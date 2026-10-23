@@ -1,7 +1,7 @@
 // node --test worktree.test.mjs — contract tests for worktree.mjs (runs 2026-10-23-bug-swarm-1/-2).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { planWorktree, parseArgs } from "./worktree.mjs";
+import { planWorktree, parseArgs, preflight } from "./worktree.mjs";
 
 const base = {
   repo: "/r/main",
@@ -15,7 +15,8 @@ const flat = (plan) => plan.map((s) => s.cmd.join(" "));
 
 test("darwin clones node_modules with cp -cR (APFS), after git worktree add", () => {
   const plan = planWorktree({ ...base, platform: "darwin" });
-  assert.deepEqual(plan[0].cmd, [
+  assert.deepEqual(plan[0].cmd, ["git", "fetch", "origin"]);
+  assert.deepEqual(plan[1].cmd, [
     "git",
     "worktree",
     "add",
@@ -24,7 +25,7 @@ test("darwin clones node_modules with cp -cR (APFS), after git worktree add", ()
     "/r/wt",
     "origin/master",
   ]);
-  assert.equal(plan[0].cwd, "/r/main");
+  assert.equal(plan[1].cwd, "/r/main");
   const cps = plan.filter((s) => s.cmd[0] === "cp");
   assert.equal(cps.length, 4);
   for (const s of cps) assert.deepEqual(s.cmd.slice(0, 2), ["cp", "-cR"]);
@@ -65,4 +66,28 @@ test("parseArgs applies defaults and rejects a missing --dir/--branch", () => {
   assert.equal(a.dryRun, true);
   assert.throws(() => parseArgs(["--dir", "/d"]), /--branch/);
   assert.throws(() => parseArgs(["--branch", "b"]), /--dir/);
+});
+
+test("preflight refuses an existing dir, a local branch or an origin branch; clean passes", () => {
+  const git = (local, remote) => (args) => {
+    if (args[0] === "rev-parse") return local ? "abc\n" : "";
+    if (args[0] === "ls-remote") return remote ? "abc\trefs/heads/b\n" : "";
+    throw new Error("unexpected");
+  };
+  assert.equal(
+    preflight({ dir: "/d", branch: "b", exists: () => false, git: git(false, false) }),
+    null,
+  );
+  assert.match(
+    preflight({ dir: "/d", branch: "b", exists: () => true, git: git(false, false) }),
+    /exists/,
+  );
+  assert.match(
+    preflight({ dir: "/d", branch: "b", exists: () => false, git: git(true, false) }),
+    /local/,
+  );
+  assert.match(
+    preflight({ dir: "/d", branch: "b", exists: () => false, git: git(false, true) }),
+    /origin/,
+  );
 });

@@ -58,18 +58,24 @@ function affinity(x, y) {
   return best;
 }
 
-function exclusionReason(b) {
+function exclusionReason(b, avoid) {
   if (b.risk !== "LOW") return `risk ${b.risk}: HIGH-risk bugs never enter the swarm`;
   if (b.status !== "live") return `status ${b.status}: only live bugs enter`;
   if (!b.files || b.files.length === 0) return "no files: triage found no touched file";
+  const hit = b.files.find((f) => avoid.has(f));
+  if (hit) return `touches avoided file ${hit}`;
   return null;
 }
 
-export function clusterBugs(manifest, { ratchetFiles = [], maxClusters = 4 } = {}) {
+export function clusterBugs(
+  manifest,
+  { ratchetFiles = [], maxClusters = 4, avoidFiles = [], requestedRows } = {},
+) {
+  const avoid = new Set(avoidFiles);
   const excluded = [];
   const bugs = [];
   for (const b of manifest.bugs ?? []) {
-    const reason = exclusionReason(b);
+    const reason = exclusionReason(b, avoid);
     if (reason) excluded.push({ row: b.row, ...(b.sub ? { sub: b.sub } : {}), reason });
     else bugs.push(b);
   }
@@ -133,7 +139,7 @@ export function clusterBugs(manifest, { ratchetFiles = [], maxClusters = 4 } = {
   }
 
   const ratchet = new Set(ratchetFiles);
-  const clusters = work.map((c, i) => ({
+  const toCluster = (c, i) => ({
     id: `c${i + 1}`,
     bugs: c.members.map((m) => ({ row: m.row, ...(m.sub ? { sub: m.sub } : {}) })),
     files: c.files,
@@ -141,17 +147,62 @@ export function clusterBugs(manifest, { ratchetFiles = [], maxClusters = 4 } = {
     needsDb: c.members.some((m) => m.needsDb),
     ui: c.members.some((m) => m.ui),
     extractionFirst: c.files.some((f) => ratchet.has(f)),
-  }));
-  return { clusters, excluded, ...(overCap ? { overCap: true } : {}) };
+  });
+  const all = work.map(toCluster);
+  // Still over the cap after same-workspace merges: run the first N, park the rest (never run).
+  const clusters = overCap ? all.slice(0, maxClusters) : all;
+  const result = { clusters, excluded };
+  if (overCap) {
+    result.overCap = true;
+    result.parked = all
+      .slice(maxClusters)
+      .map((cluster) => ({ cluster, reason: `over cap ${maxClusters}` }));
+  }
+  if (requestedRows) {
+    const seen = new Set((manifest.bugs ?? []).map((b) => String(b.row)));
+    for (const e of excluded) seen.add(String(e.row));
+    for (const e of manifest.excluded ?? []) {
+      for (const r of String(e.row).split(",")) seen.add(r.trim());
+    }
+    result.unaccounted = requestedRows.filter((r) => !seen.has(String(r)));
+  }
+  return result;
+}
+
+/** Parse CLI argv -> { file, write, maxClusters?, avoidFiles, requestedRows? }; throws on bad usage. */
+export function parseCli(argv) {
+  const o = { file: undefined, write: false, avoidFiles: [] };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--write") o.write = true;
+    else if (a === "--max") {
+      const n = Number(argv[++i]);
+      if (!Number.isInteger(n) || n < 1) throw new Error("--max needs a positive integer");
+      o.maxClusters = n;
+    } else if (a === "--avoid" && argv[i + 1]) o.avoidFiles.push(argv[++i]);
+    else if (a === "--rows" && argv[i + 1]) {
+      o.requestedRows = argv[++i]
+        .split(",")
+        .map((r) => r.trim())
+        .filter(Boolean);
+    } else if (!a.startsWith("--") && !o.file) o.file = a;
+    else throw new Error(`unknown or incomplete argument ${JSON.stringify(a)}`);
+  }
+  return o;
 }
 
 export function main(argv = process.argv.slice(2)) {
-  const write = argv.includes("--write");
-  const file = argv.find((a) => !a.startsWith("--"));
-  if (!file) {
-    console.error("usage: node cluster.mjs <manifest.json> [--write]");
+  let cli;
+  try {
+    cli = parseCli(argv);
+    if (!cli.file) throw new Error("manifest path required");
+  } catch (e) {
+    console.error(
+      `cluster: ${e.message}\nusage: node cluster.mjs <manifest.json> [--write] [--max N] [--avoid <file>]... [--rows a,b,c]`,
+    );
     return 2;
   }
+  const file = cli.file;
   const manifest = JSON.parse(readFileSync(file, "utf8"));
   const root = execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim();
   let ratchetFiles = [];
@@ -160,10 +211,14 @@ export function main(argv = process.argv.slice(2)) {
   } catch {
     console.error(`cluster: ${RATCHET_SPEC} not readable; extractionFirst will be false`);
   }
-  const result = clusterBugs(manifest, { ratchetFiles });
-  if (write) {
-    const next = { ...manifest, clusters: result.clusters, excluded: result.excluded };
-    if (result.overCap) next.overCap = true;
+  const result = clusterBugs(manifest, {
+    ratchetFiles,
+    avoidFiles: cli.avoidFiles,
+    requestedRows: cli.requestedRows,
+    ...(cli.maxClusters ? { maxClusters: cli.maxClusters } : {}),
+  });
+  if (cli.write) {
+    const next = { ...manifest, ...result };
     // Triage's own `excluded` notes ({row, why}) are kept under a separate key, not overwritten.
     if (manifest.excluded?.length && !manifest.triageExcluded)
       next.triageExcluded = manifest.excluded;

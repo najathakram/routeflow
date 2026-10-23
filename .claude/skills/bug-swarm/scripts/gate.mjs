@@ -8,7 +8,7 @@
 //
 // Pure core: planGate(...) -> steps[]; runGate(steps, { exec }) runs every step, never stops early.
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -28,8 +28,26 @@ const PRETTIER_EXT = new Set([
   ".yaml",
   ".html",
 ]);
-const LINT_EXT = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"]);
 const JEST_EXT = new Set([".ts", ".tsx", ".js", ".jsx"]);
+
+export const STEP_TIMEOUT_MS = 15 * 60_000;
+export const DB_LANE_TIMEOUT_MS = 30 * 60_000;
+
+// Prints and fails when the branch diff (merge-base..HEAD) touches any avoided file.
+const AVOID_SCRIPT = `const {execFileSync}=require("node:child_process");
+const [base,...avoid]=process.argv.slice(1);
+const out=execFileSync("git",["diff","--name-only",base+"..HEAD","--",...avoid],{encoding:"utf8"}).trim();
+if(out){console.error("avoided files touched:\\n"+out);process.exit(1);}`;
+
+function lintScriptExists(root, ws) {
+  try {
+    return Boolean(
+      JSON.parse(readFileSync(path.join(root, ws, "package.json"), "utf8")).scripts?.lint,
+    );
+  } catch {
+    return false;
+  }
+}
 
 /** { base, files } for the whole branch: merge-base with origin/master, deleted files dropped. */
 export function changedSince(git) {
@@ -46,12 +64,17 @@ export function planGate({
   base = "origin/master",
   root = process.cwd(),
   exists = existsSync,
+  avoid = [],
+  hasLint = (ws) => lintScriptExists(root, ws),
 }) {
   const steps = [];
-  const add = (name, cwd, cmd) => steps.push({ name, cwd, cmd });
+  const add = (name, cwd, cmd, timeoutMs = STEP_TIMEOUT_MS) =>
+    steps.push({ name, cwd, cmd, timeoutMs });
   add("packages-build", root, ["npx", "turbo", "run", "build", "--filter=./packages/*"]);
   add("signature-scan", root, ["node", ".claude/skills/bug-hunt/scripts/scan-signatures.mjs"]);
   add("commitlint", root, ["npx", "commitlint", "--from", base, "--to", "HEAD"]);
+
+  if (avoid.length) add("avoid-files", root, ["node", "-e", AVOID_SCRIPT, base, ...avoid]);
 
   const pretty = changedFiles.filter((f) => PRETTIER_EXT.has(path.extname(f)));
   if (pretty.length) add("prettier", root, ["npx", "prettier", "--check", ...pretty]);
@@ -68,13 +91,24 @@ export function planGate({
     const cwd = path.join(root, ws);
     if (ws === "apps/api") add(`tsc:${ws}`, root, ["npm", "run", "check-types", "-w", "apps/api"]);
     else add(`tsc:${ws}`, cwd, ["npx", "tsc", "--noEmit"]);
-    const lint = rel.filter((f) => LINT_EXT.has(path.extname(f)));
-    // Packages lint via tsc (above); only apps carry an eslint flat config.
-    if (ws.startsWith("apps/") && lint.length)
-      add(`eslint:${ws}`, cwd, ["npx", "eslint", "--quiet", ...lint]);
+    // Same lint verify runs (`--max-warnings 0` lives in the script), for every workspace that has one.
+    if (hasLint(ws)) add(`lint:${ws}`, root, ["npm", "run", "lint", "-w", ws]);
     const tests = rel.filter((f) => JEST_EXT.has(path.extname(f)));
     if (tests.length)
       add(`jest:${ws}`, cwd, ["npx", "jest", "--passWithNoTests", "--findRelatedTests", ...tests]);
+  }
+
+  if (byWs.has("packages/types") || byWs.has("packages/pricing")) {
+    // Shared contracts: every consumer must still type-check, and enums must stay in parity.
+    for (const ws of ["apps/api", "apps/web", "apps/mobile"]) {
+      if (!steps.some((x) => x.name === `tsc:${ws}`))
+        add(`tsc:${ws}`, root, ["npm", "run", "check-types", "-w", ws]);
+    }
+    add("enum-parity", path.join(root, "apps/api"), [
+      "npx",
+      "jest",
+      "src/common/enum-parity.spec.ts",
+    ]);
   }
 
   if (changedFiles.some((f) => f.startsWith("tools/ops-monitor/"))) {
@@ -96,32 +130,50 @@ export function planGate({
     "jest.repo-truth.config.js",
     "size-ratchet",
   ]);
-  if (needsDb) add("db-lane", root, ["npm", "run", "local:test:db"]);
+  if (needsDb) add("db-lane", root, ["npm", "run", "local:test:db"], DB_LANE_TIMEOUT_MS);
   return steps;
 }
 
-function defaultExec(step) {
+export function execStep(step) {
   return new Promise((resolve) => {
     const child = spawn(step.cmd[0], step.cmd.slice(1), {
       cwd: step.cwd,
       stdio: ["ignore", "pipe", "pipe"],
     });
     let output = "";
+    let timedOut = false;
+    const timer = step.timeoutMs
+      ? setTimeout(() => {
+          timedOut = true;
+          child.kill("SIGKILL");
+        }, step.timeoutMs)
+      : null;
     child.stdout.on("data", (d) => (output += d));
     child.stderr.on("data", (d) => (output += d));
-    child.on("error", (e) => resolve({ status: 127, output: `${output}\n${e.message}` }));
-    child.on("close", (code) => resolve({ status: code ?? 1, output }));
+    child.on("error", (e) => {
+      clearTimeout(timer);
+      resolve({ status: 127, output: `${output}\n${e.message}` });
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      resolve({
+        status: timedOut ? null : (code ?? 1),
+        output,
+        ...(timedOut ? { timedOut: true } : {}),
+      });
+    });
   });
 }
 
-export async function runGate(steps, { exec = defaultExec } = {}) {
+export async function runGate(steps, { exec = execStep } = {}) {
   const results = [];
   for (const step of steps) {
     const t0 = Date.now();
-    const { status, output } = await exec(step);
+    const { status, output, timedOut } = await exec(step);
     results.push({
       name: step.name,
-      ok: status === 0,
+      ok: status === 0 && !timedOut,
+      ...(timedOut ? { timedOut: true } : {}),
       exit: status,
       ms: Date.now() - t0,
       tail: String(output ?? "")
@@ -132,6 +184,19 @@ export async function runGate(steps, { exec = defaultExec } = {}) {
     });
   }
   return { ok: results.every((r) => r.ok), steps: results };
+}
+
+/** Drop any stale result and leave a "running" marker, so a reader never trusts an old green. */
+export function beginJson(file, head) {
+  rmSync(file, { force: true });
+  writeFileSync(file, `${JSON.stringify({ ok: false, running: true, head })}\n`);
+}
+
+export function finishJson(file, result, { head, base }) {
+  writeFileSync(
+    file,
+    `${JSON.stringify({ ok: result.ok, head, base, steps: result.steps }, null, 2)}\n`,
+  );
 }
 
 const git = (args) => execFileSync("git", args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
@@ -149,9 +214,15 @@ export async function main(argv = process.argv.slice(2)) {
     jsonOut = path.resolve(jsonOut);
     argv = argv.map((a, i) => (i === ji + 1 ? jsonOut : a));
   }
+  const avoid = [];
+  argv.forEach((a, i) => {
+    if (a === "--avoid" && argv[i + 1]) avoid.push(argv[i + 1]);
+  });
   const root = git(["rev-parse", "--show-toplevel"]).trim();
+  const head = git(["rev-parse", "HEAD"]).trim();
+  if (jsonOut && !dryRun && process.env.RF_HEAVY_SLOT_HELD !== "1") beginJson(jsonOut, head);
   const { base, files } = changedSince(git);
-  const steps = planGate({ changedFiles: files, needsDb, base, root });
+  const steps = planGate({ changedFiles: files, needsDb, base, root, avoid });
 
   if (dryRun) {
     console.log(
@@ -182,10 +253,13 @@ export async function main(argv = process.argv.slice(2)) {
     return r.status ?? 1;
   }
 
+  if (jsonOut) beginJson(jsonOut, head);
   const result = await runGate(steps);
   for (const s of result.steps)
-    console.log(`${s.ok ? "ok  " : "FAIL"} ${s.name} (${s.ms} ms, exit ${s.exit})`);
-  if (jsonOut) writeFileSync(jsonOut, `${JSON.stringify(result, null, 2)}\n`);
+    console.log(
+      `${s.ok ? "ok  " : "FAIL"} ${s.name} (${s.ms} ms, exit ${s.exit}${s.timedOut ? ", TIMED OUT" : ""})`,
+    );
+  if (jsonOut) finishJson(jsonOut, result, { head, base });
   return result.ok ? 0 : 1;
 }
 

@@ -4,10 +4,21 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-import { changedSince, planGate, runGate } from "./gate.mjs";
+import { mkdtempSync, writeFileSync, existsSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import {
+  beginJson,
+  changedSince,
+  execStep,
+  finishJson,
+  planGate,
+  runGate,
+  STEP_TIMEOUT_MS,
+  DB_LANE_TIMEOUT_MS,
+} from "./gate.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const opts = { root: "/r", base: "abc123", exists: () => true };
+const opts = { root: "/r", base: "abc123", exists: () => true, hasLint: () => true };
 const names = (steps) => steps.map((s) => s.name);
 const step = (steps, name) => steps.find((s) => s.name === name);
 
@@ -31,8 +42,7 @@ test("paths with parentheses and brackets survive as single argv elements", () =
     ...opts,
   });
   assert.ok(step(steps, "prettier").cmd.includes(f));
-  const eslint = step(steps, "eslint:apps/web");
-  assert.ok(eslint.cmd.includes("app/(dashboard)/orders/[id]/page.tsx"));
+  assert.equal(step(steps, "eslint:apps/web"), undefined);
   for (const s of steps)
     assert.ok(Array.isArray(s.cmd) && s.cmd.every((x) => typeof x === "string"));
 });
@@ -49,19 +59,29 @@ test("prettier skips dotfiles without an extension such as .prettierignore", () 
   assert.ok(!names(planGate({ changedFiles: [".prettierignore"], ...opts })).includes("prettier"));
 });
 
-test("per-workspace eslint and jest paths are workspace-relative, cwd is the workspace", () => {
+test("lint is npm run lint -w <ws> for every touched workspace with a lint script; jest paths are workspace-relative", () => {
   const steps = planGate({
-    changedFiles: ["apps/api/src/orders/a.service.ts", "apps/api/src/orders/a.service.spec.ts"],
+    changedFiles: [
+      "apps/api/src/orders/a.service.ts",
+      "apps/api/src/orders/a.service.spec.ts",
+      "packages/ui/x.tsx",
+    ],
     ...opts,
+    hasLint: (ws) => ws !== "packages/nolint",
   });
-  const eslint = step(steps, "eslint:apps/api");
-  assert.equal(eslint.cwd, "/r/apps/api");
-  assert.deepEqual(eslint.cmd.slice(-2), [
-    "src/orders/a.service.ts",
-    "src/orders/a.service.spec.ts",
+  assert.deepEqual(step(steps, "lint:apps/api").cmd, ["npm", "run", "lint", "-w", "apps/api"]);
+  assert.deepEqual(step(steps, "lint:packages/ui").cmd, [
+    "npm",
+    "run",
+    "lint",
+    "-w",
+    "packages/ui",
   ]);
-  assert.ok(eslint.cmd.includes("--quiet"));
+  assert.equal(step(steps, "lint:apps/api").cwd, "/r");
+  const none = planGate({ changedFiles: ["packages/nolint/a.ts"], ...opts, hasLint: () => false });
+  assert.ok(!names(none).some((n) => n.startsWith("lint:")));
   const jest = step(steps, "jest:apps/api");
+  assert.equal(jest.cwd, "/r/apps/api");
   assert.ok(jest.cmd.includes("--findRelatedTests"));
   assert.ok(jest.cmd.includes("src/orders/a.service.ts"));
   assert.deepEqual(step(steps, "tsc:apps/api").cmd, [
@@ -73,12 +93,106 @@ test("per-workspace eslint and jest paths are workspace-relative, cwd is the wor
   ]);
 });
 
+test("packages/types or packages/pricing change adds consumer type checks and enum-parity", () => {
+  for (const f of ["packages/types/api/enums.ts", "packages/pricing/src/a.ts"]) {
+    const steps = planGate({ changedFiles: [f], ...opts });
+    for (const ws of ["apps/api", "apps/web", "apps/mobile"]) {
+      assert.deepEqual(step(steps, `tsc:${ws}`).cmd, ["npm", "run", "check-types", "-w", ws]);
+    }
+    const ep = step(steps, "enum-parity");
+    assert.equal(ep.cwd, "/r/apps/api");
+    assert.deepEqual(ep.cmd, ["npx", "jest", "src/common/enum-parity.spec.ts"]);
+  }
+  const plain = planGate({ changedFiles: ["packages/ui/a.tsx"], ...opts });
+  assert.equal(step(plain, "enum-parity"), undefined);
+  assert.equal(step(plain, "tsc:apps/web"), undefined);
+  const dup = planGate({ changedFiles: ["packages/types/a.ts", "apps/api/b.ts"], ...opts });
+  assert.equal(names(dup).filter((n) => n === "tsc:apps/api").length, 1);
+});
+
+test("steps carry timeouts: 15 min default, 30 min for db-lane", () => {
+  assert.equal(STEP_TIMEOUT_MS, 15 * 60_000);
+  assert.equal(DB_LANE_TIMEOUT_MS, 30 * 60_000);
+  const steps = planGate({ changedFiles: ["apps/api/a.ts"], needsDb: true, ...opts });
+  assert.equal(step(steps, "packages-build").timeoutMs, STEP_TIMEOUT_MS);
+  assert.equal(step(steps, "db-lane").timeoutMs, DB_LANE_TIMEOUT_MS);
+});
+
+test("execStep kills a step past its timeout and reports timedOut", async () => {
+  const r = await execStep({
+    name: "slow",
+    cwd: process.cwd(),
+    cmd: [process.execPath, "-e", "setTimeout(()=>{},60000)"],
+    timeoutMs: 300,
+  });
+  assert.equal(r.timedOut, true);
+  assert.notEqual(r.status, 0);
+});
+
+test("runGate marks timedOut steps ok=false and continues", async () => {
+  const exec = async (s) =>
+    s.name === "a" ? { status: null, output: "", timedOut: true } : { status: 0, output: "" };
+  const r = await runGate(
+    [
+      { name: "a", cwd: "/", cmd: ["x"] },
+      { name: "b", cwd: "/", cmd: ["y"] },
+    ],
+    { exec },
+  );
+  assert.equal(r.steps[0].timedOut, true);
+  assert.equal(r.steps[0].ok, false);
+  assert.equal(r.steps[1].ok, true);
+  assert.equal(r.ok, false);
+});
+
+test("avoid-files step fails when the merge-base diff touches an avoided file", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "gate-avoid-"));
+  const sh = (...a) => spawnSync("git", a, { cwd: dir, encoding: "utf8" });
+  sh("init", "-q");
+  sh("config", "user.email", "t@t");
+  sh("config", "user.name", "t");
+  writeFileSync(path.join(dir, "a.txt"), "1");
+  sh("add", ".");
+  sh("commit", "-qm", "base");
+  const base = sh("rev-parse", "HEAD").stdout.trim();
+  writeFileSync(path.join(dir, "b.txt"), "1");
+  sh("add", ".");
+  sh("commit", "-qm", "next");
+  const run = (avoid) => {
+    const st = step(
+      planGate({ changedFiles: ["b.txt"], ...opts, base, avoid, root: dir }),
+      "avoid-files",
+    );
+    return spawnSync(st.cmd[0], st.cmd.slice(1), { cwd: st.cwd, encoding: "utf8" });
+  };
+  assert.equal(run(["a.txt"]).status, 0);
+  const bad = run(["a.txt", "b.txt"]);
+  assert.equal(bad.status, 1);
+  assert.match(bad.stdout + bad.stderr, /b\.txt/);
+  assert.equal(step(planGate({ changedFiles: [], ...opts }), "avoid-files"), undefined);
+});
+
+test("beginJson deletes a stale file and writes a running marker; finishJson writes head and base", () => {
+  const f = path.join(mkdtempSync(path.join(tmpdir(), "gate-json-")), "g.json");
+  writeFileSync(f, JSON.stringify({ ok: true, steps: [] }));
+  beginJson(f, "h1");
+  assert.deepEqual(JSON.parse(readFileSync(f, "utf8")), { ok: false, running: true, head: "h1" });
+  finishJson(f, { ok: true, steps: [] }, { head: "h1", base: "b1" });
+  const done = JSON.parse(readFileSync(f, "utf8"));
+  assert.equal(done.ok, true);
+  assert.equal(done.running, undefined);
+  assert.equal(done.head, "h1");
+  assert.equal(done.base, "b1");
+  assert.equal(existsSync(f), true);
+});
+
 test("web and package workspaces use tsc --noEmit in their own directory", () => {
   const steps = planGate({
     changedFiles: ["apps/web/a.tsx", "packages/pricing/src/x.ts"],
     ...opts,
   });
   assert.deepEqual(step(steps, "tsc:apps/web").cmd, ["npx", "tsc", "--noEmit"]);
+  assert.deepEqual(step(steps, "tsc:apps/web").cwd, "/r/apps/web");
   assert.equal(step(steps, "tsc:packages/pricing").cwd, "/r/packages/pricing");
 });
 

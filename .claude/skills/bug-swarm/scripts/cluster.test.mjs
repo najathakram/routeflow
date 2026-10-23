@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-import { clusterBugs, ratchetFilesFrom } from "./cluster.mjs";
+import { clusterBugs, parseCli, ratchetFilesFrom } from "./cluster.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const fixture = (n) => JSON.parse(readFileSync(path.join(here, "fixtures", n), "utf8"));
@@ -109,8 +109,8 @@ test("over maxClusters merges the smallest into the closest same-workspace clust
   assert.deepEqual(merged.bugs.map((b) => b.row).sort(), ["1", "2"]);
 });
 
-test("cannot merge across workspaces: keeps clusters and sets overCap", () => {
-  const { clusters, overCap } = clusterBugs(
+test("cannot merge across workspaces: keeps the first N, parks the rest, sets overCap", () => {
+  const r = clusterBugs(
     {
       bugs: [
         bug("1", ["apps/web/a.ts"]),
@@ -120,8 +120,53 @@ test("cannot merge across workspaces: keeps clusters and sets overCap", () => {
     },
     { maxClusters: 2 },
   );
-  assert.equal(clusters.length, 3);
-  assert.equal(overCap, true);
+  assert.equal(r.clusters.length, 2);
+  assert.equal(r.overCap, true);
+  assert.equal(r.parked.length, 1);
+  assert.equal(r.parked[0].reason, "over cap 2");
+  assert.equal(r.parked[0].cluster.bugs[0].row, "3");
+  assert.equal(r.parked[0].cluster.id, "c3");
+});
+
+test("avoidFiles excludes any bug touching an avoided file", () => {
+  const { clusters, excluded } = clusterBugs(
+    { bugs: [bug("1", ["a.ts", "b.ts"]), bug("2", ["c.ts"])] },
+    { avoidFiles: ["b.ts"] },
+  );
+  assert.equal(clusters.length, 1);
+  assert.deepEqual(excluded, [{ row: "1", reason: "touches avoided file b.ts" }]);
+});
+
+test("rows requested but in neither bugs nor excluded are unaccounted", () => {
+  const r = clusterBugs(
+    { bugs: [bug("1", ["a.ts"]), bug("2", [], {})], excluded: [{ row: "7, 8", why: "x" }] },
+    { requestedRows: ["1", "2", "7", "9", "W-3"] },
+  );
+  assert.deepEqual(r.unaccounted, ["9", "W-3"]);
+  assert.equal(clusterBugs({ bugs: [] }).unaccounted, undefined);
+});
+
+test("parseCli reads --max, repeatable --avoid, --rows, --write and the manifest path", () => {
+  const o = parseCli([
+    "m.json",
+    "--max",
+    "3",
+    "--avoid",
+    "x",
+    "--avoid",
+    "y",
+    "--rows",
+    "1,2",
+    "--write",
+  ]);
+  assert.deepEqual(o, {
+    file: "m.json",
+    write: true,
+    maxClusters: 3,
+    avoidFiles: ["x", "y"],
+    requestedRows: ["1", "2"],
+  });
+  assert.throws(() => parseCli(["m.json", "--max", "zero"]), /--max/);
 });
 
 test("run 1 manifest (14 rows, disjoint files) fits maxClusters 4 or flags overCap", () => {

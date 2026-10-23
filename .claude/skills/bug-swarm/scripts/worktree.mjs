@@ -36,7 +36,10 @@ export function planWorktree({
 }) {
   const mods = nodeModules ?? discoverNodeModules(from);
   const cp = platform === "darwin" ? ["cp", "-cR"] : ["cp", "-R"];
-  const plan = [{ cwd: repo, cmd: ["git", "worktree", "add", "-b", branch, dir, base] }];
+  const plan = [
+    { cwd: repo, cmd: ["git", "fetch", "origin"] },
+    { cwd: repo, cmd: ["git", "worktree", "add", "-b", branch, dir, base] },
+  ];
   for (const rel of mods) {
     plan.push({
       cwd: dir,
@@ -46,6 +49,18 @@ export function planWorktree({
   plan.push({ cwd: dir, cmd: ["npx", "turbo", "run", "build", "--filter=./packages/*"] });
   plan.push({ cwd: path.join(dir, "apps/api"), cmd: ["npx", "prisma", "generate"] });
   return plan;
+}
+
+/** Error text when the target dir or branch is taken (locally or on origin); null when clear. */
+export function preflight({ dir, branch, exists = existsSync, git }) {
+  if (exists(dir)) return `target dir ${dir} already exists`;
+  if (git(["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`]).trim()) {
+    return `branch ${branch} already exists locally`;
+  }
+  if (git(["ls-remote", "--heads", "origin", branch]).trim()) {
+    return `branch ${branch} already exists on origin`;
+  }
+  return null;
 }
 
 export function parseArgs(argv) {
@@ -73,9 +88,26 @@ export function main(argv = process.argv.slice(2)) {
     return 2;
   }
   const repo = execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim();
+  const dir = path.resolve(o.dir);
+  const git = (args) => {
+    const r = spawnSync("git", args, { cwd: repo, encoding: "utf8" });
+    if (r.status !== 0 && args[0] === "ls-remote")
+      throw new Error(`git ls-remote failed: ${r.stderr}`);
+    return r.stdout ?? "";
+  };
+  let problem;
+  try {
+    problem = preflight({ dir, branch: o.branch, git });
+  } catch (e) {
+    problem = e.message;
+  }
+  if (problem) {
+    console.error(`worktree: refusing: ${problem}`);
+    return 2;
+  }
   const plan = planWorktree({
     repo,
-    dir: path.resolve(o.dir),
+    dir,
     branch: o.branch,
     base: o.base,
     from: path.resolve(o.from ?? repo),
