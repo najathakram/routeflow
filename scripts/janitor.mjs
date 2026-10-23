@@ -248,13 +248,13 @@ export function classifyWorktree(info) {
 }
 
 /** The node_modules dirs of one tree: the root's plus apps/* and packages/* (as the clear does). */
-function nodeModulesCandidates(tree, unknown) {
+function nodeModulesCandidates(tree, unknown, readdir = readdirSync) {
   const out = [join(tree, "node_modules")];
   for (const group of ["apps", "packages"]) {
     const groupDir = join(tree, group);
     let names;
     try {
-      names = readdirSync(groupDir);
+      names = readdir(groupDir);
     } catch (e) {
       if (e?.code !== "ENOENT" && e?.code !== "ENOTDIR") unknown.push(`${groupDir}: ${e?.code}`);
       continue;
@@ -272,22 +272,26 @@ function nodeModulesCandidates(tree, unknown) {
  * is harmless and ignored. Read-only; never throws.
  * Returns { links: [{ tree, path, real }], unknown: { [tree]: [reason] } }.
  */
-export function scanLinkTargets(trees) {
+export function scanLinkTargets(trees, ops = {}) {
+  const lstat = ops.lstat ?? lstatSync;
+  const readdir = ops.readdir ?? readdirSync;
+  const realpath = ops.realpath ?? realpathSync.native;
+  const isLink = (p) => isLinkPath(p, lstat);
   const links = [];
   const unknown = {};
   for (const tree of trees) {
     const bad = [];
     const record = (p) => {
       try {
-        links.push({ tree, path: p, real: realpathSync(p) });
+        links.push({ tree, path: p, real: realpath(p) });
       } catch (e) {
         if (e?.code !== "ENOENT") bad.push(`${p}: ${e?.code}`);
       }
     };
-    for (const nm of nodeModulesCandidates(tree, bad)) {
+    for (const nm of nodeModulesCandidates(tree, bad, readdir)) {
       let st;
       try {
-        st = lstatSync(nm);
+        st = lstat(nm);
       } catch (e) {
         if (e?.code !== "ENOENT" && e?.code !== "ENOTDIR") bad.push(`${nm}: ${e?.code}`);
         continue;
@@ -299,24 +303,37 @@ export function scanLinkTargets(trees) {
       if (!st.isDirectory()) continue;
       let entries;
       try {
-        entries = readdirSync(nm);
+        entries = readdir(nm);
       } catch (e) {
         bad.push(`${nm}: ${e?.code}`);
         continue;
       }
       for (const e of entries) {
         const p = join(nm, e);
-        if (isLinkPath(p)) {
+        let linked;
+        try {
+          linked = isLink(p);
+        } catch (err) {
+          bad.push(`${p}: ${err?.code}`);
+          continue;
+        }
+        if (linked) {
           record(p);
         } else if (e.startsWith("@")) {
           let scoped;
           try {
-            scoped = readdirSync(p);
+            scoped = readdir(p);
           } catch (err) {
             if (err?.code !== "ENOTDIR") bad.push(`${p}: ${err?.code}`);
             continue;
           }
-          for (const c of scoped) if (isLinkPath(join(p, c))) record(join(p, c));
+          for (const c of scoped) {
+            try {
+              if (isLink(join(p, c))) record(join(p, c));
+            } catch (err) {
+              bad.push(`${join(p, c)}: ${err?.code}`);
+            }
+          }
         }
       }
     }
@@ -330,17 +347,30 @@ export function scanLinkTargets(trees) {
  * ("unknown") when any other tree could not be scanned fully; the caller must then skip.
  * `scan` is a scanLinkTargets() result to reuse across candidates.
  */
-export function linkedIntoBy(candidatePath, otherWorktreePaths, scan = null) {
-  const candReal = realOr(candidatePath);
-  const isCand = (p) => resolve(p) === resolve(candidatePath) || realOr(p) === candReal;
+export function linkedIntoBy(
+  candidatePath,
+  otherWorktreePaths,
+  scan = null,
+  platform = process.platform,
+) {
+  const nativeReal = (p) => {
+    try {
+      return realpathSync.native(p);
+    } catch {
+      return resolve(p);
+    }
+  };
+  const candReal = nativeReal(candidatePath);
+  const isCand = (p) =>
+    resolve(p) === resolve(candidatePath) ||
+    (samePathOrInside(nativeReal(p), candReal, platform) &&
+      samePathOrInside(candReal, nativeReal(p), platform));
   const others = otherWorktreePaths.filter((o) => !isCand(o));
   const sc = scan ?? scanLinkTargets(others);
   if (others.some((o) => sc.unknown[o])) return null;
   const otherSet = new Set(others);
   return sc.links
-    .filter(
-      (l) => otherSet.has(l.tree) && (l.real === candReal || l.real.startsWith(candReal + sep)),
-    )
+    .filter((l) => otherSet.has(l.tree) && samePathOrInside(l.real, candReal, platform))
     .map((l) => l.path);
 }
 
@@ -435,12 +465,32 @@ export function psLiteral(s) {
 }
 
 /** True when `p` is itself a symlink or junction (Node reports a junction as a symlink). */
-function isLinkPath(p) {
+function isLinkPath(p, lstat = lstatSync) {
   try {
-    return lstatSync(p).isSymbolicLink();
-  } catch {
-    return false;
+    return lstat(p).isSymbolicLink();
+  } catch (e) {
+    // Fail closed: only "nothing there" is a definite no. EPERM/EACCES/EIO must not read as "not a link".
+    if (e?.code === "ENOENT" || e?.code === "ENOTDIR") return false;
+    throw e;
   }
+}
+
+/**
+ * Row 719: is `child` equal to or inside `parent` (both REAL paths)? Case-folded on win32/darwin
+ * (case-insensitive file systems), \\?\ prefix stripped on win32, and only at a path boundary
+ * (C:\wt\u6 is not a prefix of C:\wt\u60).
+ */
+export function samePathOrInside(child, parent, platform = process.platform) {
+  const fold = platform === "win32" || platform === "darwin";
+  const norm = (p) => {
+    let x = String(p);
+    if (platform === "win32") x = x.replace(/^\\\\\?\\/, "");
+    return fold ? x.toLowerCase() : x;
+  };
+  const c = norm(child);
+  const par = norm(parent);
+  const sp = platform === "win32" ? "\\" : "/";
+  return c === par || c.startsWith(par.endsWith(sp) ? par : par + sp);
 }
 
 /**
