@@ -7,6 +7,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Plus, Trash2, Search, Loader2 } from "lucide-react";
 import { Button, Card, useToast, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
+import { useDismissOnLeave } from "@/lib/use-dismiss-on-leave";
 import { codedToastCopy } from "@/lib/generic-toast-copy";
 import { useInvoice, useUpdateInvoice, type UpdateInvoiceItem } from "@/lib/api/invoices";
 import { isPendingMirrorInvoice } from "@/lib/invoice-pending-mirror";
@@ -21,7 +22,7 @@ import {
 import { useProducts } from "@/lib/api/products";
 import { useCustomerPriceLayer } from "@/lib/api/useCustomerPriceLayer";
 import { PRICE_LAYER_FAILED_COPY, PriceLayerNotice } from "@/components/PriceLayerNotice";
-import { customerPricingGate } from "@/lib/customer-pricing-gate";
+import { customerPricingGate, gateNoticeLayer } from "@/lib/customer-pricing-gate";
 import { apiClient } from "@/lib/api-client";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
@@ -134,7 +135,7 @@ function ProductSearchInput({
   const [open, setOpen] = React.useState(false);
   const ref = React.useRef<HTMLDivElement>(null);
   const inputRef = React.useRef<HTMLInputElement>(null);
-  const listRef = React.useRef<HTMLDivElement>(null);
+  const leave = useDismissOnLeave(setOpen);
 
   React.useEffect(() => {
     const t = setTimeout(() => setDebouncedQuery(query), 300);
@@ -177,15 +178,7 @@ function ProductSearchInput({
           setOpen(true);
         }}
         onFocus={() => setOpen(true)}
-        // Row 446: Tab (or any focus move) away from the field closes its popup, so it never sits
-        // over the unit select below; focus moving into the popup's own list keeps it open.
-        onBlur={(e) => {
-          if (!listRef.current?.contains(e.relatedTarget as Node | null)) setOpen(false);
-        }}
-        // Tab leaves the field: close first, so focus moves to the next field, never into the list
-        onKeyDown={(e) => {
-          if (e.key === "Tab") setOpen(false);
-        }}
+        {...leave.inputProps} // row 446 / W-686: Tab and blur close the popup (shared hook)
         className="h-9 w-full rounded border border-surface-border bg-white px-2.5 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500 disabled:cursor-not-allowed disabled:bg-surface-raised"
       />
       {/* Hold every product-selection path until the tier data lands: picking or
@@ -232,10 +225,7 @@ function ProductSearchInput({
         debouncedQuery.length > 0 &&
         (products.length > 0 || onCreateProduct) && (
           <div
-            ref={listRef}
-            // a press inside the list keeps focus on the input (Safari never focuses a clicked
-            // button, so a blur would close the list before the click lands)
-            onMouseDown={(e) => e.preventDefault()}
+            {...leave.listProps}
             className="absolute z-10 mt-1 w-full rounded-lg border border-surface-border bg-white shadow-lg"
           >
             <ul className="max-h-36 overflow-y-auto">
@@ -1247,8 +1237,11 @@ export default function EditInvoicePage() {
                 </div>
               )}
               <PriceLayerNotice
-                layer={priceLayer}
-                unconfirmed={priceBlocked}
+                layer={gateNoticeLayer(pickGate, priceLayer, () => {
+                  void customerQuery.refetch();
+                  void customerPricesQuery.refetch();
+                })}
+                unconfirmed={priceBlocked || pickGate.readFailed}
                 className="block text-xs text-amber-700"
               />
               <Button

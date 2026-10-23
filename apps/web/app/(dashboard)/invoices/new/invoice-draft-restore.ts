@@ -1,5 +1,6 @@
 import {
   customerLinePrice,
+  isPlanGateError,
   layerRowForLabel,
   normalizeBoxesPieces,
   unitNameKey,
@@ -208,8 +209,9 @@ export async function checkDraftReferences(
   // The customer's per-product price rows, resolved through their tier like the page's own `priceMap`.
   const customerPrice: Record<string, number> = {};
   const lineTier: Record<string, number> = {};
-  // Only a 403 (the plan flag is off) means "no rows". Any other failure leaves customer prices unknown.
-  let rowsUnknown = false;
+  // Only the PLAN_GATE 403 (the plan flag is off) means "no rows". Any other failure leaves customer prices unknown, and so
+  // does a customer read that FAILED without the customer being gone (W-745): the tier itself is then unknown.
+  let rowsUnknown = !!customer && customerRes.status === "rejected";
   if (customer) {
     try {
       const res = await get(`/customers/${encodeURIComponent(customer.id)}/prices`);
@@ -228,8 +230,7 @@ export async function checkDraftReferences(
         }
       }
     } catch (err) {
-      const st = (err as { response?: { status?: number } } | null)?.response?.status;
-      if (st !== 403) rowsUnknown = true;
+      if (!isPlanGateError(err)) rowsUnknown = true;
     }
   }
 

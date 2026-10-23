@@ -5384,6 +5384,7 @@ export class InvoicesService {
               reference: dto.reference,
               notes: dto.notes,
               receivedAt: paidAt,
+              sourcePaymentId: payments[0]?.id ?? null, // SA-879: the group's own excess, linked to its first row
             },
           }));
 
