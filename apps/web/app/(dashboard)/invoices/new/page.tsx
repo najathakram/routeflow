@@ -47,7 +47,8 @@ import { useCustomerPriceLayer } from "@/lib/api/useCustomerPriceLayer";
 import { ladderProductOf } from "@/lib/order-line-unit";
 import { correctLayerLevelLines } from "./invoice-layer-correct";
 import { usePricesV2Enabled } from "@/lib/api/units-v2";
-import { PriceLayerNotice, pricesUnconfirmed } from "@/components/PriceLayerNotice";
+import { PriceLayerNotice } from "@/components/PriceLayerNotice";
+import { customerPricingGate, gateNoticeLayer } from "@/lib/customer-pricing-gate";
 import {
   saleLineMovedOffSpecial,
   saleLineNeedsReason,
@@ -81,6 +82,7 @@ import {
   computeInvoiceTotals,
   type InvoiceTotalsLine,
   customerLinePrice,
+  customerTierFor,
   normalizeBoxesPieces,
   perUnitPrice,
   pendingScanDecision,
@@ -281,7 +283,8 @@ function ProductSearchInput({
     product?: Record<string, unknown>,
     /** #2717 M4a-1: the level a SCAN resolved (undefined for a picker tap). */
     scanLevel?: SellLevel,
-  ) => void;
+    /** W-745: false = the pick was refused (the customer's prices are not confirmed); the box keeps what was typed. */
+  ) => boolean | void;
   onCreateProduct?: (searchTerm: string) => void;
   onBarcodeNotFound?: (barcode: string) => void;
 }) {
@@ -322,7 +325,7 @@ function ProductSearchInput({
   function selectProduct(p: any, scanLevel?: SellLevel) {
     if (isFamilyProduct(p)) return; // a FAMILY is a container, never a line (B1215 C7)
     const label = displayProductName(p);
-    onChange(
+    const accepted = onChange(
       label,
       p.id,
       String(p.pricePerUnit),
@@ -331,7 +334,7 @@ function ProductSearchInput({
       p,
       scanLevel,
     );
-    setQuery(label);
+    if (accepted !== false) setQuery(label);
     setOpen(false);
     setExpandedParentId(null);
   }
@@ -995,7 +998,8 @@ export default function NewInvoicePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [customer]);
 
-  const { data: customerPricesData } = useCustomerPrices(customer?.id);
+  const customerPricesQuery = useCustomerPrices(customer?.id);
+  const { data: customerPricesData } = customerPricesQuery;
   // Per-product PRICE resolved from the CustomerPrice TIER override through
   // the product's tier ladder. The old code read a nonexistent `specialPrice`
   // column — `parseFloat("undefined")` — so EVERY product with a CustomerPrice
@@ -1008,7 +1012,7 @@ export default function NewInvoicePage() {
       // No layer row: customerLinePrice returns master's getTierPrice number exactly.
       const price = customerLinePrice({
         product: cp.product as unknown as Record<string, unknown>,
-        tier: cp.pricingTier ?? customer?.pricingTier ?? 1,
+        tier: customerTierFor(cp.pricingTier, customer?.pricingTier),
       }).price;
       if (Number.isFinite(price)) map[cp.productId] = price;
     }
@@ -1019,7 +1023,7 @@ export default function NewInvoicePage() {
     const cp = ((customerPricesData ?? []) as CustomerPrice[]).find(
       (c) => c.productId === productId,
     );
-    return cp?.pricingTier ?? customer?.pricingTier ?? 1;
+    return customerTierFor(cp?.pricingTier, customer?.pricingTier);
   };
   // S19b (SA-811a/813): flag-on, billing's own resolved customer layer. Flag off = no request and master's numbers.
   const pricesV2 = usePricesV2Enabled();
@@ -1032,11 +1036,53 @@ export default function NewInvoicePage() {
     const r = customerLinePrice({ product, tier: tierFor(product.id), layer: l, unitLabel: null });
     return r.layered ? r : undefined;
   };
-  // Unconfirmed prices (layer pending/failed, or this product absent from an incomplete layer) block Save/Send.
-  const priceBlocked = pricesUnconfirmed(
+  // W-745 (SA-868/884): the one shared gate. The customer is the picked row (its tier is read); a customer-price read that
+  // failed with no data blocks every pick (it would drop the per-product overrides); a PLAN_GATE 403 is an empty read.
+  // Save/Send: pending, an unconfirmed layer price, or a failed read while a picked line's price is not typed.
+  const pricingGate = customerPricingGate({
+    customerQuery: customer ? { data: customer } : {},
+    customerPricesQuery: customer ? customerPricesQuery : {},
     priceLayer,
-    items.map((i) => i.productId),
-  );
+    productIds: items.map((i) => i.productId),
+    openSuggestions: items.some((i) => !!i.productId && !i.priceEdited),
+  });
+  const priceBlocked = pricingGate.blockSave;
+  // SA-890 (the recurring form's SA-856 rule 2): the products picked on THIS form, so a customer switch can re-suggest them.
+  const pickedProducts = React.useRef(new Map<string, any>());
+  // A customer switch re-suggests ONLY pack lines picked here whose price the operator has not typed, once the new customer's
+  // prices are confirmed (the gate is open); a typed price, a unit line and a restored line keep theirs.
+  React.useEffect(() => {
+    if (!customer || pricingGate.blockPick) return;
+    setItems((prev) => {
+      let changed = false;
+      const next = prev.map((it) => {
+        const product = it.productId ? pickedProducts.current.get(it.productId) : undefined;
+        if (!product || it.priceEdited || it.unitLabel) return it;
+        const fresh = catalogPricing(product, {
+          customerTier: customerTierFor(undefined, customer.pricingTier),
+          customerPrice: priceMap[product.id],
+          lineTier: tierFor(product.id),
+          layerLine: layerLineFor(product),
+        });
+        if (fresh.effectivePrice === it.unitPrice) return it;
+        changed = true;
+        const special = fresh.effectivePrice !== fresh.listPrice;
+        return {
+          ...it,
+          unitPrice: fresh.effectivePrice,
+          regularPrice: special ? fresh.listPrice : undefined,
+          isSpecialPrice: special,
+          pricing: fresh.pricing,
+          listPrice: fresh.listPrice,
+          priceType: fresh.priceType,
+          tierPrices: fresh.tierPrices,
+          overrideReason: undefined,
+        };
+      });
+      return changed ? next : prev;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- a customer switch, or its prices arriving (blockPick flips open)
+  }, [customer?.id, pricingGate.blockPick]);
 
   // ── Selling units (VU-4a, B1218) ────────────────────────────────────────────
   // Staff only, and only under flag.units_v1: everyone else keeps today's row byte for byte.
@@ -1393,17 +1439,18 @@ export default function NewInvoicePage() {
     scanLevel?: SellLevel,
     opts?: { startOnDefaultUnit?: boolean },
   ) {
-    // Flag on and the customer layer not read yet (or failed): a pick would price at the tier, so wait (the notice says why).
-    if (priceLayer.enabled && !priceLayer.ready) return;
+    // The customer's prices or (flag on) the layer not read yet, or failed: a pick would mis-price, so wait (the notice says why).
+    if (pricingGate.blockPick) return;
     const dflt = unitsOn && !!opts?.startOnDefaultUnit;
     const upb = boxedUnitsPerBox(product.unitsPerBox);
     const fresh = catalogPricing(product, {
-      customerTier: customer?.pricingTier ?? 1,
+      customerTier: customerTierFor(undefined, customer?.pricingTier),
       customerPrice: priceMap[product.id],
       lineTier: tierFor(product.id),
       layerLine: layerLineFor(product),
     });
     const { listPrice, effectivePrice } = fresh;
+    pickedProducts.current.set(product.id, product);
 
     const seed = seedLineQty(upb, scanLevel);
     const lineItem: LineItemState = {
@@ -2564,7 +2611,8 @@ export default function NewInvoicePage() {
                         onChange={(desc, pid, price, avgCost, unitsPerBox, product, scanLevel) => {
                           // #2696(c) SA-558e: a picked product prices at the customer's TIER (the
                           // server's own baseline) — list for a tier customer would be refused.
-                          if (pid && priceLayer.enabled && !priceLayer.ready) return;
+                          if (pid && pricingGate.blockPick) return false;
+                          if (pid && product) pickedProducts.current.set(pid, product);
                           const layerLine = pid && product ? layerLineFor(product) : undefined;
                           const pricing = layerLine
                             ? {
@@ -3139,8 +3187,12 @@ export default function NewInvoicePage() {
               </>
             )}
             <PriceLayerNotice
-              layer={priceLayer}
-              unconfirmed={priceBlocked}
+              layer={gateNoticeLayer(
+                pricingGate,
+                priceLayer,
+                () => void customerPricesQuery.refetch(),
+              )}
+              unconfirmed={priceBlocked || pricingGate.blockPick}
               className="ml-2 text-xs text-amber-700"
             />
             <ReadOnlyHint className="ml-2 text-xs text-slate-600" />
