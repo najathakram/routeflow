@@ -41,6 +41,8 @@ import { decideTrayPrice, reasonRequiredMessage } from "../../../../lib/staff-pr
 import { useTrackedCategories } from "../../../../lib/api/tracked-categories";
 import { saleModeGate } from "../../../../lib/sale-mode";
 import { showToast } from "../../../../lib/toast";
+import { PriceLayerGateNotice } from "../../../../components/PriceLayerGateNotice";
+import { useCustomerPickGate } from "../../../../components/new-order/use-customer-pick-gate";
 import {
   setLineBoxes,
   setLinePieces,
@@ -101,7 +103,12 @@ import { useAuthStore } from "../../../../lib/auth-store";
 import { hasUnsavedInvoiceDraft, shouldConfirmDiscard } from "../../../../lib/discard-guard";
 // Compose "<Parent> - <Variant>" so variants don't show as "Strawberry" alone.
 import { displayProductName as displayName } from "../../../../lib/product-display";
-import { computeLineSubtotal, effectiveQty, type CustomerLayerUnit } from "@routeflow/pricing";
+import {
+  computeLineSubtotal,
+  customerTierFor,
+  effectiveQty,
+  type CustomerLayerUnit,
+} from "@routeflow/pricing";
 import { useCustomerPriceLayer } from "../../../../lib/api/price-layer";
 import { lineIsSpecial, packLinePrice, withLayerBase } from "../../../../lib/cart-order-total";
 import { guardLayerSave, priceLayerGate } from "../../../../lib/price-layer-gate";
@@ -502,13 +509,15 @@ function InvoiceComposer({
   // mapping) and the customer's exempt flag, which zeroes ALL tax server-side —
   // the preview must match or the operator quotes a total the invoice won't have.
   const { data: settings } = useBusinessSettings();
-  const { data: pickedCustomer } = useAdminCustomer(customerId);
+  const customerQuery = useAdminCustomer(customerId);
+  const { data: pickedCustomer } = customerQuery;
   const isTaxExempt = !!pickedCustomer?.isTaxExempt;
   // Customer pricing (parity with NewOrderScreen/web): per-product tier
   // overrides first, then the customer's own tier ladder. Without this the
   // invoice builder billed LIST to everyone.
-  const { data: customerPrices } = useCustomerPrices(customerId ?? "");
-  const customerTier = Number((pickedCustomer as any)?.pricingTier ?? 1) || 1;
+  const pricesQuery = useCustomerPrices(customerId ?? "");
+  const { data: customerPrices } = pricesQuery;
+  const customerTier = customerTierFor(undefined, (pickedCustomer as any)?.pricingTier);
   const cpMap = useMemo(() => {
     const m = new Map<string, number | null>();
     for (const cp of customerPrices ?? []) m.set(cp.productId, cp.pricingTier);
@@ -516,8 +525,11 @@ function InvoiceComposer({
   }, [customerPrices]);
   // S19b slice D (SA-811a/813): billing's own customer price layer. Flag off: no request, every number is master's.
   const priceLayer = useCustomerPriceLayer(customerId);
+  // W-741: a pick fails closed until the customer, their prices and the layer are read (else it prices at LIST).
+  const pick = useCustomerPickGate(customerId, customerQuery, pricesQuery, priceLayer);
+  const priceNotice = pick.notice.message ? pick.notice : null;
   const layerOf = priceLayer.layerOf;
-  const effectiveTierFor = (id: string) => cpMap.get(id) ?? customerTier ?? 1;
+  const effectiveTierFor = (id: string) => customerTierFor(cpMap.get(id), customerTier);
   const packPriceFor = (p: Product) => packLinePrice(p, effectiveTierFor(p.id), layerOf(p.id));
   const tierPriceFor = (p: Product) => packPriceFor(p).price;
   /** A unit line whose unit is in the layer carries the layer's price as its base (same line object otherwise). */
@@ -587,6 +599,7 @@ function InvoiceComposer({
     viaRow?: boolean,
     code?: string,
   ): boolean => {
+    if (pick.refusal) return (showToast(pick.refusal), false);
     const p = snapshot ?? productById.get(id);
     const upb = Number(p?.unitsPerBox ?? 0);
     // #2865: the add decision is the pure `applyAddToItems` (lib/pending-unit-adapter): refused while the line is pending -> false.
@@ -750,6 +763,7 @@ function InvoiceComposer({
    * out from under the operator mid-scan); ScanOrderSheet owns the haptic.
    */
   const finishAccept: ScanLadderDeps<Product>["accept"] = (product, level, opts) => {
+    if (pick.refusal) return refusedScanOutcome(scanOpen, pick.refusal); // W-741: ONE message, the gate's
     if (!addOne(product.id, product, level, opts?.startOnDefault, false, opts?.code))
       return refusedScanOutcome(scanOpen); // a refused scan: not counted, not "Added", ONE message
     bumpScanned(product.id);
@@ -876,7 +890,7 @@ function InvoiceComposer({
       parentProductId: product.parentProductId ?? null,
       parent: null,
     };
-    addOne(product.id, snapshot);
+    if (!addOne(product.id, snapshot)) return; // a refused add: not counted, no scroll
     bumpScanned(product.id);
     setPendingScroll((s) => requestScroll(s, product.id));
     setCreateCode(null);
@@ -1119,8 +1133,7 @@ function InvoiceComposer({
   actionsRef.current = rowActions;
 
   const onRowAdd = useCallback((id: string) => {
-    actionsRef.current.add(id);
-    actionsRef.current.pickedFromSearch(id);
+    if (actionsRef.current.add(id)) actionsRef.current.pickedFromSearch(id); // W-741: a refused add keeps the search
   }, []);
   const onRowIncrement = useCallback((id: string) => actionsRef.current.add(id), []);
   const onRowDecrement = useCallback((id: string) => actionsRef.current.remove(id), []);
@@ -1195,7 +1208,9 @@ function InvoiceComposer({
       if (isCatalogHeader(p)) return <CatalogSectionLabel label={p.label} />;
       const line = items[p.id];
       const qty = line ? effectiveQty(line, p.unitsPerBox) : 0;
-      const price = line ? unitPriceBase(lineFor(line, p), tierPriceFor(p)) : tierPriceFor(p);
+      const price = line
+        ? unitPriceBase(lineFor(line, p), tierPriceFor(p))
+        : pick.shown(p.id, packPriceFor(p)); // SA-882: "…" until the gate opens
       const band =
         line && qty > 0 && Number(p.unitsPerBox ?? 0) > 1 && !line.unitLabel ? (
           <BoxedQtyBand
@@ -1235,6 +1250,7 @@ function InvoiceComposer({
       items,
       cpMap,
       customerTier,
+      pick.gate.blockPick,
       onRowAdd,
       onRowChangeQty,
       onRowIncrement,
@@ -1267,7 +1283,7 @@ function InvoiceComposer({
     (id) => productById.get(id)?.name ?? id,
   );
   const baseOk = totalItems > 0 && !saving && !anyUnitLoading && !saleRecorded && !saleUnknown;
-  const canSave = baseOk && !layerGate.blocked;
+  const canSave = baseOk && !pick.blocksSave(items) && !layerGate.blocked;
 
   // No FormSheet on this screen, so it applies the same choke-point rule as
   // FormSheet.tsx's handleCancel directly: never prompt "Discard invoice?"
@@ -1400,7 +1416,7 @@ function InvoiceComposer({
    */
   const onSave = async (fromReview = false) => {
     // D-5: name the layer block instead of the misleading "add an item" copy.
-    const layerBlock = guardLayerSave(layerGate, false);
+    const layerBlock = guardLayerSave(pick.saveGate(items, layerGate), false);
     if (layerBlock) {
       alertInfo("Prices aren't confirmed", layerBlock);
       return;
@@ -1784,19 +1800,11 @@ function InvoiceComposer({
         />
       </View>
 
-      {layerGate.message ? (
-        <Pressable
-          onPress={layerGate.canRetry ? priceLayer.refetch : undefined}
-          disabled={!layerGate.canRetry}
-          accessibilityRole={layerGate.canRetry ? "button" : "text"}
-          accessibilityLabel={layerGate.message}
-          hitSlop={6}
-        >
-          <Text style={{ color: ios.system.orangeInk, fontSize: 12, textAlign: "center" }}>
-            {layerGate.message}
-          </Text>
-        </Pressable>
-      ) : null}
+      <PriceLayerGateNotice
+        gate={priceNotice ?? layerGate}
+        onRetry={priceNotice ? pick.retry : priceLayer.refetch}
+        textStyle={{ color: ios.system.orangeInk, fontSize: 12, textAlign: "center" }}
+      />
       <View style={styles.footer}>
         {/* ONE entry point into review: the summary itself is the button —
             see NewOrderScreen's footer for the history. */}

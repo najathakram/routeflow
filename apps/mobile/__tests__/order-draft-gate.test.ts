@@ -401,9 +401,9 @@ describe("NewOrderScreen resume prices off the PER-PRODUCT tier (R2, B747)", () 
 describe("NewOrderScreen resume never hangs on a plan-gated prices query (SA-136b/SA-153, B747)", () => {
   const screenSrc = readFileSync(join(__dirname, "..", "components", "NewOrderScreen.tsx"), "utf8");
 
-  it("destructures isFetched/isError/isFetching/error/refetch from useCustomerPrices, not just data", () => {
+  it("destructures isFetched/isError/isFetching/error/refetch from useCustomerPrices, not just data (W-741: via the named pricesQuery the pick gate also reads)", () => {
     expect(screenSrc).toMatch(
-      /const\s*\{\s*data:\s*customerPrices,\s*isFetched:\s*fetched,\s*isError:\s*errored,\s*isFetching:\s*fetching,\s*error:\s*pricesError,\s*refetch:\s*refetchPrices,?\s*\}\s*=\s*useCustomerPrices/,
+      /const\s*\{\s*data:\s*customerPrices,\s*isFetched:\s*fetched,\s*isError:\s*errored,\s*isFetching:\s*fetching,\s*error:\s*pricesError,\s*refetch:\s*refetchPrices,?\s*\}\s*=\s*(useCustomerPrices|pricesQuery)/,
     );
   });
 
