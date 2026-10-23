@@ -196,6 +196,7 @@ export function isRecentlyActive(lastActivityMs, nowMs, hours = RECENT_ACTIVITY_
  */
 export function classifyWorktree(info) {
   const { name, branch, isMainCheckout, isMerged, isDirty, isRecent, hasUnpushed, isLocked } = info;
+  const linkedFrom = info.linkedFrom ?? [];
   if (isMainCheckout) return { nodeModules: "skip", worktree: "skip", reason: "main checkout" };
   if (isProtectedWorktreeName(name)) {
     return { nodeModules: "skip", worktree: "skip", reason: "protected worktree" };
@@ -225,9 +226,61 @@ export function classifyWorktree(info) {
       reason: `HEAD moved in the last ${RECENT_ACTIVITY_HOURS}h (or unknown) — never touched`,
     };
   }
+  // Row 719: another worktree's node_modules entries may be symlinks INTO this tree; clearing it
+  // (or removing the worktree) would leave those trees with dangling packages.
+  if (linkedFrom.length > 0) {
+    return {
+      nodeModules: "skip",
+      worktree: "skip",
+      reason: `other trees link into it (${linkedFrom.length}, e.g. ${linkedFrom[0]}) — never touched`,
+    };
+  }
   // Merged, clean and idle: node_modules is safe to clear (the checkout survives).
   if (hasUnpushed) return { nodeModules: "clear", worktree: "skip", reason: "unpushed commits" };
   return { nodeModules: "clear", worktree: "remove", reason: "merged, clean, pushed" };
+}
+
+/**
+ * Row 719: symlinks in OTHER worktrees' node_modules (top level and one @scope level) whose real
+ * path lies inside `candidatePath`. Read-only; unreadable entries are skipped (never throws).
+ */
+export function linkedIntoBy(candidatePath, otherWorktreePaths) {
+  const candReal = realOr(candidatePath);
+  const candKey = resolve(candidatePath);
+  const hits = [];
+  const check = (p) => {
+    if (!isLinkPath(p)) return;
+    let real;
+    try {
+      real = realpathSync(p);
+    } catch {
+      return;
+    }
+    if (real === candReal || real.startsWith(candReal + sep)) hits.push(p);
+  };
+  for (const other of otherWorktreePaths) {
+    if (resolve(other) === candKey || realOr(other) === candReal) continue;
+    const nm = join(other, "node_modules");
+    let entries;
+    try {
+      entries = readdirSync(nm);
+    } catch {
+      continue;
+    }
+    for (const e of entries) {
+      const p = join(nm, e);
+      if (e.startsWith("@") && !isLinkPath(p)) {
+        let scoped = [];
+        try {
+          scoped = readdirSync(p);
+        } catch {
+          /* unreadable scope dir: skip */
+        }
+        for (const c of scoped) check(join(p, c));
+      } else check(p);
+    }
+  }
+  return hits;
 }
 
 export function isStaleByAge(mtimeMs, nowMs, days = STALE_PROOF_AGE_DAYS) {
@@ -984,6 +1037,14 @@ export function buildPlan(repoRoot, mainCheckoutPath, worktreesRoot) {
       isDirty: isMainCheckout ? false : isDirty(wt.path),
       isRecent: isMainCheckout ? false : isRecentlyActive(lastActivityMs(wt.path), nowMs),
       hasUnpushed: isMainCheckout ? false : hasUnpushedCommits(wt.path, wt.branch),
+      // Row 719: only worth scanning for a tree that would otherwise be cleared.
+      linkedFrom:
+        isMainCheckout || !isMerged
+          ? []
+          : linkedIntoBy(
+              wt.path,
+              worktrees.map((w) => w.path),
+            ),
     };
     const verdict = classifyWorktree(info);
     if (verdict.nodeModules === "clear") {

@@ -26,6 +26,7 @@ import {
   isProtectedWorktreeName,
   isProtectedBranch,
   classifyWorktree,
+  linkedIntoBy,
   isStaleByAge,
   meetsThreshold,
   findOrphanWorktreeDirs,
@@ -1862,6 +1863,46 @@ t("applyActions: a throwing action does not stop the loop; the failure is record
     logs.some((l) => l.includes("FAILED orphan-dir") && l.includes("/w/bugs-selftest.log")),
     `expected a FAILED log line: ${JSON.stringify(logs)}`,
   );
+});
+
+t(
+  "row 719: other trees' node_modules symlinks into a candidate are found; clean trees are not",
+  () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "janitor-xlink-")));
+    try {
+      const cand = join(root, "cand");
+      const other = join(root, "other");
+      const clean = join(root, "clean");
+      for (const d of [cand, other, clean])
+        mkdirSync(join(d, "node_modules", "@s"), { recursive: true });
+      mkdirSync(join(cand, "node_modules", "pkg"), { recursive: true });
+      mkdirSync(join(clean, "node_modules", "mine"), { recursive: true });
+      symlinkSync(join(cand, "node_modules", "pkg"), join(other, "node_modules", "pkg"));
+      symlinkSync(join(cand, "node_modules", "pkg"), join(other, "node_modules", "@s", "scoped"));
+      symlinkSync(join(clean, "node_modules", "mine"), join(clean, "node_modules", "self"));
+      const hits = linkedIntoBy(cand, [other, clean, cand]);
+      assert.equal(hits.length, 2);
+      assert.ok(hits.every((h) => h.startsWith(other)));
+      assert.deepEqual(linkedIntoBy(clean, [other, cand]), []);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
+t("row 719: classifyWorktree skips (reports) a merged tree that other trees link into", () => {
+  const v = classifyWorktree({
+    name: "rf-linked",
+    branch: "fix/shipped",
+    isMainCheckout: false,
+    isMerged: true,
+    isDirty: false,
+    isRecent: false,
+    hasUnpushed: false,
+    linkedFrom: ["/w/other/node_modules/pkg"],
+  });
+  assert.equal(v.nodeModules, "skip");
+  assert.equal(v.worktree, "skip");
+  assert.match(v.reason, /other trees link into it/);
 });
 
 console.log(`janitor self-test: ${pass} passed, ${failures.length} failed`);
