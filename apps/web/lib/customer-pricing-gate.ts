@@ -1,5 +1,6 @@
 import { pricesUnconfirmed } from "@/components/PriceLayerNotice";
 import type { CustomerPriceLayer } from "@/lib/api/useCustomerPriceLayer";
+import { parsePlanGate } from "@/lib/plan-gate";
 
 type ReadState = {
   isPending?: boolean;
@@ -9,11 +10,14 @@ type ReadState = {
   error?: unknown;
 };
 
-/** The HTTP status of a failed read: axios (`response.status`) or a fetch-style `status`; else undefined. */
-function httpStatus(error: unknown): number | undefined {
-  const e = error as { response?: { status?: unknown }; status?: unknown } | null | undefined;
-  const status = e?.response?.status ?? e?.status;
-  return typeof status === "number" ? status : undefined;
+/**
+ * SA-884 rule 1: the tenant's PLAN lacks the read's flag: an axios 403 whose body is the PLAN_GATE code. A role 403,
+ * PLAN_GATE_UNAVAILABLE (entitlements unreadable) or any other failure is not a plan answer.
+ */
+function isPlanGate403(error: unknown): boolean {
+  const status = (error as { response?: { status?: unknown } } | null | undefined)?.response
+    ?.status;
+  return status === 403 && parsePlanGate(error)?.code === "PLAN_GATE";
 }
 
 /**
@@ -48,12 +52,12 @@ export function customerPricingGate(i: {
   const waiting = (q: ReadState) => !q.isError && q.data == null && !!(q.isPending ?? q.isLoading);
   // SA-883 #3: a plan without flag.pricing_tiers gets 403 (PLAN_GATE) on GET /customers/:id/prices. That tenant has no
   // customer-product price rows to honour, so the read is SETTLED EMPTY (neither failed nor waiting) and the pick is
-  // priced by the customer's own tier. ONLY this read and ONLY a 403: a 5xx, 404 or network error still fails closed,
-  // and so does any error on the customer read.
+  // priced by the customer's own tier. ONLY this read and ONLY the PLAN_GATE code (SA-884): a role 403, a 5xx, a 404
+  // or a network error still fails closed, and so does any error on the customer read.
   const pricesPlanGated =
     !!i.customerPricesQuery.isError &&
     i.customerPricesQuery.data == null &&
-    httpStatus(i.customerPricesQuery.error) === 403;
+    isPlanGate403(i.customerPricesQuery.error);
   const readFailed =
     failedRead(i.customerQuery) || (failedRead(i.customerPricesQuery) && !pricesPlanGated);
   const pending =

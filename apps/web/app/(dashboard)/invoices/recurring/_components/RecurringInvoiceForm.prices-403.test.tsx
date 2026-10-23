@@ -1,5 +1,5 @@
 import * as React from "react";
-import { fireEvent, renderWithProviders, screen } from "@/test-utils/render";
+import { fireEvent, renderWithProviders, screen, waitFor } from "@/test-utils/render";
 import { RecurringInvoiceForm } from "./RecurringInvoiceForm";
 
 /**
@@ -27,11 +27,13 @@ const P = {
 const C3 = { id: "c3", businessName: "Tier Three Cafe", pricingTier: 3 };
 
 /** An axios-shaped error with an HTTP status, or a network error (no response). */
-const httpError = (status?: number) =>
+const httpError = (status?: number, data: unknown = {}) =>
   Object.assign(new Error(status ? `Request failed with status code ${status}` : "Network Error"), {
     isAxiosError: true,
-    response: status ? { status, data: {} } : undefined,
+    response: status ? { status, data } : undefined,
   });
+/** The body the API sends when the tenant's plan lacks the flag (api-error-codes PLAN_GATE). */
+const PLAN_GATE = { code: "PLAN_GATE", flag: "flag.pricing_tiers", state: "LOCKED_PAGE" };
 
 let mockPricesError: ReturnType<typeof httpError> | null = null;
 let mockCustomerError: ReturnType<typeof httpError> | null = null;
@@ -81,15 +83,12 @@ beforeEach(() => {
   mockCustomerError = null;
 });
 
-const renderCreate = () =>
+const renderCreate = (onSubmit = jest.fn()) => {
   renderWithProviders(
-    <RecurringInvoiceForm
-      mode="create"
-      onSubmit={jest.fn()}
-      isPending={false}
-      submitLabel="Save"
-    />,
+    <RecurringInvoiceForm mode="create" onSubmit={onSubmit} isPending={false} submitLabel="Save" />,
   );
+  return onSubmit;
+};
 
 async function chooseCustomer() {
   fireEvent.change(screen.getByPlaceholderText("Search customers…"), { target: { value: "Tier" } });
@@ -98,10 +97,10 @@ async function chooseCustomer() {
 
 const FAILED = "Couldn't load this customer's prices.";
 
-describe("SA-883 #3: a plan-gated (403) customer-prices read is a settled empty read", () => {
-  it("a 403 on the PRICES read lets the pick fill the customer's tier-3 price (master: refused)", async () => {
-    mockPricesError = httpError(403);
-    renderCreate();
+describe("SA-883 #3: a PLAN_GATE customer-prices read is a settled empty read", () => {
+  it("a PLAN_GATE 403 on the PRICES read: the pick fills the tier-3 price and Save submits it (master: refused)", async () => {
+    mockPricesError = httpError(403, PLAN_GATE);
+    const onSubmit = renderCreate();
     await chooseCustomer();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     const input = screen.getByPlaceholderText("Description / product…") as HTMLInputElement;
@@ -110,10 +109,16 @@ describe("SA-883 #3: a plan-gated (403) customer-prices read is a settled empty 
     fireEvent.click(await screen.findByRole("button", { name: /Cola 12oz/ }));
     expect(await screen.findByDisplayValue("8.00")).toBeInTheDocument();
     expect(screen.queryByDisplayValue("10.00")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Save" })).not.toBeDisabled();
+    const save = screen.getByRole("button", { name: "Save" });
+    expect(save).not.toBeDisabled();
+    fireEvent.click(save);
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    expect(onSubmit.mock.calls[0][0].items[0].unitPrice).toBe(8);
   });
 
   it.each([
+    ["a role/permission 403 (no PLAN_GATE code)", httpError(403, { message: "Forbidden" })],
+    ["a 403 PLAN_GATE_UNAVAILABLE", httpError(403, { code: "PLAN_GATE_UNAVAILABLE" })],
     ["a 500", httpError(500)],
     ["a 404", httpError(404)],
     ["a network error", httpError()],
@@ -125,8 +130,8 @@ describe("SA-883 #3: a plan-gated (403) customer-prices read is a settled empty 
     expect(screen.getByRole("alert")).toHaveTextContent(FAILED);
   });
 
-  it("a 403 on the CUSTOMER read still fails closed (only the prices read is plan-gated)", async () => {
-    mockCustomerError = httpError(403);
+  it("a PLAN_GATE 403 on the CUSTOMER read still fails closed (only the prices read is plan-gated)", async () => {
+    mockCustomerError = httpError(403, PLAN_GATE);
     renderCreate();
     await chooseCustomer();
     expect(screen.getByPlaceholderText(FAILED)).toBeDisabled();
