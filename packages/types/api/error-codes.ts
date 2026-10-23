@@ -736,6 +736,11 @@ export const API_ERROR_CODES = {
   /** I-120 (SA-861 rule 2): POST /orders/:id/pickup-complete, 409: this business does not hand orders over at the store (no PICKUP method and the counter off). */
   COUNTER_COMPLETE_UNAVAILABLE: "COUNTER_COMPLETE_UNAVAILABLE",
   /**
+   * 400 from a path switch to SHIP / PICKUP (PATCH /orders/:id/fulfill-path, and Complete at counter's switch): the order is on
+   * an ACTIVE delivery run (SCHEDULED / IN_PROGRESS); remove it from the run first. Nothing was written.
+   */
+  ORDER_ON_ACTIVE_RUN: "ORDER_ON_ACTIVE_RUN",
+  /**
    * `paymentErrorCode` of a 200 from POST /orders/:id/pickup-complete: handed over with no payment sent, but
    * the final invoices leave money owing (a remainder or rebuild at DELIVERED). Retry with a payment.
    */
