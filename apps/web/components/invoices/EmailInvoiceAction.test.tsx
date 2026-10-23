@@ -28,7 +28,7 @@ describe("EmailInvoiceAction", () => {
     fireEvent.click(screen.getByRole("button", { name: "Email again" }));
     expect(onSend).not.toHaveBeenCalled();
     expect(screen.getByRole("dialog")).toHaveTextContent(
-      /It has been modified since\. Email the updated invoice\?/,
+      /It has changed since it was sent\. Email the updated invoice\?/,
     );
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(onSend).not.toHaveBeenCalled();

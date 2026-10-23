@@ -30,7 +30,7 @@ describe("invoiceSendAction", () => {
 
   it("modified since: the modified-since sentence and the 'Email updated invoice' button (same words as web)", () => {
     const a = invoiceSendAction({ status: "SENT", pendingMirror: false, sendState: changed });
-    expect(a.confirm).toMatch(/It has been modified since\. Email the updated invoice\?$/);
+    expect(a.confirm).toMatch(/It has changed since it was sent\. Email the updated invoice\?$/);
     expect(a.confirmButton).toBe("Email updated invoice");
   });
 

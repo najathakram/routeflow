@@ -74,7 +74,7 @@ export function invoiceResendCopy(
     case "changedSinceSent":
       return {
         action: "Email again",
-        confirm: `This invoice was emailed on ${when}. It has been modified since. Email the updated invoice?`,
+        confirm: `This invoice was emailed on ${when}. It has changed since it was sent. Email the updated invoice?`,
         confirmButton: "Email updated invoice",
       };
     case "unchanged":
@@ -113,7 +113,7 @@ export function invoiceSendStateLine(
     case "unchanged":
       return `Emailed ${when}${to}. No changes since.`;
     case "changedSinceSent":
-      return `Emailed ${when}${to}. Modified since.`;
+      return `Emailed ${when}${to}. Changed since it was sent.`;
     default:
       return `Emailed ${when}${to}. Changes since then can't be checked.`;
   }

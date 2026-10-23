@@ -272,6 +272,25 @@ describeDb("Invoice re-email: tracked send state - real Postgres", () => {
     expect(s.lastSentAt).not.toBeNull();
   }, 60_000);
 
+  // GUARD (SA-852 rule 3): green before and after the fold; it pins the stage a revert leaves behind.
+  it("GUARD: a DRAFT revert of an invoice whose order is DELIVERED keeps the FINAL stage: unchanged, no edit", async () => {
+    const id = await create();
+    const order = await prisma.order.create({
+      data: {
+        tenantId,
+        customerId,
+        orderNumber: `ORD-RS-${RUN_SUFFIX}-${id.slice(0, 6)}`,
+        status: "DELIVERED",
+      },
+    });
+    await prisma.invoice.update({ where: { id }, data: { orderId: order.id } });
+    await email(id);
+    expect((await state(id)).state).toBe("unchanged");
+    await run(() => invoicesService.revertInvoiceToDraft(id));
+    expect((await row(id)).status).toBe("DRAFT");
+    expect((await state(id)).state).toBe("unchanged");
+  }, 60_000);
+
   it("a sentAt after the tracking cutover with no tracked row was only MARKED sent, not emailed", async () => {
     const id = await create();
     await prisma.invoice.update({

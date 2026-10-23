@@ -33,9 +33,11 @@ export const SEND_THROTTLE_MAX = 5;
 export const SEND_THROTTLE_WINDOW_MS = 15 * 60_000;
 /**
  * When email tracking started: the release of #2088. MUST be on/after the deploy of this change (bump it if the release
- * slips): a real email sent between this instant and the deploy would read as "marked sent, not emailed".
+ * slips): a real email sent between this instant and the deploy would read as "marked sent, not emailed". SA-852: the
+ * day after the planned deploy window, 00:00Z; the safe direction is LATER (a mark-only send in the gap then reads
+ * `sentBeforeTracking`). Re-check at merge.
  */
-export const TRACKING_SINCE = new Date("2026-10-20T00:00:00.000Z");
+export const TRACKING_SINCE = new Date("2026-10-24T00:00:00.000Z");
 
 const logger = new Logger("invoice-send-state");
 

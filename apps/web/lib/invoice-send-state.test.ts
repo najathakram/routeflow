@@ -32,7 +32,7 @@ describe("invoiceResendCopy", () => {
     const c = invoiceResendCopy(state("changedSinceSent"));
     expect(c.action).toBe("Email again");
     expect(c.confirm).toMatch(
-      /^This invoice was emailed on Oct \d{1,2}, 2026\. It has been modified since\. Email the updated invoice\?$/,
+      /^This invoice was emailed on Oct \d{1,2}, 2026\. It has changed since it was sent\. Email the updated invoice\?$/,
     );
     expect(c.confirmButton).toBe("Email updated invoice");
   });
@@ -79,7 +79,7 @@ describe("invoiceSendStateLine", () => {
     ).toMatch(/^Emailed Oct \d{1,2}, 2026 to a@b\.test\. No changes since\.$/);
     expect(
       invoiceSendStateLine({ state: "changedSinceSent", lastSentAt: at, lastSentTo: "a@b.test" }),
-    ).toMatch(/Modified since\.$/);
+    ).toMatch(/Changed since it was sent\.$/);
     expect(
       invoiceSendStateLine({ state: "sentBeforeTracking", lastSentAt: at, lastSentTo: null }),
     ).toMatch(/^Emailed Oct \d{1,2}, 2026\. Changes since then can't be checked\.$/);

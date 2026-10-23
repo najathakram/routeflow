@@ -168,6 +168,12 @@ describe("decideSendState", () => {
     );
   });
 
+  it("SA-852 MUST: a sentAt the evening before the planned deploy day, no row, reads sentBeforeTracking (may have been emailed)", () => {
+    expect(decideSendState(null, null, new Date("2026-10-23T23:00:00.000Z")).state).toBe(
+      "sentBeforeTracking",
+    );
+  });
+
   it("sentBeforeTracking: a sentAt BEFORE the tracking cutover with no tracked row (may have been emailed)", () => {
     expect(decideSendState(null, null, new Date("2026-09-01T10:00:00Z"))).toEqual({
       state: "sentBeforeTracking",
