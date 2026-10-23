@@ -43,6 +43,13 @@ describe("completeAtCounterOffered", () => {
     expect(offered("CONFIRMED", "SHIP", { shippedAt: null })).toBe(true);
   });
 
+  it("OWNER-QUEUE 7a (Q1), SA-905 LOW: an order on an ACTIVE run (SCHEDULED / IN_PROGRESS) is not offered", () => {
+    expect(offered("PENDING", "ROUTE", { runStatus: "SCHEDULED" })).toBe(false);
+    expect(offered("CONFIRMED", "ROUTE", { runStatus: "IN_PROGRESS" })).toBe(false);
+    expect(offered("CONFIRMED", "ROUTE", { runStatus: "COMPLETED" })).toBe(true); // a finished run's link is released at the switch
+    expect(offered("CONFIRMED", "ROUTE", { runStatus: null })).toBe(true);
+  });
+
   it("a counter sale keeps the till", () => {
     expect(offered("PENDING", "PICKUP", { counterSale: true })).toBe(false);
   });

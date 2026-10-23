@@ -43,6 +43,16 @@ describe("completeAtCounterShown (I-120 PR-2)", () => {
     ).toBe(false);
   });
 
+  it("OWNER-QUEUE 7a (Q1), SA-905 LOW: hidden on an ACTIVE run", () => {
+    expect(
+      completeAtCounterShown(
+        order("PENDING", "ROUTE", { routeRun: { status: "IN_PROGRESS" } }),
+        "OPERATOR",
+        caps,
+      ),
+    ).toBe(false);
+  });
+
   it("a role without the till, a business that cannot hand over at the store, an unknown answer: hidden", () => {
     expect(completeAtCounterShown(order("PENDING", "ROUTE"), "DRIVER", caps)).toBe(false);
     expect(

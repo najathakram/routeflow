@@ -1,5 +1,5 @@
 import * as React from "react";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { Providers } from "@/app/providers";
 import { seedSession } from "@/test-utils/session";
 import OrderDetailPage from "./page";
@@ -90,6 +90,11 @@ const open = async (status: string, extra: Record<string, unknown> = {}, role = 
     </Providers>,
   );
   await screen.findByText(/ORD-1/);
+  // a NEGATIVE only counts once the gate has its answers (features + permissions), never before they land
+  await waitFor(() => expect(get).toHaveBeenCalledWith("/tenants/me/features"));
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 20));
+  });
 };
 
 const COMPLETE = /^complete at counter$/i;
@@ -143,6 +148,11 @@ describe("order page: Complete at counter (I-120 PR-2)", () => {
     expect(completeButton()).toBeNull();
     document.body.innerHTML = "";
     await open("CONFIRMED", { fulfillPath: "SHIP", shippedAt: "2026-10-20T10:00:00.000Z" });
+    expect(completeButton()).toBeNull();
+  });
+
+  it("OWNER-QUEUE 7a (Q1), SA-905 LOW: not offered on an ACTIVE run (the server refuses the switch)", async () => {
+    await open("PENDING", { routeRun: { status: "SCHEDULED" } });
     expect(completeButton()).toBeNull();
   });
 

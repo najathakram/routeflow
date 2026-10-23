@@ -41,6 +41,7 @@ export function CompleteAtCounterButton({ order, onOpen }: { order: Order; onOpe
       fulfillPath: order.fulfillPath,
       counterSale: (order as { counterSale?: boolean | null }).counterSale,
       shippedAt: (order as { shippedAt?: string | null }).shippedAt,
+      runStatus: (order as { routeRun?: { status?: string } | null }).routeRun?.status,
     });
   if (!offered) return null;
   return (

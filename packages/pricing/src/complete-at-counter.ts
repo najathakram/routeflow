@@ -44,6 +44,8 @@ export interface CompleteAtCounterOfferInputs extends CompleteAtCounterInputs {
   /** a counter sale keeps the till (it was rung up and paid there) */
   counterSale?: boolean | null;
   shippedAt?: string | Date | null;
+  /** the order's route run status (`order.routeRun?.status`), when it is on one */
+  runStatus?: string | null;
 }
 
 /**
@@ -61,8 +63,10 @@ export function completeAtCounterOffered(
   if (pickupHandOverOffered(p.status, p.fulfillPath)) return false;
   if (COMPLETE_AT_COUNTER_AWAITS_OWNER_7A) {
     const withDriver = p.status === "OUT_FOR_DELIVERY" && p.fulfillPath !== "PICKUP"; // R8 / Q1
+    // R8 / Q1 (SA-905 LOW): on an ACTIVE run; the server refuses the switch ("Remove it from the run" first)
+    const onActiveRun = p.runStatus === "SCHEDULED" || p.runStatus === "IN_PROGRESS";
     const shipped = p.fulfillPath === "SHIP" && !!p.shippedAt; // R9 / Q2
-    if (withDriver || shipped) return false;
+    if (withDriver || onActiveRun || shipped) return false;
   }
   return true;
 }

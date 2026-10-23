@@ -614,6 +614,7 @@ export function completeAtCounterShown(
         fulfillPath?: string | null;
         counterSale?: boolean | null;
         shippedAt?: string | null;
+        routeRun?: { status?: string } | null;
       }
     | null
     | undefined,
@@ -631,6 +632,7 @@ export function completeAtCounterShown(
     fulfillPath: order.fulfillPath,
     counterSale: order.counterSale,
     shippedAt: order.shippedAt,
+    runStatus: order.routeRun?.status, // SA-905 LOW: an active run is held for 7a
   });
 }
 
