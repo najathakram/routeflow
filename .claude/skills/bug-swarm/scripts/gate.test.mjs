@@ -494,8 +494,8 @@ test("census: any change in apps/api/prisma, apps/api/scripts or scripts runs th
     const steps = planGate({ changedFiles: [f], touchedFiles: [f], ...opts });
     const unit = step(steps, "census:unit");
     const rt = step(steps, "census:repo-truth");
-    assert.equal(norm(unit.cwd), norm("/r/apps/api"));
-    assert.deepEqual(unit.cmd, ["npx", "jest"]);
+    assert.equal(norm(unit.cwd), norm("/r"));
+    assert.deepEqual(unit.cmd, ["npm", "test", "-w", "apps/api"]);
     assert.equal(norm(rt.cwd), norm("/r/apps/api"));
     assert.deepEqual(rt.cmd, ["npx", "jest", "-c", "jest.repo-truth.config.js"]);
     assert.equal(unit.timeoutMs, 30 * 60_000);
@@ -634,4 +634,19 @@ test("id-labels also catches a bare B### word in a subject, and --ids may name a
   };
   assert.equal(mk(["599"]).status, 1);
   assert.equal(mk(["599", "B668"]).status, 0);
+});
+
+test("execStep runs every step with git's repo-scoped env scrubbed", async () => {
+  process.env.GIT_DIR = "/poison/.git";
+  try {
+    const r = await execStep({
+      name: "env",
+      cwd: here,
+      cmd: [process.execPath, "-e", "console.log(process.env.GIT_DIR || 'scrubbed')"],
+      timeoutMs: 20000,
+    });
+    assert.match(r.output, /scrubbed/);
+  } finally {
+    delete process.env.GIT_DIR;
+  }
 });

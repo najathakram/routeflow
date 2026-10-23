@@ -56,8 +56,9 @@ function lintScriptExists(root, ws) {
   }
 }
 
-// Specs that census files BY NAME across the repo (run 2026-10-23-bug-swarm-4: #3659 went red on one after
-// adding a script). They run when the branch ADDS a file under apps/api/prisma/, apps/api/scripts/ or scripts/.
+// Repo-wide census specs read files BY NAME (run 2026-10-23-bug-swarm-4: #3659 went red on one after a script
+// was added). They run when the branch touches ANY file (add, modify, delete, rename, copy: both paths of a move)
+// under apps/api/prisma/, apps/api/scripts/ or scripts/.
 // Run 2026-10-23-bug-swarm-4 (#3659) went red on a repo-wide census; a hand-listed subset still missed ~25
 // scanners (v1.2 review of #3674). So when a trigger dir changes, run the FULL api lanes, not a list.
 export const FULL_LANE_TIMEOUT_MS = 30 * 60_000;
@@ -174,7 +175,9 @@ export function planGate({
 
   if (touchedFiles.some((f) => CENSUS_DIRS.some((d) => posix(f).startsWith(d)))) {
     const api = path.join(root, "apps/api");
-    add("census:unit", api, ["npx", "jest"], FULL_LANE_TIMEOUT_MS);
+    // `npm test -w apps/api` is the api unit entry (run-unit-tests.mjs): the parallel lane AND the serial
+    // `-script.spec.ts` lane that tests the scripts themselves; bare `npx jest` skips the latter.
+    add("census:unit", root, ["npm", "test", "-w", "apps/api"], FULL_LANE_TIMEOUT_MS);
     add(
       "census:repo-truth",
       api,
@@ -211,6 +214,8 @@ export function execStep(step, { platform = process.platform, killTree } = {}) {
   return new Promise((resolve) => {
     const child = spawn(step.cmd[0], step.cmd.slice(1), {
       cwd: step.cwd,
+      // Git's repo-scoped env (GIT_DIR ...) must not leak into the inline git scripts of a step.
+      env: step.env ?? scrubbedGitEnv(),
       stdio: ["ignore", "pipe", "pipe"],
       detached: platform !== "win32",
     });
