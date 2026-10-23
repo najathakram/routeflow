@@ -23,6 +23,25 @@ jest.mock("@/lib/api/products", () => ({
 jest.mock("@/lib/api/customers", () => ({
   ...jest.requireActual("@/lib/api/customers"),
   useCustomers: () => ({ data: { data: [] } }),
+  // W-693 (SA-856): the form reads the customer's pricing; a tier-1 customer with no overrides pays the list price.
+  useCustomer: (id: string) => ({
+    data: id ? { id, businessName: "Acme Cafe", pricingTier: 1 } : undefined,
+    isLoading: false,
+  }),
+  useCustomerPrices: () => ({ data: [], isLoading: false }),
+}));
+jest.mock("@/lib/api/useCustomerPriceLayer", () => ({
+  ...jest.requireActual("@/lib/api/useCustomerPriceLayer"),
+  useCustomerPriceLayer: () => ({
+    enabled: false,
+    ready: true,
+    pending: false,
+    failed: false,
+    complete: true,
+    lineReady: () => true,
+    layerOf: () => undefined,
+    refetch: jest.fn(),
+  }),
 }));
 
 async function pickTea() {

@@ -1,0 +1,234 @@
+import * as fs from "fs";
+import * as path from "path";
+import * as React from "react";
+import { fireEvent, renderWithProviders, screen, waitFor } from "@/test-utils/render";
+import type { RecurringInvoice } from "@/lib/api/invoices";
+import { RecurringInvoiceForm } from "./RecurringInvoiceForm";
+
+/**
+ * SA-856 (W-693): a recurring-invoice line is priced at SET-UP from the one resolver, the customer's own price
+ * (`customerLinePrice` over `customerTierFor` and the customer's price layer), the price the invoice form would pre-fill.
+ * An operator's typed price is never replaced; existing templates change nothing automatically and only show
+ * "This customer's price now: $X" when their stored price differs. Master pre-filled the catalog LIST price (tier 1).
+ */
+
+// The API serves prices as decimal strings.
+const P = {
+  id: "p-cola",
+  name: "Cola 12oz",
+  unit: "each",
+  pricePerUnit: "10.00",
+  priceTier2: "9.00",
+  priceTier3: "8.00",
+  priceTier4: "7.00",
+  priceTier5: "6.00",
+  unitsPerBox: null,
+  isActive: true,
+};
+const C1 = { id: "c1", businessName: "Retail Cafe", pricingTier: 1 };
+const C3 = { id: "c3", businessName: "Tier Three Cafe", pricingTier: 3 };
+const CUSTOMERS: Record<string, typeof C1> = { c1: C1, c3: C3 };
+
+let mockCustomerLoading = false;
+let mockCustomerPrices: unknown[] = [];
+let mockLayer: Record<string, unknown> = {};
+const layerOff = () => ({
+  enabled: false,
+  ready: true,
+  pending: false,
+  failed: false,
+  complete: true,
+  lineReady: () => true,
+  layerOf: () => undefined,
+  refetch: jest.fn(),
+});
+
+jest.mock("@/lib/api/products", () => ({
+  ...jest.requireActual("@/lib/api/products"),
+  useProducts: () => ({ data: { data: [P] } }),
+  useProduct: (id: string) => ({ data: id === P.id ? P : undefined, isLoading: false }),
+}));
+jest.mock("@/lib/api/customers", () => ({
+  ...jest.requireActual("@/lib/api/customers"),
+  useCustomers: () => ({ data: { data: [C1, C3] } }),
+  useCustomer: (id: string) => ({
+    data: mockCustomerLoading ? undefined : CUSTOMERS[id],
+    isLoading: !!id && mockCustomerLoading,
+  }),
+  useCustomerPrices: (id?: string) => ({
+    data: id ? mockCustomerPrices : undefined,
+    isLoading: false,
+  }),
+}));
+jest.mock("@/lib/api/useCustomerPriceLayer", () => ({
+  ...jest.requireActual("@/lib/api/useCustomerPriceLayer"),
+  useCustomerPriceLayer: () => mockLayer,
+}));
+
+beforeEach(() => {
+  mockCustomerLoading = false;
+  mockCustomerPrices = [];
+  mockLayer = layerOff();
+});
+
+const renderCreate = (onSubmit = jest.fn()) => {
+  renderWithProviders(
+    <RecurringInvoiceForm mode="create" onSubmit={onSubmit} isPending={false} submitLabel="Save" />,
+  );
+  return onSubmit;
+};
+
+async function chooseCustomer(name: string) {
+  fireEvent.change(screen.getByPlaceholderText("Search customers…"), {
+    target: { value: name.slice(0, 4) },
+  });
+  fireEvent.click(await screen.findByRole("button", { name: new RegExp(name) }));
+}
+
+/** The chosen customer's clear button (icon-only on master), found next to the customer's name. */
+function clearCustomer(name: string) {
+  const card = screen.getByText(name).closest("div")!.parentElement!;
+  fireEvent.click(card.querySelector("button")!);
+}
+
+async function pickProduct(index = 0) {
+  const input = screen.getAllByPlaceholderText(/Description \/ product…|Loading customer pricing…/)[
+    index
+  ] as HTMLInputElement;
+  fireEvent.change(input, { target: { value: "cola" } });
+  fireEvent.click(await screen.findByRole("button", { name: /Cola 12oz/ }));
+}
+
+describe("SA-856: a recurring line pre-fills the customer's own price", () => {
+  it("a tier-3 customer's picked line pre-fills the tier-3 price, never the list price (master: 10.00)", async () => {
+    const onSubmit = renderCreate();
+    await chooseCustomer("Tier Three Cafe");
+    await pickProduct();
+    expect(await screen.findByDisplayValue("8.00")).toBeInTheDocument();
+    expect(screen.queryByDisplayValue("10.00")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    const line = onSubmit.mock.calls[0][0].items[0];
+    expect(line.unitPrice).toBe(8);
+    expect(typeof line.unitPrice).toBe("number");
+  });
+
+  it("a CustomerPrice override tier wins over the customer's own tier", async () => {
+    mockCustomerPrices = [{ productId: P.id, pricingTier: 2, product: P }];
+    renderCreate();
+    await chooseCustomer("Retail Cafe");
+    await pickProduct();
+    expect(await screen.findByDisplayValue("9.00")).toBeInTheDocument();
+  });
+
+  it("the customer's price layer (flag on) is the price when it has a row for the pack", async () => {
+    mockLayer = {
+      ...layerOff(),
+      enabled: true,
+      layerOf: (id: string) =>
+        id === P.id
+          ? [
+              {
+                ref: "pack",
+                label: null,
+                price: 7.25,
+                listPrice: 10,
+                source: "customer",
+                aboveList: false,
+              },
+            ]
+          : undefined,
+    };
+    renderCreate();
+    await chooseCustomer("Tier Three Cafe");
+    await pickProduct();
+    expect(await screen.findByDisplayValue("7.25")).toBeInTheDocument();
+  });
+
+  it("a hand-edited price survives a customer change; an unedited one is re-suggested", async () => {
+    renderCreate();
+    await chooseCustomer("Retail Cafe");
+    await pickProduct(0);
+    fireEvent.click(screen.getByRole("button", { name: /Add Line Item/ }));
+    await pickProduct(1);
+    expect(screen.getAllByDisplayValue("10.00")).toHaveLength(2);
+    // The operator types their own price on line 1.
+    const typed = screen.getAllByDisplayValue("10.00")[0];
+    fireEvent.change(typed, { target: { value: "12.34" } });
+    fireEvent.blur(typed);
+    // Change the customer to a tier-3 one.
+    clearCustomer("Retail Cafe");
+    await chooseCustomer("Tier Three Cafe");
+    expect(await screen.findByDisplayValue("8.00")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("12.34")).toBeInTheDocument();
+  });
+
+  it("picking waits while the customer's pricing is being read, and Save is disabled", async () => {
+    renderCreate();
+    await chooseCustomer("Tier Three Cafe");
+    mockCustomerLoading = true;
+    // Re-render with the customer query in flight: choose the same customer again.
+    clearCustomer("Tier Three Cafe");
+    await chooseCustomer("Tier Three Cafe");
+    const search = (await screen.findByPlaceholderText(
+      "Loading customer pricing…",
+    )) as HTMLInputElement;
+    expect(search).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  });
+});
+
+describe("SA-856: existing templates change nothing automatically", () => {
+  const template: RecurringInvoice = {
+    id: "ri-1",
+    customerId: "c3",
+    customer: { id: "c3", businessName: "Tier Three Cafe" },
+    frequency: "MONTHLY",
+    dayOfMonth: 1,
+    isActive: true,
+    autoSend: false,
+    nextRunAt: "2026-11-01T00:00:00.000Z",
+    items: [{ productId: P.id, description: "Cola 12oz", qty: 2, unitPrice: 10 }],
+    createdAt: "2026-10-01T00:00:00.000Z",
+  } as RecurringInvoice;
+
+  it("keeps the stored price and shows the customer's price now, display-only", async () => {
+    const onSubmit = jest.fn();
+    renderWithProviders(
+      <RecurringInvoiceForm
+        mode="edit"
+        initial={template}
+        onSubmit={onSubmit}
+        isPending={false}
+        submitLabel="Save"
+      />,
+    );
+    expect(await screen.findByText("This customer's price now: $8.00")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("10.00")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    expect(onSubmit.mock.calls[0][0].items[0].unitPrice).toBe(10);
+  });
+
+  it("shows no marker when the stored price already is the customer's price", async () => {
+    renderWithProviders(
+      <RecurringInvoiceForm
+        mode="edit"
+        initial={{ ...template, items: [{ ...template.items[0], unitPrice: 8 }] }}
+        onSubmit={jest.fn()}
+        isPending={false}
+        submitLabel="Save"
+      />,
+    );
+    await screen.findByDisplayValue("8.00");
+    expect(screen.queryByText(/This customer's price now/)).not.toBeInTheDocument();
+  });
+});
+
+describe("SA-856 structural pin", () => {
+  it("the form never writes the catalog list price into a line", () => {
+    const src = fs.readFileSync(path.join(__dirname, "RecurringInvoiceForm.tsx"), "utf8");
+    expect(src).not.toMatch(/onChange\([^)]*p\.pricePerUnit\)/);
+    expect(src).toContain("useCustomerLinePricing(");
+  });
+});
