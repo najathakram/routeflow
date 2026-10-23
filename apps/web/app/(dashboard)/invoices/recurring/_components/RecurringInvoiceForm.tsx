@@ -337,19 +337,17 @@ export function RecurringInvoiceForm({
   const customerId = mode === "edit" ? initial?.customerId : customer?.id;
   const customerQuery = useCustomer(customerId ?? "");
   const customerPricesQuery = useCustomerPrices(customerId);
-  const cpTier = React.useMemo(() => {
-    const m = new Map<string, number | null>();
-    for (const cp of (customerPricesQuery.data ?? []) as Array<{
-      productId: string;
-      pricingTier: number | null;
-    }>)
-      m.set(cp.productId, cp.pricingTier);
-    return m;
-  }, [customerPricesQuery.data]);
   const customerTier = (customerQuery.data as { pricingTier?: number } | undefined)?.pricingTier;
+  // The tier handed to the resolver: the customer-product row's tier, else the customer's own (customerTierFor validates
+  // both; an msrp-only row's null tier falls through). No per-product tier map of our own (the S19b A-pin).
   const tierForProductId = React.useCallback(
-    (productId: string) => customerTierFor(cpTier.get(productId), customerTier),
-    [cpTier, customerTier],
+    (productId: string) => {
+      const row = (
+        (customerPricesQuery.data ?? []) as Array<{ productId: string; pricingTier: unknown }>
+      ).find((cp) => cp.productId === productId);
+      return customerTierFor(row?.pricingTier, customerTier);
+    },
+    [customerPricesQuery.data, customerTier],
   );
   const { priceLayer, tierPriceFor } = useCustomerLinePricing(customerId, tierForProductId);
   // The same gate as the invoice form: until the customer and their prices are read a pick would price at LIST.
