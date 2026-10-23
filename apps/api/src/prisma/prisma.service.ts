@@ -1,4 +1,10 @@
-import { Injectable, OnModuleInit, OnModuleDestroy, Optional } from "@nestjs/common";
+import {
+  Injectable,
+  OnApplicationShutdown,
+  OnModuleInit,
+  OnModuleDestroy,
+  Optional,
+} from "@nestjs/common";
 import { Prisma, PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
@@ -130,7 +136,10 @@ export function isTxClient(db: unknown): boolean {
 }
 
 @Injectable()
-export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
+export class PrismaService
+  extends PrismaClient
+  implements OnModuleInit, OnModuleDestroy, OnApplicationShutdown
+{
   /** W-720: the pool this service built; PrismaPg never ends a pool its caller supplied. */
   private readonly pgPool: Pool;
   private pgPoolEnded = false;
@@ -147,18 +156,29 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     await this.$connect();
   }
 
+  /**
+   * W-720: stop the engine only. Nest runs destroy hooks BEFORE `dispose()` closes the HTTP server
+   * and websockets, and crons stop only in beforeApplicationShutdown, so requests and ticks still
+   * draining reconnect lazily on the open pool. The pool is ended in onApplicationShutdown.
+   */
   async onModuleDestroy() {
+    await super.$disconnect();
+  }
+
+  /** W-720: the last hook, after HTTP, websockets and crons have stopped: end the pool too. */
+  async onApplicationShutdown() {
     await this.$disconnect();
   }
 
   /**
    * W-720: also end the pg.Pool built above, once. Without it the pool's idle clients outlived the
    * disconnect until pg's 10 s idle timeout (every DB spec's "Jest did not exit" tail; a stopping
-   * api holding its sockets). pg throws on a second `end()`, so a repeat disconnect skips it.
+   * api holding its sockets). pg throws on a second `end()`, so a repeat disconnect (or a pool pg
+   * already marks `ending`, e.g. via a `$extends` copy whose flag is its own) skips it.
    */
   override async $disconnect(): Promise<void> {
     await super.$disconnect();
-    if (this.pgPoolEnded) return;
+    if (this.pgPoolEnded || (this.pgPool as unknown as { ending?: boolean }).ending) return;
     this.pgPoolEnded = true;
     await this.pgPool.end();
   }
