@@ -120,6 +120,10 @@ const SETTLE_SITES: Record<string, LockRow> = {
     locks: ['FROM "Order"', 'FROM "Invoice"'],
     why: "SA-608g: Order then Invoice FOR UPDATE, re-read under them",
   },
+  "orders/orders.service.ts#forceConsolidateCustomer": {
+    locks: ["lockAndRecheckMergeInputs(", "lockInvoiceRowsInOrder("],
+    why: "683 (SA-896): the merge group's Orders FOR UPDATE, then the loser's DRAFT Invoice, before INVOICE_ZEROED",
+  },
   "orders/orders.service.ts#deleteOrder": {
     locks: ["lockDeleteLines(", "lockRows: true"],
     why: "B284: the Order first; the post-release assertNoUnspentSourcedCredits takes the Invoice rows last",
@@ -165,6 +169,10 @@ const WRAPPER_CALLERS: Record<string, Record<string, LockRow>> = {
     "invoices/invoices.service.ts#rebuildSiblingDrafts": {
       locks: [],
       why: "caller-tx: every reconcile entry locks the Order (lockOrderRow / the delivered-basis stop locks) before the rebuild",
+    },
+    "invoices/invoices.service.ts#reconcileOrderDraftInvoiceLocked": {
+      locks: [],
+      why: "683 (SA-789 F2): caller-tx like rebuildSiblingDrafts: every reconcile entry locks the Order before the rebuild",
     },
     "invoices/invoices.service.ts#update": {
       locks: ["loadLockedInvoiceForEdit("],

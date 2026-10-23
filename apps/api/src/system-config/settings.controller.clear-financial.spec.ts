@@ -145,7 +145,15 @@ function makeFakeStore(tenantId: string | null) {
     (typeof MODELS)[number],
     ReturnType<typeof model>
   >;
-  const txClient = { ...models, $executeRaw: jest.fn().mockResolvedValue(0) };
+  // 683 (SA-896): the wipe first checks the tenant holds no regulated records; this store holds none (the refusal is proven
+  // against real Postgres in clear-financial-regulated.db.spec.ts).
+  const noRegulated = { findFirst: jest.fn().mockResolvedValue(null) };
+  const regulated = {
+    regulatedSalesLedger: noRegulated,
+    tobaccoReport: noRegulated,
+    regulatedFiling: noRegulated,
+  };
+  const txClient = { ...models, ...regulated, $executeRaw: jest.fn().mockResolvedValue(0) };
 
   // The REAL tenant proxy from prisma.service.ts, not an imitation of it. `deleteMany` is
   // in its SCOPED_METHODS, so it rewrites every call as `where: { ...args.where, tenantId }`
@@ -163,6 +171,7 @@ function makeFakeStore(tenantId: string | null) {
     rows,
     prisma: {
       ...models,
+      ...regulated,
       getTenantId: jest.fn().mockReturnValue(tenantId),
       forTenant: jest.fn().mockReturnValue(models),
       // Mirrors PrismaService.tenantTransaction: proxied when a tenant is in context,
