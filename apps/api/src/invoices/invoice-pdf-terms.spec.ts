@@ -58,7 +58,7 @@ describe("row 401 wiring", () => {
     expect(src).toMatch(/const hasDeposit =\s*terms\.showDueAndTerms &&/);
   });
 
-  it("the PDF service selects what the predicate reads (the order's counterSale)", () => {
-    expect(read("invoice-pdf.service.ts")).toMatch(/order: \{ select: \{[^}]*counterSale: true/);
+  it("the PDF snapshot include selects what the predicate reads (the order's counterSale)", () => {
+    expect(read("invoice-send-snapshot.ts")).toMatch(/order: \{ select: \{[^}]*counterSale: true/);
   });
 });

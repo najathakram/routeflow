@@ -1,3 +1,4 @@
+import type { RevenuePeriod } from "@routeflow/types";
 import {
   keepPreviousData,
   useInfiniteQuery,
@@ -869,10 +870,6 @@ export function useAdminFinanceDashboard() {
 
 // ─── Analytics ────────────────────────────────────────────────────────────────
 
-export interface RevenuePeriod {
-  period: string;
-  revenue: number;
-}
 export interface TopProduct {
   id: string;
   name: string;
