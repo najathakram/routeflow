@@ -958,6 +958,12 @@ export function buildSnapshot({
       title: cl?.title ?? id,
       machine: cl?.machine ?? null,
       lastEventAt: iso(lastEvent),
+      lastHeartbeatAt: iso(seen?.lastHeartbeatAt ?? null),
+      heartbeatAgeMin:
+        seen?.lastHeartbeatAt == null
+          ? null
+          : Math.max(0, Math.round((now - seen.lastHeartbeatAt) / 60000)),
+      known: !!cl,
       lastActivityAt: act ? iso(act[1]) : null,
       lastActivitySource: act ? act[0] : null,
       silentMin: act === null ? null : Math.max(0, Math.round((now - act[1]) / 60000)),

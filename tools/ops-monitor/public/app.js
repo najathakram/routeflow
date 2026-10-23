@@ -88,6 +88,7 @@
     "building-stale": "Marked as being built, but no recent activity",
     "incident-stale": "Incident not updated lately",
     "lane-silent": "Lane holding work has gone quiet",
+    "unknown-lane": "Work or activity on a lane that is not in the config",
     "past-eta": "Past the promised date",
     "stale-source": "Data source is out of date",
     "untracked-pr": "Pull request not linked to any item",
@@ -137,7 +138,15 @@
   const ANNOUNCE_GAP_MS = 60000;
   const announceDue = (lastAt, nowMs) => lastAt === null || nowMs - lastAt >= ANNOUNCE_GAP_MS;
 
+  // Lane heartbeat line: when a session last checked in, kept apart from the lane's other activity.
+  // `unknown` marks a lane the config does not list (only when the snapshot says so).
+  function laneBeat(l) {
+    const at = l?.lastHeartbeatAt ?? null;
+    return { label: at ? "heartbeat" : "no heartbeat", at, unknown: l?.known === false };
+  }
+
   const UI = {
+    laneBeat,
     capEntries,
     groupAlarms,
     kindLabel,
@@ -1342,6 +1351,7 @@
       const actSrc = SOURCE_WORD[l.lastActivitySource] ?? l.lastActivitySource ?? "recorded";
       const silent = actAt ? Math.round((now() - Date.parse(actAt)) / 60000) : null;
       const isSilent = (l.now?.length ?? 0) > 0 && silent !== null && silent > SILENT_MIN;
+      const beat = laneBeat(l);
       const box = el("div", { class: "lane" });
       box.append(
         el(
@@ -1357,7 +1367,21 @@
               ? el("span", { "data-sw": actAt, text: sinceWords(now() - Date.parse(actAt)) })
               : null,
           ),
+          el(
+            "span",
+            {
+              class: "muted lane-beat",
+              title: beat.at ? localStamp(beat.at) : "No session has checked in",
+            },
+            `${beat.label} `,
+            beat.at
+              ? el("span", { "data-sw": beat.at, text: sinceWords(now() - Date.parse(beat.at)) })
+              : null,
+          ),
           isSilent ? pill(`SILENT ${silent}m`, "warn", "Holds work but has been quiet") : null,
+          beat.unknown
+            ? pill("not in config", "warn", "This lane id is not listed in ops/config.json")
+            : null,
         ),
       );
       // Expects lane.lastPushAt / lane.lastPrAt (ISO strings); not in the snapshot yet, so nothing shows.

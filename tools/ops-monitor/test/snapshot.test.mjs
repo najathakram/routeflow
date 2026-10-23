@@ -1644,3 +1644,28 @@ test("D7 maskStatus rides the snapshot; ok:false raises an error alarm", () => {
   assert.equal(a.severity, "error");
   assert.equal(a.message, "client-name mask list missing — tenant names hidden by fallback");
 });
+
+test("lanes: lastHeartbeatAt, heartbeatAgeMin and known", () => {
+  const hb = ev("2026-10-19T11:30:00Z", "heartbeat", null, "sa", {
+    session: "s1",
+    lastActiveAt: "2026-10-19T11:30:00Z",
+  });
+  const unknown = ev("2026-10-19T11:40:00Z", "heartbeat", null, "ghost-lane", {
+    session: "s2",
+    lastActiveAt: "2026-10-19T11:40:00Z",
+  });
+  const s = build({
+    specs: okSource(30, { events: [...events(), hb, unknown], config: DEFAULT_CONFIG }),
+  });
+  const sa = s.lanes.find((l) => l.id === "sa");
+  assert.equal(sa.lastHeartbeatAt, "2026-10-19T11:30:00.000Z");
+  assert.equal(sa.heartbeatAgeMin, 30);
+  assert.equal(sa.known, true);
+  const owner = s.lanes.find((l) => l.id === "owner"); // configured, never heartbeat
+  assert.equal(owner.lastHeartbeatAt, null);
+  assert.equal(owner.heartbeatAgeMin, null);
+  assert.equal(owner.known, true);
+  const ghost = s.lanes.find((l) => l.id === "ghost-lane");
+  assert.equal(ghost.heartbeatAgeMin, 20);
+  assert.equal(ghost.known, false);
+});

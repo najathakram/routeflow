@@ -488,3 +488,23 @@ test("X1 items carry harm and statusText (null by default, settable by edit)", (
   assert.equal(s2.items.get("5").harm, "latent");
   assert.equal(s2.items.get("5").statusText, "triaged");
 });
+
+test("heartbeat: lastHeartbeatAt tracks the newest heartbeat per lane, apart from lastEventAt", () => {
+  const hb = (min, lane, active) =>
+    ev(
+      "heartbeat",
+      null,
+      { session: `s-${lane}`, lastActiveAt: new Date(T0 + active * 60000).toISOString() },
+      { min, lane },
+    );
+  const s = fold([
+    hb(1, "lead", 10),
+    hb(2, "lead", 5), // older activity does not move it back
+    newItem("5", {}, { min: 3, lane: "macmini" }),
+    hb(4, "sa", 7),
+  ]);
+  assert.equal(s.lanes.get("lead").lastHeartbeatAt, T0 + 10 * 60000);
+  assert.equal(s.lanes.get("sa").lastHeartbeatAt, T0 + 7 * 60000);
+  // A lane that only has non-heartbeat events has no heartbeat.
+  assert.equal(s.lanes.get("macmini").lastHeartbeatAt ?? null, null);
+});
