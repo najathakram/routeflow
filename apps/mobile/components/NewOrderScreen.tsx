@@ -150,6 +150,7 @@ import {
 import { useDraftAutosave, type DraftRowMeta } from "../lib/use-draft-autosave";
 import { useStopCartStore } from "../store/stopCartStore";
 import { CartModal } from "./new-order/CartModal";
+import { useCustomerPickGate } from "./new-order/use-customer-pick-gate";
 import { CreateCreditNoteSheet } from "./new-order/CreateCreditNoteSheet";
 import { CustomerPickerView } from "./new-order/CustomerPickerView";
 import { LinePriceModal } from "./new-order/LinePriceModal";
@@ -458,7 +459,9 @@ function ProductPickView({
   // the per-product CustomerPrice override, else the customer's default tier.
   // Prices shown/summed/submitted use getTierPrice(product, effectiveTier), not
   // the raw list price — so a tier-N customer sees the price the server bills.
-  const { data: customerDetail } = useCustomer(customerId);
+  const customerQuery = useCustomer(customerId);
+  const { data: customerDetail } = customerQuery;
+  const pricesQuery = useCustomerPrices(customerId);
   const {
     data: customerPrices,
     isFetched: fetched,
@@ -466,7 +469,7 @@ function ProductPickView({
     isFetching: fetching,
     error: pricesError,
     refetch: refetchPrices,
-  } = useCustomerPrices(customerId);
+  } = pricesQuery;
   const pricesSettled = (fetched || errored) && !fetching;
   // Tenant margin config for the live cost/margin hint in the cart rows.
   const { data: marginConfig } = useMarginConfig();
@@ -500,6 +503,8 @@ function ProductPickView({
   // S19b slice D (SA-811a/813): billing's own customer price layer. Flag off: no request, `layerOf` is undefined and every
   // price below is master's number.
   const priceLayer = useCustomerPriceLayer(customerId);
+  // W-741: a pick fails closed until the customer, their prices and the layer are read (else it prices at LIST).
+  const pick = useCustomerPickGate(customerId, customerQuery, pricesQuery, priceLayer);
   const layerOf = priceLayer.layerOf;
   const packPriceFor = (p: Product) => packLinePrice(p, effectiveTierFor(p.id), layerOf(p.id));
   const tierPriceFor = (p: Product) => packPriceFor(p).price;
@@ -801,6 +806,7 @@ function ProductPickView({
     viaRow?: boolean,
     code?: string,
   ): boolean => {
+    if (pick.refusal) return (showToast(pick.refusal), false);
     const p = snap ?? productById.get(id);
     // A FAMILY container is never a line (scan, tap or restored draft): refuse at this one choke point.
     if (isFamilyProduct(p as { kind?: "FAMILY" } | undefined)) {
@@ -973,6 +979,7 @@ function ProductPickView({
   const scanGuardRef = useRef(createScanAcceptGuard<Product>());
 
   const finishAccept: ScanLadderDeps<Product>["accept"] = (product, level, opts) => {
+    if (pick.refusal) return refusedScanOutcome(scanOpen, pick.refusal); // W-741: ONE message, the gate's
     if (!addOne(product.id, product, level, opts?.startOnDefault, false, opts?.code))
       return refusedScanOutcome(scanOpen); // a refused scan: not counted, not "Added", ONE message
     bumpScanned(product.id);
@@ -2330,8 +2337,8 @@ function ProductPickView({
           </Pressable>
         </View>
         <PriceLayerGateNotice
-          gate={layerGate}
-          onRetry={priceLayer.refetch}
+          gate={pick.notice.message ? pick.notice : layerGate}
+          onRetry={pick.notice.message ? pick.retry : priceLayer.refetch}
           textStyle={{ color: ios.system.orangeInk, fontSize: 12, textAlign: "center" }}
         />
         <View style={styles.footerSubRow}>
