@@ -57,18 +57,69 @@ function lintScriptExists(root, ws) {
 
 // Specs that census files BY NAME across the repo (run 2026-10-23-bug-swarm-4: #3659 went red on one after
 // adding a script). They run when the branch ADDS a file under apps/api/prisma/, apps/api/scripts/ or scripts/.
-export const CENSUS_SPECS = [
-  "src/common/scripts-live-target-guard.spec.ts",
-  "src/common/fixture-git-env-scrub.spec.ts",
-  "src/common/size-ratchet.spec.ts",
-  "src/common/script-spec-lane.spec.ts",
-  "src/common/scripts-unscoped-delete.spec.ts",
-  "src/common/scripts-product-mirror-tripwire.spec.ts",
-  "src/common/script-money-writers.spec.ts",
-  "src/common/no-runtime-ddl.spec.ts",
-  "src/common/no-single-schema-path.spec.ts",
-  "src/common/schema-folder.spec.ts",
+// Each spec runs in the lane that actually includes it: apps/api's default jest config EXCLUDES the
+// repo-truth specs (testPathIgnorePatterns), so listing them there silently skips them.
+export const CENSUS_LANES = [
+  {
+    name: "unit",
+    config: null,
+    specs: [
+      "src/common/scripts-live-target-guard.spec.ts",
+      "src/common/fixture-git-env-scrub.spec.ts",
+      "src/common/script-spec-lane.spec.ts",
+      "src/common/scripts-unscoped-delete.spec.ts",
+      "src/common/scripts-product-mirror-tripwire.spec.ts",
+      "src/common/script-money-writers.spec.ts",
+      "src/common/no-runtime-ddl.spec.ts",
+      "src/common/schema-folder.spec.ts",
+    ],
+  },
+  {
+    name: "repo-truth",
+    config: "jest.repo-truth.config.js",
+    specs: ["src/common/size-ratchet.spec.ts", "src/common/no-single-schema-path.spec.ts"],
+  },
 ];
+export const CENSUS_SPECS = CENSUS_LANES.flatMap((l) => l.specs);
+
+/** Expected specs that a lane's `jest --listTests` did not list (pure; fail-closed input for the census). */
+export function missingSpecs(listedOutput, expected) {
+  const listed = String(listedOutput)
+    .split(/\r?\n/)
+    .map((l) => l.trim().replace(/\\/g, "/"))
+    .filter(Boolean);
+  return expected.filter((spec) => !listed.some((l) => l.endsWith(`/${spec}`) || l === spec));
+}
+
+/**
+ * Run one census lane from apps/api: --listTests first, FAIL if any expected spec is not listed (it
+ * names it), then run the specs. exec(cmd, args) -> { status, stdout }.
+ */
+export function runCensusLane(laneName, { exec } = {}) {
+  const lane = CENSUS_LANES.find((l) => l.name === laneName);
+  if (!lane) {
+    console.error(`census: unknown lane ${laneName}`);
+    return 2;
+  }
+  const run =
+    exec ??
+    ((cmd, args, stdio) =>
+      spawnSync(cmd, args, {
+        encoding: "utf8",
+        stdio: stdio ?? ["ignore", "pipe", "inherit"],
+        shell: process.platform === "win32",
+      }));
+  const cfg = lane.config ? ["-c", lane.config] : [];
+  const listed = run("npx", ["jest", ...cfg, "--listTests", ...lane.specs]);
+  const missing = missingSpecs(listed.stdout ?? "", lane.specs);
+  if (missing.length) {
+    console.error(
+      `census lane ${lane.name}: not listed by jest (would be silently skipped): ${missing.join(", ")}`,
+    );
+    return 1;
+  }
+  return run("npx", ["jest", ...cfg, ...lane.specs], "inherit").status ?? 1;
+}
 const CENSUS_DIRS = ["apps/api/prisma/", "apps/api/scripts/", "scripts/"];
 
 // Fails when a commit subject carries a (B###) label that is not one of the ids the run was given
@@ -170,7 +221,14 @@ export function planGate({
   }
 
   if (addedFiles.some((f) => CENSUS_DIRS.some((d) => f.startsWith(d)))) {
-    add("census", path.join(root, "apps/api"), ["npx", "jest", ...CENSUS_SPECS]);
+    for (const lane of CENSUS_LANES) {
+      add(`census:${lane.name}`, path.join(root, "apps/api"), [
+        "node",
+        fileURLToPath(import.meta.url),
+        "--run-census",
+        lane.name,
+      ]);
+    }
   }
   add("size-ratchet", path.join(root, "apps/api"), [
     "npx",
@@ -403,6 +461,8 @@ export function stopGate(file, { platform = process.platform, exec, killTree } =
 }
 
 export async function main(argv = process.argv.slice(2)) {
+  const ri = argv.indexOf("--run-census");
+  if (ri !== -1) return runCensusLane(argv[ri + 1]);
   const si = argv.indexOf("--stop");
   if (si !== -1) {
     if (!argv[si + 1]) {

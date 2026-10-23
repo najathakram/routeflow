@@ -9,7 +9,10 @@ import { tmpdir } from "node:os";
 import { scrubbedGitEnv } from "../../../../scripts/lib/check-git-hooks.mjs";
 import {
   addedSince,
+  CENSUS_LANES,
   CENSUS_SPECS,
+  missingSpecs,
+  runCensusLane,
   commandLineOf,
   holdPidFile,
   stopGate,
@@ -485,32 +488,65 @@ test("stopGate kills only a gate.mjs pid, per platform, and removes the file", (
   assert.equal(stopGate(f3, { exec: () => "gate.mjs" }).stopped, false);
 });
 
-test("census step: an ADDED file under apps/api/prisma, apps/api/scripts or scripts runs the file-census specs", () => {
+test("census steps: an ADDED file under apps/api/prisma, apps/api/scripts or scripts runs both lanes", () => {
   for (const f of [
     "apps/api/scripts/new.mjs",
     "apps/api/prisma/seed-x.ts",
     "scripts/lib/new.mjs",
   ]) {
     const steps = planGate({ changedFiles: [f], addedFiles: [f], ...opts });
-    const s = step(steps, "census");
-    assert.ok(s, f);
-    assert.equal(norm(s.cwd), norm("/r/apps/api"));
-    assert.deepEqual(s.cmd.slice(0, 2), ["npx", "jest"]);
-    for (const spec of CENSUS_SPECS) assert.ok(s.cmd.includes(spec), spec);
-    for (const must of ["scripts-live-target-guard", "fixture-git-env-scrub", "size-ratchet"])
-      assert.ok(
-        s.cmd.some((a) => a.includes(must)),
-        must,
-      );
+    for (const lane of ["unit", "repo-truth"]) {
+      const s = step(steps, `census:${lane}`);
+      assert.ok(s, `${f} ${lane}`);
+      assert.equal(norm(s.cwd), norm("/r/apps/api"));
+      assert.deepEqual(s.cmd.slice(2), ["--run-census", lane]);
+    }
   }
   const edited = planGate({ changedFiles: ["scripts/x.mjs"], addedFiles: [], ...opts });
-  assert.equal(step(edited, "census"), undefined);
+  assert.equal(step(edited, "census:unit"), undefined);
   const other = planGate({
     changedFiles: ["apps/api/src/a.ts"],
     addedFiles: ["apps/api/src/a.ts"],
     ...opts,
   });
-  assert.equal(step(other, "census"), undefined);
+  assert.equal(step(other, "census:repo-truth"), undefined);
+  assert.equal(CENSUS_SPECS.length, 10);
+  const rt = CENSUS_LANES.find((l) => l.name === "repo-truth");
+  assert.equal(rt.config, "jest.repo-truth.config.js");
+  assert.ok(rt.specs.some((s) => s.includes("no-single-schema-path")));
+});
+
+test("missingSpecs flags an expected spec that jest did not list", () => {
+  const exp = ["src/common/a.spec.ts", "src/common/b.spec.ts"];
+  assert.deepEqual(
+    missingSpecs("/x/apps/api/src/common/a.spec.ts\n/x/apps/api/src/common/b.spec.ts\n", exp),
+    [],
+  );
+  assert.deepEqual(missingSpecs("C:\\x\\apps\\api\\src\\common\\a.spec.ts\n", exp), [
+    "src/common/b.spec.ts",
+  ]);
+  assert.deepEqual(missingSpecs("", exp), exp);
+});
+
+test("runCensusLane fails closed naming the missing spec, and runs jest only when all are listed", () => {
+  const lane = CENSUS_LANES.find((l) => l.name === "repo-truth");
+  const calls = [];
+  const partial = (cmd, args) => (
+    calls.push(args),
+    { status: 0, stdout: `/x/apps/api/${lane.specs[0]}\n` }
+  );
+  assert.equal(runCensusLane("repo-truth", { exec: partial }), 1);
+  assert.equal(calls.length, 1, "no jest run after a short listing");
+  assert.ok(calls[0].includes("--listTests") && calls[0].includes("-c"));
+  const calls2 = [];
+  const full = (cmd, args) => (
+    calls2.push(args),
+    { status: 0, stdout: lane.specs.map((s) => `/x/apps/api/${s}`).join("\n") }
+  );
+  assert.equal(runCensusLane("repo-truth", { exec: full }), 0);
+  assert.equal(calls2.length, 2);
+  assert.ok(!calls2[1].includes("--listTests") && calls2[1].includes("jest.repo-truth.config.js"));
+  assert.equal(runCensusLane("nope"), 2);
 });
 
 test("addedSince lists only added files of the merge-base range", () => {
