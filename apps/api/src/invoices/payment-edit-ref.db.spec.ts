@@ -12,6 +12,9 @@
  *        the payment-ref lock of its NEW key.
  *  - SA-865 G1-G3: a GROUPED row is judged on the group's NEW total (its siblings, possibly on other invoices, plus its
  *        excess advance), the way a fresh record of the group is judged.
+ *  - W-719 / SA-879 R1-R4, R6: a group's OWN excess advance is found through its link (`sourcePaymentId`, the group's
+ *        first row), or for a legacy unlinked one by any row's paidAt, never by the EDITED row's date alone: no false
+ *        409 after a paidAt edit, the group total counts it, on the edit path and the fresh path, and across a retry.
  *
  * SAFETY: throwaway `qa-r752-<run>-<n>-<label>` tenants only (`assertTestTenant`); `afterAll` deletes what it made.
  */
@@ -514,6 +517,136 @@ describeDb("row 752 editing a payment into a duplicate — real Postgres", () =>
       expect(status(await edit(30))).toBe("ok");
       expect(status(await edit(31))).toBe("ok");
       expect(Number((await s.get(thirty.id))?.amount)).toBe(31);
+    }, 60_000);
+  });
+
+  describe("W-719 / SA-879: a group's own advance after an earlier paidAt edit", () => {
+    const D0 = "2026-10-01T12:00:00.000Z";
+    const D1 = "2026-10-05T12:00:00.000Z";
+    /** A REAL standalone "W9" check: the allocations onto invoices 0.., the excess booked as the group's advance. */
+    async function standalone(label: string, total: number, allocs: number[], opts?: any) {
+      const s = await seed(label);
+      await s.asTenant(() =>
+        invoicesA.recordStandalonePayment(
+          {
+            customerId: s.customer.id,
+            totalAmount: total,
+            method: "CHECK",
+            reference: "W9",
+            paidAt: D0,
+            allocations: allocs.map((amount, i) => ({ invoiceId: s.invs[i].id, amount })),
+          } as any,
+          opts,
+        ),
+      );
+      const rows = await prismaA.invoicePayment.findMany({
+        where: { invoice: { tenantId: s.tenant.id } },
+        orderBy: { amount: "desc" },
+      });
+      const advs = await prismaA.advancePayment.findMany({ where: { customerId: s.customer.id } });
+      const edit = (row: { id: string; invoiceId: string }, body: Record<string, unknown>) =>
+        s
+          .asTenant(() =>
+            invoicesA.updatePayment(
+              row.invoiceId,
+              row.id,
+              { method: "CHECK", reference: "W9", ...body } as any,
+              s.staffOpts(false),
+            ),
+          )
+          .catch((e) => e);
+      return { s, rows, advs, edit };
+    }
+
+    it("the real writer links the excess advance to the group's first row (SA-879 rule 1)", async () => {
+      const { rows, advs } = await standalone("w719-fx", 100, [60]);
+      expect(rows).toHaveLength(1);
+      expect(advs).toHaveLength(1);
+      expect(Number(advs[0].amount)).toBe(40);
+      expect(advs[0].sourcePaymentId).toBe(rows[0].id);
+    }, 60_000);
+
+    it("R1 a one-row group, its paidAt edited, then $60 -> $40: no self-409 (master: 409 naming its own advance)", async () => {
+      const { s, rows, edit } = await standalone("w719-r1", 100, [60]);
+      expect(status(await edit(rows[0], { amount: 60, paidAt: D1 }))).toBe("ok");
+      expect(status(await edit(rows[0], { amount: 40 }))).toBe("ok");
+      expect(Number((await s.get(rows[0].id))?.amount)).toBe(40);
+    }, 60_000);
+
+    it("R1b ...and it is judged at $40 + $40 = $80: X = $80 'W9' elsewhere makes it 409 naming X", async () => {
+      const { s, rows, edit } = await standalone("w719-r1b", 100, [60]);
+      const x = await s.row(s.invs[2].id, { amount: 80, reference: "W9" });
+      expect(status(await edit(rows[0], { amount: 60, paidAt: D1 }))).toBe("ok");
+      const err: any = await edit(rows[0], { amount: 40 });
+      expect(status(err)).toBe(409);
+      expect(err.getResponse()).toMatchObject({ existingPayment: { id: x.id } });
+      expect(Number((await s.get(rows[0].id))?.amount)).toBe(60);
+    }, 60_000);
+
+    it("R2 the link survives a VOIDed first row: $60 (void) + $30 + a $10 advance; $30 -> $35 is judged at $45 (X = $45: 409)", async () => {
+      const { s, rows, advs, edit } = await standalone("w719-r2", 100, [60, 30]);
+      expect(advs[0].sourcePaymentId).toBe(rows[0].id); // the $60 row, the one voided next
+      await prismaA.invoicePayment.update({ where: { id: rows[0].id }, data: { status: "VOID" } });
+      const x = await s.row(s.invs[2].id, { amount: 45, reference: "W9" });
+      const err: any = await edit(rows[1], { amount: 35 });
+      expect(status(err)).toBe(409);
+      expect(err.getResponse()).toMatchObject({ existingPayment: { id: x.id } });
+    }, 60_000);
+
+    it("R3 legacy (unlinked) advance: found by the OTHER row's original paidAt after this row's date was edited", async () => {
+      const s = await seed("w719-r3");
+      const g = randomUUID();
+      await s.row(s.invs[0].id, { amount: 60, reference: "W9", paymentGroupId: g }); // keeps D0
+      const thirty = await s.row(s.invs[1].id, { amount: 30, reference: "W9", paymentGroupId: g });
+      await s.advance(10, "W9"); // receivedAt D0, sourcePaymentId null: booked before the link
+      await prismaA.invoicePayment.update({
+        where: { id: thirty.id },
+        data: { paidAt: new Date(D1) },
+      });
+      const x = await s.row(s.invs[2].id, { amount: 105, reference: "W9" });
+      const err: any = await s
+        .asTenant(() =>
+          invoicesA.updatePayment(
+            s.invs[1].id,
+            thirty.id,
+            { amount: 35, method: "CHECK", reference: "W9" } as any,
+            s.staffOpts(false),
+          ),
+        )
+        .catch((e) => e);
+      expect(status(err)).toBe(409); // $60 + $35 + the $10 legacy advance = X's $105
+      expect(err.getResponse()).toMatchObject({ existingPayment: { id: x.id } });
+    }, 60_000);
+
+    it("R4 the fresh path: an edited-paidAt group + its linked advance; a NEW $100 'W9' payment is 409 naming the group (master: none)", async () => {
+      const { s, rows, edit } = await standalone("w719-r4", 100, [60]);
+      expect(status(await edit(rows[0], { amount: 60, paidAt: D1 }))).toBe("ok");
+      const err: any = await s
+        .asTenant(() =>
+          invoicesA.recordPayment(
+            s.invs[2].id,
+            { amount: 100, method: "CHECK", reference: "W9" } as any,
+            s.staffOpts(false),
+          ),
+        )
+        .catch((e) => e);
+      expect(status(err)).toBe(409);
+      expect(err.getResponse()).toMatchObject({ existingPayment: { id: rows[0].id } });
+      expect(await prismaA.invoicePayment.count({ where: { invoiceId: s.invs[2].id } })).toBe(0);
+    }, 60_000);
+
+    it("R6 a forced retry of the standalone write: the committed advance links a COMMITTED row", async () => {
+      let attempts = 0;
+      const { rows, advs } = await standalone("w719-r6", 100, [60, 30], {
+        inTx: async () => {
+          attempts += 1;
+          if (attempts === 1) throw Object.assign(new Error("forced conflict"), { code: "P2034" });
+        },
+      });
+      expect(attempts).toBe(2);
+      expect(rows).toHaveLength(2);
+      expect(advs).toHaveLength(1);
+      expect(rows.map((r) => r.id)).toContain(advs[0].sourcePaymentId);
     }, 60_000);
   });
 });

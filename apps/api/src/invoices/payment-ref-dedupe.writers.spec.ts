@@ -187,6 +187,10 @@ describe("row 498: payments dedupe on a normalised reference (no window), on SA-
     prisma.invoicePayment.findMany.mockImplementation(async (a: any) => {
       const ids: string[] | undefined = a?.where?.id?.in;
       if (ids) return ledger.pays.filter((p) => ids.includes(p.id));
+      // SA-879 groupExcessAdvances: a group's rows by id, in EVERY status
+      const group: string | undefined = a?.where?.paymentGroupId;
+      if (typeof group === "string")
+        return ledger.pays.filter((p) => p.tenantId === tenant && p.paymentGroupId === group);
       const cust: string | undefined = a?.where?.invoice?.customerId;
       if (!cust) return [];
       return ledger.pays
@@ -209,14 +213,23 @@ describe("row 498: payments dedupe on a normalised reference (no window), on SA-
         )
         .map((p) => ({ ...p, invoice: { invoiceNumber: invoiceDir[p.invoiceId].invoiceNumber } }));
     });
-    prisma.advancePayment.findMany.mockImplementation(async (a: any) =>
-      ledger.advs.filter(
+    prisma.advancePayment.findMany.mockImplementation(async (a: any) => {
+      const w = a?.where ?? {};
+      const mine = ledger.advs.filter(
+        (r) => r.tenantId === tenant && r.customerId === w.customerId,
+      );
+      if (!w.OR) return mine.filter((r) => r.method === w.method);
+      // SA-879 groupExcessAdvances: linked to a group row, or (legacy, unlinked) same method on a row's paidAt
+      const [linked, legacy] = w.OR;
+      const at = (d: unknown) => new Date(d as string).getTime();
+      return mine.filter(
         (r) =>
-          r.tenantId === tenant &&
-          r.customerId === a?.where?.customerId &&
-          r.method === a?.where?.method,
-      ),
-    );
+          (r.sourcePaymentId != null && linked.sourcePaymentId.in.includes(r.sourcePaymentId)) ||
+          (r.sourcePaymentId == null &&
+            r.method === legacy.method &&
+            legacy.receivedAt.in.some((d: unknown) => at(d) === at(r.receivedAt))),
+      );
+    });
     prisma.advancePayment.findFirst.mockImplementation(async (a: any) => {
       const row = ledger.advs.find(
         (r) =>
