@@ -12,6 +12,8 @@ import { roundMoney, remainingCapacity } from "@routeflow/pricing";
 import type { CounterSaleResponse } from "@routeflow/types";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
 import { configuredTaxRatePercent } from "../../common/tax-rate";
+import { tenantTodayDay } from "../../common/calendar-date";
+import { tenantTimeZone } from "../../common/tenant-time-zone";
 import { PrismaService } from "../../prisma/prisma.service";
 import { InvoicesService } from "../../invoices/invoices.service";
 import { TILL_LOCK_HELD } from "../../invoices/counter-payment-guard";
@@ -40,7 +42,9 @@ import {
   allocateOldestFirst,
   assertCheckNotPostdatedForTenant,
   assertPaymentShape,
+  type CounterPaymentInput,
   assertWalkInTenderCoversTotal,
+  counterCreditPaidNow,
   type CounterPaymentMethod,
   planCounterPayment,
   toPrismaMethod,
@@ -116,7 +120,7 @@ export class CounterSaleService {
     if (!dto.walkIn && !dto.customerId) {
       throw new BadRequestException("Choose a customer or mark the sale as a walk-in");
     }
-    const walkIn = !!dto.walkIn;
+    let walkIn = !!dto.walkIn;
     assertPaymentShape(dto.payment, walkIn);
     // Interim till guard: judged on the TENANT's day, before any write.
     await assertCheckNotPostdatedForTenant(this.prisma, dto.payment);
@@ -132,10 +136,25 @@ export class CounterSaleService {
     } else {
       const customer = await this.prisma.forTenant().customer.findFirst({
         where: { id: dto.customerId, deletedAt: null },
-        select: { id: true },
+        select: { id: true, isWalkIn: true },
       });
       if (!customer) throw new NotFoundException("Customer not found");
       customerId = customer.id;
+      // The kept walk-in RECORD (park/resume) is a walk-in however the request names it: same refusals,
+      // same tender rule, before any write.
+      if (customer.isWalkIn === true) {
+        walkIn = true;
+        assertPaymentShape(dto.payment, true);
+        await this.assertNoOpenCredit(customerId); // the same guard as dto.walkIn: send() would auto-apply it
+      }
+    }
+
+    // S1: a CHECK dated after the tenant's today is not paid now; the zone is read only when one is sent.
+    let checkToday: string | undefined;
+    const tender: CounterPaymentInput = dto.payment; // the shape that may carry a checkDate
+    if (tender.method === "CHECK" && tender.checkDate) {
+      const zone = await tenantTimeZone(this.prisma);
+      checkToday = tenantTodayDay(zone, new Date());
     }
 
     // 4. The sale. create()'s own refusals propagate untouched.
@@ -159,6 +178,9 @@ export class CounterSaleService {
         beforeWrite: walkIn
           ? ({ total }) => assertWalkInTenderCoversTotal(dto.payment, total)
           : undefined,
+        // S1 (C42): the credit gate counts only what stays owed after this tender (cash/card paid now);
+        // a pending check and ON_ACCOUNT count 0. The total is create()'s own, so this is a function of it.
+        creditPaidNow: (total) => counterCreditPaidNow(tender, total, checkToday),
         // The walk-in has no mailbox: no INVOICE_SENT message (never sendEmail for them either).
         suppressInvoiceNotify: walkIn || undefined,
         onReplay: (existing) => {
