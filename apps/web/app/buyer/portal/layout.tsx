@@ -163,6 +163,9 @@ export default function BuyerPortalLayout({ children }: { children: React.ReactN
   // Hooks must be called unconditionally — before any early returns
   const sellerSlug = activeSeller?.tenant.slug;
   const { totalQty: cartItemCount } = useBuyerCart(buyer?.id, sellerSlug);
+  // The global floating cart button (below). W-669: while it shows, main keeps a bottom clearance (pb-24 = its 56 px +
+  // its 24 px offset + a margin) so a page's last row (the order detail's subtotal) scrolls clear of it.
+  const showFloatingCart = !!sellerSlug && cartItemCount > 0 && !pathname.includes("/cart");
   const { notifications, unreadCount, markAllRead, clearAll, sessionExpired } =
     useBuyerNotifications(activeSeller?.tenant.id ?? null);
   const { data: expiring = [] } = useBuyerExpiringAuthorizations(!!activeSeller);
@@ -559,7 +562,7 @@ export default function BuyerPortalLayout({ children }: { children: React.ReactN
           <BrandMark size={24} className="rounded" />
           <span className="text-sm font-bold text-navy">RouteFlow</span>
         </header>
-        <main className="flex-1 overflow-auto">
+        <main className={cn("flex-1 overflow-auto", showFloatingCart && "pb-24")}>
           {sessionExpired && (
             // #2167: the realtime socket's token expired and the refresh failed. Say so instead of
             // leaving tracking and notifications silently frozen.
@@ -588,7 +591,7 @@ export default function BuyerPortalLayout({ children }: { children: React.ReactN
       </div>
 
       {/* Global floating cart button — visible on all pages when cart has items */}
-      {sellerSlug && cartItemCount > 0 && !pathname.includes("/cart") && (
+      {showFloatingCart && (
         <button
           type="button"
           onClick={() => router.push(`/buyer/portal/${sellerSlug}/cart`)}

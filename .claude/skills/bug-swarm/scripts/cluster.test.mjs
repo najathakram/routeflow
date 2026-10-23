@@ -12,6 +12,7 @@ import {
   parseCli,
   ratchetFilesFrom,
   resolveIdInSpace,
+  workspaceOf,
   titlesMatch,
 } from "./cluster.mjs";
 
@@ -335,4 +336,118 @@ test("parseCli reads --id-space and --repo", () => {
   assert.equal(o.idSpace, "bug");
   assert.equal(o.repo, "/x");
   assert.throws(() => parseCli(["m.json", "--id-space", "other"]));
+});
+
+test("titlesMatch decodes HTML entities and folds the angle quotes (run 4: row 302 &gt; vs ›)", () => {
+  assert.ok(titlesMatch("Settings &gt; Business &amp; profile", "Settings › Business & profile"));
+  assert.ok(
+    titlesMatch("A &#39;quoted&#39; &quot;x&quot; &lt;b&gt; &#x3E;", "A 'quoted' \"x\" <b> >"),
+  );
+  assert.ok(titlesMatch("Back » Next", "Back &gt; Next"));
+  assert.ok(!titlesMatch("A &gt; B", "A < B"));
+});
+
+test("resolveIdInSpace uses the scripts' own checkout first, --repo only as a fallback", () => {
+  const seen = [];
+  const exec = (cmd, args) => (seen.push(args[0]), JSON.stringify({ title: "T" }));
+  const own = path.resolve("/own/checkout");
+  const stale = path.resolve("/stale/main");
+  const has = (p) => p.startsWith(own);
+  resolveIdInSpace({ space: "row", id: "1", repo: stale, exec, ownRoot: own, exists: has });
+  assert.equal(seen[0], path.join(own, "tools/ops-monitor/bin/rf.mjs"));
+  resolveIdInSpace({ space: "row", id: "1", repo: stale, exec, ownRoot: own, exists: () => false });
+  assert.equal(seen[1], path.join(stale, "tools/ops-monitor/bin/rf.mjs"));
+  resolveIdInSpace({
+    space: "bug",
+    id: "B1",
+    repo: stale,
+    exec: () => "title: T",
+    ownRoot: own,
+    exists: has,
+  });
+});
+
+test("a failing resolver puts the first 200 chars of its stderr in the reason", () => {
+  const exec = () => {
+    const e = new Error("exit 1");
+    e.stderr = Buffer.from(`cannot find module ${"x".repeat(400)}`);
+    throw e;
+  };
+  const r = resolveIdInSpace({ space: "row", id: "1", repo: "/r", exec });
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /cannot find module x+/);
+  assert.ok(r.reason.length < 300);
+});
+
+test("workspaceOf: outside apps/* and packages/* the key is the top-level dir, or the file name at the root", () => {
+  assert.equal(workspaceOf("tools/ops-monitor/bin/rf.mjs"), "tools");
+  assert.equal(workspaceOf("docker-compose.yml"), "docker-compose.yml");
+  assert.equal(workspaceOf("scripts/lib/x.mjs"), "scripts");
+  assert.equal(workspaceOf("apps/api/src/a.ts"), "apps/api");
+});
+
+test("run 4 shape: a root docker-compose change and a tools/ change are never merged by the cap", () => {
+  const r = clusterBugs(
+    {
+      bugs: [
+        bug("599", ["docker-compose.yml", "apps/api/src/a.ts"]),
+        bug("W-652", ["tools/ops-monitor/x.mjs"]),
+      ],
+    },
+    { maxClusters: 1 },
+  );
+  assert.equal(r.overCap, true);
+  assert.equal(r.clusters.length, 1);
+  assert.equal(r.parked.length, 1);
+});
+
+test("an out-of-range numeric entity never crashes titlesMatch; it is left as text; ‹ « fold like › »", () => {
+  assert.doesNotThrow(() => titlesMatch("x &#x110000; y", "x &#99999999; y"));
+  assert.equal(titlesMatch("x &#x110000; y", "x &#x110000; y"), true);
+  assert.equal(titlesMatch("x &#99999999; y", "x y"), false);
+  assert.equal(titlesMatch("x &#xD800;", "x &#xD800;"), true);
+  assert.ok(titlesMatch("A ‹ B « C", "A &gt; B &gt; C"));
+});
+
+test("a malformed title in a manifest never crashes clusterBugs", () => {
+  const resolveId = () => ({ ok: true, title: "ok title" });
+  const r = clusterBugs(
+    { bugs: [{ ...bug("1", ["a.ts"]), resolvedTitle: "bad &#x110000; title" }] },
+    { resolveId },
+  );
+  assert.equal(r.unresolved.length, 1);
+});
+
+test("own-checkout resolver failure retries once with --repo's tool and reports both snippets", () => {
+  const own = path.resolve("/own");
+  const stale = path.resolve("/stale");
+  const calls = [];
+  const exec = (cmd, args) => {
+    calls.push(args[0]);
+    if (args[0].startsWith(own)) {
+      const e = new Error("x");
+      e.stderr = "own boom";
+      throw e;
+    }
+    return JSON.stringify({ title: "From repo" });
+  };
+  const exists = () => true;
+  const ok = resolveIdInSpace({ space: "row", id: "1", repo: stale, exec, ownRoot: own, exists });
+  assert.deepEqual(ok, { ok: true, title: "From repo" });
+  assert.equal(calls.length, 2);
+  const both = resolveIdInSpace({
+    space: "row",
+    id: "1",
+    repo: stale,
+    exec: (cmd, args) => {
+      const e = new Error("x");
+      e.stderr = args[0].startsWith(own) ? "own boom" : "repo boom";
+      throw e;
+    },
+    ownRoot: own,
+    exists,
+  });
+  assert.equal(both.ok, false);
+  assert.match(both.reason, /own boom/);
+  assert.match(both.reason, /repo boom/);
 });

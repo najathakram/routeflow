@@ -40,7 +40,7 @@ import { costDecimal, nextAverageCost, planLotConsumption, reverseAverageCost } 
 import { recordSaleMovement, resolveSaleCost } from "./sale-movement";
 import { poReversalNote, poReversalOf } from "./bill-revert";
 import { poGoodsUsedConflict, productsUsedSinceReceipt } from "./po-use-since-receipt";
-import { documentStockDate, type DocumentStockDate } from "./stock-write-date";
+import { documentStockDate, stockWriteDate, type DocumentStockDate } from "./stock-write-date";
 import { RecordPurchaseDto } from "./dto/record-purchase.dto";
 import { RecordAdjustmentDto } from "./dto/record-adjustment.dto";
 import { CommitStockCountDto } from "./dto/commit-stock-count.dto";
@@ -114,21 +114,8 @@ export const isReplayCorrection = (m: {
   m.type === MovementType.COST_BASIS &&
   new Prisma.Decimal(m.quantity).isZero() &&
   (m.reference?.startsWith(REPLAY_CORRECTION_PREFIX) ?? false);
-/** Clock-skew allowance for a client-sent "now" effective date. */
-const EFFECTIVE_DATE_SKEW_MS = 5 * 60 * 1000;
-/**
- * B562 PR-3: a stock write's accounting date — the given `effectiveDate` or now. A FUTURE date is
- * refused: it would sort after every real row still to come, so each later write would count it as
- * "newer" and replay against a movement that has not happened yet.
- */
-export function effectiveDateOf(raw: string | undefined, now = new Date()): Date {
-  if (!raw) return now;
-  const date = new Date(raw);
-  if (date.getTime() > now.getTime() + EFFECTIVE_DATE_SKEW_MS) {
-    throw new BadRequestException("The effective date can't be in the future.");
-  }
-  return date;
-}
+// Row 563: the date gate lives in stock-write-date.ts; re-exported for this module's existing spec.
+export { effectiveDateOf } from "./stock-write-date";
 /** Averages closer than this are the same cost (costDecimal keeps 4dp). */
 const AVG_CORRECTION_EPSILON = new Prisma.Decimal("0.0001");
 
@@ -324,7 +311,12 @@ export class InventoryService {
       explicitBoxed && unitsPerBox > 1 ? costDecimal(rawUnitCost.div(unitsPerBox)) : rawUnitCost;
 
     const qty = new Prisma.Decimal(qtyPieces);
-    const effectiveDate = effectiveDateOf(dto.effectiveDate);
+    // Row 563: a person-chosen date before a filed period's close is refused (409), never clamped.
+    const effectiveDate = await stockWriteDate(this.prisma.forTenant(), {
+      tenantId: this.prisma.getTenantId(),
+      productIds: [dto.productId],
+      raw: dto.effectiveDate,
+    });
 
     // SA-767 L-2 (B286 / #2840): lock the product, THEN read the stock and average the blend comes
     // from, inside the tx. The read above only validates (existence, sellable, pack size): a purchase
@@ -419,7 +411,12 @@ export class InventoryService {
     assertSellableLines([product]); // WS8: a FAMILY is never stocked (no StockLot / StockMovement)
 
     const qty = new Prisma.Decimal(dto.quantity);
-    const effectiveDate = effectiveDateOf(dto.effectiveDate);
+    // Row 563: a person-chosen date before a filed period's close is refused (409), never clamped.
+    const effectiveDate = await stockWriteDate(this.prisma.forTenant(), {
+      tenantId: this.prisma.getTenantId(),
+      productIds: [dto.productId],
+      raw: dto.effectiveDate,
+    });
 
     // SA-767 L-2: lock the product, then read the average the movement and the new lot are stamped
     // with INSIDE the tx (a purchase committing since the read above has moved it). The whole tx
@@ -1023,7 +1020,6 @@ export class InventoryService {
     }
     assertSellableLines(products); // WS8: a counted FAMILY would drain phantom stock into its variants
 
-    const effectiveDate = dto.effectiveDate ? new Date(dto.effectiveDate) : new Date();
     const reference = `STOCK_COUNT-${dto.sessionId}`;
     const restockedProductIds: string[] = [];
 
@@ -1056,6 +1052,13 @@ export class InventoryService {
             alreadyCommitted: true,
           };
         }
+        // Row 563: the date gate runs AFTER the idempotency read, so a lost-response replay of a count that already
+        // committed returns its result even if its month was filed since. A refusal writes nothing.
+        const effectiveDate = await stockWriteDate(tx, {
+          tenantId: this.prisma.getTenantId(),
+          productIds,
+          raw: dto.effectiveDate,
+        });
 
         const { movementIds, skipped } = await this.applyStockCountItemsInTx(tx, {
           items: dto.items,
@@ -3132,7 +3135,6 @@ export class InventoryService {
       this.refuseUncountableProducts(await this.readCountProducts(session.lines));
     }
 
-    const effectiveDate = dto.effectiveDate ? new Date(dto.effectiveDate) : new Date();
     const reference = stockCountReference(id);
 
     let held;
@@ -3141,7 +3143,7 @@ export class InventoryService {
         this.commitStockCountBatches({
           id,
           reference,
-          effectiveDate,
+          rawEffectiveDate: dto.effectiveDate,
           notes: dto.notes,
           finishWithSkips: dto.finishWithSkips === true,
           user,
@@ -3225,12 +3227,13 @@ export class InventoryService {
   private async commitStockCountBatches(args: {
     id: string;
     reference: string;
-    effectiveDate: Date;
+    /** Row 563: the person-chosen date, gated under the lock by `stockWriteDate` (missing = now). */
+    rawEffectiveDate?: string;
     notes?: string;
     finishWithSkips: boolean;
     user: { sub: string };
   }): Promise<StockCountCommitOutcome> {
-    const { id, reference, effectiveDate, notes, finishWithSkips, user } = args;
+    const { id, reference, rawEffectiveDate, notes, finishWithSkips, user } = args;
 
     // Under the lock: no edit is in flight and none can start. Re-read the session AND its lines - a
     // committer that waited out an edit sees the finished edit; one that waited out another committer
@@ -3261,6 +3264,14 @@ export class InventoryService {
       id,
     );
     if (overlaps.length > 0) throw productInOpenCount(overlaps);
+
+    // Row 563: the date gate, under the lock and AFTER the COMMITTED re-read above (a committed count is never refused),
+    // over ALL line products, before the first batch: a refusal writes nothing.
+    const effectiveDate = await stockWriteDate(this.prisma.forTenant(), {
+      tenantId: this.prisma.getTenantId(),
+      productIds: [...new Set(lines.map((l) => l.productId))],
+      raw: rawEffectiveDate,
+    });
 
     const countProducts = await this.readCountProducts(lines);
     const { productMap } = countProducts;
