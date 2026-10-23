@@ -148,7 +148,7 @@ import {
 } from "@routeflow/pricing";
 import { useCustomer, useCustomerPrices } from "@/lib/api/customers";
 import { PriceLayerNotice, pricesUnconfirmed } from "@/components/PriceLayerNotice";
-import { useOrderCustomerPricing, type SpecialLine } from "./_components/use-order-pricing";
+import { useCustomerLinePricing, type SpecialLine } from "@/lib/useCustomerLinePricing";
 import { useMarginConfig, floorForCategory } from "@/lib/api/margin";
 import { PriceEditRow } from "./price-edit-row";
 import { MoneyInput, DecimalInput } from "@/components/MoneyInput";
@@ -1677,7 +1677,7 @@ export default function OrderDetailPage() {
     [cpMap, customerTier],
   );
   const { priceLayer, tierPriceFor, isSpecialTierFor, isSpecialTierForProductId } =
-    useOrderCustomerPricing(order?.customerId, tierForProductId);
+    useCustomerLinePricing(order?.customerId, tierForProductId);
   // S19b: flag on, the customer's price layer must also have settled (a price is UNCONFIRMED while it reads or failed); flag
   // off it is ready at once, no request.
   const pricingReady =

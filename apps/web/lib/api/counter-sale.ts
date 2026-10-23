@@ -1,5 +1,6 @@
 import { rememberCounterSale } from "@/lib/counter-last-sale";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { markOrderCreatedHere } from "@/lib/order-created-echo";
 import type {
   CounterSalePaymentMethod,
   CounterSaleRequest,
@@ -95,6 +96,8 @@ export function useCreateCounterSale() {
         })
         .then((r) => r.data),
     onSuccess: (res, vars) => {
+      // W-708: this tab rang the sale; its realtime `order.created` echo is not "New order placed" (it covered the receipt).
+      markOrderCreatedHere(res.orderNumber);
       void qc.invalidateQueries({ queryKey: ["orders"] });
       void qc.invalidateQueries({ queryKey: ["invoices"] });
       // SA-837b item 3: an unrecorded payment may be re-sent with "Record anyway" (the same sale, the same key).
@@ -133,8 +136,11 @@ export function useCounterSaleByKey() {
           { params: { method } },
         )
         .then((r) => r.data),
-    // a recovered sale is a sale: today's list (under ["orders"]) refreshes like a normal one
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ["orders"] }),
+    // a recovered sale is a sale: today's list (under ["orders"]) refreshes like a normal one, and it is this tab's own (W-708)
+    onSuccess: (res) => {
+      markOrderCreatedHere(res.orderNumber);
+      void qc.invalidateQueries({ queryKey: ["orders"] });
+    },
   });
 }
 
