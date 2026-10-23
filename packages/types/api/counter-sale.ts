@@ -198,6 +198,11 @@ export interface PickupCompleteResponse {
   alreadyPickedUp?: boolean;
   /** I-120 (SA-861 rule 8): true when THIS call sent the ONE completion email (a named customer, the tender final). */
   emailed?: boolean;
+  /**
+   * I-120 (SA-872 cond. 2, SA-849 on the hand-over): the delivery credit gate counted this hand-over's till tender, the
+   * tender did not record, and without it the customer is over their limit (ENFORCED). Omitted otherwise.
+   */
+  creditOverLimit?: { limit: number; exposure: number };
 }
 
 // ─── Today's sales (register panel) — GET /orders/counter-sale/today ──────────────────────────

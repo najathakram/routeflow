@@ -44,6 +44,7 @@ import {
 } from "./fulfilment-capability-reader";
 import { tenantTodayDay } from "../../common/calendar-date";
 import { tenantTimeZone } from "../../common/tenant-time-zone";
+import { creditAfterTender } from "../credit-limit-guard";
 
 /** I-120 (SA-861 rule 3): the statuses "Complete at counter" finishes; DELIVERED is the replay. */
 const COMPLETABLE = new Set(["PENDING", "CONFIRMED", "OUT_FOR_DELIVERY"]);
@@ -58,6 +59,7 @@ type OrderRow = {
   customer: { isWalkIn: boolean | null } | null;
   counterSale?: boolean | null; // SA-750r3: a COUNTER order's tender is a till event (the day-close lock + window)
   registerKey?: string | null;
+  total?: unknown; // SA-849: what the B585 gate netted this hand-over's tender against
 };
 
 /**
@@ -119,6 +121,8 @@ export class PickupCompleteService {
     // I-120 (SA-861 rule 3): any not-yet-delivered order, any path (rule 4 switches it to Store pickup first). PICKUP_ONLY
     // is no longer thrown (it stays in the codes list).
     let alreadyPickedUp = order.status === "DELIVERED";
+    // SA-849 on the hand-over (SA-872 cond. 2): set only when THIS call's B585 gate netted the till tender.
+    let gateNetted: ((total: number) => number) | undefined;
     if (!alreadyPickedUp && !COMPLETABLE.has(order.status)) {
       throw new ConflictException({
         code: API_ERROR_CODES.PICKUP_NOT_READY,
@@ -190,6 +194,7 @@ export class PickupCompleteService {
           silent: true,
           creditPaidNow,
         });
+        gateNetted = creditPaidNow; // THIS call's gate counted the tender (a lost race netted nothing of ours)
       } catch (e) {
         const now = await this.readOrder(id);
         if (now?.status !== "DELIVERED") throw e;
@@ -263,7 +268,14 @@ export class PickupCompleteService {
         // The hand-over is already committed: a contended or unavailable lock must not turn into a 500
         // over a finished hand-over. It reads as an unrecorded payment (the retry finishes it). Errors
         // from inside the locked section are not lock errors and still propagate.
-        if (!(e instanceof LockTimeoutError || e instanceof LockUnavailableError)) throw e;
+        if (!(e instanceof LockTimeoutError || e instanceof LockUnavailableError)) {
+          // SA-849 path (d): a closed day's 409 after the hand-over committed gets the re-check's log + audit; the 409 is
+          // unchanged (SA-876: never replaced by a re-check that fails).
+          const code = (e as { getResponse?: () => { code?: string } })?.getResponse?.()?.code;
+          if (code === API_ERROR_CODES.COUNTER_SALE_DAY_CLOSED)
+            await this.creditRecheck(order, gateNetted, code, user).catch(() => undefined);
+          throw e;
+        }
         this.logger.warn(`pickup complete ${id}: tender lock not taken (${e.message})`);
         planError = API_ERROR_CODES.COUNTER_PAYMENT_NOT_RECORDED;
         invoices = await this.readInvoices(id);
@@ -274,11 +286,46 @@ export class PickupCompleteService {
     // neither the register nor the cashier, so a closed day's rows never gain a writer.
     await this.stampSoldBy(id, user);
 
+    // SA-849: the gate counted this tender and it did not fully record -> the ONE post-tender re-check (never blocks).
+    const creditOverLimit =
+      planError && planError !== API_ERROR_CODES.PICKUP_PAYMENT_REQUIRED
+        ? await this.creditRecheck(order, gateNetted, planError, user).catch(() => null)
+        : null;
+
     const emailed = await this.completionEmail(id, invoices, walkIn, planError, user);
     return {
       ...this.respond(order, invoices, shown, handedOverAt, planError, alreadyPickedUp, duplicate),
       ...(emailed ? { emailed: true } : {}),
+      ...(creditOverLimit ? { creditOverLimit } : {}),
     };
+  }
+
+  /**
+   * SA-849 (S1 S-1) on the hand-over: what THIS call's gate netted (`creditPaidNow` over the stored total) and, when it
+   * was anything, `creditAfterTender` (DARK warns; ENFORCED warns + audits once per order + answers the figures). A call
+   * whose gate did not run (already picked up, a lost race) netted nothing: no re-check.
+   */
+  private async creditRecheck(
+    order: OrderRow,
+    gateNetted: ((total: number) => number) | undefined,
+    planError: string,
+    user: JwtPayload,
+  ) {
+    if (!gateNetted) return null;
+    const total = Number(order.total ?? 0);
+    return creditAfterTender(
+      { prisma: this.prisma, entitlements: this.orders.entitlements, logger: this.logger },
+      {
+        tenantId: this.prisma.getTenantId(),
+        customerId: order.customerId,
+        orderId: order.id,
+        total,
+        netted: gateNetted(total),
+        planError,
+        actor: user.sub ?? null,
+        impersonatedBy: user.impersonatedBy ?? null,
+      },
+    );
   }
 
   /**
@@ -628,6 +675,7 @@ export class PickupCompleteService {
         customer: { select: { isWalkIn: true } },
         counterSale: true,
         registerKey: true,
+        total: true,
       },
     });
   }

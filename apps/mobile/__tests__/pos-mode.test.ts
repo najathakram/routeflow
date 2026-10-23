@@ -492,3 +492,50 @@ describe("M6 posSwitchToDeliveryHint", () => {
     }
   });
 });
+
+// I-120 (SA-872 cond. 2): the hand-over's credit-over-limit line, the ONE shared sentence (packages/types), appended to
+// what the screen shows for an unrecorded payment. Mirrors web's PickupCompleteDialog.
+describe("pickup-complete: the credit-over-limit line (I-120)", () => {
+  const res = (over: Record<string, unknown>) =>
+    ({
+      orderId: "o",
+      orderNumber: "1",
+      invoiceId: "i",
+      invoiceNumber: "I-1",
+      total: 25,
+      paid: 0,
+      balanceDue: 25,
+      paymentRecorded: false,
+      paymentErrorCode: "COUNTER_PAYMENT_NOT_RECORDED",
+      creditOverLimit: { limit: 20, exposure: 25 },
+      ...over,
+    }) as never;
+  const SENTENCE =
+    "Until this payment is recorded, Acme Co is over their credit limit ($25.00 of $20.00).";
+
+  it("an unrecorded netted tender: the one sentence follows the not-recorded message", () => {
+    const d = decidePickupResponse(res({}), "OPERATOR", "Acme Co");
+    expect(d.kind).toBe("done");
+    expect((d as { message: string }).message).toBe(
+      `Handed over, but the payment wasn't recorded. Record it on the invoice. ${SENTENCE}`,
+    );
+  });
+
+  it("no name: 'the customer'", () => {
+    const d = decidePickupResponse(res({}), "OPERATOR");
+    expect((d as { message: string }).message).toContain(
+      "Until this payment is recorded, the customer is over their credit limit",
+    );
+  });
+
+  it("nothing without the field, and nothing once the payment is recorded", () => {
+    const none = decidePickupResponse(res({ creditOverLimit: undefined }), "OPERATOR", "Acme Co");
+    expect((none as { message: string }).message).not.toContain("credit limit");
+    const paid = decidePickupResponse(
+      res({ paymentRecorded: true, paid: 25, balanceDue: 0 }),
+      "OPERATOR",
+      "Acme Co",
+    );
+    expect((paid as { message: string }).message).toBe("Handed over");
+  });
+});
