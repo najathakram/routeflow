@@ -1,5 +1,6 @@
 import * as React from "react";
-import { renderWithProviders, screen, waitFor, fireEvent } from "@/test-utils/render";
+import { screen, waitFor, fireEvent } from "@/test-utils/render";
+import { renderTill } from "@/test-utils/render-till";
 import { sanitizeParkedPayload } from "@routeflow/pricing";
 import { apiClient } from "@/lib/api-client";
 import {
@@ -136,7 +137,7 @@ const chooseCheck = async () => {
 
 describe("CounterSaleScreen: post-dated check", () => {
   it("a check defaults to the business's today: no message, and the sale carries that checkDate", async () => {
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("COLA");
     await chooseCheck();
     expect(screen.queryByText(SENTENCE)).toBeNull();
@@ -150,7 +151,7 @@ describe("CounterSaleScreen: post-dated check", () => {
   });
 
   it("an earlier date is tendered with that date", async () => {
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("COLA");
     await chooseCheck();
     fireEvent.change(screen.getByLabelText("Check date"), { target: { value: dayPlus(-3) } });
@@ -160,7 +161,7 @@ describe("CounterSaleScreen: post-dated check", () => {
   });
 
   it("a future date shows the sentence; Complete is refused with it and nothing is sent", async () => {
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("COLA");
     await chooseCheck();
     fireEvent.change(screen.getByLabelText("Check date"), { target: { value: dayPlus(1) } });
@@ -176,7 +177,7 @@ describe("CounterSaleScreen: post-dated check", () => {
   });
 
   it("a walk-in cannot put it on account: the button is disabled", async () => {
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("COLA");
     await chooseCheck();
     fireEvent.change(screen.getByLabelText("Check date"), { target: { value: dayPlus(1) } });
@@ -184,7 +185,7 @@ describe("CounterSaleScreen: post-dated check", () => {
   });
 
   it("a named customer: Put this sale on account switches the tender, hides the check fields, and sells on account with no checkDate", async () => {
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("COLA");
     fireEvent.change(screen.getByLabelText("Find a customer"), { target: { value: "acme" } });
     fireEvent.click(screen.getByRole("option", { name: "Acme Co" }));
@@ -204,7 +205,7 @@ describe("CounterSaleScreen: post-dated check", () => {
   });
 
   it("a new sale starts with a fresh date: the previous sale's date does not carry over", async () => {
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("COLA");
     await chooseCheck();
     fireEvent.change(screen.getByLabelText("Check date"), { target: { value: dayPlus(-1) } });
@@ -217,7 +218,7 @@ describe("CounterSaleScreen: post-dated check", () => {
   describe("the business's day is unknown (review round 1: never judged against UTC)", () => {
     it("zone still loading: Complete is refused with the loading copy, nothing is sent, and the fields say so", async () => {
       get.mockImplementation(() => new Promise(() => undefined));
-      renderWithProviders(<CounterSaleScreen />);
+      renderTill(<CounterSaleScreen />);
       await scan("COLA");
       fireEvent.click(screen.getByRole("radio", { name: "Check" }));
       fireEvent.change(screen.getByLabelText("Check number"), { target: { value: "1042" } });
@@ -237,7 +238,7 @@ describe("CounterSaleScreen: post-dated check", () => {
 
     it("zone read failed: refused with the failed copy and a Retry; a successful retry lets the sale through", async () => {
       get.mockRejectedValue(new Error("settings down"));
-      renderWithProviders(<CounterSaleScreen />);
+      renderTill(<CounterSaleScreen />);
       await scan("COLA");
       fireEvent.click(screen.getByRole("radio", { name: "Check" }));
       fireEvent.change(screen.getByLabelText("Check number"), { target: { value: "1042" } });
@@ -281,7 +282,7 @@ describe("CounterSaleScreen: post-dated check", () => {
       });
       try {
         settingsOk("Australia/Sydney");
-        renderWithProviders(<CounterSaleScreen />);
+        renderTill(<CounterSaleScreen />);
         await scan("COLA");
         fireEvent.click(screen.getByRole("radio", { name: "Check" }));
         await waitFor(() => expect(screen.getByLabelText("Check date")).toHaveValue("2026-10-22"));
@@ -298,7 +299,7 @@ describe("CounterSaleScreen: post-dated check", () => {
 
   describe("a typed check date survives park / resume, a refresh and a held sale (review round 1)", () => {
     it("park with a future date -> resume (through the real sanitizer) -> the date is back and Complete is refused", async () => {
-      renderWithProviders(<CounterSaleScreen />);
+      renderTill(<CounterSaleScreen />);
       await scan("COLA");
       await chooseCheck();
       fireEvent.change(screen.getByLabelText("Check date"), { target: { value: dayPlus(1) } });
@@ -317,7 +318,7 @@ describe("CounterSaleScreen: post-dated check", () => {
     });
 
     it("a refresh keeps the typed date (real write, real read) and Complete is still refused", async () => {
-      const view = renderWithProviders(<CounterSaleScreen />);
+      const view = renderTill(<CounterSaleScreen />);
       await scan("COLA");
       await chooseCheck();
       fireEvent.change(screen.getByLabelText("Check date"), { target: { value: dayPlus(1) } });
@@ -327,7 +328,7 @@ describe("CounterSaleScreen: post-dated check", () => {
         expect(saved && JSON.parse(saved).checkDate).toBe(dayPlus(1));
       });
       view.unmount();
-      renderWithProviders(<CounterSaleScreen />);
+      renderTill(<CounterSaleScreen />);
       await screen.findByTestId("counter-cart-restored");
       await waitFor(() => expect(screen.getByLabelText("Check date")).toHaveValue(dayPlus(1)));
       fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
@@ -339,7 +340,7 @@ describe("CounterSaleScreen: post-dated check", () => {
 
     it("a held (outcome unknown) sale: the retry sends the typed checkDate, and a restored held sale SHOWS it, not today", async () => {
       mutateAsync.mockRejectedValueOnce(new Error("Network Error"));
-      const view = renderWithProviders(<CounterSaleScreen />);
+      const view = renderTill(<CounterSaleScreen />);
       await scan("COLA");
       await chooseCheck();
       fireEvent.change(screen.getByLabelText("Check date"), { target: { value: dayPlus(-2) } });
@@ -347,7 +348,7 @@ describe("CounterSaleScreen: post-dated check", () => {
       await screen.findByTestId("counter-outcome-unknown");
       expect(mutateAsync.mock.calls[0][0].dto.payment.checkDate).toBe(dayPlus(-2));
       view.unmount();
-      renderWithProviders(<CounterSaleScreen />);
+      renderTill(<CounterSaleScreen />);
       await screen.findByTestId("counter-outcome-unknown");
       expect(screen.getByLabelText("Check date")).toHaveValue(dayPlus(-2)); // RED on the old code: it showed today
       fireEvent.click(screen.getByRole("button", { name: "Try again" }));
@@ -357,7 +358,7 @@ describe("CounterSaleScreen: post-dated check", () => {
   });
 
   it("Put this sale on account clears the post-dated alert and lands focus on the On account tender", async () => {
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("COLA");
     fireEvent.change(screen.getByLabelText("Find a customer"), { target: { value: "acme" } });
     fireEvent.click(screen.getByRole("option", { name: "Acme Co" }));
