@@ -5,6 +5,7 @@
 
 import {
   BULK_STATE_MAX_CUSTOMERS,
+  STAFF_ORDERS_SWITCH_LABEL,
   UNKNOWN_STATE_BUCKET_VALUES,
   UNKNOWN_STATE_PAGE_DEFAULT,
   type AddressStateResponse,
@@ -36,8 +37,8 @@ export const TRUNCATED_LINE =
   "Your customer list is too large to check all at once, so some customers may still need a state.";
 
 /** The label of the tenant switch on the Selling restrictions page; the OFF copy quotes it. */
-export const STAFF_ORDERS_SWITCH_LABEL =
-  "Also block restricted products on staff orders and invoices";
+// The switch label lives once in @routeflow/types (the rule-edit impact copy quotes it too); re-exported for this module's users.
+export { STAFF_ORDERS_SWITCH_LABEL };
 
 /**
  * What a missing state does, by the staff-orders switch: the portal always hides legal bans; staff orders are checked
