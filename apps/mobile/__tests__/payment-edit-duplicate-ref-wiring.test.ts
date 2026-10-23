@@ -1,6 +1,7 @@
 import { readFileSync } from "fs";
 import { join } from "path";
 import type { UpdatePaymentDto } from "../lib/api/payments";
+import { editPaymentDto } from "../lib/payments-logic";
 
 // W-718 (row 752 follow-up): the payment EDIT screen answers a 409 DUPLICATE_PAYMENT_REF like the record-payment
 // screens: the shared prompt through chooseAction, and for staff "Record anyway" resends the SAME edit with
@@ -20,19 +21,44 @@ describe("payment edit: a duplicate reference offers Record anyway (W-718)", () 
     expect(body).toMatch(/chooseAction\(/);
   });
 
-  it("the resend carries recordAnyway: true on the same body; a first save never does", () => {
+  it("the screen sends editPaymentDto(fields, recordAnyway); a first save passes false", () => {
     expect(src).toMatch(/const submit = \(recordAnyway = false\) =>/);
-    expect(src).toMatch(/\.\.\.\(recordAnyway \? \{ recordAnyway: true \} : \{\}\)/);
+    expect(src).toMatch(/mut\.mutate\(\s*editPaymentDto\([\s\S]*?,\s*recordAnyway,?\s*\)/);
+    expect(src).toMatch(/onSubmit=\{\(\) => submit\(\)\}/);
+  });
+});
+
+// #3657 review NIT: pin the SENT body, not only the source text.
+describe("editPaymentDto: the body the edit screen sends (W-718)", () => {
+  const fields = {
+    invoiceId: "inv-1",
+    paymentId: "pay-1",
+    method: "CHECK" as const,
+    amount: 40,
+    reference: " 1042 ",
+    notes: "",
+    bankCharges: "",
+    paidAt: "2026-10-05",
+    settledAt: "",
+  };
+  const first: UpdatePaymentDto = editPaymentDto(fields, false);
+
+  it("a first save: trimmed fields, an emptied bank date sent as null, and no flag", () => {
+    expect(first).toEqual({
+      invoiceId: "inv-1",
+      paymentId: "pay-1",
+      method: "CHECK",
+      amount: 40,
+      reference: "1042",
+      notes: undefined,
+      bankCharges: undefined,
+      paidAt: "2026-10-05",
+      settledAt: null,
+    });
+    expect("recordAnyway" in first).toBe(false);
   });
 
-  it("the edit DTO carries the flag", () => {
-    const dto: UpdatePaymentDto = {
-      invoiceId: "i",
-      paymentId: "p",
-      method: "CHECK",
-      amount: 1,
-      recordAnyway: true,
-    };
-    expect(dto.recordAnyway).toBe(true);
+  it("Record anyway: the SAME body plus recordAnyway: true", () => {
+    expect(editPaymentDto(fields, true)).toEqual({ ...first, recordAnyway: true });
   });
 });
