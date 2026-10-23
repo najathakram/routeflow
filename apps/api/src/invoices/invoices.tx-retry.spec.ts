@@ -183,7 +183,7 @@ describe("#2255 Serializable invoice transactions retry on conflict, guards re-r
   it("sendEmail(): VOID committed before the pre-check ⇒ 400, NO email, nothing written", async () => {
     prisma.invoice.findUnique
       .mockResolvedValueOnce(invoice(InvoiceStatus.SENT)) // pre-tx read
-      .mockResolvedValue(invoice(InvoiceStatus.VOID)); // the snapshot tx's locked re-read's locked re-read
+      .mockResolvedValue(invoice(InvoiceStatus.VOID)); // the snapshot tx's locked re-read
     await expect(service.sendEmail(INVOICE_ID)).rejects.toThrow("Cannot send a voided invoice");
     expect(email.sendInvoice).not.toHaveBeenCalled();
     expect(prisma.invoice.update).not.toHaveBeenCalled();

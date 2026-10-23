@@ -62,4 +62,62 @@ describe("W-702 the email snapshot (SA-860)", () => {
     );
     expect(pdf.match(/invoice\.findUnique\(/g)).toHaveLength(1);
   });
+
+  // SA-874 MUST 2: a non-DB effect added anywhere the dry run reaches would fire inside a ROLLED-BACK tx (clients told of
+  // credits that never committed). So the pin walks the credit code itself: the three entry methods and every method of
+  // the same class they call (transitively), plus the commission sync the credit application runs.
+  const classBody = (src: string, name: string) => {
+    const re = new RegExp(`\\n  (?:private |public |protected )?(?:async )?${name}\\s*\\(`);
+    const m = re.exec(src);
+    expect(m).not.toBeNull();
+    const start = (m as RegExpExecArray).index;
+    const end = src.indexOf("\n  }\n", start);
+    expect(end).toBeGreaterThan(start);
+    return src.slice(start, end);
+  };
+  const FORBIDDEN =
+    /this\.(gateway|messaging|storage|emailService|pdfService|notifications|email)\b|\bemit[A-Z]\w*\(|notifyEvent\(|\.notify\(|sendInvoice\(|\.upload\(|getOrGenerate\(|afterCommit\(|onCommit\(|runAfterCommit\(/;
+
+  it("R6 (SA-874): the credit code the dry run executes has no non-DB effect and no after-commit hook", () => {
+    const credits = readFileSync(
+      join(__dirname, "../credit-notes/credit-notes.service.ts"),
+      "utf8",
+    );
+    const seen = new Set<string>();
+    const queue = ["settleOrderCreditsInTx", "autoApplyOldestCreditsInTx", "applyCreditInTx"];
+    while (queue.length) {
+      const name = queue.shift() as string;
+      if (seen.has(name)) continue;
+      seen.add(name);
+      const body = classBody(credits, name);
+      expect({ method: name, hit: FORBIDDEN.exec(body)?.[0] ?? null }).toEqual({
+        method: name,
+        hit: null,
+      });
+      for (const m of body.matchAll(/this\.([A-Za-z_]\w*)\(/g)) {
+        const callee = m[1];
+        if (
+          !seen.has(callee) &&
+          new RegExp(`\\n  (?:private |public |protected )?(?:async )?${callee}\\s*\\(`).test(
+            credits,
+          )
+        ) {
+          queue.push(callee);
+        }
+      }
+    }
+    // the walk really reached helpers (so the pin is not vacuous)
+    expect(seen.size).toBeGreaterThan(3);
+    // the commission sync applyCreditInTx runs: a SAVEPOINT inside the caller's tx, no emit
+    const engine = readFileSync(
+      join(__dirname, "../sales-agents/commission-engine.service.ts"),
+      "utf8",
+    );
+    for (const name of ["syncInvoiceCommissionSafe", "logSyncFailure"]) {
+      expect({ method: name, hit: FORBIDDEN.exec(classBody(engine, name))?.[0] ?? null }).toEqual({
+        method: name,
+        hit: null,
+      });
+    }
+  });
 });

@@ -226,6 +226,13 @@ describe("InvoicesService — send()/sendEmail() settle-before-sweep (TP-INV)", 
       "settleOrderCreditsInTx",
       "autoApplyOldestCreditsInTx",
     ]);
+    // and the two settle/sweep pairs ran on DIFFERENT transactions: the dry run's (rolled back), then markSent's
+    const settleTx = creditNotes.settleOrderCreditsInTx.mock.calls.map((c: unknown[]) => c[0]);
+    const sweepTx = creditNotes.autoApplyOldestCreditsInTx.mock.calls.map((c: unknown[]) => c[0]);
+    expect(settleTx).toHaveLength(2);
+    expect(settleTx[0]).not.toBe(settleTx[1]);
+    expect(sweepTx[0]).toBe(settleTx[0]);
+    expect(sweepTx[1]).toBe(settleTx[1]);
     expect(creditNotes.settleOrderCreditsInTx).toHaveBeenCalledWith(expect.anything(), ORDER_ID);
     expect(creditNotes.autoApplyOldestCreditsInTx).toHaveBeenCalledWith(
       expect.anything(),

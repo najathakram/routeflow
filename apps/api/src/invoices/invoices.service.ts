@@ -3673,16 +3673,24 @@ export class InvoicesService {
     // SA-860: verify after the commit. The money truth is the real tx; if the live invoice no longer hashes to what was
     // emailed (a concurrent credit or edit between the dry run and the commit), append ONE correction record with fp null
     // (the newest row decides: "emailed, changes can't be checked"). Never refuse and never roll back: the email has gone.
-    const live = await invoiceFingerprintOf(this.prisma, this.featureConfig, id, stage);
-    if (live !== fingerprint) {
-      await recordInvoiceEmailed(this.prisma, {
-        id,
-        actorId,
-        to: recipientEmail,
-        fingerprint: null,
-        variant,
-        note: "the copy emailed may not match the credits applied",
-      });
+    // Best-effort: the email went and the money committed, so a failed re-read must not turn this into a 500 or skip the
+    // emit and the notification below; the record then simply stays the snapshot's.
+    try {
+      const live = await invoiceFingerprintOf(this.prisma, this.featureConfig, id, stage);
+      if (live !== fingerprint) {
+        await recordInvoiceEmailed(this.prisma, {
+          id,
+          actorId,
+          to: recipientEmail,
+          fingerprint: null,
+          variant,
+          note: "the copy emailed may not match the credits applied",
+        });
+      }
+    } catch (err) {
+      this.logger.warn(
+        `invoice ${id}: the post-send fingerprint check failed (${err instanceof Error ? err.message : String(err)})`,
+      );
     }
     this.gateway.emitInvoiceUpdated(this.prisma.getTenantId(), {
       invoiceId: updated.id,

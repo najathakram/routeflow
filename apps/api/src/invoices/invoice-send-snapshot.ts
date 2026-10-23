@@ -6,7 +6,11 @@ import { retryCreditTx } from "../common/tx-retry";
 import type { PrismaService } from "../prisma/prisma.service";
 import { lockInvoiceRow, sendRefusal } from "./invoice-send-guard";
 import { BILL_TO_ADDRESS_ORDER } from "./invoice-bill-to";
-import { invoiceFingerprint } from "./invoice-send-state";
+import {
+  FINGERPRINT_ITEM_ORDER,
+  FINGERPRINT_PAYMENT_ORDER,
+  invoiceFingerprint,
+} from "./invoice-send-state";
 import { resolveInvoiceVariant } from "./invoice-stage";
 
 /**
@@ -16,8 +20,8 @@ import { resolveInvoiceVariant } from "./invoice-stage";
  *
  * It is the PDF service's include (customer + every bill-to address, items with product codes / levy category /
  * components, every non-VOID payment with its credit note, the order) with the customer's email added (the recipient
- * check) and the payment listing ordered `paidAt` then `id` (the order `FINGERPRINT_INCLUDE` hashes in, so the snapshot's
- * fingerprint equals the live one for the same rows).
+ * check) and the item and payment orders of `FINGERPRINT_INCLUDE` (SA-874), so the snapshot's fingerprint equals the live one
+ * for the same rows.
  */
 export const SEND_SNAPSHOT_INCLUDE = {
   customer: {
@@ -31,6 +35,7 @@ export const SEND_SNAPSHOT_INCLUDE = {
     },
   },
   items: {
+    orderBy: FINGERPRINT_ITEM_ORDER, // SA-874: the SAME order the live fingerprint reads
     include: {
       product: { select: { id: true, name: true, barcode: true, sku: true, unitSku: true } },
       // CQ-03: the category row names the levy charge ("CRV deposit")
@@ -45,7 +50,7 @@ export const SEND_SNAPSHOT_INCLUDE = {
   // scan-ok: draft-payment-not-void - intentional LISTING filter (R2); the money narrows via sumConfirmed, never this where-clause.
   payments: {
     where: { status: { not: "VOID" } },
-    orderBy: [{ paidAt: "asc" }, { id: "asc" }],
+    orderBy: FINGERPRINT_PAYMENT_ORDER, // SA-874: the SAME order the live fingerprint reads
     include: { creditNote: { select: { creditNoteNumber: true, reason: true } } },
   },
   order: { select: { status: true, fulfillPath: true, shippedAt: true, counterSale: true } },

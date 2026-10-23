@@ -32,6 +32,8 @@ import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 import { ProductLabelsService } from "../product-labels/product-labels.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-authority-provider";
+import { FINGERPRINT_INCLUDE, invoiceFingerprint } from "./invoice-send-state";
+import { SEND_SNAPSHOT_INCLUDE } from "./invoice-send-snapshot";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -330,12 +332,126 @@ describeDb("SA-860 the email snapshot, real Postgres", () => {
     );
     // the order is delivered so the DRAFT invoice is sendable
     await prisma.order.update({ where: { id: order.id }, data: { status: "DELIVERED" } });
+    let atPdf: Record<string, number> = {};
+    pdf.getOrGenerate.mockImplementation(async () => {
+      // SA-874: the settle path (an order intent) is the one R1 never runs; none of these may have fired during the dry run
+      atPdf = {
+        gateway: gateway.emitInvoiceUpdated.mock.calls.length,
+        messaging: messaging.notifyEvent.mock.calls.length + messaging.notify.mock.calls.length,
+        email: email.sendInvoice.mock.calls.length,
+        storage: storage.upload.mock.calls.length,
+      };
+      return undefined;
+    });
 
     await send(tenantId, id);
+
+    expect(atPdf).toEqual({ gateway: 0, messaging: 0, email: 0, storage: 0 });
 
     expect(email.sendInvoice.mock.calls[0][0]).toMatchObject({ balanceDue: 60, creditApplied: 40 });
     expect(await creditRows(id)).toHaveLength(1);
   }, 120_000);
+
+  describe("SA-874 MUST 1: the dry run and the commit hash the same rows alike", () => {
+    // ONE invoice with 4 lines created in a single nested create: they share createdAt and get random uuids
+    const seedMultiLine = async (tenantId: string, customerId: string) => {
+      seq += 1;
+      const inv = await prisma.invoice.create({
+        data: {
+          tenantId,
+          customerId,
+          invoiceNumber: `INV-860-${RUN}-${seq}`,
+          status: "DRAFT",
+          subtotal: 100,
+          total: 100,
+          items: {
+            create: [1, 2, 3, 4].map((n) => ({
+              tenantId,
+              description: `line ${n}`,
+              qty: 1,
+              unitPrice: 25,
+              taxRate: 0,
+              subtotal: 25,
+            })),
+          },
+        } as any,
+      });
+      return inv.id as string;
+    };
+    const fp = (inv: any) => invoiceFingerprint({ ...inv, variant: "final" });
+
+    it("M1a: a multi-line invoice whose lines share createdAt reads in ONE item order through both includes", async () => {
+      const { tenantId, customerId } = await seedTenant("m1a", true);
+      const id = await seedMultiLine(tenantId, customerId);
+      const live = await prisma.invoice.findUnique({ where: { id }, include: FINGERPRINT_INCLUDE });
+      const snap = await prisma.invoice.findUnique({
+        where: { id },
+        include: SEND_SNAPSHOT_INCLUDE,
+      });
+      expect(snap!.items.map((i) => i.id)).toEqual(live!.items.map((i) => i.id));
+      expect(fp(snap)).toBe(fp(live));
+    }, 120_000);
+
+    it("M1b: two payments with an identical paidAt and ids in the REVERSE of content order read in content order through both includes", async () => {
+      const { tenantId, customerId } = await seedTenant("m1b", true);
+      const id = await seedDraftInvoice(tenantId, customerId, 100);
+      const paidAt = new Date("2026-10-05T12:00:00.000Z");
+      // ids chosen so id order is the reverse of amount (content) order
+      await prisma.invoicePayment.create({
+        data: {
+          id: "ffffffff-0000-4000-8000-000000000001",
+          invoiceId: id,
+          tenantId,
+          amount: 10,
+          method: "CASH",
+          status: "PAID",
+          paidAt,
+        } as any,
+      });
+      await prisma.invoicePayment.create({
+        data: {
+          id: "00000000-0000-4000-8000-000000000002",
+          invoiceId: id,
+          tenantId,
+          amount: 20,
+          method: "CASH",
+          status: "PAID",
+          paidAt,
+        } as any,
+      });
+      const live = await prisma.invoice.findUnique({ where: { id }, include: FINGERPRINT_INCLUDE });
+      const snap = await prisma.invoice.findUnique({
+        where: { id },
+        include: SEND_SNAPSHOT_INCLUDE,
+      });
+      const contentOrder = [10, 20];
+      expect(live!.payments.map((x) => Number(x.amount))).toEqual(contentOrder);
+      expect(snap!.payments.map((x) => Number(x.amount))).toEqual(contentOrder);
+    }, 120_000);
+
+    it("M1c: an issuing send that applies TWO open notes records exactly one send and reads unchanged", async () => {
+      const { tenantId, customerId } = await seedTenant("m1c", true);
+      const id = await seedDraftInvoice(tenantId, customerId, 100);
+      await seedCredit(tenantId, customerId, 30);
+      await seedCredit(tenantId, customerId, 30);
+
+      await send(tenantId, id);
+
+      expect(await creditRows(id)).toHaveLength(2);
+      expect(await emailedRows(id)).toHaveLength(1);
+      expect((await sendState(tenantId, id)).state).toBe("unchanged");
+    }, 120_000);
+
+    it("an ordinary multi-line send (lines sharing createdAt) records one send and reads unchanged", async () => {
+      const { tenantId, customerId } = await seedTenant("mline", true);
+      const id = await seedMultiLine(tenantId, customerId);
+
+      await send(tenantId, id);
+
+      expect(await emailedRows(id)).toHaveLength(1);
+      expect((await sendState(tenantId, id)).state).toBe("unchanged");
+    }, 120_000);
+  });
 
   it("R5: a re-send of an issued invoice shows and moves no new credit; its fingerprint is the snapshot's", async () => {
     const { tenantId, customerId } = await seedTenant("r5", true);
