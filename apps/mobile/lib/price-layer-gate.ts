@@ -74,3 +74,19 @@ export function confirmedPrice(
 ): number | null {
   return status.lineReady(productId) ? clp.price : null;
 }
+
+/**
+ * SA-882 (W-741): the price shown for a product NOT yet added. Null (the caller renders "…") while the customer pricing gate
+ * blocks the pick: an unread or failed customer read resolves the tier to 1, so the number would be LIST shown as the
+ * customer's price. Otherwise `confirmedPrice` (the layer's own rule). No customer chosen: the catalogue price.
+ */
+export function shownPrice(
+  gate: { blockPick: boolean },
+  customerId: string | null | undefined,
+  status: Pick<PriceLayerStatus, "lineReady">,
+  productId: string | null | undefined,
+  clp: Pick<CustomerLinePrice, "price">,
+): number | null {
+  if (customerId && gate.blockPick) return null;
+  return confirmedPrice(status, productId, clp);
+}
