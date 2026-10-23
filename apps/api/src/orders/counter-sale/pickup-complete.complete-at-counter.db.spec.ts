@@ -69,17 +69,22 @@ describeDb("I-120 Complete at counter — real Postgres", () => {
   };
 
   /** A PENDING / CONFIRMED order with one line and its DRAFT invoice (total 0: nothing owed, no tender). */
-  async function seed(status: string, fulfillPath: "ROUTE" | "SHIP" | "PICKUP") {
+  async function seed(
+    status: string,
+    fulfillPath: "ROUTE" | "SHIP" | "PICKUP",
+    over: { total?: number; customerId?: string } = {},
+  ) {
     n += 1;
+    const total = String(over.total ?? 0);
     const order = await raw.order.create({
       data: {
-        customerId,
+        customerId: over.customerId ?? customerId,
         tenantId,
         status: status as never,
         fulfillPath: fulfillPath as never,
         orderNumber: `I120-${run}-${n}`,
-        subtotal: "0",
-        total: "0",
+        subtotal: total,
+        total,
       },
     });
     orderIds.push(order.id);
@@ -89,12 +94,12 @@ describeDb("I-120 Complete at counter — real Postgres", () => {
     const invoice = await raw.invoice.create({
       data: {
         invoiceNumber: `INV-I120-${run}-${n}`,
-        customerId,
+        customerId: over.customerId ?? customerId,
         orderId: order.id,
         tenantId,
         status: "DRAFT",
-        subtotal: 0,
-        total: 0,
+        subtotal: Number(total),
+        total: Number(total),
       },
     });
     invoiceIds.push(invoice.id);
@@ -161,6 +166,7 @@ describeDb("I-120 Complete at counter — real Postgres", () => {
   afterAll(async () => {
     try {
       await raw.auditLog.deleteMany({ where: { tenantId } });
+      await raw.systemConfig.deleteMany({ where: { tenantId } });
       await raw.invoicePayment.deleteMany({ where: { invoiceId: { in: invoiceIds } } });
       await raw.invoice.deleteMany({ where: { id: { in: invoiceIds } } });
       await raw.orderItem.deleteMany({ where: { orderId: { in: orderIds } } });
@@ -238,5 +244,64 @@ describeDb("I-120 Complete at counter — real Postgres", () => {
       "DRAFT",
     );
     expect(email).not.toHaveBeenCalled();
+  }, 60_000);
+
+  // SA-905 MUST 1: the delivery credit gate (B585, netted) is judged BEFORE the first write. Head: the refusal came at the
+  // DELIVERED step, after the switch to Store pickup and the silent PENDING -> CONFIRMED had committed.
+  it("M1 enforce_delivery ON, an over-limit customer, a PENDING ROUTE order on account: 409 with path ROUTE, status PENDING, nothing sent", async () => {
+    await raw.customer.update({ where: { id: customerId }, data: { creditLimit: "50" } });
+    await raw.systemConfig.create({
+      data: { tenantId, key: "credit_limit.enforce_delivery", value: "true" },
+    });
+    try {
+      const { orderId, invoiceId } = await seed("PENDING", "ROUTE", { total: 100 });
+      const err: any = await complete(orderId).catch((e) => e);
+      expect(err?.getStatus?.()).toBe(409);
+      expect(err.getResponse()).toMatchObject({ code: "CREDIT_LIMIT_EXCEEDED" });
+      const after = await raw.order.findUniqueOrThrow({ where: { id: orderId } });
+      expect({ path: after.fulfillPath, status: after.status }).toEqual({
+        path: "ROUTE",
+        status: "PENDING",
+      });
+      expect((await raw.invoice.findUniqueOrThrow({ where: { id: invoiceId } })).status).toBe(
+        "DRAFT",
+      );
+      expect(sent).toEqual([]);
+      expect(email).not.toHaveBeenCalled();
+    } finally {
+      await raw.systemConfig.deleteMany({
+        where: { tenantId, key: "credit_limit.enforce_delivery" },
+      });
+      await raw.customer.update({ where: { id: customerId }, data: { creditLimit: null } });
+    }
+  }, 60_000);
+
+  // SA-905 MUST 2 (a): a different key after an on-account completion (no hand-over tender, so the claim is replaced) must
+  // not erase the email flag. Head: the replacement dropped completionEmailedAt and a second email went.
+  it("M2a an on-account completion, then a request with a DIFFERENT key: no second email", async () => {
+    const { orderId } = await seed("PENDING", "ROUTE");
+    await as(() => engine().complete(orderId, {} as never, operator(), `key-${run}-m2a-1`));
+    await as(() => engine().complete(orderId, {} as never, operator(), `key-${run}-m2a-2`));
+    expect(email).toHaveBeenCalledTimes(1);
+  }, 60_000);
+
+  // SA-905 MUST 2 (b): two concurrent same-key calls (a client retry while the first is still sending) send exactly once.
+  it("M2b two concurrent same-key calls, the send slow: exactly 1 email", async () => {
+    const { orderId } = await seed("CONFIRMED", "PICKUP");
+    email.mockImplementation(async () => {
+      await new Promise((r) => setTimeout(r, 400));
+      return { delivered: true };
+    });
+    try {
+      const key = `key-${run}-m2b`;
+      const results = await Promise.allSettled([
+        as(() => engine().complete(orderId, {} as never, operator(), key)),
+        as(() => engine().complete(orderId, {} as never, operator(), key)),
+      ]);
+      expect(results.every((r) => r.status === "fulfilled")).toBe(true);
+      expect(email).toHaveBeenCalledTimes(1);
+    } finally {
+      email.mockImplementation(async () => ({ delivered: true }));
+    }
   }, 60_000);
 });

@@ -126,6 +126,7 @@ describe("PickupCompleteService.complete — the day-close lock and window (SA-7
         {
           provide: OrdersService,
           useValue: {
+            assertDeliveryCreditGate: jest.fn(async () => undefined), // SA-905: the pre-judge (its own spec pins it)
             changeStatus: jest.fn(async () => {
               order = { ...order, status: "DELIVERED", deliveredAt: new Date(T_DELIVERED) };
               return order;
@@ -166,6 +167,7 @@ describe("PickupCompleteService.complete — the day-close lock and window (SA-7
         key: "ord-1",
         sharedAlso: { family: "counter-close", key: "test-tenant:main" },
       },
+      { family: "counter-tender", key: "ord-1", sharedAlso: undefined }, // SA-905: the completion email, no money
     ]);
   });
 
@@ -308,6 +310,7 @@ describe("PickupCompleteService.complete — a POS-mode PICKUP order's cash coun
         {
           provide: OrdersService,
           useValue: {
+            assertDeliveryCreditGate: jest.fn(async () => undefined), // SA-905: the pre-judge (its own spec pins it)
             changeStatus: jest.fn(async () => {
               order = { ...order, status: "DELIVERED", deliveredAt: new Date(T_DELIVERED) };
               return order;

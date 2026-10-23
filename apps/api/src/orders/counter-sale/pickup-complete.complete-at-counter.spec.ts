@@ -48,6 +48,7 @@ describe("PickupCompleteService.complete: Complete at counter (I-120, SA-861)", 
   let capability: any;
   const calls: string[] = [];
   const orders = {
+    assertDeliveryCreditGate: jest.fn(async () => undefined), // SA-905: the pre-judge
     changeStatus: jest.fn(),
     updateFulfillPath: jest.fn(),
   };

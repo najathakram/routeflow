@@ -2338,11 +2338,7 @@ export class OrdersService implements OnApplicationBootstrap {
       (dto.status === OrderStatus.OUT_FOR_DELIVERY &&
         order.status !== OrderStatus.PARTIALLY_DELIVERED) ||
       (dto.status === OrderStatus.DELIVERED && !alreadyOut);
-    if (goodsLeaving) {
-      const projectedTotal = creditProjectedTotal(Number(order.total), opts); // S1 netting (I-120)
-      const p = { customerId: order.customerId, projectedTotal };
-      await this.creditGate({ ...p, excludeOrderId: id, action: "delivery", principal: user });
-    }
+    if (goodsLeaving) await this.assertDeliveryCreditGate(order, user, opts);
 
     // Refuse the cancel BEFORE writing the status — a rejection must leave the order exactly as it
     // was. A DRAFT demotion is refused the same way (#3207 D1): it credits all the stock back and a
@@ -4423,6 +4419,20 @@ export class OrdersService implements OnApplicationBootstrap {
       entitlements: this.entitlements,
       logger: this.logger,
     });
+  }
+
+  /**
+   * B585: the goods-leaving (delivery) credit gate, netted (S1: `creditPaidNow`). The ONE entry: changeStatus runs it,
+   * and Complete at counter pre-judges with it before its first write (SA-905 MUST 1). Reads only.
+   */
+  assertDeliveryCreditGate(
+    order: { id: string; customerId: string; total: unknown },
+    user: JwtPayload,
+    opts: ChangeStatusOpts = {},
+  ): Promise<void> {
+    const projectedTotal = creditProjectedTotal(Number(order.total), opts);
+    const p = { customerId: order.customerId, projectedTotal, excludeOrderId: order.id };
+    return this.creditGate({ ...p, action: "delivery", principal: user });
   }
 
   /** B585: the credit check at an enforcement point; MUST run before any write / stock tx. */
