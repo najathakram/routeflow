@@ -834,6 +834,7 @@ test("settings.json: the old trackers are retired, the ops hooks are appended, t
   );
   assert.ok(start_.includes("node scripts/check-git-hooks.mjs --warn"), "git-hooks warning kept");
   assert.ok(start_.includes("node .claude/hooks/ops-brief.mjs"), "ops brief on SessionStart");
+  assert.ok(start_.includes("node .claude/hooks/ops-status.mjs"), "status file on SessionStart");
   assert.deepEqual(cmds("UserPromptSubmit"), [
     { matcher: null, command: "node .claude/hooks/ops-brief.mjs" },
   ]);
@@ -852,7 +853,11 @@ test("settings.json: the old trackers are retired, the ops hooks are appended, t
   );
   assert.deepEqual(
     cmds("Stop").map((c) => c.command),
-    ["node .claude/hooks/stop.mjs", "node .claude/hooks/ops-stop.mjs"],
+    [
+      "node .claude/hooks/stop.mjs",
+      "node .claude/hooks/ops-stop.mjs",
+      "node .claude/hooks/ops-status.mjs",
+    ],
   );
   assert.ok(
     Array.isArray(settings.permissions.allow) && settings.permissions.allow.includes("WebFetch"),

@@ -18,6 +18,7 @@ const MOUNTED: Array<[tag: string, file: string]> = [
   ["ProductPortalVisibilityCard", "ProductPortalVisibilityCard.tsx"],
   ["ProductUnitsCard", "ProductUnitsCard.tsx"],
   ["DemandCard", "DemandCard.tsx"],
+  ["OpenOrdersCard", "OpenOrdersCard.tsx"],
   ["SalesHistoryCard", "SalesHistoryCard.tsx"],
   ["ProductInsightsExport", "ProductInsightsExport.tsx"],
   ["LegacyVariantsActions", "LegacyVariantsActions.tsx"],
@@ -31,12 +32,15 @@ describe("product page parity inventory (T38)", () => {
     expect(fs.existsSync(path.join(__dirname, file))).toBe(true);
   });
 
-  it("K14 (owner: Remove it): the old Units card is absent when the v2 grid owns the controls (cardRo)", () => {
+  it("row 742 (owner: keep structure, drop prices): under v2 the old card is only on a variant or recipe, structure only", () => {
     expect(page).not.toMatch(/const v2Family/);
+    expect(page).not.toMatch(/cardRo/);
     // K10d: the v2 flag also drops the old always-open Add form (the shell's Add a unit replaces it)
     expect(page).toMatch(
-      /\{!cardRo && !\(v2 && isFamily\) && \(\s*<ProductUnitsCard product=\{product\} hideAddForm=\{v2\} \/>\s*\)\}/,
+      /\{\(!v2 \|\| \(!isFamily && unitStructureGoverned\(product\)\)\) && \(\s*<ProductUnitsCard product=\{product\} hideAddForm=\{v2\} structureOnly=\{v2\} \/>\s*\)\}/,
     );
+    // the gate cites the row that retires the card for good
+    expect(page).toMatch(/row 659 \(family ladder with variant inherit \/ override\)/);
   });
 
   it("with the flag on and a non-FAMILY product, the v2 grid renders and the old units card does not", () => {
@@ -45,9 +49,11 @@ describe("product page parity inventory (T38)", () => {
       /\{pricingSplit \? \(\s*<div[^>]*>\s*<ProductPricingRegion>\s*<ProductPricingV2 product=\{product\} \/>\s*<\/ProductPricingRegion>\s*<\/div>\s*\) : null\}/,
     );
     expect(page).toMatch(/const pricingSplit = v2 && product\.kind !== "FAMILY";/);
-    // the old card's gate never mentions v2 except to hide it for a v2 FAMILY
+    // under v2 the old card's gate keeps only a non-family governed product (variant or recipe)
     const oldGate = page.match(/\{([^{}]*)<ProductUnitsCard/);
-    expect(oldGate?.[1].replace(/\s+/g, " ")).toBe("!cardRo && !(v2 && isFamily) && ( ");
+    expect(oldGate?.[1].replace(/\s+/g, " ")).toBe(
+      "(!v2 || (!isFamily && unitStructureGoverned(product))) && ( ",
+    );
   });
 
   it("the v2 shell is mounted exactly once, only behind the flag", () => {
@@ -115,7 +121,12 @@ describe("K11-20c: where every legacy-card control lives after the change (secti
       figs,
       "aria-label={`Edit ${productTierLabel(names, tier)} ${row.label} price`}",
     ],
-    ["5 Tier prices disclosure stays", card, "Tier prices</summary>"],
+    [
+      "5 Tier prices disclosure stays (not on a structure-only card)",
+      card,
+      '{!noPrices && (\n        <details className="mt-2">',
+    ],
+    ["5 Tier prices summary", card, "Tier prices\n          </summary>"],
     ["5 four tier figures", card, "{figure(t as (typeof TIERS)[number])}"],
     [
       "6 helper sentence replaced by the Auto or Set word",
@@ -130,12 +141,12 @@ describe("K11-20c: where every legacy-card control lives after the change (secti
     [
       "12 Add unit: Name and factor stay, Price hidden in v2",
       card,
-      '{!figures && (\n              <div>\n                <label className={LABEL} htmlFor="new-unit-price">',
+      '{!figures && !structureOnly && (\n              <div>\n                <label className={LABEL} htmlFor="new-unit-price">',
     ],
     [
       "13 cascade never offered when no price moved",
       card,
-      "if (!figures) setProposals(proposeCascade(",
+      "if (!figures && !structureOnly) {\n          setProposals(proposeCascade(",
     ],
     ["14 Remove confirm dialog", card, "Its prices are deleted."],
     ["15 header Edit prices button", card, "Edit prices\n            </button>"],

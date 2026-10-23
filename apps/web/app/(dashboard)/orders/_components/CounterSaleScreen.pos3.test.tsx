@@ -1,6 +1,7 @@
 import * as React from "react";
 import { act } from "@testing-library/react";
 import { renderWithProviders, screen, waitFor, fireEvent, within } from "@/test-utils/render";
+import { renderTill } from "@/test-utils/render-till";
 import { CounterSaleScreen } from "./CounterSaleScreen";
 import { LINE_UNDO_MS } from "./useCounterLineUndo";
 
@@ -87,7 +88,7 @@ const click = (name: string | RegExp) =>
 
 /** Cola x2 (first line, plain) and Water 1 box + 3 pcs (second line, boxed). */
 async function buildCart() {
-  renderWithProviders(<CounterSaleScreen />);
+  renderTill(<CounterSaleScreen />);
   await scan("COLA");
   await scan("COLA");
   await scan("WATER");

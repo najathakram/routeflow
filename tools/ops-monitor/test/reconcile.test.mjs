@@ -544,7 +544,7 @@ test("bug-no-registry: a B-id in an open PR or recent branch with no registry fi
   assert.equal(find(run({ prs, branches }), "bug-no-registry:B999"), undefined);
 });
 
-test("bug-unowned-backlog: one warn per severity x domain with the B-ids; claims and branches drop out", () => {
+test("bug-unowned-backlog: ONE summary alarm with every B-id; claims and branches drop out", () => {
   const old = NOW - 20 * 24 * HOUR;
   const bugs = [
     bug("B30", { severity: "high", domain: "orders", filedAt: old }),
@@ -555,41 +555,81 @@ test("bug-unowned-backlog: one warn per severity x domain with the B-ids; claims
     bug("B35", { severity: "high", domain: "orders", filedAt: NOW - 5 * 24 * HOUR }),
   ];
   const alarms = run({ bugs });
-  const a = find(alarms, "bug-unowned-backlog:high:orders");
+  const all = alarms.filter((a) => a.kind === "bug-unowned-backlog");
+  assert.equal(all.length, 1);
+  const a = find(alarms, "bug-unowned-backlog:all");
   assert.equal(a.severity, "warn");
-  assert.deepEqual(a.items, ["B30", "B31"]);
-  assert.match(
-    a.message,
-    /^2 high Orders & sales bugs have no owner, branch or PR for more than 7 days/,
-  );
-  assert.deepEqual(find(alarms, "bug-unowned-backlog:critical:orders").items, ["B32"]);
-  assert.deepEqual(find(alarms, "bug-unowned-backlog:high:other").items, ["B33"]);
+  assert.deepEqual(a.items, ["B30", "B31", "B32", "B33"]);
+  assert.match(a.message, /^4 unowned bugs \(1 critical, 3 high\) have no owner/);
   assert.equal(find(alarms, "bug-unowned:B30"), undefined);
   assert.ok(find(alarms, "bug-unowned:B35")); // within 7 days -> per-bug
   // drop-out: a claim and a branch remove bugs from the count
   const claimed = mkState([item("B30", { claimedBy: "pc-lane" })]);
   const br = [{ branch: "fix/b31-x", date: new Date(NOW - HOUR).toISOString() }];
-  assert.equal(
-    find(run({ bugs, state: claimed, branches: br }), "bug-unowned-backlog:high:orders"),
-    undefined,
+  assert.deepEqual(
+    find(run({ bugs, state: claimed, branches: br }), "bug-unowned-backlog:all").items,
+    ["B32", "B33"],
   );
-  assert.deepEqual(find(run({ bugs, state: claimed }), "bug-unowned-backlog:high:orders").items, [
-    "B31",
-  ]);
 });
 
-test("bug-unowned-backlog groups masked security bugs on their own, not under Other", () => {
+test("bug-unowned-backlog: masked security bugs join the same single summary", () => {
   const old = NOW - 30 * 24 * HOUR;
   const bugs = [
     bug("B901", { severity: "high", sensitive: true, area: null, domain: null, filedAt: old }),
-    bug("B902", { severity: "high", sensitive: true, area: null, domain: null, filedAt: old }),
     bug("B903", { severity: "high", area: null, domain: null, filedAt: old }),
   ];
   const alarms = run({ bugs });
-  const sec = find(alarms, "bug-unowned-backlog:high:security");
-  assert.deepEqual(sec.items, ["B901", "B902"]);
-  assert.match(sec.message, /security hardening \(details private\)/);
-  assert.deepEqual(find(alarms, "bug-unowned-backlog:high:other").items, ["B903"]);
+  assert.equal(alarms.filter((a) => a.kind === "bug-unowned-backlog").length, 1);
+  assert.deepEqual(find(alarms, "bug-unowned-backlog:all").items, ["B901", "B903"]);
+});
+
+// ---- D4: PR -> item linking + merged-PR-without-item alarm ----
+test("D4 linkItemFor: row NNN in title or body, branch rNNN / rowNNN / row-NNN, trailers", () => {
+  const state = mkState([item("688"), item("704"), item("1234")]);
+  const L = (o) => linkItemFor(o, state);
+  assert.equal(L({ title: "feat: unit picker (Row 688)" }), "688");
+  assert.equal(L({ title: "x", body: "Background.\nrow 704 was the driver" }), "704");
+  assert.equal(L({ title: "x", body: "Covers rows 688/704" }), "688");
+  assert.equal(L({ title: "x", body: "Summary\n\nRow: 704\n" }), "704");
+  assert.equal(L({ title: "x", body: "Item: 688" }), "688");
+  assert.equal(L({ branch: "fix/r704-picker" }), "704");
+  assert.equal(L({ branch: "fix/row-688-y" }), "688");
+  assert.equal(L({ branch: "feat/row688" }), "688");
+  // never inside other words / versions / unknown ids / bare numbers
+  assert.equal(L({ branch: "fix/arrow704-x" }), null);
+  assert.equal(L({ branch: "chore/bump-v1.r704.0" }), null);
+  assert.equal(L({ branch: "fix/r999-x" }), null);
+  assert.equal(L({ title: "x", body: "arrow 704 and Row: 999" }), null);
+  assert.equal(L({ title: "Closes #1234" }), null);
+});
+
+test("D4 untracked-merged-pr: warn for a recent merged PR with no item; linked/old are silent", () => {
+  const state = mkState([item("688")]);
+  const m = (number, ms, over = {}) => ({
+    number,
+    title: "chore: stuff",
+    branch: "chore/stuff",
+    mergedAt: ago(ms),
+    base: "master",
+    ...over,
+  });
+  const alarms = run({
+    state,
+    prs: {
+      open: [],
+      merged: [
+        m(1, 2 * HOUR),
+        m(2, 3 * HOUR, { branch: "fix/r688-x" }),
+        m(3, 3 * HOUR, { body: "Row: 688" }),
+        m(4, 9 * 24 * HOUR),
+      ],
+    },
+  });
+  const a = find(alarms, "untracked-merged-pr:1");
+  assert.equal(a.severity, "warn");
+  assert.match(a.message, /^merged PR #1 has no work item/);
+  assert.equal(a.pr, 1);
+  for (const n of [2, 3, 4]) assert.equal(find(alarms, `untracked-merged-pr:${n}`), undefined, n);
 });
 
 // ---- H3: merge-commit trains ----
@@ -762,4 +802,38 @@ test("X1 unknown-status: no alarm once the item has moved past planned or is don
   assert.equal(find(alarms, "unknown-status:540"), undefined, "building: settled");
   assert.equal(find(alarms, "unknown-status:541"), undefined, "done: settled");
   assert.ok(find(alarms, "unknown-status:542"), "still planned: alarm stays");
+});
+
+// ---- items-stale ----
+test("items-stale: only pending register changes older than 15 min raise it; other events never hide it", () => {
+  const stale = (over) =>
+    find(
+      run({ register: { changedAt: NOW - 16 * 60_000, pending: 1, ...over } }),
+      "items-stale:register",
+    );
+  // 1 pending change + 16 min: a warning naming the count and the age in words
+  const a = stale({});
+  assert.equal(a.severity, "warn");
+  assert.match(
+    a.message,
+    /^Work items are behind the register: 1 change from 16 minutes ago has not reached the board/,
+  );
+  // register changed, 0 pending changes (notes, formatting): no alarm, however old
+  assert.equal(stale({ pending: 0, changedAt: NOW - 72 * HOUR }), undefined);
+  // pending but within the 15-minute grace: nothing yet
+  assert.equal(stale({ changedAt: NOW - 14 * 60_000 }), undefined);
+  // a day behind: an error, plural wording
+  const b = stale({ pending: 3, changedAt: NOW - 48 * HOUR });
+  assert.equal(b.severity, "error");
+  assert.match(b.message, /3 changes from 2 days ago have not reached the board/);
+  // no register time or no dry-run count (generated mode, a read failure): nothing
+  assert.equal(stale({ changedAt: null }), undefined);
+  assert.equal(stale({ pending: null }), undefined);
+});
+
+test("agoWords: minutes, hours and days in words", () => {
+  assert.equal(REC.agoWords(60_000), "1 minute");
+  assert.equal(REC.agoWords(5 * 60_000), "5 minutes");
+  assert.equal(REC.agoWords(3 * HOUR), "3 hours");
+  assert.equal(REC.agoWords(72 * HOUR), "3 days");
 });

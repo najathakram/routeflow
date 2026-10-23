@@ -1,6 +1,8 @@
 import { roundMoney, sumConfirmed } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
+import type { DuplicatePaymentRefExisting } from "@routeflow/types";
 import { isTender } from "./counter-sale-readback";
+import { duplicateCause } from "./counter-duplicate-ref";
 
 /**
  * The response figures of POST /orders/:id/pickup-complete, read back from what is STORED. Payment rules
@@ -51,6 +53,7 @@ export function tenderFigures(
   payment: { method: string; amount?: number },
   mine: (p: PayRow) => boolean,
   planError: string | undefined,
+  duplicate?: DuplicatePaymentRefExisting,
 ) {
   const payments = invoices.flatMap((i) => i.payments ?? []);
   const total = roundMoney(invoices.reduce((s, i) => s + Number(i.total), 0));
@@ -75,7 +78,10 @@ export function tenderFigures(
     ...(firstTender ? { paymentId: firstTender.id } : {}),
     paymentRecorded: settled,
     ...(!settled
-      ? { paymentErrorCode: planError ?? API_ERROR_CODES.COUNTER_PAYMENT_NOT_RECORDED }
+      ? {
+          paymentErrorCode: planError ?? API_ERROR_CODES.COUNTER_PAYMENT_NOT_RECORDED,
+          ...duplicateCause(duplicate),
+        }
       : {}),
   };
 }

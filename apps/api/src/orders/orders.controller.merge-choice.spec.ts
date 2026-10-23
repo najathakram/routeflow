@@ -42,6 +42,7 @@ describe("OrdersController — merge choice vs orderDate", () => {
     findActiveOrder: jest.Mock;
     updateOrderItems: jest.Mock;
     liveTrioByProduct: jest.Mock;
+    liveUnitsPerBoxByProduct: jest.Mock;
     mergeAllPendingForCustomer: jest.Mock;
     findOne: jest.Mock;
     create: jest.Mock;
@@ -63,6 +64,7 @@ describe("OrdersController — merge choice vs orderDate", () => {
     ordersService = {
       findActiveOrder: jest.fn().mockResolvedValue(activeOrder),
       liveTrioByProduct: jest.fn().mockResolvedValue(new Map()),
+      liveUnitsPerBoxByProduct: jest.fn().mockResolvedValue(new Map()), // SA-841
       updateOrderItems: jest.fn().mockResolvedValue(undefined),
       mergeAllPendingForCustomer: jest.fn().mockResolvedValue(null),
       findOne: jest.fn().mockResolvedValue(activeOrder),

@@ -51,7 +51,7 @@ export type MergeIntoStoredLineResult =
     }
   | {
       ok: false;
-      reason: "PACK_MISMATCH" | "LOOSE_INTO_BOX_UNAWARE" | "BOXED_INTO_UNPACKAGED";
+      reason: "PACK_MISMATCH" | "LOOSE_INTO_BOX_UNAWARE" | "BOXED_INTO_UNPACKAGED" | "EMPTY_ADD";
       linePack: number;
       addPack: number | null;
     };
@@ -98,11 +98,12 @@ export function mergeIntoStoredLine(args: MergeIntoStoredLineArgs): MergeIntoSto
     addPieces = Number(add.qty);
   }
 
+  // A negative or NaN add qty lands here too (EMPTY_ADD). Callers validate qty upstream: the at-stop add 400s on
+  // qty <= 0, mergeBoxedContributions throws MERGE_CONTRIBUTION_QTY_INVALID, and the order DTOs carry @Min.
   // MUST-1b: an add that resolves to no pieces is ambiguous (e.g. {qty N, boxes 0, pieces 0} at a pack > 1, from a
   // stale client or a product unboxed since the line was sold). Fail closed: never an ok with nothing added, which
   // would approve the change, record "Added 0" and bill nothing for the goods handed over.
-  if (!(addPieces > 0))
-    return { ok: false, reason: "PACK_MISMATCH", linePack: pack, addPack: null };
+  if (!(addPieces > 0)) return { ok: false, reason: "EMPTY_ADD", linePack: pack, addPack: null };
 
   // 3. no pack: a plain sum
   if (!(pack > 1)) {

@@ -470,3 +470,92 @@ test.describe("R7b till: toasts clear the sticky bar", () => {
     expect(toastBox!.y + toastBox!.height).toBeLessThanOrEqual(barBox!.y);
   });
 });
+
+/**
+ * SA-837b item 3 (row 498): the till's escape from a duplicate payment reference, at 390 / 768 / 1440. WRITTEN, NOT RUN in the
+ * build lane (the orchestrator captures it on the proof stack). The ring is real; the answer of the FIRST counter-sale POST is
+ * rewritten below into the exact "sale rung, payment refused as a duplicate" body the server returns for a repeated reference,
+ * so no second payment with the same reference has to be seeded; the "Record anyway" resend goes through to the real server
+ * (same key, same cart, payment.recordAnyway), as the signed-in staff cashier.
+ */
+test.describe("SA-837b till: Record anyway on a duplicate payment reference", () => {
+  for (const vp of VIEWPORTS) {
+    test(`the not-recorded state names the existing payment and Record anyway resends @ ${vp.name}`, async ({
+      page,
+      context,
+    }) => {
+      await page.setViewportSize({ width: vp.width, height: vp.height });
+      await setTenantCookie(context, BASE);
+      const { products } = await discover(page);
+      let first: any = null;
+      let resend: any = null;
+      await page.route("**/orders/counter-sale", async (route) => {
+        const req = route.request();
+        if (req.method() !== "POST") return route.continue();
+        const body = req.postDataJSON();
+        if (body?.payment?.recordAnyway === true) {
+          resend = { body, key: req.headers()["idempotency-key"] };
+          return route.continue(); // the real server records it
+        }
+        first = { body, key: req.headers()["idempotency-key"] };
+        const real = await route.fetch(); // the real server rings (and tenders) the sale; only its ANSWER is rewritten below
+        const sale = await real.json();
+        return route.fulfill({
+          response: real,
+          json: {
+            ...sale,
+            paid: 0,
+            balanceDue: sale.total,
+            paymentRecorded: false,
+            paymentErrorCode: "COUNTER_PAYMENT_NOT_RECORDED",
+            paymentCauseCode: "DUPLICATE_PAYMENT_REF",
+            existingPayment: {
+              id: "00000000-0000-0000-0000-000000000000",
+              paymentNumber: "PAY-QA-0001",
+              paidAt: "2026-10-01T12:00:00.000Z",
+              amount: sale.total,
+              invoiceId: "00000000-0000-0000-0000-000000000001",
+              invoiceNumber: "INV-QA-0042",
+            },
+          },
+        });
+      });
+      await page.goto("/orders/counter-sale");
+      const scanField = page.getByLabel("Scan or search items");
+      await expect(scanField).toBeVisible({ timeout: 15_000 });
+      await scanField.fill(String(products[0].sku));
+      await scanField.press("Enter");
+      await expect(page.getByRole("list", { name: "Items" }).getByRole("listitem")).toHaveCount(1, {
+        timeout: 15_000,
+      });
+      await page.getByRole("radio", { name: "Check" }).click();
+      await page.getByLabel("Check number").fill("QA-DUP-4242");
+      await page.getByRole("button", { name: "Complete & show receipt" }).click();
+
+      await expect(page.getByTestId("counter-payment-not-recorded")).toBeVisible({
+        timeout: 20_000,
+      });
+      const panel = page.getByTestId("counter-payment-duplicate");
+      await expect(panel).toBeVisible();
+      await expect(panel).toContainText("A payment with this reference was already recorded on");
+      await expect(panel).toContainText("INV-QA-0042");
+      const action = panel.getByRole("button", { name: "Record anyway" });
+      await expect(action).toBeVisible();
+      const box = await action.boundingBox();
+      expect(box!.height, "44 px target").toBeGreaterThanOrEqual(44);
+      // no horizontal overflow at any width
+      const overflow = await page.evaluate(
+        () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      );
+      expect(overflow).toBeLessThanOrEqual(0);
+
+      await action.click();
+      await expect(page.getByTestId("counter-payment-not-recorded")).toHaveCount(0, {
+        timeout: 20_000,
+      });
+      await expect(page.getByTestId("counter-payment-duplicate")).toHaveCount(0);
+      expect(resend?.key).toBe(first?.key); // the SAME sale, never a new one
+      expect(resend?.body.payment).toEqual({ ...first.body.payment, recordAnyway: true });
+    });
+  }
+});

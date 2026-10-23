@@ -196,6 +196,10 @@ export function resolveConfirmedAmounts(
  *  NOT be built on this set. */
 export const HELD_STATUSES = ["PAID", "PENDING"] as const;
 
+/** Payment-reference dedupe (row 498): a non-void payment with the same ref is a duplicate, in-flight
+ *  DRAFT/PENDING included; a bounced check is VOID (P5-12) and never deduped. */
+export const DEDUPE_STATUSES = [...HELD_STATUSES, "DRAFT"] as const;
+
 /** Prisma `where: { status: { in: [...] } }` filter for `HELD_STATUSES`. */
 export const HELD_PAYMENT = { status: { in: [...HELD_STATUSES] } } as const;
 

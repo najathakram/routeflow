@@ -2,6 +2,7 @@ import * as React from "react";
 import { act } from "@testing-library/react";
 import { renderWithProviders, screen, waitFor, fireEvent } from "@/test-utils/render";
 import { apiClient } from "@/lib/api-client";
+import { renderTill } from "@/test-utils/render-till";
 import { CounterSaleScreen } from "./CounterSaleScreen";
 
 /**
@@ -109,7 +110,7 @@ const visibleTotal = () =>
 
 describe("counter checkout panel: the number explains itself (CQ-08) and matches the receipt (CQ-01)", () => {
   it("a taxed cart with a deposit and an excise item: Subtotal, Tax, one named charge each, Estimated total", async () => {
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("COLA");
     await scan("SODA");
     await scan("CIGAR");
@@ -125,7 +126,7 @@ describe("counter checkout panel: the number explains itself (CQ-08) and matches
   });
 
   it("an exempt customer's panel carries no tax row and no charge: total = subtotal", async () => {
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("SODA");
     await scan("CIGAR");
     pick("Exempt Cafe");
@@ -139,7 +140,7 @@ describe("counter checkout panel: the number explains itself (CQ-08) and matches
     get.mockImplementation((url: string) =>
       Promise.resolve({ data: url === "/settings" ? { taxRate: 0 } : [] }),
     );
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("COLA");
     await waitFor(() => expect(visibleTotal()).toContain("$10.00"));
     expect(text("running-subtotal")).toContain("$10.00");
@@ -154,7 +155,7 @@ describe("a regulated line waits for the categories before it can be paid (fail-
       if (url === "/tracked-categories") return new Promise(() => undefined); // never answers
       return Promise.resolve({ data: [] });
     });
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("SODA");
     // let the scan's commit effects (the cart's stale-error clear) run before the click, as they would in the browser
     await waitFor(() => expect(text("running-subtotal")).toContain("$10.00"));
@@ -172,7 +173,7 @@ describe("R7b 1.4: a licence-needing line says so at add, for a walk-in", () => 
   const NOTE = "Needs a licensed customer: choose one before paying";
 
   it("a walk-in line in a licence category says it needs a licensed customer at add", async () => {
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("COLA");
     await waitFor(() => expect(text("running-subtotal")).toContain("$10.00"));
     expect(screen.queryByTestId("line-license-note")).toBeNull();
@@ -186,7 +187,7 @@ describe("R7b 1.4: a licence-needing line says so at add, for a walk-in", () => 
   });
 
   it("an account customer sees no add-time note", async () => {
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("CIGAR");
     await waitFor(() => expect(screen.getByTestId("line-license-note")).toBeInTheDocument());
     pick("Taxed Cafe");
@@ -195,7 +196,7 @@ describe("R7b 1.4: a licence-needing line says so at add, for a walk-in", () => 
   });
 
   it("a walk-in line in a category that needs no licence has no note", async () => {
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("SODA");
     await waitFor(() => expect(text("running-subtotal")).toContain("$10.00"));
     expect(screen.queryByTestId("line-license-note")).toBeNull();
@@ -204,7 +205,7 @@ describe("R7b 1.4: a licence-needing line says so at add, for a walk-in", () => 
 
 describe("R7b ruling: the Estimated total row hides when it equals Amount due", () => {
   it("hides Estimated total when it equals Amount due", async () => {
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("COLA");
     await waitFor(() => expect(text("running-subtotal")).toContain("$10.00"));
     // cash, nothing tendered yet: Amount due is the total, to the cent
@@ -213,7 +214,7 @@ describe("R7b ruling: the Estimated total row hides when it equals Amount due", 
   });
 
   it("shows Estimated total when it differs from Amount due", async () => {
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("COLA");
     await waitFor(() => expect(text("running-subtotal")).toContain("$10.00"));
     fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "4" } });

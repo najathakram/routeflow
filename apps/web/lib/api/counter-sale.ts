@@ -1,3 +1,4 @@
+import { rememberCounterSale } from "@/lib/counter-last-sale";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   CounterSalePaymentMethod,
@@ -91,9 +92,12 @@ export function useCreateCounterSale() {
           headers: { "Idempotency-Key": idempotencyKey },
         })
         .then((r) => r.data),
-    onSuccess: () => {
+    onSuccess: (res, vars) => {
       void qc.invalidateQueries({ queryKey: ["orders"] });
       void qc.invalidateQueries({ queryKey: ["invoices"] });
+      // SA-837b item 3: an unrecorded payment may be re-sent with "Record anyway" (the same sale, the same key).
+      if (res.paymentRecorded === false)
+        rememberCounterSale(res.orderId, vars.idempotencyKey, vars.dto);
     },
     // Row 466: a failure after the sale committed still wrote an order (and maybe an invoice).
     onError: (err) => {

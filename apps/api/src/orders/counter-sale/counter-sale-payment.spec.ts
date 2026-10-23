@@ -1,6 +1,11 @@
 import { BadRequestException } from "@nestjs/common";
+import { plainToInstance } from "class-transformer";
+import { validate } from "class-validator";
+import { CounterSalePaymentDto } from "./counter-sale.dto";
 import {
   allocateOldestFirst,
+  assertCheckNotPostdated,
+  assertCheckNotPostdatedForTenant,
   assertPaymentShape,
   planCounterPayment,
   toPrismaMethod,
@@ -150,5 +155,97 @@ describe("allocateOldestFirst (a mixed regulated order's sibling invoices)", () 
         4,
       ),
     ).toEqual([{ invoiceId: "b", amount: 4 }]);
+  });
+});
+
+describe("assertCheckNotPostdated (pre-create, tenant day)", () => {
+  const today = "2026-10-22";
+  it("a CHECK dated after the tenant's today is 400 COUNTER_CHECK_POSTDATED", () => {
+    expect(
+      codeOf(() =>
+        assertCheckNotPostdated(
+          { method: "CHECK", reference: "1", checkDate: "2026-10-23" },
+          today,
+        ),
+      ).code,
+    ).toBe("COUNTER_CHECK_POSTDATED");
+  });
+  it("today, earlier, no date, and any other method pass", () => {
+    for (const checkDate of ["2026-10-22", "2026-10-21", "2025-01-01", undefined]) {
+      expect(() =>
+        assertCheckNotPostdated({ method: "CHECK", reference: "1", checkDate }, today),
+      ).not.toThrow();
+    }
+    expect(() =>
+      assertCheckNotPostdated({ method: "CASH", checkDate: "2027-01-01" }, today),
+    ).not.toThrow();
+  });
+  it("a checkDate that is not a real calendar day is a plain 400", () => {
+    for (const checkDate of ["2026-02-30", "tomorrow", "2026-10-2", "2026-10-23T00:00:00Z"]) {
+      expect(() =>
+        assertCheckNotPostdated({ method: "CHECK", reference: "1", checkDate }, today),
+      ).toThrow(BadRequestException);
+    }
+  });
+});
+
+describe("CounterSalePaymentDto.checkDate", () => {
+  const errs = (o: object) => validate(plainToInstance(CounterSalePaymentDto, o));
+  it("accepts a YYYY-MM-DD day or nothing; rejects anything else", async () => {
+    expect(await errs({ method: "CHECK", reference: "1", checkDate: "2026-10-22" })).toHaveLength(
+      0,
+    );
+    expect(await errs({ method: "CHECK", reference: "1" })).toHaveLength(0);
+    expect(await errs({ method: "CHECK", reference: "1", checkDate: "soon" })).not.toHaveLength(0);
+    expect(await errs({ method: "CHECK", reference: "1", checkDate: 20261022 })).not.toHaveLength(
+      0,
+    );
+  });
+});
+
+describe("assertCheckNotPostdatedForTenant (the one tenant-today reader)", () => {
+  const prismaFor = (timezone: string | null, tenantId: string | null = "t-1") => ({
+    getTenantId: () => tenantId,
+    tenantConfig: { findUnique: jest.fn().mockResolvedValue(timezone ? { timezone } : null) },
+  });
+  // 03:00Z on the 23rd: UTC is already the 23rd, Los Angeles is still the 22nd.
+  const now = new Date("2026-10-23T03:00:00.000Z");
+
+  it("tenant today while UTC is already tomorrow: a check dated the tenant's today is ACCEPTED", async () => {
+    await expect(
+      assertCheckNotPostdatedForTenant(
+        prismaFor("America/Los_Angeles"),
+        { method: "CHECK", reference: "1", checkDate: "2026-10-22" },
+        now,
+      ),
+    ).resolves.toBeUndefined();
+  });
+
+  it("the same tenant: the UTC day (its tomorrow) is refused", async () => {
+    await expect(
+      assertCheckNotPostdatedForTenant(
+        prismaFor("America/Los_Angeles"),
+        { method: "CHECK", reference: "1", checkDate: "2026-10-23" },
+        now,
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it("a tenant with no zone falls back to FALLBACK_ZONE (UTC): its UTC today is accepted, UTC tomorrow refused", async () => {
+    const noZone = prismaFor(null);
+    await expect(
+      assertCheckNotPostdatedForTenant(
+        noZone,
+        { method: "CHECK", reference: "1", checkDate: "2026-10-23" },
+        now,
+      ),
+    ).resolves.toBeUndefined();
+    await expect(
+      assertCheckNotPostdatedForTenant(
+        noZone,
+        { method: "CHECK", reference: "1", checkDate: "2026-10-24" },
+        now,
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 });

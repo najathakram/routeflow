@@ -68,6 +68,8 @@ module.exports = {
     "^@routeflow/types/sale-attempt$": "<rootDir>/../../packages/types/sale-attempt.ts",
     // SA-824: the shared payment submit-key rule (builds on sale-attempt), same subpath trick.
     "^@routeflow/types/payment-submit-key$": "<rootDir>/../../packages/types/payment-submit-key.ts",
+    // Row 498: the shared duplicate-payment-reference copy and 409 reader (pure), same subpath trick.
+    "^@routeflow/types/payment-ref-copy$": "<rootDir>/../../packages/types/payment-ref-copy.ts",
     // M8: the shared shipment save rule + not-shipped line (pure, no imports), same subpath trick.
     "^@routeflow/types/shipment-save$": "<rootDir>/../../packages/types/shipment-save.ts",
     // SA-817 A: the one persisted-submit-key rule for a draft (pure, no imports), same subpath trick.
