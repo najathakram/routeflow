@@ -441,7 +441,10 @@ export function codedToastCopy(err: unknown): string | null {
   // the structured field (B986): what is wrong, and the next step.
   if (code === API_ERROR_CODES.STOCK_DATE_IN_FILED_PERIOD) {
     const period = typeof data.period === "string" && data.period ? data.period : "That period";
-    return `${period} is already filed for this product, so stock can't be dated on or before it. Choose a later date.`;
+    // W-755: WHAT is filed ("Tobacco" or the category name), when the api names it.
+    const what =
+      typeof data.filedFor === "string" && data.filedFor ? data.filedFor : "this product";
+    return `${period} is already filed for ${what}, so stock can't be dated on or before it. Choose a later date.`;
   }
   if (code === API_ERROR_CODES.CREDIT_LIMIT_EXCEEDED)
     return creditLimitSentence(data.limit, data.exposure);
