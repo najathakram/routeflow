@@ -321,6 +321,7 @@ test("CLI --dry-run prints the plan and runs nothing", () => {
   const r = spawnSync(process.execPath, [path.join(here, "gate.mjs"), "--dry-run", "--needs-db"], {
     encoding: "utf8",
     cwd: here,
+    env: scrubbedGitEnv(),
   });
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /packages-build/);

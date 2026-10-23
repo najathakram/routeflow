@@ -14,9 +14,8 @@ const WORKFLOW = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 
 export const ROLE_TABLE = {
-  Triage: { model: "haiku", effort: "low" },
+  "Triage+Pack": { model: "sonnet", effort: "low" },
   Cluster: { model: "haiku", effort: "low" },
-  Pack: { model: "sonnet", effort: "low" },
   Build: { model: "sonnet", effort: "medium" },
   Gate: { model: "haiku", effort: "low" },
   Review: { model: "opus", effort: "medium" },
@@ -57,30 +56,38 @@ export async function runWorkflow(scenario, args = {}) {
   const lastHead = {};
   const manifestBugs =
     scenario.manifestBugs ??
-    scenario.clusters.flatMap((c) => c.rows.map((r) => ({ row: r, risk: "LOW", status: "live" })));
+    scenario.clusters.flatMap((c) =>
+      c.rows.map((r) => ({ row: r, resolvedTitle: `title-${r}`, risk: "LOW", status: "live" })),
+    );
   const pick = (v, n) => (typeof v === "function" ? v(n) : v);
   const agent = async (prompt, opts = {}) => {
     calls.push({ prompt, ...opts });
     const [kind, id] = String(opts.label).split(":");
     if (scenario.throwOn === opts.label) throw new Error("boom");
     switch (kind) {
-      case "triage":
+      case "triagepack":
         return scenario.triageNull
           ? null
-          : { run: args.run, bugs: scenario.triageBugs ?? manifestBugs };
+          : {
+              run: args.run,
+              bugs: (scenario.triageBugs ?? manifestBugs).map((b) => ({
+                packWritten: !scenario.packFail,
+                resolvedTitle: `title-${b.row}`,
+                ...b,
+              })),
+              unresolved: scenario.unresolved ?? [],
+            };
       case "cluster":
+        if (scenario.clusterNull) return null;
         return {
           clusters,
           excluded: scenario.excluded ?? [],
           parked: scenario.parked ?? [],
           unaccounted: scenario.unaccounted ?? [],
+          unresolved: scenario.clusterUnresolved ?? [],
           overCap: !!scenario.overCap,
           bugs: manifestBugs,
         };
-      case "pack":
-        return scenario.packFail
-          ? { ok: false, path: "", bytes: 0 }
-          : { ok: true, path: `/p/${id}.md`, bytes: 100 };
       case "build":
       case "buildfix":
       case "reviewfix":
@@ -173,6 +180,7 @@ export async function runWorkflow(scenario, args = {}) {
 }
 
 const ARGS = {
+  idSpace: "row",
   run: "2026-10-23-bug-swarm-9",
   rows: ["1", "2"],
   repo: "/repo",
@@ -225,7 +233,7 @@ export async function runAll() {
     },
     ARGS,
   );
-  assert.equal(count(zero.calls, /^(pack|build|buildfix|gate|review|reviewfix|recheck):/), 0);
+  assert.equal(count(zero.calls, /^(build|buildfix|gate|review|reviewfix|recheck):/), 0);
   assert.equal(zero.result.clusters.length, 0);
   assert.equal(zero.result.excluded.length, 1);
   assert.ok(zero.phases.includes("Report"));
@@ -346,8 +354,9 @@ export async function runAll() {
     { clusters: [two[0]], packFail: true, gateGreen: true, verdict: "PASS" },
     ARGS,
   );
-  assert.equal(pf.result.clusters[0].parked, "pack failed");
+  assert.equal(pf.result.clusters.length, 0);
   assert.equal(count(pf.calls, /^build:/), 0);
+  assert.ok(pf.result.excluded.some((e) => /no context pack/.test(e.reason)));
   const norows = await runWorkflow(
     { clusters: two, gateGreen: true, verdict: "PASS" },
     { ...ARGS, rows: undefined },
@@ -481,6 +490,178 @@ export async function runAll() {
   );
   assert.equal(realParked.result.parked.filter((p) => p.reason === "over cap").length, 1);
   assert.ok(!realParked.result.unaccounted.includes("7"));
+
+  // 21. idSpace is required and validated: no agent call without it.
+  for (const bad of [undefined, "", "bugs", "ROW"]) {
+    const noSpace = await runWorkflow(
+      { clusters: two, gateGreen: true, verdict: "PASS" },
+      { ...ARGS, idSpace: bad },
+    );
+    assert.equal(noSpace.calls.length, 0);
+    assert.match(noSpace.result.error, /idSpace/);
+  }
+
+  // 22. A W- id resolves in row space (resolvedTitle from the stub) and is clustered and built.
+  const wid = await runWorkflow(
+    {
+      clusters: [{ id: "c1", rows: ["W-652"] }],
+      triageBugs: [
+        { row: "W-652", resolvedTitle: "Parked sales label", risk: "LOW", status: "live" },
+      ],
+      gateGreen: true,
+      verdict: "PASS",
+    },
+    { ...ARGS, rows: ["W-652"] },
+  );
+  assert.equal(count(wid.calls, /^build:/), 1);
+  const tp = wid.calls.find((c) => c.label === "triagepack").prompt;
+  assert.ok(tp.includes("rf.mjs item show") && tp.includes("NEVER use bugs.mjs"));
+  assert.ok(tp.includes("WORK-REGISTER.md"));
+  assert.deepEqual(wid.result.ids, [
+    { id: "W-652", resolvedTitle: "Parked sales label", unaccounted: false },
+  ]);
+
+  // 23. Bug space uses bugs.mjs and never rf.mjs.
+  const bugSp = await runWorkflow(
+    { clusters: [{ id: "c1", rows: ["B1"] }], gateGreen: true, verdict: "PASS" },
+    { ...ARGS, idSpace: "bug", rows: ["B1"] },
+  );
+  const bp2 = bugSp.calls.find((c) => c.label === "triagepack").prompt;
+  assert.ok(bp2.includes("bugs.mjs show") && !bp2.includes("rf.mjs"));
+
+  // 24. An unresolvable id is unaccounted with a reason, never built, and the Report lists it.
+  const unres = await runWorkflow(
+    {
+      clusters: [two[0]],
+      triageBugs: [{ row: "1", resolvedTitle: "t1", risk: "LOW", status: "live" }],
+      unresolved: ["99"],
+      gateGreen: true,
+      verdict: "PASS",
+    },
+    { ...ARGS, rows: ["1", "99"] },
+  );
+  assert.equal(count(unres.calls, /^build:/), 1);
+  assert.ok(unres.result.unaccounted.includes("99"));
+  const i99 = unres.result.ids.find((i) => i.id === "99");
+  assert.equal(i99.reason, "not found in row");
+  assert.equal(i99.unaccounted, true);
+  assert.equal(unres.result.ids.find((i) => i.id === "1").resolvedTitle, "t1");
+
+  // 25. Folded: no separate Triage agent, no per-cluster Pack; one Triage+Pack sonnet/low call;
+  // the Build brief carries the packs of its cluster's bugs.
+  const fold = await runWorkflow({ clusters: two, gateGreen: true, verdict: "PASS" }, ARGS);
+  assert.equal(
+    fold.calls.filter((c) => c.phase === "Triage" || /^(triage$|pack:)/.test(c.label)).length,
+    0,
+  );
+  const tpCalls = fold.calls.filter((c) => c.label === "triagepack");
+  assert.equal(tpCalls.length, 1);
+  assert.equal(tpCalls[0].model, "sonnet");
+  assert.equal(tpCalls[0].effort, "low");
+  assert.ok(tpCalls[0].prompt.includes("pack-<row>.md") && tpCalls[0].prompt.includes("3 KB"));
+  assert.ok(fold.calls.find((c) => c.label === "build:c1").prompt.includes("/pack-1.md"));
+  assert.ok(!fold.calls.find((c) => c.label === "build:c1").prompt.includes("/pack-2.md"));
+  assert.ok(!fold.phases.includes("Pack") && !fold.phases.includes("Triage"));
+
+  // 26. Empty resolvedTitle: not found in the space, never built, not excluded; unresolved AND listed in
+  // bugs is "not found" too (no risk/status mislabel, one entry).
+  const blank = await runWorkflow(
+    {
+      clusters: [two[0], two[1]],
+      triageBugs: [
+        { row: "1", resolvedTitle: "t1", risk: "LOW", status: "live" },
+        { row: "2", resolvedTitle: "  ", risk: "LOW", status: "live" },
+      ],
+      gateGreen: true,
+      verdict: "PASS",
+    },
+    ARGS,
+  );
+  assert.equal(count(blank.calls, /^build:/), 1);
+  assert.ok(blank.result.unaccounted.includes("2"));
+  assert.equal(blank.result.ids.find((i) => i.id === "2").reason, "not found in row");
+  assert.ok(!blank.result.excluded.some((e) => e.row === "2"));
+  const both = await runWorkflow(
+    {
+      clusters: [two[0], two[1]],
+      triageBugs: [
+        { row: "1", resolvedTitle: "t1", risk: "LOW", status: "live" },
+        { row: "2", resolvedTitle: "t2", risk: "LOW", status: "live" },
+      ],
+      unresolved: ["2"],
+      gateGreen: true,
+      verdict: "PASS",
+    },
+    ARGS,
+  );
+  assert.equal(count(both.calls, /^build:/), 1);
+  assert.equal(both.result.ids.find((i) => i.id === "2").reason, "not found in row");
+  assert.equal(both.result.unaccounted.filter((u) => u === "2").length, 1);
+  assert.ok(!both.result.excluded.some((e) => e.row === "2"));
+
+  // 27. Cluster agent death is named in the Report; more than 10 ids is an error with no agent call;
+  // the Cluster step demands pack proof from cluster.mjs.
+  const cdead = await runWorkflow(
+    { clusters: two, clusterNull: true, gateGreen: true, verdict: "PASS" },
+    ARGS,
+  );
+  assert.equal(cdead.result.ids[0].reason, "cluster agent died");
+  const many = await runWorkflow(
+    { clusters: two, gateGreen: true, verdict: "PASS" },
+    { ...ARGS, rows: Array.from({ length: 11 }, (_, i) => String(i + 1)) },
+  );
+  assert.equal(many.calls.length, 0);
+  assert.match(many.result.error, /10 ids/);
+  assert.ok(fold.calls.find((c) => c.label === "cluster").prompt.includes("--packs"));
+
+  // 28. Id shapes are checked before any agent runs, per idSpace.
+  for (const [space, rows] of [
+    ["row", ["B302"]],
+    ["row", ["12x"]],
+    ["bug", ["302"]],
+    ["bug", ["B12345"]],
+  ]) {
+    const sh = await runWorkflow(
+      { clusters: two, gateGreen: true, verdict: "PASS" },
+      { ...ARGS, idSpace: space, rows },
+    );
+    assert.equal(sh.calls.length, 0, `${space} ${rows}`);
+    assert.match(sh.result.error, /id shape/);
+    assert.equal(sh.result.ids[0].unaccounted, true);
+    assert.match(sh.result.ids[0].reason, /id shape/);
+  }
+  const okShapes = await runWorkflow(
+    { clusters: [two[0]], gateGreen: true, verdict: "PASS" },
+    { ...ARGS, rows: ["1"] },
+  );
+  assert.ok(okShapes.calls.length > 0);
+  const okBug = await runWorkflow(
+    { clusters: [{ id: "c1", rows: ["B302"] }], gateGreen: true, verdict: "PASS" },
+    { ...ARGS, idSpace: "bug", rows: ["B302"] },
+  );
+  assert.equal(count(okBug.calls, /^build:/), 1);
+
+  // 29. Every error path marks every requested id unaccounted with a reason (never missing).
+  assert.ok(many.result.ids.every((i) => i.unaccounted && i.reason));
+  assert.ok(nofrom.result.ids.every((i) => i.unaccounted && /required/.test(i.reason)));
+  assert.ok(dead.result.ids.every((i) => i.unaccounted));
+
+  // 30. cluster.mjs gets the id space and repo; what it rejects in code is unaccounted, not built.
+  assert.ok(
+    fold.calls.find((c) => c.label === "cluster").prompt.includes('--id-space row --repo "/repo"'),
+  );
+  const codeRej = await runWorkflow(
+    {
+      clusters: [two[0], two[1]],
+      clusterUnresolved: [{ row: "2", reason: 'title mismatch: manifest "a" vs resolved "b"' }],
+      gateGreen: true,
+      verdict: "PASS",
+    },
+    ARGS,
+  );
+  assert.equal(count(codeRej.calls, /^build:/), 1);
+  assert.match(codeRej.result.ids.find((i) => i.id === "2").reason, /title mismatch/);
+  assert.ok(codeRej.result.unaccounted.includes("2"));
 
   return out;
 }
