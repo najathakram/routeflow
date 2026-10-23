@@ -69,14 +69,13 @@ import { redactUpsellForCustomer } from "../common/upsell-redaction";
 import { customerInvoiceList, invoiceDetailFor } from "../common/staff-only-fields";
 import {
   CONFIRMED_PAYMENT,
-  CREDIT_NOTE_METHOD,
   RECEIVED_METHOD_FILTER,
   splitConfirmed,
   sumConfirmed,
 } from "./payment-predicates";
 import { PAYABLE } from "./invoice-status-sets";
 import { assertReminderIssued, assertReminderOwes } from "./invoice-balance-sql";
-import { classifyInvoiceBalance, confirmedBalance } from "./invoice-balance-classify";
+import { classifyInvoiceBalance } from "./invoice-balance-classify";
 import { reconcileDeliveredOrdersInTx as reconcileDeliveredOrdersInTxImpl } from "./delivered-reconcile";
 import { packAtSaleByProduct, priorUnitsPerBoxMap, toSaleLedgerLines } from "./pack-at-sale";
 import { regulatedContentChanged } from "./regulated-content-change";
@@ -3796,31 +3795,12 @@ export class InvoicesService {
       /* non-critical */
     }
 
-    // F03/R8/T-B102: CONFIRMED (PAID) basis, same as sendEmail — a reminder must
-    // demand the true outstanding balance, never the DRAFT-inflated figure a
-    // non-VOID sum would give. B421: totalPaid is cash-only, same as sendEmail.
-    const { cash: totalPaid, creditApplied, advanceApplied } = splitConfirmed(inv.payments);
-    const balanceDue = confirmedBalance(inv.total, inv.payments);
-    const creditNoteNumbers = Array.from(
-      new Set(
-        (inv.payments ?? [])
-          .filter((p) => p.method === CREDIT_NOTE_METHOD)
-          .map((p) => (p as any).creditNote?.creditNoteNumber)
-          .filter((n): n is string => !!n),
-      ),
-    );
-
     // F03/R9: see sendEmail's matching comment — the reminder renders the same item
     // table, so it honours the same hide-original-price setting.
     const hideOriginalPrice = (await this.systemConfig.get("invoice.hideOriginalPrice")) === "true";
 
     const reminderPayload = buildReminderEmailPayload(inv, {
       recipientEmail,
-      totalPaid,
-      creditApplied,
-      advanceApplied,
-      creditNoteNumbers,
-      balanceDue,
       pdfUrl,
       attachment,
       hideOriginalPrice,
