@@ -65,7 +65,9 @@ export async function runWorkflow(scenario, args = {}) {
     if (scenario.throwOn === opts.label) throw new Error("boom");
     switch (kind) {
       case "triage":
-        return scenario.triageNull ? null : { run: args.run, bugs: [] };
+        return scenario.triageNull
+          ? null
+          : { run: args.run, bugs: scenario.triageBugs ?? manifestBugs };
       case "cluster":
         return {
           clusters,
@@ -105,6 +107,8 @@ export async function runWorkflow(scenario, args = {}) {
         };
       case "gate": {
         gateN[id] = (gateN[id] ?? 0) + 1;
+        if (pick(scenario.gateRunning ?? false, gateN[id]))
+          return { ok: false, running: true, head: "", steps: [] };
         const ok = pick(scenario.gateGreen, gateN[id]);
         const head = scenario.staleHead ? "old-head" : lastHead[id];
         return { ok, head, steps: [{ name: "jest", ok, tail: ok ? "" : "boom" }] };
@@ -351,6 +355,45 @@ export async function runAll() {
   const bp = flags.calls.find((c) => c.label === "build:c1").prompt;
   assert.ok(bp.includes(`--branch "fix/${ARGS.run}-c1"`) && bp.includes(`/repo-wt-${ARGS.run}-c1`));
   assert.equal(flags.result.clusters[0].branch, `fix/${ARGS.run}-c1`);
+
+  // 15. Gate still running once: exactly one re-gate, no fix round, cluster green.
+  const run1 = await runWorkflow(
+    { clusters: [two[0]], gateRunning: (n) => n === 1, gateGreen: true, verdict: "PASS" },
+    ARGS,
+  );
+  assert.equal(count(run1.calls, /^gate:/), 2);
+  assert.equal(count(run1.calls, /^buildfix:/), 0);
+  assert.equal(run1.result.clusters[0].verdict, "PASS");
+  assert.ok(!run1.result.clusters[0].parked);
+
+  // 16. Gate running twice: parked "gate incomplete", zero fix rounds, no review.
+  const run2 = await runWorkflow(
+    { clusters: [two[0]], gateRunning: true, gateGreen: true, verdict: "PASS" },
+    ARGS,
+  );
+  assert.equal(run2.result.clusters[0].parked, "gate incomplete");
+  assert.equal(count(run2.calls, /^gate:/), 2);
+  assert.equal(count(run2.calls, /^(buildfix|review):/), 0);
+
+  // 17. Cluster relay says LOW, Triage says HIGH: Triage wins, bug dropped.
+  const relay = await runWorkflow(
+    {
+      clusters: [two[0], two[1]],
+      triageBugs: [
+        { row: "1", risk: "LOW", status: "live" },
+        { row: "2", risk: "HIGH", status: "live" },
+      ],
+      manifestBugs: [
+        { row: "1", risk: "LOW", status: "live" },
+        { row: "2", risk: "LOW", status: "live" },
+      ],
+      gateGreen: true,
+      verdict: "PASS",
+    },
+    ARGS,
+  );
+  assert.equal(count(relay.calls, /^build:/), 1);
+  assert.ok(relay.result.excluded.some((e) => e.row === "2"));
 
   return out;
 }
