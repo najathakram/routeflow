@@ -515,7 +515,7 @@ async function main() {
     },
   ];
 
-  // B745: a DB seeded before products got UUID ids still holds these SKUs under the old
+  // Row 745: a DB seeded before products got UUID ids still holds these SKUs under the old
   // `seed-prod-NN` ids; the upsert below would hit P2002 on (tenantId, sku). Fail loudly instead.
   await assertNoLegacySeedProducts(prisma, tenantId, productDefs);
 

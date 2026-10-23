@@ -1,6 +1,6 @@
 import type { PrismaClient } from "@prisma/client";
 
-/** Thrown when a DB seeded before products got UUID ids still holds the seeded SKUs (B745). */
+/** Thrown when a DB seeded before products got UUID ids still holds the seeded SKUs (row 745). */
 export class LegacySeedProductsError extends Error {
   readonly code = "LEGACY_SEED_PRODUCTS";
   constructor(
@@ -13,7 +13,7 @@ export class LegacySeedProductsError extends Error {
 }
 
 /**
- * B745: the upsert would hit P2002 on (tenantId, sku) when the SKUs sit under old `seed-prod-NN`
+ * Row 745: the upsert would hit P2002 on (tenantId, sku) when the SKUs sit under old `seed-prod-NN`
  * ids. Fail loudly (before any write) instead. Exported so a spec drives the real code path.
  */
 export async function assertNoLegacySeedProducts(
