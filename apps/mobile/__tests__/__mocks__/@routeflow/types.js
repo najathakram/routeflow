@@ -482,6 +482,7 @@ module.exports = {
     BILL_PAYMENT_NOT_CASH: "BILL_PAYMENT_NOT_CASH",
     BILL_PAYMENT_NO_SUPPLIER: "BILL_PAYMENT_NO_SUPPLIER",
     APP_LINK_URL_INVALID: "APP_LINK_URL_INVALID",
+    CUSTOMER_MERGE_TENANT_MISMATCH: "CUSTOMER_MERGE_TENANT_MISMATCH",
   },
   // SA-814e: hand copy of packages/types/api/error-codes.ts (pinned to the API's literal by the API parity spec).
   INVOICE_TAX_STATE_STALE_COPY: {

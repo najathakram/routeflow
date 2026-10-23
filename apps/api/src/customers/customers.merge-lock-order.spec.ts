@@ -21,8 +21,18 @@ import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { EmailService } from "../email/email.service";
 import { createOpLogTx } from "../testing/op-log-tx";
 
-const PRIMARY = { id: "cust-primary", userId: "user-primary", deletedAt: null };
-const SECONDARY = { id: "cust-secondary", userId: "user-secondary", deletedAt: null };
+const PRIMARY = {
+  id: "cust-primary",
+  userId: "user-primary",
+  deletedAt: null,
+  tenantId: "tenant-1",
+};
+const SECONDARY = {
+  id: "cust-secondary",
+  userId: "user-secondary",
+  deletedAt: null,
+  tenantId: "tenant-1",
+};
 
 describe("mergeCustomers — Order rows before Invoice rows (SA-218 (1), #2116)", () => {
   // SA-900: a SUPER_ADMIN merge runs with NO tenant (null); it must still lock the Returns first.
