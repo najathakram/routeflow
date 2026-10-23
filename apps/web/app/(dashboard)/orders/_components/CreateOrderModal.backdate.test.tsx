@@ -253,3 +253,23 @@ describe("Backdate this order (row 100)", () => {
     expect(backdateLink()).toBeInTheDocument();
   });
 });
+
+describe("Counter-path tap targets (row 296): >= 44px hit areas", () => {
+  it("Backdate link and Use today carry the 44px floor", async () => {
+    const user = userEvent.setup({ delay: null });
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    expect(backdateLink()).toHaveClass("min-h-[44px]");
+    await user.click(backdateLink()!);
+    expect(screen.getByRole("button", { name: "Use today" })).toHaveClass("min-h-[44px]");
+  });
+
+  it("the Change customer X is 44px tall and wide", async () => {
+    const user = userEvent.setup({ delay: null });
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    await user.type(screen.getByPlaceholderText(/search by business name/i), "acme");
+    await user.click((await screen.findByText(/Acme Deli/)).closest("button") as HTMLElement);
+    const x = screen.getByRole("button", { name: "Change customer" });
+    expect(x).toHaveClass("min-h-[44px]");
+    expect(x).toHaveClass("min-w-[44px]");
+  });
+});
