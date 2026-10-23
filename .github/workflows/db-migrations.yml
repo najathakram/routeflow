@@ -169,5 +169,3 @@ jobs:
         env:
           DATABASE_URL: postgresql://test:test@localhost:5432/routeflow_test
           RUN_DB_SPECS: ci
-          # W-723: the lane takes ~10 min; a hung run is killed (whole process tree) at 25.
-          RF_DB_LANE_TIMEOUT_MIN: 25

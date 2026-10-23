@@ -9,10 +9,9 @@ import { pathToFileURL } from "node:url";
 //      child (jest), so a CLI a spec spawned (a script under test, a prisma CLI) outlived it and
 //      kept its DB connection and the heavy slot.
 //   2. A junk RF_DB_LANE_TIMEOUT_MIN is one readable line and exit 2, never a stack trace.
-//   3. CI's DB-backed specs step sets a 25 min ceiling (the lane takes about 10).
+//   (CI's 25 min RF_DB_LANE_TIMEOUT_MIN on the DB-backed specs step ships separately: a workflow edit.)
 
 const API_DIR = path.resolve(__dirname, "../..");
-const REPO_ROOT = path.resolve(API_DIR, "../..");
 const RUNNER = path.join(API_DIR, "scripts/run-db-tests.mjs");
 
 describe("W-723 the DB-lane hard timeout", () => {
@@ -70,15 +69,4 @@ describe("W-723 the DB-lane hard timeout", () => {
       );
     },
   );
-
-  it("CI's DB-backed specs step sets a 25 min ceiling", () => {
-    const wf = fs.readFileSync(path.join(REPO_ROOT, ".github/workflows/db-migrations.yml"), "utf8");
-    const start = wf.indexOf("- name: DB-backed specs");
-    expect(start).toBeGreaterThan(-1);
-    const rest = wf.slice(start + 1);
-    const next = rest.search(/\n\s*- name:/);
-    const step = next === -1 ? rest : rest.slice(0, next);
-    expect(step).toMatch(/run: npm run test:db -w apps\/api/);
-    expect(step).toMatch(/RF_DB_LANE_TIMEOUT_MIN:\s*["']?25["']?\s*$/m);
-  });
 });
