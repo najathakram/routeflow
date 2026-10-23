@@ -145,7 +145,29 @@
     return { label: at ? "heartbeat" : "no heartbeat", at, unknown: l?.known === false };
   }
 
+  // Gate summary (master's `gate` field) -> pill label + tone; null for a state it does not know.
+  // "not-run" = a required check never ran (or sat queued past the cut-off): never read as a pass.
+  function gateLabel(gate, priv = false) {
+    switch (gate) {
+      case "success":
+        return { label: "gate passes", kind: "ok" };
+      case "failure":
+        return { label: "gate fails", kind: "err" };
+      case "pending":
+        return { label: "gate running", kind: "warn" };
+      case "not-run":
+        return { label: "gate not run", kind: "warn" };
+      case "skipped":
+        return { label: priv ? "gate skipped (private)" : "gate skipped", kind: "info" };
+      case "none":
+        return { label: "no gate runs", kind: "info" };
+      default:
+        return null;
+    }
+  }
+
   const UI = {
+    gateLabel,
     laneBeat,
     capEntries,
     groupAlarms,
@@ -279,20 +301,7 @@
   // Master: the gate (verify / e2e) is judged apart from the probes (everything else).
   function gateInfo(m) {
     const priv = snap?.ci?.visibility === "PRIVATE";
-    switch (m?.gate) {
-      case "success":
-        return { label: "gate passes", kind: "ok" };
-      case "failure":
-        return { label: "gate fails", kind: "err" };
-      case "pending":
-        return { label: "gate running", kind: "warn" };
-      case "skipped":
-        return { label: priv ? "gate skipped (private)" : "gate skipped", kind: "info" };
-      case "none":
-        return { label: "no gate runs", kind: "info" };
-      default:
-        return { label: checkLabel(m?.checks), kind: checkKind(m?.checks) };
-    }
+    return gateLabel(m?.gate, priv) ?? { label: checkLabel(m?.checks), kind: checkKind(m?.checks) };
   }
   const sevKind = (s) => (s === "error" ? "err" : s === "warn" ? "warn" : "info");
   const sevLabel = (s) => (s === "error" ? "ERROR" : s === "warn" ? "WARN" : "INFO");
