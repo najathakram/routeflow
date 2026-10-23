@@ -294,6 +294,17 @@ export function consumesCapacity(status: string | null | undefined): boolean {
 /** The capacity writers' tolerance for a sub-cent float residue (their existing `+ 0.001`), named once. */
 export const CAPACITY_EPSILON = 0.001;
 
+/**
+ * SA-863: what a writer does with an amount above the remaining capacity. REQUIRED at every call (no default), like
+ * statusFromPayments' `onOverpaid`, so the compiler lists every caller. "ALLOW_IF_NO_UNCONFIRMED" is the office
+ * standalone payment's [L-O2] deliberate overpayment: allowed while no DRAFT/PENDING row reserves the invoice (capacity
+ * then equals the confirmed balance), else refused RESERVED_BY_UNCONFIRMED. Every other writer passes "REFUSE".
+ */
+export type CapacityOverpayPolicy = "REFUSE" | "ALLOW_IF_NO_UNCONFIRMED";
+
+const RESERVED_BY_UNCONFIRMED_COPY =
+  "Invoice's remaining balance is already reserved by unconfirmed payments";
+
 /** Why a capacity-consuming write is refused, with the fixed copy every writer shows (recordPayment's three cases). */
 export interface CapacityRefusal {
   kind: "FULLY_PAID" | "RESERVED_BY_UNCONFIRMED" | "EXCEEDS";
@@ -311,18 +322,23 @@ export function capacityRefusal(p: {
   existing: ReadonlyArray<Pick<ConfirmablePaymentRow, "amount" | "status">> | null | undefined;
   amount: number;
   status: string;
+  overpay: CapacityOverpayPolicy;
 }): CapacityRefusal | null {
   if (!consumesCapacity(p.status)) return null;
   const total = Number(p.total);
   const remaining = remainingCapacity(total, p.existing);
+  if (p.overpay === "ALLOW_IF_NO_UNCONFIRMED") {
+    // SA-863: only the breach unconfirmed rows cause is refused; with none, [L-O2] deliberate overpayment stands.
+    const unconfirmed = (p.existing ?? []).some(
+      (r) => consumesCapacity(r.status) && r.status !== CONFIRMED_STATUS,
+    );
+    if (!unconfirmed || p.amount <= remaining + CAPACITY_EPSILON) return null;
+    return { kind: "RESERVED_BY_UNCONFIRMED", remaining, message: RESERVED_BY_UNCONFIRMED_COPY };
+  }
   if (remaining <= 0) {
     return sumConfirmed(p.existing) >= total - CAPACITY_EPSILON
       ? { kind: "FULLY_PAID", remaining, message: "Invoice is already fully paid" }
-      : {
-          kind: "RESERVED_BY_UNCONFIRMED",
-          remaining,
-          message: "Invoice's remaining balance is already reserved by unconfirmed payments",
-        };
+      : { kind: "RESERVED_BY_UNCONFIRMED", remaining, message: RESERVED_BY_UNCONFIRMED_COPY };
   }
   if (p.amount > remaining + CAPACITY_EPSILON)
     return {

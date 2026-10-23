@@ -4558,7 +4558,8 @@ export class InvoicesService {
       const amount = roundMoney(dto.amount); // #2293: ONE rounded value — guard, write, status
       // Row 2299 (SA-858): EVERY capacity-consuming write is checked, a DRAFT too (it was PAID only).
       const existing = inv.payments;
-      const overCapacity = capacityRefusal({ total, existing, amount, status: paymentStatus });
+      const status = paymentStatus;
+      const overCapacity = capacityRefusal({ total, existing, amount, status, overpay: "REFUSE" });
       if (overCapacity) throw new BadRequestException(overCapacity.message);
 
       const paidAt = await counterPay.assertDatedOk(
