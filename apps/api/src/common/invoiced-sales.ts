@@ -1,6 +1,8 @@
 import { CostingMethod, CreditNoteStatus, InvoiceStatus } from "@prisma/client";
 import { roundMoney } from "@routeflow/pricing";
 import { CONFIRMED_PAYMENT } from "../invoices/payment-predicates";
+import { attributeCreditNote, attributeExternalRefund } from "../sales-facts/sales-facts.rules";
+import { tenantTodayDay } from "./calendar-date";
 
 /**
  * Invoiced-sales sourcing for the analytics / forecasting / COGS readers.
@@ -96,10 +98,12 @@ export interface AccrualSalesDb extends InvoicedSalesDb {
   creditNote: {
     aggregate(args: any): Promise<any>;
     groupBy(args: any): Promise<any[]>;
+    findMany(args: any): Promise<any[]>;
   };
   return: {
     aggregate(args: any): Promise<any>;
     groupBy(args: any): Promise<any[]>;
+    findMany(args: any): Promise<any[]>;
   };
 }
 
@@ -338,6 +342,200 @@ export async function fetchAccrualNetSalesByCustomer(
     );
   }
   return result;
+}
+
+/** One bucket of the row-based net-sales reader: the three accrual terms plus the invoice count. */
+export interface AccrualNetBucket extends AccrualNetSales {
+  orderCount: number;
+}
+
+export interface AccrualNetRowsOptions {
+  /** The tenant's IANA zone (null = UTC): credit notes and refunds are instants and bucket by their LOCAL day. */
+  timeZone?: string | null;
+  /**
+   * Main-analytics tobacco switch (SA-859 rule 3), on the pre-tax basis: the tobacco lines' `subtotal` leave the gross; the
+   * tobacco-attributed share of each line-based credit note and inline return leaves those terms (the shared
+   * `attributeCreditNote` / `attributeExternalRefund`). A freeform credit (no lines) cannot be attributed and stays in the
+   * figure: the conservative reading, it never inflates the main revenue. Never set for Bookkeeping / P&L.
+   */
+  excludeTobacco?: boolean;
+}
+
+/**
+ * Row-based sibling of `fetchAccrualNetSales*` (SA-859, row 2126): the SAME three predicates and the ONE `netOf`
+ * composition, with the rows bucketed by `keyOf` in JS (three reads total, never one call per bucket). Invoices
+ * carry a calendar `issueDate` (their bucket is read from it); credit notes (`createdAt`) and external refunds
+ * (`refundedAt`) are instants and are handed to `keyOf` as their tenant-local calendar day.
+ */
+async function fetchAccrualNetRows(
+  db: AccrualSalesDb,
+  tenantId: string,
+  window: AccrualWindow,
+  keyOf: (src: {
+    customerId: string;
+    day: string;
+    kind: "invoice" | "credit" | "refund";
+  }) => string,
+  opts: AccrualNetRowsOptions = {},
+): Promise<Map<string, AccrualNetBucket>> {
+  const tobacco = !!opts.excludeTobacco;
+  const [invoices, creditNotes, returns] = await Promise.all([
+    db.invoice.findMany({
+      where: { tenantId, status: ACCRUAL_REVENUE_STATUSES, issueDate: window },
+      select: {
+        customerId: true,
+        issueDate: true,
+        total: true,
+        taxAmount: true,
+        ...(tobacco
+          ? { items: { select: { subtotal: true, product: { select: { isTobacco: true } } } } }
+          : {}),
+      },
+    }),
+    db.creditNote.findMany({
+      where: { tenantId, createdAt: window, ...ACCRUAL_CREDIT_NOTE_FILTER },
+      select: {
+        customerId: true,
+        createdAt: true,
+        amount: true,
+        ...(tobacco
+          ? {
+              items: { select: { invoiceItemId: true, amount: true } },
+              invoice: {
+                select: {
+                  items: {
+                    select: { id: true, productId: true, product: { select: { isTobacco: true } } },
+                  },
+                },
+              },
+            }
+          : {}),
+      },
+    }),
+    db.return.findMany({
+      where: { tenantId, ...EXTERNAL_REFUND_FILTER, refundedAt: window },
+      select: {
+        customerId: true,
+        refundedAt: true,
+        refundAmount: true,
+        ...(tobacco ? { kind: true, items: { select: { productId: true, subtotal: true } } } : {}),
+      },
+    }),
+  ]);
+
+  const tobaccoProducts = new Set<string>();
+  if (tobacco) {
+    const ids = new Set<string>();
+    for (const r of returns)
+      for (const it of r.items ?? []) if (it.productId) ids.add(it.productId);
+    if (ids.size > 0) {
+      const found = await db.product.findMany({
+        where: { id: { in: [...ids] } },
+        select: { id: true, isTobacco: true },
+      });
+      for (const pr of found) if (pr.isTobacco) tobaccoProducts.add(pr.id);
+    }
+  }
+
+  type Acc = { gross: number; creditNotes: number; externalRefunds: number; orderCount: number };
+  const acc = new Map<string, Acc>();
+  const at = (key: string): Acc => {
+    let a = acc.get(key);
+    if (!a) acc.set(key, (a = { gross: 0, creditNotes: 0, externalRefunds: 0, orderCount: 0 }));
+    return a;
+  };
+  const dayOf = (d: Date) => tenantTodayDay(opts.timeZone ?? null, d);
+
+  for (const inv of invoices) {
+    const a = at(
+      keyOf({
+        customerId: inv.customerId,
+        day: new Date(inv.issueDate).toISOString().slice(0, 10),
+        kind: "invoice",
+      }),
+    );
+    let gross = Number(inv.total ?? 0) - Number(inv.taxAmount ?? 0);
+    if (tobacco) {
+      for (const it of inv.items ?? [])
+        if (it.product?.isTobacco) gross -= Number(it.subtotal ?? 0);
+    }
+    a.gross += gross;
+    a.orderCount += 1;
+  }
+  for (const cn of creditNotes) {
+    const a = at(
+      keyOf({ customerId: cn.customerId, day: dayOf(new Date(cn.createdAt)), kind: "credit" }),
+    );
+    let amount = Number(cn.amount ?? 0);
+    if (tobacco && cn.items?.length) {
+      const lineProduct = new Map<string, string | null>();
+      const tobaccoLine = new Set<string>();
+      for (const it of cn.invoice?.items ?? []) {
+        lineProduct.set(it.id, it.productId ?? null);
+        if (it.product?.isTobacco && it.productId) tobaccoLine.add(it.productId);
+      }
+      const split = attributeCreditNote(
+        {
+          amount: Number(cn.amount),
+          items: cn.items.map((i: any) => ({
+            invoiceItemId: i.invoiceItemId,
+            amount: Number(i.amount),
+          })),
+        },
+        lineProduct,
+      );
+      for (const [productId, share] of split.byProduct)
+        if (tobaccoLine.has(productId)) amount -= share;
+    }
+    a.creditNotes += amount;
+  }
+  for (const rt of returns) {
+    const a = at(
+      keyOf({ customerId: rt.customerId, day: dayOf(new Date(rt.refundedAt)), kind: "refund" }),
+    );
+    let amount = Number(rt.refundAmount ?? 0);
+    if (tobacco) {
+      const split = attributeExternalRefund({
+        kind: rt.kind,
+        refundAmount: Number(rt.refundAmount ?? 0),
+        items: (rt.items ?? []).map((i: any) => ({
+          productId: i.productId,
+          subtotal: i.subtotal == null ? null : Number(i.subtotal),
+        })),
+      });
+      for (const [productId, share] of split.byProduct)
+        if (tobaccoProducts.has(productId)) amount -= share;
+    }
+    a.externalRefunds += amount;
+  }
+
+  const out = new Map<string, AccrualNetBucket>();
+  for (const [key, a] of acc) out.set(key, { ...netOf(a), orderCount: a.orderCount });
+  return out;
+}
+
+/**
+ * Accrual net sales per period (SA-859): `groupBy` "month" (YYYY-MM) or "day" (YYYY-MM-DD). The dashboard revenue trend
+ * reads this, so it can never disagree with Bookkeeping's `fetchAccrualNetSales` for the same window.
+ */
+export async function fetchAccrualNetSalesByPeriod(
+  db: AccrualSalesDb,
+  tenantId: string,
+  window: AccrualWindow,
+  opts: AccrualNetRowsOptions & { groupBy?: string } = {},
+): Promise<Map<string, AccrualNetBucket>> {
+  const width = opts.groupBy === "month" ? 7 : 10;
+  return fetchAccrualNetRows(db, tenantId, window, (src) => src.day.slice(0, width), opts);
+}
+
+/** Row-based per-customer accrual net sales with the invoice count (for the dashboard's top customers; SA-859). */
+export async function fetchAccrualNetSalesByCustomerRows(
+  db: AccrualSalesDb,
+  tenantId: string,
+  window: AccrualWindow,
+  opts: AccrualNetRowsOptions = {},
+): Promise<Map<string, AccrualNetBucket>> {
+  return fetchAccrualNetRows(db, tenantId, window, (src) => src.customerId, opts);
 }
 
 /**
