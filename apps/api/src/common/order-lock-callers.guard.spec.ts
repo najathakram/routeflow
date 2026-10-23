@@ -12,6 +12,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
+import { ROW_LOCK_ORDER } from "./db-locks";
 
 const SRC = path.join(__dirname, "..");
 
@@ -345,5 +346,178 @@ describe("order-lock callers: every order<->invoice billing-state writer takes t
     const fo = read("invoices/finalize-order-recompute.ts");
     const fn = fo.slice(fo.indexOf("export async function withOrderRecomputeLock"));
     expect(fn.indexOf("withAdvisoryLock(")).toBeLessThan(fn.indexOf("tenantTransaction("));
+  });
+});
+
+/**
+ * SA-893 (row 631 PR-1) — THE ONE ROW-LOCK ORDER: Return -> Order -> Invoice -> CreditNote (`ROW_LOCK_ORDER`, read from
+ * db-locks.ts, never copied). Every method that touches two of these tables is classified with the order in which it
+ * FIRST locks each one, and that order must follow the constant. A lock is an explicit `FOR UPDATE` / `FOR NO KEY
+ * UPDATE`, a lock helper (expanded to the tables it locks), `lockRowsNoWait(tx, "<Table>")`, or the IMPLICIT row lock
+ * of `tx.<table>.update / updateMany / delete / deleteMany / upsert` on existing rows (an insert locks no other row and
+ * is exempt). The customer merge took its Orders by `updateMany` before its Returns: a `lockOrderRow`-only scan misses
+ * exactly that. A new or changed site fails until it is classified; a CALLER's locks are not seen, so a method that
+ * runs on a caller's held locks is an EXCEPTION with its reason.
+ */
+describe("SA-893: every transaction takes Return -> Order -> Invoice -> CreditNote in that order", () => {
+  type Table = (typeof ROW_LOCK_ORDER)[number];
+  /** A function whose locks a CALLER inherits: a lock helper (`lock*`, `with*Lock*`) or a `release*InTx` row-lock step. */
+  const HELPER_NAME = /^(?:lock[A-Z]\w*|with\w*Lock\w*|release\w*InTx)$/;
+  const MODEL: Record<string, Table> = {
+    return: "Return",
+    order: "Order",
+    invoice: "Invoice",
+    creditNote: "CreditNote",
+  };
+  const EVENT =
+    /FROM "(Return|Order|Invoice|CreditNote)"[^`]*FOR (?:NO KEY )?UPDATE|\blockRowsNoWait\(\s*\w+,\s*"(Return|Order|Invoice|CreditNote)"|\btx\.(return|order|invoice|creditNote)\.(?:update|updateMany|delete|deleteMany|upsert)\(|\b(\w+)\(/g;
+  type Step = { table: Table } | { call: string };
+
+  /** Every function body's lock steps in text order: a direct row lock, or a call of a helper. */
+  function scanBodies(): Array<{ site: string; name: string; steps: Step[] }> {
+    const bodies: Array<{ site: string; name: string; steps: Step[] }> = [];
+    for (const file of walk(SRC)) {
+      const src = strip(fs.readFileSync(file, "utf8"));
+      const rel = path.relative(SRC, file).split(path.sep).join("/");
+      const heads: Array<{ at: number; name: string }> = [];
+      HEAD.lastIndex = 0;
+      let h: RegExpExecArray | null;
+      while ((h = HEAD.exec(src))) heads.push({ at: h.index, name: h[1] ?? h[2] });
+      const byName = new Map<string, Step[]>();
+      EVENT.lastIndex = 0;
+      let m: RegExpExecArray | null;
+      while ((m = EVENT.exec(src))) {
+        let step: Step | undefined;
+        if (m[1] ?? m[2]) step = { table: (m[1] ?? m[2]) as Table };
+        else if (m[3]) step = { table: MODEL[m[3]] };
+        else if (m[4] && HELPER_NAME.test(m[4])) {
+          // a helper's own definition is not a call
+          if (/(function |async )$/.test(src.slice(Math.max(0, m.index - 9), m.index))) continue;
+          step = { call: m[4] };
+        }
+        if (!step) continue;
+        let name = "?";
+        for (const hh of heads) if (hh.at < m.index) name = hh.name;
+        if (!byName.has(name)) byName.set(name, []);
+        byName.get(name)!.push(step);
+      }
+      for (const [name, steps] of byName) bodies.push({ site: `${rel}#${name}`, name, steps });
+    }
+    return bodies;
+  }
+
+  /** Each function's first-lock order, its helpers expanded to a fixed point (a helper's tables come from its own body). */
+  function lockSequences(): { sites: Record<string, string>; helperClash: string[] } {
+    const bodies = scanBodies();
+    const helperSteps = new Map<string, Step[]>();
+    const helperClash: string[] = [];
+    for (const b of bodies) {
+      if (!HELPER_NAME.test(b.name)) continue;
+      const prev = helperSteps.get(b.name);
+      if (prev && JSON.stringify(prev) !== JSON.stringify(b.steps)) helperClash.push(b.name);
+      if (!prev) helperSteps.set(b.name, b.steps);
+    }
+    const resolved = new Map<string, Table[]>();
+    const expand = (steps: Step[], seen: Set<string>): Table[] =>
+      steps.flatMap((s) => {
+        if ("table" in s) return [s.table];
+        if (seen.has(s.call) || !helperSteps.has(s.call)) return [];
+        if (!resolved.has(s.call))
+          resolved.set(s.call, expand(helperSteps.get(s.call)!, new Set([...seen, s.call])));
+        return resolved.get(s.call)!;
+      });
+    const sites: Record<string, string> = {};
+    for (const b of bodies) {
+      const firsts = [...new Set(expand(b.steps, new Set([b.name])))];
+      if (firsts.length >= 2) sites[b.site] = firsts.join(" > ");
+    }
+    return { sites, helperClash: [...new Set(helperClash)].sort() };
+  }
+  const follows = (seq: string) => {
+    const ranks = seq.split(" > ").map((t) => ROW_LOCK_ORDER.indexOf(t as Table));
+    return ranks.every((r, i) => i === 0 || r > ranks[i - 1]);
+  };
+
+  /** Every method that touches two of the tables, with its first-lock order. */
+  const ROW_LOCK_SITES: Record<string, string> = {
+    "bookkeeping/bookkeeping.service.ts#writeLedgerPayment": "Order > Invoice",
+    "common/db-locks.ts#lockRowsNoWait": "Order > Invoice",
+    "credit-notes/credit-note-locks.ts#lockCreditsForSend": "CreditNote > Invoice",
+    "credit-notes/credit-note-locks.ts#lockCustomerCreditsForSweep": "Order > Invoice > CreditNote",
+    "credit-notes/credit-note-locks.ts#lockInvoiceForCredit": "Order > Invoice",
+    "credit-notes/credit-note-locks.ts#lockOrderCreditSettle": "Order > Invoice > CreditNote",
+    "credit-notes/credit-notes.service.ts#applyCreditInTx": "Invoice > CreditNote",
+    "credit-notes/credit-notes.service.ts#applyToInvoice": "Order > Invoice > CreditNote",
+    "credit-notes/credit-notes.service.ts#autoApplyOldestCreditsInTx":
+      "Order > Invoice > CreditNote",
+    "credit-notes/credit-notes.service.ts#create": "Return > Order > Invoice", // SA-893: the linked Return locked before the Invoice
+    "credit-notes/credit-notes.service.ts#restoreCreditFromPaymentInTx": "CreditNote > Invoice",
+    "credit-notes/credit-notes.service.ts#settleOrderCreditsInTx": "Order > Invoice > CreditNote",
+    "credit-notes/credit-notes.service.ts#voidWithReversalInTx": "Order > Invoice > CreditNote",
+    "credit-notes/line-credit-headroom.ts#lockOrderPoolRows": "Order > Invoice",
+    "customers/customer-delete-stock.ts#releaseLiveOrderStockInTx": "Return > Order",
+    "customers/customers.service.ts#deleteAllCustomers": "Return > Order > Invoice",
+    "customers/customers.service.ts#deleteCustomer": "Return > Order",
+    "customers/customers.service.ts#mergeCustomers": "Return > Order > Invoice > CreditNote", // SA-893: both customers' Returns locked FIRST
+    "customers/customers.service.ts#runImportedCustomersCleanup": "Return > Order > Invoice",
+    "invoices/invoice-send-guard.ts#lockInvoiceRow": "Order > Invoice",
+    "invoices/invoice-send-guard.ts#lockInvoicesForPayment": "Order > Invoice",
+    "invoices/invoice-send-snapshot.ts#readSendSnapshot": "Order > Invoice > CreditNote",
+    "invoices/invoices.service.ts#deleteInvoice": "Order > Invoice",
+    "invoices/invoices.service.ts#markSent": "Order > Invoice > CreditNote",
+    "invoices/invoices.service.ts#rebuildIssuedDepositMirrorOnDelivery": "Order > Invoice",
+    "invoices/invoices.service.ts#unvoidInvoice": "Order > Invoice",
+    "invoices/invoices.service.ts#voidInvoice": "Order > Invoice",
+    "invoices/invoices.service.ts#voidInvoiceInTx": "Invoice > CreditNote",
+    "invoices/invoices.service.ts#writeOff": "Order > Invoice",
+    "invoices/invoices.service.ts#writeStandalonePayment": "Order > Invoice",
+    "invoices/locked-invoice-edit.ts#loadLockedInvoiceForEdit": "Order > Invoice",
+    "invoices/order-billing-lock.ts#inOrderBillingTx": "Order > Invoice",
+    "invoices/order-billing-lock.ts#withOrderBillingLock": "Order > Invoice",
+    "orders/counter-sale/counter-sale-void.service.ts#voidInTx": "Order > Invoice",
+    "orders/edit-overpay-judge.ts#assertEditCannotOverpay": "Order > Invoice",
+    "orders/order-cancel-impact.ts#lockOrderAndInvoicesInTx": "Order > Invoice",
+    "orders/order-cancel-impact.ts#lockOrderForCancel": "Order > Invoice",
+    "orders/order-cancel-tx.ts#cancelOrderInTx": "Order > Invoice",
+    "orders/orders.service.ts#approveChangeRequestAtStop": "Order > Invoice",
+    "orders/orders.service.ts#deleteOrder": "Order > Invoice",
+    "orders/orders.service.ts#forceConsolidateCustomer": "Order > Invoice",
+    "regulated/ledger-locks.ts#lockLedgerDocumentRows": "Order > Invoice",
+    "regulated/parked-reversal-resolution.service.ts#resolve": "Return > Order",
+    "returns/inline-returns.service.ts#approve": "Return > Order",
+    "returns/inline-returns.service.ts#cancel": "Return > Order > Invoice",
+    "returns/inline-returns.service.ts#issueCredit": "Return > Order",
+    "returns/inline-returns.service.ts#refund": "Return > Order > Invoice",
+    "returns/inline-returns.service.ts#storeCreditInstead": "Return > Order > Invoice",
+    "returns/returns.service.ts#cancel": "Return > Order > Invoice",
+    "returns/returns.service.ts#claimRefund": "Return > Order > Invoice",
+    "returns/returns.service.ts#receive": "Return > Order",
+    "system-config/settings.controller.ts#clearFinancialData": "Invoice > CreditNote",
+  };
+
+  /** Sites whose observed order is NOT the house order, each running on locks its CALLER already holds. */
+  const CALLER_HELD: Record<string, string> = {
+    "credit-notes/credit-note-locks.ts#lockCreditsForSend":
+      "SA-860: both callers (markSent, readSendSnapshot) take lockInvoiceRow (Order -> Invoice) BEFORE it; its Invoice lock re-takes a held row",
+    "credit-notes/credit-notes.service.ts#restoreCreditFromPaymentInTx":
+      "runs inside a payment or credit reversal whose caller is documented to hold the Invoice (SA-706a); UNVERIFIED for 4 of its 6 callers (cancelStandaloneInTx, pullBackOrderCreditPair, releaseCreditsInTx, unapplyFromInvoice): a row 631 follow-up, an Invoice/CreditNote audit outside SA-893's Return tier",
+  };
+
+  it("the order is the one constant: Return -> Order -> Invoice -> CreditNote", () => {
+    expect([...ROW_LOCK_ORDER]).toEqual(["Return", "Order", "Invoice", "CreditNote"]);
+  });
+
+  it("every transaction that touches two of the tables is classified, and no classification is stale", () => {
+    const { sites, helperClash } = lockSequences();
+    expect(helperClash).toEqual([]); // one helper name, one lock sequence
+    expect(sites).toEqual(ROW_LOCK_SITES);
+  });
+
+  it("every classified order follows ROW_LOCK_ORDER, or is a listed caller-held exception", () => {
+    const off = Object.entries(lockSequences().sites)
+      .filter(([site, seq]) => !follows(seq) && !(site in CALLER_HELD))
+      .map(([site, seq]) => `${site}: ${seq}`);
+    expect(off).toEqual([]);
+    for (const site of Object.keys(CALLER_HELD)) expect(site in ROW_LOCK_SITES).toBe(true);
   });
 });

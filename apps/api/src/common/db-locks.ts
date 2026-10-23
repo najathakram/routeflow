@@ -129,6 +129,18 @@ export type LockFamily = (typeof LOCK_FAMILIES)[number];
  * (the shared lock rides the first lock's pinned connection); the list is closed for the same typo reason as `LOCK_FAMILIES`.
  */
 export const SHARED_LOCK_FAMILIES = ["counter-close"] as const;
+
+/**
+ * SA-893 (row 631, amends SA-821 MUST 1): THE ONE LOCK ORDER. A transaction takes its advisory locks first, in the order
+ * order-merge -> payment-ref -> counter-tender -> counter-close (SA-851), and then its ROW locks in this order, each
+ * table's rows id-sorted: Return -> Order -> Invoice -> CreditNote. Two transactions that take two of these tables in
+ * opposite orders deadlock (40P01), so every path follows it. That includes the implicit row lock of an UPDATE or DELETE:
+ * an Order-centric path that must touch EXISTING Return rows locks them first, in one query by order or customer id, as
+ * `releaseLiveOrderStockInTx` does (an insert locks no other row and is exempt). `order-lock-callers.guard.spec.ts`
+ * reads this constant and classifies every transaction that touches two of the tables.
+ */
+export const ROW_LOCK_ORDER = ["Return", "Order", "Invoice", "CreditNote"] as const;
+export type RowLockTable = (typeof ROW_LOCK_ORDER)[number];
 export interface AdvisoryLockOptions {
   family: string;
   key: string;
