@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import type { RevenuePeriod } from "@routeflow/types";
 import {
   BarChart,
   Bar,
@@ -47,11 +48,6 @@ const fmtDuration = (mins: number | null) => {
 };
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-
-interface RevenuePeriod {
-  period: string;
-  revenue: number;
-}
 
 interface AovData {
   aov: number;
@@ -438,6 +434,7 @@ function RevenueTab({ from, to }: { from: string; to: string }) {
           from={from}
           to={to}
         />
+        <p className="mb-2 text-xs text-muted-foreground">Net of credit notes, excluding tax</p>
         {revenueTrendLoading ? (
           <ChartSkeleton />
         ) : revenueTrend.length === 0 ? (

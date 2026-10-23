@@ -205,6 +205,24 @@ export function invoiceFingerprint(src: FingerprintSource): string {
   return `${FINGERPRINT_VERSION}:${hash}`;
 }
 
+/**
+ * ONE item order and ONE payment order for every read that is hashed (SA-874): the live fingerprint
+ * (`FINGERPRINT_INCLUDE`) and the send snapshot (`SEND_SNAPSHOT_INCLUDE`) both use these, so the same rows hash alike
+ * across the rolled-back dry run and the commit. Items are never re-created by the dry run, so `[createdAt, id]`
+ * is stable. A credit applied at commit is a NEW row with a new random id and `paidAt`, so payments order by their
+ * HASHED content first (`paidAt, method, status, amount, reference`) and the id only breaks a tie between rows that are
+ * identical in every hashed field (interchangeable in the hash).
+ */
+export const FINGERPRINT_ITEM_ORDER = [{ createdAt: "asc" as const }, { id: "asc" as const }];
+export const FINGERPRINT_PAYMENT_ORDER = [
+  { paidAt: "asc" as const },
+  { method: "asc" as const },
+  { status: "asc" as const },
+  { amount: "asc" as const },
+  { reference: "asc" as const },
+  { id: "asc" as const },
+];
+
 /** The invoice include that carries every field `invoiceFingerprint` reads. */
 export const FINGERPRINT_INCLUDE = {
   customer: {
@@ -216,7 +234,7 @@ export const FINGERPRINT_INCLUDE = {
     },
   },
   items: {
-    orderBy: [{ createdAt: "asc" as const }, { id: "asc" as const }],
+    orderBy: FINGERPRINT_ITEM_ORDER,
     include: {
       trackedCategory: { select: { name: true } },
       product: { select: { unitSku: true, barcode: true, sku: true } },
@@ -226,7 +244,7 @@ export const FINGERPRINT_INCLUDE = {
   // the PDF's Payment History: every non-VOID row (the confirmed ones also feed Amount Paid / Balance Due)
   payments: {
     where: { status: { not: "VOID" as const } },
-    orderBy: [{ paidAt: "asc" as const }, { id: "asc" as const }],
+    orderBy: FINGERPRINT_PAYMENT_ORDER,
   },
   order: { select: { status: true, fulfillPath: true, shippedAt: true } },
 } as const;
@@ -338,6 +356,8 @@ export async function recordInvoiceEmailed(
     to: string;
     fingerprint: string | null;
     variant?: string | null;
+    /** A breadcrumb for a CORRECTION record (SA-860): why this row exists beside the one before it. */
+    note?: string;
   },
 ): Promise<void> {
   const tenantId = prisma.getTenantId();
@@ -354,6 +374,7 @@ export async function recordInvoiceEmailed(
           fp: p.fingerprint,
           sentAt: new Date().toISOString(),
           ...(p.variant ? { variant: p.variant } : {}),
+          ...(p.note ? { note: p.note } : {}),
         },
       },
     });

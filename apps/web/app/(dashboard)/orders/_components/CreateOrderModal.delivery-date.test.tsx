@@ -88,6 +88,12 @@ jest.mock("@/lib/barcode-resolve", () => ({ resolveProductByCode: jest.fn() }));
 
 const dateField = () => screen.getByLabelText(/requested delivery date/i) as HTMLInputElement;
 const createButton = () => screen.getByRole("button", { name: "Create Order" });
+type User = ReturnType<typeof userEvent.setup>;
+/** Click once the target is interactive: a dialog still leaving sets `pointer-events: none`, which userEvent refuses (W-687). */
+async function clickReady(user: User, el: HTMLElement) {
+  await waitFor(() => expect(getComputedStyle(el).pointerEvents).not.toBe("none"));
+  await user.click(el);
+}
 const PAST_MESSAGE = /pick today or a later date/i;
 /** Fake only `Date`: React, userEvent and the query client keep their real timers. */
 const ONLY_DATE = [
@@ -127,9 +133,9 @@ async function openWithCustomerAndLine() {
   const user = userEvent.setup({ delay: null });
   renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
   await user.type(screen.getByPlaceholderText(/search by business name/i), "acme");
-  await user.click((await screen.findByText(/Acme Deli/)).closest("button") as HTMLElement);
+  await clickReady(user, (await screen.findByText(/Acme Deli/)).closest("button") as HTMLElement);
   await user.type(screen.getByPlaceholderText(/search by name, sku or scan barcode/i), "cola");
-  await user.click((await screen.findByText(/Sample Cola/)).closest("button") as HTMLElement);
+  await clickReady(user, (await screen.findByText(/Sample Cola/)).closest("button") as HTMLElement);
   // the business's zone arrives with GET /settings; until then the field has no `min` and nothing is blocked locally
   if (mockZone) await waitFor(() => expect(dateField()).toHaveAttribute("min", tenantDay()));
   return user;
@@ -143,6 +149,21 @@ beforeEach(() => {
   mockZone = EAST;
 });
 afterEach(() => jest.useRealTimers());
+
+// W-687: a click that lands while a dialog is still leaving (pointer-events: none on the target) is refused by userEvent
+// and the test flakes with the machine's speed. Simulate the exit window deterministically.
+describe("a click during a dialog's exit window (W-687)", () => {
+  it("the order still goes out when Create Order is clicked while it is briefly pointer-events: none", async () => {
+    const user = await openWithCustomerAndLine();
+    const button = createButton();
+    button.style.pointerEvents = "none";
+    setTimeout(() => {
+      button.style.pointerEvents = "";
+    }, 60);
+    await clickReady(user, button);
+    await waitFor(() => expect(mockCreateMutate).toHaveBeenCalled());
+  });
+});
 
 describe("Requested Delivery Date placement (F09 + F12)", () => {
   it("renders right after the customer and before the products, with a line added", async () => {
@@ -160,7 +181,7 @@ describe("Requested Delivery Date placement (F09 + F12)", () => {
   it("stays optional: an order goes out with no delivery date", async () => {
     const user = await openWithCustomerAndLine();
     expect(dateField()).toHaveValue("");
-    await user.click(createButton());
+    await clickReady(user, createButton());
     await waitFor(() => expect(mockCreateMutate).toHaveBeenCalled());
     expect(mockCreateMutate.mock.calls[0][0].requestedDeliveryDate).toBeUndefined();
   });
@@ -168,7 +189,7 @@ describe("Requested Delivery Date placement (F09 + F12)", () => {
   it("a future date still goes out as requestedDeliveryDate", async () => {
     const user = await openWithCustomerAndLine();
     fireEvent.change(dateField(), { target: { value: localDay(3) } });
-    await user.click(createButton());
+    await clickReady(user, createButton());
     await waitFor(() => expect(mockCreateMutate).toHaveBeenCalled());
     expect(mockCreateMutate.mock.calls[0][0].requestedDeliveryDate).toBe(localDay(3));
   });
@@ -183,7 +204,7 @@ describe("A delivery date in the past is refused (F13)", () => {
     expect(dateField()).toHaveValue("2025-10-26");
     expect(dateField()).toHaveAttribute("aria-invalid", "true");
     expect(dateField()).toHaveAccessibleDescription(message.textContent ?? "");
-    await user.click(createButton());
+    await clickReady(user, createButton());
     expect(mockCreateMutate).not.toHaveBeenCalled();
     expect(dateField()).toHaveValue("2025-10-26");
   });
@@ -214,7 +235,7 @@ describe("A delivery date in the past is refused (F13)", () => {
     fireEvent.change(dateField(), { target: { value: localDay(0) } });
     expect(screen.queryByText(PAST_MESSAGE)).toBeNull();
     expect(dateField()).not.toHaveAttribute("aria-invalid", "true");
-    await user.click(createButton());
+    await clickReady(user, createButton());
     await waitFor(() => expect(mockCreateMutate).toHaveBeenCalled());
     expect(mockCreateMutate.mock.calls[0][0].requestedDeliveryDate).toBe(localDay(0));
   });
@@ -222,11 +243,11 @@ describe("A delivery date in the past is refused (F13)", () => {
   it("fixing the date clears the message and lets the order go", async () => {
     const user = await openWithCustomerAndLine();
     fireEvent.change(dateField(), { target: { value: "2025-10-26" } });
-    await user.click(createButton());
+    await clickReady(user, createButton());
     expect(mockCreateMutate).not.toHaveBeenCalled();
     fireEvent.change(dateField(), { target: { value: localDay(5) } });
     expect(screen.queryByText(PAST_MESSAGE)).toBeNull();
-    await user.click(createButton());
+    await clickReady(user, createButton());
     await waitFor(() => expect(mockCreateMutate).toHaveBeenCalled());
     expect(mockCreateMutate.mock.calls[0][0].requestedDeliveryDate).toBe(localDay(5));
   });
@@ -234,7 +255,7 @@ describe("A delivery date in the past is refused (F13)", () => {
   it("Save as draft does not send a past date either", async () => {
     const user = await openWithCustomerAndLine();
     fireEvent.change(dateField(), { target: { value: "2025-10-26" } });
-    await user.click(screen.getByRole("button", { name: "Save as draft" }));
+    await clickReady(user, screen.getByRole("button", { name: "Save as draft" }));
     expect(mockCreateMutate).not.toHaveBeenCalled();
   });
 });
@@ -328,8 +349,11 @@ describe("A delivery-date refusal after the merge prompt (row 718)", () => {
     );
     const user = await openWithCustomerAndLine();
     fireEvent.change(dateField(), { target: { value: localDay(0) } });
-    await user.click(createButton());
-    await user.click(await screen.findByRole("button", { name: /create as separate order/i }));
+    await clickReady(user, createButton());
+    await clickReady(
+      user,
+      await screen.findByRole("button", { name: /create as separate order/i }),
+    );
 
     await waitFor(() => expect(mockCreateMutate).toHaveBeenCalledTimes(2));
     expect(mockCreateMutate.mock.calls[1][0].mergeChoice).toBe("separate");
@@ -352,14 +376,14 @@ describe("The past-date check uses the tenant's day, not the browser's (row 735a
       expect(dateField()).toHaveAttribute("min", tenantDay(0, zone));
       fireEvent.change(dateField(), { target: { value: tenantDay(-1, zone) } });
       expect(screen.getByText(PAST_MESSAGE)).toBeInTheDocument();
-      await user.click(createButton());
+      await clickReady(user, createButton());
       expect(mockCreateMutate).not.toHaveBeenCalled();
       for (const offset of [0, 1]) {
         fireEvent.change(dateField(), { target: { value: tenantDay(offset, zone) } });
         expect(screen.queryByText(PAST_MESSAGE)).toBeNull();
       }
       fireEvent.change(dateField(), { target: { value: tenantDay(0, zone) } });
-      await user.click(createButton());
+      await clickReady(user, createButton());
       await waitFor(() => expect(mockCreateMutate).toHaveBeenCalled());
       expect(mockCreateMutate.mock.calls[0][0].requestedDeliveryDate).toBe(tenantDay(0, zone));
     },
@@ -378,7 +402,7 @@ describe("The past-date check uses the tenant's day, not the browser's (row 735a
     expect(screen.getByText(PAST_MESSAGE)).toBeInTheDocument();
     fireEvent.change(dateField(), { target: { value: "2026-10-21" } });
     expect(screen.queryByText(PAST_MESSAGE)).toBeNull();
-    await user.click(createButton());
+    await clickReady(user, createButton());
     await waitFor(() => expect(mockCreateMutate).toHaveBeenCalled());
     expect(mockCreateMutate.mock.calls[0][0].requestedDeliveryDate).toBe("2026-10-21");
   });
@@ -407,7 +431,7 @@ describe("The past-date check uses the tenant's day, not the browser's (row 735a
     fireEvent.change(dateField(), { target: { value: "2025-10-26" } });
     expect(dateField()).not.toHaveAttribute("min");
     expect(screen.queryByText(PAST_MESSAGE)).toBeNull();
-    await user.click(createButton());
+    await clickReady(user, createButton());
     await waitFor(() => expect(mockCreateMutate).toHaveBeenCalled()); // its 400 lands on the field (row 718, below)
   });
 });

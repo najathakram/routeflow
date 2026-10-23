@@ -28,6 +28,8 @@ const NEVER_SEES_WRITE_REFUSALS: Record<string, string> = {
     "classifies the buyer-side 403 SELLER_UNAVAILABLE (a paused seller); a buyer never meets the tenant READ_ONLY refusal",
   "lib/scan-po-lock.ts":
     "classifies the PLAN_GATE 403 on the scan route; a plan lock, not a write copy",
+  "lib/customer-pricing-gate.ts":
+    "classifies the PLAN_GATE 403 on the GET /customers/:id/prices read (SA-883); a read, shows no copy",
   "app/(platform-admin)/admin/tenants/[id]/_features/profile-errors.ts":
     "platform-admin console: a platform admin is not a tenant workspace, so READ_ONLY (tenant status) never applies",
 };

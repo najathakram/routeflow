@@ -113,6 +113,8 @@ export const LOCK_FAMILIES = [
   "demo-booking",
   "mailbox",
   "policy-write",
+  // Key space (SA-877): `<orderId>` = the counter tender window (session lock: ring's tender, void, pickup hand-over);
+  // `after-tender:<orderId>` = SA-849's over-after-tender audit write (xact LEAF lock: lock -> findFirst -> create only).
   "counter-tender",
   "fulfilment-settings",
   "tenant-price",
