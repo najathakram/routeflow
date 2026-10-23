@@ -336,6 +336,26 @@ describeDb("Invoice re-email: tracked send state - real Postgres", () => {
     expect(sweepCalls()).toBe(1);
   }, 60_000);
 
+  it("a Mark as Sent RE-SEND of an issued invoice runs no credit sweep (SA-857 MUST-2)", async () => {
+    const id = await create();
+    await run(() => invoicesService.send(id)); // the issue
+    mockCreditNotes.autoApplyOldestCreditsInTx.mockClear();
+    mockCreditNotes.settleOrderCreditsInTx.mockClear();
+    await run(() => invoicesService.send(id)); // a second Mark as Sent on the issued invoice
+    expect(sweepCalls()).toBe(0);
+    expect(mockCreditNotes.settleOrderCreditsInTx).not.toHaveBeenCalled();
+  }, 60_000);
+
+  it("a DRAFT revert makes the next send an ISSUE again: the credit sweep runs", async () => {
+    const id = await create();
+    await email(id); // the issue
+    await run(() => invoicesService.revertInvoiceToDraft(id));
+    expect((await row(id)).status).toBe("DRAFT");
+    mockCreditNotes.autoApplyOldestCreditsInTx.mockClear();
+    await email(id); // the re-issue
+    expect(sweepCalls()).toBe(1);
+  }, 60_000);
+
   // GUARD (SA-852 rule 3): green before and after the fold; it pins the stage a revert leaves behind.
   it("GUARD: a DRAFT revert of an invoice whose order is DELIVERED keeps the FINAL stage: unchanged, no edit", async () => {
     const id = await create();

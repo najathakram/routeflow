@@ -10,14 +10,11 @@
  * (the oldest-first sweep), so an explicit-amount credit intent recorded at
  * order time is never settled before the invoice is marked sent.
  *
- * RED BY DESIGN: `InvoicesService.send`/`sendEmail` (invoices.service.ts,
- * search "P5-13: SENT flip") never call `this.creditNotes.settleOrderCreditsInTx`
- * at all today — grep confirms its only two call sites are elsewhere in the
- * file (the DELIVERED branch's best-effort settle, ~L1258/L2730), neither of
- * which is `send()`/`sendEmail()`. Both tests below fail on the call-order
- * assertion (`callLog` never gains a `"settleOrderCreditsInTx"` entry), never
- * on a compile error — no not-yet-existing field/option is touched, so no
- * `as any` escape hatch is needed here.
+ * HISTORY: this was written RED BY DESIGN (REG-B108): `send`/`sendEmail` never called
+ * `settleOrderCreditsInTx` before R13 wired it into `markSent`. It is now the green pin on the ORDER of the two
+ * calls (settle, then the oldest-first sweep) on the ISSUING send. SA-857: only the DRAFT -> SENT issue runs them, so
+ * the fixtures here are DRAFT invoices; a re-send is pinned to move no money in the DB lane
+ * (credit-auto-apply-sa436.db.spec.ts case 5a, invoices.resend-state.db.spec.ts).
  *
  * Harness: real `InvoicesService` over a mocked `PrismaService`
  * (`createMockPrisma()` — `forTenant()`/`tenantTransaction` pass-through, per

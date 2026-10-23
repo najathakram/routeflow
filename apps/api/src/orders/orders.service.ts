@@ -2528,7 +2528,9 @@ export class OrdersService implements OnApplicationBootstrap {
       // The old single-attempt try/catch swallowed the FIRST failure behind a
       // comment claiming send()/sendEmail()'s auto-apply would catch up —
       // that catch-up is real now that R13 wires settleOrderCreditsInTx into
-      // both of those methods (WP-API-INVOICES), which is what makes a
+      // both of those methods (WP-API-INVOICES) - on the ISSUING send only (the
+      // DRAFT -> SENT flip, SA-857): a re-send of an issued invoice moves no
+      // money, so it does not catch an order up. That is what makes a
       // survived final failure here safe: delivery must still never fail on
       // a settle failure, but giving up now logs at ERROR (not warn) so an
       // operator can find and manually settle the order.
