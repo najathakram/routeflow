@@ -219,7 +219,46 @@ export function finishJson(file, result, { head, base }) {
 
 const git = (args) => execFileSync("git", args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
 
+/**
+ * Poll a gate json in Node (agent harnesses block a foreground `sleep`). Prints the json; exit 0 when
+ * `running` is not true, 3 when --max-ms (default 540000) elapses first, 2 on bad usage.
+ */
+export async function waitForJson(file, argv = []) {
+  if (!file) {
+    console.error("gate: --wait needs a json file path");
+    return 2;
+  }
+  const mi = argv.indexOf("--max-ms");
+  const maxMs = mi === -1 ? 540000 : Number(argv[mi + 1]);
+  const read = () => {
+    try {
+      return readFileSync(file, "utf8");
+    } catch {
+      return null;
+    }
+  };
+  const done = (txt) => {
+    if (txt === null) return false;
+    try {
+      return JSON.parse(txt).running !== true;
+    } catch {
+      return false; // half-written
+    }
+  };
+  const t0 = Date.now();
+  let txt = read();
+  while (!done(txt) && Date.now() - t0 < maxMs) {
+    const left = Math.max(100, maxMs - (Date.now() - t0));
+    await new Promise((r) => setTimeout(r, Math.min(5000, left)));
+    txt = read();
+  }
+  if (txt !== null) console.log(txt.trim());
+  return done(txt) ? 0 : 3;
+}
+
 export async function main(argv = process.argv.slice(2)) {
+  const wi = argv.indexOf("--wait");
+  if (wi !== -1) return waitForJson(argv[wi + 1], argv);
   const needsDb = argv.includes("--needs-db");
   const dryRun = argv.includes("--dry-run");
   const ji = argv.indexOf("--json");

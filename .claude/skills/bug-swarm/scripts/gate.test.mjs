@@ -1,7 +1,7 @@
 // node --test gate.test.mjs — contract tests for gate.mjs (runs 2026-10-23-bug-swarm-1/-2).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { mkdtempSync, writeFileSync, existsSync, readFileSync } from "node:fs";
@@ -319,4 +319,32 @@ test("CLI --dry-run prints the plan and runs nothing", () => {
   assert.match(r.stdout, /packages-build/);
   assert.match(r.stdout, /size-ratchet/);
   assert.match(r.stdout, /db-lane/);
+});
+
+// --wait polls in Node because agent harnesses block a foreground `sleep`.
+const runWait = (file, extra = []) =>
+  new Promise((resolve) => {
+    const t0 = Date.now();
+    const p = spawn(process.execPath, [path.join(here, "gate.mjs"), "--wait", file, ...extra]);
+    let out = "";
+    p.stdout.on("data", (d) => (out += d));
+    p.on("close", (code) => resolve({ code, out, ms: Date.now() - t0 }));
+  });
+
+test("--wait returns exit 0 with the json once running flips to false", async () => {
+  const f = path.join(mkdtempSync(path.join(tmpdir(), "gw-")), "g.json");
+  writeFileSync(f, JSON.stringify({ ok: false, running: true, head: "h" }));
+  setTimeout(() => writeFileSync(f, JSON.stringify({ ok: true, head: "h", steps: [] })), 1000);
+  const r = await runWait(f);
+  assert.equal(r.code, 0);
+  assert.equal(JSON.parse(r.out).ok, true);
+  assert.ok(r.ms >= 900 && r.ms < 8000, `took ${r.ms} ms`);
+});
+
+test("--wait exits 3 and prints the json when the gate never finishes within --max-ms", async () => {
+  const f = path.join(mkdtempSync(path.join(tmpdir(), "gw-")), "g.json");
+  writeFileSync(f, JSON.stringify({ ok: false, running: true, head: "h" }));
+  const r = await runWait(f, ["--max-ms", "1500"]);
+  assert.equal(r.code, 3);
+  assert.equal(JSON.parse(r.out).running, true);
 });

@@ -107,6 +107,7 @@ export async function runWorkflow(scenario, args = {}) {
         };
       case "gate": {
         gateN[id] = (gateN[id] ?? 0) + 1;
+        if (scenario.gateNull) return null;
         if (pick(scenario.gateRunning ?? false, gateN[id]))
           return { ok: false, running: true, head: "", steps: [] };
         const ok = pick(scenario.gateGreen, gateN[id]);
@@ -374,6 +375,17 @@ export async function runAll() {
   assert.equal(run2.result.clusters[0].parked, "gate incomplete");
   assert.equal(count(run2.calls, /^gate:/), 2);
   assert.equal(count(run2.calls, /^(buildfix|review):/), 0);
+
+  // 16b. Dead gate agent: same re-gate/park logic, distinct reason; prompt uses --wait, never sleep.
+  const dead2 = await runWorkflow({ clusters: [two[0]], gateNull: true, verdict: "PASS" }, ARGS);
+  assert.equal(dead2.result.clusters[0].parked, "gate agent died");
+  assert.equal(count(dead2.calls, /^gate:/), 2);
+  assert.equal(count(dead2.calls, /^buildfix:/), 0);
+  const gp = run1.calls.find((c) => c.label === "gate:c1").prompt;
+  assert.ok(
+    gp.includes("--wait") &&
+      !/\bsleep (?!\w*\) is blocked)/.test(gp.replace("Never use sleep (it is blocked)", "")),
+  );
 
   // 17. Cluster relay says LOW, Triage says HIGH: Triage wins, bug dropped.
   const relay = await runWorkflow(

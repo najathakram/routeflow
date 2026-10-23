@@ -179,6 +179,7 @@ const redTails = (g) =>
     .join("\n") || (g.running ? "gate file still marked running" : "stale or missing gate result");
 // A gate that never finished (still running, no file, no head) is not a code failure.
 const gateIncomplete = (g) => !g || g.running === true || !g.head;
+const incompleteWhy = (g) => (g.gate ? "gate incomplete" : "gate agent died");
 // Run the gate; if it did not finish, re-run it once (no fix round consumed).
 // Returns { gate, state: "green" | "red" | "incomplete", round } where round is the next free round number.
 const settleGate = async (c, wt, head, round) => {
@@ -278,8 +279,8 @@ Return {status "ok", commits (full shas), redValues, specEdits, lesson (one cand
 
 const runGate = (c, wt, label, round) =>
   agent(
-    `Start the gate with Bash run_in_background (it can outlive any foreground timeout: it queues behind other clusters): cd "${wt}" && node "${SCRIPTS}/gate.mjs" --json "${RUN_DIR}/gate-${c.id}-r${round}.json"${c.needsDb ? " --needs-db" : ""}${avoidFlags}
-Then poll ${RUN_DIR}/gate-${c.id}-r${round}.json with short Bash calls (sleep 60 && cat the file) until it no longer says running:true, for at most 45 minutes in total. Return {ok, running, head, base, steps:[{name, ok, tail}]} exactly as recorded (keep the tail only for failed steps). If after the wait the file still says running:true or is missing, return it as recorded (ok false, running true, head empty) and do not retry. Do not fix anything, do not rerun with other flags. ${RULES}`,
+    `Start the gate with Bash run_in_background (it queues behind other clusters and can run for a long time): cd "${wt}" && node "${SCRIPTS}/gate.mjs" --json "${RUN_DIR}/gate-${c.id}-r${round}.json"${c.needsDb ? " --needs-db" : ""}${avoidFlags}
+Then wait for it with: node "${SCRIPTS}/gate.mjs" --wait "${RUN_DIR}/gate-${c.id}-r${round}.json" (Bash timeout 600000). It prints the json and exits 0 when the gate finished, or exits 3 if it is still running: call it again, up to 5 times in total, until it exits 0. Never use sleep (it is blocked). Return {ok, running, head, base, steps:[{name, ok, tail}]} exactly as printed (keep the tail only for failed steps). If it still exits 3 after 5 calls, or the file is missing, return what you have (ok false, running true, head empty) and do not retry. Do not fix anything, do not rerun with other flags. ${RULES}`,
     { label, phase: "Gate", schema: GATE_SCHEMA, model: "haiku", effort: "low" },
   );
 
@@ -338,7 +339,7 @@ const results = await pipeline(
     phase("Gate");
     let g = await settleGate(st.c, st.worktree, st.head, 1);
     if (g.state === "incomplete") {
-      return { ...st, gate: g.gate || { ok: false, steps: [] }, parked: "gate incomplete" };
+      return { ...st, gate: g.gate || { ok: false, steps: [] }, parked: incompleteWhy(g) };
     }
     if (g.state === "green") return { ...st, gate: g.gate, round: g.round };
     const gate = g.gate;
@@ -361,7 +362,7 @@ const results = await pipeline(
       return {
         ...next,
         gate: g.gate || { ok: false, steps: [] },
-        parked: g.state === "incomplete" ? "gate incomplete" : "gate red after one fix round",
+        parked: g.state === "incomplete" ? incompleteWhy(g) : "gate red after one fix round",
       };
     }
     return { ...next, gate: g.gate, round: g.round };
@@ -395,7 +396,7 @@ const results = await pipeline(
         gate: gate || { ok: false, steps: [] },
         verdict: "FAIL",
         musts: first.musts,
-        parked: g.state === "incomplete" ? "gate incomplete" : "gate red after review fix",
+        parked: g.state === "incomplete" ? incompleteWhy(g) : "gate red after review fix",
       };
     }
     phase("Review");
