@@ -1037,7 +1037,10 @@ const EMPTY_BLOB = "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391";
 test("A2 GraphQL: asks for PR bodies and check contexts (CheckRun + StatusContext) for open PRs and master", () => {
   assert.match(COL.GRAPHQL_QUERY, /body/);
   assert.match(COL.GRAPHQL_QUERY, /contexts\(first: 50\)/);
-  assert.match(COL.GRAPHQL_QUERY, /\.\.\. on CheckRun \{ name conclusion status startedAt \}/);
+  assert.match(
+    COL.GRAPHQL_QUERY,
+    /\.\.\. on CheckRun \{ name conclusion status startedAt checkSuite \{ createdAt \} \}/,
+  );
   assert.match(COL.GRAPHQL_QUERY, /\.\.\. on StatusContext \{ context state \}/);
   // master and the open PRs both carry contexts
   assert.equal((COL.GRAPHQL_QUERY.match(/contexts\(first: 50\)/g) ?? []).length, 2);
@@ -1755,6 +1758,40 @@ test("D6 a queued check is pending, never not-run and never success", () => {
     ]),
     "not-run",
   );
+});
+
+test("D6 a check queued for longer than QUEUED_STALE_MS is not-run (stale), a fresh one stays pending", () => {
+  const n = COL.normalizeContext;
+  const now = Date.parse("2026-10-23T12:00:00Z");
+  const cr = (createdAt, over = {}) => ({
+    __typename: "CheckRun",
+    name: "verify",
+    status: "QUEUED",
+    conclusion: null,
+    startedAt: null,
+    checkSuite: { createdAt },
+    ...over,
+  });
+  assert.equal(COL.QUEUED_STALE_MS, 6 * 3600_000);
+  const at = (ageMs) => new Date(now - ageMs).toISOString();
+  assert.equal(n(cr(at(COL.QUEUED_STALE_MS - 60_000)), now).state, "pending");
+  assert.equal(n(cr(at(COL.QUEUED_STALE_MS + 60_000)), now).state, "notrun");
+  // no suite time known: keeps the old reading
+  assert.equal(n(cr(undefined, { checkSuite: null }), now).state, "pending");
+  // a run that is genuinely in progress is never aged out
+  assert.equal(
+    n(cr(at(COL.QUEUED_STALE_MS * 2), { status: "IN_PROGRESS", startedAt: at(60_000) }), now).state,
+    "pending",
+  );
+});
+
+test("collapseRuns: an old success and a newer queued re-run of the same check read pending (pending outranks success)", () => {
+  const cr = (over) => ({ __typename: "CheckRun", name: "verify", ...over });
+  const runs = COL.collapseRuns([
+    cr({ status: "COMPLETED", conclusion: "SUCCESS", startedAt: "2026-10-23T08:00:00Z" }),
+    cr({ status: "QUEUED", conclusion: null, startedAt: null }),
+  ]);
+  assert.deepEqual(runs, [{ name: "verify", state: "pending" }]);
 });
 
 test("D6 normalizeContext/summarizeChecks: never-started checks are not-run, never failure", () => {

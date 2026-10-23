@@ -52,7 +52,7 @@ export const BUG_FILE_RE = /^\.claude\/campaign\/bugs\/B\d+[^/]*\.md$/;
 export const DEFAULT_CI_GATES = ["verify", "e2e"];
 
 const [OWNER, REPO] = GITHUB_REPO.split("/");
-const CONTEXTS = `statusCheckRollup { state contexts(first: 50) { nodes { __typename ... on CheckRun { name conclusion status startedAt } ... on StatusContext { context state } } } }`;
+const CONTEXTS = `statusCheckRollup { state contexts(first: 50) { nodes { __typename ... on CheckRun { name conclusion status startedAt checkSuite { createdAt } } ... on StatusContext { context state } } } }`;
 export const GRAPHQL_QUERY = `query {
   repository(owner: "${OWNER}", name: "${REPO}") {
     visibility
@@ -79,13 +79,18 @@ export const GRAPHQL_QUERY = `query {
 
 const RUN_RANK = { failure: 6, pending: 5, success: 4, cancelled: 3, skipped: 2, notrun: 1 };
 
+/** A check still queued (never started) this long after its suite was created counts as not-run. */
+export const QUEUED_STALE_MS = 6 * 3600_000;
+
 /**
  * One GraphQL check context (CheckRun | StatusContext) -> { name, state } with state in
  * success | failure | pending | skipped | cancelled | notrun. Unknown shapes -> null.
  * notrun = the check ended without ever starting (startedAt null, conclusion cancelled / skipped /
- * startup-failure). It is NOT a failure. A queued/waiting check with startedAt null is pending.
+ * startup-failure). It is NOT a failure. A queued/waiting check with startedAt null is pending,
+ * until its suite is older than QUEUED_STALE_MS: a check queued that long is not going to run
+ * (stuck runner, blocked Actions) and reads notrun, so it cannot hold the gate pending forever.
  */
-export function normalizeContext(n) {
+export function normalizeContext(n, nowMs = Date.now()) {
   if (!n || typeof n !== "object") return null;
   if (n.__typename === "StatusContext" || (n.context && !n.name)) {
     if (!n.context) return null;
@@ -99,8 +104,11 @@ export function normalizeContext(n) {
   const c = String(n.conclusion ?? "").toUpperCase();
   // startedAt present-and-null = never started. (A fixture without the key keeps the old reading.)
   const neverStarted = n.startedAt === null;
-  if (neverStarted && ["QUEUED", "WAITING", "REQUESTED", "PENDING"].includes(status))
-    return { name: String(n.name), state: "pending" };
+  if (neverStarted && ["QUEUED", "WAITING", "REQUESTED", "PENDING"].includes(status)) {
+    const queuedAt = Date.parse(n.checkSuite?.createdAt ?? "");
+    const stale = Number.isFinite(queuedAt) && nowMs - queuedAt > QUEUED_STALE_MS;
+    return { name: String(n.name), state: stale ? "notrun" : "pending" };
+  }
   if (status && status !== "COMPLETED") return { name: String(n.name), state: "pending" };
   if (neverStarted && (c === "CANCELLED" || c === "SKIPPED" || c === "STARTUP_FAILURE"))
     return { name: String(n.name), state: "notrun" };
@@ -117,10 +125,10 @@ export function normalizeContext(n) {
  * duplicate must never hide the real result). Worst wins: failure > pending > success >
  * cancelled > skipped. First-appearance order.
  */
-export function collapseRuns(nodes) {
+export function collapseRuns(nodes, nowMs = Date.now()) {
   const by = new Map();
   for (const raw of nodes ?? []) {
-    const r = normalizeContext(raw);
+    const r = normalizeContext(raw, nowMs);
     if (!r) continue;
     const had = by.get(r.name);
     if (!had || RUN_RANK[r.state] > RUN_RANK[had]) by.set(r.name, r.state);
@@ -156,7 +164,9 @@ export function classifyCheck(name, config) {
 /**
  * Runs ([{name,state}]) -> { gate, probesFailing, runs: [{name,kind,state}] }.
  * gate = failure | pending | not-run | success | skipped | none over the GATE runs only;
- * not-run = a gate check never started (Actions blocked or queued), shown as its own state; a failing probe
+ * not-run = a gate check that ended without ever starting (cancelled / skipped / startup-failure,
+ * e.g. Actions blocked), or sat queued past QUEUED_STALE_MS; shown as its own state. A fresh queued
+ * check is pending, not not-run; a failing probe
  * never fails the gate (it is listed by name in probesFailing). A cancelled gate with nothing
  * better counts as failure (it did not pass and nothing re-ran it).
  */
