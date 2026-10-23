@@ -32,6 +32,7 @@ const CUSTOMERS: Record<string, typeof C1> = { c1: C1, c3: C3 };
 let mockCustomerLoading = false;
 let mockCustomerError = false;
 let mockPricesError = false;
+let mockPricesErrorWithData = false;
 const mockRefetchCustomer = jest.fn();
 const mockRefetchPrices = jest.fn();
 let mockCustomerPrices: unknown[] = [];
@@ -64,7 +65,7 @@ jest.mock("@/lib/api/customers", () => ({
   useCustomerPrices: (id?: string) => ({
     data: id && !mockPricesError ? mockCustomerPrices : undefined,
     isLoading: false,
-    isError: !!id && mockPricesError,
+    isError: !!id && (mockPricesError || mockPricesErrorWithData),
     refetch: mockRefetchPrices,
   }),
 }));
@@ -77,6 +78,7 @@ beforeEach(() => {
   mockCustomerLoading = false;
   mockCustomerError = false;
   mockPricesError = false;
+  mockPricesErrorWithData = false;
   mockCustomerPrices = [];
   mockLayer = layerOff();
 });
@@ -240,6 +242,42 @@ describe("SA-868: a customer change whose read fails never re-prices a line", ()
     expect(screen.queryByDisplayValue("10.00")).not.toBeInTheDocument();
     // The line's price is a suggestion the failed read cannot confirm: Save waits for Retry.
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  });
+});
+
+describe("SA-870: a price suggested for one customer is never saved into another's template", () => {
+  it("customer A's tier-3 suggestion holds Save after B's failed read; typing a price releases it and saves it", async () => {
+    const onSubmit = renderCreate();
+    await chooseCustomer("Tier Three Cafe");
+    await pickProduct();
+    expect(await screen.findByDisplayValue("8.00")).toBeInTheDocument();
+    clearCustomer("Tier Three Cafe");
+    mockPricesError = true;
+    await chooseCustomer("Retail Cafe");
+    // At 1c4d42dc7: the line kept A's 8.00 and Save was enabled, submitting 8.00 for B.
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Couldn't load this customer's prices.",
+    );
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    const price = screen.getByDisplayValue("8.00");
+    fireEvent.change(price, { target: { value: "9.00" } });
+    fireEvent.blur(price);
+    const save = screen.getByRole("button", { name: "Save" });
+    await waitFor(() => expect(save).not.toBeDisabled());
+    fireEvent.click(save);
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    expect(onSubmit.mock.calls[0][0].items[0].unitPrice).toBe(9);
+  });
+
+  it("a read error WITH data present (a stale refetch) does not block: picking fills the customer's price", async () => {
+    mockPricesErrorWithData = true;
+    renderCreate();
+    await chooseCustomer("Tier Three Cafe");
+    const search = screen.getByPlaceholderText("Description / product…") as HTMLInputElement;
+    expect(search).not.toBeDisabled();
+    await pickProduct();
+    expect(await screen.findByDisplayValue("8.00")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save" })).not.toBeDisabled();
   });
 });
 

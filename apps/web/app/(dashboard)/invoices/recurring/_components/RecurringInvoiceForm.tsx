@@ -354,13 +354,11 @@ export function RecurringInvoiceForm({
     customerPricesQuery: customerId ? customerPricesQuery : {},
     priceLayer,
     productIds: items.map((it) => it.productId),
+    openSuggestions: items.some((it) => !!it.product && !it.priceEdited),
   });
   const pricingPending = gate.pending;
   const pricingFailed = gate.failed;
-  // SA-868: after a failed customer / customer-price read, a line still carrying a SUGGESTED price (picked here, not typed)
-  // cannot be confirmed, so Save waits for Retry; typed and stored prices are the operator's and never hold Save.
-  const priceBlocked =
-    gate.blockSave || (gate.readFailed && items.some((it) => it.product && !it.priceEdited));
+  const priceBlocked = gate.blockSave;
   const retryCustomerPrices = () => {
     void customerQuery.refetch?.();
     void customerPricesQuery.refetch?.();

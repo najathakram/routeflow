@@ -8,15 +8,18 @@ type ReadState = { isLoading?: boolean; isError?: boolean; data?: unknown };
  * customer, their customer-product prices and (flag on) the price layer are read. A read still in flight = `pending`; a
  * read that FAILED with no data = `failed` (else `customerTierFor(undefined, …)` would price the pick at LIST).
  *  - `blockPick`: no product may be picked (a pick would pre-fill a price) while pending or failed.
- *  - `blockSave`: Save waits while pending, and on an unconfirmed layer (SA-813 M3, `pricesUnconfirmed`). A failed
- *    customer / customer-price read does NOT block Save: with picking closed no suggestion can get in, and every price
- *    on the form is the operator's own or the stored template's.
+ *  - `blockSave`: Save waits while pending, on an unconfirmed layer (SA-813 M3, `pricesUnconfirmed`), and (SA-870) while a
+ *    read has failed AND a line still carries an open suggestion (`openSuggestions`: a product picked here whose price the
+ *    operator has not typed), so a price suggested for one customer is never saved into another's template. Typing a
+ *    price, removing the line or a successful Retry releases it. Typed and stored prices never hold Save.
  */
 export function customerPricingGate(i: {
   customerQuery: ReadState;
   customerPricesQuery: ReadState;
   priceLayer: Pick<CustomerPriceLayer, "enabled" | "ready" | "failed" | "lineReady">;
   productIds?: ReadonlyArray<string | null | undefined>;
+  /** SA-870: some line carries a suggested price (picked on this form, not typed). */
+  openSuggestions?: boolean;
 }): {
   pending: boolean;
   failed: boolean;
@@ -36,6 +39,9 @@ export function customerPricingGate(i: {
     failed,
     readFailed,
     blockPick: pending || failed,
-    blockSave: pending || pricesUnconfirmed(i.priceLayer, i.productIds ?? []),
+    blockSave:
+      pending ||
+      pricesUnconfirmed(i.priceLayer, i.productIds ?? []) ||
+      (failed && !!i.openSuggestions),
   };
 }
