@@ -245,6 +245,9 @@ describeDb(
       t1: () => Promise<unknown>,
       between: (c: any) => Promise<void>,
     ) {
+      // W-739: warm the app's connection pool and tenant client BEFORE t2 takes the lock, so a cold start on a loaded runner is
+      // not part of the window we poll for "T1 is blocked on T2" (the (a4) flake: blocked=false on CI, green on rerun).
+      await prisma.$queryRaw`SELECT 1`;
       const t2 = new Client({ connectionString: url() });
       await t2.connect();
       try {
@@ -256,7 +259,8 @@ describeDb(
           (e) => ({ ok: false as const, e }),
         );
         let blocked = false;
-        for (let i = 0; i < 800 && !blocked; i++) {
+        // 3000 x 25 ms = 75 s (was 20 s): generous on purpose, the loop exits the moment T1 is blocked, so it costs nothing when healthy
+        for (let i = 0; i < 3000 && !blocked; i++) {
           const r = await t2.query(
             `SELECT count(*)::int n FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))`,
             [pid],
