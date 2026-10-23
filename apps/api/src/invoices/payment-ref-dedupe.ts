@@ -143,6 +143,14 @@ interface Existing {
   paymentGroupId: string | null;
 }
 
+/** The retryable 503 LOCK_UNAVAILABLE: the reference is being recorded (or, for an edit, moved) elsewhere. */
+export function paymentRefLockUnavailable(): ServiceUnavailableException {
+  return new ServiceUnavailableException({
+    code: API_ERROR_CODES.LOCK_UNAVAILABLE,
+    message: "Another payment with this reference is being recorded. Try again in a moment.",
+  });
+}
+
 /** 409 DUPLICATE_PAYMENT_REF: the body names the existing payment (the clients read it, packages/types). */
 export function duplicatePaymentRefConflict(existing: Existing): ConflictException {
   const body: DuplicatePaymentRefBody = {
@@ -390,6 +398,8 @@ export function createPaymentRefGuard(p: PaymentRefInput): PaymentRefGuard {
           meta: {
             actor,
             invoiceId: forInvoice,
+            // SA-843 ruling 4: the rows this write recorded (or, for an edit, the row edited); additive, every writer
+            paymentIds: paymentIds.filter((id): id is string => !!id),
             normalisedRef: norm,
             duplicateOfPaymentId: anyway.id,
             method: p.method,
@@ -423,11 +433,7 @@ export async function withPaymentRefLock<T>(
 ): Promise<T> {
   const norm = normalizePaymentRef(p.reference);
   if (!norm || !p.method) return fn();
-  const unavailable = () =>
-    new ServiceUnavailableException({
-      code: API_ERROR_CODES.LOCK_UNAVAILABLE,
-      message: "Another payment with this reference is being recorded. Try again in a moment.",
-    });
+  const unavailable = paymentRefLockUnavailable;
   try {
     return await retryOnTxConflict(`payment-ref ${p.method}`, async () => {
       const out = await withAdvisoryLock(
