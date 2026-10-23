@@ -31,6 +31,9 @@ const CUSTOMERS: Record<string, typeof C1> = { c1: C1, c3: C3 };
 
 let mockCustomerLoading = false;
 let mockCustomerError = false;
+let mockPricesError = false;
+const mockRefetchCustomer = jest.fn();
+const mockRefetchPrices = jest.fn();
 let mockCustomerPrices: unknown[] = [];
 let mockLayer: Record<string, unknown> = {};
 const layerOff = () => ({
@@ -56,10 +59,13 @@ jest.mock("@/lib/api/customers", () => ({
     data: mockCustomerLoading || mockCustomerError ? undefined : CUSTOMERS[id],
     isLoading: !!id && mockCustomerLoading,
     isError: !!id && mockCustomerError,
+    refetch: mockRefetchCustomer,
   }),
   useCustomerPrices: (id?: string) => ({
-    data: id ? mockCustomerPrices : undefined,
+    data: id && !mockPricesError ? mockCustomerPrices : undefined,
     isLoading: false,
+    isError: !!id && mockPricesError,
+    refetch: mockRefetchPrices,
   }),
 }));
 jest.mock("@/lib/api/useCustomerPriceLayer", () => ({
@@ -70,6 +76,7 @@ jest.mock("@/lib/api/useCustomerPriceLayer", () => ({
 beforeEach(() => {
   mockCustomerLoading = false;
   mockCustomerError = false;
+  mockPricesError = false;
   mockCustomerPrices = [];
   mockLayer = layerOff();
 });
@@ -194,6 +201,26 @@ describe("SA-856: a recurring line pre-fills the customer's own price", () => {
     )) as HTMLInputElement;
     expect(search).toBeDisabled();
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  });
+});
+
+describe("SA-868: a failed customer-price read fails CLOSED (never a list-price suggestion)", () => {
+  it("picking is disabled with the failed-prices notice and Retry; Save stays allowed", async () => {
+    mockPricesError = true;
+    const onSubmit = renderCreate();
+    await chooseCustomer("Tier Three Cafe");
+    // At 50f7d6533: the read failed, customerTierFor(undefined, …) priced the pick and it filled LIST (10.00).
+    const search = screen.getByPlaceholderText(
+      "Couldn't load this customer's prices.",
+    ) as HTMLInputElement;
+    expect(search).toBeDisabled();
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("Couldn't load this customer's prices.");
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(mockRefetchPrices).toHaveBeenCalled();
+    // Save stays allowed: no suggestion can get in while picking is closed (typed and stored prices are the operator's).
+    expect(screen.getByRole("button", { name: "Save" })).not.toBeDisabled();
+    expect(onSubmit).not.toHaveBeenCalled();
   });
 });
 

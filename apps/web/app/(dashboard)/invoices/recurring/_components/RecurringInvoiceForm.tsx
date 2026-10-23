@@ -12,11 +12,8 @@ import { useCustomer, useCustomerPrices, useCustomers, type Customer } from "@/l
 import { useProduct, useProducts } from "@/lib/api/products";
 import { customerTierFor } from "@routeflow/pricing";
 import { useCustomerLinePricing } from "@/lib/useCustomerLinePricing";
-import {
-  PRICE_LAYER_FAILED_COPY,
-  PriceLayerNotice,
-  pricesUnconfirmed,
-} from "@/components/PriceLayerNotice";
+import { PRICE_LAYER_FAILED_COPY, PriceLayerNotice } from "@/components/PriceLayerNotice";
+import { customerPricingGate } from "@/lib/customer-pricing-gate";
 import { displayProductName } from "@/lib/product-display";
 import { sellableFlat } from "@/lib/product-search-groups";
 import { DecimalInput, MoneyInput } from "@/components/MoneyInput";
@@ -350,22 +347,22 @@ export function RecurringInvoiceForm({
     [customerPricesQuery.data, customerTier],
   );
   const { priceLayer, tierPriceFor } = useCustomerLinePricing(customerId, tierForProductId);
-  // The same gate as the invoice form: until the customer and their prices are read a pick would price at LIST.
-  const pricingPending =
-    !!customerId &&
-    (customerQuery.isLoading ||
-      customerPricesQuery.isLoading ||
-      (priceLayer.enabled && !priceLayer.ready));
-  const pricingFailed = priceLayer.enabled && priceLayer.failed;
-  // A failed customer / customer-price read leaves no customer's price to compare with: the marker stays hidden then
-  // (it would name the LIST price as "this customer's price"). Save keeps the invoice form's gate (SA-856 rule 1).
-  const pricingReadFailed = customerQuery.isError || customerPricesQuery.isError;
-  const priceBlocked =
-    pricingPending ||
-    pricesUnconfirmed(
-      priceLayer,
-      items.map((it) => it.productId),
-    );
+  // SA-868: money fails CLOSED. Until the customer and their prices are read (or after a read failed) a pick would price at
+  // LIST, so picking waits; Save waits only while pending / on an unconfirmed layer (see customerPricingGate).
+  const gate = customerPricingGate({
+    customerQuery: customerId ? customerQuery : {},
+    customerPricesQuery: customerId ? customerPricesQuery : {},
+    priceLayer,
+    productIds: items.map((it) => it.productId),
+  });
+  const pricingPending = gate.pending;
+  const pricingFailed = gate.failed;
+  const priceBlocked = gate.blockSave;
+  const retryCustomerPrices = () => {
+    void customerQuery.refetch?.();
+    void customerPricesQuery.refetch?.();
+    if (priceLayer.failed) priceLayer.refetch();
+  };
   const suggestedPrice = React.useCallback(
     (product: PickedProduct) => Number(tierPriceFor(product)),
     [tierPriceFor],
@@ -373,7 +370,7 @@ export function RecurringInvoiceForm({
 
   // A customer change re-suggests ONLY the lines picked here whose price the operator has not typed (SA-856 rule 2).
   React.useEffect(() => {
-    if (pricingPending) return;
+    if (gate.blockPick) return;
     setItems((prev) => {
       let changed = false;
       const next = prev.map((it) => {
@@ -385,7 +382,7 @@ export function RecurringInvoiceForm({
       });
       return changed ? next : prev;
     });
-  }, [customerId, pricingPending, suggestedPrice]);
+  }, [customerId, gate.blockPick, suggestedPrice]);
 
   function updateItem(key: string, patch: Partial<LineItemState>) {
     setItems((prev) => prev.map((it) => (it.key === key ? { ...it, ...patch } : it)));
@@ -568,7 +565,7 @@ export function RecurringInvoiceForm({
               >
                 <ProductSearchInput
                   value={item.description}
-                  disabled={pricingPending}
+                  disabled={gate.blockPick}
                   placeholder={
                     pricingFailed
                       ? PRICE_LAYER_FAILED_COPY
@@ -609,17 +606,14 @@ export function RecurringInvoiceForm({
                 >
                   <Trash2 className="h-4 w-4" />
                 </button>
-                {item.productId &&
-                  !pricingPending &&
-                  !pricingReadFailed &&
-                  !pricesUnconfirmed(priceLayer, [item.productId]) && (
-                    <CustomerPriceNow
-                      productId={item.productId}
-                      picked={item.product}
-                      stored={item.unitPrice}
-                      priceFor={suggestedPrice}
-                    />
-                  )}
+                {item.productId && !gate.blockPick && priceLayer.lineReady(item.productId) && (
+                  <CustomerPriceNow
+                    productId={item.productId}
+                    picked={item.product}
+                    stored={item.unitPrice}
+                    priceFor={suggestedPrice}
+                  />
+                )}
               </div>
             ))}
             <button
@@ -691,11 +685,20 @@ export function RecurringInvoiceForm({
         </Card>
 
         <Card>
-          <PriceLayerNotice
-            layer={priceLayer}
-            unconfirmed={priceBlocked}
-            className="mb-2 block text-xs text-amber-700"
-          />
+          {gate.readFailed ? (
+            <span role="alert" className="mb-2 block text-xs text-amber-700">
+              {PRICE_LAYER_FAILED_COPY}{" "}
+              <button type="button" className="font-medium underline" onClick={retryCustomerPrices}>
+                Retry
+              </button>
+            </span>
+          ) : (
+            <PriceLayerNotice
+              layer={priceLayer}
+              unconfirmed={priceBlocked}
+              className="mb-2 block text-xs text-amber-700"
+            />
+          )}
           <Button
             className="w-full"
             onClick={handleSubmit}
