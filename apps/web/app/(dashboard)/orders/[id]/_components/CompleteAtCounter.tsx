@@ -30,13 +30,7 @@ export function CompleteAtCounterButton({ order, onOpen }: { order: Order; onOpe
     });
   if (!offered) return null;
   return (
-    <Button
-      size="sm"
-      variant="secondary"
-      className="h-11"
-      leftIcon={<Store className="h-4 w-4" />}
-      onClick={onOpen}
-    >
+    <Button size="sm" variant="secondary" leftIcon={<Store className="h-4 w-4" />} onClick={onOpen}>
       {COUNTER_COPY.completeAtCounter}
     </Button>
   );
