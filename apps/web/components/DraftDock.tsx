@@ -55,7 +55,22 @@ function newOrderHref(scanCode: string): string {
   return `/orders?${params.toString()}`;
 }
 
+// B668: below the lg breakpoint the dock floated over page content (768: the New-unit fields).
+function useNarrowViewport(): boolean {
+  const [narrow, setNarrow] = React.useState(false);
+  React.useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
+    const mq = window.matchMedia("(max-width: 1023px)");
+    const sync = () => setNarrow(mq.matches);
+    sync();
+    mq.addEventListener?.("change", sync);
+    return () => mq.removeEventListener?.("change", sync);
+  }, []);
+  return narrow;
+}
+
 function DraftDockInner() {
+  const narrow = useNarrowViewport();
   const router = useGuardedRouter(); // POS-7: Resume / Start new cannot leave the counter mid-sale
   const { toast } = useToast();
   const { data: drafts } = useDrafts();
@@ -120,7 +135,8 @@ function DraftDockInner() {
 
   if (!hasDrafts) return null;
 
-  const visible = collapsed ? list.slice(0, 2) : list;
+  // Collapsed on a narrow screen = the pill alone; the chips (Resume / Discard) open with one tap.
+  const visible = collapsed ? (narrow ? [] : list.slice(0, 2)) : list;
 
   return (
     <>
@@ -131,14 +147,14 @@ function DraftDockInner() {
           pb-24) — they can no longer overlap and hide the Resume/Discard actions. */}
       <div className="pointer-events-none absolute bottom-24 left-4 z-40 flex max-h-[70vh] w-[min(92vw,420px)] flex-col gap-2 overflow-y-auto">
         {/* Collapse control — a badge with the parked count (shown when >2). */}
-        {list.length > 2 && (
+        {(list.length > 2 || (narrow && list.length > 0)) && (
           <button
             type="button"
             onClick={() => setCollapsed((c) => !c)}
             className="pointer-events-auto flex items-center gap-2 self-start rounded-full bg-navy px-3 py-1.5 text-[11.5px] font-semibold text-white shadow-modal transition-colors hover:bg-navy/90"
           >
             <Layers className="h-3.5 w-3.5 text-brand-300" />
-            {list.length} parked drafts
+            {list.length} parked draft{list.length === 1 ? "" : "s"}
             <ChevronUp
               className={cn("h-3.5 w-3.5 transition-transform", collapsed && "rotate-180")}
             />
