@@ -11,6 +11,7 @@ import { FulfillPath } from "@prisma/client";
 import { roundMoney, remainingCapacity } from "@routeflow/pricing";
 import type { CounterSaleResponse } from "@routeflow/types";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
+import { creditAfterTender } from "../credit-limit-guard";
 import { configuredTaxRatePercent } from "../../common/tax-rate";
 import { tenantTodayDay } from "../../common/calendar-date";
 import { tenantTimeZone } from "../../common/tenant-time-zone";
@@ -211,6 +212,7 @@ export class CounterSaleService {
         orderNumber: true,
         registerKey: true, // SA-750r3: the till this sale is counted on
         tax: true,
+        total: true, // SA-849: what the gate netted the tender against
         // POS-5: only the lines a staff price change produced (read back from storage for the audit row).
         lineItems: {
           where: { overriddenBy: { not: null } },
@@ -256,12 +258,40 @@ export class CounterSaleService {
         // The sale is already committed: a contended or unavailable lock must not turn into a 500 over a
         // finished sale. It reads as an unrecorded payment (the invoice stays open; the same key retried
         // finishes it). Errors from inside the locked section are not lock errors and still propagate.
-        if (!(e instanceof LockTimeoutError || e instanceof LockUnavailableError)) throw e;
+        if (!(e instanceof LockTimeoutError || e instanceof LockUnavailableError)) {
+          // SA-849 path (d): a closed day's 409 after the sale committed gets the re-check's log + audit; its body is unchanged.
+          const code = (e as { getResponse?: () => { code?: string } })?.getResponse?.()?.code;
+          if (code === API_ERROR_CODES.COUNTER_SALE_DAY_CLOSED)
+            // SA-876: never let the re-check replace the 409 (async, and its failure is swallowed)
+            await this.creditRecheck(
+              orderId,
+              customerId,
+              order?.total,
+              tender,
+              checkToday,
+              code,
+              user,
+            ).catch(() => undefined);
+          throw e;
+        }
         this.logger.warn(`counter sale ${orderId}: tender lock not taken (${e.message})`);
         planError = API_ERROR_CODES.COUNTER_PAYMENT_NOT_RECORDED;
         invoices = await this.readInvoices(orderId);
       }
     }
+
+    // SA-849: the gate counted this tender; it did not fully record -> the ONE post-tender re-check (never blocks).
+    const creditOverLimit = planError
+      ? await this.creditRecheck(
+          orderId,
+          customerId,
+          order?.total,
+          tender,
+          checkToday,
+          planError,
+          user,
+        ).catch(() => null) // an alert never fails a finished sale (SA-849 rule 1)
+      : null;
 
     // SA-764: the stored tendered as the tender left it (the pre-tender read above may hold a stale figure).
     // EVERY request method (row 290), so a CARD or ON_ACCOUNT replay on a sale first tendered in CASH serves
@@ -270,7 +300,7 @@ export class CounterSaleService {
       where: { id: orderId },
       select: { counterCashTendered: true, tax: true },
     });
-    return buildCounterSaleResponse({
+    const response = buildCounterSaleResponse({
       payment: dto.payment,
       order: order && {
         ...order,
@@ -283,6 +313,36 @@ export class CounterSaleService {
       replayed,
       planError,
       duplicate,
+    });
+    return creditOverLimit ? { ...response, creditOverLimit } : response;
+  }
+
+  /**
+   * SA-849 (S1 S-1): what the gate netted (the same `counterCreditPaidNow` over the stored total) and, when it was
+   * anything, `creditAfterTender`: DARK warns, ENFORCED warns + audits once per order + answers the figures.
+   */
+  private async creditRecheck(
+    orderId: string,
+    customerId: string | null | undefined,
+    total: unknown,
+    tender: CounterPaymentInput,
+    checkToday: string | undefined,
+    planError: string,
+    user: JwtPayload,
+  ) {
+    const sum = Number(total ?? 0);
+    const netted = counterCreditPaidNow(tender, sum, checkToday);
+    const deps = {
+      prisma: this.prisma,
+      entitlements: this.orders.entitlements,
+      logger: this.logger,
+    };
+    const at = { tenantId: this.prisma.getTenantId(), customerId, orderId, total: sum, netted };
+    return creditAfterTender(deps, {
+      ...at,
+      planError,
+      actor: user.sub ?? null,
+      impersonatedBy: user.impersonatedBy ?? null,
     });
   }
 

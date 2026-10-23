@@ -4,7 +4,7 @@ import type { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
 /**
  * A3-2 precondition check (bug-hunt finding on #938, test-only — no production code touched
  * here): the web order-edit page now sends `{id, productId, qty, unitLabel}` for a unit-aware
- * line's edit (`buildItemUpdates` in `apps/web/app/(dashboard)/orders/[id]/page.tsx`). This
+ * line's edit (`buildItemUpdates` in `apps/web/app/(dashboard)/orders/[id]/_components/order-line-edit.tsx`). This
  * proves, against the REAL `prepareUnitEditContext`, that including `productId` is load-bearing:
  * an id-only `{id, qty, unitLabel}` item against a line `prepareUnitEditContext` doesn't already
  * know is unit-aware never gets its product/ladder preloaded, silently discarding the label

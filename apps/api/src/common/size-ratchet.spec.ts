@@ -46,7 +46,7 @@ const BASELINE: Record<string, number> = {
   "apps/api/src/customers/customers.service.ts": 3276, // #2558/SA-510a: delete pre-flight + in-tx guards -> customer-delete-preflight.ts (was 3307; 3332 at the cap)
   "apps/api/src/invoices/invoices.service.spec.ts": 9351,
   "apps/web/app/(dashboard)/customers/[id]/page.tsx": 4378,
-  "apps/web/app/(dashboard)/orders/[id]/page.tsx": 3705, // M4a-1: scan-level line helpers -> orders/[id]/scan-level-line.tsx (was 3720)
+  "apps/web/app/(dashboard)/orders/[id]/page.tsx": 2201, // #2215: the line editor -> orders/[id]/_components/order-line-edit.tsx (was 3705); M4a-1: scan-level line helpers -> orders/[id]/scan-level-line.tsx (was 3720)
   "apps/api/src/customers/customers.service.spec.ts": 3138, // #2587: REG-B189 destruction pins retired (was 3209)
   "apps/api/src/routes/routes.service.ts": 3119, // #2514: run-status checks -> delivery-lines.util.ts (was 3126); #2562 (#2135): run-stop reorder body -> run-stop-reorder.ts; merged file measures 3126 (wc -l, SA-425a/512c). // #2512: POD-ingest helpers -> routes/pod-ingest.ts (was 3189); prefactor: run/stop select shapes + status constants live in routes/routes.constants.ts (was 3270)
   "apps/web/app/(dashboard)/products/[id]/page.tsx": 2942,

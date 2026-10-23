@@ -87,6 +87,7 @@ import { receiptCustomerName, type ReceiptBusinessProfile } from "@/lib/counter-
 import { isCounterSaleDayClosed } from "@/lib/day-closed-copy";
 import { useRestrictionWarningRetry } from "@/lib/use-restriction-warning-retry";
 import { CounterPaymentNotRecorded } from "./CounterPaymentNotRecorded";
+import { CounterCreditOverLimit } from "./CounterCreditOverLimit";
 import { CounterReceiptBody } from "./CounterReceiptBody";
 import { CounterCustomerCredit } from "./CounterCustomerCredit";
 import { CounterGateOffline } from "./CounterGateOffline";
@@ -1176,6 +1177,7 @@ export function CounterSaleScreen() {
           headingRef={receiptHeadingRef}
         />
         <CounterPaymentNotRecorded receipt={receipt} onReceipt={setReceipt} />
+        <CounterCreditOverLimit receipt={receipt} customerName={customer?.businessName} />
         <CounterReceiptActions
           orderId={receipt.orderId}
           customer={customer}

@@ -6,6 +6,8 @@
  * word as an API error code: api-error-codes-parity.spec.ts fails on a bare error-code literal anywhere else.
  */
 export const AUDIT_ACTIONS = {
+  /** SA-849 (S1 S-1): a netted counter tender failed and the customer is over the limit without it (ENFORCED; once per order). */
+  CREDIT_LIMIT_OVER_AFTER_TENDER: "credit-limit.over-after-tender",
   /** SA-762r: a counter sale voided in one transaction; meta {orderId, reason, handBack, actor} feeds the replay. */
   COUNTER_SALE_VOIDED: "counter-sale.voided",
   /** #2088: an invoice emailed to the customer; meta {to, fp, sentAt, variant}. fp = the versioned content fingerprint. */

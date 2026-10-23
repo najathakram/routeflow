@@ -146,7 +146,9 @@ describe("AnalyticsService — invoiced-sales readers", () => {
 
       await service.getGrossMarginTrend();
 
-      expect(prisma.invoice.findMany).toHaveBeenCalledTimes(1);
+      // SA-869: revenue is read by the accrual net reader (1 invoice read) and the COGS lines by this method (1 read); never
+      // a top-level invoiceItem read.
+      expect(prisma.invoice.findMany).toHaveBeenCalledTimes(2);
       expect(prisma.invoiceItem.findMany).not.toHaveBeenCalled();
       // The only movement query is the snapshot index — never type:"SALE".
       const movementArgs = prisma.stockMovement.findMany.mock.calls[0][0];
@@ -470,7 +472,9 @@ describe("AnalyticsService — invoiced-sales readers", () => {
     it("is inert when the addon is inactive even if the config key is set", async () => {
       addonService.hasAddon.mockResolvedValue(false);
       systemConfig.get.mockResolvedValue("true");
-      prisma.invoice.findMany.mockResolvedValue([{ total: D(110) }]);
+      prisma.invoice.findMany.mockResolvedValue([
+        { total: D(110), issueDate: new Date("2026-06-01T00:00:00Z") },
+      ]);
       prisma.stockMovement.findMany.mockResolvedValue([]);
 
       const result = await service.getGrossMarginTrend();
@@ -482,7 +486,9 @@ describe("AnalyticsService — invoiced-sales readers", () => {
     it("is inert when the toggle is off", async () => {
       addonService.hasAddon.mockResolvedValue(true);
       systemConfig.get.mockResolvedValue("false");
-      prisma.invoice.findMany.mockResolvedValue([{ total: D(110) }]);
+      prisma.invoice.findMany.mockResolvedValue([
+        { total: D(110), issueDate: new Date("2026-06-01T00:00:00Z") },
+      ]);
       prisma.stockMovement.findMany.mockResolvedValue([]);
 
       const result = await service.getGrossMarginTrend();

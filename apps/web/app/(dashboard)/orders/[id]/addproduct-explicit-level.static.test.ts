@@ -7,7 +7,7 @@
 import { readFileSync } from "fs";
 import { join } from "path";
 
-const src = readFileSync(join(__dirname, "page.tsx"), "utf8");
+const src = readFileSync(join(__dirname, "_components", "order-line-edit.tsx"), "utf8");
 
 describe("orders/[id] addProduct passes the explicit bump level (#2717)", () => {
   it("declares an explicit level parameter distinct from the resolved one", () => {
