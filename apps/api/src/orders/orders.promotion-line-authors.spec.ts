@@ -93,6 +93,7 @@ describe("OrdersService.changeStatus: DRAFT promotion is judged at the line auth
       customerId: "cust-1",
       lines: [{ productId: "prod-ok" }, { productId: "prod-banned" }],
       channel: "STAFF",
+      fulfilmentKind: "DELIVERY",
     });
   });
 
@@ -109,6 +110,7 @@ describe("OrdersService.changeStatus: DRAFT promotion is judged at the line auth
       customerId: "cust-1",
       lines: [{ productId: "prod-banned" }],
       channel: "BUYER_PORTAL",
+      fulfilmentKind: "DELIVERY",
     });
   });
 

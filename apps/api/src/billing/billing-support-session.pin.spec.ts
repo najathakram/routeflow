@@ -11,6 +11,7 @@ import {
   StripeConnectController,
 } from "../stripe-connect/stripe-connect.controller";
 import { SettingsBillingController } from "./settings-billing.controller";
+import { PaymentDueController } from "./payment-due.controller";
 
 /**
  * SA-778 pin: every mutating (non-GET) handler of the tenant billing controllers carries
@@ -61,6 +62,11 @@ function mutatingHandlers(ctrl: Ctor): string[] {
 const ALLOWED = ["quote"] as const;
 
 describe("tenant billing mutations carry @NoImpersonation (SA-778 pin)", () => {
+  it("PaymentDueController: its one mutation (pay) is marked and guarded", () => {
+    expect(mutatingHandlers(PaymentDueController)).toEqual(["pay"]);
+    expect(unprotectedMutations(PaymentDueController)).toEqual([]);
+  });
+
   it("every non-GET handler of SettingsBillingController is marked and guarded, except the allow-list", () => {
     expect(unprotectedMutations(SettingsBillingController, ALLOWED)).toEqual([]);
   });
@@ -175,7 +181,7 @@ describe("every controller in billing/ is classified (a new one cannot dodge the
     .sort();
 
   /** Tenant-facing: pinned above. */
-  const TENANT = ["settings-billing.controller.ts"];
+  const TENANT = ["settings-billing.controller.ts", "payment-due.controller.ts"];
   /** Not tenant-facing, with why. */
   const SUPER_ADMIN_ONLY = [
     "billing.controller.ts",

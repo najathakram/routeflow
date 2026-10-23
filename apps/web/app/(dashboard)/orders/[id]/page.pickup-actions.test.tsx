@@ -59,7 +59,21 @@ type Role = "OPERATOR" | "TENANT_ADMIN" | "SUPER_ADMIN" | "CUSTOMER" | "DRIVER" 
 const open = async (role: Role, status: string, extra: Record<string, unknown> = {}) => {
   seedSession(role);
   get.mockImplementation((url: string) =>
-    Promise.resolve({ data: url === "/orders/o1" ? order(status, extra) : [] }),
+    Promise.resolve({
+      data:
+        url === "/orders/o1"
+          ? order(status, extra)
+          : // BO-07: an operator's till entries follow their permissions; this one holds every group.
+            url === "/users/me/permissions"
+            ? {
+                role,
+                isAccountAdmin: false,
+                groups: ["PRICING", "ORDERS", "FINANCE"],
+                version: 1,
+                mode: "shadow",
+              }
+            : [],
+    }),
   );
   render(
     <Providers>

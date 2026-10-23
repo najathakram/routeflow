@@ -8,7 +8,7 @@
  */
 import * as React from "react";
 import { fireEvent, renderWithProviders, screen } from "@/test-utils/render";
-import { EditableLineItems, type EditItemState } from "./page";
+import { EditableLineItems, buildItemUpdates, type EditItemState } from "./page";
 
 let mockEnabled = true;
 let mockUnits: Array<Record<string, unknown>> = [];
@@ -145,5 +145,64 @@ describe("setLineUnit — picking a unit sets a fresh reasonBaselinePrice (A3-2)
     // read as a price change needing a reason.
     expect(updated.reasonBaselinePrice).toBe(updated.unitPrice);
     expect(updated.unitPrice).not.toBe(40); // genuinely moved off the pack's price
+  });
+});
+
+describe("setLineUnit - a DERIVED Piece is the pack's pieces, not a unit line (SA P0b must 3)", () => {
+  it("picks the pack-pieces shape at the pack price and sends boxes/pieces with no unitLabel", () => {
+    let captured: EditItemState[] = [];
+    renderRow([packLine()], (items) => {
+      captured = items;
+    });
+    fireEvent.change(screen.getByRole("combobox", { name: /Sell Widget by/i }), {
+      target: { value: "Piece" },
+    });
+    const picked = captured[0]!;
+    expect(picked.unitLabel).toBeUndefined();
+    expect(picked.derivedBase).toBe("Piece");
+    expect(picked).toMatchObject({ boxSplit: true, unitsPerBox: 24, qty: 1, unitPrice: 40 });
+    expect(picked.reasonBaselinePrice).toBe(40);
+
+    // 2 pieces of a 24-pack @ $40 is the SERVER's proration (boxes 0 / pieces 2), not 2 x a rounded per-piece price
+    const orig = {
+      id: "li-pack",
+      productId: "p-case",
+      qty: 24,
+      unitPrice: "40",
+      unitLabel: null,
+      notes: null,
+    } as never;
+    const updates = buildItemUpdates([{ ...picked, qty: 2 }], [orig]);
+    expect(updates).toEqual([{ id: "li-pack", action: "UPDATE", qty: 2, boxes: 0, pieces: 2 }]);
+  });
+
+  it("a pack line with a TYPED price switched to Piece sends the pack price with no reason (the server stores STANDARD)", () => {
+    let captured: EditItemState[] = [];
+    const typed: EditItemState = {
+      ...packLine(),
+      unitPrice: 35,
+      priceEdited: true,
+      overrideReason: "customer asked",
+    };
+    renderRow([typed], (items) => {
+      captured = items;
+    });
+    fireEvent.change(screen.getByRole("combobox", { name: /Sell Widget by/i }), {
+      target: { value: "Piece" },
+    });
+    const picked = captured[0]!;
+    expect(picked).toMatchObject({ unitPrice: 40, priceEdited: false });
+    expect(picked.overrideReason).toBeUndefined();
+    const orig = {
+      id: "li-pack",
+      productId: "p-case",
+      qty: 24,
+      unitPrice: "35",
+      unitLabel: null,
+    } as never;
+    const [update] = buildItemUpdates([{ ...picked, qty: 2 }], [orig]);
+    expect(update).toMatchObject({ id: "li-pack", unitPrice: 40, boxes: 0, pieces: 2 });
+    expect(update.overrideReason).toBeUndefined();
+    expect(update).not.toHaveProperty("unitLabel");
   });
 });

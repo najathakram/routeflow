@@ -44,7 +44,10 @@ describe("customer deletes: a late FK insert is a 409, not a raw P2003 500 (#257
         // invoice's regulated-ledger entries, so the collaborator must be provided.
         {
           provide: RegulatedLedgerService,
-          useValue: { reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined) },
+          useValue: {
+            reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined),
+            settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
+          },
         },
         {
           provide: EmailService,

@@ -94,12 +94,6 @@ describe("statusActions — ROUTE (default) is byte-identical to the pre-extract
         icon: "checkmark-done-circle-outline",
       },
       {
-        label: "Partial delivery",
-        toStatus: "PARTIALLY_DELIVERED",
-        style: "secondary",
-        icon: "git-branch-outline",
-      },
-      {
         label: "Back to confirmed",
         toStatus: "CONFIRMED",
         style: "warning",
@@ -165,6 +159,21 @@ describe("statusActions — ROUTE (default) is byte-identical to the pre-extract
           "Reopen this delivered order back to Confirmed? Its delivered date is cleared.",
       },
     ]);
+  });
+});
+
+describe("statusActions — no manual PARTIALLY_DELIVERED (B692, SA-814 R4-3)", () => {
+  it("no status offers a move to PARTIALLY_DELIVERED, on any fulfil path (the server needs per-line quantities)", () => {
+    for (const st of ALL_STATUSES) {
+      for (const path of ["ROUTE", "SHIP", "PICKUP"] as const) {
+        expect(statusActions(st, path).map((a) => a.toStatus)).not.toContain("PARTIALLY_DELIVERED");
+      }
+    }
+  });
+
+  it("the transition table still mirrors the server: OUT_FOR_DELIVERY and DELIVERED may step to it", () => {
+    expect(canTransitionOrder("OUT_FOR_DELIVERY", "PARTIALLY_DELIVERED")).toBe(true);
+    expect(canTransitionOrder("DELIVERED", "PARTIALLY_DELIVERED")).toBe(true);
   });
 });
 

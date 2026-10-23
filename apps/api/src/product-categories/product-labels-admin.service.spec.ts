@@ -533,6 +533,9 @@ describe("ProductLabelsAdminService — lock budget and in-transaction checks (#
         meta: { code: "55P03" },
       });
       await expect(run(s)).rejects.toBeInstanceOf(ConflictException);
+      // a deadlock the label lock lost (a stock writer holds the Product rows and waits here) is the same retryable 409
+      s.db.lockError = Object.assign(new Error("deadlock detected"), { meta: { code: "40P01" } });
+      await expect(run(s)).rejects.toBeInstanceOf(ConflictException);
       s.db.lockError = new Error("connection reset");
       await expect(run(s)).rejects.toThrow("connection reset"); // anything else still propagates
     },
@@ -549,5 +552,119 @@ describe("ProductLabelsAdminService — lock budget and in-transaction checks (#
     expect(lock).toBeGreaterThan(-1);
     expect(categoryRead).toBeGreaterThan(lock); // no category read happens before the lock is held
     expect(s.db.labels).toHaveLength(0);
+  });
+});
+
+describe("ProductLabelsAdminService — owner ruling 2026-10-14: operators write labels, except a federal-covered one", () => {
+  const operator = { sub: "op", username: "op", role: "OPERATOR" } as JwtPayload;
+  const admin = { sub: "ad", username: "ad", role: "TENANT_ADMIN" } as JwtPayload;
+  const FROM = new Date("2026-01-01T00:00:00Z");
+  const federalLegacy = { jurisdiction: "FEDERAL", categoryId: "c", targets: [] };
+  const federalTarget = {
+    jurisdiction: "FEDERAL",
+    categoryId: "other",
+    targets: [{ productId: null, categoryId: "c", addedAt: FROM, removedAt: null }],
+  };
+  const COPY = "Only an account admin can change (or lift) a federal rule.";
+
+  it.each([
+    ["a legacy categoryId rule", federalLegacy],
+    ["an active target-row rule", federalTarget],
+  ])("an operator adding a label %s covers: 403, nothing written", async (_, rule) => {
+    const s = family();
+    s.db.rules.push(rule);
+    await expect(s.service.setLabel("GP", "c", { mode: "INCLUDE" }, operator)).rejects.toThrow(
+      COPY,
+    );
+    expect(s.db.labels).toHaveLength(0);
+  });
+
+  it("the 403 is coded RULE_ADMIN_ONLY with the shared copy", async () => {
+    const s = family();
+    s.db.rules.push(federalLegacy);
+    const err = await s.service
+      .setLabel("GP", "c", { mode: "INCLUDE" }, operator)
+      .catch((e: { getStatus(): number; getResponse(): unknown }) => e);
+    expect((err as { getStatus(): number }).getStatus()).toBe(403);
+    expect((err as { getResponse(): unknown }).getResponse()).toEqual({
+      code: "RULE_ADMIN_ONLY",
+      message: COPY,
+    });
+  });
+
+  it("an operator removing a federal-covered label: 403, the row stays", async () => {
+    const s = family();
+    await s.service.setLabel("GP", "c", { mode: "INCLUDE" }, admin);
+    s.db.rules.push(federalLegacy);
+    await expect(s.service.removeLabel("GP", "c", operator)).rejects.toThrow(COPY);
+    expect(s.db.labels).toHaveLength(1);
+  });
+
+  it("an operator opting a variant out of a federal-covered label: 403", async () => {
+    const s = family();
+    await s.service.setLabel("GP", "c", { mode: "INCLUDE" }, admin);
+    s.db.rules.push(federalTarget);
+    await expect(
+      s.service.setLabel("V", "c", { mode: "EXCLUDE", reason: "not this one" }, operator),
+    ).rejects.toThrow(COPY);
+    expect(s.db.labels.filter((l) => l.mode === "EXCLUDE")).toHaveLength(0);
+  });
+
+  it("an operator on a STATE-only label is allowed (add and remove)", async () => {
+    const s = family();
+    s.db.rules.push({ jurisdiction: "STATE", categoryId: "c", targets: [] });
+    await s.service.setLabel("GP", "c", { mode: "INCLUDE" }, operator);
+    expect(s.db.labels).toHaveLength(1);
+    await s.service.removeLabel("GP", "c", operator);
+    expect(s.db.labels).toHaveLength(0);
+  });
+
+  it("a target row REMOVED from the federal rule no longer protects the label", async () => {
+    const s = family();
+    s.db.rules.push({
+      jurisdiction: "FEDERAL",
+      categoryId: "other",
+      targets: [{ productId: null, categoryId: "c", addedAt: FROM, removedAt: FROM }],
+    });
+    await s.service.setLabel("GP", "c", { mode: "INCLUDE" }, operator);
+    expect(s.db.labels).toHaveLength(1);
+  });
+
+  it("an account admin writes a federal-covered label", async () => {
+    const s = family();
+    s.db.rules.push(federalLegacy);
+    await s.service.setLabel("GP", "c", { mode: "INCLUDE" }, admin);
+    await s.service.removeLabel("GP", "c", admin);
+    expect(s.db.labels).toHaveLength(0);
+  });
+
+  it("the federal check runs AFTER the category lock", async () => {
+    const s = family();
+    await s.service.setLabel("GP", "c", { mode: "INCLUDE" }, operator);
+    const ops = s.db.calls.map((c) => `${c.model}.${c.op}`);
+    const rule = ops.indexOf("sellingRestriction.findMany");
+    expect(rule).toBeGreaterThan(-1);
+    expect(ops.slice(0, rule).some((o) => /lock|queryRaw|executeRaw/i.test(o))).toBe(true);
+  });
+});
+
+describe("ProductLabelsAdminService — getForProduct lists the labels a federal rule covers (owner ruling 2026-10-14)", () => {
+  it("returns the federal-covered label ids (legacy and active target rows), never a STATE rule's or a removed target's", async () => {
+    const s = family();
+    const FROM = new Date("2026-01-01T00:00:00Z");
+    s.db.rules.push(
+      { jurisdiction: "FEDERAL", categoryId: "c", targets: [] },
+      {
+        jurisdiction: "FEDERAL",
+        categoryId: "x",
+        targets: [
+          { productId: null, categoryId: "t1", addedAt: FROM, removedAt: null },
+          { productId: null, categoryId: "gone", addedAt: FROM, removedAt: FROM },
+        ],
+      },
+      { jurisdiction: "STATE", categoryId: "s", targets: [] },
+    );
+    const out = await s.service.getForProduct("V");
+    expect(out.federalCategoryIds).toEqual(["c", "t1"]);
   });
 });

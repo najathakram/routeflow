@@ -84,6 +84,17 @@ export default defineConfig({
       },
     },
 
+    // ── Backoffice web cards (BO-01 …): super-admin, approved test tenants only ──
+    {
+      name: "bo-web",
+      testMatch: /bo-web-.*\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "super-admin.json"),
+      },
+    },
+
     // ── Operator tests ─────────────────────────────────────────────────────────
     {
       name: "operator",
@@ -189,6 +200,19 @@ export default defineConfig({
       },
     },
 
+    // ── Open orders card ────────────────────────────────────────────────────────
+    // "Open orders" on /products/[id], above Sales; every endpoint mocked, writes nothing,
+    // 390/768/1280 overflow + screenshots. Self-skips on web builds that predate the card.
+    {
+      name: "product-open-orders",
+      testMatch: /77-product-open-orders\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+
     // ── Counter "Today's sales" sheet (POS-7b-2) ───────────────────────────────
     // Mocked reads only (POS-7b-1 contract); 1440/768/390 + 80 mm print emulation.
     {
@@ -204,6 +228,16 @@ export default defineConfig({
     {
       name: "day-close-ux",
       testMatch: /74-day-close-ux\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+    // ── R7b Batch 3: the counter return form + New Return by number (mocked reads) ──
+    {
+      name: "counter-return",
+      testMatch: /75-counter-return\.spec\.ts/,
       dependencies: ["setup"],
       use: {
         ...devices["Desktop Chrome"],
@@ -547,6 +581,14 @@ export default defineConfig({
     {
       name: "invoice-edit-pending-mirror",
       testMatch: /64-invoice-edit-pending-mirror\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+    },
+
+    // ── Row 711: a boxed invoice line's Boxes / Pieces / Unit Price each hit-test to themselves (spec 78).
+    {
+      name: "invoice-edit-boxed-qty-hit",
+      testMatch: /78-invoice-edit-boxed-qty-hit\.spec\.ts/,
       dependencies: ["setup"],
       use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
     },
@@ -989,6 +1031,18 @@ export default defineConfig({
       },
     },
 
+    // Row 492: the invoice form's bottom action bar wraps at 1440/768/390 and never clips Save and Send.
+    // Read-only (nothing is saved or sent). WITHOUT THIS ENTRY THE SPEC NEVER RUNS.
+    {
+      name: "invoice-action-bar",
+      testMatch: /77-invoice-action-bar\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+
     // Customers list UX (spec 65). Operator auth, same shape as "orders" et al.
     // WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's
     // header for the precedent.
@@ -1065,9 +1119,39 @@ export default defineConfig({
               storageState: path.join(AUTH_DIR, "operator.json"),
             },
           },
+          // Units v2 (grid / stock-off / family / blank-tiers money): needs a stack built WITH the feature and `flag.units_prices_v2`
+          // served to the test tenant; each spec fails (never skips) without it. Local lane only, like 71-73.
+          {
+            name: "units-v2",
+            testMatch: /(units-v2-|k11-).*\.spec\.ts/,
+            dependencies: ["setup"],
+            use: {
+              ...devices["Desktop Chrome"],
+              storageState: path.join(AUTH_DIR, "operator.json"),
+            },
+          },
           {
             name: "counter-register-look",
             testMatch: /73-counter-register-look\.spec\.ts/,
+            dependencies: ["setup"],
+            use: {
+              ...devices["Desktop Chrome"],
+              storageState: path.join(AUTH_DIR, "operator.json"),
+            },
+          },
+          {
+            name: "till-permission",
+            testMatch: /bo-api-till-permission\.spec\.ts/,
+            dependencies: ["setup"],
+            use: {
+              ...devices["Desktop Chrome"],
+              storageState: path.join(AUTH_DIR, "operator.json"),
+            },
+          },
+          // Row 559 (Get the app): writes the platform-wide app links (restored in afterAll); local lane only like 71-73.
+          {
+            name: "get-the-app",
+            testMatch: /76-get-the-app\.spec\.ts/,
             dependencies: ["setup"],
             use: {
               ...devices["Desktop Chrome"],

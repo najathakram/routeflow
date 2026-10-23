@@ -97,6 +97,7 @@ import { useFulfilmentSettings } from "@/lib/api/fulfilment-settings";
 import NextLink from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
 import { describeSaveError } from "@/lib/reason-copy";
+import { TAX_PERCENT_PRECISION_MESSAGE, taxPercentPrecisionError } from "@routeflow/pricing";
 import { isInShell } from "@/lib/in-shell";
 import { TimeZoneDatalist } from "@/components/TimeZoneInput";
 import { TIME_ZONE_REQUIRED_COPY, canonicalTimeZone, isValidTimeZone } from "@/lib/timezones";
@@ -104,6 +105,8 @@ import { useInvalidFocus } from "@/lib/form-errors";
 import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 import { isReadOnlyRefusal, showReadOnlyRefusal } from "@/lib/read-only-refusal";
 import { userStatusRefusalCopy } from "@/lib/user-status-refusal";
+import { newPasswordSchema, passwordErrorMessage } from "@/lib/password-policy";
+import { PasswordChecklist } from "@/components/auth";
 
 // ─── TAB 1: Business Profile ──────────────────────────────────────────────────
 
@@ -126,9 +129,14 @@ const profileShape = {
   }),
 };
 /** The zone is validated only when the viewer can edit it, so a hidden field can never block a save. */
-const profileSchemaFor = (canEditTimeZone: boolean) =>
+const profileSchemaFor = (canEditTimeZone: boolean, savedTaxRate?: unknown) =>
   z.object({
     ...profileShape,
+    // Review Q5: the 4-decimal cap holds a CHANGED rate only; the tenant's stored rate passes as it is.
+    taxRate: profileShape.taxRate.refine(
+      (v) => taxPercentPrecisionError(v, savedTaxRate) === null,
+      TAX_PERCENT_PRECISION_MESSAGE,
+    ),
     timezone: canEditTimeZone
       ? z.string().refine((v) => isValidTimeZone(v), TIME_ZONE_REQUIRED_COPY)
       : z.string().optional(),
@@ -226,7 +234,7 @@ function BusinessProfileTab() {
   // tax rate; a field the user edits, or clears, is still checked. With nothing edited, the whole form is checked.
   const dirtyRef = React.useRef<Record<string, unknown>>({});
   const profileResolver = React.useMemo<Resolver<ProfileFormValues>>(() => {
-    const schema = profileSchemaFor(canEditTimeZone);
+    const schema = profileSchemaFor(canEditTimeZone, savedSettings?.taxRate);
     return async (values, context, options) => {
       const mask: Record<string, true> = {};
       for (const key of Object.keys(schema.shape)) if (dirtyRef.current[key]) mask[key] = true;
@@ -238,7 +246,7 @@ function BusinessProfileTab() {
         ? { values: { ...values, ...res.values }, errors: {} }
         : res;
     };
-  }, [canEditTimeZone]);
+  }, [canEditTimeZone, savedSettings?.taxRate]);
 
   const {
     register,
@@ -472,7 +480,7 @@ function BusinessProfileTab() {
             <Input
               label="Default Tax Rate"
               type="number"
-              step="0.01"
+              step="0.0001"
               min="0"
               max="100"
               register={register("taxRate")}
@@ -1976,13 +1984,7 @@ const passwordCardSchema = z
   .object({
     currentPassword: z.string(),
     // Mirrors the server policy: min 8, upper + lower + digit-or-special.
-    newPassword: z
-      .string()
-      .min(8, "At least 8 characters")
-      .regex(
-        /^(?=.*[a-z])(?=.*[A-Z])(?=.*[\d\W])/,
-        "Must include an uppercase letter, a lowercase letter, and a number or symbol",
-      ),
+    newPassword: newPasswordSchema,
     confirmPassword: z.string().min(1, "Please confirm your new password"),
   })
   .refine((d) => d.newPassword === d.confirmPassword, {
@@ -2015,11 +2017,14 @@ function PasswordCard() {
     register,
     handleSubmit,
     reset,
+    watch,
     formState: { errors, isSubmitting },
   } = useForm<PasswordCardValues>({
     resolver: zodResolver(passwordCardSchema),
     defaultValues: { currentPassword: "", newPassword: "", confirmPassword: "" },
   });
+  const newPassword = watch("newPassword") ?? "";
+  const checklistId = React.useId();
 
   const onSubmit = async (data: PasswordCardValues) => {
     setApiError(null);
@@ -2041,10 +2046,7 @@ function PasswordCard() {
       void queryClient.invalidateQueries({ queryKey: ["users", "me"] });
       void queryClient.invalidateQueries({ queryKey: ["auth", "sessions"] });
     } catch (err: unknown) {
-      const msg =
-        (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
-        "Failed to update password.";
-      setApiError(typeof msg === "string" ? msg : "Failed to update password.");
+      setApiError(passwordErrorMessage(err, data.newPassword));
     }
   };
 
@@ -2092,8 +2094,10 @@ function PasswordCard() {
               label="New password"
               autoComplete="new-password"
               register={register("newPassword")}
+              aria-describedby={checklistId}
               error={errors.newPassword?.message}
             />
+            <PasswordChecklist value={newPassword} id={checklistId} />
             <PasswordInput
               label="Confirm new password"
               autoComplete="new-password"
@@ -2309,9 +2313,7 @@ function CostingTab() {
   const { data: config, isLoading } = useMarginConfig();
   const update = useUpdateMarginConfig();
 
-  const [method, setMethod] = React.useState<"WEIGHTED_AVERAGE" | "FIFO" | "LAST_COST">(
-    "WEIGHTED_AVERAGE",
-  );
+  const [method, setMethod] = React.useState<"WEIGHTED_AVERAGE" | "LAST_COST">("WEIGHTED_AVERAGE");
   const [floorPct, setFloorPct] = React.useState("15");
 
   React.useEffect(() => {
@@ -2358,7 +2360,6 @@ function CostingTab() {
             disabled={!isAdmin}
             options={[
               { value: "WEIGHTED_AVERAGE", label: "Weighted average" },
-              { value: "FIFO", label: "FIFO (first in, first out)" },
               { value: "LAST_COST", label: "Last cost" },
             ]}
           />

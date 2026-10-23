@@ -39,6 +39,8 @@ const response = (over: Partial<PriceHistoryResponse> = {}): PriceHistoryRespons
   productId: "prod-1",
   productName: "Sample Cola 24pk",
   costVisible: true,
+  // the v1.1 API always sends `references` (the shared contract makes it required)
+  references: { listPrice: null, tierPrice: null, changeSinceLast: null },
   rows: [
     row(),
     row({

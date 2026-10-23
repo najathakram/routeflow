@@ -37,6 +37,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { BuyerCreateOrderDto } from "./dto/buyer-create-order.dto";
 import { UpdateBuyerProfileDto } from "./dto/update-buyer-profile.dto";
 import { OrdersService } from "../orders/orders.service";
+import { assertDeliveryDateNotPast } from "../orders/delivery-date-guard";
 import { ChangeRequestsService } from "../orders/change-requests.service";
 import { CreateChangeRequestDto } from "../orders/dto/create-change-request.dto";
 import { InvoicesService } from "../invoices/invoices.service";
@@ -69,6 +70,7 @@ import { summarizeOpenInvoices } from "../invoices/invoice-balance-classify";
 import { OPEN_INVOICE_STATUSES } from "../invoices/invoice-status-sets";
 import { CONFIRMED_PAYMENT } from "../invoices/payment-predicates";
 import { resolveOversellAllowed } from "../orders/oversell-policy";
+import { assertBuyerQtySplit } from "./buyer-qty-split";
 import { PolicyOversellReader } from "../orders/policy-oversell-reader";
 import {
   LOCK_UNAVAILABLE,
@@ -584,6 +586,13 @@ export class BuyerController {
     @CurrentBuyerCustomer() ctx: any,
     @Headers("Idempotency-Key") rawIdempotencyKey?: string,
   ) {
+    // Row 531 F2: a contradictory qty / box split is refused before the key, the lock or any write.
+    await assertBuyerQtySplit(
+      this.prisma.forTenant(),
+      dto.items,
+      "buyer.createOrder",
+      ctx.tenantId,
+    );
     // B1094: a client-minted key makes a double submit (two concurrent POSTs of one cart) apply ONCE.
     const idempotencyKey = normalizeBuyerIdempotencyKey(rawIdempotencyKey);
     const requestHash = idempotencyKey ? buyerSubmitHash(ctx.customerId, dto.items) : undefined;
@@ -650,6 +659,14 @@ export class BuyerController {
                 return { orderId: replayed.orderId, replayed: true };
               }
             }
+            // Row 718: the cart's delivery day is a CHANGE of this order's date. A day before the TENANT's today is refused
+            // (400 DELIVERY_DATE_IN_PAST) before anything is folded - applyBuyerMergeHeader below is best-effort by design, so
+            // it cannot carry the refusal - while the order's own date, resent as it is, is not a change. After the replay
+            // branch above, so a retry of a merge that already landed still replays.
+            await assertDeliveryDateNotPast(this.prisma, dto.requestedDeliveryDate, {
+              tenantId: ctx.tenantId,
+              existing: activeOrder.requestedDeliveryDate,
+            });
             // REG-B47: denomination-aware fold (F30's staff exemplar, shared module) over
             // LIVE-normalized snapshots — a box-unaware line of a boxed product counts
             // selling units, so give the fold its real box split before summing.
@@ -705,14 +722,18 @@ export class BuyerController {
             const foldResult = foldMergeItems(
               normalizeBoxUnawareSnapshots(lineItems, upbForStoredSnapshots),
               normalizedIncoming,
-              // SA-124e(3): the price basis follows the RESOLVED pack, not the live one —
-              // already built above for the denomination normalizers.
-              upbByProduct,
-              // B297 row 343 (foldTarget): the rate trio a NEW sale of each incoming product takes today —
-              // an existing line sold at a different trio does not absorb the added quantity.
-              await this.ordersService.liveTrioByProduct(
-                incomingItems.map((i) => i.productId).filter(Boolean) as string[],
-              ),
+              {
+                // SA-124e(3) + SA-841: the live pack map (already built above for the denomination normalizers),
+                // read by the stored-line merge only for a line with no pack of its own.
+                liveUnitsPerBoxByProductId: upbByProduct,
+                // a buyer's bare qty is selling units
+                bare: "sellingUnits",
+                // B297 row 343 (foldTarget): the rate trio a NEW sale of each incoming product takes today —
+                // an existing line sold at a different trio does not absorb the added quantity.
+                liveTrioByProductId: await this.ordersService.liveTrioByProduct(
+                  incomingItems.map((i) => i.productId).filter(Boolean) as string[],
+                ),
+              },
             );
             if (foldResult.livePackFallbackProductIds.length > 0) {
               this.logger.warn(
@@ -844,7 +865,19 @@ export class BuyerController {
     const created = await this.ordersService.create(
       (idempotencyKey ? { ...createDto, idempotencyKey } : createDto) as any, // B1094: replays by key
       makePseudoUser(ctx),
+      // B1239: forceNew is the buyer's explicit "create new order instead" — the new order is kept
+      // apart exactly like a staff "separate" choice (skipAutoMerge), so the sweep below and the hourly
+      // one never fold it back into the pending order they chose to leave alone.
+      ...(dto.forceNew ? [{ skipAutoMerge: true }] : []),
     );
+    if (dto.forceNew) {
+      // B1239: no consolidation. The sweep's winner is the newest order, so the NEW order won and the
+      // PRE-EXISTING pending order was the loser: deleted, its number burned, its lines moved into the new
+      // order. A duplicate tap then met a changed cart in assertReplayOfCart (409 / cart mismatch). A
+      // kept-apart order has nothing to consolidate; the pending order is untouched and the key stays on
+      // THIS order, so a duplicate submit replays it (create()'s key replay).
+      return toCustomerOrder(created);
+    }
     // Newly-created order may share a customer with pre-existing PENDINGs —
     // consolidate them so the customer ends up with a single PENDING (buyer-driven,
     // so the merged quantity earns its own BUY_N_GET_M free units).
@@ -880,6 +913,14 @@ export class BuyerController {
     @Body() dto: UpdateOrderItemsDto,
     @CurrentBuyerCustomer() ctx: any,
   ) {
+    // Row 531 F2 + S3: each entry that names a stored line is checked in THAT line's own pack.
+    await assertBuyerQtySplit(
+      this.prisma.forTenant(),
+      dto.items,
+      "buyer.updateOrderItems",
+      ctx.tenantId,
+      { orderId: id, customerId: ctx.customerId },
+    );
     // B297 row 352: the entries name their lines (`orderItemId`), so a line keeps the rate it was sold at.
     return toCustomerOrder(
       await this.ordersService.updateOrderItems(id, dto, makePseudoUser(ctx), {
@@ -1094,6 +1135,10 @@ export class BuyerController {
   @ApiHeader({ name: "X-Tenant-Slug", required: true })
   @ApiOperation({ summary: "Generate a new order from a standing order template" })
   async reorderFromTemplate(@Param("id") id: string, @CurrentBuyerCustomer() ctx: any) {
+    // Row 531 S4 (intentional): this path is NOT enforced by assertBuyerQtySplit. Its lines come from the stored
+    // template rows, not from a client cart, so a disagreeing qty / split here is stored-data drift for the
+    // WARN-mode log inside OrdersService.create() (path "orders.create.lines") to surface, not a buyer payload to refuse.
+    // Enforcement on template-generated orders waits for its own ruling, like every staff / shared path.
     // Ownership check: verify the template belongs to this buyer's customer
     const template = await this.prisma
       .forTenant()

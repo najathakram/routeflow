@@ -27,6 +27,7 @@ import { SubscriptionMutationService } from "./subscription-mutation.service";
 import { BillingService } from "./billing.service";
 import { QuoteDto } from "./dto/quote.dto";
 import { SubscribeDto, UpgradeDto, DowngradeDto, EnableAddonDto } from "./dto/mutation.dto";
+import { webBaseUrl } from "../config/web-base-url";
 import {
   inviteOnlyCheckoutAllowed,
   INVITE_ONLY_PLAN_SELF_SERVE_CHECKOUT,
@@ -225,7 +226,7 @@ export class SettingsBillingController {
         "Self-serve checkout is currently disabled for this plan — contact us to complete your subscription.",
       );
     }
-    const base = process.env.FRONTEND_URL ?? "http://localhost:3001";
+    const base = webBaseUrl();
     return this.billing.createCheckoutSession(tenantId, {
       successUrl: `${base}/settings/billing?checkout=success`,
       cancelUrl: `${base}/settings/billing?checkout=cancelled`,

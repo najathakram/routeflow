@@ -3,6 +3,7 @@ import {
   firstFormulaLedField,
   formulaLeadMessage,
 } from "../common/safe-text-cell";
+import { assertSafeLicense, assertSafePersonName } from "../common/text-cell-guards";
 
 /** The customer NAME fields B956 guards on write (address / license / product names are B964). */
 export const CUSTOMER_NAME_FIELDS = ["businessName", "contactName", "displayName"] as const;
@@ -34,4 +35,18 @@ export function refusedCustomerNameField(
 export function customerNameViolation(next: NameInput, stored?: NameInput | null): string | null {
   const field = firstFormulaLedField(pick(next), stored ? pick(stored) : null);
   return field === null ? null : formulaLeadMessage(field);
+}
+
+/**
+ * The change-only text guards the customer PATCH runs before it writes: B956 names, B984 salutation /
+ * first / last name, B964 the importer's tobaccoLicenseNo. Only a CHANGED value is checked.
+ */
+export function assertSafeCustomerUpdate(
+  dto: Parameters<typeof assertSafePersonName>[0],
+  existing: Parameters<typeof assertSafePersonName>[1] & NameInput,
+  compliance: Parameters<typeof assertSafeLicense>[0] | undefined,
+): void {
+  assertSafeCustomerNames(dto as NameInput, existing);
+  assertSafePersonName(dto, existing);
+  assertSafeLicense(compliance ?? {}, existing as Parameters<typeof assertSafeLicense>[1]);
 }

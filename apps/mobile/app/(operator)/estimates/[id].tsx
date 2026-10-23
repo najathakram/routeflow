@@ -18,6 +18,7 @@ import {
   estimatePillFor,
 } from "../../../lib/estimates-logic";
 import { showToast } from "../../../lib/toast";
+import { estimateTaxBasisNotice } from "../../../lib/estimate-tax-basis";
 import { confirm } from "../../../lib/confirm";
 import { fmtCalendarDate } from "../../../lib/format-date";
 
@@ -96,7 +97,9 @@ export default function EstimateDetailScreen() {
     if (!id) return;
     convertMut.mutate(id, {
       onSuccess: (inv) => {
-        showToast("Converted to invoice");
+        // H5: the invoice is taxed at TODAY's rate (and carries any regulated levy); say so when that differs.
+        const taxNotice = estimateTaxBasisNotice(inv.taxBasis);
+        showToast(taxNotice ? `Converted to invoice. ${taxNotice}` : "Converted to invoice");
         // Server returns the created Invoice keyed `id` (not `invoiceId`).
         router.push(`/(operator)/invoices/${inv.id}`);
       },

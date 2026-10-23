@@ -49,10 +49,19 @@ export class LabelLockTimeoutError extends ConflictException {
   }
 }
 
-/** Postgres `lock_not_available` (SQLSTATE 55P03), however Prisma wraps it (P2010 raw error / message). */
+/**
+ * Postgres `lock_not_available` (SQLSTATE 55P03) OR `deadlock_detected` (40P01), however Prisma wraps it (P2010 raw
+ * error / message). A label lock that lost a deadlock (a stock writer holds Product rows and waits here while a label
+ * writer holds this lock and waits for those rows) is the same retryable 409 as one that timed out, never a 500.
+ */
 function isLockTimeout(e: unknown): boolean {
-  const err = e as { meta?: { code?: string }; message?: string };
-  return err?.meta?.code === "55P03" || /55P03|lock timeout/i.test(err?.message ?? "");
+  const err = e as { meta?: { code?: string }; code?: string; message?: string };
+  const state = err?.meta?.code ?? err?.code;
+  return (
+    state === "55P03" ||
+    state === "40P01" ||
+    /55P03|40P01|lock timeout|deadlock detected/i.test(err?.message ?? "")
+  );
 }
 
 /**
@@ -81,6 +90,31 @@ export async function lockLabelCategory(
     throw e;
   }
   await tx.$executeRaw`SELECT set_config('lock_timeout', ${previous}, true)`;
+}
+
+/**
+ * Take the label locks of the categories whose NAME the given texts match (the ones `syncCategoryLabel` would lock),
+ * in SORTED id order, for a writer that must hold them BEFORE its Product row locks (house order: label -> Product).
+ * `assignToVariants` copies the parent's category text onto a new variant, so it pre-locks that label here, then takes
+ * the Product rows; the sync inside the tx re-takes the same lock (re-entrant in one session). Blank texts and texts
+ * that match no label take nothing.
+ */
+export async function lockLabelCategoriesForText(
+  tx: Prisma.TransactionClient,
+  tenantId: string | null | undefined,
+  texts: ReadonlyArray<string | null | undefined>,
+): Promise<void> {
+  if (!tenantId) return;
+  const ids = new Set<string>();
+  for (const text of texts) {
+    // eslint-disable-next-line no-await-in-loop -- a handful of texts at most (one parent category)
+    const match = await matchLabel(tx, tenantId, text);
+    if (match) ids.add(match.id);
+  }
+  for (const id of [...ids].sort()) {
+    // eslint-disable-next-line no-await-in-loop -- sorted: one lock at a time is the order
+    await lockLabelCategory(tx, tenantId, id);
+  }
 }
 
 export type LabelStamp = { createdById: string | null; createdByName: string | null };
@@ -233,11 +267,19 @@ export async function syncCategoryLabel(
     productId: string;
     text: string | null | undefined;
     actor?: { id: string | null; name: string | null };
+    /**
+     * Set by a caller that took its label locks UP FRONT (a reparent: label locks before row locks). The matched label
+     * must be one of them; else the retryable 409, never a lock taken after the caller's row locks.
+     */
+    lockedCategoryIds?: ReadonlySet<string>;
   },
 ): Promise<{ addedCategoryId: string | null }> {
   const match = await matchLabel(tx, args.tenantId, args.text);
   if (!match || !args.tenantId) return { addedCategoryId: null };
   const categoryId = match.id;
+  if (args.lockedCategoryIds && !args.lockedCategoryIds.has(categoryId)) {
+    throw new LabelLockTimeoutError();
+  }
   const outcome = await addIncludeIfAbsent(tx, {
     tenantId: args.tenantId,
     productId: args.productId,
@@ -249,6 +291,30 @@ export async function syncCategoryLabel(
     data: auditRow(args.tenantId, args.productId, categoryId, args.actor, match.sameKey),
   });
   return { addedCategoryId: categoryId };
+}
+
+/** READ-ONLY: the id of the label `syncCategoryLabel` would match for `text` (null = none). Takes no lock. */
+export async function labelIdForText(
+  tx: Prisma.TransactionClient,
+  tenantId: string | null | undefined,
+  text: string | null | undefined,
+): Promise<string | null> {
+  return (await matchLabel(tx, tenantId, text))?.id ?? null;
+}
+
+/**
+ * Take several label locks in ONE deterministic order (sorted, de-duplicated): the order every multi-label writer
+ * uses, so two of them can never cycle. Same family and keys as `lockLabelCategory` (and so as `setLabel`).
+ */
+export async function lockLabelCategories(
+  tx: Prisma.TransactionClient,
+  tenantId: string,
+  categoryIds: Iterable<string>,
+): Promise<void> {
+  for (const categoryId of [...new Set(categoryIds)].sort()) {
+    // Serial by design: one lock at a time, in key order.
+    await lockLabelCategory(tx, tenantId, categoryId);
+  }
 }
 
 /**
@@ -476,4 +542,111 @@ export function labelNameProblem(name: string): "too-long" | "unsafe" | null {
     return "unsafe";
   }
   return null;
+}
+
+/**
+ * An inert opt-out a reparent keep REPLACED with an INCLUDE, as its audit row records it. Identifying fields only: the
+ * pin column stays the admin service's alone (label-pin-single-writer.spec.ts).
+ */
+export type ReplacedOptOut = {
+  id: string;
+  reason: string | null;
+  createdById: string | null;
+  createdByName: string | null;
+  createdAt: string;
+};
+
+/** The audit action written when a reparent materialises a label the variant would otherwise have lost. */
+export const LABEL_KEPT_ON_REPARENT_ACTION = "product_label.kept_on_reparent";
+
+/**
+ * REPARENT KEEP (H2): give `productId` its OWN INCLUDE of each of `categoryIds`, the labels it carried through its old
+ * parent and would lose under the new one (a selling ban must never silently stop applying). Unlike the add-only sync it
+ * ignores "the parent chain carries it" / "the family removed it": the caller computed that those do NOT help this
+ * product. A categories-of-this-tenant check only (an ARCHIVED label still bans, so it is kept); an existing INCLUDE is
+ * left as is, an INERT opt-out (an EXCLUDE row that no longer cancels anything) is replaced by the INCLUDE (the audit
+ * row names it: `replacedOptOut`). One audit row per kept label, same transaction. Returns the kept labels' ids and
+ * names, in id order.
+ */
+export async function keepLabelsAsOwnIncludes(
+  tx: Prisma.TransactionClient,
+  args: {
+    tenantId: string;
+    productId: string;
+    categoryIds: readonly string[];
+    fromParentId: string | null;
+    toParentId: string | null;
+    actor?: Actor;
+  },
+): Promise<Array<{ categoryId: string; name: string; replacedOptOut?: ReplacedOptOut }>> {
+  const { tenantId, productId, actor } = args;
+  const ids = [...new Set(args.categoryIds)].sort();
+  const kept: Array<{ categoryId: string; name: string; replacedOptOut?: ReplacedOptOut }> = [];
+  if (ids.length === 0) return kept;
+  const product = await tx.product.findFirst({
+    where: { id: productId, tenantId },
+    select: { id: true },
+  });
+  if (!product) return kept;
+  for (const categoryId of ids) {
+    await lockLabelCategory(tx, tenantId, categoryId);
+    const category = await tx.productCategory.findFirst({
+      where: { id: categoryId, tenantId },
+      select: { name: true },
+    });
+    if (!category) continue;
+    const existing = await tx.productCategoryLabel.findFirst({
+      where: { tenantId, productId, categoryId },
+      select: {
+        id: true,
+        mode: true,
+        reason: true,
+        createdById: true,
+        createdByName: true,
+        createdAt: true,
+      },
+    });
+    if (existing?.mode === "INCLUDE") continue;
+    if (existing)
+      await tx.productCategoryLabel.deleteMany({ where: { id: existing.id, tenantId } });
+    await tx.productCategoryLabel.create({
+      // An INCLUDE carries no pin: the column keeps its NULL default.
+      data: { tenantId, productId, categoryId, mode: "INCLUDE", reason: null, ...stampOf(actor) },
+    });
+    kept.push({
+      categoryId,
+      name: category.name,
+      // The deleted opt-out's reason was an approval: keep what identifies it in the audit trail.
+      ...(existing
+        ? {
+            replacedOptOut: {
+              id: existing.id,
+              reason: existing.reason,
+              createdById: existing.createdById,
+              createdByName: existing.createdByName,
+              createdAt: new Date(existing.createdAt).toISOString(),
+            },
+          }
+        : {}),
+    });
+  }
+  if (kept.length > 0) {
+    await tx.auditLog.createMany({
+      data: kept.map((k) => ({
+        tenantId,
+        userId: actor?.id ?? null,
+        action: LABEL_KEPT_ON_REPARENT_ACTION,
+        entityType: "Product",
+        entityId: productId,
+        meta: {
+          categoryId: k.categoryId,
+          source: "reparent",
+          fromParentProductId: args.fromParentId,
+          toParentProductId: args.toParentId,
+          ...(k.replacedOptOut ? { replacedOptOut: k.replacedOptOut } : {}),
+        } as Prisma.InputJsonValue,
+      })),
+    });
+  }
+  return kept;
 }

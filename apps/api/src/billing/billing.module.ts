@@ -10,6 +10,8 @@ import { BillingWebhookController } from "./billing-webhook.controller";
 import { PlanCatalogController } from "./plan-catalog.controller";
 import { PlanAdminController } from "./plan-admin.controller";
 import { SettingsBillingController } from "./settings-billing.controller";
+import { PaymentDueController } from "./payment-due.controller";
+import { PaymentDueService } from "./payment-due.service";
 import { ProrationService } from "./proration.service";
 import { TenantConfigSnapshotService } from "./tenant-config-snapshot.service";
 import { ConfigSnapshotFlagService } from "./config-snapshot-flag.service";
@@ -20,6 +22,7 @@ import { SubscriptionBillingExtras } from "./subscription-billing-extras";
 import { SubscriptionMutationService } from "./subscription-mutation.service";
 import { BillingEventService } from "./billing-event.service";
 import { BillingCronService } from "./billing-cron.service";
+import { AddonInvariantJob } from "./addon-invariant.job";
 import { RfInvoiceBuilder } from "./rf-invoice/rf-invoice-builder";
 import { RfInvoiceIssuerService } from "./rf-invoice/rf-invoice-issuer.service";
 import { RfInvoiceMailerService } from "./rf-invoice/rf-invoice-mailer.service";
@@ -46,6 +49,7 @@ import { AutoLockAdminService } from "./auto-lock-admin.service";
     PlanCatalogController,
     PlanAdminController,
     SettingsBillingController,
+    PaymentDueController,
   ],
   providers: [
     StripeService,
@@ -61,12 +65,16 @@ import { AutoLockAdminService } from "./auto-lock-admin.service";
     SubscriptionMutationService,
     BillingEventService,
     BillingCronService,
+    // SA-788 (b): the daily add-on invariant (07:00 UTC; the email is dark until ADDON_INVARIANT_EMAIL=email).
+    AddonInvariantJob,
     // R1 option B: a scheduled downgrade's price reaches Stripe before the renewal (invoice.upcoming + a backup sweep).
     ScheduledPriceChangeService,
     // SA-733r3 N2: the October catch-up claim lifecycle (webhook entry points + the hourly sweep).
     CatchupClaimService,
     // SA-733 D7: plan + open the October catch-up checkout (platform-admin CatchupAdminController).
     CatchupCheckoutService,
+    // The tenant's own "payment due" read + self-serve pay over the catch-up planner (PaymentDueController).
+    PaymentDueService,
     // SA-733r7 PR-B3: dunning (clock stamp, hourly pause sweep, invoice.paid resume, pause_collection reconciler).
     DunningService,
     // SA-775 (row 381): the rollout pause on AUTOMATIC locks - the switch, and the super-admin preview over it.
@@ -110,6 +118,8 @@ import { AutoLockAdminService } from "./auto-lock-admin.service";
     AddonService,
     AddonGuard,
     AddonAccessService,
+    // SA-786: platform-admin bills an add-on the old plan included after an instant down-move.
+    SubscriptionMutationService,
     // Platform-admin plan changes move the snapshot MRR run-rate, so they must emit the
     // matching signed BillingEvent delta (see PlatformAdminService.updatePlan).
     BillingEventService,

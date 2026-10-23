@@ -1,14 +1,14 @@
 "use client";
 
 import * as React from "react";
-import { BusinessProfilePicker } from "./BusinessProfilePicker";
+import { CapabilitiesCard } from "./CapabilitiesCard";
 import { SetupSummary } from "./SetupSummary";
 import { currentRoleIsSuperAdmin } from "./super-admin";
 
 /**
- * The top of the tenant's "Setup" tab: the plain-English current setup, then the business-profile picker. Platform
+ * The top of the tenant's "Setup" tab: the plain-English current setup, then the "What this business does" capabilities card. Platform
  * admin only — it renders nothing for any other role (the feature console below it already says so), and every route
- * behind it is SuperAdminGuard-ed server-side. `version` remounts the summary after a profile was applied.
+ * behind it is SuperAdminGuard-ed server-side. `version` remounts the summary after the capabilities changed.
  */
 export function SetupSection({
   tenantId,
@@ -24,7 +24,7 @@ export function SetupSection({
   return (
     <>
       <SetupSummary key={`summary-${version}`} tenantId={tenantId} />
-      <BusinessProfilePicker tenantId={tenantId} onApplied={onApplied} />
+      <CapabilitiesCard tenantId={tenantId} onApplied={onApplied} />
     </>
   );
 }

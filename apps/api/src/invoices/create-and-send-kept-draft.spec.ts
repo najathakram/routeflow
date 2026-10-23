@@ -169,6 +169,7 @@ describe("InvoicesService — create-and-send keeps the draft (row 466)", () => 
           useValue: {
             writeSaleEntries: jest.fn(),
             reverseInvoiceEntries: jest.fn(),
+            settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
             correctSaleForPriceChange: jest.fn(),
           },
         },

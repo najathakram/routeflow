@@ -226,7 +226,7 @@ describe("checkout.session.completed (the claim advances; nothing is voided yet)
           catchup: "prepaid",
           catchup_shape: "trial",
           catchup_stub_cents: "17000",
-          catchup_stub_label: "Subscription — November 2026 (from Nov 14)",
+          catchup_stub_label: "November 2026 (from Nov 14) subscription",
           catchup_finalize_at: String(finalizeAt),
         },
       }),
@@ -1154,7 +1154,7 @@ describe("Opus SHOULD-FIX 1: the prepaid stub item survives a redelivery", () =>
         catchup: "prepaid",
         catchup_shape: "trial",
         catchup_stub_cents: "17567",
-        catchup_stub_label: "Subscription — November 2026 (from Nov 14)",
+        catchup_stub_label: "November 2026 (from Nov 14) subscription",
         catchup_finalize_at: String(Math.floor(Date.parse("2026-11-14T12:00:00Z") / 1000)),
       },
     });
@@ -1762,7 +1762,7 @@ describe("Lead delta review", () => {
     catchup: "prepaid",
     catchup_shape: "trial",
     catchup_stub_cents: "17567",
-    catchup_stub_label: "Subscription — November 2026 (from Nov 14)",
+    catchup_stub_label: "November 2026 (from Nov 14) subscription",
     catchup_finalize_at: String(Math.floor(Date.parse("2026-11-14T12:00:00Z") / 1000)),
   };
 

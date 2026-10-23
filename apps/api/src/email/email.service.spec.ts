@@ -2267,27 +2267,70 @@ describe("redactAddresses — masks IP literals AND email addresses (keeps the d
     expect(redactAddresses("connect ECONNREFUSED ::1:587")).toContain("[address]");
   });
 
-  it("finishes fast on a hostile 50k string with no @ (no quadratic backtracking)", () => {
-    const hostile = "a".repeat(50_000);
-    const started = Date.now();
-    const out = redactAddresses(hostile);
-    expect(Date.now() - started).toBeLessThan(500);
+  // Linear-time proof WITHOUT a wall-clock bound (a loaded host stretches wall time by the scheduler's whim,
+  // not by the work done). The CPU time of the redactor itself (process.cpuUsage, as db-lane-script.spec #20)
+  // is measured for a SMALL input run GROWTH x M times against a GROWTH x LARGER input run M times, so both
+  // batches process the same total characters. A linear redactor costs ~the same for both (ratio ~1); a
+  // quadratic one costs ~GROWTH x more on the large input. M is calibrated so a batch burns >= MIN_BATCH_MS of
+  // CPU (the OS CPU clock ticks at ~15 ms on Windows), and the MIN of REPS repetitions drops scheduler/GC noise.
+  const SMALL = 1_000;
+  const LARGE = 16_000; // GROWTH x SMALL, well under the 65_536 pre-cap so the cap cannot mask a regression
+  const GROWTH = LARGE / SMALL;
+  const REPS = 3;
+  const MIN_BATCH_MS = 60;
+  const cpuMs = (fn: () => void): number => {
+    const t0 = process.cpuUsage();
+    fn();
+    const t = process.cpuUsage(t0);
+    return (t.user + t.system) / 1000;
+  };
+  const minCpuMs = (fn: () => void): number => {
+    let best = Infinity;
+    for (let i = 0; i < REPS; i++) best = Math.min(best, cpuMs(fn));
+    return best;
+  };
+  /** cost(LARGE x M) / cost(SMALL x GROWTH x M): ~1 when linear, ~GROWTH when quadratic. */
+  const scalingRatio = (shape: (n: number) => string, fn: (s: string) => unknown): number => {
+    const small = shape(SMALL);
+    const large = shape(LARGE);
+    const runSmall = (m: number) => () => {
+      for (let i = 0; i < GROWTH * m; i++) fn(small);
+    };
+    const runLarge = (m: number) => () => {
+      for (let i = 0; i < m; i++) fn(large);
+    };
+    runSmall(1)(); // warm up the regex JIT before measuring
+    runLarge(1)();
+    let m = 1;
+    while (cpuMs(runSmall(m)) < MIN_BATCH_MS && m < 1 << 20) m *= 2;
+    return minCpuMs(runLarge(m)) / Math.max(minCpuMs(runSmall(m)), 1);
+  };
+  // Linear => ~1 (measured 0.6-1.6); a quadratic redactor => ~GROWTH (measured 16-19 with the unbounded
+  // `[...]+@` form this function replaced). 6 sits well clear of both.
+  const MAX_LINEAR_RATIO = 6;
+
+  const HOSTILE_SHAPES: Array<[string, (n: number) => string]> = [
+    ["no '@' (letters)", (n) => "a".repeat(n)],
+    ["dots", (n) => "a.".repeat(n / 2)],
+    ["dashes", (n) => "a-".repeat(n / 2)],
+    ["colons", (n) => "1:".repeat(n / 2)],
+    ["many '@'", (n) => "x@".repeat(n / 2)],
+    ["one trailing '@'", (n) => `${"a".repeat(n - 1)}@`],
+  ];
+
+  it("a hostile 50k string with no @ is capped and linear (no quadratic backtracking)", () => {
+    const out = redactAddresses("a".repeat(50_000));
     expect(out.length).toBeLessThanOrEqual(4096);
+    expect(scalingRatio((n) => "a".repeat(n), redactAddresses)).toBeLessThan(MAX_LINEAR_RATIO);
   });
 
-  it("stays fast on other pathological shapes (dots, dashes, colons, many '@')", () => {
-    for (const hostile of [
-      "a.".repeat(25_000),
-      "a-".repeat(25_000),
-      "1:".repeat(25_000),
-      "x@".repeat(25_000),
-      `${"a".repeat(49_000)}@`,
-    ]) {
-      const started = Date.now();
-      redactAddresses(hostile);
-      expect(Date.now() - started).toBeLessThan(500);
-    }
-  });
+  it.each(HOSTILE_SHAPES)(
+    "stays linear on the pathological shape: %s (CPU cost does not grow faster than input)",
+    (_name, shape) => {
+      expect(redactAddresses(shape(50_000)).length).toBeLessThanOrEqual(4096);
+      expect(scalingRatio(shape, redactAddresses)).toBeLessThan(MAX_LINEAR_RATIO);
+    },
+  );
 
   it("handles an address and an IP together, and text with neither", () => {
     expect(redactAddresses("x@acme.example failed at 10.0.1.4")).toBe(

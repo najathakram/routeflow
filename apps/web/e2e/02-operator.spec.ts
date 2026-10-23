@@ -451,7 +451,7 @@ test.describe("Operator — Tenant Dashboard", () => {
       .getByRole("button", { name: /add as new product/i })
       .first()
       .click();
-    const createModal = page.getByRole("dialog", { name: "New Product" });
+    const createModal = page.getByRole("dialog", { name: "New product" });
     await expect(createModal.getByLabel("Name *", { exact: true })).toHaveValue("ACME COLA 24PK");
     // The label follows the unit ("Price per unit *" until one is chosen).
     await expect(createModal.getByLabel("Price per unit *", { exact: true })).toHaveValue("26.00");

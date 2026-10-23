@@ -19,6 +19,12 @@ const ALLOW: Record<string, { count: number; why: string }> = {
     count: 1,
     why: "units-per-box lookup for ids ALREADY on the buyer's own order lines",
   },
+  "buyer/buyer-qty-split.ts": {
+    count: 1,
+    why:
+      "row 531: the pack size of the ids in the buyer's OWN payload, compared with that payload's qty / box split " +
+      "and never returned (the 400 echoes only the ids the buyer sent)",
+  },
   "buyer/buyer-dashboard.service.ts": {
     count: 1,
     why: "category derivation from the buyer's order history, then the suggestion query uses the builder",

@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import type { EstimateTaxBasis } from "../estimate-tax-basis";
 import { apiClient } from "../api-client";
 import type { Estimate, EstimateStatus } from "@routeflow/types";
 
@@ -104,7 +105,8 @@ export function useDeclineEstimate() {
 export function useConvertEstimateToInvoice() {
   const qc = useQueryClient();
   // Server returns the created Invoice keyed `id` (B15-NAV) — not `invoiceId`.
-  return useMutation<{ id: string }, Error, string>({
+  // H5: `taxBasis` is the quote's tax against the tax the invoice was issued with (today's rate); absent on an older API.
+  return useMutation<{ id: string; taxBasis?: EstimateTaxBasis }, Error, string>({
     mutationFn: (id) => apiClient.post(`/estimates/${id}/convert`).then((r) => r.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["estimates"] });

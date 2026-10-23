@@ -7,6 +7,12 @@ import {
   ServiceUnavailableException,
 } from "@nestjs/common";
 import type {
+  BusinessCapabilities,
+  BusinessCapabilitiesPreviewResponse,
+  BusinessCapabilitiesRequest,
+  BusinessCapabilityTicks,
+  BusinessPlanBlocked,
+  BusinessProfileKey,
   BusinessProfileListResponse,
   BusinessProfilePlan,
   BusinessProfilePreviewResponse,
@@ -19,7 +25,14 @@ import { AddonService } from "./addon.service";
 import { FeatureOverrideService } from "./feature-override.service";
 import { FeatureConfigService } from "./feature-config.service";
 import { FeaturePreviewService } from "./feature-preview.service";
-import { FLEET_KEYS, heldAddonKeys } from "./fulfilment-capability";
+import { FLEET_KEYS, heldAddonKeys, readFulfilmentInputs } from "./fulfilment-capability";
+import {
+  capabilitiesFromInputs,
+  capabilityAvailability,
+  isOpensAsChoosable,
+  presetTicks,
+  ticksToProfileDef,
+} from "./business-capabilities";
 import { addonCodeOf, findAddonRow } from "./addon-row";
 import {
   BUSINESS_PROFILES,
@@ -28,12 +41,18 @@ import {
   describeBusinessProfilePlan,
   describeBusinessProfileSections,
   planBusinessProfile,
+  planCompRefusal,
   postApplyViolations,
   toBusinessProfileSummary,
   unavailableModes,
+  wants,
   type BusinessProfileDef,
   type BusinessProfileState,
 } from "./business-profiles";
+import {
+  carrierInTransitConflict,
+  carrierInTransitCount,
+} from "../orders/carrier-in-transit-guard";
 
 /** Canonical JSON (object keys sorted, array order kept): the same plan always hashes the same. */
 const canonical = (v: unknown): unknown =>
@@ -65,6 +84,18 @@ export interface BusinessProfileResolution {
   summary: string[];
   /** The default audit reason, "Business profile: <label>". */
   reason: string;
+  /** BO-04: the normalised ticks this plan was made for (what the audit row and the response echo). */
+  capabilities: BusinessCapabilityTicks;
+  /** The preset those ticks equal, else null (a "custom" combination). */
+  preset: BusinessProfileKey | null;
+  /** Set only when the plan was asked for by a preset key (the alias routes): the audit row keeps `profile`. */
+  aliasProfile?: BusinessProfileKey;
+  /**
+   * Why this plan cannot be applied right now, else null. Planning NEVER throws for these: the capabilities
+   * preview returns the plan with `blocked` (Confirm disabled), and every confirm calls `assertNotBlocked`
+   * right after planning, BEFORE step 1 (the billing disables), so a refusal never leaves billing half stopped.
+   */
+  blocked: BusinessPlanBlocked | null;
 }
 
 /**
@@ -87,25 +118,112 @@ export class BusinessProfileService {
   ) {}
 
   list(): BusinessProfileListResponse {
-    return { profiles: BUSINESS_PROFILES.map(toBusinessProfileSummary) };
+    return {
+      profiles: BUSINESS_PROFILES.map(toBusinessProfileSummary),
+      availability: capabilityAvailability(),
+    };
   }
 
   /**
-   * The plan for one tenant, recomputed from its CURRENT state. 400 BUSINESS_PROFILE_UNKNOWN;
-   * 400 BUSINESS_PROFILE_UNAVAILABLE when the feature registry does not offer one of its modes
-   * (checked before reading the tenant, so an unchanged mode is never a bypass — SA-671 M1);
-   * 404 for a missing tenant; 409 when the post-apply state would break a mode rule. All before
-   * anything is written.
+   * BO-03: the ticks for one tenant, read back (read-only). Fulfilment facts come from `readFulfilmentInputs`
+   * and `capabilityFromInputs`; `driver_payments` is held the way `currentState` reads it (an active
+   * override is absolute, else the add-on rows). 404 for a missing tenant.
+   */
+  async capabilities(tenantId: string): Promise<BusinessCapabilities> {
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { id: true },
+    });
+    if (!tenant) throw new NotFoundException(`Tenant ${tenantId} not found.`);
+    const inputs = await readFulfilmentInputs(
+      {
+        featureConfig: this.featureConfig,
+        addonService: this.addons,
+        featureOverrides: this.featureOverrides,
+      },
+      tenantId,
+    );
+    // A failed mode or fleet read must not become a guessed answer (a configured tenant read as
+    // unset, or fleetHeld:false): the same 503 Settings → Fulfillment and /tenants/me/features give.
+    if (inputs.fleet === null || inputs.modesFailed) {
+      throw new ServiceUnavailableException({
+        statusCode: 503,
+        code: API_ERROR_CODES.FEATURES_UNAVAILABLE,
+        message: "Feature resolution is temporarily unavailable. Please retry.",
+      });
+    }
+    const now = Date.now();
+    const doorPayments = await this.heldDoorPayments(tenantId);
+    return capabilitiesFromInputs(inputs, doorPayments ? ["driver_payments"] : []);
+  }
+
+  /** Does the tenant hold `driver_payments` now? An active override is absolute, else the add-on rows. */
+  private async heldDoorPayments(tenantId: string): Promise<boolean> {
+    const now = Date.now();
+    const rows = await this.featureOverrides.list(tenantId);
+    const override = rows.find(
+      (r) =>
+        r.tenantId === tenantId &&
+        r.featureKey === "driver_payments" &&
+        !r.revokedAt &&
+        !(r.expiresAt && r.expiresAt.getTime() <= now),
+    );
+    const held = await heldAddonKeys(this.addons, this.featureOverrides, tenantId);
+    return override ? override.effect === "GRANT" : held.has("driver_payments");
+  }
+
+  /**
+   * The plan for one PRESET key (the alias routes), recomputed from the tenant's CURRENT state. 400
+   * BUSINESS_PROFILE_UNKNOWN; the rest is `planDef`. BO-04: the preset goes through its own ticks
+   * (`presetTicks` -> `ticksToProfileDef`), the same path as a capabilities request. A carrier in transit is
+   * `blocked` on the result (no longer thrown here); the alias preview and both confirms call `assertNotBlocked`.
    */
   async plan(tenantId: string, profileKey: string): Promise<BusinessProfileResolution> {
-    const profile = businessProfileByKey(profileKey);
-    if (!profile) {
+    const preset = businessProfileByKey(profileKey);
+    if (!preset) {
       throw new BadRequestException({
         statusCode: 400,
         code: API_ERROR_CODES.BUSINESS_PROFILE_UNKNOWN,
         message: `"${profileKey}" is not a business profile.`,
       });
     }
+    const { def, normalised } = ticksToProfileDef(presetTicks(preset));
+    return this.planDef(tenantId, def, {
+      capabilities: normalised,
+      preset: preset.key as BusinessProfileKey,
+      aliasProfile: preset.key as BusinessProfileKey,
+    });
+  }
+
+  /** BO-04: the plan for a set of capability ticks. 400 BUSINESS_CAPABILITIES_EMPTY before any read. */
+  async planCapabilities(
+    tenantId: string,
+    request: BusinessCapabilitiesRequest,
+  ): Promise<BusinessProfileResolution> {
+    // An omitted doorPayments keeps the tenant's current value (read only when it can matter: Delivery ticked).
+    const current =
+      request.delivery === true && request.doorPayments === undefined
+        ? { doorPayments: await this.heldDoorPayments(tenantId) }
+        : undefined;
+    const { def, normalised, preset } = ticksToProfileDef(request, current);
+    return this.planDef(tenantId, def, { capabilities: normalised, preset });
+  }
+
+  /**
+   * The one planner entry. 400 BUSINESS_PROFILE_UNAVAILABLE when the feature registry does not offer one of the
+   * def's modes (checked before reading the tenant, so an unchanged mode is never a bypass - SA-671 M1); 404 for a
+   * missing tenant; 409 when the post-apply state would break a mode rule. All before anything is written.
+   * Carrier-in-transit and a comp the comp path would refuse come back as `blocked`, not as an error.
+   */
+  async planDef(
+    tenantId: string,
+    profile: BusinessProfileDef,
+    extras: {
+      capabilities: BusinessCapabilityTicks;
+      preset: BusinessProfileKey | null;
+      aliasProfile?: BusinessProfileKey;
+    },
+  ): Promise<BusinessProfileResolution> {
     const unavailable = unavailableModes(profile);
     if (unavailable.length > 0) {
       throw new BadRequestException({
@@ -136,6 +254,18 @@ export class BusinessProfileService {
     }
 
     const plan = planBusinessProfile(profile, state);
+    // Item 8 / BO-04: the same in-transit rule as Settings → Fulfillment, in its non-throwing form. The preview
+    // shows it as the blocker; every confirm refuses on it right after planning, before any write.
+    const model = plan.modes.find((m) => m.key === "fulfilment_model");
+    const inTransit = model
+      ? await carrierInTransitCount(this.prisma, tenantId, model.from, model.to)
+      : 0;
+    // BO-04: and the comp path's own refusal, dry-run (a refusal after the billing disables would stop billing
+    // with the profile half applied).
+    const blocked: BusinessPlanBlocked | null =
+      inTransit > 0
+        ? { code: API_ERROR_CODES.FULFILMENT_CARRIER_IN_TRANSIT, count: inTransit }
+        : planCompRefusal(plan, state);
     const reason = `Business profile: ${profile.label}`;
     const revokeOverrideIds: Record<string, string> = {};
     for (const o of plan.overrides) {
@@ -162,12 +292,40 @@ export class BusinessProfileService {
       },
       summary: describeBusinessProfilePlan(plan),
       reason,
+      capabilities: extras.capabilities,
+      preset: extras.preset,
+      ...(extras.aliasProfile ? { aliasProfile: extras.aliasProfile } : {}),
+      blocked,
     };
+  }
+
+  /**
+   * Refuse a blocked plan with the code the underlying rule gives: 409 FULFILMENT_CARRIER_IN_TRANSIT (the
+   * Settings guard's own body) or 400 FEATURE_REQUIRES_UNMET (the comp path's own body). Call it right after
+   * planning in every confirm, before `assertPlanUnchanged` and before step 1 (the billing disables).
+   */
+  assertNotBlocked(resolved: BusinessProfileResolution): void {
+    const b = resolved.blocked;
+    if (!b) return;
+    if (b.code === API_ERROR_CODES.FULFILMENT_CARRIER_IN_TRANSIT) {
+      throw carrierInTransitConflict(b.count);
+    }
+    throw new BadRequestException({
+      statusCode: 400,
+      code: API_ERROR_CODES.FEATURE_REQUIRES_UNMET,
+      key: b.key,
+      missing: b.missing,
+      message:
+        `"${b.key}" depends on ${b.missing}, which this tenant does not currently have. ` +
+        `Nothing was changed.`,
+    });
   }
 
   /** A dry run through the existing feature preview — writes nothing. */
   async preview(tenantId: string, profileKey: string): Promise<BusinessProfilePreviewResponse> {
     const resolved = await this.plan(tenantId, profileKey);
+    // The preset picker has no `blocked` field to show, so it keeps today's refusal (BO-05 retires it).
+    this.assertNotBlocked(resolved);
     const response = await this.featurePreview.preview(tenantId, resolved.previewRequest);
     return {
       ...response,
@@ -176,6 +334,30 @@ export class BusinessProfileService {
       summary: resolved.summary,
       changes: describeBusinessProfileSections(resolved.plan).changes,
       planFingerprint: planFingerprint(resolved.plan),
+    };
+  }
+
+  /**
+   * BO-04: the dry run for capability ticks. A blocked plan is still a 200: the plan, its fingerprint and
+   * `blocked` come back so the admin sees why Confirm is disabled. Writes nothing.
+   */
+  async previewCapabilities(
+    tenantId: string,
+    request: BusinessCapabilitiesRequest,
+  ): Promise<BusinessCapabilitiesPreviewResponse> {
+    const resolved = await this.planCapabilities(tenantId, request);
+    const response = await this.featurePreview.preview(tenantId, resolved.previewRequest);
+    return {
+      ...response,
+      capabilities: resolved.capabilities,
+      preset: resolved.preset,
+      opensAs: resolved.capabilities.opensAs,
+      opensAsChoosable: isOpensAsChoosable(resolved.capabilities),
+      plan: resolved.plan,
+      summary: resolved.summary,
+      changes: describeBusinessProfileSections(resolved.plan).changes,
+      planFingerprint: planFingerprint(resolved.plan),
+      blocked: resolved.blocked,
     };
   }
 
@@ -239,7 +421,7 @@ export class BusinessProfileService {
     // SA-769: the same row read also answers "does an ACTIVE row hold it" (`rowHeld`, apart from
     // `holds`, which an override overrides) and "is that row a comp" (`compRows`, `isComp`): a
     // fleet-ON profile never re-prices a held row, and a fleet-OFF profile switches a comp off
-    // through the disable path with no billing call. `paying` is only decided for a fleet-OFF profile.
+    // through the disable path with no billing call. `paying` is only decided for a module the def switches off.
     const paying = new Set<string>();
     const manualPay = new Set<string>();
     const rowHeld = new Set<string>();
@@ -249,7 +431,8 @@ export class BusinessProfileService {
       if (!row?.active) continue;
       rowHeld.add(key);
       if (row.isComp === true) compRows.add(key);
-      if (profile.fleet) continue;
+      // only a module this def switches OFF can be a billing stop (BO-04: per module, not per profile)
+      if (wants(profile, key)) continue;
       if (row.stripeItemId) paying.add(key);
       else if (Number(row.priceSnapshot ?? 0) > 0) {
         paying.add(key);

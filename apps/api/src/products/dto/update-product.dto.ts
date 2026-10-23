@@ -71,7 +71,13 @@ export class UpdateProductDto {
   // Flag-gated service-side (flag.msrp); "" clears an existing value (emptyToNull
   // ⇒ an explicit null write); 0 is normalized to null service-side too.
   @IsOptional() @Transform(toOptionalMsrp) @IsDecimal() msrp?: string | null;
-  @IsOptional() @IsInt() unitsPerBox?: number;
+  // Whole pieces per box, 1 or more; null/absent = unboxed (@IsOptional skips both). 0 or -3 would unbox silently.
+  @IsOptional() @IsInt() @Min(1) unitsPerBox?: number;
+  // SA-797 (row 218): the pack the form READ when it opened, sent with a save that carries `unit`. The
+  // server compares them under the pack lock: a 409 PRODUCT_PACK_STALE when any moved. A check, never written.
+  @IsOptional() @IsString() expectedUnit?: string;
+  @IsOptional() @IsInt() expectedUnitsPerBox?: number | null;
+  @IsOptional() @IsUUID() expectedTenantUnitId?: string | null;
   // Low-stock thresholds (B858: the CSV import updates them through this DTO, never raw prisma).
   @IsOptional() @IsInt() @Min(0) reorderPoint?: number;
   @IsOptional() @IsInt() @Min(0) reorderQty?: number;
@@ -81,7 +87,8 @@ export class UpdateProductDto {
   @IsOptional() @Transform(toOptionalDecimalString) @IsDecimal() priceTier3?: string;
   @IsOptional() @Transform(toOptionalDecimalString) @IsDecimal() priceTier4?: string;
   @IsOptional() @Transform(toOptionalDecimalString) @IsDecimal() priceTier5?: string;
-  @IsOptional() @Transform(emptyToUndefined) @IsUUID() parentProductId?: string;
+  // M2: "" / null = UNLINK (a standalone product), never "unchanged": a form that clears the select must reach update() as null.
+  @IsOptional() @Transform(emptyToNull) @IsUUID() parentProductId?: string | null;
   @IsOptional() @IsString() variantName?: string;
   // Phase 4 (subcategories): emptyToNull so clearing the select removes the tag.
   @IsOptional() @Transform(emptyToNull) @IsUUID() trackedCategoryId?: string | null;

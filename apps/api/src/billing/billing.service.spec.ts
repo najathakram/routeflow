@@ -2032,7 +2032,7 @@ describe("BillingService.syncStripeSubscriptionPrice", () => {
     });
     pricing.checkoutPriceData.mockResolvedValue({
       currency: "usd",
-      product_data: { name: "RouteFlow Growth — monthly" },
+      product_data: { name: "RouteFlow Growth" },
       unit_amount: 15000,
       recurring: { interval: "month" },
     });
@@ -2097,7 +2097,7 @@ describe("BillingService.syncStripeSubscriptionPrice", () => {
       stripe.getSubscription.mockResolvedValue(liveSub(status));
       pricing.checkoutPriceData.mockResolvedValue({
         currency: "usd",
-        product_data: { name: "RouteFlow Growth — monthly" },
+        product_data: { name: "RouteFlow Growth" },
         unit_amount: 15000,
         recurring: { interval: "month" },
       });
@@ -2500,7 +2500,7 @@ describe("BillingService.syncStripeSubscriptionPrice", () => {
     });
     pricing.checkoutPriceData.mockResolvedValue({
       currency: "usd",
-      product_data: { name: "RouteFlow Growth — monthly" },
+      product_data: { name: "RouteFlow Growth" },
       unit_amount: 15000,
       recurring: { interval: "month" },
     });
@@ -2543,7 +2543,7 @@ describe("BillingService.syncStripeSubscriptionPrice", () => {
     });
     pricing.checkoutPriceData.mockResolvedValue({
       currency: "usd",
-      product_data: { name: "RouteFlow Scale — monthly" },
+      product_data: { name: "RouteFlow Scale" },
       unit_amount: 59900,
       recurring: { interval: "month" },
     });
@@ -2594,7 +2594,7 @@ describe("BillingService.syncStripeSubscriptionPrice", () => {
     });
     pricing.checkoutPriceData.mockResolvedValue({
       currency: "usd",
-      product_data: { name: "RouteFlow Growth — monthly" },
+      product_data: { name: "RouteFlow Growth" },
       unit_amount: 15000,
       recurring: { interval: "month" },
     });
@@ -2625,7 +2625,7 @@ describe("BillingService.syncStripeSubscriptionPrice", () => {
     });
     pricing.checkoutPriceData.mockResolvedValue({
       currency: "usd",
-      product_data: { name: "RouteFlow Growth — monthly" },
+      product_data: { name: "RouteFlow Growth" },
       unit_amount: 15000,
       recurring: { interval: "month" },
     });
@@ -2654,7 +2654,7 @@ describe("BillingService.syncStripeSubscriptionPrice", () => {
     });
     pricing.checkoutPriceData.mockResolvedValue({
       currency: "usd",
-      product_data: { name: "RouteFlow Growth — monthly" },
+      product_data: { name: "RouteFlow Growth" },
       unit_amount: 15000,
       recurring: { interval: "month" },
     });

@@ -112,14 +112,32 @@ describe("the skipped line / stock writers now refuse a FAMILY (400 FAMILY_NOT_S
     const items = [{ productId: FAMILY.id, countedQty: 5, unitCost: 1 }];
     await refused(svc.commitStockCount({ sessionId: "x", items } as never, "u1"));
     await refused(svc.commitStockCountSession("s1", {} as never, { sub: "u1" }));
+    await refused(svc.setCostBasis(FAMILY.id, { unitCost: 1 } as never, "u1"));
+    await refused(svc.bulkSetCostBasis({ items } as never, "u1"));
+    expect(tenantTransaction).not.toHaveBeenCalled();
+  });
+
+  it("Opus #2881 B1': a line scan refuses a FAMILY inside its own tx (SA-767 L-2.4 B), before any write", async () => {
+    const writes = jest.fn();
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ ok: true }]), // the shared stock-count lock: granted
+      stockCountSession: {
+        findFirst: jest.fn().mockResolvedValue({ id: "s1", status: "OPEN", startedAt: new Date() }),
+      },
+      stockMovement: { findFirst: jest.fn().mockResolvedValue(null) },
+      product: { findFirst: jest.fn().mockResolvedValue(FAMILY) },
+      stockCountLine: { findUnique: writes, create: writes, update: writes },
+    };
+    const svc = build(InventoryService, {
+      ...prismaWith({}),
+      tenantTransaction: jest.fn((fn: (t: unknown) => unknown) => fn(tx)),
+    });
     await refused(
       svc.upsertStockCountLine("s1", { productId: FAMILY.id, countedQty: 5 } as never, {
         sub: "u1",
       }),
     );
-    await refused(svc.setCostBasis(FAMILY.id, { unitCost: 1 } as never, "u1"));
-    await refused(svc.bulkSetCostBasis({ items } as never, "u1"));
-    expect(tenantTransaction).not.toHaveBeenCalled();
+    expect(writes).not.toHaveBeenCalled();
   });
 
   it("the recurring template create AND update both call the shared guard helper (pinned: 2 call sites)", () => {

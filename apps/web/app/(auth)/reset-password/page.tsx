@@ -19,7 +19,7 @@ const schema = z
       .string()
       .min(8, "At least 8 characters")
       .regex(
-        /^(?=.*[a-z])(?=.*[A-Z])(?=.*[\d\W])/,
+        /^(?=.*[a-z])(?=.*[A-Z])(?=.*[\d\W_])/,
         "Must include an uppercase letter, a lowercase letter, and a number or symbol",
       ),
     confirmPassword: z.string().min(1, "Please confirm your new password"),

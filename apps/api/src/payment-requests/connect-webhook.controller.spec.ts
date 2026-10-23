@@ -29,6 +29,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { StripeConnectService } from "../stripe-connect/stripe-connect.service";
+import { ConnectChargeReviewService } from "./connect-charge-review.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 function uniqueViolation() {
@@ -83,6 +84,7 @@ describe("ConnectWebhookController", () => {
     tenantsForAccount: jest.fn(),
   };
   const audit = { log: jest.fn() };
+  const review = { flagForReview: jest.fn() };
   const gateway = { server: { to: jest.fn(() => ({ emit: jest.fn() })) } };
 
   beforeEach(async () => {
@@ -122,6 +124,7 @@ describe("ConnectWebhookController", () => {
     payments.failBySession.mockResolvedValue({ handled: true });
     connect.tenantsForAccount.mockResolvedValue([]);
     audit.log.mockResolvedValue(undefined);
+    review.flagForReview.mockResolvedValue("flagged");
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [ConnectWebhookController],
@@ -131,6 +134,7 @@ describe("ConnectWebhookController", () => {
         { provide: PaymentRequestsService, useValue: payments },
         { provide: PrismaService, useValue: prisma },
         { provide: AuditService, useValue: audit },
+        { provide: ConnectChargeReviewService, useValue: review },
         { provide: RouteFlowGateway, useValue: gateway },
       ],
     }).compile();
@@ -274,6 +278,99 @@ describe("ConnectWebhookController", () => {
     });
   });
 
+  describe("charge.refunded (row 616: flag the paid invoice for review)", () => {
+    const refundEvent = {
+      type: "charge.refunded",
+      eventId: "evt_refund",
+      accountRef: "acct_1",
+      created: new Date("2026-08-21T12:00:00Z"),
+      chargeId: "ch_1",
+      paymentIntentId: "pi_1",
+      amountRefundedDollars: 15,
+      metadata: { tenantId: "tenant-1" },
+    };
+
+    beforeEach(() => {
+      connect.assertEventAccount.mockResolvedValue(true);
+    });
+
+    it("flags the matching payment for review and acks 200", async () => {
+      provider.verifyEvent.mockReturnValue(refundEvent);
+      const res = mockRes();
+
+      await controller.handle(rawReq, res);
+
+      expect(review.flagForReview).toHaveBeenCalledTimes(1);
+      expect(review.flagForReview).toHaveBeenCalledWith({
+        tenantId: "tenant-1",
+        kind: "refund",
+        eventId: "evt_refund",
+        paymentIntentId: "pi_1",
+        chargeId: "ch_1",
+      });
+      expect(res.statusCode).toBe(200);
+      expect(stripeConnectEvent.updateMany).toHaveBeenCalledWith({
+        where: { id: "evt_refund", outcome: null, processedAt: T_INSERT },
+        data: { outcome: "flagged" },
+      });
+    });
+
+    it("answers 500 (Stripe redelivers) when the flag write fails", async () => {
+      provider.verifyEvent.mockReturnValue(refundEvent);
+      review.flagForReview.mockRejectedValue(new Error("db down"));
+      const res = mockRes();
+
+      await controller.handle(rawReq, res);
+
+      expect(res.statusCode).toBe(500);
+      expect(stripeConnectEvent.updateMany).toHaveBeenCalledWith({
+        where: { id: "evt_refund", outcome: null, processedAt: T_INSERT },
+        data: { outcome: "error:db down" },
+      });
+    });
+
+    it("acks 200 and records no_matching_payment for an unknown PaymentIntent", async () => {
+      provider.verifyEvent.mockReturnValue(refundEvent);
+      review.flagForReview.mockResolvedValue("no_matching_payment");
+      const res = mockRes();
+
+      await controller.handle(rawReq, res);
+
+      expect(res.statusCode).toBe(200);
+      expect(stripeConnectEvent.updateMany).toHaveBeenCalledWith({
+        where: { id: "evt_refund", outcome: null, processedAt: T_INSERT },
+        data: { outcome: "no_matching_payment" },
+      });
+    });
+
+    it("re-routes after a failed first attempt and records already_flagged on the retry", async () => {
+      provider.verifyEvent.mockReturnValue(refundEvent);
+      stripeConnectEvent.create.mockRejectedValue(uniqueViolation());
+      stripeConnectEvent.findUnique.mockResolvedValue({
+        id: "evt_refund",
+        outcome: "error:db down",
+      });
+      review.flagForReview.mockResolvedValue("already_flagged");
+      const res = mockRes();
+
+      await controller.handle(rawReq, res);
+
+      expect(review.flagForReview).toHaveBeenCalledTimes(1);
+      expect(res.statusCode).toBe(200);
+    });
+
+    it("does not flag when the event account does not match the tenant", async () => {
+      provider.verifyEvent.mockReturnValue(refundEvent);
+      connect.assertEventAccount.mockResolvedValue(false);
+      const res = mockRes();
+
+      await controller.handle(rawReq, res);
+
+      expect(review.flagForReview).not.toHaveBeenCalled();
+      expect(res.statusCode).toBe(200);
+    });
+  });
+
   describe("charge.dispute.created (invariant 11)", () => {
     const disputeEvent = {
       type: "charge.dispute.created",
@@ -297,12 +394,19 @@ describe("ConnectWebhookController", () => {
       await controller.handle(rawReq, res);
 
       expect(connect.tenantsForAccount).toHaveBeenCalledWith("acct_1");
+      expect(review.flagForReview).toHaveBeenCalledWith({
+        tenantId: "tenant-1",
+        kind: "dispute",
+        eventId: "evt_dispute",
+        paymentIntentId: "pi_1",
+        chargeId: "ch_1",
+      });
       expect(audit.log).toHaveBeenCalledWith(
         expect.objectContaining({ tenantId: "tenant-1", action: "stripe.charge.dispute.created" }),
       );
       expect(stripeConnectEvent.updateMany).toHaveBeenCalledWith({
         where: { id: "evt_dispute", outcome: null, processedAt: T_INSERT },
-        data: { outcome: "notified" },
+        data: { outcome: "flagged" },
       });
     });
 

@@ -20,6 +20,7 @@ import { Transform, Type } from "class-transformer";
 import { FulfillPath } from "@prisma/client";
 import { StripHtml } from "../../common/transforms/strip-html.transform";
 import { InlineReturnLinesDto } from "../../returns/dto/capture-inline-return.dto";
+import { IsOptionalNotNull } from "../../common/validators/optional-not-null";
 
 // BUG-B1-6: bound numeric inputs server-side. The audit submitted a
 // $25,664,510.89 order — all line items totalled cleanly through the API
@@ -47,7 +48,7 @@ export class OrderItemDto {
   @IsOptional() @IsInt() @Min(0) @Max(100_000) boxes?: number;
   @IsOptional() @IsInt() @Min(0) @Max(100_000) pieces?: number;
   /** One-time discount price override — operator-supplied, not stored in CustomerPrice */
-  @IsOptional() @IsNumber() @Min(0) @Max(1_000_000) unitPrice?: number;
+  @IsOptionalNotNull() @IsNumber() @Min(0) @Max(1_000_000) unitPrice?: number;
   @IsOptional() @IsString() @MaxLength(2000) notes?: string;
   @IsOptional() @IsString() @MaxLength(2000) itemNote?: string;
   @IsOptional() @IsString() @MaxLength(200) substitution?: string;
@@ -64,7 +65,7 @@ export class AppliedCreditNoteDto {
   creditNoteId!: string;
 
   /** Dollars to apply from this credit. Omit = up to the credit's remaining balance. */
-  @IsOptional()
+  @IsOptionalNotNull()
   @IsNumber()
   @Min(0.01)
   @Max(1_000_000)
@@ -99,9 +100,9 @@ export class CreateOrderDto {
   @IsOptional() @IsString() @MaxLength(64) routeRunStopId?: string;
   @IsOptional() @IsBoolean() immediateDelivery?: boolean;
   /** Order-level discount applied to the total */
-  @IsOptional() @IsNumber() @Min(0) @Max(1_000_000) discountAmount?: number;
+  @IsOptionalNotNull() @IsNumber() @Min(0) @Max(1_000_000) discountAmount?: number;
   /** Optional flat shipping fee added to the order total (never taxed). */
-  @IsOptional() @IsNumber() @Min(0) @Max(1_000_000) shippingFee?: number;
+  @IsOptionalNotNull() @IsNumber() @Min(0) @Max(1_000_000) shippingFee?: number;
   /** When true, always create a new order even if a PENDING one already exists for this customer */
   @IsOptional() @IsBoolean() forceNew?: boolean;
   /**

@@ -502,3 +502,33 @@ describe("N3 (SA-632): a settle on the PACK keeps the tap count (N taps = N pack
     expect(mergeQtyIntoLine(lines[0], 1)).toMatchObject({ qty: 4, boxes: 4 });
   });
 });
+
+describe("row 536 / P0b: N taps that resolve to a DERIVED base unit are N pieces, not 1", () => {
+  const packOf12 = { unit: "Pack", unitsPerBox: 12, pricePerUnit: "24.00" };
+  const derived = buildUnitOptions(
+    packOf12,
+    [lvl({ label: "Case", factorToBase: 24, price: null })],
+    1,
+  ).find((o) => o.derived)!;
+
+  it("3 default-start taps on a pending line, resolved onto the derived Piece, hold 3 pieces", () => {
+    const pending = line({ pendingTaps: 3, qty: 12, boxes: 1, pieces: 0 });
+    const out = applyUnitToLines([pending], "t1", derived, false, 1);
+    expect(out[0]).toMatchObject({ derivedBase: derived.value, boxes: 0, pieces: 3, qty: 3 });
+  });
+
+  it("the same taps folding into an existing Piece line add 3, not 1", () => {
+    const existing = line({
+      tempId: "t0",
+      startOnDefaultUnit: false,
+      derivedBase: derived.value,
+      boxes: 0,
+      pieces: 2,
+      qty: 2,
+    });
+    const pending = line({ pendingTaps: 3, qty: 12, boxes: 1, pieces: 0 });
+    const out = applyUnitToLines([existing, pending], "t1", derived, false, 1);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({ boxes: 0, pieces: 5, qty: 5 });
+  });
+});

@@ -903,3 +903,19 @@ describe("RecordInlineReturnDialog — B735: a parked ledger reversal must be vi
     expect(screen.queryByTestId("inline-return-parked-warning")).not.toBeInTheDocument();
   });
 });
+
+describe("RecordInlineReturnDialog — a faded Return button says why (R7b 3.1)", () => {
+  it("a faded Return & refund says 'Choose a reason to continue'", async () => {
+    await openToStep1();
+    fireEvent.change(screen.getByLabelText(/^pieces$/i), { target: { value: "10" } });
+    fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
+    await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(1));
+    resolveNextQuote(quoteResponse([chunk()]));
+    const hint = await screen.findByText("Choose a reason to continue");
+    expect(screen.getByLabelText(/^reason$/i)).toHaveAttribute("aria-describedby", hint.id);
+    expect(screen.getByRole("button", { name: /issue credit note|return &/i })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText(/^reason$/i), { target: { value: "DAMAGED" } });
+    expect(screen.queryByText("Choose a reason to continue")).toBeNull();
+    expect(screen.getByLabelText(/^reason$/i)).not.toHaveAttribute("aria-describedby");
+  });
+});

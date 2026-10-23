@@ -55,7 +55,12 @@ describe("one pairing helper for the buyer, staff and driver edits (row 373b)", 
       for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
         const p = path.join(dir, e.name);
         if (e.isDirectory()) walk(p);
-        else if (/\.ts$/.test(e.name) && !/\.(spec|test)\.ts$/.test(e.name)) {
+        else if (
+          /\.ts$/.test(e.name) &&
+          !/\.(spec|test)\.ts$/.test(e.name) &&
+          path.relative(path.resolve(__dirname, ".."), p).split(path.sep).join("/") !==
+            "inventory/testing/order-stock-world.ts" // B695: a DB-spec fixture seeding test lines, not a builder
+        ) {
           if (
             /\borderItem\.(create|createMany|upsert)\(|lineItems:\s*\{\s*create/.test(
               fs.readFileSync(p, "utf8"),

@@ -36,7 +36,7 @@ const report = (over: Record<string, unknown> = {}) => ({
     stub: {
       from: "2026-10-01T12:00:00.000Z",
       to: "2026-11-01T12:00:00.000Z",
-      label: "Subscription — October 2026",
+      label: "October 2026 subscription",
       lines: [{ kind: "PLAN", code: "PLAN", cents: 31000 }],
       totalCents: 31000,
       belowStripeMinimum: false,
@@ -116,7 +116,7 @@ describe("the printed report (anonymised)", () => {
     const text = core.formatTenantReport(report()).join("\n");
     expect(text).toContain("tenant 11111111-1111-4111-8111-111111111111");
     expect(text).toContain("$310.00/month (catalog)");
-    expect(text).toContain('"Subscription — October 2026" = $310.00');
+    expect(text).toContain('"October 2026 subscription" = $310.00');
     expect(text).toContain("1 open · 0 paid");
     expect(text).toContain("stripe subscription: no");
     expect(text).toContain("ELIGIBLE");

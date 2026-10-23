@@ -2,6 +2,7 @@ import * as React from "react";
 import { renderWithProviders, screen, waitFor, fireEvent, within } from "@/test-utils/render";
 import { apiClient } from "@/lib/api-client";
 import { COUNTER_PRICE_EDIT_NOT_PERMITTED_COPY } from "@/lib/counter-sale";
+import { renderTill } from "@/test-utils/render-till";
 import { CounterSaleScreen } from "./CounterSaleScreen";
 
 /**
@@ -217,7 +218,7 @@ const itemNames = () =>
   );
 async function pickAcme() {
   fireEvent.change(screen.getByLabelText("Find a customer"), { target: { value: "acme" } });
-  fireEvent.click(screen.getByRole("button", { name: "Acme Cafe" }));
+  fireEvent.click(screen.getByRole("option", { name: "Acme Cafe" }));
   await waitFor(() => expect(screen.queryByTestId("counter-reprice-busy")).toBeNull());
 }
 async function openList(count?: number) {
@@ -232,7 +233,7 @@ const resumeBtn = (label: string) => screen.getByRole("button", { name: `Resume 
 const discardBtn = (label: string) => screen.getByRole("button", { name: `Discard ${label}` });
 
 function renderScreen() {
-  return renderWithProviders(<CounterSaleScreen />);
+  return renderTill(<CounterSaleScreen />);
 }
 
 describe("header controls (nothing removed, Park and Parked added)", () => {
@@ -329,7 +330,7 @@ describe("Park", () => {
     await scan("COLA");
     await scan("COLA");
     await pickAcme();
-    fireEvent.click(screen.getByRole("button", { name: "Check" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Check" }));
     fireEvent.change(screen.getByLabelText("Check number"), { target: { value: "1042" } });
     let answer: (v: unknown) => void = () => undefined;
     post.mockImplementationOnce(() => new Promise((r) => (answer = r)));
@@ -360,8 +361,8 @@ describe("Park", () => {
 
     answer({ data: { id: body.id } });
     await waitFor(() => expect(itemNames().join(" ")).toContain("No items yet."));
-    expect(screen.getByText("Walk-in customer")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Cash" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByText("Who's buying?")).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "Cash" })).toHaveAttribute("aria-checked", "true");
     expect(total()).toHaveTextContent("$0.00");
     await waitFor(() => expect(screen.getByLabelText("Scan or search items")).toHaveFocus());
   });
@@ -427,7 +428,7 @@ describe("Park", () => {
     fireEvent.click(parkBtn());
     await waitFor(() => expect(parkCalls()).toHaveLength(1));
     // the payment side stays editable during the request: change it, then let the park answer
-    fireEvent.click(screen.getByRole("button", { name: "Check" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Check" }));
     fireEvent.change(screen.getByLabelText("Check number"), { target: { value: "999" } });
     answer({ data: { id: "x" } });
     const note = await screen.findByTestId("counter-park-error");
@@ -522,7 +523,7 @@ describe("Resume with an empty cart", () => {
     await waitFor(() => expect(itemNames().join(" ")).toContain("Cola"));
     expect(itemNames().join(" ")).toContain("2");
     expect(screen.getByText("Acme Cafe", { selector: "span.font-medium" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Check" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("radio", { name: "Check" })).toHaveAttribute("aria-checked", "true");
     expect(screen.getByLabelText("Check number")).toHaveValue("1042");
     // parked at 2.50, Acme's tier-2 price is 2.00: the DISPLAY follows the customer
     await waitFor(() => expect(total()).toHaveTextContent("$4.00"));
@@ -541,7 +542,8 @@ describe("Resume with an empty cart", () => {
     await openList(1);
     fireEvent.click(resumeBtn("Hold A"));
     await waitFor(() => expect(screen.getByLabelText("Amount tendered")).toHaveValue("20"));
-    expect(screen.getByText("Walk-in customer")).toBeInTheDocument();
+    // an older park (no walkIn flag) never said who was buying: the till asks, it does not assume a walk-in
+    expect(screen.getByText("Who's buying?")).toBeInTheDocument();
   });
 
   it("PARK_TAKEN shows the fixed copy, leaves the cart as it was and refreshes the list", async () => {
@@ -677,6 +679,7 @@ describe("price edits on a resumed cart (the existing Complete-time check)", () 
   const edited = () =>
     parkedPayload({
       customer: null,
+      walkIn: true, // S5: this cart was parked after Walk-in was tapped
       method: "CASH",
       reference: "",
       lines: [

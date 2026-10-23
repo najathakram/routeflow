@@ -1,0 +1,91 @@
+{
+  "data": {
+    "repository": {
+      "visibility": "PRIVATE",
+      "open": {
+        "nodes": [
+          {
+            "number": 3520,
+            "title": "feat(units): k11-20 floating price editor",
+            "isDraft": false,
+            "headRefName": "feat/k11-20-floating-editor",
+            "headRefOid": "1111111111111111111111111111111111111111",
+            "baseRefName": "master",
+            "updatedAt": "2026-10-19T11:40:00Z",
+            "url": "https://github.com/najathakram/routeflow/pull/3520",
+            "commits": { "nodes": [{ "commit": { "statusCheckRollup": { "state": "SUCCESS" } } }] },
+            "files": {
+              "nodes": [
+                { "path": "apps/web/components/products/price-editor.tsx" },
+                { "path": "apps/api/src/products/products.service.ts" }
+              ]
+            }
+          },
+          {
+            "number": 3521,
+            "title": "fix(invoices): round boxed line totals",
+            "isDraft": false,
+            "headRefName": "fix/b231-boxed-rounding",
+            "headRefOid": "2222222222222222222222222222222222222222",
+            "baseRefName": "master",
+            "updatedAt": "2026-10-19T10:05:00Z",
+            "url": "https://github.com/najathakram/routeflow/pull/3521",
+            "commits": { "nodes": [{ "commit": { "statusCheckRollup": { "state": "FAILURE" } } }] },
+            "files": { "nodes": [{ "path": "apps/api/src/invoices/invoices.service.ts" }] }
+          },
+          {
+            "number": 3522,
+            "title": "chore(ops): wip ops monitor",
+            "isDraft": true,
+            "headRefName": "feat/ops-monitor",
+            "headRefOid": "3333333333333333333333333333333333333333",
+            "baseRefName": "master",
+            "updatedAt": "2026-10-18T22:00:00Z",
+            "url": "https://github.com/najathakram/routeflow/pull/3522",
+            "commits": { "nodes": [] },
+            "files": { "nodes": [{ "path": "tools/ops-monitor/lib/collector.mjs" }] }
+          }
+        ]
+      },
+      "merged": {
+        "nodes": [
+          {
+            "number": 3513,
+            "title": "Merge train/product-k11",
+            "headRefName": "train/product-k11",
+            "mergedAt": "2026-10-19T09:00:00Z",
+            "url": "https://github.com/najathakram/routeflow/pull/3513",
+            "baseRefName": "master",
+            "mergeCommit": { "oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
+          },
+          {
+            "number": 3510,
+            "title": "fix(orders): counter promo line",
+            "headRefName": "fix/b233-counter-promo",
+            "mergedAt": "2026-10-18T20:30:00Z",
+            "url": "https://github.com/najathakram/routeflow/pull/3510",
+            "baseRefName": "master",
+            "mergeCommit": { "oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" }
+          },
+          {
+            "number": 3505,
+            "title": "feat(units): sub-train stacked work",
+            "headRefName": "feat/stacked",
+            "mergedAt": "2026-10-18T08:00:00Z",
+            "url": "https://github.com/najathakram/routeflow/pull/3505",
+            "baseRefName": "train/product-k11",
+            "mergeCommit": null
+          }
+        ]
+      },
+      "master": {
+        "target": {
+          "oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "committedDate": "2026-10-19T09:00:05Z",
+          "messageHeadline": "Merge train/product-k11 (#3513)",
+          "statusCheckRollup": { "state": "SUCCESS" }
+        }
+      }
+    }
+  }
+}

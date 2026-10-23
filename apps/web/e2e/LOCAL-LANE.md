@@ -246,3 +246,19 @@ the counter on and restores the tenant's fulfilment config in `afterAll`; it nee
 it enters the counter from the nav, checks the 64 px rail (lg+ only), the peek (which never writes `rf-sidebar-collapsed`), Exit
 with and without a cart (the "Discard this sale?" guard) and the device preference redirect. It sells nothing and creates no rows
 (it only puts a product on the cart and discards it); the preference lives in the browser context's localStorage.
+
+## Spec 76 (`get-the-app`): same lane, same rules as 71
+
+`76-get-the-app.spec.ts` (row 559: the signed-in "Get the app" page) is registered under the same local-only condition. It logs in as
+the local super admin (`npm run local:sa`), reads the three platform app links, sets them to `example.test` URLs over
+`PUT /platform-admin/app-links`, and puts the previous values back in `afterAll`. As the operator it opens the page from the avatar
+menu, checks three buttons, then two (iPhone link cleared), then the empty copy and no menu item (all cleared); at 390 / 768 / 1280 it
+checks no horizontal overflow and saves a screenshot under `test-results/`. No button is clicked and nothing is installed.
+
+## Spec 78 (`invoice-edit-boxed-qty-hit`): invoice edit, a boxed line's inputs are reachable
+
+`78-invoice-edit-boxed-qty-hit.spec.ts` (row 711) is on the `local:e2e` allow-list. It creates a throwaway boxed product
+(pack 24), customer and DRAFT invoice on the e2e-routeflow seed, opens `/invoices/<id>/edit` at 1440 / 768 / 390, and
+asserts that the centre of Boxes, Pieces and Unit Price each hit-tests (`elementFromPoint`) to that input, that Boxes and
+Pieces are at least 44 px, and that the "box" / "pcs" labels are visible. It never saves the form and deletes what it
+created in a `finally`. jsdom cannot see an overlap, so this is the guard for the edit grid's layout.

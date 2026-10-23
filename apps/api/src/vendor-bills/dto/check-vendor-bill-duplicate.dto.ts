@@ -1,4 +1,5 @@
 import { IsNumber, IsOptional, IsString } from "class-validator";
+import { IsOptionalNotNull } from "../../common/validators/optional-not-null";
 
 /**
  * POST /vendor-bills/check-duplicate body — a read-only pre-flight of the same
@@ -9,6 +10,6 @@ import { IsNumber, IsOptional, IsString } from "class-validator";
 export class CheckVendorBillDuplicateDto {
   @IsOptional() @IsString() supplierId?: string;
   @IsOptional() @IsString() supplierInvoiceNumber?: string;
-  @IsOptional() @IsNumber() total?: number;
+  @IsOptionalNotNull() @IsNumber() total?: number;
   @IsOptional() @IsString() billDate?: string;
 }

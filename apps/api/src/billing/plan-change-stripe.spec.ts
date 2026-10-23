@@ -305,7 +305,7 @@ describe("runStripeFirstPlanChange as a plain caller would use it", () => {
         version,
         def: GROWTH,
         proration: "none",
-        retireAddons: false,
+        stopBillingAddons: false,
       }),
       commit,
     );
@@ -327,7 +327,7 @@ describe("runStripeFirstPlanChange as a plain caller would use it", () => {
         version,
         def: GROWTH,
         proration: "none",
-        retireAddons: false,
+        stopBillingAddons: false,
       }),
       async () => undefined,
     );
@@ -345,7 +345,7 @@ describe("runStripeFirstPlanChange as a plain caller would use it", () => {
         version,
         def: GROWTH,
         proration: "none",
-        retireAddons: false,
+        stopBillingAddons: false,
       }),
       async () => undefined,
     );
@@ -440,7 +440,7 @@ describe("needsReconcile — SA-733r3 N4 (armed BEFORE the Stripe write, cleared
         version: { id: "v8", addonSkus: [] },
         def: { planKey: "GROWTH", name: "Growth", monthlyPrice: 249, annualPrice: 2490 },
         proration: "none",
-        retireAddons: false,
+        stopBillingAddons: false,
       });
     const flowPrisma = () =>
       ({

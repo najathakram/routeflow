@@ -3,6 +3,7 @@ import { apiClient } from "../api-client";
 import type { SelectablePaymentMethod } from "../payment-methods";
 import type { CustomerComment, CustomerDocument } from "@routeflow/types";
 import { fetchPdfBlob } from "../fetch-pdf-blob";
+import { sendWithPaymentKey, type PaymentKeyHolder } from "../payment-submit-key";
 export type { CustomerComment, CustomerDocument } from "@routeflow/types";
 
 export interface Customer {
@@ -26,7 +27,8 @@ export interface Customer {
   taxId?: string;
   isTaxExempt?: boolean;
   taxExemptDocumentKeys?: string[];
-  creditLimit?: number;
+  /** `null` clears the limit (update only); `0` is a real $0 limit; omitted leaves it alone (B1018). */
+  creditLimit?: number | null;
   currency?: string;
   pricingTier?: number;
   receivables?: number;
@@ -341,10 +343,16 @@ export function useCreateAdvancePayment() {
       method: SelectablePaymentMethod;
       reference?: string;
       notes?: string;
+      /** SA-824: the dialog's Idempotency-Key holder (never sent in the body). */
+      submitKey?: PaymentKeyHolder;
     }
   >({
-    mutationFn: ({ customerId, ...data }) =>
-      apiClient.post(`/customers/${customerId}/advance-payments`, data).then((r) => r.data),
+    mutationFn: ({ customerId, submitKey, ...data }) =>
+      sendWithPaymentKey(submitKey, data, (config) =>
+        apiClient
+          .post(`/customers/${customerId}/advance-payments`, data, ...config)
+          .then((r) => r.data),
+      ),
     onSuccess: (_d, vars) => {
       qc.invalidateQueries({ queryKey: ["customers", vars.customerId, "advance-payments"] });
       qc.invalidateQueries({ queryKey: ["customers", vars.customerId, "statement"] });

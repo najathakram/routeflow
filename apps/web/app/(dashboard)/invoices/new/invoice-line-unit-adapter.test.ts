@@ -4,6 +4,8 @@ import type { UnitOption } from "@/lib/unit-options";
 import {
   chooseUnit,
   mergeIntoPackLine,
+  hasPackSnapshot,
+  pickerLayerFor,
   pickerLineOf,
   saleUnitPriceField,
   unitPayload,
@@ -211,5 +213,100 @@ describe("unitRefusalCopy", () => {
     );
     expect(unitRefusalCopy(err())).toBeNull();
     expect(unitRefusalCopy(null)).toBeNull();
+  });
+});
+
+describe("pickerLayerFor (integration review SHOULD 4)", () => {
+  const rows = [
+    { ref: "pack", label: null, price: 33, listPrice: 42, source: "customer", aboveList: false },
+  ] as never;
+  it("a pack line and a unit line WITH a pack snapshot get the layer rows", () => {
+    expect(pickerLayerFor({ key: "k", description: "d", qty: 1, unitPrice: 1 }, rows)).toBe(rows);
+    expect(
+      pickerLayerFor(
+        {
+          key: "k",
+          description: "d",
+          qty: 1,
+          unitPrice: 1,
+          unitLabel: "Case",
+          packBase: {
+            unit: "Box",
+            qty: 1,
+            listPrice: 42,
+            unitPrice: 33,
+            priceType: "STANDARD",
+          } as never,
+        },
+        rows,
+      ),
+    ).toBe(rows);
+  });
+  it("a draft unit line WITHOUT a pack snapshot gets none: its own unit would read as the pack and take the pack's layer price", () => {
+    expect(
+      pickerLayerFor({ key: "k", description: "d", qty: 1, unitPrice: 1, unitLabel: "Case" }, rows),
+    ).toBeUndefined();
+  });
+  it("no rows stays no rows (flag off)", () => {
+    expect(
+      pickerLayerFor({ key: "k", description: "d", qty: 1, unitPrice: 1 }, undefined),
+    ).toBeUndefined();
+  });
+});
+
+describe("pickerLayerFor: corrupt snapshot (review nit 1)", () => {
+  const rows = [
+    { ref: "pack", label: null, price: 38, listPrice: 42, source: "customer", aboveList: false },
+  ] as never;
+  it("a packBase whose unit equals the line's own unitLabel is the unit itself, not a pack: no layer (a Case line must not take the pack's $38)", () => {
+    expect(
+      pickerLayerFor(
+        {
+          key: "k",
+          description: "d",
+          qty: 1,
+          unitPrice: 1,
+          unitLabel: "Case",
+          packBase: {
+            unit: "Case",
+            qty: 1,
+            listPrice: 42,
+            unitPrice: 38,
+            priceType: "STANDARD",
+          } as never,
+        },
+        rows,
+      ),
+    ).toBeUndefined();
+  });
+});
+
+describe("pickerLineOf layerManual (flag-off money, invoices/new)", () => {
+  const aboveRow = [
+    { ref: "pack", label: null, price: 50, listPrice: 42, source: "customer", aboveList: true },
+  ] as never;
+  const manual = {
+    key: "k",
+    description: "d",
+    qty: 1,
+    unitPrice: 410,
+    unit: "Box",
+    priceType: "MANUAL" as const,
+  };
+  it("flag off (no layer): a MANUAL line is never marked, so the picker leaves it alone as on master", () => {
+    expect(pickerLineOf(manual).layerManual).toBeFalsy();
+    expect(pickerLineOf(manual, undefined).layerManual).toBeFalsy();
+  });
+  it("flag on and the unit's layer row is above list: marked", () => {
+    expect(pickerLineOf(manual, aboveRow).layerManual).toBe(true);
+  });
+});
+
+describe("hasPackSnapshot (the one guard layerLevelLine, correctLayerLevelLines and the picker share)", () => {
+  it("a pack line needs none; a unit line needs a snapshot of a DIFFERENT unit", () => {
+    expect(hasPackSnapshot({ unitLabel: undefined, packBase: undefined })).toBe(true);
+    expect(hasPackSnapshot({ unitLabel: "Case", packBase: undefined })).toBe(false);
+    expect(hasPackSnapshot({ unitLabel: "Case", packBase: { unit: "Case" } })).toBe(false);
+    expect(hasPackSnapshot({ unitLabel: "Case", packBase: { unit: "Box" } })).toBe(true);
   });
 });

@@ -4,6 +4,7 @@ import {
   Controller,
   Delete,
   Get,
+  Headers,
   HttpCode,
   Param,
   Patch,
@@ -24,10 +25,12 @@ import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
+import { refDedupeFromRequest } from "../invoices/payment-ref-dedupe";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { PlanFlagGuard } from "../billing/plan-flag.guard";
 import { RequirePlanFlag } from "../billing/require-plan-flag.decorator";
 import { CustomersService } from "./customers.service";
+import { optionalIdempotencyKey } from "../orders/counter-sale/required-idempotency-key";
 import { StatementService } from "../buyer/statement.service";
 import { StatementPdfService } from "../buyer/statement-pdf.service";
 import { PortalInviteDto } from "../buyer/dto/portal-invite.dto";
@@ -169,8 +172,8 @@ export class CustomersController {
 
   @Patch(":id")
   @Roles(UserRole.OPERATOR)
-  update(@Param("id") id: string, @Body() dto: UpdateCustomerDto) {
-    return this.customersService.update(id, dto);
+  update(@Param("id") id: string, @Body() dto: UpdateCustomerDto, @CurrentUser() user: JwtPayload) {
+    return this.customersService.update(id, dto, undefined, user);
   }
 
   @Patch(":id/status")
@@ -219,8 +222,20 @@ export class CustomersController {
 
   @Post(":id/advance-payments")
   @Roles(UserRole.OPERATOR)
-  createAdvancePayment(@Param("id") id: string, @Body() dto: CreateAdvancePaymentDto) {
-    return this.customersService.createAdvancePayment(id, dto);
+  createAdvancePayment(
+    @Param("id") id: string,
+    @Body() dto: CreateAdvancePaymentDto,
+    @CurrentUser() user: JwtPayload,
+    // SA-824: optional (an old client is unchanged); a retry with the same key records once.
+    @Headers("idempotency-key") rawIdempotencyKey?: string,
+  ) {
+    const idempotencyKey = optionalIdempotencyKey(rawIdempotencyKey);
+    // Row 498 / SA-837b item 2: staff may resend a flagged duplicate with `recordAnyway`.
+    const refDedupe = refDedupeFromRequest(user, dto);
+    return this.customersService.createAdvancePayment(id, dto, {
+      ...(idempotencyKey ? { idempotencyKey } : {}),
+      refDedupe,
+    });
   }
 
   @Get(":id/advance-payments")
@@ -231,8 +246,12 @@ export class CustomersController {
 
   @Post(":id/advance-payments/:apId/apply")
   @Roles(UserRole.OPERATOR)
-  applyAdvancePayment(@Param("apId") apId: string, @Body() dto: ApplyAdvancePaymentDto) {
-    return this.customersService.applyAdvancePaymentToInvoice(apId, dto);
+  applyAdvancePayment(
+    @Param("id") id: string,
+    @Param("apId") apId: string,
+    @Body() dto: ApplyAdvancePaymentDto,
+  ) {
+    return this.customersService.applyAdvancePaymentToInvoice(apId, dto, id);
   }
 
   @Get(":id/prices")

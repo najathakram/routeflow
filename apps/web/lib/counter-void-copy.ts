@@ -61,7 +61,7 @@ export function voidReasonProblem(raw: string): string | null {
 
 /**
  * The hand-back instruction, from the SERVER's amounts only (nothing is added up here):
- * "Give back $X cash · Void the card payment on the card terminal". A method with nothing to hand back is absent.
+ * "Give back $X cash · Void the $Y card payment on the card terminal". A method with nothing to hand back is absent.
  */
 export function handBackLines(handBack: CounterSaleHandBack | null | undefined): string[] {
   const lines: string[] = [];
@@ -69,6 +69,7 @@ export function handBackLines(handBack: CounterSaleHandBack | null | undefined):
   if (h.CASH != null && h.CASH > 0) lines.push(`Give back ${formatReceiptMoney(h.CASH)} cash`);
   if (h.CHECK != null && h.CHECK > 0)
     lines.push(`Return the ${formatReceiptMoney(h.CHECK)} check to the customer`);
-  if (h.CARD != null && h.CARD > 0) lines.push("Void the card payment on the card terminal");
+  if (h.CARD != null && h.CARD > 0)
+    lines.push(`Void the ${formatReceiptMoney(h.CARD)} card payment on the card terminal`);
   return lines;
 }

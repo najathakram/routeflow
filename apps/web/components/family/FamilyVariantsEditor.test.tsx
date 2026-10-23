@@ -130,7 +130,10 @@ describe("FamilyVariantsEditor", () => {
     });
     await waitFor(() =>
       expect(toast).toHaveBeenCalledWith(
-        expect.objectContaining({ title: "Variants saved", variant: "success" }),
+        expect.objectContaining({
+          title: "Variants saved (1 added, 1 changed)",
+          variant: "success",
+        }),
       ),
     );
     await waitFor(() => expect(screen.queryByLabelText("Variant 1 price")).toBeNull());
@@ -333,5 +336,22 @@ describe("FamilyVariantsEditor", () => {
     save();
     expect(await screen.findByText(/Nothing was saved/)).toBeInTheDocument();
     expect(toast).not.toHaveBeenCalled();
+  });
+});
+
+describe("FamilyVariantsEditor ?variant= (K13 F18)", () => {
+  it("brings the variant named in the URL into view and marks it", () => {
+    Element.prototype.scrollIntoView = jest.fn();
+    window.history.pushState({}, "", "/products/fam?variant=v2");
+    render(
+      <Providers>
+        <FamilyVariantsEditor familyId="fam" variants={variants as any} />
+      </Providers>,
+    );
+    expect(screen.getByRole("link", { name: /Lime/ }).closest("tr")).toHaveAttribute(
+      "data-focused-variant",
+      "true",
+    );
+    window.history.pushState({}, "", "/");
   });
 });

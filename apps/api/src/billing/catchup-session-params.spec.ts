@@ -20,7 +20,7 @@ const PLAN_LINE = {
   currency: "usd",
   unit_amount: 31000,
   recurring: { interval: "month" },
-  product_data: { name: "RouteFlow Growth — monthly" },
+  product_data: { name: "RouteFlow Growth" },
 };
 const ADDON_LINE = {
   price_data: {
@@ -77,7 +77,7 @@ describe("trial_one_time (the common case: an unpaid October, session Oct 9)", (
       price_data: {
         currency: "usd",
         unit_amount: 31000 + 3100, // base 31/31 + add-on 31/31
-        product_data: { name: "Subscription — October 2026" },
+        product_data: { name: "October 2026 subscription" },
       },
       quantity: 1,
     });
@@ -121,7 +121,7 @@ describe("trial_one_time (the common case: an unpaid October, session Oct 9)", (
     expect(x.subscription_data.trial_end).toBe(Date.UTC(2026, 11, 1, 12) / 1000);
     expect(x.line_items.filter(isOneTime)[0].price_data.unit_amount).toBe(62000);
     expect(x.line_items.filter(isOneTime)[0].price_data.product_data.name).toBe(
-      "Subscription — October 2026 to November 2026",
+      "October 2026 to November 2026 subscription",
     );
   });
 
@@ -183,7 +183,7 @@ describe("a FUTURE mid-month S (paid through Nov 14) is trial_one_time, charged 
     const oneTime = x.line_items.filter(isOneTime);
     expect(oneTime).toHaveLength(1);
     expect(oneTime[0].price_data.unit_amount).toBe(17567);
-    expect(oneTime[0].price_data.product_data.name).toBe("Subscription — Nov 14 to Nov 30, 2026");
+    expect(oneTime[0].price_data.product_data.name).toBe("Nov 14 to Nov 30, 2026 subscription");
     expect(x.metadata[CATCHUP_META.from]).toBe("2026-11-14T12:00:00.000Z");
     expect(x.metadata[CATCHUP_META.to]).toBe("2026-12-01T12:00:00.000Z");
   });

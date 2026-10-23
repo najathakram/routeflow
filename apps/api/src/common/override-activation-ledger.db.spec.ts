@@ -818,7 +818,11 @@ describeDb(
       await activate(tenantId, "ref-ma-test");
 
       expect(await notices(tenantId)).toHaveLength(0);
-      expect(await prisma.billingEvent.count({ where: { tenantId } })).toBe(0);
+      // no MRR is booked (every amount is null); the only event is the SA-788 record of the row the activation priced
+      const written = await prisma.billingEvent.findMany({ where: { tenantId } });
+      expect(written.map((e) => e.type)).toEqual(["addon.state_changed"]);
+      expect(written.every((e) => e.amountDelta == null)).toBe(true);
+      expect((written[0].payload as any).source).toBe("manual_activation.price");
     });
 
     it("M-A: TWO simultaneous activations of one trial price, book and announce each add-on exactly once", async () => {

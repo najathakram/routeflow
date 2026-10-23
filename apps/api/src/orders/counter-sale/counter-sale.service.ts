@@ -38,6 +38,7 @@ import {
 } from "./fulfilment-capability-reader";
 import {
   allocateOldestFirst,
+  assertCheckNotPostdatedForTenant,
   assertPaymentShape,
   assertWalkInTenderCoversTotal,
   type CounterPaymentMethod,
@@ -50,6 +51,8 @@ import {
   hasOpenCreditBalance,
 } from "../../credit-notes/auto-apply-candidates";
 import { LockTimeoutError, LockUnavailableError, withAdvisoryLock } from "../../common/db-locks";
+import type { DuplicatePaymentRefExisting } from "@routeflow/types";
+import { duplicateOf, tenderRefDedupe } from "./counter-duplicate-ref";
 import { WalkInCustomerService } from "./walk-in-customer";
 import { counterCloseShared, counterTenderPaidAt } from "./counter-tender-window";
 
@@ -115,6 +118,8 @@ export class CounterSaleService {
     }
     const walkIn = !!dto.walkIn;
     assertPaymentShape(dto.payment, walkIn);
+    // Interim till guard: judged on the TENANT's day, before any write.
+    await assertCheckNotPostdatedForTenant(this.prisma, dto.payment);
 
     // 3. Tenant-scoped existence checks (another tenant's ids are simply not found).
     const packs = await this.assertProductsExist(dto.items.map((i) => i.productId));
@@ -202,6 +207,7 @@ export class CounterSaleService {
     const method = dto.payment.method;
     let invoices: InvoiceRow[];
     let planError: string | undefined;
+    let duplicate: DuplicatePaymentRefExisting | undefined;
     if (method === "ON_ACCOUNT") {
       invoices = await this.readInvoices(orderId);
     } else {
@@ -216,10 +222,10 @@ export class CounterSaleService {
             mode: "wait",
             sharedAlso: counterCloseShared(this.prisma.getTenantId(), till),
           },
-          () => this.tender(dto, orderId, till),
+          () => this.tender(dto, orderId, till, user),
         );
         if (!locked.acquired) throw new LockTimeoutError("counter-tender", orderId, 0);
-        ({ invoices, planError } = locked.value);
+        ({ invoices, planError, duplicate } = locked.value);
       } catch (e) {
         // The sale is already committed: a contended or unavailable lock must not turn into a 500 over a
         // finished sale. It reads as an unrecorded payment (the invoice stays open; the same key retried
@@ -250,6 +256,7 @@ export class CounterSaleService {
       invoices,
       replayed,
       planError,
+      duplicate,
     });
   }
 
@@ -282,6 +289,7 @@ export class CounterSaleService {
         this.prisma.forTenant(),
         customerId,
         edited.flatMap((l) => (l.productId ? [l.productId] : [])),
+        { prisma: this.prisma, entitlements: this.orders.entitlements },
       );
       await this.audit.log({
         tenantId: this.prisma.getTenantId() ?? null,
@@ -319,9 +327,15 @@ export class CounterSaleService {
     dto: CounterSaleDto,
     orderId: string,
     till: { counterSale: boolean; registerKey?: string | null },
-  ): Promise<{ invoices: InvoiceRow[]; planError?: string }> {
+    user: JwtPayload,
+  ): Promise<{
+    invoices: InvoiceRow[];
+    planError?: string;
+    duplicate?: DuplicatePaymentRefExisting;
+  }> {
     let invoices = await this.readInvoices(orderId);
     let planError: string | undefined;
+    let duplicate: DuplicatePaymentRefExisting | undefined;
     const method = dto.payment.method;
     // The plan is made against each invoice's balance BEFORE any tender of this sale (its total less the
     // wallet credit applied), so a replay computes the SAME allocation the first call did; what is already
@@ -387,6 +401,13 @@ export class CounterSaleService {
       // A tender that could not be stored takes NO money: the payment loop is skipped entirely.
       if (!planError) {
         try {
+          // Row 498: this sale's payments are ONE attempt for the reference dedupe (its sibling invoices, and a resumed
+          // call's earlier stored tender rows), so they never collide with each other; any OTHER sale's payment does.
+          const paymentAttempt = {
+            ids: new Set(
+              invoices.flatMap((i) => (i.payments ?? []).filter(isTender).map((p) => p.id)),
+            ),
+          };
           for (const { invoiceId, due } of writes) {
             // SA-750r3: the shared close lock is already held on the pinned connection (tillLockHeld)
             await this.invoices.recordPayment(
@@ -397,7 +418,11 @@ export class CounterSaleService {
                 reference: dto.payment.reference,
                 ...(paidAt ? { paidAt } : {}),
               } as never,
-              { tillLockHeld: TILL_LOCK_HELD },
+              {
+                tillLockHeld: TILL_LOCK_HELD,
+                paymentAttempt,
+                refDedupe: tenderRefDedupe(user, dto.payment),
+              },
             );
           }
         } catch (e) {
@@ -405,11 +430,12 @@ export class CounterSaleService {
             `counter sale ${orderId}: payment not recorded (${(e as Error)?.message ?? e})`,
           );
           planError = API_ERROR_CODES.COUNTER_PAYMENT_NOT_RECORDED;
+          duplicate = duplicateOf(e) ?? undefined; // WHY, for the till's "Record anyway" (SA-837b)
         }
       }
       invoices = await this.readInvoices(orderId);
     }
-    return { invoices, planError };
+    return { invoices, planError, duplicate };
   }
 
   /**

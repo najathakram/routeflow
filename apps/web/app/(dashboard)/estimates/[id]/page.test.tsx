@@ -71,6 +71,58 @@ function renderEstimatePage({ status }: { status?: EstimateStatus } = {}) {
 // no way to tell why it failed. These are the RED-gate tests for the bug —
 // see page.existing-behavior.test.tsx for the pre-existing, already-correct
 // UI behavior this task does not change.
+describe("EstimateDetailPage - H5 convert success toast names a tax that moved", () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  const convertWith = async (result: unknown) => {
+    const user = userEvent.setup();
+    convertEstimateMutate.mockImplementation(
+      (_id: string, opts?: { onSuccess?: (r: unknown) => void }) => opts?.onSuccess?.(result),
+    );
+    renderEstimatePage({ status: "ACCEPTED" as EstimateStatus });
+    await user.click(screen.getAllByRole("button", { name: /convert to invoice/i })[0]);
+    await waitFor(() => expect(toastMock).toHaveBeenCalled());
+    return toastMock.mock.calls[toastMock.mock.calls.length - 1][0];
+  };
+
+  it("a changed tax basis adds the fixed sentence to the success toast", async () => {
+    const toast = await convertWith({
+      id: "inv-1",
+      taxBasis: {
+        quotedTax: 5,
+        currentTax: 8,
+        delta: 3,
+        changed: true,
+        quotedRate: 0.05,
+        currentRate: 0.08,
+      },
+    });
+    expect(toast.title).toBe("Invoice created");
+    expect(toast.description).toContain("EST-0001 has been converted to an invoice.");
+    expect(toast.description).toContain(
+      "Tax was recalculated at today's rate: $8.00 on the invoice, $3.00 more than the $5.00 quoted.",
+    );
+  });
+
+  it("an unchanged basis (or an older API without one) leaves the toast as it was", async () => {
+    const same = await convertWith({
+      id: "inv-1",
+      taxBasis: {
+        quotedTax: 5,
+        currentTax: 5,
+        delta: 0,
+        changed: false,
+        quotedRate: 0.05,
+        currentRate: 0.05,
+      },
+    });
+    expect(same.description).toBe("EST-0001 has been converted to an invoice.");
+    toastMock.mockClear();
+    const none = await convertWith({ id: "inv-1" });
+    expect(none.description).toBe("EST-0001 has been converted to an invoice.");
+  });
+});
+
 describe("EstimateDetailPage — REG-B15 convert failure toast surfaces server reason (rt-b15)", () => {
   beforeEach(() => jest.clearAllMocks());
 

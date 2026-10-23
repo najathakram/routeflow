@@ -139,6 +139,30 @@ export function ancestorChain(
 }
 
 /**
+ * STRICT read of a chain: `startId` then its ancestors, nearest first, or NULL when the chain can't be read in FULL — a
+ * cycle (including one back through `selfId`, the product the chain is read for), a link that is not in `parentOf`
+ * (missing / another tenant's), or more than the engine's cap of ancestors for `selfId` (`startId` counts as the first).
+ * The same walk as `parentChainCarries`; unlike `ancestorChain` it never truncates, so a caller that must not read a
+ * chain SHORT (a short "before" set drops bans: keep-labels-on-reparent) can refuse instead.
+ */
+export function readableChainFrom(
+  parentOf: ReadonlyMap<string, string | null>,
+  startId: string,
+  selfId: string,
+): string[] | null {
+  const out: string[] = [];
+  const seen = new Set<string>([selfId]);
+  let cursor: string | null = startId;
+  while (cursor) {
+    if (out.length >= MAX_HOPS || seen.has(cursor) || !parentOf.has(cursor)) return null;
+    seen.add(cursor);
+    out.push(cursor);
+    cursor = parentOf.get(cursor) ?? null;
+  }
+  return out;
+}
+
+/**
  * Of `productIds`, the ones whose parent chain carries `categoryId` (counting `planned` as carrying). Loads only the
  * ancestors it needs, one query per level (≤ the cap), plus one for that label's rows on them.
  */

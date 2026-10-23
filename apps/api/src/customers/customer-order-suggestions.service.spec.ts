@@ -307,13 +307,35 @@ describe("CustomerOrderSuggestionsService", () => {
       await service.getSuggestions("c1");
       expect(restrictions.evaluate).toHaveBeenCalledTimes(1);
       const [, , lines, options] = restrictions.evaluate.mock.calls[0];
-      expect(options).toEqual({ channel: "STAFF" });
+      expect(options).toEqual({ channel: "STAFF", fulfilmentKind: "DELIVERY" });
       expect(lines.map((l: { productId: string }) => l.productId).sort()).toEqual([
         "p1",
         "p2",
         "p3",
       ]);
     });
+
+    it.each([
+      ["pickup", "ROUTE", "PICKUP"],
+      ["pickup_ship", "ROUTE", "PICKUP"],
+      ["pickup_ship", "SHIP", "DELIVERY"],
+      ["delivery", "ROUTE", "DELIVERY"],
+      ["unset", "ROUTE", "DELIVERY"],
+    ])(
+      "L8: on a %s tenant a customer whose stored path is %s is judged as %s (as the next order would be)",
+      async (mode, stored, kind) => {
+        prisma.tenantFeatureConfig.findFirst.mockResolvedValue({ mode });
+        prisma.customer.findFirst.mockResolvedValue({ id: "c1", fulfillPath: stored });
+        prisma.orderItem.groupBy.mockResolvedValue([count("p1", 3)]);
+        prisma.order.findMany.mockResolvedValue([]);
+        prisma.product.findMany.mockResolvedValue([product("p1")]);
+        await service.getSuggestions("c1");
+        expect(restrictions.evaluate.mock.calls[0][3]).toEqual({
+          channel: "STAFF",
+          fulfilmentKind: kind,
+        });
+      },
+    );
 
     it("never suggests a banned product as a chip; the next product fills its place", async () => {
       const rows = Array.from({ length: 10 }, (_, i) => count(`p${i + 1}`, 10 - i));

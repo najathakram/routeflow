@@ -462,11 +462,11 @@ describe("PlatformPricingService", () => {
 
       const monthly = await service.checkoutPriceData("tenant-1", "month");
       expect(monthly.unit_amount).toBe(9900);
-      expect(monthly.product_data.name).toBe("RouteFlow Lite — monthly");
+      expect(monthly.product_data.name).toBe("RouteFlow Lite");
 
       const annual = await service.checkoutPriceData("tenant-1", "year");
       expect(annual.unit_amount).toBe(99000); // 99 * 10 * 100 — the 10x-monthly fallback
-      expect(annual.product_data.name).toBe("RouteFlow Lite — annual");
+      expect(annual.product_data.name).toBe("RouteFlow Lite");
     });
   });
 });

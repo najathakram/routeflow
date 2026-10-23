@@ -22,3 +22,27 @@ export async function lockBillRows(
     await tx.$executeRaw`SELECT id FROM "VendorBill" WHERE id = ${id} AND "tenantId" = ${tenantId} FOR UPDATE`;
   }
 }
+
+/**
+ * B291: row-lock supplier credits for the rest of the caller's transaction. Drawing a credit
+ * (create / edit auto-apply) and handing a draw back (void / delete / edit refund) read a credit's
+ * balance and then write it, so two bills on one supplier both read the same balance and both
+ * drew it. Take this AFTER the bill lock and BEFORE reading any credit. One statement, ORDER BY
+ * "receivedAt", id: every writer locks overlapping credits in the same order, so two of them
+ * cannot deadlock; call it once with every supplier/credit the transaction will touch. The tenant
+ * predicate is required on the raw statement (the tenant extension does not rewrite raw SQL), and
+ * a missing tenant fails closed: `"tenantId" = NULL` matches nothing, which would lock nothing.
+ */
+export async function lockSupplierCredits(
+  tx: Prisma.TransactionClient,
+  tenantId: string | null,
+  scope: { supplierIds?: Iterable<string | null | undefined>; creditIds?: Iterable<string> },
+): Promise<void> {
+  const supplierIds = [...new Set([...(scope.supplierIds ?? [])].filter((s): s is string => !!s))];
+  const creditIds = [...new Set(scope.creditIds ?? [])];
+  if (supplierIds.length === 0 && creditIds.length === 0) return;
+  if (!tenantId) {
+    throw new Error("lockSupplierCredits needs a tenant: refusing to lock nothing");
+  }
+  await tx.$executeRaw`SELECT id FROM "SupplierCredit" WHERE "tenantId" = ${tenantId} AND ("supplierId" = ANY(${supplierIds}::text[]) OR id = ANY(${creditIds}::text[])) ORDER BY "receivedAt", id FOR UPDATE`;
+}

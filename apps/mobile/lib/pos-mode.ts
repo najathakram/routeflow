@@ -7,6 +7,7 @@ import { API_ERROR_CODES, PREF, staffMay } from "@routeflow/types";
 import type { PickupCompleteRequest, PickupCompleteResponse } from "@routeflow/types";
 import { roundMoney } from "@routeflow/pricing";
 import { fmtCurrency } from "../utils/format";
+import { duplicateRefPrompt } from "./duplicate-payment-ref";
 
 import { isPosOrder } from "./order-status-flow";
 
@@ -61,6 +62,7 @@ export const POS_COPY = {
   printInvoice: "Print invoice",
   invoiceCreated: "Invoice created",
   switchToDelivery: "Switch to delivery",
+  shipByCarrier: "Ship by carrier…",
   switchToDeliveryLocked: "Ready for pickup: move it back to Confirmed to switch to delivery.",
   invoiceFailed: "Couldn't create the invoice. Try again.",
 } as const;
@@ -109,6 +111,7 @@ export type PosActionKey =
   | "handOver"
   | "readyForPickup"
   | "switchToDelivery"
+  | "shipByCarrier"
   | "recordPayment"
   | "printInvoice";
 
@@ -118,10 +121,66 @@ export interface PosAction {
   tier: "primary" | "secondary";
   /** Set for the two invoice-opening actions of a handed-over order. */
   invoiceId?: string;
+  /** Set for the two "move off pickup" actions: the fulfil path the move PATCHes (ROUTE / SHIP). */
+  path?: "ROUTE" | "SHIP";
+}
+
+/** Which "move off pickup" buttons a POS order offers (web `PosMoveOptions`). */
+export interface PosMoveOptions {
+  /** The "Switch to delivery" button's target path, or null when it is not offered (a ship-only account). */
+  delivery: "ROUTE" | "SHIP" | null;
+  /** The "Ship by carrier…" button (always moves to SHIP). */
+  ship: boolean;
 }
 
 /**
- * ONE primary per state. PENDING: only "Switch to delivery" (the primary is the status bar's Confirm).
+ * Same rule as web `posMoveOptions`. Both paths: the two buttons ("Switch to delivery" is the route, "Ship by
+ * carrier…" the carrier). One path: its own single button. Neither (a pickup-only account): today's lone
+ * "Switch to delivery" to the account default.
+ */
+export function posMoveOptions(
+  methods: readonly string[],
+  formDefault: "ROUTE" | "SHIP",
+): PosMoveOptions {
+  const route = methods.includes("ROUTE");
+  const ship = methods.includes("SHIP");
+  if (route) return { delivery: "ROUTE", ship };
+  if (ship) return { delivery: null, ship: true };
+  return { delivery: formDefault, ship: false };
+}
+
+const DEFAULT_MOVE_OPTIONS: PosMoveOptions = { delivery: "ROUTE", ship: false };
+
+/** The confirm asked before an order leaves pickup; SHIP names the carrier and tracking (web `FulfillPathMoveConfirm`). */
+export function posMoveConfirm(path: "ROUTE" | "SHIP"): {
+  title: string;
+  message: string;
+  confirmText: string;
+} {
+  return path === "SHIP"
+    ? {
+        title: "Move this order off in-store pickup?",
+        message:
+          "It will no longer be a pickup order. It will ship by carrier: add the carrier and tracking number in the Shipment card, then mark it shipped.",
+        confirmText: "Move order",
+      }
+    : {
+        title: POS_COPY.switchToDelivery,
+        message: "Move this order onto the delivery route instead of pickup?",
+        confirmText: POS_COPY.switchToDelivery,
+      };
+}
+
+export function posMoveFailedCopy(path: "ROUTE" | "SHIP"): string {
+  return path === "SHIP" ? POS_SHIP_FAILED : POS_SWITCH_FAILED;
+}
+
+export function posMoveSuccessCopy(path: "ROUTE" | "SHIP"): string {
+  return path === "SHIP" ? "Switched to carrier shipping" : "Switched to delivery";
+}
+
+/**
+ * ONE primary per state. PENDING: only the path moves (the primary is the status bar's Confirm).
  * CONFIRMED: Create invoice (primary) then Hand over, or Hand over (primary) once invoiced; "Ready for
  * pickup" stays secondary on every open order until handed over. DELIVERED: Record payment / Print.
  * An order already "Ready for pickup" (OUT_FOR_DELIVERY) keeps Hand over / Create invoice but does
@@ -130,15 +189,35 @@ export interface PosAction {
 export function posOrderActions(
   order: { invoices?: PosInvoiceLike[] | null },
   status: string,
+  moveOptions: PosMoveOptions = DEFAULT_MOVE_OPTIONS,
 ): PosAction[] {
   const invoices = posLiveInvoices(order);
   const first = invoices[0];
-  const switchToDelivery: PosAction = {
-    key: "switchToDelivery",
-    label: POS_COPY.switchToDelivery,
-    tier: "secondary",
-  };
-  if (status === "PENDING") return [switchToDelivery];
+  // The path moves sit together as ONE group (Switch to delivery, then Ship by carrier…), after every other
+  // open-order action, mirroring web's single wrap unit.
+  const moves: PosAction[] = [
+    ...(moveOptions.delivery
+      ? [
+          {
+            key: "switchToDelivery" as const,
+            label: POS_COPY.switchToDelivery,
+            tier: "secondary" as const,
+            path: moveOptions.delivery,
+          },
+        ]
+      : []),
+    ...(moveOptions.ship
+      ? [
+          {
+            key: "shipByCarrier" as const,
+            label: POS_COPY.shipByCarrier,
+            tier: "secondary" as const,
+            path: "SHIP" as const,
+          },
+        ]
+      : []),
+  ];
+  if (status === "PENDING") return moves;
   if (status === "CONFIRMED" || status === "OUT_FOR_DELIVERY") {
     const out: PosAction[] = first
       ? [{ key: "handOver", label: POS_COPY.handOver, tier: "primary" }]
@@ -149,7 +228,7 @@ export function posOrderActions(
     if (status === "CONFIRMED") {
       out.push({ key: "readyForPickup", label: POS_COPY.readyForPickup, tier: "secondary" });
     }
-    if (posCanSwitchToDelivery(status)) out.push(switchToDelivery);
+    if (posCanSwitchToDelivery(status)) out.push(...moves);
     return out;
   }
   // A written-off invoice is never a payment or print target.
@@ -256,6 +335,8 @@ const PICKUP_COPY = {
   walkInOnAccount:
     "A walk-in customer can't be charged on account. Pick a customer or another payment method.",
   checkNumber: "Enter the check number.",
+  /** Mirrors web COUNTER_CHECK_POSTDATED_COPY. No mobile path sends a checkDate yet (the server judges one only when sent); mapped so the day one does, the refusal reads right. */
+  checkPostdated: "Post-dated check: put this sale on account and record the check when it clears.",
 } as const;
 
 export function posErrorCode(err: unknown): string | undefined {
@@ -284,6 +365,8 @@ export function pickupCompleteErrorCopy(err: unknown): string {
       return PICKUP_COPY.walkInOnAccount;
     case API_ERROR_CODES.COUNTER_CHECK_NUMBER_REQUIRED:
       return PICKUP_COPY.checkNumber;
+    case API_ERROR_CODES.COUNTER_CHECK_POSTDATED:
+      return PICKUP_COPY.checkPostdated;
     default:
       return PICKUP_COPY.generic;
   }
@@ -291,6 +374,7 @@ export function pickupCompleteErrorCopy(err: unknown): string {
 
 export const POS_READY_FAILED = "Couldn't mark the order ready for pickup. Try again.";
 export const POS_SWITCH_FAILED = "Couldn't switch to delivery. Check the order and try again.";
+export const POS_SHIP_FAILED = "Couldn't ship by carrier. Check the order and try again.";
 
 // ─── Hand-over tender ───────────────────────────────────────────────────────────────────────────
 
@@ -435,6 +519,15 @@ export function posConfirmLabel(posMode: boolean, saving: boolean): string {
 
 export type PickupDecision =
   | { kind: "retry-tender"; releaseKey: false; owed: number | null; message: string }
+  /** SA-837b item 3: the payment was refused as a duplicate reference; same key, the shared sentence, staff may record anyway. */
+  | {
+      kind: "duplicate-ref";
+      releaseKey: false;
+      owed: number | null;
+      title: string;
+      message: string;
+      recordAnywayLabel: string | null;
+    }
   | { kind: "done"; releaseKey: true; message: string };
 
 /**
@@ -443,8 +536,32 @@ export type PickupDecision =
  * SAME Idempotency-Key (so the retry adds the payment to this hand-over) owing `balanceDue`. The key is
  * released only when the payment was recorded (or none was requested). Mirrors web's PickupCompleteDialog.
  */
-export function decidePickupResponse(res: PickupCompleteResponse): PickupDecision {
+export function decidePickupResponse(
+  res: PickupCompleteResponse,
+  role?: string | null,
+): PickupDecision {
   const code = res.paymentRecorded ? undefined : res.paymentErrorCode;
+  if (!res.paymentRecorded && res.paymentCauseCode === API_ERROR_CODES.DUPLICATE_PAYMENT_REF) {
+    const prompt = duplicateRefPrompt(
+      {
+        response: {
+          status: 409,
+          data: { code: res.paymentCauseCode, existingPayment: res.existingPayment },
+        },
+      },
+      role,
+    );
+    if (prompt) {
+      return {
+        kind: "duplicate-ref",
+        releaseKey: false,
+        owed: res.balanceDue > 0 ? res.balanceDue : null,
+        title: prompt.title,
+        message: prompt.message,
+        recordAnywayLabel: prompt.recordAnywayLabel,
+      };
+    }
+  }
   if (
     code === API_ERROR_CODES.PICKUP_PAYMENT_REQUIRED ||
     code === API_ERROR_CODES.COUNTER_TENDER_SHORT
@@ -465,4 +582,9 @@ export function decidePickupResponse(res: PickupCompleteResponse): PickupDecisio
         : "Handed over"
       : "Handed over, but the payment wasn't recorded. Record it on the invoice.",
   };
+}
+
+/** The staff "Record anyway" resend of a hand-over: the same body with `payment.recordAnyway: true` (same Idempotency-Key). */
+export function withPickupRecordAnyway(body: PickupCompleteRequest): PickupCompleteRequest {
+  return body.payment ? { ...body, payment: { ...body.payment, recordAnyway: true } } : body;
 }

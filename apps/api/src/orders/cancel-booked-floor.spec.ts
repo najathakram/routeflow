@@ -43,6 +43,7 @@ describe("cancelOrderInTx: the stock credit honours the booked floor (counter sa
         user: { sub: "u", role: "OPERATOR", tenantId: "t" },
         notes: "CANCEL",
         bookedFloor,
+        skipDeliveryStateCheck: true, // this spec pins the stock credit, not the SA-814h guard
       } as never),
     );
     return prisma.product.update.mock.calls.map((c) => (c[0] as any).data.currentStock.increment);

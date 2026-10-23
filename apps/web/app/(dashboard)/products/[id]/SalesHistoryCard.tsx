@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { Skeleton } from "@routeflow/ui/web";
+import { Skeleton, cn } from "@routeflow/ui/web";
 import { fmt, fmtCalendarDate } from "@/lib/formatting";
 import { formatQtySplit } from "@routeflow/pricing";
 import { SortableTh } from "@/components/SortableTh";
@@ -34,7 +34,19 @@ function SummaryChip({ label, value, hint }: { label: string; value: string; hin
   );
 }
 
-export function SalesHistoryCard({ productId }: { productId: string }) {
+export function SalesHistoryCard({
+  productId,
+  hideCreateOrder,
+  compactEmpty,
+}: {
+  productId: string;
+  hideCreateOrder?: boolean;
+  /**
+   * K11-25, families only: the card is the page's ONE empty state, so it says what is true of a family (its
+   * variants' sales live on their own pages) in a shorter box.
+   */
+  compactEmpty?: boolean;
+}) {
   const { data, isLoading, isError, refetch } = useProductSales(productId);
   const lines = data?.lines ?? [];
 
@@ -55,7 +67,10 @@ export function SalesHistoryCard({ productId }: { productId: string }) {
   return (
     <div className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card">
       <div className="border-b border-surface-border px-5 py-3.5">
-        <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
+        <h3
+          id="h-sales"
+          className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70"
+        >
           Sales
         </h3>
       </div>
@@ -74,17 +89,26 @@ export function SalesHistoryCard({ productId }: { productId: string }) {
             </button>
           </div>
         ) : neverSold ? (
-          <div className="flex h-[120px] flex-col items-center justify-center gap-2 text-center">
+          <div
+            className={cn(
+              "flex flex-col items-center justify-center gap-2 text-center",
+              compactEmpty ? "h-[88px]" : "h-[120px]",
+            )}
+          >
             <p className="text-sm font-medium text-navy">Never sold</p>
             <p className="text-xs text-navy/70">
-              This product hasn&apos;t appeared on an invoice yet.
+              {compactEmpty
+                ? "A family isn't sold itself. Each variant's sales are on its own page."
+                : "This product hasn't appeared on an invoice yet."}
             </p>
-            <Link
-              href="/orders?action=new"
-              className="text-xs font-medium text-brand-600 hover:text-brand-700"
-            >
-              Create an order with this product →
-            </Link>
+            {hideCreateOrder !== true && (
+              <Link
+                href="/orders?action=new"
+                className="text-xs font-medium text-brand-600 hover:text-brand-700"
+              >
+                Create an order with this product →
+              </Link>
+            )}
           </div>
         ) : (
           data && (

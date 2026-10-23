@@ -87,6 +87,7 @@ describe("CounterSaleScreen at a 390px phone: the workspace goes read-only", () 
       </ReadOnlyGateProvider>
     );
     const { rerender } = renderWithProviders(ui("ACTIVE"));
+    fireEvent.click(screen.getByRole("button", { name: "Walk-in" }));
     await scan("COLA");
     await scan("WATER");
     expect(itemRows()).toBe(2);
@@ -122,6 +123,7 @@ describe("CounterSaleScreen at a 390px phone: the workspace goes read-only", () 
         <CounterSaleScreen />
       </ReadOnlyGateProvider>,
     );
+    fireEvent.click(screen.getByRole("button", { name: "Walk-in" }));
     await scan("COLA");
     for (const b of completeButtons()) {
       expect(b).toBeEnabled();

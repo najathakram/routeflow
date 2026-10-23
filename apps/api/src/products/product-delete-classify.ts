@@ -1,7 +1,7 @@
 import { BadRequestException, ConflictException } from "@nestjs/common";
 import { OrderStatus, Prisma } from "@prisma/client";
 import { API_ERROR_CODES } from "../common/api-error-codes";
-import { lockFamilyRow } from "./family-price";
+import { lockProductsForStock } from "../common/product-locks";
 import { lockCodesOfProducts, peekProductCodes, releaseProductCodes } from "./product-code-release";
 import { type CatalogTx } from "./product-catalog-sync";
 import { recipeReferenceGroupers } from "./recipe-references";
@@ -193,31 +193,28 @@ export async function planProductDelete(
 }
 
 /**
- * Lock the product rows a delete will decide on, in the house order (product-catalog-sync.ts): the FAMILY rows of
- * the targets first (id order), then every target row FOR UPDATE in id order, in ONE statement. The pre-lock read
- * only chooses WHICH rows to lock; nothing is decided on it (L-239). FOR UPDATE conflicts with the KEY SHARE lock a
- * foreign-key insert (an order or invoice line, a stock movement) takes on the product row, so a sale either
- * committed before this point (the re-classification sees it) or waits until the delete is over.
+ * Lock the product rows a delete will decide on, in the ONE house order of every stock writer: the targets AND the
+ * families of the targets in a single ranked statement (`lockProductsForStock`: family role first, then recipe
+ * products, then the rest, id order inside a rank), so a delete can never invert against a count commit, a receive or
+ * a sale. The pre-lock read only chooses WHICH family rows to add; nothing is decided on it (L-239). FOR UPDATE
+ * conflicts with the KEY SHARE lock a foreign-key insert (an order or invoice line, a stock movement) takes on the
+ * product row, so a sale either committed before this point (the re-classification sees it) or waits until the
+ * delete is over. The lock wait is bounded (STOCK_LOCK_TIMEOUT): a caller wraps the tx in `retryStockTx`.
  */
 export async function lockProductsForDelete(
   tx: CatalogTx,
   tenantId: string,
   ids: readonly string[],
 ): Promise<void> {
-  const sorted = Array.from(new Set(ids)).sort();
-  if (sorted.length === 0) return;
+  const targets = Array.from(new Set(ids));
+  if (targets.length === 0) return;
   const children: Array<{ parentProductId: string | null }> = await tx.product.findMany({
-    where: { tenantId, id: { in: sorted }, parentProductId: { not: null } },
+    where: { tenantId, id: { in: targets }, parentProductId: { not: null } },
     select: { parentProductId: true },
   });
-  const families = new Set<string>();
-  for (const c of children) if (c.parentProductId) families.add(c.parentProductId);
-  for (const familyId of Array.from(families).sort()) {
-    // Serial by design: id order, one lock at a time.
-    // eslint-disable-next-line no-await-in-loop
-    await lockFamilyRow(tx, tenantId, familyId);
-  }
-  await tx.$queryRaw`SELECT "id" FROM "Product" WHERE "tenantId" = ${tenantId} AND "id" = ANY(${sorted}::text[]) ORDER BY "id" FOR UPDATE`;
+  const locked = new Set(targets);
+  for (const c of children) if (c.parentProductId) locked.add(c.parentProductId);
+  await lockProductsForStock(tx, tenantId, locked);
 }
 
 export interface ProductDeleteOutcome {

@@ -1,6 +1,12 @@
 // ─── Products / inventory / stock-count (wave E / imp-10b) ─────────────────────
 
-import type { BarcodeOrigin, BarcodeSymbology, PackagingLevel, RecipeStatus } from "./enums";
+import type {
+  BarcodeOrigin,
+  BarcodeSymbology,
+  OrderStatusValue,
+  PackagingLevel,
+  RecipeStatus,
+} from "./enums";
 import type { API_ERROR_CODES } from "./error-codes";
 
 /** #2717 M1: a product barcode as the product read model returns it. `origin: "LEGACY"` = synthesized from the legacy
@@ -99,6 +105,9 @@ export interface CommitStockCountSessionResponse {
   movementIds: string[];
   costMovementIds?: string[];
   alreadyCommitted?: boolean;
+  /** "Finish with skips" (SA-767 L-2.4 C): lines left out because the product can never be counted
+   *  (a product family now, or deleted). Empty on a normal commit. */
+  skippedProducts?: Array<{ productId: string; name?: string; reason: string }>;
 }
 
 /** Near-identical: web's `variantName` is required, mobile's is optional/nullable —
@@ -179,6 +188,51 @@ export interface ProductSalesHistory {
   summary: ProductSalesSummary;
 }
 
+/** One open order line of a product: what is still to be billed. Backed by
+ *  `GET /products/:id/open-orders`. "Open" = `OPEN_ORDER_STATUSES` (PENDING, CONFIRMED,
+ *  OUT_FOR_DELIVERY); counter sales and cancelled lines are excluded. No money fields. */
+/** The statuses on the open-orders card: the api's OPEN_ORDER_STATUSES plus PARTIALLY_DELIVERED for this card (owner 2026-10-19). */
+export type OpenOrderStatusValue = Extract<
+  OrderStatusValue,
+  "PENDING" | "CONFIRMED" | "OUT_FOR_DELIVERY" | "PARTIALLY_DELIVERED"
+>;
+
+export interface ProductOpenOrderLine {
+  orderId: string;
+  orderNumber: string | null;
+  /** Only the open statuses reach this card (the api's OPEN_ORDER_STATUSES, credit-exposure.ts). */
+  status: OpenOrderStatusValue;
+  /** ISO business date of the order (`orderDate ?? createdAt`). */
+  orderDate: string;
+  customerId: string;
+  customerName: string;
+  /** Ordered qty, base units (pieces). */
+  qty: number;
+  /** Still to come, always > 0: `qty` minus ISSUED-invoice qty; for a PARTIALLY_DELIVERED order, `qty` minus the delivered qty. */
+  remainingQty: number;
+  /** `remainingQty` split by the line's own `unitsPerBox` snapshot; null when not boxed. */
+  boxes: number | null;
+  pieces: number | null;
+  unitsPerBox: number | null;
+  unitLabel: string | null;
+}
+
+export interface ProductOpenOrders {
+  productId: string;
+  /** Newest order first, at most `limit` lines. */
+  lines: ProductOpenOrderLine[];
+  summary: {
+    /** Distinct open orders in `lines`. */
+    orders: number;
+    /** Distinct customers in `lines`. */
+    customers: number;
+    /** Σ remainingQty, base units. */
+    totalQty: number;
+  };
+  /** True when more lines existed than `limit`. */
+  truncated: boolean;
+}
+
 // ─── Multi-level units (2026-09-19) ─────────────────────────────────────────────
 // See local-assets/handoff/2026-09-18/PLAN-units-po-MINIMAL.md §1. A product with
 // no levels behaves exactly as it does today — Product.unitsPerBox/pricePerUnit
@@ -215,6 +269,25 @@ export interface CreateProductUnitPayload {
 
 /** PATCH /products/:id/units/:unitId — `factorToBase` is refused once a line carries the level. */
 export type UpdateProductUnitPayload = Partial<CreateProductUnitPayload>;
+
+/** The pack fields a product form snapshots when it OPENS (from GET /products/:id). */
+export interface ProductPackAtOpen {
+  unit: string;
+  unitsPerBox?: number | null;
+  /** The tenant unit the pack word names (GET /products/:id `packTenantUnitId`); null = unlinked. */
+  packTenantUnitId?: string | null;
+}
+
+/**
+ * SA-797 (row 218): sent with a PATCH /products/:id that carries `unit` — the pack the form READ when it opened.
+ * The server compares them under the product's pack lock; any difference is a 409 PRODUCT_PACK_STALE.
+ */
+export interface ExpectedPackPayload {
+  expectedUnit: string;
+  expectedUnitsPerBox: number | null;
+  /** Only when the pack word was linked to a tenant unit. */
+  expectedTenantUnitId?: string;
+}
 
 // ─── Multi-category labels (2026-09-19) ─────────────────────────────────────────
 // See local-assets/handoff/2026-09-18/PLAN-categories-jurisdiction-bans.md §1.
@@ -382,4 +455,48 @@ export interface UpdateFamilyVariantsRequest {
   add?: FamilyVariantInput[];
   update?: Array<Partial<FamilyVariantInput> & { id: string }>;
   deactivate?: string[];
+}
+
+/**
+ * The "Delete product?" confirm's body, shared by web and mobile (audit 2026-10-14: mobile said "removed
+ * permanently", but a delete deactivates the product and keeps its history).
+ */
+export function deleteProductConfirmText(name: string): string {
+  return `${name} will be deactivated and hidden from the catalog. Its SKU and barcode are freed, so another product can use them. Order and invoice history is kept. A product on an undelivered order can't be deleted.`;
+}
+
+export interface ProductPriceGridCellDto {
+  tier: 1 | 2 | 3 | 4 | 5;
+  source: "set" | "auto";
+  value: number;
+}
+export interface ProductPriceGridRowDto {
+  ref: string;
+  label: string;
+  factor: number;
+  kind: "pack" | "base" | "unit";
+  code: string | null;
+  cells: ProductPriceGridCellDto[];
+  /**
+   * False when the price write would refuse this row (a variant, family or recipe product is priced elsewhere; the
+   * implicit piece row has no unit yet). The UI hides Edit there.
+   */
+  editable: boolean;
+  /** Plain words for why, set only when `editable` is false. */
+  notEditableReason?: string;
+}
+export interface ProductPriceGridDto {
+  productId: string;
+  anchor: string;
+  rows: ProductPriceGridRowDto[];
+  /**
+   * Units v2 sprint contract (K1 fills these in the grid service). `revision` = Product.priceRevision.
+   */
+  revision: number;
+  /** Opaque fingerprint of the R-1 price-bearing state (5 pack columns, packAuto, each unit's id/factor/prices). Echo it back. */
+  priceState: string;
+  /** LadderView.tierAnchors: tier N's own order unit. A missing tier follows `anchor`. */
+  tierAnchors: Partial<Record<2 | 3 | 4 | 5, string>>;
+  /** The tenant's normalized TierRules (pricing.tierRules), so client previews plan with the server's rules. */
+  tierRules: Partial<Record<2 | 3 | 4 | 5, number>>;
 }

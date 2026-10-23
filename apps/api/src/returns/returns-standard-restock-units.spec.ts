@@ -326,7 +326,11 @@ describe("ReturnsService receive() and cancel() (B665)", () => {
         { provide: RouteFlowGateway, useValue: { emitReturnCreated: jest.fn() } },
         {
           provide: RegulatedLedgerService,
-          useValue: { reverseReturnEntries: jest.fn(), unreverseReturnEntries: jest.fn() },
+          useValue: {
+            reverseReturnEntries: jest.fn(),
+            unreverseReturnEntries: jest.fn(),
+            settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
+          },
         },
         { provide: CreditNotesService, useValue: { create: jest.fn() } },
         { provide: NumberingService, useValue: { reserveNext: jest.fn() } },
@@ -373,6 +377,8 @@ describe("ReturnsService receive() and cancel() (B665)", () => {
         create: jest.fn().mockResolvedValue({ id: "mv-rev" }),
       },
       returnParkedRestock: { deleteMany: jest.fn() },
+      // SA-839 F3: the cancel reads its ledger rows to lock their Orders / Invoices (none here).
+      regulatedSalesLedger: { findMany: jest.fn().mockResolvedValue([]) },
       $executeRaw: jest.fn().mockResolvedValue(0),
     };
     prisma.tenantTransaction.mockImplementation((fn: any) => fn(tx));
@@ -415,6 +421,8 @@ describe("ReturnsService receive() and cancel() (B665)", () => {
       product: { update: jest.fn() },
       stockMovement: { findMany: jest.fn().mockResolvedValue([]), deleteMany: jest.fn() },
       returnParkedRestock: { deleteMany: jest.fn() },
+      // SA-839 F3: the cancel reads its ledger rows to lock their Orders / Invoices (none here).
+      regulatedSalesLedger: { findMany: jest.fn().mockResolvedValue([]) },
       $executeRaw: jest.fn().mockResolvedValue(0),
     };
     prisma.tenantTransaction.mockImplementation((fn: any) => fn(tx));

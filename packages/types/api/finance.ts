@@ -95,6 +95,8 @@ export interface StandalonePaymentDto<TMethod = string> {
   notes?: string;
   /** DRAFT records the rows without touching invoice statuses. */
   status?: "DRAFT" | "PAID";
+  /** Row 498: the staff "Record anyway" resend of a payment refused 409 DUPLICATE_PAYMENT_REF. */
+  recordAnyway?: boolean;
   allocations: { invoiceId: string; amount: number }[];
 }
 

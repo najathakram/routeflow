@@ -3,6 +3,8 @@
 // POST /orders/counter-sale. The server (OrdersModule, counter-sale/) and the web screen both import this one file;
 // never keep a second copy. The server always rings the sale as a PICKUP order (the client sends no fulfillPath).
 
+import type { DuplicatePaymentRefExisting } from "./payment-ref";
+
 export const COUNTER_SALE_PAYMENT_METHOD_VALUES = ["CASH", "CARD", "CHECK", "ON_ACCOUNT"] as const;
 export type CounterSalePaymentMethod = (typeof COUNTER_SALE_PAYMENT_METHOD_VALUES)[number];
 
@@ -31,6 +33,13 @@ export interface CounterSalePayment {
   amount?: number;
   /** a check number or card reference */
   reference?: string;
+  /**
+   * Row 498 (SA-837b): the staff cashier's "Record anyway" resend of a payment the server refused as a duplicate
+   * reference. The server ignores it unless the signed-in user is a staff role.
+   */
+  recordAnyway?: boolean;
+  /** CHECK only: the date written on the check, YYYY-MM-DD. After the tenant's today = 400 COUNTER_CHECK_POSTDATED. Omitted = not checked. */
+  checkDate?: string;
 }
 
 export interface CounterSaleRequest {
@@ -83,6 +92,13 @@ export interface CounterSaleResponse {
    */
   paymentRecorded: boolean;
   paymentErrorCode?: string;
+  /**
+   * Row 498 (SA-837b): WHY the payment was not recorded when the cause is a duplicate payment reference
+   * (`DUPLICATE_PAYMENT_REF`), with the existing payment it repeats; the till shows the shared sentence and a
+   * "Record anyway" action. Omitted for every other cause.
+   */
+  paymentCauseCode?: string;
+  existingPayment?: DuplicatePaymentRefExisting;
   /**
    * The cash handed over, as stored on the order. Optional because it is OMITTED (never null) when nothing was stored
    * (card / check / on account / a sale rung before it was stored); the Today's-sales row carries `number | null`.
@@ -169,6 +185,9 @@ export interface PickupCompleteResponse {
   /** false when the hand-over committed but recording the payment failed; `paymentErrorCode` names why. */
   paymentRecorded: boolean;
   paymentErrorCode?: string;
+  /** Row 498 (SA-837b): as on the counter-sale response. */
+  paymentCauseCode?: string;
+  existingPayment?: DuplicatePaymentRefExisting;
   /** true when the order was already picked up: no status write; only a planned shortfall of this hand-over's tender is recorded. */
   alreadyPickedUp?: boolean;
 }
@@ -179,8 +198,20 @@ export interface PickupCompleteResponse {
 // row each (no line items), plus a whole-day summary on page 1. Read-only; the server owns the day window, the
 // web formats times in `meta.timezone` and does no money math.
 
-/** How a sale's money reached the till: "STORE_CREDIT" is a credit-note / advance application, never money in. */
-export type TodaysSaleMethod = "CASH" | "CARD" | "CHECK" | "OTHER" | "STORE_CREDIT";
+/**
+ * How a sale's money reached the till, in the order a receipt lists them. "STORE_CREDIT" is a credit-note application and
+ * "ADVANCE" an application of the customer's prepaid advance (SA-838: its own label, no longer folded into store credit);
+ * neither is money in. The API keeps a twin list (`METHOD_ORDER`), pinned set- and order-equal to this by a parity spec.
+ */
+export const TODAYS_SALE_METHOD_VALUES = [
+  "ADVANCE",
+  "CASH",
+  "CARD",
+  "CHECK",
+  "OTHER",
+  "STORE_CREDIT",
+] as const;
+export type TodaysSaleMethod = (typeof TODAYS_SALE_METHOD_VALUES)[number];
 export type TodaysSalePaymentState = "PAID" | "PARTLY_PAID" | "ON_ACCOUNT" | "UNPAID";
 export type TodaysSaleReturnState = "NONE" | "PARTLY" | "FULL" | "PENDING";
 /** null = settled with no stored resolution (a legacy return with neither a refund method nor a credit note). */
@@ -193,6 +224,17 @@ export interface TodaysSaleReturn {
   resolution: TodaysSaleReturnResolution;
   /** the return's priced credit (subtotal + tax + category tax), never recomputed from lines */
   amount: number;
+}
+
+/**
+ * One item name on a Today's-sales or parked row (R7b 2.1): the line's description snapshotted at sale time and its qty.
+ * `qtyText` is the receipt's own quantity text (`invoiceLineQtyText`: "2 Cases") for a boxed or unit line; absent for a plain
+ * line, whose qty reads as is.
+ */
+export interface CounterItemName {
+  name: string;
+  qty: number;
+  qtyText?: string;
 }
 
 export interface TodaysSaleRow {
@@ -218,6 +260,27 @@ export interface TodaysSaleRow {
   paid: number;
   balanceDue: number;
   methods: Array<{ method: TodaysSaleMethod; amount: number }>;
+  /**
+   * B1262 / SA-838, the split of `paid` into what the customer TENDERED and the credit the sale's OWN return applied back to
+   * its invoice (`@routeflow/pricing` `counterTenderSplit`, the one home): `tenderPaid + returnCredit === paid`. Own return
+   * credit is the return settling the invoice, not new money, so a reprint prints `tenderPaid` / `tenderMethods` as Paid and
+   * the payment method and the return as its own Returned line. A credit the server cannot prove is the sale's own stays a
+   * tender. All three are omitted by an older server: the reprint then falls back to `paid` / `methods` as before.
+   */
+  tenderPaid?: number;
+  returnCredit?: number;
+  /** `methods` without the own-return credit */
+  tenderMethods?: Array<{ method: TodaysSaleMethod; amount: number }>;
+  /**
+   * SA-838a, what THIS sale's own returns did on the paper (`@routeflow/pricing` `returnSettlement`, summed; the one home).
+   * `applied` = credit applied to this sale's invoices: the only figure the balance subtracts (it is `returnCredit`, and the
+   * receipt's "Returned" line). `refunded` = money handed back outside RouteFlow, `kept` = settled credit still on the customer's
+   * account (worth - applied anywhere - refunded), `used` = the part of the credit spent on OTHER orders: info lines, never
+   * subtracted. `pending` = an own return is not settled (or its credit note could not be seen): "Return in progress", no amount.
+   * A VOID credit note with no refund is dead and prints nothing. The invariant: balanceDue = total - tenderPaid - applied. A
+   * carrier order holding another sale's INLINE return has all zeros. Omitted by an older server: master's wording, no return line.
+   */
+  returnLines?: { applied: number; refunded: number; kept: number; used: number; pending: boolean };
   paymentState: TodaysSalePaymentState;
   /** the cash handed over, as stored by the tender (null = card / check / on account / a sale rung before it was stored) */
   cashTendered: number | null;
@@ -247,6 +310,12 @@ export interface TodaysSaleRow {
   };
   /** the order is CANCELLED, or it has invoices and every one is VOID / WRITTEN_OFF */
   voided: boolean;
+  /**
+   * The first few line names and qty (the invoice line's description, snapshotted at sale time) and the total line count, so a
+   * row says what was sold. Omitted by an older server: then no names line shows.
+   */
+  items?: CounterItemName[];
+  itemCount?: number;
 }
 
 export interface TodaysSalesSummary {

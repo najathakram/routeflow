@@ -12,6 +12,8 @@ import { totalWithoutState } from "@/lib/unknown-state";
 import { useRestrictionsSettings } from "@/lib/api/restrictions-settings";
 import { useProductCategories } from "@/lib/api/product-labels";
 import { WriteButton } from "@/lib/read-only-gate";
+import { useAuth } from "@/lib/auth-context";
+import { ASK_ACCOUNT_ADMIN, mayHideFromAllPortal } from "@/lib/portal-hide-admin";
 import {
   LIMIT_MAX,
   LIMIT_SAVE_FAILED,
@@ -63,6 +65,7 @@ export function LimitInPortalDialog({
   const [note, setNote] = React.useState("");
   const [legalBan, setLegalBan] = React.useState(false);
   const [failed, setFailed] = React.useState(false);
+  const mayHideAll = mayHideFromAllPortal(useAuth().user?.role);
   const [picked, setPicked] = React.useState<{
     id: string;
     name: string;
@@ -93,7 +96,9 @@ export function LimitInPortalDialog({
   const tooMany = scope.kind === "products" && count > LIMIT_MAX;
   const needsCategory = scope.kind === "products" && pickCategory && !picked && count === 0;
   const showPicker = pickCategory && (tooMany || needsCategory || !!picked);
-  const ready = !tooMany && !needsCategory && (everyone || states.length > 0);
+  // L5: an all-portal hide is account-admin only; the server refuses it too.
+  const needsAdmin = !mayHideAll && everyone;
+  const ready = !tooMany && !needsCategory && !needsAdmin && (everyone || states.length > 0);
   const noState = totalWithoutState(unknown.data);
   const line = liveLine(scope, chosen, legalBan);
   const enforcementOff = settings.data ? settings.data.enabled === false : false;
@@ -212,9 +217,18 @@ export function LimitInPortalDialog({
               type="radio"
               name="limit-who"
               checked={everyone}
+              disabled={!mayHideAll}
+              aria-describedby={!mayHideAll ? "limit-all-portal-admin-only" : undefined}
               onChange={() => setEveryone(true)}
             />
-            <span>Hide from all portal customers</span>
+            <span>
+              Hide from all portal customers
+              {!mayHideAll && (
+                <span id="limit-all-portal-admin-only" className="block text-xs text-navy/60">
+                  {ASK_ACCOUNT_ADMIN}
+                </span>
+              )}
+            </span>
           </label>
         </fieldset>
 

@@ -13,6 +13,7 @@ describe("storage URL signing secret (F5-001 fail-closed)", () => {
 
   it("throws in production when STORAGE_URL_SIGNING_SECRET is unset (no JWT_SECRET fallback)", () => {
     process.env.NODE_ENV = "production";
+    process.env.WEB_URL = "https://www.routeflow.test";
     process.env.JWT_SECRET = "some-jwt-secret";
     delete process.env.STORAGE_URL_SIGNING_SECRET;
 
@@ -21,6 +22,7 @@ describe("storage URL signing secret (F5-001 fail-closed)", () => {
 
   it("uses the explicit secret verbatim when set (production)", () => {
     process.env.NODE_ENV = "production";
+    process.env.WEB_URL = "https://www.routeflow.test";
     process.env.STORAGE_URL_SIGNING_SECRET = "an-independent-storage-secret";
 
     expect(configuration().storage.urlSigningSecret).toBe("an-independent-storage-secret");
@@ -32,5 +34,37 @@ describe("storage URL signing secret (F5-001 fail-closed)", () => {
     delete process.env.STORAGE_URL_SIGNING_SECRET;
 
     expect(configuration().storage.urlSigningSecret).toMatch(/^[0-9a-f]{64}$/);
+  });
+});
+
+describe("web base URL (fail-closed in production)", () => {
+  const ORIGINAL_ENV = process.env;
+  beforeEach(() => {
+    process.env = { ...ORIGINAL_ENV };
+  });
+  afterAll(() => {
+    process.env = ORIGINAL_ENV;
+  });
+
+  it("boot validation fails in production when neither WEB_URL nor FRONTEND_URL is set", () => {
+    process.env.NODE_ENV = "production";
+    process.env.STORAGE_URL_SIGNING_SECRET = "an-independent-storage-secret";
+    delete process.env.WEB_URL;
+    delete process.env.FRONTEND_URL;
+    expect(() => configuration()).toThrow(/WEB_URL/);
+  });
+
+  it("boot validation fails in production when the URL is a loopback", () => {
+    process.env.NODE_ENV = "production";
+    process.env.STORAGE_URL_SIGNING_SECRET = "an-independent-storage-secret";
+    process.env.WEB_URL = "http://localhost:3001";
+    expect(() => configuration()).toThrow(/localhost|loopback/i);
+  });
+
+  it("urls.web is the configured base in production", () => {
+    process.env.NODE_ENV = "production";
+    process.env.STORAGE_URL_SIGNING_SECRET = "an-independent-storage-secret";
+    process.env.WEB_URL = "https://www.routeflow.info/";
+    expect(configuration().urls.web).toBe("https://www.routeflow.info");
   });
 });

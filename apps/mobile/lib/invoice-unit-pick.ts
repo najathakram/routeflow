@@ -1,5 +1,5 @@
 import { API_ERROR_CODES } from "@routeflow/types";
-import { PIECE_LABEL, effectiveQty } from "@routeflow/pricing";
+import { PIECE_LABEL, effectiveQty, unitNameKey } from "@routeflow/pricing";
 import type { LineState } from "./cart-line-state";
 import { applyUnitOption } from "./default-unit-line";
 import { invoiceLineDto, type InvoiceTotalsLine } from "./invoice-totals";
@@ -328,6 +328,21 @@ export function dropStaleUnitLines<T extends InvoiceLineState>(
         : line;
   }
   return next;
+}
+
+/**
+ * The `offered` predicate for `dropStaleUnitLines` from each product's REFRESHED ladder labels, compared by
+ * `unitNameKey` (NFC, trim, case-fold), the key the picker options use: an NFD "Café" line is the NFC
+ * "Café" level, never silently dropped. A product whose ladder could not be read is absent and its lines
+ * are left alone.
+ */
+export function offeredByLadder(
+  ladders: Record<string, readonly string[]>,
+): (productId: string, unitLabel: string) => boolean {
+  const keys = new Map(
+    Object.entries(ladders).map(([id, labels]) => [id, labels.map(unitNameKey)]),
+  );
+  return (id, label) => !keys.has(id) || keys.get(id)!.includes(unitNameKey(label));
 }
 
 export const UNIT_NOT_OFFERED_MESSAGE =

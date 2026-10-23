@@ -3,6 +3,7 @@ import { API_ERROR_CODES } from "../common/api-error-codes";
 import { channelsToJudge, resolveLineAuthors } from "../orders/line-author-channel";
 import { EDIT_REVISIONS } from "../orders/ship-state-markers";
 import { requireRestrictionTenantId } from "../selling-restrictions/restriction-tenant";
+import { saleFulfilmentKind } from "../selling-restrictions/sale-fulfilment";
 import type { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import type { InvoicesService } from "./invoices.service";
 
@@ -34,6 +35,8 @@ export async function assertDraftOrderSellable(
     source?: string | null;
     sourceRecorded?: boolean | null;
     createdAt?: Date | string | null;
+    counterSale: boolean | null | undefined; // L8: which state judges (store vs customer)
+    fulfillPath: string | null | undefined;
     lineItems?: ReadonlyArray<{
       productId?: string | null;
       /** SA ruling (#3418): the line's explicit author marker (NULL = the order-level rule). */
@@ -57,7 +60,11 @@ export async function assertDraftOrderSellable(
   const groups = channelsToJudge(ids, authors, "STAFF");
   const idsOn = (c: string) => groups.find((g) => g.channel === c)?.productIds ?? [];
   const lines = (pids: string[]) => pids.map((productId) => ({ productId }));
-  const base = { tenantId: tenant, customerId: order.customerId };
+  const base = {
+    tenantId: tenant,
+    customerId: order.customerId,
+    fulfilmentKind: saleFulfilmentKind(order),
+  };
   // BUYER_PORTAL first: the always-applying side refuses before the optional one.
   if (idsOn("BUYER_PORTAL").length)
     await deps.restrictions.assertLinesSellable({

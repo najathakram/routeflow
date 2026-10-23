@@ -56,6 +56,9 @@ export interface PickedProduct {
   priceTier4?: number | string | null;
   priceTier5?: number | string | null;
   unit?: string;
+  /** The tenant's pack / base unit names (carried into the draft's ladder so the customer layer matches a unit label). */
+  packLabel?: string | null;
+  baseUnitLabel?: string | null;
   unitsPerBox?: number | null;
 }
 

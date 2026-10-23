@@ -4,6 +4,7 @@ import type { AuthorizationGuardService } from "../authorizations/authorization-
 import type { PrismaService } from "../prisma/prisma.service";
 import { restrictionChannelForPrincipal } from "../selling-restrictions/selling-restrictions.core";
 import type { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { saleFulfilmentKind } from "../selling-restrictions/sale-fulfilment";
 import { channelsToJudge, resolveLineAuthors } from "./line-author-channel";
 import { latestEditRevisionNumber } from "./order-revisions";
 import { EDIT_REVISIONS } from "./ship-state-markers";
@@ -39,6 +40,8 @@ export async function judgeDraftPromotion(
       source?: string | null;
       sourceRecorded?: boolean | null;
       createdAt?: Date | string | null;
+      counterSale: boolean | null | undefined; // L8: which state judges (store vs customer)
+      fulfillPath: string | null | undefined;
     };
     user: JwtPayload;
     tenantId: string;
@@ -78,7 +81,11 @@ export async function judgeDraftPromotion(
   const groups = channelsToJudge([...new Set(pids)], authors, promoter);
   const idsOn = (c: string) => groups.find((g) => g.channel === c)?.productIds ?? [];
   const lines = (ids: string[]) => ids.map((productId) => ({ productId }));
-  const base = { tenantId, customerId: order.customerId };
+  const base = {
+    tenantId,
+    customerId: order.customerId,
+    fulfilmentKind: saleFulfilmentKind(order),
+  };
   // BUYER_PORTAL first: the always-applying side refuses before the optional one.
   if (idsOn("BUYER_PORTAL").length)
     await restrictions.assertLinesSellable({

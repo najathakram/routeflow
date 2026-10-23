@@ -29,6 +29,13 @@ import { dropPublishedCatalog, ensurePublishedCatalog } from "../testing/ensure-
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
 
+/** SA-788: the writer's own record for a row change. `delta` is 0 (amountDelta null), so it is never MRR. */
+const audit = (sku: string) => ({
+  type: BILLING_EVENTS.ADDON_STATE_CHANGED,
+  delta: 0,
+  sku,
+});
+
 describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Postgres)", () => {
   let pool: Pool;
   let prisma: PrismaClient;
@@ -122,7 +129,7 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
       product: {
         id: `prod_${id}`,
         object: "product",
-        name: o.sku ? `RouteFlow add-on — ${o.sku}` : "RouteFlow Starter — monthly",
+        name: o.sku ? `RouteFlow add-on — ${o.sku}` : "RouteFlow Starter",
         metadata: o.sku ? { addonSku: o.sku } : {},
       },
     },
@@ -415,7 +422,9 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
     ]);
     expect(await r.ledger()).toEqual([
       { type: BILLING_EVENTS.SUBSCRIPTION_RESUMED, delta: 99, sku: undefined },
+      audit("CUSTOMER_PACK_100"), // SA-788: the adoption's own record, delta 0
       { type: BILLING_EVENTS.ADDON_ENABLED, delta: 100, sku: "CUSTOMER_PACK_100" },
+      audit("FORECASTING"),
       { type: BILLING_EVENTS.ADDON_ENABLED, delta: 19, sku: "FORECASTING" },
     ]);
     // what Stripe bills monthly: 99 + 2×50 + 19
@@ -458,9 +467,13 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
     const ledger = await r.ledger();
     expect(ledger.filter((e) => e.type === BILLING_EVENTS.SUBSCRIPTION_RESUMED)).toHaveLength(1);
     expect(ledger.filter((e) => e.sku === "CUSTOMER_PACK_100")).toEqual([
+      audit("CUSTOMER_PACK_100"), // SA-788: adopted once, so ONE record too
       { type: BILLING_EVENTS.ADDON_ENABLED, delta: 100, sku: "CUSTOMER_PACK_100" },
     ]);
-    expect(ledger.filter((e) => e.sku === "FORECASTING")).toHaveLength(1);
+    expect(ledger.filter((e) => e.sku === "FORECASTING")).toEqual([
+      audit("FORECASTING"), // SA-788: was toHaveLength(1) (the enabled event); now + its record
+      { type: BILLING_EVENTS.ADDON_ENABLED, delta: 19, sku: "FORECASTING" },
+    ]);
     expect(await r.ledgerSum()).toBe(218);
     expect(r.stripeClient.subscriptionItems.del).not.toHaveBeenCalled();
   });
@@ -482,7 +495,7 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
     expect((await raise.rows())[0]).toMatchObject({ stripeItemId: "si_pack", quantity: 3 });
     expect(
       (await raise.ledger()).filter((e) => e.sku === "CUSTOMER_PACK_100").map((e) => e.delta),
-    ).toEqual([100, 50]);
+    ).toEqual([0, 100, 50]); // SA-788: the leading 0 is the adoption record
     expect(await raise.ledgerSum()).toBe(99 + 150);
 
     const cut = await rig({
@@ -500,7 +513,7 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
     expect((await cut.rows())[0]).toMatchObject({ stripeItemId: "si_pack", quantity: 1 });
     expect(
       (await cut.ledger()).filter((e) => e.sku === "CUSTOMER_PACK_100").map((e) => e.delta),
-    ).toEqual([100, -50]);
+    ).toEqual([0, 100, -50]); // SA-788: the leading 0 is the adoption record
     expect(await cut.ledgerSum()).toBe(99 + 50);
   });
 
@@ -580,13 +593,17 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
     await atGate;
     await r.completed(); // B: the marker is there -> ALREADY_APPLIED -> adopts while the tenant is still TRIAL
     expect((await r.rows()).map((x) => x.stripeItemId)).toEqual(["si_pack", "si_fc"]);
-    expect(await r.ledger()).toEqual([]); // a non-paying tenant's adoption books nothing (yet)
+    // a non-paying tenant's adoption books nothing (yet): no MRR event, only the SA-788 records (delta 0)
+    expect(await r.ledger()).toEqual([audit("CUSTOMER_PACK_100"), audit("FORECASTING")]);
     release();
     await a;
 
     // A's crossing prices the base AND the already-adopted add-ons at their stored (actual) snapshots,
     // once; A's own adoption finds both items set and does nothing
     expect(await r.ledger()).toEqual([
+      // SA-788: B's adoption wrote its two records first (delta 0); A's crossing books the one MRR event
+      audit("CUSTOMER_PACK_100"),
+      audit("FORECASTING"),
       { type: BILLING_EVENTS.SUBSCRIPTION_RESUMED, delta: 99 + 100 + 19, sku: undefined },
     ]);
     expect(await r.ledgerSum()).toBe(218);
@@ -671,6 +688,7 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
     expect(r.stripeClient.subscriptionItems.create).not.toHaveBeenCalled();
     expect(await r.ledger()).toEqual([
       { type: BILLING_EVENTS.SUBSCRIPTION_RESUMED, delta: 99, sku: undefined },
+      audit("CUSTOMER_PACK_100"), // SA-788
       { type: BILLING_EVENTS.ADDON_ENABLED, delta: 100, sku: "CUSTOMER_PACK_100" },
     ]);
   });
@@ -709,6 +727,7 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
     expect(rows[0].stripeItemId).toBe(r.items.find((i) => i.metadata?.sku === "FORECASTING")?.id);
     expect(Number(rows[0].priceSnapshot)).toBe(price.FORECASTING);
     expect((await r.ledger()).filter((e) => e.sku === "FORECASTING")).toEqual([
+      audit("FORECASTING"), // SA-788
       { type: BILLING_EVENTS.ADDON_ENABLED, delta: price.FORECASTING, sku: "FORECASTING" },
     ]);
   });
@@ -1740,6 +1759,7 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
         expect(row.quantity).toBe(3);
         expect(r.items.filter((i) => i.metadata?.sku === "FORECASTING")).toHaveLength(1);
         expect((await r.ledger()).filter((e) => e.sku === "FORECASTING")).toEqual([
+          audit("FORECASTING"), // SA-788
           { type: BILLING_EVENTS.ADDON_ENABLED, delta: price.FORECASTING * 3, sku: "FORECASTING" },
         ]);
       },
@@ -2031,6 +2051,7 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
 
       expect(await r.ledger()).toEqual([
         { type: BILLING_EVENTS.SUBSCRIPTION_RESUMED, delta: 99, sku: undefined },
+        audit("CUSTOMER_PACK_100"), // SA-788
         { type: BILLING_EVENTS.ADDON_ENABLED, delta: 100, sku: "CUSTOMER_PACK_100" },
       ]);
       expect(await r.ledgerSum()).toBe(199);
@@ -2245,6 +2266,7 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
         // the crossing priced the STORED 40 x 2, adoption nets it to 50 x 2: the base + 100, each once
         expect(await r.ledgerSum()).toBe(99 + 100);
         expect((await r.ledger()).filter((e) => e.sku === "CUSTOMER_PACK_100")).toEqual([
+          audit("CUSTOMER_PACK_100"), // SA-788
           { type: BILLING_EVENTS.ADDON_ENABLED, delta: 20, sku: "CUSTOMER_PACK_100" },
         ]);
       },

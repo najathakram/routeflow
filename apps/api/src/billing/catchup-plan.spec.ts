@@ -5,7 +5,9 @@ import {
   activationClusters,
   type ActivationRecord,
   addonCardRefusal,
+  CATCHUP_TRIAL_MIN_LEAD_MS,
   catchupShape,
+  chargeNowCents,
   firstBoundaryNotBefore,
   paidThroughOf,
   planCatchup,
@@ -105,7 +107,7 @@ describe("the stub (r M5): price x unpaid days / days in month, add-ons included
     const p = plan({ monthly: 310 });
     expect(p.paidThrough.toISOString()).toBe("2026-10-01T12:00:00.000Z");
     expect(p.anchorAt.toISOString()).toBe("2026-11-01T12:00:00.000Z");
-    expect(p.stub.label).toBe("Subscription — October 2026");
+    expect(p.stub.label).toBe("October 2026 subscription");
     expect(p.stub.lines).toEqual([{ kind: "PLAN", code: "PLAN", cents: 31000 }]);
     expect(p.stub.totalCents).toBe(31000);
   });
@@ -126,7 +128,7 @@ describe("the stub (r M5): price x unpaid days / days in month, add-ons included
       { kind: "PLAN", code: "PLAN", cents: 17000 }, // 310 x 17/31
       { kind: "ADDON", code: "FORECASTING", cents: 1700 }, // 31 x 17/31
     ]);
-    expect(p.stub.label).toBe("Subscription — Oct 15 to Oct 31, 2026");
+    expect(p.stub.label).toBe("Oct 15 to Oct 31, 2026 subscription");
   });
 
   it("add-on quantity multiplies the unit price; a zero-priced or zero-quantity row adds no line", () => {
@@ -150,7 +152,7 @@ describe("the stub (r M5): price x unpaid days / days in month, add-ons included
     const p = plan({ now: d("2026-11-05T10:00:00Z"), monthly: 100 });
     expect(p.anchorAt.toISOString()).toBe("2026-12-01T12:00:00.000Z");
     expect(p.stub.totalCents).toBe(20000);
-    expect(p.stub.label).toBe("Subscription — October 2026 to November 2026");
+    expect(p.stub.label).toBe("October 2026 to November 2026 subscription");
   });
 
   it("different month lengths: Nov is 30 days (paid through Nov 14 12:00 -> 17/30 of December's hand-over)", () => {
@@ -318,7 +320,7 @@ describe("SA-733r5 selector rows", () => {
     expect(p.shape).toBe("trial_one_time");
     expect(p.trialEndAt.toISOString()).toBe("2026-12-01T12:00:00.000Z");
     expect(p.stub.totalCents).toBe(20000);
-    expect(p.stub.label).toBe("Subscription — October 2026 to November 2026");
+    expect(p.stub.label).toBe("October 2026 to November 2026 subscription");
   });
 
   it("R5-2: the last 72 h before a 1st move A to the FOLLOWING 1st (that month is paid 1-3 days early), and say so", () => {
@@ -736,5 +738,50 @@ describe("MF2 -> SA-733r9: paid coverage is ONE walk over every paid source, sna
       const p = okPlan(run(rows, [OPEN_OCT]));
       expect(p.stub.from.toISOString()).toBe("2026-10-12T04:08:24.000Z");
     });
+  });
+});
+
+describe("SA-806: termsHoldUntil (D = A - 72 h) and chargeNowCents, the two single sources", () => {
+  const HOUR = 3600_000;
+
+  it("termsHoldUntil is A minus the 72 h lead, on every shape (the ONE place the 72 h lives)", () => {
+    const trial = plan({ invoices: [OCT("PAID")] }); // S === A === Nov 1
+    expect(trial.shape).toBe("trial");
+    expect(trial.termsHoldUntil.toISOString()).toBe("2026-10-29T12:00:00.000Z");
+    expect(trial.termsHoldUntil.getTime()).toBe(
+      trial.trialEndAt.getTime() - CATCHUP_TRIAL_MIN_LEAD_MS,
+    );
+
+    const oneTime = plan(); // nothing paid: stub [Oct 1, Nov 1), A = Nov 1
+    expect(oneTime.shape).toBe("trial_one_time");
+    expect(oneTime.termsHoldUntil.getTime()).toBe(oneTime.trialEndAt.getTime() - 72 * HOUR);
+  });
+
+  it("the terms really do hold until D and move to the next 1st right after it", () => {
+    const base = { invoices: [OCT("PAID")] };
+    const atD = plan({ ...base, now: new Date("2026-10-29T12:00:00Z") });
+    expect(atD.shape).toBe("trial");
+    expect(atD.trialEndAt.toISOString()).toBe("2026-11-01T12:00:00.000Z");
+    const afterD = plan({ ...base, now: new Date("2026-10-29T12:00:01Z") });
+    expect(afterD.shape).toBe("trial_one_time");
+    expect(afterD.trialEndAt.toISOString()).toBe("2026-12-01T12:00:00.000Z");
+  });
+
+  it("chargeNowCents: 0 for the trial shape", () => {
+    expect(chargeNowCents(plan({ invoices: [OCT("PAID")] }))).toBe(0);
+  });
+
+  it("chargeNowCents: 0 for a forgiven line (stub under the Stripe minimum), though the stub total is not 0", () => {
+    const p = plan({ monthly: 0.1 }); // $0.10 for October: forgiven
+    expect(p.shape).toBe("trial_one_time");
+    expect(p.stub.belowStripeMinimum).toBe(true);
+    expect(p.stub.totalCents).toBe(10);
+    expect(chargeNowCents(p)).toBe(0);
+  });
+
+  it("chargeNowCents: the stub total otherwise", () => {
+    const p = plan(); // $310 for October
+    expect(p.stub.totalCents).toBe(31000);
+    expect(chargeNowCents(p)).toBe(31000);
   });
 });

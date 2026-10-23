@@ -28,10 +28,17 @@ const ROUTED: Record<string, string[]> = {
 
 /** File -> why a direct column write there can never reach a governed (variant or recipe) row. */
 const EXEMPT: Record<string, string> = {
+  "inventory/testing/order-stock-world.ts":
+    "Test-only seeding fixture of the B284 order-stock DB specs (inventory/testing, imported only by *.db.spec.ts): it creates throwaway Product, Customer and User rows in `qa-*` tenants, never a governed variant or recipe row and never a live tenant.",
+  "inventory/testing/count-db-harness.ts":
+    "Test-only seeding helper of the SA-767 count DB specs (inventory/testing, collected only by *.db.spec.ts): it createMany's throwaway Product rows (name, pricePerUnit, a variable data array) into `qa-sa767-*` tenants, never a governed variant or recipe row and never a live tenant.",
   "products/product-families.service.ts":
     "WS8 families: createFamily mints brand-new rows and, by plan, ignores the mixed_packs mode (the variant price is the " +
     "caller's unless copyFamilyPrice is set); updateVariants refuses a price EDIT 409 FAMILY_PRICE_AUTHORITY while mixed_packs is on, " +
     "and an added variant takes all five family columns read under the family row lock (familyPricesForNewVariant).",
+  "products/product-price-write.service.ts":
+    "Units v2 price write: assertNotGoverned refuses a variant (409 FAMILY_PRICE_AUTHORITY), a FAMILY and a RECIPE row " +
+    "before any write, so it only ever writes the five columns of a standalone product.",
   "import/import.service.ts":
     "Zoho import creates a brand-new STANDALONE product (no parentProductId): nothing to inherit.",
   "import/variant-resolution.service.ts":
@@ -199,6 +206,11 @@ describe("family price writer tripwire: scripts and prisma (Q2 ii)", () => {
  * allow-listed file changes the count and fails (SA-587 lead LOW: per count, not per file).
  */
 export const OPAQUE_DATA_ALLOW: Record<string, { count: number; reason: string }> = {
+  "inventory/testing/count-db-harness.ts": {
+    count: 1,
+    reason:
+      "Test-only seeding helper of the SA-767 count DB specs (inventory/testing, collected only by *.db.spec.ts): it createMany's throwaway Product rows (name, pricePerUnit, a variable data array) into `qa-sa767-*` tenants, never a governed variant or recipe row and never a live tenant.",
+  },
   "inventory/inventory.service.ts": {
     count: 3,
     reason:

@@ -30,9 +30,9 @@ const HOOKED: Record<string, { writes: number; syncs: number; via: string }> = {
     via: "create (dto.category / parent's), update (dto.category / structured-subcategory mirror), importProducts (item.category)",
   },
   "products/product-families.service.ts": {
-    writes: 5,
+    writes: 6,
     syncs: 1,
-    via: "createFamily: the family row's category (variants copy none)",
+    via: "createFamily: the family row's category (variants copy none); reactivateFamilyContainer writes isActive only (no category text moves, so no sync)",
   },
   "inventory/inventory.service.ts": {
     writes: 12,
@@ -53,6 +53,14 @@ const HOOKED: Record<string, { writes: number; syncs: number; via: string }> = {
 
 /** Files whose product writes can never set `Product.category` (one-line reason each). */
 const EXEMPT: Record<string, { writes: number; reason: string }> = {
+  "products/product-price-write.service.ts": {
+    writes: 1,
+    reason: "writes the five pack price columns, packAuto and priceRevision only; never category",
+  },
+  "units/units.service.ts": {
+    writes: 3,
+    reason: "a unit rename rewrites baseUnitLabel, packLabel and unit by nameKey; never category",
+  },
   "products/product-code-release.ts": {
     writes: 2,
     reason: "moves sku/barcode/unitSku to and from their retired columns only",
@@ -70,8 +78,9 @@ const EXEMPT: Record<string, { writes: number; reason: string }> = {
   "returns/returns.service.ts": { writes: 1, reason: "decrements currentStock" },
   "returns/inline-returns.service.ts": { writes: 1, reason: "decrements currentStock" },
   "vendor-bills/vendor-bills.service.ts": {
-    writes: 3,
-    reason: "moves currentStock and averageCost on a bill post/void",
+    writes: 2,
+    reason:
+      "moves currentStock and averageCost only: the receive, and the one shared reversal revertToDraft and voidBill both go through (SA-808); never category",
   },
   "orders/order-stock.ts": {
     writes: 3,

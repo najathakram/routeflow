@@ -73,3 +73,61 @@ export function buildInvoiceEmailPayload(
     depositDueDate: inv.depositDueDate ? formatDate(inv.depositDueDate) : null,
   };
 }
+
+/** The pre-computed paid basis + delivery inputs `buildReminderEmailPayload` takes (its caller computes the totals). */
+export interface EmailPayloadParts {
+  recipientEmail: string;
+  totalPaid: number;
+  creditApplied: number;
+  advanceApplied: number;
+  creditNoteNumbers: string[];
+  balanceDue: number;
+  pdfUrl: string | undefined;
+  attachment: InvoiceEmailAttachment | undefined;
+  hideOriginalPrice: boolean;
+}
+
+/** `InvoicesService.sendReminder`'s payload (the same item table, without the sendEmail-only terms / deposit fields). */
+export function buildReminderEmailPayload(inv: any, x: EmailPayloadParts) {
+  const {
+    recipientEmail,
+    totalPaid,
+    creditApplied,
+    advanceApplied,
+    creditNoteNumbers,
+    balanceDue,
+  } = x;
+  const { pdfUrl, attachment, hideOriginalPrice } = x;
+  return {
+    to: recipientEmail,
+    customerName: inv.customer?.businessName ?? "Customer",
+    invoiceNumber: inv.invoiceNumber,
+    invoiceId: inv.id,
+    issueDate: formatDate(inv.issueDate),
+    dueDate: formatDate(inv.dueDate),
+    paymentTermsLabel: inv.paymentTermsLabel ?? undefined,
+    total: Number(inv.total),
+    totalPaid,
+    creditApplied,
+    advanceApplied,
+    creditNoteNumbers,
+    balanceDue,
+    items: inv.items.map((it: any) => ({
+      description: it.description,
+      qty: Number(it.qty),
+      unitPrice: Number(it.unitPrice),
+      subtotal: Number(it.subtotal),
+      msrp: it.msrp != null ? Number(it.msrp) : null,
+      // F03/R9: see sendEmail's matching comment — a reminder renders the same
+      // item table, so it needs the same promo scalars.
+      originalPrice: it.originalPrice != null ? Number(it.originalPrice) : null,
+      priceType: it.priceType ?? null,
+      promoFreeUnits: it.promoFreeUnits != null ? Number(it.promoFreeUnits) : null,
+      ...invoiceItemQtyFields(it),
+    })),
+    pdfUrl,
+    attachment,
+    isReminder: true,
+    hideOriginalPrice,
+  };
+}

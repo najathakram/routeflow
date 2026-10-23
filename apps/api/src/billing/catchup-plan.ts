@@ -342,12 +342,11 @@ const MONTHS = [
 const MON = MONTHS.map((m) => m.slice(0, 3));
 
 /**
- * "Subscription — October 2026" for whole months from a 1st; a mid-month start is labelled with its start and its last
- * billed day: "Subscription — Nov 11 to Nov 30, 2026" (never a bare month name - SA-733r10 nit 2).
+ * The period a stub covers, as words: "October 2026" for whole months from a 1st, "October 2026 to November 2026"
+ * across several, and a mid-month start is labelled with its start and its last billed day: "Nov 11 to Nov 30, 2026"
+ * (never a bare month name - SA-733r10 nit 2). The tenant-facing "payment due" banner prints this verbatim.
  */
-export function describeStub(from: Date, to: Date): string {
-  // S === A: there is no line to describe (never "December 2026 to November 2026")
-  if (snapToBoundary(from).getTime() >= snapToBoundary(to).getTime()) return "No catch-up line";
+export function describeStubPeriod(from: Date, to: Date): string {
   const monthOf = (d: Date) => `${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
   const snapped = snapToBoundary(from);
   const startsOnBoundary =
@@ -357,15 +356,25 @@ export function describeStub(from: Date, to: Date): string {
   if (startsOnBoundary) {
     return snapped.getUTCFullYear() === last.getUTCFullYear() &&
       snapped.getUTCMonth() === last.getUTCMonth()
-      ? `Subscription — ${monthOf(snapped)}`
-      : `Subscription — ${monthOf(snapped)} to ${monthOf(last)}`;
+      ? monthOf(snapped)
+      : `${monthOf(snapped)} to ${monthOf(last)}`;
   }
   const day = (d: Date) => `${MON[d.getUTCMonth()]} ${d.getUTCDate()}`;
   const startLabel =
     from.getUTCFullYear() === last.getUTCFullYear()
       ? day(from)
       : `${day(from)}, ${from.getUTCFullYear()}`;
-  return `Subscription — ${startLabel} to ${day(last)}, ${last.getUTCFullYear()}`;
+  return `${startLabel} to ${day(last)}, ${last.getUTCFullYear()}`;
+}
+
+/**
+ * The Checkout line / invoice item label: "October 2026 subscription", "Nov 11 to Nov 30, 2026 subscription". Plain
+ * words, no dash (what the customer reads on the Stripe page and the receipt).
+ */
+export function describeStub(from: Date, to: Date): string {
+  // S === A: there is no line to describe (never "December 2026 to November 2026")
+  if (snapToBoundary(from).getTime() >= snapToBoundary(to).getTime()) return "No catch-up line";
+  return `${describeStubPeriod(from, to)} subscription`;
 }
 
 /**
@@ -393,6 +402,16 @@ export function catchupShape(i: { paidThrough: Date; now: Date }): CheckoutShape
     : "trial_one_time";
 }
 
+/**
+ * SA-806: what the Checkout charges AT COMPLETION. 0 for the stub-free `trial` shape and for a forgiven line (a stub
+ * under {@link STRIPE_MIN_CHARGE_CENTS} carries no one-time line), the stub total otherwise. The one rule behind
+ * "nothing is charged now" (the card reminder) and behind the one-time line the session builder emits.
+ */
+export function chargeNowCents(plan: Pick<CatchupPlan, "shape" | "stub">): number {
+  if (plan.shape === "trial") return 0;
+  return plan.stub.totalCents >= STRIPE_MIN_CHARGE_CENTS ? plan.stub.totalCents : 0;
+}
+
 export interface CatchupPlan {
   ok: true;
   now: Date;
@@ -407,6 +426,12 @@ export interface CatchupPlan {
   anchorAt: Date;
   /** The trial end the session sends: A. */
   trialEndAt: Date;
+  /**
+   * SA-806: D = A - {@link CATCHUP_TRIAL_MIN_LEAD_MS}, the last instant the quoted terms (A, the shape, the stub) hold:
+   * from D on, {@link trialEndFor} moves A to the next 1st. THE one place the 72 h lives; the tenant-facing card
+   * deadline is this instant and nothing else re-derives it.
+   */
+  termsHoldUntil: Date;
   shape: CheckoutShape;
   /** The unpaid span the stub covers and what it comes to. */
   stub: {
@@ -543,6 +568,7 @@ export function planCatchup(i: {
     paidFromInvoices: cov.reached,
     anchorAt: a,
     trialEndAt: a,
+    termsHoldUntil: new Date(a.getTime() - CATCHUP_TRIAL_MIN_LEAD_MS),
     shape,
     stub: {
       from: s,

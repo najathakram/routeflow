@@ -2,6 +2,7 @@ import type { InvoiceItemSystemKind, InvoiceStatus } from "@routeflow/types";
 import type { InvoiceSendLock, InvoiceSendState } from "@/lib/invoice-send-state";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import { isRecordPaymentLocalRefusal } from "@/lib/duplicate-payment-ref";
 import { isDayClosedRefusal } from "../day-closed-copy";
 import { fetchPdfBlob } from "../fetch-pdf-blob";
 import { priceAdjustmentFailure } from "../price-adjustment-failure";
@@ -22,6 +23,7 @@ import type {
 } from "@routeflow/types";
 import type { LocalErrorToastOption } from "@/lib/local-error-toast";
 import { keptDraftInvoiceId } from "@/lib/kept-draft-invoice";
+import { sendWithPaymentKey, type PaymentKeyHolder } from "@/lib/payment-submit-key";
 import type { HandOverSoldBy } from "@/lib/handover-stamp";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -652,15 +654,22 @@ export interface RecordInvoicePaymentDto {
   status?: "DRAFT" | "PAID";
   reference?: string;
   notes?: string;
+  /** SA-824: the dialog's Idempotency-Key holder (never sent in the body). */
+  submitKey?: PaymentKeyHolder;
+  /** Row 498: the staff "Record anyway" resend of a payment refused 409 DUPLICATE_PAYMENT_REF. */
+  recordAnyway?: boolean;
 }
 
 export function useRecordInvoicePayment() {
   const qc = useQueryClient();
   return useMutation<Invoice & { createdPaymentId?: string }, Error, RecordInvoicePaymentDto>({
-    mutationFn: ({ id, ...data }) =>
-      apiClient.post(`/invoices/${id}/payments`, data).then((r) => r.data),
+    mutationFn: ({ id, submitKey, ...data }) =>
+      sendWithPaymentKey(submitKey, data, (config) =>
+        apiClient.post(`/invoices/${id}/payments`, data, ...config).then((r) => r.data),
+      ),
     // SA-750r3: the invoice page answers a closed-day refusal with its own fixed copy (dayClosedCopy): no second toast.
-    meta: { localErrorToast: isDayClosedRefusal },
+    // Row 498: and a duplicate-reference refusal with its own "Record anyway" toast.
+    meta: { localErrorToast: isRecordPaymentLocalRefusal },
     onSuccess: (_, { id }) => {
       qc.invalidateQueries({ queryKey: ["invoices"] });
       qc.invalidateQueries({ queryKey: ["invoices", id] });
@@ -759,12 +768,25 @@ export function useRecordPaymentStandalone() {
     // X1: bind TMethod to web's enterable subset at the use site (not via a
     // local re-declaration — see the comment above `StandalonePaymentDto`'s
     // re-export).
-    StandalonePaymentDto<SelectablePaymentMethod>
+    // SA-824: + the dialog's Idempotency-Key holder (never sent in the body).
+    StandalonePaymentDto<SelectablePaymentMethod> & { submitKey?: PaymentKeyHolder }
   >({
-    mutationFn: (dto) => apiClient.post("/invoices/payments/record", dto).then((r) => r.data),
+    mutationFn: ({ submitKey, ...dto }) =>
+      sendWithPaymentKey(
+        submitKey,
+        {
+          amount: dto.totalAmount,
+          method: dto.method,
+          allocations: dto.allocations,
+          status: dto.status,
+          bankCharges: dto.bankCharges,
+          settledAt: dto.settledAt,
+        },
+        (config) => apiClient.post("/invoices/payments/record", dto, ...config).then((r) => r.data),
+      ),
     // Row 348: every caller (finance Payments, the customer Record Payment modal) answers a closed-day refusal in its
-    // own toast; the global one stays quiet for it so the failure is shown ONCE.
-    meta: { localErrorToast: isDayClosedRefusal },
+    // own toast; the global one stays quiet for it so the failure is shown ONCE. Row 498: and for a duplicate reference.
+    meta: { localErrorToast: isRecordPaymentLocalRefusal },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["invoices"] });
       qc.invalidateQueries({ queryKey: ["invoices", "payments"] });
@@ -943,6 +965,8 @@ export function useRevertInvoiceToDraft() {
 export function useUnvoidInvoice() {
   const qc = useQueryClient();
   return useMutation<any, Error, string>({
+    // SA-814: the invoice page toasts every unvoid refusal itself (copy from the body's `reason`): no second, global one.
+    meta: { localErrorToast: true },
     mutationFn: (id) => apiClient.post(`/invoices/${id}/unvoid`).then((r) => r.data),
     onSuccess: (_, id) => {
       qc.invalidateQueries({ queryKey: ["invoices"] });

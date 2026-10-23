@@ -24,6 +24,11 @@ jest.mock("@routeflow/ui/web", () => ({
   useToast: () => ({ toast, dismiss: jest.fn() }),
 }));
 
+jest.mock("@/lib/auth-context", () => ({
+  ...jest.requireActual("@/lib/auth-context"),
+  useAuth: () => ({ user: { role: "TENANT_ADMIN" } }),
+}));
+
 const ids = (n: number) => Array.from({ length: n }, (_, i) => `p${i + 1}`);
 
 function open(props: Partial<React.ComponentProps<typeof LimitInPortalDialog>> = {}) {

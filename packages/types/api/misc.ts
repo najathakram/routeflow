@@ -3,7 +3,8 @@
 import type { EstimateStatus } from "./enums";
 
 export interface MarginConfig {
-  costingMethod: "WEIGHTED_AVERAGE" | "FIFO" | "LAST_COST";
+  /** FIFO is retired (SA-804 (1)): a stored FIFO reads as WEIGHTED_AVERAGE. */
+  costingMethod: "WEIGHTED_AVERAGE" | "LAST_COST";
   /** Default minimum margin as a fraction (0.15 = 15%). */
   defaultMarginFloor: number;
   /** Per-category floor overrides, keyed by Product.category. */
@@ -32,7 +33,13 @@ export interface SaleDraft {
 
 export type SaveDraftInput = Partial<
   Pick<SaleDraft, "kind" | "customerId" | "customerName" | "title" | "payload" | "device">
->;
+> & {
+  /**
+   * PATCH only (SA-817 A): the `updatedAt` this client last saw for the draft. A different current value is a 409
+   * `DRAFT_CHANGED` (another device wrote since). Omitted = last write wins, as before (older clients).
+   */
+  expectedUpdatedAt?: string;
+};
 
 /**
  * ⚠️ Drift fixed here (Wave E / imp-10b, L-072, sibling-sweep find): both apps

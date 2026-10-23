@@ -12,6 +12,7 @@ import { roundMoney, roundUnitCost } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { assertSafeProductNames } from "../common/text-cell-guards";
 import { AuditService } from "../audit/audit.service";
+import { EntitlementsService } from "../billing/entitlements.service";
 import { FeatureConfigService } from "../billing/feature-config.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { PrismaService } from "../prisma/prisma.service";
@@ -42,7 +43,11 @@ import {
   readFamilyPriceMode,
   type FamilyPriceColumn,
 } from "./family-price";
+import { UnitsPricesV2FlagCache, variantTierValue } from "./new-product-tiers";
+import { AUDIT_ACTIONS } from "../audit/audit-actions.constant";
+import { writeFamilyAssigned } from "./product-parent";
 import { lockProductName } from "./product-name-rules";
+import { bareRowNames } from "./product-variant-name";
 import { syncCategoryLabel } from "../product-categories/label-writer";
 import type {
   CreateFamilyDto,
@@ -157,7 +162,12 @@ export class ProductFamiliesService {
     private readonly audit: AuditService,
     // #2717 M2 price authority: optional like ProductsService (a missing provider reads as mode "off").
     @Optional() private readonly featureConfig?: FeatureConfigService,
+    // S4: flag.units_prices_v2 (a missing provider reads as OFF = master's behaviour).
+    @Optional() private readonly entitlements?: EntitlementsService,
   ) {}
+
+  /** S4: flag.units_prices_v2, cached 30 s per tenant, read before a transaction opens. */
+  private readonly unitsPricesV2 = new UnitsPricesV2FlagCache();
 
   private tenant(): string {
     const t = this.prisma.getTenantId();
@@ -195,14 +205,106 @@ export class ProductFamiliesService {
     return out;
   }
 
+  /**
+   * SA-823: reserve a FAMILY name inside the caller's transaction: the existing root-scope name lock (house order: codes ->
+   * name -> rows) plus the root-name `nameTakenBy` check, returned as conflicts. A WRAPPER over product-name-rules; it adds
+   * no second lock. createFamily and the import both call it before createFamilyContainer.
+   */
+  async reserveFamilyName(
+    tx: CatalogTx,
+    tenantId: string,
+    name: string,
+  ): Promise<FamilyRowConflict[]> {
+    await lockProductName(tx, tenantId, null, name);
+    return nameTakenBy(tx, tenantId, [{ row: "family", name, parentProductId: null }]);
+  }
+
+  /**
+   * SA-823: THE one writer of a FAMILY row (kind FAMILY, unit each, no sku/barcode/stock, parentProductId null, active)
+   * plus its one add-only category-label sync, in the caller's tx. PRECONDITION: the caller holds the family-name lock
+   * and has checked the name is free (reserveFamilyName) and ran assertSafeProductNames; it does not lock codes.
+   */
+  async createFamilyContainer(
+    tx: CatalogTx,
+    input: {
+      name: string;
+      category?: string | null;
+      pricePerUnit: string;
+      description?: string | null;
+      standardCost?: string;
+      actorId?: string | null;
+    },
+  ) {
+    const family = await tx.product.create({
+      data: {
+        name: input.name,
+        unit: "each",
+        pricePerUnit: input.pricePerUnit,
+        ...(input.standardCost !== undefined ? { standardCost: input.standardCost } : {}),
+        category: input.category ?? null,
+        description: input.description ?? null,
+        kind: "FAMILY",
+        parentProductId: null,
+        isActive: true,
+      },
+    });
+    // Add-only label sync from the family's category text (the variants carry none), same tx.
+    await syncCategoryLabel(tx, {
+      productId: family.id,
+      tenantId: this.tenant(),
+      text: family.category,
+      actor: { id: input.actorId ?? null, name: null },
+    });
+    return family;
+  }
+
+  /**
+   * SA-823 (PR-2): reactivate an EMPTY family container (the import's re-run reuse of the family an earlier, all-failed run
+   * made). House lock order: the name lock first, then the row; refused when it has members or the name is taken again.
+   */
+  async reactivateFamilyContainer(familyId: string, actorId: string | null): Promise<void> {
+    const tenantId = this.tenant();
+    await this.prisma.tenantTransaction(async (tx: CatalogTx) => {
+      const probe = await tx.product.findFirst({
+        where: { id: familyId, tenantId, parentProductId: null },
+        select: { name: true },
+      });
+      if (!probe) throw new NotFoundException("Family not found");
+      const conflicts = await this.reserveFamilyName(tx, tenantId, probe.name);
+      if (conflicts.length > 0) throw this.rowsConflict(conflicts);
+      await lockProductRow(tx, tenantId, familyId);
+      const row = await tx.product.findFirst({
+        where: { id: familyId, tenantId },
+        select: { kind: true },
+      });
+      const members = await tx.product.count({ where: { parentProductId: familyId, tenantId } });
+      if (!row || row.kind !== "FAMILY" || members > 0) {
+        throw new ConflictException("Only an empty family can be reactivated here.");
+      }
+      await tx.product.update({ where: { id: familyId }, data: { isActive: true } });
+      await tx.auditLog.create({
+        data: {
+          tenantId,
+          userId: actorId,
+          action: AUDIT_ACTIONS.PRODUCT_FAMILY_REACTIVATED,
+          entityType: "Product",
+          entityId: familyId,
+          meta: { reason: "import re-run" },
+        },
+      });
+    });
+  }
+
   /** POST /products/families */
   async createFamily(dto: CreateFamilyDto, actorId: string | null) {
     const tenantId = this.tenant();
     if (dto.variants.length < 1 || dto.variants.length > MAX_ROWS) {
       throw new BadRequestException(`A family takes 1 to ${MAX_ROWS} variants per request.`);
     }
-    const variantRows = dto.variants.map((v, i) => ({ row: i, ...v }));
     const familyName = dto.family.name.trim();
+    // B1: every variant stores its BARE label; a name typed or pasted as "<family> - <label>" is stripped first.
+    bareRowNames(dto.variants, familyName);
+    const variantRows = dto.variants.map((v, i) => ({ row: i, ...v }));
     // B964-2: a formula-led family / variant name is refused before any read or write (it is printed on invoices, exports, filings)
     assertSafeProductNames({ name: familyName });
     dto.variants.forEach((v, i) =>
@@ -235,6 +337,8 @@ export class ProductFamiliesService {
       const c = costOf(v.standardCost);
       if (c !== undefined) cost4(c);
     }
+    // S4: one cached flag read, before the transaction opens.
+    const unitsV2 = await this.unitsPricesV2.isOn(this.entitlements, this.prisma.getTenantId());
     const run = () =>
       this.prisma.tenantTransaction(async (tx: CatalogTx) => {
         const codes = this.codeInputs(variantRows);
@@ -244,7 +348,7 @@ export class ProductFamiliesService {
           tenantId,
           codes.map((c) => c.value),
         );
-        await lockProductName(tx, tenantId, null, familyName);
+        const familyNameConflicts = await this.reserveFamilyName(tx, tenantId, familyName);
         const conflicts: FamilyRowConflict[] = [
           ...familyGridConflicts(
             variantRows.map((v) => ({
@@ -256,9 +360,7 @@ export class ProductFamiliesService {
             })),
           ),
           ...(await codeTakenBy(tx, tenantId, codes)),
-          ...(await nameTakenBy(tx, tenantId, [
-            { row: "family", name: familyName, parentProductId: null },
-          ])),
+          ...familyNameConflicts,
         ];
         if (conflicts.length > 0) throw this.rowsConflict(conflicts);
         // #2860 claim semantics (Opus #2881 B2): a legacy INACTIVE holder still holds its code LIVE; release it (one
@@ -273,25 +375,13 @@ export class ProductFamiliesService {
           });
         }
 
-        const family = await tx.product.create({
-          data: {
-            name: familyName,
-            unit: "each",
-            pricePerUnit: familyPrice,
-            ...(familyCost !== undefined ? { standardCost: cost4(familyCost) } : {}),
-            category: dto.family.category ?? null,
-            description: dto.family.description ?? null,
-            kind: "FAMILY",
-            parentProductId: null,
-            isActive: true,
-          },
-        });
-        // Add-only label sync from the family's category text (the variants carry none), same tx.
-        await syncCategoryLabel(tx, {
-          tenantId,
-          productId: family.id,
-          text: family.category,
-          actor: { id: actorId, name: null },
+        const family = await this.createFamilyContainer(tx, {
+          name: familyName,
+          category: dto.family.category,
+          pricePerUnit: familyPrice,
+          description: dto.family.description,
+          standardCost: familyCost !== undefined ? cost4(familyCost) : undefined,
+          actorId,
         });
         const variants: Array<{ id: string; name: string }> = [];
         for (const v of dto.variants) {
@@ -302,9 +392,20 @@ export class ProductFamiliesService {
               v,
               dto.copyFamilyPrice ? familyPrice : undefined,
               familyCost,
+              unitsV2,
             ),
           });
           variants.push({ id: created.id, name: created.name });
+          // eslint-disable-next-line no-await-in-loop
+          await writeFamilyAssigned(tx, {
+            tenantId,
+            actorId,
+            productId: created.id,
+            fromParentId: null,
+            toParentId: family.id,
+            variantName: v.name.trim(),
+            via: "family_editor",
+          });
           // eslint-disable-next-line no-await-in-loop
           await syncProductBarcodesFromLegacy(tx, {
             tenantId,
@@ -335,11 +436,15 @@ export class ProductFamiliesService {
     v: FamilyVariantDto,
     prices?: string | Record<FamilyPriceColumn, Prisma.Decimal>,
     familyCost?: string | null,
+    unitsV2 = false,
   ): Prisma.ProductUncheckedCreateInput {
     const cost = costOf(v.standardCost) ?? familyCost;
     const own = typeof prices === "string" ? prices : money(v.pricePerUnit);
+    const record = prices && typeof prices !== "string" ? prices : undefined;
     const col = (c: FamilyPriceColumn): string =>
-      prices && typeof prices !== "string" ? prices[c].toString() : own;
+      c === "pricePerUnit"
+        ? (record?.[c].toString() ?? own)
+        : variantTierValue(unitsV2, record?.[c].toString(), own);
     return {
       name: v.name.trim(),
       variantName: v.name.trim(),
@@ -412,6 +517,15 @@ export class ProductFamiliesService {
     if (add.length + update.length + deactivate.length > MAX_ROWS) {
       throw new BadRequestException(`At most ${MAX_ROWS} rows per request.`);
     }
+    // B1: an added / renamed variant stores its BARE label; the family's name is read once (tenant-scoped) to strip a
+    // pasted "<family> - <label>". An unreadable family is left to the 404 inside the transaction.
+    if (add.length + update.length > 0) {
+      const family: { name: string } | null = await this.prisma
+        .forTenant()
+        .product.findFirst({ where: { id: familyId }, select: { name: true } });
+      bareRowNames(add, family?.name);
+      bareRowNames(update, family?.name);
+    }
     // M2 price authority: while mixed_packs is ON the family owns the variants' price, so a price EDIT is a 409 and an
     // added variant takes the family's five columns (never a price of its own).
     const authority = (await readFamilyPriceMode(this.featureConfig, tenantId)) === "on";
@@ -454,6 +568,8 @@ export class ProductFamiliesService {
         })),
     ];
 
+    // S4: one cached flag read, before the transaction opens.
+    const unitsV2 = await this.unitsPricesV2.isOn(this.entitlements, tenantId);
     const run = () =>
       this.prisma.tenantTransaction(async (tx: CatalogTx) => {
         // House order (Opus #2881 B4): the family row FIRST (an add must not race propagateFamilyPrice), then every code
@@ -614,9 +730,20 @@ export class ProductFamiliesService {
               v,
               familyPrices,
               family.standardCost == null ? null : family.standardCost.toString(),
+              unitsV2,
             ),
           });
           added.push(created.id);
+          // eslint-disable-next-line no-await-in-loop
+          await writeFamilyAssigned(tx, {
+            tenantId,
+            actorId,
+            productId: created.id,
+            fromParentId: null,
+            toParentId: familyId,
+            variantName: v.name.trim(),
+            via: "family_editor",
+          });
           // eslint-disable-next-line no-await-in-loop
           await syncProductBarcodesFromLegacy(tx, {
             tenantId,

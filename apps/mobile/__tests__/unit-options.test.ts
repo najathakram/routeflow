@@ -208,3 +208,24 @@ describe("defaultStartOption (#2784): the option a NEW line starts on", () => {
     expect(defaultStartOption(product, [], 1, { hasUnit: false })).toBeNull();
   });
 });
+
+describe("buildUnitOptions: NFC key (parity with web)", () => {
+  it("shadows a row that is the NFD spelling of the pack word", () => {
+    const opts = buildUnitOptions({ ...product, unit: "Caf\u00e9" }, [
+      {
+        id: "x",
+        label: "Cafe\u0301",
+        factorToBase: 12,
+        price: null,
+        priceTier2: null,
+        priceTier3: null,
+        priceTier4: null,
+        priceTier5: null,
+        isDefaultSelling: false,
+        sortOrder: 0,
+      } as never,
+      CASE,
+    ]);
+    expect(opts.map((o) => o.value)).toEqual(["", "Case", "Piece"]);
+  });
+});

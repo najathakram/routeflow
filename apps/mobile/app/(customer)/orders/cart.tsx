@@ -7,6 +7,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar } from "@routeflow/ui/mobile/ios";
 import { useCartStore } from "../../../store/cartStore";
+import { BUYER_QTY_SPLIT_MISMATCH_COPY, isQtySplitMismatch } from "../../../lib/buyer-qty-split";
 import { useBuyerCreateOrder, useBuyerPromotions } from "../../../lib/api/buyer";
 import {
   BUYER_CAPABILITIES_KEY,
@@ -107,6 +108,11 @@ export default function CartScreen() {
           if (unavailable) {
             showToast(unavailable);
             qc.invalidateQueries({ queryKey: BUYER_CAPABILITIES_KEY });
+            return;
+          }
+          // Row 531: the quantity and the box split disagreed; the server saved nothing.
+          if (isQtySplitMismatch(e)) {
+            showToast(BUYER_QTY_SPLIT_MISMATCH_COPY);
             return;
           }
           // The key already made an order: fixed copy, with an "Open order" action when its id is known.

@@ -1,7 +1,6 @@
 import { BadRequestException, ForbiddenException } from "@nestjs/common";
 import { PriceType } from "@prisma/client";
 import {
-  isSpecialTier,
   decideStaffOverride,
   withinStaffOverrideTolerance,
   AmbiguousLineError,
@@ -11,17 +10,26 @@ import {
   categoryTaxSnapshotOf,
   computeCategoryTax,
   computeLineSubtotalStrict,
+  isSpecialPrice,
   normalizeBoxesPieces,
+  resolveLadderLevel,
   resolveUnitPrice,
+  unitNameKey,
   type CategoryTaxSnapshot,
   type CategoryTaxType,
+  type CustomerLayerPrice,
   type LadderProduct,
   type LadderUnit,
   type TrackedCategoryRow,
   roundMoney,
 } from "@routeflow/pricing";
 import { assertUnitLineSplit } from "./unit-line-split";
-import { lineUnitsPerBoxSnapshot, type ResolvedLineUnits } from "../products/line-units";
+import {
+  asLadderProduct,
+  lineUnitsPerBoxSnapshot,
+  normalizeDerivedBaseLine,
+  type ResolvedLineUnits,
+} from "../products/line-units";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { specialPriceReasonRequired } from "./staff-override";
 import { norm } from "./unit-label-norm";
@@ -86,6 +94,22 @@ export const STORED_UNIT_LINE_SELECT = {
   overrideReason: true,
   overriddenBy: true,
 } as const;
+
+/**
+ * An EXISTING line's own snapshot (units P0b). When its `unitLabel` no longer names a level of the
+ * live ladder, a rewrite re-resolves from this — factor = `unitsPerBox`, price = `unitPrice` — and
+ * never throws `UnknownUnitError`. A NEW line has none, and still gets the 400.
+ */
+export interface UnitSnapshotLine {
+  unitLabel?: string | null;
+  unitsPerBox?: number | null;
+  unitPrice?: unknown;
+  originalPrice?: unknown;
+  priceType?: PriceType | null;
+  /** The override stamp the line carries (a DISCOUNTED / MANUAL line), copied when the unit is gone. */
+  overrideReason?: string | null;
+  overriddenBy?: string | null;
+}
 
 /** A Prisma `Decimal` (or number/string) — coerced once by `toLadderProduct`. */
 type Money = number | string | { toString(): string };
@@ -219,7 +243,7 @@ export function replayLineKey(
   },
   stored: boolean,
 ): string {
-  const unit = (r.unitLabel ?? "").trim().toLowerCase();
+  const unit = unitNameKey(r.unitLabel ?? "");
   let count: unknown = stored && unit ? (r.boxes ?? r.qty) : r.qty;
   // A boxes/pieces-only request line has no qty: derive the piece count the writer stores (same
   // normalizeBoxesPieces) instead of keying NaN, which can never match a stored line. Without a pack size
@@ -300,6 +324,17 @@ export interface UnitLineData {
   tenantId: string | null | undefined;
 }
 
+/** Does the live ladder still name `label`? (the pack, the base, or a level row) */
+function ladderNames(product: LadderProduct, units: readonly LadderUnit[], label: string): boolean {
+  try {
+    resolveLadderLevel(product, units, label);
+    return true;
+  } catch (e) {
+    if (e instanceof UnknownUnitError) return false;
+    throw e;
+  }
+}
+
 export function buildUnitLine(input: {
   product: UnitLineProduct;
   units: readonly LadderUnit[];
@@ -307,6 +342,12 @@ export function buildUnitLine(input: {
   item: UnitLineRequest;
   /** The customer's pricing tier for this product (1..5). */
   tier: number;
+  /**
+   * S19, flag.units_prices_v2 only: this line's unit in the CUSTOMER LAYER (SA-811a): a typed price, or one worked out from
+   * their typed price on their order unit. It replaces the ladder's tier price as the base; above the unit's Retail ladder
+   * price it is priced as the sticky upsell (MANUAL). Null/undefined = master's path, untouched.
+   */
+  customerLayer?: CustomerLayerPrice | null;
   /**
    * Regulated per-category tax for a line of `qtyPieces` base pieces worth `subtotal`, PLUS
    * (B297) the rate trio it was priced under — see `categoryTaxForLine`. A caller that defers
@@ -335,6 +376,8 @@ export function buildUnitLine(input: {
    * branch. An override is kept either way.
    */
   repriceTierOnQtyOnly?: boolean;
+  /** The line being rewritten, when one exists (see {@link UnitSnapshotLine}). */
+  existing?: UnitSnapshotLine | null;
 }): UnitLineData {
   const { product, units, resolved, item, tier, taxFor } = input;
   const ladderProduct = toLadderProduct(product);
@@ -373,11 +416,28 @@ export function buildUnitLine(input: {
     );
   }
 
+  // Units P0b: a rewrite of a line HELD on a unit the ladder no longer names keeps its own snapshot.
+  const snap = input.existing;
+  const gone =
+    snap != null &&
+    unitNameKey(snap.unitLabel ?? "") === unitNameKey(label) &&
+    Number(snap.unitPrice) >= 0 &&
+    !ladderNames(ladderProduct, units, label);
   let listPrice: number;
   let tierPrice: number;
+  const layer = input.customerLayer ?? null;
   try {
-    listPrice = resolveUnitPrice(ladderProduct, units, label, 1);
-    tierPrice = resolveUnitPrice(ladderProduct, units, label, tier);
+    if (gone) {
+      tierPrice = roundMoney(Number(snap.unitPrice));
+      listPrice = roundMoney(Number(snap.originalPrice ?? snap.unitPrice));
+    } else {
+      // the layer row's own list when there is one, so the original and the SPECIAL/MANUAL type agree with the price
+      // (the ladder is still resolved: an unknown unit or an invalid tier is refused exactly as master does)
+      const ladderList = resolveUnitPrice(ladderProduct, units, label, 1);
+      const ladderTier = resolveUnitPrice(ladderProduct, units, label, tier);
+      listPrice = layer ? layer.listPrice : ladderList;
+      tierPrice = layer ? layer.price : ladderTier;
+    }
   } catch (e) {
     if (e instanceof InvalidTierError) {
       throw new BadRequestException(
@@ -395,6 +455,7 @@ export function buildUnitLine(input: {
     }
     throw e;
   }
+  const special = isSpecialPrice(tier, listPrice, layer?.price);
   // H3: ONE rule for a staff-typed price — judged against the customer's TIER unit price, never the list.
   const held =
     input.stored && norm(input.stored.unitLabel ?? "") === norm(label) ? input.stored : null;
@@ -418,32 +479,52 @@ export function buildUnitLine(input: {
           overridePrice: Number(item.unitPrice),
           baselinePrice: tierPrice,
           listPrice,
-          isSpecialTier: isSpecialTier(tier),
+          isSpecialTier: special,
           hasReason: !!item.overrideReason?.trim(),
         })
       : null;
   if (decision && "refused" in decision) throw specialPriceReasonRequired(product.name);
-  const ladderType: PriceType = isSpecialTier(tier) ? PriceType.SPECIAL : PriceType.STANDARD;
+  // Units P0b: a line held on a unit the ladder lost keeps how its snapshot was classified (never re-derived from the
+  // ladder that lost the level); otherwise the tier decides.
+  const ladderType: PriceType = gone
+    ? (snap?.priceType ?? PriceType.STANDARD)
+    : special
+      ? PriceType.SPECIAL
+      : PriceType.STANDARD;
   const unitPrice = echoesHeld
     ? roundMoney(Number(held.unitPrice))
     : decision
       ? decision.unitPrice
       : tierPrice;
+  // SA-811a R2: the customer's own price above the unit's Retail ladder price is the sticky upsell's twin: MANUAL (never a
+  // staff override, so no attribution) unless a staff-typed price really changed it.
+  const layerManual =
+    !!layer?.aboveList &&
+    !gone &&
+    !echoesHeld &&
+    (decision == null || ("priceType" in decision && decision.priceType === "SPECIAL"));
   const priceType: PriceType = echoesHeld
     ? (held.priceType as PriceType)
-    : decision
-      ? PriceType[decision.priceType]
-      : ladderType;
+    : layerManual
+      ? PriceType.MANUAL
+      : decision
+        ? PriceType[decision.priceType]
+        : ladderType;
   const originalPrice: number | null = echoesHeld
     ? held.originalPrice == null
       ? null
       : Number(held.originalPrice)
     : decision
       ? decision.originalPrice
-      : isSpecialTier(tier)
-        ? listPrice
-        : null;
-  const overridden = priceType === PriceType.DISCOUNTED || priceType === PriceType.MANUAL;
+      : gone
+        ? snap?.originalPrice == null
+          ? null
+          : roundMoney(Number(snap.originalPrice))
+        : special
+          ? listPrice
+          : null;
+  const overridden =
+    !layerManual && (priceType === PriceType.DISCOUNTED || priceType === PriceType.MANUAL);
   // the stamp: a held override keeps ITS reason and user; a new one is this edit's
   const stamp = !overridden
     ? null
@@ -452,12 +533,18 @@ export function buildUnitLine(input: {
           overrideReason: held.overrideReason ?? null,
           overriddenBy: held.overriddenBy ?? undefined,
         }
-      : input.overriddenBy
-        ? {
-            overrideReason: item.overrideReason?.trim() || null,
-            overriddenBy: input.overriddenBy,
+      : gone && snap && !decision
+        ? // a gone unit with no typed price re-writes the snapshot: its override keeps ITS reason and user
+          {
+            overrideReason: snap.overrideReason ?? null,
+            overriddenBy: snap.overriddenBy ?? undefined,
           }
-        : null;
+        : input.overriddenBy
+          ? {
+              overrideReason: item.overrideReason?.trim() || null,
+              overriddenBy: input.overriddenBy,
+            }
+          : null;
 
   // The real subtotal, now that tier pricing has resolved the actual unitPrice — the split
   // above is already buildLine-validated, so computeLineSubtotalStrict never throws here.
@@ -503,5 +590,26 @@ export function buildUnitLine(input: {
       tenantId: input.tenantId,
     },
     "buildUnitLine",
+  );
+}
+
+/**
+ * SA-728 / units P0b: `OrdersService.create()` — a derived Piece from an old client becomes the pack
+ * line's pieces (see `normalizeDerivedBaseLine`); every other item comes back as the SAME object.
+ */
+export function derivedBaseAsPack<T extends { productId?: string | null }>(
+  item: T,
+  products: ReadonlyMap<string, any>,
+  ladders: ReadonlyMap<string, LadderUnit[]>,
+  tierOverrides: ReadonlyMap<string, number | null>,
+  defaultTier: number,
+): T {
+  const p = item.productId ? products.get(item.productId) : undefined;
+  if (!p) return item;
+  return normalizeDerivedBaseLine(
+    item as T & Parameters<typeof normalizeDerivedBaseLine>[0],
+    asLadderProduct(p),
+    ladders.get(p.id) ?? [],
+    tierOverrides.get(p.id) ?? defaultTier,
   );
 }

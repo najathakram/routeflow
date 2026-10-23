@@ -137,15 +137,22 @@ describeDb("#2717 M2 family price write-through — real Postgres", () => {
         const newTier3 = `${5 + round}.50`;
         // eslint-disable-next-line no-await-in-loop
         const results = await Promise.allSettled([
-          inTenant(tenantId, () => service.update(family.id, { priceTier3: newTier3 } as any)),
           inTenant(tenantId, () =>
-            service.create({
-              name: `Flavor ${round}`,
-              variantName: `Flavor ${round}`,
-              parentProductId: family.id,
-              unit: "case",
-              pricePerUnit: "10.00",
-            } as any),
+            service.update(family.id, { priceTier3: newTier3 } as any, {
+              packPrecondition: "internal",
+            }),
+          ),
+          inTenant(tenantId, () =>
+            service.create(
+              {
+                name: `Flavor ${round}`,
+                variantName: `Flavor ${round}`,
+                parentProductId: family.id,
+                unit: "case",
+                pricePerUnit: "10.00",
+              } as any,
+              { reparentVia: "editor" },
+            ),
           ),
         ]);
         // The create may lose to a stale-dto 409 only if the edit changed a column the dto names;
@@ -192,7 +199,11 @@ describeDb("#2717 M2 family price write-through — real Postgres", () => {
         parentProductId: family.id,
       },
     });
-    await inTenant(tenantA, () => service.update(family.id, { priceTier3: "7.25" } as any));
+    await inTenant(tenantA, () =>
+      service.update(family.id, { priceTier3: "7.25" } as any, {
+        packPrecondition: "internal",
+      }),
+    );
     const after = await prisma.product.findUniqueOrThrow({ where: { id: foreign.id } });
     expect(after.pricePerUnit.toString()).toBe("3");
     expect(after.priceTier3.toString()).toBe("0");

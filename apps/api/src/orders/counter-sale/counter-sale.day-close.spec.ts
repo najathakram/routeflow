@@ -168,7 +168,7 @@ describe("CounterSaleService.ring — the day-close lock and window (SA-750r3)",
         reference: undefined,
         paidAt: DB_NOW.toISOString(),
       },
-      { tillLockHeld: true },
+      { tillLockHeld: true, paymentAttempt: expect.anything(), refDedupe: expect.anything() },
     );
     expect(events).toEqual(["lock", "window-read", "record", "unlock"]);
     expect(prisma.counterDayClose.findFirst.mock.calls[0][0].where).toMatchObject({

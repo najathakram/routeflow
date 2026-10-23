@@ -32,6 +32,11 @@ describe("OrdersService.updateFulfillPath: refuses a path the account does not o
 
   beforeEach(async () => {
     h = await buildOrdersService();
+    // BO-07: an OPERATOR switching to PICKUP is judged on the live user row; this one denies nothing.
+    h.prisma.user.findFirst.mockResolvedValue({
+      deniedPermissionGroups: [],
+      permissionsVersion: 1,
+    });
     h.prisma.order.findFirst.mockResolvedValue({
       id: "ord-1",
       status: "CONFIRMED",

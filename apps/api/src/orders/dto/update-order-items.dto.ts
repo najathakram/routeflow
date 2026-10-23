@@ -16,6 +16,7 @@ import { Transform, Type } from "class-transformer";
 import { StripHtml } from "../../common/transforms/strip-html.transform";
 import { AppliedCreditNoteDto } from "./create-order.dto";
 import { InlineReturnLinesDto } from "../../returns/dto/capture-inline-return.dto";
+import { IsOptionalNotNull } from "../../common/validators/optional-not-null";
 
 class UpdateOrderItemDto {
   @IsOptional()
@@ -83,7 +84,7 @@ class UpdateOrderItemDto {
   @IsOptional() @IsInt() @Min(0) @Max(100_000) boxes?: number;
   @IsOptional() @IsInt() @Min(0) @Max(100_000) pieces?: number;
 
-  @IsOptional()
+  @IsOptionalNotNull()
   @IsNumber()
   @Min(0)
   @Max(1_000_000)
@@ -161,7 +162,7 @@ export class UpdateOrderItemsDto {
   orderNotes?: string;
 
   /** Optional flat shipping fee added to the order total (never taxed). Staff-only. */
-  @IsOptional()
+  @IsOptionalNotNull()
   @IsNumber()
   @Min(0)
   @Max(1_000_000)

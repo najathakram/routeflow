@@ -47,6 +47,7 @@ import { staffMay } from "@routeflow/types";
 import { useLastKnownRoutesAccess } from "@/lib/last-known-routes-access";
 import { DRIVER_LANDING } from "@/lib/portal-routing";
 import { DriverAppBanner } from "./DriverAppBanner";
+import { GetTheAppStrip } from "./GetTheAppStrip";
 import { GettingStartedBanner } from "./GettingStartedBanner";
 import { useTenantOnboarding } from "@/lib/api/onboarding";
 import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
@@ -870,6 +871,9 @@ export default function DashboardPage() {
         onDismiss={() => setDriverBannerDismissed(true)}
       />
 
+      {/* ── Install-the-app nudge (row 559; never for drivers, who get the banner above) ── */}
+      <GetTheAppStrip isDriver={baseIsDriver} />
+
       {/* ── Driver with neither the routes nor the delivery add-on (#2254) ── */}
       {driverWithoutRuns && (
         <Card>
@@ -922,7 +926,10 @@ export default function DashboardPage() {
             {/* Store-only tenant: the SAME rule as the Orders header. New Order would open the counter too, so the
                 header is Invoice a customer (secondary) + Counter sale (primary); `builder=1` opens the builder
                 itself where the counter is the default. */}
-            {quickCreate.storeOnly && staffMay(user?.role, "USE_POS_MODE") ? (
+            {/* BO-07: the builder's PICKUP path is the till, so a denied operator does not see it (the server refuses it too). */}
+            {quickCreate.storeOnly &&
+            counterGate.permsKnown &&
+            staffMay(user?.role, "USE_POS_MODE", counterGate.deniedGroups) ? (
               <WriteButton
                 href="/orders?action=new&builder=1"
                 size="sm"

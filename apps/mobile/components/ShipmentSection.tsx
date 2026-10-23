@@ -214,7 +214,7 @@ const styles = StyleSheet.create({
   card: { backgroundColor: ios.bgElev, borderRadius: 14, padding: 14, gap: 10 },
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   cardTitle: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: ios.label },
-  editBtn: { flexDirection: "row", alignItems: "center", gap: 4 },
+  editBtn: { flexDirection: "row", alignItems: "center", gap: 4, minHeight: 44 },
   linkText: { fontSize: 14, fontFamily: "Inter_500Medium", color: ios.brand },
   empty: { fontSize: 13, fontFamily: "Inter_400Regular", color: ios.label2 },
   row: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
@@ -284,6 +284,8 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   carrierChip: {
+    minHeight: 44,
+    justifyContent: "center",
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 999,

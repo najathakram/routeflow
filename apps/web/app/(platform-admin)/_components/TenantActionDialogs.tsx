@@ -42,14 +42,32 @@ export const TENANT_ACTION_COPY = {
   deleteFailed: "Couldn't delete the tenant. Try again.",
   cancelSubscriptionFirst:
     "This tenant still has a Stripe subscription that hasn't ended (active, paused or incomplete). End it in Stripe first, then try again.",
+  stripeNotConfigured:
+    "Stripe isn't connected in this environment, so the subscription can't be checked.",
+  stripeAccountMismatch:
+    "Stripe can't find this tenant's subscription or customer. Check the Stripe key and mode before cancelling.",
+  stripeSubscriptionOwnerMismatch:
+    "This subscription belongs to a different Stripe customer. Check the tenant's billing record before cancelling.",
+  stripeNoStoredCustomer:
+    "This tenant has a subscription on file but no Stripe customer, so it can't be checked. Fix the tenant's billing record first.",
   subscriptionUnconfirmed:
-    "Couldn't confirm the tenant's Stripe subscription just now, or it changed meanwhile. Try again in a moment.",
+    "Couldn't confirm the tenant's Stripe subscription just now. Try again in a moment.",
+  tenantChanged: "This tenant changed while you were editing. Reload and try again.",
   actionFailed: "That didn't work. Try again.",
   suspendAutoReinstate: "Suspended tenants are reinstated automatically when they pay.",
 } as const;
 
 const errorCodeOf = (err: unknown): string | undefined =>
   (err as { response?: { data?: { code?: string } } } | null)?.response?.data?.code;
+
+const errorReasonOf = (err: unknown): string | undefined =>
+  (err as { response?: { data?: { reason?: string } } } | null)?.response?.data?.reason;
+
+/** Matches the API's `reason` on a CONCURRENT_UPDATE caused by a failed Stripe read. */
+const STRIPE_UNCONFIRMED_REASON = "STRIPE_UNCONFIRMED";
+
+/** Matches the API's `reason` on a STRIPE_SUBSCRIPTION_OWNER_MISMATCH for a tenant with no stored Stripe customer. */
+const NO_STORED_CUSTOMER_REASON = "NO_STORED_CUSTOMER";
 
 /**
  * The Stripe gate's coded 409s on a tenant status change or delete (a CANCELLED / delete over a subscription that
@@ -60,7 +78,21 @@ function stripeGateCopy(err: unknown): string | null {
   if (code === API_ERROR_CODES.TENANT_CANCEL_SUBSCRIPTION_FIRST) {
     return TENANT_ACTION_COPY.cancelSubscriptionFirst;
   }
-  if (code === API_ERROR_CODES.CONCURRENT_UPDATE) return TENANT_ACTION_COPY.subscriptionUnconfirmed;
+  if (code === API_ERROR_CODES.STRIPE_ACCOUNT_MISMATCH) {
+    return TENANT_ACTION_COPY.stripeAccountMismatch;
+  }
+  if (code === API_ERROR_CODES.STRIPE_SUBSCRIPTION_OWNER_MISMATCH) {
+    return errorReasonOf(err) === NO_STORED_CUSTOMER_REASON
+      ? TENANT_ACTION_COPY.stripeNoStoredCustomer
+      : TENANT_ACTION_COPY.stripeSubscriptionOwnerMismatch;
+  }
+  if (code === API_ERROR_CODES.STRIPE_NOT_CONFIGURED) return TENANT_ACTION_COPY.stripeNotConfigured;
+  if (code === API_ERROR_CODES.CONCURRENT_UPDATE) {
+    // Only a failed Stripe read says so (reason); any other lost race is the generic reload text.
+    return errorReasonOf(err) === STRIPE_UNCONFIRMED_REASON
+      ? TENANT_ACTION_COPY.subscriptionUnconfirmed
+      : TENANT_ACTION_COPY.tenantChanged;
+  }
   return null;
 }
 

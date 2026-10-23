@@ -1,5 +1,6 @@
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { productCodeInUse } from "./product-code-in-use";
+import { bareVariantNames } from "./product-variant-name";
 import {
   assertSafeProductCategory,
   assertSafeProductNames,
@@ -23,6 +24,7 @@ import { compressImage } from "../storage/compress.util";
 import { AddonService } from "../billing/addon.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { EntitlementsService } from "../billing/entitlements.service";
+import { UnitsPricesV2FlagCache, mayInventSku, newProductTierFallback } from "./new-product-tiers";
 import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { FeatureOverrideService } from "../billing/feature-override.service";
 import { buildPlanFlagDenial } from "../billing/plan-flag-denial";
@@ -39,6 +41,10 @@ import {
   signableImageKeys,
 } from "./product-image-keys";
 import { UpdateProductDto } from "./dto/update-product.dto";
+import {
+  assertCostingMethodAllowed,
+  effectiveCostingMethod,
+} from "../inventory/costing-method-policy";
 import { BulkAssignParentDto } from "./dto/bulk-assign-parent.dto";
 import { BulkSetMsrpDto } from "./dto/bulk-set-msrp.dto";
 import { ListProductsDto } from "./dto/list-products.dto";
@@ -50,6 +56,17 @@ import { buildProductListWhere } from "./product-list-where";
 import type { ProductIdsForFilterResponse } from "@routeflow/types";
 import { RULE_TARGETS_MAX_PER_REQUEST as PRODUCT_IDS_CAP } from "../selling-restrictions-admin/dto/rule-targets.dto";
 import { assertPackKeepsLevelsValid } from "./unit-pack-rules";
+import { lockProductPack } from "../units/tenant-units-lock";
+import {
+  EXPECTED_PACK_FIELDS,
+  LOGGED_AGENT_MAX,
+  PRODUCT_PACK_PRECONDITION_REQUIRED_MESSAGE,
+  assertPackUnchanged,
+  packTenantUnitIdOf,
+  sendsExpectedPack,
+  unguardedPackChanges,
+  type PackPrecondition,
+} from "./pack-precondition";
 import { isMsrpBelowWholesale, wholesalePerPiece } from "../common/msrp";
 import { TOBACCO_CATEGORY_NAME, isTobaccoCategoryName } from "../common/tobacco-category";
 import {
@@ -59,7 +76,18 @@ import {
   syncProductBarcodesFromLegacy,
   syncProductImagesFromLegacy,
 } from "./product-catalog-sync";
-import { labelNameKey, syncCategoryLabel } from "../product-categories/label-writer";
+import {
+  labelIdForText,
+  labelNameKey,
+  LabelLockTimeoutError,
+  lockLabelCategories,
+  syncCategoryLabel,
+} from "../product-categories/label-writer";
+import { txConflictState } from "../common/tx-retry";
+import {
+  keepLabelsOnReparent,
+  planReparentLabels,
+} from "../product-labels/keep-labels-on-reparent";
 import {
   claimCodes,
   codeClaims,
@@ -81,6 +109,7 @@ import {
   type BulkDeleteSkip,
   type ProductDeleteOutcome,
 } from "./product-delete-classify";
+import { stockTxBounded } from "../common/stock-tx";
 import { lockAndAssertRecipeGuards } from "./recipe-update-guard";
 import {
   applyFamilyPriceBeforeUpdate,
@@ -89,6 +118,7 @@ import {
   lockFamilyRow,
   propagateFamilyPrice,
   readFamilyPriceMode,
+  IMPORT_FAMILY_PRICING_ON_MESSAGE,
 } from "./family-price";
 import {
   assertValidParent,
@@ -96,6 +126,9 @@ import {
   PRODUCT_PARENT_REASONS,
   tenantSafeParent,
   tenantSafeParentView,
+  type FamilyAssignVia,
+  writeFamilyAssigned,
+  type ReparentOptions,
 } from "./product-parent";
 import { scanReadInclude } from "./scan-product-view";
 import {
@@ -149,7 +182,8 @@ function normalizeMsrpForWrite(v: string | null | undefined): string | null | un
  */
 const TENANT_COSTING_TO_PRODUCT: Record<string, CostingMethod> = {
   WEIGHTED_AVERAGE: CostingMethod.AVCO,
-  FIFO: CostingMethod.FIFO,
+  // SA-804 (1): a tenant whose stored default is the retired FIFO gets AVCO on a NEW product; it never sets FIFO.
+  FIFO: CostingMethod.AVCO,
   LAST_COST: CostingMethod.LAST_COST,
 };
 
@@ -158,6 +192,8 @@ export type { BulkDeleteSkip };
 @Injectable()
 export class ProductsService {
   private readonly logger = new Logger(ProductsService.name);
+  /** S4: flag.units_prices_v2, cached 30 s per tenant, read before a transaction opens. */
+  private readonly unitsPricesV2 = new UnitsPricesV2FlagCache();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -272,7 +308,7 @@ export class ProductsService {
    * never re-costed.
    */
   private async resolveCostingMethod(explicit?: CostingMethod): Promise<CostingMethod | undefined> {
-    if (explicit) return explicit;
+    if (explicit) return explicit; // already refused if retired: create() asserts before this runs
     const tenantMethod = await this.systemConfig.get("costing.method");
     return TENANT_COSTING_TO_PRODUCT[tenantMethod ?? ""] ?? undefined;
   }
@@ -572,6 +608,10 @@ export class ProductsService {
         origin: "LEGACY" as const,
       };
     });
+    // SA-797: the tenant unit the pack word names when the form opens; a save carrying `unit` sends it back.
+    const packTenantUnitId = readTenantId
+      ? await packTenantUnitIdOf(this.prisma.forTenant(), readTenantId, product.unit)
+      : null;
     return {
       ...product,
       parent: tenantSafeParent(product.parent, readTenantId),
@@ -580,6 +620,7 @@ export class ProductsService {
       stockAlertCount,
       barcodes,
       images,
+      packTenantUnitId,
     };
   }
 
@@ -763,9 +804,25 @@ export class ProductsService {
 
   async create(
     dto: CreateProductDto,
-    options?: { suppressEmit?: boolean; actorId?: string | null; actorName?: string | null },
+    options?: {
+      suppressEmit?: boolean;
+      actorId?: string | null;
+      actorName?: string | null;
+      /** SA-823 R11: which door created this product under a parent; the row is written in the create transaction. */
+      reparentVia?: FamilyAssignVia;
+    },
   ) {
+    // SA-823 R11: a product born under a parent is audited with its door; refuse before any read or write.
+    if (dto.parentProductId && !options?.reparentVia) {
+      throw new Error(
+        "ProductsService.create with parentProductId requires options.reparentVia (the audit row names its door)",
+      );
+    }
+    // B1: a variant stores its BARE label; strip a composed "<parent> - <label>" first, so the guard and the name
+    // uniqueness check below judge what will actually be stored.
+    await bareVariantNames(this.prisma.forTenant(), dto, dto.parentProductId);
     assertSafeProductNames(dto); // B964-2: a formula-led name/variantName is refused before any read or write
+    assertCostingMethodAllowed(dto.costingMethod); // SA-804 (1): FIFO/LIFO are retired: 400 COSTING_METHOD_RETIRED before any read or write
     // B990: the typed free-text category too, UNCONDITIONALLY: even with a structured subcategory chosen or a parent without one
     // the written value can still be the typed text, and checking at the top is before any read or write.
     if (dto.category !== undefined) assertSafeProductCategory(dto.category);
@@ -782,8 +839,12 @@ export class ProductsService {
       barcode: dto.barcode,
       unitSku: dto.unitSku,
     });
+    // S4: one cached read of flag.units_prices_v2, before the transaction opens.
+    const unitsV2 = await this.unitsPricesV2.isOn(this.entitlements, this.prisma.getTenantId());
     // Auto-generate a SKU if none supplied: first 3 alpha chars of name + 4 hex digits
-    if (!dto.sku) {
+    // (a flagged tenant keeps a blank SKU empty — "" is stored as NULL, which never collides)
+    if (!dto.sku && !mayInventSku(unitsV2)) dto.sku = undefined;
+    else if (!dto.sku) {
       const prefix = dto.name
         .replace(/[^a-zA-Z]/g, "")
         .slice(0, 3)
@@ -900,8 +961,10 @@ export class ProductsService {
     // #2717 M1 (SA-572b Q4/Q6): the resolved costingMethod is computed OUTSIDE the transaction
     // below (it may call resolveCostingMethod, which itself reads/writes SystemConfig) so the tx
     // body stays a plain product-create + barcode-row sync.
+    // SA-804 (1): a variant that inherits a parent still stored as FIFO/LIFO takes the AVCO that parent is
+    // costed as, never the retired value (an explicit retired dto value was already refused at the top).
     const resolvedCostingMethod = parent
-      ? (dto.costingMethod ?? parent.costingMethod)
+      ? (dto.costingMethod ?? effectiveCostingMethod(parent.costingMethod))
       : await this.resolveCostingMethod(dto.costingMethod);
     const resolvedUnitsPerBox = dto.unitsPerBox ?? parent?.unitsPerBox ?? undefined;
     const tenantId = this.prisma.getTenantId();
@@ -910,6 +973,7 @@ export class ProductsService {
     const familyMode = dto.parentProductId
       ? await readFamilyPriceMode(this.featureConfig, tenantId)
       : "off";
+    const tierFallback = newProductTierFallback(unitsV2, dto.pricePerUnit);
     const created = await this.prisma.tenantTransaction(async (tx: any) => {
       // SA-572b Q4/SA-572c: lock the code BEFORE the create — otherwise a concurrent create of the
       // same code races on the legacy unique index and surfaces a raw P2002 instead of a 409.
@@ -951,14 +1015,10 @@ export class ProductsService {
             })
           : {
               pricePerUnit: dto.pricePerUnit,
-              priceTier2:
-                dto.priceTier2 ?? (parent ? parent.priceTier2.toString() : dto.pricePerUnit),
-              priceTier3:
-                dto.priceTier3 ?? (parent ? parent.priceTier3.toString() : dto.pricePerUnit),
-              priceTier4:
-                dto.priceTier4 ?? (parent ? parent.priceTier4.toString() : dto.pricePerUnit),
-              priceTier5:
-                dto.priceTier5 ?? (parent ? parent.priceTier5.toString() : dto.pricePerUnit),
+              priceTier2: dto.priceTier2 ?? (parent ? parent.priceTier2.toString() : tierFallback),
+              priceTier3: dto.priceTier3 ?? (parent ? parent.priceTier3.toString() : tierFallback),
+              priceTier4: dto.priceTier4 ?? (parent ? parent.priceTier4.toString() : tierFallback),
+              priceTier5: dto.priceTier5 ?? (parent ? parent.priceTier5.toString() : tierFallback),
             };
       let row;
       try {
@@ -1017,6 +1077,18 @@ export class ProductsService {
         text: row.category,
         actor: { id: options?.actorId ?? null, name: options?.actorName ?? null },
       });
+      if (dto.parentProductId && options?.reparentVia) {
+        // SA-823 R11: a product born under a parent is an assignment too (fromParentId null), in this same tx.
+        await writeFamilyAssigned(tx, {
+          tenantId,
+          actorId: options.actorId,
+          productId: row.id,
+          fromParentId: null,
+          toParentId: dto.parentProductId,
+          variantName: row.variantName ?? null,
+          via: options.reparentVia,
+        });
+      }
       return row;
     });
     if (!options?.suppressEmit) this.emitProductChanged(created.id, "created");
@@ -1026,7 +1098,21 @@ export class ProductsService {
   async update(
     id: string,
     dto: UpdateProductDto,
-    options?: { suppressEmit?: boolean; actorId?: string | null; actorName?: string | null },
+    options: {
+      /** SA-797a: REQUIRED so every caller is found. Only the PATCH controller is "client". */
+      packPrecondition: PackPrecondition;
+      /** The client's User-Agent, logged with a PRODUCT_PACK_PRECONDITION_REQUIRED refusal. */
+      clientAgent?: string | null;
+      suppressEmit?: boolean;
+      actorId?: string | null;
+      actorName?: string | null;
+      /**
+       * SA-823 R11: REQUIRED (a plain Error otherwise) when this write changes `parentProductId`, so the audit row
+       * names its door. Reparent callers use assignToParent / unlinkFromParent, which require it; only the PATCH
+       * controller passes it directly.
+       */
+      reparentVia?: FamilyAssignVia;
+    },
   ) {
     await this.assertCanFlagTobacco(dto.isTobacco);
     if (dto.msrp !== undefined) await this.assertMsrpAllowed();
@@ -1034,6 +1120,8 @@ export class ProductsService {
       await this.assertReorderAllowed();
     }
     const existing = await this.findOne(id);
+    // SA-804 (1): FIFO/LIFO are retired: refuse SETTING one (400 COSTING_METHOD_RETIRED) before any write.
+    assertCostingMethodAllowed(dto.costingMethod, existing.costingMethod);
     if (
       dto.deactivateHolderIds?.length &&
       !(existing.isActive === false && dto.isActive === true)
@@ -1042,6 +1130,13 @@ export class ProductsService {
         "deactivateHolderIds only applies when reactivating an inactive product",
       );
     }
+    // B1: a variant stores its BARE label; a composed "<parent> - <label>" from a client is stripped first (so the
+    // change-only name guard and the uniqueness check below judge the label that will actually be stored).
+    await bareVariantNames(
+      this.prisma.forTenant(),
+      dto,
+      dto.parentProductId !== undefined ? dto.parentProductId : existing.parentProductId,
+    );
     assertSafeProductNames(dto, existing); // B964-2: change-only against the one read already made
     // B990: change-only for the free-text category, BEFORE resolveOrCreateTobaccoCategory below, so a refusal never leaves an orphan Tobacco type
     if (dto.category !== undefined)
@@ -1137,25 +1232,6 @@ export class ProductsService {
       (field) => dto[field] !== undefined && (dto[field] ?? null) !== (existing[field] ?? null),
     );
     const sectionChanged = (effectiveCategoryId ?? null) !== (existing.trackedCategoryId ?? null);
-    // units_v1: a pack edit (name, size, or moving into a regulated section) must not
-    // invalidate the unit levels already defined on this product.
-    const nextUnit = dto.unit !== undefined ? dto.unit : existing.unit;
-    const nextUnitsPerBox = dto.unitsPerBox !== undefined ? dto.unitsPerBox : existing.unitsPerBox;
-    const packTouched =
-      nextUnit !== existing.unit ||
-      (nextUnitsPerBox ?? null) !== (existing.unitsPerBox ?? null) ||
-      (sectionChanged && effectiveCategoryId != null);
-    if (packTouched) {
-      const levels = await this.prisma.forTenant().productUnit.findMany({
-        where: { productId: id },
-        select: { label: true, factorToBase: true },
-      });
-      assertPackKeepsLevelsValid(levels, {
-        unit: nextUnit,
-        unitsPerBox: nextUnitsPerBox,
-        regulated: effectiveCategoryId != null,
-      });
-    }
     // `!clearingSection` is load-bearing: a legitimate section clear is a move too,
     // and validating it would 400 on "requires a regulated type" before the
     // auto-clear below ever runs.
@@ -1172,10 +1248,17 @@ export class ProductsService {
     // `where: any` Prisma clauses elsewhere in this file.
     const data: any =
       dto.name !== undefined && effectiveParentId ? { ...dto, variantName: dto.name } : { ...dto };
+    // SA-804 (1): echoing the product's own stored FIFO/LIFO back is a no-op, so it is dropped from the write
+    // instead of failing a whole-object save (a different retired value was already refused above).
+    if (dto.costingMethod !== undefined && dto.costingMethod === existing.costingMethod) {
+      delete data.costingMethod;
+    }
     // Not a column: the one-tx reactivation door reads it from `dto` (see deactivateReactivationHolders).
     delete data.deactivateHolderIds;
     // Not a column either: B1213's family-deactivation confirmation, read from `dto` inside the tx.
     delete data.confirmCascade;
+    // Nor the SA-797 pack precondition: compared inside the tx, never written.
+    for (const k of EXPECTED_PACK_FIELDS) delete data[k];
     // Force the (possibly auto-cleared) subcategory into the write when the section
     // was cleared but the client didn't also clear the subcategory.
     if (effectiveCategoryId == null && existing.trackedSubcategoryId != null) {
@@ -1268,10 +1351,91 @@ export class ProductsService {
       hasPriceColumns(dto) || dto.parentProductId
         ? await readFamilyPriceMode(this.featureConfig, tenantId)
         : "off";
+    // Set when an old client's pack echo was stripped from the write; a PATCH left with nothing else to write
+    // then writes no row at all (no UPDATE, no event) and answers with the stored row.
+    let packEchoStripped = false;
+    let wroteRow = true;
     let propagatedRows = 0;
     let doorDeactivated: string[] = [];
     let cascaded: string[] = [];
-    const updated = await this.prisma.tenantTransaction(async (tx: any) => {
+    let keptLabels: string[] | null = null;
+    // A parent CHANGE (an unlink included); an echo of the current parent is not one.
+    const reparenting =
+      dto.parentProductId !== undefined &&
+      dto.parentProductId !== (existing.parentProductId ?? null);
+    // SA-823 R11: refuse before the transaction (an echo of the current parent is not a change and passes).
+    if (reparenting && !options?.reparentVia) {
+      throw new Error(
+        "ProductsService.update changed parentProductId without options.reparentVia (use assignToParent / unlinkFromParent)",
+      );
+    }
+    const txDone = this.prisma.tenantTransaction(async (tx: any) => {
+      // units_v1: a pack edit (unit word, size or regulated section) must not invalidate the levels on
+      // this product. FIRST in the tx, before any other lock: the tenant units lock (a rename holds it
+      // exclusive) and THIS product's lock (the one every level write takes). Whether the pack really
+      // moves is judged on the row read UNDER those locks, never on the pre-tx `existing`, so the levels
+      // are checked against the pack as it is NOW. SA-797 (row 218): a form that sends the pack it READ
+      // (expectedUnit / expectedUnitsPerBox / expectedTenantUnitId) is refused with a 409 when that pack moved
+      // meanwhile (a rename committed while the form was open), compared on this same locked read. A VALUE
+      // compare, never updatedAt: every stock and cost write moves updatedAt.
+      if (
+        dto.unit !== undefined ||
+        dto.unitsPerBox !== undefined ||
+        dto.trackedCategoryId !== undefined ||
+        sendsExpectedPack(dto)
+      ) {
+        await lockProductPack(tx, tenantId, id);
+        const locked = await tx.product.findUnique({
+          where: { id },
+          select: { unit: true, unitsPerBox: true, trackedCategoryId: true },
+        });
+        if (!locked) throw new NotFoundException("Product not found");
+        await assertPackUnchanged(tx, tenantId, locked, dto);
+        if (options.packPrecondition === "client") {
+          const fields = unguardedPackChanges(locked, dto);
+          if (fields.length > 0) {
+            // TODO(2026-10-23): SA-797a measure — remove this log line 7 days after it ships. No client sends
+            // an app-version header today, so appVersion is "unknown" and the User-Agent (an iOS build
+            // carries its CFBundleVersion there) is logged beside it.
+            this.logger.warn(
+              `PRODUCT_PACK_PRECONDITION_REQUIRED product=${id} tenant=${tenantId} fields=${fields.join(",")} appVersion=unknown userAgent=${JSON.stringify(options.clientAgent?.slice(0, LOGGED_AGENT_MAX) ?? null)}`,
+            );
+            throw new ConflictException({
+              code: API_ERROR_CODES.PRODUCT_PACK_PRECONDITION_REQUIRED,
+              message: PRODUCT_PACK_PRECONDITION_REQUIRED_MESSAGE,
+            });
+          }
+          // An echo of the pack word (same unitNameKey, no expectedUnit) changes nothing: keep the stored spelling,
+          // and drop it (and an equal size, which unguardedPackChanges already let through) from the write.
+          if (dto.unit !== undefined && dto.expectedUnit === undefined) {
+            dto.unit = locked.unit;
+            delete data.unit;
+            packEchoStripped = true;
+          }
+          if (dto.unitsPerBox !== undefined && dto.expectedUnitsPerBox === undefined) {
+            delete data.unitsPerBox;
+            packEchoStripped = true;
+          }
+        }
+        const nextUnit = dto.unit !== undefined ? dto.unit : locked.unit;
+        const nextUnitsPerBox =
+          dto.unitsPerBox !== undefined ? dto.unitsPerBox : locked.unitsPerBox;
+        const nextCategoryId =
+          dto.trackedCategoryId !== undefined ? dto.trackedCategoryId : locked.trackedCategoryId;
+        const packTouched =
+          nextUnit !== locked.unit ||
+          (nextUnitsPerBox ?? null) !== (locked.unitsPerBox ?? null) ||
+          (nextCategoryId != null && nextCategoryId !== (locked.trackedCategoryId ?? null));
+        if (packTouched) {
+          assertPackKeepsLevelsValid(
+            await tx.productUnit.findMany({
+              where: { productId: id },
+              select: { label: true, factorToBase: true },
+            }),
+            { unit: nextUnit, unitsPerBox: nextUnitsPerBox, regulated: nextCategoryId != null },
+          );
+        }
+      }
       // SA-603a: reactivate restores the retired codes still free; a code this PATCH sets is claimed (an inactive
       // holder is released + audited, an active one is a 409); deactivate releases BEFORE the isActive write.
       const claims = codeClaims(dto, existing);
@@ -1279,6 +1443,8 @@ export class ProductsService {
       const deactivating = existing.isActive !== false && data.isActive === false;
       const effectiveParent =
         dto.parentProductId !== undefined ? dto.parentProductId : existing.parentProductId;
+      /** The label locks a reparent took before its row locks (see below); the keep may write only these. */
+      let reparentLocks: Set<string> | undefined;
       // B1213: deactivating a family that still has ACTIVE variants is a coded 409 unless confirmed; a confirmed one
       // deactivates them in this tx, so their codes join the ONE sorted lock call below.
       const cascadeIds = deactivating ? await activeVariantIds(tx, tenantId, id) : [];
@@ -1307,6 +1473,27 @@ export class ProductsService {
           : []),
       ].filter((c): c is string => typeof c === "string" && c.trim().length > 0);
       await lockBarcodeCodes(tx, tenantId, lockList);
+      // H2: a parent CHANGE first reads, read-only, which labels the move would lose (an OLD family chain that can't be
+      // read in full is refused here, a coded 409, before any write or row lock), then takes THOSE label locks and the
+      // category text's label lock, sorted, BEFORE the family/product rows FOR UPDATE below. setLabel takes the label
+      // lock and then the product row (FK KEY SHARE); the reverse order here cycled (40P01). The keep re-checks under
+      // the row locks and refuses (retryable 409) a label outside this set instead of locking it late.
+      if (reparenting) {
+        const planned = await planReparentLabels(tx, {
+          tenantId,
+          productId: id,
+          fromParentId: existing.parentProductId ?? null,
+          toParentId: dto.parentProductId ?? null,
+        });
+        // The category text's label, only when this PATCH changes the text's name key: only then does the sync below run.
+        const nextText = data.category !== undefined ? data.category : existing.category;
+        const textLabel =
+          labelNameKey(nextText) !== labelNameKey(existing.category)
+            ? await labelIdForText(tx, tenantId, nextText)
+            : null;
+        reparentLocks = new Set([...planned, ...(textLabel ? [textLabel] : [])]);
+        await lockLabelCategories(tx, tenantId, reparentLocks);
+      }
       // B1213: a variant is only as live as its family. The family row is locked before anything of this variant is
       // written (house order F -> V); a CHANGED parent is judged by assertValidParent below, which refuses an
       // inactive one.
@@ -1400,7 +1587,11 @@ export class ProductsService {
       // Codes + row lock BEFORE the isActive write (Opus #2860 B1): the release takes this product's code locks, then
       // its row lock; the UPDATE below must never be the first thing to lock the row.
       if (deactivating) {
-        await releaseProductCodes(tx, { tenantId, productId: id, lockedCodes: new Set(lockList) });
+        await releaseProductCodes(tx, {
+          tenantId,
+          productId: id,
+          lockedCodes: new Set(lockList),
+        });
         // The family row is held now: its variants follow in id order (re-read under the lock).
         cascaded = await cascadeDeactivate(tx, {
           tenantId,
@@ -1409,9 +1600,16 @@ export class ProductsService {
           confirmed: !!dto.confirmCascade,
         });
       }
+      if (packEchoStripped && Object.values(data).every((v) => v === undefined)) {
+        wroteRow = false;
+        return tx.product.findUnique({ where: { id } });
+      }
       // The category text this write REPLACES, read inside the tx (the label sync below compares name keys against it,
       // never the pre-transaction read). A plain read: the UPDATE right after takes the row lock (house lock order).
-      const before = await tx.product.findFirst({ where: { id }, select: { category: true } });
+      const before = await tx.product.findFirst({
+        where: { id },
+        select: { category: true, parentProductId: true },
+      });
       let row;
       try {
         row = await tx.product.update({ where: { id }, data });
@@ -1445,6 +1643,52 @@ export class ProductsService {
           productId: id,
           text: row.category,
           actor: { id: options?.actorId ?? null, name: options?.actorName ?? null },
+          lockedCategoryIds: reparentLocks,
+        });
+      }
+      // H2: a CHANGED parent (incl. an unlink) never drops a label the variant carried through the old one: what was
+      // effective before and is not after becomes its own INCLUDE, in this tx (rolls the parent write back on failure).
+      const fromParentId = before?.parentProductId ?? null;
+      if (dto.parentProductId !== undefined && dto.parentProductId !== fromParentId) {
+        keptLabels = (
+          await keepLabelsOnReparent(tx, {
+            tenantId,
+            productId: id,
+            fromParentId,
+            toParentId: dto.parentProductId ?? null,
+            actor: { id: options?.actorId ?? null, name: options?.actorName ?? null },
+            // An echo of a parent that moved concurrently took no locks up front: an empty set, so anything to keep is the
+            // retryable 409 rather than a label lock after the row lock.
+            lockedCategoryIds: reparentLocks ?? new Set<string>(),
+          })
+        ).keptLabels;
+        // SA-823 R11: the assignment is audited in THIS transaction (rolls back with the reparent); an echo never gets here.
+        const via = options?.reparentVia;
+        if (!via) {
+          // In-tx twin of the pre-tx guard: a parent that moved after findOne() must still name its door (rolls back).
+          throw new Error(
+            "ProductsService.update changed parentProductId without options.reparentVia",
+          );
+        }
+        // SA-823: the product import never re-prices. Family pricing turned ON since the import was planned (a queued
+        // apply can run minutes later) refuses the move here, after the locks; the throw rolls the whole move back.
+        if (
+          via === "import" &&
+          (await readFamilyPriceMode(this.featureConfig, tenantId)) === "on"
+        ) {
+          throw new ConflictException({
+            code: API_ERROR_CODES.IMPORT_FAMILY_PRICING_ON,
+            message: IMPORT_FAMILY_PRICING_ON_MESSAGE,
+          });
+        }
+        await writeFamilyAssigned(tx, {
+          tenantId,
+          actorId: options?.actorId,
+          productId: id,
+          fromParentId,
+          toParentId: dto.parentProductId ?? null,
+          variantName: row.variantName ?? null,
+          via,
         });
       }
       if (family.propagate) {
@@ -1453,14 +1697,21 @@ export class ProductsService {
       }
       return row;
     });
+    // H2: a reparent's deadlock / write conflict (40P01, 40001, P2034 in any shape: the shared L-221 predicate) is the
+    // retryable coded 409, never a raw 500. Nothing was saved (the transaction rolled back).
+    const updated = await txDone.catch((e: unknown): never => {
+      if (reparenting && txConflictState(e)) throw new LabelLockTimeoutError();
+      throw e;
+    });
     // suppressEmit lets a caller that loops this method (bulkAssignParent) emit
     // ONE coalesced event after the loop instead of one per row.
-    if (!options?.suppressEmit) this.emitProductChanged(id, "updated");
+    if (!options?.suppressEmit && wroteRow) this.emitProductChanged(id, "updated");
     // The one-tx door deactivated blocking products too: buyer/driver caches must not keep them visible (SA-603j LOW, N4).
     if (doorDeactivated.length > 0 || cascaded.length > 0) this.emitProductChanged(null, "bulk");
     // The family edit moved its children's prices: ONE coalesced event, after the commit (L-237).
     if (propagatedRows > 0) this.emitProductChanged(null, "bulk");
-    return updated;
+    // A reparent reports the labels it kept (names; [] = nothing was lost); any other write returns the row as before.
+    return keptLabels ? { ...updated, keptLabels } : updated;
   }
 
   /**
@@ -1590,6 +1841,47 @@ export class ProductsService {
   }
 
   /**
+   * SA-823 R11: THE entry that moves an existing product under a parent. A thin wrapper over update() (the only
+   * reparent writer): full validation, label keeping and the `product.family_assigned` audit row all happen there,
+   * in one transaction. Returns update()'s result (with `keptLabels` when the move kept any).
+   */
+  async assignToParent(
+    id: string,
+    parentProductId: string,
+    variantName: string,
+    opts: ReparentOptions,
+  ) {
+    return this.update(
+      id,
+      {
+        ...(opts.extraChanges ?? {}),
+        parentProductId,
+        variantName,
+        // Variants store JUST the variant name in `name` (PR #44).
+        name: variantName,
+      } as UpdateProductDto,
+      {
+        packPrecondition: "internal", // the move itself writes no pack field; extraChanges (the import) may carry unitsPerBox, a trusted internal write
+        reparentVia: opts.via,
+        suppressEmit: opts.suppressEmit,
+        actorId: opts.actorId ?? null,
+        actorName: opts.actorName ?? null,
+      },
+    );
+  }
+
+  /** SA-823 R11: the entry that makes a variant standalone again (parentProductId null); audited like any parent change. */
+  async unlinkFromParent(id: string, opts: ReparentOptions) {
+    return this.update(id, { parentProductId: null } as UpdateProductDto, {
+      packPrecondition: "internal",
+      reparentVia: opts.via,
+      suppressEmit: opts.suppressEmit,
+      actorId: opts.actorId ?? null,
+      actorName: opts.actorName ?? null,
+    });
+  }
+
+  /**
    * Promote existing standalone products to variants of one parent in a single
    * request (the web's "Group as variants of…" bulk action). Runs SEQUENTIALLY
    * through update() so each row gets the full validation (per-parent name
@@ -1598,7 +1890,13 @@ export class ProductsService {
    */
   async bulkAssignParent(
     dto: BulkAssignParentDto,
-  ): Promise<{ succeeded: string[]; failed: { id: string; reason: string }[] }> {
+    actor?: { actorId?: string | null; actorName?: string | null },
+  ): Promise<{
+    succeeded: string[];
+    failed: { id: string; reason: string }[];
+    /** Per child that kept labels it carried through its old parent (children that lost nothing are absent). */
+    keptLabels: { id: string; labels: string[] }[];
+  }> {
     const bulkTenantId = this.prisma.getTenantId();
     if (!bulkTenantId) throw new BadRequestException("No tenant context");
     await assertValidParent(this.prisma.forTenant(), {
@@ -1624,22 +1922,26 @@ export class ProductsService {
     });
     const succeeded: string[] = [];
     const failed: { id: string; reason: string }[] = [];
+    const keptLabels: { id: string; labels: string[] }[] = [];
     for (const assignment of dto.assignments) {
       try {
         // suppressEmit: this loop can reassign N products in one request — emit
         // ONE coalesced event after the loop below, never one per row (the same
         // rule bulkSetMsrp/bulkDelete/importFromZoho already follow).
-        await this.update(
+        const moved = await this.assignToParent(
           assignment.id,
+          dto.parentProductId,
+          assignment.variantName,
           {
-            parentProductId: dto.parentProductId,
-            variantName: assignment.variantName,
-            // Variants store JUST the variant name in `name` (PR #44).
-            name: assignment.variantName,
-          } as UpdateProductDto,
-          { suppressEmit: true },
+            via: "bulk_assign",
+            suppressEmit: true,
+            actorId: actor?.actorId ?? null,
+            actorName: actor?.actorName ?? null,
+          },
         );
         succeeded.push(assignment.id);
+        const labels = (moved as { keptLabels?: string[] } | null)?.keptLabels ?? [];
+        if (labels.length > 0) keptLabels.push({ id: assignment.id, labels });
       } catch (err) {
         // F8-003: surface the app's OWN validation messages (HttpException — intentional
         // and user-facing, e.g. "A variant named X already exists"), but genericize any
@@ -1658,7 +1960,7 @@ export class ProductsService {
     // ONE coalesced event for the whole request, never one per reassigned row —
     // each call above ran with suppressEmit so this is the only emit it produces.
     if (succeeded.length > 0) this.emitProductChanged(null, "bulk");
-    return { succeeded, failed };
+    return { succeeded, failed, keptLabels };
   }
 
   async remove(id: string, options?: { confirmCascade?: boolean }) {
@@ -1757,7 +2059,10 @@ export class ProductsService {
 
     let outcome: ProductDeleteOutcome;
     try {
-      outcome = await this.prisma.tenantTransaction(
+      // The row locks are bounded (5 s): a lock wait that times out is retried, then the coded 503 (SA-767 R6).
+      outcome = await stockTxBounded(
+        this.prisma,
+        "products.bulkDelete",
         (tx: any) => applyProductDelete(tx, { tenantId, ids, nameById, preSoftIds: peek.softIds }),
         { timeout: 60_000 },
       );
@@ -1784,6 +2089,8 @@ export class ProductsService {
     let created = 0;
     let skipped = 0;
     const errors: Array<{ row: number; name: string; reason: string }> = [];
+    // S4: one cached flag read before the loop (and before any transaction).
+    const unitsV2 = await this.unitsPricesV2.isOn(this.entitlements, this.prisma.getTenantId());
 
     for (let i = 0; i < dto.items.length; i++) {
       const item = dto.items[i];
@@ -1870,10 +2177,10 @@ export class ProductsService {
                 barcode: item.barcode ?? null,
                 unit: item.unit,
                 pricePerUnit: item.pricePerUnit,
-                priceTier2: item.pricePerUnit,
-                priceTier3: item.pricePerUnit,
-                priceTier4: item.pricePerUnit,
-                priceTier5: item.pricePerUnit,
+                priceTier2: newProductTierFallback(unitsV2, item.pricePerUnit),
+                priceTier3: newProductTierFallback(unitsV2, item.pricePerUnit),
+                priceTier4: newProductTierFallback(unitsV2, item.pricePerUnit),
+                priceTier5: newProductTierFallback(unitsV2, item.pricePerUnit),
                 category: item.category ?? null,
                 description: item.description ?? null,
                 isActive: item.isActive ?? true,

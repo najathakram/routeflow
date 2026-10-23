@@ -64,6 +64,9 @@ export interface StockCountAutosaveDeps {
   /** Best-effort observability for a write that failed; the queue already
    * retries on the next flush, so this is for logging/toasting only. */
   onError?: (err: unknown, productId: string) => void;
+  /** A failure that retrying can never fix (the server refused the line: SA-767 r-note 5 SA-3, the
+   * product is on another open count). It is reported through `onError` once and NOT queued again. */
+  isPermanent?: (err: unknown) => boolean;
 }
 
 export const STOCK_COUNT_AUTOSAVE_DEBOUNCE_MS = 900;
@@ -157,7 +160,7 @@ export function createStockCountAutosave(deps: StockCountAutosaveDeps): StockCou
         await deps.upsertLine({ productId, mode: entry.mode, ...entry.patch });
       }
     } catch (err) {
-      mergeBack(productId, entry);
+      if (!deps.isPermanent?.(err)) mergeBack(productId, entry);
       deps.onError?.(err, productId);
     }
   }
@@ -214,6 +217,7 @@ export interface UseStockCountAutosaveOptions {
   removeLine: StockCountAutosaveDeps["removeLine"];
   debounceMs?: number;
   onError?: StockCountAutosaveDeps["onError"];
+  isPermanent?: StockCountAutosaveDeps["isPermanent"];
 }
 
 export interface StockCountAutosaveHandle {
@@ -232,11 +236,17 @@ export interface StockCountAutosaveHandle {
 export function useStockCountAutosave(
   options: UseStockCountAutosaveOptions,
 ): StockCountAutosaveHandle {
-  const { upsertLine, removeLine, debounceMs, onError } = options;
+  const { upsertLine, removeLine, debounceMs, onError, isPermanent } = options;
 
   const engineRef = useRef<StockCountAutosave | null>(null);
   if (!engineRef.current) {
-    engineRef.current = createStockCountAutosave({ upsertLine, removeLine, debounceMs, onError });
+    engineRef.current = createStockCountAutosave({
+      upsertLine,
+      removeLine,
+      debounceMs,
+      onError,
+      isPermanent,
+    });
   }
   const engine = engineRef.current;
 

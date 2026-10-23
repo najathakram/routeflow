@@ -165,7 +165,8 @@
       "-script\\.spec\\.ts$",
       "size-ratchet\\.spec\\.ts$",
       "owner-report-db-url\\.spec\\.ts$",
-      "no-collection-time-clock-fuse\\.spec\\.ts$"
+      "no-collection-time-clock-fuse\\.spec\\.ts$",
+      "graph-core\\.spec\\.ts$"
     ],
     "transform": {
       "^.+\\.(t|j)s$": "ts-jest"

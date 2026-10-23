@@ -31,10 +31,6 @@ const INLINE_TOTAL_ALL = new RegExp(INLINE_TOTAL.source, "g");
  * inside an allowlisted file changes the count and fails; zero matches is an error (retire the entry).
  */
 const ALLOWLIST: Record<string, { count: number; why: string }> = {
-  "apps/api/src/invoices/price-adjustment-ledger.ts": {
-    count: 1,
-    why: "totalsFromLines: the exempt asymmetry (SA-734 A4, bug r186); lands with the B297 PR3 lane",
-  },
   "apps/api/src/estimates/estimates.service.ts": {
     count: 1,
     why: "estimate create total from the dto taxAmount (B395 -> SA-761a T-3)",

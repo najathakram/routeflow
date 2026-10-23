@@ -1,5 +1,6 @@
 import * as React from "react";
 import { renderWithProviders, screen, waitFor, fireEvent } from "@/test-utils/render";
+import { renderTill } from "@/test-utils/render-till";
 import { CounterSaleScreen } from "./CounterSaleScreen";
 
 /** POS-4: the receipt mounts the "Return items" action for the sale's order. */
@@ -60,7 +61,7 @@ it("the receipt mounts the return action for the sale's order", async () => {
     change: 17.5,
     paymentRecorded: true,
   });
-  renderWithProviders(<CounterSaleScreen />);
+  renderTill(<CounterSaleScreen />);
   const field = screen.getByLabelText("Scan or search items");
   fireEvent.change(field, { target: { value: "X" } });
   fireEvent.submit(field.closest("form")!);

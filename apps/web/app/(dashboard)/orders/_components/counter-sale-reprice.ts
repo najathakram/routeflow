@@ -1,4 +1,8 @@
-import { getTierPrice, isSpecialTier, withinStaffOverrideTolerance } from "@routeflow/pricing";
+import {
+  customerLinePrice,
+  withinStaffOverrideTolerance,
+  type CustomerLayerUnit,
+} from "@routeflow/pricing";
 import { resolveCounterPriceEdit } from "@/lib/counter-price-edit";
 import type { SaleLine } from "./counter-sale-scan";
 
@@ -14,6 +18,9 @@ import type { SaleLine } from "./counter-sale-scan";
  * cent) is no override and the line becomes a plain line again. A line without a snapshot (held before this existed) is left
  * alone. `kept` counts the edited lines whose tier price the customer WOULD have changed; an edited line whose net
  * stands and only whose STANDARD/SPECIAL flag moved is updated silently and is NOT counted as kept.
+ *
+ * S19b (SA-811a): `layerOf` (flag on, the customer's price layer) puts a layered product on the customer's price through
+ * `customerLinePrice`; with no layer for a product (flag off: `layerOf` omitted) the price is master's `getTierPrice`.
  */
 export interface RepriceResult {
   lines: SaleLine[];
@@ -26,6 +33,7 @@ export interface RepriceResult {
 export function repriceLines(
   lines: readonly SaleLine[],
   tierFor: (productId: string) => number,
+  layerOf?: (productId: string) => readonly CustomerLayerUnit[] | undefined,
 ): RepriceResult {
   let changed = 0;
   let kept = 0;
@@ -34,8 +42,13 @@ export function repriceLines(
   const next = lines.map((l) => {
     if (!l.tierPrices) return l;
     const tier = tierFor(l.productId);
-    const unitPrice = getTierPrice(l.tierPrices, tier);
-    const priceType = isSpecialTier(tier) ? ("SPECIAL" as const) : ("STANDARD" as const);
+    const lp = customerLinePrice({
+      product: l.tierPrices as Record<string, unknown>,
+      tier,
+      layer: layerOf?.(l.productId),
+    });
+    const unitPrice = lp.price;
+    const priceType = lp.isSpecial ? ("SPECIAL" as const) : ("STANDARD" as const);
     if (l.override) {
       // R17-3: a percent or dollars-off edit is RE-APPLIED to the new customer's price; a hand-typed price (mode "set"),
       // or an edit this customer cannot take (over their price, a special tier with no reason), keeps its net.
@@ -49,6 +62,7 @@ export function repriceLines(
             tierPrice: unitPrice,
             listPrice: l.listPrice ?? unitPrice,
             tier,
+            ...(lp.layered ? { isSpecial: lp.isSpecial } : {}),
             qty: l.qty,
             boxes: l.boxes,
             pieces: l.pieces,
@@ -101,8 +115,23 @@ export function repriceLines(
     changed += 1;
     return { ...l, unitPrice, priceType };
   });
+  // S19b: keep `special` (the layer's isSpecial) in step with the layer; absent when the layer does not price the line.
+  let flagMoved = false;
+  const flagged = next.map((l) => {
+    if (!l.tierPrices) return l;
+    const lp = customerLinePrice({
+      product: l.tierPrices as Record<string, unknown>,
+      tier: tierFor(l.productId),
+      layer: layerOf?.(l.productId),
+    });
+    const want = lp.layered ? lp.isSpecial : undefined;
+    if (l.special === want) return l;
+    flagMoved = true;
+    const { special: _s, ...rest } = l;
+    return want === undefined ? rest : { ...rest, special: want };
+  });
   return {
-    lines: changed || kept || touched ? next : (lines as SaleLine[]),
+    lines: changed || kept || touched || flagMoved ? flagged : (lines as SaleLine[]),
     changed,
     kept,
     dropped,

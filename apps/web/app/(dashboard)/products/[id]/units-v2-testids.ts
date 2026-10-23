@@ -1,0 +1,43 @@
+/** Stable test ids for the units v2 prices grid and its page-level seams. */
+export const UNITS_V2_TESTIDS = {
+  grid: "units-v2-grid",
+  row: (ref: string) => `units-v2-row-${ref}`,
+  cell: (ref: string, tier: number) => `units-v2-cell-${ref}-${tier}`,
+  code: (ref: string) => `units-v2-code-${ref}`,
+  card: (ref: string) => `units-v2-card-${ref}`,
+  headerStockLink: "units-v2-header-stock-link",
+  familyHeader: "units-v2-family-header",
+  // K3 edit mode (SPRINT-CONTRACT §6)
+  input: (ref: string, tier: number) => `units-v2-input-${ref}-${tier}`,
+  problem: (layout: string, ref: string, tier: number) =>
+    `units-v2-problem-${layout}-${ref}-${tier}`,
+  inputPrefix: (ref: string, tier: number, layout: string) =>
+    `units-v2-prefix-${layout}-${ref}-${tier}`,
+  word: (layout: string, ref: string, tier: number) => `units-v2-word-${layout}-${ref}-${tier}`,
+  addUnitPointer: "units-v2-add-unit-pointer",
+  notEditable: (ref: string) => `units-v2-not-editable-${ref}`,
+  btnEdit: "units-v2-btn-edit",
+  btnChange: "units-v2-btn-change-open",
+  editingPill: "units-v2-editing-pill",
+  editbar: "units-v2-editbar",
+  ebText: "units-v2-eb-text",
+  ebHint: "units-v2-eb-hint",
+  ebSave: "units-v2-eb-save",
+  ebCancel: "units-v2-eb-cancel",
+  ebDiscard: "units-v2-eb-discard",
+  ebKeep: "units-v2-eb-keep",
+  ebError: "units-v2-eb-error",
+  ebNotice: "units-v2-eb-notice",
+  ebConflicts: "units-v2-eb-conflicts",
+  ebBaked: "units-v2-eb-baked",
+  ebProblems: "units-v2-eb-problems",
+  skipSave: "units-v2-skip-save",
+  unitsTable: "units-v2-units-table",
+  scrollCue: "units-v2-scroll-cue",
+  scrollFade: "units-v2-scroll-fade",
+  hUnits: "units-v2-h-units",
+  orderUnit: "units-v2-order-unit",
+  orderUnitReason: "units-v2-order-unit-reason",
+  /** K11-20: the floating price window's body (the editor inside the dialog). */
+  priceWindow: "units-v2-price-window",
+} as const;

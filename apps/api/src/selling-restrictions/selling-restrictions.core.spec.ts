@@ -1066,3 +1066,16 @@ describe("row 509: rule targets", () => {
     expect(ruleMatchesProduct(rule({ targets: null }), product())).toBe(true);
   });
 });
+
+describe("multi-label ruling (owner): a product carries several labels and a rule on ANY one binds it", () => {
+  it("ruleMatchesProduct({A, B}, a rule on B) is true, legacy column or target row", () => {
+    const p = product({ effectiveCategoryIds: new Set(["cat-a", "cat-b"]) });
+    expect(ruleMatchesProduct(rule({ categoryId: "cat-b" }), p)).toBe(true);
+    const targeted = rule({
+      categoryId: "cat-c",
+      targets: { productIds: new Set(), categoryIds: new Set(["cat-b"]) },
+    });
+    expect(ruleMatchesProduct(targeted, p)).toBe(true);
+    expect(ruleMatchesProduct(rule({ categoryId: "cat-c" }), p)).toBe(false);
+  });
+});

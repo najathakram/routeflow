@@ -95,10 +95,38 @@ describe("#2656 the three goods-rate call sites agree with @routeflow/pricing", 
     });
   });
 
-  it("the API's applyPriceAdjustment calls the shared helper on the locked invoice's lines", () => {
-    const src = readFileSync(path.resolve(__dirname, "../invoices/invoices.service.ts"), "utf8");
-    expect(src).toMatch(/inferredGoodsFlatRate\(\{ \.\.\.live, lines: live\.items \}\)/);
-    // Imported from the shared package; later names in the same import list do not matter.
-    expect(src).toMatch(/inferredGoodsFlatRate,\n(?:\s+\w+,\n)*\} from "@routeflow\/pricing";/);
+  it("review MUST-B: the backfill passes the tenant's settings.taxRate as the preferred rate (8.875%: $4.44 on $50.00 -> 0.08875, not 0.0888)", () => {
+    const code = `
+      import { classifyInvoice, tenantRateFraction } from "${B294_HREF}";
+      const inv = { subtotal: 50, taxAmount: 4.44, createdAt: "${before}" };
+      const lines = [{ taxRate: 0, categoryTaxAmount: 0 }];
+      console.log(JSON.stringify({
+        bare: classifyInvoice(inv, lines),
+        tenant: classifyInvoice(inv, lines, undefined, tenantRateFraction("8.875")),
+        fractions: ["8.875", "0", "abc", "150", null].map((v) => tenantRateFraction(v)),
+      }));
+    `;
+    const res = spawnSync(process.execPath, ["--input-type=module", "-e", code], {
+      encoding: "utf8",
+      timeout: 60_000,
+    });
+    expect(res.stderr).toBe("");
+    const out = JSON.parse(res.stdout.trim());
+    expect(out.bare).toMatchObject({ kind: "APPLY", rate: 0.0888 });
+    expect(out.tenant).toMatchObject({ kind: "APPLY", rate: 0.08875 }); // master: 0.0888
+    expect(out.fractions).toEqual([0.08875, null, null, null, null]);
+  });
+
+  it("the API's applyPriceAdjustment reaches the shared helper through the one stored-tax guard", () => {
+    const dir = path.resolve(__dirname, "../invoices");
+    // SA-814 R5-2: the inference lives in stored-tax-state.ts (the guard), imported from the shared package.
+    const guard = readFileSync(path.join(dir, "stored-tax-state.ts"), "utf8");
+    expect(guard).toMatch(/inferredGoodsFlatRate\(\s*\{/);
+    expect(guard).toMatch(/\binferredGoodsFlatRate,\n[\s\S]*?\} from "@routeflow\/pricing";/);
+    // The locked invoice's lines go through it: applyPriceAdjustment's tx and the bulk pre-flight.
+    const svc = readFileSync(path.join(dir, "invoices.service.ts"), "utf8");
+    expect(svc).toMatch(/priceAdjustmentTaxState\(live,/);
+    const ledger = readFileSync(path.join(dir, "price-adjustment-ledger.ts"), "utf8");
+    expect(ledger).toMatch(/storedLines: inv\.items/);
   });
 });

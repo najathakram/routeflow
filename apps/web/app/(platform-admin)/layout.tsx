@@ -240,7 +240,9 @@ export default function PlatformAdminLayout({ children }: { children: React.Reac
     <SuperAdminGuard>
       <div className="surface-admin flex h-screen flex-col overflow-hidden bg-slate-950 lg:flex-row">
         <Sidebar />
-        <main className="flex-1 overflow-y-auto">{children}</main>
+        {/* BO-01: `relative` makes main the containing block of its sr-only (absolute) spans, so they
+            no longer stretch the document past the page into a blank band. */}
+        <main className="relative flex-1 overflow-y-auto">{children}</main>
       </div>
     </SuperAdminGuard>
   );

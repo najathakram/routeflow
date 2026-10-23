@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException, OnModuleInit } from "@nestjs/common";
+import { assertRefsInTenant } from "../common/assert-refs-in-tenant";
 import { lockBillRows } from "../vendor-bills/bill-locks";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -44,6 +45,11 @@ import {
 import { settledDateFilter } from "../invoices/settled-date-filter";
 import { lockInvoicesForPayment } from "../invoices/invoice-send-guard";
 import { counterPay } from "../invoices/counter-payment-guard";
+import {
+  createPaymentRefGuard,
+  withPaymentRefLock,
+  type PaymentRefOpts,
+} from "../invoices/payment-ref-dedupe";
 import { overdueInvoiceCount } from "../invoices/invoice-balance-sql";
 import { confirmedBalance, signedBalance } from "../invoices/invoice-balance-classify";
 
@@ -196,12 +202,25 @@ export class BookkeepingService implements OnModuleInit {
     };
   }
 
-  async recordPayment(id: string, dto: RecordPaymentDto) {
+  /**
+   * Row 498: the same reference predicate and `payment-ref` lock as the invoice writers (payment-ref-dedupe.ts); this
+   * ledger writer has no SA-824 key, so its single payment row is its own attempt.
+   */
+  recordPayment(id: string, dto: RecordPaymentDto, opts?: PaymentRefOpts) {
+    return withPaymentRefLock(this.prisma, dto, () => this.writeLedgerPayment(id, dto, opts));
+  }
+
+  private async writeLedgerPayment(id: string, dto: RecordPaymentDto, opts?: PaymentRefOpts) {
     // G4: the same end-of-day-close door the office recordPayment uses. The counter scope is read BEFORE the transaction so the
     // shared close lock is its FIRST statement; a non-counter invoice gets null here and every counterPay helper is a no-op.
     const till = await counterPay.scope(this.prisma, id);
+    const refGuard = createPaymentRefGuard({ ...dto, invoiceId: id, opts });
     return this.prisma.tenantTransaction(async (tx) => {
       await counterPay.lock(tx, till);
+      // Review M5: the reference check comes AFTER the G4 close lock, so the shared close lock stays this transaction's
+      // first statement; it is a read, and the `payment-ref` session lock around this transaction serialises same-reference
+      // recordings, so a duplicate is still a 409 with nothing written.
+      await refGuard.check(tx);
       // SA-404f F1: FIRST lock (Order →) Invoice, so the status read below sees a committed VOID
       // and refuses, instead of writing PAID/PARTIAL back over it.
       await lockInvoicesForPayment(tx, [id]);
@@ -252,7 +271,7 @@ export class BookkeepingService implements OnModuleInit {
         { method: dto.method },
         PaymentStatus.PAID,
       );
-      await tx.invoicePayment.create({
+      const recorded = await tx.invoicePayment.create({
         data: {
           invoiceId: id,
           amount: paymentAmount,
@@ -264,6 +283,7 @@ export class BookkeepingService implements OnModuleInit {
           checkStatus: dto.method === "CHECK" ? CheckStatus.RECORDED : null,
         },
       });
+      await refGuard.recorded(tx, [recorded?.id], id);
 
       const totalPaid = roundMoney(alreadyPaid + paymentAmount);
       const newInvStatus =
@@ -518,6 +538,12 @@ export class BookkeepingService implements OnModuleInit {
     // sub-cent rate still lands off-cent in float either way).
     computedAmount = roundMoney(Number(computedAmount));
 
+    await assertRefsInTenant(this.prisma, {
+      expenseCategoryIds: [rest.categoryId],
+      supplierIds: [rest.supplierId],
+      customerIds: [rest.customerId],
+    });
+
     const expense = await this.prisma.forTenant().expense.create({
       data: {
         categoryId: rest.categoryId ?? null,
@@ -573,12 +599,13 @@ export class BookkeepingService implements OnModuleInit {
     if (!existing) throw new NotFoundException("Expense not found");
 
     const statusPatch = this.buildStatusPatch(existing, dto);
+    await assertRefsInTenant(this.prisma, { expenseCategoryIds: [dto.categoryId] });
 
     const updated = await this.prisma.forTenant().expense.update({
       where: { id },
       data: {
         // SA-121/B801: round every monetary write.
-        ...(dto.amount !== undefined && { amount: roundMoney(dto.amount) }),
+        ...(dto.amount != null && { amount: roundMoney(dto.amount) }),
         ...(dto.date && { date: new Date(dto.date) }),
         ...(dto.description !== undefined && { description: dto.description }),
         ...(dto.notes !== undefined && { notes: dto.notes }),
@@ -1126,7 +1153,7 @@ export class BookkeepingService implements OnModuleInit {
       : new Date();
 
     const CfPayStatus = PaymentStatus;
-    const [payments, expenses, bills] = await Promise.all([
+    const [payments, expenses, bills, supplierCredits] = await Promise.all([
       this.prisma.forTenant().invoicePayment.findMany({
         // B421: cash-flow's "totalIn" is money genuinely received — a
         // CREDIT_NOTE application is never cash, but an ADVANCE application
@@ -1144,16 +1171,29 @@ export class BookkeepingService implements OnModuleInit {
         where: { deletedAt: null, date: { gte: fromDate, lte: toDate } },
         orderBy: { date: "asc" },
       }),
+      // SA-814n / B288: cash out to suppliers is what left the operator's hand. A CREDIT_NOTE BillPayment is a
+      // DRAW of on-account credit (not new money: the credit was counted when it was created, below), so it is
+      // excluded exactly as RECEIVED_METHOD_FILTER excludes a credit-note application on the money-in side.
+      // Payments on VOID bills stay counted: the cash really left (B288 makes a paid bill unvoidable anyway).
       this.prisma.forTenant().billPayment.findMany({
-        where: { paidAt: { gte: fromDate, lte: toDate } },
+        where: { paidAt: { gte: fromDate, lte: toDate }, method: RECEIVED_METHOD_FILTER },
         orderBy: { paidAt: "asc" },
+      }),
+      // The other half: a SupplierCredit is cash that left on an overpayment or a move-to-credit, counted on
+      // its `receivedAt` (a moved payment keeps the original payment's date, so cash out does not move).
+      // ASSUMPTION: SupplierCredit has no origin field, so every credit is cash-origin (recordSupplierPayment's
+      // excess and move-to-credit are its only writers); a CREDIT_NOTE-method credit is excluded as a guard.
+      this.prisma.forTenant().supplierCredit.findMany({
+        where: { receivedAt: { gte: fromDate, lte: toDate }, method: RECEIVED_METHOD_FILTER },
+        orderBy: { receivedAt: "asc" },
       }),
     ]);
 
     const totalIn = payments.reduce((s, p) => s + Number(p.amount), 0);
     const totalOut =
       expenses.reduce((s, e) => s + Number(e.amount), 0) +
-      bills.reduce((s, b) => s + Number(b.amount), 0);
+      bills.reduce((s, b) => s + Number(b.amount), 0) +
+      supplierCredits.reduce((s, c) => s + Number(c.amount), 0);
     return {
       totalIn,
       totalOut,

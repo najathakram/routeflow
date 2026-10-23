@@ -81,7 +81,9 @@ const BASELINE: Record<string, number> = {
   "buyer/buyer.controller.ts": 1,
   "buyer/replenishment.service.ts": 1,
   "buyer/buyer-catalog.service.ts": 3,
-  "inventory/inventory.service.ts": 4,
+  // 3 since the count line's in-tx product read became `live` (SA-767 L-2.4 A): upsertStockCountLine reads
+  // `live.unitsPerBox` to rebuild the boxes/pieces split (a count quantity, not a line factor).
+  "inventory/inventory.service.ts": 3,
   // SA-079: loadProductPackNow's ONE read is classifySaleAxis's boxed-GATE fallback for a
   // box-unaware line with no unitsPerBox snapshot of its own — it derives no line factor,
   // quantity or price. But it is not inert: its output decides whether a return's SALE row is
@@ -115,6 +117,9 @@ const NON_WRITERS = new Set([
   // H3b (#3435): ladderProduct copies the live unitsPerBox into the price-ladder input the override decision
   // reads (the same base as unit-line-build); it derives no line factor and writes no pack. (Train M1.)
   "invoices/invoice-line-override.ts",
+  // Units v2 K1 fold: computePriceState folds the live pack size into the price-state fingerprint so a concurrent unit
+  // edit changes the token. It hashes the value; it derives no line factor, quantity or price and writes nothing.
+  "products/price-state.ts",
   "regulated/tx-report.ts",
   // B661: packAtSaleByProduct's `p.unitsPerBox` read is a write-time SNAPSHOT for the ledger's
   // regulatedUnitBasis, not a line-factor decision — never re-read later to reclassify an old row.
@@ -137,10 +142,21 @@ const NON_WRITERS = new Set([
   // no-snapshot line (is the product boxed today?), exactly as product-insights does; every row's unit
   // and pack come from the line's own snapshot. Writes no line.
   "customers/customer-price-history.service.ts",
+  // completeSetup (import setup confirmation): reads the product's LIVE pack ONLY to tell whether the pack
+  // it is about to WRITE moved, and to check it against the product's levels (assertPackKeepsLevelsValid)
+  // under the product's units lock. It builds no line and derives no factor, quantity or price.
+  "import/variant-resolution.service.ts",
   // "Usually buys" / "Order again" (staff New Order): read-only. Passes the product's CURRENT catalog columns
   // (incl. unitsPerBox) through to the order builder, which prices every added line through its own add-line
   // path; a past line's own snapshot (unitsPerBox/unitLabel) is returned as ordered. Writes no line.
   "customers/customer-order-suggestions.service.ts",
+  // Row 531: the buyer qty / box-split consistency check reads the live pack of the products the buyer's OWN
+  // payload names, ONLY to compare it with that payload's qty and split (a coded 400 on a disagreement). It
+  // derives no line factor, quantity or price, writes nothing and returns no pack size.
+  "buyer/buyer-qty-split.ts",
+  // SA-841 (B207): a read-only live-pack MAP for foldMergeItems; it writes no line, and the stored-line merge reads it
+  // only for a line with no pack of its own (SA-104a(4)). Kept out of orders.service.ts so that file's count stays 15.
+  "orders/live-pack-map.ts",
 ]);
 
 const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");

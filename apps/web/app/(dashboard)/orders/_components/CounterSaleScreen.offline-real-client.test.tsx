@@ -3,6 +3,7 @@ import { onlineManager } from "@tanstack/react-query";
 import { renderWithProviders, screen, waitFor, fireEvent } from "@/test-utils/render";
 import { apiClient } from "@/lib/api-client";
 import { COUNTER_OFFLINE_COPY } from "@/lib/counter-sale";
+import { renderTill } from "@/test-utils/render-till";
 import { CounterSaleScreen } from "./CounterSaleScreen";
 
 /**
@@ -85,7 +86,7 @@ afterEach(() => {
 describe("CounterSaleScreen offline through the real mutation (CQ-29)", () => {
   it("shows the offline state, unlocks the form, and the retry reuses the same key", async () => {
     post.mockRejectedValueOnce({ code: "ERR_NETWORK", message: "Network Error" });
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     const field = screen.getByLabelText("Scan or search items");
     fireEvent.change(field, { target: { value: "COLA" } });
     fireEvent.submit(field.closest("form")!);

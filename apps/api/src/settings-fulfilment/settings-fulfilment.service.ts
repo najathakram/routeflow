@@ -37,6 +37,7 @@ import { API_ERROR_CODES } from "../common/api-error-codes";
 import { PrismaService } from "../prisma/prisma.service";
 import { requireTenantContext } from "../settings-inventory/require-tenant-context";
 import { SHIPPING_FULFILMENT_MODES } from "../orders/shipping-fulfilment-modes";
+import { assertNoCarrierInTransit } from "../orders/carrier-in-transit-guard";
 import { canEditFulfilment } from "./fulfilment-edit";
 import { resolveFulfilmentSelfServe } from "./fulfilment-self-serve";
 
@@ -534,9 +535,6 @@ export class SettingsFulfilmentService {
       }
 
       const model = changes.find((c) => c.key === "fulfilmentModel");
-      const crossesShipping =
-        !!model &&
-        SHIPPING_FULFILMENT_MODES.has(model.from) !== SHIPPING_FULFILMENT_MODES.has(model.to);
       const actor = {
         userId: user.sub,
         impersonatedBy: user.impersonatedBy ?? null,
@@ -544,27 +542,8 @@ export class SettingsFulfilmentService {
       };
 
       await this.prisma.tenantTransaction(async (tx) => {
-        // M1 interim rule: re-pointing the billing moment while a carrier order is in flight would
-        // bill it twice or never. Evaluated here, inside the write, under the lock.
-        if (crossesShipping) {
-          const count = await tx.order.count({
-            where: {
-              tenantId: ctx.tenantId,
-              fulfillPath: FulfillPath.SHIP,
-              status: { notIn: CLOSED_ORDER_STATUSES },
-              shippedAt: { not: null },
-            },
-          });
-          if (count > 0) {
-            throw new ConflictException({
-              statusCode: 409,
-              code: API_ERROR_CODES.FULFILMENT_CARRIER_IN_TRANSIT,
-              message:
-                "Orders are with the carrier right now. Change the delivery method once they are delivered.",
-              count,
-            });
-          }
-        }
+        // M1 interim rule, evaluated here, inside the write, under the lock (shared guard).
+        if (model) await assertNoCarrierInTransit(tx, ctx.tenantId, model.from, model.to);
         for (const change of changes) {
           const isModel = change.key === "fulfilmentModel";
           const key = isModel ? MODEL_KEY : COUNTER_KEY;

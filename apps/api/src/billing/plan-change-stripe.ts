@@ -273,7 +273,7 @@ export async function pushPlanChange(
   if (baseChanged) {
     try {
       const product = await stripe.client.products.create(
-        { name: `RouteFlow ${a.planName} — ${interval === "year" ? "annual" : "monthly"}` },
+        { name: `RouteFlow ${a.planName}` },
         { idempotencyKey: `${key}:product` },
       );
       productId = product.id;

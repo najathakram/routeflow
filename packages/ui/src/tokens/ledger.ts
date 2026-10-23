@@ -69,6 +69,8 @@ export const ledgerSurface = {
   sunken: "#edf1f6",
   line: "#e2e8f0",
   lineStrong: "#d6dee8",
+  /** Border of text inputs, selects and textareas (WCAG 1.4.11, 3:1 on every light surface). */
+  field: "#79859b",
 } as const;
 
 /** One status set everywhere: a foreground and its tint. */
@@ -215,6 +217,7 @@ export function ledgerCssVars(surface: LedgerSurface): Record<string, string> {
     "--sunken": ledgerSurface.sunken,
     "--line": ledgerSurface.line,
     "--line-strong": ledgerSurface.lineStrong,
+    "--field": ledgerSurface.field,
     "--brand-700": lower(ledgerBrand[700]),
     "--brand-600": lower(ledgerBrand[600]),
     "--brand-500": lower(ledgerBrand[500]),

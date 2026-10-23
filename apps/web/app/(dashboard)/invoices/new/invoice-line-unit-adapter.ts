@@ -8,9 +8,15 @@ import {
   type DefaultUnitLine,
   type UnitFold,
 } from "@/lib/default-unit-line";
-import { sameProductUnit, type PackBase, type UnitLine } from "@/lib/order-line-unit";
+import {
+  isLayerManualLine,
+  sameProductUnit,
+  type PackBase,
+  type UnitLine,
+} from "@/lib/order-line-unit";
 import type { OrderLineUnitPickerLine } from "@/components/OrderLineUnitPicker";
 import type { UnitOption } from "@/lib/unit-options";
+import type { CustomerLayerUnit } from "@routeflow/pricing";
 import type { SaleLinePricing } from "@/lib/sale-line-pricing";
 import { codedToastCopy } from "@/lib/generic-toast-copy";
 import { bumpInvoiceLine } from "../invoice-scan-level";
@@ -216,9 +222,12 @@ export function chooseUnit<T extends InvoiceUnitFields>(
  * What `OrderLineUnitPicker` is fed. A pack line in Piece mode is shown as "Piece" at the Piece option's price
  * (information only); the stored line keeps its unitsPerBox + BOX price and no unitLabel.
  */
-export function pickerLineOf(it: InvoiceUnitFields): OrderLineUnitPickerLine {
+export function pickerLineOf(
+  it: InvoiceUnitFields,
+  layer?: readonly CustomerLayerUnit[] | null,
+): OrderLineUnitPickerLine {
   const pieceMode = !it.unitLabel && it.sellBy === "unit" && (it.unitsPerBox ?? 0) > 1;
-  return {
+  const line: OrderLineUnitPickerLine = {
     productId: it.productId ?? "",
     productName: it.description,
     isUnlisted: !it.productId,
@@ -233,6 +242,32 @@ export function pickerLineOf(it: InvoiceUnitFields): OrderLineUnitPickerLine {
     tierPrices: it.tierPrices,
     priceEdited: it.priceEdited,
   };
+  // S19b: the picker re-prices a MANUAL line only when it is the layer's own above-list price; flag off (no layer) never.
+  const rows = pickerLayerFor(it, layer);
+  return { ...line, layerManual: rows ? isLayerManualLine(line, rows) : false };
+}
+
+/**
+ * Can this line be matched to a layer row safely? A pack line always; a unit line only with a snapshot of a DIFFERENT unit
+ * (its pack). With none, or a corrupt one that is the unit itself, the line's own unit would read as the pack and take the
+ * PACK's layer price. Shared by the picker, `layerLevelLine` and `correctLayerLevelLines`.
+ */
+export function hasPackSnapshot(it: {
+  unitLabel?: string | null;
+  packBase?: { unit?: string } | null;
+}): boolean {
+  if (!it.unitLabel) return true; // a pack line has no snapshot to need
+  return !!it.packBase && it.packBase.unit !== it.unitLabel;
+}
+
+/** The layer rows the unit picker may use for this line (none when it cannot be matched safely: `hasPackSnapshot`). */
+export function pickerLayerFor(
+  it: InvoiceUnitFields,
+  rows: readonly CustomerLayerUnit[] | null | undefined,
+): readonly CustomerLayerUnit[] | undefined {
+  if (!rows) return undefined;
+  // no snapshot, or a "snapshot" that is the unit itself (a corrupt draft): the line's own unit would read as the pack
+  return hasPackSnapshot(it) ? rows : undefined;
 }
 
 /** A typed price: shapes the line (consumes the default start, survives a tier refresh: #2381). */

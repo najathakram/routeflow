@@ -35,23 +35,32 @@ function Wrapper() {
 
 let onScanSpy: jest.Mock;
 let onChangeSpy: jest.Mock;
-let dateNowSpy: jest.SpyInstance<number, []>;
 beforeEach(() => {
   onScanSpy = jest.fn();
   onChangeSpy = jest.fn();
-  let t = 1_700_000_000_000;
-  dateNowSpy = jest.spyOn(Date, "now").mockImplementation(() => (t += 10));
-});
-afterEach(() => {
-  dateNowSpy.mockRestore();
 });
 
+/**
+ * The scan detector times keys by the browser's own `event.timeStamp` (see BarcodeScannerButton), not by
+ * Date.now(). A synthetic fireEvent gets the REAL clock as its timeStamp, so on a loaded host the render
+ * between two keys could stretch a "fast" burst past the detector's 200 ms inter-key / 150 ms Enter gates and
+ * the scan was (correctly) not recognised. The scenario under test is a scanner's 10 ms-per-key cadence, so
+ * the test pins each event's timeStamp to that cadence instead of racing the scheduler.
+ */
+const SCAN_KEY_INTERVAL_MS = 10;
+function keyDownAt(input: HTMLElement, key: string, timeStamp: number) {
+  const ev = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+  Object.defineProperty(ev, "timeStamp", { value: timeStamp });
+  fireEvent(input, ev);
+}
+
 function wedgeScan(input: HTMLElement, code: string) {
+  let t = 1_000;
   for (const ch of code) {
-    fireEvent.keyDown(input, { key: ch });
+    keyDownAt(input, ch, (t += SCAN_KEY_INTERVAL_MS));
   }
   fireEvent.change(input, { target: { value: code } });
-  fireEvent.keyDown(input, { key: "Enter" });
+  keyDownAt(input, "Enter", (t += SCAN_KEY_INTERVAL_MS));
 }
 
 it("a real wedge scan reaches onScan without the picker's own Enter handler also firing", async () => {

@@ -42,12 +42,36 @@ describe("ProductPortalVisibilityCard", () => {
     expect(mutate).toHaveBeenCalledWith({ portalVisible: false });
   });
 
-  it("operator sees a read-only status: no switch, no mutation", () => {
+  it("operator (owner ruling 2026-10-14): the switch is shown DISABLED with the visible admin-only hint, plus the status", () => {
     role = "OPERATOR";
     render({ portalVisible: false });
-    expect(screen.queryByRole("switch")).not.toBeInTheDocument();
+    const sw = screen.getByRole("switch");
+    expect(sw).toBeDisabled();
+    const hint = document.getElementById(sw.getAttribute("aria-describedby") as string);
+    expect(hint).toHaveTextContent(
+      "Only an account admin can hide a product from every portal customer.",
+    );
+    expect(hint).toBeVisible();
     expect(screen.getByTestId("portal-visibility-status")).toHaveTextContent(/hidden/i);
+    fireEvent.click(sw);
     expect(mutate).not.toHaveBeenCalled();
+  });
+
+  it.each(["TENANT_ADMIN", "SUPER_ADMIN"])("%s gets the live switch and no hint", (r) => {
+    role = r;
+    render();
+    const sw = screen.getByRole("switch");
+    expect(sw).toBeEnabled();
+    expect(sw).not.toHaveAttribute("aria-describedby");
+    expect(screen.queryByText(/Only an account admin/)).toBeNull();
+  });
+
+  it.each(["DRIVER", "CUSTOMER"])("%s sees the status only: no switch, no hint", (r) => {
+    role = r;
+    render();
+    expect(screen.queryByRole("switch")).toBeNull();
+    expect(screen.queryByText(/Only an account admin/)).toBeNull();
+    expect(screen.getByTestId("portal-visibility-status")).toBeInTheDocument();
   });
 
   it("a variant whose parent is hidden shows 'Hidden by parent'; the switch still edits its own flag", () => {

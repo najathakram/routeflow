@@ -95,6 +95,46 @@ describe("API error codes: local copy = shared list (#2163, L-072)", () => {
     expect(stub.API_ERROR_CODES).toEqual(readShared());
   });
 
+  it("apps/mobile's jest stub carries the same PLAN_GATE_FLAG_KEYS (the sibling export of API_ERROR_CODES)", () => {
+    // PLAN_GATE_FLAG_KEYS lives in the same shared file and is the other plan-gate constant a client
+    // branches on (the `flag` of a PLAN_GATE body); the stub must not drift from it either.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const shared = (require("@routeflow/types") as Record<string, unknown>).PLAN_GATE_FLAG_KEYS;
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const stub = require(
+      path.join(REPO_ROOT, "apps/mobile/__tests__/__mocks__/@routeflow/types.js"),
+    ) as Record<string, unknown>;
+    expect(shared).toEqual({ METER_CUSTOMERS: "meter.customers" });
+    expect(stub.PLAN_GATE_FLAG_KEYS).toEqual(shared);
+  });
+
+  it("every data export the mobile stub shares by name with @routeflow/types has the same value", () => {
+    // The generic net under the named pins above: a hand-copied constant that drifts from the real
+    // package (a value added or changed on one side only) fails here without a new per-name test.
+    // Functions are skipped: the stub may implement them differently on purpose.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const shared = require("@routeflow/types") as Record<string, unknown>;
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const stub = require(
+      path.join(REPO_ROOT, "apps/mobile/__tests__/__mocks__/@routeflow/types.js"),
+    ) as Record<string, unknown>;
+    // `UserRole` is an enum the stub deliberately leaves empty (mobile tests only use it as a type).
+    const INTENTIONALLY_EMPTY = new Set(["UserRole"]);
+    const drifted = Object.keys(stub).filter((k) => {
+      if (INTENTIONALLY_EMPTY.has(k)) return false;
+      if (!(k in shared) || typeof stub[k] === "function" || typeof shared[k] === "function") {
+        return false;
+      }
+      try {
+        expect(stub[k]).toEqual(shared[k]);
+        return false;
+      } catch {
+        return true;
+      }
+    });
+    expect(drifted).toEqual([]);
+  });
+
   it("the scan actually covered all three apps and the packages (guards a path typo turning the scan vacuous)", () => {
     for (const root of SCAN_ROOTS) {
       // `rel` uses the platform separator (\ on win32): compare against the same form.
@@ -217,6 +257,11 @@ const PACKAGE_ALLOWLIST: Record<string, { codes: string[]; reason: string }> = {
     reason:
       "MoneyInvariantError's `code` field; pricing's dist is loaded by the API at runtime (SA-478a, no value import of @routeflow/types)",
   },
+  "packages/pricing/src/pack-write-path.ts": {
+    codes: ["PRICING_RULES_NOT_READY"],
+    reason:
+      "PricingRulesNotReadyError's `code` field (PF-3, SA-796 R-4); pricing's dist is loaded by the API at runtime (SA-478a, no value import of @routeflow/types)",
+  },
   "packages/returns/src/inline-return-state.ts": {
     codes: [
       "ADDON_GATE",
@@ -230,7 +275,7 @@ const PACKAGE_ALLOWLIST: Record<string, { codes: string[]; reason: string }> = {
       "CONVENTION, not a runtime constraint: compiled CJS package (like pricing) that keeps @routeflow/types imports type-only, so its dist never requires the raw-TS package; only pricing is bound by SA-478a",
   },
 };
-const PACKAGE_ALLOWLIST_TOTAL = 7;
+const PACKAGE_ALLOWLIST_TOTAL = 8;
 
 /**
  * `READ_ONLY` is ALSO a tenant STATUS value (`tenant.status === "READ_ONLY"`), which is not an error

@@ -130,7 +130,7 @@ export function useReactivateFlow(opts?: { onReactivated?: (id: string) => void 
         title={`Deactivate ${noun(deactivating?.kind ?? "product")}?`}
         description={`${deactivating?.name ?? "This"} will be hidden from the catalog and its SKU, barcodes and unit code are released for other products. You can reactivate it later if they are still free.`}
         confirmLabel="Deactivate"
-        variant="danger"
+        variant="warning"
         loading={deactivate.isPending}
       />
       <ConfirmDialog
@@ -145,7 +145,7 @@ export function useReactivateFlow(opts?: { onReactivated?: (id: string) => void 
         title={cascade?.prompt.title ?? ""}
         description={cascade?.prompt.body}
         confirmLabel={cascade?.prompt.confirmText}
-        variant="danger"
+        variant="warning"
         loading={deactivate.isPending}
       />
       <ReactivateConflictDialog

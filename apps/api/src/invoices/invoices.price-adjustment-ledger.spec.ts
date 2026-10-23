@@ -19,6 +19,7 @@ const INV = { id: "inv-1", invoiceNumber: "INV-1" };
 import { PrismaService } from "../prisma/prisma.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { storedInvoiceHeader } from "../testing/stored-invoice-header";
 
 const autoMock = () =>
   new Proxy({} as Record<string | symbol, jest.Mock>, {
@@ -65,8 +66,7 @@ describe("InvoicesService.applyPriceAdjustment — regulated ledger sync (B662)"
       customerId: "cust-1",
       orderId: null,
       status,
-      discount: 0,
-      shippingFee: 0,
+      ...storedInvoiceHeader(items), // SA-814 R5-2: a header the lines reproduce
       internalNotes: null,
       payments: [],
       items,
@@ -119,7 +119,7 @@ describe("InvoicesService.applyPriceAdjustment — regulated ledger sync (B662)"
       db: expect.anything(),
     });
     // one mechanism per state: an issued invoice never re-syncs
-    expect(ledger.reverseInvoiceEntries).not.toHaveBeenCalled();
+    expect(ledger.settleRegulatedLedger).not.toHaveBeenCalled();
     expect(ledger.writeSaleEntries).not.toHaveBeenCalled();
   });
 
@@ -133,10 +133,12 @@ describe("InvoicesService.applyPriceAdjustment — regulated ledger sync (B662)"
   it("DRAFT: re-syncs with the SAME routine update() uses, and books NO correction row", async () => {
     arrange(InvoiceStatus.DRAFT, [regulated("li-1"), ordinary("li-2")]);
     await adjust(["li-1"]);
-    expect(ledger.reverseInvoiceEntries).toHaveBeenCalledWith(
-      expect.objectContaining({ invoiceId: "inv-1", preserveReturns: true }),
+    // SA-839: the DRAFT re-sync is INVOICE_BILLED through the one ledger helper.
+    expect(ledger.settleRegulatedLedger).toHaveBeenCalledTimes(1);
+    expect(ledger.settleRegulatedLedger).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ kind: "INVOICE_BILLED", invoiceId: "inv-1" }),
     );
-    expect(ledger.writeSaleEntries).toHaveBeenCalledTimes(1);
     expect(ledger.correctSaleForPriceChange).not.toHaveBeenCalled();
   });
 
@@ -146,7 +148,7 @@ describe("InvoicesService.applyPriceAdjustment — regulated ledger sync (B662)"
       await adjust(["li-2"]);
     }
     expect(ledger.correctSaleForPriceChange).not.toHaveBeenCalled();
-    expect(ledger.reverseInvoiceEntries).not.toHaveBeenCalled();
+    expect(ledger.settleRegulatedLedger).not.toHaveBeenCalled();
     expect(ledger.writeSaleEntries).not.toHaveBeenCalled();
   });
 

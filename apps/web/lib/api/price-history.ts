@@ -3,46 +3,36 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 
 import type {
-  PriceHistoryResponse as ApiPriceHistoryResponse,
+  PriceHistoryAggregate,
+  PriceHistoryReferences,
+  PriceHistoryResponse,
   PriceHistoryRow,
   PriceHistorySource,
   PriceHistorySummary,
+  PriceSummaryEntry,
+  PriceSummaryResponse,
 } from "@routeflow/types";
+import { PRICE_SUMMARY_MAX_PRODUCTS } from "@routeflow/types";
 
-export type { PriceHistoryRow, PriceHistorySource, PriceHistorySummary };
-
-/**
- * GET /customers/:customerId/products/:productId/price-history — what THIS customer has paid for
- * THIS product (invoiced sales, plus open not-yet-invoiced orders, labelled separately). Staff only.
- * The contract is `@routeflow/types` (price-history.ts); `references` / `aggregate` are the v1.1
- * extension (builder F), optional until that API lands.
- */
-export interface PriceHistoryReferences {
-  listPrice: number | null;
-  tierPrice: number | null;
-  /** Fraction (0.03 = +3%) of the newest sale vs the one before; null with fewer than two. */
-  changeSinceLast: number | null;
-}
-
-/** Other customers' prices for the product (never names): low / typical (median) / high. */
-export interface PriceHistoryAggregate {
-  low: number;
-  median: number;
-  high: number;
-  customers: number;
-  unitLabel: string;
-}
-
-export interface PriceHistoryResponse extends ApiPriceHistoryResponse {
-  references?: PriceHistoryReferences;
-  aggregate?: PriceHistoryAggregate | null;
-}
+// The contract (rows, summaries, `references`, the `?compare=all` `aggregate`) is `@routeflow/types`
+// (price-history.ts): re-exported here, never redeclared.
+export type {
+  PriceHistoryAggregate,
+  PriceHistoryReferences,
+  PriceHistoryResponse,
+  PriceHistoryRow,
+  PriceHistorySource,
+  PriceHistorySummary,
+  PriceSummaryEntry,
+  PriceSummaryResponse,
+};
 
 export const priceHistoryKey = (
   customerId: string | null | undefined,
   productId: string | null | undefined,
   limit: number,
   excludeOrderId?: string | null,
+  compare = false,
 ) =>
   [
     "customers",
@@ -52,18 +42,27 @@ export const priceHistoryKey = (
     "price-history",
     limit,
     excludeOrderId ?? null,
+    ...(compare ? (["compare"] as const) : []),
   ] as const;
 
-/** `excludeOrderId`: the order being edited, so its own price is never shown as history (hunt2 F6). */
+/**
+ * `excludeOrderId`: the order being edited, so its own price is never shown as history (hunt2 F6).
+ * `compare` adds `?compare=all`: the server then returns the anonymous other-customers `aggregate`.
+ */
 const fetchPriceHistory = (
   customerId: string,
   productId: string,
   limit: number,
   excludeOrderId?: string | null,
+  compare = false,
 ) =>
   apiClient
     .get(`/customers/${customerId}/products/${productId}/price-history`, {
-      params: { limit, ...(excludeOrderId ? { excludeOrderId } : {}) },
+      params: {
+        limit,
+        ...(excludeOrderId ? { excludeOrderId } : {}),
+        ...(compare ? { compare: "all" } : {}),
+      },
     })
     .then((r) => r.data as PriceHistoryResponse);
 
@@ -73,13 +72,16 @@ export function usePriceHistory(
   enabled: boolean,
   limit = 25,
   excludeOrderId?: string | null,
+  compare = false,
 ) {
   return useQuery<PriceHistoryResponse>({
-    queryKey: priceHistoryKey(customerId, productId, limit, excludeOrderId),
-    queryFn: () => fetchPriceHistory(customerId!, productId!, limit, excludeOrderId),
+    queryKey: priceHistoryKey(customerId, productId, limit, excludeOrderId, compare),
+    queryFn: () => fetchPriceHistory(customerId!, productId!, limit, excludeOrderId, compare),
     enabled: enabled && !!customerId && !!productId,
     staleTime: 30_000,
     retry: false,
+    // NO placeholderData: it ignores `enabled`, so a changed customer would keep showing the previous
+    // customer's prices (and their "use this price" chips) while the new query is pending or disabled.
   });
 }
 
@@ -135,4 +137,64 @@ export function usePrefetchPriceHistory(
       staleTime: 30_000,
     });
   }, [qc, customerId, productId, limit, enabled, excludeOrderId]);
+}
+
+const priceSummaryKey = (
+  customerId: string | null | undefined,
+  sortedIds: readonly string[],
+  excludeOrderId?: string | null,
+) => ["customers", customerId, "price-summary", sortedIds, excludeOrderId ?? null] as const;
+
+const fetchPriceSummary = async (
+  customerId: string,
+  sortedIds: readonly string[],
+  excludeOrderId?: string | null,
+  signal?: AbortSignal,
+): Promise<PriceSummaryResponse> => {
+  const chunks: string[][] = [];
+  for (let i = 0; i < sortedIds.length; i += PRICE_SUMMARY_MAX_PRODUCTS) {
+    chunks.push(sortedIds.slice(i, i + PRICE_SUMMARY_MAX_PRODUCTS));
+  }
+  const parts = await Promise.all(
+    chunks.map((ids) =>
+      apiClient
+        .get(`/customers/${customerId}/price-summary`, {
+          params: {
+            productIds: ids.join(","),
+            ...(excludeOrderId ? { excludeOrderId } : {}),
+          },
+          signal,
+        })
+        .then((r) => r.data as PriceSummaryResponse),
+    ),
+  );
+  return Object.assign({}, ...parts) as PriceSummaryResponse;
+};
+
+/**
+ * ONE batched request for every line's "Recent prices" chips (replaces a price-history request per
+ * line). Ids are de-duplicated and sorted so the key is stable across line reordering; more than 50
+ * ids are chunked into <= 50-id requests and merged. `excludeOrderId`: the order being edited.
+ */
+export function usePriceSummary(
+  customerId: string | null | undefined,
+  productIds: readonly (string | null | undefined)[],
+  excludeOrderId?: string | null,
+) {
+  const idKey = Array.from(new Set(productIds.filter((id): id is string => !!id)))
+    .sort()
+    .join(",");
+  const sortedIds = React.useMemo(() => (idKey ? idKey.split(",") : []), [idKey]);
+  return useQuery<PriceSummaryResponse>({
+    queryKey: priceSummaryKey(customerId, sortedIds, excludeOrderId),
+    queryFn: ({ signal }) => fetchPriceSummary(customerId!, sortedIds, excludeOrderId, signal),
+    enabled: !!customerId && sortedIds.length > 0,
+    staleTime: 30_000,
+    retry: false,
+    // Adding a product re-keys the query: keep the SAME customer's chips on screen while it loads.
+    // Never across a customer change (placeholderData ignores `enabled`, and a stale chip would put
+    // customer A's price on B's order): the previous query's customer id (key index 1) must match.
+    placeholderData: (prev, prevQuery) =>
+      prevQuery?.queryKey[1] === customerId ? prev : undefined,
+  });
 }

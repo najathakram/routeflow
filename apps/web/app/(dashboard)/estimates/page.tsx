@@ -40,9 +40,11 @@ import {
   isSpecialTier,
   computeInvoiceLineTotal,
   computeInvoiceTotals,
-  getTierPrice,
+  customerLinePrice,
   type InvoiceTotalsLine,
 } from "@routeflow/pricing";
+import { useCustomerPriceLayer } from "@/lib/api/useCustomerPriceLayer";
+import { PriceLayerNotice, pricesUnconfirmed } from "@/components/PriceLayerNotice";
 import { apiClient } from "@/lib/api-client";
 import { useTierLabels } from "@/lib/api/tier-labels";
 import { tierLabel } from "@/lib/tier-label";
@@ -114,7 +116,7 @@ interface EstimateLineItem {
   tierPrice: number;
   discountedPrice?: number;
   unitPrice: number;
-  priceType: "STANDARD" | "SPECIAL" | "DISCOUNTED";
+  priceType: "STANDARD" | "SPECIAL" | "DISCOUNTED" | "MANUAL";
   qty: number;
   unitsPerBox?: number;
   boxes?: number;
@@ -208,6 +210,9 @@ function CreateEstimateModal({
     return map;
   }, [customerPricesData]);
 
+  // S19b (SA-811a/813): flag-on, billing's own customer layer. Flag off = no request and master's chain.
+  const priceLayer = useCustomerPriceLayer(selectedCustomer?.id);
+
   // Debounce
   React.useEffect(() => {
     const t = setTimeout(() => setDebouncedCustomerSearch(customerSearch), 300);
@@ -270,13 +275,26 @@ function CreateEstimateModal({
       scheduleScannerRefocus(productSearchRef, 50);
       return;
     }
+    // Flag on and the layer not read yet (or failed): a pick would price at the tier, so wait (the notice says why).
+    if (priceLayer.enabled && !priceLayer.ready) return;
     const upb: number | undefined = product.unitsPerBox ? Number(product.unitsPerBox) : undefined;
     const listPrice = Number(product.pricePerUnit ?? 0);
     const customerTier = selectedCustomer?.pricingTier ?? 1;
     const tierOverride = cpMap.get(product.id);
     const effectiveTier = tierOverride ?? customerTier;
-    const tierPrice = getTierPrice(product, effectiveTier);
-    const priceType = isSpecialTier(effectiveTier) ? ("SPECIAL" as const) : ("STANDARD" as const);
+    let tierPrice = customerLinePrice({ product, tier: effectiveTier }).price;
+    let priceType: EstimateLineItem["priceType"] = isSpecialTier(effectiveTier)
+      ? "SPECIAL"
+      : "STANDARD";
+    const layer = priceLayer.layerOf(product.id);
+    if (layer) {
+      const r = customerLinePrice({ product, tier: effectiveTier, layer, unitLabel: null });
+      if (r.layered) {
+        // The layer's price is the line's price; an above-list one is MANUAL (badged MANUAL, no tier badge or strikethrough).
+        tierPrice = r.price;
+        priceType = r.priceType;
+      }
+    }
     setLineItems((prev) => [
       ...prev,
       {
@@ -401,8 +419,14 @@ function CreateEstimateModal({
   // Footer subtotal: boxed-aware per-line totals, summed and rounded once in pricing.
   const { subtotal } = computeInvoiceTotals(lineItems.map(toTotalsLine));
 
+  const priceBlocked = pricesUnconfirmed(
+    priceLayer,
+    lineItems.map((li) => li.productId),
+  );
+
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (priceBlocked) return;
     const errs: Record<string, string> = {};
     if (!selectedCustomer) errs.customer = "Select a customer.";
     if (!issueDate) errs.issueDate = "Issue date is required.";
@@ -457,7 +481,17 @@ function CreateEstimateModal({
           <Button variant="secondary" onClick={onClose} disabled={createEstimate.isPending}>
             Cancel
           </Button>
-          <Button type="submit" form="create-estimate-form" loading={createEstimate.isPending}>
+          <PriceLayerNotice
+            layer={priceLayer}
+            unconfirmed={priceBlocked}
+            className="mr-auto self-center text-xs text-amber-700"
+          />
+          <Button
+            type="submit"
+            form="create-estimate-form"
+            loading={createEstimate.isPending}
+            disabled={priceBlocked}
+          >
             Create Estimate
           </Button>
         </>
@@ -732,6 +766,11 @@ function CreateEstimateModal({
                       <span className="text-sm font-medium text-navy truncate">
                         {li.productName}
                       </span>
+                      {li.priceType === "MANUAL" && (
+                        <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700">
+                          MANUAL
+                        </span>
+                      )}
                       {li.priceType === "SPECIAL" && (
                         <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
                           TIER

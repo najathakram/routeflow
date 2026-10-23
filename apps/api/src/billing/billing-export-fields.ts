@@ -108,6 +108,8 @@ export const EXPORT_EXCLUDED_EVENT_TYPES: readonly string[] = [
   // SA-736r: MRR-only ledger rows booked when a coupon makes the next invoice $0 (or stops doing so).
   "coupon.unbilled",
   "coupon.billed",
+  // SA-788: the per-change audit record of a TenantAddon row (actor + before/after); internal, amountDelta null.
+  "addon.state_changed",
 ];
 
 export function projectInvoiceForExport(row: Record<string, unknown>) {

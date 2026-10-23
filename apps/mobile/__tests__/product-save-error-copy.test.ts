@@ -29,6 +29,11 @@ describe("productSaveErrorCopy (fixed copy, never the server message)", () => {
     expect(c).toBe("Turn the family back on first, then reactivate this variant.");
     expect(c).not.toContain("RAW");
   });
+  it("maps PRODUCT_PACK_STALE (SA-797) to the gate's reload sentence", () => {
+    expect(productSaveErrorCopy(err({ code: "PRODUCT_PACK_STALE", message: "RAW" }))).toBe(
+      "This product changed since you opened it. Reload to see the latest.",
+    );
+  });
   it("falls back to the blanket line, never raw text", () => {
     expect(productSaveErrorCopy(err({ code: "NOPE", message: "RAW SERVER TEXT" }))).toBe(
       PRODUCT_SAVE_FALLBACK,

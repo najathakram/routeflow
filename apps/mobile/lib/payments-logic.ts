@@ -3,6 +3,7 @@ import type { PaymentMethod } from "./api/invoices";
 import type { PaymentStatus } from "./api/payments";
 import { remainingCapacity, roundMoney } from "@routeflow/pricing";
 import { CHECK_TRANSITIONS, type CheckStatus } from "@routeflow/types";
+import { PAYMENT_STATUS_COPY } from "@routeflow/types/payment-submit-key";
 
 // Re-exported for backward compatibility — nothing in this repo currently imports either symbol
 // from this file (checked by grep), but both were public exports of this module before the
@@ -185,4 +186,18 @@ export function allocationTotals(
     excess: roundMoney(Math.max(0, total - allocated)),
     overAllocated: allocated > total + 0.001,
   };
+}
+
+/**
+ * SA-824: while this payment's attempt is unknown or in flight (`hasUnknown()`), "Change customer"
+ * is blocked — the attempt must never be re-scoped to another customer. Same copy as the web
+ * finance Payments page; released -> allowed again.
+ */
+export function changeCustomerGate(hasUnknownAttempt: boolean): {
+  blocked: boolean;
+  reason: string | null;
+} {
+  return hasUnknownAttempt
+    ? { blocked: true, reason: PAYMENT_STATUS_COPY.customerLocked }
+    : { blocked: false, reason: null };
 }

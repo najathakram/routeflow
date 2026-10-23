@@ -119,6 +119,7 @@ describe("updateOrderItems: revision guard, vanished line, B720 (row 372)", () =
       shippingFee: 0,
     });
     h.prisma.invoice.findFirst.mockResolvedValue(null);
+    h.prisma.order.updateMany.mockResolvedValue({ count: 1 }); // B695: the reopen's CANCELLED -> PENDING claim
     await h.service.reopenOrder("ord-1");
     expect(h.prisma.orderItem.updateMany).toHaveBeenCalled();
     expect(h.prisma.orderRevision.create).toHaveBeenCalledTimes(1);

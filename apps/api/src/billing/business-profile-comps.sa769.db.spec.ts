@@ -101,6 +101,8 @@ describeDb("SA-769 - a profile's comp grants under real advisory locks (real Pos
       set: async (tenantId: string, key: string, mode: string) => {
         modes[`${tenantId}:${key}`] = mode;
       },
+      // BO-04: the confirm drops the cached modes after it writes them; the stub's modes map needs no cache.
+      forgetCachedModes: jest.fn(),
     };
     const featurePreview = {
       preview: async () => ({ before: [], after: [], changed: [] }),

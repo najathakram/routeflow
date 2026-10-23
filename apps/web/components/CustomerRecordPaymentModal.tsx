@@ -2,6 +2,8 @@
 
 import * as React from "react";
 import { genericToastCopy } from "@/lib/generic-toast-copy";
+import { useAuth } from "@/lib/auth-context";
+import { toastDuplicatePaymentRef } from "@/lib/duplicate-payment-ref";
 import { Paperclip, Wallet } from "lucide-react";
 import { Button, useToast } from "@routeflow/ui/web";
 import {
@@ -13,6 +15,17 @@ import {
 import { waterfallAllocations, allocationTotals } from "@/lib/api/supplier-payments";
 import { fmt } from "@/lib/formatting";
 import { isOpenInvoiceStatus } from "@/lib/open-invoice-status";
+import {
+  PAYMENT_PHOTO_LATER_COPY,
+  finishFoundPayment,
+  forgetPaymentProof,
+  rememberPaymentProof,
+  paymentKeyScope,
+  usePaymentSubmitKey,
+} from "@/lib/payment-submit-key";
+import { usePaymentStatusCheck } from "@/lib/use-payment-status-check";
+import { PaymentStatusCheck } from "@/components/PaymentStatusCheck";
+import { PAYMENT_STATUS_COPY } from "@routeflow/types/payment-submit-key";
 import { clampAllocationInput } from "@/lib/payment-allocation";
 import {
   SELECTABLE_PAYMENT_METHODS,
@@ -61,8 +74,33 @@ export function CustomerRecordPaymentModal({
   onSuccess,
 }: CustomerRecordPaymentModalProps) {
   const { toast } = useToast();
+  const { user } = useAuth();
   const record = useRecordPaymentStandalone();
+  const keyScope = paymentKeyScope.standalone(customerId);
+  // SA-824: one Idempotency-Key per open, kept across a Cancel -> reopen while the outcome is unknown
+  const paymentKey = usePaymentSubmitKey(true, keyScope);
   const uploadPaymentImage = useUploadPaymentImage();
+  // SA-824: an unknown outcome offers "Check payment status"; found closes like a 2xx, and attaches the
+  // selected proof photo to the found payment (the same upload the 2xx path runs).
+  const statusCheck = usePaymentStatusCheck(paymentKey, async (payment) => {
+    const photo = await finishFoundPayment<File>(keyScope, payment, (paymentId, f) =>
+      uploadPaymentImage.mutateAsync({ paymentId, file: f }),
+    );
+    toast(
+      photo === "later"
+        ? { title: PAYMENT_PHOTO_LATER_COPY, variant: "info" }
+        : { title: PAYMENT_STATUS_COPY.recorded, variant: "success" },
+    );
+    if (photo === "failed") {
+      toast({
+        title: "Payment saved, image upload failed",
+        description: "You can attach it later from the payment detail page.",
+        variant: "error",
+      });
+    }
+    onSuccess?.();
+    onClose();
+  });
   const [totalAmount, setTotalAmount] = React.useState("");
   const [bankCharges, setBankCharges] = React.useState("");
   const [paidAt, setPaidAt] = React.useState(new Date().toISOString().split("T")[0]);
@@ -127,7 +165,8 @@ export function CustomerRecordPaymentModal({
       ),
     );
 
-  const handleSave = async (status: "DRAFT" | "PAID") => {
+  const handleSave = async (status: "DRAFT" | "PAID", recordAnyway = false) => {
+    if (paymentKey.hasUnknown()) return; // SA-824: the status check comes before any new attempt
     if (!total || total <= 0) {
       toast({ title: "Enter a valid amount", variant: "error" });
       return;
@@ -148,13 +187,16 @@ export function CustomerRecordPaymentModal({
       reference: reference || undefined,
       notes: notes || undefined,
       status,
+      ...(recordAnyway ? { recordAnyway: true } : {}),
       allocations: validAllocs.map((a) => ({
         invoiceId: a.invoiceId,
         amount: parseFloat(a.amount),
       })),
     };
+    rememberPaymentProof(keyScope, file); // so a status check that finds the payment can attach it
     try {
-      const res = await record.mutateAsync(dto);
+      const res = await record.mutateAsync({ ...dto, submitKey: paymentKey });
+      forgetPaymentProof(keyScope);
       toast({
         title: `Payment ${status === "DRAFT" ? "saved as draft" : "recorded"}`,
         variant: "success",
@@ -176,6 +218,9 @@ export function CustomerRecordPaymentModal({
       onSuccess?.();
       onClose();
     } catch (err: unknown) {
+      // Row 498: a duplicate reference names the existing payment; staff may "Record anyway".
+      if (toastDuplicatePaymentRef(err, toast, user?.role, () => void handleSave(status, true)))
+        return;
       toast({
         title: "Failed to record payment",
         description: genericToastCopy(err),
@@ -390,6 +435,9 @@ export function CustomerRecordPaymentModal({
           </div>
         </div>
 
+        <div className="px-6 pb-2">
+          <PaymentStatusCheck status={statusCheck} />
+        </div>
         <div className="flex items-center justify-end gap-3 border-t border-surface-border px-6 py-4">
           <Button variant="secondary" onClick={onClose} disabled={record.isPending}>
             Cancel
@@ -398,14 +446,14 @@ export function CustomerRecordPaymentModal({
             variant="secondary"
             onClick={() => void handleSave("DRAFT")}
             loading={record.isPending}
-            disabled={totals.overAllocated}
+            disabled={totals.overAllocated || statusCheck.unknown}
           >
             Save as draft
           </Button>
           <Button
             onClick={() => void handleSave("PAID")}
             loading={record.isPending}
-            disabled={totals.overAllocated}
+            disabled={totals.overAllocated || statusCheck.unknown}
           >
             Save as Paid
           </Button>

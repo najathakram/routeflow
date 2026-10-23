@@ -1,6 +1,11 @@
 import { BadRequestException, ConflictException } from "@nestjs/common";
 import {
   PIECE_LABEL,
+  baseLabelOf,
+  describeBaseOption,
+  normalizeBoxesPieces,
+  planBaseBilling,
+  roundMoney,
   defaultSellingLabel,
   UnknownUnitError,
   resolveLadderLevel,
@@ -144,4 +149,89 @@ export function lineUnitsPerBoxSnapshot(
   if (resolved.unitLabel != null) return resolved.unitsPerBox;
   if (packRule === "positive") return resolved.unitsPerBox > 0 ? resolved.unitsPerBox : null;
   return boxes != null && resolved.unitsPerBox > 1 ? resolved.unitsPerBox : null;
+}
+
+// ─── SA-728 / units P0b: a DERIVED base unit bills as the pack line's pieces ──────────────────────
+
+/** A Prisma product row (Decimal prices) as the pricing ladder's product. */
+export function asLadderProduct(p: Record<string, any>): LadderProduct {
+  const str = (v: string | number | { toString(): string } | null | undefined) =>
+    v == null ? null : v.toString();
+  return {
+    unit: p.unit,
+    baseUnitLabel: p.baseUnitLabel,
+    packLabel: p.packLabel,
+    unitsPerBox: p.unitsPerBox,
+    pricePerUnit: (p.pricePerUnit ?? 0).toString(),
+    priceTier2: str(p.priceTier2),
+    priceTier3: str(p.priceTier3),
+    priceTier4: str(p.priceTier4),
+    priceTier5: str(p.priceTier5),
+  };
+}
+
+/**
+ * An OLD client (or a stale picker) sends a derived Piece as `{ unitLabel: "Piece", qty: n }` and prices
+ * it per piece — which, rounded to the cent, bills `n x $3.33` where the pack's proration says $6.67.
+ * The server turns that line into the PACK line's pieces (boxes/pieces via normalizeBoxesPieces, no
+ * unitLabel stored) so `computeLineSubtotal` prorates it. Left untouched (returns the SAME object):
+ * a base with its OWN price (the unit-line path), a non-base label, an explicit boxes/pieces split,
+ * a line already held on the base, an unboxed product, a fractional/zero count, and a typed per-piece
+ * price that is NOT the derived price (a deliberate override).
+ *
+ * `price: "drop"` (orders) removes the echoed per-piece price so the pack branch prices at the tier;
+ * `"pack"` (manual invoices, which take the price as typed) replaces it with the PACK's tier price.
+ */
+export function normalizeDerivedBaseLine<
+  T extends {
+    unitLabel?: string | null;
+    qty?: number | null;
+    boxes?: number | null;
+    pieces?: number | null;
+    unitPrice?: number | null;
+  },
+>(
+  item: T,
+  product: LadderProduct | null | undefined,
+  units: readonly LadderUnit[],
+  tier: number | string,
+  opts?: {
+    price?: "drop" | "pack";
+    held?: string | null;
+    /** `price: "pack"` only: the pack price to stamp when it is NOT the tier's (S19: the customer layer's). */
+    packPrice?: number | null;
+  },
+): T {
+  const label = (item.unitLabel ?? "").trim();
+  if (!label || !product) return item;
+  const isBase = (l: string) =>
+    norm(l) === norm(baseLabelOf(product)) || norm(l) === norm(PIECE_LABEL);
+  if (!isBase(label) || ((opts?.held ?? "").trim() !== "" && isBase(opts!.held!))) return item;
+  if (Math.trunc(Number(product.unitsPerBox ?? 0)) <= 1) return item;
+  if ((item.boxes ?? 0) > 0 || (item.pieces ?? 0) > 0) return item;
+  const count = Number(item.qty);
+  if (!Number.isInteger(count) || count <= 0) return item;
+  const billing = planBaseBilling(product, units, tier, count);
+  if (billing.mode !== "pack") return item;
+  if (item.unitPrice != null) {
+    if (roundMoney(Number(item.unitPrice)) !== describeBaseOption(product, units, tier).price) {
+      return item;
+    }
+  }
+  const split = normalizeBoxesPieces({
+    boxes: 0,
+    pieces: count,
+    unitsPerBox: Number(product.unitsPerBox),
+  });
+  const out = {
+    ...item,
+    unitLabel: null,
+    qty: split.qty,
+    boxes: split.boxes,
+    pieces: split.pieces,
+  } as T;
+  if (opts?.price === "pack")
+    (out as { unitPrice?: number | null }).unitPrice = opts.packPrice ?? billing.packUnitPrice;
+  else delete (out as { unitPrice?: number | null }).unitPrice;
+  return out;
 }

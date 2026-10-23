@@ -18,6 +18,7 @@ let mockRole = "OPERATOR";
 const mockGateCalls: Array<{ enabled?: boolean } | undefined> = [];
 jest.mock("next/navigation", () => ({
   usePathname: () => mockPath,
+  useSearchParams: () => new URLSearchParams(),
   useRouter: () => ({ push: mockPush, replace: jest.fn(), prefetch: jest.fn() }),
 }));
 let mockGate = { showButton: false };

@@ -1,5 +1,10 @@
 import { BadRequestException, ForbiddenException } from "@nestjs/common";
-import { decideStaffOverride, getTierPrice, isSpecialTier } from "@routeflow/pricing";
+import {
+  decideStaffOverride,
+  getTierPrice,
+  isSpecialPrice,
+  type CustomerLayerPrice,
+} from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /** The api's one refusal text for a special-price change with no reason (B465 / B466 / #2696). */
@@ -22,15 +27,26 @@ export function decideTierOverride(
   tier: number,
   overridePrice: number,
   reason: string | null | undefined,
+  /** S19, flag.units_prices_v2 only: the pack's customer-layer price, the baseline in place of the tier price. */
+  layer?: CustomerLayerPrice | null,
 ) {
   const decision = decideStaffOverride({
     overridePrice,
-    baselinePrice: Number(getTierPrice(product, tier)),
-    listPrice: Number(product.pricePerUnit),
-    isSpecialTier: isSpecialTier(tier),
+    baselinePrice: layer?.price ?? Number(getTierPrice(product, tier)),
+    listPrice: layer?.listPrice ?? Number(product.pricePerUnit),
+    isSpecialTier: isSpecialPrice(
+      tier,
+      layer?.listPrice ?? Number(product.pricePerUnit),
+      layer?.price,
+    ),
     hasReason: !!reason?.trim(),
   });
   if ("refused" in decision) throw specialPriceReasonRequired(product.name);
+  // SA-811a R2: the customer's own price above the unit's Retail ladder price is the sticky upsell's twin: MANUAL, but not a
+  // staff override (no attribution) when it is only the baseline echoed back.
+  if (layer?.aboveList && decision.priceType === "SPECIAL") {
+    return { ...decision, priceType: "MANUAL" as const, overridden: false };
+  }
   return {
     ...decision,
     overridden: decision.priceType === "DISCOUNTED" || decision.priceType === "MANUAL",

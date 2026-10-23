@@ -115,6 +115,17 @@ describe("OrdersService.updateOrderItems — selling restrictions (lane R 2a-7)"
   describe("ON", () => {
     beforeEach(on);
 
+    it.each([
+      [{ fulfillPath: "PICKUP" }, "PICKUP"],
+      [{ counterSale: true, fulfillPath: "PICKUP" }, "COUNTER"],
+      [{ fulfillPath: "ROUTE" }, "DELIVERY"],
+    ])("L8: an edit of an order with %j is judged as %s", async (facts, kind) => {
+      await edit(ADD_X, operator, { ...ORDER, ...facts });
+      expect(h.restrictions.assertLinesSellable).toHaveBeenCalledWith(
+        expect.objectContaining({ fulfilmentKind: kind }),
+      );
+    });
+
     it("asks the choke point ONCE with the ROW's tenant (not the caller's), the customer, the added product and the STAFF channel — before the invoice revert and the transaction", async () => {
       await edit(ADD_X);
 
@@ -124,6 +135,7 @@ describe("OrdersService.updateOrderItems — selling restrictions (lane R 2a-7)"
         customerId: "cust-1",
         lines: [{ productId: "prod-x" }],
         channel: "STAFF",
+        fulfilmentKind: "DELIVERY",
       });
       const asked = firstCall(h.restrictions.assertLinesSellable);
       expect(asked).toBeLessThan(firstCall(revert));

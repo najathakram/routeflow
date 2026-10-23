@@ -15,7 +15,7 @@ import {
   type PendingEditIntent,
   type PendingScanDecision,
 } from "@routeflow/pricing";
-import { defaultStartOption, type UnitOption } from "./unit-options";
+import { defaultStartOption, derivedPackSplit, type UnitOption } from "./unit-options";
 
 /**
  * SA-626c (tier 1 money): the default selling unit belongs to the LINE, never to a mounted sheet. A line flagged
@@ -27,36 +27,57 @@ import { defaultStartOption, type UnitOption } from "./unit-options";
 /** #2865 (SA-632 H2): the visible refusal of a scan of a DIFFERENT level while a line's default unit is loading. */
 export const UNITS_LOADING_SCAN_MESSAGE = "Units are still loading. Scan again in a moment";
 
-/** The ONE writer of a chosen unit (the sheet's onChange and the default start). The pack is `option.value === ""`. */
+/**
+ * The ONE writer of a chosen unit (the sheet's onChange and the default start). The pack is `option.value === ""`.
+ *
+ * Units P0b / SA-728: a DERIVED base option (a Piece with no price of its own) is NOT a unit line. It writes the
+ * PACK-PIECES shape (boxes 0 / pieces N, no unitLabel, no price) plus the client-only `derivedBase` marker, so the
+ * preview total is the server's computeLineSubtotal at the pack price, never qty x a rounded per-piece price. Picking
+ * the pack again clears the marker and settles ONE whole pack; any other unit clears it too.
+ */
 export function applyUnitOption(
   prev: LineState,
   option: UnitOption,
   unitsPerBox?: number | string | null,
 ): LineState {
   const isPack = option.value === "";
+  const isDerived = !isPack && !!option.derived;
+  const isUnitLine = !isPack && !isDerived;
   // A REMEMBERED pack price (history pre-fill) is stashed while the line sells by a unit and re-applied when the buyer
   // explicitly picks the pack again; an operator-typed price is cleared by a unit choice, as always (SA-626d).
   const remembered = prev.priceSource === "history" && prev.unitPrice != null && !prev.unitLabel;
   const restore = isPack && prev.packUnitPrice != null;
-  const sameUnit = !isPack && prev.unitLabel === option.value;
+  const sameUnit = isDerived
+    ? prev.derivedBase === option.value
+    : !isPack && prev.unitLabel === option.value;
+  // A still-pending line keeps its count (N fast adds = N of the unit); re-applying the unit the line ALREADY holds (a
+  // stale sheet/picker after the resolver ran) keeps its quantity; any other choice resets to 1, as always.
+  const count = !isPack && isPendingDefaultUnit(prev) ? pendingTapCount(prev, unitsPerBox) : 1;
+  const split = sameUnit ? null : derivedPackSplit(option, count);
+  let shape: { qty: number; boxes?: number; pieces?: number };
+  if (split) {
+    shape = { qty: split.qty, boxes: split.boxes, pieces: split.pieces };
+  } else if (isDerived) {
+    shape = { qty: prev.qty, boxes: prev.boxes, pieces: prev.pieces };
+  } else if (isPack && prev.derivedBase) {
+    // Back to the pack from a derived Piece: ONE whole pack, never a lone piece on a pack line.
+    shape = packQtyForTaps(1, Number(unitsPerBox ?? 0) || option.factorToBase);
+  } else {
+    shape = { qty: sameUnit ? prev.qty : count };
+  }
   return {
     ...prev,
-    unitLabel: isPack ? undefined : option.value,
-    unitBasePrice: isPack ? undefined : option.price,
-    unitFactor: isPack ? undefined : option.factorToBase,
+    unitLabel: isUnitLine ? option.value : undefined,
+    derivedBase: isDerived ? option.value : undefined,
+    unitBasePrice: isUnitLine ? option.price : undefined,
+    unitFactor: isUnitLine ? option.factorToBase : undefined,
     // any unit choice CONSUMES the default-start flag (a cart re-open never re-applies it, Opus #2865 B2)
     startOnDefaultUnit: undefined,
     pendingTaps: undefined,
     pendingCode: undefined,
-    // A still-pending line keeps its count (N fast adds = N of the unit); re-applying the unit the line ALREADY holds (a
-    // stale sheet/picker after the resolver ran) keeps its quantity; any other choice resets to 1, as always.
-    qty: sameUnit
-      ? prev.qty
-      : !isPack && isPendingDefaultUnit(prev)
-        ? pendingTapCount(prev, unitsPerBox)
-        : 1,
-    boxes: undefined,
-    pieces: undefined,
+    qty: shape.qty,
+    boxes: shape.boxes,
+    pieces: shape.pieces,
     unitPrice: sameUnit ? prev.unitPrice : restore ? prev.packUnitPrice : undefined,
     priceSource: sameUnit ? prev.priceSource : restore ? "history" : undefined,
     packUnitPrice: isPack ? undefined : remembered ? prev.unitPrice : prev.packUnitPrice,
@@ -249,6 +270,7 @@ const UNIT_FIELDS = [
   "pendingTaps",
   "pendingCode",
   "unitLabel",
+  "derivedBase",
   "unitBasePrice",
   "unitFactor",
   "startOnDefaultUnit",

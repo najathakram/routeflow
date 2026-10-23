@@ -48,6 +48,11 @@ describe("OrdersService.create: fulfil path", () => {
       });
     h.prisma.customer.findFirst.mockImplementation(customer);
     h.prisma.customer.findUnique.mockImplementation(customer);
+    // SA-822 MUST 1: an explicit staff PICKUP asks the till; the operator here is denied no group.
+    h.prisma.user.findFirst.mockResolvedValue({
+      deniedPermissionGroups: [],
+      permissionsVersion: 1,
+    });
     h.prisma.product.findMany.mockResolvedValue([PRODUCT]);
     h.prisma.order.create.mockResolvedValue({
       id: "ord-1",

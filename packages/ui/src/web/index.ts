@@ -22,6 +22,13 @@ export type { SelectProps, SelectOption } from "./Select";
 export { Modal, ModalNoticeContext } from "./Modal";
 export type { ModalProps } from "./Modal";
 
+export { FloatingPanel, computeAnchoredPlacement } from "./FloatingPanel";
+export type {
+  FloatingPanelProps,
+  FloatingPanelTarget,
+  AnchoredPlacementInput,
+} from "./FloatingPanel";
+
 export { Table } from "./Table";
 export type { TableProps } from "./Table";
 

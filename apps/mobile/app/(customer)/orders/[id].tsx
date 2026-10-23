@@ -31,6 +31,7 @@ import { invoiceLineQtyText } from "@routeflow/pricing";
 import { invoiceLineUnitNoun, usesUnitDisplay } from "../../../lib/invoice-line-display";
 import { freeUnitsLabel } from "../../../lib/buyer-cart-logic";
 import { showToast } from "../../../lib/toast";
+import { reorderErrorCopy } from "../../../lib/buyer-qty-split";
 import { confirm } from "../../../lib/confirm";
 import { fmtCalendarDate } from "../../../lib/format-date";
 
@@ -141,8 +142,7 @@ export default function CustomerOrderDetailScreen() {
               showToast("Order created");
               router.push(`/(customer)/orders/${newOrder.id}`);
             },
-            onError: (e: any) =>
-              showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+            onError: (e: any) => showToast(reorderErrorCopy(e)),
           },
         ),
       { confirmText: "Reorder" },

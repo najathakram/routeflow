@@ -430,5 +430,8 @@ describe("BuyerController.createOrder — customer advisory lock (IMP-02 / R2 co
 
     expect(locks.withAdvisoryLock).not.toHaveBeenCalled();
     expect(ordersService.create).toHaveBeenCalledTimes(1);
+    // B1239: the explicit "new order" choice is kept apart (skipAutoMerge) and never consolidated.
+    expect(ordersService.create.mock.calls[0][2]).toEqual({ skipAutoMerge: true });
+    expect(ordersService.mergeAllPendingForCustomer).not.toHaveBeenCalled();
   });
 });

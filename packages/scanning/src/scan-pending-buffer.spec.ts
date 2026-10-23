@@ -33,12 +33,20 @@ describe("pending buffer", () => {
     expect(s.pending).toEqual(["A"]);
   });
 
-  it(`is bounded at depth ${PENDING_BUFFER_DEPTH}: a third queued scan is the only intentional drop`, () => {
+  it(`is bounded at depth ${PENDING_BUFFER_DEPTH}: the scan past the cap is the only intentional drop`, () => {
     let s = pushScan(createPendingBuffer(), "A").next;
-    s = pushScan(s, "B").next;
-    s = pushScan(s, "C").next;
-    const over = pushScan(s, "D");
+    for (let i = 0; i < PENDING_BUFFER_DEPTH; i++) s = pushScan(s, `Q${i}`).next;
+    const over = pushScan(s, "OVER");
     expect(over.startResolving).toBeNull();
     expect(over.next).toBe(s);
+  });
+});
+
+describe("pending buffer overflow is reported", () => {
+  it("pushScan flags the scan it could not queue as dropped", () => {
+    let s = pushScan(createPendingBuffer(), "A").next;
+    for (let i = 0; i < PENDING_BUFFER_DEPTH; i++) s = pushScan(s, `Q${i}`).next;
+    expect(pushScan(s, "OVER").dropped).toBe(true);
+    expect(pushScan(createPendingBuffer(), "A").dropped).toBeFalsy();
   });
 });

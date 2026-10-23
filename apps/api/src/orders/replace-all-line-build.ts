@@ -11,7 +11,6 @@
  * where the original `continue`d (a normalized qty <= 0).
  */
 import {
-  isSpecialTier,
   categoryTaxSnapshotOf,
   computeLineSubtotal,
   getTierPrice,
@@ -21,6 +20,7 @@ import {
   type TrackedCategoryRow,
 } from "@routeflow/pricing";
 import { PriceType } from "@prisma/client";
+import { isSpecialPrice, type CustomerLayerPrice } from "@routeflow/pricing";
 import { rescaleBogoFreeUnits, resolveBuyerLinePrice } from "./buyer-merge-pricing";
 import { decideTierOverride } from "./staff-override";
 import type { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
@@ -143,9 +143,12 @@ export interface ReplaceAllLineBuildCtx {
   // ambiguous and skips both). No DTO field: sourceLineId only ever travels on the internal
   // fold -> updateOrderItems call, never through the public DTO (which still rejects it).
   existingLineById: Map<string, ExistingLineForReplaceAll>;
-  isStaffEdit: boolean;
+  /** linesPriceAtCustomerTier(user): the ONE predicate that chooses the customer's tier / layer (not a role test). */
+  atCustomerTier: boolean;
   operatorCpMap: Map<string, number | null>;
   operatorDefaultTier: number;
+  /** S19, flag.units_prices_v2 only: the pack's customer-layer price per product (the tier price's replacement). */
+  layerOf?: (product: any) => CustomerLayerPrice | null;
   isCreateMerge?: boolean;
   buyerPromos: PromotionRule[];
   userId?: string | null;
@@ -187,7 +190,7 @@ export function buildReplaceAllLineData(
   if (qty <= 0) return null;
 
   const catalogPrice = Number(product.pricePerUnit);
-  const overridePrice = item.unitPrice !== undefined ? Number(item.unitPrice) : null;
+  const overridePrice = item.unitPrice != null ? Number(item.unitPrice) : null;
   // B60 (REG-B60): a client price that is ABSENT or merely ECHOES this
   // line's pre-edit BOGO snapshot price (tolerance 0.005 — float/decimal
   // round-trip, not an override decision) is not a repricing decision —
@@ -222,7 +225,7 @@ export function buildReplaceAllLineData(
   const replaceAllExisting = sourceLineId
     ? ctx.existingLineById.get(sourceLineId)
     : ctx.existingLineByProduct.get(productId);
-  const replaceAllTierForProduct = ctx.isStaffEdit
+  const replaceAllTierForProduct = ctx.atCustomerTier
     ? (ctx.operatorCpMap.get(productId) ?? ctx.operatorDefaultTier)
     : 1;
   const replaceAllHasOverrideReason = !!(
@@ -246,12 +249,19 @@ export function buildReplaceAllLineData(
   // own replaceAll:true edit of an EXISTING order (isCreateMerge
   // unset) still needs the guard for a brand-new OR ambiguous line.
   const skipAsCreateMergeNewLine = !!ctx.isCreateMerge && replaceAllExisting == null;
+  const layer = ctx.layerOf?.(product) ?? null; // S19, flag.units_prices_v2 only
   // #2696(c) SA-558d (i): that NEW line IS a staff create, so it takes create's rule A
   // (decideTierOverride: tier baseline, the sent reason, the same 400; within ½¢ of tier ⇒ the
   // tier ladder below) — a fresh order and a folded one price the same payload identically.
   const createMergeDecision =
     skipAsCreateMergeNewLine && overridePrice !== null && !bogoPriceUnchanged
-      ? decideTierOverride(product, replaceAllTierForProduct, overridePrice, item.overrideReason)
+      ? decideTierOverride(
+          product,
+          replaceAllTierForProduct,
+          overridePrice,
+          item.overrideReason,
+          layer,
+        )
       : null;
   const createMergeOverride = createMergeDecision?.overridden ? createMergeDecision : null;
   // #2716c / SA-558d: ONE rule (staff-line-price.ts -> decideStaffOverride) for a typed price that
@@ -265,12 +275,17 @@ export function buildReplaceAllLineData(
       ? decideReplaceAllLinePrice({
           overridePrice,
           existing: replaceAllExisting ?? null,
-          tierPrice: Number(getTierPrice(product, replaceAllTierForProduct)),
-          listPrice: catalogPrice,
-          isSpecialTier: isSpecialTier(replaceAllTierForProduct),
+          tierPrice: layer?.price ?? Number(getTierPrice(product, replaceAllTierForProduct)),
+          listPrice: layer?.listPrice ?? catalogPrice,
+          isSpecialTier: isSpecialPrice(
+            replaceAllTierForProduct,
+            layer?.listPrice ?? catalogPrice,
+            layer?.price,
+          ),
           hasReason: replaceAllHasOverrideReason,
           skipReasonGuard: skipAsCreateMergeNewLine,
           productName: product.name,
+          aboveList: layer?.aboveList,
         })
       : null;
   const isManualOverride = createMergeDecision
@@ -328,7 +343,7 @@ export function buildReplaceAllLineData(
             priceType: replaceAllDecision.priceType,
             freeUnits: 0,
           }
-        : ctx.isStaffEdit
+        : ctx.atCustomerTier
           ? resolveBuyerLinePrice(
               product,
               ctx.operatorCpMap.get(productId) ?? ctx.operatorDefaultTier,
@@ -338,6 +353,7 @@ export function buildReplaceAllLineData(
               null,
               // REG-B109: the exact denomination this line bills with below.
               { boxes, pieces, unitsPerBox: upb },
+              layer,
             )
           : {
               // Non-staff caller: legacy list pricing, no tier resolution.

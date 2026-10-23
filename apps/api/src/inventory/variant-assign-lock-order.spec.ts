@@ -66,7 +66,7 @@ async function run(mode: "on" | "off") {
       }),
       findFirst: jest.fn(async ({ where }: any) => {
         if (where.parentProductId && where.id) return EXISTING;
-        if (where.name) return null;
+        if (where.name || where.OR) return null; // the new-variant name-collision probe
         return {
           pricePerUnit: D(30),
           priceTier2: D(28),

@@ -20,6 +20,8 @@ import { isOpenInvoiceStatus } from "@/lib/open-invoice-status";
 import { waterfallAllocations, allocationTotals } from "@/lib/api/supplier-payments";
 import { clampAllocationInput } from "@/lib/payment-allocation";
 import { genericToastCopy } from "@/lib/generic-toast-copy";
+import { useAuth } from "@/lib/auth-context";
+import { toastDuplicatePaymentRef } from "@/lib/duplicate-payment-ref";
 import { dayClosedCopy } from "@/lib/day-closed-copy";
 import { useCustomers } from "@/lib/api/customers";
 import { useToast, EmptyState, Button, Badge } from "@routeflow/ui/web";
@@ -33,6 +35,17 @@ import {
   type SelectablePaymentMethod,
 } from "@/lib/payment-methods";
 import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
+import {
+  PAYMENT_PHOTO_LATER_COPY,
+  finishFoundPayment,
+  forgetPaymentProof,
+  paymentKeyScope,
+  rememberPaymentProof,
+  usePaymentSubmitKey,
+} from "@/lib/payment-submit-key";
+import { usePaymentStatusCheck } from "@/lib/use-payment-status-check";
+import { PaymentStatusCheck } from "@/components/PaymentStatusCheck";
+import { PAYMENT_STATUS_COPY } from "@routeflow/types/payment-submit-key";
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
 
@@ -64,10 +77,41 @@ interface Allocation {
 
 function RecordPaymentModal({ onClose }: { onClose: () => void }) {
   const { toast } = useToast();
+  const { user } = useAuth();
   const record = useRecordPaymentStandalone();
-  const uploadPaymentImage = useUploadPaymentImage();
-  const { data: customersData } = useCustomers({ limit: 200 });
   const [customerId, setCustomerId] = React.useState("");
+  // SA-824: the holder scope is the writer + target (`standalone:<customerId>`), shared with
+  // CustomerRecordPaymentModal, resolved when the customer is chosen: no key exists before that. One key per
+  // open, kept across a Cancel -> reopen while the outcome is unknown.
+  const keyScope = customerId ? paymentKeyScope.standalone(customerId) : null;
+  const paymentKey = usePaymentSubmitKey(true, keyScope);
+  const uploadPaymentImage = useUploadPaymentImage();
+  // SA-824: an unknown outcome offers "Check payment status"; found closes like a 2xx, and attaches the
+  // selected proof photo to the found payment (the same upload the 2xx path runs).
+  const statusCheck = usePaymentStatusCheck(paymentKey, async (payment) => {
+    // No scope (no customer chosen) means no key and no remembered proof: skip the lookup.
+    const photo = keyScope
+      ? await finishFoundPayment<File>(keyScope, payment, (paymentId, f) =>
+          uploadPaymentImage.mutateAsync({ paymentId, file: f }),
+        )
+      : "none";
+    toast(
+      photo === "later"
+        ? { title: PAYMENT_PHOTO_LATER_COPY, variant: "info" }
+        : { title: PAYMENT_STATUS_COPY.recorded, variant: "success" },
+    );
+    if (photo === "failed") {
+      toast({
+        title: "Payment saved, image upload failed",
+        description: "You can attach it later from the payment detail page.",
+        variant: "error",
+      });
+    }
+    onClose();
+  });
+  const { data: customersData } = useCustomers({ limit: 200 });
+  // An attempt for this customer is unknown or in flight: never re-scope it to another customer.
+  const customerLocked = paymentKey.hasUnknown();
   const [totalAmount, setTotalAmount] = React.useState("");
   const [bankCharges, setBankCharges] = React.useState("");
   const [paidAt, setPaidAt] = React.useState(new Date().toISOString().split("T")[0]);
@@ -141,8 +185,9 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
 
   const customers = customersData?.data ?? [];
 
-  const handleSave = async (status: "DRAFT" | "PAID") => {
-    if (!customerId) {
+  const handleSave = async (status: "DRAFT" | "PAID", recordAnyway = false) => {
+    if (paymentKey.hasUnknown()) return; // SA-824: the status check comes before any new attempt
+    if (!customerId || !keyScope) {
       toast({ title: "Select a customer", variant: "error" });
       return;
     }
@@ -169,13 +214,16 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
       reference: reference || undefined,
       notes: notes || undefined,
       status,
+      ...(recordAnyway ? { recordAnyway: true } : {}),
       allocations: validAllocs.map((a) => ({
         invoiceId: a.invoiceId,
         amount: parseFloat(a.amount),
       })),
     };
+    rememberPaymentProof(keyScope, file); // so a status check that finds the payment can attach it
     try {
-      const res = await record.mutateAsync(dto);
+      const res = await record.mutateAsync({ ...dto, submitKey: paymentKey });
+      forgetPaymentProof(keyScope);
       toast({
         title: `Payment ${status === "DRAFT" ? "saved as draft" : "recorded"}`,
         variant: "success",
@@ -198,6 +246,9 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
       }
       onClose();
     } catch (err: unknown) {
+      // Row 498: a duplicate reference names the existing payment; staff may "Record anyway".
+      if (toastDuplicatePaymentRef(err, toast, user?.role, () => void handleSave(status, true)))
+        return;
       toast({
         title: "Failed to record payment",
         description: genericToastCopy(err),
@@ -222,7 +273,11 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
               <label className="mb-1.5 block text-sm font-medium text-navy">Customer *</label>
               <select
                 value={customerId}
-                onChange={(e) => setCustomerId(e.target.value)}
+                onChange={(e) => {
+                  if (paymentKey.hasUnknown()) return; // SA-824: never re-scope an unknown attempt
+                  setCustomerId(e.target.value);
+                }}
+                disabled={customerLocked}
                 className={fieldCls}
               >
                 <option value="">Select customer...</option>
@@ -232,6 +287,9 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
                   </option>
                 ))}
               </select>
+              {customerLocked && (
+                <p className="mt-1 text-xs text-navy/70">{PAYMENT_STATUS_COPY.customerLocked}</p>
+              )}
             </div>
             <div>
               <label className="mb-1.5 block text-sm font-medium text-navy">
@@ -427,6 +485,9 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
           )}
         </div>
 
+        <div className="px-6 pb-2">
+          <PaymentStatusCheck status={statusCheck} />
+        </div>
         <div className="flex items-center justify-end gap-3 border-t border-surface-border px-6 py-4">
           <button
             onClick={onClose}
@@ -436,14 +497,14 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
           </button>
           <button
             onClick={() => handleSave("DRAFT")}
-            disabled={record.isPending || overAllocated}
+            disabled={record.isPending || overAllocated || statusCheck.unknown}
             className="rounded-lg border border-surface-border px-4 py-2 text-sm text-navy hover:bg-surface-raised disabled:opacity-50"
           >
             Save as draft
           </button>
           <button
             onClick={() => handleSave("PAID")}
-            disabled={record.isPending || overAllocated}
+            disabled={record.isPending || overAllocated || statusCheck.unknown}
             className="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-50"
           >
             {record.isPending ? "Saving..." : "Save as Paid"}

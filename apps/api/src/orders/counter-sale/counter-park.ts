@@ -1,4 +1,9 @@
-import { COUNTER_PARK_LABEL_MAX, type ParkedPriceLine } from "@routeflow/pricing";
+import {
+  COUNTER_PARK_LABEL_MAX,
+  ROW_ITEM_NAMES_MAX,
+  foldItemNames,
+  type ParkedPriceLine,
+} from "@routeflow/pricing";
 import type { LockFamily } from "../../common/db-locks";
 
 /** Advisory-lock family of the parked-cart cap: keyed on the tenant id (one lock covers the per-register and tenant-wide caps). */
@@ -85,6 +90,14 @@ export function priceLinesOf(payload: unknown): ParkedPriceLine[] {
     out.push(line);
   }
   return out;
+}
+
+/**
+ * R7b 2.1: the first few line names (+ qty) of a stored payload and its named-line count, for the list row. No query
+ * change: the list already reads `payload->'lines'`. A non-array / nameless payload yields `{}`.
+ */
+export function itemSummaryOf(payload: unknown): ReturnType<typeof foldItemNames> {
+  return foldItemNames((payload as { lines?: unknown } | null)?.lines, ROW_ITEM_NAMES_MAX);
 }
 
 /** The customer's business name of a stored payload, when it has one. */

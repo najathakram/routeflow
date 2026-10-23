@@ -27,6 +27,8 @@ export interface PriceEditLine {
   listPrice: number;
   /** the customer's pricing tier (1 = standard; anything else is a special price) */
   tier: number;
+  /** S19b: the customer layer's `isSpecial` for this line (flag on); absent = judged by `tier` as before. */
+  isSpecial?: boolean;
   qty: number;
   boxes?: number | null;
   pieces?: number | null;
@@ -110,7 +112,7 @@ export function resolveCounterPriceEdit(
     overridePrice: wanted,
     baselinePrice: line.tierPrice,
     listPrice: line.listPrice,
-    isSpecialTier: isSpecialTier(line.tier),
+    isSpecialTier: line.isSpecial ?? isSpecialTier(line.tier),
     hasReason: !!reason?.trim(),
   });
   if ("refused" in decision) return { ok: false, refused: "REASON_REQUIRED" };

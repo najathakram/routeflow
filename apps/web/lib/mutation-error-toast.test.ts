@@ -22,6 +22,23 @@ describe("handleMutationError (#1965)", () => {
     });
   });
 
+  it("542c: a 409 PAYMENT_TERMS_CHANGED from the pay click toasts the fixed refreshed-amount sentence", () => {
+    const { toast, router } = setup();
+    handleMutationError(
+      {
+        message: "Request failed",
+        response: { status: 409, data: { code: "PAYMENT_TERMS_CHANGED" } },
+      },
+      { meta: undefined },
+      toast,
+      router,
+    );
+    expect(toast).toHaveBeenCalledWith({
+      title: "The amount changed. We've refreshed it, please check and try again.",
+      variant: "error",
+    });
+  });
+
   it("shows NOTHING when the mutation opts out with meta.localErrorToast", () => {
     const { toast, router } = setup();
     handleMutationError(
@@ -94,6 +111,21 @@ describe("handleMutationError (#1965)", () => {
     expect(toast.mock.calls[0][0].title).toBe(
       "This workspace is currently in read-only mode. You can view records, but changes and new transactions are temporarily unavailable.",
     );
+  });
+
+  // B1234: the staff item save opts in to the fixed copy; the change-request screen (no opt-in) still owns its own toast.
+  it("toasts LINE_ALREADY_DELIVERED for the staff item save (meta.lineDeliveredToast) and swallows it elsewhere", () => {
+    const { toast, router } = setup();
+    handleMutationError(axiosErr({ code: "LINE_ALREADY_DELIVERED" }), {}, toast, router);
+    expect(toast).not.toHaveBeenCalled();
+    handleMutationError(
+      axiosErr({ code: "LINE_ALREADY_DELIVERED", message: "raw" }),
+      { meta: { lineDeliveredToast: true } },
+      toast,
+      router,
+    );
+    expect(toast).toHaveBeenCalledTimes(1);
+    expect(toast.mock.calls[0][0].title).toMatch(/delivered line can't be changed or removed/);
   });
 
   // B1135: the buyer's request form says this refusal inline; a second generic toast would repeat it.

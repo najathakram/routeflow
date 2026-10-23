@@ -37,7 +37,7 @@ jest.mock("../../common/db-locks", () => ({
   },
 }));
 
-import { BadRequestException } from "@nestjs/common";
+import { BadRequestException, ConflictException } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import { LockTimeoutError, LockUnavailableError } from "../../common/db-locks";
 import { PickupCompleteService } from "./pickup-complete.service";
@@ -48,7 +48,10 @@ import { createMockPrisma } from "../../testing/prisma-mock";
 import { pickupTenderGroupId } from "./pickup-tender-group";
 
 /** SA-763r R7: every hand-over tender is written with the order's v5 group id, in the create. */
-const TENDER_GROUP = { paymentGroupId: pickupTenderGroupId("ord-1") };
+const TENDER_GROUP = {
+  paymentGroupId: pickupTenderGroupId("ord-1"),
+  refDedupe: expect.anything(), // SA-837b: the signed-in user rides every tender (the generic flag)
+};
 
 /**
  * POST /orders/:id/pickup-complete orchestration. Every collaborator is a mock: `changeStatus` (the
@@ -447,6 +450,100 @@ describe("PickupCompleteService.complete", () => {
       const e = await errorOf(run({ payment: { method: "CHECK" } }));
       expect(e.getResponse().code).toBe("COUNTER_CHECK_NUMBER_REQUIRED");
       nothingWritten();
+    });
+    describe("post-dated check (interim guard: a check dated after the TENANT's today is never tendered)", () => {
+      const FAKE_ALL_BUT_DATE = [
+        "hrtime",
+        "nextTick",
+        "performance",
+        "queueMicrotask",
+        "requestAnimationFrame",
+        "cancelAnimationFrame",
+        "requestIdleCallback",
+        "cancelIdleCallback",
+        "setImmediate",
+        "clearImmediate",
+        "setInterval",
+        "clearInterval",
+        "setTimeout",
+        "clearTimeout",
+      ] as never;
+      const at = (iso: string, timezone: string | null) => {
+        jest.useFakeTimers({ now: new Date(iso), doNotFake: FAKE_ALL_BUT_DATE });
+        prisma.tenantConfig.findUnique.mockResolvedValue({ timezone });
+      };
+      afterEach(() => jest.useRealTimers());
+      const check = (checkDate?: string) => ({
+        payment: { method: "CHECK", reference: "1042", ...(checkDate ? { checkDate } : {}) },
+      });
+
+      it("tenant tomorrow: 400 COUNTER_CHECK_POSTDATED and NOTHING is written (no claim, no status, no payment)", async () => {
+        at("2026-10-22T15:00:00Z", "UTC");
+        const e = await errorOf(run(check("2026-10-23")));
+        expect(e.getStatus()).toBe(400);
+        expect(e.getResponse().code).toBe("COUNTER_CHECK_POSTDATED");
+        nothingWritten();
+        expect(claims).toHaveLength(0);
+      });
+
+      it("a walk-in hand-over with a post-dated check is refused the same way", async () => {
+        at("2026-10-22T15:00:00Z", "UTC");
+        order = orderRow("OUT_FOR_DELIVERY", { customer: { isWalkIn: true } });
+        const e = await errorOf(run(check("2026-12-01")));
+        expect(e.getResponse().code).toBe("COUNTER_CHECK_POSTDATED");
+        nothingWritten();
+      });
+
+      it.each([
+        ["today", "2026-10-22"],
+        ["yesterday", "2026-10-21"],
+        ["a year ago", "2025-10-22"],
+        ["no date", undefined],
+      ])("a check dated %s is tendered as before", async (_n, d) => {
+        at("2026-10-22T15:00:00Z", "UTC");
+        const res = await run(check(d));
+        expect(recordPayment).toHaveBeenCalledWith(
+          "inv-1",
+          expect.objectContaining({ method: "CHECK", reference: "1042" }),
+          expect.anything(),
+        );
+        expect(res.paymentRecorded).toBe(true);
+      });
+
+      it("a future checkDate on a non-check method is ignored", async () => {
+        at("2026-10-22T15:00:00Z", "UTC");
+        const res = await run({ payment: { method: "CASH", checkDate: "2026-12-01" } });
+        expect(res.paymentRecorded).toBe(true);
+      });
+
+      it("west of UTC: the tenant's day is the 21st, so the 22nd is TOMORROW (refused) and the 21st is today (tendered)", async () => {
+        at("2026-10-22T03:00:00Z", "America/Los_Angeles");
+        expect((await errorOf(run(check("2026-10-22")))).getResponse().code).toBe(
+          "COUNTER_CHECK_POSTDATED",
+        );
+        nothingWritten();
+        expect((await run(check("2026-10-21"))).paymentRecorded).toBe(true);
+      });
+
+      it("east of UTC: the tenant's day is the 23rd, so the 23rd is today (NO false refusal) and the 24th is refused", async () => {
+        at("2026-10-22T20:00:00Z", "Pacific/Auckland");
+        expect((await run(check("2026-10-23"))).paymentRecorded).toBe(true);
+        recordPayment.mockClear();
+        changeStatus.mockClear();
+        order = orderRow("OUT_FOR_DELIVERY");
+        expect((await errorOf(run(check("2026-10-24")))).getResponse().code).toBe(
+          "COUNTER_CHECK_POSTDATED",
+        );
+        expect(recordPayment).not.toHaveBeenCalled();
+        expect(changeStatus).not.toHaveBeenCalled();
+      });
+
+      it("a tenant with no configured zone judges its day in UTC", async () => {
+        at("2026-10-22T23:30:00Z", null);
+        expect((await errorOf(run(check("2026-10-23")))).getResponse().code).toBe(
+          "COUNTER_CHECK_POSTDATED",
+        );
+      });
     });
     it("a negative amount is 400 before any write", async () => {
       await expect(run(cash(-1))).rejects.toBeInstanceOf(BadRequestException);
@@ -927,6 +1024,39 @@ describe("PickupCompleteService.complete", () => {
     it("a failed stamp never fails the hand-over", async () => {
       prisma.order.updateMany.mockRejectedValue(new Error("db down"));
       await expect(run()).resolves.toMatchObject({ orderId: "ord-1" });
+    });
+  });
+
+  describe("SA-837b: DUPLICATE_PAYMENT_REF reaches the hand-over dialog; Record anyway resends through the generic flag", () => {
+    const existingPayment = {
+      id: "pay-old",
+      paymentNumber: "PAY-A-0001",
+      paidAt: "2026-10-01T12:00:00.000Z",
+      amount: 37.25,
+      invoiceId: "inv-9",
+      invoiceNumber: "INV-0009",
+    };
+    it("a refused duplicate: the hand-over stands, unrecorded, with the cause and the existing payment", async () => {
+      recordPayment.mockRejectedValueOnce(
+        new ConflictException({ code: "DUPLICATE_PAYMENT_REF", message: "dup", existingPayment }),
+      );
+      const res = await run({ payment: { method: "CARD", amount: 37.25, reference: "4242" } });
+      expect(res).toMatchObject({
+        paymentRecorded: false,
+        paymentErrorCode: "COUNTER_PAYMENT_NOT_RECORDED",
+        paymentCauseCode: "DUPLICATE_PAYMENT_REF",
+        existingPayment,
+      });
+    });
+    it("payment.recordAnyway reaches recordPayment as the generic refDedupe flag, with the signed-in user", async () => {
+      await run({
+        payment: { method: "CARD", amount: 37.25, reference: "4242", recordAnyway: true },
+      });
+      expect(recordPayment.mock.calls[0][2].refDedupe).toEqual({
+        actor: "op-1",
+        role: "OPERATOR",
+        recordAnyway: true,
+      });
     });
   });
 });

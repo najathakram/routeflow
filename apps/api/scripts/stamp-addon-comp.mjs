@@ -246,6 +246,25 @@ async function main() {
           }),
         ],
       );
+      // SA-788 A5: the per-change record of the row (beside the AuditLog row, same transaction), in the shape
+      // billing/tenant-addon-writer.ts writes: PLATFORM_ADMIN with no user id, source admin.comp, amountDelta NULL.
+      await client.query(
+        `INSERT INTO "BillingEvent" (id, "tenantId", type, payload, "amountDelta", "actorId")
+         VALUES ($1, $2, 'addon.state_changed', $3::jsonb, NULL, NULL)`,
+        [
+          randomUUID(),
+          p.row.tenantId,
+          JSON.stringify({
+            rowId: p.id,
+            addonKey: p.row.addonKey,
+            sku: p.row.sku ?? null,
+            changes: { isComp: [false, true] },
+            actor: { kind: "PLATFORM_ADMIN", id: null },
+            source: "admin.comp",
+            meta: { actor: ACTOR },
+          }),
+        ],
+      );
     }
     await client.query("COMMIT");
     console.log(

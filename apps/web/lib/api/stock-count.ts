@@ -4,6 +4,7 @@ import type {
   CommitStockCountPayload,
   CommitStockCountResponse,
   CommitStockCountSessionResponse,
+  StockCountCommitProgress,
 } from "@routeflow/types";
 export type {
   CommitStockCountPayload,
@@ -132,6 +133,8 @@ export interface StockCountLine {
 
 export interface StockCountSessionDetail extends StockCountSessionSummary {
   lines: StockCountLine[];
+  /** SA-767 L-2.4 D: how far an UNFINISHED commit got (some movement exists, not COMMITTED); null otherwise. */
+  commit?: StockCountCommitProgress | null;
 }
 
 export interface StartStockCountResponse extends StockCountSessionSummary {
@@ -157,12 +160,17 @@ export function useStockCountSessions(params?: {
   });
 }
 
-export function useStockCountSession(id: string | null | undefined) {
+/** `pollMs`: refetch the session on this interval (the "Saving count… N of M" read while a commit runs). */
+export function useStockCountSession(
+  id: string | null | undefined,
+  opts?: { pollMs?: number | false },
+) {
   return useQuery({
     queryKey: ["inventory", "stockCountSession", id],
     queryFn: () =>
       apiClient.get<StockCountSessionDetail>(`/inventory/stock-counts/${id}`).then((r) => r.data),
     enabled: !!id,
+    refetchInterval: opts?.pollMs || false,
   });
 }
 
@@ -219,6 +227,8 @@ export function useCommitStockCountSession() {
       sessionId: string;
       notes?: string;
       effectiveDate?: string;
+      /** SA-767 L-2.4 C: skip lines whose product can never be counted; only for a partly saved count. */
+      finishWithSkips?: boolean;
     }) =>
       apiClient
         .post<CommitStockCountSessionResponse>(`/inventory/stock-counts/${sessionId}/commit`, dto)
@@ -227,6 +237,9 @@ export function useCommitStockCountSession() {
       qc.invalidateQueries({ queryKey: ["inventory"] });
       qc.invalidateQueries({ queryKey: ["products"] });
     },
+    // A failed commit may have saved part of the count: re-read `commit` so the screen can say so.
+    onError: (_e, { sessionId }) =>
+      qc.invalidateQueries({ queryKey: ["inventory", "stockCountSession", sessionId] }),
   });
 }
 

@@ -26,6 +26,7 @@ import {
 import { getFamilyCascadePrompt } from "../../../lib/product-family-cascade";
 import { productImageFile } from "../../../lib/product-image";
 import { costPerSellingUnit } from "@routeflow/pricing";
+import { deleteProductConfirmText } from "@routeflow/types";
 import { useInventoryMovements } from "../../../lib/api/inventory";
 import { useProductSales, type ProductSaleLine } from "../../../lib/api/product-sales";
 import {
@@ -199,7 +200,8 @@ export default function ProductDetailScreen() {
 
   const handleDelete = () => {
     if (!id) return;
-    confirm("Delete product?", `${product.name} will be removed permanently.`, () => runDelete(), {
+    // Audit 2026-10-14: a delete deactivates (history kept); the same sentence as web.
+    confirm("Delete product?", deleteProductConfirmText(product.name), () => runDelete(), {
       confirmText: "Delete",
       destructive: true,
     });

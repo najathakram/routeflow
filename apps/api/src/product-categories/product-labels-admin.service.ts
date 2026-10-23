@@ -16,6 +16,11 @@ import {
 } from "../product-labels/effective-labels";
 import { SetProductLabelDto } from "./dto/set-product-label.dto";
 import { lockLabelCategory, writeLabelRow } from "./label-writer";
+import {
+  activeFederalCategoryIds,
+  assertMayManageRule,
+  labelHasActiveFederalRule,
+} from "../selling-restrictions-admin/rule-lock";
 
 const LABEL_INCLUDE = { category: { select: { name: true, archivedAt: true } } } as const;
 type LabelRow = Prisma.ProductCategoryLabelGetPayload<{ include: typeof LABEL_INCLUDE }>;
@@ -151,9 +156,12 @@ export class ProductLabelsAdminService {
         }));
       }
     }
+    // Owner ruling 2026-10-14: the labels an active federal rule covers, so the card can show them admin-only.
+    const federal = await activeFederalCategoryIds(db as never, tenantId);
     return {
       productId,
       parentProductId: product.parentProductId,
+      federalCategoryIds: [...federal].sort(),
       ancestryResolvable,
       own: own.map((r) => toDto(r, product.parentProductId)),
       inherited,
@@ -174,6 +182,23 @@ export class ProductLabelsAdminService {
   ): Promise<void> {
     // A busy lock throws LabelLockTimeoutError: a coded 409 (LABEL_CHANGE_IN_PROGRESS).
     await lockLabelCategory(tx, tenantId, categoryId); // the single writer's lock (label-writer.ts)
+  }
+
+  /**
+   * Owner ruling 2026-10-14 (SA option A): operators write labels too, except a label an ACTIVE federal rule covers:
+   * that write changes what the rule hides from every portal customer, so it is admin-only (403, the shared copy).
+   * Runs after the category lock. That lock serializes label writes only, not rule writes: a rule change committed
+   * after this read applies from then on (label write first, then the rule), never a stale mix within one write.
+   */
+  private async assertMayWriteLabel(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    categoryId: string,
+    user: JwtPayload,
+  ): Promise<void> {
+    if (await labelHasActiveFederalRule(tx as never, tenantId, categoryId)) {
+      assertMayManageRule(user, { jurisdiction: "FEDERAL" });
+    }
   }
 
   /**
@@ -335,6 +360,7 @@ export class ProductLabelsAdminService {
         if (!product) throw new NotFoundException("Product not found");
 
         await this.lockCategory(tx, tenantId, categoryId);
+        await this.assertMayWriteLabel(tx, tenantId, categoryId, user);
         // The category is checked INSIDE the transaction, after the lock: an archive that commits
         // between an outside check and the write could otherwise still get a label written to it.
         const category = await tx.productCategory.findFirst({
@@ -420,6 +446,7 @@ export class ProductLabelsAdminService {
     await this.loadProduct(productId);
     const removal = await this.prisma.tenantTransaction(async (tx) => {
       await this.lockCategory(tx, tenantId, categoryId);
+      await this.assertMayWriteLabel(tx, tenantId, categoryId, user);
       const row = await tx.productCategoryLabel.findFirst({ where: { productId, categoryId } });
       if (!row) throw new NotFoundException("Label not found on this product");
       const before = await this.carries(tx, tenantId, productId, categoryId);

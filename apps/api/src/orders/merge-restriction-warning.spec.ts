@@ -46,6 +46,25 @@ describe("warnBannedMergedLines", () => {
     onBannedLines = jest.fn();
   });
 
+  it.each([
+    [{ fulfillPath: "PICKUP" }, "PICKUP"],
+    [{ fulfillPath: "ROUTE" }, "DELIVERY"],
+  ])("L8: a winner order with %j is judged as %s", async (facts, kind) => {
+    await warnBannedMergedLines(
+      { restrictions, prisma, notifications, warn } as never,
+      {
+        tenantId: () => "t1",
+        customerId: "c1",
+        winner: { ...winner, ...facts },
+        losers,
+        actor: { role: "OPERATOR" },
+      } as never,
+    );
+    expect(restrictions.checkLinesSellable).toHaveBeenCalledWith(
+      expect.objectContaining({ fulfilmentKind: kind }),
+    );
+  });
+
   it("checks the WINNER's folded catalog lines (winner + losers, deduped, productless dropped)", async () => {
     await run({ role: "OPERATOR" });
     expect(restrictions.checkLinesSellable).toHaveBeenCalledWith({
@@ -53,6 +72,7 @@ describe("warnBannedMergedLines", () => {
       customerId: "c1",
       lines: [{ productId: "p-ok" }, { productId: "p-b" }],
       channel: "STAFF",
+      fulfilmentKind: "DELIVERY",
       switchGated: true, // a warning follows the tenant switch: a portal limit alone alerts no one
     });
   });

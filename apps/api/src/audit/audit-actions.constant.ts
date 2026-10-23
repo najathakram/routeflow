@@ -18,6 +18,32 @@ export const AUDIT_ACTIONS = {
   INVOICE_DELIBERATE_OVERPAYMENT: "invoice.deliberate-overpayment",
   /** SA-778: a support-session request refused by @NoImpersonation before the handler ran; meta {superAdminId, tenantId, method, route}. */
   IMPERSONATION_ACTION_REFUSED: "impersonation.action-refused",
+  /** SA-808b: a void degraded — stock with no receipt record adjusted, or a bill lot it could not identify left standing; meta {billNumber, products[{productId, found[], noReceiptQty}], lotsLeft[{productId, name, lotIds[], remainingQty}], receiptRowsOnOtherProducts[]}. */
+  VENDOR_BILL_VOID_NO_RECEIPT: "vendor-bill.void-without-receipt",
+  /** SA-808c: a void or revert refused because a product's receipt rows exceed what the bill received; the repair census reads it; meta {billNumber, productId, posted, received, action}. */
+  VENDOR_BILL_LEDGER_EXCESS: "vendor-bill.ledger-excess",
+  /** B288 (SA-814 R5-3): a cash payment moved off a vendor bill into a supplier credit dated at the payment; meta {billNumber, paymentId, supplierCreditId, amount, paidAt, method, statusBefore, statusAfter}. */
+  VENDOR_BILL_PAYMENT_MOVED_TO_CREDIT: "vendor-bill.payment-moved-to-credit",
+  /** Units v2 (SA-799 b): one price Save; meta {request, undo, revisionBefore, revisionAfter, actor}. Undoable once. */
+  PRODUCT_PRICES_SAVED: "product.prices-saved",
+  /** Units v2 (SA-799 b): the Undo of a PRODUCT_PRICES_SAVED row; meta {undoes, revisionBefore, revisionAfter, actor}. */
+  PRODUCT_PRICES_UNDONE: "product.prices-undone",
+  /** SA-823 R11: a product moved under (or out of) a family; meta {productId, fromParentId, toParentId, variantName, via}. Written in the reparent's own transaction. */
+  PRODUCT_FAMILY_ASSIGNED: "product.family_assigned",
+  /** SA-823 (row 655 PR-2): one summary row per apply of a product import that carried Family columns; meta {fileName, created, updated, unchanged, skipped, familiesCreated, grouped, moves, familiesDeactivated, actor}. */
+  IMPORT_PRODUCTS_APPLIED: "import.products.applied",
+  /** SA-823 (row 655 PR-2): the product import created an empty family container; the mark a re-run reads to reuse it if every row failed; entityId = the family, meta {name}. */
+  IMPORT_FAMILY_CREATED: "import.family.created",
+  /** SA-823 (row 655 PR-2): an import re-run reactivated the empty family an earlier import made; meta {reason}. Written in the reactivation's own transaction. */
+  PRODUCT_FAMILY_REACTIVATED: "product.family.reactivated",
+  /** SA-824 race ruling 4: one POST /invoices/payments/by-key/:key/resolve; meta {keyHash (sha256, never the raw key), outcome found|tombstoned, scope, invoiceId, customerId, paymentGroupId, advancePaymentId}. */
+  PAYMENT_KEY_RESOLVE: "payment-key.resolve",
+  /** Row 498 (SA-837): staff recorded a payment that repeats an existing one's customer, method, normalised reference and amount ("record anyway"); one row per recorded payment; entityId = the invoice, meta {actor, invoiceId, normalisedRef, duplicateOfPaymentId, method, amount}. */
+  PAYMENT_REF_RECORDED_ANYWAY: "payment.ref-record-anyway",
+  /** Row 498 (SA-837b): a Stripe-captured payment repeated an existing one's customer, method, normalised reference and amount; recorded anyway and flagged for staff (never refused: the money moved); entityId = the invoice, meta {source, paymentIntentId, invoiceId, paymentIds, normalisedRef, duplicateOfPaymentId, method, amount}. */
+  PAYMENT_REF_DUPLICATE_SUSPECT: "payment.ref-duplicate-suspect",
+  /** Row 587 (SA-833): PARTIALLY_DELIVERED -> DELIVERED completed an office-evidenced line; meta {orderId, lineId, from, to, summary}. */
+  ORDER_LINE_OFFICE_COMPLETED: "order.line-office-completed",
 } as const;
 
 export type AuditActionName = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS];

@@ -17,6 +17,9 @@ export const BUSINESS_PROFILE_KEYS = [
   "in_store_retailer",
   "in_store_shipping_retailer",
   "delivery_pos",
+  // BO-04: the two combinations the original five could not name (Delivery + Shipping, and all three).
+  "delivery_shipping",
+  "delivery_shipping_pos",
 ] as const;
 export type BusinessProfileKey = (typeof BUSINESS_PROFILE_KEYS)[number];
 
@@ -32,10 +35,63 @@ export interface BusinessProfileSummary {
   /** Module keys the profile turns on / off. */
   grants: string[];
   denies: string[];
+  /** The capability ticks this preset pre-ticks (BO-03): the same tuple `matchedPreset` compares against.
+   *  Optional so older clients and fixtures keep compiling (additive); the server always sends it. */
+  ticks?: BusinessCapabilityTicks;
+}
+
+/**
+ * The tuple a preset is matched on (BO-03): what a tenant "does". `doorPayments` is the `driver_payments`
+ * module; `opensAs` is where new staff orders open.
+ */
+export interface BusinessCapabilityTicks {
+  delivery: boolean;
+  doorPayments: boolean;
+  shipping: boolean;
+  counter: boolean;
+  opensAs: "order" | "counter";
+}
+
+/**
+ * The ONE "who opens new staff orders" rule: Shipping + Counter without Delivery is the only combination where
+ * staff may pick Order or Counter. Shared so the web never re-derives it for unsaved ticks (PC-L C1).
+ */
+export function isOpensAsChoosable(
+  t: Pick<BusinessCapabilityTicks, "delivery" | "shipping" | "counter">,
+): boolean {
+  return t.shipping && t.counter && !t.delivery;
+}
+
+/** A capability the registry does not offer yet, with the reason to show (PC-L C2). Empty = all available. */
+export type CapabilityAvailability = Partial<Record<"delivery" | "shipping" | "counter", string>>;
+
+/**
+ * `GET /platform-admin/tenants/:id/business-capabilities` (BO-03): the checkboxes, read back from the server.
+ * `configured: false` (a legacy `unset` tenant) means every tick is false: nothing is shown ticked until confirmed.
+ */
+export interface BusinessCapabilities extends BusinessCapabilityTicks {
+  configured: boolean;
+  /** Shipping + Counter without Delivery is the only combination where staff may pick Order or Counter. */
+  opensAsChoosable: boolean;
+  /** The counter capability: always (in-store mode), optional (`counter_sales` on), or off. */
+  counterCapability: "always" | "optional" | "off";
+  /** Either fleet module (routes, order delivery) is held. */
+  fleetHeld: boolean;
+  /** The preset whose ticks match exactly, else null (also null when not configured). */
+  matchedPreset: BusinessProfileKey | null;
+  /** Capabilities that cannot be ticked, with the reason (PC-L C2). Registry-wide today: plan-independent.
+   *  Optional for older servers; this server always sends it. */
+  unavailable?: CapabilityAvailability;
 }
 
 export interface BusinessProfileListResponse {
   profiles: BusinessProfileSummary[];
+  /**
+   * Tenant-less capability availability, for the create-tenant form (no tenant exists yet) as well as the tenant
+   * page (PC-L C2). Availability is registry-wide and plan-independent today (comps are free on every plan).
+   * Optional for older servers.
+   */
+  availability?: CapabilityAvailability;
 }
 
 /** What applying a profile would do to ONE tenant, key by key. */
@@ -144,4 +200,73 @@ export interface BusinessProfileBillingFailedBody {
   failedStep: { step: "billing" | "grant" | "mode" | "deny" | "audit"; key: string };
   addons: BusinessProfileBillingFailedAddon[];
   message: string;
+}
+
+// ─── Capability ticks → preview / apply (BO-04) ─────────────────────────────────────────────
+//
+// A platform admin ticks what a business does (Delivery, Shipping, Counter) and the server maps the ticks to the ONE
+// planner the five presets already use (`ticksToProfileDef` in apps/api/src/billing/business-capabilities.ts). The
+// preset endpoints (`business-profile`, `business-profile/preview`) stay as thin aliases onto the same path.
+
+/** The ticks an admin sends. Every field is optional: nothing ticked is a 400 `BUSINESS_CAPABILITIES_EMPTY`. */
+export interface BusinessCapabilitiesRequest {
+  delivery?: boolean;
+  /** Collect payment at the door. Default true with Delivery; ignored (false) without it. */
+  doorPayments?: boolean;
+  shipping?: boolean;
+  counter?: boolean;
+  /** Where new staff orders open. Honoured only for Shipping + Counter without Delivery (D6 default: "counter"). */
+  opensAs?: "order" | "counter";
+  /** Confirm only; the audit rows default to "Business profile: <label>". */
+  reason?: string;
+}
+
+/** `POST /platform-admin/tenants/:id/business-capabilities` (confirm): the preview's `planFingerprint` is required. */
+export interface ConfirmBusinessCapabilitiesRequest extends BusinessCapabilitiesRequest {
+  planFingerprint: string;
+}
+
+/**
+ * Why a plan cannot be confirmed right now (the preview still returns the plan; Confirm is disabled):
+ * - `FULFILMENT_CARRIER_IN_TRANSIT`: carrier orders are shipped and not delivered, and the change moves the billing moment.
+ * - `FEATURE_REQUIRES_UNMET`: a module the plan would comp is refused by the comp path's own `requires` check
+ *   (the same refusal `AddonService.enableAddon` gives), so applying would stop in the middle.
+ */
+export interface BusinessPlanBlockedInTransit {
+  code: typeof API_ERROR_CODES.FULFILMENT_CARRIER_IN_TRANSIT;
+  count: number;
+}
+export interface BusinessPlanBlockedRequires {
+  code: typeof API_ERROR_CODES.FEATURE_REQUIRES_UNMET;
+  /** The module whose comp would be refused. */
+  key: string;
+  /** What it needs, in words (registry labels), e.g. "Recurring routes or Ad hoc order delivery". */
+  missing: string;
+}
+export type BusinessPlanBlocked = BusinessPlanBlockedInTransit | BusinessPlanBlockedRequires;
+
+/** `POST /platform-admin/tenants/:id/business-capabilities/preview`. Writes nothing. */
+export interface BusinessCapabilitiesPreviewResponse extends FeaturePreviewResponse {
+  /** The normalised ticks the server planned (what the audit row will record). */
+  capabilities: BusinessCapabilityTicks;
+  /** The preset whose ticks equal `capabilities`, else null (a "custom" combination). */
+  preset: BusinessProfileKey | null;
+  /** The opens-as answer for THESE (unsaved) ticks: `capabilities.opensAs` and whether staff may choose (C1). */
+  opensAs: BusinessCapabilityTicks["opensAs"];
+  opensAsChoosable: boolean;
+  plan: BusinessProfilePlan;
+  summary: string[];
+  changes: string[];
+  planFingerprint: string;
+  /** Non-null = Confirm must be disabled; confirming would be refused with this code before any write. */
+  blocked: BusinessPlanBlocked | null;
+}
+
+/** `POST /platform-admin/tenants/:id/business-capabilities` (confirm). Re-applying is idempotent. */
+export interface BusinessCapabilitiesApplyResponse {
+  capabilities: BusinessCapabilityTicks;
+  preset: BusinessProfileKey | null;
+  plan: BusinessProfilePlan;
+  changed: string[];
+  summary: string[];
 }

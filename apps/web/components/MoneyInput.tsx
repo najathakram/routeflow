@@ -54,9 +54,10 @@ export interface DecimalInputProps extends Omit<
    * Fired once per edit session (blur, or Enter which blurs) with the committed value, and
    * ONLY when it differs from the value the field had at focus time. Use this for side effects
    * that must not run while the user is mid-keystroke — e.g. the product tier-price cascade.
-   * `onChange` still fires per keystroke so live totals keep working.
+   * `onChange` still fires per keystroke so live totals keep working. The second argument is the value the field
+   * held at FOCUS time (the "old" side of the edit), so a caller never keeps its own, staleable copy of it.
    */
-  onCommit?: (value: number) => void;
+  onCommit?: (value: number, valueAtFocus: number | null) => void;
 }
 
 export const DecimalInput = React.forwardRef<HTMLInputElement, DecimalInputProps>(
@@ -156,7 +157,7 @@ export const DecimalInput = React.forwardRef<HTMLInputElement, DecimalInputProps
           if (clamped !== parsed) onChange(clamped);
           const before = valueAtFocusRef.current;
           const changed = before == null || Math.abs(clamped - before) >= 1e-9;
-          if (changed) onCommit?.(clamped);
+          if (changed) onCommit?.(clamped, before);
         }}
         className={cn(
           "w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500",

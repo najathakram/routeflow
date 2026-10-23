@@ -14,6 +14,8 @@
 // It lives in @routeflow/pricing (a built package) and NOT in @routeflow/types, because the API never value-imports
 // @routeflow/types (L-261: that package is raw TypeScript and `nest build` does not bundle it). The error codes
 // PARK_LIMIT / PARK_TAKEN are in @routeflow/types; the API carries literals of them, pinned by a parity spec.
+import type { CounterItemName } from "@routeflow/types";
+import { invoiceLineQtyText } from "./pricing";
 
 // The default register and the register-key pattern are `COUNTER_DEFAULT_REGISTER` and `REGISTER_KEY_PATTERN` in
 // ./counter-register (the one source for every register-keyed counter feature).
@@ -107,7 +109,7 @@ export interface ParkedCartLine {
   override?: { mode: ParkedPriceEditMode; value: number; reason?: string };
 }
 
-/** The customer is kept to these five fields; an email is NEVER stored. */
+/** The customer is kept to these six fields; an email is NEVER stored. */
 export interface ParkedCartCustomer {
   id: string;
   businessName: string;
@@ -115,6 +117,8 @@ export interface ParkedCartCustomer {
   fulfillPath?: string;
   /** Tax-exempt customers owe no tax or levy: a resumed cart's estimate must still say so (CQ-02). */
   isTaxExempt?: boolean;
+  /** S5: the tenant's walk-in customer RECORD (a pick of it is a Walk-in, not a named buyer). Only ever `true`. */
+  isWalkIn?: true;
 }
 
 export interface ParkedCartPayload {
@@ -123,6 +127,11 @@ export interface ParkedCartPayload {
   method: string;
   tendered: string;
   reference: string;
+  /**
+   * S5: the clerk tapped Walk-in for this cart (a null customer alone says nothing, so a resumed cart without it asks
+   * "Who's buying?" again). Only ever `true`, and only with a null customer.
+   */
+  walkIn?: true;
 }
 
 // ─── Moved from the web: the shape checks the held-attempt snapshot and the live cart already use ───────────────────
@@ -234,6 +243,7 @@ function rebuildCustomer(raw: unknown): ParkedCartCustomer | null | undefined {
   const fulfillPath = str(raw.fulfillPath, 20);
   if (fulfillPath !== undefined) c.fulfillPath = fulfillPath;
   if (typeof raw.isTaxExempt === "boolean") c.isTaxExempt = raw.isTaxExempt;
+  if (raw.isWalkIn === true) c.isWalkIn = true;
   return c;
 }
 
@@ -264,7 +274,9 @@ export function sanitizeParkedPayload(
   }
   const tendered = str(raw.tendered, 20) ?? "";
   const reference = str(raw.reference, 100) ?? "";
-  return { ok: true, value: { lines, customer, method, tendered, reference } };
+  const value: ParkedCartPayload = { lines, customer, method, tendered, reference };
+  if (raw.walkIn === true && customer === null) value.walkIn = true;
+  return { ok: true, value };
 }
 
 // ─── Requests and responses ──────────────────────────────────────────────────────────────────────────────────────────
@@ -302,6 +314,9 @@ export interface ParkedCartListItem {
   customerName?: string;
   /** Row 330e: the lines' pricing inputs (the LIST sends them; the park answer does not). Absent = no total shown. */
   priceLines?: ParkedPriceLine[];
+  /** R7b 2.1: the first few line names and qty, and the line count (the LIST sends them). Absent = no names shown. */
+  items?: CounterItemName[];
+  itemCount?: number;
 }
 
 export interface ParkCartResponse extends ParkedCartListItem {
@@ -330,4 +345,47 @@ export interface ResumeParkedCartResponse {
   label: string;
   createdAt: string;
   payload: ParkedCartPayload;
+}
+
+/** R7b 2.1: how many item names a row carries (the screen shows two and "+n more"; one spare lets it say so). */
+export const ROW_ITEM_NAMES_MAX = 3;
+
+/** One line as the item-names fold reads it: an invoice line (`description`->`name`) or a stored parked line. */
+export interface ItemNameLine {
+  name?: unknown;
+  qty?: unknown;
+  boxes?: unknown;
+  pieces?: unknown;
+  unitLabel?: unknown;
+}
+
+/**
+ * R7b N3/N4: the ONE fold of a row's item names, shared by Today's sales (invoice lines) and the parked list (stored
+ * lines): the first `cap` named lines with their qty and the count of every named line. A boxed or unit line also carries
+ * the receipt's own quantity text (`invoiceLineQtyText`: "2 Cases"), so the row never says "24" for 2 cases. Non-array or
+ * nothing named yields `{}`.
+ */
+export function foldItemNames(
+  lines: unknown,
+  cap: number,
+): { items?: CounterItemName[]; itemCount?: number } {
+  if (!Array.isArray(lines)) return {};
+  const named: CounterItemName[] = [];
+  for (const l of lines) {
+    if (!l || typeof l !== "object") continue;
+    const r = l as ItemNameLine;
+    const name = typeof r.name === "string" ? r.name.trim() : "";
+    if (!name) continue;
+    const qty = Number(r.qty);
+    const item: CounterItemName = { name, qty: Number.isFinite(qty) ? qty : 0 };
+    const boxes = r.boxes == null ? null : Number(r.boxes);
+    const pieces = r.pieces == null ? null : Number(r.pieces);
+    const unitLabel = typeof r.unitLabel === "string" ? r.unitLabel : null;
+    if (boxes !== null || pieces !== null || (unitLabel ?? "").trim()) {
+      item.qtyText = invoiceLineQtyText({ qty: item.qty, boxes, pieces, unitLabel });
+    }
+    named.push(item);
+  }
+  if (named.length === 0) return {};
+  return { items: named.slice(0, cap), itemCount: named.length };
 }

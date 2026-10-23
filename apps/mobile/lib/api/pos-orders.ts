@@ -122,11 +122,15 @@ export function usePickupComplete(orderId: string) {
   });
 }
 
-/** "Switch to delivery": `PATCH /orders/:id/fulfill-path` ROUTE (open states only; the server decides). */
-export function useSwitchOrderToDelivery() {
+/**
+ * Move an order off pickup (open states only; the server decides): "Switch to delivery" sends ROUTE, "Ship by
+ * carrier…" SHIP, both through `PATCH /orders/:id/fulfill-path`, the endpoint web's `usePatchOrderFulfillPath` uses.
+ */
+export function useMoveOrderOffPickup() {
   const qc = useQueryClient();
-  return useMutation<unknown, Error, string>({
-    mutationFn: (id) => apiClient.patch(`/orders/${id}/fulfill-path`, { fulfillPath: "ROUTE" }),
+  return useMutation<unknown, Error, { id: string; fulfillPath: "ROUTE" | "SHIP" }>({
+    mutationFn: ({ id, fulfillPath }) =>
+      apiClient.patch(`/orders/${id}/fulfill-path`, { fulfillPath }),
     onSuccess: () => invalidateOrderCaches(qc),
   });
 }

@@ -169,3 +169,54 @@ export interface EnableAddonResult {
   billing: AddonBillingMode;
   subscription: SubscriptionView;
 }
+
+/**
+ * `GET /billing/payment-due` (OPERATOR and up): the dashboard's "payment due" banner read. The amount, the period
+ * and the eligibility are decided by the API's catch-up planner; the web only prints them. `amountCents` is whole
+ * cents (print it through `fromCents` + the money formatter, never `/ 100` by hand).
+ */
+export interface PaymentDueView {
+  due: boolean;
+  /** The period started before today (the tenant's zone): the banner says "past due". */
+  pastDue: boolean;
+  amountCents: number;
+  /** "October 2026"; null when nothing is due. */
+  periodLabel: string | null;
+  /** ISO start of the period the payment covers; null when nothing is due. */
+  periodStart: string | null;
+  /**
+   * SA-801 / SA-806: nothing is charged now but the card must be added by `cardBy`. `due` stays false. The banner
+   * reads "Add your card before {cardBy} to keep RouteFlow running." / "You won't be charged until {chargeStartsOn}."
+   * and the admin's Add card is the same `POST /billing/payment-due/pay`.
+   */
+  cardNeeded: boolean;
+  /** ISO instant of the first charge (A; print it in the tenant's zone); null unless `cardNeeded`. */
+  chargeStartsOn: string | null;
+  /**
+   * ISO instant of the card deadline D = A - 72 h (the planner's `termsHoldUntil`): the last instant the quoted terms
+   * hold. Print its calendar day in the tenant's zone; null unless `cardNeeded`.
+   */
+  cardBy: string | null;
+}
+
+/**
+ * Row 542c: the terms the banner showed, sent with the pay click. The API only COMPARES them with its fresh plan and
+ * refuses a mismatch with 409 `PAYMENT_TERMS_CHANGED` (nothing created); they never price a session. Copy them
+ * straight from the `PaymentDueView` on screen: an Add card banner is `{0, null, cardBy}`, a bill `{amountCents,
+ * periodStart, null}`.
+ */
+export interface PaymentDueShown {
+  amountCents: number;
+  periodStart: string | null;
+  cardBy: string | null;
+}
+
+/** `POST /billing/payment-due/pay` body. `shown` is optional for one release (absent = no precondition). */
+export interface PaymentDuePayRequest {
+  shown?: PaymentDueShown;
+}
+
+/** `POST /billing/payment-due/pay` (TENANT_ADMIN): the Stripe Checkout to send the admin to. */
+export interface PaymentDuePayResult {
+  checkoutUrl: string;
+}
