@@ -36,6 +36,7 @@ import {
   type BadgeVariant,
 } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
+import { useDismissOnLeave } from "@/lib/use-dismiss-on-leave";
 import { scheduleScannerRefocus } from "@/lib/refocus-scanner";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
 import { useUrlPage, useClampPage } from "@/lib/hooks/useUrlPage";
@@ -273,6 +274,12 @@ function ProductCombobox({
     includeVariants: true,
   });
   const products: ProductOption[] = sellableFlat<ProductOption>((data as any)?.data ?? []);
+  // W-758: Tab/blur close plus ArrowDown/ArrowUp/Enter/Escape over the results (the shared popup behaviour)
+  const leave = useDismissOnLeave(setOpen, {
+    open,
+    count: products.length,
+    onPick: (i) => handleSelect(products[i]),
+  });
 
   React.useEffect(() => {
     function handleClick(e: MouseEvent) {
@@ -335,6 +342,7 @@ function ProductCombobox({
           setOpen(true);
         }}
         onFocus={() => setOpen(true)}
+        {...leave.inputProps}
         className="h-9 w-full rounded border border-surface-border bg-white px-2.5 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
       />
       <BarcodeScannerButton
@@ -343,15 +351,19 @@ function ProductCombobox({
         title="Scan product barcode"
       />
       {open && (
-        <div className="absolute left-0 top-10 z-50 w-full rounded-lg border border-surface-border bg-white shadow-dropdown">
+        <div
+          {...leave.listProps}
+          className="absolute left-0 top-10 z-50 w-full rounded-lg border border-surface-border bg-white shadow-dropdown"
+        >
           {products.length > 0 ? (
             <ul className="max-h-48 overflow-y-auto py-1">
-              {products.map((p) => (
+              {products.map((p, i) => (
                 <li key={p.id}>
                   <button
                     type="button"
                     onMouseDown={() => handleSelect(p)}
-                    className="w-full px-3 py-2 text-left text-sm hover:bg-brand-50 flex items-center justify-between gap-2"
+                    {...leave.optionProps(i)}
+                    className="w-full px-3 py-2 text-left text-sm hover:bg-brand-50 aria-selected:bg-brand-50 flex items-center justify-between gap-2"
                   >
                     <span>
                       <span className="font-medium text-navy">{displayProductName(p)}</span>
