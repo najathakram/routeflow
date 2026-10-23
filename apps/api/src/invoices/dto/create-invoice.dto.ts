@@ -160,8 +160,10 @@ export class RecordInvoicePaymentDto {
 export class UpdatePaymentDto {
   @IsNumber() @Min(0.01) amount: number;
   @IsEnum(PaymentMethod) method: PaymentMethod;
-  @IsOptional() @IsString() reference?: string;
-  @IsOptional() @IsString() notes?: string;
+  /** W-663: omit to keep the stored reference; send null to clear it (an emptied edit field). */
+  @IsOptional() @IsString() reference?: string | null;
+  /** W-663: omit to keep the stored notes; send null to clear them. */
+  @IsOptional() @IsString() notes?: string | null;
   @IsOptional() @IsDateString() paidAt?: string;
   /** Omit to preserve the stored bank date; send null to clear it. */
   @IsOptional() @IsDateString() settledAt?: string | null;

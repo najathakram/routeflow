@@ -1933,8 +1933,9 @@ export default function InvoiceDetailPage() {
       paidAt: data.paidAt || undefined,
       // Explicit null so emptying the field clears the stored bank date.
       settledAt: data.settledAt || null,
-      reference: data.reference.trim() || undefined,
-      notes: data.notes.trim() || undefined,
+      // W-663: an emptied field is sent as null so the server clears it (as settledAt); undefined kept the old value
+      reference: data.reference.trim() || null,
+      notes: data.notes.trim() || null,
     };
     updatePayment.mutate(
       recordAnyway ? withRecordAnyway(body) : body, // W-718: the resend is the SAME body plus the flag
