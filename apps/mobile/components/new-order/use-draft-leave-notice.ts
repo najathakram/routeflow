@@ -11,14 +11,19 @@ export function useDraftLeaveNotice(getDraftId: () => string | null, parkable: b
   parkableRef.current = parkable;
   /** Set when the submit path pills and discards the draft: leaving after a submit says nothing. */
   const finalizedRef = useRef(false);
-  const announce = useCallback(() => {
-    const notice = draftLeaveNotice({
-      draftId: getDraftId(),
-      parkable: parkableRef.current,
-      submitted: finalizedRef.current,
-    });
-    if (notice) showToast(notice);
-  }, [getDraftId]);
+  /** Call only after a SUCCESSFUL flush (announceAfterFlush). `submitting`: a submit is in flight at leave time. */
+  const announce = useCallback(
+    (submitting = false) => {
+      const notice = draftLeaveNotice({
+        draftId: getDraftId(),
+        parkable: parkableRef.current,
+        submitted: finalizedRef.current,
+        submitting,
+      });
+      if (notice) showToast(notice);
+    },
+    [getDraftId],
+  );
   const markFinalized = useCallback(() => {
     finalizedRef.current = true;
   }, []);

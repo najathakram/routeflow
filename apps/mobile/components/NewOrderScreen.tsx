@@ -150,6 +150,7 @@ import {
 import { useDraftAutosave, type DraftRowMeta } from "../lib/use-draft-autosave";
 import { useStopCartStore } from "../store/stopCartStore";
 import { useDraftLeaveNotice } from "./new-order/use-draft-leave-notice";
+import { announceAfterFlush } from "../lib/draft-leave-notice";
 import { CartModal } from "./new-order/CartModal";
 import { CreateCreditNoteSheet } from "./new-order/CreateCreditNoteSheet";
 import { CustomerPickerView } from "./new-order/CustomerPickerView";
@@ -1615,11 +1616,12 @@ function ProductPickView({
       addListener: (event: "beforeRemove", cb: () => void) => () => void;
     };
     const unsubscribe = nav.addListener("beforeRemove", () => {
-      void flushDraftQuietly();
-      draftLeave.announce();
+      // Row 699: "Draft saved" only after the flush succeeded; a failed save raises its own error, never the notice.
+      const saved = () => (setDraftSaveFailed(false), draftLeave.announce(submittingRef.current));
+      void announceAfterFlush(flushDraft, saved, noteDraftSaveError);
     });
     return unsubscribe;
-  }, [navigation, flushDraftQuietly, draftLeave.announce]);
+  }, [navigation, flushDraft, noteDraftSaveError, draftLeave.announce]);
   useEffect(() => {
     if (Platform.OS !== "web") return;
     if (typeof document === "undefined") return;

@@ -1,4 +1,8 @@
-import { DRAFT_SAVED_ON_LEAVE, draftLeaveNotice } from "../lib/draft-leave-notice";
+import {
+  DRAFT_SAVED_ON_LEAVE,
+  announceAfterFlush,
+  draftLeaveNotice,
+} from "../lib/draft-leave-notice";
 import { draftParkable } from "../lib/drafts-payload";
 
 /**
@@ -27,7 +31,44 @@ describe("row 699: the leave notice for a kept order draft", () => {
     expect(draftLeaveNotice({ ...base, draftId: null })).toBeNull();
   });
 
-  it("parkability is the screen's own rule: draftParkable is exported for the leave check", () => {
-    expect(typeof draftParkable).toBe("function");
+  it("a submit still in flight says nothing (its own outcome speaks)", () => {
+    expect(draftLeaveNotice({ ...base, submitting: true })).toBeNull();
+  });
+
+  it("parkability is the screen's own rule: a customer AND a line (catalog or unlisted)", () => {
+    const s = (over: Record<string, unknown>) =>
+      ({ customer: { id: "c1" }, items: [], unlisted: [], ...over }) as never;
+    expect(draftParkable(s({ items: [{ productId: "p1" }] }))).toBe(true);
+    expect(draftParkable(s({ unlisted: [{ name: "Ice" }] }))).toBe(true);
+    expect(draftParkable(s({}))).toBe(false); // a customer and no line
+    expect(draftParkable(s({ customer: null, items: [{ productId: "p1" }] }))).toBe(false); // a line, no customer
+  });
+});
+
+describe("row 699 review MUST: the notice follows a SUCCESSFUL save only", () => {
+  it("a flush that rejects (offline, or the draft deleted elsewhere: 404) says nothing and reports the error", async () => {
+    const onSaved = jest.fn();
+    const onError = jest.fn();
+    const err = new Error("offline");
+    await announceAfterFlush(() => Promise.reject(err), onSaved, onError);
+    expect(onSaved).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenCalledWith(err);
+  });
+
+  it("a flush that resolves announces once, after the save (never before it settles)", async () => {
+    const order: string[] = [];
+    let release!: () => void;
+    const flush = () =>
+      new Promise<void>((r) => {
+        release = () => {
+          order.push("saved");
+          r();
+        };
+      });
+    const done = announceAfterFlush(flush, () => order.push("announce"), jest.fn());
+    expect(order).toEqual([]); // nothing said while the create is still pending
+    release();
+    await done;
+    expect(order).toEqual(["saved", "announce"]);
   });
 });
