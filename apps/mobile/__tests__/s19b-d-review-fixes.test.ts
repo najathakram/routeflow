@@ -79,11 +79,11 @@ describe("MUST 1: Create/Confirm in the cart sheet and onSave honour the D-5 gat
   it("CartModal takes layerGate and disables Create and Confirm on it; NewOrderScreen passes it and guards onSave", () => {
     expect(cartModal).toMatch(/layerGate\??:\s*PriceLayerGate/);
     expect(cartModal.match(/layerGate\?\.blocked/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
-    expect(newOrder).toMatch(/layerGate=\{layerGate\}/);
-    expect(newOrder).toMatch(/guardLayerSave\(layerGate, asDraft\)/);
+    expect(newOrder).toMatch(/layerGate=\{pick\.saveGate\(items, layerGate\)\}/); // #3665: the layer gate widened by blocksSave
+    expect(newOrder).toMatch(/guardLayerSave\(pick\.saveGate\(items, layerGate\), asDraft\)/);
   });
   it("invoices/new onSave names the layer block before any other check", () => {
-    expect(invoiceNew).toMatch(/guardLayerSave\(layerGate, false\)/);
+    expect(invoiceNew).toMatch(/guardLayerSave\(pick\.saveGate\(items, layerGate\), false\)/);
   });
 });
 
@@ -212,7 +212,9 @@ describe("copy names the product the layer could not load", () => {
 describe("wiring pins: the gate is in canSave on all three screens; the hook sends nothing flag-off", () => {
   it("canSave / Save include layerGate.blocked", () => {
     expect(newOrder).toMatch(/const canSave =[^;]*!layerGate\.blocked;/);
-    expect(invoiceNew).toMatch(/const canSave = baseOk && !layerGate\.blocked;/);
+    expect(invoiceNew).toMatch(
+      /const canSave = baseOk && [^;]*!layerGate\.blocked;/ /* SA-883 adds !pick.blocksSave(items) */,
+    );
     expect(editItems).toMatch(/disabled=\{updateMut\.isPending \|\| layerGate\.blocked\}/);
   });
   it("no /price-layer request with the flag off: enabled = flag && customer, and the flag read fails closed", () => {
