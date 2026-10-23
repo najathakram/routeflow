@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ServiceUnavailableException,
   ConflictException,
+  ForbiddenException,
   Inject,
   Injectable,
   Logger,
@@ -45,6 +46,14 @@ import {
 import { tenantTodayDay } from "../../common/calendar-date";
 import { tenantTimeZone } from "../../common/tenant-time-zone";
 import { creditAfterTender } from "../credit-limit-guard";
+import { completeAtCounterRunRefusal, type RunOrder } from "./complete-at-counter-run";
+import {
+  completionAlreadyRecorded,
+  finishCompletionEmail,
+  mergeClaimMeta,
+  releaseCompletionEmail,
+  reserveCompletionEmail,
+} from "./pickup-complete-claim";
 
 /** I-120 (SA-861 rule 3): the statuses "Complete at counter" finishes; DELIVERED is the replay. */
 const COMPLETABLE = new Set(["PENDING", "CONFIRMED", "OUT_FOR_DELIVERY"]);
@@ -129,6 +138,11 @@ export class PickupCompleteService {
         message: "This order is not ready for pickup yet, or it was cancelled",
       });
     }
+    // I-120 R8/R9 (owner 7a): a shipped order, an order on a driver's run, a stop the driver has started: judged now.
+    if (!alreadyPickedUp) {
+      const refused = completeAtCounterRunRefusal(order as RunOrder, dto.removeFromRun === true);
+      if (refused) throw refused;
+    }
     const walkIn = !!order.customer?.isWalkIn;
     // The request's real payment: never overwritten. Absent + nothing owed (same invoice set and capacity
     // rule as the tender below) = EXCUSED: no shape check, no row. Absent + owing = on account (a walk-in
@@ -172,6 +186,17 @@ export class PickupCompleteService {
         await this.orders.assertDeliveryCreditGate(at, user, { creditPaidNow });
       }
     }
+    // SA-909 item 1: a tender this call would record is refused for a CLOSED day before the first write (the same
+    // window check the tender runs under its lock, read-only, on the same register and the database clock), so a closed day
+    // leaves the order as it was. The in-lock check stays the authority (the day closing in between: today's 409 after).
+    if (!alreadyPickedUp && sent && sent.method !== "ON_ACCOUNT") {
+      await counterTenderPaidAt(
+        this.prisma,
+        this.prisma.getTenantId(),
+        order,
+        pickupRegisterOf(order, dto.registerKey),
+      );
+    }
     try {
       await this.claimHandOver(id, _idempotencyKey, sent, user);
     } catch (e) {
@@ -200,12 +225,15 @@ export class PickupCompleteService {
         order = (await this.readOrder(id)) ?? order;
       }
       const creditPaidNow = await this.tenderCreditPaidNow(sent);
+      // the B585 delivery gate runs on this step only for goods not already out (changeStatus' alreadyOut)
+      const gated = order.status !== "OUT_FOR_DELIVERY" && order.status !== "PARTIALLY_DELIVERED";
       try {
         await this.orders.changeStatus(id, { status: "DELIVERED" } as never, user, {
           silent: true,
           creditPaidNow,
         });
-        gateNetted = creditPaidNow; // THIS call's gate counted the tender (a lost race netted nothing of ours)
+        // THIS call's gate counted the tender (a lost race, or goods already out, netted nothing of ours)
+        if (gated) gateNetted = creditPaidNow;
       } catch (e) {
         const now = await this.readOrder(id);
         if (now?.status !== "DELIVERED") throw e;
@@ -303,7 +331,7 @@ export class PickupCompleteService {
         ? await this.creditRecheck(order, gateNetted, planError, user).catch(() => null)
         : null;
 
-    const emailed = await this.completionEmail(id, invoices, walkIn, planError, user);
+    const emailed = await this.completionEmail(id, invoices, walkIn, planError, user, handedOverAt);
     return {
       ...this.respond(order, invoices, shown, handedOverAt, planError, alreadyPickedUp, duplicate),
       ...(emailed ? { emailed: true } : {}),
@@ -333,6 +361,7 @@ export class PickupCompleteService {
         total,
         netted: gateNetted(total),
         planError,
+        action: "delivery", // SA-849 rule 1: the hand-over is netted at the DELIVERED gate (enforce_delivery)
         actor: user.sub ?? null,
         impersonatedBy: user.impersonatedBy ?? null,
       },
@@ -357,9 +386,10 @@ export class PickupCompleteService {
   /**
    * I-120 (SA-861 rule 8): the ONE customer email of a completion, the invoice email of every invoice of the order with
    * the COUNTER_COMPLETE wording. Only a named customer (a walk-in gets nothing), only once the tender outcome is final
-   * (recorded, or on account by choice: no `planError`), exactly once per completion (`completionEmailedAt` on the claim
-   * row, written after a delivered send; a replay finding it sends nothing). The hand-over is committed: a failed send
-   * is logged, never thrown, and the retry with the same key sends it.
+   * (recorded, or on account by choice: no `planError`). SA-909: exactly once PER COMPLETION (keyed on its `deliveredAt`),
+   * reserved by one conditional update on the claim row and sent with NO lock held (pickup-complete-claim.ts); the #2088 send
+   * record is the delivery fact if the flag never got written. The hand-over is committed: a failed send is logged, never
+   * thrown; the reservation is released so the same-key retry sends it.
    */
   private async completionEmail(
     orderId: string,
@@ -367,57 +397,48 @@ export class PickupCompleteService {
     walkIn: boolean,
     planError: string | undefined,
     user: JwtPayload,
+    deliveredAt: Date | null,
   ): Promise<boolean> {
-    if (walkIn || planError || invoices.length === 0) return false;
-    // SA-905 MUST 2 (b): read -> send -> write under the per-order counter-tender lock (the claim's family, waiting), so a
-    // concurrent call (a retry while the first is still sending, a double submit) finds the flag and sends nothing. A lock
-    // that is not taken sends nothing now (logged); the retry with the same key sends it.
-    try {
-      const locked = await withAdvisoryLock(
-        { family: "counter-tender", key: orderId, mode: "wait" },
-        () => this.sendCompletionOnce(orderId, invoices, user),
-      );
-      return locked.acquired ? locked.value : false;
-    } catch (e) {
-      this.logger.warn(
-        `pickup complete ${orderId}: completion email lock not taken (${(e as Error)?.message ?? e})`,
-      );
+    if (walkIn || planError || invoices.length === 0 || !deliveredAt || !user.tenantId)
+      return false;
+    const tenantId = user.tenantId;
+    const claim = await this.prisma.forTenant().auditLog.findFirst({
+      where: { tenantId, entityType: "Order", entityId: orderId, action: "PICKUP_COMPLETE_CLAIM" },
+      orderBy: { createdAt: "asc" },
+      select: { id: true, meta: true },
+    });
+    if (!claim) return false;
+    const completionFor = deliveredAt.toISOString();
+    if (
+      (claim.meta as { completionEmailedFor?: string } | null)?.completionEmailedFor ===
+      completionFor
+    )
+      return false;
+    // SA-909 item 4: the email went but the flag was never written (markSent threw): record it, send nothing.
+    if (await completionAlreadyRecorded(this.prisma, tenantId, invoices[0].id, deliveredAt)) {
+      await finishCompletionEmail(this.prisma, tenantId, claim.id, completionFor);
       return false;
     }
-  }
-
-  private async sendCompletionOnce(
-    orderId: string,
-    invoices: InvoiceRow[],
-    user: JwtPayload,
-  ): Promise<boolean> {
-    const db = this.prisma.forTenant();
-    const claim = await db.auditLog.findFirst({
-      where: {
-        tenantId: user.tenantId,
-        entityType: "Order",
-        entityId: orderId,
-        action: "PICKUP_COMPLETE_CLAIM",
-      },
-      orderBy: { createdAt: "asc" },
-    });
-    const meta = (claim?.meta ?? {}) as Record<string, unknown>;
-    if (!claim || meta.completionEmailedAt) return false;
+    const at = await reserveCompletionEmail(this.prisma, tenantId, claim.id, completionFor);
+    if (!at) return false; // emailed already, or another call holds a live reservation
     try {
       const sent = await this.invoices.sendCompletionEmail(
         orderId,
         invoices.map((i) => i.id),
         user.sub ?? null,
       );
-      if (!sent?.delivered) return false;
-      await db.auditLog.update({
-        where: { id: claim.id },
-        data: { meta: { ...meta, completionEmailedAt: new Date().toISOString() } },
-      });
+      if (!sent?.delivered) {
+        await releaseCompletionEmail(this.prisma, tenantId, claim.id, completionFor, at);
+        return false;
+      }
+      await finishCompletionEmail(this.prisma, tenantId, claim.id, completionFor);
       return true;
     } catch (e) {
       this.logger.warn(
         `pickup complete ${orderId}: completion email not sent (${(e as Error)?.message ?? e})`,
+      );
+      await releaseCompletionEmail(this.prisma, tenantId, claim.id, completionFor, at).catch(
+        () => undefined,
       );
       return false;
     }
@@ -443,6 +464,8 @@ export class PickupCompleteService {
           )
           .digest("hex")
       : null;
+    const tenantId = user.tenantId;
+    if (!tenantId) throw new ForbiddenException("A tenant-scoped session is required"); // the claim is per tenant
     const db = this.prisma.forTenant();
     const locked = await withAdvisoryLock(
       { family: "counter-tender", key: orderId, mode: "wait" },
@@ -490,20 +513,15 @@ export class PickupCompleteService {
               message: "Already picked up. Record any payment on the invoice.",
             });
           }
-          // SA-905 MUST 2 (a): the replacement keeps the completion's fields (completionEmailedAt): never a second email.
-          await db.auditLog.update({
-            where: { id: row.id },
-            data: { meta: { ...meta, idempotencyKey: key, bodyHash } },
-          });
+          // SA-905 MUST 2 (a) / SA-909: the replacement merges ONLY its own keys, atomically, so the completion's email
+          // fields (and a live reservation) always survive it: never a second email.
+          await mergeClaimMeta(this.prisma, tenantId, row.id, { idempotencyKey: key, bodyHash });
           return;
         }
         // A same-key retry that ADDS the payment the first call lacked (PICKUP_PAYMENT_REQUIRED) is adopted
         // on the claim, so a later, different payment under this key is a conflict, not a second tender.
         if (!meta.bodyHash && bodyHash) {
-          await db.auditLog.update({
-            where: { id: row.id },
-            data: { meta: { ...meta, bodyHash } },
-          });
+          await mergeClaimMeta(this.prisma, tenantId, row.id, { bodyHash }); // SA-909: an atomic merge
         }
       },
     );
@@ -710,6 +728,15 @@ export class PickupCompleteService {
         counterSale: true,
         registerKey: true,
         total: true,
+        // I-120 R8/R9: the run (through its stop, or a bare routeRunId), the stop's state, the carrier shipment
+        shippedAt: true,
+        routeRun: { select: { status: true, driver: { select: { contactName: true } } } },
+        routeRunStop: {
+          select: {
+            status: true,
+            routeRun: { select: { status: true, driver: { select: { contactName: true } } } },
+          },
+        },
       },
     });
   }

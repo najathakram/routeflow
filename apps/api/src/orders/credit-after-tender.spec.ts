@@ -1,4 +1,8 @@
-import { CREDIT_LIMIT_ENFORCE_KEY, creditAfterTender } from "./credit-limit-guard";
+import {
+  CREDIT_LIMIT_DELIVERY_ENFORCE_KEY,
+  CREDIT_LIMIT_ENFORCE_KEY,
+  creditAfterTender,
+} from "./credit-limit-guard";
 
 /**
  * SA-849 rule 1-2 (S1 S-1): the ONE post-tender credit re-check. The gate counted till money (`netted`) that then did not
@@ -7,12 +11,13 @@ import { CREDIT_LIMIT_ENFORCE_KEY, creditAfterTender } from "./credit-limit-guar
  * Red on master: `creditAfterTender` does not exist.
  */
 type Mode = "true" | "dark" | null;
-function deps(mode: Mode, opts: { limit?: number | null; audited?: boolean } = {}) {
+function deps(mode: Mode, opts: { limit?: number | null; audited?: boolean; key?: string } = {}) {
+  const switchKey = opts.key ?? CREDIT_LIMIT_ENFORCE_KEY; // which switch the tenant has on
   const audits: any[] = opts.audited ? [{ id: "a-1" }] : [];
   const db = {
     systemConfig: {
       findFirst: jest.fn(async ({ where }: any) =>
-        where?.key === CREDIT_LIMIT_ENFORCE_KEY && mode ? { value: mode } : null,
+        where?.key === switchKey && mode ? { value: mode } : null,
       ),
     },
     customer: {
@@ -85,10 +90,27 @@ const sale = (over: Record<string, unknown> = {}) => ({
   netted: 100,
   planError: "COUNTER_PAYMENT_NOT_RECORDED",
   actor: "op-1",
+  action: "order" as const, // the counter sale's gate
   ...over,
 });
 
 describe("creditAfterTender (SA-849)", () => {
+  // #3678 review MUST (SA-849 rule 1): the re-check reads the SAME switch as the gate that netted the tender.
+  it("a hand-over (action delivery) reads enforce_delivery: ON there alerts, even with enforce_new_orders off (P3a)", async () => {
+    const { d, audits } = deps("true", { key: CREDIT_LIMIT_DELIVERY_ENFORCE_KEY });
+    expect(await creditAfterTender(d, sale({ action: "delivery" }))).toEqual({
+      limit: 50,
+      exposure: 100,
+    });
+    expect(audits).toHaveLength(1);
+  });
+
+  it("a hand-over never alerts off the order switch: enforce_new_orders ON, enforce_delivery off (P3c)", async () => {
+    const { d, audits } = deps("true", { key: CREDIT_LIMIT_ENFORCE_KEY });
+    expect(await creditAfterTender(d, sale({ action: "delivery" }))).toBeNull();
+    expect(audits).toHaveLength(0);
+  });
+
   it("R1 ENFORCED, a breach once the tender failed: one warn, ONE audit row, the figures answered", async () => {
     const { d, audits } = deps("true");
     const out = await creditAfterTender(d, sale());

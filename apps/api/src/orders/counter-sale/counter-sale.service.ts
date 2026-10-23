@@ -334,7 +334,15 @@ export class CounterSaleService {
       entitlements: this.orders.entitlements,
       logger: this.logger,
     };
-    const at = { tenantId: this.prisma.getTenantId(), customerId, orderId, total: sum, netted };
+    // SA-849 rule 1: the SAME switch as the gate that netted the till tender (the counter sale's create gate: "order")
+    const at = {
+      tenantId: this.prisma.getTenantId(),
+      customerId,
+      orderId,
+      total: sum,
+      netted,
+      action: "order" as const,
+    };
     if (user === "read-only") return creditAfterTender(deps, { ...at, planError, readOnly: true });
     return creditAfterTender(deps, {
       ...at,

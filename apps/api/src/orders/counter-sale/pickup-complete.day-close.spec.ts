@@ -1,5 +1,10 @@
 import { BadRequestException } from "@nestjs/common";
 // OrdersService / InvoicesService pull ESM-only modules Jest's CommonJS parser cannot load: driven through mocks.
+// SA-909: the claim row's atomic jsonb writes, on the spec's in-memory claims (the real SQL: the DB spec)
+jest.mock(
+  "./pickup-complete-claim",
+  () => require("../../testing/pickup-claim-mock").pickupClaimMock,
+);
 jest.mock("../orders.service", () => ({ OrdersService: class OrdersService {} }));
 jest.mock("../../invoices/invoices.service", () => ({ InvoicesService: class InvoicesService {} }));
 jest.mock("../order-status-invoicing", () => ({ settleOrderInvoice: jest.fn() }));
@@ -82,6 +87,8 @@ describe("PickupCompleteService.complete — the day-close lock and window (SA-7
     events.length = 0;
     lockCalls.length = 0;
     claims = [];
+    require("../../testing/pickup-claim-mock").mockClaimStore.rows = claims;
+    require("../../testing/pickup-claim-mock").mockClaimStore.recorded = false;
     prisma = createMockPrisma();
     prismaRef = prisma as never;
     order = orderRow("OUT_FOR_DELIVERY", { counterSale: true, registerKey: null });
@@ -167,7 +174,6 @@ describe("PickupCompleteService.complete — the day-close lock and window (SA-7
         key: "ord-1",
         sharedAlso: { family: "counter-close", key: "test-tenant:main" },
       },
-      { family: "counter-tender", key: "ord-1", sharedAlso: undefined }, // SA-905: the completion email, no money
     ]);
   });
 
@@ -258,6 +264,8 @@ describe("PickupCompleteService.complete — a POS-mode PICKUP order's cash coun
     events.length = 0;
     lockCalls.length = 0;
     claims = [];
+    require("../../testing/pickup-claim-mock").mockClaimStore.rows = claims;
+    require("../../testing/pickup-claim-mock").mockClaimStore.recorded = false;
     prisma = createMockPrisma();
     prismaRef = prisma as never;
     order = orderRow("OUT_FOR_DELIVERY");
@@ -435,7 +443,9 @@ describe("PickupCompleteService.complete — a POS-mode PICKUP order's cash coun
   it("I-120: a non-PICKUP order is no longer refused PICKUP_ONLY; a refused path switch takes no tender lock", async () => {
     order = orderRow("OUT_FOR_DELIVERY", { fulfillPath: "ROUTE" });
     const err: any = await run(withKey("b")).catch((e) => e);
-    expect(err?.getStatus?.()).toBe(400); // the switch's own refusal, not PICKUP_ONLY
+    // I-120 R8 (owner 7a Q1 = A): an OUT_FOR_DELIVERY route order is refused up front (on its way), before the switch
+    expect(err?.getStatus?.()).toBe(409);
+    expect(err?.getResponse?.()?.code).toBe("COUNTER_COMPLETE_ON_RUN");
     expect(err?.getResponse?.()?.code).not.toBe("PICKUP_ONLY");
     // only the claim section ran; the tender's counter-tender lock (with the shared close lock) was never asked for
     expect(lockCalls.every((c: any) => !c.sharedAlso)).toBe(true);

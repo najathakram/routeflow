@@ -1,4 +1,9 @@
 // OrdersService / InvoicesService pull ESM-only modules Jest's CommonJS parser cannot load: driven through mocks.
+// SA-909: the claim row's atomic jsonb writes, on the spec's in-memory claims (the real SQL: the DB spec)
+jest.mock(
+  "./pickup-complete-claim",
+  () => require("../../testing/pickup-claim-mock").pickupClaimMock,
+);
 jest.mock("../orders.service", () => ({ OrdersService: class OrdersService {} }));
 jest.mock("../../invoices/invoices.service", () => ({ InvoicesService: class InvoicesService {} }));
 jest.mock("../order-status-invoicing", () => ({ settleOrderInvoice: jest.fn() }));
@@ -73,8 +78,10 @@ describe("PickupCompleteService.complete: the credit re-check after a failed net
       return OVER;
     });
     claims = [];
+    require("../../testing/pickup-claim-mock").mockClaimStore.rows = claims;
+    require("../../testing/pickup-claim-mock").mockClaimStore.recorded = false;
     prisma = createMockPrisma();
-    order = orderRow("OUT_FOR_DELIVERY");
+    order = orderRow("CONFIRMED"); // this call's DELIVERED step runs the B585 gate (goods not yet out)
     invoices = [
       {
         id: "inv-1",
@@ -120,6 +127,7 @@ describe("PickupCompleteService.complete: the credit re-check after a failed net
               return order;
             }),
             entitlements: { hasFlag: async () => true },
+            assertDeliveryCreditGate: jest.fn(async () => undefined), // SA-905: the pre-judge (its own spec)
           },
         },
         {
@@ -176,8 +184,21 @@ describe("PickupCompleteService.complete: the credit re-check after a failed net
     expect(r.creditOverLimit).toEqual(OVER);
   });
 
-  it("a closed day's 409 (after the hand-over committed): the re-check runs (audit only) and the 409 is unchanged", async () => {
+  it("SA-909 item 1: a closed day is refused BEFORE the hand-over: 409, nothing written, nothing netted, no re-check", async () => {
     prisma.counterDayClose.findFirst.mockResolvedValue({ id: "close-1" });
+    const err: any = await run({ method: "CASH", amount: 40 }).then(
+      () => undefined,
+      (e) => e,
+    );
+    expect(err.getResponse()).toMatchObject({ code: "COUNTER_SALE_DAY_CLOSED" });
+    expect(order.status).toBe("CONFIRMED"); // no DELIVERED
+    expect(mockAfterTender).not.toHaveBeenCalled();
+  });
+
+  it("the residual (the day closes between the pre-judge and the tender): the re-check runs (audit only) and the 409 is unchanged", async () => {
+    prisma.counterDayClose.findFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValue({ id: "close-1" });
     const err: any = await run({ method: "CASH", amount: 40 }).then(
       () => undefined,
       (e) => e,
@@ -220,6 +241,20 @@ describe("PickupCompleteService.complete: the credit re-check after a failed net
     const r: any = await run({ method: "CASH", amount: 40 });
     expect(r.alreadyPickedUp).toBe(true);
     expect(mockAfterTender).not.toHaveBeenCalled();
+  });
+
+  it("#3678 review: goods already OUT_FOR_DELIVERY (the gate never ran on this step): a failed tender runs no re-check", async () => {
+    order = orderRow("OUT_FOR_DELIVERY");
+    recordPayment.mockRejectedValueOnce(new Error("503"));
+    const r: any = await run({ method: "CASH", amount: 40 });
+    expect(r.paymentRecorded).toBe(false);
+    expect(mockAfterTender).not.toHaveBeenCalled();
+  });
+
+  it("the re-check reads the hand-over's OWN gate: the delivery switch (SA-849 rule 1)", async () => {
+    recordPayment.mockRejectedValueOnce(new Error("503"));
+    await run({ method: "CASH", amount: 40 });
+    expect(mockAfterTender.mock.calls[0][1]).toMatchObject({ action: "delivery" });
   });
 
   it("on account: no tender to fail, no re-check", async () => {
