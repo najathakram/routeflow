@@ -134,34 +134,52 @@ export function planGate({
   return steps;
 }
 
-export function execStep(step) {
+function killTreeDefault(pid, platform) {
+  if (platform === "win32") {
+    spawnSync("taskkill", ["/pid", String(pid), "/T", "/F"], { stdio: "ignore" });
+    return;
+  }
+  try {
+    process.kill(-pid, "SIGKILL"); // negative pid = the step's whole process group
+  } catch {
+    /* ESRCH: already gone */
+  }
+}
+
+// A step runs in its own process group (detached) so a timeout can kill grandchildren such as a
+// hung jest/tsc under npx; the promise resolves from the timer, never waiting on pipe `close`.
+export function execStep(step, { platform = process.platform, killTree } = {}) {
   return new Promise((resolve) => {
     const child = spawn(step.cmd[0], step.cmd.slice(1), {
       cwd: step.cwd,
       stdio: ["ignore", "pipe", "pipe"],
+      detached: platform !== "win32",
     });
     let output = "";
-    let timedOut = false;
+    let done = false;
+    const finish = (r) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      resolve({ output, ...r });
+    };
     const timer = step.timeoutMs
       ? setTimeout(() => {
-          timedOut = true;
+          if (killTree) killTree(child.pid);
+          else killTreeDefault(child.pid, platform);
           child.kill("SIGKILL");
+          child.stdout.destroy();
+          child.stderr.destroy();
+          finish({ status: null, timedOut: true });
         }, step.timeoutMs)
       : null;
     child.stdout.on("data", (d) => (output += d));
     child.stderr.on("data", (d) => (output += d));
     child.on("error", (e) => {
-      clearTimeout(timer);
-      resolve({ status: 127, output: `${output}\n${e.message}` });
+      output += `\n${e.message}`;
+      finish({ status: 127 });
     });
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      resolve({
-        status: timedOut ? null : (code ?? 1),
-        output,
-        ...(timedOut ? { timedOut: true } : {}),
-      });
-    });
+    child.on("close", (code) => finish({ status: code ?? 1 }));
   });
 }
 

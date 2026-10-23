@@ -129,6 +129,48 @@ test("execStep kills a step past its timeout and reports timedOut", async () => 
   assert.notEqual(r.status, 0);
 });
 
+test("execStep timeout kills the whole process group and resolves without waiting for close", async () => {
+  const t0 = Date.now();
+  const r = await execStep({
+    name: "hung",
+    cwd: process.cwd(),
+    cmd: ["sh", "-c", "sleep 6 & echo $!; wait"],
+    timeoutMs: 1000,
+  });
+  const ms = Date.now() - t0;
+  assert.equal(r.timedOut, true);
+  assert.ok(ms < 2000, `resolved in ${ms} ms`);
+  const gpid = Number(r.output.trim().split("\n")[0]);
+  assert.ok(gpid > 1, `grandchild pid in output: ${r.output}`);
+  await new Promise((res) => setTimeout(res, 200));
+  let alive = true;
+  try {
+    process.kill(gpid, 0);
+  } catch {
+    alive = false;
+  }
+  assert.equal(alive, false, "grandchild sleep must be dead");
+});
+
+test("timeout on win32 uses taskkill /T /F", async () => {
+  const calls = [];
+  const r = await execStep(
+    {
+      name: "w",
+      cwd: process.cwd(),
+      cmd: [process.execPath, "-e", "setTimeout(()=>{},5000)"],
+      timeoutMs: 200,
+    },
+    {
+      platform: "win32",
+      killTree: (pid) => calls.push(["taskkill", "/pid", String(pid), "/T", "/F"]),
+    },
+  );
+  assert.equal(r.timedOut, true);
+  assert.deepEqual(calls[0].slice(0, 2), ["taskkill", "/pid"]);
+  assert.deepEqual(calls[0].slice(3), ["/T", "/F"]);
+});
+
 test("runGate marks timedOut steps ok=false and continues", async () => {
   const exec = async (s) =>
     s.name === "a" ? { status: null, output: "", timedOut: true } : { status: 0, output: "" };
