@@ -33,6 +33,7 @@ let mockCustomerLoading = false;
 let mockCustomerError = false;
 let mockPricesError = false;
 let mockPricesErrorWithData = false;
+let mockCustomerPaused = false;
 const mockRefetchCustomer = jest.fn();
 const mockRefetchPrices = jest.fn();
 let mockCustomerPrices: unknown[] = [];
@@ -57,8 +58,11 @@ jest.mock("@/lib/api/customers", () => ({
   ...jest.requireActual("@/lib/api/customers"),
   useCustomers: () => ({ data: { data: [C1, C3] } }),
   useCustomer: (id: string) => ({
-    data: mockCustomerLoading || mockCustomerError ? undefined : CUSTOMERS[id],
+    data:
+      mockCustomerLoading || mockCustomerError || mockCustomerPaused ? undefined : CUSTOMERS[id],
     isLoading: !!id && mockCustomerLoading,
+    // TanStack v5: a query paused offline is pending (no data, no error) but NOT loading.
+    isPending: !!id && (mockCustomerLoading || mockCustomerPaused),
     isError: !!id && mockCustomerError,
     refetch: mockRefetchCustomer,
   }),
@@ -79,6 +83,7 @@ beforeEach(() => {
   mockCustomerError = false;
   mockPricesError = false;
   mockPricesErrorWithData = false;
+  mockCustomerPaused = false;
   mockCustomerPrices = [];
   mockLayer = layerOff();
 });
@@ -278,6 +283,42 @@ describe("SA-870: a price suggested for one customer is never saved into another
     await pickProduct();
     expect(await screen.findByDisplayValue("8.00")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Save" })).not.toBeDisabled();
+  });
+});
+
+describe("SA-870 review: every failed or unread customer price fails closed", () => {
+  it("a failed CUSTOMER read (not only prices) closes picking with the notice and Retry", async () => {
+    mockCustomerError = true;
+    renderCreate();
+    await chooseCustomer("Tier Three Cafe");
+    expect(screen.getByPlaceholderText("Couldn't load this customer's prices.")).toBeDisabled();
+    expect(screen.getByRole("alert")).toHaveTextContent("Couldn't load this customer's prices.");
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(mockRefetchCustomer).toHaveBeenCalled();
+    expect(mockRefetchPrices).toHaveBeenCalled();
+  });
+
+  it("a pick made before any customer, then a tier-3 customer with a failed read, holds Save (never list saved)", async () => {
+    const onSubmit = renderCreate();
+    await pickProduct();
+    expect(await screen.findByDisplayValue("10.00")).toBeInTheDocument();
+    mockPricesError = true;
+    await chooseCustomer("Tier Three Cafe");
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Couldn't load this customer's prices.",
+    );
+    const save = screen.getByRole("button", { name: "Save" });
+    expect(save).toBeDisabled();
+    fireEvent.click(save);
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("a customer read PAUSED offline (pending, not loading, no data) blocks picking like a loading one", async () => {
+    mockCustomerPaused = true;
+    renderCreate();
+    await chooseCustomer("Tier Three Cafe");
+    expect(screen.getByPlaceholderText("Loading customer pricing…")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
   });
 });
 
