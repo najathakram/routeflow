@@ -1,19 +1,16 @@
 export const meta = {
   name: "bug-swarm",
   description:
-    "Fix a batch of LOW RouteFlow bugs: triage, cluster by shared files, then per cluster pack, build test-first in a worktree, gate, and review. Returns the report; the orchestrator pushes and opens PRs.",
+    "Fix a batch of LOW RouteFlow bugs: one Triage+Pack agent, cluster by shared files, then per cluster build test-first in a worktree, gate, and review. Returns the report; the orchestrator pushes and opens PRs.",
   phases: [
     {
-      title: "Triage",
-      detail: "One haiku agent writes manifest.json (risk, files, needsDb, ui, status).",
+      title: "Triage+Pack",
+      detail:
+        "One sonnet agent resolves ids, verifies liveness, writes manifest.json and a pack per bug.",
     },
     {
       title: "Cluster",
       detail: "One haiku agent runs scripts/cluster.mjs --write and returns its JSON.",
-    },
-    {
-      title: "Pack",
-      detail: "Per cluster, sonnet writes a context pack (signatures, radius, lesson ids).",
     },
     {
       title: "Build",
@@ -58,6 +55,7 @@ const BUG_SCHEMA = {
     row: { type: "string" },
     sub: { type: "string" },
     resolvedTitle: { type: "string" },
+    packWritten: { type: "boolean" },
     risk: { type: "string", enum: ["LOW", "HIGH"] },
     riskReason: { type: "string" },
     status: { type: "string", enum: ["live", "fixed-on-master", "unclear"] },
@@ -66,7 +64,7 @@ const BUG_SCHEMA = {
     ui: { type: "boolean" },
     repro: { type: "string" },
   },
-  required: ["row", "resolvedTitle", "risk", "status", "files", "needsDb", "ui"],
+  required: ["row", "resolvedTitle", "packWritten", "risk", "status", "files", "needsDb", "ui"],
 };
 const MANIFEST_SCHEMA = {
   type: "object",
@@ -131,11 +129,6 @@ const CLUSTER_SCHEMA = {
     },
   },
   required: ["clusters", "excluded"],
-};
-const PACK_SCHEMA = {
-  type: "object",
-  properties: { ok: { type: "boolean" }, path: { type: "string" }, bytes: { type: "number" } },
-  required: ["ok", "path", "bytes"],
 };
 const BUILD_SCHEMA = {
   type: "object",
@@ -247,8 +240,8 @@ if (!RUN || !R || !RUN_DIR || !args.fromWorktree || REQUESTED.length === 0) {
   });
 }
 
-// ---- Triage ----
-phase("Triage");
+// ---- Triage+Pack (one agent per batch, before clustering) ----
+phase("Triage+Pack");
 const manifest = await agent(
   `Triage these ids for run ${RUN}: ${REQUESTED.join(", ")}. The id space is "${SPACE}" and ONLY that space: ${
     SPACE === "row"
@@ -257,12 +250,19 @@ const manifest = await agent(
   }
 Report the resolved title of every id in resolvedTitle. An id that does not resolve in the "${SPACE}" space goes in the "unresolved" list (not in bugs): it is never HIGH and never built; do not try the other space.
 Repo: ${R}. For each resolved id decide: risk LOW or HIGH (HIGH = money, ledger, units, locks, tenancy, migrations, billing, auth, or a repro needing a live-tenant reading), the reason, status (live | fixed-on-master | unclear: check the code on origin/master), files (use .claude/code-map/INDEX.md and scripts/graph.mjs radius), needsDb (prisma, a *.db.spec, or a transaction path), ui (yes/no) and a one-line repro. Split an id into sub-bugs (sub: "a", "b") when it holds several defects.
-Write the result as JSON to ${RUN_DIR}/manifest.json (shape {"run": "${RUN}", "bugs": [...], "unresolved": [...]}) and return the same object. Read-only apart from that file. ${RULES}`,
-  { label: "triage", phase: "Triage", schema: MANIFEST_SCHEMA, model: "haiku", effort: "low" },
+Also write a context pack per resolved row to ${RUN_DIR}/pack-<row>.md (at most 3 KB each; line 1 = the sha of origin/master): the liveness evidence as file:line, exported signatures (not bodies) of the row's files, the graph radius condensed to file names, the relevant lesson ids from .claude/lessons/LESSONS-DIGEST.md with one line each. Set packWritten true on a bug only after checking its pack file exists.
+Write the result as JSON to ${RUN_DIR}/manifest.json (shape {"run": "${RUN}", "bugs": [...], "unresolved": [...]}) and return the same object. Read-only apart from the manifest and the packs. ${RULES}`,
+  {
+    label: "triagepack",
+    phase: "Triage+Pack",
+    schema: MANIFEST_SCHEMA,
+    model: "sonnet",
+    effort: "low",
+  },
 );
 if (!manifest) {
-  for (const id of REQUESTED) WHY.set(id, "triage agent died");
-  return report({ error: "triage agent died", unaccounted: REQUESTED });
+  for (const id of REQUESTED) WHY.set(id, "triage+pack agent died");
+  return report({ error: "triage+pack agent died", unaccounted: REQUESTED });
 }
 
 // ---- Cluster ----
@@ -287,9 +287,18 @@ const clusters = [];
 for (const c of clustered.clusters) {
   const keep = c.bugs.filter((b) => {
     const m = meta2.get(key(b));
-    const ok = m && !unresolved.has(String(b.row)) && m.risk === "LOW" && m.status === "live";
+    const ok =
+      m &&
+      !unresolved.has(String(b.row)) &&
+      m.packWritten === true &&
+      m.risk === "LOW" &&
+      m.status === "live";
     if (!ok) {
-      const reason = m ? `risk ${m.risk}, status ${m.status}` : "not in manifest";
+      const reason = !m
+        ? "not in manifest"
+        : m.packWritten !== true
+          ? "no context pack"
+          : `risk ${m.risk}, status ${m.status}`;
       excluded.push({ row: b.row, sub: b.sub, reason: `dropped before Build: ${reason}` });
       log(`dropped ${key(b)} from ${c.id}: ${reason}`);
     }
@@ -337,13 +346,13 @@ for (const b of manifest.bugs) {
   if (!bucketed(b.row, b.sub)) addMissing(b.sub ? `${b.row}${b.sub}` : String(b.row));
 }
 
-// ---- Per-cluster pipeline: Pack -> Build -> Gate (+fix) -> Review (+fix) ----
+// ---- Per-cluster pipeline: Build -> Gate (+fix) -> Review (+fix) ----
 const buildBrief = (
   c,
   t,
   pack,
 ) => `You fix LOW-risk bugs ${rowsOf(c).join(", ")} in RouteFlow, test-first. Cluster ${c.id}, run ${RUN}.
-Read the context pack first: ${pack}. Files in scope: ${c.files.join(", ")}.${c.extractionFirst ? " A file here is at its size-ratchet ceiling: extract first (own commit), then fix." : ""}
+Read the context pack(s) first: ${pack}. Files in scope: ${c.files.join(", ")}.${c.extractionFirst ? " A file here is at its size-ratchet ceiling: extract first (own commit), then fix." : ""}
 LOW only: if a fix needs a HIGH path (money, ledger, units, locks, tenancy, migration, billing, auth) stop and report it in the lesson field; do not fix it.
 ${AVOID_RULE}
 Worktree: ${t.exists ? `already at ${t.dir} (branch ${t.name}); work there, do not recreate it.` : `create it first: cd "${R}" && node "${SCRIPTS}/worktree.mjs" --dir "${t.dir}" --branch "${t.name}" --from "${args.fromWorktree}". If worktree.mjs exits non-zero, STOP and return status "worktree-failed" with its message in "message" (other fields empty); never reuse or delete an existing tree or branch.`}
@@ -379,23 +388,18 @@ const guard = (name, fn) => async (prev, item) => {
 
 const results = await pipeline(
   clusters,
-  // Pack
-  guard("Pack", async (c) => {
-    phase("Pack");
-    const packPath = `${RUN_DIR}/pack-${c.id}.md`;
-    const branch = `fix/${RUN}-${c.id}`;
-    const p = await agent(
-      `Write a context pack for cluster ${c.id} (bugs ${rowsOf(c).join(", ")}) to ${packPath}, at most 6 KB, pinned to the sha of origin/master (put it on line 1). Contents: exported signatures (not bodies) of ${c.files.join(", ")}; the graph radius (node scripts/graph.mjs radius <file>) condensed to file names; the relevant lesson ids from .claude/lessons/LESSONS-DIGEST.md with one line each; the code-map area file path. Repo: ${R}. Read-only apart from the pack. Return {ok, path, bytes} after checking the file exists. ${RULES}`,
-      { label: `pack:${c.id}`, phase: "Pack", schema: PACK_SCHEMA, model: "sonnet", effort: "low" },
-    );
-    if (!p || !p.ok) return { c, packPath, branch, parked: "pack failed" };
-    return { c, packPath: p.path || packPath, branch };
-  }),
   // Build
-  guard("Build", async (st) => {
+  guard("Build", async (c) => {
     phase("Build");
-    const dir = `${R}-wt-${RUN}-${st.c.id}`;
-    const b = await agent(buildBrief(st.c, { name: st.branch, dir, exists: false }, st.packPath), {
+    const st = {
+      c,
+      branch: `fix/${RUN}-${c.id}`,
+      packs: [...new Set(c.bugs.map((b) => b.row))]
+        .map((r) => `${RUN_DIR}/pack-${r}.md`)
+        .join(", "),
+    };
+    const dir = `${R}-wt-${RUN}-${c.id}`;
+    const b = await agent(buildBrief(st.c, { name: st.branch, dir, exists: false }, st.packs), {
       label: `build:${st.c.id}`,
       phase: "Build",
       schema: BUILD_SCHEMA,
@@ -430,7 +434,7 @@ const results = await pipeline(
     const gate = g.gate;
     phase("Build");
     const fix = await agent(
-      `${buildBrief(st.c, { name: st.branch, dir: st.worktree, exists: true }, st.packPath)}\n\nFIX ROUND (the only one): the gate was red. Fix only these failures with new commit(s), then return the same schema. Failed steps:\n${redTails(gate)}`,
+      `${buildBrief(st.c, { name: st.branch, dir: st.worktree, exists: true }, st.packs)}\n\nFIX ROUND (the only one): the gate was red. Fix only these failures with new commit(s), then return the same schema. Failed steps:\n${redTails(gate)}`,
       {
         label: `buildfix:${st.c.id}`,
         phase: "Build",
@@ -461,7 +465,7 @@ const results = await pipeline(
     if (first.verdict === "PASS") return { ...st, verdict: "PASS", musts: first.musts };
     phase("Build");
     const fix = await agent(
-      `${buildBrief(st.c, { name: st.branch, dir: st.worktree, exists: true }, st.packPath)}\n\nREVIEW FIX ROUND (the only one): an independent reviewer returned FAIL. Resolve exactly these MUSTs with new commit(s) and return the same schema:\n${first.musts.map((m) => `- ${m}`).join("\n")}`,
+      `${buildBrief(st.c, { name: st.branch, dir: st.worktree, exists: true }, st.packs)}\n\nREVIEW FIX ROUND (the only one): an independent reviewer returned FAIL. Resolve exactly these MUSTs with new commit(s) and return the same schema:\n${first.musts.map((m) => `- ${m}`).join("\n")}`,
       {
         label: `reviewfix:${st.c.id}`,
         phase: "Build",

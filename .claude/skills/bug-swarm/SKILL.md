@@ -96,9 +96,11 @@ choreography into one Workflow script. The v0 steps above stay valid as the fall
   `node --test .claude/skills/bug-swarm/scripts/*.test.mjs` after any edit to `workflow.js`.
 - `gate.mjs` replaces the planned `gate.sh` (lead-accepted): argv arrays, no shell, because shell quoting broke the hand gate twice in runs 1-2.
 - The HIGH guard rests on Triage's risk label: a mislabelled HIGH row can reach Build; Review is the backstop.
-- **Workflow:** Triage (haiku) -> Cluster (haiku) -> per cluster Pack (sonnet) -> Build (sonnet) -> Gate (haiku,
+- **Workflow:** Triage+Pack (sonnet) -> Cluster (haiku) -> per cluster Build (sonnet) -> Gate (haiku,
   one build fix round) -> Review (opus, one fix round plus re-check), then a Report. A red cluster is parked.
 - **Stays with the orchestrator:** push, PRs, captures for UI clusters, the public window and landing, the
   ledger row and RUN-LOG (v0 steps 7 and 8). No agent pushes or merges.
-- **Candidate, not applied:** fold Triage into the Pack agent (one fewer agent per batch). Decide after run 3
-  on the ledger; do not change the workflow before then.
+- **Folded, applied:** Triage and the context pack are ONE sonnet @ low agent per batch, before clustering
+  (it resolves ids, verifies liveness with file:line, writes `manifest.json` and a pack per bug). Applied after
+  runs 2026-10-23-bug-swarm-1/-2/-3: triage was wrong in 3 of 3 (8 not-live rows called live in run 1; a duplicate
+  in run 2; the wrong id space in run 3) and the pack re-verified every row anyway.

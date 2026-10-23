@@ -14,9 +14,8 @@ const WORKFLOW = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 
 export const ROLE_TABLE = {
-  Triage: { model: "haiku", effort: "low" },
+  "Triage+Pack": { model: "sonnet", effort: "low" },
   Cluster: { model: "haiku", effort: "low" },
-  Pack: { model: "sonnet", effort: "low" },
   Build: { model: "sonnet", effort: "medium" },
   Gate: { model: "haiku", effort: "low" },
   Review: { model: "opus", effort: "medium" },
@@ -66,12 +65,15 @@ export async function runWorkflow(scenario, args = {}) {
     const [kind, id] = String(opts.label).split(":");
     if (scenario.throwOn === opts.label) throw new Error("boom");
     switch (kind) {
-      case "triage":
+      case "triagepack":
         return scenario.triageNull
           ? null
           : {
               run: args.run,
-              bugs: scenario.triageBugs ?? manifestBugs,
+              bugs: (scenario.triageBugs ?? manifestBugs).map((b) => ({
+                packWritten: !scenario.packFail,
+                ...b,
+              })),
               unresolved: scenario.unresolved ?? [],
             };
       case "cluster":
@@ -83,10 +85,6 @@ export async function runWorkflow(scenario, args = {}) {
           overCap: !!scenario.overCap,
           bugs: manifestBugs,
         };
-      case "pack":
-        return scenario.packFail
-          ? { ok: false, path: "", bytes: 0 }
-          : { ok: true, path: `/p/${id}.md`, bytes: 100 };
       case "build":
       case "buildfix":
       case "reviewfix":
@@ -232,7 +230,7 @@ export async function runAll() {
     },
     ARGS,
   );
-  assert.equal(count(zero.calls, /^(pack|build|buildfix|gate|review|reviewfix|recheck):/), 0);
+  assert.equal(count(zero.calls, /^(build|buildfix|gate|review|reviewfix|recheck):/), 0);
   assert.equal(zero.result.clusters.length, 0);
   assert.equal(zero.result.excluded.length, 1);
   assert.ok(zero.phases.includes("Report"));
@@ -353,8 +351,9 @@ export async function runAll() {
     { clusters: [two[0]], packFail: true, gateGreen: true, verdict: "PASS" },
     ARGS,
   );
-  assert.equal(pf.result.clusters[0].parked, "pack failed");
+  assert.equal(pf.result.clusters.length, 0);
   assert.equal(count(pf.calls, /^build:/), 0);
+  assert.ok(pf.result.excluded.some((e) => /no context pack/.test(e.reason)));
   const norows = await runWorkflow(
     { clusters: two, gateGreen: true, verdict: "PASS" },
     { ...ARGS, rows: undefined },
@@ -512,7 +511,7 @@ export async function runAll() {
     { ...ARGS, rows: ["W-652"] },
   );
   assert.equal(count(wid.calls, /^build:/), 1);
-  const tp = wid.calls.find((c) => c.label === "triage").prompt;
+  const tp = wid.calls.find((c) => c.label === "triagepack").prompt;
   assert.ok(tp.includes("rf.mjs item show") && tp.includes("NEVER use bugs.mjs"));
   assert.ok(tp.includes("WORK-REGISTER.md"));
   assert.deepEqual(wid.result.ids, [
@@ -524,7 +523,7 @@ export async function runAll() {
     { clusters: [two[0]], gateGreen: true, verdict: "PASS" },
     { ...ARGS, idSpace: "bug", rows: ["1"] },
   );
-  const bp2 = bugSp.calls.find((c) => c.label === "triage").prompt;
+  const bp2 = bugSp.calls.find((c) => c.label === "triagepack").prompt;
   assert.ok(bp2.includes("bugs.mjs show") && !bp2.includes("rf.mjs"));
 
   // 24. An unresolvable id is unaccounted with a reason, never built, and the Report lists it.
@@ -544,6 +543,22 @@ export async function runAll() {
   assert.equal(i99.reason, "not found in row");
   assert.equal(i99.unaccounted, true);
   assert.equal(unres.result.ids.find((i) => i.id === "1").resolvedTitle, "t1");
+
+  // 25. Folded: no separate Triage agent, no per-cluster Pack; one Triage+Pack sonnet/low call;
+  // the Build brief carries the packs of its cluster's bugs.
+  const fold = await runWorkflow({ clusters: two, gateGreen: true, verdict: "PASS" }, ARGS);
+  assert.equal(
+    fold.calls.filter((c) => c.phase === "Triage" || /^(triage$|pack:)/.test(c.label)).length,
+    0,
+  );
+  const tpCalls = fold.calls.filter((c) => c.label === "triagepack");
+  assert.equal(tpCalls.length, 1);
+  assert.equal(tpCalls[0].model, "sonnet");
+  assert.equal(tpCalls[0].effort, "low");
+  assert.ok(tpCalls[0].prompt.includes("pack-<row>.md") && tpCalls[0].prompt.includes("3 KB"));
+  assert.ok(fold.calls.find((c) => c.label === "build:c1").prompt.includes("/pack-1.md"));
+  assert.ok(!fold.calls.find((c) => c.label === "build:c1").prompt.includes("/pack-2.md"));
+  assert.ok(!fold.phases.includes("Pack") && !fold.phases.includes("Triage"));
 
   return out;
 }
