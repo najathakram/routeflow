@@ -12,17 +12,25 @@ const read = (f: string) => readFileSync(join(__dirname, f), "utf8");
 
 describe("W-702 the email snapshot (SA-860)", () => {
   const service = read("invoices.service.ts");
-  const region = (startMarker: string, endMarker: string) => {
-    const a = service.indexOf(startMarker);
-    const b = service.indexOf(endMarker, a);
+  const snap = read("invoice-send-snapshot.ts");
+  const regionOf = (src: string, startMarker: string, endMarker: string) => {
+    const a = src.indexOf(startMarker);
+    const b = src.indexOf(endMarker, a);
     expect(a).toBeGreaterThan(-1);
     expect(b).toBeGreaterThan(a);
-    return service.slice(a, b);
+    return src.slice(a, b);
   };
+  const region = (startMarker: string, endMarker: string) =>
+    regionOf(service, startMarker, endMarker);
 
   it("R6: the dry run and the shared credit helper call no non-DB API", () => {
-    const dryRun = region("private async readSendSnapshot(", "private async markSent(");
-    const credits = region("private async runSendCredits(", "private async readSendSnapshot(");
+    const dryRun = snap.slice(snap.indexOf("export async function readSendSnapshot("));
+    const credits = regionOf(
+      snap,
+      "export async function runSendCredits(",
+      "export async function readSendSnapshot(",
+    );
+    expect(dryRun.length).toBeGreaterThan(100);
     for (const body of [dryRun, credits]) {
       expect(body).not.toMatch(/this\.(gateway|messaging|storage|emailService|pdfService)\b/);
       expect(body).not.toMatch(
@@ -32,9 +40,9 @@ describe("W-702 the email snapshot (SA-860)", () => {
     // the dry run ends in the rollback throw, so nothing it wrote can commit
     expect(dryRun).toMatch(/throw new SendSnapshotRollback\(/);
     // and it runs the SAME credit helper the real commit runs
-    expect(dryRun).toMatch(/this\.runSendCredits\(tx, id, true, locked\)/);
+    expect(dryRun).toMatch(/runSendCredits\(creditNotes, tx, id, true, locked\)/);
     expect(region("private async markSent(", "sendEmail(...args")).toMatch(
-      /this\.runSendCredits\(tx, id, issuing, updated\)/,
+      /runSendCredits\(this\.creditNotes, tx, id, issuing, updated\)/,
     );
   });
 

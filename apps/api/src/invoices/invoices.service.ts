@@ -110,12 +110,7 @@ import {
   type SendEmailArgs,
 } from "./invoice-send-state";
 import { resolveInvoiceVariant } from "./invoice-stage";
-import {
-  SEND_SNAPSHOT_INCLUDE,
-  SendSnapshotRollback,
-  fingerprintOfSnapshot,
-  type SendSnapshot,
-} from "./invoice-send-snapshot";
+import { fingerprintOfSnapshot, readSendSnapshot, runSendCredits } from "./invoice-send-snapshot";
 import { orderShipmentFields } from "./order-shipment-fields";
 import {
   CheckStatus,
@@ -3507,89 +3502,6 @@ export class InvoicesService {
    * from the row it locks and re-reads first (SA-404), so a retry can never write SENT over a
    * VOID committed since the caller's read.
    */
-  /**
-   * The send-time money, ONE copy (SA-860): markSent's real commit and the issuing dry run both call this with the same
-   * arguments, so the preview can never drift from what is applied. Only the DRAFT -> SENT issue (`issuing`, SA-857)
-   * settles order credits and runs the oldest-first sweep; a re-send moves no money.
-   */
-  private async runSendCredits(
-    tx: any,
-    id: string,
-    issuing: boolean,
-    row: { orderId: string | null; customerId: string },
-  ): Promise<{ applied: number; invoiceStatus: InvoiceStatus | null }> {
-    if (!issuing) return { applied: 0, invoiceStatus: null };
-    // B108: make the "send() catches up" comment above actually true. An
-    // operator's explicit-amount OrderCreditNote intents are settled HERE,
-    // at their recorded amount, before the oldest-first sweep runs.
-    // settleOrderCreditsInTx clamps to the remaining balance, so money can
-    // never move twice even if it already ran (e.g. at order-create time).
-    // The explicitIds exclusion just below is deliberately KEPT — settling
-    // an explicit intent doesn't change that the sweep must still never
-    // override it.
-    if (row.orderId) {
-      await this.creditNotes.settleOrderCreditsInTx(tx, row.orderId);
-    }
-    // An operator's EXPLICIT-amount order selection must not be overridden by the
-    // oldest-first sweep; null-amount intents are already settled and clamp to 0.
-    const explicitIds = row.orderId
-      ? (
-          await tx.orderCreditNote.findMany({
-            where: { orderId: row.orderId, amount: { not: null } },
-            select: { creditNoteId: true },
-          })
-        ).map((r: any) => r.creditNoteId)
-      : [];
-    return this.creditNotes.autoApplyOldestCreditsInTx(tx, id, row.customerId, {
-      excludeCreditNoteIds: explicitIds,
-    });
-  }
-
-  /**
-   * SA-860: the ONE snapshot an email is built from. On the ISSUING path (locked status DRAFT) it is read inside a DRY RUN:
-   * one Serializable tx that takes markSent's locks and runs the SAME send-time credits (`runSendCredits`), reads the
-   * snapshot, and rolls back on purpose (`SendSnapshotRollback`), so the customer's first copy shows the balance the real
-   * send will leave. Nothing is flipped and nothing commits; if the email then fails there is no money and no SENT (R5 /
-   * P5-13). A re-send reads the snapshot in a short locked tx with the guard and no credits. This also replaces the
-   * SA-404a pre-check (VOID => 400, no email): the same lock and guard, in the same tx.
-   *
-   * ⚠️ The code between the tx open and the throw must stay DB-only: no gateway, messaging, storage or email call (pinned
-   * by invoice-send-snapshot.dry-run.spec.ts).
-   */
-  private async readSendSnapshot(
-    id: string,
-    orderId: string | null,
-  ): Promise<{ snapshot: SendSnapshot; issuing: boolean }> {
-    try {
-      return await retryCreditTx(`invoice send snapshot id=${id}`, () =>
-        this.prisma.tenantTransaction(
-          async (tx) => {
-            const locked = await lockInvoiceRow(tx, id, orderId);
-            if (!locked) throw new NotFoundException("Invoice not found");
-            const refusal = sendRefusal(locked.status);
-            if (refusal) throw new BadRequestException(refusal);
-            const issuing = locked.status === InvoiceStatus.DRAFT;
-            if (issuing) {
-              await lockCreditsForSend(tx, this.prisma.getTenantId(), locked);
-              await this.runSendCredits(tx, id, true, locked);
-            }
-            const snapshot = await tx.invoice.findUnique({
-              where: { id },
-              include: SEND_SNAPSHOT_INCLUDE,
-            });
-            if (!snapshot) throw new NotFoundException("Invoice not found");
-            throw new SendSnapshotRollback(snapshot as SendSnapshot, issuing);
-          },
-          { isolationLevel: "Serializable" },
-        ),
-      );
-    } catch (err) {
-      if (err instanceof SendSnapshotRollback)
-        return { snapshot: err.snapshot, issuing: err.issuing };
-      throw err;
-    }
-  }
-
   private async markSent(id: string, orderId: string | null, emailSent = false) {
     const tz = await tenantTimeZone(this.prisma); // SA-495a: the tenant's due day, once per call
     return retryCreditTx(`invoice mark-sent id=${id}`, () =>
@@ -3610,7 +3522,7 @@ export class InvoicesService {
             where: { id },
             data: { status: nextStatus, sentAt: locked.sentAt ?? new Date() }, // #2088: a re-send keeps the FIRST sentAt
           });
-          const auto = await this.runSendCredits(tx, id, issuing, updated);
+          const auto = await runSendCredits(this.creditNotes, tx, id, issuing, updated);
           // A credit pre-applied at order time can already cover this invoice. Auto-apply
           // returns {applied:0, invoiceStatus:null} on a zero balance, which used to leave
           // a fully-credited invoice stuck SENT — recompute from the payments it has.
@@ -3701,7 +3613,7 @@ export class InvoicesService {
 
     // SA-860: ONE snapshot (taken after the real send-time credits, in a rolled-back dry run on the issuing path) feeds the
     // PDF, the payload and the fingerprint. It replaces the SA-404a pre-check (VOID => 400, no email) and SA-857's A/B bracket.
-    const { snapshot } = await this.readSendSnapshot(id, inv.orderId);
+    const { snapshot } = await readSendSnapshot(this.prisma, this.creditNotes, id, inv.orderId);
     const { stage, fingerprint } = await fingerprintOfSnapshot(
       this.featureConfig,
       this.prisma.getTenantId(),

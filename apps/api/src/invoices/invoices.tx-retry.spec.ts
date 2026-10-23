@@ -257,9 +257,13 @@ describe("#2255 Serializable invoice transactions retry on conflict, guards re-r
   it("placement: every Serializable site named in #2255 runs inside retryOnTxConflict", () => {
     const read = (rel: string) => fs.readFileSync(path.join(__dirname, "..", rel), "utf8");
     const inv = read("invoices/invoices.service.ts");
-    for (const label of ["invoice mark-sent", "invoice send snapshot", "invoice void"]) {
+    for (const label of ["invoice mark-sent", "invoice void"]) {
       expect(inv).toMatch(new RegExp(`retry(?:OnTxConflict|CreditTx)\\(\\s*\\\`${label}`));
     }
+    // SA-860: the send snapshot's dry-run tx lives in invoice-send-snapshot.ts, also inside the retry wrapper
+    expect(read("invoices/invoice-send-snapshot.ts")).toMatch(
+      /retryCreditTx\(\s*`invoice send snapshot/,
+    );
     // send() and sendEmail() share the one retried mark-sent transaction.
     expect(inv.match(/this\.markSent\(/g)).toHaveLength(2);
     const ord = read("orders/orders.service.ts");

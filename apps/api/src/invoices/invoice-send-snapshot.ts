@@ -1,4 +1,10 @@
-import type { Prisma } from "@prisma/client";
+import { BadRequestException, NotFoundException } from "@nestjs/common";
+import { InvoiceStatus, type Prisma } from "@prisma/client";
+import { lockCreditsForSend } from "../credit-notes/credit-note-locks";
+import type { CreditNotesService } from "../credit-notes/credit-notes.service";
+import { retryCreditTx } from "../common/tx-retry";
+import type { PrismaService } from "../prisma/prisma.service";
+import { lockInvoiceRow, sendRefusal } from "./invoice-send-guard";
 import { BILL_TO_ADDRESS_ORDER } from "./invoice-bill-to";
 import { invoiceFingerprint } from "./invoice-send-state";
 import { resolveInvoiceVariant } from "./invoice-stage";
@@ -72,4 +78,86 @@ export async function fingerprintOfSnapshot(
   const stage =
     variant ?? (await resolveInvoiceVariant(featureConfig, tenantId, snapshot, snapshot.order));
   return { stage, fingerprint: invoiceFingerprint({ ...snapshot, variant: stage }) };
+}
+
+/**
+ * The send-time money, ONE copy (SA-860): markSent's real commit and the issuing dry run both call this with the same
+ * arguments, so the preview can never drift from what is applied. Only the DRAFT -> SENT issue (`issuing`, SA-857)
+ * settles order credits and runs the oldest-first sweep; a re-send moves no money.
+ */
+export async function runSendCredits(
+  creditNotes: CreditNotesService,
+  tx: any,
+  id: string,
+  issuing: boolean,
+  row: { orderId: string | null; customerId: string },
+): Promise<{ applied: number; invoiceStatus: InvoiceStatus | null }> {
+  if (!issuing) return { applied: 0, invoiceStatus: null };
+  // B108: an operator's explicit-amount OrderCreditNote intents are settled HERE, at their recorded amount, before the
+  // oldest-first sweep runs. settleOrderCreditsInTx clamps to the remaining balance, so money can never move twice even
+  // if it already ran (e.g. at order-create time). The explicitIds exclusion below is deliberately KEPT: settling an
+  // explicit intent doesn't change that the sweep must still never override it.
+  if (row.orderId) {
+    await creditNotes.settleOrderCreditsInTx(tx, row.orderId);
+  }
+  // An operator's EXPLICIT-amount order selection must not be overridden by the oldest-first sweep; null-amount intents
+  // are already settled and clamp to 0.
+  const explicitIds = row.orderId
+    ? (
+        await tx.orderCreditNote.findMany({
+          where: { orderId: row.orderId, amount: { not: null } },
+          select: { creditNoteId: true },
+        })
+      ).map((r: any) => r.creditNoteId)
+    : [];
+  return creditNotes.autoApplyOldestCreditsInTx(tx, id, row.customerId, {
+    excludeCreditNoteIds: explicitIds,
+  });
+}
+
+/**
+ * SA-860: the ONE snapshot an email is built from. On the ISSUING path (locked status DRAFT) it is read inside a DRY RUN:
+ * one Serializable tx that takes markSent's locks and runs the SAME send-time credits (`runSendCredits`), reads the
+ * snapshot, and rolls back on purpose (`SendSnapshotRollback`), so the customer's first copy shows the balance the real
+ * send will leave. Nothing is flipped and nothing commits; if the email then fails there is no money and no SENT (R5 /
+ * P5-13). A re-send reads the snapshot in a short locked tx with the guard and no credits. This also replaces the SA-404a
+ * pre-check (VOID => 400, no email): the same lock and guard, in the same tx.
+ *
+ * ⚠️ The code between the tx open and the throw must stay DB-only: no gateway, messaging, storage or email call (pinned by
+ * invoice-send-snapshot.pins.spec.ts).
+ */
+export async function readSendSnapshot(
+  prisma: PrismaService,
+  creditNotes: CreditNotesService,
+  id: string,
+  orderId: string | null,
+): Promise<{ snapshot: SendSnapshot; issuing: boolean }> {
+  try {
+    return await retryCreditTx(`invoice send snapshot id=${id}`, () =>
+      prisma.tenantTransaction(
+        async (tx) => {
+          const locked = await lockInvoiceRow(tx, id, orderId);
+          if (!locked) throw new NotFoundException("Invoice not found");
+          const refusal = sendRefusal(locked.status);
+          if (refusal) throw new BadRequestException(refusal);
+          const issuing = locked.status === InvoiceStatus.DRAFT;
+          if (issuing) {
+            await lockCreditsForSend(tx, prisma.getTenantId(), locked);
+            await runSendCredits(creditNotes, tx, id, true, locked);
+          }
+          const snapshot = await tx.invoice.findUnique({
+            where: { id },
+            include: SEND_SNAPSHOT_INCLUDE,
+          });
+          if (!snapshot) throw new NotFoundException("Invoice not found");
+          throw new SendSnapshotRollback(snapshot as SendSnapshot, issuing);
+        },
+        { isolationLevel: "Serializable" },
+      ),
+    );
+  } catch (err) {
+    if (err instanceof SendSnapshotRollback)
+      return { snapshot: err.snapshot, issuing: err.issuing };
+    throw err;
+  }
 }
