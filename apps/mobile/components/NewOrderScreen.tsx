@@ -1265,8 +1265,7 @@ function ProductPickView({
   actionsRef.current = rowActions;
 
   const onRowAdd = useCallback((id: string) => {
-    actionsRef.current.add(id);
-    actionsRef.current.pickedFromSearch(id);
+    if (actionsRef.current.add(id)) actionsRef.current.pickedFromSearch(id); // W-741: a refused add keeps the search
   }, []);
   const onRowIncrement = useCallback((id: string) => actionsRef.current.add(id), []);
   const onRowDecrement = useCallback((id: string) => actionsRef.current.remove(id), []);

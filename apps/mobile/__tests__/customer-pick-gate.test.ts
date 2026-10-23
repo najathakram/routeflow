@@ -108,6 +108,10 @@ describe("W-741: both builders route every pick through the gate", () => {
         /if \(pick\.refusal\) return refusedScanOutcome\(scanOpen, pick\.refusal\);\s*(\/\/[^\n]*\n\s*)?if \(!addOne\(/,
       );
       expect(src).toMatch(/onRetry=\{[^}]*pick\.retry/);
+      // a refused row tap keeps the operator's search (it used to clear it, so the results vanished)
+      expect(src).toMatch(
+        /const onRowAdd = useCallback\(\(id: string\) => \{\s*if \(actionsRef\.current\.add\(id\)\) actionsRef\.current\.pickedFromSearch\(id\);/,
+      );
     },
   );
 });
