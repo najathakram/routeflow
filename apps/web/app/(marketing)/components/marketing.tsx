@@ -32,7 +32,7 @@ export function CTA({ retailer = false }: { retailer?: boolean } = {}) {
   return (
     <section className={"cta-block wrap " + (retailer ? "cta-retailer" : "")}>
       <div>
-        <Eyebrow>{retailer ? "FOR YOUR NEXT RESTOCK" : "LET’S TALK ABOUT YOUR WORKFLOW"}</Eyebrow>
+        <Eyebrow>{retailer ? "For your next restock" : "Let’s talk about your workflow"}</Eyebrow>
         <h2>
           {retailer ? (
             <>
@@ -62,7 +62,7 @@ export function CTA({ retailer = false }: { retailer?: boolean } = {}) {
         </Link>
         <span>
           {retailer
-            ? "Continue to the existing retailer portal"
+            ? "Continue to the retailer portal"
             : "Review your workflow, pricing, and setup before you decide."}
         </span>
       </div>
@@ -74,7 +74,7 @@ export function AudienceCards() {
   return (
     <section className="section wrap">
       <div className="section-heading">
-        <Eyebrow>TWO SIDES OF THE SAME DELIVERY</Eyebrow>
+        <Eyebrow>Two sides of the same delivery</Eyebrow>
         <h2>
           Better connected,
           <br />

@@ -131,7 +131,7 @@ export function FeatureCatalog({ heading = false }: { heading?: boolean } = {}) 
       {heading && (
         <div className="section-heading split-heading">
           <div>
-            <Eyebrow>THE FEATURES BEHIND THE FLOW</Eyebrow>
+            <Eyebrow>The features behind the flow</Eyebrow>
             <h2>
               More than a delivery tool.
               <br />
@@ -160,7 +160,7 @@ export function FeatureCatalog({ heading = false }: { heading?: boolean } = {}) 
       </div>
       <div className="wholesale-extras">
         <div>
-          <Eyebrow>THE WHOLESALE DETAILS MATTER</Eyebrow>
+          <Eyebrow>The wholesale details matter</Eyebrow>
           <h3>Built for the work around the order, too.</h3>
         </div>
         <div className="extras-grid">

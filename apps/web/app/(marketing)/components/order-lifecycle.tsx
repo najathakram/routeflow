@@ -47,7 +47,7 @@ export function OrderLifecycle() {
   return (
     <section className="section wrap getting-started order-lifecycle">
       <div>
-        <Eyebrow>ONE ORDER, START TO FINISH</Eyebrow>
+        <Eyebrow>One order, start to finish</Eyebrow>
         <h2>
           Follow an order
           <br />

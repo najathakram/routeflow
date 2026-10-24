@@ -42,10 +42,10 @@ export default function SignInPage() {
             For your operations team managing products, orders, deliveries, and customer accounts.
           </p>
           <a className="g-btn g-btn-primary g-btn-block" href={authLinks.distributorSignIn}>
-            Wholesaler sign in <ArrowRight aria-hidden="true" />
+            Distributor sign in <ArrowRight aria-hidden="true" />
           </a>
           <a className="g-link" href={authLinks.distributorSignUp}>
-            Create a wholesaler account <ArrowRight aria-hidden="true" />
+            Create a distributor account <ArrowRight aria-hidden="true" />
           </a>
         </article>
 

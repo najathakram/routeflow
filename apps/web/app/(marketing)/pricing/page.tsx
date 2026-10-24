@@ -31,7 +31,7 @@ export default function PricingPage() {
   return (
     <div className="glass-page">
       <section className="page-hero centered wrap">
-        <Eyebrow>ROUTEFLOW PRICING</Eyebrow>
+        <Eyebrow>RouteFlow pricing</Eyebrow>
         <h1>
           A plan that fits <br />
           <em>your working day.</em>
@@ -85,7 +85,7 @@ export default function PricingPage() {
       </section>
       <section className="section wrap plan-check">
         <div>
-          <Eyebrow>BEFORE YOU CHOOSE</Eyebrow>
+          <Eyebrow>Before you choose</Eyebrow>
           <h2>
             Get the details
             <br />

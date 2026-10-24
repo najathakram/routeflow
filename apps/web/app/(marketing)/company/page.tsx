@@ -77,7 +77,7 @@ export default function CompanyPage() {
     <div className="glass-page">
       <section className="company-intro wrap split-hero">
         <div>
-          <Eyebrow>ABOUT ROUTEFLOW</Eyebrow>
+          <Eyebrow>About RouteFlow</Eyebrow>
           <h1>
             For the people who <br />
             keep local shelves <br />
@@ -127,7 +127,7 @@ export default function CompanyPage() {
       </p>
       <section className="section wrap company-principles">
         <div>
-          <Eyebrow>OUR PRODUCT FOCUS</Eyebrow>
+          <Eyebrow>Our product focus</Eyebrow>
           <h2>
             Keep it close
             <br />
@@ -146,7 +146,7 @@ export default function CompanyPage() {
       </section>
       <section className="section wrap company-principles">
         <div>
-          <Eyebrow>HOW WE BUILD</Eyebrow>
+          <Eyebrow>How we build</Eyebrow>
           <h2>
             Small, direct,
             <br />
@@ -165,7 +165,7 @@ export default function CompanyPage() {
       </section>
       <section className="section wrap">
         <div>
-          <Eyebrow>THE FACTS</Eyebrow>
+          <Eyebrow>The facts</Eyebrow>
           <h2>
             Who’s actually
             <br />
@@ -182,7 +182,7 @@ export default function CompanyPage() {
       </section>
       <section className="section wrap">
         <div>
-          <Eyebrow>DATA & SECURITY</Eyebrow>
+          <Eyebrow>Data & security</Eyebrow>
           <h2>
             Your data
             <br />

@@ -40,7 +40,7 @@ const steps = [
     rows: [
       ["01 · Warehouse", "Departed"],
       ["02 · Parkside Market", "Complete"],
-      ["03 · Corner Wholesale", "Next stop"],
+      ["03 · Corner Store", "Next stop"],
     ],
     foot: ["Driver", "Alex · 6 stops on this run"],
   },
@@ -52,7 +52,7 @@ const steps = [
     text: "Follow delivery status and refer back to proof of delivery when your customer or team needs an answer.",
     points: ["Delivery status tied to the order", "Proof of delivery for the customer record"],
     caption: "DELIVERY RECORD",
-    sampleTitle: "Order #RF-1024",
+    sampleTitle: "Order #RF-1042",
     status: "Delivered",
     rows: [
       ["Customer", "Parkside Market"],
@@ -72,8 +72,8 @@ const steps = [
     sampleTitle: "Parkside Market",
     status: "Account overview",
     rows: [
-      ["Order #RF-1024", "Delivered"],
-      ["Invoice #INV-024", "$168.00"],
+      ["Order #RF-1042", "Delivered"],
+      ["Invoice #INV-1042", "$168.00"],
       ["Payment record", "Recorded"],
     ],
     foot: ["Your next conversation", "Keep the supporting records close at hand."],

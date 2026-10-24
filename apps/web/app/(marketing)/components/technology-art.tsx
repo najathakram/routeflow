@@ -44,7 +44,7 @@ export function RetailerDetail() {
       <div>
         <p className="eyebrow">
           <span />
-          THE DETAILS BEHIND THE ORDER
+          The details behind the order
         </p>
         <h2>
           Know what you ordered.
