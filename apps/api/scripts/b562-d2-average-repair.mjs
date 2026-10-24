@@ -9,9 +9,10 @@
 // Product.averageCost). Nothing is rewritten; no snapshot moves.
 // Report per product: was / at cutover / now / EXACT|APPROX with reasons (a costful row inside an uncertain window, a
 // residual between D1's quantity and the interposed sales, a line sized by the live pack, a window across the cutover).
-// Blind spots (SA-373 e, SA-911): order stock writers that wrote no OrderRevision are invisible here, and their quantity
-// lands in the residual; an order saved as a draft took stock when it was confirmed, and that time is not stored, so its
-// sale is placed anywhere in [createdAt, updatedAt] (APPROX when a cost row falls there). Residual (SA-902): a purchase
+// Blind spots (SA-373 e, SA-911/921/923): order stock writers that wrote no OrderRevision are invisible here, and their
+// quantity lands in the residual, or, for an order with post-cutover ledger rows, is named "N pieces unplaced" (only a
+// part a post-cutover snapshot embeds is backed out, Q5). A promotion, demotion or reopen time is not stored, so every
+// event of an order touched after creation is placed anywhere in [createdAt, updatedAt] (APPROX when a cost row falls there). Residual (SA-902): a purchase
 // dated BEFORE the cutover and entered AFTER the repair folds before the repair input, so the input hides its cost; use
 // the manual cost setter for such a product. EXACT/APPROX informs the owner's per-product decision; nothing applies on
 // confidence alone (every apply is the owner's, from a reviewed plan).

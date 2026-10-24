@@ -45,7 +45,6 @@ const order = (o: Partial<LegacyOrder> & Pick<LegacyOrder, "lines">): LegacyOrde
   updatedAt: o.updatedAt ?? T("2026-09-05T00:00:00.000Z"),
   lines: o.lines,
   revisions: o.revisions ?? [],
-  counterSale: o.counterSale,
   ledger: o.ledger,
 });
 const line = (qty: number, extra: Record<string, unknown> = {}) => ({
@@ -184,15 +183,14 @@ describe("D2 interposition (SA-902 MUST 4)", () => {
     expect(r.confidence).toBe("APPROX");
   });
 
-  it("SA-911: a counter sale cannot have been a draft — its CREATE stays a point (EXACT)", () => {
+  it("SA-923 M1: a legacy counter sale touched after creation (a void → reopen) is APPROX — no counter-sale exemption", () => {
     const o = order({
-      counterSale: true,
       createdAt: T("2026-09-01T00:00:00.000Z"),
-      updatedAt: T("2026-09-05T00:00:00.000Z"),
+      updatedAt: T("2026-09-05T00:00:00.000Z"), // the reopen bumped it
       lines: [line(8)],
     });
     const ev = interposeOrder(o, "p1", null, CUT).events;
-    expect(ev[0].window).toEqual([T("2026-09-01T00:00:00.000Z"), T("2026-09-01T00:00:00.000Z")]);
+    expect(ev[0].window).toEqual([T("2026-09-01T00:00:00.000Z"), T("2026-09-05T00:00:00.000Z")]);
     const r = reconstruct({
       ledger: [
         buy(10, 1, "2026-08-31T00:00:00.000Z"),
@@ -202,7 +200,7 @@ describe("D2 interposition (SA-902 MUST 4)", () => {
       events: ev,
       approx: [],
     });
-    expect(r.confidence).toBe("EXACT");
+    expect(r.confidence).toBe("APPROX");
   });
 
   it("SA-911: a pre-cutover draft promoted AFTER the cutover (a PROMOTE ledger row) is not interposed at all", () => {
@@ -217,7 +215,6 @@ describe("D2 interposition (SA-902 MUST 4)", () => {
 
   it("SA-911 skip: a post-cutover event of an order WITH ORDER:<id> rows is dropped (no clamp, no false APPROX)", () => {
     const o = order({
-      counterSale: true,
       createdAt: T("2026-09-05T00:00:00.000Z"),
       updatedAt: T("2026-09-28T00:00:00.000Z"),
       lines: [line(10)],
@@ -231,7 +228,6 @@ describe("D2 interposition (SA-902 MUST 4)", () => {
 
   it("SA-911: the same event on an order with NO ledger rows is clamped and APPROX (a legacy change)", () => {
     const o = order({
-      counterSale: true,
       createdAt: T("2026-09-05T00:00:00.000Z"),
       updatedAt: T("2026-09-28T00:00:00.000Z"),
       lines: [line(10)],
@@ -243,25 +239,38 @@ describe("D2 interposition (SA-902 MUST 4)", () => {
       ["FINAL", -2],
     ]);
     expect(r.events[1].at.getTime()).toBe(CUT.getTime() - 1);
-    expect(r.approx).toEqual([expect.stringMatching(/FINAL window crosses the cutover/)]);
+    expect(r.approx).toEqual(
+      expect.arrayContaining([expect.stringMatching(/FINAL window crosses the cutover/)]),
+    );
   });
 
-  it("SA-921 Q5: an order with ledger rows places (net now − its ORDER:<id> rows), the difference backed out of its last pre-cutover event", () => {
+  it("SA-923 M2: a diff on an order with NO snapshot dated at or after the cutover is never absorbed: N pieces unplaced", () => {
     const o = order({
-      counterSale: true,
       createdAt: T("2026-09-05T00:00:00.000Z"),
       updatedAt: T("2026-09-05T00:00:00.000Z"),
       lines: [line(10)],
-      ledger: { rows: 1, qty: D(-3), promoted: false }, // the ledger says 3 moved after the cutover
+      ledger: { rows: 1, qty: D(-3), promoted: false }, // the ledger says 3 moved after the cutover, yet nothing embeds it
     });
     const r = interposeOrder(o, "p1", null, CUT);
-    expect(r.events.map((e) => [e.kind, Number(e.qty)])).toEqual([["CREATE", -7]]);
-    expect(r.approx).toEqual([]);
+    expect(r.events.map((e) => [e.kind, Number(e.qty)])).toEqual([["CREATE", -10]]); // head e2b2dbd42: absorbed to −7
+    expect(r.approx).toEqual([expect.stringMatching(/order o1: 3 pieces unplaced/)]);
   });
 
-  it("SA-911 SHOULD (kept): ledger rows with no pre-cutover event to adjust are placed at the CREATE and named", () => {
+  it("SA-923 sign guard: a back-out that would flip an event's sign (a sale becoming a credit) is named, not absorbed", () => {
     const o = order({
-      counterSale: true,
+      createdAt: T("2026-09-05T00:00:00.000Z"),
+      updatedAt: T("2026-09-28T00:00:00.000Z"),
+      lines: [line(2)],
+      revisions: [{ createdAt: T("2026-09-28T00:00:00.000Z"), lineItems: [line(2)] }],
+      ledger: { rows: 1, qty: D(-8), promoted: false }, // the ledger claims 8 sold after the cutover on a 2-piece order
+    });
+    const r = interposeOrder(o, "p1", null, CUT);
+    expect(r.events.map((e) => [e.kind, Number(e.qty)])).toEqual([["CREATE", -2]]); // head e2b2dbd42: +6 (a credit)
+    expect(r.approx).toEqual([expect.stringMatching(/order o1: 8 pieces unplaced/)]);
+  });
+
+  it("SA-911 SHOULD (kept): a post-cutover snapshot's part is backed out of the CREATE; with nothing embedding it, the pieces are named", () => {
+    const o = order({
       createdAt: T("2026-09-05T00:00:00.000Z"),
       updatedAt: T("2026-09-28T00:00:00.000Z"),
       lines: [line(10)],
@@ -273,7 +282,6 @@ describe("D2 interposition (SA-902 MUST 4)", () => {
     expect(r.events.map((e) => [e.kind, Number(e.qty)])).toEqual([["CREATE", -6]]);
     const none = interposeOrder(
       order({
-        counterSale: true,
         createdAt: T("2026-09-05T00:00:00.000Z"),
         updatedAt: T("2026-09-28T00:00:00.000Z"),
         lines: [line(10)],
@@ -284,11 +292,9 @@ describe("D2 interposition (SA-902 MUST 4)", () => {
       null,
       CUT,
     );
-    // no pre-cutover event of the product at all (it arrived after the cutover yet the ledger holds only 4 of 10)
-    expect(none.events.map((e) => [e.kind, Number(e.qty)])).toEqual([["CREATE", -6]]);
-    expect(none.approx).toEqual([
-      expect.stringMatching(/order o1: -6 pieces had no pre-cutover event; placed at its CREATE/),
-    ]);
+    // no pre-cutover event and no snapshot at or after the cutover (SA-923 M2): an unrevised legacy edit, named only
+    expect(none.events).toEqual([]);
+    expect(none.approx).toEqual([expect.stringMatching(/order o1: -6 pieces unplaced/)]);
   });
 
   // SA-921 MUST 2: an order whose stock may have moved at an UNRECORDED time (promotion, demote/re-promote, cancel → reopen).
@@ -313,7 +319,7 @@ describe("D2 interposition (SA-902 MUST 4)", () => {
     expect(r.reasons).toEqual(expect.arrayContaining([expect.stringMatching(reasonUnrecorded)]));
   });
 
-  it("SA-921: a demote/re-promote — a product that arrived by a revision, with a purchase BEFORE that revision — is APPROX (head: its narrow REVISION window, EXACT)", () => {
+  it("SA-921: a demote/re-promote — a product that arrived by a revision, with a purchase BEFORE that revision — is APPROX (before SA-921: its narrow REVISION window, EXACT)", () => {
     const o = order({
       createdAt: T("2026-09-01T00:00:00.000Z"),
       updatedAt: T("2026-09-08T00:00:00.000Z"),
@@ -379,24 +385,25 @@ describe("D2 interposition (SA-902 MUST 4)", () => {
     expect(r.confidence).toBe("EXACT");
   });
 
-  // SA-921 Q5's red row: order d1 for 10, edited after the cutover to 15 (ORDER −5, its snapshot used for the CREATE);
-  // bills 20@1 d0 and 10@3 d5. The pre-cutover sale is 10: 20@1 − 10 + 10@3 = 2.0000 (the clamp gave 2.3333 APPROX).
-  const q5 = (counterSale: boolean) =>
+  // SA-921 Q5 (SA-923: EXACT asserted with a bill inside the order's raw window): bills 10@1 09-01 and 10@3 09-03; an order
+  // created 09-08 for 10, edited after the cutover to 15 (ORDER −5, its 09-28 snapshot used for the CREATE); a bill of
+  // 10@5 on 09-26, inside [createdAt, updatedAt] but after the cutover. Pre-cutover: 20@2 − 10 → 2.0000.
+  const q5 = (createdAt: string) =>
     order({
-      counterSale,
-      createdAt: T("2026-09-02T00:00:00.000Z"),
+      createdAt: T(createdAt),
       updatedAt: T("2026-09-28T00:00:00.000Z"),
       lines: [line(15)],
       revisions: [{ createdAt: T("2026-09-28T00:00:00.000Z"), lineItems: [line(15)] }],
       ledger: { rows: 1, qty: D(-5), promoted: false },
     });
   const q5Ledger = () => [
-    buy(20, 1, "2026-09-01T00:00:00.000Z"),
-    buy(10, 3, "2026-09-07T00:00:00.000Z"),
+    buy(10, 1, "2026-09-01T00:00:00.000Z"),
+    buy(10, 3, "2026-09-03T00:00:00.000Z"),
     anchor(-10),
+    buy(10, 5, "2026-09-26T00:00:00.000Z"),
   ];
-  it("SA-921 Q5: backed out to the pre-edit 10 → 2.0000, residual 0, EXACT where the window allows (a counter sale)", () => {
-    const i = interposeOrder(q5(true), "p1", null, CUT);
+  it("SA-921 Q5: backed out to the pre-edit 10 → 2.0000 EXACT, residual 0, with a post-cutover bill inside the raw window", () => {
+    const i = interposeOrder(q5("2026-09-08T00:00:00.000Z"), "p1", null, CUT);
     expect(i.events.map((e) => [e.kind, Number(e.qty)])).toEqual([["CREATE", -10]]);
     expect(i.approx).toEqual([]);
     const r = reconstruct({ ledger: q5Ledger(), events: i.events, approx: i.approx });
@@ -405,11 +412,11 @@ describe("D2 interposition (SA-902 MUST 4)", () => {
     expect(r.confidence).toBe("EXACT");
   });
 
-  it("SA-921 Q5 + MUST 2: the same order entered by staff is still 2.0000 but APPROX (its window holds the d5 bill)", () => {
-    const i = interposeOrder(q5(false), "p1", null, CUT);
+  it("SA-921 Q5 + MUST 2: the same order created 09-02, before the 09-03 bill, is APPROX (the bill is in its window; placed at 09-02 → 3.0000)", () => {
+    const i = interposeOrder(q5("2026-09-02T00:00:00.000Z"), "p1", null, CUT);
     expect(i.events.map((e) => [e.kind, Number(e.qty)])).toEqual([["CREATE", -10]]);
     const r = reconstruct({ ledger: q5Ledger(), events: i.events, approx: i.approx });
-    expect(Number(r.xC)).toBe(2);
+    expect(Number(r.xC)).toBe(3);
     expect(r.confidence).toBe("APPROX");
     expect(r.reasons).toEqual(expect.arrayContaining([expect.stringMatching(reasonUnrecorded)]));
   });

@@ -169,7 +169,13 @@ describeDb("B562 D2 average repair — real Postgres (row 635, SA-902)", () => {
    */
   async function seed(
     label: string,
-    opts: { sold?: number; anchorQty?: number; costingMethod?: "AVCO" | "FIFO" | "LIFO" } = {},
+    opts: {
+      sold?: number;
+      anchorQty?: number;
+      costingMethod?: "AVCO" | "FIFO" | "LIFO";
+      /** No default purchases or legacy order: the test inserts its own rows (the anchor is still written). */
+      bare?: boolean;
+    } = {},
   ): Promise<World> {
     seq += 1;
     const slug = assertTestTenant(`qa-b562-d2-${RUN}-${seq}-${label}`, "d2-repair.db.spec.ts");
@@ -210,9 +216,15 @@ describeDb("B562 D2 average repair — real Postgres (row 635, SA-902)", () => {
       customerId: customer.id,
       userId: user.id,
     };
-    await movement(w, MovementType.PURCHASE, 10, at("2026-09-01T00:00:00.000Z"), { unitCost: 1 });
-    await legacyOrder(w, sold, at("2026-09-05T00:00:00.000Z"));
-    await movement(w, MovementType.PURCHASE, 10, at("2026-09-10T00:00:00.000Z"), { unitCost: 3 });
+    if (!opts.bare) {
+      await movement(w, MovementType.PURCHASE, 10, at("2026-09-01T00:00:00.000Z"), {
+        unitCost: 1,
+      });
+      await legacyOrder(w, sold, at("2026-09-05T00:00:00.000Z"));
+      await movement(w, MovementType.PURCHASE, 10, at("2026-09-10T00:00:00.000Z"), {
+        unitCost: 3,
+      });
+    }
     await movement(w, MovementType.SALE, -anchorQty, CUT, {
       reference: "B562:BACKFILL:d1hash",
       createdAt: at("2026-10-20T00:00:00.000Z"),
@@ -437,14 +449,13 @@ describeDb("B562 D2 average repair — real Postgres (row 635, SA-902)", () => {
   async function extraOrder(
     w: World,
     qty: number,
-    o: { createdAt: Date; updatedAt: Date; counterSale?: boolean },
+    o: { createdAt: Date; updatedAt: Date; status?: string },
   ) {
     const order = await prisma.order.create({
       data: {
         tenantId: w.tenantId,
         customerId: w.customerId,
-        status: "DELIVERED",
-        counterSale: o.counterSale ?? false,
+        status: o.status ?? "DELIVERED",
         createdAt: o.createdAt,
         updatedAt: o.updatedAt,
       } as any,
@@ -463,7 +474,7 @@ describeDb("B562 D2 average repair — real Postgres (row 635, SA-902)", () => {
     return order.id;
   }
 
-  it("SA-921 MUST 2: a touched staff order (created 09-08, last updated 09-12) around the 09-10 bill is APPROX, the order named (head: EXACT)", async () => {
+  it("SA-921 MUST 2: a touched staff order (created 09-08, last updated 09-12) around the 09-10 bill is APPROX, the order named (before SA-921: EXACT)", async () => {
     const w = await seed("unrecorded", { anchorQty: 10 });
     const id = await extraOrder(w, 2, {
       createdAt: at("2026-09-08T00:00:00.000Z"),
@@ -480,11 +491,29 @@ describeDb("B562 D2 average repair — real Postgres (row 635, SA-902)", () => {
     );
   }, 120_000);
 
-  it("SA-921 Q5: a counter sale of 4 edited after the cutover to 6 (its EDIT row and a post-cutover snapshot) is backed out to 4: residual 0, EXACT (head: −6, APPROX)", async () => {
-    const w = await seed("q5", { anchorQty: 12 });
-    const id = await extraOrder(w, 6, {
-      counterSale: true,
-      createdAt: at("2026-09-12T00:00:00.000Z"),
+  /** An `ORDER:<id>` ledger row (PR-2, after the cutover) for the world's product. */
+  const orderRow = (w: World, orderId: string, quantity: number, kind: string, at_: string) =>
+    prisma.stockMovement.create({
+      data: {
+        tenantId: w.tenantId,
+        productId: w.productId,
+        type: MovementType.SALE, // PR-2 records every order stock event as a signed SALE row
+        quantity,
+        reference: `ORDER:${orderId}`,
+        notes: kind,
+        effectiveAt: at(at_),
+        createdAt: at(at_),
+      },
+    });
+
+  it("SA-921 Q5 (SA-923: a bill inside the raw window): an order of 10 edited after the cutover to 15 is backed out to 10 → 2.0000 EXACT, residual 0", async () => {
+    // 10@1 09-01, 10@3 09-03; the order created 09-08 for 10, edited 09-28 to 15 (its EDIT row −5 and a 09-28 snapshot);
+    // 10@5 on 09-26, inside [createdAt, updatedAt] but after the cutover. Pre-cutover: 20@2 − 10 → 2.0000.
+    const w = await seed("q5", { bare: true, anchorQty: 10 });
+    await movement(w, MovementType.PURCHASE, 10, at("2026-09-01T00:00:00.000Z"), { unitCost: 1 });
+    await movement(w, MovementType.PURCHASE, 10, at("2026-09-03T00:00:00.000Z"), { unitCost: 3 });
+    const id = await extraOrder(w, 15, {
+      createdAt: at("2026-09-08T00:00:00.000Z"),
       updatedAt: at("2026-09-28T00:00:00.000Z"),
     });
     await prisma.orderRevision.create({
@@ -497,9 +526,9 @@ describeDb("B562 D2 average repair — real Postgres (row 635, SA-902)", () => {
           lineItems: [
             {
               productId: w.productId,
-              qty: 6,
+              qty: 15,
               boxes: null,
-              pieces: 6,
+              pieces: 15,
               unitsPerBox: 1,
               status: "PENDING",
             },
@@ -507,26 +536,43 @@ describeDb("B562 D2 average repair — real Postgres (row 635, SA-902)", () => {
         },
       } as any,
     });
-    await prisma.stockMovement.create({
-      data: {
-        tenantId: w.tenantId,
-        productId: w.productId,
-        type: MovementType.SALE,
-        quantity: -2,
-        reference: `ORDER:${id}`,
-        notes: "EDIT",
-        effectiveAt: at("2026-09-28T00:00:00.000Z"),
-        createdAt: at("2026-09-28T00:00:00.000Z"),
-      },
-    });
-    await prisma.product.update({ where: { id: w.productId }, data: { currentStock: 6 } });
+    await movement(w, MovementType.PURCHASE, 10, at("2026-09-26T00:00:00.000Z"), { unitCost: 5 });
+    await orderRow(w, id, -5, "EDIT", "2026-09-28T00:00:00.000Z");
+    await prisma.product.update({ where: { id: w.productId }, data: { currentStock: 15 } });
     const p = await plan(w);
     expect(p.entries[0]).toMatchObject({
-      legacyOrders: 2,
+      legacyOrders: 1,
       residual: "0",
       confidence: "EXACT",
-      xC: "2.6667",
+      xC: "2", // 2.0000
     });
+  }, 120_000);
+
+  it("SA-923 SHOULD: a DRAFT now, confirmed before the cutover and demoted after it (a DEMOTE row), is a legacy order: residual 0 (head: excluded, −3)", async () => {
+    const w = await seed("demoted", { anchorQty: 11 }); // the legacy sale of 8 plus this order's 3
+    const id = await extraOrder(w, 3, {
+      status: "DRAFT",
+      createdAt: at("2026-09-12T00:00:00.000Z"),
+      updatedAt: at("2026-09-27T00:00:00.000Z"),
+    });
+    await orderRow(w, id, 3, "DEMOTE", "2026-09-27T00:00:00.000Z");
+    await prisma.product.update({ where: { id: w.productId }, data: { currentStock: 12 } });
+    const p = await plan(w);
+    expect(p.entries[0]).toMatchObject({ legacyOrders: 2, residual: "0" });
+  }, 120_000);
+
+  it("SA-923 SHOULD: a DEMOTE before the first post-cutover PROMOTE keeps the pre-cutover sale interposed: residual 0 (head: skipped, −3)", async () => {
+    const w = await seed("repromoted", { anchorQty: 11 });
+    const id = await extraOrder(w, 3, {
+      status: "PENDING",
+      createdAt: at("2026-09-12T00:00:00.000Z"),
+      updatedAt: at("2026-09-28T00:00:00.000Z"),
+    });
+    await orderRow(w, id, 3, "DEMOTE", "2026-09-27T00:00:00.000Z");
+    await orderRow(w, id, -3, "PROMOTE", "2026-09-28T00:00:00.000Z");
+    await prisma.product.update({ where: { id: w.productId }, data: { currentStock: 9 } });
+    const p = await plan(w);
+    expect(p.entries[0]).toMatchObject({ legacyOrders: 2, residual: "0" });
   }, 120_000);
 
   describe("guards", () => {

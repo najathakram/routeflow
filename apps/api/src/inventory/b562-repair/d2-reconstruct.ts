@@ -120,6 +120,6 @@ export function reconstruct(input: {
     residual,
     stockAtCutover: atCut.stock,
     confidence: reasons.length === 0 ? "EXACT" : "APPROX",
-    reasons,
+    reasons: [...new Set(reasons)], // SA-923 LOW: one line per reason, not one per event
   };
 }

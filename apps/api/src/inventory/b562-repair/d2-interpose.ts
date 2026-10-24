@@ -45,9 +45,10 @@ export interface LegacyOrder {
   lines: LegacyLine[];
   /** OrderRevision snapshots' line items, oldest first. */
   revisions: Array<{ createdAt: Date; lineItems: LegacyLine[] }>;
-  /** A counter sale (created DELIVERED): never a draft, so its CREATE is a point (SA-911). */
-  counterSale?: boolean;
-  /** This product's `ORDER:<id>` ledger rows for the order (PR-2, after the cutover): Σ quantity, and a PROMOTE among them. */
+  /**
+   * This product's `ORDER:<id>` ledger rows for the order (PR-2, after the cutover): Σ quantity, and whether its first
+   * PROMOTE/DEMOTE row is a PROMOTE (still a draft at the cutover; SA-923: not when a DEMOTE came first).
+   */
   ledger?: { rows: number; qty: Prisma.Decimal; promoted: boolean };
 }
 export type EventKind = "CREATE" | "REVISION" | "FINAL" | "CANCEL";
@@ -84,6 +85,7 @@ export function interposeOrder(
   };
 
   const cancelled = order.status === "CANCELLED";
+  const isDraft = order.status === "DRAFT";
   // What the order held just before now (or before its cancel): a cancel flips the held lines to CANCELLED.
   const held = cancelled ? order.lines : order.lines.filter(isLive);
   const raw: Array<Omit<PlacedEvent, "orderId">> = [];
@@ -94,23 +96,14 @@ export function interposeOrder(
   // SA-911: a draft promoted after the cutover took its stock at that ledgered PROMOTE: nothing here is legacy.
   if (order.ledger?.promoted) return { events: [], approx: [] };
   const revs = order.revisions;
-  // SA-921: a promotion, a demote/re-promote or a cancel → reopen moved stock at a time nothing stores, but each is an
-  // update. Only a counter sale (never a draft) and an order never updated after creation keep their placed windows.
-  const unrecorded = !order.counterSale && order.createdAt.getTime() !== order.updatedAt.getTime();
-  const createWindow = (pointEnd: Date): [Date, Date] => [order.createdAt, pointEnd];
+  // SA-921/923: a promotion, a demote/re-promote or a cancel → reopen (a counter sale's void and reopen included) moved
+  // stock at a time nothing stores, but each is an update. Only an order never updated after creation keeps its windows.
+  const unrecorded = order.createdAt.getTime() !== order.updatedAt.getTime();
   if (revs.length === 0) {
-    place("CREATE", order.createdAt, pieces(held).neg(), createWindow(order.createdAt));
+    place("CREATE", order.createdAt, pieces(held).neg(), [order.createdAt, order.createdAt]);
   } else {
     let prev = pieces(revs[0].lineItems.filter(isLive));
-    // The first snapshot may embed edits made before it. SA-921 Q5: a snapshot written after the cutover of an order with
-    // ledger rows embeds only post-cutover edits, which are backed out exactly below, so the CREATE stays a point.
-    const firstIsLedgers = revs[0].createdAt >= cutover && (order.ledger?.rows ?? 0) > 0;
-    place(
-      "CREATE",
-      order.createdAt,
-      prev.neg(),
-      createWindow(firstIsLedgers ? order.createdAt : revs[0].createdAt),
-    );
+    place("CREATE", order.createdAt, prev.neg(), [order.createdAt, revs[0].createdAt]);
     for (let k = 1; k < revs.length; k += 1) {
       const cur = pieces(revs[k].lineItems.filter(isLive));
       place("REVISION", revs[k].createdAt, cur.sub(prev).neg(), [
@@ -160,29 +153,41 @@ export function interposeOrder(
   // SA-921 Q5: for an order with ledger rows, the pre-cutover net is its net effect now minus those rows; the difference
   // (the post-cutover part a snapshot may embed, known exactly from the ledger) comes off its LAST pre-cutover event.
   if (ledgered) {
-    const net = cancelled
-      ? pieces(held, (li) => Number(li.deliveredQty ?? 0)).neg() // a cancel keeps only the delivered pieces out
-      : pieces(held).neg();
+    const net = isDraft
+      ? new Prisma.Decimal(0) // SA-923: a draft now (demoted after the cutover) holds no stock
+      : cancelled
+        ? pieces(held, (li) => Number(li.deliveredQty ?? 0)).neg() // a cancel keeps only the delivered pieces out
+        : pieces(held).neg();
     const placed = events.reduce((s, e) => s.add(e.qty), new Prisma.Decimal(0));
     const diff = net.sub(order.ledger!.qty).sub(placed);
-    if (!diff.isZero()) {
-      const last = events[events.length - 1];
-      if (last) last.qty = last.qty.add(diff);
-      else {
-        // SHOULD (SA-911): nothing to adjust — placed at its CREATE and named, so the owner sees which order.
-        approx.add(
-          `order ${order.id}: ${diff.toString()} pieces had no pre-cutover event; placed at its CREATE`,
-        );
-        const w = unrecorded ? [order.createdAt, order.updatedAt] : createWindow(order.createdAt);
-        events.push({
-          orderId: order.id,
-          kind: "CREATE",
-          at: order.createdAt,
-          qty: diff,
-          window: [w[0], w[1] >= cutover ? beforeCut : w[1]],
-          ...(unrecorded ? { unrecorded: true } : {}),
-        });
-      }
+    // SA-923 MUST 2: only a part a USED snapshot dated at or after the cutover embeds can be backed out (the current lines
+    // count when there are no revisions). Anything else is an unrevised legacy edit: named, never absorbed.
+    const embedsPostCut =
+      revs.length === 0 ? order.updatedAt >= cutover : revs.some((r) => r.createdAt >= cutover);
+    const last = events[events.length - 1];
+    // SA-923: an absorption that would flip an event's sign (a sale becoming a credit, or the reverse) is not a back-out.
+    const flips = (q: Prisma.Decimal) =>
+      !q.isZero() && !q.add(diff).isZero() && q.isNeg() !== q.add(diff).isNeg();
+    if (diff.isZero()) {
+      // placed exactly
+    } else if (!embedsPostCut || (last && flips(last.qty))) {
+      approx.add(`order ${order.id}: ${diff.toString()} pieces unplaced`);
+    } else if (last) {
+      last.qty = last.qty.add(diff);
+    } else {
+      // SHOULD (SA-911): nothing to adjust — placed at its CREATE and named, so the owner sees which order.
+      approx.add(
+        `order ${order.id}: ${diff.toString()} pieces had no pre-cutover event; placed at its CREATE`,
+      );
+      const end = unrecorded ? order.updatedAt : order.createdAt;
+      events.push({
+        orderId: order.id,
+        kind: "CREATE",
+        at: order.createdAt,
+        qty: diff,
+        window: [order.createdAt, end >= cutover ? beforeCut : end],
+        ...(unrecorded ? { unrecorded: true } : {}),
+      });
     }
   }
   return { events, approx: [...approx] };

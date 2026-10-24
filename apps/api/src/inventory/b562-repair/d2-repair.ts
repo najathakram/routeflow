@@ -107,15 +107,20 @@ const LINE_SELECT = {
   unitLabel: true,
 } as const;
 
-/** The non-DRAFT orders created before the cutover that touched the product, now or in any revision snapshot. */
+/**
+ * The orders created before the cutover that touched the product, now or in any revision snapshot: every non-DRAFT, and
+ * (SA-923) a DRAFT now whose ledger holds a DEMOTE for the product (confirmed before the cutover, demoted after it).
+ */
 async function legacyOrdersOf(
   db: any,
   tenantId: string,
   productId: string,
   cutover: Date,
+  demotedIds: string[],
 ): Promise<LegacyOrder[]> {
+  const notDraft = { OR: [{ status: { not: "DRAFT" } }, { id: { in: demotedIds } }] };
   const viaLines: Array<{ orderId: string }> = await db.orderItem.findMany({
-    where: { productId, order: { createdAt: { lt: cutover }, status: { not: "DRAFT" } } },
+    where: { productId, order: { createdAt: { lt: cutover }, ...notDraft } },
     select: { orderId: true },
     distinct: ["orderId"],
   });
@@ -126,7 +131,7 @@ async function legacyOrdersOf(
       JOIN "Order" o ON o.id = r."orderId"
      WHERE o."tenantId" = ${tenantId}
        AND o."createdAt" < ${cutover}
-       AND o.status::text <> 'DRAFT'
+       AND (o.status::text <> 'DRAFT' OR o.id = ANY(${demotedIds}::text[]))
        AND r.snapshot @> ${contains}::jsonb`;
   const ids = [...new Set([...viaLines, ...viaRevisions].map((o) => o.orderId))];
   if (ids.length === 0) return [];
@@ -137,7 +142,6 @@ async function legacyOrdersOf(
       status: true,
       createdAt: true,
       updatedAt: true,
-      counterSale: true, // SA-911: a counter sale cannot have been a draft
       lineItems: { select: LINE_SELECT },
       revisions: {
         select: { createdAt: true, snapshot: true },
@@ -150,7 +154,6 @@ async function legacyOrdersOf(
     status: String(o.status),
     createdAt: o.createdAt,
     updatedAt: o.updatedAt,
-    counterSale: o.counterSale === true,
     lines: o.lineItems as LegacyLine[],
     revisions: o.revisions.map((r: any) => ({
       createdAt: r.createdAt,
@@ -158,6 +161,9 @@ async function legacyOrdersOf(
     })),
   }));
 }
+
+const ledgerOf = (l?: { rows: number; qty: Prisma.Decimal; promoted: boolean }) =>
+  l && { rows: l.rows, qty: l.qty, promoted: l.promoted };
 
 /** Read-only: the tenant's D2 plan. `db` is a tenant-scoped client (or the apply's tenant transaction). */
 export async function planD2(
@@ -235,24 +241,35 @@ export async function planD2(
       continue;
     }
     const anchor = anchors[0];
-    // eslint-disable-next-line no-await-in-loop
-    const orders = await legacyOrdersOf(db, opts.tenantId, p.id, anchor.effectiveAt);
     const events: PlacedEvent[] = [];
     const approx: string[] = [];
-    // SA-911: each order's own ORDER:<id> rows for THIS product (PR-2, after the cutover) — the skip rule and PROMOTE.
-    const byOrder = new Map<string, { rows: number; qty: Prisma.Decimal; promoted: boolean }>();
+    // SA-911/923: each order's own ORDER:<id> rows for THIS product (PR-2, after the cutover): the skip rule, the Q5
+    // back-out, and the PROMOTE skip, which holds only when its first PROMOTE/DEMOTE row is a PROMOTE (ledger order).
+    const byOrder = new Map<
+      string,
+      { rows: number; qty: Prisma.Decimal; promoted: boolean; firstKind?: string }
+    >();
+    const demotedIds = new Set<string>();
     for (const m of ledger as Array<LedgerRow & { notes?: string | null }>) {
       if (!m.reference?.startsWith(ORDER_REF_PREFIX)) continue;
       const id = m.reference.slice(ORDER_REF_PREFIX.length);
       const cur = byOrder.get(id) ?? { rows: 0, qty: new Prisma.Decimal(0), promoted: false };
       cur.rows += 1;
       cur.qty = cur.qty.add(m.quantity);
-      if (m.notes === "PROMOTE") cur.promoted = true;
+      if ((m.notes === "PROMOTE" || m.notes === "DEMOTE") && !cur.firstKind) {
+        cur.firstKind = m.notes;
+        cur.promoted = m.notes === "PROMOTE";
+      }
+      if (m.notes === "DEMOTE") demotedIds.add(id);
       byOrder.set(id, cur);
     }
+    // eslint-disable-next-line no-await-in-loop
+    const orders = await legacyOrdersOf(db, opts.tenantId, p.id, anchor.effectiveAt, [
+      ...demotedIds,
+    ]);
     for (const o of orders) {
       const r = interposeOrder(
-        { ...o, ledger: byOrder.get(o.id) },
+        { ...o, ledger: ledgerOf(byOrder.get(o.id)) },
         p.id,
         p.unitsPerBox,
         anchor.effectiveAt,
