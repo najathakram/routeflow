@@ -125,14 +125,21 @@ describe("refresh and setPassword refuse a session with no business unless SUPER
     await expect(service.refresh("incoming")).resolves.toMatchObject({ accessToken: "mock-token" });
   });
 
-  it("setPassword (mintSessionForUser): a tenantless OPERATOR is refused before any session is revoked or minted", async () => {
-    prisma.user.findUnique.mockResolvedValue(user("OPERATOR", null) as any);
-    prisma.user.update.mockResolvedValue(user("OPERATOR", null) as any);
-    prisma.passwordResetToken.updateMany.mockResolvedValue({ count: 0 } as any);
-    await expect(service.setPassword("user-1", "N3w-passw0rd!")).rejects.toBeInstanceOf(
-      UnauthorizedException,
-    );
-    expect(prisma.refreshToken.deleteMany).not.toHaveBeenCalled();
-    expect(jwtService.sign).not.toHaveBeenCalled();
-  });
+  it.each([
+    ["setPassword", (s: AuthService) => s.setPassword("user-1", "N3w-passw0rd!")],
+    [
+      "changePassword",
+      (s: AuthService) => s.changePassword("user-1", "0ld-passw0rd!", "N3w-passw0rd!"),
+    ],
+  ])(
+    "%s: a tenantless OPERATOR is refused BEFORE the password write (SA-924), and no session is revoked or minted",
+    async (_name, call) => {
+      prisma.user.findUnique.mockResolvedValue({ ...user("OPERATOR", null), password: "h" } as any);
+      await expect(call(service)).rejects.toBeInstanceOf(UnauthorizedException);
+      expect(prisma.user.update).not.toHaveBeenCalled();
+      expect(prisma.passwordResetToken.updateMany).not.toHaveBeenCalled();
+      expect(prisma.refreshToken.deleteMany).not.toHaveBeenCalled();
+      expect(jwtService.sign).not.toHaveBeenCalled();
+    },
+  );
 });

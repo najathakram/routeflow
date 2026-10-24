@@ -665,6 +665,8 @@ export class AuthService {
   async changePassword(userId: string, currentPassword: string, newPassword: string) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new UnauthorizedException();
+    // W-767 (SA-924): login's RF-176 rule BEFORE any write; mintSessionForUser checks again before it mints.
+    if (!hasSessionTenant(user)) throw new UnauthorizedException("Tenant not found");
 
     if (!user.password)
       throw new BadRequestException("This account uses Google sign-in and has no password");
@@ -706,6 +708,8 @@ export class AuthService {
   async setPassword(userId: string, newPassword: string, deviceInfo?: DeviceInfo) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new UnauthorizedException();
+    // W-767 (SA-924): login's RF-176 rule BEFORE any write; mintSessionForUser checks again before it mints.
+    if (!hasSessionTenant(user)) throw new UnauthorizedException("Tenant not found");
 
     if (user.password)
       throw new BadRequestException(

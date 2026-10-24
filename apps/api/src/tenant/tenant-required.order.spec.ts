@@ -12,6 +12,7 @@ import { APP_INTERCEPTOR } from "@nestjs/core";
 import { Test } from "@nestjs/testing";
 import request from "supertest";
 import { AppModule } from "../app.module";
+import { listenOnLoopback } from "../common/testing/listen-loopback";
 import { AuditInterceptor } from "../audit/audit.interceptor";
 import { RouteHitsInterceptor } from "../route-hits/route-hits.interceptor";
 import { TenantRequiredInterceptor } from "./tenant-required.interceptor";
@@ -93,6 +94,7 @@ describe("W-767 (SA-917): TenantRequiredInterceptor runs before the audit and ro
       await Test.createTestingModule({ imports: [Root] }).compile()
     ).createNestApplication();
     await app.init();
+    await listenOnLoopback(app); // #2267: own a 127.0.0.1 port before request(), so no other worker's server answers
     try {
       await request(app.getHttpServer()).get("/probe").expect(200);
     } finally {
