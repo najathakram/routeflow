@@ -56,23 +56,34 @@ export function CustomerAccountStrip({
       : undefined,
     { enabled: !!id },
   );
+  // #3724 review (a): the overdue count and the oldest overdue invoice are the SERVER's (its isOverdue filter, in the
+  // tenant's zone), never counted from the one page above: oldest due date first, one row.
+  const overdueQ = useInvoices(
+    id
+      ? { customerId: id, isOverdue: true, sortBy: "dueDate", sortOrder: "asc", page: 1, limit: 1 }
+      : undefined,
+    { enabled: !!id },
+  );
   const [expanded, setExpanded] = React.useState(false);
   const [showAll, setShowAll] = React.useState(false);
   const [pay, setPay] = React.useState<{ focusInvoiceId?: string } | null>(null);
 
   if (!id) return null;
 
+  // (d) the time zone only dates the rows: a failed read drops the day counts, never the strip.
   const failed =
     view.openBalance.state === "failed" ||
     view.creditLimit.state === "failed" ||
     list.isError ||
-    zoneQ.isError;
+    overdueQ.isError;
+  const zoneReady = !!zoneQ.zone;
   const loading =
     !failed &&
     (view.openBalance.state === "loading" ||
       view.creditLimit.state === "loading" ||
       !list.data ||
-      !zoneQ.zone);
+      !overdueQ.data ||
+      (!zoneReady && !zoneQ.isError));
 
   const shell = "min-h-[2.25rem] rounded-lg border px-3 py-2 text-sm";
 
@@ -102,12 +113,7 @@ export function CustomerAccountStrip({
       </div>
     );
   }
-  if (
-    loading ||
-    view.openBalance.state !== "ready" ||
-    view.creditLimit.state !== "ready" ||
-    !zoneQ.zone
-  ) {
+  if (loading || view.openBalance.state !== "ready" || view.creditLimit.state !== "ready") {
     return (
       <div
         role="status"
@@ -119,8 +125,9 @@ export function CustomerAccountStrip({
     );
   }
 
-  const tenantDay = calendarDayInZone(zoneQ.zone);
-  const rows = [...(list.data?.data ?? [])]
+  const tenantDay = zoneQ.zone ? calendarDayInZone(zoneQ.zone) : null;
+  const page = list.data?.data ?? [];
+  const rows = [...page]
     .filter((r) => (r.balanceDue ?? 0) > 0.001)
     .sort((a, b) => {
       const ad = a.issueDate ?? "";
@@ -129,23 +136,33 @@ export function CustomerAccountStrip({
         ? ad.localeCompare(bd)
         : (a.createdAt ?? "").localeCompare(b.createdAt ?? "");
     })
-    .map((r) => ({ inv: r, late: daysPastDue(tenantDay, r.dueDate) }));
-  const overdueRows = rows.filter((r) => r.late > 0);
-  const oldestLate = overdueRows.reduce((m, r) => Math.max(m, r.late), 0);
+    .map((r) => ({ inv: r, late: tenantDay ? daysPastDue(tenantDay, r.dueDate) : 0 }));
+  const overdueCount = overdueQ.data?.meta?.total ?? 0;
+  const oldestOverdue = overdueQ.data?.data?.[0];
+  const oldestLate = tenantDay && oldestOverdue ? daysPastDue(tenantDay, oldestOverdue.dueDate) : 0;
   const owed = view.openBalance.value;
   const overLimitBy = view.overLimitBy;
   const warn =
-    overdueRows.length > 0 ||
+    overdueCount > 0 ||
     overLimitBy > 0 ||
     (view.overdue.state === "ready" && view.overdue.value > 0);
   // The list is one page (LIST_LIMIT): the open count is the server's total, never the page's length (Opus review).
-  const openCount = Math.max(list.data?.meta?.total ?? rows.length, rows.length);
-  const truncated = openCount > rows.length;
+  // (b) like with like: the server's total against the page it returned (zero-balance rows included), not the
+  // balance-filtered rows, so a zero-balance open invoice never reads as "more than one page".
+  const openCount = Math.max(list.data?.meta?.total ?? page.length, page.length);
+  const truncated = openCount > page.length;
   const nothing = openCount === 0 && owed <= 0;
+  // (c) an opening balance with no open invoice: the amount alone, with nothing to expand.
+  const listable = rows.length > 0;
 
-  const parts: string[] = [`Owes ${fmt(owed)}`, `${openCount} open`];
-  if (overdueRows.length > 0) {
-    parts.push(`${overdueRows.length} overdue, oldest ${plural(oldestLate, "day", "days")}`);
+  const parts: string[] = [`Owes ${fmt(owed)}`];
+  if (openCount > 0) parts.push(`${openCount} open`);
+  if (overdueCount > 0) {
+    parts.push(
+      oldestLate > 0
+        ? `${overdueCount} overdue, oldest ${plural(oldestLate, "day", "days")}`
+        : `${overdueCount} overdue`,
+    );
   }
   if (overLimitBy > 0) parts.push(`${fmt(overLimitBy)} over limit`);
 
@@ -175,24 +192,26 @@ export function CustomerAccountStrip({
             <p data-testid="account-strip-line" className="font-medium">
               {parts.join(" · ")}
             </p>
-            <button
-              type="button"
-              aria-expanded={expanded}
-              onClick={() => setExpanded((v) => !v)}
-              className="inline-flex shrink-0 items-center gap-1 text-xs font-medium underline-offset-2 hover:underline"
-            >
-              {expanded ? "Hide" : "View"}
-              {expanded ? (
-                <ChevronUp className="h-3.5 w-3.5" />
-              ) : (
-                <ChevronDown className="h-3.5 w-3.5" />
-              )}
-            </button>
+            {listable ? (
+              <button
+                type="button"
+                aria-expanded={expanded}
+                onClick={() => setExpanded((v) => !v)}
+                className="inline-flex shrink-0 items-center gap-1 text-xs font-medium underline-offset-2 hover:underline"
+              >
+                {expanded ? "Hide" : "View"}
+                {expanded ? (
+                  <ChevronUp className="h-3.5 w-3.5" />
+                ) : (
+                  <ChevronDown className="h-3.5 w-3.5" />
+                )}
+              </button>
+            ) : null}
           </>
         )}
       </div>
 
-      {expanded && !nothing ? (
+      {expanded && listable ? (
         <div className="rounded-lg border border-surface-border bg-white">
           <ul className="divide-y divide-surface-border">
             {shown.map(({ inv, late }) => (

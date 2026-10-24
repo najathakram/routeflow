@@ -76,12 +76,16 @@ let customer: Record<string, unknown>;
 let invoices: Inv[];
 let failStatement = false;
 let listTotal: number | null = null;
+let overdueTotal: number | null = null;
+let failZone = false;
 
 beforeEach(() => {
   mockUser = { role: "OPERATOR" };
   modalProps = null;
   failStatement = false;
   listTotal = null;
+  overdueTotal = null;
+  failZone = false;
   statement = { outstandingAmount: 1240, overdueAmount: 420 };
   customer = { id: "c1", businessName: "Acme Foods", creditLimit: 930 };
   invoices = [
@@ -90,7 +94,7 @@ beforeEach(() => {
     inv(2, 40, -10, 520),
   ];
   mockGet.mockReset();
-  mockGet.mockImplementation((url: string) => {
+  mockGet.mockImplementation((url: string, opts?: { params?: Record<string, any> }) => {
     if (url === "/customers/c1") return Promise.resolve({ data: customer });
     if (url === "/customers/c1/statement") {
       return failStatement
@@ -98,7 +102,22 @@ beforeEach(() => {
         : Promise.resolve({ data: statement });
     }
     if (url === "/settings/invoice") return Promise.resolve({ data: { defaultTerms: "Net 30" } });
-    if (url === "/settings") return Promise.resolve({ data: { timezone: ZONE } });
+    if (url === "/settings")
+      return failZone
+        ? Promise.reject(new Error("zone"))
+        : Promise.resolve({ data: { timezone: ZONE } });
+    if (url === "/invoices" && opts?.params?.isOverdue) {
+      // the server's overdue set: past due, a balance left, oldest due date first (sortBy dueDate asc)
+      const overdue = invoices
+        .filter((i) => i.dueDate < dayOffset(0) && i.balanceDue > 0)
+        .sort((a, b) => a.dueDate.localeCompare(b.dueDate));
+      return Promise.resolve({
+        data: {
+          data: overdue.slice(0, opts.params.limit ?? 20),
+          meta: { total: overdueTotal ?? overdue.length, page: 1, limit: 1, totalPages: 1 },
+        },
+      });
+    }
     if (url === "/invoices") {
       return Promise.resolve({
         data: {
@@ -116,6 +135,50 @@ const line = () => screen.findByTestId("account-strip-line");
 describe("CustomerAccountStrip", () => {
   // Opus review: the list is one page (limit 100). The open count is the server's total, never the page's length, and
   // past one page the full list is on the customer page, not a "Show all" that would show only the first 100.
+  // #3724 review (a): past one page, the overdue figures are the server's too (an isOverdue read), never the page's.
+  it("more than one page: the overdue count is the server's total and the oldest is the server's oldest", async () => {
+    listTotal = 140;
+    overdueTotal = 61;
+    renderWithProviders(<CustomerAccountStrip customerId="c1" />);
+    expect(await line()).toHaveTextContent("140 open · 61 overdue, oldest 34 days");
+    const call = mockGet.mock.calls.find((c) => c[0] === "/invoices" && c[1]?.params?.isOverdue);
+    expect(call?.[1]?.params).toEqual(
+      expect.objectContaining({
+        customerId: "c1",
+        isOverdue: true,
+        sortBy: "dueDate",
+        sortOrder: "asc",
+        limit: 1,
+      }),
+    );
+  });
+
+  // (b) like with like: a zero-balance open invoice on the page is not a "more than one page" signal.
+  it("a zero-balance open invoice never produces a false 'See all'", async () => {
+    invoices = [...invoices, inv(9, 2, 30, 0)];
+    renderWithProviders(<CustomerAccountStrip customerId="c1" />);
+    await line();
+    await userEvent.click(screen.getByRole("button", { name: /view/i }));
+    expect(screen.queryByRole("link", { name: /see all/i })).toBeNull();
+  });
+
+  // (c) an opening balance with no open invoices: the amount, never "0 open" and a View of an empty list.
+  it("owes with no open invoices: shows the amount alone, with nothing to expand", async () => {
+    invoices = [];
+    renderWithProviders(<CustomerAccountStrip customerId="c1" />);
+    expect(await line()).toHaveTextContent(/^Owes \$1,240\.00( · \$310\.00 over limit)?$/);
+    expect(screen.queryByRole("button", { name: /view/i })).toBeNull();
+  });
+
+  // (d) a failed time-zone read drops only the day counts; the money and the list still show.
+  it("a failed time-zone read keeps the strip, without day counts", async () => {
+    failZone = true;
+    renderWithProviders(<CustomerAccountStrip customerId="c1" />);
+    expect(await line()).toHaveTextContent("Owes $1,240.00 · 3 open · 2 overdue");
+    expect(screen.getByTestId("account-strip-line")).not.toHaveTextContent(/oldest/);
+    expect(screen.queryByText("Couldn't load account info")).toBeNull();
+  });
+
   it("more open invoices than one page: the count is the server's total, and the list points to the customer", async () => {
     listTotal = 140;
     renderWithProviders(<CustomerAccountStrip customerId="c1" />);
