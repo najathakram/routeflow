@@ -76,6 +76,28 @@ export const ORDERS_SQL = `SELECT DENSE_RANK() OVER (ORDER BY x.tn)::int AS tena
      WHERE o."discountAmount" > 0
   ) x`;
 
+/**
+ * W-762 / SA-918 (census for SA-780's repair): discounted PRODUCTION orders that were EDITED or MERGED after create (they
+ * carry an OrderRevision: one is written after every edit, change-request apply and merge) and whose stored total does
+ * NOT carry the discount (more than 1 cent off subtotal + tax + levy + shipping − discount). Before W-762 those re-totals
+ * dropped the discount, so these totals are wrong today. Internal order ids only, for the repair; nothing is changed.
+ */
+export const REPAIR_IDS_SQL = `SELECT DENSE_RANK() OVER (ORDER BY o."tenantId")::int AS tenant_no,
+       o.id AS order_ref,
+       o.status::text AS status,
+       (SELECT COUNT(*) FROM "OrderRevision" r WHERE r."orderId" = o.id)::int AS revisions,
+       (o.total - (o.subtotal + o.tax + COALESCE(o."shippingFee", 0) - o."discountAmount"
+         + COALESCE((SELECT SUM(i."categoryTaxAmount") FROM "OrderItem" i
+                      WHERE i."orderId" = o.id AND i.status::text <> 'CANCELLED'), 0)))::text AS over_by
+  FROM "Order" o
+  JOIN "Tenant" t ON t.id = o."tenantId" AND t.class::text = 'PRODUCTION' AND t."deletedAt" IS NULL
+ WHERE o."discountAmount" > 0
+   AND EXISTS (SELECT 1 FROM "OrderRevision" r WHERE r."orderId" = o.id)
+   AND abs(o.total - (o.subtotal + o.tax + COALESCE(o."shippingFee", 0) - o."discountAmount"
+         + COALESCE((SELECT SUM(i."categoryTaxAmount") FROM "OrderItem" i
+                      WHERE i."orderId" = o.id AND i.status::text <> 'CANCELLED'), 0))) > 0.01
+ ORDER BY tenant_no, o.id`;
+
 const c = (v) => Math.round((Number(v ?? 0) || 0) * 100);
 const money = (n) => (n / 100).toFixed(2);
 
@@ -404,6 +426,11 @@ export function selfTest() {
   const outerSelect = ORDERS_SQL.split(/\n\s*FROM \(/)[0];
   if (/\bslug\b|\bemail\b|businessName|\bAS\s+"?(id|tenantId|orderId)"?\b/i.test(outerSelect))
     throw new Error("the SELECT list must not carry an id, slug, name or email");
+  // W-762: the repair list carries internal order ids only, and is read-only too
+  if (/\bslug\b|\bemail\b|businessName|\bname\b/i.test(REPAIR_IDS_SQL))
+    throw new Error("the repair list must not carry a slug, name or email");
+  if (/\b(INSERT|UPDATE|DELETE|TRUNCATE|ALTER|DROP|CREATE|GRANT|COPY)\b/i.test(REPAIR_IDS_SQL))
+    throw new Error("the repair list SQL must be read-only");
   if (/\b(INSERT|UPDATE|DELETE|TRUNCATE|ALTER|DROP|CREATE|GRANT|COPY)\b/i.test(ORDERS_SQL))
     throw new Error("the report SQL must be read-only");
   return "self-test ok";
@@ -440,15 +467,25 @@ async function main() {
     await assertReadOnly(client);
     await client.query("BEGIN READ ONLY");
     const { rows } = await client.query(ORDERS_SQL);
+    const { rows: repair } = await client.query(REPAIR_IDS_SQL);
     await client.query("ROLLBACK");
     const report = summarize(rows);
-    if (json) console.log(JSON.stringify(report, null, 2));
+    if (json) console.log(JSON.stringify({ ...report, editedOrMergedWrongTotal: repair }, null, 2));
     else {
       console.log("\n=== ORDERS WITH AN ORDER-LEVEL DISCOUNT (SA-780 census, counts only) ===");
       printBlock("all", report.total);
       for (const st of report.statuses) printBlock(`  status ${st.status}`, st);
       for (const t of report.tenants) printBlock(`  ${t.label}`, t);
       if (report.total.orders === 0) console.log("  no discounted orders");
+      // W-762 / SA-918: the ids SA-780's repair needs (internal ids only).
+      console.log(
+        `\n=== DISCOUNTED ORDERS EDITED OR MERGED WITH A WRONG STORED TOTAL (W-762): ${repair.length} ===`,
+      );
+      for (const r of repair) {
+        console.log(
+          `  tenant-${r.tenant_no}  ${r.order_ref}  ${r.status}  revisions ${r.revisions}  over by $${Number(r.over_by).toFixed(2)}`,
+        );
+      }
       console.log(
         "\nNo data is changed. 'shortfall' is the discount the live invoices do not carry (an over-billing); remedies are the owner's, per tenant.",
       );
