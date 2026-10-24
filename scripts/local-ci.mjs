@@ -196,6 +196,53 @@ export function linksInto(dir, from) {
 }
 
 /**
+ * `fs.cpSync` can inline a workspace junction as a real directory copy. For every @routeflow link in
+ * the source checkout's node_modules dirs, make the same entry in `dir` a junction to the same
+ * relative path inside `dir` (the worktree's own apps/packages). Returns how many were made.
+ */
+export function relinkWorkspace(dir, from) {
+  const roots = [""];
+  for (const top of ["apps", "packages"]) {
+    try {
+      for (const n of fs.readdirSync(path.join(from, top))) roots.push(path.join(top, n));
+    } catch {
+      /* none */
+    }
+  }
+  let n = 0;
+  for (const r of roots) {
+    const scope = path.join(from, r, "node_modules", "@routeflow");
+    let names;
+    try {
+      names = fs.readdirSync(scope);
+    } catch {
+      continue;
+    }
+    for (const name of names) {
+      const src = path.join(scope, name);
+      if (!fs.lstatSync(src).isSymbolicLink()) continue;
+      const target = path.join(dir, path.relative(path.resolve(from), linkTarget(src)));
+      const dst = path.join(dir, r, "node_modules", "@routeflow", name);
+      if (!fs.existsSync(path.dirname(dst))) continue; // that node_modules was not cloned
+      let st = null;
+      try {
+        st = fs.lstatSync(dst);
+      } catch {
+        /* absent */
+      }
+      if (st?.isSymbolicLink()) removeLink(dst);
+      else if (st) {
+        if (removeAllLinks(dst).length) throw new Error(`cannot clear links under ${dst}`);
+        fs.rmSync(dst, { recursive: true, force: true });
+      }
+      fs.symlinkSync(target, dst, "junction");
+      n++;
+    }
+  }
+  return n;
+}
+
+/**
  * Re-points every link under `dir` that targets `from` at the same relative path inside `dir`
  * (the copy made them absolute links into the main checkout). Returns how many were moved.
  */
@@ -466,6 +513,8 @@ function makeExec({ logStream, ctx, state }) {
     if (state.aborted) return { status: 130 };
     logStream.write(`\n$ (cd ${step.cwd}) ${step.cmd ? step.cmd.map(q).join(" ") : step.action}\n`);
     if (step.action === "retarget-links") {
+      const made = relinkWorkspace(ctx.dir, ctx.from);
+      logStream.write(`re-created ${made} workspace link(s) inside the worktree\n`);
       const moved = retargetLinks(ctx.dir, ctx.from);
       const left = linksInto(ctx.dir, ctx.from);
       logStream.write(

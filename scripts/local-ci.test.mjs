@@ -15,6 +15,7 @@ import {
   removeAllLinks,
   linksInto,
   badWorkspaceLinks,
+  relinkWorkspace,
   retargetLinks,
   planLocalCi,
   runSteps,
@@ -351,5 +352,23 @@ test("badWorkspaceLinks flags an @routeflow entry copied as a directory, or link
   fs.mkdirSync(path.join(scope, "inlined"));
   fs.symlinkSync(path.join(main, "packages/pricing"), path.join(scope, "outside"), "junction");
   assert.equal(badWorkspaceLinks(wt).length, 2);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("relinkWorkspace turns an inlined @routeflow copy back into a junction into the worktree", () => {
+  const { root, main, wt } = makeTree();
+  fs.mkdirSync(path.join(main, "node_modules/@routeflow"), { recursive: true });
+  fs.symlinkSync(
+    path.join(main, "packages/pricing"),
+    path.join(main, "node_modules/@routeflow/pricing"),
+    "junction",
+  );
+  const inl = path.join(wt, "node_modules/@routeflow/pricing");
+  fs.mkdirSync(inl);
+  fs.writeFileSync(path.join(inl, "copy.txt"), "x");
+  assert.equal(badWorkspaceLinks(wt).length, 1);
+  assert.equal(relinkWorkspace(wt, main), 1);
+  assert.deepEqual(badWorkspaceLinks(wt), []);
+  assert.equal(fs.readFileSync(path.join(main, "packages/pricing/keep.txt"), "utf8"), "tracked");
   fs.rmSync(root, { recursive: true, force: true });
 });
