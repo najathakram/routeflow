@@ -148,7 +148,7 @@ export default function SalesAgentDetailPage() {
       <div className="flex flex-col items-center gap-4 p-12 text-center">
         <p className="text-base font-medium text-navy">Sales agent not found.</p>
         <Button variant="secondary" href="/sales-agents">
-          Back to Sales Agents
+          Back to sales agents
         </Button>
       </div>
     );
@@ -181,7 +181,7 @@ function AgentDetailView({
         className="flex w-fit items-center gap-1.5 text-sm text-navy/70 transition-colors hover:text-navy"
       >
         <ArrowLeft className="h-4 w-4" />
-        Sales Agents
+        Sales agents
       </Link>
 
       <div className="flex flex-wrap items-center gap-3">

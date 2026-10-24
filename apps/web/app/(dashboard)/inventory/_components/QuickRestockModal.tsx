@@ -189,7 +189,7 @@ export function QuickRestockModal({
                 upgrade. */}
             {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
             <a href="/vendor-bills" className="text-brand-500 hover:underline">
-              Supplier Bills
+              Supplier bills
             </a>
           </p>
         </div>

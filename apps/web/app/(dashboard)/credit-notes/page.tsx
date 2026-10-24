@@ -539,7 +539,7 @@ export default function CreditNotesPage() {
   const router = useRouter();
   const { setTitle } = usePageTitle();
   React.useEffect(() => {
-    setTitle("Credit Notes");
+    setTitle("Credit notes");
   }, [setTitle]);
 
   const [statusFilter, setStatusFilter] = React.useState("");
@@ -640,7 +640,7 @@ export default function CreditNotesPage() {
   return (
     <div className="space-y-5 p-6">
       <PageHeader
-        title="Credit Notes"
+        title="Credit notes"
         subtitle="Issued from returns, disputes and manual adjustments, applied against invoices automatically."
         action={
           <Button leftIcon={<Plus className="h-4 w-4" />} onClick={() => setIsCreateOpen(true)}>

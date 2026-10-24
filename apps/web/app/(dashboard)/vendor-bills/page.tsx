@@ -1532,7 +1532,7 @@ function PurchaseOrdersTab() {
     <div className="space-y-5">
       <div className="rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-700">
         Purchase orders track what&apos;s on order with suppliers. Receiving a PO updates stock; the
-        resulting supplier bill appears under <strong>Supplier Bills</strong>.
+        resulting supplier bill appears under <strong>Supplier bills</strong>.
       </div>
 
       {/* Chip-style status filters */}
@@ -2008,7 +2008,7 @@ function OtherExpensesTab() {
                         {e.vendorBillId && (
                           <Link
                             href={`/vendor-bills/${e.vendorBillId}`}
-                            title="View in Supplier Bills"
+                            title="View in supplier bills"
                             className="rounded p-1 text-teal-600 hover:bg-teal-50 transition-colors"
                           >
                             <ExternalLink className="h-3.5 w-3.5" />
@@ -2242,7 +2242,7 @@ type ExpensesTab = "inventory" | "pos" | "other";
 function ExpensesContent() {
   const { setTitle } = usePageTitle();
   React.useEffect(() => {
-    setTitle("Supplier Bills");
+    setTitle("Supplier bills");
   }, [setTitle]);
 
   const searchParams = useSearchParams();
@@ -2287,14 +2287,14 @@ function ExpensesContent() {
   return (
     <div className="space-y-6 p-6">
       <PageHeader
-        title="Supplier Bills"
+        title="Supplier bills"
         subtitle="One hub for supplier bills, purchase orders and inventory spend — supplier payments happen here."
       />
 
       {/* Tab switcher */}
       <div className="flex gap-1 rounded-xl border border-surface-border bg-surface-raised p-1 w-fit">
-        <TabButton tab="inventory" label="Supplier Bills" count={billsCount} />
-        <TabButton tab="pos" label="Purchase Orders" count={posCount} />
+        <TabButton tab="inventory" label="Supplier bills" count={billsCount} />
+        <TabButton tab="pos" label="Purchase orders" count={posCount} />
         <TabButton tab="other" label="Other Expenses" />
       </div>
 

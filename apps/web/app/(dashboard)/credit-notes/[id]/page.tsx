@@ -183,7 +183,7 @@ export default function CreditNoteDetailPage() {
       <div className="flex flex-col items-center gap-4 p-12 text-center">
         <p className="text-base font-medium text-navy">Credit note not found.</p>
         <Button variant="secondary" href="/credit-notes">
-          Back to Credit Notes
+          Back to credit notes
         </Button>
       </div>
     );
@@ -238,7 +238,7 @@ export default function CreditNoteDetailPage() {
         className="flex items-center gap-1.5 text-sm text-navy/70 hover:text-navy transition-colors"
       >
         <ArrowLeft className="h-4 w-4" />
-        Credit Notes
+        Credit notes
       </Link>
 
       {/* Header */}

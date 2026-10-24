@@ -108,10 +108,10 @@ const CLOSED_DAY = [
 ] as const;
 
 const openRecordModal = () => {
-  fireEvent.click(screen.getAllByRole("button", { name: /Record Payment/ })[0]);
+  fireEvent.click(screen.getAllByRole("button", { name: /Record payment/i })[0]);
   fireEvent.change(screen.getByDisplayValue("Select customer..."), { target: { value: "cust-1" } });
   fireEvent.change(screen.getAllByPlaceholderText("0.00")[0], { target: { value: "50" } });
-  fireEvent.click(screen.getByRole("button", { name: "Save as Paid" }));
+  fireEvent.click(screen.getByRole("button", { name: "Save as paid" }));
 };
 const openVoidConfirm = async () => {
   fireEvent.click(screen.getByRole("button", { name: "Void" }));

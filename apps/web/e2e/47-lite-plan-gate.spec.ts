@@ -33,9 +33,9 @@ const SKIP_REASON = "PLAYWRIGHT_LITE_TENANT_SLUG not set — needs a dedicated L
  *  excluded too: catalog v13 gave LITE flag.returns, so a LITE tenant keeps it. */
 const GATED_LABELS = [
   "Estimates",
-  "Credit Notes",
+  "Credit notes",
   "Suppliers",
-  "Supplier Bills",
+  "Supplier bills",
   "Reports",
   "Analytics",
 ];
@@ -47,7 +47,7 @@ const UNGATED_LABELS = [
   "Returns",
   "Customers",
   "Inventory",
-  "Purchase Orders",
+  "Purchase orders",
   "Products",
 ];
 

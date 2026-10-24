@@ -64,7 +64,7 @@ interface AppliedRow {
 function StatementsPageInner() {
   const { setTitle } = usePageTitle();
   React.useEffect(() => {
-    setTitle("Supplier Statements");
+    setTitle("Supplier statements");
   }, [setTitle]);
 
   const router = useRouter();
@@ -195,7 +195,7 @@ function StatementsPageInner() {
   return (
     <div className="space-y-6 p-6">
       <PageHeader
-        title="Supplier Statements"
+        title="Supplier statements"
         subtitle="Upload a statement, let Claude read it, and reconcile it against your bills — nothing moves money until you Apply."
       />
 

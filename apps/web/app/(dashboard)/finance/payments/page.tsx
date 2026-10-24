@@ -261,7 +261,7 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
       <div className="w-full max-w-2xl rounded-2xl bg-white shadow-modal flex flex-col max-h-[90vh]">
         <div className="flex items-center justify-between border-b border-surface-border px-6 py-4">
-          <h2 className="text-lg font-semibold text-navy">Record Payment</h2>
+          <h2 className="text-lg font-semibold text-navy">Record payment</h2>
           <button onClick={onClose} className="text-navy/70 hover:text-navy text-xl">
             ×
           </button>
@@ -507,7 +507,7 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
             disabled={record.isPending || overAllocated || statusCheck.unknown}
             className="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-50"
           >
-            {record.isPending ? "Saving..." : "Save as Paid"}
+            {record.isPending ? "Saving..." : "Save as paid"}
           </button>
         </div>
       </div>
@@ -661,7 +661,7 @@ export default function FinancePaymentsPage() {
           <p className="text-sm text-navy/70">All payments recorded against invoices</p>
         </div>
         <div className="flex flex-col items-end">
-          <WriteButton onClick={() => setShowModal(true)}>+ Record Payment</WriteButton>
+          <WriteButton onClick={() => setShowModal(true)}>+ Record payment</WriteButton>
           <ReadOnlyHint />
         </div>
       </div>

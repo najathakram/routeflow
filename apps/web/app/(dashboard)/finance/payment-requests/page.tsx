@@ -161,7 +161,7 @@ function RequestRow({
 export default function PaymentRequestsPage() {
   const { setTitle } = usePageTitle();
   React.useEffect(() => {
-    setTitle("Payment Requests");
+    setTitle("Payment requests");
   }, [setTitle]);
   const { toast } = useToast();
   const { user } = useAuth();
@@ -281,7 +281,7 @@ export default function PaymentRequestsPage() {
 
       {/* Header */}
       <div>
-        <h2 className="text-xl font-semibold text-navy">Payment Requests</h2>
+        <h2 className="text-xl font-semibold text-navy">Payment requests</h2>
         <p className="text-sm text-navy/70">
           Buyer-declared cash payments awaiting approval, plus card payment history.
         </p>
