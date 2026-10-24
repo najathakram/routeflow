@@ -82,8 +82,8 @@ export async function flagUnconfirmedOverReserved(
   writtenId: string,
 ): Promise<string[]> {
   const p = { tenantId: inv.tenantId, invoiceId: inv.id, total: Number(inv.total), writtenId };
+  // scan-ok: draft-payment-not-void - W-769 listing of every live row; the money narrows via the pricing predicate, never this where.
   const rows = await tx.invoicePayment.findMany({
-    // scan-ok: draft-payment-not-void - W-769 listing of every live row; the money narrows via the pricing predicate, never this where.
     where: { invoiceId: p.invoiceId, status: { not: "VOID" } },
     select: { id: true, amount: true, status: true, createdAt: true },
   });
