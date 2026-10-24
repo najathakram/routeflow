@@ -193,7 +193,7 @@ describe("PickupCompleteService.complete: the credit re-check after a failed net
       () => undefined,
       (e) => e,
     );
-    expect(err.getResponse()).toMatchObject({ code: "COUNTER_SALE_DAY_CLOSED" });
+    expect(err.getResponse()).toMatchObject({ code: "COUNTER_COMPLETE_DAY_CLOSED" });
     expect(order.status).toBe("CONFIRMED"); // no DELIVERED
     expect(mockAfterTender).not.toHaveBeenCalled();
   });
@@ -224,7 +224,7 @@ describe("PickupCompleteService.complete: the credit re-check after a failed net
       () => undefined,
       (e) => e,
     );
-    expect(err.getResponse()).toMatchObject({ code: "COUNTER_SALE_DAY_CLOSED" });
+    expect(err.getResponse()).toMatchObject({ code: "COUNTER_COMPLETE_DAY_CLOSED" });
   });
 
   it("a re-check that throws never fails the finished hand-over", async () => {

@@ -388,6 +388,25 @@ describe("PickupCompleteDialog — the API's pickup codes", () => {
     expect(onClose).toHaveBeenCalled();
   });
 
+  // W-776 (SA-925): the pre-check refused before any write: nothing changed, the tender step stays (Cancel + confirm), no Reload
+  it("409 COUNTER_COMPLETE_DAY_CLOSED: says nothing changed and keeps the tender step, not Reload", async () => {
+    balance(25);
+    post.mockRejectedValueOnce({
+      response: { status: 409, data: { code: "COUNTER_COMPLETE_DAY_CLOSED", message: "raw text" } },
+    });
+    mount();
+    fireEvent.click(await screen.findByRole("button", { name: "Cash" }));
+    fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "25" } });
+    confirm();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Nothing changed. This register's day is closed. A manager or owner can reopen it.",
+    );
+    expect(screen.queryByText(/Handed over/)).toBeNull();
+    expect(screen.queryByText(/raw text/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Reload" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeTruthy();
+  });
+
   it("409 PICKUP_INVOICE_MISSING: fixed copy, Retry reposts under the SAME key", async () => {
     balance(0, "PAID");
     post.mockRejectedValueOnce({

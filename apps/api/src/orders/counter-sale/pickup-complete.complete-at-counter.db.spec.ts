@@ -387,50 +387,65 @@ describeDb("I-120 Complete at counter — real Postgres", () => {
     email.mock.calls.filter((c: any[]) => c[0] === orderId).length;
 
   // Item 1: a closed day is refused BEFORE the first write (head: PICKUP / DELIVERED / SENT with no payment).
-  it("S1 a CLOSED window, a ROUTE order with CASH: 409 COUNTER_SALE_DAY_CLOSED, path ROUTE, status unchanged, nothing sent", async () => {
-    const now = new Date();
-    await raw.counterDayClose.create({
-      data: {
-        tenantId,
-        registerKey: "main",
-        day: now,
-        zone: "UTC",
-        windowStart: new Date(now.getTime() - 3_600_000),
-        windowEnd: new Date(now.getTime() + 3_600_000),
-        closedAt: now,
-        expectedCash: 0,
-        countedCash: 0,
-        variance: 0,
-        denominations: {},
-        totals: {},
-      },
-    });
-    try {
-      const { orderId, invoiceId } = await seed("CONFIRMED", "ROUTE", { total: 10 });
-      const err: any = await as(() =>
-        engine().complete(
-          orderId,
-          { payment: { method: "CASH", amount: 10 } } as never,
-          operator(),
-          `key-${run}-s1`,
-        ),
-      ).catch((e) => e);
-      expect(err?.getStatus?.()).toBe(409);
-      expect(err.getResponse()).toMatchObject({ code: "COUNTER_SALE_DAY_CLOSED" });
-      const after = await raw.order.findUniqueOrThrow({ where: { id: orderId } });
-      expect({ path: after.fulfillPath, status: after.status }).toEqual({
-        path: "ROUTE",
-        status: "CONFIRMED",
+  // W-776 (SA-925): the pre-check's refusal has its OWN code (head: COUNTER_SALE_DAY_CLOSED, which the clients read as "handed over").
+  for (const [from, path] of [
+    ["CONFIRMED", "ROUTE"],
+    ["PENDING", "PICKUP"],
+  ] as const)
+    it(`S1 a CLOSED window, a ${from} ${path} order with CASH: 409 COUNTER_COMPLETE_DAY_CLOSED, path and status unchanged, no claim, nothing sent`, async () => {
+      const now = new Date();
+      await raw.counterDayClose.create({
+        data: {
+          tenantId,
+          registerKey: "main",
+          day: now,
+          zone: "UTC",
+          windowStart: new Date(now.getTime() - 3_600_000),
+          windowEnd: new Date(now.getTime() + 3_600_000),
+          closedAt: now,
+          expectedCash: 0,
+          countedCash: 0,
+          variance: 0,
+          denominations: {},
+          totals: {},
+        },
       });
-      expect((await raw.invoice.findUniqueOrThrow({ where: { id: invoiceId } })).status).toBe(
-        "DRAFT",
-      );
-      expect(sent).toEqual([]);
-      expect(email).not.toHaveBeenCalled();
-    } finally {
-      await raw.counterDayClose.deleteMany({ where: { tenantId } });
-    }
-  }, 60_000);
+      try {
+        const { orderId, invoiceId } = await seed(from, path, { total: 10 });
+        const err: any = await as(() =>
+          engine().complete(
+            orderId,
+            { payment: { method: "CASH", amount: 10 } } as never,
+            operator(),
+            `key-${run}-s1-${from}`,
+          ),
+        ).catch((e) => e);
+        expect(err?.getStatus?.()).toBe(409);
+        expect(err.getResponse()).toMatchObject({ code: "COUNTER_COMPLETE_DAY_CLOSED" });
+        const after = await raw.order.findUniqueOrThrow({ where: { id: orderId } });
+        expect({
+          path: after.fulfillPath,
+          status: after.status,
+          delivered: after.deliveredAt,
+        }).toEqual({
+          path,
+          status: from,
+          delivered: null,
+        });
+        expect(
+          await raw.auditLog.count({
+            where: { tenantId, entityId: orderId, action: "PICKUP_COMPLETE_CLAIM" },
+          }),
+        ).toBe(0);
+        expect((await raw.invoice.findUniqueOrThrow({ where: { id: invoiceId } })).status).toBe(
+          "DRAFT",
+        );
+        expect(sent).toEqual([]);
+        expect(email).not.toHaveBeenCalled();
+      } finally {
+        await raw.counterDayClose.deleteMany({ where: { tenantId } });
+      }
+    }, 60_000);
 
   // Item 2: the flag is per COMPLETION (head: completionEmailedAt lived for the order's lifetime, so a re-completion after a
   // reopen sent nothing).

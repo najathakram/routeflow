@@ -219,12 +219,23 @@ export class PickupCompleteService {
     // #3678 Opus NIT: nothing owed (the same excuse rule as above) records no tender, so a closed day does not refuse it
     const nothingOwed = preRows.length > 0 && preOwed <= 0;
     if (!alreadyPickedUp && sent && sent.method !== "ON_ACCOUNT" && !nothingOwed) {
-      await counterTenderPaidAt(
-        this.prisma,
-        this.prisma.getTenantId(),
-        order,
-        pickupRegisterOf(order, dto.registerKey),
-      );
+      // W-776 (SA-925): nothing is written yet, so this refusal has its OWN code; COUNTER_SALE_DAY_CLOSED from here on
+      // (the in-lock tender, a replay) means the hand-over stands.
+      try {
+        await counterTenderPaidAt(
+          this.prisma,
+          this.prisma.getTenantId(),
+          order,
+          pickupRegisterOf(order, dto.registerKey),
+        );
+      } catch (e) {
+        const body = (e as { getResponse?: () => { code?: string } })?.getResponse?.();
+        if (body?.code !== API_ERROR_CODES.COUNTER_SALE_DAY_CLOSED) throw e;
+        throw new ConflictException({
+          ...body,
+          code: API_ERROR_CODES.COUNTER_COMPLETE_DAY_CLOSED,
+        });
+      }
     }
     // SA-919: THIS completion's `completionAt`, the claim's stamp (never `deliveredAt`): its tender and its email key
     let handedOverAt: Date | null;

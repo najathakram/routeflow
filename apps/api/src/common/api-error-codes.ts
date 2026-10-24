@@ -527,6 +527,12 @@ export const API_ERROR_CODES = {
   /** I-120 R8: POST /orders/:id/pickup-complete, 409: the driver has started that stop (with or without `takeOffRun`). Nothing written. */
   COUNTER_COMPLETE_STOP_STARTED: "COUNTER_COMPLETE_STOP_STARTED",
   /**
+   * W-776 (SA-925): POST /orders/:id/pickup-complete, 409: the register's day is closed, refused by the PRE-CHECK before the
+   * first write (nothing changed, the order stays as it was). COUNTER_SALE_DAY_CLOSED from this endpoint now means only "the
+   * hand-over stands" (raised after the claim).
+   */
+  COUNTER_COMPLETE_DAY_CLOSED: "COUNTER_COMPLETE_DAY_CLOSED",
+  /**
    * `paymentErrorCode` of a 200 from POST /orders/:id/pickup-complete: the hand-over committed, no payment
    * was sent, and the invoices final after DELIVERED (a remainder or rebuild) leave money owing. Retry with a payment.
    */
