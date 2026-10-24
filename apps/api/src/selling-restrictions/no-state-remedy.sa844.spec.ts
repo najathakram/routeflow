@@ -269,7 +269,7 @@ describe("row 672 / SA-844: a sale whose state can't be resolved names its remed
     "R4: the buyer portal, %s (the order-create seam)",
     (path) => {
       it("the seam: a DELIVERY sale on the BUYER_PORTAL channel, judged by the customer's own state", () => {
-        expect(saleFulfilmentKind({ fulfillPath: path })).toBe("DELIVERY");
+        expect(saleFulfilmentKind({ counterSale: undefined, fulfillPath: path })).toBe("DELIVERY");
         expect(restrictionChannelForPrincipal(BUYER)).toBe("BUYER_PORTAL");
       });
 
