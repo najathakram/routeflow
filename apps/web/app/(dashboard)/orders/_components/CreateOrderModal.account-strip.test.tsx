@@ -218,7 +218,7 @@ describe("CreateOrderModal: Account strip and the credit-limit payment shortcut 
     await pickCustomer("Acme Foods");
     const banner = await screen.findByText(/over their \$100\.00 credit limit/);
     const action = within(
-      banner.closest("[data-testid='credit-refusal']") as HTMLElement,
+      banner.closest("[data-testid='order-api-error']") as HTMLElement,
     ).getByRole("button", { name: "Record payment" });
     await user.click(action);
     expect(modalProps?.customerId).toBe("c1");

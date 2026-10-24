@@ -138,9 +138,12 @@ export function CustomerAccountStrip({
     overdueRows.length > 0 ||
     overLimitBy > 0 ||
     (view.overdue.state === "ready" && view.overdue.value > 0);
-  const nothing = rows.length === 0 && owed <= 0;
+  // The list is one page (LIST_LIMIT): the open count is the server's total, never the page's length (Opus review).
+  const openCount = Math.max(list.data?.meta?.total ?? rows.length, rows.length);
+  const truncated = openCount > rows.length;
+  const nothing = openCount === 0 && owed <= 0;
 
-  const parts: string[] = [`Owes ${fmt(owed)}`, `${rows.length} open`];
+  const parts: string[] = [`Owes ${fmt(owed)}`, `${openCount} open`];
   if (overdueRows.length > 0) {
     parts.push(`${overdueRows.length} overdue, oldest ${plural(oldestLate, "day", "days")}`);
   }
@@ -241,7 +244,16 @@ export function CustomerAccountStrip({
             ))}
           </ul>
           <div className="flex items-center justify-between gap-3 border-t border-surface-border px-3 py-2">
-            {!showAll && rows.length > COLLAPSED_ROWS ? (
+            {truncated ? (
+              <a
+                href={`/customers/${id}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs font-medium text-brand-600 hover:underline"
+              >
+                {`See all ${openCount} on the customer page`}
+              </a>
+            ) : !showAll && rows.length > COLLAPSED_ROWS ? (
               <button
                 type="button"
                 onClick={() => setShowAll(true)}

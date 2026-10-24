@@ -2551,7 +2551,7 @@ export function CreateOrderModal({
           {/* API error */}
           {apiError && (
             <div
-              data-testid="credit-refusal"
+              data-testid="order-api-error"
               className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 ring-1 ring-red-200"
             >
               <span>{apiError}</span>

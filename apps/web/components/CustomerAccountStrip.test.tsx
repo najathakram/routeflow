@@ -75,11 +75,13 @@ let statement: Record<string, unknown>;
 let customer: Record<string, unknown>;
 let invoices: Inv[];
 let failStatement = false;
+let listTotal: number | null = null;
 
 beforeEach(() => {
   mockUser = { role: "OPERATOR" };
   modalProps = null;
   failStatement = false;
+  listTotal = null;
   statement = { outstandingAmount: 1240, overdueAmount: 420 };
   customer = { id: "c1", businessName: "Acme Foods", creditLimit: 930 };
   invoices = [
@@ -101,7 +103,7 @@ beforeEach(() => {
       return Promise.resolve({
         data: {
           data: invoices,
-          meta: { total: invoices.length, page: 1, limit: 100, totalPages: 1 },
+          meta: { total: listTotal ?? invoices.length, page: 1, limit: 100, totalPages: 1 },
         },
       });
     }
@@ -112,6 +114,20 @@ beforeEach(() => {
 const line = () => screen.findByTestId("account-strip-line");
 
 describe("CustomerAccountStrip", () => {
+  // Opus review: the list is one page (limit 100). The open count is the server's total, never the page's length, and
+  // past one page the full list is on the customer page, not a "Show all" that would show only the first 100.
+  it("more open invoices than one page: the count is the server's total, and the list points to the customer", async () => {
+    listTotal = 140;
+    renderWithProviders(<CustomerAccountStrip customerId="c1" />);
+    expect(await line()).toHaveTextContent("Owes $1,240.00 · 140 open");
+    await userEvent.click(screen.getByRole("button", { name: /view/i }));
+    expect(screen.getByRole("link", { name: "See all 140 on the customer page" })).toHaveAttribute(
+      "href",
+      "/customers/c1",
+    );
+    expect(screen.queryByRole("button", { name: /show all/i })).toBeNull();
+  });
+
   it("shows the statement's figures exactly, with the over-limit note (L-119: no figure of its own)", async () => {
     renderWithProviders(<CustomerAccountStrip customerId="c1" />);
     expect(await line()).toHaveTextContent(
