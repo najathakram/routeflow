@@ -46,6 +46,12 @@ const CODE_COPY: Record<string, string> = {
   // a buyer write toward a paused seller: the seller-unavailable sentence, never "You don't have permission"
   [API_ERROR_CODES.SELLER_UNAVAILABLE]: sellerUnavailableCopy(null),
   [API_ERROR_CODES.RETURN_REFUND_OVER_LINE_HEADROOM]: RETURN_REFUND_OVER_LINE_HEADROOM_COPY,
+  // Row 510: a staff sale of a restricted product. The warning dialog owns the flow (HANDLED_CODES); these are the
+  // fixed sentences for a surface with no dialog, never the server's text.
+  [API_ERROR_CODES.RESTRICTION_WARNING]:
+    "Some items are restricted. Review them and add a reason to sell them anyway.",
+  [API_ERROR_CODES.RESTRICTION_OVERRIDE_REASON_INVALID]:
+    "Give a reason of 3 to 200 characters to sell a restricted item.",
   // SA-823 (row 655): the product import refuses a whole file with a Family column (fixed copy, B980).
   ...IMPORT_REFUSAL_COPY,
   // SA-804 (1): FIFO and LIFO costing are retired; the picker no longer offers them, so this is an old client or a direct API call.

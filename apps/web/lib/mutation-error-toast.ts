@@ -56,6 +56,9 @@ export function handleMutationError(
     // Selling restrictions: the order UIs show a blocked-lines dialog (the lines and why),
     // so the generic toast would only say "Request failed with status code 409".
     "SELLING_RESTRICTED",
+    // Row 510: a staff sale of a restricted product opens the warning dialog (useRestrictionWarningRetry), which
+    // asks for a reason and resubmits; the generic toast would only say "Request failed with status code 409".
+    API_ERROR_CODES.RESTRICTION_WARNING,
     // Credit limit: the order detail opens a guard dialog (the server's limit / exposure and a
     // "collect a payment" exit); CreateOrderModal keeps its inline banner. No override exists.
     "CREDIT_LIMIT_EXCEEDED",

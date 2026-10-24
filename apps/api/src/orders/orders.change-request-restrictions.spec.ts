@@ -127,13 +127,16 @@ describe("OrdersService.approveChangeRequestAtStop — selling restrictions (lan
     await approve(ADD_X);
 
     expect(h.restrictions.assertLinesSellable).toHaveBeenCalledTimes(1);
-    expect(h.restrictions.assertLinesSellable).toHaveBeenCalledWith({
-      tenantId: "t-row",
-      customerId: "cust-1",
-      lines: [{ productId: "prod-x" }],
-      channel: "STAFF",
-      fulfilmentKind: "DELIVERY",
-    });
+    expect(h.restrictions.assertLinesSellable).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: "t-row",
+        customerId: "cust-1",
+        lines: [{ productId: "prod-x", lineKey: "cr:cr-1" }], // row 510: keyed by the change request
+        channel: "STAFF",
+        fulfilmentKind: "DELIVERY",
+        document: "ORDER",
+      }),
+    );
     const asked = firstCall(h.restrictions.assertLinesSellable);
     expect(asked).toBeLessThan(firstCall(revert));
     expect(asked).toBeLessThan(firstCall(h.prisma.tenantTransaction));
@@ -143,11 +146,15 @@ describe("OrdersService.approveChangeRequestAtStop — selling restrictions (lan
     on();
     await approve(RAISE_A);
     expect(h.restrictions.assertLinesSellable).toHaveBeenLastCalledWith(
-      expect.objectContaining({ lines: [{ productId: "prod-a", qtyDelta: 3 }] }),
+      expect.objectContaining({
+        lines: [{ productId: "prod-a", qtyDelta: 3, lineKey: "cr:cr-1" }],
+      }),
     );
     await approve(LOWER_A);
     expect(h.restrictions.assertLinesSellable).toHaveBeenLastCalledWith(
-      expect.objectContaining({ lines: [{ productId: "prod-a", qtyDelta: -1 }] }),
+      expect.objectContaining({
+        lines: [{ productId: "prod-a", qtyDelta: -1, lineKey: "cr:cr-1" }],
+      }),
     );
   });
 
@@ -225,7 +232,10 @@ describe("OrdersService.approveChangeRequestAtStop — selling restrictions (lan
       });
 
       expect(h.restrictions.assertLinesSellable).toHaveBeenCalledWith(
-        expect.objectContaining({ channel: "BUYER_PORTAL", lines: [{ productId: "prod-x" }] }),
+        expect.objectContaining({
+          channel: "BUYER_PORTAL",
+          lines: [expect.objectContaining({ productId: "prod-x" })],
+        }),
       );
       expect(h.prisma.orderItem.create).not.toHaveBeenCalled();
       expect(revert).not.toHaveBeenCalled();

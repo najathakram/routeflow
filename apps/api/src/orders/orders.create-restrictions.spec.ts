@@ -282,13 +282,17 @@ describe("OrdersService.create — selling restrictions call site (lane R 2a-5)"
     );
 
     expect(restrictions.assertLinesSellable).toHaveBeenCalledTimes(1);
-    expect(restrictions.assertLinesSellable).toHaveBeenCalledWith({
-      tenantId: "t-1",
-      customerId: "cust-1",
-      lines: [{ productId: "prod-1" }], // every line of a new order is a NEW line: no qtyDelta
-      channel: "STAFF",
-      fulfilmentKind: "DELIVERY",
-    });
+    expect(restrictions.assertLinesSellable).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: "t-1",
+        customerId: "cust-1",
+        // every line of a new order is a NEW line: no qtyDelta; row 510: keyed by its index in the payload
+        lines: [{ productId: "prod-1", lineKey: "n:0" }],
+        channel: "STAFF",
+        fulfilmentKind: "DELIVERY",
+        document: "ORDER",
+      }),
+    );
     expect(order).toEqual(["restrictions", "stock-tx"]);
   });
 

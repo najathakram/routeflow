@@ -77,6 +77,7 @@ import { getDaysForTerms, addDaysIso } from "@/lib/invoice-terms";
 import { remainingCapacity, resolveConfirmedAmounts } from "@routeflow/pricing";
 import { useInvoiceTaxSplit } from "@/lib/use-invoice-tax-split";
 import { useDuplicateInvoiceAction } from "@/lib/use-duplicate-invoice-action";
+import { RestrictionOverrideNote } from "@/components/RestrictionOverrideNote";
 import { invoiceLineQtyText } from "@/lib/invoice-line-unit";
 import { ComponentSubLines } from "@/components/ComponentSubLines";
 import type { LineComponentView } from "@routeflow/types";
@@ -1445,7 +1446,7 @@ export default function InvoiceDetailPage() {
   const voidInvoice = useVoidInvoice();
   const reopenInvoice = useReopenInvoice();
   const recordPayment = useRecordInvoicePayment();
-  const { duplicate: duplicateInvoice } = useDuplicateInvoiceAction();
+  const { duplicate: duplicateInvoice, dialog: duplicateDialog } = useDuplicateInvoiceAction();
   const writeOffInvoice = useWriteOffInvoice();
   const updatePayment = useUpdateInvoicePayment();
   const deletePayment = useDeleteInvoicePayment();
@@ -2554,6 +2555,7 @@ export default function InvoiceDetailPage() {
                           <ComponentSubLines
                             components={(item as { components?: LineComponentView[] }).components}
                           />
+                          <RestrictionOverrideNote line={item} />
                         </td>
                         <td className="px-4 py-3 text-right">
                           <span
@@ -3135,6 +3137,7 @@ export default function InvoiceDetailPage() {
           orderId={(invoice as any).orderId}
         />
       )}
+      {duplicateDialog}
     </div>
   );
 }

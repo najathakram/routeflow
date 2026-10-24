@@ -16,6 +16,7 @@ import {
 import { Type } from "class-transformer";
 import { StripHtml } from "../../common/transforms/strip-html.transform";
 import { AppliedCreditNoteDto, OrderItemDto } from "./create-order.dto";
+import { RestrictionAckDto } from "../../selling-restrictions/dto/restriction-ack.dto";
 import { IsOptionalNotNull } from "../../common/validators/optional-not-null";
 
 /**
@@ -31,7 +32,7 @@ import { IsOptionalNotNull } from "../../common/validators/optional-not-null";
  *
  * Either way an Order always exists and Invoice.orderId is set — no floating invoices.
  */
-export class CreateSaleDto {
+export class CreateSaleDto extends RestrictionAckDto {
   @IsUUID() customerId: string;
 
   @IsArray()

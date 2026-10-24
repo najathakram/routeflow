@@ -37,7 +37,7 @@ import {
   roundMoney,
 } from "@routeflow/pricing";
 import type { CategoryTaxType, CustomerLayerPrice } from "@routeflow/pricing";
-import type { BuyerReorderSkippedLine } from "@routeflow/types";
+import type { BuyerReorderSkippedLine, RestrictionAck } from "@routeflow/types";
 import { taxRateFractionFrom } from "../common/tax-rate";
 import { decrementStockForSale } from "../orders/order-stock";
 import { resolveOversellAllowed } from "../orders/oversell-policy";
@@ -52,6 +52,7 @@ import {
   toBuyerView,
 } from "./buyer-template-view";
 import { assertPositiveTemplateQty } from "./template-qty";
+import * as tGate from "./template-restriction-gate";
 import { authorMarkerOf, withAuthor } from "../orders/line-author-channel";
 import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
 import { isoWeekdayUtc, startOfUtcDay } from "../common/utc-day";
@@ -546,6 +547,8 @@ export class OrderTemplatesService {
     allowOversell?: boolean,
     /** Out-param: a buyer's Reorder fills `skipped` with the lines a selling restriction left out. */
     outcome?: { skipped: BuyerReorderSkippedLine[] },
+    /** Row 510: a staff member's manual run: who clicked and what they acknowledged of a RESTRICTION_WARNING. */
+    staffRun?: tGate.TemplateStaffRun,
   ) {
     // Only a caller that asked for `skipped` (the buyer's Reorder) has restricted lines left out; every other
     // manual run keeps the 409 so nothing is dropped without the caller being told.
@@ -572,6 +575,7 @@ export class OrderTemplatesService {
       runCtx,
       allowOversell,
       replaySince,
+      staffRun,
     );
     if (outcome && runCtx.restricted) outcome.skipped = runCtx.restricted;
     // Null = every line was a license-gated category the customer isn't verified
@@ -605,7 +609,7 @@ export class OrderTemplatesService {
     return this.removeItem(templateId, itemId, { role: user.role });
   }
 
-  async generateOrderForUser(templateId: string, user: JwtPayload) {
+  async generateOrderForUser(templateId: string, user: JwtPayload, ack?: RestrictionAck) {
     const template = await this.assertTemplateAccess(templateId, user);
     // #1208 review LOW-MED: POST :id/generate is open to CUSTOMER (controller); a buyer's own
     // "Reorder" must not oversell where their own checkout would 409. WS9: the policy is resolved
@@ -617,7 +621,13 @@ export class OrderTemplatesService {
       source: user.role === UserRole.CUSTOMER ? "buyer" : "staff_entry",
       customerId: template.customerId,
     });
-    return this.generateOrder(templateId, isStaffRole, allowOversell);
+    return this.generateOrder(
+      templateId,
+      isStaffRole,
+      allowOversell,
+      undefined,
+      isStaffRole ? { actor: user, ack } : undefined,
+    );
   }
 
   /** The backoff seam of the cron's one retry (a spec replaces it, so no test waits on a real timer). */
@@ -821,6 +831,8 @@ export class OrderTemplatesService {
     allowOversellArg?: boolean,
     /** B1054: an order this template placed at/after it is returned instead of a second one (manual: now - 30 s; cron: UTC day start). */
     replaySince?: Date,
+    /** Row 510: a manual STAFF run's actor and acknowledgement (absent on the cron and on a buyer's Reorder). */
+    staffRun?: tGate.TemplateStaffRun,
   ) {
     assertPositiveTemplateQty(template.items); // a stored or bypassed quantity never reaches an order or stock
     // F-05: a banned product refuses a manual run (409 — the operator decides). The unattended cron run
@@ -859,6 +871,7 @@ export class OrderTemplatesService {
     );
     const fulfilmentKind = saleFulfilmentKind({ counterSale: false, fulfillPath });
     let live = template.items.filter((i) => !i.suspendedAt);
+    let restrictionDecision: tGate.TemplateDecision | undefined;
     let banNote: { count: number; names: string } | null = null;
     if (!unattended) {
       if (live.length === 0)
@@ -888,18 +901,21 @@ export class OrderTemplatesService {
             throw new BadRequestException("None of these items are available to you right now.");
         }
       }
-      await this.sellingRestrictions.assertLinesSellable({
-        tenantId: restrictionTenantId,
-        customerId,
-        lines: live.map((i) => ({ productId: i.productId })),
+      // Row 510: a staff member's manual run warns (409 RESTRICTION_WARNING) and takes the ack; the decision is
+      // stamped inside the order's own transaction below. A buyer's Reorder keeps the hard 409 (same call).
+      restrictionDecision = await this.sellingRestrictions.assertLinesSellable({
+        ...tGate.manualArgs({
+          tenantId: restrictionTenantId,
+          customerId,
+          live,
+          run: staffRun,
+        }),
         channel,
         fulfilmentKind,
       });
     } else {
       const verdict = await this.sellingRestrictions.checkLinesSellable({
-        tenantId: restrictionTenantId,
-        customerId,
-        lines: live.map((i) => ({ productId: i.productId })),
+        ...tGate.scheduledArgs({ tenantId: restrictionTenantId, customerId, live }),
         channel,
         fulfilmentKind,
         // A staff-built legacy template is not suspended by a portal limit; a legal ban still is.
@@ -1227,6 +1243,7 @@ export class OrderTemplatesService {
           },
           include: GENERATED_ORDER_INCLUDE,
         });
+        await tGate.stampOrder(tx, restrictionDecision, order.id); // row 510: the clicker's override, same tx
         await syncOrderLineCompositions(
           tx,
           order.id,

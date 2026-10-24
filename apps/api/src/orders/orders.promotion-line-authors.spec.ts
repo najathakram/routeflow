@@ -88,13 +88,19 @@ describe("OrdersService.changeStatus: DRAFT promotion is judged at the line auth
     await expect(promote()).resolves.toMatchObject({ status: "PENDING" });
 
     expect(h.restrictions.assertLinesSellable).toHaveBeenCalledTimes(1);
-    expect(h.restrictions.assertLinesSellable).toHaveBeenCalledWith({
-      tenantId: "t-1",
-      customerId: "cust-1",
-      lines: [{ productId: "prod-ok" }, { productId: "prod-banned" }],
-      channel: "STAFF",
-      fulfilmentKind: "DELIVERY",
-    });
+    // Row 510: a staff write also carries the ack, the held lines and the principal, and each line a lineKey.
+    expect(h.restrictions.assertLinesSellable).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: "t-1",
+        customerId: "cust-1",
+        lines: [
+          expect.objectContaining({ productId: "prod-ok" }),
+          expect.objectContaining({ productId: "prod-banned" }),
+        ],
+        channel: "STAFF",
+        fulfilmentKind: "DELIVERY",
+      }),
+    );
   });
 
   it("a mixed order: the buyer's line goes to BUYER_PORTAL, the staff line stays on STAFF", async () => {

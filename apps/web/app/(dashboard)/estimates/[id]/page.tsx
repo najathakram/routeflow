@@ -25,6 +25,7 @@ import {
 } from "@/lib/api/estimates";
 import { fmt, fmtCalendarDate, fmtDate } from "@/lib/formatting";
 import { DocumentLetterhead } from "@/components/DocumentLetterhead";
+import { useRestrictionWarningRetry } from "@/lib/use-restriction-warning-retry";
 import { storedOrComputedLineSubtotal } from "@/lib/line-subtotal";
 import { estimateTaxBasisNotice } from "@/lib/estimate-tax-basis";
 
@@ -82,6 +83,7 @@ export default function EstimateDetailPage() {
   const acceptEstimate = useAcceptEstimate();
   const declineEstimate = useDeclineEstimate();
   const convertToInvoice = useConvertEstimateToInvoice();
+  const rw = useRestrictionWarningRetry(); // row 510: staff warning + override dialog
   const voidEstimate = useVoidEstimate();
 
   const [isVoidOpen, setIsVoidOpen] = React.useState(false);
@@ -174,7 +176,7 @@ export default function EstimateDetailPage() {
   };
 
   const handleConvert = () => {
-    convertToInvoice.mutate(estimate.id, {
+    convertToInvoice.mutate(rw.attach(estimate.id), {
       onSuccess: (inv) => {
         // H5: the invoice is taxed at TODAY's rate and exempt flag; say so when that differs from the quote.
         const taxNotice = estimateTaxBasisNotice(inv?.taxBasis);
@@ -190,6 +192,7 @@ export default function EstimateDetailPage() {
         if (target) router.push(`/invoices/${target}`);
       },
       onError: (err: unknown) => {
+        if (rw.handle(err, handleConvert)) return; // row 510
         // B15: surface the server's rejection reason (e.g. "Estimate must be
         // ACCEPTED") instead of a fixed "Please try again." that hid why a
         // convert attempt failed. `message` may be a string or an array of
@@ -558,6 +561,7 @@ export default function EstimateDetailPage() {
         estimateNumber={estimate.estimateNumber}
         isPending={voidEstimate.isPending}
       />
+      {rw.dialog}
     </div>
   );
 }
