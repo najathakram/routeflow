@@ -152,6 +152,8 @@ for (const vp of VIEWPORTS) {
         .getByRole("listitem")
         .filter({ hasNotText: "No items yet" });
       await expect(lineRows).toHaveCount(1, { timeout: 15_000 });
+      // F12: the line's price control says "Change price"
+      await expect(page.getByRole("button", { name: /^Change price for / })).toBeVisible();
 
       await page.getByRole("button", { name: "Exit counter" }).click();
       await expect(page.getByText("Discard this sale?")).toBeVisible();
@@ -204,6 +206,41 @@ for (const vp of VIEWPORTS) {
       } finally {
         await page.evaluate(() => localStorage.removeItem("rf-open-counter"));
       }
+    });
+  });
+}
+
+// ── W-783 layout proof shots at 390 and 1440 (F12 "Change price" on the line; W-710 dialog). Separate from the rail test above so
+// the shots do not depend on the nav rail's peek control.
+for (const vp of [VIEWPORTS[0], VIEWPORTS[3]]) {
+  test.describe(`W-783 layout shots @ ${vp.name}`, () => {
+    test.use({ viewport: { width: vp.width, height: vp.height } });
+    test("the line's Change price and the eased Discard dialog", async ({ page, context }) => {
+      await setTenantCookie(context, BASE);
+      await page.goto("/orders");
+      const sku = await discoverSku(page);
+      await page.goto(COUNTER);
+      const scanField = page.getByLabel("Scan or search items");
+      await expect(scanField).toBeVisible({ timeout: 15_000 });
+      await scanField.fill(sku);
+      await scanField.press("Enter");
+      await expect(page.getByRole("button", { name: /^Change price for / })).toBeVisible({
+        timeout: 15_000,
+      });
+      // a proof shot only: bring the line above the sticky checkout bar on a phone
+      await page.getByRole("button", { name: /^Change price for / }).scrollIntoViewIfNeeded();
+      await page.evaluate(() => window.scrollBy(0, 200));
+      await page.screenshot({ path: `test-results/w783-layout-line-${vp.name}.png` });
+      await page.getByRole("button", { name: "Exit counter" }).click();
+      await expect(page.getByText("Discard this sale?")).toBeVisible();
+      const motion = await page.getByRole("dialog").evaluate((el) => ({
+        fn: getComputedStyle(el).animationTimingFunction,
+        duration: getComputedStyle(el).animationDuration,
+      }));
+      expect(motion.fn).toMatch(/ease-out|cubic-bezier\(0, ?0, 0\.2, ?1\)/);
+      expect(motion.duration).toBe("0.2s");
+      await page.screenshot({ path: `test-results/w783-layout-dialog-${vp.name}.png` });
+      await page.getByRole("button", { name: "Discard", exact: true }).click();
     });
   });
 }
