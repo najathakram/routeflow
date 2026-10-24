@@ -659,3 +659,7 @@ TS config presets (JSON inheritance): `base.json` (es2022, strict, nodeNext), `n
 - `packages/pricing/src/unit-levels.ts`: `derivedPiece(pack, n)` -> `{ price, derived: { n, packPrice, exact } }` (the one derived-Piece definition; web `unit-options.ts` imports it, K14 S2).
 - `packages/pricing/src/counter-park.ts`: `ROW_ITEM_NAMES_MAX` (3), `ItemNameLine`, `foldItemNames(lines, cap)` -> `{ items?, itemCount? }` (the ONE fold of a row's item names for Today's sales and the parked list; a boxed or unit line carries `qtyText` from `invoiceLineQtyText`). `ParkedCartListItem` gains `items?`, `itemCount?`.
 - `packages/types/api/counter-sale.ts`: `CounterItemName { name, qty, qtyText? }`; `TodaysSaleRow` gains `items?`, `itemCount?` (absent from an older server: no names line).
+
+## Window 4 (2026-10-22, #3583, #3563, #3571, #3576, #3575, #3562, #3588)
+
+Moved to [packages/landing-2026-10-22-w4.md](packages/landing-2026-10-22-w4.md) (this file is at its size cap): filed-month undo note, payment key types and rule, import Family types, counter return settlement in pricing, Modal `headerActions`, Toast inset.

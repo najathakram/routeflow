@@ -53,6 +53,7 @@ in `useOpenPurchaseOrders` always return zero rows for that leg; `lib/api/buyer.
 | [mobile/landing-2026-10-20-r5.md](mobile/landing-2026-10-20-r5.md) | Landing 2026-10-20 R5 (#3552, mobile): fixed stale-tax-state copy on the invoice edit screen |
 | [mobile/landing-2026-10-21-w1.md](mobile/landing-2026-10-21-w1.md) | Landing 2026-10-21 window 1 (#3555): vendor bill refused void + move to supplier credit (row 667), submit key per draft |
 | [mobile/landing-2026-10-21-w2-r5p2.md](mobile/landing-2026-10-21-w2-r5p2.md) | Landing 2026-10-21 R5 part 2 (#3558): tax percent input guard, tenant-rate hydration |
+| [mobile/landing-2026-10-22-w4.md](mobile/landing-2026-10-22-w4.md) | Landing 2026-10-22 window 4: payment Idempotency-Key screens, filed-month unvoid note, x-client header, boxed split on edit |
 | [mobile/landing-2026-09-30-w9-w11.md](mobile/landing-2026-09-30-w9-w11.md) | Landing 2026-09-30 (mobile): PO receive stored pack (#2781), socket bulk invalidation pins, M3 sub-lines |
 | [mobile/landing-2026-09-30-drift-c38f2b0.md](mobile/landing-2026-09-30-drift-c38f2b0.md) | Landing 2026-09-30 (earlier drift, mobile): applied-credit wording, credit createdAt, Google mismatch message |
 | [mobile/landing-2026-09-28-late.md](mobile/landing-2026-09-28-late.md) | Landing 2026-09-28 late: buyer custom lines skipped (B889), useNewUi flag, one-unit-sold surfaces, return-only-bought guard |
