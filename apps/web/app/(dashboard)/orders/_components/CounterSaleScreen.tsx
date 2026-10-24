@@ -235,6 +235,9 @@ export function CounterSaleScreen() {
   const resetTenderDefault = tenderDefault.reset;
   const chooseMethod = (m: CounterSalePaymentMethod) => {
     decideTender(); // the clerk's own choice: the default never overrides it
+    // The tender is shared across methods: a cash amount typed for another method must not arrive in the Amount paying now
+    // field as a silent part payment. Blank is a full payment. (Restores set the method directly and keep what was saved.)
+    if (m !== method && (m === "CHECK" || m === "CARD")) setTendered("");
     setMethod(m);
   };
   const [tendered, setTendered] = React.useState("");

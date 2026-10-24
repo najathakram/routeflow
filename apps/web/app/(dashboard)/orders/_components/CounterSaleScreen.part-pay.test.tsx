@@ -191,6 +191,54 @@ describe("the split label", () => {
   });
 });
 
+describe("a stale tender never becomes a silent part payment", () => {
+  it.each(["Card", "Check"])(
+    "cash typed short, then switching to %s: the field is blank, no amount is sent, no split label",
+    async (name) => {
+      renderTill(<CounterSaleScreen />);
+      pickPlain();
+      await scanCase();
+      fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "5" } });
+      expect(await screen.findByTestId("counter-part-pay-split")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("radio", { name }));
+      expect(screen.getByLabelText("Amount paying now")).toHaveValue("");
+      expect(split()).toBeNull();
+      if (name === "Check") {
+        await waitFor(() =>
+          expect(screen.getByLabelText("Check date")).toHaveValue(calendarDayInZone("UTC")),
+        );
+        fireEvent.change(screen.getByLabelText("Check number"), { target: { value: "1042" } });
+      }
+      complete();
+      await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+      expect(sentPayment()).not.toHaveProperty("amount");
+      expect(sentPayment().method).toBe(name.toUpperCase());
+    },
+  );
+
+  it("a card part amount, then switching to Check: cleared", async () => {
+    renderTill(<CounterSaleScreen />);
+    pickPlain();
+    await scanCase();
+    fireEvent.click(screen.getByRole("radio", { name: "Card" }));
+    fireEvent.change(screen.getByLabelText("Amount paying now"), { target: { value: "5" } });
+    expect(await screen.findByTestId("counter-part-pay-split")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("radio", { name: "Check" }));
+    expect(screen.getByLabelText("Amount paying now")).toHaveValue("");
+    expect(split()).toBeNull();
+  });
+
+  it("tapping the method that is already chosen keeps what was typed", async () => {
+    renderTill(<CounterSaleScreen />);
+    pickPlain();
+    await scanCase();
+    fireEvent.click(screen.getByRole("radio", { name: "Card" }));
+    fireEvent.change(screen.getByLabelText("Amount paying now"), { target: { value: "5" } });
+    fireEvent.click(screen.getByRole("radio", { name: "Card" }));
+    expect(screen.getByLabelText("Amount paying now")).toHaveValue("5");
+  });
+});
+
 describe("a walk-in still pays the full total", () => {
   it("a short cash tender is refused with the same sentence and no request", async () => {
     renderTill(<CounterSaleScreen />);

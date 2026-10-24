@@ -276,6 +276,30 @@ describe("a restored sale keeps the tender it was saved with", () => {
     expect(checked("On account")).toBe(false);
   });
 
+  it("a parked CARD sale keeps its part amount and its split label", async () => {
+    parkedRows.push({
+      id: "park-2",
+      label: "Hold B",
+      payload: {
+        lines: [colaLine],
+        customer: NET_CUSTOMER,
+        method: "CARD",
+        tendered: "5",
+        reference: "",
+      },
+    });
+    renderTill(<CounterSaleScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: "Parked (1)" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Resume Hold B" }));
+    await screen.findByRole("button", { name: "Remove Cola" });
+    await settled("Net 30");
+    expect(checked("Card")).toBe(true);
+    expect(screen.getByLabelText("Amount paying now")).toHaveValue("5");
+    expect(screen.getByTestId("counter-part-pay-split").textContent).toBe(
+      "Pay $5.00 now \u00b7 $2.50 goes on account",
+    );
+  });
+
   it("a cart restored after a refresh keeps its tender", async () => {
     window.sessionStorage.setItem("rf.counterSale.tabId", "tab-from-before-the-refresh");
     window.localStorage.setItem(
