@@ -57,6 +57,13 @@ describe("CounterCustomerMatches keyboard", () => {
     expect(screen.queryByRole("listbox")).toBeNull();
   });
 
+  it("names its keys while the list is open and drops the line when Escape closes it", () => {
+    render(<Harness onPick={jest.fn()} />);
+    expect(screen.getByText("↑↓ to choose · Enter to pick")).toBeInTheDocument();
+    fireEvent.keyDown(screen.getByLabelText("Find customer"), { key: "Escape" });
+    expect(screen.queryByText("↑↓ to choose · Enter to pick")).toBeNull();
+  });
+
   it("a click still picks a match", () => {
     const onPick = jest.fn();
     render(<Harness onPick={onPick} />);

@@ -155,6 +155,14 @@ for (const vp of VIEWPORTS) {
 
       await page.getByRole("button", { name: "Exit counter" }).click();
       await expect(page.getByText("Discard this sale?")).toBeVisible();
+      // W-710: the dialog eases out on the way in (about 200 ms), never the linear default
+      const motion = await page.getByRole("dialog").evaluate((el) => ({
+        fn: getComputedStyle(el).animationTimingFunction,
+        duration: getComputedStyle(el).animationDuration,
+      }));
+      expect(motion.fn, "an ease-out curve, not linear").not.toBe("linear");
+      expect(motion.fn).toMatch(/ease-out|cubic-bezier\(0, ?0, 0\.2, ?1\)/);
+      expect(motion.duration).toBe("0.2s");
       await expect(page.getByRole("button", { name: "Keep selling" })).toBeFocused();
       await page.keyboard.press("Escape");
       await expect(page.getByText("Discard this sale?")).toHaveCount(0);

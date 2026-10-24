@@ -92,32 +92,39 @@ export function CounterCustomerMatches<C extends CustomerMatch>({
   if (matches.length > 0) {
     if (listbox && !listbox.open) return null;
     return (
-      <ul
-        className="rounded border text-sm"
-        role={listbox ? "listbox" : undefined}
-        id={listbox?.id}
-        aria-label={listbox ? "Matching customers" : undefined}
-      >
-        {matches.map((c, i) => (
-          <li
-            key={c.id}
-            role={listbox ? "option" : undefined}
-            id={listbox?.optionId(i)}
-            aria-selected={listbox ? listbox.active === i : undefined}
-            aria-disabled={disabled || undefined}
-            className={cn(
-              "min-h-[44px] w-full px-3 py-2 text-left",
-              disabled ? "opacity-40" : "cursor-pointer hover:bg-gray-50",
-              listbox?.active === i && "bg-gray-100",
-            )}
-            onClick={() => {
-              if (!disabled) onPick(c);
-            }}
-          >
-            {c.businessName}
-          </li>
-        ))}
-      </ul>
+      <>
+        <ul
+          className="rounded border text-sm"
+          role={listbox ? "listbox" : undefined}
+          id={listbox?.id}
+          aria-label={listbox ? "Matching customers" : undefined}
+        >
+          {matches.map((c, i) => (
+            <li
+              key={c.id}
+              role={listbox ? "option" : undefined}
+              id={listbox?.optionId(i)}
+              aria-selected={listbox ? listbox.active === i : undefined}
+              aria-disabled={disabled || undefined}
+              className={cn(
+                "min-h-[44px] w-full px-3 py-2 text-left",
+                disabled ? "opacity-40" : "cursor-pointer hover:bg-gray-50",
+                listbox?.active === i && "bg-gray-100",
+              )}
+              onClick={() => {
+                if (!disabled) onPick(c);
+              }}
+            >
+              {c.businessName}
+            </li>
+          ))}
+        </ul>
+        {listbox ? (
+          <p className="text-xs text-navy/70" data-testid="counter-customer-keys">
+            ↑↓ to choose · Enter to pick
+          </p>
+        ) : null}
+      </>
     );
   }
   if (search.trim() && answered) {
