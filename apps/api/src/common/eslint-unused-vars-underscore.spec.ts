@@ -5,11 +5,14 @@ import { resolve } from "node:path";
 describe("eslint no-unused-vars underscore convention (row 220)", () => {
   it("does not warn on an unused _-prefixed destructured variable", () => {
     const apiDir = resolve(__dirname, "../..");
+    // Windows ships npx as npx.cmd, which spawnSync only runs through a shell.
+    const win = process.platform === "win32";
     const run = spawnSync(
-      "npx",
+      win ? "npx.cmd" : "npx",
       ["eslint", "--stdin", "--stdin-filename", "src/users/users.service.ts", "--format", "json"],
       {
         cwd: apiDir,
+        shell: win,
         encoding: "utf8",
         input:
           "const user = { a: 1, b: 2, c: 3 };\nconst { a: _a, ...rest } = user;\nexport const out = rest;\n",
