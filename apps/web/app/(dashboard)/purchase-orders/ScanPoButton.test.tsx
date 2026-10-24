@@ -2,6 +2,8 @@ import * as React from "react";
 import { render, screen, fireEvent, act } from "@testing-library/react";
 import { ScanPoButton } from "./ScanPoButton";
 
+const push = jest.fn();
+jest.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
 const toast = jest.fn();
 jest.mock("@routeflow/ui/web", () => {
   const actual = jest.requireActual("@routeflow/ui/web");
@@ -29,6 +31,7 @@ beforeEach(() => {
   modalProps = null;
   modalMounts = 0;
   toast.mockClear();
+  push.mockClear();
 });
 
 describe("ScanPoButton", () => {
@@ -48,6 +51,13 @@ describe("ScanPoButton", () => {
     expect(toast).toHaveBeenCalledWith(
       expect.objectContaining({ title: "PO PO-0007 drafted — open it below" }),
     );
+  });
+
+  it("opens the drafted PO's detail page when a PO is raised (row 128)", () => {
+    render(<ScanPoButton onDrafted={jest.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: /Scan supplier invoice/ }));
+    act(() => modalProps!.onPurchaseOrderCreated({ id: "po1", poNumber: "PO-0007" }));
+    expect(push).toHaveBeenCalledWith("/purchase-orders/po1");
   });
 
   it("on a plan without scanning shows the lock and a friendly notice, never the scanner", () => {
