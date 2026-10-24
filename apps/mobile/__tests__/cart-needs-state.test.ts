@@ -35,6 +35,10 @@ describe("buyerNeedsStateCopy", () => {
 });
 
 describe("customer cart screen: needs-state refusal", () => {
+  it("imports the shared helper from @routeflow/types (never a local copy)", () => {
+    expect(src).toMatch(/import \{[^}]*\bbuyerNeedsStateCopy\b[^}]*\} from "@routeflow\/types";/);
+  });
+
   it("toasts buyerNeedsStateCopy before the generic fallback", () => {
     const at = src.indexOf("buyerNeedsStateCopy(e)");
     expect(at).toBeGreaterThan(-1);

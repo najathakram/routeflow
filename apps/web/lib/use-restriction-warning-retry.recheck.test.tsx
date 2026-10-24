@@ -13,7 +13,6 @@ jest.mock("@/components/RestrictionWarningDialog", () => ({
     return null;
   },
 }));
-// eslint-disable-next-line import/first
 import { useRestrictionWarningRetry } from "./use-restriction-warning-retry";
 
 const warning = (hash: string) => ({

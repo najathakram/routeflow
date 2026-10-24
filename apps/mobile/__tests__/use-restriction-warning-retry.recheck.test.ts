@@ -18,7 +18,6 @@ jest.mock("../components/RestrictionWarningModal", () => ({
     return null;
   },
 }));
-// eslint-disable-next-line import/first
 import { useRestrictionWarningRetry } from "../lib/use-restriction-warning-retry";
 
 const warning = (hash: string) => ({
