@@ -43,6 +43,7 @@
     "local:seed": "node scripts/local-env.mjs --db -- \"npm --prefix apps/api run db:seed && npm --prefix apps/api run db:publish:catalog:v11 && npm --prefix apps/api run db:publish:catalog:v12 && npm --prefix apps/api run db:publish:catalog:v13\"",
     "local:drift": "node scripts/local-env.mjs --db -- \"npm run db:drift -w apps/api -- --local\"",
     "local:test:db": "node scripts/local-db-specs.mjs -- \"npm run test:db -w apps/api\"",
+    "local:ci": "node scripts/local-ci.mjs",
     "local:validate": "node scripts/local-env.mjs --proof-stack --smoke --db -- \"npm run smoke && npm run post-deploy-check && npm run local:stock-gap && npm run local:drift\"",
     "local:stock-gap": "node scripts/local-env.mjs --db -- \"node apps/api/scripts/stock-ledger-gap.mjs\"",
     "local:test:smtp": "node scripts/local-env.mjs --smtp-specs -- \"npm run test:smtp -w apps/api\"",
