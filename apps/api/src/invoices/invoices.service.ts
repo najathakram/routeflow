@@ -41,6 +41,7 @@ import {
   normalizeBoxesPieces,
   remainingCapacity,
   capacityRefusal,
+  CAPACITY_EPSILON,
   OVERPAID_EPSILON,
   isPaidAtSale,
 } from "@routeflow/pricing";
@@ -217,6 +218,7 @@ import { calendarFieldStamp, dueDateStamps, dueStamp } from "./invoice-due-dates
 import { lockRowsNoWait } from "../common/db-locks";
 import { counterPay, type CounterPayOpts } from "./counter-payment-guard";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { AUDIT_ACTIONS } from "../audit/audit-actions.constant";
 import { planInvoicedQtyAdjustment } from "./unvoid-billing-claim";
 import { UNVOID_REFUSAL_COPY, assertUnvoidOrderNotCancelled } from "./unvoid-billing-refusal";
 import { NumberingService } from "../import/numbering.service";
@@ -4865,6 +4867,23 @@ export class InvoicesService {
       // recordPayment's conversion closes, so this edit can no longer be parked
       // above what the invoice can actually hold once that DRAFT confirms.
       const capacity = remainingCapacity(total, otherPayments);
+      // SA-862: an unconfirmed row whose room a captured payment already took cannot be confirmed any more.
+      if (
+        (payment.status === "DRAFT" || payment.status === "PENDING") &&
+        capacityRefusal({
+          total,
+          existing: otherPayments,
+          amount,
+          status: newPaymentStatus,
+          overpay: "REFUSE",
+        })?.kind === "FULLY_PAID"
+      ) {
+        throw new ConflictException({
+          code: API_ERROR_CODES.UNCONFIRMED_PAYMENT_SUPERSEDED,
+          message:
+            "This invoice is already paid. Void this unconfirmed payment, or move it to the customer's credit.",
+        });
+      }
       if (newPaymentStatus !== "VOID" && amount > capacity + 0.001) {
         throw new BadRequestException(`Payment amount exceeds remaining balance`);
       }
@@ -5152,6 +5171,7 @@ export class InvoicesService {
     return retryOnTxConflict(`standalone payment group=${paymentGroupId}`, () =>
       this.prisma.tenantTransaction(async (tx) => {
         await opts?.claim?.(tx); // SA-824: the key claim is the FIRST statement (throws, unwritten, when held)
+        if (opts?.capturedExternally?.overReserved) opts.capturedExternally.overReserved.length = 0; // SA-862: per attempt
         // B311: the buyer/online path's anti-overpay guard reads the invoice's balance and
         // THEN checks it — with no row lock between the two, a concurrent office payment on the
         // same invoice could commit in between, and this check would still pass against the
@@ -5249,6 +5269,33 @@ export class InvoicesService {
             };
           }
           await tx.invoice.update({ where: { id: alloc.invoiceId }, data: invoiceData });
+          // SA-862: captured money is allocated on the confirmed basis and never refused; when unconfirmed rows were
+          // holding the room it filled, say so once (audit in this tx; the caller alerts staff after the commit).
+          const captured = opts?.capturedExternally;
+          if (captured && status === "PAID") {
+            const rows = await tx.invoicePayment.findMany({
+              where: { invoiceId: alloc.invoiceId },
+            });
+            const over = roundMoney(-remainingCapacity(Number(invoice.total), rows));
+            const unconfirmed = rows.filter((r) => r.status === "DRAFT" || r.status === "PENDING");
+            if (over > CAPACITY_EPSILON && unconfirmed.length > 0) {
+              const unconfirmedPaymentIds = unconfirmed.map((r) => r.id);
+              await tx.auditLog.create({
+                data: {
+                  userId: null,
+                  action: AUDIT_ACTIONS.PAYMENT_UNCONFIRMED_OVER_RESERVED,
+                  entityType: "invoice",
+                  entityId: alloc.invoiceId,
+                  meta: { paymentIds: [payment.id], unconfirmedPaymentIds, excess: over },
+                },
+              });
+              captured.overReserved?.push({
+                invoiceId: alloc.invoiceId,
+                unconfirmedPaymentIds,
+                excess: over,
+              });
+            }
+          }
         }
 
         // Commission hook: the payments-modal / buyer-allocation path creates PAID

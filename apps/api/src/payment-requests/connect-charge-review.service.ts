@@ -159,6 +159,54 @@ export class ConnectChargeReviewService {
    * (no schema field exists for it) and alerts the operators once, so staff can refund the duplicate in Stripe.
    * Best-effort and idempotent per payment intent + invoice; the caller never fails a webhook over it.
    */
+  /**
+   * SA-862: a captured card payment filled an invoice that unconfirmed (DRAFT/PENDING) rows were holding room on.
+   * Best-effort and idempotent per payment intent + invoice; the audit row in the payment tx is the durable record.
+   */
+  async flagOverReserved(input: {
+    tenantId: string | null;
+    paymentIntentId: string;
+    invoiceId: string;
+    excess: number;
+  }): Promise<void> {
+    const { tenantId, paymentIntentId, invoiceId, excess } = input;
+    if (!tenantId) return;
+    const inv = await this.prisma.forTenant().invoice.findFirst({
+      where: { id: invoiceId },
+      select: { id: true, invoiceNumber: true, internalNotes: true },
+    });
+    if (!inv || inv.internalNotes?.includes(`${paymentIntentId} over-reserved`)) return;
+    const line =
+      `[REVIEW] The card payment ${paymentIntentId} over-reserved: it paid this invoice in full while an unconfirmed ` +
+      `payment (${excess.toFixed(2)}) was still pending. The card payment is recorded because the money moved. ` +
+      `Void the unconfirmed payment, or move it to the customer's credit.`;
+    const { count } = await this.prisma.forTenant().invoice.updateMany({
+      where: { id: inv.id, internalNotes: inv.internalNotes },
+      data: {
+        internalNotes: inv.internalNotes
+          ? `${inv.internalNotes}
+${line}`
+          : line,
+      },
+    });
+    if (count !== 1) throw new Error(`Invoice ${inv.invoiceNumber} changed while flagging — retry`);
+    const title = "Card payment arrived with an unconfirmed payment pending";
+    const body =
+      `Invoice ${inv.invoiceNumber} was paid by card while an unconfirmed payment still held room on it. ` +
+      `Void the unconfirmed payment, or move it to the customer's credit.`;
+    try {
+      const operators = await this.prisma.user.findMany({
+        where: { tenantId, role: { in: ["OPERATOR", "TENANT_ADMIN"] }, status: "ACTIVE" },
+        select: { id: true },
+      });
+      await Promise.allSettled(
+        operators.map((op) => this.notifications.sendToUser(op.id, { title, body })),
+      );
+    } catch (err: any) {
+      this.logger.warn(`over-reserved notification failed: ${err?.message}`);
+    }
+  }
+
   async flagDuplicateSuspect(input: {
     tenantId: string | null;
     paymentIntentId: string;

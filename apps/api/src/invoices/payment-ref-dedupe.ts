@@ -95,6 +95,15 @@ export interface ExternalCapture {
   /** The processor's own id for this charge (the payment intent id): the reference the payment is recorded under. */
   sourceRef: string;
   suspects?: DuplicateSuspect[];
+  /** SA-862: invoices a captured payment filled beyond their total because unconfirmed rows held the room; reset per attempt. */
+  overReserved?: OverReservedCapture[];
+}
+
+/** One invoice a captured payment left over-reserved (SA-862): the caller alerts staff once the payment committed. */
+export interface OverReservedCapture {
+  invoiceId: string;
+  unconfirmedPaymentIds: string[];
+  excess: number;
 }
 
 /** The same charge is already on the ledger (thrown instead of recording it twice); the caller settles idempotently. */
@@ -308,6 +317,7 @@ export function createPaymentRefGuard(p: PaymentRefInput): PaymentRefGuard {
       suspect = null;
       // m1: a rolled-back attempt's suspects never survive into the retry (the caller alerts only on what committed).
       if (captured?.suspects) captured.suspects.length = 0;
+      if (captured?.overReserved) captured.overReserved.length = 0; // SA-862: same rule
       if (!norm) return;
       const customerId =
         p.customerId ??

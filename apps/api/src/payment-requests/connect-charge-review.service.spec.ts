@@ -221,6 +221,42 @@ describe("ConnectChargeReviewService", () => {
     void done;
   });
 
+  describe("flagOverReserved (SA-862, W-706)", () => {
+    const over = {
+      tenantId: "tenant-1",
+      paymentIntentId: "pi_9",
+      invoiceId: "inv-1",
+      excess: 1000,
+    };
+    beforeEach(() => {
+      (prisma as any).invoice.findFirst = jest
+        .fn()
+        .mockResolvedValue({ id: "inv-1", invoiceNumber: "INV-100", internalNotes: null });
+    });
+
+    it("tells staff to void the unconfirmed payment or move it to credit, and alerts the operators", async () => {
+      await service.flagOverReserved(over);
+      const note = (prisma as any).invoice.updateMany.mock.calls[0][0].data.internalNotes as string;
+      expect(note).toContain("[REVIEW]");
+      expect(note).toContain("pi_9 over-reserved");
+      expect(note).toMatch(/void the unconfirmed payment, or move it to the customer's credit/i);
+      expect(notifications.sendToUser.mock.calls[0][1].body).toMatch(
+        /void the unconfirmed payment/i,
+      );
+    });
+
+    it("is idempotent per payment intent: a breadcrumb that already names it adds nothing", async () => {
+      (prisma as any).invoice.findFirst = jest.fn().mockResolvedValue({
+        id: "inv-1",
+        invoiceNumber: "INV-100",
+        internalNotes: "[REVIEW] The card payment pi_9 over-reserved: x",
+      });
+      await service.flagOverReserved(over);
+      expect((prisma as any).invoice.updateMany).not.toHaveBeenCalled();
+      expect(notifications.sendToUser).not.toHaveBeenCalled();
+    });
+  });
+
   describe("flagDuplicateSuspect (SA-837b, review m6)", () => {
     const suspect = {
       tenantId: "tenant-1",

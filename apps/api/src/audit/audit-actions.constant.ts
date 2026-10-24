@@ -53,6 +53,8 @@ export const AUDIT_ACTIONS = {
   PAYMENT_REF_RECORDED_ANYWAY: "payment.ref-record-anyway",
   /** Row 498 (SA-837b): a Stripe-captured payment repeated an existing one's customer, method, normalised reference and amount; recorded anyway and flagged for staff (never refused: the money moved); entityId = the invoice, meta {source, paymentIntentId, invoiceId, paymentIds, normalisedRef, duplicateOfPaymentId, method, amount}. */
   PAYMENT_REF_DUPLICATE_SUSPECT: "payment.ref-duplicate-suspect",
+  /** Row W-706 (SA-862): a Stripe-captured payment filled an invoice that unconfirmed (DRAFT/PENDING) rows were already holding room on; the money is allocated on the confirmed basis, staff must void or move the unconfirmed rows; entityId = the invoice, meta {paymentIds, unconfirmedPaymentIds, excess}. */
+  PAYMENT_UNCONFIRMED_OVER_RESERVED: "payment.unconfirmed-over-reserved",
   /** Row 587 (SA-833): PARTIALLY_DELIVERED -> DELIVERED completed an office-evidenced line; meta {orderId, lineId, from, to, summary}. */
   ORDER_LINE_OFFICE_COMPLETED: "order.line-office-completed",
   /** SA-737: a STANDARD return's cash/card/check refund recorded; meta {returnId, returnNumber, orderId, customerId, invoiceIds, amount, tender, actor, impersonatedBy}. */

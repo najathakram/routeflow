@@ -10,6 +10,7 @@ import { ConnectChargeReviewService } from "./connect-charge-review.service";
 import {
   isPaymentAlreadyRecorded,
   type DuplicateSuspect,
+  type OverReservedCapture,
   type ExternalCapture,
   type RefDedupeOpts,
 } from "../invoices/payment-ref-dedupe";
@@ -890,6 +891,7 @@ export class PaymentRequestsService {
       source: "STRIPE",
       sourceRef: evt.paymentIntentId,
       suspects: [] as DuplicateSuspect[],
+      overReserved: [] as OverReservedCapture[],
     };
     let result: { paymentGroupId: string };
     try {
@@ -929,6 +931,22 @@ export class PaymentRequestsService {
         .catch((e: Error) =>
           this.logger.error(
             `duplicate-suspect alert for ${evt.paymentIntentId} failed: ${e?.message}`,
+          ),
+        );
+    }
+
+    for (const over of capture.overReserved ?? []) {
+      // Best-effort, like the suspects above: the audit row written inside the payment transaction is the record.
+      await this.chargeReview
+        .flagOverReserved({
+          tenantId: this.tenantContext.get(),
+          paymentIntentId: evt.paymentIntentId,
+          invoiceId: over.invoiceId,
+          excess: over.excess,
+        })
+        .catch((e: Error) =>
+          this.logger.error(
+            `over-reserved alert for ${evt.paymentIntentId} failed: ${e?.message}`,
           ),
         );
     }

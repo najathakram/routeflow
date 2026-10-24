@@ -129,7 +129,7 @@ describe("PaymentRequestsService", () => {
     emitBuyerPaymentRequest: jest.fn(),
   };
   // Row 498 / SA-837b: the duplicate-suspect breadcrumb + operator notification of Stripe-captured money.
-  const mockReview = { flagDuplicateSuspect: jest.fn() };
+  const mockReview = { flagDuplicateSuspect: jest.fn(), flagOverReserved: jest.fn() };
 
   beforeEach(async () => {
     prisma = createMockPrisma();
@@ -146,6 +146,7 @@ describe("PaymentRequestsService", () => {
     mockProvider.verifyEvent.mockReset();
     mockGateway.emitBuyerPaymentRequest.mockReset();
     mockReview.flagDuplicateSuspect.mockReset().mockResolvedValue(undefined);
+    mockReview.flagOverReserved.mockReset().mockResolvedValue(undefined);
     mockTenantContext.get.mockReset().mockReturnValue("tenant-1");
     mockTenantContext.getOrNull.mockReset().mockReturnValue("tenant-1");
     mockTenantContext.run
@@ -715,6 +716,29 @@ describe("PaymentRequestsService", () => {
             paymentIntentId: "pi_123",
             invoiceId: "inv-1",
             duplicateOfPaymentId: "pay-1",
+          }),
+        );
+      });
+
+      it("an over-reserved capture settles the request and alerts staff once per invoice (SA-862)", async () => {
+        pendingRequest();
+        mockInvoices.recordStandalonePayment.mockImplementation(async (_dto: any, opts: any) => {
+          opts.capturedExternally.overReserved.push({
+            invoiceId: "inv-1",
+            unconfirmedPaymentIds: ["pay-d"],
+            excess: 1000,
+          });
+          return { paymentGroupId: "pg-1", excess: 0 };
+        });
+        const result = await service.settleByPaymentIntent(piSucceededEvent() as any);
+        expect(result).toEqual({ handled: true });
+        expect(mockReview.flagOverReserved).toHaveBeenCalledTimes(1);
+        expect(mockReview.flagOverReserved).toHaveBeenCalledWith(
+          expect.objectContaining({
+            tenantId: "tenant-1",
+            paymentIntentId: "pi_123",
+            invoiceId: "inv-1",
+            excess: 1000,
           }),
         );
       });
