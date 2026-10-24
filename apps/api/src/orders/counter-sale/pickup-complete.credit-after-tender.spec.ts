@@ -122,6 +122,9 @@ describe("PickupCompleteService.complete: the credit re-check after a failed net
         {
           provide: OrdersService,
           useValue: {
+            // W-774: the restriction pre-judge reads the order's lines (none here) through the orders service's prisma
+            prisma,
+            staffSellable: jest.fn(async () => undefined),
             changeStatus: jest.fn(async () => {
               order = { ...order, status: "DELIVERED", deliveredAt: new Date(1000) };
               return order;

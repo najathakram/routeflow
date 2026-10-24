@@ -2,6 +2,7 @@ import { IsBoolean, IsOptional, ValidateNested, registerDecorator } from "class-
 import { Transform, Type } from "class-transformer";
 import { REGISTER_KEY_PATTERN } from "@routeflow/pricing";
 import { CounterSalePaymentDto } from "./counter-sale.dto";
+import { RestrictionAckDto } from "../../selling-restrictions/dto/restriction-ack.dto";
 
 const IsRegisterKey = () => (target: object, propertyName: string) =>
   registerDecorator({
@@ -16,7 +17,8 @@ const IsRegisterKey = () => (target: object, propertyName: string) =>
   });
 
 /** `PickupCompleteRequest` of the shared contract (packages/types/api/counter-sale.ts). */
-export class PickupCompleteDto {
+/** W-773: a restricted line's acknowledged override (#3455) travels to the switch, like every staff write body. */
+export class PickupCompleteDto extends RestrictionAckDto {
   /** Omit to hand the order over unpaid (on account). A walk-in must pay. */
   @IsOptional()
   @ValidateNested()

@@ -53,6 +53,11 @@ describe("PickupCompleteService.complete: Complete at counter (I-120, SA-861)", 
   let capability: any;
   const calls: string[] = [];
   const orders = {
+    // W-774: the restriction pre-judge reads the order's lines (none here) through the orders service's prisma
+    get prisma() {
+      return prisma;
+    },
+    staffSellable: jest.fn(async () => undefined),
     assertDeliveryCreditGate: jest.fn(async () => undefined), // SA-905: the pre-judge
     changeStatus: jest.fn(),
     updateFulfillPath: jest.fn(),

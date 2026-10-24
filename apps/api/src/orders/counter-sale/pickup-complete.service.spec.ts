@@ -210,6 +210,9 @@ describe("PickupCompleteService.complete", () => {
         {
           provide: OrdersService,
           useValue: {
+            // W-774: the restriction pre-judge reads the order's lines (none here) through the orders service's prisma
+            prisma,
+            staffSellable: jest.fn(async () => undefined),
             changeStatus,
             decrementStockForSale,
             updateFulfillPath,

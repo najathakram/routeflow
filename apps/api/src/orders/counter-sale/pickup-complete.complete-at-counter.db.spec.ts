@@ -55,6 +55,7 @@ describeDb("I-120 Complete at counter — real Postgres", () => {
   const recordPayment = jest.fn();
   const sent: string[] = [];
   let restricted = false;
+  let lastAck: unknown = null;
   const operator = () =>
     ({
       sub: userId,
@@ -132,10 +133,12 @@ describeDb("I-120 Complete at counter — real Postgres", () => {
     orders = buildDbOrdersService(prisma, tenantCtx, {
       pushes,
       events,
-      assertLinesSellable: async () => {
-        if (restricted)
+      // W-773: the judgement sees the request's acknowledgement; an acknowledged override passes
+      assertLinesSellable: (async (p?: { ack?: any }) => {
+        lastAck = p?.ack ?? null;
+        if (restricted && !p?.ack?.restrictionOverrides?.length)
           throw new ConflictException({ code: "SELLING_RESTRICTED", message: "restricted" });
-      },
+      }) as never,
       invoices: {
         send: async (id: string, opts?: { suppressNotify?: boolean }) => {
           sent.push(`${id}:${opts?.suppressNotify === true ? "quiet" : "notify"}`);
@@ -772,6 +775,40 @@ describeDb("I-120 Complete at counter — real Postgres", () => {
       change.mockRestore();
       gate.mockRestore();
     }
+  }, 60_000);
+
+  // W-774 (SA-922 amendment): the #3455 restriction is pre-judged READ-ONLY before the claim, like the credit gate, so its
+  // refusal writes nothing. Head: the take-off committed first, then the switch refused, leaving the order off its run.
+  it("R8+D7 a restricted store-state line on an on-run order: 409 SELLING_RESTRICTED, still linked to the run, stop untouched, no claim", async () => {
+    const { orderId, invoiceId } = await seed("CONFIRMED", "ROUTE");
+    const { runId, stopId } = await onDriverRun([orderId]);
+    restricted = true;
+    const err: any = await withFlag(orderId, `key-${run}-r8d7`, true).catch((e) => e);
+    expect(err?.getStatus?.()).toBe(409);
+    expect(err.getResponse()).toMatchObject({ code: "SELLING_RESTRICTED" });
+    await expectUntouched(orderId, invoiceId, {
+      path: "ROUTE",
+      status: "CONFIRMED",
+      routeRunId: runId,
+      routeRunStopId: stopId,
+    });
+    expect((await stopOf(stopId)).status).toBe("PENDING");
+    expect(await takeOffRows(orderId)).toHaveLength(0);
+    expect(await claimCount(orderId)).toBe(0);
+  }, 60_000);
+
+  // W-773: the staff override travels with Complete at counter: the dto's acknowledgement reaches the switch's judgement
+  // (and the pre-judge), so an acknowledged restricted line completes. Head: the dto had no ack, so it was refused.
+  it("W-773 an acknowledged override on the request reaches the restriction judgement: the order completes", async () => {
+    const { orderId } = await seed("CONFIRMED", "ROUTE");
+    restricted = true;
+    const ack = {
+      restrictionOverrides: [{ lineKey: "n:0", reason: "Store manager approved" }],
+      warningHash: "h-w773",
+    };
+    await as(() => engine().complete(orderId, ack as never, operator(), `key-${run}-w773`));
+    expect(lastAck).toMatchObject(ack);
+    expect(await linkOf(orderId)).toEqual(delivered);
   }, 60_000);
 
   it.each(["IN_PROGRESS", "COMPLETED"])(

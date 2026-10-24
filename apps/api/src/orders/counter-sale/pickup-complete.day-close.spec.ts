@@ -133,6 +133,9 @@ describe("PickupCompleteService.complete — the day-close lock and window (SA-7
         {
           provide: OrdersService,
           useValue: {
+            // W-774: the restriction pre-judge reads the order's lines (none here) through the orders service's prisma
+            prisma,
+            staffSellable: jest.fn(async () => undefined),
             assertDeliveryCreditGate: jest.fn(async () => undefined), // SA-905: the pre-judge (its own spec pins it)
             changeStatus: jest.fn(async () => {
               order = { ...order, status: "DELIVERED", deliveredAt: new Date(T_DELIVERED) };
@@ -318,6 +321,9 @@ describe("PickupCompleteService.complete — a POS-mode PICKUP order's cash coun
         {
           provide: OrdersService,
           useValue: {
+            // W-774: the restriction pre-judge reads the order's lines (none here) through the orders service's prisma
+            prisma,
+            staffSellable: jest.fn(async () => undefined),
             assertDeliveryCreditGate: jest.fn(async () => undefined), // SA-905: the pre-judge (its own spec pins it)
             changeStatus: jest.fn(async () => {
               order = { ...order, status: "DELIVERED", deliveredAt: new Date(T_DELIVERED) };
