@@ -59,14 +59,27 @@ const LEDGER_KEYS = [
   "categoryTaxAmount",
 ] as const;
 
-function hasNested(data: Record<string, any>): boolean {
-  return Object.values(data).some(
-    (v) =>
-      v != null &&
-      typeof v === "object" &&
-      !(v instanceof Date) &&
-      typeof (v as { toNumber?: unknown }).toNumber !== "function",
+/**
+ * SA-938: a Prisma nested (relation) write is always an object, so a value is nested when it is an object other
+ * than a Date or a Decimal, or an array holding any such object. A top-level array of primitives (a scalar list
+ * such as `restrictionOverrideRuleIds`, null elements allowed) is a VALUE: compared element-wise, never nested.
+ */
+export function isNestedWrite(v: unknown): boolean {
+  if (Array.isArray(v)) return v.some((e) => isObjectWrite(e));
+  return isObjectWrite(v);
+}
+
+function isObjectWrite(v: unknown): boolean {
+  return (
+    v != null &&
+    typeof v === "object" &&
+    !(v instanceof Date) &&
+    typeof (v as { toNumber?: unknown }).toNumber !== "function"
   );
+}
+
+function hasNested(data: Record<string, any>): boolean {
+  return Object.values(data).some(isNestedWrite);
 }
 
 function sameLedgerShape(row: Record<string, any>, data: Record<string, any>): boolean {
@@ -84,6 +97,16 @@ const norm = (v: unknown): unknown => {
 };
 
 function same(x: unknown, y: unknown): boolean {
+  // SA-938 MUST 2: a scalar list compares element-wise IN ORDER (a reorder, or NULL vs [], is a change: one
+  // in-place write, never a rebuild, as no list is a LEDGER_KEY).
+  if (Array.isArray(x) || Array.isArray(y)) {
+    return (
+      Array.isArray(x) &&
+      Array.isArray(y) &&
+      x.length === y.length &&
+      x.every((e, i) => same(e, y[i]))
+    );
+  }
   const a = norm(x);
   const b = norm(y);
   if (a === undefined || b === undefined) return false;

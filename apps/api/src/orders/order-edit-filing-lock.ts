@@ -14,8 +14,13 @@ export function assertOrderEditFilingOpen(
   dto: unknown,
   user: JwtPayload | undefined,
 ): Promise<void> {
-  return assertOrderEditNotLocked(prisma.forTenant(), orderId, dto as any, {
-    tenantId: (user?.tenantId ?? prisma.getTenantId()) as string,
-    role: user?.role,
-  });
+  return assertOrderEditNotLocked(
+    prisma.forTenant(),
+    orderId,
+    dto as Parameters<typeof assertOrderEditNotLocked>[2],
+    {
+      tenantId: (user?.tenantId ?? prisma.getTenantId()) as string,
+      role: user?.role,
+    },
+  );
 }
