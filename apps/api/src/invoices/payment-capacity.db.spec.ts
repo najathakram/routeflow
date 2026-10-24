@@ -349,7 +349,7 @@ describeDb("row 2299 payment capacity — real Postgres", () => {
     expect(await paidAtOf(s.invs[0].id)).toEqual(stamped);
   }, 60_000);
 
-  it("W10 [L-O2] standalone 150 over a DRAFT 100: PAID 100 on the invoice, 50 to advance, the deliberate-overpay AND over-reserved rows", async () => {
+  it("W10 [L-O2] standalone 150 over a DRAFT 100: PAID 100 on the invoice, 50 to advance (the allocation is capped at the total, so NO deliberate-overpay row), and the over-reserved row", async () => {
     const s = await seed("w769-w10");
     await s.row(s.invs[0].id, 100, "DRAFT");
     await s.asTenant(() =>
@@ -362,7 +362,7 @@ describeDb("row 2299 payment capacity — real Postgres", () => {
       await prisma.auditLog.count({
         where: { tenantId: s.tenant.id, action: "invoice.deliberate-overpayment" },
       }),
-    ).toBe(1);
+    ).toBe(0);
     expect(await overReserved(s.tenant.id)).toHaveLength(1);
   }, 60_000);
 
