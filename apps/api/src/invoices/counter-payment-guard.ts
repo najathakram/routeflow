@@ -12,6 +12,9 @@ import {
 } from "../returns/counter-close-window";
 import { isCounterTenderRow, type TenderRowShape } from "../orders/counter-sale/counter-tender-row";
 import { isTillCashRow } from "../orders/counter-sale/counter-till-cash";
+import { assertStaffMay } from "../orders/counter-sale/till-permission.guard";
+import type { PermissionPrincipal } from "../auth/permissions/operator-permissions.service";
+import type { PrismaService } from "../prisma/prisma.service";
 
 /**
  * SA-750r3 / SA-762r F7: the payment-edit paths (voidPayment, deletePayment, updatePayment, setCheckStatus(BOUNCED)) of a COUNTER
@@ -67,6 +70,22 @@ async function scope(
   if (!order || !(counterSale || order.fulfillPath === "PICKUP")) return null;
   const registerKey = order.registerKey ?? COUNTER_DEFAULT_REGISTER;
   return { tenantId, registerKey, counterSale, orderId: order.id ?? "" };
+}
+
+/**
+ * W-870: `scope` for the office payment void. Unwinding a TILL payment is the same act as the counter-sale void, so it asks
+ * the same VOID_SALE predicate over the operator's live denied groups (ORDERS switched off = 403, nothing read further).
+ * `user` absent = a system caller, not judged; an ordinary invoice (null scope) is never judged.
+ */
+export type VoidPrincipal = PermissionPrincipal;
+async function voidScope(
+  prisma: PrismaService,
+  invoiceId: string,
+  user?: VoidPrincipal,
+): Promise<CounterPaymentScope | null> {
+  const till = await scope(prisma, invoiceId);
+  if (till && user) await assertStaffMay(prisma, user, "VOID_SALE");
+  return till;
 }
 
 /**
@@ -250,6 +269,7 @@ async function assertEditDated(
 /** One namespace so the 5.9k-line invoices service imports it in a single line (size ratchet). */
 export const counterPay = {
   scope,
+  voidScope,
   lock,
   assertOpen,
   assertDatesOpen,
