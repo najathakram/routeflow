@@ -4,8 +4,9 @@ import type { CreditSource } from "./counter-customer-credit";
 /**
  * SA-933 / W-822(a): the default tender for the picked customer, once the reads that decide it have answered. The customer's
  * own terms come from `GET /customers/:id`, the business default from `GET /settings/invoice` (the same two reads the
- * customer panel makes, same query keys). `null` = not known yet (a read pending or failed): the screen then changes nothing,
- * because a guessed default would put On account or Cash on a sale nobody asked for. A walk-in is known at once: CASH.
+ * customer panel makes, same query keys). `null` = not known yet (a read pending or failed): the screen never guesses On
+ * account from it; an undecided sale whose customer's terms are unknown sits on Cash until they are known (the safe side,
+ * see useCounterTenderDefault). A walk-in is known at once: CASH.
  */
 const text = (v: unknown): string | null =>
   typeof v === "string" && v.trim() !== "" ? v.trim() : null;
