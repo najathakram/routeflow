@@ -314,16 +314,16 @@ describeDb("B297 PR5 — a LOCKED filing closes its period, real Postgres", () =
     expect(out).toMatchObject({ status: "LOCKED", lockedById: operatorUserId });
     expect(out.lockReason).toBe("September filed with the state");
     expect(out.lockedAt).toBeInstanceOf(Date);
-    expect(audit.log).toHaveBeenCalledWith(
-      expect.objectContaining({
-        action: "regulated_filing.locked",
-        entityId: f.id,
-        meta: expect.objectContaining({
-          periodKey: "2026-09",
-          reason: "September filed with the state",
-        }),
-      }),
-    );
+    // the audit row commits in the claim's own transaction (Opus review of #3726, MUST 4), so it is a real row
+    const row = await raw.auditLog.findFirst({
+      where: { tenantId, action: "regulated_filing.locked", entityId: f.id },
+    });
+    expect(row).not.toBeNull();
+    expect(row?.userId).toBe(operatorUserId);
+    expect(row?.meta).toMatchObject({
+      periodKey: "2026-09",
+      reason: "September filed with the state",
+    });
   }, 120_000);
 
   it.each([
@@ -337,7 +337,11 @@ describeDb("B297 PR5 — a LOCKED filing closes its period, real Postgres", () =
       await expect(lockAs(f.id)).rejects.toMatchObject({ response: { code } });
       const after = await raw.regulatedFiling.findUniqueOrThrow({ where: { id: f.id } });
       expect(after.status).toBe((over as any).status ?? "GENERATED");
-      expect(audit.log).not.toHaveBeenCalled();
+      expect(
+        await raw.auditLog.count({
+          where: { tenantId, action: "regulated_filing.locked", entityId: f.id },
+        }),
+      ).toBe(0);
     },
     120_000,
   );

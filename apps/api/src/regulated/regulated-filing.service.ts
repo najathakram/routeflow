@@ -122,32 +122,36 @@ export class RegulatedFilingService {
       { categoryName: category?.name ?? filing.trackedCategoryId, periodKey: filing.periodKey },
     );
 
-    // Claimed conditionally: a concurrent lock (or a regeneration that flipped it) cannot double-lock.
-    const claimed = await claimFilingLock(this.prisma.forTenant(), {
-      id,
-      lockedById: params.userId,
-      reason,
-    });
-    if (claimed.count !== 1)
-      throw new ConflictException({
-        code: API_ERROR_CODES.FILING_ALREADY_LOCKED,
-        message: "This filing changed while it was being locked; reload and retry.",
+    // ONE transaction (Opus review of #3726, MUST 4): the conditional claim and its audit row commit together or
+    // not at all, so a filing can never be LOCKED without the row that says who locked it and why, nor the
+    // reverse. The audit row is written on the tx (`AuditService.log` swallows errors and uses its own client, so
+    // it could not roll back with the claim). Claimed conditionally: a concurrent lock (or a regeneration that
+    // flipped it) cannot double-lock.
+    return this.prisma.tenantTransaction(async (tx: any) => {
+      const claimed = await claimFilingLock(tx, { id, lockedById: params.userId, reason });
+      if (claimed.count !== 1)
+        throw new ConflictException({
+          code: API_ERROR_CODES.FILING_ALREADY_LOCKED,
+          message: "This filing changed while it was being locked; reload and retry.",
+        });
+      await tx.auditLog.create({
+        data: {
+          tenantId,
+          userId: params.userId,
+          action: "regulated_filing.locked",
+          entityType: "RegulatedFiling",
+          entityId: id,
+          meta: {
+            trackedCategoryId: filing.trackedCategoryId,
+            periodKey: filing.periodKey,
+            reason,
+            totalCategoryTax: Number(filing.totalCategoryTax),
+            generationCount: filing.generationCount,
+          },
+        },
       });
-    await this.audit.log({
-      tenantId,
-      userId: params.userId,
-      action: "regulated_filing.locked",
-      entityType: "RegulatedFiling",
-      entityId: id,
-      meta: {
-        trackedCategoryId: filing.trackedCategoryId,
-        periodKey: filing.periodKey,
-        reason,
-        totalCategoryTax: Number(filing.totalCategoryTax),
-        generationCount: filing.generationCount,
-      },
+      return tx.regulatedFiling.findUnique({ where: { id } });
     });
-    return this.prisma.forTenant().regulatedFiling.findUnique({ where: { id } });
   }
 
   /**
