@@ -1,6 +1,7 @@
 import { useRouter } from "expo-router";
 import { CustomerForm, emptyCustomerForm } from "../../../components/CustomerForm";
-import { useCreateCustomer } from "../../../lib/api/customers";
+import { useCreateCustomer, type CreateCustomerDto } from "../../../lib/api/customers";
+import { safeTextErrorCopy } from "../../../lib/safe-text-error-copy";
 import { showToast } from "../../../lib/toast";
 
 export default function NewCustomerScreen() {
@@ -13,12 +14,15 @@ export default function NewCustomerScreen() {
       submitting={mut.isPending}
       initial={emptyCustomerForm()}
       onSubmit={(payload) =>
-        mut.mutate(payload, {
+        mut.mutate(payload as CreateCustomerDto, {
           onSuccess: (res) => {
             showToast("Customer created");
             router.replace(`/(operator)/customers/${res.customer.id}`);
           },
-          onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+          onError: (e: any) =>
+            showToast(
+              safeTextErrorCopy(e) ?? e?.response?.data?.message ?? e?.message ?? "Try again.",
+            ),
         })
       }
     />

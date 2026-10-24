@@ -266,6 +266,10 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
     billing: { skus: [], selfService: false },
     defaultGranted: false,
   },
+  // The SEND path (MailboxSendService.trySend) is gated on this key too, though it is not an HTTP
+  // route and so is not in `routes`: it shares the guard's decision (addon-access.ts) — dark = send
+  // + would-deny warning, enforced = `addon_required` (EmailService falls through to the next
+  // transport). Covered by mailbox-send.addon-gate.spec.ts.
   {
     key: "email.connected_mailbox",
     kind: "boolean",
@@ -495,7 +499,31 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
       added: "2026-09-19",
       routes: ["ALL /products/:productId/units (class-level)"],
       grantPath: "Owner override GRANT per tenant (feature grants) — no plan bundles it yet",
-      backfill: "New key: no tenant has used it, so there is nothing to backfill.",
+      backfill:
+        "New key: no tenant had used it at ship time, so there was nothing to backfill. Settings > Units (/units) is NOT gated by it: that moved to flag.units_settings_v1 below.",
+    },
+    billing: { skus: [], selfService: false },
+    defaultGranted: false,
+  },
+  {
+    key: "flag.units_settings_v1",
+    kind: "boolean",
+    area: "catalog",
+    label: "Settings > Units (rename units)",
+    description:
+      "The Settings > Units page and its API: add, rename, archive and restore the unit names tenants sell by. A rename rewrites the unit text on every product that uses it.",
+    gate: {
+      via: "RequirePlanFlag",
+      // ENFORCED, never dark: a dark flag is courtesy-allowed to every tenant, and a rename
+      // rewrites product rows. flag.units_v1 is already ACTIVE on a live tenant, so /units
+      // cannot ride on it; this key is granted per tenant only after the U-6 backfill shows 0/0/0.
+      state: "enforced",
+      added: "2026-10-14",
+      routes: ["ALL /units (class-level)"],
+      grantPath:
+        "Owner override GRANT per tenant (feature grants), only after that tenant's U-6 unit backfill shows 0/0/0 — no plan bundles it",
+      backfill:
+        "New key: nobody holds it, so every tenant (including those with flag.units_v1) is refused on /units until the owner grants it. Nothing to backfill; the grant itself is the gated step.",
     },
     billing: { skus: [], selfService: false },
     defaultGranted: false,
@@ -622,6 +650,36 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
       ],
       grantPath: DARK_PLAN_FLAG_GRANT_PATH,
       backfill: DARK_PLAN_FLAG_BACKFILL,
+    },
+    billing: { skus: [], selfService: false },
+    defaultGranted: false,
+  },
+  {
+    key: "flag.units_prices_v2",
+    kind: "boolean",
+    area: "catalog",
+    label: "Units and prices v2",
+    description: "The one price grid per product: every unit, every tier, Set or Auto.",
+    gate: {
+      via: "RequirePlanFlag",
+      // SA-796 R-5: a stated exception to the DARK_PLAN_FLAGS rule. The key gates a NEW route and
+      // UI with zero prior users (blast radius 0), and "dark" would allow it for every tenant, so
+      // it ships ENFORCED-BUT-UNGRANTED like flag.units_v1.
+      state: "enforced",
+      added: "2026-10-16",
+      routes: [
+        "GET /products/:productId/price-grid (product-pricing.controller.ts, class-level)",
+        "GET /products/:productId/customer-prices (product-pricing.controller.ts, class-level)",
+        "POST /products/:productId/prices (product-pricing.controller.ts, class-level)",
+        "POST /products/:productId/prices/undo (product-pricing.controller.ts, class-level)",
+        "GET /customers/:customerId/unit-prices (customer-unit-prices.controller.ts, class-level)",
+        "GET /customers/:customerId/price-layer (customer-price-layer.controller.ts, class-level)",
+        "products.service.ts create and importFromZoho, product-families.service.ts createFamily and updateVariants (hasFlag, S4)",
+        "S19 billing readers (customerPricing, orders/units-prices-v2.ts): orders.service.ts create, updateOrderItems (add, substitute, edit, replace-all, change-request add), getCustomerPriceHistory (pre-fill); unit-line-edit.ts; replace-all-line-build.ts; buyer-replace-keep.ts; invoice-line-override.ts (manual invoice lines); order-templates.service.ts; estimates.service.ts; buyer-catalog.service.ts (tile, detail, favorites); inline-returns-quote.service.ts; S19b A1: buyer-dashboard.service.ts (tiles), customer-price-history.service.ts (reference price), counter-sale-tier-price.ts (audit baseline), manual-invoice-context.ts (old-client Piece), customer-unit-prices.service.ts (K6 parity)",
+      ],
+      grantPath:
+        "No grant until S19b: every reader that shows or charges a customer price goes through the S19 helper and the no-direct-customer-tier-price pin is green (SA-811). Then: owner override GRANT per tenant after the 95/95 live check (S28); the local test tenant for proofs",
+      backfill: "New key: no tenant has used it, so there is nothing to backfill.",
     },
     billing: { skus: [], selfService: false },
     defaultGranted: false,
@@ -1097,6 +1155,93 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
             },
           ],
         },
+      },
+    },
+  },
+  {
+    key: "fulfilment_model",
+    kind: "boolean",
+    area: "routes",
+    label: "Where orders go",
+    description:
+      "Whether a tenant's orders go out on its own delivery runs, ship by carrier, or both. Unset keeps today's behavior exactly.",
+    gate: {
+      via: "none",
+      state: "none",
+      added: "2026-10-04",
+      routes: [],
+      grantPath: NEW_ROW_GRANT_PATH,
+      backfill: NEW_ROW_BACKFILL,
+    },
+    billing: { skus: [], selfService: false },
+    defaultGranted: true,
+    // Business profiles 1A: a free configuration row (never gates a paid feature). `unset` is
+    // today, for every existing tenant. `delivery` and `both` need a fleet key (FeatureConfigService.set refuses them
+    // otherwise; the registry's mode schema stays allOf-only); the ship and in-store modes need none.
+    config: {
+      fallbackMode: "unset",
+      modes: {
+        unset: {
+          label: "Not configured (today's behavior)",
+          available: true,
+          lifecycle: "ga",
+          settings: [],
+        },
+        delivery: {
+          label: "Own delivery",
+          available: true,
+          lifecycle: "ga",
+          settings: [],
+        },
+        ship: { label: "Ship by carrier", available: true, lifecycle: "ga", settings: [] },
+        both: {
+          label: "Both",
+          available: true,
+          lifecycle: "ga",
+          settings: [],
+        },
+        // SA-671 M1 lifted (pickup mode API): PICKUP orders can be written (counter sale, order-ahead
+        // pickup), so a tenant may now be SET to an in-store mode. A STORED mode that the registry
+        // marks UNAVAILABLE would derive as unset (deriveFulfilmentCapability, SA-666a/b).
+        pickup: { label: "In store only", available: true, lifecycle: "proposed", settings: [] },
+        pickup_ship: {
+          label: "In store + shipping",
+          available: true,
+          lifecycle: "proposed",
+          settings: [],
+        },
+      },
+    },
+  },
+  {
+    key: "counter_sales",
+    kind: "boolean",
+    area: "routes",
+    label: "Counter sales",
+    description:
+      "Lets a business that is not in-store sell over the counter too. In-store modes always have the counter; unset keeps today's behavior.",
+    gate: {
+      via: "none",
+      state: "none",
+      added: "2026-10-04",
+      routes: [],
+      grantPath: NEW_ROW_GRANT_PATH,
+      backfill: NEW_ROW_BACKFILL,
+    },
+    billing: { skus: [], selfService: false },
+    defaultGranted: true,
+    // Business profiles 1A: a free configuration row; clients read `capabilities.fulfilment.counter`
+    // only, never this value.
+    config: {
+      fallbackMode: "unset",
+      modes: {
+        unset: {
+          label: "Not configured (today's behavior)",
+          available: true,
+          lifecycle: "ga",
+          settings: [],
+        },
+        on: { label: "On", available: true, lifecycle: "ga", settings: [] },
       },
     },
   },

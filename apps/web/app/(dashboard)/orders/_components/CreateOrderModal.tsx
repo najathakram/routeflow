@@ -9,7 +9,15 @@ import { X, AlertTriangle, ChevronRight, Plus, Minus } from "lucide-react";
 import { Modal, Textarea, Button, cn, useToast } from "@routeflow/ui/web";
 import { useQuery } from "@tanstack/react-query";
 import { useCustomers, useCustomerPrices, useCustomer } from "@/lib/api/customers";
+import { countNoun } from "@/lib/plural";
 import { useProducts } from "@/lib/api/products";
+import {
+  attachParent,
+  groupSearchRows,
+  isFamilyProduct,
+  isGroupExpanded,
+  pickerProductName,
+} from "@/lib/product-search-groups";
 import { scheduleScannerRefocus } from "@/lib/refocus-scanner";
 import {
   useCreateOrder,
@@ -17,10 +25,26 @@ import {
   useCustomerPriceHistory,
   type ActiveOrderSummary,
 } from "@/lib/api/orders";
+import { usePriceSummary } from "@/lib/api/price-history";
 import { useCreateDraft, useUpdateDraft, useDeleteDraft, useDraft } from "@/lib/api/drafts";
-import { draftDeviceLabel, type OrderDraftPayload } from "@/lib/drafts";
+import type { OrderDraftPayload } from "@/lib/drafts";
+import { readDraftSubmitKey } from "@routeflow/types/draft-submit-key";
+import { priceChangedCopy, repriceResumedLines } from "@/lib/order-draft/resume";
+import {
+  fetchCurrentTierPrices,
+  PRICES_NOT_REFRESHED_COPY,
+  productsToRefresh,
+  withFreshTierPrices,
+} from "@/lib/order-draft/fresh-prices";
+import type { DraftPayload } from "@/lib/order-draft/engine";
+import type { LocalDraftRecord } from "@/lib/order-draft/storage";
+import { draftMetaOf, useOrderDraftAutosave } from "./use-order-draft-autosave";
+import { useUnsentOrderResume } from "./use-unsent-order-resume";
+import { ResumeUnsentOrderDialog } from "./ResumeUnsentOrderDialog";
+import { DraftConflictDialog } from "./DraftConflictDialog";
 import { apiClient } from "@/lib/api-client";
-import { orderCreatedToast } from "./order-created-toast";
+import { useTenantToday } from "@/lib/tenant-timezone";
+import { ACTION_TOAST_MS, addedLineQty, showOrderCreatedToast } from "./order-created-toast";
 import {
   mergePieceIntoLine,
   mergeQtyIntoLine,
@@ -28,10 +52,11 @@ import {
   newLineQtyForLevel,
 } from "./add-line-merge";
 import {
-  isSpecialTier,
-  getTierPrice,
+  customerLinePrice,
   computeLineSubtotal,
-  normalizeBoxesPieces,
+  pendingScanDecision,
+  undoPendingTap,
+  type DerivedBaseMarker,
   type SellLevel,
 } from "@routeflow/pricing";
 import {
@@ -41,6 +66,7 @@ import {
 } from "@/lib/staff-price-override";
 import { useMarginConfig, floorForCategory } from "@/lib/api/margin";
 import { MoneyInput, DecimalInput } from "@/components/MoneyInput";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { displayProductName } from "@/lib/product-display";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
@@ -48,31 +74,86 @@ import { LineItemRow } from "@/components/LineItemRow";
 import { OrderLineUnitPicker } from "@/components/OrderLineUnitPicker";
 import {
   applyLineUnit,
-  mergeSameLine,
+  customerLineSpecial,
+  isLayerManualLine,
+  repriceLineFromLayer,
+  masterLayerFrom,
+  type LayerFrom,
   sameProductUnit,
   unitLabelPayload,
   type PackBase,
 } from "@/lib/order-line-unit";
+import { useCustomerPriceLayer } from "@/lib/api/useCustomerPriceLayer";
+import { PRICE_LAYER_FAILED_COPY, PRICE_LAYER_PENDING_COPY } from "@/components/PriceLayerNotice";
+import {
+  applyUnitToLines,
+  isPendingDefaultUnit,
+  pendingCount,
+  isShapedLine,
+  isStaffRole,
+  keepsDefaultStart,
+  mergeResolvedLines,
+  UNITS_LOADING_SCAN_MESSAGE,
+} from "@/lib/default-unit-line";
+import {
+  refusesLineEdit,
+  setBoxesOnLines,
+  setPiecesOnLines,
+  setQtyOnLines,
+  setSellByOnLines,
+  setUnitQtyOnLines,
+  stepQtyOnLines,
+} from "@/lib/line-qty-edit";
+import { useDefaultUnitResolver } from "@/lib/hooks/useDefaultUnitResolver";
 import type { UnitOption } from "@/lib/unit-options";
 import { useScanCodeHandler } from "./scan/useScanCodeHandler";
+import { createSerialScanQueue } from "./scan/serial-scan-queue";
+import { DidYouMeanPicker } from "@/components/scan/DidYouMeanPicker";
 import { ScanOrderScreen } from "./scan/ScanOrderScreen";
 import { PriceEditor } from "./scan/PriceEditor";
 import type { ScanHistoryEntry } from "./scan/scan-summary";
 import { LicenseGuardModal } from "./LicenseGuardModal";
+import { API_ERROR_CODES, staffMay } from "@routeflow/types";
 import { parseRegulatedAuthError, type BlockedCategory } from "@/lib/api/authorizations";
 import { parseSellingRestricted } from "@/lib/api/selling-restricted";
 import { BlockedLinesDialog } from "@/components/BlockedLinesDialog";
+import { parseRestrictionWarning } from "@/lib/api/restriction-warning";
+import { useRestrictionWarningRetry } from "@/lib/use-restriction-warning-retry";
 import type { BlockedLine } from "@routeflow/types";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { CreditNotePicker, type CreditSelection } from "./CreditNotePicker";
+import { CustomerSearchPicker } from "./CustomerSearchPicker";
+import { STALE_CREDIT_COPY, isStaleCreditRefusal } from "./stale-credit-refusal";
+import { useCustomerChangeUndo } from "./use-customer-change-undo";
+import { useListboxNav } from "@/lib/use-listbox-nav";
 import { useAuth } from "@/lib/auth-context";
+import { CustomerAccountStrip } from "@/components/CustomerAccountStrip";
+import { CreditRefusalRecordPayment } from "@/components/CreditRefusalRecordPayment";
+import { useCounterSaleGate } from "@/lib/api/counter-sale";
 import { useHasAddon } from "@/lib/api/tobacco";
 import { SALES_AGENTS_ADDON, useOrderUiV2, useScanV2 } from "@/lib/api/addons";
+import { useFulfilmentCaps, useStaffFulfilment } from "@/lib/fulfilment-caps";
+import { isStoreOnly } from "@/lib/counter-sale";
+import { usePosFinish, usePosMode, PosFinishError } from "@/lib/api/pos-orders";
+import { POS_COPY } from "@/lib/pos-copy";
 import {
   OrderInlineReturnsSection,
   type OrderInlineReturnsSectionHandle,
 } from "./OrderInlineReturnsSection";
 import { RETURN_SAVE_BLOCKED, useOrderInlineReturnSave } from "./use-order-inline-return-save";
+import {
+  CREDITS_PENDING_COPY,
+  creditsPendingOrderId,
+  idempotencyConflictOrderId,
+  isUnknownOutcome,
+  useCreateOrderSubmitKey,
+} from "./use-create-order-submit-key";
+import { codedToastCopy } from "@/lib/generic-toast-copy";
+import { useOrderSuggestions } from "@/lib/api/order-suggestions";
+import { mergeOrderedIntoLine, type OrderedAdd } from "./order-again";
+import { OrderSuggestionsBar } from "./OrderSuggestionsBar";
+import { useOrderSuggestionActions } from "./use-order-suggestion-actions";
+import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -108,7 +189,7 @@ interface SelectedCustomer {
   fulfillPath?: "ROUTE" | "SHIP";
 }
 
-interface LineItem {
+interface LineItem extends DerivedBaseMarker {
   tempId: string;
   /** Empty string for unlisted (ad-hoc) lines — `isUnlisted` is the real flag. */
   productId: string;
@@ -140,6 +221,16 @@ interface LineItem {
   sellBy?: "case" | "unit";
   /** units_v1: the non-pack unit this line sells by (`undefined` = the pack); see LineItemRowItem. */
   unitLabel?: string;
+  /** S19b: a price the SYSTEM pre-filled from last-given history; the customer layer replaces it once ready. */
+  systemPrefill?: boolean;
+  /** SA-817 A5: the price this line carried when the order was parked, set when a resume found today's price different. */
+  priceChangedFrom?: number;
+  /** S19b: set while the customer layer prices this line; the pre-layer values to restore if its row goes away. */
+  layerFrom?: LayerFrom;
+  /** #2784 UI-only: a NEW line from the picker tap / a shared-code scan starts on the default selling unit. */
+  startOnDefaultUnit?: boolean;
+  /** #2865 case c UI-only: the PENDING TAP COUNT (N default-start taps before the ladder loaded = N of the default unit). */
+  pendingTaps?: number;
   /** UI-only: the pack fields a unit switch overwrote (restored when the pack is chosen again). */
   packBase?: PackBase;
   /**
@@ -165,19 +256,80 @@ export interface CreateOrderModalProps {
   resumeDraftId?: string | null;
   /** A barcode to add on open (scan-to-draft / scan-to-new, pos-cost-roles §2). */
   initialScanCode?: string | null;
+  /** B1210: open a FRESH order on "Ship via carrier" (?preselect=SHIP). Ignored when resuming a draft: that keeps its own path. */
+  initialFulfillPath?: "SHIP" | null;
   /** Wired by the orders page to `router.push` — powers the "View Order" toast action. */
   onViewOrder?: (orderId: string) => void;
 }
+
+/** F13 (row 718): the local copy for a requested delivery day before the browser's today. */
+const DELIVERY_DATE_PAST_COPY = "That day has passed. Pick today or a later date.";
+
+type SubmitOptions = { mergeChoice?: "merge" | "separate"; asDraft?: boolean };
+
+/** A 4xx the modal resolves with the operator and re-submits itself (merge prompt, license capture): the SAME attempt. */
+function isSameAttemptRefusal(err: any): boolean {
+  const body = err?.response?.data;
+  if (
+    err?.response?.status === 409 &&
+    body?.code === API_ERROR_CODES.MERGE_CHOICE_REQUIRED &&
+    body?.activeOrder
+  ) {
+    return true;
+  }
+  // Row 510: a RESTRICTION_WARNING wrote nothing; the dialog resubmits this SAME attempt (same key) with the ack.
+  return parseRestrictionWarning(err) !== null || (parseRegulatedAuthError(err)?.length ?? 0) > 0;
+}
+
+/**
+ * N05: how long after the "Open order exists" prompt mounts that Enter/Space will not activate its buttons.
+ * The pre-check opens the prompt synchronously inside the Create Order click, so an Enter/Space pressed "at
+ * once" lands after the mount as a FRESH keydown that the held-key lineage cannot tell from a deliberate one.
+ * No operator reads and answers a dialog in 300 ms; a deliberate press after the window works as before.
+ */
+export const MERGE_PROMPT_KEY_GUARD_MS = 300;
 
 export function CreateOrderModal({
   isOpen,
   onClose,
   resumeDraftId,
   initialScanCode,
+  initialFulfillPath,
   onViewOrder,
 }: CreateOrderModalProps) {
-  const { toast } = useToast();
-  const createOrder = useCreateOrder();
+  const { toast, dismiss: dismissToast } = useToast();
+  const toastApi = { toast, dismiss: dismissToast };
+  const createOrder = useCreateOrder({ localErrorToast: true });
+  const rw = useRestrictionWarningRetry(); // row 510: staff warning + override dialog
+  const pos = usePosMode(); // SA-763r P-2: server-backed preference, never localStorage
+  const { user: posUser } = useAuth();
+  // The switch and PICKUP are for roles with USE_POS_MODE only: a stored preference never applies without it.
+  // BO-07: and not for an operator whose admin switched ORDERS off (the same deny list the till reads).
+  const { deniedGroups: posDenied, permsKnown } = useCounterSaleGate();
+  const posAllowed = permsKnown && staffMay(posUser?.role, "USE_POS_MODE", posDenied);
+  // A store-only business (capabilities.fulfilment: PICKUP is its only method) has no delivery to switch back to:
+  // the builder is simply POS mode, with no switch and no preference involved (row 331).
+  const storeOnly = isStoreOnly(useFulfilmentCaps());
+  const posMode = posAllowed && (storeOnly || pos.posMode);
+  // POS mode forced by the capability (not an opt-in): the builder talks about invoicing in store, not delivery.
+  const storeOnlyPos = posAllowed && storeOnly;
+  const posFinish = usePosFinish();
+  // Which POS finishing action the operator pressed ("Confirm and invoice" vs "Confirm only"); survives the merge prompt.
+  const posFinishRef = React.useRef<"invoice" | "confirm">("invoice");
+  // SA-817 A: the key rides with the draft (payload._submitKey); a re-mint bumps `keyTick` so the draft carries the new one.
+  const [keyTick, setKeyTick] = React.useState(0);
+  const submitKey = useCreateOrderSubmitKey(isOpen, () => setKeyTick((t) => t + 1)); // BUG-A: latch + Idempotency-Key per attempt
+  // An unknown outcome (timeout / 5xx) may still have written the order. Closing mints a fresh key on
+  // reopen (accepted residual risk), so tell the operator to check before re-entering it.
+  React.useEffect(() => {
+    if (!isOpen && submitKey.hasUnknown()) {
+      toast({
+        title: "Your last order may have gone through. Check Orders before re-entering it.",
+        variant: "warning",
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
   // #2406: an inline return started (lines entered + quoted) before this order is saved.
   const returnsRef = React.useRef<OrderInlineReturnsSectionHandle>(null);
   const returnSave = useOrderInlineReturnSave(returnsRef);
@@ -192,7 +344,9 @@ export function CreateOrderModal({
   const [activeDraftId, setActiveDraftId] = React.useState<string | null>(null);
   const hydratedRef = React.useRef<string | null>(null);
   const scanConsumedRef = React.useRef(false);
-  const lastSavedRef = React.useRef<string>("");
+  // SA-817 A5: a resume re-prices once the customer's prices have been read (display only; the server prices at submit).
+  const repriceAfterResumeRef = React.useRef(false);
+  const [repriceTick, setRepriceTick] = React.useState(0);
 
   // Fetch default tax rate from settings
   const { data: settings } = useQuery<{ taxRate?: number }>({
@@ -216,10 +370,16 @@ export function CreateOrderModal({
     return map;
   }, [customerPricesData]);
 
-  // Product search state
+  // S19b (SA-811a, SA-813): flag on, the customer's price layer prices every line through customerLinePrice and a pending
+  // or failed read leaves prices UNCONFIRMED (Create/Save wait). Flag off: no request, `layerOf` is undefined, master's chain.
+  const priceLayer = useCustomerPriceLayer(selectedCustomer?.id);
   const [productSearch, setProductSearch] = React.useState("");
   const [debouncedProductSearch, setDebouncedProductSearch] = React.useState("");
   const [lineItems, setLineItems] = React.useState<LineItem[]>([]);
+  // The scan handler's local fast path reads the order as of the LAST COMMIT (addLineItem flushSyncs).
+  const orderSessionRef = React.useRef(0);
+  const lineItemsRef = React.useRef(lineItems);
+  lineItemsRef.current = lineItems;
   const [lineItemsError, setLineItemsError] = React.useState("");
   const [expandedParentId, setExpandedParentId] = React.useState<string | null>(null);
 
@@ -237,20 +397,30 @@ export function CreateOrderModal({
   // never a value computed before that decision, which a same-tick retry+live-scan race of the
   // same product could make stale (both calls would otherwise decide "new line" from the same
   // pre-commit snapshot and append two rows for one product).
-  const lastAddResultRef = React.useRef<{ created: boolean; mergedInto?: LineItem } | null>(null);
+  const lastAddResultRef = React.useRef<{
+    created: boolean;
+    mergedInto?: LineItem;
+    refused?: boolean;
+  } | null>(null);
   // #2696 (b): the line whose price/qty sheet (the scan screen's PriceEditor) is open, if any.
   const [editingLineId, setEditingLineId] = React.useState<string | null>(null);
   // Scroll the just-scanned line into view so rapid scanning stays visible.
   const rowRefs = React.useRef<Map<string, HTMLLIElement>>(new Map());
   const [scrollToId, setScrollToId] = React.useState<string | null>(null);
+  // Q09: the line you last touched (or just added). Only it shows the "Tap to change" hint; before any touch the newest
+  // line is the active one (computed at render, not mirrored into state: L-333).
+  const [touchedLineId, setTouchedLineId] = React.useState<string | null>(null);
   React.useEffect(() => {
     if (!scrollToId) return;
+    setTouchedLineId(scrollToId);
     rowRefs.current.get(scrollToId)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
     setScrollToId(null);
   }, [scrollToId, lineItems]);
 
   // Create-product modal state
   const [createProductOpen, setCreateProductOpen] = React.useState(false);
+  // B1219: a scan with no exact code match but ONE fuzzy hit is offered here, never auto-added.
+  const [scanMatches, setScanMatches] = React.useState<any[]>([]);
   const [createProductInitialName, setCreateProductInitialName] = React.useState("");
   const [createProductInitialSku, setCreateProductInitialSku] = React.useState("");
   // scan_v2 (dark, owner-granted per tenant): the accumulating scan screen replaces the
@@ -279,17 +449,98 @@ export function CreateOrderModal({
   // Merge-vs-separate prompt state. Set when the operator submits and the API
   // (or our pre-check) reports an existing active order for the same customer.
   const [mergePrompt, setMergePrompt] = React.useState<ActiveOrderSummary | null>(null);
+  const mergeChoiceRef = React.useRef<HTMLButtonElement>(null);
+  const separateChoiceRef = React.useRef<HTMLButtonElement>(null);
+  // N05: the prompt must not act on a key press that began before it opened. The 409 (or the
+  // pre-check) opens it while the operator's Enter/Space from the Create Order click is still
+  // down, N02 then focuses Merge, and that same press (auto-repeat keydown, keypress, the click the
+  // browser makes from it, or Space's keyup click) would land on it. We note which activation keys
+  // are physically held at the moment of opening ("stale") and swallow only those: until the key's
+  // keyup, or until a fresh non-repeat keydown starts a new press. Native capture listeners, so
+  // they run before React's and before the browser's default action (Enter clicks at keydown/
+  // keypress, Space at keyup). Second layer: for MERGE_PROMPT_KEY_GUARD_MS after the mount no Enter/Space activates
+  // the buttons at all (the pre-check path, where the key is a fresh keydown). A pointer click and Tab/Escape are untouched.
+  const promptFooterRef = React.useRef<HTMLDivElement>(null);
+  const heldKeysRef = React.useRef<Set<string>>(new Set());
+  const staleKeysRef = React.useRef<Set<string>>(new Set());
+  const promptOpenedAtRef = React.useRef(Number.NEGATIVE_INFINITY); // performance.now() when the prompt mounted (compared with a key event's own timeStamp)
+  const mergePromptOpen = mergePrompt !== null;
+  React.useEffect(() => {
+    if (!isOpen) return;
+    const held = heldKeysRef.current;
+    const stale = staleKeysRef.current;
+    const inPrompt = (t: EventTarget | null) =>
+      t instanceof Node && !!promptFooterRef.current?.contains(t);
+    const isActivationKey = (k: string) => k === "Enter" || k === " ";
+    // Post-mount guard: the pre-check mounts the prompt inside the click, so an Enter/Space pressed "at once" is a
+    // FRESH keydown after the mount that the lineage cannot tell from a deliberate one. A timestamp, not a timer.
+    // Row 744: judged by the key event's OWN timeStamp (the same clock origin as the mount's performance.now()), never by a
+    // clock read while the handler runs: a press queued before the mount but handled after it (a main-thread stall) is still
+    // "before or within the window" (a negative difference is under the limit).
+    const inGuardWindow = (e: KeyboardEvent) =>
+      e.timeStamp - promptOpenedAtRef.current < MERGE_PROMPT_KEY_GUARD_MS;
+    const onKeyDown = (e: KeyboardEvent) => {
+      held.add(e.key);
+      if (!e.repeat) stale.delete(e.key); // a new press started after the open: deliberate once the window is over
+      if (!isActivationKey(e.key) || !inPrompt(e.target)) return;
+      if (inGuardWindow(e)) stale.add(e.key); // a press that began inside the window stays swallowed until its keyup
+      if (stale.has(e.key)) e.preventDefault();
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      // Space clicks on keyup: cancel it for a stale press and for any key activation inside the window.
+      if (isActivationKey(e.key) && inPrompt(e.target) && (stale.has(e.key) || inGuardWindow(e)))
+        e.preventDefault();
+      held.delete(e.key);
+      stale.delete(e.key);
+    };
+    const onClick = (e: MouseEvent) => {
+      // detail 0 = keyboard-made (a pointer click has detail >= 1); only while a stale/swallowed key is down
+      // (a programmatic or assistive click with no key involved is left alone).
+      if (e.detail === 0 && stale.size > 0 && inPrompt(e.target)) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    };
+    const onBlur = () => {
+      held.clear();
+      stale.clear();
+    };
+    document.addEventListener("keydown", onKeyDown, true);
+    document.addEventListener("keyup", onKeyUp, true);
+    document.addEventListener("click", onClick, true);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown, true);
+      document.removeEventListener("keyup", onKeyUp, true);
+      document.removeEventListener("click", onClick, true);
+      window.removeEventListener("blur", onBlur);
+      held.clear();
+      stale.clear();
+    };
+  }, [isOpen]);
+  // Layout effect: snapshot the held keys before any follow-on event of the press can be dispatched.
+  React.useLayoutEffect(() => {
+    const stale = staleKeysRef.current;
+    stale.clear();
+    promptOpenedAtRef.current = mergePromptOpen ? performance.now() : Number.NEGATIVE_INFINITY;
+    if (mergePromptOpen) {
+      for (const k of heldKeysRef.current) if (k === "Enter" || k === " ") stale.add(k);
+    }
+  }, [mergePromptOpen]);
   // The license guard (W6b): categories blocked by a 409 REGULATED_AUTH_REQUIRED.
   const [licenseBlock, setLicenseBlock] = React.useState<BlockedCategory[] | null>(null);
   // Selling restrictions: lines the API refused for this customer (shown instead of a raw toast).
   const [restrictedBlock, setRestrictedBlock] = React.useState<BlockedLine[] | null>(null);
-  // Pre-check: as soon as a customer is selected, look up their active order so we can
-  // surface the prompt the moment "Create Order" is clicked.
-  const { data: activeOrderForCustomer } = useActiveOrderForCustomer(selectedCustomer?.id);
 
   // Per-product last-given price for this customer — fetched once on customer select so
   // scanning is instant (no per-item round trip). Used to pre-fill the discount field.
   const { data: priceHistory } = useCustomerPriceHistory(selectedCustomer?.id);
+  // ONE batched request feeds every line's "Recent prices" chips (no per-line request, no mount budget).
+  // This screen creates a new order, so there is no order of its own to exclude.
+  const { data: priceSummary } = usePriceSummary(
+    isOpen ? selectedCustomer?.id : null,
+    lineItems.map((l) => (l.isUnlisted ? null : l.productId)),
+  );
 
   // Regulated tracked-categories (for the per-line "· regulated" tag + the live
   // invoice-split preview). Only staff build orders here; fetch while open.
@@ -358,27 +609,34 @@ export function CreateOrderModal({
     return (customersData?.data ?? []).slice(0, 8);
   }, [customersData, debouncedCustomerSearch]);
 
+  // Top-level rows (parents + standalones) with variants nested. A variant that matched on its own
+  // gets its parent re-attached and opened (B1215 C6); a FAMILY is only ever a group header (C7).
+  const productGroups = React.useMemo(
+    () => groupSearchRows<any>(productsData?.data ?? []),
+    [productsData],
+  );
   const filteredProducts = React.useMemo(() => {
     if (!debouncedProductSearch) return [];
-    // Only return top-level products (parents + standalones); variants are nested inside parents
-    return (productsData?.data ?? [])
-      .filter((p: any) => !p.parentProductId) // exclude variant rows from top-level
-      .slice(0, 10);
-  }, [productsData, debouncedProductSearch]);
+    return productGroups.rows.slice(0, 10);
+  }, [productGroups, debouncedProductSearch]);
 
   // Barcode scan handler — kept in a ref so the keydown listener never goes stale. The
   // resolve ladder (archived / hit / network error / unknown code) lives in
   // ./scan/useScanCodeHandler so the redesigned scan screen can reuse it.
   const barcodeScanHandlerRef = useScanCodeHandler({
     // A thunk: addLineItem is declared further down and is read only when a code is scanned.
-    addLineItem: (product, level) => {
+    addLineItem: (product, level, opts) => {
       // SA-090/Opus item 1: `created` comes from addLineItem's OWN return value now — it is
       // decided inside the setLineItems updater, against the true latest state, never from a
       // closure-captured `lineItems` read here beforehand (which a same-tick retry-plus-live-scan
       // race of the same product could make stale — see addLineItem's own comment).
-      const { created } = addLineItem(product, level);
-      return { created };
+      const { created, refused } = addLineItem(product, level, opts);
+      return { created, refused };
     },
+    onSuggestion: (matches) => setScanMatches(matches),
+    suggestionsSuppressed: () => scanScreenActive,
+    hasLine: (productId) => lineItemsRef.current.some((li) => li.productId === productId),
+    sessionKey: () => orderSessionRef.current,
     onUnknownCode: (code) => {
       setCreateProductInitialName("");
       setCreateProductInitialSku(code);
@@ -387,40 +645,76 @@ export function CreateOrderModal({
     toast,
   });
 
+  // ONE FIFO queue for every code that arrives outside the scan screen (wedge, typed SKU + Enter, the
+  // single-shot camera): each finishes lookup AND line commit before the next starts. `consumedCodeRef`
+  // names the code in flight so addLineItem clears the search field only if it still holds THAT code -
+  // never the partly-typed next scan of a burst.
+  const consumedCodeRef = React.useRef<string | null>(null);
+  const [scanQueue] = React.useState(() =>
+    createSerialScanQueue(async (code: string) => {
+      consumedCodeRef.current = code;
+      try {
+        return await barcodeScanHandlerRef.current(code);
+      } finally {
+        consumedCodeRef.current = null;
+      }
+    }),
+  );
+
   // handleProductSearchEnter — called when Enter is pressed in the product search input.
   // Works for keyboard-emulation scanners AND paste-mode scanners (where no individual
   // keydown events fire for each character, so sequence-accumulation approaches fail).
   const handleProductSearchEnter = () => {
-    const code = productSearch.trim();
+    // The DOM value, not the render's `productSearch`: a burst can outrun the re-render that state needs.
+    const code = (productSearchRef.current?.value ?? productSearch).trim();
     if (!code) return;
     setProductSearch("");
     setDebouncedProductSearch("");
-    barcodeScanHandlerRef.current(code);
+    void scanQueue.enqueue(code);
   };
 
   const { register, handleSubmit, reset, watch, setValue } = useForm<FormValues>({
     resolver: zodResolver(schema),
-    defaultValues: { urgent: false, fulfillPath: "ROUTE" },
+    defaultValues: { urgent: false },
   });
 
   const isUrgent = watch("urgent");
   const notesValue = watch("notes");
-  const fulfillPath = watch("fulfillPath");
+  const staffFulfilment = useStaffFulfilment();
+  const fulfillPath = watch("fulfillPath") ?? staffFulfilment.formDefault;
+  // A ship-only account must not submit before /tenants/me/features answers (the path would fall back to
+  // ROUTE) — and a FAILED answer keeps it blocked behind an inline Retry, never a silent ROUTE default.
+  // POS mode sends the explicit PICKUP path, which does not depend on the delivery settings: never blocked by them.
+  const fulfilmentPending = !staffFulfilment.known && !posMode;
+  // Pre-check: as soon as a customer is selected, look up their active order so we can surface the prompt
+  // the moment "Create Order" is clicked. It looks for the SAME merge target create would: same fulfil path.
+  const { data: activeOrderForCustomer } = useActiveOrderForCustomer(
+    selectedCustomer?.id,
+    posMode ? "PICKUP" : fulfillPath,
+  );
 
   // Reset the builder each time it opens (a fresh session). For a resume, the
   // hydration effect below re-fills the state from the draft payload right after.
   React.useEffect(() => {
     if (!isOpen) return;
-    reset({ urgent: false, fulfillPath: "ROUTE" });
+    orderSessionRef.current += 1; // a new order: forget which products earlier scans resolved to
+    reset({
+      urgent: false,
+      fulfillPath: initialFulfillPath === "SHIP" && !resumeDraftId ? "SHIP" : undefined,
+    });
     setCustomerSearch("");
     setDebouncedCustomerSearch("");
     setSelectedCustomer(null);
+    customerUndo.dismiss();
+    setCustomerListOpen(true);
+    setBackdateOpen(false);
     setCustomerError("");
     setProductSearch("");
     setDebouncedProductSearch("");
     setLineItems([]);
     setLineItemsError("");
     setCustomFormOpen(false);
+    setSuggestionsMenuOpen(false);
     setCustomName("");
     setCustomPrice("");
     setCustomQty("1");
@@ -433,6 +727,7 @@ export function CreateOrderModal({
     setAppliedCredits([]);
     setFloorAcked(new Set());
     setCreateProductOpen(false);
+    setScanMatches([]);
     setCreateProductInitialName("");
     setCreateProductInitialSku("");
     createOrder.reset();
@@ -440,7 +735,8 @@ export function CreateOrderModal({
     setActiveDraftId(null);
     hydratedRef.current = null;
     scanConsumedRef.current = false;
-    lastSavedRef.current = "";
+    repriceAfterResumeRef.current = false;
+    setPricesNotRefreshed(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, resumeDraftId]);
 
@@ -450,15 +746,39 @@ export function CreateOrderModal({
   // draft-persisted (see drafts.ts) — a resumed draft starts with none selected.
   const [appliedCredits, setAppliedCredits] = React.useState<CreditSelection[]>([]);
   // Credit selections are per-customer — reset whenever the operator swaps customers.
+  const customerUndo = useCustomerChangeUndo<SelectedCustomer, CreditSelection>({
+    selectedCustomer,
+    fulfillPath,
+    appliedCredits,
+    setSelectedCustomer,
+    setFulfillPath: (p) => setValue("fulfillPath", p as FormValues["fulfillPath"]),
+  });
+  const takeRestoredCredits = customerUndo.takeRestoredCredits;
   React.useEffect(() => {
-    setAppliedCredits([]);
-  }, [selectedCustomer?.id]);
+    setAppliedCredits(takeRestoredCredits()); // [] unless an Undo is restoring this customer's set
+  }, [selectedCustomer?.id, takeRestoredCredits]);
+  const [customerListOpen, setCustomerListOpen] = React.useState(true);
+  // Seeds the order's fulfilment from the customer's own default here (not in a
+  // selectedCustomer-keyed effect) so hydrating a parked draft's own fulfillPath is never clobbered.
+  const pickCustomer = (c: SelectedCustomer) => {
+    setSelectedCustomer(c);
+    setValue("fulfillPath", staffFulfilment.pickForm(c.fulfillPath));
+    setCustomerSearch("");
+    setDebouncedCustomerSearch("");
+    setCustomerListOpen(true);
+    customerUndo.dismiss();
+  };
 
   // scan_v2 / owner ruling D1: the customer's price applies IMMEDIATELY, including to lines scanned
   // BEFORE the customer was chosen (the classic modal never re-priced them). Only lines whose price
   // is still the auto-derived tier price move; an operator's one-time price, an upsell, or a
   // history-prefilled override stands, as do unlisted lines and lines added before this snapshot
   // existed (no `tierPrices`). Behind the gate so the classic modal's behaviour is untouched.
+  // S19b: the layer's content for the cart's products, so new layer data (not just "ready") re-runs the effect.
+  const layerSig = priceLayer.enabled
+    ? `${priceLayer.ready}|` +
+      lineItems.map((li) => JSON.stringify(priceLayer.layerOf(li.productId) ?? null)).join("|")
+    : "";
   React.useEffect(() => {
     if (!scanV2) return;
     setLineItems((prev) => {
@@ -466,12 +786,19 @@ export function CreateOrderModal({
       const next = prev.map((li) => {
         // a unit line is re-priced by its own picker from the product's ladder, not the pack's tiers
         if (li.isUnlisted || !li.tierPrices || li.unitLabel) return li;
-        if (li.priceType === "DISCOUNTED" || li.priceType === "MANUAL") return li;
+        // an operator's MANUAL / DISCOUNTED price always carries a one-time price; a MANUAL line without one is the layer's
+        // above-list price (the system's), so it re-prices with the customer
+        if (li.priceType === "DISCOUNTED") return li;
         if (li.discountedPrice != null) return li;
         const tier = cpMap.get(li.productId) ?? selectedCustomer?.pricingTier ?? 1;
-        const tierPrice = getTierPrice(li.tierPrices, tier);
-        const priceType = isSpecialTier(tier) ? ("SPECIAL" as const) : ("STANDARD" as const);
-        const specialPrice = isSpecialTier(tier) ? tierPrice : undefined;
+        const lp = customerLinePrice({
+          product: li.tierPrices as unknown as Record<string, unknown>,
+          tier,
+          layer: priceLayer.layerOf(li.productId),
+        });
+        const tierPrice = lp.price;
+        const priceType = lp.priceType;
+        const specialPrice = customerLineSpecial(lp);
         if (
           li.unitPrice === tierPrice &&
           li.priceType === priceType &&
@@ -484,7 +811,7 @@ export function CreateOrderModal({
       });
       return changed ? next : prev;
     });
-  }, [scanV2, selectedCustomer?.pricingTier, cpMap]);
+  }, [scanV2, selectedCustomer?.pricingTier, cpMap, layerSig]);
 
   // ── Derived totals ────────────────────────────────────────────────────────
 
@@ -555,12 +882,20 @@ export function CreateOrderModal({
       const pieces = li.pieces ?? 0;
       // Never step a case-packed line below one case (or its loose pieces) — undo must not zero it.
       const boxes = Math.max(pieces > 0 ? 0 : 1, (li.boxes ?? 0) + dir);
-      return { ...li, boxes, qty: boxes * li.unitsPerBox + pieces };
+      return { ...li, boxes, qty: boxes * li.unitsPerBox + pieces, startOnDefaultUnit: false };
     }
-    return { ...li, qty: Math.max(1, li.qty + dir) };
+    return { ...li, qty: Math.max(1, li.qty + dir), startOnDefaultUnit: false };
   };
 
-  const addLineItem = (product: any, level: SellLevel = "BOX"): { created: boolean } => {
+  const addLineItem = (
+    product: any,
+    level: SellLevel = "BOX",
+    opts?: {
+      startOnDefaultUnit?: boolean;
+      /** "Order again": add this quantity (in this unit) instead of one; priced today like any add. */
+      ordered?: OrderedAdd;
+    },
+  ): { created: boolean; refused?: boolean } => {
     const n = 1; // #2696: every pick / scan adds one (the quick-add Qty field is gone)
     // #2717 M4a-1 (SA-580 R1/R4): a UNIT scan on a boxed product adds one loose PIECE, never a
     // case; a picker click (no level) and every BOX/shared scan keep today's whole-case add. For
@@ -571,14 +906,31 @@ export function CreateOrderModal({
     //    gains N cases and its qty is re-derived from boxes/pieces (pricing reads the split).
     //  - scan_v2 alone: one whole case for a case-packed line (a new line starts as one case).
     //  - neither: the classic picker keeps its historical +1 qty so nothing changes with the gates off.
+    // A merge is a qty edit that CONSUMES startOnDefaultUnit, EXCEPT a default-start add to a still-pending line:
+    // two fast adds before the ladder loads stay "2 of the default unit" (SA-626d), never a pack.
     const merge = (li: LineItem): LineItem =>
-      unitScan
-        ? mergePieceIntoLine(li, n)
-        : orderUiV2
-        ? mergeQtyIntoLine(li, n)
-        : scanV2
-          ? stepLineUnit(li, 1)
-          : { ...li, qty: li.qty + 1 };
+      // Order again: the ordered quantity lands on the line (same product + unit) as a sum, never a "+1".
+      opts?.ordered
+        ? {
+            ...mergeOrderedIntoLine(li, opts.ordered.qty),
+            startOnDefaultUnit: false,
+            pendingTaps: undefined,
+          }
+        : // #2865 (SA-632 M2): a default-start tap on a still-pending line ONLY records one more tap. The line's own
+          // quantity (boxes/pieces) is never touched, so neither the row nor the totals ever show N cases while pending.
+          keepsDefaultStart(li, opts?.startOnDefaultUnit)
+          ? { ...li, pendingTaps: pendingCount(li) + 1 }
+          : {
+              ...(unitScan
+                ? mergePieceIntoLine(li, n)
+                : orderUiV2
+                  ? mergeQtyIntoLine(li, n)
+                  : scanV2
+                    ? stepLineUnit(li, 1)
+                    : { ...li, qty: li.qty + 1 }),
+              startOnDefaultUnit: false,
+              pendingTaps: undefined,
+            };
     // Built once, outside the updater — none of it depends on `prev`, only on `product`/the
     // customer/pricing context, so there is nothing here a race could make stale.
     const newTempId = product.id + "-" + Date.now();
@@ -587,20 +939,28 @@ export function CreateOrderModal({
     const customerTier = selectedCustomer?.pricingTier ?? 1;
     const tierOverride = cpMap.get(product.id);
     const effectiveTier = tierOverride ?? customerTier;
-    const tierPrice = getTierPrice(product, effectiveTier);
-    const priceType = isSpecialTier(effectiveTier) ? ("SPECIAL" as const) : ("STANDARD" as const);
+    // S19b: the customer's layer price (flag on) or master's tier price (no layer): getTierPrice lives inside the helper.
+    const linePrice = customerLinePrice({
+      product,
+      tier: effectiveTier,
+      layer: priceLayer.layerOf(product.id),
+    });
+    const tierPrice = linePrice.price;
+    const priceType = linePrice.priceType;
     // Pre-fill from customer's last-given price for this product (only when below
     // the effective tier price, and only when this isn't already a SPECIAL price
     // — SPECIAL prices are permanent, the discount is already in tierPrice).
+    // R3 (SA-811a): a price from the customer's layer is that same permanent price, so last-given is skipped for it too.
     const histEntry = priceHistory?.[product.id as string];
-    const hasHistDiscount =
-      priceType !== "SPECIAL" && histEntry != null && histEntry.lastPrice < tierPrice;
+    const permanentPrice = priceType === "SPECIAL" || linePrice.layered;
+    const hasHistDiscount = !permanentPrice && histEntry != null && histEntry.lastPrice < tierPrice;
     // Carry forward a remembered UPSELL too (a saved price ABOVE list). It pre-fills
     // as a MANUAL override, mirroring the operator's last agreed above-list price.
-    const hasHistUpsell =
-      priceType !== "SPECIAL" && histEntry != null && histEntry.lastPrice > listPrice;
+    const hasHistUpsell = !permanentPrice && histEntry != null && histEntry.lastPrice > listPrice;
     const hasHistOverride = hasHistDiscount || hasHistUpsell;
-    const newLine: LineItem = {
+    const orderedUnit =
+      opts?.ordered?.unit && opts.ordered.unit.kind !== "pack" ? opts.ordered.unit : undefined;
+    const baseLine: LineItem = {
       tempId: newTempId,
       productId: product.id,
       // Show the full "<Parent> - <Variant>" name on the order line so the
@@ -608,17 +968,34 @@ export function CreateOrderModal({
       // just the variant name in `product.name` (PR #44).
       productName: displayProductName(product),
       unit: product.unit ?? "each",
-      listPrice,
-      specialPrice: isSpecialTier(effectiveTier) ? tierPrice : undefined,
+      listPrice: linePrice.layered ? (linePrice.listPrice ?? listPrice) : listPrice,
+      specialPrice: customerLineSpecial(linePrice),
       discountedPrice: hasHistOverride ? histEntry!.lastPrice : undefined,
+      // a price the system pre-filled from history: the layer replaces it if one turns out to price this line (review 1)
+      systemPrefill: hasHistOverride && priceLayer.enabled ? true : undefined,
+      // the pre-layer (master) values, restored if the layer's row goes away
+      layerFrom: linePrice.layered
+        ? masterLayerFrom(
+            {
+              pricePerUnit: product.pricePerUnit,
+              priceTier2: product.priceTier2,
+              priceTier3: product.priceTier3,
+              priceTier4: product.priceTier4,
+              priceTier5: product.priceTier5,
+            },
+            effectiveTier,
+          )
+        : undefined,
       unitPrice: hasHistOverride ? histEntry!.lastPrice : tierPrice,
       priceType: hasHistUpsell
         ? ("MANUAL" as const)
         : hasHistDiscount
           ? ("DISCOUNTED" as const)
           : priceType,
-      ...newLineQtyForLevel(upb, level, n),
+      ...(opts?.ordered ? opts.ordered.qty : newLineQtyForLevel(upb, level, n)),
       unitsPerBox: upb,
+      startOnDefaultUnit: opts?.startOnDefaultUnit,
+      pendingTaps: opts?.startOnDefaultUnit ? 1 : undefined,
       unitCost: product.averageCost != null ? Number(product.averageCost) : undefined,
       category: product.category ?? undefined,
       trackedCategoryId: product.trackedCategoryId ?? null,
@@ -630,6 +1007,17 @@ export function CreateOrderModal({
         priceTier5: product.priceTier5,
       },
     };
+    // A past line that sold by a unit ("Carton") comes back as that unit: a plain count at the ladder's
+    // price for the customer's tier today (applyLineUnit drops any one-time price, as a manual switch does).
+    const newLine: LineItem = orderedUnit
+      ? {
+          ...applyLineUnit(baseLine, orderedUnit, {
+            tier: effectiveTier,
+            layer: priceLayer.layerOf(product.id),
+          }),
+          qty: opts!.ordered!.qty.qty,
+        }
+      : baseLine;
 
     // SA-090/Opus item 1: the add-vs-merge DECISION happens INSIDE the updater, against the true
     // latest `prev` React is about to commit — never against `lineItems` read from the render
@@ -647,10 +1035,22 @@ export function CreateOrderModal({
     lastAddResultRef.current = null;
     flushSync(() => {
       setLineItems((prev) => {
-        const idx = prev.findIndex((li) => sameProductUnit(li, { productId: product.id }));
+        const idx = prev.findIndex((li) =>
+          sameProductUnit(li, { productId: product.id, unitLabel: orderedUnit?.value }),
+        );
         if (idx === -1) {
           lastAddResultRef.current = { created: true };
           return [...prev, newLine];
+        }
+        // #2865 (SA-632 H2): a scan landing on a PENDING line is a tap only when it maps to the default unit; a
+        // scan of a different level is REFUSED (not merged, not counted, not "Added"). The shared rule decides.
+        const decision = pendingScanDecision(
+          { startOnDefaultUnit: prev[idx].startOnDefaultUnit, shaped: isShapedLine(prev[idx]) },
+          { mapsToDefault: !!opts?.startOnDefaultUnit },
+        );
+        if (decision === "refuse") {
+          lastAddResultRef.current = { created: false, mergedInto: prev[idx], refused: true };
+          return prev;
         }
         const merged = merge(prev[idx]);
         lastAddResultRef.current = { created: false, mergedInto: merged };
@@ -664,7 +1064,11 @@ export function CreateOrderModal({
     // flushSync — an explicit cast to the ref's own declared type restores real narrowing for the
     // runtime check below (the pre-#1271-review code used a bare `!` for the same closure-blindness
     // reason; this keeps the throw instead of silently asserting).
-    const result = lastAddResultRef.current as { created: boolean; mergedInto?: LineItem } | null;
+    const result = lastAddResultRef.current as {
+      created: boolean;
+      mergedInto?: LineItem;
+      refused?: boolean;
+    } | null;
     if (result === null) {
       throw new Error(
         "addLineItem: lastAddResultRef was never set — the setLineItems updater did not run " +
@@ -677,7 +1081,24 @@ export function CreateOrderModal({
     // or a retry that treats the throw as "resolveCode failed" would re-run this whole method and
     // add the line a SECOND time. Logged, not silently swallowed; the commit's own outcome is
     // returned either way.
+    // A picker add clears the search it was made from; a scan clears the field only while it still holds the
+    // code that scan consumed (the wedge take already emptied it - a later clear must not eat the next scan).
+    const consumed = consumedCodeRef.current;
+    const clearSearchAfterAdd = () => {
+      if (consumed === null) {
+        setProductSearch("");
+        setDebouncedProductSearch("");
+      } else {
+        setProductSearch((cur) => (cur.trim() === consumed.trim() ? "" : cur));
+        setDebouncedProductSearch((cur) => (cur.trim() === consumed.trim() ? "" : cur));
+      }
+    };
     try {
+      if (result.refused) {
+        // The scan screen reports the refusal itself; elsewhere a toast says it.
+        if (!scanScreenActive) toast({ title: UNITS_LOADING_SCAN_MESSAGE, variant: "info" });
+        return { created: false, refused: true };
+      }
       if (!result.created) {
         // The scan screen shows its own running rows (a toast per repeat scan would bury them).
         if (orderUiV2 && !scanScreenActive) {
@@ -688,13 +1109,11 @@ export function CreateOrderModal({
           });
         }
         setScrollToId(result.mergedInto!.tempId);
-        setProductSearch("");
-        setDebouncedProductSearch("");
+        clearSearchAfterAdd();
         scheduleScannerRefocus(productSearchRef, 50);
       } else {
         setScrollToId(newTempId);
-        setProductSearch("");
-        setDebouncedProductSearch("");
+        clearSearchAfterAdd();
         setLineItemsError("");
         // Re-focus the product search so the scanner is ready for the next item
         scheduleScannerRefocus(productSearchRef, 50);
@@ -707,8 +1126,74 @@ export function CreateOrderModal({
 
   /** A pick from the search dropdown: +1 (#2696 — no typed quick-add qty). */
   const addPicked = (product: any) => {
-    addLineItem(product);
+    if (isFamilyProduct(product)) return; // a FAMILY is a container, never a line (B1215 C7)
+    // #2784: the picker tap starts a NEW line on the product's default selling unit (OrderLineUnitPicker applies it).
+    addLineItem(product, undefined, { startOnDefaultUnit: true });
   };
+
+  // PKG-4 F09: ArrowUp/Down + Enter on the product results. Nothing is highlighted until an Arrow
+  // key, so a wedge scan + Enter still takes handleProductSearchEnter (barcode path).
+  const productListOpen =
+    !!productSearch && (filteredProducts.length > 0 || debouncedProductSearch.length > 0);
+  // One flat, ordered row list for the listbox: each product, its variants while expanded, then the
+  // trailing "Create new product" row — so every visible option has an id and an Arrow stop.
+  type ProductNavRow =
+    { kind: "product"; p: any } | { kind: "variant"; v: any } | { kind: "create" };
+  const productNavRows: ProductNavRow[] = [];
+  const productRowIndex = new Map<string, number>();
+  const variantRowIndex = new Map<string, number>();
+  for (const p of filteredProducts as any[]) {
+    productRowIndex.set(p.id, productNavRows.length);
+    productNavRows.push({ kind: "product", p });
+    // Same expansion rule as the rendered list (B1215: a variant-only hit opens its family by itself).
+    if (
+      p.variants?.length > 0 &&
+      isGroupExpanded(expandedParentId, productGroups.expandedIds, p.id)
+    ) {
+      for (const v of p.variants) {
+        variantRowIndex.set(v.id, productNavRows.length);
+        // The keyboard pick names the variant under its parent exactly like the click does (attachParent).
+        productNavRows.push({ kind: "variant", v: attachParent(v, p) });
+      }
+    }
+  }
+  const createProductRowIndex = productNavRows.length;
+  productNavRows.push({ kind: "create" });
+  const openCreateProduct = () => {
+    const looksLikeSku = /^\d{6,}$/.test(debouncedProductSearch.trim());
+    setCreateProductInitialName(looksLikeSku ? "" : debouncedProductSearch);
+    setCreateProductInitialSku(looksLikeSku ? debouncedProductSearch.trim() : "");
+    setCreateProductOpen(true);
+    setProductSearch("");
+    setDebouncedProductSearch("");
+  };
+  /** Expanding/collapsing a parent changes the row count (which resets the highlight): put it back. */
+  const keepHighlightOnRow = React.useRef<number | null>(null);
+  const productNav = useListboxNav<ProductNavRow>({
+    items: productNavRows,
+    open: productListOpen,
+    onPick: (row) => {
+      if (row.kind === "variant") return addPicked(row.v);
+      if (row.kind === "create") return openCreateProduct();
+      if (row.p.variants?.length > 0) {
+        keepHighlightOnRow.current = productRowIndex.get(row.p.id) ?? null;
+        // Mirrors the header click: "" closes even an auto-opened family (null would re-open it).
+        const open = isGroupExpanded(expandedParentId, productGroups.expandedIds, row.p.id);
+        setExpandedParentId(open ? "" : row.p.id);
+      } else {
+        addPicked(row.p);
+      }
+    },
+    resetKey: productSearch,
+    idPrefix: "product-search",
+  });
+  const productNavSetHighlight = productNav.setHighlight;
+  React.useEffect(() => {
+    if (keepHighlightOnRow.current !== null) {
+      productNavSetHighlight(keepHighlightOnRow.current);
+      keepHighlightOnRow.current = null;
+    }
+  }, [expandedParentId, productNavSetHighlight]);
 
   const removeLineItem = (tempId: string) => {
     setLineItems((prev) => prev.filter((li) => li.tempId !== tempId));
@@ -781,64 +1266,76 @@ export function CreateOrderModal({
     );
   };
 
+  // #2865 case c (SA-632): every quantity editor refuses a PENDING line (its default unit not yet resolved) in the
+  // logic (lib/line-qty-edit.ts), so a quantity never depends on how fast the units ladder loads.
   /** #2696 (b): a typed qty on a plain (non-case) line — a whole number, at least 1 (like the −). */
-  const setQty = (tempId: string, value: number) => {
-    const qty = Math.max(1, Number.isFinite(value) ? Math.trunc(value) : 1);
-    setLineItems((prev) => prev.map((li) => (li.tempId === tempId ? { ...li, qty } : li)));
-  };
+  const setQty = (tempId: string, value: number) =>
+    setLineItems((prev) => setQtyOnLines(prev, tempId, value));
 
-  const updateQty = (tempId: string, delta: number) => {
-    setLineItems((prev) =>
-      prev.map((li) => {
-        if (li.tempId !== tempId) return li;
-        return { ...li, qty: Math.max(1, li.qty + delta) };
-      }),
-    );
-  };
+  const updateQty = (tempId: string, delta: number) =>
+    setLineItems((prev) => stepQtyOnLines(prev, tempId, delta));
 
-  const setBoxes = (tempId: string, value: number) => {
-    setLineItems((prev) =>
-      prev.map((li) => {
-        if (li.tempId !== tempId) return li;
-        const boxes = Math.max(0, isNaN(value) ? 0 : value);
-        const pieces = li.pieces ?? 0;
-        const qty = boxes * (li.unitsPerBox ?? 1) + pieces;
-        return { ...li, boxes, qty: Math.max(qty, boxes > 0 || pieces > 0 ? qty : 0) };
-      }),
-    );
-  };
+  const setBoxes = (tempId: string, value: number) =>
+    setLineItems((prev) => setBoxesOnLines(prev, tempId, value));
 
-  const setPieces = (tempId: string, value: number) => {
-    setLineItems((prev) =>
-      prev.map((li) => {
-        if (li.tempId !== tempId) return li;
-        const pieces = Math.max(0, isNaN(value) ? 0 : value);
-        const boxes = li.boxes ?? 0;
-        const qty = boxes * (li.unitsPerBox ?? 1) + pieces;
-        return { ...li, pieces, qty };
-      }),
-    );
-  };
+  const setPieces = (tempId: string, value: number) =>
+    setLineItems((prev) => setPiecesOnLines(prev, tempId, value));
 
   /** Unit mode: the operator types a TOTAL unit count; normalize it back into cases + loose.
    *  7 units of a 6-pack -> {boxes:1, pieces:1, qty:7}. Price is unchanged either way because
    *  computeLineSubtotal's proration is linear. */
-  const setUnitQty = (tempId: string, value: number) => {
-    setLineItems((prev) =>
-      prev.map((li) => {
-        if (li.tempId !== tempId) return li;
-        const n = normalizeBoxesPieces({ qty: value, unitsPerBox: li.unitsPerBox });
-        return { ...li, boxes: n.boxes ?? 0, pieces: n.pieces ?? 0, qty: n.qty };
-      }),
-    );
-  };
+  const setUnitQty = (tempId: string, value: number) =>
+    setLineItems((prev) => setUnitQtyOnLines(prev, tempId, value));
 
   const setSellBy = (tempId: string, sellBy: "case" | "unit") =>
-    setLineItems((prev) => prev.map((li) => (li.tempId === tempId ? { ...li, sellBy } : li)));
+    setLineItems((prev) => setSellByOnLines(prev, tempId, sellBy));
 
   /** The effective price tier for a product on this order (per-product override, else the customer's). */
   const tierForProduct = (productId: string) =>
     cpMap.get(productId) ?? selectedCustomer?.pricingTier ?? 1;
+
+  // S19b (SA-811a R1): once the customer's layer has loaded, every auto-priced line (pack or unit, however it was added or
+  // switched) takes the layer price. Idempotent (a settled line returns itself), so running it after every commit is safe;
+  // flag off or no layer for a product = the line is untouched.
+  React.useEffect(() => {
+    if (!priceLayer.enabled || !priceLayer.ready) return;
+    setLineItems((prev) => {
+      let changed = false;
+      const next = prev.map((li) => {
+        if (li.isUnlisted || !li.productId) return li;
+        const r = repriceLineFromLayer(li, {
+          tier: tierForProduct(li.productId),
+          // the server omits a product whose typed row is gone: [] (ready, no row) restores master's number
+          layer: priceLayer.layerOf(li.productId) ?? [],
+        });
+        if (r !== li) changed = true;
+        return r;
+      });
+      return changed ? next : prev;
+    });
+  });
+
+  // SA-813 M1/M3: flag on and the layer pending, failed, or missing a line's product (an incomplete response): the prices
+  // on screen are UNCONFIRMED, so Create / Save as draft / Confirm wait. Flag off: never blocked.
+  const priceLayerUnconfirmed =
+    priceLayer.enabled &&
+    (!priceLayer.ready ||
+      lineItems.some(
+        (li) => !li.isUnlisted && !!li.productId && !priceLayer.lineReady(li.productId),
+      ));
+
+  // "Usually buys" chips + "Order again": the customer's top products and last orders. Both add through
+  // addLineItem, so every line is priced today (see use-order-suggestion-actions).
+  const { data: orderSuggestions, isError: orderSuggestionsError } = useOrderSuggestions(
+    selectedCustomer?.id,
+  );
+  const [suggestionsMenuOpen, setSuggestionsMenuOpen] = React.useState(false);
+  const suggestionActions = useOrderSuggestionActions({
+    suggestions: orderSuggestions,
+    addLine: addLineItem,
+    tierFor: tierForProduct,
+    toast,
+  });
 
   /**
    * units_v1: sell a line by another unit (or back by the pack). A line switched to a unit the
@@ -848,44 +1345,64 @@ export function CreateOrderModal({
     setLineItems((prev) => {
       const target = prev.find((li) => li.tempId === tempId);
       if (!target) return prev;
-      const next = applyLineUnit(target, option, {
-        tier: tierForProduct(target.productId),
-        keepQty: refresh,
-      });
-      const twin = prev.find((li) => li.tempId !== tempId && sameProductUnit(li, next));
-      if (!twin) return prev.map((li) => (li.tempId === tempId ? next : li));
-      return prev
-        .filter((li) => li.tempId !== tempId)
-        .map((li) => (li.tempId === twin.tempId ? mergeSameLine(li, next) : li));
+      const tier = tierForProduct(target.productId);
+      const layer = priceLayer.layerOf(target.productId);
+      return applyUnitToLines(prev, tempId, option, refresh, tier, layer);
     });
+  // SA-626c: a flagged line holds its default unit from the moment it is added, not only once its row mounts.
+  const { user: authUser } = useAuth();
+  const {
+    resolveBeforeSubmit: resolveDefaultUnits,
+    retry: retryUnits,
+    retrying,
+    statusFor: unitStatusFor,
+  } = useDefaultUnitResolver(lineItems, setLineItems, tierForProduct, isStaffRole(authUser?.role));
+  const resolvingRef = React.useRef(false);
+  /** #2865 case c: the row's pending-unit state (locked qty controls, tap count, loading/failed + Retry). */
+  const pendingUnitOf = (li: LineItem) => {
+    const status = unitStatusFor(li);
+    return status
+      ? { status, taps: pendingCount(li), onRetry: () => void retryUnits(), retrying }
+      : undefined;
+  };
 
   const setDiscountedPrice = (tempId: string, value: number | null) => {
     setLineItems((prev) =>
       prev.map((li) => {
         if (li.tempId !== tempId) return li;
+        // #2865 (SA-632 H1): a typed price shapes the line and would settle a PENDING one as cases: refused in the
+        // logic, exactly like a quantity edit (the price controls are disabled while pending as well).
+        if (refusesLineEdit(li, "price")) return li;
         if (value == null) {
           // Clear override — revert to special or list price
           const revertPrice = li.specialPrice ?? li.listPrice;
           return {
             ...li,
             discountedPrice: undefined,
+            systemPrefill: undefined,
             overrideReason: undefined,
             unitPrice: revertPrice,
             priceType: li.specialPrice != null ? "SPECIAL" : "STANDARD",
+            startOnDefaultUnit: false,
           };
         }
         // #2696(c): the server's own rule A (@routeflow/pricing decideStaffOverride) — within ½¢
         // of the special / list price is no override; below list DISCOUNTED, at/above MANUAL (an
         // upsell: the base is hidden from the customer server-side, shown green to the operator).
         const next = applyTypedPrice(li, value);
-        return next.discountedPrice == null ? { ...next, overrideReason: undefined } : next;
+        const consumed = { ...next, startOnDefaultUnit: false, systemPrefill: undefined };
+        return consumed.discountedPrice == null
+          ? { ...consumed, overrideReason: undefined }
+          : consumed;
       }),
     );
   };
 
   const setOverrideReason = (tempId: string, reason: string) =>
     setLineItems((prev) =>
-      prev.map((li) => (li.tempId === tempId ? { ...li, overrideReason: reason } : li)),
+      prev.map((li) =>
+        li.tempId === tempId ? { ...li, overrideReason: reason, systemPrefill: undefined } : li,
+      ),
     );
 
   // ── Submit ────────────────────────────────────────────────────────────────
@@ -893,14 +1410,40 @@ export function CreateOrderModal({
   const [requestedDeliveryDate, setRequestedDeliveryDate] = React.useState("");
   // Business date of the order (blank = today).
   const [orderDate, setOrderDate] = React.useState("");
+  // Row 100: the Order date control sits behind a "Backdate this order" link. `backdateOpen` is the one switch (a resumed
+  // draft with a date sets it at hydrate), so clearing the date from the keyboard never unmounts the focused input.
+  const [backdateOpen, setBackdateOpen] = React.useState(false);
+  const showOrderDate = backdateOpen;
+  const orderDateRef = React.useRef<HTMLInputElement>(null);
+  const backdateLinkRef = React.useRef<HTMLButtonElement>(null);
+  const focusAfterToggle = React.useRef<"date" | "link" | null>(null);
+  React.useEffect(() => {
+    // Focus follows the toggle: the date field when it opens, the link when it folds away (the clicked control unmounts).
+    const target = focusAfterToggle.current;
+    focusAfterToggle.current = null;
+    if (target === "date") orderDateRef.current?.focus();
+    if (target === "link") backdateLinkRef.current?.focus();
+  }, [backdateOpen]);
   // The server's upper bound is the end of the current UTC day (parseOrderDate).
   const maxOrderDate = new Date().toISOString().slice(0, 10);
+  // F13 + row 735a: a requested delivery day before today ON THE BUSINESS'S CALENDAR (the tenant's zone, the day the API judges
+  // it on; never the browser's) is refused next to the field. Until the zone has loaded nothing is blocked locally: the
+  // server refuses a past day with the tenant's today on the field (below). Derived in the render, never mirrored into state (L-333). POS mode steps the field aside and sends no delivery date, so it never blocks there.
+  const tenantToday = useTenantToday(isOpen);
+  const deliveryDateMin = tenantToday; // undefined until the business's zone is known: no `min`, no local block
+  const deliveryDatePast =
+    !posMode &&
+    requestedDeliveryDate !== "" &&
+    tenantToday !== undefined &&
+    requestedDeliveryDate < tenantToday;
+  const deliveryDateRef = React.useRef<HTMLInputElement>(null);
 
   // Staff-only per-order commission override (0 = exempt; null = agent/customer
   // default). Gated on role + the sales_agents addon — server re-checks both.
   const { user } = useAuth();
-  const isStaff = user?.role === "OPERATOR" || user?.role === "TENANT_ADMIN";
+  const isStaff = isStaffRole(user?.role);
   const hasSalesAgents = useHasAddon(SALES_AGENTS_ADDON);
+  // SHIP fulfilment mode: no fulfilment toggle, every order ships by carrier.
   const [commissionRatePct, setCommissionRatePct] = React.useState<number | null>(null);
 
   // ── Minimize & resume drafts (pos-cost-roles-spec §2) ───────────────────────
@@ -918,7 +1461,7 @@ export function CreateOrderModal({
       urgent: !!isUrgent,
       floorAcked: Array.from(floorAcked),
       commissionRatePct,
-      fulfillPath: fulfillPath ?? "ROUTE",
+      fulfillPath,
     }),
     [
       selectedCustomer,
@@ -936,36 +1479,39 @@ export function CreateOrderModal({
   );
   const draftPayloadJson = JSON.stringify(draftPayload);
 
-  const buildDraftDto = React.useCallback(
-    (payload: OrderDraftPayload) => ({
-      kind: "ORDER" as const,
-      customerId: payload.customer?.id ?? null,
-      customerName: payload.customer?.businessName ?? null,
-      title: payload.customer ? `Order, ${payload.customer.businessName}` : "Order draft",
-      payload: payload as unknown as Record<string, unknown>,
-      device: draftDeviceLabel(),
-    }),
-    [],
-  );
-
   // Nothing worth parking until a customer is picked or a line is added.
   const canMinimize = !!selectedCustomer || lineItems.length > 0;
-  const savingDraft = createDraft.isPending || updateDraft.isPending;
+  // SA-817 A2: a server draft (and the local mirror) from the FIRST parkable change (customer + at least one line), not only on
+  // Minimize. The submit key rides in the payload; the engine mirrors mobile's autosave rules (900 ms, single-flight create).
+  const draftParkable = !!selectedCustomer && lineItems.length > 0;
+  const draftMeta = React.useMemo(() => draftMetaOf(draftPayload), [draftPayload]);
+  const autosave = useOrderDraftAutosave({
+    isOpen,
+    resumeDraftId,
+    enabled: isOpen && (!resumeDraftId || activeDraftId === resumeDraftId),
+    parkable: draftParkable,
+    payload: draftPayload as unknown as Record<string, unknown>,
+    payloadJson: draftPayloadJson,
+    meta: draftMeta,
+    user,
+    submitKey,
+    keyTick,
+    createDraft: (dto) => createDraft.mutateAsync(dto as never),
+    updateDraft: (dto) => updateDraft.mutateAsync(dto as never),
+  });
+  // Only an EXPLICIT park (Minimize / dismiss) disables the buttons; a background autosave never does.
+  const [savingDraft, setSavingDraft] = React.useState(false);
+  // Row 604 S5: the toast's Discard asks first (same wording as the drafts dock).
+  const [discardDraftId, setDiscardDraftId] = React.useState<string | null>(null);
 
-  // Park the current builder state into the local Draft (the dock). Returns whether
-  // the save succeeded. Reuses the bound draft when resuming, else creates a new one.
+  // Park the current builder state into the draft (the dock): save it now, creating the row if autosave has not yet.
+  // Returns whether the save succeeded.
   const parkDraft = async (): Promise<boolean> => {
-    const dto = buildDraftDto(draftPayload);
+    setSavingDraft(true);
     try {
-      if (activeDraftId) {
-        await updateDraft.mutateAsync({ id: activeDraftId, ...dto });
-      } else {
-        await createDraft.mutateAsync(dto);
-      }
-      lastSavedRef.current = draftPayloadJson;
-      return true;
-    } catch {
-      return false;
+      return await autosave.flush({ force: true });
+    } finally {
+      setSavingDraft(false);
     }
   };
 
@@ -989,10 +1535,28 @@ export function CreateOrderModal({
   // Radix's Escape interception (see Modal.onEscapeKeyDown). While mid-add, swallow
   // the Escape and clear just the sub-flow state, keeping the order builder open.
   const handleEscape = (event: KeyboardEvent) => {
+    // The "Order again" menu takes Escape first — it closes the menu, never the order.
+    if (suggestionsMenuOpen) {
+      event.preventDefault();
+      setSuggestionsMenuOpen(false);
+      return;
+    }
     // #2696 (b): an open price sheet takes Escape first — it closes the sheet, never the order.
     if (editingLineId) {
       event.preventDefault();
       setEditingLineId(null);
+      return;
+    }
+    // K3: Escape with the customer list OPEN closes just the list (typed text kept) — never parks a draft.
+    // Same visibility rule as CustomerSearchPicker (`show`), so Escape never swallows a no-op.
+    if (
+      customerListOpen &&
+      !selectedCustomer &&
+      customerSearch &&
+      (filteredCustomers.length > 0 || debouncedCustomerSearch.length > 0)
+    ) {
+      event.preventDefault();
+      setCustomerListOpen(false);
       return;
     }
     if (!addItemFlowActive) return; // fall through → Radix dismiss → handleDismiss
@@ -1020,7 +1584,21 @@ export function CreateOrderModal({
     }
     const ok = await parkDraft();
     if (ok) {
-      toast({ title: "Order saved as draft", variant: "success" });
+      // Row 604 S5: read the engine's id NOW - when Close itself created the draft, the render-time id is still null.
+      const parkedId = autosave.getDraftId();
+      toast({
+        title: "Draft saved",
+        description: "Find it in the drafts dock to resume.",
+        variant: "success",
+        ...(parkedId
+          ? {
+              action: {
+                label: "Discard",
+                onClick: () => setDiscardDraftId(parkedId),
+              },
+            }
+          : {}),
+      });
       onClose();
     } else {
       toast({
@@ -1030,29 +1608,32 @@ export function CreateOrderModal({
     }
   };
 
-  // Hydrate the builder from a resumed draft (once per open).
-  React.useEffect(() => {
-    if (!isOpen || !resumeDraftId || !loadedDraft) return;
-    if (hydratedRef.current === loadedDraft.id) return;
-    hydratedRef.current = loadedDraft.id;
-    const p = (loadedDraft.payload ?? {}) as unknown as DraftPayloadWithFulfillPath;
+  // Fill the builder from a draft payload (a docked server draft, a local copy, or the other device's version after a conflict).
+  // Returns the payload exactly as the builder will re-serialize it, so the engine's baseline matches and hydrating itself writes nothing.
+  const hydrateFromPayload = (p: DraftPayloadWithFulfillPath): DraftPayload => {
+    const pick = staffFulfilment.pickForm(p.fulfillPath);
     setSelectedCustomer(p.customer ?? null);
     setLineItems(Array.isArray(p.lineItems) ? p.lineItems : []);
     setOrderDiscount(p.orderDiscount ?? "");
     setShippingFeeInput(p.shippingFee ?? "");
     setRequestedDeliveryDate(p.requestedDeliveryDate ?? "");
     setOrderDate(p.orderDate ?? "");
+    setBackdateOpen(!!p.orderDate);
     setCommissionRatePct(p.commissionRatePct ?? null);
     setFloorAcked(new Set(p.floorAcked ?? []));
     // fulfillPath round-trips from the parked draft itself — NOT re-derived from
     // the customer's own default (that only seeds a FRESH selection; see the
     // picker's onClick). Order matters: this reset() must run after
     // setSelectedCustomer above so a resumed SHIP order stays SHIP.
-    reset({ notes: p.notes ?? "", urgent: !!p.urgent, fulfillPath: p.fulfillPath ?? "ROUTE" });
-    setActiveDraftId(loadedDraft.id);
-    // Seed the autosave baseline so hydration itself never triggers a write. Key
-    // order must match `draftPayload` — the comparison is on the JSON string.
-    lastSavedRef.current = JSON.stringify({
+    reset({ notes: p.notes ?? "", urgent: !!p.urgent, fulfillPath: pick });
+    // SA-817 A6: the draft's own submit key is the order's key (a resubmit after a reload replays it). A draft without one keeps
+    // the key this session minted, and the next autosave writes it into the draft.
+    const savedKey = readDraftSubmitKey(p);
+    if (savedKey) submitKey.adopt(savedKey);
+    // SA-817 A5: today's prices are read once the customer's price read lands (see the effect below).
+    repriceAfterResumeRef.current = true;
+    setRepriceTick((t) => t + 1);
+    return {
       customer: p.customer ?? null,
       lineItems: Array.isArray(p.lineItems) ? p.lineItems : [],
       orderDiscount: p.orderDiscount ?? "",
@@ -1063,29 +1644,131 @@ export function CreateOrderModal({
       urgent: !!p.urgent,
       floorAcked: p.floorAcked ?? [],
       commissionRatePct: p.commissionRatePct ?? null,
-      fulfillPath: p.fulfillPath ?? "ROUTE",
-    });
+      fulfillPath: pick,
+      _submitKey: savedKey ?? submitKey.peek(),
+    } as unknown as DraftPayload;
+  };
+
+  // Hydrate the builder from a resumed draft (once per open).
+  React.useEffect(() => {
+    if (!isOpen || !resumeDraftId || !loadedDraft) return;
+    if (hydratedRef.current === loadedDraft.id) return;
+    hydratedRef.current = loadedDraft.id;
+    const normalized = hydrateFromPayload(
+      (loadedDraft.payload ?? {}) as unknown as DraftPayloadWithFulfillPath,
+    );
+    setActiveDraftId(loadedDraft.id);
+    autosave.hydrateFromServer(loadedDraft, normalized);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, resumeDraftId, loadedDraft]);
 
-  // Autosave per change while bound to a draft (debounced so keystrokes stay cheap
-  // and survive navigation / device loss). Skips when nothing changed.
+  // The bound server draft (created by autosave on the first parkable change) is the modal's active draft.
   React.useEffect(() => {
-    if (!isOpen || !activeDraftId) return;
-    if (draftPayloadJson === lastSavedRef.current) return;
-    const t = setTimeout(() => {
-      updateDraft.mutate(
-        { id: activeDraftId, ...buildDraftDto(draftPayload) },
-        {
-          onSuccess: () => {
-            lastSavedRef.current = draftPayloadJson;
-          },
-        },
+    if (autosave.draftId) setActiveDraftId(autosave.draftId);
+  }, [autosave.draftId]);
+
+  // SA-817 A3: "Resume your unsent order?" - a local copy the server lacks (or is behind on) is offered on a FRESH open.
+  // A docked draft (resumeDraftId) is also checked: a local copy bound to THAT draft that is newer than the server's is offered, so
+  // opening the draft from the dock never orphans work that only reached this device.
+  const unsent = useUnsentOrderResume({
+    active: isOpen,
+    mirror: autosave.mirror,
+    onlyFor: resumeDraftId ?? null,
+  });
+  const resumeLocalCopy = (record: LocalDraftRecord) => {
+    const normalized = hydrateFromPayload(record.payload as unknown as DraftPayloadWithFulfillPath);
+    autosave.hydrateFromLocal(record, normalized);
+    if (record.serverDraftId) setActiveDraftId(record.serverDraftId);
+    unsent.dismiss();
+  };
+
+  // SA-817 A5 / SA-817a: re-price a resumed order for display from TODAY's prices: each product's current tier columns
+  // (the existing GET /products/:id, parallel, capped at 8) plus the customer's price layer / tier rows the modal already
+  // reads. Overrides survive as typed; a failed read never blocks the resume (the lines keep what they had and a notice says so);
+  // the server prices again at submit, so what is shown is what is billed.
+  const [conflictBusy, setConflictBusy] = React.useState(false);
+  // SA-817a: when the draft conflicts and this session has a submit whose outcome is unknown, that submit is replayed FIRST with
+  // its original key (the order may already exist); only then is the user asked which version to keep.
+  const [replay, setReplay] = React.useState<"idle" | "running" | "done">("idle");
+  const lastSubmitRef = React.useRef<{
+    data: FormValues;
+    options: SubmitOptions;
+    /** The builder state the attempt was sent with: the replay may only resend THAT cart. */
+    cartJson: string;
+  } | null>(null);
+  const [pricesNotRefreshed, setPricesNotRefreshed] = React.useState(false);
+  const resumePricesReady = priceLayer.ready && customerPricesData !== undefined;
+  React.useEffect(() => {
+    if (!repriceAfterResumeRef.current || !selectedCustomer || lineItems.length === 0) return;
+    if (!resumePricesReady) return;
+    repriceAfterResumeRef.current = false;
+    const tierFor = tierForProduct; // the one tier chain this modal prices with
+    const layerOf = priceLayer.enabled
+      ? (productId: string) => priceLayer.layerOf(productId)
+      : undefined;
+    void fetchCurrentTierPrices(productsToRefresh(lineItems), (id) =>
+      apiClient.get(`/products/${id}`).then((r) => r.data),
+    ).then((fresh) => {
+      setPricesNotRefreshed(fresh.failed);
+      if (fresh.byProduct.size === 0) return;
+      setLineItems(
+        (prev) =>
+          repriceResumedLines(withFreshTierPrices(prev, fresh.byProduct), tierFor, layerOf).lines,
       );
-    }, 900);
-    return () => clearTimeout(t);
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, activeDraftId, draftPayloadJson]);
+  }, [resumePricesReady, selectedCustomer?.id, lineItems.length, repriceTick]);
+
+  React.useEffect(() => {
+    if (!autosave.conflict) {
+      if (replay !== "idle") setReplay("idle");
+      return;
+    }
+    if (replay !== "idle") return;
+    const last = lastSubmitRef.current;
+    // Replay only the cart that was actually sent: if the cart changed since, K1 may never have reached the server and a replay
+    // would create an order for edits nobody confirmed. Then the dialog opens at once and Keep this one still keeps K1.
+    if (submitKey.hasUnknown() && last && last.cartJson === draftPayloadJson) {
+      setReplay("running");
+      if (submitOrder(last.data, last.options) !== true) setReplay("done");
+    } else {
+      setReplay("done");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autosave.conflict, replay]);
+
+  // SA-817 A4: another device changed the draft after our last sync. Keep BOTH; the choice only picks which one is shown.
+  const settleConflict = async (choice: "keep-mine" | "open-other") => {
+    setConflictBusy(true);
+    try {
+      // A key that may already own an order (a submit was sent with it, or it came from a resumed draft) is never moved to a
+      // copy: Keep this one then keeps this version on the same draft and parks the other device's version instead.
+      const res = await autosave.resolveConflict(choice, { keepKey: submitKey.maybeUsed() });
+      if (res.choice === "keep-mine") {
+        const key = readDraftSubmitKey(res.payload);
+        if (key && !res.parkedDraftId) submitKey.adopt(key, { fresh: true });
+        setActiveDraftId(res.draftId);
+        toast({
+          title: "Kept your version. The other one is still in your drafts.",
+          variant: "success",
+        });
+      } else {
+        const normalized = hydrateFromPayload(
+          res.current.payload as unknown as DraftPayloadWithFulfillPath,
+        );
+        setActiveDraftId(res.current.id);
+        autosave.hydrateFromServer(res.current, normalized);
+        toast({
+          title: "Opened the other version. Yours is saved in your drafts.",
+          variant: "success",
+        });
+      }
+    } catch {
+      toast({ title: "Couldn't settle the two versions. Try again.", variant: "error" });
+    } finally {
+      setConflictBusy(false);
+    }
+  };
 
   // Scan-to-draft / scan-to-new: add the incoming barcode once the builder is
   // ready — a fresh open adds immediately; a resumed draft waits until it has
@@ -1099,7 +1782,7 @@ export function CreateOrderModal({
   }, [isOpen, initialScanCode, resumeDraftId, activeDraftId]);
 
   // Stash form values + intended status across the merge-prompt round-trip so we can
-  // re-submit with the operator's choice. Both "Save as Draft" and "Create Order"
+  // re-submit with the operator's choice. Both "Save as draft" and "Create Order"
   // funnel through here so the prompt fires for either action.
   const pendingFormValuesRef = React.useRef<FormValues | null>(null);
   const pendingAsDraftRef = React.useRef<boolean>(false);
@@ -1107,17 +1790,84 @@ export function CreateOrderModal({
   // operator captures a license or accepts responsibility.
   const licenseRetryRef = React.useRef<{
     data: FormValues;
-    options: { mergeChoice?: "merge" | "separate"; asDraft?: boolean };
+    options: SubmitOptions;
   } | null>(null);
 
   /**
    * Actually fire the create-order request with the operator's chosen mergeChoice
    * (or no choice, if the customer has no active order).
    */
-  const submitOrder = (
-    data: FormValues,
-    options: { mergeChoice?: "merge" | "separate"; asDraft?: boolean } = {},
+  const submitOrder = (data: FormValues, options: SubmitOptions = {}) => {
+    if (fulfilmentPending || priceLayerUnconfirmed) return;
+    // SA-626c: any line still waiting for its default unit is resolved FIRST (never sent as the pack/case by default);
+    // nothing pending = the synchronous path, unchanged.
+    if (!lineItems.some(isPendingDefaultUnit)) return doSubmitOrder(data, options, lineItems);
+    if (resolvingRef.current) return; // a double click while the units load must not submit twice
+    resolvingRef.current = true;
+    // Returned so a Sell-anyway retry keeps its ack until the units have loaded and the request has been built.
+    return resolveDefaultUnits(lineItems)
+      .then(({ lines, blocked, folds }) => {
+        if (blocked.length) {
+          setMergePrompt(null);
+          toast({
+            title: "Couldn't load the selling units. Check your connection and try again.",
+            variant: "error",
+          });
+          return;
+        }
+        setLineItems((cur) => mergeResolvedLines(cur, lineItems, lines, folds)); // keeps edits made while this waited
+        doSubmitOrder(data, options, lines);
+      })
+      .finally(() => {
+        resolvingRef.current = false;
+      });
+  };
+
+  /** POS "Confirm and invoice" / "Confirm only": the order exists (PENDING); confirm it, then invoice it. */
+  const finishPosOrder = (
+    created: { id: string; orderNumber?: string | null; status?: string | null },
+    finish: "invoice" | "confirm",
+    viewOrder?: (orderId: string) => void,
+    merged?: { fromStatus?: string | null },
   ) => {
+    const action = viewOrder
+      ? { label: "View Order", onClick: () => viewOrder(created.id) }
+      : undefined;
+    posFinish
+      .mutateAsync({
+        ...rw.attach({ orderId: created.id }),
+        invoice: finish === "invoice",
+        fromStatus: created.status ?? merged?.fromStatus,
+      })
+      .then(() => {
+        toast({
+          title: finish === "invoice" ? POS_COPY.confirmedInvoiced : POS_COPY.confirmedOnly,
+          variant: "success",
+          action,
+          // F17: a toast that carries View Order stays until used (the 4 s default is gone before a click lands).
+          ...(action ? { duration: ACTION_TOAST_MS } : {}),
+        });
+      })
+      .catch((err: unknown) => {
+        if (rw.handle(err, () => finishPosOrder(created, finish, viewOrder, merged))) return; // row 510: promote
+        const step = err instanceof PosFinishError ? err.step : "confirm";
+        toast({
+          title:
+            step === "invoice"
+              ? POS_COPY.invoiceMissing
+              : merged
+                ? POS_COPY.mergedConfirmMissing
+                : POS_COPY.confirmMissing,
+          variant: "warning",
+          action,
+          ...(action ? { duration: ACTION_TOAST_MS } : {}),
+        });
+      })
+      // POS mode lands on the new order's page (Hand over / Print live there), never back on the list.
+      .finally(() => viewOrder?.(created.id));
+  };
+
+  const doSubmitOrder = (data: FormValues, options: SubmitOptions, lines: LineItem[]) => {
     const { mergeChoice, asDraft } = options;
     // #2406: fold in whatever the operator has typed into the Returns section.
     const inlineReturn = returnSave.build(selectedCustomer!.id, "");
@@ -1129,7 +1879,7 @@ export function CreateOrderModal({
       return;
     }
     // #2696(c): never send what the server refuses — an off-special price needs its reason first.
-    const needsReason = lineItems.find(lineNeedsReason);
+    const needsReason = lines.find(lineNeedsReason);
     if (needsReason) {
       setMergePrompt(null);
       toast({ title: reasonRequiredMessage(needsReason.productName), variant: "error" });
@@ -1138,10 +1888,8 @@ export function CreateOrderModal({
     }
     const itemsForSubmit = (
       asDraft
-        ? lineItems.filter(
-            (li) => (li.isUnlisted ? li.productName.trim() : li.productId) && li.qty > 0,
-          )
-        : lineItems
+        ? lines.filter((li) => (li.isUnlisted ? li.productName.trim() : li.productId) && li.qty > 0)
+        : lines
     ).map((li) => {
       // Optional per-line note (trimmed) — carried onto the invoice line.
       const note = li.note?.trim() ? { notes: li.note.trim() } : {};
@@ -1168,73 +1916,178 @@ export function CreateOrderModal({
             ...note,
           };
     });
-    createOrder.mutate(
-      {
-        customerId: selectedCustomer!.id,
-        items: itemsForSubmit,
-        notes: data.notes,
-        urgent: data.urgent,
-        fulfillPath: data.fulfillPath || "ROUTE",
-        requestedDeliveryDate: requestedDeliveryDate || undefined,
-        orderDate: orderDate || undefined,
-        ...(discountAmt > 0 ? { discountAmount: discountAmt } : {}),
-        ...(shippingAmt > 0 ? { shippingFee: shippingAmt } : {}),
-        // 0 MUST be sent (it means exempt) — `!= null` preserves it; only a
-        // blank field (null) is omitted so the agent/customer default applies.
-        ...(commissionRatePct != null ? { commissionRatePct } : {}),
-        ...(asDraft ? { status: "DRAFT" as const } : {}),
-        ...(mergeChoice ? { mergeChoice } : {}),
-        // Bill-now (createSale) has no path through this modal today — only
-        // the create-order payload needs threading here.
-        ...(appliedCredits.length ? { appliedCreditNotes: appliedCredits } : {}),
-        // SA-484a: the create's Idempotency-Key HEADER rides with the returnKey (same lifecycle).
-        ...(inlineReturn ? { inlineReturn, idempotencyKey: returnSave.idempotencyKey() } : {}),
-      } as any,
-      {
-        onSuccess: (created: any) => {
-          toast(orderCreatedToast({ mergeChoice, asDraft, created, onViewOrder }));
-          // The parked draft has become a real order — clear it from the dock.
-          if (activeDraftId) deleteDraft.mutate(activeDraftId);
-          setMergePrompt(null);
-          pendingFormValuesRef.current = null;
-          pendingAsDraftRef.current = false;
-          returnSave.onSuccess();
-          onClose();
+    // The lines the request carries, for the merged toast (same filter as the payload's items).
+    const itemsForToast = asDraft
+      ? lines.filter((li) => (li.isUnlisted ? li.productName.trim() : li.productId) && li.qty > 0)
+      : lines;
+    const payload = {
+      customerId: selectedCustomer!.id,
+      items: itemsForSubmit,
+      notes: data.notes,
+      urgent: posMode ? false : data.urgent,
+      fulfillPath: posMode ? "PICKUP" : staffFulfilment.pickForm(data.fulfillPath),
+      // POS mode: the delivery-only fields step aside (their values are kept, so switching POS off restores them).
+      requestedDeliveryDate: posMode ? undefined : requestedDeliveryDate || undefined,
+      orderDate: orderDate || undefined,
+      ...(discountAmt > 0 ? { discountAmount: discountAmt } : {}),
+      ...(shippingAmt > 0 ? { shippingFee: shippingAmt } : {}),
+      // 0 MUST be sent (it means exempt) — `!= null` preserves it; only a
+      // blank field (null) is omitted so the agent/customer default applies.
+      ...(commissionRatePct != null ? { commissionRatePct } : {}),
+      ...(asDraft ? { status: "DRAFT" as const } : {}),
+      ...(mergeChoice ? { mergeChoice } : {}),
+      // Bill-now (createSale) has no path through this modal today — only
+      // the create-order payload needs threading here.
+      ...(appliedCredits.length ? { appliedCreditNotes: appliedCredits } : {}),
+      // SA-484a: the create's Idempotency-Key HEADER rides with the returnKey (same lifecycle).
+      ...(inlineReturn ? { inlineReturn } : {}),
+    } as any;
+    // BUG-A: ONE request in flight per modal (a synchronous latch — `isPending` is stale for the
+    // second click of a double click) and one Idempotency-Key per attempt. mergeChoice is NOT part
+    // of the cart fingerprint: the merge-prompt round trip re-submits the SAME attempt.
+    const { mergeChoice: _mc, idempotencyKey: _ik, ...cartForKey } = payload;
+    const attemptKey = submitKey.begin(JSON.stringify(cartForKey));
+    if (attemptKey === null) return false;
+    lastSubmitRef.current = { data, options, cartJson: draftPayloadJson };
+    // SA-817 A6: the key is DURABLE before it is sent - the local copy (with `_submitKey`) is written and the server copy saved
+    // (short budget, never gating the order) before the POST, so a lost response followed by a reload can replay the same key.
+    // Row 510: the Sell-anyway ack is read NOW, synchronously, not inside `send`: the durable write below awaits, and the
+    // retry has returned (so the hook has dropped the ack) before a deferred `attach` would run.
+    const sentBody = rw.attach(payload);
+    const send = () =>
+      createOrder.mutate(
+        { ...sentBody, idempotencyKey: attemptKey },
+        {
+          onSuccess: (created: any) => {
+            submitKey.settle("success");
+            if (posMode && !asDraft && created?.id) {
+              // A merge returns the target order; its status (else the prompt's) says if it is still a DRAFT.
+              finishPosOrder(
+                created,
+                posFinishRef.current,
+                onViewOrder,
+                mergeChoice === "merge" ? { fromStatus: mergePrompt?.status } : undefined,
+              );
+            } else {
+              showOrderCreatedToast(toastApi, {
+                mergeChoice,
+                asDraft,
+                created,
+                onViewOrder,
+                // N01: what the merge added, in the lines' own words (the total comes from the response).
+                addedLines:
+                  mergeChoice === "merge"
+                    ? itemsForToast.map((li) => ({
+                        name: li.productName,
+                        qty: addedLineQty(li),
+                      }))
+                    : undefined,
+              });
+            }
+            // The parked draft has become a real order — clear it from the dock.
+            // SA-817: the order exists - stop autosave, drop the local copy, delete the bound server draft (once a create in flight lands).
+            void autosave.finish().then((boundId) => {
+              if (boundId) deleteDraft.mutate(boundId);
+            });
+            setMergePrompt(null);
+            pendingFormValuesRef.current = null;
+            pendingAsDraftRef.current = false;
+            returnSave.onSuccess();
+            onClose();
+            // B1201: a lost-response replay of a create whose credits were never applied (read-only hint).
+            if (created?.creditsPending && created?.id) {
+              toast({ title: CREDITS_PENDING_COPY, variant: "warning" });
+              onViewOrder?.(created.id);
+            }
+          },
+          onError: (err: any) => {
+            // SA-715: the key already made an order: open it, never resubmit. Checked FIRST so no
+            // key-conflict code can fall through to the refused / re-mint branch.
+            const pendingOrderId = creditsPendingOrderId(err); // B1201: saved, credits not applied
+            const heldOrderId = idempotencyConflictOrderId(err) ?? pendingOrderId;
+            submitKey.settle(
+              heldOrderId
+                ? "conflict"
+                : isUnknownOutcome(err)
+                  ? "unknown"
+                  : isSameAttemptRefusal(err)
+                    ? "same-attempt"
+                    : "refused",
+            );
+            if (heldOrderId) {
+              toast(
+                pendingOrderId
+                  ? { title: CREDITS_PENDING_COPY, variant: "warning" }
+                  : {
+                      title: "Your earlier submit went through. Opening that order.",
+                      variant: "success",
+                    },
+              );
+              // The order EXISTS: the bound draft is finished with (no zombie draft left to resubmit).
+              void autosave.finish().then((boundId) => {
+                if (boundId) deleteDraft.mutate(boundId);
+              });
+              onClose();
+              onViewOrder?.(heldOrderId);
+              return;
+            }
+            // Belt-and-braces: if our pre-check missed an active order (race) the API
+            // returns 409 with code MERGE_CHOICE_REQUIRED. Surface the modal from that.
+            const body = err?.response?.data;
+            if (
+              err?.response?.status === 409 &&
+              body?.code === API_ERROR_CODES.MERGE_CHOICE_REQUIRED &&
+              body?.activeOrder
+            ) {
+              pendingFormValuesRef.current = data;
+              pendingAsDraftRef.current = !!asDraft;
+              setMergePrompt(body.activeOrder as ActiveOrderSummary);
+              return;
+            }
+            if (
+              rw.handle(err, () => {
+                const r = submitOrder(data, options); // a boolean is the submit's result, not the retry's
+                return typeof r === "object" ? r : undefined; // the default-unit path: hold the ack until it has built
+              })
+            )
+              return; // row 510
+            // Row 718: the tenant's day called the date past. The refusal is on the date field (above); a merge-or-separate
+            // prompt that led here must not stay over it, so close it (as its onClose does) and put focus on the field.
+            if (body?.code === API_ERROR_CODES.DELIVERY_DATE_IN_PAST) {
+              setMergePrompt(null);
+              pendingFormValuesRef.current = null;
+              pendingAsDraftRef.current = false;
+              // After the prompt's dialog has unmounted: it traps focus while open and restores it to its opener on close.
+              window.setTimeout(() => deliveryDateRef.current?.focus(), 50);
+              return;
+            }
+            const restricted = parseSellingRestricted(err);
+            if (restricted) {
+              setRestrictedBlock(restricted);
+              return;
+            }
+            // A regulated line needs a verified license (or a §8 override / removal).
+            const blocked = parseRegulatedAuthError(err);
+            if (blocked && blocked.length > 0) {
+              licenseRetryRef.current = { data, options };
+              setLicenseBlock(blocked);
+              return;
+            }
+            // #2406: none of the precondition flows above matched (each re-submits the SAME
+            // attempt and must keep the returnKey) — an inline-return-carrying save refused
+            // for any other 4xx reason mints a fresh one and surfaces the message near the
+            // Returns section. The modal itself stays open (no onClose() on this path already).
+            if (inlineReturn) returnSave.onError(err, false);
+          },
+          // SA-817a: a replay triggered by a draft conflict is over, whatever its outcome.
+          onSettled: () => setReplay((r) => (r === "running" ? "done" : r)),
         },
-        onError: (err: any) => {
-          // Belt-and-braces: if our pre-check missed an active order (race) the API
-          // returns 409 with code MERGE_CHOICE_REQUIRED. Surface the modal from that.
-          const body = err?.response?.data;
-          if (
-            err?.response?.status === 409 &&
-            body?.code === "MERGE_CHOICE_REQUIRED" &&
-            body?.activeOrder
-          ) {
-            pendingFormValuesRef.current = data;
-            pendingAsDraftRef.current = !!asDraft;
-            setMergePrompt(body.activeOrder as ActiveOrderSummary);
-            return;
-          }
-          const restricted = parseSellingRestricted(err);
-          if (restricted) {
-            setRestrictedBlock(restricted);
-            return;
-          }
-          // A regulated line needs a verified license (or a §8 override / removal).
-          const blocked = parseRegulatedAuthError(err);
-          if (blocked && blocked.length > 0) {
-            licenseRetryRef.current = { data, options };
-            setLicenseBlock(blocked);
-            return;
-          }
-          // #2406: none of the precondition flows above matched (each re-submits the SAME
-          // attempt and must keep the returnKey) — an inline-return-carrying save refused
-          // for any other 4xx reason mints a fresh one and surfaces the message near the
-          // Returns section. The modal itself stays open (no onClose() on this path already).
-          if (inlineReturn) returnSave.onError(err, false);
-        },
-      },
-    );
+      );
+    // With no local copy to make durable (no signed-in identity) the POST goes at once.
+    const durable = autosave.durableBeforeSubmit();
+    if (durable) void durable.then(send);
+    else send();
+    return true;
   };
 
   /**
@@ -1244,6 +2097,10 @@ export function CreateOrderModal({
   const onSaveDraft = () => {
     if (!selectedCustomer) {
       setCustomerError("Select a customer");
+      return;
+    }
+    if (deliveryDatePast) {
+      deliveryDateRef.current?.focus();
       return;
     }
     // Read Notes from react-hook-form (the <Textarea> renders id="notes", so the
@@ -1275,6 +2132,10 @@ export function CreateOrderModal({
       setLineItemsError("All items must have a quantity greater than zero");
       hasErrors = true;
     }
+    if (deliveryDatePast) {
+      deliveryDateRef.current?.focus();
+      hasErrors = true;
+    }
     if (hasErrors) return;
 
     // If the customer already has an active draft/pending order, ask the operator
@@ -1288,6 +2149,20 @@ export function CreateOrderModal({
     submitOrder(data);
   };
 
+  // Row 718: the server measures the day on the TENANT's calendar, so a browser on another day can pass the local check
+  // and still get 400 DELIVERY_DATE_IN_PAST. The refusal goes next to the date field, worded from the code and the
+  // tenant's `today` it carries (never the raw server message, B986); editing the date clears it.
+  const deliveryDateRefusal: string | null = (() => {
+    const body = (
+      createOrder.error as { response?: { data?: { code?: unknown; today?: unknown } } } | null
+    )?.response?.data;
+    if (body?.code !== API_ERROR_CODES.DELIVERY_DATE_IN_PAST) return null;
+    return typeof body.today === "string" && /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(body.today)
+      ? `That day has passed (today is ${body.today} for this business). Pick today or a later date.`
+      : DELIVERY_DATE_PAST_COPY;
+  })();
+  const deliveryDateError = deliveryDatePast ? DELIVERY_DATE_PAST_COPY : deliveryDateRefusal;
+
   // Extract the API's error message from Axios error structure
   const apiError: string | null = (() => {
     const err = createOrder.error as {
@@ -1297,12 +2172,25 @@ export function CreateOrderModal({
     if (!err) return null;
     // A SELLING_RESTRICTED 409 has its own dialog; the banner would repeat it (with the rule's
     // admin-written reason) and outlive the dialog's OK.
-    if (parseSellingRestricted(err)) return null;
-    return err.response?.data?.message || err.message || "Something went wrong. Please try again.";
+    if (parseSellingRestricted(err) || parseRestrictionWarning(err)) return null;
+    // Row 718: the server's past-delivery-day refusal sits on the date field, not in this banner.
+    if (deliveryDateRefusal) return null;
+    // B986-7 (Opus): a RECOGNISED refusal (a coded one, a stock shortfall, a credit limit...) is fixed copy; an UNCODED one keeps
+    // today's server sentence, which says what to fix (B991 / B987-E mint the codes + fields, then this read goes).
+    return (
+      codedToastCopy(err) ||
+      (isStaleCreditRefusal(err) ? STALE_CREDIT_COPY : null) ||
+      err.response?.data?.message ||
+      err.message ||
+      "Something went wrong. Please try again."
+    );
   })();
 
   // The same LineItemRow for the create-order list and the scan screen, so the two can never drift.
-  const renderLine = (li: LineItem, ctx?: { highlighted?: boolean; onTapPrice?: () => void }) => (
+  const renderLine = (
+    li: LineItem,
+    ctx?: { highlighted?: boolean; onTapPrice?: () => void; priceHistory?: boolean },
+  ) => (
     <LineItemRow
       key={li.tempId}
       item={li}
@@ -1312,8 +2200,27 @@ export function CreateOrderModal({
       costRevealed={costRevealed.has(li.tempId)}
       // the remembered price is a PACK price (the server excludes unit lines from it, B606)
       priceHistoryEntry={li.unitLabel ? undefined : priceHistory?.[li.productId]}
+      // Main list only. The scan screen has its own window-level Escape handler that would close
+      // the whole screen with the popover open, so it renders no history button or chips.
+      customerPriceHistory={
+        ctx?.priceHistory
+          ? {
+              customerId: selectedCustomer?.id,
+              customerName: selectedCustomer?.businessName,
+              onUsePrice: (price) => setDiscountedPrice(li.tempId, price),
+              summary: priceSummary,
+            }
+          : undefined
+      }
       highlighted={ctx?.highlighted}
       onTapPrice={ctx?.onTapPrice}
+      active={
+        li.tempId ===
+        (lineItems.some((l) => l.tempId === touchedLineId)
+          ? touchedLineId
+          : lineItems[lineItems.length - 1]?.tempId)
+      }
+      onActivate={() => setTouchedLineId(li.tempId)}
       rowRef={(el) => {
         if (el) rowRefs.current.set(li.tempId, el);
         else rowRefs.current.delete(li.tempId);
@@ -1333,12 +2240,22 @@ export function CreateOrderModal({
       onUpdateUnlistedName={(name) => updateUnlistedName(li.tempId, name)}
       onUpdateUnlistedPrice={(value) => updateUnlistedPrice(li.tempId, value)}
       onRemove={() => removeLineItem(li.tempId)}
+      pendingUnit={pendingUnitOf(li)}
       unitSlot={
-        <OrderLineUnitPicker
-          line={li}
-          tier={tierForProduct(li.productId)}
-          onChange={(option, refresh) => setLineUnit(li.tempId, option, refresh)}
-        />
+        <>
+          <OrderLineUnitPicker
+            line={{ ...li, layerManual: isLayerManualLine(li, priceLayer.layerOf(li.productId)) }}
+            tier={tierForProduct(li.productId)}
+            layer={priceLayer.layerOf(li.productId)}
+            startOnDefaultUnit={li.startOnDefaultUnit}
+            onChange={(option, refresh) => setLineUnit(li.tempId, option, refresh)}
+          />
+          {li.priceChangedFrom != null && li.priceChangedFrom !== li.unitPrice && (
+            <p data-testid="price-changed-note" className="mt-1 text-xs font-medium text-amber-700">
+              {priceChangedCopy(li.priceChangedFrom, li.unitPrice)}
+            </p>
+          )}
+        </>
       }
     />
   );
@@ -1352,6 +2269,7 @@ export function CreateOrderModal({
       floorAcked={floorAcked.has(li.tempId)}
       costRevealed={costRevealed.has(li.tempId)}
       priceHistoryEntry={priceHistory?.[li.productId]}
+      pendingUnit={pendingUnitOf(li)}
       onQtyDelta={(delta) => updateQty(li.tempId, delta)}
       onSetBoxes={(value) => setBoxes(li.tempId, value)}
       onSetPieces={(value) => setPieces(li.tempId, value)}
@@ -1373,6 +2291,17 @@ export function CreateOrderModal({
   const undoScan = ({ productId, created }: ScanHistoryEntry) => {
     const line = lineItems.find((li) => sameProductUnit(li, { productId }));
     if (!line) return; // the operator already removed it by hand
+    // #2865 (SA-632 N2): Undo on a PENDING line takes one TAP back (the shared rule); at the creating scan the line is
+    // REMOVED. It never steps a quantity, so it can never settle the line as a case.
+    if (isPendingDefaultUnit(line)) {
+      const undone = undoPendingTap(pendingCount(line));
+      if (undone.remove) removeLineItem(line.tempId);
+      else
+        setLineItems((prev) =>
+          prev.map((li) => (li.tempId === line.tempId ? { ...li, pendingTaps: undone.taps } : li)),
+        );
+      return;
+    }
     const singleUnit = line.unitsPerBox
       ? (line.boxes ?? 0) <= 1 && (line.pieces ?? 0) === 0
       : line.qty <= 1;
@@ -1414,58 +2343,143 @@ export function CreateOrderModal({
       open={isOpen && !scanScreenActive}
       onClose={handleDismiss}
       onEscapeKeyDown={handleEscape}
-      title={resumeDraftId ? "Resume draft" : "Create Order"}
-      description="Create a new order on behalf of a customer."
+      title={resumeDraftId ? "Resume draft" : storeOnlyPos ? POS_COPY.builderTitle : "Create Order"}
+      description={
+        storeOnlyPos ? POS_COPY.builderSubtitle : "Create a new order on behalf of a customer."
+      }
       className="max-w-2xl"
+      // Q08: the X is the one Close (the footer used to repeat it); Minimize sits beside it. Both are 44 px targets below lg.
+      closeClassName="max-lg:h-11 max-lg:w-11 max-lg:items-center max-lg:justify-center"
+      headerActions={
+        <Button
+          variant="ghost"
+          type="button"
+          size="sm"
+          aria-label="Minimize"
+          title="Minimize to drafts"
+          className="w-7 px-0 max-lg:h-11 max-lg:w-11"
+          onClick={handleMinimize}
+          disabled={!canMinimize || savingDraft}
+          loading={savingDraft}
+        >
+          {savingDraft ? null : <Minus className="h-4 w-4" />}
+        </Button>
+      }
       footer={
-        // B564: the Modal footer is a `justify-end` flex row, so four buttons wider than a
-        // 390px sheet overflowed off the LEFT edge and clipped Minimize. Under `sm` the save
-        // actions get their own row and Minimize sits below them, full-width; from `sm` up
-        // this is the original single row with Minimize pinned left.
-        <div className="flex w-full flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-end sm:gap-3">
-          {/* Minimize parks the whole builder into the bottom-left draft dock
-              (pos-cost-roles-spec §2). Left-aligned, away from the save actions. */}
-          <Button
-            variant="ghost"
-            type="button"
-            className="w-full sm:mr-auto sm:w-auto"
-            onClick={handleMinimize}
-            disabled={!canMinimize || savingDraft}
-            loading={savingDraft}
-            leftIcon={<Minus className="h-4 w-4" />}
-          >
-            Minimize
-          </Button>
-          {/* Three-tier hierarchy: ghost (dismiss) < secondary (alt save) <
+        // Q08: ONE compact row at every width. Minimize moved into the header beside the X and the footer
+        // Close (a repeat of the X, same handleDismiss) is gone, so only the total and the save actions are left; the row
+        // wraps instead of overflowing a 390px sheet (B564). Every footer button is a 44px touch target under `sm`.
+        <div
+          data-testid="create-order-footer"
+          className="flex w-full flex-wrap items-center justify-end gap-x-3 gap-y-2"
+        >
+          {/* O3 (P01/P02): the total is pinned HERE (it used to sit at the foot of the scrolling body, hidden behind
+              this sticky footer at the moment of "Create Order"). First in the row, left-aligned (mr-auto); min-w-0 +
+              tabular-nums, no fixed width: a five-figure total wraps instead of clipping. */}
+          {lineItems.length > 0 && (
+            <div
+              data-testid="create-order-footer-total"
+              className="mr-auto flex min-w-0 items-baseline gap-2 tabular-nums text-navy"
+            >
+              <span className="text-sm text-navy/70">Total</span>
+              <span className="min-w-0 break-all text-base font-semibold">${total.toFixed(2)}</span>
+            </div>
+          )}
+          {/* Two-tier hierarchy: secondary (alt save) <
               primary (main action). Save-as-Draft was an amber button that
               competed with the primary blue and misused a warning colour. */}
           <div className="flex flex-wrap items-center justify-end gap-2 sm:gap-3">
-            <Button variant="ghost" type="button" onClick={handleDismiss}>
-              Cancel
-            </Button>
-            <Button
+            {/* Row 344: the footer actions are 44 px tap targets below sm (they were 34 px at 390). */}
+            <ReadOnlyHint className="basis-full text-right text-xs text-slate-600" />
+            {priceLayer.enabled && priceLayer.failed ? (
+              <p
+                role="alert"
+                className="basis-full text-right text-xs text-red-700"
+                data-testid="order-price-layer-failed"
+              >
+                Couldn&apos;t load this customer&apos;s prices.{" "}
+                <button type="button" className="underline" onClick={priceLayer.refetch}>
+                  Retry
+                </button>
+              </p>
+            ) : priceLayerUnconfirmed ? (
+              <p
+                role="status"
+                className="basis-full text-right text-xs text-slate-600"
+                data-testid="order-price-layer-pending"
+              >
+                Checking this customer&apos;s prices…
+              </p>
+            ) : null}
+            <WriteButton
               variant="secondary"
               type="button"
+              className="max-sm:h-11"
               loading={createOrder.isPending}
+              disabled={createOrder.isPending || fulfilmentPending || priceLayerUnconfirmed}
               onClick={onSaveDraft}
             >
-              Save as Draft
-            </Button>
-            <Button type="submit" form="create-order-form" loading={createOrder.isPending}>
-              Create Order
-            </Button>
+              Save as draft
+            </WriteButton>
+            {posMode && (
+              <WriteButton
+                variant="secondary"
+                type="button"
+                className="max-sm:h-11"
+                loading={createOrder.isPending}
+                disabled={
+                  createOrder.isPending ||
+                  fulfilmentPending ||
+                  priceLayerUnconfirmed ||
+                  lineItems.some(isPendingDefaultUnit)
+                }
+                onClick={() => {
+                  posFinishRef.current = "confirm";
+                  void handleSubmit(onSubmit)();
+                }}
+              >
+                {POS_COPY.confirmOnly}
+              </WriteButton>
+            )}
+            <WriteButton
+              type="submit"
+              form="create-order-form"
+              className="max-sm:h-11"
+              onClick={() => {
+                posFinishRef.current = "invoice";
+              }}
+              loading={createOrder.isPending}
+              // #2865 case d (SA-632): no order is created while ANY line is still waiting on its default unit
+              disabled={
+                createOrder.isPending ||
+                fulfilmentPending ||
+                priceLayerUnconfirmed ||
+                lineItems.some(isPendingDefaultUnit)
+              }
+              aria-busy={lineItems.some(isPendingDefaultUnit) || undefined}
+            >
+              {posMode ? POS_COPY.confirmAndInvoice : "Create Order"}
+            </WriteButton>
           </div>
         </div>
       }
     >
       <form
         id="create-order-form"
-        onSubmit={handleSubmit(onSubmit)}
+        onSubmit={(e) => {
+          // An implicit submit (no button pressed) follows the primary action; "Confirm only" bypasses this
+          // (it calls handleSubmit itself), and a click on the primary already set the same value.
+          posFinishRef.current = "invoice";
+          return handleSubmit(onSubmit)(e);
+        }}
         noValidate
         onKeyDown={(e) => {
           // A <textarea> (the per-line note) owns Enter for itself — a newline, never a submit.
           // Every other control keeps the no-Enter-submit behavior this form has always had.
-          if (e.key === "Enter" && !(e.target instanceof HTMLTextAreaElement)) {
+          // A result row (button[role=option]) keeps its native Enter-to-pick (PKG-4 F09c).
+          const isOption =
+            e.target instanceof HTMLButtonElement && e.target.getAttribute("role") === "option";
+          if (e.key === "Enter" && !(e.target instanceof HTMLTextAreaElement) && !isOption) {
             e.preventDefault();
           }
         }}
@@ -1479,10 +2493,76 @@ export function CreateOrderModal({
             </div>
           )}
 
+          {pricesNotRefreshed && (
+            <div
+              role="status"
+              data-testid="prices-not-refreshed"
+              className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-700 ring-1 ring-amber-200"
+            >
+              {PRICES_NOT_REFRESHED_COPY}
+            </div>
+          )}
+
+          {posAllowed && !storeOnly && (
+            <label
+              htmlFor="pos-mode-switch"
+              className="flex min-h-11 cursor-pointer items-start justify-between gap-3 rounded-lg border border-surface-border bg-white px-3 py-2.5"
+            >
+              <span className="min-w-0">
+                <span id="pos-mode-label" className="block text-sm font-medium text-navy">
+                  {POS_COPY.switchLabel}
+                </span>
+                <span id="pos-mode-hint" className="block text-[11px] leading-snug text-navy/70">
+                  {POS_COPY.switchHint}
+                </span>
+                {pos.failed && (
+                  <span role="alert" className="block text-[11px] leading-snug text-danger">
+                    {POS_COPY.switchFailed}
+                  </span>
+                )}
+              </span>
+              <input
+                id="pos-mode-switch"
+                type="checkbox"
+                role="switch"
+                aria-checked={posMode}
+                aria-labelledby="pos-mode-label"
+                aria-describedby="pos-mode-hint"
+                checked={posMode}
+                disabled={!pos.known || pos.saving}
+                onChange={(e) => pos.setPosMode(e.target.checked)}
+                className="mt-1 h-4 w-4 shrink-0 accent-brand-500"
+              />
+            </label>
+          )}
+
+          {staffFulfilment.failed && !posMode && (
+            <div
+              role="alert"
+              className="flex items-center justify-between gap-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 ring-1 ring-red-200"
+            >
+              <span>Couldn&apos;t load your delivery settings.</span>
+              <Button type="button" variant="secondary" size="sm" onClick={staffFulfilment.retry}>
+                Retry
+              </Button>
+            </div>
+          )}
+
           {/* API error */}
           {apiError && (
-            <div className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 ring-1 ring-red-200">
-              {apiError}
+            <div
+              data-testid="order-api-error"
+              className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 ring-1 ring-red-200"
+            >
+              <span>{apiError}</span>
+              {selectedCustomer && (
+                <CreditRefusalRecordPayment
+                  error={createOrder.error}
+                  customerId={selectedCustomer.id}
+                  customerName={selectedCustomer.businessName}
+                  onPaid={() => createOrder.reset()}
+                />
+              )}
             </div>
           )}
 
@@ -1504,64 +2584,101 @@ export function CreateOrderModal({
                 </div>
                 <button
                   type="button"
-                  onClick={() => setSelectedCustomer(null)}
-                  className="rounded p-1 text-navy/70 hover:text-danger transition-colors"
+                  ref={customerUndo.chipRef}
+                  onClick={customerUndo.change}
+                  className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded p-1 text-navy/70 hover:text-danger transition-colors lg:min-h-0 lg:min-w-0"
                   title="Change customer"
+                  aria-label="Change customer"
                 >
                   <X className="h-4 w-4" />
                 </button>
               </div>
             ) : (
-              <div className="relative">
-                <input
-                  type="search"
-                  placeholder="Search by business name…"
+              <>
+                <CustomerSearchPicker
+                  inputRef={customerUndo.searchInputRef}
                   value={customerSearch}
-                  onChange={(e) => {
-                    setCustomerSearch(e.target.value);
+                  onValueChange={(v) => {
+                    setCustomerSearch(v);
                     setCustomerError("");
                   }}
+                  results={filteredCustomers as SelectedCustomer[]}
+                  searched={debouncedCustomerSearch.length > 0}
+                  listOpen={customerListOpen}
+                  onListOpenChange={setCustomerListOpen}
+                  onPick={pickCustomer}
+                  error={customerError}
+                />
+                {customerUndo.previous && (
+                  <p role="status" className="flex items-center gap-2 text-xs text-navy/70">
+                    Customer cleared ({customerUndo.previous.customer.businessName}).
+                    <button
+                      type="button"
+                      onClick={customerUndo.undo}
+                      className="font-medium text-brand-500 hover:underline"
+                    >
+                      Undo
+                    </button>
+                  </p>
+                )}
+              </>
+            )}
+
+            {/* F09/F12: the delivery day is set right after the customer, so it is on screen once lines are added. */}
+            {!posMode && (
+              <div className="space-y-1 sm:max-w-[16rem]">
+                <label className="block text-xs font-medium text-navy/70" htmlFor="delivery-date">
+                  Requested Delivery Date{" "}
+                  <span className="font-normal text-navy/70">(optional)</span>
+                </label>
+                <input
+                  id="delivery-date"
+                  ref={deliveryDateRef}
+                  type="date"
+                  min={deliveryDateMin}
+                  value={requestedDeliveryDate}
+                  onChange={(e) => {
+                    setRequestedDeliveryDate(e.target.value);
+                    if (deliveryDateRefusal) createOrder.reset();
+                  }}
+                  aria-invalid={deliveryDateError ? true : undefined}
+                  aria-describedby={deliveryDateError ? "delivery-date-error" : undefined}
                   className={cn(
-                    "h-10 w-full rounded border bg-white px-3 text-sm text-navy placeholder:text-navy/70 focus:outline-none focus:ring-2 focus:ring-brand-500",
-                    customerError
-                      ? "border-danger focus:border-transparent"
-                      : "border-surface-border focus:border-transparent",
+                    "h-10 w-full rounded border bg-white px-3 text-sm text-navy focus:outline-none focus:ring-2",
+                    deliveryDateError
+                      ? "border-danger focus:ring-danger"
+                      : "border-surface-border focus:ring-brand-500",
                   )}
                 />
-                {customerError && <p className="mt-1 text-xs text-danger">{customerError}</p>}
-                {customerSearch &&
-                  (filteredCustomers.length > 0 || debouncedCustomerSearch.length > 0) && (
-                    <ul className="absolute left-0 right-0 top-full z-10 mt-1 overflow-hidden rounded-lg border border-surface-border bg-white shadow-dropdown">
-                      {filteredCustomers.length === 0 && debouncedCustomerSearch.length > 0 && (
-                        <li className="px-3 py-2 text-sm text-navy/70">No customers found.</li>
-                      )}
-                      {filteredCustomers.map((c: any) => (
-                        <li key={c.id}>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setSelectedCustomer(c);
-                              // Seed the order's fulfillment from this customer's own
-                              // default — done here (not a selectedCustomer-keyed
-                              // effect) so hydrating a parked draft's own
-                              // fulfillPath — via the same setSelectedCustomer call
-                              // below — is never clobbered by this default.
-                              setValue("fulfillPath", c.fulfillPath ?? "ROUTE");
-                              setCustomerSearch("");
-                              setDebouncedCustomerSearch("");
-                            }}
-                            className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-navy hover:bg-surface-raised"
-                          >
-                            <span className="font-medium">{c.businessName}</span>
-                            {c.contactName && (
-                              <span className="text-xs text-navy/70">{c.contactName}</span>
-                            )}
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
+                {deliveryDateError && (
+                  <p
+                    id="delivery-date-error"
+                    role="alert"
+                    className="text-xs font-medium text-danger"
+                  >
+                    {deliveryDateError}
+                  </p>
+                )}
               </div>
+            )}
+
+            {selectedCustomer && (
+              <CustomerAccountStrip
+                customerId={selectedCustomer.id}
+                customerName={selectedCustomer.businessName}
+              />
+            )}
+
+            {selectedCustomer && (
+              <OrderSuggestionsBar
+                suggestions={orderSuggestions}
+                hasLines={lineItems.length > 0}
+                onAddProduct={suggestionActions.addProduct}
+                onOrderAgain={(order) => void suggestionActions.orderAgain(order)}
+                error={orderSuggestionsError}
+                menuOpen={suggestionsMenuOpen}
+                onMenuOpenChange={setSuggestionsMenuOpen}
+              />
             )}
           </section>
 
@@ -1588,12 +2705,14 @@ export function CreateOrderModal({
                   // handler from ALSO running. Without this check, a real wedge scan double-adds:
                   // once via the detector (correct, +1) and once here, which (mis)treats it as a
                   // manually-typed SKU and applies whatever is in the Qty field.
+                  if (productNav.onKeyDown(e)) return;
                   if (e.key === "Enter" && !e.defaultPrevented) {
                     e.preventDefault();
                     e.stopPropagation();
                     handleProductSearchEnter();
                   }
                 }}
+                {...productNav.inputProps}
                 className={cn(
                   // B596: at 390 the [search][Qty][scan] row leaves ~200px — the placeholder is one line, so it
                   // steps down a size and ellipsizes instead of being cut mid-word.
@@ -1603,34 +2722,42 @@ export function CreateOrderModal({
                     : "border-surface-border focus:border-transparent",
                 )}
               />
-              <BarcodeScannerButton
-                inputRef={productSearchRef}
-                onScan={(code) => {
-                  barcodeScanHandlerRef.current(code); // a camera scan is +1
-                }}
-                onError={(message) => toast({ variant: "error", title: message })}
-                onOpenContinuous={scanV2 ? () => setScanScreenOpen(true) : undefined}
-                className="h-10 min-h-[44px] w-10 min-w-[44px] shrink-0"
-                title="Scan barcode"
-              />
+              {/* Results render BEFORE the Scan button (absolutely positioned — no visual change) so a
+                  first Tab from the search reaches result 1, like the customer search (PKG-4 F10). */}
               {productSearch &&
                 (filteredProducts.length > 0 || debouncedProductSearch.length > 0) && (
-                  <ul className="absolute left-0 right-0 top-full z-10 mt-1 overflow-hidden rounded-lg border border-surface-border bg-white shadow-dropdown">
+                  <ul
+                    id={productNav.listId}
+                    role="listbox"
+                    aria-label="Products"
+                    className="absolute left-0 right-0 top-full z-10 mt-1 overflow-hidden rounded-lg border border-surface-border bg-white shadow-dropdown"
+                  >
                     {filteredProducts.length === 0 && debouncedProductSearch.length > 0 && (
-                      <li className="px-3 py-2 text-sm text-navy/70">No products found.</li>
+                      <li role="status" className="px-3 py-2 text-sm text-navy/70">
+                        No products found.
+                      </li>
                     )}
                     {filteredProducts.map((p: any) => {
+                      const pi = productRowIndex.get(p.id) ?? -1; // the flat nav index, shared with variant rows
                       const hasVariants = p.variants?.length > 0;
-                      const isExpanded = expandedParentId === p.id;
+                      const isExpanded = isGroupExpanded(
+                        expandedParentId,
+                        productGroups.expandedIds,
+                        p.id,
+                      );
                       const alreadyAdded = lineItems.some((li) => li.productId === p.id);
                       return (
                         <React.Fragment key={p.id}>
-                          <li>
+                          <li role="presentation">
                             <button
                               type="button"
+                              role="option"
+                              id={productNav.optionId(pi)}
+                              aria-selected={pi === productNav.highlight}
+                              onMouseEnter={() => productNav.setHighlight(pi)}
                               onClick={() => {
                                 if (hasVariants) {
-                                  setExpandedParentId(isExpanded ? null : p.id);
+                                  setExpandedParentId(isExpanded ? "" : p.id);
                                 } else {
                                   // Already-added rows increment qty (addLineItem's
                                   // repeat path) — the old no-op left the search
@@ -1643,6 +2770,7 @@ export function CreateOrderModal({
                               }}
                               className={cn(
                                 "flex w-full items-center justify-between px-3 py-2.5 text-left text-sm text-navy hover:bg-surface-raised",
+                                pi === productNav.highlight && "bg-surface-raised",
                                 alreadyAdded && !hasVariants && "opacity-40",
                               )}
                             >
@@ -1661,7 +2789,7 @@ export function CreateOrderModal({
                                 )}
                                 {hasVariants && (
                                   <span className="ml-1 text-[10px] text-navy/70 shrink-0">
-                                    {p.variants.length} variants
+                                    {countNoun(p.variants.length, "variant")}
                                   </span>
                                 )}
                                 {!hasVariants && (
@@ -1681,20 +2809,26 @@ export function CreateOrderModal({
                           {hasVariants &&
                             isExpanded &&
                             p.variants.map((v: any) => {
+                              const vi = variantRowIndex.get(v.id) ?? -1;
                               const variantAdded = lineItems.some((li) => li.productId === v.id);
                               return (
-                                <li key={v.id} className="bg-surface-raised/50">
+                                <li key={v.id} role="presentation" className="bg-surface-raised/50">
                                   <button
                                     type="button"
-                                    onClick={() => addPicked(v)}
+                                    role="option"
+                                    id={productNav.optionId(vi)}
+                                    aria-selected={vi === productNav.highlight}
+                                    onMouseEnter={() => productNav.setHighlight(vi)}
+                                    onClick={() => addPicked(attachParent(v, p))}
                                     className={cn(
                                       "flex w-full items-center justify-between pl-8 pr-3 py-2 text-left text-sm text-navy hover:bg-surface-raised",
+                                      vi === productNav.highlight && "bg-surface-raised",
                                       variantAdded && "opacity-40",
                                     )}
                                   >
                                     <div className="flex items-center gap-1.5 min-w-0">
                                       <span className="font-medium truncate">
-                                        {v.variantName ?? v.name}
+                                        {pickerProductName(v, p)}
                                       </span>
                                       {v.sku && (
                                         <span className="text-xs text-navy/70 shrink-0">
@@ -1715,20 +2849,18 @@ export function CreateOrderModal({
                         </React.Fragment>
                       );
                     })}
-                    <li className="border-t border-surface-border">
+                    <li role="presentation" className="border-t border-surface-border">
                       <button
                         type="button"
-                        className="flex w-full items-center gap-2 px-3 py-2.5 text-sm text-brand-500 hover:bg-surface-raised font-medium"
-                        onClick={() => {
-                          const looksLikeSku = /^\d{6,}$/.test(debouncedProductSearch.trim());
-                          setCreateProductInitialName(looksLikeSku ? "" : debouncedProductSearch);
-                          setCreateProductInitialSku(
-                            looksLikeSku ? debouncedProductSearch.trim() : "",
-                          );
-                          setCreateProductOpen(true);
-                          setProductSearch("");
-                          setDebouncedProductSearch("");
-                        }}
+                        role="option"
+                        id={productNav.optionId(createProductRowIndex)}
+                        aria-selected={createProductRowIndex === productNav.highlight}
+                        onMouseEnter={() => productNav.setHighlight(createProductRowIndex)}
+                        className={cn(
+                          "flex w-full items-center gap-2 px-3 py-2.5 text-sm text-brand-500 hover:bg-surface-raised font-medium",
+                          createProductRowIndex === productNav.highlight && "bg-surface-raised",
+                        )}
+                        onClick={openCreateProduct}
                       >
                         <Plus className="h-3.5 w-3.5" />
                         Create new product
@@ -1737,7 +2869,37 @@ export function CreateOrderModal({
                     </li>
                   </ul>
                 )}
+              <BarcodeScannerButton
+                inputRef={productSearchRef}
+                onScan={(code, source) => {
+                  // A wedge scan is taken from the field AND the field cleared here, in the same task, so
+                  // the next scan of a burst types into an empty field. A camera scan is +1.
+                  if (source === "field") {
+                    setProductSearch("");
+                    setDebouncedProductSearch("");
+                  }
+                  void scanQueue.enqueue(code);
+                }}
+                onError={(message) => toast({ variant: "error", title: message })}
+                onOpenContinuous={scanV2 ? () => setScanScreenOpen(true) : undefined}
+                className="h-10 min-h-[44px] w-10 min-w-[44px] shrink-0"
+                title="Scan barcode"
+              />
             </div>
+
+            {scanMatches.length > 0 && (
+              <DidYouMeanPicker
+                matches={scanMatches}
+                onConfirm={(product) => {
+                  setScanMatches([]);
+                  addPicked(product);
+                }}
+                onCancel={() => {
+                  setScanMatches([]);
+                  scheduleScannerRefocus(productSearchRef, 50);
+                }}
+              />
+            )}
 
             {lineItemsError && lineItems.length === 0 && (
               <p className="text-xs text-danger">{lineItemsError}</p>
@@ -1837,6 +2999,7 @@ export function CreateOrderModal({
                     // #2696 (b)/(c): tap the price → the line's price/qty sheet, a SPECIAL-priced line
                     // too — moving off the special price takes a reason there (SA-558).
                     onTapPrice: () => setEditingLineId(li.tempId),
+                    priceHistory: true,
                   }),
                 )}
               </ul>
@@ -1945,35 +3108,50 @@ export function CreateOrderModal({
 
             {/* Dates */}
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <div className="space-y-1">
-                <label className="block text-xs font-medium text-navy/70" htmlFor="delivery-date">
-                  Requested Delivery Date{" "}
-                  <span className="font-normal text-navy/70">(optional)</span>
-                </label>
-                <input
-                  id="delivery-date"
-                  type="date"
-                  value={requestedDeliveryDate}
-                  onChange={(e) => setRequestedDeliveryDate(e.target.value)}
-                  className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                />
-              </div>
-              <div className="space-y-1">
-                <label className="block text-xs font-medium text-navy/70" htmlFor="order-date">
-                  Order date <span className="font-normal text-navy/70">(optional)</span>
-                </label>
-                <input
-                  id="order-date"
-                  type="date"
-                  max={maxOrderDate}
-                  value={orderDate}
-                  onChange={(e) => setOrderDate(e.target.value)}
-                  className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                />
-                <p className="text-[11px] leading-snug text-navy/70">
-                  The day the order actually happened. Leave blank for today.
-                </p>
-              </div>
+              {showOrderDate ? (
+                <div className="space-y-1">
+                  <label className="block text-xs font-medium text-navy/70" htmlFor="order-date">
+                    Order date <span className="font-normal text-navy/70">(optional)</span>
+                  </label>
+                  <input
+                    id="order-date"
+                    ref={orderDateRef}
+                    type="date"
+                    max={maxOrderDate}
+                    value={orderDate}
+                    onChange={(e) => setOrderDate(e.target.value)}
+                    className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  />
+                  <p className="text-[11px] leading-snug text-navy/70">
+                    The day the order actually happened. Leave blank for today.{" "}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setOrderDate("");
+                        focusAfterToggle.current = "link";
+                        setBackdateOpen(false);
+                      }}
+                      className="inline-flex min-h-[44px] items-center font-medium text-brand-500 hover:underline lg:min-h-0"
+                    >
+                      Use today
+                    </button>
+                  </p>
+                </div>
+              ) : (
+                <div className="flex items-end">
+                  <button
+                    type="button"
+                    ref={backdateLinkRef}
+                    onClick={() => {
+                      focusAfterToggle.current = "date";
+                      setBackdateOpen(true);
+                    }}
+                    className="min-h-[44px] text-sm font-medium text-brand-500 hover:underline lg:min-h-10"
+                  >
+                    Backdate this order
+                  </button>
+                </div>
+              )}
             </div>
 
             {isStaff && hasSalesAgents && (
@@ -1999,57 +3177,56 @@ export function CreateOrderModal({
               </div>
             )}
 
-            <div className="space-y-1">
-              <label className="block text-xs font-medium text-navy/70">Fulfillment</label>
-              <div className="inline-flex rounded-lg border border-surface-border bg-white p-0.5">
-                <button
-                  type="button"
-                  onClick={() => setValue("fulfillPath", "ROUTE")}
-                  className={cn(
-                    "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
-                    fulfillPath === "ROUTE" ? "bg-navy text-white" : "text-navy/70 hover:text-navy",
-                  )}
-                >
-                  Delivery route
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setValue("fulfillPath", "SHIP")}
-                  className={cn(
-                    "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
-                    fulfillPath === "SHIP" ? "bg-navy text-white" : "text-navy/70 hover:text-navy",
-                  )}
-                >
-                  Ship via carrier
-                </button>
+            {staffFulfilment.choice && !posMode && (
+              <div className="space-y-1">
+                <label className="block text-xs font-medium text-navy/70">Fulfillment</label>
+                <div className="inline-flex rounded-lg border border-surface-border bg-white p-0.5">
+                  {staffFulfilment.formMethods.map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => setValue("fulfillPath", m)}
+                      className={cn(
+                        "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+                        fulfillPath === m ? "bg-navy text-white" : "text-navy/70 hover:text-navy",
+                      )}
+                    >
+                      {m === "ROUTE" ? "Delivery route" : "Ship via carrier"}
+                    </button>
+                  ))}
+                </div>
+                {fulfillPath === "SHIP" && (
+                  <p className="text-[11px] leading-snug text-navy/70">Ships via carrier.</p>
+                )}
               </div>
-              {fulfillPath === "SHIP" && (
-                <p className="text-[11px] leading-snug text-navy/70">
-                  Ships via carrier — won&apos;t appear on delivery routes.
-                </p>
-              )}
-            </div>
+            )}
 
             <Textarea
               label="Notes"
-              placeholder="Special instructions, delivery notes…"
+              placeholder={
+                storeOnlyPos ? "Special instructions…" : "Special instructions, delivery notes…"
+              }
               register={register("notes")}
             />
 
-            <label
-              className={cn(
-                "flex cursor-pointer items-center gap-2.5 rounded-lg border px-3 py-2.5 transition-colors",
-                isUrgent
-                  ? "border-danger/40 bg-danger-bg"
-                  : "border-surface-border bg-white hover:bg-surface-raised",
-              )}
-            >
-              <input type="checkbox" {...register("urgent")} className="h-4 w-4 accent-danger" />
-              <AlertTriangle className={cn("h-4 w-4", isUrgent ? "text-danger" : "text-navy/30")} />
-              <span className={cn("text-sm font-medium", isUrgent ? "text-danger" : "text-navy")}>
-                Mark as Urgent
-              </span>
-            </label>
+            {!posMode && (
+              <label
+                className={cn(
+                  "flex cursor-pointer items-center gap-2.5 rounded-lg border px-3 py-2.5 transition-colors",
+                  isUrgent
+                    ? "border-danger/40 bg-danger-bg"
+                    : "border-surface-border bg-white hover:bg-surface-raised",
+                )}
+              >
+                <input type="checkbox" {...register("urgent")} className="h-4 w-4 accent-danger" />
+                <AlertTriangle
+                  className={cn("h-4 w-4", isUrgent ? "text-danger" : "text-navy/30")}
+                />
+                <span className={cn("text-sm font-medium", isUrgent ? "text-danger" : "text-navy")}>
+                  Mark as Urgent
+                </span>
+              </label>
+            )}
           </section>
         </div>
       </form>
@@ -2071,24 +3248,55 @@ export function CreateOrderModal({
           pendingFormValuesRef.current = null;
           pendingAsDraftRef.current = false;
         }}
-        title="Open order exists"
+        // N02: open on the primary action so Enter takes it (Tab reaches the other, Escape cancels). Radix would
+        // otherwise focus the header X, where Enter would just close the prompt.
+        onOpenAutoFocus={(event) => {
+          const primary = orderDate ? separateChoiceRef.current : mergeChoiceRef.current;
+          if (!primary || primary.disabled) return; // a disabled primary: leave Radix's default
+          event.preventDefault();
+          primary.focus();
+        }}
+        title={posMode ? POS_COPY.mergeTitle : "Open order exists"}
         description={
           mergePrompt
-            ? orderDate
-              ? `This customer already has an open ${mergePrompt.status.toLowerCase()} order. Merging files these items under that order's date, so a backdated order has to be created separately.`
-              : `This customer already has an open ${mergePrompt.status.toLowerCase()} order. Merge these items into it, or create a fully separate order?`
+            ? posMode
+              ? orderDate
+                ? "Adding to it files these items under that order's date, so a backdated order has to be created separately."
+                : POS_COPY.mergeDescription
+              : orderDate
+                ? `This customer already has an open ${mergePrompt.status.toLowerCase()} order. Merging files these items under that order's date, so a backdated order has to be created separately.`
+                : `This customer already has an open ${mergePrompt.status.toLowerCase()} order. Merge these items into it, or create a fully separate order?`
             : undefined
         }
         className="max-w-md"
         footer={
           mergePrompt ? (
-            <div className="flex w-full flex-col gap-2">
+            <div ref={promptFooterRef} className="flex w-full flex-col gap-2">
+              {priceLayerUnconfirmed ? (
+                <p
+                  role="status"
+                  className="text-xs text-slate-600"
+                  data-testid="merge-price-layer-wait"
+                >
+                  {priceLayer.failed ? PRICE_LAYER_FAILED_COPY : PRICE_LAYER_PENDING_COPY} The order
+                  can be created once this customer&apos;s prices are confirmed.
+                  {priceLayer.failed ? (
+                    <>
+                      {" "}
+                      <button type="button" className="underline" onClick={priceLayer.refetch}>
+                        Retry
+                      </button>
+                    </>
+                  ) : null}
+                </p>
+              ) : null}
               {/* Merging routes through the existing order, which keeps its own
                   orderDate — the backdate would be dropped, so it is not offered. */}
               <Button
+                ref={mergeChoiceRef}
                 type="button"
                 variant={orderDate ? "secondary" : "primary"}
-                disabled={!!orderDate}
+                disabled={!!orderDate || priceLayerUnconfirmed}
                 loading={createOrder.isPending}
                 onClick={() => {
                   if (pendingFormValuesRef.current)
@@ -2098,11 +3306,15 @@ export function CreateOrderModal({
                     });
                 }}
               >
-                Merge into {mergePrompt.orderNumber ?? "existing order"}
+                {posMode
+                  ? POS_COPY.mergeAdd
+                  : `Merge into ${mergePrompt.orderNumber ?? "existing order"}`}
               </Button>
               <Button
+                ref={separateChoiceRef}
                 type="button"
                 variant={orderDate ? "primary" : "secondary"}
+                disabled={priceLayerUnconfirmed}
                 loading={createOrder.isPending}
                 onClick={() => {
                   if (pendingFormValuesRef.current)
@@ -2112,7 +3324,9 @@ export function CreateOrderModal({
                     });
                 }}
               >
-                Create as separate {pendingAsDraftRef.current ? "draft" : "order"}
+                {posMode
+                  ? POS_COPY.mergeNew
+                  : `Create as separate ${pendingAsDraftRef.current ? "draft" : "order"}`}
               </Button>
             </div>
           ) : null
@@ -2133,6 +3347,7 @@ export function CreateOrderModal({
 
       {/* License guard (W6b): the sale hit a 409 REGULATED_AUTH_REQUIRED. */}
       <BlockedLinesDialog lines={restrictedBlock} onClose={() => setRestrictedBlock(null)} />
+      {rw.dialog}
       {licenseBlock && selectedCustomer && (
         <LicenseGuardModal
           open
@@ -2155,12 +3370,40 @@ export function CreateOrderModal({
         />
       )}
       {editingLine && renderPriceEditor(editingLine, () => setEditingLineId(null))}
+      {/* SA-817 A3: a local copy the server lacks is offered on a fresh open. */}
+      <ResumeUnsentOrderDialog
+        candidates={unsent.candidates}
+        onResume={resumeLocalCopy}
+        onDismiss={unsent.dismiss}
+        onDiscard={unsent.discard}
+      />
+      {/* SA-817 A4: the draft changed on another device after our last sync. */}
+      <DraftConflictDialog
+        open={!!autosave.conflict && replay === "done"}
+        busy={conflictBusy}
+        onChoose={(choice) => void settleConflict(choice)}
+      />
     </Modal>
   );
 
   return (
     <>
       {dialog}
+      <ConfirmDialog
+        open={discardDraftId !== null}
+        onClose={() => setDiscardDraftId(null)}
+        onConfirm={() => {
+          const id = discardDraftId;
+          setDiscardDraftId(null);
+          if (!id) return;
+          deleteDraft.mutate(id, {
+            onSuccess: () => toast({ title: "Draft discarded", variant: "success" }),
+          });
+        }}
+        title="Discard this draft?"
+        description="The parked order and everything in it will be removed. This cannot be undone."
+        confirmLabel="Discard"
+      />
       {scanV2 && (
         <ScanOrderScreen
           open={isOpen && scanScreenOpen}

@@ -3,6 +3,7 @@
 import * as React from "react";
 import { AlertTriangle } from "lucide-react";
 import { Modal, Button } from "@routeflow/ui/web";
+import { DIALOG_FIT, DIALOG_FOOTER_BUTTON } from "./dialog-mobile-fit";
 
 // ─── ConfirmDialog ─────────────────────────────────────────────────────────────
 // Lightweight wrapper around Modal for simple yes/no destructive confirmations.
@@ -14,8 +15,12 @@ export interface ConfirmDialogProps {
   title: string;
   description?: string;
   confirmLabel?: string;
-  /** "danger" = red button, "secondary" = neutral button */
-  variant?: "danger" | "secondary";
+  /** Label of the dismiss button — default "Cancel". Set it where "Cancel" would be ambiguous
+   *  (e.g. confirming a cancellation: "Keep my plan"). */
+  cancelLabel?: string;
+  /** "danger" = red button (opens with focus on Cancel), "warning" = primary button + amber icon
+   *  (reversible actions such as Deactivate), "secondary" = neutral button */
+  variant?: "danger" | "secondary" | "warning";
   loading?: boolean;
 }
 
@@ -26,21 +31,43 @@ export function ConfirmDialog({
   title,
   description,
   confirmLabel = "Confirm",
+  cancelLabel = "Cancel",
   variant = "danger",
   loading = false,
 }: ConfirmDialogProps) {
+  const cancelRef = React.useRef<HTMLButtonElement>(null);
   return (
     <Modal
       open={open}
       onClose={onClose}
       title={title}
-      className="max-w-sm"
+      className={DIALOG_FIT}
+      // A destructive confirm must not be one Enter away: focus lands on Cancel, not the close X.
+      onOpenAutoFocus={
+        variant === "danger"
+          ? (e) => {
+              e.preventDefault();
+              cancelRef.current?.focus();
+            }
+          : undefined
+      }
       footer={
         <>
-          <Button variant="secondary" onClick={onClose} disabled={loading}>
-            Cancel
+          <Button
+            ref={cancelRef}
+            variant="secondary"
+            className={DIALOG_FOOTER_BUTTON}
+            onClick={onClose}
+            disabled={loading}
+          >
+            {cancelLabel}
           </Button>
-          <Button variant={variant} onClick={onConfirm} loading={loading}>
+          <Button
+            variant={variant === "warning" ? "primary" : variant}
+            className={DIALOG_FOOTER_BUTTON}
+            onClick={onConfirm}
+            loading={loading}
+          >
             {confirmLabel}
           </Button>
         </>

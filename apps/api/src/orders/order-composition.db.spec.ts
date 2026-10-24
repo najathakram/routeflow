@@ -48,6 +48,7 @@ import { OrdersService } from "./orders.service";
 import * as snapshotAdapter from "./recipe-snapshot.adapter";
 import type { RecipeSnapshot } from "./line-composition";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
+import { INVOICE_EDIT_STUBS } from "./testing/invoice-edit-stubs";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -321,6 +322,7 @@ describeDb("#2717 M3 order composition writes — real Postgres", () => {
       invoicesService: {
         revertLinkedInvoicesForOrderEdit: async () => undefined,
         resyncOrderInvoicesForEdit: async () => [],
+        ...INVOICE_EDIT_STUBS,
         reconcileOrderDraftInvoice: async () => undefined,
       },
       logger: new Logger(OrdersService.name),
@@ -340,7 +342,10 @@ describeDb("#2717 M3 order composition writes — real Postgres", () => {
       stub,
       { hasFlag: async () => false } as never,
       stub,
-      { reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined) } as never,
+      {
+        reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined),
+        settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
+      } as never,
       stub,
     );
   }, 120_000);

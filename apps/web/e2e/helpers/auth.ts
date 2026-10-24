@@ -29,6 +29,20 @@ export async function loginAsSuperAdmin(page: Page) {
 }
 
 /**
+ * A brand-new Super Admin session for this test, instead of the shared `super-admin.json`
+ * storage state. The API rotates refresh tokens on use, so every test that replays the SAME saved
+ * refresh token after the first one has refreshed it gets a 401 and lands on the Platform
+ * Administrator Login. Signing in per test gives each test its own, unrotated token pair.
+ * Call from `test.beforeEach` in specs that hit the real stack as the super admin.
+ */
+export async function freshSuperAdminSession(page: Page) {
+  await page.context().clearCookies();
+  await page.goto("/admin-login");
+  await page.evaluate(() => window.localStorage.clear());
+  await loginAsSuperAdmin(page);
+}
+
+/**
  * The login form requires a Workspace (tenant slug) on hosts without a real
  * tenant subdomain. On the Railway prod URL the page derives one from the
  * hostname so the field is hidden; on localhost it is visible and REQUIRED —

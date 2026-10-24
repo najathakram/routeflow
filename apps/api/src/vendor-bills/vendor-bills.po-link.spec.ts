@@ -94,6 +94,14 @@ describe("VendorBillsService — PO-linked bills (units/PO step 7)", () => {
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    // R5-5: refs resolve inside the tenant unless a test says otherwise.
+    prisma.supplier.findMany.mockImplementation(async (args: any) =>
+      (args?.where?.id?.in ?? []).map((id: string) => ({ id })),
+    );
+    // B1236: bill lines are validated against the catalog; by default every named id resolves.
+    prisma.product.findMany.mockImplementation(async (args: any) =>
+      (args?.where?.id?.in ?? []).map((id: string) => ({ id })),
+    );
     // receive() re-reads the bill inside its transaction (B285 row lock): repeat the last bill read
     prisma.vendorBill.findUnique.mockImplementation(
       () =>
@@ -325,8 +333,7 @@ describe("VendorBillsService — PO-linked bills (units/PO step 7)", () => {
       await expect(
         service.update("bill-1", { items: [billLine({ qty: 3 })] }),
       ).rejects.toMatchObject({ response: { code: "BILL_EXCEEDS_PO" } });
-      expect(prisma.vendorBillItem.deleteMany).not.toHaveBeenCalled();
-      expect(prisma.vendorBill.update).not.toHaveBeenCalled();
+      expect(prisma.vendorBill.update).not.toHaveBeenCalled(); // nothing deleted, nothing written
     });
 
     it("allows an edit that stays within the PO", async () => {
@@ -334,7 +341,12 @@ describe("VendorBillsService — PO-linked bills (units/PO step 7)", () => {
       prisma.purchaseOrder.findUnique.mockResolvedValue(po());
       prisma.vendorBill.update.mockResolvedValue({ id: "bill-1", supplierId: null });
       await service.update("bill-1", { items: [billLine({ qty: 1, unitCost: 28 })] });
-      expect(prisma.vendorBillItem.deleteMany).toHaveBeenCalled();
+      // the old lines go through the PARENT (a child-scoped delete cannot see null-tenant lines)
+      expect(prisma.vendorBill.update).toHaveBeenCalledWith({
+        where: { id: "bill-1" },
+        data: { items: { deleteMany: {} } },
+      });
+      expect(prisma.vendorBillItem.deleteMany).not.toHaveBeenCalled();
     });
 
     it("an unlinked bill's edit never consults a PO", async () => {
@@ -398,8 +410,22 @@ describe("VendorBillsService — PO-linked bills (units/PO step 7)", () => {
       );
       prisma.product.findFirst.mockResolvedValue({ currentStock: D(24), averageCost: D(1.25) });
       prisma.vendorBill.update.mockResolvedValue({ id: "bill-1", status: "DRAFT" });
+      prisma.stockMovement.findMany.mockImplementation(async ({ where }: any) =>
+        where.notes && typeof where.notes === "object"
+          ? []
+          : [
+              {
+                id: "mv-1",
+                quantity: D(24),
+                unitCost: D(1.25),
+                effectiveAt: new Date("2026-06-01"),
+              },
+            ],
+      );
       await service.revertToDraft("bill-1");
-      expect(prisma.stockMovement.deleteMany).toHaveBeenCalled();
+      // B846: reversed by an appended row, never by a delete.
+      expect(prisma.stockMovement.deleteMany).not.toHaveBeenCalled();
+      expect(prisma.stockMovement.create).toHaveBeenCalledTimes(1);
       expect(prisma.product.update).toHaveBeenCalled();
     });
 
@@ -430,8 +456,23 @@ describe("VendorBillsService — PO-linked bills (units/PO step 7)", () => {
       );
       prisma.product.findFirst.mockResolvedValue({ currentStock: D(24), averageCost: D(1.25) });
       prisma.vendorBill.update.mockResolvedValue({ id: "bill-1", status: "VOID" });
+      prisma.stockMovement.findMany.mockImplementation(async ({ where }: any) =>
+        where.notes && typeof where.notes === "object"
+          ? []
+          : [
+              {
+                id: "mv-1",
+                quantity: D(24),
+                unitCost: D(1.25),
+                effectiveAt: new Date("2026-06-01"),
+              },
+            ],
+      );
       await service.voidBill("bill-1", "user-1");
+      // B846 sibling: reversed by one appended PURCHASE row, never an ADJUSTMENT or a delete.
+      expect(prisma.stockMovement.deleteMany).not.toHaveBeenCalled();
       expect(prisma.stockMovement.create).toHaveBeenCalledTimes(1);
+      expect(prisma.stockMovement.create.mock.calls[0][0].data.type).toBe("PURCHASE");
     });
   });
 
@@ -527,7 +568,10 @@ describe("VendorBillsService — PO-linked bills (units/PO step 7)", () => {
       prisma.vendorBill.findUnique.mockResolvedValue(bill());
       prisma.vendorBill.update.mockResolvedValue({ id: "bill-1", supplierId: null });
       await service.update("bill-1", { items: [billLine({ packSize: 2.5 })] });
-      const rows = prisma.vendorBill.update.mock.calls[0][0].data.items.createMany.data;
+      const main = prisma.vendorBill.update.mock.calls.find(
+        (c: any[]) => c[0].data.items?.createMany,
+      );
+      const rows = main![0].data.items.createMany.data;
       expect(rows[0].packSize).toBe(2);
     });
 

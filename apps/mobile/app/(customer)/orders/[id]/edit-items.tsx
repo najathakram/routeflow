@@ -17,6 +17,7 @@ import {
   buyerSavePlan,
   CUSTOM_LINES_NOTE,
   customLineCount,
+  draftKey,
   hydrateBuyerDraft,
   orderUnitLabel,
   readOnlyNotice,
@@ -51,26 +52,29 @@ export default function BuyerEditItemsScreen() {
 
   const items = useMemo(() => Object.values(draft).filter((i) => i.qty > 0), [draft]);
 
-  const setQty = (productId: string, qty: number) => {
+  // B297 row 352: rows are keyed by their stored line (`draftKey`), so two lines of one product stay two rows.
+  const setQty = (key: string, qty: number) => {
     if (qty <= 0) {
       setDraft((d) => {
         const next = { ...d };
-        delete next[productId];
+        delete next[key];
         return next;
       });
     } else {
-      setDraft((d) => ({ ...d, [productId]: { ...d[productId], qty } }));
+      setDraft((d) => ({ ...d, [key]: { ...d[key], qty } }));
     }
   };
 
   const addFromCatalog = (p: any) => {
     const price = p.buyerPrice;
-    setDraft((d) => ({
-      ...d,
-      [p.id]: d[p.id]
-        ? { ...d[p.id], qty: d[p.id].qty + 1 }
-        : { productId: p.id, name: p.name, unit: p.unit, qty: 1, unitPrice: price },
-    }));
+    setDraft((d) => {
+      const held = Object.values(d).find((i) => i.productId === p.id);
+      if (held) return { ...d, [draftKey(held)]: { ...held, qty: held.qty + 1 } };
+      return {
+        ...d,
+        [p.id]: { productId: p.id, name: p.name, unit: p.unit, qty: 1, unitPrice: price },
+      };
+    });
     setShowCatalog(false);
   };
 
@@ -134,7 +138,7 @@ export default function BuyerEditItemsScreen() {
         ) : (
           <View style={styles.section}>
             {items.map((item) => (
-              <View key={item.productId} style={styles.itemRow}>
+              <View key={draftKey(item)} style={styles.itemRow}>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.itemName} numberOfLines={2}>
                     {item.name}
@@ -155,19 +159,19 @@ export default function BuyerEditItemsScreen() {
                   <View style={styles.qtyRow}>
                     <Pressable
                       style={styles.qtyBtn}
-                      onPress={() => setQty(item.productId, item.qty - 1)}
+                      onPress={() => setQty(draftKey(item), item.qty - 1)}
                       hitSlop={6}
                     >
                       <Ionicons name="remove" size={16} color={ios.brand} />
                     </Pressable>
                     <QtyTextInput
                       value={item.qty}
-                      onChangeQty={(n) => setQty(item.productId, n)}
+                      onChangeQty={(n) => setQty(draftKey(item), n)}
                       style={styles.qtyInput}
                     />
                     <Pressable
                       style={styles.qtyBtn}
-                      onPress={() => setQty(item.productId, item.qty + 1)}
+                      onPress={() => setQty(draftKey(item), item.qty + 1)}
                       hitSlop={6}
                     >
                       <Ionicons name="add" size={16} color={ios.brand} />

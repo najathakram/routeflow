@@ -18,7 +18,7 @@ describe("StatePicker", () => {
       within(chips)
         .getAllByRole("listitem")
         .map((l) => l.textContent),
-    ).toEqual(["TX ×", "FL ×"]);
+    ).toEqual(["Texas ×", "Florida ×"]);
     fireEvent.click(box("Texas"));
     expect(
       within(screen.getByRole("list", { name: "Selected states" })).getAllByRole("listitem"),
@@ -28,7 +28,7 @@ describe("StatePicker", () => {
 
   it("a chip removes its state", () => {
     render(<Host initial={["TX", "FL"]} />);
-    fireEvent.click(screen.getByRole("button", { name: "Remove TX" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove Texas" }));
     expect(box("Texas")).not.toBeChecked();
     expect(box("Florida")).toBeChecked();
   });
@@ -79,7 +79,7 @@ describe("StatePicker", () => {
       );
     }
     render(<Spy initial={["tx", "TX", "FL"]} />);
-    fireEvent.click(screen.getAllByRole("button", { name: "Remove tx" })[0]);
+    fireEvent.click(screen.getAllByRole("button", { name: "Remove Texas" })[0]);
     expect(seen.at(-1)).toEqual(["FL"]);
     expect(box("Texas")).not.toBeChecked();
     expect(box("Florida")).toBeChecked();
@@ -87,7 +87,7 @@ describe("StatePicker", () => {
 
   it("a lone lower-case chip removes to an empty selection", () => {
     render(<Host initial={["tx"]} />);
-    fireEvent.click(screen.getByRole("button", { name: "Remove tx" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove Texas" }));
     expect(screen.queryByRole("list", { name: "Selected states" })).toBeNull();
   });
 });

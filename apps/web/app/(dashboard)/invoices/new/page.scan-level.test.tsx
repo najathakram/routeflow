@@ -107,7 +107,6 @@ async function openStandaloneBuilder() {
   return user;
 }
 
-
 const BOXED = { id: "p-24", name: "Case Soda", pricePerUnit: "60", unitsPerBox: 24 };
 
 function sentItems() {
@@ -198,7 +197,7 @@ describe("SA-595c (1) — new-invoice scan applies the scanned level", () => {
       await scanBar(user, "2000000000012");
       await screen.findByDisplayValue("Case Soda");
       await scanBar(user, "2000000000012");
-      await waitFor(() => expect(screen.getByTitle("Extra loose units")).toHaveValue(2));
+      await waitFor(() => expect(screen.getByTitle("Extra pieces")).toHaveValue(2));
       await save(user);
       expect(sentItems()).toHaveLength(1);
       expect(sentItems()[0]).toMatchObject({ qty: 2, boxes: 0, pieces: 2 });
@@ -210,7 +209,7 @@ describe("SA-595c (1) — new-invoice scan applies the scanned level", () => {
       await scanBar(user, "U");
       await screen.findByDisplayValue("Case Soda");
       await scanBar(user, "U");
-      await waitFor(() => expect(screen.getByTitle("Cases")).toHaveValue(1));
+      await waitFor(() => expect(screen.getByTitle("Boxes")).toHaveValue(1));
       await save(user);
       expect(sentItems()[0]).toMatchObject({ qty: 2, boxes: 1, pieces: 0 });
     });
@@ -221,7 +220,7 @@ describe("SA-595c (1) — new-invoice scan applies the scanned level", () => {
       await scanBar(user, "4000000000019");
       await screen.findByDisplayValue("Case Soda");
       await scanBar(user, "4000000000019");
-      await waitFor(() => expect(screen.getByTitle("Cases")).toHaveValue(2));
+      await waitFor(() => expect(screen.getByTitle("Boxes")).toHaveValue(2));
       await save(user);
       expect(sentItems()[0]).toMatchObject({ qty: 48, boxes: 2, pieces: 0 });
     });
@@ -233,7 +232,7 @@ describe("SA-595c (1) — new-invoice scan applies the scanned level", () => {
       await screen.findByDisplayValue("Case Soda");
       mockBarcodeProduct = { ...BOXED, scanMatch: { levels: ["BOX"] } };
       await scanBar(user, "B");
-      await waitFor(() => expect(screen.getByTitle("Cases")).toHaveValue(1));
+      await waitFor(() => expect(screen.getByTitle("Boxes")).toHaveValue(1));
       await save(user);
       expect(sentItems()[0]).toMatchObject({ qty: 25, boxes: 1, pieces: 1 });
     });

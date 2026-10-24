@@ -52,7 +52,12 @@ export function usePlanOptions(): PlanOptions {
 
   React.useEffect(() => {
     let cancelled = false;
-    const fallback = { planKeys: PLAN_KEYS, loading: false, unavailable: true };
+    // LITE is frozen (invite only): even the fallback never offers it.
+    const fallback = {
+      planKeys: PLAN_KEYS.filter((k) => k !== "LITE"),
+      loading: false,
+      unavailable: true,
+    };
     fetchPlanCatalog()
       .then((catalog) => {
         if (cancelled) return;

@@ -6,12 +6,13 @@ import { EntitlementsModule } from "../billing/entitlements.module";
 import { EmailModule } from "../email/email.module";
 import { InventoryService } from "./inventory.service";
 import { InventoryController } from "./inventory.controller";
+import { InventoryMovementsExportService } from "./inventory-movements-export.service";
 import { LowStockDigestService } from "./low-stock-digest.service";
 
 @Module({
   imports: [StockAlertsModule, EntitlementsModule, EmailModule],
   controllers: [InventoryController],
-  providers: [InventoryService, LowStockDigestService],
+  providers: [InventoryService, LowStockDigestService, InventoryMovementsExportService],
   exports: [InventoryService],
 })
 export class InventoryModule {}

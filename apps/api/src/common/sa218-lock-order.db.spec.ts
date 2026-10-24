@@ -36,6 +36,7 @@ import { TenantContextService } from "../tenant/tenant-context.service";
 import { CustomersService } from "../customers/customers.service";
 import { OrdersService } from "../orders/orders.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
+import { INVOICE_EDIT_STUBS } from "../orders/testing/invoice-edit-stubs";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -189,6 +190,7 @@ describeDb(
         // The draft-invoice reconcile runs OUTSIDE the credit tx, before it opens — not the SA-218 edge.
         invoicesService: {
           resyncOrderInvoicesForEdit: async () => null,
+          ...INVOICE_EDIT_STUBS,
           reconcileOrderDraftInvoice: async () => undefined,
         },
         logger: new Logger("sa218-orders"),

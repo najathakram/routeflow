@@ -1,0 +1,191 @@
+{
+  "run": "2026-10-24-bug-swarm-5",
+  "bugs": [
+    {
+      "row": "421",
+      "resolvedTitle": "NIT (SA row-372): tighten orders.service.revision-guard.spec.ts (1cdc981c9 pin) to assert status 404",
+      "packWritten": true,
+      "risk": "LOW",
+      "riskReason": "test-only assertion tightening",
+      "status": "live",
+      "files": [
+        "apps/api/src/orders/orders.service.revision-guard.spec.ts"
+      ],
+      "needsDb": false,
+      "ui": false,
+      "repro": "spec line 146 only asserts code != CONCURRENT_UPDATE, not 404"
+    },
+    {
+      "row": "220",
+      "resolvedTitle": "#3316 nit: apps/api/eslint.config.mjs:44 add varsIgnorePattern '^_'",
+      "packWritten": true,
+      "risk": "LOW",
+      "riskReason": "lint config only",
+      "status": "live",
+      "files": [
+        "apps/api/eslint.config.mjs",
+        "apps/api/src/users/users.service.ts"
+      ],
+      "needsDb": false,
+      "ui": false,
+      "repro": "npm run lint -w apps/api warns on users.service.ts:128-129 underscore vars"
+    },
+    {
+      "row": "303",
+      "resolvedTitle": "Email receipt parity: receipt-model.ts lineDetail/note lack the '/ each' unit word and line notes",
+      "packWritten": true,
+      "risk": "LOW",
+      "riskReason": "receipt text only, delegates to pricing helper; no totals change",
+      "status": "fixed-on-master",
+      "files": [
+        "apps/api/src/documents/receipt-model.ts"
+      ],
+      "needsDb": false,
+      "ui": false,
+      "repro": "receipt-model.ts:192-247 now uses receiptLineDetail with unit and prints notes"
+    },
+    {
+      "row": "128",
+      "resolvedTitle": "#2862 follow-up: after scan-to-PO success router.push to /purchase-orders/<id>",
+      "packWritten": true,
+      "risk": "LOW",
+      "riskReason": "web navigation only",
+      "status": "live",
+      "files": [
+        "apps/web/app/(dashboard)/purchase-orders/ScanPoButton.tsx",
+        "apps/web/app/(dashboard)/purchase-orders/page.tsx",
+        "apps/web/app/(dashboard)/purchase-orders/ScanPoButton.test.tsx"
+      ],
+      "needsDb": false,
+      "ui": true,
+      "repro": "scan a PO: toast + highlight only, no navigation to /purchase-orders/<id>"
+    },
+    {
+      "row": "70",
+      "resolvedTitle": "Buyer QtyStepper 44 px (trash 18, +/- 26 on tile/detail/cart) + tile heart aria-label",
+      "packWritten": true,
+      "risk": "LOW",
+      "riskReason": "a11y sizing only",
+      "status": "fixed-on-master",
+      "files": [
+        "apps/web/app/buyer/portal/[seller]/shop/_components/QtyStepper.tsx",
+        "apps/web/app/buyer/portal/[seller]/shop/_components/ProductTile.tsx"
+      ],
+      "needsDb": false,
+      "ui": true,
+      "repro": "QtyStepper min-h-11/min-w-11 and heart aria-label already present"
+    },
+    {
+      "row": "184",
+      "sub": "a",
+      "resolvedTitle": "U-3a nits (#3326 PASS-WITH-NITS): add-extra aria-label must contain visible text '+ pieces'",
+      "packWritten": true,
+      "risk": "LOW",
+      "riskReason": "aria label text",
+      "status": "fixed-on-master",
+      "files": [
+        "apps/web/app/(dashboard)/orders/_components/scan/PriceEditor.tsx",
+        "apps/web/components/LineItemRow.tsx"
+      ],
+      "needsDb": false,
+      "ui": true,
+      "repro": "PriceEditor.tsx:243 label now starts with '+ <unit>'"
+    },
+    {
+      "row": "184",
+      "sub": "b",
+      "resolvedTitle": "U-3a nits (#3326 PASS-WITH-NITS): PO UNIT_COST test regex pack vs base; ProductUnitsCard label copy pin",
+      "packWritten": true,
+      "risk": "LOW",
+      "riskReason": "test pins and copy",
+      "status": "unclear",
+      "files": [
+        "apps/web/app/(dashboard)/products/[id]/ProductUnitsCard.tsx"
+      ],
+      "needsDb": false,
+      "ui": true,
+      "repro": "UNIT_COST regex test not located; ProductUnitsCard.tsx:132 label copy has no pin"
+    }
+  ],
+  "unresolved": [
+    {
+      "row": "184",
+      "sub": "a",
+      "reason": "title mismatch: manifest \"U-3a nits (#3326 PASS-WITH-NITS): add-extra aria-label must contain visible text '+ pieces'\" vs resolved \"U-3a nits (#3326 PASS-WITH-NITS 20:10Z): add-extra aria-label must contain visible text...\""
+    },
+    {
+      "row": "184",
+      "sub": "b",
+      "reason": "title mismatch: manifest \"U-3a nits (#3326 PASS-WITH-NITS): PO UNIT_COST test regex pack vs base; ProductUnitsCard label copy pin\" vs resolved \"U-3a nits (#3326 PASS-WITH-NITS 20:10Z): add-extra aria-label must contain visible text...\""
+    }
+  ],
+  "clusters": [
+    {
+      "id": "c1",
+      "bugs": [
+        {
+          "row": "128"
+        }
+      ],
+      "files": [
+        "apps/web/app/(dashboard)/purchase-orders/ScanPoButton.test.tsx",
+        "apps/web/app/(dashboard)/purchase-orders/ScanPoButton.tsx",
+        "apps/web/app/(dashboard)/purchase-orders/page.tsx"
+      ],
+      "workspaces": [
+        "apps/web"
+      ],
+      "needsDb": false,
+      "ui": true,
+      "extractionFirst": false
+    },
+    {
+      "id": "c2",
+      "bugs": [
+        {
+          "row": "220"
+        }
+      ],
+      "files": [
+        "apps/api/eslint.config.mjs",
+        "apps/api/src/users/users.service.ts"
+      ],
+      "workspaces": [
+        "apps/api"
+      ],
+      "needsDb": false,
+      "ui": false,
+      "extractionFirst": false
+    },
+    {
+      "id": "c3",
+      "bugs": [
+        {
+          "row": "421"
+        }
+      ],
+      "files": [
+        "apps/api/src/orders/orders.service.revision-guard.spec.ts"
+      ],
+      "workspaces": [
+        "apps/api"
+      ],
+      "needsDb": false,
+      "ui": false,
+      "extractionFirst": false
+    }
+  ],
+  "excluded": [
+    {
+      "row": "303",
+      "reason": "status fixed-on-master: only live bugs enter"
+    },
+    {
+      "row": "70",
+      "reason": "status fixed-on-master: only live bugs enter"
+    }
+  ],
+  "unaccounted": [
+    "184"
+  ]
+}

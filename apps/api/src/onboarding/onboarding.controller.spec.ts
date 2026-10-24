@@ -25,7 +25,9 @@ describe("OnboardingController (#2159 S1)", () => {
 
   it("every 409 code the service throws is listed in the shared contract, and vice versa", () => {
     const src = fs.readFileSync(path.join(__dirname, "onboarding.service.ts"), "utf8");
-    const thrown = new Set([...src.matchAll(/code: "(ONBOARDING_[A-Z_]+)"/g)].map((m) => m[1]));
+    const thrown = new Set(
+      [...src.matchAll(/code: (?:"|API_ERROR_CODES\.)(ONBOARDING_[A-Z_]+)\b/g)].map((m) => m[1]),
+    );
     expect([...thrown].sort()).toEqual([...ONBOARDING_CONFLICT_CODES].sort());
   });
 });

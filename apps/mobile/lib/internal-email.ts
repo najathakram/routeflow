@@ -1,14 +1,10 @@
 /**
- * True for the internal, non-routable email sentinels minted when a customer has
- * no real address: `no-email+<uuid>@placeholder.local` (User.email is required +
- * unique per tenant) and `<username>@imported.local` (CSV import). Never email
- * one of these and never render one to a user — treat it like "no email on file".
- *
- * Triple mirror — api `common/internal-email.ts` (canonical) + web
- * `lib/formatting.ts#isInternalEmail` + this file. Keep in sync.
+ * B910: the one implementation lives in `@routeflow/types` (`internal-email.ts`
+ * there) — this file is a re-export kept so every existing `lib/internal-email`
+ * import keeps working. Web re-exports the same module. The api keeps a LOCAL copy
+ * (runtime source cannot value-import this package) pinned functionally equal by
+ * `apps/api/src/common/internal-email.spec.ts`. The SUBPATH import matters:
+ * mobile's jest stubs the types package ROOT (its index pulls the whole DTO
+ * surface), and the subpath resolves to source past that stub (jest.config.js).
  */
-export function isInternalEmail(email?: string | null): boolean {
-  if (!email) return false;
-  const e = email.toLowerCase();
-  return e.endsWith("@placeholder.local") || e.endsWith("@imported.local");
-}
+export { displayEmail, isInternalEmail, NO_EMAIL_COPY } from "@routeflow/types/internal-email";

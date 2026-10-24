@@ -1,6 +1,7 @@
 import React from "react";
 import { Document, Page, Text, View, StyleSheet, Image } from "@react-pdf/renderer";
 import type { MonthlyStatement, StatementLineItem } from "./statement.service";
+import { fmtPdfDate } from "../common/pdf-date";
 
 /**
  * P5-15: tenant branding shape for the monthly statement PDF header/footer.
@@ -24,14 +25,8 @@ export interface StatementTenantInfo {
   logoDataUri?: string;
 }
 
-const fmtDate = (val: Date | string | null | undefined): string => {
-  if (!val) return "—";
-  return new Date(val).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
-};
+// B954: the shared UTC-anchored PDF date (calendar dates are UTC-midnight instants).
+const fmtDate = fmtPdfDate;
 const fmtDateTime = (val: Date | string | null | undefined): string => {
   if (!val) return "—";
   return new Date(val).toLocaleString("en-US", {

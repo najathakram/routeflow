@@ -14,6 +14,7 @@ import {
   ValidateNested,
 } from "class-validator";
 import { Type } from "class-transformer";
+import { FulfillPath } from "@prisma/client";
 
 // BUG-B1-6: same numeric/length caps as CreateOrderDto so the buyer-facing
 // order endpoint cannot accept 999,999 cases of bread or 5MB of notes.
@@ -38,4 +39,11 @@ export class BuyerCreateOrderDto {
   @IsOptional() @IsDateString() requestedDeliveryDate?: string;
   @IsOptional() @IsEnum(["PENDING"]) status?: "PENDING";
   @IsOptional() @IsBoolean() forceNew?: boolean;
+  /**
+   * How the buyer wants this order: pickup at the store or shipped. Omit = the business's default.
+   * Resolved against the business's capability in OrdersService.create (fulfil-path-resolver.ts): the
+   * request is IGNORED where the portal offers no choice, and a method the portal does not offer is
+   * refused with FULFIL_METHOD_NOT_OFFERED.
+   */
+  @IsOptional() @IsEnum(FulfillPath) fulfillPath?: FulfillPath;
 }

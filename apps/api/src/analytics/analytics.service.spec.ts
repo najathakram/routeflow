@@ -146,7 +146,9 @@ describe("AnalyticsService — invoiced-sales readers", () => {
 
       await service.getGrossMarginTrend();
 
-      expect(prisma.invoice.findMany).toHaveBeenCalledTimes(1);
+      // SA-869: revenue is read by the accrual net reader (1 invoice read) and the COGS lines by this method (1 read); never
+      // a top-level invoiceItem read.
+      expect(prisma.invoice.findMany).toHaveBeenCalledTimes(2);
       expect(prisma.invoiceItem.findMany).not.toHaveBeenCalled();
       // The only movement query is the snapshot index — never type:"SALE".
       const movementArgs = prisma.stockMovement.findMany.mock.calls[0][0];
@@ -470,7 +472,9 @@ describe("AnalyticsService — invoiced-sales readers", () => {
     it("is inert when the addon is inactive even if the config key is set", async () => {
       addonService.hasAddon.mockResolvedValue(false);
       systemConfig.get.mockResolvedValue("true");
-      prisma.invoice.findMany.mockResolvedValue([{ total: D(110) }]);
+      prisma.invoice.findMany.mockResolvedValue([
+        { total: D(110), issueDate: new Date("2026-06-01T00:00:00Z") },
+      ]);
       prisma.stockMovement.findMany.mockResolvedValue([]);
 
       const result = await service.getGrossMarginTrend();
@@ -482,7 +486,9 @@ describe("AnalyticsService — invoiced-sales readers", () => {
     it("is inert when the toggle is off", async () => {
       addonService.hasAddon.mockResolvedValue(true);
       systemConfig.get.mockResolvedValue("false");
-      prisma.invoice.findMany.mockResolvedValue([{ total: D(110) }]);
+      prisma.invoice.findMany.mockResolvedValue([
+        { total: D(110), issueDate: new Date("2026-06-01T00:00:00Z") },
+      ]);
       prisma.stockMovement.findMany.mockResolvedValue([]);
 
       const result = await service.getGrossMarginTrend();
@@ -539,13 +545,49 @@ describe("AnalyticsService — invoiced-sales readers", () => {
 
       expect(prisma.stockMovement.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { productId: "p1", type: { in: ["PURCHASE", "COST_BASIS"] } },
+          where: {
+            productId: "p1",
+            type: { in: ["PURCHASE", "COST_BASIS"] },
+            OR: [{ type: "COST_BASIS" }, { quantity: { gt: 0 } }],
+          },
         }),
       );
       expect(result).toEqual([
         { date: day1, unitCost: 2, avgCostAfter: 2, type: "PURCHASE" },
         { date: day2, unitCost: 3.15, avgCostAfter: 3.15, type: "COST_BASIS" },
       ]);
+    });
+  });
+
+  describe("getCostHistory — B846 bill-revert pairs", () => {
+    it("excludes the receipt a reversal has paired, and every non-positive PURCHASE, in SQL", async () => {
+      // the pairing read (inventory/bill-revert.ts) is the one keyed on a reversal-note prefix
+      prisma.stockMovement.findMany.mockImplementation(async ({ where }: any) =>
+        where.notes || where.OR?.some((c: any) => c.notes)
+          ? [{ type: "PURCHASE", quantity: D(-4), notes: "BILL_REVERTED — reverses m2" }]
+          : [
+              {
+                effectiveAt: new Date("2026-06-01"),
+                unitCost: D(4),
+                avgCostAfter: D(4),
+                type: "PURCHASE",
+              },
+            ],
+      );
+
+      const result = await service.getCostHistory("p1");
+
+      expect(prisma.stockMovement.findMany).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          where: {
+            productId: "p1",
+            type: { in: ["PURCHASE", "COST_BASIS"] },
+            OR: [{ type: "COST_BASIS" }, { quantity: { gt: 0 } }],
+            id: { notIn: ["m2"] },
+          },
+        }),
+      );
+      expect(result).toHaveLength(1);
     });
   });
 

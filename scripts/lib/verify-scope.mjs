@@ -18,6 +18,7 @@
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
+import { scrubbedGitEnv } from "./check-git-hooks.mjs";
 
 // Files whose change can move every workspace's result — a scoped run would be a false green.
 const FULL_PATTERNS = [
@@ -117,19 +118,59 @@ export function computeScope(changedFiles, workspaces) {
 export const shortName = (pkgName) => pkgName.replace(/^@routeflow\//, "");
 
 /**
- * process.env minus every GIT_* variable. Inside a git hook the parent exports GIT_DIR /
- * GIT_INDEX_FILE / GIT_WORK_TREE, and those override `cwd` — a git spawned for a DIFFERENT
- * directory (a fixture repo) would silently act on the real repo (the B420 hijack). Every git
- * this module spawns is repo-discovery-by-cwd only.
+ * process.env minus every GIT_* variable (the B420 hijack guard). Not a copy: the ONE definition is
+ * scripts/lib/scrubbed-git-env.cjs, reached here through check-git-hooks.mjs.
  */
-export function cleanGitEnv(env = process.env) {
-  return Object.fromEntries(Object.entries(env).filter(([k]) => !/^GIT_/.test(k)));
-}
+export const cleanGitEnv = scrubbedGitEnv;
 
 function git(root, args) {
   const r = spawnSync("git", args, { cwd: root, encoding: "utf8", env: cleanGitEnv() });
   if (r.error || r.status !== 0) return null;
   return r.stdout;
+}
+
+/**
+ * FAST VERIFY (owner ruling 2026-10-10, "Fast local check, full in CI").
+ *
+ * A feature-branch push runs check-types + lint for the affected workspaces and ONLY the Jest tests
+ * related to the changed files (`--changedSince=<merge-base with origin/master>`); the full suite runs
+ * in CI on every train/PR, which is the authority. Three pure pieces, one policy:
+ *  - `wantsFastVerify`  the POLICY (not CI, not FULL_VERIFY=1, not master/main/detached) — the pre-push
+ *                       hook asks it through `scripts/verify-mode.mjs` and, on "fast", exports
+ *                       RF_VERIFY_MODE=fast.
+ *  - `isFastMode`       the explicit SWITCH every consumer reads (verify-turbo, decideScope,
+ *                       campaign-check): RF_VERIFY_MODE is exactly "fast" AND the run is neither CI nor
+ *                       FULL_VERIFY=1 — so a stray exported value can never narrow CI or a landing run.
+ *  - `mergeBaseSha`     the one sha the related-only filter hangs off; null = uncomputable, and every
+ *                       caller then falls back to the FULL plan (loudly).
+ */
+export const FAST_VERIFY_BANNER =
+  "FAST VERIFY (owner 2026-10-10): types + lint for affected workspaces, related tests only; the full suite runs in CI. FULL_VERIFY=1 runs everything.";
+
+const TRUNK = new Set(["master", "main", "HEAD"]);
+
+export function wantsFastVerify({ env = process.env, branch } = {}) {
+  if (env.CI) return false;
+  if (env.FULL_VERIFY === "1") return false;
+  if (!branch || TRUNK.has(branch)) return false;
+  return true;
+}
+
+export function isFastMode(env = process.env) {
+  return env.RF_VERIFY_MODE === "fast" && !env.CI && env.FULL_VERIFY !== "1";
+}
+
+/** The checked-out branch name ("HEAD" when detached), or null when git cannot say. */
+export function currentBranch(root) {
+  const out = git(root, ["rev-parse", "--abbrev-ref", "HEAD"]);
+  return out === null ? null : out.trim() || null;
+}
+
+/** 40-hex merge-base of `base` and HEAD, or null when it cannot be computed. */
+export function mergeBaseSha(root, base = "origin/master") {
+  const out = git(root, ["merge-base", base, "HEAD"]);
+  const sha = out === null ? "" : out.trim();
+  return /^[0-9a-f]{40}$/.test(sha) ? sha : null;
 }
 
 /** Every file that differs from the merge-base with `base` (committed, staged, unstaged, untracked). */
@@ -169,6 +210,10 @@ export function decideScope(root, env = process.env, probe = {}) {
   // diff that tripped a FULL pattern never pays the spawn. `probe.stale` is the same kind of test
   // seam as branch/files: the workspaces whose campaign report is refused (see staleWorkspaces).
   if (scope.mode !== "scoped") return scope;
+  // FAST VERIFY (isFastMode): local runs execute related tests only, and campaign-check defers report
+  // coverage to CI, so a stale report is no reason to widen the run — and the --print-stale spawn is
+  // skipped outright. Outside fast mode this is exactly the previous behaviour.
+  if (isFastMode(env)) return withStale(scope, []);
   const stale = "stale" in probe ? probe.stale : staleWorkspaces(root, workspaces);
   return withStale(scope, stale);
 }
@@ -182,8 +227,9 @@ export function decideScope(root, env = process.env, probe = {}) {
  * replays without running jest — the `--freshness-only` pre-step earlier in `npm run verify`
  * forces a real run for exactly that case (order pinned by verify-turbo.self-test SP8). FAILS
  * OPEN ([]): an unanswerable question must never narrow or break a run — the end-of-verify check
- * still enforces freshness exactly as before. Note campaign-check scrubs a fixed list of GIT_*
- * variables while `cleanGitEnv` strips all of them; git does not export GIT_CONFIG_* into hooks.
+ * still enforces freshness exactly as before. `cleanGitEnv` is an alias of the shared
+ * `scrubbedGitEnv` (scripts/lib/scrubbed-git-env.cjs), the one prefix filter that drops every
+ * GIT_* variable (GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE, GIT_CONFIG* ...).
  */
 export function staleWorkspaces(root, workspaces = loadWorkspaces(root)) {
   const r = spawnSync(

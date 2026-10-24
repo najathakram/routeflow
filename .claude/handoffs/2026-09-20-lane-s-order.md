@@ -4,6 +4,7 @@ Board: GitHub issue #938. Post as `[S-order@pc] EVENT — detail`. Worktree
 `C:\ClaudeCode\routeflow\.claude\worktrees\rf-lane-S-order` (on `feat/s-order-11-rn-line-cards`).
 
 ## ALL WORK IS ON ORIGIN (local == origin for each)
+
 - **#982** step 10 (typed Qty, box-aware merge, toast; ALL gated by `useOrderUiV2`; B596 placeholder) @09314c2b.
   B596 is UNPROVEN at 390 (stated in the PR body). Known limitation recorded at the merge site: merges on productId only.
 - **#1121** web boxed-progress fix + unit-aware Case noun (`OrderItem.unitLabel` -> `boxLabel`) @be312d3f.
@@ -11,6 +12,7 @@ Board: GitHub issue #938. Post as `[S-order@pc] EVENT — detail`. Worktree
 - **#989** step 11 RN line card (dark) + B597 + Case noun @76dc9a09. Proof = Playwright 390 on the Expo web build.
 
 ## TOMORROW (lead: stand down tonight)
+
 1. Split the two `turbo.json` entries (`@routeflow/web#test`, `@routeflow/web#check-types`, hash `$TURBO_ROOT$/apps/mobile/lib/**`)
    out of #989 into their own config-only PR off master (clean; reword the comment — the parity test is still only in #989);
    AFTER it lands: ONE commit on top of `feat/s-order-11-rn-line-cards` deleting those same two entries (they now live on master),
@@ -22,6 +24,7 @@ Board: GitHub issue #938. Post as `[S-order@pc] EVENT — detail`. Worktree
 3. Respond to Train B / CI findings on #982, #1121, #989.
 
 ## Rulings I operate under
+
 - New order UI gated by `useOrderUiV2()` = `useDeveloperMode().enabled`; `useScanV2` reads the same addon.
 - Step 10 typed qty = "additive in the line's own unit"; the productId+unit re-key belongs to the picker PR (not mine).
 - 5b restrictions rule editor is R-ui's. `apps/api/src/orders/orders.service.ts` is FROZEN until #1101 lands.
@@ -29,6 +32,7 @@ Board: GitHub issue #938. Post as `[S-order@pc] EVENT — detail`. Worktree
   if a force is ever needed ask the lead, who asks the owner). GitHub CI is the binding gate (B637), not pre-push.
 
 ## Traps hit
+
 - Pre-push takes 30-40 min under load; `visibility-watchdog-script.spec.ts` flakes under load (passes alone) — rerun.
 - A scoped jest run leaves `.campaign/runs/<ws>.json` PARTIAL and the push is rejected: run the FULL suite first
   (`cd apps/web|mobile && npx jest --maxWorkers=2`) after any scoped run (L-179).
@@ -39,5 +43,6 @@ Board: GitHub issue #938. Post as `[S-order@pc] EVENT — detail`. Worktree
 - `stale local branch feat/s-order-5b1-restrictions-list` (3 unpushed commits) is superseded by R-ui — never push it.
 
 ## Follow-ups not done
+
 - Legacy split-without-pack-size line still shows raw pieces in progress (web + mobile).
 - Mobile `splitIntoBoxes` could use `normalizeBoxesPieces`; `unit-aware-guard.ts` comment is stale (create() honours unitLabel behind units_v1).

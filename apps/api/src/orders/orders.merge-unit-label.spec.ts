@@ -32,6 +32,8 @@ jest.mock("../invoices/invoices.service", () => ({
     findAll: jest.fn().mockResolvedValue({ data: [], meta: {} }),
     revertLinkedInvoicesForOrderEdit: jest.fn().mockResolvedValue(undefined),
     resyncOrderInvoicesForEdit: jest.fn().mockResolvedValue([{ id: "inv-1" }]),
+    followPartialPrices: jest.fn().mockResolvedValue({ issuedPartialsUnchanged: [] }),
+    projectEditedInvoiceTotals: jest.fn().mockResolvedValue([]),
   })),
 }));
 
@@ -101,7 +103,7 @@ const operatorPayload = {
   forcePasswordChange: false,
 };
 
-const buildController = (svc: any) => new OrdersController(svc, {} as any);
+const buildController = (svc: any) => new OrdersController(svc, {} as any, {} as any, {} as any);
 
 const activeOrderFixture = {
   id: "ord-active",
@@ -129,6 +131,8 @@ function fakeOrdersService() {
   return {
     findActiveOrder: jest.fn(async () => ({ ...activeOrderFixture })),
     findOrderIdByIdempotencyKey: jest.fn().mockResolvedValue(null),
+    liveTrioByProduct: jest.fn().mockResolvedValue(new Map()),
+    liveUnitsPerBoxByProduct: jest.fn().mockResolvedValue(new Map()), // SA-841
     updateOrderItems: jest.fn().mockResolvedValue(undefined),
     recordIdempotencyKey: jest.fn().mockResolvedValue(undefined),
     // Post-commit sweep, unrelated to this bug — always reached on a non-replayed merge.
@@ -186,6 +190,7 @@ describe("OrdersController.create — staff merge refuses a unit-aware incoming 
     const { items: merged } = foldMergeItems(
       [],
       [{ productId: "prod-2", qty: 3, unitLabel: "Case" } as any],
+      { liveUnitsPerBoxByProductId: new Map(), bare: "pieces" },
     );
 
     expect(merged).toHaveLength(1);

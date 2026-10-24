@@ -26,6 +26,7 @@ jest.mock("../notifications/notifications.service", () => ({
   })),
 }));
 
+import { oversellReaderOffProvider } from "./testing/policy-reader-provider";
 import { Test, TestingModule } from "@nestjs/testing";
 import { getQueueToken } from "@nestjs/bull";
 import { ConfigService } from "@nestjs/config";
@@ -85,6 +86,7 @@ describe("OrdersService — credit-limit exposure (D6 / B462, option B)", () => 
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
+        oversellReaderOffProvider,
         OrdersService,
         { provide: PrismaService, useValue: prisma },
         { provide: getQueueToken("invoices"), useValue: { add: jest.fn() } },
@@ -104,6 +106,8 @@ describe("OrdersService — credit-limit exposure (D6 / B462, option B)", () => 
           useValue: {
             reconcileOrderDraftInvoice: jest.fn().mockResolvedValue({ id: "inv-1" }),
             resyncOrderInvoicesForEdit: jest.fn().mockResolvedValue([{ id: "inv-1" }]),
+            followPartialPrices: jest.fn().mockResolvedValue({ issuedPartialsUnchanged: [] }),
+            projectEditedInvoiceTotals: jest.fn().mockResolvedValue([]),
             revertLinkedInvoicesForOrderEdit: jest.fn().mockResolvedValue([]),
           },
         },
@@ -543,16 +547,28 @@ describe("OrdersService — credit-limit exposure (D6 / B462, option B)", () => 
       ).rejects.toMatchObject(overLimit(110, 100));
     });
 
-    it("B577 follow-up: the netting is FLOORED at 0 — a big prepayment on the edited order never subtracts from OTHER orders' exposure (900 + 0 = 900 blocks a limit of 100)", async () => {
-      // the edited order was prepaid 900, and is edited down to 15
+    it("a fully prepaid edit adds nothing, so it is never refused, even with others over the limit", async () => {
+      // the edited order was prepaid 900, and is edited down to 15; an unrelated open order holds 900
       prisma.invoice.findMany.mockResolvedValue([
         ownInvoice({ total: 900, status: "PAID", paid: 900 }),
       ]);
-      prisma.order.findMany.mockResolvedValue([{ id: "ord-2", total: 900 }]); // an unrelated open order
+      prisma.order.findMany.mockResolvedValue([{ id: "ord-2", total: 900 }]);
+
+      await service.updateOrderItems("ord-1", editDto, operatorPayload);
+
+      expect(prisma.order.update).toHaveBeenCalled();
+    });
+
+    it("the same setup with a +0.01 contribution is 409 at 900.01: a positive part stacks on the other orders, the prepayment is never netted against them", async () => {
+      prisma.invoice.findMany.mockResolvedValue([
+        ownInvoice({ total: 14.99, status: "PAID", paid: 14.99 }),
+      ]);
+      prisma.order.findMany.mockResolvedValue([{ id: "ord-2", total: 900 }]);
 
       await expect(
-        service.updateOrderItems("ord-1", editDto, operatorPayload),
-      ).rejects.toMatchObject(overLimit(900, 100));
+        service.updateOrderItems("ord-1", editDto, operatorPayload as never),
+      ).rejects.toMatchObject(overLimit(900.01, 100));
+      expect(prisma.order.update).not.toHaveBeenCalled();
     });
 
     it.each([

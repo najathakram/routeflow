@@ -1,3 +1,4 @@
+import { API_ERROR_CODES } from "../common/api-error-codes";
 /**
  * The PLAN_GATE error contract. When a plan gate denies a request, the server
  * returns HTTP 403 with this body; the web renders one of three gate states
@@ -19,7 +20,7 @@ export interface PlanGateUpgrade {
 }
 
 export interface PlanGateErrorBody {
-  code: "PLAN_GATE";
+  code: typeof API_ERROR_CODES.PLAN_GATE;
   state: PlanGateState;
   /** The flag key that was missing. */
   flag: string;
@@ -35,5 +36,5 @@ export function buildPlanGateBody(flag: string, upgrade: PlanGateUpgrade): PlanG
     : upgrade.planKey
       ? `This feature requires the ${upgrade.planKey} plan or higher.`
       : "This feature is not available on your current plan.";
-  return { code: "PLAN_GATE", state, flag, message, upgrade };
+  return { code: API_ERROR_CODES.PLAN_GATE, state, flag, message, upgrade };
 }

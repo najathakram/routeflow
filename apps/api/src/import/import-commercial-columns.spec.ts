@@ -27,6 +27,7 @@
 import { Test } from "@nestjs/testing";
 import { BadRequestException, ConflictException, ForbiddenException } from "@nestjs/common";
 import { ImportService } from "./import.service";
+import { ProductFamilyImportService } from "./product-family-import.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
 import { CustomersService } from "../customers/customers.service";
@@ -84,10 +85,32 @@ describe("ImportService — commercial columns (B858/B859)", () => {
         {
           provide: SellingRestrictionsService,
           useValue: {
-            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
+            judgeStaffWrite: jest.fn().mockResolvedValue({
+              outcome: "ALLOW",
+              reasons: [],
+              breaches: [],
+              basis: "CUSTOMER",
+            }),
           },
         },
         ImportService,
+        // SA-823: the all-columns fixture now carries Family / Variant Name / Product ID (blank); no Family row exists.
+        {
+          provide: ProductFamilyImportService,
+          useValue: {
+            currentFamilyNoops: jest.fn().mockResolvedValue(new Set()),
+            assertRowCap: jest.fn(),
+            assertPricingOff: jest.fn().mockResolvedValue(undefined),
+            planRows: jest.fn().mockResolvedValue({
+              decisions: new Map(),
+              newFamilies: new Map(),
+              created: new Map(),
+            }),
+            deactivateEmpty: jest.fn().mockResolvedValue([]),
+            summarize: jest.fn().mockReturnValue({}),
+            recordApplied: jest.fn().mockResolvedValue(undefined),
+          },
+        },
         { provide: PrismaService, useValue: prisma },
         { provide: VendorBillsService, useValue: { create: jest.fn(), receive: jest.fn() } },
         { provide: CustomersService, useValue: customers },
@@ -320,7 +343,9 @@ describe("ImportService — commercial columns (B858/B859)", () => {
 
       await service.importContacts(Buffer.from(csv), "user-1");
 
-      const call = prisma.customer.findFirst.mock.calls[0]?.[0];
+      const call = prisma.customer.findFirst.mock.calls.find(
+        ([a]: any[]) => a?.where?.zohoContactId,
+      )?.[0];
       expect(call?.where).toMatchObject({ zohoContactId: "ZC-1", deletedAt: null });
     });
 
@@ -731,7 +756,7 @@ describe("ImportService — commercial columns (B858/B859)", () => {
       expect(productsService.update.mock.calls[0]).toEqual([
         "prod-null",
         { unitsPerBox: 12 },
-        { suppressEmit: true },
+        { packPrecondition: "internal", reparentVia: "import", suppressEmit: true },
       ]);
       expect(result.unchanged).toBe(1);
     });
@@ -1036,6 +1061,44 @@ describe("ImportService — commercial columns (B858/B859)", () => {
       expect(productsService.create).not.toHaveBeenCalled();
       expect(productsService.update).not.toHaveBeenCalled();
     });
+
+    // ── B987-E (c): the entitlement 403 carries a CODE and structured fields so the web shows fixed copy. The status and
+    // the message are unchanged; `column` is the user's own header, data only, capped. ──────────────────────────────────
+
+    it.each([
+      ["MSRP", "MSRP", "assertMsrpAllowed", "MSRP", "needs the MSRP plan flag"],
+      [
+        "Tobacco",
+        "Tobacco",
+        "assertCanFlagTobacco",
+        "TOBACCO_DEALER",
+        "needs tobacco_dealer add-on",
+      ],
+      [
+        "Reorder Point",
+        "Reorder Point",
+        "assertReorderAllowed",
+        "FORECASTING",
+        "needs the forecasting plan flag",
+      ],
+    ])(
+      "B987-E: a %s column without its entitlement answers 403 IMPORT_COLUMN_NEEDS_ENTITLEMENT {requires, column}, message unchanged",
+      async (header, column, gate, requires, sentence) => {
+        (productsService as any)[gate].mockRejectedValue(new ForbiddenException("denied"));
+        const csv = `Item Name,SKU,${header}\nWidget,SKU-1,1\n`;
+        const err: any = await service
+          .importProducts(Buffer.from(csv), "user-1", { dryRun: true } as any)
+          .catch((e) => e);
+        expect(err).toBeInstanceOf(ForbiddenException);
+        expect(err.getStatus()).toBe(403);
+        expect(err.getResponse()).toEqual({
+          code: "IMPORT_COLUMN_NEEDS_ENTITLEMENT",
+          message: `Column "${column}" ${sentence}; remove the column or enable it`,
+          requires,
+          column,
+        });
+      },
+    );
 
     // ── Opus #938 fold (B): the file-level gate's catch must never turn an entitlement OUTAGE
     // into "needs the flag" — only a genuine denial gets the friendly message; anything else

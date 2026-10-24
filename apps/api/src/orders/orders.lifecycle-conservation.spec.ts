@@ -73,6 +73,7 @@ jest.mock("../notifications/notifications.service", () => ({
   })),
 }));
 
+import { oversellReaderOffProvider } from "./testing/policy-reader-provider";
 import { Test, TestingModule } from "@nestjs/testing";
 import { BadRequestException, ConflictException } from "@nestjs/common";
 import { getQueueToken } from "@nestjs/bull";
@@ -141,7 +142,7 @@ describe("OrdersService — F07 lifecycle-conservation (TP-API)", () => {
     settleOrderCreditsInTx: jest.Mock;
   };
   let commissionEngineService: { removeInvoiceCommission: jest.Mock };
-  let ledgerService: { reverseInvoiceEntries: jest.Mock };
+  let ledgerService: { reverseInvoiceEntries: jest.Mock; settleRegulatedLedger: jest.Mock };
 
   beforeEach(async () => {
     prisma = createMockPrisma();
@@ -149,6 +150,7 @@ describe("OrdersService — F07 lifecycle-conservation (TP-API)", () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
+        oversellReaderOffProvider,
         OrdersService,
         {
           provide: TenantContextService,
@@ -181,6 +183,8 @@ describe("OrdersService — F07 lifecycle-conservation (TP-API)", () => {
             findOpenOrderDraft: jest.fn().mockResolvedValue(null),
             reconcileOrderDraftInvoice: jest.fn().mockResolvedValue({ id: "inv-1" }),
             resyncOrderInvoicesForEdit: jest.fn().mockResolvedValue([{ id: "inv-1" }]),
+            followPartialPrices: jest.fn().mockResolvedValue({ issuedPartialsUnchanged: [] }),
+            projectEditedInvoiceTotals: jest.fn().mockResolvedValue([]),
             revertLinkedInvoicesForOrderEdit: jest.fn().mockResolvedValue([]),
             voidInvoice: jest.fn().mockResolvedValue({ id: "inv-1", status: "VOID" }),
             voidInvoiceInTx: jest.fn().mockResolvedValue({ id: "inv-1", status: "VOID" }),
@@ -258,7 +262,10 @@ describe("OrdersService — F07 lifecycle-conservation (TP-API)", () => {
         // red signal; the fix wires `private readonly ledger: RegulatedLedgerService`.
         {
           provide: RegulatedLedgerService,
-          useValue: { reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined) },
+          useValue: {
+            reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined),
+            settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
+          },
         },
       ],
     }).compile();
@@ -434,7 +441,8 @@ describe("OrdersService — F07 lifecycle-conservation (TP-API)", () => {
         id: "ord-1",
         status: "CANCELLED",
         notes: null,
-        lineItems: [],
+        // the same line the locked re-read below returns (row 510: reopen re-judges the order's lines under its lock)
+        lineItems: [{ id: "li-1", productId: "prod-1", qty: 4, deliveredQty: 1 }],
       });
       prisma.invoice.findFirst.mockResolvedValue(null); // no PAID invoice blocks the reopen
       prisma.orderItem.findMany.mockResolvedValue([
@@ -481,9 +489,13 @@ describe("OrdersService — F07 lifecycle-conservation (TP-API)", () => {
       creditNotesService.previewOrderCreditRelease.mockResolvedValue([]);
 
       const calls: string[] = [];
-      ledgerService.reverseInvoiceEntries.mockImplementation(async ({ invoiceId }: any) => {
-        calls.push(`ledger:${invoiceId}`);
-      });
+      // SA-839: each invoice is zeroed through the one ledger helper (INVOICE_ZEROED).
+      ledgerService.settleRegulatedLedger.mockImplementation(
+        async (_tx: unknown, { invoiceId }: any) => {
+          calls.push(`ledger:${invoiceId}`);
+          return { written: 0, amendedPeriod: null };
+        },
+      );
       prisma.invoice.delete.mockImplementation(async ({ where }: any) => {
         calls.push(`delete:${where.id}`);
         return { id: where.id };
@@ -492,13 +504,15 @@ describe("OrdersService — F07 lifecycle-conservation (TP-API)", () => {
       await service.deleteOrder("ord-1");
 
       // Called once per invoice — not zero, not once for the whole order.
-      expect(ledgerService.reverseInvoiceEntries).toHaveBeenCalledTimes(2);
-      expect(ledgerService.reverseInvoiceEntries).toHaveBeenCalledWith(
-        expect.objectContaining({ invoiceId: "inv-1" }),
-      );
-      expect(ledgerService.reverseInvoiceEntries).toHaveBeenCalledWith(
-        expect.objectContaining({ invoiceId: "inv-2" }),
-      );
+      expect(ledgerService.settleRegulatedLedger).toHaveBeenCalledTimes(2);
+      expect(ledgerService.settleRegulatedLedger).toHaveBeenCalledWith(expect.anything(), {
+        kind: "INVOICE_ZEROED",
+        invoiceId: "inv-1",
+      });
+      expect(ledgerService.settleRegulatedLedger).toHaveBeenCalledWith(expect.anything(), {
+        kind: "INVOICE_ZEROED",
+        invoiceId: "inv-2",
+      });
       // Each invoice's reversal precedes ITS OWN delete — never merely
       // "somewhere before the last delete".
       expect(calls.indexOf("ledger:inv-1")).toBeGreaterThanOrEqual(0);
@@ -557,7 +571,7 @@ describe("OrdersService — F07 lifecycle-conservation (TP-API)", () => {
       // order stays DELIVERED and staff retries invoicing from the order page.
       expect(prisma.order.update).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: "ord-1" },
+          where: { id: "ord-1", status: "CONFIRMED" },
           data: expect.objectContaining({ status: "DELIVERED" }),
         }),
       );

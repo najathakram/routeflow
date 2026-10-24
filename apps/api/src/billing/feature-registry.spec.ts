@@ -330,7 +330,7 @@ describe("FEATURE_REGISTRY (feature grants PR-1)", () => {
 
   it("DARK_PLAN_FLAGS (plan-flag-policy.ts) parity: exactly the dark RequirePlanFlag keys", () => {
     // DARK_PLAN_FLAGS is DEFINED in plan-flag-policy.ts (split out of plan-flag.guard.ts for the
-    // 2026-08-23/Lite-L2 rollout, REMOVE by 2026-10-01) and RE-EXPORTED from plan-flag.guard.ts —
+    // 2026-08-23/Lite-L2 rollout, review by 2027-01-31) and RE-EXPORTED from plan-flag.guard.ts —
     // scan the file that actually declares the literal, not the re-export. Do not point this back
     // at plan-flag.guard.ts; it no longer contains the `new Set([...])` text.
     const policyText = fs.readFileSync(
@@ -556,3 +556,9 @@ describe("B524 — checkFeatureRequires / describeUnmetFeatureRequirement / feat
 // Type-only assertion: keeps this file failing to compile if FeatureDef's shape changes without
 // the spec being revisited.
 type _AssertFeatureDefShape = FeatureDef;
+
+describe("SA-1: plain names", () => {
+  it("the fulfilment_model row is called 'Where orders go'", () => {
+    expect(featureDefByKey("fulfilment_model")?.label).toBe("Where orders go");
+  });
+});

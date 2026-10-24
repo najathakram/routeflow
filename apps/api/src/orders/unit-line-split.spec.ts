@@ -88,15 +88,16 @@ describe("change-request writes run the unit-aware target check first (#2230, SA
     expect(start).toBeGreaterThan(-1);
     expect(body).toContain("unitAware.assertChangeTargetAllowed(");
     expect(body).toContain("const wasBoxSplit = src.boxes != null;");
-    expect(body).toContain("const wasBoxSplit = existing.boxes != null;");
+    // SA-841: the ADD_ITEM merge derives its split through the one helper now (it was `wasBoxSplit = existing.boxes != null`)
+    expect(body).toContain("const merged = mergeIntoStoredLine(");
   });
 
-  it.each([
-    ["const wasBoxSplit = src.boxes != null;"],
-    ["const wasBoxSplit = existing.boxes != null;"],
-  ])("assertChangeTargetAllowed runs before `%s`", (write) => {
-    const check = body.indexOf("unitAware.assertChangeTargetAllowed(");
-    expect(check).toBeGreaterThan(-1);
-    expect(check).toBeLessThan(body.indexOf(write));
-  });
+  it.each([["const wasBoxSplit = src.boxes != null;"], ["const merged = mergeIntoStoredLine("]])(
+    "assertChangeTargetAllowed runs before `%s`",
+    (write) => {
+      const check = body.indexOf("unitAware.assertChangeTargetAllowed(");
+      expect(check).toBeGreaterThan(-1);
+      expect(check).toBeLessThan(body.indexOf(write));
+    },
+  );
 });

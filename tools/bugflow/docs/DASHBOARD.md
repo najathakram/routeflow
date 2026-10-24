@@ -11,18 +11,18 @@ itself is unavailable or the repo is between GitHub sessions.
 
 ## Fields
 
-| Field | Type | Mirrors |
-| --- | --- | --- |
-| Status | single-select (built-in) | `status:*` |
-| Wave | number | `wave:N` |
-| Class | multi-select (a bug carries 1 `agent-safe`, or 1–3 carve-out classes; never both — see [DATA-MODEL.md](DATA-MODEL.md)) | `class:*` |
-| Tier | single-select | `tier:*` |
-| Severity | single-select | `severity:*` |
-| Area | single-select | `area:*` |
-| Harness | single-select | `harness:*` |
-| Claimed by | people (built-in) | the issue's assignee |
-| Lease expiry | date | the live claim comment's `exp=` field |
-| Batch | (built-in parent-issue relationship) | the sub-issue's parent |
+| Field        | Type                                                                                                                   | Mirrors                               |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------- |
+| Status       | single-select (built-in)                                                                                               | `status:*`                            |
+| Wave         | number                                                                                                                 | `wave:N`                              |
+| Class        | multi-select (a bug carries 1 `agent-safe`, or 1–3 carve-out classes; never both — see [DATA-MODEL.md](DATA-MODEL.md)) | `class:*`                             |
+| Tier         | single-select                                                                                                          | `tier:*`                              |
+| Severity     | single-select                                                                                                          | `severity:*`                          |
+| Area         | single-select                                                                                                          | `area:*`                              |
+| Harness      | single-select                                                                                                          | `harness:*`                           |
+| Claimed by   | people (built-in)                                                                                                      | the issue's assignee                  |
+| Lease expiry | date                                                                                                                   | the live claim comment's `exp=` field |
+| Batch        | (built-in parent-issue relationship)                                                                                   | the sub-issue's parent                |
 
 `project` in `bugflow.config.json` names the Projects v2 project **number**; `bugflow sync` is
 the only writer of any field above, run after every status-affecting fact (see
@@ -39,7 +39,7 @@ the only writer of any field above, run after every status-affecting fact (see
   label on a stuck question — here, the three ways a bug legitimately cannot move without a human
   decision).
 - **Board** — grouped by Status, left to right in state-machine order (`triage → ready → claimed →
-  in_progress → in_review → verifying → done`, with `blocked`/`parked`/`regressed` as side lanes).
+in_progress → in_review → verifying → done`, with `blocked`/`parked`/`regressed` as side lanes).
   The literal Kanban view.
 - **Waves** — a table grouped by Wave, each row a Batch (or standalone bug) with its Claimed-by,
   Severity and Area columns visible — this is `bugflow plan`'s own output

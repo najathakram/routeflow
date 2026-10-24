@@ -1,5 +1,5 @@
 import * as React from "react";
-import { fireEvent, renderWithProviders, screen, waitFor } from "@/test-utils/render";
+import { fireEvent, renderWithProviders, screen, waitFor, within } from "@/test-utils/render";
 import { InlineReturnSection, type InlineReturnSectionState } from "./InlineReturnSection";
 
 /**
@@ -78,5 +78,57 @@ describe("#2694 InlineReturnSection — scan items into Returns", () => {
     fireEvent.click(screen.getByRole("button", { name: /scan barcode/i }));
     expect(await screen.findByText(/no product with barcode 0123456789012/i)).toBeInTheDocument();
     expect(lastLines(states)).toEqual([]);
+  });
+
+  describe("B1219 - a single fuzzy match is confirmed, not added", () => {
+    const suggestion = {
+      product: WIDGET,
+      source: "search",
+      ambiguous: true,
+      suggestion: true,
+      matches: [WIDGET],
+    };
+
+    it("adds nothing until Add", async () => {
+      resolveProductByCode.mockResolvedValue(suggestion);
+      const states = renderSection();
+      fireEvent.click(screen.getByRole("button", { name: /scan barcode/i }));
+      const picker = await screen.findByRole("group", { name: /did you mean/i });
+      expect(picker).toHaveTextContent("Did you mean Widget?");
+      expect(lastLines(states)).toEqual([]);
+      fireEvent.click(within(picker).getByRole("button", { name: "Add" }));
+      await waitFor(() => expect(lastLines(states)).toEqual([["prod-1", "1"]]));
+      expect(screen.queryByRole("group", { name: /did you mean/i })).toBeNull();
+    });
+
+    it("2+ fuzzy hits list every match, add nothing until a row's Add", async () => {
+      const GADGET = { id: "prod-2", name: "Gadget", unit: "each", unitsPerBox: null };
+      resolveProductByCode.mockResolvedValue({
+        product: WIDGET,
+        source: "search",
+        ambiguous: true,
+        matches: [WIDGET, GADGET],
+      });
+      const states = renderSection();
+      fireEvent.click(screen.getByRole("button", { name: /scan barcode/i }));
+      const picker = await screen.findByRole("group", { name: /did you mean/i });
+      expect(picker).toHaveTextContent("Widget");
+      expect(picker).toHaveTextContent("Gadget");
+      expect(lastLines(states)).toEqual([]);
+      fireEvent.click(within(picker).getByRole("button", { name: "Add Gadget" }));
+      await waitFor(() => expect(lastLines(states)).toEqual([["prod-2", "1"]]));
+    });
+
+    it("Cancel adds nothing", async () => {
+      resolveProductByCode.mockResolvedValue(suggestion);
+      const states = renderSection();
+      fireEvent.click(screen.getByRole("button", { name: /scan barcode/i }));
+      const picker = await screen.findByRole("group", { name: /did you mean/i });
+      fireEvent.click(within(picker).getByRole("button", { name: "Cancel" }));
+      await waitFor(() =>
+        expect(screen.queryByRole("group", { name: /did you mean/i })).toBeNull(),
+      );
+      expect(lastLines(states)).toEqual([]);
+    });
   });
 });

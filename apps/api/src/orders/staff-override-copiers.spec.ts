@@ -134,6 +134,8 @@ describe("replaceAll existing-line map (replace-all-line-build buildExistingLine
       originalPrice: 6,
       overrideReason: "promo",
       overriddenBy: "u-1",
+      // B297 row 340: the line's own category facts ride along for a fold's re-creation of it
+      category: expect.objectContaining({ productId: "p-1" }),
     });
   });
 });

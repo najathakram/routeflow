@@ -5,7 +5,7 @@
 // so the board doesn't sit stale until the next 5-minute poll. If a
 // reconcile was already triggered within the last 60s, this is a silent
 // no-op — that in-flight (or just-finished) run already covers the change.
-// Otherwise it spawns a fully DETACHED `node reconcile.mjs --quiet` and
+// Otherwise it spawns a fully DETACHED `node reconcile.mjs --apply --quiet` and
 // returns immediately: the caller never blocks on the board actually
 // refreshing.
 //
@@ -72,14 +72,14 @@ function main() {
     console.log(`work trigger: debounced — a reconcile started ${ageS}s ago`);
     return;
   }
-  const child = spawn(process.execPath, [RECONCILE_PATH, "--quiet"], {
+  const child = spawn(process.execPath, [RECONCILE_PATH, "--apply", "--quiet"], {
     cwd: ROOT,
     detached: true,
     stdio: "ignore",
   });
   child.unref();
   saveState({ ...state, lastTriggeredAt: now.toISOString() });
-  console.log(`work trigger: spawned reconcile.mjs --quiet (pid ${child.pid})`);
+  console.log(`work trigger: spawned reconcile.mjs --apply --quiet (pid ${child.pid})`);
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {

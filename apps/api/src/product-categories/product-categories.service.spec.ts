@@ -23,7 +23,7 @@ function row(over: Record<string, unknown> = {}, labels = 2, active = 0) {
     name: "Alcohol",
     archivedAt: null,
     createdAt: new Date("2026-09-19T00:00:00Z"),
-    _count: { labels, sellingRestrictions: active },
+    _count: { labels, sellingRestrictionTargets: active, sellingRestrictions: 0 },
     ...over,
   };
 }
@@ -38,6 +38,15 @@ describe("ProductCategoriesService", () => {
     prisma = createMockPrisma();
     cat = stub();
     (prisma.forTenant() as any).productCategory = cat;
+    // Name writes run in a tx under the per-tenant names lock (label-writer): the same stub, plus the lock's raw calls.
+    (prisma as any).tenantTransaction = jest.fn(async (fn: (tx: unknown) => unknown) =>
+      fn({
+        productCategory: cat,
+        $queryRaw: jest.fn().mockResolvedValue([{ lock_timeout: "0" }]),
+        $executeRaw: jest.fn().mockResolvedValue(0),
+        $executeRawUnsafe: jest.fn().mockResolvedValue(0),
+      }),
+    );
     audit = { log: jest.fn().mockResolvedValue(undefined) };
     const mod = await Test.createTestingModule({
       providers: [
@@ -81,10 +90,17 @@ describe("ProductCategoriesService", () => {
       await service.list();
       const counts = cat.findMany.mock.calls[0][0].select._count.select;
       expect(counts.labels).toEqual({ where: { mode: "INCLUDE" } });
-      const where = counts.sellingRestrictions.where;
-      // Same shape as `activeRuleWhere` for the very instant the query used — incl. effectiveFrom.
-      expect(where.effectiveFrom).toEqual({ lte: expect.any(Date) });
-      expect(where).toEqual(activeRuleWhere(where.effectiveFrom.lte));
+      // Row 509: a rule counts through an ACTIVE target of the label whose rule is in force...
+      const held = counts.sellingRestrictionTargets.where;
+      const at = held.AND[1].rule.effectiveFrom.lte as Date;
+      expect(held.AND[1]).toEqual({ rule: activeRuleWhere(at) });
+      expect(held.AND[0]).toEqual({
+        addedAt: { lte: at },
+        OR: [{ removedAt: null }, { removedAt: { gt: at } }],
+      });
+      // ...and a pre-509 rule with ZERO target rows counts by its legacy column.
+      const legacy = counts.sellingRestrictions.where;
+      expect(legacy).toEqual({ AND: [activeRuleWhere(at), { targets: { none: {} } }] });
     });
   });
 
@@ -130,8 +146,20 @@ describe("ProductCategoriesService", () => {
       );
       const where = cat.updateMany.mock.calls[0][0].where;
       expect(where.id).toBe("c1");
+      const at = where.sellingRestrictionTargets.none.AND[1].rule.effectiveFrom.lte as Date;
+      expect(where.sellingRestrictionTargets).toEqual({
+        none: {
+          AND: [
+            {
+              addedAt: { lte: at },
+              OR: [{ removedAt: null }, { removedAt: { gt: at } }],
+            },
+            { rule: activeRuleWhere(at) },
+          ],
+        },
+      });
       expect(where.sellingRestrictions).toEqual({
-        none: activeRuleWhere(where.sellingRestrictions.none.effectiveFrom.lte),
+        none: { AND: [activeRuleWhere(at), { targets: { none: {} } }] },
       });
       expect(audit.log).not.toHaveBeenCalled();
     });
@@ -180,6 +208,7 @@ describe("ProductCategoriesService", () => {
       await service.update("c1", { archived: false }, user);
       expect(cat.updateMany.mock.calls[0][0].data.archivedAt).toBeNull();
       expect(cat.updateMany.mock.calls[0][0].where.sellingRestrictions).toBeUndefined();
+      expect(cat.updateMany.mock.calls[0][0].where.sellingRestrictionTargets).toBeUndefined();
     });
 
     it("a no-op patch writes and audits nothing", async () => {
@@ -197,6 +226,67 @@ describe("ProductCategoriesService", () => {
       await expect(service.update("c1", { name: "Dup" }, user)).rejects.toBeInstanceOf(
         ConflictException,
       );
+    });
+  });
+
+  describe("one label per name key (SA: LABEL_NAME_TAKEN under the per-tenant names lock)", () => {
+    it('creating "vape" when "Vape" exists is a 409 LABEL_NAME_TAKEN naming the existing label; nothing created', async () => {
+      cat.findMany.mockResolvedValue([{ id: "c-vape", name: "Vape" }]);
+      const err = await service.create({ name: "vape" } as any, user as any).catch((e) => e);
+      expect(err).toBeInstanceOf(ConflictException);
+      expect(err.getResponse()).toMatchObject({
+        code: "LABEL_NAME_TAKEN",
+        message: 'A label named "Vape" already exists.',
+        existingLabel: { id: "c-vape", name: "Vape" },
+      });
+      expect(cat.create).not.toHaveBeenCalled();
+    });
+
+    it('the key ignores case and spacing: "  VAPE  " collides too; an archived label still holds its name', async () => {
+      cat.findMany.mockResolvedValue([{ id: "c-old", name: "Vape" }]);
+      await expect(service.create({ name: "  VAPE  " } as any, user as any)).rejects.toMatchObject({
+        response: { code: "LABEL_NAME_TAKEN" },
+      });
+      // the collision read includes archived labels (no archivedAt filter)
+      expect(cat.findMany.mock.calls[0][0].where).not.toHaveProperty("archivedAt");
+    });
+
+    it("the check runs under the per-tenant names lock, before the write", async () => {
+      const calls: string[] = [];
+      (prisma as any).tenantTransaction = jest.fn(async (fn: (tx: unknown) => unknown) =>
+        fn({
+          productCategory: {
+            ...cat,
+            findMany: jest.fn(async () => (calls.push("check"), [])),
+            create: jest.fn(async () => (calls.push("create"), row({}, 0, 0))),
+          },
+          $queryRaw: jest.fn().mockResolvedValue([{ lock_timeout: "0" }]),
+          $executeRaw: jest.fn(async (strings: TemplateStringsArray) => {
+            if (strings.join("?").includes("pg_advisory_xact_lock")) calls.push("lock");
+            return 0;
+          }),
+          $executeRawUnsafe: jest.fn().mockResolvedValue(0),
+        }),
+      );
+      await service.create({ name: "Hemp" } as any, user as any);
+      expect(calls).toEqual(["lock", "check", "create"]);
+    });
+
+    it("renaming to another label's key is refused; a case-only rename of itself is allowed", async () => {
+      cat.findFirst.mockResolvedValue(row({ id: "c1", name: "Alcohol" }, 0, 0));
+      cat.findMany.mockResolvedValue([{ id: "c2", name: "Vape" }]);
+      await expect(
+        service.update("c1", { name: "VAPE" } as any, user as any),
+      ).rejects.toMatchObject({
+        response: { code: "LABEL_NAME_TAKEN", existingLabel: { id: "c2", name: "Vape" } },
+      });
+      expect(cat.updateMany).not.toHaveBeenCalled();
+      // itself excluded from the check: a case-only rename passes
+      cat.findMany.mockResolvedValue([]);
+      cat.updateMany.mockResolvedValue({ count: 1 });
+      await service.update("c1", { name: "ALCOHOL" } as any, user as any);
+      expect(cat.findMany.mock.calls.at(-1)[0].where).toMatchObject({ id: { not: "c1" } });
+      expect(cat.updateMany).toHaveBeenCalledTimes(1);
     });
   });
 });

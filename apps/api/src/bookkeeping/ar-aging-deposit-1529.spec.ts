@@ -164,7 +164,7 @@ describe("BookkeepingService.getArAgingInvoices — deposit visibility (#1529 / 
         dueDate: future,
         depositPercent: 50,
         depositDueDate: new Date("2026-09-10T00:00:00.000Z"),
-        payments: [{ amount: 100 }],
+        payments: [{ amount: 100, status: "PAID" }],
       }),
     ]);
     const result: any = await service.getArAgingInvoices();
@@ -186,7 +186,7 @@ describe("BookkeepingService.getArAgingInvoices — deposit visibility (#1529 / 
         dueDate: future,
         depositPercent: 50,
         depositDueDate: new Date("2026-09-10T00:00:00.000Z"),
-        payments: [{ amount: 100 }],
+        payments: [{ amount: 100, status: "PAID" }],
       }),
       // overdue deposit: 25% of 1000 = 250, nothing paid ⇒ 250 outstanding
       inv("inv-b", {
@@ -199,7 +199,7 @@ describe("BookkeepingService.getArAgingInvoices — deposit visibility (#1529 / 
         dueDate: future,
         depositPercent: 50,
         depositDueDate: new Date("2026-09-10T00:00:00.000Z"),
-        payments: [{ amount: 600 }],
+        payments: [{ amount: 600, status: "PAID" }],
       }),
       // deposit not yet due ⇒ not overdue
       inv("inv-d", {

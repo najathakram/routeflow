@@ -57,8 +57,12 @@ const GROUP_TITLE: Record<NotificationAudience, string> = {
 
 /** One line per event: who gets it, and when. Closed copy keyed by the event code. */
 const EVENT_DESCRIPTION: Record<string, string> = {
-  ORDER_CONFIRMED: "Sent when an order is confirmed for delivery.",
+  ORDER_CONFIRMED: "Sent when an order is confirmed.",
   OUT_FOR_DELIVERY: "Sent when the driver starts the route with this order.",
+  ORDER_SHIPPED: "Sent when an order is marked shipped with a carrier (UPS, FedEx and so on).",
+  READY_FOR_PICKUP: "Sent when a pickup order is ready for the customer to collect.",
+  SHIPMENT_TRACKING_ADDED:
+    "Sent once, when a tracking number is first added to an order that has already shipped.",
   DELIVERED: "Sent when the order is delivered.",
   CANCELLED: "Sent when an order is cancelled.",
   ORDER_CHANGED_AT_DOOR: "Sent when a driver changes the order at the door.",
@@ -328,7 +332,21 @@ export function NotificationRulesCard({
           </summary>
           <ul className="mt-2 space-y-1 text-sm text-navy/70">
             {comingSoon.map((event) => (
-              <li key={event.eventKey}>{event.label}</li>
+              <li key={event.eventKey}>
+                <span>{event.label}</span>
+                {/* per-product low-stock alerts are not built, but the daily digest (admin card below) is live */}
+                {event.eventKey === "LOW_STOCK" && isAdmin && (
+                  <>
+                    {" · "}
+                    <a
+                      href="#low-stock-digest"
+                      className="font-medium text-brand-600 underline-offset-2 hover:underline"
+                    >
+                      The daily low-stock digest is below
+                    </a>
+                  </>
+                )}
+              </li>
             ))}
             {notBuilt.length > 0 && (
               <li>{joinList(notBuilt.map((c) => COMING_SOON_LABEL[c] ?? CHANNEL_LABELS[c]))}</li>

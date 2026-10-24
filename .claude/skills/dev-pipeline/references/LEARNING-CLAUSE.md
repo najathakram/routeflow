@@ -29,12 +29,12 @@ defect.
 
 ## What "better" means, measured
 
-| Dimension | Signal (from the ledger / usage) | Direction |
-|---|---|---|
-| Cost | `trueCostUsd` per run at equal scale; session cache-read share | down |
-| Speed | `activeMs`; gate wall-clock; fix rounds | down |
-| Quality | confirmed findings per phase; red-gate behavioral rate; probes caught; unledgered runs | up / up / up / **0** |
-| Consistency | close-outs done by the script; knob changes backed by a `summary` line | 100% |
+| Dimension   | Signal (from the ledger / usage)                                                       | Direction            |
+| ----------- | -------------------------------------------------------------------------------------- | -------------------- |
+| Cost        | `trueCostUsd` per run at equal scale; session cache-read share                         | down                 |
+| Speed       | `activeMs`; gate wall-clock; fix rounds                                                | down                 |
+| Quality     | confirmed findings per phase; red-gate behavioral rate; probes caught; unledgered runs | up / up / up / **0** |
+| Consistency | close-outs done by the script; knob changes backed by a `summary` line                 | 100%                 |
 
 ## Where the clause lives
 

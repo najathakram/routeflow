@@ -44,6 +44,9 @@ function make(opts: { assertFeatureRequiresMet?: jest.Mock } = {}) {
     stub() as any, // featureDiffs
     authority as any,
     stub() as any, // featurePreview
+    stub() as any, // snapshotAdmin
+    stub() as any, // businessProfiles
+    stub() as any, // featureConfig
   );
   return { controller, authority, featureOverrides, svc };
 }

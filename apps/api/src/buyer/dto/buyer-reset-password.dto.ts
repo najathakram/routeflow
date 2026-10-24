@@ -14,7 +14,7 @@ export class BuyerResetPasswordDto {
   })
   @IsString()
   @MinLength(8)
-  @Matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*[\d\W])/, {
+  @Matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*[\d\W_])/, {
     message:
       "newPassword must contain at least one uppercase letter, one lowercase letter, and one number or special character",
   })

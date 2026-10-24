@@ -1,4 +1,4 @@
-import { cascadeTierPrices, getTierPrice } from "./tier-pricing";
+import { applyLadderChange, getTierPrice } from "./tier-pricing";
 
 /**
  * Locks the tier ladder semantics — this 17-line function is the whole tier
@@ -53,44 +53,47 @@ describe("getTierPrice", () => {
   });
 });
 
-describe("cascadeTierPrices", () => {
-  it("copies the committed price down to every lower tier", () => {
-    expect(cascadeTierPrices("priceTier2", 9)).toEqual({
+describe("applyLadderChange (replaces the unconditional copy-down, P0 2026-10-14)", () => {
+  const flat = (v: unknown) =>
+    ({ priceTier2: v, priceTier3: v, priceTier4: v, priceTier5: v }) as never;
+
+  it("copies the committed price into lower tiers that were TRACKING it (equal to the old value)", () => {
+    expect(applyLadderChange("priceTier2", 10, 9, flat(10))).toEqual({
       priceTier3: "9.00",
       priceTier4: "9.00",
       priceTier5: "9.00",
     });
   });
 
-  it("cascades only to the tiers below the edited one", () => {
-    expect(cascadeTierPrices("priceTier4", 8.5)).toEqual({ priceTier5: "8.50" });
+  it("touches only the tiers below the edited one", () => {
+    expect(applyLadderChange("priceTier4", 10, 8.5, flat(10))).toEqual({ priceTier5: "8.50" });
   });
 
   it("tier 5 has nothing below it", () => {
-    expect(cascadeTierPrices("priceTier5", 7)).toEqual({});
-  });
-
-  it("Tier 1 / pricePerUnit is deliberately excluded from the cascade", () => {
-    expect(cascadeTierPrices("pricePerUnit", 10)).toEqual({});
+    expect(applyLadderChange("priceTier5", 10, 7, flat(10))).toEqual({});
   });
 
   it("rejects non-finite or negative input", () => {
-    expect(cascadeTierPrices("priceTier2", NaN)).toEqual({});
-    expect(cascadeTierPrices("priceTier2", -1)).toEqual({});
+    expect(applyLadderChange("priceTier2", 10, NaN, flat(10))).toEqual({});
+    expect(applyLadderChange("priceTier2", 10, -1, flat(10))).toEqual({});
   });
 
   it("rounds half-up at the cent", () => {
-    expect(cascadeTierPrices("priceTier2", 9.005)).toEqual({
+    expect(applyLadderChange("priceTier2", 0, 9.005, flat(0))).toEqual({
       priceTier3: "9.01",
       priceTier4: "9.01",
       priceTier5: "9.01",
     });
   });
 
-  it("committing 0 cascades an explicit 0.00 — the tiers inherit list price again under getTierPrice's fallback", () => {
-    expect(cascadeTierPrices("priceTier3", 0)).toEqual({
-      priceTier4: "0.00",
-      priceTier5: "0.00",
-    });
+  it("committing 0 moves only the tracking tiers to 0.00 (they inherit the list again); a cheaper break stays", () => {
+    expect(
+      applyLadderChange("priceTier3", 9, 0, {
+        priceTier2: 10,
+        priceTier3: 9,
+        priceTier4: 9,
+        priceTier5: 7,
+      } as never),
+    ).toEqual({ priceTier4: "0.00" });
   });
 });

@@ -159,11 +159,12 @@ describe("MailboxCard — what the admin sees in each state", () => {
     expect(screen.queryByText(/gmail/i)).toBeNull();
   });
 
-  it("CONNECTED with a recorded send failure shows the last error", async () => {
+  it("CONNECTED with a recorded send failure shows a fixed sentence, never the provider text", async () => {
     statusAnswers = [{ ...CONNECTED_GOOGLE, lastError: "Gmail send failed" }];
     renderCard();
 
-    expect(await screen.findByText("Last error: Gmail send failed")).toBeInTheDocument();
+    expect(await screen.findByText(/last sync reported a problem/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Gmail send failed/)).not.toBeInTheDocument();
   });
 
   it("THROTTLED: the amber badge and the fallback notice naming the provider and the time it clears", async () => {

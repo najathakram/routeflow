@@ -1,4 +1,5 @@
 import {
+  gtinEquivalents,
   MAX_SCAN_CANDIDATES,
   normalizeScanCode,
   pickBestScanMatch,
@@ -152,5 +153,42 @@ describe("pickBestScanMatch", () => {
 
   it("still returns a row when nothing ranks (server matched on a column we don't rank)", () => {
     expect(pickBestScanMatch([{ id: "only" }], ["NOPE"]).id).toBe("only");
+  });
+});
+
+describe("gtinEquivalents (B1214: the identity subset of the scan candidates)", () => {
+  const UPC = "012345678905";
+  const EAN = `0${UPC}`;
+
+  it("a UPC-A and its EAN-13 form are each other's equivalents", () => {
+    expect(gtinEquivalents(UPC).sort()).toEqual([EAN, UPC].sort());
+    expect(gtinEquivalents(EAN).sort()).toEqual([EAN, UPC].sort());
+  });
+
+  it("a GTIN-14 reaches the inner GTIN, and a UPC-E its UPC-A and EAN-13", () => {
+    expect(gtinEquivalents(`0${EAN}`)).toEqual(expect.arrayContaining([`0${EAN}`, EAN, UPC]));
+    expect(gtinEquivalents("01234565")).toEqual(
+      expect.arrayContaining(["01234565", "012345000065", "0012345000065"]),
+    );
+  });
+
+  it("is a subset of what scan lookup tries, and never includes the fuzzy fallbacks", () => {
+    for (const code of [UPC, EAN, "01234565", "00123"]) {
+      const scan = new Set(normalizeScanCode(code));
+      for (const e of gtinEquivalents(code)) expect(scan.has(e)).toBe(true);
+    }
+    expect(gtinEquivalents(UPC)).not.toContain(UPC.slice(0, -1));
+    expect(gtinEquivalents(UPC)).not.toContain("12345678905");
+    expect(gtinEquivalents("00123")).toEqual(["00123"]);
+  });
+
+  it("keeps a non-numeric code as is, and a blank one empty", () => {
+    expect(gtinEquivalents("TOM-001")).toEqual(["TOM-001"]);
+    expect(gtinEquivalents("  ")).toEqual(["  "]);
+    expect(gtinEquivalents("")).toEqual([]);
+  });
+
+  it("does not change what normalizeScanCode returns for a UPC-A (same order as before)", () => {
+    expect(normalizeScanCode(UPC)).toEqual([UPC, EAN, "12345678905", "01234567890"]);
   });
 });

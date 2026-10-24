@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { MovementsExportButton } from "./_components/MovementsExportButton";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, ChevronLeft, ChevronRight } from "lucide-react";
 import { Badge, Button, cn } from "@routeflow/ui/web";
@@ -110,17 +111,27 @@ export default function MovementsPage() {
         Inventory
       </Link>
 
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-2xl font-bold text-navy">Stock Movements</h2>
-        {meta ? (
-          <p className="text-sm text-navy/70">
-            {meta.total} record{meta.total !== 1 ? "s" : ""}
-          </p>
-        ) : referenceFilter ? (
-          <p className="text-sm text-navy/70">
-            {movements.length} record{movements.length !== 1 ? "s" : ""}
-          </p>
-        ) : null}
+        <div className="flex items-center gap-3">
+          {/* The reference filter is client-side only, so an export would not match the rows shown. */}
+          {!referenceFilter && (
+            <MovementsExportButton
+              total={meta?.total ?? movements.length}
+              loading={isLoading}
+              filters={filters}
+            />
+          )}
+          {meta ? (
+            <p className="text-sm text-navy/70">
+              {meta.total} record{meta.total !== 1 ? "s" : ""}
+            </p>
+          ) : referenceFilter ? (
+            <p className="text-sm text-navy/70">
+              {movements.length} record{movements.length !== 1 ? "s" : ""}
+            </p>
+          ) : null}
+        </div>
       </div>
 
       {referenceFilter && (

@@ -12,7 +12,10 @@ const newLineQtyForLevel = (m as any).newLineQtyForLevel as (
   level: "BOX" | "UNIT",
   n: number,
 ) => { qty: number; boxes?: number; pieces?: number };
-const mergePieceIntoLine = (m as any).mergePieceIntoLine as <T extends object>(line: T, n: number) => T;
+const mergePieceIntoLine = (m as any).mergePieceIntoLine as <T extends object>(
+  line: T,
+  n: number,
+) => T;
 
 describe("newLineQtyForLevel", () => {
   it("UNIT on a boxed product -> one loose piece, no hidden box: {qty:1, boxes:0, pieces:1}", () => {
@@ -48,7 +51,10 @@ describe("mergePieceIntoLine — one loose piece onto the ONE existing line", ()
   it("rolls over through normalizeBoxesPieces: 1 case + 11 loose + 1 piece -> 2 cases + 0 loose", () => {
     const out: any = mergePieceIntoLine(line(1, 11), 1);
     expect(out).toMatchObject({ boxes: 2, pieces: 0, qty: 24 });
-    expect(normalizeBoxesPieces({ qty: out.qty, unitsPerBox: 12 })).toMatchObject({ boxes: 2, pieces: 0 });
+    expect(normalizeBoxesPieces({ qty: out.qty, unitsPerBox: 12 })).toMatchObject({
+      boxes: 2,
+      pieces: 0,
+    });
   });
 
   it("a non-boxed line just gains qty + 1 (R4)", () => {

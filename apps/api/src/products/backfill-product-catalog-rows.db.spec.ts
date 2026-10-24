@@ -402,7 +402,9 @@ describeDb("backfill-product-catalog-rows backfillProductCatalogRows() (db)", ()
         const results = await Promise.allSettled([
           backfillProductCatalogRows(prisma, { tenantSlug: testSlug, apply: true }),
           productsTenantCtx!.run(testTenantId, () =>
-            productsService.update(product.id, { barcode: codeY } as any),
+            productsService.update(product.id, { barcode: codeY } as any, {
+              packPrecondition: "internal",
+            }),
           ),
         ]);
 

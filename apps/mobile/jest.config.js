@@ -26,6 +26,8 @@ module.exports = {
       {
         tsconfig: {
           strict: false,
+          // W-830: the render tests of app/_layout.tsx and the redirect screens compile real .tsx.
+          jsx: "react-jsx",
           esModuleInterop: true,
           allowSyntheticDefaultImports: true,
           moduleResolution: "node",
@@ -46,6 +48,46 @@ module.exports = {
     "^@routeflow/scanning$": "<rootDir>/../../packages/scanning/src/index.ts",
     // Same reason for the shared return-state helpers: resolve to SOURCE, no build step to depend on.
     "^@routeflow/returns$": "<rootDir>/../../packages/returns/src/index.ts",
+    // B910: the sentinel-email helpers live in the shared types package, but the
+    // PACKAGE ROOT is stubbed below (its index pulls the whole DTO surface), so
+    // lib/internal-email.ts re-exports the SUBPATH module — resolve that one to
+    // SOURCE, same as pricing/scanning/returns.
+    "^@routeflow/types/internal-email$": "<rootDir>/../../packages/types/internal-email.ts",
+    // SA-714: the pure staff "Backorder" tag rule, same subpath trick (the package root is stubbed).
+    "^@routeflow/types/order-line-backorder$":
+      "<rootDir>/../../packages/types/order-line-backorder.ts",
+    // SA-767 L-2.4 D: the stock-count commit copy, same subpath trick (the package root is stubbed).
+    "^@routeflow/types/stock-count-commit-copy$":
+      "<rootDir>/../../packages/types/stock-count-commit-copy.ts",
+    // SA-776: the shared read-only copy composer, same subpath trick (the package root is stubbed).
+    "^@routeflow/types/read-only-copy$": "<rootDir>/../../packages/types/read-only-copy.ts",
+    // CQ-06: the shared license-refusal sentence (it imports only the pure error-code constants), same subpath trick.
+    "^@routeflow/types/regulated-auth-copy$":
+      "<rootDir>/../../packages/types/regulated-auth-copy.ts",
+    // H5: the shared estimate tax-basis notice (pure), same subpath trick.
+    "^@routeflow/types/estimate-tax-basis$": "<rootDir>/../../packages/types/estimate-tax-basis.ts",
+    // Row 485: the pure sale-retry rule (definitive refusal, per-attempt key), same subpath trick.
+    "^@routeflow/types/sale-attempt$": "<rootDir>/../../packages/types/sale-attempt.ts",
+    // #2088: the shared invoice re-email copy + states (pure), same subpath trick.
+    "^@routeflow/types/invoice-send-state$": "<rootDir>/../../packages/types/invoice-send-state.ts",
+    // SA-824: the shared payment submit-key rule (builds on sale-attempt), same subpath trick.
+    "^@routeflow/types/payment-submit-key$": "<rootDir>/../../packages/types/payment-submit-key.ts",
+    // Row 498: the shared duplicate-payment-reference copy and 409 reader (pure), same subpath trick.
+    "^@routeflow/types/payment-ref-copy$": "<rootDir>/../../packages/types/payment-ref-copy.ts",
+    // I-120: the shared credit-over-limit sentence (pure, no imports), same subpath trick.
+    "^@routeflow/types/credit-over-limit-copy$":
+      "<rootDir>/../../packages/types/credit-over-limit-copy.ts",
+    // I-120: the shared Counter sale / Store pickup / Complete at counter words (pure, no imports), same subpath trick.
+    "^@routeflow/types/counter-copy$": "<rootDir>/../../packages/types/counter-copy.ts",
+    // W-769: the shared no-longer-fits sentence (pure, no imports), same subpath trick.
+    "^@routeflow/types/no-longer-fits-copy$":
+      "<rootDir>/../../packages/types/no-longer-fits-copy.ts",
+    // M8: the shared shipment save rule + not-shipped line (pure, no imports), same subpath trick.
+    "^@routeflow/types/shipment-save$": "<rootDir>/../../packages/types/shipment-save.ts",
+    // SA-817 A: the one persisted-submit-key rule for a draft (pure, no imports), same subpath trick.
+    "^@routeflow/types/draft-submit-key$": "<rootDir>/../../packages/types/draft-submit-key.ts",
+    // Row 505: the fulfilment capability shape + UNSET fallback (pure, no imports), same subpath trick.
+    "^@routeflow/types/api/fulfilment$": "<rootDir>/../../packages/types/api/fulfilment.ts",
     "^expo-secure-store$": "<rootDir>/__tests__/__mocks__/expo-secure-store.js",
     // #2653: the shell bridge is pure TS (zod only) — resolve it to SOURCE, ahead of the ui stub.
     "^@routeflow/ui/shell-bridge$": "<rootDir>/../../packages/ui/src/shell-bridge.ts",

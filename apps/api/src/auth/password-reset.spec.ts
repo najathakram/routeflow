@@ -14,7 +14,7 @@ import { EntitlementsService } from "../billing/entitlements.service";
 jest.mock("bcrypt", () => ({ compare: jest.fn(), hash: jest.fn(), genSalt: jest.fn() }));
 
 const JWT_CONFIG = {
-  secret: "test-secret",
+  secret: "test-jwt-secret-0123456789-abcdefghijklmnop",
   refreshSecret: "test-refresh-secret",
   expiresIn: "15m",
   refreshExpiresIn: "30d",

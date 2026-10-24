@@ -26,7 +26,7 @@
  * app to match this commit" gate FAILS the job rather than continuing unless
  * the deployed web build is code-identical to the commit under test.
  *
- * Role: OPERATOR (storage state from the "import-duplicates" project). Runs
+ * Role: TENANT_ADMIN (storage state from the "import-duplicates" project; account administration is admin-only). Runs
  * against the DEPLOYED build (T2, proven-pending-deploy per the build plan).
  */
 import { test, expect, type Page } from "@playwright/test";

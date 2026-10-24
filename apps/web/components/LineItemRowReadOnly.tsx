@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import type { LineComponentView } from "@routeflow/types";
+import { BackorderTag } from "@/components/BackorderTag";
 import { ComponentSubLines } from "./ComponentSubLines";
 import { Package } from "lucide-react";
 import { Badge, cn, type BadgeStatus } from "@routeflow/ui/web";
@@ -12,6 +13,7 @@ import {
   normalizeBoxesPieces,
 } from "@routeflow/pricing";
 import { formatMoney } from "@/lib/format";
+import { unitPriceNote } from "@/lib/line-unit-price-note";
 import { objectPositionForUrl } from "@/lib/image-focal";
 import { splitProductName } from "@/lib/product-display";
 import { linePriceTag } from "./line-price-tag";
@@ -64,6 +66,13 @@ export interface LineItemRowReadOnlyProps {
   custom?: boolean;
   /** #2717 M3: frozen components of a composed (mixed-pack) line, shown as "(included)" sub-lines. */
   components?: ReadonlyArray<LineComponentView> | null;
+  /** SA-714: pieces sold past stock (staff-only); > 0 shows the "Backorder" tag. Display only. */
+  backorderPieces?: number;
+  /**
+   * Row 510: staff-only content that belongs to THIS line (the "Sold despite restriction" note). Rendered inside the
+   * line's own text column, so it is part of the row and never a separate row or a block under the list.
+   */
+  footer?: React.ReactNode;
   className?: string;
 }
 
@@ -96,6 +105,8 @@ export function LineItemRowReadOnly({
   note,
   custom,
   components,
+  backorderPieces,
+  footer,
   className,
 }: LineItemRowReadOnlyProps) {
   const [imageFailed, setImageFailed] = React.useState(false);
@@ -189,6 +200,12 @@ export function LineItemRowReadOnly({
           {anchor}
         </p>
         {sku && <p className="mt-0.5 font-mono text-xs text-navy/60">SKU {sku}</p>}
+        {backorderPieces != null && backorderPieces > 0 && (
+          <BackorderTag
+            pieces={backorderPieces}
+            unit={{ boxes, unitsPerBox, unitLabel: boxLabel }}
+          />
+        )}
         {custom && (
           <span className="mt-1 inline-flex rounded-full bg-brand-50 px-1.5 py-0.5 text-[10px] font-medium text-brand-700 ring-1 ring-brand-200">
             Custom
@@ -197,6 +214,17 @@ export function LineItemRowReadOnly({
         <p className="mt-1 text-xs text-navy/70" title={hasSplit ? `${qty} pcs total` : undefined}>
           {qtyPriceLine}
         </p>
+        {(() => {
+          // B1261: a boxed line sold in pieces also says the price each, from the same note the order table uses
+          const note = boxed
+            ? unitPriceNote({ unitPrice, unitsPerBox, unitLabel: boxLabel, pieces })
+            : null;
+          return note?.each ? (
+            <p className="mt-0.5 text-xs text-navy/60" data-testid="line-unit-price-unit">
+              {note.text}
+            </p>
+          ) : null;
+        })()}
         {priceTag && (
           <p
             className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs"
@@ -238,6 +266,7 @@ export function LineItemRowReadOnly({
             <Badge status={lineStatus} />
           </div>
         )}
+        {footer}
       </div>
 
       <div className="shrink-0 text-right">

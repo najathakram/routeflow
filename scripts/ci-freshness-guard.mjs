@@ -69,6 +69,8 @@
 //                                real `gh api ...` invocation entirely so
 //                                specs can drive a fake with no network.
 //   CI_FRESHNESS_GH_TIMEOUT_MS   Bounds the `gh api` call (default 30000ms).
+//   CI_FRESHNESS_VIRTUAL_CLOCK   "1" = the successor-confirmation window runs on a virtual clock
+//                                that advances only by the polling sleeps (no real waiting).
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -135,7 +137,19 @@ function ghApi(endpoint) {
   }
 }
 
+// Clock seam (test-only, off by default). With CI_FRESHNESS_VIRTUAL_CLOCK=1 the confirmation window is
+// measured in VIRTUAL time that only advances by the sleeps the loop asks for, so how many polls fit
+// in CI_E2E_SUCCESSOR_TIMEOUT_MS depends on the intervals, never on how fast the machine spawns `gh`.
+// Unset (every real CI run) it is the real Date.now() and a real sleep, exactly as before.
+const VIRTUAL_CLOCK = process.env.CI_FRESHNESS_VIRTUAL_CLOCK === "1";
+let virtualNow = 0;
+const now = () => (VIRTUAL_CLOCK ? virtualNow : Date.now());
+
 function sleep(ms) {
+  if (VIRTUAL_CLOCK) {
+    virtualNow += ms;
+    return;
+  }
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
@@ -207,11 +221,11 @@ function pollSuccessor(repo, deploySha) {
 function confirmSuccessor(repo, deploySha) {
   const timeoutMs = Number(process.env.CI_E2E_SUCCESSOR_TIMEOUT_MS) || 10 * 60_000;
   const intervalMs = Number(process.env.CI_E2E_SUCCESSOR_INTERVAL_MS) || 15_000;
-  const deadline = Date.now() + timeoutMs;
+  const deadline = now() + timeoutMs;
   let last = { kind: "wait", why: "never polled" };
   for (;;) {
     last = pollSuccessor(repo, deploySha);
-    if (last.kind !== "wait" || Date.now() >= deadline) return last;
+    if (last.kind !== "wait" || now() >= deadline) return last;
     console.log(`::notice::superseded, waiting for a later E2E run: ${last.why}`);
     sleep(intervalMs);
   }

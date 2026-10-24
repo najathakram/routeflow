@@ -6,11 +6,45 @@ import { ONBOARDING_TOKEN_SECRET_MIN_LENGTH } from "./onboarding/onboarding-toke
 const GOOD = "o".repeat(ONBOARDING_TOKEN_SECRET_MIN_LENGTH);
 const SHORT = "o".repeat(ONBOARDING_TOKEN_SECRET_MIN_LENGTH - 1);
 
+// A full-length HANDOFF_TOKEN_SECRET by default, so each block only sees its own secret's warning.
+const HANDOFF_OK = "h".repeat(32);
+
 function run(env: NodeJS.ProcessEnv) {
   const io: jest.Mocked<AssertSecretsIo> = { exit: jest.fn(), error: jest.fn(), warn: jest.fn() };
-  assertSecrets({ JWT_SECRET: "j", JWT_REFRESH_SECRET: "r", ...env }, io);
+  assertSecrets(
+    { JWT_SECRET: "j", JWT_REFRESH_SECRET: "r", HANDOFF_TOKEN_SECRET: HANDOFF_OK, ...env },
+    io,
+  );
   return io;
 }
+
+describe("assertSecrets — HANDOFF_TOKEN_SECRET (#2653, SA-542a)", () => {
+  const ONB = "o".repeat(32);
+  it.each([
+    ["development", "unset", undefined],
+    ["development", "short", "h".repeat(31)],
+    ["production", "unset", undefined],
+    ["production", "short", "h".repeat(31)],
+  ])(
+    "%s, %s: boots (never exits) and warns that the handoff is disabled",
+    (nodeEnv, _l, secret) => {
+      const io = run({
+        ...(nodeEnv === "production" ? PROD : { NODE_ENV: nodeEnv }),
+        ONBOARDING_TOKEN_SECRET: ONB,
+        HANDOFF_TOKEN_SECRET: secret,
+      });
+      expect(io.exit).not.toHaveBeenCalled();
+      expect(io.warn.mock.calls.flat().join("\n")).toMatch(
+        /HANDOFF_TOKEN_SECRET .*handoff is DISABLED .*409 HANDOFF_NOT_CONFIGURED/,
+      );
+    },
+  );
+
+  it("is quiet with a full-length secret", () => {
+    const io = run({ ...PROD, ONBOARDING_TOKEN_SECRET: ONB });
+    expect(io.warn.mock.calls.flat().join("\n")).not.toMatch(/HANDOFF_TOKEN_SECRET/);
+  });
+});
 
 const PROD = {
   NODE_ENV: "production",

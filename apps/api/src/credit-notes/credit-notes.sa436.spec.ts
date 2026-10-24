@@ -35,6 +35,7 @@ describe("CreditNotesService — SA-436 credit auto-apply off, exclusion and app
           useValue: {
             reverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
             unreverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
+            settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
           },
         },
         {

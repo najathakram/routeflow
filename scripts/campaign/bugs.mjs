@@ -63,6 +63,7 @@
 //   node scripts/campaign/bugs.mjs index                        # rebuild bugs.jsonl from the records (regenerate, never hand-edit)
 //   node scripts/campaign/bugs.mjs brief <F##|B###>             # everything an agent needs to start a batch, in one output
 //   node scripts/campaign/bugs.mjs prove <B###> --pr <n> --proof "REG-B### ..." [--pending-deploy] [--build-plan <path>]  (--build-plan is REQUIRED for a T3 row)
+//   node scripts/campaign/bugs.mjs close <B###> --sha <commit sha> --why "<how verified fixed>" [--batch F## --tier T1|T2|T3]   # registry state already-fixed; a bug with no ledger row needs --batch + --tier
 //   node scripts/campaign/bugs.mjs discharge <F##> --evidence "<post-deploy proof>" [--evidence-B### "<per-row proof>"]   # per-row evidence is REQUIRED for every T2 row
 //   node scripts/campaign/bugs.mjs reopen <B###> --why "<failing REG-B### token or the run that showed the regression>"
 //   node scripts/campaign/bugs.mjs claim <F##>                  # flip that batch's workable rows to in-flight (next/waves skip it)
@@ -95,6 +96,7 @@ import { tmpdir, uptime } from "node:os";
 import { execFileSync, execSync, spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
+import { scrubbedGitEnv } from "../lib/check-git-hooks.mjs";
 import { normalizeEvidence } from "./normalize-evidence.mjs";
 import {
   hasRegToken,
@@ -1523,7 +1525,8 @@ const SYNC_STATE = () =>
   (process.env.BUGS_ROOT ? join(rootDir(), "sync-state.json") : ".campaign/bugs-sync-state.json");
 const FIRST_RUN_WINDOW = 400;
 
-const git = (cmd) => execSync(cmd, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+const git = (cmd) =>
+  execSync(cmd, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: scrubbedGitEnv() });
 
 function readSyncState() {
   const p = SYNC_STATE();
@@ -2697,6 +2700,137 @@ cmds["already-fixed"] = (args) => {
   });
 };
 
+// The proof sha for `close`: a real commit (resolved to its full 40-hex form) that is reachable from
+// origin/master. Returns the full sha or throws with the reason; `close` turns that into a refusal.
+function resolveCloseSha(sha) {
+  if (!/^[0-9a-f]{7,40}$/i.test(sha))
+    throw new Error(`--sha must be 7-40 hex characters (got "${sha}")`);
+  if (!isCommit(sha)) throw new Error(`--sha ${sha} is not a commit in this repository`);
+  const full = git(`git rev-parse --verify ${sha}`).trim().toLowerCase();
+  try {
+    git("git rev-parse --verify --quiet refs/remotes/origin/master");
+  } catch {
+    throw new Error("origin/master is not available here — `git fetch origin master` first");
+  }
+  try {
+    git(`git merge-base --is-ancestor ${full} refs/remotes/origin/master`);
+  } catch {
+    throw new Error(`--sha ${sha} is not reachable from origin/master (merge the fix first)`);
+  }
+  return full;
+}
+
+// A bug closed OUTSIDE the ledger (a History note, a fix that landed without `prove`) has no
+// ledger row, so `show`/`stats`/`sync` read "uncampaigned" forever (item 642). `close` writes the
+// registry state: the row becomes `already-fixed` (the evidence-only terminal state) carrying the
+// fixing commit's full sha, which must be a real commit reachable from origin/master. A bug with no
+// row yet needs `--batch` + `--tier` to get its first one (reusing `move`'s triage path, rolled back
+// if the close then fails); a queued/in-flight row closes in place; closing again with the same sha
+// is a no-op; anything else is refused (it is not a replacement for `reopen`).
+cmds.close = (args) => {
+  const typed = (args[0] ?? "").toUpperCase();
+  const sha = flag(args, "sha");
+  const why = flag(args, "why");
+  if (!BUG_ID_RE.test(typed) || !sha || !why)
+    fail(
+      'usage: close <B###> --sha <commit sha> --why "<how this was verified fixed>" [--batch F## --tier T1|T2|T3]',
+    );
+  if (why.length < 20)
+    fail(`--why must be at least 20 characters (got ${why.length}) — cite where it was verified`);
+  const id = resolveId(typed);
+  let proof;
+  try {
+    proof = resolveCloseSha(sha);
+  } catch (e) {
+    return fail(e.message);
+  }
+
+  // Every refusal that does not need a write happens BEFORE the triage-move.
+  const existing = findShardOf(id);
+  const bug = readCatalogue().find((r) => r.id === id);
+  if (!existing && !bug) fail(`${id}: unknown id`);
+  let triage = null;
+  if (!existing) {
+    const batchArg = flag(args, "batch");
+    const tierArg = flag(args, "tier");
+    if (!batchArg || !tierArg)
+      fail(`${id} has no ledger row yet — pass --batch F## and --tier T1|T2|T3 to create it`);
+    if (!/^T[123]$/i.test(tierArg)) fail("--tier must be one of T1|T2|T3");
+    triage = { batch: normBatch(batchArg), tier: tierArg };
+  }
+
+  let created = null; // the pre-move catalogue/record, kept so a late failure can restore it
+  if (triage) {
+    created = { catalogue: readCatalogue(), rec: readRecord(id), batch: triage.batch };
+    cmds.move([
+      id,
+      "--to",
+      triage.batch,
+      "--tier",
+      triage.tier,
+      "--why",
+      `triage for close (${proof})`,
+    ]);
+  }
+  const batch = findShardOf(id);
+  try {
+    if (!batch) throw new Error(`${id} is in no ledger shard after the triage-move`);
+    if (
+      created &&
+      process.env.BUGS_SELF_TEST === "1" &&
+      process.env.BUGS_TEST_CLOSE_FAIL_AFTER_MOVE === "1"
+    )
+      throw new Error("BUGS_TEST_CLOSE_FAIL_AFTER_MOVE fixture");
+    const outcome = withShardLock(batch, () => {
+      const row = readShard(batch).rows.find((r) => r.id === id);
+      if (!row)
+        throw new Error(`${id} vanished from ${batch}.jsonl while this close waited for the lock`);
+      if (row.state === "already-fixed" && row.sha === proof) return { same: true };
+      if (!["queued", "in-flight"].includes(row.state))
+        throw new Error(
+          `${id} is "${row.state}" — close only applies to a queued or in-flight row (it is not a replacement for reopen)`,
+        );
+      const evidence = `${why} (fixed in ${proof})`;
+      const { what, row: after } = upsertLedgerRow(batch, {
+        ...row,
+        state: "already-fixed",
+        sha: proof,
+        evidence,
+      });
+      if (after?.state !== "already-fixed" || after?.sha !== proof || after?.evidence !== evidence)
+        throw new Error(
+          `ledger write for ${id} did not land as intended — re-read row is ${JSON.stringify(after)}`,
+        );
+      const rec = readRecord(id);
+      if (rec) {
+        writeRecord(
+          id,
+          { ...rec.front, state: "already-fixed", closed: "yes" },
+          appendEvent(rec.body, `state-closed-${proof}`, "already-fixed", `closed at ${proof}`),
+        );
+      }
+      return { what };
+    });
+    console.log(
+      outcome.same
+        ? `${id}: ${batch} already closed at ${proof}`
+        : `${id}: ${batch} row ${outcome.what} → already-fixed (${proof})`,
+    );
+  } catch (e) {
+    if (created) {
+      // Undo the triage-move this call made: drop the row it added and restore the catalogue and
+      // record, so a failed close never leaves a queued row behind.
+      withCatalogueLock(() => {
+        dropLedgerRow(created.batch, id);
+        writeCatalogue(created.catalogue);
+        if (created.rec) writeRecord(id, created.rec.front, created.rec.body);
+      });
+      fail(`close: ${id} failed after the triage-move (${e.message}) — rolled back`);
+    }
+    fail(e.message);
+  }
+};
+
 // ⚠️ THE T2 EVIDENCE RULE. campaign-check accepts a non-empty
 // `dischargeEvidence` INSTEAD of a Playwright artifact for a T2 `done` row (a
 // verify runner never has one — Playwright runs post-deploy). That makes the
@@ -3139,7 +3273,7 @@ cmds.triage = () => {
 // so a self-test that temporarily process.chdir()s elsewhere — to drive a
 // throwaway fixture git repo — still spawns the right script.
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
-const runCli = (argv, root) => {
+const runCli = (argv, root, cwd, extraEnv) => {
   const cmd = [SCRIPT_PATH, ...argv].map((a) => JSON.stringify(a)).join(" ");
   try {
     return {
@@ -3153,7 +3287,7 @@ const runCli = (argv, root) => {
         encoding: "utf8",
         // BUGS_SELF_TEST is what un-gates the stall seam in
         // upsertLedgerRowLocked; production runs never carry it.
-        env: { ...process.env, BUGS_ROOT: root, BUGS_SELF_TEST: "1" },
+        env: { ...process.env, BUGS_ROOT: root, BUGS_SELF_TEST: "1", ...extraEnv },
         stdio: ["ignore", "pipe", "pipe"],
         // A real-tree run (`root` undefined — T13b, the pre-push guard) must
         // not depend on the INVOKER's cwd: `rootDir()` resolves `.claude/campaign`
@@ -3162,7 +3296,7 @@ const runCli = (argv, root) => {
         // `--check` reports clean having examined zero real records. A fixture
         // run (`root` given) keeps the inherited cwd — irrelevant there since
         // BUGS_ROOT already points every path helper at the tmp fixture.
-        ...(root === undefined ? { cwd: REPO_ROOT } : {}),
+        ...(root === undefined ? { cwd: REPO_ROOT } : cwd ? { cwd } : {}),
       }),
     };
   } catch (e) {
@@ -3257,19 +3391,8 @@ cmds["self-test"] = () => {
   // here — every check below (the real-repo ones included) discovers the
   // repository from the process cwd, which is what they meant all along.
   // Deliberately not restored: `self-test` is a terminal command.
-  for (const k of [
-    "GIT_DIR",
-    "GIT_WORK_TREE",
-    "GIT_INDEX_FILE",
-    "GIT_COMMON_DIR",
-    "GIT_OBJECT_DIRECTORY",
-    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-    "GIT_QUARANTINE_PATH",
-    "GIT_PREFIX",
-    "GIT_NAMESPACE",
-    "GIT_CEILING_DIRECTORIES",
-  ])
-    delete process.env[k];
+  const cleanGit = scrubbedGitEnv();
+  for (const k of Object.keys(process.env)) if (!(k in cleanGit)) delete process.env[k];
 
   let failures = 0;
   const check = (name, got, want) => {
@@ -4644,12 +4767,15 @@ cmds["self-test"] = () => {
     const prevRoot = process.env.BUGS_ROOT;
     process.env.BUGS_ROOT = campaignRoot;
     try {
-      execSync("git init -q", { cwd: tmp });
-      execSync('git config user.email "self-test@routeflow.local"', { cwd: tmp });
-      execSync('git config user.name "Self Test"', { cwd: tmp });
+      execSync("git init -q", { cwd: tmp, env: scrubbedGitEnv() });
+      execSync('git config user.email "self-test@routeflow.local"', {
+        cwd: tmp,
+        env: scrubbedGitEnv(),
+      });
+      execSync('git config user.name "Self Test"', { cwd: tmp, env: scrubbedGitEnv() });
       writeFileSync(join(tmp, "seed.txt"), "seed\n");
-      execSync("git add seed.txt", { cwd: tmp });
-      execSync('git commit -q -m "initial"', { cwd: tmp });
+      execSync("git add seed.txt", { cwd: tmp, env: scrubbedGitEnv() });
+      execSync('git commit -q -m "initial"', { cwd: tmp, env: scrubbedGitEnv() });
 
       writeCatalogue([
         {
@@ -4693,9 +4819,10 @@ cmds["self-test"] = () => {
       // A new commit lands mentioning B2 — the event that must survive a
       // crash later in the SAME sync run.
       writeFileSync(join(tmp, "seed.txt"), "seed 2\n");
-      execSync("git add seed.txt", { cwd: tmp });
+      execSync("git add seed.txt", { cwd: tmp, env: scrubbedGitEnv() });
       execSync('git commit -q -m "fix(routes): B2 gamma event that must not be lost"', {
         cwd: tmp,
+        env: scrubbedGitEnv(),
       });
 
       // Corrupt B1's record so the per-bug loop dies while processing it —
@@ -6600,7 +6727,11 @@ cmds["self-test"] = () => {
   {
     const checkIgnore = (relPath) => {
       try {
-        execFileSync("git", ["check-ignore", relPath], { cwd: REPO_ROOT, encoding: "utf8" });
+        execFileSync("git", ["check-ignore", relPath], {
+          cwd: REPO_ROOT,
+          encoding: "utf8",
+          env: scrubbedGitEnv(),
+        });
         return true;
       } catch (e) {
         return e.status === 1 ? false : null; // 1 = genuinely not ignored; anything else is a real error
@@ -8296,6 +8427,141 @@ cmds["self-test"] = () => {
       if (prevRoot === undefined) delete process.env.BUGS_ROOT;
       else process.env.BUGS_ROOT = prevRoot;
       rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+
+  // Item 642: `close <B###> --sha <sha> --why "<>=20 chars>" [--batch F## --tier T#]` — the verb a
+  // bug closed outside the ledger was missing. An uncampaigned bug (no ledger row) reads "state:
+  // uncampaigned" forever when it is closed only by a History note; `close` writes the registry
+  // state (already-fixed + the proof sha) so `show`/`stats`/`sync` tell the truth. The sha must be a
+  // real commit reachable from origin/master (a fixture repo here), never a made-up string.
+  {
+    const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
+    const repo = mkdtempSync(join(tmpdir(), "bugs-self-test-repo-"));
+    try {
+      const g = (c) => execSync(c, { cwd: repo, encoding: "utf8", env: scrubbedGitEnv() }).trim();
+      g("git init -q");
+      g('git config user.email "self-test@routeflow.local"');
+      g('git config user.name "Self Test"');
+      const commit = (name) => {
+        writeFileSync(join(repo, name), name);
+        g(`git add ${name}`);
+        g(`git commit -q -m ${name}`);
+        return g("git rev-parse HEAD");
+      };
+      const shaA = commit("a.txt");
+      const shaA2 = commit("a2.txt");
+      g(`git update-ref refs/remotes/origin/master ${shaA2}`);
+      g("git checkout -q -b side");
+      const shaU = commit("u.txt"); // on a side branch, NOT reachable from origin/master
+      const cli = (argv, env) => runCli(argv, tmp, repo, env);
+      cli(["file", "Close fixture A", "--location", "apps/api/src/x.ts", "--severity", "low"]);
+      cli([
+        "file",
+        "Close fixture B",
+        "--location",
+        "apps/api/src/x.ts",
+        "--severity",
+        "low",
+        "--batch",
+        "F01",
+        "--tier",
+        "T1",
+      ]);
+      cli(["file", "Close fixture C", "--location", "apps/api/src/x.ts", "--severity", "low"]);
+      const rowOf = (batch, id) => {
+        const shard = join(tmp, "status", `${batch}.jsonl`);
+        if (!existsSync(shard)) return null;
+        return (
+          readFileSync(shard, "utf8")
+            .split(/\r?\n/)
+            .filter(Boolean)
+            .map((l) => JSON.parse(l))
+            .find((r) => r.id === id) ?? null
+        );
+      };
+      const why = "closed by the merged fix; verified on master";
+      const closeArgs = (id, sha, extra = []) => [
+        "close",
+        id,
+        "--sha",
+        sha,
+        "--why",
+        why,
+        ...extra,
+      ];
+
+      const noBatch = cli(closeArgs("B1", shaA));
+      const unknownId = cli(closeArgs("B99", shaA));
+      const badSha = cli(closeArgs("B2", "not-a-sha"));
+      const missingSha = cli(closeArgs("B2", "abcdef1234"));
+      const unreachable = cli(closeArgs("B2", shaU));
+      check(
+        "642: close refuses no-batch, unknown id, non-hex, nonexistent and unreachable shas",
+        {
+          noBatch: [noBatch.code, noBatch.out.includes("--batch")],
+          unknownId: [unknownId.code, unknownId.out.includes("unknown id")],
+          badSha: badSha.code,
+          missingSha: [missingSha.code, missingSha.out.includes("not a commit")],
+          unreachable: [unreachable.code, unreachable.out.includes("origin/master")],
+          noRowYet: rowOf("F05", "B1"),
+          bStillQueued: rowOf("F01", "B2")?.state,
+        },
+        {
+          noBatch: [1, true],
+          unknownId: [1, true],
+          badSha: 1,
+          missingSha: [1, true],
+          unreachable: [1, true],
+          noRowYet: null,
+          bStillQueued: "queued",
+        },
+      );
+
+      const closeA = cli(closeArgs("B1", shaA, ["--batch", "F05", "--tier", "T1"]));
+      const closeB = cli(closeArgs("B2", shaA2.toUpperCase().slice(0, 12)));
+      check(
+        "642: close sets the registry state + full proof sha (uncampaigned and queued bugs)",
+        {
+          a: [closeA.code, rowOf("F05", "B1")?.state, rowOf("F05", "B1")?.sha],
+          b: [closeB.code, rowOf("F01", "B2")?.state, rowOf("F01", "B2")?.sha],
+          aShow: cli(["show", "B1"]).out.includes("state: already-fixed"),
+          aEvidenceCitesSha: String(rowOf("F05", "B1")?.evidence).includes(shaA),
+        },
+        {
+          a: [0, "already-fixed", shaA],
+          b: [0, "already-fixed", shaA2],
+          aShow: true,
+          aEvidenceCitesSha: true,
+        },
+      );
+
+      const replaySame = cli(closeArgs("B1", shaA));
+      const replayOther = cli(closeArgs("B1", shaA2));
+      check(
+        "642: close is idempotent for the same sha and refuses a different one",
+        {
+          same: [replaySame.code, rowOf("F05", "B1")?.sha],
+          other: [replayOther.code, rowOf("F05", "B1")?.sha],
+        },
+        { same: [0, shaA], other: [1, shaA] },
+      );
+
+      const partial = cli(closeArgs("B3", shaA, ["--batch", "F06", "--tier", "T1"]), {
+        BUGS_TEST_CLOSE_FAIL_AFTER_MOVE: "1",
+      });
+      check(
+        "642: a failure after the triage-move leaves no queued row behind (rolled back)",
+        {
+          code: partial.code,
+          row: rowOf("F06", "B3"),
+          show: cli(["show", "B3"]).out.includes("state: uncampaigned"),
+        },
+        { code: 1, row: null, show: true },
+      );
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+      rmSync(repo, { recursive: true, force: true });
     }
   }
 

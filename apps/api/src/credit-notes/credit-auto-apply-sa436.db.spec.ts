@@ -76,6 +76,7 @@ describeDb("SA-436/SA-436a credit-note auto-apply gate, blocks and exclusions (#
   const mockLedger = {
     reverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
     unreverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
+    settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
   };
   const mockCommissionEngine = {
     syncInvoiceCommissionSafe: jest.fn().mockResolvedValue(undefined),
@@ -365,7 +366,26 @@ describeDb("SA-436/SA-436a credit-note auto-apply gate, blocks and exclusions (#
     expect(audit!.userId).toBe(actorId);
   }, 30_000);
 
-  it("5: ON + a blocked pair (unapply) — the sweep skips that pair on re-send", async () => {
+  it("5a: ON + a RE-SEND of an issued invoice moves no money (SA-857 MUST-2, real DB)", async () => {
+    const { tenantId, customerId } = await seedTenant("p5a", false);
+    const invoiceId = await seedDraftInvoice(tenantId, customerId, 50);
+    const noteId = await seedOpenCredit(tenantId, customerId, 50);
+    await tenantCtx.run(tenantId, () => invoices.send(invoiceId, { allowPreDelivery: true })); // the issue
+    await prisma.tenantConfig.update({
+      where: { tenantId },
+      data: { creditAutoApplyOnSend: true },
+    });
+
+    await tenantCtx.run(tenantId, () => invoices.send(invoiceId, { allowPreDelivery: true })); // a re-send
+
+    expect(await activePaymentsFor(noteId, invoiceId)).toHaveLength(0);
+    const note = await prisma.creditNote.findUnique({ where: { id: noteId } });
+    expect(Number(note!.amountUsed)).toBe(0);
+    const inv = await prisma.invoice.findUnique({ where: { id: invoiceId } });
+    expect(inv?.status).toBe("SENT");
+  }, 30_000);
+
+  it("5: ON + a blocked pair (unapply) — the sweep skips that pair on a RE-ISSUE (revert to DRAFT, send again)", async () => {
     // Sent with the switch OFF (so the first send sweeps nothing), then paid by hand.
     const { tenantId, customerId } = await seedTenant("p5", false);
     const invoiceId = await seedDraftInvoice(tenantId, customerId, 50);
@@ -387,11 +407,14 @@ describeDb("SA-436/SA-436a credit-note auto-apply gate, blocks and exclusions (#
     inv = await prisma.invoice.findUnique({ where: { id: invoiceId } });
     expect(inv?.status).toBe("SENT"); // no payment left after the unapply
 
-    // The tenant turns the sweep ON; the re-send must still skip the blocked pair.
+    // The tenant turns the sweep ON. A plain re-send no longer sweeps at all (5a), so the block is exercised on a
+    // RE-ISSUE: the invoice goes back to DRAFT and is sent again, the one path that sweeps a second time.
     await prisma.tenantConfig.update({
       where: { tenantId },
       data: { creditAutoApplyOnSend: true },
     });
+    await tenantCtx.run(tenantId, () => invoices.revertInvoiceToDraft(invoiceId));
+    expect((await prisma.invoice.findUnique({ where: { id: invoiceId } }))?.status).toBe("DRAFT");
     await tenantCtx.run(tenantId, () => invoices.send(invoiceId, { allowPreDelivery: true }));
     expect(await activePaymentsFor(noteId, invoiceId)).toHaveLength(0);
     const note = await prisma.creditNote.findUnique({ where: { id: noteId } });

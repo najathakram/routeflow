@@ -21,6 +21,11 @@ import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import { isTestTenant } from "../../../scripts/lib/test-tenants.cjs";
+import guardLib from "./lib/live-target-guard.cjs";
+import protectedSlugsLib from "./lib/protected-slugs.cjs";
+
+const { assertWritableTenant, ProtectedTenantError } = guardLib;
+const { loadProtectedSlugs } = protectedSlugsLib;
 
 function resolveDbUrl() {
   if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
@@ -113,17 +118,45 @@ const errorReason = (err) =>
   err?.name ??
   "unknown error";
 
-const pool = new Pool({ connectionString: resolveDbUrl() });
+const dbUrl = resolveDbUrl();
+
+// Row 195: a LIVE (non-test) tenant must not be protected (paying, Stripe-linked or env-listed).
+// The list is loaded ONCE, before connecting, from the URL this script dials; an approved test
+// tenant keeps its existing behaviour. There is no override: a protected tenant is refused.
+let protectedSlugs = null;
+if (!isTestTenant(tenantSlug)) {
+  try {
+    protectedSlugs = loadProtectedSlugs(process.env, dbUrl);
+  } catch (err) {
+    console.error(`\n${err.message} Nothing was written.\n`);
+    process.exit(1);
+  }
+}
+
+const pool = new Pool({ connectionString: dbUrl });
 const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
 
 (async () => {
   const tenant = await prisma.tenant.findUnique({
     where: { slug: tenantSlug },
-    select: { id: true, slug: true, status: true },
+    select: { id: true, slug: true, status: true, class: true, deletedAt: true },
   });
   if (!tenant) {
     console.error(`Tenant "${tenantSlug}" not found. Nothing was written.`);
     process.exit(1);
+  }
+  if (protectedSlugs) {
+    const sub = await prisma.tenantSubscription.findUnique({
+      where: { tenantId: tenant.id },
+      select: { planKey: true, stripeSubId: true, couponFull: true },
+    });
+    try {
+      assertWritableTenant(tenant, sub, protectedSlugs);
+    } catch (err) {
+      if (!(err instanceof ProtectedTenantError)) throw err;
+      console.error(`\n${err.message} Nothing was written.\n`);
+      process.exit(1);
+    }
   }
 
   console.log(`\n===== ESCAPED-ENTITY REPAIR (${execute ? "EXECUTE" : "DRY-RUN"}) =====`);

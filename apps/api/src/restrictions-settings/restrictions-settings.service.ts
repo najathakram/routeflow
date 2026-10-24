@@ -37,9 +37,10 @@ export const READINESS_THROTTLE = { ttl: 60_000, limit: 5 } as const;
 
 /**
  * Tenant switch + governing-address policy for selling restrictions (Lane R step 6a). The values it
- * WRITES are exactly the ones the engine's `getPolicy` reads (its own constants, never re-spelled),
- * and turning the feature ON goes through the engine's `assertReadyToEnable`: an un-backfilled
- * tenant is refused with a 409 that says what to fix, instead of silently making orders INDETERMINATE.
+ * WRITES are exactly the ones the engine's `getPolicy` reads (its own constants, never re-spelled).
+ * Readiness is ADVICE, never a gate (owner ruling 3, portal limits 10-12): turning the switch ON
+ * with customers whose state can't be resolved succeeds; `readiness()` (the engine's
+ * `getEnableReadiness`) is still there for the settings page to show what to fix.
  * Writes are ONE transaction: both keys land or neither does.
  */
 @Injectable()
@@ -125,8 +126,8 @@ export class RestrictionsSettingsService {
       dto.governingAddress !== undefined && dto.governingAddress !== before.addressPrecedence;
     const enabling = dto.enabled === true && !before.enabled;
 
-    // Readiness is judged under the address policy ALREADY in force; judging it under one that is being
-    // changed in the same request would need that policy applied first. Two steps keep it honest.
+    // The readiness advice the admin saw was computed under the address policy ALREADY in force; changing
+    // that policy in the same request as switching on would act on advice for a different policy. Two steps.
     if (enabling && precedenceChanges) {
       throw new BadRequestException({
         code: SETTINGS_ENABLE_AND_POLICY_TOGETHER,
@@ -134,8 +135,6 @@ export class RestrictionsSettingsService {
           "Change which address decides the state first, then turn enforcement on, so readiness is checked under the policy that will apply.",
       });
     }
-    if (enabling) await this.engine.assertReadyToEnable(tenantId);
-
     const writes: Array<[string, string]> = [];
     if (precedenceChanges)
       writes.push([SYSTEM_CONFIG_GOVERNING_ADDRESS, dto.governingAddress as string]);

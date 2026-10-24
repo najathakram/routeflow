@@ -78,3 +78,37 @@ describe("ReturnsController#findAll — kind query whitelist (#2406)", () => {
     },
   );
 });
+
+describe("ReturnsController#findAll — ?pendingRefund (SA-727b)", () => {
+  const findAllForUser = jest.fn().mockResolvedValue({ data: [], meta: {} });
+  const user = { sub: "u1", role: "OPERATOR" } as any;
+  const call = (pending?: string) =>
+    new ReturnsController({ findAllForUser } as any, {} as any, {} as any, {} as any).findAll(
+      user,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      "INLINE",
+      pending,
+    );
+  beforeEach(() => findAllForUser.mockClear());
+
+  it("only the literal 'true' turns the filter on", async () => {
+    await call("true");
+    expect(findAllForUser).toHaveBeenLastCalledWith(
+      user,
+      expect.objectContaining({ pendingRefund: true }),
+    );
+    for (const v of [undefined, "false", "1", "TRUE", ""]) {
+      await call(v);
+      expect(findAllForUser).toHaveBeenLastCalledWith(
+        user,
+        expect.objectContaining({ pendingRefund: false }),
+      );
+    }
+  });
+});

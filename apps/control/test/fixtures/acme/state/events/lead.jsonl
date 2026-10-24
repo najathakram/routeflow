@@ -1,0 +1,8 @@
+{"seq":1,"ts":"2026-01-09T08:00:00Z","lane":"lead","type":"lane.registered","by":"agent","laneId":"lead","name":"Lead","machine":"mac","kind":"lead","active":true}
+{"seq":2,"ts":"2026-01-09T08:00:01Z","lane":"lead","type":"lane.registered","by":"agent","laneId":"lane-u","name":"Lane U","machine":"mac","kind":"feature","active":true}
+{"seq":3,"ts":"2026-01-09T08:00:02Z","lane":"lead","type":"lane.registered","by":"agent","laneId":"r-ui","name":"R UI","machine":"mac","kind":"feature","active":true}
+{"seq":4,"ts":"2026-01-09T08:00:03Z","lane":"lead","type":"lane.registered","by":"agent","laneId":"lane-b","name":"Lane B","machine":"mac","kind":"bug","active":true}
+{"seq":5,"ts":"2026-01-09T08:00:04Z","lane":"lead","type":"lane.registered","by":"agent","laneId":"owner","name":"Owner","machine":"mac","kind":"owner","active":true}
+{"seq":6,"ts":"2026-01-09T08:10:00Z","lane":"lead","type":"task.created","by":"agent","id":"RF-1","title":"acme: invoice PDF right-align dates","kind":"feature","priority":"P1","release":"R2","areas":["apps/api/src/invoices/**"]}
+{"seq":7,"ts":"2026-01-09T08:11:00Z","lane":"lead","type":"task.created","by":"agent","id":"RF-2","title":"acme: order total rounding","kind":"bug","priority":"P2","release":"R2"}
+{"seq":8,"ts":"2026-01-09T08:12:00Z","lane":"lead","type":"task.created","by":"agent","id":"RF-3","title":"acme: tidy route list copy","kind":"chore","priority":"P3"}

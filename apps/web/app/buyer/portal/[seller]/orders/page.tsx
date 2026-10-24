@@ -7,6 +7,8 @@ import { ChevronLeft, ChevronRight, ShoppingCart, Loader2, AlertTriangle } from 
 import { Badge } from "@routeflow/ui/web";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import { useBuyerOrders } from "@/lib/api/buyer";
+import { useBuyerSellerCapabilities } from "@/lib/api/buyer-capabilities";
+import { buyerOrderStatusLabel, sellerShowsRouteWording } from "@/lib/buyer-fulfilment";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -53,6 +55,25 @@ function formatCurrency(amount?: number): string {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(amount);
 }
 
+/** The order total as money, or an em dash when the response carried none. A missing total is
+ *  "unknown", not zero: `Number(undefined)` is NaN ("$NaN") and `Number(null)` is 0 ("$0.00"),
+ *  so both are screened out before the local `formatCurrency` runs. */
+function totalLabel(order: { total?: number | string | null }): string {
+  const total = order.total;
+  if (total === undefined || total === null || total === "") return "—";
+  const value = Number(total);
+  return Number.isFinite(value) ? formatCurrency(value) : "—";
+}
+
+/** "N item(s)" from the order's real `lineItems` (GET /buyer/orders returns them; there is no
+ *  `itemCount`). Null when the order has no lines or the response carried none, so the caller
+ *  prints nothing / an em dash rather than a wrong number (B1130). */
+function itemsLabel(order: { lineItems?: unknown[] | null }): string | null {
+  const count = order.lineItems?.length ?? 0;
+  if (count === 0) return null;
+  return `${count} item${count !== 1 ? "s" : ""}`;
+}
+
 function orderLabel(order: { orderNumber?: string | null; id: string }): string {
   return order.orderNumber ?? order.id.slice(0, 8).toUpperCase();
 }
@@ -67,6 +88,17 @@ export default function BuyerOrdersPage() {
 
   const [page, setPage] = React.useState(1);
   const [statusFilter, setStatusFilter] = React.useState("");
+  // Business profiles 1B: a configured seller without a fleet has no delivery run, so no
+  // "Out for Delivery" filter. Each order's badge is the order detail's own label
+  // (buyerOrderStatusLabel). Unset / unread / loading = today's tabs and labels.
+  const { data: capabilities, isLoading: capLoading } = useBuyerSellerCapabilities();
+  const showsRoute = sellerShowsRouteWording(capabilities);
+  const statusLabel = (order: {
+    status: string;
+    fulfillPath?: string | null;
+    shippedAt?: string | null;
+    shippingTrackingNumber?: string | null;
+  }) => buyerOrderStatusLabel(order, capabilities, capLoading) ?? formatStatus(order.status);
   const {
     data: result,
     isLoading,
@@ -120,22 +152,24 @@ export default function BuyerOrdersPage() {
           { label: "Out for Delivery", value: "OUT_FOR_DELIVERY" },
           { label: "Delivered", value: "DELIVERED" },
           { label: "Cancelled", value: "CANCELLED" },
-        ].map((tab) => (
-          <button
-            key={tab.value}
-            onClick={() => {
-              setStatusFilter(tab.value);
-              setPage(1);
-            }}
-            className={`flex-shrink-0 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
-              statusFilter === tab.value
-                ? "border-buyer-500 bg-buyer-500 text-white"
-                : "border-surface-border bg-white text-navy/70 hover:border-buyer-300 hover:text-buyer-600"
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
+        ]
+          .filter((tab) => showsRoute || tab.value !== "OUT_FOR_DELIVERY")
+          .map((tab) => (
+            <button
+              key={tab.value}
+              onClick={() => {
+                setStatusFilter(tab.value);
+                setPage(1);
+              }}
+              className={`flex-shrink-0 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
+                statusFilter === tab.value
+                  ? "border-buyer-500 bg-buyer-500 text-white"
+                  : "border-surface-border bg-white text-navy/70 hover:border-buyer-300 hover:text-buyer-600"
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
       </div>
 
       {/* Error */}
@@ -162,7 +196,7 @@ export default function BuyerOrdersPage() {
           {/* Card list — under 640px the 5-column table only scrolled sideways, so phones
               get one tappable card per order instead. */}
           <ul data-testid="buyer-orders-cards" className="space-y-3 sm:hidden">
-            {orders.map((order: any) => (
+            {orders.map((order) => (
               <li key={order.id}>
                 <Link
                   href={`/buyer/portal/${sellerSlug}/orders/${order.id}`}
@@ -172,20 +206,14 @@ export default function BuyerOrdersPage() {
                     <span className="min-w-0 truncate text-sm font-semibold text-navy">
                       {orderLabel(order)}
                     </span>
-                    <Badge
-                      variant={getStatusVariant(order.status)}
-                      label={formatStatus(order.status)}
-                    />
+                    <Badge variant={getStatusVariant(order.status)} label={statusLabel(order)} />
                   </div>
                   <div className="mt-2 flex items-end justify-between gap-3">
                     <p className="text-xs text-navy/70">
                       {formatDate(order.createdAt)}
-                      {order.itemCount != null &&
-                        ` · ${order.itemCount} item${order.itemCount !== 1 ? "s" : ""}`}
+                      {itemsLabel(order) != null && ` · ${itemsLabel(order)}`}
                     </p>
-                    <span className="text-sm font-semibold text-navy">
-                      {formatCurrency(Number(order.totalAmount ?? order.total))}
-                    </span>
+                    <span className="text-sm font-semibold text-navy">{totalLabel(order)}</span>
                   </div>
                 </Link>
               </li>
@@ -220,7 +248,7 @@ export default function BuyerOrdersPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-surface-border">
-                  {orders.map((order: any) => (
+                  {orders.map((order) => (
                     <tr
                       key={order.id}
                       onClick={() => router.push(`/buyer/portal/${sellerSlug}/orders/${order.id}`)}
@@ -232,19 +260,15 @@ export default function BuyerOrdersPage() {
                       <td className="px-4 py-3 text-sm text-navy/70">
                         {formatDate(order.createdAt)}
                       </td>
-                      <td className="px-4 py-3 text-sm text-navy/70">
-                        {order.itemCount != null
-                          ? `${order.itemCount} item${order.itemCount !== 1 ? "s" : ""}`
-                          : "—"}
-                      </td>
+                      <td className="px-4 py-3 text-sm text-navy/70">{itemsLabel(order) ?? "—"}</td>
                       <td className="px-4 py-3">
                         <Badge
                           variant={getStatusVariant(order.status)}
-                          label={formatStatus(order.status)}
+                          label={statusLabel(order)}
                         />
                       </td>
                       <td className="px-4 py-3 text-right text-sm text-navy">
-                        {formatCurrency(Number(order.totalAmount ?? order.total))}
+                        {totalLabel(order)}
                       </td>
                     </tr>
                   ))}

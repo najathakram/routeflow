@@ -18,7 +18,7 @@ describe("invoices/[id]/edit — scan level wiring", () => {
 
   it("the scan handler resolves the level from the scanned code and passes it to addCatalogLine", () => {
     expect(src).toMatch(
-      /addCatalogLine\(\s*result\.product,\s*resolveScanSellLevel\(result\.product, levelsForScan\(trimmed, result\.product\)\),\s*\)/,
+      /addCatalogLine\(p, resolveScanSellLevel\(p, levelsForScan\(trimmed, p\)\)\)/,
     );
   });
 

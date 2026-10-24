@@ -6,17 +6,23 @@
 export const PREF = {
   lowStockDigestEnabled: "lowStockDigestEnabled",
   pushEnabled: "pushEnabled",
+  staffOrderEmail: "staffOrderEmail",
+  staffBuyerChangeEmail: "staffBuyerChangeEmail",
   locale: "locale",
   billLastSupplierId: "bill.lastSupplierId",
   paymentLastMethod: "payment.lastMethod",
+  ordersPosMode: "orders.posMode",
 } as const;
 
 export const PREFERENCE_KEYS = [
   PREF.lowStockDigestEnabled,
   PREF.pushEnabled,
+  PREF.staffOrderEmail,
+  PREF.staffBuyerChangeEmail,
   PREF.locale,
   PREF.billLastSupplierId,
   PREF.paymentLastMethod,
+  PREF.ordersPosMode,
 ] as const;
 
 export type PreferenceKey = (typeof PREFERENCE_KEYS)[number];

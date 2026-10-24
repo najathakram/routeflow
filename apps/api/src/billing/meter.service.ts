@@ -121,7 +121,12 @@ export class MeterService {
    */
   async customersUsed(tenantId: string): Promise<number> {
     return this.prisma.customer.count({
-      where: { tenantId, deletedAt: null, supplierOnly: false },
+      where: {
+        tenantId,
+        deletedAt: null,
+        supplierOnly: false,
+        OR: [{ isWalkIn: null }, { isWalkIn: false }],
+      },
     });
   }
 

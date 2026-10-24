@@ -1,4 +1,5 @@
 # Handoff — 2026-09-13 · lead-fleet-board
+
 - Task: lead all RouteFlow sessions (no collisions, no rework); session table; K-HUB demo-notes vs research → feature-comparison doc.
 - State: in progress — board written, MERGE-QUEUE refreshed, K-HUB inventory agent running; comparison doc not started.
 - Branch/tree: main `chore/workflow-redesign` @536f3438 (not mine; f2 diff + 67 docs live there) · mine: `rf-backoffice` `docs/platform-backoffice-design` @91e4bce6, unpushed · worktrees: 9 (table in board).

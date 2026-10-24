@@ -22,3 +22,28 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
 | [web/components-shared.md](web/components-shared.md) | Components & shared                                                                                    |
 | [web/api-hooks.md](web/api-hooks.md)                 | API hooks (`lib/api/`)                                                                                 |
 | [web/catchup-2026-09-21.md](web/catchup-2026-09-21.md) | Catch-up 2026-09-21: restrictions UI, product labels, PO tab, scan-to-order, credit-limit guard, config snapshots tab |
+| [web/landing-2026-10-12-r52-tail.md](web/landing-2026-10-12-r52-tail.md) | Landing 2026-10-12 R5.2 tail: super-admin automatic-locks card and reason input |
+| [web/landing-2026-10-16-bk.md](web/landing-2026-10-16-bk.md) | Landing 2026-10-16: buyer cart line, product detail Batch A, portal-hide admin, serial scan queue |
+| [web/landing-2026-10-16-bk2.md](web/landing-2026-10-16-bk2.md) | Landing 2026-10-16 (2nd): product price grid, credit-limit box, payment-due banner |
+| [web/landing-2026-10-17-bk3.md](web/landing-2026-10-17-bk3.md) | Landing 2026-10-17 (3rd): product page saves the bare variant name, coded toast copy |
+| [web/landing-2026-10-18-fixes-4.md](web/landing-2026-10-18-fixes-4.md) | Landing 2026-10-18 fixes-4: K11 jump strip and customer view, product page, New product piece price, password policy |
+| [web/landing-2026-10-18-k11-money1.md](web/landing-2026-10-18-k11-money1.md) | Landing 2026-10-18 k11-money1: one floating price editor, price figures, limit=0 removal, price history chips |
+| [web/landing-2026-10-20-bo-train-g1.md](web/landing-2026-10-20-bo-train-g1.md) | Landing 2026-10-20 bo-train/G1 (#3551): Capabilities card, activation add-on checklist, till permissions, SendInvoiceModal |
+| [web/landing-2026-10-20-r5.md](web/landing-2026-10-20-r5.md) | Landing 2026-10-20 R5 (#3552): vendor-bill move-to-credit modal, coded bill toast copy, header-only edit |
+| [web/landing-2026-10-21-w1.md](web/landing-2026-10-21-w1.md) | Landing 2026-10-21 window 1 (#3555): order draft autosave + resume, submit key per draft, sign-out guard |
+| [web/landing-2026-10-21-w2-r5p2.md](web/landing-2026-10-21-w2-r5p2.md) | Landing 2026-10-21 R5 part 2 (#3558): held-override tab, scan Enter, buyer cache clear |
+| [web/landing-2026-10-21-w3.md](web/landing-2026-10-21-w3.md) | Landing 2026-10-21 window 3 (#3560, #3561, #3564, #3565, #3566): ACH return copy, R3 product page, sold-unit edit, day-close draft |
+| [web/landing-2026-10-24-w5.md](web/landing-2026-10-24-w5.md) | Landing 2026-10-24 window 5: restriction warn+override, till buyer/check/complete, pricing gate fails closed, record anyway, account strip, buyer cart |
+| [web/landing-2026-10-22-w4.md](web/landing-2026-10-22-w4.md) | Landing 2026-10-22 window 4: orders apple-ux r3/r4 train, buyer cart, import Family UI, counter till/returns, payment key dialogs |
+| [web/landing-2026-10-17-units-v2-3.md](web/landing-2026-10-17-units-v2-3.md) | Landing 2026-10-17 units-v2-3: price layer, units settings, K-cards, product image actions |
+| [web/landing-2026-10-12-r52.md](web/landing-2026-10-12-r52.md) | Landing 2026-10-12 Release 5.2: edit rebase on 409, read-only gate and copy, billing card, counter QA polish, paid-at-sale |
+| [web/landing-2026-10-12-r51-r42.md](web/landing-2026-10-12-r51-r42.md) | Landing 2026-10-12 Release 5.1 + 4.2: READ_ONLY refusal copy, hand-over stamp and rows, day close and Z wording, store-only header, edit log |
+| [web/landing-2026-10-12-macbook.md](web/landing-2026-10-12-macbook.md) | Landing 2026-10-12 MacBook lane (pushed): merged-draft POS confirm, delivery + POS profile UI, dashboard KPIs never zero |
+| [web/landing-2026-10-11-r4.md](web/landing-2026-10-11-r4.md) | Landing 2026-10-11 Release 4: email receipt, counter pass 2, last 7 days, refund slip, POS order page, revision marks |
+| [web/landing-2026-10-11-r41.md](web/landing-2026-10-11-r41.md) | Landing 2026-10-11 Release 4.1: day close form and Z view, store-only invoice entry, receipt cashier, closed-day copy |
+| [web/landing-2026-10-11-r5.md](web/landing-2026-10-11-r5.md) | Landing 2026-10-11 Release 5: billing strip, read-only gate (WriteButton), Billing status card, buyer seller-unavailable line, profile comps |
+| [web/landing-2026-10-10-w22a2-w23.md](web/landing-2026-10-10-w22a2-w23.md) | Landing 2026-10-10 W22a-2 + W23: quick keys, create tenant, readiness card, park, void, zone UI, unit words |
+| [web/landing-2026-10-09-w21b-w22a1.md](web/landing-2026-10-09-w21b-w22a1.md) | Landing 2026-10-09 W21b + W22a-1: counter price edit, leave guard, live cart persist, discount reapply, variant pickers, family cascade |
+| [web/landing-2026-10-08-w21a.md](web/landing-2026-10-08-w21a.md) | Landing 2026-10-08 W21a: counter refund or store credit, Today's sales, register look and exit guard, Settings > Fulfillment (dark) |
+| [web/landing-2026-10-06-w4-w10.md](web/landing-2026-10-06-w4-w10.md) | Landing 2026-10-06 (windows 4 to 10): order actions by role, business profile picker, billing confirm sheets, order suggestions |
+| [web/landing-2026-10-01-w12-w27.md](web/landing-2026-10-01-w12-w27.md) | Landing 2026-10-01 w12-w27: settings hub, PO route/detail/scan, scan level/aim/hold, shell handoff, CN edit/void |

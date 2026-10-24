@@ -5,6 +5,10 @@ import { InventoryService } from "./inventory.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { StockAlertService } from "../stock-alerts/stock-alert.service";
+import { API_ERROR_CODES } from "../common/api-error-codes";
+import { PRODUCT_PARENT_REASONS } from "../products/product-parent";
+import { readFileSync } from "fs";
+import { join } from "path";
 
 /**
  * PR-D: InventoryService.assignToVariants — moving stock atomically from a
@@ -171,7 +175,69 @@ describe("InventoryService.assignToVariants", () => {
       .catch((e) => e);
 
     expect(err).toBeInstanceOf(BadRequestException);
+    expect(err.getResponse()).toMatchObject({
+      code: API_ERROR_CODES.PRODUCT_PARENT_INVALID,
+      reason: PRODUCT_PARENT_REASONS.VARIANT_PARENT,
+    });
     expect(prisma.product.findFirst).not.toHaveBeenCalled();
+  });
+
+  it("B1211: a missing parent is the coded PRODUCT_PARENT_INVALID (reason NOT_FOUND), nothing written", async () => {
+    prisma.product.findUnique.mockResolvedValue(null);
+
+    const err = await service
+      .assignToVariants(
+        { parentProductId: "nope", assignments: [{ productId: "variant-1", qty: 1 }] } as any,
+        "user-1",
+      )
+      .catch((e) => e);
+
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err.getResponse()).toMatchObject({
+      code: API_ERROR_CODES.PRODUCT_PARENT_INVALID,
+      reason: PRODUCT_PARENT_REASONS.NOT_FOUND,
+    });
+    expect(prisma.product.findFirst).not.toHaveBeenCalled();
+    expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["an inactive product", { isActive: false }, PRODUCT_PARENT_REASONS.INACTIVE],
+    ["a product of kind VARIANT", { kind: "VARIANT" }, PRODUCT_PARENT_REASONS.VARIANT_PARENT],
+  ])(
+    "B1211: %s is an unusable parent: coded 400, nothing is looked up or written",
+    async (_name, overrides, reason) => {
+      prisma.product.findUnique.mockResolvedValue(parent(overrides));
+
+      const err = await service
+        .assignToVariants(
+          { parentProductId: "parent-1", assignments: [{ productId: "variant-1", qty: 1 }] } as any,
+          "user-1",
+        )
+        .catch((e) => e);
+
+      expect(err).toBeInstanceOf(BadRequestException);
+      expect(err.getResponse()).toMatchObject({
+        code: API_ERROR_CODES.PRODUCT_PARENT_INVALID,
+        reason,
+      });
+      expect(prisma.product.findFirst).not.toHaveBeenCalled();
+      expect(prisma.product.update).not.toHaveBeenCalled();
+      expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+    },
+  );
+
+  it("B1211: the parent rule runs in the transaction, after the family lock and the parent read, before any write", () => {
+    const src = readFileSync(join(__dirname, "inventory.service.ts"), "utf8");
+    const body = src.slice(src.indexOf("async assignToVariants("));
+    const lock = body.indexOf("lockFamilyRow(tx");
+    const read = body.indexOf("tx.product.findUnique({ where: { id: dto.parentProductId } })");
+    const rule = body.indexOf("assertParentUsable(parent)");
+    const firstWrite = body.indexOf("tx.product.update(");
+    expect(lock).toBeGreaterThan(-1);
+    expect(read).toBeGreaterThan(lock);
+    expect(rule).toBeGreaterThan(read);
+    expect(firstWrite === -1 || rule < firstWrite).toBe(true);
   });
 
   it("converts a boxed generic's {boxes, pieces} to base units against the parent's unitsPerBox", async () => {
@@ -318,7 +384,8 @@ describe("InventoryService.assignToVariants", () => {
     const createData = prisma.product.create.mock.calls[0][0].data;
     expect(createData.parentProductId).toBe("parent-1");
     expect(createData.variantName).toBe("Zero");
-    expect(createData.name).toBe("Cola 24pk - Zero");
+    // B1: a variant stores its BARE label in both columns; the display name is composed at read time.
+    expect(createData.name).toBe("Zero");
     expect(createData.category).toBe("Beverages");
     expect(createData.unitsPerBox).toBe(12);
     expect(createData.costingMethod).toBe("AVCO");
@@ -327,6 +394,56 @@ describe("InventoryService.assignToVariants", () => {
 
     expect(result.assignments[0].created).toBe(true);
     expect(result.assignments[0].productId).toBe("new-variant-1");
+  });
+
+  it("B1: a new variant typed as '<parent> - <label>' (any case) is stored bare and collision-checked bare", async () => {
+    prisma.product.findUnique.mockResolvedValue(parent());
+    prisma.product.findFirst.mockResolvedValue(null);
+    prisma.product.create.mockResolvedValue(
+      variant({ id: "new-variant-2", variantName: "Zero", currentStock: D(0) }),
+    );
+
+    await service.assignToVariants(
+      {
+        parentProductId: "parent-1",
+        assignments: [{ newVariant: { name: "COLA 24PK - Zero" }, qty: 1 }],
+      } as any,
+      "user-1",
+    );
+
+    const createData = prisma.product.create.mock.calls[0][0].data;
+    expect(createData.name).toBe("Zero");
+    expect(createData.variantName).toBe("Zero");
+    // legacy rows of this writer stored the composed spelling in `name`: it still counts as taken
+    const probe = prisma.product.findFirst.mock.calls
+      .map((c: any[]) => c[0]?.where)
+      .find((w: any) => w?.OR);
+    expect(probe.OR).toEqual(
+      expect.arrayContaining([
+        { name: { equals: "Zero", mode: "insensitive" } },
+        { name: { equals: "Cola 24pk - Zero", mode: "insensitive" } },
+        { variantName: { equals: "Zero", mode: "insensitive" } },
+      ]),
+    );
+  });
+
+  it("B1 R3: a new variant that is only the parent prefix is a coded 400; nothing is created", async () => {
+    prisma.product.findUnique.mockResolvedValue(parent());
+    prisma.product.findFirst.mockResolvedValue(null);
+
+    const err = await service
+      .assignToVariants(
+        {
+          parentProductId: "parent-1",
+          assignments: [{ newVariant: { name: "COLA 24PK - " }, qty: 1 }],
+        } as any,
+        "user-1",
+      )
+      .catch((e) => e);
+
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err.getResponse()).toMatchObject({ code: API_ERROR_CODES.VARIANT_NAME_PREFIX_ONLY });
+    expect(prisma.product.create).not.toHaveBeenCalled();
   });
 
   it("costs a STANDARD-costed parent from its standardCost, never $0, when averageCost is null", async () => {
@@ -461,5 +578,31 @@ describe("InventoryService.assignToVariants", () => {
     );
     expect(drawdown.toString()).toBe("10");
     expect(opened.toString()).toBe("10");
+  });
+
+  // ── B964-2: a NEW variant's name is user-typed text that becomes Product.name / variantName ──
+
+  it("refuses a formula-led newVariant.name with a coded 400 naming the row, before any transaction or write", async () => {
+    const err: any = await service
+      .assignToVariants(
+        {
+          parentProductId: "parent-1",
+          assignments: [
+            { newVariant: { name: "Cherry" }, qty: 1 },
+            { newVariant: { name: "=HYPERLINK(1)" }, qty: 2 },
+          ],
+        } as any,
+        "user-1",
+      )
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err.getResponse()).toMatchObject({
+      code: "TEXT_CELL_FORMULA_LEAD",
+      field: "variantName",
+      index: 1,
+      message: "Variant name can't start with =, +, -, @ or a tab/line break",
+    });
+    expect(prisma.tenantTransaction).not.toHaveBeenCalled();
+    expect(prisma.product.create).not.toHaveBeenCalled();
   });
 });

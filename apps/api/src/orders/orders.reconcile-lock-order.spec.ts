@@ -105,6 +105,8 @@ function build(tenantId: string | null) {
   );
   const invoicesService = {
     resyncOrderInvoicesForEdit: jest.fn().mockResolvedValue(null),
+    followPartialPrices: jest.fn().mockResolvedValue({ issuedPartialsUnchanged: [] }),
+    projectEditedInvoiceTotals: jest.fn().mockResolvedValue([]),
     reconcileOrderDraftInvoice: jest.fn().mockResolvedValue(undefined),
   };
   const service = Object.assign(Object.create(OrdersService.prototype), {
@@ -117,15 +119,27 @@ function build(tenantId: string | null) {
       postDeliveryEdit: false,
       skipInPlaceResync: false,
     });
-  return { log, prisma, reconcile };
+  // create()'s credit tx IS this helper (SA-706 MUST 2): the same Order-first shape, same retry.
+  const syncAndSettle = (applied: Array<{ creditNoteId: string }> | undefined) =>
+    service.syncAndSettleOrderCredits("ord-1", "cust-1", applied);
+  return { log, prisma, reconcile, syncAndSettle };
 }
 
 function expectOrderLockFirst(log: ReturnType<typeof createOpLogTx>["log"]) {
-  expect(log[0]?.op).toBe("$queryRaw");
+  expect(log[0]?.op).toBe("$executeRaw");
   expect(log[0]?.sql).toMatch(/^SELECT id FROM "Order" WHERE id = \?.*FOR UPDATE$/);
   expect(log[0]?.values?.[0]).toBe("ord-1");
-  // Exactly one row lock: the credit code itself takes none.
-  expect(log.filter((e) => e.op === "$queryRaw" || e.op === "$executeRaw")).toHaveLength(1);
+  // B1052: the credit code now takes its own row locks too (settle: this Order again — a no-op on
+  // a row the tx holds — then its invoices, then its notes; restore: the note), so a second
+  // spender of the same note waits instead of double-spending. They all come AFTER this Order
+  // lock, they only ever lock Order / Invoice / CreditNote rows, and the only Order is this one.
+  const locks = log.filter((e) => e.op === "$queryRaw" || e.op === "$executeRaw");
+  for (const lock of locks) {
+    expect(lock.sql).toMatch(/FROM "(Order|Invoice|CreditNote)"/);
+    if (/^SELECT id FROM "Order" WHERE id = \?/.test(lock.sql ?? "")) {
+      expect(lock.values?.[0]).toBe("ord-1");
+    }
+  }
 }
 
 describe("reconcileOrderAfterEdit — the credit-sync tx takes Order FOR UPDATE first (SA-218 (2), #2116)", () => {
@@ -146,6 +160,20 @@ describe("reconcileOrderAfterEdit — the credit-sync tx takes Order FOR UPDATE 
     expect(ops).toContain("orderCreditNote.create");
     expect(ops.findIndex((op) => INVOICE_WRITE.test(op))).toBeGreaterThan(0);
     expect(ops.indexOf("orderCreditNote.create")).toBeGreaterThan(0);
+  });
+
+  it("REG-SA706a: create()'s credit tx (the shared helper) locks the Order BEFORE the OrderCreditNote insert, in one Serializable tx", async () => {
+    const { log, prisma, syncAndSettle } = build("tenant-1");
+
+    await syncAndSettle([{ creditNoteId: CN_NEW.id }]);
+
+    expect(prisma.tenantTransaction).toHaveBeenCalledTimes(1);
+    expect((prisma.tenantTransaction.mock.calls[0] as unknown[])[1]).toEqual({
+      isolationLevel: "Serializable",
+    });
+    expectOrderLockFirst(log);
+    // The insert whose FK takes KEY SHARE on the CreditNote comes strictly after the Order lock.
+    expect(log.map((e) => e.op).indexOf("orderCreditNote.create")).toBeGreaterThan(0);
   });
 
   it("REG-SA218-2b: settle only (no selection sent) — the Order lock still comes first", async () => {
@@ -208,11 +236,13 @@ describe("reconcileOrderAfterEdit — a write conflict retries the credit tx (SA
       return result;
     });
 
-    await expect(reconcile([{ creditNoteId: CN_NEW.id }])).resolves.toBeUndefined();
+    await expect(reconcile([{ creditNoteId: CN_NEW.id }])).resolves.toEqual({
+      issuedPartialsUnchanged: [],
+    });
 
     expect(prisma.tenantTransaction).toHaveBeenCalledTimes(2);
     // Each attempt is a whole tx: it re-takes the Order lock FIRST, then re-runs the sync.
-    expect(starts.map((s) => log[s]?.op)).toEqual(["$queryRaw", "$queryRaw"]);
+    expect(starts.map((s) => log[s]?.op)).toEqual(["$executeRaw", "$executeRaw"]);
     expect(log.filter((e) => e.op === "orderCreditNote.create")).toHaveLength(2);
   });
 
@@ -234,14 +264,17 @@ describe("reconcileOrderAfterEdit — a write conflict retries the credit tx (SA
     expect(prisma.tenantTransaction).toHaveBeenCalledTimes(1);
   });
 
-  it("REG-SA269-3: a conflict on every attempt gives up after 3 and propagates the last one", async () => {
+  it("REG-SA269-3: a conflict on every attempt gives up after 3 with a CODED 503 (SA-706c), never the raw P2034", async () => {
     const { prisma, reconcile } = build("tenant-1");
     const conflicts = [1, 2, 3].map((n) => conflict("P2034", `write conflict ${n}`));
     prisma.tenantTransaction.mockImplementation(async () => {
       throw conflicts[prisma.tenantTransaction.mock.calls.length - 1];
     });
 
-    await expect(reconcile(undefined)).rejects.toBe(conflicts[2]);
+    await expect(reconcile(undefined)).rejects.toMatchObject({
+      status: 503,
+      response: { code: "LOCK_UNAVAILABLE" },
+    });
     expect(prisma.tenantTransaction).toHaveBeenCalledTimes(3);
   });
 });

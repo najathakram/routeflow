@@ -4,6 +4,7 @@ import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar } from "@routeflow/ui/mobile/ios";
 import { useBuyerProfile } from "../../lib/api/buyer";
+import { displayEmail, NO_EMAIL_COPY } from "../../lib/internal-email";
 import { ActivityIndicator } from "react-native";
 
 export default function CustomerProfileScreen() {
@@ -24,7 +25,7 @@ export default function CustomerProfileScreen() {
         <View style={styles.section}>
           <View style={styles.card}>
             <Row label="Business name" value={profile?.businessName ?? "—"} />
-            <Row label="Email" value={profile?.email ?? "—"} />
+            <Row label="Email" value={displayEmail(profile?.email) ?? NO_EMAIL_COPY} />
             <Row label="Phone" value={profile?.phone ?? "—"} />
             {profile?.address?.line1 ? (
               <Row

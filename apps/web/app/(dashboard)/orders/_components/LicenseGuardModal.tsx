@@ -8,6 +8,7 @@ import {
   useCreateAuthorizationOverride,
   type BlockedCategory,
 } from "@/lib/api/authorizations";
+import { genericToastCopy } from "@/lib/generic-toast-copy";
 
 const todayIso = () => new Date().toISOString().slice(0, 10);
 
@@ -101,8 +102,10 @@ export function LicenseGuardModal({
       onResolved();
     } catch (e) {
       setError(
-        (e as { response?: { data?: { message?: string } } })?.response?.data?.message ??
-          "Could not save the license. Please try again.",
+        genericToastCopy(
+          e,
+          "The license couldn't be saved. Check the number and expiry, then try again.",
+        ),
       );
     }
   };
@@ -126,8 +129,7 @@ export function LicenseGuardModal({
       onResolved();
     } catch (e) {
       setError(
-        (e as { response?: { data?: { message?: string } } })?.response?.data?.message ??
-          "Could not record the override. Please try again.",
+        genericToastCopy(e, "The override couldn't be recorded. Check the reason, then try again."),
       );
     }
   };

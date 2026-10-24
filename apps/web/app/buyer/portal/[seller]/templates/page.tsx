@@ -11,11 +11,12 @@ import {
   Calendar,
   ShoppingCart,
   CheckCircle2,
-  AlertTriangle,
 } from "lucide-react";
 import { Badge, Button } from "@routeflow/ui/web";
+import { reorderNoneAvailable, reorderSkippedNote } from "@/lib/buyer-reorder-review";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import { useBuyerTemplates, useBuyerReorder, type BuyerOrderTemplate } from "@/lib/api/buyer";
+import { ReorderReviewSheet, REORDER_FAILED_COPY } from "../_components/ReorderReviewSheet";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -110,26 +111,26 @@ function TemplateRow({
           {template.notes && <p className="mb-3 text-xs text-navy/70 italic">{template.notes}</p>}
           <div className="rounded-lg border border-surface-border bg-white overflow-hidden">
             <div className="overflow-x-auto">
-            <table className="w-full min-w-[560px]">
-              <thead>
-                <tr className="border-b border-surface-border text-[11px] text-navy/70 uppercase tracking-wider">
-                  <th className="px-3 py-2 text-left">Product</th>
-                  <th className="px-3 py-2 text-left w-20">Unit</th>
-                  <th className="px-3 py-2 text-right w-16">Qty</th>
-                  <th className="px-3 py-2 text-left">Notes</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-surface-border">
-                {template.items.map((item) => (
-                  <tr key={item.id} className="text-sm">
-                    <td className="px-3 py-2 font-medium text-navy">{item.product.name}</td>
-                    <td className="px-3 py-2 text-navy/70">{item.product.unit}</td>
-                    <td className="px-3 py-2 text-right text-navy">{item.qty}</td>
-                    <td className="px-3 py-2 text-navy/70 text-xs">{item.notes ?? "N/A"}</td>
+              <table className="w-full min-w-[560px]">
+                <thead>
+                  <tr className="border-b border-surface-border text-[11px] text-navy/70 uppercase tracking-wider">
+                    <th className="px-3 py-2 text-left">Product</th>
+                    <th className="px-3 py-2 text-left w-20">Unit</th>
+                    <th className="px-3 py-2 text-right w-16">Qty</th>
+                    <th className="px-3 py-2 text-left">Notes</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-surface-border">
+                  {template.items.map((item) => (
+                    <tr key={item.id} className="text-sm">
+                      <td className="px-3 py-2 font-medium text-navy">{item.product.name}</td>
+                      <td className="px-3 py-2 text-navy/70">{item.product.unit}</td>
+                      <td className="px-3 py-2 text-right text-navy">{item.qty}</td>
+                      <td className="px-3 py-2 text-navy/70 text-xs">{item.notes ?? "N/A"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </div>
         </div>
@@ -147,11 +148,16 @@ export default function BuyerTemplatesPage() {
   const sellerSlug = params.seller as string;
 
   const { data: result, isLoading, isError } = useBuyerTemplates();
-  const reorder = useBuyerReorder();
+  const reorder = useBuyerReorder({ localErrorToast: true }); // the sheet shows its own sentence
+  const [skippedNote, setSkippedNote] = React.useState<string | null>(null);
 
   const [reorderingId, setReorderingId] = React.useState<string | null>(null);
+  // The standing order awaiting review: a tap on Reorder Now only OPENS the review sheet; the
+  // order is placed from its "Place order" button, never from the tap itself.
+  const [reviewing, setReviewing] = React.useState<BuyerOrderTemplate | null>(null);
   const [successId, setSuccessId] = React.useState<string | null>(null);
-  const [errorMsg, setErrorMsg] = React.useState<string | null>(null);
+  // Fixed copy only — a server message can carry ids or internals a buyer must never see.
+  const [placeError, setPlaceError] = React.useState<string | null>(null);
 
   // Redirect checks
   React.useEffect(() => {
@@ -166,17 +172,25 @@ export default function BuyerTemplatesPage() {
 
   const handleReorder = async (templateId: string) => {
     setReorderingId(templateId);
-    setErrorMsg(null);
+    setPlaceError(null);
     setSuccessId(null);
     try {
-      await reorder.mutateAsync(templateId);
+      const res = await reorder.mutateAsync(templateId);
+      setSkippedNote(reorderSkippedNote(res));
       setSuccessId(templateId);
       setTimeout(() => setSuccessId(null), 4000);
-    } catch (err: any) {
-      setErrorMsg(err?.response?.data?.message ?? "Failed to create order from template.");
+      // Close the review only on success; a failure keeps it open so nothing is lost.
+      setReviewing(null);
+    } catch (err) {
+      setPlaceError(reorderNoneAvailable(err) ?? REORDER_FAILED_COPY);
     } finally {
       setReorderingId(null);
     }
+  };
+
+  const closeReview = () => {
+    setReviewing(null);
+    setPlaceError(null);
   };
 
   const templates = result?.data ?? [];
@@ -214,13 +228,14 @@ export default function BuyerTemplatesPage() {
           .
         </div>
       )}
-
-      {/* Error */}
-      {errorMsg && (
-        <div className="mb-4 flex items-center gap-2 rounded-lg border border-danger/30 bg-danger-bg px-4 py-2.5 text-sm text-danger">
-          <AlertTriangle className="h-4 w-4 flex-shrink-0" />
-          {errorMsg}
-        </div>
+      {skippedNote && (
+        <p
+          role="status"
+          data-testid="reorder-skipped-note"
+          className="mb-4 rounded-lg bg-surface-raised px-4 py-2.5 text-sm text-navy"
+        >
+          {skippedNote}
+        </p>
       )}
 
       {/* Templates list */}
@@ -244,12 +259,20 @@ export default function BuyerTemplatesPage() {
             <TemplateRow
               key={t.id}
               template={t}
-              onReorder={() => handleReorder(t.id)}
+              onReorder={() => setReviewing(t)}
               isReordering={reorderingId === t.id}
             />
           ))}
         </div>
       )}
+
+      <ReorderReviewSheet
+        template={reviewing}
+        placing={reorderingId != null}
+        onConfirm={() => reviewing && handleReorder(reviewing.id)}
+        error={placeError}
+        onClose={closeReview}
+      />
 
       {/* Summary footer */}
       {templates.length > 0 && (

@@ -47,8 +47,40 @@ export function jurisdictionText(
   return r.states.length ? "Banned in" : "Banned everywhere (no states listed)";
 }
 
+/**
+ * The ONE wording for where a rule applies. Neutral on purpose: it says which channel the rule covers
+ * and nothing about what staff can do (row 510 owns any staff sentence). Every surface that names a
+ * channel (cards, detail, settings fields) goes through this.
+ */
 export const surfaceText = (s: SellingRestrictionListItemDto["surface"]) =>
-  s === "BUYER_PORTAL" ? "Buyer portal only (staff can still sell)" : "All sales";
+  s === "BUYER_PORTAL" ? "Buyer portal only" : "All orders";
+
+/**
+ * The two admin-only sentences, said the same way on every surface (rules list and detail, the edit
+ * dialog, the catalog chooser, the product page). A rule that hides products from every portal
+ * customer is the account admin's to change; operators may still lift a state rule.
+ */
+export const ADMIN_ONLY_CHANGE_HINT = "Only an account admin can change (or lift) a federal rule.";
+/** The note under the disabled "Everywhere (federal)" choice for a viewer who isn't an account admin (SA copy). */
+export const ADMIN_ONLY_FEDERAL_NOTE =
+  "Only an account admin can make a rule apply everywhere (federal).";
+/** Lead copy (M1): one sentence for both operator hints, so a page that shows both says it once. */
+export const ADMIN_ONLY_LIFT_HINT = ADMIN_ONLY_CHANGE_HINT;
+
+/**
+ * Can this viewer lift this rule (owner L5)? Operators may lift a STATE rule; a rule that applies
+ * everywhere (FEDERAL) is the account admin's (TENANT_ADMIN or SUPER_ADMIN, as rule-lock.ts decides).
+ * "none" = nothing to offer (not staff, or the rule is no longer in force).
+ */
+export function liftState(
+  role: string | undefined,
+  rule: Pick<SellingRestrictionListItemDto, "jurisdiction" | "status">,
+): "enabled" | "admin-only" | "none" {
+  if (rule.status !== "ACTIVE" && rule.status !== "SCHEDULED") return "none";
+  if (role === "TENANT_ADMIN" || role === "SUPER_ADMIN") return "enabled";
+  if (role !== "OPERATOR") return "none";
+  return rule.jurisdiction === "FEDERAL" ? "admin-only" : "enabled";
+}
 
 /**
  * The window as an admin reads it. `effectiveTo` is EXCLUSIVE (the engine stops applying the rule AT
@@ -86,4 +118,23 @@ export function emptyText(filter: RestrictionStatus | "ALL"): {
   }
   const label = STATUS_FILTERS.find((f) => f.value === filter)!.label.toLowerCase();
   return { title: `No ${label} rules`, description: "Try another filter to see the rest." };
+}
+
+/** One line for a rule's header: who it bans and where it applies ("Banned in Texas and California · All sales"). */
+export function ruleSentence(
+  r: Pick<SellingRestrictionListItemDto, "jurisdiction" | "states" | "surface">,
+): string {
+  let where: string;
+  if (r.jurisdiction === "STATE" && r.states.length > 0) {
+    const names = r.states.map(stateName);
+    where =
+      names.length > 4
+        ? `Banned in ${names.length} states`
+        : names.length === 1
+          ? `Banned in ${names[0]}`
+          : `Banned in ${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+  } else {
+    where = jurisdictionText(r);
+  }
+  return `${where} · ${surfaceText(r.surface)}`;
 }

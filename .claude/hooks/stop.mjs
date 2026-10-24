@@ -43,8 +43,8 @@
  * (too slow/fragile per-file with Prisma); type-checks live in the pre-push hook.
  */
 import { execSync, spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 // Invoke prettier directly via node — this repo's root has no node_modules/.bin
@@ -404,6 +404,77 @@ try {
   }
 } catch {
   // the usage guard is advisory-only — never let it block or crash the turn
+}
+
+// ── Gate 6 — Design Gate reference (owner R19, 2026-10-08). WARN-ONLY: it ships
+// dark like a new entitlement gate — it reports what it WOULD block and never
+// blocks (no exit 2 anywhere in this block; it falls through to exit 0 below).
+// Active only where the future-proof skill exists, on a feat/* or fix/* branch
+// that touches code (uncommitted, or committed since the merge-base with master).
+// Satisfied by EITHER (a) a spec in local-assets/specs/ (this checkout's or the
+// main checkout's — lane worktrees have none of their own) matched to the branch
+// by an sa-<nnn> / b<nnnn> id in the branch name or by the branch slug in the
+// file name, whose text carries a `## Design Gate` heading; or (b) the HEAD
+// commit body mentioning "Design Gate" (a Lite/Hotfix block, or a
+// `Design-Gate: <spec path>` trailer). Flipping it to enforced is a separate,
+// owner-approved diff after RUN-LOG evidence (.claude/skills/future-proof/).
+try {
+  const branch = sh("git rev-parse --abbrev-ref HEAD").out.trim();
+  const m = /^(feat|fix)\/(.+)$/.exec(branch);
+  if (m && existsSync(".claude/skills/future-proof/SKILL.md")) {
+    const base = ["origin/master", "master"]
+      .map((ref) => sh(`git merge-base HEAD ${ref}`).out.trim())
+      .find((s) => /^[0-9a-f]{40}$/i.test(s));
+    const committedCode = base
+      ? sh(`git diff --name-only ${base} HEAD -- apps packages scripts`)
+          .out.split(/\r?\n/)
+          .map((f) => f.trim())
+          .filter((f) => f && isCode(f))
+      : [];
+    if (uncommittedCode.length > 0 || committedCode.length > 0) {
+      const slug = m[2].toLowerCase();
+      const saIds = [...slug.matchAll(/(?:^|[^a-z0-9])sa-?(\d{3,4})(?!\d)/g)].map((x) => x[1]);
+      const bugIds = [...slug.matchAll(/(?:^|[^a-z0-9])b(\d{3,4})(?!\d)/g)].map((x) => x[1]);
+      const matchesBranch = (file) => {
+        const name = file.toLowerCase();
+        return (
+          (slug.length >= 6 && name.includes(slug)) ||
+          saIds.some((n) => new RegExp(`^sa-${n}(?!\\d)`).test(name)) ||
+          bugIds.some((n) => new RegExp(`(?:^|-)b${n}(?!\\d)`).test(name))
+        );
+      };
+      const commonDir = sh("git rev-parse --git-common-dir").out.trim();
+      const specDirs = [
+        ...new Set(
+          [
+            resolve("local-assets/specs"),
+            commonDir ? join(dirname(resolve(commonDir)), "local-assets", "specs") : null,
+          ].filter((d) => d && existsSync(d)),
+        ),
+      ];
+      const matched = specDirs.flatMap((d) =>
+        readdirSync(d)
+          .filter((f) => f.endsWith(".md") && matchesBranch(f))
+          .map((f) => join(d, f)),
+      );
+      const specHasGate = matched.some((p) =>
+        /^#{1,3}\s+.*\bDesign Gate\b/im.test(readFileSync(p, "utf8")),
+      );
+      const commitHasGate = /Design[- ]Gate/i.test(sh("git log -1 --format=%B").out);
+      if (!specHasGate && !commitHasGate) {
+        process.stderr.write(
+          `Design Gate (R19, dark — warn only): no gate found for ${branch} — ` +
+            `${matched.length} matched spec(s) in local-assets/specs carry no \`## Design Gate\` ` +
+            `block and the HEAD commit body mentions none. Fill one from ` +
+            `.claude/skills/future-proof/references/GATE-TEMPLATE.md (check: ` +
+            `node .claude/skills/future-proof/scripts/check-gate.mjs <spec>) or add a ` +
+            `\`Design-Gate: <spec path>\` trailer.\n`,
+        );
+      }
+    }
+  }
+} catch {
+  // Gate 6 is advisory-only (dark) — never let it block or crash the turn
 }
 
 process.exit(0);

@@ -1,12 +1,9 @@
 /**
- * CRM (GoHighLevel) status enums — re-exported from `@prisma/client` now that WP1 has landed
- * the schema. Superseded the TP2 skeleton's plain-string unions (kept until the migration
- * existed so tests never imported a not-yet-generated Prisma enum).
+ * CRM (GoHighLevel) shared types. The status enums (CrmConnectionStatus, CrmTriggerMode,
+ * CrmHandoffStatus) come straight from `@prisma/client`; nothing imported them through here.
  */
 
 import type { GoHighLevelClient } from "./gohighlevel/gohighlevel.client";
-
-export type { CrmConnectionStatus, CrmTriggerMode, CrmHandoffStatus } from "@prisma/client";
 
 /**
  * GHL wire shapes live on the client; re-exported here so specs and services import one
@@ -15,7 +12,7 @@ export type { CrmConnectionStatus, CrmTriggerMode, CrmHandoffStatus } from "@pri
 export type { GhlContact, GhlOpportunity, GhlCustomField } from "./gohighlevel/gohighlevel.client";
 
 /** The minimum of a `CrmConnection` row needed to build a correctly-scoped client (F4). */
-export interface GhlConnectionCreds {
+interface GhlConnectionCreds {
   secretCipher?: string | null;
   locationId: string;
 }

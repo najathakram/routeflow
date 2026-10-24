@@ -1,8 +1,10 @@
 import axios, { type InternalAxiosRequestConfig } from "axios";
 import { Platform } from "react-native";
 import { useOfflineQueue } from "../store/offlineQueue";
+import { ONLINE_REQUIRED_MESSAGE, isOfflineQueueable } from "./offline-allowlist";
 import { OP_KEYS, DRIVER_KEYS, CURRENT_ROLE_KEY, type CurrentRole } from "./auth-keys";
 import { toSecureStoreKey } from "./secure-key";
+import { BUILD_SHA } from "./build-info";
 
 const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:3000";
 
@@ -78,6 +80,10 @@ apiClient.interceptors.request.use(async (config) => {
   const [token, tenantSlug] = await Promise.all([getActiveAccessToken(), storageGet("tenantSlug")]);
   if (token) config.headers.Authorization = `Bearer ${token}`;
   if (tenantSlug) config.headers["X-Tenant-Slug"] = tenantSlug;
+  // Row 500 (SA-837): the API's missing-token warn reads these. Mobile also ships as an Expo web export
+  // (a browser User-Agent), so x-client is the only reliable way to tell it from the web app.
+  config.headers["x-client"] = "mobile";
+  config.headers["x-app-version"] = BUILD_SHA || "unknown";
   return config;
 });
 
@@ -149,14 +155,28 @@ apiClient.interceptors.response.use(
     const isTimeout = error.code === "ECONNABORTED" || error.code === "ETIMEDOUT";
     const queueAsOffline = !isTimeout || useOfflineQueue.getState().isOnline === false;
 
-    if (
+    const wouldQueue =
       isNetworkError &&
       isMutation &&
       !isFormData &&
       !original?._offlineQueued &&
       !original?._skipOfflineQueue &&
-      queueAsOffline
+      queueAsOffline;
+
+    // B923: only an allow-listed endpoint may be queued. Every other mutation is online-only: nothing is
+    // enqueued and the caller gets a plain "You're offline" error that is NOT `isOfflineQueued` (screens
+    // treat that flag as a pending success). A queue REPLAY carries `_offlineQueued`, so legacy entries
+    // persisted before this rule still drain and fail/retry through the normal classification.
+    if (
+      wouldQueue &&
+      !isOfflineQueueable(original?.method ?? "", original?.url ?? "", original?.headers)
     ) {
+      return Promise.reject(
+        Object.assign(new Error(ONLINE_REQUIRED_MESSAGE), { isOnlineRequired: true }),
+      );
+    }
+
+    if (wouldQueue) {
       if (original) original._offlineQueued = true;
       let body: unknown;
       try {

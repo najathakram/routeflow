@@ -20,9 +20,13 @@ const whenPresent = () => ValidateIf((_o, v) => v !== undefined);
  * Senders / readers:
  *  - lowStockDigestEnabled: web LowStockDigestToggle -> LowStockDigestService (opt-out, "false")
  *  - pushEnabled: mobile lib/notification-prefs.ts -> NotificationsService (opt-out, "false")
+ *  - staffOrderEmail: web Notifications toggle (WS4) -> messaging resolveStaffRecipients (opt-out, "false")
+ *  - staffBuyerChangeEmail: same toggle group (WS4) -> messaging resolveStaffRecipients (opt-out, "false")
  *  - locale: web lib/i18n (en | es) -> web lib/i18n
  *  - bill.lastSupplierId: web vendor-bills create modal -> same modal (prefill)
  *  - payment.lastMethod: web vendor-bill record-payment -> same modal (default method)
+ *  - orders.posMode: web/mobile Create Order POS mode switch -> the same switch (seed). The server never
+ *    infers a PICKUP order from it: clients send the explicit fulfil path (SA-763r). Unset = off.
  */
 export class UpdatePreferencesDto {
   @whenPresent()
@@ -32,6 +36,14 @@ export class UpdatePreferencesDto {
   @whenPresent()
   @IsIn(["true", "false"], { message: 'pushEnabled must be exactly "true" or "false"' })
   pushEnabled?: string;
+
+  @whenPresent()
+  @IsIn(["true", "false"], { message: 'staffOrderEmail must be exactly "true" or "false"' })
+  staffOrderEmail?: string;
+
+  @whenPresent()
+  @IsIn(["true", "false"], { message: 'staffBuyerChangeEmail must be exactly "true" or "false"' })
+  staffBuyerChangeEmail?: string;
 
   @whenPresent()
   @IsIn(["en", "es"], { message: "locale must be one of en, es" })
@@ -47,6 +59,10 @@ export class UpdatePreferencesDto {
     message: "payment.lastMethod must be a PaymentMethod value",
   })
   "payment.lastMethod"?: string;
+
+  @whenPresent()
+  @IsIn(["true", "false"], { message: 'orders.posMode must be exactly "true" or "false"' })
+  "orders.posMode"?: string;
 }
 
 /**
@@ -57,9 +73,12 @@ export class UpdatePreferencesDto {
 export const PREFERENCE_KEYS = [
   "lowStockDigestEnabled",
   "pushEnabled",
+  "staffOrderEmail",
+  "staffBuyerChangeEmail",
   "locale",
   "bill.lastSupplierId",
   "payment.lastMethod",
+  "orders.posMode",
 ] as const;
 
 /**

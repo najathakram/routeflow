@@ -504,7 +504,8 @@ describe("TripsService", () => {
       await service.getEligibleOrders(tenantId, {});
 
       const where = prisma.order.findMany.mock.calls[0][0].where;
-      expect(where.fulfillPath).toEqual({ not: FulfillPath.SHIP });
+      // SA-655: PICKUP (a counter sale) is excluded alongside SHIP.
+      expect(where.fulfillPath).toEqual({ notIn: [FulfillPath.SHIP, FulfillPath.PICKUP] });
       expect(where.status).toEqual({
         in: [OrderStatus.PENDING, OrderStatus.CONFIRMED, OrderStatus.PARTIALLY_DELIVERED],
       });

@@ -235,6 +235,25 @@ describe("StatementService (P5-15 — monthly statement reconciliation)", () => 
       );
     });
 
+    it("row 615: an approved cash payment's statement line shows the buyer's own reference, unchanged", async () => {
+      prisma.invoicePayment.findMany.mockResolvedValue([
+        {
+          id: "pay-cash",
+          amount: 100,
+          method: "CASH",
+          status: "PAID",
+          reference: "receipt 7",
+          paidAt: new Date("2026-06-05T00:00:00.000Z"),
+          invoice: { invoiceNumber: "INV-100" },
+        },
+      ]);
+
+      const stmt = await service.buildMonthlyStatement("cust-1", "2026-06");
+
+      const line = stmt.lineItems.find((li) => li.type === "PAYMENT");
+      expect(line?.description).toBe("Payment — CASH (receipt 7) on #INV-100");
+    });
+
     it("REG-M2: a payment's settled date (not paidAt) determines when it reduces the receivable and its line-item date (check-payments PR-2b)", async () => {
       // A $200 payment recorded (paidAt) in April but not settled until June
       // 15 — a post-dated check paid in advance and cashed mid-month.

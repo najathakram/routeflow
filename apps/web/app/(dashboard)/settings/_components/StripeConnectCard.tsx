@@ -6,6 +6,7 @@ import { CreditCard, CheckCircle2, AlertCircle, AlertTriangle, Trash2 } from "lu
 import { Card, Badge, Button, useToast, cn } from "@routeflow/ui/web";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { useAuth } from "@/lib/auth-context";
+import { isAccountAdmin } from "@/lib/auth";
 import {
   useStripeConnectStatus,
   useStartStripeConnect,
@@ -35,6 +36,8 @@ export function StripeConnectCard() {
   // don't fire a request that only ever 403s for them, and don't render the card at all.
   const canManage =
     user?.role === "OPERATOR" || user?.role === "TENANT_ADMIN" || user?.role === "SUPER_ADMIN";
+  // Linking / disconnecting is admin-only on the api; an operator sees the status read-only.
+  const isAdmin = isAccountAdmin(user);
   const { data, isLoading, isError } = useStripeConnectStatus({ enabled: canManage });
   const startConnect = useStartStripeConnect();
   const disconnect = useDisconnectStripe();
@@ -125,11 +128,15 @@ export function StripeConnectCard() {
             Connect your own Stripe account so customers can pay their invoices by card. Payments go
             straight into your Stripe account — RouteFlow takes no fee.
           </p>
-          <div>
-            <Button onClick={() => startConnect.mutate()} loading={startConnect.isPending}>
-              Connect Stripe
-            </Button>
-          </div>
+          {isAdmin ? (
+            <div>
+              <Button onClick={() => startConnect.mutate()} loading={startConnect.isPending}>
+                Connect Stripe
+              </Button>
+            </div>
+          ) : (
+            <p className="text-sm text-navy/50">Only an admin can change this.</p>
+          )}
         </>
       )}
 
@@ -164,15 +171,19 @@ export function StripeConnectCard() {
             </div>
           )}
 
-          <div>
-            <Button
-              variant="secondary"
-              onClick={() => setConfirmOpen(true)}
-              leftIcon={<Trash2 className="h-4 w-4" />}
-            >
-              Disconnect
-            </Button>
-          </div>
+          {isAdmin ? (
+            <div>
+              <Button
+                variant="secondary"
+                onClick={() => setConfirmOpen(true)}
+                leftIcon={<Trash2 className="h-4 w-4" />}
+              >
+                Disconnect
+              </Button>
+            </div>
+          ) : (
+            <p className="text-sm text-navy/50">Only an admin can change this.</p>
+          )}
         </div>
       )}
 

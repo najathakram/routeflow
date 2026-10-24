@@ -1,0 +1,2 @@
+# temporary compiled output of specs that spawn the server (removed by the spec; ignored if a run is killed)
+.dist-*/

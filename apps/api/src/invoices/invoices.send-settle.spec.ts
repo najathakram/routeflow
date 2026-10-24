@@ -10,14 +10,11 @@
  * (the oldest-first sweep), so an explicit-amount credit intent recorded at
  * order time is never settled before the invoice is marked sent.
  *
- * RED BY DESIGN: `InvoicesService.send`/`sendEmail` (invoices.service.ts,
- * search "P5-13: SENT flip") never call `this.creditNotes.settleOrderCreditsInTx`
- * at all today — grep confirms its only two call sites are elsewhere in the
- * file (the DELIVERED branch's best-effort settle, ~L1258/L2730), neither of
- * which is `send()`/`sendEmail()`. Both tests below fail on the call-order
- * assertion (`callLog` never gains a `"settleOrderCreditsInTx"` entry), never
- * on a compile error — no not-yet-existing field/option is touched, so no
- * `as any` escape hatch is needed here.
+ * HISTORY: this was written RED BY DESIGN (REG-B108): `send`/`sendEmail` never called
+ * `settleOrderCreditsInTx` before R13 wired it into `markSent`. It is now the green pin on the ORDER of the two
+ * calls (settle, then the oldest-first sweep) on the ISSUING send. SA-857: only the DRAFT -> SENT issue runs them, so
+ * the fixtures here are DRAFT invoices; a re-send is pinned to move no money in the DB lane
+ * (credit-auto-apply-sa436.db.spec.ts case 5a, invoices.resend-state.db.spec.ts).
  *
  * Harness: real `InvoicesService` over a mocked `PrismaService`
  * (`createMockPrisma()` — `forTenant()`/`tenantTransaction` pass-through, per
@@ -67,11 +64,10 @@ const CUSTOMER_ID = "cust-f07-settle-1";
 const EXPLICIT_CREDIT_NOTE_ID = "cn-e2e-routeflow-explicit-1";
 
 /**
- * An order-linked invoice, already SENT (a re-send). Status !== DRAFT short-
- * circuits `assertOrderInvoiceUnlocked`'s order lookup AND the DRAFT-only
- * INVOICE_SENT notify branch, so the fixture only needs what `send()`/
- * `sendEmail()` actually read on this path — the orderId is what makes the
- * new settle branch reachable per the test-plan's harness note.
+ * An order-linked DRAFT invoice: the ISSUING send (SA-857 - only a DRAFT -> SENT send settles order
+ * credits and runs the sweep; a re-send of an issued invoice moves no money). The fixture only needs
+ * what `send()`/`sendEmail()` actually read on this path - the orderId is what makes the settle
+ * branch reachable per the test-plan's harness note.
  */
 function buildInvoiceFixture() {
   return {
@@ -79,7 +75,7 @@ function buildInvoiceFixture() {
     orderId: ORDER_ID,
     customerId: CUSTOMER_ID,
     invoiceNumber: "INV-F07-SETTLE-1",
-    status: InvoiceStatus.SENT,
+    status: InvoiceStatus.DRAFT, // SA-857: only the DRAFT -> SENT issue settles and sweeps credits
     deliveryBatchId: null as string | null,
     total: 100,
     issueDate: new Date("2026-09-01T00:00:00.000Z"),
@@ -193,9 +189,7 @@ describe("InvoicesService — send()/sendEmail() settle-before-sweep (TP-INV)", 
 
     await service.send(INVOICE_ID);
 
-    // Call-order oracle: today `settleOrderCreditsInTx` is never called by
-    // send() at all, so callLog is ["autoApplyOldestCreditsInTx"] — this
-    // fails on the array comparison, not a missing property.
+    // Call-order oracle: settle runs BEFORE the oldest-first sweep (B108), on the issuing send.
     expect(callLog).toEqual(["settleOrderCreditsInTx", "autoApplyOldestCreditsInTx"]);
     expect(creditNotes.settleOrderCreditsInTx).toHaveBeenCalledWith(expect.anything(), ORDER_ID);
     expect(creditNotes.autoApplyOldestCreditsInTx).toHaveBeenCalledWith(
@@ -216,9 +210,22 @@ describe("InvoicesService — send()/sendEmail() settle-before-sweep (TP-INV)", 
 
     await service.sendEmail(INVOICE_ID);
 
-    // Same call-order oracle as T17 — sendEmail() mirrors send()'s tx block
-    // verbatim, so it carries the identical omission today.
-    expect(callLog).toEqual(["settleOrderCreditsInTx", "autoApplyOldestCreditsInTx"]);
+    // Same call-order oracle as T17, on the email path: sendEmail() shares markSent's tx block.
+    // SA-860: the same two calls run twice: first in the rolled-back dry run that feeds the email snapshot,
+    // then in the real markSent commit (the only committer of money).
+    expect(callLog).toEqual([
+      "settleOrderCreditsInTx",
+      "autoApplyOldestCreditsInTx",
+      "settleOrderCreditsInTx",
+      "autoApplyOldestCreditsInTx",
+    ]);
+    // and the two settle/sweep pairs ran on DIFFERENT transactions: the dry run's (rolled back), then markSent's
+    const settleTx = creditNotes.settleOrderCreditsInTx.mock.calls.map((c: unknown[]) => c[0]);
+    const sweepTx = creditNotes.autoApplyOldestCreditsInTx.mock.calls.map((c: unknown[]) => c[0]);
+    expect(settleTx).toHaveLength(2);
+    expect(settleTx[0]).not.toBe(settleTx[1]);
+    expect(sweepTx[0]).toBe(settleTx[0]);
+    expect(sweepTx[1]).toBe(settleTx[1]);
     expect(creditNotes.settleOrderCreditsInTx).toHaveBeenCalledWith(expect.anything(), ORDER_ID);
     expect(creditNotes.autoApplyOldestCreditsInTx).toHaveBeenCalledWith(
       expect.anything(),

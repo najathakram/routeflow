@@ -15,7 +15,8 @@ import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar, Pill, SegmentedControl } from "@routeflow/ui/mobile/ios";
-import { useAdminInvoice, useAdminInvoices } from "../../../../lib/api/admin";
+import { useAdminInvoice, useAdminInvoices, useBusinessSettings } from "../../../../lib/api/admin";
+import { INVOICE_STALE_COPY, isInvoiceStale } from "../../../../lib/invoice-stale";
 import {
   useDeleteInvoice,
   useDuplicateInvoice,
@@ -36,18 +37,23 @@ import {
   useUnapplyCreditNote,
 } from "../../../../lib/api/credit-notes";
 import { useApplyAdvancePayment, useCustomerAdvancePayments } from "../../../../lib/api/customers";
-import { useGetPaymentImageUrl } from "../../../../lib/api/payments";
+import { useGetPaymentImageUrl, useUpdatePayment } from "../../../../lib/api/payments";
+import { noLongerFitsCopy, voidPaymentBody } from "../../../../lib/payment-no-longer-fits";
 import { deriveInvoiceVariant } from "../../../../lib/invoice-pdf-variant";
+import { invoiceShowsTerms } from "../../../../lib/invoice-sale-terms";
 import { fmtCalendarDate } from "../../../../lib/format-date";
 import { isInternalEmail } from "../../../../lib/internal-email";
 import {
   canRecordPayment,
-  canSendInvoiceNow,
+  invoiceSendAction,
   canWriteOff,
   invoiceActionFlags,
+  isOpenInvoiceStatus,
   isPaymentEditable,
   isPendingOrderMirror,
 } from "../../../../lib/invoices-logic";
+import { reminderErrorCopy } from "../../../../lib/invoice-reminder-error-copy";
+import { invoiceSendStateLine } from "../../../../lib/invoice-send-state";
 import { isCreditOpenForApply, openCreditBalance } from "../../../../lib/credit-notes-logic";
 import { siblingInvoicesOf } from "../../../../lib/invoice-siblings";
 import { showToast } from "../../../../lib/toast";
@@ -57,16 +63,23 @@ import {
   invoiceLineUnitNoun,
   usesUnitDisplay,
 } from "../../../../lib/invoice-line-display";
+import { invoiceTaxLines } from "../../../../lib/invoice-tax-lines";
 import { invoiceLineQtyText } from "@routeflow/pricing";
+import { shipmentSaveDecision } from "@routeflow/types/shipment-save";
+import { unvoidAmendedPeriodNote } from "@routeflow/types/unvoid-amended-period";
 import { freeUnitsLabel } from "../../../../lib/buyer-cart-logic";
 import { ACTIVATION_BUDGET_MS, sharePdf } from "../../../../lib/share-pdf";
 import { printPdf } from "../../../../lib/print-pdf";
+import { RestrictionOverrideNote } from "../../../../components/RestrictionOverrideNote";
+import { useRestrictionWarningRetry } from "../../../../lib/use-restriction-warning-retry";
+import { overpaidText, revisedBadgeText } from "../../../../lib/invoice-revision";
 import {
   nextPdfSharePhase,
   smtpFallbackNotice,
   type PdfSharePhase,
 } from "../../../../lib/invoice-send-logic";
 import { ShipmentSection, ShipmentEditModal } from "../../../../components/ShipmentSection";
+import { shipmentForDisplay } from "../../../../lib/shipment-display";
 
 // admin.ts's AdminInvoice.payments doesn't declare the image fields even
 // though the API already returns them (findOne's `payments` include has no
@@ -124,6 +137,7 @@ export default function InvoiceDetailScreen() {
   }, [isCreateAlias, router]);
 
   const { data: invoice, isLoading, refetch } = useAdminInvoice(isCreateAlias ? "" : (id ?? ""));
+  const tenantZone = useBusinessSettings().data?.timezone;
   // REG-5: sibling invoices from the same regulated sale-split. No dedicated
   // "list siblings" endpoint exists — GET /invoices already returns
   // invoiceGroupId as a raw scalar on every row (verified: findAll's `include`
@@ -151,13 +165,17 @@ export default function InvoiceDetailScreen() {
   const updateMut = useUpdateInvoice();
   const shipmentMut = useUpdateInvoiceShipment();
   const getImageUrlMut = useGetPaymentImageUrl();
+  const voidPaymentMut = useUpdatePayment();
   const reminderMut = useSendInvoiceReminder();
   const duplicateMut = useDuplicateInvoice();
+  const rw = useRestrictionWarningRetry(); // row 510: staff warning + override dialog
   const reopenMut = useReopenInvoice();
   const unvoidMut = useUnvoidInvoice();
   const revertMut = useRevertInvoiceToDraft();
   const [loadingReceiptId, setLoadingReceiptId] = useState<string | null>(null);
   const [dueDateModal, setDueDateModal] = useState(false);
+  // H4: the invoice updatedAt captured when the due-date modal OPENS (a refetch while it is open never moves it).
+  const dueDateToken = useRef<string | undefined>(undefined);
   const [dueDateInput, setDueDateInput] = useState("");
   const [shipmentModal, setShipmentModal] = useState(false);
   const [creditSheetOpen, setCreditSheetOpen] = useState(false);
@@ -189,8 +207,12 @@ export default function InvoiceDetailScreen() {
   }
 
   const s = statusPill(invoice.status);
+  // Row 398: the header tax holds the regular tax plus the levy; the totals show them apart (shared invoiceTaxSplit).
+  const taxLines = invoiceTaxLines(invoice as Parameters<typeof invoiceTaxLines>[0]);
   const balance = invoice.balanceDue ?? invoice.total;
   const paymentTermsLabel = (invoice as typeof invoice & InvoiceTermsLabelField).paymentTermsLabel;
+  // Row 401: a counter sale paid at the till shows no due date or terms (the web page's CQ-26 rule).
+  const showTerms = invoiceShowsTerms(invoice);
   const isVoid = invoice.status === "VOID";
   // B4: mirrors web's allow-list exactly. The server only rejects VOID, so a
   // bare "not paid, not void" gate used to offer this on DRAFT/WRITTEN_OFF —
@@ -202,15 +224,23 @@ export default function InvoiceDetailScreen() {
     status: invoice.status,
     paymentCount: invoice.payments?.length ?? 0,
     isOrderLinked: invoice.orderId != null,
+    balanceDue: invoice.balanceDue,
   });
   // Computed BEFORE canSend: a pending mirror is locked server-side, so Send has
   // to know about it or it offers a guaranteed 400.
   const pendingMirror = isPendingOrderMirror({
+    pendingMirror: invoice.pendingMirror,
     orderId: invoice.orderId,
     deliveryBatchId: invoice.deliveryBatchId,
     orderStatus: invoice.order?.status,
   });
-  const canSend = canSendInvoiceNow(invoice.status, pendingMirror);
+  // #2088: Send / "Email again" (with the tracked state in the confirmation) / locked-with-reason.
+  const sendAction = invoiceSendAction({
+    status: invoice.status,
+    pendingMirror,
+    sendState: invoice.sendState,
+    sendLocked: invoice.sendLocked,
+  });
   // Draft/Final PDF stage (mirrors web): smart default per stage, operator-overridable
   // via the toggle. Governs BOTH Share and Send.
   const defaultPdfVariant = deriveInvoiceVariant(invoice);
@@ -274,6 +304,11 @@ export default function InvoiceDetailScreen() {
         onError: (e: any) => {
           const code = e?.response?.data?.code;
           const msg = e?.response?.data?.message ?? e?.message ?? "Try again.";
+          if (code === "EMAIL_SEND_FAILED" && invoice.status !== "DRAFT") {
+            // #2088: a re-send of an invoice that was already sent: it is NOT "not sent", and Mark as Sent is meaningless.
+            showToast(msg);
+            return;
+          }
           if (code === "EMAIL_SEND_FAILED") {
             // Invoice is still DRAFT (R5 honesty). Offer Mark as Sent so a broken
             // mail transport can't leave it stuck. Mirrors the web recovery modal.
@@ -372,11 +407,17 @@ export default function InvoiceDetailScreen() {
 
   const handleSaveShipment = (carrier: string, trackingNumber: string) => {
     if (!id) return;
+    const { outcome, payload } = shipmentSaveDecision(invoice ?? {}, carrier, trackingNumber);
+    if (!payload) {
+      // Nothing stored and nothing typed: not a change, so no request and no "cleared" toast.
+      setShipmentModal(false);
+      return;
+    }
     shipmentMut.mutate(
-      { id, shippingCarrier: carrier, shippingTrackingNumber: trackingNumber },
+      { id, ...payload },
       {
         onSuccess: () => {
-          showToast(carrier || trackingNumber ? "Shipment saved" : "Shipment cleared");
+          showToast(outcome === "saved" ? "Shipment saved" : "Shipment cleared");
           setShipmentModal(false);
           refetch();
         },
@@ -528,7 +569,7 @@ export default function InvoiceDetailScreen() {
           if (notice) alertInfo("Reminder sent", notice);
           else showToast(`Reminder emailed to ${res.sentTo}`);
         },
-        onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+        onError: (e: unknown) => showToast(reminderErrorCopy(e)), // fixed copy by code, never server text
       },
     );
   };
@@ -538,12 +579,14 @@ export default function InvoiceDetailScreen() {
     // Real POST /invoices/:id/duplicate — preserves the box split + per-line
     // discount/taxRate (web hand-rolls a lossy re-create here; deliberately
     // not mirrored, RF-011).
-    duplicateMut.mutate(id, {
+    duplicateMut.mutate(rw.attach(id), {
       onSuccess: (inv) => {
         showToast(`New draft ${inv.invoiceNumber} created`);
         router.push(`/(operator)/invoices/${inv.id}`);
       },
-      onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+      onError: (e: any) =>
+        rw.handle(e, handleDuplicate) ||
+        showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
     });
   };
 
@@ -582,7 +625,13 @@ export default function InvoiceDetailScreen() {
       `${invoice.invoiceNumber} returns to Draft and re-claims its billed quantities on the source order.`,
       () =>
         unvoidMut.mutate(id, {
-          onSuccess: () => showToast("Invoice unvoided — now in Draft"),
+          onSuccess: (res: any) => {
+            // SA-839 §3: one more line when the void sat in an already-filed month.
+            const note = unvoidAmendedPeriodNote(res?.amendedPeriod);
+            showToast(
+              note ? `Invoice unvoided — now in Draft. ${note}` : "Invoice unvoided — now in Draft",
+            );
+          },
           onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
         }),
       { confirmText: "Unvoid" },
@@ -621,6 +670,14 @@ export default function InvoiceDetailScreen() {
             <Pill variant={s.variant} dot>
               {s.label}
             </Pill>
+            {revisedBadgeText(invoice.revisedAt, tenantZone) ? (
+              <Text style={styles.headerMeta}>
+                {revisedBadgeText(invoice.revisedAt, tenantZone)}
+              </Text>
+            ) : null}
+            {overpaidText(invoice.overpaidBy) ? (
+              <Text style={styles.headerMeta}>{overpaidText(invoice.overpaidBy)}</Text>
+            ) : null}
             <Text style={styles.customer}>{invoice.customer?.businessName ?? "Customer"}</Text>
             {invoice.subject?.trim() ? (
               <Text style={styles.headerMeta} numberOfLines={2}>
@@ -653,16 +710,21 @@ export default function InvoiceDetailScreen() {
               style={styles.dueRow}
               onPress={() => {
                 setDueDateInput(invoice.dueDate ? invoice.dueDate.slice(0, 10) : "");
+                dueDateToken.current = invoice.updatedAt;
                 setDueDateModal(true);
               }}
               hitSlop={4}
             >
               <Text style={styles.due}>
-                {invoice.dueDate ? `Due ${fmtCalendarDate(invoice.dueDate)}` : "Set due date"}
+                {!showTerms
+                  ? "Edit due date"
+                  : invoice.dueDate
+                    ? `Due ${fmtCalendarDate(invoice.dueDate)}`
+                    : "Set due date"}
               </Text>
               <Ionicons name="pencil-outline" size={12} color={ios.label3} />
             </Pressable>
-            {paymentTermsLabel ? (
+            {showTerms && paymentTermsLabel ? (
               <Text style={styles.headerMeta}>Terms: {paymentTermsLabel}</Text>
             ) : null}
           </View>
@@ -730,6 +792,13 @@ export default function InvoiceDetailScreen() {
             </View>
           ) : null}
 
+          {/* #2088: what was emailed and whether it changed since (same words as web). */}
+          {invoiceSendStateLine(invoice.sendState) ? (
+            <Text testID="invoice-send-state-line" style={styles.mirrorHintText}>
+              {invoiceSendStateLine(invoice.sendState)}
+            </Text>
+          ) : null}
+
           {/* Action grid */}
           <View style={styles.actionsGrid}>
             {canRecord ? (
@@ -739,13 +808,19 @@ export default function InvoiceDetailScreen() {
                 onPress={() => router.push(`/(operator)/invoices/${id}/record-payment`)}
               />
             ) : null}
-            {canSend ? (
+            {sendAction.show ? (
               <ActionTile
                 icon="paper-plane-outline"
-                label={sendMut.isPending ? "Sending…" : "Send"}
+                label={sendMut.isPending ? "Sending…" : sendAction.label}
                 // B6: was tappable while pending — a fast double-tap fired two send emails.
-                disabled={sendMut.isPending}
-                onPress={handleSend}
+                disabled={sendMut.isPending || sendAction.locked}
+                onPress={() =>
+                  sendAction.confirm
+                    ? confirm(sendAction.label, sendAction.confirm, handleSend, {
+                        confirmText: sendAction.confirmButton,
+                      })
+                    : handleSend()
+                }
               />
             ) : null}
             {flags.canEdit && !pendingMirror ? (
@@ -807,7 +882,7 @@ export default function InvoiceDetailScreen() {
                 status recompute doesn't preserve DRAFT (customers.service
                 applyAdvancePaymentToInvoice), so a draft would silently flip
                 to SENT — gate to the post-send statuses only. */}
-            {["SENT", "VIEWED", "PARTIAL", "OVERDUE"].includes(invoice.status) ? (
+            {isOpenInvoiceStatus(invoice.status) ? (
               <ActionTile
                 icon="wallet-outline"
                 label="Apply advance"
@@ -894,6 +969,7 @@ export default function InvoiceDetailScreen() {
                           {it.notes}
                         </Text>
                       ) : null}
+                      <RestrictionOverrideNote line={it} />
                       {invoiceLineSubLines(it).map((text, i) => (
                         <Text key={i} style={styles.itemSub} testID="line-component-sub-line">
                           {text}
@@ -917,12 +993,19 @@ export default function InvoiceDetailScreen() {
                 <Text style={styles.totalLabel}>Subtotal</Text>
                 <Text style={styles.totalValue}>{fmtCurrency(invoice.subtotal)}</Text>
               </View>
-              {invoice.taxAmount ? (
+              {/* Row 398: Tax is the regular tax; each regulated category (deposit, excise) is its own named row */}
+              {taxLines.tax ? (
                 <View style={styles.totalRow}>
                   <Text style={styles.totalLabel}>Tax</Text>
-                  <Text style={styles.totalValue}>{fmtCurrency(invoice.taxAmount)}</Text>
+                  <Text style={styles.totalValue}>{fmtCurrency(taxLines.tax)}</Text>
                 </View>
               ) : null}
+              {taxLines.charges.map((c) => (
+                <View key={c.key} style={styles.totalRow}>
+                  <Text style={styles.totalLabel}>{c.label}</Text>
+                  <Text style={styles.totalValue}>{fmtCurrency(c.amount)}</Text>
+                </View>
+              ))}
               {invoice.discount ? (
                 <View style={styles.totalRow}>
                   <Text style={styles.totalLabel}>Discount</Text>
@@ -952,7 +1035,10 @@ export default function InvoiceDetailScreen() {
               the section (mirrors web's invoice detail gate). */}
           {!isVoid &&
           (!invoice.orderId || invoice.shippingCarrier || invoice.shippingTrackingNumber) ? (
-            <ShipmentSection shipment={invoice} onEdit={() => setShipmentModal(true)} />
+            <ShipmentSection
+              shipment={shipmentForDisplay(invoice, invoice.order?.status)}
+              onEdit={() => setShipmentModal(true)}
+            />
           ) : null}
 
           {/* Payments */}
@@ -1018,6 +1104,9 @@ export default function InvoiceDetailScreen() {
                           </Text>
                         </Pressable>
                       ) : null}
+                      {noLongerFitsCopy(p as never) ? (
+                        <Text style={styles.payMeta}>{noLongerFitsCopy(p as never)}</Text>
+                      ) : null}
                       {pay.imageKey ? (
                         <Pressable
                           style={styles.viewReceiptRow}
@@ -1031,6 +1120,22 @@ export default function InvoiceDetailScreen() {
                         </Pressable>
                       ) : null}
                     </View>
+                    {noLongerFitsCopy(p as never) ? (
+                      <Pressable
+                        hitSlop={8}
+                        style={styles.payEditBtn}
+                        onPress={() =>
+                          voidPaymentMut.mutate({
+                            invoiceId: String(id),
+                            paymentId: p.id,
+                            ...voidPaymentBody(p),
+                          } as never)
+                        }
+                        accessibilityLabel="Void payment"
+                      >
+                        <Ionicons name="close-circle-outline" size={16} color={ios.brand} />
+                      </Pressable>
+                    ) : null}
                     <Text style={styles.payAmount}>+{fmtCurrency(p.amount)}</Text>
                     {isPaymentEditable(p.method, p.status, invoice.status) ? (
                       <Pressable
@@ -1088,18 +1193,31 @@ export default function InvoiceDetailScreen() {
                 ]}
                 onPress={() => {
                   if (!id) return;
-                  updateMut.mutate(
-                    { id, dueDate: dueDateInput.trim() || undefined },
-                    {
-                      onSuccess: () => {
-                        showToast("Due date updated");
-                        setDueDateModal(false);
-                        refetch();
+                  const saveDueDate = () =>
+                    updateMut.mutate(
+                      rw.attach({
+                        id,
+                        dueDate: dueDateInput.trim() || undefined,
+                        expectedUpdatedAt: dueDateToken.current, // H4: as the modal opened
+                      }),
+                      {
+                        onSuccess: () => {
+                          showToast("Due date updated");
+                          setDueDateModal(false);
+                          refetch();
+                        },
+                        onError: (e: any) => {
+                          if (rw.handle(e, saveDueDate)) return; // row 510
+                          if (isInvoiceStale(e)) {
+                            showToast(INVOICE_STALE_COPY); // H4: fixed copy, then the latest
+                            refetch();
+                            return;
+                          }
+                          showToast(e?.response?.data?.message ?? e?.message ?? "Try again.");
+                        },
                       },
-                      onError: (e: any) =>
-                        showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
-                    },
-                  );
+                    );
+                  saveDueDate();
                 }}
                 disabled={updateMut.isPending}
               >
@@ -1113,6 +1231,7 @@ export default function InvoiceDetailScreen() {
           </Pressable>
         </Pressable>
       </Modal>
+      {rw.modal}
 
       <ShipmentEditModal
         open={shipmentModal}

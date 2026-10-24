@@ -62,3 +62,72 @@ describe("#2183 DB lane is serial whatever the caller asks for", () => {
     ]);
   });
 });
+
+// Item 726 review: a pattern that matches no spec must FAIL the lane, even when a caller passes
+// --passWithNoTests through (a typo'd pattern otherwise reads as a green DB run).
+describe("a zero-spec DB run is never green", () => {
+  it("the runner drops --passWithNoTests (and says so); the lane config does not set it", () => {
+    const probe = `
+      const m = await import(${JSON.stringify(pathToFileURL(path.join(API_DIR, "scripts/run-db-tests.mjs")).href)});
+      console.log(JSON.stringify([
+        m.dropPassWithNoTests(["--passWithNoTests", "(a|b)"]),
+        m.dropPassWithNoTests(["--passWithNoTests=true", "x", "--ci"]),
+        m.dropPassWithNoTests(["x"]),
+      ]));`;
+    const res = spawnSync(process.execPath, ["--input-type=module", "-e", probe], {
+      encoding: "utf8",
+    });
+    expect(res.stderr).toBe("");
+    expect(JSON.parse(res.stdout)).toEqual([
+      { kept: ["(a|b)"], dropped: ["--passWithNoTests"] },
+      { kept: ["x", "--ci"], dropped: ["--passWithNoTests=true"] },
+      { kept: ["x"], dropped: [] },
+    ]);
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    expect(require(path.join(API_DIR, "jest.db.config.js")).passWithNoTests).not.toBe(true);
+  });
+});
+
+// W-699: a DB-lane run that never exits (an open handle after "Tests:") would hold the machine's
+// heavy slot for every other lane, so the runner kills jest after a hard timeout and exits 124.
+describe("W-699 the DB lane runner has a hard timeout", () => {
+  it("the runner has a hard timeout: 60 min by default, RF_DB_LANE_TIMEOUT_MIN overrides, junk refused", () => {
+    const probe = `
+      const m = await import(${JSON.stringify(pathToFileURL(path.join(API_DIR, "scripts/run-db-tests.mjs")).href)});
+      const out = [{}, { RF_DB_LANE_TIMEOUT_MIN: "5" }, { RF_DB_LANE_TIMEOUT_MIN: "0" },
+        { RF_DB_LANE_TIMEOUT_MIN: "-3" }, { RF_DB_LANE_TIMEOUT_MIN: "abc" }].map((env) => {
+        try { return m.dbLaneTimeoutMs(env); } catch (e) { return "throws"; }
+      });
+      console.log(JSON.stringify(out));`;
+    const res = spawnSync(process.execPath, ["--input-type=module", "-e", probe], {
+      encoding: "utf8",
+    });
+    expect(res.stderr).toBe("");
+    expect(JSON.parse(res.stdout)).toEqual([3_600_000, 300_000, "throws", "throws", "throws"]);
+  });
+});
+
+// W-720: every DB spec ends the advisory-lock pools (and PrismaService ends its own pool on
+// $disconnect), so jest exits right after "Tests:" instead of ~10 s later.
+describe("W-720 the DB lane closes the advisory-lock pools after every spec", () => {
+  const CLOSE = path.join(API_DIR, "test/db-lane-close-pools.cjs");
+
+  it("jest itself resolves the hook into the lane's setup (a misspelt key would only warn)", () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const jestBin = require.resolve("jest/bin/jest", { paths: [API_DIR] });
+    const res = spawnSync(process.execPath, [jestBin, "-c", "jest.db.config.js", "--showConfig"], {
+      cwd: API_DIR,
+      encoding: "utf8",
+    });
+    expect(res.stderr).not.toMatch(/Unknown option/);
+    const resolved: string[] = JSON.parse(res.stdout).configs[0].setupFilesAfterEnv;
+    expect(resolved.map((f) => path.resolve(f))).toContain(CLOSE);
+  });
+
+  it("the hook ends the db-locks pools in an afterAll", () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const text: string = require("node:fs").readFileSync(CLOSE, "utf8");
+    expect(text).toMatch(/require\("\.\.\/src\/common\/db-locks"\)/);
+    expect(text).toMatch(/afterAll\(\s*(async\s*)?\(\)\s*=>[\s\S]*_resetLockPoolForTests\(\)/);
+  });
+});

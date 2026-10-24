@@ -6,6 +6,7 @@ import {
   roundMoney,
   type POLineAmounts,
 } from "@routeflow/pricing";
+import type { PurchaseOrderBillLink, PurchaseOrderReceipt } from "@routeflow/types";
 
 // Shared purchase-order types + pure line helpers, extracted verbatim from
 // inventory/page.tsx (LANE-U step 3 prefactor — behaviour identical).
@@ -57,6 +58,9 @@ export interface PurchaseOrder {
   expectedDate: string;
   notes?: string;
   createdAt: string;
+  /** Detail read only (`GET /inventory/purchase-orders/:id`): the receipts history and the linked bill. */
+  receipts?: PurchaseOrderReceipt[];
+  vendorBill?: PurchaseOrderBillLink | null;
 }
 
 export interface POLineItem {

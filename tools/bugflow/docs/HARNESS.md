@@ -62,16 +62,16 @@ Everything that fails the predicate runs the house pipeline unchanged
 (`~/.claude/skills/bug-pipeline/SKILL.md`, itself the shared dev-pipeline engine at `mode: 'bugfix'`).
 Bugflow does not fork or shadow it — it feeds it:
 
-| bug-pipeline stage | What bugflow feeds it |
-|---|---|
-| **S0 — Triage** | Already done: bugflow's own `triage`/`bugflow triage #N` set class/tier/severity/area/files before the bug ever reached `ready`. The full-tier run starts at S1. |
-| **S1 — Evidence brief** (Sonnet, low) | Seeded from `bugflow brief #N` (the issue body, symptom, `## Files`); the agent still gathers `git log`/`git blame` and the failing path itself. |
-| **S2 — Cause refutation** (Opus, high) | Unchanged — reads S1 verbatim. |
-| **S3 — Fix ruling** (Fable, high) | Unchanged; its blast-radius answer should overlap the issue's `## Files` — a mismatch is a signal the triage pass under- or over-scoped the bug (fix via `bugflow triage #N --files "..."`, not by hand-editing the issue). |
-| **S4 — Test plan** (Fable writes; Sonnet types) | The REG token is `REG-#N` (or legacy `REG-B###` for an imported record) — `bugflow.config.json`'s `proof.tokenFormat`. |
-| **S5 — Build plan + args** | `mode: 'bugfix'`; radius/sibling data from S3; the plan's PR-body requirement is `Closes #N`. |
-| **S6 — Execute** (the shared engine, bugfix mode) | Unchanged — radius-scoped review, sibling sweep, fix-revert probes, harness-integrity check, exactly as `bug-pipeline` SKILL.md's S6 table describes. |
-| **S7 — Close-out** | Bugflow layers its own obligations on top, not instead of: `bugflow prove #N --pr <num>`, the lessons-register entry (Stop-hook Gate 3 already requires this on a `fix/*` branch — see [GUARDRAILS.md](GUARDRAILS.md)), the ledger row and RUN-LOG entry below. |
+| bug-pipeline stage                                | What bugflow feeds it                                                                                                                                                                                                                                           |
+| ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **S0 — Triage**                                   | Already done: bugflow's own `triage`/`bugflow triage #N` set class/tier/severity/area/files before the bug ever reached `ready`. The full-tier run starts at S1.                                                                                                |
+| **S1 — Evidence brief** (Sonnet, low)             | Seeded from `bugflow brief #N` (the issue body, symptom, `## Files`); the agent still gathers `git log`/`git blame` and the failing path itself.                                                                                                                |
+| **S2 — Cause refutation** (Opus, high)            | Unchanged — reads S1 verbatim.                                                                                                                                                                                                                                  |
+| **S3 — Fix ruling** (Fable, high)                 | Unchanged; its blast-radius answer should overlap the issue's `## Files` — a mismatch is a signal the triage pass under- or over-scoped the bug (fix via `bugflow triage #N --files "..."`, not by hand-editing the issue).                                     |
+| **S4 — Test plan** (Fable writes; Sonnet types)   | The REG token is `REG-#N` (or legacy `REG-B###` for an imported record) — `bugflow.config.json`'s `proof.tokenFormat`.                                                                                                                                          |
+| **S5 — Build plan + args**                        | `mode: 'bugfix'`; radius/sibling data from S3; the plan's PR-body requirement is `Closes #N`.                                                                                                                                                                   |
+| **S6 — Execute** (the shared engine, bugfix mode) | Unchanged — radius-scoped review, sibling sweep, fix-revert probes, harness-integrity check, exactly as `bug-pipeline` SKILL.md's S6 table describes.                                                                                                           |
+| **S7 — Close-out**                                | Bugflow layers its own obligations on top, not instead of: `bugflow prove #N --pr <num>`, the lessons-register entry (Stop-hook Gate 3 already requires this on a `fix/*` branch — see [GUARDRAILS.md](GUARDRAILS.md)), the ledger row and RUN-LOG entry below. |
 
 Model/effort per stage is exactly `bug-pipeline`'s own policy — Fable never reads the repo or runs a
 command, Opus refutes/reviews/judges/executes HIGH-risk fixes, Sonnet gathers/writes/sweeps, Haiku
@@ -80,12 +80,12 @@ this; it only decides which bugs are routed here at all.
 
 ## The gate ladder (both tiers)
 
-| When | Command | Scope |
-|---|---|---|
-| Every iteration | scoped typecheck/lint/tests | The touched workspace only — never repo-wide |
-| Once, before opening the PR | `npm run verify` | The repo's own full local gate (type-check, lint, unit tests) |
-| API changes | `npm run local:validate` | The Docker-Compose full stack against the `test` tenant — smoke, post-deploy-check, schema drift (ADR 0001) |
-| UI (web) changes | the local E2E lane, `npm run local:e2e` | Allow-listed money/guard Playwright projects, ≤ 10 min (ADR 0001's Local E2E lane addendum) |
+| When                        | Command                                 | Scope                                                                                                       |
+| --------------------------- | --------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| Every iteration             | scoped typecheck/lint/tests             | The touched workspace only — never repo-wide                                                                |
+| Once, before opening the PR | `npm run verify`                        | The repo's own full local gate (type-check, lint, unit tests)                                               |
+| API changes                 | `npm run local:validate`                | The Docker-Compose full stack against the `test` tenant — smoke, post-deploy-check, schema drift (ADR 0001) |
+| UI (web) changes            | the local E2E lane, `npm run local:e2e` | Allow-listed money/guard Playwright projects, ≤ 10 min (ADR 0001's Local E2E lane addendum)                 |
 
 This ladder sits **on top of** whatever the full tier's own engine already runs (its red gate, its
 verify-on-dispute, its mutation probes) — it is the repo-specific local-environment layer every

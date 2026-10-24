@@ -13,7 +13,7 @@ jest.mock("../notifications/notifications.service", () => ({
 }));
 
 import { Test } from "@nestjs/testing";
-import { BadRequestException, ForbiddenException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 
 import { OrdersService } from "./orders.service";
@@ -62,6 +62,10 @@ describe("OrdersService.create — sell by a unit (units_v1, 4b-2b)", () => {
     trackedCategoryId: null,
     trackedSubcategoryId: null,
     isActive: true,
+    // the buyer gate (#2856) judges these: a fixture that omits them is correctly hidden
+    kind: "STANDARD",
+    portalVisible: true,
+    parent: null,
   };
   const ladder = [
     { productId: "prod-1", label: "Case", factorToBase: 288, price: "480.00", sortOrder: 0 },
@@ -133,6 +137,74 @@ describe("OrdersService.create — sell by a unit (units_v1, 4b-2b)", () => {
     expect(hasFlag()).toHaveBeenCalledWith("test-tenant", "flag.units_v1");
   });
 
+  describe("SA-728 / P0b: a derived Piece from an OLD client bills as the pack's pieces", () => {
+    const PACK3 = { ...PRODUCT, id: "prod-3", unit: "Pack", pricePerUnit: 10, unitsPerBox: 3 };
+    const caseRow = {
+      productId: "prod-3",
+      label: "Case",
+      factorToBase: 12,
+      price: null,
+      priceTier2: null,
+      priceTier3: null,
+      priceTier4: null,
+      priceTier5: null,
+      sortOrder: 0,
+    };
+    beforeEach(() => prisma.product.findMany.mockResolvedValue([PACK3]));
+
+    it("3-pack @10, 2 pcs sent as unitLabel Piece = $6.67 on a pack line (boxes 0, pieces 2), no unitLabel stored", async () => {
+      scopedUnits.findMany.mockResolvedValue([caseRow]);
+      await create([{ productId: "prod-3", qty: 2, unitLabel: "Piece", unitPrice: 3.33 }]);
+      const line = orderData().lineItems.create[0];
+      expect("unitLabel" in line && line.unitLabel != null).toBe(false);
+      expect(line).toMatchObject({
+        boxes: 0,
+        pieces: 2,
+        qty: 2,
+        unitsPerBox: 3,
+        unitPrice: 10,
+        subtotal: 6.67,
+      });
+      expect(orderData().subtotal).toBe(6.67);
+    });
+
+    it("SA-759r B1: an old client's retry of the derived Piece create replays the stored pack line (no cartMismatch 409)", async () => {
+      scopedUnits.findMany.mockResolvedValue([caseRow]);
+      // what the first press stored: the PACK line's pieces, no unitLabel
+      const original = {
+        id: "ord-old",
+        customerId: "cust-1",
+        lineItems: [
+          { productId: "prod-3", qty: 2, boxes: 0, pieces: 2, unitLabel: null, status: "PENDING" },
+        ],
+      };
+      jest.spyOn(service as any, "findReplayCandidateByKey").mockResolvedValue(original);
+      const retry = (items: unknown[]) =>
+        service.create({ customerId: "cust-1", items, idempotencyKey: "k-old" } as never, staff);
+      await expect(
+        retry([{ productId: "prod-3", qty: 2, unitLabel: "Piece", unitPrice: 3.33 }]),
+      ).resolves.toBe(original);
+      // a DIFFERENT count is still a different cart
+      await expect(
+        retry([{ productId: "prod-3", qty: 3, unitLabel: "Piece", unitPrice: 3.33 }]),
+      ).rejects.toThrow(/different cart/);
+      expect(prisma.order.create).not.toHaveBeenCalled();
+    });
+
+    it("an own-priced Piece row keeps the unit-line path: unitLabel Piece at the row's price", async () => {
+      scopedUnits.findMany.mockResolvedValue([
+        { ...caseRow, label: "Piece", factorToBase: 1, price: "3.00" },
+      ]);
+      await create([{ productId: "prod-3", qty: 2, unitLabel: "Piece" }]);
+      expect(orderData().lineItems.create[0]).toMatchObject({
+        unitLabel: "Piece",
+        unitPrice: 3,
+        qty: 2,
+        subtotal: 6,
+      });
+    });
+  });
+
   it("a mixed order keeps its pack line exactly as before next to a unit line", async () => {
     await create([
       { productId: "prod-1", qty: 2, boxes: 2, pieces: 0 }, // pack: 2 boxes of 24 at $42
@@ -178,6 +250,50 @@ describe("OrdersService.create — sell by a unit (units_v1, 4b-2b)", () => {
     expect(prisma.order.create).not.toHaveBeenCalled();
   });
 
+  it("WS8: a FAMILY container on a line is a 400 FAMILY_NOT_SELLABLE, for staff too, and nothing is written", async () => {
+    prisma.product.findMany.mockResolvedValue([{ ...PRODUCT, kind: "FAMILY" }]);
+    const err = await create([{ productId: "prod-1", qty: 1 }]).catch((e) => e);
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err.getResponse()).toMatchObject({
+      code: "FAMILY_NOT_SELLABLE",
+      productIds: ["prod-1"],
+    });
+    expect(prisma.order.create).not.toHaveBeenCalled();
+  });
+
+  it("a BUYER naming a FAMILY container gets the buyer 409 SELLING_RESTRICTED (blocked-lines dialog), not the staff 400", async () => {
+    prisma.product.findMany.mockResolvedValue([{ ...PRODUCT, kind: "FAMILY" }]);
+    const err = await create([{ productId: "prod-1", qty: 1 }], {
+      ...customerPayload,
+      tenantId: "t-1",
+    } as never).catch((e) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(err.getResponse()).toMatchObject({
+      code: "SELLING_RESTRICTED",
+      blockedLines: [
+        expect.objectContaining({ productId: "prod-1", reason: "HIDDEN_FROM_PORTAL" }),
+      ],
+    });
+    expect(prisma.order.create).not.toHaveBeenCalled();
+  });
+
+  it("#2784 / SA-601 interim: a BUYER's plain qty stays a PACK line even when a level is flagged isDefaultSelling, and no ladder is read for a buyer", async () => {
+    scopedUnits.findMany.mockResolvedValue(
+      ladder.map((u) => (u.label === "Case" ? { ...u, isDefaultSelling: true } : u)),
+    );
+    (service as any).promotionsService.activeForCatalog.mockResolvedValue([]);
+    await create([{ productId: "prod-1", qty: 2 }], {
+      ...customerPayload,
+      tenantId: "t-1",
+    } as never);
+    const line = orderData().lineItems.create[0];
+    expect("unitLabel" in line).toBe(false);
+    // a plain pack line: no unit, and no factor snapshot (snapshots only for a box-split or unit-aware line)
+    expect(line).toMatchObject({ productId: "prod-1", unitsPerBox: null, qty: 2 });
+    expect(scopedUnits.findMany).not.toHaveBeenCalled();
+    // The goal (owner #2780: a buyer's plain qty = the default selling unit) needs the SA's buyer unit-line design first.
+  });
+
   it("an unknown unit, boxes beside a unit, and a unit on a custom line are 400s that write nothing", async () => {
     for (const items of [
       [{ productId: "prod-1", qty: 1, unitLabel: "Bogus" }],
@@ -220,5 +336,27 @@ describe("OrdersService.create — sell by a unit (units_v1, 4b-2b)", () => {
       /different cart/,
     );
     expect(prisma.order.create).not.toHaveBeenCalled();
+  });
+
+  describe("SA ruling (#3418): each nested line carries its explicit author marker from the creator", () => {
+    it("a staff create writes STAFF on every line (pack and unit), whatever the timestamps", async () => {
+      await create([
+        { productId: "prod-1", qty: 2, boxes: 2, pieces: 0 },
+        { productId: "prod-1", qty: 1, unitLabel: "Pallet" },
+      ]);
+      const lines = orderData().lineItems.create;
+      expect(lines.map((l: any) => l.authorChannel)).toEqual(["STAFF", "STAFF"]);
+      expect(orderData()).toMatchObject({ source: "PHONE", sourceRecorded: true });
+    });
+
+    it("a buyer create writes BUYER on every line", async () => {
+      (service as any).promotionsService.activeForCatalog.mockResolvedValue([]);
+      await create([{ productId: "prod-1", qty: 2 }], {
+        ...customerPayload,
+        tenantId: "t-1",
+      } as never);
+      expect(orderData().lineItems.create.map((l: any) => l.authorChannel)).toEqual(["BUYER"]);
+      expect(orderData()).toMatchObject({ source: "APP", sourceRecorded: true });
+    });
   });
 });

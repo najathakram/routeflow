@@ -7,6 +7,7 @@ jest.mock("@/lib/api-client", () => ({
   ...jest.requireActual("@/lib/api-client"),
   apiClient: { get: (...a: unknown[]) => get(...a) },
 }));
+jest.mock("next/navigation", () => ({ useRouter: () => ({ push: jest.fn() }) }));
 let role = "OPERATOR";
 jest.mock("@/lib/auth-context", () => ({
   ...jest.requireActual("@/lib/auth-context"),
@@ -58,7 +59,7 @@ describe("RestrictionRulesPage", () => {
         .getAllByRole("listitem")
         .map((l) => l.textContent),
     ).toEqual(["TX", "FL"]);
-    expect(within(card).getByText("All sales")).toBeInTheDocument();
+    expect(within(card).getByText("All orders")).toBeInTheDocument();
     expect(within(card).getByText(/no end date/)).toBeInTheDocument();
     expect(within(card).getByText("State ban on hemp edibles")).toBeInTheDocument();
     expect(within(card).getByText(/by Pat Admin/)).toBeInTheDocument();
@@ -85,7 +86,7 @@ describe("RestrictionRulesPage", () => {
     ok([rule({ jurisdiction: "FEDERAL", states: [], surface: "BUYER_PORTAL" })]);
     renderWithProviders(<RestrictionRulesPage />);
     const card = await screen.findByTestId("rule-card");
-    expect(within(card).getByText(/federal/)).toBeInTheDocument();
+    expect(within(card).getByText("Banned everywhere (federal)")).toBeInTheDocument();
     expect(within(card).queryByRole("list", { name: "Banned states" })).toBeNull();
     expect(within(card).getByText(/Buyer portal only/)).toBeInTheDocument();
   });
@@ -131,14 +132,14 @@ describe("RestrictionRulesPage", () => {
     ok(Array.from({ length: 500 }, (_, i) => rule({ id: `r${i}` })));
     renderWithProviders(<RestrictionRulesPage />);
     expect(await screen.findByText(/Showing the newest 500 rules/)).toBeInTheDocument();
-  });
+  }, 120_000); // renders 500 cards: ~10 s alone, past the 30 s default on a loaded machine
 
   it("does not claim truncation just under the cap", async () => {
     ok(Array.from({ length: 499 }, (_, i) => rule({ id: `r${i}` })));
     renderWithProviders(<RestrictionRulesPage />);
     await screen.findAllByTestId("rule-card");
     expect(screen.queryByText(/Showing the newest/)).toBeNull();
-  });
+  }, 120_000);
 
   it("a tenant admin gets a New rule button that opens the dialog; an operator does not", async () => {
     ok([]);
@@ -169,5 +170,141 @@ describe("RestrictionRulesPage", () => {
     expect(screen.getAllByRole("button", { name: "Lift rule" })).toHaveLength(2);
     fireEvent.click(screen.getAllByRole("button", { name: "Lift rule" })[0]);
     expect(await screen.findByRole("dialog", { name: "Lift this rule?" })).toBeInTheDocument();
+  });
+});
+
+describe("Portal limits & rules: multi-select Lift N", () => {
+  it("is titled Portal limits & rules", async () => {
+    ok([rule()]);
+    renderWithProviders(<RestrictionRulesPage />);
+    expect(await screen.findByText("Portal limits & rules")).toBeInTheDocument();
+  });
+
+  it("ticking rows shows Lift N; only rules that can still be lifted are tickable", async () => {
+    role = "TENANT_ADMIN";
+    ok([
+      rule({ id: "a", categoryName: "Vapes" }),
+      rule({ id: "b", categoryName: "Kratom" }),
+      rule({ id: "c", categoryName: "Old", status: "LIFTED", liftedAt: "2026-03-10T00:00:00Z" }),
+    ]);
+    renderWithProviders(<RestrictionRulesPage />);
+    await screen.findAllByTestId("rule-card");
+    expect(screen.getAllByRole("checkbox")).toHaveLength(2);
+    fireEvent.click(screen.getByRole("checkbox", { name: /limit on vapes/i }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /limit on kratom/i }));
+    expect(screen.getByRole("button", { name: "Lift 2" })).toBeInTheDocument();
+  });
+});
+
+describe("Portal limits & rules: rules that cover many products (row 509)", () => {
+  const summary = (over: Record<string, unknown> = {}) => ({
+    products: 12,
+    categories: 1,
+    preview: [
+      { kind: "CATEGORY", id: "c1", name: "Vapes" },
+      { kind: "PRODUCT", id: "p1", name: "Sample Pod" },
+      { kind: "PRODUCT", id: "p2", name: "Gummies" },
+    ],
+    ...over,
+  });
+
+  it("the target line says how many products and labels, with the first three names", async () => {
+    ok([rule({ id: "r9", categoryName: null, targetSummary: summary() })]);
+    renderWithProviders(<RestrictionRulesPage />);
+    const card = await screen.findByTestId("rule-card");
+    expect(within(card).getByText("12 products · Vapes label")).toBeInTheDocument();
+    expect(within(card).getByText("Vapes, Sample Pod, Gummies, +10 more")).toBeInTheDocument();
+    expect(card.textContent).not.toMatch(/\bp1\b|\bc1\b/);
+  });
+
+  it("links to the rule's detail from the target line and from 'Products (N)'", async () => {
+    ok([rule({ id: "r9", categoryName: null, targetSummary: summary() })]);
+    renderWithProviders(<RestrictionRulesPage />);
+    const card = await screen.findByTestId("rule-card");
+    const links = within(card).getAllByRole("link");
+    expect(links.length).toBeGreaterThanOrEqual(2);
+    for (const l of links) expect(l).toHaveAttribute("href", "/settings/restrictions/rules/r9");
+    expect(within(card).getByRole("link", { name: "Products (13)" })).toBeInTheDocument();
+  });
+
+  it("a one-target rule keeps its own name, and still links to the detail", async () => {
+    ok([
+      rule({
+        id: "r2",
+        categoryName: null,
+        productName: "Gummies 10ct",
+        targetSummary: {
+          products: 1,
+          categories: 0,
+          preview: [{ kind: "PRODUCT", id: "p1", name: "Gummies 10ct" }],
+        },
+      }),
+    ]);
+    renderWithProviders(<RestrictionRulesPage />);
+    const card = await screen.findByTestId("rule-card");
+    expect(within(card).getByText("Gummies 10ct")).toBeInTheDocument();
+    expect(within(card).getByText("Product")).toBeInTheDocument();
+    expect(within(card).getByRole("link", { name: "Products (1)" })).toBeInTheDocument();
+  });
+
+  it("a rule from a server with no summary reads exactly as before and has no detail link", async () => {
+    ok([rule()]);
+    renderWithProviders(<RestrictionRulesPage />);
+    const card = await screen.findByTestId("rule-card");
+    expect(within(card).getByText("Hemp")).toBeInTheDocument();
+    expect(within(card).queryByRole("link")).toBeNull();
+  });
+
+  it("every control the card had is still there (select, lift, filters)", async () => {
+    role = "TENANT_ADMIN";
+    ok([rule({ id: "r9", categoryName: null, targetSummary: summary() })]);
+    renderWithProviders(<RestrictionRulesPage />);
+    const card = await screen.findByTestId("rule-card");
+    expect(within(card).getByRole("checkbox", { name: /Select the limit on/ })).toBeInTheDocument();
+    expect(within(card).getByRole("button", { name: "Lift rule" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Filter rules by status" })).toBeInTheDocument();
+  });
+});
+
+describe("Portal limits & rules: who sees Lift rule (owner L5)", () => {
+  const lift = (card: HTMLElement) => within(card).getByRole("button", { name: "Lift rule" });
+
+  it("an operator can lift a state rule", async () => {
+    role = "OPERATOR";
+    ok([rule()]);
+    renderWithProviders(<RestrictionRulesPage />);
+    const card = await screen.findByTestId("rule-card");
+    expect(lift(card)).toBeEnabled();
+    fireEvent.click(lift(card));
+    expect(await screen.findByRole("dialog", { name: "Lift this rule?" })).toBeInTheDocument();
+  });
+
+  it("on an everywhere rule an operator sees Lift disabled, with the reason as visible text it points at", async () => {
+    role = "OPERATOR";
+    ok([rule({ jurisdiction: "FEDERAL", states: [] })]);
+    renderWithProviders(<RestrictionRulesPage />);
+    const card = await screen.findByTestId("rule-card");
+    const btn = lift(card);
+    expect(btn).toBeDisabled();
+    const hintId = btn.getAttribute("aria-describedby");
+    expect(hintId).toBeTruthy();
+    const hint = document.getElementById(hintId as string);
+    expect(hint).toHaveTextContent("Only an account admin can change (or lift) a federal rule.");
+    expect(btn).not.toHaveAttribute("title");
+  });
+
+  it("an account admin can lift an everywhere rule", async () => {
+    role = "TENANT_ADMIN";
+    ok([rule({ jurisdiction: "FEDERAL", states: [] })]);
+    renderWithProviders(<RestrictionRulesPage />);
+    expect(lift(await screen.findByTestId("rule-card"))).toBeEnabled();
+  });
+
+  it("an ended rule offers no Lift to anyone", async () => {
+    role = "OPERATOR";
+    ok([rule({ status: "EXPIRED" })]);
+    renderWithProviders(<RestrictionRulesPage />);
+    const card = await screen.findByTestId("rule-card");
+    expect(within(card).queryByRole("button", { name: "Lift rule" })).toBeNull();
   });
 });

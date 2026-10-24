@@ -1,7 +1,7 @@
 /**
  * Auth setup — runs once before the main test suites as a Playwright setup project.
  *
- * Authenticates each role (super admin, operator, customer, buyer) and saves the
+ * Authenticates each role (super admin, operator, tenant admin, customer, buyer) and saves the
  * browser storage state (cookies + localStorage) to disk. The test projects
  * for each role load this state so tests start already logged-in, avoiding
  * repeated UI logins that would exhaust the API rate-limiter.
@@ -18,6 +18,7 @@ import { assertSafeSetupTarget } from "../../lib/e2e-setup-guard";
 export const AUTH_DIR = path.join(__dirname, ".auth");
 export const SUPER_ADMIN_AUTH = path.join(AUTH_DIR, "super-admin.json");
 export const OPERATOR_AUTH = path.join(AUTH_DIR, "operator.json");
+export const TENANT_ADMIN_AUTH = path.join(AUTH_DIR, "tenant-admin.json");
 export const CUSTOMER_AUTH = path.join(AUTH_DIR, "customer.json");
 export const BUYER_AUTH = path.join(AUTH_DIR, "buyer.json");
 
@@ -57,6 +58,22 @@ setup("authenticate as operator", async ({ page, context }) => {
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await page.waitForURL("**/dashboard", { timeout: 60_000 });
   await page.context().storageState({ path: OPERATOR_AUTH });
+});
+
+// ── Tenant admin ───────────────────────────────────────────────────────────────
+
+// Account-administration specs (settings import / migration / numbering / email) need admin
+// rights, which the OPERATOR above will not have once those endpoints are restricted to admins.
+// Seeded by apps/api/scripts/e2e-seed.js (e2e_admin) on the e2e-routeflow tenant.
+setup("authenticate as tenant admin", async ({ page, context }) => {
+  await setTenantCookie(context, BASE_URL, TENANT_SLUG);
+  await page.goto("/login");
+  await fillWorkspaceIfShown(page);
+  await page.getByLabel("Username or email").fill(CREDENTIALS.tenantAdmin.username);
+  await page.getByPlaceholder("Enter your password").fill(CREDENTIALS.tenantAdmin.password);
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await page.waitForURL("**/dashboard", { timeout: 60_000 });
+  await page.context().storageState({ path: TENANT_ADMIN_AUTH });
 });
 
 // ── Customer ───────────────────────────────────────────────────────────────────

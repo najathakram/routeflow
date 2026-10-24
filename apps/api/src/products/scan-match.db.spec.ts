@@ -65,7 +65,10 @@ describeDb("#2717 M4a-1 scan lookup — real Postgres", () => {
         { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
         { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(false) } },
         entitlementAuthorityFromEntitlements,
-        { provide: PlanCatalogService, useValue: { upgradeTargetForFlag: jest.fn().mockResolvedValue(null) } },
+        {
+          provide: PlanCatalogService,
+          useValue: { upgradeTargetForFlag: jest.fn().mockResolvedValue(null) },
+        },
         { provide: FeatureOverrideService, useValue: { get: jest.fn().mockResolvedValue(null) } },
         { provide: RouteFlowGateway, useValue: { emitProductUpdated: jest.fn() } },
       ],
@@ -119,7 +122,15 @@ describeDb("#2717 M4a-1 scan lookup — real Postgres", () => {
     over: Record<string, unknown> = {},
   ) {
     return prisma.productBarcode.create({
-      data: { tenantId, productId, code, level, symbology: "CODE128", origin: "ENTERED", ...over } as any,
+      data: {
+        tenantId,
+        productId,
+        code,
+        level,
+        symbology: "CODE128",
+        origin: "ENTERED",
+        ...over,
+      } as any,
     });
   }
 
@@ -153,7 +164,9 @@ describeDb("#2717 M4a-1 scan lookup — real Postgres", () => {
       // eslint-disable-next-line no-await-in-loop
       const r: any = await inTenant(t, () => service.findByBarcode(code));
       expect(r.id).toBe(id);
-      expect(r.barcodes).toEqual(synthesizeLegacyBarcodes({ barcode: "036000291452", unitsPerBox: 6 }));
+      expect(r.barcodes).toEqual(
+        synthesizeLegacyBarcodes({ barcode: "036000291452", unitsPerBox: 6 }),
+      );
     }
     const viaSku: any = await inTenant(t, () => service.findByBarcode("HW-6"));
     expect(viaSku.scanMatch.levels).toEqual(["BOX"]);

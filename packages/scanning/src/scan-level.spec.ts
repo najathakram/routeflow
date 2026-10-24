@@ -15,6 +15,7 @@
 import { defaultSellLevel, SELL_LEVEL_VALUES, type SellLevel } from "@routeflow/pricing";
 import {
   levelsForScannedCode,
+  isSharedScanCode,
   resolveScanSellLevel,
   scanMatchIsForCode,
 } from "./scan-level";
@@ -113,7 +114,12 @@ describe("resolveScanSellLevel — R4 (upb <= 1: no box/unit distinction)", () =
 });
 
 describe("levelsForScannedCode — legacy columns (parity with mobile scanUnitKind on upb>1, R5)", () => {
-  const boxed = { barcode: "4000000000019", sku: "COLA-6", unitSku: "2000000000012", unitsPerBox: 6 };
+  const boxed = {
+    barcode: "4000000000019",
+    sku: "COLA-6",
+    unitSku: "2000000000012",
+    unitsPerBox: 6,
+  };
 
   it.each([
     ["barcode hit", "4000000000019", [BOX, UNIT], BOX],
@@ -241,7 +247,31 @@ describe("scanMatchIsForCode — a scanMatch only speaks for the code that produ
 
 describe("levelsForScannedCode — a row whose level is not BOX/UNIT never contributes (#2764)", () => {
   it("CASE + UNIT rows on one code -> [UNIT] only", () => {
-    const rows = [{ code: "SH", level: "CASE" }, { code: "SH", level: "UNIT" }] as any;
+    const rows = [
+      { code: "SH", level: "CASE" },
+      { code: "SH", level: "UNIT" },
+    ] as any;
     expect(levelsForScannedCode("SH", { barcodes: rows, unitsPerBox: 6 })).toEqual(["UNIT"]);
+  });
+});
+
+describe("isSharedScanCode (SA-626): the ONE rule web and mobile share for 'start on the default unit'", () => {
+  it("is true only when the code resolves at BOTH levels", () => {
+    expect(isSharedScanCode(["BOX", "UNIT"])).toBe(true);
+    expect(isSharedScanCode(["UNIT", "BOX"])).toBe(true);
+  });
+
+  it("is false for a box-only, a unit-only and an unmatched code (the code decides the level)", () => {
+    expect(isSharedScanCode(["BOX"])).toBe(false);
+    expect(isSharedScanCode(["UNIT"])).toBe(false);
+    expect(isSharedScanCode([])).toBe(false);
+  });
+});
+
+describe("no second 'which unit label' rule lives in @routeflow/scanning (SA-626a)", () => {
+  it("resolveScanSellChoice / ScanSellChoice / ScanDefaultUnits are not exported (defaultSellingLabel in pricing is the one rule)", () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const mod = require("./scan-level") as Record<string, unknown>;
+    expect(mod.resolveScanSellChoice).toBeUndefined();
   });
 });

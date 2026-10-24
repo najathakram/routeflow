@@ -64,3 +64,28 @@ describe("BuyerPortalPage — Connect to a Seller", () => {
     expect(await screen.findAllByText("Connected!")).toHaveLength(2);
   });
 });
+
+describe("BuyerPortalPage - invite not taken by the seller", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    searchParams.delete("invite");
+  });
+  afterEach(() => searchParams.delete("invite"));
+
+  it("shows one fixed neutral notice when the sign-in says the invite's seller is not taking it", async () => {
+    searchParams.set("invite", "seller_unavailable");
+    renderWithProviders(<BuyerPortalPage />);
+    const notice = await screen.findByTestId("invite-seller-unavailable-notice", undefined, {
+      timeout: 15_000,
+    });
+    expect(notice).toHaveTextContent(
+      "This seller isn't taking online orders right now. Please check back soon or contact them.",
+    );
+  });
+
+  it("shows nothing for a plain landing", async () => {
+    renderWithProviders(<BuyerPortalPage />);
+    await screen.findByRole("button", { name: /connect to a seller/i }, { timeout: 15_000 });
+    expect(screen.queryByTestId("invite-seller-unavailable-notice")).not.toBeInTheDocument();
+  });
+});

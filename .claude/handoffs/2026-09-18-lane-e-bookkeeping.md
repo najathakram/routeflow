@@ -21,7 +21,7 @@ does that). Push with SKIP_VERIFY=1 SKIP_VERIFY_REASON="…" if the local verify
 chain is the blocker; never --no-verify. Ask the lead for any bug registry id —
 B525 is taken, B526 is next free; never mint your own. Check free disk before any
 full verify or build run (a full run filled the disk twice on 2026-09-17).
-Approved test tenants only: test, e2e-routeflow, routeflow-demo, qa-*, e2e-*,
+Approved test tenants only: test, e2e-routeflow, routeflow-demo, qa-_, e2e-_,
 ux-audit-*. Never a live tenant.
 
 **Status: PR pushed, NOT merged. Session ending on credit exhaustion.**

@@ -58,7 +58,8 @@ describe("inferBarcodeSymbology (#2717 M1, SA-572a; moved to @routeflow/scanning
       const alnum = rnd() < 0.3;
       let code = "";
       for (let j = 0; j < len; j += 1) {
-        code += alnum && rnd() < 0.5 ? "AZ-"[Math.floor(rnd() * 3)] : String(Math.floor(rnd() * 10));
+        code +=
+          alnum && rnd() < 0.5 ? "AZ-"[Math.floor(rnd() * 3)] : String(Math.floor(rnd() * 10));
       }
       expect(BARCODE_SYMBOLOGY_VALUES).toContain(inferBarcodeSymbology(code));
     }

@@ -1,4 +1,4 @@
-import { roundMoney } from "@routeflow/pricing";
+import { scalePrice } from "@routeflow/pricing";
 import type { ProductUnitLevel } from "@routeflow/types";
 
 export type CascadeField = "price" | "priceTier2" | "priceTier3" | "priceTier4" | "priceTier5";
@@ -58,7 +58,7 @@ export function proposeCascade(
       if (oldP == null || newP == null || !(oldP > 0) || !(newP > 0) || oldP === newP) return;
       const from = explicit(u[field]);
       if (from == null) return;
-      const to = roundMoney((from * newP) / oldP);
+      const to = scalePrice(from, newP, oldP); // the pricing core's one proportional rounding (planPriceChange)
       if (to !== from) changes.push({ field, tier: i + 1, from, to });
     });
     if (changes.length > 0) out.push({ unitId: u.id, label: u.label, changes });

@@ -47,6 +47,10 @@ const ALLOW_LIST = new Set<string>(
     "apps/api/scripts/split-prisma-schema.mjs",
     "apps/api/src/common/schema-folder.spec.ts",
     ".claude/skills/model-routing/scripts/route-task.mjs",
+    // These read the GENERATED client's copy (<node_modules>/.prisma/client/schema.prisma, written by
+    // `prisma generate`) to detect a stale client. They never read or write the retired source schema.
+    "scripts/lib/prisma-fresh.mjs",
+    "scripts/prisma-fresh.self-test.mjs",
   ].map((p) => path.join(REPO_ROOT, p)),
 );
 

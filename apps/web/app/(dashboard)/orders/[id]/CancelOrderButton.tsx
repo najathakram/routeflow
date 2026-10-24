@@ -1,0 +1,47 @@
+"use client";
+
+import * as React from "react";
+import { XCircle } from "lucide-react";
+import { Button } from "@routeflow/ui/web";
+import type { OrderCancelBlockedReason } from "@routeflow/types";
+
+/** Fixed copy for a cancel the server refuses (ORDER_WITH_CARRIER_NO_CANCEL): same words as the 409. */
+export const WITH_CARRIER_COPY =
+  "This order is already with the carrier. Use a return instead of cancelling.";
+
+/**
+ * "Cancel Order". When the server says the parcel is with the carrier (`cancelBlockedReason`), there is
+ * no button, only the explanation: cancelling would put its stock back while the parcel is still out.
+ * The reason is the server's one answer (B1083); the web never derives it from the status.
+ * Destructive, so an outline with red text (as the buyer's order detail has it): the filled button
+ * beside it is the one primary action (apple-ux r3 Q15).
+ */
+export function CancelOrderButton({
+  blockedReason,
+  onClick,
+  inMenu = false,
+}: {
+  blockedReason?: OrderCancelBlockedReason | null;
+  onClick: () => void;
+  /** Phone width: Cancel Order is an entry of the "More actions" menu (apple-ux r4 Q19), so no button here. */
+  inMenu?: boolean;
+}) {
+  if (blockedReason === "WITH_CARRIER") {
+    return (
+      <p role="note" className="text-xs text-navy/70">
+        {WITH_CARRIER_COPY}
+      </p>
+    );
+  }
+  if (inMenu) return null;
+  return (
+    <Button
+      size="sm"
+      variant="danger-outline"
+      leftIcon={<XCircle className="h-4 w-4" />}
+      onClick={onClick}
+    >
+      Cancel Order
+    </Button>
+  );
+}

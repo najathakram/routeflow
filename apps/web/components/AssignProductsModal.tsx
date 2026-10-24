@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { genericToastCopy } from "@/lib/generic-toast-copy";
 import { Search, X } from "lucide-react";
 import { Button, useToast } from "@routeflow/ui/web";
 import { useProducts } from "@/lib/api/products";
@@ -108,7 +109,7 @@ export function AssignProductsModal({ isOpen, onClose, category }: Props) {
     } catch (err: any) {
       toast({
         title: "Failed to update products",
-        description: err?.response?.data?.message ?? "Please try again.",
+        description: genericToastCopy(err),
         variant: "error",
       });
     }

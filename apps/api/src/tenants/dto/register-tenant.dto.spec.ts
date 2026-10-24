@@ -40,3 +40,17 @@ describe("RegisterTenantDto password complexity (B03)", () => {
     expect(await validate(dto)).toHaveLength(0);
   });
 });
+
+describe("RegisterTenantDto timezone (SA-738)", () => {
+  it("is optional", async () => {
+    expect(await validate(plainToInstance(RegisterTenantDto, validDto))).toHaveLength(0);
+  });
+  it("accepts an IANA zone", async () => {
+    const dto = plainToInstance(RegisterTenantDto, { ...validDto, timezone: "America/Chicago" });
+    expect(await validate(dto)).toHaveLength(0);
+  });
+  it.each(["Mars/Base", "+01:00", "EST", ""])("rejects %p", async (timezone) => {
+    const errors = await validate(plainToInstance(RegisterTenantDto, { ...validDto, timezone }));
+    expect(errors.map((e) => e.property)).toContain("timezone");
+  });
+});

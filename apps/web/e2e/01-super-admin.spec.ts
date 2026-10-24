@@ -111,7 +111,7 @@ test.describe("Super Admin — Platform Admin Panel", () => {
       .sort((a, b) => a.sortOrder - b.sortOrder)
       .map((p) => p.planKey);
 
-    const planSelect = page.getByRole("combobox").first();
+    const planSelect = page.getByRole("combobox", { name: "Plan" });
     await expect(planSelect).toBeVisible({ timeout: 15_000 });
     // The select paints before the in-browser catalog fetch resolves (a disabled
     // "Loading plans…" option), so poll the option list until it settles — a plain
@@ -132,6 +132,7 @@ test.describe("Super Admin — Platform Admin Panel", () => {
     await page.getByPlaceholder("e.g. Acme Foods Ltd.").fill("E2E Test Tenant");
     await page.getByPlaceholder("admin@acme.com").fill(`admin@${slug}.com`);
     await page.getByPlaceholder("acme_admin").fill(`${slug}_admin`);
+    await page.getByLabel("Time zone").fill("America/New_York");
     await page.getByPlaceholder("Min. 8 characters").fill("AdminPass@123!");
     await page.getByRole("button", { name: "Create Tenant", exact: true }).click();
     // Should redirect back to tenants list and show the new entry

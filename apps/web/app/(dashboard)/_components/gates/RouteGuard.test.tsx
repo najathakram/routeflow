@@ -120,9 +120,33 @@ describe("RouteGuard (B449 fix-round finding 5)", () => {
     expect(boundaryProps[0]).toMatchObject({ planGateKey: null });
   });
 
+  // B966: the driver "Scan to add order" / "New order at door" links point here and are hidden for a
+  // DRIVER; a typed URL is still bounced client-side (the API keeps DRIVER POST /orders for mobile).
+  it("bounces a DRIVER off /orders to /dashboard", () => {
+    mockUser = { role: "DRIVER" };
+    mockPathname = "/orders";
+    render(
+      <RouteGuard>
+        <div />
+      </RouteGuard>,
+    );
+    expect(mockReplace).toHaveBeenCalledWith("/dashboard");
+  });
+
   it.each(["DRIVER", "CUSTOMER"])("bounces a %s off /purchase-orders to /dashboard", (role) => {
     mockUser = { role };
     mockPathname = "/purchase-orders";
+    render(
+      <RouteGuard>
+        <div />
+      </RouteGuard>,
+    );
+    expect(mockReplace).toHaveBeenCalledWith("/dashboard");
+  });
+
+  it.each(["DRIVER", "CUSTOMER"])("bounces a %s off a PO detail page to /dashboard", (role) => {
+    mockUser = { role };
+    mockPathname = "/purchase-orders/po-1";
     render(
       <RouteGuard>
         <div />
@@ -139,5 +163,75 @@ describe("RouteGuard (B449 fix-round finding 5)", () => {
       </RouteGuard>,
     );
     expect(mockReplace).not.toHaveBeenCalled();
+  });
+
+  // REG-B1013: "/settings" is the CUSTOMER/DRIVER account page only; the business sub-pages under it
+  // (billing, restrictions, imports, migration, product categories) are staff-only.
+  it.each(["DRIVER", "CUSTOMER"])(
+    "lets a %s stay on /settings itself (their own account)",
+    (role) => {
+      mockUser = { role };
+      mockPathname = "/settings";
+      render(
+        <RouteGuard>
+          <div />
+        </RouteGuard>,
+      );
+      expect(mockReplace).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ["DRIVER", "/settings/billing"],
+    ["CUSTOMER", "/settings/billing"],
+    ["DRIVER", "/settings/restrictions"],
+    ["CUSTOMER", "/settings/import"],
+    ["CUSTOMER", "/settings/product-categories"],
+  ])("bounces a %s off %s to /dashboard", (role, path) => {
+    mockUser = { role };
+    mockPathname = path;
+    render(
+      <RouteGuard>
+        <div />
+      </RouteGuard>,
+    );
+    expect(mockReplace).toHaveBeenCalledWith("/dashboard");
+  });
+
+  it("lets an OPERATOR stay on /settings/billing", () => {
+    mockPathname = "/settings/billing";
+    render(
+      <RouteGuard>
+        <div />
+      </RouteGuard>,
+    );
+    expect(mockReplace).not.toHaveBeenCalled();
+  });
+
+  // Row 559: the install page is for every dashboard role, matched exactly like /settings.
+  it("a CUSTOMER and a DRIVER may open /get-the-app", () => {
+    for (const role of ["CUSTOMER", "DRIVER"]) {
+      mockReplace.mockClear();
+      mockUser = { role };
+      mockPathname = "/get-the-app";
+      const { unmount } = render(
+        <RouteGuard>
+          <div />
+        </RouteGuard>,
+      );
+      expect(mockReplace).not.toHaveBeenCalled();
+      unmount();
+    }
+  });
+
+  it("does not open the rest of a /get-the-app prefix to a CUSTOMER", () => {
+    mockUser = { role: "CUSTOMER" };
+    mockPathname = "/get-the-app/other";
+    render(
+      <RouteGuard>
+        <div />
+      </RouteGuard>,
+    );
+    expect(mockReplace).toHaveBeenCalledWith("/dashboard");
   });
 });

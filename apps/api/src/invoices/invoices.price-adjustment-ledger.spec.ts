@@ -9,13 +9,17 @@ jest.mock("./invoice-pdf.service", () => ({ InvoicePdfService: class InvoicePdfS
 jest.mock("../storage/compress.util", () => ({ compressDocument: jest.fn() }));
 jest.mock("../common/msrp", () => ({ loadMsrpMap: jest.fn().mockResolvedValue(new Map()) }));
 
-import { ConflictException } from "@nestjs/common";
+import { BadRequestException, ConflictException } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import { InvoiceStatus } from "@prisma/client";
 import { InvoicesService } from "./invoices.service";
+import { assertNotOverpaidByPriceChange } from "./price-adjustment-ledger";
+
+const INV = { id: "inv-1", invoiceNumber: "INV-1" };
 import { PrismaService } from "../prisma/prisma.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { storedInvoiceHeader } from "../testing/stored-invoice-header";
 
 const autoMock = () =>
   new Proxy({} as Record<string | symbol, jest.Mock>, {
@@ -62,8 +66,7 @@ describe("InvoicesService.applyPriceAdjustment — regulated ledger sync (B662)"
       customerId: "cust-1",
       orderId: null,
       status,
-      discount: 0,
-      shippingFee: 0,
+      ...storedInvoiceHeader(items), // SA-814 R5-2: a header the lines reproduce
       internalNotes: null,
       payments: [],
       items,
@@ -116,7 +119,7 @@ describe("InvoicesService.applyPriceAdjustment — regulated ledger sync (B662)"
       db: expect.anything(),
     });
     // one mechanism per state: an issued invoice never re-syncs
-    expect(ledger.reverseInvoiceEntries).not.toHaveBeenCalled();
+    expect(ledger.settleRegulatedLedger).not.toHaveBeenCalled();
     expect(ledger.writeSaleEntries).not.toHaveBeenCalled();
   });
 
@@ -130,10 +133,12 @@ describe("InvoicesService.applyPriceAdjustment — regulated ledger sync (B662)"
   it("DRAFT: re-syncs with the SAME routine update() uses, and books NO correction row", async () => {
     arrange(InvoiceStatus.DRAFT, [regulated("li-1"), ordinary("li-2")]);
     await adjust(["li-1"]);
-    expect(ledger.reverseInvoiceEntries).toHaveBeenCalledWith(
-      expect.objectContaining({ invoiceId: "inv-1", preserveReturns: true }),
+    // SA-839: the DRAFT re-sync is INVOICE_BILLED through the one ledger helper.
+    expect(ledger.settleRegulatedLedger).toHaveBeenCalledTimes(1);
+    expect(ledger.settleRegulatedLedger).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ kind: "INVOICE_BILLED", invoiceId: "inv-1" }),
     );
-    expect(ledger.writeSaleEntries).toHaveBeenCalledTimes(1);
     expect(ledger.correctSaleForPriceChange).not.toHaveBeenCalled();
   });
 
@@ -143,7 +148,7 @@ describe("InvoicesService.applyPriceAdjustment — regulated ledger sync (B662)"
       await adjust(["li-2"]);
     }
     expect(ledger.correctSaleForPriceChange).not.toHaveBeenCalled();
-    expect(ledger.reverseInvoiceEntries).not.toHaveBeenCalled();
+    expect(ledger.settleRegulatedLedger).not.toHaveBeenCalled();
     expect(ledger.writeSaleEntries).not.toHaveBeenCalled();
   });
 
@@ -209,13 +214,14 @@ describe("InvoicesService.applyPriceAdjustment — regulated ledger sync (B662)"
       },
       invoice: {
         update: jest.fn().mockResolvedValue({}),
-        // a payment landed after the pre-tx read: the fresh copy under the lock carries it
+        // a payment landed after the pre-tx read: the fresh copy under the lock carries it. It settles
+        // the new $53.50 total exactly (B1051: a payment ABOVE the new total is now refused)
         findUnique: jest.fn(async () => {
           order.push("reread invoice");
           return {
             status: InvoiceStatus.SENT,
             items: [regulated("li-1")],
-            payments: [{ status: "PAID", amount: 999 }],
+            payments: [{ status: "PAID", amount: 53.5 }],
           };
         }),
       },
@@ -308,5 +314,26 @@ describe("InvoicesService.applyPriceAdjustment — regulated ledger sync (B662)"
     ledger.correctSaleForPriceChange.mockRejectedValueOnce(new Error("ledger down"));
     await expect(adjust(["li-1"])).rejects.toThrow("ledger down");
     expect(commission.syncInvoiceCommissionSafe).not.toHaveBeenCalled();
+  });
+});
+
+// B1051: the overpayment guard's cent arithmetic. The end-to-end proof (a $150 -> $80 re-price of a
+// PARTIAL invoice with $100 paid) is price-adjustment-overpay-b1051.db.spec.ts.
+describe("assertNotOverpaidByPriceChange (B1051)", () => {
+  it("refuses a new total below the confirmed payments and names the exact overage", () => {
+    expect(() => assertNotOverpaidByPriceChange(100, 80, INV)).toThrow(BadRequestException);
+    expect(() => assertNotOverpaidByPriceChange(100, 80, INV)).toThrow("overpaid by $20.00");
+    expect(() => assertNotOverpaidByPriceChange(100.01, 100, INV)).toThrow("overpaid by $0.01");
+  });
+
+  it("allows a new total equal to, or above, the confirmed payments", () => {
+    expect(() => assertNotOverpaidByPriceChange(80, 80, INV)).not.toThrow();
+    expect(() => assertNotOverpaidByPriceChange(60, 80, INV)).not.toThrow();
+    expect(() => assertNotOverpaidByPriceChange(0, 80, INV)).not.toThrow();
+  });
+
+  it("compares in cents: float noise on the paid sum is not an overpayment", () => {
+    expect(0.1 + 0.2 > 0.3).toBe(true); // the raw comparison WOULD refuse
+    expect(() => assertNotOverpaidByPriceChange(0.1 + 0.2, 0.3, INV)).not.toThrow();
   });
 });

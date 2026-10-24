@@ -48,6 +48,8 @@ export class CreateProductUnitDto {
   @Min(0)
   @Max(MAX_PRICE)
   priceTier5?: number | null;
+  @IsOptional() @IsString() @MaxLength(64) parentUnitId?: string | null;
+  @IsOptional() @IsInt() @Min(2) @Max(1_000_000) perParent?: number | null;
   @IsOptional() @IsBoolean() isDefaultSelling?: boolean;
   @IsOptional() @IsInt() @Min(0) @Max(1000) sortOrder?: number;
 }
@@ -77,6 +79,8 @@ export class UpdateProductUnitDto {
   @Min(0)
   @Max(MAX_PRICE)
   priceTier5?: number | null;
+  @IsOptional() @IsString() @MaxLength(64) parentUnitId?: string | null;
+  @IsOptional() @IsInt() @Min(2) @Max(1_000_000) perParent?: number | null;
   @NotNull() @IsBoolean() isDefaultSelling?: boolean;
   @NotNull() @IsInt() @Min(0) @Max(1000) sortOrder?: number;
 }

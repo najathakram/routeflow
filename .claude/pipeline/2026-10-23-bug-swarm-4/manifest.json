@@ -1,0 +1,191 @@
+{
+  "run": "2026-10-23-bug-swarm-4",
+  "bugs": [
+    {
+      "row": "302",
+      "resolvedTitle": "BUG P2: Settings > Business profile > Business Name never saves: toast 'Profile saved'...",
+      "packWritten": true,
+      "risk": "LOW",
+      "riskReason": "tenant branding text field, no money/tenancy logic",
+      "status": "fixed-on-master",
+      "files": [
+        "apps/web/app/(dashboard)/settings/page.tsx",
+        "apps/api/src/tenants/tenants.service.ts"
+      ],
+      "needsDb": false,
+      "ui": true,
+      "repro": "Edit Business Name in Settings, Save, reload: name reverts (register says VERIFY-CLOSE; code looks correct)"
+    },
+    {
+      "row": "599",
+      "resolvedTitle": "API default throttle hard-coded 100 req/60 s per IP (common/throttlers.ts:41) makes local e2e 429; make it env-configurable",
+      "packWritten": true,
+      "risk": "LOW",
+      "riskReason": "config only, prod default unchanged",
+      "status": "live",
+      "files": [
+        "apps/api/src/common/throttlers.ts",
+        "docker-compose.yml",
+        "apps/api/.env.example"
+      ],
+      "needsDb": false,
+      "ui": false,
+      "repro": "Run local e2e: >100 req/60s from 127.0.0.1 returns 429"
+    },
+    {
+      "row": "745",
+      "resolvedTitle": "local:seed 'test' products have non-UUID ids (seed-prod-09), counter returns 400 productId must be a UUID",
+      "packWritten": true,
+      "risk": "LOW",
+      "riskReason": "local seed only, but ids are referenced by fixtures",
+      "status": "live",
+      "files": [
+        "apps/api/prisma/seed.ts"
+      ],
+      "needsDb": true,
+      "ui": false,
+      "repro": "npm run local:seed, ring seed-prod-09 at the counter: 400 items.0.productId must be a UUID"
+    },
+    {
+      "row": "W-652",
+      "resolvedTitle": "Client-name mask list read from a machine-local file (<opsHome>/client-names.json), not the specs config",
+      "packWritten": true,
+      "risk": "LOW",
+      "riskReason": "ops tooling, no product code",
+      "status": "live",
+      "files": [
+        "tools/ops-monitor/lib/mask.mjs",
+        "tools/ops-monitor/server.mjs",
+        "tools/ops-monitor/lib/snapshot.mjs"
+      ],
+      "needsDb": false,
+      "ui": false,
+      "repro": "Remove <opsHome>/client-names.json: mask list unavailable, brief disabled"
+    },
+    {
+      "row": "W-679",
+      "resolvedTitle": "heavy-slot.mjs refuses a bare 'npm ci' (husky prepare resets core.hooksPath; require --ignore-scripts)",
+      "packWritten": true,
+      "risk": "LOW",
+      "riskReason": "dev tooling script",
+      "status": "live",
+      "files": [
+        "scripts/heavy-slot.mjs",
+        "scripts/lib/heavy-slot.mjs"
+      ],
+      "needsDb": false,
+      "ui": false,
+      "repro": "heavy-slot.mjs run -- npm ci is accepted today; should be refused without --ignore-scripts"
+    },
+    {
+      "row": "W-685",
+      "resolvedTitle": "Mobile customer edit can't clear creditLimit: parseOptionalNumber turns '' into undefined",
+      "packWritten": true,
+      "risk": "HIGH",
+      "riskReason": "credit limit is money-adjacent customer data",
+      "status": "live",
+      "files": [
+        "apps/mobile/lib/customer-payload.ts"
+      ],
+      "needsDb": false,
+      "ui": true,
+      "repro": "Mobile edit customer, empty Credit limit, save: payload omits creditLimit so the old value stays"
+    },
+    {
+      "row": "W-687",
+      "resolvedTitle": "Flaky web test: CreateOrderModal.delivery-date (row 718 case) clicks during the dialog's pointer-events:none exit",
+      "packWritten": true,
+      "risk": "LOW",
+      "riskReason": "test-only flake",
+      "status": "live",
+      "files": [
+        "apps/web/app/(dashboard)/orders/_components/CreateOrderModal.delivery-date.test.tsx"
+      ],
+      "needsDb": false,
+      "ui": false,
+      "repro": "Run the delivery-date spec repeatedly: occasional click blocked by pointer-events:none"
+    }
+  ],
+  "unresolved": [
+    {
+      "row": "302",
+      "reason": "title mismatch: manifest \"BUG P2: Settings > Business profile > Business Name never saves: toast 'Profile saved'...\" vs resolved \"BUG P2: Settings › Business profile › Business Name never saves: toast 'Profile saved'...\""
+    }
+  ],
+  "clusters": [
+    {
+      "id": "c1",
+      "bugs": [
+        {
+          "row": "599"
+        },
+        {
+          "row": "745"
+        },
+        {
+          "row": "W-652"
+        }
+      ],
+      "files": [
+        "apps/api/.env.example",
+        "apps/api/prisma/seed.ts",
+        "apps/api/src/common/throttlers.ts",
+        "docker-compose.yml",
+        "tools/ops-monitor/lib/mask.mjs",
+        "tools/ops-monitor/lib/snapshot.mjs",
+        "tools/ops-monitor/server.mjs"
+      ],
+      "workspaces": [
+        "apps/api",
+        "other"
+      ],
+      "needsDb": true,
+      "ui": false,
+      "extractionFirst": false
+    },
+    {
+      "id": "c2",
+      "bugs": [
+        {
+          "row": "W-679"
+        }
+      ],
+      "files": [
+        "scripts/heavy-slot.mjs",
+        "scripts/lib/heavy-slot.mjs"
+      ],
+      "workspaces": [
+        "other"
+      ],
+      "needsDb": false,
+      "ui": false,
+      "extractionFirst": false
+    },
+    {
+      "id": "c3",
+      "bugs": [
+        {
+          "row": "W-687"
+        }
+      ],
+      "files": [
+        "apps/web/app/(dashboard)/orders/_components/CreateOrderModal.delivery-date.test.tsx"
+      ],
+      "workspaces": [
+        "apps/web"
+      ],
+      "needsDb": false,
+      "ui": false,
+      "extractionFirst": false
+    }
+  ],
+  "excluded": [
+    {
+      "row": "W-685",
+      "reason": "risk HIGH: HIGH-risk bugs never enter the swarm"
+    }
+  ],
+  "unaccounted": [
+    "302"
+  ]
+}

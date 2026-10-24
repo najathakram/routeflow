@@ -108,7 +108,7 @@ and from the house rules in the root `CLAUDE.md`:
 
 - **Unit tests over a fake `gh` boundary.** Every `gh` invocation in the package goes through the one
   `gh()` function in `src/gh.ts`; tests replace it with a recorded-fixture adapter (a real `gh …
-  --json …` output captured once, replayed deterministically). No unit spec imports the real `gh.ts`
+--json …` output captured once, replayed deterministically). No unit spec imports the real `gh.ts`
   un-mocked, and no unit spec makes a live network call.
 - **Contract tests for the state machine** (LIFECYCLE.md's table). Per **L-036** (compacted to
   `.claude/lessons/ARCHIVE.md`, id retained) — "when the artefact
@@ -127,7 +127,7 @@ and from the house rules in the root `CLAUDE.md`:
   the same label/status facts as the live source it was taken from — a property test over a
   generated set of issues, not one fixture.
 - **`bugflow self-test`** is the package's own `npm run verify` step — the direct descendant of the
-  legacy `bugs.mjs self-test` suite (CLI.md). Per **L-041**, a CI step's *own* conclusion
+  legacy `bugs.mjs self-test` suite (CLI.md). Per **L-041**, a CI step's _own_ conclusion
   is what proves it ran — assert the self-test step is `success`, never infer that from the job being
   green (a job is green when every real step was skipped).
 - **No live GitHub in unit tests**, ever — that is what the integration lane below is for.
@@ -162,7 +162,7 @@ and from the house rules in the root `CLAUDE.md`:
 ## Versioning
 
 - Semver from the first commit (`0.1.0`); `CHANGELOG.md` in Keep-a-Changelog style; `bugflow
-  --version` reads its own `package.json`.
+--version` reads its own `package.json`.
 - Because Routines clone the default branch fresh on every run and a Desktop task runs against
   whatever the developer's own checkout has installed (WORKERS.md), there is no separate "deploy" for
   bugflow — the version every worker runs is whatever `tools/bugflow/package.json` says on `master` at
@@ -187,8 +187,8 @@ self-test` replace that step in the main `verify` job outright rather than sitti
 - Steps (the `bugflow` job): lint, typecheck, `bugflow self-test` — scoped to the package, not a
   full monorepo rebuild.
 - Per **L-034**: once `tools/bugflow`'s tests run under Turbo, a scoped local run (`jest -t
-  "some spec"`) can leave a stale cached "green" for the FULL suite — force execution (`turbo run
-  test --force`, or `npx jest` directly inside `tools/bugflow`) before trusting a replayed pass
+"some spec"`) can leave a stale cached "green" for the FULL suite — force execution (`turbo run
+test --force`, or `npx jest` directly inside `tools/bugflow`) before trusting a replayed pass
   during development. CI itself has no turbo cache (`turbo.json`'s own comment: no `TURBO_TOKEN`, no
   `actions/cache` of `.turbo`, fresh runners every time), so this is a local-dev trap only.
 - Per **L-013**/**L-010**: a red CI job here might be an install-step flake or worker exhaustion, not

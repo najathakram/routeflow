@@ -4,6 +4,7 @@ import { ConfigService } from "@nestjs/config";
 import { JwtService } from "@nestjs/jwt";
 import { UserRole } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
+import { acceptsAutomatedWrites } from "../tenant/tenant-automation";
 import {
   CONNECT_OAUTH_PROVIDER,
   type ConnectAccountSnapshot,
@@ -11,6 +12,11 @@ import {
   type ConnectOAuthToken,
 } from "./provider/connect-oauth.interface";
 import { AppConfig } from "../config/configuration";
+import {
+  DERIVED_JWT_AUDIENCES,
+  DERIVED_JWT_LABELS,
+  derivedJwtKey,
+} from "../common/derived-jwt-key";
 
 /**
  * Stripe Connect (Standard accounts, direct charges, no platform fee).
@@ -48,6 +54,7 @@ import { AppConfig } from "../config/configuration";
 @Injectable()
 export class StripeConnectService {
   private readonly logger = new Logger(StripeConnectService.name);
+  private readonly stateKey: Buffer;
 
   /**
    * The platform's own Stripe account id, cached after the first successful
@@ -61,7 +68,13 @@ export class StripeConnectService {
     @Inject(CONNECT_OAUTH_PROVIDER) private readonly oauth: ConnectOAuthProvider,
     private readonly config: ConfigService<AppConfig>,
     private readonly jwt: JwtService,
-  ) {}
+  ) {
+    // Fails the boot on a missing or short secret (see derived-jwt-key.ts).
+    this.stateKey = derivedJwtKey(
+      DERIVED_JWT_LABELS.stripeConnectState,
+      config.get<AppConfig["jwt"]>("jwt")?.secret ?? "",
+    );
+  }
 
   private get clientId(): string {
     return this.config.get<AppConfig["stripe"]>("stripe")?.connectClientId ?? "";
@@ -139,7 +152,11 @@ export class StripeConnectService {
     const jti = randomUUID();
     const state = await this.jwt.signAsync(
       { purpose: "stripe-connect", tid: tenantId, by: startedByName ?? null, jti },
-      { expiresIn: "15m" },
+      {
+        secret: this.stateKey,
+        audience: DERIVED_JWT_AUDIENCES.stripeConnectState,
+        expiresIn: "15m",
+      },
     );
     await this.prisma.tenantStripeConnect.upsert({
       where: { tenantId },
@@ -205,13 +222,24 @@ export class StripeConnectService {
    * exception text (invariant 12).
    */
   async completeOAuth(code: string, state: string) {
-    let payload: { purpose?: string; tid?: string; by?: string | null; jti?: string };
+    let payload: {
+      purpose?: string;
+      tid?: string;
+      by?: string | null;
+      jti?: string;
+      aud?: unknown;
+    };
     try {
-      payload = await this.jwt.verifyAsync(state);
+      payload = await this.jwt.verifyAsync(state, { secret: this.stateKey });
     } catch {
       throw new BadRequestException("state_expired");
     }
-    if (payload.purpose !== "stripe-connect" || !payload.tid || !payload.jti) {
+    if (
+      payload.aud !== DERIVED_JWT_AUDIENCES.stripeConnectState ||
+      payload.purpose !== "stripe-connect" ||
+      !payload.tid ||
+      !payload.jti
+    ) {
       throw new BadRequestException("state_invalid");
     }
     const tenantId = payload.tid;
@@ -230,9 +258,25 @@ export class StripeConnectService {
 
     const tenant = await this.prisma.tenant.findUnique({
       where: { id: tenantId },
-      select: { id: true, slug: true },
+      select: { id: true, slug: true, status: true },
     });
     if (!tenant) throw new BadRequestException("tenant_not_found");
+
+    // The signed state was minted while the workspace accepted changes; its status may
+    // have moved since. Re-read it live and refuse BEFORE the code exchange, so a
+    // workspace that no longer accepts changes never gets a Stripe grant or a bound
+    // payout account. Same TRIAL/ACTIVE rule as every other system-side write. The refusal
+    // names the status (fixed codes the callback maps to fixed copy): a SUSPENDED or CANCELLED
+    // workspace is not "read-only"; READ_ONLY and anything unrecognised stay workspace_read_only.
+    if (!acceptsAutomatedWrites(tenant.status)) {
+      throw new BadRequestException(
+        tenant.status === "SUSPENDED"
+          ? "workspace_suspended"
+          : tenant.status === "CANCELLED"
+            ? "workspace_cancelled"
+            : "workspace_read_only",
+      );
+    }
 
     // REG-2441: resolve the PLATFORM's own account id BEFORE exchanging the
     // code — a code exchange creates a live Stripe OAuth grant, so doing the

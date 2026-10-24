@@ -22,7 +22,11 @@ const MESSAGING_DIR = path.resolve(__dirname);
  * `DEFAULT_ON` key instead of allowlisting it — FAILED_DELIVERY specifically stays out because
  * B146/F11 reconciles a skipped stop but never emits the event (S3 check on 12cdc26a).
  */
-const ALLOWLIST: string[] = [];
+const ALLOWLIST: string[] = [
+  // Seeded ON here, fired by the pickup flow in its own PR (this PR only creates the event, template and
+  // seed rows). That PR registers it in NOTIFICATION_TRIGGERS and deletes this entry.
+  "READY_FOR_PICKUP",
+];
 
 function collectSourceFiles(dir: string, out: string[] = []): string[] {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {

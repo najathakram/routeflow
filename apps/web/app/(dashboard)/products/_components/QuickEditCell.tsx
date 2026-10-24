@@ -21,13 +21,17 @@ interface QuickEditCellProps {
   value: string | number | null | undefined;
   placeholder?: string;
   type?: "text" | "number";
+  /** Passed to a `type="number"` input (e.g. min 1 / step 1 for a whole-number size). */
+  min?: number;
+  step?: number;
   /** When true every cell is clickable to edit */
   quickEditMode: boolean;
   /** When provided, shows a filterable scrollable dropdown of suggestions */
   options?: string[];
   /** Ref of the input in the NEXT row (provided by the parent list) */
   nextInputRef?: React.RefObject<HTMLInputElement | null>;
-  onSave: (newVal: string, record: EditRecord) => Promise<void>;
+  /** Resolve `false` to REJECT the value: nothing was saved, so the cell stays in edit mode. */
+  onSave: (newVal: string, record: EditRecord) => Promise<void | false>;
 }
 
 export const QuickEditCell = React.forwardRef<HTMLInputElement, QuickEditCellProps>(
@@ -39,6 +43,8 @@ export const QuickEditCell = React.forwardRef<HTMLInputElement, QuickEditCellPro
       value,
       placeholder = "Type and press Enter",
       type = "text",
+      min,
+      step,
       quickEditMode,
       options,
       nextInputRef,
@@ -88,6 +94,15 @@ export const QuickEditCell = React.forwardRef<HTMLInputElement, QuickEditCellPro
 
     const commit = async (overrideDraft?: string) => {
       if (saving) return;
+      // A number input holding garbled text ("1e") reports value "" — that must never read as a
+      // cleared cell (it would unbox the product). Keep the cell open and save nothing.
+      if (
+        overrideDraft === undefined &&
+        type === "number" &&
+        inputRef.current?.validity?.badInput
+      ) {
+        return;
+      }
       const trimmed = (overrideDraft ?? draft).trim();
       const oldValue = value != null ? String(value) : null;
       if (trimmed === oldValue || (trimmed === "" && oldValue === null)) {
@@ -96,13 +111,15 @@ export const QuickEditCell = React.forwardRef<HTMLInputElement, QuickEditCellPro
       }
       setSaving(true);
       try {
-        await onSave(trimmed, {
+        const result = await onSave(trimmed, {
           productId,
           productName,
           field,
           oldValue,
           newValue: trimmed || null,
         });
+        // The caller rejected the value (and said why): keep the draft open, no focus jump.
+        if (result === false) return;
         setEditing(false);
         // Jump focus to next row
         if (nextInputRef?.current) {
@@ -141,6 +158,8 @@ export const QuickEditCell = React.forwardRef<HTMLInputElement, QuickEditCellPro
             <input
               ref={inputRef}
               type={type}
+              min={min}
+              step={step}
               value={draft}
               onChange={(e) => {
                 setDraft(e.target.value);

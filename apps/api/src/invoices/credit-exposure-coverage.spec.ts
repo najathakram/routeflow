@@ -302,12 +302,19 @@ describe("credit-exposure coverage (D6 / B462, L-119)", () => {
       }
     });
 
-    it("CustomersService.getStatementForOperator calls loadCreditExposure", () => {
+    it("the operator statement (CustomersService.getStatementForOperator -> buildOperatorStatement) calls loadCreditExposure", () => {
+      // The body moved verbatim to customers/customer-statement.ts (size headroom); the service method
+      // delegates to it, so both halves are pinned.
       const method = methodNamed(
         parseFile("customers/customers.service.ts"),
         "getStatementForOperator",
       );
-      expect(callsFunction(method, "loadCreditExposure")).toBe(true);
+      expect(callsFunction(method, "buildOperatorStatement")).toBe(true);
+      const builder = functionNamed(
+        parseFile("customers/customer-statement.ts"),
+        "buildOperatorStatement",
+      );
+      expect(callsFunction(builder, "loadCreditExposure")).toBe(true);
     });
 
     it("the shared module exports the reader, the pure core and the draft predicate", () => {

@@ -7,6 +7,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { setTenantCookie } from "@/lib/tenant-cookie";
 import { OP_KEYS, BUYER_KEYS } from "@/lib/auth-keys";
 import { setOpPresenceCookie, setBuyerPresenceCookie } from "@/lib/presence-cookies";
+import { buyerLandingDestination } from "@/lib/google-callback-destination";
 
 // ─── Error messages shown to the user ────────────────────────────────────────
 
@@ -69,39 +70,26 @@ function GoogleCallbackInner() {
       setTimeout(() => router.replace("/login?error=google_failed"), 4000);
     };
 
-    // ── Resolve tokens: one-time code (F8-001) or legacy direct params ─────────
+    // ── Resolve tokens: only by redeeming the one-time code (F8-001) ──────────
+    // Tokens are never read from the URL; a link carrying them does not sign anyone in.
     async function resolveBundle(): Promise<Record<string, string> | null> {
       const code = params.get("code");
-      if (code) {
-        const apiBase = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000/api/v1").replace(
-          /\/$/,
-          "",
-        );
-        try {
-          const res = await fetch(`${apiBase}/auth/google/exchange`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ code }),
-          });
-          if (!res.ok) return null;
-          return (await res.json()) as Record<string, string>;
-        } catch {
-          return null;
-        }
+      if (!code) return null;
+      const apiBase = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000/api/v1").replace(
+        /\/$/,
+        "",
+      );
+      try {
+        const res = await fetch(`${apiBase}/auth/google/exchange`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ code }),
+        });
+        if (!res.ok) return null;
+        return (await res.json()) as Record<string, string>;
+      } catch {
+        return null;
       }
-      // Backward-compat: tokens delivered directly in the URL (deploy skew / legacy)
-      const accessToken = params.get("accessToken");
-      const refreshToken = params.get("refreshToken");
-      if (!accessToken || !refreshToken) return null;
-      return {
-        accessToken,
-        refreshToken,
-        type: params.get("type") ?? "",
-        role: params.get("role") ?? "",
-        tenantSlug: params.get("tenantSlug") ?? "",
-        sellerCount: params.get("sellerCount") ?? "",
-        linked: params.get("linked") ?? "",
-      };
     }
 
     void resolveBundle().then((bundle) => {
@@ -114,8 +102,9 @@ function GoogleCallbackInner() {
       const role = bundle.role || null; // OPERATOR, DRIVER, CUSTOMER, TENANT_ADMIN
       const tenantSlug = bundle.tenantSlug || null;
       const linked = bundle.linked || null;
+      const invite = bundle.invite || null; // "seller_unavailable": signed in, the invite's seller is not taking it
 
-      handleTokens(accessToken, refreshToken, type, role, tenantSlug, linked);
+      handleTokens(accessToken, refreshToken, type, role, tenantSlug, linked, invite);
     });
 
     function handleTokens(
@@ -125,6 +114,7 @@ function GoogleCallbackInner() {
       role: string | null,
       tenantSlug: string | null,
       linked: string | null,
+      invite: string | null,
     ) {
       if (type === "BUYER") {
         // Store buyer tokens under the namespaced keys that `BuyerAuthProvider`
@@ -146,7 +136,7 @@ function GoogleCallbackInner() {
         // guard would bounce the user back to login on the first attempt and they'd
         // have to click "Sign in with Google" twice. A hard load remounts the
         // providers so the new session is picked up immediately.
-        const destination = linked === "true" ? "/buyer/portal?linked=true" : "/buyer/portal";
+        const destination = buyerLandingDestination(linked, invite);
         window.location.replace(destination);
       } else {
         // Store staff tokens under both the namespaced keys (read by

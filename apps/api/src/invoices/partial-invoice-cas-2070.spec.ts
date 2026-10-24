@@ -108,7 +108,11 @@ describe("partial invoices: the invoicedQty bump is a compare-and-set (#2070, SA
         { provide: SystemConfigService, useValue: mockSystemConfig },
         {
           provide: RegulatedLedgerService,
-          useValue: { writeSaleEntries: jest.fn(), reverseInvoiceEntries: jest.fn() },
+          useValue: {
+            writeSaleEntries: jest.fn(),
+            reverseInvoiceEntries: jest.fn(),
+            settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
+          },
         },
         {
           provide: AuthorizationGuardService,
@@ -149,6 +153,8 @@ describe("partial invoices: the invoicedQty bump is a compare-and-set (#2070, SA
     categoryPriceIncludesTax: null,
     unitLabel: null,
     originalPrice: null,
+    overrideReason: null, // H3b: a real OrderItem row always carries both (CAS basis)
+    overriddenBy: null,
     priceType: "STANDARD",
     name: null,
     notes: null,

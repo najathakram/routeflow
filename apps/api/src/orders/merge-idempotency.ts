@@ -1,6 +1,9 @@
 import { ConflictException, ForbiddenException } from "@nestjs/common";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { createHash } from "crypto";
 import { assertReplayCarriesReturnKey } from "./order-inline-return";
+import { assertReplaySameCart } from "./replay-same-cart";
+import { replayCartOf } from "./replay-cart-normalize";
 import type { InlineReturnReplayLines } from "../returns/inline-return-fingerprint";
 
 // Canonical JSON: object keys sorted, undefined-valued keys dropped (an absent field and a
@@ -221,10 +224,21 @@ export async function findOrderIdByKeyCheckingReturn(
   deps: IdempotencyLookupDeps & { prisma: { forTenant(): unknown } },
   idempotencyKey: string,
   customerId: string,
-  requestHash?: string,
-  inlineReturn?: InlineReturnReplayLines, // #2424: its items are compared too, not only its key
+  requestHash: string | undefined,
+  inlineReturn: InlineReturnReplayLines | undefined, // #2424: its items are compared too, not only its key
+  cart: { items?: ReadonlyArray<unknown> | null; status?: string | null }, // BUG-A: the body to compare
 ): Promise<{ orderId: string; verified: boolean } | null> {
   const hit = await findOrderIdByIdempotencyKey(deps, idempotencyKey, customerId, requestHash);
+  if (hit && !hit.verified) {
+    // An Order-COLUMN hit stores no fingerprint: compare the body to the order the key created.
+    const held = await (deps.prisma.forTenant() as any).order.findFirst({
+      where: { id: hit.orderId },
+      select: { id: true, status: true, lineItems: true },
+    });
+    // The held order stores an old client's derived Piece as the pack's pieces: compare the body the same way.
+    if (held)
+      assertReplaySameCart(held, await replayCartOf(deps.prisma.forTenant(), customerId, cart));
+  }
   if (hit) await assertReplayCarriesReturnKey(deps.prisma.forTenant(), inlineReturn, hit.orderId);
   return hit;
 }
@@ -343,3 +357,30 @@ export async function insertMergeIdempotencyKey(
     throw e;
   }
 }
+
+/**
+ * create()'s two Idempotency-Key 409s, each CODED (the order already exists: for a counter sale an UNKNOWN
+ * outcome). The message text is unchanged from before the codes were added.
+ */
+export const otherOrderConflict = () =>
+  new ConflictException({
+    code: API_ERROR_CODES.IDEMPOTENCY_KEY_OTHER_ORDER,
+    message: "Idempotency-Key already used for a different order",
+  });
+export const cartMismatchConflict = (orderId: string) =>
+  new ConflictException({
+    code: API_ERROR_CODES.IDEMPOTENCY_KEY_CART_MISMATCH,
+    // BUG-A: the order that HOLDS the key, so a client can open it instead of wedging on a message.
+    orderId,
+    message:
+      "Idempotency-Key reused with a different cart — submit the edited cart as a new order (new key), or retry the original unchanged",
+  });
+/** BUG-A: the key already made this order as a DRAFT (or already made a real order and this is a draft save). */
+export const draftMismatchConflict = (orderId: string, storedIsDraft: boolean) =>
+  new ConflictException({
+    code: API_ERROR_CODES.IDEMPOTENCY_KEY_DRAFT_MISMATCH,
+    orderId,
+    message: storedIsDraft
+      ? "This order was saved as a draft — open it to confirm"
+      : "This order was already created — open it instead of saving it as a draft",
+  });

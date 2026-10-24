@@ -44,6 +44,7 @@ import { InlineReturnsQuoteService } from "../returns/inline-returns-quote.servi
 import { InlineReturnsService } from "../returns/inline-returns.service";
 import { OrdersService } from "./orders.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
+import { INVOICE_EDIT_STUBS } from "./testing/invoice-edit-stubs";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -190,6 +191,7 @@ describeDb(
           });
         },
         resyncOrderInvoicesForEdit: hooks.resync,
+        ...INVOICE_EDIT_STUBS,
         reconcileOrderDraftInvoice: hooks.reconcileDraft,
       };
       orders = Object.assign(Object.create(OrdersService.prototype), {

@@ -5,7 +5,9 @@ import {
   LineItemRowReadOnly,
   type LineItemRowReadOnlyProps,
 } from "@/components/LineItemRowReadOnly";
+import { lineBackorderPieces } from "@routeflow/types";
 import { formatMoney } from "@/lib/format";
+import { RestrictionOverrideNote } from "@/components/RestrictionOverrideNote";
 import type { OrderItem } from "@/lib/api/orders";
 import { orderLineName } from "@/lib/product-display";
 import { displayLineStatus } from "./line-status";
@@ -44,6 +46,7 @@ export function lineRowProps(li: OrderItem, orderStatus: string): LineItemRowRea
     note: li.notes ?? null,
     custom: !li.productId,
     components: li.components ?? null,
+    backorderPieces: lineBackorderPieces(li, orderStatus),
   };
 }
 
@@ -79,7 +82,14 @@ export function OrderLineItemCards({
 
       <ul className="divide-y divide-surface-border">
         {visible.map((li) => (
-          <LineItemRowReadOnly key={li.id} className="px-6" {...lineRowProps(li, orderStatus)} />
+          // Row 510: the staff-only override note rides INSIDE its own line's row (a footer of the row), never as a
+          // second list item between rows.
+          <LineItemRowReadOnly
+            key={li.id}
+            className="px-6"
+            {...lineRowProps(li, orderStatus)}
+            footer={<RestrictionOverrideNote line={li} />}
+          />
         ))}
       </ul>
 

@@ -61,7 +61,8 @@ export class ProductCategoriesController {
   }
 
   @Put("products/:productId/labels/:categoryId")
-  @Roles(UserRole.TENANT_ADMIN)
+  // Owner ruling 2026-10-14: operators too; a federal-covered label stays admin-only (the service checks).
+  @Roles(UserRole.OPERATOR)
   setLabel(
     @Param("productId") productId: string,
     @Param("categoryId") categoryId: string,
@@ -72,7 +73,8 @@ export class ProductCategoriesController {
   }
 
   @Delete("products/:productId/labels/:categoryId")
-  @Roles(UserRole.TENANT_ADMIN)
+  // Owner ruling 2026-10-14: operators too; a federal-covered label stays admin-only (the service checks).
+  @Roles(UserRole.OPERATOR)
   removeLabel(
     @Param("productId") productId: string,
     @Param("categoryId") categoryId: string,

@@ -268,6 +268,7 @@ describe("orderUnsettledOutstanding + editedOrderContribution — the floor unde
   it.each([
     // projected, paid, unsettledOwed, survives → contribution
     [15, 15, 0, false, 0], // fully prepaid → nothing
+    [15, 50, 0, false, 0], // paid MORE than projected → floored at 0, never negative
     [15, 5, 0, false, 10], // half paid → the unpaid part
     [100, 0, 0, false, 100], // nothing paid → the projected total, as before B577
     [15, 50, 150, true, 150], // a PARTIAL invoice that SURVIVES still owes 150 → its balance wins

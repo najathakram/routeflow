@@ -1223,13 +1223,17 @@ async function writeOrders(pricedPlans) {
               ? "PENDING"
               : "CONFIRMED";
 
+    // Drawn here, in the same RNG position as before; the lines below record the same author (SA ruling #3418).
+    const source = chance(0.35) ? "APP" : chance(0.5) ? "PHONE" : "ROUTE";
     await prisma.order.create({
       data: scoped({
         id: orderId,
         customerId: plan.customer.customerId,
         orderNumber,
         status: plan.status,
-        source: chance(0.35) ? "APP" : chance(0.5) ? "PHONE" : "ROUTE",
+        source,
+        // F1(i): the synthetic source above is meant as recorded (the column must exist: owner migrates first).
+        sourceRecorded: true,
         subtotal: plan.subtotal,
         tax: plan.tax,
         total: plan.total,
@@ -1285,7 +1289,9 @@ async function writeOrders(pricedPlans) {
         deliveredQty,
       };
     });
-    await prisma.orderItem.createMany({ data: itemRows.map((r) => r.row) });
+    // F1(i) SA ruling (#3418): every line's author, matching the order's recorded source.
+    const authorChannel = source === "APP" ? "BUYER" : "STAFF";
+    await prisma.orderItem.createMany({ data: itemRows.map((r) => ({ ...r.row, authorChannel })) });
 
     created.push({ ...plan, orderId, orderNumber, items: itemRows });
   }

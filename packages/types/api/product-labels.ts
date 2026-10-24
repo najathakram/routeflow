@@ -52,6 +52,11 @@ export interface ProductLabelsDto {
   ancestryResolvable: boolean;
   own: ProductLabelDto[];
   inherited: InheritedLabelDto[];
+  /**
+   * The tenant's label ids an ACTIVE federal (all-customer) rule covers. Writing one of these labels is admin-only
+   * (owner ruling 2026-10-14): an operator sees its controls disabled with the shared hint.
+   */
+  federalCategoryIds: string[];
 }
 
 export interface SetProductLabelRequest {

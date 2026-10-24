@@ -16,7 +16,10 @@ import { checkBadgeFor } from "../../../lib/check-badge";
 import { formatPaymentMethod, paymentRowFlags } from "../../../lib/buyer-payments-logic";
 import { freeUnitsLabel } from "../../../lib/buyer-cart-logic";
 import { fmtCalendarDate } from "../../../lib/format-date";
+import { overpaidText, revisedBadgeText } from "../../../lib/invoice-revision";
+import { invoiceShowsTerms } from "../../../lib/invoice-sale-terms";
 import { invoiceLineQtyText } from "@routeflow/pricing";
+import { buyerInvoiceTotalsRows, totalsRowText } from "../../../lib/buyer-invoice-totals";
 import { invoiceLineUnitNoun, usesUnitDisplay } from "../../../lib/invoice-line-display";
 
 // buyer.ts's BuyerInvoiceItem doesn't declare `msrp` yet even though the
@@ -81,6 +84,7 @@ export default function CustomerInvoiceDetailScreen() {
 
   const p = invoicePill(invoice.status, invoice.isOverdue);
   const balanceDue = Number(invoice.balanceDue ?? invoice.amountDue ?? 0);
+  const totalsRows = buyerInvoiceTotalsRows(invoice); // server figures, no hard-coded tax name or rate
   const paidAmount = Number(invoice.paidAmount ?? invoice.amountPaid ?? 0);
   // B421: confirmed but non-cash — a credit note or advance applied to this
   // invoice reduces balanceDue but must never render as "Paid".
@@ -103,6 +107,8 @@ export default function CustomerInvoiceDetailScreen() {
           : "total";
   const pdfUrl = (invoice as any).pdfUrl as string | undefined;
   const paymentTermsLabel = (invoice as typeof invoice & InvoiceTermsLabelField).paymentTermsLabel;
+  // Row 401: a counter sale paid at the till shows no due date or terms (the web page's CQ-26 rule).
+  const showTerms = invoiceShowsTerms(invoice);
 
   const handleSharePdf = async () => {
     if (!pdfUrl) return;
@@ -140,25 +146,34 @@ export default function CustomerInvoiceDetailScreen() {
                   Issued: {fmtCalendarDate(invoice.issueDate, "short")}
                 </Text>
               ) : null}
+              {revisedBadgeText(invoice.revisedAt) ? (
+                <Text style={styles.issuedDate}>{revisedBadgeText(invoice.revisedAt)}</Text>
+              ) : null}
+              {overpaidText(invoice.overpaidBy) ? (
+                <Text style={styles.issuedDate}>{overpaidText(invoice.overpaidBy)}</Text>
+              ) : null}
             </View>
             <Pill variant={p.variant} dot>
               {p.label}
             </Pill>
           </View>
 
-          {invoice.subtotal != null && invoice.tax != null ? (
+          {totalsRows.length > 0 ? (
             <View style={{ marginTop: 4, gap: 2 }}>
-              <Text style={styles.totalLine}>Subtotal: ${Number(invoice.subtotal).toFixed(2)}</Text>
-              <Text style={styles.totalLine}>GST (10%): ${Number(invoice.tax).toFixed(2)}</Text>
+              {totalsRows.map((r) => (
+                <Text key={r.key} style={styles.totalLine}>
+                  {totalsRowText(r)}
+                </Text>
+              ))}
             </View>
           ) : null}
 
           <Text style={styles.total}>${Number(invoice.total).toFixed(2)}</Text>
 
-          {invoice.dueDate ? (
+          {showTerms && invoice.dueDate ? (
             <Text style={styles.dueDate}>Due: {fmtCalendarDate(invoice.dueDate, "short")}</Text>
           ) : null}
-          {paymentTermsLabel ? (
+          {showTerms && paymentTermsLabel ? (
             <Text style={styles.dueDate}>Terms: {paymentTermsLabel}</Text>
           ) : null}
         </View>

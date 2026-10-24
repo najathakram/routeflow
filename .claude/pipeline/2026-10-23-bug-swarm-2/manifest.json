@@ -1,0 +1,56 @@
+{
+  "run": "2026-10-23-bug-swarm-2",
+  "baseSha": "e6acb9955062021a725c7203233815f458f4b40c",
+  "bugs": [
+    {
+      "row": "301",
+      "title": "Counter price-edit Apply button under 44px touch target",
+      "risk": "LOW",
+      "riskReason": "Layout/touch-target only; no money path change. Button is the shared default with no size override.",
+      "status": "live",
+      "files": ["apps/web/app/(dashboard)/orders/_components/CounterLinePriceEdit.tsx"],
+      "needsDb": false,
+      "ui": true,
+      "repro": "CounterLinePriceEdit.tsx:271 <Button type=\"submit\">Apply</Button> with no min-h/size class (register measured 34px)",
+      "laneOwner": "Mac mini (counter)"
+    },
+    {
+      "row": "296",
+      "title": "Counter touch targets under 44px: Change-customer X, Use today, backdate link",
+      "risk": "LOW",
+      "riskReason": "Touch-target sizing only; no amount, tender or ledger change.",
+      "status": "live",
+      "files": ["apps/web/app/(dashboard)/orders/_components/CreateOrderModal.tsx"],
+      "needsDb": false,
+      "ui": true,
+      "repro": "CreateOrderModal.tsx:2561-2564 Change-customer button is p-1 + h-4 w-4 (~24px); :3100 'Use today' text button has no min-height; :3110-3115 backdate link is min-h-10 (40px, still under 44)",
+      "laneOwner": "Mac mini (assigned 10-22)"
+    },
+    {
+      "row": "300",
+      "title": "Tax rate label rounded with toFixed(0): 8.25% prints Tax (8%)",
+      "risk": "LOW",
+      "riskReason": "Label text only; the tax AMOUNT is not changed. Brief rule: rate label is LOW only if no amount changes. Verify the fix only touches the label string.",
+      "status": "live",
+      "files": ["apps/web/app/(dashboard)/invoices/new/page.tsx"],
+      "needsDb": false,
+      "ui": true,
+      "repro": "invoices/new/page.tsx:2943 and :2999 <span>Tax ({(taxRate * 100).toFixed(0)}%)</span>",
+      "laneOwner": "Mac mini / R7b session (register stale: names orders/[id]/page.tsx:3005, which has no such label on master)"
+    }
+  ],
+  "excluded": [
+    { "row": "752", "why": "Counter lane open work (payment edit, building, mm-counter)" },
+    { "row": "W-663", "why": "Payment edit clearing reference; payment-edit UI, excluded by brief" },
+    { "row": "304", "why": "Tax rate vs per-line rounding: touches amounts, HIGH" },
+    { "row": "298", "why": "'$2.50 / piece' on boxed line touches unit display; units/qty is HIGH in doubt" },
+    { "row": "188", "why": "'Change $0.00' on underpaid counter sale touches change money amount, HIGH in doubt" },
+    { "row": "329", "why": "Order edit panel 'Tax (8%)': no matching label on master at orders/[id]/page.tsx; location unclear, triage needed" },
+    { "row": "182", "why": "Bundle of mixed items; the '403 price-edit copy' is not found in CounterLinePriceEdit.tsx so likely fixed or moved; needs a split before it can be a bug" },
+    { "row": "348", "why": "Two-toast fix on finance pages, not verified live (grep found no COUNTER_SALE_DAY_CLOSED in web app source); not triaged" },
+    { "row": "676", "why": "Counter quantity stepper rule: units/qty, HIGH" },
+    { "row": "322", "why": "Receipt nits bundle, mixed with receipt amounts and tax explanation; not triaged" },
+    { "row": "12, 66, 76, 538, 643, 644", "why": "Status review/building or mixed scope with money/ledger items" },
+    { "row": "T5, 737", "why": "Parent train / split-payment stack, touches payment and Counter lane open work" }
+  ]
+}

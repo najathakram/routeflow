@@ -9,6 +9,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { scrubbedGitEnv } from '../../../../scripts/lib/check-git-hooks.mjs';
 
 const DEFAULT_CAP = 16384;
 const MARKER_TEXT = (cap) => '[truncated at ' + cap + ' bytes -- packager must tighten]';
@@ -103,7 +104,7 @@ export function runSelftest() {
   const state = { failed: false, failures: [] };
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'task-brief-selftest-'));
   try {
-    execFileSync('git', ['init'], { cwd: tmp, encoding: 'utf8' });
+    execFileSync('git', ['init'], { cwd: tmp, encoding: 'utf8', env: scrubbedGitEnv() });
     const planMd = [
       '# Build plan',
       '',
@@ -124,8 +125,8 @@ export function runSelftest() {
     ].join('\n');
     const planPath = path.join(tmp, 'build-plan.md');
     fs.writeFileSync(planPath, planMd);
-    execFileSync('git', ['add', '-A'], { cwd: tmp, encoding: 'utf8' });
-    execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-m', 'init'], { cwd: tmp, encoding: 'utf8' });
+    execFileSync('git', ['add', '-A'], { cwd: tmp, encoding: 'utf8', env: scrubbedGitEnv() });
+    execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-m', 'init'], { cwd: tmp, encoding: 'utf8', env: scrubbedGitEnv() });
 
     try {
       assertEq(sliceTaskSection(planMd, 'T9'), null, 'fenced ### T9 decoy does not match', state);

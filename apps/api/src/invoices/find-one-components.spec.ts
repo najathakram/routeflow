@@ -10,7 +10,16 @@ function serviceReturning(inv: object) {
     ...Array(14).fill(undefined),
   );
   Object.assign(service, {
-    prisma: { forTenant: () => ({ invoice: { findUnique: jest.fn().mockResolvedValue(inv) } }) },
+    prisma: {
+      getTenantId: () => null, // row 308: the zone lookup short-circuits with no tenant
+      forTenant: () => ({
+        invoice: { findUnique: jest.fn().mockResolvedValue(inv) },
+        auditLog: {
+          groupBy: jest.fn().mockResolvedValue([]),
+          findFirst: jest.fn().mockResolvedValue(null), // #2088: no tracked email
+        }, // revisedAt: never revised
+      }),
+    },
     systemConfig: { get: jest.fn().mockResolvedValue(null) },
   });
   return service;

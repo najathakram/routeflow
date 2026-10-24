@@ -1,6 +1,6 @@
 "use client";
 
-import { PREF } from "@routeflow/types";
+import { API_ERROR_CODES, PREF } from "@routeflow/types";
 import * as React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -51,8 +51,11 @@ import {
 } from "@/lib/api/vendor-bills";
 import { useSuppliers as useInventorySuppliers, usePurchaseOrders } from "@/lib/api/inventory";
 import { getPoBillRefusal, type PoBillRefusal } from "@/lib/po-bill-refusal";
+import { ProductCombobox, type ProductOption } from "./_components/ProductCombobox";
 import { poTotal, type PORow } from "./po-ledger-total";
 import { useProducts } from "@/lib/api/products";
+import { displayProductName } from "@/lib/product-display";
+import { sellableFlat, sellableOnly } from "@/lib/product-search-groups";
 import {
   useExpenses,
   useExpenseCategories,
@@ -233,143 +236,6 @@ const emptyLineItem = (): LineItemRow => ({
   unitCost: "",
 });
 
-// ─── Product combobox ─────────────────────────────────────────────────────────
-
-interface ProductOption {
-  id: string;
-  name: string;
-  sku?: string;
-  unit: string;
-  averageCost?: string;
-  barcode?: string;
-}
-
-function ProductCombobox({
-  value,
-  onChange,
-  onCreateNew,
-}: {
-  value: { productId: string; description: string; unit: string; unitCost: string };
-  onChange: (update: Partial<LineItemRow>) => void;
-  onCreateNew: (search: string) => void;
-}) {
-  const [search, setSearch] = React.useState(value.description);
-  const [open, setOpen] = React.useState(false);
-  const barcodeInputRef = React.useRef<HTMLInputElement>(null);
-  const containerRef = React.useRef<HTMLDivElement>(null);
-
-  const { data } = useProducts({ search: search || undefined, limit: 20, isActive: true });
-  const products: ProductOption[] = (data as any)?.data ?? [];
-
-  React.useEffect(() => {
-    function handleClick(e: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
-  }, []);
-
-  const handleSelect = (p: ProductOption) => {
-    onChange({
-      productId: p.id,
-      description: p.name,
-      unit: p.unit,
-      unitCost: p.averageCost ? String(parseFloat(p.averageCost).toFixed(4)) : "",
-    });
-    setSearch(p.name);
-    setOpen(false);
-  };
-
-  const handleBarcodeScanned = async (code: string) => {
-    // 1. Try barcode endpoint
-    try {
-      const res = await apiClient.get(`/products/barcode/${encodeURIComponent(code)}`);
-      if (res.data?.id) {
-        handleSelect(res.data as ProductOption);
-        return;
-      }
-    } catch {
-      /* not found */
-    }
-    // 2. Try exact SKU match from current results
-    const skuMatch = products.find((p) => p.sku === code);
-    if (skuMatch) {
-      handleSelect(skuMatch);
-      return;
-    }
-    // 3. Fall back to first search result
-    if (products.length === 1) {
-      handleSelect(products[0]);
-      return;
-    }
-    // 4. Open dropdown with code pre-filled
-    setSearch(code);
-    setOpen(true);
-  };
-
-  return (
-    <div ref={containerRef} className="relative flex gap-1">
-      <input
-        ref={barcodeInputRef}
-        type="text"
-        placeholder="Search product or scan barcode…"
-        value={search}
-        onChange={(e) => {
-          setSearch(e.target.value);
-          if (!value.productId) onChange({ description: e.target.value });
-          setOpen(true);
-        }}
-        onFocus={() => setOpen(true)}
-        className="h-9 w-full rounded border border-surface-border bg-white px-2.5 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
-      />
-      <BarcodeScannerButton
-        inputRef={barcodeInputRef}
-        onScan={handleBarcodeScanned}
-        title="Scan product barcode"
-      />
-      {open && (
-        <div className="absolute left-0 top-10 z-50 w-full rounded-lg border border-surface-border bg-white shadow-dropdown">
-          {products.length > 0 ? (
-            <ul className="max-h-48 overflow-y-auto py-1">
-              {products.map((p) => (
-                <li key={p.id}>
-                  <button
-                    type="button"
-                    onMouseDown={() => handleSelect(p)}
-                    className="w-full px-3 py-2 text-left text-sm hover:bg-brand-50 flex items-center justify-between gap-2"
-                  >
-                    <span>
-                      <span className="font-medium text-navy">{p.name}</span>
-                      {p.sku && <span className="ml-2 text-xs text-navy/70">{p.sku}</span>}
-                    </span>
-                    <span className="shrink-0 text-xs text-navy/70">{p.unit}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <div className="px-3 py-2 text-xs text-navy/70">No products found</div>
-          )}
-          <div className="border-t border-surface-border px-3 py-2">
-            <button
-              type="button"
-              onMouseDown={() => {
-                setOpen(false);
-                onCreateNew(search);
-              }}
-              className="flex w-full items-center gap-1.5 text-sm font-medium text-brand-500 hover:text-brand-600"
-            >
-              <Plus size={14} /> Create &quot;{search || "new product"}&quot;
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
 // ─── Duplicate bill banner ────────────────────────────────────────────────────
 
 /**
@@ -475,6 +341,8 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
   // an edited form is judged fresh.
   const [duplicate, setDuplicate] = React.useState<DuplicateVendorBillInfo | null>(null);
   const [createProductOpen, setCreateProductOpen] = React.useState(false);
+  // W-758: an open product popup takes the dialog's first Escape (closes the popup, never the bill form)
+  const productPopupEscRef = React.useRef<(() => boolean) | null>(null);
   const [createProductForIndex, setCreateProductForIndex] = React.useState<number>(-1);
   const [createProductSearch, setCreateProductSearch] = React.useState("");
   const [scanInput, setScanInput] = React.useState("");
@@ -501,7 +369,7 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
           const res = await apiClient.get("/products", {
             params: { search: code.trim(), limit: 5, isActive: true },
           });
-          const results: ProductOption[] = res.data?.data ?? [];
+          const results: ProductOption[] = sellableOnly<ProductOption>(res.data?.data ?? []);
           product = results.find((p) => p.sku === code.trim()) ?? results[0] ?? null;
         } catch {
           /* ignore */
@@ -721,6 +589,9 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
       <Modal
         open={isOpen}
         onClose={onClose}
+        onEscapeKeyDown={(e) => {
+          if (productPopupEscRef.current?.()) e.preventDefault();
+        }}
         title="New Inventory Purchase"
         description="Record a supplier bill for inventory received."
         footer={
@@ -876,6 +747,7 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
                       {row.productId && <span className="text-xs text-brand-500">{row.unit}</span>}
                     </div>
                     <ProductCombobox
+                      escapeCloseRef={productPopupEscRef}
                       value={row}
                       onChange={(updates) => updateLineItem(i, updates)}
                       onCreateNew={(search) => {
@@ -1073,8 +945,23 @@ function InventoryPurchasesTab() {
       return;
     try {
       const result = await bulkDelete.mutateAsync(Array.from(selectedBills.keys()));
+      // Word the title from why each bill was skipped: cash payments vs. status (received/paid).
+      const skippedForCash = result.skipped.filter(
+        (b) => b.code === API_ERROR_CODES.BILL_HAS_PAYMENTS,
+      ).length;
+      const skippedForStatus = result.skipped.length - skippedForCash;
+      const skipReasons = [
+        skippedForCash > 0 ? "has payments" : null,
+        skippedForStatus > 0 ? "received/paid" : null,
+      ]
+        .filter(Boolean)
+        .join(", ");
       toast({
-        title: `${result.deleted} bill(s) deleted${result.skipped.length > 0 ? `, ${result.skipped.length} skipped (received/paid)` : ""}`,
+        title: `${result.deleted} bill(s) deleted${result.skipped.length > 0 ? `, ${result.skipped.length} skipped (${skipReasons})` : ""}`,
+        // B288: a bill with cash payments is skipped, not deleted — say how to proceed.
+        description: result.skipped.some((b) => b.code === API_ERROR_CODES.BILL_HAS_PAYMENTS)
+          ? "Some bills have payments. Open each one and move its payments to a supplier credit first."
+          : undefined,
         variant: result.deleted > 0 ? "success" : "error",
       });
       setSelectedBills(new Map());
@@ -1187,8 +1074,8 @@ function InventoryPurchasesTab() {
   return (
     <div className="space-y-5">
       <div className="rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-700">
-        Inventory purchases are recorded as supplier bills. When a bill is <strong>received</strong>,
-        stock is updated and product average costs are recalculated automatically.
+        Inventory purchases are recorded as supplier bills. When a bill is <strong>received</strong>
+        , stock is updated and product average costs are recalculated automatically.
       </div>
 
       {/* Actions row */}
@@ -2120,7 +2007,7 @@ function OtherExpensesTab() {
                         )}
                         {e.vendorBillId && (
                           <Link
-                            href={`/finance/vendor-bills/${e.vendorBillId}`}
+                            href={`/vendor-bills/${e.vendorBillId}`}
                             title="View in Supplier Bills"
                             className="rounded p-1 text-teal-600 hover:bg-teal-50 transition-colors"
                           >
@@ -2337,7 +2224,7 @@ function ExpenseDetailModal({
 
         {expense.vendorBillId && (
           <Link
-            href={`/finance/vendor-bills/${expense.vendorBillId}`}
+            href={`/vendor-bills/${expense.vendorBillId}`}
             className="inline-flex items-center gap-2 text-sm text-brand-600 hover:underline"
           >
             <ExternalLink className="h-4 w-4" /> View linked supplier bill

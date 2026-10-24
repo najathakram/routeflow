@@ -4,9 +4,7 @@ import * as React from "react";
 import { useSearchParams } from "next/navigation";
 import { CheckCircle2, XCircle, Loader2 } from "lucide-react";
 import { AuthShell } from "@/components/auth";
-import { setTenantCookie } from "@/lib/tenant-cookie";
-import { OP_KEYS } from "@/lib/auth-keys";
-import { setOpPresenceCookie } from "@/lib/presence-cookies";
+import { adoptTokenPair } from "@/lib/auth";
 
 // ─── States ───────────────────────────────────────────────────────────────────
 
@@ -46,6 +44,11 @@ function VerifyEmailInner() {
 
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
+          if ((body as { code?: string }).code === "ALREADY_VERIFIED") {
+            // Already verified: nothing to do here but sign in the normal way.
+            window.location.replace("/login");
+            return;
+          }
           const msg =
             (body as { message?: string }).message ??
             "Verification failed. The link may have expired.";
@@ -56,19 +59,9 @@ function VerifyEmailInner() {
 
         const data = await res.json();
 
-        // Store tokens exactly like the normal login flow (lib/auth.ts login):
-        // the namespaced operator keys — everything (api-client, getStoredUser)
-        // reads only these; the legacy "accessToken"/"refreshToken" keys are dead.
-        localStorage.setItem(OP_KEYS.accessToken, data.accessToken);
-        localStorage.setItem(OP_KEYS.refreshToken, data.refreshToken);
-        // Presence cookie for the middleware guards — without it a browser that
-        // also holds a buyer session gets bounced off /dashboard to /buyer/portal.
-        setOpPresenceCookie();
-
-        // Set tenant cookie so the API interceptor sends the right tenant header
-        if (data.user?.tenantSlug) {
-          setTenantCookie(data.user.tenantSlug);
-        }
+        // The SAME post-login step as password login and the in-app handoff (#2653):
+        // namespaced operator keys, presence cookie, impersonation reset, tenant cookie.
+        adoptTokenPair(data);
 
         setState("success");
 

@@ -268,8 +268,8 @@ CRITICAL — ship the hotfix batch immediately. This is active production pain f
   the trigger and it fails SILENTLY (wrong money, no error/log/test); Railway injects no replica-count
   variable, so the guard is a comment in `apps/api/railway.toml`'s `[deploy]` block. Three designs in
   `withOrderMergeLock`'s doc comment — Redis lock (cheapest, Redis already a dependency), optimistic CAS
-  + 409 retry, or the full fold-inside-the-transaction (which must MOVE, not delete, the T-B199
-  "ONE INSTANCE" spec block).
+  - 409 retry, or the full fold-inside-the-transaction (which must MOVE, not delete, the T-B199
+    "ONE INSTANCE" spec block).
 - **recordIdempotencyKey single-slot carry (R6).** When an auto-merge sweep folds several keyed
   losers into one winner, only the eldest loser's key can occupy the winner's slot; later losers'
   keys are dropped (their clients' replays fall back to content comparison against the merged

@@ -1,3 +1,5 @@
+import { regulatedGateOpenProvider } from "./testing/regulated-gate-open-provider";
+import { oversellReaderOffProvider } from "../orders/testing/policy-reader-provider";
 import { Test } from "@nestjs/testing";
 import { OrderTemplatesService } from "./order-templates.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -64,7 +66,9 @@ describe("OrderTemplatesService — stock decrement + regulated levy on generate
 
     const mod = await Test.createTestingModule({
       providers: [
+        oversellReaderOffProvider,
         OrderTemplatesService,
+        regulatedGateOpenProvider,
         { provide: PrismaService, useValue: prisma },
         { provide: TenantContextService, useValue: { run: jest.fn((_id, fn) => fn()) } },
         // settings.taxRate is stored as a PERCENT string — "10" is 10%.
@@ -123,7 +127,7 @@ describe("OrderTemplatesService — stock decrement + regulated levy on generate
       expect(mockDecrementStockForSale).toHaveBeenCalledTimes(1);
       const [deps, , stockLines, isStaffRole] = mockDecrementStockForSale.mock.calls[0];
       expect(deps).toEqual(expect.objectContaining({ tenantId: "test-tenant" }));
-      expect(stockLines).toEqual([{ productId: "p1", qty: 3 }]);
+      expect(stockLines).toEqual([{ id: undefined, position: 0, productId: "p1", qty: 3 }]);
       // An unattended cron run must never abort on insufficient stock — the staff/operator
       // posture (warn + oversell), never the customer/driver hard-block.
       expect(isStaffRole).toBe(true);
@@ -153,8 +157,8 @@ describe("OrderTemplatesService — stock decrement + regulated levy on generate
       expect(mockDecrementStockForSale).toHaveBeenCalledTimes(1);
       const [, , stockLines] = mockDecrementStockForSale.mock.calls[0];
       expect(stockLines).toEqual([
-        { productId: "p1", qty: 2 },
-        { productId: "p2", qty: 4 },
+        { id: undefined, position: 0, productId: "p1", qty: 2 },
+        { id: undefined, position: 1, productId: "p2", qty: 4 },
       ]);
     });
 
@@ -192,8 +196,8 @@ describe("OrderTemplatesService — stock decrement + regulated levy on generate
         { orderId: "o1", notes: "TEMPLATE:t1", performedById: null },
       );
 
-      // $executeRaw = the FOR UPDATE lock; $queryRaw = the aggregated UPDATE … RETURNING.
-      expect(executeRaw).toHaveBeenCalledTimes(1);
+      // $executeRaw = SET LOCAL lock_timeout, then the FOR UPDATE lock; $queryRaw = the aggregated UPDATE … RETURNING.
+      expect(executeRaw).toHaveBeenCalledTimes(2);
       expect(queryRaw).toHaveBeenCalledTimes(1);
       const updateValues = queryRaw.mock.calls[0][1]; // first interpolated value: the VALUES row
       // Prisma.sql's join of a single-entry array yields ONE Sql fragment whose own
@@ -218,7 +222,9 @@ describe("OrderTemplatesService — stock decrement + regulated levy on generate
       const authGuard = { checkAuthorized: jest.fn() };
       const mod = await Test.createTestingModule({
         providers: [
+          oversellReaderOffProvider,
           OrderTemplatesService,
+          regulatedGateOpenProvider,
           { provide: PrismaService, useValue: prisma },
           { provide: TenantContextService, useValue: { run: jest.fn((_id, fn) => fn()) } },
           { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue("10") } },
@@ -259,7 +265,7 @@ describe("OrderTemplatesService — stock decrement + regulated levy on generate
       await gatedService.generateOrder("t1");
 
       const [, , stockLines] = mockDecrementStockForSale.mock.calls[0];
-      expect(stockLines).toEqual([{ productId: "p-std", qty: 3 }]);
+      expect(stockLines).toEqual([{ id: undefined, position: 0, productId: "p-std", qty: 3 }]);
     });
   });
 
@@ -387,6 +393,71 @@ describe("OrderTemplatesService — stock decrement + regulated levy on generate
       });
       expect(prisma.order.create).not.toHaveBeenCalled();
       expect(mockDecrementStockForSale).not.toHaveBeenCalled();
+    });
+  });
+
+  // SA-767 r-note 3 (b): the generation tx is inside retryStockTx. A lock wait that gave up (55P03) on
+  // attempt 1 re-runs the WHOLE tx (order write + decrement): Postgres rolled the first order back, so
+  // the committed attempts are the ones that did not throw.
+  describe("SA-767 r-note 3 (b) — the generation tx is inside retryStockTx", () => {
+    const lockTimeout = () =>
+      Object.assign(new Error("canceling statement due to lock timeout"), { code: "55P03" });
+    const arrange = () => {
+      prisma.product.findMany.mockResolvedValue([
+        { id: "p1", pricePerUnit: 10, unitsPerBox: null, trackedCategoryId: null },
+      ]);
+      setTemplate([{ productId: "p1", qty: 3, notes: null }]);
+    };
+    /** Writes of a tx attempt that threw are rolled back: count only the attempts that committed. */
+    const committedOrders = () => {
+      const real = prisma.tenantTransaction.getMockImplementation()!;
+      let rolledBack = 0;
+      prisma.tenantTransaction.mockImplementation(async (fn: any, opts?: any) => {
+        const before = prisma.order.create.mock.calls.length;
+        try {
+          return await real(fn, opts);
+        } catch (e) {
+          rolledBack += prisma.order.create.mock.calls.length - before;
+          throw e;
+        }
+      });
+      return () => prisma.order.create.mock.calls.length - rolledBack;
+    };
+
+    it("a 55P03 from the decrement re-runs the whole tx; exactly one order commits", async () => {
+      arrange();
+      mockDecrementStockForSale.mockRejectedValueOnce(lockTimeout());
+      const committed = committedOrders();
+
+      await expect(service.generateOrder("t1")).resolves.toMatchObject({ id: "o1" });
+
+      expect(prisma.tenantTransaction).toHaveBeenCalledTimes(2);
+      expect(mockDecrementStockForSale).toHaveBeenCalledTimes(2);
+      expect(committed()).toBe(1);
+    });
+
+    it("a 55P03 on every attempt is the coded 503 LOCK_UNAVAILABLE; no order commits", async () => {
+      arrange();
+      mockDecrementStockForSale.mockRejectedValue(lockTimeout());
+      const committed = committedOrders();
+
+      await expect(service.generateOrder("t1")).rejects.toMatchObject({
+        status: 503,
+        response: { code: "LOCK_UNAVAILABLE" },
+      });
+
+      expect(prisma.tenantTransaction).toHaveBeenCalledTimes(3);
+      expect(committed()).toBe(0);
+      mockDecrementStockForSale.mockResolvedValue(undefined);
+    });
+
+    it("an unrelated error propagates unchanged after ONE attempt", async () => {
+      arrange();
+      const boom = new Error("boom");
+      mockDecrementStockForSale.mockRejectedValueOnce(boom);
+
+      await expect(service.generateOrder("t1")).rejects.toBe(boom);
+      expect(prisma.tenantTransaction).toHaveBeenCalledTimes(1);
     });
   });
 });

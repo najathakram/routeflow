@@ -1,5 +1,9 @@
 import { useEffect, useState } from "react";
 import {
+  canDeleteCustomer,
+  WALK_IN_PROTECTED_COPY,
+} from "../../../lib/customer-walk-in-protection";
+import {
   ActivityIndicator,
   Linking,
   Modal,
@@ -26,6 +30,7 @@ import { SALES_AGENTS_ADDON, useHasAddon } from "../../../lib/api/tobacco";
 import { useTierLabels } from "../../../lib/api/tier-labels";
 import { MoneyTextInput } from "../../../components/MoneyTextInput";
 import { openInMaps } from "../../../components/openInMaps";
+import { displayEmail } from "../../../lib/internal-email";
 import {
   SELECTABLE_METHOD_OPTIONS,
   type SelectablePaymentMethod,
@@ -34,6 +39,13 @@ import { roundMoney } from "@routeflow/pricing";
 import { tierLabel } from "../../../lib/tier-label";
 import { showToast } from "../../../lib/toast";
 import { confirm } from "../../../lib/confirm";
+import {
+  paymentKeyRefusalCopy,
+  paymentKeyScope,
+  usePaymentSubmitKey,
+} from "../../../lib/payment-submit-key";
+import { usePaymentStatusCheck } from "../../../lib/use-payment-status-check";
+import { PaymentStatusNotice } from "../../../components/PaymentStatusNotice";
 import { useRecordReturn } from "../../../hooks/useRecordReturn";
 
 function fmt(n: number | string | null | undefined): string {
@@ -117,6 +129,10 @@ export default function CustomerDetailScreen() {
   const tier = customer.pricingTier ?? 1;
   const creditLimit = customer.creditLimit != null ? Number(customer.creditLimit) : null;
 
+  // Import sentinels aren't real inboxes — treat them as "no email on file"
+  // (no Email quick-action, no Account row), mirroring web.
+  const email = displayEmail(customer.email);
+
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
       <NavBar
@@ -167,10 +183,10 @@ export default function CustomerDetailScreen() {
                   <Text style={styles.actionText}>Text</Text>
                 </Pressable>
               ) : null}
-              {customer.email ? (
+              {email ? (
                 <Pressable
                   style={styles.actionBtn}
-                  onPress={() => Linking.openURL(`mailto:${customer.email}`)}
+                  onPress={() => Linking.openURL(`mailto:${email}`)}
                 >
                   <Ionicons name="mail-outline" size={16} color={ios.brand} />
                   <Text style={styles.actionText}>Email</Text>
@@ -311,8 +327,8 @@ export default function CustomerDetailScreen() {
           {/* Account details */}
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Account</Text>
-            {customer.email ? (
-              <Row label="Email" value={<Text style={styles.rowValue}>{customer.email}</Text>} />
+            {email ? (
+              <Row label="Email" value={<Text style={styles.rowValue}>{email}</Text>} />
             ) : null}
             {customer.phone ? (
               <Row label="Phone" value={<Text style={styles.rowValue}>{customer.phone}</Text>} />
@@ -454,10 +470,18 @@ export default function CustomerDetailScreen() {
             </Pressable>
           </View>
 
-          <Pressable style={styles.deleteBtn} onPress={handleDelete} disabled={deleteMut.isPending}>
-            <Ionicons name="trash-outline" size={18} color={ios.system.red} />
-            <Text style={styles.deleteBtnText}>Delete customer</Text>
-          </Pressable>
+          {canDeleteCustomer(customer) ? (
+            <Pressable
+              style={styles.deleteBtn}
+              onPress={handleDelete}
+              disabled={deleteMut.isPending}
+            >
+              <Ionicons name="trash-outline" size={18} color={ios.system.red} />
+              <Text style={styles.deleteBtnText}>Delete customer</Text>
+            </Pressable>
+          ) : (
+            <Text style={styles.actionListText}>{WALK_IN_PROTECTED_COPY}</Text>
+          )}
         </View>
         <View style={{ height: 24 }} />
       </ScrollView>
@@ -472,6 +496,9 @@ export default function CustomerDetailScreen() {
     </SafeAreaView>
   );
 }
+
+/** An advance carries no receipt photo: there is nothing to attach on a found status check. */
+const noAdvancePhoto = async () => undefined;
 
 /**
  * Take a deposit into the customer's advance wallet (Wave 3). The server has
@@ -489,12 +516,21 @@ function RecordAdvanceModal({
   onClose: () => void;
 }) {
   const mut = useCreateAdvancePayment();
+  // SA-824: one Idempotency-Key per open, kept across a Cancel -> reopen while the outcome is unknown
+  const keyScope = paymentKeyScope.advance(customerId);
+  const paymentKey = usePaymentSubmitKey(keyScope);
+  // SA-824: an unknown outcome offers "Check payment status"; found closes like a 2xx.
+  const statusCheck = usePaymentStatusCheck(paymentKey, keyScope, noAdvancePhoto, (message) => {
+    showToast(message);
+    onClose();
+  });
   const [method, setMethod] = useState<SelectablePaymentMethod>("CASH");
   const [amount, setAmount] = useState<number | null>(null);
   const [reference, setReference] = useState("");
   const [notes, setNotes] = useState("");
 
   const submit = () => {
+    if (paymentKey.hasUnknown()) return; // SA-824: the status check comes before any new attempt
     const amt = amount != null ? roundMoney(amount) : 0;
     if (amt <= 0) {
       showToast("Enter a positive amount.");
@@ -507,13 +543,17 @@ function RecordAdvanceModal({
         method,
         ...(reference.trim() ? { reference: reference.trim() } : {}),
         ...(notes.trim() ? { notes: notes.trim() } : {}),
+        submitKey: paymentKey,
       },
       {
         onSuccess: () => {
           showToast("Advance recorded");
           onClose();
         },
-        onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+        onError: (e: any) =>
+          showToast(
+            paymentKeyRefusalCopy(e) ?? e?.response?.data?.message ?? e?.message ?? "Try again.",
+          ),
       },
     );
   };
@@ -526,6 +566,7 @@ function RecordAdvanceModal({
           <Text style={styles.advBody}>
             A pre-payment from {customerName} that can be applied to future invoices.
           </Text>
+          <PaymentStatusNotice status={statusCheck} />
           <View style={styles.advChips}>
             {SELECTABLE_METHOD_OPTIONS.map((m) => (
               <Pressable
@@ -573,8 +614,11 @@ function RecordAdvanceModal({
               <Text style={styles.advBtnGhostText}>Cancel</Text>
             </Pressable>
             <Pressable
-              style={[styles.advBtnFill, mut.isPending && { opacity: 0.6 }]}
-              disabled={mut.isPending}
+              style={[
+                styles.advBtnFill,
+                (mut.isPending || statusCheck.unknown) && { opacity: 0.6 },
+              ]}
+              disabled={mut.isPending || statusCheck.unknown}
               onPress={submit}
             >
               <Text style={styles.advBtnFillText}>{mut.isPending ? "Saving…" : "Record"}</Text>

@@ -1,5 +1,6 @@
 import React from "react";
 import { Document, Page, Text, View, StyleSheet } from "@react-pdf/renderer";
+import { fmtPdfDate } from "../common/pdf-date";
 
 // Prisma Decimal is compatible with this interface (has toNumber / valueOf / toString)
 type DecimalLike = { toNumber(): number } | number | string;
@@ -44,14 +45,8 @@ const toNum = (val: DecimalLike): number => {
 
 const fmt = (val: DecimalLike) => `$${toNum(val).toFixed(2)}`;
 
-const fmtDate = (val: Date | string | null | undefined): string => {
-  if (!val) return "—";
-  return new Date(val).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
-};
+// B954: the shared UTC-anchored PDF date (calendar dates are UTC-midnight instants).
+const fmtDate = fmtPdfDate;
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 

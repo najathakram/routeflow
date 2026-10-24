@@ -1,6 +1,6 @@
 /**
  * Feature grants v2 (PR-2) — the data-driven Feature Console inside the platform-admin tenant
- * detail page's "Addons & Features" tab (/admin/tenants/[id]). Every endpoint is MOCKED (same
+ * detail page's "Setup" tab (/admin/tenants/[id]). Every endpoint is MOCKED (same
  * pattern as apps/web/e2e/48-feature-overrides.spec.ts's mockTenantShell/fulfillJson) — brief
  * A's real endpoints exist now (schema + contract landed), but this suite still mocks them so it
  * runs standalone against `npm run dev -w apps/web` without a live DB; it becomes a real-backend
@@ -9,6 +9,7 @@
  * decodes the JWT payload locally, no server round-trip.
  */
 import { test, expect, type Page, type Route } from "@playwright/test";
+import { mockOverviewReads, mockUnmockedBackoffice } from "./helpers/bo-api-mocks";
 
 const TENANT_ID = "e2e-fc-tenant-1";
 
@@ -261,6 +262,10 @@ function fulfillJson(route: Route, body: unknown, status = 200) {
 
 /** Installs mocks for every endpoint the tenant page's Overview + Addons tabs touch. */
 async function mockTenantShell(page: Page, opts: { registryStatus?: number } = {}) {
+  // Registered first, so every route below wins: nothing the page reads can reach the real API (a 401 there wipes
+  // the fake token and redirects to /admin-login).
+  await mockUnmockedBackoffice(page);
+  await mockOverviewReads(page, TENANT_ID);
   await page.route(new RegExp(`/platform-admin/tenants/${TENANT_ID}$`), (route) =>
     fulfillJson(route, tenantFixture()),
   );
@@ -344,6 +349,44 @@ async function mockTenantShell(page: Page, opts: { registryStatus?: number } = {
         },
       }),
   );
+  // The Setup tab lists the presets from this (and the capabilities card reads the routes below) (an empty one keeps the console specs unchanged).
+  await page.route(/\/platform-admin\/business-profiles(\?.*)?$/, (route) =>
+    fulfillJson(route, { profiles: [] }),
+  );
+  // BO-05: the Setup tab's "What this business does" card reads these. A tenant nobody set up keeps the console
+  // specs unchanged; a write is answered with a 500 so a real one can never succeed from here.
+  await page.route(
+    new RegExp(`/platform-admin/tenants/${TENANT_ID}/business-capabilities$`),
+    (route) =>
+      route.request().method() === "POST"
+        ? fulfillJson(route, { message: "blocked by the spec" }, 500)
+        : fulfillJson(route, {
+            configured: false,
+            delivery: false,
+            doorPayments: false,
+            shipping: false,
+            counter: false,
+            opensAs: "order",
+            opensAsChoosable: false,
+            counterCapability: "off",
+            fleetHeld: false,
+            matchedPreset: null,
+          }),
+  );
+  await page.route(
+    new RegExp(`/platform-admin/tenants/${TENANT_ID}/business-capabilities/preview$`),
+    (route) =>
+      fulfillJson(route, {
+        plan: { overrides: [], comps: [], modes: [], billing: [] },
+        summary: [],
+        changes: [],
+        planFingerprint: "f".repeat(64),
+        before: [],
+        after: [],
+        changed: [],
+        blocked: null,
+      }),
+  );
 }
 
 async function gotoFeatureConsole(page: Page) {
@@ -351,7 +394,7 @@ async function gotoFeatureConsole(page: Page) {
     window.localStorage.setItem("superAdminToken", token);
   }, fakeSuperAdminToken());
   await page.goto(`/admin/tenants/${TENANT_ID}`);
-  await page.getByRole("button", { name: "Addons & Features" }).click();
+  await page.getByRole("button", { name: "Setup", exact: true }).click();
   // NOT getByText("compliance") — the legacy AVAILABLE_ADDONS card "Regulated compliance pack"
   // (name + description) also contains that substring, a strict-mode collision. The console's
   // own area heading is an exact-text <h3>, unique from that card's copy.
@@ -381,26 +424,25 @@ for (const vp of VIEWPORTS) {
         window.localStorage.setItem("superAdminToken", token);
       }, fakeSuperAdminToken());
       await page.goto(`/admin/tenants/${TENANT_ID}`);
-      await page.getByRole("button", { name: "Addons & Features" }).click();
+      await page.getByRole("button", { name: "Setup", exact: true }).click();
       await expect(page.getByText("No features are registered yet.")).toBeVisible();
     });
 
-    test(`${vp.label}px — populated: all six badges render`, async ({ page }) => {
+    test(`${vp.label}px — populated: each row reads one state (BO-12)`, async ({ page }) => {
       await mockTenantShell(page);
       await gotoFeatureConsole(page);
 
-      await expect(page.locator('[data-feature-key="tobacco_dealer"]')).toContainText("Removed");
-      await expect(page.locator('[data-feature-key="msrp"]')).toContainText("Grandfathered");
-      await expect(page.locator('[data-feature-key="recurring_routes"]')).toContainText(
-        "Purchased",
-      );
-      await expect(page.locator('[data-feature-key="route_optimization"]')).toContainText(
-        "Inherited",
-      );
-      await expect(page.locator('[data-feature-key="boxes_pieces_mode"]')).toContainText("Off");
+      const readout = (key: string) =>
+        page.locator(`[data-feature-key="${key}"]`).getByTestId("readout");
+      await expect(readout("tobacco_dealer")).toContainText("Off, removed by override");
+      await expect(readout("msrp")).toContainText("On, kept from an earlier plan");
+      await expect(readout("recurring_routes")).toContainText("On, paid add-on");
+      // a plain inherited row has no source chip: exactly one readout, which is its mode or On/Off
+      await expect(readout("route_optimization")).toHaveCount(1);
+      await expect(readout("boxes_pieces_mode")).toContainText("Off");
 
       await page.getByLabel("Show internal").check();
-      await expect(page.locator('[data-feature-key="developer_mode"]')).toContainText("Added");
+      await expect(readout("developer_mode")).toContainText("On, added by override");
     });
 
     test(`${vp.label}px — blocked mode option is disabled with the missing key named`, async ({
@@ -424,12 +466,16 @@ for (const vp of VIEWPORTS) {
       await gotoFeatureConsole(page);
 
       await page.getByLabel("Tier").selectOption("STARTER");
-      await page.getByRole("button", { name: "Preview tier change" }).click();
-      await expect(page.getByRole("heading", { name: "Preview tier change" })).toBeVisible();
+      await page.getByRole("button", { name: "Preview plan change" }).click();
+      await expect(page.getByRole("heading", { name: "Preview plan change" })).toBeVisible();
       await expect(page.getByTestId("preview-diff")).toContainText("Recurring routes");
-      // Confirm calls the page's existing plan-change action — no separate write endpoint here.
+      // Confirm calls the page's existing plan-change action (PATCH /plan). Unmocked it 404s, the
+      // confirm rejects and the drawer correctly stays open with its error, so answer it here.
+      await page.route(new RegExp(`/platform-admin/tenants/${TENANT_ID}/plan$`), (route) =>
+        fulfillJson(route, { ok: true }),
+      );
       await page.getByRole("button", { name: "Confirm" }).click();
-      await expect(page.getByRole("heading", { name: "Preview tier change" })).not.toBeVisible();
+      await expect(page.getByRole("heading", { name: "Preview plan change" })).not.toBeVisible();
     });
 
     test(`${vp.label}px — registry fetch failure shows the error alert, never a blank tab`, async ({
@@ -440,7 +486,7 @@ for (const vp of VIEWPORTS) {
         window.localStorage.setItem("superAdminToken", token);
       }, fakeSuperAdminToken());
       await page.goto(`/admin/tenants/${TENANT_ID}`);
-      await page.getByRole("button", { name: "Addons & Features" }).click();
+      await page.getByRole("button", { name: "Setup", exact: true }).click();
       await expect(page.getByText("Could not load the feature console. Try again.")).toBeVisible();
     });
   });

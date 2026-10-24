@@ -12,6 +12,7 @@ import {
   FEATURE_OVERRIDE_AUDIT_ENTITY_TYPE,
   FEATURE_OVERRIDE_EXPIRED_REVIEW_ACTION,
 } from "./feature-override-audit.constants";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 export type FeatureOverrideEffect = "GRANT" | "DENY";
 export type { FeatureOverrideKind };
@@ -115,12 +116,21 @@ export class FeatureOverrideService {
    * The active override effect for one key, or null when none applies. Fails open to null on
    * a DB error — every consulting guard/read path then falls back to its plan-only decision,
    * never a 500 into a guarded route.
+   *
+   * `{ strict: true }` is for the one caller that must not guess: a money path where "no
+   * override" and "the lookup failed" bill differently (units_prices_v2). A DB error then
+   * propagates instead of reading as null. Every other caller keeps the fail-open default.
    */
-  async get(tenantId: string, featureKey: string): Promise<FeatureOverrideEffect | null> {
+  async get(
+    tenantId: string,
+    featureKey: string,
+    opts?: { strict?: boolean },
+  ): Promise<FeatureOverrideEffect | null> {
     try {
       const rows = await this.activeRows(tenantId);
       return this.effectAt(rows, featureKey, Date.now());
     } catch (err) {
+      if (opts?.strict) throw err;
       this.logger.error(
         `Override lookup failed for tenant ${tenantId} key ${featureKey}`,
         err as Error,
@@ -183,7 +193,7 @@ export class FeatureOverrideService {
     if (!isRegisteredFeatureKey(params.featureKey)) {
       throw new BadRequestException({
         statusCode: 400,
-        code: "FEATURE_KEY_UNKNOWN",
+        code: API_ERROR_CODES.FEATURE_KEY_UNKNOWN,
         message: `"${params.featureKey}" is not a registered feature key.`,
       });
     }
@@ -192,7 +202,7 @@ export class FeatureOverrideService {
     if (params.expiresAt && params.expiresAt.getTime() <= Date.now()) {
       throw new BadRequestException({
         statusCode: 400,
-        code: "EXPIRES_AT_MUST_BE_FUTURE",
+        code: API_ERROR_CODES.EXPIRES_AT_MUST_BE_FUTURE,
         message: "expiresAt must be in the future.",
       });
     }

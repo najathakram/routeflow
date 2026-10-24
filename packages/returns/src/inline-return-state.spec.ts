@@ -12,6 +12,9 @@ import {
   DEFAULT_EXCESS_OPTION,
   dropExcessAndRequote,
   extractRefusalMessage,
+  alreadyReturnedProductIds,
+  missingAlreadyReturnedReasons,
+  INLINE_RETURN_OVER_LINE_HEADROOM_MESSAGE,
   groupQuoteChunks,
   hasAnyQtyEntered,
   isBoxedProduct,
@@ -61,6 +64,12 @@ function quoteResponse(chunks: InlineReturnQuoteChunk[]): InlineReturnQuoteRespo
     categoryTax: chunks.reduce((s, c) => s + c.categoryTax, 0),
     total: chunks.reduce((s, c) => s + c.subtotal + c.taxAmount + c.categoryTax, 0),
     productBreakdown: {},
+    // SA-727: the quote now always carries the refund eligibility fields.
+    canRefund: false,
+    paidInFull: false,
+    paidMethods: [],
+    paidWithStoreCredit: false,
+    customerIsWalkIn: false,
   };
 }
 
@@ -113,6 +122,26 @@ describe("buildQuoteRequest — never a bare qty", () => {
       line({ productId: "prod-2" }),
     ]);
     expect(req.items.map((i) => i.productId)).toEqual(["prod-1"]);
+  });
+
+  it("SA-740: sends sourceOrderId only when supplied (the sale this return is from), on the quote and the capture", () => {
+    expect(buildQuoteRequest("cust-1", [line({ pieces: "1" })])).not.toHaveProperty(
+      "sourceOrderId",
+    );
+    expect(
+      buildQuoteRequest("cust-1", [line({ pieces: "1" })], undefined, "order-9").sourceOrderId,
+    ).toBe("order-9");
+    const base = {
+      customerId: "cust-1",
+      orderId: "order-1",
+      lines: [line({ pieces: "1" })],
+      returnKey: "k",
+      reason: "DAMAGED" as const,
+    };
+    expect(buildCaptureRequest(base)).not.toHaveProperty("sourceOrderId");
+    expect(buildCaptureRequest({ ...base, sourceOrderId: "order-9" }).sourceOrderId).toBe(
+      "order-9",
+    );
   });
 
   it("includes routeRunStopId only when supplied (driver captures)", () => {
@@ -791,5 +820,100 @@ describe("#2695 (SA-557): the staff credit price override on the wire", () => {
         /^Widget: /,
       );
     });
+  });
+});
+
+describe("extractRefusalMessage: the line-headroom 409 (B948)", () => {
+  it("shows FIXED copy for RETURN_REFUND_OVER_LINE_HEADROOM and never the raw server message", () => {
+    const err = {
+      response: {
+        status: 409,
+        data: { code: "RETURN_REFUND_OVER_LINE_HEADROOM", message: "raw server text cn=CN-1" },
+      },
+    };
+    const out = extractRefusalMessage(err);
+    expect(out).toBe(INLINE_RETURN_OVER_LINE_HEADROOM_MESSAGE);
+    expect(out).not.toMatch(/raw server text/);
+  });
+  it("any other refusal keeps its existing message", () => {
+    expect(
+      extractRefusalMessage({
+        response: { status: 400, data: { code: "OTHER", message: "named" } },
+      }),
+    ).toBe("named");
+  });
+});
+
+describe("B961: already returned or credited", () => {
+  const chunk = (productId: string, alreadyReturned?: boolean) =>
+    ({
+      sourceOrderId: null,
+      sourceInvoiceItemId: null,
+      sourceOrderItemId: null,
+      productId,
+      pieces: 2,
+      subtotal: 10,
+      taxAmount: 0,
+      categoryTax: 0,
+      priceSource: "BASE",
+      unitPrice: 5,
+      ...(alreadyReturned ? { alreadyReturned: true } : {}),
+    }) as any;
+  const quote = { chunks: [chunk("p1", true), chunk("p2")] } as any;
+
+  it("alreadyReturnedProductIds lists only the flagged chunks' products", () => {
+    expect([...alreadyReturnedProductIds(quote)]).toEqual(["p1"]);
+  });
+  it("missingAlreadyReturnedReasons names the flagged products without a (non-blank) reason", () => {
+    expect(missingAlreadyReturnedReasons([{ productId: "p1" }], quote)).toEqual(["p1"]);
+    expect(
+      missingAlreadyReturnedReasons([{ productId: "p1", alreadyReturnedReason: "   " }], quote),
+    ).toEqual(["p1"]);
+    expect(
+      missingAlreadyReturnedReasons(
+        [{ productId: "p1", alreadyReturnedReason: "slip lost" }],
+        quote,
+      ),
+    ).toEqual([]);
+  });
+  it("buildCaptureRequest sends the trimmed reason on the line, and the QUOTE request never carries it", () => {
+    const lines = [
+      {
+        productId: "p1",
+        productName: "P1",
+        boxes: "0",
+        pieces: "2",
+        reason: "",
+        note: "",
+        alreadyReturnedReason: "  slip lost  ",
+      },
+    ] as any;
+    const cap = buildCaptureRequest({
+      customerId: "c",
+      orderId: "o",
+      lines,
+      returnKey: "k",
+      reason: "DAMAGED",
+    } as any);
+    expect(cap.items[0]).toMatchObject({ alreadyReturnedReason: "slip lost" });
+    expect(JSON.stringify(buildQuoteRequest("c", lines))).not.toMatch(/alreadyReturnedReason/);
+  });
+});
+
+describe("extractRefusalMessage: READ_ONLY", () => {
+  const readOnly403 = {
+    response: { status: 403, data: { code: "READ_ONLY", message: "RAW GUARD TEXT" } },
+  };
+
+  it("a 403 READ_ONLY is the read-only line, never the server's guard text (web + mobile share this)", () => {
+    expect(extractRefusalMessage(readOnly403)).toBe(
+      "This workspace is currently in read-only mode. You can view records, but changes and new transactions are temporarily unavailable.",
+    );
+  });
+
+  it("a code-less 403 is still the returns-not-enabled copy", () => {
+    expect(extractRefusalMessage({ response: { status: 403, data: {} } })).toBe(
+      RETURNS_NOT_ENABLED_MESSAGE,
+    );
   });
 });

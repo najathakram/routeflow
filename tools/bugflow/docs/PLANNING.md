@@ -22,7 +22,7 @@ half and the connected-component batching are new, given directly in the brief. 
 - The standing four-agent cap (the same `AGENT_CAP = 4` `bugs.mjs` uses, citing the house rule
   that a wave proposing more parallel batches than the fleet can run "is not a plan").
 
-**Design note on hub files:** `bugs.mjs` computes its hub set *dynamically* — any file touched by
+**Design note on hub files:** `bugs.mjs` computes its hub set _dynamically_ — any file touched by
 `hubThreshold` (default 10) or more open bugs is treated as shared surface, not a conflict,
 because a god-file gets touched constantly and a naive shares-a-file rule found "no batch was EVER
 parallel-safe." bugflow's `hubFiles` is a **static, config-provided list** instead — the brief's
@@ -41,7 +41,7 @@ attaches it to that batch — the batch holder's next iteration picks it up (see
 holder's assignee + `status:claimed` rather than sitting at `ready` under a claimed parent). This is a same-area,
 any-file-overlap rule — it does **not** exclude hub files the way the hard-conflict rule below
 does, because attaching to a batch already touching a file is a much cheaper mistake than
-scheduling two *separate* batches to touch it in parallel: at worst the batch holder finds one
+scheduling two _separate_ batches to touch it in parallel: at worst the batch holder finds one
 extra bug already staged in their own working set.
 
 Otherwise, the bug carries forward to Step 2 unattached.
@@ -103,15 +103,15 @@ schedule (a housekeeping Routine) rather than only by hand.
 Config's `hubFiles`: `orders.service.ts`, `invoices.service.ts`, `routes.service.ts`,
 `schema.prisma`. Seven freshly-triaged, unattached `ready` bugs:
 
-| Bug | Severity | Area | Files |
-| --- | --- | --- | --- |
-| #101 | critical | orders | `orders.service.ts`(hub), `order-templates.service.ts` |
-| #102 | high | orders | `order-templates.service.ts`, `order-templates.controller.ts` |
-| #103 | medium | orders | `order-templates.controller.ts`, `order-templates.dto.ts` |
-| #104 | high | finance | `invoices.service.ts`(hub), `credit-notes.service.ts` |
-| #105 | medium | finance | `credit-notes.service.ts`, `credit-notes.controller.ts` |
-| #106 | critical | orders | `order-templates.service.ts`, `routes.service.ts`(hub), `route-optimization.service.ts` |
-| #107 | low | orders | `route-optimization.service.ts`, `route-optimization.controller.ts` |
+| Bug  | Severity | Area    | Files                                                                                   |
+| ---- | -------- | ------- | --------------------------------------------------------------------------------------- |
+| #101 | critical | orders  | `orders.service.ts`(hub), `order-templates.service.ts`                                  |
+| #102 | high     | orders  | `order-templates.service.ts`, `order-templates.controller.ts`                           |
+| #103 | medium   | orders  | `order-templates.controller.ts`, `order-templates.dto.ts`                               |
+| #104 | high     | finance | `invoices.service.ts`(hub), `credit-notes.service.ts`                                   |
+| #105 | medium   | finance | `credit-notes.service.ts`, `credit-notes.controller.ts`                                 |
+| #106 | critical | orders  | `order-templates.service.ts`, `routes.service.ts`(hub), `route-optimization.service.ts` |
+| #107 | low      | orders  | `route-optimization.service.ts`, `route-optimization.controller.ts`                     |
 
 **Step 2 — components (non-hub shared files only):**
 
@@ -130,7 +130,7 @@ splitting. `plan` creates three Batch issues:
 - **Batch #203** ({#106, #107}), area orders, worst severity **critical**, 2 bugs.
 
 Cross-batch check: #201 and #203 both touch `order-templates.service.ts` (non-hub) → **hard
-conflict, #201 ↔ #203**. #201/#203 also each touch a *different* hub file (`orders.service.ts`,
+conflict, #201 ↔ #203**. #201/#203 also each touch a _different_ hub file (`orders.service.ts`,
 `routes.service.ts` respectively) — hub overlap is never a conflict, so that alone would not have
 linked them even without the real edge above. #202 shares nothing with either.
 

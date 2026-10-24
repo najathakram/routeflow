@@ -19,6 +19,11 @@
 import axios from "axios";
 import { API_ERROR_CODES } from "@routeflow/types";
 import type { QueuedAction } from "../store/offlineQueue";
+import {
+  creditsPendingFromError,
+  creditsPendingFromOrder,
+  type SavedCreditsPending,
+} from "./order-credits-pending";
 
 export const MAX_RETRIES = 3;
 
@@ -81,10 +86,41 @@ export interface DrainResult {
    * store's `failedActions` list and alerted — never just dequeued.
    */
   failedActions: FailedActionRecord[];
+  /**
+   * B1205: entries that were DELIVERED but whose order has credit notes still unapplied (a 503
+   * ORDER_SAVED_CREDITS_PENDING, or a replayed 2xx with `creditsPending: true`). They are also in
+   * `delivered` (dequeue) and are never retried; the caller must show `message` and may open `orderId`.
+   */
+  creditsPending: CreditsPendingRecord[];
+}
+
+/** B1205: ONE dialog for the whole drain. The fixed copy is never altered; a count line precedes it. */
+export function describeCreditsPendingDrain(records: CreditsPendingRecord[]): {
+  title: string;
+  message: string;
+  orderId: string;
+} {
+  const [first] = records;
+  if (records.length === 1) {
+    return { title: "Order saved", message: first.message, orderId: first.orderId };
+  }
+  return {
+    title: `${records.length} orders saved`,
+    message: `${records.length} orders were saved.\n\n${first.message}`,
+    orderId: first.orderId,
+  };
+}
+
+export interface CreditsPendingRecord {
+  action: QueuedAction;
+  orderId: string;
+  /** The fixed CREDITS_PENDING_COPY - never the server's text. */
+  message: string;
 }
 
 export interface DrainDeps {
   /** Issue the actual HTTP call for one queued action (e.g. via apiClient). */
+  /** Resolves the response BODY (B1205: drain inspects it for `creditsPending`). */
   request: (action: QueuedAction) => Promise<unknown>;
   /**
    * Called once per entry that lands in `failedActions`, as it is classified —
@@ -173,6 +209,10 @@ export async function drainQueue(actions: QueuedAction[], deps: DrainDeps): Prom
   const retriedIds: string[] = [];
   const unreachedIds: string[] = [];
   const failedActions: FailedActionRecord[] = [];
+  const creditsPending: CreditsPendingRecord[] = [];
+  const warn = (action: QueuedAction, p: SavedCreditsPending | null) => {
+    if (p) creditsPending.push({ action, orderId: p.orderId, message: p.message });
+  };
 
   for (const [index, action] of actions.entries()) {
     if (action.retries >= MAX_RETRIES) {
@@ -187,9 +227,19 @@ export async function drainQueue(actions: QueuedAction[], deps: DrainDeps): Prom
     }
 
     try {
-      await deps.request(action);
+      const body = await deps.request(action);
       delivered.push(action.id);
+      if (action.method === "POST" && action.endpoint.split("?")[0] === "/orders") {
+        warn(action, creditsPendingFromOrder(body as { id?: string; creditsPending?: boolean }));
+      }
     } catch (err: unknown) {
+      // B1205: the order WAS saved - retrying replays the key, returns 200 and drops the credits.
+      const saved = creditsPendingFromError(err);
+      if (saved) {
+        delivered.push(action.id);
+        warn(action, saved);
+        continue;
+      }
       const status = (err as { response?: { status?: number } })?.response?.status;
       const isNonRetriableClientError =
         status !== undefined &&
@@ -218,7 +268,7 @@ export async function drainQueue(actions: QueuedAction[], deps: DrainDeps): Prom
     }
   }
 
-  return { delivered, retriedIds, unreachedIds, failedActions };
+  return { delivered, retriedIds, unreachedIds, failedActions, creditsPending };
 }
 
 /**

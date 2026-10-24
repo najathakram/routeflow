@@ -3,6 +3,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { CustomerForm, customerFormFromValues } from "../../../../components/CustomerForm";
 import { useCustomer, useUpdateCustomer } from "../../../../lib/api/customers";
+import { safeTextErrorCopy } from "../../../../lib/safe-text-error-copy";
 import { showToast } from "../../../../lib/toast";
 
 export default function EditCustomerScreen() {
@@ -43,7 +44,9 @@ export default function EditCustomerScreen() {
               router.back();
             },
             onError: (e: any) =>
-              showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+              showToast(
+                safeTextErrorCopy(e) ?? e?.response?.data?.message ?? e?.message ?? "Try again.",
+              ),
           },
         );
       }}

@@ -42,7 +42,7 @@ describeDb("#2495 GoogleOAuthService staff lookup resolves by sub first (real Po
       get: (key: string) => {
         if (key === "jwt") {
           return {
-            secret: "qa-2495-secret",
+            secret: "qa-2495-secret-0123456789-abcdefghijklmnop",
             refreshSecret: "rs",
             expiresIn: "15m",
             refreshExpiresIn: "30d",

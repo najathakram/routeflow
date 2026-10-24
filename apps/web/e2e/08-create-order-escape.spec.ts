@@ -100,7 +100,7 @@ test.describe("Operator — Create Order Escape scoping (WP-1)", () => {
     // POST has definitely landed before afterEach deletes the draft.
     await page.keyboard.press("Escape");
     await expect(title).toBeHidden({ timeout: 10_000 });
-    await expect(page.getByText(/saved as draft|draft parked/i).first()).toBeVisible({
+    await expect(page.getByText(/draft saved|saved as draft|draft parked/i).first()).toBeVisible({
       timeout: 10_000,
     });
   });
@@ -111,11 +111,15 @@ test.describe("Operator — Create Order Escape scoping (WP-1)", () => {
     const title = await openBuilderWithCustomer(page);
 
     // Cancel with a customer selected → the order is parked to a draft, not lost.
-    await page.getByRole("button", { name: "Cancel", exact: true }).click();
+    await page
+      .getByRole("dialog")
+      .getByRole("button", { name: "Close", exact: true })
+      .first()
+      .click();
     await expect(title).toBeHidden({ timeout: 10_000 });
 
     // The parked order surfaces in the draft dock (toast confirms the save).
-    await expect(page.getByText(/saved as draft|draft parked/i).first()).toBeVisible({
+    await expect(page.getByText(/draft saved|saved as draft|draft parked/i).first()).toBeVisible({
       timeout: 10_000,
     });
   });
@@ -202,6 +206,21 @@ async function mockDraft(page: Page, orderDate: string, patched: unknown[] = [])
 
 const SKIP_REASON = "Draft resume not present in this web build (pre-deploy)";
 
+/**
+ * The resumed draft carries made-up ids (e2e-cust-1 / e2e-prod-1). With `flag.units_prices_v2` served,
+ * Create Order waits on that customer's price layer (SA-813 M3) and the layer read of a customer that
+ * does not exist fails, so the button would stay disabled. This spec is about the backdate/merge
+ * rule, not prices: show the browser the subscription without the flag (it is read client-side).
+ */
+async function stripPricesV2Flag(page: Page) {
+  await page.route("**/billing/subscription*", async (route) => {
+    const res = await route.fetch();
+    const body = (await res.json()) as { flags?: string[] };
+    body.flags = (body.flags ?? []).filter((f) => f !== "flag.units_prices_v2");
+    await route.fulfill({ response: res, json: body });
+  });
+}
+
 /** Opens the builder on a resumed draft; false when the build predates the flow. */
 async function resumeDraft(page: Page): Promise<boolean> {
   await page.goto(`/orders?resumeDraft=${DRAFT_ID}`);
@@ -230,6 +249,9 @@ test.describe("Operator — order date survives a parked draft (WP-4)", () => {
     const patched = await mockDraft(page, "");
     test.skip(!(await resumeDraft(page)), SKIP_REASON);
 
+    // Row 100: with no parked date the Order date input is hidden behind a "Backdate this order"
+    // control (CreateOrderModal.tsx `showOrderDate = backdateOpen`); open it first.
+    await page.getByRole("button", { name: "Backdate this order" }).click();
     const orderDateInput = page.locator("#order-date");
     await expect(orderDateInput).toHaveValue("");
     await orderDateInput.fill(BACKDATE);
@@ -247,6 +269,7 @@ test.describe("Operator — order date survives a parked draft (WP-4)", () => {
     page,
   }) => {
     await mockDraft(page, BACKDATE);
+    await stripPricesV2Flag(page);
     await page.route(/\/api\/v1\/orders\/active(\?.*)?$/, (route) =>
       fulfillJson(route, {
         id: "e2e-open-order-1",
@@ -318,7 +341,11 @@ test.describe("Operator — Create Order product search scan button, mobile (B49
     );
     expect(hasHorizontalOverflow).toBe(false);
 
-    await page.getByRole("button", { name: "Cancel", exact: true }).click();
+    await page
+      .getByRole("dialog")
+      .getByRole("button", { name: "Close", exact: true })
+      .first()
+      .click();
   });
 });
 
@@ -342,6 +369,8 @@ test.describe("Operator — Orders list delivery date-range filter, mobile (B506
       timeout: 10_000,
     });
 
+    // r4 Q01: below md the delivery range sits in the Filters panel.
+    await page.getByRole("button", { name: /^Filters/ }).click();
     const from = page.getByTitle("Delivery date from");
     const to = page.getByTitle("Delivery date to");
     await expect(from).toBeVisible();
@@ -370,4 +399,78 @@ test.describe("Operator — Orders list delivery date-range filter, mobile (B506
     await to.fill("2026-10-15");
     await expect(to).toHaveValue("2026-10-15");
   });
+});
+
+// ─── BUG-A (A6): a double click on Create Order writes ONE order ───────────────────────────────
+
+test.describe("Operator — Create Order double click (BUG-A)", () => {
+  for (const [label, size] of [
+    ["1440", { width: 1440, height: 900 }],
+    ["768", { width: 768, height: 1024 }],
+    ["390", { width: 390, height: 844 }],
+  ] as const) {
+    test(`DBL-01 a real double click on Create Order @${label}: ONE POST /orders (<300), ONE new order`, async ({
+      page,
+      context,
+      request,
+    }) => {
+      await setTenantCookie(context, BASE);
+      await page.setViewportSize(size);
+      const note = `UX-F01-${Date.now()}-${label}`;
+      const posts: Array<{ status: number; key: string | undefined }> = [];
+      page.on("response", (resp) => {
+        const req = resp.request();
+        if (req.method() === "POST" && /\/api\/v1\/orders(\?.*)?$/.test(resp.url())) {
+          posts.push({ status: resp.status(), key: req.headers()["idempotency-key"] });
+        }
+      });
+      await page.goto("/orders");
+      await page
+        .getByRole("button", { name: /new order/i })
+        .first()
+        .click();
+      await expect(page.getByRole("heading", { name: "Create Order" })).toBeVisible({
+        timeout: 10_000,
+      });
+      await page.getByPlaceholder("Search by business name…").fill("E2E Fixture Deli Three");
+      await page
+        .locator('input[placeholder="Search by business name…"] ~ ul li button')
+        .first()
+        .click({ timeout: 10_000 });
+      await page.getByPlaceholder("Search by name, SKU or scan barcode…").fill("a");
+      await page
+        .locator(
+          'input[placeholder="Search by name, SKU or scan barcode…"] ~ ul li button, [role="option"]',
+        )
+        .first()
+        .click({ timeout: 10_000 });
+      await page.getByPlaceholder("Special instructions, delivery notes…").fill(note);
+
+      await page.getByRole("button", { name: /^create order$/i }).dblclick();
+      await expect(page.getByText(/order created|merged into order/i).first()).toBeVisible({
+        timeout: 15_000,
+      });
+
+      expect(posts, "exactly one POST /orders").toHaveLength(1);
+      expect(posts[0].status).toBeLessThan(300);
+      expect(posts[0].key, "an Idempotency-Key of 1-128 printable chars").toMatch(
+        /^[\x21-\x7e]{1,128}$/,
+      );
+
+      // One new row carries the note; cancel it so the tenant is left as found.
+      const token = await operatorAccessToken(page);
+      const api = apiBase(page.url());
+      const headers = { authorization: `Bearer ${token}`, "x-tenant-slug": TENANT_SLUG };
+      const list = await request.get(`${api}/api/v1/orders?limit=50`, { headers });
+      const rows = ((await list.json()) as { data?: Array<{ id: string; notes?: string | null }> })
+        .data;
+      const mine = (rows ?? []).filter((o) => o.notes === note);
+      for (const o of mine) {
+        await request
+          .patch(`${api}/api/v1/orders/${o.id}/status`, { headers, data: { status: "CANCELLED" } })
+          .catch(() => {});
+      }
+      expect(mine, "exactly one order with this note").toHaveLength(1);
+    });
+  }
 });

@@ -119,6 +119,31 @@ describeDb("e2e-seed.js commerce fixtures (B566) — real Postgres", () => {
     expect(second.products).toBe(first.products);
   }, 300_000);
 
+  it("B917: the harbor_cafe CUSTOMER login is linked to ONE live Customer, idempotently, and a soft-delete is repaired", async () => {
+    runSeed(dbUrl);
+    const tenant = await prisma.tenant.findUniqueOrThrow({ where: { slug: TENANT_SLUG } });
+    const user = await prisma.user.findFirstOrThrow({
+      where: { tenantId: tenant.id, username: "harbor_cafe", role: "CUSTOMER" },
+    });
+    const linked = await prisma.customer.findMany({ where: { userId: user.id } });
+    // Without this row GET /orders answers the login 403 CUSTOMER_NOT_LINKED (the dashboard showed
+    // "Could not load recent orders.").
+    expect(linked).toHaveLength(1);
+    expect(linked[0]).toMatchObject({ tenantId: tenant.id, deletedAt: null });
+
+    // re-run: still exactly one, same row
+    runSeed(dbUrl);
+    const again = await prisma.customer.findMany({ where: { userId: user.id } });
+    expect(again.map((c) => c.id)).toEqual(linked.map((c) => c.id));
+
+    // a soft-deleted link is restored, not duplicated
+    await prisma.customer.update({ where: { id: linked[0].id }, data: { deletedAt: new Date() } });
+    runSeed(dbUrl);
+    const repaired = await prisma.customer.findMany({ where: { userId: user.id } });
+    expect(repaired).toHaveLength(1);
+    expect(repaired[0].deletedAt).toBeNull();
+  }, 300_000);
+
   it("a customer SOFT-DELETED through the API is restored on re-seed — no duplicate user/customer (B566 follow-up)", async () => {
     runSeed(dbUrl);
     const tenant = await prisma.tenant.findUniqueOrThrow({ where: { slug: TENANT_SLUG } });

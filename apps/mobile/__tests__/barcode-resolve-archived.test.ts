@@ -129,7 +129,9 @@ describe("resolveProductByCode — archived products (T-B195 / REG-B195)", () =>
 
     // Counting the archived row toward ambiguity would open the picker with it
     // as choice #1 — the archived product reaching the order after all.
-    expect(result.ambiguous).toBeFalsy();
+    // B1220: the lone sellable row is a fuzzy hit, so it is a suggestion (confirm first).
+    expect(result.suggestion).toBe(true);
+    expect(result.matches.map((m: any) => m.id)).toEqual(["live"]);
     expect(result.archived).toBeFalsy();
     expect(result.product?.id).toBe("live");
   });

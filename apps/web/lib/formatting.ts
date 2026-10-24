@@ -95,6 +95,13 @@ export function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+/** Today's date in the browser's LOCAL calendar (YYYY-MM-DD) - what a date <input> shows as today. */
+export function todayLocalIso(): string {
+  const d = new Date();
+  const pad = (n: number, len = 2) => String(n).padStart(len, "0");
+  return `${pad(d.getFullYear(), 4)}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
 /**
  * Whole calendar days from the viewer's LOCAL today until a stored
  * UTC-midnight calendar date. Negative = that many days overdue. The due
@@ -113,12 +120,11 @@ export function calendarDaysUntil(d?: string | null): number | null {
 }
 
 /**
- * True for the internal, non-routable email sentinels we mint when a customer has no address:
- * `no-email+<uuid>@placeholder.local` (User.email is required + unique per tenant) and
- * `<username>@imported.local` (CSV import). Never render one of these to a user.
+ * B910: sentinel-email helpers (`isInternalEmail`, `displayEmail`,
+ * `NO_EMAIL_COPY`) now have ONE implementation in `@routeflow/types`
+ * (`internal-email.ts` there) — re-exported here so every existing
+ * `@/lib/formatting` import keeps working. Mobile re-exports the same module. The api
+ * CANNOT value-import it from runtime source, so it keeps a LOCAL copy
+ * (`apps/api/src/common/internal-email.ts`) pinned functionally equal by its spec.
  */
-export function isInternalEmail(email?: string | null): boolean {
-  if (!email) return false;
-  const e = email.toLowerCase();
-  return e.endsWith("@placeholder.local") || e.endsWith("@imported.local");
-}
+export { displayEmail, isInternalEmail, NO_EMAIL_COPY } from "@routeflow/types";

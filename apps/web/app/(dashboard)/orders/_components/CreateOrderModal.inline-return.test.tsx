@@ -111,7 +111,7 @@ async function openReturnsAndAddLine(pieces: string) {
   fireEvent.click(screen.getByRole("button", { name: /^returns$/i }));
   fireEvent.change(screen.getByLabelText(/add another product/i), { target: { value: "wid" } });
   fireEvent.click(await screen.findByText("Widget"));
-  fireEvent.change(screen.getByLabelText(/qty \(pieces\)/i), { target: { value: pieces } });
+  fireEvent.change(screen.getByLabelText(/^pieces$/i), { target: { value: pieces } });
   fireEvent.change(screen.getByLabelText(/^reason$/i), { target: { value: "DAMAGED" } });
 }
 
@@ -309,7 +309,7 @@ describe("CreateOrderModal — collapsing the Returns section (#2406)", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(/discard this return/i);
     fireEvent.click(screen.getByRole("button", { name: /keep editing/i }));
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    expect(screen.getByLabelText(/qty \(pieces\)/i)).toHaveValue(5);
+    expect(screen.getByLabelText(/^pieces$/i)).toHaveValue(5);
     await quoteIt();
     fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
     expect(createOrderMutate.mock.calls[0][0].inlineReturn).toBeDefined();
@@ -321,14 +321,15 @@ describe("CreateOrderModal — collapsing the Returns section (#2406)", () => {
     await openReturnsAndAddLine("5");
     fireEvent.click(screen.getByRole("button", { name: /^returns$/i }));
     fireEvent.click(screen.getByRole("button", { name: /discard return/i }));
-    expect(screen.queryByLabelText(/qty \(pieces\)/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/^pieces$/i)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
     expect(createOrderMutate).toHaveBeenCalledTimes(1);
     expect(createOrderMutate.mock.calls[0][0]).not.toHaveProperty("inlineReturn");
-    expect(createOrderMutate.mock.calls[0][0]).not.toHaveProperty("idempotencyKey");
+    // BUG-A: every create carries its attempt key now (no inlineReturn => the modal's own key).
+    expect(createOrderMutate.mock.calls[0][0].idempotencyKey).toEqual(expect.any(String));
     // Re-opening starts empty — nothing from the discarded draft survives.
     fireEvent.click(screen.getByRole("button", { name: /^returns$/i }));
-    expect(screen.queryByLabelText(/qty \(pieces\)/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/^pieces$/i)).not.toBeInTheDocument();
   });
 
   // SA-484i: the return rides the save ONLY when the section is expanded AND quoted.
@@ -357,10 +358,10 @@ describe("CreateOrderModal — collapsing the Returns section (#2406)", () => {
     fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
     expect(createOrderMutate.mock.calls[0][0]).not.toHaveProperty("inlineReturn");
     fireEvent.click(screen.getByRole("button", { name: /^returns$/i }));
-    expect(screen.queryByLabelText(/qty \(pieces\)/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/^pieces$/i)).not.toBeInTheDocument();
   });
 
-  it("a discard drops the returnKey/Idempotency-Key pair: the next return gets a fresh pair", async () => {
+  it("a discard after an UNKNOWN outcome: a fresh returnKey, but the attempt key is KEPT (the first save may have been written)", async () => {
     renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
     await pickCustomer();
     await openReturnsAndAddLine("5");
@@ -377,7 +378,10 @@ describe("CreateOrderModal — collapsing the Returns section (#2406)", () => {
     fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
     const second = createOrderMutate.mock.calls[1][0];
     expect(second.inlineReturn.returnKey).not.toBe(first.inlineReturn.returnKey);
-    expect(second.idempotencyKey).not.toBe(first.idempotencyKey);
+    // One key per attempt (BUG-A): a 500 is unknown, so the key survives the edit. If the first save did
+    // land, the server refuses this return under that key (assertReplayCarriesReturnKey, a loud 409)
+    // rather than writing a second order.
+    expect(second.idempotencyKey).toBe(first.idempotencyKey);
   });
 
   it("a blocked return save closes the merge-vs-separate prompt that led to it", async () => {
@@ -398,6 +402,6 @@ describe("CreateOrderModal — collapsing the Returns section (#2406)", () => {
       expect(screen.queryByRole("button", { name: /separate/i })).not.toBeInTheDocument(),
     );
     // Back on the Returns section the operator must fix.
-    expect(screen.getByLabelText(/qty \(pieces\)/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/^pieces$/i)).toBeInTheDocument();
   });
 });

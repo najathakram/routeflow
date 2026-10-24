@@ -1,6 +1,7 @@
 # Delivery plan — the first five customers
 
 **Written 2026-09-13 by the fleet lead. Owner's requirements, in the owner's order:**
+
 1. The back office must be **perfect** — we are onboarding our first five customers.
 2. Then fix the bugs.
 3. Then improve the tool so it can be pitched to prospects.
@@ -16,11 +17,11 @@
 The registry's raw `state` field overstates open work by ~2×. Resolved through `status/F##.jsonl`
 (the registry's own truth) on 2026-09-13:
 
-| | Raw rows said | **True** |
-|---|---|---|
-| Open bugs | 393 | **220** |
-| Open critical | 39 | **7** |
-| Open high | 135 | **56** |
+|               | Raw rows said | **True** |
+| ------------- | ------------- | -------- |
+| Open bugs     | 393           | **220**  |
+| Open critical | 39            | **7**    |
+| Open high     | 135           | **56**   |
 
 **Batches F02–F18 are essentially all done.** That is the money-loop core — orders, invoices,
 delivery money, returns, scan, billing plan change, impersonation — fixed and landed. The
@@ -29,15 +30,15 @@ wave plan listed as open (B58, B107, B123, B124, B125) were already fixed. `wave
 
 **The seven open criticals**, and their state:
 
-| Id | Batch | What | State |
-|---|---|---|---|
-| B305 | F38 | Driver at-door amount due is pre-tax — every cash stop under-collects | **in flight — PR #710** (blocked on one seam fix, then merges) |
-| B349 | F47 | Google OAuth link state unsigned — anyone can attach their Google identity to any user | **built** in routeflow-f2's auth batch, unpushed |
-| B310 | F39 | A customer advance can be spent twice — wallet debit takes no lock | queued (parked carve-out, standing go) |
-| B294 | F36 | Order-derived and estimate-converted invoice lines carry `taxRate 0` | queued (parked carve-out) |
-| B297 | F36 | Order edits re-price already-invoiced excise at today's rate | queued (parked carve-out) |
-| B323 | F42 | Hourly pending-order sweep runs with **no tenant context** — winner tax from another tenant | queued (parked carve-out) |
-| B283 | F34 | DRAFT→PENDING never reserves stock; later cancel credits stock never taken | queued (parked carve-out) |
+| Id   | Batch | What                                                                                        | State                                                          |
+| ---- | ----- | ------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| B305 | F38   | Driver at-door amount due is pre-tax — every cash stop under-collects                       | **in flight — PR #710** (blocked on one seam fix, then merges) |
+| B349 | F47   | Google OAuth link state unsigned — anyone can attach their Google identity to any user      | **built** in routeflow-f2's auth batch, unpushed               |
+| B310 | F39   | A customer advance can be spent twice — wallet debit takes no lock                          | queued (parked carve-out, standing go)                         |
+| B294 | F36   | Order-derived and estimate-converted invoice lines carry `taxRate 0`                        | queued (parked carve-out)                                      |
+| B297 | F36   | Order edits re-price already-invoiced excise at today's rate                                | queued (parked carve-out)                                      |
+| B323 | F42   | Hourly pending-order sweep runs with **no tenant context** — winner tax from another tenant | queued (parked carve-out)                                      |
+| B283 | F34   | DRAFT→PENDING never reserves stock; later cancel credits stock never taken                  | queued (parked carve-out)                                      |
 
 **Finished but not in production** — roughly eight units of done work sitting unmerged:
 #708 (bookkeeping), #709 (approach docs), #710 (F38, seam fix in flight), #711 (F27, hygiene in
@@ -57,7 +58,9 @@ conflict risk.
 ## 2. What each requirement actually needs — scoped to five customers
 
 ### Requirement 1 — "back office perfect"
-For five customers, *perfect* is narrow and concrete. Each of them must be able to:
+
+For five customers, _perfect_ is narrow and concrete. Each of them must be able to:
+
 - be created on the right plan (Phase 0 T10/T14 — live catalog in the plan picker, `PLAN_KEYS` validation),
 - trial → subscribe → pay, and cancel cleanly (03's billing branch: TRIAL-1, RO-1, STRIPE-CANCEL-1, `/billing/quote`),
 - be billed correctly month over month (wave W1 remainder: B327 dunning that never fires, B342 double add-on, B216 armed downgrade, B218 STARTER shadow, B329 anchor drift, the unfiled admin `updatePlan` no-proration path),
@@ -69,11 +72,13 @@ plan editor, HQ invoicing, lifecycle email campaigns. Those are for fifty custom
 now delays the five.
 
 ### Requirement 2 — "fix the bugs"
+
 Five open criticals not yet in flight, all in parked carve-out batches that already carry standing
 go (DECIDE-30, gates a–d). Then the 56 highs, by customer impact. The "393 bugs" framing was wrong;
 this is a bounded list.
 
 ### Requirement 3 — "pitch-ready"
+
 What a prospect sees in a thirty-minute demo. From the K-HUB Gap Ledger, the demo-visible subset
 of the 83 one-sentence fixes — not the Location model, not the storefront builder, not i18n.
 Those are quarter-scale projects; a prospect never sees them in a demo.
@@ -83,6 +88,7 @@ Those are quarter-scale projects; a prospect never sees them in a demo.
 ## 3. The flow
 
 ### Phase A — LAND · now → +24 h · zero new building
+
 Get the eight finished units into production. This is the whole job for the next day.
 
 1. routeflow-03 fixes the #710 excise seam → **independent** Opus re-review of the delta → #710 ready.
@@ -96,6 +102,7 @@ Get the eight finished units into production. This is the whole job for the next
 **Exit criterion:** zero finished-but-unmerged work; two criticals closed (B305, B349); freeze lifted.
 
 ### Phase B — BACK OFFICE · days 2–6 · lane A only
+
 Wave **W1** remainder, then wave **W2** (Phase 0), in that order — reconciliation must not run
 against billing writes that are still wrong.
 
@@ -108,6 +115,7 @@ against billing writes that are still wrong.
 **Exit criterion:** the five customers can be created, billed, cancelled, and seen truthfully; the admin dashboard's numbers are derived, not estimated.
 
 ### Phase C — CRITICAL & HIGH BUGS · days 4–10 · lane B, overlapping Phase B
+
 Independent files from lane A, so it runs alongside. Order by customer impact:
 
 1. **F39** (payments/wallet, 6 rows, B310 critical — a customer advance spent twice).
@@ -120,6 +128,7 @@ Each batch: hand-fixed, red-first, one in-lane refute, one independent pre-merge
 **Exit criterion:** zero open criticals; highs down to the long tail.
 
 ### Phase D — PITCH-READY · week 3 onward · lane C opens
+
 Only once Phases A–B have landed. Order by what a prospect sees:
 
 1. **Demo-visible little things** from the Gap Ledger (roughly ten): paste-a-list bulk order entry; products-and-units summary line; invoice send toggles (hide cost / MSRP / balance); returns tab on the customer page; available-credit tile; reorder-list-to-PO button; "Generate description" button reusing the existing Claude client; hero tagline + banner on the buyer shop; a Quick Order shortcut into Your Shelf; a weekly emailed P&L via one `@LeaderCron`.

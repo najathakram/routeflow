@@ -77,6 +77,8 @@ describeDb("#2648 credit-note reissue (SA-535b)", () => {
   const mockLedger = {
     reverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
     unreverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
+    settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
+    reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined), // deleteInvoice (case 15)
   };
   const mockCommissionEngine = {
     syncInvoiceCommissionSafe: jest.fn().mockResolvedValue(undefined),
@@ -170,6 +172,7 @@ describeDb("#2648 credit-note reissue (SA-535b)", () => {
   afterEach(() => {
     mockLedger.reverseCreditNoteEntries.mockClear();
     mockLedger.unreverseCreditNoteEntries.mockClear();
+    mockLedger.settleRegulatedLedger.mockClear();
     jest.restoreAllMocks();
   });
 
@@ -299,6 +302,42 @@ describeDb("#2648 credit-note reissue (SA-535b)", () => {
       return real(...args);
     }) as any);
   }
+  /**
+   * Makes a SAME-key race deterministic. The first transaction to reach `idempotency.save` (the
+   * winner: it holds the key's advisory lock and has done every write) is parked there until
+   * Postgres itself reports a peer backend blocked behind it on `pg_advisory_xact_lock`
+   * (`pg_blocking_pids`), and only then is it allowed to save and commit. So the peer's
+   * Serializable snapshot is provably taken BEFORE the winner commits: its `check` sees no row,
+   * it enters the void, loses on the write conflict and replays on the retry. Without the park the
+   * peer may start its transaction after the winner has already committed, take the early
+   * replay and never reach the void at all - which of the two happens is just scheduling.
+   */
+  function parkWinnerUntilPeerBlocked() {
+    const real = (idempotency.save as any).bind(idempotency);
+    const state = { parked: false, peerObserved: false };
+    const spy = jest.spyOn(idempotency, "save").mockImplementation((async (...args: any[]) => {
+      const tx = args[4];
+      if (!state.parked) {
+        state.parked = true;
+        const [{ pid }] = await tx.$queryRaw`SELECT pg_backend_pid()::int AS pid`;
+        const deadline = Date.now() + 20_000;
+        while (!state.peerObserved) {
+          const rows = await prisma.$queryRaw<Array<{ n: number }>>`
+            SELECT count(*)::int AS n FROM pg_stat_activity
+            WHERE ${pid}::int = ANY(pg_blocking_pids(pid))
+              AND wait_event_type = 'Lock' AND wait_event = 'advisory'
+              AND query ILIKE '%pg_advisory_xact_lock%'`;
+          state.peerObserved = rows[0].n > 0;
+          if (state.peerObserved) break;
+          if (Date.now() > deadline)
+            throw new Error("park: no peer was ever blocked on the idempotency lock");
+          await new Promise((r) => setTimeout(r, 20));
+        }
+      }
+      return real(...args);
+    }) as any);
+    return { spy, state };
+  }
   const settle = async (...calls: Array<Promise<any>>) => {
     const results = await Promise.allSettled(calls);
     return {
@@ -355,10 +394,10 @@ describeDb("#2648 credit-note reissue (SA-535b)", () => {
     expect(reissued.meta).toMatchObject({ replaces: old.id, replacesNumber: old.creditNoteNumber });
 
     // Ledger: the old note's entries are counter-entered once, on the reissue's transaction.
-    expect(mockLedger.unreverseCreditNoteEntries).toHaveBeenCalledTimes(1);
-    expect(mockLedger.unreverseCreditNoteEntries).toHaveBeenCalledWith({
+    expect(mockLedger.settleRegulatedLedger).toHaveBeenCalledTimes(1);
+    expect(mockLedger.settleRegulatedLedger).toHaveBeenCalledWith(expect.anything(), {
+      kind: "ADJUSTMENT_UNDONE",
       creditNoteId: old.id,
-      db: expect.anything(),
     });
   }, 60_000);
 
@@ -536,6 +575,47 @@ describeDb("#2648 credit-note reissue (SA-535b)", () => {
       expect((await counter(o.tenantId))?.nextNumber).toBe(before?.nextNumber);
     }, 60_000);
 
+    it("15: #2848 - deleting an invoice with 2 closed linked notes leaves 2 SOURCE_DELETED rows; reissue of either is a 409", async () => {
+      const { tenantId, customerId } = await seedTenant("srcdel");
+      const invSrc = await seedSentInvoice(tenantId, customerId, 50);
+      const a = await seedSourcedCredit(tenantId, customerId, invSrc, 20);
+      const b = await seedSourcedCredit(tenantId, customerId, invSrc, 20);
+      // Closed = expired (deleteInvoice refuses while a sourced note still has spendable balance).
+      await prisma.creditNote.updateMany({
+        where: { id: { in: [a.id, b.id] } },
+        data: { expiresAt: new Date("2020-01-01T00:00:00Z") },
+      });
+
+      await tenantCtx.run(tenantId, () => invoices.deleteInvoice(invSrc));
+
+      const marks = await prisma.auditLog.findMany({
+        where: { tenantId, entityType: "CreditNote", action: "SOURCE_DELETED" },
+      });
+      expect(marks.map((m) => m.entityId).sort()).toEqual([a.id, b.id].sort());
+      expect(marks[0].meta).toMatchObject({ invoiceId: invSrc });
+      expect((await prisma.creditNote.findUnique({ where: { id: a.id } }))?.invoiceId).toBeNull();
+
+      const before = await counter(tenantId);
+      for (const [n, key] of [
+        [a, "k-15a"],
+        [b, "k-15b"],
+      ] as const) {
+        // <= its own amount and a future expiry: SA-608c (a) alone would let this pass.
+        await expect(
+          run(tenantId, n.id, { amount: 10, expiresAt: "2999-01-01T00:00:00.000Z" }, key),
+        ).rejects.toThrow(/source invoice was deleted/);
+        expect((await prisma.creditNote.findUnique({ where: { id: n.id } }))?.status).toBe(
+          "ISSUED",
+        );
+        await expect(
+          tenantCtx.run(tenantId, () =>
+            creditNotes.updateCreditNote(n.id, { expiresAt: "2999-01-01T00:00:00.000Z" }, null),
+          ),
+        ).rejects.toThrow(/source invoice was deleted/);
+      }
+      expect((await counter(tenantId))?.nextNumber).toBe(before?.nextNumber); // no number burned
+    }, 60_000);
+
     it("14: a born-standalone note: down passes, up is a 409", async () => {
       const { tenantId, customerId } = await seedTenant("born");
       const cn = await tenantCtx.run(tenantId, () =>
@@ -556,12 +636,16 @@ describeDb("#2648 credit-note reissue (SA-535b)", () => {
     const before = await counter(tenantId);
     barrierAtReserve(2);
     const voidSpy = jest.spyOn(creditNotes, "voidWithReversalInTx");
+    // r366: the barrier only aligns the PRE-tx phase. Without this park the loser may open its
+    // transaction after the winner committed, hit the early replay and never reach the void.
+    const park = parkWinnerUntilPeerBlocked();
 
     const { ok, failed } = await settle(
       run(tenantId, old.id, { amount: 20 }, "k-9"),
       run(tenantId, old.id, { amount: 20 }, "k-9"),
     );
 
+    expect(park.state.peerObserved).toBe(true); // the loser really was inside its tx, behind the winner
     expect(failed).toHaveLength(0);
     expect(ok[0].value.creditNote.id).toBe(ok[1].value.creditNote.id);
     expect(voidSpy.mock.calls.length).toBeGreaterThanOrEqual(2); // the loser's first attempt reached the void, then replayed
@@ -628,10 +712,10 @@ describeDb("#2648 credit-note reissue (SA-535b)", () => {
 });
 
 /**
- * SA-535c/d: a regulated, line-linked reissue on the REAL regulated ledger. The lifted void keeps
- * #2536's shipped behaviour (unreverseCreditNoteEntries deletes the old note's REVERSAL rows;
- * the locked-period counter-entry is #2541's, for every void path), so today the net filing for
- * the period is exactly the new note's reversal. Also the executed proof of findOne's `items`.
+ * SA-535c/d: a regulated, line-linked reissue on the REAL regulated ledger. The lifted void
+ * counter-enters the old note's REVERSAL rows (SA-839: append-only, never a delete), so the net
+ * filing for the period is exactly the new note's reversal. Also the executed proof of findOne's
+ * `items`.
  */
 describeDb("#2648 regulated line-linked reissue on the real ledger (SA-535c/d)", () => {
   let prisma: PrismaService;
@@ -788,10 +872,15 @@ describeDb("#2648 regulated line-linked reissue on the real ledger (SA-535c/d)",
       ),
     );
 
-    expect(await reversals(old.id)).toHaveLength(0); // #2536 as shipped: deleted, not counter-entered
+    // SA-839 (#2541's hard-delete item): the old note's row is KEPT and counter-entered, never deleted.
+    const signed = (rows: Array<{ netSales: unknown }>) =>
+      Math.round(rows.reduce((t, r) => t + Number(r.netSales), 0) * 100) / 100;
+    const oldRows = await reversals(old.id);
+    expect(oldRows).toHaveLength(2);
+    expect(signed(oldRows)).toBe(0);
     const fresh = await reversals(res.creditNote.id);
     expect(net(fresh)).toBe(30);
-    expect(net(await reversals())).toBe(30); // the period's net filing is the new amount's reversal
+    expect(signed(await reversals())).toBe(-30); // the period's net filing is the new amount's reversal
     const items = await prisma.creditNoteItem.findMany({
       where: { creditNoteId: res.creditNote.id },
     });

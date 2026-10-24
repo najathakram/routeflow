@@ -155,7 +155,11 @@
         "$TURBO_ROOT$/apps/web/Dockerfile",
         "$TURBO_ROOT$/apps/web/jest.config.js",
         "$TURBO_ROOT$/apps/web/next.config.mjs",
-        "$TURBO_ROOT$/security/**"
+        "$TURBO_ROOT$/security/**",
+        // graph-core.spec.ts reads the graph overlay: .graphifyignore + the packages' "source" exports
+        // (scripts/** is already hashed above).
+        "$TURBO_ROOT$/.graphifyignore",
+        "$TURBO_ROOT$/packages/*/package.json"
       ],
       "outputs": []
     },
@@ -163,6 +167,13 @@
     // dependents cannot typecheck until its dist/*.d.ts exists.
     "check-types": {
       "dependsOn": ["^build", "^check-types"],
+      "outputs": []
+    },
+    // The api check-types heap override (scripts/lib/check-types-ratchet-core.mjs chooseHeapMb):
+    // strict env mode drops an undeclared variable, so declare it here or it never reaches the task.
+    "@routeflow/api#check-types": {
+      "dependsOn": ["^build", "^check-types"],
+      "env": ["CHECK_TYPES_HEAP_MB"],
       "outputs": []
     },
     // apps/web's typecheck walks the apps/mobile files such a spec imports (see the

@@ -1,8 +1,10 @@
+import type { BuyerReorderSkippedLine } from "@routeflow/types";
 import {
   Body,
   Controller,
   Delete,
   Get,
+  Headers,
   HttpCode,
   HttpStatus,
   Logger,
@@ -15,7 +17,7 @@ import {
 } from "@nestjs/common";
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiHeader } from "@nestjs/swagger";
 import { Throttle } from "@nestjs/throttler";
-import { InvoiceStatus, OrderStatus, UserRole, UserStatus } from "@prisma/client";
+import { FulfillPath, InvoiceStatus, OrderStatus, UserRole, UserStatus } from "@prisma/client";
 import { BuyerService } from "./buyer.service";
 import { BuyerCatalogService } from "./buyer-catalog.service";
 import { BuyerDashboardService } from "./buyer-dashboard.service";
@@ -35,6 +37,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { BuyerCreateOrderDto } from "./dto/buyer-create-order.dto";
 import { UpdateBuyerProfileDto } from "./dto/update-buyer-profile.dto";
 import { OrdersService } from "../orders/orders.service";
+import { assertDeliveryDateNotPast } from "../orders/delivery-date-guard";
 import { ChangeRequestsService } from "../orders/change-requests.service";
 import { CreateChangeRequestDto } from "../orders/dto/create-change-request.dto";
 import { InvoicesService } from "../invoices/invoices.service";
@@ -42,7 +45,9 @@ import { InvoicePdfService } from "../invoices/invoice-pdf.service";
 import { StatementService } from "./statement.service";
 import { StatementPdfService } from "./statement-pdf.service";
 import { CustomersService } from "../customers/customers.service";
+import { omitStaffOnlyCustomerFields } from "../customers/self-service-fields";
 import { OrderTemplatesService } from "../order-templates/order-templates.service";
+import { UpdateBuyerOrderTemplateDto } from "../order-templates/dto/update-buyer-order-template.dto";
 import { AuthorizationsService } from "../authorizations/authorizations.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { ListOrdersDto } from "../orders/dto/list-orders.dto";
@@ -52,18 +57,33 @@ import { SubmitAuthorizationDto } from "../authorizations/dto/submit-authorizati
 import { normalizeScanCode } from "@routeflow/scanning";
 import { findScanMatches } from "../products/scan-match";
 import { redactUpsellForCustomer } from "../common/upsell-redaction";
+import { pickCustomerInvoiceFields, toCustomerOrder } from "../common/staff-only-fields";
 import {
   foldMergeItems,
   normalizeBareIncomingSellingUnits,
   normalizeBoxUnawareSnapshots,
 } from "../orders/merge-items";
 import { withAdvisoryLock } from "../common/db-locks";
+import { logDiscountedSkip, mergeBlockedByDiscount } from "../orders/merge-discount-guard";
+import { overdueCutoff } from "../common/calendar-date";
+import { tenantTimeZone } from "../common/tenant-time-zone";
+import { summarizeOpenInvoices } from "../invoices/invoice-balance-classify";
+import { OPEN_INVOICE_STATUSES } from "../invoices/invoice-status-sets";
+import { CONFIRMED_PAYMENT } from "../invoices/payment-predicates";
+import { resolveOversellAllowed } from "../orders/oversell-policy";
+import { assertBuyerQtySplit } from "./buyer-qty-split";
+import { PolicyOversellReader } from "../orders/policy-oversell-reader";
 import {
   LOCK_UNAVAILABLE,
   LOCK_UNAVAILABLE_MESSAGE,
   isMergeContention,
   mapLockError,
 } from "../orders/merge-contention";
+import {
+  buyerSubmitHash,
+  normalizeBuyerIdempotencyKey,
+  scrubForeignOrderId,
+} from "./buyer-order-idempotency";
 
 /** Upper bound on `GET /buyer/products?ids=` — a cart is far smaller than this. */
 const MAX_PRODUCT_IDS = 200;
@@ -125,6 +145,8 @@ export class BuyerController {
     private readonly authorizationsService: AuthorizationsService,
     private readonly prisma: PrismaService,
     private readonly systemConfigService: SystemConfigService,
+    // WS9: reads the backorder policy for a buyer's standing-order "Reorder" (once, before the run).
+    private readonly oversellReader: PolicyOversellReader,
   ) {}
 
   // ─── Unscoped endpoints (no seller context needed) ────────────────────────────
@@ -178,7 +200,7 @@ export class BuyerController {
   @ApiHeader({ name: "X-Tenant-Slug", required: true })
   @ApiOperation({ summary: "Get buyer's customer profile at the selected seller" })
   getProfile(@CurrentBuyerCustomer() ctx: any) {
-    return ctx.customer;
+    return omitStaffOnlyCustomerFields(ctx.customer);
   }
 
   @Get("orders")
@@ -194,9 +216,9 @@ export class BuyerController {
       makePseudoUser({ ...ctx, role: UserRole.OPERATOR }),
     );
     // findAll runs as an OPERATOR pseudo-user, so the service-layer customer
-    // redaction never fires — strip upsell bases here at the buyer boundary.
-    result.data.forEach((order) => redactUpsellForCustomer(order));
-    return result;
+    // redaction never fires — strip upsell bases and project the customer-facing allowlist here at
+    // the buyer boundary.
+    return { ...result, data: result.data.map((o) => toCustomerOrder(o)) };
   }
 
   @Get("invoices")
@@ -229,10 +251,18 @@ export class BuyerController {
       statuses: visible,
       customerId: ctx.customerId,
     };
-    return this.invoicesService.findAll(
+    const result = await this.invoicesService.findAll(
       buyerQuery,
       makePseudoUser({ ...ctx, role: UserRole.OPERATOR }),
     );
+    // The OPERATOR pseudo-user also skips the service's customer-facing pass, so apply it here:
+    // no staff-only fields, and confirmed (PAID) payment rows only (balances are already derived).
+    return {
+      ...result,
+      data: result.data.map((inv) =>
+        pickCustomerInvoiceFields(inv, { confirmedPaymentsOnly: true }),
+      ),
+    };
   }
 
   @Get("invoices/:id")
@@ -243,28 +273,28 @@ export class BuyerController {
   async getInvoice(@Param("id") id: string, @CurrentBuyerCustomer() ctx: any) {
     const invoice = await this.invoicesService.findOne(id);
     // Ownership check: invoice must belong to this buyer's customer
-    if ((invoice as any).customerId !== ctx.customerId) {
+    if (invoice.customerId !== ctx.customerId) {
       throw new ForbiddenException("This invoice does not belong to your account");
     }
     // #2142 N1: a DRAFT is the seller's unissued working copy: to the buyer it does not exist yet
     // (the same 404 as a missing id), and opening it must not mark it viewed.
-    if ((invoice as any).status === InvoiceStatus.DRAFT) {
+    if (invoice.status === InvoiceStatus.DRAFT) {
       throw new NotFoundException("Invoice not found");
     }
     // Mark as viewed if not already
-    if (!(invoice as any).viewedAt) {
+    if (!invoice.viewedAt) {
       await this.prisma.forTenant().invoice.update({
         where: { id },
         data: { viewedAt: new Date() },
       });
     }
-    if ((invoice as any).pdfUrl) {
-      (invoice as any).pdfUrl = await this.invoicePdfService.getOrGenerate(id);
+    if (invoice.pdfUrl) {
+      invoice.pdfUrl = await this.invoicePdfService.getOrGenerate(id);
     }
     // findOne was called without a user, so its customer redaction didn't fire —
-    // strip upsell bases here at the buyer boundary.
-    redactUpsellForCustomer(invoice as any);
-    return invoice;
+    // strip upsell bases and staff-only fields here at the buyer boundary.
+    redactUpsellForCustomer(invoice);
+    return pickCustomerInvoiceFields(invoice);
   }
 
   @Get("statement")
@@ -370,8 +400,8 @@ export class BuyerController {
   @UseInterceptors(BuyerTenantInterceptor)
   @ApiHeader({ name: "X-Tenant-Slug", required: true })
   @ApiOperation({ summary: "List distinct product categories for filter dropdowns" })
-  getCategories() {
-    return this.catalogService.getCategories();
+  getCategories(@CurrentBuyerCustomer() ctx: any) {
+    return this.catalogService.getCategories(ctx.customerId);
   }
 
   @Get("products/counts")
@@ -464,9 +494,16 @@ export class BuyerController {
     const candidates = normalizeScanCode(code);
     if (candidates.length === 0) throw new NotFoundException("Product not found");
 
-    // One shared lookup (L-167). Buyer scope: active products only; getProductDetail below still
-    // applies the regulated-category gate, so a row code on a hidden product 404s here too.
-    const hit = await findScanMatches(this.prisma.forTenant(), candidates, { isActive: true });
+    // One shared lookup (L-167). The buyer's scope is the ONE catalog visibility builder (active, not a FAMILY,
+    // portal-visible, visible parent), which findScanMatches applies to every product query; getProductDetail
+    // below still applies the regulated-category gate, so a row code on a hidden product 404s here too.
+    const hit = await findScanMatches(
+      this.prisma.forTenant(),
+      candidates,
+      // B1211: the parent-visibility filter is tenant-scoped, so a parent link across tenants decides nothing.
+      // The restriction-hidden ids ride the same builder, so a scanned code on a hidden product 404s too.
+      await this.catalogService.scanVisibilityWhere(ctx.customerId, ctx.tenantId),
+    );
     if (!hit) throw new NotFoundException("Product not found");
     const match = hit.product;
 
@@ -493,9 +530,22 @@ export class BuyerController {
   @UseInterceptors(BuyerTenantInterceptor)
   @ApiHeader({ name: "X-Tenant-Slug", required: true })
   @ApiOperation({ summary: "Get the buyer's active DRAFT/PENDING order (or null)" })
-  async getActiveOrder(@CurrentBuyerCustomer() ctx: any) {
-    const order = await this.ordersService.findActiveOrder(ctx.customerId);
-    return redactUpsellForCustomer(order);
+  async getActiveOrder(
+    @CurrentBuyerCustomer() ctx: any,
+    @Query("fulfillPath") fulfillPath?: string,
+  ) {
+    // `fulfillPath` scopes the read to the order a cart on that path would fold into (the SAME
+    // search create runs), so the cart banner matches the server. Absent or unknown = today's read.
+    const path = (Object.values(FulfillPath) as string[]).includes(fulfillPath ?? "")
+      ? (fulfillPath as FulfillPath)
+      : null;
+    const order = path
+      ? await this.ordersService.findActiveOrder(ctx.customerId, {
+          forMerge: true,
+          mergeAs: { audience: "buyer", role: UserRole.CUSTOMER, explicit: path },
+        })
+      : await this.ordersService.findActiveOrder(ctx.customerId);
+    return toCustomerOrder(order);
   }
 
   @Get("orders/:id")
@@ -503,8 +553,9 @@ export class BuyerController {
   @UseInterceptors(BuyerTenantInterceptor)
   @ApiHeader({ name: "X-Tenant-Slug", required: true })
   @ApiOperation({ summary: "Get order detail with line items" })
-  getOrder(@Param("id") id: string, @CurrentBuyerCustomer() ctx: any) {
-    return this.ordersService.findOne(id, makePseudoUser(ctx));
+  async getOrder(@Param("id") id: string, @CurrentBuyerCustomer() ctx: any) {
+    // findOne's CUSTOMER branch already applies this; the boundary pass keeps it independent of the role.
+    return toCustomerOrder(await this.ordersService.findOne(id, makePseudoUser(ctx)));
   }
 
   @Get("orders/:id/tracking")
@@ -529,8 +580,23 @@ export class BuyerController {
   @UseGuards(BuyerSellerContextGuard)
   @UseInterceptors(BuyerTenantInterceptor)
   @ApiHeader({ name: "X-Tenant-Slug", required: true })
+  @ApiHeader({ name: "Idempotency-Key", required: false })
   @ApiOperation({ summary: "Create a new order or merge into existing active order" })
-  async createOrder(@Body() dto: BuyerCreateOrderDto, @CurrentBuyerCustomer() ctx: any) {
+  async createOrder(
+    @Body() dto: BuyerCreateOrderDto,
+    @CurrentBuyerCustomer() ctx: any,
+    @Headers("Idempotency-Key") rawIdempotencyKey?: string,
+  ) {
+    // Row 531 F2: a contradictory qty / box split is refused before the key, the lock or any write.
+    await assertBuyerQtySplit(
+      this.prisma.forTenant(),
+      dto.items,
+      "buyer.createOrder",
+      ctx.tenantId,
+    );
+    // B1094: a client-minted key makes a double submit (two concurrent POSTs of one cart) apply ONCE.
+    const idempotencyKey = normalizeBuyerIdempotencyKey(rawIdempotencyKey);
+    const requestHash = idempotencyKey ? buyerSubmitHash(ctx.customerId, dto.items) : undefined;
     // Check if buyer has an active DRAFT/PENDING order (unless forceNew is set)
     if (!dto.forceNew) {
       // IMP-02 (R2 companion): this is the SAME read-fold-absolute-write critical
@@ -550,7 +616,7 @@ export class BuyerController {
       // by deferring every single time, so the sweep would never run at all). This
       // mirrors the staff controller, which likewise sweeps and re-reads after its lock
       // has been released.
-      let mergedOrderId: string | null = null;
+      let merged: { orderId: string; replayed: boolean } | null = null;
       try {
         const lock = await withAdvisoryLock(
           // 10s, not the module default of 20s: the mobile api client aborts every request
@@ -561,10 +627,53 @@ export class BuyerController {
           // and only the sweep/force paths (no client attached) take the service's 20s wait.
           { family: "order-merge", key: ctx.customerId, mode: "wait", waitMs: 10_000 },
           async () => {
+            // A buyer cart folds only into an order on the SAME fulfil path (merge-candidates.ts).
             const activeOrder = await this.ordersService.findActiveOrder(ctx.customerId, {
               forMerge: true,
+              // The cart folds only into an order on the path it asked for (the SAME resolver as create).
+              mergeAs: {
+                audience: "buyer",
+                role: UserRole.CUSTOMER,
+                ...(dto.fulfillPath ? { explicit: dto.fulfillPath } : {}),
+              },
             });
             if (!activeOrder) return null;
+            // B1094: the fold writes ABSOLUTE totals, so a retry that serialized behind the submit that
+            // already folded this cart must replay it, not fold it in a second time (2 + 3 + 3 = 8).
+            if (idempotencyKey) {
+              const replayed = await this.ordersService
+                .findOrderIdByIdempotencyKey(
+                  idempotencyKey,
+                  ctx.customerId,
+                  requestHash,
+                  undefined,
+                  { items: dto.items }, // BUG-A: a column hit compares the body to the order it made
+                )
+                .catch(scrubForeignOrderId); // never hand a buyer another customer's order id
+              if (replayed) {
+                // The fold's convergent tail may not have run (the key commits inside the fold's tx).
+                await this.ordersService.replayMergeReconcile(
+                  replayed.orderId,
+                  ctx.customerId,
+                  undefined,
+                );
+                return { orderId: replayed.orderId, replayed: true };
+              }
+            }
+            // W-762 / SA-918: never fold into an order that carries an order discount (SA-780 decides the
+            // allocation): the cart becomes its own order. After the replay branch, so a landed fold still replays.
+            if (mergeBlockedByDiscount([activeOrder])) {
+              logDiscountedSkip("buyer.createOrder", ctx.customerId);
+              return null;
+            }
+            // Row 718: the cart's delivery day is a CHANGE of this order's date. A day before the TENANT's today is refused
+            // (400 DELIVERY_DATE_IN_PAST) before anything is folded - applyBuyerMergeHeader below is best-effort by design, so
+            // it cannot carry the refusal - while the order's own date, resent as it is, is not a change. After the replay
+            // branch above, so a retry of a merge that already landed still replays.
+            await assertDeliveryDateNotPast(this.prisma, dto.requestedDeliveryDate, {
+              tenantId: ctx.tenantId,
+              existing: activeOrder.requestedDeliveryDate,
+            });
             // REG-B47: denomination-aware fold (F30's staff exemplar, shared module) over
             // LIVE-normalized snapshots — a box-unaware line of a boxed product counts
             // selling units, so give the fold its real box split before summing.
@@ -583,11 +692,6 @@ export class BuyerController {
             // incoming item is expanded only when the STORED line is box-split (where
             // the accumulator is in pieces). Where both sides are bare they already
             // agree in selling units and neither is touched.
-            const boxAwareIncoming = new Set(
-              incomingItems
-                .filter((i) => i.boxes != null || i.pieces != null)
-                .map((i) => i.productId),
-            );
             const productIds = lineItems
               .map((li: { productId?: string | null }) => li.productId)
               .filter((id: string | null | undefined): id is string => !!id);
@@ -598,27 +702,45 @@ export class BuyerController {
                 })
               : [];
             const upbByProduct = new Map(products.map((p) => [p.id, Number(p.unitsPerBox ?? 0)]));
+            // Row 355: "box-aware" is read from the incoming AFTER the bare ones are expanded against a
+            // box-split stored line — a stored PACK line of that product must be normalized to pieces too,
+            // or its packs fold into the expanded boxes as if they were pieces.
+            const normalizedIncoming = normalizeBareIncomingSellingUnits(
+              incomingItems,
+              lineItems,
+              upbByProduct,
+            );
+            const boxAwareIncoming = new Set(
+              normalizedIncoming
+                .filter((i) => i.boxes != null || i.pieces != null)
+                .map((i) => i.productId),
+            );
             const upbForStoredSnapshots = new Map(
               [...upbByProduct].filter(([id]) => boxAwareIncoming.has(id)),
             );
-            // ⚠️ The fold's R0/R11 price-survival contract ("a merge is never where an
-            // operator's price override silently disappears") does NOT hold on THIS
-            // caller, and not because of anything here: `updateOrderItems`' CUSTOMER
-            // branch re-prices every catalog line through `resolveBuyerLinePrice` and
-            // never reads `item.unitPrice`, so a preserved MANUAL override is dropped
-            // and the line re-prices at the tier ladder. That is pre-existing (the
-            // naive merge dropped it too) and B13-correct in posture — a buyer payload
-            // must never set a price — but it means an operator's courtesy price on the
-            // buyer's active order does not survive the buyer adding to it. Filed as a
-            // register entry rather than fixed here: the fix belongs in the CUSTOMER
-            // branch (honour a STORED override, still never a client-supplied one),
-            // which is F07's file region.
+            // Row 497 (what the fold below does with prices): `updateOrderItems`' CUSTOMER branch recreates every
+            // line and prices each one itself; it never reads a client-supplied `item.unitPrice` (B13). A line the
+            // fold names by `sourceLineId` KEEPS its stored price, type, original price, reason and stamp ONLY if
+            // it is an operator OVERRIDE (DISCOUNTED / MANUAL, or SPECIAL with a stored reason), the product and
+            // unit are unchanged and its box size is unchanged; the subtotal is recomputed from the kept price
+            // (@routeflow/pricing). Everything else re-prices at the buyer's CURRENT tier (SA-507b): a plain tier
+            // line, a new line, a changed product, and the extra quantity a fold SPLITS onto a new line (that
+            // quantity is a new sale, so it never inherits the override).
             const foldResult = foldMergeItems(
               normalizeBoxUnawareSnapshots(lineItems, upbForStoredSnapshots),
-              normalizeBareIncomingSellingUnits(incomingItems, lineItems, upbByProduct),
-              // SA-124e(3): the price basis follows the RESOLVED pack, not the live one —
-              // already built above for the denomination normalizers.
-              upbByProduct,
+              normalizedIncoming,
+              {
+                // SA-124e(3) + SA-841: the live pack map (already built above for the denomination normalizers),
+                // read by the stored-line merge only for a line with no pack of its own.
+                liveUnitsPerBoxByProductId: upbByProduct,
+                // a buyer's bare qty is selling units
+                bare: "sellingUnits",
+                // B297 row 343 (foldTarget): the rate trio a NEW sale of each incoming product takes today —
+                // an existing line sold at a different trio does not absorb the added quantity.
+                liveTrioByProductId: await this.ordersService.liveTrioByProduct(
+                  incomingItems.map((i) => i.productId).filter(Boolean) as string[],
+                ),
+              },
             );
             if (foldResult.livePackFallbackProductIds.length > 0) {
               this.logger.warn(
@@ -630,7 +752,23 @@ export class BuyerController {
               activeOrder.id,
               { items: mergedItems, replaceAll: true } as UpdateOrderItemsDto,
               makePseudoUser(ctx),
+              ...(idempotencyKey
+                ? [{ idempotency: { key: idempotencyKey, responseHash: requestHash! } }]
+                : []),
             );
+            if (idempotencyKey) {
+              // Order-column stamp for create()'s replay path (best-effort; the key row already
+              // committed with the fold above).
+              await this.ordersService
+                .recordIdempotencyKey(activeOrder.id, idempotencyKey)
+                .catch((err: unknown) =>
+                  this.logger.error(
+                    `buyer idempotency record failed order=${activeOrder.id} key=${idempotencyKey}: ${
+                      err instanceof Error ? err.message : String(err)
+                    }`,
+                  ),
+                );
+            }
             // REG-B78: carry the buyer's header fields onto the merged order (append/OR/set
             // semantics) BEFORE the sibling-order sweep, so they land on the surviving order.
             // BEST-EFFORT ON PURPOSE: the line write above has already COMMITTED (it runs in
@@ -658,7 +796,7 @@ export class BuyerController {
               );
             }
 
-            return activeOrder.id;
+            return { orderId: activeOrder.id, replayed: false };
           },
         );
         // `wait` mode either acquires or throws, so this is defensive only — but it must NOT
@@ -673,12 +811,19 @@ export class BuyerController {
             message: LOCK_UNAVAILABLE_MESSAGE,
           });
         }
-        mergedOrderId = lock.value;
+        merged = lock.value;
       } catch (lockErr) {
         mapLockError(lockErr);
       }
 
-      if (mergedOrderId) {
+      if (merged) {
+        const mergedOrderId = merged.orderId;
+        // B1094: a replayed submit already had its sweep when it first landed.
+        if (merged.replayed) {
+          return toCustomerOrder(
+            await this.ordersService.findOne(mergedOrderId, makePseudoUser(ctx)),
+          );
+        }
         // Sweep any other PENDING orders for this customer into the winner. The
         // buyer drove this, so a merged BUY_N_GET_M line earns the free units the
         // combined quantity qualifies for (split carts keep the promo).
@@ -703,7 +848,9 @@ export class BuyerController {
         }
 
         // Return the updated order
-        return this.ordersService.findOne(mergedOrderId, makePseudoUser(ctx));
+        return toCustomerOrder(
+          await this.ordersService.findOne(mergedOrderId, makePseudoUser(ctx)),
+        );
       }
     }
 
@@ -720,8 +867,24 @@ export class BuyerController {
       urgent: dto.urgent,
       requestedDeliveryDate: dto.requestedDeliveryDate,
       status: dto.status ?? "PENDING",
+      ...(dto.fulfillPath ? { fulfillPath: dto.fulfillPath } : {}),
     };
-    const created = await this.ordersService.create(createDto as any, makePseudoUser(ctx));
+    const created = await this.ordersService.create(
+      (idempotencyKey ? { ...createDto, idempotencyKey } : createDto) as any, // B1094: replays by key
+      makePseudoUser(ctx),
+      // B1239: forceNew is the buyer's explicit "create new order instead" — the new order is kept
+      // apart exactly like a staff "separate" choice (skipAutoMerge), so the sweep below and the hourly
+      // one never fold it back into the pending order they chose to leave alone.
+      ...(dto.forceNew ? [{ skipAutoMerge: true }] : []),
+    );
+    if (dto.forceNew) {
+      // B1239: no consolidation. The sweep's winner is the newest order, so the NEW order won and the
+      // PRE-EXISTING pending order was the loser: deleted, its number burned, its lines moved into the new
+      // order. A duplicate tap then met a changed cart in assertReplayOfCart (409 / cart mismatch). A
+      // kept-apart order has nothing to consolidate; the pending order is untouched and the key stays on
+      // THIS order, so a duplicate submit replays it (create()'s key replay).
+      return toCustomerOrder(created);
+    }
     // Newly-created order may share a customer with pre-existing PENDINGs —
     // consolidate them so the customer ends up with a single PENDING (buyer-driven,
     // so the merged quantity earns its own BUY_N_GET_M free units).
@@ -733,7 +896,8 @@ export class BuyerController {
     try {
       merged = await this.ordersService.mergeAllPendingForCustomer(
         ctx.customerId,
-        { buyerInitiated: true },
+        // focusOrderId: only the new order's path folds, so `merged` is never another path's pair
+        { buyerInitiated: true, focusOrderId: created.id },
         // POST-COMMIT: never wait — see the sibling sweep above.
         { lockMode: "try" },
       );
@@ -743,7 +907,7 @@ export class BuyerController {
         `post-commit consolidation deferred (merge in progress) tenant=${ctx.tenantId} customer=${ctx.customerId}`,
       );
     }
-    return merged ?? created;
+    return toCustomerOrder(merged ?? created);
   }
 
   @Patch("orders/:id/items")
@@ -751,12 +915,25 @@ export class BuyerController {
   @UseInterceptors(BuyerTenantInterceptor)
   @ApiHeader({ name: "X-Tenant-Slug", required: true })
   @ApiOperation({ summary: "Edit items on a DRAFT/PENDING order" })
-  updateOrderItems(
+  async updateOrderItems(
     @Param("id") id: string,
     @Body() dto: UpdateOrderItemsDto,
     @CurrentBuyerCustomer() ctx: any,
   ) {
-    return this.ordersService.updateOrderItems(id, dto, makePseudoUser(ctx));
+    // Row 531 F2 + S3: each entry that names a stored line is checked in THAT line's own pack.
+    await assertBuyerQtySplit(
+      this.prisma.forTenant(),
+      dto.items,
+      "buyer.updateOrderItems",
+      ctx.tenantId,
+      { orderId: id, customerId: ctx.customerId },
+    );
+    // B297 row 352: the entries name their lines (`orderItemId`), so a line keeps the rate it was sold at.
+    return toCustomerOrder(
+      await this.ordersService.updateOrderItems(id, dto, makePseudoUser(ctx), {
+        buyerLineIds: true,
+      }),
+    );
   }
 
   @Post("orders/:id/change-requests")
@@ -884,7 +1061,7 @@ export class BuyerController {
     if (items.length === 0) {
       // No low items — no-op: return the active order (or null) unchanged.
       const active = await this.ordersService.findActiveOrder(ctx.customerId);
-      return redactUpsellForCustomer(active);
+      return toCustomerOrder(active);
     }
     // Delegate to the EXACT create/merge path the buyer cart uses (@Post("orders")):
     // pricing, active-order merge and the pending-sweep are inherited, never re-implemented.
@@ -909,7 +1086,7 @@ export class BuyerController {
   @ApiHeader({ name: "X-Tenant-Slug", required: true })
   @ApiOperation({ summary: "Get authenticated buyer's own profile" })
   getMe(@CurrentBuyerCustomer() ctx: any) {
-    return ctx.customer;
+    return omitStaffOnlyCustomerFields(ctx.customer);
   }
 
   @Patch("me")
@@ -917,11 +1094,20 @@ export class BuyerController {
   @UseInterceptors(BuyerTenantInterceptor)
   @ApiHeader({ name: "X-Tenant-Slug", required: true })
   @ApiOperation({ summary: "Update authenticated buyer's own profile" })
-  updateMe(@CurrentBuyerCustomer() ctx: any, @Body() dto: UpdateBuyerProfileDto) {
-    // SECURITY (F4-001): dto is a strict buyer-profile DTO — seller-controlled
-    // commercial fields (pricingTier/creditLimit/isTaxExempt/...) are not part of
-    // it, so the ValidationPipe rejects them and update() can only touch profile.
-    return this.customersService.update(ctx.customerId, dto);
+  async updateMe(
+    @CurrentBuyerCustomer() ctx: any,
+    @CurrentBuyer() buyer: BuyerJwtPayload,
+    @Body() dto: UpdateBuyerProfileDto,
+  ) {
+    // SECURITY (F4-001): dto is a strict buyer-profile DTO, so the ValidationPipe rejects seller-controlled
+    // commercial fields. Second layer: updateOwnProfile applies the same explicit allowlist as
+    // /customers/me and writes the audit row, so the write never depends on the pipe alone.
+    return this.customersService.updateOwnProfile({
+      customerId: ctx.customerId,
+      actor: buyer,
+      source: "buyer/me",
+      body: dto,
+    });
   }
 
   // ─── Order templates ──────────────────────────────────────────────────────────
@@ -932,12 +1118,9 @@ export class BuyerController {
   @ApiHeader({ name: "X-Tenant-Slug", required: true })
   @ApiOperation({ summary: "List buyer's standing order templates" })
   getTemplates(@CurrentBuyerCustomer() ctx: any) {
-    // Pass OPERATOR role + customerId to avoid userId-based customer lookup
-    // (buyer-portal-only accounts may have userId=null on the Customer record).
-    return this.templatesService.findAllForUser(
-      makePseudoUser({ ...ctx, role: UserRole.OPERATOR }),
-      ctx.customerId,
-    );
+    // By customerId (buyer-portal-only accounts may have userId=null on the Customer record); lines for
+    // products the catalog hides from this buyer are dropped (row 479).
+    return this.templatesService.findAllForBuyer(ctx.customerId);
   }
 
   @Get("standing-orders")
@@ -948,11 +1131,8 @@ export class BuyerController {
     summary: "Alias: list buyer's standing order templates (same as /buyer/templates)",
   })
   getStandingOrders(@CurrentBuyerCustomer() ctx: any) {
-    // Pass OPERATOR role + customerId to avoid userId-based customer lookup.
-    return this.templatesService.findAllForUser(
-      makePseudoUser({ ...ctx, role: UserRole.OPERATOR }),
-      ctx.customerId,
-    );
+    // Same buyer-filtered list as GET /buyer/templates.
+    return this.templatesService.findAllForBuyer(ctx.customerId);
   }
 
   @Post("templates/:id/reorder")
@@ -962,6 +1142,10 @@ export class BuyerController {
   @ApiHeader({ name: "X-Tenant-Slug", required: true })
   @ApiOperation({ summary: "Generate a new order from a standing order template" })
   async reorderFromTemplate(@Param("id") id: string, @CurrentBuyerCustomer() ctx: any) {
+    // Row 531 S4 (intentional): this path is NOT enforced by assertBuyerQtySplit. Its lines come from the stored
+    // template rows, not from a client cart, so a disagreeing qty / split here is stored-data drift for the
+    // WARN-mode log inside OrdersService.create() (path "orders.create.lines") to surface, not a buyer payload to refuse.
+    // Enforcement on template-generated orders waits for its own ruling, like every staff / shared path.
     // Ownership check: verify the template belongs to this buyer's customer
     const template = await this.prisma
       .forTenant()
@@ -970,12 +1154,24 @@ export class BuyerController {
     if (template.customerId !== ctx.customerId) {
       throw new ForbiddenException("This template does not belong to your account");
     }
-    // #1208 review LOW-MED: this buyer-portal path bypasses generateOrderForUser (there
-    // is no JwtPayload here — ownership is already verified above against ctx.customerId),
-    // so it must pass isStaffRole=false itself, or it silently keeps the old hardcoded-true
-    // oversell posture. A buyer's "Reorder" gets the SAME hard block their own checkout
-    // (orders.service.ts create()) gives them — never the operator/cron warn-and-oversell.
-    return this.templatesService.generateOrder(id, false);
+    // #1208 review LOW-MED / WS9: this buyer-portal path has no JwtPayload (ownership is verified above
+    // against ctx.customerId), so it resolves the policy itself, ONCE, before the run: role CUSTOMER
+    // (never a staff role) and source "buyer" (never "template_cron" - a buyer's Reorder is a buyer
+    // action). A buyer's Reorder gets the SAME answer their own checkout gets; the boolean is all the
+    // template service receives; `isStaffRole=false` (2nd arg) keeps the BUYER selling-restriction channel.
+    const allowOversell = await resolveOversellAllowed(this.oversellReader, {
+      tenantId: ctx.tenantId,
+      role: UserRole.CUSTOMER,
+      source: "buyer",
+      customerId: ctx.customerId,
+    });
+    // The generated order goes back to the buyer: the customer-facing allowlist, never the staff row. Lines a
+    // selling restriction hides from this buyer are left out and listed in `skipped` (BuyerReorderSkipped).
+    const outcome: { skipped: BuyerReorderSkippedLine[] } = { skipped: [] };
+    const order = toCustomerOrder(
+      await this.templatesService.generateOrder(id, false, allowOversell, outcome),
+    );
+    return order ? { ...order, skipped: outcome.skipped } : order;
   }
 
   @Patch("templates/:id")
@@ -985,7 +1181,7 @@ export class BuyerController {
   @ApiOperation({ summary: "Update a standing order template (e.g. pause/resume)" })
   async updateTemplate(
     @Param("id") id: string,
-    @Body() dto: { isActive?: boolean },
+    @Body() dto: UpdateBuyerOrderTemplateDto,
     @CurrentBuyerCustomer() ctx: any,
   ) {
     const template = await this.prisma
@@ -995,7 +1191,7 @@ export class BuyerController {
     if (template.customerId !== ctx.customerId) {
       throw new ForbiddenException("This template does not belong to your account");
     }
-    return this.templatesService.updateForUser(id, dto, makePseudoUser(ctx));
+    return this.templatesService.updateForUser(id, { isActive: dto.isActive }, makePseudoUser(ctx));
   }
 
   // ─── Analytics ───────────────────────────────────────────────────────────────
@@ -1050,33 +1246,29 @@ export class BuyerController {
     const totalSpend = allOrders.reduce((s, o) => s + Number(o.total), 0);
     const avgOrderValue = totalOrders > 0 ? totalSpend / totalOrders : 0;
 
-    // Invoice breakdown
-    const invoices = await db.invoice.findMany({
-      where: { customerId },
-      select: { status: true, total: true, dueDate: true },
-    });
-    const now = new Date();
-    let paidCount = 0,
-      unpaidCount = 0,
-      overdueCount = 0,
-      unpaidTotal = 0;
-    for (const inv of invoices) {
-      if (inv.status === "PAID") {
-        paidCount++;
-      } else if (
-        inv.status === "SENT" ||
-        inv.status === "VIEWED" ||
-        inv.status === "PARTIAL" ||
-        inv.status === "OVERDUE"
-      ) {
-        if (inv.status === "OVERDUE" || (inv.dueDate && inv.dueDate < now)) {
-          overdueCount++;
-        } else {
-          unpaidCount++;
-        }
-        unpaidTotal += Number(inv.total);
-      }
-    }
+    // Invoice breakdown (SA-770 r-note): the staff rule - an open invoice that still owes a balance and
+    // whose due day has ended in THIS seller's zone is overdue; the total is BALANCE due, never gross.
+    // Bounded: PAID invoices are only counted, and only OPEN ones are fetched, each with just the
+    // confirmed payments (amount, status, method) the classifier nets.
+    const [paidInvoiceCount, openInvoices, zone] = await Promise.all([
+      db.invoice.count({ where: { customerId, status: "PAID" } }),
+      db.invoice.findMany({
+        where: { customerId, status: { in: [...OPEN_INVOICE_STATUSES] } },
+        select: {
+          status: true,
+          total: true,
+          dueDate: true,
+          payments: {
+            where: CONFIRMED_PAYMENT,
+            select: { amount: true, status: true, method: true },
+          },
+        },
+      }),
+      tenantTimeZone(this.prisma),
+    ]);
+    const summary = summarizeOpenInvoices(openInvoices, overdueCutoff(new Date(), zone));
+    const paidCount = paidInvoiceCount + summary.settledCount;
+    const { unpaidCount, overdueCount, unpaidTotal } = summary;
 
     // Recent payments (last 20)
     const payments = await db.invoicePayment.findMany({

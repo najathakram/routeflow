@@ -1,9 +1,18 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
 import { RegulatedVisibilityService } from "./regulated-visibility.service";
 import { getTierPrice } from "@routeflow/pricing";
+import { EntitlementsService } from "../billing/entitlements.service";
+import { customerPricing } from "../orders/units-prices-v2";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { buyerVisibilityFor, buyerVisibleProductWhere } from "./buyer-product-visibility";
 import { firstSignableImageKey } from "../products/product-image-keys";
+import { overdueCutoff } from "../common/calendar-date";
+import { tenantTimeZone } from "../common/tenant-time-zone";
+import { summarizeOpenInvoices } from "../invoices/invoice-balance-classify";
+import { OPEN_INVOICE_STATUSES } from "../invoices/invoice-status-sets";
+import { CONFIRMED_PAYMENT } from "../invoices/payment-predicates";
 
 @Injectable()
 export class BuyerDashboardService {
@@ -11,7 +20,29 @@ export class BuyerDashboardService {
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
     private readonly visibility: RegulatedVisibilityService,
+    private readonly restrictions: SellingRestrictionsService,
+    // S19b: the customer layer (flag.units_prices_v2) prices a tile like the cart; absent = master's tier price.
+    @Optional() private readonly entitlements?: EntitlementsService,
   ) {}
+
+  /**
+   * S19b: one tile group's tier maps and (flag.units_prices_v2 only) customer layer, as billing reads them. Flag off: master's
+   * `customer.pricingTier ?? 1` and the raw per-product tier map. Tiles keep master's no-sticky behaviour (SA-813 Q2).
+   */
+  private tilePricing(
+    customerId: string,
+    productIds: string[],
+    customer: Parameters<typeof customerPricing>[3],
+    rows: Parameters<typeof customerPricing>[4],
+  ) {
+    const svc = { prisma: this.prisma, entitlements: this.entitlements };
+    return customerPricing(svc, customerId, productIds, customer, rows);
+  }
+
+  /** The tenant-scoped buyer visibility context (hidden ids included): no tenant on the request throws, never unscoped (B1211). */
+  private buyerVisibility(customerId: string) {
+    return buyerVisibilityFor(this.restrictions, this.prisma.getTenantId(), customerId);
+  }
 
   /**
    * Aggregated dashboard data for a buyer at a specific seller.
@@ -26,13 +57,14 @@ export class BuyerDashboardService {
     const customer = await this.prisma
       .forTenant()
       .customer.findFirst({ where: { id: customerId }, select: { pricingTier: true } });
-    const defaultTier = customer?.pricingTier ?? 1;
 
     // W7 gate: hide regulated products the buyer isn't licensed for on every product
     // surface (featured / new / suggested / frequently-ordered), via the SAME shared
     // visibility service the catalog uses — so the dashboard can't drift and re-expose
     // a product the buyer would be blocked from buying at checkout.
     const { hiddenIds } = await this.visibility.computeGate(customerId, now);
+    // One restriction read per request; every product query below applies the same hidden-id set.
+    const buyerVis = await this.buyerVisibility(customerId);
     // NULL-safe form: `notIn` never matches NULL, so the old shape hid every
     // UNTRACKED product from the dashboard rails once a license-gated
     // category existed (see products.service.findAll for the full account).
@@ -53,7 +85,8 @@ export class BuyerDashboardService {
       spend30d,
       spend90d,
       spendAllTime,
-      unpaidAgg,
+      openInvoices,
+      sellerZone,
     ] = await Promise.all([
       // Recent orders (last 5)
       this.prisma.forTenant().order.findMany({
@@ -65,6 +98,9 @@ export class BuyerDashboardService {
           total: true,
           createdAt: true,
           requestedDeliveryDate: true,
+          // Business profiles 1B: the buyer badge is the order detail's label, which reads these.
+          fulfillPath: true,
+          shippedAt: true,
           lineItems: {
             select: { id: true },
           },
@@ -116,14 +152,17 @@ export class BuyerDashboardService {
 
       // New products (last 30 days)
       this.prisma.forTenant().product.findMany({
-        where: { isActive: true, createdAt: { gte: thirtyDaysAgo }, ...gateWhere },
+        where: buyerVisibleProductWhere(buyerVis, {
+          createdAt: { gte: thirtyDaysAgo },
+          ...gateWhere,
+        }),
         orderBy: { createdAt: "desc" },
         take: 10,
       }),
 
       // Featured products
       this.prisma.forTenant().product.findMany({
-        where: { isActive: true, isFeatured: true, ...gateWhere },
+        where: buyerVisibleProductWhere(buyerVis, { isFeatured: true, ...gateWhere }),
         orderBy: { name: "asc" },
         take: 10,
       }),
@@ -157,15 +196,25 @@ export class BuyerDashboardService {
         _sum: { total: true },
       }),
 
-      // Unpaid invoices — count + total over the open statuses, matching
-      // getAnalytics' summary (unpaidCount + overdueCount / unpaidTotal) so the
-      // dashboard strip and the Finances screen never diverge.
-      this.prisma.forTenant().invoice.aggregate({
-        where: { customerId, status: { in: ["SENT", "VIEWED", "PARTIAL", "OVERDUE"] } },
-        _count: { _all: true },
-        _sum: { total: true },
+      // Unpaid invoices over the open statuses (SA-770 r-note): the strip counts what is still OWED, via the
+      // same classifier as getAnalytics' summary, so the dashboard strip and the Finances screen never
+      // diverge and an overpaid or part-paid invoice shows its balance, never the gross.
+      this.prisma.forTenant().invoice.findMany({
+        where: { customerId, status: { in: [...OPEN_INVOICE_STATUSES] } },
+        select: {
+          status: true,
+          total: true,
+          dueDate: true,
+          payments: {
+            where: CONFIRMED_PAYMENT,
+            select: { amount: true, status: true, method: true },
+          },
+        },
       }),
+      // The seller's own due day (SA-488): an invoice is overdue once ITS tenant's day has ended.
+      tenantTimeZone(this.prisma),
     ]);
+    const unpaid = summarizeOpenInvoices(openInvoices, overdueCutoff(now, sellerZone));
 
     // Enrich frequently ordered products with product details + buyer pricing.
     // Unlisted (catalog-free) lines have no productId and can't be reordered.
@@ -175,7 +224,10 @@ export class BuyerDashboardService {
     const freqProducts =
       freqProductIds.length > 0
         ? await this.prisma.forTenant().product.findMany({
-            where: { id: { in: freqProductIds }, isActive: true, ...gateWhere },
+            where: buyerVisibleProductWhere(buyerVis, {
+              id: { in: freqProductIds },
+              ...gateWhere,
+            }),
           })
         : [];
     const freqProductMap = new Map(freqProducts.map((p) => [p.id, p]));
@@ -187,14 +239,14 @@ export class BuyerDashboardService {
             where: { customerId, productId: { in: freqProductIds } },
           })
         : [];
-    const cpMap = new Map(freqCustomerPrices.map((cp) => [cp.productId, cp.pricingTier]));
+    const freqPc = await this.tilePricing(customerId, freqProductIds, customer, freqCustomerPrices);
 
     const frequentlyOrdered = await Promise.all(
       frequentlyOrderedRaw
         .filter((f) => !!f.productId && freqProductMap.has(f.productId))
         .map(async (f) => {
           const product = freqProductMap.get(f.productId!)!;
-          const effectiveTier = cpMap.get(f.productId!) ?? defaultTier;
+          const effectiveTier = freqPc.cpMap.get(f.productId!) ?? freqPc.defaultTier;
           const thumbKey = firstSignableImageKey(f.productId!, product.imageKeys); // #2533
           const thumbnailUrl = thumbKey ? await this.storage.presignedUrl(thumbKey) : null;
           return {
@@ -203,7 +255,7 @@ export class BuyerDashboardService {
             sku: product.sku,
             unit: product.unit,
             category: product.category,
-            buyerPrice: getTierPrice(product, effectiveTier),
+            buyerPrice: freqPc.layer(product)?.price ?? getTierPrice(product, effectiveTier),
             thumbnailUrl,
             orderCount: f._count.productId,
             totalQty: Number(f._sum.qty ?? 0),
@@ -219,11 +271,11 @@ export class BuyerDashboardService {
             where: { customerId, productId: { in: newProductIds } },
           })
         : [];
-    const newCpMap = new Map(newCpOverrides.map((cp) => [cp.productId, cp.pricingTier]));
+    const newPc = await this.tilePricing(customerId, newProductIds, customer, newCpOverrides);
 
     const newFromSeller = await Promise.all(
       newProducts.map(async (p) => {
-        const effectiveTier = newCpMap.get(p.id) ?? defaultTier;
+        const effectiveTier = newPc.cpMap.get(p.id) ?? newPc.defaultTier;
         const thumbKey = firstSignableImageKey(p.id, p.imageKeys); // #2533
         const thumbnailUrl = thumbKey ? await this.storage.presignedUrl(thumbKey) : null;
         return {
@@ -232,7 +284,7 @@ export class BuyerDashboardService {
           sku: p.sku,
           unit: p.unit,
           category: p.category,
-          buyerPrice: getTierPrice(p, effectiveTier),
+          buyerPrice: newPc.layer(p)?.price ?? getTierPrice(p, effectiveTier),
           thumbnailUrl,
         };
       }),
@@ -246,11 +298,16 @@ export class BuyerDashboardService {
             where: { customerId, productId: { in: featuredProductIds } },
           })
         : [];
-    const featCpMap = new Map(featCpOverrides.map((cp) => [cp.productId, cp.pricingTier]));
+    const featPc = await this.tilePricing(
+      customerId,
+      featuredProductIds,
+      customer,
+      featCpOverrides,
+    );
 
     const featuredItems = await Promise.all(
       featuredProducts.map(async (p) => {
-        const effectiveTier = featCpMap.get(p.id) ?? defaultTier;
+        const effectiveTier = featPc.cpMap.get(p.id) ?? featPc.defaultTier;
         const thumbKey = firstSignableImageKey(p.id, p.imageKeys); // #2533
         const thumbnailUrl = thumbKey ? await this.storage.presignedUrl(thumbKey) : null;
         return {
@@ -259,7 +316,7 @@ export class BuyerDashboardService {
           sku: p.sku,
           unit: p.unit,
           category: p.category,
-          buyerPrice: getTierPrice(p, effectiveTier),
+          buyerPrice: featPc.layer(p)?.price ?? getTierPrice(p, effectiveTier),
           thumbnailUrl,
         };
       }),
@@ -298,12 +355,11 @@ export class BuyerDashboardService {
     const suggestedProducts =
       orderedCategories.length > 0
         ? await this.prisma.forTenant().product.findMany({
-            where: {
-              isActive: true,
+            where: buyerVisibleProductWhere(buyerVis, {
               category: { in: orderedCategories },
               id: { notIn: orderedProductIds },
               ...gateWhere,
-            },
+            }),
             orderBy: { createdAt: "desc" },
             take: 8,
           })
@@ -317,11 +373,11 @@ export class BuyerDashboardService {
             where: { customerId, productId: { in: suggestedProductIds } },
           })
         : [];
-    const sugCpMap = new Map(sugCpOverrides.map((cp) => [cp.productId, cp.pricingTier]));
+    const sugPc = await this.tilePricing(customerId, suggestedProductIds, customer, sugCpOverrides);
 
     const suggestedItems = await Promise.all(
       suggestedProducts.map(async (p) => {
-        const effectiveTier = sugCpMap.get(p.id) ?? defaultTier;
+        const effectiveTier = sugPc.cpMap.get(p.id) ?? sugPc.defaultTier;
         const thumbKey = firstSignableImageKey(p.id, p.imageKeys); // #2533
         const thumbnailUrl = thumbKey ? await this.storage.presignedUrl(thumbKey) : null;
         return {
@@ -330,7 +386,7 @@ export class BuyerDashboardService {
           sku: p.sku,
           unit: p.unit,
           category: p.category,
-          buyerPrice: getTierPrice(p, effectiveTier),
+          buyerPrice: sugPc.layer(p)?.price ?? getTierPrice(p, effectiveTier),
           thumbnailUrl,
         };
       }),
@@ -344,6 +400,8 @@ export class BuyerDashboardService {
         total: Number(o.total),
         createdAt: o.createdAt,
         requestedDeliveryDate: o.requestedDeliveryDate,
+        fulfillPath: o.fulfillPath,
+        shippedAt: o.shippedAt,
         itemCount: o.lineItems.length,
       })),
       stats: {
@@ -353,8 +411,8 @@ export class BuyerDashboardService {
         spend30d: Number(spend30d._sum.total ?? 0),
         spend90d: Number(spend90d._sum.total ?? 0),
         spendAllTime: Number(spendAllTime._sum.total ?? 0),
-        unpaidInvoiceCount: unpaidAgg._count._all,
-        unpaidInvoiceTotal: Number(unpaidAgg._sum.total ?? 0),
+        unpaidInvoiceCount: unpaid.unpaidCount + unpaid.overdueCount,
+        unpaidInvoiceTotal: unpaid.unpaidTotal,
       },
       frequentlyOrdered,
       newFromSeller,

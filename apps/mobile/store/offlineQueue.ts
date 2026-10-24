@@ -29,7 +29,7 @@ export interface QueuedAction {
 }
 
 /** Upper bound on the persisted failure list (see addFailedAction). */
-export const MAX_FAILED_ACTIONS = 50;
+const MAX_FAILED_ACTIONS = 50;
 
 interface OfflineQueueState {
   queue: QueuedAction[];

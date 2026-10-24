@@ -41,6 +41,9 @@ export interface InlineReturnLineDraft {
   creditUnitPrice?: string;
   /** #2695: why — required with `creditUnitPrice`. */
   overrideReason?: string;
+  /** B961 / SA-071c: staff-only reason for crediting goods the quote flagged "already returned or credited". Sent on the CAPTURE
+   *  only (the quote ignores it). */
+  alreadyReturnedReason?: string;
 }
 
 // ─── #2695: staff credit price override ─────────────────────────────────────────
@@ -227,6 +230,8 @@ export function buildQuoteRequest(
   customerId: string,
   lines: InlineReturnLineDraft[],
   routeRunStopId?: string,
+  /** SA-740: the sale this return is from (a counter return sends the sale's order id; REQUIRED for a walk-in). */
+  sourceOrderId?: string,
 ): QuoteInlineReturnRequest {
   const items: QuoteInlineReturnItem[] = mergeDuplicateProductItems(
     lines
@@ -245,7 +250,48 @@ export function buildQuoteRequest(
     pieces,
     ...(creditUnitPrice !== undefined ? { creditUnitPrice, overrideReason } : {}),
   }));
-  return routeRunStopId ? { customerId, items, routeRunStopId } : { customerId, items };
+  return quoteRequestOf(customerId, items, routeRunStopId, sourceOrderId);
+}
+
+/** The quote request envelope: routeRunStopId and sourceOrderId ride along only when supplied. */
+function quoteRequestOf(
+  customerId: string,
+  items: QuoteInlineReturnItem[],
+  routeRunStopId?: string,
+  sourceOrderId?: string,
+): QuoteInlineReturnRequest {
+  return {
+    customerId,
+    items,
+    ...(routeRunStopId ? { routeRunStopId } : {}),
+    ...(sourceOrderId ? { sourceOrderId } : {}),
+  };
+}
+
+// ─── B961 / SA-071c: goods already returned or credited ────────────────────────
+
+/** The label of an over-return chunk of a product the customer DID buy and already returned/was credited for (NOT "Not on any invoice"). */
+export const ALREADY_RETURNED_LABEL = "Already returned or credited";
+export const ALREADY_RETURNED_NOTE =
+  "The records show every unit of this product on this customer's invoices was already returned or credited. Crediting it again needs a reason.";
+/** Shown to a DRIVER: their capture is held (nothing credited) until the office approves it with a reason. */
+export const ALREADY_RETURNED_DRIVER_NOTE =
+  "These goods were already returned or credited for this customer. Your return is recorded and held for the office to confirm; no credit is issued until staff approve it.";
+
+/** The products whose over-return chunk the quote flagged `alreadyReturned`. */
+export function alreadyReturnedProductIds(quote: InlineReturnQuoteResponse): Set<string> {
+  return new Set(quote.chunks.filter((c) => c.alreadyReturned).map((c) => c.productId));
+}
+
+/** Staff must type a reason for EVERY flagged product before confirming: the product ids still missing one. */
+export function missingAlreadyReturnedReasons(
+  lines: ReadonlyArray<Pick<InlineReturnLineDraft, "productId" | "alreadyReturnedReason">>,
+  quote: InlineReturnQuoteResponse,
+): string[] {
+  return [...alreadyReturnedProductIds(quote)].filter(
+    (id) =>
+      !lines.some((l) => l.productId === id && (l.alreadyReturnedReason ?? "").trim().length > 0),
+  );
 }
 
 // ─── Step 2: quote chunk grouping (display only — no money math) ───────────────
@@ -356,6 +402,8 @@ export function dropExcessAndRequote(
    *  the same rule the request merge uses) carries into the re-quote, so the reduced quote and
    *  the capture that follows price the same chunks. */
   lines: Pick<InlineReturnLineDraft, "productId" | "creditUnitPrice" | "overrideReason">[] = [],
+  /** SA-740: the re-quote stays pinned to the same source sale the first quote was. */
+  sourceOrderId?: string,
 ): QuoteInlineReturnRequest {
   const firstLine = (productId: string) => lines.find((l) => l.productId === productId);
   const items: QuoteInlineReturnItem[] = [...coveredPiecesByProduct(quote).entries()]
@@ -364,7 +412,7 @@ export function dropExcessAndRequote(
       const line = firstLine(productId);
       return { productId, qty: 1, boxes: 0, pieces, ...(line ? overrideFields(line) : {}) };
     });
-  return routeRunStopId ? { customerId, items, routeRunStopId } : { customerId, items };
+  return quoteRequestOf(customerId, items, routeRunStopId, sourceOrderId);
 }
 
 /**
@@ -417,6 +465,8 @@ export function buildCaptureRequest(params: {
    *  item's `condition` — the DTO's only per-item free-text field). */
   notes?: string;
   routeRunStopId?: string;
+  /** SA-740: the SAME source sale the quote priced (a walk-in defaults to `orderId` server-side when omitted). */
+  sourceOrderId?: string;
 }): CaptureInlineReturnRequest {
   const items: CaptureInlineReturnItem[] = mergeDuplicateProductItems(
     params.lines
@@ -426,6 +476,7 @@ export function buildCaptureRequest(params: {
         pieces: parseNonNegativeInt(l.pieces),
         reason: l.reason || undefined,
         condition: l.note.trim() || undefined,
+        alreadyReturnedReason: l.alreadyReturnedReason?.trim() || undefined,
         ...overrideFields(l),
       }))
       .filter((i) => i.boxes > 0 || i.pieces > 0),
@@ -436,6 +487,7 @@ export function buildCaptureRequest(params: {
     pieces: i.pieces,
     ...(i.reason ? { reason: i.reason } : {}),
     ...(i.condition ? { condition: i.condition } : {}),
+    ...(i.alreadyReturnedReason ? { alreadyReturnedReason: i.alreadyReturnedReason } : {}),
     ...(i.creditUnitPrice !== undefined
       ? { creditUnitPrice: i.creditUnitPrice, overrideReason: i.overrideReason }
       : {}),
@@ -448,6 +500,7 @@ export function buildCaptureRequest(params: {
     returnKey: params.returnKey,
     reason: params.reason,
     ...(params.routeRunStopId ? { routeRunStopId: params.routeRunStopId } : {}),
+    ...(params.sourceOrderId ? { sourceOrderId: params.sourceOrderId } : {}),
     ...(params.notes ? { notes: params.notes } : {}),
   };
 }
@@ -525,11 +578,30 @@ export function keyReusedReturnOf(
   };
 }
 
+/** B948: an inline return that would credit a source invoice line past its value (a credit note or an earlier return took part of it). */
+export const INLINE_RETURN_OVER_LINE_HEADROOM_CODE = "RETURN_REFUND_OVER_LINE_HEADROOM";
+export const INLINE_RETURN_OVER_LINE_HEADROOM_MESSAGE =
+  "This return would credit more than the invoice line is worth, because part of it was already credited (by a credit note or an earlier return). Lower the quantity, or issue the credit note manually.";
+
+/**
+ * A write refused by a READ_ONLY workspace (403, code READ_ONLY). The sentence is the owner's read-only sentence,
+ * web's `readOnlyLine(null, false)` (`READ_ONLY_SENTENCE`, packages/types/read-only-copy.ts), kept equal by a web
+ * parity test; this package cannot import apps/web.
+ */
+export const INLINE_RETURN_READ_ONLY_MESSAGE =
+  "This workspace is currently in read-only mode. You can view records, but changes and new transactions are temporarily unavailable.";
+
 export function extractRefusalMessage(error: unknown, fallback = "Something went wrong"): string {
   const body = (error as ApiErrorLike | undefined)?.response?.data;
   const status = (error as ApiErrorLike | undefined)?.response?.status;
+  // Before the 403 branch below: a READ_ONLY workspace has the permission; it is read-only, and the guard text is never shown.
+  if (body?.code === "READ_ONLY") return INLINE_RETURN_READ_ONLY_MESSAGE;
   if (status === 403 && (body?.code == null || ENTITLEMENT_GATE_CODES.has(body.code))) {
     return RETURNS_NOT_ENABLED_MESSAGE;
+  }
+  // fixed copy by code, never the server message (house rule: no raw server strings in the UI)
+  if (body?.code === INLINE_RETURN_OVER_LINE_HEADROOM_CODE) {
+    return INLINE_RETURN_OVER_LINE_HEADROOM_MESSAGE;
   }
   if (!body?.message) return fallback;
   return Array.isArray(body.message) ? body.message.join(" ") : body.message;

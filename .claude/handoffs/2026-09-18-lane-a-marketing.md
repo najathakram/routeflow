@@ -20,7 +20,7 @@ does that). Push with SKIP_VERIFY=1 SKIP_VERIFY_REASON="…" if the local verify
 chain is the blocker; never --no-verify. Ask the lead for any bug registry id —
 B525 is taken, B526 is next free; never mint your own. Check free disk before any
 full verify or build run (a full run filled the disk twice on 2026-09-17).
-Approved test tenants only: test, e2e-routeflow, routeflow-demo, qa-*, e2e-*,
+Approved test tenants only: test, e2e-routeflow, routeflow-demo, qa-_, e2e-_,
 ux-audit-*. Never a live tenant.
 
 Ending on a credits/time cutoff. Status by ticket below. Worktree:
@@ -42,6 +42,7 @@ open, docs-only, zero risk to merge whenever). Updated with a full "Root cause" 
 commit `9606a1e9` on that branch).
 
 **What I found, in order:**
+
 - On live production (`https://www.routeflow.info`), a real `.capability-card`/`.section-heading`
   element carries `.editorial-reveal.reveal-pending` and inconsistently reads
   `opacity: 1` (should be `0` until scrolled into view) across repeated checks.
@@ -61,6 +62,7 @@ commit `9606a1e9` on that branch).
   B504/B507. But this is inference, not proof.
 
 **Ruled out / could not do:**
+
 - Could NOT get an authoritative, tool-independent signal via Playwright's own `T13` test
   (`apps/web/e2e/36-marketing-site.spec.ts`, built for exactly this — scroll the whole page,
   assert every `.editorial-reveal` node reaches `opacity: 1`). Two blockers, both external:
@@ -75,9 +77,11 @@ commit `9606a1e9` on that branch).
 
 **Exact next step:** once GH Actions billing is restored OR local disk safely permits a
 fresh `npm ci` + `npx playwright install`, run:
+
 ```
 npx playwright test e2e/36-marketing-site.spec.ts -g "T13" --project=marketing
 ```
+
 against `PLAYWRIGHT_BASE_URL=https://www.routeflow.info` (or whatever `playwright.config.ts`
 defaults to now). If T13 passes clean, close B520 as `already-fixed`/tooling-artifact and
 this note stands as the record of why nobody needs to look at it again. If it fails, the
@@ -108,6 +112,7 @@ arrived; the `fix/A7-marketing-nav-consistency` branch exists locally in the wor
 zero commits (identical to `origin/master`), so there's nothing to push for it.
 
 **What I'd already found (worth carrying forward, so the next session doesn't re-derive it):**
+
 - The primary header nav (`components/site-header.tsx`) is genuinely single-sourced already
   — `NAV_LINKS` is built from `NAV_SLUGS`/`routes[]` in `lib/site.ts` (the L-072 convention,
   cited in the file's own comment), and `SiteHeader` renders once at the `(marketing)/layout.tsx`
@@ -120,7 +125,7 @@ zero commits (identical to `origin/master`), so there's nothing to push for it.
   For distributors / For retailers / Pricing) **hand-types labels** instead of sourcing them
   from `routes[]` — the exact L-072 anti-pattern the header's own comment warns against. The
   **hrefs and relative order already match** `NAV_SLUGS`'s first four entries exactly
-  (product, wholesalers, retailers, pricing), so this is not a *broken* link, just a silent-drift
+  (product, wholesalers, retailers, pricing), so this is not a _broken_ link, just a silent-drift
   risk: if `routes[].label` ever changes, the footer goes stale without anyone noticing. I did
   **not** change the footer's copy — "Product overview"/"For distributors"/"For retailers" read
   as deliberate, friendlier footer-style wording (vs. the header's terser "Platform"/
@@ -146,11 +151,12 @@ zero commits (identical to `origin/master`), so there's nothing to push for it.
 
 **Exact next step:** in the same reused worktree/branch (`fix/A7-marketing-nav-consistency`,
 currently at `origin/master`, zero commits):
+
 1. Confirm live (curl won't show this — need a real browser check, e.g. `getComputedStyle`
    on `.desktop-nav [aria-current="page"]` across two different pages) that the same CSS
    rule wins everywhere, matching the cascade-order prediction above.
 2. If confirmed dead, delete `glass-site.css`'s unreachable `.glass-page .desktop-nav
-   [aria-current="page"]` rule (lines 61-65) and, optionally, the three superseded
+[aria-current="page"]` rule (lines 61-65) and, optionally, the three superseded
    `marketing.css` duplicates (keep only the last).
 3. Add the footer-consistency regression test described above (hrefs subset + order check
    against `NAV_SLUGS`, not a copy change).
@@ -158,6 +164,7 @@ currently at `origin/master`, zero commits):
    check free space first), open the PR.
 
 ## Disk / environment notes for whoever picks this up
+
 - `npm run janitor` / `npm run janitor:apply` reclaims worktree `node_modules` and
   merged-and-clean worktrees — free space fluctuated 4.5GB↔9.5GB tonight from other lanes'
   janitor runs plus my own partial installs. Check free space before any `npm ci`/build.

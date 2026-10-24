@@ -106,6 +106,7 @@ describe("RF-081 ReturnsService.findOneForUser – IDOR prevention", () => {
     const ledger = {
       reverseReturnEntries: jest.fn(),
       unreverseReturnEntries: jest.fn(),
+      settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
     } as unknown as RegulatedLedgerService;
 
     const module: TestingModule = await Test.createTestingModule({
@@ -174,6 +175,7 @@ describe("REG-B221 ReturnsService.findAllForUser – DRIVER scoping", () => {
     const ledger = {
       reverseReturnEntries: jest.fn(),
       unreverseReturnEntries: jest.fn(),
+      settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
     } as unknown as RegulatedLedgerService;
 
     const module: TestingModule = await Test.createTestingModule({

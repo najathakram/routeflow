@@ -35,6 +35,11 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync } from 
 import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
+
+// The ONE GIT_* scrub (CommonJS so ts-jest specs share it). Fixture repos that copy this file must
+// copy scripts/lib/scrubbed-git-env.cjs next to it (../lib/ relative to this file).
+const { scrubbedGitEnv } = createRequire(import.meta.url)("../lib/scrubbed-git-env.cjs");
 
 const THIS_FILE_DIR = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_DENYLIST_PATH = join(THIS_FILE_DIR, "plane-denylist.json");
@@ -86,16 +91,10 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 // tree", under the hook's env). Every git spawn in this family (plane-sync.mjs,
 // plane-intake.mjs, and both self-tests' fixture setup) must pass
 // `env: gitEnv()` alongside an explicit `cwd` — never inherit process.env
-// into a git child unscrubbed. GIT_AUTHOR_*/GIT_COMMITTER_* are left alone:
-// harmless (an explicit -c user.name/user.email is set at every commit site
-// in this family regardless) and not part of the reported failure mode.
-const GIT_ENV_DENYLIST_RE = /^GIT_/;
+// into a git child unscrubbed. A thin wrapper over the ONE shared scrub
+// (scripts/lib/scrubbed-git-env.cjs, drops every GIT_* var); `extra` is merged on top.
 export function gitEnv(extra = {}) {
-  const env = { ...process.env };
-  for (const key of Object.keys(env)) {
-    if (GIT_ENV_DENYLIST_RE.test(key)) delete env[key];
-  }
-  return { ...env, ...extra };
+  return { ...scrubbedGitEnv(), ...extra };
 }
 
 export const EXTERNAL_SOURCE = "routeflow-registry";

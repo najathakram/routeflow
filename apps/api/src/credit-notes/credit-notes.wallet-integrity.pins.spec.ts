@@ -86,6 +86,7 @@ describe("CreditNotesService — settleOrderCreditsInTx positive controls (F09 p
           useValue: {
             reverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
             unreverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
+            settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
           },
         },
         {
@@ -305,6 +306,7 @@ describe("CreditNotesService — create() unaffected for a live SENT source invo
           useValue: {
             reverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
             unreverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
+            settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
           },
         },
         {
@@ -397,6 +399,7 @@ describe("CreditNotesService — create() unaffected for a DRAFT source invoice 
           useValue: {
             reverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
             unreverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
+            settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
           },
         },
         {

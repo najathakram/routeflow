@@ -21,10 +21,23 @@ import { FormField, FormSection, FormTextInput } from "../../../components/FormS
 import {
   useAdminUsers,
   useBusinessSettings,
+  useInventorySettings,
   useToggleUserStatus,
   useUpdateBusinessSettings,
+  useUpdateInventorySettings,
   type AppUser,
 } from "../../../lib/api/admin";
+import { useAuthStore } from "../../../lib/auth-store";
+import { canToggleUserStatus, isUserActive } from "../../../lib/user-admin";
+import {
+  OVERSELL_COPY,
+  VISIBILITY_COPY,
+  canEditOversell,
+  canEditVisibility,
+  nextOversellMode,
+  oversellIsOn,
+  visibilityMode,
+} from "../../../lib/oversell-settings";
 import {
   getPushEnabled,
   setPushEnabled as persistPushEnabled,
@@ -32,6 +45,101 @@ import {
 import { registerPushToken, deregisterPushToken } from "../../../lib/auth";
 import { showToast } from "../../../lib/toast";
 import { alertInfo } from "../../../lib/confirm";
+import { taxPercentInputError } from "../../../lib/tax-percent-input";
+
+// ─── Ordering (out-of-stock) ──────────────────────────────────────────────────
+
+/** Mirror of web's "Out-of-stock ordering" card. No switch until the setting has loaded. */
+function OversellSection() {
+  const { user } = useAuthStore();
+  const canEdit = canEditOversell(user?.role);
+  const { data, isLoading, isError, refetch } = useInventorySettings();
+  const update = useUpdateInventorySettings();
+
+  const toggle = () => {
+    if (!data || !canEdit) return;
+    const turningOn = !oversellIsOn(data.buyerOversell);
+    update.mutate(
+      { buyerOversell: nextOversellMode(oversellIsOn(data.buyerOversell)) },
+      {
+        onSuccess: () => showToast(turningOn ? OVERSELL_COPY.savedOn : OVERSELL_COPY.savedOff),
+        onError: () => showToast(OVERSELL_COPY.saveFailed),
+      },
+    );
+  };
+
+  // OOS PR2: what customers see about backordered items (the seller's choice; off while the switch is off).
+  const visibility = visibilityMode(data?.buyerBackorderVisibility);
+  const canEditVis = canEditVisibility(
+    user?.role,
+    oversellIsOn(data?.buyerOversell),
+    data?.customerOverrides,
+  );
+  const chooseVisibility = (next: "show" | "hide") => {
+    if (!data || !canEditVis || next === visibility) return;
+    update.mutate(
+      { buyerBackorderVisibility: next },
+      {
+        onSuccess: () =>
+          showToast(next === "show" ? VISIBILITY_COPY.savedShow : VISIBILITY_COPY.savedHide),
+        onError: () => showToast(VISIBILITY_COPY.saveFailed),
+      },
+    );
+  };
+
+  return (
+    <FormSection title={OVERSELL_COPY.section}>
+      {isLoading ? (
+        <ActivityIndicator color={ios.brand} />
+      ) : isError || !data ? (
+        <Pressable onPress={() => void refetch()}>
+          <Text style={styles.switchHint}>{OVERSELL_COPY.loadFailed} Tap to retry.</Text>
+        </Pressable>
+      ) : (
+        <>
+          <View style={styles.switchRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.switchLabel}>{OVERSELL_COPY.label}</Text>
+              <Text style={styles.switchHint}>{OVERSELL_COPY.hint}</Text>
+            </View>
+            <Switch
+              value={oversellIsOn(data.buyerOversell)}
+              disabled={!canEdit || update.isPending}
+              onValueChange={toggle}
+              trackColor={{ true: ios.brand }}
+              accessibilityLabel={OVERSELL_COPY.label}
+            />
+          </View>
+          <Text style={styles.switchLabel}>{VISIBILITY_COPY.title}</Text>
+          {(
+            [
+              ["show", VISIBILITY_COPY.show],
+              ["hide", VISIBILITY_COPY.hide],
+            ] as const
+          ).map(([value, label]) => (
+            <Pressable
+              key={value}
+              onPress={() => chooseVisibility(value)}
+              disabled={!canEditVis || update.isPending}
+              accessibilityRole="radio"
+              accessibilityState={{ checked: visibility === value, disabled: !canEditVis }}
+              style={[styles.switchRow, !canEditVis && { opacity: 0.5 }]}
+            >
+              <Ionicons
+                name={visibility === value ? "radio-button-on" : "radio-button-off"}
+                size={20}
+                color={ios.brand}
+              />
+              <Text style={[styles.switchHint, { flex: 1 }]}>{label}</Text>
+            </Pressable>
+          ))}
+          <Text style={styles.switchHint}>{VISIBILITY_COPY.needsSwitch}</Text>
+          {!canEdit && <Text style={styles.switchHint}>{OVERSELL_COPY.readOnly}</Text>}
+        </>
+      )}
+    </FormSection>
+  );
+}
 
 // ─── General tab ──────────────────────────────────────────────────────────────
 
@@ -88,6 +196,12 @@ function GeneralTab() {
   }
 
   const save = () => {
+    // R5-1: the same 4-decimal cap as web and the API, refused before the request.
+    const taxError = taxPercentInputError(taxRate, data?.taxRate);
+    if (taxError) {
+      showToast(taxError);
+      return;
+    }
     update.mutate(
       {
         phone: phone.trim() || undefined,
@@ -133,6 +247,8 @@ function GeneralTab() {
             <FormTextInput value={taxRate} onChangeText={setTaxRate} keyboardType="decimal-pad" />
           </FormField>
         </FormSection>
+
+        <OversellSection />
 
         <FormSection title="Notifications">
           <View style={styles.switchRow}>
@@ -203,13 +319,16 @@ function rolePill(role: string) {
 function UsersTab() {
   const { data: usersPage, isLoading, refetch } = useAdminUsers();
   const toggleMut = useToggleUserStatus();
+  // Perms PR1: activating / deactivating a team member is account administration (admin only); others read.
+  // SA #3412: never on the viewer's own row (the API refuses it).
+  const viewer = useAuthStore().user;
 
   const handleToggle = (user: AppUser) => {
     toggleMut.mutate(
-      { id: user.id, isActive: !user.isActive },
+      { id: user.id, currentStatus: user.status },
       {
         onSuccess: () => {
-          showToast(user.isActive ? "User deactivated" : "User activated");
+          showToast(isUserActive(user) ? "User deactivated" : "User activated");
           refetch();
         },
         onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
@@ -246,22 +365,26 @@ function UsersTab() {
                       : u.username}
                   </Text>
                   {rolePill(u.role)}
-                  {!u.isActive ? <Pill variant="gray">Inactive</Pill> : null}
+                  {!isUserActive(u) ? <Pill variant="gray">Inactive</Pill> : null}
                 </View>
                 <Text style={styles.userSub} numberOfLines={1}>
                   @{u.username}
                   {u.email ? ` · ${u.email}` : ""}
                 </Text>
               </View>
-              <Pressable
-                style={[styles.toggleBtn, !u.isActive && styles.toggleBtnActive]}
-                onPress={() => handleToggle(u)}
-                disabled={toggleMut.isPending}
-              >
-                <Text style={[styles.toggleBtnText, !u.isActive && styles.toggleBtnTextActive]}>
-                  {u.isActive ? "Deactivate" : "Activate"}
-                </Text>
-              </Pressable>
+              {canToggleUserStatus(viewer, u) ? (
+                <Pressable
+                  style={[styles.toggleBtn, !isUserActive(u) && styles.toggleBtnActive]}
+                  onPress={() => handleToggle(u)}
+                  disabled={toggleMut.isPending}
+                >
+                  <Text
+                    style={[styles.toggleBtnText, !isUserActive(u) && styles.toggleBtnTextActive]}
+                  >
+                    {isUserActive(u) ? "Deactivate" : "Activate"}
+                  </Text>
+                </Pressable>
+              ) : null}
             </View>
           ))
         )}

@@ -129,6 +129,28 @@ describe("captureCompositionCarry / restore", () => {
     });
   });
 
+  it("a named line is claimed by its entry: an id-less entry re-created BEFORE it takes the other line, not the named one (row 352)", async () => {
+    const tx = txFor([storedRow("old-1", A, 8, 0), storedRow("old-2", A, 16, 0)]);
+    const carry = await captureCompositionCarry(
+      tx as never,
+      [oldLine({ id: "old-1" }), oldLine({ id: "old-2", position: 1 })],
+      [
+        { productId: RECIPE_P }, // e.g. a new add / the split's new half, ordered before the line it came from
+        { productId: RECIPE_P, sourceLineId: "old-1" },
+      ],
+    );
+    // the id-less entry is re-created FIRST: it must not take old-1's slot (the line "new-b" is named for)
+    await carry.restore(tx as never, "new-a", { productId: RECIPE_P });
+    await carry.restore(tx as never, "new-b", { productId: RECIPE_P, sourceLineId: "old-1" });
+    const byLine = Object.fromEntries(
+      tx.orderItemComponent.createMany.mock.calls.map((c) => [
+        c[0].data[0].orderItemId,
+        c[0].data[0].qty,
+      ]),
+    );
+    expect(byLine).toEqual({ "new-a": 16, "new-b": 8 });
+  });
+
   it("two lines of one product at ONE version pair by position order", async () => {
     const tx = txFor([storedRow("old-1", A, 8, 0), storedRow("old-2", A, 16, 0)]);
     const carry = await captureCompositionCarry(

@@ -4,6 +4,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { ClipboardEdit, PackagePlus, CreditCard, ChevronRight } from "lucide-react";
 import { Modal } from "@routeflow/ui/web";
+import { useAuth } from "@/lib/auth-context";
 
 // ─── ArrivedStopSheet ──────────────────────────────────────────────────────────
 // pos-cost-roles-spec.md §3 "At-the-door actions" — on an arrived stop, one sheet
@@ -11,7 +12,7 @@ import { Modal } from "@routeflow/ui/web";
 // it does not reimplement any flow, it links to the EXISTING order/payment
 // screens and closes on selection. No new API calls, no new endpoints.
 
-export interface ArrivedStopSheetOrder {
+interface ArrivedStopSheetOrder {
   id: string;
   orderNumber?: string | null;
 }
@@ -60,6 +61,12 @@ export function ArrivedStopSheet({
   orders = [],
 }: ArrivedStopSheetProps) {
   const router = useRouter();
+  const { user } = useAuth();
+  // B966: the house staff condition (RouteGuard isStaffRole). Every tile goes to /orders or
+  // /finance, which a DRIVER is bounced off (dead ends); drivers adjust, add and collect in the
+  // native app. A DRIVER's sheet therefore has no tiles and shows a pointer instead.
+  const role = user?.role;
+  const isStaff = !!role && role !== "CUSTOMER" && role !== "DRIVER";
   const primaryOrder = orders[0];
 
   const go = (href: string) => {
@@ -69,33 +76,42 @@ export function ArrivedStopSheet({
 
   return (
     <Modal open={open} onClose={onClose} title={customerName} className="max-w-sm">
-      <p className="mb-4 text-xs text-navy/70">At-the-door actions</p>
-      <div className="space-y-2.5">
-        {primaryOrder && (
-          <ActionTile
-            icon={<ClipboardEdit className="h-5 w-5" />}
-            title="Adjust order"
-            subtitle={
-              primaryOrder.orderNumber
-                ? `Edit order #${primaryOrder.orderNumber} — qty, lines, POD`
-                : "Edit this stop's order — qty, lines, POD"
-            }
-            onClick={() => go(`/orders/${primaryOrder.id}`)}
-          />
-        )}
-        <ActionTile
-          icon={<PackagePlus className="h-5 w-5" />}
-          title="New order at door"
-          subtitle="Open the order builder for this delivery"
-          onClick={() => go("/orders?action=new")}
-        />
-        <ActionTile
-          icon={<CreditCard className="h-5 w-5" />}
-          title="Collect payment"
-          subtitle="Record a payment against this customer's balance"
-          onClick={() => go("/finance/payments")}
-        />
-      </div>
+      {isStaff ? (
+        <>
+          <p className="mb-4 text-xs text-navy/70">At-the-door actions</p>
+          <div className="space-y-2.5">
+            {primaryOrder && (
+              <ActionTile
+                icon={<ClipboardEdit className="h-5 w-5" />}
+                title="Adjust order"
+                subtitle={
+                  primaryOrder.orderNumber
+                    ? `Edit order #${primaryOrder.orderNumber} — qty, lines, POD`
+                    : "Edit this stop's order — qty, lines, POD"
+                }
+                onClick={() => go(`/orders/${primaryOrder.id}`)}
+              />
+            )}
+            <ActionTile
+              icon={<PackagePlus className="h-5 w-5" />}
+              title="New order at door"
+              subtitle="Open the order builder for this delivery"
+              onClick={() => go("/orders?action=new")}
+            />
+            <ActionTile
+              icon={<CreditCard className="h-5 w-5" />}
+              title="Collect payment"
+              subtitle="Record a payment against this customer's balance"
+              onClick={() => go("/finance/payments")}
+            />
+          </div>
+        </>
+      ) : (
+        <p className="text-sm text-navy/70">
+          Use the RouteFlow driver app to adjust orders, add orders and collect payments at the
+          door.
+        </p>
+      )}
     </Modal>
   );
 }

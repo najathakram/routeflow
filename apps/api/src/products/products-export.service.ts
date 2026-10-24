@@ -9,9 +9,11 @@ import {
 import { CSV_BOM, csvRow } from "../common/csv";
 import { roundQty } from "../common/invoiced-sales";
 import { PrismaService } from "../prisma/prisma.service";
+import { tenantSafeParent } from "./product-parent";
 import { SalesFactsService } from "../sales-facts/sales-facts.service";
 import { ExportProductsDto } from "./dto/export-products.dto";
 import { buildProductListWhere } from "./product-list-where";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /** Most product rows one export streams before the trailing truncation row. */
 export const PRODUCTS_EXPORT_MAX_ROWS = 50_000;
@@ -39,6 +41,8 @@ export const PRODUCTS_EXPORT_HEADER = [
   "Units sold",
   "Net sales",
   "Last sold date",
+  // SA-823 (row 655): the stable key the product import's Family columns match on.
+  "Product ID",
 ];
 
 const num = (v: unknown) => (v == null ? null : Number(v));
@@ -58,7 +62,8 @@ const SELECT = {
   currentStock: true,
   isActive: true,
   isTobacco: true,
-  parent: { select: { name: true } },
+  // tenantId only for the cross-tenant check (B1211); it is never written to the file.
+  parent: { select: { name: true, tenantId: true } },
 } as const;
 
 /**
@@ -96,7 +101,14 @@ export class ProductsExportService {
       const from = blank(query.from) ?? addCalendarDays(to, -(DEFAULT_WINDOW_DAYS - 1));
       range = resolveInsightRange({ from, to }, today);
     } catch (err) {
-      if (err instanceof InsightWindowError) throw new BadRequestException(err.message);
+      if (err instanceof InsightWindowError) {
+        throw new BadRequestException({
+          code: API_ERROR_CODES.INSIGHT_WINDOW_INVALID,
+          message: err.message,
+          reason: err.reason,
+          ...err.params,
+        });
+      }
       throw err;
     }
     return {
@@ -179,10 +191,11 @@ export class ProductsExportService {
               roundQty(Number(r.currentStock ?? 0)),
               yesNo(r.isActive),
               yesNo(r.isTobacco),
-              r.parent?.name ?? null,
+              tenantSafeParent(r.parent, tenantId)?.name ?? null,
               roundQty(s?.pieces ?? 0),
               roundMoney((s?.gross ?? 0) - (credits.get(r.id) ?? 0)),
               s?.lastSold ? s.lastSold.toISOString().slice(0, 10) : null,
+              r.id,
             ]);
           }
           yield chunk;

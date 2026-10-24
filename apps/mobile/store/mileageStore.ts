@@ -4,7 +4,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export interface MileageEntry {
+interface MileageEntry {
   runId: string;
   startOdometer: number;
   endOdometer: number | null;

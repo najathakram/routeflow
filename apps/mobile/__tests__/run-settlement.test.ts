@@ -5,6 +5,8 @@ import {
   isReconciled,
   buildSettlementNote,
   shouldForceSettlement,
+  buildSettlementRows,
+  settlementTotalsReady,
 } from "../lib/run-settlement";
 
 const entries = [
@@ -135,5 +137,94 @@ describe("shouldForceSettlement (REG-B152)", () => {
 
   it("is false when there is neither a cash/check total nor a store signal", () => {
     expect(shouldForceSettlement({ settlementNote: null }, false)).toBe(false);
+  });
+});
+
+// B1008 (SA-644): the per-method rows must come from the SAME server payload as the total the driver
+// reconciles against, so they can never disagree (the rows used to be this device's own tally).
+describe("buildSettlementRows (B1008)", () => {
+  const sumPhysical = (rows: { method: string; amount: number }[]) =>
+    Math.round(
+      rows
+        .filter((r) => r.method === "CASH" || r.method === "CHECK")
+        .reduce((a, r) => a + r.amount, 0) * 100,
+    ) / 100;
+
+  it("(a) after a reinstall (no local entries) the CASH and CHECK rows still come from the server and sum to the total", () => {
+    const collected = { cashTotal: 70, checkTotal: 25, count: 3 };
+    const out = buildSettlementRows(collected, []);
+    expect(out.rows).toEqual([
+      { method: "CASH", amount: 70, basis: "server" },
+      { method: "CHECK", amount: 25, basis: "server" },
+    ]);
+    expect(out.serverLoaded).toBe(true);
+    expect(sumPhysical(out.rows)).toBe(expectedPhysicalCash(collected));
+    expect(sumPhysical(out.rows)).toBe(95);
+  });
+
+  it("(b) a stale local CASH entry never overrides the server: the CASH row is 70, not 40", () => {
+    const out = buildSettlementRows({ cashTotal: 70, checkTotal: 0, count: 2 }, [
+      { stopId: "s1", method: "CASH", amount: 40, collectedAt: 1 },
+    ]);
+    expect(out.rows).toEqual([{ method: "CASH", amount: 70, basis: "server" }]);
+  });
+
+  it("(c) before the run payload has loaded the rows are this device's tally, device-basis, and serverLoaded is false", () => {
+    const out = buildSettlementRows(null, entries);
+    expect(out.rows).toEqual([
+      { method: "CASH", amount: 65.5, basis: "device" },
+      { method: "CHECK", amount: 100, basis: "device" },
+    ]);
+    expect(out.serverLoaded).toBe(false);
+  });
+
+  it("(d) card, Zelle, advance and other are NOT in the reconciliation rows: they come back separately, from this device", () => {
+    const out = buildSettlementRows({ cashTotal: 70, checkTotal: 25, count: 3 }, [
+      { stopId: "s4", method: "CREDIT_CARD", amount: 60, collectedAt: 4 },
+      { stopId: "s5", method: "ZELLE", amount: 10, collectedAt: 5 },
+    ]);
+    expect(out.rows.map((r) => r.method)).toEqual(["CASH", "CHECK"]);
+    expect(out.deviceOnly).toEqual([
+      { method: "ZELLE", amount: 10, basis: "device" },
+      { method: "CREDIT_CARD", amount: 60, basis: "device" },
+    ]);
+  });
+
+  it("(e) a server payload with nothing collected shows no cash/check rows, even if this device queued one (rows = total)", () => {
+    const collected = { cashTotal: 0, checkTotal: 0, count: 0 };
+    const out = buildSettlementRows(collected, [
+      { stopId: "s1", method: "CASH", amount: 40, collectedAt: 1 },
+    ]);
+    expect(out.rows).toEqual([]);
+    expect(out.serverLoaded).toBe(true); // a loaded zero is still loaded: the run can close
+    expect(sumPhysical(out.rows)).toBe(expectedPhysicalCash(collected));
+  });
+
+  it("(f) the cash and check rows sum to the server total at cents precision (0.1 + 0.2 = 0.3)", () => {
+    const collected = { cashTotal: 0.1, checkTotal: 0.2, count: 2 };
+    expect(sumPhysical(buildSettlementRows(collected, []).rows)).toBe(
+      expectedPhysicalCash(collected),
+    );
+  });
+
+  it("(g) a payload without checkTotal still loads (checks count as 0), and undefined is NOT loaded", () => {
+    expect(buildSettlementRows({ cashTotal: 5 }, []).serverLoaded).toBe(true);
+    expect(buildSettlementRows(undefined, []).serverLoaded).toBe(false);
+  });
+});
+
+// SA-644a: cached run data is not "loaded". The totals count as ready only when the payload is present AND
+// this screen's own fetch has completed (react-query isFetchedAfterMount), never on a cache hit alone.
+describe("settlementTotalsReady (SA-644a)", () => {
+  it("is ready only when the payload loaded AND it was fetched after this screen mounted", () => {
+    expect(settlementTotalsReady({ serverLoaded: true, fetchedAfterMount: true })).toBe(true);
+  });
+
+  it("a cached payload that has not been refetched since mount is NOT ready", () => {
+    expect(settlementTotalsReady({ serverLoaded: true, fetchedAfterMount: false })).toBe(false);
+  });
+
+  it("a fresh fetch without a payload is NOT ready", () => {
+    expect(settlementTotalsReady({ serverLoaded: false, fetchedAfterMount: true })).toBe(false);
   });
 });

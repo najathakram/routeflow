@@ -29,11 +29,17 @@ const EXECUTE = process.argv.includes("--execute");
 // #2421: local-only via the shared guard (the host pg dials, allow-listed); dial exactly what was checked.
 // Dry run included: a cross-tenant one-off; a production run needs an audited path (not built).
 const { productionGuard } = require("./lib/production-guard");
+const { loadProtectedSlugs } = require("./lib/protected-slugs.cjs");
+const { assertNoLiveProtectedTenants } = require("./lib/live-target-guard.cjs");
+// Row 195: productionGuard trusts a host allow-list a tunnel can fake, so this wipe ALSO refuses a database
+// that holds a protected non-test tenant (paying, Stripe-linked or PROTECTED_TENANT_SLUGS).
+const protectedSlugs = loadProtectedSlugs(process.env, process.env.DATABASE_URL);
 const target = productionGuard({ dbUrl: process.env.DATABASE_URL });
 
 (async () => {
   const pool = new Pool(target);
   const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
+  await assertNoLiveProtectedTenants(prisma, protectedSlugs);
 
   // Customers with more than one mergeable PENDING order.
   const groups = await prisma.order.groupBy({

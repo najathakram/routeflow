@@ -154,7 +154,10 @@ describe("#2696(c) SA-558e source pins — invoices/new (New sale)", () => {
     "utf8",
   );
   it("the sale builds each catalog line's price through saleLinePriceFields and blocks a refused one", () => {
-    expect(src).toMatch(/saleLinePriceFields\(/);
+    // VU-4b moved the per-line builder into lib/invoice-unit-pick (saleItemDto); the screen blocks a refusal.
+    const builder = fs.readFileSync(path.join(__dirname, "..", "lib/invoice-unit-pick.ts"), "utf8");
+    expect(builder).toMatch(/saleLinePriceFields\(/);
+    expect(src).toMatch(/saleItemDto\(/);
     expect(src).toMatch(/reasonRequiredMessage\(/);
   });
   it("the review row shows a required Reason field", () => {

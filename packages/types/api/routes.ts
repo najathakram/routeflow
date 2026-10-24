@@ -38,6 +38,7 @@ export interface RouteAnalysisResult {
 
 export type TripIneligibleReason =
   | "SHIP_FULFILLMENT"
+  | "PICKUP_FULFILLMENT"
   | "INELIGIBLE_STATUS"
   | "ON_ACTIVE_RUN"
   | "PREVIOUSLY_DISPATCHED"

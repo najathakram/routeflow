@@ -34,8 +34,9 @@ describe("AuthController — B825 resolveReturnOrigin allow-list", () => {
     const controller = new AuthController(
       {} as any, // authService — unused by the google* methods under test
       configService,
-      {} as any, // tenantGoogleOAuth — unused (legacy path-param flow)
       googleOAuth,
+      {} as any, // staffHandoff (#2653) — unused by the google* methods under test
+      {} as any, // appleOAuth — unused by the google* methods under test
     );
     return { controller, googleOAuth };
   }

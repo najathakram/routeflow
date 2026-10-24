@@ -145,18 +145,50 @@ describe("LowStockDigestService (N4)", () => {
       expect(email.sendLowStockDigest).not.toHaveBeenCalled();
     });
 
-    it("REG-N4: a tenant with no TenantConfig row falls back to America/New_York and 'RouteFlow' business name, never crashes", async () => {
+    it("REG-N4 + SA-738: a tenant with no TenantConfig row falls back to UTC and 'RouteFlow' business name, never crashes", async () => {
       const { svc, email } = make({
         tenants: [{ id: "t1", config: null }],
         products: [product({ currentStock: 1, reorderPoint: 10 })],
         admins: [makeAdmin("u1", "admin@acme.example")],
       });
 
-      await svc.sendLowStockDigest(AT_SEVEN_LOCAL);
+      // 07:30 UTC is the 07:00 hour on the UTC fallback clock (every other server path is on UTC).
+      await svc.sendLowStockDigest(new Date("2026-09-16T07:30:00.000Z"));
 
       expect(email.sendLowStockDigest).toHaveBeenCalledWith(
         expect.objectContaining({ businessName: "RouteFlow" }),
       );
+    });
+
+    it("SA-738: a no-row tenant is NOT on New York time (07:30 New York is not its 07:00)", async () => {
+      const { svc, email } = make({
+        tenants: [{ id: "t1", config: null }],
+        products: [product({ currentStock: 1, reorderPoint: 10 })],
+        admins: [makeAdmin("u1", "admin@acme.example")],
+      });
+
+      await svc.sendLowStockDigest(AT_SEVEN_LOCAL); // 11:30Z = 07:30 America/New_York
+
+      expect(email.sendLowStockDigest).not.toHaveBeenCalled();
+    });
+
+    it("SA-738: an invalid stored zone is on UTC too (07:30 UTC fires, 07:30 New York does not)", async () => {
+      const bad = () => ({ tenants: [tenant({ timezone: "Mars/Phobos" })] });
+      const fires = make({
+        ...bad(),
+        products: [product({ currentStock: 1, reorderPoint: 10 })],
+        admins: [makeAdmin("u1", "admin@acme.example")],
+      });
+      await fires.svc.sendLowStockDigest(new Date("2026-09-16T07:30:00.000Z"));
+      expect(fires.email.sendLowStockDigest).toHaveBeenCalledTimes(1);
+
+      const quiet = make({
+        ...bad(),
+        products: [product({ currentStock: 1, reorderPoint: 10 })],
+        admins: [makeAdmin("u1", "admin@acme.example")],
+      });
+      await quiet.svc.sendLowStockDigest(AT_SEVEN_LOCAL);
+      expect(quiet.email.sendLowStockDigest).not.toHaveBeenCalled();
     });
   });
 
@@ -280,6 +312,71 @@ describe("LowStockDigestService (N4)", () => {
       await svc.sendLowStockDigest(AT_SEVEN_LOCAL);
 
       expect(email.sendLowStockDigest).toHaveBeenCalledTimes(1); // still just the one from before
+    });
+  });
+
+  describe("recipients (owner 10-07 OK-6)", () => {
+    // #3725 review: the user read is FILTERED here (tenant, role, status), so a wrong where-clause shows up as a wrong
+    // recipient, not just a different query object.
+    const users = [
+      { ...makeAdmin("a1", "admin@acme.example"), tenantId: "t1" },
+      { ...makeAdmin("o1", "op@acme.example"), role: "OPERATOR", tenantId: "t1" },
+      { ...makeAdmin("o2", "op@other.example"), role: "OPERATOR", tenantId: "t2" },
+      { ...makeAdmin("d1", "driver@acme.example"), role: "DRIVER", tenantId: "t1" },
+    ];
+    const filtering = (all: any[]) =>
+      jest.fn(async ({ where }: any) =>
+        all.filter(
+          (u) =>
+            u.tenantId === where.tenantId &&
+            (where.role?.in ? where.role.in.includes(u.role) : u.role === where.role) &&
+            u.status === where.status,
+        ),
+      );
+    const recipients = (email: any) =>
+      email.sendLowStockDigest.mock.calls.map((c: any[]) => c[0].to).sort();
+
+    it("OK-6: this tenant's admins and operators get it; another tenant's operator and a driver never do", async () => {
+      const { svc, prisma, email } = make({
+        tenants: [tenant()],
+        products: [product({ currentStock: 1, reorderPoint: 10 })],
+        optOuts: [],
+      });
+      prisma.user.findMany = filtering(users);
+      await svc.sendLowStockDigest(AT_SEVEN_LOCAL);
+      expect(recipients(email)).toEqual(["admin@acme.example", "op@acme.example"]);
+    });
+
+    it("OK-6: an operator's opt-out is honoured like an admin's", async () => {
+      const { svc, prisma, email } = make({
+        tenants: [tenant()],
+        products: [product({ currentStock: 1, reorderPoint: 10 })],
+        optOuts: [{ userId: "o1" }],
+      });
+      prisma.user.findMany = filtering(users);
+      await svc.sendLowStockDigest(AT_SEVEN_LOCAL);
+      expect(recipients(email)).toEqual(["admin@acme.example"]);
+    });
+
+    it("OK-6: operators get the digest as well as tenant admins (active users of this tenant only)", async () => {
+      const { svc, prisma } = make({
+        tenants: [tenant()],
+        products: [product({ currentStock: 1, reorderPoint: 10 })],
+        admins: [makeAdmin("u1", "admin@acme.example")],
+        optOuts: [],
+      });
+
+      await svc.sendLowStockDigest(AT_SEVEN_LOCAL);
+
+      expect(prisma.user.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            role: { in: ["TENANT_ADMIN", "OPERATOR"] },
+            status: "ACTIVE",
+            deletedAt: null,
+          }),
+        }),
+      );
     });
   });
 

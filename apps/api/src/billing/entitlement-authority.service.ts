@@ -16,6 +16,7 @@ import {
 import { addonGateState } from "./addon-gate-registry";
 import { isDarkFlag, allowsFlag, computeServedFlags } from "./plan-flag-policy";
 import type { FeatureModeState, FeatureSource } from "@routeflow/types";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /** Fire-and-forget diff writes (item 3): suppress a re-write of the SAME disagreement from
  *  the SAME tenant within this window — a hot key flips the guard on every request, and
@@ -270,7 +271,7 @@ export class EntitlementAuthority {
     if (!status.satisfied) {
       throw new BadRequestException({
         statusCode: 400,
-        code: "FEATURE_REQUIRES_UNMET",
+        code: API_ERROR_CODES.FEATURE_REQUIRES_UNMET,
         key,
         missing: describeUnmetFeatureRequirement(status),
         message:

@@ -65,7 +65,9 @@ describe("isPayingRow parity with PAYING_TENANT_CONDITIONS", () => {
       tenant.class === PAYING_TENANT_CONDITIONS.class &&
       planKey != null;
     expect(manual).toBe(expected);
-    expect(isPayingRow(tenant, planKey)).toBe(expected);
+    expect(isPayingRow(tenant, planKey, false)).toBe(expected);
+    // SA-736r: couponFull = true is never paying, whatever else holds
+    expect(isPayingRow(tenant, planKey, true)).toBe(false);
   });
 });
 

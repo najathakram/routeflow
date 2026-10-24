@@ -1,8 +1,10 @@
 import type { Ionicons } from "@expo/vector-icons";
 import type { PaymentMethod } from "./api/invoices";
-import type { PaymentStatus } from "./api/payments";
-import { remainingCapacity, roundMoney } from "@routeflow/pricing";
+import type { PaymentStatus, UpdatePaymentDto } from "./api/payments";
+import { withRecordAnyway } from "@routeflow/types/payment-ref-copy";
+import { editPaymentCap, roundMoney } from "@routeflow/pricing";
 import { CHECK_TRANSITIONS, type CheckStatus } from "@routeflow/types";
+import { PAYMENT_STATUS_COPY } from "@routeflow/types/payment-submit-key";
 
 // Re-exported for backward compatibility — nothing in this repo currently imports either symbol
 // from this file (checked by grep), but both were public exports of this module before the
@@ -81,18 +83,19 @@ export function paymentActionFlags(
 /**
  * Amount cap when editing an existing payment: how much more capacity the
  * invoice has once every OTHER payment (not this one) is reserved. PR-2
- * (check-payments B1 hardening): routes through the shared remainingCapacity()
- * predicate (DRAFT+PAID+PENDING) — the same "not VOID" semantics this screen
- * already had, now the one copy web/api also use — mirroring the server's
+ * (check-payments B1 hardening) / W-769: routes through the shared editPaymentCap() —
+ * a PAID edit is real money, capped on CONFIRMED siblings only; an unconfirmed
+ * edit stays on capacity (DRAFT+PAID+PENDING) — mirroring the server's
  * updatePayment guard and web's editPaymentMax. `otherPayments` must already
  * exclude the payment being edited; the caller does that filtering since this
- * module carries no payment id.
+ * module carries no payment id. `status` is the edited payment's status.
  */
 export function editPaymentMaxAmount(
   total: number,
   otherPayments: ReadonlyArray<{ amount: unknown; status?: string }>,
+  status: string | null | undefined = "PAID",
 ): number {
-  return Math.max(0, remainingCapacity(total, otherPayments));
+  return editPaymentCap(total, otherPayments as never, status);
 }
 
 // ─── Check lifecycle (P5-12; Wave 3 operator controls) ───────────────────────
@@ -185,4 +188,52 @@ export function allocationTotals(
     excess: roundMoney(Math.max(0, total - allocated)),
     overAllocated: allocated > total + 0.001,
   };
+}
+
+/**
+ * SA-824: while this payment's attempt is unknown or in flight (`hasUnknown()`), "Change customer"
+ * is blocked — the attempt must never be re-scoped to another customer. Same copy as the web
+ * finance Payments page; released -> allowed again.
+ */
+export function changeCustomerGate(hasUnknownAttempt: boolean): {
+  blocked: boolean;
+  reason: string | null;
+} {
+  return hasUnknownAttempt
+    ? { blocked: true, reason: PAYMENT_STATUS_COPY.customerLocked }
+    : { blocked: false, reason: null };
+}
+
+/**
+ * W-718: the payment edit screen's PATCH body from its form fields. The staff "Record anyway" resend (a 409
+ * DUPLICATE_PAYMENT_REF) is the SAME body plus `recordAnyway: true` (`withRecordAnyway`); a first save never carries it.
+ */
+export function editPaymentDto(
+  f: {
+    invoiceId: string;
+    paymentId: string;
+    method: UpdatePaymentDto["method"];
+    amount: number;
+    reference: string | null;
+    notes: string | null;
+    bankCharges: string | null;
+    paidAt: string | null;
+    settledAt: string | null;
+  },
+  recordAnyway: boolean,
+): UpdatePaymentDto {
+  const body: UpdatePaymentDto = {
+    invoiceId: f.invoiceId,
+    paymentId: f.paymentId,
+    method: f.method,
+    amount: f.amount,
+    // W-663: an emptied field is sent as null so the server clears it (as settledAt); undefined kept the old value
+    reference: (f.reference ?? "").trim() || null,
+    notes: (f.notes ?? "").trim() || null,
+    bankCharges: (f.bankCharges ?? "").trim() ? Number(f.bankCharges) || undefined : undefined,
+    paidAt: (f.paidAt ?? "").trim() || undefined,
+    // Always sent: an emptied field has to clear the stored bank date.
+    settledAt: (f.settledAt ?? "").trim() || null,
+  };
+  return recordAnyway ? withRecordAnyway(body) : body;
 }

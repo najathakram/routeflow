@@ -20,11 +20,15 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
+import { scrubbedGitEnv } from "./lib/check-git-hooks.mjs";
 import { join, resolve, sep } from "node:path";
 import {
   isProtectedWorktreeName,
   isProtectedBranch,
   classifyWorktree,
+  linkedIntoBy,
+  scanLinkTargets,
+  samePathOrInside,
   isStaleByAge,
   meetsThreshold,
   findOrphanWorktreeDirs,
@@ -57,17 +61,25 @@ import {
   pathPresent,
   unlinkLinksWindows,
   WINDOWS_DEPS,
+  applyActions,
 } from "./janitor.mjs";
 
 // Run inside a git hook, GIT_DIR / GIT_INDEX_FILE / GIT_WORK_TREE would point every `git -C <tmp>`
 // below at the REAL repo. Scrub them before any git call (the janitor inherits this env).
-for (const k of Object.keys(process.env)) if (k.startsWith("GIT_")) delete process.env[k];
+const cleanGit = scrubbedGitEnv();
+for (const k of Object.keys(process.env)) if (!(k in cleanGit)) delete process.env[k];
 // ...and ignore the machine's global/system git config, so commit signing, a global hooks path or
 // a template-dir commit-msg hook can never make the throwaway-repo commits below fail.
 const emptyGitConfig = join(mkdtempSync(join(tmpdir(), "janitor-gitcfg-")), "config");
 writeFileSync(emptyGitConfig, "");
 process.env.GIT_CONFIG_GLOBAL = emptyGitConfig;
 process.env.GIT_CONFIG_NOSYSTEM = "1";
+// Every fixture git spawn passes this explicitly: the shared scrub, then the empty-config pins.
+const fixtureGitEnv = () => ({
+  ...scrubbedGitEnv(),
+  GIT_CONFIG_GLOBAL: emptyGitConfig,
+  GIT_CONFIG_NOSYSTEM: "1",
+});
 
 let pass = 0;
 const failures = [];
@@ -226,6 +238,7 @@ t("isMergedEvidence (B800): ancestry alone is not proof; a mainline tip is a fre
     execFileSync("git", ["-C", dir, ...args], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
+      env: fixtureGitEnv(),
     }).trim();
   const commit = (file, msg) => {
     writeFileSync(join(dir, file), msg);
@@ -387,6 +400,7 @@ t(
     execFileSync("git", ["-C", dir, ...args], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
+      env: fixtureGitEnv(),
     }).trim();
   const commit = (file, body, msg) => {
     writeFileSync(join(dir, file), body);
@@ -616,6 +630,7 @@ t(
     execFileSync("git", ["-C", dir, ...args], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
+      env: fixtureGitEnv(),
     }).trim();
   const commit = (file, body, msg) => {
     writeFileSync(join(dir, file), body);
@@ -831,6 +846,7 @@ if (process.platform !== "win32") {
     execFileSync("git", ["-C", cwd, ...args], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
+      env: fixtureGitEnv(),
     }).trim();
   try {
     g(main, "init", "-q", "-b", "master");
@@ -990,6 +1006,7 @@ t("REG-B820: an orphan dir touched in the last 24h (or unreadable) is never dele
     execFileSync("git", ["-C", dir, ...args], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
+      env: fixtureGitEnv(),
     }).trim();
   try {
     g("init", "-q", "-b", "master");
@@ -1178,6 +1195,7 @@ t(
     execFileSync("git", ["-C", dir, ...args], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
+      env: fixtureGitEnv(),
     }).trim();
   try {
     g("init", "-q", "-b", "master");
@@ -1506,11 +1524,12 @@ if (process.platform === "win32" && CMD_UNSAFE.test(winBase)) {
     execFileSync("git", ["-C", cwd, ...args], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
+      env: fixtureGitEnv(),
     }).trim();
   const id = ["-c", "user.name=t", "-c", "user.email=t@example.com"];
   try {
-    execFileSync("git", ["init", "-q", "--bare", origin]);
-    execFileSync("git", ["init", "-q", "-b", "master", main]);
+    execFileSync("git", ["init", "-q", "--bare", origin], { env: fixtureGitEnv() });
+    execFileSync("git", ["init", "-q", "-b", "master", main], { env: fixtureGitEnv() });
     writeFileSync(join(main, "a.txt"), "a");
     git(main, "add", "a.txt");
     git(main, ...id, "commit", "-q", "-m", "base");
@@ -1723,6 +1742,283 @@ const DIR_LINK_TYPE = process.platform === "win32" ? "junction" : "dir";
     rmSync(sandbox, { recursive: true, force: true });
   }
 }
+
+// Bug: a stray FILE under .claude/worktrees/ (a .log, a .patch, a jest summary json) is not a
+// worktree candidate at all — findOrphanWorktreeDirs only diffs names against `git worktree
+// list`, so buildPlan's orphan step used to push it as kind "orphan-dir" like a real directory,
+// and the apply-mode executor then ran a directory `rmdir` on a plain file and threw. A stray
+// file must come out of buildPlan as its own "stray-file" kind, never "orphan-dir".
+{
+  const root = mkdtempSync(join(tmpdir(), "janitor-strayfile-"));
+  const main = join(root, "main");
+  const worktreesRoot = join(root, "worktrees");
+  try {
+    execFileSync("git", ["init", "-q", "-b", "master", main], { env: fixtureGitEnv() });
+    writeFileSync(join(main, "a.txt"), "a");
+    execFileSync("git", ["-C", main, "add", "a.txt"], { env: fixtureGitEnv() });
+    execFileSync(
+      "git",
+      [
+        "-C",
+        main,
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@example.com",
+        "commit",
+        "-q",
+        "-m",
+        "base",
+      ],
+      { env: fixtureGitEnv() },
+    );
+
+    mkdirSync(worktreesRoot, { recursive: true });
+    const strayFile = join(worktreesRoot, "bugs-selftest.log");
+    writeFileSync(strayFile, "log output");
+    const orphanDir = join(worktreesRoot, "old-orphan");
+    mkdirSync(orphanDir);
+    writeFileSync(join(orphanDir, "note.txt"), "stuff");
+
+    // Both old enough to clear the orphanEligible recent-activity check.
+    const old = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+    utimesSync(strayFile, old, old);
+    utimesSync(orphanDir, old, old);
+    utimesSync(join(orphanDir, "note.txt"), old, old);
+
+    t("buildPlan: a stray file under worktrees/ is kind stray-file, never orphan-dir", () => {
+      const { actions } = buildPlan(main, main, worktreesRoot);
+      const forFile = actions.find((a) => a.target === strayFile);
+      const forDir = actions.find((a) => a.target === orphanDir);
+      assert.ok(forFile, `expected an action for the stray file: ${JSON.stringify(actions)}`);
+      assert.equal(forFile.kind, "stray-file");
+      assert.ok(forDir, `expected an action for the orphan dir: ${JSON.stringify(actions)}`);
+      assert.equal(forDir.kind, "orphan-dir");
+    });
+
+    t("buildPlan: a RECENT stray file is skipped, not planned for deletion", () => {
+      const recent = join(worktreesRoot, "fresh.log");
+      writeFileSync(recent, "being written");
+      const { actions, skipped } = buildPlan(main, main, worktreesRoot);
+      assert.ok(
+        !actions.some((x) => x.target === recent),
+        "recent stray file must not be an action",
+      );
+      assert.ok(
+        skipped.some((x) => x.worktree === "fresh.log"),
+        "recent stray file is reported",
+      );
+    });
+
+    t("execute: a failing unlink of a stray file is a reported skip, not a throw", () => {
+      const logs = [];
+      const res = execute(
+        { kind: "stray-file", target: strayFile },
+        {
+          refuseDelete: () => null,
+          isDirty: () => false,
+          removeFile: () => {
+            throw new Error("EBUSY");
+          },
+          log: (m) => logs.push(m),
+        },
+      );
+      assert.equal(res, "skipped");
+      assert.ok(logs.some((m) => m.includes("SKIPPED") && m.includes("EBUSY")));
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+// Bug (cont'd): the apply loop used to let one action's thrown error kill the whole run, so a
+// stray-file rmdir failure on action 1 meant docker prune / npm cache clean / stale-proof cleanup
+// (later actions) never ran at all. applyActions must isolate each action: a throw is caught,
+// logged, and recorded, and the loop still reaches every later action.
+t("applyActions: a throwing action does not stop the loop; the failure is recorded", () => {
+  const calls = [];
+  const logs = [];
+  const actions = [
+    { kind: "orphan-dir", target: "/w/bugs-selftest.log" },
+    { kind: "docker-build-cache" },
+    { kind: "npm-cache" },
+  ];
+  const result = applyActions(actions, 10, {
+    getFreeSpaceGb: () => 0, // always below target: never stop early
+    execute: (a) => {
+      calls.push(a.kind);
+      if (a.kind === "orphan-dir") {
+        throw new Error("Command failed: cmd /c rmdir /s /q C:\\wt\\bugs-selftest.log");
+      }
+      return "done";
+    },
+    log: (m) => logs.push(m),
+  });
+  assert.deepEqual(
+    calls,
+    ["orphan-dir", "docker-build-cache", "npm-cache"],
+    "every action must be attempted even though the first one threw",
+  );
+  assert.equal(result.failed.length, 1);
+  assert.equal(result.failed[0].action.kind, "orphan-dir");
+  assert.ok(
+    logs.some((l) => l.includes("FAILED orphan-dir") && l.includes("/w/bugs-selftest.log")),
+    `expected a FAILED log line: ${JSON.stringify(logs)}`,
+  );
+});
+
+const dirLink = (target, path) => symlinkSync(target, path, DIR_LINK_TYPE);
+t(
+  "row 719: other trees' node_modules symlinks into a candidate are found; clean trees are not",
+  () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "janitor-xlink-")));
+    try {
+      const cand = join(root, "cand");
+      const other = join(root, "other");
+      const clean = join(root, "clean");
+      for (const d of [cand, other, clean])
+        mkdirSync(join(d, "node_modules", "@s"), { recursive: true });
+      mkdirSync(join(cand, "node_modules", "pkg"), { recursive: true });
+      mkdirSync(join(clean, "node_modules", "mine"), { recursive: true });
+      dirLink(join(cand, "node_modules", "pkg"), join(other, "node_modules", "pkg"));
+      dirLink(join(cand, "node_modules", "pkg"), join(other, "node_modules", "@s", "scoped"));
+      dirLink(join(clean, "node_modules", "mine"), join(clean, "node_modules", "self"));
+      const hits = linkedIntoBy(cand, [other, clean, cand]);
+      assert.equal(hits.length, 2);
+      assert.ok(hits.every((h) => h.startsWith(other)));
+      assert.deepEqual(linkedIntoBy(clean, [other, cand]), []);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
+t("row 719: classifyWorktree skips (reports) a merged tree that other trees link into", () => {
+  const v = classifyWorktree({
+    name: "rf-linked",
+    branch: "fix/shipped",
+    isMainCheckout: false,
+    isMerged: true,
+    isDirty: false,
+    isRecent: false,
+    hasUnpushed: false,
+    linkedFrom: ["/w/other/node_modules/pkg"],
+  });
+  assert.equal(v.nodeModules, "skip");
+  assert.equal(v.worktree, "skip");
+  assert.match(v.reason, /other trees link into it/);
+});
+
+t(
+  "row 719 (A): a link inside another tree's apps/*/node_modules into the candidate is found",
+  () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "janitor-xlink-a-")));
+    try {
+      const cand = join(root, "cand");
+      const other = join(root, "other");
+      mkdirSync(join(cand, "apps", "mobile", "node_modules", "react-native"), { recursive: true });
+      mkdirSync(join(other, "apps", "mobile", "node_modules"), { recursive: true });
+      mkdirSync(join(other, "packages", "ui", "node_modules"), { recursive: true });
+      dirLink(
+        join(cand, "apps", "mobile", "node_modules", "react-native"),
+        join(other, "apps", "mobile", "node_modules", "react-native"),
+      );
+      const hits = linkedIntoBy(cand, [other, cand]);
+      assert.equal(hits.length, 1);
+      assert.match(hits[0], /apps.mobile.node_modules.react-native$/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
+t("row 719 (B): another tree whose node_modules IS a symlink into the candidate is found", () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "janitor-xlink-b-")));
+  try {
+    const cand = join(root, "cand");
+    const other = join(root, "other");
+    mkdirSync(join(cand, "node_modules", "pkg"), { recursive: true });
+    mkdirSync(other, { recursive: true });
+    dirLink(join(cand, "node_modules"), join(other, "node_modules"));
+    const hits = linkedIntoBy(cand, [other, cand]);
+    assert.equal(hits.length, 1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+t("row 719 (fail closed): a readdir error makes the scan unknown, and the tree is skipped", () => {
+  const eio = (code) => () => {
+    throw Object.assign(new Error(code), { code });
+  };
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "janitor-xlink-c-")));
+  try {
+    const cand = join(root, "cand");
+    const other = join(root, "other");
+    mkdirSync(cand, { recursive: true });
+    mkdirSync(join(other, "node_modules"), { recursive: true });
+    const scan = scanLinkTargets([other], { readdir: eio("EACCES") });
+    assert.ok(scan.unknown[other], "the unreadable dir must be recorded as unknown");
+    assert.equal(linkedIntoBy(cand, [other, cand], scan), null);
+    const scan2 = scanLinkTargets([other], { lstat: eio("EPERM") });
+    assert.ok(scan2.unknown[other], "an lstat EPERM must be recorded as unknown");
+    const v = classifyWorktree({
+      name: "rf-unk",
+      branch: "fix/shipped",
+      isMainCheckout: false,
+      isMerged: true,
+      isDirty: false,
+      isRecent: false,
+      hasUnpushed: false,
+      linkedFrom: null,
+    });
+    assert.equal(v.nodeModules, "skip");
+    assert.equal(v.worktree, "skip");
+    assert.match(v.reason, /link scan/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+t("row 719: an lstat EPERM on an entry inside node_modules is unknown, never 'not a link'", () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "janitor-xlink-e-")));
+  try {
+    const other = join(root, "other");
+    mkdirSync(join(other, "node_modules", "pkg"), { recursive: true });
+    const pkg = join(other, "node_modules", "pkg");
+    const lstat = (p) => {
+      if (p === pkg) throw Object.assign(new Error("EPERM"), { code: "EPERM" });
+      return lstatSync(p);
+    };
+    const scan = scanLinkTargets([other], { lstat });
+    assert.ok(scan.unknown[other]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+t(
+  "row 719: samePathOrInside folds case on win32/darwin, not linux, and respects boundaries",
+  () => {
+    assert.equal(samePathOrInside("c:\\wt\\u6\\node_modules", "C:\\WT\\U6", "win32"), true);
+    assert.equal(samePathOrInside("\\\\?\\C:\\wt\\u6", "C:\\wt\\u6", "win32"), true);
+    assert.equal(samePathOrInside("C:\\wt\\u60", "C:\\wt\\u6", "win32"), false);
+    assert.equal(samePathOrInside("/Users/x/WT/U6/a", "/users/x/wt/u6", "darwin"), true);
+    assert.equal(samePathOrInside("/Users/x/wt/u60", "/Users/x/wt/u6", "darwin"), false);
+    assert.equal(samePathOrInside("/Users/x/WT/U6/a", "/users/x/wt/u6", "linux"), false);
+    assert.equal(samePathOrInside("/w/u6", "/w/u6", "linux"), true);
+  },
+);
+t("row 719: a precomputed scan map is reused across candidates", () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "janitor-xlink-d-")));
+  try {
+    const a = join(root, "a");
+    const b = join(root, "b");
+    mkdirSync(join(a, "node_modules", "p"), { recursive: true });
+    mkdirSync(join(b, "node_modules"), { recursive: true });
+    dirLink(join(a, "node_modules", "p"), join(b, "node_modules", "p"));
+    const scan = scanLinkTargets([a, b]);
+    assert.equal(linkedIntoBy(a, [a, b], scan).length, 1);
+    assert.deepEqual(linkedIntoBy(b, [a, b], scan), []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 console.log(`janitor self-test: ${pass} passed, ${failures.length} failed`);
 if (failures.length) {

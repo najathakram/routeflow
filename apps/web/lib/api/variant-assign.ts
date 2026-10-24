@@ -1,6 +1,8 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import { invalidateProductSet } from "./products";
 import type { VariantAssignResult } from "@routeflow/types";
+import type { LocalErrorToastOption } from "@/lib/local-error-toast";
 export type { VariantAssignResult, VariantAssignResultItem } from "@routeflow/types";
 
 /**
@@ -38,13 +40,13 @@ export interface VariantAssignRequest {
  * point that opens `VariantSplitModal` (product detail, inventory Stock tab,
  * vendor-bill line) so behaviour is identical everywhere.
  */
-export function useAssignToVariants() {
+export function useAssignToVariants(options?: LocalErrorToastOption) {
   const qc = useQueryClient();
   return useMutation<VariantAssignResult, Error, VariantAssignRequest>({
+    meta: options?.localErrorToast ? { localErrorToast: options.localErrorToast } : undefined,
     mutationFn: (data) => apiClient.post("/inventory/variant-assign", data).then((r) => r.data),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["inventory"] });
-      qc.invalidateQueries({ queryKey: ["products"] });
+      invalidateProductSet(qc);
       qc.invalidateQueries({ queryKey: ["vendor-bills"] });
     },
   });

@@ -13,22 +13,28 @@ export function DemoteReasonModal({
   onConfirm,
   loading,
   targetStatus,
+  fulfillPath,
 }: {
   open: boolean;
   onClose: () => void;
   onConfirm: (reason: string) => void;
   loading: boolean;
   targetStatus: string;
+  /** The order's path: a SHIP order walking back to CONFIRMED is "unmarking shipped", never "Return to Confirmed". */
+  fulfillPath?: string | null;
 }) {
   const [reason, setReason] = React.useState("");
 
+  const unmarkShipped = fulfillPath === "SHIP" && targetStatus === "CONFIRMED";
   const label: Record<string, string> = {
     PENDING: "Return to Pending",
-    CONFIRMED: "Return to Confirmed",
+    CONFIRMED: unmarkShipped ? "Unmark shipped" : "Return to Confirmed",
   };
   const description: Record<string, string> = {
     PENDING: "Why is this order being returned to pending?",
-    CONFIRMED: "Why is this order being returned to confirmed?",
+    CONFIRMED: unmarkShipped
+      ? "Why is this order being unmarked as shipped?"
+      : "Why is this order being returned to confirmed?",
   };
 
   React.useEffect(() => {

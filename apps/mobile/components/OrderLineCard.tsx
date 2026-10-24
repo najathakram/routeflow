@@ -53,6 +53,11 @@ export function OrderLineCard({
             <Text style={styles.customTagText}>Custom</Text>
           </View>
         ) : null}
+        {model.backorderPieces > 0 ? (
+          <View style={styles.customTag} testID="line-backorder-tag">
+            <Text style={styles.customTagText}>Backorder</Text>
+          </View>
+        ) : null}
         <Text style={styles.sub}>{model.qtyPriceLine}</Text>
         {model.tag ? (
           <View style={styles.tagRow}>
@@ -74,6 +79,12 @@ export function OrderLineCard({
         {model.note ? (
           <Text style={[styles.sub, { fontStyle: "italic" }]} numberOfLines={2}>
             {model.note}
+          </Text>
+        ) : null}
+        {model.overrideNote ? (
+          // Row 510: the staff-only "Sold despite restriction" note is part of THIS card, under its product.
+          <Text style={styles.override} testID="restriction-override-note">
+            {model.overrideNote}
           </Text>
         ) : null}
         {model.subLines?.map((text, i) => (
@@ -103,6 +114,12 @@ const styles = StyleSheet.create({
   stem: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2 },
   anchor: { fontSize: 14, fontFamily: "Inter_500Medium", color: ios.label },
   struck: { textDecorationLine: "line-through" },
+  override: {
+    fontSize: 12,
+    fontFamily: "Inter_400Regular",
+    color: ios.system.orangeInk,
+    marginTop: 2,
+  },
   sku: { fontSize: 11, fontFamily: "Inter_400Regular", color: ios.label3, marginTop: 2 },
   sub: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
   tagRow: { flexDirection: "row", alignItems: "baseline", gap: 6, marginTop: 2 },

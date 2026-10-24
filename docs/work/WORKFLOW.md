@@ -106,7 +106,8 @@ progress bar is the release's progress.
 ## What keeps it current (no one edits the board by hand)
 
 - **Every 5 minutes**, a scheduled task on the owner's PC runs `scripts/work/run.mjs`: the reconciler
-  (`npm run work:reconcile`) derives every item's fields, adds new issues and PRs, closes issues
+  (`reconcile.mjs --apply`; by hand, `npm run work:reconcile` is a dry run and
+  `npm run work:reconcile:apply` writes) derives every item's fields, adds new issues and PRs, closes issues
   whose PR merged, and rewrites the pinned `work-status` digest issue. Once a day, or when the
   overall state changes, it also posts an on-track / at-risk update on the board.
 - **Instantly**, `npm run work:claim` (claim or release) triggers a refresh.

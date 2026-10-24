@@ -1,0 +1,837 @@
+{
+  "tasks": {
+    "F-1": {
+      "id": "F-1",
+      "title": "Acme invoice date fixes",
+      "kind": "feature",
+      "status": {
+        "value": "in-progress",
+        "source": "reported",
+        "ref": "lane-u#4"
+      },
+      "priority": {
+        "value": "P1",
+        "source": "register",
+        "ref": null
+      },
+      "release": {
+        "value": "R1",
+        "source": "register",
+        "ref": null
+      },
+      "lane": {
+        "value": "lane-u",
+        "source": "register",
+        "ref": null
+      },
+      "phase": {
+        "value": "build",
+        "source": "register",
+        "ref": null
+      },
+      "areas": {
+        "value": ["apps/api/src/invoices/**"],
+        "source": "register",
+        "ref": null
+      },
+      "dependsOn": [],
+      "related": {
+        "value": [],
+        "source": "register",
+        "ref": null
+      },
+      "effort": "S",
+      "importance": 3,
+      "customerImpact": "medium",
+      "ref": {
+        "register": {
+          "release": "R1"
+        }
+      },
+      "notes": null,
+      "pr": {
+        "value": 2801,
+        "source": "inferred",
+        "ref": "#2801"
+      }
+    },
+    "F-2": {
+      "id": "F-2",
+      "title": "Acme route export",
+      "kind": "feature",
+      "status": {
+        "value": "planned",
+        "source": "register",
+        "ref": null
+      },
+      "priority": {
+        "value": "P1",
+        "source": "register",
+        "ref": null
+      },
+      "release": {
+        "value": "R2",
+        "source": "reported",
+        "ref": "owner#3"
+      },
+      "lane": {
+        "value": "lane-u",
+        "source": "register",
+        "ref": null
+      },
+      "phase": {
+        "value": null,
+        "source": "register",
+        "ref": null
+      },
+      "areas": {
+        "value": [],
+        "source": "register",
+        "ref": null
+      },
+      "dependsOn": [],
+      "related": {
+        "value": [],
+        "source": "register",
+        "ref": null
+      },
+      "effort": "S",
+      "importance": 3,
+      "customerImpact": "medium",
+      "ref": {
+        "register": {
+          "release": "R1"
+        }
+      },
+      "notes": null,
+      "pr": {
+        "value": null,
+        "source": "register",
+        "ref": null
+      }
+    },
+    "F-3": {
+      "id": "F-3",
+      "title": "Acme driver notes",
+      "kind": "feature",
+      "status": {
+        "value": "planned",
+        "source": "register",
+        "ref": null
+      },
+      "priority": {
+        "value": "P0",
+        "source": "register",
+        "ref": null
+      },
+      "release": {
+        "value": "R1",
+        "source": "register",
+        "ref": null
+      },
+      "lane": {
+        "value": null,
+        "source": "register",
+        "ref": null
+      },
+      "phase": {
+        "value": null,
+        "source": "register",
+        "ref": null
+      },
+      "areas": {
+        "value": [],
+        "source": "register",
+        "ref": null
+      },
+      "dependsOn": [],
+      "related": {
+        "value": [],
+        "source": "register",
+        "ref": null
+      },
+      "effort": "S",
+      "importance": 3,
+      "customerImpact": "medium",
+      "ref": null,
+      "notes": null,
+      "pr": {
+        "value": null,
+        "source": "register",
+        "ref": null
+      }
+    },
+    "F-4": {
+      "id": "F-4",
+      "title": "Acme dashboards polish",
+      "kind": "feature",
+      "status": {
+        "value": "blocked",
+        "source": "register",
+        "ref": null
+      },
+      "priority": {
+        "value": "P2",
+        "source": "register",
+        "ref": null
+      },
+      "release": {
+        "value": "R1",
+        "source": "register",
+        "ref": null
+      },
+      "lane": {
+        "value": "lane-b",
+        "source": "register",
+        "ref": null
+      },
+      "phase": {
+        "value": null,
+        "source": "register",
+        "ref": null
+      },
+      "areas": {
+        "value": [],
+        "source": "register",
+        "ref": null
+      },
+      "dependsOn": [],
+      "related": {
+        "value": [],
+        "source": "register",
+        "ref": null
+      },
+      "effort": "S",
+      "importance": 3,
+      "customerImpact": "medium",
+      "ref": null,
+      "notes": null,
+      "pr": {
+        "value": null,
+        "source": "register",
+        "ref": null
+      }
+    },
+    "B905": {
+      "id": "B905",
+      "title": "Acme rounding on credit notes",
+      "kind": "bug",
+      "status": {
+        "value": "code-complete",
+        "source": "inferred",
+        "ref": "#2801"
+      },
+      "priority": {
+        "value": "P1",
+        "source": "register",
+        "ref": null
+      },
+      "release": {
+        "value": "R1",
+        "source": "register",
+        "ref": null
+      },
+      "lane": {
+        "value": null,
+        "source": "register",
+        "ref": null
+      },
+      "phase": {
+        "value": null,
+        "source": "register",
+        "ref": null
+      },
+      "areas": {
+        "value": [],
+        "source": "register",
+        "ref": null
+      },
+      "dependsOn": [],
+      "related": {
+        "value": [],
+        "source": "register",
+        "ref": null
+      },
+      "effort": "S",
+      "importance": 3,
+      "customerImpact": "medium",
+      "ref": {
+        "severity": "high",
+        "register": {
+          "status": "planned"
+        }
+      },
+      "notes": null,
+      "pr": {
+        "value": 2801,
+        "source": "inferred",
+        "ref": "#2801"
+      }
+    },
+    "B906": {
+      "id": "B906",
+      "title": "Acme bug 0",
+      "kind": "bug",
+      "status": {
+        "value": "planned",
+        "source": "register",
+        "ref": null
+      },
+      "priority": {
+        "value": "P2",
+        "source": "register",
+        "ref": null
+      },
+      "release": {
+        "value": "R1",
+        "source": "register",
+        "ref": null
+      },
+      "lane": {
+        "value": null,
+        "source": "register",
+        "ref": null
+      },
+      "phase": {
+        "value": null,
+        "source": "register",
+        "ref": null
+      },
+      "areas": {
+        "value": [],
+        "source": "register",
+        "ref": null
+      },
+      "dependsOn": [],
+      "related": {
+        "value": [],
+        "source": "register",
+        "ref": null
+      },
+      "effort": "S",
+      "importance": 3,
+      "customerImpact": "medium",
+      "ref": {
+        "severity": "critical",
+        "register": {
+          "status": "planned"
+        }
+      },
+      "notes": null,
+      "pr": {
+        "value": null,
+        "source": "register",
+        "ref": null
+      }
+    },
+    "B907": {
+      "id": "B907",
+      "title": "Acme bug 1",
+      "kind": "bug",
+      "status": {
+        "value": "planned",
+        "source": "register",
+        "ref": null
+      },
+      "priority": {
+        "value": "P2",
+        "source": "register",
+        "ref": null
+      },
+      "release": {
+        "value": "R1",
+        "source": "register",
+        "ref": null
+      },
+      "lane": {
+        "value": null,
+        "source": "register",
+        "ref": null
+      },
+      "phase": {
+        "value": null,
+        "source": "register",
+        "ref": null
+      },
+      "areas": {
+        "value": [],
+        "source": "register",
+        "ref": null
+      },
+      "dependsOn": [],
+      "related": {
+        "value": [],
+        "source": "register",
+        "ref": null
+      },
+      "effort": "S",
+      "importance": 3,
+      "customerImpact": "medium",
+      "ref": {
+        "severity": "medium",
+        "register": {
+          "status": "planned"
+        }
+      },
+      "notes": null,
+      "pr": {
+        "value": null,
+        "source": "register",
+        "ref": null
+      }
+    },
+    "B908": {
+      "id": "B908",
+      "title": "Acme bug 2",
+      "kind": "bug",
+      "status": {
+        "value": "in-progress",
+        "source": "register",
+        "ref": null
+      },
+      "priority": {
+        "value": "P2",
+        "source": "register",
+        "ref": null
+      },
+      "release": {
+        "value": "R1",
+        "source": "register",
+        "ref": null
+      },
+      "lane": {
+        "value": null,
+        "source": "register",
+        "ref": null
+      },
+      "phase": {
+        "value": null,
+        "source": "register",
+        "ref": null
+      },
+      "areas": {
+        "value": [],
+        "source": "register",
+        "ref": null
+      },
+      "dependsOn": [],
+      "related": {
+        "value": [],
+        "source": "register",
+        "ref": null
+      },
+      "effort": "S",
+      "importance": 3,
+      "customerImpact": "medium",
+      "ref": {
+        "severity": "low",
+        "register": {
+          "status": "in-progress"
+        }
+      },
+      "notes": null,
+      "pr": {
+        "value": null,
+        "source": "register",
+        "ref": null
+      }
+    },
+    "B909": {
+      "id": "B909",
+      "title": "Acme bug 3",
+      "kind": "bug",
+      "status": {
+        "value": "released",
+        "source": "register",
+        "ref": null
+      },
+      "priority": {
+        "value": "P2",
+        "source": "register",
+        "ref": null
+      },
+      "release": {
+        "value": "R1",
+        "source": "register",
+        "ref": null
+      },
+      "lane": {
+        "value": null,
+        "source": "register",
+        "ref": null
+      },
+      "phase": {
+        "value": null,
+        "source": "register",
+        "ref": null
+      },
+      "areas": {
+        "value": [],
+        "source": "register",
+        "ref": null
+      },
+      "dependsOn": [],
+      "related": {
+        "value": [],
+        "source": "register",
+        "ref": null
+      },
+      "effort": "S",
+      "importance": 3,
+      "customerImpact": "medium",
+      "ref": {
+        "severity": "high",
+        "register": {
+          "status": "released"
+        }
+      },
+      "notes": null,
+      "pr": {
+        "value": null,
+        "source": "register",
+        "ref": null
+      }
+    }
+  },
+  "lanes": {
+    "lane-u": {
+      "id": "lane-u",
+      "name": "lane-u",
+      "machine": "PC",
+      "kind": "feature",
+      "active": true,
+      "current": {
+        "value": "F-1",
+        "source": "reported",
+        "ref": null
+      },
+      "next": {
+        "value": "F-2",
+        "source": "reported",
+        "ref": null
+      },
+      "blockers": [],
+      "heartbeat": {
+        "value": "2026-01-12T09:48:00Z",
+        "source": "reported",
+        "ref": null
+      },
+      "stale": {
+        "value": "live",
+        "source": "inferred",
+        "ref": null
+      }
+    },
+    "lane-b": {
+      "id": "lane-b",
+      "name": "lane-b",
+      "machine": "Mac",
+      "kind": "feature",
+      "active": true,
+      "current": {
+        "value": "F-4",
+        "source": "reported",
+        "ref": null
+      },
+      "next": {
+        "value": null,
+        "source": "inferred",
+        "ref": null
+      },
+      "blockers": [
+        {
+          "task": "F-4",
+          "reason": "waiting on SA-442",
+          "ref": "lane-b#9"
+        }
+      ],
+      "heartbeat": {
+        "value": "2026-01-12T05:00:00Z",
+        "source": "reported",
+        "ref": null
+      },
+      "stale": {
+        "value": "stale",
+        "source": "inferred",
+        "ref": null
+      }
+    },
+    "lane-idle": {
+      "id": "lane-idle",
+      "name": "lane-idle",
+      "machine": "Mac",
+      "kind": "feature",
+      "active": true,
+      "current": {
+        "value": null,
+        "source": "reported",
+        "ref": null
+      },
+      "next": {
+        "value": "F-3",
+        "source": "reported",
+        "ref": null
+      },
+      "blockers": [],
+      "heartbeat": {
+        "value": null,
+        "source": "reported",
+        "ref": null
+      },
+      "stale": {
+        "value": "silent",
+        "source": "inferred",
+        "ref": null
+      }
+    }
+  },
+  "releases": {
+    "R1": {
+      "id": "R1",
+      "name": "Release 1",
+      "status": {
+        "value": "done",
+        "source": "register",
+        "ref": null
+      },
+      "shipDate": {
+        "value": "2026-01-05",
+        "source": "register",
+        "ref": null
+      },
+      "goal": "Acme goal",
+      "history": []
+    },
+    "R2": {
+      "id": "R2",
+      "name": "Release 2",
+      "status": {
+        "value": "at-risk",
+        "source": "inferred",
+        "ref": "R2"
+      },
+      "shipDate": {
+        "value": "2026-01-20",
+        "source": "reported",
+        "ref": "owner#7"
+      },
+      "goal": "Acme goal",
+      "history": [
+        {
+          "ref": "owner#7",
+          "ts": "2026-01-11T10:00:00Z",
+          "type": "release.moved",
+          "task": null,
+          "from": "2026-01-15",
+          "to": "2026-01-20"
+        }
+      ]
+    },
+    "R3": {
+      "id": "R3",
+      "name": "Release 3",
+      "status": {
+        "value": "planned",
+        "source": "register",
+        "ref": null
+      },
+      "shipDate": {
+        "value": "2026-02-10",
+        "source": "register",
+        "ref": null
+      },
+      "goal": "Acme goal",
+      "history": []
+    }
+  },
+  "prs": [
+    {
+      "pr": 2801,
+      "at": "2026-01-12T09:30:00Z",
+      "state": "open",
+      "headSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mergeSha": null,
+      "lane": "lane-u",
+      "links": {
+        "task": "F-1",
+        "bug": null,
+        "feature": null,
+        "defers": null,
+        "issue": null
+      },
+      "ci": "green",
+      "ciSince": "2026-01-12T08:00:00Z",
+      "review": "none",
+      "mergeable": "clean",
+      "files": 4,
+      "areas": ["apps/api/src/invoices/**"],
+      "deployed": false,
+      "title": "Acme invoice date fix",
+      "headRef": "feat/acme-2801",
+      "baseRef": "master",
+      "createdAt": "2026-01-10T10:00:00Z",
+      "updatedAt": "2026-01-12T09:00:00Z",
+      "mergedAt": null,
+      "closedAt": null,
+      "headCommittedAt": "2026-01-12T08:00:00Z",
+      "filePaths": ["apps/api/src/invoices/a.ts"],
+      "body": "",
+      "bookkeepingPending": false
+    },
+    {
+      "pr": 2810,
+      "at": "2026-01-12T09:30:00Z",
+      "state": "open",
+      "headSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mergeSha": null,
+      "lane": "lane-b",
+      "links": {
+        "task": "F-4",
+        "bug": null,
+        "feature": null,
+        "defers": null,
+        "issue": null
+      },
+      "ci": "pending",
+      "ciSince": "2026-01-12T08:00:00Z",
+      "review": "none",
+      "mergeable": "conflicting",
+      "files": 4,
+      "areas": ["apps/api/src/invoices/**"],
+      "deployed": false,
+      "title": "Acme export rewrite",
+      "headRef": "feat/acme-2810",
+      "baseRef": "master",
+      "createdAt": "2026-01-10T10:00:00Z",
+      "updatedAt": "2026-01-12T09:00:00Z",
+      "mergedAt": null,
+      "closedAt": null,
+      "headCommittedAt": "2026-01-12T08:00:00Z",
+      "filePaths": ["apps/api/src/invoices/a.ts"],
+      "body": "",
+      "bookkeepingPending": false
+    },
+    {
+      "pr": 2788,
+      "at": "2026-01-12T09:30:00Z",
+      "state": "merged",
+      "headSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mergeSha": null,
+      "lane": "lane-u",
+      "links": {
+        "task": "B905",
+        "bug": null,
+        "feature": null,
+        "defers": null,
+        "issue": null
+      },
+      "ci": "green",
+      "ciSince": "2026-01-12T08:00:00Z",
+      "review": "approved",
+      "mergeable": "clean",
+      "files": 4,
+      "areas": ["apps/api/src/invoices/**"],
+      "deployed": false,
+      "title": "Acme rounding merged",
+      "headRef": "feat/acme-2788",
+      "baseRef": "master",
+      "createdAt": "2026-01-10T10:00:00Z",
+      "updatedAt": "2026-01-12T09:00:00Z",
+      "mergedAt": "2026-01-11T12:00:00Z",
+      "closedAt": null,
+      "headCommittedAt": "2026-01-12T08:00:00Z",
+      "filePaths": ["apps/api/src/invoices/a.ts"],
+      "body": "",
+      "bookkeepingPending": false
+    }
+  ],
+  "branches": [
+    {
+      "name": "fix/B905-orphan",
+      "oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "committedDate": "2026-01-08T10:00:00Z",
+      "ahead": 2
+    }
+  ],
+  "waste": [
+    {
+      "key": "W2:2810",
+      "rule": "W2",
+      "subject": "PR #2810",
+      "why": "draft for 5 d, never marked ready",
+      "action": "mark ready or close",
+      "since": "2026-01-07T10:00:00Z"
+    },
+    {
+      "key": "W6:fix/B905-orphan",
+      "rule": "W6",
+      "subject": "fix/B905-orphan",
+      "why": "ahead of master with no open or merged PR, last push 3 d ago",
+      "action": "open a PR or delete the branch",
+      "since": "2026-01-09T10:00:00Z"
+    }
+  ],
+  "overlap": [
+    {
+      "a": "lane-u",
+      "b": "lane-b",
+      "shared": 4,
+      "level": "HOT",
+      "source": "from diff",
+      "paths": ["apps/api/src/invoices/a.ts"]
+    }
+  ],
+  "piggyback": {
+    "lane-u": [
+      {
+        "id": "B906",
+        "severity": "low",
+        "score": 0.8,
+        "sensitive": true,
+        "title": "Acme bug 0"
+      }
+    ]
+  },
+  "acks": {},
+  "superseded": {},
+  "timeline": [
+    {
+      "ts": "2026-01-12T09:48:00Z",
+      "lane": "lane-u",
+      "seq": 4,
+      "type": "task.started",
+      "task": "F-1",
+      "by": "lane-u"
+    },
+    {
+      "ts": "2026-01-11T10:00:00Z",
+      "lane": "owner",
+      "seq": 3,
+      "type": "task.release",
+      "task": "F-2",
+      "by": "owner"
+    }
+  ],
+  "warnings": [],
+  "sources": {
+    "events": 5,
+    "lanes": 3,
+    "github": {
+      "lastOk": "2026-01-12T09:59:00Z",
+      "rateRemaining": 4120
+    },
+    "railway": {
+      "lastOk": "2026-01-12T09:59:00Z",
+      "api": true,
+      "web": true
+    },
+    "master": {
+      "sha": "47f648c"
+    },
+    "state": {
+      "lane": "lane-u",
+      "seq": 4
+    }
+  },
+  "version": "9f3a1c0d5e7b"
+}

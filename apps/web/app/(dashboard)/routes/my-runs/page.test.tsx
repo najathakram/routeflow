@@ -145,3 +145,58 @@ describe("MyRunsPage — #2145 no 403 flash for a driver without the routes add-
     await waitFor(() => expect(get).toHaveBeenCalledWith("/route-runs/my-runs"));
   });
 });
+
+/**
+ * B966: a pure DRIVER cannot reach /orders (RouteGuard DRIVER_ALLOWED has no /orders, so it
+ * bounces them to /dashboard), so the hero card's "Scan to add order" link is a dead end for
+ * them. It is hidden for a pure DRIVER only; staff (and a dual-role operator in drive mode) keep it.
+ */
+describe("MyRunsPage — B966 'Scan to add order' is hidden for a pure DRIVER", () => {
+  const todayISO = () => {
+    const d = new Date();
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  };
+  const TODAY_RUN = {
+    id: "run-1",
+    scheduledDate: todayISO(),
+    status: "SCHEDULED",
+    route: { name: "North loop" },
+    stops: [],
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    driveModeOn = false;
+    routeGets(
+      () => Promise.resolve({ addons: [RECURRING_ROUTES_ADDON] }),
+      () => Promise.resolve({ data: { data: [TODAY_RUN], meta: EMPTY_RUNS.meta } }),
+    );
+  });
+
+  it("a DRIVER sees the run card and 'Open full run' but NOT 'Scan to add order'", async () => {
+    authUser = { role: "DRIVER" };
+    renderWithProviders(<MyRunsPage />);
+
+    expect(await screen.findByText("Open full run")).toBeInTheDocument();
+    expect(screen.queryByText("Scan to add order")).not.toBeInTheDocument();
+    expect(document.querySelector('a[href="/orders?action=new"]')).toBeNull();
+  });
+
+  it("a dual-role OPERATOR (canActAsDriver) in drive mode keeps 'Scan to add order'", async () => {
+    authUser = { role: "OPERATOR", canActAsDriver: true };
+    driveModeOn = true;
+    renderWithProviders(<MyRunsPage />);
+
+    expect(await screen.findByText("Scan to add order")).toBeInTheDocument();
+    expect(screen.getByText("Open full run")).toBeInTheDocument();
+  });
+
+  it("a TENANT_ADMIN who can act as a driver, in drive mode, keeps 'Scan to add order'", async () => {
+    authUser = { role: "TENANT_ADMIN", canActAsDriver: true };
+    driveModeOn = true;
+    renderWithProviders(<MyRunsPage />);
+
+    expect(await screen.findByText("Scan to add order")).toBeInTheDocument();
+  });
+});

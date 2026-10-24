@@ -33,6 +33,8 @@ describe("parseSellingRestricted, refusals without detail", () => {
     );
     expect(lines).toHaveLength(1);
     expect(lines?.[0]).toMatchObject({ productName: "An item on this order", ruleId: null });
+    // B986: the detail-less refusal never carries the server's top-level sentence.
+    expect(lines?.[0].message).toBe("");
   });
 });
 

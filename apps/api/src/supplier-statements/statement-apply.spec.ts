@@ -556,11 +556,19 @@ describe("StatementApplyService — applyStatement (WP3)", () => {
 
     // The transaction alone does NOT close the race: at READ COMMITTED both
     // racers would still see SCANNED and both would write a full payment set.
-    expect(order).toEqual(["read", "lock", "read"]);
+    // then (B285) the bills it will pay are row-locked, sorted, before their payments are read.
+    expect(order).toEqual(["read", "lock", "read", "lock"]);
     const [strings, ...values] = txExecuteRaw.mock.calls[0] as unknown as [string[], ...unknown[]];
     expect(strings.join("?")).toContain('"SupplierStatementScan"');
     expect(strings.join("?")).toContain("FOR UPDATE");
     expect(values).toEqual(["scan-1"]);
+    const [billSql, ...billValues] = txExecuteRaw.mock.calls[1] as unknown as [
+      string[],
+      ...unknown[],
+    ];
+    expect(billSql.join("?")).toContain('"VendorBill"');
+    expect(billSql.join("?")).toContain("FOR UPDATE");
+    expect(billValues[0]).toBe("bill-settled");
   });
 
   it("closes the race where two concurrent Applies target the same scan: the second sees APPLIED inside the transaction and writes nothing further", async () => {

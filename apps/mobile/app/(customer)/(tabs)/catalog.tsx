@@ -45,6 +45,7 @@ import {
   deriveTilePrice,
   stockLabel,
   tileCta,
+  backorderNote,
 } from "../../../lib/catalog-tile-logic";
 
 function formatCurrency(n: number | string | null | undefined): string {
@@ -364,6 +365,9 @@ function ProductCard({
           {behavior ? `${behavior} · ` : ""}
           <Text style={{ color: TONE_COLORS[stock.tone] }}>{stock.label}</Text>
         </Text>
+        {backorderNote(product) ? (
+          <Text style={styles.backorderNote}>{backorderNote(product)}</Text>
+        ) : null}
       </View>
 
       {cta === "add" ? (
@@ -571,6 +575,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     flexShrink: 0,
   },
+  backorderNote: { fontSize: 12, fontWeight: "600", color: "#b45309", marginTop: 2 },
   notifyBtn: {
     flexDirection: "row",
     alignItems: "center",

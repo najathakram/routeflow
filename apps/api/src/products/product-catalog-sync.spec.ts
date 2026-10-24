@@ -44,6 +44,14 @@ interface ImageRow {
   focalY: number | null;
 }
 
+/** The fake's code filter: an exact string, or `{ in: [...] }` (B1214: every equivalent spelling of a label). */
+function matchesCode(value: unknown, filter: unknown): boolean {
+  if (filter && typeof filter === "object" && "in" in (filter as object)) {
+    return (filter as { in: unknown[] }).in.includes(value);
+  }
+  return value === filter;
+}
+
 function makeTx(
   seed: { barcodes?: BarcodeRow[]; products?: ProductRow[]; images?: ImageRow[] } = {},
 ) {
@@ -76,7 +84,7 @@ function makeTx(
         const match = barcodeRows.find(
           (r) =>
             r.tenantId === where.tenantId &&
-            r.code === where.code &&
+            matchesCode(r.code, where.code) &&
             matchesIdFilter(r.productId, where.productId),
         );
         return Promise.resolve(match ? { productId: match.productId } : null);
@@ -96,9 +104,10 @@ function makeTx(
             })),
         );
       }),
-      deleteMany: jest.fn(({ where }: { where: { id: { in: string[] } } }) => {
+      deleteMany: jest.fn(({ where }: { where: { id?: { in: string[] } } }) => {
         calls.push({ op: "productBarcode.deleteMany", args: { where } });
-        const ids = new Set(where.id.in);
+        // SA-603a: the stale-released-row purge (`code: null`) carries no id list — nothing released in the mock.
+        const ids = new Set(where.id?.in ?? []);
         barcodeRows = barcodeRows.filter((r) => !ids.has(r.id));
         return Promise.resolve({ count: ids.size });
       }),
@@ -114,7 +123,7 @@ function makeTx(
         const match = productRows.find(
           (r) =>
             r.tenantId === where.tenantId &&
-            r.barcode === where.barcode &&
+            matchesCode(r.barcode, where.barcode) &&
             matchesIdFilter(r.id, where.id),
         );
         return Promise.resolve(match ? { id: match.id } : null);
@@ -575,11 +584,16 @@ describe("source pin: lockBarcodeCodes precedes assertBarcodeAvailable in every 
       for (const m of src.matchAll(/lockBarcodeCodes\(/g)) lockIdxs.push(m.index as number);
       for (const m of src.matchAll(/assertBarcodeAvailable\(/g)) assertIdxs.push(m.index as number);
       expect(lockIdxs.length).toBeGreaterThan(0);
-      expect(lockIdxs.length).toBe(assertIdxs.length);
-      for (let i = 0; i < lockIdxs.length; i += 1) {
-        expect(lockIdxs[i]).toBeLessThan(assertIdxs[i]);
+      // Extra lock calls are legitimate (the deactivate/release paths lock codes and assert nothing, SA-603a), but
+      // EVERY assertBarcodeAvailable must be preceded by its own lock since the previous assert.
+      expect(lockIdxs.length).toBeGreaterThanOrEqual(assertIdxs.length);
+      let prevAssert = -1;
+      for (const a of assertIdxs) {
+        const lock = Math.max(-1, ...lockIdxs.filter((l) => l < a));
+        expect(lock).toBeGreaterThan(prevAssert);
+        prevAssert = a;
       }
-      totalPairs += lockIdxs.length;
+      totalPairs += assertIdxs.length;
     }
     // Non-vacuous: both files together must have found real pairs to check.
     expect(totalPairs).toBeGreaterThanOrEqual(4);

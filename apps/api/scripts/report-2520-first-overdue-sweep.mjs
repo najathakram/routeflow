@@ -4,7 +4,8 @@
  *
  * The sweep's rule, mirrored here: a TRIAL or ACTIVE tenant's invoice in SENT / VIEWED
  * whose `dueDate` is before the START of that tenant's local today (its TenantConfig.timezone;
- * UTC when unset), i.e. `dueDate < overdueCutoff(now, tz)`. Nothing has ever run this sweep in
+ * UTC when unset), i.e. `dueDate < overdueCutoff(now, tz)`, AND a balance is still owed (SA-770: total minus
+ * CONFIRMED payments > 0.005, the same predicate as invoices/invoice-balance-sql.ts). Nothing has ever run this sweep in
  * production (markOverdue was never scheduled), so the first run flips the whole backlog at once.
  *
  * NEVER RUN FROM AN IMPLEMENTATION SESSION. The owner runs it:
@@ -146,7 +147,8 @@ async function main() {
            LEFT JOIN (SELECT "invoiceId", SUM(amount) AS paid FROM "InvoicePayment"
                        WHERE status = 'PAID' GROUP BY "invoiceId") p ON p."invoiceId" = i.id
           WHERE i."tenantId" = $1 AND i.status IN ('SENT', 'VIEWED')
-            AND i."dueDate" < $2`,
+            AND i."dueDate" < $2
+            AND i.total - COALESCE(p.paid, 0) > 0.005`,
         [t.id, cutoff, now],
       );
       const x = r[0];

@@ -22,7 +22,7 @@ does that). Push with SKIP_VERIFY=1 SKIP_VERIFY_REASON="…" if the local verify
 chain is the blocker; never --no-verify. Ask the lead for any bug registry id —
 B525 is taken, B526 is next free; never mint your own. Check free disk before any
 full verify or build run (a full run filled the disk twice on 2026-09-17).
-Approved test tenants only: test, e2e-routeflow, routeflow-demo, qa-*, e2e-*,
+Approved test tenants only: test, e2e-routeflow, routeflow-demo, qa-_, e2e-_,
 ux-audit-*. Never a live tenant.
 
 Session: routeflow-51. Owned the dev server + compose slot for this stretch. Wind-down handoff —
@@ -105,6 +105,7 @@ environment?
 
 **What's established so far** (from the existing `B523.md`, filed by an earlier session in
 `.claude/worktrees/rf-B523-file` — I did not edit that file; it's not my worktree):
+
 - 2 spot-checked ids (B128, B34) have byte-identical registry-shard content between PR #871's
   branch and master, and their `REG-B###` test titles genuinely exist in
   `apps/mobile/__tests__/*.test.ts` on master. So it's not a simple content-divergence or a
@@ -122,7 +123,7 @@ followed by `node scripts/campaign-check.mjs` — the actual test that would set
 fleet-wide disk crisis hit (see below) and I had to abort, kill the run, and delete the whole
 worktree to help reclaim space. **No verdict reached.**
 
-**Net effect**: this is now the *second* attempt specifically blocked by disk pressure before
+**Net effect**: this is now the _second_ attempt specifically blocked by disk pressure before
 producing a real answer. That's a pattern, not bad luck — completing this needs a window with
 real disk headroom (10GB+ sustained through a full `turbo run test --force` across
 api/mobile/pricing/web), ideally when no other lane is mid-build. Whoever picks this up next:
@@ -138,6 +139,7 @@ open question staying open.
 Free space dropped from ~7.5 GB to ~3.5 GB while my `npm ci` was running in `rf-b523-verify` —
 alongside what looked like at least one other session's concurrent npm/build activity (saw a
 second `npm ci --prefer-offline` process that wasn't mine). Actions taken, in order:
+
 1. Killed my `npm ci` process and its child immediately.
 2. Deleted the `rf-b523-verify` worktree entirely (`git worktree remove` hung/failed on a file
    lock; finished it with a direct `Remove-Item -Recurse -Force` after confirming it was my own,
@@ -145,6 +147,7 @@ second `npm ci --prefer-offline` process that wasn't mine). Actions taken, in or
 3. `npm cache clean --force`.
 4. `docker builder prune -f` — was already at 0B, no gain.
 5. Cleared `~/AppData/Local/Temp/jest` (0.19 GB transform cache from tonight's various runs).
+
 - Did **not** strip `node_modules` from any other worktree — there are ~48 worktrees on this
   machine right now and I did not have time under the wind-down window to safely verify
   merged-status + no-live-session-claim for any of them. That's real reclaimable space still
@@ -171,6 +174,7 @@ assuming those fixes still compose cleanly.
 ## Proof artifacts already produced this session (evidence for work already landed — point here, don't re-derive)
 
 All under `local-assets/proofs/2026-09-17/` in the `rf-deliveries-mobile-sheet` worktree:
+
 - **`planner-sheet/`** — #854's mobile bottom-sheet proof (18 screenshots, 390/768/1440 ×
   half/full/peek/dragging/after-map-tap + reduced-motion variants), plus `PROOF.md` explaining the
   one e2e failure (desktop-vs-mobile Build CTA visibility difference, confirmed genuine via DOM

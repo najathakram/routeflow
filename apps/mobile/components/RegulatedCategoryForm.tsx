@@ -46,7 +46,7 @@ export function emptyRegulatedCategoryForm(): RegulatedCategoryFormValues {
   };
 }
 
-export interface RegulatedCategorySubmitPayload {
+interface RegulatedCategorySubmitPayload {
   name: string;
   taxType: TrackedCategoryTaxType;
   rate: number;

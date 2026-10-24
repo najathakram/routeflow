@@ -1,3 +1,4 @@
+import { safeBuyerDisplayName } from "../common/text-cell-guards";
 import {
   BadRequestException,
   ConflictException,
@@ -18,9 +19,18 @@ import { EmailService } from "../email/email.service";
 import type { AppConfig } from "../config/configuration";
 import type { JwtPayload } from "./jwt-payload.interface";
 import type { BuyerJwtPayload } from "../buyer/interfaces/buyer-jwt-payload.interface";
+import { sellerAcceptsBuyerWrite } from "../buyer/seller-status-gate";
 import { EntitlementsService } from "../billing/entitlements.service";
 import type { DeviceInfo } from "./auth.service";
 import { escapeHtml } from "../common/html-escape";
+import { DERIVED_JWT_LABELS, derivedJwtKey } from "../common/derived-jwt-key";
+import { casLinkProviderId, resolveBySubThenEmail } from "./oauth-account-link";
+import {
+  BUYER_ACCESS_AUDIENCE,
+  BUYER_REFRESH_AUDIENCE,
+  STAFF_ACCESS_AUDIENCE,
+  STAFF_REFRESH_AUDIENCE,
+} from "./session-token";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -93,18 +103,21 @@ export type GoogleAuthResult =
       kind: "buyer";
       buyer: { id: string; email: string; name: string; hasPassword: boolean };
       sellerCount: number;
+      /** Only when the sign-in carried an invite: what became of it (see InviteOutcome). */
+      inviteOutcome?: InviteOutcome;
     } & TokenPair);
 
 // ─── Service ─────────────────────────────────────────────────────────────────
 
 const NONCE_TTL_SECS = 600; // 10 minutes
 
+/** What the callback's invite step did: linked, silently skipped (dead / removed / expired), or refused by the seller's status. */
+export type InviteOutcome = "accepted" | "ignored" | "seller_unavailable";
+
 // B349: the OAuth `state` is signed so a caller cannot rewrite `linkUserId` (or any
 // other field) to attach their Google identity to someone else's account. The key is
-// HKDF-derived from JWT_SECRET (same isolation pattern as STORAGE_URL_SIGNING_SECRET)
-// — no new secret to provision.
-const OAUTH_STATE_HKDF_INFO = "routeflow-oauth-state-v1";
-const OAUTH_STATE_KEY_LEN = 32;
+// derived from JWT_SECRET by the shared helper (common/derived-jwt-key.ts) — no new secret to
+// provision.
 
 @Injectable()
 export class GoogleOAuthService {
@@ -125,20 +138,11 @@ export class GoogleOAuthService {
     const clientSecret = configService.get<string>("GOOGLE_CLIENT_SECRET") ?? "";
     this.oauth2Client = new OAuth2Client(clientId, clientSecret);
 
-    const jwtSecret = configService.get<{ secret: string }>("jwt")?.secret ?? "";
-    if (!jwtSecret) {
-      // B349 round 1: deriving the state-signing key from an empty string is a fixed,
-      // publicly-known key — fail closed instead of silently signing state with it.
-      throw new Error("JWT_SECRET is required to sign OAuth state");
-    }
-    this.stateSigningKey = Buffer.from(
-      crypto.hkdfSync(
-        "sha256",
-        jwtSecret,
-        Buffer.alloc(0),
-        OAUTH_STATE_HKDF_INFO,
-        OAUTH_STATE_KEY_LEN,
-      ),
+    // B349 round 1: a missing or short secret fails closed (the helper throws) rather than
+    // deriving the state-signing key from a guessable value.
+    this.stateSigningKey = derivedJwtKey(
+      DERIVED_JWT_LABELS.oauthState,
+      configService.get<{ secret: string }>("jwt")?.secret ?? "",
     );
 
     if (!clientId || !clientSecret) {
@@ -337,10 +341,25 @@ export class GoogleOAuthService {
     if (existingByGoogleId) throw new ForbiddenException("google_id_taken");
     if (user.googleId) throw new ForbiddenException("google_already_linked");
 
-    await this.prisma.user.update({
-      where: { id: linkUserId },
-      data: { googleId, forcePasswordChange: false },
-    });
+    // Link by compare-and-set (oauth-account-link.ts, shared with sign-in): only the first writer
+    // wins. A lost race to a DIFFERENT sub is refused like the read-time check above; to the SAME
+    // sub it is a harmless duplicate (nothing to repeat, no second notification).
+    let linked: boolean;
+    try {
+      ({ linked } = await casLinkProviderId({
+        updateMany: (args) => this.prisma.user.updateMany(args as any),
+        findUnique: (id) => this.prisma.user.findUnique({ where: { id } }),
+        row: user,
+        column: "googleId",
+        sub: googleId,
+        data: { forcePasswordChange: false },
+        extraWhere: { tenantId: user.tenantId },
+      }));
+    } catch (e) {
+      if (e instanceof ConflictException) throw new ForbiddenException("google_already_linked");
+      throw e;
+    }
+    if (!linked) return;
 
     this.logger.log(`Google account linked for user ${linkUserId}`);
 
@@ -525,30 +544,20 @@ export class GoogleOAuthService {
     profile: GoogleProfile,
   ): Promise<T | null> {
     // #2664: fail closed before touching the DB at all — a falsy sub or email means
-    // `verifyCallback`'s profile is malformed (should never happen downstream of a real
-    // Google ID token), and querying with an undefined/empty filter would turn `where`
-    // into an unscoped match instead of refusing outright.
+    // `verifyCallback`'s profile is malformed, and an undefined/empty filter would turn `where`
+    // into an unscoped match. (Google always carries an email, so unlike Apple it is required.)
     if (!profile.googleId || !profile.email) {
       throw new ForbiddenException("unauthorized");
     }
-
-    const bySub = await findFirst({ where: { ...baseWhere, googleId: profile.googleId } });
-    if (bySub) return bySub;
-
-    // #2664: SUPER_ADMIN rows are scoped by `tenantId: null`, and Postgres treats every
-    // NULL as distinct under `@@unique([tenantId, email])` — two platform admins CAN share
-    // an email. `findFirst` with no `orderBy` has no defined row order, so pin one:
-    // oldest-created row wins, `id` as the final tiebreak for rows created in the same tick.
-    const byEmail = await findFirst({
-      where: { ...baseWhere, email: profile.email },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    // The ONE rule (oauth-account-link.ts, shared with Apple): sub first, then the ordered email
+    // match; an email row bound to a DIFFERENT sub is a 409 google_account_mismatch.
+    return resolveBySubThenEmail({
+      findFirst,
+      baseWhere,
+      column: "googleId",
+      sub: profile.googleId,
+      email: profile.email,
     });
-    if (byEmail && byEmail.googleId && byEmail.googleId !== profile.googleId) {
-      // A different Google account is already bound to this email — no sign-in,
-      // no update. The caller must resolve the conflict out-of-band.
-      throw new ConflictException("google_account_mismatch");
-    }
-    return byEmail;
   }
 
   // ─── Link race guard (#2495 LOW) ────────────────────────────────────────────
@@ -571,21 +580,16 @@ export class GoogleOAuthService {
     profile: GoogleProfile,
     data: Record<string, unknown>,
   ): Promise<{ row: T; linked: boolean }> {
-    const result = await updateMany({ where: { id: row.id, googleId: null }, data });
-    if (result.count === 1) {
-      return { row: { ...row, ...data } as T, linked: true };
-    }
-
-    // Lost the race — someone else wrote googleId on this row between our read and
-    // our write. Re-read and decide who won.
-    const fresh = await findUnique(row.id);
-    if (!fresh) throw new ForbiddenException("unauthorized");
-    if (fresh.googleId && fresh.googleId !== profile.googleId) {
-      throw new ConflictException("google_account_mismatch");
-    }
-    // Already linked to THIS same sub (a duplicate concurrent request) — proceed
-    // with the row as it now stands; no side effect to repeat.
-    return { row: fresh, linked: false };
+    // Shared CAS (oauth-account-link.ts): only the first writer succeeds; a lost race to a
+    // different sub is a 409 google_account_mismatch, to the same sub a harmless duplicate.
+    return casLinkProviderId({
+      updateMany,
+      findUnique,
+      row,
+      column: "googleId",
+      sub: profile.googleId,
+      data,
+    });
   }
 
   /** Find or create the appropriate user record and return a token pair. */
@@ -828,7 +832,8 @@ export class GoogleOAuthService {
           email: profile.email,
           passwordHash,
           passwordSet: false,
-          name: profile.name,
+          // B964: the provider's name never blocks a sign-in; a formula-led one is neutralised to the email local-part
+          name: safeBuyerDisplayName(profile.name, profile.email),
           googleId: profile.googleId,
           status: "ACTIVE",
           emailVerified: true,
@@ -838,9 +843,16 @@ export class GoogleOAuthService {
     }
 
     // Process an invite token embedded in the OAuth state
+    // The invite never blocks the sign-in: a link that cannot be accepted (dead, removed, expired, or refused by the
+    // seller's workspace status) is skipped and the buyer still lands signed in. The outcome rides on the result so
+    // the callback reports `linked` only when a link was really activated, and says so when the seller refused.
+    let inviteOutcome: InviteOutcome | undefined;
     if (profile.inviteToken) {
-      await this.acceptInviteToken(profile.inviteToken, buyer.id).catch((e: Error) =>
-        this.logger.warn(`Invite token processing failed: ${e.message}`),
+      inviteOutcome = await this.acceptInviteToken(profile.inviteToken, buyer.id).catch(
+        (e: Error): InviteOutcome => {
+          this.logger.warn(`Invite token processing failed: ${e.message}`);
+          return "ignored";
+        },
       );
     }
 
@@ -868,12 +880,13 @@ export class GoogleOAuthService {
         hasPassword: buyer.passwordSet,
       },
       sellerCount,
+      ...(inviteOutcome ? { inviteOutcome } : {}),
     };
   }
 
   // ─── Invite token helper ───────────────────────────────────────────────────
 
-  private async acceptInviteToken(token: string, buyerAccountId: string): Promise<void> {
+  private async acceptInviteToken(token: string, buyerAccountId: string): Promise<InviteOutcome> {
     // PENDING_SELLER_APPROVAL is redeemable too: a buyer-initiated request against an
     // INVITED row flips the status while PRESERVING the token, and the true invitee's
     // emailed link must keep working. Mirrors BuyerService.acceptInvite's gate, including
@@ -887,9 +900,23 @@ export class GoogleOAuthService {
         status: { in: ["INVITED", "PENDING_SELLER_APPROVAL"] },
         customer: { deletedAt: null },
       },
+      include: { tenant: { select: { id: true, status: true } } },
     });
-    if (!link) return;
-    if (link.inviteExpiresAt && link.inviteExpiresAt < new Date()) return;
+    if (!link) return "ignored";
+    if (link.inviteExpiresAt && link.inviteExpiresAt < new Date()) return "ignored";
+
+    // The acceptance follows the seller's workspace status through the ONE buyer-write rule (SA-776;
+    // buyer/seller-status-gate.ts), before any write. A refusal leaves the row and its invite token untouched, so the
+    // invite can be accepted once the seller is back.
+    const verdict = link.tenant
+      ? sellerAcceptsBuyerWrite({
+          sellerStatus: link.tenant.status,
+          sellerId: link.tenant.id,
+          logger: this.logger,
+          context: "GET /api/v1/auth/google/callback (invite)",
+        })
+      : ({ allowed: false, reason: "SELLER_BLOCKED" } as const);
+    if (!verdict.allowed) return "seller_unavailable";
 
     await this.prisma.customerLink.update({
       where: { id: link.id },
@@ -902,6 +929,7 @@ export class GoogleOAuthService {
       },
     });
     this.logger.log(`CustomerLink accepted via Google invite: buyer=${buyerAccountId}`);
+    return "accepted";
   }
 
   // ─── Token issuance helpers ────────────────────────────────────────────────
@@ -945,11 +973,16 @@ export class GoogleOAuthService {
     if (claims) Object.assign(payload, claims);
     const accessToken = this.jwtService.sign(payload, {
       secret: jwtConfig.secret,
+      audience: STAFF_ACCESS_AUDIENCE,
       expiresIn: jwtConfig.expiresIn as any,
     });
     const refreshToken = this.jwtService.sign(
       { sub: user.id, type: "staff" }, // F5-003: realm discriminator (Google staff login)
-      { secret: jwtConfig.refreshSecret, expiresIn: jwtConfig.refreshExpiresIn as any },
+      {
+        secret: jwtConfig.refreshSecret,
+        expiresIn: jwtConfig.refreshExpiresIn as any,
+        audience: STAFF_REFRESH_AUDIENCE,
+      },
     );
     await this.storeUserRefreshToken(user.id, refreshToken, deviceInfo);
     return { accessToken, refreshToken };
@@ -976,11 +1009,16 @@ export class GoogleOAuthService {
     };
     const accessToken = this.jwtService.sign(payload, {
       secret: jwtConfig.secret,
+      audience: BUYER_ACCESS_AUDIENCE,
       expiresIn: jwtConfig.expiresIn as any,
     });
     const refreshToken = this.jwtService.sign(
       { sub: buyerAccountId, type: "buyer" }, // F5-003: realm discriminator (Google buyer login)
-      { secret: jwtConfig.refreshSecret, expiresIn: jwtConfig.refreshExpiresIn as any },
+      {
+        secret: jwtConfig.refreshSecret,
+        expiresIn: jwtConfig.refreshExpiresIn as any,
+        audience: BUYER_REFRESH_AUDIENCE,
+      },
     );
     const tokenHash = crypto.createHash("sha256").update(refreshToken).digest("hex");
     const decoded = this.jwtService.decode(refreshToken);

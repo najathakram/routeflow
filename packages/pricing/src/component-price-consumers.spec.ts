@@ -14,6 +14,7 @@ const ALLOWLIST: string[] = [
   "apps/api/src/orders/line-composition.spec.ts", // pins the writer above
   "apps/api/src/invoices/invoice-line-composition.ts", // invoice component rows at bill time
   "apps/api/src/invoices/invoice-composed-edit.ts", // re-stamps the rows on a DRAFT edit
+  "apps/api/src/invoices/partial-price-follow.spec.ts", // a fixture row: pins that the price follow keeps components
 ];
 const REPO_ROOT = path.resolve(__dirname, "../../..");
 const ROOTS = ["apps/api/src", "apps/web", "apps/mobile"];

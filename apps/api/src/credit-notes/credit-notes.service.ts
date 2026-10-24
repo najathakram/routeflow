@@ -8,23 +8,44 @@ import {
 } from "@nestjs/common";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { PrismaService } from "../prisma/prisma.service";
-import { recomputeInvoiceStatus } from "../invoices/invoice-status";
+import { statusFromPayments } from "../invoices/invoice-status";
 import { tenantTimeZone } from "../common/tenant-time-zone";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
-import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
+import { RegulatedLedgerService, type FiledPeriod } from "../regulated/regulated-ledger.service";
 import { roundMoney, sumConfirmed, remainingCapacity } from "@routeflow/pricing";
 import { InvoiceStatus, PaymentMethod } from "@prisma/client";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { NumberingService } from "../import/numbering.service";
-import { retryOnTxConflict, txConflictState } from "../common/tx-retry";
+import { describeUniqueViolation, uniqueViolationOn } from "../common/prisma-unique";
+import { retryCreditTx, retryOnTxConflict, txConflictState } from "../common/tx-retry";
 import { asReadableConflict, cnBad, cnConflict, type CreditNoteCode } from "./credit-note-errors";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { finiteStoredLevy, finiteStoredMoney } from "../common/money-invariants.util";
+import { autoApplyCandidateWhere, creditAutoApplyOnSend } from "./auto-apply-candidates";
 import { blockedPairs, clearApplyBlocks, pairKey, writeApplyBlocks } from "./apply-block";
+import {
+  lockCreditNotes,
+  lockCustomerCreditsForSweep,
+  lockInvoiceForCredit,
+  lockOrderCreditSettle,
+} from "./credit-note-locks";
+import { SOURCE_DELETED_MESSAGE, hasSourceDeletedMarker } from "./sourced-credit-guard";
+import {
+  loadLineCredits,
+  countCreditableInvoices,
+  loadOrderPool,
+  lockOrderPoolRows,
+  pooledRefundRefusal,
+  pooledTakeRefusal,
+  toHeadroomLine,
+  type OrderPool,
+} from "./line-credit-headroom";
 import {
   CREDIT_NOT_APPLICABLE,
   CREDIT_SETTLE_EXCLUDED,
   CREDIT_SOURCE_EXCLUDED,
 } from "../invoices/invoice-status-sets";
+import { bumpInvoiceRowVersions, ledgerDocumentTargets } from "../regulated/ledger-locks";
 
 @Injectable()
 export class CreditNotesService {
@@ -77,7 +98,13 @@ export class CreditNotesService {
     // #2648 / SA-535b(1): the reissue's pre-reserve DRY RUN only — leaves the note about to be
     // voided out of BOTH caps, so the dry run counts exactly the headroom its void frees. create()
     // never passes it, no DTO carries it, and the in-tx re-cap after the void runs without it.
-    opts: { excludeCreditNoteId?: string } = {},
+    opts: {
+      excludeCreditNoteId?: string;
+      ledgerReversedByReturn?: boolean;
+      // B947: a return refund on an order with 2+ creditable invoices is a lump sum (no items); these are the
+      // returned products it must fit, in the ORDER POOL, re-checked here under the locks (the pre-claim check is stale).
+      pooledRefund?: Array<{ productId: string; qty: number }>;
+    } = {},
   ): Promise<
     Array<{
       invoiceItemId: string;
@@ -97,14 +124,21 @@ export class CreditNotesService {
         total: true,
         customerId: true,
         status: true,
+        orderId: true,
         items: {
           select: {
             id: true,
+            productId: true,
             subtotal: true,
             qty: true,
+            boxes: true,
+            unitsPerBox: true,
+            pieces: true,
+            product: { select: { unitsPerBox: true } },
             trackedCategoryId: true,
             categoryTaxAmount: true,
           },
+          orderBy: [{ createdAt: "asc" }, { id: "asc" }], // deterministic line order for the shared headroom (SA-628)
         },
       },
     });
@@ -136,6 +170,30 @@ export class CreditNotesService {
         `Credit note amount (${dto.amount}) would exceed invoice total (${invoiceTotal}). Already credited: ${totalExisting}.`,
       );
     }
+
+    // B947: with 2+ creditable invoices on the order, ONE pool per product across ALL of them (see loadOrderPool): the credit
+    // note's own line room is still checked below; this is the second check. Locked in a tx (Order, then the invoices).
+    let pool: OrderPool | null = null;
+    if (
+      invoice.orderId &&
+      ((opts.pooledRefund?.length ?? 0) > 0 || lineItems) &&
+      (await countCreditableInvoices(db, invoice.orderId)) >= 2 // a lone invoice never pays for a pool read
+    ) {
+      pool = await loadOrderPool(db, invoice.orderId, {
+        excludeCreditNoteId: opts.excludeCreditNoteId,
+      });
+    }
+    if (pool)
+      for (const r of opts.pooledRefund ?? []) {
+        const refusal = pooledRefundRefusal(pool, r.productId, r.qty);
+        if (refusal)
+          // `pooled`: the refund path maps ONLY this refusal (not the invoice-total cap) to its own 409 wording
+          throw new BadRequestException({
+            code: API_ERROR_CODES.CREDIT_NOTE_OVER_HEADROOM,
+            pooled: true,
+            message: `Refund of ${refusal.requestedQty} would exceed what this order's invoices still allow to be credited for the product (${refusal.remainingQty} left).`,
+          });
+      }
 
     if (!lineItems) return [];
 
@@ -178,22 +236,23 @@ export class CreditNotesService {
     // order-line-keyed cap (RegulatedLedgerService.reverseCreditNoteEntries) floors
     // the filing at 0 — so a reconcile-rotated double-credit is a within-invoice
     // line-attribution quirk, never a net over-refund or a negative filing.
-    const notThisNote = opts.excludeCreditNoteId ? { id: { not: opts.excludeCreditNoteId } } : {};
-    const priorLineItems = await db.creditNoteItem.findMany({
-      where: {
-        invoiceItemId: { in: [...mergedByLine.keys()] },
-        creditNote: { invoiceId: dto.invoiceId, status: { not: "VOID" }, ...notThisNote },
-      },
-      select: { invoiceItemId: true, amount: true, qty: true },
-    });
+    // SA-628: the credited-so-far per line comes from the ONE shared headroom (credit-note ITEMS plus the legacy term for old
+    // itemless refund notes), so a credit note and a return refund can never together exceed a line's value. Qty is credited
+    // QUANTITY per line too (SA-401a, base pieces, like InvoiceItem.qty).
+    // B960: with the order pool active (2+ creditable invoices) the pool is the ONE source for itemless refund lumps (it attributes
+    // each across the COMBINED lines); the per-invoice legacy term would attribute the same lump to THIS invoice's lines and
+    // refuse what the pool allows. The line's own credit note items and inline returns still bind per line.
+    const lineCredits = await loadLineCredits(
+      db,
+      dto.invoiceId,
+      (invoice.items ?? []).map(toHeadroomLine),
+      { ...opts, skipLegacy: pool !== null },
+    );
     const creditedByLine = new Map<string, number>();
-    // SA-401a: credited QUANTITY per line too (base pieces, like InvoiceItem.qty), so a line
-    // cannot be credited for more units than it sold even when its amount cap has headroom.
     const creditedQtyByLine = new Map<string, number>();
-    for (const it of priorLineItems) {
-      const k = it.invoiceItemId ?? "";
-      creditedByLine.set(k, (creditedByLine.get(k) ?? 0) + Number(it.amount));
-      creditedQtyByLine.set(k, (creditedQtyByLine.get(k) ?? 0) + Number(it.qty ?? 0));
+    for (const [k, v] of lineCredits) {
+      creditedByLine.set(k, v.amount);
+      creditedQtyByLine.set(k, v.qty);
     }
 
     let sum = 0;
@@ -205,12 +264,15 @@ export class CreditNotesService {
           `Credit line ${li.invoiceItemId} is not on invoice ${dto.invoiceId}`,
         );
       const amt = li.amount;
-      if (!(amt > 0))
+      // a return-refund row may carry its qty at amount 0 (a free line, or a paid line whose share of the pooled price is 0, SA-628b); nothing else may be $0
+      const freeRefundRow = opts.ledgerReversedByReturn && amt === 0 && li.qty != null;
+      if (!(amt > 0) && !freeRefundRow)
         throw cnBad(
           API_ERROR_CODES.CREDIT_NOTE_LINE_INVALID,
           "Credit line amount must be greater than 0",
         );
-      const lineSubtotal = Number(line.subtotal);
+      // SA-816c: a NaN subtotal made every headroom comparison below false, so the over-credit check was skipped.
+      const lineSubtotal = finiteStoredMoney(line.subtotal, `Invoice line ${line.id} subtotal`);
       const priorForLine = creditedByLine.get(li.invoiceItemId) ?? 0;
       if (priorForLine + amt > lineSubtotal + 0.001)
         throw cnBad(
@@ -223,7 +285,7 @@ export class CreditNotesService {
         );
       sum += amt;
       const frac = lineSubtotal > 0 ? Math.min(1, amt / lineSubtotal) : 0;
-      const lineQty = Number(line.qty);
+      const lineQty = finiteStoredMoney(line.qty, `Invoice line ${line.id} qty`);
       const priorQtyForLine = creditedQtyByLine.get(li.invoiceItemId) ?? 0;
       // #2245: an amount-only credit (no qty — the web picker) defaults to line.qty × fraction,
       // and those round3s accumulate (three 1/3 credits of 2 pieces are 0.667 × 3 = 2.001). The
@@ -251,12 +313,42 @@ export class CreditNotesService {
         // Snapshot the category as it was AT SALE (the invoice line), NEVER the
         // live product — a product's category may have drifted, and only a line
         // that actually sold regulated has a matching SALE row to reverse.
-        trackedCategoryId: line.trackedCategoryId ?? null,
+        // SA-628: a RETURN REFUND note is itemised only so the shared per-line headroom counts it; receive() already reversed
+        // the returned regulated goods, so its rows carry NO category and NO tax (a second reversal would double-file them).
+        trackedCategoryId: opts.ledgerReversedByReturn ? null : (line.trackedCategoryId ?? null),
         amount: roundMoney(amt),
         qty,
-        categoryTax: roundMoney(Number(line.categoryTaxAmount ?? 0) * frac),
+        categoryTax: opts.ledgerReversedByReturn
+          ? 0
+          : roundMoney(
+              // SA-816: a stored non-finite levy is refused (400), never refunded as $0.
+              finiteStoredLevy(line, `Invoice line ${line.id} category tax`) * frac,
+            ),
       };
     });
+    if (pool) {
+      // Every row's qty binds, derived or typed (in PIECES). With the pool as the only source for refund lumps, an amount-only
+      // credit's derived qty is what keeps the PRODUCT's pieces (and the regulated reversal that follows them) from being credited
+      // past what was billed when lines of the product carry different prices (B960 review).
+      const byProduct = new Map<string, { amount: number; qty: number }>();
+      for (const row of cnItemsData) {
+        const productId = (lineById.get(row.invoiceItemId) as any)?.productId;
+        if (!productId) continue;
+        const prev = byProduct.get(productId) ?? { amount: 0, qty: 0 };
+        // the pool's qty is in PIECES (lines can use different units): the row's qty is on its line's own axis
+        const pieces =
+          row.qty * (pool.lines.find((l) => l.id === row.invoiceItemId)?.piecesPerQty ?? 1);
+        byProduct.set(productId, { amount: prev.amount + row.amount, qty: prev.qty + pieces });
+      }
+      for (const [productId, take] of byProduct) {
+        const refusal = pooledTakeRefusal(pool, productId, { amount: take.amount, qty: take.qty });
+        if (refusal)
+          throw cnBad(
+            API_ERROR_CODES.CREDIT_NOTE_OVER_HEADROOM,
+            `Credit of ${refusal.requestedAmount} would exceed what this order's invoices still allow to be credited for the product (${refusal.remainingAmount} left, counting refunds already minted on other invoices).`,
+          );
+      }
+    }
     if (Math.abs(sum - dto.amount) > 0.01)
       throw cnBad(
         API_ERROR_CODES.CREDIT_NOTE_LINE_INVALID,
@@ -424,20 +516,28 @@ export class CreditNotesService {
     return created;
   }
 
-  async create(dto: {
-    customerId: string;
-    invoiceId?: string;
-    amount: number;
-    reason?: string;
-    // Optional line linkage: which invoice lines this credit applies to. REQUIRED for
-    // any regulated-ledger reversal — a lump-sum credit with no linkage reverses
-    // NOTHING in the regulated ledger (returned regulated goods go through the returns
-    // path, which attributes by product). This is what prevents a credit that concerned
-    // non-regulated goods from proportionally reversing regulated excise sales.
-    items?: Array<{ invoiceItemId: string; amount: number; qty?: number }>;
-    /** P5-13: optional ISO date after which this credit is excluded from the wallet and can never apply. */
-    expiresAt?: string;
-  }) {
+  async create(
+    dto: {
+      customerId: string;
+      invoiceId?: string;
+      amount: number;
+      reason?: string;
+      // Optional line linkage: which invoice lines this credit applies to. REQUIRED for
+      // any regulated-ledger reversal — a lump-sum credit with no linkage reverses
+      // NOTHING in the regulated ledger (returned regulated goods go through the returns
+      // path, which attributes by product). This is what prevents a credit that concerned
+      // non-regulated goods from proportionally reversing regulated excise sales.
+      items?: Array<{ invoiceItemId: string; amount: number; qty?: number }>;
+      /** P5-13: optional ISO date after which this credit is excluded from the wallet and can never apply. */
+      expiresAt?: string;
+    },
+    internal: {
+      ledgerReversedByReturn?: boolean;
+      pooledRefund?: Array<{ productId: string; qty: number }>;
+      /** B947: the Return this lump-sum refund belongs to; linked to the note inside the mint transaction. */
+      returnId?: string;
+    } = {},
+  ) {
     if (!dto.amount || dto.amount <= 0)
       throw new BadRequestException("Amount must be greater than 0");
 
@@ -480,7 +580,7 @@ export class CreditNotesService {
     // standalone (non-tx) read of everything this create can be rejected for, so
     // a rejected request burns none of the tenant's CREDIT_NOTE series. Runs on
     // `forTenant()`, never `tx` — nothing is open yet.
-    await this.validateAndBuildCnItems(this.prisma.forTenant(), dto);
+    await this.validateAndBuildCnItems(this.prisma.forTenant(), dto, internal);
 
     // Hoisted ABOVE the SERIALIZABLE tx below (never `{ tx }`): under
     // SERIALIZABLE a blocked counter UPDATE ABORTS (P2034) rather than waiting,
@@ -518,7 +618,22 @@ export class CreditNotesService {
         // `tx` read (the pre-check above ran on a separate, non-tx snapshot).
         cn = await this.prisma.tenantTransaction(
           async (tx: any) => {
-            const cnItemsData = await this.validateAndBuildCnItems(tx, dto);
+            // SA-628 / SA-214 lock order: the INVOICE row first, tenant-scoped. The lock alone serialises the two
+            // writers' transactions; it is the Serializable retry that makes the second one SEE the first's credit
+            // (a stale snapshot aborts 40001 and re-reads the shared per-line headroom).
+            // B947: with 2+ creditable invoices on the order, the Order and ALL of them are locked FIRST (Order -> Invoice,
+            // id-sorted), so a refund on Y and a credit note on X serialise and no writer takes an Invoice then the Order.
+            // SA-893 (ROW_LOCK_ORDER): a note that links a Return (internal.returnId; processRefund calls this AFTER its
+            // claim committed, so no Return is held) locks that Return FIRST. Writing the link after the Order and
+            // Invoice locks was Order -> Invoice -> Return, the inverse of inline issueCredit (Return -> Order): 40P01.
+            if (internal.returnId) {
+              await tx.$executeRaw`SELECT id FROM "Return" WHERE id = ${internal.returnId} AND "tenantId" = ${tenantId} FOR UPDATE`;
+            }
+            if (dto.invoiceId) await lockOrderPoolRows(tx, dto.invoiceId, tenantId);
+            if (dto.invoiceId) {
+              await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${dto.invoiceId} AND "tenantId" = ${tenantId} FOR UPDATE`;
+            }
+            const cnItemsData = await this.validateAndBuildCnItems(tx, dto, internal);
 
             // REG-B267-E: the customer summary the response carries comes from the
             // tenant-scoped pre-read above rather than from `create({ include })`.
@@ -529,7 +644,7 @@ export class CreditNotesService {
             // read"), so five parallel creates lost two even with the number already
             // reserved outside this tx. Customer is never written on this path, so
             // the value read before the tx is still the right one. Same shape out.
-            return this.insertCreditNoteInTx(
+            const created = await this.insertCreditNoteInTx(
               tx,
               {
                 creditNoteNumber,
@@ -543,6 +658,15 @@ export class CreditNotesService {
               tenantId,
               customer,
             );
+            // B947: a lump-sum refund is attributed to its product only THROUGH its Return's link, so the link is written in
+            // the SAME transaction as the note: a credit note item that reads the pool after the commit can never see the
+            // lump with no return (and a crash between the mint and a later link cannot leave it uncounted).
+            if (internal.returnId)
+              await tx.return.updateMany({
+                where: { id: internal.returnId, creditNoteId: null },
+                data: { creditNoteId: created.id },
+              });
+            return created;
           },
           { isolationLevel: "Serializable" },
         );
@@ -555,13 +679,10 @@ export class CreditNotesService {
           // Anything else (a future unique on CreditNoteItem or the ledger) must
           // propagate untouched rather than reach the operator as a retry advice
           // that cannot help — and either way the real constraint gets logged.
-          const target = Array.isArray(err?.meta?.target)
-            ? err.meta.target.join(",")
-            : String(err?.meta?.target ?? "");
           this.logger.warn(
-            `Credit note create failed [${creditNoteNumber}] customer=${dto.customerId} invoice=${dto.invoiceId ?? "-"} code=P2002 target=${target}`,
+            `Credit note create failed [${creditNoteNumber}] customer=${dto.customerId} invoice=${dto.invoiceId ?? "-"} code=P2002 target=${describeUniqueViolation(err)}`,
           );
-          if (target === "" || target.includes("creditNoteNumber"))
+          if (uniqueViolationOn(err, "CreditNote_tenantId_creditNoteNumber_key", { exact: true }))
             throw new ConflictException("Credit note number conflict — please retry.");
           throw err;
         }
@@ -694,6 +815,10 @@ export class CreditNotesService {
    * own. Every monetary figure via roundMoney. Returns {applied:0} instead of
    * throwing so the auto-apply loop can skip; the manual path throws on 0 itself.
    * Callers pre-filter VOID + expired credits (expiry is a computed filter).
+   *
+   * B1052: `cn` MUST have been read AFTER the caller locked the note's row (credit-note-locks.ts:
+   * settle, sweep and manual apply all lock before they read). The balance below comes from `cn`;
+   * an unlocked read let two transactions spend the same dollars.
    */
   private async applyCreditInTx(
     tx: any,
@@ -764,18 +889,21 @@ export class CreditNotesService {
     // on top of a 60-dollar DRAFT sibling was flipping a $100 invoice straight to
     // PAID off unconfirmed money. Matches restoreCreditFromPaymentInTx's own basis.
     const newPaid = roundMoney(sumConfirmed(inv.payments) + applyAmount);
-    const newStatus = recomputeInvoiceStatus(
+    const newStatus = statusFromPayments(
       newPaid,
       Number(inv.total),
       inv.dueDate,
       inv.status,
       tz,
+      "NOT_PAID",
     );
     await tx.invoice.update({
       where: { id: inv.id },
       data: { status: newStatus, paidAt: newStatus === InvoiceStatus.PAID ? new Date() : null },
     });
 
+    // B1052: `cn` was read under its row lock (see the doc above), so this absolute value can't
+    // overwrite another writer's spend.
     const newAmountUsed = roundMoney(Number(cn.amountUsed) + applyAmount);
     const fullyApplied = newAmountUsed >= Number(cn.amount) - 0.001;
     await tx.creditNote.update({
@@ -820,13 +948,9 @@ export class CreditNotesService {
     // SA-436 (#2401): the tenant's send-time sweep switch, OFF by default (owner ruling). No config
     // row reads as OFF. Read inside the caller's send tx; the order's own intents settle regardless.
     const tenantId = this.prisma.getTenantId();
-    const cfg = tenantId
-      ? await tx.tenantConfig.findUnique({
-          where: { tenantId },
-          select: { creditAutoApplyOnSend: true },
-        })
-      : null;
-    if (!cfg?.creditAutoApplyOnSend) return nothing;
+    if (!(await creditAutoApplyOnSend(tx, tenantId))) return nothing;
+    // B1052: lock the invoice and the customer's live notes BEFORE reading any balance.
+    await lockCustomerCreditsForSweep(tx, tenantId, invoiceId, customerId);
 
     const first = await tx.invoice.findUnique({
       where: { id: invoiceId },
@@ -840,13 +964,12 @@ export class CreditNotesService {
 
     const now = new Date();
     const candidates = await tx.creditNote.findMany({
-      where: {
+      // The ONE candidate predicate (shared with the counter sale's walk-in open-credit guard).
+      where: autoApplyCandidateWhere({
         customerId,
-        status: { not: "VOID" },
-        autoApplyExcluded: false, // SA-436: an operator kept this note out of the sweep
-        OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
-        ...(opts?.excludeCreditNoteIds?.length ? { id: { notIn: opts.excludeCreditNoteIds } } : {}),
-      },
+        now,
+        excludeCreditNoteIds: opts?.excludeCreditNoteIds,
+      }),
       orderBy: { createdAt: "asc" },
     });
     // SA-436: a pair an operator removed (unapply / untick / void-reversal) is never re-applied.
@@ -897,9 +1020,13 @@ export class CreditNotesService {
     const tz = await tenantTimeZone(this.prisma); // SA-495a: once per call, before any loop
     // SA-392 (#2201): the WHOLE Serializable tx re-runs on a 40001/40P01 conflict (bounded); the
     // body is DB-only and idempotent, and the in-tx commission sync now rethrows a conflict.
-    return retryOnTxConflict(`credit apply cn=${creditNoteId} inv=${invoiceId}`, () =>
+    return retryCreditTx(`credit apply cn=${creditNoteId} inv=${invoiceId}`, () =>
       this.prisma.tenantTransaction(
         async (tx) => {
+          // B1052: the invoice (with its Order), then the note, BEFORE reading the balance.
+          const tenantId = this.prisma.getTenantId();
+          await lockInvoiceForCredit(tx, tenantId, invoiceId);
+          await lockCreditNotes(tx, tenantId, [creditNoteId]);
           const cn = await tx.creditNote.findUnique({ where: { id: creditNoteId } });
           if (!cn || cn.status === "APPLIED" || cn.status === "VOID")
             throw new BadRequestException("Credit note is not available for application");
@@ -952,14 +1079,17 @@ export class CreditNotesService {
    * note that happens to sit on the same order/invoice (a manual credit, or a sibling
    * inline return's own CN).
    *
-   * Pulls back every non-VOID `CREDIT_NOTE` payment this note made (mirrors `voidCreditNote`'s
+   * Pulls back every non-VOID `CREDIT_NOTE` payment this note made (mirrors the void's
    * "un-apply first" rule, but un-applies here instead of refusing), then voids it and undoes
    * its regulated-ledger reversal. Throws `RETURN_CREDIT_CONSUMED` if `amountUsed` is still
    * non-zero after restoring everything a payment row could account for — money consumed
    * through some path this couldn't find and restore, which must block the cancel rather than
    * silently void a note that's still "used" on paper (m-5's "restore < amountUsed" case).
    */
-  async cancelStandaloneInTx(tx: any, creditNoteId: string): Promise<{ restored: number }> {
+  async cancelStandaloneInTx(
+    tx: any,
+    creditNoteId: string,
+  ): Promise<{ restored: number; amendedPeriod?: FiledPeriod | null }> {
     const tz = await tenantTimeZone(this.prisma); // SA-495a: once per call, before any loop
     // scan-ok: draft-payment-not-void — a CREDIT_NOTE-method InvoicePayment is an
     // internal ledger write this service itself creates atomically as CONFIRMED;
@@ -971,7 +1101,12 @@ export class CreditNotesService {
     });
     let restored = 0;
     for (const p of payments) {
-      restored = roundMoney(restored + (await this.restoreCreditFromPaymentInTx(tx, tz, p)));
+      restored = roundMoney(
+        restored +
+          (await this.restoreCreditFromPaymentInTx(tx, tz, p, undefined, {
+            voidingNoteId: creditNoteId,
+          })),
+      );
     }
 
     const cn = await tx.creditNote.findFirst({
@@ -989,61 +1124,16 @@ export class CreditNotesService {
       data: { status: "VOID" },
     });
     if (flipped.count > 0) {
-      await this.ledger.unreverseCreditNoteEntries({ creditNoteId, db: tx });
+      // SA-839: counter-entries for this note's rows. The caller (InlineReturnsService.cancel) holds, in one sorted pass,
+      // the Orders and Invoices of the note's ledger rows AND of its credit payments restored above (W-757);
+      // §3: `amendedPeriod` when one of them corrected a filed month.
+      const settled = await this.ledger.settleRegulatedLedger(tx, {
+        kind: "ADJUSTMENT_UNDONE",
+        creditNoteId,
+      });
+      return { restored, amendedPeriod: settled?.amendedPeriod ?? null };
     }
     return { restored };
-  }
-
-  async voidCreditNote(id: string) {
-    // SA-392 (#2201): the WHOLE Serializable tx re-runs on a 40001/40P01 conflict (bounded).
-    const voided = await retryOnTxConflict(`credit void cn=${id}`, () =>
-      this.prisma.tenantTransaction(
-        async (tx: any) => {
-          const cn = await tx.creditNote.findFirst({
-            where: { id },
-            select: { status: true, amountUsed: true },
-          });
-          if (!cn) throw new NotFoundException("Credit note not found");
-          // A credit that's been consumed as a payment can't be voided — un-applying it
-          // first is the only safe path. Without this, void would delete the ledger
-          // reversal (re-inflating net sales) AND leave the InvoicePayment orphaned.
-          if (cn.status === "APPLIED" || Number(cn.amountUsed) > 0) {
-            throw new BadRequestException(
-              "Cannot void a credit note that has been applied — un-apply it first.",
-            );
-          }
-          // Race-free flip: only ISSUED/DRAFT + unused → VOID. A concurrent
-          // applyToInvoice (also serializable) that sets amountUsed>0 / APPLIED makes
-          // this updateMany match 0 rows, so we refuse rather than orphan the payment.
-          const flipped = await tx.creditNote.updateMany({
-            where: { id, status: { notIn: ["APPLIED", "VOID"] }, amountUsed: 0 },
-            data: { status: "VOID" },
-          });
-          if (flipped.count === 0) {
-            throw new BadRequestException(
-              "Cannot void a credit note that has been applied — un-apply it first.",
-            );
-          }
-          // W5c: undo the regulated ledger reversal booked at creation (safe now — the
-          // credit was never consumed, so voiding restores the sale to full).
-          await this.ledger.unreverseCreditNoteEntries({ creditNoteId: id, db: tx });
-          return tx.creditNote.findUnique({ where: { id } });
-        },
-        { isolationLevel: "Serializable" },
-      ),
-    );
-
-    // B343: emitted outside the tx, mirroring create()'s emitCreditNoteCreated — a
-    // void previously fired no event at all, so a customer statement or credit-notes
-    // view left open in another tab/session never learned the note was gone.
-    this.gateway.emitCreditNoteVoided(this.prisma.getTenantId(), {
-      creditNoteId: voided.id,
-      creditNoteNumber: voided.creditNoteNumber,
-      customerId: voided.customerId,
-      amount: Number(voided.amount),
-    });
-
-    return voided;
   }
 
   /**
@@ -1148,12 +1238,13 @@ export class CreditNotesService {
         invoiceNumber: inv.invoiceNumber,
         amount,
         statusBefore: inv.status,
-        statusAfter: recomputeInvoiceStatus(
+        statusAfter: statusFromPayments(
           sumConfirmed(remaining),
           Number(inv.total),
           inv.dueDate,
           inv.status,
           tz,
+          "NOT_PAID",
         ),
       };
     });
@@ -1176,6 +1267,12 @@ export class CreditNotesService {
     id: string,
     actorId: string | null,
     tz: Awaited<ReturnType<typeof tenantTimeZone>>,
+    reason?: string | null, // #2540: optional WHY, recorded in the VOIDED audit row
+    // SA-608g: rows the CALLER also needs locked in SA-214 order (the reissue's SOURCE invoice and its
+    // order). They join the SAME sorted sets below, so the reissue never takes KEY SHARE on the invoice
+    // after holding the note (CN -> Invoice) while deleteInvoice holds the invoice and wants the note.
+    // The endpoint passes none: its lock set is unchanged.
+    extra?: { orderIds?: string[]; invoiceIds?: string[] },
   ) {
     const seen: any[] = await this.liveCreditPayments(tx, id);
     // SA-498a: the lock set is COMPLETE, per SA-214: every order this void writes. That is the
@@ -1186,20 +1283,34 @@ export class CreditNotesService {
         where: { creditNoteId: id },
         select: { orderId: true },
       })) ?? [];
+    // SA-839 F3: and the Orders / Invoices the note's own ledger rows sit on (the void counters them).
+    const ledgerRows = await ledgerDocumentTargets(tx, { creditNoteId: id });
     const orderIds = [
       ...new Set([
         ...(seen.map((p) => p.invoice?.orderId).filter(Boolean) as string[]),
         ...intentOrders.map((r) => r.orderId),
+        ...(extra?.orderIds ?? []),
+        ...ledgerRows.orderIds,
       ]),
     ].sort();
-    const invoiceIds = [...new Set(seen.map((p) => p.invoiceId as string))].sort();
+    const invoiceIds = [
+      ...new Set([
+        ...seen.map((p) => p.invoiceId as string),
+        ...(extra?.invoiceIds ?? []),
+        ...ledgerRows.invoiceIds,
+      ]),
+    ].sort();
+    // B1052: every lock is tenant-scoped (credit-note-locks.ts): a foreign id can't lock another tenant's rows.
+    const lockTenantId = this.prisma.getTenantId();
     for (const orderId of orderIds) {
-      await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${orderId} FOR UPDATE`;
+      await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${orderId} AND (${lockTenantId}::text IS NULL OR "tenantId" = ${lockTenantId}) FOR UPDATE`;
     }
     for (const invoiceId of invoiceIds) {
-      await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${invoiceId} FOR UPDATE`;
+      await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${invoiceId} AND (${lockTenantId}::text IS NULL OR "tenantId" = ${lockTenantId}) FOR UPDATE`;
     }
-    await tx.$executeRaw`SELECT id FROM "CreditNote" WHERE id = ${id} FOR UPDATE`;
+    // SA-839: a concurrent Serializable void of those invoices must re-read after this undo (ledger-locks.ts).
+    await bumpInvoiceRowVersions(tx, lockTenantId, ledgerRows.invoiceIds);
+    await tx.$executeRaw`SELECT id FROM "CreditNote" WHERE id = ${id} AND (${lockTenantId}::text IS NULL OR "tenantId" = ${lockTenantId}) FOR NO KEY UPDATE`;
 
     const cn = await tx.creditNote.findFirst({
       where: { id },
@@ -1213,7 +1324,9 @@ export class CreditNotesService {
 
     const reopened: Array<{ invoiceId: string; invoiceNumber: string; amount: number }> = [];
     for (const p of payments) {
-      const restored = await this.restoreCreditFromPaymentInTx(tx, tz, p);
+      const restored = await this.restoreCreditFromPaymentInTx(tx, tz, p, undefined, {
+        voidingNoteId: id, // the note's OWN void: it ends VOID, nothing becomes spendable
+      });
       const row = reopened.find((r) => r.invoiceId === p.invoiceId);
       if (row) row.amount = roundMoney(row.amount + restored);
       else
@@ -1232,7 +1345,7 @@ export class CreditNotesService {
     });
     await tx.orderCreditNote.deleteMany({ where: { creditNoteId: id } });
 
-    // The same compare-and-set as voidCreditNote: every dollar is back, so amountUsed is 0.
+    // The same compare-and-set as the old plain void (removed, B957): every dollar is back, so amountUsed is 0.
     const flipped = await tx.creditNote.updateMany({
       where: { id, status: { not: "VOID" }, amountUsed: 0 },
       data: { status: "VOID" },
@@ -1243,7 +1356,11 @@ export class CreditNotesService {
         "This credit note changed while it was being voided. Nothing was changed; try again.",
       );
     }
-    await this.ledger.unreverseCreditNoteEntries({ creditNoteId: id, db: tx });
+    // SA-839 (B705 twin): counter-entries for the note's rows; a VOID or deleted invoice is re-zeroed.
+    const settled = await this.ledger.settleRegulatedLedger(tx, {
+      kind: "ADJUSTMENT_UNDONE",
+      creditNoteId: id,
+    });
     await tx.auditLog.create({
       data: {
         tenantId: this.prisma.getTenantId(),
@@ -1251,31 +1368,33 @@ export class CreditNotesService {
         action: "VOIDED", // SA-442 vocabulary
         entityType: "CreditNote",
         entityId: id,
-        meta: { reversed: reopened },
+        meta: { reversed: reopened, ...(reason?.trim() ? { reason: reason.trim() } : {}) },
       },
     });
     const voided = await tx.creditNote.findUnique({ where: { id } });
-    return { creditNote: voided, reopened };
+    // SA-839 §3: the void corrected a row of a FILED month (the correction books now).
+    return { creditNote: voided, reopened, amendedPeriod: settled?.amendedPeriod ?? null };
   }
 
   /**
    * SA-436 PR-2 (#2402): POST :id/void-with-reversal. Un-applies every live application of the
    * note (restoreCreditFromPaymentInTx recomputes each invoice's status), remembers each pair
    * (CreditNoteApplyBlock VOID_REVERSAL) and drops the note's order intents, then runs the SAME
-   * compare-and-set void and ledger un-reversal as voidCreditNote.
+   * compare-and-set void and ledger un-reversal the plain void used (B957: POST :id/void delegates here).
    *
    * Serializable and retried whole on a conflict (L-221). Lock order SA-214: the payments'
    * Orders (sorted), then their Invoices (sorted), then the CreditNote row. Every refusal is
    * decided BEFORE the first write, so a refused call writes nothing.
    */
-  async voidWithReversal(id: string, actorId: string | null) {
+  async voidWithReversal(id: string, actorId: string | null, reason?: string | null) {
     const tz = await tenantTimeZone(this.prisma); // SA-495a: once per call, before any loop
     let result: Awaited<ReturnType<CreditNotesService["voidWithReversalInTx"]>>;
     try {
       result = await retryOnTxConflict(`credit void-with-reversal cn=${id}`, () =>
-        this.prisma.tenantTransaction((tx: any) => this.voidWithReversalInTx(tx, id, actorId, tz), {
-          isolationLevel: "Serializable",
-        }),
+        this.prisma.tenantTransaction(
+          (tx: any) => this.voidWithReversalInTx(tx, id, actorId, tz, reason),
+          { isolationLevel: "Serializable" },
+        ),
       );
     } catch (err) {
       throw asReadableConflict(err, this.logger); // SA-608h: exhausted retries are a 409, not a 500
@@ -1291,6 +1410,29 @@ export class CreditNotesService {
   }
 
   /**
+   * B949: refuse (409 CREDIT_NOTE_SOURCE_GONE) when any of these payments would restore money to a note carrying the
+   * SOURCE_DELETED marker. Callers run it over the WHOLE payment list BEFORE the first restore so the operation is refused
+   * atomically (the tx would roll back anyway, but nothing is even attempted). The way out is the note's own void.
+   */
+  private async refuseSourceGoneRestores(
+    tx: any,
+    payments: ReadonlyArray<{ creditNoteId: string | null }>,
+  ): Promise<void> {
+    const ids = [...new Set(payments.map((p) => p.creditNoteId).filter(Boolean) as string[])];
+    for (const id of ids) {
+      if (!(await hasSourceDeletedMarker(tx, id))) continue;
+      const cn = await tx.creditNote.findFirst({
+        where: { id },
+        select: { creditNoteNumber: true },
+      });
+      throw cnConflict(
+        API_ERROR_CODES.CREDIT_NOTE_SOURCE_GONE,
+        `Credit note ${cn?.creditNoteNumber ?? id} came from a deleted invoice. Void that credit note first, then try again.`,
+      );
+    }
+  }
+
+  /**
    * Inverse of applyCreditInTx: give (part of) an applied credit back to the wallet.
    * Deletes (or shrinks) the CREDIT_NOTE InvoicePayment, decrements amountUsed,
    * reverts APPLIED→ISSUED when the credit is no longer fully consumed, and
@@ -1302,11 +1444,22 @@ export class CreditNotesService {
     tz: string | null, // SA-495a: the caller's tenant zone, resolved once — never per row
     payment: { id: string; invoiceId: string; creditNoteId: string | null; amount: unknown },
     reduceBy?: number,
+    // B949: the note being VOIDED/CANCELLED right now: its OWN payments may be restored (it ends VOID, nothing becomes
+    // spendable). No global flag: any other note's marker still refuses.
+    opts: { voidingNoteId?: string } = {},
   ): Promise<number> {
     if (!payment.creditNoteId) return 0;
     const payAmt = roundMoney(Number(payment.amount));
     const restore = roundMoney(Math.min(payAmt, reduceBy ?? payAmt));
     if (!(restore > 0.001)) return 0;
+    // W-757 (ROW_LOCK_ORDER): the payment's Order -> Invoice BEFORE the note below, so a restore never takes
+    // CreditNote -> Invoice. Every caller already holds the payment's Order (most also its Invoice, in one sorted pass), so
+    // this takes no Order after an Invoice: a no-op or the Invoice alone, and the helper is in order on its own.
+    await lockInvoiceForCredit(tx, this.prisma.getTenantId(), payment.invoiceId);
+    // B949: the backstop of the pre-pass below. A restore would hand a SOURCE_DELETED note's money back as SPENDABLE wallet
+    // credit with no provenance; every path that restores refuses, before it writes any RESTORE (an operation such as an order cancel may already have written its own claim in the same transaction; the refusal rolls the whole transaction back).
+    if (payment.creditNoteId !== opts.voidingNoteId)
+      await this.refuseSourceGoneRestores(tx, [payment]);
 
     if (restore >= payAmt - 0.001) {
       await tx.invoicePayment.delete({ where: { id: payment.id } });
@@ -1317,6 +1470,9 @@ export class CreditNotesService {
       });
     }
 
+    // B1052: lock the note before reading its balance (the write below takes this lock anyway, so
+    // the lock order is unchanged); a concurrent apply can no longer overwrite the restore.
+    await lockCreditNotes(tx, this.prisma.getTenantId(), [payment.creditNoteId]);
     const cn = await tx.creditNote.findUnique({ where: { id: payment.creditNoteId } });
     if (cn) {
       const newUsed = Math.max(0, roundMoney(Number(cn.amountUsed) - restore));
@@ -1331,7 +1487,7 @@ export class CreditNotesService {
       await tx.creditNote.update({
         where: { id: cn.id },
         data: {
-          amountUsed: newUsed,
+          amountUsed: newUsed, // B1052: from the balance read under the lock above
           // Wallet state follows consumption: fully consumed = APPLIED, else ISSUED.
           status: fullyApplied && cn.status !== "VOID" ? "APPLIED" : "ISSUED",
           appliedToInvoiceId: fullyApplied ? cn.appliedToInvoiceId : null,
@@ -1350,12 +1506,13 @@ export class CreditNotesService {
       // confirmed money, never a DRAFT (or, once PENDING exists, an un-cleared check) —
       // sumConfirmed replaces the not-void filter (F03 discipline; design.md §3.4).
       const paid = sumConfirmed(inv.payments);
-      const newStatus = recomputeInvoiceStatus(
+      const newStatus = statusFromPayments(
         paid,
         Number(inv.total),
         inv.dueDate,
         inv.status,
         tz,
+        "NOT_PAID",
       );
       await tx.invoice.update({
         where: { id: inv.id },
@@ -1434,12 +1591,13 @@ export class CreditNotesService {
       // PR-2 (check-payments B1 hardening): same sumConfirmed basis as
       // restoreCreditFromPaymentInTx above.
       const paid = sumConfirmed(inv.payments);
-      const newStatus = recomputeInvoiceStatus(
+      const newStatus = statusFromPayments(
         paid,
         Number(inv.total),
         inv.dueDate,
         inv.status,
         tz,
+        "NOT_PAID",
       );
       await tx.invoice.update({
         where: { id: inv.id },
@@ -1473,7 +1631,10 @@ export class CreditNotesService {
     const seen = new Set<string>();
     for (const s of selections) {
       if (seen.has(s.creditNoteId))
-        throw new BadRequestException(`Duplicate credit note selection: ${s.creditNoteId}`);
+        throw cnBad(
+          API_ERROR_CODES.CREDIT_NOTE_UNAVAILABLE,
+          `Duplicate credit note selection: ${s.creditNoteId}`,
+        );
       seen.add(s.creditNoteId);
     }
 
@@ -1483,15 +1644,26 @@ export class CreditNotesService {
     const now = new Date();
     for (const id of ids) {
       const cn: any = byId.get(id);
-      if (!cn) throw new NotFoundException(`Credit note ${id} not found`);
+      if (!cn)
+        throw new NotFoundException({
+          code: API_ERROR_CODES.CREDIT_NOTE_UNAVAILABLE,
+          message: `Credit note ${id} not found`,
+        });
       if (cn.customerId !== customerId)
-        throw new BadRequestException(
+        throw cnBad(
+          API_ERROR_CODES.CREDIT_NOTE_UNAVAILABLE,
           `Credit note ${cn.creditNoteNumber ?? id} does not belong to this customer`,
         );
       if (cn.status === "VOID")
-        throw new BadRequestException(`Credit note ${cn.creditNoteNumber ?? id} has been voided`);
+        throw cnBad(
+          API_ERROR_CODES.CREDIT_NOTE_UNAVAILABLE,
+          `Credit note ${cn.creditNoteNumber ?? id} has been voided`,
+        );
       if (cn.expiresAt && new Date(cn.expiresAt) <= now)
-        throw new BadRequestException(`Credit note ${cn.creditNoteNumber ?? id} has expired`);
+        throw cnBad(
+          API_ERROR_CODES.CREDIT_NOTE_UNAVAILABLE,
+          `Credit note ${cn.creditNoteNumber ?? id} has expired`,
+        );
     }
   }
 
@@ -1516,6 +1688,7 @@ export class CreditNotesService {
       },
       orderBy: { createdAt: "desc" },
     });
+    await this.refuseSourceGoneRestores(tx, pays); // B949: before the first restore
     for (const p of pays) await this.restoreCreditFromPaymentInTx(tx, tz, p);
   }
 
@@ -1576,6 +1749,7 @@ export class CreditNotesService {
       orderBy: { createdAt: "desc" },
     });
 
+    await this.refuseSourceGoneRestores(tx, payments); // B949: before the first restore
     const byNote = new Map<string, { creditNoteNumber: string; amount: number }>();
     for (const p of payments) {
       const restored = await this.restoreCreditFromPaymentInTx(tx, tz, p);
@@ -1730,8 +1904,13 @@ export class CreditNotesService {
     // the payment would be written tenant-orphaned.
     tenantId: string | null = this.prisma.getTenantId(),
   ): Promise<{ applied: number; unapplied: number }> {
-    const tz = await tenantTimeZone(this.prisma, tenantId); // #2556 B3: the explicit tenant, not the ambient one
+    const tz = await tenantTimeZone(this.prisma, { tenantId }); // #2556 B3: the explicit tenant, not the ambient one
     const result = { applied: 0, unapplied: 0 };
+    // B1052: the FIRST statements — lock this Order, its invoices and every note this settle can
+    // touch (SA-214 order, each set in id order) BEFORE any balance is read. Two office settles
+    // (or office then driver) of orders sharing a note used to both read amountUsed=0 and both
+    // spend it; now the second waits here and reads the first's committed balance.
+    await lockOrderCreditSettle(tx, tenantId, orderId);
     const intents = await tx.orderCreditNote.findMany({
       where: { orderId },
       orderBy: { createdAt: "asc" },
@@ -1768,6 +1947,7 @@ export class CreditNotesService {
         .sort(
           (a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
         );
+      await this.refuseSourceGoneRestores(tx, creditPays); // B949: before the first restore
       for (const p of creditPays) {
         if (!(excess > 0.001)) break;
         const restored = await this.restoreCreditFromPaymentInTx(tx, tz, p, excess);
@@ -1857,9 +2037,13 @@ export class CreditNotesService {
   async unapplyFromInvoice(creditNoteId: string, invoiceId: string, actorId: string | null = null) {
     const tz = await tenantTimeZone(this.prisma); // SA-495a: once per call, before any loop
     // SA-392 (#2201): the WHOLE Serializable tx re-runs on a 40001/40P01 conflict (bounded).
-    return retryOnTxConflict(`credit unapply cn=${creditNoteId} inv=${invoiceId}`, () =>
+    return retryCreditTx(`credit unapply cn=${creditNoteId} inv=${invoiceId}`, () =>
       this.prisma.tenantTransaction(
         async (tx: any) => {
+          // W-757 (ROW_LOCK_ORDER): FIRST statement, the invoice's Order -> Invoice, before the restores below take the
+          // note. Without it the unapply took CreditNote -> Invoice and deadlocked against markSent (Order -> Invoice ->
+          // CreditNote) on the same pair.
+          await lockInvoiceForCredit(tx, this.prisma.getTenantId(), invoiceId);
           // scan-ok: draft-payment-not-void — method-scoped to CREDIT_NOTE (see
           // pullBackOrderCreditPair above).
           const payments = await tx.invoicePayment.findMany({
@@ -1876,6 +2060,7 @@ export class CreditNotesService {
               "This credit note has no active application to that invoice",
             );
 
+          await this.refuseSourceGoneRestores(tx, payments); // B949: before the first restore
           let restored = 0;
           for (const p of payments) {
             restored = roundMoney(restored + (await this.restoreCreditFromPaymentInTx(tx, tz, p)));
@@ -1990,6 +2175,9 @@ export class CreditNotesService {
             throw new BadRequestException("expiresAt must be a valid ISO date");
         }
         if (!sameDate(cn.expiresAt ?? null, next)) {
+          // #2848: an expiry change could revive an orphan's value; refused once its source is gone.
+          if (await hasSourceDeletedMarker(tx, id))
+            throw cnConflict(API_ERROR_CODES.CREDIT_NOTE_SOURCE_GONE, SOURCE_DELETED_MESSAGE);
           if (cn.status !== "ISSUED")
             throw cnBad(
               API_ERROR_CODES.CREDIT_NOTE_EXPIRY_NOT_EDITABLE,

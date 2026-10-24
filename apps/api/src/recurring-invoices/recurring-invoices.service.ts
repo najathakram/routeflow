@@ -1,11 +1,15 @@
 import { Injectable, Logger, NotFoundException } from "@nestjs/common";
+import type { RestrictionAck } from "@routeflow/types";
+import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { LeaderCron } from "../common/cron-lock";
+import { assertRefsInTenant } from "../common/assert-refs-in-tenant";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { InvoicesService } from "../invoices/invoices.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { requireRestrictionTenantId } from "../selling-restrictions/restriction-tenant";
 import { CronExpression } from "@nestjs/schedule";
+import { defaultSaleFulfilmentKind } from "../orders/default-sale-fulfilment";
 import { blockedTemplateLines } from "./recurring-invoice-restrictions";
 import { calcNextRunAt } from "./recurring-schedule";
 import { NotificationsService } from "../notifications/notifications.service";
@@ -14,6 +18,7 @@ import { UpdateRecurringInvoiceDto } from "./dto/update-recurring-invoice.dto";
 import { RecurringFrequency } from "@prisma/client";
 import { recurringLineSplit } from "./recurring-line-split";
 import { assertNsfLinesUntaxed, nsfSafeTaxRate } from "../invoices/nsf-line-tax-guard";
+import { assertSellableLines } from "../products/sellable-lines";
 
 /** REG-B106: RecurringInvoice.lastRunStatus values (schema comment: "SUCCESS" | "FAILED"). */
 export const RUN_STATUS_SUCCESS = "SUCCESS";
@@ -57,6 +62,11 @@ export class RecurringInvoicesService {
 
   async create(dto: CreateRecurringInvoiceDto) {
     assertNsfLinesUntaxed(dto.items ?? []); // #2656: a template's NSF-described line is never taxed
+    // 681 (R5-5): the template stores its customer and each item's productId; prove both in this tenant first.
+    await assertRefsInTenant(this.prisma, {
+      customerIds: [dto.customerId],
+      productIds: (dto.items ?? []).map((i) => i.productId),
+    });
     // REG-B131: a removed (soft-deleted) customer is not a recurring-invoice target — the sweep
     // already skips their schedules, so creating one would only schedule a silent no-op. Refuse
     // through the existing not-found branch so no customer state leaks.
@@ -64,6 +74,7 @@ export class RecurringInvoicesService {
       .forTenant()
       .customer.findUnique({ where: { id: dto.customerId, deletedAt: null } });
     if (!customer) throw new NotFoundException("Customer not found");
+    await this.assertNoFamilyLines(dto.items ?? []);
 
     return this.prisma.forTenant().recurringInvoice.create({
       data: {
@@ -91,6 +102,17 @@ export class RecurringInvoicesService {
       },
       include: { customer: { select: { id: true, businessName: true } }, items: true },
     });
+  }
+
+  /** WS8: a template line never names a FAMILY (the generated invoice line would). */
+  private async assertNoFamilyLines(items: ReadonlyArray<{ productId?: string | null }>) {
+    const ids = [...new Set(items.map((i) => i.productId).filter((id): id is string => !!id))];
+    if (ids.length === 0) return;
+    const products = await this.prisma.forTenant().product.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, name: true, kind: true },
+    });
+    assertSellableLines(products);
   }
 
   async findAll(customerId?: string) {
@@ -132,6 +154,9 @@ export class RecurringInvoicesService {
     // the re-create must never leave a template with no items.
     const tenantId = this.prisma.getTenantId();
     const items = dto.items;
+    // 681 (R5-5): update never writes customerId; the replacement items' productIds are proven before the tx.
+    await assertRefsInTenant(this.prisma, { productIds: items.map((i) => i.productId) });
+    await this.assertNoFamilyLines(items);
     return this.prisma.tenantTransaction(async (tx) => {
       await tx.recurringInvoiceItem.deleteMany({ where: { recurringInvoiceId: id } });
       return tx.recurringInvoice.update({
@@ -224,13 +249,14 @@ export class RecurringInvoicesService {
     });
   }
 
-  async runNow(id: string) {
+  /** `actor` + `ack`: the clicker and the acknowledgement of a prior 409 RESTRICTION_WARNING (row 510). */
+  async runNow(id: string, actor?: JwtPayload, ack?: RestrictionAck) {
     const ri = await this.prisma.forTenant().recurringInvoice.findUnique({
       where: { id },
       include: { items: true, customer: true },
     });
     if (!ri) throw new NotFoundException("Recurring invoice not found");
-    return this.generateInvoiceFromTemplate(ri, false);
+    return this.generateInvoiceFromTemplate(ri, false, actor ? { actor, ack } : undefined);
   }
 
   // ─── Core generation logic ────────────────────────────────────────────────
@@ -335,20 +361,35 @@ export class RecurringInvoicesService {
     return taxRate;
   }
 
-  private async generateInvoiceFromTemplate(ri: any, unattended = true) {
+  private async generateInvoiceFromTemplate(
+    ri: any,
+    unattended = true,
+    /** Row 510, "Run now" only: who clicked and what they acknowledged (stamps are written by THAT user). */
+    run?: { actor: JwtPayload; ack?: RestrictionAck },
+  ) {
     // #2656 / SA-549e: "Run now" is an operator deciding — a template whose NSF line carries a rate is
     // refused (400 NSF_LINE_UNTAXED) before the cycle is claimed, so nothing is issued or written.
     // Only the UNATTENDED run bills that line at 0 and logs it (B142: billing never pauses).
     if (!unattended) assertNsfLinesUntaxed(ri.items ?? []);
     // F-05 (SA-205): a banned line refuses the whole document — it is never dropped so the rest issues, since
-    // that would change the invoice's money with nobody deciding. "Run now" is an operator deciding (409, the
-    // template is untouched); the unattended run skips the cycle BEFORE it is claimed, notifies once and
-    // SUSPENDS the template until a tenant admin reactivates it. A tenant-owned template sells as STAFF.
+    // that would change the invoice's money with nobody deciding. "Run now" is a staff member deciding (row 510:
+    // 409 RESTRICTION_WARNING, the template untouched; a resubmit with the ack generates with stamps by the
+    // clicker); the unattended run skips the cycle BEFORE it is claimed, notifies once and SUSPENDS the template
+    // until a tenant admin reactivates it. A tenant-owned template sells as STAFF.
+    const restrictionTenantId = requireRestrictionTenantId(this.prisma.getTenantId());
     const blocked = await blockedTemplateLines(
       this.sellingRestrictions,
-      requireRestrictionTenantId(this.prisma.getTenantId()),
+      restrictionTenantId,
       ri,
       unattended,
+      {
+        fulfilmentKind: await defaultSaleFulfilmentKind(
+          this.prisma,
+          restrictionTenantId,
+          ri.customerId,
+        ),
+      },
+      run,
     );
     if (blocked) {
       await this.suspendForSellingRestriction(ri, blocked);
@@ -411,24 +452,29 @@ export class RecurringInvoicesService {
       const packByProduct = new Map<string, number | null>(
         (packRows ?? []).map((p: any) => [p.id, p.unitsPerBox ?? null]),
       );
-      invoice = await this.invoicesService.create({
-        customerId: ri.customerId,
-        discount: Number(ri.discount),
-        shippingFee: Number(ri.shippingFee),
-        notes: archivedNote ? `${ri.notes ? `${ri.notes}\n` : ""}${archivedNote}` : ri.notes,
-        terms: ri.terms,
-        items: ri.items.map((item: any) => ({
-          description: item.description,
-          productId: item.productId,
-          qty: Number(item.qty),
-          unitPrice: Number(item.unitPrice),
-          discount: Number(item.discount),
-          taxRate: unattended ? this.runLineTaxRate(ri, item) : Number(item.taxRate),
-          // B646: a boxed pack count carries its split, so qty is stored in PIECES (boxes x pack), and
-          // SA-135: the pack it was split with rides along as packSnapshot (ONE read, never re-read).
-          ...this.boxedSplitOrWarn(ri, item, packByProduct.get(item.productId)),
-        })),
-      });
+      invoice = await this.invoicesService.create(
+        {
+          customerId: ri.customerId,
+          // row 510: the clicker's acknowledgement rides to the create, which stamps with the same line keys
+          ...(run?.ack ?? {}),
+          discount: Number(ri.discount),
+          shippingFee: Number(ri.shippingFee),
+          notes: archivedNote ? `${ri.notes ? `${ri.notes}\n` : ""}${archivedNote}` : ri.notes,
+          terms: ri.terms,
+          items: ri.items.map((item: any) => ({
+            description: item.description,
+            productId: item.productId,
+            qty: Number(item.qty),
+            unitPrice: Number(item.unitPrice),
+            discount: Number(item.discount),
+            taxRate: unattended ? this.runLineTaxRate(ri, item) : Number(item.taxRate),
+            // B646: a boxed pack count carries its split, so qty is stored in PIECES (boxes x pack), and
+            // SA-135: the pack it was split with rides along as packSnapshot (ONE read, never re-read).
+            ...this.boxedSplitOrWarn(ri, item, packByProduct.get(item.productId)),
+          })),
+        },
+        run?.actor,
+      );
     } catch (err) {
       // REG-B106: record the failure AND give the cycle back. invoicesService.create
       // commits the invoice + its ledger rows in ONE tenantTransaction and has no

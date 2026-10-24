@@ -1,6 +1,7 @@
 import axios from "axios";
 import { BUYER_KEYS } from "./auth-keys";
 import { setBuyerPresenceCookie, clearBuyerPresenceCookie } from "./presence-cookies";
+import { clearBuyerSubmitKey } from "./api/buyer-submit-key";
 
 const BASE_URL = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000/api/v1").replace(
   /\/$/,
@@ -112,22 +113,32 @@ export function getStoredActiveSeller(): BuyerSeller | null {
 
 export function storeActiveSeller(seller: BuyerSeller): void {
   localStorage.setItem(BUYER_KEYS.activeSeller, JSON.stringify(seller));
+  clearBuyerSubmitKey(); // B1094: the submit key is customer-scoped; never carried across sellers
 }
 
 export function clearActiveSeller(): void {
   localStorage.removeItem(BUYER_KEYS.activeSeller);
+  clearBuyerSubmitKey();
 }
 
 export { BUYER_PRESENCE_COOKIE, clearBuyerPresenceCookie } from "./presence-cookies";
+
+/**
+ * Adopt a freshly-issued buyer token pair as THIS browser's buyer session — the ONE post-login
+ * step shared by buyer login, register and the in-app handoff (#2653, SA-542b).
+ */
+export function adoptBuyerTokenPair(data: { accessToken: string; refreshToken: string }): void {
+  localStorage.setItem(BUYER_KEYS.accessToken, data.accessToken);
+  localStorage.setItem(BUYER_KEYS.refreshToken, data.refreshToken);
+  setBuyerPresenceCookie();
+}
 
 export async function buyerLogin(email: string, password: string): Promise<BuyerAuthResponse> {
   const { data } = await axios.post<BuyerAuthResponse>(`${BASE_URL}/buyer/auth/login`, {
     email,
     password,
   });
-  localStorage.setItem(BUYER_KEYS.accessToken, data.accessToken);
-  localStorage.setItem(BUYER_KEYS.refreshToken, data.refreshToken);
-  setBuyerPresenceCookie();
+  adoptBuyerTokenPair(data);
   return data;
 }
 
@@ -141,9 +152,7 @@ export async function buyerRegister(
     password,
     name,
   });
-  localStorage.setItem(BUYER_KEYS.accessToken, data.accessToken);
-  localStorage.setItem(BUYER_KEYS.refreshToken, data.refreshToken);
-  setBuyerPresenceCookie();
+  adoptBuyerTokenPair(data);
   return data;
 }
 
@@ -163,6 +172,7 @@ export async function buyerLogout(): Promise<void> {
   localStorage.removeItem(BUYER_KEYS.accessToken);
   localStorage.removeItem(BUYER_KEYS.refreshToken);
   localStorage.removeItem(BUYER_KEYS.activeSeller);
+  clearBuyerSubmitKey(); // B1094: the next buyer on this browser must not inherit this one's key
   Object.keys(localStorage)
     .filter(
       (k) =>
@@ -257,6 +267,14 @@ export async function buyerVerifyEmail(token: string): Promise<{ message: string
     token,
   });
   return data;
+}
+
+/**
+ * Row 404: confirms the emailed account-merge link. The single-use token goes in the POST body, and
+ * only on the user's click; the page never calls this on mount, so a link scanner cannot consume it.
+ */
+export async function buyerVerifyMerge(token: string): Promise<void> {
+  await axios.post(`${BASE_URL}/buyer/auth/verify-merge`, { token });
 }
 
 export async function buyerResendVerification(

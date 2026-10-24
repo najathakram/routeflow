@@ -7,6 +7,8 @@
 // the convention this follows. `EntitlementsMode` is NOT a Prisma enum: it's the value of the
 // system-config key `entitlements.mode` (audited admin PUT), not a DB column.
 
+import type { TenantCapabilities } from "./fulfilment";
+
 export const FEATURE_SOURCE_VALUES = [
   "OVERRIDE_DENY",
   "OVERRIDE_GRANT",
@@ -85,12 +87,21 @@ export interface TenantEffectiveFeaturesResponse {
 }
 
 export interface TenantFeaturesResponse {
+  /** Business profiles 1A: the derived capability answers; clients read these, never raw modes. */
+  capabilities: TenantCapabilities;
   /** The old enforcement path's verdict, per key that path actually covers — byte-identical
    *  to `getSubscription().flags` (same gateVia filter, PREPIN, dark courtesy, and LITE). */
   served: string[];
   /** The shadow resolver's own verdict for every FEATURE_REGISTRY key — informational only;
    *  `served` is what's actually enforced while entitlements.mode is "shadow". */
   resolver: Record<string, boolean>;
+  /**
+   * Feature modes plus (SA-138) the TENANT-scope effective value of every policy registry key
+   * that allows TENANT scope. A policy value rides here as an `enum` value verbatim (`"amend"`)
+   * or, for `money`/`set`, as its JSON text (`"null"`, `"250"`,
+   * `'["originalPrice","discount","msrp"]'`). A missing key or an unparseable value means
+   * "today's behaviour" (the registry default). Customer/category-scope values never ride here.
+   */
   modes: Record<string, string>;
   catalogVersionId: string;
   computedAt: string;

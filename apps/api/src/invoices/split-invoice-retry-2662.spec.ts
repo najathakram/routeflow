@@ -61,6 +61,8 @@ describe("#2662 createSplitInvoices — transaction timeout / missing invoice", 
           invoicedQty: 0,
           unitPrice: 10,
           originalPrice: null,
+          overrideReason: null, // H3b: a real OrderItem row always carries both (CAS basis)
+          overriddenBy: null,
           priceType: "STANDARD",
           // #2645's whole-basis CAS reads every one of these off the line (null = none).
           subtotal: 20,

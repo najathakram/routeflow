@@ -9,6 +9,7 @@ import {
   suspendedTemplate,
   checkoutPlanNotAppliedTemplate,
   billingSettingsUrl,
+  dunningTemplate,
 } from "./billing-notification.templates";
 
 describe("billing-notification.templates", () => {
@@ -173,6 +174,21 @@ describe("billing-notification.templates", () => {
       expect(t.text).toContain("$42.50");
     });
 
+    it("labels the local figure an ESTIMATE — Stripe computes the real proration (SA-733 D8)", () => {
+      const t = upgradeConfirmedTemplate({
+        businessName: "Acme Retail",
+        adminName: "Jamie",
+        fromPlanName: "Starter",
+        toPlanName: "Growth",
+        proratedAmount: 42.5,
+      });
+      expect(t.html).toContain("estimate");
+      expect(t.text).toContain("We estimate a prorated charge of $42.50");
+      expect(t.text).toContain("shown on your next invoice");
+      expect(t.html).not.toContain("has been applied");
+      expect(t.text).not.toContain("has been applied");
+    });
+
     it("formats a zero proration correctly (not blank, not omitted)", () => {
       const t = upgradeConfirmedTemplate({
         businessName: "Acme Retail",
@@ -181,7 +197,10 @@ describe("billing-notification.templates", () => {
         toPlanName: "Growth",
         proratedAmount: 0,
       });
-      expect(t.html).toContain("$0.00");
+      // No charge applies: the email must not claim a prorated charge of $0.00.
+      expect(t.html).toContain("No prorated charge applies now");
+      expect(t.text).toContain("No prorated charge applies now");
+      expect(t.html).not.toContain("estimate");
     });
   });
 
@@ -207,6 +226,32 @@ describe("billing-notification.templates", () => {
       expect(t.html).toContain("/settings/billing");
     });
 
+    // Lead ruling: a canceled subscription is not a payment problem - the copy says so and the CTA picks a plan.
+    it("reason 'subscription canceled': says the subscription was canceled and to choose a plan, never 'payment details'", () => {
+      const t = suspendedTemplate({
+        businessName: "Acme Retail",
+        adminName: "Jamie",
+        reason: "subscription canceled",
+      });
+      const sentence = "Your subscription was canceled. Choose a plan to restore access.";
+      expect(t.html).toContain(sentence);
+      expect(t.text).toContain(sentence);
+      expect(t.html).toContain("Choose a plan");
+      expect(t.html).toContain("/settings/billing");
+      for (const part of [t.html, t.text]) expect(part).not.toMatch(/payment details/i);
+    });
+
+    it("any other reason keeps the payment-details copy", () => {
+      const t = suspendedTemplate({
+        businessName: "Acme Retail",
+        adminName: "Jamie",
+        reason: "overdue payment",
+      });
+      expect(t.html).toContain("update your payment details to restore access");
+      expect(t.text).toContain("update your payment details to restore access");
+      expect(t.html).not.toContain("Choose a plan to restore access");
+    });
+
     it("escapes a hostile reason string", () => {
       const t = suspendedTemplate({
         businessName: "Acme Retail",
@@ -229,6 +274,84 @@ describe("billing-notification.templates", () => {
       expect(t.text).toContain("NOT changed");
       expect(t.html).toContain("/settings/billing");
       expect(t.html).not.toContain("<b>SCALE</b>");
+    });
+  });
+
+  describe("dunning d0 copy is keyed by whether Stripe ATTEMPTED the invoice (SA r-note 5 A1)", () => {
+    const base = {
+      kind: "d0" as const,
+      businessName: "Acme",
+      adminName: "Sam",
+      payUrl: "https://pay.example.test/i/in_1",
+    };
+
+    it("attempted: 'We couldn't process your payment ... we'll try again'", () => {
+      const t = dunningTemplate({ ...base, attempted: true });
+      expect(t.text).toMatch(/couldn't process/i);
+      expect(t.text).toMatch(/try again/i);
+      expect(t.subject).toMatch(/payment failed/i);
+    });
+
+    it("never attempted: 'Your <period> invoice for $X is open - pay it here', no failure language", () => {
+      const t = dunningTemplate({
+        ...base,
+        attempted: false,
+        periodLabel: "October 2026",
+        amountCents: 4900,
+        currency: "usd",
+      });
+      expect(t.text).toContain("Your October 2026 invoice for $49.00 is open");
+      expect(t.text).toMatch(/pay it here/i);
+      expect(t.text).toContain(base.payUrl);
+      for (const part of [t.subject, t.text]) {
+        expect(part).not.toMatch(/couldn't process|unable to process|payment failed|try again/i);
+      }
+    });
+
+    it("never attempted, no period or amount known: still truthful ('Your subscription invoice is open')", () => {
+      const t = dunningTemplate({ ...base, attempted: false });
+      expect(t.text).toContain("Your subscription invoice is open");
+      expect(t.text).not.toMatch(/undefined|null|NaN/);
+    });
+
+    it("the attempted flag is absent (older callers): behaves as attempted, the long-standing copy", () => {
+      expect(dunningTemplate({ ...base }).text).toMatch(/couldn't process/i);
+    });
+  });
+
+  describe("the dunning final notice drops the lock threat when the pause holds the lock (SA-775 rollout)", () => {
+    const base = {
+      kind: "final" as const,
+      businessName: "Acme",
+      adminName: "Sam",
+      payUrl: "https://pay.example.test/i/in_1",
+    };
+
+    it("omitLockWarning absent or false: the long-standing copy, pinned exactly", () => {
+      for (const extra of [{}, { omitLockWarning: false }]) {
+        const t = dunningTemplate({ ...base, readOnlyOn: "Nov 9, 2026", ...extra });
+        expect(t.subject).toBe("Your workspace becomes read-only tomorrow — Acme");
+        expect(t.text).toContain(
+          "The subscription invoice for Acme is still unpaid. Unless it is paid, your workspace becomes read-only on Nov 9, 2026. Your data stays safe, and paying restores full access right away.",
+        );
+      }
+      expect(dunningTemplate({ ...base }).text).toContain("becomes read-only tomorrow.");
+    });
+
+    it("omitLockWarning true: no 'read-only' / 'tomorrow' anywhere, the pay-now CTA stays", () => {
+      const t = dunningTemplate({ ...base, readOnlyOn: "Nov 9, 2026", omitLockWarning: true });
+      for (const part of [t.subject, t.html, t.text]) {
+        expect(part).not.toMatch(/read-only|readonly|tomorrow|Nov 9, 2026|final notice/i);
+      }
+      expect(t.text).toContain("The subscription invoice for Acme is still unpaid.");
+      expect(t.text).toContain(`Pay now: ${base.payUrl}`);
+      expect(t.html).toContain(base.payUrl);
+      expect(t.html).toContain("Pay now");
+    });
+
+    it("omitLockWarning only changes the final notice (d3 is identical)", () => {
+      const d3 = { ...base, kind: "d3" as const };
+      expect(dunningTemplate({ ...d3, omitLockWarning: true })).toEqual(dunningTemplate(d3));
     });
   });
 });

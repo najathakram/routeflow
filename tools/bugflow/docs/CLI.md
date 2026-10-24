@@ -26,13 +26,13 @@ the same commit. See [GLOSSARY](./GLOSSARY.md) for any term used but not redefin
 
 ### Exit codes
 
-| Code | Meaning |
-| ---- | ------- |
-| `0`  | Success. |
-| `2`  | A gate failed — an unmet obligation (`check`) or an assertion the command could not back with evidence (`verify`). |
-| `3`  | Claim lost — another live claim beat this one in the compare-and-swap. |
+| Code | Meaning                                                                                                                                                                          |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | Success.                                                                                                                                                                         |
+| `2`  | A gate failed — an unmet obligation (`check`) or an assertion the command could not back with evidence (`verify`).                                                               |
+| `3`  | Claim lost — another live claim beat this one in the compare-and-swap.                                                                                                           |
 | `4`  | Not takeable — the target does not currently satisfy [takeable](./GLOSSARY.md#takeable) (wrong status, class not allowed for this seat, over the daily cap, or an open blocker). |
-| `5`  | Auth — `gh` is not authenticated, or the authenticated identity lacks a permission the command needs. |
+| `5`  | Auth — `gh` is not authenticated, or the authenticated identity lacks a permission the command needs.                                                                            |
 
 Any other non-zero exit is a usage or unexpected error, carrying no protocol meaning beyond "this
 command did not complete."
@@ -239,15 +239,16 @@ interactive.
 ## `bugflow import --from <dir>`
 
 **Purpose.** One-time, re-runnable migration of the legacy registry (`.claude/campaign/bugs/B###.md`
-+ `status/F##.jsonl`) into GitHub Issues — see [MIGRATION](./MIGRATION.md) for the full procedure
-this is one step of.
 
-- **Reads:** the legacy catalogue, records, and ledger shards under `<dir>`.
-- **Writes:** one new Issue (type `Bug`) per legacy id not already imported, title carrying
+- `status/F##.jsonl`) into GitHub Issues — see [MIGRATION](./MIGRATION.md) for the full procedure
+  this is one step of.
+
+* **Reads:** the legacy catalogue, records, and ledger shards under `<dir>`.
+* **Writes:** one new Issue (type `Bug`) per legacy id not already imported, title carrying
   `[B###]`, body carrying the record's history; `status`/`class`/`tier`/`severity`/`area` labels
   ported from the legacy row.
-- **Exit:** `0` ok (reports counts imported/skipped); `5` auth.
-- **Idempotency:** dedupes on the `[B###]` title prefix — an id already present as an open or
+* **Exit:** `0` ok (reports counts imported/skipped); `5` auth.
+* **Idempotency:** dedupes on the `[B###]` title prefix — an id already present as an open or
   closed issue's title is skipped rather than re-filed.
 
 ## `bugflow render [--out <path>]` (local)
@@ -280,27 +281,27 @@ still sitting in `status:triage` that nothing has explicitly triaged yet — the
 `triage` performs on demand. Markers (`approved:owner`, `needs:human`, `resolution:*`) are listed
 separately below the table — most are not written by any command here.
 
-| Command      | status | class | tier | severity | area | wave | harness | source |
-| ------------ | :----: | :---: | :--: | :------: | :--: | :--: | :-----: | :----: |
-| `file`       |   ✓    |       |      |    ✓     |  ✓   |      |         |   ✓    |
-| `triage`     |   ✓    |   ✓   |  ✓   |    ✓     |  ✓   |      |    ✓    |        |
-| `brief`      |        |       |      |          |      |      |         |        |
-| `next`       |        |       |      |          |      |      |         |        |
-| `claim`      |   ✓    |       |      |          |      |      |         |        |
-| `heartbeat`  |        |       |      |          |      |      |         |        |
-| `release`    |   ✓    |       |      |          |      |      |         |        |
-| `start`      |   ✓    |       |      |          |      |      |         |        |
-| `prove`      |        |       |      |          |      |      |         |        |
-| `verify`     |        |       |      |          |      |      |         |        |
-| `plan`       |        |       |      |          |      |  ✓   |         |        |
-| `sync`       |   ✓    |   ✓†  |  ✓†  |    ✓     |  ✓†  |      |    ✓†   |        |
-| `reap`       |        |       |      |          |      |      |         |        |
-| `snapshot`   |        |       |      |          |      |      |         |        |
-| `check`      |        |       |      |          |      |      |         |        |
-| `board`      |        |       |      |          |      |      |         |        |
-| `import`     |   ✓    |   ✓   |  ✓   |    ✓     |  ✓   |      |         |        |
-| `render`     |        |       |      |          |      |      |         |        |
-| `self-test`  |        |       |      |          |      |      |         |        |
+| Command     | status | class | tier | severity | area | wave | harness | source |
+| ----------- | :----: | :---: | :--: | :------: | :--: | :--: | :-----: | :----: |
+| `file`      |   ✓    |       |      |    ✓     |  ✓   |      |         |   ✓    |
+| `triage`    |   ✓    |   ✓   |  ✓   |    ✓     |  ✓   |      |    ✓    |        |
+| `brief`     |        |       |      |          |      |      |         |        |
+| `next`      |        |       |      |          |      |      |         |        |
+| `claim`     |   ✓    |       |      |          |      |      |         |        |
+| `heartbeat` |        |       |      |          |      |      |         |        |
+| `release`   |   ✓    |       |      |          |      |      |         |        |
+| `start`     |   ✓    |       |      |          |      |      |         |        |
+| `prove`     |        |       |      |          |      |      |         |        |
+| `verify`    |        |       |      |          |      |      |         |        |
+| `plan`      |        |       |      |          |      |  ✓   |         |        |
+| `sync`      |   ✓    |  ✓†   |  ✓†  |    ✓     |  ✓†  |      |   ✓†    |        |
+| `reap`      |        |       |      |          |      |      |         |        |
+| `snapshot`  |        |       |      |          |      |      |         |        |
+| `check`     |        |       |      |          |      |      |         |        |
+| `board`     |        |       |      |          |      |      |         |        |
+| `import`    |   ✓    |   ✓   |  ✓   |    ✓     |  ✓   |      |         |        |
+| `render`    |        |       |      |          |      |      |         |        |
+| `self-test` |        |       |      |          |      |      |         |        |
 
 **Markers.** `approved:owner` is applied by a human directly on GitHub — no command here writes
 it; a fleet seat must never approve its own carve-out bug. `needs:human` is applied by `release`

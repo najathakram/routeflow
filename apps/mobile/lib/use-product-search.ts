@@ -14,6 +14,7 @@
 import { useMemo, useState } from "react";
 import { useDebounce } from "./use-debounce";
 import { flattenPages } from "./paged-rows";
+import { sellableCatalogRows, type CatalogProductLike } from "./sellable-products";
 import { productSearchEnabled, productSearchParams } from "./product-search-params";
 import { PRODUCT_PAGE_SIZE, useProductsInfinite } from "./api/products";
 import { useAdminProductsInfinite } from "./api/admin";
@@ -78,11 +79,16 @@ export function useProductSearch<T extends { id: string }>(
     {
       ...productSearchParams({ term: debouncedTerm, category: opts?.category }),
       limit: opts?.limit ?? PRODUCT_PAGE_SIZE,
+      includeVariants: true,
     },
     { enabled: fetchEnabled },
   );
 
-  const products = useMemo(() => flattenPages<T>(query.data?.pages), [query.data]);
+  // A FAMILY container is never sellable (400 FAMILY_NOT_SELLABLE at submit): list its variants instead.
+  const products = useMemo(
+    () => sellableCatalogRows(flattenPages<T & CatalogProductLike>(query.data?.pages)) as T[],
+    [query.data],
+  );
 
   return {
     search,

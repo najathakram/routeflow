@@ -245,11 +245,7 @@ package — the exact source for every such symbol is written into this plan, so
   ```ts
   /** The five tier price columns in ladder order. Index 0 (`pricePerUnit`) is Tier 1 / list. */
   export type TierField =
-    | "pricePerUnit"
-    | "priceTier2"
-    | "priceTier3"
-    | "priceTier4"
-    | "priceTier5";
+    "pricePerUnit" | "priceTier2" | "priceTier3" | "priceTier4" | "priceTier5";
   export const TIER_FIELDS: readonly TierField[] = [
     "pricePerUnit",
     "priceTier2",

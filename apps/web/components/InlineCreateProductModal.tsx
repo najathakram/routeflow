@@ -3,6 +3,7 @@
 import * as React from "react";
 import { X } from "lucide-react";
 import { Button, useToast } from "@routeflow/ui/web";
+import { unitWords } from "@routeflow/pricing";
 import { useCreateProduct, useProducts } from "@/lib/api/products";
 import { apiClient } from "@/lib/api-client";
 import { PRODUCT_NAME_SEPARATOR } from "@/lib/product-display";
@@ -51,6 +52,7 @@ export function InlineCreateProductModal({
   initialCost,
 }: InlineCreateProductModalProps) {
   const { toast } = useToast();
+  const w = unitWords();
   const createProduct = useCreateProduct();
   const skuInputRef = React.useRef<HTMLInputElement>(null);
 
@@ -329,7 +331,9 @@ export function InlineCreateProductModal({
 
           {/* ── Units per box ── */}
           <div>
-            <label className="mb-1 block text-xs font-medium text-navy">Units per box</label>
+            <label className="mb-1 block text-xs font-medium text-navy">
+              {w.base.other} per {w.pack.lower}
+            </label>
             <input
               type="number"
               min={1}

@@ -16,7 +16,7 @@
  *      requires; never disconnects an existing connection.
  *
  * What it does:
- *   1. Logs in as the tenant's operator.
+ *   1. Logs in as the tenant's admin (the seeded TENANT_ADMIN test user).
  *   2. Saves a GoHighLevel connection from GHL_SANDBOX_TOKEN/GHL_SANDBOX_LOCATION_ID and
  *      confirms Save & test reports the sandbox location name (R2).
  *   3. Reads GET /crm/gohighlevel/pipelines and confirms at least one pipeline comes back.
@@ -28,8 +28,8 @@
  * Env vars:
  *   SMOKE_BASE_URL           — API base URL (default: http://localhost:3000)
  *   SMOKE_TENANT_SLUG        — tenant slug for operator login (default: test)
- *   SMOKE_OPERATOR_USERNAME  — operator username (default: admin)
- *   SMOKE_OPERATOR_PASSWORD  — operator password (default: Admin@123)
+ *   SMOKE_ADMIN_USERNAME     — tenant-admin username (default: tenant_admin)
+ *   SMOKE_ADMIN_PASSWORD     — tenant-admin password (default: TenantAdmin1!)
  *   SMOKE_TIMEOUT_MS         — per-request timeout in ms (default: 20000)
  *   GHL_SANDBOX_TOKEN        — GoHighLevel Private Integration Token (required)
  *   GHL_SANDBOX_LOCATION_ID  — GoHighLevel location id (required)
@@ -41,8 +41,10 @@ const BASE = (process.env.SMOKE_BASE_URL || "http://localhost:3000").replace(/\/
 // Only approved test tenants may be checked against — never a live client tenant.
 const TENANT = assertTestTenant(process.env.SMOKE_TENANT_SLUG || "test", "crm-gohighlevel-check");
 const TIMEOUT_MS = Number(process.env.SMOKE_TIMEOUT_MS || 20_000);
-const OP_USER = process.env.SMOKE_OPERATOR_USERNAME || "admin";
-const OP_PASS = process.env.SMOKE_OPERATOR_PASSWORD || "Admin@123";
+// The GoHighLevel connection endpoints are account-administration (admin-only): log in as the seeded
+// TENANT_ADMIN test user (apps/api/prisma/seed.ts), not the OPERATOR `admin`.
+const OP_USER = process.env.SMOKE_ADMIN_USERNAME || "tenant_admin";
+const OP_PASS = process.env.SMOKE_ADMIN_PASSWORD || "TenantAdmin1!";
 const GHL_TOKEN = process.env.GHL_SANDBOX_TOKEN;
 const GHL_LOCATION_ID = process.env.GHL_SANDBOX_LOCATION_ID;
 

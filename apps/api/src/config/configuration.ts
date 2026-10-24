@@ -1,4 +1,6 @@
 import * as crypto from "crypto";
+import { Logger } from "@nestjs/common";
+import { webBaseUrl } from "./web-base-url";
 
 /**
  * F5-001: resolve the storage-URL HMAC signing secret WITHOUT reusing JWT_SECRET
@@ -45,6 +47,28 @@ function positiveIntEnv(name: string, fallback: number): number {
   if (!/^\d+$/.test(raw)) return fallback;
   const value = Number(raw);
   return Number.isSafeInteger(value) && value > 0 ? value : fallback;
+}
+
+/** Highest DEFAULT_THROTTLE_LIMIT honoured; above it the limit is no longer a throttle. */
+export const MAX_DEFAULT_THROTTLE_LIMIT = 10_000;
+const DEFAULT_THROTTLE_LIMIT_FALLBACK = 100;
+
+/**
+ * DEFAULT_THROTTLE_LIMIT -> an integer in 1..MAX_DEFAULT_THROTTLE_LIMIT, else 100. A set-but-invalid
+ * value (0, negative, non-integer, non-numeric, above the cap) logs ONE warning and falls back.
+ */
+export function parseDefaultThrottleLimit(raw: string | undefined): number {
+  const trimmed = raw?.trim() ?? "";
+  if (trimmed === "") return DEFAULT_THROTTLE_LIMIT_FALLBACK;
+  const value = /^\d+$/.test(trimmed) ? Number(trimmed) : NaN;
+  if (Number.isSafeInteger(value) && value >= 1 && value <= MAX_DEFAULT_THROTTLE_LIMIT) {
+    return value;
+  }
+  new Logger("Configuration").warn(
+    `DEFAULT_THROTTLE_LIMIT must be an integer 1..${MAX_DEFAULT_THROTTLE_LIMIT}; ` +
+      `ignoring the set value and using ${DEFAULT_THROTTLE_LIMIT_FALLBACK}`,
+  );
+  return DEFAULT_THROTTLE_LIMIT_FALLBACK;
 }
 
 export interface AppConfig {
@@ -99,6 +123,8 @@ export interface AppConfig {
     stableUrlWindowSeconds: number;
   };
   throttle: {
+    /** Per-IP ceiling (requests / 60 s) of the global "default" throttler; prod default 100 (B599). */
+    defaultLimit: number;
     /**
      * Per-IP ceiling (requests / 60 s) for GET /uploads/*, which is exempt from the global
      * 100 / 60 s throttle because one catalog page loads more images than that (#2091).
@@ -110,6 +136,12 @@ export interface AppConfig {
   };
   googleMaps: {
     apiKey: string;
+  };
+  apple: {
+    bundleId: string;
+    teamId: string;
+    keyId: string;
+    privateKey: string;
   };
   mapbox: {
     accessToken: string;
@@ -144,7 +176,7 @@ export const configuration = (): AppConfig => ({
     refreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN ?? "30d",
   },
   urls: {
-    web: process.env.WEB_URL ?? "http://localhost:3001",
+    web: webBaseUrl(),
     mobileWeb: process.env.MOBILE_WEB_URL ?? "https://routeflowmobile-production.up.railway.app",
   },
   redis: {
@@ -169,6 +201,7 @@ export const configuration = (): AppConfig => ({
     stableUrlWindowSeconds: positiveIntEnv("STORAGE_URL_STABLE_WINDOW_SECONDS", 43_200),
   },
   throttle: {
+    defaultLimit: parseDefaultThrottleLimit(process.env.DEFAULT_THROTTLE_LIMIT),
     uploadsLimit: positiveIntEnv("UPLOADS_THROTTLE_LIMIT", 1200),
   },
   ors: {
@@ -176,6 +209,16 @@ export const configuration = (): AppConfig => ({
   },
   googleMaps: {
     apiKey: process.env.GOOGLE_MAPS_API_KEY ?? "",
+  },
+  // #2309 (SA-418): Sign in with Apple, native iOS only. Read directly by name via the
+  // untyped ConfigService (AppleOAuthService.isConfigured()), same pattern as GOOGLE_CLIENT_ID —
+  // not consumed through this "apple" object, but declared here so every config name the app
+  // reads has one place naming it.
+  apple: {
+    bundleId: process.env.APPLE_BUNDLE_ID ?? "",
+    teamId: process.env.APPLE_TEAM_ID ?? "",
+    keyId: process.env.APPLE_KEY_ID ?? "",
+    privateKey: process.env.APPLE_PRIVATE_KEY ?? "",
   },
   mapbox: {
     accessToken: process.env.MAPBOX_ACCESS_TOKEN ?? "",

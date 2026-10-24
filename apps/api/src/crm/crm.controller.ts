@@ -61,6 +61,7 @@ export class CrmController {
   }
 
   @Patch("connection")
+  @Roles(UserRole.TENANT_ADMIN)
   @UseGuards(AddonGuard)
   @RequireAddon("crm_gohighlevel")
   saveConnection(@CurrentUser() user: JwtPayload, @Body() dto: SaveCrmConnectionDto) {
@@ -68,6 +69,7 @@ export class CrmController {
   }
 
   @Post("connection/test")
+  @Roles(UserRole.TENANT_ADMIN)
   @UseGuards(AddonGuard)
   @RequireAddon("crm_gohighlevel")
   testConnection(@CurrentUser() user: JwtPayload) {
@@ -75,6 +77,7 @@ export class CrmController {
   }
 
   @Delete("connection")
+  @Roles(UserRole.TENANT_ADMIN)
   @UseGuards(AddonGuard)
   @RequireAddon("crm_gohighlevel")
   disconnect(@CurrentUser() user: JwtPayload) {
@@ -82,6 +85,7 @@ export class CrmController {
   }
 
   @Patch("config")
+  @Roles(UserRole.TENANT_ADMIN)
   @UseGuards(AddonGuard)
   @RequireAddon("crm_gohighlevel")
   updateConfig(@CurrentUser() user: JwtPayload, @Body() dto: UpdateCrmConfigDto) {

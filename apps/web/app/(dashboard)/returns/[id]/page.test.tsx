@@ -1,5 +1,6 @@
 import * as React from "react";
-import { renderWithProviders, screen } from "@/test-utils/render";
+import userEvent from "@testing-library/user-event";
+import { renderWithProviders, screen, within } from "@/test-utils/render";
 import ReturnDetailPage from "./page";
 import type { Return } from "@/lib/api/returns";
 
@@ -9,7 +10,12 @@ jest.mock("next/navigation", () => ({
   useParams: () => ({ id: "ret-1" }),
 }));
 
+jest.mock("@/lib/api-client", () => ({
+  apiClient: { get: jest.fn().mockResolvedValue({ data: {} }) },
+}));
+
 let mockReturn: Return | undefined;
+const mockCancelMutate = jest.fn();
 jest.mock("@/lib/api/returns", () => ({
   useReturn: () => ({ data: mockReturn, isLoading: false, isError: false }),
   useApproveReturn: () => ({ mutate: jest.fn(), isPending: false }),
@@ -17,7 +23,7 @@ jest.mock("@/lib/api/returns", () => ({
   useMarkReturnInTransit: () => ({ mutate: jest.fn(), isPending: false }),
   useMarkReturnReceived: () => ({ mutate: jest.fn(), isPending: false }),
   useProcessRefund: () => ({ mutate: jest.fn(), isPending: false }),
-  useCancelReturn: () => ({ mutate: jest.fn(), isPending: false }),
+  useCancelReturn: () => ({ mutate: mockCancelMutate, isPending: false }),
 }));
 
 const baseReturn = {
@@ -78,5 +84,50 @@ describe("ReturnDetailPage (#2406)", () => {
     renderWithProviders(<ReturnDetailPage />);
     expect(screen.getAllByRole("button", { name: /resolve/i }).length).toBeGreaterThan(0);
     expect(screen.getAllByRole("button", { name: /cancel/i }).length).toBeGreaterThan(0);
+  });
+
+  it("Train 4: a refunded return offers Print slip (from this same record)", async () => {
+    mockReturn = {
+      ...baseReturn,
+      kind: "INLINE",
+      status: "REFUNDED",
+      refundAmount: 14.97,
+      refundMethod: "EXTERNAL_REFUND",
+      refundTender: "CASH",
+      refundedAt: "2026-10-09T14:00:00.000Z",
+      order: { id: "o1", orderNumber: "ORD-1", counterSale: true },
+    } as unknown as Return;
+    renderWithProviders(<ReturnDetailPage />);
+    expect(await screen.findByRole("button", { name: "Print slip" })).toBeEnabled();
+  });
+
+  it.each(["PENDING", "APPROVED", "RECEIVED", "REJECTED"])(
+    "Train 4: a %s return has no Print slip",
+    (status) => {
+      mockReturn = { ...baseReturn, kind: "STANDARD", status } as Return;
+      renderWithProviders(<ReturnDetailPage />);
+      expect(screen.queryByRole("button", { name: "Print slip" })).toBeNull();
+    },
+  );
+  it("SA-839 §3: a cancel whose reversal sat in a filed month adds the amended-month line to the toast", async () => {
+    mockCancelMutate.mockImplementation((_id: string, opts: any) =>
+      opts.onSuccess({
+        id: "ret-1",
+        status: "CANCELLED",
+        amendedPeriod: { periodKey: "2026-09", status: "LOCKED", trackedCategoryId: "cat-1" },
+      }),
+    );
+    mockReturn = { ...baseReturn, kind: "STANDARD", status: "RECEIVED" } as Return;
+    const user = userEvent.setup();
+    renderWithProviders(<ReturnDetailPage />);
+    await user.click(screen.getByRole("button", { name: /cancel return/i }));
+    const dialog = within(await screen.findByRole("dialog"));
+    await user.click(dialog.getByRole("button", { name: /cancel return/i }));
+    expect(mockCancelMutate).toHaveBeenCalledWith("ret-1", expect.anything());
+    expect(
+      await screen.findByText(
+        /This return was in the September 2026 filing, which is already filed/,
+      ),
+    ).toBeInTheDocument();
   });
 });

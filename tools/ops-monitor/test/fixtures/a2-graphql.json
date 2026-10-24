@@ -1,0 +1,297 @@
+{
+  "data": {
+    "repository": {
+      "visibility": "PRIVATE",
+      "open": {
+        "nodes": [
+          {
+            "number": 9001,
+            "title": "fix(invoices): widget rounding",
+            "body": "Fixes B9001\n\nAlso closes row 700.",
+            "isDraft": false,
+            "headRefName": "fix/widget-rounding",
+            "headRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa9001",
+            "baseRefName": "master",
+            "updatedAt": "2026-10-19T11:00:00Z",
+            "url": "https://github.com/acme-org/widgets/pull/9001",
+            "commits": {
+              "nodes": [
+                {
+                  "commit": {
+                    "statusCheckRollup": {
+                      "state": "FAILURE",
+                      "contexts": {
+                        "nodes": [
+                          {
+                            "__typename": "CheckRun",
+                            "name": "Verify",
+                            "conclusion": "SKIPPED",
+                            "status": "COMPLETED"
+                          },
+                          {
+                            "__typename": "CheckRun",
+                            "name": "E2E gate (freshness)",
+                            "conclusion": "SKIPPED",
+                            "status": "COMPLETED"
+                          },
+                          {
+                            "__typename": "CheckRun",
+                            "name": "Replay migrations on a fresh database",
+                            "conclusion": "FAILURE",
+                            "status": "COMPLETED"
+                          },
+                          {
+                            "__typename": "CheckRun",
+                            "name": "CodeQL",
+                            "conclusion": "SUCCESS",
+                            "status": "COMPLETED"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "files": {
+              "nodes": [
+                {
+                  "path": "apps/api/src/invoices/invoices.service.ts"
+                }
+              ]
+            }
+          },
+          {
+            "number": 9002,
+            "title": "Merge train/acme-widgets",
+            "body": "Train members: B9002, B9003.\nCloses row 710",
+            "isDraft": false,
+            "headRefName": "train/acme-widgets",
+            "headRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa9002",
+            "baseRefName": "master",
+            "updatedAt": "2026-10-19T11:00:00Z",
+            "url": "https://github.com/acme-org/widgets/pull/9002",
+            "commits": {
+              "nodes": [
+                {
+                  "commit": {
+                    "statusCheckRollup": {
+                      "state": "PENDING",
+                      "contexts": {
+                        "nodes": [
+                          {
+                            "__typename": "CheckRun",
+                            "name": "Verify",
+                            "conclusion": "SUCCESS",
+                            "status": "COMPLETED"
+                          },
+                          {
+                            "__typename": "CheckRun",
+                            "name": "E2E (Playwright)",
+                            "conclusion": null,
+                            "status": "IN_PROGRESS"
+                          },
+                          {
+                            "__typename": "StatusContext",
+                            "context": "ci/lint",
+                            "state": "ERROR"
+                          },
+                          {
+                            "__typename": "StatusContext",
+                            "context": "ci/size",
+                            "state": "PENDING"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "files": {
+              "nodes": [
+                {
+                  "path": "apps/api/src/invoices/invoices.service.ts"
+                }
+              ]
+            }
+          },
+          {
+            "number": 9003,
+            "title": "chore: acme misc",
+            "body": null,
+            "isDraft": true,
+            "headRefName": "feat/acme-misc",
+            "headRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa9003",
+            "baseRefName": "master",
+            "updatedAt": "2026-10-19T11:00:00Z",
+            "url": "https://github.com/acme-org/widgets/pull/9003",
+            "commits": {
+              "nodes": [
+                {
+                  "commit": {
+                    "statusCheckRollup": null
+                  }
+                }
+              ]
+            },
+            "files": {
+              "nodes": [
+                {
+                  "path": "apps/api/src/invoices/invoices.service.ts"
+                }
+              ]
+            }
+          },
+          {
+            "number": 9004,
+            "title": "docs: big body",
+            "body": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            "isDraft": false,
+            "headRefName": "docs/acme-big-body",
+            "headRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa9004",
+            "baseRefName": "master",
+            "updatedAt": "2026-10-19T11:00:00Z",
+            "url": "https://github.com/acme-org/widgets/pull/9004",
+            "commits": {
+              "nodes": [
+                {
+                  "commit": {
+                    "statusCheckRollup": {
+                      "state": "SUCCESS",
+                      "contexts": {
+                        "nodes": [
+                          {
+                            "__typename": "CheckRun",
+                            "name": "Verify",
+                            "conclusion": "SUCCESS",
+                            "status": "COMPLETED"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "files": {
+              "nodes": [
+                {
+                  "path": "apps/api/src/invoices/invoices.service.ts"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "merged": {
+        "nodes": [
+          {
+            "number": 9010,
+            "title": "fix(invoices): widget total B9004",
+            "body": "Fixes B9004",
+            "headRefName": "fix/b9004-widget-total",
+            "mergedAt": "2026-10-19T09:00:00Z",
+            "url": "https://github.com/acme-org/widgets/pull/9010",
+            "baseRefName": "master",
+            "mergeCommit": {
+              "oid": "dddddddddddddddddddddddddddddddddddddddd"
+            }
+          },
+          {
+            "number": 9011,
+            "title": "fix: widget B9002 member",
+            "body": "",
+            "headRefName": "fix/b9002-member",
+            "mergedAt": "2026-10-19T08:00:00Z",
+            "url": "https://github.com/acme-org/widgets/pull/9011",
+            "baseRefName": "train/acme-widgets",
+            "mergeCommit": null
+          },
+          {
+            "number": 9012,
+            "title": "docs: register note",
+            "body": "Background: see #9010 and #9011.",
+            "headRefName": "docs/register-note",
+            "mergedAt": "2026-10-18T09:00:00Z",
+            "url": "https://github.com/acme-org/widgets/pull/9012",
+            "baseRefName": "master",
+            "mergeCommit": {
+              "oid": "cccccccccccccccccccccccccccccccccccccccc"
+            }
+          }
+        ]
+      },
+      "master": {
+        "target": {
+          "oid": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "committedDate": "2026-10-19T09:30:00Z",
+          "messageHeadline": "Merge widgets (#9010)",
+          "statusCheckRollup": {
+            "state": "PENDING",
+            "contexts": {
+              "nodes": [
+                {
+                  "__typename": "CheckRun",
+                  "name": "Verify",
+                  "conclusion": "SKIPPED",
+                  "status": "COMPLETED"
+                },
+                {
+                  "__typename": "CheckRun",
+                  "name": "Verify",
+                  "conclusion": "SKIPPED",
+                  "status": "COMPLETED"
+                },
+                {
+                  "__typename": "CheckRun",
+                  "name": "Verify",
+                  "conclusion": "SUCCESS",
+                  "status": "COMPLETED"
+                },
+                {
+                  "__typename": "CheckRun",
+                  "name": "E2E gate (freshness)",
+                  "conclusion": "SKIPPED",
+                  "status": "COMPLETED"
+                },
+                {
+                  "__typename": "CheckRun",
+                  "name": "E2E gate (freshness)",
+                  "conclusion": "SUCCESS",
+                  "status": "COMPLETED"
+                },
+                {
+                  "__typename": "CheckRun",
+                  "name": "E2E (Playwright)",
+                  "conclusion": null,
+                  "status": "IN_PROGRESS"
+                },
+                {
+                  "__typename": "CheckRun",
+                  "name": "E2E (Playwright)",
+                  "conclusion": "SKIPPED",
+                  "status": "COMPLETED"
+                },
+                {
+                  "__typename": "CheckRun",
+                  "name": "Replay migrations on a fresh database",
+                  "conclusion": "SKIPPED",
+                  "status": "COMPLETED"
+                },
+                {
+                  "__typename": "StatusContext",
+                  "context": "ci/lint",
+                  "state": "FAILURE"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "deployments": {
+        "nodes": []
+      }
+    }
+  }
+}

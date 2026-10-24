@@ -17,26 +17,30 @@ import {
   useApplyCreditNote,
   useCreditNote,
   useOpenInvoicesForCustomer,
-  useVoidCreditNote,
+  useVoidPreview,
+  useVoidWithReversal,
 } from "../../../lib/api/credit-notes";
 import {
   creditNoteActionFlags,
   creditNotePillFor,
   isCreditOpenForApply,
   openCreditBalance,
+  voidConfirmMessage,
 } from "../../../lib/credit-notes-logic";
+import { creditNoteErrorCopy, refusalCopy } from "../../../lib/credit-note-error-copy";
 import { showToast } from "../../../lib/toast";
 import { confirm } from "../../../lib/confirm";
 import { fmtCalendarDate } from "../../../lib/format-date";
-
-const OPEN_INVOICE_STATUSES = ["SENT", "VIEWED", "PARTIAL", "OVERDUE"];
+import { isOpenInvoiceStatus } from "../../../lib/invoices-logic";
 
 function fmtCurrency(n: number | string | undefined): string {
   const v = typeof n === "string" ? Number(n) : (n ?? 0);
   return `$${(Number.isFinite(v) ? v : 0).toFixed(2)}`;
 }
 
-const onErr = (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again.");
+// Owner rule: never show a server message. Refusals map by code to fixed copy; else generic.
+const onErr = (e: unknown) =>
+  showToast(creditNoteErrorCopy(e, "Something went wrong. Please try again."));
 
 export default function CreditNoteDetailScreen() {
   const router = useRouter();
@@ -44,8 +48,9 @@ export default function CreditNoteDetailScreen() {
 
   const { data: cn, isLoading, refetch } = useCreditNote(id ?? "");
   const applyMut = useApplyCreditNote();
-  const voidMut = useVoidCreditNote();
+  const voidMut = useVoidWithReversal();
   const [pickerOpen, setPickerOpen] = useState(false);
+  const voidPreview = useVoidPreview(id ?? "", !!cn && cn.status !== "VOID");
 
   if (isLoading || !cn) {
     return (
@@ -93,17 +98,25 @@ export default function CreditNoteDetailScreen() {
 
   const handleVoid = () => {
     if (!id) return;
+    // The confirm lists what the void reopens, so it waits for a loaded preview (never a blind void).
+    if (voidPreview.isLoading || voidPreview.isError)
+      return showToast("Checking what this void affects. Try again in a moment.");
+    if (voidPreview.data?.refusalCode || voidPreview.data?.refusal)
+      return showToast(refusalCopy(voidPreview.data.refusalCode));
     confirm(
       "Void credit note?",
-      `${cn.creditNoteNumber} will be voided and can't be undone.`,
+      voidConfirmMessage(cn.creditNoteNumber, voidPreview.data?.invoices ?? []),
       () =>
-        voidMut.mutate(id, {
-          onSuccess: () => {
-            showToast("Credit note voided");
-            refetch();
+        voidMut.mutate(
+          { id },
+          {
+            onSuccess: () => {
+              showToast("Credit note voided");
+              refetch();
+            },
+            onError: onErr,
           },
-          onError: onErr,
-        }),
+        ),
       { confirmText: "Void", destructive: true },
     );
   };
@@ -156,9 +169,16 @@ export default function CreditNoteDetailScreen() {
             </View>
           </View>
 
-          {/* Actions */}
-          {flags.canApply || flags.canVoid ? (
+          {/* Actions — #2648: Edit on any non-VOID note (reason/expiry save; amount reissues). */}
+          {flags.canApply || flags.canVoid || cn.status !== "VOID" ? (
             <View style={styles.actionsGrid}>
+              {cn.status !== "VOID" ? (
+                <ActionTile
+                  icon="create-outline"
+                  label="Edit"
+                  onPress={() => router.push(`/(operator)/credit-notes/${cn.id}/edit`)}
+                />
+              ) : null}
               {canApply ? (
                 <ActionTile
                   icon="checkmark-circle-outline"
@@ -171,11 +191,7 @@ export default function CreditNoteDetailScreen() {
               ) : null}
             </View>
           ) : (
-            <Text style={styles.readonly}>
-              {cn.status === "APPLIED"
-                ? "This credit note has been applied."
-                : "This credit note is void."}
-            </Text>
+            <Text style={styles.readonly}>This credit note is void.</Text>
           )}
 
           {/* Reason */}
@@ -219,7 +235,7 @@ function ApplyInvoicePicker({
   onPick: (invoiceId: string) => void;
 }) {
   const { data, isLoading } = useOpenInvoicesForCustomer(visible ? customerId : undefined);
-  const open = (data?.data ?? []).filter((i) => OPEN_INVOICE_STATUSES.includes(i.status));
+  const open = (data?.data ?? []).filter((i) => isOpenInvoiceStatus(i.status));
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>

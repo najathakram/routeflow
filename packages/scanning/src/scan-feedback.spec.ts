@@ -12,3 +12,9 @@ describe("cueForOutcome", () => {
     expect(cueForOutcome({})).toBe("none");
   });
 });
+
+describe("cueForOutcome - info", () => {
+  it("cues nothing for an info feedback (the screen fires its own neutral haptic)", () => {
+    expect(cueForOutcome({ feedback: { kind: "info", text: "Confirm" } })).toBe("none");
+  });
+});

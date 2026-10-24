@@ -54,6 +54,7 @@ jest.mock("../common/db-locks", () => {
   };
 });
 
+import { oversellReaderOffProvider } from "../orders/testing/policy-reader-provider";
 import { Test, TestingModule } from "@nestjs/testing";
 import { UserRole } from "@prisma/client";
 import { BuyerController } from "./buyer.controller";
@@ -87,10 +88,15 @@ const MOCK_CTX = {
   customer: { id: "cust-merge-1", businessName: "Merge Test Buyer" },
 };
 
+// Row 718: a merge refuses a requested day before the tenant's today, so the fixture day is two days ahead of
+// the wall clock (the mock tenant has no zone: UTC), never a fixed calendar date that goes stale.
+const DELIVERY_DAY = new Date(Date.now() + 2 * 86_400_000).toISOString().slice(0, 10);
+
 describe("BuyerController.createOrder merge branch (TP3 / REG-B47 / REG-B78)", () => {
   let controller: BuyerController;
   let ordersService: {
     findActiveOrder: jest.Mock;
+    liveTrioByProduct: jest.Mock;
     updateOrderItems: jest.Mock;
     applyBuyerMergeHeader: jest.Mock;
     mergeAllPendingForCustomer: jest.Mock;
@@ -102,6 +108,7 @@ describe("BuyerController.createOrder merge branch (TP3 / REG-B47 / REG-B78)", (
   beforeEach(async () => {
     ordersService = {
       findActiveOrder: jest.fn().mockResolvedValue(null),
+      liveTrioByProduct: jest.fn().mockResolvedValue(new Map()),
       updateOrderItems: jest.fn().mockResolvedValue(undefined),
       applyBuyerMergeHeader: jest.fn().mockResolvedValue(undefined),
       mergeAllPendingForCustomer: jest.fn().mockResolvedValue(null),
@@ -113,6 +120,7 @@ describe("BuyerController.createOrder merge branch (TP3 / REG-B47 / REG-B78)", (
     const module: TestingModule = await Test.createTestingModule({
       controllers: [BuyerController],
       providers: [
+        oversellReaderOffProvider,
         { provide: BuyerService, useValue: {} },
         { provide: BuyerCatalogService, useValue: {} },
         { provide: BuyerDashboardService, useValue: {} },
@@ -139,6 +147,52 @@ describe("BuyerController.createOrder merge branch (TP3 / REG-B47 / REG-B78)", (
     }).compile();
 
     controller = module.get<BuyerController>(BuyerController);
+  });
+
+  // ─── row 355 (M2): a stored PACK line beside a box-split line of one product ─────
+  it("row 355: a bare incoming add on a product with a box-split line AND a pack line folds in the right units (pack normalized to pieces)", async () => {
+    const activeOrder = {
+      id: "order-mixed",
+      customerId: MOCK_CTX.customerId,
+      lineItems: [
+        // a pack line: 2 selling units (boxes), no split
+        {
+          id: "li-pack",
+          productId: "prod-boxed",
+          qty: 2,
+          boxes: null,
+          pieces: null,
+          unitsPerBox: null,
+          unitPrice: 10,
+          priceType: "STANDARD",
+        },
+        // a box-split line: 1 box = 12 pieces
+        {
+          id: "li-box",
+          productId: "prod-boxed",
+          qty: 12,
+          boxes: 1,
+          pieces: 0,
+          unitsPerBox: 12,
+          unitPrice: 10,
+          priceType: "STANDARD",
+        },
+      ],
+    };
+    ordersService.findActiveOrder.mockResolvedValue(activeOrder);
+    prisma.product.findMany.mockResolvedValue([{ id: "prod-boxed", unitsPerBox: 12 }]);
+
+    await controller.createOrder(
+      { items: [{ productId: "prod-boxed", qty: 3 }] } as any, // 3 selling units (boxes)
+      MOCK_CTX as any,
+    );
+
+    const written = ordersService.updateOrderItems.mock.calls[0][1].items as any[];
+    const pieces = written
+      .filter((i) => i.productId === "prod-boxed")
+      .reduce((n, i) => n + Number(i.qty), 0);
+    // 2 packs (24 pieces) + 1 box (12 pieces) + 3 boxes added (36 pieces) = 72 pieces, never 2 + 12 + 36.
+    expect(pieces).toBe(72);
   });
 
   // ─── REG-B47 (T14 companion): denomination-aware fold, replaceAll, no unlisted ──
@@ -190,6 +244,25 @@ describe("BuyerController.createOrder merge branch (TP3 / REG-B47 / REG-B78)", (
     });
   });
 
+  it("M2: the post-create sweep folds only the NEW order's path (focusOrderId), so it returns that order", async () => {
+    ordersService.findActiveOrder.mockResolvedValue(null);
+    await controller.createOrder({ items: [{ productId: "p1", qty: 1 }] } as any, MOCK_CTX as any);
+    expect(ordersService.mergeAllPendingForCustomer).toHaveBeenCalledWith(
+      MOCK_CTX.customerId,
+      { buyerInitiated: true, focusOrderId: "order-fresh" },
+      expect.anything(),
+    );
+  });
+
+  it("the buyer's active-order search passes mergeAs for the buyer audience (portal path rules)", async () => {
+    ordersService.findActiveOrder.mockResolvedValue(null);
+    await controller.createOrder({ items: [{ productId: "p1", qty: 1 }] } as any, MOCK_CTX as any);
+    expect(ordersService.findActiveOrder).toHaveBeenCalledWith(
+      MOCK_CTX.customerId,
+      expect.objectContaining({ forMerge: true, mergeAs: { audience: "buyer", role: "CUSTOMER" } }),
+    );
+  });
+
   it("REG-B47 (T14 companion): a BARE-qty incoming add folds against the stored line in SELLING UNITS — 2 + 2 = a plain qty 4, never 2 boxes + 2 loose pieces", async () => {
     // The other half of the denomination convention. `foldMergeItems` reads a bare
     // incoming `{productId, qty}` as loose PIECES (right for the staff scan path),
@@ -229,6 +302,35 @@ describe("BuyerController.createOrder merge branch (TP3 / REG-B47 / REG-B78)", (
     expect(updateDto.items).toEqual([
       { productId: "prod-boxed", qty: 4, sourceLineId: "li-boxed-unaware" },
     ]);
+  });
+
+  it("row 727: a box-unaware line sold as a 12-pack (own snapshot 12), product now a 6-pack, + a 6-pack box is refused 409, never restamped at 6", async () => {
+    const activeOrder = {
+      id: "order-active-repack",
+      customerId: MOCK_CTX.customerId,
+      lineItems: [
+        {
+          id: "li-own-12",
+          productId: "prod-boxed",
+          qty: 2,
+          boxes: null,
+          pieces: null,
+          unitsPerBox: 12,
+          unitPrice: 36.0,
+          name: null,
+        },
+      ],
+    };
+    ordersService.findActiveOrder.mockResolvedValue(activeOrder);
+    prisma.forTenant().product.findMany.mockResolvedValue([{ id: "prod-boxed", unitsPerBox: 6 }]);
+
+    const dto = { items: [{ productId: "prod-boxed", qty: 6, boxes: 1, pieces: 0 }] };
+
+    // the stored line normalizes at its OWN 12 (row 727), so the live-6 box is a pack the merge cannot reconcile
+    await expect(controller.createOrder(dto as any, MOCK_CTX as any)).rejects.toMatchObject({
+      response: expect.objectContaining({ code: "MERGE_PACK_MISMATCH" }),
+    });
+    expect(ordersService.updateOrderItems).not.toHaveBeenCalled();
   });
 
   it("REG-B47 (T14 companion): a BARE-qty incoming add against a box-SPLIT stored line expands to boxes — 2 boxes + 2 = {qty:48, boxes:4}, never {qty:26, boxes:2, pieces:2}", async () => {
@@ -302,7 +404,7 @@ describe("BuyerController.createOrder merge branch (TP3 / REG-B47 / REG-B78)", (
       items: [{ productId: "prod-plain", qty: 2 }],
       notes: "ring bell",
       urgent: true,
-      requestedDeliveryDate: "2026-09-05",
+      requestedDeliveryDate: DELIVERY_DAY,
     };
 
     await controller.createOrder(dto as any, MOCK_CTX as any);
@@ -312,7 +414,7 @@ describe("BuyerController.createOrder merge branch (TP3 / REG-B47 / REG-B78)", (
     expect(ordersService.applyBuyerMergeHeader).toHaveBeenCalledTimes(1);
     expect(ordersService.applyBuyerMergeHeader).toHaveBeenCalledWith(
       activeOrder.id,
-      { notes: "ring bell", urgent: true, requestedDeliveryDate: "2026-09-05" },
+      { notes: "ring bell", urgent: true, requestedDeliveryDate: DELIVERY_DAY },
       expect.any(Object),
     );
 
@@ -378,5 +480,30 @@ describe("BuyerController.createOrder merge branch (TP3 / REG-B47 / REG-B78)", (
       expect(user.role).toBe(UserRole.CUSTOMER);
       expect(result).toEqual(createdOrder);
     });
+  });
+
+  // W-762 / SA-918 §2: the buyer cart fold is an AUTOMATIC merge — into an order that carries an order discount it
+  // skips (reason DISCOUNTED) and the cart becomes its own order; nothing is folded.
+  it("W-762: a cart never folds into an active order that carries an order discount — it is created on its own", async () => {
+    const activeOrder = {
+      id: "order-active-discounted",
+      customerId: MOCK_CTX.customerId,
+      discountAmount: 4,
+      lineItems: [
+        {
+          id: "li-1",
+          productId: "p1",
+          qty: 2,
+          boxes: null,
+          pieces: null,
+          unitPrice: 10,
+          name: null,
+        },
+      ],
+    };
+    ordersService.findActiveOrder.mockResolvedValue(activeOrder);
+    await controller.createOrder({ items: [{ productId: "p1", qty: 1 }] } as any, MOCK_CTX as any);
+    expect(ordersService.updateOrderItems).not.toHaveBeenCalled();
+    expect(ordersService.create).toHaveBeenCalledTimes(1);
   });
 });

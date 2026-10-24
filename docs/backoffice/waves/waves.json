@@ -9,19 +9,11 @@
   "orderingRule": "Money that is wrong -> numbers that are wrong -> the seat that operates on them -> the lifecycle around them -> what we sell -> what we show.",
   "lanes": {
     "A": {
-      "serial": [
-        "W1",
-        "W2",
-        "W4",
-        "W5",
-        "W6"
-      ],
+      "serial": ["W1", "W2", "W4", "W5", "W6"],
       "note": "the money/truth spine"
     },
     "B": {
-      "serial": [
-        "W3"
-      ],
+      "serial": ["W3"],
       "note": "admin seat security; disjoint files, runs in parallel from day one"
     }
   },
@@ -38,9 +30,7 @@
       "title": "Money that is wrong today",
       "rule": "Money moves incorrectly, or entitlements do not match what was paid for.",
       "dependsOn": [],
-      "blocks": [
-        "W2"
-      ],
+      "blocks": ["W2"],
       "moneyCarveOut": true,
       "status": "ready",
       "tasks": [
@@ -141,15 +131,9 @@
       "id": "W2",
       "title": "Truth (= Phase 0)",
       "rule": "Every number the admin surface shows must be derived, not estimated, and every tenant must be classifiable.",
-      "dependsOn": [
-        "W1"
-      ],
+      "dependsOn": ["W1"],
       "dependsWhy": "Reconciling the subscription set while the billing writes that produce it are still wrong reconciles to wrong values.",
-      "blocks": [
-        "W4",
-        "W5",
-        "W6"
-      ],
+      "blocks": ["W4", "W5", "W6"],
       "moneyCarveOut": true,
       "status": "planned-not-started",
       "plan": "docs/superpowers/plans/2026-09-12-backoffice-phase-0-truth.md",
@@ -306,9 +290,7 @@
       "id": "W4",
       "title": "Tenant lifecycle completeness",
       "rule": "Every state a tenant can reach has a way out, and somebody is told when it is reached.",
-      "dependsOn": [
-        "W2"
-      ],
+      "dependsOn": ["W2"],
       "status": "blocked",
       "tasks": [
         {
@@ -353,9 +335,7 @@
           "sev": "medium",
           "batch": null,
           "status": "open",
-          "dependsOn": [
-            "ROAD-84"
-          ],
+          "dependsOn": ["ROAD-84"],
           "what": "Phase 4 lifecycle messaging - event-triggered emails on the existing notify() engine, owner alerts, and the legacy READ_ONLY-with-live-Stripe cohort alert (currently a log warn nobody reads). Needs the real outbound transport."
         }
       ]
@@ -364,9 +344,7 @@
       "id": "W5",
       "title": "What we sell (= Phase 3)",
       "rule": "The catalog we sell from must be editable safely and consistent with what checkout charges.",
-      "dependsOn": [
-        "W2"
-      ],
+      "dependsOn": ["W2"],
       "dependsWhy": "A plan editor over untrustworthy plan data is a liability.",
       "moneyCarveOut": true,
       "status": "blocked",
@@ -392,9 +370,7 @@
       "id": "W6",
       "title": "What we show (= Phases 5-6)",
       "rule": "One place to see a tenant whole, and a portal where the tenant can serve itself.",
-      "dependsOn": [
-        "W2"
-      ],
+      "dependsOn": ["W2"],
       "status": "blocked",
       "tasks": [
         {

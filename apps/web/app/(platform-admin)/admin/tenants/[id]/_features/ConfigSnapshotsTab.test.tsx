@@ -6,6 +6,13 @@ import { ConfigSnapshotsTab } from "./ConfigSnapshotsTab";
 const mockList = jest.fn();
 const mockPreview = jest.fn();
 const mockRestore = jest.fn();
+jest.mock("@/lib/platform-admin/features", () => ({
+  fetchFeatureRegistry: () =>
+    Promise.resolve([
+      { key: "ocr", label: "OCR document scanning" },
+      { key: "driver_payments", label: "Driver payments" },
+    ]),
+}));
 jest.mock("@/lib/platform-admin/config-snapshots", () => ({
   fetchConfigSnapshots: (t: string) => mockList(t),
   previewConfigSnapshotRestore: (t: string, s: string) => mockPreview(t, s),
@@ -145,6 +152,99 @@ describe("ConfigSnapshotsTab", () => {
     );
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(mockList).toHaveBeenCalledTimes(2); // initial load + refresh
+  });
+
+  describe("a partial restore (BO-13 held rows) says what was held and why", () => {
+    const RESULT = {
+      snapshotId: "s1",
+      takenAt: "2026-09-10T12:00:00.000Z",
+      planKey: "SCALE",
+      restoredToPlanKey: "SCALE",
+      report: { restored: 1, skipped: 1, keptNewer: 0, unchanged: 3 },
+      supersededSnapshots: 0,
+    };
+    const confirm = async () => {
+      mockPreview.mockResolvedValue(PREVIEW);
+      await renderTab();
+      fireEvent.click(await screen.findByRole("button", { name: /^Restore now/ }));
+      const dialog = await screen.findByRole("dialog");
+      await within(dialog).findByText("Will be restored (2)");
+      fireEvent.click(within(dialog).getByRole("button", { name: "Restore now" }));
+      return (await screen.findByRole("status")).textContent ?? "";
+    };
+
+    it("one held row: names the Delivery model and the reason", async () => {
+      mockRestore.mockResolvedValue({
+        ...RESULT,
+        held: [
+          {
+            kind: "fulfilment",
+            featureKey: "fulfilment_model",
+            from: "ship",
+            to: "delivery",
+            reason: "CARRIER_IN_TRANSIT",
+            count: 2,
+          },
+        ],
+      });
+      const text = await confirm();
+      expect(text).toContain(
+        "Restored, except Delivery model: held while orders are with the carrier",
+      );
+    });
+
+    it("several held rows: each is listed with its own reason", async () => {
+      mockRestore.mockResolvedValue({
+        ...RESULT,
+        held: [
+          {
+            kind: "fulfilment",
+            featureKey: "fulfilment_model",
+            from: "ship",
+            to: "delivery",
+            reason: "CARRIER_IN_TRANSIT",
+          },
+          {
+            kind: "fulfilment",
+            featureKey: "other_key",
+            from: "a",
+            to: "b",
+            reason: "FULFILMENT_MODE_NEEDS_FLEET",
+          },
+        ],
+      });
+      const text = await confirm();
+      expect(text).toContain("Delivery model: held while orders are with the carrier");
+      expect(text).toContain("other_key: held while own delivery needs a fleet module");
+    });
+
+    it("row 640: a held GRANT override names the key and says it is not paid for", async () => {
+      mockRestore.mockResolvedValue({
+        ...RESULT,
+        held: [
+          { kind: "override", featureKey: "ocr", overrideKind: "PILOT", reason: "ADDON_NOT_PAID" },
+          {
+            kind: "override",
+            featureKey: "driver_payments",
+            overrideKind: "COMP",
+            reason: "REQUIRES_UNMET",
+          },
+        ],
+      });
+      const text = await confirm();
+      expect(text).toContain(
+        "OCR document scanning: held while the add-on isn't paid for or included in the plan; restore again once it is billed",
+      );
+      expect(text).toContain("Driver payments: held while a required feature is missing");
+      expect(text).not.toContain("ocr:");
+    });
+
+    it("an empty held list is a plain restore (no 'except')", async () => {
+      mockRestore.mockResolvedValue({ ...RESULT, held: [] });
+      const text = await confirm();
+      expect(text).toMatch(/^Restored the /);
+      expect(text).not.toMatch(/except/);
+    });
   });
 
   it("nothing to restore disables the confirm button", async () => {

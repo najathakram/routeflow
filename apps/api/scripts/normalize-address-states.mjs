@@ -199,6 +199,8 @@
 import { createRequire } from "node:module";
 import readline from "node:readline";
 import { resolveDatabaseUrl } from "./lib/railway-db-url.mjs";
+import guardLib from "./lib/live-target-guard.cjs";
+import protectedSlugsLib from "./lib/protected-slugs.cjs";
 import {
   applyUpdates,
   assertTestTenantTargets,
@@ -217,6 +219,9 @@ import {
   summarize,
   TestTenantListingRefusedError,
 } from "./lib/address-state-normalize.mjs";
+
+const { protectedTenantIds } = guardLib;
+const { loadProtectedSlugs } = protectedSlugsLib;
 
 const HELP = `normalize-address-states.mjs — backfill CustomerAddress.stateCode from the free-text state
 
@@ -456,6 +461,16 @@ try {
   process.exit(1);
 }
 
+// Row 195: the protected-tenant list is loaded ONCE, before any connection, from the URL this
+// script dials. Unset on a non-local target, or an invalid entry, refuses the run (exit 1).
+let protectedSlugs;
+try {
+  protectedSlugs = loadProtectedSlugs(process.env, databaseUrl);
+} catch (e) {
+  console.error(`normalize-address-states: ${e.message}`);
+  process.exit(1);
+}
+
 // host + database only — never the URL, which carries the password.
 const target = (() => {
   try {
@@ -479,6 +494,8 @@ function printStatements(updates) {
 // ─── main ─────────────────────────────────────────────────────────────────────────────────────
 
 let client = null;
+// Row 195: ids of every protected tenant (paying, Stripe-linked, env-listed); filled in main().
+let protectedIds = new Set();
 
 function connect(connectionString) {
   // `pg` is required lazily so argument validation above can never be preceded by a driver load.
@@ -642,6 +659,17 @@ async function run() {
     say(batchError);
   }
 
+  // Row 195: a protected tenant's rows are never written (report and --dry-run show the same list
+  // --live would run). Counted here; the tenant ids stay out of the output.
+  const writesBeforeGuard = updates.length;
+  updates = updates.filter((u) => !protectedIds.has(u.tenantId));
+  if (updates.length < writesBeforeGuard) {
+    console.error(
+      `normalize-address-states: protected-tenant guard dropped ${writesBeforeGuard - updates.length} ` +
+        "write(s) that belong to protected tenant(s); they are never written by this tool",
+    );
+  }
+
   const counts = summarize(reports, updates);
   say("=== SUMMARY ===");
   say(`  candidates             ${counts.candidates}`);
@@ -765,6 +793,9 @@ async function main() {
   // the report has been printed and the confirmation typed — never before.
   await client.query("SET default_transaction_read_only = on");
   await client.query("SET statement_timeout = '60s'");
+
+  // Row 195: SELECT-only (the session is read-only here); resolved before any report line prints.
+  protectedIds = new Set(await protectedTenantIds(client, protectedSlugs));
 
   return run();
 }

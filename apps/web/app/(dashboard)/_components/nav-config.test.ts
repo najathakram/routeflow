@@ -70,3 +70,19 @@ describe("operator nav: Purchase Orders + Supplier Bills", () => {
     expect(labels).not.toContain("Bills & Purchasing");
   });
 });
+
+// REG-B1013: a buyer or a driver has no business settings — their /settings entry is their own
+// account page, so the sidebar must not advertise a "Settings" hub to them.
+describe("customer and driver nav: settings entry is My account (REG-B1013)", () => {
+  const leaf = (nav: typeof OPERATOR_NAV) =>
+    nav.find((e) => e.kind === "leaf" && e.href === "/settings");
+  it.each([
+    ["customer", CUSTOMER_NAV],
+    ["driver", DRIVER_NAV],
+  ])("the %s nav labels it My account", (_role, nav) => {
+    expect(leaf(nav)).toMatchObject({ label: "My account", href: "/settings" });
+  });
+  it("the operator nav keeps Settings", () => {
+    expect(leaf(OPERATOR_NAV)).toMatchObject({ label: "Settings" });
+  });
+});

@@ -38,24 +38,24 @@ once the cleanup is done. This file is the ONE place a new session starts. Every
 
 ## 2. Sessions to create (same titles)
 
-| Title | Machine | Role / file area | Model |
-|---|---|---|---|
-| RouteFlow fleet lead | PC | routing, reviews, owner comms; never implements | Opus 5.5 (Fable for rulings if wanted) |
-| Senior Architect role and operating rules | any | rulings (SA-nnn) + tier-1 first pass, posts on #938 | Fable 5.1 |
-| RouteFlow landing coordinator | PC | serial landing windows, public/private flips, bookkeeping PRs | Sonnet 5 |
-| RouteFlow Mac Lead coordination | Mac mini | Mac lanes, registry (mints bug ids via bugs.mjs), mini disk/Colima | Opus 5.5 |
-| RouteFlow Mac F2 prover | Mac mini | DB proofs (`*.db.spec.ts`), image builds alone | Sonnet 5 |
-| Lane B | Mac | `orders.service.ts` (#1310 B776 critical) | Sonnet 5 |
-| RouteFlow Lane IR inline returns web | Mac | regulated/returns + ledger (#1324, #1246, B650…) | Sonnet 5 |
-| RouteFlow R-ui rule dialog follow-ups | Mac | pricing package + ledger specs (#1319, #1341, B687, D-20…) | Sonnet 5 |
-| RouteFlow Lane web unit-line edit | Mac | order-line / unit-line (#1339 REQUIRED, B718, B740, B679…) | Sonnet 5 |
-| RouteFlow Lane B707 mobile edit-items pack | Mac | `invoices.service.ts` (B824 #1336, B556/B557 #1335, B733…) | Sonnet 5 |
-| RouteFlow MacBook landing | MacBook | tooling, F-09, F-22 tracking engine, #1134, #1330 B646 | Sonnet 5 |
-| Extract and fix vendor-bills poTotal drift | MacBook | PO / vendor-bills (#1344, #1352, B743 D, B710, B746, D-11) | Sonnet 5 |
-| RouteFlow Lane F prover setup | PC | #1353 B785, B692 (SA ruling pending), D-14, F-23 | Sonnet 5 |
-| Order UI redesign steps 10–11 | PC | web order/list screens (#1340 spec 61, #1288, B597…) | Sonnet 5 |
-| RouteFlow Lane S-scan resume | PC | scanner + mobile display (#1271, #1329, B653…) | Sonnet 5 |
-| Cloud: B562 builder / policy PR-A builder | cloud | #1331 B562 PR-1..4 then SA-137; #1337 policy PR-A only | — |
+| Title                                      | Machine  | Role / file area                                                   | Model                                  |
+| ------------------------------------------ | -------- | ------------------------------------------------------------------ | -------------------------------------- |
+| RouteFlow fleet lead                       | PC       | routing, reviews, owner comms; never implements                    | Opus 5.5 (Fable for rulings if wanted) |
+| Senior Architect role and operating rules  | any      | rulings (SA-nnn) + tier-1 first pass, posts on #938                | Fable 5.1                              |
+| RouteFlow landing coordinator              | PC       | serial landing windows, public/private flips, bookkeeping PRs      | Sonnet 5                               |
+| RouteFlow Mac Lead coordination            | Mac mini | Mac lanes, registry (mints bug ids via bugs.mjs), mini disk/Colima | Opus 5.5                               |
+| RouteFlow Mac F2 prover                    | Mac mini | DB proofs (`*.db.spec.ts`), image builds alone                     | Sonnet 5                               |
+| Lane B                                     | Mac      | `orders.service.ts` (#1310 B776 critical)                          | Sonnet 5                               |
+| RouteFlow Lane IR inline returns web       | Mac      | regulated/returns + ledger (#1324, #1246, B650…)                   | Sonnet 5                               |
+| RouteFlow R-ui rule dialog follow-ups      | Mac      | pricing package + ledger specs (#1319, #1341, B687, D-20…)         | Sonnet 5                               |
+| RouteFlow Lane web unit-line edit          | Mac      | order-line / unit-line (#1339 REQUIRED, B718, B740, B679…)         | Sonnet 5                               |
+| RouteFlow Lane B707 mobile edit-items pack | Mac      | `invoices.service.ts` (B824 #1336, B556/B557 #1335, B733…)         | Sonnet 5                               |
+| RouteFlow MacBook landing                  | MacBook  | tooling, F-09, F-22 tracking engine, #1134, #1330 B646             | Sonnet 5                               |
+| Extract and fix vendor-bills poTotal drift | MacBook  | PO / vendor-bills (#1344, #1352, B743 D, B710, B746, D-11)         | Sonnet 5                               |
+| RouteFlow Lane F prover setup              | PC       | #1353 B785, B692 (SA ruling pending), D-14, F-23                   | Sonnet 5                               |
+| Order UI redesign steps 10–11              | PC       | web order/list screens (#1340 spec 61, #1288, B597…)               | Sonnet 5                               |
+| RouteFlow Lane S-scan resume               | PC       | scanner + mobile display (#1271, #1329, B653…)                     | Sonnet 5                               |
+| Cloud: B562 builder / policy PR-A builder  | cloud    | #1331 B562 PR-1..4 then SA-137; #1337 policy PR-A only             | —                                      |
 
 Each lane's paste-in prompt = LANE-PROMPTS.md's common preamble + its block. On the Mac, the Mac Lead
 gives lanes their block from the mac handoff.
@@ -87,8 +87,7 @@ First message to the owner: a ≤ 10-line status (master sha, what landed, what'
   `apps/api/scripts/backfill-b294-order-line-taxrate.mjs` from a checkout AT master (dry-run first, then
   `--apply` with plan hash + `--guard-sha` + `--i-have-a-fresh-backup`) — the owner-run checkout
   `C:/ClaudeCode/rf-owner-reports` is staged and ready (detached at master, `npm ci` clean). Landing queue
-  (coordinator, W17): #1321 → #1325 → #1354 → **#1319** (NOW LANDABLE — Opus merge-delta SHIP #938
-  5815316761) → #1121 (B597, CLEARED) → #1365 (D-14 re-cut, CLEARED T2; #1355 CLOSED, superseded) →
+  (coordinator, W17): #1321 → #1325 → #1354 → **#1319** (NOW LANDABLE — Opus merge-delta SHIP #938 5815316761) → #1121 (B597, CLEARED) → #1365 (D-14 re-cut, CLEARED T2; #1355 CLOSED, superseded) →
   #1315; then the docs window — all four PRs already opened: #1363 skills (`f819ac75b`, supersedes closed
   #1342), #1364 roadmap (`b09469ab9`), #1229 SA regs (`92b7ebc3`), #1285 registry (`14cf1c6c2`, kept
   current with master, carries the mac-handoff + B845 + B846). B846 filed (revertToDraft deletes PURCHASE

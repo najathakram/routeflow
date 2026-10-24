@@ -2,10 +2,14 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import type { SelectablePaymentMethod } from "../payment-methods";
 import type { CustomerComment, CustomerDocument } from "@routeflow/types";
+import { fetchPdfBlob } from "../fetch-pdf-blob";
+import { sendWithPaymentKey, type PaymentKeyHolder } from "../payment-submit-key";
 export type { CustomerComment, CustomerDocument } from "@routeflow/types";
 
 export interface Customer {
   id: string;
+  /** SA-655: the tenant's system walk-in customer (counter sales): never deactivated, deleted or merged. */
+  isWalkIn?: boolean | null;
   businessName: string;
   contactName: string;
   phone?: string;
@@ -23,7 +27,8 @@ export interface Customer {
   taxId?: string;
   isTaxExempt?: boolean;
   taxExemptDocumentKeys?: string[];
-  creditLimit?: number;
+  /** `null` clears the limit (update only); `0` is a real $0 limit; omitted leaves it alone (B1018). */
+  creditLimit?: number | null;
   currency?: string;
   pricingTier?: number;
   receivables?: number;
@@ -103,18 +108,24 @@ export function useCustomer(id: string) {
   });
 }
 
-export function useCreateCustomer() {
+/**
+ * `localErrorToast`: the caller renders its own error UI (the customer form's banner), so the
+ * app-wide generic error toast must not show the same failure a second time.
+ */
+export function useCreateCustomer(options?: { localErrorToast?: boolean }) {
   const qc = useQueryClient();
   return useMutation({
+    meta: options?.localErrorToast ? { localErrorToast: true } : undefined,
     mutationFn: (data: Record<string, unknown>) =>
       apiClient.post("/customers", data).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["customers"] }),
   });
 }
 
-export function useUpdateCustomer() {
+export function useUpdateCustomer(options?: { localErrorToast?: boolean }) {
   const qc = useQueryClient();
   return useMutation({
+    meta: options?.localErrorToast ? { localErrorToast: true } : undefined,
     mutationFn: ({ id, ...data }: { id: string; [k: string]: unknown }) =>
       apiClient.patch(`/customers/${id}`, data).then((r) => r.data),
     onSuccess: (_d, vars) => {
@@ -156,26 +167,28 @@ export function useCustomerOrders<T = unknown>(id: string) {
   });
 }
 
-export function useCustomerRoutes(id: string) {
+export function useCustomerRoutes(id: string, options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: ["customers", id, "routes"],
     queryFn: () => apiClient.get(`/customers/${id}/routes`).then((r) => r.data),
-    enabled: !!id,
+    enabled: !!id && (options?.enabled ?? true),
   });
 }
 
-export function useAddCustomerAddress() {
+export function useAddCustomerAddress(options?: { localErrorToast?: boolean }) {
   const qc = useQueryClient();
   return useMutation({
+    meta: options?.localErrorToast ? { localErrorToast: true } : undefined,
     mutationFn: ({ id, ...data }: { id: string; [k: string]: unknown }) =>
       apiClient.post(`/customers/${id}/addresses`, data).then((r) => r.data),
     onSuccess: (_d, vars) => qc.invalidateQueries({ queryKey: ["customers", vars.id] }),
   });
 }
 
-export function useUpdateCustomerAddress() {
+export function useUpdateCustomerAddress(options?: { localErrorToast?: boolean }) {
   const qc = useQueryClient();
   return useMutation({
+    meta: options?.localErrorToast ? { localErrorToast: true } : undefined,
     mutationFn: ({
       id,
       addrId,
@@ -268,6 +281,36 @@ export function useCustomerStatement(id: string) {
   });
 }
 
+// ─── Monthly statement PDF (B1005) ─────────────────────────────────────────────
+
+/** The months (YYYY-MM, newest first) the server can build a statement PDF for. */
+export function useCustomerStatementMonths(id: string) {
+  return useQuery<{ months: string[] }>({
+    queryKey: ["customers", id, "statement-months"],
+    queryFn: () => apiClient.get(`/customers/${id}/statements`).then((r) => r.data),
+    enabled: !!id,
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+const STATEMENT_MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
+
+/**
+ * The server's statement PDF for one month: the tenant's own letterhead and the real opening balance come from the server,
+ * never from this page. Returns the presigned URL and its bytes (fetched with the right transport by `fetchPdfBlob`).
+ */
+export async function fetchCustomerStatementPdf(
+  id: string,
+  month: string,
+): Promise<{ url: string; blob: Blob }> {
+  if (!STATEMENT_MONTH.test(month)) throw new Error("Invalid statement month");
+  const { url } = await apiClient
+    .get<{ url: string }>(`/customers/${id}/statements/${month}`)
+    .then((r) => r.data);
+  const blob = await fetchPdfBlob(url, apiClient);
+  return { url, blob };
+}
+
 // ─── Advance payments ─────────────────────────────────────────────────────────
 
 export interface AdvancePayment {
@@ -300,10 +343,16 @@ export function useCreateAdvancePayment() {
       method: SelectablePaymentMethod;
       reference?: string;
       notes?: string;
+      /** SA-824: the dialog's Idempotency-Key holder (never sent in the body). */
+      submitKey?: PaymentKeyHolder;
     }
   >({
-    mutationFn: ({ customerId, ...data }) =>
-      apiClient.post(`/customers/${customerId}/advance-payments`, data).then((r) => r.data),
+    mutationFn: ({ customerId, submitKey, ...data }) =>
+      sendWithPaymentKey(submitKey, data, (config) =>
+        apiClient
+          .post(`/customers/${customerId}/advance-payments`, data, ...config)
+          .then((r) => r.data),
+      ),
     onSuccess: (_d, vars) => {
       qc.invalidateQueries({ queryKey: ["customers", vars.customerId, "advance-payments"] });
       qc.invalidateQueries({ queryKey: ["customers", vars.customerId, "statement"] });
@@ -475,16 +524,6 @@ export function useBatchDeleteCustomers() {
       apiClient
         .post("/customers/batch-delete", { ids })
         .then((r) => r.data as { deleted: number; failed: { id: string; reason: string }[] }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["customers"] });
-    },
-  });
-}
-
-export function useDeleteAllCustomers() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: () => apiClient.delete("/customers/all").then((r) => r.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["customers"] });
     },

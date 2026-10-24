@@ -1,3 +1,4 @@
+import { DRIVER_RESTRICTION_BLOCK_MESSAGE } from "@routeflow/types";
 import { classifyAtStopResolveError } from "../lib/at-stop-cr-outcome";
 
 /**
@@ -11,6 +12,8 @@ import { classifyAtStopResolveError } from "../lib/at-stop-cr-outcome";
 describe("classifyAtStopResolveError", () => {
   it("REG-B790: offline — no decline, no server error to key on", () => {
     expect(classifyAtStopResolveError({ isOfflineQueued: true })).toEqual({ action: "offline" });
+    // B923: the create step is online-only now; its refusal is an offline outcome, not a decline.
+    expect(classifyAtStopResolveError({ isOnlineRequired: true })).toEqual({ action: "offline" });
   });
 
   it("REG-B790: REGULATED_AUTH_REQUIRED — the deferred (not immediate) branch, blocked categories carried through", () => {
@@ -22,6 +25,19 @@ describe("classifyAtStopResolveError", () => {
       },
     };
     expect(classifyAtStopResolveError(e)).toEqual({ action: "regulated", blocked });
+  });
+
+  it("CQ-06: a license refusal with no categories declines with the shared sentence, not server text", () => {
+    const e = {
+      response: {
+        status: 409,
+        data: { code: "REGULATED_AUTH_REQUIRED", message: "Conflict Exception" },
+      },
+    };
+    const out = classifyAtStopResolveError(e);
+    expect(out.action).toBe("decline");
+    expect((out as { reason: string }).reason).toContain("Licenses tab");
+    expect((out as { reason: string }).reason).not.toContain("Conflict Exception");
   });
 
   it("REG-B790: CHANGE_REQUEST_ALREADY_RESOLVED — the ONE case with no decline", () => {
@@ -132,6 +148,82 @@ describe("classifyAtStopResolveError", () => {
     expect(classifyAtStopResolveError(new Error("network exploded"))).toEqual({
       action: "decline",
       reason: "network exploded",
+    });
+  });
+
+  /**
+   * Row 510: a DRIVER may not override a selling restriction ("Ask the office to approve this sale"), and the office
+   * can only approve a request that is still PENDING. So this is the REGULATED case's sibling (the second deliberate
+   * exception to B790's decline): the caller leaves the CR PENDING, never declines it.
+   */
+  describe("row 510: a driver's restricted change request stays PENDING for the office", () => {
+    const driverBlock = {
+      response: {
+        status: 409,
+        data: {
+          code: "SELLING_RESTRICTED",
+          message: DRIVER_RESTRICTION_BLOCK_MESSAGE,
+          blockedLines: [
+            {
+              productId: "p1",
+              productName: "Acme Gummies",
+              ruleId: "r1",
+              reason: "STATE_BAN",
+              state: "CA",
+              message: "m",
+            },
+          ],
+          lines: [
+            {
+              lineKey: "cr:cr-1",
+              productId: "p1",
+              displayName: "Acme Gummies",
+              outcome: "BLOCK",
+              rules: [
+                {
+                  id: "r1",
+                  states: ["CA"],
+                  legal: true,
+                  reasonText: "This product is banned in CA by law.",
+                },
+              ],
+            },
+          ],
+        },
+      },
+    };
+
+    it("the driver's hard block classifies as `restricted`, never `decline`", () => {
+      expect(classifyAtStopResolveError(driverBlock)).toEqual({ action: "restricted" });
+    });
+
+    it("an ordinary SELLING_RESTRICTED (not the driver's fixed message) keeps the safe decline default", () => {
+      const e = {
+        response: { status: 409, data: { code: "SELLING_RESTRICTED", message: "Sold out here." } },
+      };
+      expect(classifyAtStopResolveError(e)).toEqual({
+        action: "decline",
+        reason: "Sold out here.",
+      });
+    });
+
+    it("a 400 or a different code carrying the driver's sentence is not the block", () => {
+      expect(
+        classifyAtStopResolveError({
+          response: {
+            status: 400,
+            data: { code: "SELLING_RESTRICTED", message: DRIVER_RESTRICTION_BLOCK_MESSAGE },
+          },
+        }).action,
+      ).toBe("decline");
+      expect(
+        classifyAtStopResolveError({
+          response: {
+            status: 409,
+            data: { code: "SOME_OTHER_CODE", message: DRIVER_RESTRICTION_BLOCK_MESSAGE },
+          },
+        }).action,
+      ).toBe("decline");
     });
   });
 });

@@ -2,6 +2,8 @@
 // from apps/api/.env / DATABASE_URL (#2206: the old top-of-file call checked a URL this script
 // never used when apps/api/.env set one).
 const { productionGuard } = require("./lib/production-guard");
+const { loadProtectedSlugs } = require("./lib/protected-slugs.cjs");
+const { assertNoLiveProtectedTenants } = require("./lib/live-target-guard.cjs");
 
 /**
  * Fresh data population script.
@@ -73,6 +75,9 @@ function loadEnvDatabaseUrl() {
 }
 
 // #2206: guard the URL this script actually dials, and dial exactly what was checked.
+// Row 195: productionGuard trusts a host allow-list a tunnel can fake, so this wipe ALSO refuses a database
+// that holds a protected non-test tenant (paying, Stripe-linked or PROTECTED_TENANT_SLUGS).
+const protectedSlugs = loadProtectedSlugs(process.env, loadEnvDatabaseUrl());
 const target = productionGuard({
   requireFlag: "--i-know-this-deletes-everything",
   dbUrl: loadEnvDatabaseUrl(),
@@ -1215,6 +1220,7 @@ async function createReturnsAndTemplates(orders, products) {
 // ─── Main ────────────────────────────────────────────────────────────────────
 
 async function main() {
+  await assertNoLiveProtectedTenants(prisma, protectedSlugs);
   console.log("🚀 RouteFlow Fresh Data Script");
   console.log("================================");
   console.log(`   Tenant: ${TENANT_SLUG}`);

@@ -25,8 +25,14 @@ export function shellUserAgentToken(appVersion: string): string {
   return `${SHELL_UA_PRODUCT}/${v}`;
 }
 
+/**
+ * The UA test as a RegExp SOURCE string, so the web's pre-paint head script (a plain inline
+ * script, no imports) is built from the SAME pattern isShellUserAgent uses — one source.
+ */
+export const SHELL_UA_PATTERN = String.raw`(^|\s)RouteFlowShell\/[0-9A-Za-z.+-]+(\s|$)`;
+
 export function isShellUserAgent(userAgent: string | null | undefined): boolean {
-  return !!userAgent && /(^|\s)RouteFlowShell\/[0-9A-Za-z.+-]+(\s|$)/.test(userAgent);
+  return !!userAgent && new RegExp(SHELL_UA_PATTERN).test(userAgent);
 }
 /** A raw message larger than this is dropped before JSON.parse. */
 export const SHELL_BRIDGE_MAX_BYTES = 4096;

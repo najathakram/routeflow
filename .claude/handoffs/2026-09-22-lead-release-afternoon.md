@@ -180,8 +180,9 @@ missing id; required outcome = stock delta from LIVE qty; lost update on qty NOT
 owner's session on claude/wizardly-thompson-a7362f. NOT tonight: inline-return park guard
 (**SA-067** = morning spec: SA-058 content rule for detection, false-positive guards, unreverse
 deletes that return's parked rows). Reviewers: (1)(2) Mac Lead + S-scan; (3) S-order + Mac Lead
-+ SA diff read; (4) U-units tier 2. Coordinator opens window 4 on the first fully gated PR;
-watchdog never extended; window 5 if needed. Owner's smoke run at the FINAL sha, then declare.
+
+- SA diff read; (4) U-units tier 2. Coordinator opens window 4 on the first fully gated PR;
+  watchdog never extended; window 5 if needed. Owner's smoke run at the FINAL sha, then declare.
 
 ## Owner decision 15:55Z (superseded by the above)
 
@@ -448,10 +449,12 @@ sha-resolution, freeze-by-deletion, `date -u` not estimates, guards paired with 
 **Master 3e707af8. Repo PRIVATE (read back, not assumed). Deploy SUCCESS 21:48:40Z; post-deploy-check green, health commit = 3e707af8. A live probe of the exact defect shape on a test tenant was authorised and is the last thing running.**
 
 ### Merged + deployed tonight
+
 - **#1249** verify worker/concurrency caps → 949eb154. Ceiling = VERIFY_CONCURRENCY × JEST_MAX_WORKERS.
 - **#1253 B717** the live billing defect → 3e707af8. Deployed and confirmed.
 
 ### Ready in the morning window, in this order
+
 1. **#1250 inline-returns capture @ 6cec01e9** — GATE FULLY SATISFIED: Verify success 21:35:06→21:42:42Z (7m36s), S-scan PASS at that sha with tree identity proven, 15 captures (5 states × 1440/768/390) on the **mini**, paths in the PR comment. Outstanding: SA contract read + R-ui cold read, **additions not gate items**.
 2. **#1252 order-edit unit line @ 8b34fea2** — Verify success 21:37:47→21:44:56Z (7m09s). Needs U-units' PASS (not started) + captures on 3013.
 3. **B681 park guard** — SA-080 PASS with its one condition now met (the "no readable line parks" case added); lane pushing + opening the PR. **Its merge sha is what the routine's apply gate keys on (SA-070c).**
@@ -461,11 +464,13 @@ sha-resolution, freeze-by-deletion, `date -u` not estimates, guards paired with 
 7. **feat/multiline-item-notes** (notes lane) — cites **B724**; third in the PC queue.
 
 ### Corrections I issued tonight that must not be re-litigated
+
 - **No second overcharge in invoice create.** A measured 660 was the CORRECT price: on a product with no pack a unit price is per piece. The incoherence was in the request. No id, exposure stays closed. The truthy `product?.unitsPerBox` at pack 1 is **B664**, already filed medium.
 - **Exposure for B717 = confirmed ZERO** across all three null paths (46 lines edited in window, 9 boxed, 0 with the signature).
 - `computeLineSubtotalStrict` **is** called — three sites in `build-line.ts`.
 
 ### Standing rules earned tonight
+
 Gate on a **run id** of plausible duration, never the aggregate; a ~2 s Verify is the billing artifact. Grep for the **specific** trailer, never non-empty output. A merge moves HEAD off the trailer; the empty-commit remedy is **free** (hook prints "clean tree, unchanged content"). Headroom is available memory read now, never installed total. End-of-run comes from **exit status**, never a process count. An observed value with an assumed meaning is still an assumption.
 
 **Lead log: 43 entries.**
@@ -547,17 +552,19 @@ outstanding.**
 **Master 3e707af8 · repo PRIVATE (read back) · B717 fixed AND confirmed in production by live probe.**
 
 ### Morning window, in this order
-| PR | sha | state |
-|---|---|---|
-| **#1257** SA-078(b) reconcile pack | `45f306c6` | SA-078e PASS (1 of 2), body conditions met. **LIFTS THE PILOT HOLD — on DEPLOY, not on merge.** |
-| **#1255** B681 park guard | `e2aba544` | **BOTH PASSes green.** Its MERGE sha is the routine's apply anchor (SA-070c). |
-| **#1250** inline-returns capture | `6cec01e9` | Gate fully satisfied + 15 captures verified. Owed: SA contract read, R-ui cold read (additions). |
-| **#1252** order-edit unit line | `8b34fea2` | Green + 3 captures verified. Owed: U-units PASS (not started). |
-| **#1256** SA-077(2) refusal | `537772d3` | SA-077g PASS (1 of 2). **Name the 2nd reviewer.** |
-| **#1248** vendor bills | `66e8ee66` | owes captures |
-| notes lane | local | third in PC queue, cites B724 |
+
+| PR                                 | sha        | state                                                                                            |
+| ---------------------------------- | ---------- | ------------------------------------------------------------------------------------------------ |
+| **#1257** SA-078(b) reconcile pack | `45f306c6` | SA-078e PASS (1 of 2), body conditions met. **LIFTS THE PILOT HOLD — on DEPLOY, not on merge.**  |
+| **#1255** B681 park guard          | `e2aba544` | **BOTH PASSes green.** Its MERGE sha is the routine's apply anchor (SA-070c).                    |
+| **#1250** inline-returns capture   | `6cec01e9` | Gate fully satisfied + 15 captures verified. Owed: SA contract read, R-ui cold read (additions). |
+| **#1252** order-edit unit line     | `8b34fea2` | Green + 3 captures verified. Owed: U-units PASS (not started).                                   |
+| **#1256** SA-077(2) refusal        | `537772d3` | SA-077g PASS (1 of 2). **Name the 2nd reviewer.**                                                |
+| **#1248** vendor bills             | `66e8ee66` | owes captures                                                                                    |
+| notes lane                         | local      | third in PC queue, cites B724                                                                    |
 
 ### Facts that must not be re-litigated
+
 - **No second overcharge in invoice create.** The measured 660 was CORRECT: no pack ⇒ price is per piece. Incoherence was in the request. No id; exposure stays closed. Truthy `product?.unitsPerBox` at pack 1 = **B664**, already medium.
 - **B717 exposure = confirmed ZERO** (46 edited, 9 boxed, 0 with the signature) and confirmed fixed in prod by probe: 4.58 not 55.00, snapshot 12 not null.
 - **#1257 stops the corruption, it does NOT repair it.** A prior item already rewritten at the live pack by a pre-fix reconcile is carried forward as-is — that is B681's "reconciled after a repack" bucket (SA-078d), the routine's job.
@@ -565,6 +572,7 @@ outstanding.**
 - **`invoices.service.ts` is at 6414/6414, zero headroom.** Next change into it extracts first (SA-065).
 
 ### Rules earned tonight (all in the lead log, 46 entries)
+
 Gate on a **run id** of plausible duration, never the aggregate; ~2 s Verify = billing artifact. Grep the **specific** trailer, never non-empty output. A merge moves HEAD off the trailer; the empty-commit remedy is **free** (hook prints "clean tree, unchanged content"). Headroom = available memory now, never installed total. End-of-run = **exit status**, never a process count. **An observed value with an assumed meaning is still an assumption.** Pin where a guard does **not** fire. **A transcript is not an artifact** — UI proof is written to a file by a script. Suspect the capture as well as the product. Review what a change **gives up**, not only what it does.
 
 ## 22:25Z — merge ORDER ruling, and #1257's conditions closed
@@ -588,15 +596,16 @@ without its spirit". Next change into that file extracts first.
 
 ## 23:30Z — BOTH of the owner's urgent gaps are on master
 
-| merged | sha | what |
-|---|---|---|
-| #1250 | 4d4a7bfe | inline-returns capture (web): over-return → real credit note |
-| #1255 | **3ff8b142** | B681 park guard — **this sha is the routine's apply-gate anchor (SA-070c)** |
-| #1252 | 34668f7d | order-edit unit line: unit type + price, with the B465 intra-branch fix |
+| merged | sha          | what                                                                        |
+| ------ | ------------ | --------------------------------------------------------------------------- |
+| #1250  | 4d4a7bfe     | inline-returns capture (web): over-return → real credit note                |
+| #1255  | **3ff8b142** | B681 park guard — **this sha is the routine's apply-gate anchor (SA-070c)** |
+| #1252  | 34668f7d     | order-edit unit line: unit type + price, with the B465 intra-branch fix     |
 
 Earlier tonight: #1249 worker cap (949eb154), #1253 B717 billing fix (3e707af8, deployed + probed).
 
 ### Still open
+
 - **#1257** reconcile pack — HELD on a confirmed gap: `rebuildIssuedDepositMirrorOnDelivery` is a 4th caller of the `rebuildSiblingDrafts` core and never selects `items`, so the carried pack is always empty and the headline defect survives for prepaid deposit-mirror orders. SA withdrew its PASS (posted, comment 5785883386). Fix = same select + a test driving that caller + fresh PASSes from both at the new sha. **This is what lifts the pilot hold, on DEPLOY.**
 - **#1256** unpackable-split refusal — PASS at `bdcc8194` conditional on rewriting `pricing.ts:217`'s over-broad comment; extraction bought the service back to 6401 under the 6414 cap.
 - **Extraction → `packages/returns`** — HALTED at classification: web's copy is 249 lines/35 tests, mobile's is **253 lines/25 tests**. Already drifted. Lane must classify every difference as platform-necessary / accidental / real behaviour change and send the three buckets before moving anything. Web is source of truth.
@@ -605,6 +614,7 @@ Earlier tonight: #1249 worker cap (949eb154), #1253 B717 billing fix (3e707af8, 
 - **multiline notes** — running on the PC.
 
 ### Owner questions logged
+
 `local-assets/handoff/2026-09-22/OWNER-QUESTIONS-PENDING.md` — five, each with a recommended answer.
 
 ## 23:40Z — B681 apply gate is ANCHORED
@@ -617,24 +627,25 @@ the served commit must be at or after **`3ff8b142`** on master. So the routine's
 **`3ff8b142`**, and the live run is unblocked on the guard side.
 
 **What still blocks the B681 live run**, in order:
+
 1. **#1246 routine revision** — HOLD on its own SA-076/076a fixes (live-sha gate that cannot refuse; dist/src
    stamp; per-row evidence hash; replay refusal; statement timeout). Lane F owns it, AFTER #1257.
 2. **Owner runs the sizing query** — never run. `railway run --service postgres node
-   local-assets/handoff/2026-09-22/run-b681-sizing.mjs`. Nothing downstream can be planned without the count.
+local-assets/handoff/2026-09-22/run-b681-sizing.mjs`. Nothing downstream can be planned without the count.
 3. Owner reads the dry run, then authorises the live run with a fresh backup.
 
 #1252 landed after the guard at `34668f7d`.
 
 ## 23:45Z — four of five merged; #1257 is the last of the set
 
-| merged tonight | sha |
-|---|---|
-| #1249 verify worker/concurrency cap | 949eb154 |
-| #1253 B717 billing fix (deployed + probed in prod) | 3e707af8 |
-| #1250 inline-returns capture, web | 4d4a7bfe |
-| #1255 B681 park guard — **apply-gate anchor** | **3ff8b142** (deployed 23:27:42Z) |
-| #1252 order-edit unit line | 34668f7d |
-| #1256 unpackable-split refusal | c222f972 |
+| merged tonight                                     | sha                               |
+| -------------------------------------------------- | --------------------------------- |
+| #1249 verify worker/concurrency cap                | 949eb154                          |
+| #1253 B717 billing fix (deployed + probed in prod) | 3e707af8                          |
+| #1250 inline-returns capture, web                  | 4d4a7bfe                          |
+| #1255 B681 park guard — **apply-gate anchor**      | **3ff8b142** (deployed 23:27:42Z) |
+| #1252 order-edit unit line                         | 34668f7d                          |
+| #1256 unpackable-split refusal                     | c222f972                          |
 
 **#1257 is the only one left from the set.** Its fourth-caller fix is committed (1700ebdeb + trailer 3bac4448c),
 push in flight. The old test asserted on the MOCK'S RETURN VALUE, so it stayed green when the query stopped
@@ -645,6 +656,7 @@ the select. Both reviewers read fresh at the new sha, nothing carries from 45f30
 gone and Lane F can restore the doc paragraph it trimmed to fit, after merging master (c222f972).
 
 ### Not yet on origin
+
 - **Mobile unit picker** — nothing pushed. `feat/u-unit-picker-5a` is OLD WEB work, not this. Chasing.
 - **`feat/extract-returns-logic-package`** — committed (fb92eaa7 pure move + 873842c5 seam doc/test union,
   36 tests counted), waiting on a build slot. The seam note lives in `packages/returns/src/index.ts` so the
@@ -652,6 +664,7 @@ gone and Lane F can restore the doc paragraph it trimmed to fit, after merging m
 - **`test/B467-inline-returns-db-specs`** — on origin with NO PR. Needs one or needs deleting.
 
 ### Newly filed
+
 B730 mobile unit-picker gap · B731 inline-returns has no client · B732 janitor merged-detection (both
 directions + the target-gated no-op) · B733 size-ratchet headroom exhausted · B734 move key minting out of
 `packages/returns`.
@@ -663,15 +676,16 @@ directions + the target-gated no-op) · B733 size-ratchet headroom exhausted · 
 #1256 unpackable-split refusal.
 
 **In flight**
-| item | where | state |
-|---|---|---|
-| #1257 reconcile pack | PC, Lane F | head 3bac4448c; merging master + restoring the trimmed doc paragraph before reviewers start. Both read fresh, nothing carries from 45f306c6. **Lifts the pilot hold on DEPLOY.** |
-| #1261 multiline notes | PC | PASS posted at 16c56405a; captures running. |
-| #1262 returns extraction | mini | open @ 9dc3cb66, 12 files. Move proof re-verified 3× incl. **post-commit-prettier**. U-units reviewing. |
-| mobile unit picker | mini | 5 commits, captures done, pushing. Reviewer = U-units after #1262. |
-| mobile inline-returns mirror | mini | logic layer done; drops its duplicate once #1262 lands. |
-| #1246 routine revision | PC, Lane F | after #1257. `--guard-sha 3ff8b142`. |
-| docs stack #1247→#1251→#1254→#1258→#1259→#1260 | PC, coordinator | landing bottom-up; verify each retarget, gate each, yield to #1257. |
+
+| item                                           | where           | state                                                                                                                                                                            |
+| ---------------------------------------------- | --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| #1257 reconcile pack                           | PC, Lane F      | head 3bac4448c; merging master + restoring the trimmed doc paragraph before reviewers start. Both read fresh, nothing carries from 45f306c6. **Lifts the pilot hold on DEPLOY.** |
+| #1261 multiline notes                          | PC              | PASS posted at 16c56405a; captures running.                                                                                                                                      |
+| #1262 returns extraction                       | mini            | open @ 9dc3cb66, 12 files. Move proof re-verified 3× incl. **post-commit-prettier**. U-units reviewing.                                                                          |
+| mobile unit picker                             | mini            | 5 commits, captures done, pushing. Reviewer = U-units after #1262.                                                                                                               |
+| mobile inline-returns mirror                   | mini            | logic layer done; drops its duplicate once #1262 lands.                                                                                                                          |
+| #1246 routine revision                         | PC, Lane F      | after #1257. `--guard-sha 3ff8b142`.                                                                                                                                             |
+| docs stack #1247→#1251→#1254→#1258→#1259→#1260 | PC, coordinator | landing bottom-up; verify each retarget, gate each, yield to #1257.                                                                                                              |
 
 **B735 bounded by sweep:** ONE live surface (capture screen shows unconditional success on a silent park),
 ONE latent (the driver-cap `approve` endpoint — no client calls it today; whoever builds that screen must

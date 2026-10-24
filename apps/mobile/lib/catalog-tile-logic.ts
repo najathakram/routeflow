@@ -21,15 +21,32 @@ import type { CartItem } from "../store/cartStore";
 
 export type TileCta = "stepper" | "notify" | "add";
 
-/** In-cart → stepper (even if now OOS); OOS → notify; else → add. */
+/**
+ * In-cart → stepper (even if now OOS); OOS → notify, UNLESS the server says this buyer may order it
+ * anyway (`canBackorder`, OOS PR2: the seller's setting, resolved server-side) → add; else → add.
+ */
 // Partial: a missing stockStatus reads as IN_STOCK (cart/cached rows), though the catalog always sends it.
+// A missing canBackorder reads as "cannot" (fail closed, as before).
 export function tileCta(
-  product: Partial<Pick<BuyerProduct, "stockStatus">>,
+  product: Partial<Pick<BuyerProduct, "stockStatus" | "canBackorder">>,
   inCartUnits: number,
 ): TileCta {
   if (inCartUnits > 0) return "stepper";
-  if ((product.stockStatus ?? "IN_STOCK") === "OUT_OF_STOCK") return "notify";
+  if ((product.stockStatus ?? "IN_STOCK") === "OUT_OF_STOCK" && product.canBackorder !== true) {
+    return "notify";
+  }
   return "add";
+}
+
+/** The note under an out-of-stock item this buyer may order anyway (the web tile's exact words). */
+export const SHIPS_WHEN_RESTOCKED = "Ships when restocked";
+
+export function backorderNote(
+  product: Partial<Pick<BuyerProduct, "stockStatus" | "canBackorder">>,
+): string | null {
+  return (product.stockStatus ?? "IN_STOCK") === "OUT_OF_STOCK" && product.canBackorder === true
+    ? SHIPS_WHEN_RESTOCKED
+    : null;
 }
 
 export function alertIdSet(alerts: BuyerStockAlerts | undefined): Set<string> {

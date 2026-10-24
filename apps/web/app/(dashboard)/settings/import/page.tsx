@@ -2,6 +2,8 @@
 
 import React from "react";
 import { usePageTitle } from "@/lib/page-title-context";
+import { useAuth } from "@/lib/auth-context";
+import { isAccountAdmin } from "@/lib/auth";
 import { apiClient } from "@/lib/api-client";
 import { useToast } from "@routeflow/ui/web";
 import {
@@ -35,6 +37,7 @@ import {
 } from "@/lib/api/import-resolution";
 import { ImportCsvPanel } from "@/components/import/ImportCsvPanel";
 import { PRODUCT_IMPORT_COLUMNS, CUSTOMER_IMPORT_COLUMNS } from "@routeflow/types";
+import { validateDocumentPrefix } from "@/lib/document-prefix";
 
 interface ImportResult {
   imported?: number;
@@ -460,6 +463,7 @@ function NumberingRow({
   serverPreview,
   dirty,
   saving,
+  prefixError,
   onChange,
   onSave,
 }: {
@@ -468,6 +472,8 @@ function NumberingRow({
   serverPreview: string;
   dirty: boolean;
   saving: boolean;
+  /** B1188: the shared prefix rule's message for an edited prefix, else null. */
+  prefixError: string | null;
   onChange: (patch: Partial<NumberingDraft>) => void;
   onSave: () => void;
 }) {
@@ -482,6 +488,7 @@ function NumberingRow({
         value={draft.prefix}
         onChange={(e) => onChange({ prefix: e.target.value })}
         placeholder="Prefix"
+        aria-invalid={prefixError ? true : undefined}
         className="rounded-lg border border-surface-border px-2.5 py-1.5 text-sm font-mono text-navy focus:border-brand-400 focus:outline-none"
       />
       <input
@@ -513,11 +520,16 @@ function NumberingRow({
       </span>
       <button
         onClick={onSave}
-        disabled={!dirty || saving}
+        disabled={!dirty || saving || !!prefixError}
         className="rounded-lg bg-brand-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-40 transition-colors"
       >
         {saving ? "Saving…" : "Save"}
       </button>
+      {prefixError ? (
+        <p role="alert" className="col-span-full text-xs text-danger">
+          {prefixError}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -561,6 +573,13 @@ function NumberingCard() {
     if (nextNumberChanged && (!Number.isFinite(draft.nextNumber) || draft.nextNumber < 1)) {
       toast({ title: "Enter a next number of 1 or more", variant: "error" });
       return;
+    }
+    if (draft.prefix !== loaded.prefix) {
+      const invalid = validateDocumentPrefix(draft.prefix);
+      if (invalid) {
+        toast({ title: invalid, variant: "error" });
+        return;
+      }
     }
     const data: UpdateNumberingInput = { expectedNextNumber: loaded.nextNumber };
     if (draft.prefix !== loaded.prefix) data.prefix = draft.prefix;
@@ -657,6 +676,9 @@ function NumberingCard() {
                 serverPreview={s.preview}
                 dirty={dirty}
                 saving={savingType === s.docType}
+                prefixError={
+                  draft.prefix !== loaded.prefix ? validateDocumentPrefix(draft.prefix) : null
+                }
                 onChange={(patch) =>
                   setDrafts((prev) => ({
                     ...prev,
@@ -774,7 +796,7 @@ function FinishSetupCard() {
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-export default function SettingsImportPage() {
+function SettingsImportBody() {
   const { setTitle } = usePageTitle();
   React.useEffect(() => {
     setTitle("Import Data");
@@ -832,4 +854,23 @@ export default function SettingsImportPage() {
       </div>
     </div>
   );
+}
+
+/** The whole /import controller is admin-only on the api: anyone else gets the title and one line, and no requests. */
+export default function SettingsImportPage() {
+  const { user } = useAuth();
+  const { setTitle } = usePageTitle();
+  const allowed = isAccountAdmin(user);
+  React.useEffect(() => {
+    if (!allowed) setTitle("Import Data");
+  }, [allowed, setTitle]);
+  if (!allowed) {
+    return (
+      <div className="space-y-2 p-6">
+        <h2 className="text-xl font-semibold text-navy">Import Data</h2>
+        <p className="text-sm text-navy/50">Only an admin can import data.</p>
+      </div>
+    );
+  }
+  return <SettingsImportBody />;
 }

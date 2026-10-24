@@ -9,6 +9,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { scrubbedGitEnv } from '../../../../scripts/lib/check-git-hooks.mjs';
 
 const DEFAULT_CAP = 8192;
 const DEFAULT_CONTEXT = 20;
@@ -40,7 +41,7 @@ export function findEnclosingSymbol(lines, idx) {
 function git(args, cwd, opts) {
   const o = opts || {};
   try {
-    return execFileSync('git', args, { cwd, encoding: 'utf8', maxBuffer: 1024 * 1024 * 64 });
+    return execFileSync('git', args, { cwd, encoding: 'utf8', maxBuffer: 1024 * 1024 * 64, env: scrubbedGitEnv() });
   } catch (e) {
     if (o.allowExit1 && e.status === 1) return e.stdout || '';
     throw new ContentError('git ' + args.join(' ') + ' failed: ' + (e.stderr || e.message || String(e)));
@@ -208,7 +209,7 @@ export function runSelftest() {
   const state = { failed: false, failures: [] };
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'fix-brief-selftest-'));
   try {
-    execFileSync('git', ['init'], { cwd: tmp, encoding: 'utf8' });
+    execFileSync('git', ['init'], { cwd: tmp, encoding: 'utf8', env: scrubbedGitEnv() });
     const srcLines = [];
     for (let i = 1; i <= 10; i++) srcLines.push('// pad line ' + i);
     srcLines.push('function target(x) {');
@@ -218,8 +219,8 @@ export function runSelftest() {
     fs.mkdirSync(path.join(tmp, 'src'), { recursive: true });
     fs.writeFileSync(path.join(tmp, 'src', 'a.ts'), srcLines.join('\n') + '\n');
     fs.writeFileSync(path.join(tmp, 'src', 'b.ts'), 'import { target } from "./a";\nexport function caller() { return target(1); }\n');
-    execFileSync('git', ['add', '-A'], { cwd: tmp, encoding: 'utf8' });
-    execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-m', 'init'], { cwd: tmp, encoding: 'utf8' });
+    execFileSync('git', ['add', '-A'], { cwd: tmp, encoding: 'utf8', env: scrubbedGitEnv() });
+    execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-m', 'init'], { cwd: tmp, encoding: 'utf8', env: scrubbedGitEnv() });
 
     const bugLineNum = 11; // 1-based: 10 pad lines then "function target(x) {"
     const longDetail = 'x'.repeat(1300);

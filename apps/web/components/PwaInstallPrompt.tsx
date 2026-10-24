@@ -4,6 +4,7 @@ import * as React from "react";
 import { Download, X } from "lucide-react";
 import { cn } from "@routeflow/ui/web";
 import { BRAND_MARK_SRC } from "./brand";
+import { isInShell } from "@/lib/in-shell";
 
 interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>;
@@ -70,12 +71,13 @@ export function PwaInstallPrompt({
     setDeferredPrompt(null);
   };
 
-  if (installed || dismissed) return null;
+  // #2653 sim proof F3: inside the app shell the user already has the app — never offer install.
+  if (installed || dismissed || isInShell()) return null;
 
   // Chrome/Android install banner
   if (deferredPrompt) {
     return (
-      <div className="fixed bottom-4 left-1/2 z-50 -translate-x-1/2 w-[calc(100%-2rem)] max-w-sm">
+      <div className="fixed bottom-4 left-1/2 z-50 -translate-x-1/2 w-[calc(100%-2rem)] max-w-sm [body[data-edit-bar]_&]:hidden">
         <div className="flex items-center gap-3 rounded-xl border border-surface-border bg-white px-4 py-3 shadow-modal">
           <img src={logoSrc} alt="" className="h-9 w-9 shrink-0 rounded-lg" />
           <div className="flex-1 min-w-0">
@@ -106,7 +108,7 @@ export function PwaInstallPrompt({
   // iOS tip
   if (isIos) {
     return (
-      <div className="fixed bottom-4 left-1/2 z-50 -translate-x-1/2 w-[calc(100%-2rem)] max-w-sm">
+      <div className="fixed bottom-4 left-1/2 z-50 -translate-x-1/2 w-[calc(100%-2rem)] max-w-sm [body[data-edit-bar]_&]:hidden">
         <div className="flex items-start gap-3 rounded-xl border border-surface-border bg-white px-4 py-3 shadow-modal">
           <img src={logoSrc} alt="" className="h-9 w-9 shrink-0 rounded-lg" />
           <div className="flex-1 min-w-0">

@@ -4,6 +4,13 @@
  * re-exports everything here.
  */
 
+/**
+ * CQ-06: the ONE sentence for a license refusal (expired / none on file + the next step), shared with web through
+ * `@routeflow/types` so the strings cannot drift. A fallback that has no guard modal to open uses it instead of a raw
+ * server message. SUBPATH import: jest stubs the types package ROOT and resolves this subpath to source (jest.config.js).
+ */
+export { regulatedAuthCopy, regulatedAuthErrorCopy } from "@routeflow/types/regulated-auth-copy";
+
 export type AuthorizationStatus = "NONE" | "PENDING_REVIEW" | "VERIFIED" | "EXPIRED" | "REJECTED";
 
 /** One category blocking a regulated sale, from the 409 REGULATED_AUTH_REQUIRED body. */

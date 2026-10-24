@@ -9,7 +9,7 @@ import type { RouteOptimizeMetric } from "@/lib/api/routes";
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export type RoutePlanningOriginKind = "TENANT" | "DRIVER" | "ADDRESS";
-export type TripEndType = "NONE" | "RETURN_TO_START" | "DRIVER_HOME" | "ADDRESS";
+type TripEndType = "NONE" | "RETURN_TO_START" | "DRIVER_HOME" | "ADDRESS";
 
 export interface RoutePlanningAddress {
   line1: string;

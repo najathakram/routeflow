@@ -22,7 +22,7 @@
  */
 
 import { Test, TestingModule } from "@nestjs/testing";
-import { BadRequestException } from "@nestjs/common";
+import { BadRequestException, ConflictException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { ReturnsService } from "./returns.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -56,16 +56,45 @@ function invoicesAsSelected(args: any, rows: Record<string, any>[]): Record<stri
   });
 }
 
+/**
+ * SA-740r2: a recorded (EXTERNAL_REFUND) refund runs in a locked transaction that reads the order's creditable invoices for
+ * "paid in full" (inside the tx, by the resolver's `orderId` query and the state reader's `id in` query). This mocks both:
+ * the given invoices, with `payments` for the state read. `status` of the return row is what the in-tx re-read sees.
+ */
+function mockExternalRefundSources(
+  prisma: any,
+  invoices: Array<{ id: string; status: string; total: number; payments: any[] }>,
+  returnStatus = "RECEIVED",
+) {
+  prisma.return.findFirst.mockResolvedValue({ id: "ret", status: returnStatus });
+  prisma.invoice.findMany.mockImplementation(async ({ where }: any) => {
+    if (where?.id?.in) return invoices.filter((i) => where.id.in.includes(i.id));
+    const notIn: string[] = where?.status?.notIn ?? [];
+    return invoices.filter((i) => !notIn.includes(i.status)).map((i) => ({ id: i.id }));
+  });
+}
+const PAID = (total: number) => [{ amount: total, status: "PAID", method: "CASH" }];
+
 describe("ReturnsService.processRefund → dispute creates a store credit (P5-13 WP5)", () => {
   let service: ReturnsService;
   let prisma: ReturnType<typeof createMockPrisma>;
   let creditNotesCreate: jest.Mock;
-  let ledger: { reverseReturnEntries: jest.Mock; unreverseReturnEntries: jest.Mock };
+  let ledger: {
+    reverseReturnEntries: jest.Mock;
+    unreverseReturnEntries: jest.Mock;
+    settleRegulatedLedger: jest.Mock;
+  };
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    // SA-737: the claim re-reads the Return's status under its row lock
+    prisma.return.findFirst.mockResolvedValue({ id: "ret", status: "RECEIVED", kind: "STANDARD" });
     creditNotesCreate = jest.fn();
-    ledger = { reverseReturnEntries: jest.fn(), unreverseReturnEntries: jest.fn() };
+    ledger = {
+      reverseReturnEntries: jest.fn(),
+      unreverseReturnEntries: jest.fn(),
+      settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
+    };
 
     const mod: TestingModule = await Test.createTestingModule({
       providers: [
@@ -129,7 +158,7 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
     // persists the resolution snapshot in the same write, so a concurrent double-refund
     // can't mint two credits or record two resolutions; update() is only the linkage.
     expect(prisma.return.updateMany).toHaveBeenCalledWith({
-      where: { id: "ret-1", status: "RECEIVED" },
+      where: { id: "ret-1", status: "RECEIVED", refundedAt: null, creditNoteId: null },
       data: {
         status: "REFUNDED",
         refundMethod: "CREDIT_NOTE",
@@ -231,44 +260,33 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
     expect(result.creditNoteId).toBe("cn-12");
   });
 
-  it("skips credit creation for a $0 refund (no matching items) but still flips REFUNDED", async () => {
-    prisma.return.findUnique
-      .mockResolvedValueOnce({
-        id: "ret-3",
-        returnNumber: "RET-2026-003",
-        status: "RECEIVED",
-        customerId: "cust-1",
-        items: [{ productId: "p-not-on-order", qty: 3 }],
-        order: {
-          orderNumber: "ORD-003",
-          invoices: [
-            {
-              id: "inv-1",
-              status: "SENT",
-              total: 100,
-              items: [{ productId: "p1", qty: 10, subtotal: 100 }],
-            },
-          ],
-          lineItems: [{ productId: "p1", qty: 10, unitPrice: 15, subtotal: 100 }],
-        },
-      })
-      .mockResolvedValueOnce({ id: "ret-3", status: "REFUNDED" }); // refetch after the claim
-    prisma.return.updateMany.mockResolvedValue({ count: 1 });
-
-    const result = await service.processRefund("ret-3");
-
-    expect(creditNotesCreate).not.toHaveBeenCalled();
-    expect(prisma.return.updateMany).toHaveBeenCalledWith({
-      where: { id: "ret-3", status: "RECEIVED" },
-      data: {
-        status: "REFUNDED",
-        refundMethod: "CREDIT_NOTE",
-        refundAmount: 0,
-        refundedAt: expect.any(Date),
+  it("B959: a return of a product that NO creditable invoice billed is REFUSED 400 RETURN_NOTHING_BILLED before the claim (it used to price $0 and flip REFUNDED with no credit note)", async () => {
+    prisma.return.findUnique.mockResolvedValueOnce({
+      id: "ret-3",
+      returnNumber: "RET-2026-003",
+      status: "RECEIVED",
+      customerId: "cust-1",
+      items: [{ productId: "p-not-on-order", qty: 3 }],
+      order: {
+        orderNumber: "ORD-003",
+        invoices: [
+          {
+            id: "inv-1",
+            status: "SENT",
+            total: 100,
+            items: [{ productId: "p1", qty: 10, subtotal: 100 }],
+          },
+        ],
+        lineItems: [{ productId: "p1", qty: 10, unitPrice: 15, subtotal: 100 }],
       },
     });
-    expect(prisma.return.update).not.toHaveBeenCalled();
-    expect(result).toEqual({ id: "ret-3", status: "REFUNDED" });
+
+    await expect(service.processRefund("ret-3")).rejects.toMatchObject({
+      response: { code: "RETURN_NOTHING_BILLED" },
+    });
+
+    expect(creditNotesCreate).not.toHaveBeenCalled();
+    expect(prisma.return.updateMany).not.toHaveBeenCalled(); // never claimed
   });
 
   it("rejects a non-RECEIVED return before any money math", async () => {
@@ -322,7 +340,8 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
     });
     prisma.return.updateMany.mockResolvedValue({ count: 0 });
 
-    await expect(service.processRefund("ret-5")).rejects.toBeInstanceOf(BadRequestException);
+    // SA-737: a claim that matches nothing is the lost race: 409, same text
+    await expect(service.processRefund("ret-5")).rejects.toBeInstanceOf(ConflictException);
     expect(creditNotesCreate).not.toHaveBeenCalled();
   });
 
@@ -388,17 +407,21 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
       },
     });
     prisma.return.updateMany.mockResolvedValue({ count: 1 });
+    mockExternalRefundSources(prisma, [
+      { id: "inv-1", status: "SENT", total: 96, payments: PAID(96) },
+    ]);
 
     const result = await service.processRefund("ret-9", { method: "EXTERNAL_REFUND" });
 
     expect(creditNotesCreate).not.toHaveBeenCalled();
     expect(prisma.return.updateMany).toHaveBeenCalledWith({
-      where: { id: "ret-9", status: "RECEIVED" },
+      where: { id: "ret-9", status: "RECEIVED", refundedAt: null, creditNoteId: null },
       data: {
         status: "REFUNDED",
         refundMethod: "EXTERNAL_REFUND",
         refundAmount: 24,
         refundedAt: expect.any(Date),
+        refundTender: null, // SA-740r2: no tender sent = unknown
       },
     });
     expect(prisma.return.update).not.toHaveBeenCalled(); // no creditNoteId written
@@ -426,10 +449,14 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
       },
     });
     prisma.return.updateMany.mockResolvedValue({ count: 0 });
+    mockExternalRefundSources(prisma, [
+      { id: "inv-1", status: "SENT", total: 100, payments: PAID(100) },
+    ]);
 
     await expect(
       service.processRefund("ret-10", { method: "EXTERNAL_REFUND" }),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(prisma.return.updateMany).toHaveBeenCalledTimes(1); // the claim itself was attempted and lost
     expect(creditNotesCreate).not.toHaveBeenCalled();
   });
 
@@ -472,7 +499,7 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
     const dto = creditNotesCreate.mock.calls[0][0];
     expect(dto.amount).toBe(60); // billed basis (6 × 10), NOT the order line's 10 × 10 = 100
     expect(prisma.return.updateMany).toHaveBeenCalledWith({
-      where: { id: "ret-53a", status: "RECEIVED" },
+      where: { id: "ret-53a", status: "RECEIVED", refundedAt: null, creditNoteId: null },
       data: {
         status: "REFUNDED",
         refundMethod: "CREDIT_NOTE",
@@ -799,11 +826,9 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
     expect(dto.amount).toBe(100);
   });
 
-  it("REG-B53 EXTERNAL_REFUND on a VOID-only order still resolves (mints nothing)", async () => {
-    // Same fixture as the refusal case above, resolved the other way: the money was
-    // already returned by cash/card, so there is nothing to mint and nothing to cap.
-    // The creditable/headroom refusals guard the MINT path only — applying them to
-    // EXTERNAL_REFUND leaves the return stuck at RECEIVED with no transition out.
+  it("SA-740r2: EXTERNAL_REFUND on a VOID-only order is refused 409 REFUND_NEEDS_PAID_INVOICE (the B53 escape hatch is closed)", async () => {
+    // Nothing creditable is billed, so no money was paid for these goods that could be handed back: the exits are store credit
+    // when billable, else cancelling the return (the refusal says so). It used to resolve with a recorded $0 (200 REFUNDED).
     prisma.return.findUnique.mockResolvedValue({
       id: "ret-53e3",
       returnNumber: "RET-2026-060",
@@ -825,18 +850,17 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
       },
     });
     prisma.return.updateMany.mockResolvedValue({ count: 1 });
+    mockExternalRefundSources(prisma, [
+      { id: "inv-1", status: "VOID", total: 100, payments: PAID(100) },
+    ]);
 
-    await expect(
-      service.processRefund("ret-53e3", { method: "EXTERNAL_REFUND" } as any),
-    ).resolves.toBeDefined();
-
-    expect(prisma.return.updateMany).toHaveBeenCalledTimes(1);
-    const claim = prisma.return.updateMany.mock.calls[0][0];
-    expect(claim.data).toMatchObject({
-      status: "REFUNDED",
-      refundMethod: "EXTERNAL_REFUND",
-      refundAmount: 0, // nothing creditable is billed, so nothing is recorded as credited
-    });
+    const err: any = await service
+      .processRefund("ret-53e3", { method: "EXTERNAL_REFUND" } as any)
+      .catch((e) => e);
+    expect(err.getStatus()).toBe(409);
+    expect(err.getResponse()).toMatchObject({ code: "REFUND_NEEDS_PAID_INVOICE" });
+    expect(err.getResponse().message).toMatch(/cancel the return/i);
+    expect(prisma.return.updateMany).not.toHaveBeenCalled();
     expect(creditNotesCreate).not.toHaveBeenCalled();
   });
 
@@ -1236,6 +1260,8 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
           create: jest.fn().mockResolvedValue({ id: "mv-rev" }),
         },
         returnParkedRestock: { deleteMany: jest.fn() },
+        // SA-839 F3: the cancel reads its ledger rows to lock their Orders / Invoices (none here).
+        regulatedSalesLedger: { findMany: jest.fn().mockResolvedValue([]) },
         $executeRaw: jest.fn().mockResolvedValue(0),
       };
       prisma.tenantTransaction.mockImplementation((fn: any) => fn(tx));
@@ -1268,7 +1294,7 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
         performedById: "u1",
       });
       expect(rev.quantity.toString()).toBe("-2");
-      expect(ledger.unreverseReturnEntries).toHaveBeenCalledTimes(1);
+      expect(ledger.settleRegulatedLedger).toHaveBeenCalledTimes(1);
       // The fresh read alone is still a TOCTOU: pin the FOR UPDATE row lock, and pin that
       // it ran BEFORE the fresh read, so deleting it turns this test red.
       expect(tx.$executeRaw).toHaveBeenCalledTimes(1);
@@ -1296,6 +1322,8 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
           create: jest.fn(),
         },
         returnParkedRestock: { deleteMany: jest.fn() },
+        // SA-839 F3: the cancel reads its ledger rows to lock their Orders / Invoices (none here).
+        regulatedSalesLedger: { findMany: jest.fn().mockResolvedValue([]) },
         $executeRaw: jest.fn().mockResolvedValue(0),
       };
       prisma.tenantTransaction.mockImplementation((fn: any) => fn(tx));
@@ -1313,7 +1341,7 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
       // B562 PR-2: no movement to undo → nothing appended, and nothing is ever deleted.
       expect(tx.stockMovement.create).not.toHaveBeenCalled();
       expect(tx.stockMovement.deleteMany).not.toHaveBeenCalled();
-      expect(ledger.unreverseReturnEntries).toHaveBeenCalledTimes(1);
+      expect(ledger.settleRegulatedLedger).toHaveBeenCalledTimes(1);
       expect(tx.$executeRaw).toHaveBeenCalledTimes(1);
       expect(tx.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
         txReturnFindUnique.mock.invocationCallOrder[0],

@@ -1,6 +1,9 @@
 import type { Metadata, Viewport } from "next";
 import { geistSans, geistMono, inter, instrumentSerif, splineSans, splineSansMono } from "./fonts";
 import "./globals.css";
+// #2653: hides Google sign-in inside the app shell (html[data-shell]); globals.css is hash-pinned.
+import "./shell.css";
+import { SHELL_MARK_SCRIPT } from "@/lib/in-shell";
 // Marketing stylesheet. It has to be imported here, not from the segments that
 // use it: the App Router drops the `not-found` segment's own CSS chunk on
 // hydration, so `app/not-found.tsx` rendered completely unstyled (verified in
@@ -74,7 +77,12 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    // suppressHydrationWarning: SHELL_MARK_SCRIPT may set data-shell on <html> before hydration.
+    <html lang="en" suppressHydrationWarning>
+      <head>
+        {/* #2653 / SA-542a: mark the app shell before first paint (no Google sign-in flash). */}
+        <script dangerouslySetInnerHTML={{ __html: SHELL_MARK_SCRIPT }} />
+      </head>
       <body
         className={`${splineSans.variable} ${splineSansMono.variable} ${inter.variable} ${instrumentSerif.variable} ${geistSans.variable} ${geistMono.variable} font-sans antialiased`}
       >

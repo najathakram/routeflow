@@ -5,6 +5,7 @@ import { SettingsController } from "./settings.controller";
 import { SystemConfigService } from "./system-config.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
+import { quickKeysSettingsStubProvider } from "../testing/quick-keys-settings-stub";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 // WP2: settings.taxRate is stored as a PERCENT (0-100, string) — see
@@ -31,6 +32,7 @@ describe("SettingsController — PATCH /settings taxRate validation", () => {
         { provide: ConfigService, useValue: { get: jest.fn() } },
         { provide: PrismaService, useValue: prisma },
         { provide: EmailService, useValue: { send: jest.fn().mockResolvedValue(undefined) } },
+        quickKeysSettingsStubProvider,
       ],
     }).compile();
 
@@ -59,6 +61,38 @@ describe("SettingsController — PATCH /settings taxRate validation", () => {
 
   it("rejects a non-numeric taxRate with a 400 and does not write it", async () => {
     await expect(controller.updateSettings({ taxRate: "abc" })).rejects.toThrow(
+      BadRequestException,
+    );
+    expect(svc.set).not.toHaveBeenCalled();
+  });
+
+  // R5-1 (SA-814 §3): a percent has at most 4 decimals (6-dp fraction on the line column), 400 beyond that.
+  it.each(["8.875", 8.875, "7.0625", "8.8750", "0.0001"])(
+    "accepts a taxRate with at most 4 decimals of percent (%p)",
+    async (v) => {
+      await controller.updateSettings({ taxRate: v });
+      expect(svc.set).toHaveBeenCalledWith("settings.taxRate", String(v));
+    },
+  );
+
+  it.each(["8.87501", 8.12345, "0.00001"])(
+    "rejects a taxRate with more than 4 decimals of percent (%p) with a 400 and does not write it",
+    async (v) => {
+      await expect(controller.updateSettings({ taxRate: v })).rejects.toThrow(BadRequestException);
+      expect(svc.set).not.toHaveBeenCalled();
+    },
+  );
+
+  // Review Q5 (lead ruling): an unchanged rate is never held to the cap, so an old 5-decimal rate does not block a save.
+  it("accepts a taxRate equal to the stored one whatever its decimals (200, written as it was)", async () => {
+    svc.get.mockResolvedValue("8.87501");
+    await controller.updateSettings({ taxRate: 8.87501 });
+    expect(svc.set).toHaveBeenCalledWith("settings.taxRate", "8.87501");
+  });
+
+  it("still rejects a CHANGED rate beyond 4 decimals when another is stored", async () => {
+    svc.get.mockResolvedValue("8.87501");
+    await expect(controller.updateSettings({ taxRate: "8.87502" })).rejects.toThrow(
       BadRequestException,
     );
     expect(svc.set).not.toHaveBeenCalled();
@@ -93,6 +127,7 @@ describe("SettingsController — GET/PATCH /settings/invoice hideOriginalPrice",
         { provide: ConfigService, useValue: { get: jest.fn() } },
         { provide: PrismaService, useValue: prisma },
         { provide: EmailService, useValue: { send: jest.fn().mockResolvedValue(undefined) } },
+        quickKeysSettingsStubProvider,
       ],
     }).compile();
 
@@ -147,6 +182,7 @@ describe("SettingsController — GET/PATCH /settings/invoice deposit policy", ()
         { provide: ConfigService, useValue: { get: jest.fn() } },
         { provide: PrismaService, useValue: prisma },
         { provide: EmailService, useValue: { send: jest.fn().mockResolvedValue(undefined) } },
+        quickKeysSettingsStubProvider,
       ],
     }).compile();
 
@@ -228,5 +264,59 @@ describe("SettingsController — GET/PATCH /settings/invoice deposit policy", ()
   it("PATCH without creditAutoApplyOnSend never writes TenantConfig", async () => {
     await controller.updateInvoiceSettings({ defaultTerms: "Net 15" });
     expect(prisma.tenantConfig.upsert).not.toHaveBeenCalled();
+  });
+});
+
+// B1188: the Settings "Save Numbering" button used to PATCH invoicePrefix / paymentDueDays here,
+// where neither is stored — accepted (200) and silently dropped. They now 400 with a pointer to
+// the real stores (PUT /import/numbering/INVOICE and PATCH /settings/invoice defaultTerms), and
+// NOTHING in the same body is written (no half-applied save).
+describe("SettingsController — PATCH /settings refuses invoicePrefix / paymentDueDays (B1188)", () => {
+  let controller: SettingsController;
+  let svc: { get: jest.Mock; set: jest.Mock; getAll: jest.Mock };
+  let prisma: ReturnType<typeof createMockPrisma>;
+
+  beforeEach(async () => {
+    prisma = createMockPrisma();
+    prisma.tenantConfig.upsert = jest.fn().mockResolvedValue({});
+    svc = {
+      get: jest.fn().mockResolvedValue(null),
+      set: jest.fn().mockResolvedValue(undefined),
+      getAll: jest.fn().mockResolvedValue({}),
+    };
+    const module: TestingModule = await Test.createTestingModule({
+      controllers: [SettingsController],
+      providers: [
+        { provide: SystemConfigService, useValue: svc },
+        { provide: ConfigService, useValue: { get: jest.fn() } },
+        { provide: PrismaService, useValue: prisma },
+        { provide: EmailService, useValue: { send: jest.fn().mockResolvedValue(undefined) } },
+        quickKeysSettingsStubProvider,
+      ],
+    }).compile();
+    controller = module.get<SettingsController>(SettingsController);
+  });
+
+  it.each([
+    ["invoicePrefix", "INV-", /import\/numbering|Invoice Numbering/i],
+    ["paymentDueDays", "30", /settings\/invoice|payment terms/i],
+  ])("400s %s with a message naming the real store", async (key, value, message) => {
+    await expect(controller.updateSettings({ [key]: value })).rejects.toThrow(message);
+    await expect(controller.updateSettings({ [key]: value })).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+  });
+
+  it("writes nothing from the same body when one of the refused keys is present", async () => {
+    await expect(
+      controller.updateSettings({ taxRate: 8, invoiceNotes: "hi", invoicePrefix: "X-" }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(svc.set).not.toHaveBeenCalled();
+    expect(prisma.tenantConfig.upsert).not.toHaveBeenCalled();
+  });
+
+  it("still accepts invoiceNotes / invoiceTerms (control)", async () => {
+    await controller.updateSettings({ invoiceNotes: "n", invoiceTerms: "t" });
+    expect(prisma.tenantConfig.upsert).toHaveBeenCalled();
   });
 });

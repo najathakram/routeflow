@@ -453,7 +453,7 @@ system. Shared building blocks live in `(platform-admin)/_components/` (`AdminCa
 - Plans / Billing / Audit / Profile / Settings: `.../admin/plans/page.tsx`, `.../admin/billing/page.tsx`,
   `.../admin/audit-logs/page.tsx`, `.../admin/profile/page.tsx`, `.../admin/settings/page.tsx`
 - Impersonation banner (operator side): `apps/web/app/(dashboard)/layout.tsx`
-- Login (separate section): `docs/web-inventory/01-auth-and-entry.md`
+- Login (separate section): `docs/history/archive-2026-09-30/web-inventory/01-auth-and-entry.md`
 - E2E: `apps/web/e2e/01-super-admin.spec.ts` (SA-01…12), `apps/web/e2e/05-cross-cutting.spec.ts`
   (CC-02 unauth redirect, CC-04 operator blocked, CC-05 read-only impersonation)
 

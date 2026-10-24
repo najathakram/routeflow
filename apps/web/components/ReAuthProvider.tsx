@@ -9,6 +9,7 @@ import { getTenantCookie } from "@/lib/tenant-cookie";
 import { GoogleIcon, startGoogleSignIn } from "@/lib/google-oauth";
 import { registerReauthHandler, type ReauthRequest } from "@/lib/session-expiry";
 import { useI18n } from "@/lib/i18n";
+import { isInShell } from "@/lib/in-shell";
 
 /**
  * Mounts the session re-auth sheet and wires it to `api-client` via
@@ -59,6 +60,8 @@ export function ReAuthProvider({ children }: { children: React.ReactNode }) {
   );
 
   const onGoogle = async () => {
+    // #2653 / SA-542 Q3: never start Google inside the app shell (the CSS hides it; this guards it).
+    if (isInShell()) return;
     if (!tenantSlug || googleLoading) return;
     setGoogleLoading(true);
     setError(null);
@@ -187,7 +190,8 @@ export function ReAuthProvider({ children }: { children: React.ReactNode }) {
                     for password accounts the server auto-links by email match,
                     so offering it universally is safe. */}
                 {tenantSlug && (
-                  <>
+                  // #2653: hidden inside the app shell (app/shell.css); same gap as the parent.
+                  <div data-google-signin className="flex flex-col gap-3">
                     <div className="flex items-center gap-3">
                       <div className="h-px flex-1 bg-line" />
                       <span className="text-[11px] uppercase tracking-wider text-ink-500">
@@ -208,7 +212,7 @@ export function ReAuthProvider({ children }: { children: React.ReactNode }) {
                       )}
                       <span>{t("reauth.continueGoogle")}</span>
                     </button>
-                  </>
+                  </div>
                 )}
               </div>
 

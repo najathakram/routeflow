@@ -1,6 +1,13 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
-import type { CreditNoteStatus } from "@routeflow/types";
+import type {
+  CreditNoteStatus,
+  CreditNoteVoidPreview,
+  FiledPeriod,
+  ReissueCreditNoteInput,
+  ReissueCreditNoteResult,
+} from "@routeflow/types";
+import type { LocalErrorToastOption } from "@/lib/local-error-toast";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -33,6 +40,8 @@ export interface CreditNote {
   appliedAt?: string;
   /** P5-13: true if any application of this note happened via auto-apply at send. */
   autoApplied?: boolean;
+  /** #2648: the note's split across its source invoice's lines (empty for a lump-sum credit). */
+  items?: Array<{ invoiceItemId: string | null; amount: number; qty: number }>;
   createdAt: string;
   updatedAt: string;
 }
@@ -99,9 +108,10 @@ export interface CreateCreditNoteDto {
   expiresAt?: string;
 }
 
-export function useCreateCreditNote() {
+export function useCreateCreditNote(options?: LocalErrorToastOption) {
   const qc = useQueryClient();
   return useMutation<CreditNote, Error, CreateCreditNoteDto>({
+    meta: options?.localErrorToast ? { localErrorToast: options.localErrorToast } : undefined,
     mutationFn: (dto) => apiClient.post("/credit-notes", dto).then((r) => r.data),
     // B343: the customer statement's outstanding/available-credit figures come from a
     // separate query (useCustomerStatement) that this mutation never invalidated — a
@@ -122,18 +132,6 @@ export function useApplyCreditNote() {
       qc.invalidateQueries({ queryKey: ["credit-notes"] });
       qc.invalidateQueries({ queryKey: ["credit-notes", id] });
       qc.invalidateQueries({ queryKey: ["invoices"] });
-      qc.invalidateQueries({ queryKey: ["customers", data.customerId, "statement"] });
-    },
-  });
-}
-
-export function useVoidCreditNote() {
-  const qc = useQueryClient();
-  return useMutation<CreditNote, Error, string>({
-    mutationFn: (id) => apiClient.post(`/credit-notes/${id}/void`).then((r) => r.data),
-    onSuccess: (data, id) => {
-      qc.invalidateQueries({ queryKey: ["credit-notes"] });
-      qc.invalidateQueries({ queryKey: ["credit-notes", id] });
       qc.invalidateQueries({ queryKey: ["customers", data.customerId, "statement"] });
     },
   });
@@ -163,7 +161,7 @@ export function useUnapplyCreditNote() {
 }
 
 export interface UpdateCreditNoteDto {
-  /** Descriptive text — editable at ANY status, unlike expiresAt below. */
+  /** Descriptive text — editable on any non-VOID note (a VOID note is not editable: 409). */
   reason?: string;
   /** Only settable while the credit note is ISSUED (server rejects otherwise). */
   expiresAt?: string | null;
@@ -176,6 +174,74 @@ export function useUpdateCreditNote() {
     onSuccess: (_, { id }) => {
       qc.invalidateQueries({ queryKey: ["credit-notes"] });
       qc.invalidateQueries({ queryKey: ["credit-notes", id] });
+    },
+  });
+}
+
+export type VoidPreview = CreditNoteVoidPreview;
+
+export function useVoidPreview(id: string, enabled: boolean) {
+  return useQuery<VoidPreview>({
+    queryKey: ["credit-notes", id, "void-preview"],
+    queryFn: () => apiClient.get(`/credit-notes/${id}/void-preview`).then((r) => r.data),
+    enabled: !!id && enabled,
+    staleTime: 0,
+  });
+}
+
+/**
+ * SA-436 PR-2 (#2402) / #2540: void a credit note AFTER un-applying it everywhere (each pair is
+ * remembered so the auto-apply sweep cannot re-apply it), with an optional reason for the audit.
+ */
+export function useVoidWithReversal() {
+  const qc = useQueryClient();
+  return useMutation<
+    {
+      creditNote: CreditNote;
+      reopened: Array<{ invoiceId: string; invoiceNumber: string; amount: number }>;
+      /** SA-839 §3: the filed month the void's ledger correction answers (null when none). */
+      amendedPeriod?: FiledPeriod | null;
+    },
+    Error,
+    { id: string; reason?: string }
+  >({
+    mutationFn: ({ id, reason }) =>
+      apiClient
+        .post(`/credit-notes/${id}/void-with-reversal`, reason ? { reason } : {})
+        .then((r) => r.data),
+    onSuccess: (data, { id }) => {
+      qc.invalidateQueries({ queryKey: ["credit-notes"] });
+      qc.invalidateQueries({ queryKey: ["credit-notes", id] });
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+      qc.invalidateQueries({ queryKey: ["orders"] });
+      qc.invalidateQueries({ queryKey: ["customers", data.creditNote.customerId, "statement"] });
+    },
+  });
+}
+
+/** #2648 / SA-535(b): an amount/line edit (void-with-reversal + an unapplied replacement). */
+export type ReissueCreditNoteDto = ReissueCreditNoteInput;
+export type ReissueResult = ReissueCreditNoteResult<CreditNote>;
+
+export function useReissueCreditNote() {
+  const qc = useQueryClient();
+  return useMutation<
+    ReissueResult,
+    Error,
+    { id: string; idempotencyKey: string } & ReissueCreditNoteDto
+  >({
+    mutationFn: ({ id, idempotencyKey, ...dto }) =>
+      apiClient
+        .post(`/credit-notes/${id}/reissue`, dto, {
+          headers: { "Idempotency-Key": idempotencyKey },
+        })
+        .then((r) => r.data),
+    onSuccess: (data, { id }) => {
+      qc.invalidateQueries({ queryKey: ["credit-notes"] });
+      qc.invalidateQueries({ queryKey: ["credit-notes", id] });
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+      qc.invalidateQueries({ queryKey: ["orders"] });
+      qc.invalidateQueries({ queryKey: ["customers", data.creditNote.customerId, "statement"] });
     },
   });
 }

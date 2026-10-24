@@ -17,6 +17,8 @@ jest.mock("../notifications/notifications.service", () => ({
 import { BadRequestException } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
 import { OrdersController } from "./orders.controller";
+import { OrderBatchShipService } from "./order-batch-ship";
+import { PackingSlipService } from "./packing-slip.service";
 import { OrdersService } from "./orders.service";
 import { ChangeRequestsService } from "./change-requests.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
@@ -39,6 +41,8 @@ describe("OrdersController — merge choice vs orderDate", () => {
   let ordersService: {
     findActiveOrder: jest.Mock;
     updateOrderItems: jest.Mock;
+    liveTrioByProduct: jest.Mock;
+    liveUnitsPerBoxByProduct: jest.Mock;
     mergeAllPendingForCustomer: jest.Mock;
     findOne: jest.Mock;
     create: jest.Mock;
@@ -59,6 +63,8 @@ describe("OrdersController — merge choice vs orderDate", () => {
   beforeEach(async () => {
     ordersService = {
       findActiveOrder: jest.fn().mockResolvedValue(activeOrder),
+      liveTrioByProduct: jest.fn().mockResolvedValue(new Map()),
+      liveUnitsPerBoxByProduct: jest.fn().mockResolvedValue(new Map()), // SA-841
       updateOrderItems: jest.fn().mockResolvedValue(undefined),
       mergeAllPendingForCustomer: jest.fn().mockResolvedValue(null),
       findOne: jest.fn().mockResolvedValue(activeOrder),
@@ -70,6 +76,8 @@ describe("OrdersController — merge choice vs orderDate", () => {
       providers: [
         { provide: OrdersService, useValue: ordersService },
         { provide: ChangeRequestsService, useValue: {} },
+        { provide: OrderBatchShipService, useValue: {} },
+        { provide: PackingSlipService, useValue: {} },
       ],
     }).compile();
 
@@ -116,6 +124,42 @@ describe("OrdersController — merge choice vs orderDate", () => {
     );
   });
 
+  it("row 510: the fold forwards the staff's acknowledgement (reasons + hash) to updateOrderItems unchanged", async () => {
+    const restrictionOverrides = [{ lineKey: "n:1", reason: "Licensed buyer, paperwork on file" }];
+    await controller.create(
+      {
+        customerId: "cust-1",
+        items: [{ productId: "prod-1", qty: 1 }],
+        mergeChoice: "merge",
+        restrictionOverrides,
+        warningHash: "rw1:abc",
+      } as any,
+      operatorPayload,
+    );
+
+    expect(ordersService.updateOrderItems).toHaveBeenCalledWith(
+      "ord-open",
+      expect.objectContaining({ restrictionOverrides, warningHash: "rw1:abc", replaceAll: true }),
+      operatorPayload,
+      expect.objectContaining({ isCreateMerge: true }),
+    );
+  });
+
+  it("row 510: a merge with no acknowledgement sends none (the fold never invents one)", async () => {
+    await controller.create(
+      {
+        customerId: "cust-1",
+        items: [{ productId: "prod-1", qty: 1 }],
+        mergeChoice: "merge",
+      } as any,
+      operatorPayload,
+    );
+
+    const [, foldDto] = ordersService.updateOrderItems.mock.calls[0];
+    expect(foldDto.restrictionOverrides).toBeUndefined();
+    expect(foldDto.warningHash).toBeUndefined();
+  });
+
   it("a dated order chosen as separate goes through create()", async () => {
     const orderDate = isoDaysAgo(4);
 
@@ -135,5 +179,155 @@ describe("OrdersController — merge choice vs orderDate", () => {
       operatorPayload,
       { skipAutoMerge: true },
     );
+  });
+
+  // Wiring pins (one predicate, merge-candidates.ts): every merge-target search passes `mergeAs`, so the
+  // incoming order's fulfil path decides which open order it may fold into.
+  it("the pre-merge candidate search AND its in-lock re-read both pass mergeAs (the request's own path)", async () => {
+    await controller.create(
+      {
+        customerId: "cust-1",
+        items: [{ productId: "prod-1", qty: 1 }],
+        mergeChoice: "merge",
+        fulfillPath: "SHIP",
+      } as any,
+      operatorPayload,
+    );
+    const calls = ordersService.findActiveOrder.mock.calls;
+    expect(calls.length).toBeGreaterThanOrEqual(2);
+    for (const [, opts] of calls)
+      expect(opts).toEqual({
+        forMerge: true,
+        mergeAs: { explicit: "SHIP", audience: "staff", role: "OPERATOR" },
+      });
+  });
+
+  it("M2: a driver's post-create sweep folds only the NEW order's path (focusOrderId)", async () => {
+    await controller.create(
+      { customerId: "cust-1", items: [{ productId: "prod-1", qty: 1 }] } as any,
+      { ...operatorPayload, sub: "user-drv", role: "DRIVER" } as JwtPayload,
+    );
+    expect(ordersService.mergeAllPendingForCustomer).toHaveBeenCalledWith(
+      "cust-1",
+      { buyerInitiated: false, focusOrderId: "ord-new" },
+      expect.anything(),
+    );
+  });
+
+  it("GET /orders/active takes the order's path and searches as create would (omitted = the customer's own)", async () => {
+    await controller.getActiveOrderForCustomer("cust-1", "SHIP", operatorPayload);
+    expect(ordersService.findActiveOrder).toHaveBeenLastCalledWith("cust-1", {
+      forMerge: true,
+      mergeAs: { explicit: "SHIP", audience: "staff", role: "OPERATOR" },
+    });
+    await controller.getActiveOrderForCustomer("cust-1", undefined, operatorPayload);
+    expect(ordersService.findActiveOrder).toHaveBeenLastCalledWith("cust-1", {
+      forMerge: true,
+      mergeAs: { explicit: undefined, audience: "staff", role: "OPERATOR" },
+    });
+    await controller.getActiveOrderForCustomer("cust-1", "garbage", operatorPayload);
+    expect(ordersService.findActiveOrder).toHaveBeenLastCalledWith("cust-1", {
+      forMerge: true,
+      mergeAs: { explicit: undefined, audience: "staff", role: "OPERATOR" },
+    });
+  });
+  it("POS mode: the pre-resolve and the in-lock re-read carry an explicit PICKUP with the caller's role", async () => {
+    for (const role of ["OPERATOR", "TENANT_ADMIN"] as const) {
+      ordersService.findActiveOrder.mockClear();
+      await controller.create(
+        {
+          customerId: "cust-1",
+          items: [{ productId: "prod-1", qty: 1 }],
+          mergeChoice: "merge",
+          fulfillPath: "PICKUP",
+        } as any,
+        { ...operatorPayload, role } as JwtPayload,
+      );
+      const calls = ordersService.findActiveOrder.mock.calls;
+      expect(calls.length).toBeGreaterThanOrEqual(2);
+      for (const [, opts] of calls)
+        expect(opts).toEqual({
+          forMerge: true,
+          mergeAs: { explicit: "PICKUP", audience: "staff", role },
+        });
+    }
+  });
+
+  it("POS mode: GET /orders/active accepts PICKUP for staff, so the preview and the create pick one target", async () => {
+    await controller.getActiveOrderForCustomer("cust-1", "PICKUP", operatorPayload);
+    expect(ordersService.findActiveOrder).toHaveBeenLastCalledWith("cust-1", {
+      forMerge: true,
+      mergeAs: { explicit: "PICKUP", audience: "staff", role: "OPERATOR" },
+    });
+  });
+
+  // W-762 / SA-918 §2: create()'s merge is an AUTOMATIC merge, so an order discount on either side SKIPS it (reason
+  // DISCOUNTED): no merge prompt, no fold, the order is created on its own and kept out of later auto-merges.
+  describe("W-762: a discount on either side keeps the new order separate", () => {
+    it("an incoming order with a discount: no MERGE_CHOICE_REQUIRED, no fold, created separately", async () => {
+      await controller.create(
+        {
+          customerId: "cust-1",
+          items: [{ productId: "prod-1", qty: 1 }],
+          discountAmount: 5,
+        } as any,
+        operatorPayload,
+      );
+      expect(ordersService.updateOrderItems).not.toHaveBeenCalled();
+      expect(ordersService.create).toHaveBeenCalledWith(
+        expect.objectContaining({ discountAmount: 5 }),
+        operatorPayload,
+        { skipAutoMerge: false, separateOnce: true }, // SA-923: apart this once, never opted out of future merges
+      );
+    });
+
+    it("an open order that carries a discount: even mergeChoice 'merge' creates separately", async () => {
+      ordersService.findActiveOrder.mockResolvedValue({ ...activeOrder, discountAmount: 3 });
+      await controller.create(
+        {
+          customerId: "cust-1",
+          items: [{ productId: "prod-1", qty: 1 }],
+          mergeChoice: "merge",
+        } as any,
+        operatorPayload,
+      );
+      expect(ordersService.updateOrderItems).not.toHaveBeenCalled();
+      expect(ordersService.create).toHaveBeenCalledWith(expect.anything(), operatorPayload, {
+        skipAutoMerge: false,
+        separateOnce: true,
+      });
+    });
+
+    it("the open order took a discount while the request queued (the in-lock re-read): created separately", async () => {
+      ordersService.findActiveOrder
+        .mockResolvedValueOnce(activeOrder) // the pre-lock read: no discount yet
+        .mockResolvedValueOnce({ ...activeOrder, discountAmount: 3 }); // the in-lock re-read
+      await controller.create(
+        {
+          customerId: "cust-1",
+          items: [{ productId: "prod-1", qty: 1 }],
+          mergeChoice: "merge",
+        } as any,
+        operatorPayload,
+      );
+      expect(ordersService.updateOrderItems).not.toHaveBeenCalled();
+      expect(ordersService.create).toHaveBeenCalledWith(expect.anything(), operatorPayload, {
+        skipAutoMerge: false,
+        separateOnce: true,
+      });
+    });
+
+    it("no discount anywhere: the merge still runs (unchanged)", async () => {
+      await controller.create(
+        {
+          customerId: "cust-1",
+          items: [{ productId: "prod-1", qty: 1 }],
+          mergeChoice: "merge",
+        } as any,
+        operatorPayload,
+      );
+      expect(ordersService.updateOrderItems).toHaveBeenCalled();
+      expect(ordersService.create).not.toHaveBeenCalled();
+    });
   });
 });

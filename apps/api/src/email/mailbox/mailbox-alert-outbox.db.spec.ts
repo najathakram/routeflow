@@ -69,7 +69,9 @@ describeDb("#2113: durable mailbox admin alert — real Postgres", () => {
     prisma = new PrismaService(tenantCtx);
     await prisma.$connect();
     encryption = new EncryptionService(config);
-    sender = new MailboxSendService(prisma, encryption, config);
+    sender = new MailboxSendService(prisma, encryption, config, {
+      decide: jest.fn().mockResolvedValue({ outcome: "granted", overrides: new Map() }),
+    } as any);
     // NOT subscribed (no onModuleInit): every transition here is "the process died between the
     // commit and the emit" — only the sweep can deliver it.
     alerts = new MailboxAlertService(sender, prisma, tenantCtx, notifications as any, email as any);

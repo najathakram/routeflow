@@ -1,0 +1,78 @@
+{
+  "301": [
+    {
+      "path": "apps/api/src/invoices/dates.ts",
+      "additions": 10,
+      "deletions": 2
+    },
+    {
+      "path": "apps/web/app/(dashboard)/invoices/page.tsx",
+      "additions": 4,
+      "deletions": 1
+    },
+    {
+      "path": "packages/types/api/invoice.ts",
+      "additions": 1,
+      "deletions": 0
+    }
+  ],
+  "302": [
+    {
+      "path": "apps/api/src/invoices/invoice-pdf.ts",
+      "additions": 3,
+      "deletions": 3
+    }
+  ],
+  "303": [
+    {
+      "path": "apps/web/lib/misc.ts",
+      "additions": 0,
+      "deletions": 40
+    },
+    {
+      "path": "apps/web/lib/other.ts",
+      "additions": 2,
+      "deletions": 2
+    }
+  ],
+  "304": [
+    {
+      "path": "apps/mobile/app/routes.tsx",
+      "additions": 30,
+      "deletions": 0
+    },
+    {
+      "path": "packages/types/api/route.ts",
+      "additions": 5,
+      "deletions": 0
+    }
+  ],
+  "305": [
+    {
+      "path": "apps/api/src/spike.ts",
+      "additions": 12,
+      "deletions": 0
+    }
+  ],
+  "306": [
+    {
+      "path": ".claude/roadmap/notes.md",
+      "additions": 6,
+      "deletions": 1
+    }
+  ],
+  "307": [
+    {
+      "path": "apps/api/src/invoices/dates.ts",
+      "additions": 1,
+      "deletions": 1
+    }
+  ],
+  "309": [
+    {
+      "path": "apps/api/src/hotfix.ts",
+      "additions": 2,
+      "deletions": 1
+    }
+  ]
+}

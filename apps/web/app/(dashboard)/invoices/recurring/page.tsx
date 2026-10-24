@@ -10,11 +10,12 @@ import {
   useDeactivateRecurringInvoice,
   useActivateRecurringInvoice,
   useRunRecurringInvoice,
-  isRetryableRunFailure,
   type RecurringInvoice,
 } from "@/lib/api/invoices";
 import { useRouter } from "next/navigation";
 import { fmtCalendarDate, fmtDate } from "@/lib/formatting";
+import { describeRunFailure } from "@/lib/reason-copy";
+import { useRestrictionWarningRetry } from "@/lib/use-restriction-warning-retry";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -48,6 +49,7 @@ export default function RecurringInvoicesPage() {
   const deactivate = useDeactivateRecurringInvoice();
   const activate = useActivateRecurringInvoice();
   const runNow = useRunRecurringInvoice();
+  const rw = useRestrictionWarningRetry(); // row 510 Q2: a manual run is judged for the clicker
 
   const items: RecurringInvoice[] = recurringList ?? [];
 
@@ -66,7 +68,7 @@ export default function RecurringInvoicesPage() {
   };
 
   const handleRunNow = (ri: RecurringInvoice) => {
-    runNow.mutate(ri.id, {
+    runNow.mutate(rw.attach(ri.id), {
       onSuccess: (inv) => {
         // The server claims the cycle atomically, so a losing racer (a second
         // tap, or the cron) gets an empty body back — never announce/navigate
@@ -82,7 +84,9 @@ export default function RecurringInvoicesPage() {
         });
         router.push(`/invoices/${(inv as any).id}`);
       },
-      onError: () => toast({ title: "Failed to generate invoice", variant: "error" }),
+      onError: (err) =>
+        rw.handle(err, () => handleRunNow(ri)) ||
+        toast({ title: "Failed to generate invoice", variant: "error" }),
     });
   };
 
@@ -182,13 +186,12 @@ export default function RecurringInvoicesPage() {
               </div>
 
               {ri.lastRunStatus === "FAILED" && ri.lastError && (
-                <p className="mt-1 truncate text-xs text-danger" title={ri.lastError}>
+                <p className="mt-1 text-xs text-danger">
                   {/* REG-B106: the retry hint appears ONLY when the cycle produced no
                       invoice. A cycle that billed and then failed to finalize is already
-                      invoiced — re-running it would bill the customer twice. */}
-                  {isRetryableRunFailure(ri.lastError)
-                    ? `${ri.lastError} — use Run Now to retry.`
-                    : ri.lastError}
+                      invoiced — re-running it would bill the customer twice. The raw
+                      lastError is never shown (#1965): describeRunFailure maps it. */}
+                  {describeRunFailure(ri.lastError).text}
                 </p>
               )}
 
@@ -223,6 +226,7 @@ export default function RecurringInvoicesPage() {
           ))}
         </div>
       )}
+      {rw.dialog}
     </div>
   );
 }

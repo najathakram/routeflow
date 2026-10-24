@@ -1,5 +1,5 @@
 /**
- * repair-integrity.mjs — SURGICAL repair script for the specific production rows
+ * repair-integrity.mjs — RETIRED (row 195: refuses to connect; only --list runs). Was a SURGICAL repair script for the specific production rows
  * found by scripts/data-integrity-report.mjs on 2026-08-28/29.
  *
  * ⚠️ SCOPE IS A HARDCODED ALLOWLIST. This script can only ever touch the rows
@@ -55,7 +55,7 @@
 import pg from "pg";
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { randomUUID } from "node:crypto";
 import { roundMoney } from "@routeflow/pricing";
 
@@ -65,6 +65,19 @@ const EXECUTE = argv.includes("--execute");
 const BACKUP_ATTESTED = argv.includes("--i-have-a-fresh-backup");
 const FORCE_NONPROD = argv.includes("--force-nonprod");
 const LIST = argv.includes("--list");
+
+// Row 195 (lead ruling): RETIRED. This was a dated one-off over a hardcoded allowlist of live client
+// rows (2026-08-28/29) with no uniform tenant column to guard on. Run as a script it refuses in every
+// mode — before any argument handling or connection — except --list, a static registry with no
+// database. Importing it (the B963 specs) is unaffected.
+if (!LIST && import.meta.url === pathToFileURL(fs.realpathSync(process.argv[1] ?? "")).href) {
+  console.error(
+    "repair-integrity.mjs is RETIRED: it repaired a fixed 2026-08 allowlist of live rows and no " +
+      "longer connects in any mode (use --list to read the registry). New repairs get their own " +
+      "script behind the protected-tenant guard (apps/api/scripts/lib/live-target-guard.cjs).",
+  );
+  process.exit(2);
+}
 
 function collectFlag(name) {
   const out = [];
@@ -175,6 +188,29 @@ function canonical(obj) {
 async function q(db, sql, params = []) {
   return (await db.query(sql, params)).rows;
 }
+
+/**
+ * B963 (the script twin of B949): a credit note whose SOURCE invoice was deleted carries a SOURCE_DELETED AuditLog marker
+ * (#2848). Restoring money to such a note makes a provenance-less credit SPENDABLE, which the API now refuses on every path
+ * (CREDIT_NOTE_SOURCE_GONE); this script must refuse it too. Read-only SELECT. Returns the note number, or null.
+ */
+export async function sourceDeletedNote(db, creditNoteId) {
+  const row = (
+    await q(
+      db,
+      `SELECT cn."creditNoteNumber" AS number
+       FROM "CreditNote" cn
+       WHERE cn.id = $1
+         AND EXISTS (SELECT 1 FROM "AuditLog" a
+                     WHERE a."entityType" = 'CreditNote' AND a."action" = 'SOURCE_DELETED' AND a."entityId" = cn.id)`,
+      [creditNoteId],
+    )
+  )[0];
+  return row ? String(row.number) : null;
+}
+
+export const sourceDeletedBlock = (number, amount) =>
+  `Credit note ${number} came from a deleted invoice (SOURCE_DELETED, B949): restoring ${Number(amount).toFixed(2)} to it would make it spendable without provenance. Void that credit note first (it un-applies its own payments), or escalate.`;
 
 /** Full invoice money state: header, non-VOID paid sum, payment rows (ids/amounts only). */
 async function invoiceState(db, id, { lock = false } = {}) {
@@ -298,7 +334,7 @@ const VERIFY = {
 // plan() runs twice: once read-only for the dry run, once INSIDE the row's
 // transaction (after locks) — the two `before` snapshots must match exactly.
 
-const ROWS = [
+export const ROWS = [
   // ── CRITICAL ───────────────────────────────────────────────────────────────
   {
     rowId: "overpaid-1a8fbb3d",
@@ -371,6 +407,14 @@ const ROWS = [
           });
         }
         if (p.method === "CREDIT_NOTE" && p.creditNoteId) {
+          const marked = await sourceDeletedNote(db, p.creditNoteId);
+          // in `before` too: the execute-time re-read byte-compares it, so a marker that appears after the dry run aborts the row
+          base.before = { ...base.before, creditNoteSourceDeleted: marked !== null };
+          // lock the NOTE too, so the execute-time tx holds it before its re-plan reads the marker. NOT a complete close: an invoice
+          // delete writes the marker BEFORE it locks the note (unlinkSourcedCredits), so a narrow race remains; the marker read
+          // below sees only a committed marker. The execute-time re-plan plus the byte-compared before-state narrow it, no more.
+          base.lockRows = [...(base.lockRows ?? []), { table: "CreditNote", id: p.creditNoteId }];
+          if (marked !== null) return { ...base, blocked: sourceDeletedBlock(marked, p.amount) };
           actions.push({
             label: `Restore ${Number(p.amount).toFixed(2)} to CreditNote ${p.creditNoteId} (amountUsed down, status per wallet rules)`,
             sql: `UPDATE "CreditNote" SET
@@ -575,6 +619,14 @@ const ROWS = [
           params: [p.advancePaymentId, roundMoney(p.amount)],
         });
       } else if (p.method === "CREDIT_NOTE" && p.creditNoteId) {
+        const marked = await sourceDeletedNote(db, p.creditNoteId);
+        // in `before` too: the execute-time re-read byte-compares it, so a marker that appears after the dry run aborts the row
+        base.before = { ...base.before, creditNoteSourceDeleted: marked !== null };
+        // lock the NOTE too, so the execute-time tx holds it before its re-plan reads the marker. NOT a complete close: an invoice
+        // delete writes the marker BEFORE it locks the note (unlinkSourcedCredits), so a narrow race remains; the marker read
+        // below sees only a committed marker. The execute-time re-plan plus the byte-compared before-state narrow it, no more.
+        base.lockRows = [...(base.lockRows ?? []), { table: "CreditNote", id: p.creditNoteId }];
+        if (marked !== null) return { ...base, blocked: sourceDeletedBlock(marked, p.amount) };
         actions.push({
           label: `Restore ${p.amount.toFixed(2)} to CreditNote ${p.creditNoteId} (restoreCreditFromPaymentInTx semantics incl. REVIVE of a past expiry)`,
           sql: `UPDATE "CreditNote" SET
@@ -1391,9 +1443,21 @@ async function main() {
   process.exitCode = failed ? 1 : 0;
 }
 
-main()
-  .catch((err) => {
-    console.error("Repair run failed:", err.message);
-    process.exitCode = 2;
-  })
-  .finally(() => client?.end());
+// Run only as a script (a spec imports this module for ROWS / sourceDeletedNote without connecting).
+// `realpath`: Node resolves the main module's URL through symlinks but argv[1] is as typed (/tmp -> /private/tmp), so a plain
+// compare silently never ran main() (exit 0, no output).
+const isMain = (() => {
+  try {
+    return import.meta.url === pathToFileURL(fs.realpathSync(process.argv[1] ?? "")).href;
+  } catch {
+    return false;
+  }
+})();
+if (isMain) {
+  main()
+    .catch((err) => {
+      console.error("Repair run failed:", err.message);
+      process.exitCode = 2;
+    })
+    .finally(() => client?.end());
+}

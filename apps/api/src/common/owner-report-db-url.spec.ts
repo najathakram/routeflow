@@ -33,6 +33,12 @@ const B768_REPORTS = [
   "report-train4-damage.mjs",
   "sales-gap-analysis.js",
   "stock-ledger-gap.mjs", // B562 PR-2 (SA-136 §6.3) — born on the resolver
+  "report-addon-comp-candidates.mjs", // SA-693 — born on the resolver
+  "report-sitting4-sizing.mjs", // SA-772 / SA-814 sitting 4 — born on the resolver
+  "report-640-restored-grants.mjs", // row 640 (SA-834) - born on the resolver
+  "report-exempt-orders-taxed.mjs", // row 635 PR A (B293) - born on the resolver
+  "report-order-discounts.mjs", // row 635 PR A (SA-780) - born on the resolver
+  "report-cross-tenant-refs.mjs", // row 681 PR A (SA-936) - born on the resolver
 ];
 
 /**
@@ -40,15 +46,21 @@ const B768_REPORTS = [
  * reads the prod DB through it by default.
  */
 const ALLOWED: Record<string, string> = {
+  // Row 635: a WRITER (resolveDatabaseUrl, requireProxy unless --local); it sets DATABASE_URL to the resolved target for
+  // the compiled runner's PrismaService, which reads nothing else.
+  "b562-d2-average-repair.mjs": "a writer: hands the resolved target to the compiled runner",
   // `--local` mode only: production goes through resolveDatabaseUrl(); DATABASE_URL is read solely
   // when the operator explicitly asks for a local run.
   "data-questions-report.mjs": "--local mode only",
   "sa077-split-qty-consistency.mjs": "--local mode only",
+  "labels-from-categories.mjs": "--local mode only (writer: requireProxy otherwise)",
   "t6-backfill-census.mjs": "--local mode only",
   "t6-null-census.mjs": "--local mode only",
   "t6-null-rows-report.mjs": "--local mode only",
+  "stamp-addon-comp.mjs": "--local mode only (writer: id-pinned, dry-run first)",
   // B294: a gated WRITER; production resolves with requireProxy, DATABASE_URL is --local only.
   "backfill-b294-order-line-taxrate.mjs": "--local mode only (writer: requireProxy otherwise)",
+  "backfill-b297-rate-snapshot.mjs": "--local mode only (writer: requireProxy otherwise)",
   // The drift gate and the production guard deliberately read the raw variable.
   "schema-drift.mjs": "drift gate (railway-db-url.mjs: read-only drift check)",
   // Writers, destructive/QA and admin scripts: out of B768's scope (a separate decision). Listed so
@@ -107,6 +119,8 @@ const ALLOWED: Record<string, string> = {
   // scope like the writers above.
   "backfill-product-aliases.mjs": "writer under --apply; DATABASE_URL-first",
   "backfill-supplier-invoice-number.mjs": "writer under --execute; DATABASE_URL-first",
+  "backfill-tenant-units.mjs":
+    "writer under --apply; DATABASE_URL only under --local (provably local), else resolveDatabaseUrl(requireProxy)",
 };
 
 const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");

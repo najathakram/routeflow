@@ -32,13 +32,19 @@ export interface PendingBufferState {
   pending: string[];
 }
 
-/** Max codes queued behind the one currently resolving (spec R2). */
-export const PENDING_BUFFER_DEPTH = 2;
+/**
+ * Max codes queued behind the one currently resolving. Raised from 2 (spec R2) to 8: a lookup can take a
+ * second or more on a bad link while an operator scans a case a second, and the cap must never be why a
+ * counted scan vanishes. Past it the scan is REPORTED as `dropped`, never lost silently.
+ */
+export const PENDING_BUFFER_DEPTH = 8;
 
 export interface PendingBufferResult {
   next: PendingBufferState;
   /** The code to hand to the resolver right now, or null to start nothing. */
   startResolving: string | null;
+  /** True when the buffer was full and this scan could NOT be queued — the caller must surface it. */
+  dropped?: boolean;
 }
 
 /** The empty/idle buffer. */
@@ -57,11 +63,8 @@ export function pushScan(state: PendingBufferState, code: string): PendingBuffer
     return { startResolving: code, next: { isResolving: true, current: code, pending: [] } };
   }
   if (state.pending.length >= PENDING_BUFFER_DEPTH) {
-    // Bounded by design (R2's "depth 2") — this is the intentional cap, not
-    // the drop-not-queue bug: it only bites once THREE accepted scans (the
-    // one resolving plus two buffered) are already in flight at once, which
-    // real resolve latency makes rare.
-    return { startResolving: null, next: state };
+    // Bounded by design, but never silent: the caller gets `dropped` and shows a rejected cue.
+    return { startResolving: null, next: state, dropped: true };
   }
   return { startResolving: null, next: { ...state, pending: [...state.pending, code] } };
 }

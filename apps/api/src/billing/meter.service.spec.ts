@@ -49,7 +49,12 @@ describe("MeterService", () => {
       resetsAt: null,
     });
     expect(prisma.customer.count).toHaveBeenCalledWith({
-      where: { tenantId: "t1", deletedAt: null, supplierOnly: false },
+      where: {
+        tenantId: "t1",
+        deletedAt: null,
+        supplierOnly: false,
+        OR: [{ isWalkIn: null }, { isWalkIn: false }],
+      },
     });
   });
 
@@ -143,11 +148,31 @@ describe("MeterService", () => {
     expect(customers).toMatchObject({ used: 7, included: 10, remaining: 3 });
   });
 
-  it("customersUsed() counts only non-deleted, non-supplier-only, tenant-scoped rows", async () => {
+  it("customersUsed() counts only non-deleted, non-supplier-only, non-walk-in, tenant-scoped rows", async () => {
     const { svc, prisma } = makeService(CAPS);
     await svc.customersUsed("t1");
     expect(prisma.customer.count).toHaveBeenCalledWith({
-      where: { tenantId: "t1", deletedAt: null, supplierOnly: false },
+      where: {
+        tenantId: "t1",
+        deletedAt: null,
+        supplierOnly: false,
+        // SA-655: the system walk-in customer is not a seat of the customer cap. The column is
+        // nullable and every pre-existing row is NULL; Prisma's `{ not: true }` compiles to
+        // `<> true`, which drops NULL rows, so the filter MUST be the explicit null-or-false OR.
+        OR: [{ isWalkIn: null }, { isWalkIn: false }],
+      },
     });
+  });
+
+  it("customersUsed() filter keeps a NULL isWalkIn row and a false row, drops a true row", async () => {
+    const { svc, prisma } = makeService(CAPS);
+    await svc.customersUsed("t1");
+    const where = (prisma.customer.count as jest.Mock).mock.calls[0][0].where;
+    // Evaluate the OR the way SQL does (three-valued: NULL never equals true).
+    const keeps = (isWalkIn: boolean | null) =>
+      (where.OR as Array<{ isWalkIn: boolean | null }>).some((c) => c.isWalkIn === isWalkIn);
+    expect(keeps(null)).toBe(true);
+    expect(keeps(false)).toBe(true);
+    expect(keeps(true)).toBe(false);
   });
 });

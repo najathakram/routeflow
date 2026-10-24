@@ -17,7 +17,7 @@
 //      destructive. If that checkout changed run.mjs's own on-disk code
 //      (already loaded into this live process), it re-execs the fresh
 //      version exactly once so the rest of the run uses current logic.
-//   3. Runs `node reconcile.mjs --quiet`.
+//   3. Runs `node reconcile.mjs --apply --quiet` (a bare run is a dry run since #2284).
 //   4. When WORK_TRIAGE=1, may spawn a headless `claude -p ...` auto-triage
 //      run over the needs-triage backlog — see the "AUTO-TRIAGE" section
 //      below for the full trigger contract. Best-effort: any failure here
@@ -597,7 +597,7 @@ function runSteps(now, meta) {
   const steps = {};
 
   try {
-    execFileSync(process.execPath, [RECONCILE_PATH, "--quiet"], {
+    execFileSync(process.execPath, [RECONCILE_PATH, "--apply", "--quiet"], {
       cwd: ROOT,
       stdio: ["ignore", "pipe", "pipe"],
     });

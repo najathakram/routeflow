@@ -75,6 +75,7 @@ const tmpdir = () => realpathForTmp(osTmpdir());
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawn, spawnSync } from "node:child_process";
+import { scrubbedGitEnv } from "../lib/check-git-hooks.mjs";
 import { createServer } from "node:http";
 import { startFakePlane } from "./plane-fake-server.mjs";
 
@@ -83,6 +84,17 @@ import { startFakePlane } from "./plane-fake-server.mjs";
 const CLI_BUDGET_MS = Number(process.env.PLANE_SELF_TEST_CLI_BUDGET_MS) || 90_000;
 
 const THIS_DIR = dirname(fileURLToPath(import.meta.url));
+// plane-client.mjs requires ../lib/scrubbed-git-env.cjs (the one shared GIT_* scrub), so every
+// fixture repo that carries a copy of it must carry the helper at the same relative path.
+function copyScrubHelper(clientDir) {
+  const dest = join(clientDir, "..", "lib");
+  mkdirSync(dest, { recursive: true });
+  writeFileSync(
+    join(dest, "scrubbed-git-env.cjs"),
+    readFileSync(fileURLToPath(new URL("../lib/scrubbed-git-env.cjs", import.meta.url))),
+  );
+}
+
 const REPO_ROOT = join(THIS_DIR, "..", ".."); // scripts/campaign/ -> repo root, computed independently of plane-client.mjs's own repoRoot() so this file's real-path invariant check never depends on the thing it is guarding.
 const SYNC_PATH = fileURLToPath(new URL("./plane-sync.mjs", import.meta.url));
 const TRIAGE_PATH = fileURLToPath(new URL("./plane-triage.mjs", import.meta.url));
@@ -760,11 +772,7 @@ console.log(JSON.stringify(loadKnobs()));
   // --abbrev-ref HEAD`, same call shape as plane-*.mjs's own currentBranch().
   {
     const repoDir = makeTmpDir();
-    const gitEnvLocal = () => {
-      const env = { ...process.env };
-      for (const k of Object.keys(env)) if (/^GIT_/.test(k)) delete env[k];
-      return env;
-    };
+    const gitEnvLocal = () => scrubbedGitEnv();
     const runGit = (args) => {
       const res = spawnSync("git", args, { cwd: repoDir, encoding: "utf8", env: gitEnvLocal() });
       if (res.status !== 0) {
@@ -1157,15 +1165,12 @@ appendRun({ tool: "m1-self-test", exit: 0, branch: ${JSON.stringify(actualBranch
     mkdirSync(join(fixtureRoot, ".claude"), { recursive: true });
     const campaignDir = join(fixtureRoot, "scripts", "campaign");
     mkdirSync(campaignDir, { recursive: true });
+    copyScrubHelper(campaignDir);
     writeFileSync(join(campaignDir, "plane-retro.mjs"), readFileSync(RETRO_PATH));
     writeFileSync(join(campaignDir, "plane-client.mjs"), readFileSync(fileURLToPath(CLIENT_URL)));
     writeFileSync(join(campaignDir, "plane-sync.mjs"), readFileSync(SYNC_PATH));
 
-    const gitEnvLocal = () => {
-      const env = { ...process.env };
-      for (const k of Object.keys(env)) if (/^GIT_/.test(k)) delete env[k];
-      return env;
-    };
+    const gitEnvLocal = () => scrubbedGitEnv();
     const runGit = (args) => {
       const res = spawnSync("git", args, {
         cwd: fixtureRoot,

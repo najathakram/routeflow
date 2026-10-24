@@ -127,6 +127,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { assertTestTenant } from "./lib/test-tenants.cjs";
 import { recoverCalendarDay, classifyRepairRow } from "./lib/recover-calendar-day.cjs";
+import guardLib from "../apps/api/scripts/lib/live-target-guard.cjs";
+import protectedSlugsLib from "../apps/api/scripts/lib/protected-slugs.cjs";
+
+const { assertWritableTenant, ProtectedTenantError } = guardLib;
+const { loadProtectedSlugs } = protectedSlugsLib;
 
 const argv = process.argv.slice(2);
 const EXECUTE = argv.includes("--execute");
@@ -196,12 +201,27 @@ if (!url) {
   process.exit(2);
 }
 
+// Row 195: a LIVE (non-test) tenant must not be protected (paying, Stripe-linked or env-listed).
+// The list is loaded ONCE, before connecting, from the URL this script dials; an approved test
+// tenant keeps its behaviour. There is no override: a protected tenant is refused.
+let protectedSlugs = null;
+if (isLiveTenant) {
+  try {
+    protectedSlugs = loadProtectedSlugs(process.env, url);
+  } catch (e) {
+    console.error(`\n✖ ${e.message}`);
+    process.exit(2);
+  }
+}
+
 // The tenant's configured zone is resolved for the banner ONLY — it plays no
 // part in recovering a day (see recover-calendar-day.cjs's header).
 const TENANT_QUERY = `
-  SELECT t.id AS tenant_id, tc.timezone AS tenant_timezone
+  SELECT t.id AS tenant_id, t.slug, t.status, t.class, t."deletedAt" AS deleted_at,
+         tc.timezone AS tenant_timezone, s."planKey" AS plan_key, s."stripeSubId" AS stripe_sub_id
   FROM "Tenant" t
   LEFT JOIN "TenantConfig" tc ON tc."tenantId" = t.id
+  LEFT JOIN "TenantSubscription" s ON s."tenantId" = t.id
   WHERE t.slug = $1
 `;
 
@@ -265,6 +285,26 @@ async function main() {
   }
 
   const tenantId = tenantRows[0].tenant_id;
+  if (protectedSlugs) {
+    try {
+      assertWritableTenant(
+        {
+          id: tenantId,
+          slug: tenantRows[0].slug,
+          status: tenantRows[0].status,
+          class: tenantRows[0].class,
+          deletedAt: tenantRows[0].deleted_at,
+        },
+        { planKey: tenantRows[0].plan_key, stripeSubId: tenantRows[0].stripe_sub_id },
+        protectedSlugs,
+      );
+    } catch (e) {
+      if (!(e instanceof ProtectedTenantError)) throw e;
+      fail(`${e.message} Nothing was written.`);
+      await client.end();
+      return;
+    }
+  }
   const timeZone = tenantRows[0].tenant_timezone;
   console.log(
     `tenant id ${tenantId}  timezone=${timeZone || "(unset)"} ` +

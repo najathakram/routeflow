@@ -8,7 +8,7 @@ import { roundMoney } from "@routeflow/pricing";
  *
  * #1529 / SA-517: extracted from InvoicesService as a PURE function so the invoice list, the invoice
  * detail and AR aging share one rule. `todayIso` (YYYY-MM-DD) is the caller's "today": the invoice
- * list and detail keep their existing UTC day; AR aging passes the tenant's day. A deposit due TODAY
+ * list, the detail and AR aging all pass the tenant's day (the UTC day when the tenant has no zone). A deposit due TODAY
  * is never overdue (RF-202: the whole due day is grace — ISO date strings compare, never instants).
  */
 export function computeDepositFields(

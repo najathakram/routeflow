@@ -3,6 +3,7 @@ import { CreditNoteStatus } from "@prisma/client";
 import { roundMoney } from "@routeflow/pricing";
 
 import { lockRowsNoWait } from "../common/db-locks";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /**
  * B214 (REG-B214): the ONE home of "a credit note sourced by an invoice still carries spendable
@@ -81,7 +82,7 @@ export async function assertNoUnspentSourcedCredits(
   const unspent = roundMoney(open.reduce((s: number, cn: any) => s + remainingOf(cn), 0));
   const numbers = open.map((cn: any) => cn.creditNoteNumber).join(", ");
   throw new ConflictException({
-    code: "INVOICE_HAS_UNSPENT_CREDIT",
+    code: API_ERROR_CODES.INVOICE_HAS_UNSPENT_CREDIT,
     message: opts?.afterRelease
       ? `Deleting this order would hand credit ${numbers} (${unspent.toFixed(2)} unspent) back ` +
         `to the customer. Void the invoice instead.`
@@ -94,4 +95,56 @@ export async function assertNoUnspentSourcedCredits(
       remaining: remainingOf(cn),
     })),
   });
+}
+
+/** #2848 (SA-608c follow-up): the AuditLog action that marks a credit note whose source invoice was deleted. */
+export const SOURCE_DELETED_ACTION = "SOURCE_DELETED";
+
+/** The refusal text for editing such a note (the typed code arrives with the CREDIT_NOTE_* set). */
+export const SOURCE_DELETED_MESSAGE =
+  "This credit's source invoice was deleted; it can't be edited.";
+
+/**
+ * #2848: the ONE home of "an invoice is going away, so its closed credit notes are unlinked" for
+ * every door that destroys an invoice (L-072). It reads the affected note ids FIRST, writes one
+ * SOURCE_DELETED AuditLog row per note (the durable marker: a note's columns alone cannot say its
+ * source was deleted), then unlinks exactly those ids, never an unscoped many-write. Call it
+ * INSIDE the deleting transaction, after `assertNoUnspentSourcedCredits` and BEFORE the invoice row
+ * is deleted (the FK would otherwise null the link silently).
+ */
+export async function unlinkSourcedCredits(
+  tx: any,
+  invoices: Array<{ id: string; invoiceNumber: string }>,
+  tenantId: string | null,
+): Promise<void> {
+  if (invoices.length === 0) return;
+  const numberById = new Map(invoices.map((i) => [i.id, i.invoiceNumber]));
+  const notes: Array<{ id: string; invoiceId: string }> = await tx.creditNote.findMany({
+    where: { invoiceId: { in: [...numberById.keys()] } },
+    select: { id: true, invoiceId: true },
+  });
+  if (!notes || notes.length === 0) return;
+  await tx.auditLog.createMany({
+    data: notes.map((n) => ({
+      tenantId,
+      userId: null,
+      action: SOURCE_DELETED_ACTION,
+      entityType: "CreditNote",
+      entityId: n.id,
+      meta: { invoiceId: n.invoiceId, invoiceNumber: numberById.get(n.invoiceId) ?? null },
+    })),
+  });
+  await tx.creditNote.updateMany({
+    where: { id: { in: notes.map((n) => n.id) } },
+    data: { invoiceId: null },
+  });
+}
+
+/** True when a SOURCE_DELETED marker exists for this credit note. */
+export async function hasSourceDeletedMarker(db: any, creditNoteId: string): Promise<boolean> {
+  const row = await db.auditLog.findFirst({
+    where: { entityType: "CreditNote", entityId: creditNoteId, action: SOURCE_DELETED_ACTION },
+    select: { id: true },
+  });
+  return !!row;
 }

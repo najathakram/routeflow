@@ -25,6 +25,7 @@ import {
   type ScanStatementFile,
   type StatementLineKind,
 } from "./dto/statement.dto";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /**
  * Statements are far more variable than invoices — many suppliers, many
@@ -217,7 +218,7 @@ IMPORTANT: "amount" is always a positive magnitude — use "kind" to say whether
         throw new BadRequestException({
           message:
             "The Anthropic API key is invalid or expired. Go to Settings → AI & Integrations to update it.",
-          code: "AI_KEY_INVALID",
+          code: API_ERROR_CODES.AI_KEY_INVALID,
         });
       }
       // Non-transient 4xx (bad/oversized/corrupt image, malformed request) —
@@ -227,12 +228,12 @@ IMPORTANT: "amount" is always a positive magnitude — use "kind" to say whether
         throw new BadRequestException({
           message:
             "The scanner couldn't process this file. Try a clearer photo or re-export as JPEG.",
-          code: "AI_SCAN_REJECTED",
+          code: API_ERROR_CODES.AI_SCAN_REJECTED,
         });
       }
       throw new ServiceUnavailableException({
         message: "The AI scanner is temporarily unavailable. Try again in a minute.",
-        code: "AI_UNAVAILABLE",
+        code: API_ERROR_CODES.AI_UNAVAILABLE,
       });
     }
     const scanDurationMs = Date.now() - startedAt;
@@ -251,7 +252,7 @@ IMPORTANT: "amount" is always a positive magnitude — use "kind" to say whether
     if (content.type !== "text") {
       throw new UnprocessableEntityException({
         message: "The AI scanner returned an unexpected response. Try again.",
-        code: "AI_PARSE_FAILED",
+        code: API_ERROR_CODES.AI_PARSE_FAILED,
       });
     }
 
@@ -271,7 +272,7 @@ IMPORTANT: "amount" is always a positive magnitude — use "kind" to say whether
       this.logger.error(`scanStatement: failed to parse AI response. Raw output:\n${content.text}`);
       throw new UnprocessableEntityException({
         message: "Couldn't read the scan result. Try again — a retry usually works.",
-        code: "AI_PARSE_FAILED",
+        code: API_ERROR_CODES.AI_PARSE_FAILED,
       });
     }
     if (skippedPages.length > 0) {

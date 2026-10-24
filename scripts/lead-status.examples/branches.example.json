@@ -1,0 +1,17 @@
+[
+  {
+    "machine": "pc",
+    "branch": "feat/example-pushed",
+    "sha": "0123456789abcdef0123456789abcdef01234567",
+    "pr": 123,
+    "expectOnOrigin": true,
+    "note": "pushed lane branch"
+  },
+  {
+    "machine": "mini",
+    "branch": "feat/example-local",
+    "sha": "89abcdef0123456789abcdef0123456789abcdef",
+    "expectOnOrigin": false,
+    "note": "not pushed yet; cannot be verified from here"
+  }
+]

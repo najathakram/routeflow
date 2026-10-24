@@ -193,21 +193,21 @@ reseller programs, an external CRM adapter.
 Data model deltas (columns first; tables only where nothing fits; every new model in its
 domain file and the `MODEL_DOMAIN` map):
 
-| Model | Change |
-| --- | --- |
-| Tenant | `class` enum PRODUCTION / DEMO / TEST / INTERNAL; `signupSource`; legacy `plan` enum widened in Phase 0, no longer written, dropped in Phase 3 |
-| TenantSubscription | `billingMode`, `dunningState`, `dunningNextRetryAt`, `cancellationReason`, `cancellationDetail`; `failedPaymentCount` / `graceStartedAt` / `graceMeter` lose writers, dropped later |
-| Customer | `representsTenantId` (unique, nullable) |
-| ContactPerson | `role` OWNER / BILLING / DISPATCH / OTHER |
-| CustomerTask (new, tenant-side) | title, dueAt, status OPEN / DONE / SNOOZED, kind, assigneeId, customerId |
-| MessageDispatch (new) | tenant, customer, eventKey, occurrenceKey (unique with tenant+customer+event), channel, template, recipient, status, error, providerMessageId |
-| OperatorAlert (new) | kind, tenantId, detail, createdAt, readAt, snoozedUntil, dismissedReason |
-| TenantAddonDenial (new) | tenantId, addonKey, count, lastAt (the would-deny counter) |
-| JobRun (new) | jobKey, startedAt, finishedAt, outcome, summary |
-| User | `platformRole` SUPER_ADMIN / SUPPORT (platform accounts only), `mfaSecret`, `mfaEnabled`, hashed recovery codes |
-| NotificationEvent | twelve lifecycle members |
-| PlatformConfig keys | houseTenantId, dunning.graceDays, dunning.retrySchedule, alerts.recipients, mail.replyTo, trial.defaultDays, maintenance.enabled, maintenance.message |
-| RfInvoice | dropped once HQ invoices exist |
+| Model                           | Change                                                                                                                                                                              |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Tenant                          | `class` enum PRODUCTION / DEMO / TEST / INTERNAL; `signupSource`; legacy `plan` enum widened in Phase 0, no longer written, dropped in Phase 3                                      |
+| TenantSubscription              | `billingMode`, `dunningState`, `dunningNextRetryAt`, `cancellationReason`, `cancellationDetail`; `failedPaymentCount` / `graceStartedAt` / `graceMeter` lose writers, dropped later |
+| Customer                        | `representsTenantId` (unique, nullable)                                                                                                                                             |
+| ContactPerson                   | `role` OWNER / BILLING / DISPATCH / OTHER                                                                                                                                           |
+| CustomerTask (new, tenant-side) | title, dueAt, status OPEN / DONE / SNOOZED, kind, assigneeId, customerId                                                                                                            |
+| MessageDispatch (new)           | tenant, customer, eventKey, occurrenceKey (unique with tenant+customer+event), channel, template, recipient, status, error, providerMessageId                                       |
+| OperatorAlert (new)             | kind, tenantId, detail, createdAt, readAt, snoozedUntil, dismissedReason                                                                                                            |
+| TenantAddonDenial (new)         | tenantId, addonKey, count, lastAt (the would-deny counter)                                                                                                                          |
+| JobRun (new)                    | jobKey, startedAt, finishedAt, outcome, summary                                                                                                                                     |
+| User                            | `platformRole` SUPER_ADMIN / SUPPORT (platform accounts only), `mfaSecret`, `mfaEnabled`, hashed recovery codes                                                                     |
+| NotificationEvent               | twelve lifecycle members                                                                                                                                                            |
+| PlatformConfig keys             | houseTenantId, dunning.graceDays, dunning.retrySchedule, alerts.recipients, mail.replyTo, trial.defaultDays, maintenance.enabled, maintenance.message                               |
+| RfInvoice                       | dropped once HQ invoices exist                                                                                                                                                      |
 
 API deltas: richer tenant list (class, MRR, mode, dunning, last active, `includeTest`);
 live-catalog create DTO with mode and inline activation; legal-transition guard on status; one
@@ -234,15 +234,15 @@ post-deploy-check gains an HQ-invoice and one-MRR assertion.
 
 ## Roadmap (seven sub-projects, each its own spec and plan)
 
-| Phase | Name | Closes (headline) | Bugs folded in |
-| --- | --- | --- | --- |
-| 0 | Truth, hygiene, HQ bootstrap | subscription set reconciled, one MRR, tenant classes, legacy plan enum, live catalog in pickers, expired-trial hotfix, one trial length, HQ tenant + mirror sync, device columns | none new |
-| 1 | Money writers | HQ invoicing (webhook bridge + recurring), dunning dark then enforced, reminders, prorated admin plan change, add-on idempotency, MANUAL renewals, JobRun, mobile status banner | B327, B342, B107, B329, B58 admin twin |
-| 2 | Security | MFA + recovery + break-glass, admin password change, second admin account, impersonation end, signed OAuth state | B173, B349 |
-| 3 | Catalog and selling | draft/publish editor, add-on SKU table, pin pre-flight, would-deny counter and blast-radius report, GoHighLevel $9.99 SKU (v12) with 60-day grandfathering, public Starter/Growth prices, Enterprise quote fields, drop legacy plan column | none |
-| 4 | Lifecycle messaging and alerts | event members, email transport, sendOnce + MessageDispatch, seeded templates, operator alerts and bell, sender identity, suppression, Messaging page | none |
-| 5 | Tenant 360 and daily workflow | merged timeline, contact roles, tasks, tags, health, milestones, attention feed, entitlement inspector, editable branding, bulk with preview, maintenance mode, search and bell shell, structured audit view, SUPPORT role | none |
-| 6 | Portal, self-service, governance | portal logins for tenant admins, card update and invoice download, credits and refunds record, export and dry-run erasure, per-tenant AI cost and quota, mobile billing screen | none |
+| Phase | Name                             | Closes (headline)                                                                                                                                                                                                                          | Bugs folded in                         |
+| ----- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------- |
+| 0     | Truth, hygiene, HQ bootstrap     | subscription set reconciled, one MRR, tenant classes, legacy plan enum, live catalog in pickers, expired-trial hotfix, one trial length, HQ tenant + mirror sync, device columns                                                           | none new                               |
+| 1     | Money writers                    | HQ invoicing (webhook bridge + recurring), dunning dark then enforced, reminders, prorated admin plan change, add-on idempotency, MANUAL renewals, JobRun, mobile status banner                                                            | B327, B342, B107, B329, B58 admin twin |
+| 2     | Security                         | MFA + recovery + break-glass, admin password change, second admin account, impersonation end, signed OAuth state                                                                                                                           | B173, B349                             |
+| 3     | Catalog and selling              | draft/publish editor, add-on SKU table, pin pre-flight, would-deny counter and blast-radius report, GoHighLevel $9.99 SKU (v12) with 60-day grandfathering, public Starter/Growth prices, Enterprise quote fields, drop legacy plan column | none                                   |
+| 4     | Lifecycle messaging and alerts   | event members, email transport, sendOnce + MessageDispatch, seeded templates, operator alerts and bell, sender identity, suppression, Messaging page                                                                                       | none                                   |
+| 5     | Tenant 360 and daily workflow    | merged timeline, contact roles, tasks, tags, health, milestones, attention feed, entitlement inspector, editable branding, bulk with preview, maintenance mode, search and bell shell, structured audit view, SUPPORT role                 | none                                   |
+| 6     | Portal, self-service, governance | portal logins for tenant admins, card update and invoice download, credits and refunds record, export and dry-run erasure, per-tenant AI cost and quota, mobile billing screen                                                             | none                                   |
 
 ## Owner decisions recorded
 

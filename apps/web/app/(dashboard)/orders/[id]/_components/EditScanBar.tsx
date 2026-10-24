@@ -65,6 +65,7 @@ export function EditScanBar({
         inputRef={inputRef}
         onScan={onScan}
         onError={onError}
+        disabled={!pricingReady} // W-745: no scan prices a line until the customer's prices are confirmed
         className="h-9 min-h-[44px] w-9 min-w-[44px] shrink-0"
         title="Scan barcode"
       />

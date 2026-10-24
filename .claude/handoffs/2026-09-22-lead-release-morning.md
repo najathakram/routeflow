@@ -17,7 +17,7 @@ be the release gate. It desynchronised **three** readers of the regulated ledger
    `reverseInvoiceEntries`' skip-guard omits `unitBasisQty`. MacBook is fixing it.
 3. **`tx-report.ts:328-333`** — possible 12× over-report, gated on `regUomCase`. Needs a prod count.
 
-**Revert was considered and rejected.** Pre-B661 the *inline* return path over-reversed whole sales;
+**Revert was considered and rejected.** Pre-B661 the _inline_ return path over-reversed whole sales;
 reverting trades under-reversal for over-reversal. Confirmed by three independent analyses.
 **Do not revert without re-reading that reasoning on #938.**
 

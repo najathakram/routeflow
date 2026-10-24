@@ -1,4 +1,5 @@
-import { IsEmail, IsNotEmpty, IsString, Matches, MinLength } from "class-validator";
+import { IsEmail, IsNotEmpty, IsOptional, IsString, Matches, MinLength } from "class-validator";
+import { IsTenantTimeZone } from "../../common/is-tenant-time-zone.validator";
 
 export class RegisterTenantDto {
   @IsString()
@@ -30,9 +31,16 @@ export class RegisterTenantDto {
   // silently the ONLY gate in practice.
   @IsString()
   @MinLength(8)
-  @Matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*[\d\W])/, {
+  @Matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*[\d\W_])/, {
     message:
       "adminPassword must contain at least one uppercase letter, one lowercase letter, and one number or special character",
   })
   adminPassword: string;
+
+  // SA-738: the business's IANA zone (the web signup sends the browser's). Optional so older
+  // clients keep working; the service then writes the resolver's UTC fallback explicitly.
+  @IsOptional()
+  @IsString()
+  @IsTenantTimeZone()
+  timezone?: string;
 }

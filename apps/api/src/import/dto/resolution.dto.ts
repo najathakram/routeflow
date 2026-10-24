@@ -1,4 +1,5 @@
 import { IsInt, IsNumber, IsOptional, IsString, MaxLength, Min } from "class-validator";
+import { IsOptionalNotNull } from "../../common/validators/optional-not-null";
 
 /** §5 choice 1 — new variant of an existing product. */
 export class CreateVariantDto {
@@ -26,7 +27,7 @@ export class CreateBrandNewDto {
   @MaxLength(64)
   sku?: string;
 
-  @IsOptional()
+  @IsOptionalNotNull()
   @IsNumber()
   @Min(0)
   cost?: number;
@@ -61,7 +62,7 @@ export class MatchExistingDto {
 
 /** Confirm a brand-new product's details and clear the incomplete flag. */
 export class CompleteSetupDto {
-  @IsOptional()
+  @IsOptionalNotNull()
   @IsNumber()
   @Min(0)
   pricePerUnit?: number;

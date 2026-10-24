@@ -1,4 +1,4 @@
-import type { BuyerInvoiceItem, BuyerInvoicePayment } from "@routeflow/types";
+import type { BuyerInvoiceItem, BuyerInvoiceListItem, BuyerInvoicePayment } from "@routeflow/types";
 
 /** #2703: full-shape buyer invoice line / payment fixtures (the shared types are server truth, so
  *  every field is present); tests pass only the fields they care about. */
@@ -41,6 +41,29 @@ export function invoicePayment(over: Partial<BuyerInvoicePayment> = {}): BuyerIn
     checkStatus: null,
     nsfFeeAmount: null,
     creditNote: null,
+    ...over,
+  };
+}
+
+/** B1122: a full-shape row of GET /buyer/invoices (InvoicesService.findAll) — the money is `total`
+ *  and the server-derived `balanceDue`; there is no `totalAmount`, `amount` or `balance`. */
+export function invoiceListItem(over: Partial<BuyerInvoiceListItem> = {}): BuyerInvoiceListItem {
+  return {
+    id: "inv-1",
+    invoiceNumber: "INV-0001",
+    status: "SENT",
+    issueDate: "2026-09-10T12:00:00.000Z",
+    createdAt: "2026-09-10T12:00:00.000Z",
+    dueDate: "2026-10-10T00:00:00.000Z",
+    subtotal: 100,
+    taxAmount: 0,
+    total: 100,
+    balanceDue: 100,
+    paidAmount: 0,
+    creditApplied: 0,
+    advanceApplied: 0,
+    isOverdue: false,
+    customer: { id: "c-1", businessName: "Sample Buyer Co" },
     ...over,
   };
 }

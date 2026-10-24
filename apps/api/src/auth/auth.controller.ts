@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  GoneException,
   HttpCode,
   HttpStatus,
   Param,
@@ -10,6 +11,7 @@ import {
   Query,
   Req,
   Res,
+  ServiceUnavailableException,
   UnauthorizedException,
   UseGuards,
 } from "@nestjs/common";
@@ -20,9 +22,14 @@ import type { Request, Response } from "express";
 import { AuthService } from "./auth.service";
 import { LocalAuthGuard } from "./guards/local-auth.guard";
 import { JwtAuthGuard } from "./guards/jwt-auth.guard";
+import { NoImpersonation } from "./decorators/no-impersonation.decorator";
 import { CurrentUser } from "./decorators/current-user.decorator";
-import { TenantGoogleOAuthService } from "../tenants/tenant-google-oauth.service";
 import { GoogleOAuthService } from "./google-oauth.service";
+import { AppleOAuthService } from "./apple-oauth.service";
+import { AppleNonceDto } from "./dto/apple-nonce.dto";
+import { AppleSignInDto } from "./dto/apple-sign-in.dto";
+import { AppleLinkDto } from "./dto/apple-link.dto";
+import { AppleNotificationDto } from "./dto/apple-notification.dto";
 import { LoginDto } from "./dto/login.dto";
 import { RefreshDto } from "./dto/refresh.dto";
 import { ChangePasswordDto } from "./dto/change-password.dto";
@@ -32,6 +39,10 @@ import { ResetPasswordDto } from "./dto/reset-password.dto";
 import { ExchangeCodeDto } from "./dto/exchange-code.dto";
 import { resolveLoginThrottle } from "./login-throttle.config";
 import { extractDeviceInfo } from "./device-info.util";
+import { StaffHandoffService } from "./handoff/staff-handoff.service";
+import { HandoffExchangeDto, HandoffMintDto } from "./handoff/handoff.dto";
+import type { JwtPayload } from "./jwt-payload.interface";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 // SEC-4 / F11-002: name + scope of the httpOnly refresh cookie. Path is scoped
 // to the auth routes so it is never sent to unrelated API endpoints. Kept in
@@ -39,6 +50,14 @@ import { extractDeviceInfo } from "./device-info.util";
 const REFRESH_COOKIE = "rf_refresh";
 const REFRESH_COOKIE_PATH = "/api/v1/auth";
 const REFRESH_COOKIE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30d fallback (matches refresh TTL)
+
+/** Fixed 410 body for the retired per-tenant Google sign-in routes. Nothing from the request is echoed. */
+export const RETIRED_SIGN_IN_ROUTE = {
+  statusCode: 410,
+  code: API_ERROR_CODES.SIGN_IN_ROUTE_RETIRED,
+  message: "This sign-in route has been retired. Use the standard Google sign-in.",
+  error: "Gone",
+} as const;
 
 @ApiTags("auth")
 @Controller("auth")
@@ -56,8 +75,9 @@ export class AuthController {
   constructor(
     private readonly authService: AuthService,
     private readonly configService: ConfigService,
-    private readonly tenantGoogleOAuth: TenantGoogleOAuthService,
     private readonly googleOAuth: GoogleOAuthService,
+    private readonly staffHandoff: StaffHandoffService,
+    private readonly appleOAuth: AppleOAuthService,
   ) {
     this.webUrl = AuthController.normalizeOrigin(
       configService.get<string>("WEB_URL") || "http://localhost:3001",
@@ -133,6 +153,41 @@ export class AuthController {
     return result;
   }
 
+  // ─── #2653 in-app sign-in handoff (SA-542a/b), staff realm ──────────────────────
+
+  @Post("handoff")
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard)
+  @Throttle({ default: { ttl: 60_000, limit: 10 } })
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: "Mint a one-time code for the in-app web shell (OPERATOR/TENANT_ADMIN)",
+  })
+  mintHandoff(@CurrentUser() user: JwtPayload, @Body() dto: HandoffMintDto) {
+    return this.staffHandoff.mint(user, dto.deviceId);
+  }
+
+  @Post("handoff/exchange")
+  @HttpCode(HttpStatus.OK)
+  // Same throttle as login: an exchange signs someone in.
+  @Throttle({
+    default: {
+      limit: () => resolveLoginThrottle().limit,
+      ttl: () => resolveLoginThrottle().ttl,
+    },
+  })
+  @ApiOperation({ summary: "Trade a one-time handoff code for a fresh session" })
+  async exchangeHandoff(
+    @Body() dto: HandoffExchangeDto,
+    @Req() req: any,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.staffHandoff.exchange(dto.code, extractDeviceInfo(req));
+    // The same httpOnly refresh cookie login() sets (SEC-4).
+    this.setRefreshCookie(res, result.refreshToken);
+    return result;
+  }
+
   @Post("refresh")
   @HttpCode(HttpStatus.OK)
   @Throttle({ default: { ttl: 60_000, limit: 20 } })
@@ -183,6 +238,8 @@ export class AuthController {
     return this.authService.verifyEmailAndLogin(body.token, deviceInfo);
   }
 
+  // Topmost on purpose: decorators apply bottom-up, so this guard lands AFTER JwtAuthGuard in the guard list.
+  @NoImpersonation("account")
   @Post("change-password")
   @HttpCode(HttpStatus.OK)
   @UseGuards(JwtAuthGuard)
@@ -192,6 +249,7 @@ export class AuthController {
     return this.authService.changePassword(user.id, dto.currentPassword, dto.newPassword);
   }
 
+  @NoImpersonation("account")
   @Post("set-password")
   @HttpCode(HttpStatus.OK)
   @UseGuards(JwtAuthGuard)
@@ -308,6 +366,7 @@ export class AuthController {
    * links the Google account to the currently signed-in user instead of logging in.
    * Requires a valid JWT (the user must already be authenticated).
    */
+  @NoImpersonation("account")
   @Get("google/link")
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
@@ -356,6 +415,14 @@ export class AuthController {
 
     try {
       const profile = await this.googleOAuth.verifyCallback(code, state);
+
+      // Platform accounts sign in only through the platform callback. Turn a platform-type
+      // state away before the link or sign-in step, so on this path no account is linked,
+      // looked up or signed in and no token pair or exchange code is issued.
+      if (profile.type === "platform") {
+        return res.redirect(`${base}?error=unauthorized`);
+      }
+
       // B825: profile.returnOrigin was already validated at mint time (googleAuthUrl's
       // resolveReturnOrigin call) and the signature above proves it wasn't tampered
       // with since — resolveReturnOrigin here is defense-in-depth, never a second
@@ -376,9 +443,10 @@ export class AuthController {
       // ── Sign-in flow ─────────────────────────────────────────────────────────
       const result = await this.googleOAuth.findOrCreateUser(profile, extractDeviceInfo(req));
 
-      // Build the param bundle the web callback page expects.
+      // Build the param bundle the web callback page expects. Platform results are
+      // unreachable here: the platform-type state check above turns them away first.
       let bundle: Record<string, string>;
-      if (result.kind === "staff" || result.kind === "platform") {
+      if (result.kind === "staff") {
         const r = result as any;
         bundle = {
           accessToken: r.accessToken,
@@ -393,7 +461,10 @@ export class AuthController {
           refreshToken: r.refreshToken,
           type: "BUYER",
           sellerCount: String(r.sellerCount),
-          linked: profile.inviteToken ? "true" : "false",
+          // true only when this sign-in actually activated a link (a dead, removed, expired or refused invite is not).
+          linked: r.inviteOutcome === "accepted" ? "true" : "false",
+          // The seller's workspace is not taking the invite right now: the buyer is signed in, the link was skipped.
+          ...(r.inviteOutcome === "seller_unavailable" ? { invite: "seller_unavailable" } : {}),
         };
       }
 
@@ -523,32 +594,96 @@ export class AuthController {
     }
   }
 
-  // ─── Per-tenant Google OAuth (legacy path-param variant) ──────────────────
-  // Kept for backward compatibility. New integrations should use the header-based flow above.
+  // ─── Sign in with Apple (#2309, SA-418 — native iOS only) ─────────────────
+  //
+  // ENV VARS required in Railway:
+  //   APPLE_BUNDLE_ID     — the app's bundle identifier (exact `aud` match)
+  //   APPLE_TEAM_ID       — Apple Developer Team ID
+  //   APPLE_KEY_ID        — Sign in with Apple private key's Key ID
+  //   APPLE_PRIVATE_KEY   — the .p8 private key contents, verbatim
+  //
+  // No redirect flow — the native client (expo-apple-authentication) does the
+  // consent UI itself and posts identityToken/authorizationCode directly.
+
+  @Post("apple/nonce")
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { ttl: 60_000, limit: 30 } })
+  @ApiOperation({ summary: "Mint a server-side nonce for a Sign in with Apple request" })
+  async appleNonce(@Body() dto: AppleNonceDto) {
+    if (!this.appleOAuth.isConfigured()) {
+      throw new ServiceUnavailableException(
+        "Sign in with Apple is not configured for this environment.",
+      );
+    }
+    return this.appleOAuth.mintNonce(dto.tenantSlug, dto.context);
+  }
+
+  @Post("apple")
+  @HttpCode(HttpStatus.OK)
+  // SA-418 §1: the SAME throttle as /auth/login.
+  @Throttle({
+    default: {
+      limit: () => resolveLoginThrottle().limit,
+      ttl: () => resolveLoginThrottle().ttl,
+    },
+  })
+  @ApiOperation({ summary: "Sign in with Apple (native iOS only)" })
+  async appleSignIn(@Body() dto: AppleSignInDto, @Req() req: Request) {
+    if (!this.appleOAuth.isConfigured()) {
+      throw new ServiceUnavailableException(
+        "Sign in with Apple is not configured for this environment.",
+      );
+    }
+    return this.appleOAuth.signIn(dto, extractDeviceInfo(req));
+  }
+
+  @NoImpersonation("account")
+  @Post("apple/link")
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: "Link an Apple account to the current user" })
+  async appleLink(@CurrentUser() user: { sub: string }, @Body() dto: AppleLinkDto) {
+    if (!this.appleOAuth.isConfigured()) {
+      throw new ServiceUnavailableException(
+        "Sign in with Apple is not configured for this environment.",
+      );
+    }
+    await this.appleOAuth.linkAppleAccount(user.sub, dto.identityToken, dto.nonce);
+    return { message: "Apple account linked" };
+  }
+
+  @Post("apple/notifications")
+  // Unauthenticated and does a JWKS lookup + a Redis write per call: its own tight limit.
+  @Throttle({ default: { ttl: 60_000, limit: 30 } })
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: "Apple server-to-server notifications (consent-revoked, account-delete)",
+  })
+  async appleNotifications(@Body() dto: AppleNotificationDto) {
+    // Unconfigured ⇒ refuse: with no bundle id there is no audience to verify against.
+    if (!this.appleOAuth.isNotificationConfigured()) {
+      throw new ServiceUnavailableException("Sign in with Apple is not configured");
+    }
+    await this.appleOAuth.handleNotification((dto.payload ?? dto.signedPayload) as string);
+    return { received: true };
+  }
+
+  // ─── Retired per-tenant Google sign-in routes ─────────────────────────────
+  // The legacy per-tenant sign-in routes are retired. Both answer 410 Gone with one fixed body
+  // and read nothing from the request. Declared after the static GET google/link and
+  // google/callback routes so these param routes never shadow them.
 
   @Get("google/:tenantSlug")
-  @ApiOperation({ summary: "Initiate per-tenant Google OAuth login (legacy)" })
-  async tenantGoogleLogin(@Param("tenantSlug") slug: string, @Res() res: Response) {
-    const url = await this.tenantGoogleOAuth.buildAuthUrl(slug);
-    res.redirect(url);
+  @ApiOperation({ summary: "Retired per-tenant Google sign-in route (410 Gone)" })
+  tenantGoogleLogin(): never {
+    throw new GoneException(RETIRED_SIGN_IN_ROUTE);
   }
 
   @Get("google/:tenantSlug/callback")
-  @ApiOperation({ summary: "Per-tenant Google OAuth callback (legacy)" })
-  async tenantGoogleCallback(
-    @Param("tenantSlug") slug: string,
-    @Req() req: any,
-    @Res() res: Response,
-  ) {
-    const code = req.query?.code as string;
-    if (!code) {
-      return res.redirect(`${this.webUrl}/auth/error?message=oauth_cancelled`);
-    }
-    const user = await this.tenantGoogleOAuth.exchangeCode(code, slug);
-    const tokens = await this.authService.login(user as any);
-    res.redirect(
-      `${this.webUrl}/auth/callback?accessToken=${tokens.accessToken}&refreshToken=${tokens.refreshToken}&role=${tokens.user.role}&tenantSlug=${slug}`,
-    );
+  @ApiOperation({ summary: "Retired per-tenant Google sign-in callback (410 Gone)" })
+  tenantGoogleCallback(): never {
+    throw new GoneException(RETIRED_SIGN_IN_ROUTE);
   }
 
   // ─── Refresh-cookie helpers (SEC-4 / F11-002) ──────────────────────────────

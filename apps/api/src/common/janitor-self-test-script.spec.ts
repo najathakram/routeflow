@@ -10,14 +10,17 @@ import path from "node:path";
 const REPO_ROOT = path.resolve(__dirname, "../../../..");
 const SCRIPT = path.resolve(REPO_ROOT, "scripts/janitor.self-test.mjs");
 
-// #2146: this child's wall-clock time scales with how many OTHER jest workers/turbo tasks are
-// contending for CPU at the same time, not just this repo's own size — a fixed 120s timeout had
-// no margin when running inside the FULL `npm run test -w apps/api` (hundreds of concurrent
-// workers), even though the same child finishes in ~70s standalone. Load-tolerant default (5 min);
-// JANITOR_SELF_TEST_TIMEOUT_MS overrides it for a slower box without touching this file. The jest
-// test timeout stays comfortably above the child's own, so a genuine hang still fails with the
-// child's own signal/status assertions instead of a less specific jest-level timeout.
-const CHILD_TIMEOUT_MS = Number(process.env.JANITOR_SELF_TEST_TIMEOUT_MS) || 300_000;
+// #2146: the child's time is intrinsic real process spawns (PowerShell cold starts plus ~150 git
+// spawns): ~56s standalone, ~129s when the machine is contended — a fixed 120s timeout had no
+// margin inside the full `npm run test -w apps/api`. Load-tolerant default (5 min);
+// JANITOR_SELF_TEST_TIMEOUT_MS overrides it for a slower box without touching this file (a
+// non-numeric or non-positive value falls back to the default). The jest test timeout stays
+// above the child's own, so a genuine hang still fails with the child's own signal/status
+// assertions instead of a less specific jest-level timeout.
+const DEFAULT_CHILD_TIMEOUT_MS = 300_000;
+const envTimeoutMs = Number(process.env.JANITOR_SELF_TEST_TIMEOUT_MS);
+const CHILD_TIMEOUT_MS =
+  Number.isFinite(envTimeoutMs) && envTimeoutMs > 0 ? envTimeoutMs : DEFAULT_CHILD_TIMEOUT_MS;
 
 describe("janitor self-test contract (B800)", () => {
   it(

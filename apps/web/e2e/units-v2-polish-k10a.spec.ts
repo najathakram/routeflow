@@ -1,0 +1,250 @@
+/**
+ * Units v2 (units-v2-polish-k10a): the product page's pricing polish, proven in a real browser at 1440 / 768 / 390.
+ *   F02  Change prices: Apply/Cancel sit below the preview (never on it) and the Also update text is fully readable
+ *   P13  Raise / Lower: only the chosen half is filled (the native radio's checked state)
+ *   F22  Edit: the save bar rests at the real bottom and never covers a price box that takes focus
+ *   F03  After Apply the price box shows the applied value, not the old one
+ *   NIT-3  the "customers capped" note shows only when the server said truncated
+ *
+ * LOCAL LANE ONLY (project `units-v2`). READ-ONLY: nothing is saved (Apply only folds into the draft, which is discarded).
+ * Role: OPERATOR on the approved test tenant; fixture product E2E-FIX-UNITS (apps/api/scripts/e2e-seed.js). A tenant not
+ * served `flag.units_prices_v2` FAILS the spec.
+ */
+import { test, expect, type Locator, type Page } from "@playwright/test";
+import { setTenantCookie } from "./helpers/auth";
+import { VIEWPORTS, productBySku, requireUnitsV2Flag, shot } from "./helpers/units-v2-support";
+
+const BASE = process.env.PLAYWRIGHT_BASE_URL ?? "";
+const SKU = "E2E-FIX-UNITS";
+const ID = {
+  change: "units-v2-btn-change-open",
+  panel: "units-v2-change-panel",
+  preview: "units-v2-ch-preview",
+  footer: "units-v2-change-footer",
+  alsoUpdate: "units-v2-cp-also-update",
+  truncated: "units-v2-cp-customers-truncated",
+  edit: "units-v2-btn-edit",
+  bar: "units-v2-editbar",
+  barText: "units-v2-eb-text",
+  cancel: "units-v2-eb-cancel",
+  discard: "units-v2-eb-discard",
+};
+
+async function openProduct(page: Page, context: Parameters<typeof setTenantCookie>[0]) {
+  await setTenantCookie(context, BASE);
+  const ctx = await requireUnitsV2Flag(page);
+  const product = await productBySku(page, ctx, SKU);
+  await page.goto(`/products/${product.id}`);
+  await expect(page.getByTestId("units-v2-grid")).toBeVisible({ timeout: 20_000 });
+  return { ...ctx, productId: product.id };
+}
+
+/** The unit with a typed (Set) Retail price: the one Change prices can raise and the Retail box can show. */
+async function setRetailUnit(
+  page: Page,
+  ctx: { api: string; headers: Record<string, string> },
+  id: string,
+) {
+  const res = await page.request.get(`${ctx.api}/products/${id}/price-grid`, {
+    headers: ctx.headers,
+  });
+  expect(res.ok(), `GET price-grid returned ${res.status()}`).toBe(true);
+  const grid: any = await res.json();
+  const row = grid.rows.find(
+    (r: any) =>
+      r.editable &&
+      r.cells.some((c: any) => c.tier === 1 && c.source === "set" && Number(c.value) > 0),
+  );
+  expect(
+    row,
+    `${SKU} has no unit with a typed Retail price: re-run apps/api/scripts/e2e-seed.js`,
+  ).toBeTruthy();
+  const cell = row.cells.find((c: any) => c.tier === 1);
+  return { ref: row.ref as string, label: row.label as string, retail: Number(cell.value) };
+}
+
+const box = async (page: Page, testId: string) => {
+  const b = await page.getByTestId(testId).boundingBox();
+  expect(b, `${testId} has a box`).toBeTruthy();
+  return b!;
+};
+
+/**
+ * One Raise / Lower half's label, found inside the panel by its WHOLE text: hasText is a case-insensitive substring match,
+ * so a bare "Raise" would also find the "Also raise the prices you set" checkbox label.
+ */
+const half = (panel: Locator, name: "Raise" | "Lower") =>
+  panel.locator("label", { hasText: new RegExp(`^${name}$`) });
+const bg = (panel: Locator, name: "Raise" | "Lower") =>
+  half(panel, name).evaluate((el) => getComputedStyle(el).backgroundColor);
+
+for (const vp of VIEWPORTS) {
+  test.describe(`Units v2 polish K10a @ ${vp.name}`, () => {
+    test.use({ viewport: { width: vp.width, height: vp.height } });
+
+    test("F02 + P13: Change prices reads clean, Apply sits below the preview, one half of Raise/Lower is filled", async ({
+      page,
+      context,
+    }, info) => {
+      const { api, headers, productId } = await openProduct(page, context);
+      const unit = await setRetailUnit(page, { api, headers }, productId);
+      await page.getByTestId(ID.change).click();
+      const panel = page.getByTestId(ID.panel);
+      await expect(panel).toBeVisible();
+
+      // P13: Raise is chosen first and filled; Lower is outlined (a different, lighter fill)
+      const raise = panel.getByRole("radio", { name: "Raise", exact: true });
+      const lower = panel.getByRole("radio", { name: "Lower", exact: true });
+      await expect(raise).toBeChecked();
+      await expect(lower).not.toBeChecked();
+      const [raiseOn, lowerOff] = [await bg(panel, "Raise"), await bg(panel, "Lower")];
+      expect(raiseOn, "the chosen half is filled").not.toBe(lowerOff);
+      await half(panel, "Lower").click();
+      await expect(lower).toBeChecked();
+      await expect(raise).not.toBeChecked();
+      expect(await bg(panel, "Lower"), "the fill moved to Lower").toBe(raiseOn);
+      expect(await bg(panel, "Raise")).toBe(lowerOff);
+      await half(panel, "Raise").click();
+
+      // F02: with an amount typed the preview shows, and Apply/Cancel sit BELOW it, on nothing
+      await panel.getByLabel("Unit", { exact: true }).selectOption(unit.ref);
+      await panel.getByLabel("Amount", { exact: true }).fill("5");
+      const preview = page.getByTestId(ID.preview);
+      await expect(preview.getByRole("row").first()).toBeVisible();
+      const rows = preview.getByRole("row");
+      const n = await rows.count();
+      expect(n, "the preview lists the changed prices").toBeGreaterThan(0);
+      const also = page.getByTestId(ID.alsoUpdate);
+      await expect(also).toBeVisible();
+      const clipped = await also.evaluate((el) => el.scrollHeight > el.clientHeight + 1);
+      expect(clipped, "the Also update box is not clipped").toBe(false);
+      const vh = page.viewportSize()!.height;
+
+      // Two scroll positions of #main-content: the very bottom, and the one that leaves Apply's natural place in the 96px
+      // band under the shell's padding, where a sticky footer used to be lifted onto the last preview rows.
+      const scrollMain = (to: "bottom" | number) =>
+        page.evaluate((target) => {
+          const m = document.getElementById("main-content")!;
+          m.scrollTop = target === "bottom" ? m.scrollHeight : m.scrollTop + target;
+        }, to);
+      const positions: Array<"bottom" | "band"> = ["bottom", "band"];
+      for (const where of positions) {
+        if (where === "bottom") await scrollMain("bottom");
+        else {
+          await scrollMain("bottom");
+          await scrollMain(-1000);
+          const f = await box(page, ID.footer);
+          await scrollMain(f.y + f.height - (vh - 40));
+        }
+        const footer = await box(page, ID.footer);
+        const ends: Array<[string, number]> = [];
+        for (let i = 0; i < n; i++) {
+          const r = await rows.nth(i).boundingBox();
+          ends.push([`preview row ${i}`, r!.y + r!.height]);
+        }
+        const a = await box(page, ID.alsoUpdate);
+        ends.push(["the Also update text", a.y + a.height]);
+        for (const [what, end] of ends) {
+          expect(end, `${what} ends above Apply/Cancel (${where})`).toBeLessThanOrEqual(
+            footer.y + 1,
+          );
+          expect(end, `${what} is not below the fold (${where})`).toBeLessThanOrEqual(vh);
+        }
+        expect(
+          footer.y + footer.height,
+          `Apply/Cancel is in the viewport (${where})`,
+        ).toBeLessThanOrEqual(vh);
+      }
+      await shot(page, info, "k10a-change-prices");
+    });
+
+    test("F03: Apply writes the new price into the Retail box, not the old one", async ({
+      page,
+      context,
+    }) => {
+      const { api, headers, productId } = await openProduct(page, context);
+      const unit = await setRetailUnit(page, { api, headers }, productId);
+      await page.getByTestId(ID.change).click();
+      const panel = page.getByTestId(ID.panel);
+      await panel.getByLabel("Unit", { exact: true }).selectOption(unit.ref);
+      await panel.getByLabel("Amount", { exact: true }).fill("10");
+      await panel.getByRole("button", { name: "Apply", exact: true }).click();
+      await expect(panel).toHaveCount(0);
+      await expect(page.getByTestId(ID.barText)).not.toContainText("Nothing changed yet");
+      const input = page.locator(`[data-testid="units-v2-input-${unit.ref}-1"]:visible`).first();
+      await expect(input).toBeVisible();
+      const shown = Number((await input.inputValue()).replace(/[$,]/g, ""));
+      expect(shown, "the box shows the applied (raised) price").toBeGreaterThan(unit.retail);
+      // nothing is saved: discard the draft
+      await page.getByTestId(ID.cancel).click();
+      await page.getByTestId(ID.discard).click();
+      await expect(page.getByTestId(ID.bar)).toHaveCount(0);
+    });
+
+    test("F22: the save bar rests at the bottom and never covers a price box that takes focus", async ({
+      page,
+      context,
+    }, info) => {
+      await openProduct(page, context);
+      await page.getByTestId(ID.edit).click();
+      const bar = page.getByTestId(ID.bar);
+      await expect(bar).toBeVisible();
+      const viewportBottom = page.viewportSize()!.height;
+      const first = await box(page, ID.bar);
+      expect(
+        Math.abs(viewportBottom - (first.y + first.height)),
+        "the bar sits at the real bottom, not lifted by the shell's padding",
+      ).toBeLessThanOrEqual(2);
+
+      const inputs = page.locator('[data-testid^="units-v2-input-"]:visible');
+      const n = await inputs.count();
+      expect(n, "edit mode shows price boxes").toBeGreaterThan(0);
+      for (let i = 0; i < n; i++) {
+        await inputs.nth(i).focus();
+        const b = await bar.boundingBox();
+        const r = await inputs.nth(i).boundingBox();
+        expect(
+          r!.y + r!.height,
+          `price box ${i} is not under the save bar once focused`,
+        ).toBeLessThanOrEqual(b!.y + 1);
+      }
+      await shot(page, info, "k10a-edit-bar");
+      await page.getByTestId(ID.cancel).click();
+    });
+
+    test("NIT-3: no 'customers capped' note when the server did not truncate; one when it did", async ({
+      page,
+      context,
+    }) => {
+      const { api, headers, productId } = await openProduct(page, context);
+      const unit = await setRetailUnit(page, { api, headers }, productId);
+      const amount = async () => {
+        await page.getByTestId(ID.change).click();
+        const panel = page.getByTestId(ID.panel);
+        await panel.getByLabel("Unit", { exact: true }).selectOption(unit.ref);
+        await panel.getByLabel("Amount", { exact: true }).fill("5");
+        await expect(page.getByTestId(ID.alsoUpdate)).toBeVisible();
+      };
+
+      await amount();
+      await expect(page.getByTestId(ID.truncated)).toHaveCount(0);
+      await page
+        .getByTestId(ID.footer)
+        .getByRole("button", { name: "Cancel", exact: true })
+        .click();
+
+      // the same page, with the endpoint saying it capped the list
+      await page.route(`**/products/${productId}/customer-prices`, async (route) => {
+        const res = await route.fetch();
+        const body = await res.json();
+        await route.fulfill({ response: res, json: { ...body, truncated: true } });
+      });
+      await page.reload();
+      await expect(page.getByTestId("units-v2-grid")).toBeVisible({ timeout: 20_000 });
+      await page.getByTestId(ID.edit).click();
+      await amount();
+      await expect(page.getByTestId(ID.truncated)).toContainText("Showing the first 500 customers");
+      await page.unroute(`**/products/${productId}/customer-prices`);
+    });
+  });
+}

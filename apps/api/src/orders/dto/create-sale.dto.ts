@@ -16,6 +16,8 @@ import {
 import { Type } from "class-transformer";
 import { StripHtml } from "../../common/transforms/strip-html.transform";
 import { AppliedCreditNoteDto, OrderItemDto } from "./create-order.dto";
+import { RestrictionAckDto } from "../../selling-restrictions/dto/restriction-ack.dto";
+import { IsOptionalNotNull } from "../../common/validators/optional-not-null";
 
 /**
  * "Sale" = an order plus its invoice created in one step (the operator "bill now" flow).
@@ -30,7 +32,7 @@ import { AppliedCreditNoteDto, OrderItemDto } from "./create-order.dto";
  *
  * Either way an Order always exists and Invoice.orderId is set — no floating invoices.
  */
-export class CreateSaleDto {
+export class CreateSaleDto extends RestrictionAckDto {
   @IsUUID() customerId: string;
 
   @IsArray()
@@ -54,9 +56,9 @@ export class CreateSaleDto {
   @IsOptional() @IsDateString() deliveredOn?: string;
 
   @IsOptional() @StripHtml() @IsString() @MaxLength(5000) notes?: string;
-  @IsOptional() @IsNumber() @Min(0) @Max(1_000_000) discountAmount?: number;
+  @IsOptionalNotNull() @IsNumber() @Min(0) @Max(1_000_000) discountAmount?: number;
   /** Optional flat shipping fee added to the order total (never taxed). */
-  @IsOptional() @IsNumber() @Min(0) @Max(1_000_000) shippingFee?: number;
+  @IsOptionalNotNull() @IsNumber() @Min(0) @Max(1_000_000) shippingFee?: number;
   @IsOptional() @IsDateString() requestedDeliveryDate?: string;
   /**
    * Business date of the sale — the day it actually happened, for a sale entered
@@ -95,4 +97,16 @@ export class CreateSaleDto {
   @ValidateNested({ each: true })
   @Type(() => AppliedCreditNoteDto)
   appliedCreditNotes?: AppliedCreditNoteDto[];
+
+  /**
+   * INTERNAL (SA-655): the counter sale sets this in code, never from a request body. It becomes the
+   * order's Idempotency-Key; with it createSale RESUMES a replayed sale instead of starting over.
+   *
+   * Why `declare` (B1224): this field has no validator on purpose, so a body-sent value must be refused
+   * by the global whitelist. But the api targets ES2023 (class fields use define semantics), so a plain
+   * `idempotencyKey?: string;` is emitted as an own `undefined` property on every instance, and
+   * forbidNonWhitelisted then rejects EVERY request with 400 "property idempotencyKey should not exist".
+   * `declare` keeps the type and emits no field, so only a client-sent key is refused.
+   */
+  declare idempotencyKey?: string;
 }

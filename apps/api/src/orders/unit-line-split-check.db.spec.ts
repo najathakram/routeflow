@@ -1,6 +1,7 @@
 /**
- * #2230 / SA-388d on REAL Postgres: the NOT VALID CHECKs `OrderItem_unitLine_split_chk` and
- * `InvoiceItem_unitLine_split_chk` (migration 20260926180000_b2230_unit_line_split_check_not_valid)
+ * #2230 / SA-388d on REAL Postgres: the CHECKs `OrderItem_unitLine_split_chk` and
+ * `InvoiceItem_unitLine_split_chk` (added NOT VALID by 20260926180000_b2230_unit_line_split_check_not_valid,
+ * VALIDATED by 20261010090900_b2230_unit_line_split_validate)
  * refuse B718's all-empty split on a multi-piece unit line and nothing else.
  *
  *  - a part-Case delivery rebuild (5 pieces of a 12-Case: boxes 0 + pieces 5) is written   (SA-178)
@@ -132,14 +133,14 @@ describeDb("#2230 unit-line split CHECK — real Postgres (SA-388d)", () => {
     ],
   ];
 
-  it("the two constraints are installed (NOT VALID is fine: new writes are enforced)", async () => {
+  it("the two constraints are installed and VALIDATED (the sitting-3 VALIDATE migration ran)", async () => {
     const { rows } = await pool.query(
-      `SELECT conname FROM pg_constraint WHERE conname = ANY($1::text[]) ORDER BY conname`,
+      `SELECT conname, convalidated FROM pg_constraint WHERE conname = ANY($1::text[]) ORDER BY conname`,
       [["InvoiceItem_unitLine_split_chk", "OrderItem_unitLine_split_chk"]],
     );
-    expect(rows.map((r) => r.conname)).toEqual([
-      "InvoiceItem_unitLine_split_chk",
-      "OrderItem_unitLine_split_chk",
+    expect(rows).toEqual([
+      { conname: "InvoiceItem_unitLine_split_chk", convalidated: true },
+      { conname: "OrderItem_unitLine_split_chk", convalidated: true },
     ]);
   });
 
@@ -170,10 +171,11 @@ describeDb("#2230 unit-line split CHECK — real Postgres (SA-388d)", () => {
   });
 
   /**
-   * NOT VALID leaves a pre-existing violator in place, but ANY later UPDATE of that row is checked, even
-   * a no-op one. A legacy violator is planted by dropping the constraint, inserting, and re-adding it
-   * from its OWN captured definition (pg_get_constraintdef) as NOT VALID, all in one transaction on
-   * this isolated DB, so the schema is left exactly as the migration made it.
+   * The migrations leave the constraints VALIDATED. A NOT VALID constraint leaves a pre-existing violator
+   * in place, but ANY later UPDATE of that row is checked, even a no-op one. A legacy violator is planted
+   * by dropping the constraint, inserting, and re-adding it from its OWN captured definition
+   * (pg_get_constraintdef) as NOT VALID (a VALID re-add would fail on the violator), in one transaction.
+   * The finally block deletes the violator and re-VALIDATEs, restoring the migration's state.
    */
   it.each([
     ["OrderItem", "OrderItem_unitLine_split_chk"],
@@ -184,11 +186,11 @@ describeDb("#2230 unit-line split CHECK — real Postgres (SA-388d)", () => {
     try {
       await client.query("BEGIN");
       const { rows } = await client.query(
-        `SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint WHERE conname = $1`,
+        `SELECT pg_get_constraintdef(oid) AS def, convalidated FROM pg_constraint WHERE conname = $1`,
         [con],
       );
-      const def: string = rows[0].def;
-      expect(def).toMatch(/NOT VALID$/);
+      const def: string = String(rows[0].def).replace(/ NOT VALID$/, "");
+      expect(rows[0].convalidated).toBe(true);
       await client.query(`ALTER TABLE "${table}" DROP CONSTRAINT "${con}"`);
       if (table === "OrderItem")
         await client.query(
@@ -202,7 +204,7 @@ describeDb("#2230 unit-line split CHECK — real Postgres (SA-388d)", () => {
            VALUES ($1, $2, 'B2230 legacy', 40, 0, $3, 'Case', 12, 36, NULL, NULL, now())`,
           [legacyId, invoiceId, tenantId],
         );
-      await client.query(`ALTER TABLE "${table}" ADD CONSTRAINT "${con}" ${def}`);
+      await client.query(`ALTER TABLE "${table}" ADD CONSTRAINT "${con}" ${def} NOT VALID`);
       await client.query("COMMIT");
     } catch (e) {
       await client.query("ROLLBACK").catch(() => undefined);
@@ -210,18 +212,31 @@ describeDb("#2230 unit-line split CHECK — real Postgres (SA-388d)", () => {
     } finally {
       client.release();
     }
-    // The re-added constraint is the migration's, still NOT VALID.
-    const { rows: after } = await pool.query(
+    try {
+      // The temporary re-add is NOT VALID (it has to tolerate the planted violator).
+      const { rows: after } = await pool.query(
+        `SELECT convalidated FROM pg_constraint WHERE conname = $1`,
+        [con],
+      );
+      expect(after).toEqual([{ convalidated: false }]);
+
+      const err = await pool
+        .query(`UPDATE "${table}" SET qty = qty WHERE id = $1`, [legacyId])
+        .then(
+          () => undefined,
+          (e) => e,
+        );
+      expect(err?.code).toBe("23514");
+      expect(String(err?.message)).toContain(con);
+    } finally {
+      // Restore the migration's state for later specs: no violator, constraint VALIDATED.
+      await pool.query(`DELETE FROM "${table}" WHERE id = $1`, [legacyId]);
+      await pool.query(`ALTER TABLE "${table}" VALIDATE CONSTRAINT "${con}"`);
+    }
+    const { rows: restored } = await pool.query(
       `SELECT convalidated FROM pg_constraint WHERE conname = $1`,
       [con],
     );
-    expect(after).toEqual([{ convalidated: false }]);
-
-    const err = await pool.query(`UPDATE "${table}" SET qty = qty WHERE id = $1`, [legacyId]).then(
-      () => undefined,
-      (e) => e,
-    );
-    expect(err?.code).toBe("23514");
-    expect(String(err?.message)).toContain(con);
+    expect(restored).toEqual([{ convalidated: true }]);
   });
 });

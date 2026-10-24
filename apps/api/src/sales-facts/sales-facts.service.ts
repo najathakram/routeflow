@@ -1,11 +1,12 @@
 import { BadRequestException, Injectable } from "@nestjs/common";
 import { roundMoney } from "@routeflow/pricing";
 import { PrismaService } from "../prisma/prisma.service";
+import { resolveZone } from "../common/tenant-time-zone";
 import {
   calendarDateFromIso,
   isoFromCalendarDate,
   startOfCalendarDay,
-  startOfLocalDay,
+  localInstantWindow,
 } from "../common/calendar-date";
 import {
   ACCRUAL_CREDIT_NOTE_FILTER,
@@ -209,15 +210,11 @@ export class SalesFactsService {
   }
 
   /**
-   * The tenant's configured IANA zone, or null (no `TenantConfig` row) — the calendar helpers
-   * then fall back to UTC, never to a guessed zone (the analytics convention).
+   * The tenant's resolved IANA zone (SA-738: the one resolver; UTC when there is no `TenantConfig`
+   * row or the stored zone is invalid, never a guessed zone).
    */
-  async tenantTimezone(tenantId: string): Promise<string | null> {
-    const cfg = await this.prisma.tenantConfig.findUnique({
-      where: { tenantId },
-      select: { timezone: true },
-    });
-    return cfg?.timezone ?? null;
+  async tenantTimezone(tenantId: string): Promise<string> {
+    return (await resolveZone(this.prisma, { tenantId })).zone;
   }
 
   /** Today's calendar day ("YYYY-MM-DD") in `timeZone` (UTC when null). */
@@ -239,10 +236,7 @@ export class SalesFactsService {
    * belongs to the 31st.
    */
   instantWindow(fromDay: string, toDay: string, timeZone: string | null): InstantWindow {
-    return {
-      gte: startOfLocalDay(fromDay, timeZone),
-      lt: startOfLocalDay(addCalendarDays(toDay, 1), timeZone),
-    };
+    return localInstantWindow(fromDay, toDay, timeZone);
   }
 
   /** The product row insights label with; a deactivated product stays reachable by id. */

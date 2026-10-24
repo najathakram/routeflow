@@ -1,8 +1,12 @@
 import {
   ABSENCE_GAP_MS,
   gateScan,
+  isAbsentFromGate,
+  isTrackedByGate,
+  NEVER_ACCEPTED,
   SCAN_COOLDOWN_MS,
   SCAN_SLOTS,
+  touchSeen,
   type ScanCandidates,
   type ScanGateState,
 } from "./scan-loop";
@@ -148,5 +152,67 @@ describe("gateScan — injected candidate matcher", () => {
         stripZeros,
       ),
     ).toEqual([true, true]);
+  });
+});
+
+// #2131 review round 1: touchSeen lets a caller ahead of the gate (continuousFrameScanned's
+// steady-read filter) keep lastSeenAt fresh for a code it hasn't decided to accept yet,
+// without starting a phantom cooldown/absence window.
+describe("touchSeen", () => {
+  it("a first-ever touch creates a slot stamped NEVER_ACCEPTED, not a real timestamp", () => {
+    const state = touchSeen(null, "A", T0);
+    expect(state.slots?.[0]).toEqual({ code: "A", lastAcceptAt: NEVER_ACCEPTED, lastSeenAt: T0 });
+  });
+
+  it("gateScan treats a NEVER_ACCEPTED slot exactly like no slot — accepts immediately", () => {
+    let state: ScanGateState | null = touchSeen(null, "A", T0);
+    state = touchSeen(state, "A", T0 + 100); // a second touch, still never accepted
+    // Immediately after, with NO cooldown/absence elapsed — a real slot would reject this.
+    const { accept } = gateScan("A", state, T0 + 100);
+    expect(accept).toBe(true);
+  });
+
+  it("a touch after a REAL accept preserves the real lastAcceptAt untouched", () => {
+    const accepted = gateScan("A", null, T0);
+    expect(accepted.accept).toBe(true);
+    const touched = touchSeen(accepted.state, "A", T0 + 50);
+    expect(touched.slots?.[0]?.lastAcceptAt).toBe(T0); // unchanged — only lastSeenAt moved
+    expect(touched.slots?.[0]?.lastSeenAt).toBe(T0 + 50);
+  });
+
+  it("a touch keeps the code's real cooldown/absence enforced once it HAS been accepted for real", () => {
+    const accepted = gateScan("A", null, T0);
+    const touched = touchSeen(accepted.state, "A", T0 + 50);
+    // Still well inside both the cooldown and the absence gap from the real accept.
+    const { accept } = gateScan("A", touched, T0 + 60);
+    expect(accept).toBe(false);
+  });
+});
+
+describe("absence observed by the caller (#2131 @1f8b1ea4 review)", () => {
+  const T = 5_000;
+  const accepted = gateScan("A", null, T).state;
+
+  it("isAbsentFromGate: never-seen and stale codes are absent, a fresh one is not", () => {
+    expect(isAbsentFromGate(null, "A", T)).toBe(true);
+    expect(isAbsentFromGate(accepted, "A", T + ABSENCE_GAP_MS - 1)).toBe(false);
+    expect(isAbsentFromGate(accepted, "A", T + ABSENCE_GAP_MS)).toBe(true);
+    expect(isAbsentFromGate(accepted, "B", T)).toBe(true);
+  });
+
+  it("isTrackedByGate matches a slot the same way gateScan does", () => {
+    expect(isTrackedByGate(null, "A")).toBe(false);
+    expect(isTrackedByGate(accepted, "A")).toBe(true);
+    expect(isTrackedByGate(accepted, "B")).toBe(false);
+  });
+
+  it("absenceObserved skips the absence check but never the cooldown", () => {
+    const fresh = touchSeen(accepted, "A", T + SCAN_COOLDOWN_MS); // seen just now
+    expect(gateScan("A", fresh, T + SCAN_COOLDOWN_MS + 10).accept).toBe(false);
+    expect(gateScan("A", fresh, T + SCAN_COOLDOWN_MS + 10, undefined, undefined, true).accept).toBe(
+      true,
+    );
+    const early = touchSeen(accepted, "A", T + 100);
+    expect(gateScan("A", early, T + 110, undefined, undefined, true).accept).toBe(false);
   });
 });

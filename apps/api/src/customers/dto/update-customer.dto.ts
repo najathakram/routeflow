@@ -1,6 +1,5 @@
 import {
   IsBoolean,
-  IsEnum,
   IsIn,
   IsInt,
   IsNumber,
@@ -13,6 +12,7 @@ import {
 import { Transform } from "class-transformer";
 import { FulfillPath } from "@prisma/client";
 import { StripHtml } from "../../common/transforms/strip-html.transform";
+import { WRITABLE_FULFILL_PATHS } from "../../orders/writable-fulfill-paths";
 import { emptyToNull } from "../../common/dto-transforms";
 import { MAX_DECIMAL_10_2 } from "../../common/decimal-bounds.constant";
 import { VALID_TERMS } from "../../system-config/dto/update-invoice-settings.dto";
@@ -27,7 +27,7 @@ export class UpdateCustomerDto {
   @IsOptional() @IsString() contactName?: string;
   @IsOptional() @IsString() phone?: string;
   @IsOptional() @IsString() notes?: string;
-  @IsOptional() @IsEnum(FulfillPath) fulfillPath?: FulfillPath;
+  @IsOptional() @IsIn(WRITABLE_FULFILL_PATHS) fulfillPath?: FulfillPath;
   @IsOptional() @IsString() deliveryWindowStart?: string;
   @IsOptional() @IsString() deliveryWindowEnd?: string;
   // "" clears the stored email (→ null) so an import sentinel or stale address can
@@ -36,7 +36,8 @@ export class UpdateCustomerDto {
   @IsOptional() @Transform(emptyToNull) @IsString() email?: string | null;
   @IsOptional() @IsString() mobile?: string;
   @IsOptional() @IsString() customerType?: string;
-  @IsOptional() @IsString() displayName?: string;
+  // The buyer profile body is derived from this class, so displayName keeps the HTML strip it had there.
+  @IsOptional() @StripHtml() @IsString() displayName?: string;
   @IsOptional() @IsString() salutation?: string;
   @IsOptional() @IsString() firstName?: string;
   @IsOptional() @IsString() lastName?: string;
@@ -48,11 +49,12 @@ export class UpdateCustomerDto {
   // so the buyer themself can toggle it via PATCH /buyer/me.
   @IsOptional() @IsBoolean() orderStatusEmails?: boolean;
   // SA-423: scale is part of the Decimal(10,2) bound — refuse a third decimal, never round it.
+  // B1018 / SA-642: `null` clears the limit ("no limit"), `0` is a real $0 limit, `undefined` leaves it alone. Update only.
   @IsOptional()
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   @Max(MAX_DECIMAL_10_2)
-  creditLimit?: number;
+  creditLimit?: number | null;
   @IsOptional() @IsString() currency?: string;
   @IsOptional() @IsInt() @Min(1) @Max(5) pricingTier?: number;
   /**

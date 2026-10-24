@@ -102,18 +102,3 @@ export function useDeleteSupplier() {
     onSuccess: () => invalidateSupplierLists(qc),
   });
 }
-
-export function useImportExpenseSuppliers() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (file: File) => {
-      const form = new FormData();
-      form.append("file", file);
-      return apiClient.post("/import/expense-suppliers", form).then((r) => r.data);
-    },
-    onSuccess: () => {
-      invalidateSupplierLists(qc);
-      qc.invalidateQueries({ queryKey: ["customers"] });
-    },
-  });
-}

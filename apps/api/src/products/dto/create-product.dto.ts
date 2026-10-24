@@ -55,7 +55,8 @@ export class CreateProductDto {
   // MSRP (suggested retail price) — per PIECE, display-only, never money math.
   // Flag-gated service-side (flag.msrp); "" clears; 0 is normalized to null.
   @IsOptional() @Transform(toOptionalMsrp) @IsDecimal() msrp?: string | null;
-  @IsOptional() @IsInt() unitsPerBox?: number;
+  // Whole pieces per box, 1 or more; null/absent = unboxed (@IsOptional skips both). 0 or -3 would unbox silently.
+  @IsOptional() @IsInt() @Min(1) unitsPerBox?: number;
   // Low-stock thresholds (B858: the CSV import sets them on a new product in the same write).
   @IsOptional() @IsInt() @Min(0) reorderPoint?: number;
   @IsOptional() @IsInt() @Min(0) reorderQty?: number;

@@ -14,6 +14,7 @@ describe("OrdersService.changeStatus — DRAFT promotion and selling restriction
     tenantId: "t-1",
     orderNumber: "ORD-1",
     status: "DRAFT",
+    source: "PHONE", // F1(i): built by office staff; an order with no staff source is judged as the buyer's
     orderDate: null as Date | null,
     routeRunId: null,
     routeRunStopId: null,
@@ -22,7 +23,12 @@ describe("OrdersService.changeStatus — DRAFT promotion and selling restriction
   };
   const operator = { ...operatorPayload, tenantId: "t-1" } as never;
   const tenantAdmin = { ...operatorPayload, role: "TENANT_ADMIN", tenantId: "t-1" } as never;
-  const line = (productId: string | null) => ({ productId, qty: 2, trackedCategoryId: null });
+  const line = (productId: string | null) => ({
+    id: productId ? `li-${productId}` : "li-unlisted",
+    productId,
+    qty: 2,
+    trackedCategoryId: null,
+  });
 
   let h: Awaited<ReturnType<typeof buildOrdersService>>;
   const promote = (user: never = operator) =>
@@ -50,16 +56,37 @@ describe("OrdersService.changeStatus — DRAFT promotion and selling restriction
     await promote();
 
     expect(h.restrictions.assertLinesSellable).toHaveBeenCalledTimes(1);
-    expect(h.restrictions.assertLinesSellable).toHaveBeenCalledWith({
-      tenantId: "t-1",
-      customerId: "cust-1",
-      lines: [{ productId: "prod-1" }],
-      // The channel is the PROMOTING principal's, so a draft a BUYER started and staff promotes is
-      // judged on STAFF (not BUYER_PORTAL): an open ruling, flagged in the PR. No `at`: judged at
-      // entry time, like the license guard (owner ruling pending).
-      channel: "STAFF",
-    });
+    expect(h.restrictions.assertLinesSellable).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: "t-1",
+        customerId: "cust-1",
+        // row 510: each judged line carries the key the client echoes on a warning
+        lines: [{ productId: "prod-1", lineKey: "l:li-prod-1" }],
+        // The channel is the PROMOTING principal's, so a draft a BUYER started and staff promotes is
+        // judged on STAFF (not BUYER_PORTAL): an open ruling, flagged in the PR. No `at`: judged at
+        // entry time, like the license guard (owner ruling pending).
+        channel: "STAFF",
+        fulfilmentKind: "DELIVERY",
+        document: "ORDER",
+        principal: operator,
+      }),
+    );
   });
+
+  it.each([
+    [{ fulfillPath: "PICKUP" }, "PICKUP"],
+    [{ counterSale: true, fulfillPath: "PICKUP" }, "COUNTER"],
+    [{ fulfillPath: "ROUTE" }, "DELIVERY"],
+  ])(
+    "L8: promoting an order with %j judges it as %s (counter / pickup: the store's state)",
+    async (facts, kind) => {
+      h.prisma.order.findUnique.mockResolvedValue({ ...draft, ...facts });
+      await promote();
+      expect(h.restrictions.assertLinesSellable).toHaveBeenCalledWith(
+        expect.objectContaining({ fulfilmentKind: kind }),
+      );
+    },
+  );
 
   it("a refusal (409 SELLING_RESTRICTED) is thrown BEFORE the transition commits: no transaction, no status write", async () => {
     h.restrictions.assertLinesSellable.mockRejectedValue(

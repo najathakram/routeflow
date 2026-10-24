@@ -13,6 +13,8 @@ describe("ProductRow suppresses the was-price marker on a unit-sold line (SA-105
   const src = readFileSync(join(__dirname, "..", "components", "ProductRow.tsx"), "utf8");
 
   it("isSpecial is false whenever unitLabel is set, regardless of the pack's listPrice", () => {
-    expect(src).toMatch(/const isSpecial = !unitLabel && price < listPrice - 0\.0001;/);
+    expect(src).toMatch(
+      /const isSpecial = price != null && !unitLabel && price < listPrice - 0\.0001;/,
+    );
   });
 });

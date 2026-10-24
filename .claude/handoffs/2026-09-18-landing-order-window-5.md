@@ -8,7 +8,7 @@ actual merge/visibility-flip sequence from `docs/runbooks/deploy-visibility-flip
 
 1. **#897** — `fix/B516-grid-cols-responsive` (title says B534, PR body itself was renumbered
    B523→B534 after an id collision, see commit `ccd3dd78` on that branch). MERGEABLE per `gh pr
-   view`. No stated blocker. Land first — #910 is stacked on its file set.
+view`. No stated blocker. Land first — #910 is stacked on its file set.
 2. **#910** — `fix/B535-tap-target-hit-areas`. MERGEABLE. **States its own dependency in the PR
    body**: "Lands after #897 (B534, grid-cols responsive fix) — same six files, built on a fresh
    branch off current master rather than stacked on #897's branch." Land immediately after #897.

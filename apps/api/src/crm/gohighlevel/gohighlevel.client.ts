@@ -97,7 +97,7 @@ export interface GhlTag {
   name: string;
 }
 
-export interface GhlPipelineStage {
+interface GhlPipelineStage {
   id: string;
   name: string;
   position?: number;
@@ -110,7 +110,7 @@ export interface GhlPipeline {
 }
 
 /** Hand-written type guard: a `searchOpportunities` response actually has an `opportunities` array. */
-export function isOpportunityPage(json: unknown): json is GhlOpportunitySearchResponse {
+function isOpportunityPage(json: unknown): json is GhlOpportunitySearchResponse {
   return (
     !!json &&
     typeof json === "object" &&
@@ -119,7 +119,7 @@ export function isOpportunityPage(json: unknown): json is GhlOpportunitySearchRe
 }
 
 /** Hand-written type guard: a `getContact` response actually carries a `contact` object. */
-export function isContact(json: unknown): json is { contact: GhlContact } {
+function isContact(json: unknown): json is { contact: GhlContact } {
   return (
     !!json &&
     typeof json === "object" &&

@@ -16,9 +16,11 @@ import path from "node:path";
 const SCRIPT = path.resolve(__dirname, "../../../../scripts/lint-migrations.mjs");
 // git EXPORTS repo-scoped variables into a hook (verify runs this spec from pre-push): strip every GIT_*
 // so the throwaway repos below can never be redirected at another repository (B420).
-const CLEAN_ENV: NodeJS.ProcessEnv = Object.fromEntries(
-  Object.entries(process.env).filter(([k]) => !/^GIT_/.test(k)),
-);
+// The ONE GIT_* scrub (scripts/lib/scrubbed-git-env.cjs); fixture-git-env-scrub.spec.ts pins that every
+// git spawn in a fixture-repo spec passes it (a private copy of the filter does not count).
+const { scrubbedGitEnv } = require("../../../../scripts/lib/scrubbed-git-env.cjs") as {
+  scrubbedGitEnv: () => NodeJS.ProcessEnv;
+};
 const REPO_ROOT = path.resolve(__dirname, "../../../..");
 const SQUAWK_CLI = path.resolve(REPO_ROOT, "node_modules/squawk-cli");
 
@@ -267,6 +269,7 @@ describe("lint-migrations.mjs contract (T1 / R2, R3)", () => {
       "20260927043000_sa436_credit_auto_apply_off",
       "20260927060000_onboarding_s1_cases",
       "20260928230000_2717_m1_catalog_barcodes_images",
+      "20261008120000_invoice_payment_tenant_paid_at_index",
     ];
     const PRESENT = EXPECTED_EXEMPT.filter((n) => fs.existsSync(path.join(MIGRATIONS, n)));
     const UNWRAPPED = "SET LOCAL lock_timeout = '5s';\nSELECT 1;\n";
@@ -456,7 +459,7 @@ describe("lint-migrations.mjs contract (T1 / R2, R3)", () => {
       // The script anchors everything at its own repo root, so it runs from a copy in a temp repo.
       let repo: string;
       const g = (...a: string[]) => {
-        const r = spawnSync("git", a, { cwd: repo, encoding: "utf8", env: CLEAN_ENV });
+        const r = spawnSync("git", a, { cwd: repo, encoding: "utf8", env: scrubbedGitEnv() });
         if (r.status !== 0) throw new Error(`git ${a.join(" ")}: ${r.stderr}`);
         return r.stdout.trim();
       };
@@ -474,7 +477,7 @@ describe("lint-migrations.mjs contract (T1 / R2, R3)", () => {
         spawnSync(process.execPath, ["scripts/lint-migrations.mjs", "--base", base], {
           cwd: repo,
           encoding: "utf8",
-          env: CLEAN_ENV,
+          env: scrubbedGitEnv(),
         });
       let base: string;
 

@@ -4,6 +4,7 @@ import * as WebBrowser from "expo-web-browser";
 import { BUYER_KEYS } from "./auth-keys";
 import { generateOAuthState, isValidReturnedState, OAUTH_STATE_KEY } from "./oauth-state";
 import { toSecureStoreKey } from "./secure-key";
+import { clearBuyerSubmitKey } from "./buyer-submit-key";
 
 // ─── Web-safe storage ─────────────────────────────────────────────────────────
 
@@ -236,6 +237,34 @@ export async function buyerLogout(): Promise<void> {
   await storage.del(BUYER_KEYS.accessToken);
   await storage.del(BUYER_KEYS.refreshToken);
   await storage.del(BUYER_KEYS.activeSeller);
+  clearBuyerSubmitKey(); // B1094: the next buyer on this device must not inherit this one's key
+}
+
+/**
+ * W-830: drop the native buyer session from this device WITHOUT calling the server. Once the hybrid
+ * shell is on the web holds its own buyer session, and the server logout revokes every refresh
+ * token of the account (including that one). Clearing the three buyer-namespaced keys leaves no
+ * token for a later shell-off build to reuse.
+ */
+export async function clearBuyerSessionLocal(): Promise<void> {
+  await storage.del(BUYER_KEYS.accessToken);
+  await storage.del(BUYER_KEYS.refreshToken);
+  await storage.del(BUYER_KEYS.activeSeller);
+  clearBuyerSubmitKey();
+}
+
+/**
+ * W-830: whether ANY buyer key is stored on this device. `getStoredBuyer` is null for an expired
+ * access token even while a valid refresh token sits next to it, so the shell handover asks this
+ * instead: a stored refresh token must be cleared too.
+ */
+export async function hasStoredBuyerSession(): Promise<boolean> {
+  const [access, refresh, seller] = await Promise.all([
+    storage.get(BUYER_KEYS.accessToken),
+    storage.get(BUYER_KEYS.refreshToken),
+    storage.get(BUYER_KEYS.activeSeller),
+  ]);
+  return !!access || !!refresh || !!seller;
 }
 
 export async function buyerRefreshTokens(): Promise<BuyerAuthResponse | null> {
@@ -287,6 +316,18 @@ export async function getActiveSeller(): Promise<BuyerSeller | null> {
 
 export async function setActiveSeller(seller: BuyerSeller): Promise<void> {
   await storage.set(BUYER_KEYS.activeSeller, JSON.stringify(seller));
+  clearBuyerSubmitKey(); // B1094: the submit key is customer-scoped; never carried across sellers
+}
+
+/**
+ * B1094: WHO is submitting (buyer account id from the access token, expired or not, + the active
+ * seller's tenant id) — the scope the `POST /buyer/orders` Idempotency-Key is minted under.
+ */
+export async function getBuyerSubmitScope(): Promise<string> {
+  const token = await storage.get(BUYER_KEYS.accessToken);
+  const sub = token ? parseJwtPayload(token)?.sub : null;
+  const seller = await getActiveSeller();
+  return `${typeof sub === "string" ? sub : ""}|${seller?.tenant.id ?? ""}`;
 }
 
 function parseQueryFromUrl(url: string): Record<string, string> {
