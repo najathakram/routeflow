@@ -361,7 +361,21 @@ export function confirmedRemaining(
   total: number,
   rows: ReadonlyArray<Pick<ConfirmablePaymentRow, "amount" | "status">> | null | undefined,
 ): number {
-  return Math.max(0, Number(total) - sumConfirmed(rows));
+  return Math.max(0, roundMoney(Number(total) - sumConfirmed(rows)));
+}
+
+/**
+ * W-769: the most an EDIT of one payment may be set to, given the invoice's OTHER rows. The same split as `capacityRefusal` /
+ * `assertEditFits` (a PAID row is real money, judged on CONFIRMED money; an unconfirmed row stays on CAPACITY), so web and
+ * mobile cap an edit exactly where the API refuses it. `status` is the status the row is edited TO.
+ */
+export function editPaymentCap(
+  total: number,
+  others: ReadonlyArray<Pick<ConfirmablePaymentRow, "amount" | "status">> | null | undefined,
+  status: string | null | undefined,
+): number {
+  if (status === CONFIRMED_STATUS) return confirmedRemaining(total, others);
+  return Math.max(0, remainingCapacity(total, others));
 }
 
 /** An unconfirmed (DRAFT / PENDING) row: consumes capacity but is not confirmed money. */

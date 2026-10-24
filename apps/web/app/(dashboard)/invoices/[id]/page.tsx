@@ -74,7 +74,7 @@ import { useUnapplyCreditNote } from "@/lib/api/credit-notes";
 import { useCustomerAdvancePayments } from "@/lib/api/customers";
 import { fmt, fmtCalendarDate, fmtDate, isInternalEmail, todayIso } from "@/lib/formatting";
 import { getDaysForTerms, addDaysIso } from "@/lib/invoice-terms";
-import { remainingCapacity, resolveConfirmedAmounts } from "@routeflow/pricing";
+import { editPaymentCap, resolveConfirmedAmounts } from "@routeflow/pricing";
 import { useInvoiceTaxSplit } from "@/lib/use-invoice-tax-split";
 import { useDuplicateInvoiceAction } from "@/lib/use-duplicate-invoice-action";
 import { RestrictionOverrideNote } from "@/components/RestrictionOverrideNote";
@@ -2104,18 +2104,14 @@ export default function InvoiceDetailPage() {
     );
   };
 
-  // PR-2 (check-payments B1 hardening): mirrors the server guard's capacity
-  // check (invoices.service updatePayment), which moved from summing only
-  // CONFIRMED siblings to remainingCapacity() over every non-VOID sibling — a
-  // DRAFT sibling now reserves capacity on both sides, so the modal still
-  // refuses exactly what the API would refuse.
+  // PR-2 / W-769: mirrors the server guard (invoices.service updatePayment -> assertEditFits) through the ONE pricing
+  // helper: a PAID edit is real money, capped on CONFIRMED siblings only; an unconfirmed edit stays on capacity (a DRAFT
+  // sibling reserves it). So the modal refuses exactly what the API would refuse.
   const editPaymentMax = editingPayment
-    ? Math.max(
-        0,
-        remainingCapacity(
-          total,
-          payments.filter((p) => p.id !== editingPayment.id),
-        ),
+    ? editPaymentCap(
+        total,
+        payments.filter((p) => p.id !== editingPayment.id),
+        editingPayment.status,
       )
     : 0;
 

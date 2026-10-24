@@ -36,8 +36,8 @@ type Kind = "GUARDED" | "NO_REFERENCE" | "SYSTEM_METHOD" | "IMPORT";
  * CAPACITY: checked with capacityRefusal / remainingCapacity (@routeflow/pricing) on the non-VOID basis. CAPTURED: money
  * already taken outside RouteFlow, never refused (SA-837b). SPILL: caps on the CONFIRMED balance and books the excess as
  * an advance. IMPORT: reproduces the source system's ledger, no check by design. CONFIRMED: sizes on the CONFIRMED
- * balance by a standing decision; whether it moves to CAPACITY is the SA-864 owner question (real money vs an
- * unconfirmed row), so it is held, not missed.
+ * balance, decided (owner 7b = A, SA-910 Part 2, W-769): real money is judged on confirmed money, and the unconfirmed
+ * rows it displaces are flagged (flagUnconfirmedOverReserved), never used to turn the money away.
  */
 type CapacityKind = "CAPACITY" | "CAPTURED" | "SPILL" | "IMPORT" | "CONFIRMED";
 const WRITERS: Record<
@@ -55,7 +55,7 @@ const WRITERS: Record<
       },
       {
         kind: "CONFIRMED",
-        why: "writeStandalonePayment: the office path keeps [L-O2] (no capacity refusal; Σ allocations <= payment) and the captured path (capturedExternally) is CAPTURED, confirmed-basis and never refused (SA-858 amended). held: SA-864, owner question 7b.",
+        why: "writeStandalonePayment: the office path keeps [L-O2] (no capacity refusal; Σ allocations <= payment) and the captured path (capturedExternally) is CAPTURED, confirmed-basis and never refused (SA-858 amended). Confirmed-basis by owner 7b = A (W-769).",
       },
       {
         kind: "SPILL",
@@ -70,7 +70,7 @@ const WRITERS: Record<
     capacity: [
       {
         kind: "CONFIRMED",
-        why: "writeLedgerPayment sizes on CONFIRMED money (REG-B11, T-B11s); held: SA-864, owner question 7b.",
+        why: "writeLedgerPayment sizes on CONFIRMED money (REG-B11, T-B11s); confirmed-basis by owner 7b = A (W-769).",
       },
     ],
   },
@@ -143,10 +143,10 @@ describe("row 498: the InvoicePayment writer census", () => {
     expect(callers).toEqual({ "invoices/confirmed-basis.ts": 1 });
   });
 
-  it("row 2299: every CONFIRMED site names its hold (SA-867 condition 1)", () => {
+  it("row 2299: every CONFIRMED site names its ruling (W-769, owner 7b = A)", () => {
     for (const w of Object.values(WRITERS))
       for (const c of w.capacity)
-        if (c.kind === "CONFIRMED") expect(c.why).toContain("held: SA-864, owner question 7b");
+        if (c.kind === "CONFIRMED") expect(c.why).toContain("owner 7b = A (W-769)");
   });
 
   it("row 2299 (W-769): recordPayment takes CONFIRMED_BASIS through the ONE helper; bookkeeping only flags", () => {

@@ -4908,7 +4908,14 @@ export class InvoicesService {
       const newStatus = statusFromPayments(newPaid, total, inv.dueDate, inv.status, tz, "NOT_PAID");
       const updated = await tx.invoice.update({
         where: { id: invoiceId },
-        data: { status: newStatus, paidAt: newStatus === InvoiceStatus.PAID ? new Date() : null },
+        data: {
+          status: newStatus,
+          // W-769: an invoice that stays PAID keeps the stamp it earned (voiding a displaced DRAFT must not re-date it).
+          paidAt:
+            newStatus === InvoiceStatus.PAID
+              ? (inv.status === InvoiceStatus.PAID && inv.paidAt) || new Date()
+              : null,
+        },
         include: {
           customer: { select: { id: true, businessName: true } },
           items: true,

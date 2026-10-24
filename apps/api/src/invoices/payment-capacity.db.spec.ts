@@ -317,6 +317,38 @@ describeDb("row 2299 payment capacity — real Postgres", () => {
     expect((await overReserved(s.tenant.id))[0]?.meta).toMatchObject({ displaced: [d.id] });
   }, 60_000);
 
+  const paidAtOf = async (invoiceId: string) =>
+    (await prisma.invoice.findUniqueOrThrow({ where: { id: invoiceId } })).paidAt;
+
+  it("W9b voiding the flagged DRAFT (voidPayment): the invoice stays PAID and keeps its paidAt", async () => {
+    const s = await seed("w769-w9b");
+    await s.row(s.invs[0].id, 60, "PAID");
+    const d = await s.row(s.invs[0].id, 40, "DRAFT");
+    await s.asTenant(() => invoices.recordPayment(s.invs[0].id, cash(40)));
+    const stamped = await paidAtOf(s.invs[0].id);
+    expect(stamped).not.toBeNull();
+    await s.asTenant(() => invoices.voidPayment(s.invs[0].id, d.id));
+    expect(await shape(s.invs[0].id)).toEqual(["PAID 60", "VOID 40", "PAID 40"]);
+    expect(await invoiceStatus(s.invs[0].id)).toBe("PAID");
+    expect(await paidAtOf(s.invs[0].id)).toEqual(stamped);
+  }, 60_000);
+
+  it("W9c voiding the flagged DRAFT (updatePayment to VOID): the invoice stays PAID, paidAt is not re-stamped", async () => {
+    const s = await seed("w769-w9c");
+    await s.row(s.invs[0].id, 60, "PAID");
+    const d = await s.row(s.invs[0].id, 40, "DRAFT");
+    await s.asTenant(() => invoices.recordPayment(s.invs[0].id, cash(40)));
+    const stamped = await paidAtOf(s.invs[0].id);
+    expect(stamped).not.toBeNull();
+    await new Promise((r) => setTimeout(r, 25));
+    await s.asTenant(() =>
+      invoices.updatePayment(s.invs[0].id, d.id, cash(40, { status: "VOID" })),
+    );
+    expect(await shape(s.invs[0].id)).toEqual(["PAID 60", "VOID 40", "PAID 40"]);
+    expect(await invoiceStatus(s.invs[0].id)).toBe("PAID");
+    expect(await paidAtOf(s.invs[0].id)).toEqual(stamped);
+  }, 60_000);
+
   it("W10 [L-O2] standalone 150 over a DRAFT 100: PAID 100 on the invoice, 50 to advance, the deliberate-overpay AND over-reserved rows", async () => {
     const s = await seed("w769-w10");
     await s.row(s.invs[0].id, 100, "DRAFT");
@@ -330,7 +362,7 @@ describeDb("row 2299 payment capacity — real Postgres", () => {
       await prisma.auditLog.count({
         where: { tenantId: s.tenant.id, action: "invoice.deliberate-overpayment" },
       }),
-    ).toBeLessThanOrEqual(1);
+    ).toBe(1);
     expect(await overReserved(s.tenant.id)).toHaveLength(1);
   }, 60_000);
 

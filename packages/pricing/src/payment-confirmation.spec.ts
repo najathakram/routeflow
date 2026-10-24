@@ -15,6 +15,8 @@ import {
   sumHeld,
   collectedDateOf,
   remainingCapacity,
+  confirmedRemaining,
+  editPaymentCap,
   BLOCKING_PAYMENT_STATUSES,
   BLOCKING_PAYMENT,
   isBlockingPayment,
@@ -284,5 +286,36 @@ describe("remainingCapacity", () => {
 
   it("rounds like every other money-returning export in this package", () => {
     expect(remainingCapacity(10.005, [{ amount: 0.001, status: "PAID" }])).toBe(10);
+  });
+});
+
+describe("W-769 confirmedRemaining rounding + editPaymentCap", () => {
+  it("rounds the float residue: 0.3 total less 0.1 + 0.2 confirmed is exactly 0", () => {
+    expect(
+      confirmedRemaining(0.3, [
+        { amount: 0.1, status: "PAID" },
+        { amount: 0.2, status: "PAID" },
+      ]),
+    ).toBe(0);
+    expect(confirmedRemaining(10.1, [{ amount: 0.2, status: "PAID" }])).toBe(9.9);
+  });
+
+  it("a PAID edit is capped on CONFIRMED money: a DRAFT sibling does not reduce it", () => {
+    const others = [{ amount: 40, status: "DRAFT" }];
+    expect(editPaymentCap(100, others, "PAID")).toBe(100);
+    expect(editPaymentCap(100, others, "DRAFT")).toBe(60);
+    expect(editPaymentCap(100, others, "PENDING")).toBe(60);
+  });
+
+  it("a PAID edit sees confirmed siblings, and floors at 0", () => {
+    expect(editPaymentCap(100, [{ amount: 60, status: "PAID" }], "PAID")).toBe(40);
+    expect(editPaymentCap(100, [{ amount: 150, status: "PAID" }], "PAID")).toBe(0);
+    expect(editPaymentCap(100, [{ amount: 150, status: "PAID" }], "DRAFT")).toBe(0);
+  });
+
+  it("ignores a VOID sibling for both", () => {
+    const others = [{ amount: 999, status: "VOID" }];
+    expect(editPaymentCap(100, others, "PAID")).toBe(100);
+    expect(editPaymentCap(100, others, "DRAFT")).toBe(100);
   });
 });
