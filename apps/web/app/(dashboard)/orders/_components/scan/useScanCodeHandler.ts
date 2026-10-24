@@ -10,7 +10,11 @@ import {
   type ScanBarcodeRow,
 } from "@routeflow/scanning";
 import type { SellLevel } from "@routeflow/pricing";
-import { resolveProductByCode, type BarcodeResolveResult } from "@/lib/barcode-resolve";
+import {
+  resolveProductByCode,
+  type BarcodeResolveResult,
+  SCAN_LOOKUP_TIMEOUT_MS,
+} from "@/lib/barcode-resolve";
 import { genericToastCopy } from "@/lib/generic-toast-copy";
 
 type ToastFn = ReturnType<typeof useToast>["toast"];
@@ -36,6 +40,18 @@ export type ScanResolution =
  * offline)? An HTTP response — even a 500 — means the server was reached, so it is NOT a signal
  * problem and must not be retried as one.
  */
+/** Row 541: the shared lookup deadline (lib/barcode-resolve.ts), re-exported for the scan surfaces' tests. */
+export { SCAN_LOOKUP_TIMEOUT_MS };
+
+/** An axios request that hit its own deadline (`timeout`), not a dropped connection. */
+const isLookupTimeout = (err: unknown): boolean => {
+  const e = err as { response?: unknown; code?: string; message?: string } | null | undefined;
+  return (
+    !e?.response &&
+    (e?.code === "ECONNABORTED" || /timeout of \d+ms exceeded/i.test(e?.message ?? ""))
+  );
+};
+
 export function isConnectivityError(err: unknown): boolean {
   const e = err as { response?: unknown; code?: string; message?: string } | null | undefined;
   if (e?.response) return false;
@@ -157,12 +173,16 @@ export function useScanCodeHandler(deps: ScanCodeHandlerDeps) {
         // below, so a throw from THAT (nothing to do with connectivity) was caught here and
         // misreported as `offline: true` — which queues the code for a retry that then adds it a
         // SECOND time, on top of whatever the first (throwing) call already committed.
-        result = await resolveProductByCode(code);
+        result = await resolveProductByCode(code, { timeoutMs: SCAN_LOOKUP_TIMEOUT_MS });
       } catch (err: any) {
         // Network / 5xx — a transient failure is NOT "product doesn't exist";
         // don't open the create-product modal over it.
         // A failure with no HTTP response is the transient case ("check the connection"); anything the server answered is fixed copy.
-        const message = err?.response ? genericToastCopy(err) : "Check the connection and rescan.";
+        const message = err?.response
+          ? genericToastCopy(err)
+          : isLookupTimeout(err)
+            ? `The lookup for ${code.trim()} took too long. Scan it again.`
+            : "Check the connection and rescan.";
         if (!opts?.quiet) {
           deps.toast({
             variant: "error",
