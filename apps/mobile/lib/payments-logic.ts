@@ -3,7 +3,7 @@ import type { PaymentMethod } from "./api/invoices";
 import type { PaymentStatus, UpdatePaymentDto } from "./api/payments";
 import { withRecordAnyway } from "@routeflow/types/payment-ref-copy";
 import { remainingCapacity, roundMoney } from "@routeflow/pricing";
-import { CHECK_TRANSITIONS, type CheckStatus } from "@routeflow/types";
+import { API_ERROR_CODES, CHECK_TRANSITIONS, type CheckStatus } from "@routeflow/types";
 import { PAYMENT_STATUS_COPY } from "@routeflow/types/payment-submit-key";
 
 // Re-exported for backward compatibility — nothing in this repo currently imports either symbol
@@ -235,4 +235,15 @@ export function editPaymentDto(
     settledAt: (f.settledAt ?? "").trim() || null,
   };
   return recordAnyway ? withRecordAnyway(body) : body;
+}
+
+/**
+ * SA-862 (W-706): the fixed sentence for a 409 UNCONFIRMED_PAYMENT_SUPERSEDED on a payment edit (a card payment filled
+ * the invoice while this one was unconfirmed); null for any other error. Same sentence as web's generic-toast-copy.
+ */
+export function paymentEditErrorCopy(e: unknown): string | null {
+  const code = (e as { response?: { data?: { code?: string } } } | null)?.response?.data?.code;
+  return code === API_ERROR_CODES.UNCONFIRMED_PAYMENT_SUPERSEDED
+    ? "This invoice is already paid. Void this unconfirmed payment, or move it to the customer's credit."
+    : null;
 }

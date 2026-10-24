@@ -19,7 +19,11 @@ import {
   useDeletePaymentImage,
   useGetPaymentImageUrl,
 } from "../../../../../../../lib/api/payments";
-import { editPaymentDto, editPaymentMaxAmount } from "../../../../../../../lib/payments-logic";
+import {
+  editPaymentDto,
+  editPaymentMaxAmount,
+  paymentEditErrorCopy,
+} from "../../../../../../../lib/payments-logic";
 import {
   SELECTABLE_METHOD_OPTIONS,
   type SelectablePaymentMethod,
@@ -217,7 +221,9 @@ export default function EditPaymentScreen() {
             chooseAction(c.title, c.message, c.actions);
             return;
           }
-          showToast(e?.response?.data?.message ?? e?.message ?? "Try again.");
+          showToast(
+            paymentEditErrorCopy(e) ?? e?.response?.data?.message ?? e?.message ?? "Try again.",
+          );
         },
       },
     );

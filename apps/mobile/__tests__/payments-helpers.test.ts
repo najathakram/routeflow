@@ -8,6 +8,7 @@ import {
   changeCustomerGate,
   checkNextStates,
   editPaymentMaxAmount,
+  paymentEditErrorCopy,
   oldestInvoicesFirst,
   paymentActionFlags,
   paymentMethodPill,
@@ -207,5 +208,20 @@ describe("changeCustomerGate (SA-824)", () => {
 
   it("a released attempt allows Change customer again", () => {
     expect(changeCustomerGate(false)).toEqual({ blocked: false, reason: null });
+  });
+});
+
+describe("paymentEditErrorCopy (SA-862, W-706)", () => {
+  it("maps 409 UNCONFIRMED_PAYMENT_SUPERSEDED to the fixed sentence, ignoring the server text", () => {
+    const e = {
+      response: { status: 409, data: { code: "UNCONFIRMED_PAYMENT_SUPERSEDED", message: "raw" } },
+    };
+    expect(paymentEditErrorCopy(e)).toBe(
+      "This invoice is already paid. Void this unconfirmed payment, or move it to the customer's credit.",
+    );
+  });
+  it("returns null for any other error", () => {
+    expect(paymentEditErrorCopy({ response: { data: { code: "OTHER" } } })).toBeNull();
+    expect(paymentEditErrorCopy(null)).toBeNull();
   });
 });
