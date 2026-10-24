@@ -7,6 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   parseArgs,
+  describeTree,
   parseWorkflowPaths,
   touchesDbLane,
   installIsStale,
@@ -371,4 +372,23 @@ test("relinkWorkspace turns an inlined @routeflow copy back into a junction into
   assert.deepEqual(badWorkspaceLinks(wt), []);
   assert.equal(fs.readFileSync(path.join(main, "packages/pricing/keep.txt"), "utf8"), "tracked");
   fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("tree mode: default is GitHub's merge ref; --head and --fresh are exclusive", () => {
+  assert.equal(parseArgs(["--pr", "1"]).tree, "merge");
+  assert.equal(parseArgs(["--pr", "1", "--head"]).tree, "head");
+  assert.equal(parseArgs(["--pr", "1", "--fresh"]).tree, "fresh");
+  assert.throws(() => parseArgs(["--pr", "1", "--head", "--fresh"]), /exclusive/);
+});
+
+test("describeTree flags a merge ref that lacks the master tip as stale", () => {
+  const a = { mergeSha: "m", headSha: "h" };
+  assert.deepEqual(describeTree({ ...a, mode: "merge", masterInMerge: true }), {
+    sha: "m",
+    label: "github-merge-ref",
+    stale: false,
+  });
+  assert.equal(describeTree({ ...a, mode: "merge", masterInMerge: false }).stale, true);
+  assert.equal(describeTree({ ...a, mode: "head" }).sha, "h");
+  assert.equal(describeTree({ ...a, mode: "fresh" }).label, "fresh-merge");
 });

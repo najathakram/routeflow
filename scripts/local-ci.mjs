@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Local mirror of GitHub CI's Verify job, run on the exact tree GitHub tests (refs/pull/N/merge).
 //
-//   node scripts/local-ci.mjs --pr N [--from <worktree>] [--no-status] [--keep] [--dry]
+//   node scripts/local-ci.mjs --pr N [--from <worktree>] [--no-status] [--keep] [--dry] [--head | --fresh]
 //   node scripts/local-ci.mjs --self-test
 //
 // WHY: Actions minutes are scarce and the PC is idle between lanes. This reproduces ci.yml's Verify
@@ -258,10 +258,20 @@ export function retargetLinks(dir, from) {
 }
 
 export function parseArgs(argv) {
-  const o = { pr: null, dry: false, selfTest: false, keep: false, noStatus: false, from: null };
+  const o = {
+    pr: null,
+    dry: false,
+    selfTest: false,
+    keep: false,
+    noStatus: false,
+    from: null,
+    tree: "merge",
+  };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === "--dry") o.dry = true;
+    if (a === "--head") o.tree = o.tree === "fresh" ? "both" : "head";
+    else if (a === "--fresh") o.tree = o.tree === "head" ? "both" : "fresh";
+    else if (a === "--dry") o.dry = true;
     else if (a === "--self-test") o.selfTest = true;
     else if (a === "--keep") o.keep = true;
     else if (a === "--no-status") o.noStatus = true;
@@ -273,7 +283,20 @@ export function parseArgs(argv) {
     } else throw new Error(`unknown or incomplete argument ${JSON.stringify(a)}`);
   }
   if (o.pr === null && !o.selfTest) throw new Error("--pr N is required");
+  if (o.tree === "both") throw new Error("--head and --fresh are mutually exclusive");
   return o;
+}
+
+/**
+ * Which tree a run tests. Default `merge` = GitHub's refs/pull/N/merge, which is what a
+ * pull_request Verify runs, BUT GitHub refreshes it lazily: when origin/master has moved on it can
+ * be stale (not contain the master tip), so it is flagged. `fresh` = head merged into the current
+ * origin/master locally; `head` = the bare PR head.
+ */
+export function describeTree({ mode, mergeSha, headSha, masterInMerge }) {
+  if (mode === "head") return { sha: headSha, label: "head", stale: false };
+  if (mode === "fresh") return { sha: null, label: "fresh-merge", stale: false };
+  return { sha: mergeSha, label: "github-merge-ref", stale: !masterInMerge };
 }
 
 export function resultDirName(pr, headSha) {
@@ -617,7 +640,7 @@ export async function main(argv = process.argv.slice(2)) {
     o = parseArgs(argv);
   } catch (e) {
     console.error(
-      `local-ci: ${e.message}\nusage: node scripts/local-ci.mjs --pr N [--from W] [--no-status] [--keep] [--dry] | --self-test`,
+      `local-ci: ${e.message}\nusage: node scripts/local-ci.mjs --pr N [--from W] [--no-status] [--keep] [--dry] [--head | --fresh] | --self-test`,
     );
     return 2;
   }
@@ -668,7 +691,7 @@ export async function main(argv = process.argv.slice(2)) {
     return 0;
   }
 
-  let mergeSha, headSha, plan, outDir, dbLane, installStale;
+  let mergeSha, headSha, plan, outDir, dbLane, installStale, treeInfo;
   try {
     // Fetch the exact tree GitHub CI tests, plus the base.
     git(repo, [
@@ -678,8 +701,48 @@ export async function main(argv = process.argv.slice(2)) {
       `+refs/pull/${o.pr}/merge:refs/local-ci/${o.pr}/merge`,
       `+refs/pull/${o.pr}/head:refs/local-ci/${o.pr}/head`,
     ]);
-    mergeSha = git(repo, ["rev-parse", `refs/local-ci/${o.pr}/merge`]);
     headSha = git(repo, ["rev-parse", `refs/local-ci/${o.pr}/head`]);
+    const masterSha = git(repo, ["rev-parse", "origin/master"]);
+    let githubMerge = null;
+    try {
+      githubMerge = git(repo, ["rev-parse", `refs/local-ci/${o.pr}/merge`]);
+    } catch {
+      /* no merge ref: conflicting PR */
+    }
+    if (o.tree === "merge" && !githubMerge) {
+      throw new Error(`GitHub has no refs/pull/${o.pr}/merge (conflicts?); failing closed`);
+    }
+    const masterInMerge =
+      githubMerge !== null &&
+      spawnSync("git", ["merge-base", "--is-ancestor", masterSha, githubMerge], { cwd: repo })
+        .status === 0;
+    const tree = describeTree({ mode: o.tree, mergeSha: githubMerge, headSha, masterInMerge });
+    if (o.tree === "fresh") {
+      const t = spawnSync("git", ["merge-tree", "--write-tree", masterSha, headSha], {
+        cwd: repo,
+        encoding: "utf8",
+      });
+      if (t.status !== 0)
+        throw new Error(`head does not merge cleanly into origin/master: ${t.stdout}`);
+      tree.sha = git(repo, [
+        "commit-tree",
+        t.stdout.split("\n")[0].trim(),
+        "-p",
+        masterSha,
+        "-p",
+        headSha,
+        "-m",
+        `local-ci fresh merge of ${headSha.slice(0, 9)} into ${masterSha.slice(0, 9)}`,
+      ]);
+    }
+    mergeSha = tree.sha;
+    treeInfo = { ...tree, headSha, masterSha, githubMerge };
+    log(
+      `local-ci: testing ${tree.label} ${mergeSha.slice(0, 9)} (head ${headSha.slice(0, 9)}, origin/master ${masterSha.slice(0, 9)})` +
+        (tree.stale
+          ? "; WARNING GitHub's merge ref does NOT contain origin/master (stale), rerun with --fresh to test head merged into current master"
+          : ""),
+    );
     const files = git(repo, ["diff", "--name-only", "origin/master", mergeSha])
       .split("\n")
       .filter(Boolean);
@@ -692,7 +755,12 @@ export async function main(argv = process.argv.slice(2)) {
     }
     dbLane = touchesDbLane(files, dbGlobs);
     installStale = installIsStale(installEntries(repo, from, mergeSha));
-    outDir = path.join(repo, "local-assets", "local-ci", resultDirName(o.pr, headSha));
+    outDir = path.join(
+      repo,
+      "local-assets",
+      "local-ci",
+      resultDirName(o.pr, headSha) + (o.tree === "merge" ? "" : `-${o.tree}`),
+    );
     fs.mkdirSync(outDir, { recursive: true });
     plan = planLocalCi({
       mergeSha,
@@ -737,6 +805,7 @@ export async function main(argv = process.argv.slice(2)) {
           pr: o.pr,
           headSha,
           mergeSha,
+          tree: treeInfo,
           node: process.version,
           ciNode: String(CI_NODE_MAJOR),
           platform: process.platform,
