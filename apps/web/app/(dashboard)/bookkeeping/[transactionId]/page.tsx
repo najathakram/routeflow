@@ -24,7 +24,7 @@ import {
   PAYMENT_METHOD_LABELS,
   paymentMethodLabel,
 } from "@/lib/payment-methods";
-import { fmtCalendarDate } from "@/lib/formatting";
+import { fmt, fmtCalendarDate } from "@/lib/formatting";
 import { BrandMark } from "@/components/brand";
 import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 
@@ -87,7 +87,7 @@ function RecordPaymentModal({
     <Modal
       open={isOpen}
       onClose={onClose}
-      title="Record Payment"
+      title="Record payment"
       description="Log a payment received for this invoice."
       footer={
         <>
@@ -95,7 +95,7 @@ function RecordPaymentModal({
             Cancel
           </Button>
           <Button type="submit" form="payment-form" loading={isPending}>
-            Record Payment
+            Record payment
           </Button>
         </>
       }
@@ -205,7 +205,7 @@ export default function TransactionDetailPage() {
       <div className="flex flex-col items-center gap-4 p-12 text-center">
         <p className="text-base font-medium text-navy">Invoice not found.</p>
         <Button variant="secondary" href="/bookkeeping">
-          Back to Bookkeeping
+          Back to bookkeeping
         </Button>
       </div>
     );
@@ -276,7 +276,7 @@ export default function TransactionDetailPage() {
               leftIcon={<Plus className="h-4 w-4" />}
               onClick={() => setIsPaymentOpen(true)}
             >
-              Record Payment
+              Record payment
             </WriteButton>
           )}
         </div>
@@ -293,10 +293,9 @@ export default function TransactionDetailPage() {
                   <BrandMark size={32} />
                   <span className="text-lg font-bold text-navy">RouteFlow</span>
                 </div>
-                <p className="mt-1 text-xs text-navy/70">Austin, TX · routeflow.io</p>
               </div>
               <div className="text-right">
-                <p className="text-xl font-bold text-navy">INVOICE</p>
+                <p className="text-xl font-bold uppercase text-navy">Invoice</p>
                 <p className="mt-1 font-mono text-sm text-navy/70">
                   {txn.order?.orderNumber ?? txn.id}
                 </p>
@@ -342,11 +341,11 @@ export default function TransactionDetailPage() {
               <div className="ml-auto w-56 space-y-2 text-sm">
                 <div className="flex justify-between border-t border-surface-border pt-2 text-base font-bold text-navy">
                   <span>Total</span>
-                  <span>${total.toFixed(2)}</span>
+                  <span>{fmt(total)}</span>
                 </div>
                 <div className="flex justify-between text-success">
                   <span className="font-medium">Amount Paid</span>
-                  <span className="font-bold">-${paid.toFixed(2)}</span>
+                  <span className="font-bold">-{fmt(paid)}</span>
                 </div>
                 <div
                   className={cn(
@@ -355,7 +354,7 @@ export default function TransactionDetailPage() {
                   )}
                 >
                   <span>Balance Due</span>
-                  <span>${bal.toFixed(2)}</span>
+                  <span>{fmt(bal)}</span>
                 </div>
               </div>
             </div>
@@ -377,7 +376,7 @@ export default function TransactionDetailPage() {
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center justify-between gap-2">
                         <span className="text-sm font-semibold text-navy">
-                          ${Number(pmt.amount).toFixed(2)}
+                          {fmt(Number(pmt.amount))}
                         </span>
                         <span className="text-xs text-navy/70">
                           {new Date(pmt.createdAt).toLocaleDateString("en-US", {
@@ -405,7 +404,7 @@ export default function TransactionDetailPage() {
                   leftIcon={<CreditCard className="h-4 w-4" />}
                   onClick={() => setIsPaymentOpen(true)}
                 >
-                  Record Payment
+                  Record payment
                 </WriteButton>
                 <ReadOnlyHint />
               </div>
@@ -417,11 +416,11 @@ export default function TransactionDetailPage() {
             <dl className="space-y-2 text-sm">
               <div className="flex justify-between">
                 <dt className="text-navy/70">Invoice total</dt>
-                <dd className="font-medium text-navy">${total.toFixed(2)}</dd>
+                <dd className="font-medium text-navy">{fmt(total)}</dd>
               </div>
               <div className="flex justify-between">
                 <dt className="text-navy/70">Paid</dt>
-                <dd className="font-medium text-success">${paid.toFixed(2)}</dd>
+                <dd className="font-medium text-success">{fmt(paid)}</dd>
               </div>
               <div
                 className={cn(
@@ -430,7 +429,7 @@ export default function TransactionDetailPage() {
                 )}
               >
                 <dt>Balance due</dt>
-                <dd>${bal.toFixed(2)}</dd>
+                <dd>{fmt(bal)}</dd>
               </div>
             </dl>
           </Card>

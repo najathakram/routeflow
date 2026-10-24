@@ -96,8 +96,8 @@ describe("Dashboard — fleet-off clean UI", () => {
     ship = false;
     renderWithProviders(<DashboardPage />);
 
-    expect(tileLabels()).not.toContain("Scheduled Routes");
-    expect(tileLabels()).not.toContain("Active Drivers");
+    expect(tileLabels()).not.toContain("Scheduled routes");
+    expect(tileLabels()).not.toContain("Active drivers");
     expect(screen.queryByText(/scheduled route runs/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/driver status/i)).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /new route/i })).not.toBeInTheDocument();
@@ -105,7 +105,7 @@ describe("Dashboard — fleet-off clean UI", () => {
     expect(screen.queryByText("Shipped")).not.toBeInTheDocument();
     // everything else is still there
     expect(tileLabels()).toEqual(
-      expect.arrayContaining(["Active Orders", "Overdue Invoices", "Low Stock Items"]),
+      expect.arrayContaining(["Active orders", "Overdue invoices", "Low stock items"]),
     );
   });
 
@@ -211,13 +211,13 @@ describe("Dashboard — fleet-off clean UI", () => {
     expect(screen.getByText("Shipped")).toBeInTheDocument();
   });
 
-  it("fleet-ON (today's UI, unchanged): route / driver tiles, New Route and the Out for delivery label", () => {
+  it("fleet-ON (today's UI, unchanged): route / driver tiles, New route and the Out for delivery label", () => {
     fleet = true;
     ship = false;
     renderWithProviders(<DashboardPage />);
 
     expect(tileLabels()).toEqual(
-      expect.arrayContaining(["Scheduled Routes", "Active Drivers", "Active Orders"]),
+      expect.arrayContaining(["Scheduled routes", "Active drivers", "Active orders"]),
     );
     expect(screen.getByRole("link", { name: /new route/i })).toBeInTheDocument();
     expect(screen.getByText("Out for delivery")).toBeInTheDocument();

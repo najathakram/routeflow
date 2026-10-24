@@ -25,11 +25,11 @@ const EXEMPT: Record<string, { labels: string[]; why: string }> = {
     why: "(1) the mark-bounced, record-payment and write-off MODALS' own submits: they open only from gated triggers and the server refuses the write; (2) the read-only twin of the Record payment trigger, a deliberately disabled button",
   },
   "app/(dashboard)/bookkeeping/[transactionId]/page.tsx": {
-    labels: ["Record Payment"],
+    labels: ["Record payment"],
     why: "the record-payment MODAL's own submit: it opens only from the gated triggers in this file; the server refuses the write",
   },
   "app/(dashboard)/vendor-bills/[id]/page.tsx": {
-    labels: ["Record Payment"],
+    labels: ["Record payment"],
     why: "the record-payment MODAL's own submit: it opens only from the gated triggers in this file; the server refuses the write",
   },
   "app/(dashboard)/estimates/page.tsx": {

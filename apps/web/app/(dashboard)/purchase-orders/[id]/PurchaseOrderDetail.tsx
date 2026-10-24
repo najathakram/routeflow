@@ -265,8 +265,8 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
                     <td className="px-3 py-2 text-navy/70">
                       {r.kind === "REVERSAL" ? "Correction" : "Received"}
                     </td>
-                    <td className="px-3 py-2 text-right text-navy/70">{r.quantity}</td>
-                    <td className="px-3 py-2 text-right text-navy/70">
+                    <td className="px-3 py-2 text-right text-navy/70 tabular-nums">{r.quantity}</td>
+                    <td className="px-3 py-2 text-right text-navy/70 tabular-nums">
                       {r.unitCost == null
                         ? "—"
                         : `$${r.unitCost.toFixed(boxedProductIds.has(r.productId) ? 4 : 2)}`}

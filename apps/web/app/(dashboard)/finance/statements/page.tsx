@@ -380,7 +380,7 @@ function StatementsPageInner() {
                             <span className="font-medium text-navy">{row.billNumber}</span>
                           )}
                           {row.impliedPaid && (
-                            <span className="ml-1 text-xs text-navy/50">(implied-paid)</span>
+                            <span className="ml-1 text-xs text-navy/50">(counted as paid)</span>
                           )}
                         </td>
                         <td className="px-3 py-2 text-right text-navy">{fmt(row.amount)}</td>

@@ -34,7 +34,7 @@ describe("SettingsPage — Business Profile tab", () => {
     renderWithProviders(<SettingsPage />);
 
     // Wait for the /settings GET to resolve and the form to hydrate empty.
-    await screen.findByLabelText("Business Name");
+    await screen.findByLabelText("Business name");
     await user.click(screen.getByRole("button", { name: /save/i }));
 
     expect(await screen.findAllByText("Required")).not.toHaveLength(0);
@@ -45,13 +45,13 @@ describe("SettingsPage — Business Profile tab", () => {
     const user = userEvent.setup();
     renderWithProviders(<SettingsPage />);
 
-    await user.type(await screen.findByLabelText("Business Name"), "Acme Foods");
-    await user.type(screen.getByLabelText("Account Email"), "ops@acme.test");
-    await user.type(screen.getByLabelText("Owner / Manager Name"), "Jane Doe");
+    await user.type(await screen.findByLabelText("Business name"), "Acme Foods");
+    await user.type(screen.getByLabelText("Account email"), "ops@acme.test");
+    await user.type(screen.getByLabelText("Owner / manager name"), "Jane Doe");
     await user.type(screen.getByLabelText("Phone"), "5125550100");
     await user.type(screen.getByLabelText("Street"), "123 Main St");
     await user.type(screen.getByLabelText("City"), "Austin");
-    await user.type(screen.getByLabelText("ZIP Code"), "78701");
+    await user.type(screen.getByLabelText("ZIP code"), "78701");
 
     await user.click(screen.getByRole("button", { name: /save/i }));
 

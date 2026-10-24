@@ -71,7 +71,7 @@ for (const vp of VIEWPORTS) {
       await page.goto("/settings");
       await page.getByLabel("Search settings").fill("zzzzqq");
       await expect(page.getByText("No settings match")).toBeVisible();
-      await page.getByRole("button", { name: "Clear Search" }).click();
+      await page.getByRole("button", { name: "Clear search" }).click();
       await expect(page.getByLabel("Search settings")).toHaveValue("");
       await expect(page.getByTestId("settings-group-business")).toBeVisible();
     });

@@ -409,7 +409,7 @@ function StatusCard({
         onClose={() => setDeleteOpen(false)}
         onConfirm={handleDelete}
         title="Deactivate this agent?"
-        description={`${agent.name} will be soft-deleted. If they have unconverged claimed commission or a non-paid statement outstanding, the server will block this and explain why.`}
+        description={`${agent.name} will be deactivated. If they have unpaid claimed commission or an unpaid statement, deactivation is blocked and you'll see why.`}
         confirmLabel="Deactivate"
         variant="danger"
         loading={deleteAgent.isPending}
@@ -503,7 +503,7 @@ function RatesCard({ agent, isOperator }: { agent: SalesAgentDetail; isOperator:
         onSuccess: (data) => {
           toast({
             title: data.recompute
-              ? `Rate added — recomputed ${data.recompute.invoicesSynced} invoice(s)`
+              ? `Rate added — recomputed ${data.recompute.invoicesSynced} ${data.recompute.invoicesSynced === 1 ? "invoice" : "invoices"}`
               : "Rate added",
             variant: "success",
           });
@@ -521,7 +521,7 @@ function RatesCard({ agent, isOperator }: { agent: SalesAgentDetail; isOperator:
   };
 
   return (
-    <Card title="Default Rates">
+    <Card title="Default rates">
       <div className="space-y-3">
         {agent.rates.length === 0 ? (
           <p className="text-sm text-navy/70">No rates set yet.</p>
@@ -618,7 +618,7 @@ function CustomerRateCard({ agentId, isOperator }: { agentId: string; isOperator
   const [showAdd, setShowAdd] = React.useState(false);
 
   return (
-    <Card title="Customer Rates">
+    <Card title="Customer rates">
       <div className="space-y-3">
         <p className="text-xs text-navy/70">
           Set a custom rate for specific customers — it overrides the agent&apos;s default rate.
@@ -675,7 +675,7 @@ function AddCustomerRateForm({
         onSuccess: (result) => {
           toast({
             title: result.recompute
-              ? `Rate added — recomputed ${result.recompute.invoicesSynced} invoice(s)`
+              ? `Rate added — recomputed ${result.recompute.invoicesSynced} ${result.recompute.invoicesSynced === 1 ? "invoice" : "invoices"}`
               : "Rate added",
             variant: "success",
           });
@@ -789,7 +789,7 @@ function CustomersCard({ agent, isOperator }: { agent: SalesAgentDetail; isOpera
           toast({
             title: "Assignment ended",
             description: data.recompute
-              ? `Recomputed ${data.recompute.invoicesSynced} invoice(s)`
+              ? `Recomputed ${data.recompute.invoicesSynced} ${data.recompute.invoicesSynced === 1 ? "invoice" : "invoices"}`
               : undefined,
             variant: "success",
           });
@@ -874,7 +874,7 @@ function LedgerCard({ agentId }: { agentId: string }) {
       {
         onSuccess: (result) =>
           toast({
-            title: `Recomputed ${result.invoicesSynced} invoice(s)`,
+            title: `Recomputed ${result.invoicesSynced} ${result.invoicesSynced === 1 ? "invoice" : "invoices"}`,
             variant: "success",
           }),
       },
@@ -882,7 +882,7 @@ function LedgerCard({ agentId }: { agentId: string }) {
   };
 
   return (
-    <Card title="Commission Ledger">
+    <Card title="Commission ledger">
       <div className="space-y-4">
         <div className="w-44">
           <Select
@@ -941,7 +941,9 @@ function LedgerCard({ agentId }: { agentId: string }) {
                       </Link>
                     </td>
                     <td className="px-3 py-2 text-navy/70">{fmtCalendarDate(row.basisDate)}</td>
-                    <td className="px-3 py-2 text-right">{fmt(Number(row.baseAmount))}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">
+                      {fmt(Number(row.baseAmount))}
+                    </td>
                     <td className="px-3 py-2">
                       <div className="flex flex-col">
                         <span>{pctLabel(row.ratePct)}</span>
@@ -950,12 +952,18 @@ function LedgerCard({ agentId }: { agentId: string }) {
                         </span>
                       </div>
                     </td>
-                    <td className="px-3 py-2 text-right">{fmt(Number(row.accruedAmount))}</td>
-                    <td className="px-3 py-2 text-right">{fmt(Number(row.payableAmount))}</td>
-                    <td className="px-3 py-2 text-right">{fmt(Number(row.claimedAmount))}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">
+                      {fmt(Number(row.accruedAmount))}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums">
+                      {fmt(Number(row.payableAmount))}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums">
+                      {fmt(Number(row.claimedAmount))}
+                    </td>
                     {/* `drift` is the API's own remainder — rendered verbatim, never
                         subtracted from the columns beside it. */}
-                    <td className="px-3 py-2 text-right">{fmt(Number(row.drift))}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{fmt(Number(row.drift))}</td>
                     <td className="px-3 py-2">
                       <Badge
                         variant={ACCRUAL_STATUS_VARIANT[row.status]}

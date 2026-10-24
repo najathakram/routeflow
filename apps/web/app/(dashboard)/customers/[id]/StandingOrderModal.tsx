@@ -3,6 +3,7 @@
 import * as React from "react";
 import { X } from "lucide-react";
 import { Modal, Button, cn, useToast } from "@routeflow/ui/web";
+import { formatMoney } from "@/lib/format";
 import { useProducts } from "@/lib/api/products";
 import { displayProductName } from "@/lib/product-display";
 import { sellableFlat } from "@/lib/product-search-groups";
@@ -373,7 +374,7 @@ export function StandingOrderModal({
                           <span className="ml-2 text-xs text-navy/70">{p.unit}</span>
                         </div>
                         <span className="text-xs font-medium text-navy/70">
-                          ${Number(p.pricePerUnit ?? 0).toFixed(2)}
+                          {formatMoney(Number(p.pricePerUnit ?? 0))}
                         </span>
                       </button>
                     </li>
@@ -440,7 +441,7 @@ export function StandingOrderModal({
             <textarea
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
-              placeholder="Any recurring instructions..."
+              placeholder="Any recurring instructions…"
               rows={2}
               className="w-full resize-none rounded border border-surface-border bg-white px-3 py-2 text-sm text-navy placeholder:text-navy/70 focus:outline-none focus:ring-2 focus:ring-brand-500"
             />

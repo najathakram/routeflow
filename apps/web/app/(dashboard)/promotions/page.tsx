@@ -59,8 +59,8 @@ function fromLocalInput(local: string): string {
 
 function fmtWindow(startsAt: string, endsAt: string): string {
   const opts: Intl.DateTimeFormatOptions = { month: "short", day: "numeric", year: "numeric" };
-  const s = new Date(startsAt).toLocaleDateString(undefined, opts);
-  const e = new Date(endsAt).toLocaleDateString(undefined, opts);
+  const s = new Date(startsAt).toLocaleDateString("en-US", opts);
+  const e = new Date(endsAt).toLocaleDateString("en-US", opts);
   return `${s} → ${e}`;
 }
 
@@ -92,7 +92,7 @@ const TYPE_OPTIONS: { value: PromotionType; label: string }[] = [
 ];
 
 const SCOPE_OPTIONS: { value: PromotionScope; label: string }[] = [
-  { value: "ALL", label: "Entire catalogue" },
+  { value: "ALL", label: "Entire catalog" },
   { value: "CATEGORY", label: "A category" },
   { value: "PRODUCTS", label: "Specific products" },
 ];
@@ -519,9 +519,9 @@ function PromotionFormModal({
               bills $0.00 on the invoice. {zeroImpact.count} of the {zeroImpact.inScope} product
               {zeroImpact.inScope === 1 ? "" : "s"} this promotion covers are priced at or below the
               discount — e.g. {zeroImpact.examples.join(", ")}
-              {zeroImpact.count > zeroImpact.examples.length ? ", …" : ""}. Prices shown are
-              catalogue list prices; a customer on a lower tier can be affected even when their
-              product is not counted here.
+              {zeroImpact.count > zeroImpact.examples.length ? ", …" : ""}. Prices shown are catalog
+              list prices; a customer on a lower tier can be affected even when their product is not
+              counted here.
             </p>
             <label className="mt-2 flex items-start gap-2 text-xs font-medium text-navy">
               <input
@@ -781,7 +781,7 @@ export default function PromotionsPage() {
         subtitle={
           list.length > 0
             ? `${list.filter((p) => promotionStatus(p) === "ACTIVE").length} active · ${list.length} total`
-            : "Run windowed merchandising deals across your catalogue"
+            : "Run windowed merchandising deals across your catalog"
         }
         action={
           <Button leftIcon={<Plus className="h-4 w-4" />} onClick={openCreate}>
@@ -830,7 +830,7 @@ export default function PromotionsPage() {
             description={
               statusFilter
                 ? "Try a different filter, or create a new promotion."
-                : "Create a windowed deal — percent off, fixed amount, or a quantity break — scoped to your whole catalogue, a category, or specific products."
+                : "Create a windowed deal — percent off, fixed amount, or a quantity break — scoped to your whole catalog, a category, or specific products."
             }
             action={
               <Button size="sm" onClick={openCreate}>

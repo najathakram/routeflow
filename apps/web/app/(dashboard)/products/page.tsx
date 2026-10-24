@@ -23,6 +23,7 @@ import { PageHeader, Table, Button, Select, cn, EmptyState } from "@routeflow/ui
 import { usePageTitle } from "@/lib/page-title-context";
 import { useToast } from "@routeflow/ui/web";
 import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
+import { formatMoney } from "@/lib/format";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
 import { useUrlPage, useResetPageOnChange, useClampPage } from "@/lib/hooks/useUrlPage";
 import {
@@ -251,7 +252,7 @@ function ProductCard({
         </div>
         <div className="mt-auto flex items-end justify-between gap-1">
           <p className="font-mono tabular-nums text-base font-bold text-navy">
-            ${parseFloat(String(product.pricePerUnit)).toFixed(2)}
+            {formatMoney(parseFloat(String(product.pricePerUnit)))}
             <span className="ml-1 font-sans text-xs font-normal text-navy/70">
               / {product.unit}
             </span>
@@ -400,7 +401,7 @@ function makeTableColumns(
         <span className="font-mono tabular-nums text-sm text-navy/70">
           {p.msrp != null && parseFloat(String(p.msrp)) > 0 ? (
             <>
-              ${parseFloat(String(p.msrp)).toFixed(2)}
+              {formatMoney(parseFloat(String(p.msrp)))}
               <span className="ml-0.5 text-[10px] text-navy/40">/{UW.base.short.one}</span>
             </>
           ) : (
@@ -612,7 +613,7 @@ function makeTableColumns(
         return (
           <div className="group flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
             <span className="font-mono tabular-nums font-medium text-navy">
-              ${parseFloat(String(p.pricePerUnit)).toFixed(2)}
+              {formatMoney(parseFloat(String(p.pricePerUnit)))}
             </span>
             <button
               onClick={() => onEditPrice(p)}
@@ -641,7 +642,7 @@ function makeTableColumns(
             </span>
           );
         }
-        return <span className="font-mono tabular-nums text-navy/70">{`$${cost.toFixed(2)}`}</span>;
+        return <span className="font-mono tabular-nums text-navy/70">{formatMoney(cost)}</span>;
       },
     },
     {
@@ -698,7 +699,7 @@ function makeTableColumns(
         return (
           <span className="font-mono tabular-nums text-sm text-navy/70">
             {val && parseFloat(String(val)) > 0 ? (
-              `$${parseFloat(String(val)).toFixed(2)}`
+              formatMoney(parseFloat(String(val)))
             ) : (
               <span className="text-navy/30">—</span>
             )}
@@ -1267,7 +1268,7 @@ export default function ProductsPage() {
               leftIcon={<Plus className="h-4 w-4" />}
               onClick={() => setShowCreate(true)}
             >
-              New Product
+              New product
             </WriteButton>
           </div>
         }
@@ -1279,7 +1280,7 @@ export default function ProductsPage() {
         <div className="rounded-lg bg-brand-50 border border-brand-200 px-4 py-2.5 text-sm text-brand-700 flex items-center gap-2">
           <Pencil className="h-4 w-4 shrink-0" />
           <span>
-            <strong>Quick Edit Mode</strong> — click any SKU/Barcode, Category, or Tier Price cell
+            <strong>Quick edit mode</strong> — click any SKU/Barcode, Category, or Tier Price cell
             to edit. Press{" "}
             <kbd className="rounded border border-brand-300 bg-white px-1 py-0.5 text-xs font-mono">
               Enter
@@ -1387,7 +1388,7 @@ export default function ProductsPage() {
         <div className="w-40">
           <Select
             options={[
-              { value: "", label: "All Categories" },
+              { value: "", label: "All categories" },
               ...categories.map((c) => ({ value: c, label: c })),
             ]}
             value={categoryFilter}

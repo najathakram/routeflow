@@ -13,6 +13,7 @@ import {
 import { useSuppliers } from "@/lib/api/suppliers";
 import { useCustomers } from "@/lib/api/customers";
 import { useToast } from "@routeflow/ui/web";
+import { fmt } from "@/lib/formatting";
 import { SupplierSelect } from "@/components/SupplierSelect";
 import { SELECTABLE_PAYMENT_METHODS, PAYMENT_METHOD_LABELS } from "@/lib/payment-methods";
 
@@ -184,7 +185,7 @@ function RecordExpenseTab({ onSaved }: { onSaved: () => void }) {
           ) : (
             <>
               <div className="mb-1.5 flex items-center justify-between">
-                <label className="text-sm font-medium text-navy">Expense Category *</label>
+                <label className="text-sm font-medium text-navy">Expense category *</label>
                 <button
                   type="button"
                   onClick={() => setIsItemized(true)}
@@ -199,7 +200,7 @@ function RecordExpenseTab({ onSaved }: { onSaved: () => void }) {
                 required={!isItemized}
                 className={fieldCls}
               >
-                <option value="">Select category...</option>
+                <option value="">Select category…</option>
                 {categories?.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
@@ -269,7 +270,7 @@ function RecordExpenseTab({ onSaved }: { onSaved: () => void }) {
 
         {/* Payment Method */}
         <div>
-          <label className={labelCls}>Payment Method</label>
+          <label className={labelCls}>Payment method</label>
           <select
             value={form.paymentMethod}
             onChange={(e) => setForm((f) => ({ ...f, paymentMethod: e.target.value }))}
@@ -331,7 +332,7 @@ function RecordExpenseTab({ onSaved }: { onSaved: () => void }) {
             onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
             rows={2}
             maxLength={500}
-            placeholder="Additional notes..."
+            placeholder="Additional notes…"
             className={`${fieldCls} resize-none`}
           />
         </div>
@@ -353,7 +354,7 @@ function RecordExpenseTab({ onSaved }: { onSaved: () => void }) {
                 onChange={(e) => updateLineItem(idx, "account", e.target.value)}
                 className={fieldCls}
               >
-                <option value="">Select account...</option>
+                <option value="">Select account…</option>
                 {categories?.map((c) => (
                   <option key={c.id} value={c.name}>
                     {c.name}
@@ -407,10 +408,10 @@ function RecordExpenseTab({ onSaved }: { onSaved: () => void }) {
             onClick={addLineItem}
             className="mt-1 text-sm text-brand-500 hover:underline"
           >
-            + Add New Row
+            Add row
           </button>
           <div className="flex justify-end border-t border-surface-border pt-2 mt-2">
-            <span className="text-sm font-semibold text-navy">Total: ${lineTotal.toFixed(2)}</span>
+            <span className="text-sm font-semibold text-navy">Total: {fmt(lineTotal)}</span>
           </div>
         </div>
       )}
@@ -428,7 +429,7 @@ function RecordExpenseTab({ onSaved }: { onSaved: () => void }) {
           disabled={createExpense.isPending}
           className="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-50 transition-colors"
         >
-          {createExpense.isPending ? "Saving..." : "Record Expense"}
+          {createExpense.isPending ? "Saving…" : "Record expense"}
         </button>
       </div>
     </form>
@@ -474,6 +475,8 @@ function RecordMileageTab({ onSaved }: { onSaved: () => void }) {
       : parseFloat(form.distance) || 0;
 
   const amount = applicableRate ? distance * Number(applicableRate.ratePerUnit) : 0;
+  const unitOne = form.unit === "KM" ? "km" : "mile";
+  const unitWord = form.unit === "KM" ? "km" : distance === 1 ? "mile" : "miles";
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -581,15 +584,15 @@ function RecordMileageTab({ onSaved }: { onSaved: () => void }) {
                 onChange={(e) => setForm((f) => ({ ...f, unit: e.target.value }))}
                 className="rounded-lg border border-surface-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
               >
-                <option value="MILE">Mile(s)</option>
-                <option value="KM">Km</option>
+                <option value="MILE">Miles</option>
+                <option value="KM">Kilometers</option>
               </select>
             </div>
           </div>
         ) : (
           <div className="col-span-2 grid grid-cols-2 gap-4">
             <div>
-              <label className={labelCls}>Odometer Start *</label>
+              <label className={labelCls}>Odometer start *</label>
               <input
                 type="number"
                 step="0.1"
@@ -621,7 +624,7 @@ function RecordMileageTab({ onSaved }: { onSaved: () => void }) {
           <label className={labelCls}>Amount (auto-calculated)</label>
           <div className="rounded-lg border border-surface-border bg-surface-raised px-3 py-2 text-sm text-navy/70">
             {applicableRate ? (
-              `$${amount.toFixed(2)} (${distance} ${form.unit.toLowerCase()}s × $${Number(applicableRate.ratePerUnit).toFixed(4)}/${form.unit.toLowerCase()})`
+              `${fmt(amount)} (${distance} ${unitWord} × $${Number(applicableRate.ratePerUnit).toFixed(4)}/${unitOne})`
             ) : (
               <span className="text-amber-600">No mileage rate set for this date</span>
             )}
@@ -662,7 +665,7 @@ function RecordMileageTab({ onSaved }: { onSaved: () => void }) {
             onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
             rows={2}
             maxLength={500}
-            placeholder="Additional notes..."
+            placeholder="Additional notes…"
             className={`${fieldCls} resize-none`}
           />
         </div>
@@ -681,7 +684,7 @@ function RecordMileageTab({ onSaved }: { onSaved: () => void }) {
           disabled={createExpense.isPending}
           className="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-50 transition-colors"
         >
-          {createExpense.isPending ? "Saving..." : "Record Mileage"}
+          {createExpense.isPending ? "Saving…" : "Record mileage"}
         </button>
       </div>
     </form>
@@ -743,9 +746,15 @@ function BulkAddTab({ onSaved }: { onSaved: () => void }) {
 
     try {
       const result = await bulkCreate.mutateAsync(expenses);
-      toast({ title: `${result.created} expense(s) saved`, variant: "success" });
+      toast({
+        title: `${result.created} ${result.created === 1 ? "expense" : "expenses"} saved`,
+        variant: "success",
+      });
       if (result.errors?.length) {
-        toast({ title: `${result.errors.length} row(s) failed`, variant: "error" });
+        toast({
+          title: `${result.errors.length} ${result.errors.length === 1 ? "row" : "rows"} failed`,
+          variant: "error",
+        });
       } else {
         onSaved();
       }
@@ -797,7 +806,7 @@ function BulkAddTab({ onSaved }: { onSaved: () => void }) {
                     onChange={(e) => updateRow(idx, "categoryId", e.target.value)}
                     className="w-48 rounded border border-surface-border px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-brand-500"
                   >
-                    <option value="">Select...</option>
+                    <option value="">Select…</option>
                     {categories?.map((c) => (
                       <option key={c.id} value={c.id}>
                         {c.name}
@@ -877,7 +886,7 @@ function BulkAddTab({ onSaved }: { onSaved: () => void }) {
           disabled={bulkCreate.isPending}
           className="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-50 transition-colors"
         >
-          {bulkCreate.isPending ? "Saving..." : "Save All"}
+          {bulkCreate.isPending ? "Saving…" : "Save all"}
         </button>
       </div>
     </div>
@@ -891,7 +900,7 @@ type TabKey = "single" | "mileage" | "bulk";
 export default function NewExpensePage() {
   const { setTitle } = usePageTitle();
   React.useEffect(() => {
-    setTitle("New Expense");
+    setTitle("New expense");
   }, [setTitle]);
   const router = useRouter();
 
@@ -901,24 +910,24 @@ export default function NewExpensePage() {
   return (
     <div className="mx-auto max-w-4xl space-y-6 p-6">
       <div>
-        <h2 className="text-xl font-semibold text-navy">New Expense</h2>
+        <h2 className="text-2xl font-bold text-navy">New expense</h2>
         <p className="text-sm text-navy/70">Record a business expense</p>
       </div>
 
       {/* Tabs */}
       <div className="border-b border-surface-border flex gap-0">
         <Tab
-          label="Record Expense"
+          label="Record expense"
           active={activeTab === "single"}
           onClick={() => setActiveTab("single")}
         />
         <Tab
-          label="Record Mileage"
+          label="Record mileage"
           active={activeTab === "mileage"}
           onClick={() => setActiveTab("mileage")}
         />
         <Tab
-          label="Bulk Add Expenses"
+          label="Bulk add expenses"
           active={activeTab === "bulk"}
           onClick={() => setActiveTab("bulk")}
         />

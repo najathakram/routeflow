@@ -23,6 +23,13 @@ import { fmt, fmtCalendarDate, fmtDate } from "@/lib/formatting";
 import { paymentMethodLabel } from "@/lib/payment-methods";
 import { RecordPayoutModal } from "../_components/RecordPayoutModal";
 
+const ADJUSTMENT_KIND_LABEL: Record<string, string> = {
+  CLAWBACK: "Clawback",
+  RATE_CHANGE: "Rate change",
+  REASSIGNMENT: "Reassignment",
+  MANUAL: "Manual adjustment",
+};
+
 const LINE_KIND_BADGE: Record<
   CommissionStatementLineKind,
   { variant: "success" | "warning" | "neutral"; label: string }
@@ -92,7 +99,7 @@ export default function CommissionStatementDetailPage() {
       <div className="flex flex-col items-center gap-4 p-12 text-center">
         <p className="text-base font-medium text-navy">Statement not found.</p>
         <Button variant="secondary" href="/finance/commissions">
-          Back to Commissions
+          Back to commissions
         </Button>
       </div>
     );
@@ -298,7 +305,9 @@ function StatementDetailBody({ statement }: { statement: CommissionStatementDeta
                         </Link>
                       ) : line.kind === "ADJUSTMENT" && line.adjustment ? (
                         <span>
-                          <span className="font-medium">{line.adjustment.kind}</span>
+                          <span className="font-medium">
+                            {ADJUSTMENT_KIND_LABEL[line.adjustment.kind] ?? line.adjustment.kind}
+                          </span>
                           {(line.description || line.adjustment.reason) && (
                             <span className="text-navy/70">
                               {" "}
@@ -318,7 +327,7 @@ function StatementDetailBody({ statement }: { statement: CommissionStatementDeta
                       )}
                     </td>
                     <td
-                      className={`px-3 py-2 text-right ${amount < 0 ? "text-danger" : "text-navy"}`}
+                      className={`px-3 py-2 text-right tabular-nums ${amount < 0 ? "text-danger" : "text-navy"}`}
                     >
                       {fmt(amount)}
                     </td>
@@ -353,7 +362,9 @@ function StatementDetailBody({ statement }: { statement: CommissionStatementDeta
                     <td className="px-3 py-2 text-navy/70">{fmtDate(p.paidAt)}</td>
                     <td className="px-3 py-2 text-navy">{paymentMethodLabel(p.method)}</td>
                     <td className="px-3 py-2 text-navy/70">{p.reference ?? "—"}</td>
-                    <td className="px-3 py-2 text-right text-navy">{fmt(Number(p.amount))}</td>
+                    <td className="px-3 py-2 text-right tabular-nums text-navy">
+                      {fmt(Number(p.amount))}
+                    </td>
                   </tr>
                 ))}
               </tbody>

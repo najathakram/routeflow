@@ -76,7 +76,11 @@ import { SupplierSelect } from "@/components/SupplierSelect";
 import Link from "next/link";
 import { fmt, fmtCalendarDate, fmtDate, todayIso } from "@/lib/formatting";
 import { apiClient } from "@/lib/api-client";
-import { SELECTABLE_PAYMENT_METHODS, PAYMENT_METHOD_LABELS } from "@/lib/payment-methods";
+import {
+  SELECTABLE_PAYMENT_METHODS,
+  PAYMENT_METHOD_LABELS,
+  paymentMethodLabel,
+} from "@/lib/payment-methods";
 import { roundMoney } from "@routeflow/pricing";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -169,7 +173,7 @@ function poBadge(status: string): { variant: BadgeVariant; label: string } {
 // no longer go missing from this filter unnoticed — which is exactly how `OVERDUE` was absent
 // while the table below renders an "Overdue" badge for it.
 const STATUS_OPTIONS: Array<{ value: "" | VendorBillStatus; label: string }> = [
-  { value: "", label: "All Statuses" },
+  { value: "", label: "All statuses" },
   { value: "DRAFT", label: "Draft" },
   { value: "RECEIVED", label: "Received" },
   { value: "PARTIAL", label: "Partial" },
@@ -495,8 +499,9 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
     if (!dueDate) errs.dueDate = "Due date is required.";
     if (lineItems.length === 0) errs.items = "Add at least one line item.";
     lineItems.forEach((row, i) => {
-      if (!row.description.trim()) errs[`desc_${i}`] = "Description required.";
-      if (!row.qty || parseFloat(row.qty) <= 0) errs[`qty_${i}`] = "Qty > 0.";
+      if (!row.description.trim()) errs[`desc_${i}`] = "Description is required.";
+      if (!row.qty || parseFloat(row.qty) <= 0)
+        errs[`qty_${i}`] = "Quantity must be greater than 0.";
       // B469: cost may be NEGATIVE (a discount/deposit line, mirroring mobile
       // scan-to-bill since #791) — only require that a number was entered.
       // The server enforces the real invariant (the bill must not NET
@@ -600,7 +605,7 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
               Cancel
             </Button>
             <Button type="submit" form="create-bill-form" loading={createBill.isPending}>
-              Create Bill
+              Create bill
             </Button>
           </>
         }
@@ -679,7 +684,7 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
           </div>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <div>
-              <label className="mb-1.5 block text-sm font-medium text-navy/80">Bill Date</label>
+              <label className="mb-1.5 block text-sm font-medium text-navy/80">Bill date</label>
               <input
                 type="date"
                 value={billDate}
@@ -706,7 +711,7 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
               </select>
             </div>
             <div>
-              <label className="mb-1.5 block text-sm font-medium text-navy/80">Due Date</label>
+              <label className="mb-1.5 block text-sm font-medium text-navy/80">Due date</label>
               <input
                 type="date"
                 value={dueDate}
@@ -725,7 +730,7 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
           </div>
           <div>
             <div className="mb-2 flex items-center justify-between">
-              <label className="text-sm font-medium text-navy/80">Line Items</label>
+              <label className="text-sm font-medium text-navy/80">Line items</label>
               <button
                 type="button"
                 onClick={addLineItem}
@@ -939,7 +944,7 @@ function InventoryPurchasesTab() {
     if (selectedBills.size === 0) return;
     if (
       !confirm(
-        `Delete ${selectedBills.size} selected bill(s)? Only DRAFT and VOID bills can be deleted.`,
+        `Delete ${selectedBills.size} selected ${selectedBills.size === 1 ? "bill" : "bills"}? Only draft and void bills can be deleted.`,
       )
     )
       return;
@@ -1081,10 +1086,10 @@ function InventoryPurchasesTab() {
       {/* Actions row */}
       <div className="flex items-center justify-end gap-2">
         <Button variant="secondary" onClick={() => setScanOpen(true)}>
-          <Sparkles className="mr-1 h-4 w-4" /> Scan Invoice
+          <Sparkles className="mr-1 h-4 w-4" /> Scan invoice
         </Button>
         <Button leftIcon={<Plus className="h-4 w-4" />} onClick={() => setIsCreateOpen(true)}>
-          New purchase
+          New bill
         </Button>
       </div>
 
@@ -1143,7 +1148,7 @@ function InventoryPurchasesTab() {
       {/* KPI row */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <StatTile
-          label="Open Bills"
+          label="Open bills"
           value={fmt(kpis.outstanding)}
           hint={`${kpis.unpaidCount} bill${kpis.unpaidCount === 1 ? "" : "s"} unpaid`}
           money
@@ -1186,7 +1191,7 @@ function InventoryPurchasesTab() {
         <StatTile
           label="Spend, 30d"
           value={fmt(kpis.spend30d)}
-          hint="vendor bills in the last 30 days"
+          hint="supplier bills in the last 30 days"
           money
         />
       </div>
@@ -1283,13 +1288,13 @@ function InventoryPurchasesTab() {
                   className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy"
                   onClick={() => toggleSort("billDate")}
                 >
-                  Bill Date <SortIcon col="billDate" />
+                  Bill date <SortIcon col="billDate" />
                 </th>
                 <th
                   className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy"
                   onClick={() => toggleSort("dueDate")}
                 >
-                  Due Date <SortIcon col="dueDate" />
+                  Due date <SortIcon col="dueDate" />
                 </th>
                 <th
                   className="px-4 py-3 text-right text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy"
@@ -1327,8 +1332,8 @@ function InventoryPurchasesTab() {
                     {search || statusFilter || dateFrom || dateTo ? (
                       <EmptyState
                         variant="data"
-                        title="No matching purchases"
-                        description="No inventory purchases match your current search and filters."
+                        title="No matching bills"
+                        description="No bills match your current search and filters."
                         action={
                           <Button
                             variant="secondary"
@@ -1348,11 +1353,11 @@ function InventoryPurchasesTab() {
                     ) : (
                       <EmptyState
                         variant="data"
-                        title="No purchases yet"
-                        description="Record an inventory purchase to track supplier bills and expenses."
+                        title="No supplier bills yet"
+                        description="Record a supplier bill to track inventory spend."
                         action={
                           <Button size="sm" onClick={() => setIsCreateOpen(true)}>
-                            New purchase
+                            New bill
                           </Button>
                         }
                       />
@@ -1413,10 +1418,10 @@ function InventoryPurchasesTab() {
                           <span className="ml-1.5 text-xs font-semibold text-red-500">Overdue</span>
                         )}
                       </td>
-                      <td className="px-4 py-3 text-right font-medium text-navy">
+                      <td className="px-4 py-3 text-right font-medium text-navy tabular-nums">
                         {fmt(Number(bill.totalOwed ?? 0))}
                       </td>
-                      <td className="px-4 py-3 text-right text-navy">
+                      <td className="px-4 py-3 text-right text-navy tabular-nums">
                         {fmt(Number(bill.totalPaid ?? 0))}
                       </td>
                       <td className="px-4 py-3 text-right">
@@ -1615,7 +1620,7 @@ function PurchaseOrdersTab() {
                     <td className="px-4 py-3">
                       <Badge variant={b.variant} label={b.label} />
                     </td>
-                    <td className="px-4 py-3 text-right font-medium text-navy">
+                    <td className="px-4 py-3 text-right font-medium text-navy tabular-nums">
                       {fmt(poTotal(po))}
                     </td>
                   </tr>
@@ -1802,14 +1807,14 @@ function OtherExpensesTab() {
               loading={batchStatus.isPending}
               onClick={() => handleBatchStatus("RECEIVED")}
             >
-              Mark Received
+              Mark received
             </Button>
             <Button
               leftIcon={<CheckCircle2 className="h-4 w-4" />}
               loading={batchStatus.isPending}
               onClick={() => handleBatchStatus("PAID")}
             >
-              Mark Paid
+              Mark paid
             </Button>
           </div>
         </div>
@@ -1826,7 +1831,7 @@ function OtherExpensesTab() {
           }}
           className="rounded-lg border border-surface-border px-3 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
         >
-          <option value="">All Categories</option>
+          <option value="">All categories</option>
           {categories?.map((c) => (
             <option key={c.id} value={c.id}>
               {c.name}
@@ -2024,7 +2029,7 @@ function OtherExpensesTab() {
                       </div>
                     )}
                   </td>
-                  <td className="px-5 py-3 text-right font-semibold text-navy">
+                  <td className="px-5 py-3 text-right font-semibold text-navy tabular-nums">
                     {fmt(Number(e.amount))}
                   </td>
                   <td className="px-5 py-3">
@@ -2122,7 +2127,7 @@ function ExpenseDetailModal({
     );
 
   return (
-    <Modal open={!!expense} onClose={onClose} title="Expense Details">
+    <Modal open={!!expense} onClose={onClose} title="Expense details">
       <div className="space-y-5">
         <div className="flex items-start justify-between gap-4">
           <div>
@@ -2136,7 +2141,10 @@ function ExpenseDetailModal({
           <Field label="Category" value={expense.category?.name} />
           <Field label="Supplier" value={expense.supplier?.name} />
           <Field label="Customer" value={expense.customer?.businessName} />
-          <Field label="Payment Method" value={expense.paymentMethod} />
+          <Field
+            label="Payment Method"
+            value={expense.paymentMethod ? paymentMethodLabel(expense.paymentMethod) : null}
+          />
           <Field label="Reference #" value={expense.referenceNumber} />
           <Field label="Employee" value={expense.employeeName} />
           {expense.isMileage && (
@@ -2295,7 +2303,7 @@ function ExpensesContent() {
       <div className="flex gap-1 rounded-xl border border-surface-border bg-surface-raised p-1 w-fit">
         <TabButton tab="inventory" label="Supplier bills" count={billsCount} />
         <TabButton tab="pos" label="Purchase orders" count={posCount} />
-        <TabButton tab="other" label="Other Expenses" />
+        <TabButton tab="other" label="Other expenses" />
       </div>
 
       {activeTab === "inventory" ? (

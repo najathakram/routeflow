@@ -60,7 +60,7 @@ async function openPaymentsPage(customer = "cust-1") {
   const view = renderWithProviders(<FinancePaymentsPage />);
   fireEvent.click(screen.getAllByRole("button", { name: /Record payment/i })[0]);
   await screen.findAllByRole("option", { name: /Acme Foods/ });
-  fireEvent.change(screen.getByDisplayValue("Select customer..."), { target: { value: customer } });
+  fireEvent.change(screen.getByDisplayValue("Select customer…"), { target: { value: customer } });
   fireEvent.change(amountField(), { target: { value: "50" } });
   return view;
 }

@@ -49,7 +49,7 @@ jest.mock("@/lib/api/customers", () => ({
 function openModalWithCustomer() {
   renderWithProviders(<FinancePaymentsPage />);
   fireEvent.click(screen.getAllByRole("button", { name: /Record payment/i })[0]);
-  fireEvent.change(screen.getByDisplayValue("Select customer..."), {
+  fireEvent.change(screen.getByDisplayValue("Select customer…"), {
     target: { value: "cust-1" },
   });
 }

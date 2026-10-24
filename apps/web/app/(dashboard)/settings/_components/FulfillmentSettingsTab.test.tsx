@@ -7,7 +7,7 @@ import { FulfillmentSettingsTab } from "./FulfillmentSettingsTab";
 /**
  * Settings → Fulfillment (dark behind the API's FULFILMENT_SELF_SERVE; the page only mounts this tab
  * when GET /settings/fulfilment says `selfServe`). Two cards: "Delivery method" (a radiogroup, changed
- * through Review Change -> a server-built preview dialog -> Confirm Change) and "Counter sales" (a
+ * through Review change -> a server-built preview dialog -> Confirm change) and "Counter sales" (a
  * switch that opens the same dialog). The server owns the fingerprint, the effects text and every
  * refusal; this tab sends exactly what the admin chose plus the fingerprint it reviewed.
  */
@@ -79,7 +79,7 @@ const axiosError = (status: number, data: Record<string, unknown>) =>
   Object.assign(new Error(`HTTP ${status}`), { response: { status, data } });
 
 const radio = (name: RegExp | string) => screen.getByRole("radio", { name });
-const review = () => screen.getByRole("button", { name: "Review Change" });
+const review = () => screen.getByRole("button", { name: "Review change" });
 const dialog = () => screen.getByRole("dialog");
 
 beforeEach(() => {
@@ -104,12 +104,12 @@ describe("loading and error states", () => {
     expect(screen.queryByRole("radio")).not.toBeInTheDocument();
   });
 
-  it("a failed load says so and Try Again loads it", async () => {
+  it("a failed load says so and Try again loads it", async () => {
     get.mockRejectedValueOnce(new Error("boom"));
     renderWithProviders(<FulfillmentSettingsTab />);
     expect(await screen.findByText("Couldn't load your fulfillment settings.")).toBeInTheDocument();
     expect(screen.queryByRole("radio")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Try Again" }));
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(await screen.findByRole("radiogroup", { name: "Delivery method" })).toBeInTheDocument();
     expect(get).toHaveBeenCalledTimes(2);
   });
@@ -144,7 +144,7 @@ describe("the Delivery method card", () => {
     expect(radio(/No preference/)).toBeChecked();
   });
 
-  it("Review Change is disabled until the selection differs from the saved value", async () => {
+  it("Review change is disabled until the selection differs from the saved value", async () => {
     await renderLoaded();
     expect(review()).toBeDisabled();
     fireEvent.click(radio(/^By carrier/));
@@ -172,7 +172,7 @@ describe("the Delivery method card", () => {
     expect(radio(/^By carrier/)).toBeEnabled();
     expect(screen.getAllByText("Not on your plan")).toHaveLength(2);
     expect(screen.getAllByText("Needs Routes or Order delivery on your plan.")).toHaveLength(2);
-    const links = screen.getAllByRole("link", { name: "See Plan & Billing" });
+    const links = screen.getAllByRole("link", { name: "See Plan & billing" });
     expect(links).toHaveLength(2);
     for (const l of links) expect(l).toHaveAttribute("href", "/settings/billing");
   });
@@ -196,7 +196,7 @@ describe("the Delivery method card", () => {
 });
 
 describe("changing the delivery method", () => {
-  it("Review Change previews, the dialog shows the server's effects, Confirm sends the model and the fingerprint", async () => {
+  it("Review change previews, the dialog shows the server's effects, Confirm sends the model and the fingerprint", async () => {
     post.mockResolvedValue({ data: previewFor() });
     patch.mockResolvedValue({
       data: {
@@ -224,7 +224,7 @@ describe("changing the delivery method", () => {
     expect(within(d).getByText("Existing orders keep their delivery method.")).toBeInTheDocument();
     expect(patch).not.toHaveBeenCalled();
 
-    fireEvent.click(within(d).getByRole("button", { name: "Confirm Change" }));
+    fireEvent.click(within(d).getByRole("button", { name: "Confirm change" }));
     await waitFor(() =>
       expect(patch).toHaveBeenCalledWith("/settings/fulfilment", {
         fulfilmentModel: "ship",
@@ -247,12 +247,12 @@ describe("changing the delivery method", () => {
     await renderLoaded();
     fireEvent.click(radio(/^By carrier/));
     fireEvent.click(review());
-    fireEvent.click(await screen.findByRole("button", { name: "Confirm Change" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm change" }));
     const saving = await screen.findByRole("button", { name: "Saving…" });
     expect(saving).toBeDisabled();
   });
 
-  it("Cancel closes the dialog without saving and focus returns to Review Change", async () => {
+  it("Cancel closes the dialog without saving and focus returns to Review change", async () => {
     post.mockResolvedValue({ data: previewFor() });
     await renderLoaded();
     fireEvent.click(radio(/^By carrier/));
@@ -265,7 +265,7 @@ describe("changing the delivery method", () => {
     await waitFor(() => expect(review()).toHaveFocus());
   });
 
-  it("a stale change shows the notice; Review Again reloads and previews again with the NEW fingerprint", async () => {
+  it("a stale change shows the notice; Review again reloads and previews again with the NEW fingerprint", async () => {
     post
       .mockResolvedValueOnce({ data: previewFor() })
       .mockResolvedValueOnce({ data: previewFor({ fingerprint: "fp-cccccccccccc3" }) });
@@ -292,21 +292,21 @@ describe("changing the delivery method", () => {
     await renderLoaded();
     fireEvent.click(radio(/^By carrier/));
     fireEvent.click(review());
-    fireEvent.click(await screen.findByRole("button", { name: "Confirm Change" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm change" }));
 
     expect(
       await screen.findByText(
         "Someone changed this a moment ago. Review the new setting before you try again.",
       ),
     ).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Confirm Change" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Confirm change" })).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Review Again" }));
+    fireEvent.click(screen.getByRole("button", { name: "Review again" }));
     await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
     expect(post).toHaveBeenLastCalledWith("/settings/fulfilment/preview", {
       fulfilmentModel: "ship",
     });
-    fireEvent.click(await screen.findByRole("button", { name: "Confirm Change" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm change" }));
     await waitFor(() =>
       expect(patch).toHaveBeenLastCalledWith("/settings/fulfilment", {
         fulfilmentModel: "ship",
@@ -323,7 +323,7 @@ describe("changing the delivery method", () => {
     await renderLoaded();
     fireEvent.click(radio(/^By carrier/));
     fireEvent.click(review());
-    fireEvent.click(await screen.findByRole("button", { name: "Confirm Change" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm change" }));
     expect(
       await screen.findByText(
         "2 orders are still with the carrier. Try again once they're delivered.",
@@ -333,22 +333,22 @@ describe("changing the delivery method", () => {
       "href",
       "/orders?fulfillPath=SHIP&status=OUT_FOR_DELIVERY",
     );
-    expect(screen.queryByRole("button", { name: "Review Again" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Confirm Change" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Review again" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Confirm change" })).not.toBeInTheDocument();
   });
 
-  it("own delivery without a plan: the fixed sentence and a Plan & Billing link", async () => {
+  it("own delivery without a plan: the fixed sentence and a Plan & billing link", async () => {
     post.mockResolvedValue({ data: previewFor() });
     patch.mockRejectedValue(axiosError(409, { code: "FULFILMENT_MODE_NEEDS_FLEET", message: "x" }));
     await renderLoaded();
     fireEvent.click(radio(/^By carrier/));
     fireEvent.click(review());
-    fireEvent.click(await screen.findByRole("button", { name: "Confirm Change" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm change" }));
     const d = dialog();
     expect(
       await within(d).findByText("Own delivery needs Routes or Order delivery on your plan."),
     ).toBeInTheDocument();
-    expect(within(d).getByRole("link", { name: "See Plan & Billing" })).toHaveAttribute(
+    expect(within(d).getByRole("link", { name: "See Plan & billing" })).toHaveAttribute(
       "href",
       "/settings/billing",
     );
@@ -407,7 +407,7 @@ describe("the Counter sales card", () => {
       await screen.findByRole("dialog", { name: "Turn on counter sales?" }),
     ).toBeInTheDocument();
     expect(post).toHaveBeenCalledWith("/settings/fulfilment/preview", { counterSales: "on" });
-    fireEvent.click(within(dialog()).getByRole("button", { name: "Confirm Change" }));
+    fireEvent.click(within(dialog()).getByRole("button", { name: "Confirm change" }));
     await waitFor(() =>
       expect(patch).toHaveBeenCalledWith("/settings/fulfilment", {
         counterSales: "on",
@@ -444,7 +444,7 @@ describe("the Counter sales card", () => {
     expect(
       await screen.findByRole("dialog", { name: "Turn off counter sales?" }),
     ).toBeInTheDocument();
-    fireEvent.click(within(dialog()).getByRole("button", { name: "Confirm Change" }));
+    fireEvent.click(within(dialog()).getByRole("button", { name: "Confirm change" }));
     await waitFor(() =>
       expect(toast).toHaveBeenCalledWith(
         expect.objectContaining({ title: "Counter sales turned off." }),
@@ -489,11 +489,11 @@ describe("a non-admin (canEdit false)", () => {
     });
   });
 
-  it("reads everything, changes nothing: all controls disabled, no Review Change, the admins named", async () => {
+  it("reads everything, changes nothing: all controls disabled, no Review change, the admins named", async () => {
     await renderLoaded();
     for (const r of screen.getAllByRole("radio")) expect(r).toBeDisabled();
     expect(screen.getByRole("switch", { name: "Allow counter sales" })).toBeDisabled();
-    expect(screen.queryByRole("button", { name: "Review Change" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Review change" })).not.toBeInTheDocument();
     expect(
       screen.getByText(/Only an admin can change these settings\. Your admins: ada, cy/),
     ).toBeInTheDocument();

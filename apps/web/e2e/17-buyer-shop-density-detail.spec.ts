@@ -40,7 +40,7 @@ test.describe("Buyer shop density + product detail", () => {
     await loginAsOperator(page);
 
     await page.goto("/customers");
-    await page.getByRole("button", { name: "New Customer" }).first().click();
+    await page.getByRole("button", { name: "New customer" }).first().click();
     await page.getByLabel("Business Name").fill(businessName);
     await page.getByLabel("Contact Name").fill(buyerName);
     await page.getByLabel("Street").fill("100 E2E Test Way");
@@ -69,7 +69,7 @@ test.describe("Buyer shop density + product detail", () => {
       (res) => res.request().method() === "POST" && res.url().includes("/portal-invite"),
       { timeout: 20_000 },
     );
-    await page.getByRole("button", { name: "Send Portal Invite" }).click();
+    await page.getByRole("button", { name: "Send portal invite" }).click();
     const inviteResponse = await inviteResponsePromise;
     const inviteBody = (await inviteResponse.json()) as { inviteUrl?: string };
     const inviteToken = inviteBody.inviteUrl?.split("/buyer/invite/")[1];

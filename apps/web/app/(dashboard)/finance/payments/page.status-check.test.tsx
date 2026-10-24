@@ -57,7 +57,7 @@ async function openModal() {
   renderWithProviders(<FinancePaymentsPage />);
   fireEvent.click(screen.getAllByRole("button", { name: /Record payment/i })[0]);
   await screen.findAllByRole("option", { name: /Acme Foods/ });
-  fireEvent.change(screen.getByDisplayValue("Select customer..."), {
+  fireEvent.change(screen.getByDisplayValue("Select customer…"), {
     target: { value: "cust-1" },
   });
   fireEvent.change(screen.getAllByPlaceholderText("0.00")[0], { target: { value: "50" } });
@@ -65,7 +65,7 @@ async function openModal() {
 // the scope is the customer (writer + target): a reopened dialog resolves it when the customer is chosen
 const pickCustomer = async () => {
   await screen.findAllByRole("option", { name: /Acme Foods/ });
-  fireEvent.change(screen.getByDisplayValue("Select customer..."), { target: { value: "cust-1" } });
+  fireEvent.change(screen.getByDisplayValue("Select customer…"), { target: { value: "cust-1" } });
 };
 const save = () => fireEvent.click(screen.getByRole("button", { name: "Save as paid" }));
 const checkBtn = () => screen.getByRole("button", { name: "Check payment status" });

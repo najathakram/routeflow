@@ -120,7 +120,7 @@ function EditModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
       <div className="w-full max-w-lg rounded-xl border border-surface-border bg-white shadow-xl">
         <div className="flex items-center justify-between border-b border-surface-border px-6 py-4">
-          <h2 className="text-base font-semibold text-navy">Edit Supplier</h2>
+          <h2 className="text-base font-semibold text-navy">Edit supplier</h2>
           <button onClick={onClose} className="text-navy/70 hover:text-navy transition-colors">
             <X className="h-4 w-4" />
           </button>
@@ -301,15 +301,17 @@ function BillRow({ bill }: { bill: VendorBill }) {
       <td className="px-5 py-3">
         <Badge variant={STATUS_VARIANTS[bill.status]} label={STATUS_LABELS[bill.status]} />
       </td>
-      <td className="px-5 py-3 text-right text-sm text-navy">{fmt(bill.totalOwed)}</td>
-      <td className="px-5 py-3 text-right text-sm text-navy/70">{fmt(bill.totalPaid)}</td>
+      <td className="px-5 py-3 text-right text-sm text-navy tabular-nums">{fmt(bill.totalOwed)}</td>
+      <td className="px-5 py-3 text-right text-sm text-navy/70 tabular-nums">
+        {fmt(bill.totalPaid)}
+      </td>
       <td
         className={cn(
           "px-5 py-3 text-right text-sm font-medium",
           outstanding > 0 ? "text-warning" : "text-navy/70",
         )}
       >
-        {outstanding > 0 ? fmt(outstanding) : "—"}
+        {fmt(outstanding)}
       </td>
       <td className="px-5 py-3 text-xs text-navy/70 max-w-xs truncate">{bill.notes ?? "—"}</td>
     </tr>
@@ -525,7 +527,7 @@ function SupplierDetailPageInner() {
           <p
             className={cn("text-2xl font-bold", outstanding > 0 ? "text-warning" : "text-navy/30")}
           >
-            {outstanding > 0 ? fmt(outstanding) : "—"}
+            {fmt(outstanding)}
           </p>
           {outstanding > 0 && (
             <p className="mt-1 text-xs text-navy/70">
@@ -539,10 +541,10 @@ function SupplierDetailPageInner() {
           <div className="flex items-center gap-2 mb-2">
             <Receipt className="h-4 w-4 text-navy/30" />
             <span className="text-xs font-medium text-navy/70 uppercase tracking-wide">
-              Total Billed
+              Total billed
             </span>
           </div>
-          <p className="text-2xl font-bold text-navy">{totalOwed > 0 ? fmt(totalOwed) : "—"}</p>
+          <p className="text-2xl font-bold text-navy">{fmt(totalOwed)}</p>
           <p className="mt-1 text-xs text-navy/70">
             {bills.filter((b) => b.status !== "VOID").length} bills
           </p>
@@ -553,10 +555,10 @@ function SupplierDetailPageInner() {
           <div className="flex items-center gap-2 mb-2">
             <CheckCircle2 className="h-4 w-4 text-navy/30" />
             <span className="text-xs font-medium text-navy/70 uppercase tracking-wide">
-              Total Paid
+              Total paid
             </span>
           </div>
-          <p className="text-2xl font-bold text-navy">{totalPaid > 0 ? fmt(totalPaid) : "—"}</p>
+          <p className="text-2xl font-bold text-navy">{fmt(totalPaid)}</p>
           <p className="mt-1 text-xs text-navy/70">
             {bills.filter((b) => b.status === "PAID").length} paid bills
           </p>
@@ -568,7 +570,7 @@ function SupplierDetailPageInner() {
         {/* Contact details */}
         <div className="lg:col-span-1 space-y-4">
           <div className="rounded-xl border border-surface-border bg-white p-5 shadow-card">
-            <h2 className="mb-4 text-sm font-semibold text-navy">Contact Details</h2>
+            <h2 className="mb-4 text-sm font-semibold text-navy">Contact details</h2>
             <div className="space-y-3">
               {(supplier.phone || supplier.mobile) && (
                 <div className="flex items-center gap-2.5">
@@ -655,7 +657,7 @@ function SupplierDetailPageInner() {
             <div className="flex items-center justify-between border-b border-surface-border px-5 py-4">
               <div className="flex items-center gap-2">
                 <FileText className="h-4 w-4 text-navy/70" />
-                <h2 className="text-sm font-semibold text-navy">Purchase Bills</h2>
+                <h2 className="text-sm font-semibold text-navy">Supplier bills</h2>
                 {bills.length > 0 && (
                   <span className="rounded-full bg-surface-raised px-2 py-0.5 text-xs font-medium text-navy/70">
                     {bills.length}
@@ -731,7 +733,7 @@ function SupplierDetailPageInner() {
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-surface-border px-5 py-4">
           <div className="flex items-center gap-2">
             <History className="h-4 w-4 text-navy/70" />
-            <h2 className="text-sm font-semibold text-navy">Account Activity</h2>
+            <h2 className="text-sm font-semibold text-navy">Account activity</h2>
           </div>
           <div className="flex items-center gap-4 text-sm">
             <span className="text-navy/70">
