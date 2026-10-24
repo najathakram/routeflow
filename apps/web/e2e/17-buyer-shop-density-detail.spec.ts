@@ -84,7 +84,7 @@ test.describe("Buyer shop density + product detail", () => {
     await page.getByPlaceholder("Enter your email").fill(buyerEmail);
     await page.getByPlaceholder("8+ chars, upper & lower case, number or symbol").fill(buyerPass);
     await page.getByPlaceholder("Re-enter your password").fill(buyerPass);
-    await page.getByRole("button", { name: "Create Account" }).click();
+    await page.getByRole("button", { name: "Create account" }).click();
     await page.waitForURL(/\/buyer\/invite\//, { timeout: 20_000 });
 
     await page.getByRole("button", { name: /accept invite/i }).click();

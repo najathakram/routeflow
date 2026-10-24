@@ -16,12 +16,20 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import { useBuyerAnalytics, useBuyerStatement } from "@/lib/api/buyer";
 import { fmtCalendarDate } from "@/lib/formatting";
+import { paymentMethodLabel } from "@/lib/payment-methods";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function fmt(amount: number): string {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(amount);
 }
+
+const fmtCompact = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  notation: "compact",
+  maximumFractionDigits: 1,
+});
 
 function fmtMonth(monthStr: string): string {
   const [year, month] = monthStr.split("-");
@@ -37,13 +45,6 @@ function fmtDate(dateStr: string): string {
     month: "short",
     year: "numeric",
   });
-}
-
-function formatPaymentMethod(method: string): string {
-  return method
-    .replace(/_/g, " ")
-    .toLowerCase()
-    .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 // ─── Stat Card ────────────────────────────────────────────────────────────────
@@ -163,14 +164,14 @@ export default function FinancesPage() {
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
         <StatCard
           icon={DollarSign}
-          label="Total Spend"
+          label="Total spend"
           value={fmt(summary.totalSpend)}
           sub="All time"
           color="bg-buyer-50 text-buyer-600"
         />
         <StatCard
           icon={ShoppingCart}
-          label="Total Orders"
+          label="Total orders"
           value={String(summary.totalOrders)}
           sub={`Avg ${fmt(summary.avgOrderValue)} / order`}
           color="bg-blue-50 text-blue-600"
@@ -184,14 +185,14 @@ export default function FinancesPage() {
         />
         <StatCard
           icon={CheckCircle2}
-          label="Paid Invoices"
+          label="Paid invoices"
           value={String(invoiceBreakdown.paid)}
           sub={`${invoiceBreakdown.overdue} overdue`}
           color="bg-success-bg text-success"
         />
         <StatCard
           icon={Wallet}
-          label="Store Credit"
+          label="Store credit"
           value={fmt(statement?.availableCredit ?? 0)}
           sub={hasActiveCredit ? "Available" : "None available"}
           color="bg-buyer-50 text-buyer-600"
@@ -202,7 +203,7 @@ export default function FinancesPage() {
       <div className="rounded-xl border border-surface-border bg-white p-5 shadow-sm">
         <div className="flex items-center gap-2 mb-5">
           <TrendingUp className="h-4 w-4 text-buyer-500" />
-          <h2 className="text-sm font-semibold text-navy">Monthly Spend (Last 12 Months)</h2>
+          <h2 className="text-sm font-semibold text-navy">Monthly spend (last 12 months)</h2>
         </div>
         {chartData.length === 0 ? (
           <div className="py-12 text-center text-sm text-navy/70">No spend data yet</div>
@@ -220,7 +221,7 @@ export default function FinancesPage() {
                 tick={{ fontSize: 11, fill: "#94a3b8" }}
                 axisLine={false}
                 tickLine={false}
-                tickFormatter={(v) => `$${v >= 1000 ? `${(v / 1000).toFixed(0)}k` : v}`}
+                tickFormatter={(v) => fmtCompact.format(v)}
               />
               <Tooltip content={<ChartTooltip />} cursor={{ fill: "#f1faf5" }} />
               <Bar dataKey="spend" fill="#10b981" radius={[4, 4, 0, 0]} maxBarSize={40} />
@@ -234,7 +235,7 @@ export default function FinancesPage() {
         <div className="rounded-xl border border-surface-border bg-white p-5 shadow-sm">
           <div className="flex items-center gap-2 mb-4">
             <Wallet className="h-4 w-4 text-buyer-500" />
-            <h2 className="text-sm font-semibold text-navy">Active Credits</h2>
+            <h2 className="text-sm font-semibold text-navy">Active credits</h2>
           </div>
           {activeCreditsTruncated && (
             <p className="mb-2 text-xs text-navy/70">
@@ -265,7 +266,7 @@ export default function FinancesPage() {
       <div className="grid gap-4 lg:grid-cols-2">
         {/* Invoice breakdown */}
         <div className="rounded-xl border border-surface-border bg-white p-5 shadow-sm">
-          <h2 className="text-sm font-semibold text-navy mb-4">Invoice Status</h2>
+          <h2 className="text-sm font-semibold text-navy mb-4">Invoice status</h2>
           <div className="space-y-3">
             {[
               {
@@ -309,7 +310,7 @@ export default function FinancesPage() {
 
         {/* Recent payments */}
         <div className="rounded-xl border border-surface-border bg-white p-5 shadow-sm">
-          <h2 className="text-sm font-semibold text-navy mb-4">Recent Payments</h2>
+          <h2 className="text-sm font-semibold text-navy mb-4">Recent payments</h2>
           {recentPayments.length === 0 ? (
             <p className="py-8 text-center text-xs text-navy/70">No payments recorded yet</p>
           ) : (
@@ -321,7 +322,7 @@ export default function FinancesPage() {
                       Invoice #{p.invoiceNumber}
                     </p>
                     <p className="text-[11px] text-navy/70 mt-0.5">
-                      {fmtDate(p.date)} · {formatPaymentMethod(p.method)}
+                      {fmtDate(p.date)} · {paymentMethodLabel(p.method)}
                     </p>
                   </div>
                   <span className="ml-3 flex-shrink-0 text-sm font-semibold text-success">

@@ -230,7 +230,7 @@ describe("buyer invoice detail — money fits on phones (B1150)", () => {
       ),
     ).toBe(true);
     expect(screen.getByTestId("invoice-line-unit-item-1").getAttribute("data-label")).toBe(
-      "Unit Price",
+      "Unit price",
     );
     expect(screen.getByTestId("invoice-line-qty-item-1").getAttribute("data-label")).toBe("Qty");
   });
