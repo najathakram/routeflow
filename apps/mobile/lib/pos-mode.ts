@@ -12,6 +12,7 @@ import type {
 import { roundMoney } from "@routeflow/pricing";
 import { fmtCurrency } from "../utils/format";
 import { duplicateRefPrompt } from "./duplicate-payment-ref";
+import { creditOverLimitSentence } from "@routeflow/types/credit-over-limit-copy";
 
 import { isPosOrder } from "./order-status-flow";
 
@@ -550,11 +551,22 @@ export type PickupDecision =
  * (`paymentRecorded: false`): when the tender was required or short, go back to the tender step with the
  * SAME Idempotency-Key (so the retry adds the payment to this hand-over) owing `balanceDue`. The key is
  * released only when the payment was recorded (or none was requested). Mirrors web's PickupCompleteDialog.
+ * I-120: an unrecorded tender the credit gate counted (`creditOverLimit`) adds the ONE shared sentence to the message.
  */
 export function decidePickupResponse(
   res: PickupCompleteResponse,
   role?: string | null,
+  customerName?: string | null,
 ): PickupDecision {
+  const d = decidePickup(res, role);
+  if (res.paymentRecorded || !res.creditOverLimit) return d;
+  return {
+    ...d,
+    message: `${d.message} ${creditOverLimitSentence(customerName, res.creditOverLimit, fmtCurrency)}`,
+  };
+}
+
+function decidePickup(res: PickupCompleteResponse, role?: string | null): PickupDecision {
   const code = res.paymentRecorded ? undefined : res.paymentErrorCode;
   if (!res.paymentRecorded && res.paymentCauseCode === API_ERROR_CODES.DUPLICATE_PAYMENT_REF) {
     const prompt = duplicateRefPrompt(

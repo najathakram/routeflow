@@ -3,6 +3,7 @@ import { API_ERROR_CODES } from "../../common/api-error-codes";
 import type { DuplicatePaymentRefExisting } from "@routeflow/types";
 import { isTender } from "./counter-sale-readback";
 import { duplicateCause } from "./counter-duplicate-ref";
+import { pickupTenderGroupId } from "./pickup-tender-group";
 
 /**
  * The response figures of POST /orders/:id/pickup-complete, read back from what is STORED. Payment rules
@@ -10,8 +11,7 @@ import { duplicateCause } from "./counter-duplicate-ref";
  * `counter-sale-payment.ts`; only the question "which stored payments are THIS request's tender?" differs
  * from the counter sale, whose invoices are born in the same request as its tender. A pickup order's invoice
  * pre-exists (deposits, portal payments, an ADVANCE or credit applied by send), so the answer is keyed on
- * THIS hand-over: only a tender payment created at or after the order's `deliveredAt` (the moment the
- * hand-over moved it to DELIVERED) is this request's.
+ * THIS completion (SA-919): a tender row of the order's hand-over group created at or after the claim's `completionAt`.
  *
  * No line/tax/total math lives here: only the payment split (in cents via roundMoney).
  */
@@ -21,6 +21,7 @@ export type PayRow = {
   method?: string;
   status?: string;
   createdAt?: Date | string | null;
+  paymentGroupId?: string | null;
 };
 
 export type InvoiceRow = {
@@ -32,15 +33,18 @@ export type InvoiceRow = {
 };
 
 /**
- * Is this stored payment THIS hand-over's tender? A tender created at or after `handedOverAt`. With no
- * known `handedOverAt` (a legacy DELIVERED row) or no `createdAt`, EVERY stored tender counts as this
- * hand-over's: the unknown direction is "already collected", never a second collection.
+ * SA-919: is this stored payment THIS completion's tender? ONE identity, used by every site: a tender row of the order's
+ * hand-over group (`pickupTenderGroupId`, written IN the create, SA-763r R7) created at or after the claim's `completionAt`.
+ * The group alone is per ORDER (a reopened order's first tender carries it too); the time alone would take a deposit or a
+ * portal payment made after the stamp. With no `completionAt` (a legacy claim) or no `createdAt`, EVERY row of the group
+ * counts: the unknown direction is "already collected", never a second collection.
  */
 export const isHandOverTender =
-  (handedOverAt: Date | null) =>
+  (orderId: string, completionAt: Date | null) =>
   (p: PayRow): boolean =>
     isTender(p) &&
-    (handedOverAt == null || p.createdAt == null || new Date(p.createdAt) >= handedOverAt);
+    p.paymentGroupId === pickupTenderGroupId(orderId) &&
+    (completionAt == null || p.createdAt == null || new Date(p.createdAt) >= completionAt);
 
 /**
  * Every figure comes from the stored invoices/payments; `change` is display-only (no money row). Change is
