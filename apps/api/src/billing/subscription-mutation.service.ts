@@ -24,7 +24,7 @@ import {
   checkoutAddonLineItem,
   isOwnedAddonItem,
 } from "./stripe-addon-items";
-import { ensureAddonProduct } from "./stripe-product";
+import { ensureAddonProduct, stripeProductId } from "./stripe-product";
 import { emitAddonDelta, lockTenantForLedger, bookAddonsOnCrossing } from "./addon-ledger";
 import {
   addonCodeOf,
@@ -2231,7 +2231,7 @@ export class SubscriptionMutationService {
     tenantId: string,
     interval: "month" | "year",
     // SA-733 D7: the catch-up DRY-RUN reads the same lines but writes nothing (no platform notice).
-    opts: { quiet?: boolean } = {},
+    opts: { quiet?: boolean; readOnly?: boolean } = {},
   ): Promise<{
     lineItems: ReturnType<typeof checkoutAddonLineItem>[];
     skus: string[];
@@ -2311,7 +2311,10 @@ export class SubscriptionMutationService {
         billable.map(async (b) =>
           checkoutAddonLineItem({
             sku: b.def.sku,
-            productId: await ensureAddonProduct(this.stripe.client, b.def.sku, b.def.name),
+            // a readOnly call (plan, census, payment-due) never touches Stripe: the id is deterministic
+            productId: opts.readOnly
+              ? stripeProductId("addon", b.def.sku)
+              : await ensureAddonProduct(this.stripe.client, b.def.sku, b.def.name),
             monthlyPrice: b.def.monthlyPrice,
             quantity: b.quantity,
           }),

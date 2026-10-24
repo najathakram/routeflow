@@ -113,7 +113,10 @@ describe("plan() is a read-only dry-run", () => {
     expect(h.db.audits).toHaveLength(0);
     expect(h.db.locks).toHaveLength(0);
     expect(h.stripe.calls).toEqual([]);
-    expect(h.mutations.checkoutAddonLines).toHaveBeenCalledWith("t1", "month", { quiet: true });
+    expect(h.mutations.checkoutAddonLines).toHaveBeenCalledWith("t1", "month", {
+      quiet: true,
+      readOnly: true,
+    });
     expect(h.sub().catchupState).toBeNull();
   });
 

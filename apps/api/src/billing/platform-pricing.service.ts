@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { StripeService } from "./stripe.service";
-import { ensurePlanProduct } from "./stripe-product";
+import { ensurePlanProduct, stripeProductId } from "./stripe-product";
 import { PlanCatalogService } from "./plan-catalog.service";
 import { findPlanDefinition, normalizePlanKey } from "./plan-catalog.constants";
 import { toCents } from "@routeflow/pricing";
@@ -153,6 +153,8 @@ export class PlatformPricingService {
     tenantId: string,
     interval: "month" | "year",
     proposed?: ProposedOverride,
+    /** `readOnly`: a plan/dry-run/tenant read - name the product by its deterministic id, touch Stripe never. */
+    opts: { readOnly?: boolean } = {},
   ): Promise<CheckoutPriceData> {
     const pricing = proposed
       ? await this.resolveTenantPricingWith(tenantId, proposed)
@@ -160,7 +162,9 @@ export class PlatformPricingService {
     const amount = interval === "year" ? pricing.annual : pricing.monthly;
     return {
       currency: pricing.currency,
-      product: await ensurePlanProduct(this.stripe.client, pricing.planKey, pricing.planName),
+      product: opts.readOnly
+        ? stripeProductId("plan", pricing.planKey)
+        : await ensurePlanProduct(this.stripe.client, pricing.planKey, pricing.planName),
       unit_amount: toCents(amount),
       recurring: { interval },
     };

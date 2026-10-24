@@ -200,13 +200,18 @@ export class CatchupCheckoutService {
       monthly = resolved.monthly;
       resolvedPlanKey = resolved.planKey ?? null;
       source = resolved.source;
-      planPriceData = await this.pricing.checkoutPriceData(tenantId, "month");
+      planPriceData = await this.pricing.checkoutPriceData(tenantId, "month", undefined, {
+        readOnly: true,
+      });
     } catch (err) {
       ineligible.push("no_resolvable_price");
       this.logger.warn(`catch-up plan tenant ${tenantId}: no price (${(err as Error).message})`);
     }
 
-    const lines = await this.mutations.checkoutAddonLines(tenantId, "month", { quiet: true });
+    const lines = await this.mutations.checkoutAddonLines(tenantId, "month", {
+      quiet: true,
+      readOnly: true,
+    });
     // B1102: a held add-on whose catalog includedAtPlan names no plan is CATALOG_INVALID, not "not card billable".
     if (lines.invalid.length > 0) ineligible.push("addon_catalog_invalid");
     const addons: CatchupAddon[] = lines.lineItems.map((li: any, i: number) => ({
@@ -411,6 +416,12 @@ export class CatchupCheckoutService {
       ) {
         throw new ChangedUnderClaim();
       }
+      // W-810: plan() names the products by id only (it is a read); the session is the one place that makes
+      // sure they exist and are active in Stripe.
+      const planPriceData = await this.pricing.checkoutPriceData(tenantId, "month");
+      const addonLines = await this.mutations.checkoutAddonLines(tenantId, "month", {
+        quiet: true,
+      });
       const customerId = await this.billing.ensureStripeCustomer(tenantId);
       const base = webBaseUrl();
       const params = buildCatchupSessionParams({
@@ -418,9 +429,9 @@ export class CatchupCheckoutService {
         slug: report.slug,
         planKey: fresh.planKey as string,
         customerId,
-        planPriceData: fresh._inputs!.planPriceData,
-        addonLines: fresh._inputs!.addonLines,
-        addonSkus: fresh._inputs!.addonSkus,
+        planPriceData,
+        addonLines: addonLines.lineItems,
+        addonSkus: addonLines.skus,
         plan: fresh.plan,
         now,
         // PATHS ("/settings/billing?..."), joined to the one web base (webBaseUrl) here

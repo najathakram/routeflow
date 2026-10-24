@@ -32,7 +32,7 @@ describe("W-810 product pin", () => {
 
   it("nothing creates a product outside the helper", () => {
     const offenders = sources
-      .filter(({ text }) => /products\.create\(/.test(text))
+      .filter(({ text }) => /products\s*\.\s*create\s*\(/.test(text))
       .map(({ f }) => f)
       .filter((f) => f !== "stripe-product.ts");
     expect(offenders).toEqual([]);
@@ -40,10 +40,14 @@ describe("W-810 product pin", () => {
 
   it("no push path takes its product from the item's current price", () => {
     const offenders = sources
-      .filter(({ text }) => /item\.price\??\.product/.test(text))
+      .filter(({ text }) => /\bprice\??\.product\b/.test(text))
       .map(({ f }) => f)
       // stripe-addon-items reads the product only to tell an add-on from the base plan (metadata.addonSku)
-      .filter((f) => f !== "stripe-addon-items.ts");
+      // plan-change-stripe / plan-change-flow only SNAPSHOT or COMPARE the prior product for a revert
+      .filter(
+        (f) =>
+          !["stripe-addon-items.ts", "plan-change-stripe.ts", "plan-change-flow.ts"].includes(f),
+      );
     expect(offenders).toEqual([]);
   });
 });
