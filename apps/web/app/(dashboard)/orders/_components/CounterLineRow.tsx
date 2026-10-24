@@ -22,6 +22,12 @@ const UW = unitWords();
 /** Every compact line control is a full 44 px target (TAP_TARGET) however small it looks. */
 const LINE_BTN = cn(TAP_TARGET, "rounded border px-2 text-xs disabled:opacity-40");
 
+/** W-717: the note buttons are secondary to the steppers, so they drop the border (one weight per role, not six equal boxes). */
+const LINE_BTN_QUIET = cn(
+  TAP_TARGET,
+  "rounded px-2 text-xs text-navy/70 underline-offset-2 hover:underline disabled:opacity-40",
+);
+
 /** B1208: a boxed line steps by a box or a piece; a plain line by one. Nothing steps a line to zero (x removes it). */
 export function LineStepper({
   line,
@@ -304,7 +310,7 @@ export function CounterLineRow({
         ) : null}
         <button
           type="button"
-          className={LINE_BTN}
+          className={LINE_BTN_QUIET}
           aria-label={`${hasNote ? "Edit the note on" : "Add a note to"} ${l.name}`}
           aria-expanded={editing}
           disabled={locked}
@@ -319,7 +325,7 @@ export function CounterLineRow({
         {hasNote ? (
           <button
             type="button"
-            className={LINE_BTN}
+            className={LINE_BTN_QUIET}
             aria-label={`Clear the note on ${l.name}`}
             disabled={locked}
             onClick={() => {
