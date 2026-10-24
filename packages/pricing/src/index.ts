@@ -51,4 +51,5 @@ export * from "./units-prices-v2";
 export * from "./counter-tender-split";
 export * from "./counter-own-return";
 export * from "./return-settlement";
+export * from "./complete-at-counter";
 export * from "./customer-pricing-gate";

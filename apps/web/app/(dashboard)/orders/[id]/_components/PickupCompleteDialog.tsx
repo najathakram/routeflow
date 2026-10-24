@@ -4,7 +4,12 @@ import * as React from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button, Modal, cn } from "@routeflow/ui/web";
 import { roundMoney } from "@routeflow/pricing";
-import { API_ERROR_CODES, RECORD_ANYWAY_LABEL, canRecordAnyway } from "@routeflow/types";
+import {
+  API_ERROR_CODES,
+  RECORD_ANYWAY_LABEL,
+  canRecordAnyway,
+  creditOverLimitSentence,
+} from "@routeflow/types";
 import type { CounterSalePaymentMethod, PickupCompleteResponse } from "@routeflow/types";
 import { usePickupComplete, usePickupInvoiceBalances } from "@/lib/api/counter-sale";
 import { useOptionalAuth } from "@/lib/auth-context";
@@ -60,6 +65,7 @@ export function PickupCompleteDialog({
   handOver = false,
   heldKey,
   storeKey = null,
+  customerName = null,
 }: {
   open: boolean;
   onClose: () => void;
@@ -73,6 +79,8 @@ export function PickupCompleteDialog({
   heldKey?: React.MutableRefObject<HeldPickupKey>;
   /** sessionStorage key (tenant + user + order) that keeps an UNKNOWN outcome's key across a reload. */
   storeKey?: string | null;
+  /** I-120: the customer the credit-over-limit line names (falls back to "the customer"). */
+  customerName?: string | null;
 }) {
   const ownHeld = React.useRef<HeldPickupKey>(null);
   const held = heldKey ?? ownHeld;
@@ -293,6 +301,16 @@ export function PickupCompleteDialog({
               </p>
             )}
             {duplicateMessage && <p className="text-sm text-navy">{duplicateMessage}</p>}
+            {/* I-120 (SA-849 on the hand-over): the gate counted this tender; without it the customer is over their limit. */}
+            {unrecorded && outcome.creditOverLimit && (
+              <p
+                role="status"
+                className="rounded border border-amber-300 bg-amber-50 p-3 text-sm"
+                data-testid="pickup-credit-over-limit"
+              >
+                {creditOverLimitSentence(customerName, outcome.creditOverLimit, money)}
+              </p>
+            )}
             {(outcome.change ?? 0) > 0 && (
               <p className="text-3xl font-bold" data-testid="pickup-change">
                 Change {money(outcome.change ?? 0)}

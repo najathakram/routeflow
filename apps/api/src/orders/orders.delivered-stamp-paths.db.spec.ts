@@ -267,7 +267,9 @@ describeDb("SA-763r — the delivered stamp through the real writers, real Postg
       },
     });
     invoiceIds.push(invoice.id);
-    const pickup = new PickupCompleteService(orders, orders.invoicesService, prisma);
+    const pickup = new PickupCompleteService(orders, orders.invoicesService, prisma, {
+      get: async () => ({ methods: ["ROUTE", "SHIP", "PICKUP"], counter: "off" }),
+    } as never); // I-120: store pickup
     await as(() => pickup.complete(orderId, {} as never, operator(), `key-${run}-${n}`));
     expect((await raw.order.findUniqueOrThrow({ where: { id: orderId } })).status).toBe(
       "DELIVERED",

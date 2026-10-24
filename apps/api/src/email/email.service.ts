@@ -1134,11 +1134,20 @@ export class EmailService {
      * link-only, exactly as before this field existed.
      */
     attachment?: { filename: string; content: Buffer; contentType: string };
+    /**
+     * I-120 (SA-861 rule 8): the ONE email of "Complete at counter": the order-complete subject and intro over the
+     * same invoice body (lines, paid now, balance). Absent = today's invoice email, unchanged.
+     */
+    completion?: { orderNumber: string };
+    /** I-120: the order's other invoices' PDFs, one attachment each, beside `attachment`. */
+    extraAttachments?: { filename: string; content: Buffer; contentType: string }[];
   }) {
     const businessName = await this.getTenantBusinessName();
-    const subject = params.isReminder
-      ? `Payment Reminder — Invoice ${params.invoiceNumber}`
-      : `Invoice ${params.invoiceNumber}`;
+    const subject = params.completion
+      ? `Your order ${params.completion.orderNumber} is complete — invoice attached`
+      : params.isReminder
+        ? `Payment Reminder — Invoice ${params.invoiceNumber}`
+        : `Invoice ${params.invoiceNumber}`;
 
     const { html, text } = this.buildInvoiceEmail(params, businessName);
     return this.send({
@@ -1146,7 +1155,10 @@ export class EmailService {
       subject,
       html,
       text,
-      attachments: params.attachment ? [params.attachment] : undefined,
+      attachments:
+        params.attachment || params.extraAttachments?.length
+          ? [...(params.attachment ? [params.attachment] : []), ...(params.extraAttachments ?? [])]
+          : undefined,
     });
   }
 
@@ -1640,6 +1652,8 @@ export class EmailService {
       }[];
       pdfUrl?: string;
       isReminder?: boolean;
+      /** I-120: the completion email's intro (see sendInvoice's doc). */
+      completion?: { orderNumber: string };
       /** Tenant's `invoice.hideOriginalPrice` — see sendInvoice's doc. */
       hideOriginalPrice?: boolean;
       /** Row 401: no Due Date / Terms rows for a paid-at-sale counter invoice — see sendInvoice's doc. */
@@ -1761,7 +1775,7 @@ export class EmailService {
           ${depositBanner}
           <p style="margin:0 0 8px;font-size:15px;color:#6b7280;">Dear ${escapeHtml(params.customerName)},</p>
           <p style="margin:0 0 24px;font-size:15px;color:#374151;">
-            ${params.isReminder ? "This is a reminder that the following invoice is outstanding." : "Please find your invoice details below."}
+            ${params.completion ? "Your order is complete. Your invoice is attached." : params.isReminder ? "This is a reminder that the following invoice is outstanding." : "Please find your invoice details below."}
           </p>
 
           <!-- Invoice meta -->
@@ -1829,9 +1843,11 @@ export class EmailService {
     }
     bodyText.push(`Dear ${params.customerName},`);
     bodyText.push(
-      params.isReminder
-        ? "This is a reminder that the following invoice is outstanding."
-        : "Please find your invoice details below.",
+      params.completion
+        ? "Your order is complete. Your invoice is attached."
+        : params.isReminder
+          ? "This is a reminder that the following invoice is outstanding."
+          : "Please find your invoice details below.",
     );
     bodyText.push(
       [

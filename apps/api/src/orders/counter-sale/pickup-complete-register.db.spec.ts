@@ -146,6 +146,7 @@ describeDb("a POS-mode pickup hand-over counts on a register, real Postgres", ()
           }),
       } as never,
       prisma,
+      { get: async () => ({ methods: ["ROUTE", "SHIP", "PICKUP"], counter: "off" }) } as never, // I-120: a business that hands over at the store
     );
 
     // A close in force over "now" for ONE register: its window runs from two hours ago to an hour ahead.

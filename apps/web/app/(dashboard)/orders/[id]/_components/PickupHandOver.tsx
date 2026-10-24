@@ -63,6 +63,7 @@ export function PickupHandOverDialog({
       total={Number(order.total)}
       invoices={order.invoices ?? []}
       isWalkIn={order.customer?.isWalkIn === true}
+      customerName={order.customer?.businessName ?? null}
       handOver={isPosOrder(order)}
     />
   );
