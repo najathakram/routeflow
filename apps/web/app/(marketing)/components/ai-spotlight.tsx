@@ -7,8 +7,8 @@ export function AISpotlight() {
   return (
     <section className="ai-spotlight section wrap" aria-labelledby="ai-heading">
       <div className="ai-copy">
-        <span className="ai-label">
-          <ScanText size={17} /> AI PURCHASE-INVOICE SCANNING
+        <span className="ai-label caps">
+          <ScanText size={17} /> AI purchase-invoice scanning
         </span>
         <h2 id="ai-heading">
           Less invoice entry.
@@ -29,7 +29,7 @@ export function AISpotlight() {
       </div>
       <div className="ai-review">
         <div className="ai-review-heading">
-          <span>INVOICE → INVENTORY → COSTING</span>
+          <span className="caps">Invoice → inventory → costing</span>
           <span>Built for multiple vendors</span>
         </div>
         <ol className="ai-review-steps">

@@ -105,7 +105,7 @@ export default function CompanyPage() {
             decoding="async"
           />
           <figcaption>
-            <span>THE WORK BEHIND THE DELIVERY</span>
+            <span className="caps">The work behind the delivery</span>
             <p>
               Stock to move.
               <br />

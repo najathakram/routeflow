@@ -98,7 +98,7 @@ export function AudienceCards() {
           />
           <div>
             <Warehouse size={28} />
-            <span className="card-eyebrow">FOR DISTRIBUTORS</span>
+            <span className="card-eyebrow caps">For distributors</span>
             <h3>
               Give your team
               <br />a shared plan.
@@ -125,7 +125,7 @@ export function AudienceCards() {
           />
           <div>
             <Store size={28} />
-            <span className="card-eyebrow">FOR RETAILERS</span>
+            <span className="card-eyebrow caps">For retailers</span>
             <h3>
               Restock with less
               <br />

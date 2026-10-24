@@ -127,7 +127,7 @@ export default function Home() {
           {PLANS.map((plan) => (
             <article key={plan.name} className="pricing-teaser-card">
               <plan.icon size={24} />
-              <p className="card-eyebrow">{plan.tag}</p>
+              <p className="card-eyebrow caps">{plan.tag}</p>
               <h3>{plan.name}</h3>
               <p>{plan.text}</p>
               <Link className="text-link" href="/pricing">

@@ -24,7 +24,7 @@ export default function SignInPage() {
   return (
     <div className="glass-page">
       <section className="g-wrap glass page-intro">
-        <span className="g-eyebrow">SIGN IN TO ROUTEFLOW</span>
+        <span className="g-eyebrow caps">Sign in to RouteFlow</span>
         <h1>Choose your account.</h1>
         <p>
           Wholesalers and retailers use separate sign-in pages. Select the account you use for your

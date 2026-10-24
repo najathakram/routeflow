@@ -22,7 +22,7 @@ export function RetailerArt() {
       />
       <div className="art-chip browser-chip">
         <Globe size={17} />
-        <span>YOUR SUPPLIERS. ONE PORTAL.</span>
+        <span className="caps">Your suppliers. One portal.</span>
       </div>
       <div className="art-chip order-chip">
         <span className="order-chip-check">

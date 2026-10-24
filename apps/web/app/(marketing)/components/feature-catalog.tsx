@@ -28,55 +28,55 @@ const capabilities = [
     icon: Warehouse,
     name: "Inventory & purchasing",
     text: "Manage products, stock counts, suppliers, and purchase orders in your distribution workspace.",
-    tag: "KNOW WHAT YOU HAVE",
+    tag: "Know what you have",
   },
   {
     icon: Package,
     name: "Order management",
     text: "Keep customer orders, items, delivery details, and status together from intake to dispatch.",
-    tag: "KEEP WORK MOVING",
+    tag: "Keep work moving",
   },
   {
     icon: Route,
     name: "Route planning & dispatch",
     text: "Organize stops, assign drivers, and prepare delivery manifests with a Google Maps handoff.",
-    tag: "GIVE DRIVERS A CLEAR PLAN",
+    tag: "Give drivers a clear plan",
   },
   {
     icon: Wallet,
     name: "Customer accounts",
     text: "Find addresses, order history, balances, documents, and agreed pricing in the customer record.",
-    tag: "ANSWER WITH CONTEXT",
+    tag: "Answer with context",
   },
   {
     icon: ReceiptText,
     name: "Invoices & payments",
     text: "Work with invoices, recorded payments, payment requests, statements, and credit notes.",
-    tag: "FOLLOW THE MONEY",
+    tag: "Follow the money",
   },
   {
     icon: BarChart3,
     name: "Analytics & reporting",
     text: "Review sales, products, customers, and operations through dedicated reporting views.",
-    tag: "SEE THE BUSINESS",
+    tag: "See the business",
   },
   {
     icon: Store,
     name: "Retailer ordering platform",
     text: "Give connected retailers a place to browse supplier catalogs, place orders, and review their purchases.",
-    tag: "CONNECT YOUR CUSTOMERS",
+    tag: "Connect your customers",
   },
   {
     icon: BrainCircuit,
     name: "AI purchase-invoice scanning",
     text: "Scan purchase invoices from multiple vendors to simplify inventory updates and costing, with less manual data entry.",
-    tag: "FROM INVOICE TO INVENTORY",
+    tag: "From invoice to inventory",
   },
   {
     icon: ShieldCheck,
     name: "Regulated-goods workflows",
     text: "Dedicated tobacco inventory, purchase and sales records, monthly reporting, and customer license records.",
-    tag: "HANDLE THE EXTRA REQUIREMENTS",
+    tag: "Handle the extra requirements",
   },
 ];
 
@@ -152,7 +152,7 @@ export function FeatureCatalog({ heading = false }: { heading?: boolean } = {}) 
             className={"capability-card capability-" + i}
           >
             <f.icon size={27} />
-            <span>{f.tag}</span>
+            <span className="caps">{f.tag}</span>
             <h3>{f.name}</h3>
             <p>{f.text}</p>
           </article>

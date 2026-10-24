@@ -49,8 +49,8 @@ export default function PricingPage() {
         <div className="pricing-grid">
           {PLANS.map((p, i) => (
             <article className={"pricing-card " + (i === 1 ? "featured" : "")} key={p.name}>
-              {i === 1 && <span className="plan-ribbon">FOR GROWING DELIVERY TEAMS</span>}
-              <p className="card-eyebrow">{p.tag}</p>
+              {i === 1 && <span className="plan-ribbon caps">For growing delivery teams</span>}
+              <p className="card-eyebrow caps">{p.tag}</p>
               <div className="plan-name">
                 <h2>{p.name}</h2>
                 <p.icon size={26} />
