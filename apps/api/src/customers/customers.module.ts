@@ -2,6 +2,8 @@ import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
 import { CustomersController } from "./customers.controller";
 import { CustomersService } from "./customers.service";
+import { CustomerAddressStateController } from "./customer-address-state.controller";
+import { CustomerAddressStateService } from "./customer-address-state.service";
 import { CustomerPriceHistoryController } from "./customer-price-history.controller";
 import { CustomerPriceHistoryService } from "./customer-price-history.service";
 import { CustomerOrderSuggestionsController } from "./customer-order-suggestions.controller";
@@ -48,6 +50,7 @@ import { SellingRestrictionsModule } from "../selling-restrictions/selling-restr
     CustomersController,
     CustomerPriceHistoryController,
     CustomerOrderSuggestionsController,
+    CustomerAddressStateController,
   ],
   providers: [
     CustomersService,
@@ -55,6 +58,7 @@ import { SellingRestrictionsModule } from "../selling-restrictions/selling-restr
     CustomerOrderSuggestionsService,
     StatementService,
     StatementPdfService,
+    CustomerAddressStateService,
   ],
   exports: [CustomersService],
 })

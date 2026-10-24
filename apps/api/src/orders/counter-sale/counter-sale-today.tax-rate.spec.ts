@@ -109,6 +109,20 @@ describe("Today's sales row: cashTendered and taxRatePercent (SA-764)", () => {
   it("the page query reads both in the ONE existing query: the column, each invoice's line rates", () => {
     const q = pageQuery("t1", { start: new Date(0), end: new Date(1) }, 1, 20);
     expect(q.select.counterCashTendered).toBe(true);
-    expect(q.select.invoices.select.items).toEqual({ select: { taxRate: true } });
+    // CQ-03: the rate AND the billed levy with its category name (the receipt names it as its own charge)
+    expect(q.select.invoices.select.items).toEqual({
+      select: {
+        description: true, // R7b 2.1: the row's item names
+        qty: true,
+        boxes: true, // N4: the receipt's own quantity text
+        pieces: true,
+        unitLabel: true,
+        taxRate: true,
+        categoryTaxAmount: true,
+        trackedCategoryId: true,
+        categoryTaxType: true,
+        trackedCategory: { select: { id: true, name: true, taxType: true } },
+      },
+    });
   });
 });

@@ -44,4 +44,17 @@ describe("instrument.ts release tagging (PR 1)", () => {
 
     expect(init).toHaveBeenCalledWith(expect.objectContaining({ release: undefined }));
   });
+
+  it("wires the Idempotency-Key redaction into beforeSend and beforeSendTransaction (SA-824)", () => {
+    require("./instrument");
+
+    const opts = init.mock.calls[0][0];
+    const ev = { transaction: "GET /api/v1/invoices/payments/by-key/RAW-KEY-4" };
+    expect(opts.beforeSend(structuredClone(ev)).transaction).toBe(
+      "GET /api/v1/invoices/payments/by-key/:key",
+    );
+    expect(opts.beforeSendTransaction(structuredClone(ev)).transaction).toBe(
+      "GET /api/v1/invoices/payments/by-key/:key",
+    );
+  });
 });

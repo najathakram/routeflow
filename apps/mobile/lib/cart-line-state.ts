@@ -1,3 +1,4 @@
+import type { DerivedBaseMarker } from "@routeflow/pricing";
 import type { DraftLinePriceSource, ProductKind } from "@routeflow/types";
 
 /**
@@ -49,7 +50,11 @@ export type Product = {
   isActive?: boolean | null;
 };
 
-export type LineState = {
+/**
+ * One cart line. `derivedBase` (the shared client-only `DerivedBaseMarker`, units P0b): set while the line sells a DERIVED
+ * base unit as pack pieces (`boxes`/`pieces`, no `unitLabel`); NEVER submitted, parked in drafts.
+ */
+export type LineState = DerivedBaseMarker & {
   qty: number;
   boxes?: number;
   pieces?: number;

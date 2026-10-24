@@ -1,7 +1,9 @@
 import * as React from "react";
 import { act } from "@testing-library/react";
 import { renderWithProviders, screen, waitFor, fireEvent, within } from "@/test-utils/render";
+import { renderTill } from "@/test-utils/render-till";
 import { CounterSaleScreen } from "./CounterSaleScreen";
+import { LINE_UNDO_MS } from "./useCounterLineUndo";
 
 /**
  * POS UX review folds: typed quantity editor, single-line note, payment column scroll, undo bar live region + pause, receipt targets. The API is
@@ -82,7 +84,7 @@ const click = (name: string | RegExp) => fireEvent.click(screen.getByRole("butto
 
 /** Cola x2 (first line, plain) and Water 1 box + 3 pcs (second line, boxed). */
 async function buildCart() {
-  renderWithProviders(<CounterSaleScreen />);
+  renderTill(<CounterSaleScreen />);
   await scan("COLA");
   await scan("COLA");
   await scan("WATER");
@@ -219,7 +221,7 @@ describe("removed-line bar: live region, pause on hover/focus, named Undo", () =
     expect(screen.getByRole("button", { name: "Undo: put back Cola" })).toBeInTheDocument();
   });
 
-  it("hover pauses the 5 s timer and leaving resumes it", async () => {
+  it("hover pauses the undo timer and leaving resumes it", async () => {
     await buildCart();
     jest.useFakeTimers();
     click("Remove Cola");
@@ -233,9 +235,9 @@ describe("removed-line bar: live region, pause on hover/focus, named Undo", () =
     expect(screen.getByRole("button", { name: UNDO })).toBeInTheDocument(); // paused
     fireEvent.mouseLeave(screen.getByTestId("line-undo-bar"));
     act(() => {
-      jest.advanceTimersByTime(1900);
+      jest.advanceTimersByTime(LINE_UNDO_MS - 3000 - 100);
     });
-    expect(screen.getByRole("button", { name: UNDO })).toBeInTheDocument(); // 2 s were left
+    expect(screen.getByRole("button", { name: UNDO })).toBeInTheDocument(); // the rest of the window was left
     act(() => {
       jest.advanceTimersByTime(200);
     });
@@ -253,7 +255,7 @@ describe("removed-line bar: live region, pause on hover/focus, named Undo", () =
     expect(screen.getByRole("button", { name: UNDO })).toBeInTheDocument();
     fireEvent.blur(screen.getByRole("button", { name: UNDO }));
     act(() => {
-      jest.advanceTimersByTime(5100);
+      jest.advanceTimersByTime(LINE_UNDO_MS + 100);
     });
     expect(screen.queryByRole("button", { name: UNDO })).toBeNull();
   });

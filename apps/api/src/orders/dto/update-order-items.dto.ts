@@ -12,10 +12,12 @@ import {
   Min,
   ValidateNested,
 } from "class-validator";
-import { Type } from "class-transformer";
+import { Transform, Type } from "class-transformer";
 import { StripHtml } from "../../common/transforms/strip-html.transform";
 import { AppliedCreditNoteDto } from "./create-order.dto";
 import { InlineReturnLinesDto } from "../../returns/dto/capture-inline-return.dto";
+import { RestrictionAckDto } from "../../selling-restrictions/dto/restriction-ack.dto";
+import { IsOptionalNotNull } from "../../common/validators/optional-not-null";
 
 class UpdateOrderItemDto {
   @IsOptional()
@@ -25,6 +27,16 @@ class UpdateOrderItemDto {
   @IsOptional()
   @IsString()
   productId?: string;
+
+  /**
+   * B297 row 352 — BUYER edit only (PATCH /buyer/orders/:id/items): the stored line this entry edits. It keeps
+   * the rate it was sold at; an entry without it is a new line (or, for one release, the line of its product
+   * when exactly one exists). An id that is not a line of this order, or is another product's, is a 400.
+   * Staff edits name a line with `id`; an entry carrying this field there is refused (400), never ignored.
+   */
+  @IsOptional()
+  @IsString()
+  orderItemId?: string;
 
   /**
    * units_v1 (A1): sell by this unit of the product's ladder (Case, Pallet, Piece …). STAFF ONLY,
@@ -73,7 +85,7 @@ class UpdateOrderItemDto {
   @IsOptional() @IsInt() @Min(0) @Max(100_000) boxes?: number;
   @IsOptional() @IsInt() @Min(0) @Max(100_000) pieces?: number;
 
-  @IsOptional()
+  @IsOptionalNotNull()
   @IsNumber()
   @Min(0)
   @Max(1_000_000)
@@ -96,12 +108,15 @@ class UpdateOrderItemDto {
   @IsString()
   substitution?: string;
 
+  /** Row 496: capped (as create-order.dto.ts), trimmed (a blank one is null); a formula-led value is refused in the service. */
   @IsOptional()
+  @Transform(({ value }) => (typeof value === "string" ? value.trim() || null : value))
   @IsString()
+  @MaxLength(200)
   overrideReason?: string;
 }
 
-export class UpdateOrderItemsDto {
+export class UpdateOrderItemsDto extends RestrictionAckDto {
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => UpdateOrderItemDto)
@@ -122,6 +137,25 @@ export class UpdateOrderItemsDto {
   @IsBoolean()
   replaceAll?: boolean;
 
+  /**
+   * Row 372 (SA-735 item 2): the `revisionNumber` the client loaded the order at (GET /orders/:id). When it is
+   * behind the order's latest revision the PATCH is 409 ORDER_REVISION_STALE before any write. Optional: a
+   * client that omits it keeps the old last-writer behaviour.
+   */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  expectedRevisionNumber?: number;
+
+  /**
+   * B297 row 352 — BUYER edit only: the client names every existing line with `items[].orderItemId`, so an
+   * entry without one is a NEW line. Absent = a legacy client: the server falls back to the product's only
+   * line when exactly one exists (one release), and 409s `ORDER_EDIT_NEEDS_LINE_IDS` when two or more could be meant.
+   */
+  @IsOptional()
+  @IsBoolean()
+  namesLines?: boolean;
+
   // RF-110: strip HTML to prevent stored XSS via order notes
   @IsOptional()
   @StripHtml()
@@ -129,7 +163,7 @@ export class UpdateOrderItemsDto {
   orderNotes?: string;
 
   /** Optional flat shipping fee added to the order total (never taxed). Staff-only. */
-  @IsOptional()
+  @IsOptionalNotNull()
   @IsNumber()
   @Min(0)
   @Max(1_000_000)

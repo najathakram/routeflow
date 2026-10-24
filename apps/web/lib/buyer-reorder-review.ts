@@ -1,3 +1,4 @@
+import { codedToastCopy } from "./generic-toast-copy";
 import { applyBestPromotion, computeLineSubtotal, roundMoney } from "@routeflow/pricing";
 import type { PromotionRule } from "@routeflow/pricing";
 import type { BuyerOrderTemplate, BuyerProduct } from "@/lib/api/buyer";
@@ -82,4 +83,26 @@ export function priceReorderReview(
   });
   const subtotal = roundMoney(lines.reduce((sum, l) => sum + (l.lineSubtotal ?? 0), 0));
   return { lines, subtotal, unresolvedCount: lines.filter((l) => l.unresolved).length };
+}
+
+/**
+ * State portal limits (spec §4): a placed reorder carries `skipped` (the lines this buyer may not be offered, always
+ * present, `[]` when nothing was left out). Null when nothing was skipped.
+ */
+export function reorderSkippedNote(res: unknown): string | null {
+  const skipped = (res as { skipped?: unknown } | null | undefined)?.skipped;
+  const n = Array.isArray(skipped) ? skipped.length : 0;
+  if (n <= 0) return null;
+  return `${n} ${n === 1 ? "item isn't" : "items aren't"} available to you and ${n === 1 ? "was" : "were"} left out.`;
+}
+
+const NONE_AVAILABLE = "None of these items are available to you right now.";
+
+/**
+ * Every line was restricted: the API answers 400 with that sentence and places nothing. Recognised through the closed
+ * known-sentence table (never a raw message read) and shown as-is.
+ */
+export function reorderNoneAvailable(err: unknown): string | null {
+  const status = (err as { response?: { status?: number } } | null)?.response?.status;
+  return status === 400 && codedToastCopy(err) === NONE_AVAILABLE ? NONE_AVAILABLE : null;
 }

@@ -28,6 +28,7 @@ import {
   type AppUser,
 } from "../../../lib/api/admin";
 import { useAuthStore } from "../../../lib/auth-store";
+import { canToggleUserStatus, isUserActive } from "../../../lib/user-admin";
 import {
   OVERSELL_COPY,
   VISIBILITY_COPY,
@@ -44,6 +45,7 @@ import {
 import { registerPushToken, deregisterPushToken } from "../../../lib/auth";
 import { showToast } from "../../../lib/toast";
 import { alertInfo } from "../../../lib/confirm";
+import { taxPercentInputError } from "../../../lib/tax-percent-input";
 
 // ─── Ordering (out-of-stock) ──────────────────────────────────────────────────
 
@@ -194,6 +196,12 @@ function GeneralTab() {
   }
 
   const save = () => {
+    // R5-1: the same 4-decimal cap as web and the API, refused before the request.
+    const taxError = taxPercentInputError(taxRate, data?.taxRate);
+    if (taxError) {
+      showToast(taxError);
+      return;
+    }
     update.mutate(
       {
         phone: phone.trim() || undefined,
@@ -311,13 +319,16 @@ function rolePill(role: string) {
 function UsersTab() {
   const { data: usersPage, isLoading, refetch } = useAdminUsers();
   const toggleMut = useToggleUserStatus();
+  // Perms PR1: activating / deactivating a team member is account administration (admin only); others read.
+  // SA #3412: never on the viewer's own row (the API refuses it).
+  const viewer = useAuthStore().user;
 
   const handleToggle = (user: AppUser) => {
     toggleMut.mutate(
-      { id: user.id, isActive: !user.isActive },
+      { id: user.id, currentStatus: user.status },
       {
         onSuccess: () => {
-          showToast(user.isActive ? "User deactivated" : "User activated");
+          showToast(isUserActive(user) ? "User deactivated" : "User activated");
           refetch();
         },
         onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
@@ -354,22 +365,26 @@ function UsersTab() {
                       : u.username}
                   </Text>
                   {rolePill(u.role)}
-                  {!u.isActive ? <Pill variant="gray">Inactive</Pill> : null}
+                  {!isUserActive(u) ? <Pill variant="gray">Inactive</Pill> : null}
                 </View>
                 <Text style={styles.userSub} numberOfLines={1}>
                   @{u.username}
                   {u.email ? ` · ${u.email}` : ""}
                 </Text>
               </View>
-              <Pressable
-                style={[styles.toggleBtn, !u.isActive && styles.toggleBtnActive]}
-                onPress={() => handleToggle(u)}
-                disabled={toggleMut.isPending}
-              >
-                <Text style={[styles.toggleBtnText, !u.isActive && styles.toggleBtnTextActive]}>
-                  {u.isActive ? "Deactivate" : "Activate"}
-                </Text>
-              </Pressable>
+              {canToggleUserStatus(viewer, u) ? (
+                <Pressable
+                  style={[styles.toggleBtn, !isUserActive(u) && styles.toggleBtnActive]}
+                  onPress={() => handleToggle(u)}
+                  disabled={toggleMut.isPending}
+                >
+                  <Text
+                    style={[styles.toggleBtnText, !isUserActive(u) && styles.toggleBtnTextActive]}
+                  >
+                    {isUserActive(u) ? "Deactivate" : "Activate"}
+                  </Text>
+                </Pressable>
+              ) : null}
             </View>
           ))
         )}

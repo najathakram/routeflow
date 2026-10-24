@@ -42,11 +42,18 @@ export interface ReceiptLine {
  * The receipt as a pure view model. Line money goes through `computeLineSubtotal` (a boxed line is prorated, never
  * `qty * unitPrice`); the sale's own figures (total / paid / balance / change) are the server's, passed through.
  *
- * ONE money model (SA-762r): Subtotal - Discounts + Tax + Adjustments = Total. `tax` is the order's tax; `adjustments` is
+ * ONE money model (SA-762r, CQ-03): Subtotal - Discounts + Tax + Charges + Adjustments = Total. `tax` is the order's tax; `adjustments` is
  * whatever remains (a re-price, a credit, regulated tax). `taxRatePercent` is set only when `explainedTaxRatePercent`
  * (@routeflow/pricing) says one stored rate reproduces `tax`. Every renderer (80 mm print, email) prints these fields and
  * derives nothing of its own.
  */
+/** One named regulated charge on a receipt ("CRV deposit", "Tobacco excise"): never inside Tax, never an Adjustment. */
+export interface ReceiptCharge {
+  key: string;
+  label: string;
+  amount: number;
+}
+
 export interface ReceiptModel {
   header: { name: string | null; addressLines: string[]; phone: string | null };
   orderNumber: string;
@@ -61,7 +68,9 @@ export interface ReceiptModel {
   discounts: number;
   /** the order's tax (live: the settings rate when it explains the whole difference): 0 = hide the Tax row */
   tax: number;
-  /** server total minus the net subtotal minus `tax` (a re-price, a credit, regulated tax): 0 = hide the Adjustments row */
+  /** the regulated levies, one named line each (CQ-03): deposit, excise. Empty = none. */
+  charges: ReceiptCharge[];
+  /** server total minus the net subtotal minus `tax` minus the charges (a re-price, a credit): 0 = hide the Adjustments row */
   adjustments: number;
   total: number;
   paid: number;
@@ -81,4 +90,17 @@ export interface ReceiptModel {
   customerName: string | null;
   /** SA-762r: the business's receipt footer, trimmed, or null. Tenant text: the email template HTML-escapes it, print renders a React text node. */
   footer: string | null;
+  /**
+   * SA-838a: a COUNTER sale that had a return carries these (the reprint and the emailed receipt alike), each from
+   * `@routeflow/pricing`'s `returnSettlement` / `settlementTotals`, used as given and never re-derived. `returned` = the
+   * credit APPLIED to this sale (the "Returned −$x" line, the only figure the balance subtracts); `refunded` = money handed
+   * back outside RouteFlow, `creditKept` = credit left on the customer's account and `creditUsed` = credit spent on OTHER
+   * orders (info lines, never subtracted); `returnPending` = a return is not settled yet ("Return in progress", no amount).
+   * null = no line. Absent on every other receipt (a non-counter order, or a reprint from an older server).
+   */
+  returned?: number | null;
+  refunded?: number | null;
+  creditKept?: number | null;
+  creditUsed?: number | null;
+  returnPending?: boolean;
 }

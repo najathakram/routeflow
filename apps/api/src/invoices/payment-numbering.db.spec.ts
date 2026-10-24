@@ -162,7 +162,9 @@ describeDb(
             useValue: {
               writeSaleEntries: jest.fn(),
               reverseInvoiceEntries: jest.fn(),
-              syncInvoiceEntries: jest.fn(),
+              settleRegulatedLedger: jest
+                .fn()
+                .mockResolvedValue({ written: 0, amendedPeriod: null }),
             },
           },
           {

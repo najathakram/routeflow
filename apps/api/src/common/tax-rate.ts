@@ -47,6 +47,22 @@ export async function configuredTaxRatePercent(prisma: {
 }
 
 /**
+ * H5: the tenant's configured rate as a FRACTION (0.0825), read from `settings.taxRate` through the same parser as
+ * every other reader; 0 when unset. For a service that holds a Prisma client but no SystemConfigService
+ * (the estimate quote), exactly like `configuredTaxRatePercent`.
+ */
+export async function configuredTaxRateFraction(prisma: {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- PrismaService and its test mock both fit
+  forTenant(): { systemConfig: { findFirst(args: any): Promise<{ value: string } | null> } };
+}): Promise<number> {
+  const row = await prisma.forTenant().systemConfig.findFirst({
+    where: { key: "settings.taxRate" },
+    select: { value: true },
+  });
+  return taxRateFractionFrom(row?.value ?? null);
+}
+
+/**
  * The tenant's CURRENT tax rate (fraction), read from Settings — the ONE reader every
  * caller shares, so the percent→fraction parsing above is never re-derived a second time
  * (the exact L-072/duplicated-rule class this file's own header warns about). Originally
@@ -68,10 +84,11 @@ export async function currentTaxRate(systemConfig: SystemConfigService): Promise
 
 /**
  * B294: the effective REGULAR (non-category) tax rate to stamp on invoice
- * lines derived from an order or a converted estimate. Both rows store one
- * flat tax amount over their whole subtotal — `order.tax = subtotal * rate`,
- * `estimate.taxAmount = subtotal * rate` — rather than a per-line rate, so
+ * lines derived from an order. The order stores one flat tax amount over its
+ * whole subtotal — `order.tax = subtotal * rate` — rather than a per-line rate, so
  * `tax / subtotal` recovers that same rate exactly.
+ * (H5: a converted ESTIMATE no longer recovers its rate this way - it re-takes today's tenant
+ * rate; `estimate.taxAmount` is kept only to report the difference against the quote.)
  *
  * Zero for an exempt customer (mirrors foldCategoryTax's contract), and zero
  * for a degenerate zero-or-negative subtotal (the guard this helper always

@@ -164,7 +164,7 @@ describeDb("BUG-A: two concurrent create() calls on one Idempotency-Key - real P
           provide: RegulatedLedgerService,
           useValue: {
             reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined),
-            syncInvoiceEntries: jest.fn(),
+            settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
           },
         },
       ],

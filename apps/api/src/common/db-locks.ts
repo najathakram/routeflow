@@ -95,7 +95,9 @@
 import { ConflictException, Logger } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { Pool, type PoolClient } from "pg";
+import { utcPoolConfig } from "./pg-session";
 import { API_ERROR_CODES } from "./api-error-codes";
+import { STOCK_LOCK_TIMEOUT } from "./product-locks";
 
 export type LockMode = "wait" | "try";
 /**
@@ -111,10 +113,15 @@ export const LOCK_FAMILIES = [
   "demo-booking",
   "mailbox",
   "policy-write",
+  // Key space (SA-877): `<orderId>` = the counter tender window (session lock: ring's tender, void, pickup hand-over);
+  // `after-tender:<orderId>` = SA-849's over-after-tender audit write (xact LEAF lock: lock -> findFirst -> create only).
   "counter-tender",
   "fulfilment-settings",
   "tenant-price",
   "counter-park",
+  "stock-count",
+  "stock-count-product",
+  "payment-ref",
 ] as const;
 export type LockFamily = (typeof LOCK_FAMILIES)[number];
 /**
@@ -122,6 +129,18 @@ export type LockFamily = (typeof LOCK_FAMILIES)[number];
  * (the shared lock rides the first lock's pinned connection); the list is closed for the same typo reason as `LOCK_FAMILIES`.
  */
 export const SHARED_LOCK_FAMILIES = ["counter-close"] as const;
+
+/**
+ * SA-893 (row 631, amends SA-821 MUST 1): THE ONE LOCK ORDER. A transaction takes its advisory locks first, in the order
+ * order-merge -> payment-ref -> counter-tender -> counter-close (SA-851), and then its ROW locks in this order, each
+ * table's rows id-sorted: Return -> Order -> Invoice -> CreditNote. Two transactions that take two of these tables in
+ * opposite orders deadlock (40P01), so every path follows it. That includes the implicit row lock of an UPDATE or DELETE:
+ * an Order-centric path that must touch EXISTING Return rows locks them first, in one query by order or customer id, as
+ * `releaseLiveOrderStockInTx` does (an insert locks no other row and is exempt). `order-lock-callers.guard.spec.ts`
+ * reads this constant and classifies every transaction that touches two of the tables.
+ */
+export const ROW_LOCK_ORDER = ["Return", "Order", "Invoice", "CreditNote"] as const;
+export type RowLockTable = (typeof ROW_LOCK_ORDER)[number];
 export interface AdvisoryLockOptions {
   family: string;
   key: string;
@@ -210,6 +229,9 @@ const POOL_MAX: Record<string, number | undefined> = {
   // a convenience: admin / cron writers wait up to 20 s, but the tenant-facing upgrade waits only ~2.5 s
   // (`billing/price-lock.ts`) so a double-click burst or a slow Stripe cannot hold all 4 slots for the
   // long wait; a caller that cannot get a slot surfaces as a retryable 409 / 503, never a hang.
+  // LOCK ORDER (G1a): `tenant-price` is taken BEFORE `billing` `addon:<tenant>:<sku>`, never the reverse - the
+  // scheduled-downgrade sweep and the admin plan edit hold the price lock while they bill leaving add-ons under the
+  // add-on lock. No code path may take an add-on lock and then wait for the tenant-price lock.
   "tenant-price": 4,
   // `counter-park` (SA-748): the parked-cart cap in `CounterParkService#park`, keyed on the tenant id. That
   // lock is a transaction-scoped `pg_advisory_xact_lock` taken on the park transaction's own Prisma connection
@@ -217,6 +239,22 @@ const POOL_MAX: Record<string, number | undefined> = {
   // is reserved in the one namespace (a `withAdvisoryLock` caller can never collide with it by accident) and
   // sized small in case a pinned caller is ever added.
   "counter-park": 2,
+  // `stock-count` (SA-767 L-2.2): `InventoryService#commitStockCountSession`, keyed on the count session id,
+  // mode `try`. The single committer of a count holds its slot across ALL of the commit's batch transactions
+  // (minutes for a warehouse-wide count), so the size is the cap on counts committing at the same moment
+  // across every tenant; a committer that finds no slot gets the retryable 503 LOCK_UNAVAILABLE, and a
+  // second commit of the same session loses the try-lock at once (409 STOCK_COUNT_COMMITTING).
+  "stock-count": 4,
+  // `payment-ref` (row 498, SA-837): every InvoicePayment writer that carries a typed reference serialises per
+  // `tenant:method:normalisedRef` around its transaction, so two NEW attempts with the same reference cannot both
+  // pass the duplicate check. Staff/counter request-path and short (one payment transaction); a waiter pins a slot,
+  // bounded by its 10 s wait (a retryable 503). LOCK ORDER: the customer merge lock ("order-merge"), when a path
+  // holds it, is ALWAYS taken BEFORE this lock; nothing under this lock takes it (pinned by
+  // invoices/payment-ref-writers.census.spec.ts).
+  "payment-ref": 8,
+  // `stock-count-product` (SA-767 r-note 5 SA-3) opens no lock pool: it is the one-open-count-per-product lock,
+  // a transaction-scoped `pg_advisory_xact_lock` on the adder's own Prisma connection ({@link advisoryXactLock}),
+  // keyed `<tenantId>:<productId>`. It is listed so the family name is reserved in the one namespace.
 };
 const DEFAULT_POOL_MAX = 8;
 function lockPool(family: string): Pool {
@@ -226,17 +264,19 @@ function lockPool(family: string): Pool {
     // critical section: without it `pool.connect()` queues with NO timer once `max` is reached
     // (pg-pool `connect()`), so an overflowing caller would hang unbounded instead of surfacing
     // as LockUnavailableError → 503.
-    pool = new Pool({
-      connectionString: process.env.DATABASE_URL,
-      max: POOL_MAX[family] ?? DEFAULT_POOL_MAX,
-      connectionTimeoutMillis: 5_000,
-      // A lock connection is idle at the SOCKET for the whole critical section — a cron leader's
-      // tick does its work on the Prisma pool — so an intermediate idle-reap would end the
-      // session and release the advisory lock mid-tick, letting another replica win an election
-      // for a job still running. See the header's "WHY KEEPALIVE".
-      keepAlive: true,
-      keepAliveInitialDelayMillis: 30_000,
-    });
+    pool = new Pool(
+      utcPoolConfig({
+        connectionString: process.env.DATABASE_URL,
+        max: POOL_MAX[family] ?? DEFAULT_POOL_MAX,
+        connectionTimeoutMillis: 5_000,
+        // A lock connection is idle at the SOCKET for the whole critical section — a cron leader's
+        // tick does its work on the Prisma pool — so an intermediate idle-reap would end the
+        // session and release the advisory lock mid-tick, letting another replica win an election
+        // for a job still running. See the header's "WHY KEEPALIVE".
+        keepAlive: true,
+        keepAliveInitialDelayMillis: 30_000,
+      }),
+    );
     // pg-pool re-emits an idle client's socket error on the pool; with no listener an
     // EventEmitter "error" throws as an uncaught exception and takes the API process down.
     // The client is already removed from the pool by the time this runs — log and nothing else.
@@ -456,6 +496,22 @@ export const NOWAIT_LOCK_TABLES = ["RouteRunStop", "Invoice", "Order"] as const;
 export type NoWaitLockTable = (typeof NOWAIT_LOCK_TABLES)[number];
 
 /**
+ * True for Postgres `lock_not_available` (SQLSTATE 55P03: a NOWAIT miss or a `lock_timeout`), however Prisma wraps it.
+ * Prisma surfaces the SQLSTATE on `meta.code` for a raw query, but not on every driver/error shape, so the message check is the
+ * fallback: a wrapped error is never mistaken for a real failure and rethrown as a 500.
+ */
+export function isLockUnavailableError(err: unknown): boolean {
+  const e = err as any;
+  return (
+    e?.meta?.code === "55P03" ||
+    // the driver-adapter shape (the SQLSTATE rides on the cause, as the SA-218 lane reads it)
+    e?.meta?.driverAdapterError?.cause?.originalCode === "55P03" ||
+    e?.cause?.originalCode === "55P03" ||
+    /55P03|could not obtain lock/i.test(String(e?.message ?? ""))
+  );
+}
+
+/**
  * Take `FOR NO KEY UPDATE NOWAIT` on the given rows inside `tx`; a lock held by an in-flight
  * writer surfaces as 409 CONCURRENT_UPDATE (retryable) instead of a wait.
  *
@@ -500,10 +556,7 @@ export async function lockRowsNoWait(
     // Prisma surfaces the SQLSTATE on `meta.code` for a raw query, but not on every driver/error
     // shape — the message check is the fallback so a wrapped error is never mistaken for a real
     // failure and rethrown as a 500.
-    const lockUnavailable =
-      (err as any)?.meta?.code === "55P03" ||
-      /55P03|could not obtain lock/i.test(String((err as any)?.message ?? ""));
-    if (!lockUnavailable) throw err;
+    if (!isLockUnavailableError(err)) throw err;
     throw new ConflictException({
       code: API_ERROR_CODES.CONCURRENT_UPDATE,
       reason,
@@ -616,4 +669,58 @@ export async function withAdvisoryLocks<T>(
     if (destroy) client.release(failure instanceof Error ? failure : new Error(String(failure)));
     else client.release();
   }
+}
+
+/**
+ * Take the EXCLUSIVE, transaction-scoped advisory lock on `(family, key)` inside `tx`, WAITING for it
+ * (blocking `pg_advisory_xact_lock`; released by Postgres when `tx` ends). For a check-then-insert that
+ * must serialise concurrent adders - SA-767 r-note 5 SA-3: two sessions adding the same product take
+ * `stock-count-product:<tenantId>:<productId>` one after the other, and the second one sees the first
+ * one's committed line. The wait is bounded (lock_timeout, below). The key pair is derived like {@link withAdvisoryLock}'s (`hashtext` x 2). A caller
+ * that needs several keys takes them in SORTED order, so two such callers can never deadlock.
+ */
+export async function advisoryXactLock(
+  tx: { $executeRaw: (...args: any[]) => unknown },
+  family: LockFamily,
+  key: string,
+): Promise<void> {
+  if (typeof key !== "string" || key.length === 0) {
+    throw new TypeError("advisoryXactLock: key must be a non-empty string");
+  }
+  if (!(LOCK_FAMILIES as readonly string[]).includes(family)) {
+    throw new TypeError(`advisoryXactLock: unknown lock family "${family}"`);
+  }
+  // The wait is bounded like every other stock lock (common/product-locks.ts): a tx with no lock_timeout
+  // yet gets the stock default (SET LOCAL, so the pooled connection never carries it out), and a stuck
+  // holder surfaces as 55P03 - which retryStockTx and the lock filter map - instead of a hung backend.
+  await tx.$executeRaw`SELECT set_config('lock_timeout', ${STOCK_LOCK_TIMEOUT}, true) WHERE current_setting('lock_timeout') = '0'`;
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${family}), hashtext(${key}))`;
+}
+
+/**
+ * Take the SHARED, transaction-scoped advisory lock on `(family, key)` inside `tx`, in try mode (never
+ * waits). The key pair is derived EXACTLY like {@link withAdvisoryLock}'s - `hashtext(family)`,
+ * `hashtext(key)` - so it conflicts with a holder of that lock's exclusive session-level form: the
+ * committer of a durable stock count holds `stock-count:<sessionId>` exclusively across all of its
+ * batch transactions, while a line edit or a discard holds the shared form for its own transaction
+ * (many edits run side by side; none runs beside the committer). Returns `false` when an exclusive
+ * holder has it; the lock is released by Postgres when `tx` ends, so there is nothing to unlock.
+ */
+export async function tryAdvisoryXactLockShared(
+  tx: { $queryRaw: (...args: any[]) => unknown },
+  family: LockFamily,
+  key: string,
+): Promise<boolean> {
+  if (typeof key !== "string" || key.length === 0) {
+    throw new TypeError("tryAdvisoryXactLockShared: key must be a non-empty string");
+  }
+  if (!(LOCK_FAMILIES as readonly string[]).includes(family)) {
+    throw new TypeError(`tryAdvisoryXactLockShared: unknown lock family "${family}"`);
+  }
+  const rows = (await tx.$queryRaw`
+    SELECT pg_try_advisory_xact_lock_shared(hashtext(${family}), hashtext(${key})) AS ok
+  `) as Array<{ ok?: boolean }> | undefined;
+  // Fails CLOSED: only an explicit true is "the shared lock is held". An odd client shape (no row, no
+  // boolean) must read as "not acquired" (the edit is refused, nothing is written), never as a grant.
+  return rows?.[0]?.ok === true;
 }

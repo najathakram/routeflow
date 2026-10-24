@@ -236,6 +236,12 @@ describeDb(
         },
         authGuard: { assertAuthorizedOrThrow: async () => undefined },
         messaging: { notify: async () => [], notifyEvent: async () => undefined },
+        // Required dep since F1(iii): the buyer-visibility + BUYER_PORTAL judge in approveNextDelivery. A stub (no
+        // rules: nothing hidden, everything sellable) keeps this spec about the lock/claim/compensation protocol.
+        sellingRestrictions: {
+          restrictedProductIdsFor: async () => new Set<string>(),
+          assertLinesSellable: async () => undefined,
+        },
       });
       tenantId = (await raw.tenant.create({ data: { slug, name: `2391 ${slug}` } })).id;
       for (const who of ["me", "other"] as const) {

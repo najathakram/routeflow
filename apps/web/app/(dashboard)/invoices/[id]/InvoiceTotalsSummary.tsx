@@ -4,7 +4,10 @@ import { fmt } from "@/lib/formatting";
 export interface InvoiceTotalsSummaryProps {
   subtotal: number;
   discount: number;
+  /** The REGULAR tax only: the levy is its own named charge in `chargeLines` (CQ-03). */
   taxAmount: number;
+  /** One named line per regulated category ("CRV deposit", "Tobacco excise"), printed under Tax. */
+  chargeLines?: ReadonlyArray<{ key: string; label: string; amount: number }>;
   shippingFee: number;
   /** Cash only (B421) — a credit note or advance is never included here. */
   amountPaid: number;
@@ -28,6 +31,7 @@ export function InvoiceTotalsSummary({
   subtotal,
   discount,
   taxAmount,
+  chargeLines = [],
   shippingFee,
   amountPaid,
   creditApplied,
@@ -52,6 +56,16 @@ export function InvoiceTotalsSummary({
           <span className="money text-navy">{fmt(taxAmount)}</span>
         </div>
       )}
+      {chargeLines.map((c) => (
+        <div
+          key={c.key}
+          className="flex justify-between py-0.5"
+          data-testid={`invoice-charge-${c.key}`}
+        >
+          <span className="text-navy/70">{c.label}</span>
+          <span className="money text-navy">{fmt(c.amount)}</span>
+        </div>
+      ))}
       {shippingFee > 0 && (
         <div className="flex justify-between py-0.5">
           <span className="text-navy/70">Shipping</span>

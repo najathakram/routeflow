@@ -1,4 +1,5 @@
 import { BadRequestException } from "@nestjs/common";
+import type { OrderStatus } from "@prisma/client";
 
 /**
  * `OrdersService.changeStatus`'s transition table and demotion-reason rule, lifted VERBATIM out of the
@@ -11,6 +12,13 @@ import { BadRequestException } from "@nestjs/common";
  * already make them staff-only — CUSTOMER may only cancel, DRIVER may only
  * confirm. Mirrored EXACTLY by `apps/mobile/lib/order-status-flow.ts`.
  */
+/**
+ * SA-814h (B692): DELIVERED -> CONFIRMED stays legal. Its required reason (see `assertOrderStatusTransition`) is
+ * appended to the order's notes (the status history) by `buildStatusUpdateData`, and the reopened order is not
+ * cancelled blind: the cancel's delivery-state guard reads the lines under the lock. PARTIALLY_DELIVERED ->
+ * OUT_FOR_DELIVERY is the one step back that IS guarded (a legacy row with no quantities cannot leave PD,
+ * `leavePartialDeliveryInTx`).
+ */
 export const ORDER_STATUS_TRANSITIONS: Record<string, string[]> = {
   DRAFT: ["PENDING", "CANCELLED"],
   PENDING: ["CONFIRMED", "CANCELLED", "DRAFT"],
@@ -19,6 +27,11 @@ export const ORDER_STATUS_TRANSITIONS: Record<string, string[]> = {
   PARTIALLY_DELIVERED: ["OUT_FOR_DELIVERY", "DELIVERED", "CANCELLED"],
   DELIVERED: ["CONFIRMED", "PARTIALLY_DELIVERED"],
 };
+
+/** The statuses an order may be cancelled FROM: the office cancel's compare-and-set set (SA-404f F2). */
+export const CANCELLABLE_FROM = Object.keys(ORDER_STATUS_TRANSITIONS).filter((k) =>
+  ORDER_STATUS_TRANSITIONS[k].includes("CANCELLED"),
+) as OrderStatus[];
 
 /**
  * Throws the service's own 400s for an illegal transition, and for a demotion with no reason.

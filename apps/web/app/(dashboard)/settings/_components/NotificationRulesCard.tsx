@@ -332,7 +332,21 @@ export function NotificationRulesCard({
           </summary>
           <ul className="mt-2 space-y-1 text-sm text-navy/70">
             {comingSoon.map((event) => (
-              <li key={event.eventKey}>{event.label}</li>
+              <li key={event.eventKey}>
+                <span>{event.label}</span>
+                {/* per-product low-stock alerts are not built, but the daily digest (admin card below) is live */}
+                {event.eventKey === "LOW_STOCK" && isAdmin && (
+                  <>
+                    {" · "}
+                    <a
+                      href="#low-stock-digest"
+                      className="font-medium text-brand-600 underline-offset-2 hover:underline"
+                    >
+                      The daily low-stock digest is below
+                    </a>
+                  </>
+                )}
+              </li>
             ))}
             {notBuilt.length > 0 && (
               <li>{joinList(notBuilt.map((c) => COMING_SOON_LABEL[c] ?? CHANNEL_LABELS[c]))}</li>

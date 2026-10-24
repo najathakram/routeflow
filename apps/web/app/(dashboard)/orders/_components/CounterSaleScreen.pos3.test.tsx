@@ -1,10 +1,12 @@
 import * as React from "react";
 import { act } from "@testing-library/react";
 import { renderWithProviders, screen, waitFor, fireEvent, within } from "@/test-utils/render";
+import { renderTill } from "@/test-utils/render-till";
 import { CounterSaleScreen } from "./CounterSaleScreen";
+import { LINE_UNDO_MS } from "./useCounterLineUndo";
 
 /**
- * POS-3: per-line editing, the two-column layout, 44 px touch targets and the 5 s "Removed <name>. Undo" bar. The API is
+ * POS-3: per-line editing, the two-column layout, 44 px touch targets and the timed "Removed <name>. Undo" bar. The API is
  * mocked at the module boundary exactly as CounterSaleScreen.test.tsx does. RTL cannot measure pixels, so the layout and
  * size pins are CLASS pins (Playwright verifies the rendered 390 / lg layout).
  */
@@ -78,11 +80,15 @@ const scan = async (text: string) => {
   await waitFor(() => expect((field as HTMLInputElement).value).toBe(""));
 };
 const UNDO = /^Undo: put back /;
-const click = (name: string | RegExp) => fireEvent.click(screen.getByRole("button", { name }));
+const TENDERS = /^(Cash|Card|Check|On account)$/;
+const click = (name: string | RegExp) =>
+  fireEvent.click(
+    screen.getByRole(typeof name === "string" && TENDERS.test(name) ? "radio" : "button", { name }),
+  );
 
 /** Cola x2 (first line, plain) and Water 1 box + 3 pcs (second line, boxed). */
 async function buildCart() {
-  renderWithProviders(<CounterSaleScreen />);
+  renderTill(<CounterSaleScreen />);
   await scan("COLA");
   await scan("COLA");
   await scan("WATER");
@@ -118,7 +124,9 @@ describe("POS-3 control inventory (nothing removed or hidden)", () => {
       "Complete & show receipt",
       "Complete & next sale",
     ]) {
-      expect(screen.getByRole("button", { name })).toBeInTheDocument();
+      expect(
+        screen.getByRole(TENDERS.test(name) ? "radio" : "button", { name }),
+      ).toBeInTheDocument();
     }
     for (const label of ["Find a customer", "Scan or search items", "Amount tendered"]) {
       expect(screen.getByLabelText(label)).toBeInTheDocument();
@@ -173,12 +181,26 @@ describe("POS-3 remove with Undo", () => {
     expect(screen.getByTestId("running-total")).toHaveTextContent("$20.00");
   });
 
-  it("after 5 s the removal is final: the bar goes and Undo is gone", async () => {
+  // CQ-27: ten seconds at least, so a clerk who looks away to serve someone can still take the line back.
+  it("the removal can still be taken back almost ten seconds later", async () => {
+    expect(LINE_UNDO_MS).toBeGreaterThanOrEqual(10_000);
     await buildCart();
     jest.useFakeTimers();
     click("Remove Cola");
     act(() => {
-      jest.advanceTimersByTime(4900);
+      jest.advanceTimersByTime(9_900);
+    });
+    expect(screen.getByRole("button", { name: UNDO })).toBeInTheDocument();
+    click(UNDO);
+    expect(itemNames()).toHaveLength(2);
+  });
+
+  it("after the undo window the removal is final: the bar goes and Undo is gone", async () => {
+    await buildCart();
+    jest.useFakeTimers();
+    click("Remove Cola");
+    act(() => {
+      jest.advanceTimersByTime(LINE_UNDO_MS - 100);
     });
     expect(screen.getByRole("button", { name: UNDO })).toBeInTheDocument();
     act(() => {
@@ -205,9 +227,9 @@ describe("POS-3 remove with Undo", () => {
       jest.advanceTimersByTime(8000);
     });
     expect(screen.getByRole("button", { name: UNDO })).toBeInTheDocument();
-    act(() => undoBtn.blur()); // now both are gone: the 5 s window runs again
+    act(() => undoBtn.blur()); // now both are gone: the undo window runs again
     act(() => {
-      jest.advanceTimersByTime(4900);
+      jest.advanceTimersByTime(LINE_UNDO_MS - 100);
     });
     expect(screen.getByRole("button", { name: UNDO })).toBeInTheDocument();
     act(() => {
@@ -237,7 +259,7 @@ describe("POS-3 remove with Undo", () => {
     expect(screen.getByRole("button", { name: UNDO })).toBeInTheDocument(); // still hovered: still paused
     fireEvent.mouseLeave(bar);
     act(() => {
-      jest.advanceTimersByTime(5100);
+      jest.advanceTimersByTime(LINE_UNDO_MS + 100);
     });
     expect(screen.queryByRole("button", { name: UNDO })).toBeNull();
   });
@@ -260,7 +282,7 @@ describe("POS-3 remove with Undo", () => {
     expect(screen.getByRole("button", { name: UNDO })).toBeInTheDocument();
     fireEvent.mouseLeave(bar);
     act(() => {
-      jest.advanceTimersByTime(5100);
+      jest.advanceTimersByTime(LINE_UNDO_MS + 100);
     });
     expect(screen.queryByRole("button", { name: UNDO })).toBeNull();
   });
@@ -309,12 +331,12 @@ describe("POS-3 layout and touch targets", () => {
     expect(pay.className).toMatch(/\bcontents\b/); // below md its children flow in the one column
     expect(within(cart).getByRole("list", { name: "Items" })).toBeInTheDocument();
     expect(within(cart).getByLabelText("Scan or search items")).toBeInTheDocument();
-    expect(within(pay).getByRole("button", { name: "Cash" })).toBeInTheDocument();
+    expect(within(pay).getByRole("radio", { name: "Cash" })).toBeInTheDocument();
     expect(
       within(pay).getByRole("button", { name: "Complete & show receipt" }),
     ).toBeInTheDocument();
     expect(within(pay).getByTestId("running-total")).toBeInTheDocument();
-    expect(within(cart).queryByRole("button", { name: "Cash" })).toBeNull();
+    expect(within(cart).queryByRole("radio", { name: "Cash" })).toBeNull();
   });
 
   it("below md the scan field and the checkout bar (total + both Complete buttons) are sticky", async () => {
@@ -345,7 +367,9 @@ describe("POS-3 layout and touch targets", () => {
     expect(small).toEqual([]);
     // compact controls (stepper, remove, Undo) are 44 wide as well, not just tall
     for (const name of ["Add a box to Water", "Remove Water", UNDO, "Cash", "Exact"]) {
-      expect(screen.getByRole("button", { name }).className).toMatch(/min-w-\[44px\]/);
+      expect(
+        screen.getByRole(TENDERS.test(String(name)) ? "radio" : "button", { name }).className,
+      ).toMatch(/min-w-\[44px\]/);
     }
     const autoPrint = screen.getByLabelText("Print receipt automatically").closest("label")!;
     expect(autoPrint.className).toMatch(/min-h-\[44px\]/);

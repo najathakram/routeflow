@@ -178,12 +178,12 @@ describe("Email receipt: sending", () => {
     await act(async () => resolve({ data: {} }));
   });
 
-  it("sent: a status line 'Sent to {address}.', the button becomes 'Send again'", async () => {
+  it("sent: a status line 'Receipt sent to {address}.', the button becomes 'Send again'", async () => {
     renderWithProviders(<Harness prefill="buyer@example.com" />);
     openRow();
     fireEvent.click(sendButton());
     const status = await screen.findByRole("status");
-    expect(status).toHaveTextContent("Sent to buyer@example.com.");
+    expect(status).toHaveTextContent("Receipt sent to buyer@example.com.");
     expect(screen.getByRole("button", { name: "Send again" })).toBeEnabled();
   });
 
@@ -192,13 +192,13 @@ describe("Email receipt: sending", () => {
     renderWithProviders(<Harness prefill="buyer@example.com" />);
     openRow();
     fireEvent.click(sendButton());
-    await screen.findByText("Sent to buyer@example.com.");
+    await screen.findByText("Receipt sent to buyer@example.com.");
     await user.clear(field());
     await user.type(field(), "other@example.com");
-    // editing retires the old 'Sent to' line: it was about the other address
-    expect(screen.queryByText("Sent to buyer@example.com.")).toBeNull();
+    // editing retires the old 'Receipt sent to' line: it was about the other address
+    expect(screen.queryByText("Receipt sent to buyer@example.com.")).toBeNull();
     await user.click(screen.getByRole("button", { name: "Send again" }));
-    expect(await screen.findByText("Sent to other@example.com.")).toBeInTheDocument();
+    expect(await screen.findByText("Receipt sent to other@example.com.")).toBeInTheDocument();
     expect(post).toHaveBeenCalledTimes(2);
     expect(post.mock.calls[1][1]).toEqual({ channel: "email", to: "other@example.com" });
   });
@@ -223,7 +223,7 @@ describe("Email receipt: failures", () => {
     expect(alert).toHaveTextContent("Couldn't send. Try again.");
     expect(field().value).toBe("buyer@example.com");
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
-    expect(await screen.findByText("Sent to buyer@example.com.")).toBeInTheDocument();
+    expect(await screen.findByText("Receipt sent to buyer@example.com.")).toBeInTheDocument();
     expect(screen.queryByRole("alert")).toBeNull();
     expect(post).toHaveBeenCalledTimes(2);
   });
@@ -282,11 +282,11 @@ describe("Email receipt: failures", () => {
     renderWithProviders(<Harness prefill="buyer@example.com" />);
     openRow();
     await user.click(sendButton());
-    await screen.findByText("Sent to buyer@example.com.");
+    await screen.findByText("Receipt sent to buyer@example.com.");
     for (let i = 0; i < 2; i++) {
       await user.click(screen.getByRole("button", { name: "Send again" }));
       await waitFor(() => expect(post).toHaveBeenCalledTimes(i + 2));
-      await screen.findByText("Sent to buyer@example.com.");
+      await screen.findByText("Receipt sent to buyer@example.com.");
     }
     await user.click(screen.getByRole("button", { name: "Send again" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("email limit");
@@ -329,7 +329,7 @@ describe("Email receipt: failures", () => {
     await user.type(field(), "other@example.com");
     expect(screen.queryByRole("alert")).toBeNull();
     await user.click(sendButton());
-    expect(await screen.findByText("Sent to other@example.com.")).toBeInTheDocument();
+    expect(await screen.findByText("Receipt sent to other@example.com.")).toBeInTheDocument();
     expect(post.mock.calls[1][1]).toEqual({ channel: "email", to: "other@example.com" });
   });
 

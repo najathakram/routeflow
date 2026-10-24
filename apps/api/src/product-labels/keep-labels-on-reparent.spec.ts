@@ -1,0 +1,431 @@
+import { LabelFakeDb } from "../product-categories/testing/label-fake-db";
+import {
+  familyRemovedLabel,
+  LABEL_KEPT_ON_REPARENT_ACTION,
+  LABEL_REMOVED_ACTION,
+  LabelLockTimeoutError,
+  syncCategoryLabel,
+} from "../product-categories/label-writer";
+import {
+  effectiveCategoryIdsUnder,
+  keepLabelsOnReparent,
+  ProductChainUnreadableError,
+} from "./keep-labels-on-reparent";
+import { API_ERROR_CODES } from "../common/api-error-codes";
+
+/**
+ * H2: reparenting a variant must never silently drop a label (a legal selling ban) that the variant carried
+ * through its OLD parent. Whatever was effective before and is not after becomes the variant's OWN INCLUDE,
+ * written by the single label writer with an audit row, in the same transaction.
+ */
+const ACTOR = { id: "u1", name: "Ann" };
+
+function world() {
+  const db = new LabelFakeDb();
+  db.addCategory("ca", "CA ban").addCategory("ny", "NY ban").addCategory("misc", "Misc");
+  db.addProduct("P1").addProduct("P2").addProduct("P3").addProduct("C", "P1");
+  db.addLabel("P1", "ca", "INCLUDE");
+  db.addLabel("P1", "ny", "INCLUDE");
+  return db;
+}
+
+const run = (
+  db: LabelFakeDb,
+  args: Partial<Parameters<typeof keepLabelsOnReparent>[1]> & {
+    productId: string;
+    fromParentId: string | null;
+    toParentId: string | null;
+  },
+) =>
+  db
+    .prisma("t1")
+    .tenantTransaction((tx: any) =>
+      keepLabelsOnReparent(tx, { tenantId: "t1", actor: ACTOR, ...args }),
+    );
+
+const effectiveOf = async (
+  db: LabelFakeDb,
+  productId: string,
+  parentId: string | null,
+): Promise<Set<string>> => {
+  const set = await db
+    .prisma("t1")
+    .tenantTransaction((tx: any) => effectiveCategoryIdsUnder(tx, "t1", productId, parentId));
+  if (!set) throw new Error(`chain under ${parentId} unreadable`);
+  return set as Set<string>;
+};
+
+/** The refusal is the coded, fixed-copy 409 (never a 500, never the raw chain). */
+async function expectChainUnreadable(p: Promise<unknown>): Promise<void> {
+  const err = await p.then(
+    () => null,
+    (e: unknown) => e,
+  );
+  expect(err).toBeInstanceOf(ProductChainUnreadableError);
+  const http = err as ProductChainUnreadableError;
+  expect(http.getStatus()).toBe(409);
+  expect(http.getResponse()).toEqual({
+    code: API_ERROR_CODES.PRODUCT_CHAIN_UNREADABLE,
+    message: "This product's family chain can't be read.",
+  });
+}
+
+describe("keepLabelsOnReparent", () => {
+  it("(1) a variant moved to an UNLABELLED parent keeps the inherited bans as its own INCLUDEs", async () => {
+    const db = world();
+    expect([...(await effectiveOf(db, "C", "P1"))].sort()).toEqual(["ca", "ny"]);
+    expect([...(await effectiveOf(db, "C", "P2"))]).toEqual([]); // the bug: both vanish
+
+    const out = await run(db, { productId: "C", fromParentId: "P1", toParentId: "P2" });
+
+    expect(out.keptLabels).toEqual(["CA ban", "NY ban"]);
+    for (const c of ["ca", "ny"]) {
+      const row = db.label("C", c);
+      expect(row).toMatchObject({ mode: "INCLUDE", tenantId: "t1", createdById: "u1" });
+      expect(row?.parentProductIdAtWrite).toBeNull();
+    }
+    // the engine's own rule now keeps both bans on the child under its NEW parent
+    expect([...(await effectiveOf(db, "C", "P2"))].sort()).toEqual(["ca", "ny"]);
+    expect(db.audits).toHaveLength(2);
+    expect(db.audits[0]).toMatchObject({
+      tenantId: "t1",
+      userId: "u1",
+      action: LABEL_KEPT_ON_REPARENT_ACTION,
+      entityType: "Product",
+      entityId: "C",
+    });
+    expect(db.audits[0].meta).toMatchObject({
+      categoryId: "ca",
+      source: "reparent",
+      fromParentProductId: "P1",
+      toParentProductId: "P2",
+    });
+  });
+
+  it("(2) unlinking to standalone keeps every inherited label as an own INCLUDE", async () => {
+    const db = world();
+    const out = await run(db, { productId: "C", fromParentId: "P1", toParentId: null });
+    expect(out.keptLabels).toEqual(["CA ban", "NY ban"]);
+    expect([...(await effectiveOf(db, "C", null))].sort()).toEqual(["ca", "ny"]);
+  });
+
+  it("(3) keeps only what is LOST: a label the new parent also carries gets no own row", async () => {
+    const db = world();
+    db.addLabel("P3", "ca", "INCLUDE");
+    const out = await run(db, { productId: "C", fromParentId: "P1", toParentId: "P3" });
+    expect(out.keptLabels).toEqual(["NY ban"]);
+    expect(db.label("C", "ca")).toBeUndefined();
+    expect(db.label("C", "ny")?.mode).toBe("INCLUDE");
+    expect(db.audits).toHaveLength(1);
+  });
+
+  it("(3b) several children each materialise their own (one call per child)", async () => {
+    const db = world();
+    db.addProduct("C2", "P1");
+    await run(db, { productId: "C", fromParentId: "P1", toParentId: "P2" });
+    await run(db, { productId: "C2", fromParentId: "P1", toParentId: "P2" });
+    expect(
+      db.labels
+        .filter((l) => l.productId === "C2")
+        .map((l) => l.categoryId)
+        .sort(),
+    ).toEqual(["ca", "ny"]);
+    expect(db.audits.map((a) => a.entityId).sort()).toEqual(["C", "C", "C2", "C2"]);
+  });
+
+  it("(4) controls: nothing lost writes nothing (own INCLUDEs, same labels, no old parent)", async () => {
+    const db = world();
+    db.addLabel("C", "ca", "INCLUDE");
+    db.addLabel("C", "ny", "INCLUDE");
+    const own = await run(db, { productId: "C", fromParentId: "P1", toParentId: "P2" });
+    expect(own.keptLabels).toEqual([]);
+
+    const db2 = world();
+    db2.addLabel("P2", "ca", "INCLUDE");
+    db2.addLabel("P2", "ny", "INCLUDE");
+    const same = await run(db2, { productId: "C", fromParentId: "P1", toParentId: "P2" });
+    expect(same.keptLabels).toEqual([]);
+    expect(db2.labels.filter((l) => l.productId === "C")).toEqual([]);
+    expect(db2.audits).toEqual([]);
+
+    const db3 = world();
+    db3.addProduct("S"); // standalone with no labels, adopted by an unlabelled family
+    const none = await run(db3, { productId: "S", fromParentId: null, toParentId: "P2" });
+    expect(none.keptLabels).toEqual([]);
+    expect(db3.audits).toEqual([]);
+    expect(db3.calls.some((c) => ["create", "update", "deleteMany"].includes(c.op))).toBe(false);
+  });
+
+  it("(4b) a variant's opt-out is not 'kept': it never carried the label", async () => {
+    const db = world();
+    db.addLabel("C", "ca", "EXCLUDE", "P1");
+    const out = await run(db, { productId: "C", fromParentId: "P1", toParentId: "P2" });
+    expect(out.keptLabels).toEqual(["NY ban"]);
+    expect(db.label("C", "ca")?.mode).toBe("EXCLUDE");
+  });
+
+  it("(4c) an INERT opt-out (pinned to no parent) does not block the keep: it is replaced by an INCLUDE", async () => {
+    const db = world();
+    const optOutId = db.addLabel("C", "ca", "EXCLUDE", null); // inert: the label still applies via P1
+    expect([...(await effectiveOf(db, "C", "P1"))].sort()).toEqual(["ca", "ny"]);
+    const out = await run(db, { productId: "C", fromParentId: "P1", toParentId: "P2" });
+    expect(out.keptLabels).toEqual(["CA ban", "NY ban"]);
+    expect(db.label("C", "ca")).toMatchObject({ mode: "INCLUDE" });
+    expect(db.labels.filter((l) => l.productId === "C" && l.categoryId === "ca")).toHaveLength(1);
+    expect([...(await effectiveOf(db, "C", "P2"))].sort()).toEqual(["ca", "ny"]);
+    // The deleted opt-out (its reason was an approval) is identified in the keep's audit row; the other keep's is not.
+    const metaOf = (c: string) =>
+      db.audits.find((a) => (a.meta as { categoryId: string }).categoryId === c)?.meta as Record<
+        string,
+        unknown
+      >;
+    expect(metaOf("ca").replacedOptOut).toEqual({
+      id: optOutId,
+      reason: "seed",
+      createdById: null,
+      createdByName: null,
+      createdAt: "2026-09-19T00:00:00.000Z",
+    });
+    expect(metaOf("ny")).not.toHaveProperty("replacedOptOut");
+  });
+
+  it("(4d) removal audits: one on the NEW parent does not suppress the keep; one on the OLD parent for a label it no longer carries keeps nothing", async () => {
+    const db = world();
+    db.addCategory("wa", "WA ban");
+    // An operator removed CA from the NEW family P2 on purpose (the add-only sync would honour it: "parent-removed").
+    db.audits.push({
+      tenantId: "t1",
+      action: LABEL_REMOVED_ACTION,
+      entityType: "Product",
+      entityId: "P2",
+      meta: { categoryId: "ca", mode: "INCLUDE" },
+    });
+    // …and WA from the OLD family P1 earlier: P1 no longer carries WA, so the child never did.
+    db.audits.push({
+      tenantId: "t1",
+      action: LABEL_REMOVED_ACTION,
+      entityType: "Product",
+      entityId: "P1",
+      meta: { categoryId: "wa", mode: "INCLUDE" },
+    });
+    db.products.find((p) => p.id === "C")!.parentProductId = "P2"; // update() wrote the parent first
+    // Not vacuous: the audit IS read, and it would make an add-only write skip CA on C under P2.
+    const removedUnderNew = await db
+      .prisma("t1")
+      .tenantTransaction((tx: any) => familyRemovedLabel(tx, "t1", "ca", ["C"]));
+    expect([...removedUnderNew]).toEqual(["C"]);
+
+    const out = await run(db, { productId: "C", fromParentId: "P1", toParentId: "P2" });
+
+    // Direction 1: CA was effective under P1, so it is KEPT despite the removal on the new family.
+    expect(out.keptLabels).toEqual(["CA ban", "NY ban"]);
+    expect(db.label("C", "ca")?.mode).toBe("INCLUDE");
+    expect([...(await effectiveOf(db, "C", "P2"))].sort()).toEqual(["ca", "ny"]);
+    // Direction 2: WA was removed from the old family before the move, so it was not effective: nothing kept for it.
+    expect(db.label("C", "wa")).toBeUndefined();
+    expect(
+      db.audits
+        .filter((a) => a.action === LABEL_KEPT_ON_REPARENT_ACTION)
+        .map((a) => (a.meta as { categoryId: string }).categoryId),
+    ).toEqual(["ca", "ny"]);
+  });
+
+  it("(4e) an ARCHIVED label still bans, so it is kept too", async () => {
+    const db = world();
+    db.categories.find((c) => c.id === "ca")!.archivedAt = new Date("2026-01-01T00:00:00Z");
+    const out = await run(db, { productId: "C", fromParentId: "P1", toParentId: "P2" });
+    expect(out.keptLabels).toEqual(["CA ban", "NY ban"]);
+  });
+
+  it("(4f) labels chain through a grandparent", async () => {
+    const db = new LabelFakeDb();
+    db.addCategory("ca", "CA ban");
+    db.addProduct("G").addProduct("P", "G").addProduct("C", "P").addProduct("Q");
+    db.addLabel("G", "ca", "INCLUDE");
+    const out = await run(db, { productId: "C", fromParentId: "P", toParentId: "Q" });
+    expect(out.keptLabels).toEqual(["CA ban"]);
+  });
+
+  it("(5) tenant isolation: another tenant's label rows and categories are never read or written", async () => {
+    const db = world();
+    db.addCategory("ca-t2", "CA ban", "t2");
+    db.addProduct("X2", null, "t2");
+    db.addLabel("X2", "ca-t2", "INCLUDE", null, "t2");
+    const before = JSON.stringify(db.labels.filter((l) => l.tenantId === "t2"));
+    await run(db, { productId: "C", fromParentId: "P1", toParentId: "P2" });
+    expect(JSON.stringify(db.labels.filter((l) => l.tenantId === "t2"))).toBe(before);
+    expect(db.labels.filter((l) => l.tenantId === "t1" && l.productId === "C")).toHaveLength(2);
+    // every read the helper issued named the tenant itself (the fake would otherwise return t2 rows)
+    for (const c of db.calls.filter((c) =>
+      ["productCategory", "product", "productCategoryLabel"].includes(c.model),
+    )) {
+      if (c.op === "create") expect(c.args.data.tenantId ?? "t1").toBe("t1");
+      else expect(c.args.where?.tenantId).toBe("t1");
+    }
+    expect(db.audits.every((a) => a.tenantId === "t1")).toBe(true);
+  });
+
+  it("(5b) a category of another tenant is not materialised", async () => {
+    const db = world();
+    db.addLabel("P1", "ca-t2", "INCLUDE"); // corrupt: t1 product points at t2's category
+    db.addCategory("ca-t2", "Foreign", "t2");
+    const out = await run(db, { productId: "C", fromParentId: "P1", toParentId: "P2" });
+    expect(out.keptLabels).toEqual(["CA ban", "NY ban"]);
+    expect(db.label("C", "ca-t2")).toBeUndefined();
+  });
+
+  it("(6) atomic: a failing write rolls the whole keep back and the error propagates", async () => {
+    const db = world();
+    db.auditError = new Error("audit down");
+    await expect(run(db, { productId: "C", fromParentId: "P1", toParentId: "P2" })).rejects.toThrow(
+      "audit down",
+    );
+    expect(db.labels.filter((l) => l.productId === "C")).toEqual([]);
+    expect(db.audits).toEqual([]);
+  });
+
+  it("(6b) a busy label lock is the coded 409, not a swallowed skip", async () => {
+    const db = world();
+    db.lockError = Object.assign(new Error("lock timeout"), { meta: { code: "55P03" } });
+    await expect(
+      run(db, { productId: "C", fromParentId: "P1", toParentId: "P2" }),
+    ).rejects.toBeInstanceOf(LabelLockTimeoutError);
+  });
+
+  it("never runs the add-only category-text sync (SHOULD b): a label removed from the product itself stays removed", async () => {
+    const db = world();
+    db.addCategory("snack", "Snacks");
+    db.audits.push({
+      tenantId: "t1",
+      action: LABEL_REMOVED_ACTION,
+      entityType: "Product",
+      entityId: "C",
+      meta: { categoryId: "snack", mode: "INCLUDE" },
+    });
+    const out = await run(db, { productId: "C", fromParentId: "P1", toParentId: "P2" });
+    expect(out.keptLabels).toEqual(["CA ban", "NY ban"]);
+    expect(db.label("C", "snack")).toBeUndefined();
+    expect(db.calls.some((c) => c.model === "productCategory" && c.op === "findMany")).toBe(false);
+  });
+
+  describe("(7) an unreadable OLD chain is refused (409), never read short: a short chain drops bans", () => {
+    const nothingWritten = (db: LabelFakeDb) => {
+      expect(db.labels.filter((l) => l.productId === "C")).toEqual([]);
+      expect(db.audits).toEqual([]);
+      expect(
+        db.calls.some((c) => ["create", "createMany", "update", "deleteMany"].includes(c.op)),
+      ).toBe(false);
+    };
+
+    it("(7a) a cycle above the old parent", async () => {
+      const db = new LabelFakeDb();
+      db.addCategory("ca", "CA ban").addCategory("ny", "NY ban");
+      // C -> P1 -> X -> P1 …: X carries NY; a truncated read would see only P1's CA.
+      db.addProduct("P1", "X").addProduct("X", "P1").addProduct("C", "P1").addProduct("P2");
+      db.addLabel("P1", "ca", "INCLUDE");
+      db.addLabel("X", "ny", "INCLUDE");
+      await expectChainUnreadable(
+        run(db, { productId: "C", fromParentId: "P1", toParentId: "P2" }),
+      );
+      nothingWritten(db);
+    });
+
+    it("(7b) a chain back through the product itself is a cycle too", async () => {
+      const db = new LabelFakeDb();
+      db.addCategory("ca", "CA ban");
+      db.addProduct("C", "P1").addProduct("P1", "C").addProduct("P2");
+      db.addLabel("P1", "ca", "INCLUDE");
+      await expectChainUnreadable(
+        run(db, { productId: "C", fromParentId: "P1", toParentId: "P2" }),
+      );
+      nothingWritten(db);
+    });
+
+    it("(7c) deeper than the engine's cap (6 ancestors); exactly 5 still reads", async () => {
+      const deep = (ancestors: number) => {
+        const db = new LabelFakeDb();
+        db.addCategory("ca", "CA ban");
+        for (let i = 1; i <= ancestors; i++)
+          db.addProduct(`A${i}`, i < ancestors ? `A${i + 1}` : null);
+        db.addProduct("C", "A1").addProduct("P2");
+        db.addLabel(`A${ancestors}`, "ca", "INCLUDE"); // the ban sits on the root
+        return db;
+      };
+      const tooDeep = deep(6);
+      await expectChainUnreadable(
+        run(tooDeep, { productId: "C", fromParentId: "A1", toParentId: "P2" }),
+      );
+      nothingWritten(tooDeep);
+      const atCap = deep(5);
+      const out = await run(atCap, { productId: "C", fromParentId: "A1", toParentId: "P2" });
+      expect(out.keptLabels).toEqual(["CA ban"]);
+    });
+
+    it("(7d) a missing link (an ancestor that is not this tenant's / does not exist)", async () => {
+      const db = new LabelFakeDb();
+      db.addCategory("ca", "CA ban");
+      db.addProduct("G", null, "t2"); // another tenant's row: unknown to t1's read
+      db.addProduct("P1", "G").addProduct("Q", "ghost").addProduct("C", "P1").addProduct("P2");
+      db.addLabel("P1", "ca", "INCLUDE");
+      await expectChainUnreadable(
+        run(db, { productId: "C", fromParentId: "P1", toParentId: "P2" }),
+      );
+      nothingWritten(db);
+      db.products.find((p) => p.id === "C")!.parentProductId = "Q";
+      await expectChainUnreadable(run(db, { productId: "C", fromParentId: "Q", toParentId: null }));
+      nothingWritten(db);
+    });
+  });
+
+  describe("(8) re-verify under the row locks: only labels the caller pre-locked may be written", () => {
+    it("(8a) a lost label outside the pre-locked set is the retryable 409, and nothing is written or locked for it", async () => {
+      const db = world();
+      const err = await run(db, {
+        productId: "C",
+        fromParentId: "P1",
+        toParentId: "P2",
+        lockedCategoryIds: new Set(["ca"]),
+      }).then(
+        () => null,
+        (e: unknown) => e,
+      );
+      expect(err).toBeInstanceOf(LabelLockTimeoutError);
+      expect(db.labels.filter((l) => l.productId === "C")).toEqual([]);
+      expect(db.audits).toEqual([]);
+      const locked = db.calls
+        .filter((c) => c.model === "$executeRaw")
+        .flatMap((c) => (c.args as unknown[]).map(String));
+      expect(locked.some((v) => v.endsWith(":ny"))).toBe(false);
+    });
+
+    it("(8b) a pre-locked superset is fine", async () => {
+      const db = world();
+      const out = await run(db, {
+        productId: "C",
+        fromParentId: "P1",
+        toParentId: "P2",
+        lockedCategoryIds: new Set(["ca", "ny", "misc"]),
+      });
+      expect(out.keptLabels).toEqual(["CA ban", "NY ban"]);
+    });
+  });
+
+  it("(8c) syncCategoryLabel with a pre-locked set refuses (retryable 409) a matched label outside it, writing nothing", async () => {
+    const db = world();
+    db.addCategory("snack", "Snacks");
+    const sync = (locked: ReadonlySet<string>) =>
+      db.prisma("t1").tenantTransaction((tx: any) =>
+        syncCategoryLabel(tx, {
+          tenantId: "t1",
+          productId: "P3",
+          text: "Snacks",
+          actor: ACTOR,
+          lockedCategoryIds: locked,
+        }),
+      );
+    await expect(sync(new Set(["ca"]))).rejects.toBeInstanceOf(LabelLockTimeoutError);
+    expect(db.label("P3", "snack")).toBeUndefined();
+    await expect(sync(new Set(["snack"]))).resolves.toEqual({ addedCategoryId: "snack" });
+    expect(db.label("P3", "snack")?.mode).toBe("INCLUDE");
+  });
+});

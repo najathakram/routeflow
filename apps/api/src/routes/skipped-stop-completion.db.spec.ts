@@ -129,7 +129,7 @@ describeDb("#2409 a SKIPPED stop refuses a replayed completion — real Postgres
           useValue: {
             writeSaleEntries: jest.fn(),
             reverseInvoiceEntries: jest.fn(),
-            syncInvoiceEntries: jest.fn(),
+            settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
           },
         },
         {

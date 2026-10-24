@@ -218,7 +218,7 @@ describe("OrdersService — F11 getOrderTracking pins (no REG- token; excluded f
           provide: RegulatedLedgerService,
           useValue: {
             reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined),
-            syncInvoiceEntries: jest.fn(),
+            settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
           },
         },
       ],

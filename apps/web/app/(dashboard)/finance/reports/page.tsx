@@ -56,11 +56,16 @@ import {
 } from "lucide-react";
 import { Badge, cn, useToast, type ToastVariant } from "@routeflow/ui/web";
 import { depositOverdueLine, groupArAgingByCustomer } from "@/lib/ar-aging-rows";
+import { receivableSummaryBalanceTotal } from "@/lib/receivable-summary-total";
 import Link from "next/link";
 import { useTransactions, useRecordPayment, type Transaction } from "@/lib/api/bookkeeping";
+import { dayClosedCopy, isDayClosedRefusal } from "@/lib/day-closed-copy";
+import { useAuth } from "@/lib/auth-context";
+import { toastDuplicatePaymentRef } from "@/lib/duplicate-payment-ref";
 import { fmt, fmtCalendarDate, fmtDate } from "@/lib/formatting";
 import { useUrlPage, useClampPage } from "@/lib/hooks/useUrlPage";
 import { useFleetAccess } from "@/lib/api/addons";
+import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 
 const CHART_COLORS = [
   "#3b82f6",
@@ -1265,13 +1270,13 @@ function ReceivableSummaryReport({ from, to }: { from?: string; to?: string }) {
         <tfoot>
           <tr className="border-t-2 border-navy bg-surface-raised">
             <td colSpan={5} className="px-4 py-2.5 font-semibold text-navy">
-              Total
+              Total (overpayments not netted)
             </td>
             <td className="px-4 py-2.5 text-right font-bold text-navy">
               {fmt(rows.reduce((s, r) => s + r.total, 0))}
             </td>
             <td className="px-4 py-2.5 text-right font-bold text-navy">
-              {fmt(rows.reduce((s, r) => s + r.balance, 0))}
+              {fmt(receivableSummaryBalanceTotal(rows))}
             </td>
           </tr>
         </tfoot>
@@ -1965,8 +1970,10 @@ function LedgerReport() {
   const [payAmount, setPayAmount] = React.useState("");
   const [payMethod, setPayMethod] = React.useState<SelectablePaymentMethod>("CASH");
   const [payRef, setPayRef] = React.useState("");
-  const recordPayment = useRecordPayment();
+  // Row 348: this report toasts a closed-day refusal itself, so the global toast stays quiet for it (one toast).
+  const recordPayment = useRecordPayment({ localErrorToast: isDayClosedRefusal });
   const { toast } = React.useContext(ToastContext);
+  const { user } = useAuth();
 
   const { data, isLoading } = useTransactions({
     status: statusFilter || undefined,
@@ -1984,8 +1991,8 @@ function LedgerReport() {
     setPayRef("");
   };
 
-  const handleRecordPayment = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleRecordPayment = async (e: React.FormEvent | null, recordAnyway = false) => {
+    e?.preventDefault();
     if (!paymentModal) return;
     const amount = parseFloat(payAmount);
     if (isNaN(amount) || amount <= 0) {
@@ -1998,11 +2005,18 @@ function LedgerReport() {
         amount,
         method: payMethod,
         reference: payRef || undefined,
+        ...(recordAnyway ? { recordAnyway: true } : {}),
       });
       toast({ title: "Payment recorded", variant: "success" });
       setPaymentModal(null);
-    } catch {
-      toast({ title: "Failed to record payment", variant: "error" });
+    } catch (err: unknown) {
+      // Row 498: a duplicate reference names the existing payment; staff may "Record anyway".
+      if (
+        toastDuplicatePaymentRef(err, toast, user?.role, () => void handleRecordPayment(null, true))
+      )
+        return;
+      // The global toast is quiet for a closed-day refusal (the hook's option): this one says why, once.
+      toast({ title: dayClosedCopy(err) ?? "Failed to record payment", variant: "error" });
     }
   };
 
@@ -2040,6 +2054,7 @@ function LedgerReport() {
         )}
       </div>
 
+      <ReadOnlyHint className="px-4 py-2 text-xs text-slate-600" />
       {/* Table */}
       {isLoading ? (
         <Spinner />
@@ -2101,12 +2116,9 @@ function LedgerReport() {
                   </td>
                   <td className="px-4 py-2.5">
                     {tx.status !== "PAID" && (
-                      <button
-                        onClick={() => openPayment(tx)}
-                        className="rounded-lg border border-brand-200 bg-brand-50 px-2.5 py-1 text-xs font-medium text-brand-600 hover:bg-brand-100 transition-colors"
-                      >
+                      <WriteButton size="sm" variant="secondary" onClick={() => openPayment(tx)}>
                         Record Payment
-                      </button>
+                      </WriteButton>
                     )}
                   </td>
                 </tr>

@@ -23,7 +23,12 @@ import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { PlatformAdminService } from "./platform-admin.service";
 import { PlatformConfigService } from "./platform-config.service";
 import { BillingService } from "../billing/billing.service";
-import { AddonService } from "../billing/addon.service";
+import {
+  ADMIN_DISABLE_SOURCE,
+  AddonService,
+  PROFILE_APPLY_SOURCE,
+  type AddonDisableSource,
+} from "../billing/addon.service";
 import { FeatureOverrideService } from "../billing/feature-override.service";
 import { UpdateTenantStatusDto } from "./dto/update-tenant-status.dto";
 import { UpdateTenantPlanDto } from "./dto/update-tenant-plan.dto";
@@ -48,18 +53,35 @@ import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { FeaturePreviewService } from "../billing/feature-preview.service";
 import { TenantConfigSnapshotAdminService } from "../billing/tenant-config-snapshot-admin.service";
 import { toEffectiveFeature } from "../billing/feature-resolver.service";
-import type { EffectiveFeature, FeatureModeState, FeaturePreviewRequest } from "@routeflow/types";
+import type {
+  AppLinks,
+  AppLinksPatch,
+  EffectiveFeature,
+  FeatureModeState,
+  FeaturePreviewRequest,
+} from "@routeflow/types";
 import { AdminAuditAction } from "./audit-actions.constant";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { API_ERROR_CODES } from "../common/api-error-codes";
-import { BusinessProfileService } from "../billing/business-profile.service";
+import {
+  BusinessProfileService,
+  type BusinessProfileResolution,
+} from "../billing/business-profile.service";
 import { FeatureConfigService } from "../billing/feature-config.service";
 import {
   ApplyBusinessProfileDto,
   ConfirmBusinessProfileDto,
 } from "./dto/apply-business-profile.dto";
+import {
+  BusinessCapabilitiesDto,
+  ConfirmBusinessCapabilitiesDto,
+} from "./dto/business-capabilities.dto";
 import type {
+  BusinessCapabilitiesApplyResponse,
+  BusinessCapabilitiesPreviewResponse,
   BusinessProfileApplyResponse,
+  BusinessProfileBillingFailedAddon,
+  BusinessCapabilities,
   BusinessProfileListResponse,
   BusinessProfilePreviewResponse,
 } from "@routeflow/types";
@@ -390,7 +412,7 @@ export class PlatformAdminController {
       dto.addonKey,
       dto.stripePriceId,
       dto.acknowledgeUnmetRequires,
-      { comp },
+      { comp, actorId: admin.sub },
     );
     if (comp) {
       // One audit row per action: a comp is ADDON_COMPED (actor = userId, plus the optional reason).
@@ -421,7 +443,12 @@ export class PlatformAdminController {
     @Body() dto: UncompAddonDto,
     @CurrentUser() admin: JwtPayload,
   ) {
-    const result = await this.addonService.uncompAddon(id, dto.addonKey, dto.stripePriceId);
+    const result = await this.addonService.uncompAddon(
+      id,
+      dto.addonKey,
+      dto.stripePriceId,
+      admin.sub,
+    );
     await this.svc.recordAdminAction(id, admin.sub, AdminAuditAction.ADDON_UNCOMPED, {
       addonKey: dto.addonKey,
       // The mode the service ACTUALLY took (STRIPE / MANUAL / UNBILLED), never inferred from the DTO:
@@ -439,8 +466,10 @@ export class PlatformAdminController {
     @Param("id") id: string,
     @Body() dto: DisableAddonDto,
     @CurrentUser() admin: JwtPayload,
+    /** SA-788 A3: who is asking decides the record's source; this route is the direct admin disable. */
+    source: AddonDisableSource = ADMIN_DISABLE_SOURCE,
   ) {
-    const result = await this.addonService.disableAddon(id, dto.addonKey);
+    const result = await this.addonService.disableAddon(id, dto.addonKey, admin.sub, source);
     await this.svc.recordAdminAction(id, admin.sub, AdminAuditAction.ADDON_DISABLED, {
       addonKey: dto.addonKey,
     });
@@ -776,6 +805,14 @@ export class PlatformAdminController {
     return this.businessProfiles.list();
   }
 
+  @Get("tenants/:id/business-capabilities")
+  @ApiOperation({
+    summary: "The capability ticks (delivery, shipping, counter, door payments) for one tenant",
+  })
+  getBusinessCapabilities(@Param("id") id: string): Promise<BusinessCapabilities> {
+    return this.businessProfiles.capabilities(id);
+  }
+
   @Post("tenants/:id/business-profile/preview")
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -791,13 +828,15 @@ export class PlatformAdminController {
   /**
    * Confirm. The plan is recomputed HERE from the tenant's current state (never trusted from the
    * client) and validated whole before the first write. Writes go through the existing audited
-   * paths only — this controller's own add-on disable and override create/revoke, and
+   * paths only — this controller's own add-on disable, the add-on comp enable (SA-769: a profile's
+   * add-on grants are comp rows, never GRANT overrides) and override create/revoke, and
    * `FeatureConfigService.set` — in the order billing disables → grants → modes → denies. The
    * disables (paid modules, owner ruling) come first so a billing failure refuses the apply before
    * anything else is written; only fleet-OFF profiles have any, and their modes need no fleet.
    * Grants precede modes and modes precede denies because `set()` checks the fleet rule against
    * the SAVED state: delivery needs the fleet granted first, and a fleet is denied only after the
-   * mode has moved off delivery. Re-applying is idempotent (every step becomes a skip). Not one DB
+   * mode has moved off delivery. BO-04: this route is a thin alias - the preset goes through its ticks onto
+   * the same plan and the same `applyResolvedLocked` as `business-capabilities`. Re-applying is idempotent (every step becomes a skip). Not one DB
    * transaction: a mid-way failure leaves the steps already written, each audited, and a re-apply
    * completes the rest.
    */
@@ -810,17 +849,62 @@ export class PlatformAdminController {
     @CurrentUser() admin: JwtPayload,
   ): Promise<BusinessProfileApplyResponse> {
     // Plan-then-apply under the add-on locks the enable path takes (#3199 review): see withConfirmLock.
-    return this.businessProfiles.withConfirmLock(id, () =>
-      this.applyBusinessProfileLocked(id, dto, admin),
-    );
+    return this.businessProfiles.withConfirmLock(id, async () => {
+      // BO-04 review: re-plan from the DB, not this replica's 30s mode cache (see forgetCachedModes).
+      this.featureConfig.forgetCachedModes(id);
+      const resolved = await this.businessProfiles.plan(id, dto.profile);
+      const done = await this.applyResolvedLocked(id, resolved, dto, admin);
+      return { profile: resolved.profile.key as BusinessProfileApplyResponse["profile"], ...done };
+    });
   }
 
-  private async applyBusinessProfileLocked(
+  @Post("tenants/:id/business-capabilities/preview")
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      "What ticking these capabilities would change for this tenant (and whether it is blocked) - writes nothing",
+  })
+  previewBusinessCapabilities(
+    @Param("id") id: string,
+    @Body() dto: BusinessCapabilitiesDto,
+  ): Promise<BusinessCapabilitiesPreviewResponse> {
+    return this.businessProfiles.previewCapabilities(id, dto);
+  }
+
+  /**
+   * BO-04: confirm for capability ticks. The ticks map to the ONE planner the presets use, then the SAME
+   * apply sequence runs (`applyResolvedLocked`): nothing here has its own plan or its own write order.
+   */
+  @Post("tenants/:id/business-capabilities")
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: "Apply capability ticks to a tenant (audited; idempotent)" })
+  applyBusinessCapabilities(
+    @Param("id") id: string,
+    @Body() dto: ConfirmBusinessCapabilitiesDto,
+    @CurrentUser() admin: JwtPayload,
+  ): Promise<BusinessCapabilitiesApplyResponse> {
+    return this.businessProfiles.withConfirmLock(id, async () => {
+      // BO-04 review: re-plan from the DB, not this replica's 30s mode cache (see forgetCachedModes).
+      this.featureConfig.forgetCachedModes(id);
+      const resolved = await this.businessProfiles.planCapabilities(id, dto);
+      const done = await this.applyResolvedLocked(id, resolved, dto, admin);
+      return { capabilities: resolved.capabilities, preset: resolved.preset, ...done };
+    });
+  }
+
+  /**
+   * The one apply sequence, for a plan already resolved from the tenant's CURRENT state (preset or ticks).
+   * Order: refuse a blocked plan (carrier in transit, a comp the comp path would refuse) and a stale
+   * fingerprint FIRST, before any write - so a refusal never leaves billing half stopped - then billing
+   * disables -> comps and grants -> modes -> denies.
+   */
+  private async applyResolvedLocked(
     id: string,
-    dto: ConfirmBusinessProfileDto,
+    resolved: BusinessProfileResolution,
+    dto: { planFingerprint: string; reason?: string },
     admin: JwtPayload,
-  ): Promise<BusinessProfileApplyResponse> {
-    const resolved = await this.businessProfiles.plan(id, dto.profile);
+  ): Promise<{ plan: BusinessProfileApplyResponse["plan"]; changed: string[]; summary: string[] }> {
+    this.businessProfiles.assertNotBlocked(resolved); // before any write, and before the fingerprint
     this.businessProfiles.assertPlanUnchanged(resolved, dto.planFingerprint); // before any write
     const reason = dto.reason?.trim() || resolved.reason;
     const { changed } = await this.featurePreview.preview(id, resolved.previewRequest);
@@ -844,19 +928,42 @@ export class PlatformAdminController {
     const billingFailed = () => {
       const label = (k: string) => FEATURE_REGISTRY.find((f) => f.key === k)?.label ?? k;
       const done = alreadyDisabled.map(label).join(", ") || "none";
+      // SA-769: a COMP row has no billing to stop, so its copy says "switched off" only. The billing wording
+      // stays whenever a paid add-on is involved (a paid one was stopped, or is the one that failed).
+      const compOff = new Set(resolved.plan.billing.filter((b) => b.comp).map((b) => b.featureKey));
+      const billingWords =
+        alreadyDisabled.length > 0
+          ? alreadyDisabled.some((k) => !compOff.has(k))
+          : !compOff.has(current.key);
       const what =
         current.step === "billing"
-          ? `The profile was not applied: billing for ${label(current.key)} could not be stopped.`
+          ? compOff.has(current.key)
+            ? `The profile was not applied: ${label(current.key)} could not be switched off.`
+            : `The profile was not applied: billing for ${label(current.key)} could not be stopped.`
           : `The profile was only partly applied: the ${current.step} step for ` +
-            `${label(current.key)} failed after billing was stopped.`;
+            `${label(current.key)} failed after ` +
+            (billingWords ? "billing was stopped." : "the add-ons were switched off.");
+      // ROW c: say per add-on what happened. The one whose switch-off failed first, then the ones already switched
+      // off (they are in the billing disable order). A comp has no billing to stop; a paid row's billing is stopped
+      // exactly when its disable succeeded.
+      const failedKey = current.step === "billing" ? current.key : null;
+      const addons: BusinessProfileBillingFailedAddon[] = [
+        ...(failedKey ? [failedKey] : []),
+        ...alreadyDisabled,
+      ].map((key) => {
+        const wasComp = compOff.has(key);
+        const switchedOff = key !== failedKey;
+        return { key, wasComp, billingStopped: switchedOff && !wasComp, switchedOff };
+      });
       return new ServiceUnavailableException({
         statusCode: 503,
         code: API_ERROR_CODES.BUSINESS_PROFILE_BILLING_FAILED,
         featureKey: current.key,
         alreadyDisabled: [...alreadyDisabled],
         failedStep: { ...current },
+        addons,
         message:
-          `${what} Already switched off with billing stopped: ${done}. ` +
+          `${what} Already switched off${billingWords ? " with billing stopped" : ""}: ${done}. ` +
           (current.step === "billing" ? "Nothing else was changed; " : "") +
           "retry to finish.",
       });
@@ -865,7 +972,12 @@ export class PlatformAdminController {
     for (const b of resolved.plan.billing) {
       current = { step: "billing", key: b.featureKey };
       try {
-        await this.disableAddon(id, { addonKey: b.featureKey } as DisableAddonDto, admin);
+        await this.disableAddon(
+          id,
+          { addonKey: b.featureKey } as DisableAddonDto,
+          admin,
+          PROFILE_APPLY_SOURCE,
+        );
       } catch {
         throw billingFailed();
       }
@@ -873,18 +985,45 @@ export class PlatformAdminController {
     }
     if (alreadyDisabled.length > 0) this.authority.invalidate(id);
 
+    // SA-769 (D-S2): an add-on module the profile grants is a COMP row (the SA-693 comp path:
+    // isComp, no Stripe call, nothing booked), not a GRANT override. The confirm already holds this
+    // module's add-on key, so the enable runs under it (`lockHeld`) instead of waiting on itself.
+    // The audit row is the same ADDON_COMPED the admin comp route writes, with the profile as reason.
+    const compKeys = new Set(resolved.plan.comps.map((c) => c.featureKey));
+    const compModule = async (featureKey: string) => {
+      const compReason = `business profile ${resolved.profile.key}`;
+      await this.addonService.enableAddon(id, featureKey, undefined, undefined, {
+        comp: true,
+        lockHeld: true,
+        source: PROFILE_APPLY_SOURCE,
+        actorId: admin.sub,
+        reason: compReason,
+      });
+      // a later module (driver_payments) `requires` this one: its comp must be visible to that check
+      this.authority.invalidate(id);
+      await this.svc.recordAdminAction(id, admin.sub, AdminAuditAction.ADDON_COMPED, {
+        addonKey: featureKey,
+        acknowledgeUnmetRequires: false,
+        reason: compReason,
+        profile: resolved.profile.key,
+      });
+    };
     const applyOverrides = async (effect: "GRANT" | "DENY") => {
       for (const o of resolved.plan.overrides) {
-        if (o.effect !== effect || o.action === "skip") continue;
+        if (o.effect !== effect) continue;
         current = { step: effect === "GRANT" ? "grant" : "deny", key: o.featureKey };
-        if (o.action === "replace") {
+        if (o.action === "replace" || o.action === "revoke") {
           await this.revokeFeatureOverride(id, resolved.revokeOverrideIds[o.featureKey], admin);
         }
-        await this.createFeatureOverride(
-          id,
-          { featureKey: o.featureKey, effect: o.effect, reason } as CreateFeatureOverrideDto,
-          admin,
-        );
+        if (o.action === "create" || o.action === "replace") {
+          await this.createFeatureOverride(
+            id,
+            { featureKey: o.featureKey, effect: o.effect, reason } as CreateFeatureOverrideDto,
+            admin,
+          );
+        }
+        // module order: the fleet keys first, driver_payments last (it requires a fleet key)
+        if (effect === "GRANT" && compKeys.has(o.featureKey)) await compModule(o.featureKey);
       }
     };
     try {
@@ -897,9 +1036,14 @@ export class PlatformAdminController {
       current = { step: "audit", key: resolved.profile.key };
       this.authority.invalidate(id);
       await this.svc.recordAdminAction(id, admin.sub, AdminAuditAction.BUSINESS_PROFILE_APPLIED, {
-        profile: resolved.profile.key,
+        // alias calls (a preset key) keep `profile`; capability calls carry `capabilities` + `preset` instead
+        ...(resolved.aliasProfile ? { profile: resolved.aliasProfile } : {}),
+        capabilities: resolved.capabilities,
+        preset: resolved.preset,
         reason,
         plan: resolved.plan,
+        // SA-769: the comp rows this apply wrote, listed so the audit row alone shows what was granted free
+        comps: resolved.plan.comps.map((c) => c.featureKey),
         summary: resolved.summary,
       });
     } catch (err) {
@@ -908,12 +1052,7 @@ export class PlatformAdminController {
       if (alreadyDisabled.length > 0) throw billingFailed();
       throw err;
     }
-    return {
-      profile: resolved.profile.key as BusinessProfileApplyResponse["profile"],
-      plan: resolved.plan,
-      changed,
-      summary: resolved.summary,
-    };
+    return { plan: resolved.plan, changed, summary: resolved.summary };
   }
 
   // ─── Configuration snapshots (Lane B A2 step c) ───────────────────────────
@@ -948,6 +1087,31 @@ export class PlatformAdminController {
   ) {
     // The audit row (with the report) is written by the service INSIDE the restore transaction.
     return this.snapshotAdmin.restoreNow(id, snapshotId, admin.sub);
+  }
+
+  // ─── Mobile app install links ─────────────────────────────────────────────
+
+  @Get("app-links")
+  @ApiOperation({ summary: "Get the global mobile app install links (Get the app page)" })
+  getAppLinks(): Promise<AppLinks> {
+    return this.platformConfig.getAppLinks();
+  }
+
+  @Put("app-links")
+  @ApiOperation({
+    summary: "Set the mobile app install links (string sets, empty or null clears, absent leaves)",
+  })
+  async updateAppLinks(
+    @Body() dto: AppLinksPatch,
+    @CurrentUser() admin: JwtPayload,
+  ): Promise<AppLinks> {
+    const previous = await this.platformConfig.getAppLinks();
+    const next = await this.platformConfig.setAppLinks(dto);
+    await this.svc.recordAdminAction(null, admin.sub, AdminAuditAction.APP_LINKS_UPDATED, {
+      previous,
+      next,
+    });
+    return next;
   }
 
   // ─── Platform AI Configuration ────────────────────────────────────────────

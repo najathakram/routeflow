@@ -1,4 +1,5 @@
 import { API_ERROR_CODES } from "@routeflow/types";
+import { READ_ONLY_SENTENCE } from "@routeflow/types/read-only-copy";
 import { parsePlanGate } from "./plan-gate";
 import { safeTextErrorCopy } from "./safe-text-error-copy";
 
@@ -17,7 +18,8 @@ export const KNOWN_SERVER_SENTENCES: Record<string, string> = {
 
 const CUSTOMER_CAP_COPY =
   "Your plan's customer limit has been reached. Upgrade your plan to add more customers.";
-const READ_ONLY_COPY = "Your workspace is read-only, so this action is unavailable.";
+// SA-776: the owner's sentence, verbatim (shared with mobile); the reason line needs the subscription read.
+const READ_ONLY_COPY = READ_ONLY_SENTENCE;
 const PLAN_COPY = "This isn't included in your current plan.";
 const GENERIC_COPY = "Something went wrong. Please try again.";
 const NETWORK_COPY = "We couldn't reach the server. Check your connection and try again.";

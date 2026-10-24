@@ -44,6 +44,9 @@ export const TEXT_CELL_FIELD_LABELS: Readonly<Record<string, string>> = {
   salutation: "Salutation",
   firstName: "First name",
   lastName: "Last name",
+  // Row 507: the shipment tracking text (order and invoice PATCH .../shipment)
+  shippingCarrier: "Carrier",
+  shippingTrackingNumber: "Tracking number",
 };
 
 /** Readable text for the 400 (and for an import row's skip reason). */

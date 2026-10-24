@@ -5,6 +5,7 @@ import { findPlanDefinition, normalizePlanKey } from "./plan-catalog.constants";
 import { toCents } from "@routeflow/pricing";
 import type { ProposedOverride } from "./price-override";
 import { resolvePlanPrice } from "./plan-price";
+import { resolvePlanVersionId } from "./plan-version-pin";
 
 export type PricingSource = "override" | "catalog";
 
@@ -89,6 +90,7 @@ export class PlatformPricingService {
         subscription: {
           select: {
             planKey: true,
+            planVersionId: true,
             priceOverrideMonthly: true,
             priceOverrideAnnual: true,
           },
@@ -101,7 +103,10 @@ export class PlatformPricingService {
 
     // Read the tenant's own PINNED version, never latest — grandfathered tenants
     // (older PlanVersion) must resolve against their own PlanDefinition rows.
-    const version = await this.planCatalog.getVersionForTenant(tenant.planVersionId);
+    // SA-815a: the ONE resolver (sub pin, else tenant pin, else published).
+    const version = await this.planCatalog.getVersionForTenant(
+      resolvePlanVersionId(tenant.subscription, tenant),
+    );
     const definition = findPlanDefinition(version.definitions, planKey);
     const planName = definition?.name ?? planKey;
 
@@ -152,7 +157,7 @@ export class PlatformPricingService {
     return {
       currency: pricing.currency,
       product_data: {
-        name: `RouteFlow ${pricing.planName} — ${interval === "year" ? "annual" : "monthly"}`,
+        name: `RouteFlow ${pricing.planName}`,
       },
       unit_amount: toCents(amount),
       recurring: { interval },

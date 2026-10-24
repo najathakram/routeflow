@@ -2,6 +2,8 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import type { ChangeRequest, ChangeRequestResolveAction } from "@/lib/change-requests";
 import { fetchPdfBlob } from "../fetch-pdf-blob";
+import { keptDraftInvoiceId, keptOrderId } from "../kept-draft-invoice";
+import { isDefinitiveSaleRefusal } from "@routeflow/types/sale-attempt";
 import type {
   ActiveOrderSummary,
   BatchShipRequest,
@@ -17,6 +19,9 @@ import type {
   OrderCancelBlockedReason,
 } from "@routeflow/types";
 import type { LocalErrorToastOption } from "@/lib/local-error-toast";
+import type { OverrideStampView, RestrictionAck } from "@routeflow/types";
+import { splitIdAck, type IdWithAck } from "@/lib/api/restriction-warning";
+import type { HandOverSoldBy } from "@/lib/handover-stamp";
 
 export type { ChangeRequest } from "@/lib/change-requests";
 
@@ -32,6 +37,8 @@ export type {
 export interface Order {
   id: string;
   orderNumber: string;
+  /** Row 372: the latest edit revision (GET /orders/:id); the edit save sends it back as `expectedRevisionNumber`. */
+  revisionNumber?: number;
   customerId: string;
   customer?: {
     id: string;
@@ -48,6 +55,14 @@ export interface Order {
   fulfillPath: "ROUTE" | "SHIP" | "PICKUP";
   /** Walk-in counter sale (PICKUP + counterSale). Never a POS-mode order: see `isPosOrder` (pos-orders.ts). */
   counterSale?: boolean | null;
+  /** Row 342, STAFF reads only (absent on a buyer read / older API): the register the order was handed over at. */
+  registerKey?: string | null;
+  /** Row 342, staff reads only: the cashier's display name the API built once; null = none stamped. */
+  handedOverBy?: string | null;
+  /** Row 342: the moment the hand-over moved the order to DELIVERED (the stamp line's time). */
+  deliveredAt?: string | null;
+  /** Row 342, staff reads only: the cashier relation (the API selects the username). */
+  soldBy?: HandOverSoldBy | null;
   urgent: boolean;
   subtotal: number;
   tax: number;
@@ -155,7 +170,9 @@ export interface OrderRevision {
   createdAt: string;
 }
 
-export interface OrderItem {
+/** Row 510: a STAFF read also carries the override stamp (and may carry the resolved name); a buyer read never does. */
+export interface OrderItem extends Partial<OverrideStampView> {
+  restrictionOverrideByName?: string | null;
   id: string;
   /** Null for unlisted (ad-hoc, non-catalog) lines — `name` carries the label instead. */
   productId: string | null;
@@ -329,7 +346,7 @@ export function useCreateOrder(options?: LocalErrorToastOption) {
       /** SA-484a: the B215 replay key, sent as the `Idempotency-Key` HEADER (never in the body),
        *  paired with `inlineReturn.returnKey` — one per save attempt, reused on its retries. */
       idempotencyKey?: string;
-    }
+    } & RestrictionAck // row 510: the resubmit after a RESTRICTION_WARNING (rides in ...dto)
   >({
     meta: options?.localErrorToast ? { localErrorToast: options.localErrorToast } : undefined,
     mutationFn: ({ idempotencyKey, ...dto }) =>
@@ -349,7 +366,7 @@ export function useCreateOrder(options?: LocalErrorToastOption) {
   });
 }
 
-export interface CreateSaleDto {
+export interface CreateSaleDto extends RestrictionAck {
   customerId: string;
   items: {
     productId: string;
@@ -394,11 +411,33 @@ export interface CreateSaleDto {
  */
 export function useCreateSale() {
   const qc = useQueryClient();
-  return useMutation<{ id: string; invoiceNumber?: string }, Error, CreateSaleDto>({
-    mutationFn: (dto) => apiClient.post("/orders/sell", dto).then((r) => r.data),
+  // Row 485: `idempotencyKey` travels as the Idempotency-Key HEADER (like the counter sale), never in the body.
+  return useMutation<
+    { id: string; invoiceNumber?: string },
+    Error,
+    CreateSaleDto & { idempotencyKey?: string }
+  >({
+    // Row 485: an UNKNOWN outcome (a 5xx, a dropped connection, a body naming a committed sale) is rendered by the
+    // page's lock panel alone; the global toast would contradict it. A definitive refusal still reaches the toast.
+    meta: { localErrorToast: (err: unknown) => !isDefinitiveSaleRefusal(err) },
+    mutationFn: ({ idempotencyKey, ...dto }) =>
+      apiClient
+        .post(
+          "/orders/sell",
+          dto,
+          idempotencyKey ? { headers: { "Idempotency-Key": idempotencyKey } } : undefined,
+        )
+        .then((r) => r.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["orders"] });
       qc.invalidateQueries({ queryKey: ["invoices"] });
+    },
+    // Row 466: the sale and its invoice exist even when the send step failed.
+    onError: (err) => {
+      if (keptDraftInvoiceId(err) || keptOrderId(err)) {
+        qc.invalidateQueries({ queryKey: ["orders"] });
+        qc.invalidateQueries({ queryKey: ["invoices"] });
+      }
     },
   });
 }
@@ -455,10 +494,14 @@ export function useCustomerPriceHistory(customerId: string | null | undefined) {
  */
 export function useUpdateOrderStatus(options?: LocalErrorToastOption) {
   const qc = useQueryClient();
-  return useMutation<Order, Error, { id: string; status: string; reason?: string }>({
+  return useMutation<
+    Order,
+    Error,
+    { id: string; status: string; reason?: string } & RestrictionAck
+  >({
     meta: options?.localErrorToast ? { localErrorToast: options.localErrorToast } : undefined,
-    mutationFn: ({ id, status, reason }) =>
-      apiClient.patch(`/orders/${id}/status`, { status, reason }).then((r) => r.data),
+    mutationFn: ({ id, status, reason, ...ack }) =>
+      apiClient.patch(`/orders/${id}/status`, { status, reason, ...ack }).then((r) => r.data),
     onSuccess: (_, { id }) => {
       qc.invalidateQueries({ queryKey: ["orders"] });
       qc.invalidateQueries({ queryKey: ["orders", id] });
@@ -516,9 +559,15 @@ export function useUpdateOrderItems(options?: LocalErrorToastOption) {
        *  `orderId` are DERIVED server-side from the order being edited, never sent here (see
        *  UpdateOrderItemsDto.inlineReturn). */
       inlineReturn?: InlineReturnLinesRequest;
-    }
+      /** Row 372: the `revisionNumber` the editor loaded; behind the server's latest it is 409 ORDER_REVISION_STALE. */
+      expectedRevisionNumber?: number;
+    } & RestrictionAck
   >({
-    meta: options?.localErrorToast ? { localErrorToast: options.localErrorToast } : undefined,
+    meta: {
+      // B1234: a delivered line's 409 LINE_ALREADY_DELIVERED is toasted here (mutation-error-toast).
+      lineDeliveredToast: true,
+      ...(options?.localErrorToast ? { localErrorToast: options.localErrorToast } : {}),
+    },
     mutationFn: ({
       id,
       items,
@@ -527,6 +576,8 @@ export function useUpdateOrderItems(options?: LocalErrorToastOption) {
       shippingFee,
       appliedCreditNotes,
       inlineReturn,
+      expectedRevisionNumber,
+      ...ack
     }) =>
       apiClient
         .patch<Order>(`/orders/${id}/items`, {
@@ -536,6 +587,8 @@ export function useUpdateOrderItems(options?: LocalErrorToastOption) {
           shippingFee,
           appliedCreditNotes,
           inlineReturn,
+          expectedRevisionNumber,
+          ...ack,
         })
         .then((r) => r.data),
     onSuccess: (data, variables) => {
@@ -561,9 +614,15 @@ export function useToggleUrgent() {
 
 export function useReopenOrder() {
   const qc = useQueryClient();
-  return useMutation<Order, Error, string>({
-    mutationFn: (id) => apiClient.post(`/orders/${id}/reopen`).then((r) => r.data),
-    onSuccess: (_, id) => {
+  return useMutation<Order, Error, IdWithAck>({
+    mutationFn: (v) => {
+      const { id, ack } = splitIdAck(v);
+      return (
+        ack ? apiClient.post(`/orders/${id}/reopen`, ack) : apiClient.post(`/orders/${id}/reopen`)
+      ).then((r) => r.data);
+    },
+    onSuccess: (_, v) => {
+      const { id } = splitIdAck(v);
       qc.invalidateQueries({ queryKey: ["orders"] });
       qc.invalidateQueries({ queryKey: ["orders", id] });
     },
@@ -627,11 +686,18 @@ export function useResolveChangeRequest() {
   return useMutation<
     ChangeRequest,
     Error,
-    { orderId: string; crId: string; action: ChangeRequestResolveAction; reason?: string }
+    // Row 510: an approval that would sell a restricted product answers 409 RESTRICTION_WARNING; "Sell anyway" re-sends
+    // the SAME request plus the ack (lineKey `cr:<id>`), so the ack rides the body or the dialog would reopen forever.
+    {
+      orderId: string;
+      crId: string;
+      action: ChangeRequestResolveAction;
+      reason?: string;
+    } & RestrictionAck
   >({
-    mutationFn: ({ orderId, crId, action, reason }) =>
+    mutationFn: ({ orderId, crId, action, reason, ...ack }) =>
       apiClient
-        .post(`/orders/${orderId}/change-requests/${crId}/resolve`, { action, reason })
+        .post(`/orders/${orderId}/change-requests/${crId}/resolve`, { action, reason, ...ack })
         .then((r) => r.data),
     onSettled: (_data, _err, { orderId }) => {
       qc.invalidateQueries({ queryKey: ["orders", orderId] });
@@ -651,10 +717,14 @@ export function usePatchOrderCommissionRate() {
 
 export function usePatchOrderFulfillPath(options?: LocalErrorToastOption) {
   const qc = useQueryClient();
-  return useMutation<Order, Error, { id: string; fulfillPath: "ROUTE" | "SHIP" | "PICKUP" }>({
+  return useMutation<
+    Order,
+    Error,
+    { id: string; fulfillPath: "ROUTE" | "SHIP" | "PICKUP" } & RestrictionAck
+  >({
     meta: options?.localErrorToast ? { localErrorToast: options.localErrorToast } : undefined,
-    mutationFn: ({ id, fulfillPath }) =>
-      apiClient.patch(`/orders/${id}/fulfill-path`, { fulfillPath }).then((r) => r.data),
+    mutationFn: ({ id, fulfillPath, ...ack }) =>
+      apiClient.patch(`/orders/${id}/fulfill-path`, { fulfillPath, ...ack }).then((r) => r.data),
     onSuccess: (_d, vars) => qc.invalidateQueries({ queryKey: ["orders", vars.id] }),
   });
 }

@@ -35,6 +35,11 @@ const REGISTRY: Record<string, Entry> = {
     kind: "exempt",
     reason: "manual invoice lines carry no order provenance and are never composed",
   },
+  "import/import-restriction-marker.ts::markImportedRestrictedLines": {
+    kind: "exempt",
+    reason:
+      "row 510: writes only the four restrictionOverride* stamp columns on a just-imported invoice line (an audit mark); no qty, price or composition column",
+  },
   "invoices/invoices.service.ts::createSplitInvoices": { kind: "invoice" },
   "invoices/invoices.service.ts::reconcileOrderDraftInvoiceLocked": { kind: "invoice" },
   // SA-760 Q-760-1: the DRAFT-partial price follow. Its lines come from the shared builder (planned via
@@ -64,10 +69,25 @@ const REGISTRY: Record<string, Entry> = {
     kind: "exempt",
     reason: "SA-763r: writes only OrderItem.deliveredQty, on lines with no delivery evidence",
   },
-  "orders/orders.service.ts::reopenOrder": { kind: "exempt", reason: "status only" },
-  "orders/orders.service.ts::recomputeLineCategoryTaxes": {
+  "orders/office-evidence-completion.ts::completeOfficeEvidencedLines": {
     kind: "exempt",
-    reason: "tax amount only",
+    reason:
+      "row 587: writes only OrderItem.deliveredQty, on office-evidenced lines at a DELIVERED write",
+  },
+  "orders/order-pd-quantities.ts::writeOfficeDeliveries": {
+    kind: "exempt",
+    reason:
+      "B692: writes only OrderItem.deliveredQty (recomputed from the evidence rows it inserts)",
+  },
+  "orders/orders.service.ts::reopenOrder": { kind: "exempt", reason: "status only" },
+  "orders/recompute-line-category-taxes.ts::recomputeLineCategoryTaxes": {
+    kind: "exempt",
+    reason: "tax amount, plus the rate trio stamped once on a NULL-trio line",
+  },
+  "orders/settle-split-free-units.ts::settleSplitFreeUnits": {
+    kind: "exempt",
+    reason:
+      "B297 row 355: writes only promoFreeUnits + the subtotal it implies; called from updateOrderItems / the at-stop change before their syncCompositions",
   },
   "orders/order-line-removal.ts::writeLineRemoval": {
     kind: "exempt",
@@ -134,6 +154,10 @@ const REGISTRY: Record<string, Entry> = {
   "returns/inline-returns.service.ts::captureInTx": { kind: "exempt", reason: "credit note items" },
   "routes/routes.service.ts::completeWithPayment": { kind: "exempt", reason: "deliveredQty only" },
   "routes/routes.service.ts::reopenStop": { kind: "exempt", reason: "deliveredQty/status only" },
+  "inventory/testing/order-stock-world.ts::buildOrderStockWorld": {
+    kind: "exempt",
+    reason: "DB-spec seed of stock-only lines (no recipe), never a production writer",
+  },
   "common/testing/copier-contract/copier-ast.ts::?": {
     kind: "exempt",
     reason: "a comment in the copier AST helper",

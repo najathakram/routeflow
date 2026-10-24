@@ -12,7 +12,6 @@ import { RolesGuard } from "./guards/roles.guard";
 import { GoogleOAuthService } from "./google-oauth.service";
 import { AppleOAuthService } from "./apple-oauth.service";
 import { PlatformGoogleAuthController } from "./platform-google-auth.controller";
-import { TenantGoogleOAuthService } from "../tenants/tenant-google-oauth.service";
 import { UsersModule } from "../users/users.module";
 import { EmailModule } from "../email/email.module";
 import { EntitlementsModule } from "../billing/entitlements.module";
@@ -47,18 +46,10 @@ import { StaffHandoffService } from "./handoff/staff-handoff.service";
     RolesGuard,
     GoogleOAuthService,
     AppleOAuthService,
-    TenantGoogleOAuthService,
     // #2653 in-app sign-in handoff (staff realm). HandoffCodeService is stateless and shared.
     HandoffCodeService,
     StaffHandoffService,
   ],
-  exports: [
-    AuthService,
-    JwtAuthGuard,
-    RolesGuard,
-    TenantGoogleOAuthService,
-    GoogleOAuthService,
-    AppleOAuthService,
-  ],
+  exports: [AuthService, JwtAuthGuard, RolesGuard, GoogleOAuthService, AppleOAuthService],
 })
 export class AuthModule {}

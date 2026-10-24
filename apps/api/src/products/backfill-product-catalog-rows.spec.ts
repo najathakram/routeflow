@@ -450,7 +450,10 @@ describe("backfillProductCatalogRows — planned counts over a mixed product set
   it("a protected (paying) non-test tenant is REFUSED even with a matching override", async () => {
     const prisma = mockPrisma();
     prisma.tenant.findUnique.mockResolvedValue(liveTenant());
-    prisma.tenantSubscription.findUnique.mockResolvedValue({ planKey: "GROWTH" });
+    prisma.tenantSubscription.findUnique.mockResolvedValue({
+      planKey: "GROWTH",
+      couponFull: false,
+    });
     const err = await backfillProductCatalogRows(prisma, {
       tenantSlug: "acme-live",
       apply: false,

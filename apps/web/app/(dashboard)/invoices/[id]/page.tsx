@@ -66,6 +66,8 @@ import { isPendingMirrorInvoice, pendingMirrorCopy } from "@/lib/invoice-pending
 import { useCounterSaleGate } from "@/lib/api/counter-sale";
 import { isStoreOnly } from "@/lib/counter-sale";
 import { canSendReminder } from "@/lib/invoice-reminder";
+import { canEmailAgain, invoiceSendStateLine, sendsAfterLabel } from "@/lib/invoice-send-state";
+import { EmailInvoiceAction } from "@/components/invoices/EmailInvoiceAction";
 import { useParams, useRouter } from "next/navigation";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { useUnapplyCreditNote } from "@/lib/api/credit-notes";
@@ -73,11 +75,14 @@ import { useCustomerAdvancePayments } from "@/lib/api/customers";
 import { fmt, fmtCalendarDate, fmtDate, isInternalEmail, todayIso } from "@/lib/formatting";
 import { getDaysForTerms, addDaysIso } from "@/lib/invoice-terms";
 import { remainingCapacity, resolveConfirmedAmounts } from "@routeflow/pricing";
+import { useInvoiceTaxSplit } from "@/lib/use-invoice-tax-split";
 import { useDuplicateInvoiceAction } from "@/lib/use-duplicate-invoice-action";
+import { RestrictionOverrideNote } from "@/components/RestrictionOverrideNote";
 import { invoiceLineQtyText } from "@/lib/invoice-line-unit";
 import { ComponentSubLines } from "@/components/ComponentSubLines";
 import type { LineComponentView } from "@routeflow/types";
-import { CHECK_TRANSITIONS } from "@routeflow/types";
+import { CHECK_TRANSITIONS, withRecordAnyway } from "@routeflow/types";
+import { unvoidAmendedPeriodNote, type UnvoidInvoiceResult } from "@routeflow/types";
 import { InvoiceTotalsSummary } from "./InvoiceTotalsSummary";
 import { InvoiceLineAmount } from "./InvoiceLineAmount";
 import { InvoiceLinePrice } from "./InvoiceLinePrice";
@@ -96,11 +101,36 @@ import { TenantLogo } from "@/components/TenantLogo";
 import { ShipmentCard } from "@/components/ShipmentCard";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { useTenant } from "@/components/tenant-provider";
+import { isAccountAdmin } from "@/lib/auth";
 import { useAuth } from "@/lib/auth-context";
+import { ReviewFlagNotice } from "@/components/ReviewFlagNotice";
+import { HandOverStamp } from "@/components/HandOverStamp";
+import { seesHandOverStamp } from "@/lib/handover-stamp";
+import { isPaidAtSale, termsAndConditionsToShow } from "@/lib/invoice-sale-terms";
+import { useTenantTimeZone } from "@/lib/tenant-timezone";
 import { OrderPreviewModal } from "../../_components/LinkedDocPreviewModal";
 import { printPdfBlob } from "@/lib/print-pdf-blob";
 import { dayClosedCopy } from "@/lib/day-closed-copy";
+import { toastDuplicatePaymentRef } from "@/lib/duplicate-payment-ref";
+import { unvoidRefusalCopy } from "@/lib/unvoid-refusal-copy";
 import { voidFailureDescription } from "@/lib/invoice-void-copy";
+import { isOpenInvoiceStatus } from "@/lib/open-invoice-status";
+import { ReadOnlyHint, WriteButton, useReadOnlyGate } from "@/lib/read-only-gate";
+import {
+  PAYMENT_PHOTO_LATER_COPY,
+  finishFoundPayment,
+  forgetPaymentProof,
+  paymentKeyRefusalCopy,
+  rememberPaymentProof,
+  paymentKeyScope,
+  usePaymentSubmitKey,
+} from "@/lib/payment-submit-key";
+import {
+  usePaymentStatusCheck,
+  type PaymentStatusCheck as PaymentStatusCheckState,
+} from "@/lib/use-payment-status-check";
+import { PaymentStatusCheck } from "@/components/PaymentStatusCheck";
+import { PAYMENT_STATUS_COPY } from "@routeflow/types/payment-submit-key";
 
 // ─── Credit-note relation on a payment row ─────────────────────────────────────
 // WP2 (invoices.service.ts findOne) includes `creditNote: {id, creditNoteNumber,
@@ -249,9 +279,13 @@ function WhatsNextBanner({
             <strong>Invoice has been sent.</strong> Record payment as soon as you receive it.
           </p>
         </div>
-        <Button size="sm" onClick={onRecordPayment} leftIcon={<CreditCard className="h-4 w-4" />}>
+        <WriteButton
+          size="sm"
+          onClick={onRecordPayment}
+          leftIcon={<CreditCard className="h-4 w-4" />}
+        >
           Record Payment
-        </Button>
+        </WriteButton>
       </div>
     );
   }
@@ -265,9 +299,13 @@ function WhatsNextBanner({
             <strong>Partial payment received.</strong> Follow up for the remaining balance.
           </p>
         </div>
-        <Button size="sm" onClick={onRecordPayment} leftIcon={<CreditCard className="h-4 w-4" />}>
+        <WriteButton
+          size="sm"
+          onClick={onRecordPayment}
+          leftIcon={<CreditCard className="h-4 w-4" />}
+        >
           Record Payment
-        </Button>
+        </WriteButton>
       </div>
     );
   }
@@ -281,7 +319,7 @@ function WhatsNextBanner({
             <strong>This invoice is overdue.</strong> Contact your customer for payment.
           </p>
         </div>
-        <Button
+        <WriteButton
           size="sm"
           variant="secondary"
           onClick={onRecordPayment}
@@ -289,7 +327,7 @@ function WhatsNextBanner({
           className="border-orange-300 text-orange-700 hover:bg-orange-100"
         >
           Record Payment
-        </Button>
+        </WriteButton>
       </div>
     );
   }
@@ -345,12 +383,15 @@ function RecordPaymentModal({
   onRecord,
   balanceDue,
   isPending,
+  statusCheck,
 }: {
   isOpen: boolean;
   onClose: () => void;
   onRecord: (data: PaymentFormState, file: File | null) => void;
   balanceDue: number;
   isPending: boolean;
+  /** SA-824: the unknown-outcome "Check payment status" state (Record is off while it is unknown). */
+  statusCheck: PaymentStatusCheckState;
 }) {
   const [form, setForm] = React.useState<PaymentFormState>({
     method: "ACH",
@@ -381,6 +422,7 @@ function RecordPaymentModal({
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (statusCheck.unknown) return; // SA-824: the status check comes before any new attempt
     const amt = parseFloat(form.amount);
     if (!form.amount || isNaN(amt) || amt <= 0) {
       setAmountError("Enter an amount greater than 0.");
@@ -401,13 +443,19 @@ function RecordPaymentModal({
           <Button variant="secondary" onClick={onClose} disabled={isPending}>
             Cancel
           </Button>
-          <Button type="submit" form="invoice-payment-form" loading={isPending}>
+          <Button
+            type="submit"
+            form="invoice-payment-form"
+            loading={isPending}
+            disabled={statusCheck.unknown}
+          >
             Record Payment
           </Button>
         </>
       }
     >
       <form id="invoice-payment-form" onSubmit={handleSubmit} noValidate className="space-y-4">
+        <PaymentStatusCheck status={statusCheck} />
         <div>
           <label className="mb-1.5 block text-sm font-medium text-navy/80">Payment Method</label>
           <select
@@ -889,6 +937,7 @@ function VoidConfirmModal({
   invoiceNumber: string;
   isPending: boolean;
 }) {
+  // F3/F4: a void is a write: a WriteButton, disabled up front (with the shared line) while read-only.
   return (
     <Modal
       open={isOpen}
@@ -900,9 +949,9 @@ function VoidConfirmModal({
           <Button variant="secondary" onClick={onClose} disabled={isPending}>
             Cancel
           </Button>
-          <Button variant="danger" onClick={onConfirm} loading={isPending}>
+          <WriteButton variant="danger" onClick={onConfirm} loading={isPending}>
             Void Invoice
-          </Button>
+          </WriteButton>
         </>
       }
     >
@@ -1379,6 +1428,7 @@ function DropdownMenu({
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function InvoiceDetailPage() {
+  const readOnlyGate = useReadOnlyGate();
   const params = useParams();
   const id = params.id as string;
   const router = useRouter();
@@ -1396,7 +1446,7 @@ export default function InvoiceDetailPage() {
   const voidInvoice = useVoidInvoice();
   const reopenInvoice = useReopenInvoice();
   const recordPayment = useRecordInvoicePayment();
-  const { duplicate: duplicateInvoice } = useDuplicateInvoiceAction();
+  const { duplicate: duplicateInvoice, dialog: duplicateDialog } = useDuplicateInvoiceAction();
   const writeOffInvoice = useWriteOffInvoice();
   const updatePayment = useUpdateInvoicePayment();
   const deletePayment = useDeleteInvoicePayment();
@@ -1410,12 +1460,42 @@ export default function InvoiceDetailPage() {
   const setCheckStatus = useSetCheckStatus();
   const unapplyCreditNote = useUnapplyCreditNote();
   const { user } = useAuth();
+  const stampZone = useTenantTimeZone(seesHandOverStamp(user?.role)); // row 342: the hand-over time
   // A store-only business is POS-forced: its order is handed over, never delivered (the draft's wording follows).
   const { capability: fulfilmentCapability } = useCounterSaleGate();
-  const mirrorCopy = pendingMirrorCopy(isStoreOnly(fulfilmentCapability));
+  const mirrorCopy = pendingMirrorCopy(
+    fulfilmentCapability == null ? null : isStoreOnly(fulfilmentCapability),
+  );
 
   const [isPaymentOpen, setIsPaymentOpen] = React.useState(false);
+  // SA-824: one Idempotency-Key per open, kept across a Cancel -> reopen while the outcome is unknown
+  const keyScope = paymentKeyScope.invoice(id);
+  const paymentKey = usePaymentSubmitKey(isPaymentOpen, keyScope);
   const [isAdvanceOpen, setIsAdvanceOpen] = React.useState(false);
+  // SA-824: an unknown outcome offers "Check payment status"; found closes like a 2xx, and attaches the
+  // selected proof photo to the found payment (the same upload the 2xx path runs).
+  const paymentStatus = usePaymentStatusCheck(
+    paymentKey,
+    async (payment) => {
+      const photo = await finishFoundPayment<File>(keyScope, payment, (paymentId, file) =>
+        uploadPaymentImage.mutateAsync({ paymentId, file }),
+      );
+      setIsPaymentOpen(false);
+      toast(
+        photo === "later"
+          ? { title: PAYMENT_PHOTO_LATER_COPY, variant: "info" }
+          : { title: PAYMENT_STATUS_COPY.recorded, variant: "success" },
+      );
+      if (photo === "failed") {
+        toast({
+          title: "Payment saved, image upload failed",
+          description: "You can attach it later from Payment History.",
+          variant: "error",
+        });
+      }
+    },
+    isPaymentOpen,
+  );
   // Payment row whose "Remove credit" was clicked — confirm before un-applying.
   const [removingCreditPayment, setRemovingCreditPayment] = React.useState<InvoicePayment | null>(
     null,
@@ -1458,6 +1538,8 @@ export default function InvoiceDetailPage() {
     () => new Map((invTrackedCategories ?? []).map((c) => [c.id, c])),
     [invTrackedCategories],
   );
+  // CQ-03 / row 398: the levy is its own named charge under Tax (one hook, one pricing helper, every staff screen).
+  const taxSplit = useInvoiceTaxSplit(invoice, !!invoice);
   const sectionedRows = React.useMemo(() => {
     const its = invoice?.items ?? [];
     const inline: typeof its = [];
@@ -1528,6 +1610,12 @@ export default function InvoiceDetailPage() {
     payments,
   );
   const status = invoice.status;
+  // CQ-26: a counter sale paid at the till has no terms or due date to show (display only; stored values untouched).
+  const showTerms = !isPaidAtSale(invoice);
+  // ...and the "Terms & Conditions" row that falls back to the same payment terms text ("Net 30")
+  const termsAndConditions = termsAndConditionsToShow(
+    invoice as Parameters<typeof termsAndConditionsToShow>[0],
+  );
 
   // Draft/Final invoice-PDF stage. Default: DRAFT while it's still the
   // pre-delivery proforma; FINAL once the order is delivered or the invoice is
@@ -1548,11 +1636,10 @@ export default function InvoiceDetailPage() {
   // the order and can't be edited or sent until the order is delivered. Edit the
   // order, not the invoice.
   const isPendingMirror = isPendingMirrorInvoice({ ...invoice, status });
+  const sendStateLine = invoiceSendStateLine(invoice.sendState); // #2088: "Emailed Oct 2 to x. Modified since."
 
-  const canRecordPayment =
-    status === "SENT" || status === "VIEWED" || status === "PARTIAL" || status === "OVERDUE";
-  const canWriteOff =
-    status === "SENT" || status === "VIEWED" || status === "PARTIAL" || status === "OVERDUE";
+  const canRecordPayment = isOpenInvoiceStatus(status);
+  const canWriteOff = isOpenInvoiceStatus(status);
   const canVoid = status !== "PAID" && status !== "VOID" && status !== "WRITTEN_OFF";
 
   // ── Action handlers ─────────────────────────────────────────────────────────
@@ -1597,6 +1684,15 @@ export default function InvoiceDetailPage() {
           const code = e?.response?.data?.code;
           const description = e?.response?.data?.message || e.message;
           if (code === "EMAIL_NOT_CONFIGURED") {
+            // Email settings are admin-only (Perms PR1): an operator is told who can fix it instead.
+            if (!isAccountAdmin(user)) {
+              toast({
+                title: "Email isn't set up yet",
+                description: "Ask an account admin to set up email.",
+                variant: "error",
+              });
+              return;
+            }
             toast({
               title: "Email isn't set up yet",
               description: "Opening Email settings so you can configure it…",
@@ -1758,7 +1854,9 @@ export default function InvoiceDetailPage() {
     );
   };
 
-  const handleRecordPayment = (data: PaymentFormState, file: File | null) => {
+  const handleRecordPayment = (data: PaymentFormState, file: File | null, recordAnyway = false) => {
+    if (paymentKey.hasUnknown()) return; // SA-824: the status check comes before any new attempt
+    rememberPaymentProof(keyScope, file); // so a status check that finds the payment can attach it
     recordPayment.mutate(
       {
         id: invoice.id,
@@ -1768,9 +1866,12 @@ export default function InvoiceDetailPage() {
         settledAt: data.settledAt || undefined,
         reference: data.reference.trim() || undefined,
         notes: data.notes.trim() || undefined,
+        submitKey: paymentKey,
+        ...(recordAnyway ? { recordAnyway: true } : {}),
       },
       {
         onSuccess: (updated) => {
+          forgetPaymentProof(keyScope);
           setIsPaymentOpen(false);
           toast({
             title: "Payment recorded",
@@ -1795,9 +1896,20 @@ export default function InvoiceDetailPage() {
           }
         },
         onError: (err: any) => {
+          // Row 498: a duplicate reference names the existing payment; staff may "Record anyway".
+          if (
+            toastDuplicatePaymentRef(err, toast, user?.role, () =>
+              handleRecordPayment(data, file, true),
+            )
+          )
+            return;
           toast({
             title: "Failed to record payment",
-            description: dayClosedCopy(err) ?? err?.response?.data?.message ?? "Please try again.",
+            description:
+              paymentKeyRefusalCopy(err) ??
+              dayClosedCopy(err) ??
+              err?.response?.data?.message ??
+              "Please try again.",
             variant: "error",
           });
         },
@@ -1812,26 +1924,31 @@ export default function InvoiceDetailPage() {
     });
   };
 
-  const handleSavePayment = (data: PaymentFormState) => {
+  const handleSavePayment = (data: PaymentFormState, recordAnyway = false) => {
     if (!editingPayment) return;
+    const body = {
+      invoiceId: invoice.id,
+      paymentId: editingPayment.id,
+      method: data.method,
+      amount: parseFloat(data.amount),
+      paidAt: data.paidAt || undefined,
+      // Explicit null so emptying the field clears the stored bank date.
+      settledAt: data.settledAt || null,
+      // W-663: an emptied field is sent as null so the server clears it (as settledAt); undefined kept the old value
+      reference: data.reference.trim() || null,
+      notes: data.notes.trim() || null,
+    };
     updatePayment.mutate(
-      {
-        invoiceId: invoice.id,
-        paymentId: editingPayment.id,
-        method: data.method,
-        amount: parseFloat(data.amount),
-        paidAt: data.paidAt || undefined,
-        // Explicit null so emptying the field clears the stored bank date.
-        settledAt: data.settledAt || null,
-        reference: data.reference.trim() || undefined,
-        notes: data.notes.trim() || undefined,
-      },
+      recordAnyway ? withRecordAnyway(body) : body, // W-718: the resend is the SAME body plus the flag
       {
         onSuccess: () => {
           setEditingPayment(null);
           toast({ title: "Payment updated", variant: "success" });
         },
         onError: (err: any) => {
+          // W-718: an edit onto a used reference names the existing payment; staff may "Record anyway".
+          if (toastDuplicatePaymentRef(err, toast, user?.role, () => handleSavePayment(data, true)))
+            return;
           toast({
             title: "Failed to update payment",
             description: dayClosedCopy(err) ?? err?.response?.data?.message ?? "Please try again.",
@@ -2007,14 +2124,21 @@ export default function InvoiceDetailPage() {
             <TenantInvoiceRevisionMarks
               revisedAt={invoice.revisedAt}
               overpaidBy={invoice.overpaidBy}
+              orderId={invoice.orderId}
             />
           </div>
           <p className="mt-1 text-sm text-navy/70">
             {invoice.customer?.businessName ?? "—"}
             {(invoice as any).orderNumber ? ` · from ${(invoice as any).orderNumber}` : ""} · issued{" "}
             {fmtCalendarDate(invoice.issueDate ?? invoice.createdAt)}
-            {invoice.dueDate ? ` · due ${fmtCalendarDate(invoice.dueDate)}` : ""}
+            {invoice.dueDate && showTerms ? ` · due ${fmtCalendarDate(invoice.dueDate)}` : ""}
           </p>
+          {/* Row 342: where and by whom the linked order was handed over (staff reads only) */}
+          {invoice.order ? (
+            <div className="mt-0.5">
+              <HandOverStamp order={invoice.order} role={user?.role} timeZone={stampZone} />
+            </div>
+          ) : null}
         </div>
 
         {/* Zoho-style action toolbar */}
@@ -2040,17 +2164,20 @@ export default function InvoiceDetailPage() {
             </Button>
           )}
 
-          {/* Send (DRAFT) / Send Reminder (SENT/VIEWED/OVERDUE) */}
-          {status === "DRAFT" && !isPendingMirror && (
-            <Button
-              size="sm"
-              variant="primary"
-              leftIcon={<Send className="h-3.5 w-3.5" />}
-              onClick={handleSend}
+          {/* #2088: Send (DRAFT) / Email again (SENT/VIEWED/OVERDUE/PARTIAL/PAID), with the tracked state in the
+              confirmation; a locked draft says why instead of hiding the action. Send Reminder stays separate. */}
+          {((status === "DRAFT" && !isPendingMirror) ||
+            canEmailAgain(status) ||
+            invoice.sendLocked) && (
+            <EmailInvoiceAction
+              sendState={invoice.sendState}
+              sendLocked={invoice.sendLocked}
+              lockedLabel={sendsAfterLabel(
+                fulfilmentCapability == null ? null : isStoreOnly(fulfilmentCapability),
+              )}
               loading={sendInvoiceEmail.isPending || sendInvoice.isPending}
-            >
-              Send
-            </Button>
+              onSend={handleSend}
+            />
           )}
           {canSendReminder({ status, balanceDue }) && (
             <Button
@@ -2141,7 +2268,22 @@ export default function InvoiceDetailPage() {
           )}
 
           {/* Record Payment dropdown */}
-          {canRecordPayment && (
+          {canRecordPayment && readOnlyGate.readOnly && (
+            <div>
+              <button
+                type="button"
+                disabled
+                aria-describedby={readOnlyGate.hintId}
+                data-testid="record-payment-trigger"
+                className="flex items-center gap-1.5 rounded-lg border border-surface-border bg-white px-3 py-1.5 text-sm font-medium text-navy shadow-card opacity-50"
+              >
+                <CreditCard className="h-3.5 w-3.5" />
+                Record Payment
+              </button>
+              <ReadOnlyHint />
+            </div>
+          )}
+          {canRecordPayment && !readOnlyGate.readOnly && (
             <DropdownMenu
               trigger={
                 <button
@@ -2154,14 +2296,29 @@ export default function InvoiceDetailPage() {
                 </button>
               }
               items={[
-                { label: "Record Payment", onClick: () => setIsPaymentOpen(true) },
+                {
+                  label: "Record Payment",
+                  onClick: () => setIsPaymentOpen(true),
+                  disabled: readOnlyGate.readOnly,
+                },
                 // B13: web had no way to apply a customer's advance-payment wallet balance —
                 // only mobile could. Same gate as Record Payment; the server also refuses a
                 // settled/dead/forgiven invoice (CREDIT_NOT_APPLICABLE) regardless.
                 ...(invoice.customerId
-                  ? [{ label: "Apply Advance", onClick: () => setIsAdvanceOpen(true) }]
+                  ? [
+                      {
+                        label: "Apply Advance",
+                        onClick: () => setIsAdvanceOpen(true),
+                        disabled: readOnlyGate.readOnly,
+                      },
+                    ]
                   : []),
-                { label: "Write Off", onClick: () => setIsWriteOffOpen(true), danger: true },
+                {
+                  label: "Write Off",
+                  onClick: () => setIsWriteOffOpen(true),
+                  danger: true,
+                  disabled: readOnlyGate.readOnly,
+                },
               ]}
             />
           )}
@@ -2217,12 +2374,18 @@ export default function InvoiceDetailPage() {
                 label: "Void Invoice",
                 onClick: () => setIsVoidOpen(true),
                 danger: true,
-                disabled: !canVoid,
+                disabled: !canVoid || readOnlyGate.readOnly,
               },
             ]}
           />
         </div>
       </div>
+
+      {sendStateLine && (
+        <p data-testid="invoice-send-state-line" className="text-xs font-medium text-navy/60">
+          {sendStateLine}
+        </p>
+      )}
 
       {/* Write-off reason banner */}
       {status === "WRITTEN_OFF" && invoice.writeOffReason && (
@@ -2234,6 +2397,9 @@ export default function InvoiceDetailPage() {
           </div>
         </div>
       )}
+
+      {/* Row 616: a Stripe refund/dispute flag written to the staff-only internal notes. */}
+      <ReviewFlagNotice notes={invoice.internalNotes} role={user?.role} />
 
       {/* What's Next guidance banner */}
       <WhatsNextBanner status={status} onRecordPayment={() => setIsPaymentOpen(true)} />
@@ -2313,7 +2479,7 @@ export default function InvoiceDetailPage() {
                   <span className="font-medium text-navy">Issue Date:</span>{" "}
                   {fmtCalendarDate(invoice.issueDate ?? invoice.createdAt)}
                 </p>
-                {invoice.dueDate && (
+                {invoice.dueDate && showTerms && (
                   <p className="text-sm text-navy/70">
                     <span className="font-medium text-navy">Due Date:</span>{" "}
                     <span className={cn(status === "OVERDUE" && "font-medium text-danger")}>
@@ -2323,7 +2489,7 @@ export default function InvoiceDetailPage() {
                 )}
                 {/* Structured "Net 30"-style label — distinct from the long-form
                     Terms & Conditions text below, which keeps its own line. */}
-                {invoice.paymentTermsLabel && (
+                {invoice.paymentTermsLabel && showTerms && (
                   <p className="text-sm text-navy/70">
                     <span className="font-medium text-navy">Terms:</span>{" "}
                     {invoice.paymentTermsLabel}
@@ -2336,10 +2502,10 @@ export default function InvoiceDetailPage() {
                     </span>
                   </p>
                 )}
-                {(invoice as any).terms && (
+                {termsAndConditions && (
                   <p className="text-sm text-navy/70">
                     <span className="font-medium text-navy">Terms &amp; Conditions:</span>{" "}
-                    {(invoice as any).terms}
+                    {termsAndConditions}
                   </p>
                 )}
                 {(invoice as any).orderNumber && (
@@ -2389,6 +2555,7 @@ export default function InvoiceDetailPage() {
                           <ComponentSubLines
                             components={(item as { components?: LineComponentView[] }).components}
                           />
+                          <RestrictionOverrideNote line={item} />
                         </td>
                         <td className="px-4 py-3 text-right">
                           <span
@@ -2435,7 +2602,8 @@ export default function InvoiceDetailPage() {
               <InvoiceTotalsSummary
                 subtotal={Number(invoice.subtotal)}
                 discount={discount}
-                taxAmount={Number(invoice.taxAmount ?? 0)}
+                taxAmount={taxSplit.tax}
+                chargeLines={taxSplit.charges}
                 shippingFee={shippingFee}
                 amountPaid={amountPaid}
                 creditApplied={creditApplied}
@@ -2653,6 +2821,7 @@ export default function InvoiceDetailPage() {
                                   label: "Mark deposited",
                                   onClick: () => handleSetCheckStatus(pmt.id, "DEPOSITED"),
                                   disabled:
+                                    readOnlyGate.readOnly ||
                                     !CHECK_TRANSITIONS[checkStatusForRow ?? "RECORDED"].includes(
                                       "DEPOSITED",
                                     ),
@@ -2661,6 +2830,7 @@ export default function InvoiceDetailPage() {
                                   label: "Mark cleared",
                                   onClick: () => handleSetCheckStatus(pmt.id, "CLEARED"),
                                   disabled:
+                                    readOnlyGate.readOnly ||
                                     !CHECK_TRANSITIONS[checkStatusForRow ?? "RECORDED"].includes(
                                       "CLEARED",
                                     ),
@@ -2670,6 +2840,7 @@ export default function InvoiceDetailPage() {
                                   onClick: () => setBouncingPayment(pmt),
                                   danger: true,
                                   disabled:
+                                    readOnlyGate.readOnly ||
                                     !CHECK_TRANSITIONS[checkStatusForRow ?? "RECORDED"].includes(
                                       "BOUNCED",
                                     ),
@@ -2686,7 +2857,7 @@ export default function InvoiceDetailPage() {
             )}
             {canRecordPayment && (
               <div className="mt-4">
-                <Button
+                <WriteButton
                   variant="secondary"
                   size="sm"
                   className="w-full"
@@ -2694,7 +2865,8 @@ export default function InvoiceDetailPage() {
                   onClick={() => setIsPaymentOpen(true)}
                 >
                   Record Payment
-                </Button>
+                </WriteButton>
+                <ReadOnlyHint />
               </div>
             )}
           </Card>
@@ -2745,6 +2917,7 @@ export default function InvoiceDetailPage() {
         onRecord={handleRecordPayment}
         balanceDue={balanceDue}
         isPending={recordPayment.isPending}
+        statusCheck={paymentStatus}
       />
 
       {isAdvanceOpen && invoice.customerId && (
@@ -2908,14 +3081,21 @@ export default function InvoiceDetailPage() {
               variant="primary"
               onClick={() => {
                 unvoid.mutate(invoice.id, {
-                  onSuccess: () => {
+                  onSuccess: (res: UnvoidInvoiceResult | undefined) => {
                     setIsUnvoidOpen(false);
-                    toast({ title: "Invoice unvoided — now in Draft", variant: "success" });
+                    // SA-839 §3: one more line when the void sat in an already-filed month.
+                    const note = unvoidAmendedPeriodNote(res?.amendedPeriod);
+                    toast({
+                      title: "Invoice unvoided — now in Draft",
+                      variant: "success",
+                      ...(note ? { description: note } : {}),
+                    });
                   },
                   onError: (e: any) =>
                     toast({
                       title: "Failed to unvoid",
-                      description: e?.response?.data?.message ?? "Please try again.",
+                      description:
+                        unvoidRefusalCopy(e) ?? e?.response?.data?.message ?? "Please try again.",
                       variant: "error",
                     }),
                 });
@@ -2957,6 +3137,7 @@ export default function InvoiceDetailPage() {
           orderId={(invoice as any).orderId}
         />
       )}
+      {duplicateDialog}
     </div>
   );
 }

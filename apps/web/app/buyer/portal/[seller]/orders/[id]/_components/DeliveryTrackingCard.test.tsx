@@ -77,7 +77,7 @@ describe("DeliveryTrackingCard (#2095)", () => {
   it("not yet scheduled (no tracking): says so, with no driver, window or live updates", () => {
     answer("CONFIRMED", null);
     renderCard();
-    expect(status()).toHaveTextContent("Not scheduled");
+    expect(screen.queryByTestId("tracking-status")).toBeNull(); // the heading says it (P30)
     expect(headline()).toHaveTextContent("Not scheduled yet");
     expect(fact("Driver")).toBeNull();
     expect(fact("Delivery window")).toBeNull();

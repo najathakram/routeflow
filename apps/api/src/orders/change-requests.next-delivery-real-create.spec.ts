@@ -56,6 +56,7 @@ describe("B673 — APPROVE_NEXT_DELIVERY of a door add, through the real create(
       { sendToCustomer: jest.fn(), sendToUser: jest.fn() } as never,
       { assertAuthorizedOrThrow: jest.fn().mockResolvedValue(undefined) } as never,
       { notify: jest.fn().mockResolvedValue([]), notifyEvent: jest.fn() } as never,
+      h.restrictions as never,
     );
 
     h.prisma.changeRequest.findFirst.mockResolvedValue(DOOR_ADD);

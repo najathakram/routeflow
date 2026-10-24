@@ -1,6 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import type { AnyPaymentMethod } from "../payment-methods";
+import { isDuplicatePaymentRef } from "@/lib/duplicate-payment-ref";
+import type { LocalErrorToastOption } from "@/lib/local-error-toast";
 
 export interface Transaction {
   id: string;
@@ -66,15 +68,35 @@ export function useTransaction(id: string) {
   });
 }
 
-export function useRecordPayment() {
+/**
+ * Record a payment against a bookkeeping transaction. A caller that toasts the failure itself (the Ledger report)
+ * passes `localErrorToast`; the invoice page keeps the global toast as its only one.
+ */
+export function useRecordPayment(options?: LocalErrorToastOption) {
   const qc = useQueryClient();
   return useMutation<
     Transaction,
     Error,
-    { id: string; amount: number; method: string; reference?: string; notes?: string }
+    {
+      id: string;
+      amount: number;
+      method: string;
+      reference?: string;
+      notes?: string;
+      /** Row 498: the staff "Record anyway" resend of a payment refused 409 DUPLICATE_PAYMENT_REF. */
+      recordAnyway?: boolean;
+    }
   >({
     mutationFn: ({ id, ...data }) =>
       apiClient.post(`/bookkeeping/transactions/${id}/payments`, data).then((r) => r.data),
+    // Row 498: both callers answer a duplicate-reference refusal themselves (a "Record anyway" toast), so the global
+    // toast stays quiet for it, besides whatever the caller already asked to handle locally.
+    meta: {
+      localErrorToast: (err: unknown) => {
+        const own = options?.localErrorToast;
+        return isDuplicatePaymentRef(err) || (typeof own === "function" ? own(err) : own === true);
+      },
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["bookkeeping"] });
     },

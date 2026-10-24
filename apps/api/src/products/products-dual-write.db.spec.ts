@@ -145,7 +145,9 @@ describeDb("#2728 M1 catalog dual write — real Postgres", () => {
         unitsPerBox: 1,
       } as any),
     );
-    await inTenant(tenantId, () => service.update(product.id, { barcode: "222" } as any));
+    await inTenant(tenantId, () =>
+      service.update(product.id, { barcode: "222" } as any, { packPrecondition: "internal" }),
+    );
     const rows = await prisma.productBarcode.findMany({
       where: { tenantId, productId: product.id },
     });
@@ -215,7 +217,9 @@ describeDb("#2728 M1 catalog dual write — real Postgres", () => {
       service.create({ name: "B", unit: "each", pricePerUnit: "1.00", barcode: "BBB222" } as any),
     );
     await expect(
-      inTenant(tenantId, () => service.update(b.id, { barcode: "AAA111" } as any)),
+      inTenant(tenantId, () =>
+        service.update(b.id, { barcode: "AAA111" } as any, { packPrecondition: "internal" }),
+      ),
     ).rejects.toMatchObject({ getResponse: expect.any(Function) });
     const freshB = await prisma.product.findUniqueOrThrow({ where: { id: b.id } });
     expect(freshB.barcode).toBe("BBB222");

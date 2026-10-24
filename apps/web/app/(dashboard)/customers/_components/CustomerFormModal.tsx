@@ -21,6 +21,7 @@ import { safeTextErrorCopy } from "@/lib/safe-text-error-copy";
 import { useSalesAgents } from "@/lib/api/sales-agents";
 import { AgentFormModal } from "../../sales-agents/_components/AgentFormModal";
 import { clearableField } from "@/lib/contact-person-payload";
+import { creditLimitForSubmit, isCreditLimitInput } from "@/lib/customer-credit-limit";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -44,7 +45,10 @@ const customerSchema = z
     email: z.string().email("Enter a valid email").optional().or(z.literal("")),
     // Account
     currency: z.string().optional(),
-    creditLimit: z.string().optional().or(z.literal("")),
+    creditLimit: z
+      .string()
+      .optional()
+      .refine(isCreditLimitInput, "Enter an amount like 500 or 500.50"),
     taxId: z.string().optional().or(z.literal("")),
     isTaxExempt: z.boolean().optional(),
     notes: z.string().optional(),
@@ -111,7 +115,7 @@ export interface CustomerFormModalProps {
     lastName?: string;
     taxId?: string;
     isTaxExempt?: boolean;
-    creditLimit?: number;
+    creditLimit?: number | string | null;
     currency?: string;
     /** ROUTE (default), SHIP or PICKUP — this customer's own fulfillment default. */
     fulfillPath?: string;
@@ -173,7 +177,8 @@ function buildDefaultValues(
     // the stored sentinel — the update payload sends "" which the API clears to null.)
     email: [initialData.email, initialData.user?.email].find((e) => e && !isInternalEmail(e)) ?? "",
     currency: initialData.currency ?? "USD",
-    creditLimit: initialData.creditLimit ? String(initialData.creditLimit) : "",
+    // `!= null`, not truthiness: a stored $0 limit is a real limit and must show as 0 (B1018).
+    creditLimit: initialData.creditLimit != null ? String(initialData.creditLimit) : "",
     taxId: initialData.taxId ?? "",
     isTaxExempt: initialData.isTaxExempt ?? false,
     notes: initialData.notes ?? "",
@@ -326,7 +331,7 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
           lastName: data.lastName || undefined,
           taxId: data.taxId || undefined,
           isTaxExempt: data.isTaxExempt || false,
-          creditLimit: data.creditLimit ? parseFloat(data.creditLimit) : undefined,
+          creditLimit: creditLimitForSubmit(data.creditLimit, "create", false),
           currency: data.currency || "USD",
           fulfillPath: payloadFulfillPath(data.fulfillPath, staffFulfilment.pickForm),
           notes: data.notes,
@@ -365,8 +370,11 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
           email: data.email ?? "",
           businessName: resolvedBusinessName,
           contactName: resolvedContactName,
-          phone: data.phone || undefined,
-          mobile: data.mobile || undefined,
+          // B1033: an emptied optional field is an explicit null (the API stores null); `|| undefined`
+          // made it a silent no-op and the old value stayed. Only a value the form actually loaded can be
+          // cleared — an already-empty field is left out, so an edit can never wipe a column it never saw.
+          phone: clearableField(data.phone, initialData.phone),
+          mobile: clearableField(data.mobile, initialData.mobile),
           customerType: data.customerType,
           displayName: resolvedDisplayName,
           // #3206 follow-up: an emptied name field the form loaded is an explicit null (cleared); one
@@ -374,9 +382,13 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
           salutation: clearableField(data.salutation, initialData.salutation),
           firstName: clearableField(data.firstName, initialData.firstName),
           lastName: clearableField(data.lastName, initialData.lastName),
-          taxId: data.taxId || undefined,
+          taxId: clearableField(data.taxId, initialData.taxId),
           isTaxExempt: data.isTaxExempt || false,
-          creditLimit: data.creditLimit ? parseFloat(data.creditLimit) : undefined,
+          creditLimit: creditLimitForSubmit(
+            data.creditLimit,
+            "update",
+            initialData.creditLimit != null,
+          ),
           currency: data.currency || "USD",
           fulfillPath: payloadFulfillPath(data.fulfillPath, staffFulfilment.pickForm),
           notes: data.notes,
@@ -594,6 +606,7 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
                 label="Credit Limit (optional)"
                 type="number"
                 placeholder="0.00"
+                error={errors.creditLimit?.message}
                 register={register("creditLimit")}
               />
             </div>

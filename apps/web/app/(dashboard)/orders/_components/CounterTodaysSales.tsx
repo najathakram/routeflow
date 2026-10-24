@@ -5,42 +5,41 @@ import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { cashierNameOf } from "@routeflow/pricing";
+import { cashierNameOf, roundMoney } from "@routeflow/pricing";
 import { Button, Modal, cn } from "@routeflow/ui/web";
 import { apiClient } from "@/lib/api-client";
 import { useOrder } from "@/lib/api/orders";
-import type { TodaysSaleMethod, TodaysSaleRow, TodaysSalesSummary } from "@routeflow/types";
+import type { TodaysSaleRow, TodaysSalesSummary } from "@routeflow/types";
 import {
   COUNTER_SALE_TODAY_KEY,
   useCounterSaleToday,
   useCounterSaleWeek,
 } from "@/lib/api/counter-sale-today";
 import { lastDays, sumWeek, weekCsv } from "@/lib/counter-week";
+import { itemNamesLine } from "@/lib/counter-item-names";
 import { useTenant } from "@/components/tenant-provider";
 import { useOptionalAuth } from "@/lib/auth-context";
 import { guardCounterLeave } from "@/lib/counter-cart-signal";
 import {
   formatReceiptMoney as money,
-  formatSaleTime,
+  formatSaleDayTime,
   receiptCustomerName,
   receiptModelFromOrder,
   type ReceiptBusinessProfile,
 } from "@/lib/counter-receipt";
 import { CounterDayClose } from "./CounterDayClose";
+import { HandOverRows, METHOD_LABEL, handOverFigure } from "./HandOverRows";
 import { receiptEmailPrefill } from "@/lib/email-receipt";
 import { CounterReceiptView } from "./CounterReceiptView";
 import { CounterReturnAction } from "./CounterReturnAction";
 import { EmailReceiptButton, EmailReceiptRow } from "./EmailReceipt";
 import { useEmailReceipt } from "./useEmailReceipt";
-import { CounterVoidSaleAction, CounterVoidSaleDialog } from "./CounterVoidSaleDialog";
+import {
+  CounterVoidSaleAction,
+  CounterVoidSaleDialog,
+  TodaysSalesReadOnlyLine,
+} from "./CounterVoidSaleDialog";
 
-const METHOD_LABEL: Record<TodaysSaleMethod, string> = {
-  CASH: "Cash",
-  CARD: "Card",
-  CHECK: "Check",
-  OTHER: "Other",
-  STORE_CREDIT: "Store credit",
-};
 const PAYMENT_LABEL: Record<TodaysSaleRow["paymentState"], string> = {
   PAID: "Paid",
   PARTLY_PAID: "Partly paid",
@@ -60,22 +59,73 @@ const timeOf = (iso: string, timeZone: string) =>
     new Date(iso),
   );
 
-function Stat({ label, value, testId }: { label: string; value: string; testId?: string }) {
+function Stat({
+  label,
+  value,
+  testId,
+  note,
+}: {
+  label: string;
+  value: string;
+  testId?: string;
+  /** a hand-overs line: says the figure is already inside Money in and the cash expected */
+  note?: boolean;
+}) {
   return (
-    <div className="flex justify-between gap-2" data-testid={testId}>
+    <div className="flex flex-wrap justify-between gap-x-2" data-testid={testId}>
       <dt>{label}</dt>
       <dd className="tabular-nums">{value}</dd>
+      {note ? (
+        <dd className="basis-full text-xs text-navy/60">
+          These are already counted in money in and cash expected.
+        </dd>
+      ) : null}
     </div>
   );
 }
 
-/** Server numbers only: nothing here adds, subtracts or derives a figure. */
+const SHOW_ALL_KEY = "rf:counter:summary:showAll";
+const readShowAll = (): boolean => {
+  try {
+    return window.localStorage.getItem(SHOW_ALL_KEY) === "1";
+  } catch {
+    return false;
+  }
+};
+const writeShowAll = (on: boolean) => {
+  try {
+    window.localStorage.setItem(SHOW_ALL_KEY, on ? "1" : "0");
+  } catch {
+    /* storage unavailable: the choice just is not remembered */
+  }
+};
+
+/** One summary figure. `amount` is the number the zero test reads; `always` rows show even at $0.00. */
+interface SummaryRow {
+  key: string;
+  label: string;
+  amount: number;
+  value: string;
+  testId: string;
+  always?: boolean;
+  /** a row that is not an amount (hand-overs): shown while it has any count, even at $0.00 */
+  keep?: boolean;
+  note?: boolean;
+}
+
+/**
+ * Server numbers only: nothing here adds, subtracts or derives a figure. With `collapsible` (the Today view) it leads with
+ * the header, the three anchor rows (Money in, On account, Cash expected: even at $0.00) and every other row that is non-zero
+ * to the cent; a "Show all figures" disclosure reveals only the $0.00 rows. The week view lists every row, unchanged.
+ */
 function Summary({
   s,
   label = "Today's summary",
   testId = "today-summary",
   prefix = "today",
   cashExpectedSuffix = "",
+  handOverNote = true,
+  collapsible = false,
 }: {
   s: TodaysSalesSummary;
   /** the region's accessible name */
@@ -85,12 +135,82 @@ function Summary({
   prefix?: string;
   /** appended to the cash-expected label (the week total says it is a sum of the days) */
   cashExpectedSuffix?: string;
+  /** the "already counted" note under the hand-overs line (the per-day week blocks leave it to the total) */
+  handOverNote?: boolean;
+  /** the Today view: every non-zero row + the anchors; a remembered "Show all figures" reveals the $0.00 rows */
+  collapsible?: boolean;
 }) {
+  const [showAll, setShowAll] = React.useState(false);
+  React.useEffect(() => setShowAll(readShowAll()), []);
   const r = s.refunds;
   // SA-740r2: a window can hold refunds with a recorded method AND refunds without one (the tender is optional on STANDARD
   // refunds until the mobile minimum moves): then the breakdown shows and the labels say which figure lacks a method. A
   // comparison only; no figure is derived here.
   const someTenderRecorded = !r.tenderKnown && (r.cash > 0 || r.card > 0 || r.check > 0);
+  const ho = s.handOvers ?? { count: 0, total: 0 };
+  const row = (
+    key: string,
+    label: string,
+    amount: number,
+    extra: Partial<SummaryRow> = {},
+  ): SummaryRow => ({
+    key,
+    label,
+    amount,
+    value: money(amount),
+    testId: `${prefix}-${key}`,
+    ...extra,
+  });
+  const rows: SummaryRow[] = [
+    row("in-cash", "Cash in", s.moneyIn.cash),
+    row("in-card", "Card in", s.moneyIn.card),
+    row("in-check", "Check in", s.moneyIn.check),
+    row("in-other", "Other in", s.moneyIn.other),
+    row("in-total", "Money in", s.moneyIn.total, { always: true }),
+    row("hand-overs", "Pickup hand-overs", ho.total, {
+      value: handOverFigure(ho),
+      keep: ho.count > 0,
+      note: handOverNote && ho.count > 0,
+    }),
+    row("store-credit-used", "Store credit used", s.storeCreditUsed),
+    row("on-account", "On account", s.onAccount, { always: true }),
+    row(
+      "refunds",
+      r.tenderKnown
+        ? "Refunds"
+        : someTenderRecorded
+          ? "Refunds (some without a recorded method)"
+          : "Refunds (method not recorded)",
+      r.total,
+    ),
+    ...(r.tenderKnown || someTenderRecorded
+      ? [
+          row("refunds-cash", "Cash refunds", r.cash),
+          row("refunds-card", "Card refunds", r.card),
+          row("refunds-check", "Check refunds", r.check),
+          row("refunds-other", "Other refunds", r.other),
+        ]
+      : []),
+    row("store-credit-issued", "Store credit issued", s.storeCreditIssued.amount),
+    row("net-collected", "Net collected", s.netCollected),
+    row(
+      "cash-expected",
+      `${
+        r.tenderKnown
+          ? "Cash expected in drawer"
+          : someTenderRecorded
+            ? "Cash expected, before refunds with no method recorded"
+            : "Cash expected, before refunds"
+      }${cashExpectedSuffix}`,
+      s.cashExpectedInDrawer,
+      { always: true },
+    ),
+  ];
+  // The week view lists every row as before. The Today view always shows the anchor rows and every row that is non-zero to
+  // the cent (a refund or a card takings never hides); "Show all figures" reveals only the $0.00 rows.
+  const isZero = (x: SummaryRow) => !x.always && !x.keep && roundMoney(x.amount) === 0;
+  const zeros = collapsible ? rows.filter(isZero) : [];
+  const shown = collapsible ? rows.filter((x) => !isZero(x) || showAll) : rows;
   return (
     <section
       aria-label={label}
@@ -102,58 +222,23 @@ function Summary({
         <span className="tabular-nums">{money(s.sales.total)}</span>
       </p>
       <dl className="mt-2 space-y-1">
-        <Stat label="Cash in" value={money(s.moneyIn.cash)} testId={`${prefix}-in-cash`} />
-        <Stat label="Card in" value={money(s.moneyIn.card)} testId={`${prefix}-in-card`} />
-        <Stat label="Check in" value={money(s.moneyIn.check)} testId={`${prefix}-in-check`} />
-        <Stat label="Other in" value={money(s.moneyIn.other)} testId={`${prefix}-in-other`} />
-        <Stat label="Money in" value={money(s.moneyIn.total)} testId={`${prefix}-in-total`} />
-        <Stat
-          label="Store credit used"
-          value={money(s.storeCreditUsed)}
-          testId={`${prefix}-store-credit-used`}
-        />
-        <Stat label="On account" value={money(s.onAccount)} testId={`${prefix}-on-account`} />
-        <Stat
-          label={
-            r.tenderKnown
-              ? "Refunds"
-              : someTenderRecorded
-                ? "Refunds (some without a recorded method)"
-                : "Refunds (method not recorded)"
-          }
-          value={money(r.total)}
-          testId={`${prefix}-refunds`}
-        />
-        {r.tenderKnown || someTenderRecorded ? (
-          <>
-            <Stat label="Cash refunds" value={money(r.cash)} testId={`${prefix}-refunds-cash`} />
-            <Stat label="Card refunds" value={money(r.card)} testId={`${prefix}-refunds-card`} />
-            <Stat label="Check refunds" value={money(r.check)} testId={`${prefix}-refunds-check`} />
-            <Stat label="Other refunds" value={money(r.other)} testId={`${prefix}-refunds-other`} />
-          </>
-        ) : null}
-        <Stat
-          label="Store credit issued"
-          value={money(s.storeCreditIssued.amount)}
-          testId={`${prefix}-store-credit-issued`}
-        />
-        <Stat
-          label="Net collected"
-          value={money(s.netCollected)}
-          testId={`${prefix}-net-collected`}
-        />
-        <Stat
-          label={`${
-            r.tenderKnown
-              ? "Cash expected in drawer"
-              : someTenderRecorded
-                ? "Cash expected, before refunds with no method recorded"
-                : "Cash expected, before refunds"
-          }${cashExpectedSuffix}`}
-          value={money(s.cashExpectedInDrawer)}
-          testId={`${prefix}-cash-expected`}
-        />
+        {shown.map((x) => (
+          <Stat key={x.key} label={x.label} value={x.value} testId={x.testId} note={x.note} />
+        ))}
       </dl>
+      {collapsible && zeros.length > 0 ? (
+        <button
+          type="button"
+          className="mt-2 min-h-11 text-sm font-medium text-navy underline"
+          aria-expanded={showAll}
+          onClick={() => {
+            writeShowAll(!showAll);
+            setShowAll(!showAll);
+          }}
+        >
+          {showAll ? "Show fewer figures" : "Show all figures"}
+        </button>
+      ) : null}
     </section>
   );
 }
@@ -198,6 +283,10 @@ function Reprint({
             balanceDue: row.balanceDue,
             methods: row.methods,
             createdAt: row.createdAt,
+            // B1262 / SA-838 + SA-838a: the server's tender split and what the sale's own returns did (absent on an older server)
+            tenderPaid: row.tenderPaid,
+            tenderMethods: row.tenderMethods,
+            returnLines: row.returnLines,
             cashTendered: row.cashTendered,
             change: row.change,
             customerName: receiptCustomerName({
@@ -205,6 +294,7 @@ function Reprint({
               isWalkIn: row.isWalkIn,
             }),
             taxRatePercent: row.taxRatePercent,
+            charges: row.charges,
             timezone,
           },
         })
@@ -226,7 +316,7 @@ function Reprint({
           model={model}
           logoUrl={branding?.logoUrl ?? null}
           reprintedBy={reprintedBy}
-          reprintLabel={`Reprint · sold ${formatSaleTime(row.createdAt, timezone)}`}
+          reprintLabel={`Reprint · Sold ${formatSaleDayTime(row.createdAt, timezone)}`}
         />
       ) : isError ? (
         <div role="alert" className="space-y-2 text-sm">
@@ -327,6 +417,7 @@ function WeekReport({ today }: { today: string }) {
             label={`${dayLabel(r.day)} summary`}
             testId={`week-day-${r.day}`}
             prefix={`week-day-${r.day}`}
+            handOverNote={false}
           />
         </div>
       ))}
@@ -360,6 +451,7 @@ function SaleRow({
   }, [focusReprint, onFocused]);
   const who = row.isWalkIn ? "Walk-in" : (row.customerName ?? "Customer");
   const methods = row.methods.map((m) => METHOD_LABEL[m.method]).join(" + ");
+  const itemNames = itemNamesLine(row.items, row.itemCount);
   const returnLabel = row.voided ? null : RETURN_LABEL[row.returned.state];
   const router = useRouter();
   return (
@@ -379,6 +471,11 @@ function SaleRow({
           <span data-testid="today-row-cashier"> · Cashier: {row.cashierName}</span>
         ) : null}
       </p>
+      {itemNames ? (
+        <p data-testid="today-row-items" className="truncate text-xs text-navy/70">
+          {itemNames}
+        </p>
+      ) : null}
       <div className="flex flex-wrap gap-1">
         {row.voided ? (
           <span className={cn(BADGE, "bg-red-100 text-red-700")}>Voided</span>
@@ -424,9 +521,7 @@ export function CounterTodaysSales() {
   const [open, setOpen] = React.useState(false);
   const [reprint, setReprint] = React.useState<TodaysSaleRow | null>(null);
   // SA-762r: the sale being voided. The dialog sits here (not on the row) so it outlives the row turning Voided.
-  const [voidRow, setVoidRow] = React.useState<{ orderId: string; orderNumber: string } | null>(
-    null,
-  );
+  const [voidRow, setVoidRow] = React.useState<TodaysSaleRow | null>(null);
   // "today" = the live list; "week" = the last-7-days report
   const [view, setView] = React.useState<"today" | "week">("today");
   // the row whose Reprint button gets focus back after "Back to sales"
@@ -484,6 +579,8 @@ export function CounterTodaysSales() {
           (reprint || view === "week") && "print:[&>div:first-child]:hidden",
         )}
       >
+        {/* CQ-21: the list and week sheets print with real page margins (the receipt view sets its own 80 mm page) */}
+        {reprint ? null : <style>{`@media print { @page { margin: 10mm; } }`}</style>}
         {reprint ? (
           <Reprint
             row={reprint}
@@ -527,7 +624,15 @@ export function CounterTodaysSales() {
             </div>
             {view === "week" ? null : <CounterDayClose />}
             {view === "week" && tenantDay ? <WeekReport today={tenantDay} /> : null}
-            {view === "week" ? null : summary ? <Summary s={summary} /> : null}
+            {view === "week" ? null : summary ? <Summary s={summary} collapsible /> : null}
+            {view === "week" || !summary ? null : (
+              <HandOverRows
+                rows={q.data?.pages[0]?.handOverRows}
+                summary={summary.handOvers ?? { count: 0, total: 0 }}
+                timeOf={(iso) => timeOf(iso, timezone)}
+              />
+            )}
+            {view === "week" ? null : <TodaysSalesReadOnlyLine />}
             {view === "week" ? null : rows.length === 0 ? (
               <p className="py-6 text-center text-sm text-navy/70">No sales yet today</p>
             ) : (
@@ -540,7 +645,7 @@ export function CounterTodaysSales() {
                     focusReprint={refocusId === r.orderId}
                     onFocused={clearRefocus}
                     onReprint={() => setReprint(r)}
-                    onVoid={() => setVoidRow({ orderId: r.orderId, orderNumber: r.orderNumber })}
+                    onVoid={() => setVoidRow(r)}
                     onDone={refetchList}
                   />
                 ))}
@@ -564,6 +669,10 @@ export function CounterTodaysSales() {
           open
           orderId={voidRow.orderId}
           orderNumber={voidRow.orderNumber}
+          total={voidRow.total}
+          methodsText={voidRow.methods.map((m) => METHOD_LABEL[m.method]).join(" + ")}
+          items={voidRow.items}
+          itemCount={voidRow.itemCount}
           onClose={() => setVoidRow(null)}
           onVoided={refetchList}
         />

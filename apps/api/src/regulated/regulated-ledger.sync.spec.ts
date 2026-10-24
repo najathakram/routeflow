@@ -310,7 +310,10 @@ describe("RegulatedLedgerService.reverseInvoiceEntries nets per category (B297 P
     const db = {
       regulatedSalesLedger: { findMany: jest.fn().mockResolvedValue(rows), createMany },
     };
-    await new RegulatedLedgerService({} as any).reverseInvoiceEntries({ invoiceId: "inv-1", db });
+    await new RegulatedLedgerService({} as any)["reverseInvoiceEntries"]({
+      invoiceId: "inv-1",
+      db,
+    });
     const written = createMany.mock.calls.flatMap((c) => c[0].data as any[]);
     expect(written.map((r) => [r.entryType, r.trackedCategoryId, r.qty])).toEqual([
       ["REVERSAL", "cat-2", -12],
@@ -351,7 +354,10 @@ describe("void metadata after a re-file (B297 PR4 review MED-1)", () => {
         createMany,
       },
     };
-    await new RegulatedLedgerService({} as any).reverseInvoiceEntries({ invoiceId: "inv-1", db });
+    await new RegulatedLedgerService({} as any)["reverseInvoiceEntries"]({
+      invoiceId: "inv-1",
+      db,
+    });
     const written = createMany.mock.calls.flatMap((c) => c[0].data as any[]);
     expect(written.map((r) => [r.entryType, r.trackedSubcategoryId, r.qty])).toEqual([
       ["REVERSAL", "sub-b", -12],
@@ -380,7 +386,10 @@ describe("void metadata after a re-file (B297 PR4 review MED-1)", () => {
         createMany,
       },
     };
-    await new RegulatedLedgerService({} as any).reverseInvoiceEntries({ invoiceId: "inv-1", db });
+    await new RegulatedLedgerService({} as any)["reverseInvoiceEntries"]({
+      invoiceId: "inv-1",
+      db,
+    });
     const written = createMany.mock.calls.flatMap((c) => c[0].data as any[]);
     expect(written.map((r) => [r.entryType, r.orderItemId, r.qty])).toEqual([
       ["REVERSAL", "oi-9", -12],

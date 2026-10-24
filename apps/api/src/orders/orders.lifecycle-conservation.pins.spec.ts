@@ -251,7 +251,7 @@ describe("OrdersService — F07 lifecycle-conservation pins (green pre-fix)", ()
           provide: RegulatedLedgerService,
           useValue: {
             reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined),
-            syncInvoiceEntries: jest.fn(),
+            settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
           },
         },
       ],

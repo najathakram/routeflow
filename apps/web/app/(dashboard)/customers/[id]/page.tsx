@@ -61,6 +61,9 @@ import {
   Legend,
 } from "recharts";
 import { usePageTitle } from "@/lib/page-title-context";
+import { useCustomerPriceLayer } from "@/lib/api/useCustomerPriceLayer";
+import { PriceLayerNotice } from "@/components/PriceLayerNotice";
+import { ReviewFlagNotice } from "@/components/ReviewFlagNotice";
 import { useAuth } from "@/lib/auth-context";
 import { useApprovePortalRequest, useDeclinePortalRequest } from "@/lib/api/portal-approvals";
 import { CustomerFormModal } from "../_components/CustomerFormModal";
@@ -70,6 +73,7 @@ import { statementMoney } from "@/lib/customer-statement-display";
 import {
   isSpecialTier,
   getTierPrice,
+  customerLinePrice,
   computeMarginFraction,
   classifyMargin,
 } from "@routeflow/pricing";
@@ -132,6 +136,7 @@ import { useUndo } from "@/lib/undo";
 import { useProduct } from "@/lib/api/products";
 import { displayProductName } from "@/lib/product-display";
 import { CustomerPriceProductSearch } from "./customer-price-product-search";
+import { UnitPricesTabContent, UnitPricesTabTrigger } from "./units-v2/CustomerUnitPricesTab";
 import { useHasAddon } from "@/lib/api/tobacco";
 import { MSRP_ADDON, SALES_AGENTS_ADDON, useFleetAccess, useRoutesAccess } from "@/lib/api/addons";
 import { OrderStatusBadge, useOrderStatusLabel } from "@/components/OrderStatusBadge";
@@ -150,18 +155,24 @@ import {
   useOrderTemplates,
   useUpdateOrderTemplate,
   useDeleteOrderTemplate,
-  useGenerateTemplateOrder,
   type OrderTemplate,
 } from "@/lib/api/order-templates";
 import { StandingOrderModal } from "./StandingOrderModal";
 import { CustomerStatementCard } from "./customer-statement-card";
 import { CreditLimitPanel } from "./credit-limit-panel";
 import { GenerateOrderNowButton } from "./generate-order-button";
+import { useGenerateTemplateOrderAction } from "@/lib/use-generate-template-order-action";
 import { CustomerOversellOverride } from "./customer-oversell-override";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { CustomerRecordPaymentModal } from "@/components/CustomerRecordPaymentModal";
 import { AddressAutocomplete } from "@/components/AddressAutocomplete";
 import { focusRefusedContactField } from "@/lib/refused-text-field";
+import { isOpenInvoiceStatus } from "@/lib/open-invoice-status";
+import { ReadOnlyHint, WriteButton, WriteLink } from "@/lib/read-only-gate";
+import { paymentKeyScope, usePaymentSubmitKey } from "@/lib/payment-submit-key";
+import { usePaymentStatusCheck } from "@/lib/use-payment-status-check";
+import { PaymentStatusCheck } from "@/components/PaymentStatusCheck";
+import { PAYMENT_STATUS_COPY } from "@routeflow/types/payment-submit-key";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -1078,6 +1089,9 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
   };
 
   const priceList: CustomerPrice[] = prices ?? [];
+  // S19b (SA-811a/813): flag-on, the price list shows billing's own customer-layer price (not the bare tier price).
+  // Flag off: no request, the tier price as today. Pending or failed: unconfirmed, never a final tier price.
+  const priceLayer = useCustomerPriceLayer(customerId);
 
   return (
     <Tabs.Content value="special-prices" className="mt-5 focus:outline-none">
@@ -1086,8 +1100,7 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
           <div>
             <h3 className="text-base font-semibold text-navy">Default Pricing Tier</h3>
             <p className="mt-0.5 text-xs text-navy/70">
-              Applies to every product for this customer. Per-product overrides below take
-              precedence.
+              Applies to every product for this customer. Tier overrides below take precedence.
             </p>
           </div>
           {isOperator ? (
@@ -1113,8 +1126,8 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
         </div>
         {priceList.length > 0 && (
           <p className="mt-3 text-xs text-navy/70">
-            {priceList.length} product{priceList.length === 1 ? " has" : "s have"} a per-product
-            override and will keep {priceList.length === 1 ? "its" : "their"} own tier.
+            {priceList.length} product{priceList.length === 1 ? " has" : "s have"} a tier override
+            and will keep {priceList.length === 1 ? "its" : "their"} own tier.
           </p>
         )}
       </Card>
@@ -1194,15 +1207,15 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
       <Card>
         <div className="mb-4 flex items-center justify-between">
           <div>
-            <h3 className="text-base font-semibold text-navy">Product Overrides</h3>
+            <h3 className="text-base font-semibold text-navy">Tier overrides</h3>
             <p className="mt-0.5 text-xs text-navy/70">
               {hasMsrpAddon
-                ? "Override the pricing tier and/or MSRP for specific products. These override the customer's default tier and the product's default MSRP."
-                : "Override the pricing tier for specific products. These override the customer's default tier."}
+                ? "Pick a different pricing tier, and optionally an MSRP, for specific products. These take precedence over the customer's default tier and the product's default MSRP."
+                : "Pick a different pricing tier for specific products. These take precedence over the customer's default tier."}
             </p>
           </div>
           <Button size="sm" leftIcon={<Plus className="h-4 w-4" />} onClick={openAdd}>
-            Add Override
+            Add tier override
           </Button>
         </div>
 
@@ -1210,13 +1223,21 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
           <p className="text-sm text-navy/70">Loading…</p>
         ) : priceList.length === 0 ? (
           <div className="rounded-lg border border-dashed border-surface-border bg-surface-raised py-10 text-center">
-            <p className="text-sm text-navy/70">No product overrides set.</p>
+            <p className="text-sm text-navy/70">No tier overrides set.</p>
             <button className="mt-2 text-sm text-brand-500 hover:underline" onClick={openAdd}>
               Add the first one &rarr;
             </button>
           </div>
         ) : (
           <div className="-mx-6 -mb-6 overflow-x-auto">
+            {/* One notice for the whole list while any price is unconfirmed (SA-813 M3), never one per row. */}
+            <PriceLayerNotice
+              layer={priceLayer}
+              unconfirmed={
+                priceLayer.enabled && priceList.some((cp) => !priceLayer.lineReady(cp.productId))
+              }
+              className="block px-6 pb-3 text-xs text-amber-700"
+            />
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-surface-border bg-gray-50">
@@ -1256,7 +1277,19 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
                   // No tier override on this row (MSRP-only) \u2192 price at the
                   // customer's default tier, same as an ordinary order would.
                   const effectiveTier = cp.pricingTier ?? customer?.pricingTier ?? 1;
-                  const tierPrice = cp.product ? getTierPrice(cp.product, effectiveTier) : 0;
+                  const layerRows = priceLayer.layerOf(cp.productId);
+                  // No layer row: customerLinePrice returns master's tier price exactly.
+                  const layered = cp.product
+                    ? customerLinePrice({
+                        product: cp.product as unknown as Record<string, unknown>,
+                        tier: effectiveTier,
+                        layer: layerRows,
+                        unitLabel: null,
+                      })
+                    : undefined;
+                  const tierPrice = layered ? layered.price : 0;
+                  const priceUnconfirmed =
+                    priceLayer.enabled && !priceLayer.lineReady(cp.productId);
                   return (
                     <tr key={cp.id} className="hover:bg-gray-50/60">
                       <td className="px-6 py-3 text-sm font-medium text-navy">
@@ -1290,10 +1323,17 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
                         </td>
                       )}
                       <td className="px-4 py-3 text-right text-sm font-semibold text-brand-600">
-                        {fmt(tierPrice)}
-                        {cp.pricingTier != null && tierUnset(cp.product, cp.pricingTier) && (
-                          <span className="ml-1 text-xs font-normal text-navy/50">(list)</span>
+                        {priceUnconfirmed ? (
+                          <span className="font-normal text-navy/30">{"\u2014"}</span>
+                        ) : (
+                          fmt(tierPrice)
                         )}
+                        {!priceUnconfirmed &&
+                          !layered?.layered &&
+                          cp.pricingTier != null &&
+                          tierUnset(cp.product, cp.pricingTier) && (
+                            <span className="ml-1 text-xs font-normal text-navy/50">(list)</span>
+                          )}
                       </td>
                       <td className="px-4 py-3 text-right font-mono text-xs">
                         {(() => {
@@ -1302,7 +1342,7 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
                             cp.product?.averageCost != null ? Number(cp.product.averageCost) : null,
                             cp.product?.unitsPerBox,
                           );
-                          if (margin == null)
+                          if (margin == null || priceUnconfirmed)
                             return <span className="text-navy/30">{"\u2014"}</span>;
                           const cls = classifyMargin(margin, marginFloor);
                           const color =
@@ -1352,7 +1392,7 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
       <Modal
         open={isModalOpen}
         onClose={() => setIsModalOpen(false)}
-        title={editingPrice ? "Edit Price Override" : "Add Price Override"}
+        title={editingPrice ? "Edit tier override" : "Add tier override"}
         footer={
           <>
             <Button
@@ -1401,7 +1441,7 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
                 <option key={t} value={t}>
                   {tierLabel(tierLabels, t)}
                   {t === 1 ? " (List Price)" : ""}
-                  {selectedProduct ? ` — ${fmt(getTierPrice(selectedProduct, t))}` : ""}
+                  {selectedProduct ? `: ${fmt(getTierPrice(selectedProduct, t))}` : ""}
                   {tierUnset(selectedProduct, t) ? " (list)" : ""}
                 </option>
               ))}
@@ -1899,9 +1939,8 @@ function DocumentsTab({ customerId }: { customerId: string }) {
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
-/** "Outstanding" spans four statuses, but ListInvoicesDto validates `status` as a
- *  single enum value (a comma-list 400s) — so it's filtered client-side. */
-const OUTSTANDING_STATUSES = ["SENT", "VIEWED", "PARTIAL", "OVERDUE"];
+// "Outstanding" spans the four open statuses (isOpenInvoiceStatus), but ListInvoicesDto validates
+// `status` as a single enum value (a comma-list 400s) — so it is filtered client-side.
 
 function CustomerDetailPageInner({ id }: { id: string }) {
   const { setTitle } = usePageTitle();
@@ -1951,7 +1990,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
   const deleteAddress = useDeleteCustomerAddress();
   const updateTemplate = useUpdateOrderTemplate();
   const deleteTemplate = useDeleteOrderTemplate();
-  const generateOrder = useGenerateTemplateOrder();
+  const generateOrder = useGenerateTemplateOrderAction(); // row 510 Q2: a manual Generate is judged for the clicker
 
   const { data: statement, isError: statementFailed } = useCustomerStatement(id);
   const { data: advancePayments } = useCustomerAdvancePayments(id);
@@ -1969,7 +2008,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
   const customerInvoices = React.useMemo(() => {
     const rows = invoicesData?.data ?? [];
     return invoiceFilter === "outstanding"
-      ? rows.filter((inv) => OUTSTANDING_STATUSES.includes(inv.status))
+      ? rows.filter((inv) => isOpenInvoiceStatus(inv.status))
       : rows;
   }, [invoicesData, invoiceFilter]);
 
@@ -2123,6 +2162,17 @@ function CustomerDetailPageInner({ id }: { id: string }) {
 
   // Advance payment
   const [isAdvanceOpen, setIsAdvanceOpen] = React.useState(false);
+  // SA-824: one Idempotency-Key per open, kept across a Cancel -> reopen while the outcome is unknown
+  const advanceKey = usePaymentSubmitKey(isAdvanceOpen, paymentKeyScope.advance(id));
+  // SA-824: an unknown outcome offers "Check payment status"; found closes like a 2xx.
+  const advanceStatus = usePaymentStatusCheck(
+    advanceKey,
+    () => {
+      setIsAdvanceOpen(false);
+      toast({ title: PAYMENT_STATUS_COPY.recorded, variant: "success" });
+    },
+    isAdvanceOpen,
+  );
   const [advanceForm, setAdvanceForm] = React.useState<{
     method: SelectablePaymentMethod;
     amount: string;
@@ -2361,14 +2411,15 @@ function CustomerDetailPageInner({ id }: { id: string }) {
               Edit
             </Button>
           )}
-          <Button
+          <WriteButton
             variant="secondary"
             size="sm"
             leftIcon={<FileText className="h-3.5 w-3.5" />}
             href={`/invoices/new?customerId=${id}`}
           >
             New Invoice
-          </Button>
+          </WriteButton>
+          <ReadOnlyHint className="basis-full text-xs text-slate-600" />
           <RecordReturnAction customerId={id} customerName={customer.businessName} />
         </div>
       </div>
@@ -2392,6 +2443,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
           </TabTrigger>
           <TabTrigger value="billing">Billing</TabTrigger>
           <TabTrigger value="special-prices">Special Prices</TabTrigger>
+          <UnitPricesTabTrigger />
           <TabTrigger value="comments">
             <span className="flex items-center gap-1.5">
               <MessageSquare className="h-3.5 w-3.5" />
@@ -3490,11 +3542,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                         </button>
                         <GenerateOrderNowButton
                           pending={generateOrder.isPending}
-                          onGenerate={() =>
-                            generateOrder.mutate(tmpl.id, {
-                              onSuccess: () => window.alert(`Order generated for "${tmpl.name}"!`),
-                            })
-                          }
+                          onGenerate={() => generateOrder.generate(tmpl.id, tmpl.name)}
                         />
                         <button
                           title="Edit template"
@@ -3616,13 +3664,13 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                   </button>
                 ))}
               </div>
-              <Link
+              <WriteLink
                 href={`/invoices/new?customerId=${id}`}
                 className="inline-flex items-center gap-1.5 rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand/90"
               >
                 <Plus className="h-3.5 w-3.5" />
                 New Invoice
-              </Link>
+              </WriteLink>
             </div>
 
             {/* Invoice table */}
@@ -3632,13 +3680,13 @@ function CustomerDetailPageInner({ id }: { id: string }) {
               <div className="py-10 text-center">
                 <FileText className="mx-auto mb-3 h-8 w-8 text-navy/20" />
                 <p className="text-sm font-medium text-navy/70">No invoices found</p>
-                <Link
+                <WriteLink
                   href={`/invoices/new?customerId=${id}`}
                   className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand/90"
                 >
                   <Plus className="h-3.5 w-3.5" />
                   Create Invoice
-                </Link>
+                </WriteLink>
               </div>
             ) : (
               <div className="-mx-6 -mb-6 overflow-x-auto">
@@ -3715,14 +3763,15 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                     {statementMoney(statement, statementFailed, (x) => x.outstandingAmount, fmt)}
                   </p>
                   <p className="text-xs text-navy/70">Amount currently owed on invoices</p>
-                  <Button
+                  <WriteButton
                     size="sm"
                     className="w-full"
                     leftIcon={<Wallet className="h-4 w-4" />}
                     onClick={() => setIsRecordPaymentOpen(true)}
                   >
                     Record Payment
-                  </Button>
+                  </WriteButton>
+                  <ReadOnlyHint />
                 </div>
               </Card>
               <Card>
@@ -3777,6 +3826,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                           {ap.reference ? ` \u00b7 ${ap.reference}` : ""} \u00b7{" "}
                           {new Date(ap.createdAt).toLocaleDateString()}
                         </p>
+                        <ReviewFlagNotice notes={ap.notes} role={user?.role} compact />
                       </li>
                     ))}
                   </ul>
@@ -3821,7 +3871,9 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                 </Button>
                 <Button
                   loading={createAdvance.isPending}
+                  disabled={advanceStatus.unknown}
                   onClick={() => {
+                    if (advanceKey.hasUnknown()) return; // SA-824: the status check comes first
                     const amt = parseFloat(advanceForm.amount);
                     if (!amt || amt <= 0) return;
                     createAdvance.mutate(
@@ -3831,6 +3883,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                         amount: amt,
                         reference: advanceForm.reference || undefined,
                         notes: advanceForm.notes || undefined,
+                        submitKey: advanceKey,
                       },
                       { onSuccess: () => setIsAdvanceOpen(false) },
                     );
@@ -3842,6 +3895,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
             }
           >
             <div className="space-y-4">
+              <PaymentStatusCheck status={advanceStatus} />
               <div>
                 <label className="mb-1.5 block text-sm font-medium text-navy/80">
                   Payment Method
@@ -3918,6 +3972,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
 
         {/* ── Special Prices tab ─────────────────────────────────── */}
         <SpecialPricesTab customerId={id} />
+        <UnitPricesTabContent customerId={id} />
 
         {/* ── Comments tab ───────────────────────────────────────── */}
         <CommentsTab customerId={id} />
@@ -4086,6 +4141,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
       {/* ── Tax document lightbox — routed through DocumentViewer so a PDF tax-exempt
            document is viewable too, not just images ─────────────────────────────── */}
       <DocumentViewer doc={taxDocLightbox} onClose={() => setTaxDocLightbox(null)} />
+      {generateOrder.dialog}
     </div>
   );
 }

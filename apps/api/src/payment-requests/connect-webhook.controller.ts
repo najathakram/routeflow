@@ -8,6 +8,7 @@ import { AuditService } from "../audit/audit.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { StripeConnectService } from "../stripe-connect/stripe-connect.service";
 import { PaymentRequestsService } from "./payment-requests.service";
+import { ConnectChargeReviewService } from "./connect-charge-review.service";
 import {
   PAYMENT_PROVIDER,
   type PaymentProvider,
@@ -71,6 +72,7 @@ export class ConnectWebhookController {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly gateway: RouteFlowGateway,
+    private readonly review: ConnectChargeReviewService,
   ) {}
 
   @Post()
@@ -240,12 +242,21 @@ export class ConnectWebhookController {
         if (!(await this.connect.assertEventAccount(tenantId, evt.accountRef))) {
           return "account_mismatch";
         }
+        // Row 616: flag the paid invoice for review BEFORE the alert. A throw here is a 500, so
+        // Stripe redelivers; the flag is idempotent on the event id.
+        const reviewed = await this.review.flagForReview({
+          tenantId,
+          kind: "refund",
+          eventId: evt.eventId,
+          paymentIntentId: evt.paymentIntentId,
+          chargeId: evt.chargeId,
+        });
         await this.notifyTenant(tenantId, "stripe.charge.refunded", {
           chargeId: evt.chargeId,
           paymentIntentId: evt.paymentIntentId,
           amountRefundedDollars: evt.amountRefundedDollars,
         });
-        return "notified";
+        return reviewed;
       }
 
       case "charge.dispute.created": {
@@ -274,7 +285,19 @@ export class ConnectWebhookController {
           );
           return "no_matching_tenant";
         }
+        // Row 616: a PaymentIntent lives in exactly one tenant; flag it per candidate tenant
+        // (each lookup is tenant-scoped, so only the owning tenant ever matches).
+        const results: string[] = [];
         for (const tenantId of tenantIds) {
+          results.push(
+            await this.review.flagForReview({
+              tenantId,
+              kind: "dispute",
+              eventId: evt.eventId,
+              paymentIntentId: evt.paymentIntentId,
+              chargeId: evt.chargeId,
+            }),
+          );
           await this.notifyTenant(tenantId, "stripe.charge.dispute.created", {
             chargeId: evt.chargeId,
             paymentIntentId: evt.paymentIntentId,
@@ -282,7 +305,9 @@ export class ConnectWebhookController {
             reason: evt.reason,
           });
         }
-        return "notified";
+        return (
+          ["flagged", "already_flagged"].find((r) => results.includes(r)) ?? "no_matching_payment"
+        );
       }
 
       case "account.application.deauthorized": {

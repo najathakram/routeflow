@@ -1,5 +1,6 @@
 import { ForbiddenException } from "@nestjs/common";
 import { CounterSaleTodayService } from "./counter-sale-today.service";
+import { salePaymentSelect } from "./counter-sale-today";
 import type { CounterSaleTodayDto } from "./counter-sale-today.dto";
 import { createMockPrisma, type MockPrisma } from "../../testing/prisma-mock";
 
@@ -68,6 +69,12 @@ function setup(rows: Row[], timezone: string | null = "America/New_York") {
     service.today({ page: 1, limit: 50, ...q } as CounterSaleTodayDto, now);
   return { prisma, service, call };
 }
+
+/** the call that read the day's counter payments (the one that selects `salePaymentSelect`), as args */
+const saleCall = (prisma: MockPrisma): any =>
+  (prisma.invoicePayment.findMany.mock.calls as any[]).find(
+    (c) => c[0]?.select === salePaymentSelect,
+  )![0];
 
 // 2026-10-07 is an ordinary EDT day in New York (UTC-4): its window is 04:00Z to 04:00Z.
 const NOW = iso("2026-10-07T15:00:00.000Z");
@@ -242,9 +249,9 @@ describe("CounterSaleTodayService: tenant scoping (test 7, unit half)", () => {
       prisma.order.findMany.mock.calls[0][0].where,
       prisma.order.count.mock.calls[0][0].where,
       prisma.order.aggregate.mock.calls[0][0].where,
-      prisma.invoicePayment.groupBy.mock.calls[0][0].where,
-      prisma.invoicePayment.groupBy.mock.calls[0][0].where.invoice,
-      prisma.invoicePayment.groupBy.mock.calls[0][0].where.invoice.order,
+      saleCall(prisma).where,
+      saleCall(prisma).where.invoice,
+      saleCall(prisma).where.invoice.order,
       prisma.invoicePayment.aggregate.mock.calls[0][0].where,
       prisma.invoicePayment.aggregate.mock.calls[0][0].where.invoice,
       prisma.invoicePayment.aggregate.mock.calls[0][0].where.invoice.order,
@@ -263,7 +270,7 @@ describe("CounterSaleTodayService: tenant scoping (test 7, unit half)", () => {
     const live = prisma.order.aggregate.mock.calls[0][0].where;
     expect(live.status).toEqual({ not: "CANCELLED" });
     expect(live.invoices).toEqual({ some: { status: { notIn: ["VOID", "WRITTEN_OFF"] } } });
-    expect(prisma.invoicePayment.groupBy.mock.calls[0][0].where.status).toBe("PAID");
+    expect(saleCall(prisma).where.status).toBe("PAID");
   });
 
   it("MED-1: money in is keyed to the PAID date on counter sales of ANY day; on-account is measured on the day's own sales", async () => {
@@ -271,10 +278,11 @@ describe("CounterSaleTodayService: tenant scoping (test 7, unit half)", () => {
     await call({}, NOW);
     const start = iso("2026-10-07T04:00:00.000Z");
     const end = iso("2026-10-08T04:00:00.000Z");
-    const money = prisma.invoicePayment.groupBy.mock.calls[0][0].where;
+    const money = saleCall(prisma).where;
     expect(money.paidAt).toEqual({ gte: start, lt: end });
     expect(money.status).toBe("PAID");
-    expect(money.invoice.status).toEqual({ notIn: ["VOID", "WRITTEN_OFF"] });
+    // cash taken stays in the day when the invoice is written off later: only VOID drops its payments (the Z's rule)
+    expect(money.invoice.status).toEqual({ not: "VOID" });
     // the SALE's own day is not a filter: a day-1 sale paid today counts today
     expect(money.invoice.order).toEqual({
       tenantId: T,
@@ -337,15 +345,56 @@ describe("CounterSaleTodayService: query budget (test 12)", () => {
     expect(prisma.order.findMany).toHaveBeenCalledTimes(1);
     expect(prisma.order.count).toHaveBeenCalledTimes(1);
     expect(prisma.order.aggregate).toHaveBeenCalledTimes(1);
-    expect(prisma.invoicePayment.groupBy).toHaveBeenCalledTimes(1);
+    // the counter payments (classified in code, row 374 a) and the hand-over candidates: two reads, never a groupBy
+    expect(prisma.invoicePayment.groupBy).not.toHaveBeenCalled();
     expect(prisma.invoicePayment.aggregate).toHaveBeenCalledTimes(1);
-    expect(prisma.return.findMany).toHaveBeenCalledTimes(1);
+    // the summary's read + the ONE batched read of the returns carried on other orders (a row never makes its own)
+    expect(prisma.return.findMany).toHaveBeenCalledTimes(2);
     expect(prisma.creditNote.findMany).toHaveBeenCalledTimes(1);
     // nothing else is read: no per-row call on any other model
     expect(prisma.invoice.findMany).not.toHaveBeenCalled();
     expect(prisma.return.groupBy).not.toHaveBeenCalled();
-    expect(prisma.invoicePayment.findMany).toHaveBeenCalledTimes(1); // SA-763r R7: hand-over candidates
+    expect(prisma.invoicePayment.findMany).toHaveBeenCalledTimes(2); // the sale payments + SA-763r R7 hand-over candidates
     expect(prisma.customer.findMany).not.toHaveBeenCalled();
+  });
+
+  it("B1262 / SA-838 (e): a page WITH credit-note payments makes exactly two return reads, the summary's and the one batched read", async () => {
+    const { prisma, call } = setup([row("2026-10-07T16:00:00.000Z")]);
+    // the page record carries a credit-note payment, so the batched read of the returns behind it runs
+    prisma.order.findMany.mockResolvedValue([
+      {
+        ...pageRecord(row("2026-10-07T16:00:00.000Z")),
+        invoices: [
+          {
+            id: "i-1",
+            invoiceNumber: "INV-1",
+            status: "PAID",
+            payments: [
+              {
+                method: "CREDIT_NOTE",
+                amount: "5.00",
+                status: "PAID",
+                creditNoteId: "cn-1",
+                creditNote: { invoiceId: "i-1" },
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+    await call({ page: 1, limit: 50 }, NOW);
+    expect(prisma.return.findMany).toHaveBeenCalledTimes(2);
+    // SA-838a I2: plus exactly ONE batched credit-note read (the summary's read is the other creditNote.findMany)
+    expect(prisma.creditNote.findMany).toHaveBeenCalledTimes(2);
+    expect(
+      (prisma.creditNote.findMany.mock.calls as any[]).filter((c) => c[0]?.select?.invoicePayments),
+    ).toHaveLength(1);
+    const batched = (prisma.return.findMany.mock.calls as any[]).filter((c) => c[0]?.select?.items);
+    expect(batched).toHaveLength(1);
+    // one where for both surfaces: behind the page's notes, OR with an item sold on a page order
+    expect(batched[0][0].where.tenantId).toBe(T);
+    expect(batched[0][0].where.OR[0]).toEqual({ creditNoteId: { in: ["cn-1"] } });
+    expect(batched[0][0].where.OR[1].items.some.sourceOrderId.in).toHaveLength(1);
   });
 
   it("page 2 runs NO summary query", async () => {
@@ -353,13 +402,15 @@ describe("CounterSaleTodayService: query budget (test 12)", () => {
     await call({ page: 2, limit: 1 }, NOW);
     expect(prisma.order.aggregate).not.toHaveBeenCalled();
     expect(prisma.invoicePayment.groupBy).not.toHaveBeenCalled();
+    expect(prisma.invoicePayment.findMany).not.toHaveBeenCalled();
     expect(prisma.invoicePayment.aggregate).not.toHaveBeenCalled();
+    // this page 2 is empty: no summary and no batched carried read
     expect(prisma.return.findMany).not.toHaveBeenCalled();
     expect(prisma.creditNote.findMany).not.toHaveBeenCalled();
     expect(prisma.order.findMany).toHaveBeenCalledTimes(1);
   });
 
-  it("the page query selects (never includes) and carries no line items or cost fields", async () => {
+  it("the page query selects (never includes) and carries no cost fields (item names only)", async () => {
     const { prisma, call } = setup([]);
     await call({}, NOW);
     const args = prisma.order.findMany.mock.calls[0][0];

@@ -2,7 +2,7 @@ import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { requireTenantContext } from "./require-tenant-context";
 import { EmailDeliveryStatus } from "@prisma/client";
-import { EMAIL_KINDS, type EmailKind } from "../email/email-kinds";
+import { EMAIL_KINDS, PLATFORM_AUDIENCE_KINDS, type EmailKind } from "../email/email-kinds";
 import type { DeliveryFixKey, DeliveryHealth, DeliveryList } from "@routeflow/types";
 
 /** Local literal copy (the API never value-imports `@routeflow/types`); pinned equal to the shared
@@ -47,6 +47,9 @@ export function fixKeyForError(error: string | null | undefined): DeliveryFixKey
   return "OTHER";
 }
 
+/** Rows of platform-audience kinds (billing mail) are recorded but never shown in the tenant's own views. */
+const TENANT_VISIBLE_KINDS = { notIn: [...PLATFORM_AUDIENCE_KINDS] };
+
 export interface ListDeliveriesQuery {
   status?: EmailDeliveryStatus;
   page?: number;
@@ -66,6 +69,7 @@ export class MessagingDeliveriesService {
     );
     const where: Record<string, unknown> = {
       createdAt: { gte: new Date(Date.now() - LIST_WINDOW_DAYS * DAY_MS) },
+      kind: TENANT_VISIBLE_KINDS,
     };
     if (query.status) where.status = query.status;
 
@@ -107,11 +111,11 @@ export class MessagingDeliveriesService {
     const [grouped, failedRows] = await Promise.all([
       db.emailDelivery.groupBy({
         by: ["status"],
-        where: { createdAt: since },
+        where: { createdAt: since, kind: TENANT_VISIBLE_KINDS },
         _count: { _all: true },
       }),
       db.emailDelivery.findMany({
-        where: { createdAt: since, status: "FAILED" },
+        where: { createdAt: since, status: "FAILED", kind: TENANT_VISIBLE_KINDS },
         select: { error: true },
         take: FAILURE_SAMPLE,
         orderBy: { createdAt: "desc" },

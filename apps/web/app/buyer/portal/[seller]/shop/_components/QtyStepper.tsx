@@ -28,7 +28,10 @@ export function QtyStepper({
   /** Puts the removed line back (the caller re-adds the pre-removal cart line). Undo is shown only when given. */
   onRestore?: () => void;
   size?: "sm" | "md";
-  /** Below `sm` take the whole row of the parent; from `sm` up stay inline. For the narrow 2-column tile. */
+  /**
+   * Take the whole row of the parent at EVERY width. For the narrow shop tile: at 1440 its 5-column grid left an
+   * inline stepper 102px against the 124px it needs (44 + 36 + 44), and the "+" was clipped (row 531 R3).
+   */
   stack?: boolean;
 }) {
   const runUndoable = useUndo();
@@ -70,7 +73,7 @@ export function QtyStepper({
   return (
     <div
       data-qty-stepper
-      className={`grid h-11 grid-cols-[44px_minmax(36px,1fr)_44px] gap-0 overflow-hidden rounded-lg border border-buyer-200 bg-buyer-50 ${stack ? "w-full sm:w-auto" : ""}`}
+      className={`grid h-11 grid-cols-[44px_minmax(36px,1fr)_44px] gap-0 overflow-hidden rounded-lg border border-buyer-200 bg-buyer-50 ${stack ? "w-full" : ""}`}
     >
       {qty >= 2 ? (
         <button

@@ -241,7 +241,9 @@ interface ParentDb {
 /**
  * Draft-invoice rewrite guard. Checks the invoice's OWN lines AND its linked order's lines: an
  * invoice built by a path that drops `unitLabel` carries none, but the back-sync
- * (recomputeOrderFromInvoices) writes this edit straight onto the order line that does.
+ * (recomputeOrderFromInvoices) writes this edit straight onto the order line that does. The
+ * invoice's own unit rows are judged only when it is order-linked (VU-4a); the parent is still
+ * read either way so an unreadable one fails closed.
  */
 export async function assertInvoiceRewriteAllowed(
   db: ParentDb,
@@ -271,8 +273,13 @@ export async function assertInvoiceRewriteAllowed(
       message: "This invoice's lines could not be verified, so it can't be edited. Ask an admin.",
     });
   }
+  // VU-4a (D3): an ORDER-LESS draft's own unit rows are rewritten by update() through resolveLineUnits;
+  // nothing back-syncs them onto an order line. A linked draft keeps the full refusal.
   assertNoUnitAwareLines(
-    [...((own.items ?? []) as LineLike[]), ...((linked?.lineItems ?? []) as LineLike[])],
+    [
+      ...((invoice.orderId ? (own.items ?? []) : []) as LineLike[]),
+      ...((linked?.lineItems ?? []) as LineLike[]),
+    ],
     "edited",
   );
 }

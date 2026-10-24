@@ -104,7 +104,7 @@ describe("InvoicesService — B653 (email qty fields)", () => {
           useValue: {
             writeSaleEntries: jest.fn(),
             reverseInvoiceEntries: jest.fn(),
-            syncInvoiceEntries: jest.fn(),
+            settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
           },
         },
         {

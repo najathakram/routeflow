@@ -17,6 +17,7 @@ import {
   type ScanEngineStep,
   type ScanOutcome,
 } from "@routeflow/scanning";
+import { UNITS_LOADING_SCAN_MESSAGE } from "@/lib/default-unit-line";
 import { playScanCue, unlockScanCue } from "@/lib/scan-cue";
 import { readScanMode, writeScanMode } from "@/lib/scan-mode-store";
 import {
@@ -230,7 +231,7 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string; priceT
           res.kind === "archived"
             ? `${res.name} is archived`
             : res.kind === "refused"
-              ? res.message
+              ? UNITS_LOADING_SCAN_MESSAGE
               : res.kind === "unknown"
                 ? `Not in the catalog: ${code}`
                 : res.kind === "suggested"
@@ -310,9 +311,14 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string; priceT
     (step: ScanEngineStep & { next: ContinuousScanState }) => {
       engineRef.current = step.next;
       if (step.indicator) setResolving(step.indicator === "on");
+      // A counted scan the queue had no room for is never silent: the rejected cue + a line to rescan.
+      if (step.dropped) {
+        playScanCue("rejected");
+        showFeedback("error", "Too many scans waiting - that one wasn't counted, scan it again");
+      }
       if (step.startResolving) void resolveOne(step.startResolving);
     },
-    [resolveOne],
+    [resolveOne, showFeedback],
   );
 
   // A camera frame decoded `code`. The gate drops per-frame repeats; only a genuine new item (or
@@ -326,6 +332,9 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string; priceT
         continuousFrameScanned(engineRef.current, code, Date.now(), {
           bounds: frame?.bounds,
           aimBox: frame?.aimBox,
+          // Order builder only (owner ruling 2026-10-14): a repeat of the code just accepted counts after a
+          // 0.3 s absence, no steady hold. Every other scan screen stays on the 09-24 rule.
+          fastRepeat: true,
         }),
       );
     },

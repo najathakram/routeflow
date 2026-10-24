@@ -976,7 +976,7 @@ async function runApply() {
     const protectedSlugs = loadProtectedSlugs(process.env, databaseUrl);
     const tenantIds = [...new Set(applicableLosses.map((r) => r.tenantId))];
     const { rows: tenantRows } = await client.query(
-      `SELECT t.id, t.slug, t.status, t.class, t."deletedAt", s."planKey", s."stripeSubId"
+      `SELECT t.id, t.slug, t.status, t.class, t."deletedAt", s."planKey", s."stripeSubId", s."couponFull"
          FROM "Tenant" t LEFT JOIN "TenantSubscription" s ON s."tenantId" = t.id
         WHERE t.id = ANY($1::text[])`,
       [tenantIds],

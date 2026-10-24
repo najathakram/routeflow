@@ -6,7 +6,7 @@ import { INestApplication, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 
 export class RedisIoAdapter extends IoAdapter {
-  private readonly logger = new Logger(RedisIoAdapter.name);
+  private readonly adapterLogger = new Logger(RedisIoAdapter.name);
   private adapterConstructor: ReturnType<typeof createAdapter> | null = null;
 
   constructor(app: INestApplication) {
@@ -19,16 +19,16 @@ export class RedisIoAdapter extends IoAdapter {
     const subClient = pubClient.duplicate();
 
     // Surface Redis errors via logger so they're not silently swallowed
-    pubClient.on("error", (err) => this.logger.error("Redis pub client error", err));
-    subClient.on("error", (err) => this.logger.error("Redis sub client error", err));
+    pubClient.on("error", (err) => this.adapterLogger.error("Redis pub client error", err));
+    subClient.on("error", (err) => this.adapterLogger.error("Redis sub client error", err));
 
     Promise.all([pubClient.connect(), subClient.connect()])
       .then(() => {
         this.adapterConstructor = createAdapter(pubClient, subClient);
-        this.logger.log("Redis adapter connected");
+        this.adapterLogger.log("Redis adapter connected");
       })
       .catch((err) => {
-        this.logger.error(
+        this.adapterLogger.error(
           "Redis adapter connection failed — falling back to in-memory adapter",
           err,
         );

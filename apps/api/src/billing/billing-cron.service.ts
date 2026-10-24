@@ -1,5 +1,5 @@
 import { priceOverrideOf, sameOverride } from "./price-override";
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable, Logger, Optional } from "@nestjs/common";
 import { CronExpression } from "@nestjs/schedule";
 import { LeaderCron } from "../common/cron-lock";
 import { PrismaService } from "../prisma/prisma.service";
@@ -20,17 +20,41 @@ import {
   UnknownPlanKeyError,
 } from "./plan-catalog.constants";
 import { addCycle } from "./billing-math";
+import { billableAddonWhere } from "./addon-row";
+import { effectiveCycle, nextBillingWindow } from "./rf-invoice/calendar-windows";
 import { lockTenantForLedger } from "./addon-ledger";
 import { isPayingRow } from "./mrr.service";
 import { BillingNotificationService } from "./billing-notification.service";
 import { PlanTransitionConfigService, SnapshotFailedError } from "./plan-transition-config.service";
 import { StripeService } from "./stripe.service";
 import { ScheduledPriceChangeService } from "./scheduled-price-change";
-import { markNeedsReconcile } from "./plan-change-stripe";
+import { AutoLockSwitchService } from "./auto-lock-switch.service";
+import { autoLockAllowed, recordAutoLockSkip } from "./auto-lock-gate";
+import { expiredTrialWhere, scheduledCancellationWhere } from "./auto-lock-candidates";
+import { markNeedsReconcile } from "./needs-reconcile";
 import { resolvePlanPrice } from "./plan-price";
 import { CHECKOUT_ADDON_EXPAND, stripeAddonItemIds } from "./stripe-addon-items";
-import { stripeBaseItem } from "./stripe-period";
+import { stripeBaseItem, stripeSubscriptionPeriod } from "./stripe-period";
 import { lockTenantPrice } from "./price-lock";
+import {
+  addonBillingModeOf,
+  billLeavingAddonsAfterCommit,
+  repriceAddonsLeavingInclusionTx,
+  targetVersionFor,
+  type LeavingAddon,
+  type LeavingBiller,
+} from "./addon-inclusion";
+import { updateAddonRowsTx } from "./tenant-addon-writer";
+import { dunningZone } from "./dunning-zone";
+import { formatInZone } from "./subscription-billing-extras";
+import { SubscriptionMutationService } from "./subscription-mutation.service";
+import { inclusionCatalogFor, pinPlanVersionTx } from "./plan-version-pin";
+
+/** No mutation service wired (a bare unit build): billing a leaving add-on fails loudly into the notice path. */
+const MISSING_BILLER: LeavingBiller = {
+  billAddonsLeavingInclusion: () =>
+    Promise.reject(new Error("SubscriptionMutationService is not wired into BillingCronService")),
+};
 
 /** A run of this many snapshot failures in one sweep is systemic — the sweep aborts loudly. */
 const MAX_CONSECUTIVE_SNAPSHOT_FAILURES = 3;
@@ -66,6 +90,12 @@ export class BillingCronService {
     private readonly stripe: StripeService,
     // R1 option B: the backup sweep for a downgrade price whose `invoice.upcoming` webhook was missed.
     private readonly scheduledPrice: ScheduledPriceChangeService,
+    // SA-775: the rollout pause on AUTOMATIC locks (trial expiry, scheduled cancellation). @Optional only so a
+    // unit spec can build the sweep bare; billing.module-wiring.spec.ts pins that production injects it.
+    @Optional() private readonly autoLocks?: AutoLockSwitchService,
+    // SA-786: bills an add-on the old plan included, after a scheduled downgrade committed. @Optional only so a unit
+    // spec can build the sweep bare; billing.module-wiring.spec.ts pins that production injects it.
+    @Optional() private readonly mutations?: SubscriptionMutationService,
   ) {}
 
   private planMonthly(version: PlanVersionWithCatalog | null, planKey: string | null): number {
@@ -94,14 +124,38 @@ export class BillingCronService {
   async expireTrials(): Promise<void> {
     const now = new Date();
     const expired = await this.prisma.tenant.findMany({
-      where: { status: "TRIAL", trialEndsAt: { lt: now }, deletedAt: null },
-      select: { id: true, trialEndsAt: true },
+      where: expiredTrialWhere(now),
+      select: { id: true, trialEndsAt: true, class: true },
     });
+    let locked = 0;
+    let held = 0;
     for (const t of expired) {
-      await this.prisma.tenant.update({
-        where: { id: t.id },
+      // SA-775 (row 381): the rollout pause. While the switch is paused a PRODUCTION trial is NOT locked: no
+      // status write, no notice. ONE durable skip record per trialEndsAt; the hourly pass meeting it again writes
+      // nothing, and the pass after an unpause finds the case again (it is still TRIAL and past its end).
+      if (!(await autoLockAllowed(this.autoLocks, t, "trial_expired"))) {
+        await recordAutoLockSkip(
+          this.prisma,
+          {
+            tenantId: t.id,
+            kind: "trial_expired",
+            key: (t.trialEndsAt as Date).toISOString(),
+            wouldHaveSet: { status: "READ_ONLY", readOnlyReason: "trial_expired" },
+          },
+          this.logger,
+        );
+        held++;
+        continue;
+      }
+      // Compare-and-swap (SA-774r5 MF9): only a tenant that is STILL on TRIAL is locked and announced, so a
+      // concurrent activation or a repeated pass writes nothing and emits nothing. The class the gate judged is part of
+      // the CAS (SA-775 S3): a TEST->PRODUCTION reclassification between the scan and this write cannot lock.
+      const { count } = await this.prisma.tenant.updateMany({
+        where: { id: t.id, status: "TRIAL", class: t.class },
         data: { status: "READ_ONLY", readOnlyReason: "trial_expired" },
       });
+      if (count !== 1) continue;
+      locked++;
       await this.events.emit(t.id, BILLING_EVENTS.TRIAL_EXPIRED, { at: now.toISOString() });
       this.entitlements.invalidate(t.id);
       this.tenantStatus.invalidate(t.id);
@@ -119,7 +173,8 @@ export class BillingCronService {
         );
       }
     }
-    if (expired.length) this.logger.log(`Expired ${expired.length} trials → READ_ONLY`);
+    if (locked) this.logger.log(`Expired ${locked} trials → READ_ONLY`);
+    if (held) this.logger.log(`Held ${held} expired trials: automatic locks are paused`);
   }
 
   /**
@@ -253,7 +308,8 @@ export class BillingCronService {
         // `planKey` is nullable (the pre-plans-as-data cohort): resolve the plan being LEFT the
         // way every other plan path does, or the snapshot would be skipped for exactly those tenants.
         // Joined ONLY while the snapshot flag is on — flag off, the query is exactly what it was.
-        ...(snapshotOn ? { tenant: { select: { plan: true } } } : {}),
+        // SA-815a: the tenant's pin (the resolver's fallback) rides along; `plan` only while the snapshot flag is on.
+        tenant: { select: { planVersionId: true, ...(snapshotOn ? { plan: true } : {}) } },
       },
     });
     let applied = 0;
@@ -265,7 +321,7 @@ export class BillingCronService {
       // not the published one. Skip loudly if the catalog can't be resolved.
       let fromVersion: PlanVersionWithCatalog;
       try {
-        fromVersion = await this.catalog.getVersionForTenant(s.planVersionId);
+        fromVersion = await inclusionCatalogFor(this.catalog, s, s.tenant);
       } catch {
         this.logger.error(`Skipping downgrade for ${s.tenantId} — catalog unresolvable`);
         continue;
@@ -293,6 +349,8 @@ export class BillingCronService {
             priceOverrideMonthly: true,
             priceOverrideAnnual: true,
             stripeSubId: true,
+            externalPayment: true,
+            couponFull: true,
             basePriceSnapshot: true,
             downgradeToPlanKey: true,
             downgradeEffectiveAt: true,
@@ -311,22 +369,14 @@ export class BillingCronService {
         ) {
           throw new DowngradeOvertakenError();
         }
-        let targetVersion = fromVersion;
-        let targetDef = findPlanDefinition(fromVersion.definitions, target);
-        if (!targetDef) {
-          // The tenant's pinned (grandfathered) version predates this plan (e.g. LITE shipped
-          // in v12) — resolve the target against the currently published catalog instead of
-          // silently pricing it as $0 and falling back to STARTER entitlements.
-          const published = await this.catalog.getPublishedVersion();
-          targetDef = published ? findPlanDefinition(published.definitions, target) : undefined;
-          if (!published || !targetDef) {
-            throw new PlanNotInCatalogError(
-              target,
-              [fromVersion.id, published?.id].filter((x): x is string => Boolean(x)),
-            );
-          }
-          targetVersion = published;
-        }
+        // The tenant's pinned (grandfathered) version, else - when it predates this plan (e.g. LITE shipped in
+        // v12) - the currently published catalog, instead of silently pricing it as $0 and falling back to
+        // STARTER entitlements. The same resolution the downgrade preview prices add-ons from (SA-786).
+        const { version: targetVersion, def: targetDef } = await targetVersionFor(
+          this.catalog,
+          fromVersion,
+          target,
+        );
         // #2223 / SA-444c (i) + #2460 / SA-464 (2), one invariant (snapshot = what the tenant pays):
         // the new snapshot is the negotiated fee, else the target's price; the ledger books it minus
         // what the MRR snapshot counted (the stored snapshot, NULL ⇒ 0) — never a catalog price for
@@ -334,6 +384,22 @@ export class BillingCronService {
         const override = priceOverrideOf(cur);
         const newBase = override ?? this.planMonthly(targetVersion, target);
         const seatCap = targetDef.seatsIncluded ?? null;
+
+        // SA-786: the date a MANUAL tenant's DUE notice names, in the tenant's zone (read outside the transaction).
+        const dateLabel =
+          addonBillingModeOf(this.stripe.isConfigured, cur) === "MANUAL"
+            ? formatInZone(
+                s.downgradeEffectiveAt as Date,
+                await dunningZone(this.prisma, s.tenantId),
+                {
+                  month: "long",
+                  day: "numeric",
+                  year: "numeric",
+                },
+              )
+            : "";
+        let leavingToBill: LeavingAddon[] = [];
+        let tenantLabel = s.tenantId;
 
         const tenantPlan = (s as { tenant?: { plan?: string } }).tenant?.plan;
         const transition = snapshotOn
@@ -368,7 +434,7 @@ export class BillingCronService {
           // against the LOCKED snapshot; a non-PRODUCTION class still applies, booking Δ0.
           const lockedTenant = await tx.tenant.findUnique({
             where: { id: s.tenantId },
-            select: { status: true, class: true, deletedAt: true },
+            select: { status: true, class: true, deletedAt: true, name: true, slug: true },
           });
           const lockedSub = await tx.tenantSubscription.findUnique({
             where: { tenantId: s.tenantId },
@@ -377,9 +443,11 @@ export class BillingCronService {
               basePriceSnapshot: true,
               priceOverrideMonthly: true,
               priceOverrideAnnual: true,
+              externalPayment: true,
               stripeSubId: true,
               downgradeToPlanKey: true,
               downgradeEffectiveAt: true,
+              couponFull: true,
             },
           });
           if (
@@ -398,8 +466,8 @@ export class BillingCronService {
             throw new DowngradeOvertakenError();
           }
           const amountDelta = roundMoney(
-            (isPayingRow(lockedTenant, target) ? newBase : 0) -
-              (isPayingRow(lockedTenant, lockedSub.planKey)
+            (isPayingRow(lockedTenant, target, lockedSub.couponFull) ? newBase : 0) -
+              (isPayingRow(lockedTenant, lockedSub.planKey, lockedSub.couponFull)
                 ? Number(lockedSub.basePriceSnapshot ?? 0)
                 : 0),
           );
@@ -413,7 +481,6 @@ export class BillingCronService {
               // now THROWS instead of silently writing STARTER for such a key; caught below so ONE
               // bad row never stops the sweep from applying every other tenant's downgrade.
               currentPlan: planKeyToEnum(target),
-              planVersionId: targetVersion.id,
               basePriceSnapshot: override ?? targetDef.monthlyPrice ?? null,
               downgradeToPlanKey: null,
               downgradeEffectiveAt: null,
@@ -424,6 +491,36 @@ export class BillingCronService {
             where: { id: s.tenantId },
             data: { plan: planKeyToEnum(target) },
           });
+          // SA-815a (G1c-1): both pins through the ONE writer (this sweep used to move only the subscription's).
+          await pinPlanVersionTx(tx, s.tenantId, targetVersion.id, {
+            kind: "SYSTEM",
+            id: null,
+            source: "cron.scheduled_downgrade",
+          });
+          // SA-786 S3 (owner ruling Q-B): an add-on the old plan included starts to bill at the TARGET version's
+          // catalog price. AFTER the plan write, so the ledger judges "paying" on the new plan. MANUAL: priced
+          // here + a DUE notice; UNBILLED: nothing; STRIPE: collected and billed after the commit below.
+          tenantLabel = lockedTenant.name ?? lockedTenant.slug ?? s.tenantId;
+          const fromKey = normalizePlanKey(s.planKey);
+          if (fromKey) {
+            const leaving = await repriceAddonsLeavingInclusionTx(tx, this.events, {
+              tenantId: s.tenantId,
+              fromPlanKey: fromKey,
+              fromAddonSkus: fromVersion.addonSkus,
+              toPlanKey: target,
+              toPlanName: targetDef.name,
+              toAddonSkus: targetVersion.addonSkus,
+              mode: addonBillingModeOf(this.stripe.isConfigured, lockedSub),
+              tenantLabel,
+              dateLabel,
+              actorKind: "SYSTEM",
+              onInvalid: (sku, value) =>
+                this.logger.error(
+                  `Scheduled downgrade tenant=${s.tenantId}: add-on "${sku}" catalog includedAtPlan "${value}" names no plan - left unpriced`,
+                ),
+            });
+            leavingToBill = leaving.toBill;
+          }
           // Free seats ONLY when over the new cap (deactivate non-retained OPERATOR/DRIVER;
           // TENANT_ADMIN is never deactivated). An empty retained list = keep only admins.
           if (seatCap != null) {
@@ -471,6 +568,26 @@ export class BillingCronService {
           targetDef,
           { monthly: cur.priceOverrideMonthly, annual: cur.priceOverrideAnnual },
           target,
+        );
+        // SA-786 S3, STRIPE: ONE item per add-on that stopped being included, after the flip committed, with
+        // `always_invoice` pinned to the new period's start (the lead's R1 note: one full period on its own
+        // invoice). A throw flags the tenant and writes a notice; the committed flip is never rolled back.
+        await billLeavingAddonsAfterCommit(
+          { prisma: this.prisma, logger: this.logger },
+          this.mutations ?? MISSING_BILLER,
+          {
+            tenantId: s.tenantId,
+            tenantLabel,
+            fromPlanName:
+              findPlanDefinition(fromVersion.definitions, s.planKey)?.name ?? "its previous plan",
+            stripeSubId: cur.stripeSubId,
+            rows: leavingToBill,
+            toSkus: targetVersion.addonSkus,
+            opts: {
+              prorationBehavior: "always_invoice",
+              prorationDate: s.downgradeEffectiveAt as Date,
+            },
+          },
         );
 
         // N3: best-effort admin notification, never blocks the transaction above. `key` is
@@ -579,16 +696,89 @@ export class BillingCronService {
       if (!base || ids.has(base.id) || base.price?.recurring?.interval !== "month") return;
       const expectedCents = toCents(expectedMonthly);
       if (base.price?.unit_amount === expectedCents) return;
-      markNeedsReconcile(this.logger, {
-        tenantId,
-        stripeSubId,
-        local: { planKey: target, monthly: Number(expectedMonthly) },
-        stripe: { billedCents: base.price?.unit_amount ?? null, expectedCents },
-        error: "the downgrade flipped locally but Stripe still bills a different price",
-      });
+      await markNeedsReconcile(
+        { prisma: this.prisma, logger: this.logger },
+        {
+          tenantId,
+          stripeSubId,
+          local: { planKey: target, monthly: Number(expectedMonthly) },
+          stripe: { billedCents: base.price?.unit_amount ?? null, expectedCents },
+          error: "the downgrade flipped locally but Stripe still bills a different price",
+        },
+      );
     } catch (e) {
       this.logger.warn(
         `Could not verify Stripe's price after the downgrade of tenant=${tenantId}: ${(e as Error).message}`,
+      );
+    }
+  }
+
+  /**
+   * F1 (b): does Stripe itself say this subscription ended? True only for `canceled`, or `cancel_at_period_end`
+   * with the base item's period over. Any read failure is a "no" for this hour, logged, never a lock.
+   */
+  private async stripeConfirmsCancellation(
+    tenantId: string,
+    stripeSubId: string,
+    now: Date,
+    scannedAt: Date,
+  ): Promise<boolean> {
+    try {
+      if (!this.stripe?.isConfigured) return false;
+      const stripeSub = await this.stripe.getSubscription(stripeSubId, {
+        expand: CHECKOUT_ADDON_EXPAND,
+      });
+      if (stripeSub?.status === "canceled") return true;
+      if (stripeSub?.cancel_at_period_end !== true) {
+        // F1b: Stripe says the cancel was resumed, so the local flag is a stale webhook's. Warning about it every
+        // hour for ever helps nobody: the flag is cleared ONCE (compare-and-set on the old value), with one log line.
+        // A `cancel_at` timestamp is another way to schedule a cancel - that is NOT a resume, so it is left alone.
+        if (stripeSub?.cancel_at == null)
+          await this.clearStaleCancelFlag(tenantId, stripeSubId, scannedAt);
+        else {
+          this.logger.warn(
+            `F1: tenant=${tenantId} has a local cancellation and Stripe holds cancel_at, not cancel_at_period_end - not locked`,
+          );
+        }
+        return false;
+      }
+      const ids = await stripeAddonItemIds(this.prisma, tenantId, stripeSub);
+      const period = stripeSubscriptionPeriod(stripeSub, ids);
+      return period != null && period.periodEnd.getTime() <= now.getTime();
+    } catch (e) {
+      this.logger.warn(
+        `F1: could not read Stripe for tenant=${tenantId}'s scheduled cancellation - skipped this hour: ${(e as Error).message}`,
+      );
+      return false;
+    }
+  }
+
+  /** F1b: clear a local `cancelAtPeriodEnd` Stripe no longer has - only while the row still holds that value. */
+  private async clearStaleCancelFlag(
+    tenantId: string,
+    stripeSubId: string,
+    scannedAt: Date,
+  ): Promise<void> {
+    try {
+      const { count } = await this.prisma.tenantSubscription.updateMany({
+        // updatedAt is the row's value from the scan, taken BEFORE the Stripe read: a re-cancel that landed since then
+        // moves it, the CAS misses, and the flag (now a real one) stays armed.
+        where: {
+          tenantId,
+          stripeSubId,
+          cancelAtPeriodEnd: true,
+          updatedAt: scannedAt,
+        },
+        data: { cancelAtPeriodEnd: false },
+      });
+      if (count === 1) {
+        this.logger.log(
+          `F1b: tenant=${tenantId}'s local cancellation was stale (Stripe has the cancel resumed) - flag cleared, not locked`,
+        );
+      }
+    } catch (e) {
+      this.logger.warn(
+        `F1b: could not clear tenant=${tenantId}'s stale cancellation flag - skipped this hour: ${(e as Error).message}`,
       );
     }
   }
@@ -599,15 +789,20 @@ export class BillingCronService {
   async applyScheduledCancellations(): Promise<void> {
     const now = new Date();
     const subs = await this.prisma.tenantSubscription.findMany({
-      where: {
-        cancelAtPeriodEnd: true,
-        periodEnd: { not: null, lt: now },
-        tenant: { status: "ACTIVE", deletedAt: null },
-      },
-      select: { tenantId: true },
+      where: scheduledCancellationWhere(now),
+      select: { tenantId: true, stripeSubId: true, updatedAt: true },
     });
     let applied = 0;
+    let held = 0;
     for (const s of subs) {
+      // F1 (b): the local cancel flag can be a stale webhook's. Stripe is re-read BEFORE any lock or add-on
+      // deactivation; a read failure skips the tenant this hour (the next pass retries) - it never locks.
+      if (
+        s.stripeSubId &&
+        !(await this.stripeConfirmsCancellation(s.tenantId, s.stripeSubId, now, s.updatedAt))
+      ) {
+        continue;
+      }
       // #2641 / SA-544: ONE transaction per tenant, Tenant row lock FIRST; the scan's filter is
       // re-proved on the rows read under it (suspended/deleted, cancellation resumed, or period
       // moved since the scan ⇒ no-op). Everything below is priced from those LOCKED rows.
@@ -625,6 +820,7 @@ export class BillingCronService {
             discount: true,
             cancelAtPeriodEnd: true,
             periodEnd: true,
+            couponFull: true,
           },
         });
         if (
@@ -637,19 +833,32 @@ export class BillingCronService {
         ) {
           return false;
         }
+        // SA-775 (row 381): the rollout pause. A PRODUCTION tenant is NOT locked while the switch is paused: no
+        // READ_ONLY, its add-ons stay active, no churn event, and cancelAtPeriodEnd stays armed so the pass after
+        // an unpause finds it again. The skip record is written after this transaction (one per periodEnd).
+        if (
+          !(await autoLockAllowed(
+            this.autoLocks,
+            { id: s.tenantId, class: tenant.class },
+            "subscription_cancelled",
+          ))
+        ) {
+          return { heldPeriodEnd: sub.periodEnd };
+        }
         // The run-rate this tenant stops contributing once access ends → emit it as a NEGATIVE
         // MRR delta (base + active add-ons − discount) so the append-only ledger nets down with
         // churn instead of over-counting the tenant's last plan forever. Booked only for a row in
         // the shared paying set (isPayingRow) — any other class was never counted, so Δ0.
+        // N4: only BILLABLE add-ons were ever in the run-rate (a comp is a platform grant, never booked).
         const addons = await tx.tenantAddon.findMany({
-          where: { tenantId: s.tenantId, active: true },
+          where: billableAddonWhere({ tenantId: s.tenantId, active: true }),
           select: { priceSnapshot: true, quantity: true },
         });
         const addonMrr = addons.reduce(
           (sum, a) => sum + (a.priceSnapshot != null ? Number(a.priceSnapshot) : 0) * a.quantity,
           0,
         );
-        const contribution = isPayingRow(tenant, sub.planKey ?? null)
+        const contribution = isPayingRow(tenant, sub.planKey ?? null, sub.couponFull)
           ? roundMoney(
               (sub.basePriceSnapshot != null ? Number(sub.basePriceSnapshot) : 0) +
                 addonMrr -
@@ -660,26 +869,60 @@ export class BillingCronService {
           where: { id: s.tenantId },
           data: { status: "READ_ONLY", readOnlyReason: "subscription_cancelled" },
         });
-        // Deactivate the cancelled subscription's add-ons: the negative delta above already
-        // removed their run-rate, so the rows must follow suit — otherwise a later reactivation
-        // via subscribe() sees them still-active (deltaQty=0) and never re-adds the +add-on delta,
-        // drifting the ledger below the snapshot. (A non-paying tenant holding "active" paid
-        // add-ons is itself incorrect state.)
-        // NOTE for support: this drops admin-granted "ships dark" SKUs too (MSRP, SALES_AGENTS,
-        // REGULATED_ITEMS). They are outside SELF_SERVICE_ADDON_SKUS, so a re-subscribe cannot
-        // bring them back — platform-admin must re-grant them after the tenant reactivates.
-        await tx.tenantAddon.updateMany({
-          where: { tenantId: s.tenantId, active: true },
-          data: { active: false },
+        // SA-787 C1: the lock changes the tenant's STATUS, never its entitlements. Every add-on stays exactly as
+        // it was (`active`, price, `isComp`, quantity), so every reactivation path already has the add-ons the
+        // tenant held (B865 / SA-277 FIX-4: `subscribe()` books a re-picked add-on whenever the tenant was not
+        // paying; the other crossings book the active billable rows), and the regulated record-keeping that SA-776
+        // keeps running for a READ_ONLY tenant keeps its gate. Only the Stripe item pointers clear: the
+        // subscription's items died with it, so a later admin disable never calls Stripe on a dead item.
+        // `addonsKept` records what stayed on (read by the daily add-on invariant); it restores nothing.
+        const addonsKept = (
+          await tx.tenantAddon.findMany({
+            where: { tenantId: s.tenantId, active: true },
+            select: {
+              id: true,
+              addonKey: true,
+              sku: true,
+              quantity: true,
+              priceSnapshot: true,
+              isComp: true,
+            },
+          })
+        ).map((r) => ({
+          id: r.id,
+          addonKey: r.addonKey,
+          sku: r.sku,
+          quantity: r.quantity,
+          priceSnapshot: r.priceSnapshot != null ? Number(r.priceSnapshot) : null,
+          isComp: r.isComp,
+        }));
+        await updateAddonRowsTx(tx, this.events, {
+          where: { tenantId: s.tenantId, active: true, stripeItemId: { not: null } },
+          data: { stripeItemId: null },
+          actor: { kind: "SYSTEM", id: null, source: "lock.cancel_clear_item" },
         });
         await this.events.emit(
           s.tenantId,
           BILLING_EVENTS.SUBSCRIPTION_CANCELED,
-          { appliedAt: now.toISOString() },
+          { appliedAt: now.toISOString(), addonsKept },
           { amountDelta: contribution ? -contribution : 0, tx },
         );
         return true;
       });
+      if (done && typeof done === "object") {
+        await recordAutoLockSkip(
+          this.prisma,
+          {
+            tenantId: s.tenantId,
+            kind: "subscription_cancelled",
+            key: done.heldPeriodEnd.toISOString(),
+            wouldHaveSet: { status: "READ_ONLY", readOnlyReason: "subscription_cancelled" },
+          },
+          this.logger,
+        );
+        held++;
+        continue;
+      }
       if (!done) continue;
       // After commit: caches never observe a rolled-back transition.
       this.entitlements.invalidate(s.tenantId);
@@ -687,9 +930,10 @@ export class BillingCronService {
       applied++;
     }
     if (applied) this.logger.log(`Applied ${applied} scheduled cancellations → READ_ONLY`);
-    if (subs.length > applied) {
+    if (held) this.logger.log(`Held ${held} scheduled cancellations: automatic locks are paused`);
+    if (subs.length > applied + held) {
       this.logger.log(
-        `Skipped ${subs.length - applied} scheduled cancellations changed since the scan`,
+        `Skipped ${subs.length - applied - held} scheduled cancellations changed since the scan`,
       );
     }
   }
@@ -735,16 +979,19 @@ export class BillingCronService {
     });
     for (const s of subs) {
       const start = s.periodEnd as Date;
-      // B863 / SA-277: an external (prepaid) row rolls by its OWN prior length (start := old end, end := start + prior
-      // length); Stripe/catalog rows keep addCycle's calendar clamping (B329 note above).
-      const priorMs = s.periodStart ? start.getTime() - s.periodStart.getTime() : 0;
-      const periodEnd =
-        s.externalPayment && priorMs > 0
-          ? new Date(start.getTime() + priorMs)
-          : addCycle(start, s.cycle);
+      // SA-744r2: an external (manual-pay) row rolls onto the owner's CALENDAR - the same helper the RF
+      // invoice issuer uses for "the next window" (L-167), so the two always agree - and BOTH ends are
+      // written (the snapped start, never the raw old end). Stripe/catalog rows keep addCycle's calendar
+      // clamping (B329 note above).
+      let next: { periodStart: Date; periodEnd: Date };
+      if (s.externalPayment) {
+        next = nextBillingWindow(start, effectiveCycle(s.cycle, s.periodStart, start));
+      } else {
+        next = { periodStart: start, periodEnd: addCycle(start, s.cycle) };
+      }
       await this.prisma.tenantSubscription.update({
         where: { tenantId: s.tenantId },
-        data: { periodStart: start, periodEnd },
+        data: { periodStart: next.periodStart, periodEnd: next.periodEnd },
       });
     }
     if (subs.length) this.logger.log(`Rolled ${subs.length} billing cycles`);

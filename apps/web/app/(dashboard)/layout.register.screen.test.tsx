@@ -23,6 +23,7 @@ let mockPath = "/orders";
 let mockRole = "OPERATOR";
 jest.mock("next/navigation", () => ({
   usePathname: () => mockPath,
+  useSearchParams: () => new URLSearchParams(),
   useRouter: () => ({ push: mockPush, replace: mockReplace, prefetch: jest.fn() }),
 }));
 let mockGate: Record<string, unknown> = {
@@ -176,5 +177,16 @@ describe("g shortcut with the real counter screen", () => {
     press("g", "c");
     expect(mockPush).toHaveBeenCalledWith("/customers");
     expect(screen.queryByText("Discard this sale?")).toBeNull();
+  });
+});
+
+/** CQ-32: at tablet width (768) the shell's search control is a 44 px target; only a desktop width goes compact. */
+describe("the search pill's touch target (CQ-32)", () => {
+  it("is 44 px high from md and compact (34 px) only from lg", async () => {
+    mount(COUNTER);
+    await screen.findByLabelText("Scan or search items");
+    const pill = screen.getAllByRole("button", { name: "Open command palette" })[0];
+    expect(pill).toHaveClass("h-11");
+    expect(pill).toHaveClass("lg:h-[34px]");
   });
 });

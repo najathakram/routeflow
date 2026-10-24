@@ -299,6 +299,16 @@ function findSlot(
   );
 }
 
+/** True when the gate has really ACCEPTED `code` before (a look-only `touchSeen` slot does not count). */
+export function hasBeenAccepted(
+  state: ScanGateState | null,
+  code: string,
+  candidatesOf: ScanCandidates = rawCandidates,
+): boolean {
+  const slot = findSlot(state, code, candidatesOf);
+  return slot !== null && slot.lastAcceptAt !== NEVER_ACCEPTED;
+}
+
 /** True when the gate already tracks `code` (same candidate matching as `gateScan`). */
 export function isTrackedByGate(
   state: ScanGateState | null,

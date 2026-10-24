@@ -22,7 +22,7 @@ const HREF = pathToFileURL(SCRIPT).href;
 const CASES = `
 import * as b from "${HREF}";
 const row = (id, slug, over = {}) => ({ id, slug, status: "ACTIVE", class: "PRODUCTION", deletedAt: null,
-  planKey: "STARTER", stripeSubId: null, ...over });
+  planKey: "STARTER", stripeSubId: null, couponFull: false, ...over });
 const prot = b.protectedTenants([
   row("t-paying", "qa-2639-paying"),
   row("t-stripe", "qa-2639-stripe", { class: "TEST", status: "READ_ONLY", planKey: null, stripeSubId: "sub_fake_qa" }),

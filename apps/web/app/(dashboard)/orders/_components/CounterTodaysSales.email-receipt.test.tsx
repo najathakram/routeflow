@@ -130,7 +130,7 @@ describe("Today's sales > Reprint > Email receipt (SA-751r)", () => {
     expect(screen.getByRole("button", { name: "Send" })).toHaveFocus();
     expect(post).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
-    expect(await screen.findByText("Sent to buyer@example.com.")).toBeInTheDocument();
+    expect(await screen.findByText("Receipt sent to buyer@example.com.")).toBeInTheDocument();
     expect(post).toHaveBeenCalledWith("/orders/o1/receipt", {
       channel: "email",
       to: "buyer@example.com",
@@ -158,7 +158,7 @@ describe("Today's sales > Reprint > Email receipt (SA-751r)", () => {
       target: { value: "someone@example.com" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
-    await screen.findByText("Sent to someone@example.com.");
+    await screen.findByText("Receipt sent to someone@example.com.");
     expect(post).toHaveBeenCalledTimes(1);
     expect(post.mock.calls[0][0]).toBe("/orders/o1/receipt");
     expect(get.mock.calls.some((c) => String(c[0]).startsWith("/customers"))).toBe(false);

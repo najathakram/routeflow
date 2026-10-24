@@ -235,7 +235,7 @@ describe("RegulatedLedgerService", () => {
       warnSpy.mockRestore();
       prisma.regulatedSalesLedger.createMany.mockClear();
       prisma.regulatedSalesLedger.findMany.mockResolvedValueOnce([{ ...sale, entryType: "SALE" }]);
-      await service.reverseInvoiceEntries({ invoiceId: "inv-1", db: prisma });
+      await service["reverseInvoiceEntries"]({ invoiceId: "inv-1", db: prisma });
       const reversal = written()[0];
       expect(reversal).toMatchObject({ entryType: "REVERSAL", unitBasisQty: -60 });
       expect(sale.unitBasisQty + reversal.unitBasisQty).toBe(0); // net exactly zero
@@ -372,7 +372,7 @@ describe("RegulatedLedgerService", () => {
           categoryTax: -10,
         },
       ]);
-      await service.reverseInvoiceEntries({ invoiceId: "inv-1", db: prisma });
+      await service["reverseInvoiceEntries"]({ invoiceId: "inv-1", db: prisma });
       expect(prisma.regulatedSalesLedger.createMany).toHaveBeenCalledTimes(1);
       const row = prisma.regulatedSalesLedger.createMany.mock.calls[0][0].data[0];
       expect(row.unitBasisQty).toBe(-55); // 60 - 5 still outstanding
@@ -433,7 +433,7 @@ describe("RegulatedLedgerService", () => {
       prisma.regulatedSalesLedger.findMany.mockResolvedValue([
         sale({ qty: 10, netSales: 50, categoryTax: 2 }),
       ]);
-      await service.reverseInvoiceEntries({ invoiceId: "inv-1", db: prisma });
+      await service["reverseInvoiceEntries"]({ invoiceId: "inv-1", db: prisma });
       const data = written();
       expect(data).toHaveLength(1);
       expect(data[0]).toMatchObject({
@@ -452,7 +452,7 @@ describe("RegulatedLedgerService", () => {
         sale({ invoiceItemId: "ii-2", qty: 1, netSales: 10, categoryTax: 0 }),
         reversal({ invoiceItemId: "ii-2", qty: -1, netSales: -10, categoryTax: 0 }),
       ]);
-      await service.reverseInvoiceEntries({ invoiceId: "inv-1", db: prisma });
+      await service["reverseInvoiceEntries"]({ invoiceId: "inv-1", db: prisma });
       const data = written();
       expect(data).toHaveLength(1);
       expect(data[0]).toMatchObject({
@@ -470,7 +470,7 @@ describe("RegulatedLedgerService", () => {
         sale({ qty: 10, netSales: 50 }),
         reversal({ qty: -3, netSales: -15 }),
       ]);
-      await service.reverseInvoiceEntries({ invoiceId: "inv-1", db: prisma });
+      await service["reverseInvoiceEntries"]({ invoiceId: "inv-1", db: prisma });
       const data = written();
       expect(data).toHaveLength(1);
       expect(data[0]).toMatchObject({ invoiceItemId: "ii-1", qty: -7, netSales: -35 });
@@ -481,7 +481,7 @@ describe("RegulatedLedgerService", () => {
         sale({ qty: 10, netSales: 50 }),
         reversal({ qty: -10, netSales: -50 }),
       ]);
-      await service.reverseInvoiceEntries({ invoiceId: "inv-1", db: prisma });
+      await service["reverseInvoiceEntries"]({ invoiceId: "inv-1", db: prisma });
       expect(prisma.regulatedSalesLedger.createMany).not.toHaveBeenCalled();
     });
 
@@ -491,7 +491,7 @@ describe("RegulatedLedgerService", () => {
         sale({ qty: 10, netSales: 50 }),
         reversal({ qty: -10, netSales: -50 }),
       ]);
-      await service.reverseInvoiceEntries({ invoiceId: "inv-1", db: prisma });
+      await service["reverseInvoiceEntries"]({ invoiceId: "inv-1", db: prisma });
       expect(prisma.regulatedSalesLedger.createMany).not.toHaveBeenCalled();
     });
 
@@ -503,7 +503,7 @@ describe("RegulatedLedgerService", () => {
         sale({ qty: 10, netSales: 50 }),
         returnReversal({ qty: -3, netSales: -15 }),
       ]);
-      await service.reverseInvoiceEntries({
+      await service["reverseInvoiceEntries"]({
         invoiceId: "inv-1",
         db: prisma,
         preserveReturns: true,
@@ -515,7 +515,7 @@ describe("RegulatedLedgerService", () => {
 
     it("preserveReturns re-sync with no prior return reverses the full sale (unchanged)", async () => {
       prisma.regulatedSalesLedger.findMany.mockResolvedValue([sale({ qty: 10, netSales: 50 })]);
-      await service.reverseInvoiceEntries({
+      await service["reverseInvoiceEntries"]({
         invoiceId: "inv-1",
         db: prisma,
         preserveReturns: true,
@@ -531,7 +531,7 @@ describe("RegulatedLedgerService", () => {
         returnReversal({ qty: -3, netSales: -15 }),
         reversal({ qty: -10, netSales: -50 }), // prior re-sync reversal (no returnId)
       ]);
-      await service.reverseInvoiceEntries({
+      await service["reverseInvoiceEntries"]({
         invoiceId: "inv-1",
         db: prisma,
         preserveReturns: true,
@@ -546,7 +546,7 @@ describe("RegulatedLedgerService", () => {
         sale({ qty: 10, netSales: 50 }),
         returnReversal({ qty: -3, netSales: -15 }),
       ]);
-      await service.reverseInvoiceEntries({
+      await service["reverseInvoiceEntries"]({
         invoiceId: "inv-1",
         db: prisma,
         preserveReturns: true,
@@ -589,7 +589,7 @@ describe("RegulatedLedgerService", () => {
       prisma.regulatedSalesLedger.findMany.mockResolvedValue([
         sale({ qty: 10, netSales: 50, categoryTax: 0, trackedSubcategoryId: "sub-cig" }),
       ]);
-      await service.reverseInvoiceEntries({ invoiceId: "inv-1", db: prisma });
+      await service["reverseInvoiceEntries"]({ invoiceId: "inv-1", db: prisma });
       expect(written()[0]).toMatchObject({
         entryType: "REVERSAL",
         trackedSubcategoryId: "sub-cig",
@@ -599,7 +599,7 @@ describe("RegulatedLedgerService", () => {
 
     it("no-ops when the invoice has no ledger rows", async () => {
       prisma.regulatedSalesLedger.findMany.mockResolvedValue([]);
-      await service.reverseInvoiceEntries({ invoiceId: "inv-x", db: prisma });
+      await service["reverseInvoiceEntries"]({ invoiceId: "inv-x", db: prisma });
       expect(prisma.regulatedSalesLedger.createMany).not.toHaveBeenCalled();
     });
   });
@@ -625,6 +625,9 @@ describe("RegulatedLedgerService", () => {
       unitBasisQty: 3,
       netSales: 30,
       categoryTax: 6,
+      // #2052 (SA-609): a snapshot-less ratio-1 row is judged on its WRITE time; these fixtures
+      // model rows written after B661, which would have expanded a boxed line.
+      createdAt: new Date("2026-10-01T00:00:00Z"),
       ...over,
     });
 
@@ -1715,6 +1718,7 @@ describe("RegulatedLedgerService", () => {
     it("(e) a non-boxed product (no line snapshot, live pack 1) with qty 7 == unitBasisQty 7 → NOT parked", async () => {
       const sale = {
         id: "s-e",
+        createdAt: new Date("2026-10-01T00:00:00Z"), // #2052: written after B661
         entryType: "SALE",
         tenantId: "t1",
         trackedCategoryId: "cat-A",
@@ -1835,6 +1839,7 @@ describe("RegulatedLedgerService", () => {
     it("productPackNow: an explicit null (product found, unitsPerBox null) is NOT boxed → reverses normally, never parks", async () => {
       const sale = {
         id: "s-null",
+        createdAt: new Date("2026-10-01T00:00:00Z"), // #2052: written after B661
         entryType: "SALE",
         tenantId: "t1",
         trackedCategoryId: "cat-A",
@@ -1987,20 +1992,126 @@ describe("RegulatedLedgerService", () => {
     });
   });
 
-  describe("unreverseReturnEntries", () => {
-    it("deletes the return's REVERSAL rows", async () => {
-      await service.unreverseReturnEntries({ returnId: "ret-1", db: prisma });
-      expect(prisma.regulatedSalesLedger.deleteMany).toHaveBeenCalledWith({
-        where: { returnId: "ret-1", entryType: "REVERSAL" },
+  // SA-839 F1 (B705): an undo appends counter-entries; it never deletes a ledger row (was: "deletes the
+  // return's REVERSAL rows", the blind delete that left a VOID line positive and changed filed months).
+  describe("ADJUSTMENT_UNDONE (was unreverseReturnEntries / unreverseCreditNoteEntries)", () => {
+    const soldAt = new Date("2026-09-03T00:00:00Z");
+    const docRow = (over: Record<string, unknown> = {}) => ({
+      id: "rev-1",
+      tenantId: "t1",
+      trackedCategoryId: "cat-tob",
+      trackedSubcategoryId: null,
+      entryType: "REVERSAL",
+      orderId: "ord-1",
+      orderItemId: "oi-1",
+      invoiceId: "inv-1",
+      invoiceItemId: "ii-1",
+      returnId: "ret-1",
+      creditNoteId: null,
+      correctsEntryId: null,
+      qty: -3,
+      unitBasisQty: -36,
+      netSales: -30,
+      categoryTax: -6,
+      soldAt,
+      periodBucket: "2026-09",
+      ...over,
+    });
+    beforeEach(() => {
+      prisma.invoice.findMany.mockResolvedValue([{ id: "inv-1", status: "SENT" }]);
+    });
+
+    it("appends the exact signed inverse of each of the return's rows, pointing at it; deletes no ledger row", async () => {
+      prisma.regulatedSalesLedger.findMany.mockResolvedValueOnce([docRow()]);
+      const res = await service.settleRegulatedLedger(prisma, {
+        kind: "ADJUSTMENT_UNDONE",
+        returnId: "ret-1",
       });
+      expect(prisma.regulatedSalesLedger.deleteMany).not.toHaveBeenCalled();
+      expect(prisma.regulatedSalesLedger.createMany).toHaveBeenCalledTimes(1);
+      const data = prisma.regulatedSalesLedger.createMany.mock.calls[0][0].data;
+      expect(data).toEqual([
+        expect.objectContaining({
+          entryType: "REVERSAL",
+          returnId: "ret-1",
+          creditNoteId: null,
+          correctsEntryId: "rev-1",
+          originalSoldAt: soldAt,
+          orderItemId: "oi-1",
+          invoiceId: "inv-1",
+          invoiceItemId: "ii-1",
+          qty: 3,
+          unitBasisQty: 36,
+          netSales: 30,
+          categoryTax: 6,
+        }),
+      ]);
+      expect(res.written).toBe(1);
+    });
+
+    it("idempotent: a row that already has its counter-entry is not countered again", async () => {
+      prisma.regulatedSalesLedger.findMany.mockResolvedValueOnce([
+        docRow(),
+        docRow({ id: "ctr-1", correctsEntryId: "rev-1", qty: 3, unitBasisQty: 36, netSales: 30 }),
+      ]);
+      const res = await service.settleRegulatedLedger(prisma, {
+        kind: "ADJUSTMENT_UNDONE",
+        returnId: "ret-1",
+      });
+      expect(prisma.regulatedSalesLedger.createMany).not.toHaveBeenCalled();
+      expect(res.written).toBe(0);
+    });
+
+    it("§3: an undo that counters a row of a FILED month returns amendedPeriod (the counter still books now)", async () => {
+      prisma.regulatedSalesLedger.findMany.mockResolvedValueOnce([
+        docRow({ periodBucket: "2020-01" }),
+      ]);
+      prisma.regulatedFiling.findFirst.mockResolvedValue({
+        periodKey: "2020-01",
+        status: "LOCKED",
+        trackedCategoryId: "cat-tob",
+      });
+      const res = await service.settleRegulatedLedger(prisma, {
+        kind: "ADJUSTMENT_UNDONE",
+        returnId: "ret-1",
+      });
+      expect(res.amendedPeriod).toEqual({
+        periodKey: "2020-01",
+        status: "LOCKED",
+        trackedCategoryId: "cat-tob",
+      });
+      const data = prisma.regulatedSalesLedger.createMany.mock.calls[0][0].data;
+      expect(data[0].periodBucket).not.toBe("2020-01");
     });
 
     // SA-067(4) / red-first (g): a return this guard parked leaves a RegulatedLedgerParkedReversal
     // row that would otherwise block its period's filing forever once the return is cancelled.
+    // (A work-queue row, not a filing row: SA-839 F1 keeps this delete.)
     it("B681/SA-067(4): also deletes the return's UNRESOLVED parked-reversal rows, never a resolved one", async () => {
-      await service.unreverseReturnEntries({ returnId: "ret-1", db: prisma });
+      await service.settleRegulatedLedger(prisma, { kind: "ADJUSTMENT_UNDONE", returnId: "ret-1" });
       expect(prisma.regulatedLedgerParkedReversal.deleteMany).toHaveBeenCalledWith({
         where: { returnId: "ret-1", resolvedAt: null },
+      });
+    });
+
+    it("a credit note's rows are countered the same way, never deleted", async () => {
+      prisma.regulatedSalesLedger.findMany.mockResolvedValueOnce([
+        docRow({ returnId: null, creditNoteId: "cn-1" }),
+      ]);
+      await service.settleRegulatedLedger(prisma, {
+        kind: "ADJUSTMENT_UNDONE",
+        creditNoteId: "cn-1",
+      });
+      expect(prisma.regulatedSalesLedger.deleteMany).not.toHaveBeenCalled();
+      const data = prisma.regulatedSalesLedger.createMany.mock.calls[0][0].data;
+      expect(data[0]).toMatchObject({
+        creditNoteId: "cn-1",
+        returnId: null,
+        correctsEntryId: "rev-1",
+      });
+      expect(prisma.regulatedSalesLedger.findMany.mock.calls[0][0].where).toEqual({
+        creditNoteId: "cn-1",
+        entryType: "REVERSAL",
       });
     });
   });
@@ -2721,11 +2832,13 @@ describe("RegulatedLedgerService", () => {
       expect(row).toMatchObject({ netSales: -70, qty: -7 });
     });
 
-    it("unreverseCreditNoteEntries deletes the credit note's REVERSAL rows", async () => {
-      await service.unreverseCreditNoteEntries({ creditNoteId: "cn-1", db: prisma });
-      expect(prisma.regulatedSalesLedger.deleteMany).toHaveBeenCalledWith({
-        where: { creditNoteId: "cn-1", entryType: "REVERSAL" },
+    it("SA-839: a credit-note void (ADJUSTMENT_UNDONE) never deletes the note's REVERSAL rows", async () => {
+      prisma.invoice.findMany.mockResolvedValue([]);
+      await service.settleRegulatedLedger(prisma, {
+        kind: "ADJUSTMENT_UNDONE",
+        creditNoteId: "cn-1",
       });
+      expect(prisma.regulatedSalesLedger.deleteMany).not.toHaveBeenCalled();
     });
   });
 
@@ -3016,6 +3129,52 @@ describe("RegulatedLedgerService", () => {
       expect(result.verdictAfter).toBe("piece-axis");
     });
 
+    it("SA-839 F1 (MUST): an earlier box-axis reversal that a counter-entry undid (its return was cancelled) is NOT restated", async () => {
+      const prior = {
+        id: "r-prior-1",
+        tenantId: "t1",
+        trackedCategoryId: "cat-A",
+        trackedSubcategoryId: null,
+        entryType: "REVERSAL",
+        orderId: "ord-1",
+        invoiceId: "inv-1",
+        invoiceItemId: "ii-1",
+        orderItemId: "oi-1",
+        returnId: "ret-0",
+        creditNoteId: null,
+        correctsEntryId: null,
+        qty: -2,
+        unitBasisQty: -2,
+        netSales: -20,
+        categoryTax: -4,
+        soldAt: new Date("2026-08-01T00:00:00Z"),
+      };
+      // ret-0 was cancelled: its counter-entry nets the prior reversal to zero.
+      priorReversals = [
+        prior,
+        {
+          ...prior,
+          id: "r-prior-1-ctr",
+          correctsEntryId: "r-prior-1",
+          qty: 2,
+          unitBasisQty: 2,
+          netSales: 20,
+          categoryTax: 4,
+          soldAt: new Date("2026-08-15T00:00:00Z"),
+        },
+      ];
+      const result = await service.resolveParkedReversal(
+        prisma,
+        parked({ returnedPieces: 24 }),
+        12,
+      );
+
+      // Only the SALE is restated; restating r-prior-1 (-22) would put the cancelled boxes back.
+      expect(corrections().map((c) => [c.entryType, c.correctsEntryId])).toEqual([["SALE", "s-1"]]);
+      expect(result.outcome).toBe("booked");
+      expect(result.bookedPieces).toBe(24);
+    });
+
     it("SA-070 hazard 2: after the correction row lands, the SAME sale row re-classifies as piece-axis — a second resolution attempt on it would never re-park", async () => {
       await service.resolveParkedReversal(prisma, parked(), 12);
       expect(corrections()).toHaveLength(1);
@@ -3029,6 +3188,7 @@ describe("RegulatedLedgerService", () => {
           entryType: corrected.entryType,
           qty: corrected.qty,
           unitBasisQty: corrected.unitBasisQty,
+          writtenAt: corrected.createdAt ?? null,
         },
         { boxes: null, pieces: null, unitLabel: null, unitsPerBox: 12 },
         corrections().map((c) => ({ qty: c.qty, unitBasisQty: c.unitBasisQty })),
@@ -3253,7 +3413,7 @@ describe("RegulatedLedgerService", () => {
       });
       prisma.regulatedSalesLedger.findMany.mockResolvedValue([sale(), correction]);
       prisma.regulatedSalesLedger.createMany.mockClear();
-      await service.reverseInvoiceEntries({
+      await service["reverseInvoiceEntries"]({
         invoiceId: "inv-1",
         db: prisma,
         preserveReturns: true,

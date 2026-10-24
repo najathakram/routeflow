@@ -1,3 +1,4 @@
+import { clearTenantInvoicePdfPointers } from "../invoices/invoice-pdf-pointer";
 import {
   BadRequestException,
   ConflictException,
@@ -495,9 +496,6 @@ export class TenantsService {
    * the invoice "dirty" through their own flows.
    */
   private async invalidateInvoicePdfCache(tenantId: string): Promise<void> {
-    await this.prisma.invoice.updateMany({
-      where: { tenantId, pdfUrl: { not: null } },
-      data: { pdfUrl: null },
-    });
+    await clearTenantInvoicePdfPointers(this.prisma, tenantId); // row 502: no updatedAt bump
   }
 }

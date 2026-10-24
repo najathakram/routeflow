@@ -10,6 +10,7 @@ import { EmailModule } from "../email/email.module";
 import { AuthModule } from "../auth/auth.module";
 import { TenantModule } from "../tenant/tenant.module";
 import { OrdersModule } from "../orders/orders.module";
+import { EntitlementsModule } from "../billing/entitlements.module";
 import { InvoicesModule } from "../invoices/invoices.module";
 import { CustomersModule } from "../customers/customers.module";
 import { ProductsModule } from "../products/products.module";
@@ -18,6 +19,7 @@ import { OrderTemplatesModule } from "../order-templates/order-templates.module"
 import { StorageModule } from "../storage/storage.module";
 import { AuthorizationsModule } from "../authorizations/authorizations.module";
 import { StockAlertsModule } from "../stock-alerts/stock-alerts.module";
+import { SellingRestrictionsModule } from "../selling-restrictions/selling-restrictions.module";
 import { SystemConfigModule } from "../system-config/system-config.module";
 import { GatewaysModule } from "../gateways/gateways.module";
 
@@ -56,6 +58,7 @@ import { BuyerPaymentsController } from "../payment-requests/buyer-payments.cont
     AuthModule,
     TenantModule,
     OrdersModule,
+    EntitlementsModule,
     InvoicesModule,
     CustomersModule,
     ProductsModule,
@@ -64,6 +67,7 @@ import { BuyerPaymentsController } from "../payment-requests/buyer-payments.cont
     StorageModule,
     AuthorizationsModule,
     StockAlertsModule,
+    SellingRestrictionsModule,
     SystemConfigModule,
     GatewaysModule,
     PaymentRequestsModule,

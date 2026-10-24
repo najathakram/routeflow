@@ -31,8 +31,7 @@ import { creditNoteErrorCopy, refusalCopy } from "../../../lib/credit-note-error
 import { showToast } from "../../../lib/toast";
 import { confirm } from "../../../lib/confirm";
 import { fmtCalendarDate } from "../../../lib/format-date";
-
-const OPEN_INVOICE_STATUSES = ["SENT", "VIEWED", "PARTIAL", "OVERDUE"];
+import { isOpenInvoiceStatus } from "../../../lib/invoices-logic";
 
 function fmtCurrency(n: number | string | undefined): string {
   const v = typeof n === "string" ? Number(n) : (n ?? 0);
@@ -236,7 +235,7 @@ function ApplyInvoicePicker({
   onPick: (invoiceId: string) => void;
 }) {
   const { data, isLoading } = useOpenInvoicesForCustomer(visible ? customerId : undefined);
-  const open = (data?.data ?? []).filter((i) => OPEN_INVOICE_STATUSES.includes(i.status));
+  const open = (data?.data ?? []).filter((i) => isOpenInvoiceStatus(i.status));
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>

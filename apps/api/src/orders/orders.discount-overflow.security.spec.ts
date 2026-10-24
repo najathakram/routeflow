@@ -177,7 +177,7 @@ describe("OrdersService.create — discount-overflow negative total (B451 gap 4)
           provide: RegulatedLedgerService,
           useValue: {
             reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined),
-            syncInvoiceEntries: jest.fn(),
+            settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
           },
         },
         { provide: TenantContextService, useValue: tenantCtx },

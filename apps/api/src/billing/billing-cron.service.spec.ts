@@ -16,6 +16,7 @@ import { Logger } from "@nestjs/common";
 import { BillingCronService } from "./billing-cron.service";
 import { BILLING_EVENTS, normalizePlanKey, planKeyFromEnum } from "./plan-catalog.constants";
 import { fakeStripeSubscription } from "../testing/fake-stripe-subscription";
+import { RfInvoiceIssuerService } from "./rf-invoice/rf-invoice-issuer.service";
 
 function make(
   data: {
@@ -34,6 +35,10 @@ function make(
     rereadSubs?: Record<string, Record<string, unknown>>;
     /** SA-733r M7: the StripeService mock (default: not configured, no calls). */
     stripe?: any;
+    /** SA-786: the TenantAddon rows the downgrade transaction reads (the add-ons the old plan may include). */
+    heldAddons?: any[];
+    /** SA-786: the SubscriptionMutationService stand-in that bills a leaving add-on after commit. */
+    mutations?: any;
   } = {},
 ) {
   // #2641: the scanned row IS the committed row unless a test overrides it (a mid-sweep change).
@@ -53,6 +58,8 @@ function make(
     $queryRaw: jest.fn().mockResolvedValue([]),
     tenantSubscription: {
       update: jest.fn().mockResolvedValue({}),
+      // markNeedsReconcile's flag write (SA-786: a failed post-commit bill flags the tenant).
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       findUnique: jest.fn(async ({ where }: any) => {
         const row = scanned.get(where.tenantId);
         return row ? { ...row, ...(data.lockedSubs?.[where.tenantId] ?? {}) } : null;
@@ -60,31 +67,55 @@ function make(
     },
     tenant: {
       update: jest.fn().mockResolvedValue({}),
+      // SA-815a: the one pin writer mirrors the subscription's pin onto the tenant.
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       findUnique: jest.fn().mockResolvedValue({
         status: "ACTIVE",
         class: "PRODUCTION",
         deletedAt: null,
         ...data.lockedTenant,
       }),
+      // emitAddonDelta's paying-set read, after the plan write (SA-786).
+      findUniqueOrThrow: jest.fn().mockResolvedValue({
+        status: "ACTIVE",
+        class: "PRODUCTION",
+        deletedAt: null,
+        ...data.lockedTenant,
+        subscription: { planKey: "GROWTH", couponFull: false },
+      }),
     },
     user: {
       updateMany: jest.fn().mockResolvedValue({ count: 2 }),
       count: jest.fn().mockResolvedValue(data.activeTeam ?? 5),
     },
-    // #2641: the cancellation sweep reads and deactivates add-ons on its locked tx.
+    // #2641: the cancellation sweep reads and deactivates add-ons on its locked tx. SA-786: the downgrade
+    // transaction reads the held rows (its `where` carries no `isComp`, the sweep's billable read does).
     tenantAddon: {
-      findMany: jest.fn().mockResolvedValue(data.cancelAddons ?? []),
-      updateMany: jest.fn().mockResolvedValue({ count: data.cancelAddons?.length ?? 0 }),
+      findMany: jest.fn(async ({ where }: any = {}) =>
+        where?.isComp === false && !where?.id
+          ? (data.cancelAddons ?? [])
+          : (data.heldAddons ?? data.cancelAddons ?? []),
+      ),
+      // the writer limits its updateMany to the rows it locked: AND: [guard, { id: { in } }]
+      updateMany: jest.fn(async ({ where }: any = {}) => ({
+        count: (where?.AND?.[0] ?? where)?.id ? 1 : (data.cancelAddons?.length ?? 0),
+      })),
     },
+    auditLog: { create: jest.fn().mockResolvedValue({}) },
   };
   const prisma = {
     tenant: {
       findMany: jest.fn().mockResolvedValue(data.trials ?? []),
       update: jest.fn().mockResolvedValue({}),
+      // SA-775: expireTrials locks through a compare-and-swap on status TRIAL.
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
+    auditLog: { create: jest.fn().mockResolvedValue({}) },
     tenantSubscription: {
       findMany: jest.fn(),
       update: jest.fn().mockResolvedValue({}),
+      // F1b: the compare-and-set that clears a stale local cancel flag.
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       // The revert's fresh read of the committed row (SA-733r M7).
       // Also the cron's re-read UNDER the tenant-price lock (SA-733 D8): the committed row, plus the tenant's
       // status. `data.rereadSubs` lets a test move a column between the scan and the lock.
@@ -157,7 +188,9 @@ function make(
   } as any;
   const stripe = data.stripe ?? ({ isConfigured: false } as any);
   const scheduledPrice = { applyDue: jest.fn().mockResolvedValue({ pushed: 0, held: 0 }) } as any;
-  const svc = new BillingCronService(
+  // SA-786: the 12th argument is the mutation service that bills a leaving add-on (a cast keeps this builder
+  // compiling against a service that does not take it yet).
+  const svc = new (BillingCronService as unknown as new (...a: unknown[]) => BillingCronService)(
     prisma,
     events,
     entitlements,
@@ -168,6 +201,8 @@ function make(
     planTransition,
     stripe,
     scheduledPrice,
+    undefined,
+    data.mutations,
   );
   return {
     planTransition,
@@ -193,9 +228,17 @@ const deltaOf = (events: any, type: string) => {
 
 describe("BillingCronService", () => {
   it("expireTrials flips expired trials to READ_ONLY (not SUSPENDED) + emits trial.expired", async () => {
-    const { svc, prisma, events, tenantStatus } = make({ trials: [{ id: "t1" }] });
+    const { svc, prisma, events, tenantStatus } = make({
+      trials: [{ id: "t1", class: "PRODUCTION" }],
+    });
     await svc.expireTrials();
-    expect(prisma.tenant.update.mock.calls[0][0].data).toMatchObject({
+    // SA-775 S3: the class the gate judged is part of the CAS (a reclassification since the scan cannot lock)
+    expect(prisma.tenant.updateMany.mock.calls[0][0].where).toEqual({
+      id: "t1",
+      status: "TRIAL",
+      class: "PRODUCTION",
+    });
+    expect(prisma.tenant.updateMany.mock.calls[0][0].data).toMatchObject({
       status: "READ_ONLY",
       readOnlyReason: "trial_expired",
     });
@@ -223,7 +266,7 @@ describe("BillingCronService", () => {
     });
     billingNotification.notifyTrialEnding.mockRejectedValueOnce(new Error("email down"));
     await svc.expireTrials();
-    expect(prisma.tenant.update).toHaveBeenCalledTimes(2); // both tenants still transitioned
+    expect(prisma.tenant.updateMany).toHaveBeenCalledTimes(2); // both tenants still transitioned
     expect(billingNotification.notifyTrialEnding).toHaveBeenCalledTimes(2); // t2 still attempted
   });
 
@@ -471,7 +514,7 @@ describe("BillingCronService", () => {
     expect(order).toEqual(["onPlanChange", "tenant-lock", "plan-write"]);
   });
 
-  it("flag OFF: the sweep issues exactly its old query (no tenant.plan join) and never touches the hook", async () => {
+  it("flag OFF: the sweep issues its old query (no tenant.plan join; only the pin rides along) and never touches the hook", async () => {
     const { svc, prisma, planTransition } = make({
       downgrades: [
         {
@@ -490,7 +533,8 @@ describe("BillingCronService", () => {
     const call = prisma.tenantSubscription.findMany.mock.calls.find(
       (c: any[]) => c[0].where.downgradeEffectiveAt,
     )!;
-    expect(call[0].select).not.toHaveProperty("tenant");
+    // flag OFF: no `plan` join; only the tenant's pin (the resolver's fallback, SA-815a) rides along
+    expect(call[0].select.tenant).toEqual({ select: { planVersionId: true } });
     expect(planTransition.prepare).not.toHaveBeenCalled();
     expect(planTransition.onPlanChange).not.toHaveBeenCalled();
   });
@@ -503,7 +547,7 @@ describe("BillingCronService", () => {
     const call = prisma.tenantSubscription.findMany.mock.calls.find(
       (c: any[]) => c[0].where.downgradeEffectiveAt,
     )!;
-    expect(call[0].select.tenant).toEqual({ select: { plan: true } });
+    expect(call[0].select.tenant).toEqual({ select: { planVersionId: true, plan: true } });
   });
 
   it("A2b: a NULL stored planKey resolves the plan being left from tenant.plan, never skips the snapshot", async () => {
@@ -896,6 +940,194 @@ describe("BillingCronService", () => {
     expect(stripe.updateSubscription).not.toHaveBeenCalled();
   });
 
+  // SA-786 S3 / R6-R8: a scheduled downgrade BELOW the plan that includes an add-on starts to bill it at the TARGET
+  // version's catalog price (owner ruling 2026-10-15, Q-B). The row stays on; MANUAL books it in the flip's own
+  // transaction, STRIPE creates one item AFTER commit, UNBILLED stays at $0.
+  describe("applyScheduledDowngrades - an add-on the old plan included starts to bill (SA-786 R6-R8)", () => {
+    const EFFECTIVE = new Date("2026-10-11T00:00:00.000Z");
+    const regulated = (over: Record<string, unknown> = {}) => ({
+      id: "ta_reg",
+      tenantId: "t1",
+      addonKey: "REGULATED_ITEMS",
+      sku: "REGULATED_ITEMS",
+      quantity: 1,
+      priceSnapshot: 0,
+      stripeItemId: null,
+      isComp: false,
+      active: true,
+      ...over,
+    });
+    const row = (over: Record<string, unknown> = {}) => ({
+      tenantId: "t1",
+      planKey: "SCALE",
+      planVersionId: "v7",
+      downgradeToPlanKey: "GROWTH",
+      downgradeEffectiveAt: EFFECTIVE,
+      retainedUserIds: [],
+      basePriceSnapshot: 499,
+      stripeSubId: null,
+      externalPayment: true,
+      couponFull: false,
+      priceOverrideMonthly: null,
+      priceOverrideAnnual: null,
+      ...over,
+    });
+    const versionWithRegulated = (catalog: any) =>
+      catalog.getVersionForTenant.mockResolvedValue({
+        id: "v7",
+        definitions: [
+          { planKey: "GROWTH", name: "Growth", monthlyPrice: 249, seatsIncluded: 5 },
+          { planKey: "SCALE", name: "Scale", monthlyPrice: 499, seatsIncluded: 15 },
+        ],
+        addonSkus: [
+          {
+            sku: "REGULATED_ITEMS",
+            name: "Regulated items",
+            monthlyPrice: 39,
+            includedAtPlan: "SCALE",
+          },
+        ],
+      });
+    const baseItem = (cents: number) => ({
+      id: "si_base",
+      quantity: 1,
+      price: {
+        unit_amount: cents,
+        currency: "usd",
+        recurring: { interval: "month" },
+        product: "p",
+      },
+    });
+
+    it("R6 MANUAL: the $0 included row is priced at 39 inside the flip, +39 booked once, one DUE notice (kind add); the plan flip is unchanged", async () => {
+      const { svc, tx, events, catalog } = make({
+        downgrades: [row()],
+        heldAddons: [regulated()],
+      });
+      versionWithRegulated(catalog);
+      await svc.applyScheduledDowngrades();
+
+      expect(tx.tenantAddon.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          // limited to the locked rows by the writer: AND: [guard, { id: { in } }]
+          where: {
+            AND: expect.arrayContaining([
+              expect.objectContaining({ id: "ta_reg", isComp: false, stripeItemId: null }),
+            ]),
+          },
+          data: { priceSnapshot: 39 },
+        }),
+      );
+      const added = events.emit.mock.calls.filter(
+        (c: any[]) => c[1] === BILLING_EVENTS.ADDON_ENABLED,
+      );
+      expect(added).toHaveLength(1);
+      expect(added[0][3].amountDelta).toBe(39);
+      expect(added[0][2]).toMatchObject({ sku: "REGULATED_ITEMS", reprice: "left_inclusion" });
+      const notices = tx.auditLog.create.mock.calls.map((c: any[]) => c[0].data);
+      expect(notices).toHaveLength(1);
+      expect(notices[0].action).toBe("ADDON_MANUAL_INVOICE_DUE");
+      expect(notices[0].meta).toMatchObject({
+        kind: "add",
+        sku: "REGULATED_ITEMS",
+        monthlyPrice: 39,
+      });
+      expect(notices[0].meta.message).toBe(
+        "Add-on Regulated items is no longer included in Growth for t1: invoice it at $39.00 a month from October 11, 2026",
+      );
+      expect(tx.tenantSubscription.update.mock.calls[0][0].data).toMatchObject({
+        planKey: "GROWTH",
+      });
+    });
+
+    it("R7 STRIPE: nothing is written locally; ONE bill call AFTER commit, plan_change + always_invoice pinned to the new period start", async () => {
+      const mutations = { billAddonsLeavingInclusion: jest.fn() };
+      const stripe = fakeStripeSubscription([baseItem(24900)]);
+      const { svc, tx, prisma, catalog } = make({
+        downgrades: [row({ stripeSubId: "sub_1", externalPayment: false })],
+        heldAddons: [regulated()],
+        stripe,
+        mutations,
+      });
+      versionWithRegulated(catalog);
+      let committed = false;
+      prisma.$transaction.mockImplementation(async (fn: any) => {
+        const out = await fn(tx);
+        committed = true;
+        return out;
+      });
+      mutations.billAddonsLeavingInclusion.mockImplementation(async () => {
+        expect(committed).toBe(true); // billed only after the flip committed
+        return {};
+      });
+      await svc.applyScheduledDowngrades();
+
+      expect(tx.tenantAddon.updateMany).not.toHaveBeenCalled();
+      expect(mutations.billAddonsLeavingInclusion).toHaveBeenCalledTimes(1);
+      const [tenantId, rows, skus, source, opts] =
+        mutations.billAddonsLeavingInclusion.mock.calls[0];
+      expect(tenantId).toBe("t1");
+      expect(rows.map((r: any) => [r.id, r.monthlyPrice])).toEqual([["ta_reg", 39]]);
+      expect(skus.map((k: any) => k.sku)).toEqual(["REGULATED_ITEMS"]);
+      expect(source).toBe("plan_change");
+      expect(opts).toEqual({ prorationBehavior: "always_invoice", prorationDate: EFFECTIVE });
+    });
+
+    it("R7 failure: a throw after commit flags the tenant and writes ONE notice; the plan flip stays committed and the sweep carries on", async () => {
+      const error = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+      const mutations = {
+        billAddonsLeavingInclusion: jest.fn().mockRejectedValue(new Error("stripe down")),
+      };
+      const stripe = fakeStripeSubscription([baseItem(24900)]);
+      const { svc, tx, prisma, catalog } = make({
+        downgrades: [row({ stripeSubId: "sub_1", externalPayment: false })],
+        heldAddons: [regulated()],
+        stripe,
+        mutations,
+      });
+      versionWithRegulated(catalog);
+      await expect(svc.applyScheduledDowngrades()).resolves.not.toThrow();
+
+      expect(tx.tenantSubscription.update).toHaveBeenCalledTimes(1); // the flip committed
+      expect(
+        error.mock.calls.map((c) => String(c[0])).filter((m) => m.includes("needs_reconcile")),
+      ).toHaveLength(1);
+      const notices = prisma.auditLog.create.mock.calls.map((c: any[]) => c[0].data);
+      expect(notices).toHaveLength(1);
+      expect(notices[0].meta.message).toBe(
+        "Add-on Regulated items for t1 left Scale and could not be billed: bill it",
+      );
+      error.mockRestore();
+    });
+
+    it("R8 guards: a comp row, a priced row with an item, a quantity > 1 row and an UNBILLED tenant are all left alone", async () => {
+      const manual = make({
+        downgrades: [row()],
+        heldAddons: [
+          regulated({ id: "ta_comp", isComp: true }),
+          regulated({ id: "ta_item", priceSnapshot: 39, stripeItemId: "si_x" }),
+          regulated({ id: "ta_qty", quantity: 3 }),
+        ],
+      });
+      versionWithRegulated(manual.catalog);
+      await manual.svc.applyScheduledDowngrades();
+      expect(manual.tx.tenantAddon.updateMany).not.toHaveBeenCalled();
+      expect(manual.tx.auditLog.create).not.toHaveBeenCalled();
+
+      const unbilled = make({
+        downgrades: [row({ externalPayment: false })],
+        heldAddons: [regulated()],
+      });
+      versionWithRegulated(unbilled.catalog);
+      await unbilled.svc.applyScheduledDowngrades();
+      expect(unbilled.tx.tenantAddon.updateMany).not.toHaveBeenCalled();
+      expect(unbilled.tx.auditLog.create).not.toHaveBeenCalled();
+      expect(
+        unbilled.events.emit.mock.calls.filter((c: any[]) => c[1] === BILLING_EVENTS.ADDON_ENABLED),
+      ).toHaveLength(0);
+    });
+  });
+
   it("N3: applyScheduledDowngrades notifies with the effectiveAt the row carried BEFORE the transaction cleared it", async () => {
     const downgradeEffectiveAt = new Date("2026-09-01T00:00:00.000Z");
     const { svc, billingNotification } = make({
@@ -1106,8 +1338,16 @@ describe("BillingCronService", () => {
 
     expect(tx.tenantSubscription.update.mock.calls[0][0].data).toMatchObject({
       planKey: "LITE",
-      planVersionId: "v12",
       basePriceSnapshot: 99,
+    });
+    // SA-815a: the re-pin goes through the ONE pin writer, so BOTH pins move to the version that defines LITE
+    expect(tx.tenantSubscription.updateMany).toHaveBeenCalledWith({
+      where: { tenantId: "t1" },
+      data: { planVersionId: "v12" },
+    });
+    expect(tx.tenant.updateMany).toHaveBeenCalledWith({
+      where: { id: "t1" },
+      data: { planVersionId: "v12" },
     });
     expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(-150); // 99 − 249
   });
@@ -1185,7 +1425,7 @@ describe("BillingCronService", () => {
     expect(tenantStatus.invalidate).toHaveBeenCalledWith("t1");
   });
 
-  it("applyScheduledCancellations churn delta includes active add-ons + deactivates the add-on rows", async () => {
+  it("SA-787 C1: applyScheduledCancellations churn delta includes active add-ons; the lock changes STATUS only - rows stay active, only dead Stripe pointers clear", async () => {
     const { svc, tx, events } = make({
       cancellations: [
         { tenantId: "t1", planKey: "BUSINESS", basePriceSnapshot: 349, discount: 10 },
@@ -1195,11 +1435,78 @@ describe("BillingCronService", () => {
     await svc.applyScheduledCancellations();
     // −(349 + 12×2 − 10) = −363.
     expect(deltaOf(events, BILLING_EVENTS.SUBSCRIPTION_CANCELED)).toBe(-363);
-    // Rows follow the ledger: the removed add-ons are deactivated so a later reactivation
-    // re-adds their delta symmetrically (no ledger drift).
+    // SA-787 C1: a lock changes the tenant's status, never its entitlements. The subscription's items died with
+    // it, so only the dead pointers clear; `active`, the price, `isComp` and the quantity are never written.
+    expect(tx.tenantAddon.updateMany).toHaveBeenCalledTimes(1);
     expect(tx.tenantAddon.updateMany).toHaveBeenCalledWith({
-      where: { tenantId: "t1", active: true },
-      data: { active: false },
+      // the guard, limited to the rows the writer locked and recorded
+      where: {
+        AND: [
+          { tenantId: "t1", active: true, stripeItemId: { not: null } },
+          { id: { in: expect.any(Array) } },
+        ],
+      },
+      data: { stripeItemId: null },
+    });
+    for (const call of tx.tenantAddon.updateMany.mock.calls) {
+      expect(call[0].data).not.toHaveProperty("active");
+    }
+  });
+
+  it("SA-787 C1: the SUBSCRIPTION_CANCELED event records what stayed on (addonsKept), comps included; it restores nothing", async () => {
+    const kept = [
+      {
+        id: "ta_a",
+        addonKey: "FORECASTING",
+        sku: "FORECASTING",
+        quantity: 1,
+        priceSnapshot: 25,
+        isComp: false,
+      },
+      {
+        id: "ta_c",
+        addonKey: "REGULATED_ITEMS",
+        sku: "REGULATED_ITEMS",
+        quantity: 1,
+        priceSnapshot: 0,
+        isComp: true,
+      },
+    ];
+    const { svc, tx, events } = make({
+      cancellations: [{ tenantId: "t1", planKey: "BUSINESS", basePriceSnapshot: 349, discount: 0 }],
+    });
+    tx.tenantAddon.findMany.mockImplementation(async (a: any) =>
+      a?.where?.isComp === false ? kept.filter((r) => !r.isComp) : kept,
+    );
+    await svc.applyScheduledCancellations();
+
+    const canceled = events.emit.mock.calls.find(
+      (c: any[]) => c[1] === BILLING_EVENTS.SUBSCRIPTION_CANCELED,
+    );
+    expect(canceled[2].addonsKept).toEqual(kept);
+    expect(canceled[3].amountDelta).toBe(-374); // 349 + 25: the comp is never in the run-rate
+  });
+
+  it("N4: the churn delta never includes a COMP add-on (a platform grant: never billed, never in MRR)", async () => {
+    const { svc, tx, events } = make({
+      cancellations: [
+        { tenantId: "t1", planKey: "BUSINESS", basePriceSnapshot: 349, discount: 10 },
+      ],
+    });
+    const rows = [
+      { priceSnapshot: 12, quantity: 2, isComp: false },
+      { priceSnapshot: 20, quantity: 1, isComp: true },
+    ];
+    tx.tenantAddon.findMany.mockImplementation(async (a: any) =>
+      rows.filter((r) => (a?.where?.isComp === false ? !r.isComp : true)),
+    );
+    await svc.applyScheduledCancellations();
+    // -(349 + 12x2 - 10) = -363; the comp's 20 is not in it (-383 would be the bug)
+    expect(deltaOf(events, BILLING_EVENTS.SUBSCRIPTION_CANCELED)).toBe(-363);
+    expect(tx.tenantAddon.findMany.mock.calls[0][0].where).toEqual({
+      tenantId: "t1",
+      active: true,
+      isComp: false,
     });
   });
 
@@ -1255,7 +1562,7 @@ describe("BillingCronService", () => {
   // mislabeled (or whose real billing period doesn't match the stored cycle enum) rolls by
   // the wrong span forever. An externally-paid row must instead roll by its OWN observed
   // period length (periodEnd - periodStart), not by the `cycle` column.
-  it("REG-B863-ROLL 365-day external row rolls +365d (flips REG-ROLL-MANUAL-ANNUAL, SA-277)", async () => {
+  it("REG-B863-ROLL 365-day external row labelled MONTHLY rolls onto the ANNUAL calendar (SA-744r2 M4; master: +365d)", async () => {
     const periodStart = new Date("2025-01-01T00:00:00.000Z");
     const periodEnd = new Date("2026-01-01T00:00:00.000Z");
     const { svc, prisma } = make({
@@ -1272,8 +1579,9 @@ describe("BillingCronService", () => {
     await svc.rollCycles();
 
     const data = prisma.tenantSubscription.update.mock.calls[0][0].data;
-    expect(data.periodStart).toEqual(periodEnd);
-    expect(data.periodEnd.toISOString()).toBe("2027-01-01T00:00:00.000Z");
+    // BOTH ends are written: the SNAPPED start (never the raw old end) and a full calendar year.
+    expect(data.periodStart.toISOString()).toBe("2026-01-01T12:00:00.000Z");
+    expect(data.periodEnd.toISOString()).toBe("2027-01-01T12:00:00.000Z");
     expect(prisma.tenantSubscription.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         select: expect.objectContaining({ periodStart: true, externalPayment: true }),
@@ -1281,7 +1589,7 @@ describe("BillingCronService", () => {
     );
   });
 
-  it("REG-B863-ROLL 90-day external row rolls +90d", async () => {
+  it("REG-B863-ROLL 90-day external row rolls MONTHLY on the calendar, not +90d (SA-744r2; master: Apr 1 00:00Z)", async () => {
     const periodStart = new Date("2025-10-03T00:00:00.000Z");
     const periodEnd = new Date("2026-01-01T00:00:00.000Z");
     const { svc, prisma } = make({
@@ -1291,10 +1599,11 @@ describe("BillingCronService", () => {
     });
     await svc.rollCycles();
     const data = prisma.tenantSubscription.update.mock.calls[0][0].data;
-    expect(data.periodEnd.toISOString()).toBe("2026-04-01T00:00:00.000Z");
+    expect(data.periodStart.toISOString()).toBe("2026-01-01T12:00:00.000Z");
+    expect(data.periodEnd.toISOString()).toBe("2026-02-01T12:00:00.000Z");
   });
 
-  it("REG-B863-ROLL 180-day external row rolls +180d", async () => {
+  it("REG-B863-ROLL 180-day external row rolls MONTHLY on the calendar, not +180d", async () => {
     const periodStart = new Date("2025-07-05T00:00:00.000Z");
     const periodEnd = new Date("2026-01-01T00:00:00.000Z");
     const { svc, prisma } = make({
@@ -1304,7 +1613,94 @@ describe("BillingCronService", () => {
     });
     await svc.rollCycles();
     const data = prisma.tenantSubscription.update.mock.calls[0][0].data;
-    expect(data.periodEnd.toISOString()).toBe("2026-06-30T00:00:00.000Z");
+    expect(data.periodEnd.toISOString()).toBe("2026-02-01T12:00:00.000Z");
+  });
+
+  // SA-744r2 red rows (master gives a length-preserving roll for each).
+  it("SA-744r2: a 17-day activation ending Nov 1 00:00Z rolls to [Nov 1 12:00Z, Dec 1 12:00Z) (master: another 17 days)", async () => {
+    const { svc, prisma } = make({
+      rollSubs: [
+        {
+          tenantId: "t1",
+          cycle: "MONTHLY",
+          externalPayment: true,
+          periodStart: new Date("2026-10-15T00:00:00.000Z"),
+          periodEnd: new Date("2026-11-01T00:00:00.000Z"),
+        },
+      ],
+    });
+    await svc.rollCycles();
+    const data = prisma.tenantSubscription.update.mock.calls[0][0].data;
+    expect([data.periodStart.toISOString(), data.periodEnd.toISOString()]).toEqual([
+      "2026-11-01T12:00:00.000Z",
+      "2026-12-01T12:00:00.000Z",
+    ]);
+  });
+
+  it("SA-744r2: a 45-day prepay ending Nov 22 rolls to the ALIGNMENT window [Nov 22, Dec 1 12:00Z), then plain months (master: 45 days forever)", async () => {
+    const { svc, prisma } = make({
+      rollSubs: [
+        {
+          tenantId: "t1",
+          cycle: "MONTHLY",
+          externalPayment: true,
+          periodStart: new Date("2026-10-08T00:00:00.000Z"),
+          periodEnd: new Date("2026-11-22T00:00:00.000Z"),
+        },
+      ],
+    });
+    await svc.rollCycles();
+    const data = prisma.tenantSubscription.update.mock.calls[0][0].data;
+    expect([data.periodStart.toISOString(), data.periodEnd.toISOString()]).toEqual([
+      "2026-11-22T00:00:00.000Z",
+      "2026-12-01T12:00:00.000Z",
+    ]);
+  });
+
+  it("SA-744r2 M4: an ANNUAL row on a non-1st fixture merges the alignment into the first year, then rolls plain years", async () => {
+    const first = {
+      tenantId: "t1",
+      cycle: "ANNUAL",
+      externalPayment: true,
+      periodStart: new Date("2025-10-08T00:00:00.000Z"),
+      periodEnd: new Date("2026-10-08T00:00:00.000Z"),
+    };
+    const a = make({ rollSubs: [first] });
+    await a.svc.rollCycles();
+    const d1 = a.prisma.tenantSubscription.update.mock.calls[0][0].data;
+    expect([d1.periodStart.toISOString(), d1.periodEnd.toISOString()]).toEqual([
+      "2026-10-08T00:00:00.000Z",
+      "2027-11-01T12:00:00.000Z",
+    ]);
+    const b = make({
+      rollSubs: [{ ...first, periodStart: d1.periodStart, periodEnd: d1.periodEnd }],
+    });
+    await b.svc.rollCycles();
+    const d2 = b.prisma.tenantSubscription.update.mock.calls[0][0].data;
+    expect([d2.periodStart.toISOString(), d2.periodEnd.toISOString()]).toEqual([
+      "2027-11-01T12:00:00.000Z",
+      "2028-11-01T12:00:00.000Z",
+    ]);
+  });
+
+  it("SA-744r2: a merged (< 3 days) alignment rolls to [Nov 29, Jan 1 12:00Z) in ONE write (rollCycles == the issuer's helper)", async () => {
+    const { svc, prisma } = make({
+      rollSubs: [
+        {
+          tenantId: "t1",
+          cycle: "MONTHLY",
+          externalPayment: true,
+          periodStart: new Date("2026-10-30T00:00:00.000Z"),
+          periodEnd: new Date("2026-11-29T00:00:00.000Z"),
+        },
+      ],
+    });
+    await svc.rollCycles();
+    const data = prisma.tenantSubscription.update.mock.calls[0][0].data;
+    expect([data.periodStart.toISOString(), data.periodEnd.toISOString()]).toEqual([
+      "2026-11-29T00:00:00.000Z",
+      "2027-01-01T12:00:00.000Z",
+    ]);
   });
 
   // Pin: a Stripe/catalog-priced row (externalPayment: false) is still rolled by `addCycle`
@@ -1322,9 +1718,9 @@ describe("BillingCronService", () => {
     expect(data.periodEnd.toISOString()).toBe("2026-02-01T00:00:00.000Z");
   });
 
-  // Pin: an external row with no periodStart on record can't derive an observed period
-  // length, so it falls back to the old addCycle(periodEnd, cycle) behavior.
-  it("rollCycles falls back to addCycle for an external row with periodStart: null", async () => {
+  // SA-744r2: an external row with no periodStart on record has no observed length to preserve; it follows
+  // the calendar by its label (it used to fall back to addCycle).
+  it("rollCycles rolls an external row with periodStart: null onto the calendar by its label", async () => {
     const periodEnd = new Date("2026-01-01T00:00:00.000Z");
     const { svc, prisma } = make({
       rollSubs: [
@@ -1339,7 +1735,8 @@ describe("BillingCronService", () => {
     });
     await svc.rollCycles();
     const data = prisma.tenantSubscription.update.mock.calls[0][0].data;
-    expect(data.periodEnd.toISOString()).toBe("2026-02-01T00:00:00.000Z");
+    expect(data.periodStart.toISOString()).toBe("2026-01-01T12:00:00.000Z");
+    expect(data.periodEnd.toISOString()).toBe("2026-02-01T12:00:00.000Z");
   });
 });
 
@@ -1502,6 +1899,201 @@ describe("#2641 scheduled sweeps book on the paying predicate, re-read under the
     expect(emitted(events)).not.toContain(BILLING_EVENTS.SUBSCRIPTION_CANCELED);
   });
 
+  // F1 (b): the local cancel flag can be a STALE webhook's. Before ANY lock or add-on deactivation the sweep
+  // re-reads Stripe: lock only for cancel_at_period_end=true AND current_period_end <= now, or status=canceled.
+  describe("F1(b): Stripe is re-read before a scheduled cancellation locks the tenant", () => {
+    // the row's updatedAt as the sweep's scan read it, BEFORE the Stripe read
+    const SCANNED_AT = new Date("2026-08-31T10:00:00.000Z");
+    const withStripe = (getSubscription: jest.Mock) =>
+      make({
+        cancellations: [{ ...cancellation, stripeSubId: "sub_1", updatedAt: SCANNED_AT }],
+        cancelAddons: [{ priceSnapshot: 12, quantity: 2 }],
+        stripe: { isConfigured: true, getSubscription },
+      });
+    const nothingLocked = (h: ReturnType<typeof make>) => {
+      expect(h.tx.tenant.update).not.toHaveBeenCalled();
+      expect(h.tx.tenantAddon.updateMany).not.toHaveBeenCalled();
+      expect(emitted(h.events)).not.toContain(BILLING_EVENTS.SUBSCRIPTION_CANCELED);
+      expect(h.tenantStatus.invalidate).not.toHaveBeenCalled();
+    };
+    const nowS = () => Math.floor(Date.now() / 1000);
+
+    it("Stripe says the cancel was resumed (a stale event armed it): no lock, no add-on deactivation", async () => {
+      const get = jest.fn().mockResolvedValue({
+        status: "active",
+        cancel_at_period_end: false,
+        items: {
+          data: [
+            {
+              id: "si",
+              current_period_start: nowS() - 86_400,
+              current_period_end: nowS() + 86_400,
+            },
+          ],
+        },
+      });
+      const h = withStripe(get);
+      await h.svc.applyScheduledCancellations();
+      expect(get.mock.calls[0][0]).toBe("sub_1");
+      nothingLocked(h);
+    });
+
+    describe("F1b: a stale local cancel flag is cleared once, not warned about hourly", () => {
+      const resumed = (extra: Record<string, unknown> = {}) =>
+        jest.fn().mockResolvedValue({
+          status: "active",
+          cancel_at_period_end: false,
+          items: {
+            data: [
+              {
+                id: "si",
+                current_period_start: nowS() - 86_400,
+                current_period_end: nowS() + 86_400,
+              },
+            ],
+          },
+          ...extra,
+        });
+
+      it("Stripe says resumed: the flag is CAS-cleared on the old value, one log line, no lock", async () => {
+        const log = jest.spyOn(Logger.prototype, "log").mockImplementation(() => undefined);
+        const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+        const h = withStripe(resumed());
+        await h.svc.applyScheduledCancellations();
+        expect(h.prisma.tenantSubscription.updateMany).toHaveBeenCalledTimes(1);
+        expect(h.prisma.tenantSubscription.updateMany).toHaveBeenCalledWith({
+          // updatedAt fences the clear: a re-cancel that landed after the scan (after Stripe was read) moves it
+          where: {
+            tenantId: "t1",
+            stripeSubId: "sub_1",
+            cancelAtPeriodEnd: true,
+            updatedAt: SCANNED_AT,
+          },
+          data: { cancelAtPeriodEnd: false },
+        });
+        expect(log.mock.calls.filter((c) => /stale/i.test(String(c[0])))).toHaveLength(1);
+        expect(
+          warn.mock.calls.filter((c) => /does not - not locked/.test(String(c[0]))),
+        ).toHaveLength(0);
+        nothingLocked(h);
+        log.mockRestore();
+        warn.mockRestore();
+      });
+
+      it("a lost CAS (another writer moved the flag) is quiet: no throw, no second write", async () => {
+        const h = withStripe(resumed());
+        h.prisma.tenantSubscription.updateMany.mockResolvedValue({ count: 0 });
+        await expect(h.svc.applyScheduledCancellations()).resolves.toBeUndefined();
+        expect(h.prisma.tenantSubscription.updateMany).toHaveBeenCalledTimes(1);
+        nothingLocked(h);
+      });
+
+      it("Stripe holds a cancel_at timestamp (a different way to schedule a cancel): the flag is NOT cleared", async () => {
+        const h = withStripe(resumed({ cancel_at: nowS() + 86_400 }));
+        await h.svc.applyScheduledCancellations();
+        expect(h.prisma.tenantSubscription.updateMany).not.toHaveBeenCalled();
+        nothingLocked(h);
+      });
+
+      it("a failed clear is logged and skips the tenant this hour - the sweep does not throw", async () => {
+        const err = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+        const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+        const h = withStripe(resumed());
+        h.prisma.tenantSubscription.updateMany.mockRejectedValue(new Error("db blip"));
+        await expect(h.svc.applyScheduledCancellations()).resolves.toBeUndefined();
+        nothingLocked(h);
+        expect(err.mock.calls.length + warn.mock.calls.length).toBeGreaterThan(0);
+        err.mockRestore();
+        warn.mockRestore();
+      });
+
+      it("the control: Stripe still has the cancel armed -> no clear (and it locks once the period ends)", async () => {
+        const h = withStripe(
+          jest.fn().mockResolvedValue({
+            status: "active",
+            cancel_at_period_end: true,
+            items: {
+              data: [
+                {
+                  id: "si",
+                  current_period_start: nowS() - 86_400,
+                  current_period_end: nowS() - 60,
+                },
+              ],
+            },
+          }),
+        );
+        await h.svc.applyScheduledCancellations();
+        expect(h.prisma.tenantSubscription.updateMany).not.toHaveBeenCalled();
+        expect(h.tx.tenant.update.mock.calls[0][0].data).toMatchObject({ status: "READ_ONLY" });
+      });
+    });
+
+    it("a Stripe read error skips the tenant this hour (logged) - no lock", async () => {
+      const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+      const err = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+      const h = withStripe(jest.fn().mockRejectedValue(new Error("Stripe timeout")));
+      await expect(h.svc.applyScheduledCancellations()).resolves.toBeUndefined();
+      nothingLocked(h);
+      expect(warn.mock.calls.length + err.mock.calls.length).toBeGreaterThan(0);
+      warn.mockRestore();
+      err.mockRestore();
+    });
+
+    it("cancel armed at Stripe but the period has NOT ended there: no lock", async () => {
+      const get = jest.fn().mockResolvedValue({
+        status: "active",
+        cancel_at_period_end: true,
+        items: {
+          data: [
+            {
+              id: "si",
+              current_period_start: nowS() - 86_400,
+              current_period_end: nowS() + 86_400,
+            },
+          ],
+        },
+      });
+      const h = withStripe(get);
+      await h.svc.applyScheduledCancellations();
+      nothingLocked(h);
+    });
+
+    it("cancel armed at Stripe and its period ended: locks (the control)", async () => {
+      const get = jest.fn().mockResolvedValue({
+        status: "active",
+        cancel_at_period_end: true,
+        items: {
+          data: [
+            { id: "si", current_period_start: nowS() - 86_400, current_period_end: nowS() - 60 },
+          ],
+        },
+      });
+      const h = withStripe(get);
+      await h.svc.applyScheduledCancellations();
+      expect(h.tx.tenant.update.mock.calls[0][0].data).toMatchObject({ status: "READ_ONLY" });
+    });
+
+    it("Stripe status canceled: locks", async () => {
+      const get = jest.fn().mockResolvedValue({
+        status: "canceled",
+        cancel_at_period_end: false,
+        items: {
+          data: [
+            {
+              id: "si",
+              current_period_start: nowS() - 86_400,
+              current_period_end: nowS() + 86_400,
+            },
+          ],
+        },
+      });
+      const h = withStripe(get);
+      await h.svc.applyScheduledCancellations();
+      expect(h.tx.tenant.update.mock.calls[0][0].data).toMatchObject({ status: "READ_ONLY" });
+    });
+  });
+
   it("cancellation: a TEST-class tenant still goes READ_ONLY but books Δ0", async () => {
     const { svc, tx, events } = make({
       cancellations: [cancellation],
@@ -1587,5 +2179,40 @@ describe("#2641 scheduled sweeps book on the paying predicate, re-read under the
     await svc.applyScheduledCancellations();
     expect(tx.tenant.update).toHaveBeenCalledTimes(1);
     expect(deltaOf(events, BILLING_EVENTS.SUBSCRIPTION_CANCELED)).toBe(0);
+  });
+});
+
+// SA-744r2 parity guard (green on master too, by the spec's own label): the window rollCycles writes for an
+// external row is EXACTLY the window the issuer's windowsFor issues next - start AND end - for random ends
+// and both cycles (L-167: one helper behind both).
+describe("SA-744r2: rollCycles == windowsFor (start AND end)", () => {
+  it("200 random external ends x both cycles agree", async () => {
+    let seed = 744;
+    const rand = () => {
+      seed = (seed * 1664525 + 1013904223) % 4294967296;
+      return seed / 4294967296;
+    };
+    const issuer = new (RfInvoiceIssuerService as any)(
+      { rfInvoice: { findMany: async () => [], findFirst: async () => null } },
+      {},
+      {},
+    ) as RfInvoiceIssuerService;
+    const DAY = 24 * 60 * 60 * 1000;
+    const t0 = new Date("2026-01-01T00:00:00.000Z").getTime();
+    for (let i = 0; i < 200; i++) {
+      for (const cycle of ["MONTHLY", "ANNUAL"] as const) {
+        const periodEnd = new Date(t0 + Math.floor(rand() * 3 * 365 * DAY));
+        const periodStart = new Date(periodEnd.getTime() - (cycle === "ANNUAL" ? 365 : 30) * DAY);
+        const sub = { tenantId: "t1", cycle, externalPayment: true, periodStart, periodEnd };
+        const { svc, prisma } = make({ rollSubs: [sub] });
+        await svc.rollCycles();
+        const data = prisma.tenantSubscription.update.mock.calls[0][0].data;
+        const next = (await issuer.windowsFor(sub as any, periodEnd, Infinity))[0];
+        expect([data.periodStart.getTime(), data.periodEnd.getTime()]).toEqual([
+          next?.periodStart.getTime(),
+          next?.periodEnd.getTime(),
+        ]);
+      }
+    }
   });
 });

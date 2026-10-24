@@ -28,6 +28,7 @@ export class RestrictionsSettingsController {
     return this.settings.readiness();
   }
 
+  /** Readiness is advice: switching ON with customers whose state can't be resolved succeeds (200). */
   @Patch()
   @Roles(UserRole.TENANT_ADMIN)
   update(@Body() dto: UpdateRestrictionsSettingsDto, @CurrentUser() user: JwtPayload) {

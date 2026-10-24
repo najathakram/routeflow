@@ -33,7 +33,7 @@ export const PasswordInput = React.forwardRef<HTMLInputElement, PasswordInputPro
             id={inputId}
             type={visible ? "text" : "password"}
             className={cn(
-              "h-10 w-full rounded border border-surface-border bg-white px-3 pr-10 text-sm text-navy placeholder:text-navy/70 transition-colors",
+              "h-10 w-full rounded border border-field bg-white px-3 pr-10 text-sm text-navy placeholder:text-navy/70 transition-colors",
               "focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent",
               error && "border-danger focus:ring-danger",
               props.disabled && "opacity-50 cursor-not-allowed bg-surface-raised",

@@ -212,6 +212,8 @@ it. Fable reads the pack — not the sources. Skip the pack only for `small` wor
 
 ## S1 — Discovery: why (→ `discovery.md`)
 
+> **Design Gate (owner R19, mandatory):** S1–S3 run the `future-proof` skill's Design Gate (`.claude/skills/future-proof/SKILL.md`) and paste its filled `## Design Gate` block into `spec.md` (small work: atop `build-plan.md`); `check-gate.mjs` must pass before review, and S6 approves no build without it.
+
 **Reuse before re-deriving:** read the context pack (S0.5) — it carries the code map, lessons, fix-cards and prior
 artifacts for this area; open a source file only when the pack's "unknowns" say a decision depends on it. Then
 state, in the requester's words: the problem and whose it

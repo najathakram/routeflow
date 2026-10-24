@@ -12,6 +12,7 @@ import {
 } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import { JwtAuthGuard } from "../../auth/guards/jwt-auth.guard";
+import { PrismaService } from "../../prisma/prisma.service";
 import { listenOnLoopback } from "../../common/testing/listen-loopback";
 import { OrdersController } from "../orders.controller";
 import { CounterParkController } from "./counter-park.controller";
@@ -97,7 +98,7 @@ describe("the parked-sale routes over HTTP (roles and the DTO pipe)", () => {
       const req = ctx.switchToHttp().getRequest();
       const role = req.headers["x-role"];
       if (!role) throw new UnauthorizedException();
-      req.user = { role, sub: "u-1" };
+      req.user = { role, sub: "u-1", tenantId: "t-1" };
       return true;
     },
   };
@@ -105,7 +106,19 @@ describe("the parked-sale routes over HTTP (roles and the DTO pipe)", () => {
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
       controllers: [CounterParkController],
-      providers: [{ provide: CounterParkService, useValue: svc }],
+      providers: [
+        { provide: CounterParkService, useValue: svc },
+        {
+          provide: PrismaService,
+          useValue: {
+            user: {
+              findFirst: jest
+                .fn()
+                .mockResolvedValue({ deniedPermissionGroups: [], permissionsVersion: 1 }),
+            },
+          },
+        },
+      ],
     })
       .overrideGuard(JwtAuthGuard)
       .useValue(fakeJwt)

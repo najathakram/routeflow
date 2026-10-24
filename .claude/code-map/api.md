@@ -45,7 +45,27 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
 | [api/landing-2026-09-29-early.md](api/landing-2026-09-29-early.md) | Landing 2026-09-29 early: scanning package, component price, paying predicate, run/stop lock order, Jest cache, buyer types, order credits |
 | [api/landing-2026-09-29-midday.md](api/landing-2026-09-29-midday.md) | Landing 2026-09-29 midday: unitLineCount tripwire, lint:migrations SET LOCAL, plane deploy ids, shared PaymentMethod |
 | [api/landing-2026-09-29-late.md](api/landing-2026-09-29-late.md) | Landing 2026-09-29 late: staff price-override rule, driver mode 1a, push-guard, lint-migrations exemptions |
+| [api/landing-2026-10-12-r52-tail.md](api/landing-2026-10-12-r52-tail.md) | Landing 2026-10-12 R5.2 tail: automatic-lock pause switch, writer pin, auth/Connect callback hardening, PDF pointer |
+| [api/landing-2026-10-16-bk.md](api/landing-2026-10-16-bk.md) | Landing 2026-10-16: ranked stock locks, bounded stock tx, count commit batches, replay normalize, buyer qty-split guard |
+| [api/landing-2026-10-16-bk2.md](api/landing-2026-10-16-bk2.md) | Landing 2026-10-16 (2nd): units v2 schema and price grid, delete returns stock, reopen claim, FIFO/LIFO retire, payment due |
+| [api/landing-2026-10-17-bk3.md](api/landing-2026-10-17-bk3.md) | Landing 2026-10-17 (3rd): B1 bare variant name, B846 bill revert appends, B568 Zoho sync atomic, 542d session terms sig |
+| [api/landing-2026-10-17-units-v2-3.md](api/landing-2026-10-17-units-v2-3.md) | Landing 2026-10-17 units-v2-3: S19 customer price layer, U-1 tenant units module, pack precondition |
+| [api/landing-2026-10-18-fixes-4.md](api/landing-2026-10-18-fixes-4.md) | Landing 2026-10-18 fixes-4: one web base for return URLs, strict customer-price flag read (503), carrier-in-transit guard |
+| [api/landing-2026-10-18-k11-money1.md](api/landing-2026-10-18-k11-money1.md) | Landing 2026-10-18 k11-money1: B920 per-product stock total, L8 store-vs-address state, one Stripe termination gate, price history v1.1 |
+| [api/landing-2026-10-20-bo-train-g1.md](api/landing-2026-10-20-bo-train-g1.md) | Landing 2026-10-20 bo-train/G1 (#3551): business capabilities, till guard, stranded-item sweep, add-on writer, inclusion, order-list |
+| [api/landing-2026-10-20-r5.md](api/landing-2026-10-20-r5.md) | Landing 2026-10-20 R5 (#3552): sitting-4 migrations, stored-tax guard, JSON-null money DTOs, NaN backstop, bill cash guard |
+| [api/landing-2026-10-21-w1.md](api/landing-2026-10-21-w1.md) | Landing 2026-10-21 window 1 (#3555): draft compare-and-set (`DRAFT_CHANGED`), submit key kept |
+| [api/landing-2026-10-21-w2-r5p2.md](api/landing-2026-10-21-w2-r5p2.md) | Landing 2026-10-21 window 2 + R5 part 2 (#3558): regulated resolver, restore verdict, PO use guard, office completion, tax precision |
+| [api/landing-2026-10-21-w3.md](api/landing-2026-10-21-w3.md) | Landing 2026-10-21 window 3 (#3566): counter Today's-sales and parked rows carry item names (`itemSummaryOf`, page query select) |
+| [api/b1234-delivered-line-lock.md](api/b1234-delivered-line-lock.md) | B1234: delivered lines locked on a PARTIALLY_DELIVERED order (409 LINE_ALREADY_DELIVERED, binding check under the lock) |
+| [api/b299-unvoid-billing-claim.md](api/b299-unvoid-billing-claim.md) | B299: unvoid re-claims invoicedQty only if the qty is free (409 ORDER_BILLING_CHANGED, no clamp on +1; void keeps its clamp) |
+| [api/b692-office-pd-quantities.md](api/b692-office-pd-quantities.md) | B692 office PARTIALLY_DELIVERED needs per-line quantities (409 ORDER_PD_NEEDS_QUANTITIES); legacy delivered cancel fails closed |
+| [api/landing-2026-10-12-r52.md](api/landing-2026-10-12-r52.md) | Landing 2026-10-12 Release 5.2: order edit revision guard, edit-line pairing, category trio from snapshot, read-only registries |
+| [api/landing-2026-10-12-r51-r42.md](api/landing-2026-10-12-r51-r42.md) | Landing 2026-10-12 Release 5.1 + 4.2: unpaid ACH checkout never activates, failed-payment email dedupe, one till-money classification, hand-over rows and stamp, UTC session pin |
+| [api/landing-2026-10-12-macbook.md](api/landing-2026-10-12-macbook.md) | Landing 2026-10-12 MacBook lane (pushed): delivery_pos business profile |
 | [api/landing-2026-10-11-r4.md](api/landing-2026-10-11-r4.md) | Landing 2026-10-11 Release 4: digital receipt, SA-764, POS mode, SA-770 overdue-by-balance, billing B1 Stripe-first |
+| [api/landing-2026-10-11-r41.md](api/landing-2026-10-11-r41.md) | Landing 2026-10-11 Release 4.1: day close and Z report, closed-day guards, receipt cashier, overdue and reminder fixes |
+| [api/landing-2026-10-11-r5.md](api/landing-2026-10-11-r5.md) | Landing 2026-10-11 Release 5: dunning B3, grace/read-only B4, October catch-up B2, coupon-unbilled, calendar RF windows, profile comps |
 | [api/landing-2026-10-10-w22a2-w23.md](api/landing-2026-10-10-w22a2-w23.md) | Landing 2026-10-10 W22a-2 + W23: sitting-3 schema, quick keys, zone resolver, counter void and park, refund tender, B1043 |
 | [api/landing-2026-10-09-w21b-w22a1.md](api/landing-2026-10-09-w21b-w22a1.md) | Landing 2026-10-09 W21b + W22a-1: counter price edit (POS-5), cash-refund void guard, units schema P0a, protected-tenant guard, operator groups, variant rules |
 | [api/landing-2026-10-06-w4-w10.md](api/landing-2026-10-06-w4-w10.md) | Landing 2026-10-06 (windows 4 to 10): merge-by-path predicate, one fulfil-path resolver, partial-invoice guard, comp add-ons, order suggestions; W19/W20 and W21a trains (counter refunds, today's sales, Settings fulfilment, product parent check, token audiences) |

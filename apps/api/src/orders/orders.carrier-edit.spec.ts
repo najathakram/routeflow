@@ -146,7 +146,9 @@ describe("#3207 D1/D2/D6: carrier order write paths", () => {
     seed(order());
     reopened();
     await edit(2);
-    expect(invoices.revertLinkedInvoicesForOrderEdit).toHaveBeenCalledWith("ord-1");
+    expect(invoices.revertLinkedInvoicesForOrderEdit).toHaveBeenCalledWith("ord-1", undefined, {
+      preflightOnly: true,
+    });
   });
 
   it("D6 / #3219 S2: an order shipped between the pre-read and the row lock is refused with NOTHING reverted", async () => {

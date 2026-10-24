@@ -8,6 +8,7 @@
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { ticksToProfileDef } from "./business-capabilities";
 import {
   BILLING_DISABLE_ORDER,
   BUSINESS_PROFILES,
@@ -16,9 +17,11 @@ import {
   describeBusinessProfilePlan,
   describeBusinessProfileSections,
   planBusinessProfile,
+  planCompRefusal,
   postApplyViolations,
   toBusinessProfileSummary,
   unavailableModes,
+  type BusinessProfileDef,
   type BusinessProfileState,
 } from "./business-profiles";
 import { FEATURE_REGISTRY } from "./feature-registry";
@@ -36,6 +39,9 @@ function unsetTenant(): BusinessProfileState {
     holds: { recurring_routes: false, order_delivery: false, driver_payments: false },
     // Modules held through an add-on row the tenant PAYS for (a Stripe item or a price).
     paying: new Set(),
+    // SA-769: modules with an ACTIVE add-on row (billable or comp), and the subset that is a comp.
+    rowHeld: new Set(),
+    compRows: new Set(),
     modes: { fulfilment_model: "unset", counter_sales: "unset" },
   };
 }
@@ -47,12 +53,15 @@ function profile(key: string) {
 }
 
 describe("business profile registry", () => {
-  it("has exactly the four profiles, in picker order", () => {
+  it("has exactly the seven profiles, in picker order (BO-04: + Delivery + shipping, Everything)", () => {
     expect(BUSINESS_PROFILES.map((p) => [p.key, p.label])).toEqual([
       ["delivery_distributor", "Delivery distributor"],
       ["shipping_wholesaler", "Shipping wholesaler"],
       ["in_store_retailer", "In-store retailer"],
       ["in_store_shipping_retailer", "In-store + shipping retailer"],
+      ["delivery_pos", "Delivery + POS"],
+      ["delivery_shipping", "Delivery + shipping"],
+      ["delivery_shipping_pos", "Everything"],
     ]);
   });
 
@@ -87,13 +96,14 @@ describe("business profile registry", () => {
         key: "delivery_distributor",
         grants: FLEET_MODULES,
         denies: [],
-        modes: { fulfilment_model: "delivery" },
+        // BO-04: counter_sales is ALWAYS written ("unset" = no counter), so a profile can switch it off
+        modes: { fulfilment_model: "delivery", counter_sales: "unset" },
       },
       {
         key: "shipping_wholesaler",
         grants: [],
         denies: FLEET_MODULES,
-        modes: { fulfilment_model: "ship" },
+        modes: { fulfilment_model: "ship", counter_sales: "unset" },
       },
       {
         key: "in_store_retailer",
@@ -106,6 +116,24 @@ describe("business profile registry", () => {
         grants: [],
         denies: FLEET_MODULES,
         modes: { fulfilment_model: "pickup_ship", counter_sales: "on" },
+      },
+      {
+        key: "delivery_pos",
+        grants: FLEET_MODULES,
+        denies: [],
+        modes: { fulfilment_model: "delivery", counter_sales: "on" },
+      },
+      {
+        key: "delivery_shipping",
+        grants: FLEET_MODULES,
+        denies: [],
+        modes: { fulfilment_model: "both", counter_sales: "unset" },
+      },
+      {
+        key: "delivery_shipping_pos",
+        grants: FLEET_MODULES,
+        denies: [],
+        modes: { fulfilment_model: "both", counter_sales: "on" },
       },
     ]);
   });
@@ -136,6 +164,14 @@ describe("business profile registry", () => {
       modes: { fulfilment_model: "pickup", counter_sales: "on" },
       grants: [],
       denies: FLEET_MODULES,
+      // BO-03: additive - what picking this preset pre-ticks
+      ticks: {
+        delivery: false,
+        doorPayments: false,
+        shipping: false,
+        counter: true,
+        opensAs: "counter",
+      },
     });
   });
 
@@ -155,6 +191,9 @@ describe("business profile registry", () => {
       ["shipping_wholesaler", true],
       ["in_store_retailer", true],
       ["in_store_shipping_retailer", true],
+      ["delivery_pos", true],
+      ["delivery_shipping", true],
+      ["delivery_shipping_pos", true],
     ]);
     expect(unavailableModes(profile("in_store_shipping_retailer"))).toEqual([]);
     expect(unavailableModes(profile("shipping_wholesaler"))).toEqual([]);
@@ -180,6 +219,8 @@ describe("no second resolver — the applied profile reads through deriveFulfilm
   it.each([
     ["delivery_distributor", { methods: ["ROUTE"], counter: "off", staffOpensAs: "order" }],
     ["shipping_wholesaler", { methods: ["SHIP"], counter: "off", staffOpensAs: "order" }],
+    // delivery + counter: ROUTE orders with an optional counter (not an in-store-only mode)
+    ["delivery_pos", { methods: ["ROUTE"], counter: "optional", staffOpensAs: "order" }],
   ])("%s lands on a consistent capability", (key, expected) => {
     const p = profile(key);
     const fleet = toBusinessProfileSummary(p).grants.length > 0;
@@ -224,12 +265,19 @@ describe("no second resolver — the applied profile reads through deriveFulfilm
 });
 
 describe("planBusinessProfile", () => {
-  it("delivery distributor on an unset tenant: grants all three modules (driver payments is NOT on by default), sets delivery", () => {
+  it("SA-769: delivery distributor on an unset tenant COMPS all three modules (driver payments is NOT on by default), writes no GRANT override, sets delivery", () => {
     expect(planBusinessProfile(profile("delivery_distributor"), unsetTenant())).toEqual({
+      // a comp row replaces the GRANT override: nothing for the override path to create
       overrides: [
-        { featureKey: "recurring_routes", effect: "GRANT", action: "create" },
-        { featureKey: "order_delivery", effect: "GRANT", action: "create" },
-        { featureKey: "driver_payments", effect: "GRANT", action: "create" },
+        { featureKey: "recurring_routes", effect: "GRANT", action: "skip" },
+        { featureKey: "order_delivery", effect: "GRANT", action: "skip" },
+        { featureKey: "driver_payments", effect: "GRANT", action: "skip" },
+      ],
+      // order unchanged: the fleet keys first, driver_payments last
+      comps: [
+        { featureKey: "recurring_routes" },
+        { featureKey: "order_delivery" },
+        { featureKey: "driver_payments" },
       ],
       modes: [{ key: "fulfilment_model", from: "unset", to: "delivery" }],
       billing: [],
@@ -243,6 +291,7 @@ describe("planBusinessProfile", () => {
         { featureKey: "order_delivery", effect: "DENY", action: "skip" },
         { featureKey: "driver_payments", effect: "DENY", action: "skip" },
       ],
+      comps: [],
       modes: [{ key: "fulfilment_model", from: "unset", to: "ship" }],
       billing: [],
     });
@@ -264,15 +313,29 @@ describe("planBusinessProfile", () => {
     ]);
   });
 
-  it("a DENY override on a fleet key is replaced by the GRANT", () => {
+  it("SA-769: a DENY override on a fleet key is REVOKED (nothing created) and the module comped when no add-on row holds it", () => {
     const state = unsetTenant();
     state.overrides.set("order_delivery", "DENY");
     const plan = planBusinessProfile(profile("delivery_distributor"), state);
     expect(plan.overrides[1]).toEqual({
       featureKey: "order_delivery",
       effect: "GRANT",
-      action: "replace",
+      action: "revoke",
     });
+    expect(plan.comps.map((c) => c.featureKey)).toEqual([
+      "recurring_routes",
+      "order_delivery",
+      "driver_payments",
+    ]);
+  });
+
+  it("SA-769: a DENY override over an ACTIVE add-on row is only revoked: the row already holds the module, no comp", () => {
+    const state = unsetTenant();
+    state.overrides.set("order_delivery", "DENY");
+    state.rowHeld = new Set(["order_delivery"]);
+    const plan = planBusinessProfile(profile("delivery_distributor"), state);
+    expect(plan.overrides[1].action).toBe("revoke");
+    expect(plan.comps.map((c) => c.featureKey)).not.toContain("order_delivery");
   });
 
   it("a tenant that already matches gets an all-skip plan with no mode changes", () => {
@@ -285,6 +348,78 @@ describe("planBusinessProfile", () => {
     expect(plan.overrides.every((o) => o.action === "skip")).toBe(true);
     expect(plan.modes).toEqual([]);
     expect(describeBusinessProfilePlan(plan)).toEqual([]);
+  });
+});
+
+describe("SA-769 planBusinessProfile — never re-price what exists", () => {
+  const heldBy = (state: BusinessProfileState, key: string) => {
+    state.holds[key] = true;
+    state.rowHeld = new Set([...(state.rowHeld ?? []), key]);
+    return state;
+  };
+
+  it("a module the tenant already PAYS for stays billable: no comp, no billing change, no override", () => {
+    const state = heldBy(unsetTenant(), "order_delivery");
+    state.paying = new Set(["order_delivery"]);
+    const plan = planBusinessProfile(profile("delivery_distributor"), state);
+    expect(plan.comps.map((c) => c.featureKey)).toEqual(["recurring_routes", "driver_payments"]);
+    expect(plan.overrides.find((o) => o.featureKey === "order_delivery")?.action).toBe("skip");
+    expect(plan.billing).toEqual([]);
+  });
+
+  it("an existing comp row is left alone (held: nothing to comp)", () => {
+    const state = heldBy(unsetTenant(), "recurring_routes");
+    state.compRows = new Set(["recurring_routes"]);
+    const plan = planBusinessProfile(profile("delivery_distributor"), state);
+    expect(plan.comps.map((c) => c.featureKey)).toEqual(["order_delivery", "driver_payments"]);
+  });
+
+  it("an existing GRANT override is left alone (no comp, no revoke, no create)", () => {
+    const state = unsetTenant();
+    state.overrides.set("driver_payments", "GRANT");
+    state.holds.driver_payments = true;
+    const plan = planBusinessProfile(profile("delivery_distributor"), state);
+    expect(plan.overrides.find((o) => o.featureKey === "driver_payments")?.action).toBe("skip");
+    expect(plan.comps.map((c) => c.featureKey)).toEqual(["recurring_routes", "order_delivery"]);
+  });
+
+  it("idempotent: a tenant whose modules are all held by comp rows plans no comp at all", () => {
+    const state = unsetTenant();
+    for (const k of FLEET_MODULES) heldBy(state, k);
+    state.compRows = new Set(FLEET_MODULES);
+    const plan = planBusinessProfile(profile("delivery_distributor"), state);
+    expect(plan.comps).toEqual([]);
+    expect(plan.overrides.every((o) => o.action === "skip")).toBe(true);
+    expect(describeBusinessProfilePlan(plan)).toEqual([
+      "Where orders go: Not configured (today's behavior) → Own delivery",
+    ]);
+  });
+
+  it("a fleet:false profile switches a COMP row off through the disable path (BILLING_DISABLE_ORDER), flagged comp, with no DENY override", () => {
+    const state = unsetTenant();
+    for (const k of FLEET_MODULES) heldBy(state, k);
+    state.compRows = new Set(FLEET_MODULES);
+    const plan = planBusinessProfile(profile("shipping_wholesaler"), state);
+    expect(plan.comps).toEqual([]);
+    expect(plan.billing).toEqual([
+      { featureKey: "driver_payments", action: "disable", manual: false, comp: true },
+      { featureKey: "order_delivery", action: "disable", manual: false, comp: true },
+      { featureKey: "recurring_routes", action: "disable", manual: false, comp: true },
+    ]);
+    expect(plan.overrides.every((o) => o.action === "skip")).toBe(true);
+  });
+
+  it("a PAID row and a COMP row side by side: the paid one stays a billing stop, the comp one is flagged comp", () => {
+    const state = unsetTenant();
+    heldBy(state, "recurring_routes");
+    heldBy(state, "order_delivery");
+    state.paying = new Set(["recurring_routes"]);
+    state.compRows = new Set(["order_delivery"]);
+    const plan = planBusinessProfile(profile("shipping_wholesaler"), state);
+    expect(plan.billing).toEqual([
+      { featureKey: "order_delivery", action: "disable", manual: false, comp: true },
+      { featureKey: "recurring_routes", action: "disable", manual: false },
+    ]);
   });
 });
 
@@ -327,15 +462,42 @@ describe("describeBusinessProfileSections — billing kept apart from the rest (
         { featureKey: "recurring_routes", effect: "GRANT" as const, action: "create" as const },
         { featureKey: "driver_payments", effect: "DENY" as const, action: "skip" as const },
       ],
+      comps: [],
       modes: [{ key: "fulfilment_model", from: "unset", to: "ship" }],
       billing: [{ featureKey: "driver_payments", action: "disable" as const, manual: true }],
     };
-    const { billing, changes } = describeBusinessProfileSections(plan);
+    const { billing, comps, changes } = describeBusinessProfileSections(plan);
     expect(billing).toHaveLength(1);
     expect(billing[0]).toMatch(/manual invoice/);
+    expect(comps).toEqual([]);
     expect(changes.some((l) => /billing|manual invoice/.test(l))).toBe(false);
     expect(changes[0]).toContain("turned on free (comp), no charge added");
-    expect(describeBusinessProfilePlan(plan)).toEqual([...billing, ...changes]);
+    expect(describeBusinessProfilePlan(plan)).toEqual([...billing, ...comps, ...changes]);
+  });
+
+  it('SA-769: comps get their own lines ("Included free with this profile"), kept out of changes; summary = billing, comps, changes', () => {
+    const plan = planBusinessProfile(profile("delivery_distributor"), unsetTenant());
+    const { billing, comps, changes } = describeBusinessProfileSections(plan);
+    const label = (key: string) => FEATURE_REGISTRY.find((f) => f.key === key)!.label;
+    expect(billing).toEqual([]);
+    expect(comps).toEqual(
+      FLEET_MODULES.map(
+        (k) => `Turn on ${label(k)}: included free with this profile, no charge added`,
+      ),
+    );
+    expect(changes).toEqual(["Where orders go: Not configured (today's behavior) → Own delivery"]);
+    expect(describeBusinessProfilePlan(plan)).toEqual([...comps, ...changes]);
+  });
+
+  it("SA-769: a comp row switched off by a fleet:false profile says it was free and nothing is billed", () => {
+    const state = unsetTenant();
+    state.holds.recurring_routes = true;
+    state.rowHeld = new Set(["recurring_routes"]);
+    state.compRows = new Set(["recurring_routes"]);
+    const plan = planBusinessProfile(profile("shipping_wholesaler"), state);
+    expect(describeBusinessProfileSections(plan).billing).toEqual([
+      "Recurring routes will be switched off (it was included free; nothing is billed)",
+    ]);
   });
 });
 
@@ -459,9 +621,9 @@ describe("describeBusinessProfilePlan — the plain-English preview", () => {
       planBusinessProfile(profile("delivery_distributor"), state),
     );
     const label = FEATURE_REGISTRY.find((f) => f.key === "order_delivery")!.label;
-    expect(lines).toContain(
-      `Turn on ${label}: turned on free (comp), no charge added (replaces the current "off" override)`,
-    );
+    // SA-769: the DENY is revoked on its own line; the comp row is its own "included free" line
+    expect(lines).toContain(`Remove the "off" override on ${label}`);
+    expect(lines).toContain(`Turn on ${label}: included free with this profile, no charge added`);
   });
 });
 
@@ -473,4 +635,339 @@ describe("never writes PICKUP orders", () => {
       expect(text).not.toMatch(/\.order\.|prisma\.order\b/);
     }
   });
+});
+
+/**
+ * BO-04: the capability ticks plan through the SAME planner. `counter_sales` is always written, and a def may carry
+ * a per-module map (`modules`) that overrides `fleet`. Billing stays BILLING_DISABLE_ORDER, filtered, never reordered.
+ */
+describe("BO-04 planBusinessProfile — ticks as input", () => {
+  const ticks = (t: Parameters<typeof ticksToProfileDef>[0]) => ticksToProfileDef(t).def;
+  const paidAll = (): BusinessProfileState => {
+    const s = unsetTenant();
+    s.holds = { recurring_routes: true, order_delivery: true, driver_payments: true };
+    s.rowHeld = new Set(FLEET_MODULES);
+    s.paying = new Set(FLEET_MODULES);
+    return s;
+  };
+  const counterOn = (s: BusinessProfileState) => {
+    s.modes = { ...s.modes, counter_sales: "on" };
+    return s;
+  };
+
+  it("Shipping only on a tenant with counter_sales=on plans counter_sales on -> unset (the old preset never did)", () => {
+    const state = counterOn(unsetTenant());
+    state.modes.fulfilment_model = "ship";
+    for (const def of [profile("shipping_wholesaler"), ticks({ shipping: true })]) {
+      expect(planBusinessProfile(def, state).modes).toEqual([
+        { key: "counter_sales", from: "on", to: "unset" },
+      ]);
+    }
+  });
+
+  it("Delivery on a Delivery + counter tenant plans counter_sales on -> unset", () => {
+    const state = counterOn(unsetTenant());
+    state.modes.fulfilment_model = "delivery";
+    for (const def of [profile("delivery_distributor"), ticks({ delivery: true })]) {
+      expect(planBusinessProfile(def, state).modes).toEqual([
+        { key: "counter_sales", from: "on", to: "unset" },
+      ]);
+    }
+  });
+
+  it("{delivery, shipping} plans fulfilment_model=both and comps the fleet keys the tenant lacks", () => {
+    const state = unsetTenant();
+    state.holds.order_delivery = true;
+    state.rowHeld = new Set(["order_delivery"]);
+    const plan = planBusinessProfile(ticks({ delivery: true, shipping: true }), state);
+    expect(plan.modes).toEqual([{ key: "fulfilment_model", from: "unset", to: "both" }]);
+    expect(plan.comps).toEqual([
+      { featureKey: "recurring_routes" },
+      { featureKey: "driver_payments" },
+    ]);
+    expect(plan.billing).toEqual([]);
+  });
+
+  it("{delivery, doorPayments:false} on a tenant paying driver_payments plans a billing stop for it and comps the two fleet keys", () => {
+    const state = unsetTenant();
+    state.holds.driver_payments = true;
+    state.rowHeld = new Set(["driver_payments"]);
+    state.paying = new Set(["driver_payments"]);
+    const plan = planBusinessProfile(ticks({ delivery: true, doorPayments: false }), state);
+    expect(plan.billing).toEqual([
+      { featureKey: "driver_payments", action: "disable", manual: false },
+    ]);
+    expect(plan.comps).toEqual([
+      { featureKey: "recurring_routes" },
+      { featureKey: "order_delivery" },
+    ]);
+    expect(plan.overrides).toEqual([
+      { featureKey: "recurring_routes", effect: "GRANT", action: "skip" },
+      { featureKey: "order_delivery", effect: "GRANT", action: "skip" },
+      { featureKey: "driver_payments", effect: "DENY", action: "skip" },
+    ]);
+  });
+
+  it("{delivery, doorPayments:false} on a tenant holding driver_payments by a comp row switches it off as a comp", () => {
+    const state = unsetTenant();
+    state.holds.driver_payments = true;
+    state.rowHeld = new Set(["driver_payments"]);
+    state.compRows = new Set(["driver_payments"]);
+    const plan = planBusinessProfile(ticks({ delivery: true, doorPayments: false }), state);
+    expect(plan.billing).toEqual([
+      { featureKey: "driver_payments", action: "disable", manual: false, comp: true },
+    ]);
+  });
+
+  it("{shipping} with all three modules paid disables them in BILLING_DISABLE_ORDER", () => {
+    const plan = planBusinessProfile(ticks({ shipping: true }), paidAll());
+    expect(plan.billing.map((b) => b.featureKey)).toEqual([...BILLING_DISABLE_ORDER]);
+    expect(plan.comps).toEqual([]);
+  });
+
+  it("a per-module map filters the disable order, never reorders it", () => {
+    const def: BusinessProfileDef = {
+      ...profile("delivery_distributor"),
+      key: "custom",
+      modules: { recurring_routes: false, order_delivery: true, driver_payments: false },
+    };
+    const plan = planBusinessProfile(def, paidAll());
+    expect(plan.billing.map((b) => b.featureKey)).toEqual(["driver_payments", "recurring_routes"]);
+    expect(toBusinessProfileSummary(def)).toMatchObject({
+      grants: ["order_delivery"],
+      denies: ["recurring_routes", "driver_payments"],
+    });
+  });
+
+  it("idempotent: re-planning the ticks' own end state writes nothing", () => {
+    for (const t of [
+      { delivery: true, shipping: true, counter: true },
+      { delivery: true, doorPayments: false },
+      { shipping: true },
+      { counter: true },
+    ]) {
+      const def = ticks(t);
+      const state = unsetTenant();
+      for (const k of FLEET_MODULES) {
+        const wants = def.modules?.[k as keyof typeof def.modules] ?? def.fleet;
+        state.holds[k] = wants;
+        if (wants) {
+          state.rowHeld = new Set([...(state.rowHeld ?? []), k]);
+          state.compRows = new Set([...(state.compRows ?? []), k]);
+        }
+      }
+      state.modes = { ...state.modes, ...def.modes };
+      const plan = planBusinessProfile(def, state);
+      expect(plan.modes).toEqual([]);
+      expect(plan.comps).toEqual([]);
+      expect(plan.billing).toEqual([]);
+    }
+  });
+
+  it("postApplyViolations respects the per-module map (fleet true but both fleet keys off still needs a fleet)", () => {
+    const noFleetKeys: BusinessProfileDef = {
+      ...profile("delivery_distributor"),
+      key: "custom",
+      modules: { recurring_routes: false, order_delivery: false, driver_payments: true },
+    };
+    expect(postApplyViolations(noFleetKeys, unsetTenant())).toEqual([
+      { code: "FULFILMENT_MODE_NEEDS_FLEET", key: "fulfilment_model", mode: "delivery" },
+    ]);
+    const oneKey: BusinessProfileDef = {
+      ...profile("delivery_distributor"),
+      fleet: false,
+      modules: { recurring_routes: false, order_delivery: true, driver_payments: false },
+    };
+    expect(postApplyViolations(oneKey, unsetTenant())).toEqual([]);
+  });
+});
+
+describe("BO-04 planCompRefusal — the comp path's own refusal, dry-run in the plan", () => {
+  const oddDef: BusinessProfileDef = {
+    ...profile("delivery_distributor"),
+    key: "custom",
+    // door payments without any fleet key: the comp of driver_payments would be refused (anyOf the fleet keys)
+    modules: { recurring_routes: false, order_delivery: false, driver_payments: true },
+  };
+
+  it("a comp of driver_payments with no fleet key effective at that point is refused with FEATURE_REQUIRES_UNMET", () => {
+    const state = unsetTenant();
+    const plan = planBusinessProfile(oddDef, state);
+    expect(planCompRefusal(plan, state)).toEqual({
+      code: "FEATURE_REQUIRES_UNMET",
+      key: "driver_payments",
+      missing: expect.stringContaining("Recurring routes"),
+    });
+  });
+
+  it("the fleet comps that run first satisfy it (every ticks combination, from an unset tenant)", () => {
+    for (const t of [
+      { delivery: true },
+      { delivery: true, shipping: true },
+      { delivery: true, counter: true, shipping: true },
+      { delivery: true, doorPayments: false },
+      { shipping: true },
+      { counter: true },
+    ]) {
+      const state = unsetTenant();
+      expect(
+        planCompRefusal(planBusinessProfile(ticksToProfileDef(t).def, state), state),
+      ).toBeNull();
+    }
+  });
+
+  it("a DENY override on a fleet key is revoked before the comp, so it does not block driver_payments", () => {
+    const state = unsetTenant();
+    state.overrides.set("recurring_routes", "DENY");
+    state.overrides.set("order_delivery", "DENY");
+    const plan = planBusinessProfile(profile("delivery_distributor"), state);
+    expect(planCompRefusal(plan, state)).toBeNull();
+  });
+
+  it("a fleet key the same apply switches off (billing disable) no longer counts as effective", () => {
+    const state = unsetTenant();
+    state.holds.recurring_routes = true;
+    state.rowHeld = new Set(["recurring_routes"]);
+    state.paying = new Set(["recurring_routes"]);
+    const plan = planBusinessProfile(oddDef, state);
+    expect(plan.billing.map((b) => b.featureKey)).toEqual(["recurring_routes"]);
+    expect(planCompRefusal(plan, state)?.key).toBe("driver_payments");
+  });
+
+  it("nothing to comp, nothing refused", () => {
+    const state = unsetTenant();
+    expect(
+      planCompRefusal(planBusinessProfile(profile("shipping_wholesaler"), state), state),
+    ).toBeNull();
+  });
+});
+
+/**
+ * GUARD (labelled): the five original presets plan EXACTLY as before BO-04, apart from the new counter line.
+ * `legacyPlan` is the pre-BO-04 planner, copied here on purpose as the reference.
+ */
+describe("BO-04 guard — the five original presets plan exactly as before", () => {
+  const LEGACY: { key: string; fleet: boolean; modes: Record<string, string> }[] = [
+    { key: "delivery_distributor", fleet: true, modes: { fulfilment_model: "delivery" } },
+    { key: "shipping_wholesaler", fleet: false, modes: { fulfilment_model: "ship" } },
+    {
+      key: "in_store_retailer",
+      fleet: false,
+      modes: { fulfilment_model: "pickup", counter_sales: "on" },
+    },
+    {
+      key: "in_store_shipping_retailer",
+      fleet: false,
+      modes: { fulfilment_model: "pickup_ship", counter_sales: "on" },
+    },
+    {
+      key: "delivery_pos",
+      fleet: true,
+      modes: { fulfilment_model: "delivery", counter_sales: "on" },
+    },
+  ];
+
+  function legacyPlan(
+    def: { fleet: boolean; modes: Record<string, string> },
+    state: BusinessProfileState,
+  ) {
+    const effect: "GRANT" | "DENY" = def.fleet ? "GRANT" : "DENY";
+    const opposite = def.fleet ? "DENY" : "GRANT";
+    const disables = def.fleet
+      ? []
+      : BILLING_DISABLE_ORDER.filter((k) => state.paying?.has(k) || state.compRows?.has(k));
+    const comps: { featureKey: string }[] = [];
+    const overrides = PROFILE_MODULE_KEYS.map((featureKey) => {
+      const active = state.overrides.get(featureKey);
+      const held = disables.includes(featureKey) ? false : (state.holds[featureKey] ?? false);
+      if (def.fleet) {
+        if (active === "DENY") {
+          if (!state.rowHeld?.has(featureKey)) comps.push({ featureKey });
+          return { featureKey, effect, action: "revoke" as const };
+        }
+        if (!held) comps.push({ featureKey });
+        return { featureKey, effect, action: "skip" as const };
+      }
+      const action: "create" | "replace" | "skip" =
+        active === opposite ? "replace" : held === def.fleet ? "skip" : "create";
+      return { featureKey, effect, action };
+    });
+    const modes = Object.entries(def.modes)
+      .map(([key, to]) => ({ key, from: state.modes[key] ?? "unset", to }))
+      .filter((m) => m.from !== m.to);
+    return {
+      overrides,
+      comps,
+      modes,
+      billing: disables.map((featureKey) => ({
+        featureKey,
+        action: "disable" as const,
+        manual: state.manualPay?.has(featureKey) ?? false,
+        ...(!state.paying?.has(featureKey) && state.compRows?.has(featureKey)
+          ? { comp: true }
+          : {}),
+      })),
+    };
+  }
+
+  const all = FLEET_MODULES;
+  const mk = (
+    patch: Partial<Omit<BusinessProfileState, "overrides">> & {
+      overrides?: [string, "GRANT" | "DENY"][];
+    },
+  ): BusinessProfileState => {
+    const { overrides, ...rest } = patch;
+    return { ...unsetTenant(), ...rest, overrides: new Map(overrides ?? []) };
+  };
+  const heldAll = { recurring_routes: true, order_delivery: true, driver_payments: true };
+  const STATES: [string, BusinessProfileState][] = [
+    ["unset", mk({})],
+    ["paid all", mk({ holds: heldAll, rowHeld: new Set(all), paying: new Set(all) })],
+    [
+      "manual pay",
+      mk({
+        holds: heldAll,
+        rowHeld: new Set(all),
+        paying: new Set(all),
+        manualPay: new Set(["driver_payments"]),
+      }),
+    ],
+    ["comp all", mk({ holds: heldAll, rowHeld: new Set(all), compRows: new Set(all) })],
+    [
+      "paid + comp mix",
+      mk({
+        holds: heldAll,
+        rowHeld: new Set(all),
+        paying: new Set(["recurring_routes"]),
+        compRows: new Set(["order_delivery", "driver_payments"]),
+      }),
+    ],
+    [
+      "overrides both ways",
+      mk({
+        holds: { recurring_routes: true, order_delivery: false, driver_payments: true },
+        overrides: [
+          ["recurring_routes", "GRANT"],
+          ["order_delivery", "DENY"],
+        ],
+        rowHeld: new Set(["order_delivery"]),
+      }),
+    ],
+    ["stored modes already set", mk({ modes: { fulfilment_model: "ship", counter_sales: "on" } })],
+  ];
+
+  it.each(LEGACY.flatMap((l) => STATES.map(([name, st]) => [l.key, name, l, st] as const)))(
+    "%s from %s",
+    (key, _name, legacy, state) => {
+      const actual = planBusinessProfile(profile(key), state);
+      const expected = legacyPlan(legacy, state);
+      expect(actual.overrides).toEqual(expected.overrides);
+      expect(actual.comps).toEqual(expected.comps);
+      expect(actual.billing).toEqual(expected.billing);
+      // the ONLY difference: the counter line the two presets without a counter now carry
+      expect(actual.modes.filter((m) => !(m.key === "counter_sales" && m.to === "unset"))).toEqual(
+        expected.modes,
+      );
+    },
+  );
 });

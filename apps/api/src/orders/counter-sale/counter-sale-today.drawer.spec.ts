@@ -91,7 +91,7 @@ function m(rec: any, where: any): boolean {
           (v.not === undefined || val !== v.not) &&
           (v.notIn === undefined || !v.notIn.includes(val)) &&
           (v.in === undefined || v.in.includes(val)) &&
-          (v.some === undefined || (val as any[]).some((r) => m(r, v.some)))
+          (v.some === undefined || ((val as any[] | undefined) ?? []).some((r) => m(r, v.some)))
         );
       }
       return m(val, v);
@@ -139,13 +139,22 @@ function setup(orders: OrderRow[]) {
       _sum: { total: hit.reduce((s, o) => s + Number(o.total), 0) },
     };
   });
-  prisma.invoicePayment.groupBy.mockImplementation(async (args: any) => {
-    const by = new Map<string, number>();
-    for (const p of payments.filter((x) => m(x, args.where))) {
-      by.set(p.method, (by.get(p.method) ?? 0) + Number(p.amount));
-    }
-    return [...by].map(([method, amount]) => ({ method, _sum: { amount } }));
-  });
+  // the counter payments are READ as rows (row 374 a: the same till-money classification as the Z); the hand-over candidate
+  // read (non-counter orders) finds none in these fixtures
+  prisma.invoicePayment.findMany.mockImplementation(async (args: any) =>
+    args.where?.invoice?.order?.counterSale === false
+      ? []
+      : payments
+          .filter((x) => m(x, args.where))
+          .map((p, i) => ({
+            amount: p.amount,
+            method: p.method,
+            status: "PAID",
+            paymentGroupId: null,
+            checkStatus: null,
+            invoice: { orderId: `drawer-order-${i}` },
+          })),
+  );
   prisma.invoicePayment.aggregate.mockImplementation(async (args: any) => ({
     _sum: {
       amount: payments.filter((x) => m(x, args.where)).reduce((s, p) => s + Number(p.amount), 0),

@@ -344,7 +344,7 @@ describeDb("#2717 M3 order composition writes — real Postgres", () => {
       stub,
       {
         reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined),
-        syncInvoiceEntries: jest.fn(),
+        settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
       } as never,
       stub,
     );

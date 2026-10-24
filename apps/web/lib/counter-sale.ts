@@ -1,13 +1,33 @@
-import { computeLineSubtotal, roundMoney, validCustomer, validLine } from "@routeflow/pricing";
+import {
+  isCalendarDay,
+  roundMoney,
+  saleTotals,
+  type ChargeLine,
+  validCustomer,
+  validLine,
+  type CategoryTaxType,
+} from "@routeflow/pricing";
+import { formatReceiptMoney } from "./counter-receipt";
+import {
+  SALE_ORDER_EXISTS_CODES as ORDER_EXISTS_CODES,
+  isDefinitiveSaleRefusal,
+  mintSaleKey,
+} from "@routeflow/types/sale-attempt";
 import {
   API_ERROR_CODES,
+  COMPLETE_MODE_ERROR_COPY,
+  counterCompleteRefusalCopy,
   type CounterSalePaymentMethod,
   type FulfilmentCapability,
 } from "@routeflow/types";
+import { regulatedAuthErrorCopy } from "@routeflow/types/regulated-auth-copy";
+import { creditLimitCounterSentence } from "./credit-limit-copy";
+import { sellingRestrictedCopy } from "./selling-restricted-copy";
+import { isReadOnlyRefusal, readOnlyRefusalCopy } from "./read-only-refusal";
 
 /**
  * Counter sale (walk-in pickup) — the pure logic behind the one screen. Money goes ONLY through @routeflow/pricing
- * (`computeLineSubtotal`, `roundMoney`); there is no ad-hoc rounding here.
+ * (`saleTotals`, `roundMoney`); there is no ad-hoc rounding here.
  */
 
 export interface CounterSaleGate {
@@ -61,6 +81,28 @@ export function counterSaleGate(cap: FulfilmentCapability | null | undefined): C
 }
 
 /**
+ * Row 331 (UX G7) + row 344: the ONE header rule for every place that carries the quick-create entries (the Orders
+ * header, the dashboard header). A store-only business has a single place to ring a sale, so "New Order" (which
+ * went to the same place as "Counter sale") is not offered, Counter sale is the filled primary and trails, and
+ * the actions are 44 px targets below `sm`. Read from the one capability gate (`counterSaleGate`), so there is no
+ * second rule and no second capability read. A partial gate (a test double, a loading state) is NOT store-only.
+ */
+export interface QuickCreateRule {
+  storeOnly: boolean;
+  /** "New Order" is offered. */
+  showNewOrder: boolean;
+  /** "Counter sale" is the filled primary (and trails the other actions). */
+  counterIsPrimary: boolean;
+}
+
+export function quickCreateRule(
+  gate: Partial<Pick<CounterSaleGate, "offerInvoiceOrder">> | null | undefined,
+): QuickCreateRule {
+  const storeOnly = gate?.offerInvoiceOrder === true;
+  return { storeOnly, showNewOrder: !storeOnly, counterIsPrimary: storeOnly };
+}
+
+/**
  * Mirrors the server resolver: the CUSTOMER's stored path is used only if it is one of `capability.methods`, otherwise
  * `capability.staffDefault`. A stored ROUTE on a ship-only business therefore preselects SHIP.
  */
@@ -80,29 +122,74 @@ export interface CartLine {
   boxes?: number | null;
   pieces?: number | null;
   unitsPerBox?: number | null;
+  /** The product's regulated category (levy), snapshotted when the line was added. */
+  trackedCategoryId?: string | null;
 }
 
-/** Subtotal = the sum of each line's `computeLineSubtotal`; tax = one `roundMoney` of the subtotal; total = their sum. */
+/** A regulated category as the tracked-categories list serialises it (`rate` is a Decimal string). */
+export interface CartCategory {
+  id?: string;
+  /** the category's name: the levy prints as its own named charge ("CRV deposit") */
+  name?: string;
+  taxType: string;
+  rate: string | number;
+  priceIncludesTax?: boolean | null;
+}
+
+export interface CartTotalsContext {
+  /** Tax-exempt customer: $0 of BOTH the sales tax and the levy (RF-079 / RF-4), as on the order and invoice. */
+  isTaxExempt?: boolean;
+  /** The tenant's regulated categories by id; a line whose category is absent here is not levied. */
+  categories?: ReadonlyMap<string, CartCategory>;
+}
+
+/**
+ * The till's cart total: the SAME figure the server writes on the order and the invoice, from the one
+ * `saleTotals` (@routeflow/pricing): subtotal = the sum of each line's `computeLineSubtotal`; `tax` = the sales
+ * tax; `charges` = the regulated levy (excise / deposit); total = their sum. A line's levy needs `categories`; an
+ * exempt customer owes neither tax nor levy.
+ */
 export function cartTotals(
   lines: readonly CartLine[],
   taxRate: number,
-): { subtotal: number; tax: number; total: number } {
-  const subtotal = roundMoney(
-    lines.reduce(
-      (sum, l) =>
-        sum +
-        computeLineSubtotal({
-          unitPrice: l.unitPrice,
-          qty: l.qty,
-          boxes: l.boxes ?? undefined,
-          pieces: l.pieces ?? undefined,
-          unitsPerBox: l.unitsPerBox ?? undefined,
-        }),
-      0,
-    ),
+  ctx: CartTotalsContext = {},
+): {
+  subtotal: number;
+  tax: number;
+  charges: number;
+  total: number;
+  /** the levy as named charges, one per regulated category (CQ-08) */
+  chargeLines: ChargeLine[];
+} {
+  const t = saleTotals(
+    lines.map((l) => {
+      const c = l.trackedCategoryId ? ctx.categories?.get(l.trackedCategoryId) : undefined;
+      return {
+        unitPrice: l.unitPrice,
+        qty: l.qty,
+        boxes: l.boxes ?? undefined,
+        pieces: l.pieces ?? undefined,
+        unitsPerBox: l.unitsPerBox ?? undefined,
+        category: c
+          ? {
+              id: c.id ?? l.trackedCategoryId,
+              name: c.name,
+              taxType: c.taxType as CategoryTaxType,
+              rate: Number(c.rate),
+              priceIncludesTax: c.priceIncludesTax ?? false,
+            }
+          : null,
+      };
+    }),
+    { taxRate, isTaxExempt: ctx.isTaxExempt === true },
   );
-  const tax = roundMoney(subtotal * taxRate);
-  return { subtotal, tax, total: roundMoney(subtotal + tax) };
+  return {
+    subtotal: t.subtotal,
+    tax: t.regularTax,
+    charges: t.categoryTax,
+    total: t.total,
+    chargeLines: t.chargeLines,
+  };
 }
 
 export interface QuickTender {
@@ -165,12 +252,43 @@ export function validatePayment(input: {
   return null;
 }
 
+/** The short-tender line says what to enter ("Enter at least $18.94."), never what was wrong. */
+export const TENDER_SHORT_PREFIX = "Enter at least";
+export const tenderShortCopy = (total: number): string =>
+  `${TENDER_SHORT_PREFIX} ${formatReceiptMoney(total)}.`;
+/** True for the line `tenderShortCopy` made (the screen clears it, and only it, when the tender is fixed). */
+export const isTenderShortCopy = (text: string): boolean => text.startsWith(TENDER_SHORT_PREFIX);
+
 export const PAYMENT_PROBLEM_COPY: Record<PaymentProblem, string> = {
-  TENDER_SHORT: "The amount tendered is less than the total.",
+  /** the amount-less fallback; callers that know the total use `paymentProblemCopy` */
+  TENDER_SHORT: `${TENDER_SHORT_PREFIX} the full total.`,
   CHECK_NUMBER_REQUIRED: "Enter the check number.",
   WALK_IN_ON_ACCOUNT:
     "A walk-in customer can't be charged on account. Pick a customer or another payment method.",
 };
+
+/** The line for a payment problem; a short cash tender names the amount to enter. */
+export function paymentProblemCopy(problem: PaymentProblem, total: number): string {
+  return problem === "TENDER_SHORT" ? tenderShortCopy(total) : PAYMENT_PROBLEM_COPY[problem];
+}
+
+/**
+ * Interim till guard (owner P0): the one sentence for a check dated after the business's today. It is the inline message on
+ * the Check fields AND the refusal copy for the server's 400 COUNTER_CHECK_POSTDATED (a post-dated check is not money yet).
+ */
+export const COUNTER_CHECK_POSTDATED_COPY =
+  "Post-dated check: put this sale on account and record the check when it clears.";
+
+/** A check can only be dated against the business's day, so until that day is known the till says so and waits. */
+export const COUNTER_CHECK_ZONE_LOADING_COPY =
+  "Still loading the business's day. Try again in a moment.";
+export const COUNTER_CHECK_ZONE_FAILED_COPY =
+  "Couldn't load the business's day, so a check can't be dated yet.";
+
+/** True when `checkDate` names a real YYYY-MM-DD day strictly after `today` (the business's day). Anything else is not post-dated. */
+export function isPostdatedCheck(checkDate: string, today: string): boolean {
+  return isCalendarDay(checkDate) && isCalendarDay(today) && checkDate > today;
+}
 
 /** The scan field: 1-3 digits are a QUANTITY to multiply the next scan by; anything else is a code. */
 export function parseScanField(
@@ -183,6 +301,17 @@ export function parseScanField(
 
 export const COUNTER_SALES_DISABLED_COPY = "Counter sales are not turned on for this business.";
 
+/** BO-07: an operator whose admin has not turned selling on for their account (the Counter reached by a link or a stale tab). */
+export const COUNTER_NO_ACCESS_COPY = "Your admin hasn't turned on selling for your account.";
+
+/** CQ-30: shown after a Retry that got no answer either (still offline); the lookup resumes by itself when the network is back. */
+export const COUNTER_GATE_STILL_OFFLINE_COPY =
+  "Still no answer. It will open by itself when you are back online.";
+
+/** CQ-30: the capability lookup failed (offline, a server error): say so, never "not turned on". Shown with a Retry button. */
+export const COUNTER_GATE_CHECK_FAILED_COPY =
+  "Couldn't check whether counter sales are on. Check your connection and try again.";
+
 /** Shown under the unknown-outcome banner when "Check sale status" itself failed (anything but a 404 answer). */
 export const COUNTER_LOOKUP_FAILED_COPY = "Couldn't check the sale. Try again.";
 
@@ -190,35 +319,34 @@ export const COUNTER_LOOKUP_FAILED_COPY = "Couldn't check the sale. Try again.";
 export const COUNTER_OUTCOME_UNKNOWN_COPY =
   "We couldn't confirm the sale. Check recent sales before trying again.";
 
-const DEFINITIVE_REFUSALS = new Set([400, 401, 403, 404, 409, 422, 429]);
+/**
+ * CQ-29: offline at Complete. Shown in the checkout bar; the form stays usable and the sale can be sent again. It says
+ * "recorded", not "charged": a card or check is run on an outside terminal, which may already have taken the money while
+ * only the RouteFlow sale is missing, so the line also tells the clerk not to run the card a second time.
+ */
+export const COUNTER_OFFLINE_COPY =
+  "No connection. Nothing was recorded yet. Check your connection and try again. If a card was already charged on the terminal, do not charge it again.";
 
-/** 409 codes that mean the order EXISTS (the key was already used): an unknown outcome, never a refusal. */
-const ORDER_EXISTS_CODES: ReadonlySet<unknown> = new Set([
-  API_ERROR_CODES.COUNTER_SALE_ORDER_CHANGED,
-  API_ERROR_CODES.IDEMPOTENCY_KEY_OTHER_ORDER,
-  API_ERROR_CODES.IDEMPOTENCY_KEY_CART_MISMATCH,
-  // The sale is committed BEFORE its tender: a tender dated inside a closed day is refused afterwards, so the sale exists
-  // (unpaid). A fresh key would ring it twice; the SAME key finishes it once the close is reopened.
-  API_ERROR_CODES.COUNTER_SALE_DAY_CLOSED,
-]);
+/**
+ * CQ-29: the request got no answer AND the browser already reported itself offline when it was sent. Only that combination
+ * proves nothing reached the server, so only it may say "nothing was recorded". Any other no-answer failure (a drop in flight, a
+ * timeout, a 5xx) stays an UNKNOWN outcome. The sale keeps its Idempotency-Key for the retry either way.
+ */
+export function isNotSentOffline(err: unknown, offlineAtSend: boolean): boolean {
+  const e = err as { response?: unknown } | null | undefined;
+  return offlineAtSend && !!e && !e.response;
+}
 
 /** 409 COUNTER_SALE_DAY_CLOSED from the till's sale: the sale is saved, only its payment was refused (the tender's day is closed). */
 export const COUNTER_SALE_DAY_CLOSED_TILL_COPY =
-  "This day is closed, so no payment was taken. The sale is saved. Ask the office to reopen the close, then use Try again.";
+  "This day is closed, so no payment was taken. The sale is saved without payment.";
 
 /**
  * True only for a 4xx that PROVES nothing was written (the auth guard, the throttler and validation all reject BEFORE the
  * handler runs), and only for a FIRST attempt: once an attempt has been UNKNOWN, no refusal is definitive (the first try may
- * have committed); only a 2xx or the by-key lookup's 404 COUNTER_SALE_NOT_FOUND settles it. Every other failure (5xx,
- * network, timeout, 408) is unknown, and so is a 409 whose code says the order exists.
+ * have committed). The ONE rule lives in `@routeflow/types/sale-attempt` (row 485), shared with the New sale page and mobile.
  */
-export function isDefinitiveCounterSaleRefusal(err: unknown): boolean {
-  const res = (
-    err as { response?: { status?: number; data?: { code?: unknown } } } | null | undefined
-  )?.response;
-  if (res?.status === 409 && ORDER_EXISTS_CODES.has(res.data?.code)) return false;
-  return typeof res?.status === "number" && DEFINITIVE_REFUSALS.has(res.status);
-}
+export const isDefinitiveCounterSaleRefusal = isDefinitiveSaleRefusal;
 
 /** The by-key lookup's one definitive "no": a 404 with COUNTER_SALE_NOT_FOUND. Any other failure proves nothing. */
 export function isCounterSaleNotFound(err: unknown): boolean {
@@ -251,6 +379,18 @@ export function isCounterSaleChanged(err: unknown): boolean {
   return res?.status === 409 && res.data?.code === API_ERROR_CODES.COUNTER_SALE_CHANGED;
 }
 
+/**
+ * A message that says something about a sale that EXISTS (voided or changed after it was rung, or saved without payment for a
+ * closed day). Unlike a stale refusal it stays when the cart is edited, because editing the cart does not undo it (CQ-18).
+ */
+export function isFinalSaleMessage(message: string): boolean {
+  return (
+    message === COUNTER_SALE_VOIDED_COPY ||
+    message === COUNTER_SALE_CHANGED_COPY ||
+    message === COUNTER_SALE_DAY_CLOSED_TILL_COPY
+  );
+}
+
 /** The fixed copy of a FINAL answer (voided / changed after it was rung), else null: such a sale is never retried. */
 export function finalCounterSaleCopy(err: unknown): string | null {
   if (isCounterSaleVoided(err)) return COUNTER_SALE_VOIDED_COPY;
@@ -274,9 +414,17 @@ export const COUNTER_PRICE_EDIT_NOT_PERMITTED_COPY =
  * FIXED copy by status (and the one named 403 code); the server's own message is never shown. "Nothing was charged" is
  * said ONLY for a refusal that proves nothing was written; a 5xx / network error / timeout is an unknown outcome.
  */
-export function counterSaleErrorCopy(err: unknown): string {
+export function counterSaleErrorCopy(err: unknown, opts: { walkIn?: boolean } = {}): string {
   const res = (
-    err as { response?: { status?: number; data?: { code?: unknown } } } | null | undefined
+    err as
+      | {
+          response?: {
+            status?: number;
+            data?: { code?: unknown; limit?: unknown; exposure?: unknown; blockedLines?: unknown };
+          };
+        }
+      | null
+      | undefined
   )?.response;
   const status = res?.status;
   if (status === 403 && res?.data?.code === API_ERROR_CODES.COUNTER_SALES_DISABLED)
@@ -284,6 +432,8 @@ export function counterSaleErrorCopy(err: unknown): string {
   // POS-5: a refused price edit says so (and what to do), before the generic permission copy below.
   if (status === 403 && res?.data?.code === API_ERROR_CODES.PRICE_EDIT_NOT_PERMITTED)
     return COUNTER_PRICE_EDIT_NOT_PERMITTED_COPY;
+  // A READ_ONLY workspace's 403: the guard refused before the handler ran (nothing was written), and the permission is fine.
+  if (status === 403 && isReadOnlyRefusal(err)) return readOnlyRefusalCopy();
   if (status === 401 || status === 403)
     return "You don't have permission to complete a counter sale.";
   const final = finalCounterSaleCopy(err);
@@ -292,13 +442,28 @@ export function counterSaleErrorCopy(err: unknown): string {
     return COUNTER_SALE_DAY_CLOSED_TILL_COPY;
   if (status === 409 && ORDER_EXISTS_CODES.has(res?.data?.code))
     return COUNTER_OUTCOME_UNKNOWN_COPY; // the order exists
+  if (status === 400 && res?.data?.code === API_ERROR_CODES.WALK_IN_NO_ACCOUNT)
+    return "A walk-in has no account. Pick a customer to put this sale on account.";
   if (status === 409 && res?.data?.code === API_ERROR_CODES.WALK_IN_OPEN_CREDIT)
     return "This walk-in has open credit. Resolve it on the customer, then ring the sale again.";
   // B1209: a walk-in's cash below the server's total was refused (400, as pickup-complete) BEFORE anything was written.
   if (status === 400 && res?.data?.code === API_ERROR_CODES.COUNTER_TENDER_SHORT)
     return PICKUP_TENDER_SHORT_COPY;
+  // Interim till guard: a check dated after the business's today was refused (400) BEFORE anything was written.
+  if (status === 400 && res?.data?.code === API_ERROR_CODES.COUNTER_CHECK_POSTDATED)
+    return COUNTER_CHECK_POSTDATED_COPY;
   if (status === 409 && res?.data?.code === API_ERROR_CODES.COUNTER_SALE_KEY_CONFLICT)
     return "That sale reference was already used. Ring the sale again.";
+  // CQ-06: a license refusal (create()'s regulated guard, before anything is written) says what to fix, not "Something changed".
+  const license = regulatedAuthErrorCopy(err, { walkIn: opts.walkIn === true });
+  if (license) return `${license} Nothing was charged.`;
+  // CQ-06 review: the credit-limit and selling-restriction guards also run in create() before any write; each says what to fix.
+  if (status === 409 && res?.data?.code === API_ERROR_CODES.CREDIT_LIMIT_EXCEEDED) {
+    return `${creditLimitCounterSentence(res.data.limit, res.data.exposure)} Nothing was charged.`;
+  }
+  if (status === 409 && res?.data?.code === API_ERROR_CODES.SELLING_RESTRICTED) {
+    return `${sellingRestrictedCopy(res.data.blockedLines)} Nothing was charged.`;
+  }
   if (status === 409)
     return "Something changed while you were checking out. Review the sale and try again. Nothing was charged.";
   if (status === 400 || status === 404 || status === 422 || status === 429)
@@ -307,15 +472,7 @@ export function counterSaleErrorCopy(err: unknown): string {
 }
 
 /** One key per SALE (sent as `Idempotency-Key`): kept until a DEFINITIVE answer, then a new sale gets a new one. */
-export function newIdempotencyKey(): string {
-  const c = typeof globalThis !== "undefined" ? globalThis.crypto : undefined;
-  if (c && typeof c.randomUUID === "function") return c.randomUUID();
-  // insecure-context fallback (a counter on a plain-http LAN address has no randomUUID)
-  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (ch) => {
-    const r = Math.floor(Math.random() * 16);
-    return (ch === "x" ? r : (r & 0x3) | 0x8).toString(16);
-  });
-}
+export const newIdempotencyKey = mintSaleKey;
 
 /** Per-DEVICE preference ("Print receipt automatically"): localStorage only, never tenant data, never throws. */
 export const AUTO_PRINT_KEY = "rf.counterSale.autoPrint";
@@ -360,8 +517,10 @@ export const PICKUP_ONLY_COPY = "Only a pickup order can be handed over this way
 export const PICKUP_GENERIC_COPY = "Couldn't complete the pickup. Check the order and try again.";
 
 /** 409 COUNTER_SALE_DAY_CLOSED from pickup-complete: the hand-over stands, only the payment was refused (the tender's day is closed). */
-export const PICKUP_DAY_CLOSED_COPY =
-  "Handed over. Payment not taken: the till for that day is closed.";
+export const PICKUP_DAY_CLOSED_COPY = "Handed over. Payment is still due.";
+/** The same refusal when the dialog knows what is owed: "Handed over. $18.94 still due." */
+export const pickupDayClosedCopy = (balanceDue: number): string =>
+  `Handed over. ${formatReceiptMoney(balanceDue)} still due.`;
 export const PICKUP_PAYMENT_REQUIRED_COPY =
   "A balance is due on this order now. Take payment to finish.";
 export const PICKUP_TENDER_SHORT_COPY = "A walk-in customer must pay the full balance.";
@@ -377,10 +536,21 @@ export function pickupErrorCode(err: unknown): string | undefined {
   return typeof code === "string" ? code : undefined;
 }
 
-/** Fixed copy by error code; the server's own message is never shown. */
-export function pickupCompleteErrorCopy(err: unknown): string {
+/** Fixed copy by error code; the server's own message is never shown. `complete`: opened from "Complete at counter". */
+export function pickupCompleteErrorCopy(
+  err: unknown,
+  balanceDue?: number,
+  complete = false,
+): string {
   const res = (err as { response?: { status?: number; data?: { code?: unknown } } } | null)
     ?.response;
+  // I-120: the refusals before any write (the shared copy), then complete mode's own words for the shared lines
+  const refused = counterCompleteRefusalCopy(res?.data, formatReceiptMoney);
+  if (refused) return refused;
+  if (complete && res?.data?.code === API_ERROR_CODES.PICKUP_NOT_READY)
+    return COMPLETE_MODE_ERROR_COPY.notReady;
+  if (complete && res?.data?.code === API_ERROR_CODES.PICKUP_KEY_CONFLICT)
+    return COMPLETE_MODE_ERROR_COPY.keyConflict;
   if (res?.data?.code === API_ERROR_CODES.PICKUP_PAYMENT_REQUIRED)
     return PICKUP_PAYMENT_REQUIRED_COPY;
   if (res?.data?.code === API_ERROR_CODES.COUNTER_TENDER_SHORT) return PICKUP_TENDER_SHORT_COPY;
@@ -389,14 +559,18 @@ export function pickupCompleteErrorCopy(err: unknown): string {
     return PICKUP_INVOICE_MISSING_COPY;
   if (res?.data?.code === API_ERROR_CODES.WALK_IN_OPEN_CREDIT) return PICKUP_WALK_IN_CREDIT_COPY;
   if (res?.status === 409 && res.data?.code === API_ERROR_CODES.COUNTER_SALE_DAY_CLOSED)
-    return PICKUP_DAY_CLOSED_COPY;
+    return balanceDue !== undefined && balanceDue > 0
+      ? pickupDayClosedCopy(balanceDue)
+      : PICKUP_DAY_CLOSED_COPY;
   if (res?.data?.code === API_ERROR_CODES.PICKUP_NOT_READY) return PICKUP_NOT_READY_COPY;
   if (res?.data?.code === API_ERROR_CODES.PICKUP_ONLY) return PICKUP_ONLY_COPY;
   if (res?.data?.code === API_ERROR_CODES.WALK_IN_NO_ACCOUNT)
     return PAYMENT_PROBLEM_COPY.WALK_IN_ON_ACCOUNT;
   if (res?.data?.code === API_ERROR_CODES.COUNTER_CHECK_NUMBER_REQUIRED)
     return PAYMENT_PROBLEM_COPY.CHECK_NUMBER_REQUIRED;
-  return PICKUP_GENERIC_COPY;
+  if (res?.data?.code === API_ERROR_CODES.COUNTER_CHECK_POSTDATED)
+    return COUNTER_CHECK_POSTDATED_COPY;
+  return complete ? COMPLETE_MODE_ERROR_COPY.generic : PICKUP_GENERIC_COPY;
 }
 
 /**
@@ -414,6 +588,8 @@ export interface HeldAttemptSnapshot {
   method: string;
   tendered: string;
   reference: string;
+  /** a check's typed date, so a restored held sale shows it (the retry sends the dto's own) */
+  checkDate?: string;
 }
 /** Shown with the Discard button: the unreadable held sale may already have been written. */
 export const COUNTER_DISCARD_COPY =
@@ -471,7 +647,7 @@ export function writeHeldAttempt(storeKey: string | null, snap: HeldAttemptSnaps
     const c = snap.customer as Record<string, unknown> | null | undefined;
     const customer = c
       ? Object.fromEntries(
-          (["id", "businessName", "pricingTier", "fulfillPath"] as const)
+          (["id", "businessName", "pricingTier", "fulfillPath", "isTaxExempt"] as const)
             .filter((k) => c[k] !== undefined)
             .map((k) => [k, c[k]]),
         )
@@ -502,7 +678,17 @@ const PICKUP_HANDLED_CODES: ReadonlySet<string> = new Set([
   API_ERROR_CODES.PICKUP_NOT_READY,
   API_ERROR_CODES.PICKUP_ONLY,
   API_ERROR_CODES.COUNTER_SALE_DAY_CLOSED,
+  API_ERROR_CODES.COUNTER_CHECK_POSTDATED,
 ]);
+/** Counter-sale codes the till answers with its own fixed copy (counterSaleErrorCopy): the global error toast stays quiet. */
+const COUNTER_SALE_HANDLED_CODES: ReadonlySet<string> = new Set([
+  API_ERROR_CODES.COUNTER_CHECK_POSTDATED,
+  API_ERROR_CODES.COUNTER_TENDER_SHORT,
+]);
+export function isCounterSaleHandledError(err: unknown): boolean {
+  const code = pickupErrorCode(err);
+  return code !== undefined && COUNTER_SALE_HANDLED_CODES.has(code);
+}
 export function isPickupHandledError(err: unknown): boolean {
   const code = pickupErrorCode(err);
   return code !== undefined && PICKUP_HANDLED_CODES.has(code);

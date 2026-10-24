@@ -12,6 +12,10 @@ import { InvoiceNumberingCard } from "./InvoiceNumberingCard";
 const mockGet = jest.fn();
 const mockPut = jest.fn();
 const mockPatch = jest.fn();
+jest.mock("@/lib/auth-context", () => ({
+  ...jest.requireActual("@/lib/auth-context"),
+  useAuth: () => ({ user: { id: "u1", username: "x", role: "TENANT_ADMIN" } }),
+}));
 jest.mock("@/lib/api-client", () => ({
   apiClient: {
     get: (...a: unknown[]) => mockGet(...a),

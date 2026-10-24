@@ -1,6 +1,10 @@
 import {
+  COUNTER_METHOD_LABEL,
+  counterMethodLine,
+  dayCloseDateLabel,
   explainedTaxRatePercent,
   formatReceiptMoney,
+  receiptFigures,
   receiptLineAmounts,
   receiptLineDetail,
   roundMoney,
@@ -65,6 +69,12 @@ export interface ReceiptBusinessProfile {
  * the rule for naming a rate are `@routeflow/pricing`'s (`explainedTaxRatePercent`), shared with the emailed receipt.
  */
 export type CounterReceiptLine = ReceiptLine;
+/**
+ * SA-838a: the reprint of a sale that had a return carries the server's `returnLines`, each used as given (the web derives none),
+ * on the SHARED `ReceiptModel` (`returned` / `refunded` / `creditKept` / `creditUsed` / `returnPending`, documented there): the
+ * emailed receipt prints the same fields from the same pricing helpers. Only a server that sends `returnLines` sets any of
+ * them; an older one reprints exactly as before (none of the keys exist on the model).
+ */
 export type CounterReceiptModel = ReceiptModel;
 
 /**
@@ -83,7 +93,7 @@ const METHOD_LABEL: Record<CounterSalePaymentMethod, string> = {
   ON_ACCOUNT: "On account",
 };
 
-/** "3 × $2.50 / each" or "1 box + 3 pcs × $12.00 per box": the ONE text (pricing's `receiptLineDetail`), the same the email prints. */
+/** "3 × $2.50 each" or "1 box + 3 pcs × $12.00 per box": the ONE text (pricing's `receiptLineDetail`), the same the email prints. */
 const lineDetail = (l: ReceiptLineInput): string => receiptLineDetail(l);
 
 /** GET /orders/:id serialises Prisma Decimals as strings ("3.30"): coerce, and treat anything non-numeric as 0. */
@@ -222,8 +232,13 @@ export function buildCounterReceipt(input: {
   // Tax and the rate candidate are the SERVER's (the response's `tax` = Order.tax and `taxRatePercent`, from pricing's
   // storedTaxRatePercent), exactly what the reprint and the emailed receipt use. Adjustments is whatever remains. The settings
   // tax rate is not a money source here; an older server that sends no tax prints no Tax row.
-  const tax = roundMoney(receipt.tax ?? 0) || 0; // never -0
-  const adjustments = roundMoney(receipt.total - netSubtotal - tax) || 0; // never -0
+  // CQ-03: the deposit / excise are their own named charges (the invoices' billed levy), never inside Tax or Adjustments.
+  const { tax, charges, adjustments } = receiptFigures({
+    netSubtotal,
+    total: receipt.total,
+    tax: receipt.tax ?? 0,
+    charges: receipt.charges,
+  });
   const namedRate = explainedTaxRatePercent({
     base: netSubtotal,
     tax,
@@ -241,6 +256,7 @@ export function buildCounterReceipt(input: {
     subtotal: roundMoney(netSubtotal + discounts),
     discounts,
     tax,
+    charges,
     adjustments,
     total: receipt.total,
     paid: receipt.paid,
@@ -306,22 +322,36 @@ export interface ReprintSaleFacts {
   change?: number | null;
   /** the sale's single stored tax rate in percent (the row's `taxRatePercent`); null/absent: no rate known */
   taxRatePercent?: number | null;
+  /** the regulated levies the invoices billed, each a named charge (the row's `charges`); absent: none */
+  charges?: ReadonlyArray<{ key: string; label: string; amount: number }>;
   /** the row's customer name; null/absent for a walk-in (the row's `isWalkIn`): no customer line prints */
   customerName?: string | null;
   /** IANA zone the sale time is read in (the server's `meta.timezone`) */
   timezone?: string;
+  /**
+   * B1262 / SA-838, the server's split of `paid` (the row's `tenderPaid` / `tenderMethods`, `@routeflow/pricing`
+   * `counterTenderSplit`): what was TENDERED, without the sale's own return credit. Used as given, never re-derived. Present:
+   * Paid and the payment method read these. Absent (an older server): `paid` / `methods` as before.
+   */
+  tenderPaid?: number;
+  tenderMethods?: ReadonlyArray<{ method: ReprintTender; amount: number }>;
+  /**
+   * SA-838a, the row's `returnLines` (`@routeflow/pricing` `returnSettlement`, summed by the server): applied / refunded / kept
+   * credit of THIS sale's own returns, and whether one is still pending. Used as given. Absent (an older server): no return line.
+   */
+  returnLines?: {
+    applied: number;
+    refunded: number;
+    kept: number;
+    used: number;
+    pending: boolean;
+  };
 }
 
 /** The tender of a today's-sales row (the shared POS-7b-1 type; never hand-typed here). */
 export type ReprintTender = TodaysSaleMethod;
 
-const REPRINT_METHOD_LABEL: Record<ReprintTender, string> = {
-  CASH: "Cash",
-  CARD: "Card",
-  CHECK: "Check",
-  OTHER: "Other",
-  STORE_CREDIT: "Store credit",
-};
+const REPRINT_METHOD_LABEL = COUNTER_METHOD_LABEL;
 
 /**
  * "Oct 7, 2026, 11:15 AM" in the given zone (the sale's own zone, not the browser's). The tenant timezone is a free
@@ -336,6 +366,30 @@ export function formatSaleTime(at: string | Date, timeZone: string = "UTC"): str
       timeStyle: "short",
       timeZone: zone,
     }).format(d);
+  try {
+    return format(timeZone);
+  } catch {
+    return format("UTC");
+  }
+}
+
+/**
+ * "Sun, Oct 11, 2:46 PM": the day label is the shared `dayCloseDateLabel` (the one the Z report title uses), read from the
+ * sale's own calendar day in the sale's zone, then the time of day in that zone. Same zone fallback as `formatSaleTime`.
+ */
+export function formatSaleDayTime(at: string | Date, timeZone: string = "UTC"): string {
+  const d = at instanceof Date ? at : new Date(at);
+  const format = (zone: string) => {
+    // en-CA prints a calendar date as YYYY-MM-DD, which is what dayCloseDateLabel reads.
+    const day = new Intl.DateTimeFormat("en-CA", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      timeZone: zone,
+    }).format(d);
+    const time = new Intl.DateTimeFormat("en-US", { timeStyle: "short", timeZone: zone }).format(d);
+    return `${dayCloseDateLabel(day)}, ${time}`;
+  };
   try {
     return format(timeZone);
   } catch {
@@ -393,12 +447,24 @@ export function receiptModelFromOrder(input: {
     });
   const netSubtotal = roundMoney(rows.reduce((sum, r) => sum + r.total, 0));
   const discounts = roundMoney(rows.reduce((sum, r) => sum + r.discount, 0));
-  const hasTender = sale.methods.length > 0;
-  const { paid, balanceDue } = sale;
+  // B1262 / SA-838: a server that sends the tender split has already taken the sale's own return credit out of what was paid
+  // and out of the methods (an unproven store credit stays a tender there), so they are read as given. An older server sends
+  // neither: master's reading of `paid` / `methods`, and no Returned line.
+  const split = sale.tenderPaid !== undefined;
+  const tenders = split ? (sale.tenderMethods ?? sale.methods) : sale.methods;
+  const hasTender = tenders.length > 0;
+  const paid = split ? sale.tenderPaid! : sale.paid;
+  const { balanceDue } = sale;
+  // the server's return figures as given (no client rounding or derivation of a server field); absent: no return line
+  const lines = split ? sale.returnLines : undefined;
   const onAccount = !hasTender && balanceDue > 0;
   const orderTotal = num(order.total);
-  const tax = roundMoney(num(order.tax));
-  const adjustments = roundMoney(orderTotal - netSubtotal - tax) || 0; // never -0
+  const { tax, charges, adjustments } = receiptFigures({
+    netSubtotal,
+    total: orderTotal,
+    tax: num(order.tax),
+    charges: sale.charges,
+  });
   // Name the rate only when it accounts for the stored tax (a re-price or credit must not read as tax); else plain "Tax".
   const taxRatePercent = explainedTaxRatePercent({
     base: netSubtotal,
@@ -416,6 +482,7 @@ export function receiptModelFromOrder(input: {
     cashier: clean(input.cashier) || null,
     subtotal: roundMoney(netSubtotal + discounts),
     tax,
+    charges,
     adjustments,
     discounts,
     total: orderTotal,
@@ -425,9 +492,21 @@ export function receiptModelFromOrder(input: {
     paymentNotRecorded: false,
     showPaid: hasTender,
     showBalance: onAccount || balanceDue > 0,
+    // the split path prints pricing's ONE Payment method line (the emailed receipt's too); an older server keeps master's labels
     methodLabel: hasTender
-      ? sale.methods.map((m) => REPRINT_METHOD_LABEL[m.method]).join(" + ")
+      ? split
+        ? counterMethodLine(tenders)
+        : tenders.map((m) => REPRINT_METHOD_LABEL[m.method]).join(" + ")
       : null,
+    ...(lines
+      ? {
+          returned: lines.applied > 0 ? lines.applied : null,
+          refunded: lines.refunded > 0 ? lines.refunded : null,
+          creditKept: lines.kept > 0 ? lines.kept : null,
+          creditUsed: lines.used > 0 ? lines.used : null,
+          returnPending: lines.pending,
+        }
+      : {}),
     tendered,
     tenderedAsEntered: false,
     // the server's figure (the row's `change`, servedChange), shown as given: the client recomputes nothing

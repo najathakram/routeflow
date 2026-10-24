@@ -26,8 +26,12 @@ export const PAYING_TENANT_CONDITIONS = {
 export function isPayingRow(
   tenant: { status: string; deletedAt: Date | null; class: string },
   planKey: string | null,
+  // SA-736r M2: REQUIRED, so the compiler finds every site. A subscription whose next recurring invoice is
+  // $0 because of discounts (`TenantSubscription.couponFull`, synced from Stripe) is UNBILLED, never paying.
+  couponFull: boolean,
 ): boolean {
   return (
+    couponFull !== true &&
     tenant.status === PAYING_TENANT_CONDITIONS.status &&
     // Loose, matching every prior inline copy's `deletedAt == null` — never strict `===`,
     // which would reject `undefined` (a caller's select that never fetched the column).
@@ -98,6 +102,11 @@ export interface MrrOverview {
    */
   unpricedActiveTenants: number;
   /**
+   * SA-736r: ACTIVE, PRODUCTION tenants whose Stripe subscription's next recurring invoice is $0 because of
+   * discounts (`couponFull`): UNBILLED - counted here, never in `payingTenants`, `mrr` or `ledgerMrr`.
+   */
+  couponUnbilledTenants: number;
+  /**
    * REG-743-N5/F2 (review finding F2): a paying-scoped row that DOES have a basePriceSnapshot
    * but nets to exactly $0 anyway (e.g. a full discount) — the "free pilot with a real Stripe
    * subscription" shape. Disjoint from `unpricedActiveTenants` (that one requires a null
@@ -144,8 +153,10 @@ export class MrrService {
     // five customers are FREE PILOTS/TRIALS and every TEST/DEMO/INTERNAL tenant (routeflow-demo,
     // qa-*/e2e-*/ux-audit-* slugs, routeflow-hq) must be invisible to revenue everywhere,
     // not just here in the paying-subscription filter.
+    // SA-736r M2: `couponFull: false` lives on payingWhere itself, so no spread-then-override can drop it.
     const payingWhere = {
       planKey: { not: null },
+      couponFull: false,
       tenant: PAYING_TENANT_CONDITIONS,
     };
     const now = new Date();
@@ -168,6 +179,7 @@ export class MrrService {
       ledgerAgg,
       momAgg,
       activeWithoutSubscription,
+      couponUnbilledTenants,
     ] = await Promise.all([
       this.prisma.tenantSubscription.findMany({
         where: payingWhere,
@@ -179,7 +191,11 @@ export class MrrService {
         // manual/external-payment activation) would book add-on MRR with no base behind it.
         where: billableAddonWhere({
           active: true,
-          tenant: { ...PAYING_TENANT_CONDITIONS, subscription: { planKey: { not: null } } },
+          // SA-736r M2: a coupon tenant's add-ons leave `mrr` exactly as they leave `ledgerMrr`.
+          tenant: {
+            ...PAYING_TENANT_CONDITIONS,
+            subscription: { planKey: { not: null }, couponFull: false },
+          },
         }),
         select: { tenantId: true, priceSnapshot: true, quantity: true },
       }),
@@ -209,6 +225,10 @@ export class MrrService {
           ...activeProductionWhere,
           OR: [{ subscription: null }, { subscription: { planKey: null } }],
         },
+      }),
+      // SA-736r: the unbilled coupon cohort, beside zeroPricedActiveTenants.
+      this.prisma.tenantSubscription.count({
+        where: { planKey: { not: null }, couponFull: true, tenant: PAYING_TENANT_CONDITIONS },
       }),
     ]);
 
@@ -288,6 +308,7 @@ export class MrrService {
       ledgerMrr: roundMoney(Number(ledgerAgg._sum.amountDelta ?? 0)),
       momDelta: roundMoney(Number(momAgg._sum.amountDelta ?? 0)),
       unpricedActiveTenants,
+      couponUnbilledTenants,
       zeroPricedActiveTenants,
       activeWithoutSubscription,
     };
@@ -342,10 +363,19 @@ export class MrrService {
         status: true,
         class: true,
         deletedAt: true,
-        subscription: { select: { planKey: true, basePriceSnapshot: true, discount: true } },
+        subscription: {
+          select: { planKey: true, basePriceSnapshot: true, discount: true, couponFull: true },
+        },
       },
     });
-    if (!tenant || !isPayingRow(tenant, tenant.subscription?.planKey ?? null)) {
+    if (
+      !tenant ||
+      !isPayingRow(
+        tenant,
+        tenant.subscription?.planKey ?? null,
+        tenant.subscription?.couponFull ?? false,
+      )
+    ) {
       return 0;
     }
     const addons = await db.tenantAddon.findMany({

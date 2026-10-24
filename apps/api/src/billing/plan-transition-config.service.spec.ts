@@ -51,6 +51,7 @@ function build(enabled: boolean) {
       // An add-on SKU grants a plan flag to a tenant on ANY plan (grantsFlags), like MSRP/forecasting.
       addonSkus: [{ sku: "SOME_SKU", grantsFlags: [SKU_GRANTED] }],
     }),
+    getPublishedCatalog: jest.fn().mockResolvedValue({ addonSkus: [] }),
   };
   const flag = { isEnabled: jest.fn().mockResolvedValue(enabled) };
   const caches = {
@@ -198,6 +199,100 @@ describe("PlanTransitionConfigService (A2 step b)", () => {
         report: { restored: 2, skipped: 1, keptNewer: 1, unchanged: 0 },
         supersededSnapshots: 2,
       },
+    });
+  });
+
+  // BO-13: a restore that HELD the delivery-method row (orders with the carrier, or no fleet) is partial.
+  // The upgrade is a paid event and always proceeds; the partial run is reported on a SEPARATE audit action
+  // so the admin list's one-RESTORED-row-per-restored-snapshot invariant (#2226) still holds, and a warning
+  // names the held row.
+  describe("a held row never blocks the upgrade (BO-13)", () => {
+    const up = { tenantId: "t1", fromPlanKey: LOW, toPlanKey: HIGH, toPlanVersionId: null };
+    const HELD = {
+      featureKey: "fulfilment_model",
+      from: "delivery",
+      to: "ship",
+      reason: "CARRIER_IN_TRANSIT",
+      count: 2,
+    };
+    const partial = () => ({
+      snapshotId: "snap-0",
+      takenAt: new Date(),
+      planKey: HIGH,
+      report: { restored: 1, skipped: 1, keptNewer: 0, unchanged: 0 },
+      supersededSnapshots: 0,
+      held: [HELD],
+    });
+
+    it("orders in transit: the upgrade proceeds (savepoint RELEASED, never rolled back) and the audit report counts the held row as skipped", async () => {
+      const { svc, snapshots } = build(true);
+      snapshots.restoreLatest.mockResolvedValue(partial());
+
+      const outcome = await runTransition(svc, up);
+
+      expect(outcome).toMatchObject({ action: "restore" });
+      expect(sqlOf()).toEqual([
+        "SAVEPOINT config_snapshot_restore",
+        "RELEASE SAVEPOINT config_snapshot_restore",
+      ]);
+      expect(auditCreate).toHaveBeenCalledTimes(1);
+      expect(auditCreate.mock.calls[0][0].data).toMatchObject({
+        tenantId: "t1",
+        action: "CONFIG_SNAPSHOT_RESTORE_HELD",
+        entityType: "tenant",
+        entityId: "t1",
+        meta: {
+          automatic: true,
+          snapshotId: "snap-0",
+          report: { restored: 1, skipped: 1, keptNewer: 0, unchanged: 0 },
+          held: [HELD],
+        },
+      });
+    });
+
+    it("a held run does NOT also log the 'Restored tenant' success line", async () => {
+      const { svc, snapshots } = build(true);
+      snapshots.restoreLatest.mockResolvedValue(partial());
+      const log = jest.spyOn(Logger.prototype, "log").mockImplementation(() => undefined);
+      const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+
+      await runTransition(svc, up);
+
+      expect(log.mock.calls.filter((c) => String(c[0]).includes("Restored tenant"))).toEqual([]);
+      log.mockRestore();
+      warn.mockRestore();
+    });
+
+    it("M1: hands the add-on keys the same transaction will activate to the restore", async () => {
+      const { svc, snapshots } = build(true);
+      await runTransition(svc, { ...up, pendingAddonKeys: ["recurring_routes"] });
+      expect(snapshots.restoreLatest.mock.calls[0][6]).toEqual(["recurring_routes"]);
+    });
+
+    it("logs a warning that names the held row and its reason", async () => {
+      const { svc, snapshots } = build(true);
+      snapshots.restoreLatest.mockResolvedValue(partial());
+      const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+
+      await runTransition(svc, up);
+
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0][0])).toEqual(
+        expect.stringMatching(/t1.*fulfilment_model.*CARRIER_IN_TRANSIT/s),
+      );
+      warn.mockRestore();
+    });
+
+    it("a complete restore still writes the ordinary CONFIG_SNAPSHOT_RESTORED row (held: [] or absent)", async () => {
+      const { svc, snapshots } = build(true);
+      snapshots.restoreLatest.mockResolvedValue({ ...partial(), held: [] });
+
+      await runTransition(svc, up);
+
+      expect(auditCreate.mock.calls[0][0].data).toMatchObject({
+        action: "CONFIG_SNAPSHOT_RESTORED",
+      });
+      expect(auditCreate.mock.calls[0][0].data.meta.held).toBeUndefined();
     });
   });
 
@@ -524,5 +619,31 @@ describe("PlanTransitionConfigService (A2 step b)", () => {
     ).toEqual({ action: "none" });
     expect(snapshots.snapshot).not.toHaveBeenCalled();
     expect(snapshots.restoreLatest).not.toHaveBeenCalled();
+  });
+});
+
+// Row 640 review fold: the coverage the restored-GRANT verdict reads.
+describe("PlanTransitionConfigService.planAllowsFor coverage (row 640)", () => {
+  it("prices a SKU the PINNED version predates at the published one, includedAt stays the target version", async () => {
+    const { svc, catalog } = build(true);
+    catalog.getVersionForTenant.mockResolvedValue({
+      definitions: [{ planKey: HIGH, featureFlags: [IN_PLAN] }],
+      addonSkus: [{ sku: "SOME_SKU", monthlyPrice: 5, grantsFlags: [SKU_GRANTED] }],
+    });
+    catalog.getPublishedCatalog.mockResolvedValue({
+      addonSkus: [{ sku: "OCR_PACK_250", monthlyPrice: 19, includedAtPlan: null }],
+    });
+    const allows: any = await svc.planAllowsFor(HIGH, "v-old");
+    expect(allows.coverage.priceOf("OCR_PACK_250")).toBe(19);
+    expect(allows.coverage.priceOf("SOME_SKU")).toBe(5);
+    expect(allows.coverage.includedAt("OCR_PACK_250")).toBe(false);
+  });
+
+  it("exposes the plan own flags apart from the SKU-granted ones, and each SKU grantsFlags", async () => {
+    const { svc } = build(true);
+    const allows: any = await svc.planAllowsFor(HIGH, "v1");
+    expect([...allows.coverage.planFlags]).toEqual([IN_PLAN]);
+    expect(allows.coverage.grantsFlagsOf("SOME_SKU")).toEqual([SKU_GRANTED]);
+    expect(allows.coverage.grantsFlagsOf("OTHER")).toEqual([]);
   });
 });

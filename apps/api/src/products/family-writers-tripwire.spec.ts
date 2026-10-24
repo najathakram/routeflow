@@ -42,9 +42,9 @@ const GUARDED: Record<string, { calls: number; sites: number; why: string }> = {
     why: "loadEditCatalog: PATCH /invoices/:id line products (create and update do NOT share manual-invoice-context)",
   },
   "inventory/inventory.service.ts": {
-    calls: 10,
+    calls: 11,
     sites: 16,
-    why: "PO draft/create/update, recordPurchase (StockLot), recordAdjustment, commitStockCount (+ applyStockCountItemsInTx), commitStockCountSession, upsertStockCountLine, setCostBasis, bulkSetCostBasis; the other writer sites (assignToVariants, PO receive/reverse, cost replay) move stock only out of / into a product that HAS stock: a FAMILY is created with zero stock and never receives any (every entry point above refuses it), so their pool checks reject it",
+    why: "PO draft/create/update, recordPurchase (StockLot), recordAdjustment, commitStockCount (+ applyStockCountItemsInTx), commitStockCountSession (+ its batch re-check of kind under the product lock, SA-767 n2), upsertStockCountLine, setCostBasis, bulkSetCostBasis; the other writer sites (assignToVariants, PO receive/reverse, cost replay) move stock only out of / into a product that HAS stock: a FAMILY is created with zero stock and never receives any (every entry point above refuses it), so their pool checks reject it",
   },
   "order-templates/order-templates.service.ts": {
     calls: 4,
@@ -58,13 +58,17 @@ const GUARDED: Record<string, { calls: number; sites: number; why: string }> = {
   },
   "vendor-bills/vendor-bills.service.ts": {
     calls: 1,
-    sites: 4,
-    why: "receiving a bill line writes a StockLot + PURCHASE movement: a FAMILY is refused there",
+    sites: 5,
+    why: "receiving a bill line writes a StockLot + PURCHASE movement: a FAMILY is refused there (the 4th site is the ONE reversal row revertToDraft and voidBill share (appendBillReversals): it mirrors a receipt row found by the receive() note, so it assumes that row was written by receive() under this guard — a receipt that predates the guard could name a FAMILY, and the reversal then just undoes it; the 5th is voidBill's shortfall ADJUSTMENT (SA-808b): stock with no receipt record is taken out of the product the BILL LINE names, which the receive guard already kept off FAMILY)",
   },
 };
 
 /** Writer files that do NOT call the guard, each with the reason it cannot carry a FAMILY line. `sites` is pinned. */
 const ALLOWED: Record<string, { sites: number; why: string }> = {
+  "inventory/b562-repair/d2-repair.ts": {
+    sites: 1,
+    why: "the B562 D2 repair input (row 635): a quantity-0 COST_BASIS row, only on a product that already carries its own D1 anchor and stock ledger (a FAMILY is never stocked, so it never has one)",
+  },
   "bookkeeping/bookkeeping.service.ts": {
     sites: 1,
     why: "the nested itemised ExpenseLineItem rows of an expense (account / notes / amount): an accounting line that has no product column",
@@ -158,5 +162,108 @@ describe("FAMILY never on a sellable line or in stock: a structural tripwire (WS
       .map((f) => f.rel)
       .sort();
     expect(callers).toEqual(Object.keys(GUARDED).sort());
+  });
+});
+
+/**
+ * SA-823 (PR-1) class pins: ONE family creator, ONE reparent path with its audit writers, units v2 untouched.
+ * `files` is comment-stripped, so prose can neither satisfy nor trip a pin.
+ */
+const srcOf = (rel: string): string => files.find((x) => x.rel === rel)!.src;
+/** A method body: from its `async name(` to the next sibling method (or end of file). */
+const methodBody = (src: string, name: string): string => {
+  const start = src.indexOf(`async ${name}(`);
+  expect(start).toBeGreaterThan(-1);
+  const rest = src.slice(start + 1);
+  const next = rest.search(/\n {2}(?:private |public |protected )?(?:async |get |static )/);
+  return next === -1 ? rest : rest.slice(0, next);
+};
+
+describe("SA-823: one family creator, one reparent path, units v2 untouched", () => {
+  it('T10: only createFamilyContainer writes kind: "FAMILY" in src', () => {
+    const FAMILY_KIND = /\bkind\s*:\s*(?:"FAMILY"|ProductKind\.FAMILY)/;
+    const writers = files.filter((f) => FAMILY_KIND.test(f.src)).map((f) => f.rel);
+    expect(writers).toEqual(["products/product-families.service.ts"]);
+    const svc = srcOf("products/product-families.service.ts");
+    expect(methodBody(svc, "createFamilyContainer")).toMatch(FAMILY_KIND);
+    expect(methodBody(svc, "createFamily")).not.toMatch(FAMILY_KIND);
+    expect(methodBody(svc, "createFamily")).toMatch(/this\.createFamilyContainer\(/);
+  });
+
+  it("T11: product.family_assigned is written only by writeFamilyAssigned (SA-823b); create(), update()'s reparent block, inventory createVariantRowInTx and the family editor call it; bulkAssignParent goes through assignToParent", () => {
+    const holders = files
+      .filter((f) => /PRODUCT_FAMILY_ASSIGNED/.test(f.src))
+      .map((f) => [f.rel, count(/PRODUCT_FAMILY_ASSIGNED/g, f.src)])
+      .sort((a, b) => String(a[0]).localeCompare(String(b[0])));
+    expect(holders).toEqual([
+      ["audit/audit-actions.constant.ts", 1],
+      ["products/product-parent.ts", 1],
+    ]);
+    // global regexes so a SECOND call in any body is caught
+    const CALL = /writeFamilyAssigned\(/g;
+    const ps = srcOf("products/products.service.ts");
+    expect(count(CALL, methodBody(ps, "update"))).toBe(1);
+    expect(count(CALL, methodBody(ps, "create"))).toBe(1);
+    expect(
+      count(CALL, methodBody(srcOf("inventory/inventory.service.ts"), "createVariantRowInTx")),
+    ).toBe(1);
+    const fs = srcOf("products/product-families.service.ts");
+    expect(count(CALL, methodBody(fs, "createFamily"))).toBe(1);
+    expect(count(CALL, methodBody(fs, "updateVariants"))).toBe(1);
+    // no other file or method calls the writer, and none writes the row inline
+    const callers = files
+      .filter((f) => count(CALL, f.src) > 0)
+      .map((f) => f.rel)
+      .sort();
+    expect(callers).toEqual([
+      "inventory/inventory.service.ts",
+      "products/product-families.service.ts",
+      "products/product-parent.ts",
+      "products/products.service.ts",
+    ]);
+    expect(ps).not.toMatch(/audit\.log\([^)]*family_assigned/);
+    const bulk = methodBody(ps, "bulkAssignParent");
+    expect(bulk).toMatch(/this\.assignToParent\(/);
+    expect(bulk).not.toMatch(/this\.update\(|\.product\.(?:create|update|upsert|updateMany)\(/);
+    expect(methodBody(ps, "assignToParent")).toMatch(/this\.update\(/);
+    expect(methodBody(ps, "unlinkFromParent")).toMatch(/this\.update\(/);
+  });
+
+  it("T13 (PR-2): createFamilyContainer is called only by createFamily and the import's ensureFamily; the import family branch writes no productUnit and no Product row itself", () => {
+    const CALL = /createFamilyContainer\(/g;
+    const callers = files
+      .filter((f) => count(CALL, f.src) > 0)
+      .map((f) => [f.rel, count(CALL, f.src)])
+      .sort((a, b) => String(a[0]).localeCompare(String(b[0])));
+    expect(callers).toEqual([
+      ["import/product-family-import.service.ts", 1],
+      ["products/product-families.service.ts", 2], // its definition and the createFamily call
+    ]);
+    const imp = srcOf("import/product-family-import.service.ts");
+    expect(imp).not.toMatch(/productUnit/);
+    // ANY write verb on ANY receiver (db., tx., an alias of forTenant()): the import service holds no write at all
+    expect(imp).not.toMatch(
+      /\.\s*(?:create|createMany|createManyAndReturn|update|updateMany|upsert|delete|deleteMany)\s*\(/,
+    );
+    expect(imp).not.toMatch(/\$executeRaw|\$queryRaw|\$transaction/);
+    expect(imp).not.toMatch(/kind\s*:\s*"FAMILY"/);
+  });
+
+  it("T12: no productUnit write in the family service, product-parent.ts or the reparent paths of ProductsService", () => {
+    const UNIT_WRITE =
+      /\bproductUnit\s*\.\s*(?:create|createMany|update|updateMany|upsert|delete|deleteMany)\s*\(/;
+    expect(srcOf("products/product-families.service.ts")).not.toMatch(UNIT_WRITE);
+    expect(srcOf("products/product-parent.ts")).not.toMatch(UNIT_WRITE);
+    const ps = srcOf("products/products.service.ts");
+    for (const m of ["assignToParent", "unlinkFromParent", "bulkAssignParent"]) {
+      expect(methodBody(ps, m)).not.toMatch(UNIT_WRITE);
+    }
+    const update = methodBody(ps, "update");
+    const block = update.slice(
+      update.indexOf("fromParentId ="),
+      update.indexOf("family.propagate"),
+    );
+    expect(block.length).toBeGreaterThan(100);
+    expect(block).not.toMatch(UNIT_WRITE);
   });
 });

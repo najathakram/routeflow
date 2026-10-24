@@ -68,7 +68,8 @@ jest.mock("@/lib/api/orders", () => ({
       return page(9);
     }
     if (p?.fulfillPath === "SHIP" && p?.status === "CONFIRMED") return page(7);
-    return page(3);
+    // The dashboard's per-status KPI counts sum to 12 (3 x 4), so "9" below stays unique to the week card.
+    return page(p?.status ? 4 : 3);
   },
 }));
 jest.mock("@/lib/api/finance", () => ({
@@ -151,25 +152,42 @@ describe("Dashboard — fleet-off clean UI", () => {
     fleet = false;
     ship = true;
     const { apiClient } = jest.requireMock("@/lib/api-client");
-    apiClient.get.mockResolvedValueOnce({ data: {} });
-    renderWithProviders(<DashboardPage />);
-    await screen.findByText("Shipped this week");
-    const card = screen.getAllByText("Shipped this week").find((el) => el.tagName === "P")!;
-    expect(card.closest("a")).toHaveTextContent("—");
-    expect(card.closest("a")).not.toHaveTextContent("9");
+    // Answer the /settings read only (BO-07: the render order of the page's other reads is not what this pins).
+    apiClient.get.mockImplementation((url: string) =>
+      Promise.resolve({ data: url === "/settings" ? {} : { timezone: "America/New_York" } }),
+    );
+    try {
+      renderWithProviders(<DashboardPage />);
+      await screen.findByText("Shipped this week");
+      const card = screen.getAllByText("Shipped this week").find((el) => el.tagName === "P")!;
+      expect(card.closest("a")).toHaveTextContent("—");
+      expect(card.closest("a")).not.toHaveTextContent("9");
+    } finally {
+      apiClient.get.mockReset();
+      apiClient.get.mockResolvedValue({ data: { timezone: "America/New_York" } });
+    }
   });
 
   it("Shipped this week shows — when the timezone read fails", async () => {
     fleet = false;
     ship = true;
     const { apiClient } = jest.requireMock("@/lib/api-client");
-    apiClient.get.mockRejectedValueOnce(new Error("403"));
-    renderWithProviders(<DashboardPage />);
-    const card = (await screen.findAllByText("Shipped this week")).find(
-      (el) => el.tagName === "P",
-    )!;
-    expect(card.closest("a")).toHaveTextContent("—");
-    expect(card.closest("a")).not.toHaveTextContent("9");
+    apiClient.get.mockImplementation((url: string) =>
+      url === "/settings"
+        ? Promise.reject(new Error("403"))
+        : Promise.resolve({ data: { timezone: "America/New_York" } }),
+    );
+    try {
+      renderWithProviders(<DashboardPage />);
+      const card = (await screen.findAllByText("Shipped this week")).find(
+        (el) => el.tagName === "P",
+      )!;
+      expect(card.closest("a")).toHaveTextContent("—");
+      expect(card.closest("a")).not.toHaveTextContent("9");
+    } finally {
+      apiClient.get.mockReset();
+      apiClient.get.mockResolvedValue({ data: { timezone: "America/New_York" } });
+    }
   });
 
   it.each([

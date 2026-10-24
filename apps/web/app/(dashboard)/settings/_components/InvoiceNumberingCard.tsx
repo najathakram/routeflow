@@ -5,6 +5,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Card, useToast } from "@routeflow/ui/web";
 import { DOCUMENT_PREFIX_MAX_LENGTH, validateDocumentPrefix } from "@/lib/document-prefix";
 import { apiClient } from "@/lib/api-client";
+import { useAuth } from "@/lib/auth-context";
+import { isAccountAdmin } from "@/lib/auth";
 import { describeSaveError } from "@/lib/reason-copy";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import {
@@ -53,9 +55,13 @@ export function InvoiceNumberingCard({
 }) {
   const { toast } = useToast();
   const qc = useQueryClient();
+  // The whole /import/numbering controller is admin-only (GET included): an operator never requests
+  // it, never sees the prefix field, and keeps the payment-terms select.
+  const isAdmin = isAccountAdmin(useAuth().user);
   const { data: numbering } = useQuery<NumberingSetting[]>({
     queryKey: NUMBERING_QUERY_KEY,
     queryFn: () => apiClient.get("/import/numbering").then((r) => r.data),
+    enabled: isAdmin,
   });
   const row = numbering?.find((n) => n.docType === "INVOICE");
 
@@ -147,41 +153,43 @@ export function InvoiceNumberingCard({
   return (
     <Card title="Invoice Numbering">
       <div className="grid grid-cols-2 gap-4">
-        <div>
-          <label
-            htmlFor="invoice-number-prefix"
-            className="mb-1.5 block text-sm font-medium text-navy"
-          >
-            Invoice Number Prefix
-          </label>
-          <input
-            id="invoice-number-prefix"
-            type="text"
-            value={prefix}
-            onChange={(e) => {
-              setPrefixDraft(e.target.value);
-              setPrefixError(null);
-            }}
-            placeholder={formatPlaceholder}
-            maxLength={DOCUMENT_PREFIX_MAX_LENGTH}
-            aria-invalid={prefixError ? true : undefined}
-            aria-describedby={prefixError ? "invoice-number-prefix-error" : undefined}
-            className={inputClass}
-          />
-          {prefixError ? (
-            <p id="invoice-number-prefix-error" role="alert" className="mt-1 text-xs text-danger">
-              {prefixError}
+        {isAdmin && (
+          <div>
+            <label
+              htmlFor="invoice-number-prefix"
+              className="mb-1.5 block text-sm font-medium text-navy"
+            >
+              Invoice Number Prefix
+            </label>
+            <input
+              id="invoice-number-prefix"
+              type="text"
+              value={prefix}
+              onChange={(e) => {
+                setPrefixDraft(e.target.value);
+                setPrefixError(null);
+              }}
+              placeholder={formatPlaceholder}
+              maxLength={DOCUMENT_PREFIX_MAX_LENGTH}
+              aria-invalid={prefixError ? true : undefined}
+              aria-describedby={prefixError ? "invoice-number-prefix-error" : undefined}
+              className={inputClass}
+            />
+            {prefixError ? (
+              <p id="invoice-number-prefix-error" role="alert" className="mt-1 text-xs text-danger">
+                {prefixError}
+              </p>
+            ) : null}
+            <p className="mt-1 text-xs text-navy/70">
+              Prepended to invoice numbers (e.g. INV-, 2026-).
             </p>
-          ) : null}
-          <p className="mt-1 text-xs text-navy/70">
-            Prepended to invoice numbers (e.g. INV-, 2026-).
-          </p>
-          {unconfigured && row ? (
-            <p className="mt-1 text-xs text-navy/70" data-testid="invoice-next-preview">
-              Next invoice: {row.preview} (yearly numbering)
-            </p>
-          ) : null}
-        </div>
+            {unconfigured && row ? (
+              <p className="mt-1 text-xs text-navy/70" data-testid="invoice-next-preview">
+                Next invoice: {row.preview} (yearly numbering)
+              </p>
+            ) : null}
+          </div>
+        )}
         <div>
           <label htmlFor="invoice-due-days" className="mb-1.5 block text-sm font-medium text-navy">
             Payment Due Days
@@ -204,11 +212,13 @@ export function InvoiceNumberingCard({
           </p>
         </div>
       </div>
-      <div className="mt-4 flex justify-end">
-        <Button onClick={handleSave} loading={saving && !pending} size="sm">
-          Save Numbering
-        </Button>
-      </div>
+      {isAdmin && (
+        <div className="mt-4 flex justify-end">
+          <Button onClick={handleSave} loading={saving && !pending} size="sm">
+            Save Numbering
+          </Button>
+        </div>
+      )}
 
       <ConfirmDialog
         open={pending !== null}

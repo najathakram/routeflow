@@ -19,8 +19,15 @@ export type { TextareaProps } from "./Textarea";
 export { Select } from "./Select";
 export type { SelectProps, SelectOption } from "./Select";
 
-export { Modal } from "./Modal";
+export { Modal, ModalNoticeContext } from "./Modal";
 export type { ModalProps } from "./Modal";
+
+export { FloatingPanel, computeAnchoredPlacement } from "./FloatingPanel";
+export type {
+  FloatingPanelProps,
+  FloatingPanelTarget,
+  AnchoredPlacementInput,
+} from "./FloatingPanel";
 
 export { Table } from "./Table";
 export type { TableProps } from "./Table";

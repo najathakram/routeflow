@@ -177,6 +177,9 @@ export async function planPartialPriceFollow(
             promoFreeUnits: f.promoFreeUnits,
             originalPrice: f.originalPrice,
             priceType: f.priceType,
+            // H3b: the override reason and author follow the override price they explain (staff-only).
+            overrideReason: f.overrideReason,
+            overriddenBy: f.overriddenBy,
             discount: f.discount,
             subtotal: f.subtotal,
             taxRate: rate,

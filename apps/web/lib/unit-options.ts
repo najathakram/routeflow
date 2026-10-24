@@ -1,12 +1,16 @@
 import {
-  PIECE_LABEL,
-  computeLineSubtotal,
-  defaultSellingLabel,
-  resolveLadderLevel,
-  resolveUnitPrice,
-  roundMoney,
+  buildLadderOptions,
+  customerLinePrice,
+  type CustomerLayerUnit,
+  type CustomerLinePrice,
+  defaultLadderOptionValue,
+  derivedPiece,
+  ladderOptionLineTotal,
+  ladderOptionPriceText,
+  type LadderOption,
   type LadderProduct,
   type LadderUnit,
+  roundMoney,
 } from "@routeflow/pricing";
 import type { ProductUnitLevel } from "@routeflow/types";
 import { formatMoney, formatQty } from "@/lib/format";
@@ -16,20 +20,70 @@ import { formatMoney, formatQty } from "@/lib/format";
  * Everything here is DISPLAY: the server re-resolves the factor and price from the ladder by label
  * on every write, so a stale option can never change what is stored.
  */
-export interface UnitOption {
-  /** What the picker sends as `unitLabel`; `""` = the pack (no unitLabel — today's behaviour). */
-  value: string;
-  label: string;
-  /** Pieces per ONE of this unit. */
-  factorToBase: number;
-  kind: "pack" | "piece" | "level";
-  /** Price per ONE of this unit at the customer's tier (`resolveUnitPrice`, same as the server). */
-  price: number;
-  /** The same unit's TIER-1 price — what a typed one-time price is compared against (server rule). */
-  listPrice: number;
+export type UnitOption = LadderOption & {
+  /**
+   * S19b (SA-811a): set by `withLayerPrices` when the customer's price layer has a row for this option (flag on). `price` and
+   * `listPrice` are then the layer's, and `applyLineUnit` takes the line's priceType / special baseline from this.
+   */
+  layerLine?: CustomerLinePrice;
+};
+
+/**
+ * An EXISTING line's own pack basis (row 630): the price its pack was sold at and the pack size it was sold at, as stored.
+ * The derived Piece of such a line is that price over that size, whatever the customer's layer or the product's pack size
+ * is now, because the server re-splits the line at its own size and price.
+ */
+export interface OwnPackBasis {
+  unitPrice: number;
+  unitsPerBox: number;
 }
 
-const norm = (s: string) => s.trim().toLowerCase();
+/**
+ * Put the customer's layer prices on the picker's options (S19b): each option with a layer row (the pack included) takes
+ * `customerLinePrice`'s price and list and records it as `layerLine`. No layer (flag off) or no row for an option = the
+ * option unchanged, so master's ladder price stands. A derived Piece bills as the pack's proration, so it takes the layer's PACK
+ * price over the pack size, except on an existing line (`ownPack`, row 630): that line keeps the price and size it was sold at,
+ * whether or not the customer has a layer or a pack row in it (the server re-splits the line at its own size and price).
+ */
+export function withLayerPrices(
+  options: readonly UnitOption[],
+  product: LadderProduct,
+  tier: number | string,
+  layer?: readonly CustomerLayerUnit[] | null,
+  ownPack?: OwnPackBasis | null,
+): UnitOption[] {
+  // Row 630: an existing line's derived Piece is its OWN price over its OWN size, before any layer lookup. It is not a layer
+  // line, so no `layerLine` (its price and baseline stay the line's).
+  const own = ownPack && ownPack.unitsPerBox > 1 ? ownPack : null;
+  const ownPiece = (o: UnitOption): UnitOption =>
+    own && o.derived ? { ...o, ...derivedPiece(roundMoney(own.unitPrice), own.unitsPerBox) } : o;
+  if (!layer || layer.length === 0) return own ? options.map(ownPiece) : (options as UnitOption[]);
+  const t = Number(tier);
+  return options.map((o) => {
+    if (o.derived) {
+      if (own) return ownPiece(o);
+      // The Piece bills as the pack's proration: the layer's PACK price is what it divides.
+      const pack = customerLinePrice({
+        product: product as unknown as Record<string, unknown>,
+        tier: t,
+        layer,
+        unitLabel: null,
+        tierPrice: o.derived.packPrice,
+      });
+      return pack.layered ? { ...o, ...derivedPiece(pack.price, o.derived.n), layerLine: pack } : o;
+    }
+    const lp = customerLinePrice({
+      product: product as unknown as Record<string, unknown>,
+      tier: t,
+      layer,
+      unitLabel: o.kind === "pack" ? null : o.value,
+      tierPrice: o.price,
+    });
+    return lp.layered
+      ? { ...o, price: lp.price, listPrice: lp.listPrice ?? o.listPrice, layerLine: lp }
+      : o;
+  });
+}
 
 /** The API returns Decimal strings; the pricing ladder takes them as-is. */
 const toLadderUnit = (u: ProductUnitLevel): LadderUnit => ({
@@ -61,49 +115,8 @@ export function buildUnitOptions(
    */
   packPrice?: number,
 ): UnitOption[] {
-  const ladder = units.map(toLadderUnit);
-  const price = (label: string) => resolveUnitPrice(product, ladder, label, tier);
-  const list = (label: string) => resolveUnitPrice(product, ladder, label, 1);
-  const pack = resolveLadderLevel(product, ladder, "");
-  const options: UnitOption[] = [
-    {
-      value: "",
-      label: pack.label,
-      factorToBase: pack.factorToBase,
-      kind: "pack",
-      price: packPrice ?? price(""),
-      listPrice: list(""),
-    },
-  ];
-  const seen = new Set([norm(pack.label), norm(PIECE_LABEL)]);
-  const rows = ladder
-    .filter((l) => Number.isInteger(l.factorToBase) && l.factorToBase >= 1)
-    .sort((a, b) => b.factorToBase - a.factorToBase);
-  for (const u of rows) {
-    if (seen.has(norm(u.label))) continue;
-    seen.add(norm(u.label));
-    options.push({
-      value: u.label,
-      label: u.label,
-      factorToBase: u.factorToBase,
-      kind: u.factorToBase === 1 ? "piece" : "level",
-      price: price(u.label),
-      listPrice: list(u.label),
-    });
-  }
-  // gate on the ladder, not on `options`: a ladder whose only row is the explicit Piece (or is
-  // shadowed) still sells singles, and a product with NO rows stays a single-option pack
-  if (rows.length > 0 && !options.some((o) => o.factorToBase === 1)) {
-    options.push({
-      value: PIECE_LABEL,
-      label: PIECE_LABEL,
-      factorToBase: 1,
-      kind: "piece",
-      price: price(PIECE_LABEL),
-      listPrice: list(PIECE_LABEL),
-    });
-  }
-  return options;
+  // The ONE builder lives in @routeflow/pricing (SA-728) — web and mobile share it, so they cannot disagree.
+  return buildLadderOptions(product, units.map(toLadderUnit), tier, packPrice);
 }
 
 /**
@@ -117,32 +130,16 @@ export function defaultUnitValue(
   tier: number | string = 1,
 ): string {
   // #2784: the ONE resolver (@routeflow/pricing) — the server's buyer-qty default reads the same function.
-  const flagged = defaultSellingLabel(product, units.map(toLadderUnit));
-  if (!flagged) return "";
-  const offered = buildUnitOptions(product, units, tier).find(
-    (o) => o.kind !== "pack" && norm(o.value) === norm(flagged),
-  );
-  return offered?.value ?? "";
+  return defaultLadderOptionValue(product, units.map(toLadderUnit), tier);
 }
 
-/** The dropdown text: "Case · 288 pcs · $480.00". */
+/** The dropdown text: "Case · 288 pcs · $480.00"; a derived Piece reads "Piece · ≈$3.33 (1/3 of $10.00)" when not exact. */
 export function unitOptionText(o: UnitOption): string {
   const pcs = o.factorToBase === 1 ? "" : ` · ${formatQty(o.factorToBase)} pcs`;
-  return `${o.label}${pcs} · ${formatMoney(o.price)}`;
+  return `${o.label}${pcs} · ${ladderOptionPriceText(o, formatMoney)}`;
 }
 
-/** Line total for `count` of a unit at `unitPrice` — the same rounding the server applies. */
+/** Line total for `count` of a unit — a derived Piece prorates off the pack, the rest bill count x price like the server. */
 export function unitLineSubtotal(option: UnitOption, count: number, unitPrice?: number): number {
-  const n = Math.trunc(Number(count));
-  if (!(n > 0)) return 0;
-  const price = unitPrice ?? option.price;
-  return option.factorToBase === 1
-    ? roundMoney(price * n)
-    : computeLineSubtotal({
-        unitPrice: price,
-        qty: n * option.factorToBase,
-        boxes: n,
-        pieces: 0,
-        unitsPerBox: option.factorToBase,
-      });
+  return ladderOptionLineTotal(option, count, unitPrice);
 }

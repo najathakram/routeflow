@@ -1,4 +1,6 @@
+import { fromCents } from "@routeflow/pricing";
 import { escapeHtml, safeLinkHref } from "../common/html-escape";
+import { webBaseUrl } from "../config/web-base-url";
 export { escapeHtml };
 // N3 (2026-09-16): billing-lifecycle email templates to the tenant admin — trial ending,
 // downgrade scheduled/applied, upgrade confirmed, cancelled, suspended.
@@ -67,19 +69,21 @@ function ctaButtonHtml(url: string, label: string): string {
   </td></tr></table>`;
 }
 
-// Fix round (finding 5): WEB_URL is the repo-wide convention for a user-facing link
-// (payment-requests.service.ts, stripe-connect.controller.ts) — FRONTEND_URL is not in
-// .env.example and is only used by a few older billing.service.ts call sites. Falls back to
-// the real production domain, not localhost, so a misconfigured env never ships a dead link.
-function webBaseUrl(): string {
-  return (process.env.WEB_URL ?? process.env.FRONTEND_URL ?? "https://www.routeflow.info").replace(
-    /\/$/,
-    "",
-  );
+// The base comes from the shared helper (config/web-base-url.ts: WEB_URL, then FRONTEND_URL). An email must never carry
+// a dead link, so when neither is set (or the helper refuses the value) it falls back to the real production domain,
+// not localhost.
+function emailWebBase(): string {
+  const configured = `${process.env.WEB_URL ?? process.env.FRONTEND_URL ?? ""}`.trim();
+  if (!configured) return "https://www.routeflow.info";
+  try {
+    return webBaseUrl();
+  } catch {
+    return "https://www.routeflow.info";
+  }
 }
 
 export function billingSettingsUrl(): string {
-  return `${webBaseUrl()}/settings/billing`;
+  return `${emailWebBase()}/settings/billing`;
 }
 
 export interface BillingEmailTemplate {
@@ -243,15 +247,31 @@ export function cancelledTemplate(params: {
   };
 }
 
+/** The `notifySuspended` reason of a suspension that follows a canceled Stripe subscription (not a payment problem). */
+export const SUSPENDED_REASON_SUBSCRIPTION_CANCELED = "subscription canceled";
+
 export function suspendedTemplate(params: {
   businessName: string;
   adminName: string;
-  reason: string; // e.g. "overdue payment"
+  reason: string; // e.g. "overdue payment" | SUSPENDED_REASON_SUBSCRIPTION_CANCELED
 }): BillingEmailTemplate {
   const manageUrl = billingSettingsUrl();
+  // Lead ruling: a canceled subscription is not a payment problem. Its body says so and the CTA picks a plan
+  // (the same "Choose a plan" wording and link as the trial notices); any other reason keeps the payment copy.
+  const canceled = params.reason === SUSPENDED_REASON_SUBSCRIPTION_CANCELED;
+  const canceledSentence = "Your subscription was canceled. Choose a plan to restore access.";
   const html = baseLayout({
     tagline: "Account suspended",
-    bodyHtml: `
+    bodyHtml: canceled
+      ? `
+      <p style="margin:0 0 8px;font-size:15px;color:#6b7280;">Hi ${escapeHtml(params.adminName)},</p>
+      <p style="margin:0 0 16px;font-size:15px;color:#374151;">
+        Your RouteFlow account for <strong>${escapeHtml(params.businessName)}</strong> has been suspended.
+        ${canceledSentence}
+      </p>
+      ${ctaButtonHtml(manageUrl, "Choose a plan")}
+    `
+      : `
       <p style="margin:0 0 8px;font-size:15px;color:#6b7280;">Hi ${escapeHtml(params.adminName)},</p>
       <p style="margin:0 0 16px;font-size:15px;color:#374151;">
         Your RouteFlow account for <strong>${escapeHtml(params.businessName)}</strong> has been suspended
@@ -260,7 +280,17 @@ export function suspendedTemplate(params: {
       ${ctaButtonHtml(manageUrl, "Update payment details")}
     `,
   });
-  const text = `Hi ${params.adminName},\n\nYour RouteFlow account for ${params.businessName} has been suspended (${params.reason}). Please update your payment details to restore access.\n\nUpdate payment details: ${manageUrl}`;
+  const text = canceled
+    ? `Hi ${params.adminName},
+
+Your RouteFlow account for ${params.businessName} has been suspended. ${canceledSentence}
+
+Choose a plan: ${manageUrl}`
+    : `Hi ${params.adminName},
+
+Your RouteFlow account for ${params.businessName} has been suspended (${params.reason}). Please update your payment details to restore access.
+
+Update payment details: ${manageUrl}`;
   return {
     subject: `Account suspended — ${params.businessName}`,
     html,
@@ -309,7 +339,7 @@ export interface RfInvoiceEmailInput {
   periodEnd: Date | null;
   dueDate: Date | null;
   lines: unknown;
-  /** Whole UTC days past the due date; read only by a `manual` resend (the stage kinds imply their own). */
+  /** Whole UTC days past the due date; read by a `manual` resend and a late `issue` email (the stage kinds imply their own). */
   overdueDays?: number;
 }
 
@@ -356,7 +386,8 @@ function rfLines(raw: unknown): RfEmailLine[] {
 function overdueDaysFor(kind: RfInvoiceEmailKind, inv: RfInvoiceEmailInput): number {
   if (kind === "d7") return 7;
   if (kind === "d14") return 14;
-  if (kind === "manual") return Math.max(0, Math.floor(inv.overdueDays ?? 0));
+  // manual resend, or an issue email for an invoice issued after its due date: the days so far
+  if (kind === "manual" || kind === "issue") return Math.max(0, Math.floor(inv.overdueDays ?? 0));
   return 0;
 }
 
@@ -417,4 +448,132 @@ export function rfInvoiceEmail(
   ].join("\n");
   const replyTo = process.env.PLATFORM_BILLING_REPLY_TO?.trim();
   return { subject, html, text, ...(replyTo ? { replyTo } : {}) };
+}
+
+// SA-733r7 PR-B3: the dunning emails (d0 / d3 / d6, the final read-only notice, and the paused notice). The copy is
+// truthful for each BILLING_PAUSE_MODE: `d6` names no date (it is what `dark` sends); `final` and `paused` exist only
+// in `enforced`. Wording is fixed - no ids, no amounts - and the pay link is the invoice's Stripe-hosted page.
+export type DunningEmailKind = "d0" | "d3" | "d6" | "final" | "paused" | "paused_still_owed";
+
+/** "$49.00": cents in the invoice's own currency (USD when Stripe sent none). */
+function formatDunningAmount(cents: number, currency?: string | null): string {
+  const code = (currency || "usd").toUpperCase();
+  try {
+    return new Intl.NumberFormat("en-US", { style: "currency", currency: code }).format(
+      fromCents(cents),
+    );
+  } catch {
+    return `${fromCents(cents).toFixed(2)} ${code}`;
+  }
+}
+
+export function dunningTemplate(params: {
+  kind: DunningEmailKind;
+  businessName: string;
+  adminName: string;
+  /** Stripe's hosted invoice page; absent -> the billing settings page. */
+  payUrl: string | null;
+  /** `final` only: the tenant-local date the workspace becomes read-only. */
+  readOnlyOn?: string;
+  /**
+   * `final` only (SA-775 rollout): the rollout pause holds the lock this notice would threaten, so the workspace will NOT
+   * become read-only. The notice then asks for the payment without the deadline, the date or the words "read-only".
+   */
+  omitLockWarning?: boolean;
+  /** `d6` (dark) only: the tenant-local date to update the card by. */
+  byDate?: string;
+  /** `paused_still_owed` and a never-attempted `d0`: the open invoice's number, amount still owed (cents), currency. */
+  invoiceNumber?: string | null;
+  amountCents?: number | null;
+  currency?: string | null;
+  /** `d0` only: false when Stripe never ATTEMPTED the invoice (attempt_count 0, a discovery stamp). Absent = attempted. */
+  attempted?: boolean;
+  /** `d0` of a never-attempted invoice: the billed month ("October 2026"). */
+  periodLabel?: string | null;
+}): BillingEmailTemplate {
+  const link = params.payUrl || billingSettingsUrl();
+  const biz = params.businessName;
+  const copy: Record<DunningEmailKind, { subject: string; tagline: string; body: string }> = {
+    d0: {
+      subject: `Payment failed — ${biz}`,
+      tagline: "Payment failed",
+      body: `We couldn't process your subscription payment for ${biz}. We'll try again automatically; paying the open invoice now avoids any interruption.`,
+    },
+    d3: {
+      subject: `Your payment is still overdue — ${biz}`,
+      tagline: "Payment overdue",
+      body: `The subscription invoice for ${biz} is still unpaid. Please pay it or update your payment method to avoid an interruption to your service.`,
+    },
+    // dark's d6: nothing will happen, so it carries NO read-only threat (SA-733r7 r-note 2) - only the card ask + date.
+    d6: {
+      subject: `Your payment is still failing — ${biz}`,
+      tagline: "Payment overdue",
+      body: `The subscription payment for ${biz} is still failing. Please update your card${
+        params.byDate ? ` by ${params.byDate}` : " today"
+      } to keep your subscription in good standing.`,
+    },
+    final: {
+      subject: `Your workspace becomes read-only tomorrow — ${biz}`,
+      tagline: "Final notice",
+      body: `The subscription invoice for ${biz} is still unpaid. Unless it is paid, your workspace becomes read-only${
+        params.readOnlyOn ? ` on ${params.readOnlyOn}` : " tomorrow"
+      }. Your data stays safe, and paying restores full access right away.`,
+    },
+    // SA G8: the workspace is ALREADY read-only, so this is plain information - no deadline, no alarm words.
+    paused_still_owed: {
+      subject: `Your workspace is still read-only — ${biz}`,
+      tagline: "Workspace read-only",
+      body: `${biz} is still read-only. ${
+        params.invoiceNumber ? `Invoice ${params.invoiceNumber}` : "Your subscription invoice"
+      }${
+        typeof params.amountCents === "number" && params.amountCents > 0
+          ? ` for ${formatDunningAmount(params.amountCents, params.currency)}`
+          : ""
+      } is open. Pay it to restore full access right away; your data stays safe.`,
+    },
+    paused: {
+      subject: `Your workspace is now read-only — ${biz}`,
+      tagline: "Workspace read-only",
+      body: `Because the subscription invoice for ${biz} is unpaid, your workspace is now read-only. Your data is safe and exports still work. Pay the open invoice and full access returns right away.`,
+    },
+  };
+  // A discovery-stamped invoice Stripe never tried must not read "we couldn't process your payment": its first
+  // notice says the invoice is open and where to pay it (SA r-note 5 A1, truthful copy keyed by attempt state).
+  if (params.kind === "d0" && params.attempted === false) {
+    const what = params.periodLabel
+      ? `Your ${params.periodLabel} invoice`
+      : "Your subscription invoice";
+    copy.d0 = {
+      subject: `Your invoice is open — ${biz}`,
+      tagline: "Invoice open",
+      body: `${what}${
+        typeof params.amountCents === "number" && params.amountCents > 0
+          ? ` for ${formatDunningAmount(params.amountCents, params.currency)}`
+          : ""
+      } is open — pay it here.`,
+    };
+  }
+  // SA-775: never threaten a lock the pause will not carry out. Same invoice, same milestone - only the wording changes.
+  if (params.kind === "final" && params.omitLockWarning === true) {
+    copy.final = {
+      subject: `Your subscription invoice is still unpaid — ${biz}`,
+      tagline: "Payment overdue",
+      body: `The subscription invoice for ${biz} is still unpaid. Please pay it or update your payment method to keep your subscription in good standing.`,
+    };
+  }
+  const c = copy[params.kind];
+  const label =
+    params.kind === "paused" || params.kind === "paused_still_owed"
+      ? "Pay the open invoice"
+      : "Pay now";
+  const html = baseLayout({
+    tagline: c.tagline,
+    bodyHtml: `
+      <p style="margin:0 0 8px;font-size:15px;color:#6b7280;">Hi ${escapeHtml(params.adminName)},</p>
+      <p style="margin:0 0 16px;font-size:15px;color:#374151;">${escapeHtml(c.body)}</p>
+      ${ctaButtonHtml(link, label)}
+    `,
+  });
+  const text = `Hi ${params.adminName},\n\n${c.body}\n\n${label}: ${link}`;
+  return { subject: c.subject, html, text };
 }

@@ -196,6 +196,7 @@ export function isRecentlyActive(lastActivityMs, nowMs, hours = RECENT_ACTIVITY_
  */
 export function classifyWorktree(info) {
   const { name, branch, isMainCheckout, isMerged, isDirty, isRecent, hasUnpushed, isLocked } = info;
+  const linkedFrom = info.linkedFrom === undefined ? [] : info.linkedFrom;
   if (isMainCheckout) return { nodeModules: "skip", worktree: "skip", reason: "main checkout" };
   if (isProtectedWorktreeName(name)) {
     return { nodeModules: "skip", worktree: "skip", reason: "protected worktree" };
@@ -225,9 +226,152 @@ export function classifyWorktree(info) {
       reason: `HEAD moved in the last ${RECENT_ACTIVITY_HOURS}h (or unknown) — never touched`,
     };
   }
+  // Row 719: another worktree's node_modules entries may be symlinks INTO this tree; clearing it
+  // (or removing the worktree) would leave those trees with dangling packages.
+  if (linkedFrom === null) {
+    return {
+      nodeModules: "skip",
+      worktree: "skip",
+      reason: "link scan of the other trees failed (unreadable) — never touched",
+    };
+  }
+  if (linkedFrom.length > 0) {
+    return {
+      nodeModules: "skip",
+      worktree: "skip",
+      reason: `other trees link into it (${linkedFrom.length}, e.g. ${linkedFrom[0]}) — never touched`,
+    };
+  }
   // Merged, clean and idle: node_modules is safe to clear (the checkout survives).
   if (hasUnpushed) return { nodeModules: "clear", worktree: "skip", reason: "unpushed commits" };
   return { nodeModules: "clear", worktree: "remove", reason: "merged, clean, pushed" };
+}
+
+/** The node_modules dirs of one tree: the root's plus apps/* and packages/* (as the clear does). */
+function nodeModulesCandidates(tree, unknown, readdir = readdirSync) {
+  const out = [join(tree, "node_modules")];
+  for (const group of ["apps", "packages"]) {
+    const groupDir = join(tree, group);
+    let names;
+    try {
+      names = readdir(groupDir);
+    } catch (e) {
+      if (e?.code !== "ENOENT" && e?.code !== "ENOTDIR") unknown.push(`${groupDir}: ${e?.code}`);
+      continue;
+    }
+    for (const n of names) out.push(join(groupDir, n, "node_modules"));
+  }
+  return out;
+}
+
+/**
+ * Row 719: ONE pass over the given trees, recording every symlink found in their node_modules
+ * dirs (root, apps/*, packages/*; top level and one @scope level) with its real path. A
+ * node_modules dir that is ITSELF a link is recorded as a link. Fail closed (B818): any
+ * lstat/readdir/realpath error other than "not there" lands in `unknown`. A broken link (ENOENT)
+ * is harmless and ignored. Read-only; never throws.
+ * Returns { links: [{ tree, path, real }], unknown: { [tree]: [reason] } }.
+ */
+export function scanLinkTargets(trees, ops = {}) {
+  const lstat = ops.lstat ?? lstatSync;
+  const readdir = ops.readdir ?? readdirSync;
+  const realpath = ops.realpath ?? realpathSync.native;
+  const isLink = (p) => isLinkPath(p, lstat);
+  const links = [];
+  const unknown = {};
+  for (const tree of trees) {
+    const bad = [];
+    const record = (p) => {
+      try {
+        links.push({ tree, path: p, real: realpath(p) });
+      } catch (e) {
+        if (e?.code !== "ENOENT") bad.push(`${p}: ${e?.code}`);
+      }
+    };
+    for (const nm of nodeModulesCandidates(tree, bad, readdir)) {
+      let st;
+      try {
+        st = lstat(nm);
+      } catch (e) {
+        if (e?.code !== "ENOENT" && e?.code !== "ENOTDIR") bad.push(`${nm}: ${e?.code}`);
+        continue;
+      }
+      if (st.isSymbolicLink()) {
+        record(nm);
+        continue;
+      }
+      if (!st.isDirectory()) continue;
+      let entries;
+      try {
+        entries = readdir(nm);
+      } catch (e) {
+        bad.push(`${nm}: ${e?.code}`);
+        continue;
+      }
+      for (const e of entries) {
+        const p = join(nm, e);
+        let linked;
+        try {
+          linked = isLink(p);
+        } catch (err) {
+          bad.push(`${p}: ${err?.code}`);
+          continue;
+        }
+        if (linked) {
+          record(p);
+        } else if (e.startsWith("@")) {
+          let scoped;
+          try {
+            scoped = readdir(p);
+          } catch (err) {
+            if (err?.code !== "ENOTDIR") bad.push(`${p}: ${err?.code}`);
+            continue;
+          }
+          for (const c of scoped) {
+            try {
+              if (isLink(join(p, c))) record(join(p, c));
+            } catch (err) {
+              bad.push(`${join(p, c)}: ${err?.code}`);
+            }
+          }
+        }
+      }
+    }
+    if (bad.length) unknown[tree] = bad;
+  }
+  return { links, unknown };
+}
+
+/**
+ * Row 719: paths in OTHER worktrees' node_modules that link into `candidatePath`. Returns null
+ * ("unknown") when any other tree could not be scanned fully; the caller must then skip.
+ * `scan` is a scanLinkTargets() result to reuse across candidates.
+ */
+export function linkedIntoBy(
+  candidatePath,
+  otherWorktreePaths,
+  scan = null,
+  platform = process.platform,
+) {
+  const nativeReal = (p) => {
+    try {
+      return realpathSync.native(p);
+    } catch {
+      return resolve(p);
+    }
+  };
+  const candReal = nativeReal(candidatePath);
+  const isCand = (p) =>
+    resolve(p) === resolve(candidatePath) ||
+    (samePathOrInside(nativeReal(p), candReal, platform) &&
+      samePathOrInside(candReal, nativeReal(p), platform));
+  const others = otherWorktreePaths.filter((o) => !isCand(o));
+  const sc = scan ?? scanLinkTargets(others);
+  if (others.some((o) => sc.unknown[o])) return null;
+  const otherSet = new Set(others);
+  return sc.links
+    .filter((l) => otherSet.has(l.tree) && samePathOrInside(l.real, candReal, platform))
+    .map((l) => l.path);
 }
 
 export function isStaleByAge(mtimeMs, nowMs, days = STALE_PROOF_AGE_DAYS) {
@@ -321,12 +465,32 @@ export function psLiteral(s) {
 }
 
 /** True when `p` is itself a symlink or junction (Node reports a junction as a symlink). */
-function isLinkPath(p) {
+function isLinkPath(p, lstat = lstatSync) {
   try {
-    return lstatSync(p).isSymbolicLink();
-  } catch {
-    return false;
+    return lstat(p).isSymbolicLink();
+  } catch (e) {
+    // Fail closed: only "nothing there" is a definite no. EPERM/EACCES/EIO must not read as "not a link".
+    if (e?.code === "ENOENT" || e?.code === "ENOTDIR") return false;
+    throw e;
   }
+}
+
+/**
+ * Row 719: is `child` equal to or inside `parent` (both REAL paths)? Case-folded on win32/darwin
+ * (case-insensitive file systems), \\?\ prefix stripped on win32, and only at a path boundary
+ * (C:\wt\u6 is not a prefix of C:\wt\u60).
+ */
+export function samePathOrInside(child, parent, platform = process.platform) {
+  const fold = platform === "win32" || platform === "darwin";
+  const norm = (p) => {
+    let x = String(p);
+    if (platform === "win32") x = x.replace(/^\\\\\?\\/, "");
+    return fold ? x.toLowerCase() : x;
+  };
+  const c = norm(child);
+  const par = norm(parent);
+  const sp = platform === "win32" ? "\\" : "/";
+  return c === par || c.startsWith(par.endsWith(sp) ? par : par + sp);
 }
 
 /**
@@ -959,6 +1123,8 @@ export function buildPlan(repoRoot, mainCheckoutPath, worktreesRoot) {
   const actions = [];
   const skipped = [];
   const nowMs = Date.now();
+  // Row 719: ONE scan of every tree's node_modules links, reused for each candidate below.
+  const linkScan = scanLinkTargets(worktrees.map((w) => w.path));
 
   for (const wt of worktrees) {
     const name = wt.path.split(/[\\/]/).pop();
@@ -984,6 +1150,15 @@ export function buildPlan(repoRoot, mainCheckoutPath, worktreesRoot) {
       isDirty: isMainCheckout ? false : isDirty(wt.path),
       isRecent: isMainCheckout ? false : isRecentlyActive(lastActivityMs(wt.path), nowMs),
       hasUnpushed: isMainCheckout ? false : hasUnpushedCommits(wt.path, wt.branch),
+      // Row 719: only worth scanning for a tree that would otherwise be cleared.
+      linkedFrom:
+        isMainCheckout || !isMerged
+          ? []
+          : linkedIntoBy(
+              wt.path,
+              worktrees.map((w) => w.path),
+              linkScan,
+            ),
     };
     const verdict = classifyWorktree(info);
     if (verdict.nodeModules === "clear") {
@@ -1019,7 +1194,51 @@ export function buildPlan(repoRoot, mainCheckoutPath, worktreesRoot) {
     const dirNames = readdirSync(worktreesRoot);
     for (const orphan of findOrphanWorktreeDirs(listedPaths, dirNames, worktreesRoot)) {
       const target = join(worktreesRoot, orphan);
+      // Orphan detection is directories only. A stray FILE (a .log, a .patch, a jest summary
+      // json) is not a worktree candidate at all — it gets its own action kind, never
+      // "orphan-dir", so the executor never runs a directory rmdir on a plain file. lstat, never
+      // follow: a symlink/junction entry is reported only, and is never auto-classified as a
+      // "stray file" either — it could be someone's checkout linked in from elsewhere.
+      let st;
+      try {
+        st = lstatSync(target);
+      } catch {
+        continue; // vanished between the readdir above and this lstat
+      }
+      if (st.isSymbolicLink()) {
+        skipped.push({
+          worktree: orphan,
+          branch: null,
+          reason: "orphan entry is a symlink/junction — reported only, never touched",
+        });
+        continue;
+      }
+      if (!st.isDirectory()) {
+        // Same recent-activity guard as an orphan dir: a log/patch someone is still writing stays.
+        if (orphanEligible({ ...orphanFacts(target), nowMs })) {
+          actions.push({ step: 3, kind: "stray-file", target });
+        } else {
+          skipped.push({
+            worktree: orphan,
+            branch: null,
+            reason: `stray file touched in the last ${RECENT_ACTIVITY_HOURS}h (or unreadable) — never touched`,
+          });
+        }
+        continue;
+      }
       const facts = orphanFacts(target);
+      const orphanLinks = linkedIntoBy(target, listedPaths, linkScan);
+      if (orphanLinks === null || orphanLinks.length > 0) {
+        skipped.push({
+          worktree: orphan,
+          branch: null,
+          reason:
+            orphanLinks === null
+              ? "link scan of the worktrees failed (unreadable) — never touched"
+              : `other trees link into it (${orphanLinks.length}, e.g. ${orphanLinks[0]}) — never touched`,
+        });
+        continue;
+      }
       if (orphanEligible({ ...facts, nowMs })) {
         actions.push({ step: 3, kind: "orphan-dir", target });
       } else {
@@ -1151,6 +1370,8 @@ function describeAction(a) {
       return `[2] remove whole worktree — ${a.target} (merged, clean, idle, pushed)`;
     case "orphan-dir":
       return `[3] remove orphan worktree dir — ${a.target} (not listed by git worktree)`;
+    case "stray-file":
+      return `[3] remove stray file — ${a.target} (not a directory; found under .claude/worktrees)`;
     case "docker-build-cache":
       return `[4] docker builder prune -a -f (build cache only, never volumes/system)`;
     case "npm-cache":
@@ -1182,6 +1403,7 @@ const EXECUTE_DEPS = {
     });
   },
   run: (cmd, args) => trySh(cmd, args),
+  removeFile: (t) => unlinkSync(t),
   log: (m) => console.log(m),
 };
 
@@ -1190,7 +1412,9 @@ const EXECUTE_DEPS = {
  * skips the action, loudly. A whole worktree goes through removeWorktreeSafely (B817: links first).
  */
 export function execute(a, deps = EXECUTE_DEPS) {
-  if (["node_modules", "orphan-dir", "stale-proof-dir", "worktree"].includes(a.kind)) {
+  if (
+    ["node_modules", "orphan-dir", "stale-proof-dir", "worktree", "stray-file"].includes(a.kind)
+  ) {
     const why = deps.refuseDelete(a.target, { kind: a.kind, worktreePath: a.worktreePath });
     if (why) {
       deps.log(`   REFUSED, skipped: ${a.target} (${why})`);
@@ -1220,6 +1444,15 @@ export function execute(a, deps = EXECUTE_DEPS) {
     case "stale-proof-dir":
       deps.removeTree(a.target);
       return "done";
+    case "stray-file":
+      try {
+        deps.removeFile(a.target);
+      } catch (err) {
+        // A locked/in-use stray file is a reported skip, never a failed run (exit 1).
+        deps.log(`   SKIPPED stray file ${a.target}: ${err.message}`);
+        return "skipped";
+      }
+      return "done";
     case "worktree":
       deps.removeWorktree(a.target);
       return "done";
@@ -1232,6 +1465,44 @@ export function execute(a, deps = EXECUTE_DEPS) {
     default:
       throw new Error(`unknown janitor action kind: ${a.kind}`);
   }
+}
+
+/**
+ * Run every planned action in apply mode. Each action is isolated: a thrown error (an OS-level
+ * failure like a directory rmdir on a plain file, or a fail-closed refusal that throws instead of
+ * returning) is caught, logged as `FAILED <kind> <target>: <message>`, and recorded — the loop
+ * always continues to the next action. One bad action must never stop the docker/npm/proof
+ * cleanup that follows it. Stops early once the free-space target is met. Returns
+ * { ran, failed: [{ action, message }] }; deps are injectable so the self-test never touches real
+ * disk/OS.
+ */
+export function applyActions(actions, target, deps = {}) {
+  const {
+    getFreeSpaceGb: freeSpace = getFreeSpaceGb,
+    execute: doExecute = execute,
+    log = (m) => console.log(m),
+  } = deps;
+  const failed = [];
+  let ran = 0;
+  for (const a of actions) {
+    const free = freeSpace();
+    if (meetsThreshold(free, target)) {
+      log(`\nTarget reached (${free.toFixed(1)} GB >= ${target} GB) — stopping early.`);
+      break;
+    }
+    log(`→ ${describeAction(a)}`);
+    ran++;
+    try {
+      doExecute(a);
+    } catch (err) {
+      log(`   FAILED ${a.kind} ${a.target ?? ""}: ${err.message}`);
+      failed.push({ action: a, message: err.message });
+    }
+  }
+  if (failed.length) {
+    log(`\n${failed.length} of ${ran} action(s) failed.`);
+  }
+  return { ran, failed };
 }
 
 /** Remove a whole worktree, with its OS/git calls injected (testable anywhere). */
@@ -1340,23 +1611,11 @@ function main() {
   }
 
   console.log("\nApplying...");
-  for (const a of actions) {
-    let free = getFreeSpaceGb();
-    if (meetsThreshold(free, target)) {
-      console.log(`\nTarget reached (${free.toFixed(1)} GB >= ${target} GB) — stopping early.`);
-      break;
-    }
-    console.log(`→ ${describeAction(a)}`);
-    try {
-      execute(a);
-    } catch (err) {
-      // A fail-closed refusal (B817/B818) or an OS error skips THIS action only.
-      console.log(`   REFUSED, skipped: ${a.target ?? a.kind} (${err.message})`);
-    }
-  }
+  const { failed } = applyActions(actions, target);
 
   const after = getFreeSpaceGb();
   console.log(`\nfree space after: ${after.toFixed(1)} GB (was ${before.toFixed(1)} GB)`);
+  if (failed.length) process.exit(1);
 }
 
 // Guarded: when imported from an inline script there is no argv[1] to compare against.

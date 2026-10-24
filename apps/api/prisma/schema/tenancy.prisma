@@ -203,11 +203,16 @@ model Tenant {
   // ─── Units/PO minimal + multi-category labels (2026-09-19) ───
   productUnits             ProductUnit[]
   tenantUnits              TenantUnit[]
+  // Units program S6: tier unit settings and per-customer unit prices.
+  productTierUnits         ProductTierUnit[]
+  customerUnitPrices       CustomerUnitPrice[]
   supplierProducts         SupplierProduct[]
   productCategories        ProductCategory[]
   productCategoryLabels    ProductCategoryLabel[]
   // ─── Selling restrictions (2026-09-19) ───
   sellingRestrictions      SellingRestriction[]
+  sellingRestrictionTargets SellingRestrictionTarget[]
+  sellingRestrictionRevisions SellingRestrictionRevision[]
   // ─── Sales agents & commissions (flag.sales_agents) ───
   salesAgents              SalesAgent[]
   salesAgentRates          SalesAgentRate[]

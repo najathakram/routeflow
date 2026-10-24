@@ -1,4 +1,6 @@
 import React from "react";
+import { SEND_SNAPSHOT_INCLUDE, type SendSnapshot } from "./invoice-send-snapshot";
+import { writeInvoicePdfPointer } from "./invoice-pdf-pointer";
 import { Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
 import { renderToBuffer } from "@react-pdf/renderer";
 import { PrismaService } from "../prisma/prisma.service";
@@ -16,6 +18,7 @@ import { toLineComponentViews } from "../orders/component-view";
 import { readFamilyPriceMode } from "../products/family-price";
 import { pdfSubLine } from "./invoice-pdf-item";
 import { orderQrUrl } from "./invoice-qr";
+import { withoutOverrideStamp } from "../common/restriction-override-columns";
 
 import bwipjs from "bwip-js";
 
@@ -42,53 +45,29 @@ export class InvoicePdfService {
 
   async getOrGenerate(
     invoiceId: string,
-    opts?: { force?: boolean; variant?: InvoicePdfVariant },
+    opts?: { force?: boolean; variant?: InvoicePdfVariant; model?: SendSnapshot | null },
   ): Promise<string> {
     // Always render fresh: the DRAFT/FINAL badge + watermark and the
     // "Generated <datetime>" stamp must reflect the current moment and the
     // invoice's live stage, so returning a cached copy would show a stale
     // timestamp (and possibly the wrong stage). `opts.force` is kept for API
     // compatibility; generation is now unconditional.
-    return this.generateAndUpload(invoiceId, opts?.variant);
+    return this.generateAndUpload(invoiceId, opts?.variant, opts?.model);
   }
 
-  async generateAndUpload(invoiceId: string, variantArg?: InvoicePdfVariant): Promise<string> {
-    const inv = await this.prisma.forTenant().invoice.findUnique({
-      where: { id: invoiceId },
-      include: {
-        customer: {
-          select: {
-            id: true,
-            businessName: true,
-            contactName: true,
-            phone: true,
-            addresses: { orderBy: { isDefault: "desc" } },
-          },
-        },
-        items: {
-          include: {
-            product: { select: { id: true, name: true, barcode: true, sku: true, unitSku: true } },
-            // #2717 M3: the frozen sub-lines of a composed (FIXED) line; empty on a plain line.
-            components: { orderBy: { position: "asc" } },
-          },
-        },
-        // F03/R1/B97 fix: this is a LISTING read (the Payment History section), so
-        // it keeps the broad not:VOID filter — a DRAFT (unconfirmed) row must stay
-        // VISIBLE on the document under a "Pending confirmation" label rather than
-        // disappear, mirroring the web invoice detail's own draft badge (R2). What
-        // changed is the MONEY: the headline Amount Paid / Balance Due below is
-        // computed from `sumConfirmed(inv.payments)` (CONFIRMED/PAID rows only),
-        // never from a reduce over this listing array — a DRAFT row must never
-        // inflate what the customer is told they've already paid.
-        // scan-ok: draft-payment-not-void — intentional LISTING filter (R2); the money below narrows via sumConfirmed(inv.payments), never this where-clause.
-        payments: {
-          where: { status: { not: "VOID" } },
-          orderBy: { paidAt: "asc" },
-          include: { creditNote: { select: { creditNoteNumber: true, reason: true } } },
-        },
-        order: { select: { status: true, fulfillPath: true, shippedAt: true } },
-      },
-    });
+  async generateAndUpload(
+    invoiceId: string,
+    variantArg?: InvoicePdfVariant,
+    model?: SendSnapshot | null,
+  ): Promise<string> {
+    // SA-860: the email path hands in its ONE snapshot (taken after the send-time credits) so the PDF is rendered from the
+    // same object as the email and the fingerprint; every other caller reads its own.
+    const inv =
+      model ??
+      (await this.prisma.forTenant().invoice.findUnique({
+        where: { id: invoiceId },
+        include: SEND_SNAPSHOT_INCLUDE,
+      }));
     if (!inv) throw new NotFoundException("Invoice not found");
 
     // F3: the invoice raised at shipment is FINAL (resolveInvoiceVariant), not the pre-delivery proforma.
@@ -163,9 +142,10 @@ export class InvoicePdfService {
 
     this.logger.log(`Generating PDF for invoice ${invoiceId}`);
 
-    // Generate barcodes for each line item
+    // Generate barcodes for each line item. Row 510: the staff-only override stamp is stripped here, in the one
+    // mapper the template model is built from (the findUnique above includes whole item rows).
     const itemsWithBarcodes = await Promise.all(
-      inv.items.map(async (item) => {
+      inv.items.map(withoutOverrideStamp).map(async (item) => {
         const barcodeText = invoiceItemCode((item as any).product);
         if (barcodeText) {
           try {
@@ -253,10 +233,14 @@ export class InvoicePdfService {
     const key = invoicePdfStorageKey(invoiceId);
     await this.storage.upload(key, pdfBuffer, "application/pdf");
 
-    await this.prisma.invoice.update({
-      where: { id: invoiceId },
-      data: { pdfUrl: key },
-    });
+    // The key is deterministic per invoice, so write the pointer only when it changes
+    // (first render, or after an invalidation nulled it). Row 502: the write never moves
+    // updatedAt (the H4 edit token), so a render can't make an open edit form go stale.
+    if (inv.pdfUrl !== key) {
+      if (invTenantId) await writeInvoicePdfPointer(this.prisma, invTenantId, invoiceId, key);
+      // A tenant-less invoice cannot take the tenant-scoped write: say so, never a silent cache miss.
+      else this.logger.warn(`Invoice ${invoiceId} has no tenantId: PDF pointer not written`);
+    }
 
     this.logger.log(`Invoice PDF stored at key: ${key}`);
     return this.storage.presignedUrl(key);

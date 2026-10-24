@@ -18,6 +18,8 @@ export interface CancelImpactLike {
    * before live invoices are voided.
    */
   deliveredUnits?: number;
+  /** B692: delivered / partly delivered with no quantity recorded (legacy rows): the server refuses the cancel. */
+  deliveryQuantitiesMissing?: boolean;
 }
 
 const money = (n: number) => `$${Number(n).toFixed(2)}`;
@@ -66,6 +68,15 @@ export function describeCancelImpact(impact: CancelImpactLike | undefined): Canc
         // already has the product for. A return handles the delivered portion.
         blockedReason:
           "Some items on this order have already been delivered. Record a return for the delivered goods, or edit the order down to the undelivered items instead of cancelling.",
+        confirmLabel: null,
+      };
+    }
+
+    if (impact.deliveryQuantitiesMissing) {
+      return {
+        title: "Can't cancel",
+        lines: [],
+        blockedReason: "Delivery quantities are missing; set them before cancelling.",
         confirmLabel: null,
       };
     }

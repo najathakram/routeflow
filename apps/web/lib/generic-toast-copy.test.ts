@@ -1,7 +1,7 @@
 import { readFileSync } from "fs";
 import { join } from "path";
 import { handleMutationError } from "./mutation-error-toast";
-import { API_ERROR_CODES } from "@routeflow/types";
+import { API_ERROR_CODES, INVOICE_TAX_STATE_STALE_COPY } from "@routeflow/types";
 import { codedToastCopy, genericToastCopy } from "./generic-toast-copy";
 
 /**
@@ -96,10 +96,121 @@ describe("genericToastCopy: codes users rely on", () => {
     expect(genericToastCopy({ code: "ECONNABORTED", request: {} })).toMatch(/couldn't confirm/);
   });
 
+  it.each([
+    [
+      API_ERROR_CODES.UNIT_ARCHIVED,
+      "That unit is archived. Restore it in Settings > Units, or choose another unit.",
+    ],
+    [
+      API_ERROR_CODES.UNIT_SIZE_IN_USE,
+      "Orders or invoices already use that unit at a different size, so its size can't change. Add a new unit instead.",
+    ],
+  ])("%s shows its fixed sentence, never the raw 409 text", (code, copy) => {
+    expect(genericToastCopy(err(409, { code, message: "raw server text" }))).toBe(copy);
+  });
+
+  it("UNITS_RENAME_IN_PROGRESS is neutral (a product save OR a rename can be the blocker) and says to retry (never the raw 409 text)", () => {
+    expect(
+      genericToastCopy(
+        err(409, { code: API_ERROR_CODES.UNITS_RENAME_IN_PROGRESS, message: "raw" }),
+      ),
+    ).toBe("Another change is in progress. Try again in a moment.");
+  });
+
+  it("SA-832 / 453: TENANT_ADMIN_LOCKED shows its fixed sentence, never the raw 409 text or the cause", () => {
+    const copy = genericToastCopy(
+      err(409, { code: API_ERROR_CODES.TENANT_ADMIN_LOCKED, message: "raw server text" }),
+    );
+    expect(copy).toBe(
+      "This workspace is locked and can't take a payment right now. Please contact support.",
+    );
+    expect(copy).not.toBe(NEUTRAL_409);
+    expect(copy).not.toMatch(/admin_set|administrator/i);
+  });
+
+  it("SA-733r5: the catch-up refusals show fixed copy, never the server message", () => {
+    for (const code of [
+      API_ERROR_CODES.EXTERNAL_PAYMENT_USE_CATCHUP,
+      API_ERROR_CODES.CATCHUP_SESSION_OPEN,
+      API_ERROR_CODES.CATCHUP_PENDING,
+      API_ERROR_CODES.CATCHUP_ADDON_NOT_CARD_BILLABLE,
+      API_ERROR_CODES.CATCHUP_ADDON_SNAPSHOT_NOT_CATALOG,
+      API_ERROR_CODES.CATCHUP_MANUAL_PERIOD_AHEAD,
+      API_ERROR_CODES.CATCHUP_NO_BILLABLE_PRICE,
+      API_ERROR_CODES.ACTIVATION_CATCHUP_SESSION_OPEN,
+    ]) {
+      const copy = genericToastCopy(err(409, { code, message: "raw server text" }));
+      expect(copy).not.toContain("raw server text");
+      expect(copy).not.toBe(NEUTRAL_409);
+    }
+    expect(
+      genericToastCopy(err(409, { code: API_ERROR_CODES.EXTERNAL_PAYMENT_USE_CATCHUP })),
+    ).toMatch(/invoiced directly/);
+    // CATCHUP_MANUAL_PERIOD_AHEAD now means only "a manual activation recorded without a paid period"
+    expect(
+      genericToastCopy(err(409, { code: API_ERROR_CODES.CATCHUP_MANUAL_PERIOD_AHEAD })),
+    ).toMatch(/manual activation recorded without a paid period/);
+    expect(
+      genericToastCopy(err(409, { code: API_ERROR_CODES.CATCHUP_MANUAL_PERIOD_AHEAD })),
+    ).not.toMatch(/part-way/);
+  });
+
+  it("SA-733r7: the dunning refusals show fixed copy, never the server message", () => {
+    for (const code of [API_ERROR_CODES.PAYMENT_OVERDUE, API_ERROR_CODES.PAYMENT_STATE_UNKNOWN]) {
+      const copy = genericToastCopy(err(409, { code, message: "raw server text" }));
+      expect(copy).not.toContain("raw server text");
+      expect(copy).not.toBe(NEUTRAL_409);
+    }
+    expect(genericToastCopy(err(409, { code: API_ERROR_CODES.PAYMENT_OVERDUE }))).toMatch(
+      /overdue/,
+    );
+  });
+
+  it("PAYMENT_NOT_DUE (row 542: pay refused, nothing is due) is fixed copy", () => {
+    const copy = genericToastCopy(
+      err(409, { code: API_ERROR_CODES.PAYMENT_NOT_DUE, message: "raw server text" }),
+    );
+    expect(copy).toBe("Nothing is due right now.");
+  });
+
+  it("PAYMENT_TERMS_CHANGED (row 542c: the banner's terms no longer hold) is one fixed plain sentence", () => {
+    const copy = genericToastCopy(
+      err(409, { code: API_ERROR_CODES.PAYMENT_TERMS_CHANGED, message: "raw server text" }),
+    );
+    expect(copy).toBe("The amount changed. We've refreshed it, please check and try again.");
+    expect(copy).not.toMatch(/[–—]/);
+  });
+
+  it("PRODUCT_CHAIN_UNREADABLE (H2: a reparent refused on an unreadable family chain) is fixed copy", () => {
+    const copy = genericToastCopy(err(409, { code: API_ERROR_CODES.PRODUCT_CHAIN_UNREADABLE }));
+    expect(copy).toBe("This product's family chain can't be read.");
+    expect(copy).not.toContain(RAW);
+  });
+
+  // SA-812a G-1: the units_prices_v2 fail-closed 503. Without a mapped code a 503 reads as the generic "our side" copy.
+  it("CUSTOMER_PRICES_UNAVAILABLE (503) says nothing was saved and to retry, never the server message", () => {
+    const e = err(503, { code: API_ERROR_CODES.CUSTOMER_PRICES_UNAVAILABLE });
+    expect(genericToastCopy(e)).toBe(
+      "Customer prices couldn't be loaded. Nothing was saved. Try again in a moment.",
+    );
+    expect(codedToastCopy(e)).toBe(genericToastCopy(e));
+    expect(genericToastCopy(e)).not.toContain(RAW);
+    expect(genericToastCopy(e)).not.toMatch(/[–—]/);
+  });
+
   it("ORDER_LINE_CHANGED is mapped through the shared constant", () => {
     expect(genericToastCopy(err(409, { code: API_ERROR_CODES.ORDER_LINE_CHANGED }))).toMatch(
       /changed while it was being billed/,
     );
+  });
+
+  it("LINE_ALREADY_DELIVERED (B1234, staff item save) is fixed copy through the shared constant, never the server message, no dash", () => {
+    const copy = genericToastCopy(
+      err(409, { code: API_ERROR_CODES.LINE_ALREADY_DELIVERED, message: "raw server text" }),
+    );
+    expect(copy).toMatch(/delivered line can't be changed or removed.*Nothing was saved/);
+    expect(copy).not.toContain("raw server text");
+    expect(copy).not.toMatch(/[–—]/);
   });
 
   it("ORDER_INVOICES_NEED_REVIEW (SA-687) shows the fixed review copy, never the server message", () => {
@@ -125,7 +236,10 @@ describe("genericToastCopy: codes users rely on", () => {
     ["CREDIT_NOTE_VOID_NOT_EDITABLE", /is void/],
     ["CREDIT_NOTE_OVER_HEADROOM", /more than the source invoice still allows/],
     ["UNIT_AWARE_LINE", /sold by a unit/],
+    // SA-804 (1) / B1232: FIFO and LIFO costing are retired.
+    ["COSTING_METHOD_RETIRED", /^FIFO and LIFO costing are retired. Pick average cost/],
     ["ORDER_CHANGED_DURING_EDIT", /changed while you were editing/],
+    ["DUPLICATE_LINE_ID", /^A line appears twice\. Refresh the page and try again\.$/],
     ["ORDER_BILLING_CHANGED", /billing changed/],
     ["ORDER_EDIT_WOULD_OVERPAY", /overpaid on the invoice/],
     ["ORDER_WITH_CARRIER_NO_CANCEL", /already with the carrier/],
@@ -137,8 +251,17 @@ describe("genericToastCopy: codes users rely on", () => {
     ["ORDER_WITH_CARRIER_NO_REDUCE", /Record a return instead of reducing/],
     ["ORDER_WITH_CARRIER_NO_ADD", /Create a new order for the extra items/],
     ["CONCURRENT_UPDATE", /Someone else is updating/],
+    // SA-767 L-2.2: a second commit / an edit of a count that is being saved.
+    ["STOCK_COUNT_COMMITTING", /^This count is being saved. Try again in a moment.$/],
+    // SA-767 r-note 5 SA-3: the fallback toast (the count screens show the session name themselves).
+    ["PRODUCT_IN_OPEN_COUNT", /^Already being counted in another count$/],
     ["BARCODE_TAKEN", /barcode/],
     ["ADDON_GATE", /isn't included in your current plan/],
+    // M11: the stackable add-on quantity refusals
+    ["ADDON_QUANTITY_CHANGED", /^Your add-on changed since this page loaded\. Check the new total/],
+    ["ADDON_QUANTITY_NOT_INCREASED", /would not add any more/],
+    ["ADDON_NOT_STACKABLE", /only be turned on once per workspace/],
+    ["ADDON_RAISE_UNBILLED_ROW", /isn't billed on your subscription yet/],
   ])("%s", (code, re) => {
     const copy = genericToastCopy(err(409, { code }));
     expect(copy).toMatch(re);
@@ -159,6 +282,38 @@ describe("genericToastCopy: codes users rely on", () => {
         err(400, { message: "Cannot duplicate an order-linked invoice. Also: " + RAW }),
       ),
     ).toBe("Some details aren't valid. Check what you entered and try again.");
+  });
+
+  it("O1: the 1-piece naming refusal (uncoded 400) says what to do, with the tenant's piece name, not 'Some details aren't valid'", () => {
+    const one = (label: string) => `A 1-piece unit is always named "${label}".`;
+    expect(genericToastCopy(err(400, { message: one("Piece") }))).toBe(
+      "A 1-piece unit is always called Piece. Rename it to Piece, or give it more than one piece.",
+    );
+    expect(codedToastCopy(err(400, { message: one("Each") }))).toBe(
+      "A 1-piece unit is always called Each. Rename it to Each, or give it more than one piece.",
+    );
+    // a near-miss, or a label that is not a plain short name, is never echoed
+    expect(genericToastCopy(err(400, { message: one("<b>x</b>") }))).toBe(
+      "Some details aren't valid. Check what you entered and try again.",
+    );
+    expect(genericToastCopy(err(400, { message: one("Piece") + " " + RAW }))).toBe(
+      "Some details aren't valid. Check what you entered and try again.",
+    );
+  });
+
+  it("O1: a base name with accents or non-Latin letters keeps the specific copy", () => {
+    const one = (label: string) => `A 1-piece unit is always named "${label}".`;
+    expect(genericToastCopy(err(400, { message: one("Pièce") }))).toBe(
+      "A 1-piece unit is always called Pièce. Rename it to Pièce, or give it more than one piece.",
+    );
+    expect(genericToastCopy(err(400, { message: one("Stück") }))).toBe(
+      "A 1-piece unit is always called Stück. Rename it to Stück, or give it more than one piece.",
+    );
+    expect(genericToastCopy(err(400, { message: one("件") }))).toMatch(/always called 件\./);
+    // markup and control characters are still never echoed
+    expect(genericToastCopy(err(400, { message: one("Pièce<b>") }))).toBe(
+      "Some details aren't valid. Check what you entered and try again.",
+    );
   });
 
   describe("B986: coded refusals that tell the user what to fix (never less actionable than the server sentence)", () => {
@@ -192,6 +347,48 @@ describe("genericToastCopy: codes users rely on", () => {
       ).toBe(
         "This bill has no line items, so receiving it won't update inventory or costs. Add the lines first.",
       );
+    });
+
+    it("row 648: the vendor bill refusals say what happened and what to do", () => {
+      expect(genericToastCopy(err(400, { code: API_ERROR_CODES.BILL_NOT_EDITABLE }))).toBe(
+        "Only draft bills can be edited. Revert the bill to draft first.",
+      );
+      expect(genericToastCopy(err(400, { code: API_ERROR_CODES.BILL_PO_SUPPLIER_LOCKED }))).toBe(
+        "This bill is linked to a purchase order, so its supplier can't be changed.",
+      );
+      expect(genericToastCopy(err(400, { code: API_ERROR_CODES.BILL_NEVER_RECEIVED }))).toBe(
+        "This bill was never received, so there is no stock or cost to revert. Its payments keep it out of draft.",
+      );
+      expect(genericToastCopy(err(409, { code: API_ERROR_CODES.BILL_TAX_UNKNOWN }))).toBe(
+        "This bill's tax wasn't recorded separately, so it can't be changed on its own. Edit the lines and the tax together.",
+      );
+      expect(genericToastCopy(err(400, { code: API_ERROR_CODES.BILL_NEEDS_A_LINE }))).toBe(
+        "A bill needs at least one line. Void or delete it instead.",
+      );
+    });
+
+    it("row 648: RECEIVE_EXCEEDS_OUTSTANDING names the product and both quantities from structured fields", () => {
+      expect(
+        genericToastCopy(
+          err(400, {
+            code: API_ERROR_CODES.RECEIVE_EXCEEDS_OUTSTANDING,
+            productName: "Widget 24pk",
+            requested: "5",
+            outstanding: "2.5",
+          }),
+        ),
+      ).toBe("Can't receive 5 of Widget 24pk: only 2.5 still outstanding.");
+      // Never the server message, and a malformed field falls back to the numberless line.
+      const fallback = genericToastCopy(
+        err(400, {
+          code: API_ERROR_CODES.RECEIVE_EXCEEDS_OUTSTANDING,
+          productName: "Widget",
+          requested: "<b>5</b>",
+          outstanding: "2",
+        }),
+      );
+      expect(fallback).toBe("You can't receive more than is still outstanding on a line.");
+      expect(fallback).not.toContain(RAW);
     });
 
     it("PACK_SIZE_UNKNOWN keeps the 'confirm as loose pieces' option", () => {
@@ -307,12 +504,16 @@ describe("genericToastCopy: codes users rely on", () => {
       ["UNIT_AWARE_LINE_UNVERIFIABLE", /lines couldn't be verified.*Ask an admin/],
       ["CHANGE_REQUEST_PACK_CHANGED", /pack size changed.*Decline it and re-add/],
       ["INVOICE_CHANGED_CONCURRENTLY", /invoice changed.*Refresh and try again/],
-      ["INVOICE_TAX_STATE_STALE", /tax no longer matches.*Re-save the invoice lines/],
+      [
+        "INVOICE_TAX_STATE_STALE",
+        /stored tax can't be recalculated safely.*Issue a credit note/, // the no-path default
+      ],
       [
         "INVOICE_TOTAL_BELOW_PAID",
         /total below what is already paid or credited.*change the lines or discount/,
       ],
       ["FAMILY_NOT_PRICEABLE", /family can't be priced or promoted.*variants/],
+      ["VARIANT_NAME_PREFIX_ONLY", /can't be just the product name.*what makes it different/],
       // SA-770: the overdue list refuses past its id cap (422) and says how to narrow it.
       ["OVERDUE_FILTER_TOO_BROAD", /Too many invoices are overdue.*customer/],
       ["REMINDER_NO_BALANCE_DUE", /no balance due.*nothing to remind/],
@@ -477,6 +678,7 @@ describe("B986-7 fold: codes #3051 registered are spelled through API_ERROR_CODE
     "INVOICE_CHANGED_CONCURRENTLY",
     "INVOICE_TAX_STATE_STALE",
     "INVOICE_TOTAL_BELOW_PAID",
+    "LINE_ALREADY_DELIVERED",
   ];
   it.each(REGISTERED)("%s is a computed [API_ERROR_CODES.X] key", (code) => {
     expect(src).toContain(`[API_ERROR_CODES.${code}]:`);
@@ -493,5 +695,177 @@ describe("P-4: ORDER_EDIT_WOULD_OVERPAY", () => {
     const copy = genericToastCopy(err(409, { code: "ORDER_EDIT_WOULD_OVERPAY", excess: 5 }));
     expect(copy).toMatch(/overpaid/);
     expect(copy).not.toContain(RAW);
+  });
+});
+
+describe("SELLER_UNAVAILABLE (a buyer write toward a paused seller)", () => {
+  const body = {
+    code: API_ERROR_CODES.SELLER_UNAVAILABLE,
+    message: "This seller isn't taking online orders right now. Please check back soon.",
+  };
+  const SELLER_COPY =
+    "This seller isn't taking online orders right now. Please check back soon or contact them.";
+
+  it("is the seller-unavailable copy, never the generic permission line", () => {
+    expect(genericToastCopy(err(403, body))).toBe(SELLER_COPY);
+    expect(codedToastCopy(err(403, body))).toBe(SELLER_COPY);
+    expect(genericToastCopy(err(403, body))).not.toMatch(/permission/i);
+  });
+
+  it("the app-wide handler toasts it once with that copy", () => {
+    const toast = jest.fn();
+    handleMutationError(err(403, body), { meta: undefined }, toast, { push: jest.fn() });
+    expect(toast).toHaveBeenCalledTimes(1);
+    expect(toast).toHaveBeenCalledWith({ title: SELLER_COPY, variant: "error" });
+  });
+
+  it("a plain 403 keeps the permission line (unchanged)", () => {
+    expect(genericToastCopy(err(403, { message: "Forbidden" }))).toBe(
+      "You don't have permission to do that.",
+    );
+  });
+});
+
+describe("SA-778: a billing action refused in a support session", () => {
+  const SUPPORT_COPY =
+    "This action isn't available in a support session. Ask the account admin to do it.";
+  const body = {
+    code: API_ERROR_CODES.IMPERSONATION_NOT_ALLOWED,
+    message: "This action isn't available in a support session. Ask the account admin to do it.",
+  };
+
+  it("is fixed copy, not the generic permission line and not the raw server message", () => {
+    expect(genericToastCopy(err(403, body))).toBe(SUPPORT_COPY);
+    expect(codedToastCopy(err(403, body))).toBe(SUPPORT_COPY);
+    expect(genericToastCopy(err(403, { ...body, message: RAW }))).toBe(SUPPORT_COPY);
+    expect(genericToastCopy(err(403, body))).not.toMatch(/permission/i);
+  });
+
+  it("the app-wide handler toasts it once with that copy", () => {
+    const toast = jest.fn();
+    handleMutationError(err(403, body), { meta: undefined }, toast, { push: jest.fn() });
+    expect(toast).toHaveBeenCalledTimes(1);
+    expect(toast).toHaveBeenCalledWith({ title: SUPPORT_COPY, variant: "error" });
+  });
+});
+
+describe("CQ-06: a license refusal (409 REGULATED_AUTH_REQUIRED) says what is wrong and the next step", () => {
+  const licenseErr = (blockedCategories: unknown) =>
+    err(409, { code: API_ERROR_CODES.REGULATED_AUTH_REQUIRED, blockedCategories });
+
+  it("is mapped by code, never the neutral 409 sentence or the server message", () => {
+    const copy = genericToastCopy(
+      licenseErr([{ trackedCategoryId: "c", categoryName: "Alcohol", reason: "EXPIRED" }]),
+    );
+    expect(copy).toBe(
+      "This sale includes regulated items (Alcohol), and the customer's license has expired. Renew it on the customer's Licenses tab, then try again.",
+    );
+    expect(copy).not.toBe(NEUTRAL_409);
+    expect(copy).not.toContain(RAW);
+  });
+
+  it("codedToastCopy recognises it (so a surface with its own fallback shows it, not the fallback)", () => {
+    expect(
+      codedToastCopy(
+        licenseErr([{ trackedCategoryId: "c", categoryName: "Alcohol", reason: "NO_AUTH" }]),
+      ),
+    ).toContain("no verified license on file");
+  });
+
+  it("a body with no categories still gets the license sentence", () => {
+    expect(genericToastCopy(licenseErr(undefined))).toContain("Licenses tab");
+  });
+});
+
+describe("a selling-restriction refusal (409 SELLING_RESTRICTED) in a dialog with no blocked-lines panel", () => {
+  const restricted = (blockedLines: unknown) =>
+    err(409, { code: API_ERROR_CODES.SELLING_RESTRICTED, blockedLines });
+
+  it("says what is wrong and the next step, never the neutral 409 sentence", () => {
+    const copy = genericToastCopy(
+      restricted([{ productId: "p", productName: "Item", reason: "STATE_BAN", message: "" }]),
+    );
+    expect(copy).toBe(
+      "This sale includes an item that can't be sold to this customer under your selling restrictions. Remove the item or change the customer, then try again.",
+    );
+    expect(copy).not.toBe(NEUTRAL_409);
+    expect(copy).not.toContain(RAW);
+  });
+
+  it("an undeterminable state says so and what to do", () => {
+    const copy = genericToastCopy(
+      restricted([
+        { productId: "p", productName: "Item", reason: "INDETERMINATE_ADDRESS", message: "" },
+      ]),
+    );
+    expect(copy).toContain("can't tell which state");
+    expect(copy).toContain("Choose a customer with an address on file");
+  });
+
+  it("a body with no lines still gets the sentence", () => {
+    expect(genericToastCopy(restricted(undefined))).toContain("selling restrictions");
+  });
+});
+
+describe("row 510: the staff restriction codes have fixed copy", () => {
+  it("RESTRICTION_WARNING and RESTRICTION_OVERRIDE_REASON_INVALID are never the neutral status sentence, never the raw text", () => {
+    for (const [status, code] of [
+      [409, API_ERROR_CODES.RESTRICTION_WARNING],
+      [400, API_ERROR_CODES.RESTRICTION_OVERRIDE_REASON_INVALID],
+    ] as const) {
+      const copy = genericToastCopy(err(status, { code }));
+      expect(copy).not.toBe(NEUTRAL_409);
+      expect(copy).not.toContain(RAW);
+      expect(codedToastCopy(err(status, { code }))).toBe(copy);
+    }
+    expect(
+      genericToastCopy(err(400, { code: API_ERROR_CODES.RESTRICTION_OVERRIDE_REASON_INVALID })),
+    ).toBe("Give a reason of 3 to 200 characters to sell a restricted item.");
+  });
+
+  it("RESTRICTION_WARNING is handled by the dialog: the global handler stays silent", () => {
+    const toast = jest.fn();
+    handleMutationError(err(409, { code: API_ERROR_CODES.RESTRICTION_WARNING }), undefined, toast, {
+      push: jest.fn(),
+    });
+    expect(toast).not.toHaveBeenCalled();
+  });
+});
+
+describe("SA-814g: 409 INVOICE_TAX_STATE_STALE copy follows the kind of invoice that refused", () => {
+  const stale = (data: Record<string, unknown> = {}) =>
+    err(409, { code: API_ERROR_CODES.INVOICE_TAX_STATE_STALE, ...data });
+
+  it("an order-linked DRAFT says to create it again from the order, never 'Re-save the invoice lines'", () => {
+    const copy = genericToastCopy(stale({ path: "DRAFT_ORDER" }));
+    expect(copy).toBe(INVOICE_TAX_STATE_STALE_COPY.DRAFT_ORDER);
+    expect(copy).toMatch(/Create it again from the order, or contact support/);
+    expect(copy).not.toMatch(/Re-save/);
+    expect(copy).not.toContain(RAW);
+  });
+
+  it("a manual DRAFT says to create the draft again", () => {
+    const copy = genericToastCopy(stale({ path: "DRAFT_MANUAL" }));
+    expect(copy).toBe(INVOICE_TAX_STATE_STALE_COPY.DRAFT_MANUAL);
+    expect(copy).toMatch(/Create the draft again, or contact support/);
+  });
+
+  it("an issued invoice points at a credit note", () => {
+    const copy = genericToastCopy(stale({ path: "ISSUED" }));
+    expect(copy).toBe(INVOICE_TAX_STATE_STALE_COPY.ISSUED);
+    expect(copy).toMatch(/Issue a credit note or contact support/);
+  });
+
+  it("a body with no (or an unknown) path gets the issued sentence, which claims nothing about drafts", () => {
+    expect(genericToastCopy(stale())).toBe(INVOICE_TAX_STATE_STALE_COPY.ISSUED);
+    expect(genericToastCopy(stale({ path: "SOMETHING_NEW" }))).toBe(
+      INVOICE_TAX_STATE_STALE_COPY.ISSUED,
+    );
+  });
+
+  it("codedToastCopy recognises it on every path", () => {
+    expect(codedToastCopy(stale({ path: "DRAFT_MANUAL" }))).toBe(
+      INVOICE_TAX_STATE_STALE_COPY.DRAFT_MANUAL,
+    );
   });
 });

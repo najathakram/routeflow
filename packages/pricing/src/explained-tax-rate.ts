@@ -1,4 +1,5 @@
 import { roundMoney } from "./pricing";
+import { sameRateAtLegacyPrecision } from "./tax-precision";
 
 /**
  * SA-762r / SA-751r: the ONE rule for when a receipt may NAME a tax rate. Counter receipt, reprint and the emailed receipt
@@ -48,7 +49,7 @@ export function storedTaxRatePercent(
   if (configuredPercent == null || !(configuredPercent > 0)) return null;
   const stored = [...rates][0];
   // the column is Decimal(5, 4): compare at that precision, in basis points of the fraction
-  if (Math.round(stored * 10_000) !== Math.round((configuredPercent / 100) * 10_000)) return null;
+  if (!sameRateAtLegacyPrecision(stored, configuredPercent / 100)) return null;
   // print the CONFIGURED rate: the stored column is Decimal(5, 4), so 8.875% is stored as 0.0888 and must not read 8.88%
   return configuredPercent;
 }

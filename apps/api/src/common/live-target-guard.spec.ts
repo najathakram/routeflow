@@ -28,8 +28,8 @@ describe("filterWritableTenants", () => {
     trial({ id: "t-plain", slug: "acme-plain" }),
   ];
   const subs = new Map<string, object>([
-    ["t-paying", { planKey: "STARTER", stripeSubId: null }],
-    ["t-stripe", { planKey: null, stripeSubId: "sub_fake_qa" }],
+    ["t-paying", { planKey: "STARTER", stripeSubId: null, couponFull: false }],
+    ["t-stripe", { planKey: null, stripeSubId: "sub_fake_qa", couponFull: false }],
   ]);
 
   it("drops protected rows and prints per-arm counts only", () => {
@@ -45,9 +45,14 @@ describe("filterWritableTenants", () => {
   });
 
   it("accepts a plain object for subsById", () => {
-    const out = guard.filterWritableTenants(rows, { "t-paying": { planKey: "STARTER" } }, NONE, {
-      log: () => undefined,
-    });
+    const out = guard.filterWritableTenants(
+      rows,
+      { "t-paying": { planKey: "STARTER", couponFull: false } },
+      NONE,
+      {
+        log: () => undefined,
+      },
+    );
     expect(out.writable.map((r: { id: string }) => r.id)).toEqual([
       "t-trial",
       "t-stripe",
@@ -262,6 +267,7 @@ describe("protectedTenantIds", () => {
       deletedAt: null,
       planKey: null,
       stripeSubId: null,
+      couponFull: false,
     },
     {
       id: "t-paying",
@@ -271,6 +277,7 @@ describe("protectedTenantIds", () => {
       deletedAt: null,
       planKey: "STARTER",
       stripeSubId: null,
+      couponFull: false,
     },
     {
       id: "t-plain",
@@ -280,6 +287,7 @@ describe("protectedTenantIds", () => {
       deletedAt: null,
       planKey: null,
       stripeSubId: null,
+      couponFull: false,
     },
   ];
 
@@ -314,6 +322,7 @@ describe("assertNoLiveProtectedTenants (tunnel-proof refusal for destructive loc
     deletedAt: null,
     planKey: null,
     stripeSubId: null,
+    couponFull: false,
     ...over,
   });
 

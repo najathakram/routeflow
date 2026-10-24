@@ -125,6 +125,8 @@ const NUKE_MODELS = [
   // #2717 M2 (SA-594): Recipe/RecipeComponent hold RESTRICT FKs into Product — children first.
   "recipeComponent",
   "recipe",
+  // Row 509: SellingRestrictionTarget holds RESTRICT FKs into Product (and ProductCategory) — children first.
+  "sellingRestrictionTarget",
   "product",
   "supplier",
   "expenseCategory",
@@ -358,7 +360,7 @@ async function nuke(tenantId) {
   // --allow-paying-tenant — read from THIS database (same client), before any count or write.
   const sub = await prisma.tenantSubscription.findUnique({
     where: { tenantId: tenant.id },
-    select: { planKey: true, stripeSubId: true },
+    select: { planKey: true, stripeSubId: true, couponFull: true },
   });
   const guard = checkProtectedTarget({ tenant, sub, protectedSlugs });
   let override = null;

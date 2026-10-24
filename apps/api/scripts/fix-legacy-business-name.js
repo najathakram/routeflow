@@ -45,7 +45,7 @@ async function run() {
 
     // Row 195: refuse a protected tenant (paying, Stripe-linked or env-listed) before any write.
     const subRes = await client.query(
-      `SELECT "planKey", "stripeSubId" FROM "TenantSubscription" WHERE "tenantId" = $1`,
+      `SELECT "planKey", "stripeSubId", "couponFull" FROM "TenantSubscription" WHERE "tenantId" = $1`,
       [row.tenantId],
     );
     try {

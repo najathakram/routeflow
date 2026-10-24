@@ -1,8 +1,18 @@
 import { InternalServerErrorException } from "@nestjs/common";
-import { roundMoney, storedTaxRatePercent, sumConfirmed } from "@routeflow/pricing";
-import type { CounterSalePaymentMethod, CounterSaleResponse } from "@routeflow/types";
+import {
+  billedChargeLines,
+  roundMoney,
+  storedTaxRatePercent,
+  sumConfirmed,
+} from "@routeflow/pricing";
+import type {
+  CounterSalePaymentMethod,
+  CounterSaleResponse,
+  DuplicatePaymentRefExisting,
+} from "@routeflow/types";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
 import type { CounterSaleDto } from "./counter-sale.dto";
+import { duplicateCause } from "./counter-duplicate-ref";
 
 export type InvoiceRow = {
   id: string;
@@ -19,6 +29,11 @@ export type InvoiceRow = {
     unitPrice?: unknown;
     originalPrice?: unknown;
     priceType?: string | null;
+    /** the levy this line billed (0 for an exempt customer) and its category: the receipt names it (CQ-03) */
+    categoryTaxAmount?: unknown;
+    trackedCategoryId?: string | null;
+    trackedCategory?: { id?: string | null; name?: string | null; taxType?: string | null } | null;
+    categoryTaxType?: string | null;
   }>;
   payments?: Array<{ id: string; amount: unknown; method?: string; status?: string }>;
 };
@@ -129,10 +144,12 @@ export function buildCounterSaleResponse(input: {
   invoices: InvoiceRow[];
   replayed: boolean;
   planError?: string;
+  /** SA-837b: the existing payment a refused duplicate reference repeats (the response then names the cause). */
+  duplicate?: DuplicatePaymentRefExisting;
   /** the tenant's configured rate in percent: a stored line rate is named only when it equals this */
   configuredTaxPercent?: number | null;
 }): CounterSaleResponse {
-  const { payment, order, invoices, replayed, planError } = input;
+  const { payment, order, invoices, replayed, planError, duplicate } = input;
   const first = invoices[0];
   if (!order || !first) {
     throw new InternalServerErrorException(
@@ -180,7 +197,10 @@ export function buildCounterSaleResponse(input: {
     ...(method ? { method } : {}),
     paymentRecorded: settled,
     ...(!settled
-      ? { paymentErrorCode: error ?? API_ERROR_CODES.COUNTER_PAYMENT_NOT_RECORDED }
+      ? {
+          paymentErrorCode: error ?? API_ERROR_CODES.COUNTER_PAYMENT_NOT_RECORDED,
+          ...duplicateCause(duplicate),
+        }
       : {}),
     ...(order.counterCashTendered != null
       ? { cashTendered: roundMoney(Number(order.counterCashTendered)) }
@@ -189,6 +209,8 @@ export function buildCounterSaleResponse(input: {
     ...(order.tax != null
       ? {
           tax: roundMoney(Number(order.tax)),
+          // CQ-03: the deposit / excise the invoices billed, each its own named charge (never inside Tax)
+          charges: billedChargeLines(invoices.flatMap((i) => i.items ?? [])),
           taxRatePercent: storedTaxRatePercent(
             invoices.map((i) => ({ lines: i.items ?? [] })),
             input.configuredTaxPercent,

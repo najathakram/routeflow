@@ -80,6 +80,20 @@ describe("AddonGuard", () => {
     });
   });
 
+  it("SA-786 R13 (regression guard): an ACTIVE tobacco_dealer row is the whole entitlement - granted at any plan and at any price, the gate reads neither", async () => {
+    reflector.getAllAndOverride.mockReturnValue("tobacco_dealer");
+    addonService.getActiveAddons.mockResolvedValue(["tobacco_dealer"]);
+
+    // The same call for a $0 included row (SCALE) and a priced row (GROWTH): the gate's only inputs are the tenant
+    // and the route's keys, so an included add-on stays reachable after an upgrade.
+    for (const _plan of ["STARTER", "GROWTH", "SCALE", "ENTERPRISE"]) {
+      await expect(guard.canActivate(contextFor({ tenantId: "t1" }))).resolves.toBe(true);
+    }
+    for (const call of addonService.getActiveAddons.mock.calls) {
+      expect(call).toEqual(["t1", { onlyKeys: ["tobacco_dealer"] }]);
+    }
+  });
+
   it("throws Forbidden when the addon is not active (legacy single-string metadata)", async () => {
     reflector.getAllAndOverride.mockReturnValue("tobacco_dealer");
     addonService.getActiveAddons.mockResolvedValue([]);

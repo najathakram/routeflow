@@ -9,8 +9,13 @@ import {
   resolveGoverningState,
   restrictedSummary,
   restrictionChannelForPrincipal,
+  restrictionsApply,
   ruleBindsChannel,
+  ruleHidesFromBuyer,
   ruleIsActive,
+  ruleMatchesProduct,
+  ruleTargetSets,
+  targetIsActive,
   UNKNOWN_PRODUCT_NAME,
   UNRESOLVED_STATE,
   type CustomerAddressFacts,
@@ -913,5 +918,164 @@ describe("restrictedSummary — the 409's human `message`", () => {
 
   it("an empty list (should not happen) still yields a real sentence, never an empty toast", () => {
     expect(restrictedSummary([])).toBe("This order can't be sold to this customer.");
+  });
+});
+
+describe("portal limits: the switch is staff-channel only (restrictionsApply)", () => {
+  it("the portal channel always applies its rules, switch on or off", () => {
+    expect(restrictionsApply({ enabled: false }, "BUYER_PORTAL")).toBe(true);
+    expect(restrictionsApply({ enabled: true }, "BUYER_PORTAL")).toBe(true);
+  });
+
+  it("the staff channel applies them only when the switch is on", () => {
+    expect(restrictionsApply({ enabled: false }, "STAFF")).toBe(false);
+    expect(restrictionsApply({ enabled: true }, "STAFF")).toBe(true);
+  });
+
+  it("an unrecognised channel is treated as the portal (fails closed)", () => {
+    expect(restrictionsApply({ enabled: false }, "SOMETHING_ELSE" as never)).toBe(true);
+  });
+});
+
+describe("portal limits: a buyer with no state on file", () => {
+  const portalOnly = rule({ surface: "BUYER_PORTAL" });
+  const legalBan = rule({ surface: "ALL" });
+  const NO_STATE = UNRESOLVED_STATE;
+
+  it("is ALLOWED a portal-only limit (the admin is told they have no state)", () => {
+    expect(
+      evaluateRestrictions(
+        input({ channel: "BUYER_PORTAL", rules: [portalOnly], governingState: NO_STATE }),
+      ),
+    ).toEqual({ outcome: "ALLOW", reasons: [] });
+  });
+
+  it("is still INDETERMINATE (fail closed) for a legal ban that binds every channel", () => {
+    expect(
+      evaluateRestrictions(
+        input({ channel: "BUYER_PORTAL", rules: [legalBan], governingState: NO_STATE }),
+      ).outcome,
+    ).toBe("INDETERMINATE");
+  });
+
+  it("a legal ban beside a portal-only limit still fails closed", () => {
+    expect(
+      evaluateRestrictions(
+        input({
+          channel: "BUYER_PORTAL",
+          rules: [portalOnly, rule({ id: "r2", surface: "ALL" })],
+          governingState: NO_STATE,
+        }),
+      ).outcome,
+    ).toBe("INDETERMINATE");
+  });
+
+  it("a resolved state matching a portal-only limit BLOCKs the portal", () => {
+    expect(
+      evaluateRestrictions(
+        input({
+          channel: "BUYER_PORTAL",
+          rules: [portalOnly],
+          governingState: { resolved: true, state: "TX" },
+        }),
+      ).outcome,
+    ).toBe("BLOCK");
+  });
+});
+
+describe("portal limits: ruleHidesFromBuyer matches the decision rule by rule", () => {
+  const TX = { resolved: true, state: "TX" } as const;
+  const NY = { resolved: true, state: "NY" } as const;
+  const hides = (
+    over: Partial<RestrictionRuleFacts>,
+    gov: Parameters<typeof ruleHidesFromBuyer>[1],
+  ) => ruleHidesFromBuyer(rule(over), gov);
+
+  it("a STATE rule hides only where its state is named", () => {
+    expect(hides({ surface: "BUYER_PORTAL" }, TX)).toBe(true);
+    expect(hides({ surface: "BUYER_PORTAL" }, NY)).toBe(false);
+  });
+
+  it("a FEDERAL rule hides from everyone, with or without a state", () => {
+    expect(hides({ jurisdiction: "FEDERAL", states: [] }, NY)).toBe(true);
+    expect(hides({ jurisdiction: "FEDERAL", states: [] }, UNRESOLVED_STATE)).toBe(true);
+  });
+
+  it("a malformed STATE rule with no readable states hides everywhere", () => {
+    expect(hides({ states: [] }, NY)).toBe(true);
+  });
+
+  it("with no state on file: a portal-only limit shows, a legal ban hides", () => {
+    expect(hides({ surface: "BUYER_PORTAL" }, UNRESOLVED_STATE)).toBe(false);
+    expect(hides({ surface: "ALL" }, UNRESOLVED_STATE)).toBe(true);
+  });
+});
+
+describe("row 509: rule targets", () => {
+  const t = (
+    over: Partial<{
+      productId: string | null;
+      categoryId: string | null;
+      addedAt: Date;
+      removedAt: Date | null;
+    }>,
+  ) => ({
+    productId: null,
+    categoryId: null,
+    addedAt: day(-10),
+    removedAt: null,
+    ...over,
+  });
+
+  it("targetIsActive: added on/before at, removed strictly after (half-open, like a rule)", () => {
+    expect(targetIsActive(t({ addedAt: AT }), AT)).toBe(true);
+    expect(targetIsActive(t({ addedAt: day(1) }), AT)).toBe(false);
+    expect(targetIsActive(t({ removedAt: AT }), AT)).toBe(false);
+    expect(targetIsActive(t({ removedAt: day(1) }), AT)).toBe(true);
+  });
+
+  it("ruleTargetSets: null only with ZERO rows (legacy fallback); otherwise the active rows split by kind", () => {
+    expect(ruleTargetSets([], 0, AT)).toBeNull();
+    expect(ruleTargetSets([], 3, AT)).toEqual({ productIds: new Set(), categoryIds: new Set() });
+    const sets = ruleTargetSets(
+      [t({ productId: "a" }), t({ categoryId: "c" }), t({ productId: "gone", removedAt: day(-1) })],
+      3,
+      AT,
+    )!;
+    expect([...sets.productIds]).toEqual(["a"]);
+    expect([...sets.categoryIds]).toEqual(["c"]);
+  });
+
+  it("ruleMatchesProduct: targets win over the legacy column; product targets bind lineage, label targets labels", () => {
+    const sets = { productIds: new Set(["parent"]), categoryIds: new Set(["cat-vape"]) };
+    const r = rule({ categoryId: null, productId: "stale", targets: sets });
+    expect(ruleMatchesProduct(r, product({ id: "v", lineageIds: new Set(["v", "parent"]) }))).toBe(
+      true,
+    );
+    expect(ruleMatchesProduct(r, product({ effectiveCategoryIds: new Set(["cat-vape"]) }))).toBe(
+      true,
+    );
+    // the legacy column no longer matches once the rule has targets
+    expect(ruleMatchesProduct(r, product({ id: "stale", effectiveCategoryIds: new Set() }))).toBe(
+      false,
+    );
+    // an empty target set (every target removed) matches nothing
+    const empty = rule({ targets: { productIds: new Set(), categoryIds: new Set() } });
+    expect(ruleMatchesProduct(empty, product())).toBe(false);
+    // no targets at all: the legacy column decides (SA condition 1)
+    expect(ruleMatchesProduct(rule({ targets: null }), product())).toBe(true);
+  });
+});
+
+describe("multi-label ruling (owner): a product carries several labels and a rule on ANY one binds it", () => {
+  it("ruleMatchesProduct({A, B}, a rule on B) is true, legacy column or target row", () => {
+    const p = product({ effectiveCategoryIds: new Set(["cat-a", "cat-b"]) });
+    expect(ruleMatchesProduct(rule({ categoryId: "cat-b" }), p)).toBe(true);
+    const targeted = rule({
+      categoryId: "cat-c",
+      targets: { productIds: new Set(), categoryIds: new Set(["cat-b"]) },
+    });
+    expect(ruleMatchesProduct(targeted, p)).toBe(true);
+    expect(ruleMatchesProduct(rule({ categoryId: "cat-c" }), p)).toBe(false);
   });
 });

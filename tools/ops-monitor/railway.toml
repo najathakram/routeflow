@@ -1,0 +1,13 @@
+# Railway config for the ops monitor service. Deploy: `railway up tools/ops-monitor --path-as-root`
+# (the build context root is this directory).
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+healthcheckPath = "/api/health"
+# The server clones both repos (read-only) before it listens.
+healthcheckTimeout = 300
+restartPolicyType = "ON_FAILURE"
+# One replica: one collector, one in-memory session/rate-limit state.
+numReplicas = 1

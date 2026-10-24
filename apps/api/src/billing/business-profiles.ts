@@ -1,6 +1,17 @@
-import type { BusinessProfilePlan, BusinessProfileSummary } from "@routeflow/types";
-import { FEATURE_REGISTRY } from "./feature-registry";
+import type {
+  BusinessPlanBlockedRequires,
+  BusinessProfilePlan,
+  BusinessProfileSummary,
+} from "@routeflow/types";
+import {
+  FEATURE_REGISTRY,
+  ADDON_KEY_TO_REGISTRY_KEY,
+  checkFeatureRequires,
+  describeUnmetFeatureRequirement,
+  featureDefByKey,
+} from "./feature-registry";
 import { FLEET_KEYS } from "./fulfilment-capability";
+import { presetTicks } from "./business-capabilities";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /**
@@ -10,7 +21,9 @@ import { API_ERROR_CODES } from "../common/api-error-codes";
  * EXISTING module switches (no new plan flags) and the existing config rows:
  *
  * - `fleet: true` grants the three fleet modules, `fleet: false` denies them. Order matters:
- *   `driver_payments` requires `anyOf` the two fleet add-ons, so it comes last.
+ *   `driver_payments` requires `anyOf` the two fleet add-ons, so it comes last. SA-769 (D-S2): a grant
+ *   of an add-on module is a COMP row (`TenantAddon.isComp`, the SA-693 path), never a feature
+ *   override; a module the tenant already holds is left exactly as it is.
  * - `modes` are `fulfilment_model` (and `counter_sales` for the in-store profiles), applied through
  *   `FeatureConfigService.set` — never a config row written directly.
  *
@@ -20,6 +33,13 @@ import { API_ERROR_CODES } from "../common/api-error-codes";
 export const PROFILE_MODULE_KEYS = [...FLEET_KEYS, "driver_payments"] as const;
 
 /**
+ * SA-769: the profile modules that are add-on SKUs, so a profile GRANTS them as comp rows. Every profile
+ * module is one today; a future profile module that is not an add-on is simply absent here and keeps the
+ * GRANT-override path (the one `FeatureOverrideService.create` caller stays the controller).
+ */
+export const PROFILE_ADDON_MODULE_KEYS: readonly string[] = PROFILE_MODULE_KEYS;
+
+/**
  * Lead ruling (all-or-nothing as far as Stripe allows): paid add-ons are disabled in REVERSE
  * dependency order — `driver_payments` (which requires anyOf the fleet keys) first, then the fleet
  * keys in reverse — so a failure part-way leaves a valid configuration: driver payments is never
@@ -27,14 +47,26 @@ export const PROFILE_MODULE_KEYS = [...FLEET_KEYS, "driver_payments"] as const;
  */
 export const BILLING_DISABLE_ORDER = ["driver_payments", ...[...FLEET_KEYS].reverse()] as const;
 
+export type ProfileModuleKey = (typeof PROFILE_MODULE_KEYS)[number];
+
 export interface BusinessProfileDef {
   key: string;
   label: string;
   description: string;
   /** true = grant every PROFILE_MODULE_KEYS module; false = deny every one. */
   fleet: boolean;
-  /** Config modes by registry key. */
+  /**
+   * BO-04: a per-module override of `fleet`. A module present here is granted (true) or denied (false) by this
+   * map; an absent module follows `fleet`. Without `modules` a def behaves exactly as before (all or nothing).
+   */
+  modules?: Partial<Record<ProfileModuleKey, boolean>>;
+  /** Config modes by registry key. `counter_sales` is always listed (`on` or `unset`), so a profile can switch it off. */
   modes: Record<string, string>;
+}
+
+/** Does this def want `key` ON (a grant) rather than OFF (a deny)? The per-module map wins over `fleet`. */
+export function wants(def: BusinessProfileDef, key: string): boolean {
+  return def.modules?.[key as ProfileModuleKey] ?? def.fleet;
 }
 
 export const BUSINESS_PROFILES: readonly BusinessProfileDef[] = [
@@ -43,14 +75,14 @@ export const BUSINESS_PROFILES: readonly BusinessProfileDef[] = [
     label: "Delivery distributor",
     description: "Delivers on its own trucks: routes, ad hoc delivery and at-door payments on.",
     fleet: true,
-    modes: { fulfilment_model: "delivery" },
+    modes: { fulfilment_model: "delivery", counter_sales: "unset" },
   },
   {
     key: "shipping_wholesaler",
     label: "Shipping wholesaler",
     description: "Ships by carrier: no delivery fleet.",
     fleet: false,
-    modes: { fulfilment_model: "ship" },
+    modes: { fulfilment_model: "ship", counter_sales: "unset" },
   },
   {
     key: "in_store_retailer",
@@ -65,6 +97,31 @@ export const BUSINESS_PROFILES: readonly BusinessProfileDef[] = [
     description: "Sells over the counter and ships by carrier: no delivery fleet.",
     fleet: false,
     modes: { fulfilment_model: "pickup_ship", counter_sales: "on" },
+  },
+  {
+    key: "delivery_pos",
+    label: "Delivery + POS",
+    // `delivery` (not `both`): `both` adds carrier shipping, and no registry mode offers delivery
+    // plus pickup. The counter is `counter_sales: "on"`, so it is optional beside the delivery runs.
+    description:
+      "Delivers on its own trucks and also sells over the counter: delivery routes on, counter sales on.",
+    fleet: true,
+    modes: { fulfilment_model: "delivery", counter_sales: "on" },
+  },
+  {
+    key: "delivery_shipping",
+    label: "Delivery + shipping",
+    description: "Delivers on its own trucks and ships by carrier: delivery routes on, no counter.",
+    fleet: true,
+    modes: { fulfilment_model: "both", counter_sales: "unset" },
+  },
+  {
+    key: "delivery_shipping_pos",
+    label: "Everything",
+    description:
+      "Delivers on its own trucks, ships by carrier and sells over the counter: delivery routes on, counter sales on.",
+    fleet: true,
+    modes: { fulfilment_model: "both", counter_sales: "on" },
   },
 ];
 
@@ -92,8 +149,9 @@ export function toBusinessProfileSummary(def: BusinessProfileDef): BusinessProfi
     description: def.description,
     available: unavailableModes(def).length === 0,
     modes: { ...def.modes },
-    grants: def.fleet ? [...PROFILE_MODULE_KEYS] : [],
-    denies: def.fleet ? [] : [...PROFILE_MODULE_KEYS],
+    grants: PROFILE_MODULE_KEYS.filter((k) => wants(def, k)),
+    denies: PROFILE_MODULE_KEYS.filter((k) => !wants(def, k)),
+    ticks: presetTicks(def),
   };
 }
 
@@ -110,6 +168,13 @@ export interface BusinessProfileState {
   paying?: ReadonlySet<string>;
   /** The subset of `paying` billed MANUALLY (a price, no Stripe item). */
   manualPay?: ReadonlySet<string>;
+  /**
+   * SA-769: modules with an ACTIVE add-on row of any kind (billable or comp), read apart from `holds` (which an
+   * override overrides): after a DENY override is revoked, the row it hid decides whether the module is held.
+   */
+  rowHeld?: ReadonlySet<string>;
+  /** SA-769: the subset of `rowHeld` whose row is a comp (`isComp`): held, never paid for. */
+  compRows?: ReadonlySet<string>;
   modes: Record<string, string>;
 }
 
@@ -117,23 +182,46 @@ export interface BusinessProfileState {
  * Per module: `replace` when an opposite override is active (revoke it, then create), `skip` when
  * the tenant already is that way, else `create`. Modes list only what changes.
  *
+ * SA-769 (D-S2): for a fleet-ON profile an add-on module is not granted by an override. The tenant that
+ * does not hold it gets a COMP row (`comps`); an active DENY override is only `revoke`d (the comp, or the
+ * row the DENY hid, then holds it). What the tenant already holds - a paid row, a comp, a GRANT override -
+ * is left alone: applying a profile never converts a purchase into a comp.
+ *
  * Owner ruling (money): a module a fleet-OFF profile switches off that the tenant PAYS for goes to
  * `billing` as a `disable` — the existing add-on disable switches it off AND stops its billing —
  * so it needs no DENY override (unless a GRANT override also holds it; overrides are absolute).
- * A comped module (no paid row) is switched off with a DENY, never a billing call.
+ * SA-769: a COMP row (`isComp`) is switched off through the same disable path, flagged `comp` - it carries
+ * no Stripe item, so no billing call follows. Any other held module with no paid row (a GRANT override, an
+ * unpriced non-comp row) is switched off with a DENY, never a billing call.
  */
 export function planBusinessProfile(
   def: BusinessProfileDef,
   state: BusinessProfileState,
 ): BusinessProfilePlan {
-  const effect: "GRANT" | "DENY" = def.fleet ? "GRANT" : "DENY";
-  const opposite = def.fleet ? "DENY" : "GRANT";
-  const disables = def.fleet ? [] : BILLING_DISABLE_ORDER.filter((k) => state.paying?.has(k));
+  // BO-04: a module is switched off (and, if paid or comped, disabled) when THIS def does not want it. The disable
+  // list is BILLING_DISABLE_ORDER filtered, never reordered.
+  const disables = BILLING_DISABLE_ORDER.filter(
+    (k) => !wants(def, k) && (state.paying?.has(k) || state.compRows?.has(k)),
+  );
+  const comps: { featureKey: string }[] = [];
   const overrides = PROFILE_MODULE_KEYS.map((featureKey) => {
+    const want = wants(def, featureKey);
+    const effect: "GRANT" | "DENY" = want ? "GRANT" : "DENY";
+    const opposite = want ? "DENY" : "GRANT";
     const active = state.overrides.get(featureKey);
     const held = disables.includes(featureKey) ? false : (state.holds[featureKey] ?? false);
+    if (want && PROFILE_ADDON_MODULE_KEYS.includes(featureKey)) {
+      // Comp row instead of a GRANT override. Held (row or GRANT): nothing to grant. A DENY is revoked,
+      // and what it hid decides: an active row holds the module, otherwise it is comped.
+      if (active === "DENY") {
+        if (!state.rowHeld?.has(featureKey)) comps.push({ featureKey });
+        return { featureKey, effect, action: "revoke" as const };
+      }
+      if (!held) comps.push({ featureKey });
+      return { featureKey, effect, action: "skip" as const };
+    }
     const action: "create" | "replace" | "skip" =
-      active === opposite ? "replace" : held === def.fleet ? "skip" : "create";
+      active === opposite ? "replace" : held === want ? "skip" : "create";
     return { featureKey, effect, action };
   });
   const modes = Object.entries(def.modes)
@@ -141,13 +229,63 @@ export function planBusinessProfile(
     .filter((m) => m.from !== m.to);
   return {
     overrides,
+    comps,
     modes,
     billing: disables.map((featureKey) => ({
       featureKey,
       action: "disable" as const,
       manual: state.manualPay?.has(featureKey) ?? false,
+      // only a comp-only row carries the flag; a paid row keeps the exact pre-SA-769 shape
+      ...(!state.paying?.has(featureKey) && state.compRows?.has(featureKey) ? { comp: true } : {}),
     })),
   };
+}
+
+/**
+ * BO-04: the comp path's OWN refusal, dry-run in the plan. `AddonService.enableAddon` (comp) calls
+ * `EntitlementAuthority.assertFeatureRequiresMet(tenant, key)` before it writes, which refuses with 400
+ * `FEATURE_REQUIRES_UNMET` when the key's registry `requires` is not satisfied by what is effective at that moment.
+ * That is the only plan-dependent refusal in the apply sequence, and it can come AFTER the billing disables, which
+ * stops billing with the profile half applied. So the plan simulates the apply sequence (billing disables, then
+ * per module in order: revoke the DENY, comp) and returns the first comp the real check would refuse, as a
+ * `blocked` entry. The apply refuses on it before step 1, exactly like the carrier-in-transit guard.
+ *
+ * Same predicate as the real check (`checkFeatureRequires` over the registry row, labels from
+ * `describeUnmetFeatureRequirement`). It APPROXIMATES the effective set from `state.holds` for the profile modules,
+ * not the resolver: exact for every `requires` in the registry today; a future module whose `requires` reaches
+ * outside the profile modules needs a resolver-backed check here.
+ */
+export function planCompRefusal(
+  plan: BusinessProfilePlan,
+  state: BusinessProfileState,
+): BusinessPlanBlockedRequires | null {
+  if (plan.comps.length === 0) return null;
+  const effective = new Set<string>(PROFILE_MODULE_KEYS.filter((k) => state.holds[k] === true));
+  for (const b of plan.billing) {
+    // a disable switches the module off unless a GRANT override (absolute) still holds it
+    if (state.overrides.get(b.featureKey) !== "GRANT") effective.delete(b.featureKey);
+  }
+  const comped = new Set(plan.comps.map((c) => c.featureKey));
+  for (const o of plan.overrides) {
+    if (o.effect !== "GRANT") continue;
+    if (o.action === "revoke" || o.action === "replace") {
+      // the opposite override is gone: the add-on row it hid (if any) decides
+      if (state.rowHeld?.has(o.featureKey)) effective.add(o.featureKey);
+      else effective.delete(o.featureKey);
+    }
+    if (!comped.has(o.featureKey)) continue;
+    const registryKey = ADDON_KEY_TO_REGISTRY_KEY[o.featureKey] ?? o.featureKey;
+    const status = checkFeatureRequires(featureDefByKey(registryKey)?.requires, effective);
+    if (!status.satisfied) {
+      return {
+        code: API_ERROR_CODES.FEATURE_REQUIRES_UNMET,
+        key: o.featureKey,
+        missing: describeUnmetFeatureRequirement(status) ?? "",
+      };
+    }
+    effective.add(o.featureKey); // the comp row now holds it for the next module's check
+  }
+  return null;
 }
 
 export interface BusinessProfileViolation {
@@ -188,21 +326,22 @@ function modeLabel(key: string, mode: string): string {
 }
 
 /**
- * The plan in plain English, one line per change, in APPLY order (billing disables → grants →
- * modes → denies); skips say nothing.
+ * The plan in plain English, one line per change, in APPLY order (billing disables → comps →
+ * grants → modes → denies); skips say nothing.
  */
 export function describeBusinessProfilePlan(plan: BusinessProfilePlan): string[] {
-  const { billing, changes } = describeBusinessProfileSections(plan);
-  return [...billing, ...changes];
+  const { billing, comps, changes } = describeBusinessProfileSections(plan);
+  return [...billing, ...comps, ...changes];
 }
 
 /**
- * The plan in plain English, split: `billing` (one line per `plan.billing` entry, in its order) and
- * `changes` (everything else), so a client never has to slice `summary` by position (#3220 review).
- * A grant is a comp: it adds no charge, and says so.
+ * The plan in plain English, split: `billing` (one line per `plan.billing` entry, in its order),
+ * `comps` (one line per `plan.comps` entry, SA-769) and `changes` (everything else), so a client never
+ * has to slice `summary` by position (#3220 review). A grant is a comp: it adds no charge, and says so.
  */
 export function describeBusinessProfileSections(plan: BusinessProfilePlan): {
   billing: string[];
+  comps: string[];
   changes: string[];
 } {
   const labelOf = (key: string) => registryRow(key)?.label ?? key;
@@ -212,6 +351,8 @@ export function describeBusinessProfileSections(plan: BusinessProfilePlan): {
       o.effect === "GRANT"
         ? `Turn on ${labelOf(o.featureKey)}: turned on free (comp), no charge added`
         : `Turn off ${labelOf(o.featureKey)}`;
+    if (o.action === "revoke")
+      return `Remove the "${replaced}" override on ${labelOf(o.featureKey)}`;
     return o.action === "replace" ? `${base} (replaces the current "${replaced}" override)` : base;
   };
   // Owner ruling (money): a paid module is switched off by disabling its add-on, which stops its
@@ -219,10 +360,16 @@ export function describeBusinessProfileSections(plan: BusinessProfilePlan): {
   // A MANUAL-pay add-on has no Stripe item to stop: the disable takes it off RouteFlow's ledger,
   // but the admin must take it off the tenant's manual invoice themselves (SA, no STOP-notice
   // helper exists to write one).
+  // SA-769: a COMP row has no billing to stop and no manual invoice to fix: say so.
   const billing = (plan.billing ?? []).map((b) =>
-    b.manual
-      ? `${labelOf(b.featureKey)} will be switched off; remove it from their manual invoice`
-      : `${labelOf(b.featureKey)} will be switched off and its billing stopped`,
+    b.comp
+      ? `${labelOf(b.featureKey)} will be switched off (it was included free; nothing is billed)`
+      : b.manual
+        ? `${labelOf(b.featureKey)} will be switched off; remove it from their manual invoice`
+        : `${labelOf(b.featureKey)} will be switched off and its billing stopped`,
+  );
+  const comps = (plan.comps ?? []).map(
+    (c) => `Turn on ${labelOf(c.featureKey)}: included free with this profile, no charge added`,
   );
   const changing = plan.overrides.filter((o) => o.action !== "skip");
   const grants = changing.filter((o) => o.effect === "GRANT").map(overrideLine);
@@ -230,5 +377,5 @@ export function describeBusinessProfileSections(plan: BusinessProfilePlan): {
   const modes = plan.modes.map(
     (m) => `${labelOf(m.key)}: ${modeLabel(m.key, m.from)} → ${modeLabel(m.key, m.to)}`,
   );
-  return { billing, changes: [...grants, ...modes, ...denies] };
+  return { billing, comps, changes: [...grants, ...modes, ...denies] };
 }

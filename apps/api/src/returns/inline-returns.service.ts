@@ -40,9 +40,13 @@ import { roundMoney } from "@routeflow/pricing";
 import { PrismaService } from "../prisma/prisma.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
-import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
+import { RegulatedLedgerService, type FiledPeriod } from "../regulated/regulated-ledger.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
-import { lockOrderRow } from "../credit-notes/credit-note-locks";
+import {
+  creditPaymentTargets,
+  lockCreditNotes,
+  lockOrderRow,
+} from "../credit-notes/credit-note-locks";
 import { NumberingService } from "../import/numbering.service";
 import {
   countCreditableInvoices,
@@ -89,6 +93,7 @@ import {
 } from "./refund-tender";
 import { selectEditRevertedInvoices } from "../invoices/order-edit-revert-set";
 import { uniqueViolationOn } from "../common/prisma-unique";
+import { ledgerDocumentTargets, lockLedgerDocumentRows } from "../regulated/ledger-locks";
 
 /** design.md §8 — the ONE gate every money-writing method here re-checks itself,
  * regardless of the registry's rollout state (the `AddonGuard` on the controller courtesy-
@@ -1788,8 +1793,47 @@ export class InlineReturnsService {
       }
 
       // m-5 order: the carrying order is locked before any credit pull-back below touches
-      // its invoices.
-      await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${fresh.orderId} FOR UPDATE`;
+      // its invoices. SA-839 F3: with every SOURCE order this return's ledger rows sit on (PR-1a
+      // multi-order) and the credit note's, in one id-sorted set, then their invoices (Return ->
+      // Order -> Invoice), so a concurrent void of a source invoice serialises with this undo.
+      const ret = await ledgerDocumentTargets(tx, { returnId: id });
+      const note =
+        fresh.status === "REFUNDED" && fresh.creditNoteId
+          ? await ledgerDocumentTargets(tx, { creditNoteId: fresh.creditNoteId })
+          : { orderIds: [], invoiceIds: [] };
+      // W-757: and the Orders / Invoices the note's credit PAYMENTS sit on, which cancelStandaloneInTx below restores
+      // (each restore writes its Invoice). Without them in THIS one sorted pass the restore took CreditNote -> Invoice
+      // on another order's invoice: 40P01 against markSent, a 500 with no retry.
+      const paid =
+        fresh.status === "REFUNDED" && fresh.creditNoteId
+          ? await creditPaymentTargets(tx, fresh.creditNoteId)
+          : { orderIds: [], invoiceIds: [] };
+      const lockedOrders = [fresh.orderId, ...ret.orderIds, ...note.orderIds, ...paid.orderIds];
+      const lockedInvoices = [...ret.invoiceIds, ...note.invoiceIds, ...paid.invoiceIds];
+      await lockLedgerDocumentRows(tx, tenantId, {
+        orderIds: lockedOrders,
+        invoiceIds: lockedInvoices,
+      });
+      if (fresh.status === "REFUNDED" && fresh.creditNoteId) {
+        // SA-920: `paid` was read BEFORE the pass, so a send-time sweep could have applied this note to another order's
+        // invoice in between. Take the note LAST (ROW_LOCK_ORDER; FOR NO KEY UPDATE, SA-706a, which every writer that
+        // adds a payment of this note also holds), then re-read under it. A target outside the locked set aborts the
+        // whole cancel with a retryable 409; a late lock on it would be CreditNote -> Invoice again. The retry re-reads
+        // and locks the full set.
+        await lockCreditNotes(tx, tenantId, [fresh.creditNoteId]);
+        const now = await creditPaymentTargets(tx, fresh.creditNoteId);
+        const orders = new Set(lockedOrders);
+        const invoices = new Set(lockedInvoices);
+        if (
+          now.orderIds.some((o) => !orders.has(o)) ||
+          now.invoiceIds.some((i) => !invoices.has(i))
+        ) {
+          throw new ConflictException({
+            code: API_ERROR_CODES.RETURN_CANCEL_RETRY,
+            message: "This return changed while it was being cancelled. Try again.",
+          });
+        }
+      }
 
       // HIGH-4: "applied" (restocked + regulated-ledger reversed) is no longer just
       // `status IN (RECEIVED, REFUNDED)` — a RECEIVED row still carrying `DRIVER_CAP` in
@@ -1799,6 +1843,7 @@ export class InlineReturnsService {
       // and any other REJECTED/CANCELLED shape are likewise never applied.
       const wasApplied =
         fresh.status === "REFUNDED" || (fresh.status === "RECEIVED" && !fresh.holdReason);
+      let amendedPeriod: FiledPeriod | null = null;
       if (wasApplied) {
         for (const item of fresh.items as any[]) {
           if (!item.restock) continue;
@@ -1829,7 +1874,13 @@ export class InlineReturnsService {
             },
           });
         }
-        await this.ledger.unreverseReturnEntries({ returnId: fresh.id, db: tx });
+        // SA-839 (B705): counter-entries for this return's rows (claimed CANCELLED above); a VOID or
+        // deleted source invoice is netted to 0 again.
+        const settled = await this.ledger.settleRegulatedLedger(tx, {
+          kind: "ADJUSTMENT_UNDONE",
+          returnId: fresh.id,
+        });
+        amendedPeriod = settled?.amendedPeriod ?? null;
       }
 
       if (fresh.status === "REFUNDED" && fresh.creditNoteId) {
@@ -1837,13 +1888,16 @@ export class InlineReturnsService {
         // sweeps a DIFFERENT credit note that happens to sit on the same order/invoice.
         // Throws RETURN_CREDIT_CONSUMED if some of its `amountUsed` can't be traced back to a
         // restorable payment (m-5: "restore < amountUsed").
-        await this.creditNotes.cancelStandaloneInTx(tx, fresh.creditNoteId);
+        const voided = await this.creditNotes.cancelStandaloneInTx(tx, fresh.creditNoteId);
+        amendedPeriod ??= voided?.amendedPeriod ?? null;
         await tx.orderCreditNote.deleteMany({
           where: { orderId: fresh.orderId, creditNoteId: fresh.creditNoteId },
         });
       }
 
-      return tx.return.findUnique({ where: { id } });
+      // SA-839 §3: the undo corrected a row of a FILED month (the correction books now).
+      const cancelled = await tx.return.findUnique({ where: { id } });
+      return cancelled ? { ...cancelled, amendedPeriod } : cancelled;
     });
   }
 }

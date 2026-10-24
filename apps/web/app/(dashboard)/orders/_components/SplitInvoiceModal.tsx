@@ -1,11 +1,13 @@
 "use client";
 
 import * as React from "react";
-import { roundMoney } from "@routeflow/pricing";
+import { roundMoney, unitWords } from "@routeflow/pricing";
 import { Modal, Button, useToast } from "@routeflow/ui/web";
 import { previewSplitLineTotal, type SplitInvoiceLine } from "@/lib/split-invoice-line";
 import { useCreatePartialInvoiceFromOrder } from "@/lib/api/invoices";
 import { genericToastCopy } from "@/lib/generic-toast-copy";
+import { KEPT_DRAFT_TOAST, keptDraftInvoiceId } from "@/lib/kept-draft-invoice";
+import { WriteButton } from "@/lib/read-only-gate";
 
 interface SplitInvoiceModalProps {
   isOpen: boolean;
@@ -104,6 +106,14 @@ export function SplitInvoiceModal({
           onClose();
         },
         onError: (err: any) => {
+          // Row 466: the split invoice was created and only the send failed. Open it, don't retry.
+          const keptId = keptDraftInvoiceId(err);
+          if (keptId) {
+            toast({ ...KEPT_DRAFT_TOAST, variant: "warning" });
+            onCreated?.(keptId);
+            onClose();
+            return;
+          }
           toast({
             title: "Could not create invoice",
             description: genericToastCopy(
@@ -129,14 +139,14 @@ export function SplitInvoiceModal({
           <Button variant="secondary" type="button" onClick={onClose}>
             Cancel
           </Button>
-          <Button
+          <WriteButton
             type="button"
             loading={createPartial.isPending}
             disabled={billable.length === 0}
             onClick={submit}
           >
             Create invoice
-          </Button>
+          </WriteButton>
         </>
       }
     >
@@ -164,7 +174,9 @@ export function SplitInvoiceModal({
                     <tr key={it.id} className="border-t border-surface-border">
                       <td className="px-3 py-2 text-navy">{it.productName}</td>
                       <td className="px-3 py-2 text-right text-navy/70">
-                        {remaining} {it.unit ?? ""}
+                        {remaining}{" "}
+                        {/* F01: a box-split line counts PIECES (3 cases of 12 = 36), so its unit is the piece word, never the case unit. */}
+                        {it.boxes != null ? unitWords().baseShortFor(remaining) : (it.unit ?? "")}
                       </td>
                       <td className="px-3 py-2 text-right">
                         <input

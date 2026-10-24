@@ -1,0 +1,8 @@
+182a | 5584e2f4f63526937e6974247e5c26ef9b1fd70b | release: W21b counter fixes train (#3347) 2026-10-08 | #3347 | apps/web/lib/counter-sale.ts:412-413 (COUNTER_PRICE_EDIT_NOT_PERMITTED_COPY, blame 5584e2f4f6)
+182b | 7fed87eb4c519b0b3a7bb8c2f7db74f9b458502c | fix(web): invoice void toast reads the coded copy first 2026-10-08 | - | apps/web/lib/invoice-void-copy.ts:13, invoice-void-copy.test.ts "Row 182"
+182d | never-live? (wording identical, no fix needed) | - | - | pack-c3.md:3; mobile returns/[id].tsx:35-36 vs web returns/[id]/page.tsx:83-86; both strings from 355757aae3a71ac354c57472f5e9d716d6e6f520 (2026-07-30)
+238 | 89def2ff64e27eedc3d3e1b0bc6692fbc22e8145 | fix(web): the counter sale error shows inside the sticky bar, never below the fold 2026-10-09 | - | CounterSaleScreen.test.tsx:248 "row 238"; CounterSaleScreen.tsx:1310
+298 | 83911caa9b7ed20d68ca748afd1a7e7722ca5b0c | fix(web): the counter names the product's own unit 2026-10-10 | - | CounterLineRow.unit-price.test.tsx:41,47 "row 298"
+440 | d980584493c8daa06f208eed7303658a73991cf2 | fix: ux batch - keep the count, close the popup on Tab, count lines 2026-10-13 (red pins c4b4701f1498a12754620124a43c5cf372083f06) | - | apps/mobile/lib/invoice-line-count.ts; __tests__/invoice-line-count.test.ts
+533a | 143dd1534f1f4fd990b5b222a1a73dffc8d05832 | feat(mobile): pack/unit labels on the PO detail item rows (#1799 D-05) (#2066) 2026-09-28 | #2066 | apps/mobile/app/(operator)/purchase-orders/[id].tsx:219-225 linePack (-S'linePack' first commit)
+705 | 958a7eea4de01a5c87d142a0718887938e20f4ec | fix(web): capabilities stale-plan notice hides with the fresh preview (row 705) 2026-10-21 | - | given

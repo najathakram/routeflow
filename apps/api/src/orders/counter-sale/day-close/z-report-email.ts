@@ -1,4 +1,10 @@
-import { dayCloseDateLabel, dayCloseZSections, type ZRow } from "@routeflow/pricing";
+import {
+  dayCloseDateLabel,
+  dayCloseHandOvers,
+  dayCloseVerdictText,
+  dayCloseZSections,
+  type ZRow,
+} from "@routeflow/pricing";
 import type { DayCloseSnapshot } from "@routeflow/types";
 import { escapeHtml } from "../../../common/html-escape";
 
@@ -75,10 +81,8 @@ function signedMoney(n: number): string {
 function valueOf(row: ZRow): string {
   if (row.amount === null) return "Not recorded";
   const money = row.signed ? signedMoney(row.amount) : zMoney(row.amount);
-  return row.count === undefined ? money : `${row.count} ${DOT} ${money}`;
+  return row.count === undefined ? money : `${money} ${DOT} ${dayCloseHandOvers(row.count)}`;
 }
-
-const VERDICT_LABEL = { short: "Short", over: "Over", even: "Even" } as const;
 
 export function buildZReportEmail(input: {
   businessName: string;
@@ -88,7 +92,7 @@ export function buildZReportEmail(input: {
   const z = dayCloseZSections(s);
   // The report's own calendar day, worded as the Z screen's title is ("Sun, Oct 11"): subject, title line and screen agree.
   const dayLabel = dayCloseDateLabel(s.day);
-  const subject = `Z report ${DOT} ${dayLabel} ${DOT} ${input.businessName}`;
+  const subject = `Z report for ${dayLabel} ${DOT} ${input.businessName}`;
 
   const closed = clock(s.closedAt, s.zone);
   const start = clock(s.windowStart, s.zone);
@@ -100,9 +104,10 @@ export function buildZReportEmail(input: {
   const windowLine = crossesDay
     ? `${start.weekday} ${start.time} ${DASH} ${end.weekday} ${end.time}${suffix}`
     : `${start.time} ${DASH} ${end.time}${suffix}`;
-  const headline = `Counted ${zMoney(z.headline.counted)} ${DOT} ${VERDICT_LABEL[z.headline.verdict]} ${zMoney(z.headline.amount)}`;
-  const notTaken = `Not taken at the till: ${zMoney(z.notTakenAtTill)}`;
-  const tenderWarning = "Some refunds have no method. Cash in drawer may be high.";
+  // the screen's own order: the variance verdict is the headline, "Counted" sits beneath it (owner ruling 10-12 wording)
+  const headline = dayCloseVerdictText(z.headline.verdict, zMoney(z.headline.amount));
+  const counted = `Counted ${zMoney(z.headline.counted)}`;
+  const tenderWarning = "Some refunds have no method. Expected cash may be high.";
 
   const tr = (row: ZRow) => {
     const cell = (v: string) => (row.bold ? `<strong>${escapeHtml(v)}</strong>` : escapeHtml(v));
@@ -114,14 +119,14 @@ export function buildZReportEmail(input: {
     `<h2 style="margin:0 0 4px">${escapeHtml(titleLine)}</h2>` +
     `<p style="margin:4px 0">${escapeHtml(closedLine)}</p>` +
     `<p style="margin:4px 0">${escapeHtml(windowLine)}</p>` +
-    `<p style="margin:12px 0 0;font-size:16px"><strong>${escapeHtml(headline)}</strong></p>` +
+    `<p style="margin:12px 0 0;font-size:20px"><strong>${escapeHtml(headline)}</strong></p>` +
+    `<p style="margin:2px 0 0">${escapeHtml(counted)}</p>` +
     z.groups
       .map(
         (g) =>
           `<h3 style="margin:16px 0 4px">${escapeHtml(g.heading)}</h3><table>${g.rows.map((r) => tr(r)).join("")}</table>`,
       )
       .join("") +
-    `<p style="margin:16px 0 0">${escapeHtml(notTaken)}</p>` +
     (z.refundsTenderKnown
       ? ""
       : `<p style="color:#b45309"><strong>${escapeHtml(tenderWarning)}</strong></p>`) +
@@ -136,14 +141,13 @@ export function buildZReportEmail(input: {
     windowLine,
     "",
     headline,
+    counted,
     ...z.groups.flatMap((g) => [
       "",
       g.heading,
       ...g.rows.map((r) => `  ${r.label}: ${valueOf(r)}`),
     ]),
-    "",
-    notTaken,
-    ...(z.refundsTenderKnown ? [] : [tenderWarning]),
+    ...(z.refundsTenderKnown ? [] : ["", tenderWarning]),
     ...(s.notes ? ["", `Note: ${s.notes}`] : []),
   ].join("\n");
 

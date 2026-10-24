@@ -103,16 +103,20 @@ describe("ProductsService — cross-tenant image keys (#2533)", () => {
       ["an own-shaped key the product does not hold (must be uploaded)", own(3)],
     ])("refuses %s with a 400 and writes nothing", async (_label, planted) => {
       prisma.product.findUnique.mockResolvedValue(row([own(1)]));
-      await expect(service.update(P, { imageKeys: [own(1), planted] } as any)).rejects.toThrow(
-        BadRequestException,
-      );
+      await expect(
+        service.update(P, { imageKeys: [own(1), planted] } as any, {
+          packPrecondition: "internal",
+        }),
+      ).rejects.toThrow(BadRequestException);
       expect(prisma.product.update).not.toHaveBeenCalled();
     });
 
     it("a reorder of the product's own images is written as sent", async () => {
       prisma.product.findUnique.mockResolvedValue(row([own(1), own(2)]));
       prisma.product.update.mockResolvedValue(row([own(2), own(1)]));
-      await service.update(P, { imageKeys: [own(2), own(1)] } as any);
+      await service.update(P, { imageKeys: [own(2), own(1)] } as any, {
+        packPrecondition: "internal",
+      });
       expect(prisma.product.update.mock.calls[0][0].data.imageKeys).toEqual([own(2), own(1)]);
     });
   });
@@ -196,7 +200,9 @@ describe("ProductsService — cross-tenant image keys (#2533)", () => {
     prisma.productImage.findMany.mockImplementation(async ({ where }: { where: any }) =>
       "storageKey" in where ? [{ storageKey: own(1) }] : [],
     );
-    await expect(service.update(P, { pricePerUnit: "9.99" } as any)).resolves.toBeDefined();
+    await expect(
+      service.update(P, { pricePerUnit: "9.99" } as any, { packPrecondition: "internal" }),
+    ).resolves.toBeDefined();
     const created = prisma.productImage.create.mock.calls.map((c: any[]) => c[0].data.storageKey);
     expect(created).toEqual([own(2)]);
   });
@@ -212,7 +218,7 @@ describe("ProductsService — cross-tenant image keys (#2533)", () => {
       unitsPerBox: null,
     });
     prisma.productImage.findMany.mockResolvedValue([]);
-    await service.update(P, { name: "Widget 2" } as any);
+    await service.update(P, { name: "Widget 2" } as any, { packPrecondition: "internal" });
     const created = prisma.productImage.create.mock.calls.map((c: any[]) => c[0].data.storageKey);
     expect(created).toEqual([own(1), own(2)]);
   });

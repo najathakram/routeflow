@@ -11,6 +11,7 @@ import {
   type PriceHistoryResponse,
   type PriceHistoryRow,
   type PriceHistorySummary,
+  type PriceSummaryEntry,
 } from "@/lib/api/price-history";
 import { fmt } from "@/lib/formatting";
 
@@ -140,6 +141,11 @@ function PanelBody({
   customerName,
   unitHint,
   packHint,
+  compare,
+  comparing,
+  compareError,
+  onCompareChange,
+  onCompareRetry,
   onUse,
 }: {
   data: PriceHistoryResponse;
@@ -147,10 +153,17 @@ function PanelBody({
   customerName?: string | null;
   unitHint?: string | null;
   packHint?: number | null;
+  /** "All customers" is selected; the Panel owns it (it adds `?compare=all` to the request). */
+  compare: boolean;
+  /** The comparison request is still in flight. */
+  comparing: boolean;
+  /** The comparison request failed: shown inline on the toggle, the rows stay. */
+  compareError: boolean;
+  onCompareChange: (on: boolean) => void;
+  onCompareRetry: () => void;
   onUse: (price: number) => void;
 }) {
   const [showCost, setShowCost] = React.useState(false);
-  const [compare, setCompare] = React.useState(false);
   const [active, setActive] = React.useState(0);
   const bodyRef = React.useRef<HTMLDivElement>(null);
   // Focus the body only once the (visible) popover shell exists; AnchoredPopover also focuses it.
@@ -262,26 +275,24 @@ function PanelBody({
 
       <Sparkline points={chronological} />
 
-      {data.aggregate !== undefined && (
-        <div className="flex items-center gap-1" role="group" aria-label="Compare">
-          {(["This customer", "All customers"] as const).map((label) => (
-            <button
-              key={label}
-              type="button"
-              aria-pressed={(label === "All customers") === compare}
-              onClick={() => setCompare(label === "All customers")}
-              className={cn(
-                "rounded-full px-2 py-0.5 text-[11px] ring-1",
-                (label === "All customers") === compare
-                  ? "bg-brand-50 text-brand-700 ring-brand-200"
-                  : "text-navy/60 ring-surface-border hover:text-navy",
-              )}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-      )}
+      <div className="flex items-center gap-1" role="group" aria-label="Compare">
+        {(["This customer", "All customers"] as const).map((label) => (
+          <button
+            key={label}
+            type="button"
+            aria-pressed={(label === "All customers") === compare}
+            onClick={() => onCompareChange(label === "All customers")}
+            className={cn(
+              "rounded-full px-2 py-0.5 text-[11px] ring-1",
+              (label === "All customers") === compare
+                ? "bg-brand-50 text-brand-700 ring-brand-200"
+                : "text-navy/60 ring-surface-border hover:text-navy",
+            )}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
       {compare && (
         <div data-testid="compare-panel" className="rounded border border-surface-border p-2">
           {agg ? (
@@ -295,6 +306,19 @@ function PanelBody({
                 Other customers, {agg.customers} in all. Names are never shown.
               </p>
             </>
+          ) : compareError ? (
+            <p role="alert" className="text-[11px] text-navy/70">
+              Couldn&apos;t load the comparison.{" "}
+              <button
+                type="button"
+                onClick={onCompareRetry}
+                className="font-medium text-brand-600 underline"
+              >
+                Retry
+              </button>
+            </p>
+          ) : comparing ? (
+            <p className="text-[11px] text-navy/60">Loading comparison…</p>
           ) : (
             <p className="text-[11px] text-navy/60">No comparison available for this unit.</p>
           )}
@@ -436,7 +460,15 @@ function Panel({
   onUsePrice: (price: number) => void;
   excludeOrderId?: string | null;
 }) {
+  const [compare, setCompare] = React.useState(false);
+  // Two requests, so a failed or slow comparison never takes the customer's own rows away: the base
+  // history is always shown; `?compare=all` is a separate query that only adds the aggregate. Both
+  // leave the order being edited out of the history (hunt2 F6).
   const q = usePriceHistory(customerId, productId, true, 25, excludeOrderId);
+  const cmp = usePriceHistory(customerId, productId, compare, 25, excludeOrderId, true);
+  const shown = q.data
+    ? { ...q.data, aggregate: compare ? (cmp.data?.aggregate ?? null) : undefined }
+    : undefined;
   return (
     <AnchoredPopover
       anchor={anchor}
@@ -446,7 +478,7 @@ function Panel({
     >
       {q.isLoading ? (
         <Skeleton />
-      ) : q.isError || !q.data ? (
+      ) : q.isError || !shown ? (
         <div role="alert" className="space-y-2 text-xs text-navy">
           <p className="text-sm font-semibold">Price history · {productName}</p>
           <p>Couldn&apos;t load price history.</p>
@@ -458,20 +490,25 @@ function Panel({
             Retry
           </button>
         </div>
-      ) : q.data.rows.length === 0 ? (
+      ) : shown.rows.length === 0 ? (
         <div className="space-y-1 text-xs">
           <p className="text-sm font-semibold text-navy">
-            Price history · {q.data.productName || productName}
+            Price history · {shown.productName || productName}
           </p>
           <p className="text-navy/60">No past sales of this product to this customer</p>
         </div>
       ) : (
         <PanelBody
-          data={q.data}
+          data={shown}
           productName={productName}
           customerName={customerName}
           unitHint={unitHint}
           packHint={packHint}
+          compare={compare}
+          comparing={cmp.isFetching}
+          compareError={cmp.isError}
+          onCompareChange={setCompare}
+          onCompareRetry={() => void cmp.refetch()}
           onUse={(price) => {
             onUsePrice(price);
             onClose("use");
@@ -607,28 +644,26 @@ export function PriceHistoryButton({
 
 /**
  * The customer's last 3 sold prices for the line's unit as small tap-to-use chips ("$18.75 · Sep 26").
- * One cached request per customer + product, shared with the prefetch and the popover. Renders nothing while loading, on error, or
- * when there is no history; a tap is "Use this price" (the line's existing price path).
+ * Pure view over one entry of the order screen's single batched `usePriceSummary` request (no fetch of
+ * its own, so no per-line budget). Renders nothing with no entry / no history; a tap is "Use this price"
+ * (the line's existing price path). Unit and pack rules are `canUseHistoryPrice`'s, unchanged.
  */
 export function PriceChips({
-  customerId,
-  productId,
+  entry,
   unitHint,
   packHint,
   onUsePrice,
-  excludeOrderId,
 }: {
-  customerId?: string | null;
-  productId?: string | null;
+  entry?: PriceSummaryEntry | null;
   unitHint?: string | null;
   packHint?: number | null;
   onUsePrice: (price: number) => void;
-  excludeOrderId?: string | null;
 }) {
-  const slot = useAutoFetchSlot(customerId, productId);
-  const q = usePriceHistory(customerId, productId, slot, 25, excludeOrderId);
-  const all = q.data?.rows ?? [];
-  const unitCount = new Set(all.map((r) => r.unitLabel.trim().toLowerCase())).size;
+  // Each row carries its OWN pack size (null = unknown / sold by the piece), so `canUseHistoryPrice`
+  // judges a chip exactly as it judges the same sale in the popover. Never borrow the entry's pack:
+  // the server groups by label and pack, and two pack sizes can share a label ("Box").
+  const all = entry?.last3 ?? [];
+  const unitCount = new Set(all.map((r) => normUnit(r.unitLabel))).size;
   const rows = all
     .filter((r) => canUseHistoryPrice(r, unitHint, packHint, unitCount))
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
@@ -638,7 +673,7 @@ export function PriceChips({
     <span className="flex flex-wrap items-center gap-1" aria-label="Recent prices">
       {rows.map((r, i) => (
         <button
-          key={`${r.orderId}-${i}`}
+          key={`${r.date}-${i}`}
           type="button"
           aria-label={`Use last price ${fmt(r.unitPrice)} from ${fmtDate(r.date)}`}
           onClick={() => onUsePrice(r.unitPrice)}

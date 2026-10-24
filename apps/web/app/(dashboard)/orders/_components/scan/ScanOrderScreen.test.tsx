@@ -252,6 +252,15 @@ describe("ScanOrderScreen", () => {
       expect(await screen.findByRole("status")).toHaveTextContent("Retired Widget is archived");
     });
 
+    it("B993: a refused scan (units still loading) cues a rejection and shows the same sentence", async () => {
+      setup({}, async () => ({ kind: "refused" }));
+      await scan("111");
+      expect(playScanCue).toHaveBeenCalledWith("rejected");
+      expect(await screen.findByRole("status")).toHaveTextContent(
+        "Units are still loading. Scan again in a moment",
+      );
+    });
+
     it("an unknown code cues a rejection and names the code", async () => {
       setup({}, async () => ({ kind: "unknown" }));
       await scan("999000111222");

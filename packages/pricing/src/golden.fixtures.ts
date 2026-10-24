@@ -528,15 +528,19 @@ export type TierFieldFixture =
 export interface CascadeTierPriceFixture {
   label: string;
   field: TierFieldFixture;
+  oldValue: string;
   value: number;
+  tiers: Partial<Record<Exclude<TierFieldFixture, "pricePerUnit">, string>>;
   expected: Partial<Record<TierFieldFixture, string>>;
 }
 
 export const CASCADE_TIER_PRICE_FIXTURES: CascadeTierPriceFixture[] = [
   {
-    label: "committing tier 2 cascades 2.00 down through tiers 3, 4 and 5",
+    label: "a fresh product (tiers 0): committing tier 2 fills tiers 3, 4 and 5",
     field: "priceTier2",
+    oldValue: "0",
     value: 2,
+    tiers: { priceTier2: "0", priceTier3: "0", priceTier4: "0", priceTier5: "0" },
     expected: { priceTier3: "2.00", priceTier4: "2.00", priceTier5: "2.00" },
   },
   // REG-B122 at the tier ladder: the thousandths digit is exactly 5, so
@@ -548,19 +552,67 @@ export const CASCADE_TIER_PRICE_FIXTURES: CascadeTierPriceFixture[] = [
   {
     label: "cascading a half-cent tier price rounds UP, matching roundMoney (REG-B122)",
     field: "priceTier2",
+    oldValue: "0",
     value: 2.135,
+    tiers: { priceTier2: "0", priceTier3: "0", priceTier4: "0", priceTier5: "0" },
     expected: { priceTier3: "2.14", priceTier4: "2.14", priceTier5: "2.14" },
+  },
+  // P0 2026-10-14: a raise never overwrites a CHEAPER lower tier (the old copy-down overcharged tiers 4 and 5).
+  {
+    label: "raising tier 3 21.00 -> 21.25 leaves a cheaper tier 4 / tier 5 untouched (P0)",
+    field: "priceTier3",
+    oldValue: "21.00",
+    value: 21.25,
+    tiers: { priceTier2: "22.00", priceTier3: "21.00", priceTier4: "19.50", priceTier5: "18.00" },
+    expected: {},
+  },
+  {
+    label:
+      "a LIST commit keeps a 0 tier at 0 (it follows the list) and moves the tiers equal to the old list",
+    field: "pricePerUnit",
+    oldValue: "10.00",
+    value: 12,
+    tiers: { priceTier2: "9.00", priceTier3: "10.00", priceTier4: "0", priceTier5: "10.00" },
+    expected: { priceTier3: "12.00", priceTier5: "12.00" },
+  },
+  {
+    label: "a cut caps lower tiers priced above the new value (the ladder never inverts)",
+    field: "priceTier2",
+    oldValue: "22.00",
+    value: 19,
+    tiers: { priceTier2: "22.00", priceTier3: "21.00", priceTier4: "20.00", priceTier5: "18.00" },
+    expected: { priceTier3: "19.00", priceTier4: "19.00" },
+  },
+  {
+    label: "missing (null / undefined) lower tiers count as 0 and fill on a tier change",
+    field: "priceTier3",
+    oldValue: "8",
+    value: 7,
+    tiers: { priceTier2: "9", priceTier3: "8" },
+    expected: { priceTier4: "7.00", priceTier5: "7.00" },
+  },
+  {
+    label: "a non-numeric old value matches nothing; only 0s and tiers above the new value change",
+    field: "priceTier2",
+    oldValue: "n/a",
+    value: 6,
+    tiers: { priceTier2: "8", priceTier3: "8", priceTier4: "5", priceTier5: "0" },
+    expected: { priceTier3: "6.00", priceTier5: "6.00" },
+  },
+  {
+    label: "a LIST change from 0 keeps every 0 tier at 0 (they follow the list), #3470 review",
+    field: "pricePerUnit",
+    oldValue: "0",
+    value: 12,
+    tiers: { priceTier2: "0", priceTier3: "0", priceTier4: "9.00", priceTier5: "0" },
+    expected: {},
   },
   {
     label: "committing tier 5 cascades nothing (bottom of the ladder)",
     field: "priceTier5",
+    oldValue: "4",
     value: 3,
-    expected: {},
-  },
-  {
-    label: "committing tier 1 (list price) cascades nothing — index 0 is excluded",
-    field: "pricePerUnit",
-    value: 4,
+    tiers: { priceTier2: "4", priceTier3: "4", priceTier4: "4", priceTier5: "4" },
     expected: {},
   },
 ];

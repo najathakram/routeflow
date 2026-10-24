@@ -47,7 +47,13 @@ describe("CustomersService — B769 money rounding", () => {
         { provide: MeterService, useValue: { read: jest.fn() } },
         { provide: PlanCatalogService, useValue: { getPublishedVersion: jest.fn() } },
         { provide: EntitlementAuthority, useValue: { can: jest.fn() } },
-        { provide: RegulatedLedgerService, useValue: { reverseInvoiceEntries: jest.fn() } },
+        {
+          provide: RegulatedLedgerService,
+          useValue: {
+            reverseInvoiceEntries: jest.fn(),
+            settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
+          },
+        },
         { provide: EmailService, useValue: { send: jest.fn() } },
       ],
     }).compile();
@@ -62,13 +68,18 @@ describe("CustomersService — B769 money rounding", () => {
     });
     prisma.invoice.findUnique.mockResolvedValue({
       id: "inv-1",
+      customerId: "cust-1",
       total: 1000,
       status: "SENT",
       dueDate: null,
       payments: [],
     });
 
-    await service.applyAdvancePaymentToInvoice("ap-1", { invoiceId: "inv-1", amount: 10.005 });
+    await service.applyAdvancePaymentToInvoice(
+      "ap-1",
+      { invoiceId: "inv-1", amount: 10.005 },
+      "cust-1",
+    );
 
     // Unrounded, Math.min(1000, 1000, 10.005) writes 10.005 verbatim to both rows.
     expect(prisma.invoicePayment.create).toHaveBeenCalledWith(

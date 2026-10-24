@@ -1,17 +1,32 @@
-import { API_ERROR_CODES, CREDITS_PENDING_COPY, SHIPPED_ORDER_MESSAGE } from "@routeflow/types";
+import {
+  API_ERROR_CODES,
+  CREDITS_PENDING_COPY,
+  INVOICE_TAX_STATE_STALE_COPY,
+  SHIPPED_ORDER_MESSAGE,
+  productInOpenCountCopy,
+} from "@routeflow/types";
+import { BUYER_QTY_SPLIT_MISMATCH_COPY } from "./buyer-cart-line";
+import { READ_ONLY_SENTENCE } from "@routeflow/types/read-only-copy";
+import { regulatedAuthCopy } from "@routeflow/types/regulated-auth-copy";
 import {
   CREDIT_NOTE_ERROR_COPY,
   RETURN_REFUND_OVER_LINE_HEADROOM_COPY,
   UNCONFIRMED_COPY,
   noResponse,
 } from "./credit-note-error-copy";
+import { activationEndedCopy, activationOverlapsPaidCopy } from "./activation-error-copy";
 import { creditLimitSentence } from "./credit-limit-copy";
 import { COUNTER_VOID_ERROR_COPY } from "./counter-void-copy";
+import { IMPORT_REFUSAL_COPY } from "./import-job-copy";
 import { COUNTER_SALE_DAY_CLOSED_COPY, DAY_CLOSED_FOR_PAYMENT_DATE_COPY } from "./day-closed-copy";
 import { KNOWN_SERVER_SENTENCES } from "./customer-form-error-copy";
 import { ORDER_OVERPAY_GENERIC_COPY } from "./order-overpay";
 import { parsePlanGate } from "./plan-gate";
 import { safeTextErrorCopy } from "./safe-text-error-copy";
+import { sellerUnavailableCopy } from "./seller-unavailable";
+import { sellingRestrictedCopy } from "./selling-restricted-copy";
+import { RULE_ERROR_COPY } from "./restriction-rule-errors";
+import { paymentKeyRefusalCopy } from "@routeflow/types/payment-submit-key";
 
 /**
  * B980 (owner rule: no raw strings in the UI): the app-wide mutation error toast shows FIXED copy,
@@ -26,7 +41,22 @@ import { safeTextErrorCopy } from "./safe-text-error-copy";
 
 /** Daily-work refusals, by `body.code`. The sentences name the cause and the next step. */
 const CODE_COPY: Record<string, string> = {
+  // Row 509: selling-restriction rule targets and edits (fixed copy; the guided cases are rendered in place).
+  ...RULE_ERROR_COPY,
+  // a buyer write toward a paused seller: the seller-unavailable sentence, never "You don't have permission"
+  [API_ERROR_CODES.SELLER_UNAVAILABLE]: sellerUnavailableCopy(null),
   [API_ERROR_CODES.RETURN_REFUND_OVER_LINE_HEADROOM]: RETURN_REFUND_OVER_LINE_HEADROOM_COPY,
+  // Row 510: a staff sale of a restricted product. The warning dialog owns the flow (HANDLED_CODES); these are the
+  // fixed sentences for a surface with no dialog, never the server's text.
+  [API_ERROR_CODES.RESTRICTION_WARNING]:
+    "Some items are restricted. Review them and add a reason to sell them anyway.",
+  [API_ERROR_CODES.RESTRICTION_OVERRIDE_REASON_INVALID]:
+    "Give a reason of 3 to 200 characters to sell a restricted item.",
+  // SA-823 (row 655): the product import refuses a whole file with a Family column (fixed copy, B980).
+  ...IMPORT_REFUSAL_COPY,
+  // SA-804 (1): FIFO and LIFO costing are retired; the picker no longer offers them, so this is an old client or a direct API call.
+  [API_ERROR_CODES.COSTING_METHOD_RETIRED]:
+    "FIFO and LIFO costing are retired. Pick average cost, standard cost or last cost.",
   INLINE_RETURN_ALREADY_RETURNED_REASON_REQUIRED:
     "This item was already returned. Add a reason to confirm another return.",
   INLINE_RETURN_KEY_CONFLICT: "This return was already submitted. Refresh to see it.",
@@ -37,7 +67,16 @@ const CODE_COPY: Record<string, string> = {
     "A line on this order is sold by a unit such as a case, so this action isn't available for it yet.",
   MERGE_PACK_MISMATCH:
     "The pack size on this order no longer matches the product. Refresh and review the line.",
+  ORDER_DELIVERY_ADDRESS_MISSING:
+    "This customer has no delivery address on file. Add one before switching the order to delivery.",
   ORDER_CHANGED_DURING_EDIT: "This order changed while you were editing it. Refresh and try again.",
+  // F3: the edit named one line twice; nothing was saved.
+  DUPLICATE_LINE_ID: "A line appears twice. Refresh the page and try again.",
+  // Row 531: a buyer cart whose quantity and box split disagree; nothing was saved.
+  QTY_SPLIT_MISMATCH: BUYER_QTY_SPLIT_MISMATCH_COPY,
+  // B692: a partial delivery needs per-line quantities; a delivered order with none recorded is not cancelled blind.
+  ORDER_PD_NEEDS_QUANTITIES: "Record what was delivered for each line first.",
+  ORDER_DELIVERY_QUANTITIES_MISSING: "Delivery quantities are missing; set them before cancelling.",
   ORDER_BILLING_CHANGED:
     "This order's billing changed while you were working on it. Refresh and try again.",
   FULFIL_METHOD_NOT_OFFERED: "This business doesn't offer that way of fulfilling orders.",
@@ -50,6 +89,12 @@ const CODE_COPY: Record<string, string> = {
   INVOICE_WITH_CARRIER_NO_LINE_CHANGE:
     "This order is already with the carrier, so its invoice lines and quantities can't change. Price, discount and notes still can.",
   [API_ERROR_CODES.ORDER_WITH_CARRIER_NO_CHANGE_REQUEST]: SHIPPED_ORDER_MESSAGE,
+  // B1234 (D-O2-a): a staff edit of a delivered line of a partly delivered order; nothing was saved. The change-request
+  // screen toasts its own sentence for the same code (mutation-error-toast HANDLED_CODES).
+  [API_ERROR_CODES.LINE_ALREADY_DELIVERED]:
+    "A delivered line can't be changed or removed. Nothing was saved. Undelivered lines can still be edited.",
+  [API_ERROR_CODES.UNITS_RENAME_IN_PROGRESS]:
+    "Another change is in progress. Try again in a moment.",
   [API_ERROR_CODES.ORDER_LINE_CHANGED]:
     "A line on this order changed while it was being billed. Nothing was billed. Try again.",
   [API_ERROR_CODES.ORDER_INVOICES_NEED_REVIEW]:
@@ -57,6 +102,9 @@ const CODE_COPY: Record<string, string> = {
   CONCURRENT_UPDATE: "Someone else is updating this record. Try again in a moment.",
   MERGE_IN_PROGRESS: "Another change for this customer is in progress. Try again in a moment.",
   LOCK_UNAVAILABLE: "This is busy right now. Try again in a moment.",
+  [API_ERROR_CODES.STOCK_COUNT_COMMITTING]: "This count is being saved. Try again in a moment.",
+  // SA-767 r-note 5 SA-3: the count screens name the other count themselves; this is the fallback.
+  [API_ERROR_CODES.PRODUCT_IN_OPEN_COUNT]: productInOpenCountCopy(),
   [API_ERROR_CODES.ORDER_SAVED_CREDITS_PENDING]: CREDITS_PENDING_COPY,
   [API_ERROR_CODES.BARCODE_TAKEN]: "Another product already uses that barcode.",
   [API_ERROR_CODES.FAMILY_NOT_PRICEABLE]:
@@ -66,8 +114,16 @@ const CODE_COPY: Record<string, string> = {
   // B986-7 (Opus): coded refusals whose server sentence tells the user what to fix. Fixed sentences, no ids or typed text. Keys are
   // computed keys from API_ERROR_CODES (B987-A registered them); EMAIL_NOT_CONFIGURED / EMAIL_SEND_FAILED stay bare keys until
   // B987-B (#3053) registers them, then switch to the constants.
+  [API_ERROR_CODES.BILL_PAYMENT_NOT_CASH]:
+    "That payment is a draw of supplier credit. Voiding or deleting the bill hands it back.",
+  [API_ERROR_CODES.BILL_PAYMENT_NO_SUPPLIER]:
+    "This bill has no supplier, so there is no account to hold the credit.",
   [API_ERROR_CODES.UNIT_NOT_OFFERED]:
     "That unit isn't offered for this product any more. Choose another unit, or ask an admin to add it back.",
+  [API_ERROR_CODES.UNIT_ARCHIVED]:
+    "That unit is archived. Restore it in Settings > Units, or choose another unit.",
+  [API_ERROR_CODES.UNIT_SIZE_IN_USE]:
+    "Orders or invoices already use that unit at a different size, so its size can't change. Add a new unit instead.",
   // SA-770: the overdue list refuses past its id cap. The server's text is never shown.
   [API_ERROR_CODES.OVERDUE_FILTER_TOO_BROAD]:
     "Too many invoices are overdue to list at once. Filter by customer, then try again.",
@@ -75,6 +131,9 @@ const CODE_COPY: Record<string, string> = {
     "This invoice has no balance due, so there is nothing to remind about.",
   [API_ERROR_CODES.REMINDER_NOT_ISSUED]:
     "A reminder can only be sent for an invoice that has been issued and is still unpaid.",
+  // SA-778: a billing action refused in a support session. Fixed sentence, same as the server's.
+  [API_ERROR_CODES.IMPERSONATION_NOT_ALLOWED]:
+    "This action isn't available in a support session. Ask the account admin to do it.",
   EMAIL_NOT_CONFIGURED:
     "Email isn't set up for this workspace yet. Connect it under Settings → Email, then try again.",
   EMAIL_SEND_FAILED:
@@ -97,14 +156,38 @@ const CODE_COPY: Record<string, string> = {
     "This invoice's lines couldn't be verified, so it can't be edited. Ask an admin.",
   [API_ERROR_CODES.CHANGE_REQUEST_PACK_CHANGED]:
     "The pack size changed, so a change request was filed. Decline it and re-add the item to the next order.",
+  [API_ERROR_CODES.MERGE_ALREADY_DECIDED]:
+    "This merge request was already decided by someone else. Refresh to see its status.",
   [API_ERROR_CODES.INVOICE_CHANGED_CONCURRENTLY]:
     "The invoice changed while this was happening. Refresh and try again.",
-  [API_ERROR_CODES.INVOICE_TAX_STATE_STALE]:
-    "This invoice's tax no longer matches its lines. Re-save the invoice lines, then try again.",
+  // B1 R3: a variant name that is only its product's name and the separator; nothing was saved.
+  [API_ERROR_CODES.VARIANT_NAME_PREFIX_ONLY]:
+    "A variant name can't be just the product name. Type what makes it different, such as a flavor or size.",
+  [API_ERROR_CODES.LABEL_NAME_TAKEN]:
+    "A product label with this name already exists. Use that label or pick another name.",
+  [API_ERROR_CODES.LABEL_CHANGE_IN_PROGRESS]:
+    "Another product label change is in progress. Try again in a moment.",
+  [API_ERROR_CODES.PRODUCT_CHAIN_UNREADABLE]: "This product's family chain can't be read.",
+  // SA-812a G-1: a typed-price customer's flag read failed (503); the write never ran, so a retry is safe.
+  [API_ERROR_CODES.CUSTOMER_PRICES_UNAVAILABLE]:
+    "Customer prices couldn't be loaded. Nothing was saved. Try again in a moment.",
+  // SA-814g: the sentence follows the body's `path` (codedToastCopy, taxStateStaleCopy); this is the no-path default.
+  [API_ERROR_CODES.INVOICE_TAX_STATE_STALE]: INVOICE_TAX_STATE_STALE_COPY.ISSUED,
   [API_ERROR_CODES.INVOICE_TOTAL_BELOW_PAID]:
     "That change would take the invoice total below what is already paid or credited. Remove the credit first, or change the lines or discount.",
   PO_ALREADY_BILLED: "That purchase order already has a bill.",
   BILL_EXCEEDS_PO: "That bill is more than the purchase order allows.",
+  // B292: an edit that would clear every line is refused; the bill is voided or deleted instead.
+  [API_ERROR_CODES.BILL_NEEDS_A_LINE]: "A bill needs at least one line. Void or delete it instead.",
+  // Row 648: vendor bill refusals the page used to explain by rendering the server message.
+  [API_ERROR_CODES.BILL_NOT_EDITABLE]:
+    "Only draft bills can be edited. Revert the bill to draft first.",
+  [API_ERROR_CODES.BILL_PO_SUPPLIER_LOCKED]:
+    "This bill is linked to a purchase order, so its supplier can't be changed.",
+  [API_ERROR_CODES.BILL_TAX_UNKNOWN]:
+    "This bill's tax wasn't recorded separately, so it can't be changed on its own. Edit the lines and the tax together.",
+  [API_ERROR_CODES.BILL_NEVER_RECEIVED]:
+    "This bill was never received, so there is no stock or cost to revert. Its payments keep it out of draft.",
   INVOICE_HAS_UNSPENT_CREDIT:
     "This invoice has unspent credit. Release or use it first, then try again.",
   [API_ERROR_CODES.INVOICE_HAS_CASH_REFUND]:
@@ -127,16 +210,64 @@ const CODE_COPY: Record<string, string> = {
   // P-4: the one overpay copy (order-overpay.ts); a surface with the structured numbers uses orderOverpayCopy.
   [API_ERROR_CODES.ORDER_EDIT_WOULD_OVERPAY]: ORDER_OVERPAY_GENERIC_COPY,
   HANDOFF_CODE_INVALID: "This sign-in link is invalid or has expired. Sign in again.",
+  // SA-733r5 (billing go-live): a manual-pay account completes card setup through its RouteFlow contact, and a card
+  // checkout already in progress blocks a second one. Fixed sentences; no ids.
+  [API_ERROR_CODES.EXTERNAL_PAYMENT_USE_CATCHUP]:
+    "Your account is invoiced directly. Your RouteFlow contact will send you a secure link to set up card payment.",
+  [API_ERROR_CODES.CATCHUP_SESSION_OPEN]:
+    "A card checkout is open for this account (October catch-up), so this change isn't available yet. Wait for it to complete or expire, then try again.",
+  [API_ERROR_CODES.CATCHUP_PENDING]:
+    "This account's card payment is being confirmed (October catch-up). This change is available once it clears.",
+  // SA-733r5 r-note: a catch-up the plan refuses because card billing would lose or change a charge. The account
+  // stays on invoiced billing; fixed sentences, no ids.
+  [API_ERROR_CODES.CATCHUP_ADDON_NOT_CARD_BILLABLE]:
+    "This account has an add-on that card billing can't carry yet, so it stays on invoiced billing for now. Your RouteFlow contact will follow up.",
+  [API_ERROR_CODES.ACTIVATION_CATCHUP_SESSION_OPEN]:
+    "A card checkout is open for this account (October catch-up), so it can't be activated by hand yet. Wait for the checkout to complete or expire, then try again.",
+  [API_ERROR_CODES.CATCHUP_MANUAL_PERIOD_AHEAD]:
+    "This account has a manual activation recorded without a paid period, so it stays on invoiced billing for now. Your RouteFlow contact will follow up.",
+  [API_ERROR_CODES.CATCHUP_NO_BILLABLE_PRICE]:
+    "This account has no billable monthly price set, so it stays on invoiced billing for now. Your RouteFlow contact will follow up.",
+  [API_ERROR_CODES.CATCHUP_ADDON_SNAPSHOT_NOT_CATALOG]:
+    "This account's add-on price or quantity differs from the standard one, so it stays on invoiced billing for now. Your RouteFlow contact will follow up.",
+  // SA-733r7 PR-B3 (dunning): a plan change is refused while an invoice is overdue; paying it restores everything.
+  [API_ERROR_CODES.PAYMENT_OVERDUE]:
+    "An invoice on this account is overdue. Pay it to continue; plan changes are available again right after.",
+  // Row 542: paying an amount due was refused because nothing is due (already paid); the banner re-reads.
+  [API_ERROR_CODES.PAYMENT_NOT_DUE]: "Nothing is due right now.",
+  // Row 542c: the terms the banner showed no longer hold; the banner re-reads (the mutation invalidates it on error).
+  [API_ERROR_CODES.PAYMENT_TERMS_CHANGED]:
+    "The amount changed. We've refreshed it, please check and try again.",
+  // SA-832 / 453: a subscribe / checkout on a workspace a payment may not reinstate. Fixed sentence, no cause named.
+  [API_ERROR_CODES.TENANT_ADMIN_LOCKED]:
+    "This workspace is locked and can't take a payment right now. Please contact support.",
+  [API_ERROR_CODES.PAYMENT_STATE_UNKNOWN]:
+    "We couldn't confirm your open invoice just now. Please try again in a moment.",
+  // B1102: a catalog add-on whose plan setting is invalid is refused instead of billed; fixed sentence, no ids.
+  [API_ERROR_CODES.ADDON_CATALOG_INVALID]:
+    "This add-on can't be changed right now because of a setup problem on our side. Please contact support.",
+  // M11 (stackable add-on quantity): fixed sentences, never the server's text.
+  [API_ERROR_CODES.ADDON_QUANTITY_CHANGED]:
+    "Your add-on changed since this page loaded. Check the new total and try again.",
+  [API_ERROR_CODES.ADDON_QUANTITY_NOT_INCREASED]:
+    "That would not add any more of this add-on, so nothing was changed. Check the total and try again.",
+  [API_ERROR_CODES.ADDON_NOT_STACKABLE]: "This add-on can only be turned on once per workspace.",
+  [API_ERROR_CODES.ADDON_RAISE_UNBILLED_ROW]:
+    "This add-on isn't billed on your subscription yet, so its quantity can't be raised here. Please contact support.",
 };
 
 /** Exact server sentences (already product text) for refusals with no `code`; matched whole, never partially. */
 const KNOWN_REFUSAL_SENTENCES: Record<string, string> = {
+  // a buyer reorder where every line is restricted: the API's own sentence, already product text
+  "None of these items are available to you right now.":
+    "None of these items are available to you right now.",
   "Cannot duplicate an order-linked invoice. Create a new invoice or issue a credit note instead.":
     "This invoice came from an order, so it can't be duplicated. Create a new invoice or issue a credit note instead.",
 };
 
 const PLAN_COPY = "This isn't included in your current plan.";
-const READ_ONLY_COPY = "Your workspace is read-only, so this action is unavailable.";
+// SA-776: the owner's sentence, verbatim (shared with mobile); the reason line needs the subscription read.
+const READ_ONLY_COPY = READ_ONLY_SENTENCE;
 const GENERIC_COPY = "Something went wrong. Please try again.";
 
 function statusCopy(status: number, refusal?: string): string {
@@ -164,6 +295,15 @@ const STOCK_COPY = "Some items aren't available in that quantity.";
 
 const usd = (n: unknown): string | null =>
   typeof n === "number" && Number.isFinite(n) && n >= 0 ? `$${n.toFixed(2)}` : null;
+
+/**
+ * B288 (SA-814 R5-3): a vendor bill that still carries cash payments cannot be voided, reverted or deleted. FIXED sentence, the
+ * amount from the structured `amount` field (never the server's message); the bill page's "Move to supplier credit" is the exit.
+ */
+export function billHasPaymentsCopy(data: Record<string, unknown>): string {
+  const amount = usd(data.amount);
+  return `This bill has ${amount ?? "payments"}${amount ? " in payments" : ""}. Move them to a supplier credit first.`;
+}
 
 /** A payment's allocations add up to more than the payment: the two amounts come from structured body fields. */
 function allocationsCopy(data: Record<string, unknown>): string {
@@ -198,9 +338,28 @@ function unlinkedCopy(data: Record<string, unknown>): string {
     : "Some bill lines aren't linked to a product, so they won't update inventory or costs. Link them, or confirm to receive the bill anyway.";
 }
 
+/** A decimal quantity as the API prints it ("3", "2.5"); anything else is not shown. */
+const QTY_TEXT = /^\d{1,9}(\.\d{1,4})?$/;
+
+/** Row 648: receiving more than a line has outstanding. Product and quantities come from STRUCTURED fields, never the message. */
+function receiveExceedsCopy(data: Record<string, unknown>): string {
+  const name = typeof data.productName === "string" ? data.productName.trim().slice(0, 80) : "";
+  const requested = typeof data.requested === "string" && QTY_TEXT.test(data.requested);
+  const outstanding = typeof data.outstanding === "string" && QTY_TEXT.test(data.outstanding);
+  return name && requested && outstanding
+    ? `Can't receive ${data.requested} of ${name}: only ${data.outstanding} still outstanding.`
+    : "You can't receive more than is still outstanding on a line.";
+}
+
 /** The closed duplicate-name 409s ("A category named "X" already exists."): the noun is matched, the typed name is never shown. */
 const DUPLICATE_NAME =
   /^A (category|subcategory|product) named ".*" already exists(?: in this section)?\.?$/;
+/**
+ * K10e/O1: the units service's uncoded 400 for a 1-piece unit with any other name. It echoes the TENANT's piece name (set in
+ * Settings, "Piece" when unset), never text a user typed here, so a short plain name (any letters or digits) is shown back and anything else is not.
+ */
+const ONE_PIECE_NAME =
+  /^A 1-piece unit is always named "([\p{L}\p{N}][\p{L}\p{N} ._'-]{0,39})"\.$/u;
 /** Static server sentences that already tell the user what to do (B986-7: send email, delete order). */
 const ACTIONABLE_REFUSALS: Record<string, string> = {
   // the unit-selling plan limit is an uncoded 403: say it is a PLAN limit, not a permission problem
@@ -233,6 +392,9 @@ function sentenceForMessage(data: Record<string, unknown>): string | null {
     return ACTIONABLE_REFUSALS[message];
   if (DELETE_STATUS.test(message))
     return "Only draft, pending or cancelled orders can be deleted. Cancel this order first if it's still open.";
+  const onePiece = ONE_PIECE_NAME.exec(message);
+  if (onePiece)
+    return `A 1-piece unit is always called ${onePiece[1]}. Rename it to ${onePiece[1]}, or give it more than one piece.`;
   const dup = DUPLICATE_NAME.exec(message);
   if (dup) return `A ${dup[1]} with that name already exists. Choose a different name.`;
   return null;
@@ -247,6 +409,17 @@ function sentenceForMessage(data: Record<string, unknown>): string | null {
  * sentence), or null when the failure is uncoded / unknown / has no HTTP response. A surface whose uncoded server sentence
  * already tells the user what to fix uses `codedToastCopy(err) ?? <today's text>` so it never gets LESS actionable.
  */
+/**
+ * SA-814g: the 409 INVOICE_TAX_STATE_STALE sentence for the kind of invoice that refused (`path`); a body with no
+ * (or an unknown) path gets the issued-invoice sentence, which makes no claim about drafts.
+ */
+function taxStateStaleCopy(data: Record<string, unknown>): string {
+  const copy = INVOICE_TAX_STATE_STALE_COPY as Record<string, string>;
+  return typeof data.path === "string" && Object.prototype.hasOwnProperty.call(copy, data.path)
+    ? copy[data.path]
+    : INVOICE_TAX_STATE_STALE_COPY.ISSUED;
+}
+
 export function codedToastCopy(err: unknown): string | null {
   const refusal = safeTextErrorCopy(err);
   if (refusal) return refusal;
@@ -262,13 +435,33 @@ export function codedToastCopy(err: unknown): string | null {
   const code = typeof data.code === "string" ? data.code : "";
   if (code === API_ERROR_CODES.ADDON_GATE) return PLAN_COPY;
   if (code === API_ERROR_CODES.READ_ONLY) return READ_ONLY_COPY;
+  if (code === API_ERROR_CODES.INVOICE_TAX_STATE_STALE) return taxStateStaleCopy(data);
   if (code === API_ERROR_CODES.INSUFFICIENT_STOCK) return STOCK_COPY;
   // B986: coded refusals whose server sentence tells the user what to fix; the numbers come from STRUCTURED fields.
   if (code === API_ERROR_CODES.ALLOCATIONS_EXCEED_PAYMENT) return allocationsCopy(data);
   if (code === API_ERROR_CODES.UNLINKED_ITEMS) return unlinkedCopy(data);
+  if (code === API_ERROR_CODES.BILL_HAS_PAYMENTS) return billHasPaymentsCopy(data);
   if (code === API_ERROR_CODES.DUPLICATE_VENDOR_BILL) return duplicateBillCopy(data);
+  if (code === API_ERROR_CODES.RECEIVE_EXCEEDS_OUTSTANDING) return receiveExceedsCopy(data);
+  // Row 563: a backdated stock write into a filed period (tobacco report / regulated filing). Fixed copy, the period from
+  // the structured field (B986): what is wrong, and the next step.
+  if (code === API_ERROR_CODES.STOCK_DATE_IN_FILED_PERIOD) {
+    const period = typeof data.period === "string" && data.period ? data.period : "That period";
+    // W-755: WHAT is filed ("Tobacco" or the category name), when the api names it.
+    const what =
+      typeof data.filedFor === "string" && data.filedFor ? data.filedFor : "this product";
+    return `${period} is already filed for ${what}, so stock can't be dated on or before it. Choose a later date.`;
+  }
   if (code === API_ERROR_CODES.CREDIT_LIMIT_EXCEEDED)
     return creditLimitSentence(data.limit, data.exposure);
+  if (code === API_ERROR_CODES.ACTIVATION_PERIOD_ALREADY_ENDED) return activationEndedCopy(err);
+  if (code === API_ERROR_CODES.ACTIVATION_OVERLAPS_PAID_PERIOD)
+    return activationOverlapsPaidCopy(err);
+  // CQ-06 review: a selling-restriction refusal with no dialog of its own says what is wrong and the next step.
+  if (code === API_ERROR_CODES.SELLING_RESTRICTED) return sellingRestrictedCopy(data.blockedLines);
+  // CQ-06: the license refusal says what is wrong (expired / none on file) and where to fix it (shared with mobile).
+  if (code === API_ERROR_CODES.REGULATED_AUTH_REQUIRED)
+    return regulatedAuthCopy(data.blockedCategories);
   if (Object.prototype.hasOwnProperty.call(CREDIT_NOTE_ERROR_COPY, code))
     return CREDIT_NOTE_ERROR_COPY[code as keyof typeof CREDIT_NOTE_ERROR_COPY];
   if (Object.prototype.hasOwnProperty.call(CODE_COPY, code)) return CODE_COPY[code];
@@ -276,6 +469,10 @@ export function codedToastCopy(err: unknown): string | null {
 }
 
 export function genericToastCopy(err: unknown, surfaceRefusal?: string): string {
+  // SA-824: a payment key conflict means the payment may already be recorded (never "nothing saved"); a
+  // resolved key was cancelled with nothing charged; a key in flight is retryable. Fixed copy, by code.
+  const recorded = paymentKeyRefusalCopy(err);
+  if (recorded) return recorded;
   const coded = codedToastCopy(err);
   if (coded) return coded;
   if (!err || typeof err !== "object") return GENERIC_COPY;

@@ -1,3 +1,5 @@
+import { clearTenantInvoicePdfPointers } from "../invoices/invoice-pdf-pointer";
+import { assertNoRegulatedRecords } from "./financial-wipe-guard";
 import {
   BadRequestException,
   Body,
@@ -14,6 +16,7 @@ import {
   ValidationPipe,
 } from "@nestjs/common";
 import { UserRole } from "@prisma/client";
+import { taxPercentPrecisionError } from "@routeflow/pricing";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
@@ -159,6 +162,13 @@ export class SettingsController {
       if (!Number.isFinite(n) || n < 0 || n > 100) {
         throw new BadRequestException("Tax rate must be between 0 and 100 (percent)");
       }
+      // R5-1 (SA-814 §3): a percent carries at most 4 decimals (the 6-dp line fraction), 400 beyond that.
+      // Review Q5: a rate equal to the tenant's stored one passes whatever its decimals; only a CHANGED rate is capped.
+      const precision =
+        taxPercentPrecisionError(dto.taxRate) === null
+          ? null
+          : taxPercentPrecisionError(dto.taxRate, await this.svc.get("settings.taxRate"));
+      if (precision) throw new BadRequestException(precision);
     }
 
     // SA-738 R16-4: `timezone` is TENANT_ADMIN only (403) and must be an IANA zone (400), checked
@@ -235,10 +245,7 @@ export class SettingsController {
         ];
         const touchesInvoice = invoiceVisibleKeys.some((k) => k in configUpdate);
         if (touchesInvoice) {
-          await this.prisma.invoice.updateMany({
-            where: { tenantId, pdfUrl: { not: null } },
-            data: { pdfUrl: null },
-          });
+          await clearTenantInvoicePdfPointers(this.prisma, tenantId); // row 502: no updatedAt bump
         }
       }
     }
@@ -263,6 +270,7 @@ export class SettingsController {
   // ─── Anthropic API Key ───────────────────────────────────────────────────────
 
   @Get("anthropic")
+  @Roles(UserRole.TENANT_ADMIN)
   async getAnthropicSettings() {
     const stored = await this.svc.get("anthropic.apiKey");
     const envKey = this.configService.get<string>("ANTHROPIC_API_KEY");
@@ -277,6 +285,7 @@ export class SettingsController {
   }
 
   @Patch("anthropic")
+  @Roles(UserRole.TENANT_ADMIN)
   async updateAnthropicSettings(@Body() dto: { apiKey?: string }) {
     if (dto.apiKey !== undefined) {
       if (dto.apiKey === "") {
@@ -292,6 +301,7 @@ export class SettingsController {
   // ─── Email Settings ──────────────────────────────────────────────────────────
 
   @Get("email")
+  @Roles(UserRole.TENANT_ADMIN)
   async getEmailSettings() {
     const all = await this.svc.getAll("email.");
     return {
@@ -316,6 +326,7 @@ export class SettingsController {
   }
 
   @Post("email")
+  @Roles(UserRole.TENANT_ADMIN)
   async updateEmailSettings(@Body() dto: Record<string, unknown>) {
     const allowed = [
       "fromName",
@@ -355,6 +366,7 @@ export class SettingsController {
   }
 
   @Post("email/test")
+  @Roles(UserRole.TENANT_ADMIN)
   @HttpCode(HttpStatus.OK)
   async testEmailSettings(@Body() dto: { toEmail: string }) {
     return this.emailService.sendTestEmail(dto.toEmail);
@@ -367,6 +379,7 @@ export class SettingsController {
    * never 500s for a connection problem.
    */
   @Post("email/verify")
+  @Roles(UserRole.TENANT_ADMIN)
   @HttpCode(HttpStatus.OK)
   async verifyEmailConnection(
     @Body()
@@ -390,34 +403,40 @@ export class SettingsController {
   // ─── Sending domain (Resend, per-tenant own-domain verification) ──────────────
 
   @Get("email/domain")
+  @Roles(UserRole.TENANT_ADMIN)
   async getSendingDomain() {
     return this.emailService.getSendingDomainStatus();
   }
 
   @Post("email/domain")
+  @Roles(UserRole.TENANT_ADMIN)
   async addSendingDomain(@Body() dto: { domain: string }) {
     return this.emailService.addSendingDomain(dto.domain);
   }
 
   @Post("email/domain/refresh")
+  @Roles(UserRole.TENANT_ADMIN)
   @HttpCode(HttpStatus.OK)
   async refreshSendingDomain() {
     return this.emailService.refreshSendingDomain();
   }
 
   @Post("email/domain/verify")
+  @Roles(UserRole.TENANT_ADMIN)
   @HttpCode(HttpStatus.OK)
   async verifySendingDomain() {
     return this.emailService.verifySendingDomain();
   }
 
   @Post("email/domain/from")
+  @Roles(UserRole.TENANT_ADMIN)
   @HttpCode(HttpStatus.OK)
   async setSendingFrom(@Body() dto: { address: string }) {
     return this.emailService.setSendingFromAddress(dto.address);
   }
 
   @Delete("email/domain")
+  @Roles(UserRole.TENANT_ADMIN)
   async removeSendingDomain() {
     return this.emailService.removeSendingDomain();
   }
@@ -449,6 +468,9 @@ export class SettingsController {
       );
     }
 
+    // 683 (SA-896): refused while the tenant holds regulated records (checked here, and again inside the tx below).
+    await assertNoRegulatedRecords(this.prisma, tenantId);
+
     // R1 — scope every delete. ⚠️ CHILDREN ARE MATCHED THROUGH THEIR PARENT, NOT BY
     // THEIR OWN tenantId: `tenantId` is `String?` on ALL of these models and
     // nested-created child rows (invoice lines, bill payments written via their
@@ -479,6 +501,8 @@ export class SettingsController {
     // own. A tenant holding commission accruals still fails this wipe on that FK.
     await this.prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT set_config('app.current_tenant_id', ${tenantId}, true)`;
+      // 683 (SA-896): the same refusal as the tx's first read, so a regulated record written meanwhile still stops the wipe.
+      await assertNoRegulatedRecords(tx, tenantId);
 
       await tx.invoicePayment.deleteMany({ where: { invoice: { tenantId } } });
       await tx.invoiceItem.deleteMany({ where: { invoice: { tenantId } } });
@@ -508,6 +532,10 @@ export class SettingsController {
       // left behind would also block the tenant's purge.
       await tx.counterDayClose.deleteMany({ where: { tenantId } });
       await tx.counterParkedCart.deleteMany({ where: { tenantId } });
+
+      // 683 (#3682 review NIT-3): the reads above are READ COMMITTED, so a regulated sale committed after the first check
+      // would go with its invoice. Check again after the deletes, before the commit: any such record rolls the wipe back.
+      await assertNoRegulatedRecords(tx, tenantId);
     });
 
     return { success: true, message: "All financial data cleared successfully" };

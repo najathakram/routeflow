@@ -25,13 +25,13 @@ const T = { id: "t-1", slug: "acme-2639", name: "Acme 2639", status: "ACTIVE", c
 const LISTED = new Set(["acme-2639"]);
 const check = (tenant, sub, protectedSlugs = new Set()) => t.checkProtectedTarget({ tenant, sub, protectedSlugs });
 console.log(JSON.stringify({
-  paying: check(T, { planKey: "STARTER", stripeSubId: null }),
-  stripeOnly: check({ ...T, class: "TEST", status: "READ_ONLY" }, { planKey: null, stripeSubId: "sub_fake_qa" }),
+  paying: check(T, { planKey: "STARTER", stripeSubId: null, couponFull: false }),
+  stripeOnly: check({ ...T, class: "TEST", status: "READ_ONLY" }, { planKey: null, stripeSubId: "sub_fake_qa", couponFull: false }),
   envListed: check({ ...T, status: "TRIAL" }, null, LISTED),
   envListedDeleted: check({ ...T, status: "TRIAL", deletedAt: "2026-01-01" }, null, LISTED),
-  plain: check({ ...T, class: "TEST" }, { planKey: "STARTER", stripeSubId: null }),
+  plain: check({ ...T, class: "TEST" }, { planKey: "STARTER", stripeSubId: null, couponFull: false }),
   noSub: check(T, null),
-  deletedStripe: check({ ...T, class: "TEST", deletedAt: "2026-01-01" }, { planKey: null, stripeSubId: "sub_fake_qa" }),
+  deletedStripe: check({ ...T, class: "TEST", deletedAt: "2026-01-01" }, { planKey: null, stripeSubId: "sub_fake_qa", couponFull: false }),
   parse: t.parseFreshStartArgs(["acme-2639", "--local", "--allow-protected", "t-1", "--backup-taken"]),
   parseDefault: t.parseFreshStartArgs(["acme-2639", "--local"]),
   parseRetired: t.parseFreshStartArgs(["acme-2639", "--local", "--allow-paying-tenant"]),

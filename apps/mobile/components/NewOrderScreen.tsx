@@ -5,7 +5,6 @@ import {
   FlatList,
   Platform,
   Pressable,
-  StyleSheet,
   Text,
   View,
 } from "react-native";
@@ -23,8 +22,8 @@ import {
 } from "../lib/cart-line-state";
 import {
   computeOrderTotal,
-  lineUnitFor,
-  priceEditorPrefill,
+  lineUnitFor as libLineUnitFor,
+  priceEditorPrefill as libPriceEditorPrefill,
   type UnlistedTotalLine,
 } from "../lib/cart-order-total";
 import { decideTrayPrice } from "../lib/staff-price-override";
@@ -74,15 +73,16 @@ import { createScanAcceptGuard } from "../lib/scan-accept-guard";
 import { needsUnitLabelConfirm } from "../lib/scan-unit-confirm";
 // Compose "<Parent> - <Variant>" so scanned variants don't show as "Strawberry" alone.
 import { displayProductName as displayName } from "../lib/product-display";
-import { effectiveQty, getTierPrice, isSpecialTier, roundMoney } from "@routeflow/pricing";
+import { customerTierFor, effectiveQty, isSpecialTier, roundMoney } from "@routeflow/pricing";
+import { useCustomerPriceLayer } from "../lib/api/price-layer";
+import { PriceLayerGateNotice } from "./PriceLayerGateNotice";
+import { buildInvoiceSplitPreview } from "../lib/invoice-split-preview";
+import { buildDraftCatalogLines } from "../lib/draft-catalog-lines";
+import { lineIsSpecial, lineLayerPrice, packLinePrice } from "../lib/cart-order-total";
+import { guardLayerSave, layerAwareIsSpecial, priceLayerGate } from "../lib/price-layer-gate";
 import { useMarginConfig, floorForCategory } from "../lib/api/margin";
 import { useTrackedCategories } from "../lib/api/tracked-categories";
-import {
-  groupLinesForInvoiceSplit,
-  type InvoiceSplitCategory,
-  type InvoiceSplitLineInput,
-  type InvoiceSplitPreview,
-} from "../lib/invoice-split";
+import { type InvoiceSplitCategory, type InvoiceSplitPreview } from "../lib/invoice-split";
 import { InlineCreateProductSheet } from "./InlineCreateProductSheet";
 import { ProductPickerSheet } from "./ProductPickerSheet";
 import { BoxedQtyBand } from "./BoxedQtyBand";
@@ -105,9 +105,14 @@ import {
 } from "../lib/sale-line";
 import { LicenseGuardModal } from "./LicenseGuardModal";
 import { BlockedLinesModal } from "./BlockedLinesModal";
+import { useRestrictionWarningRetry } from "../lib/use-restriction-warning-retry";
 import { parseSellingRestricted } from "../lib/selling-restricted";
 import type { BlockedLine } from "@routeflow/types";
-import { parseRegulatedAuthError, type BlockedCategory } from "../lib/api/authorizations";
+import {
+  parseRegulatedAuthError,
+  regulatedAuthErrorCopy,
+  type BlockedCategory,
+} from "../lib/api/authorizations";
 import { bumpScanOrder, nextFlash, trayRowsFrom, type ScanFlash } from "../lib/scan-tray";
 import {
   NO_PENDING_SCROLL,
@@ -120,11 +125,17 @@ import { unlistedAffordancePlacement } from "../lib/unlisted-affordance";
 import {
   orderSubmitGate,
   resolveResumeLinePricing,
+  resolveResumeDerivedBase,
   resolveResumeLineBoxes,
   decideResumeHydrationStart,
 } from "../lib/order-draft-logic";
 import { hydrateParkedLine } from "../lib/resume-draft-hydration";
-import { getOrderSubmitKey, resetOrderSubmitKey } from "../lib/order-submit-key";
+import {
+  getOrderSubmitKey,
+  resetOrderSubmitKey,
+  seedOrderSubmitKeyFromDraft,
+} from "../lib/order-submit-key";
+import { withDraftSubmitKey } from "@routeflow/types/draft-submit-key";
 // Parked drafts (PR-3): NewOrderScreen resolves ?resumeDraft= and hydrates
 // only the customer; ProductPickView (it owns all other parkable state) binds
 // the autosave hook and drives create/update/delete of the SAME draft.
@@ -139,14 +150,21 @@ import {
 } from "../lib/drafts-payload";
 import { useDraftAutosave, type DraftRowMeta } from "../lib/use-draft-autosave";
 import { useStopCartStore } from "../store/stopCartStore";
+import { useDraftLeaveNotice } from "./new-order/use-draft-leave-notice";
 import { CartModal } from "./new-order/CartModal";
+import { useCustomerPickGate } from "./new-order/use-customer-pick-gate";
 import { CreateCreditNoteSheet } from "./new-order/CreateCreditNoteSheet";
 import { CustomerPickerView } from "./new-order/CustomerPickerView";
 import { LinePriceModal } from "./new-order/LinePriceModal";
 import { useScanPriceEdit } from "../lib/use-scan-price-edit";
 import { UnlistedItemModal } from "./new-order/UnlistedItemModal";
 import { styles } from "./new-order/styles";
+import { CatalogSectionLabel, RowSpacer } from "./new-order/CatalogParts";
 import type { UnlistedLine } from "./new-order/types";
+import * as ul from "./new-order/unlisted-lines";
+import { usePosModeState } from "../lib/use-pos-mode";
+import { PosConfirmOnly, PosModeSwitch } from "./PosModeSwitch";
+import { canUsePosMode, posConfirmLabel, posMergeAlert } from "../lib/pos-mode";
 import {
   savedOrderDestination,
   creditsPendingFromError,
@@ -193,37 +211,6 @@ function newLocalId(): string {
 }
 
 const productKey = (p: CatalogRow<Product>) => (isCatalogHeader(p) ? `hdr-${p.__header}` : p.id);
-
-function RowSpacer() {
-  return <View style={styles.rowSpacer} />;
-}
-
-/** Separator label between the on-this-order section and the catalogue. */
-function CatalogSectionLabel({ label }: { label: string }) {
-  return (
-    <View style={sectionStyles.wrap}>
-      <Text style={sectionStyles.text}>{label.toUpperCase()}</Text>
-      <View style={sectionStyles.rule} />
-    </View>
-  );
-}
-
-const sectionStyles = StyleSheet.create({
-  wrap: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    paddingTop: 6,
-    paddingBottom: 2,
-  },
-  text: {
-    fontSize: 11,
-    fontFamily: "Inter_600SemiBold",
-    color: ios.label2,
-    letterSpacing: 0.6,
-  },
-  rule: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: ios.separator },
-});
 
 export function NewOrderScreen({
   customerId: initialCustomerId,
@@ -475,7 +462,9 @@ function ProductPickView({
   // the per-product CustomerPrice override, else the customer's default tier.
   // Prices shown/summed/submitted use getTierPrice(product, effectiveTier), not
   // the raw list price — so a tier-N customer sees the price the server bills.
-  const { data: customerDetail } = useCustomer(customerId);
+  const customerQuery = useCustomer(customerId);
+  const { data: customerDetail } = customerQuery;
+  const pricesQuery = useCustomerPrices(customerId);
   const {
     data: customerPrices,
     isFetched: fetched,
@@ -483,7 +472,7 @@ function ProductPickView({
     isFetching: fetching,
     error: pricesError,
     refetch: refetchPrices,
-  } = useCustomerPrices(customerId);
+  } = pricesQuery;
   const pricesSettled = (fetched || errored) && !fetching;
   // Tenant margin config for the live cost/margin hint in the cart rows.
   const { data: marginConfig } = useMarginConfig();
@@ -503,7 +492,7 @@ function ProductPickView({
       m.set(c.id, { id: c.id, name: c.name, invoiceTreatment: c.invoiceTreatment });
     return m;
   }, [splitTrackedCategories]);
-  const customerTier = customerDetail?.pricingTier ?? 1;
+  const customerTier = customerTierFor(undefined, customerDetail?.pricingTier);
   // Ad-hoc trips (plan §WP11): the customer's default fulfillment mode, which
   // seeds this order's own fulfillPath below (never constrains it).
   const customerFulfillPath = customerDetail?.fulfillPath;
@@ -512,11 +501,29 @@ function ProductPickView({
     for (const cp of customerPrices ?? []) m.set(cp.productId, cp.pricingTier);
     return m;
   }, [customerPrices]);
-  const effectiveTierFor = (id: string) => cpMap.get(id) ?? customerTier ?? 1;
+  const effectiveTierFor = (id: string) => customerTierFor(cpMap.get(id), customerTier);
   /** The customer's effective per-selling-unit (box) price for a product. */
-  const tierPriceFor = (p: Product) => getTierPrice(p, effectiveTierFor(p.id));
+  // S19b slice D (SA-811a/813): billing's own customer price layer. Flag off: no request, `layerOf` is undefined and every
+  // price below is master's number.
+  const priceLayer = useCustomerPriceLayer(customerId);
+  // W-741 / SA-883: picks and Create fail closed until the customer, their prices and the layer are read.
+  const pick = useCustomerPickGate(customerId, customerQuery, pricesQuery, priceLayer);
+  const layerOf = priceLayer.layerOf;
+  const packPriceFor = (p: Product) => packLinePrice(p, effectiveTierFor(p.id), layerOf(p.id));
+  const tierPriceFor = (p: Product) => packPriceFor(p).price;
+  // The lib's pure line price with this customer's layer bound in (the call sites keep their pinned shapes).
+  const lineUnitFor = (line: LineState | undefined, p: Product, tier: number) =>
+    libLineUnitFor(line, p, tier, layerOf(p.id));
+  const priceEditorPrefill = (line: LineState | undefined, p: Product, tier: number) =>
+    libPriceEditorPrefill(line, p, tier, layerOf(p.id));
+  /** The line's comparison base: its OWN unit's resolved price (the layer row, else master's unitPriceBase). */
+  const lineBaseFor = (line: LineState, p: Product) =>
+    lineLayerPrice(line, p, effectiveTierFor(p.id), layerOf(p.id)).price;
   /** SPECIAL (tier≠1) lines are the customer's permanent price — never overridable. */
-  const isSpecialFor = (p: Product) => isSpecialTier(effectiveTierFor(p.id));
+  const isSpecialFor = (p: Product) => packPriceFor(p).isSpecial;
+  /** This LINE's SPECIAL-ness: a unit line answers with its own layer row (a Can is not the pack). */
+  const lineSpecialFor = (line: LineState | undefined, p: Product) =>
+    lineIsSpecial(line, p, effectiveTierFor(p.id), layerOf(p.id));
   const [scanOpen, setScanOpen] = useState(false);
   /** Tray line (catalog id or unlisted local id) whose price is being edited. */
   const [priceEditId, setPriceEditId] = useState<string | null>(null);
@@ -702,6 +709,8 @@ function ProductPickView({
         if (boxes != null) line.boxes = boxes;
         if (pieces != null) line.pieces = pieces;
         if (li.note) line.note = li.note;
+        const marker = resolveResumeDerivedBase(li, Number(product.unitsPerBox ?? 0)); // units P0b
+        if (marker) line.derivedBase = marker;
         // B747/B755: re-resolve unit/override pricing off LIVE data, never the parked price.
         // R2: the per-product tier (effectiveTierFor), never the bare header customerTier.
         const pricing = resolveResumeLinePricing(
@@ -800,6 +809,7 @@ function ProductPickView({
     viaRow?: boolean,
     code?: string,
   ): boolean => {
+    if (pick.refusal) return (showToast(pick.refusal), false);
     const p = snap ?? productById.get(id);
     // A FAMILY container is never a line (scan, tap or restored draft): refuse at this one choke point.
     if (isFamilyProduct(p as { kind?: "FAMILY" } | undefined)) {
@@ -811,7 +821,7 @@ function ProductPickView({
       priceHistory?.[id],
       p ? toNumber(p.pricePerUnit) : 0,
       p ? tierPriceFor(p) : 0,
-      isSpecialTier(effectiveTierFor(id)),
+      p ? layerAwareIsSpecial(packPriceFor(p)) : isSpecialTier(effectiveTierFor(id)),
     );
     // #2865: the add decision is the pure `applyAddToItems` (lib/pending-unit-adapter): refused while the line is pending -> false.
     const input = { id, level, dflt, viaRow, code, role: userRole, upb, prefill };
@@ -917,19 +927,11 @@ function ProductPickView({
   // ── Unlisted (ad-hoc, non-catalog) line helpers ──────────────────────────
   const addUnlisted = (name: string, unitPrice: number, qty: number) =>
     setUnlisted((u) => [...u, { id: newLocalId(), name: name.trim(), unitPrice, qty }]);
-  const updateUnlistedQty = (id: string, qty: number) =>
-    setUnlisted((u) =>
-      qty <= 0 ? u.filter((x) => x.id !== id) : u.map((x) => (x.id === id ? { ...x, qty } : x)),
-    );
+  const updateUnlistedQty = (id: string, qty: number) => setUnlisted((u) => ul.qty(u, id, qty));
   const updateUnlistedPrice = (id: string, value: number | null) =>
-    setUnlisted((u) => {
-      const price = value == null || value < 0 ? 0 : value;
-      return u.map((x) => (x.id === id ? { ...x, unitPrice: price } : x));
-    });
-  const updateUnlistedNote = (id: string, note: string) =>
-    setUnlisted((u) => u.map((x) => (x.id === id ? { ...x, note } : x)));
-  const toggleUnlistedNote = (id: string) =>
-    setUnlisted((u) => u.map((x) => (x.id === id ? { ...x, noteOpen: !x.noteOpen } : x)));
+    setUnlisted((u) => ul.price(u, id, value));
+  const updateUnlistedNote = (id: string, note: string) => setUnlisted((u) => ul.note(u, id, note));
+  const toggleUnlistedNote = (id: string) => setUnlisted((u) => ul.toggleNote(u, id));
   const removeUnlisted = (id: string) => setUnlisted((u) => u.filter((x) => x.id !== id));
 
   /** Newest scanned line to the top of the tray, and flash it. */
@@ -972,6 +974,7 @@ function ProductPickView({
   const scanGuardRef = useRef(createScanAcceptGuard<Product>());
 
   const finishAccept: ScanLadderDeps<Product>["accept"] = (product, level, opts) => {
+    if (pick.refusal) return refusedScanOutcome(scanOpen, pick.refusal); // W-741: ONE message, the gate's
     if (!addOne(product.id, product, level, opts?.startOnDefault, false, opts?.code))
       return refusedScanOutcome(scanOpen); // a refused scan: not counted, not "Added", ONE message
     bumpScanned(product.id);
@@ -1112,7 +1115,7 @@ function ProductPickView({
       parentProductId: product.parentProductId ?? null,
       parent: null,
     };
-    addOne(product.id, snapshot);
+    if (!addOne(product.id, snapshot)) return; // a refused add: not counted, no scroll
     bumpScanned(product.id);
     setPendingScroll((s) => requestScroll(s, product.id));
     setCreateCode(null);
@@ -1160,9 +1163,16 @@ function ProductPickView({
   // items that aren't in the local list still contribute. Subtotal uses the shared
   // box/piece-aware formula so the footer agrees with what the server will compute on submit.
   const { total, totalItems } = useMemo(
-    () => computeOrderTotal(items, productById, unlisted as UnlistedTotalLine[], effectiveTierFor),
+    () =>
+      computeOrderTotal(
+        items,
+        productById,
+        unlisted as UnlistedTotalLine[],
+        effectiveTierFor,
+        layerOf,
+      ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [items, productById, unlisted, cpMap, customerTier],
+    [items, productById, unlisted, cpMap, customerTier, priceLayer.data, customerId],
   );
 
   // REG-4: live, DISPLAY-ONLY preview of how this cart will split into invoices.
@@ -1171,29 +1181,24 @@ function ProductPickView({
   // inside groupLinesForInvoiceSplit produces the same pre-tax per-line amounts
   // the total memo already sums; this just also buckets them by category. The
   // server (createSplitInvoices) is the sole source of truth for the real split.
-  const invoiceSplit: InvoiceSplitPreview = useMemo(() => {
-    const splitLines: InvoiceSplitLineInput[] = [];
-    for (const [id, line] of Object.entries(items)) {
-      const p = productById.get(id);
-      if (!p) continue;
-      const qty = effectiveQty(line, p.unitsPerBox);
-      if (qty <= 0) continue;
-      splitLines.push({
-        trackedCategoryId: p.trackedCategoryId ?? null,
-        unitPrice: lineUnitFor(line, p, effectiveTierFor(p.id)),
-        qty,
-        boxes: line.boxes ?? null,
-        pieces: line.pieces ?? null,
-        unitsPerBox: p.unitsPerBox ?? null,
-      });
-    }
-    for (const u of unlisted) {
-      if (u.qty <= 0) continue;
-      splitLines.push({ trackedCategoryId: null, unitPrice: u.unitPrice, qty: u.qty });
-    }
-    return groupLinesForInvoiceSplit(splitLines, splitCategoryById);
+  const invoiceSplit: InvoiceSplitPreview = useMemo(
+    () =>
+      buildInvoiceSplitPreview(items, productById, unlisted, splitCategoryById, {
+        lineUnitFor,
+        effectiveTierFor,
+      }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [items, productById, unlisted, splitCategoryById, cpMap, customerTier]);
+    [
+      items,
+      productById,
+      unlisted,
+      splitCategoryById,
+      cpMap,
+      customerTier,
+      priceLayer.data,
+      customerId,
+    ],
+  );
 
   // Newest-first "order so far" for the scan tray. Same inputs as the total
   // memo, so the tray and the footer cannot disagree.
@@ -1211,11 +1216,11 @@ function ProductPickView({
         },
         overridable: (p) => {
           const full = productById.get(p.id);
-          return full ? !isSpecialFor(full) : true;
+          return full ? !lineSpecialFor(items[p.id], full) : true;
         },
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [items, unlisted, scanOrder, productById, cpMap, customerTier],
+    [items, unlisted, scanOrder, productById, cpMap, customerTier, priceLayer.data, customerId],
   );
 
   /**
@@ -1255,8 +1260,7 @@ function ProductPickView({
   actionsRef.current = rowActions;
 
   const onRowAdd = useCallback((id: string) => {
-    actionsRef.current.add(id);
-    actionsRef.current.pickedFromSearch(id);
+    if (actionsRef.current.add(id)) actionsRef.current.pickedFromSearch(id); // W-741: a refused add keeps the search
   }, []);
   const onRowIncrement = useCallback((id: string) => actionsRef.current.add(id), []);
   const onRowDecrement = useCallback((id: string) => actionsRef.current.remove(id), []);
@@ -1332,8 +1336,12 @@ function ProductPickView({
       unlisted: false,
       rule: {
         base: unitPriceBase(line ?? {}, tierPriceFor(p)),
+        // S19b: a unit line whose unit is in the customer layer is judged against that price (later key wins).
+        ...(line?.unitLabel ? { base: lineBaseFor(line, p) } : {}),
         listPrice: toNumber(p.pricePerUnit),
         isSpecial: isSpecialFor(p),
+        // S19b: a unit line is judged by ITS OWN layer row, not the pack's (later key wins; a pack line is unchanged).
+        ...(line?.unitLabel ? { isSpecial: lineSpecialFor(line, p) } : {}),
         reason: line?.overrideReason,
       },
     };
@@ -1369,14 +1377,16 @@ function ProductPickView({
       const line = items[p.id];
       const qty = line ? effectiveQty(line, p.unitsPerBox) : 0;
       // SA-085i: never the pack's tier price for a unit-sold line ("/Case", not "/each").
-      const price = line ? lineUnitFor(line, p, effectiveTierFor(p.id)) : tierPriceFor(p);
+      const price = line
+        ? lineUnitFor(line, p, effectiveTierFor(p.id))
+        : pick.shown(p.id, packPriceFor(p)); // SA-882: "…" until the gate opens
       const band =
         line && qty > 0 && Number(p.unitsPerBox ?? 0) > 1 && !line.unitLabel ? (
           <BoxedQtyBand
             line={line}
             unitsPerBox={Number(p.unitsPerBox)}
             unit={p.unit}
-            unitPrice={price}
+            unitPrice={price ?? 0}
             productName={displayName(p)}
             onChangeBoxes={(n) => onRowChangeBoxes(p.id, n)}
             onChangePieces={(n) => onRowChangePieces(p.id, n)}
@@ -1409,6 +1419,7 @@ function ProductPickView({
       items,
       cpMap,
       customerTier,
+      pick.gate.blockPick,
       onRowAdd,
       onRowChangeQty,
       onRowIncrement,
@@ -1424,59 +1435,11 @@ function ProductPickView({
   // these variables 1:1 by design — see drafts-payload.ts). Every money value
   // flows through computeLineSubtotal elsewhere (never re-derived here); this
   // memo just packages the CURRENT effective price/qty per line.
-  const draftCatalogLines = useMemo<DraftCatalogLine[]>(() => {
-    const lines: DraftCatalogLine[] = [];
-    for (const [productId, line] of Object.entries(items)) {
-      const p = productById.get(productId);
-      if (!p) continue;
-      const qty = effectiveQty(line, p.unitsPerBox);
-      if (qty <= 0) continue;
-      const special = isSpecialFor(p);
-      const tierPrice = tierPriceFor(p);
-      const listPrice = toNumber(p.pricePerUnit);
-      // B747: a unit-sold line's comparison base is its OWN resolved price, never the pack's
-      // tier price — same fix as lineUnitFor/computeOrderTotal (lib/cart-order-total.ts). Before
-      // this, a parked unit line was written to the wire as a plain STANDARD/pack line (no
-      // unitLabel at all), so this screen's own drafts never actually carried the field the old
-      // whole-draft resume refusal keyed on — that refusal only ever fired for a draft parked by
-      // a different client.
-      const priceBase = unitPriceBase(line, tierPrice);
-      // Mobile has no separate "permanent discount" concept — any explicit
-      // override the operator set is tagged MANUAL (never DISCOUNTED), which
-      // is exactly what the resume-hydration pin rule above checks for.
-      // #2696(c): a special line's override parks only WITH its reason (as submit sends it).
-      const hasOverride =
-        (!special || !!line.overrideReason?.trim()) &&
-        line.unitPrice != null &&
-        line.unitPrice !== priceBase;
-      lines.push({
-        productId,
-        productName: displayName(p),
-        unit: p.unit ?? "each",
-        listPrice,
-        ...(special ? { specialPrice: tierPrice } : {}),
-        ...(hasOverride ? { discountedPrice: line.unitPrice } : {}),
-        ...(hasOverride && line.overrideReason ? { overrideReason: line.overrideReason } : {}),
-        unitPrice: hasOverride ? line.unitPrice! : priceBase,
-        priceType: hasOverride ? "MANUAL" : special ? "SPECIAL" : "STANDARD",
-        qty,
-        ...(p.unitsPerBox ? { unitsPerBox: Number(p.unitsPerBox) } : {}),
-        ...(line.boxes != null ? { boxes: line.boxes } : {}),
-        ...(line.pieces != null ? { pieces: line.pieces } : {}),
-        ...(line.unitLabel ? { unitLabel: line.unitLabel } : {}),
-        ...(hasOverride && line.priceSource ? { priceSource: line.priceSource } : {}),
-        ...(p.averageCost != null
-          ? { unitCost: toNumber(p.averageCost) }
-          : p.standardCost != null
-            ? { unitCost: toNumber(p.standardCost) }
-            : {}),
-        ...(p.category ? { category: p.category } : {}),
-        ...(line.note?.trim() ? { note: line.note.trim() } : {}),
-      });
-    }
-    return lines;
+  const draftCatalogLines = useMemo<DraftCatalogLine[]>(
+    () => buildDraftCatalogLines(items, productById, { lineSpecialFor, tierPriceFor, lineBaseFor }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [items, productById, cpMap, customerTier]);
+    [items, productById, cpMap, customerTier, priceLayer.data, customerId],
+  );
 
   const draftBuilderState = useMemo<DraftBuilderState>(
     () => ({
@@ -1510,9 +1473,18 @@ function ProductPickView({
       fulfillPath,
     ],
   );
+  // SA-817 A4: ONE submit key per draft, persisted in the draft itself. The slot is settled BEFORE the first read below: a
+  // resumed draft re-seeds it from its payload (so a resubmit after an app kill replays the first attempt's key); a genuinely
+  // new cart starts clean (R5: a resume must NOT rotate it - that would re-open the duplicate window for a timed-out submit).
+  const keySlotSettledRef = useRef(false);
+  if (!keySlotSettledRef.current) {
+    keySlotSettledRef.current = true;
+    if (initialDraft) seedOrderSubmitKeyFromDraft(customerId, initialDraft.payload);
+    else resetOrderSubmitKey(customerId);
+  }
   const draftPayload = useMemo<OrderDraftPayload>(
-    () => toOrderDraftPayload(draftBuilderState),
-    [draftBuilderState],
+    () => withDraftSubmitKey(toOrderDraftPayload(draftBuilderState), getOrderSubmitKey(customerId)),
+    [draftBuilderState, customerId],
   );
 
   const createDraftMutation = useCreateDraft();
@@ -1538,7 +1510,9 @@ function ProductPickView({
   // rejection in a literal empty catch. A 5xx, a 403 addon gate, a 404 on a
   // draft deleted from web — nothing on screen, nothing in the console, and no
   // retry unless a later edit happens to fire one. (A genuine loss of network
-  // is different: api-client queues that write and replays it.)
+  // is different: draft writes are ONLINE-ONLY, so api-client refuses them with
+  // `isOnlineRequired` instead of queueing; the builder state stays the source
+  // of truth and the next save sends the latest payload, B923 ruling 3.)
   const [draftSaveFailed, setDraftSaveFailed] = useState(false);
   // Stable: the autosave engine reads this ONCE, at mount.
   const noteDraftSaveError = useCallback((err: unknown) => {
@@ -1636,16 +1610,14 @@ function ProductPickView({
     return () => sub.remove();
   }, [flushDraftQuietly]);
   useEffect(() => () => void flushDraftQuietly(), [flushDraftQuietly]);
-  const navigation = useNavigation();
-  useEffect(() => {
-    const nav = navigation as unknown as {
-      addListener: (event: "beforeRemove", cb: () => void) => () => void;
-    };
-    const unsubscribe = nav.addListener("beforeRemove", () => {
-      void flushDraftQuietly();
-    });
-    return unsubscribe;
-  }, [navigation, flushDraftQuietly]);
+  // Row 699: leaving says where the kept draft is ("Draft saved. Find it in Orders.") after a successful flush.
+  const draftLeave = useDraftLeaveNotice(getDraftId, stopCartParkable, {
+    navigation: useNavigation(),
+    flush: flushDraft,
+    onSaved: () => setDraftSaveFailed(false),
+    onError: noteDraftSaveError,
+    isSubmitting: () => submittingRef.current,
+  });
   useEffect(() => {
     if (Platform.OS !== "web") return;
     if (typeof document === "undefined") return;
@@ -1670,6 +1642,7 @@ function ProductPickView({
     // undeleted — DraftStrip would then offer an already-submitted order.
     const id = getDraftId();
     if (!id) return;
+    draftLeave.markFinalized();
     discardDraft();
     await updateDraftMutation
       .mutateAsync({
@@ -1697,24 +1670,18 @@ function ProductPickView({
   };
 
   const createOrder = useCreateOrderAsDriver();
+  const rw = useRestrictionWarningRetry(); // row 510: staff warning + override (a driver gets the hard block)
   // Pre-check the customer's open draft/pending order so we can ask before submitting.
-  const { data: activeOrder } = useActiveOrderForCustomer(customerId);
+  // POS mode (SA-763r P-2): staff only, never a driver's at-door cart (lib/use-pos-mode.ts).
+  const showPosSwitch = canUsePosMode(userRole) && !runId && !stopId;
+  const pos = usePosModeState(showPosSwitch);
+  const posMode = pos.posMode;
+  const { data: activeOrder } = useActiveOrderForCustomer(customerId, pos.activePath);
 
-  // A screen instance IS a cart session: mint a fresh Idempotency-Key for it
-  // (F30/R8). The key then survives every FAILED attempt on this cart — a
-  // timeout, an offline queue replay — so the server collapses the retry onto
-  // the original order instead of creating a sibling; it is only reset once a
-  // submit actually succeeds (below), because the next submit is deliberately
-  // a new order.
-  useEffect(() => {
-    // R5 (close-out): a parked-draft RESUME re-mounts this screen for the SAME
-    // cart — rotating the key there re-opens the duplicate window for a
-    // timed-out-but-committed submit made before the park. Rotate only for a
-    // genuinely new cart session.
-    // B215/R3: scoped to THIS customer's slot — no other customer's live cart is disturbed.
-    if (!initialDraft) resetOrderSubmitKey(customerId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot mount decision on the resume seed
-  }, []);
+  // The Idempotency-Key for this cart is settled once, in the render above (SA-817 A4): fresh for a new cart, the draft's own
+  // for a resume. It survives every FAILED attempt on this cart (a timeout, a 5xx): the server collapses the retry onto the
+  // original order. It is reset only once a submit actually succeeds (below), because the next submit is deliberately a new
+  // order. The map is process memory; the durable copy is the draft's `payload._submitKey`.
 
   // Re-entrancy latch. `createOrder.isPending` alone leaves two windows open
   // where the button still reads "Confirm": the pre-submit draft flush (a
@@ -1731,9 +1698,16 @@ function ProductPickView({
     setSubmitting(false);
   };
 
-  const canSave = totalItems > 0 && !createOrder.isPending && !submitting;
+  // D-5 (SA-813 M3): Create stays disabled until every line's price is confirmed by the layer read.
+  const layerGate = priceLayerGate(
+    priceLayer,
+    Object.keys(items),
+    (id) => productById.get(id)?.name ?? id,
+  );
+  const idle = !createOrder.isPending && !submitting;
+  const canSave = totalItems > 0 && idle && !pick.blocksSave(items) && !layerGate.blocked;
   // "Save as draft" needs only a customer (a zero-item DRAFT is allowed server-side).
-  const canSaveDraft = !!customerId && !createOrder.isPending && !submitting;
+  const canSaveDraft = !!customerId && idle;
 
   /** Submit with a specific (or no) merge choice; `asDraft` parks it as a DRAFT. */
   const submitOrder = async (mergeChoice?: "merge" | "separate", asDraft = false) => {
@@ -1742,7 +1716,7 @@ function ProductPickView({
     setSubmitting(true);
     // Flush BEFORE mutate so a failed create still leaves an up-to-date
     // parked draft behind (nothing about this order is lost) — but NEVER let
-    // it gate the order: a rejected draft write (offline queue, 404 on a draft
+    // it gate the order: a rejected draft write (offline refusal, 404 on a draft
     // discarded from web) would otherwise abort submitOrder before `mutate`,
     // leaving Confirm a dead button with no error shown.
     await flushDraftQuietly();
@@ -1764,10 +1738,10 @@ function ProductPickView({
         // the server applies the SPECIAL/tier price authoritatively.
         // units_v1: see lib/unit-options.ts#unitPriceBase — the comparison base is the ACTIVE
         // unit's own resolved price, never the pack's `tierPriceFor`.
-        const catalog = unitPriceBase(line, p ? tierPriceFor(p) : 0);
+        const catalog = p ? lineBaseFor(line, p) : 0;
         // #2696(c): a SPECIAL line's override is sent only WITH its reason (the server refuses
         // one without); a lingering reasonless one (e.g. an old draft) is dropped, as before.
-        const specialOk = p != null && (!isSpecialFor(p) || !!line.overrideReason?.trim());
+        const specialOk = p != null && (!lineSpecialFor(line, p) || !!line.overrideReason?.trim());
         const override =
           specialOk && line.unitPrice != null && line.unitPrice !== catalog
             ? {
@@ -1818,15 +1792,15 @@ function ProductPickView({
     // Blank = today (the server stamps it); only staff can reach the field.
     const orderDateTrim = isStaff ? orderDate.trim() : "";
     createOrder.mutate(
-      {
+      rw.attach({
         customerId,
         items: itemPayload,
         routeRunId: runId,
         routeRunStopId: stopId,
         ...(asDraft ? { status: "DRAFT" as const } : {}),
         ...(orderNotes.trim() ? { notes: orderNotes.trim() } : {}),
-        ...(orderUrgent ? { urgent: true } : {}),
-        ...(deliveryTrim ? { requestedDeliveryDate: deliveryTrim } : {}),
+        ...(orderUrgent && !posMode ? { urgent: true } : {}),
+        ...(deliveryTrim && !posMode ? { requestedDeliveryDate: deliveryTrim } : {}),
         ...(orderDateTrim ? { orderDate: orderDateTrim } : {}),
         ...(discountAmount > 0 ? { discountAmount } : {}),
         ...(shippingFee > 0 ? { shippingFee } : {}),
@@ -1835,7 +1809,7 @@ function ProductPickView({
         // `dto.fulfillPath ?? customer.fulfillPath ?? ROUTE`, so omitting it on
         // ROUTE would let a SHIP-default customer silently overwrite an explicit
         // "Delivery route" choice — and drop the order out of every trip sweep.
-        fulfillPath,
+        fulfillPath: posMode ? ("PICKUP" as const) : fulfillPath,
         ...(mergeChoice ? { mergeChoice } : {}),
         ...(selectedCreditIds.length
           ? { appliedCreditNotes: selectedCreditIds.map((id) => ({ creditNoteId: id })) }
@@ -1843,7 +1817,7 @@ function ProductPickView({
         // Sent as the Idempotency-Key header (see useCreateOrderAsDriver). The
         // SAME value on every retry/replay of this cart is the point.
         idempotencyKey: getOrderSubmitKey(customerId),
-      },
+      }),
       {
         onSuccess: async (order) => {
           // This cart is now a real order; anything submitted next for THIS customer is a NEW
@@ -1868,6 +1842,16 @@ function ProductPickView({
             // Drivers have no operator order route: back to the stop.
             if (savedOrderDestination(userRole) === "stop") onBack();
             else router.replace(`/(operator)/orders/${hint.orderId}` as any);
+            return;
+          }
+          if (posMode && !asDraft && order.id) {
+            await pos.finishAndOpen(
+              order.id,
+              { status: order.status, merged: mergeChoice === "merge" },
+              showToast,
+              () => router.replace(`/(operator)/orders/${order.id}` as any),
+              rw, // row 510: a confirm into a judged DRAFT opens the same warning modal
+            );
             return;
           }
           onSaved(order.orderNumber);
@@ -1982,6 +1966,7 @@ function ProductPickView({
             );
             return;
           }
+          if (rw.handle(err, () => submitOrder(mergeChoice, asDraft))) return; // row 510
           const restricted = parseSellingRestricted(err);
           if (restricted) {
             setRestrictedBlock(restricted);
@@ -1995,7 +1980,9 @@ function ProductPickView({
             setLicenseBlock(blocked);
             return;
           }
-          const msg = body?.message ?? err?.message ?? "Unable to save order.";
+          // CQ-06: a license refusal that carried no categories (no guard to open) still says what to fix.
+          const msg =
+            regulatedAuthErrorCopy(err) ?? body?.message ?? err?.message ?? "Unable to save order.";
           alertInfo("Couldn't save order", String(msg));
         },
       },
@@ -2010,6 +1997,10 @@ function ProductPickView({
     },
     asDraft = false,
   ) => {
+    if (posMode) {
+      const mergePrompt = posMergeAlert(!!orderDate.trim(), (c) => void submitOrder(c, asDraft));
+      return chooseAction(mergePrompt.title, mergePrompt.message, mergePrompt.buttons);
+    }
     chooseAction(
       "Open order exists",
       `This customer has an open order ${existing.orderNumber ?? ""} with ${existing.itemCount} item${existing.itemCount === 1 ? "" : "s"} ($${existing.total.toFixed(2)}). Merge into it or create a separate order?`,
@@ -2021,7 +2012,15 @@ function ProductPickView({
     );
   };
 
-  const onSave = (asDraft = false) => {
+  const onSave = (asDraft = false, finish: "invoice" | "confirm" = "invoice") => {
+    // Not while a submit is in flight: Confirm only mid-flight must not downgrade Confirm & invoice.
+    if (!submittingRef.current) pos.finishRef.current = finish;
+    // D-5: a charge is never saved on unconfirmed prices (a draft is not a charge).
+    const layerBlock = guardLayerSave(pick.saveGate(items, layerGate), asDraft);
+    if (layerBlock) {
+      alertInfo("Prices aren't confirmed", layerBlock);
+      return;
+    }
     const gate = orderSubmitGate({ hasCustomer: !!customerId, itemCount: totalItems, asDraft });
     if (!gate.ok) {
       alertInfo(gate.title ?? "Can't save yet", gate.message ?? "");
@@ -2136,6 +2135,7 @@ function ProductPickView({
           </Text>
           {customerLocked ? null : <Text style={styles.customerChipChange}>Change</Text>}
         </Pressable>
+        {showPosSwitch ? <PosModeSwitch pos={pos} /> : null}
       </View>
 
       {/* Find: search + categories, pinned so they never scroll away.
@@ -2331,11 +2331,16 @@ function ProductPickView({
             accessibilityState={{ disabled: !canSave || anyUnitLoading, busy: anyUnitLoading }}
           >
             <Text style={styles.confirmBtnText} numberOfLines={1}>
-              {createOrder.isPending || submitting ? "Saving…" : "Confirm"}
+              {posConfirmLabel(posMode, createOrder.isPending || submitting)}
             </Text>
             <Ionicons name="arrow-forward" size={14} color="#fff" />
           </Pressable>
         </View>
+        <PriceLayerGateNotice
+          gate={pick.notice.message ? pick.notice : layerGate}
+          onRetry={pick.notice.message ? pick.retry : priceLayer.refetch}
+          textStyle={{ color: ios.system.orangeInk, fontSize: 12, textAlign: "center" }}
+        />
         <View style={styles.footerSubRow}>
           {/* A rejected draft write used to be silent everywhere. The order
               itself is never at risk — it is right here on screen — so say
@@ -2349,6 +2354,7 @@ function ProductPickView({
           ) : (
             <View style={{ flex: 1 }} />
           )}
+          {posMode && canSave ? <PosConfirmOnly onPress={() => onSave(false, "confirm")} /> : null}
           {canSaveDraft || createOrder.isPending || submitting ? (
             <Pressable onPress={() => onSave(true)} disabled={!canSaveDraft} hitSlop={6}>
               <Text style={[styles.footerDraftText, !canSaveDraft && { opacity: 0.4 }]}>
@@ -2405,6 +2411,7 @@ function ProductPickView({
       />
 
       <BlockedLinesModal lines={restrictedBlock} onClose={() => setRestrictedBlock(null)} />
+      {rw.modal}
 
       <LicenseGuardModal
         open={!!licenseBlock}
@@ -2478,6 +2485,9 @@ function ProductPickView({
         priceHistory={priceHistory}
         tierPriceFor={tierPriceFor}
         isSpecialFor={isSpecialFor}
+        layerOf={layerOf}
+        layerGate={pick.saveGate(items, layerGate)}
+        onRetryLayer={pick.retry}
         tierForProductId={effectiveTierFor}
         marginFloorFor={(p) => floorForCategory(marginConfig, p.category)}
         unlisted={unlisted}
@@ -2527,6 +2537,7 @@ function ProductPickView({
           onChangeNotes: setOrderNotes,
           fulfillPath,
           onChangeFulfillPath: setFulfillPath,
+          posMode,
         }}
         credits={{
           rows: creditRows,
@@ -2537,9 +2548,9 @@ function ProductPickView({
             ),
           onCreateNew: () => setCreateCreditOpen(true),
         }}
-        onSave={() => {
+        onSave={(finish) => {
           setCartOpen(false);
-          onSave();
+          onSave(false, finish ?? "invoice");
         }}
       />
 

@@ -161,7 +161,7 @@ async function main() {
         }
         const sub = await prisma.tenantSubscription.findUnique({
           where: { tenantId },
-          select: { planKey: true, stripeSubId: true },
+          select: { planKey: true, stripeSubId: true, couponFull: true },
         });
         try {
           assertWritableTenant(tenant, sub, protectedSlugs);

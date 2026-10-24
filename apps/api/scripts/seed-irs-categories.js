@@ -47,7 +47,7 @@ const IRS = [
   const subs = new Map(
     (
       await prisma.tenantSubscription.findMany({
-        select: { tenantId: true, planKey: true, stripeSubId: true },
+        select: { tenantId: true, planKey: true, stripeSubId: true, couponFull: true },
       })
     ).map((s) => [s.tenantId, s]),
   );

@@ -24,7 +24,7 @@ export class FulfilmentCapabilityService {
    * A failed mode read is `unset` (today's screens). A failed fleet read is the existing 503,
    * never a guessed `fleet: false`.
    */
-  async forBuyer(tenantId: string): Promise<BuyerSellerCapability> {
+  async forBuyer(tenantId: string): Promise<Omit<BuyerSellerCapability, "acceptingOrders">> {
     // The ONE input read (shared with GET /tenants/me/features and the counter gate): a failed mode read
     // already answers "unset"; a failed fleet read answers null, which is this endpoint's 503.
     const inputs = await readFulfilmentInputs(

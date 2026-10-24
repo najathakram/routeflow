@@ -1,3 +1,4 @@
+import { computeLineSubtotal, normalizeBoxesPieces } from "@routeflow/pricing";
 import type { ProductUnitLevel } from "@routeflow/types";
 import { buildUnitOptions, type UnitOption } from "./unit-options";
 import {
@@ -6,6 +7,7 @@ import {
   mergeSameLine,
   sameProductUnit,
   unitLabelPayload,
+  unitPickerValueOf,
   type UnitLine,
 } from "./order-line-unit";
 
@@ -191,5 +193,149 @@ describe("mergeSameLine", () => {
     const a = { qty: 44, unitsPerBox: 24, boxes: 1, pieces: 20 };
     const b = { qty: 34, unitsPerBox: 24, boxes: 1, pieces: 10 };
     expect(mergeSameLine(a, b)).toEqual({ qty: 78, unitsPerBox: 24, boxes: 3, pieces: 6 });
+  });
+});
+
+describe("SA-728 / units P0b: a derived-Piece pick is a PACK-PIECES line (preview == server)", () => {
+  const pack3 = { unit: "Pack", unitsPerBox: 3, pricePerUnit: "10.00" };
+  const opts = buildUnitOptions(pack3, [level("Case", 12, null)], 1);
+  const line3: UnitLine & { tempId: string; productId: string } = {
+    tempId: "t3",
+    productId: "p3",
+    unit: "Pack",
+    qty: 3,
+    unitsPerBox: 3,
+    boxes: 1,
+    pieces: 0,
+    sellBy: "case",
+    listPrice: 10,
+    unitPrice: 10,
+    priceType: "STANDARD",
+  };
+  const preview = (li: UnitLine) =>
+    computeLineSubtotal({
+      unitPrice: li.unitPrice,
+      qty: li.qty,
+      boxes: li.boxes ?? null,
+      pieces: li.pieces ?? null,
+      unitsPerBox: li.unitsPerBox ?? null,
+    });
+
+  it("2 pcs of a 3-pack @ $10: boxes 0 / pieces 2, no unitLabel, preview total $6.67 (== the server's)", () => {
+    const one = applyLineUnit(line3, by(opts, "Piece"), { tier: 1 });
+    const n = normalizeBoxesPieces({ qty: 2, unitsPerBox: 3 });
+    const two = { ...one, boxes: n.boxes ?? 0, pieces: n.pieces ?? 0, qty: n.qty };
+    expect(one.unitLabel).toBeUndefined();
+    expect(unitLabelPayload(one)).toEqual({});
+    expect(one).toMatchObject({ unitsPerBox: 3, boxes: 0, pieces: 1, qty: 1, unitPrice: 10 });
+    expect(two).toMatchObject({ boxes: 0, pieces: 2, qty: 2 });
+    expect(preview(two)).toBe(6.67);
+  });
+
+  it("the picker still shows Piece as selected, and switching back restores the pack line", () => {
+    const one = applyLineUnit(line3, by(opts, "Piece"), { tier: 1 });
+    expect(unitPickerValueOf(one)).toBe("Piece");
+    const back = applyLineUnit(one, by(opts, ""), { tier: 1 });
+    expect(unitPickerValueOf(back)).toBe("");
+    expect(back).toMatchObject({ unitsPerBox: 3, boxes: 1, pieces: 0, qty: 3 });
+  });
+
+  it("an OWN-priced Piece row keeps the unit-line path (unitLabel Piece, price per piece)", () => {
+    const own = buildUnitOptions(pack3, [level("Case", 12, null), level("Piece", 1, "3.00")], 1);
+    const li = applyLineUnit(line3, by(own, "Piece"), { tier: 1 });
+    expect(li).toMatchObject({ unitLabel: "Piece", unitPrice: 3, qty: 1 });
+    expect(unitLabelPayload(li)).toEqual({ unitLabel: "Piece" });
+  });
+
+  it("a level pick from a derived-Piece line snapshots the PACK, not the pieces state", () => {
+    const one = applyLineUnit(line3, by(opts, "Piece"), { tier: 1 });
+    const caseLine = applyLineUnit(one, by(opts, "Case"), { tier: 1 });
+    const back = applyLineUnit(caseLine, by(opts, ""), { tier: 1 });
+    expect(back).toMatchObject({ unitsPerBox: 3, boxes: 1, pieces: 0, qty: 3 });
+  });
+});
+
+describe("SA P0b must 1: a derived Piece picked FROM a level starts from the PACK", () => {
+  const prod = { unit: "Pack", unitsPerBox: 3, pricePerUnit: "20.00" };
+  const opts = buildUnitOptions(prod, [level("Case", 12, "190.00")], 1);
+  const packLine: UnitLine & { tempId: string; productId: string } = {
+    tempId: "t9",
+    productId: "p9",
+    unit: "Pack",
+    qty: 3,
+    unitsPerBox: 3,
+    boxes: 1,
+    pieces: 0,
+    sellBy: "case",
+    listPrice: 20,
+    unitPrice: 20,
+    priceType: "STANDARD",
+    tierPrices: { pricePerUnit: "20.00" },
+  };
+  // the server's proration for `pieces` loose pieces of this line's pack
+  const total = (li: UnitLine, pieces: number) =>
+    computeLineSubtotal({
+      unitPrice: li.unitPrice,
+      qty: pieces,
+      boxes: 0,
+      pieces,
+      unitsPerBox: li.unitsPerBox ?? null,
+    });
+
+  it("Case $190 -> Piece previews the pack's $20 prorated: 2 pcs = $13.33, never the level price", () => {
+    const onCase = applyLineUnit(packLine, by(opts, "Case"), { tier: 1 });
+    expect(onCase).toMatchObject({ unitLabel: "Case", unitPrice: 190 });
+    const piece = applyLineUnit(onCase, by(opts, "Piece"), { tier: 1 });
+    expect(piece).toMatchObject({
+      derivedBase: "Piece",
+      unitsPerBox: 3,
+      boxes: 0,
+      pieces: 1,
+      unitPrice: 20,
+      priceType: "STANDARD",
+    });
+    expect(piece.unitLabel).toBeUndefined();
+    expect(piece.packBase).toBeUndefined();
+    expect(piece.discountedPrice).toBeUndefined();
+    expect(unitLabelPayload(piece)).toEqual({});
+    expect(total(piece, 2)).toBe(13.33);
+  });
+
+  it("a DISCOUNTED Case ($180 typed) does not bill $60/pc: the one-time price is gone", () => {
+    const onCase = applyLineUnit(packLine, by(opts, "Case"), { tier: 1 });
+    const discounted = {
+      ...onCase,
+      unitPrice: 180,
+      discountedPrice: 180,
+      priceType: "DISCOUNTED" as const,
+    };
+    const piece = applyLineUnit(discounted, by(opts, "Piece"), { tier: 1 });
+    expect(piece).toMatchObject({ unitPrice: 20, priceType: "STANDARD" });
+    expect(piece.discountedPrice).toBeUndefined();
+  });
+
+  it("a pack line carrying a one-time price also drops it for the derived Piece", () => {
+    const typed = {
+      ...packLine,
+      unitPrice: 15,
+      discountedPrice: 15,
+      priceType: "DISCOUNTED" as const,
+    };
+    const piece = applyLineUnit(typed, by(opts, "Piece"), { tier: 1 });
+    expect(piece).toMatchObject({ unitPrice: 20, priceType: "STANDARD" });
+    expect(piece.discountedPrice).toBeUndefined();
+  });
+
+  it("a special-tier customer on a line with no tier columns gets the SHOWN pack price, never the tier-1 list price", () => {
+    // tier 3 pack is $16 (what the picker shows); the snapshot only knows the tier-1 $20
+    const noTiers = { ...packLine, tierPrices: undefined };
+    const special = buildUnitOptions(
+      { ...prod, priceTier3: "16.00" },
+      [level("Case", 12, "190.00")],
+      3,
+    );
+    const onCase = applyLineUnit(noTiers, by(special, "Case"), { tier: 3 });
+    const piece = applyLineUnit(onCase, by(special, "Piece"), { tier: 3 });
+    expect(piece).toMatchObject({ unitPrice: 16, priceType: "SPECIAL", specialPrice: 16 });
   });
 });

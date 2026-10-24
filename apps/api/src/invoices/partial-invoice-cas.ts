@@ -57,6 +57,8 @@ export const INVOICE_LINE_CAS_FIELDS = [
   "unitLabel",
   "originalPrice",
   "priceType",
+  "overrideReason", // H3b: copied onto the invoice line with the override price
+  "overriddenBy",
   "name",
   "notes",
   "productId",

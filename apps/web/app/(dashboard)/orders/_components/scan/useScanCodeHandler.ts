@@ -10,7 +10,6 @@ import {
   type ScanBarcodeRow,
 } from "@routeflow/scanning";
 import type { SellLevel } from "@routeflow/pricing";
-import { UNITS_LOADING_SCAN_MESSAGE } from "@/lib/default-unit-line";
 import { resolveProductByCode, type BarcodeResolveResult } from "@/lib/barcode-resolve";
 import { genericToastCopy } from "@/lib/generic-toast-copy";
 
@@ -20,7 +19,7 @@ type ToastFn = ReturnType<typeof useToast>["toast"];
 export type ScanResolution =
   | { kind: "added"; product: any; created: boolean }
   /** #2865 (SA-632 H2): a scan of a different level landed on a line still waiting for its default unit. */
-  | { kind: "refused"; message: string }
+  | { kind: "refused" }
   | { kind: "archived"; name: string }
   /** B1219: one fuzzy match, no exact code - NOT added; the caller offers "Did you mean ...?". */
   | { kind: "suggested"; product: any }
@@ -102,6 +101,14 @@ export interface ScanCodeHandlerDeps {
   onSuggestion?: (matches: any[], code: string) => void;
   /** B1219: true while another surface (the scan_v2 screen) owns the scan - no picker is raised. */
   suggestionsSuppressed?: () => boolean;
+  /**
+   * Local fast path: true while the order still holds a line for this product id. A code the handler
+   * already resolved to such a product is added again from memory - no lookup, no network wait - so a
+   * repeat scan costs nothing and cannot be lost behind a slow request.
+   */
+  hasLine?: (productId: string) => boolean;
+  /** Changes whenever a NEW order starts: the remembered code -> product map never outlives its order. */
+  sessionKey?: () => number | string;
   toast: ToastFn;
 }
 
@@ -126,32 +133,45 @@ export function useScanCodeHandler(deps: ScanCodeHandlerDeps) {
   const handlerRef = React.useRef<
     (code: string, opts?: { quiet?: boolean; background?: boolean }) => Promise<ScanResolution>
   >(async () => ({ kind: "unknown" }));
+  // code -> the product it resolved to (only a plain hit; never a suggestion/archived/unknown).
+  const seenRef = React.useRef(new Map<string, any>());
+  const seenSessionRef = React.useRef<number | string | undefined>(undefined);
   // `quiet` suppresses ONLY the lookup-failure toast: the scan screen shows its own status and
   // retries a queued scan every few seconds, which must not toast on every failed retry.
   handlerRef.current = async (
     code: string,
     opts?: { quiet?: boolean; background?: boolean },
   ): Promise<ScanResolution> => {
-    let result: BarcodeResolveResult;
-    try {
-      // Opus item 5: the try/catch covers ONLY the lookup. It used to also wrap `addLineItem`
-      // below, so a throw from THAT (nothing to do with connectivity) was caught here and
-      // misreported as `offline: true` — which queues the code for a retry that then adds it a
-      // SECOND time, on top of whatever the first (throwing) call already committed.
-      result = await resolveProductByCode(code);
-    } catch (err: any) {
-      // Network / 5xx — a transient failure is NOT "product doesn't exist";
-      // don't open the create-product modal over it.
-      // A failure with no HTTP response is the transient case ("check the connection"); anything the server answered is fixed copy.
-      const message = err?.response ? genericToastCopy(err) : "Check the connection and rescan.";
-      if (!opts?.quiet) {
-        deps.toast({
-          variant: "error",
-          title: "Couldn't look up the code",
-          description: message,
-        });
+    const session = deps.sessionKey?.();
+    if (seenSessionRef.current !== session) {
+      seenRef.current.clear();
+      seenSessionRef.current = session;
+    }
+    // Local fast path: a code already resolved to a product still on the order needs no lookup.
+    const seen = deps.hasLine ? seenRef.current.get(code.trim()) : undefined;
+    let result: BarcodeResolveResult | null =
+      seen && deps.hasLine?.(String(seen.id)) ? { product: seen, source: "barcode" } : null;
+    if (!result) {
+      try {
+        // Opus item 5: the try/catch covers ONLY the lookup. It used to also wrap `addLineItem`
+        // below, so a throw from THAT (nothing to do with connectivity) was caught here and
+        // misreported as `offline: true` — which queues the code for a retry that then adds it a
+        // SECOND time, on top of whatever the first (throwing) call already committed.
+        result = await resolveProductByCode(code);
+      } catch (err: any) {
+        // Network / 5xx — a transient failure is NOT "product doesn't exist";
+        // don't open the create-product modal over it.
+        // A failure with no HTTP response is the transient case ("check the connection"); anything the server answered is fixed copy.
+        const message = err?.response ? genericToastCopy(err) : "Check the connection and rescan.";
+        if (!opts?.quiet) {
+          deps.toast({
+            variant: "error",
+            title: "Couldn't look up the code",
+            description: message,
+          });
+        }
+        return { kind: "error", message, offline: isConnectivityError(err) };
       }
-      return { kind: "error", message, offline: isConnectivityError(err) };
     }
     if (result.archived) {
       // F30 / R5: the product exists but is retired — never put it on an
@@ -181,6 +201,7 @@ export function useScanCodeHandler(deps: ScanCodeHandlerDeps) {
       return { kind: "suggested", product: result.product };
     }
     if (!result.notFound && result.product) {
+      if (deps.hasLine) seenRef.current.set(code.trim(), result.product);
       // addLineItem clears search + refocuses — outside the try above: a throw here is a real
       // bug, never a connectivity failure, and must never be silently queued/re-added.
       const level = scanLevelForHit(code, result.product);
@@ -188,7 +209,7 @@ export function useScanCodeHandler(deps: ScanCodeHandlerDeps) {
       const added = scanCodeIsShared(code, result.product)
         ? deps.addLineItem(result.product, level, { startOnDefaultUnit: true })
         : deps.addLineItem(result.product, level);
-      if (added?.refused) return { kind: "refused", message: UNITS_LOADING_SCAN_MESSAGE };
+      if (added?.refused) return { kind: "refused" };
       return { kind: "added", product: result.product, created: added?.created ?? true };
     }
     // Nothing found — let the caller open create-product with the scanned barcode as SKU. Not for a

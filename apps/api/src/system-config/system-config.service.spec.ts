@@ -1,4 +1,5 @@
 import { Test, TestingModule } from "@nestjs/testing";
+import { BadRequestException } from "@nestjs/common";
 import { SystemConfigService } from "./system-config.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { EncryptionService } from "../common/encryption.service";
@@ -162,5 +163,80 @@ describe("SystemConfigService — remittance config (P5-14)", () => {
         value: JSON.stringify({ payToName: "Acme Wholesale" }),
       },
     });
+  });
+});
+
+describe("SystemConfigService margin config: retired costing methods (SA-804 (1) / B1232)", () => {
+  let service: SystemConfigService;
+  let prisma: ReturnType<typeof createMockPrisma>;
+
+  /** `costing.method` is stored as `stored`; every other key reads as unset. */
+  const storedMethod = (stored: string | null) =>
+    prisma.systemConfig.findFirst.mockImplementation(({ where }: any) =>
+      Promise.resolve(
+        where?.key === "costing.method" && stored != null
+          ? { id: "cfg-1", key: "costing.method", value: stored }
+          : null,
+      ),
+    );
+
+  beforeEach(async () => {
+    prisma = createMockPrisma();
+    prisma.systemConfig.findMany.mockResolvedValue([]);
+    const moduleRef: TestingModule = await Test.createTestingModule({
+      providers: [
+        SystemConfigService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: EncryptionService, useValue: { encrypt: jest.fn(), decrypt: jest.fn() } },
+      ],
+    }).compile();
+    service = moduleRef.get(SystemConfigService);
+  });
+
+  it.each(["FIFO", "LIFO"])(
+    "setMarginConfig refuses %s with 400 COSTING_METHOD_RETIRED and writes nothing (not even the floor)",
+    async (method) => {
+      storedMethod(null);
+
+      const err: any = await service
+        .setMarginConfig({ costingMethod: method, defaultMarginFloor: 0.2 })
+        .catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(BadRequestException);
+      expect(err.getResponse()).toMatchObject({ code: "COSTING_METHOD_RETIRED" });
+      expect(prisma.systemConfig.create).not.toHaveBeenCalled();
+      expect(prisma.systemConfig.update).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["WEIGHTED_AVERAGE", "LAST_COST"])("setMarginConfig still accepts %s", async (method) => {
+    storedMethod(null);
+
+    await service.setMarginConfig({ costingMethod: method });
+
+    expect(prisma.systemConfig.create).toHaveBeenCalledWith({
+      data: { key: "costing.method", value: method },
+    });
+  });
+
+  it("a PATCH that leaves a stored FIFO unchanged (floor only, or the same value) does not fail", async () => {
+    storedMethod("FIFO");
+
+    await expect(service.setMarginConfig({ defaultMarginFloor: 0.3 })).resolves.toBeUndefined();
+    await expect(service.setMarginConfig({ costingMethod: "FIFO" })).resolves.toBeUndefined();
+  });
+
+  it("getMarginConfig reads a stored FIFO as WEIGHTED_AVERAGE (the average cost it is costed by)", async () => {
+    storedMethod("FIFO");
+
+    const cfg = await service.getMarginConfig();
+
+    expect(cfg.costingMethod).toBe("WEIGHTED_AVERAGE");
+  });
+
+  it("getMarginConfig keeps LAST_COST", async () => {
+    storedMethod("LAST_COST");
+
+    expect((await service.getMarginConfig()).costingMethod).toBe("LAST_COST");
   });
 });

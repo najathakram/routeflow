@@ -3,7 +3,9 @@ import {
   COUNTER_PARK_NAME_MAX,
   COUNTER_PARK_NOTE_MAX,
   PARKED_PAYLOAD_RESUME_KEY,
+  foldItemNames,
   hasReservedParkKey,
+  isCalendarDay,
   sanitizeParkedPayload,
   validCustomer,
   validLine,
@@ -55,6 +57,28 @@ describe("the server-reserved _resume key", () => {
 });
 
 describe("sanitizeParkedPayload", () => {
+  it("keeps a line's regulated category and the customer's tax exemption, so a resumed cart's estimate is the receipt's (CQ-01 / CQ-02)", () => {
+    const v = ok(
+      cart({
+        lines: [line({ trackedCategoryId: "cat-1" })],
+        customer: { id: "c1", businessName: "Acme", isTaxExempt: true, email: "x@y.test" },
+      }),
+    );
+    expect(v.lines[0].trackedCategoryId).toBe("cat-1");
+    expect(v.customer).toEqual({ id: "c1", businessName: "Acme", isTaxExempt: true });
+  });
+
+  it("a non-boolean exemption or a non-string category is dropped, not stored", () => {
+    const v = ok(
+      cart({
+        lines: [line({ trackedCategoryId: 5 })],
+        customer: { id: "c1", businessName: "Acme", isTaxExempt: "yes" },
+      }),
+    );
+    expect(v.lines[0]).not.toHaveProperty("trackedCategoryId");
+    expect(v.customer).toEqual({ id: "c1", businessName: "Acme" });
+  });
+
   it("keeps the cart snapshot fields", () => {
     expect(ok(cart())).toEqual(cart());
   });
@@ -183,6 +207,29 @@ describe("sanitizeParkedPayload", () => {
     }
   });
 
+  it("keeps the tenant's walk-in customer record marked isWalkIn (only when true), so a resumed cart is still a Walk-in (#3610 review)", () => {
+    expect(
+      ok(cart({ customer: { id: "w1", businessName: "Walk-in customer", isWalkIn: true } }))
+        .customer,
+    ).toEqual({
+      id: "w1",
+      businessName: "Walk-in customer",
+      isWalkIn: true,
+    });
+    expect(
+      ok(cart({ customer: { id: "c1", businessName: "Acme", isWalkIn: false } })).customer,
+    ).toEqual({
+      id: "c1",
+      businessName: "Acme",
+    });
+    expect(
+      ok(cart({ customer: { id: "c1", businessName: "Acme", isWalkIn: "yes" } })).customer,
+    ).toEqual({
+      id: "c1",
+      businessName: "Acme",
+    });
+  });
+
   it("keeps a customer of null or absent as null", () => {
     expect(ok(cart({ customer: null })).customer).toBeNull();
     const { customer: _c, ...noCustomer } = cart();
@@ -227,5 +274,91 @@ describe("validLine / validCustomer (moved from the web, behaviour unchanged)", 
     expect(validCustomer({ id: "c", businessName: "A" })).toBe(true);
     expect(validCustomer({ id: "c" })).toBe(false);
     expect(validCustomer("c")).toBe(false);
+  });
+});
+
+describe("foldItemNames: the ONE fold of a row's item names (R7b N3, N4)", () => {
+  it("keeps the first `cap` names, trims them, and counts every named line", () => {
+    const out = foldItemNames(
+      [
+        { name: " Cola 12oz Can ", qty: "2.000" },
+        { name: "", qty: 1 },
+        { name: "Ice Bag 10lb", qty: 1 },
+        { name: "Chips", qty: 3 },
+        { name: "Gum", qty: 1 },
+      ],
+      3,
+    );
+    expect(out.items).toEqual([
+      { name: "Cola 12oz Can", qty: 2 },
+      { name: "Ice Bag 10lb", qty: 1 },
+      { name: "Chips", qty: 3 },
+    ]);
+    expect(out.itemCount).toBe(4);
+  });
+
+  it("a boxed line sold as 2 cases carries the receipt's own quantity text, not 24 pieces", () => {
+    const out = foldItemNames(
+      [{ name: "Cola 12oz Can", qty: 24, boxes: 2, pieces: 0, unitLabel: "Case" }],
+      3,
+    );
+    expect(out.items).toEqual([{ name: "Cola 12oz Can", qty: 24, qtyText: "2 Cases" }]);
+  });
+
+  it("a plain line has no quantity text; nothing named is an empty answer", () => {
+    expect(foldItemNames([{ name: "Chips", qty: 3 }], 3).items).toEqual([
+      { name: "Chips", qty: 3 },
+    ]);
+    expect(foldItemNames([{ name: "  ", qty: 3 }, null, 7], 3)).toEqual({});
+    expect(foldItemNames("nope", 3)).toEqual({});
+  });
+});
+
+describe("checkDate (the typed date of a check tender) survives a park and a resume", () => {
+  it("a real YYYY-MM-DD day is kept, beside the reference", () => {
+    expect(ok(cart({ method: "CHECK", reference: "1042", checkDate: "2026-10-23" }))).toEqual(
+      cart({ method: "CHECK", reference: "1042", checkDate: "2026-10-23" }),
+    );
+  });
+  it("an absent date stays absent (older payloads and every other method)", () => {
+    expect(ok(cart())).not.toHaveProperty("checkDate");
+  });
+  it.each([
+    ["an impossible day", "2026-02-31"],
+    ["a month 13", "2026-13-01"],
+    ["a wrong shape", "2026-1-3"],
+    ["a datetime", "2026-10-23T00:00:00Z"],
+    ["a number", 20261023],
+    ["an empty string", ""],
+    ["an object", { y: 2026 }],
+    ["null", null],
+  ])("%s is dropped, never thrown on, and the rest of the payload stands", (_n, bad) => {
+    const v = ok(cart({ method: "CHECK", checkDate: bad }));
+    expect(v).not.toHaveProperty("checkDate");
+    expect(v.method).toBe("CHECK");
+  });
+  it("isCalendarDay: only a strict day that round-trips through a real date", () => {
+    expect(isCalendarDay("2024-02-29")).toBe(true);
+    expect(isCalendarDay("2026-02-29")).toBe(false);
+    expect(isCalendarDay("2026-04-31")).toBe(false);
+    expect(isCalendarDay("2026-10-23 ")).toBe(false);
+    expect(isCalendarDay(undefined)).toBe(false);
+  });
+});
+
+describe("S5: the explicit Walk-in choice rides the payload", () => {
+  it("keeps walkIn: true on a cart with no customer", () => {
+    expect(ok(cart({ walkIn: true })).walkIn).toBe(true);
+  });
+  it("a cart without it stays byte-identical (no walkIn key)", () => {
+    expect(ok(cart())).toEqual(cart());
+    expect("walkIn" in ok(cart())).toBe(false);
+  });
+  it("drops walkIn when a customer is on the cart, and any value that is not true", () => {
+    expect(
+      "walkIn" in ok(cart({ walkIn: true, customer: { id: "c1", businessName: "Acme" } })),
+    ).toBe(false);
+    for (const v of [false, "true", 1, null])
+      expect("walkIn" in ok(cart({ walkIn: v }))).toBe(false);
   });
 });

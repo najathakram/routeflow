@@ -1,8 +1,10 @@
 import type { Ionicons } from "@expo/vector-icons";
 import type { PaymentMethod } from "./api/invoices";
-import type { PaymentStatus } from "./api/payments";
+import type { PaymentStatus, UpdatePaymentDto } from "./api/payments";
+import { withRecordAnyway } from "@routeflow/types/payment-ref-copy";
 import { remainingCapacity, roundMoney } from "@routeflow/pricing";
 import { CHECK_TRANSITIONS, type CheckStatus } from "@routeflow/types";
+import { PAYMENT_STATUS_COPY } from "@routeflow/types/payment-submit-key";
 
 // Re-exported for backward compatibility — nothing in this repo currently imports either symbol
 // from this file (checked by grep), but both were public exports of this module before the
@@ -185,4 +187,52 @@ export function allocationTotals(
     excess: roundMoney(Math.max(0, total - allocated)),
     overAllocated: allocated > total + 0.001,
   };
+}
+
+/**
+ * SA-824: while this payment's attempt is unknown or in flight (`hasUnknown()`), "Change customer"
+ * is blocked — the attempt must never be re-scoped to another customer. Same copy as the web
+ * finance Payments page; released -> allowed again.
+ */
+export function changeCustomerGate(hasUnknownAttempt: boolean): {
+  blocked: boolean;
+  reason: string | null;
+} {
+  return hasUnknownAttempt
+    ? { blocked: true, reason: PAYMENT_STATUS_COPY.customerLocked }
+    : { blocked: false, reason: null };
+}
+
+/**
+ * W-718: the payment edit screen's PATCH body from its form fields. The staff "Record anyway" resend (a 409
+ * DUPLICATE_PAYMENT_REF) is the SAME body plus `recordAnyway: true` (`withRecordAnyway`); a first save never carries it.
+ */
+export function editPaymentDto(
+  f: {
+    invoiceId: string;
+    paymentId: string;
+    method: UpdatePaymentDto["method"];
+    amount: number;
+    reference: string | null;
+    notes: string | null;
+    bankCharges: string | null;
+    paidAt: string | null;
+    settledAt: string | null;
+  },
+  recordAnyway: boolean,
+): UpdatePaymentDto {
+  const body: UpdatePaymentDto = {
+    invoiceId: f.invoiceId,
+    paymentId: f.paymentId,
+    method: f.method,
+    amount: f.amount,
+    // W-663: an emptied field is sent as null so the server clears it (as settledAt); undefined kept the old value
+    reference: (f.reference ?? "").trim() || null,
+    notes: (f.notes ?? "").trim() || null,
+    bankCharges: (f.bankCharges ?? "").trim() ? Number(f.bankCharges) || undefined : undefined,
+    paidAt: (f.paidAt ?? "").trim() || undefined,
+    // Always sent: an emptied field has to clear the stored bank date.
+    settledAt: (f.settledAt ?? "").trim() || null,
+  };
+  return recordAnyway ? withRecordAnyway(body) : body;
 }

@@ -24,6 +24,10 @@ let mockFilters: Record<string, unknown> = {
   removed: false,
 };
 
+jest.mock("@/lib/auth-context", () => ({
+  ...jest.requireActual("@/lib/auth-context"),
+  useAuth: () => ({ user: { id: "u1", username: "x", role: "TENANT_ADMIN" } }),
+}));
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push, replace: jest.fn() }),
   usePathname: () => "/customers",

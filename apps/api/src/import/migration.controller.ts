@@ -22,7 +22,7 @@ import { CreateJobDto, StageRecordsDto } from "./dto/migration.dto";
  */
 @Controller("import/migration")
 @UseGuards(JwtAuthGuard, RolesGuard, PlanFlagGuard)
-@Roles(UserRole.OPERATOR)
+@Roles(UserRole.TENANT_ADMIN)
 @RequirePlanFlag("flag.import_integrations")
 export class MigrationController {
   constructor(private readonly migration: MigrationService) {}

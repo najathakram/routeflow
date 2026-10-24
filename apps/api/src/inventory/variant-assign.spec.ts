@@ -384,7 +384,8 @@ describe("InventoryService.assignToVariants", () => {
     const createData = prisma.product.create.mock.calls[0][0].data;
     expect(createData.parentProductId).toBe("parent-1");
     expect(createData.variantName).toBe("Zero");
-    expect(createData.name).toBe("Cola 24pk - Zero");
+    // B1: a variant stores its BARE label in both columns; the display name is composed at read time.
+    expect(createData.name).toBe("Zero");
     expect(createData.category).toBe("Beverages");
     expect(createData.unitsPerBox).toBe(12);
     expect(createData.costingMethod).toBe("AVCO");
@@ -393,6 +394,56 @@ describe("InventoryService.assignToVariants", () => {
 
     expect(result.assignments[0].created).toBe(true);
     expect(result.assignments[0].productId).toBe("new-variant-1");
+  });
+
+  it("B1: a new variant typed as '<parent> - <label>' (any case) is stored bare and collision-checked bare", async () => {
+    prisma.product.findUnique.mockResolvedValue(parent());
+    prisma.product.findFirst.mockResolvedValue(null);
+    prisma.product.create.mockResolvedValue(
+      variant({ id: "new-variant-2", variantName: "Zero", currentStock: D(0) }),
+    );
+
+    await service.assignToVariants(
+      {
+        parentProductId: "parent-1",
+        assignments: [{ newVariant: { name: "COLA 24PK - Zero" }, qty: 1 }],
+      } as any,
+      "user-1",
+    );
+
+    const createData = prisma.product.create.mock.calls[0][0].data;
+    expect(createData.name).toBe("Zero");
+    expect(createData.variantName).toBe("Zero");
+    // legacy rows of this writer stored the composed spelling in `name`: it still counts as taken
+    const probe = prisma.product.findFirst.mock.calls
+      .map((c: any[]) => c[0]?.where)
+      .find((w: any) => w?.OR);
+    expect(probe.OR).toEqual(
+      expect.arrayContaining([
+        { name: { equals: "Zero", mode: "insensitive" } },
+        { name: { equals: "Cola 24pk - Zero", mode: "insensitive" } },
+        { variantName: { equals: "Zero", mode: "insensitive" } },
+      ]),
+    );
+  });
+
+  it("B1 R3: a new variant that is only the parent prefix is a coded 400; nothing is created", async () => {
+    prisma.product.findUnique.mockResolvedValue(parent());
+    prisma.product.findFirst.mockResolvedValue(null);
+
+    const err = await service
+      .assignToVariants(
+        {
+          parentProductId: "parent-1",
+          assignments: [{ newVariant: { name: "COLA 24PK - " }, qty: 1 }],
+        } as any,
+        "user-1",
+      )
+      .catch((e) => e);
+
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err.getResponse()).toMatchObject({ code: API_ERROR_CODES.VARIANT_NAME_PREFIX_ONLY });
+    expect(prisma.product.create).not.toHaveBeenCalled();
   });
 
   it("costs a STANDARD-costed parent from its standardCost, never $0, when averageCost is null", async () => {

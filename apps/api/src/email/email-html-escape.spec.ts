@@ -88,6 +88,16 @@ describe("B807 — each tenant/buyer field is HTML-escaped in its email (REG-B80
     expectEscaped(buildInvoiceHtml(over));
   });
 
+  it("invoice email: a business name that ends in a period gets no second one in the footer (CQ-20)", () => {
+    const built = (makeService() as any).buildInvoiceEmail(invoice({}), "Acme Co.") as {
+      html: string;
+      text: string;
+    };
+    expect(built.text).toContain("This is an automated email from Acme Co.");
+    expect(built.text).not.toContain("Acme Co..");
+    expect(built.html).not.toContain("Acme Co..");
+  });
+
   it('invoice email: pdfUrl cannot break out of its href (a `"` is escaped)', () => {
     const html = buildInvoiceHtml({ pdfUrl: `https://x.example/a"><script>alert("x")</script>` });
     expect(html).not.toContain("<script>");

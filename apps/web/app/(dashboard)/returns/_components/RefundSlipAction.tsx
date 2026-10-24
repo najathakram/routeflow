@@ -38,6 +38,7 @@ export function RefundSlipAction({
     queryFn: () => apiClient.get("/settings").then((r) => r.data),
   });
   const [printing, setPrinting] = React.useState(false);
+  const reasonId = React.useId();
   const autoPrinted = React.useRef(false);
 
   const model = React.useMemo(
@@ -90,6 +91,13 @@ export function RefundSlipAction({
   }, [autoPrint, printable, ret?.order?.counterSale]);
 
   if (!isLoading && !printable) return null;
+  // Row 330c: a disabled button always says why. Only two states are visible: the refund is still loading, or the
+  // slip is with the printer (until `afterprint`, or the fallback timer).
+  const reason = printing
+    ? "Sending the slip to the printer…"
+    : !printable
+      ? "Loading the refund…"
+      : null;
   return (
     <>
       <Button
@@ -97,10 +105,21 @@ export function RefundSlipAction({
         variant="secondary"
         className={className ?? "min-h-11"}
         disabled={!printable || printing}
+        aria-describedby={reason ? reasonId : undefined}
         onClick={() => setPrinting(true)}
       >
         Print slip
       </Button>
+      {reason && (
+        <span
+          id={reasonId}
+          data-testid="print-slip-reason"
+          role="status"
+          className="text-xs text-navy/70"
+        >
+          {reason}
+        </span>
+      )}
       {printing && model
         ? createPortal(
             <div data-refund-slip-portal className="hidden print:block">

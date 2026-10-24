@@ -35,3 +35,11 @@ export function overpaidText(overpaidBy?: number | null): string | null {
   const amount = roundMoney(overpaidBy);
   return amount > 0 ? `Overpaid by ${fmt(amount)}` : null;
 }
+
+/** The order page's edit-log anchor (`OrderRevisionLog` opens itself when the page is reached on it). */
+export const ORDER_REVISIONS_HASH = "#order-revisions";
+
+/** Row 330d: where an invoice's "Revised" badge goes, one tap; null when the invoice has no order. */
+export function orderRevisionLogHref(orderId?: string | null): string | null {
+  return orderId ? `/orders/${orderId}${ORDER_REVISIONS_HASH}` : null;
+}

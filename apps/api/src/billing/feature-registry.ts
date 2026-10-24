@@ -499,7 +499,31 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
       added: "2026-09-19",
       routes: ["ALL /products/:productId/units (class-level)"],
       grantPath: "Owner override GRANT per tenant (feature grants) — no plan bundles it yet",
-      backfill: "New key: no tenant has used it, so there is nothing to backfill.",
+      backfill:
+        "New key: no tenant had used it at ship time, so there was nothing to backfill. Settings > Units (/units) is NOT gated by it: that moved to flag.units_settings_v1 below.",
+    },
+    billing: { skus: [], selfService: false },
+    defaultGranted: false,
+  },
+  {
+    key: "flag.units_settings_v1",
+    kind: "boolean",
+    area: "catalog",
+    label: "Settings > Units (rename units)",
+    description:
+      "The Settings > Units page and its API: add, rename, archive and restore the unit names tenants sell by. A rename rewrites the unit text on every product that uses it.",
+    gate: {
+      via: "RequirePlanFlag",
+      // ENFORCED, never dark: a dark flag is courtesy-allowed to every tenant, and a rename
+      // rewrites product rows. flag.units_v1 is already ACTIVE on a live tenant, so /units
+      // cannot ride on it; this key is granted per tenant only after the U-6 backfill shows 0/0/0.
+      state: "enforced",
+      added: "2026-10-14",
+      routes: ["ALL /units (class-level)"],
+      grantPath:
+        "Owner override GRANT per tenant (feature grants), only after that tenant's U-6 unit backfill shows 0/0/0 — no plan bundles it",
+      backfill:
+        "New key: nobody holds it, so every tenant (including those with flag.units_v1) is refused on /units until the owner grants it. Nothing to backfill; the grant itself is the gated step.",
     },
     billing: { skus: [], selfService: false },
     defaultGranted: false,
@@ -626,6 +650,36 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
       ],
       grantPath: DARK_PLAN_FLAG_GRANT_PATH,
       backfill: DARK_PLAN_FLAG_BACKFILL,
+    },
+    billing: { skus: [], selfService: false },
+    defaultGranted: false,
+  },
+  {
+    key: "flag.units_prices_v2",
+    kind: "boolean",
+    area: "catalog",
+    label: "Units and prices v2",
+    description: "The one price grid per product: every unit, every tier, Set or Auto.",
+    gate: {
+      via: "RequirePlanFlag",
+      // SA-796 R-5: a stated exception to the DARK_PLAN_FLAGS rule. The key gates a NEW route and
+      // UI with zero prior users (blast radius 0), and "dark" would allow it for every tenant, so
+      // it ships ENFORCED-BUT-UNGRANTED like flag.units_v1.
+      state: "enforced",
+      added: "2026-10-16",
+      routes: [
+        "GET /products/:productId/price-grid (product-pricing.controller.ts, class-level)",
+        "GET /products/:productId/customer-prices (product-pricing.controller.ts, class-level)",
+        "POST /products/:productId/prices (product-pricing.controller.ts, class-level)",
+        "POST /products/:productId/prices/undo (product-pricing.controller.ts, class-level)",
+        "GET /customers/:customerId/unit-prices (customer-unit-prices.controller.ts, class-level)",
+        "GET /customers/:customerId/price-layer (customer-price-layer.controller.ts, class-level)",
+        "products.service.ts create and importFromZoho, product-families.service.ts createFamily and updateVariants (hasFlag, S4)",
+        "S19 billing readers (customerPricing, orders/units-prices-v2.ts): orders.service.ts create, updateOrderItems (add, substitute, edit, replace-all, change-request add), getCustomerPriceHistory (pre-fill); unit-line-edit.ts; replace-all-line-build.ts; buyer-replace-keep.ts; invoice-line-override.ts (manual invoice lines); order-templates.service.ts; estimates.service.ts; buyer-catalog.service.ts (tile, detail, favorites); inline-returns-quote.service.ts; S19b A1: buyer-dashboard.service.ts (tiles), customer-price-history.service.ts (reference price), counter-sale-tier-price.ts (audit baseline), manual-invoice-context.ts (old-client Piece), customer-unit-prices.service.ts (K6 parity)",
+      ],
+      grantPath:
+        "No grant until S19b: every reader that shows or charges a customer price goes through the S19 helper and the no-direct-customer-tier-price pin is green (SA-811). Then: owner override GRANT per tenant after the 95/95 live check (S28); the local test tenant for proofs",
+      backfill: "New key: no tenant has used it, so there is nothing to backfill.",
     },
     billing: { skus: [], selfService: false },
     defaultGranted: false,

@@ -41,7 +41,7 @@ describe("SA-681: partial invoices are never rebuilt to the full order", () => {
   const mockLedger = {
     writeSaleEntries: jest.fn(),
     reverseInvoiceEntries: jest.fn(),
-    syncInvoiceEntries: jest.fn(),
+    settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
   };
 
   beforeEach(async () => {

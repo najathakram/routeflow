@@ -119,7 +119,7 @@ describe("SA-322 reorder gate — dark shape (allow + would-deny warn) and enfor
     prisma.product.findUnique.mockResolvedValue({ id: "p1", name: "W", imageKeys: [] } as any);
     prisma.product.findFirst.mockResolvedValue(null);
     prisma.product.update.mockResolvedValue({ id: "p1", name: "W" } as any);
-    await service.update("p1", { reorderQty: 9 } as any);
+    await service.update("p1", { reorderQty: 9 } as any, { packPrecondition: "internal" });
     expect(prisma.product.update).toHaveBeenCalled();
     expect(wouldDenyWarns()).toHaveLength(1);
   });

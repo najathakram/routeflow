@@ -4,7 +4,7 @@ import type { CounterSaleHandBack, CounterSaleVoidResponse } from "@routeflow/ty
 import { AfterCommit } from "../../common/after-commit";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
 import { LockTimeoutError, LockUnavailableError, withAdvisoryLock } from "../../common/db-locks";
-import { retryOnTxConflict, txConflictState } from "../../common/tx-retry";
+import { retryStockTx, txConflictState } from "../../common/tx-retry";
 import { tenantTimeZone } from "../../common/tenant-time-zone";
 import type { JwtPayload } from "../../auth/jwt-payload.interface";
 import {
@@ -51,7 +51,7 @@ const VOID_LOCK_WAIT_MS = 10_000;
  * same-key tender replay serialize) plus the SHARED end-of-day close lock of the order's register on the same pinned
  * connection (`sharedAlso`, like the tender; lock order counter-tender -> counter-close -> Order/Invoice rows). Under both,
  * before any write, the void refuses 409 COUNTER_SALE_DAY_CLOSED when the sale's own time or any tender payment it reverses
- * is dated inside a closed window of the register: a closed day's totals never move. It wraps `retryOnTxConflict(tenantTransaction(Serializable))`; inside the tx the row
+ * is dated inside a closed window of the register: a closed day's totals never move. It wraps `retryStockTx(tenantTransaction(Serializable))`; inside the tx the row
  * order is Order -> Invoice -> Product. A lock timeout or an unavailable lock connection is a 503
  * COUNTER_SALE_VOID_BUSY with nothing written. No in-process lock, no order-merge/customer lock, and no tx is
  * threaded into updateOrderItems. Gateway emits are queued and flushed after the commit.
@@ -110,7 +110,8 @@ export class CounterSaleVoidService {
       if (
         e instanceof LockTimeoutError ||
         e instanceof LockUnavailableError ||
-        txConflictState(e)
+        txConflictState(e) ||
+        isStockLockUnavailable(e)
       ) {
         this.logger.warn(`counter sale void ${orderId}: not completed (${(e as Error).message})`);
         throw counterVoidBusy();
@@ -125,7 +126,8 @@ export class CounterSaleVoidService {
     user: JwtPayload,
   ): Promise<CounterSaleVoidResponse> {
     const after = new AfterCommit();
-    const result = await retryOnTxConflict(`counter sale void order=${orderId}`, () =>
+    // SA-767 R6: the void re-takes stock, so a lock wait (55P03) or an expired tx budget (P2028) is retried too
+    const result = await retryStockTx(`counter sale void order=${orderId}`, () =>
       this.prisma.tenantTransaction(
         (tx) => {
           after.reset(); // a retried attempt never re-sends the emits of one that rolled back
@@ -288,6 +290,7 @@ export class CounterSaleVoidService {
       user,
       notes: "CANCEL",
       bookedFloor,
+      skipDeliveryStateCheck: true, // SA-814h: step 9 above already undid the hand-over
     });
 
     // 11. The audit row, in the same tx: step 3's replay reads it back.
@@ -319,3 +322,10 @@ const saleNotFound = () =>
     code: API_ERROR_CODES.COUNTER_SALE_NOT_FOUND,
     message: "No counter sale was found for this id",
   });
+
+/** `retryStockTx` gives up with a 503 LOCK_UNAVAILABLE after its retries: nothing was written, the clerk retries. */
+function isStockLockUnavailable(e: unknown): boolean {
+  const body = (e as { getResponse?: () => unknown } | null)?.getResponse?.() as
+    { code?: unknown } | undefined;
+  return body?.code === API_ERROR_CODES.LOCK_UNAVAILABLE;
+}

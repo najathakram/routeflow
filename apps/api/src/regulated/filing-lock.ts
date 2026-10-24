@@ -1,6 +1,11 @@
 import { ConflictException } from "@nestjs/common";
 import { API_ERROR_CODES } from "../common/api-error-codes";
-import { monthRange } from "./period";
+import {
+  anyLockedFiling,
+  lockedFilingsCovering,
+  type BucketRef,
+  type FilingsDb,
+} from "./filed-periods";
 
 /**
  * B297 PR5 (SA-088 D4, SA-734r2 B6): what a LOCKED `RegulatedFiling` means for writes.
@@ -16,59 +21,9 @@ import { monthRange } from "./period";
  * Returns and credit notes against a locked-period sale are NOT blocked at the edit guard: a return is a new
  * event booked today, and the locked period's SUM is untouched.
  */
-export interface LockedFilingRow {
-  id: string;
-  trackedCategoryId: string;
-  periodKey: string;
-  periodStart: Date;
-  periodEnd: Date;
-  status: string;
-}
-
-export interface BucketRef {
-  trackedCategoryId: string;
-  periodBucket: string;
-}
-
-type LockDb = {
-  regulatedFiling?: { findMany(args: unknown): Promise<any[]> };
+type LockDb = FilingsDb & {
   regulatedSalesLedger?: { findMany(args: unknown): Promise<any[]> };
 };
-
-/**
- * The LOCKED filings that cover each given (category, periodBucket) pair. A filing covers a bucket when the
- * bucket's month starts inside its [periodStart, periodEnd). A client without a filings model (a unit-test
- * stub) covers nothing.
- */
-export async function lockedFilingsCovering(
-  db: LockDb,
-  refs: BucketRef[],
-): Promise<Array<{ filing: LockedFilingRow; trackedCategoryId: string; periodBucket: string }>> {
-  if (refs.length === 0 || !db.regulatedFiling?.findMany) return [];
-  const categoryIds = [...new Set(refs.map((r) => r.trackedCategoryId))];
-  const filings: LockedFilingRow[] = await db.regulatedFiling.findMany({
-    where: { trackedCategoryId: { in: categoryIds }, status: "LOCKED" },
-  });
-  if (filings.length === 0) return [];
-  const out: Array<{ filing: LockedFilingRow; trackedCategoryId: string; periodBucket: string }> =
-    [];
-  for (const ref of refs) {
-    const from = monthRange(ref.periodBucket).from.getTime();
-    for (const f of filings) {
-      if (
-        f.trackedCategoryId === ref.trackedCategoryId &&
-        f.periodStart.getTime() <= from &&
-        from < f.periodEnd.getTime()
-      )
-        out.push({
-          filing: f,
-          trackedCategoryId: ref.trackedCategoryId,
-          periodBucket: ref.periodBucket,
-        });
-    }
-  }
-  return out;
-}
 
 /** (b) the ledger guard: throws LEDGER_PERIOD_LOCKED when any row would book into a locked period. */
 export async function assertLedgerRowsNotLocked(db: LockDb, rows: BucketRef[]): Promise<void> {
@@ -101,8 +56,7 @@ export async function assertSalesNotLockedForEdit(
 ): Promise<void> {
   // Cheap exit for the overwhelmingly common tenant: nothing is locked, so no ledger read at all.
   if (!db.regulatedFiling?.findMany || !db.regulatedSalesLedger?.findMany) return;
-  const anyLocked = await db.regulatedFiling.findMany({ where: { status: "LOCKED" }, take: 1 });
-  if (anyLocked.length === 0) return;
+  if (!(await anyLockedFiling(db))) return;
   const { lineIds, ...scope } = where;
   const rows = await db.regulatedSalesLedger.findMany({
     where: {
@@ -199,3 +153,26 @@ export async function assertOrderEditNotLocked(
     ...(named ? { lineIds: { orderItemIds: items.map((i) => String(i.id)) } } : {}),
   });
 }
+
+/**
+ * SA-819 MUST 6: the undo guard. Voiding a credit note or cancelling a return whose REVERSAL rows sit in a
+ * LOCKED filing's bucket is refused (409 LEDGER_PERIOD_LOCKED) with the next step in the copy: the figures of
+ * a closed period stay explained by the document that produced them, and the owner records a new charge.
+ */
+export async function assertUndoNotLocked(db: LockDb, rows: BucketRef[]): Promise<void> {
+  const unique = [
+    ...new Map(rows.map((r) => [`${r.trackedCategoryId}|${r.periodBucket}`, r])).values(),
+  ];
+  const hit = (await lockedFilingsCovering(db, unique))[0];
+  if (!hit) return;
+  throw new ConflictException({
+    code: API_ERROR_CODES.LEDGER_PERIOD_LOCKED,
+    message: undoLockedMessage(hit.filing.periodKey),
+    filingId: hit.filing.id,
+    periodKey: hit.filing.periodKey,
+  });
+}
+
+/** The exact 409 copy of the undo guard ({period} is the locked filing's period key). */
+export const undoLockedMessage = (period: string): string =>
+  `This credit is part of a locked filing (${period}). Record a new charge instead of voiding it.`;

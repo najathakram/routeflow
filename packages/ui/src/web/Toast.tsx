@@ -23,6 +23,8 @@ export interface ToastData {
   duration?: number;
   /** Optional action button (e.g. the 8-second Undo). */
   action?: ToastAction;
+  /** Optional second action beside `action` (e.g. "View limits" next to Undo). */
+  secondaryAction?: ToastAction;
 }
 
 // ─── Variant config ───────────────────────────────────────────────────────────
@@ -111,15 +113,22 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
                     {t.description}
                   </RadixToast.Description>
                 )}
-                {t.action && (
-                  <RadixToast.Action altText={t.action.label} asChild>
-                    <button
-                      onClick={t.action.onClick}
-                      className="mt-2 text-[12.5px] font-semibold text-accent-deep hover:underline"
-                    >
-                      {t.action.label}
-                    </button>
-                  </RadixToast.Action>
+                {(t.action || t.secondaryAction) && (
+                  <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
+                    {[t.action, t.secondaryAction].map(
+                      (a) =>
+                        a && (
+                          <RadixToast.Action key={a.label} altText={a.label} asChild>
+                            <button
+                              onClick={a.onClick}
+                              className="text-[12.5px] font-semibold text-accent-deep hover:underline"
+                            >
+                              {a.label}
+                            </button>
+                          </RadixToast.Action>
+                        ),
+                    )}
+                  </div>
                 )}
               </div>
               <RadixToast.Close
@@ -131,7 +140,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
             </RadixToast.Root>
           );
         })}
-        <RadixToast.Viewport className="fixed bottom-4 right-4 z-[100] flex w-96 max-w-[calc(100vw-2rem)] flex-col gap-2 outline-none" />
+        <RadixToast.Viewport className="fixed bottom-[max(1rem,var(--toast-bottom-inset,1rem))] right-4 z-[100] flex w-96 max-w-[calc(100vw-2rem)] flex-col gap-2 outline-none" />
       </RadixToast.Provider>
     </ToastContext.Provider>
   );

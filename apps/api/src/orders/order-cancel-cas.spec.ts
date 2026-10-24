@@ -245,7 +245,7 @@ describe("SA-404f F2 — order cancel compare-and-set", () => {
           provide: RegulatedLedgerService,
           useValue: {
             reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined),
-            syncInvoiceEntries: jest.fn(),
+            settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
           },
         },
         // B323: sweepAllPendingOrders() re-enters each group's own tenant scope via

@@ -96,3 +96,51 @@ describe("product mutation hooks refresh the whole product set (products + inven
     );
   });
 });
+
+describe("useUpdateProduct waits for the product refetch (P0 2026-10-14: no stale tier window)", () => {
+  it("mutateAsync resolves only after the invalidated products query has refetched", async () => {
+    const qc = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+    let release!: () => void;
+    let fetches = 0;
+    const fetcher = () => {
+      fetches += 1;
+      return fetches === 1
+        ? Promise.resolve({ priceTier4: "21.00" })
+        : new Promise((res) => {
+            release = () => res({ priceTier4: "19.50" });
+          });
+    };
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+    );
+    const { useQuery } = jest.requireActual("@tanstack/react-query");
+    const { result } = renderHook(
+      () => ({
+        product: useQuery({ queryKey: ["products", "p1"], queryFn: fetcher }),
+        update: useUpdateProduct(),
+      }),
+      { wrapper },
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+    let resolved = false;
+    let pending!: Promise<unknown>;
+    act(() => {
+      pending = result.current.update
+        .mutateAsync({ id: "p1", priceTier4: "19.50" })
+        .then(() => (resolved = true));
+    });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    expect(fetches).toBe(2);
+    expect(resolved).toBe(false); // still waiting on the refetch
+    await act(async () => {
+      release();
+      await pending;
+    });
+    expect(resolved).toBe(true);
+    expect(qc.getQueryData(["products", "p1"])).toEqual({ priceTier4: "19.50" });
+  });
+});

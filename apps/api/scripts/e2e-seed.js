@@ -237,6 +237,21 @@ const UNITS_PRODUCT = {
   pricePerUnit: cents(200),
 };
 const UNITS_CASE = { label: "Case", factorToBase: 12, price: cents(2100) };
+// VU-4 (B1218): a boxed product whose Case is the DEFAULT selling unit, shared by the invoice-picker lane
+// (web) and the mobile Expo-web proof. Box of 24 @ 48.00; Case = 12 pcs @ 24.00; Piece is implicit.
+const CASE_DEFAULT_PRODUCT = {
+  sku: "E2E-FIX-CASEDEFAULT",
+  name: "E2E Fixture Case Default",
+  unit: "Box",
+  unitsPerBox: 24,
+  pricePerUnit: cents(4800),
+};
+const CASE_DEFAULT_LEVEL = {
+  label: "Case",
+  factorToBase: 12,
+  price: cents(2400),
+  isDefaultSelling: true,
+};
 
 const FIXTURE_INVOICE_NUMBER = "E2E-FIX-INV-001";
 // One PENDING order with one line on the first plain fixture product: 06 CP-02/CP-06 read real
@@ -496,6 +511,16 @@ async function ensureUnitsFixture(tenantId) {
     where: { productId_label: { productId: product.id, label: UNITS_CASE.label } },
     create: { tenantId, productId: product.id, ...UNITS_CASE },
     update: {},
+  });
+  const caseDefault = await prisma.product.upsert({
+    where: { tenantId_sku: { tenantId, sku: CASE_DEFAULT_PRODUCT.sku } },
+    create: { tenantId, currentStock: 500, isActive: true, ...CASE_DEFAULT_PRODUCT },
+    update: { isActive: true },
+  });
+  await prisma.productUnit.upsert({
+    where: { productId_label: { productId: caseDefault.id, label: CASE_DEFAULT_LEVEL.label } },
+    create: { tenantId, productId: caseDefault.id, ...CASE_DEFAULT_LEVEL },
+    update: { isDefaultSelling: true },
   });
 }
 

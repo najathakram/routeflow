@@ -8,7 +8,10 @@ import { DraftDock } from "./DraftDock";
  * "Add scanned item to a draft?": one tap joins the scan to that draft, or it starts a new order. Pins the one-tap path.
  */
 const mockPush = jest.fn();
-jest.mock("next/navigation", () => ({ useRouter: () => ({ push: mockPush, replace: jest.fn() }) }));
+jest.mock("next/navigation", () => ({
+  useRouter: () => ({ push: mockPush, replace: jest.fn() }),
+  usePathname: () => "/orders",
+}));
 jest.mock("@/lib/auth-context", () => ({ useAuth: () => ({ user: { role: "OPERATOR" } }) }));
 jest.mock("@/lib/api/drafts", () => ({
   useDrafts: () => ({

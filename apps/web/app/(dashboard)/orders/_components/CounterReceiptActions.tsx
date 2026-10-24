@@ -3,6 +3,7 @@
 import * as React from "react";
 import { Button } from "@routeflow/ui/web";
 import { receiptEmailPrefill } from "@/lib/email-receipt";
+import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 import { CounterReturnAction } from "./CounterReturnAction";
 import { EmailReceiptButton, EmailReceiptRow } from "./EmailReceipt";
 import { useEmailReceipt } from "./useEmailReceipt";
@@ -33,10 +34,12 @@ export function CounterReceiptActions({
         </Button>
         <EmailReceiptButton email={email} />
         <CounterReturnAction orderId={orderId} />
-        <Button className={RECEIPT_BTN} variant="secondary" onClick={onNewSale}>
+        {/* SA-733r6: a new sale is a write; read-only keeps it visible and disabled. Print / Email receipt / Return stay as is. */}
+        <WriteButton className={RECEIPT_BTN} variant="secondary" onClick={onNewSale}>
           New sale
-        </Button>
+        </WriteButton>
       </div>
+      <ReadOnlyHint className="text-xs text-slate-600 print:hidden" />
       <EmailReceiptRow email={email} />
     </>
   );

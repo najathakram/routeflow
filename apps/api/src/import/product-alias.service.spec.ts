@@ -48,7 +48,24 @@ describe("ProductAliasService", () => {
   });
 
   describe("learn", () => {
+    it("rejects a reference from another business (no alias written)", async () => {
+      prisma.product.findMany.mockResolvedValue([]); // the product is not in this tenant
+      await expect(
+        service.learn(null, "cloud chips", { productId: "other-biz-product" }),
+      ).rejects.toThrow(/not found/i);
+      expect(prisma.productAlias.upsert).not.toHaveBeenCalled();
+    });
+
+    it("accepts a global (tenant-less) expense category", async () => {
+      prisma.expenseCategory.findMany.mockResolvedValue([{ id: "cat-global" }]);
+      await service.learn(null, "pallet deposit", { expenseCategoryId: "cat-global" });
+      const where = prisma.expenseCategory.findMany.mock.calls[0][0].where;
+      expect(where.OR).toEqual([{ tenantId: "test-tenant" }, { tenantId: null }]);
+      expect(prisma.productAlias.upsert).toHaveBeenCalledTimes(1);
+    });
+
     it("upserts the normalized alias under the any-supplier sentinel when no supplier", async () => {
+      prisma.expenseCategory.findMany.mockResolvedValue([{ id: "cat-9" }]);
       await service.learn(null, "  BS Pallet Deposit ", { expenseCategoryId: "cat-9" });
       expect(prisma.productAlias.upsert).toHaveBeenCalledWith(
         expect.objectContaining({

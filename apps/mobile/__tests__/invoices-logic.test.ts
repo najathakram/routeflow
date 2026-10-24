@@ -6,7 +6,7 @@
  * terminal, so a fully-paid invoice stays DRAFT and drops out of AR/aging.
  * See `invoice-actions.test.ts` for the rest of this module's gates.
  */
-import { canRecordPayment } from "../lib/invoices-logic";
+import { canRecordPayment, canWriteOff, isOpenInvoiceStatus } from "../lib/invoices-logic";
 
 describe("canRecordPayment", () => {
   it.each(["DRAFT", "WRITTEN_OFF", "VOID", "PAID"])("%s → false", (status) => {
@@ -15,5 +15,26 @@ describe("canRecordPayment", () => {
 
   it.each(["SENT", "VIEWED", "PARTIAL", "OVERDUE"])("%s → true", (status) => {
     expect(canRecordPayment(status)).toBe(true);
+  });
+});
+
+describe("isOpenInvoiceStatus (the shared open set)", () => {
+  it.each(["SENT", "VIEWED", "PARTIAL", "OVERDUE"])(
+    "%s is open, and may be paid / written off",
+    (s) => {
+      expect(isOpenInvoiceStatus(s)).toBe(true);
+      expect(canRecordPayment(s)).toBe(true);
+      expect(canWriteOff(s)).toBe(true);
+    },
+  );
+
+  it.each(["DRAFT", "PAID", "VOID", "WRITTEN_OFF", "", "SOMETHING_NEW"])("%s is not open", (s) => {
+    expect(isOpenInvoiceStatus(s)).toBe(false);
+    expect(canWriteOff(s)).toBe(false);
+  });
+
+  it("a missing status is not open", () => {
+    expect(isOpenInvoiceStatus(undefined)).toBe(false);
+    expect(isOpenInvoiceStatus(null)).toBe(false);
   });
 });

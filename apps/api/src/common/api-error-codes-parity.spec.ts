@@ -95,6 +95,46 @@ describe("API error codes: local copy = shared list (#2163, L-072)", () => {
     expect(stub.API_ERROR_CODES).toEqual(readShared());
   });
 
+  it("apps/mobile's jest stub carries the same PLAN_GATE_FLAG_KEYS (the sibling export of API_ERROR_CODES)", () => {
+    // PLAN_GATE_FLAG_KEYS lives in the same shared file and is the other plan-gate constant a client
+    // branches on (the `flag` of a PLAN_GATE body); the stub must not drift from it either.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const shared = (require("@routeflow/types") as Record<string, unknown>).PLAN_GATE_FLAG_KEYS;
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const stub = require(
+      path.join(REPO_ROOT, "apps/mobile/__tests__/__mocks__/@routeflow/types.js"),
+    ) as Record<string, unknown>;
+    expect(shared).toEqual({ METER_CUSTOMERS: "meter.customers" });
+    expect(stub.PLAN_GATE_FLAG_KEYS).toEqual(shared);
+  });
+
+  it("every data export the mobile stub shares by name with @routeflow/types has the same value", () => {
+    // The generic net under the named pins above: a hand-copied constant that drifts from the real
+    // package (a value added or changed on one side only) fails here without a new per-name test.
+    // Functions are skipped: the stub may implement them differently on purpose.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const shared = require("@routeflow/types") as Record<string, unknown>;
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const stub = require(
+      path.join(REPO_ROOT, "apps/mobile/__tests__/__mocks__/@routeflow/types.js"),
+    ) as Record<string, unknown>;
+    // `UserRole` is an enum the stub deliberately leaves empty (mobile tests only use it as a type).
+    const INTENTIONALLY_EMPTY = new Set(["UserRole"]);
+    const drifted = Object.keys(stub).filter((k) => {
+      if (INTENTIONALLY_EMPTY.has(k)) return false;
+      if (!(k in shared) || typeof stub[k] === "function" || typeof shared[k] === "function") {
+        return false;
+      }
+      try {
+        expect(stub[k]).toEqual(shared[k]);
+        return false;
+      } catch {
+        return true;
+      }
+    });
+    expect(drifted).toEqual([]);
+  });
+
   it("the scan actually covered all three apps and the packages (guards a path typo turning the scan vacuous)", () => {
     for (const root of SCAN_ROOTS) {
       // `rel` uses the platform separator (\ on win32): compare against the same form.
@@ -179,7 +219,6 @@ const CONSUMER_ALLOWLIST: Record<string, string[]> = {
   "apps/web/components/ScanInvoiceModal.tsx": ["AI_KEY_INVALID"],
   "apps/web/lib/api/authorizations.ts": ["REGULATED_AUTH_REQUIRED"],
   "apps/web/lib/api/credit-limit.ts": ["CREDIT_LIMIT_EXCEEDED"],
-  "apps/web/lib/api/restrictions-settings.ts": ["SELLING_RESTRICTIONS_NOT_READY"],
   "apps/web/lib/api/selling-restricted.ts": ["SELLING_RESTRICTED"],
   "apps/web/lib/api/supplier-statements.ts": [
     "AI_KEY_INVALID",
@@ -196,14 +235,13 @@ const CONSUMER_ALLOWLIST: Record<string, string[]> = {
     "MERGE_CHOICE_REQUIRED",
     "STOP_ALREADY_COMPLETED",
     "SELLING_RESTRICTED",
-    "SELLING_RESTRICTIONS_NOT_READY",
     "REGULATED_AUTH_REQUIRED",
   ],
   "apps/web/lib/plan-gate.ts": ["PLAN_GATE", "PLAN_GATE_UNAVAILABLE"],
   "apps/web/lib/po-bill-refusal.ts": ["BILL_EXCEEDS_PO"],
   "apps/web/lib/scan-po-lock.ts": ["PLAN_GATE"],
 };
-const CONSUMER_ALLOWLIST_TOTAL = 74;
+const CONSUMER_ALLOWLIST_TOTAL = 72;
 
 /**
  * B987-D: literals in packages/ that keep a literal because a value import of `@routeflow/types` is ruled out there (a hard runtime constraint for pricing, a build CONVENTION for returns).
@@ -219,6 +257,16 @@ const PACKAGE_ALLOWLIST: Record<string, { codes: string[]; reason: string }> = {
     reason:
       "MoneyInvariantError's `code` field; pricing's dist is loaded by the API at runtime (SA-478a, no value import of @routeflow/types)",
   },
+  "packages/pricing/src/pack-write-path.ts": {
+    codes: ["PRICING_RULES_NOT_READY"],
+    reason:
+      "PricingRulesNotReadyError's `code` field (PF-3, SA-796 R-4); pricing's dist is loaded by the API at runtime (SA-478a, no value import of @routeflow/types)",
+  },
+  "packages/pricing/src/customer-pricing-gate.ts": {
+    codes: ["PLAN_GATE"],
+    reason:
+      "isPlanGateError reads the PLAN_GATE body code of a 403 (SA-883/884: a plan-gated customer-price read is an empty read); pricing's dist is loaded by the API at runtime (SA-478a, no value import of @routeflow/types)",
+  },
   "packages/returns/src/inline-return-state.ts": {
     codes: [
       "ADDON_GATE",
@@ -226,12 +274,13 @@ const PACKAGE_ALLOWLIST: Record<string, { codes: string[]; reason: string }> = {
       "PLAN_GATE_UNAVAILABLE",
       "RETURN_REFUND_OVER_LINE_HEADROOM",
       "INLINE_RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS",
+      "READ_ONLY",
     ],
     reason:
       "CONVENTION, not a runtime constraint: compiled CJS package (like pricing) that keeps @routeflow/types imports type-only, so its dist never requires the raw-TS package; only pricing is bound by SA-478a",
   },
 };
-const PACKAGE_ALLOWLIST_TOTAL = 6;
+const PACKAGE_ALLOWLIST_TOTAL = 9;
 
 /**
  * `READ_ONLY` is ALSO a tenant STATUS value (`tenant.status === "READ_ONLY"`), which is not an error
@@ -241,12 +290,15 @@ const PACKAGE_ALLOWLIST_TOTAL = 6;
 const READ_ONLY_STATUS_FILES = [
   "apps/api/src/billing/billing-cron.service.ts",
   "apps/api/src/billing/billing.service.ts",
+  "apps/api/src/billing/dunning-config.ts", // SA-733r7: READ_ONLY_STATUS, the one spelling the dunning modules share
   "apps/api/src/billing/mrr.service.ts",
   "apps/api/src/billing/subscription-mutation.service.ts",
   "apps/api/src/tenant/tenant-status.guard.ts",
   // web: tenant STATUS checks (`status !== "READ_ONLY"`), not the error code
   "apps/web/app/(dashboard)/settings/billing/page.tsx",
   "apps/web/components/ReadOnlyBanner.tsx",
+  "apps/web/lib/read-only-gate.tsx", // SA-733r6: `view.status === "READ_ONLY"`
+  "apps/web/lib/subscription-banner-state.ts", // SA-733r6: `view.status === "READ_ONLY"`
 ];
 
 /**
@@ -433,6 +485,8 @@ describe("API error codes: the onboarding contracts are registered (B987-C)", ()
 const RETIRED_NOT_SENT: Record<string, string> = {
   ADDON_BILLING_PENDING_CHECKOUT:
     "SA-690 option A bills a trial's add-ons at checkout; the web billing page still maps the retired gate code",
+  PICKUP_ONLY:
+    "I-120 (SA-861 rule 1): Complete at counter takes any path (Store pickup first), so the API no longer sends it; the web pickup dialog still maps it until its copy is dropped (removal LATER)",
 };
 
 describe("API error codes: every code is still sent by the API (#2163)", () => {

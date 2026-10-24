@@ -14,7 +14,8 @@ import { API_ERROR_CODES } from "@routeflow/types";
  *   never falls to "That conflicts with something...".
  */
 export const DAY_CLOSED_FOR_PAYMENT_DATE_COPY = "That day is closed. Record it with today's date.";
-export const COUNTER_SALE_DAY_CLOSED_COPY = "This day has been closed. Reopen the close first.";
+export const COUNTER_SALE_DAY_CLOSED_COPY =
+  "This day is closed, so this can't be changed. Record it with today's date instead.";
 
 /**
  * A refund (a recorded cash / card / check payout of a return) dated inside a closed day. Store credit mints no drawer money,

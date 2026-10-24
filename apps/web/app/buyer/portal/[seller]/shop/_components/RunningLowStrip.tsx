@@ -5,8 +5,10 @@ import Link from "next/link";
 import { ArrowRight, Package, Plus } from "lucide-react";
 import { useBuyerShelf, type ShelfEstimate } from "@/lib/api/buyer";
 import type { useBuyerCart } from "@/lib/buyer-cart";
+import { lineCount, newCartLine } from "@/lib/buyer-cart-line";
 import { objectPositionForUrl } from "@/lib/image-focal";
 import { QtyStepper } from "./QtyStepper";
+import { CartLineUnit } from "../../_components/CartLineUnit";
 
 /**
  * P5-07: horizontal running-low strip at the top of the shop.
@@ -28,18 +30,17 @@ export function RunningLowStrip({
   const low = (shelf?.estimates ?? []).filter((e) => e.state === "low" && !e.snoozed);
   if (low.length === 0) return null;
 
-  const addSuggested = (e: ShelfEstimate) =>
-    cart.addItem({
-      productId: e.productId,
-      qty: e.suggestedQty,
-      name: e.name,
-      unit: e.unit,
-      thumbnailUrl: e.imageUrl,
-      unitsPerBox: e.unitsPerBox,
-      // suggestedQty is already rounded to whole boxes for boxed products.
-      boxes: e.unitsPerBox ? Math.max(1, Math.round(e.suggestedQty / e.unitsPerBox)) : undefined,
-      pieces: e.unitsPerBox ? 0 : undefined,
-    });
+  const addSuggested = (e: ShelfEstimate) => {
+    const upb = e.unitsPerBox && e.unitsPerBox > 1 ? e.unitsPerBox : 0;
+    cart.addItem(
+      newCartLine(
+        { productId: e.productId, name: e.name, unit: e.unit, thumbnailUrl: e.imageUrl },
+        e.unitsPerBox,
+        // suggestedQty is a piece count for a boxed product: add that many whole Cases.
+        upb ? Math.max(1, Math.round(e.suggestedQty / upb)) : Math.max(1, e.suggestedQty),
+      ),
+    );
+  };
 
   return (
     <div className="mb-4 overflow-hidden rounded-xl border border-danger/30 bg-white">
@@ -83,14 +84,23 @@ export function RunningLowStrip({
                 Usually {e.suggestedQty} {e.unitsPerBox && e.unitsPerBox > 1 ? "pcs" : e.unit}
               </p>
               {qty > 0 ? (
-                <QtyStepper
-                  qty={qty}
-                  name={e.name}
-                  onUpdate={(n) => cart.updateQty(e.productId, n)}
-                  onRemove={() => cart.updateQty(e.productId, 0)}
-                  onRestore={line ? () => cart.addItem(line) : undefined}
-                  size="sm"
-                />
+                <div className="flex flex-col items-center gap-1.5">
+                  <QtyStepper
+                    qty={line ? lineCount(line) : qty}
+                    name={e.name}
+                    onUpdate={(n) => cart.updateQty(e.productId, n)}
+                    onRemove={() => cart.updateQty(e.productId, 0)}
+                    onRestore={line ? () => cart.addItem(line) : undefined}
+                    size="sm"
+                  />
+                  {line && (
+                    <CartLineUnit
+                      item={line}
+                      name={e.name}
+                      onUnit={(unit) => cart.setUnit(e.productId, unit)}
+                    />
+                  )}
+                </div>
               ) : (
                 <button
                   onClick={() => addSuggested(e)}

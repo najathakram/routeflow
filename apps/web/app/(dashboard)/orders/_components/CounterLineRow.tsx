@@ -1,14 +1,19 @@
 import * as React from "react";
 import { TAP_TARGET, cn } from "@routeflow/ui/web";
-import { unitWords } from "@routeflow/pricing";
+import { formatReceiptMoney as money, unitWords } from "@routeflow/pricing";
 import { priceUnitWord } from "@/lib/product-unit-label";
 import { cartTotals } from "@/lib/counter-sale";
-import { NOTE_MAX, isBoxedLine, lineQtyLabel, type TypedQty } from "./counter-sale-line-edit";
+import {
+  NOTE_MAX,
+  isBoxedLine,
+  registerPriceLabel,
+  registerQtyLabel,
+  type TypedQty,
+} from "./counter-sale-line-edit";
+import { qtyRefusalMessage, type QtyFieldKind } from "./counter-qty-refusal";
 import { stepLine, type SaleLine, type StepUnit } from "./counter-sale-scan";
 import { CounterLinePriceEdit, type CounterPriceEdit } from "./CounterLinePriceEdit";
 import { cartStrikesList, editedLineFigures, priceEditLineOf } from "./counter-sale-price-edit";
-
-const money = (n: number) => `$${n.toFixed(2)}`;
 
 // A boxed line prints the default pack word; a plain line prints its product's own unit (row 298), else the default base word.
 const UW = unitWords();
@@ -62,10 +67,11 @@ export function LineStepper({
 
 /**
  * A TYPED quantity field (the steppers stay). The draft is local: Enter / blur commit it, Escape reverts, and a value the
- * screen refuses (not whole, or nothing left) snaps back to the line's quantity.
+ * screen refuses (not whole, or nothing left) snaps back to the line's quantity AND says why (CQ-12), until the next edit.
  */
 function QtyField({
   label,
+  kind,
   value,
   locked,
   onCommit,
@@ -73,6 +79,7 @@ function QtyField({
   tabOut = false,
 }: {
   label: string;
+  kind: QtyFieldKind;
   value: number;
   locked: boolean;
   onCommit: (text: string) => boolean;
@@ -81,36 +88,56 @@ function QtyField({
   tabOut?: boolean;
 }) {
   const [draft, setDraft] = React.useState<string | null>(null);
+  const [refusal, setRefusal] = React.useState<string | null>(null);
+  const messageId = React.useId();
   const commit = () => {
     if (draft === null) return;
     const text = draft;
     setDraft(null); // accepted or refused, the field re-reads the line
-    onCommit(text);
+    setRefusal(onCommit(text) ? null : qtyRefusalMessage(text, kind));
   };
   return (
-    <input
-      type="number"
-      inputMode="numeric"
-      min={0}
-      step={1}
-      aria-label={label}
-      className="min-h-[44px] w-16 rounded border px-2 text-center text-sm disabled:opacity-40"
-      disabled={locked}
-      value={draft ?? String(value)}
-      onChange={(e) => setDraft(e.target.value)}
-      onBlur={commit}
-      onKeyDown={(e) => {
-        // Tab is redirected only to finish an uncommitted typed edit; a plain Tab moves on normally
-        if (e.key === "Enter" || (tabOut && e.key === "Tab" && !e.shiftKey && draft !== null)) {
-          e.preventDefault();
-          commit();
-          onEnter?.();
-        } else if (e.key === "Escape") {
-          e.preventDefault();
-          setDraft(null);
-        }
-      }}
-    />
+    <>
+      <input
+        type="number"
+        inputMode="numeric"
+        min={0}
+        step={1}
+        aria-label={label}
+        aria-invalid={refusal ? true : undefined}
+        aria-describedby={refusal ? messageId : undefined}
+        className="min-h-[44px] w-16 rounded border px-2 text-center text-sm disabled:opacity-40"
+        disabled={locked}
+        value={draft ?? String(value)}
+        onChange={(e) => {
+          setRefusal(null);
+          setDraft(e.target.value);
+        }}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          // Tab is redirected only to finish an uncommitted typed edit; a plain Tab moves on normally
+          if (e.key === "Enter" || (tabOut && e.key === "Tab" && !e.shiftKey && draft !== null)) {
+            e.preventDefault();
+            commit();
+            onEnter?.();
+          } else if (e.key === "Escape") {
+            e.preventDefault();
+            setRefusal(null);
+            setDraft(null);
+          }
+        }}
+      />
+      {refusal ? (
+        <span
+          id={messageId}
+          role="alert"
+          className="basis-full text-xs text-red-700"
+          data-testid="counter-qty-refusal"
+        >
+          {refusal}
+        </span>
+      ) : null}
+    </>
   );
 }
 
@@ -127,8 +154,9 @@ function LineQtyEditor({
   onEnter?: () => void;
 }) {
   return isBoxedLine(line) ? (
-    <span className="flex items-center gap-1">
+    <span className="flex flex-wrap items-center gap-1">
       <QtyField
+        kind="boxes"
         label={`Boxes of ${line.name}`}
         value={line.boxes ?? 0}
         locked={locked}
@@ -136,6 +164,7 @@ function LineQtyEditor({
         onEnter={onEnter}
       />
       <QtyField
+        kind="pieces"
         label={`Pieces of ${line.name}`}
         value={line.pieces ?? 0}
         locked={locked}
@@ -146,6 +175,7 @@ function LineQtyEditor({
     </span>
   ) : (
     <QtyField
+      kind="qty"
       label={`Set quantity of ${line.name}`}
       value={line.qty}
       locked={locked}
@@ -160,12 +190,16 @@ function LineQtyEditor({
  * One cart line. Top row: name + quantity label, subtotal, remove. Below: the stepper and the note. `locked` disables EVERY
  * control on the line (an unknown outcome, or the sale POST in flight).
  */
+/** R7b 1.4: the one sentence (a line and the Payment area both say it; the server refusal at Complete stays authoritative). */
+export const COUNTER_LICENSE_NOTE = "Needs a licensed customer: choose one before paying";
+
 export function CounterLineRow({
   line: l,
   locked,
   onStep,
   onRemove,
   onNote,
+  needsLicense,
   onQty,
   canEditPrices = false,
   priceTier = 1,
@@ -182,6 +216,8 @@ export function CounterLineRow({
   onStep: (tempId: string, unit: StepUnit, dir: 1 | -1) => void;
   onRemove: (tempId: string) => void;
   onNote: (tempId: string, note: string) => void;
+  /** R7b 1.4: a walk-in sale holds a line that needs a licensed customer: show the one amber note on the line. */
+  needsLicense?: boolean;
   onQty: (tempId: string, typed: TypedQty) => boolean;
   /** POS-5: the ONE gate (`staffMay(role, "EDIT_LINE_PRICE")`). False = the price control does not exist (hidden, never disabled). */
   canEditPrices?: boolean;
@@ -210,7 +246,7 @@ export function CounterLineRow({
     <li className="flex flex-col gap-2 p-3 text-sm">
       <div className="flex items-start justify-between gap-2">
         <span className="min-w-0 break-words">
-          {l.name} · {lineQtyLabel(l)}
+          {l.name} · {registerQtyLabel(l, UW)}
           <span className="block text-xs text-navy/70">
             {cartStrikesList(l, hideOriginalPrice) ? (
               <s className="mr-1 tabular-nums text-navy/50" data-testid="line-unit-price-was">
@@ -218,10 +254,7 @@ export function CounterLineRow({
               </s>
             ) : null}
             <span className="tabular-nums" data-testid="line-unit-price">
-              {money(l.unitPrice)}{" "}
-              {isBoxedLine(l)
-                ? `/ ${UW.pack.lower}`
-                : `/ ${l.unit ? priceUnitWord(l.unit) : UW.base.lower}`}
+              {registerPriceLabel(l, UW, money, priceUnitWord)}
             </span>
           </span>
         </span>
@@ -301,7 +334,7 @@ export function CounterLineRow({
           type="text"
           maxLength={NOTE_MAX}
           aria-label={`Note for ${l.name}`}
-          className="min-h-[44px] w-full rounded border px-2 py-1 text-sm"
+          className="min-h-[44px] w-full text-ellipsis rounded border px-2 py-1 text-sm"
           placeholder="Flavor or note for this item (prints on invoice)"
           disabled={locked}
           value={l.note ?? ""}
@@ -327,6 +360,11 @@ export function CounterLineRow({
       ) : hasNote ? (
         <p className="break-words text-xs text-navy/70" data-testid="line-note">
           {l.note}
+        </p>
+      ) : null}
+      {needsLicense ? (
+        <p className="text-xs text-amber-800" data-testid="line-license-note">
+          {COUNTER_LICENSE_NOTE}
         </p>
       ) : null}
     </li>

@@ -2,6 +2,7 @@ import * as React from "react";
 import { act, renderWithProviders, screen, fireEvent, waitFor, within } from "@/test-utils/render";
 import type { DayCloseSnapshot, DayCloseState, DayCloseTotals } from "@routeflow/types";
 import type { TodaysSaleRow, TodaysSalesResponse, TodaysSalesSummary } from "@routeflow/types";
+import { DAY_CLOSE_MAX_COUNT } from "@routeflow/pricing";
 import { CounterTodaysSales } from "./CounterTodaysSales";
 
 /**
@@ -21,6 +22,16 @@ jest.mock("@/lib/api-client", () => ({
   },
 }));
 let role: string | undefined = "OPERATOR";
+let tenantSlug: string | null = "acme";
+jest.mock("@/components/tenant-provider", () => ({
+  ...jest.requireActual("@/components/tenant-provider"),
+  useTenant: () => ({
+    slug: tenantSlug,
+    branding: null,
+    isLoading: false,
+    refresh: async () => {},
+  }),
+}));
 jest.mock("@/lib/api/tobacco", () => ({ useHasAddon: () => true }));
 jest.mock("@/lib/auth-context", () => ({
   ...jest.requireActual("@/lib/auth-context"),
@@ -166,7 +177,9 @@ const apiError = (status: number, code: string, message = "server says no") => (
 
 beforeEach(() => {
   jest.clearAllMocks();
+  window.sessionStorage.clear(); // a kept count draft must not leak into the next test
   role = "OPERATOR";
+  tenantSlug = "acme";
   dayState = stateOf();
   serve();
 });
@@ -178,7 +191,8 @@ describe("CounterDayClose: the form", () => {
     expect(screen.getByTestId("close-counted")).toHaveTextContent("$0.00");
     // expected = 100 + 30 - 0
     expect(screen.getByTestId("close-expected")).toHaveTextContent("$130.00");
-    expect(screen.getByTestId("close-variance")).toHaveTextContent("Short $130.00");
+    // nothing counted yet: the hero says so (row 378), never "Short $130.00"
+    expect(screen.getByTestId("close-variance")).toHaveTextContent("Not counted yet");
   });
 
   it("has a row per denomination, the $1 bill and the $1 coin distinct", async () => {
@@ -202,7 +216,7 @@ describe("CounterDayClose: the form", () => {
     expect(screen.getByTestId("close-counted")).toHaveTextContent("$0.30");
     // 0.2 + 0.1 is 0.30000000000000004 in floating point
     expect(screen.getByTestId("close-expected")).toHaveTextContent("$0.30");
-    expect(screen.getByTestId("close-variance")).toHaveTextContent("Even $0.00");
+    expect(screen.getByTestId("close-variance")).toHaveTextContent("Balanced");
     expect(document.body.textContent).not.toMatch(/0\.30000/);
   });
 
@@ -212,14 +226,14 @@ describe("CounterDayClose: the form", () => {
     expect(screen.getByTestId("close-expected")).toHaveTextContent("$122.75");
   });
 
-  it("labels the variance Even / Over / Short in words, not by colour alone", async () => {
+  it("labels the variance Balanced / Over / Short in words, not by colour alone", async () => {
     await openForm();
     setCount("$100 bill", 1);
     setCount("$20 bill", 1);
     setCount("$10 bill", 1);
     expect(screen.getByTestId("close-counted")).toHaveTextContent("$130.00");
     const v = screen.getByTestId("close-variance");
-    expect(v).toHaveTextContent("Even $0.00");
+    expect(v).toHaveTextContent("Balanced");
     setCount("$5 bill", 1);
     expect(v).toHaveTextContent("Over $5.00");
     expect(v.className).toMatch(/amber/);
@@ -228,15 +242,26 @@ describe("CounterDayClose: the form", () => {
     expect(v).toHaveTextContent("Short $10.00");
     expect(v.className).toMatch(/red/);
     expect(v.className).not.toMatch(/amber/);
-    // one vocabulary: the old Balanced / Under words are gone from the form
-    expect(v.textContent).not.toMatch(/Balanced|Under/);
+    // one vocabulary: Even, Under and Over/short are gone from the form
+    expect(v.textContent).not.toMatch(/Even|Under|Over\/short/);
   });
 
-  it("shows Not taken at the till, and the tender note only while a refund has no recorded tender", async () => {
+  it("the variance is the sticky hero, neutral (not red) until the first count entry", async () => {
     await openForm();
-    expect(screen.getByTestId("close-not-at-till")).toHaveTextContent(
-      "Not taken at the till: $12.50",
-    );
+    const v = screen.getByTestId("close-variance");
+    // nothing counted yet: a plain prompt, no verdict and no alarm colour
+    expect(v).toHaveTextContent("Not counted yet");
+    expect(v.textContent).not.toMatch(/Short|Over|Balanced/);
+    expect(v.className).not.toMatch(/red|amber|green/);
+    expect(v.className).toMatch(/text-2xl font-semibold/);
+    expect(screen.getByTestId("day-close-variance-hero").className).toMatch(/sticky top-0/);
+    setCount("$20 bill", 1);
+    expect(v.className).toMatch(/red/);
+  });
+
+  it("shows Unpaid pickups, and the tender note only while a refund has no recorded tender", async () => {
+    await openForm();
+    expect(screen.getByTestId("close-not-at-till")).toHaveTextContent("Unpaid pickups: $12.50");
     expect(screen.queryByTestId("close-tender-note")).toBeNull();
   });
 
@@ -283,7 +308,9 @@ describe("CounterDayClose: the form", () => {
     const form = dialogs[dialogs.length - 1];
     expect(form.className).toMatch(/h-\[100dvh\]/);
     expect(form.className).toMatch(/w-screen/);
-    expect(screen.getByRole("button", { name: "More $20 bill" }).className).toMatch(/min-h-11/);
+    expect(screen.getByRole("button", { name: "More $20 bill" }).className).toMatch(
+      /min-h-\[44px\]/,
+    );
     expect(screen.getByLabelText("$20 bill count").className).toMatch(/h-11/);
     expect(screen.getByLabelText("$20 bill count")).toHaveAttribute("inputmode", "numeric");
   });
@@ -384,7 +411,7 @@ describe("CounterDayClose: the closed state", () => {
   });
 
   it.each([
-    [0, "Closed 11:30 AM by Pat · Even $0.00"],
+    [0, "Closed 11:30 AM by Pat · Balanced"],
     [1, "Closed 11:30 AM by Pat · Over $1.00"],
   ])("a variance of %s reads '%s'", async (variance, text) => {
     withClose({ variance, countedCash: 130 + variance });
@@ -409,58 +436,57 @@ describe("CounterDayClose: the closed state", () => {
   it("View Z opens the Z report for the stored close, in the plan's four groups", async () => {
     withClose({ day: "2026-10-07" });
     await openSheet();
-    fireEvent.click(await screen.findByRole("button", { name: "View Z" }));
+    fireEvent.click(await screen.findByRole("button", { name: "View Z report" }));
     const dialog = await screen.findByRole("dialog", { name: "Z report · Wed, Oct 7" });
-    expect(within(dialog).getByTestId("z-headline")).toHaveTextContent(
-      "Counted $128.00 · Short $2.00",
-    );
+    expect(within(dialog).getByTestId("z-headline").textContent).toBe("Short $2.00");
+    expect(within(dialog).getByTestId("z-counted")).toHaveTextContent("Counted $128.00");
     expect(
       within(dialog)
         .getAllByRole("heading", { level: 3 })
         .map((h) => h.textContent),
-    ).toEqual(["Money in", "Credit & account", "Refunds & net", "Drawer"]);
+    ).toEqual(["Drawer", "Money in", "Credit & account", "Refunds & net"]);
     // the stored expected cash, not a re-derived one
-    expect(within(dialog).getByTestId("z-row-Cash in drawer")).toHaveTextContent("$130.00");
+    expect(within(dialog).getByTestId("z-row-Expected cash")).toHaveTextContent("$130.00");
     expect(within(dialog).getByTestId("z-note")).toHaveTextContent("ok");
     // no customer names, no sale lines
     expect(within(dialog).queryAllByRole("listitem")).toHaveLength(0);
   });
 
-  it("View Z carries Print, Resend and Back to sales; Back to sales returns to the sheet", async () => {
+  it("View Z carries Close, Email and Print (Print last); Close returns to the sheet", async () => {
     withClose({ reportSent: true });
     await openSheet();
-    fireEvent.click(await screen.findByRole("button", { name: "View Z" }));
+    fireEvent.click(await screen.findByRole("button", { name: "View Z report" }));
     const z = await screen.findByRole("dialog", { name: "Z report · Wed, Oct 7" });
     const actions = within(z).getByTestId("z-actions");
     expect(
       within(actions)
         .getAllByRole("button")
         .map((b) => b.textContent),
-    ).toEqual(["Print", "Resend", "Back to sales"]);
-    fireEvent.click(within(actions).getByRole("button", { name: "Back to sales" }));
+    ).toEqual(["Close", "Email", "Print"]);
+    fireEvent.click(within(actions).getByRole("button", { name: "Close" }));
     await waitFor(() => expect(screen.queryByTestId("z-report")).toBeNull());
     expect(screen.getByRole("dialog", { name: "Today's sales" })).toBeInTheDocument();
   });
 
-  it("Resend in the Z view posts the report route and shows the fixed sent line", async () => {
+  it("Email in the Z view posts the report route and shows the fixed sent line", async () => {
     withClose({ reportSent: true });
     post.mockResolvedValue({ data: { reportSent: true } });
     await openSheet();
-    fireEvent.click(await screen.findByRole("button", { name: "View Z" }));
+    fireEvent.click(await screen.findByRole("button", { name: "View Z report" }));
     const z = await screen.findByRole("dialog", { name: "Z report · Wed, Oct 7" });
-    fireEvent.click(within(z).getByRole("button", { name: "Resend" }));
+    fireEvent.click(within(z).getByRole("button", { name: "Email" }));
     await waitFor(() =>
       expect(post).toHaveBeenCalledWith("/orders/counter-sale/day-close/dc1/report"),
     );
     expect(await within(z).findByTestId("z-resend-status")).toHaveTextContent(
-      "Report sent to the admins",
+      "Z report emailed to admins",
     );
   });
 
   it("Escape leaves the Z view first, then the Today's sales sheet", async () => {
     withClose();
     await openSheet();
-    fireEvent.click(await screen.findByRole("button", { name: "View Z" }));
+    fireEvent.click(await screen.findByRole("button", { name: "View Z report" }));
     await screen.findByRole("dialog", { name: "Z report · Wed, Oct 7" });
     fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape", code: "Escape" });
     await waitFor(() => expect(screen.queryByTestId("z-report")).toBeNull());
@@ -473,10 +499,10 @@ describe("CounterDayClose: the closed state", () => {
     withClose({ variance: -2, countedCash: 128 });
     await openSheet();
     expect(await screen.findByTestId("closed-variance")).toHaveTextContent("Short $2.00");
-    fireEvent.click(screen.getByRole("button", { name: "View Z" }));
+    fireEvent.click(screen.getByRole("button", { name: "View Z report" }));
     const z = await screen.findByRole("dialog", { name: "Z report · Wed, Oct 7" });
-    expect(within(z).getByTestId("z-headline")).toHaveTextContent("Counted $128.00 · Short $2.00");
-    expect(document.body.textContent).not.toMatch(/Balanced|Under \$/);
+    expect(within(z).getByTestId("z-headline").textContent).toBe("Short $2.00");
+    expect(document.body.textContent).not.toMatch(/Balanced|Under \$|Even \$|Over\/short/);
   });
 
   it("shows 'Report not sent' with Resend only when reportSent === false", async () => {
@@ -522,23 +548,26 @@ describe("CounterDayClose: the closed state", () => {
     expect(document.body.textContent).not.toMatch(/smtp password/);
   });
 
-  it.each(["OPERATOR", "TENANT_ADMIN"])("%s sees View Z and Edit count", async (r) => {
+  it.each(["OPERATOR", "TENANT_ADMIN"])("%s sees View Z report and Edit count", async (r) => {
     role = r;
     withClose();
     await openSheet();
     await screen.findByTestId("day-close-closed");
-    expect(screen.getByRole("button", { name: "View Z" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "View Z report" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Edit count" })).toBeInTheDocument();
   });
 
-  it.each([undefined, "DRIVER", "CUSTOMER"])("role %s sees View Z but no Edit count", async (r) => {
-    role = r;
-    withClose();
-    await openSheet();
-    await screen.findByTestId("day-close-closed");
-    expect(screen.getByRole("button", { name: "View Z" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Edit count" })).toBeNull();
-  });
+  it.each([undefined, "DRIVER", "CUSTOMER"])(
+    "role %s sees View Z report but no Edit count",
+    async (r) => {
+      role = r;
+      withClose();
+      await openSheet();
+      await screen.findByTestId("day-close-closed");
+      expect(screen.getByRole("button", { name: "View Z report" })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Edit count" })).toBeNull();
+    },
+  );
 
   it("has no Reopen day button or confirm dialog any more: the reopen path is Edit count", async () => {
     withClose();
@@ -549,6 +578,10 @@ describe("CounterDayClose: the closed state", () => {
     await screen.findByTestId("day-close-form");
     expect(screen.queryByRole("dialog", { name: "Reopen this day?" })).toBeNull();
     expect(post).not.toHaveBeenCalled();
+    // row 345 wording for what an edit does (the owner-ruled sentence R4.2 shipped)
+    expect(
+      screen.getByText("Sales times stay the same. A corrected Z report is emailed."),
+    ).toBeInTheDocument();
   });
 
   it("offers no second close for a quiet window on the same day, but does once anything happened", async () => {
@@ -615,11 +648,178 @@ describe("CounterDayClose: loading and failure", () => {
     expect(await screen.findByRole("button", { name: "Close day" })).toBeInTheDocument();
   });
 
+  it("Close day is a secondary button", async () => {
+    await openSheet();
+    const btn = await screen.findByRole("button", { name: "Close day" });
+    expect(btn.className).toContain("bg-paper");
+    expect(btn.className).not.toContain("bg-accent-strong");
+  });
+
   it("places Close day above the Summary", async () => {
     await openSheet();
     const btn = await screen.findByRole("button", { name: "Close day" });
     const summary = await screen.findByTestId("today-summary");
     expect(btn.compareDocumentPosition(summary) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+});
+
+const draftKeys = () =>
+  Object.keys(window.sessionStorage).filter((k) => k.startsWith("rf:dayclose:draft:"));
+const pressEscape = () =>
+  fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape", code: "Escape" });
+
+describe("CounterDayClose: the drawer count survives a dismissed dialog (R7b 2.3, B1263)", () => {
+  beforeEach(() => window.sessionStorage.clear());
+
+  it("closing the form with a typed count and reopening keeps the float and counts", async () => {
+    await openForm();
+    setFloat("50.00");
+    setCount("$20 bill", 2);
+    fireEvent.change(screen.getByLabelText("Notes"), { target: { value: "short a five" } });
+    pressEscape();
+    fireEvent.click(await screen.findByRole("button", { name: "Keep" }));
+    await waitFor(() => expect(screen.queryByTestId("day-close-form")).toBeNull());
+    fireEvent.click(await screen.findByRole("button", { name: "Close day" }));
+    await screen.findByTestId("day-close-form");
+    expect(screen.getByLabelText("Opening float")).toHaveValue("50.00");
+    expect(screen.getByLabelText("$20 bill count")).toHaveValue("2");
+    expect(screen.getByLabelText("Notes")).toHaveValue("short a five");
+    expect(draftKeys()).toHaveLength(1);
+    expect(draftKeys()[0]).toMatch(/^rf:dayclose:draft:[^:]+:main:\d{4}-\d{2}-\d{2}$/);
+  });
+
+  it("a dirty close asks Keep or Discard; Discard clears the draft", async () => {
+    await openForm();
+    setCount("$5 bill", 4);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(await screen.findByText("Keep your count for later?")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+    await waitFor(() => expect(screen.queryByTestId("day-close-form")).toBeNull());
+    expect(draftKeys()).toHaveLength(0);
+    fireEvent.click(await screen.findByRole("button", { name: "Close day" }));
+    await screen.findByTestId("day-close-form");
+    expect(screen.getByLabelText("Opening float")).toHaveValue("100.00");
+    expect(screen.getByLabelText("$5 bill count")).toHaveValue("0");
+  });
+
+  it("typing the suggested float as 100 (not 100.00) is not dirty: no prompt on close (N1)", async () => {
+    await openForm();
+    setFloat("100");
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByTestId("day-close-form")).toBeNull());
+    expect(screen.queryByText("Keep your count for later?")).toBeNull();
+    expect(draftKeys()).toHaveLength(0);
+  });
+
+  it("with no tenant known there is no draft: nothing is written under a made-up tenant (N5)", async () => {
+    tenantSlug = null;
+    await openForm();
+    setCount("$20 bill", 2);
+    await new Promise((r) => setTimeout(r, 450));
+    expect(draftKeys()).toHaveLength(0);
+    pressEscape();
+    fireEvent.click(await screen.findByRole("button", { name: "Keep" }));
+    await waitFor(() => expect(screen.queryByTestId("day-close-form")).toBeNull());
+    expect(draftKeys()).toHaveLength(0);
+  });
+
+  it("a clean form closes with no question and writes no draft", async () => {
+    await openForm();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByTestId("day-close-form")).toBeNull());
+    expect(screen.queryByText("Keep your count for later?")).toBeNull();
+    expect(draftKeys()).toHaveLength(0);
+  });
+
+  it("a successful close clears the draft", async () => {
+    post.mockResolvedValue({ data: snapshot() });
+    await openForm();
+    setCount("$20 bill", 2);
+    await waitFor(() => expect(draftKeys()).toHaveLength(1));
+    fireEvent.click(submitButton());
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(draftKeys()).toHaveLength(0));
+  });
+
+  it("the draft key is the window's tenant day: a count typed before midnight is still there after it (I1)", async () => {
+    jest.useFakeTimers({
+      doNotFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "queueMicrotask"],
+    });
+    try {
+      // 23:58 on Oct 7 in New York = 03:58Z on Oct 8; the preview window started that morning
+      jest.setSystemTime(new Date("2026-10-08T03:58:00.000Z"));
+      await openForm();
+      setCount("$20 bill", 2);
+      pressEscape();
+      fireEvent.click(await screen.findByRole("button", { name: "Keep" }));
+      await waitFor(() => expect(screen.queryByTestId("day-close-form")).toBeNull());
+      jest.setSystemTime(new Date("2026-10-08T04:30:00.000Z")); // 00:30 the next tenant day
+      fireEvent.click(await screen.findByRole("button", { name: "Close day" }));
+      await screen.findByTestId("day-close-form");
+      expect(screen.getByLabelText("$20 bill count")).toHaveValue("2");
+      expect(draftKeys()[0]).toContain(":2026-10-07");
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("a seeded form (Edit count) never touches the kept draft (M2)", async () => {
+    const first = await openSheet();
+    fireEvent.click(await screen.findByRole("button", { name: "Close day" }));
+    await screen.findByTestId("day-close-form");
+    setCount("$20 bill", 2);
+    pressEscape();
+    fireEvent.click(await screen.findByRole("button", { name: "Keep" }));
+    await waitFor(() => expect(screen.queryByTestId("day-close-form")).toBeNull());
+    first.unmount();
+    const kept = window.sessionStorage.getItem(draftKeys()[0]!);
+    expect(kept).not.toBeNull();
+    // a fresh sheet whose state is a reopened close: the seeded form opens, then closes
+    dayState = stateOf({ lastClose: snapshot({ reopenedAt: "2026-10-07T16:00:00.000Z" }) });
+    await openSheet();
+    fireEvent.click(await screen.findByRole("button", { name: "Close day" }));
+    await screen.findByLabelText("Opening float (kept from the first close)");
+    await new Promise((r) => setTimeout(r, 450)); // long enough for the debounced write to have fired
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByTestId("day-close-form")).toBeNull());
+    expect(window.sessionStorage.getItem(draftKeys()[0]!)).toBe(kept);
+  });
+
+  it("unmounting the sheet under a typed count keeps it, with no confirm (M1)", async () => {
+    const r = await openSheet();
+    fireEvent.click(await screen.findByRole("button", { name: "Close day" }));
+    await screen.findByTestId("day-close-form");
+    setCount("$20 bill", 3);
+    r.unmount(); // what closing Today's sales or switching to week does to the form
+    await openForm();
+    expect(screen.getByLabelText("$20 bill count")).toHaveValue("3");
+  });
+
+  it("restored counts follow the input's rule: whole, not negative, capped (M3)", async () => {
+    window.sessionStorage.setItem(
+      "rf:dayclose:draft:acme:main:2026-10-07",
+      JSON.stringify({
+        v: 1,
+        floatText: "100.00",
+        notes: "",
+        counts: { "bill:20": -3, "bill:10": 2.7, "bill:5": 99999999 },
+      }),
+    );
+    await openForm();
+    expect(screen.getByLabelText("$20 bill count")).toHaveValue("0");
+    expect(screen.getByLabelText("$10 bill count")).toHaveValue("2");
+    expect(
+      Number((screen.getByLabelText("$5 bill count") as HTMLInputElement).value),
+    ).toBeLessThanOrEqual(DAY_CLOSE_MAX_COUNT);
+    expect(screen.getByLabelText("$5 bill count")).not.toHaveValue("99999999");
+  });
+
+  it("the form says the Z report is emailed before Close day", async () => {
+    await openForm();
+    const note = screen.getByText("Closing emails the Z report to admins.");
+    expect(
+      note.compareDocumentPosition(submitButton()) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 });
 
@@ -669,6 +869,14 @@ describe("CounterDayClose: Edit count (reopen, then close again)", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Edit count" }));
     return screen.findByTestId("day-close-form");
   };
+
+  it("row 345: the help line says sales times stay the same and a corrected Z report is emailed", async () => {
+    closedWithQuietNextWindow();
+    await openEdit();
+    const dialog = screen.getByRole("dialog", { name: "Edit count" });
+    expect(dialog).toHaveTextContent("Sales times stay the same. A corrected Z report is emailed.");
+    expect(dialog).not.toHaveTextContent("The window stays the same");
+  });
 
   it("opens the count form prefilled from the stored close, float locked, and posts nothing yet", async () => {
     closedWithQuietNextWindow();
@@ -828,7 +1036,7 @@ describe("CounterDayClose: close failures (fixed copy per cause, counts kept)", 
     expect(alert).toHaveTextContent("Closed on another device.");
     expect(screen.getByLabelText("$20 bill count")).toHaveValue("3");
     const before = stateCalls().length;
-    fireEvent.click(within(alert).getByRole("button", { name: "View Z" }));
+    fireEvent.click(within(alert).getByRole("button", { name: "View Z report" }));
     const z = await screen.findByRole("dialog", { name: "Z report · Wed, Oct 7" });
     expect(stateCalls().length).toBeGreaterThan(before);
     expect(within(z).getByTestId("z-closed-line")).toHaveTextContent("Closed 11:30 AM by Sam");
@@ -837,7 +1045,7 @@ describe("CounterDayClose: close failures (fixed copy per cause, counts kept)", 
 
   it("only DAY_ALREADY_CLOSED offers View Z in the form", async () => {
     const alert = await failWith(apiError(500, "INTERNAL"));
-    expect(within(alert).queryByRole("button", { name: "View Z" })).toBeNull();
+    expect(within(alert).queryByRole("button", { name: "View Z report" })).toBeNull();
   });
 });
 
@@ -880,22 +1088,22 @@ describe("CounterDayClose: phone layout", () => {
     dayState = stateOf({ lastClose: snapshot({ reportSent: false }), salesSince: 0 });
     await openSheet();
     const card = await screen.findByTestId("day-close-closed");
-    for (const name of ["Resend", "View Z", "Edit count"]) {
-      expect(within(card).getByRole("button", { name }).className).toMatch(/min-h-11/);
+    for (const name of ["Resend", "View Z report", "Edit count"]) {
+      expect(within(card).getByRole("button", { name }).className).toMatch(/min-h-\[44px\]/);
     }
     fireEvent.click(within(card).getByRole("button", { name: "Edit count" }));
     const form = await screen.findByTestId("day-close-form");
     const dialogs = screen.getAllByRole("dialog");
     expect(dialogs[dialogs.length - 1].className).toMatch(/h-\[100dvh\]/);
     for (const name of ["Save count", "Cancel"]) {
-      expect(within(form).getByRole("button", { name }).className).toMatch(/min-h-11/);
+      expect(within(form).getByRole("button", { name }).className).toMatch(/min-h-\[44px\]/);
     }
     expect(within(form).getByLabelText("$20 bill count").className).toMatch(/h-11/);
     expect(
       within(form).getByLabelText("Opening float (kept from the first close)").className,
     ).toMatch(/h-11/);
     expect(within(form).getByRole("button", { name: "More $20 bill" }).className).toMatch(
-      /min-h-11/,
+      /min-h-\[44px\]/,
     );
   });
 });

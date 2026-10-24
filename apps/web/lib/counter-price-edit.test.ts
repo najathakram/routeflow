@@ -47,7 +47,8 @@ describe("resolveCounterPriceEdit (POS-5 money, golden)", () => {
   it.each([
     ["percent", 100.01, "PERCENT_RANGE"],
     ["percent", -1, "PERCENT_RANGE"],
-    ["percent", 10.123, "PERCENT_RANGE"],
+    ["percent", 10.123, "PERCENT_PRECISION"],
+    ["percent", 10.555, "PERCENT_PRECISION"],
     ["amount", 10.01, "AMOUNT_OVER_PRICE"],
     ["amount", -1, "NEGATIVE"],
     ["set", -0.01, "NEGATIVE"],

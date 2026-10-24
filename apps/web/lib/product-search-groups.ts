@@ -139,3 +139,38 @@ export function sellableFlat<T extends PickerRow>(rows: readonly T[]): T[] {
   }
   return out;
 }
+
+/** What Enter does on a grouped picker's first shown row (row 503, SA must). */
+export type GroupEnterAction<T> =
+  { kind: "add"; product: T } | { kind: "expand"; id: string } | { kind: "none" };
+
+/**
+ * Row 503: Enter does what a click on the first shown row does, never adds a product the operator cannot
+ * see. A standalone row, and a non-family parent with variants (#3323), add themselves. A FAMILY row
+ * EXPANDS (as a click does), except that a family with exactly one sellable variant adds it; once the
+ * family is open, Enter adds the highlighted visible variant (the first by default).
+ */
+export function groupEnterAction<T extends PickerRow>(
+  first: T | undefined,
+  expanded: boolean,
+  highlight = 0,
+): GroupEnterAction<T> {
+  if (!first) return { kind: "none" };
+  if (!isFamilyProduct(first)) return { kind: "add", product: first };
+  const variants = (first.variants ?? []) as T[];
+  if (variants.length === 0) return { kind: "none" };
+  if (variants.length === 1) return { kind: "add", product: attachParent(variants[0], first) };
+  if (!expanded) return { kind: "expand", id: first.id };
+  const i = Math.min(Math.max(highlight, 0), variants.length - 1);
+  return { kind: "add", product: attachParent(variants[i], first) };
+}
+
+/** Every product a grouped list offers, in display order (each sellable row, then its variants). */
+export function groupOffered<T extends PickerRow>(rows: readonly T[]): T[] {
+  const out: T[] = [];
+  for (const r of rows) {
+    if (!isFamilyProduct(r)) out.push(r);
+    for (const v of r.variants ?? []) out.push(attachParent(v as T, r));
+  }
+  return out;
+}

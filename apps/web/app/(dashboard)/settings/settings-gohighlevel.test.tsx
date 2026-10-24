@@ -133,6 +133,13 @@ describe("GoHighLevelSettingsTab", () => {
 
 // ─── Container tests (M15/M16/m5) — mock `apiClient`, mount the real hooks ─────
 
+// The container's connection / rules controls are admin-only (Perms PR1); these flows run as a tenant admin.
+let mockRole = "TENANT_ADMIN";
+jest.mock("@/lib/auth-context", () => ({
+  ...jest.requireActual("@/lib/auth-context"),
+  useAuth: () => ({ user: { id: "u1", role: mockRole } }),
+}));
+
 jest.mock("@/lib/api-client", () => ({
   apiClient: {
     get: jest.fn(),
@@ -311,5 +318,20 @@ describe("GoHighLevelSettingsTabConnected (container)", () => {
 
     expect(await screen.findByText(/key ending in/)).toBeInTheDocument();
     expect(screen.queryByLabelText("Connection key")).not.toBeInTheDocument();
+  });
+});
+
+describe("Perms PR1: an operator reads GoHighLevel but cannot connect or change its rules", () => {
+  afterEach(() => {
+    mockRole = "TENANT_ADMIN";
+  });
+  it("no connection key form, and the admin-only line instead", async () => {
+    mockRole = "OPERATOR";
+    renderWithProviders(<GoHighLevelSettingsTabConnected />);
+    expect(
+      await screen.findByText(/Only an admin can (connect GoHighLevel|change these settings)/),
+    ).toBeInTheDocument();
+    expect(screen.queryByLabelText("Connection key")).toBeNull();
+    expect(screen.queryByRole("button", { name: /Save & test|Disconnect|Replace key/ })).toBeNull();
   });
 });

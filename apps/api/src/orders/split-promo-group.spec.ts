@@ -1,0 +1,67 @@
+import { planSplitPromos } from "./split-promo-group";
+
+/**
+ * B297 row 355: the buyer replace-all prices a product on several lines on its COMBINED quantity; each
+ * entry is read from its OWN line (pack vs pieces), free units go oldest line first, one-line products
+ * get no group.
+ */
+const products = new Map([
+  ["p1", { unitsPerBox: null }],
+  ["boxed", { unitsPerBox: 12 }],
+]);
+const none = new Set<string>();
+
+describe("planSplitPromos", () => {
+  it("gives no group to a product on one line", () => {
+    expect(planSplitPromos([{ productId: "p1", qty: 12 }], [], products, none).size).toBe(0);
+  });
+
+  it("measures two lines of an unboxed product together", () => {
+    const g = planSplitPromos(
+      [
+        { productId: "p1", qty: 6 },
+        { productId: "p1", qty: 6 },
+      ],
+      [],
+      products,
+      none,
+    ).get("p1")!;
+    expect(g).toMatchObject({ qtyPieces: 12, qtyUnits: 12 });
+  });
+
+  it("reads a pack line as selling units and a box-split line (named by its stored line) as pieces", () => {
+    const lineItems = [
+      { id: "L-pack", productId: "boxed", boxes: null, pieces: null },
+      { id: "L-box", productId: "boxed", boxes: 2, pieces: 0 },
+    ];
+    const g = planSplitPromos(
+      [
+        { productId: "boxed", qty: 2, sourceLineId: "L-pack" },
+        { productId: "boxed", qty: 24, sourceLineId: "L-box" },
+      ],
+      lineItems,
+      products,
+      none,
+    ).get("boxed")!;
+    // 2 packs = 24 pieces, + 24 pieces = 48 pieces = 4 boxes
+    expect(g).toMatchObject({ qtyPieces: 48, qtyUnits: 4 });
+    expect(g.denomination).toMatchObject({ boxes: 4, pieces: 0, unitsPerBox: 12 });
+  });
+
+  it("allocates oldest first: stored lines by their createdAt (payload order be damned), then added lines in payload order", () => {
+    const lineItems = [
+      { id: "z-old", productId: "p1", createdAt: new Date("2026-01-01") },
+      { id: "a-new", productId: "p1", createdAt: new Date("2026-02-01") },
+    ];
+    const items = [
+      { productId: "p1", qty: 5 }, // added in this edit
+      { productId: "p1", qty: 7, sourceLineId: "a-new" },
+      { productId: "p1", qty: 2, sourceLineId: "z-old" }, // the OLDEST line, last in the payload
+    ];
+    const g = planSplitPromos(items, lineItems, products, none).get("p1")!;
+    // 2 free over caps [z-old:2, a-new:7, added:5]: the oldest line takes both
+    expect(g.share(items[2], 2)).toBe(2);
+    expect(g.share(items[1], 2)).toBe(0);
+    expect(g.share(items[0], 2)).toBe(0);
+  });
+});

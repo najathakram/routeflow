@@ -2,8 +2,9 @@ import { BadRequestException, Injectable } from "@nestjs/common";
 import { roundMoney } from "@routeflow/pricing";
 import { PrismaService } from "../../prisma/prisma.service";
 import { billableAddonWhere } from "../addon-row";
-import { cyclePrice, periodMonths, type Cycle } from "../billing-math";
+import { annualPrice, cyclePrice, periodMonths, type Cycle } from "../billing-math";
 import { PlatformPricingService } from "../platform-pricing.service";
+import { windowParts, type WindowPart } from "./calendar-windows";
 import type { RfInvoiceLine } from "./rf-invoice.constants";
 
 export type RfInvoiceDraft =
@@ -53,20 +54,29 @@ export class RfInvoiceBuilder {
       throw e;
     }
 
-    const { months, irregular } = windowMonths(cycle, window);
+    // SA-744r2 M3: a window the calendar helper produces is priced by its parts (whole calendar months at
+    // the full price, an alignment stretch prorated exactly). Any other shape keeps the length-based months
+    // and is flagged IRREGULAR_PERIOD - a defensive notice, not normal flow.
+    const parts = window ? windowParts(window.periodStart, window.periodEnd, cycle) : null;
+    const legacy = parts ? null : windowMonths(cycle, window);
+    const effectiveParts: WindowPart[] = parts ?? [{ kind: "FULL", months: legacy!.months }];
+    const irregular = legacy?.irregular ?? false;
+
     const planUnit = roundMoney(cycle === "ANNUAL" ? resolved.annual : resolved.monthly);
-    // Unit first, then x months - the same rounding order as the add-on rule below.
-    const planAmount = roundMoney(planUnit * months);
-    const lines: RfInvoiceLine[] = [
-      {
-        kind: "PLAN",
-        code: resolved.planKey,
-        label: `${resolved.planName} plan (${cycle === "ANNUAL" ? "annual" : "monthly"})`,
-        quantity: months,
-        unitAmount: planUnit,
-        amount: planAmount,
-      },
-    ];
+    const planProrationUnit = cycle === "ANNUAL" ? resolved.annual / 12 : resolved.monthly;
+    const lines: RfInvoiceLine[] = [];
+    for (const part of effectiveParts) {
+      lines.push(
+        partLine(part, {
+          kind: "PLAN",
+          code: resolved.planKey,
+          label: `${resolved.planName} plan (${cycle === "ANNUAL" ? "annual" : "monthly"})`,
+          units: 1,
+          fullUnit: planUnit,
+          prorationUnit: planProrationUnit,
+        }),
+      );
+    }
 
     const rows = await this.prisma.tenantAddon.findMany({
       where: billableAddonWhere({ tenantId, active: true }),
@@ -75,18 +85,31 @@ export class RfInvoiceBuilder {
     let needsReview = irregular;
     for (const row of rows) {
       if (row.isComp) continue; // belt and braces: billableAddonWhere already excludes comps
-      // Units x months: a quarterly line of 2 units is quantity 6 at the monthly unit price.
-      const quantity = row.quantity * months;
+      const code = row.sku ?? row.addonKey;
       if (row.priceSnapshot == null) {
         needsReview = true;
-        lines.push(addonLine(row, quantity, 0, 0));
+        // Units x months: a quarterly line of 2 units is quantity 6 at the monthly unit price.
+        for (const part of effectiveParts) {
+          lines.push(addonLine(code, part.kind === "FULL" ? row.quantity * part.months : 0, 0, 0));
+        }
         continue;
       }
       // ONE formula for both cycles, the same as manual-activation-addons.ts (cycleAmount): the invoice
       // must equal what the other billing paths charge.
-      const unit = cyclePrice(Number(row.priceSnapshot), cycle);
-      const amount = roundMoney(unit * quantity);
-      lines.push(addonLine(row, quantity, unit, amount));
+      const snapshot = Number(row.priceSnapshot);
+      for (const part of effectiveParts) {
+        lines.push(
+          partLine(part, {
+            kind: "ADDON",
+            code,
+            label: code,
+            units: row.quantity,
+            fullUnit: cyclePrice(snapshot, cycle),
+            prorationUnit:
+              cycle === "ANNUAL" ? annualPrice(snapshot) / 12 : cyclePrice(snapshot, cycle),
+          }),
+        );
+      }
     }
 
     const total = roundMoney(lines.reduce((sum, l) => sum + l.amount, 0));
@@ -95,13 +118,58 @@ export class RfInvoiceBuilder {
 }
 
 function addonLine(
-  row: { sku: string | null; addonKey: string },
+  code: string,
   quantity: number,
   unitAmount: number,
   amount: number,
 ): RfInvoiceLine {
-  const code = row.sku ?? row.addonKey;
   return { kind: "ADDON", code, label: code, quantity, unitAmount, amount };
+}
+
+interface PartProduct {
+  kind: RfInvoiceLine["kind"];
+  code: string;
+  label: string;
+  /** Units of the product (an add-on's quantity; 1 for the plan). */
+  units: number;
+  /** The price of one unit for a whole billing month (ANNUAL: year), already rounded to cents. */
+  fullUnit: number;
+  /** The unit price an alignment stretch prorates: the monthly price (ANNUAL: annual / 12), unrounded. */
+  prorationUnit: number;
+}
+
+/** Trim a day count to at most 4 decimals without trailing zeros (9.5, 2.5, 1.0417). */
+function fmtDays(n: number): string {
+  return String(Number(n.toFixed(4)));
+}
+
+/**
+ * ONE line for one part of a window (L-167: every line of every invoice is priced here).
+ * FULL: `roundMoney(unit x units x months)`. ALIGN (M3): ONE rounding per line,
+ * `roundMoney(unit x units x daysRemaining / daysInCycle)` - never a rounded unit multiplied by qty. The
+ * displayed quantity is the fraction of a unit (4 dp); the amount comes from the exact figures.
+ */
+function partLine(part: WindowPart, p: PartProduct): RfInvoiceLine {
+  if (part.kind === "FULL") {
+    const quantity = p.units * part.months;
+    return {
+      kind: p.kind,
+      code: p.code,
+      label: p.label,
+      quantity,
+      unitAmount: p.fullUnit,
+      amount: roundMoney(p.fullUnit * quantity),
+    };
+  }
+  const factor = part.daysRemaining / part.daysInCycle;
+  return {
+    kind: p.kind,
+    code: p.code,
+    label: `${p.label}, prorated ${fmtDays(part.daysRemaining)}/${fmtDays(part.daysInCycle)} days`,
+    quantity: Number((p.units * factor).toFixed(4)),
+    unitAmount: roundMoney(p.prorationUnit),
+    amount: roundMoney(p.prorationUnit * p.units * factor),
+  };
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;

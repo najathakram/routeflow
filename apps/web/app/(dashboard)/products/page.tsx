@@ -8,7 +8,6 @@ import {
   LayoutGrid,
   LayoutList,
   Plus,
-  Trash2,
   X as XIcon,
   CheckSquare,
   Pencil,
@@ -26,8 +25,14 @@ import { useToast } from "@routeflow/ui/web";
 import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
 import { useUrlPage, useResetPageOnChange, useClampPage } from "@/lib/hooks/useUrlPage";
-import { useProducts, useUpdateProduct, useBulkDeleteProducts } from "@/lib/api/products";
-import { cascadeTierPrices, unitWords, type TierField } from "@routeflow/pricing";
+import {
+  useProducts,
+  useProductCategories,
+  useUpdateProduct,
+  useBulkDeleteProducts,
+} from "@/lib/api/products";
+import { applyLadderChange, ladderChangeNote, unitWords, type TierField } from "@routeflow/pricing";
+import { productTierLabel } from "@/lib/tier-one-label";
 import { useTierLabels, type TierLabelsConfig } from "@/lib/api/tier-labels";
 import { unitsLabel } from "@/lib/stock-label";
 import { useTrackedCategories, type TrackedCategory } from "@/lib/api/tracked-categories";
@@ -41,9 +46,11 @@ import { AssignToSectionModal } from "@/components/AssignToSectionModal";
 import { RegulatedScopeTabs } from "@/components/RegulatedScopeTabs";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { QuickEditCell, type EditRecord } from "./_components/QuickEditCell";
+import { quickPackEdit } from "@/lib/quick-edit-pack";
 import { SectionEditCell } from "./_components/SectionEditCell";
 import {
   PortalBulkButtons,
+  PortalLimitButtons,
   PortalHiddenBadge,
   PortalHiddenFilter,
 } from "./_components/PortalVisibilityControls";
@@ -51,7 +58,13 @@ import { portalBadge, portalVisibleFilterParam } from "@/lib/product-portal-visi
 import { NewFamilyButton } from "@/components/family/NewFamilyButton";
 import { deactivateFailureToast, isReadOnlyRefusal } from "@/lib/product-reactivation-refusal";
 import { BulkDeleteSkipReport, type SkippedProduct } from "@/components/BulkDeleteSkipReport";
+import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 import { ProductsExportButton } from "./_components/ProductsExportButton";
+import { ProductNameLink } from "./_components/ProductNameLink";
+import { RestrictMenu } from "@/components/restrictions/RestrictMenu";
+import { SelectAllMatching } from "@/components/restrictions/SelectAllMatching";
+import { OFF_PAGE_HINT, OFF_PAGE_HINT_ID } from "@/lib/rule-chooser";
+import { BulkDeleteButton, useOffPageSelection } from "@/components/restrictions/OffPageSelection";
 import {
   STOCK_FILTER_CHIPS,
   ProductStatusBadge,
@@ -153,12 +166,17 @@ function ProductCard({
   sectionNameById: Map<string, string>;
 }) {
   const status = getProductStatus(product);
+  const trackedTypeTitle = product.trackedCategoryId
+    ? ((product as any).trackedSubcategory?.name ??
+      sectionNameById.get(product.trackedCategoryId) ??
+      "Type")
+    : undefined;
   return (
     <div
       className={cn(
         "relative flex flex-col overflow-hidden rounded-lg border bg-white text-left shadow-card transition-shadow hover:shadow-dropdown cursor-pointer",
         status === "LOW" && "border-warning/40",
-        status === "OUT_OF_STOCK" && "border-danger/40",
+        status === "OUT_OF_STOCK" && "border-warning/40",
         (status === "IN_STOCK" || status === "INACTIVE") && "border-surface-border",
         selected && "ring-2 ring-brand-500 border-brand-500",
       )}
@@ -187,7 +205,7 @@ function ProductCard({
         className={cn(
           "relative flex h-28 w-full items-center justify-center overflow-hidden",
           status === "LOW" && "bg-warning-bg",
-          status === "OUT_OF_STOCK" && "bg-danger-bg",
+          status === "OUT_OF_STOCK" && "bg-warning-bg",
           (status === "IN_STOCK" || status === "INACTIVE") && "bg-surface-raised",
         )}
         onClick={selectionMode ? undefined : onClick}
@@ -206,7 +224,7 @@ function ProductCard({
             className={cn(
               "h-10 w-10",
               status === "LOW" && "text-warning/40",
-              status === "OUT_OF_STOCK" && "text-danger/40",
+              status === "OUT_OF_STOCK" && "text-warning/40",
               (status === "IN_STOCK" || status === "INACTIVE") && "text-navy/20",
             )}
           />
@@ -222,7 +240,13 @@ function ProductCard({
                 context is rendered below as a small caption. Falls back to
                 full `name` for variants whose row still has the legacy
                 "Parent - Variant" composite name (pre-fix data). */}
-            {product.variantName ?? product.name}
+            {selectionMode ? (
+              (product.variantName ?? product.name)
+            ) : (
+              <ProductNameLink id={product.id} stretched srNote={trackedTypeTitle}>
+                {product.variantName ?? product.name}
+              </ProductNameLink>
+            )}
           </p>
         </div>
         <div className="mt-auto flex items-end justify-between gap-1">
@@ -243,16 +267,13 @@ function ProductCard({
           <p className="text-[10px] text-navy/70 truncate">{product.parent.name}</p>
         )}
         <div className="flex items-center gap-1.5">
-          <ProductStatusBadge status={status} />
+          <ProductStatusBadge status={status} currentStock={product.currentStock} />
           <MerchBadges product={product} />
           {product.trackedCategoryId && (
             <span
-              title={
-                (product as any).trackedSubcategory?.name ??
-                sectionNameById.get(product.trackedCategoryId) ??
-                "Type"
-              }
-              className="rounded-full border border-brand-200 bg-brand-50 px-2 py-0.5 text-[11px] text-brand-700"
+              title={trackedTypeTitle}
+              aria-hidden="true"
+              className="relative z-10 rounded-full border border-brand-200 bg-brand-50 px-2 py-0.5 text-[11px] text-brand-700"
             >
               {sectionNameById.get(product.trackedCategoryId) ?? "Type"}
             </span>
@@ -266,9 +287,9 @@ function ProductCard({
               e.stopPropagation();
               onAddVariant(product.id);
             }}
-            className="mt-1 flex items-center gap-1 text-[10px] text-navy/70 hover:text-brand-500 transition-colors"
+            className="relative z-10 -mx-3 -mb-3 mt-1 flex min-h-[44px] items-center gap-1.5 px-3 text-xs text-navy/70 transition-colors hover:text-brand-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-500"
           >
-            <Plus className="h-2.5 w-2.5" />
+            <Plus className="h-3.5 w-3.5" />
             Add variant
           </button>
         )}
@@ -297,7 +318,7 @@ function makeTableColumns(
     field: string,
     newVal: string,
     record: EditRecord,
-  ) => Promise<void>,
+  ) => Promise<void | false>,
   barcodeRefs: React.MutableRefObject<Record<string, React.RefObject<HTMLInputElement | null>>>,
   productIds: string[],
   categories: string[],
@@ -432,7 +453,7 @@ function makeTableColumns(
                 status === "LOW"
                   ? "border-warning/40 bg-warning-bg"
                   : status === "OUT_OF_STOCK"
-                    ? "border-danger/40 bg-danger-bg"
+                    ? "border-warning/40 bg-warning-bg"
                     : "border-surface-border bg-surface-raised",
               )}
             >
@@ -451,7 +472,7 @@ function makeTableColumns(
             </div>
             <div className="min-w-0">
               <p className="font-semibold text-navy">
-                {p.name}
+                {selectMode ? p.name : <ProductNameLink id={p.id}>{p.name}</ProductNameLink>}
                 {(p as any).isTobacco && (
                   <span
                     title="Tobacco product — tracked separately for monthly tax reports"
@@ -635,6 +656,9 @@ function makeTableColumns(
               productId={p.id}
               productName={p.name}
               field="unitsPerBox"
+              type="number"
+              min={1}
+              step={1}
               value={p.unitsPerBox != null ? String(p.unitsPerBox) : ""}
               quickEditMode={quickEditMode}
               onSave={(val, rec) => onQuickSave(p, "unitsPerBox", val, rec)}
@@ -690,7 +714,7 @@ function makeTableColumns(
         const status = getProductStatus(row.original);
         return (
           <div className="flex items-center gap-2">
-            <ProductStatusBadge status={status} />
+            <ProductStatusBadge status={status} currentStock={row.original.currentStock} />
             {/* `currentStock` is a PIECE count system-wide, so it must never be printed
                 next to `unit` (the box/case noun) — `unitsLabel` keeps that noun only
                 for unboxed products and shows a box+piece split otherwise. */}
@@ -783,52 +807,63 @@ export default function ProductsPage() {
 
   const handleQuickSave = React.useCallback(
     async (product: ApiProduct, field: string, newVal: string, record: EditRecord) => {
+      // SA-797a: the size as a number, with the pack the cell read; undo / redo carry their own expected pack.
+      if (field === "unitsPerBox") {
+        const pack = quickPackEdit(product, newVal);
+        if (!pack.ok) {
+          // Invalid size: no PATCH, the cell stays open (the `false` result) so the typo can be fixed.
+          toast({ title: pack.message, variant: "error" });
+          return false;
+        }
+        await updateProduct.mutateAsync({ id: product.id, ...pack.save });
+        toast({ title: `${field} updated`, variant: "success" });
+        setUndoStack((prev) => [
+          ...prev.slice(-19),
+          { ...record, oldValue: pack.undo, newValue: pack.redo },
+        ]);
+        setRedoStack([]);
+        return;
+      }
       const updates: { id: string; [k: string]: unknown } = {
         id: product.id,
         [field]: newVal || null,
       };
 
-      // Auto-copy pricePerUnit to all tiers if they were all the same as the old price
+      // A list change moves tiers 2-5 by the ONE ladder rule (applyLadderChange("pricePerUnit"), SA ruling
+      // 2026-10-14): equal to the old list moves, 0 stays 0 (it follows the list), a tier above the new list is capped.
+      // The old inline copy here froze 0 tiers at the new price and left equal tiers behind in a mixed ladder.
+      let ladderNote: string | null = null;
       if (field === "pricePerUnit" && newVal) {
-        const newPrice = parseFloat(newVal);
-        const oldPrice = parseFloat(String(product.pricePerUnit)).toFixed(2);
-        const allSameAsOld = [
-          product.priceTier2,
-          product.priceTier3,
-          product.priceTier4,
-          product.priceTier5,
-        ].every(
-          (t) =>
-            !t ||
-            parseFloat(String(t)).toFixed(2) === oldPrice ||
-            parseFloat(String(t)).toFixed(2) === "0.00",
+        const moved = applyLadderChange(
+          "pricePerUnit",
+          product.pricePerUnit,
+          newVal,
+          product as never,
         );
-        if (allSameAsOld) {
-          updates.priceTier2 = newVal;
-          updates.priceTier3 = newVal;
-          updates.priceTier4 = newVal;
-          updates.priceTier5 = newVal;
-        } else {
-          // Cascade cap: higher tiers that are MORE expensive than T1 get capped
-          for (let m = 2; m <= 5; m++) {
-            const key = `priceTier${m}` as keyof ApiProduct;
-            const tierVal = product[key];
-            const tierPrice = tierVal ? parseFloat(String(tierVal)) : 0;
-            if (!tierVal || tierPrice > newPrice) {
-              updates[`priceTier${m}`] = newVal;
-            }
-          }
-        }
+        Object.assign(updates, moved);
+        ladderNote = ladderChangeNote(moved, (n) => productTierLabel(tierLabels, n));
       }
 
-      // Committing a tier price copies it down the ladder (T3..T5 when T2 is edited, etc).
-      // The list price (pricePerUnit) deliberately keeps its smarter behavior above.
+      // P0 2026-10-14: a tier commit moves lower tiers only by applyLadderChange (tracking the old value, 0, or above
+      // the new price), never a blind copy-down. The list price keeps its own behaviour above.
       if (field.startsWith("priceTier") && newVal) {
-        Object.assign(updates, cascadeTierPrices(field as TierField, parseFloat(newVal)));
+        const moved = applyLadderChange(
+          field as TierField,
+          (product as unknown as Record<string, unknown>)[field] as string,
+          newVal,
+          product as never,
+        );
+        Object.assign(updates, moved);
+        ladderNote = ladderChangeNote(moved, (n) => productTierLabel(tierLabels, n));
       }
 
       await updateProduct.mutateAsync(updates);
-      toast({ title: `${field} updated`, variant: "success" });
+      // A save that moved other tiers names them (SA: never silent).
+      toast({
+        title: `${field} updated`,
+        ...(ladderNote ? { description: ladderNote } : {}),
+        variant: "success",
+      });
 
       // Push an OBJECT PATCH covering every field this save touched — not just the field
       // the operator edited — so a cascade (pricePerUnit or priceTierN) can be undone/redone
@@ -844,7 +879,7 @@ export default function ProductsPage() {
       setUndoStack((prev) => [...prev.slice(-19), { ...record, oldValue, newValue }]);
       setRedoStack([]);
     },
-    [updateProduct, toast],
+    [updateProduct, toast, tierLabels],
   );
 
   // Regulated section + subcategory save from the Section Quick-Edit cell — an
@@ -944,40 +979,20 @@ export default function ProductsPage() {
       // Find the product to check if tiers should auto-copy
       const product = productList.find((p: ApiProduct) => p.id === id);
       const newPriceStr = parseFloat(editPriceValue).toFixed(2);
-      const newPrice = parseFloat(newPriceStr);
       const updates: { id: string; [k: string]: unknown } = { id, pricePerUnit: newPriceStr };
-      if (product) {
-        const oldPrice = parseFloat(String(product.pricePerUnit)).toFixed(2);
-        const allSameAsOld = [
-          product.priceTier2,
-          product.priceTier3,
-          product.priceTier4,
-          product.priceTier5,
-        ].every(
-          (t) =>
-            !t ||
-            parseFloat(String(t)).toFixed(2) === oldPrice ||
-            parseFloat(String(t)).toFixed(2) === "0.00",
-        );
-        if (allSameAsOld) {
-          updates.priceTier2 = newPriceStr;
-          updates.priceTier3 = newPriceStr;
-          updates.priceTier4 = newPriceStr;
-          updates.priceTier5 = newPriceStr;
-        } else {
-          // Cascade cap: any tier that's currently MORE expensive than the new T1 gets capped
-          for (let m = 2; m <= 5; m++) {
-            const key = `priceTier${m}` as keyof ApiProduct;
-            const tierVal = product[key];
-            const tierPrice = tierVal ? parseFloat(String(tierVal)) : 0;
-            if (!tierVal || tierPrice > newPrice) {
-              updates[`priceTier${m}`] = newPriceStr;
-            }
-          }
-        }
-      }
+      // The ONE list → tiers rule (applyLadderChange("pricePerUnit"), SA ruling 2026-10-14). The old inline copy here
+      // left a tier equal to the old list frozen whenever the ladder was mixed (9/10/0/10 → 12 kept the 10s at 10).
+      const moved = product
+        ? applyLadderChange("pricePerUnit", product.pricePerUnit, newPriceStr, product as never)
+        : {};
+      Object.assign(updates, moved);
+      const ladderNote = ladderChangeNote(moved, (n) => productTierLabel(tierLabels, n));
       await updateProduct.mutateAsync(updates);
-      toast({ title: "Price updated", variant: "success" });
+      toast({
+        title: "Price updated",
+        ...(ladderNote ? { description: ladderNote } : {}),
+        variant: "success",
+      });
     } catch {
       toast({ title: "Failed to update price", variant: "error" });
     }
@@ -1047,23 +1062,29 @@ export default function ProductsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, debouncedSearch, categoryFilter, stockFilter, sectionFilter, pageSize, hiddenOnly]);
 
-  const {
-    data: result,
-    isLoading,
-    isError,
-  } = useProducts({
+  // The filters the list shows. "Select all matching" (row 509) fetches ids with THIS object, so the ids can never
+  // drift from the rows on screen.
+  const listFilters = {
     search: debouncedSearch,
     category: categoryFilter || undefined,
     ...stockFilterParams(stockFilter),
     section: sectionFilter || undefined,
     ...portalVisibleFilterParam(hiddenOnly),
+    includeVariants: true,
+  };
+
+  const {
+    data: result,
+    isLoading,
+    isError,
+  } = useProducts({
+    ...listFilters,
     page,
     limit: pageSize, // 0 = all
-    includeVariants: true,
   });
 
-  // Separate unfiltered query just to populate the category dropdown — always fetches all
-  const { data: allProductsForCategories } = useProducts({ limit: 0 });
+  // Category dropdown: the tenant's distinct categories from their own endpoint (not the whole catalog).
+  const { data: tenantCategories } = useProductCategories();
 
   const productList: ApiProduct[] = result?.data ?? [];
   const meta = result?.meta;
@@ -1071,13 +1092,10 @@ export default function ProductsPage() {
   useClampPage(setPage, page, meta?.totalPages);
   const totalItems = meta?.total ?? 0;
 
-  const categories = Array.from(
-    new Set(
-      (allProductsForCategories?.data ?? productList)
-        .map((p: ApiProduct) => p.category)
-        .filter(Boolean),
-    ),
-  ) as string[];
+  const categories = (tenantCategories ??
+    Array.from(
+      new Set(productList.map((p: ApiProduct) => p.category).filter(Boolean)),
+    )) as string[];
 
   const existingUnits = Array.from(
     new Set(productList.map((p) => p.unit).filter(Boolean)),
@@ -1093,6 +1111,23 @@ export default function ProductsPage() {
   // the intersection of the selection with whatever page happened to be loaded, which
   // silently dropped any id selected on a different page/filter view.
   const productById = React.useMemo(() => new Map(filtered.map((p) => [p.id, p])), [filtered]);
+
+  // Row 509: "Select all matching" puts ids BEYOND this page in the selection. Derived from the ids themselves (not from
+  // the banner's state), so deselecting one visible row cannot turn the other actions back on for ids the operator
+  // cannot see. Only Restrict… may act on such a selection; every other bulk action is off, with a hint.
+  const { offPage: bannerSelected, hint: offPageHint } = useOffPageSelection(selected, (id) =>
+    productById.has(id),
+  );
+
+  // Names of the selected products this page holds (the rule editor labels its chips from them).
+  const selectedNames = React.useMemo(() => {
+    const out: Record<string, string> = {};
+    selected.forEach((id) => {
+      const name = productById.get(id)?.name;
+      if (name) out[id] = name;
+    });
+    return out;
+  }, [selected, productById]);
 
   const toggleOne = (id: string) =>
     setSelected((prev) => {
@@ -1112,6 +1147,7 @@ export default function ProductsPage() {
     });
 
   const handleBulkDelete = async () => {
+    if (bannerSelected) return;
     const ids = Array.from(selected);
     try {
       // R1's server contract is {deleted, softDeleted, skipped[]} (vendor-bills'
@@ -1227,12 +1263,16 @@ export default function ProductsPage() {
               }}
             />
             <NewFamilyButton />
-            <Button leftIcon={<Plus className="h-4 w-4" />} onClick={() => setShowCreate(true)}>
+            <WriteButton
+              leftIcon={<Plus className="h-4 w-4" />}
+              onClick={() => setShowCreate(true)}
+            >
               New Product
-            </Button>
+            </WriteButton>
           </div>
         }
       />
+      <ReadOnlyHint className="px-1 text-xs text-slate-600" />
 
       {/* Quick Edit mode banner */}
       {quickEditMode && (
@@ -1255,7 +1295,8 @@ export default function ProductsPage() {
       )}
 
       {/* Create product modal — creation, its toast, and list refresh are all
-          owned by ProductCreateModal itself now; nothing extra to do here. */}
+          owned by ProductCreateModal itself. K12 F07: the list then opens the
+          product just made (the toast survives the navigation). */}
       {showCreate && (
         <ProductCreateModal
           isOpen
@@ -1263,7 +1304,14 @@ export default function ProductsPage() {
             setShowCreate(false);
             setNewVariantParentId(undefined);
           }}
-          onCreated={() => {}}
+          onCreated={(created) =>
+            // K13 F18: a variant opens its FAMILY with the new row in view; a standalone product opens itself.
+            router.push(
+              created.parentProductId
+                ? `/products/${created.parentProductId}?variant=${created.id}`
+                : `/products/${created.id}`,
+            )
+          }
           units={existingUnits}
           defaultParentId={newVariantParentId}
         />
@@ -1325,6 +1373,15 @@ export default function ProductsPage() {
           placeholder="Name, SKU or scan barcode…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
+          onKeyDown={(e) => {
+            // K11-09: ArrowDown reaches the first product link of the current view (grid or table).
+            // Not during an IME composition: there ArrowDown picks a candidate.
+            if (e.key !== "ArrowDown" || e.nativeEvent.isComposing) return;
+            const first = document.querySelector<HTMLAnchorElement>("a[data-product-name-link]");
+            if (!first) return;
+            e.preventDefault();
+            first.focus();
+          }}
           className="ml-auto h-8 w-64 rounded-lg border border-surface-border bg-white px-3 text-xs text-navy placeholder:text-navy/40 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
         />
         <div className="w-40">
@@ -1380,16 +1437,41 @@ export default function ProductsPage() {
         </div>
       </div>
 
+      {/* Row 509 (owner Q5): "Select all N matching" - only under the toolbar, only in select mode. */}
+      {selectMode && (
+        <SelectAllMatching
+          filters={listFilters}
+          resetKey={[
+            page,
+            debouncedSearch,
+            categoryFilter,
+            stockFilter,
+            sectionFilter,
+            pageSize,
+            hiddenOnly,
+          ].join("|")}
+          selected={selected}
+          setSelected={setSelected}
+          pageIds={filteredIds}
+          total={totalItems}
+        />
+      )}
+
       {/* Selection action bar */}
       {selectMode && selected.size > 0 && (
-        <div className="flex items-center justify-between rounded-lg border border-brand-200 bg-brand-50 px-4 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-brand-200 bg-brand-50 px-4 py-3">
           <span className="text-sm font-medium text-navy">
             {selected.size} item{selected.size !== 1 ? "s" : ""} selected
           </span>
-          <div className="flex items-center gap-2">
+          {bannerSelected && (
+            <p id={OFF_PAGE_HINT_ID} className="basis-full text-xs text-navy/70">
+              {OFF_PAGE_HINT}
+            </p>
+          )}
+          <div className="flex flex-wrap items-center gap-2">
             <button
               onClick={() => setSelected(new Set())}
-              className="text-sm text-navy/70 hover:text-navy transition-colors"
+              className="text-sm font-medium text-brand-600 hover:underline"
             >
               Deselect all
             </button>
@@ -1397,7 +1479,9 @@ export default function ProductsPage() {
               variant="secondary"
               leftIcon={<GitBranch className="h-4 w-4" />}
               onClick={() => setShowGroupAsVariants(true)}
-              disabled={selected.size < 1}
+              disabled={selected.size < 1 || bannerSelected}
+              title={offPageHint}
+              aria-describedby={bannerSelected ? OFF_PAGE_HINT_ID : undefined}
             >
               Group as variants of…
             </Button>
@@ -1406,20 +1490,41 @@ export default function ProductsPage() {
                 variant="secondary"
                 leftIcon={<Layers className="h-4 w-4" />}
                 onClick={() => setShowAssignToSection(true)}
-                disabled={selected.size < 1}
+                disabled={selected.size < 1 || bannerSelected}
+                title={offPageHint}
+                aria-describedby={bannerSelected ? OFF_PAGE_HINT_ID : undefined}
               >
                 Assign to type…
               </Button>
             )}
-            <PortalBulkButtons selected={selected} onDone={() => setSelected(new Set())} />
-            <Button
-              variant="danger"
-              leftIcon={<Trash2 className="h-4 w-4" />}
-              loading={bulkDelete.isPending}
-              onClick={() => setShowBulkDeleteConfirm(true)}
+            <PortalBulkButtons
+              selected={selected}
+              onDone={() => setSelected(new Set())}
+              offPageHint={offPageHint}
+            />
+            <PortalLimitButtons
+              selected={selected}
+              onDone={() => setSelected(new Set())}
+              offPageHint={offPageHint}
+            />
+            <RestrictMenu
+              selected={selected}
+              names={selectedNames}
+              onDone={() => setSelected(new Set())}
+            />
+            {/* The destructive action sits apart, past a divider, never shoulder to shoulder with Limit in portal. */}
+            <div
+              data-testid="bulk-destructive"
+              className="flex items-center sm:ml-2 sm:border-l sm:border-brand-200 sm:pl-4"
             >
-              Delete {selected.size} item{selected.size !== 1 ? "s" : ""}
-            </Button>
+              <BulkDeleteButton
+                count={selected.size}
+                offPage={bannerSelected}
+                hint={offPageHint}
+                loading={bulkDelete.isPending}
+                onClick={() => setShowBulkDeleteConfirm(true)}
+              />
+            </div>
           </div>
         </div>
       )}
@@ -1522,9 +1627,9 @@ export default function ProductsPage() {
               title="No products yet"
               description="Add your first product to build your catalog and start taking orders."
               action={
-                <Button size="sm" onClick={() => setShowCreate(true)}>
+                <WriteButton size="sm" onClick={() => setShowCreate(true)}>
                   New product
-                </Button>
+                </WriteButton>
               }
             />
           )}

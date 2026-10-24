@@ -1,8 +1,12 @@
 import { useQuery, useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import { keptDraftInvoiceId, keptOrderId } from "../kept-draft-invoice";
 import type { ChangeRequest } from "./change-requests";
 import { creditsPendingFromError } from "../order-credits-pending";
+import { splitIdAck, type IdWithAck } from "../restriction-warning";
 import type {
+  OverrideStampView,
+  RestrictionAck,
   ActiveOrderSummary,
   BatchShipRequest,
   BatchShipResult,
@@ -23,7 +27,9 @@ export type {
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export interface OrderItem {
+/** Row 510: a STAFF read also carries the override stamp (and may carry the resolved name); a buyer read never does. */
+export interface OrderItem extends Partial<OverrideStampView> {
+  restrictionOverrideByName?: string | null;
   id: string;
   /** #2717 M3: frozen sub-lines of a composed (mixed-pack) line; absent on a plain line. */
   components?: LineComponentView[];
@@ -235,7 +241,7 @@ export interface CreateOrderAsDriverDto {
    * excludes it from every trip/route sweep. Seeded from the customer's own
    * default in `NewOrderScreen`.
    */
-  fulfillPath?: "ROUTE" | "SHIP";
+  fulfillPath?: "ROUTE" | "SHIP" | "PICKUP";
   routeRunId?: string;
   routeRunStopId?: string;
   immediateDelivery?: boolean;
@@ -374,6 +380,8 @@ export type CreateSaleItemInput =
       qty: number;
       boxes?: number;
       pieces?: number;
+      /** VU-4b: a unit-ladder level ("Case"); the server prices it off the ladder. */
+      unitLabel?: string;
       unitPrice?: number;
       /** #2696(c) SA-558e: required when unitPrice moves off a special (tier) price. */
       overrideReason?: string;
@@ -399,7 +407,7 @@ export type CreateSaleItemInput =
  *    Net-30 default, which would override the tenant's configured
  *    `invoice.defaultTerms`. The server's default stays authoritative here.
  */
-export interface CreateSaleDto {
+export interface CreateSaleDto extends RestrictionAck {
   customerId: string;
   items: CreateSaleItemInput[];
   /** true = van/cash sale (order DELIVERED + invoice SENT). false = PENDING order + linked DRAFT invoice. */
@@ -429,18 +437,33 @@ export interface CreatedSaleInvoice {
  */
 export function useCreateSale() {
   const qc = useQueryClient();
-  return useMutation<CreatedSaleInvoice, Error, CreateSaleDto>({
-    mutationFn: (dto) => apiClient.post("/orders/sell", dto).then((r) => r.data),
+  // Row 485: `idempotencyKey` travels as the Idempotency-Key HEADER, never in the body.
+  return useMutation<CreatedSaleInvoice, Error, CreateSaleDto & { idempotencyKey?: string }>({
+    mutationFn: ({ idempotencyKey, ...dto }) =>
+      apiClient
+        .post(
+          "/orders/sell",
+          dto,
+          idempotencyKey ? { headers: { "idempotency-key": idempotencyKey } } : {},
+        )
+        .then((r) => r.data),
     onSuccess: () => {
       invalidateOrderCaches(qc);
       qc.invalidateQueries({ queryKey: ["invoices"] });
+    },
+    // Row 466: the sale and its invoice exist even when the send step failed.
+    onError: (err) => {
+      if (keptDraftInvoiceId(err) || keptOrderId(err)) {
+        invalidateOrderCaches(qc);
+        qc.invalidateQueries({ queryKey: ["invoices"] });
+      }
     },
   });
 }
 
 export function useCreateOrderAsDriver() {
   const qc = useQueryClient();
-  return useMutation<Order, Error, CreateOrderAsDriverDto>({
+  return useMutation<Order, Error, CreateOrderAsDriverDto & RestrictionAck>({
     // `idempotencyKey` travels as a HEADER, never in the body (the same idiom
     // as `useCompleteWithPayment` in lib/api/routes.ts) — api-client also
     // preserves that header across an offline-queue replay, so a replayed cart
@@ -550,14 +573,15 @@ export function useUpdateOrderItems() {
        * desired set.
        */
       appliedCreditNotes?: AppliedCreditNoteInput[];
-    }
+    } & RestrictionAck // row 510: the resubmit after a RESTRICTION_WARNING
   >({
-    mutationFn: ({ orderId, items, replaceAll, appliedCreditNotes }) =>
+    mutationFn: ({ orderId, items, replaceAll, appliedCreditNotes, ...ack }) =>
       apiClient
         .patch(`/orders/${orderId}/items`, {
           items,
           replaceAll,
           ...(appliedCreditNotes !== undefined ? { appliedCreditNotes } : {}),
+          ...ack,
         })
         .then((r) => r.data),
     onSuccess: () => {
@@ -595,9 +619,13 @@ export function useToggleOrderUrgent() {
 
 export function useChangeOrderStatus() {
   const qc = useQueryClient();
-  return useMutation<Order, Error, { id: string; status: OrderStatus; reason?: string }>({
-    mutationFn: ({ id, status, reason }) =>
-      apiClient.patch(`/orders/${id}/status`, { status, reason }).then((r) => r.data),
+  return useMutation<
+    Order,
+    Error,
+    { id: string; status: OrderStatus; reason?: string } & RestrictionAck
+  >({
+    mutationFn: ({ id, status, reason, ...ack }) =>
+      apiClient.patch(`/orders/${id}/status`, { status, reason, ...ack }).then((r) => r.data),
     onSuccess: () => {
       invalidateOrderCaches(qc);
       qc.invalidateQueries({ queryKey: ["route-runs"] });
@@ -617,8 +645,13 @@ export function useChangeOrderStatus() {
  */
 export function useReopenOrder() {
   const qc = useQueryClient();
-  return useMutation<Order, Error, string>({
-    mutationFn: (id) => apiClient.post(`/orders/${id}/reopen`).then((r) => r.data),
+  return useMutation<Order, Error, IdWithAck>({
+    mutationFn: (v) => {
+      const { id, ack } = splitIdAck(v); // row 510: a reopen is re-judged, so it can carry an ack
+      return (
+        ack ? apiClient.post(`/orders/${id}/reopen`, ack) : apiClient.post(`/orders/${id}/reopen`)
+      ).then((r) => r.data);
+    },
     onSuccess: () => invalidateOrderCaches(qc),
   });
 }
@@ -646,10 +679,17 @@ export function useCreateAdminOrder() {
  * Look up the most recent DRAFT/PENDING order for a customer (operator only).
  * Used by the operator's create-order screen to ask whether to merge or keep separate.
  */
-export function useActiveOrderForCustomer(customerId: string | null | undefined) {
+export function useActiveOrderForCustomer(
+  customerId: string | null | undefined,
+  /** The path the order being built is on (POS mode: PICKUP), so the preview finds the same merge target. */
+  fulfillPath?: "ROUTE" | "SHIP" | "PICKUP",
+) {
   return useQuery<ActiveOrderSummary | null>({
-    queryKey: ["orders", "active", customerId],
-    queryFn: () => apiClient.get("/orders/active", { params: { customerId } }).then((r) => r.data),
+    queryKey: ["orders", "active", customerId, fulfillPath],
+    queryFn: () =>
+      apiClient
+        .get("/orders/active", { params: { customerId, ...(fulfillPath ? { fulfillPath } : {}) } })
+        .then((r) => r.data),
     enabled: !!customerId,
   });
 }

@@ -366,7 +366,7 @@ describe("BuyerService.requestSeller — identity-gated auto-connect (security)"
       inviteToken: "secret-token",
       inviteExpiresAt: new Date("2099-01-01"),
       inviteMethod: "EMAIL",
-      tenant: { id: "tenant-1", name: "Acme Foods", slug: "acme-foods" },
+      tenant: { id: "tenant-1", name: "Acme Foods", slug: "acme-foods", status: "ACTIVE" },
     };
     prisma.customerLink.findUnique.mockResolvedValue(requestedAgainstInvite as any);
     prisma.customerLink.findFirst.mockResolvedValue(null); // invitee has no other link here
@@ -719,7 +719,7 @@ describe("BuyerService reconnect paths — removed customer (B141)", () => {
       inviteToken: "secret-token",
       inviteExpiresAt: new Date("2099-01-01"),
       inviteMethod: "EMAIL",
-      tenant: { id: "tenant-1", name: "Acme Foods", slug: "acme-foods" },
+      tenant: { id: "tenant-1", name: "Acme Foods", slug: "acme-foods", status: "ACTIVE" },
       customer: { id: "cust-1", deletedAt },
     };
     prisma.customerLink.findUnique.mockImplementation((async (args: any) => {

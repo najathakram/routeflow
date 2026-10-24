@@ -13,9 +13,12 @@ import DashboardLayout from "./layout";
 
 jest.mock("next/navigation", () => ({
   usePathname: () => "/orders",
+  useSearchParams: () => new URLSearchParams(),
   useRouter: () => ({ push: jest.fn(), replace: jest.fn(), prefetch: jest.fn() }),
 }));
 jest.mock("@/lib/auth-context", () => ({
+  // BO-07: the gate reads the role from the optional context to decide whether to ask for permissions; none here.
+  useOptionalAuth: () => null,
   useAuth: () => ({
     isAuthenticated: true,
     isLoading: false,

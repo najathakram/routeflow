@@ -49,11 +49,12 @@ export class UpdateCustomerDto {
   // so the buyer themself can toggle it via PATCH /buyer/me.
   @IsOptional() @IsBoolean() orderStatusEmails?: boolean;
   // SA-423: scale is part of the Decimal(10,2) bound — refuse a third decimal, never round it.
+  // B1018 / SA-642: `null` clears the limit ("no limit"), `0` is a real $0 limit, `undefined` leaves it alone. Update only.
   @IsOptional()
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   @Max(MAX_DECIMAL_10_2)
-  creditLimit?: number;
+  creditLimit?: number | null;
   @IsOptional() @IsString() currency?: string;
   @IsOptional() @IsInt() @Min(1) @Max(5) pricingTier?: number;
   /**

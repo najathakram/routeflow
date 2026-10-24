@@ -2,7 +2,16 @@
 
 import * as React from "react";
 import { Button, useToast } from "@routeflow/ui/web";
-import { Bell, CheckCircle2, FileText, Printer, Truck, Wallet } from "lucide-react";
+import {
+  Bell,
+  CheckCircle2,
+  Circle,
+  FileText,
+  Package,
+  Printer,
+  Truck,
+  Wallet,
+} from "lucide-react";
 import type { Order } from "@/lib/api/orders";
 import { useCreateInvoiceFromOrder } from "@/lib/api/invoices";
 import { codedToastCopy } from "@/lib/generic-toast-copy";
@@ -57,12 +66,37 @@ export function PosProgress({ order, status }: { order: PosOrder; status: string
           }
         >
           {s.done && <CheckCircle2 className="h-3.5 w-3.5" aria-hidden />}
+          {i === current && <Circle className="h-3 w-3" aria-hidden />}
           {s.label}
           {s.done && <span className="sr-only"> (completed)</span>}
+          {i === current && <span className="sr-only"> (next step)</span>}
         </li>
       ))}
     </ol>
   );
+}
+
+/** Which "move off pickup" buttons a POS order offers, from the ROUTE / SHIP paths the account offers. */
+export interface PosMoveOptions {
+  /** The "Switch to delivery" button's target path, or null when it is not offered (a ship-only account). */
+  delivery: "ROUTE" | "SHIP" | null;
+  /** The "Ship by carrier…" button (always moves to SHIP). */
+  ship: boolean;
+}
+
+/**
+ * Both paths: the two buttons ("Switch to delivery" is the route, "Ship by carrier…" the carrier). One path:
+ * its own single button. Neither (a pickup-only account): today's lone "Switch to delivery" to the account default.
+ */
+export function posMoveOptions(
+  methods: readonly string[],
+  formDefault: "ROUTE" | "SHIP",
+): PosMoveOptions {
+  const route = methods.includes("ROUTE");
+  const ship = methods.includes("SHIP");
+  if (route) return { delivery: "ROUTE", ship };
+  if (ship) return { delivery: null, ship: true };
+  return { delivery: formDefault, ship: false };
 }
 
 /**
@@ -77,7 +111,8 @@ export function PosOrderActions({
   onHandOver,
   onReadyForPickup,
   readyPending,
-  onSwitchToDelivery,
+  moveOptions = { delivery: "ROUTE", ship: false },
+  onMove,
 }: {
   order: PosOrder;
   orderId: string;
@@ -86,26 +121,50 @@ export function PosOrderActions({
   /** "Ready for pickup": the customer notification (the order's OUT_FOR_DELIVERY step, kept out of the 3-step layout). */
   onReadyForPickup: () => void;
   readyPending?: boolean;
-  onSwitchToDelivery: () => void;
+  moveOptions?: PosMoveOptions;
+  /** Moves the order off pickup (the page asks first): "Switch to delivery" / "Ship by carrier…". */
+  onMove: (path: "ROUTE" | "SHIP") => void;
 }) {
   const { toast } = useToast();
   const createInvoice = useCreateInvoiceFromOrder({ localErrorToast: true });
   const invoices = invoicesOf(order);
   const firstInvoice = invoices[0];
 
-  const switchToDelivery = (
-    <ActionTier tier="secondary">
-      <Button
-        size="sm"
-        className="h-11"
-        variant="secondary"
-        leftIcon={<Truck className="h-4 w-4" />}
-        onClick={onSwitchToDelivery}
-      >
-        {POS_COPY.switchToDelivery}
-      </Button>
-    </ActionTier>
-  );
+  // ONE wrap unit: the path moves sit in a single flex group that is full width below md, so on a phone they
+  // wrap together on their own row (never one of them beside Delete, which the page renders after this).
+  const switchToDelivery =
+    moveOptions.delivery || moveOptions.ship ? (
+      <ActionTier tier="secondary">
+        <div
+          role="group"
+          aria-label="Move this order off pickup"
+          className="flex flex-wrap items-center gap-2 max-md:w-full"
+        >
+          {moveOptions.delivery && (
+            <Button
+              size="sm"
+              className="h-11"
+              variant="secondary"
+              leftIcon={<Truck className="h-4 w-4" />}
+              onClick={() => moveOptions.delivery && onMove(moveOptions.delivery)}
+            >
+              {POS_COPY.switchToDelivery}
+            </Button>
+          )}
+          {moveOptions.ship && (
+            <Button
+              size="sm"
+              className="h-11"
+              variant="secondary"
+              leftIcon={<Package className="h-4 w-4" />}
+              onClick={() => onMove("SHIP")}
+            >
+              {POS_COPY.shipByCarrier}
+            </Button>
+          )}
+        </div>
+      </ActionTier>
+    ) : null;
 
   if (status === "PENDING") return switchToDelivery;
 

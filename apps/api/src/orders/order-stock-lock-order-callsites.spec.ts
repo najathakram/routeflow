@@ -227,7 +227,7 @@ describe("zero policy reads after the first FOR UPDATE (behavioural)", () => {
 export function transactionBodies(source: string): string[] {
   const code = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
   const out: string[] = [];
-  const re = /(?:tenantTransaction|\$transaction|runEditTx)\s*\(/g; // runEditTx wraps the edit tx
+  const re = /(?:tenantTransaction|\$transaction|runEditTx|stockTx)\s*\(/g; // runEditTx / stockTx wrap the tx
   let m: RegExpExecArray | null;
   while ((m = re.exec(code))) {
     let depth = 1;

@@ -149,7 +149,9 @@ describe("ProductsService: family and variant activity (B1213)", () => {
   describe("deactivating a family (PATCH isActive: false)", () => {
     it("with active variants and no confirmation: coded 409 carrying the count; nothing is written", async () => {
       familyWithVariants();
-      const body = await bodyOf(service.update("fam", { isActive: false } as never));
+      const body = await bodyOf(
+        service.update("fam", { isActive: false } as never, { packPrecondition: "internal" }),
+      );
       expect(body).toMatchObject({
         code: API_ERROR_CODES.FAMILY_HAS_ACTIVE_VARIANTS,
         variantCount: 2,
@@ -161,7 +163,9 @@ describe("ProductsService: family and variant activity (B1213)", () => {
 
     it("confirmCascade deactivates the family AND its active variants, releasing the variants' codes first", async () => {
       familyWithVariants();
-      await service.update("fam", { isActive: false, confirmCascade: true } as never);
+      await service.update("fam", { isActive: false, confirmCascade: true } as never, {
+        packPrecondition: "internal",
+      });
       expect(rows.map((r) => [r.id, r.isActive])).toEqual([
         ["fam", false],
         ["v1", false],
@@ -187,15 +191,15 @@ describe("ProductsService: family and variant activity (B1213)", () => {
         row({ id: "fam", kind: "FAMILY" }),
         row({ id: "v1", kind: "VARIANT", parentProductId: "fam", isActive: false }),
       ];
-      await service.update("fam", { isActive: false } as never);
+      await service.update("fam", { isActive: false } as never, { packPrecondition: "internal" });
       expect(rows[0].isActive).toBe(false);
       expect(prisma.product.updateMany).not.toHaveBeenCalled();
     });
 
     it("an echo (no isActive change) or an unrelated edit never asks for confirmation", async () => {
       familyWithVariants();
-      await service.update("fam", { description: "x" } as never);
-      await service.update("fam", { isActive: true } as never);
+      await service.update("fam", { description: "x" } as never, { packPrecondition: "internal" });
+      await service.update("fam", { isActive: true } as never, { packPrecondition: "internal" });
       expect(prisma.product.updateMany).not.toHaveBeenCalled();
     });
 
@@ -222,7 +226,9 @@ describe("ProductsService: family and variant activity (B1213)", () => {
         row({ id: "fam", kind: "FAMILY", isActive: false }),
         row({ id: "v1", kind: "VARIANT", parentProductId: "fam", isActive: false }),
       ];
-      const body = await bodyOf(service.update("v1", { isActive: true } as never));
+      const body = await bodyOf(
+        service.update("v1", { isActive: true } as never, { packPrecondition: "internal" }),
+      );
       expect(body).toMatchObject({ code: API_ERROR_CODES.VARIANT_PARENT_INACTIVE });
       expect(prisma.product.update).not.toHaveBeenCalled();
     });
@@ -232,13 +238,13 @@ describe("ProductsService: family and variant activity (B1213)", () => {
         row({ id: "fam", kind: "FAMILY" }),
         row({ id: "v1", kind: "VARIANT", parentProductId: "fam", isActive: false }),
       ];
-      await service.update("v1", { isActive: true } as never);
+      await service.update("v1", { isActive: true } as never, { packPrecondition: "internal" });
       expect(rows[1].isActive).toBe(true);
     });
 
     it("a standalone product reactivates as before", async () => {
       rows = [row({ id: "solo", isActive: false })];
-      await service.update("solo", { isActive: true } as never);
+      await service.update("solo", { isActive: true } as never, { packPrecondition: "internal" });
       expect(rows[0].isActive).toBe(true);
     });
   });

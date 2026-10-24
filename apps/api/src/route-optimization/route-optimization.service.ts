@@ -12,6 +12,7 @@ import { SystemConfigService } from "../system-config/system-config.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { RouteRealtime } from "../routes/route-realtime";
 import { retryOnTxConflict } from "../common/tx-retry";
+import { hasBlankStreet } from "../common/geocode.util";
 import { ApplyRouteVariantDto } from "./dto/apply-route-variant.dto";
 import { buildCostMatrices, type LatLng } from "./cost-matrix";
 
@@ -1627,7 +1628,8 @@ export class RouteOptimizationService {
     zip: string;
   }): Promise<{ lat: number; lng: number } | null> {
     const key = this.config.get<string>("googleMaps.apiKey") ?? "";
-    if (!key) return null;
+    // No street and no city would geocode to the state's centroid: skip it (see `hasBlankStreet`).
+    if (!key || hasBlankStreet(address)) return null;
     const q = encodeURIComponent(
       `${address.line1}, ${address.city}, ${address.state} ${address.zip}`,
     );

@@ -5,6 +5,7 @@ import { Button } from "@routeflow/ui/web";
 import { CheckCircle2 } from "lucide-react";
 import type { Order } from "@/lib/api/orders";
 import { useOptionalAuth } from "@/lib/auth-context";
+import { useCounterSaleGate } from "@/lib/api/counter-sale";
 import { isPosOrder } from "@/lib/api/pos-orders";
 import { heldPickupStoreKey } from "@/lib/counter-sale";
 import { PickupCompleteDialog, type HeldPickupKey } from "./PickupCompleteDialog";
@@ -22,6 +23,10 @@ export function PickupHandOverButton({
   onOpen: () => void;
   label?: string;
 }) {
+  // BO-07: completing a pickup is a till action, so an operator whose admin switched ORDERS off is not offered it
+  // (the server refuses it too).
+  const { mayUseTill, loading } = useCounterSaleGate();
+  if (!mayUseTill || loading) return null;
   return (
     <Button
       size="sm"
@@ -38,10 +43,13 @@ export function PickupHandOverDialog({
   order,
   open,
   onClose,
+  complete = false,
 }: {
   order: Order;
   open: boolean;
   onClose: () => void;
+  /** I-120: opened from "Complete at counter" */
+  complete?: boolean;
 }) {
   // An UNKNOWN outcome's key outlives the dialog's close/reopen (cleared only on a known outcome).
   const heldKey = React.useRef<HeldPickupKey>(null);
@@ -58,7 +66,9 @@ export function PickupHandOverDialog({
       total={Number(order.total)}
       invoices={order.invoices ?? []}
       isWalkIn={order.customer?.isWalkIn === true}
+      customerName={order.customer?.businessName ?? null}
       handOver={isPosOrder(order)}
+      completeMode={complete}
     />
   );
 }

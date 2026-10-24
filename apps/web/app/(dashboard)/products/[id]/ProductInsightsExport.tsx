@@ -5,6 +5,7 @@ import { Download } from "lucide-react";
 import { Button, useToast } from "@routeflow/ui/web";
 import { apiClient } from "@/lib/api-client";
 import { useAuth } from "@/lib/auth-context";
+import { useProductSales } from "@/lib/api/product-sales";
 import { usePlanFlag } from "@/lib/api/plan-flags";
 import { planFlagVisible } from "@/lib/plan-gated-nav";
 import { csvFilename, downloadCsvBlob } from "@/lib/export";
@@ -26,9 +27,13 @@ export function ProductInsightsExport({ productId, sku }: { productId: string; s
   const [from, setFrom] = React.useState("");
   const [to, setTo] = React.useState("");
   const [busy, setBusy] = React.useState(false);
+  // J10: nothing to export for a product that never sold. Same query key as the Sales card (shared
+  // cache); hidden while loading (no flash), shown if the lookup failed (never lose the export).
+  const sales = useProductSales(productId);
+  const neverSold = sales.isLoading || (!!sales.data && sales.data.summary.count === 0);
 
   const roleOk = user?.role === "OPERATOR" || user?.role === "TENANT_ADMIN";
-  if (!roleOk || !planFlagVisible(analytics)) return null;
+  if (!roleOk || !planFlagVisible(analytics) || neverSold) return null;
 
   async function download() {
     if (busy) return;

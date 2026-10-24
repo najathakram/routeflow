@@ -1,6 +1,8 @@
 "use client";
 
 import * as React from "react";
+import { isAccountAdmin } from "@/lib/auth";
+import { useAuth } from "@/lib/auth-context";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
@@ -148,6 +150,8 @@ function StatementsPageInner() {
   };
 
   const isApiKeyError = scanError?.code === "AI_KEY_INVALID";
+  // The Claude key lives on an admin-only screen (Perms PR1); an operator is told who can fix it.
+  const canFixApiKey = isAccountAdmin(useAuth().user);
   const isUnavailable = scanError?.code === "AI_UNAVAILABLE";
 
   // What the apply did, from whichever source has it: the in-session summary
@@ -303,11 +307,14 @@ function StatementsPageInner() {
               <p className="mt-1 max-w-md text-sm text-navy/70">{scanError.message}</p>
             </div>
             <div className="flex flex-wrap justify-center gap-3">
-              {isApiKeyError && (
-                <Button href="/settings?tab=integrations" variant="secondary">
-                  Go to Settings
-                </Button>
-              )}
+              {isApiKeyError &&
+                (canFixApiKey ? (
+                  <Button href="/settings?tab=integrations" variant="secondary">
+                    Go to Settings
+                  </Button>
+                ) : (
+                  <p className="text-sm text-navy/70">Ask an account admin to update the key.</p>
+                ))}
               {isUnavailable && files.length > 0 && (
                 <Button
                   onClick={() => void runScan(files)}

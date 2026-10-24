@@ -19,6 +19,7 @@ import { UsersModule } from "./users/users.module";
 import { CustomersModule } from "./customers/customers.module";
 import { DriversModule } from "./drivers/drivers.module";
 import { ProductsModule } from "./products/products.module";
+import { CustomerUnitPricesModule } from "./customers/customer-unit-prices.module";
 import { PromotionsModule } from "./promotions/promotions.module";
 import { RoutesModule } from "./routes/routes.module";
 import { TripsModule } from "./trips/trips.module";
@@ -62,6 +63,7 @@ import { RestrictionsSettingsModule } from "./restrictions-settings/restrictions
 import { SettingsInventoryModule } from "./settings-inventory/settings-inventory.module";
 import { SettingsFulfilmentModule } from "./settings-fulfilment/settings-fulfilment.module";
 import { ProductCategoriesModule } from "./product-categories/product-categories.module";
+import { UnitsModule } from "./units/units.module";
 import { SellingRestrictionsAdminModule } from "./selling-restrictions-admin/selling-restrictions-admin.module";
 import { RegulatedModule } from "./regulated/regulated.module";
 import { AuthorizationsModule } from "./authorizations/authorizations.module";
@@ -70,6 +72,7 @@ import { CommissionsModule } from "./sales-agents/commissions.module";
 import { CrmModule } from "./crm/crm.module";
 import { DemoBookingModule } from "./demo-booking/demo-booking.module";
 import { OnboardingModule } from "./onboarding/onboarding.module";
+import { AppLinksModule } from "./app-links/app-links.module";
 
 import { TenantStatusGuard } from "./tenant/tenant-status.guard";
 import { ImpersonationGuard } from "./auth/guards/impersonation.guard";
@@ -138,6 +141,7 @@ import { AppService } from "./app.service";
     CustomersModule,
     DriversModule,
     ProductsModule,
+    CustomerUnitPricesModule,
     PromotionsModule,
     RoutesModule,
     TripsModule,
@@ -189,6 +193,7 @@ import { AppService } from "./app.service";
     SettingsInventoryModule,
     SettingsFulfilmentModule,
     ProductCategoriesModule,
+    UnitsModule,
     SellingRestrictionsAdminModule,
     RegulatedModule,
     AuthorizationsModule,
@@ -198,6 +203,7 @@ import { AppService } from "./app.service";
     CrmModule,
     DemoBookingModule,
     OnboardingModule,
+    AppLinksModule,
   ],
   controllers: [AppController],
   providers: [

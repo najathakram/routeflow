@@ -6,6 +6,7 @@ import { markInvoicesOverdue, overdueInvoiceCount } from "./invoice-balance-sql"
 import { resolveZone } from "../common/tenant-time-zone";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
+import { AUTOMATED_WRITE_STATUSES } from "../tenant/tenant-automation";
 
 /**
  * SA-506a (#2556, owner policy): the sweep shipped DARK; the owner turned it ON on 2026-10-10
@@ -45,8 +46,8 @@ export function overdueSweepMode(env: NodeJS.ProcessEnv = process.env): {
   return { mode: OVERDUE_SWEEP_FAIL_CLOSED, unknown: String(raw) };
 }
 
-/** The tenant statuses whose open invoices are aged (billing-live tenants only). */
-const SWEPT_TENANT_STATUSES = ["TRIAL", "ACTIVE"] as const;
+/** The tenant statuses whose open invoices are aged (billing-live tenants only): SA-776's one predicate's set. */
+const SWEPT_TENANT_STATUSES = AUTOMATED_WRITE_STATUSES;
 
 /**
  * The invoice statuses the sweep may flip: issued and UNPAID only. PARTIAL is deliberately absent

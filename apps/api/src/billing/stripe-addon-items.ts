@@ -65,6 +65,16 @@ export async function stripeAddonItemIds(
   ]);
 }
 
+/**
+ * ONE recognizer for "an add-on item RouteFlow's in-app path made for this tenant and SKU" (metadata
+ * `{tenantId, sku}`): shared by orphan adoption and the stranded-item sweep (G1a). The plan item and a checkout
+ * line (tagged `addonSku` on its product, never `metadata.sku`) never match.
+ */
+export function isOwnedAddonItem(item: unknown, tenantId: string, sku: string): boolean {
+  const m = (item as { metadata?: Record<string, unknown> | null } | null | undefined)?.metadata;
+  return m?.tenantId === tenantId && m?.sku === sku;
+}
+
 /** A subscription item Stripe made from a checkout add-on line. */
 export interface CheckoutAddonItem {
   itemId: string;

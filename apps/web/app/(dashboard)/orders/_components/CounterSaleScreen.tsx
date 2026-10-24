@@ -6,6 +6,8 @@ import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { Button, TAP_TARGET, cn } from "@routeflow/ui/web";
 import {
+  formatReceiptMoney as money,
+  isCalendarDay,
   normalizeBoxesPieces,
   roundMoney,
   type ParkedCartPayload,
@@ -26,6 +28,7 @@ import {
   setCounterDiscardHook,
 } from "@/lib/counter-cart-signal";
 import { useCustomers } from "@/lib/api/customers";
+import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { useCreateDraft } from "@/lib/api/drafts";
 import { DidYouMeanPicker } from "@/components/scan/DidYouMeanPicker";
 import {
@@ -38,13 +41,18 @@ import {
   useCounterSaleGate,
   useCreateCounterSale,
 } from "@/lib/api/counter-sale";
+import { usePermissionDeniedWatcher } from "@/lib/api/my-permissions";
 import { displayProductName } from "@/lib/product-display";
 import {
   COUNTER_LOOKUP_FAILED_COPY,
+  COUNTER_OFFLINE_COPY,
   COUNTER_DISCARD_COPY,
   COUNTER_OUTCOME_UNKNOWN_COPY,
+  COUNTER_NO_ACCESS_COPY,
   COUNTER_SALES_DISABLED_COPY,
-  PAYMENT_PROBLEM_COPY,
+  counterSaleGate,
+  isTenderShortCopy,
+  paymentProblemCopy,
   cartTotals,
   amountDue,
   changeDue,
@@ -55,6 +63,8 @@ import {
   isCounterSaleIncomplete,
   isCounterSaleNotFound,
   isDefinitiveCounterSaleRefusal,
+  isFinalSaleMessage,
+  isNotSentOffline,
   newIdempotencyKey,
   paymentMethodOptions,
   preselectFulfilment,
@@ -64,18 +74,41 @@ import {
   validatePayment,
   writeAutoPrint,
   writeHeldAttempt,
+  COUNTER_CHECK_POSTDATED_COPY,
+  COUNTER_CHECK_ZONE_FAILED_COPY,
+  COUNTER_CHECK_ZONE_LOADING_COPY,
+  isPostdatedCheck,
+  isCounterSaleHandledError,
 } from "@/lib/counter-sale";
+import { calendarDayInZone } from "@/lib/calendar-date";
+import { useTenantTimeZoneQuery } from "@/lib/tenant-timezone";
+import { keptSaleHref } from "@/lib/kept-draft-invoice";
 import { receiptCustomerName, type ReceiptBusinessProfile } from "@/lib/counter-receipt";
 import { isCounterSaleDayClosed } from "@/lib/day-closed-copy";
+import { useRestrictionWarningRetry } from "@/lib/use-restriction-warning-retry";
+import { CounterPaymentNotRecorded } from "./CounterPaymentNotRecorded";
+import { CounterCreditOverLimit } from "./CounterCreditOverLimit";
 import { CounterReceiptBody } from "./CounterReceiptBody";
+import { CounterCustomerCredit } from "./CounterCustomerCredit";
+import { CounterGateOffline } from "./CounterGateOffline";
+import { CounterCustomerMatches, useCustomerListbox } from "./CounterCustomerMatches";
+import {
+  CounterLastSale,
+  lastSaleNoteFrom,
+  useLastSaleNote,
+  type LastSaleNote,
+} from "./CounterLastSale";
+import { useCounterLineUndo } from "./useCounterLineUndo";
 import { COUNTER_SCAN_FAILED_COPY } from "./useCounterSaleScan";
 import { useCounterReprice } from "./useCounterReprice";
 import { repriceLines } from "./counter-sale-reprice";
+import { PRICE_LAYER_TOO_MANY_COPY } from "@/components/PriceLayerNotice";
 import { isTextEntryActive } from "@/lib/refocus-scanner";
+import { scrollPageToTop } from "@/lib/scroll-top";
 import { useCounterLiveCart } from "./useCounterLiveCart";
 import { liveCartKey } from "@/lib/counter-live-cart-keys";
 import { addScannedProduct, stepLine, type SaleLine, type StepUnit } from "./counter-sale-scan";
-import { CounterLineRow } from "./CounterLineRow";
+import { COUNTER_LICENSE_NOTE, CounterLineRow } from "./CounterLineRow";
 import type { CounterPriceEdit } from "./CounterLinePriceEdit";
 import {
   applyPriceEdit,
@@ -92,14 +125,19 @@ import {
   setLineNote,
   takeLine,
   toSaleItem,
-  type RemovedLine,
 } from "./counter-sale-line-edit";
 import { useCounterSaleScan } from "./useCounterSaleScan";
+import { CounterScanFeedback } from "./CounterScanFeedback";
+import { CounterBuyerChoice } from "./CounterBuyerChoice";
+import { BUYER_REASON_COPY, kindOfPick } from "./counter-buyer-choice";
+import { useCounterBuyerChoice } from "./useCounterBuyerChoice";
 import { useCounterScanFocus } from "./useCounterScanFocus";
 import { CounterReceiptActions } from "./CounterReceiptActions";
 import { CounterTodaysSales } from "./CounterTodaysSales";
 import { ParkedSales } from "./ParkedSales";
 import { QuickKeysGrid } from "./QuickKeysGrid";
+import { CounterCheckDetails } from "./CounterCheckDetails";
+import { ReadOnlyHint, WriteButton, useReadOnlyGate } from "@/lib/read-only-gate";
 
 interface PickedCustomer {
   id: string;
@@ -109,19 +147,29 @@ interface PickedCustomer {
   fulfillPath?: string | null;
   /** the system walk-in customer record (a pick of it is still a walk-in on the receipt) */
   isWalkIn?: boolean | null;
+  /** owes no sales tax and no levy: the estimate, the order and the invoice all say so */
+  isTaxExempt?: boolean | null;
 }
-
-const money = (n: number) => `$${n.toFixed(2)}`;
-
-/** How long the "Line removed. Undo" bar stays. */
-const UNDO_MS = 5000;
 
 export { lineQtyLabel, toSaleItem } from "./counter-sale-line-edit";
 
+/** An empty Enter in the scan box moves to the payment only this long after the last scan submit or scan-box keystroke. */
+export const EMPTY_ENTER_QUIET_MS = 150;
+
 export function CounterSaleScreen() {
+  const readOnlyGate = useReadOnlyGate();
   const router = useRouter();
   const gate = useCounterSaleGate();
+  usePermissionDeniedWatcher();
+  // CQ-30: once the capability check has failed, the retry panel stays up for the WHOLE refetch. React Query flips a failed,
+  // data-less lookup back to "loading" the moment it refetches; without this the panel gave way to the blank loading
+  // placeholder for the length of the request. It leaves only when the lookup settles (the sale UI, or the panel again).
+  const gateWasFailedRef = React.useRef(false);
+  if (gate.failed) gateWasFailedRef.current = true;
+  else if (!gate.loading) gateWasFailedRef.current = false;
+  const keepRetryPanel = gate.failed || (gate.loading && gateWasFailedRef.current);
   const createSale = useCreateCounterSale();
+  const rw = useRestrictionWarningRetry(); // row 510: staff warning + override dialog
   const lookupSale = useCounterSaleByKey();
   const createDraft = useCreateDraft();
   const authUser = useOptionalAuth()?.user;
@@ -143,8 +191,13 @@ export function CounterSaleScreen() {
   // The total and change the clerk SAW (client figures) when the sale was submitted: compared with the server's on the way out.
   const estimateRef = React.useRef({ total: 0, change: 0 });
   const [outcomeUnknown, setOutcomeUnknown] = React.useState(false);
+  // Row 466: where the sale landed when the call failed AFTER it committed (the invoice, else the order).
+  const [recordedHref, setRecordedHref] = React.useState<string | null>(null);
   const [heldCorrupt, setHeldCorrupt] = React.useState(false); // a stored attempt was unreadable: locked, only "recent sales" or discard
   const [lookupFailed, setLookupFailed] = React.useState(false); // "Check sale status" itself failed (not a 404 answer)
+  // CQ-29: the key of a sale that got no answer for want of a connection. The form is usable again, and the next Complete reuses
+  // it: the server answers an identical retry with the same sale, and a changed cart with a key mismatch (never a second sale).
+  const offlineKeyRef = React.useRef<string | null>(null);
   const submittingRef = React.useRef(false);
   const customerFindRef = React.useRef<HTMLInputElement>(null);
   // B1210: "Ship this order instead" is an intent that completes on its own once the cart can be handed over (a customer is
@@ -161,13 +214,18 @@ export function CounterSaleScreen() {
   }, []);
   const awaitingCustomerRef = React.useRef(false);
 
-  const [customer, setCustomer] = React.useState<PickedCustomer | null>(null); // null = Walk-in customer
+  const [customer, setCustomer] = React.useState<PickedCustomer | null>(null); // null = Walk-in customer (once chosen)
+  // S5: null is NOT a walk-in until the clerk says so. Complete waits on this.
+  const buyerChoice = useCounterBuyerChoice();
+  const restoreBuyer = buyerChoice.restore;
   const [customerSearch, setCustomerSearch] = React.useState("");
   const [lines, setLines] = React.useState<SaleLine[]>([]);
+  const [lastSale, setLastSale] = useLastSaleNote(lines.length); // CQ-17: the order "Complete & next" just finished
   const [scanText, setScanText] = React.useState("");
   const [method, setMethod] = React.useState<CounterSalePaymentMethod>("CASH");
   const [tendered, setTendered] = React.useState("");
   const [reference, setReference] = React.useState("");
+  const [checkDate, setCheckDate] = React.useState(""); // "" = today (the business's day)
   const [error, setError] = React.useState("");
   const [receipt, setReceipt] = React.useState<CounterSaleResponse | null>(null);
   // Set only when the receipt came from "Check sale status": the cash the clerk ENTERED on the attempt (the server stores
@@ -195,11 +253,13 @@ export function CounterSaleScreen() {
     estimateRef.current = held.estimate ?? { total: 0, change: 0 };
     setLines(held.lines as SaleLine[]);
     setCustomer((held.customer as PickedCustomer | null) ?? null);
+    restoreBuyer((held.customer as PickedCustomer | null) ?? null, true); // that sale was already sent: its buyer was chosen
     setMethod(held.method as CounterSalePaymentMethod);
     setTendered(held.tendered ?? "");
     setReference(held.reference ?? "");
+    setCheckDate(isCalendarDay(held.checkDate) ? held.checkDate : "");
     setOutcomeUnknown(true);
-  }, [heldKey]);
+  }, [heldKey, restoreBuyer]);
   // The scan field is ALWAYS focused: after every action, and whenever the sale view is showing.
   // While a walk-in sale waits for the customer to ship to, the customer field keeps focus instead.
   const { refocus, focusCustomerFind, refocusFromActive } = useCounterScanFocus({
@@ -207,28 +267,45 @@ export function CounterSaleScreen() {
     customerFindRef,
     awaitingCustomerRef,
   });
-  // Fixing the tender clears the "less than the total" message and ONLY that one (never a server or final-sale error).
-  const clearUnderpaidError = () =>
-    setError((e) => (e === PAYMENT_PROBLEM_COPY.TENDER_SHORT ? "" : e));
+  // CQ-18: a refusal shown in the checkout bar belongs to the cart that was refused. Any edit to the cart's lines (a scan, a
+  // quantity, a removal, a re-price) makes it stale, so it goes. A FINAL message (the sale was voided / changed / saved
+  // unpaid) is about a sale that exists and stays. The tender has its own rule just below.
+  React.useEffect(() => {
+    setError((e) => (isFinalSaleMessage(e) ? e : ""));
+  }, [lines]);
+  // Fixing the tender clears the "Enter at least $X" message and ONLY that one (never a server or final-sale error).
+  const clearUnderpaidError = () => setError((e) => (isTenderShortCopy(e) ? "" : e));
   const locked = outcomeUnknown; // every cart / payment control is disabled while the outcome is unknown
   // SA-748 section 1: the unfinished cart survives a refresh (restored UNLOCKED; a held attempt always wins).
   const liveCart = useCounterLiveCart({
     storeKey: liveKey,
     heldKey,
-    snapshot: { lines, customer, method, tendered, reference },
+    snapshot: {
+      lines,
+      customer,
+      method,
+      tendered,
+      reference,
+      checkDate,
+      walkIn: buyerChoice.kind === "walk-in",
+    },
     suspended: createSale.isPending || outcomeUnknown || receipt !== null,
     canRestore: lines.length === 0 && !receipt,
     onRestore: (snap) => {
       setLines(snap.lines as SaleLine[]);
       setCustomer((snap.customer as PickedCustomer | null) ?? null);
+      buyerChoice.restore((snap.customer as PickedCustomer | null) ?? null, snap.walkIn === true);
       setMethod(snap.method as CounterSalePaymentMethod);
       // The cash is not restored: prices may have moved since it was tapped, so it is entered against today's total.
       setReference(snap.reference);
+      setCheckDate(snap.checkDate ?? "");
     },
     onClearedElsewhere: () => {
       setLines([]);
       setCustomer(null);
+      buyerChoice.reset();
       setReference("");
+      setCheckDate("");
     },
   });
   const hasLines = lines.length > 0; // POS-7: the register header's Exit asks before discarding a cart with lines
@@ -314,28 +391,114 @@ export function CounterSaleScreen() {
     barObserver.current = new ResizeObserver(measure);
     barObserver.current.observe(el);
   }, []);
+  // Rows 330a / 368: below md the checkout bar floats at the bottom of the scroll container. `position: sticky` stops at the
+  // container's own padding (the shell's pb-24), so left alone the bar floated 96 px up with cart lines showing below it.
+  // The bar's `bottom` is pulled down through that padding and the screen draws the same padding back in (a negative
+  // margin), so the bar is the LAST thing in the scroll and rests at the real bottom: the only space reserved for it is its
+  // own in-flow height. A control that takes focus mid-page (a quantity, Tab, the keyboard) is scrolled to the container's
+  // bottom edge, under the floating bar, so the container's scroll-padding is exactly the bar's height. Let go on unmount.
+  const [mainPad, setMainPad] = React.useState(0);
+  React.useEffect(() => {
+    const main = document.getElementById("main-content");
+    // md+ lays the bar out in the payment column (static), so only the floating one needs this
+    const floating = !window.matchMedia?.("(min-width: 768px)").matches;
+    if (!main || !floating) {
+      setMainPad(0);
+      return;
+    }
+    setMainPad(parseFloat(getComputedStyle(main).paddingBottom) || 0);
+    if (barHeight === 0) return;
+    main.style.setProperty("scroll-padding-bottom", `${barHeight}px`);
+    return () => {
+      main.style.removeProperty("scroll-padding-bottom");
+    };
+  }, [barHeight]);
+  // B1182: below md a toast would land on the floating bar. While the register is mounted the page publishes the bar's height
+  // + 12px as --toast-bottom-inset (the toast viewport's own bottom offset reads it); md+ and unmount leave none.
+  React.useEffect(() => {
+    const root = document.documentElement;
+    const mq = window.matchMedia?.("(min-width: 768px)");
+    const apply = () => {
+      if (barHeight > 0 && !mq?.matches)
+        root.style.setProperty("--toast-bottom-inset", `${barHeight + 12}px`);
+      else root.style.removeProperty("--toast-bottom-inset");
+    };
+    apply();
+    mq?.addEventListener?.("change", apply);
+    return () => {
+      mq?.removeEventListener?.("change", apply);
+      root.style.removeProperty("--toast-bottom-inset");
+    };
+  }, [barHeight]);
   const refocusAfterPointer = (e: React.MouseEvent) => {
     if (e.detail > 0) refocus();
   };
   const receiptHeadingRef = React.useRef<HTMLHeadingElement>(null);
   React.useEffect(() => {
     if (!receipt) refocus();
-    else receiptHeadingRef.current?.focus(); // POS-1: keyboard focus lands on the receipt heading
+    else {
+      // POS-1: keyboard focus lands on the receipt heading. CQ-33: without scrolling to it, and the page back at its top, so
+      // a clerk who had scrolled the sale down to the Complete buttons reads the receipt from its first line.
+      receiptHeadingRef.current?.focus({ preventScroll: true });
+      scrollPageToTop();
+    }
   }, [receipt, refocus]);
 
   const isWalkIn = customer === null;
+  const zoneRead = useTenantTimeZoneQuery();
   const { data: settings } = useQuery<ReceiptBusinessProfile>({
     queryKey: ["settings"],
     queryFn: () => apiClient.get("/settings").then((r) => r.data),
     staleTime: 60_000,
   });
+  // A check is dated against the BUSINESS's day. Until /settings has answered that day is unknown: nothing is judged (never
+  // against UTC), a CHECK sale is refused with its own copy, and a failed read offers a retry.
+  const zoneStatus = settings !== undefined ? "ready" : zoneRead.isError ? "failed" : "loading";
+  const businessToday = () =>
+    zoneStatus === "ready" ? calendarDayInZone(zoneRead.zone ?? "UTC") : "";
+  const today = businessToday(); // for the Check fields; complete() reads the day again when it is pressed
+  const checkDateValue = checkDate || today;
+  // A held (outcome unknown) sale shows the date its attempt SENT, never one re-derived from today.
+  const shownCheckDate =
+    (outcomeUnknown ? attemptRef.current?.dto.payment.checkDate : undefined) ?? checkDateValue;
   const taxRate = (settings?.taxRate ?? 0) / 100;
-  const totals = cartTotals(lines, taxRate);
+  // The regulated levy and the exempt customer's $0 tax are in the estimate, so it is the receipt's figure to the cent
+  // (CQ-01 / CQ-02 / CQ-28): the same saleTotals the order and invoice sums run.
+  const { data: categoryRows, isSuccess: categoriesLoaded } = useTrackedCategories();
+  const categories = React.useMemo(
+    () => new Map((Array.isArray(categoryRows) ? categoryRows : []).map((c) => [c.id, c])),
+    [categoryRows],
+  );
+  const totals = cartTotals(lines, taxRate, {
+    categories,
+    isTaxExempt: customer?.isTaxExempt === true,
+  });
+  // R7b 1.4: a walk-in sale cannot carry a licence-needing line. Say so at add (the server check at Complete stays authoritative).
+  const needsLicense = (l: SaleLine) =>
+    customer === null &&
+    !!l.trackedCategoryId &&
+    categories.get(l.trackedCategoryId)?.requiresLicense === true;
+  const licenseNeeded = lines.some(needsLicense);
   const discounts = discountsTotal(lines, settings?.hideOriginalPrice === true); // POS-5: the `Discounts` row (display only; the total already includes it)
   const tenderedNum = Number(tendered) || 0;
 
-  const { data: customersData } = useCustomers({ search: customerSearch.trim() || undefined });
+  const { data: customersData, isFetching: customersFetching } = useCustomers({
+    search: customerSearch.trim() || undefined,
+  });
   const matches = customerSearch.trim() ? (customersData?.data ?? []).slice(0, 6) : [];
+  const pickCustomer = (c: PickedCustomer) => {
+    if (lineLocked || saleInFlight()) return;
+    setCustomer(c);
+    if (kindOfPick(c) === "walk-in") buyerChoice.chooseWalkIn();
+    else buyerChoice.chooseCustomer();
+    setCustomerSearch("");
+    refocus();
+  };
+  const customerListbox = useCustomerListbox(
+    matches as PickedCustomer[],
+    customerSearch,
+    pickCustomer,
+  );
 
   // The fulfilment pre-selection for "Ship this order instead": the customer's own path first, then the staff default.
   const shipPreselected = preselectFulfilment(customer?.fulfillPath, gate.capability) === "SHIP";
@@ -355,7 +518,16 @@ export function CounterSaleScreen() {
 
   // The ONE add path: a scan, a picker click and a quick-key tap all land a product through here.
   const addProduct = (product: any, level: SellLevel, n: number) =>
-    setLines((prev) => addScannedProduct(prev, product, level, n, reprice.tierFor(product.id)));
+    setLines((prev) =>
+      addScannedProduct(
+        prev,
+        product,
+        level,
+        n,
+        reprice.tierFor(product.id),
+        reprice.layerOf(product.id),
+      ),
+    );
 
   // B1206-B1208: every scan joins one FIFO queue resolved through the shared exact-code ladder (see useCounterSaleScan).
   const scan = useCounterSaleScan({
@@ -363,7 +535,16 @@ export function CounterSaleScreen() {
     refocus,
     add: (product, level, n) => {
       scanCueArmedRef.current = true;
-      setLines((prev) => addScannedProduct(prev, product, level, n, reprice.tierFor(product.id)));
+      setLines((prev) =>
+        addScannedProduct(
+          prev,
+          product,
+          level,
+          n,
+          reprice.tierFor(product.id),
+          reprice.layerOf(product.id),
+        ),
+      );
     },
   });
 
@@ -460,8 +641,92 @@ export function CounterSaleScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shipIntent, locked, scanBusy, reprice.blocked, customer, lines, createSale.isPending]);
 
+  // R7b 1.2 (a): Enter in an EMPTY scan box with lines in the cart moves to the payment (a scanner never sends an empty Enter).
+  const tenderRef = React.useRef<HTMLInputElement>(null);
+  // The ONE place the payment area takes focus (Enter in an empty scan box, and the tender radiogroup's arrow keys).
+  const focusPaymentControl = (el: HTMLElement | null | undefined) => el?.focus();
+  // W-709 (538 F24): a short cash tender takes the cashier to the fix. Bumped when complete() refuses with TENDER_SHORT; the
+  // effect below runs after that render (and after a pointer Complete's own refocus of the scan box), scrolls Amount
+  // tendered into view (nearest edge; Exact sits beside it) and focuses it through focusPaymentControl.
+  // A counter, not the error text: a second Complete with the same short tender repeats the same copy and must move focus too.
+  const [tenderFix, setTenderFix] = React.useState(0);
+  React.useEffect(() => {
+    if (tenderFix === 0) return;
+    const el = tenderRef.current;
+    if (!el) return;
+    el.scrollIntoView?.({ block: "nearest" });
+    focusPaymentControl(el); // the ONE owner of payment focus (counter-focus.structure.test.ts)
+  }, [tenderFix]);
+  const focusPayment = () =>
+    focusPaymentControl(
+      method === "CASH" && tenderRef.current
+        ? tenderRef.current
+        : document.querySelector<HTMLButtonElement>(
+            '[data-testid="counter-checkout-actions"] button',
+          ),
+    );
+  // R7b 1.2 (b): the tender methods are a WAI-ARIA radiogroup: Left/Right (and Up/Down) move to the next enabled method.
+  // The radiogroup always has ONE tab stop: the checked method, or the first enabled one when the checked one is disabled.
+  const tenderOptions = paymentMethodOptions(isWalkIn);
+  const tabStopMethod = (
+    tenderOptions.find((m) => m.method === method && !m.disabled) ??
+    tenderOptions.find((m) => !m.disabled)
+  )?.method;
+  const onTenderKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const dir =
+      e.key === "ArrowRight" || e.key === "ArrowDown"
+        ? 1
+        : e.key === "ArrowLeft" || e.key === "ArrowUp"
+          ? -1
+          : 0;
+    if (!dir || locked) return;
+    const options = paymentMethodOptions(isWalkIn).filter((m) => !m.disabled);
+    // movement starts from the tab stop (the checked method, or the first enabled one when that is disabled), wrapping
+    const at = Math.max(
+      0,
+      options.findIndex((m) => m.method === tabStopMethod),
+    );
+    const next = options[(at + dir + options.length) % options.length];
+    if (!next) return;
+    e.preventDefault();
+    setMethod(next.method);
+    focusPaymentControl(
+      e.currentTarget.querySelector<HTMLButtonElement>(`[data-method="${next.method}"]`),
+    );
+  };
+
+  // R7b 1.3: the tender(s) the sale will be paid with, as a list (split tender will add entries; today it holds one).
+  const barTenders: { method: CounterSalePaymentMethod; text: string }[] = [
+    {
+      method,
+      text:
+        method === "CASH"
+          ? tenderedNum > 0
+            ? `Cash · tendered ${money(roundMoney(tenderedNum))}`
+            : "Cash"
+          : method === "CHECK"
+            ? reference.trim()
+              ? `Check #${reference.trim()}`
+              : "Check"
+            : method === "CARD"
+              ? "Card"
+              : "On account",
+    },
+  ];
+  const paymentRef = React.useRef<HTMLElement>(null);
+  const bringPaymentIntoView = () => {
+    const section = paymentRef.current;
+    if (!section) return;
+    section.scrollIntoView?.({ block: "start" });
+    // the tab-stop radio: the checked one, or the first enabled one when the checked method is disabled
+    focusPaymentControl(section.querySelector<HTMLElement>('[role="radio"][tabindex="0"]'));
+  };
+
+  // A scanner may end a read with CR+LF (or a double Enter): the empty Enter only counts after a human pause.
+  const lastScanActivityRef = React.useRef(Number.NEGATIVE_INFINITY);
   function onScanSubmit(e: React.FormEvent) {
     e.preventDefault();
+    lastScanActivityRef.current = performance.now();
     if (lineLocked || saleInFlight()) return; // frozen while the sale POST is in flight: a mid-POST scan would miss the sale
     const text = scanText;
     setScanText("");
@@ -474,65 +739,25 @@ export function CounterSaleScreen() {
     refocus();
   };
 
-  // POS-3: a removed line is held for 5 s in ONE slot (a newer removal makes the older one final). Undo puts it back at
-  // its index, or merges it into the same product if that was re-scanned meanwhile. Pay uses `lines`, which never has it.
-  const [undo, setUndo] = React.useState<RemovedLine | null>(null);
-  const undoRef = React.useRef<RemovedLine | null>(null);
-  undoRef.current = undo;
-  const undoTimerRef = React.useRef<number | null>(null);
-  // The countdown resumes only when BOTH the pointer and the keyboard focus have left the bar.
-  const undoHoverRef = React.useRef(false);
-  const undoFocusRef = React.useRef(false);
-  const dropUndo = React.useCallback(() => {
-    if (undoTimerRef.current !== null) window.clearTimeout(undoTimerRef.current);
-    undoTimerRef.current = null;
-    undoLeftRef.current = UNDO_MS;
-    const hadFocus = undoFocusRef.current;
-    undoFocusRef.current = false; // the focused Undo button is gone with the line; the pointer may still be over the bar
-    setUndo(null);
-    if (hadFocus) refocus(); // the focused Undo chip vanished: the cursor goes back to the scan field, not <body>
-  }, [refocus]);
-  // The 5 s window PAUSES while the bar is hovered or focused and resumes with what was left.
-  const undoLeftRef = React.useRef(UNDO_MS);
-  const undoStartedRef = React.useRef(0);
-  const armUndo = (ms: number) => {
-    if (undoTimerRef.current !== null) window.clearTimeout(undoTimerRef.current);
-    undoLeftRef.current = ms;
-    if (undoHoverRef.current || undoFocusRef.current) return; // held: the leave/blur handler starts the countdown
-    undoStartedRef.current = Date.now();
-    undoTimerRef.current = window.setTimeout(dropUndo, ms);
-  };
-  const pauseUndo = () => {
-    if (undoTimerRef.current === null) return;
-    window.clearTimeout(undoTimerRef.current);
-    undoTimerRef.current = null;
-    undoLeftRef.current = Math.max(0, undoLeftRef.current - (Date.now() - undoStartedRef.current));
-  };
-  const resumeUndo = () => {
-    if (!undoRef.current || undoTimerRef.current !== null) return;
-    armUndo(undoLeftRef.current);
-  };
-  React.useEffect(
-    () => () => {
-      if (undoTimerRef.current !== null) window.clearTimeout(undoTimerRef.current);
-    },
-    [],
-  );
+  // POS-3: a removed line is held (LINE_UNDO_MS, CQ-27) in ONE slot (a newer removal makes the older one final). Undo puts it
+  // back at its index, or merges it into the same product if that was re-scanned meanwhile. Pay uses `lines`, which never has it.
+  const { undo, hold: holdRemoved, drop: dropUndo, bar: undoBar } = useCounterLineUndo(refocus);
 
   const removeLine = (tempId: string) => {
     if (lineLocked || saleInFlight()) return;
     const taken = takeLine(lines, tempId);
     if (!taken) return;
     setLines(taken.lines);
-    setUndo(taken.removed);
-    armUndo(UNDO_MS);
+    holdRemoved(taken.removed);
     refocus();
   };
 
   const undoRemove = () => {
     if (!undo || lineLocked || saleInFlight()) return;
     // A customer pick may have re-priced the cart while the line sat in the undo window: price it for them too (an edited price is kept).
-    setLines((prev) => repriceLines(restoreLine(prev, undo), reprice.tierFor).lines);
+    setLines(
+      (prev) => repriceLines(restoreLine(prev, undo), reprice.tierFor, reprice.layerOf).lines,
+    );
     dropUndo();
     refocus();
   };
@@ -565,7 +790,9 @@ export function CounterSaleScreen() {
 
   function resetSale() {
     dropUndo();
+    setLastSale(null);
     setCustomer(null);
+    buyerChoice.reset();
     setCustomerSearch("");
     setLines([]);
     setScanText("");
@@ -573,10 +800,12 @@ export function CounterSaleScreen() {
     setMethod("CASH");
     setTendered("");
     setReference("");
+    setCheckDate("");
     setError("");
     setReceipt(null);
     setEnteredTender(null);
     attemptRef.current = null;
+    offlineKeyRef.current = null;
     clearHeldAttempt(heldKey);
     liveCart.endSend();
     setOutcomeUnknown(false);
@@ -594,9 +823,11 @@ export function CounterSaleScreen() {
     resetSale();
     setLines(p.lines as SaleLine[]);
     setCustomer(p.customer as PickedCustomer | null);
+    buyerChoice.restore(p.customer as PickedCustomer | null, p.walkIn === true);
     setMethod(p.method as CounterSalePaymentMethod);
     setTendered(p.tendered);
     setReference(p.reference);
+    setCheckDate(p.checkDate ?? "");
     setRepriceEpoch((n) => n + 1);
   }
 
@@ -610,28 +841,49 @@ export function CounterSaleScreen() {
     unknown: boolean;
   }): Promise<CounterSaleResponse | null> => {
     setLookupFailed(false);
+    // CQ-29: read BEFORE the request leaves: a browser already offline cannot have delivered it.
+    const offlineAtSend = typeof navigator !== "undefined" && navigator.onLine === false;
     setSending(true); // from here to the answer the cart is frozen (a validation refusal never reaches this point)
     liveCart.beginSend(); // the stored cart goes NOW, before the POST can leave: a refresh mid-send must not bring it back
     try {
-      const res = await createSale.mutateAsync({ dto: attempt.dto, idempotencyKey: attempt.key });
+      const sent = await createSale.mutateAsync({ dto: attempt.dto, idempotencyKey: attempt.key });
+      // The method the cashier chose, if the server's answer does not echo it (captured before the screen resets).
+      const res = { ...sent, method: sent.method ?? attempt.dto.payment.method };
       attemptRef.current = null;
+      offlineKeyRef.current = null;
       clearHeldAttempt(heldKey);
       setOutcomeUnknown(false);
       return res;
     } catch (err) {
       const finalCopy = finalCounterSaleCopy(err);
-      if (finalCopy) {
+      if (rw.handle(err, () => void completeSale(attempt.next))) {
+        // Row 510: a warning (or a driver's block) wrote nothing. Keep the key for the re-ring with the ack, unfreeze the cart.
+        offlineKeyRef.current = attempt.key;
+        attemptRef.current = null;
+        clearHeldAttempt(heldKey);
+        setOutcomeUnknown(false);
+        liveCart.endSend();
+      } else if (finalCopy) {
         // FINAL (even for an unknown attempt): voided or changed after it was rung. Drop the key, unlock, never retry.
         attemptRef.current = null;
         clearHeldAttempt(heldKey);
         setOutcomeUnknown(false);
         setError(finalCopy);
         liveCart.endSend();
+      } else if (!attempt.unknown && isNotSentOffline(err, offlineAtSend)) {
+        // CQ-29: offline, so nothing was sent. Say so, unfreeze the form, and keep the key for the retry.
+        offlineKeyRef.current = attempt.key;
+        attemptRef.current = null;
+        clearHeldAttempt(heldKey);
+        setOutcomeUnknown(false);
+        setError(COUNTER_OFFLINE_COPY);
+        liveCart.endSend();
       } else if (!attempt.unknown && isDefinitiveCounterSaleRefusal(err)) {
         attemptRef.current = null;
         clearHeldAttempt(heldKey);
         setOutcomeUnknown(false);
-        setError(counterSaleErrorCopy(err)); // FIXED copy, never the server message
+        // FIXED copy, never the server message; a walk-in sale has no customer record to fix a license on
+        setError(counterSaleErrorCopy(err, { walkIn: attempt.dto.walkIn === true }));
         liveCart.endSend();
       } else {
         attempt.unknown = true;
@@ -645,9 +897,16 @@ export function CounterSaleScreen() {
           method,
           tendered,
           reference,
+          checkDate,
         });
         // A tender refused for a CLOSED DAY leaves the sale saved but unpaid: say so (the banner below is the generic one).
-        setError(isCounterSaleDayClosed(err) ? counterSaleErrorCopy(err) : "");
+        // A refusal the till owns (its global toast is silenced) says its own copy too, or the clerk would see nothing.
+        setError(
+          isCounterSaleDayClosed(err) || isCounterSaleHandledError(err)
+            ? counterSaleErrorCopy(err)
+            : "",
+        );
+        setRecordedHref(keptSaleHref(err));
         setOutcomeUnknown(true);
       }
       return null;
@@ -661,6 +920,12 @@ export function CounterSaleScreen() {
     if (attemptRef.current) return send(attemptRef.current); // an unknown outcome: the SAME body, the SAME key
     if (lines.length === 0) {
       setError("Add at least one item.");
+      return null;
+    }
+    // A regulated line's deposit / excise comes from the categories list: until it has loaded the total is short by
+    // exactly that, so the sale waits rather than tender against a figure the server will refuse (CQ-01 / CQ-28).
+    if (!categoriesLoaded && lines.some((l) => l.trackedCategoryId)) {
+      setError("Still loading the regulated charges. Try again in a moment.");
       return null;
     }
     // POS-5: the shared rule (decideStaffOverride) says a special-price customer's edited line needs a reason: no POST.
@@ -679,21 +944,54 @@ export function CounterSaleScreen() {
       isWalkIn,
     });
     if (problem) {
-      setError(PAYMENT_PROBLEM_COPY[problem]);
+      // B1181: On account is refused for a walk-in, so it can no longer be the checked tender (its radio is disabled): fall
+      // back to Cash with a clean amount and reference. The cart and the refusal copy stay.
+      if (problem === "WALK_IN_ON_ACCOUNT") {
+        setMethod("CASH");
+        setTendered("");
+        setReference("");
+        setCheckDate("");
+      }
+      setError(paymentProblemCopy(problem, totals.total));
+      if (problem === "TENDER_SHORT") setTenderFix((n) => n + 1);
+      return null;
+    }
+    // The day is read NOW, not when the screen was drawn: a till left idle across the business's midnight dates the check,
+    // and judges a post-dated one, against the new day.
+    const submitToday = businessToday();
+    const submitCheckDate = checkDate || submitToday;
+    if (
+      method === "CHECK" &&
+      (zoneStatus !== "ready" || isPostdatedCheck(submitCheckDate, submitToday))
+    ) {
+      setError(
+        zoneStatus === "loading"
+          ? COUNTER_CHECK_ZONE_LOADING_COPY
+          : zoneStatus === "failed"
+            ? COUNTER_CHECK_ZONE_FAILED_COPY
+            : COUNTER_CHECK_POSTDATED_COPY,
+      );
       return null;
     }
     const tenderAmount = roundMoney(tenderedNum);
-    const dto: CounterSaleRequest = {
+    // Row 510: the ack (once, from "Sell anyway") rides IN the attempt's body, so a resend of an unknown outcome repeats it.
+    const dto: CounterSaleRequest = rw.attach({
       ...(customer ? { customerId: customer.id } : { walkIn: true }),
       items: lines.map(toSaleItem),
       payment: {
         method,
         ...(method === "CASH" ? { amount: tenderAmount } : {}),
         ...(reference.trim() ? { reference: reference.trim() } : {}),
+        ...(method === "CHECK" && submitCheckDate ? { checkDate: submitCheckDate } : {}),
       },
-    };
+    } as CounterSaleRequest);
     dropUndo(); // the sale is going out: a removed line can no longer come back
-    attemptRef.current = { key: newIdempotencyKey(), dto, next, unknown: false };
+    attemptRef.current = {
+      key: offlineKeyRef.current ?? newIdempotencyKey(),
+      dto,
+      next,
+      unknown: false,
+    };
     estimateRef.current = {
       total: totals.total,
       change: method === "CASH" ? changeDue(totals.total, tenderAmount) : 0,
@@ -714,15 +1012,30 @@ export function CounterSaleScreen() {
     const startFresh = next && !unpaid && !figuresDiffer;
     if (autoPrint) {
       // D6: the RECEIPT is rendered first, then printed once (the effect below), and only then does "next" reset.
-      printAfterRenderRef.current = { reset: startFresh };
+      printAfterRenderRef.current = { reset: startFresh, note: lastSaleNoteFrom(res) };
       setReceipt(res);
-    } else if (startFresh) resetSale();
-    else setReceipt(res);
+    } else if (startFresh) {
+      resetSale();
+      setLastSale(lastSaleNoteFrom(res)); // CQ-17: after the reset, so the fresh sale names the one just finished
+    } else setReceipt(res);
   };
+
+  // S5: why Complete is off (linked from both buttons), next to the read-only hint when that shows too
+  const completeDescribedBy =
+    [
+      readOnlyGate.readOnly ? readOnlyGate.hintId : null,
+      buyerChoice.chosen ? null : "counter-buyer-reason",
+    ]
+      .filter(Boolean)
+      .join(" ") || undefined;
 
   const completeSale = async (next: boolean, retry = false) => {
     if (submittingRef.current) return; // a double Enter / click is one sale
     if (parkBusyRef.current) return; // a park / resume request is still running
+    if (!buyerChoice.chosen && !attemptRef.current) {
+      setError(BUYER_REASON_COPY); // S5: the Enter key in the tender field gets the same answer as the disabled buttons
+      return;
+    }
     if (shipRunningRef.current || createDraft.isPending) return; // a ship hand-off is saving this cart
     // A scan still resolving (or waiting on Retry / the picker) is not on the cart yet: never post without it.
     if (!retry && (scanBusyRef.current || repriceBlockedRef.current)) return;
@@ -801,13 +1114,16 @@ export function CounterSaleScreen() {
   };
 
   // Auto-print: runs after the receipt has committed to the DOM, so the page printed IS the receipt.
-  const printAfterRenderRef = React.useRef<{ reset: boolean } | null>(null);
+  const printAfterRenderRef = React.useRef<{ reset: boolean; note?: LastSaleNote } | null>(null);
   React.useEffect(() => {
     if (!receipt || !printAfterRenderRef.current) return;
-    const { reset } = printAfterRenderRef.current;
+    const { reset, note } = printAfterRenderRef.current;
     printAfterRenderRef.current = null;
     window.print(); // once per completed sale
-    if (reset) resetSale();
+    if (reset) {
+      resetSale();
+      if (note) setLastSale(note);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [receipt]);
 
@@ -816,9 +1132,24 @@ export function CounterSaleScreen() {
     writeAutoPrint(on);
   };
 
+  // A failed check keeps its retry panel up through a retry (CQ-30, see `keepRetryPanel`).
+  if (keepRetryPanel) {
+    return <CounterGateOffline onRetry={gate.retry} retrying={gate.retrying || gate.loading} />;
+  }
+
   // The features answer is not in yet: an empty, non-interactive placeholder, with no copy (neither the sale UI nor a false
   // "not turned on").
   if (gate.loading) return <div data-testid="counter-sale-loading" aria-busy="true" />;
+
+  // BO-07: the counter is on for the business but this operator's admin has not turned selling on for their account (read
+  // live; a PERMISSION_DENIED from any till call lands here too). A plain panel, checked before the "off" copy, never a toast.
+  if (gate.mayUseTill === false && counterSaleGate(gate.capability).showButton) {
+    return (
+      <div className="mx-auto max-w-md p-4 text-sm" data-testid="counter-sale-no-access">
+        {COUNTER_NO_ACCESS_COPY}
+      </div>
+    );
+  }
 
   // Missing means dark: loading, error, unknown, a response without the capability, or counter "off" all render NO sale UI
   // (a deep link or a stale tab). Only "optional" / "always" open the screen.
@@ -845,6 +1176,8 @@ export function CounterSaleScreen() {
           customerName={receiptCustomerName(customer)}
           headingRef={receiptHeadingRef}
         />
+        <CounterPaymentNotRecorded receipt={receipt} onReceipt={setReceipt} />
+        <CounterCreditOverLimit receipt={receipt} customerName={customer?.businessName} />
         <CounterReceiptActions
           orderId={receipt.orderId}
           customer={customer}
@@ -856,8 +1189,13 @@ export function CounterSaleScreen() {
 
   return (
     <div
-      className="mx-auto w-full max-w-5xl space-y-4 p-4 pb-[calc(1rem+var(--counter-bar-h,0px))] md:pb-4"
-      style={{ "--counter-bar-h": `${barHeight}px` } as React.CSSProperties}
+      className="mx-auto w-full max-w-5xl space-y-4 p-4 max-md:mb-[calc(-1*var(--counter-main-pb,0px))] max-md:pb-0"
+      style={
+        {
+          "--counter-bar-h": `${barHeight}px`,
+          "--counter-main-pb": `${mainPad}px`,
+        } as React.CSSProperties
+      }
       data-testid="counter-sale-screen"
       data-counter-screen
     >
@@ -865,7 +1203,15 @@ export function CounterSaleScreen() {
         <h1 className="text-xl font-semibold">Counter sale</h1>
         <CounterTodaysSales />
         <ParkedSales
-          cart={{ lines, customer, method, tendered, reference }}
+          cart={{
+            lines,
+            customer,
+            method,
+            tendered,
+            reference,
+            checkDate,
+            walkIn: buyerChoice.kind === "walk-in",
+          }}
           blocked={
             locked ||
             salePosting ||
@@ -881,47 +1227,42 @@ export function CounterSaleScreen() {
           onRestore={restoreParked}
         />
         {gate.offerShipInstead ? (
-          <Button
+          <WriteButton
             className="min-h-[44px]"
             variant="secondary"
             disabled={locked || salePosting || createDraft.isPending}
             onClick={onShipClick}
           >
             Ship this order instead
-          </Button>
+          </WriteButton>
         ) : null}
       </div>
+
+      {lastSale ? <CounterLastSale note={lastSale} /> : null}
 
       <div
         className="flex flex-col gap-4 [&>*]:min-w-0 md:grid md:grid-cols-[minmax(0,1fr)_320px] md:items-start xl:grid-cols-[minmax(0,1fr)_380px]"
         data-testid="counter-sale-columns"
       >
         <div className="min-w-0 space-y-4" data-testid="counter-cart-column">
-          {/* customer: Walk-in by default */}
+          {/* S5: who's buying? Walk-in is one explicit tap, never the default */}
           <section aria-label="Customer" className="space-y-2">
-            <div className="flex items-center gap-2 text-sm">
-              <span className="font-medium">
-                {customer ? customer.businessName : "Walk-in customer"}
-              </span>
-              {customer ? (
-                <button
-                  type="button"
-                  className="min-h-[44px] text-brand-700 underline"
-                  disabled={lineLocked}
-                  onClick={() => {
-                    if (lineLocked || saleInFlight()) return;
-                    setCustomer(null);
-                  }}
-                >
-                  Use Walk-in customer
-                </button>
-              ) : null}
-            </div>
+            <CounterBuyerChoice
+              kind={buyerChoice.kind}
+              customerName={customer?.businessName}
+              disabled={lineLocked}
+              onWalkIn={() => {
+                if (lineLocked || saleInFlight()) return;
+                setCustomer(null);
+                buyerChoice.chooseWalkIn();
+              }}
+            />
             <input
+              {...customerListbox.inputProps}
               ref={customerFindRef}
               aria-label="Find a customer"
               className="min-h-[44px] w-full rounded border px-3 py-2 text-sm"
-              placeholder="Find a customer (optional)"
+              placeholder="Find a customer"
               disabled={lineLocked}
               value={customerSearch}
               onChange={(e) => {
@@ -929,6 +1270,9 @@ export function CounterSaleScreen() {
                 setCustomerSearch(e.target.value);
               }}
             />
+            {customer && !customer.isWalkIn ? (
+              <CounterCustomerCredit customerId={customer.id} />
+            ) : null}
             {reprice.noteText ? (
               <p
                 role="status"
@@ -962,27 +1306,14 @@ export function CounterSaleScreen() {
                 {COUNTER_SHIP_WALK_IN_CAPTION}
               </p>
             ) : null}
-            {matches.length > 0 ? (
-              <ul className="rounded border text-sm">
-                {matches.map((c: any) => (
-                  <li key={c.id}>
-                    <button
-                      type="button"
-                      className="min-h-[44px] w-full px-3 py-2 text-left hover:bg-gray-50"
-                      disabled={lineLocked}
-                      onClick={() => {
-                        if (lineLocked || saleInFlight()) return;
-                        setCustomer(c);
-                        setCustomerSearch("");
-                        refocus();
-                      }}
-                    >
-                      {c.businessName}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
+            <CounterCustomerMatches
+              listbox={customerListbox.listbox}
+              search={customerSearch}
+              matches={matches as PickedCustomer[]}
+              answered={customersData !== undefined && !customersFetching}
+              disabled={lineLocked}
+              onPick={pickCustomer}
+            />
           </section>
 
           {/* SA-747: quick keys; a tap is the scan add path, and a frozen cart ignores it */}
@@ -1004,12 +1335,15 @@ export function CounterSaleScreen() {
             <input
               ref={scanRef}
               aria-label="Scan or search items"
-              className="min-h-[44px] w-full rounded border px-3 py-2 text-base"
-              placeholder="Scan or type an item (type a quantity first to multiply)"
+              className="min-h-[44px] w-full text-ellipsis rounded border px-3 py-2 text-base"
+              placeholder="Scan or type an item"
+              aria-describedby="counter-scan-hint"
               value={scanText}
               disabled={lineLocked}
               onChange={(e) => {
                 if (lineLocked || saleInFlight()) return;
+                lastScanActivityRef.current = performance.now();
+                scan.dismissMessage(); // F05: a miss message goes at the next keystroke
                 setScanText(e.target.value);
               }}
               onKeyDown={(e) => {
@@ -1017,6 +1351,16 @@ export function CounterSaleScreen() {
                 if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z" && !scanText && undo) {
                   e.preventDefault();
                   undoRemove();
+                }
+                if (e.key === "Enter" && !scanText.trim()) {
+                  e.preventDefault(); // an empty Enter is never a scan
+                  if (
+                    lines.length > 0 &&
+                    !lineLocked &&
+                    !scanBusyRef.current &&
+                    performance.now() - lastScanActivityRef.current >= EMPTY_ENTER_QUIET_MS
+                  )
+                    focusPayment(); // the next keys are the payment
                 }
               }}
               onBlur={(e) => {
@@ -1034,16 +1378,11 @@ export function CounterSaleScreen() {
               </span>
             ) : null}
           </form>
-          {scanCue ? (
-            <p
-              role="status"
-              className="rounded bg-navy/5 px-2 py-1 text-sm font-medium"
-              data-testid="counter-scan-cue"
-            >
-              {scanCue}
-            </p>
-          ) : null}
-          {scan.message ? <p className="text-sm text-red-700">{scan.message}</p> : null}
+          {/* The multiply tip lives under the field: in the placeholder it was cut off at 390px. */}
+          <p id="counter-scan-hint" className="-mt-1 text-xs text-navy/70" data-testid="scan-hint">
+            Type a quantity first to multiply.
+          </p>
+          <CounterScanFeedback miss={scan.message} cue={scanCue} added={scan.added} />
           {scan.failed ? (
             <div
               role="alert"
@@ -1062,6 +1401,11 @@ export function CounterSaleScreen() {
           ) : null}
           {scan.picker ? (
             <div className="space-y-1" data-testid="counter-scan-picker">
+              {scan.picker.category ? (
+                <p className="text-sm font-medium" data-testid="counter-category-heading">
+                  {scan.picker.category.name}: {scan.picker.matches.length} items
+                </p>
+              ) : null}
               <DidYouMeanPicker
                 matches={scan.picker.matches.map((p: any) => ({
                   id: p.id,
@@ -1072,6 +1416,17 @@ export function CounterSaleScreen() {
                 }
                 onCancel={scan.cancelPicker}
               />
+              {scan.picker.category?.hasMore ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="min-h-[44px]"
+                  disabled={scan.moreBusy}
+                  onClick={() => void scan.loadMore()}
+                >
+                  Show more
+                </Button>
+              ) : null}
               {scan.waiting > 1 ? (
                 <p className="text-sm">{scan.waiting - 1} more scans waiting</p>
               ) : null}
@@ -1110,6 +1465,7 @@ export function CounterSaleScreen() {
               <CounterLineRow
                 key={l.tempId}
                 line={l}
+                needsLicense={needsLicense(l)}
                 locked={lineLocked}
                 onStep={stepItem}
                 onRemove={removeLine}
@@ -1137,23 +1493,7 @@ export function CounterSaleScreen() {
               undo &&
                 "flex items-center justify-between gap-2 rounded border border-navy/20 bg-navy/5 p-2 text-sm",
             )}
-            onMouseEnter={() => {
-              undoHoverRef.current = true;
-              pauseUndo();
-            }}
-            onMouseLeave={() => {
-              undoHoverRef.current = false;
-              if (!undoFocusRef.current) resumeUndo();
-            }}
-            onFocus={() => {
-              undoFocusRef.current = true;
-              pauseUndo();
-            }}
-            onBlur={(e) => {
-              if (e.currentTarget.contains(e.relatedTarget as Node | null)) return; // focus moved within the bar
-              undoFocusRef.current = false;
-              if (!undoHoverRef.current) resumeUndo();
-            }}
+            {...undoBar}
           >
             {undo ? (
               <>
@@ -1180,14 +1520,28 @@ export function CounterSaleScreen() {
           data-testid="counter-payment-column"
         >
           {/* payment on the same screen */}
-          <section aria-label="Payment" className="space-y-3">
-            <div className="flex flex-wrap gap-2">
+          <section ref={paymentRef} aria-label="Payment" className="space-y-3">
+            {licenseNeeded ? (
+              <p className="text-sm text-amber-800" data-testid="counter-license-note">
+                {COUNTER_LICENSE_NOTE}
+              </p>
+            ) : null}
+            <div
+              className="flex flex-wrap gap-2"
+              role="radiogroup"
+              aria-label="Payment method"
+              data-testid="counter-tender-methods"
+              onKeyDown={onTenderKeyDown}
+            >
               {paymentMethodOptions(isWalkIn).map((m) => (
                 <button
                   key={m.method}
                   type="button"
+                  role="radio"
                   disabled={m.disabled || locked}
-                  aria-pressed={method === m.method}
+                  aria-checked={method === m.method}
+                  tabIndex={m.method === tabStopMethod ? 0 : -1}
+                  data-method={m.method}
                   className={cn(
                     TAP_TARGET,
                     "rounded border px-3 text-sm disabled:opacity-40",
@@ -1225,6 +1579,7 @@ export function CounterSaleScreen() {
                 <label className="block text-sm">
                   Amount tendered
                   <input
+                    ref={tenderRef}
                     aria-label="Amount tendered"
                     inputMode="decimal"
                     className="mt-1 min-h-[44px] w-full rounded border px-3 py-2"
@@ -1246,23 +1601,31 @@ export function CounterSaleScreen() {
             ) : null}
 
             {method === "CHECK" ? (
-              <label className="block text-sm">
-                Check number
-                <input
-                  aria-label="Check number"
-                  className="mt-1 min-h-[44px] w-full rounded border px-3 py-2"
-                  value={reference}
-                  disabled={locked}
-                  onChange={(e) => setReference(e.target.value)}
-                />
-              </label>
+              <CounterCheckDetails
+                reference={reference}
+                onReferenceChange={setReference}
+                checkDate={shownCheckDate}
+                onCheckDateChange={setCheckDate}
+                today={today}
+                zoneStatus={zoneStatus}
+                onRetryZone={zoneRead.retry}
+                walkIn={!customer || !!customer.isWalkIn}
+                disabled={locked}
+                onPutOnAccount={() => {
+                  setMethod("ON_ACCOUNT");
+                  setError("");
+                  focusPaymentControl(
+                    document.querySelector<HTMLElement>('[data-method="ON_ACCOUNT"]'),
+                  );
+                }}
+              />
             ) : null}
           </section>
 
           <label className="flex min-h-[44px] items-center gap-2 text-sm">
             <input
               type="checkbox"
-              className="h-5 w-5"
+              className="h-5 w-5 max-lg:h-11 max-lg:w-11"
               checked={autoPrint}
               onChange={(e) => toggleAutoPrint(e.target.checked)}
             />
@@ -1277,6 +1640,15 @@ export function CounterSaleScreen() {
             >
               <p className="font-semibold">{COUNTER_OUTCOME_UNKNOWN_COPY}</p>
               {lookupFailed ? <p>{COUNTER_LOOKUP_FAILED_COPY}</p> : null}
+              {recordedHref ? (
+                <p>
+                  The sale was recorded.{" "}
+                  <Link href={recordedHref} className="text-brand-700 underline">
+                    Open it
+                  </Link>{" "}
+                  to check it. Try again finishes it once, without ringing it twice.
+                </p>
+              ) : null}
               {heldCorrupt ? <p>{COUNTER_DISCARD_COPY}</p> : null}
               <div className="flex flex-wrap items-center gap-3">
                 {heldCorrupt ? (
@@ -1318,7 +1690,34 @@ export function CounterSaleScreen() {
             </p>
           ) : null}
 
-          {reprice.failed ? (
+          {reprice.unconfirmed === "failed" ? (
+            <p
+              role="alert"
+              className="text-sm text-red-700"
+              data-testid="counter-price-layer-failed"
+            >
+              Couldn&apos;t load this customer&apos;s prices.{" "}
+              <button type="button" className={cn(TAP_TARGET, "underline")} onClick={reprice.retry}>
+                Retry
+              </button>
+            </p>
+          ) : reprice.unconfirmed === "incomplete" ? (
+            <p
+              role="status"
+              className="text-sm text-navy/70"
+              data-testid="counter-price-layer-incomplete"
+            >
+              {PRICE_LAYER_TOO_MANY_COPY}
+            </p>
+          ) : reprice.unconfirmed === "pending" ? (
+            <p
+              role="status"
+              className="text-sm text-navy/70"
+              data-testid="counter-price-layer-pending"
+            >
+              Checking this customer&apos;s prices…
+            </p>
+          ) : reprice.failed ? (
             <p role="alert" className="text-sm text-red-700" data-testid="counter-reprice-failed">
               Couldn&apos;t update prices for this customer. The old prices are still showing.{" "}
               <button type="button" className={cn(TAP_TARGET, "underline")} onClick={reprice.retry}>
@@ -1337,27 +1736,83 @@ export function CounterSaleScreen() {
             </p>
           ) : null}
 
+          {/* SA-733r6: read-only keeps the cart; Charge is disabled and says why - above the bar, so the bar's box never moves. */}
+          <ReadOnlyHint className="text-sm text-slate-700" />
           <div
             ref={barRef}
-            className="sticky bottom-0 z-20 space-y-2 border-t bg-white py-2 md:static md:border-t-0 md:py-0"
+            className="sticky bottom-0 z-20 space-y-2 border-t bg-white pb-[calc(0.5rem+env(safe-area-inset-bottom,0px))] pt-2 max-md:bottom-[calc(-1*var(--counter-main-pb,0px))] md:static md:border-t-0 md:py-0"
             data-testid="counter-checkout-bar"
           >
+            {/* R7b 1.3: below md the Payment section sits above the bar, out of sight: the bar names the chosen tender, from a
+                LIST of tenders (one today; the split-tender seam), and "Change payment" brings the section back. */}
+            <button
+              type="button"
+              className={cn(
+                TAP_TARGET,
+                "flex w-full items-center justify-between gap-2 rounded border px-3 text-left text-sm md:hidden",
+              )}
+              data-testid="counter-bar-tender"
+              disabled={locked}
+              onClick={bringPaymentIntoView}
+            >
+              <span className="min-w-0 truncate font-medium">
+                {barTenders.map((t) => t.text).join(" + ")}
+              </span>
+              <span className="shrink-0 text-brand-700 underline">Change payment</span>
+            </button>
+            {/* CQ-08: the number explains itself, in the receipt's order: Subtotal at the system prices, Discounts, Tax,
+                each named regulated charge, then the total. Every figure is the one the receipt prints. */}
+            <div className="flex justify-between text-sm" data-testid="running-subtotal">
+              <span>Subtotal</span>
+              <span>{money(roundMoney(totals.subtotal + discounts))}</span>
+            </div>
             {discounts > 0 ? (
               <div className="flex justify-between text-sm" data-testid="running-discounts">
-                <span>Discounts</span>
-                <span>-{money(discounts)}</span>
+                <span>Discount</span>
+                <span>−{money(discounts)}</span>
               </div>
             ) : null}
-            <div className="flex justify-between text-lg font-semibold" data-testid="running-total">
-              <span>Estimated total</span>
-              <span>{money(totals.total)}</span>
-            </div>
+            {totals.tax > 0 ? (
+              <div className="flex justify-between text-sm" data-testid="running-tax">
+                <span>Tax</span>
+                <span>{money(totals.tax)}</span>
+              </div>
+            ) : null}
+            {totals.chargeLines.map((c) => (
+              <div
+                key={c.key}
+                className="flex justify-between text-sm"
+                data-testid={`running-charge-${c.key}`}
+              >
+                <span>{c.label}</span>
+                <span>{money(c.amount)}</span>
+              </div>
+            ))}
+            {/* R7b ruling: for cash, "Amount due" below already reads the total; the row hides while the two are equal to
+                the cent (a tender in progress, a card sale or a differing figure shows it as before). The figure stays in
+                the DOM, visually hidden, for assistive tech and for the tests that read it. */}
+            {method === "CASH" &&
+            roundMoney(totals.total) === roundMoney(amountDue(totals.total, tenderedNum)) ? (
+              <span className="sr-only" data-testid="running-total">
+                Total {money(totals.total)}
+              </span>
+            ) : (
+              <div data-testid="estimated-total-row">
+                <div
+                  className="flex justify-between text-lg font-semibold"
+                  data-testid="running-total"
+                >
+                  <span>Estimated total</span>
+                  <span>{money(totals.total)}</span>
+                </div>
+              </div>
+            )}
 
             {method === "CASH" ? (
               <p className="text-3xl font-bold" data-testid="change-due" role="status">
-                {amountDue(totals.total, tenderedNum) > 0
-                  ? `Amount due ${money(amountDue(totals.total, tenderedNum))}`
-                  : `Change ${money(changeDue(totals.total, tenderedNum))}`}
+                {changeDue(totals.total, tenderedNum) > 0
+                  ? `Change ${money(changeDue(totals.total, tenderedNum))}`
+                  : `Amount due ${money(amountDue(totals.total, tenderedNum))}`}
               </p>
             ) : null}
 
@@ -1368,11 +1823,24 @@ export function CounterSaleScreen() {
               </p>
             ) : null}
 
+            {!buyerChoice.chosen ? (
+              <p
+                id="counter-buyer-reason"
+                className="text-sm font-medium text-brand-700"
+                data-testid="counter-buyer-reason"
+              >
+                {BUYER_REASON_COPY}
+              </p>
+            ) : null}
+
             <div className="flex flex-wrap gap-2" data-testid="counter-checkout-actions">
               <Button
                 className="min-h-[44px]"
                 onClick={() => void completeSale(false)}
+                aria-describedby={completeDescribedBy}
                 disabled={
+                  readOnlyGate.readOnly ||
+                  !buyerChoice.chosen ||
                   salePosting ||
                   createDraft.isPending ||
                   locked ||
@@ -1387,7 +1855,10 @@ export function CounterSaleScreen() {
                 className="min-h-[44px]"
                 variant="secondary"
                 onClick={() => void completeSale(true)}
+                aria-describedby={completeDescribedBy}
                 disabled={
+                  readOnlyGate.readOnly ||
+                  !buyerChoice.chosen ||
                   salePosting ||
                   createDraft.isPending ||
                   locked ||
@@ -1402,6 +1873,7 @@ export function CounterSaleScreen() {
           </div>
         </div>
       </div>
+      {rw.dialog}
     </div>
   );
 }

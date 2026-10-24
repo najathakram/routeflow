@@ -184,9 +184,7 @@ export interface ZSections {
   /** "Counted $412.50 · Short $2.50" / "Even $0.00" / "Over $1.00" */
   headline: { counted: number; verdict: "short" | "even" | "over"; amount: number };
   groups: ZGroup[];
-  /** "Not taken at the till: $40.00" */
-  notTakenAtTill: number;
-  /** false -> print "Some refunds have no method. Cash in drawer may be high." */
+  /** false -> print "Some refunds have no method. Expected cash may be high." */
   refundsTenderKnown: boolean;
 }
 
@@ -205,6 +203,24 @@ export function dayCloseDateLabel(day: string): string {
   }).format(d);
 }
 
+/**
+ * The ONE variance wording (owner ruling 10-12), on the count form, the closed card, the Z report and the Z email:
+ * "Balanced", "Short $2.50" or "Over $1.00". `amount` is the already-formatted magnitude (each surface formats money its own
+ * way); a balanced drawer carries none. Never "Even", "Under" or "Over/short".
+ */
+export function dayCloseVerdictText(
+  verdict: ZSections["headline"]["verdict"],
+  amount: string,
+): string {
+  if (verdict === "even") return "Balanced";
+  return `${verdict === "short" ? "Short" : "Over"} ${amount}`;
+}
+
+/** "1 hand-over" / "3 hand-overs": the count beside the hand-over cash on the Z report and the Z email. */
+export function dayCloseHandOvers(count: number): string {
+  return count === 1 ? "1 hand-over" : `${count} hand-overs`;
+}
+
 export function dayCloseZSections(s: ZReportInput): ZSections {
   const t = s.totals;
   const variance = roundMoney(s.variance);
@@ -215,6 +231,21 @@ export function dayCloseZSections(s: ZReportInput): ZSections {
       amount: Math.abs(variance),
     },
     groups: [
+      {
+        heading: "Drawer",
+        rows: [
+          { label: "Opening float", amount: s.openingFloat },
+          {
+            label: "Cash from sales",
+            amount: dayCloseCashFromSales(s.expectedCash, s.openingFloat, t.refunds.cash),
+          },
+          { label: "Expected cash", amount: s.expectedCash, bold: true },
+          { label: "Counted", amount: s.countedCash },
+          { label: "Variance", amount: variance, signed: true },
+          // money on a counter sale that the till did not take (an office payment, a pickup still unpaid): part of the drawer's story
+          { label: "Unpaid pickups", amount: t.notAtTill },
+        ],
+      },
       {
         heading: "Money in",
         rows: [
@@ -250,21 +281,7 @@ export function dayCloseZSections(s: ZReportInput): ZSections {
           { label: "Net collected", amount: t.netCollected, bold: true },
         ],
       },
-      {
-        heading: "Drawer",
-        rows: [
-          { label: "Opening float", amount: s.openingFloat },
-          {
-            label: "Cash from sales",
-            amount: dayCloseCashFromSales(s.expectedCash, s.openingFloat, t.refunds.cash),
-          },
-          { label: "Cash in drawer", amount: s.expectedCash, bold: true },
-          { label: "Counted", amount: s.countedCash },
-          { label: "Over/short", amount: variance, signed: true },
-        ],
-      },
     ],
-    notTakenAtTill: t.notAtTill,
     refundsTenderKnown: t.refunds.tenderKnown,
   };
 }

@@ -1,4 +1,9 @@
-import { COUNTER_PARK_LABEL_MAX } from "@routeflow/pricing";
+import {
+  COUNTER_PARK_LABEL_MAX,
+  ROW_ITEM_NAMES_MAX,
+  foldItemNames,
+  type ParkedPriceLine,
+} from "@routeflow/pricing";
 import type { LockFamily } from "../../common/db-locks";
 
 /** Advisory-lock family of the parked-cart cap: keyed on the tenant id (one lock covers the per-register and tenant-wide caps). */
@@ -43,6 +48,8 @@ export interface ParkedRow {
   expiresAt?: Date | string;
   payload?: unknown;
   lineCount?: number | null;
+  /** The list's `"payload"->'lines'` (only its pricing inputs leave the service: {@link priceLinesOf}). */
+  lines?: unknown;
   customerName?: string | null;
 }
 
@@ -52,6 +59,45 @@ export const iso = (d: Date | string): string => new Date(d).toISOString();
 export function lineCountOf(payload: unknown): number {
   const lines = (payload as { lines?: unknown } | null)?.lines;
   return Array.isArray(lines) ? lines.length : 0;
+}
+
+/**
+ * Row 330e: the pricing inputs of a stored payload's lines (`unitPrice`, `qty`, and the box/piece split when set),
+ * for the list's per-row total. The screen totals them with `cartTotals`, the same function its live cart uses; no
+ * money is computed here. A line without a finite price and qty is dropped, so a row's total never shows NaN.
+ */
+export function priceLinesOf(payload: unknown): ParkedPriceLine[] {
+  const lines = (payload as { lines?: unknown } | null)?.lines;
+  if (!Array.isArray(lines)) return [];
+  const out: ParkedPriceLine[] = [];
+  for (const l of lines) {
+    if (!l || typeof l !== "object") continue;
+    const r = l as Record<string, unknown>;
+    const unitPrice = Number(r.unitPrice);
+    const qty = Number(r.qty);
+    if (
+      r.unitPrice == null ||
+      r.qty == null ||
+      !Number.isFinite(unitPrice) ||
+      !Number.isFinite(qty)
+    )
+      continue;
+    const line: ParkedPriceLine = { unitPrice, qty };
+    for (const k of ["boxes", "pieces", "unitsPerBox"] as const) {
+      const v = r[k];
+      if (v != null && Number.isFinite(Number(v))) line[k] = Number(v);
+    }
+    out.push(line);
+  }
+  return out;
+}
+
+/**
+ * R7b 2.1: the first few line names (+ qty) of a stored payload and its named-line count, for the list row. No query
+ * change: the list already reads `payload->'lines'`. A non-array / nameless payload yields `{}`.
+ */
+export function itemSummaryOf(payload: unknown): ReturnType<typeof foldItemNames> {
+  return foldItemNames((payload as { lines?: unknown } | null)?.lines, ROW_ITEM_NAMES_MAX);
 }
 
 /** The customer's business name of a stored payload, when it has one. */

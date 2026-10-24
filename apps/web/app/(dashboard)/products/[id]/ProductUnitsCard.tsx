@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import type { ProductUnitLevel } from "@routeflow/types";
+import type { ProductPriceGridDto, ProductUnitLevel } from "@routeflow/types";
 import { resolveUnitPrice, unitWords, type LadderProduct } from "@routeflow/pricing";
 import { Button, Modal, Skeleton, useToast } from "@routeflow/ui/web";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -9,7 +9,7 @@ import { DecimalInput } from "@/components/MoneyInput";
 import { useAuth } from "@/lib/auth-context";
 import { fmt } from "@/lib/formatting";
 import { useTierLabels } from "@/lib/api/tier-labels";
-import { tierLabel } from "@/lib/tier-label";
+import { productTierLabel } from "@/lib/tier-one-label";
 import {
   useCreateProductUnit,
   useDeleteProductUnit,
@@ -18,6 +18,20 @@ import {
   useUpdateProductUnit,
 } from "@/lib/api/product-units";
 import { cascadePatch, proposeCascade, type CascadeProposal } from "@/lib/unit-cascade";
+import { unitNotListedNotice } from "@/lib/api/tenant-units";
+import { usePriceGrid } from "@/lib/api/usePriceGrid";
+import { MoneyFigure } from "./MoneyFigure";
+import { PriceFigure, TIERS, packRowOf, rowForUnit } from "./PriceFigures";
+import { usePriceWindowOpener } from "./PriceWindowHost";
+import { PriceSaveStatus } from "./ProductPricingV2";
+import { useDefaultOrderUnit } from "./units-v2/structure/useDefaultOrderUnit";
+import { BTN } from "./units-v2/edit/PriceEditBar";
+import { usePriceDraftOptional } from "./units-v2/edit/PriceDraftProvider";
+import {
+  shellHasUnitControls,
+  shellRemovesUnit,
+  unitStructureGoverned,
+} from "./units-v2/structure/unit-structure";
 
 /**
  * "Units & prices" (units_v1, ask 1-3): define Case / Pallet / Piece levels on a product, give
@@ -31,6 +45,9 @@ export interface UnitsCardProduct extends LadderProduct {
   unit: string;
   unitsPerBox?: number | null;
   pricePerUnit: number | string;
+  /** Read only to tell a product the unit ladder can't be edited on (a family, recipe or variant). */
+  kind?: string | null;
+  parentProductId?: string | null;
 }
 
 const num = (v: string | number | null | undefined): number | null =>
@@ -55,6 +72,41 @@ const draftOf = (u: ProductUnitLevel): Draft => ({
   prices: [u.price, u.priceTier2, u.priceTier3, u.priceTier4, u.priceTier5].map(num),
 });
 
+const DEFAULT_RADIO = "default-selling-unit";
+const DEFAULT_HINT_ID = "units-default-hint";
+const DEFAULT_HINT = "Use arrow keys to move, Space to make it the default.";
+
+/**
+ * F18: a default-order-unit radio saves the moment it is chosen, so the keys must not choose by accident. Arrow keys only
+ * MOVE focus through the group (natively they also select, which would write on every press); Space (a click) and Enter
+ * commit. `commit` is a no-op for the radio that is already the default.
+ */
+function radioKeys(commit: () => void) {
+  return (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      commit();
+      return;
+    }
+    const step =
+      e.key === "ArrowDown" || e.key === "ArrowRight"
+        ? 1
+        : e.key === "ArrowUp" || e.key === "ArrowLeft"
+          ? -1
+          : 0;
+    if (!step) return;
+    e.preventDefault();
+    const group = Array.from(
+      (e.currentTarget.closest("[data-units-card]") ?? document).querySelectorAll<HTMLInputElement>(
+        `input[type="radio"][name="${DEFAULT_RADIO}"]`,
+      ),
+    );
+    const at = group.indexOf(e.currentTarget);
+    if (at < 0 || group.length < 2) return;
+    group[(at + step + group.length) % group.length].focus();
+  };
+}
+
 function UnitRow({
   unit,
   product,
@@ -64,6 +116,9 @@ function UnitRow({
   onSave,
   onDelete,
   onMakeDefault,
+  hideRemove,
+  figures,
+  noPrices,
 }: {
   unit: ProductUnitLevel;
   product: UnitsCardProduct;
@@ -73,6 +128,21 @@ function UnitRow({
   onSave: (unit: ProductUnitLevel, draft: Draft) => void;
   onDelete: (unit: ProductUnitLevel) => void;
   onMakeDefault: (unit: ProductUnitLevel) => void;
+  /** K10d: the v2 shell has its own Remove under this unit's name, so there is one Remove per unit. */
+  hideRemove?: boolean;
+  /**
+   * K11-20c: the v2 page. Prices are read-only figures from the served grid (buttons to the floating window) and this row
+   * writes Name and factor only. `grid` is the served grid; `card` is the element the window hangs off.
+   */
+  figures?: {
+    grid: ProductPriceGridDto | undefined;
+    /** The grid query failed with nothing cached: figures show the stored prices as read-only text. */
+    errored: boolean;
+    card: () => HTMLElement | null;
+    heading: () => HTMLElement | null;
+  };
+  /** Row 742: structure only (name, size, default, remove); the product's prices follow its family or recipe. */
+  noPrices?: boolean;
 }) {
   const [draft, setDraft] = React.useState<Draft>(() => draftOf(unit));
   const base = draftOf(unit);
@@ -83,7 +153,18 @@ function UnitRow({
   const dirty =
     draft.label !== base.label ||
     draft.factor !== base.factor ||
-    draft.prices.some((p, i) => p !== base.prices[i]);
+    (!figures && !noPrices && draft.prices.some((p, i) => p !== base.prices[i]));
+  const gridRow = figures ? rowForUnit(figures.grid, unit) : undefined;
+  const figure = (t: (typeof TIERS)[number]) =>
+    figures ? (
+      <PriceFigure
+        row={gridRow}
+        tier={t}
+        anchor={figures.card}
+        fallback={figures.heading}
+        plainValue={figures.errored ? base.prices[t - 1] : undefined}
+      />
+    ) : null;
   const w = unitWords();
   const valid = draft.label.trim() !== "" && draft.factor != null && draft.factor >= 1;
   // What tier `t` would price at if THIS field were left blank: the row as currently drafted,
@@ -129,11 +210,11 @@ function UnitRow({
         </div>
         <div>
           <label className={LABEL} htmlFor={`${idp}-factor`}>
-            {w.base.other} per {unit.label.toLowerCase()}
+            {isPiece ? "Smallest unit" : `${w.base.other} per ${unit.label.toLowerCase()}`}
           </label>
           <DecimalInput
             id={`${idp}-factor`}
-            aria-label={`${w.base.other} per ${unit.label}`}
+            aria-label={isPiece ? "Smallest unit size" : `${w.base.other} per ${unit.label}`}
             className={FIELD}
             decimals={0}
             min={1}
@@ -142,57 +223,81 @@ function UnitRow({
             onChange={(v) => setDraft({ ...draft, factor: v })}
           />
         </div>
-        <div className="col-span-2">
-          <label className={LABEL} htmlFor={`${idp}-price`}>
-            Price
-          </label>
-          <DecimalInput
-            id={`${idp}-price`}
-            aria-label={`${unit.label} price`}
-            className={FIELD}
-            value={draft.prices[0]}
-            placeholder={derived(1) != null ? fmt(derived(1) as number) : ""}
-            onChange={(v) =>
-              setDraft({ ...draft, prices: draft.prices.map((p, i) => (i ? p : v)) })
-            }
-          />
-        </div>
-      </div>
-      <p className="mt-1.5 text-[11px] text-navy/50">
-        A grey figure is derived from the {w.pack.lower} price; type a price to override it.
-      </p>
-      <details className="mt-2">
-        <summary className="cursor-pointer text-xs font-medium text-brand-600">Tier prices</summary>
-        <div className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-4">
-          {[2, 3, 4, 5].map((t) => (
-            <div key={t}>
-              <label className={LABEL} htmlFor={`${idp}-t${t}`}>
-                {tierLabel(tierNames, t)}
-              </label>
+        {!noPrices && (
+          <div className="col-span-2">
+            <label className={LABEL} htmlFor={`${idp}-price`}>
+              Price
+            </label>
+            {figures ? (
+              <div id={`${idp}-price`}>{figure(1)}</div>
+            ) : (
               <DecimalInput
-                id={`${idp}-t${t}`}
-                aria-label={`${unit.label} ${tierLabel(tierNames, t)} price`}
+                id={`${idp}-price`}
+                aria-label={`${unit.label} price`}
                 className={FIELD}
-                value={draft.prices[t - 1]}
-                placeholder={derived(t) != null ? fmt(derived(t) as number) : ""}
+                value={draft.prices[0]}
+                placeholder={derived(1) != null ? fmt(derived(1) as number) : ""}
                 onChange={(v) =>
-                  setDraft({ ...draft, prices: draft.prices.map((p, i) => (i === t - 1 ? v : p)) })
+                  setDraft({ ...draft, prices: draft.prices.map((p, i) => (i ? p : v)) })
                 }
               />
-            </div>
-          ))}
-        </div>
-      </details>
+            )}
+          </div>
+        )}
+      </div>
+      {!figures && !noPrices && (
+        <p className="mt-1.5 text-[11px] text-navy/50">
+          A grey figure is worked out automatically from the {w.pack.lower} price. Type a price to
+          set it yourself, or clear it to go back to automatic.
+        </p>
+      )}
+      {!noPrices && (
+        <details className="mt-2">
+          <summary className="cursor-pointer text-xs font-medium text-brand-600">
+            Tier prices
+          </summary>
+          <div className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {[2, 3, 4, 5].map((t) => (
+              <div key={t}>
+                <label className={LABEL} htmlFor={`${idp}-t${t}`}>
+                  {productTierLabel(tierNames, t)}
+                </label>
+                {figures ? (
+                  <div id={`${idp}-t${t}`}>{figure(t as (typeof TIERS)[number])}</div>
+                ) : (
+                  <DecimalInput
+                    id={`${idp}-t${t}`}
+                    aria-label={`${unit.label} ${productTierLabel(tierNames, t)} price`}
+                    className={FIELD}
+                    value={draft.prices[t - 1]}
+                    placeholder={derived(t) != null ? fmt(derived(t) as number) : ""}
+                    onChange={(v) =>
+                      setDraft({
+                        ...draft,
+                        prices: draft.prices.map((p, i) => (i === t - 1 ? v : p)),
+                      })
+                    }
+                  />
+                )}
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
         <label className="flex items-center gap-2 text-sm text-navy">
           <input
             type="radio"
-            name="default-selling-unit"
+            name={DEFAULT_RADIO}
+            aria-describedby={DEFAULT_HINT_ID}
             checked={unit.isDefaultSelling}
             onChange={() => onMakeDefault(unit)}
-            disabled={busy}
+            onKeyDown={radioKeys(() => {
+              if (!unit.isDefaultSelling) onMakeDefault(unit);
+            })}
+            aria-disabled={busy || undefined}
           />
-          Pre-selected on staff orders
+          Default order unit
         </label>
         <div className="flex gap-2">
           {dirty && (
@@ -205,16 +310,100 @@ function UnitRow({
               </Button>
             </>
           )}
-          <Button size="sm" variant="secondary" onClick={() => onDelete(unit)} disabled={busy}>
-            Remove
-          </Button>
+          {!hideRemove && (
+            <Button size="sm" variant="secondary" onClick={() => onDelete(unit)} disabled={busy}>
+              Remove
+            </Button>
+          )}
         </div>
       </div>
     </li>
   );
 }
 
-export function ProductUnitsCard({ product }: { product: UnitsCardProduct }) {
+/** The badge a read-only row (or the pack row) wears instead of the Default order unit radio. */
+const DefaultBadge = () => (
+  <span className="rounded-full bg-surface-raised px-2 py-0.5 text-[11px] font-medium text-navy">
+    Default order unit
+  </span>
+);
+
+/**
+ * Read-only row (the v2 grid owns every control now): name, size and each tier's price as text. Prices come from the
+ * served grid; with no grid row (the query failed) the unit's own stored prices stand in, as the live row does.
+ */
+function UnitRowReadOnly({
+  unit,
+  grid,
+  tierNames,
+}: {
+  unit: ProductUnitLevel;
+  grid: ProductPriceGridDto | undefined;
+  tierNames: Record<string, string> | undefined;
+}) {
+  const w = unitWords();
+  const row = rowForUnit(grid, unit);
+  const stored = draftOf(unit).prices;
+  return (
+    <li className="rounded-lg border border-surface-border bg-white p-3" data-testid="unit-row">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <span className="text-sm text-navy">
+          <span className="font-medium">{unit.label}</span>{" "}
+          <span className="text-navy/60">
+            · {unit.factorToBase} {w.baseFor(unit.factorToBase)}
+          </span>
+        </span>
+        {unit.isDefaultSelling && <DefaultBadge />}
+      </div>
+      <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-sm sm:grid-cols-5">
+        {TIERS.map((t) => {
+          const value = row ? row.cells.find((c) => c.tier === t)?.value : stored[t - 1];
+          return (
+            <div key={t}>
+              <dt className="text-[11px] uppercase tracking-wide text-navy/60">
+                {productTierLabel(tierNames, t)}
+              </dt>
+              <dd>
+                {value == null ? (
+                  <span aria-label="not set">—</span>
+                ) : (
+                  <MoneyFigure value={value} className="font-mono font-medium text-navy" />
+                )}
+              </dd>
+            </div>
+          );
+        })}
+      </dl>
+    </li>
+  );
+}
+
+export function ProductUnitsCard({
+  product,
+  hideAddForm = false,
+  readOnly = false,
+  structureOnly = false,
+}: {
+  product: UnitsCardProduct;
+  /**
+   * K10d: the v2 shell has its own single "Add a unit", so the page passes the v2 flag and the always-open form
+   * goes. A product the shell does not mount it on (family, recipe, variant) keeps this form.
+   */
+  hideAddForm?: boolean;
+  /**
+   * Owner ruling D-2026-10-18: under the v2 grid this card only reads. Every live control (Add, Remove, Name / size, the
+   * default order unit, Edit prices) sits beside the grid. Applies once the grid has mounted those controls, so until
+   * then (or if its query fails) the card keeps its own, and nothing is ever without a control.
+   */
+  readOnly?: boolean;
+  /**
+   * Row 742 (owner ruling 2026-10-22, "keep structure, drop prices"): under the v2 grid a variant or recipe keeps this
+   * card for its unit STRUCTURE only (name, size, add, remove, default order unit). Its prices follow the family or
+   * recipe, as the grid says ("Priced by ..."), so no price field, tier field or cascade is shown or sent here. The card
+   * goes away entirely when row 659 (family ladder with variant inherit / override) ships.
+   */
+  structureOnly?: boolean;
+}) {
   const { user } = useAuth();
   // GET /billing/subscription is OPERATOR-only — never fire it (and 403) for other roles.
   const canManage = user?.role === "OPERATOR" || user?.role === "TENANT_ADMIN";
@@ -230,34 +419,98 @@ export function ProductUnitsCard({ product }: { product: UnitsCardProduct }) {
   const [price, setPrice] = React.useState<number | null>(null);
   const [proposals, setProposals] = React.useState<CascadeProposal[]>([]);
   const [removing, setRemoving] = React.useState<ProductUnitLevel | null>(null);
+  const cardRef = React.useRef<HTMLDivElement>(null);
+  const headingRef = React.useRef<HTMLHeadingElement>(null);
+  // K11-20c: under the v2 page's price host, prices are figures that open the floating window (the card writes none).
+  const opener = usePriceWindowOpener();
+  const pageDraft = usePriceDraftOptional();
+  // After Dismiss, Undo or a committed change the CHECKED default radio takes focus (never another radio: one Space press
+  // on it would flip the default). It is the pack radio when the pack is the default, so that one is never natively
+  // disabled. Focus moves only if it is already on the page's body or inside this card, so a late write never steals it
+  // from somewhere else; a plain click commit (focus not in the card) only scrolls. Scrolling never moves focus.
+  const [refocus, setRefocus] = React.useState({ n: 0, needInside: false });
+  React.useEffect(() => {
+    if (refocus.n === 0) return;
+    const card = cardRef.current;
+    const checked = card?.querySelector<HTMLInputElement>(
+      `input[type="radio"][name="${DEFAULT_RADIO}"]:checked`,
+    );
+    if (!card || !checked) return;
+    const active = document.activeElement;
+    const inside = active != null && active !== document.body && card.contains(active);
+    const free = active == null || active === document.body;
+    if (inside || (free && !refocus.needInside)) checked.focus();
+    checked.scrollIntoView?.({ block: "nearest" });
+  }, [refocus]);
 
-  if (!enabled) return null;
+  // K10d: the same grid the v2 shell reads. Until it has rows the shell has no Add / Remove, so the old ones stay.
+  const shellOwns = hideAddForm && !unitStructureGoverned(product);
+  const gridQuery = usePriceGrid(product.id, enabled && shellOwns);
+  const grid = gridQuery.data;
+  const figures = shellOwns && opener != null;
+  const figureCtx = figures
+    ? {
+        grid,
+        errored: gridQuery.isError && !grid,
+        card: () => cardRef.current,
+        heading: () => headingRef.current,
+      }
+    : undefined;
+  const anyEditable = !!grid?.rows?.some((r) => r.editable);
   const units = list.data ?? [];
-  const busy = create.isPending || update.isPending || remove.isPending;
+  const otherBusy = create.isPending || update.isPending || remove.isPending;
+  // F18: the default order unit's write logic is shared with the v2 shell's units beside the grid.
+  const packName = product.unit || unitWords().pack.one;
+  const dflt = useDefaultOrderUnit(product.id, units, packName, {
+    busy: otherBusy,
+    onSettled: (needInside) => setRefocus((r) => ({ n: r.n + 1, needInside })),
+  });
+  const defaultNote = dflt.note;
+  const busy = otherBusy || dflt.pending;
+  if (!enabled) return null;
+  const addInShell = shellOwns && shellHasUnitControls(grid);
+  const ro = readOnly && addInShell;
   const tierNames = tiers;
   // B594: no component-level error toasts — app/providers.tsx's global MutationCache handler
   // already toasts the server's message for every failed mutation, so a second one here doubled it.
 
+  // SA-810: the level saved, but its name was not added to the full unit list. Say so, once.
+  const notListed = (saved: unknown) => {
+    const notice = unitNotListedNotice(saved);
+    if (notice) toast({ title: notice, variant: "info" });
+  };
+
   const save = (unit: ProductUnitLevel, d: Draft) => {
+    dflt.clearNote();
     const oldPrices = draftOf(unit).prices;
     const newPrices = d.prices.map(priceOrNull);
+    // Only a price the operator changed is sent (a draft price that still equals the value the row was seeded with is
+    // left out): a v2 price save moves prices outside this card, so the row's snapshot is never written back.
+    const dirtyPrice = (i: number) => !figures && !structureOnly && d.prices[i] !== oldPrices[i];
     const body = {
       id: unit.id,
       label: d.label.trim(),
       factorToBase: d.factor ?? unit.factorToBase,
-      price: newPrices[0],
-      priceTier2: newPrices[1],
-      priceTier3: newPrices[2],
-      priceTier4: newPrices[3],
-      priceTier5: newPrices[4],
+      ...(dirtyPrice(0) ? { price: newPrices[0] } : {}),
+      ...(dirtyPrice(1) ? { priceTier2: newPrices[1] } : {}),
+      ...(dirtyPrice(2) ? { priceTier3: newPrices[2] } : {}),
+      ...(dirtyPrice(3) ? { priceTier4: newPrices[3] } : {}),
+      ...(dirtyPrice(4) ? { priceTier5: newPrices[4] } : {}),
     };
     update.mutate(body, {
       // EVERY tier cascades, each independently (a tier-2 edit offers tier 2 to the others).
-      onSuccess: () => setProposals(proposeCascade(units, unit.id, oldPrices, newPrices)),
+      onSuccess: (saved) => {
+        notListed(saved);
+        // No price moved from this card in v2, so there is nothing to offer to the other units.
+        if (!figures && !structureOnly) {
+          setProposals(proposeCascade(units, unit.id, oldPrices, newPrices));
+        }
+      },
     });
   };
 
   const applyCascade = async () => {
+    dflt.clearNote();
     const todo = proposals;
     setProposals([]);
     const results = await Promise.allSettled(
@@ -277,10 +530,17 @@ export function ProductUnitsCard({ product }: { product: UnitsCardProduct }) {
 
   const add = () => {
     if (!name.trim() || !factor) return;
+    dflt.clearNote();
     create.mutate(
-      { label: name.trim(), factorToBase: factor, price: priceOrNull(price) },
       {
-        onSuccess: () => {
+        label: name.trim(),
+        factorToBase: factor,
+        // v2: prices are written only through the price window (S9), never by creating a unit.
+        ...(figures || structureOnly ? {} : { price: priceOrNull(price) }),
+      },
+      {
+        onSuccess: (saved) => {
+          notListed(saved);
           setName("");
           setFactor(null);
           setPrice(null);
@@ -294,40 +554,129 @@ export function ProductUnitsCard({ product }: { product: UnitsCardProduct }) {
   const noneDefault = !units.some((u) => u.isDefaultSelling);
 
   return (
-    <div className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card">
-      <div className="border-b border-surface-border px-5 py-3.5">
-        <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
-          Units &amp; prices
-        </h3>
+    <div
+      ref={cardRef}
+      data-units-card
+      className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card"
+    >
+      <div data-testid="units-card-header" className="border-b border-surface-border px-5 py-3.5">
+        <div className="flex items-center justify-between gap-3">
+          <h3
+            ref={headingRef}
+            tabIndex={-1}
+            className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70 outline-none"
+          >
+            {structureOnly ? "Units" : <>Units &amp; prices</>}
+          </h3>
+          {figures && opener && anyEditable && !ro && (
+            <button
+              type="button"
+              className={BTN}
+              onClick={(e) =>
+                opener.open({
+                  origin: e.currentTarget,
+                  anchor: cardRef.current,
+                  fallback: () => headingRef.current,
+                })
+              }
+            >
+              Edit prices
+            </button>
+          )}
+        </div>
+        {figures && pageDraft && <PriceSaveStatus productId={product.id} surface="window" />}
       </div>
       <div className="space-y-3 p-5">
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-surface-raised px-3 py-2.5 text-sm">
           <span className="text-navy">
             <span className="font-medium">{product.unit || w.pack.one}</span>{" "}
             <span className="text-navy/60">
-              · {packPieces} {w.baseFor(packPieces)} · the {w.pack.lower} (edit its price above)
+              · {packPieces} {w.baseFor(packPieces)} ·{" "}
+              {figures || ro || structureOnly ? (
+                <>the {w.pack.lower}</>
+              ) : (
+                <>the {w.pack.lower} (edit its price above)</>
+              )}
             </span>
           </span>
           <span className="flex items-center gap-4">
-            <span className="font-mono tabular-nums text-navy">
-              {fmt(Number(product.pricePerUnit) || 0)}
-            </span>
-            <label className="flex items-center gap-2 text-navy">
-              <input
-                type="radio"
-                name="default-selling-unit"
-                checked={noneDefault}
-                disabled={busy || noneDefault}
-                onChange={() => {
-                  const current = units.find((u) => u.isDefaultSelling);
-                  if (current) {
-                    update.mutate({ id: current.id, isDefaultSelling: false });
-                  }
-                }}
+            {ro ? (
+              <MoneyFigure
+                value={
+                  packRowOf(grid)?.cells.find((c) => c.tier === 1)?.value ?? product.pricePerUnit
+                }
+                className="font-mono font-medium text-navy"
               />
-              Pre-selected on staff orders
-            </label>
+            ) : figures ? (
+              <PriceFigure
+                row={packRowOf(grid)}
+                tier={1}
+                anchor={() => cardRef.current}
+                fallback={() => headingRef.current}
+                plainValue={gridQuery.isError && !grid ? product.pricePerUnit : undefined}
+              />
+            ) : structureOnly ? null : (
+              <span className="font-mono tabular-nums text-navy">
+                {fmt(Number(product.pricePerUnit) || 0)}
+              </span>
+            )}
+            {ro ? (
+              noneDefault && <DefaultBadge />
+            ) : (
+              <label className="flex items-center gap-2 text-navy">
+                <input
+                  type="radio"
+                  name={DEFAULT_RADIO}
+                  aria-describedby={DEFAULT_HINT_ID}
+                  checked={noneDefault}
+                  // Never natively disabled: a disabled radio drops focus the moment it becomes the checked default, so a
+                  // screen-reader user would hear nothing. aria-disabled keeps it focusable; activating it does nothing.
+                  aria-disabled={busy || noneDefault || undefined}
+                  onChange={() => {
+                    if (!busy && !noneDefault) dflt.change(null);
+                  }}
+                  onKeyDown={radioKeys(() => {
+                    if (!busy && !noneDefault) dflt.change(null);
+                  })}
+                />
+                Default order unit
+              </label>
+            )}
           </span>
+        </div>
+
+        {/* F18: always mounted, so the text it receives is announced. Undo and Dismiss sit beside it, not inside it. */}
+        {!ro && (
+          <p id={DEFAULT_HINT_ID} className="sr-only">
+            {DEFAULT_HINT}
+          </p>
+        )}
+        <div
+          hidden={ro}
+          className={
+            defaultNote
+              ? "flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg bg-surface-raised px-3 py-2 text-sm text-navy"
+              : "sr-only"
+          }
+        >
+          <p role="status" data-testid="units-default-note">
+            {defaultNote?.text ?? ""}
+          </p>
+          {defaultNote?.undo && (
+            <Button size="sm" variant="secondary" onClick={dflt.undo} disabled={busy}>
+              Undo
+            </Button>
+          )}
+          {defaultNote && (
+            <button
+              type="button"
+              className="inline-flex min-h-11 items-center px-1 text-xs font-medium text-brand-600 underline"
+              aria-label="Dismiss the default order unit message"
+              onClick={dflt.dismiss}
+            >
+              Dismiss
+            </button>
+          )}
         </div>
 
         {list.isLoading ? (
@@ -345,70 +694,88 @@ export function ProductUnitsCard({ product }: { product: UnitsCardProduct }) {
           </p>
         ) : units.length === 0 ? (
           <p className="text-sm text-navy/70">
-            No other units yet. Add a Case or Pallet below to sell this product in bigger (or
-            smaller) steps.
+            No other units yet.{" "}
+            {addInShell
+              ? "Use Add a unit above to sell this product in bigger (or smaller) steps."
+              : "Add a Case or Pallet below to sell this product in bigger (or smaller) steps."}
           </p>
         ) : (
           <ul className="space-y-3">
-            {units.map((u) => (
-              <UnitRow
-                key={u.id}
-                unit={u}
-                product={product}
-                units={units}
-                tierNames={tierNames}
-                busy={busy}
-                onSave={save}
-                onDelete={setRemoving}
-                onMakeDefault={(x) => update.mutate({ id: x.id, isDefaultSelling: true })}
-              />
-            ))}
+            {units.map((u) =>
+              ro ? (
+                <UnitRowReadOnly key={u.id} unit={u} grid={grid} tierNames={tierNames} />
+              ) : (
+                <UnitRow
+                  key={u.id}
+                  unit={u}
+                  product={product}
+                  units={units}
+                  tierNames={tierNames}
+                  busy={busy}
+                  onSave={save}
+                  onDelete={setRemoving}
+                  hideRemove={shellOwns && !gridQuery.isError && shellRemovesUnit(grid, u.id)}
+                  figures={figureCtx}
+                  noPrices={structureOnly}
+                  onMakeDefault={dflt.change}
+                />
+              ),
+            )}
           </ul>
         )}
 
-        <form
-          className="grid grid-cols-2 items-end gap-3 border-t border-surface-border pt-3 sm:grid-cols-4"
-          onSubmit={(e) => {
-            e.preventDefault();
-            add();
-          }}
-        >
-          <div>
-            <label className={LABEL} htmlFor="new-unit-name">
-              New unit
-            </label>
-            <input
-              id="new-unit-name"
-              className={FIELD}
-              placeholder="e.g. Case"
-              maxLength={40}
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-            />
-          </div>
-          <div>
-            <label className={LABEL} htmlFor="new-unit-factor">
-              {w.base.other} per new unit
-            </label>
-            <DecimalInput
-              id="new-unit-factor"
-              className={FIELD}
-              decimals={0}
-              min={1}
-              value={factor}
-              onChange={setFactor}
-            />
-          </div>
-          <div>
-            <label className={LABEL} htmlFor="new-unit-price">
-              Price (optional)
-            </label>
-            <DecimalInput id="new-unit-price" className={FIELD} value={price} onChange={setPrice} />
-          </div>
-          <Button type="submit" disabled={busy || !name.trim() || !factor}>
-            Add unit
-          </Button>
-        </form>
+        {!addInShell && !ro && (
+          <form
+            className="grid grid-cols-2 items-end gap-3 border-t border-surface-border pt-3 sm:grid-cols-4"
+            onSubmit={(e) => {
+              e.preventDefault();
+              add();
+            }}
+          >
+            <div>
+              <label className={LABEL} htmlFor="new-unit-name">
+                New unit
+              </label>
+              <input
+                id="new-unit-name"
+                className={FIELD}
+                placeholder="e.g. Case"
+                maxLength={40}
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+              />
+            </div>
+            <div>
+              <label className={LABEL} htmlFor="new-unit-factor">
+                {w.base.other} per new unit
+              </label>
+              <DecimalInput
+                id="new-unit-factor"
+                className={FIELD}
+                decimals={0}
+                min={1}
+                value={factor}
+                onChange={setFactor}
+              />
+            </div>
+            {!figures && !structureOnly && (
+              <div>
+                <label className={LABEL} htmlFor="new-unit-price">
+                  Price (optional)
+                </label>
+                <DecimalInput
+                  id="new-unit-price"
+                  className={FIELD}
+                  value={price}
+                  onChange={setPrice}
+                />
+              </div>
+            )}
+            <Button type="submit" disabled={busy || !name.trim() || !factor}>
+              Add unit
+            </Button>
+          </form>
+        )}
       </div>
 
       <ConfirmDialog
@@ -420,6 +787,7 @@ export function ProductUnitsCard({ product }: { product: UnitsCardProduct }) {
         loading={remove.isPending}
         onConfirm={() => {
           if (!removing) return;
+          dflt.clearNote();
           remove.mutate(removing.id, {
             onSuccess: () => setRemoving(null),
             onError: () => setRemoving(null),
@@ -448,7 +816,7 @@ export function ProductUnitsCard({ product }: { product: UnitsCardProduct }) {
               <ul className="ml-3">
                 {p.changes.map((c) => (
                   <li key={c.field}>
-                    {tierLabel(tierNames, c.tier)}:{" "}
+                    {productTierLabel(tierNames, c.tier)}:{" "}
                     <span className="font-mono tabular-nums">
                       {fmt(c.from)} → {fmt(c.to)}
                     </span>

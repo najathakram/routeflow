@@ -208,17 +208,15 @@ export class TenantsController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.TENANT_ADMIN)
   @ApiBearerAuth()
-  @ApiOperation({ summary: "Get the Google OAuth authorization URL for this tenant" })
+  @ApiOperation({ summary: "Check whether this tenant's Google OAuth settings are complete" })
   async testGoogleOAuthConfig(@Param() _: any, @CurrentUser() user: JwtPayload) {
     const cfg = await this.tenantsService.getGoogleOAuthConfig(user.tenantId!);
     if (!cfg.clientId || !cfg.callbackUrl || !cfg.enabled) {
       return { success: false, message: "Google OAuth is not fully configured or not enabled" };
     }
-    return {
-      success: true,
-      message: "Google OAuth is configured",
-      authUrl: `/api/v1/auth/google/${user.tenantId}`,
-    };
+    // No sign-in URL is advertised: the legacy per-tenant sign-in routes are retired, and the
+    // standard start (GET /auth/google?tenant=) answers JSON that a plain link cannot open.
+    return { success: true, message: "Google OAuth is configured" };
   }
 
   // ─── Me/Config: Branding ───────────────────────────────────────────────────

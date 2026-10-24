@@ -4,16 +4,20 @@ import { Modal, Pressable, ScrollView, Text, TextInput, View } from "react-nativ
 import { Ionicons } from "@expo/vector-icons";
 import { ios } from "@routeflow/ui/tokens";
 import { type UnitOption } from "../../lib/unit-options";
+import { POS_COPY, posCartSaveLabel } from "../../lib/pos-mode";
 import { type LineState, type Product } from "../../lib/cart-line-state";
 import { CartRow } from "../CartRow";
 import { CartStepperRow } from "../CartStepperRow";
 import { type CustomerPriceHistory } from "../../lib/api/orders";
-import { computeLineSubtotal } from "@routeflow/pricing";
+import { computeLineSubtotal, type CustomerLayerUnit } from "@routeflow/pricing";
+import { layerUnitBaseFor, lineIsSpecial } from "../../lib/cart-order-total";
+import type { PriceLayerGate } from "../../lib/price-layer-gate";
 import { type InvoiceSplitPreview } from "../../lib/invoice-split";
 import { MoneyTextInput } from "../MoneyTextInput";
 import { fmtCalendarDate } from "../../lib/format-date";
 import { styles } from "./styles";
 import type { UnlistedLine, OrderOptions, CreditPicker } from "./types";
+import { COUNTER_COPY } from "@routeflow/types/counter-copy";
 
 /** Collapsed-by-default disclosure inside the cart sheet. */
 function CartSection({
@@ -50,11 +54,12 @@ function CartSection({
 
 function OrderOptionsSection({ options: o }: { options: OrderOptions }) {
   const summary = [
-    o.urgent ? "Urgent" : null,
+    o.posMode ? COUNTER_COPY.storePickup : null,
+    !o.posMode && o.urgent ? "Urgent" : null,
     // ROUTE is the default majority — only call it out when it isn't.
-    o.fulfillPath === "SHIP" ? "Ship via carrier" : null,
+    !o.posMode && o.fulfillPath === "SHIP" ? "Ship via carrier" : null,
     o.orderDate ? `Dated ${o.orderDate}` : null,
-    o.deliveryDate ? `Deliver ${o.deliveryDate}` : null,
+    !o.posMode && o.deliveryDate ? `Deliver ${o.deliveryDate}` : null,
     parseFloat(o.discountRaw) > 0 ? `-$${parseFloat(o.discountRaw).toFixed(2)}` : null,
     parseFloat(o.shippingFeeRaw) > 0
       ? `+$${parseFloat(o.shippingFeeRaw).toFixed(2)} shipping`
@@ -66,59 +71,63 @@ function OrderOptionsSection({ options: o }: { options: OrderOptions }) {
 
   return (
     <CartSection icon="options-outline" title="Order options" summary={summary}>
-      <Pressable style={styles.optionRow} onPress={o.onToggleUrgent}>
-        <Ionicons
-          name={o.urgent ? "flame" : "flame-outline"}
-          size={18}
-          color={o.urgent ? ios.system.orange : ios.label2}
-        />
-        <Text style={styles.optionLabel}>Urgent</Text>
-        <View style={[styles.toggle, o.urgent && styles.toggleOn]}>
-          <View style={[styles.toggleDot, o.urgent && styles.toggleDotOn]} />
-        </View>
-      </Pressable>
-      <View style={styles.optionField}>
-        <Text style={styles.optionLabel}>Fulfillment</Text>
-        <View style={styles.fulfillRow}>
-          <Pressable
-            style={[styles.fulfillBtn, o.fulfillPath === "ROUTE" && styles.fulfillBtnActive]}
-            onPress={() => o.onChangeFulfillPath("ROUTE")}
-            accessibilityRole="button"
-            accessibilityLabel="Delivery route"
-            accessibilityState={{ selected: o.fulfillPath === "ROUTE" }}
-          >
-            <Text
-              style={[
-                styles.fulfillBtnText,
-                o.fulfillPath === "ROUTE" && styles.fulfillBtnTextActive,
-              ]}
-            >
-              Delivery route
-            </Text>
+      {o.posMode ? null : (
+        <>
+          <Pressable style={styles.optionRow} onPress={o.onToggleUrgent}>
+            <Ionicons
+              name={o.urgent ? "flame" : "flame-outline"}
+              size={18}
+              color={o.urgent ? ios.system.orange : ios.label2}
+            />
+            <Text style={styles.optionLabel}>Urgent</Text>
+            <View style={[styles.toggle, o.urgent && styles.toggleOn]}>
+              <View style={[styles.toggleDot, o.urgent && styles.toggleDotOn]} />
+            </View>
           </Pressable>
-          <Pressable
-            style={[styles.fulfillBtn, o.fulfillPath === "SHIP" && styles.fulfillBtnActive]}
-            onPress={() => o.onChangeFulfillPath("SHIP")}
-            accessibilityRole="button"
-            accessibilityLabel="Ship via carrier"
-            accessibilityState={{ selected: o.fulfillPath === "SHIP" }}
-          >
-            <Text
-              style={[
-                styles.fulfillBtnText,
-                o.fulfillPath === "SHIP" && styles.fulfillBtnTextActive,
-              ]}
-            >
-              Ship via carrier
-            </Text>
-          </Pressable>
-        </View>
-        {o.fulfillPath === "SHIP" ? (
-          <Text style={styles.optionHelp}>
-            Ships via carrier — won't appear on delivery routes.
-          </Text>
-        ) : null}
-      </View>
+          <View style={styles.optionField}>
+            <Text style={styles.optionLabel}>Fulfillment</Text>
+            <View style={styles.fulfillRow}>
+              <Pressable
+                style={[styles.fulfillBtn, o.fulfillPath === "ROUTE" && styles.fulfillBtnActive]}
+                onPress={() => o.onChangeFulfillPath("ROUTE")}
+                accessibilityRole="button"
+                accessibilityLabel="Delivery route"
+                accessibilityState={{ selected: o.fulfillPath === "ROUTE" }}
+              >
+                <Text
+                  style={[
+                    styles.fulfillBtnText,
+                    o.fulfillPath === "ROUTE" && styles.fulfillBtnTextActive,
+                  ]}
+                >
+                  Delivery route
+                </Text>
+              </Pressable>
+              <Pressable
+                style={[styles.fulfillBtn, o.fulfillPath === "SHIP" && styles.fulfillBtnActive]}
+                onPress={() => o.onChangeFulfillPath("SHIP")}
+                accessibilityRole="button"
+                accessibilityLabel="Ship via carrier"
+                accessibilityState={{ selected: o.fulfillPath === "SHIP" }}
+              >
+                <Text
+                  style={[
+                    styles.fulfillBtnText,
+                    o.fulfillPath === "SHIP" && styles.fulfillBtnTextActive,
+                  ]}
+                >
+                  Ship via carrier
+                </Text>
+              </Pressable>
+            </View>
+            {o.fulfillPath === "SHIP" ? (
+              <Text style={styles.optionHelp}>
+                Ships via carrier — won't appear on delivery routes.
+              </Text>
+            ) : null}
+          </View>
+        </>
+      )}
       {o.canBackdate ? (
         <View style={styles.optionField}>
           <Text style={styles.optionLabel}>Order date (backdate)</Text>
@@ -135,17 +144,19 @@ function OrderOptionsSection({ options: o }: { options: OrderOptions }) {
           </Text>
         </View>
       ) : null}
-      <View style={styles.optionField}>
-        <Text style={styles.optionLabel}>Delivery date</Text>
-        <TextInput
-          value={o.deliveryDate}
-          onChangeText={o.onChangeDeliveryDate}
-          placeholder="YYYY-MM-DD"
-          placeholderTextColor={ios.label3}
-          keyboardType="numbers-and-punctuation"
-          style={styles.optionInput}
-        />
-      </View>
+      {o.posMode ? null : (
+        <View style={styles.optionField}>
+          <Text style={styles.optionLabel}>Delivery date</Text>
+          <TextInput
+            value={o.deliveryDate}
+            onChangeText={o.onChangeDeliveryDate}
+            placeholder="YYYY-MM-DD"
+            placeholderTextColor={ios.label3}
+            keyboardType="numbers-and-punctuation"
+            style={styles.optionInput}
+          />
+        </View>
+      )}
       <View style={styles.optionField}>
         <Text style={styles.optionLabel}>Order discount ($)</Text>
         <TextInput
@@ -245,6 +256,9 @@ export function CartModal({
   tierPriceFor,
   isSpecialFor,
   tierForProductId,
+  layerOf,
+  layerGate,
+  onRetryLayer,
   marginFloorFor,
   unlisted,
   total,
@@ -288,6 +302,11 @@ export function CartModal({
   /** units_v1: the EFFECTIVE numeric tier (1-5) for a product — `UnitPickerRow` resolves the
    *  ladder price at this tier, same source as `isSpecialFor`/`tierPriceFor`. */
   tierForProductId: (productId: string) => number;
+  /** S19b: the customer's price layer for a product (undefined flag-off / no typed price): unit lines use its price. */
+  layerOf?: (productId: string) => readonly CustomerLayerUnit[] | null | undefined;
+  /** S19b D-5: while the customer's prices are unconfirmed, Create and Confirm stay disabled and the marker shows. */
+  layerGate?: PriceLayerGate;
+  onRetryLayer?: () => void;
   /** The customer's effective margin floor (fraction) for a product's category. */
   marginFloorFor: (p: Product) => number;
   unlisted: UnlistedLine[];
@@ -326,7 +345,7 @@ export function CartModal({
   /** Order-level fields; state stays in the parent so the payload is unchanged. */
   options: OrderOptions;
   credits: CreditPicker;
-  onSave: () => void;
+  onSave: (finish?: "invoice" | "confirm") => void;
 }) {
   // R2: preserve SCAN order. `items` is a UUID-keyed Record whose insertion order
   // is first-scan order (a repeat scan updates the existing key in place, a new
@@ -374,8 +393,24 @@ export function CartModal({
                     product={product}
                     line={line}
                     catalogPrice={tierPriceFor(product)}
-                    isSpecial={isSpecialFor(product)}
+                    isSpecial={
+                      layerOf
+                        ? lineIsSpecial(
+                            line,
+                            product,
+                            tierForProductId(product.id),
+                            layerOf(product.id),
+                          )
+                        : isSpecialFor(product)
+                    }
+                    pricesUnconfirmed={!!layerGate?.blocked}
                     tier={tierForProductId(product.id)}
+                    layerUnitBase={layerUnitBaseFor(
+                      line,
+                      product,
+                      tierForProductId(product.id),
+                      layerOf?.(product.id),
+                    )}
                     marginFloor={marginFloorFor(product)}
                     historyPrice={priceHistory?.[id]?.lastPrice}
                     onChangeBoxes={(n) => onChangeBoxes(id, n)}
@@ -455,6 +490,19 @@ export function CartModal({
           </ScrollView>
 
           {/* Sticky footer: total + actions */}
+          {layerGate?.message ? (
+            <Pressable
+              onPress={layerGate.canRetry ? onRetryLayer : undefined}
+              disabled={!layerGate.canRetry}
+              accessibilityRole={layerGate.canRetry ? "button" : "text"}
+              accessibilityLabel={layerGate.message}
+              hitSlop={6}
+            >
+              <Text style={{ color: ios.system.orangeInk, fontSize: 12, textAlign: "center" }}>
+                {layerGate.message}
+              </Text>
+            </Pressable>
+          ) : null}
           <View style={styles.cartFooter}>
             <View style={styles.cartFooterRow}>
               <View>
@@ -465,16 +513,31 @@ export function CartModal({
                 <Pressable style={styles.cartContinueBtn} onPress={onClose} hitSlop={6}>
                   <Text style={styles.cartContinueText}>Keep adding</Text>
                 </Pressable>
+                {options.posMode ? (
+                  <Pressable
+                    style={styles.cartContinueBtn}
+                    disabled={totalItems === 0 || saving || !!layerGate?.blocked}
+                    onPress={() => onSave("confirm")}
+                    hitSlop={6}
+                    accessibilityRole="button"
+                  >
+                    <Text style={styles.cartContinueText}>{POS_COPY.confirmOnly}</Text>
+                  </Pressable>
+                ) : null}
                 <Pressable
                   style={[
                     styles.confirmBtn,
-                    (totalItems === 0 || saving) && styles.confirmBtnDisabled,
+                    (totalItems === 0 || saving || layerGate?.blocked) && styles.confirmBtnDisabled,
                   ]}
-                  disabled={totalItems === 0 || saving}
-                  onPress={onSave}
-                  accessibilityState={{ disabled: totalItems === 0 || saving }}
+                  disabled={totalItems === 0 || saving || !!layerGate?.blocked}
+                  onPress={() => onSave("invoice")}
+                  accessibilityState={{
+                    disabled: totalItems === 0 || saving || !!layerGate?.blocked,
+                  }}
                 >
-                  <Text style={styles.confirmBtnText}>{saving ? "Saving…" : "Save order"}</Text>
+                  <Text style={styles.confirmBtnText}>
+                    {posCartSaveLabel(!!options.posMode, saving)}
+                  </Text>
                   <Ionicons name="checkmark" size={14} color="#fff" />
                 </Pressable>
               </View>

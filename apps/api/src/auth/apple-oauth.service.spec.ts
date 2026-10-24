@@ -72,7 +72,13 @@ beforeEach(() => {
   (global as any).fetch = fetchStub;
 });
 
-async function makeKeyPair() {
+// RSA key generation is the expensive step (hundreds of ms to seconds on a loaded host), and no test
+// mutates a key, so each distinct key is generated ONCE per file and shared. Tests that need a second or
+// third key (a wrong-signer, a rotated signer) ask for another slot; per-test service/prisma mocks stay fresh.
+type KeySlot = "primary" | "other" | "rotated";
+const keyPairCache = new Map<KeySlot, ReturnType<typeof generateKeyPairWithJwk>>();
+
+async function generateKeyPairWithJwk() {
   const { publicKey, privateKey } = await jose.generateKeyPair("RS256");
   const jwk = await jose.exportJWK(publicKey);
   jwk.kid = KID;
@@ -80,6 +86,20 @@ async function makeKeyPair() {
   jwk.use = "sig";
   return { publicKey, privateKey, jwk };
 }
+
+function makeKeyPair(slot: KeySlot = "primary") {
+  let pending = keyPairCache.get(slot);
+  if (!pending) {
+    pending = generateKeyPairWithJwk();
+    keyPairCache.set(slot, pending);
+  }
+  return pending;
+}
+
+// Pay the three generations once, up front and in parallel, instead of inside whichever test hits them first.
+beforeAll(async () => {
+  await Promise.all([makeKeyPair("primary"), makeKeyPair("other"), makeKeyPair("rotated")]);
+}, 120_000);
 
 interface BuildOpts {
   prismaOverrides?: Record<string, unknown>;
@@ -207,7 +227,7 @@ describe("AppleOAuthService — token verification (SA-418 §1)", () => {
     const { service, privateKey } = await buildService();
     const { nonce } = await service.mintNonce(undefined, "buyer-standalone");
     // Sign with a DIFFERENT keypair — same kid, different key, so signature check fails.
-    const { privateKey: otherKey } = await makeKeyPair();
+    const { privateKey: otherKey } = await makeKeyPair("other");
     const identityToken = await signIdentityToken(otherKey, { nonce: sha256hex(nonce) });
 
     await expect(
@@ -401,8 +421,7 @@ describe("AppleOAuthService — token verification (SA-418 §1)", () => {
     // isn't in the locally-cached JWKS, and swap in a getKey function that only
     // "discovers" the new key after being called once (mirrors jose's own
     // createRemoteJWKSet single-refetch-on-unknown-kid behaviour).
-    const { publicKey: newPublicKey, privateKey: newPrivateKey } =
-      await jose.generateKeyPair("RS256");
+    const { publicKey: newPublicKey, privateKey: newPrivateKey } = await makeKeyPair("rotated");
     const newJwk = await jose.exportJWK(newPublicKey);
     newJwk.kid = "rotated-kid";
     newJwk.alg = "RS256";

@@ -137,7 +137,9 @@ describe("(5) evidence guards", () => {
         { id: "route", qty: 10, deliveredQty: 6 },
         { id: "extra", qty: 2, deliveredQty: 0 },
       ],
-      mutations: [{ orderItemId: "route", type: "PARTIAL", quantityDelivered: 6 }],
+      mutations: [
+        { orderItemId: "route", type: "PARTIAL", quantityDelivered: 6, routeRunStopId: "stop-1" },
+      ],
     });
     await deliver(db, OrderStatus.PARTIALLY_DELIVERED);
     expect(db.line("route").deliveredQty).toBe(6);

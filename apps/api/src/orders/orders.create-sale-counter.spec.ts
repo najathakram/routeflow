@@ -79,6 +79,16 @@ describe("OrdersService.createSale — counter-sale options and resume", () => {
     expect(b.create.mock.calls[0][2]).not.toHaveProperty("priceEditAllowed");
   });
 
+  it("sale.creditPaidNow reaches create() as the same function, and is absent when unset (S1)", async () => {
+    const fn = (total: number) => total;
+    const a = await setup();
+    await a.h.service.createSale(dto, operatorPayload as never, { creditPaidNow: fn });
+    expect(a.create.mock.calls[0][2]).toMatchObject({ skipAutoMerge: true, creditPaidNow: fn });
+    const b = await setup();
+    await b.h.service.createSale(dto, operatorPayload as never, { counterSale: true });
+    expect(b.create.mock.calls[0][2]).not.toHaveProperty("creditPaidNow");
+  });
+
   it("suppressInvoiceNotify sends the invoice with { suppressNotify: true } (walk-in: no INVOICE_SENT email)", async () => {
     const { h, invoices } = await setup();
     await h.service.createSale(dto, operatorPayload as never, { suppressInvoiceNotify: true });
@@ -225,9 +235,13 @@ describe("OrdersService.createSale — counter-sale options and resume", () => {
     it("a failed invoice step leaves DELIVERED + no invoice; the retry with the same key finishes it, one DELIVERED write, one send", async () => {
       const { h, invoices, setReplayed } = await setup("PENDING");
       invoices.createInvoiceFromOrder.mockRejectedValueOnce(new Error("invoice step failed"));
-      await expect(h.service.createSale(keyed, operatorPayload as never)).rejects.toThrow(
-        "invoice step failed",
-      );
+      // Row 466: the order committed, so the failure is a coded 500 carrying orderId (cause kept).
+      const failed = await errorOf(h.service.createSale(keyed, operatorPayload as never));
+      expect(failed.getResponse()).toMatchObject({
+        code: "SALE_INVOICE_CREATE_FAILED",
+        orderId: "ord-1",
+      });
+      expect((failed.cause as Error).message).toBe("invoice step failed");
       expect(h.prisma.order.update).toHaveBeenCalledTimes(1);
       expect(invoices.send).not.toHaveBeenCalled();
 

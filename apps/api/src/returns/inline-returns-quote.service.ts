@@ -12,6 +12,7 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  Optional,
   NotFoundException,
 } from "@nestjs/common";
 import {
@@ -23,9 +24,12 @@ import {
 } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { SystemConfigService } from "../system-config/system-config.service";
+import { EntitlementsService } from "../billing/entitlements.service";
+import { customerPricing } from "../orders/units-prices-v2";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { REAL_INVOICE_STATUSES } from "../common/invoiced-sales";
 import { currentTaxRate } from "../common/tax-rate";
+import { finiteStoredLevy } from "../common/money-invariants.util";
 import { getTierPrice, isWholeCents, packFromOwnSplit } from "@routeflow/pricing";
 import { returnedPiecesByProduct } from "./returns-pieces.util";
 import { DEAD_RETURN_STATUSES } from "./return-statuses";
@@ -129,6 +133,8 @@ export class InlineReturnsQuoteService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly systemConfig: SystemConfigService,
+    // S19: the customer layer (flag.units_prices_v2) prices an unreferenced return like the sale; absent = master's tier.
+    @Optional() private readonly entitlements?: EntitlementsService,
   ) {}
 
   async quote(
@@ -267,7 +273,7 @@ export class InlineReturnsQuoteService {
     const [customerPrices, products] = (await Promise.all([
       db.customerPrice.findMany({
         where: { customerId: dto.customerId, productId: { in: productIds } },
-        select: { productId: true, pricingTier: true },
+        select: { productId: true, pricingTier: true, orderUnitRef: true },
       }),
       db.product.findMany({
         where: { id: { in: productIds } },
@@ -280,6 +286,11 @@ export class InlineReturnsQuoteService {
           priceTier4: true,
           priceTier5: true,
           unitsPerBox: true,
+          unit: true,
+          packLabel: true,
+          baseUnitLabel: true,
+          orderUnitRef: true,
+          packAuto: true,
         },
       }),
       // `db` is typed loosely (`any` — see priceInlineReturn's doc comment) so a plain `tx`
@@ -297,6 +308,15 @@ export class InlineReturnsQuoteService {
       withPriorCredits: true, // B905: the pricing set telescopes over what each line already had credited
     });
 
+    // S19: flag.units_prices_v2 only: the customer layer (null otherwise: master's tier below, byte for byte).
+    const pc = await customerPricing(
+      { prisma: this.prisma, entitlements: this.entitlements },
+      dto.customerId,
+      productIds,
+      customer,
+      customerPrices,
+      db,
+    );
     const tierByProduct = new Map(
       customerPrices
         .filter((cp) => cp.pricingTier != null)
@@ -463,13 +483,22 @@ export class InlineReturnsQuoteService {
       // SA-740: a walk-in never gets an unreferenced chunk (cash out with no sale behind it): over the sale is a 409.
       if (walkIn) assertWalkInCoveredBySale(item.productId, productName, allocated);
 
-      const tierForProduct = tierByProduct.get(item.productId) ?? customer.pricingTier;
-      const unreferencedPrice = product ? Number(getTierPrice(product, tierForProduct)) : 0;
-      const unreferencedSource = tierByProduct.has(item.productId)
-        ? ("CUSTOMER_PRICE" as const)
-        : tierForProduct > 1
-          ? ("TIER" as const)
-          : ("BASE" as const);
+      const tierForProduct = pc.layered
+        ? (pc.cpMap.get(item.productId) ?? pc.defaultTier)
+        : (tierByProduct.get(item.productId) ?? customer.pricingTier);
+      // S19: an unreferenced return is credited what the sale would have billed: the customer layer when the pack is in it.
+      const layer = product ? pc.layer(product) : null;
+      const unreferencedPrice = layer
+        ? layer.price
+        : product
+          ? Number(getTierPrice(product, tierForProduct))
+          : 0;
+      const unreferencedSource =
+        layer || tierByProduct.has(item.productId)
+          ? ("CUSTOMER_PRICE" as const)
+          : tierForProduct > 1
+            ? ("TIER" as const)
+            : ("BASE" as const);
       // The candidate lines are ALL the same product's own tax rate lineage; for the
       // unreferenced chunk (no matched line at all) fall back to whichever candidate
       // line names the widest-known rate, else the tenant's CURRENT rate (deferred PR-1b
@@ -755,7 +784,8 @@ export class InlineReturnsQuoteService {
           // §4/§5: the QUOTE's category-tax figure is a pro-rated preview of this
           // snapshot; the actual capped-at-the-ledger-booking credit is computed at
           // capture time (PR-1c), which is the only place a mismatch can be caught.
-          categoryTax: Number(item.categoryTaxAmount) || null,
+          // SA-816: a stored non-finite levy is refused (400), never read as "no levy" (NaN || null).
+          categoryTax: finiteStoredLevy(item, `Invoice line ${item.id} category tax`) || null,
           invoiceSubtotal: Number(inv.subtotal),
           invoiceDiscount: Number(inv.discount),
           invoiceTaxAmount: Number(inv.taxAmount),

@@ -116,6 +116,40 @@ describe("Void sale: who sees the button", () => {
 });
 
 describe("Void sale: the dialog", () => {
+  it("warns in the one plain sentence: 'You can't undo this.'", async () => {
+    await openSheet();
+    fireEvent.click(rowVoidButton());
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent(
+      "This cancels the sale, puts its items back in stock and voids its payments. You can't undo this.",
+    );
+    expect(dialog).not.toHaveTextContent("It can't be undone");
+  });
+
+  it("the dialog title names the sale total", async () => {
+    serve(() => [
+      row({
+        total: 11.98,
+        methods: [
+          { method: "CASH", amount: 5 },
+          { method: "CARD", amount: 6.98 },
+        ],
+        items: [
+          { name: "Cola 12oz Can", qty: 2 },
+          { name: "Ice Bag 10lb", qty: 1 },
+        ],
+        itemCount: 2,
+      }),
+    ]);
+    await openSheet();
+    fireEvent.click(rowVoidButton());
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByRole("heading", { name: "Void sale ORD-1 · $11.98" })).toBeTruthy();
+    expect(within(dialog).getByTestId("counter-void-summary")).toHaveTextContent(
+      "Cash + Card · Cola 12oz Can ×2, Ice Bag 10lb",
+    );
+  });
+
   it("requires a reason: empty and 2-character reasons never leave", async () => {
     await openSheet();
     fireEvent.click(rowVoidButton());
@@ -145,7 +179,7 @@ describe("Void sale: the dialog", () => {
       reason: "wrong item rung",
     });
     expect(within(done).getByTestId("counter-void-handback")).toHaveTextContent(
-      "Give back $12.50 cash · Void the card payment on the card terminal",
+      "Give back $12.50 cash · Void the $10.00 card payment on the card terminal",
     );
     fireEvent.click(within(screen.getByRole("dialog", { name: /Void sale/ })).getByText("Done"));
     await waitFor(() => expect(screen.getByText("Voided")).toBeInTheDocument());
@@ -159,7 +193,7 @@ describe("Void sale: the dialog", () => {
     typeReason("customer left");
     fireEvent.click(confirmVoid());
     expect(await screen.findByTestId("counter-void-handback")).toHaveTextContent(
-      /^Void the card payment on the card terminal$/,
+      /^Void the \$22\.50 card payment on the card terminal$/,
     );
   });
 
@@ -218,7 +252,9 @@ describe("Void sale: the dialog", () => {
     typeReason("because");
     fireEvent.click(confirmVoid());
     const err = await screen.findByTestId("counter-void-error");
-    expect(err).toHaveTextContent("This sale is in a closed day. Use Return items instead.");
+    expect(err).toHaveTextContent(
+      "This sale is in a closed day and can't be voided. Use Return items instead.",
+    );
     expect(document.body.textContent).not.toMatch(/conflicts with something/i);
     expect(document.body.textContent).not.toContain(RAW);
     expect(screen.queryByTestId("counter-void-done")).toBeNull();

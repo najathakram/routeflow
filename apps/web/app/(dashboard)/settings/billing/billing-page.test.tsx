@@ -27,11 +27,16 @@ let mockSubscriptionView: SubscriptionView;
 const mockCancelMutate = jest.fn();
 // WP9: mutable per-test fixture for useCreateCheckout, same pattern as mockCancelMutate.
 const mockCheckoutMutate = jest.fn();
+const mockPortalMutate = jest.fn();
 let mockCheckoutPending = false;
 // Add-on fixtures: the catalog the page lists, and the mutations/preview the confirm sheet drives.
 const mockEnableMutate = jest.fn();
+// M11: the page's own re-read of the subscription after a 409 ADDON_QUANTITY_CHANGED.
+const mockSubRefetch = jest.fn();
 const mockDisableMutate = jest.fn();
 let mockPlansAddons: Array<Record<string, unknown>> = [];
+// M11: the usage meters the "Usage this cycle" card renders (empty unless a test sets them).
+let mockUsage: Array<Record<string, unknown>> = [];
 let mockProrationPreview: {
   data?: Record<string, unknown>;
   isLoading: boolean;
@@ -40,8 +45,13 @@ let mockProrationPreview: {
 } = { isLoading: false, isFetching: false, isError: false };
 
 jest.mock("@/lib/api/billing", () => ({
-  useSubscription: () => ({ data: mockSubscriptionView, isLoading: false, isError: false }),
-  useUsage: () => ({ data: [], isLoading: false }),
+  useSubscription: () => ({
+    data: mockSubscriptionView,
+    isLoading: false,
+    isError: false,
+    refetch: mockSubRefetch,
+  }),
+  useUsage: () => ({ data: mockUsage, isLoading: false }),
   usePlans: () => ({ data: { plans: [], addons: mockPlansAddons }, isLoading: false }),
   useCancelSubscription: () => ({ mutate: mockCancelMutate, isPending: false }),
   useResumeSubscription: () => ({ mutate: jest.fn(), isPending: false }),
@@ -52,6 +62,7 @@ jest.mock("@/lib/api/billing", () => ({
       ? mockProrationPreview
       : { data: undefined, isLoading: false, isFetching: false, isError: false },
   useCreateCheckout: () => ({ mutate: mockCheckoutMutate, isPending: mockCheckoutPending }),
+  useBillingPortal: () => ({ mutate: mockPortalMutate, isPending: false }),
 }));
 
 // Mutable per-test fixture, same pattern as `mockSubscriptionView` above: the real
@@ -116,8 +127,10 @@ describe("BillingSettingsPage — READ_ONLY / TRIAL visibility (RO-1)", () => {
 
     renderWithProviders(<BillingSettingsPage />);
 
-    expect(await screen.findByText(/workspace is read-only/i)).toBeInTheDocument();
-    expect(screen.getByText(/trial ended/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/workspace is currently in read-only mode/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/free trial has ended/i)).toBeInTheDocument();
     const choosePlanLink = screen.getByRole("link", { name: /choose a plan/i });
     expect(choosePlanLink).toHaveAttribute("href", "/choose-plan");
     expect(screen.queryByRole("button", { name: /^cancel$/i })).not.toBeInTheDocument();
@@ -132,6 +145,24 @@ describe("BillingSettingsPage — READ_ONLY / TRIAL visibility (RO-1)", () => {
     renderWithProviders(<BillingSettingsPage />);
 
     expect(await screen.findByRole("button", { name: /end trial/i })).toBeInTheDocument();
+  });
+
+  // SA-775 rollout: never threaten a lock the pause will not carry out.
+  it("a trial tenant is told it goes read-only after the trial, unless the server says the lock is held", async () => {
+    const trial = {
+      status: "TRIAL" as const,
+      trialEndsAt: new Date(Date.now() + 5 * 86_400_000).toISOString(),
+    };
+    mockSubscriptionView = subscriptionView(trial);
+    const first = renderWithProviders(<BillingSettingsPage />);
+    expect(await screen.findByText(/goes read-only/i)).toBeInTheDocument();
+    first.unmount();
+
+    mockSubscriptionView = { ...subscriptionView(trial), autoLockHeld: true } as SubscriptionView;
+    renderWithProviders(<BillingSettingsPage />);
+    expect(await screen.findByText(/Trial ends in/i)).toBeInTheDocument();
+    expect(screen.getByText(/pick a plan to keep full access/i)).toBeInTheDocument();
+    expect(screen.queryByText(/goes read-only/i)).not.toBeInTheDocument();
   });
 
   // Regression guard: an ACTIVE tenant keeps today's Cancel affordance. GREEN today.
@@ -158,7 +189,9 @@ describe("BillingSettingsPage — READ_ONLY / TRIAL visibility (RO-1)", () => {
 
     renderWithProviders(<BillingSettingsPage />);
 
-    expect(await screen.findByText(/workspace is read-only/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/workspace is currently in read-only mode/i),
+    ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /keep my plan/i })).not.toBeInTheDocument();
     expect(screen.queryByText(/cancellation scheduled/i)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^cancel$/i })).not.toBeInTheDocument();
@@ -187,6 +220,25 @@ describe("BillingSettingsPage — READ_ONLY / TRIAL visibility (RO-1)", () => {
     );
   });
 
+  // SA-775 follow-up: while auto-locks are paused a production tenant may stay writable, so the copy must
+  // not promise an immediate lock; it is true both when the pause holds the lock and when it does not.
+  it("RO-1 the End trial dialog does not promise an immediate read-only lock", async () => {
+    mockAuthUser = { role: "TENANT_ADMIN" };
+    mockSubscriptionView = subscriptionView({
+      status: "TRIAL",
+      trialEndsAt: new Date(Date.now() + 5 * 86_400_000).toISOString(),
+    });
+    const user = userEvent.setup();
+    renderWithProviders(<BillingSettingsPage />);
+
+    await user.click(await screen.findByRole("button", { name: "End trial" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    expect(
+      dialog.getByText("Your workspace becomes read-only; exports still work."),
+    ).toBeInTheDocument();
+    expect(dialog.queryByText(/immediately/i)).not.toBeInTheDocument();
+  });
+
   it("RO-1 a trial tenant as OPERATOR sees no End trial control and no read-only banner", async () => {
     mockAuthUser = { role: "OPERATOR" };
     mockSubscriptionView = subscriptionView({
@@ -198,7 +250,7 @@ describe("BillingSettingsPage — READ_ONLY / TRIAL visibility (RO-1)", () => {
 
     expect(await screen.findByRole("button", { name: /change plan/i })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /end trial/i })).not.toBeInTheDocument();
-    expect(screen.queryByText(/workspace is read-only/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/workspace is currently in read-only mode/i)).not.toBeInTheDocument();
   });
 });
 
@@ -1034,6 +1086,487 @@ describe("BillingSettingsPage — checkout errors", () => {
     await clickComplete();
     expect(
       await screen.findByText("We couldn't start checkout. Nothing was changed. Please try again."),
+    ).toBeInTheDocument();
+  });
+});
+
+// SA-733r6 (B4): the Billing card while an invoice is owed - Pay $X primary at the top (admins only), no plan
+// purchase path, the autopay line when nothing is owed, and none of it in an operator's DOM.
+describe("BillingSettingsPage - owed invoice / autopay (B4)", () => {
+  const T0 = Date.now() - 2 * 86_400_000;
+  const owed = (over: Partial<SubscriptionView> = {}): SubscriptionView =>
+    subscriptionView({
+      pastDueSince: new Date(T0).toISOString(),
+      pastDueInvoiceId: "in_1",
+      openInvoiceAmount: 149,
+      billingContactEmail: "dana@acme.test",
+      ...over,
+    });
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockAuthUser = { role: "TENANT_ADMIN" };
+  });
+
+  it("admin: Pay $149.00 is a primary button that opens the pay link; no Change plan / Choose a plan", async () => {
+    mockSubscriptionView = owed();
+    renderWithProviders(<BillingSettingsPage />);
+    const pay = await screen.findByRole("button", { name: "Pay $149.00" });
+    await userEvent.click(pay);
+    expect(mockPortalMutate).toHaveBeenCalledWith({ intent: "pay" });
+    expect(screen.queryByRole("button", { name: /change plan/i })).toBeNull();
+    expect(screen.queryByText(/choose a plan|subscribe/i)).toBeNull();
+  });
+
+  it("paused admin: the read-only sentence with the money, Pay $149.00, and no old read-only banner", async () => {
+    mockSubscriptionView = owed({ status: "READ_ONLY", readOnlyReason: "payment_overdue" });
+    renderWithProviders(<BillingSettingsPage />);
+    expect(
+      await screen.findByText(
+        "This workspace is currently in read-only mode. You can view records, but changes and new transactions are temporarily unavailable. Your subscription payment of $149.00 is overdue.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Pay $149.00" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /choose a plan/i })).toBeNull();
+  });
+
+  it("operator: the sentence, the reason and the contact (your admin + e-mail); no pay control in the DOM", async () => {
+    mockAuthUser = { role: "OPERATOR" };
+    mockSubscriptionView = owed({ status: "READ_ONLY", readOnlyReason: "payment_overdue" });
+    renderWithProviders(<BillingSettingsPage />);
+    expect(
+      await screen.findByText(
+        "This workspace is currently in read-only mode. You can view records, but changes and new transactions are temporarily unavailable. Your subscription payment of $149.00 is overdue. To restore access, contact your admin (dana@acme.test).",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^pay/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /update payment/i })).toBeNull();
+  });
+
+  it("nothing owed: the admin sees the autopay line with the next charge", async () => {
+    mockSubscriptionView = subscriptionView({
+      paymentMethodSummary: { brand: "visa", last4: "4242", expMonth: 12, expYear: 2099 },
+      nextCharge: { amount: 149, date: "2099-12-01T12:00:00.000Z" },
+    });
+    renderWithProviders(<BillingSettingsPage />);
+    expect(
+      await screen.findByText("Autopay is on. Next charge: $149.00 on Dec 1."),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^pay/i })).toBeNull();
+  });
+});
+
+// ─── Row 350 / SA-693: a comp add-on reads "Included", never a price ───────────────────────────
+
+describe("BillingSettingsPage — comp add-ons (row 350)", () => {
+  const rowOf = (name: string) => {
+    const row = screen.getByText(name).closest(".py-3");
+    if (!row) throw new Error(`no add-on row for ${name}`);
+    return within(row as HTMLElement);
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockAuthUser = { role: "TENANT_ADMIN" };
+    mockPlansAddons = [ADDON, { ...ADDON, sku: "OCR_PACK", name: "OCR Pack", sortOrder: 2 }];
+  });
+
+  it("a comp catalog add-on shows Included and no price; a paid one beside it is unchanged", async () => {
+    mockSubscriptionView = subscriptionView({
+      status: "ACTIVE",
+      addons: [
+        { sku: "ROUTE_PLUS", name: "Route Plus", quantity: 1, comp: true, monthly: null },
+        { sku: "OCR_PACK", name: "OCR Pack", quantity: 1, comp: false, monthly: 49 },
+      ],
+    });
+    renderWithProviders(<BillingSettingsPage />);
+    await screen.findByText("Route Plus");
+
+    const comp = rowOf("Route Plus");
+    expect(comp.getByText("Included")).toBeInTheDocument();
+    expect(comp.getByText("Active")).toBeInTheDocument();
+    expect(comp.queryByText(/\$/)).toBeNull();
+
+    const paid = rowOf("OCR Pack");
+    expect(paid.getByText("$49/mo")).toBeInTheDocument();
+    expect(paid.queryByText("Included")).toBeNull();
+  });
+
+  it("an active add-on with no comp flag (an older server) still shows its price", async () => {
+    mockSubscriptionView = subscriptionView({
+      status: "ACTIVE",
+      addons: [{ sku: "ROUTE_PLUS", name: "Route Plus", quantity: 1, monthly: 49 }],
+    });
+    renderWithProviders(<BillingSettingsPage />);
+    await screen.findByText("Route Plus");
+
+    const row = rowOf("Route Plus");
+    expect(row.getByText("$49/mo")).toBeInTheDocument();
+    expect(row.queryByText("Included")).toBeNull();
+  });
+
+  it("a comp add-on outside the catalog reads Included · Managed by RouteFlow with no price", async () => {
+    mockPlansAddons = [ADDON];
+    mockSubscriptionView = subscriptionView({
+      status: "ACTIVE",
+      addons: [
+        { sku: "SALES_AGENTS", name: "Sales agents", quantity: 1, comp: true, monthly: null },
+        { sku: "MSRP", name: "MSRP", quantity: 1, comp: false, monthly: 29 },
+      ],
+    });
+    renderWithProviders(<BillingSettingsPage />);
+    await screen.findByText("Sales agents");
+
+    const comp = rowOf("Sales agents");
+    expect(comp.getByText(/^Included · Managed by RouteFlow$/)).toBeInTheDocument();
+    expect(comp.queryByText(/\$/)).toBeNull();
+
+    expect(rowOf("MSRP").getByText("$29/mo · Managed by RouteFlow")).toBeInTheDocument();
+  });
+});
+
+// ─── M11: the Customers meter label, and a quantity for stackable add-ons ────────────────────
+
+const PACK = {
+  sku: "CUSTOMER_PACK_100",
+  name: "Customer pack (+100)",
+  monthlyPrice: 50,
+  unit: "FLAT",
+  includedAtPlan: null,
+  meteredKey: "CUSTOMERS",
+  capacityPerUnit: 100,
+  stackable: true,
+  grantsFlags: [],
+  sortOrder: 2,
+};
+
+describe("BillingSettingsPage — usage meter labels (M11)", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockAuthUser = { role: "TENANT_ADMIN" };
+    mockPlansAddons = [];
+    mockSubscriptionView = subscriptionView({ status: "ACTIVE" });
+  });
+  afterEach(() => {
+    mockUsage = [];
+  });
+
+  it("the Customers meter reads Customers, never the raw key", async () => {
+    mockUsage = [{ meter: "CUSTOMERS", used: 42, included: 100, remaining: 58, resetsAt: null }];
+    renderWithProviders(<BillingSettingsPage />);
+
+    expect(await screen.findByText("Customers")).toBeInTheDocument();
+    expect(screen.queryByText("CUSTOMERS")).not.toBeInTheDocument();
+  });
+
+  it("a meter key this page has never heard of is humanised, never printed raw", async () => {
+    mockUsage = [{ meter: "ROUTE_STOPS", used: 1, included: 10, remaining: 9, resetsAt: null }];
+    renderWithProviders(<BillingSettingsPage />);
+
+    expect(await screen.findByText("Route stops")).toBeInTheDocument();
+    expect(screen.queryByText("ROUTE_STOPS")).not.toBeInTheDocument();
+  });
+});
+
+describe("BillingSettingsPage — stackable add-on quantity (M11)", () => {
+  const rowOf = (name: string) => {
+    const row = screen.getByText(name).closest(".py-3");
+    if (!row) throw new Error(`no add-on row for ${name}`);
+    return within(row as HTMLElement);
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockAuthUser = { role: "TENANT_ADMIN" };
+    mockPlansAddons = [ADDON, PACK];
+    mockProrationPreview = {
+      data: {
+        sku: "CUSTOMER_PACK_100",
+        name: "Customer pack (+100)",
+        monthly: 50,
+        proratedToday: 20,
+        daysRemaining: 12,
+        daysInCycle: 30,
+        effectiveAt: "2026-10-02T00:00:00.000Z",
+        nextChargeAt: "2026-10-17T00:00:00.000Z",
+        billing: "STRIPE",
+        billed: true,
+      },
+      isLoading: false,
+      isFetching: false,
+      isError: false,
+    };
+    mockSubscriptionView = subscriptionView({ status: "ACTIVE", addons: [] });
+    mockEnableMutate.mockReset();
+  });
+
+  it("a stackable add-on's sheet has a quantity stepper, and Confirm sends the chosen quantity", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<BillingSettingsPage />);
+    await screen.findByText("Customer pack (+100)");
+
+    await user.click(rowOf("Customer pack (+100)").getByRole("button", { name: "Enable" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    const qty = dialog.getByRole("textbox", { name: "Quantity" });
+    expect(qty).toHaveValue("1");
+    await user.click(dialog.getByRole("button", { name: "Increase quantity" }));
+    await user.click(dialog.getByRole("button", { name: "Increase quantity" }));
+    expect(qty).toHaveValue("3");
+    await user.click(dialog.getByRole("button", { name: "Enable add-on" }));
+
+    expect(mockEnableMutate).toHaveBeenCalledTimes(1);
+    expect(mockEnableMutate).toHaveBeenCalledWith(
+      { sku: "CUSTOMER_PACK_100", quantity: 3, expectedQuantity: 0 },
+      expect.objectContaining({ onSuccess: expect.any(Function) }),
+    );
+  });
+
+  it("the stepper never goes below 1 and the dialog shows quantity x unit price", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<BillingSettingsPage />);
+    await screen.findByText("Customer pack (+100)");
+
+    await user.click(rowOf("Customer pack (+100)").getByRole("button", { name: "Enable" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    expect(dialog.getByRole("button", { name: "Decrease quantity" })).toBeDisabled();
+    await user.click(dialog.getByRole("button", { name: "Increase quantity" }));
+    await user.click(dialog.getByRole("button", { name: "Increase quantity" }));
+
+    expect(dialog.getByText("3 × $50.00 = $150.00/mo")).toBeInTheDocument();
+    // The prorated ESTIMATE scales with the units being added (the preview is per unit).
+    expect(dialog.getByText("About $60.00 this cycle")).toBeInTheDocument();
+    await user.click(dialog.getByRole("button", { name: "Decrease quantity" }));
+    await user.click(dialog.getByRole("button", { name: "Decrease quantity" }));
+    expect(dialog.getByRole("textbox", { name: "Quantity" })).toHaveValue("1");
+    expect(dialog.getByRole("button", { name: "Decrease quantity" })).toBeDisabled();
+  });
+
+  it("a non-stackable add-on's sheet has no stepper and sends no quantity", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<BillingSettingsPage />);
+    await screen.findByText("Route Plus");
+
+    await user.click(rowOf("Route Plus").getByRole("button", { name: "Enable" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    expect(dialog.queryByRole("textbox", { name: "Quantity" })).not.toBeInTheDocument();
+    expect(dialog.queryByRole("button", { name: "Increase quantity" })).not.toBeInTheDocument();
+    await user.click(dialog.getByRole("button", { name: "Enable add-on" }));
+
+    expect(mockEnableMutate).toHaveBeenCalledWith(
+      { sku: "ROUTE_PLUS" },
+      expect.objectContaining({ onSuccess: expect.any(Function) }),
+    );
+  });
+
+  it("an owned stackable pack offers Buy more beside Disable, and sends the NEW TOTAL quantity", async () => {
+    mockSubscriptionView = subscriptionView({
+      status: "ACTIVE",
+      addons: [
+        { sku: "CUSTOMER_PACK_100", name: "Customer pack (+100)", quantity: 2, monthly: 100 },
+      ],
+    });
+    const user = userEvent.setup();
+    renderWithProviders(<BillingSettingsPage />);
+    await screen.findByText("Customer pack (+100)");
+
+    const row = rowOf("Customer pack (+100)");
+    expect(row.getByText("Active")).toBeInTheDocument();
+    expect(row.getByRole("button", { name: "Disable" })).toBeInTheDocument();
+    await user.click(row.getByRole("button", { name: "Buy more" }));
+
+    const dialog = within(await screen.findByRole("dialog"));
+    expect(dialog.getByText("Buy more Customer pack (+100)?")).toBeInTheDocument();
+    expect(dialog.getByText("You have 2 now")).toBeInTheDocument();
+    await user.click(dialog.getByRole("button", { name: "Increase quantity" }));
+    expect(dialog.getByText("+2 × $50.00 = $100.00/mo")).toBeInTheDocument();
+    expect(dialog.getByText("New total: 4 × $50.00 = $200.00/mo")).toBeInTheDocument();
+    await user.click(dialog.getByRole("button", { name: "Buy more" }));
+
+    // The server's `quantity` is the target TOTAL, not an increment: 2 owned + 2 more = 4.
+    expect(mockEnableMutate).toHaveBeenCalledWith(
+      { sku: "CUSTOMER_PACK_100", quantity: 4, expectedQuantity: 2 },
+      expect.objectContaining({ onSuccess: expect.any(Function) }),
+    );
+  });
+
+  it("an owned non-stackable add-on offers no Buy more", async () => {
+    mockSubscriptionView = subscriptionView({
+      status: "ACTIVE",
+      addons: [{ sku: "ROUTE_PLUS", name: "Route Plus", quantity: 1, monthly: 49 }],
+    });
+    renderWithProviders(<BillingSettingsPage />);
+    await screen.findByText("Route Plus");
+
+    expect(rowOf("Route Plus").queryByRole("button", { name: "Buy more" })).toBeNull();
+  });
+
+  it("a comp stackable pack (RouteFlow-managed quantity) offers no Buy more", async () => {
+    mockSubscriptionView = subscriptionView({
+      status: "ACTIVE",
+      addons: [
+        {
+          sku: "CUSTOMER_PACK_100",
+          name: "Customer pack (+100)",
+          quantity: 3,
+          comp: true,
+          monthly: null,
+        },
+      ],
+    });
+    renderWithProviders(<BillingSettingsPage />);
+    await screen.findByText("Customer pack (+100)");
+
+    expect(rowOf("Customer pack (+100)").queryByRole("button", { name: "Buy more" })).toBeNull();
+  });
+
+  it("a non-admin sees no Enable, Buy more or stepper", async () => {
+    mockAuthUser = { role: "OPERATOR" };
+    mockSubscriptionView = subscriptionView({
+      status: "ACTIVE",
+      addons: [
+        { sku: "CUSTOMER_PACK_100", name: "Customer pack (+100)", quantity: 2, monthly: 100 },
+      ],
+    });
+    renderWithProviders(<BillingSettingsPage />);
+    await screen.findByText("Customer pack (+100)");
+
+    expect(screen.queryByRole("button", { name: "Buy more" })).toBeNull();
+  });
+});
+
+// ─── M11 SA must: a stale page must never CUT a pack ─────────────────────────────────────────────
+
+describe("BillingSettingsPage — stale owned count (M11, SA must)", () => {
+  const rowOf = (name: string) => {
+    const row = screen.getByText(name).closest(".py-3");
+    if (!row) throw new Error(`no add-on row for ${name}`);
+    return within(row as HTMLElement);
+  };
+  const OWNED_2 = [
+    { sku: "CUSTOMER_PACK_100", name: "Customer pack (+100)", quantity: 2, monthly: 100 },
+  ];
+  const previewFor = (over: Record<string, unknown> = {}) => ({
+    data: {
+      sku: "CUSTOMER_PACK_100",
+      name: "Customer pack (+100)",
+      monthly: 50,
+      proratedToday: 20,
+      daysRemaining: 12,
+      daysInCycle: 30,
+      effectiveAt: "2026-10-02T00:00:00.000Z",
+      nextChargeAt: "2026-10-17T00:00:00.000Z",
+      billing: "STRIPE",
+      billed: true,
+      ...over,
+    },
+    isLoading: false,
+    isFetching: false,
+    isError: false,
+  });
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockAuthUser = { role: "TENANT_ADMIN" };
+    mockPlansAddons = [PACK];
+    mockProrationPreview = previewFor();
+    mockSubscriptionView = subscriptionView({ status: "ACTIVE", addons: OWNED_2 });
+    mockEnableMutate.mockReset();
+    mockSubRefetch.mockReset();
+  });
+
+  it("a 409 ADDON_QUANTITY_CHANGED refetches the subscription and re-shows the sheet with the NEW owned total, in fixed copy", async () => {
+    // The server holds 6; the page showed 2. The click targets 3, which would cut the pack.
+    mockEnableMutate.mockImplementation((_v: unknown, o: any) =>
+      o.onError({
+        response: {
+          status: 409,
+          data: { code: API_ERROR_CODES.ADDON_QUANTITY_CHANGED, message: "RAW server text" },
+        },
+      }),
+    );
+    mockSubRefetch.mockImplementation(async () => {
+      mockSubscriptionView = subscriptionView({
+        status: "ACTIVE",
+        addons: [{ ...OWNED_2[0], quantity: 6, monthly: 300 }],
+      });
+      return { data: mockSubscriptionView };
+    });
+    const user = userEvent.setup();
+    renderWithProviders(<BillingSettingsPage />);
+    await screen.findByText("Customer pack (+100)");
+
+    await user.click(rowOf("Customer pack (+100)").getByRole("button", { name: "Buy more" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    expect(dialog.getByText("You have 2 now")).toBeInTheDocument();
+    await user.click(dialog.getByRole("button", { name: "Buy more" }));
+
+    expect(mockEnableMutate).toHaveBeenCalledWith(
+      { sku: "CUSTOMER_PACK_100", quantity: 3, expectedQuantity: 2 },
+      expect.anything(),
+    );
+    expect(mockSubRefetch).toHaveBeenCalledTimes(1);
+    // Still open, the fixed copy (never the server's text), and the sheet now shows the real total.
+    expect(
+      await screen.findByText(
+        "Your add-on changed since this page loaded. Check the new total and try again.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/RAW server text/)).not.toBeInTheDocument();
+    expect(await dialog.findByText("You have 6 now")).toBeInTheDocument();
+    expect(dialog.getByText("New total: 7 × $50.00 = $350.00/mo")).toBeInTheDocument();
+    expect(dialog.getByRole("button", { name: "Buy more" })).toBeEnabled();
+  });
+
+  it("an owned pack whose row no Stripe item bills is blocked: fixed copy, no 'About $' quote, Confirm disabled", async () => {
+    mockProrationPreview = previewFor({
+      billing: "REFUSED",
+      billed: false,
+      proratedToday: null,
+      refusal: { code: API_ERROR_CODES.ADDON_RAISE_UNBILLED_ROW, message: "server text" },
+    });
+    const user = userEvent.setup();
+    renderWithProviders(<BillingSettingsPage />);
+    await screen.findByText("Customer pack (+100)");
+
+    await user.click(rowOf("Customer pack (+100)").getByRole("button", { name: "Buy more" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    expect(
+      dialog.getByText(
+        "This add-on isn't billed on your subscription yet, so its quantity can't be raised here. Please contact support.",
+      ),
+    ).toBeInTheDocument();
+    expect(dialog.queryByText(/About \$/)).not.toBeInTheDocument();
+    expect(dialog.getByRole("button", { name: "Buy more" })).toBeDisabled();
+  });
+
+  it("an enable 409 ADDON_RAISE_UNBILLED_ROW is worded inline, not as the generic refusal", async () => {
+    mockEnableMutate.mockImplementation((_v: unknown, o: any) =>
+      o.onError({
+        response: { status: 409, data: { code: API_ERROR_CODES.ADDON_RAISE_UNBILLED_ROW } },
+      }),
+    );
+    const user = userEvent.setup();
+    renderWithProviders(<BillingSettingsPage />);
+    await screen.findByText("Customer pack (+100)");
+
+    await user.click(rowOf("Customer pack (+100)").getByRole("button", { name: "Buy more" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    await user.click(dialog.getByRole("button", { name: "Buy more" }));
+
+    expect(await dialog.findByText(/isn't billed on your subscription yet/)).toBeInTheDocument();
+  });
+
+  it("Buy more is hidden once the pack is at the 10,000 cap", async () => {
+    mockSubscriptionView = subscriptionView({
+      status: "ACTIVE",
+      addons: [{ ...OWNED_2[0], quantity: 10000, monthly: 500000 }],
+    });
+    renderWithProviders(<BillingSettingsPage />);
+    await screen.findByText("Customer pack (+100)");
+
+    expect(rowOf("Customer pack (+100)").queryByRole("button", { name: "Buy more" })).toBeNull();
+    expect(
+      rowOf("Customer pack (+100)").getByRole("button", { name: "Disable" }),
     ).toBeInTheDocument();
   });
 });

@@ -30,6 +30,7 @@ import {
   Handshake,
   BadgePercent,
   Store,
+  Smartphone,
 } from "lucide-react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { cn, Avatar, ToastProvider } from "@routeflow/ui/web";
@@ -39,8 +40,13 @@ import { PortalSwitchLink } from "@/components/PortalSwitchLink";
 import { setLastPortalCookie } from "@/lib/presence-cookies";
 import { createNavShortcutHandler } from "@/lib/nav-shortcuts";
 import { CommandPalette, useCommandPalette } from "@/components/CommandPalette";
-import { ReadOnlyBanner } from "@/components/ReadOnlyBanner";
+import { ReadOnlyGateProvider } from "@/lib/read-only-gate";
+import { BillingShellBanner, BillingStripReserve } from "@/components/BillingShellBanner";
+import { DriverReadOnlyBanner } from "@/components/DriverReadOnlyBanner";
+import { subscriptionPollInterval } from "@/lib/subscription-banner-state";
 import { useSubscription } from "@/lib/api/billing";
+import { hasAnyAppLink, useAppLinks } from "@/lib/api/app-links";
+import { isInShell } from "@/lib/in-shell";
 import { useAuth } from "@/lib/auth-context";
 import {
   getImpersonation,
@@ -55,11 +61,13 @@ import { useExpiringAuthorizations, type ExpiringAuthorization } from "@/lib/api
 import { usePendingPortalApprovals } from "@/lib/api/portal-approvals";
 import { PwaInstallPrompt } from "@/components/PwaInstallPrompt";
 import { DraftDock } from "@/components/DraftDock";
+import { useGuardedSignOut } from "@/components/SignOutUnsentGuard";
 import { useHasAddon, useTenantAddons } from "@/lib/api/tobacco";
 import { useRoutesAccess, useDeliveryAccess, SALES_AGENTS_ADDON } from "@/lib/api/addons";
 import { useCounterSaleGate } from "@/lib/api/counter-sale";
 import { RegisterHeader } from "@/components/RegisterHeader";
 import { guardCounterLeave } from "@/lib/counter-cart-signal";
+import { NumberWheelGuard } from "@/components/NumberWheelGuard";
 import { useGuardedRouter } from "@/lib/use-guarded-router";
 import { isRegisterPath, recordPreviousPath } from "@/lib/register-mode";
 import { useCounterLanding, useOpenCounterPref } from "@/lib/use-counter-device-pref";
@@ -68,6 +76,7 @@ import { useI18n, LOCALES, LOCALE_LABELS } from "@/lib/i18n";
 import { useDriveMode } from "@/lib/drive-mode";
 import { matchPlanGatedRoute, planFlagVisible } from "@/lib/plan-gated-nav";
 import { SkipToContentLink } from "@/components/SkipToContentLink";
+import { useNoShellScroll } from "@/lib/use-no-shell-scroll";
 import { RouteGuard } from "./_components/gates/RouteGuard";
 import { activeLeafHref } from "./_components/nav-active";
 
@@ -527,6 +536,8 @@ function HeaderTools({
   clerkTestId?: string;
 }) {
   const { user, logout } = useAuth();
+  // SA-817 A8: an explicit sign-out with unsent orders on this device asks first; a session expiry never comes through here.
+  const { requestSignOut, dialog: signOutDialog } = useGuardedSignOut(() => void logout(), user);
   const { locale, setLocale, t } = useI18n();
   const pathname = usePathname();
   const router = useGuardedRouter();
@@ -546,6 +557,10 @@ function HeaderTools({
   const bellCount = unreadCount + expiring.length + pendingApprovals.length;
   const { driveMode, setDriveMode } = useDriveMode();
   const counterPref = useOpenCounterPref();
+  // Row 559: "Get the app" shows only when an install link is ready (fails closed while loading or on an
+  // older api) and never inside the app shell itself.
+  const { data: appLinks } = useAppLinks();
+  const showGetTheApp = hasAnyAppLink(appLinks) && !isInShell();
   // Drive mode is a recurring-routes affordance ("My Routes"), so it's gated
   // on routesAccess (not delivery access).
   const { enabled: routesAccess } = useRoutesAccess();
@@ -567,7 +582,7 @@ function HeaderTools({
       {/* Command palette trigger — Ledger search pill */}
       <button
         onClick={onOpenPalette}
-        className="hidden h-[34px] w-[280px] items-center gap-2.5 rounded-full border border-line-strong bg-surface-raised px-3 text-[13px] text-ink-400 transition-colors hover:border-brand-300 hover:text-ink-500 md:flex"
+        className="hidden h-11 w-[280px] items-center gap-2.5 rounded-full border border-line-strong bg-surface-raised px-3 text-[13px] text-ink-400 transition-colors hover:border-brand-300 hover:text-ink-500 md:flex lg:h-[34px]"
         aria-label="Open command palette"
       >
         <Search className="h-[15px] w-[15px]" />
@@ -784,6 +799,15 @@ function HeaderTools({
               <UserIcon className="h-4 w-4 text-navy/70" />
               {t("menu.profile")}
             </DropdownMenu.Item>
+            {showGetTheApp && (
+              <DropdownMenu.Item
+                className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm text-navy outline-none hover:bg-surface-raised"
+                onSelect={() => router.push("/get-the-app")}
+              >
+                <Smartphone className="h-4 w-4 text-navy/70" />
+                {t("menu.getTheApp")}
+              </DropdownMenu.Item>
+            )}
             {/* POS-7: per-device preference; hidden when storage is blocked (the toggle could not persist). */}
             {showCounterPref && counterPref.available && (
               <DropdownMenu.CheckboxItem
@@ -867,8 +891,8 @@ function HeaderTools({
               <DropdownMenu.Item
                 className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm text-danger outline-none hover:bg-danger-bg"
                 onSelect={() => {
-                  if (guardCounterLeave(() => void logout())) return;
-                  void logout();
+                  if (guardCounterLeave(requestSignOut)) return;
+                  requestSignOut();
                 }}
               >
                 <LogOut className="h-4 w-4" />
@@ -878,6 +902,7 @@ function HeaderTools({
           </DropdownMenu.Content>
         </DropdownMenu.Portal>
       </DropdownMenu.Root>
+      {signOutDialog}
     </div>
   );
 }
@@ -1002,11 +1027,19 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
   // CUSTOMER/DRIVER); a 60s staleTime keeps it from refetching on every navigation.
   // Lite-L2 (WP8): the same result also drives the nav's plan-gated filtering below —
   // isSuccess/isError captured alongside `data` (do not add a second useSubscription call).
+  // Per-viewer convenience memory (the strip-shown hint, the paid notice) is scoped to the workspace.
+  const billingScope = user?.tenantSlug ?? user?.id ?? null;
   const {
     data: subscriptionStatus,
+    dataUpdatedAt: subscriptionReadAt,
     isSuccess: subscriptionResolved,
     isError: subscriptionFailed,
-  } = useSubscription({ staleTime: 60_000, enabled: isStaff });
+  } = useSubscription({
+    staleTime: 60_000,
+    enabled: isStaff,
+    // SA-733r6: while a billing state is showing, re-read every 30 s so a payment clears the strip <= 60 s.
+    refetchInterval: (q) => subscriptionPollInterval(q.state.data),
+  });
   const { data: regulatedSections, isLoading: regulatedLoading } = useTrackedCategories(
     { active: true },
     { enabled: isStaff },
@@ -1166,6 +1199,9 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
 
   // Below lg the static rail is hidden and replaced by an off-canvas drawer.
   const [mobileNavOpen, setMobileNavOpen] = React.useState(false);
+  // K11-16: the right column is overflow-hidden; a native click/focus scroll must never move it.
+  const shellColumnRef = React.useRef<HTMLDivElement>(null);
+  useNoShellScroll(shellColumnRef);
 
   // Close the mobile drawer whenever the route changes.
   React.useEffect(() => {
@@ -1343,15 +1379,22 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
       {/* Right column — `relative` so the draft dock anchors to the bottom-left of
           the content area (right of the rail), not over the sidebar's collapse
           control; below lg the rail is a drawer so it becomes the viewport corner. */}
-      <div className="relative flex flex-1 flex-col overflow-hidden">
+      <div ref={shellColumnRef} className="relative flex flex-1 flex-col overflow-hidden">
         <ImpersonationBanner />
-        {subscriptionStatus && (
-          <ReadOnlyBanner
-            status={subscriptionStatus.status}
-            readOnlyReason={subscriptionStatus.readOnlyReason}
-            compact
-          />
-        )}
+        {subscriptionStatus ? (
+          // useSearchParams() (the ?paid=1 return) needs a Suspense boundary for the static prerender
+          <React.Suspense fallback={null}>
+            <BillingShellBanner
+              view={subscriptionStatus}
+              userRole={user?.role}
+              scope={billingScope}
+            />
+          </React.Suspense>
+        ) : isStaff && !subscriptionFailed ? (
+          <BillingStripReserve scope={billingScope} />
+        ) : user?.role === "DRIVER" ? (
+          <DriverReadOnlyBanner />
+        ) : null}
         {register ? (
           <RegisterHeader
             onOpenMobileNav={() => setMobileNavOpen(true)}
@@ -1383,14 +1426,26 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
           tabIndex={-1}
           className="flex-1 focus:outline-none overflow-x-hidden overflow-y-auto bg-surface-raised pb-24"
         >
-          {children}
+          <ReadOnlyGateProvider
+            view={subscriptionStatus}
+            readAt={subscriptionReadAt}
+            isAdmin={user?.role === "TENANT_ADMIN"}
+          >
+            {children}
+          </ReadOnlyGateProvider>
         </main>
         {/* Persistent parked-draft dock (pos-cost-roles-spec §2) — bottom-left of
             the content area, every operator screen; resume/discard + scan-to-draft. */}
         <DraftDock />
       </div>
 
-      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+      <ReadOnlyGateProvider
+        view={subscriptionStatus}
+        readAt={subscriptionReadAt}
+        isAdmin={user?.role === "TENANT_ADMIN"}
+      >
+        <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+      </ReadOnlyGateProvider>
       <PwaInstallPrompt logoSrc={BRAND_MARK_SRC} accentClass="bg-brand-600 hover:bg-brand-700" />
 
       {/* Keyboard shortcuts help modal */}
@@ -1442,6 +1497,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   return (
     <ToastProvider>
+      <NumberWheelGuard />
       <PageTitleProvider>
         <AuthGuard>{children}</AuthGuard>
       </PageTitleProvider>

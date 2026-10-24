@@ -202,3 +202,75 @@ describe("readWindowFacts: POS-mode pickup hand-overs", () => {
     expect(JSON.stringify(calls[0].args.where)).toContain('"counterSale":true');
   });
 });
+
+/**
+ * CONSERVATION (row 342 review): every payment row the window reads lands in exactly one Z bucket, and the buckets add up to
+ * the window total. A POS hand-over whose check was deposited the same day is read (selected by its own pickup group) and folds
+ * to `notAtTill`; it must never vanish from every bucket. Which bucket is RIGHT for it is an open SA question: this pins that it
+ * has one, and that master's bucket (notAtTill) is the one it has today.
+ */
+describe("day close conservation: no payment row falls out of the buckets", () => {
+  const pay = (
+    orderId: string,
+    over: {
+      method?: string;
+      amount: number;
+      group?: string | null;
+      checkStatus?: string | null;
+      counterSale?: boolean;
+    },
+  ) => ({
+    amount: over.amount,
+    method: over.method ?? "CASH",
+    status: "PAID",
+    paymentGroupId: over.group === undefined ? null : over.group,
+    checkStatus: over.checkStatus ?? null,
+    invoice: { orderId, order: { counterSale: over.counterSale ?? false } },
+  });
+  function dbOf(counter: unknown[], candidates: unknown[]) {
+    let n = 0;
+    return {
+      order: { aggregate: async () => ({ _count: { _all: 0 }, _sum: { total: null } }) },
+      invoicePayment: {
+        findMany: async () => (n++ === 0 ? counter : candidates),
+        aggregate: async () => ({ _sum: { amount: null } }),
+      },
+      creditNote: { findMany: async () => [] },
+      return: { findMany: async () => [] },
+    } as never;
+  }
+
+  it("a same-day DEPOSITED hand-over check folds to notAtTill, not to nothing; the buckets sum to the window total", async () => {
+    const counter = [
+      pay("o-c1", { amount: 30, counterSale: true }), // till cash
+      pay("o-c2", { amount: 12, method: "CREDIT_CARD", counterSale: true }), // card
+      pay("o-c3", { amount: 7, group: "5b0f4a6e-2b0a-4c53-9a54-6f1c8d1f2a11", counterSale: true }), // an office payment: notAtTill
+      pay("o-c4", { amount: 9, method: "CREDIT_NOTE", counterSale: true }), // a credit application
+    ];
+    const candidates = [
+      pay("o-p1", { amount: 20, group: pickupTenderGroupId("o-p1") }), // hand-over cash: till
+      pay("o-p2", {
+        amount: 40,
+        method: "CHECK",
+        checkStatus: "DEPOSITED",
+        group: pickupTenderGroupId("o-p2"),
+      }),
+      pay("o-p3", {
+        amount: 15,
+        method: "CHECK",
+        checkStatus: "RECORDED",
+        group: pickupTenderGroupId("o-p3"),
+      }),
+    ];
+    const facts = await readWindowFacts(dbOf(counter, candidates), "t-acme", "main", window);
+    // every counter row and every hand-over row (selected by its own pickup group) reaches the fold
+    expect(facts.payments).toHaveLength(counter.length + candidates.length);
+    const fold = foldDayClose(facts);
+    const total = [...counter, ...candidates].reduce((s, p) => s + Number(p.amount), 0);
+    const buckets = fold.totals.moneyIn.total + fold.totals.notAtTill + fold.totals.storeCreditUsed;
+    expect(buckets).toBe(total); // 30 + 12 + 20 + 15 (money in) + 7 + 40 (notAtTill) + 9 (store credit) = 133
+    expect(fold.totals.notAtTill).toBe(47); // the office payment 7 and the deposited check 40
+    expect(fold.totals.moneyIn).toMatchObject({ cash: 50, card: 12, check: 15, total: 77 });
+    expect(fold.totals.handOver).toEqual({ count: 2, cash: 20 });
+  });
+});

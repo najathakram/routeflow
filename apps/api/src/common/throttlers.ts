@@ -26,7 +26,7 @@ function isUploadsThrottled(ctx: ExecutionContext): boolean {
  * The named throttlers the global ThrottlerGuard (app.module.ts APP_GUARD) runs on every
  * request. Built here, not inline in app.module.ts, so specs drive the exact production set.
  *
- * - "default": 100 req / 60 s per IP (per route handler — the guard's key is class + handler +
+ * - "default": `throttle.defaultLimit` (default 100) req / 60 s per IP (per route handler — the guard's key is class + handler +
  *   throttler name + IP). Every route, except those that `@SkipThrottle({ default: true })`.
  * - "uploads" (#2091): signed product-image GETs. One catalog page — or several staff behind one
  *   shop IP — loads far more than 100 images a minute, so images past the 100th used to 429 and
@@ -37,8 +37,9 @@ function isUploadsThrottled(ctx: ExecutionContext): boolean {
  */
 export function buildThrottlers(config: ConfigService): ThrottlerOptions[] {
   const uploadsLimit = Number(config.get("throttle.uploadsLimit")) || 1200;
+  const defaultLimit = Number(config.get("throttle.defaultLimit")) || 100;
   return [
-    { name: "default", ttl: WINDOW_MS, limit: 100 },
+    { name: "default", ttl: WINDOW_MS, limit: defaultLimit },
     {
       name: "uploads",
       ttl: WINDOW_MS,

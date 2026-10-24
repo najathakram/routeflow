@@ -15,6 +15,7 @@ jest.mock("../common/db-locks", () => ({
   LockUnavailableError: class extends Error {},
 }));
 
+import { regulatedGateOpenProvider } from "./testing/regulated-gate-open-provider";
 import { Test } from "@nestjs/testing";
 import { OrderTemplatesService } from "./order-templates.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -57,6 +58,7 @@ describe("OrderTemplatesService oversell call sites", () => {
     const mod = await Test.createTestingModule({
       providers: [
         OrderTemplatesService,
+        regulatedGateOpenProvider,
         { provide: PrismaService, useValue: prisma },
         { provide: TenantContextService, useValue: { run: jest.fn((_id, fn) => fn()) } },
         { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue("10") } },

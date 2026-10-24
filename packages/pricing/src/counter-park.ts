@@ -14,6 +14,8 @@
 // It lives in @routeflow/pricing (a built package) and NOT in @routeflow/types, because the API never value-imports
 // @routeflow/types (L-261: that package is raw TypeScript and `nest build` does not bundle it). The error codes
 // PARK_LIMIT / PARK_TAKEN are in @routeflow/types; the API carries literals of them, pinned by a parity spec.
+import type { CounterItemName } from "@routeflow/types";
+import { invoiceLineQtyText } from "./pricing";
 
 // The default register and the register-key pattern are `COUNTER_DEFAULT_REGISTER` and `REGISTER_KEY_PATTERN` in
 // ./counter-register (the one source for every register-keyed counter feature).
@@ -93,6 +95,8 @@ export interface ParkedCartLine {
   unit?: string;
   priceType?: "STANDARD" | "SPECIAL";
   category?: string;
+  /** The product's regulated category, so a resumed cart's estimate still carries the levy (CQ-01). */
+  trackedCategoryId?: string;
   tierPrices?: {
     pricePerUnit?: number | string | null;
     priceTier2?: number | string | null;
@@ -105,12 +109,16 @@ export interface ParkedCartLine {
   override?: { mode: ParkedPriceEditMode; value: number; reason?: string };
 }
 
-/** The customer is kept to these four fields; an email is NEVER stored. */
+/** The customer is kept to these six fields; an email is NEVER stored. */
 export interface ParkedCartCustomer {
   id: string;
   businessName: string;
   pricingTier?: number;
   fulfillPath?: string;
+  /** Tax-exempt customers owe no tax or levy: a resumed cart's estimate must still say so (CQ-02). */
+  isTaxExempt?: boolean;
+  /** S5: the tenant's walk-in customer RECORD (a pick of it is a Walk-in, not a named buyer). Only ever `true`. */
+  isWalkIn?: true;
 }
 
 export interface ParkedCartPayload {
@@ -119,9 +127,29 @@ export interface ParkedCartPayload {
   method: string;
   tendered: string;
   reference: string;
+  /** A check tender's typed date (YYYY-MM-DD), kept so a resumed cart is still judged against the business's day. */
+  checkDate?: string;
+  /**
+   * S5: the clerk tapped Walk-in for this cart (a null customer alone says nothing, so a resumed cart without it asks
+   * "Who's buying?" again). Only ever `true`, and only with a null customer.
+   */
+  walkIn?: true;
 }
 
 // ─── Moved from the web: the shape checks the held-attempt snapshot and the live cart already use ───────────────────
+
+/** A strict YYYY-MM-DD that is also a real day (2026-02-31 is not): the only shape a check date may take. */
+export function isCalendarDay(v: unknown): v is string {
+  if (typeof v !== "string") return false;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v);
+  if (!m) return false;
+  const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+  return (
+    d.getUTCFullYear() === Number(m[1]) &&
+    d.getUTCMonth() === Number(m[2]) - 1 &&
+    d.getUTCDate() === Number(m[3])
+  );
+}
 
 const isNum = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n);
 const optNum = (n: unknown): boolean => n === undefined || isNum(n);
@@ -188,6 +216,8 @@ function rebuildLine(raw: unknown): ParkedCartLine | null {
   if (raw.priceType === "STANDARD" || raw.priceType === "SPECIAL") line.priceType = raw.priceType;
   const category = str(raw.category, 100);
   if (category !== undefined) line.category = category;
+  const trackedCategoryId = str(raw.trackedCategoryId, 64);
+  if (trackedCategoryId !== undefined) line.trackedCategoryId = trackedCategoryId;
   if (isObj(raw.tierPrices)) {
     const tp: NonNullable<ParkedCartLine["tierPrices"]> = {};
     for (const k of TIER_KEYS) {
@@ -227,6 +257,8 @@ function rebuildCustomer(raw: unknown): ParkedCartCustomer | null | undefined {
   if (isNum(raw.pricingTier)) c.pricingTier = raw.pricingTier;
   const fulfillPath = str(raw.fulfillPath, 20);
   if (fulfillPath !== undefined) c.fulfillPath = fulfillPath;
+  if (typeof raw.isTaxExempt === "boolean") c.isTaxExempt = raw.isTaxExempt;
+  if (raw.isWalkIn === true) c.isWalkIn = true;
   return c;
 }
 
@@ -257,7 +289,10 @@ export function sanitizeParkedPayload(
   }
   const tendered = str(raw.tendered, 20) ?? "";
   const reference = str(raw.reference, 100) ?? "";
-  return { ok: true, value: { lines, customer, method, tendered, reference } };
+  const value: ParkedCartPayload = { lines, customer, method, tendered, reference };
+  if (isCalendarDay(raw.checkDate)) value.checkDate = raw.checkDate;
+  if (raw.walkIn === true && customer === null) value.walkIn = true;
+  return { ok: true, value };
 }
 
 // ─── Requests and responses ──────────────────────────────────────────────────────────────────────────────────────────
@@ -272,6 +307,18 @@ export interface ParkCartRequest {
   payload: ParkedCartPayload;
 }
 
+/**
+ * The pricing inputs of one parked line, and nothing else of it: all the screen's `cartTotals` needs to total the row
+ * (`computeLineSubtotal`'s own inputs). The list never carries the payload.
+ */
+export interface ParkedPriceLine {
+  unitPrice: number;
+  qty: number;
+  boxes?: number;
+  pieces?: number;
+  unitsPerBox?: number;
+}
+
 /** One parked cart in the list (and the answer to a park). */
 export interface ParkedCartListItem {
   id: string;
@@ -281,6 +328,11 @@ export interface ParkedCartListItem {
   expiresAt: string;
   lineCount: number;
   customerName?: string;
+  /** Row 330e: the lines' pricing inputs (the LIST sends them; the park answer does not). Absent = no total shown. */
+  priceLines?: ParkedPriceLine[];
+  /** R7b 2.1: the first few line names and qty, and the line count (the LIST sends them). Absent = no names shown. */
+  items?: CounterItemName[];
+  itemCount?: number;
 }
 
 export interface ParkCartResponse extends ParkedCartListItem {
@@ -309,4 +361,47 @@ export interface ResumeParkedCartResponse {
   label: string;
   createdAt: string;
   payload: ParkedCartPayload;
+}
+
+/** R7b 2.1: how many item names a row carries (the screen shows two and "+n more"; one spare lets it say so). */
+export const ROW_ITEM_NAMES_MAX = 3;
+
+/** One line as the item-names fold reads it: an invoice line (`description`->`name`) or a stored parked line. */
+export interface ItemNameLine {
+  name?: unknown;
+  qty?: unknown;
+  boxes?: unknown;
+  pieces?: unknown;
+  unitLabel?: unknown;
+}
+
+/**
+ * R7b N3/N4: the ONE fold of a row's item names, shared by Today's sales (invoice lines) and the parked list (stored
+ * lines): the first `cap` named lines with their qty and the count of every named line. A boxed or unit line also carries
+ * the receipt's own quantity text (`invoiceLineQtyText`: "2 Cases"), so the row never says "24" for 2 cases. Non-array or
+ * nothing named yields `{}`.
+ */
+export function foldItemNames(
+  lines: unknown,
+  cap: number,
+): { items?: CounterItemName[]; itemCount?: number } {
+  if (!Array.isArray(lines)) return {};
+  const named: CounterItemName[] = [];
+  for (const l of lines) {
+    if (!l || typeof l !== "object") continue;
+    const r = l as ItemNameLine;
+    const name = typeof r.name === "string" ? r.name.trim() : "";
+    if (!name) continue;
+    const qty = Number(r.qty);
+    const item: CounterItemName = { name, qty: Number.isFinite(qty) ? qty : 0 };
+    const boxes = r.boxes == null ? null : Number(r.boxes);
+    const pieces = r.pieces == null ? null : Number(r.pieces);
+    const unitLabel = typeof r.unitLabel === "string" ? r.unitLabel : null;
+    if (boxes !== null || pieces !== null || (unitLabel ?? "").trim()) {
+      item.qtyText = invoiceLineQtyText({ qty: item.qty, boxes, pieces, unitLabel });
+    }
+    named.push(item);
+  }
+  if (named.length === 0) return {};
+  return { items: named.slice(0, cap), itemCount: named.length };
 }

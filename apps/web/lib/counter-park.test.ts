@@ -14,6 +14,7 @@ import {
   isStaleParked,
   lineCountLabel,
   parkErrorCopy,
+  parkedRowTitle,
   resumeErrorCopy,
 } from "./counter-park";
 
@@ -29,6 +30,26 @@ const line = {
   qty: 2,
   stray: "dropped",
 };
+
+describe("buildParkPayload keeps a check's typed date through the REAL sanitizer", () => {
+  const cart = (checkDate?: unknown) => ({
+    lines: [line],
+    customer: null,
+    method: "CHECK",
+    tendered: "",
+    reference: "1042",
+    ...(checkDate === undefined ? {} : { checkDate }),
+  });
+  it("a real day is carried; an impossible one is dropped", () => {
+    expect(buildParkPayload(cart("2026-10-23") as never)).toMatchObject({
+      ok: true,
+      value: { checkDate: "2026-10-23" },
+    });
+    const dropped = buildParkPayload(cart("2026-02-31") as never);
+    expect(dropped.ok).toBe(true);
+    expect(dropped.ok && dropped.value).not.toHaveProperty("checkDate");
+  });
+});
 
 describe("buildParkPayload (the whitelist the server also applies)", () => {
   it("keeps the five fields, reduces the customer to four, never carries an email or a stray key", () => {
@@ -162,5 +183,30 @@ describe("validLine / validCustomer (re-exported from @routeflow/pricing, behavi
     expect(validCustomer({ id: "c1", businessName: "Acme" })).toBe(true);
     expect(validCustomer({ id: "c1" })).toBe(false);
     expect(validCustomer("x")).toBe(false);
+  });
+});
+
+describe("parkedRowTitle (row 368: the time reads once)", () => {
+  it("rewrites the server's default walk-in label to the 12 h time in the business zone, and hides the separate time", () => {
+    // 15:26 UTC is 11:26 AM in New York (EDT)
+    expect(
+      parkedRowTitle("Walk-in · 11:26", "2026-10-08T15:26:00.000Z", "America/New_York"),
+    ).toEqual({
+      title: "Walk-in · 11:26 AM",
+      timeShown: true,
+    });
+    expect(parkedRowTitle("Walk-in · 19:26", "2026-10-08T19:26:00.000Z", "UTC")).toEqual({
+      title: "Walk-in · 7:26 PM",
+      timeShown: true,
+    });
+  });
+
+  it("leaves a typed label, or a customer's name, as it is and keeps the separate time", () => {
+    for (const label of ["Aisle 3", "Acme Foods", "Walk-in", "Walk-in · back at 5"]) {
+      expect(parkedRowTitle(label, "2026-10-08T19:26:00.000Z", "UTC")).toEqual({
+        title: label,
+        timeShown: false,
+      });
+    }
   });
 });

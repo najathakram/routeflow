@@ -7,6 +7,7 @@ import {
   fetchTenantPricing,
   updateTenantPriceOverride,
   createTenantCheckout,
+  tenantCheckoutErrorMessage,
   platformPricingErrorMessage,
   type TenantPricingResponse,
   type BillingInterval,
@@ -111,7 +112,7 @@ export function TenantPricingCard({ tenantId }: { tenantId: string }) {
     } catch (err) {
       setMsg({
         type: "error",
-        text: platformPricingErrorMessage(err, "Failed to create checkout session"),
+        text: tenantCheckoutErrorMessage(err),
       });
     } finally {
       setCheckoutLoading(false);

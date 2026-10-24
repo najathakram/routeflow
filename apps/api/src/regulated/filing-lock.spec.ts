@@ -6,8 +6,8 @@ import {
   assertOrderEditNotLocked,
   isMoneyBearingEdit,
   assertSalesNotLockedForEdit,
-  lockedFilingsCovering,
 } from "./filing-lock";
+import { lockedFilingsCovering } from "./filed-periods";
 
 /**
  * B297 PR5 (SA-088 D4, SA-734r2 B6): a LOCKED filing closes the (tenant, category, period) triple.

@@ -28,12 +28,13 @@ describe("CustomerPriceHistoryController", () => {
   it("passes ids, limit and the caller role to the service", async () => {
     const service = { getHistory: jest.fn().mockResolvedValue({ rows: [] }) };
     const controller = new CustomerPriceHistoryController(service as any);
-    const out = await controller.getPriceHistory("c1", "p1", "40", {
+    const out = await controller.getPriceHistory("c1", "p1", "40", undefined, {
       role: UserRole.TENANT_ADMIN,
     } as any);
     expect(out).toEqual({ rows: [] });
     expect(service.getHistory).toHaveBeenCalledWith("c1", "p1", {
       limit: "40",
+      compare: undefined,
       role: UserRole.TENANT_ADMIN,
     });
   });
@@ -61,7 +62,7 @@ describe("CustomerPriceHistoryController", () => {
     const service = { getHistory: jest.fn().mockResolvedValue({ rows: [] }) };
     const controller = new CustomerPriceHistoryController(service as any);
     const caller = { role: UserRole.OPERATOR } as any;
-    await controller.getPriceHistory("c1", "p1", undefined, caller, "o9");
+    await controller.getPriceHistory("c1", "p1", undefined, undefined, caller, "o9");
     expect(service.getHistory).toHaveBeenCalledWith("c1", "p1", {
       limit: undefined,
       role: UserRole.OPERATOR,

@@ -10,11 +10,8 @@ import { API_ERROR_CODES } from "../common/api-error-codes";
 import { PrismaService } from "../prisma/prisma.service";
 import { findPlanDefinition } from "./plan-catalog.constants";
 import { PlanCatalogService } from "./plan-catalog.service";
-import {
-  markNeedsReconcile,
-  PLAN_CHANGE_BILLING_FAILED,
-  type PlanChangeAudience,
-} from "./plan-change-stripe";
+import { markNeedsReconcile } from "./needs-reconcile";
+import { PLAN_CHANGE_BILLING_FAILED, type PlanChangeAudience } from "./plan-change-stripe";
 import { resolvePlanPrice } from "./plan-price";
 import { underTenantPriceLock } from "./price-lock";
 import { CHECKOUT_ADDON_EXPAND, stripeAddonItemIds } from "./stripe-addon-items";
@@ -191,11 +188,14 @@ export class ScheduledPriceChangeService {
         this.restoreIfPushedLocked(tenantId, clearedTargetPlanKey, { mustBeCleared: true }),
       );
     } catch (err) {
-      markNeedsReconcile(this.logger, {
-        tenantId,
-        local: { clearedTargetPlanKey },
-        error: err,
-      });
+      await markNeedsReconcile(
+        { prisma: this.prisma, logger: this.logger },
+        {
+          tenantId,
+          local: { clearedTargetPlanKey },
+          error: err,
+        },
+      );
     }
   }
 
@@ -284,7 +284,7 @@ export class ScheduledPriceChangeService {
     // restore after another push. Replays are made harmless by the amount check above.
     const key = `${sub.stripeSubId}:scheduled-price-restore:${clearedCents}-${keptCents}:${Date.now()}`;
     const product = await this.stripe.client.products.create(
-      { name: `RouteFlow ${keptDef?.name ?? sub.planKey} — monthly` },
+      { name: `RouteFlow ${keptDef?.name ?? sub.planKey}` },
       { idempotencyKey: `${key}:product` },
     );
     await this.stripe.updateSubscription(
@@ -405,7 +405,7 @@ export class ScheduledPriceChangeService {
     const key = `${sub.stripeSubId}:scheduled-price:${sub.downgradeEffectiveAt.toISOString()}:${version.id}:${target}:${priorAmountCents}-${amountCents}:${base.price?.id ?? "-"}:${nonce}`;
     try {
       const product = await this.stripe.client.products.create(
-        { name: `RouteFlow ${targetDef.name} — monthly` },
+        { name: `RouteFlow ${targetDef.name}` },
         { idempotencyKey: `${key}:product` },
       );
       this.logger.log(

@@ -62,10 +62,11 @@ const KEY = NUMBERING_QUERY_KEY;
 
 // ─── Queries ──────────────────────────────────────────────────────────────────
 
-export function useNumberingSettings() {
+export function useNumberingSettings({ enabled = true }: { enabled?: boolean } = {}) {
   return useQuery<NumberingSetting[]>({
     queryKey: KEY,
     queryFn: () => apiClient.get("/import/numbering").then((r) => r.data),
+    enabled,
   });
 }
 

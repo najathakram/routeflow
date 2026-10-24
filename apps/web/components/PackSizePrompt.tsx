@@ -64,6 +64,12 @@ export interface PackSizePromptProps {
   currentStock?: number | null;
   /** Called with the operator-confirmed pack size; write it into your own draft/mutation. */
   onAccept: (value: number) => void;
+  /**
+   * K12 O1: the count the operator TYPED here but has not confirmed with "Set pack size" (null when nothing typed, the
+   * value is not a valid pack, the prompt is dismissed or gone). The form's own Save must send it: dropping typed input
+   * behind a "Saved" is the one thing this prompt must never do. A pre-filled suggestion never counts until typed.
+   */
+  onPendingChange?: (value: number | null) => void;
   className?: string;
 }
 
@@ -87,6 +93,7 @@ export function PackSizePrompt({
   unitPrice,
   currentStock,
   onAccept,
+  onPendingChange,
   className,
 }: PackSizePromptProps) {
   const currentUnitsPerBox = toPositiveNumber(unitsPerBox);
@@ -97,6 +104,8 @@ export function PackSizePrompt({
   );
 
   const [dismissed, setDismissed] = React.useState(false);
+  /** The operator typed in the box (a pre-filled suggestion alone is never a pending value). */
+  const [typed, setTyped] = React.useState(false);
   const [draftValue, setDraftValue] = React.useState<string>(
     suggestion.packSize != null ? String(suggestion.packSize) : "",
   );
@@ -111,8 +120,18 @@ export function PackSizePrompt({
     if (prevSuggestionKey.current === suggestionKey) return;
     prevSuggestionKey.current = suggestionKey;
     setDraftValue(suggestion.packSize != null ? String(suggestion.packSize) : "");
+    setTyped(false);
     setDismissed(false);
   }, [suggestionKey, suggestion.packSize]);
+
+  const visible = !!suggestion.confidence && suggestion.confidence !== "PIECE_UNIT" && !dismissed;
+  const pending = visible && typed ? parseAcceptableCount(draftValue) : null;
+  const reportPending = React.useRef(onPendingChange);
+  reportPending.current = onPendingChange;
+  React.useEffect(() => {
+    reportPending.current?.(pending);
+  }, [pending]);
+  React.useEffect(() => () => reportPending.current?.(null), []);
 
   // Nothing to suggest, a piece-unit row, or dismissed ⇒ nothing. "Already
   // set" is deliberately NOT re-derived here: `suggestPackSize` already
@@ -187,7 +206,10 @@ export function PackSizePrompt({
             step={1}
             inputMode="numeric"
             value={draftValue}
-            onChange={(e) => setDraftValue(e.target.value)}
+            onChange={(e) => {
+              setDraftValue(e.target.value);
+              setTyped(true);
+            }}
             placeholder={isConfident ? undefined : "e.g. 12"}
             aria-label={`${w.base.other} per ${w.pack.lower}`}
             className="w-24 rounded border border-brand-300 bg-white px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"

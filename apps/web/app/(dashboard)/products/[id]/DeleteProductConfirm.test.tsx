@@ -52,6 +52,23 @@ const yes = () => screen.getByRole("button", { name: /Yes, delete/ });
 beforeEach(() => jest.clearAllMocks());
 
 describe("DeleteProductConfirm", () => {
+  it("P-15: stays red and opens with focus on Cancel", () => {
+    mount();
+    expect(yes().className).toMatch(/bg-danger/);
+    expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
+  });
+
+  it("keeps its title and 'Yes, delete', with the vu-2 body (codes are freed)", () => {
+    mount();
+    expect(screen.getByText("Delete product?")).toBeInTheDocument();
+    expect(yes()).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /will be deactivated and hidden from the catalog\. Its SKU and barcode are freed, so another product can use them\. Order and invoice history is kept\. A product on an undelivered order can't be deleted\./,
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("a second click while the DELETE is pending sends exactly one DELETE and keeps the dialog open", async () => {
     let resolve!: (v: unknown) => void;
     del.mockReturnValueOnce(new Promise((r) => (resolve = r)));

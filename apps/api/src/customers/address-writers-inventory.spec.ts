@@ -52,7 +52,16 @@ export function addressWrites(source: string, file = "x.ts"): Write[] {
 }
 
 /** What is wrong with one classified write, or null. */
-export function writeProblem(kind: "STATE" | "EXEMPT", callText: string): string | null {
+export function writeProblem(
+  kind: "STATE" | "EXEMPT" | "RESTORE",
+  callText: string,
+): string | null {
+  // RESTORE (bulk-state undo only): puts back the three columns captured from the row moments earlier, and
+  // nothing else. It must go through `restoredStateFields(<snapshot>)` and never write a fresh state.
+  if (kind === "RESTORE")
+    return /data:\s*\{\s*\.\.\.restoredStateFields\(\s*[\w.]+\s*\)\s*\}/.test(callText)
+      ? null
+      : "restores a state but not only through restoredStateFields(<snapshot>)";
   // STATE: the helper must be fed the STATE (`addressStateFields(dto.zip)` is not a derivation).
   if (kind === "STATE")
     return /addressStateFields\(\s*[\w.?!]*[sS]tate\b/.test(callText)
@@ -93,12 +102,22 @@ export function nestedAddressWrites(source: string, file = "x.ts"): string[] {
 }
 
 const S = { kind: "STATE" } as const;
+const R = { kind: "RESTORE" } as const;
 const E = (why: string) => ({ kind: "EXEMPT", why }) as const;
-const TABLE: Record<string, { kind: "STATE" } | { kind: "EXEMPT"; why: string }> = {
+const TABLE: Record<
+  string,
+  { kind: "STATE" } | { kind: "RESTORE" } | { kind: "EXEMPT"; why: string }
+> = {
   "customers/customers.service.ts::create::createMany#0": S,
   "customers/customers.service.ts::addAddress::create#0": S,
+  "customers/address-state-writes.ts::setChosenAddressState::updateMany#0": S,
+  "customers/address-state-writes.ts::createMinimalAddresses::createMany#0": S,
+  "customers/address-state-writes.ts::restoreAddressState::updateMany#0": R,
   "customers/customers.service.ts::updateAddress::update#0": S,
   "customers/customers.service.ts::addAddress::updateMany#0": E("clears the isDefault flag"),
+  "customers/customers.service.ts::addAddress::updateMany#1": E(
+    "demotes a blank-street placeholder default",
+  ),
   "customers/customers.service.ts::updateAddress::updateMany#0": E("clears the isDefault flag"),
   "customers/customers.service.ts::updateAddress::update#1": E("async geocode: coordinates only"),
   "customers/customers.service.ts::geocodeAllAddresses::update#0": E("geocode: coordinates only"),
@@ -219,6 +238,21 @@ describe("every CustomerAddress write is classified (F4)", () => {
         "x.customerAddress.updateMany({ where: {}, data: { tenantId } })",
       ])
         expect(writeProblem("EXEMPT", text)).toBeNull();
+    });
+
+    it("RESTORE passes only a data object that is exactly the restoredStateFields spread", () => {
+      const restore = (text: string) => writeProblem("RESTORE", text);
+      expect(
+        restore(
+          "tx.customerAddress.updateMany({ where, data: { ...restoredStateFields(prior) } })",
+        ),
+      ).toBeNull();
+      for (const text of [
+        "tx.customerAddress.updateMany({ where, data: { state: prior.state } })",
+        "tx.customerAddress.updateMany({ where, data: { ...restoredStateFields(prior), state: 'CA' } })",
+        "tx.customerAddress.updateMany({ where, data: { ...addressStateFields(dto.state) } })",
+      ])
+        expect(restore(text)).toMatch(/restoredStateFields/);
     });
 
     it("flags a nested address write and ignores nested reads", () => {

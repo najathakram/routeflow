@@ -37,7 +37,7 @@ const subFor = (subsById, id) =>
 /**
  * Multi-tenant writers: keep only the rows a script may write. Prints counts per arm, never a slug.
  * @param {Array<{ id: string, slug: string, status: string, class: string, deletedAt?: Date | null }>} rows
- * @param {Map<string, object> | Record<string, object>} subsById tenantId -> { planKey, stripeSubId }
+ * @param {Map<string, object> | Record<string, object>} subsById tenantId -> { planKey, stripeSubId, couponFull }
  * @param {Set<string>} slugs from loadProtectedSlugs
  */
 function filterWritableTenants(rows, subsById, slugs, { log = console.log } = {}) {
@@ -182,7 +182,7 @@ async function confirmProtectedAdditive({
 }
 
 const PROTECTION_SQL = `
-  SELECT t.id, t.slug, t.status, t.class, t."deletedAt", s."planKey", s."stripeSubId"
+  SELECT t.id, t.slug, t.status, t.class, t."deletedAt", s."planKey", s."stripeSubId", s."couponFull"
   FROM "Tenant" t LEFT JOIN "TenantSubscription" s ON s."tenantId" = t.id`;
 
 async function fetchProtectionRows(client) {
@@ -199,7 +199,7 @@ async function protectedRows(client, slugs) {
       throw new ProtectedTenantError("protectedTenantIds: a tenant row has no string slug");
     const arm = protectedArm(
       { slug: r.slug, status: r.status, class: r.class, deletedAt: r.deletedAt },
-      { planKey: r.planKey, stripeSubId: r.stripeSubId },
+      { planKey: r.planKey, stripeSubId: r.stripeSubId, couponFull: r.couponFull },
       slugs,
     );
     if (arm !== null) out.push({ id: r.id, slug: r.slug, arm });

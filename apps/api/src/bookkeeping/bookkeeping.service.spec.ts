@@ -799,27 +799,71 @@ describe("BookkeepingService", () => {
       expect({ closing: o.closingBalance, ind: o.indicator }).toEqual({ closing: -30, ind: "Cr" });
     });
 
-    it("getReceivableSummary: an overpaid PAID invoice shows balance 0 (the surplus stays visible through the payment rows), not a negative", async () => {
-      const paidOver = { ...row("po", 100, [pay(130)], PAST, "PAID") };
-      prisma.invoice.findMany.mockResolvedValue([paidOver, owing()]);
-      prisma.creditNote.findMany.mockResolvedValue([]);
-      prisma.invoicePayment.findMany.mockResolvedValue([
-        {
-          id: "p1",
-          paymentNumber: "PAY-1",
-          createdAt: PAST,
-          status: "PAID",
-          amount: 130,
-          invoice: { invoiceNumber: "PO", customer: cust },
-        },
-      ]);
-      const res: any = await service.getReceivableSummary();
-      const inv = res.data.filter((r: any) => r.type === "INVOICE");
-      expect(inv.map((r: any) => [r.transactionNumber, r.balance])).toEqual([
-        ["PO", 0],
-        ["OWES", 50],
-      ]);
-      expect(res.data.find((r: any) => r.type === "PAYMENT").total).toBe(130); // the surplus is visible here
+    // OWNER RULING 2026-10-11 (supersedes the row-310 pin that read 0 here): the Receivable Summary
+    // report alone shows an overpayment as a NEGATIVE invoice-row balance. Every other surface stays
+    // clamped (overdue-readers-inventory.spec.ts pins that `signedBalance` is used by this reader only).
+    describe("getReceivableSummary — signed invoice-row balance (owner ruling 2026-10-11)", () => {
+      const summaryRows = async (invoices: any[]) => {
+        prisma.invoice.findMany.mockResolvedValue(invoices);
+        prisma.creditNote.findMany.mockResolvedValue([]);
+        prisma.invoicePayment.findMany.mockResolvedValue([]);
+        const res: any = await service.getReceivableSummary();
+        return res.data.filter((r: any) => r.type === "INVOICE");
+      };
+
+      it("an overpaid PAID invoice shows -10.00; the surplus is also visible on the PAYMENT row", async () => {
+        const paidOver = row("po", 100, [pay(110)], PAST, "PAID");
+        prisma.invoice.findMany.mockResolvedValue([paidOver, owing()]);
+        prisma.creditNote.findMany.mockResolvedValue([]);
+        prisma.invoicePayment.findMany.mockResolvedValue([
+          {
+            id: "p1",
+            paymentNumber: "PAY-1",
+            createdAt: PAST,
+            status: "PAID",
+            amount: 110,
+            invoice: { invoiceNumber: "PO", customer: cust },
+          },
+        ]);
+        const res: any = await service.getReceivableSummary();
+        const inv = res.data.filter((r: any) => r.type === "INVOICE");
+        expect(inv.map((r: any) => [r.transactionNumber, r.balance])).toEqual([
+          ["PO", -10],
+          ["OWES", 50],
+        ]);
+        expect(res.data.find((r: any) => r.type === "PAYMENT").total).toBe(110);
+      });
+
+      it("exactly paid reads 0 and a partial payment reads a positive balance", async () => {
+        const rows = await summaryRows([
+          row("exact", 100, [pay(100)], PAST, "PAID"),
+          row("part", 100, [pay(40)], PAST, "PARTIAL"),
+        ]);
+        expect(rows.map((r: any) => [r.transactionNumber, r.balance])).toEqual([
+          ["EXACT", 0],
+          ["PART", 60],
+        ]);
+      });
+
+      it("an overpaid + owing pair: each row keeps its own sign (no netting inside a row)", async () => {
+        const rows = await summaryRows([overpaid(), owing()]);
+        expect(rows.map((r: any) => [r.transactionNumber, r.balance])).toEqual([
+          ["OVER", -30],
+          ["OWES", 50],
+        ]);
+      });
+
+      it("float dust (11 x $0.10 against $1.10) reads 0, never -2e-16 / 2e-16", async () => {
+        const rows = await summaryRows([dusty()]);
+        expect(Object.is(rows[0].balance, 0)).toBe(true);
+      });
+
+      it("only confirmed payments count: a VOID payment does not make the row negative", async () => {
+        const rows = await summaryRows([
+          row("v", 100, [{ amount: 100, status: "VOID", method: "CASH" }], PAST, "SENT"),
+        ]);
+        expect(rows[0].balance).toBe(100);
+      });
     });
 
     it("getInvoiceDetailsReport: an overpaid row shows balance 0 (paid > total stays visible), not a negative", async () => {
@@ -1541,6 +1585,111 @@ describe("BookkeepingService", () => {
   // Own fixture (not REG-B11's $200/$300/$800 one) — isolates the accrual-net
   // revenue figure from the cash-basis totalCollected/totalOutstanding ones.
 
+  // SA-814n / B288: cash out to suppliers = BillPayments that are not credit draws + SupplierCredit.amount on
+  // receivedAt. A draw is the same dollars already counted when the credit was created.
+  describe("getCashFlow — supplier cash out (SA-814n)", () => {
+    const FROM = "2026-01-01";
+    const TO = "2026-03-31";
+    const inWindow = (d: Date, w: any) =>
+      !w || ((w.gte === undefined || d >= w.gte) && (w.lte === undefined || d <= w.lte));
+    const notMethod = (method: string, cond: any) => cond?.not === undefined || method !== cond.not;
+
+    const billPay = (over: Record<string, any>) => ({
+      id: "bp",
+      amount: 0,
+      method: "CHECK",
+      paidAt: new Date("2026-02-10T00:00:00Z"),
+      supplierCreditId: null,
+      ...over,
+    });
+    const credit = (over: Record<string, any>) => ({
+      id: "sc",
+      amount: 0,
+      method: "CHECK",
+      receivedAt: new Date("2026-02-10T00:00:00Z"),
+      ...over,
+    });
+    /** The mock does not evaluate `where`: apply the service's own window + method filter. */
+    const stub = (payments: any[], credits: any[]) => {
+      prisma.billPayment.findMany.mockImplementation(async ({ where }: any) =>
+        payments.filter(
+          (p) => inWindow(p.paidAt, where.paidAt) && notMethod(p.method, where.method),
+        ),
+      );
+      (prisma.supplierCredit as any).findMany.mockImplementation(async ({ where }: any) =>
+        credits.filter(
+          (c) => inWindow(c.receivedAt, where.receivedAt) && notMethod(c.method, where.method),
+        ),
+      );
+    };
+
+    it("(a) $1,000 paid on a $600 bill ($600 payment + $400 credit), next bill draws $400 -> $1,000 out", async () => {
+      stub(
+        [
+          billPay({ id: "bp-1", amount: 600 }),
+          // The next bill's auto-applied draw of the $400 credit: not new money.
+          billPay({
+            id: "bp-draw",
+            amount: 400,
+            method: "CREDIT_NOTE",
+            supplierCreditId: "sc-1",
+            paidAt: new Date("2026-03-05T00:00:00Z"),
+          }),
+        ],
+        [credit({ id: "sc-1", amount: 400 })],
+      );
+
+      const result = await service.getCashFlow(FROM, TO);
+
+      expect(result.totalOut).toBe(1000); // not 1,400 (draw counted) and not 600 (credit missed)
+      // The credit counts the day the cash left; the later draw adds nothing in ANY window.
+      expect((await service.getCashFlow("2026-02-01", "2026-02-28")).totalOut).toBe(1000);
+      expect((await service.getCashFlow("2026-03-01", "2026-03-31")).totalOut).toBe(0);
+    });
+
+    it("(b) moving a $200 payment to credit leaves cash out unchanged, in the same period", async () => {
+      const before = [
+        billPay({ id: "bp-1", amount: 200, paidAt: new Date("2026-02-10T00:00:00Z") }),
+      ];
+      stub(before, []);
+      const was = (await service.getCashFlow(FROM, TO)).totalOut;
+
+      // After the move: the payment row is gone, a $200 credit is dated at the ORIGINAL payment.
+      stub([], [credit({ id: "sc-1", amount: 200, receivedAt: new Date("2026-02-10T00:00:00Z") })]);
+      const now = (await service.getCashFlow(FROM, TO)).totalOut;
+
+      expect(was).toBe(200);
+      expect(now).toBe(200);
+      // And in a window that excludes that day, neither version counts it.
+      const later = await service.getCashFlow("2026-03-01", TO);
+      expect(later.totalOut).toBe(0);
+    });
+
+    it("(c) a CREDIT_NOTE draw alone adds nothing", async () => {
+      stub(
+        [billPay({ id: "bp-draw", amount: 400, method: "CREDIT_NOTE", supplierCreditId: "sc-0" })],
+        [],
+      );
+
+      const result = await service.getCashFlow(FROM, TO);
+
+      expect(result.totalOut).toBe(0);
+    });
+
+    it("keeps payments on VOID bills counted (the cash left) and excludes a credit outside the window", async () => {
+      stub(
+        [billPay({ id: "bp-void", amount: 75 })],
+        [credit({ id: "sc-old", amount: 500, receivedAt: new Date("2025-11-01T00:00:00Z") })],
+      );
+
+      const result = await service.getCashFlow(FROM, TO);
+
+      expect(result.totalOut).toBe(75);
+      const where = prisma.billPayment.findMany.mock.calls[0][0].where;
+      expect(where).not.toHaveProperty("vendorBill");
+    });
+  });
+
   describe("getMobileDashboard (B440)", () => {
     it("REG-B440-mobile: revenue is accrual net sales, not totalCollected; netIncome subtracts badDebtExpense", async () => {
       prisma.invoice.aggregate.mockResolvedValue({ _sum: { total: 500, taxAmount: 0 } });
@@ -1808,6 +1957,64 @@ describe("BookkeepingService", () => {
 
   // ─── extractExpenseItems (AI receipt extraction) ──────────────────────────
 
+  describe("createExpense — references stay inside the tenant (R5-5)", () => {
+    it("rejects a reference from another business (no expense written)", async () => {
+      prisma.expenseCategory.findMany.mockResolvedValue([]); // not this tenant's, not global
+      await expect(
+        service.createExpense(
+          { date: new Date("2026-09-01T00:00:00Z"), amount: 5, categoryId: "other-biz-cat" },
+          "u1",
+        ),
+      ).rejects.toThrow(/not found/i);
+      expect(prisma.expense.create).not.toHaveBeenCalled();
+    });
+
+    it("rejects a supplier and a customer from another business", async () => {
+      prisma.supplier.findMany.mockResolvedValue([]);
+      prisma.customer.findMany.mockResolvedValue([]);
+      await expect(
+        service.createExpense(
+          { date: new Date("2026-09-01T00:00:00Z"), amount: 5, supplierId: "other-sup" },
+          "u1",
+        ),
+      ).rejects.toThrow(/not found/i);
+      await expect(
+        service.createExpense(
+          { date: new Date("2026-09-01T00:00:00Z"), amount: 5, customerId: "other-cust" },
+          "u1",
+        ),
+      ).rejects.toThrow(/not found/i);
+      expect(prisma.expense.create).not.toHaveBeenCalled();
+    });
+
+    it("accepts a global category (tenant-less) alongside the tenant's own", async () => {
+      prisma.expenseCategory.findMany.mockResolvedValue([{ id: "cat-global" }]);
+      prisma.expense.create.mockResolvedValue({ id: "exp-new", categoryId: "cat-global" });
+      await service.createExpense(
+        { date: new Date("2026-09-01T00:00:00Z"), amount: 5, categoryId: "cat-global" },
+        "u1",
+      );
+      const where = prisma.expenseCategory.findMany.mock.calls[0][0].where;
+      expect(where.OR).toEqual([{ tenantId: "test-tenant" }, { tenantId: null }]);
+      expect(prisma.expense.create).toHaveBeenCalledTimes(1);
+    });
+
+    it("updateExpense rejects a reference from another business", async () => {
+      prisma.expense.findFirst.mockResolvedValue({
+        id: "e1",
+        status: "DRAFT",
+        receivedAt: null,
+        paidAt: null,
+        vendorBillId: null,
+      });
+      prisma.expenseCategory.findMany.mockResolvedValue([]);
+      await expect(service.updateExpense("e1", { categoryId: "other-biz-cat" })).rejects.toThrow(
+        /not found/i,
+      );
+      expect(prisma.expense.update).not.toHaveBeenCalled();
+    });
+  });
+
   describe("createExpense — nested line items carry the tenant (T6)", () => {
     // Nested creates bypass the forTenant() extension, so an itemized expense's ExpenseLineItem rows
     // must be stamped IN the nested literal. Unstamped they were written with a NULL tenantId (and
@@ -1949,6 +2156,22 @@ describe("BookkeepingService", () => {
       const data = prisma.expense.update.mock.calls[0][0].data;
       expect(data.amount).toBe(0.3);
       expect(data.amount).not.toBe(0.30000000000000004);
+    });
+
+    it("row 591 sibling: a null amount keeps the stored amount (never an expense of $0)", async () => {
+      prisma.expense.findFirst.mockResolvedValue({
+        id: "exp-1",
+        status: "PENDING",
+        receivedAt: null,
+        paidAt: null,
+      });
+      prisma.expense.update.mockResolvedValue({ id: "exp-1" });
+
+      await service.updateExpense("exp-1", { amount: null, notes: "n" });
+
+      const data = prisma.expense.update.mock.calls[0][0].data;
+      expect(data).not.toHaveProperty("amount"); // a direct read wrote roundMoney(null) = 0
+      expect(data.notes).toBe("n");
     });
   });
 

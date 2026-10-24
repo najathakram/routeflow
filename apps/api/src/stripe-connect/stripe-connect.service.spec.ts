@@ -224,12 +224,65 @@ describe("StripeConnectService", () => {
       jti: "jti-1",
       aud: "stripe-connect-state",
     };
+    const liveTenant = { id: "tenant-1", slug: "acme", status: "ACTIVE" };
+
+    // ── The workspace must accept changes when the callback lands ──────────────
+    // The status is read live after the signed state checks out and BEFORE the code
+    // exchange, so a refused callback never creates a Stripe grant or binds an account.
+
+    // Each refused status carries its OWN fixed code, so the callback can show status-specific copy.
+    it.each([
+      ["READ_ONLY", "workspace_read_only"],
+      ["SUSPENDED", "workspace_suspended"],
+      ["CANCELLED", "workspace_cancelled"],
+    ])(
+      "refuses a %s workspace with %s before the code exchange and stores nothing",
+      async (status, code) => {
+        mockJwt.verifyAsync.mockResolvedValue(statePayload);
+        tenantStripeConnect.updateMany.mockResolvedValueOnce({ count: 1 });
+        prisma.tenant.findUnique.mockResolvedValue({ ...liveTenant, status } as any);
+        mockOauth.exchangeCode.mockResolvedValue({ accountRef: "acct_1", livemode: false });
+
+        await expect(service.completeOAuth("code", "state")).rejects.toMatchObject({
+          response: { message: code },
+        });
+        expect(prisma.tenant.findUnique).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: { id: "tenant-1" },
+            select: expect.objectContaining({ status: true }),
+          }),
+        );
+        expect(mockOauth.exchangeCode).not.toHaveBeenCalled();
+        expect(mockOauth.retrievePlatformAccountId).not.toHaveBeenCalled();
+        expect(mockOauth.retrieveAccount).not.toHaveBeenCalled();
+        expect(tenantStripeConnect.upsert).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each(["TRIAL", "ACTIVE"])("still completes for a %s workspace", async (status) => {
+      mockJwt.verifyAsync.mockResolvedValue(statePayload);
+      tenantStripeConnect.updateMany.mockResolvedValueOnce({ count: 1 });
+      prisma.tenant.findUnique.mockResolvedValue({ ...liveTenant, status } as any);
+      mockOauth.exchangeCode.mockResolvedValue({ accountRef: "acct_1", livemode: false });
+      mockOauth.retrieveAccount.mockResolvedValue({ chargesEnabled: true, detailsSubmitted: true });
+      tenantStripeConnect.upsert.mockResolvedValue({
+        stripeAccountId: "acct_1",
+        livemode: false,
+        chargesEnabled: true,
+      });
+
+      await expect(service.completeOAuth("code", "state")).resolves.toMatchObject({
+        accountId: "acct_1",
+      });
+      expect(mockOauth.exchangeCode).toHaveBeenCalledTimes(1);
+      expect(tenantStripeConnect.upsert).toHaveBeenCalledTimes(1);
+    });
 
     it("consumes the jti once — a replay of the same state finds nothing to consume and is rejected", async () => {
       mockJwt.verifyAsync.mockResolvedValue(statePayload);
       // First call: the atomic consume succeeds.
       tenantStripeConnect.updateMany.mockResolvedValueOnce({ count: 1 });
-      prisma.tenant.findUnique.mockResolvedValue({ id: "tenant-1", slug: "acme" } as any);
+      prisma.tenant.findUnique.mockResolvedValue(liveTenant as any);
       mockOauth.exchangeCode.mockResolvedValue({ accountRef: "acct_1", livemode: false });
       mockOauth.retrieveAccount.mockResolvedValue({
         chargesEnabled: true,
@@ -283,7 +336,7 @@ describe("StripeConnectService", () => {
     it("throws stripe_exchange_failed when Stripe rejects the code", async () => {
       mockJwt.verifyAsync.mockResolvedValue(statePayload);
       tenantStripeConnect.updateMany.mockResolvedValueOnce({ count: 1 });
-      prisma.tenant.findUnique.mockResolvedValue({ id: "tenant-1", slug: "acme" } as any);
+      prisma.tenant.findUnique.mockResolvedValue(liveTenant as any);
       mockOauth.exchangeCode.mockRejectedValue(new Error("invalid_grant"));
       await expect(service.completeOAuth("code", "state")).rejects.toMatchObject({
         response: { message: "stripe_exchange_failed" },
@@ -293,7 +346,7 @@ describe("StripeConnectService", () => {
     it("throws account_missing when the exchange yields no account id", async () => {
       mockJwt.verifyAsync.mockResolvedValue(statePayload);
       tenantStripeConnect.updateMany.mockResolvedValueOnce({ count: 1 });
-      prisma.tenant.findUnique.mockResolvedValue({ id: "tenant-1", slug: "acme" } as any);
+      prisma.tenant.findUnique.mockResolvedValue(liveTenant as any);
       mockOauth.exchangeCode.mockResolvedValue({ accountRef: null, livemode: false });
       await expect(service.completeOAuth("code", "state")).rejects.toMatchObject({
         response: { message: "account_missing" },
@@ -305,7 +358,7 @@ describe("StripeConnectService", () => {
     it("REG-2441: refuses and stores nothing when the connected account IS the platform's own account", async () => {
       mockJwt.verifyAsync.mockResolvedValue(statePayload);
       tenantStripeConnect.updateMany.mockResolvedValueOnce({ count: 1 });
-      prisma.tenant.findUnique.mockResolvedValue({ id: "tenant-1", slug: "acme" } as any);
+      prisma.tenant.findUnique.mockResolvedValue(liveTenant as any);
       mockOauth.exchangeCode.mockResolvedValue({
         accountRef: "acct_platform_fake",
         livemode: false,
@@ -321,7 +374,7 @@ describe("StripeConnectService", () => {
     it("REG-2441: fails closed BEFORE the exchange — a throwing platform-id lookup never calls exchangeCode, stores nothing", async () => {
       mockJwt.verifyAsync.mockResolvedValue(statePayload);
       tenantStripeConnect.updateMany.mockResolvedValueOnce({ count: 1 });
-      prisma.tenant.findUnique.mockResolvedValue({ id: "tenant-1", slug: "acme" } as any);
+      prisma.tenant.findUnique.mockResolvedValue(liveTenant as any);
       mockOauth.exchangeCode.mockResolvedValue({ accountRef: "acct_tenant_fake", livemode: false });
       mockOauth.retrievePlatformAccountId.mockRejectedValue(new Error("stripe down"));
 
@@ -338,7 +391,7 @@ describe("StripeConnectService", () => {
     it("REG-2441: fails closed — an empty/missing platform account id is never trusted or cached", async () => {
       mockJwt.verifyAsync.mockResolvedValue(statePayload);
       tenantStripeConnect.updateMany.mockResolvedValueOnce({ count: 1 });
-      prisma.tenant.findUnique.mockResolvedValue({ id: "tenant-1", slug: "acme" } as any);
+      prisma.tenant.findUnique.mockResolvedValue(liveTenant as any);
       mockOauth.exchangeCode.mockResolvedValue({ accountRef: "acct_tenant_fake", livemode: false });
       // A misbehaving provider resolving "" instead of throwing must still be
       // refused by the service's own defensive check — never cached as truth.
@@ -371,7 +424,7 @@ describe("StripeConnectService", () => {
 
     it("PIN: a failed lookup is not cached — the next callback's successful lookup is used", async () => {
       mockJwt.verifyAsync.mockResolvedValue(statePayload);
-      prisma.tenant.findUnique.mockResolvedValue({ id: "tenant-1", slug: "acme" } as any);
+      prisma.tenant.findUnique.mockResolvedValue(liveTenant as any);
       mockOauth.retrieveAccount.mockResolvedValue({ chargesEnabled: true, detailsSubmitted: true });
       tenantStripeConnect.upsert.mockResolvedValue({
         stripeAccountId: "acct_tenant_fake",
@@ -405,7 +458,7 @@ describe("StripeConnectService", () => {
     it("PIN: a different (non-platform) account still connects exactly as today", async () => {
       mockJwt.verifyAsync.mockResolvedValue(statePayload);
       tenantStripeConnect.updateMany.mockResolvedValueOnce({ count: 1 });
-      prisma.tenant.findUnique.mockResolvedValue({ id: "tenant-1", slug: "acme" } as any);
+      prisma.tenant.findUnique.mockResolvedValue(liveTenant as any);
       mockOauth.exchangeCode.mockResolvedValue({ accountRef: "acct_tenant_fake", livemode: false });
       mockOauth.retrievePlatformAccountId.mockResolvedValue("acct_platform_fake");
       mockOauth.retrieveAccount.mockResolvedValue({ chargesEnabled: true, detailsSubmitted: true });
@@ -422,7 +475,7 @@ describe("StripeConnectService", () => {
 
     it("PIN: the platform account id is retrieved at most once across two callbacks (in-memory cache)", async () => {
       mockJwt.verifyAsync.mockResolvedValue(statePayload);
-      prisma.tenant.findUnique.mockResolvedValue({ id: "tenant-1", slug: "acme" } as any);
+      prisma.tenant.findUnique.mockResolvedValue(liveTenant as any);
       mockOauth.retrievePlatformAccountId.mockResolvedValue("acct_platform_fake");
       mockOauth.retrieveAccount.mockResolvedValue({ chargesEnabled: true, detailsSubmitted: true });
       tenantStripeConnect.upsert.mockResolvedValue({

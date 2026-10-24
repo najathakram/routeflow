@@ -4,10 +4,13 @@ import { withAdvisoryLocks, LockTimeoutError, LockUnavailableError } from "../co
 import { ADMIN_AUDIT_ENTITY, AdminAuditAction } from "../platform-admin/audit-actions.constant";
 import { billableAddonWhere, keepsTrialAddons } from "./addon-row";
 import { emitAddonDelta } from "./addon-ledger";
+import { updateAddonRowsTx } from "./tenant-addon-writer";
 import { BillingEventService } from "./billing-event.service";
 import { cyclePrice, Cycle } from "./billing-math";
-import { writeManualInvoiceNotice } from "./manual-invoice-notice";
-import { addonSkuCode, isAddonIncludedAtPlan, isSelfServiceAddon } from "./plan-catalog.constants";
+import { includedAtPlanVerdict } from "./addon-catalog-invalid";
+import { writeAdminNotice, writeManualInvoiceNotice } from "./manual-invoice-notice";
+import { addonSkuCode, isSelfServiceAddon } from "./plan-catalog.constants";
+import type { ActivationAddonChange, ActivationAddonState } from "@routeflow/types";
 
 const logger = new Logger("ManualActivationAddons");
 
@@ -170,7 +173,22 @@ export async function priceUnbilledAddonsOnActivation(
   for (const row of rows.filter(isSelfServeRow)) {
     const sku = addonSkuCode({ sku: row.sku, addonKey: row.addonKey }) as string;
     const def = a.catalogAddons.find((c) => c.sku === sku);
-    if (def && isAddonIncludedAtPlan(def.includedAtPlan, a.planKey)) continue;
+    const verdict = def ? includedAtPlanVerdict(def, a.planKey) : null;
+    if (verdict?.kind === "INCLUDED") continue;
+    if (verdict?.kind === "CATALOG_INVALID") {
+      // B1102: never price a row against a catalog entry that names no plan; leave it as it is and say so.
+      logger.error(
+        `Manual activation: add-on "${sku}" catalog includedAtPlan "${verdict.value}" names no plan — left unpriced`,
+      );
+      await writeAdminNotice(tx, {
+        tenantId: a.tenantId,
+        actorId: a.actorId,
+        action: AdminAuditAction.ADDON_CATALOG_INVALID,
+        message: `Add-on ${sku} for ${a.tenantLabel} was not priced: the catalog's includedAtPlan "${verdict.value}" is not a plan — fix the catalog entry.`,
+        meta: { sku, value: verdict.value },
+      });
+      continue;
+    }
     const name = def?.name ?? sku;
     const rawQty = Number(row.quantity);
     const quantity = Number.isFinite(rawQty) && rawQty >= 1 ? rawQty : 0;
@@ -196,7 +214,7 @@ export async function priceUnbilledAddonsOnActivation(
           `Manual activation for tenant ${a.tenantId}: add-on "${sku}" has no catalog price — left unpriced`,
         );
       } else {
-        const { count } = await tx.tenantAddon.updateMany({
+        const { count } = await updateAddonRowsTx(tx, events, {
           where: {
             ...billableAddonWhere({
               id: row.id,
@@ -207,6 +225,11 @@ export async function priceUnbilledAddonsOnActivation(
             OR: [{ priceSnapshot: null }, { priceSnapshot: 0 }],
           },
           data: { priceSnapshot: price },
+          actor: {
+            kind: "PLATFORM_ADMIN",
+            id: a.actorId ?? null,
+            source: "manual_activation.price",
+          },
         });
         if (count !== 1) continue;
         await emitAddonDelta(tx, events, {
@@ -262,4 +285,46 @@ export async function priceUnbilledAddonsOnActivation(
     });
   }
   return done;
+}
+
+/**
+ * SA-788 (c): the tenant's add-on rows as the activation result shows them (`ManualActivationResult.addons`). Read
+ * UNDER the tenant row lock at the start of the activation and again just before commit.
+ */
+export async function readActivationAddons(
+  tx: { tenantAddon: { findMany(args: any): Promise<any[]> } },
+  tenantId: string,
+  catalogAddons: ReadonlyArray<{ sku: string; name: string }>,
+): Promise<ActivationAddonState[]> {
+  const rows = await tx.tenantAddon.findMany({
+    where: { tenantId },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+  });
+  return (rows ?? []).map((r) => {
+    const sku = addonSkuCode({ sku: r.sku, addonKey: r.addonKey });
+    return {
+      addonKey: r.addonKey,
+      sku,
+      name: catalogAddons.find((c) => c.sku === sku)?.name ?? sku ?? r.addonKey,
+      active: r.active === true,
+      priceSnapshot: r.priceSnapshot != null ? Number(r.priceSnapshot) : null,
+      isComp: r.isComp === true,
+    };
+  });
+}
+
+/** Per-field changes between two reads of the same rows (a row new to `after` counts as changed from nothing). */
+export function diffActivationAddons(
+  before: readonly ActivationAddonState[],
+  after: readonly ActivationAddonState[],
+): ActivationAddonChange[] {
+  const out: ActivationAddonChange[] = [];
+  for (const a of after) {
+    const b = before.find((x) => x.addonKey === a.addonKey);
+    for (const field of ["active", "priceSnapshot", "isComp"] as const) {
+      const was = b ? b[field] : field === "priceSnapshot" ? null : false;
+      if (was !== a[field]) out.push({ addonKey: a.addonKey, field, before: was, after: a[field] });
+    }
+  }
+  return out;
 }

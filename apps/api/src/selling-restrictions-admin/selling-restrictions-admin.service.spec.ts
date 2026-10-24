@@ -53,6 +53,8 @@ describe("restrictionStatus (the engine's own window rule)", () => {
 });
 
 const user = { sub: "u1", username: "admin" } as JwtPayload;
+// Row 509 (SA condition 5): an all-customer (FEDERAL) rule is TENANT_ADMIN-only.
+const tenantAdmin = { ...user, role: UserRole.TENANT_ADMIN } as JwtPayload;
 
 function setup() {
   const prisma = createMockPrisma();
@@ -61,20 +63,32 @@ function setup() {
     findMany: jest.fn().mockResolvedValue([]),
     findFirst: jest.fn(),
     create: jest.fn(),
+    createMany: jest.fn().mockResolvedValue({ count: 1 }),
     updateMany: jest.fn(),
   };
   models.sellingRestriction = rules;
+  // Row 509: a rule's targets are written as rows, read back as a summary (raw SQL) and the lift takes a row lock.
+  const targetRows = { createMany: jest.fn().mockResolvedValue({ count: 1 }) };
+  models.sellingRestrictionTarget = targetRows;
+  // Row 509 PR3: every rule is written with its revision 1.
+  const revisionRows = { create: jest.fn().mockResolvedValue({}) };
+  models.sellingRestrictionRevision = revisionRows;
+  models.$queryRaw = jest.fn().mockResolvedValue([]);
+  // `findMany` resolves the target ids (non-archived labels only): "c1" is the one label this tenant has.
   models.productCategory = {
-    findFirst: jest.fn().mockResolvedValue({ id: "c1", archivedAt: null }),
+    findMany: jest.fn(async (a: any) =>
+      (a?.where?.id?.in ?? []).filter((id: string) => id === "c1").map((id: string) => ({ id })),
+    ),
   };
-  models.product.findFirst.mockResolvedValue({ id: "p1" });
-  const audit = { log: jest.fn().mockResolvedValue(undefined) };
+  models.product.findMany.mockResolvedValue([{ id: "p1" }]);
+  const labels = { effectiveLabels: jest.fn() };
   return {
     prisma,
     models,
     rules,
-    audit,
-    service: new SellingRestrictionsAdminService(prisma, audit as any),
+    targetRows,
+    revisionRows,
+    service: new SellingRestrictionsAdminService(prisma, labels as any),
   };
 }
 
@@ -137,12 +151,15 @@ describe("SellingRestrictionsAdminService.create", () => {
       BadRequestException,
     );
     expect(s.rules.create).not.toHaveBeenCalled();
+    expect(s.targetRows.createMany).not.toHaveBeenCalled();
   });
 
-  it("stores state names as de-duplicated USPS codes, stamped with tenant and user, then audits", async () => {
+  it("stores state names as de-duplicated USPS codes, stamped with tenant and user, then audits in the same transaction", async () => {
     const s = setup();
-    s.rules.create.mockResolvedValue(row({ states: ["TX", "FL"] }));
+    s.rules.findFirst.mockResolvedValue(row({ states: ["TX", "FL"] }));
     await s.service.create({ ...base, states: ["Texas", "tx", " fl "] }, user);
+    expect(s.rules.create).toHaveBeenCalledTimes(1);
+    expect(s.targetRows.createMany).toHaveBeenCalledTimes(1);
     const data = s.rules.create.mock.calls[0][0].data;
     expect(data).toMatchObject({
       tenantId: "test-tenant",
@@ -155,32 +172,71 @@ describe("SellingRestrictionsAdminService.create", () => {
       createdByName: "admin",
     });
     expect(data.effectiveFrom).toBeInstanceOf(Date);
-    expect(s.audit.log).toHaveBeenCalledWith(
-      expect.objectContaining({ action: "selling_restriction.created", entityId: "r1" }),
-    );
+    // Row 509: one target row for the one label, stamped with the rule's id, tenant and creator.
+    expect(s.targetRows.createMany.mock.calls[0][0].data).toEqual([
+      expect.objectContaining({
+        tenantId: "test-tenant",
+        ruleId: data.id,
+        productId: null,
+        categoryId: "c1",
+        addedById: "u1",
+        addedByName: "admin",
+      }),
+    ]);
+    // Row 509 PR3: revision 1 = the rule as created, by its creator, in the same transaction.
+    expect(s.revisionRows.create).toHaveBeenCalledTimes(1);
+    expect(s.revisionRows.create.mock.calls[0][0].data).toMatchObject({
+      tenantId: "test-tenant",
+      ruleId: data.id,
+      revision: 1,
+      jurisdiction: "STATE",
+      states: ["TX", "FL"],
+      surface: "ALL",
+      reason: data.reason,
+      editedById: "u1",
+      editedByName: "admin",
+    });
+    expect(s.models.auditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ action: "selling_restriction.created", entityId: "r1" }),
+    });
+    // The response is still the single rule's list item (the web's create caller reads it).
+    expect(s.rules.findFirst.mock.calls[0][0].where).toEqual({
+      id: data.id,
+      tenantId: "test-tenant",
+    });
   });
 
   it("a FEDERAL rule stores no states; a product-scoped rule needs the product to exist", async () => {
     const s = setup();
-    s.rules.create.mockResolvedValue(row({ jurisdiction: "FEDERAL", states: [] }));
-    await s.service.create({ productId: "p1", jurisdiction: "FEDERAL", reason: "x" }, user);
+    s.rules.findFirst.mockResolvedValue(row({ jurisdiction: "FEDERAL", states: [] }));
+    await s.service.create({ productId: "p1", jurisdiction: "FEDERAL", reason: "x" }, tenantAdmin);
     expect(s.rules.create.mock.calls[0][0].data).toMatchObject({
       productId: "p1",
       categoryId: null,
       states: [],
     });
-    s.models.product.findFirst.mockResolvedValue(null);
-    await expect(
-      s.service.create({ productId: "nope", jurisdiction: "FEDERAL", reason: "x" }, user),
-    ).rejects.toBeInstanceOf(NotFoundException);
+    s.models.product.findMany.mockResolvedValue([]);
+    // Row 509: an unknown id is the coded 409 RULE_TARGETS_NOT_FOUND (was a plain 404).
+    const err = await s.service
+      .create({ productId: "nope", jurisdiction: "FEDERAL", reason: "x" }, tenantAdmin)
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect((err as ConflictException).getResponse()).toMatchObject({
+      code: "RULE_TARGETS_NOT_FOUND",
+      notFoundIds: ["nope"],
+    });
   });
 
-  it("404s an unknown category, refuses an archived one, and needs a tenant context", async () => {
+  it("an unknown or archived label is RULE_TARGETS_NOT_FOUND (409, was 404 / 409), and a tenant context is needed", async () => {
     const s = setup();
-    s.models.productCategory.findFirst.mockResolvedValueOnce(null);
-    await expect(s.service.create(base, user)).rejects.toBeInstanceOf(NotFoundException);
-    s.models.productCategory.findFirst.mockResolvedValueOnce({ id: "c1", archivedAt: new Date() });
-    await expect(s.service.create(base, user)).rejects.toBeInstanceOf(ConflictException);
+    // unknown AND archived both resolve to "not among the tenant's non-archived labels"
+    await expect(s.service.create({ ...base, categoryId: "gone" }, user)).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+    expect(s.models.productCategory.findMany.mock.calls[0][0].where).toMatchObject({
+      tenantId: "test-tenant",
+      archivedAt: null,
+    });
     (s.prisma.getTenantId as jest.Mock).mockReturnValue(null);
     await expect(s.service.create(base, user)).rejects.toBeInstanceOf(BadRequestException);
     expect(s.rules.create).not.toHaveBeenCalled();
@@ -194,15 +250,15 @@ describe("SellingRestrictionsAdminService.lift", () => {
     s.rules.findFirst.mockResolvedValue(row({ liftedAt: NOW }));
     await s.service.lift("r1", { reason: "Law repealed" }, user);
     const call = s.rules.updateMany.mock.calls[0][0];
-    expect(call.where).toEqual({ id: "r1", liftedAt: null });
+    expect(call.where).toEqual({ tenantId: "test-tenant", id: { in: ["r1"] }, liftedAt: null });
     expect(call.data).toMatchObject({
       liftedById: "u1",
       liftedByName: "admin",
       liftReason: "Law repealed",
     });
-    expect(s.audit.log).toHaveBeenCalledWith(
-      expect.objectContaining({ action: "selling_restriction.lifted" }),
-    );
+    expect(s.models.auditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ action: "selling_restriction.lifted", entityId: "r1" }),
+    });
   });
 
   it("a second lift is a 409 and never overwrites; an unknown id is a 404; needs a tenant", async () => {
@@ -220,16 +276,18 @@ describe("SellingRestrictionsAdminService.lift", () => {
     await expect(s.service.lift("r1", { reason: "x" }, user)).rejects.toBeInstanceOf(
       BadRequestException,
     );
-    expect(s.audit.log).not.toHaveBeenCalled();
+    expect(s.models.auditLog.create).not.toHaveBeenCalled();
   });
 });
 
 describe("SellingRestrictionsAdminController", () => {
-  it("reads are OPERATOR, create/lift are TENANT_ADMIN, and the class is behind both guards", () => {
+  it("reads, create and lift are OPERATOR (TENANT_ADMIN satisfies it), and the class is behind both guards", () => {
     const proto = SellingRestrictionsAdminController.prototype as unknown as Record<string, object>;
     expect(Reflect.getMetadata(ROLES_KEY, proto.list)).toEqual([UserRole.OPERATOR]);
-    expect(Reflect.getMetadata(ROLES_KEY, proto.create)).toEqual([UserRole.TENANT_ADMIN]);
-    expect(Reflect.getMetadata(ROLES_KEY, proto.lift)).toEqual([UserRole.TENANT_ADMIN]);
+    expect(Reflect.getMetadata(ROLES_KEY, proto.create)).toEqual([UserRole.OPERATOR]);
+    expect(Reflect.getMetadata(ROLES_KEY, proto.bulkCreate)).toEqual([UserRole.OPERATOR]);
+    expect(Reflect.getMetadata(ROLES_KEY, proto.lift)).toEqual([UserRole.OPERATOR]);
+    expect(Reflect.getMetadata(ROLES_KEY, proto.liftBatch)).toEqual([UserRole.OPERATOR]);
     const guards = (
       Reflect.getMetadata("__guards__", SellingRestrictionsAdminController) ?? []
     ).map((g: { name: string }) => g.name);

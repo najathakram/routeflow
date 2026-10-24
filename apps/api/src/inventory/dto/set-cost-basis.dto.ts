@@ -12,7 +12,7 @@ export class SetCostBasisDto {
   @IsString()
   notes?: string;
 
-  /** Also rewrite the unit cost of all open stock lots (FIFO/LIFO products). */
+  /** Also rewrite the unit cost of all open stock lots (history only: a lot cost no longer feeds any cost). */
   @IsOptional()
   @IsBoolean()
   applyToLots?: boolean;

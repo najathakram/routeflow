@@ -3,6 +3,7 @@ import { Prisma, PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import { TenantContextService } from "../tenant/tenant-context.service";
+import { utcPoolConfig } from "../common/pg-session";
 
 /**
  * The exact error Prisma's own `*OrThrow` operations raise when no row matches
@@ -130,18 +131,44 @@ export function isTxClient(db: unknown): boolean {
 
 @Injectable()
 export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
+  /** W-720: the pool this service built; PrismaPg never ends a pool its caller supplied. */
+  private readonly pgPool: Pool;
+  private pgPoolEnded = false;
+
   constructor(@Optional() private readonly tenantCtx?: TenantContextService) {
-    const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+    // Row 361: the session time zone is pinned to UTC on every connection (common/pg-session.ts).
+    const pool = new Pool(utcPoolConfig({ connectionString: process.env.DATABASE_URL }));
     const adapter = new PrismaPg(pool);
     super({ adapter });
+    this.pgPool = pool;
   }
 
   async onModuleInit() {
     await this.$connect();
   }
 
+  /**
+   * W-720: app shutdown stops the engine only and never ends the pool. Work still draining after
+   * this hook must keep reconnecting lazily on it: Nest closes HTTP/websockets (dispose) and stops
+   * crons only after destroy hooks, and each Bull queue closes in its own onApplicationShutdown,
+   * waiting for its active jobs, possibly after this provider's. The process exit frees the pool.
+   */
   async onModuleDestroy() {
-    await this.$disconnect();
+    await super.$disconnect();
+  }
+
+  /**
+   * W-720: an explicit `$disconnect()` (DB specs, test harnesses, scripts) also ends the pg.Pool
+   * built above, once. Without it the pool's idle clients outlived the disconnect until pg's 10 s
+   * idle timeout: every DB spec's "Jest did not exit" tail. pg throws on a second `end()`, so a
+   * repeat disconnect (or a pool pg already marks `ending`, e.g. via a `$extends` copy whose flag
+   * is its own) skips it.
+   */
+  override async $disconnect(): Promise<void> {
+    await super.$disconnect();
+    if (this.pgPoolEnded || (this.pgPool as unknown as { ending?: boolean }).ending) return;
+    this.pgPoolEnded = true;
+    await this.pgPool.end();
   }
 
   /** Returns the current request's tenantId (null for SUPER_ADMIN / unset context). */

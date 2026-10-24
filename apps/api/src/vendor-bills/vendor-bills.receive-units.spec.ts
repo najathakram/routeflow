@@ -172,13 +172,29 @@ async function revertLine(
   );
   prisma.product.findFirst.mockResolvedValue(postReceiveProduct);
   prisma.stockLot.findMany.mockResolvedValue([]);
+  // B846: revert reads back the receipt row(s) receive() wrote — 24 pieces @ $1.25 either way.
+  prisma.stockMovement.findMany.mockImplementation(async ({ where }: any) =>
+    where.notes && typeof where.notes === "object"
+      ? []
+      : [
+          {
+            id: "mv-1",
+            quantity: D(24),
+            unitCost: D(1.25),
+            effectiveAt: new Date("2026-06-01"),
+          },
+        ],
+  );
 
-  await service.revertToDraft("bill-1");
+  await service.revertToDraft("bill-1", "user-1");
 
-  const deleteArgs: any = prisma.stockMovement.deleteMany.mock.calls[0][0];
+  expect(prisma.stockMovement.deleteMany).not.toHaveBeenCalled();
+  const reversal: any = prisma.stockMovement.create.mock.calls[0][0].data;
   const product: any = prisma.product.update.mock.calls[0][0].data;
   return {
-    deleteType: deleteArgs.where.type as string,
+    reversalType: reversal.type as string,
+    reversalQty: reversal.quantity.toString(),
+    reversalUnitCost: reversal.unitCost.toString(),
     productStockDecrement: product.currentStock.decrement.toString(),
     productAverageCost:
       product.averageCost === undefined ? undefined : product.averageCost.toString(),
@@ -201,6 +217,12 @@ async function voidLine(
   );
   prisma.product.findFirst.mockResolvedValue(postReceiveProduct);
   prisma.stockLot.findMany.mockResolvedValue([]);
+  // B846 sibling: void reads back the receipt row(s) receive() wrote — 24 pieces @ $1.25 either way.
+  prisma.stockMovement.findMany.mockImplementation(async ({ where }: any) =>
+    where.notes && typeof where.notes === "object"
+      ? []
+      : [{ id: "mv-1", quantity: D(24), unitCost: D(1.25), effectiveAt: new Date("2026-06-01") }],
+  );
 
   await service.voidBill("bill-1", "user-1");
 
@@ -265,7 +287,10 @@ describe("VendorBillsService — receive-path denomination equivalence (WP6)", (
       const pieces = await revertLine(PIECE_ITEM, PIECE_ITEM.qty, postReceive);
 
       expect(boxed).toEqual(pieces);
-      expect(boxed.deleteType).toBe("PURCHASE");
+      // B846: the ledger is appended to, never deleted from — a signed PURCHASE reversal row.
+      expect(boxed.reversalType).toBe("PURCHASE");
+      expect(boxed.reversalQty).toBe("-24");
+      expect(boxed.reversalUnitCost).toBe("1.25");
       expect(boxed.productStockDecrement).toBe("24");
       // Reversal empties stock (24 - 24 = 0) — average is KEPT, not zeroed.
       expect(boxed.productAverageCost).toBeUndefined();
@@ -273,13 +298,13 @@ describe("VendorBillsService — receive-path denomination equivalence (WP6)", (
   });
 
   describe("voidBill()", () => {
-    it("posts an IDENTICAL compensating ADJUSTMENT for each denomination", async () => {
+    it("posts an IDENTICAL compensating PURCHASE reversal for each denomination", async () => {
       const postReceive = { currentStock: D(24), averageCost: D(1.25) };
       const boxed = await voidLine(BOXED_ITEM, BOXED_ITEM.qty, postReceive);
       const pieces = await voidLine(PIECE_ITEM, PIECE_ITEM.qty, postReceive);
 
       expect(boxed).toEqual(pieces);
-      expect(boxed.movementType).toBe("ADJUSTMENT");
+      expect(boxed.movementType).toBe("PURCHASE");
       expect(boxed.movementQty).toBe("-24");
       expect(boxed.movementUnitCost).toBe("1.25");
       // Reversal empties stock → average carried forward, not zeroed.

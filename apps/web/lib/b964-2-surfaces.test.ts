@@ -178,6 +178,8 @@ describe("handleMutationError with a predicate localErrorToast (B964-2)", () => 
   });
   it("a read-only tenant still gets 'Choose a plan' (the predicate never hides it)", () => {
     const toast = run({ response: { status: 403, data: { code: "READ_ONLY", message: "x" } } });
-    expect(toast.mock.calls[0][0].title).toBe("Your workspace is read-only");
+    expect(toast.mock.calls[0][0].title).toBe(
+      "This workspace is currently in read-only mode. You can view records, but changes and new transactions are temporarily unavailable.",
+    );
   });
 });

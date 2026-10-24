@@ -417,3 +417,31 @@ describe("copier contract mutation proofs (each must turn the spec red)", () => 
       evaluate({ ...world(), copiers: [{ ...entry, coverage: "registry-only" }, entry] }).join(),
     ).toMatch(/needs a "why"[\s\S]*duplicate copier id/));
 });
+
+/**
+ * ROW 373(a) (SA-734r2 r-note 8) — the VALUE-SOURCE class the column check above cannot see (limit 3): every
+ * order -> invoice copier carries the category / subcategory / trio / levy from the SOURCE LINE, never from the
+ * live product. An uncategorised order line stays uncategorised on its invoice, with the same stored levy. The
+ * authorization guards (license checks) read the product LIVE on purpose: they are guards, not copiers, and are
+ * not in this list.
+ */
+describe("order -> invoice copiers read the source line, never the live product (row 373a)", () => {
+  const PRODUCT_CATEGORY_READ = /\bproduct\??\.tracked(?:Sub)?categoryId\b/i;
+  const ORDER_TO_INVOICE: Array<{ file: string; fn: string }> = [
+    { file: "invoices/invoices.service.ts", fn: "buildInvoiceItemData" },
+    { file: "invoices/invoices.service.ts", fn: "groupOrderLinesForInvoicing" },
+  ];
+
+  it.each(ORDER_TO_INVOICE)("$file::$fn never reads the product's category", ({ file, fn }) => {
+    const src = fs.readFileSync(path.join(SRC, file), "utf8");
+    const found = findFunctions(src, fn);
+    expect(found.length).toBeGreaterThan(0);
+    for (const node of found) expect(node.getText()).not.toMatch(PRODUCT_CATEGORY_READ);
+  });
+
+  it("mutation proof: a `?? li.product?.trackedCategoryId` fallback is caught", () => {
+    const bad = `class S { buildInvoiceItemData(li) { return { trackedCategoryId: li.trackedCategoryId ?? li.product?.trackedCategoryId ?? null }; } }`;
+    const [node] = findFunctions(bad, "buildInvoiceItemData");
+    expect(node.getText()).toMatch(PRODUCT_CATEGORY_READ);
+  });
+});

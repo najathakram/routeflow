@@ -7,6 +7,7 @@
 
 import axios from "axios";
 import { clearAllLiveCarts } from "./counter-live-cart-keys";
+import { clearAllInvoiceDrafts } from "./invoice-draft-storage";
 import { OP_KEYS, BUYER_KEYS } from "./auth-keys";
 import { setOpPresenceCookie, clearOpPresenceCookie } from "./presence-cookies";
 import { hasReauthHandler, requestReauth } from "./session-expiry";
@@ -93,6 +94,11 @@ function isOperatorSurface(): boolean {
 // ─── Request interceptor: attach access token + tenant slug ──────────────────
 
 apiClient.interceptors.request.use((config) => {
+  // Row 500 (SA-837): name this client and build on every request, so the API's missing-token warn can
+  // prove "0 hits from current web builds". The release sha is baked at build time; the package version
+  // is the fallback when the Railway variable is unset.
+  config.headers["x-client"] = "web";
+  config.headers["x-app-version"] = process.env.NEXT_PUBLIC_RELEASE_SHA || "0.1.0";
   if (typeof window !== "undefined") {
     const imp = getImpersonation();
     // An EXPIRED impersonation token must never fall through to the operator
@@ -279,6 +285,7 @@ apiClient.interceptors.response.use(
       // switches me to the buyer/sign-in page after idling" bug: nothing about
       // the admin session expired, and superAdminClient handles its own 401s.
       clearAllLiveCarts(); // the operator session is over: an unfinished counter sale must not outlive it
+      clearAllInvoiceDrafts(); // nor an unsaved new invoice (ROW 447)
       if (!isOnMarketingRoute() && !isOnSuperAdminRoute()) {
         window.location.href = buyerToken && !opToken ? "/buyer/login" : "/login";
       }

@@ -4,6 +4,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from "@nestjs/common";
 import { roundMoney } from "@routeflow/pricing";
 import type {
@@ -32,6 +33,9 @@ import {
   type RfInvoiceStatus,
 } from "../billing/rf-invoice/rf-invoice.constants";
 import { AdminAuditAction } from "./audit-actions.constant";
+import { lockTenantForLedger } from "../billing/addon-ledger";
+import { CatchupClaimService } from "../billing/catchup-claim.service";
+import { claimRefusal } from "../billing/catchup-claim";
 import {
   EXTERNAL_PAYMENT_METHODS,
   type ExternalPaymentMethod,
@@ -103,6 +107,8 @@ export class RfInvoicesAdminService {
     private readonly prisma: PrismaService,
     private readonly builder: RfInvoiceBuilder,
     private readonly issuer: RfInvoiceIssuerService,
+    // SA-733r3 N2: payments / reopens / on-demand issues are refused while an October catch-up claim is held.
+    @Optional() private readonly catchup?: CatchupClaimService,
   ) {
     rfInvoiceTestTenantSlugs(); // a non-test slug in RF_INVOICE_TEST_TENANT_SLUGS fails the boot
   }
@@ -273,7 +279,7 @@ export class RfInvoicesAdminService {
     }
     const paidAt = this.resolvePaidAt(dto.paidAt, now);
 
-    return this.transition(id, "OPEN", actorId, now, (row) => ({
+    return this.transition(id, "OPEN", actorId, now, { guardClaim: true }, (row) => ({
       data: {
         status: "PAID",
         paidAt,
@@ -295,7 +301,7 @@ export class RfInvoicesAdminService {
     now: Date = new Date(),
   ): Promise<RfInvoiceRow> {
     const reason = this.requireReason(dto);
-    return this.transition(id, "PAID", actorId, now, (row) => ({
+    return this.transition(id, "PAID", actorId, now, { guardClaim: true }, (row) => ({
       data: {
         status: "OPEN",
         paidAt: null,
@@ -317,7 +323,7 @@ export class RfInvoicesAdminService {
     now: Date = new Date(),
   ): Promise<RfInvoiceRow> {
     const reason = this.requireReason(dto);
-    return this.transition(id, "OPEN", actorId, now, (row) => ({
+    return this.transition(id, "OPEN", actorId, now, { guardClaim: false }, (row) => ({
       data: {
         status: "VOID",
         voidedAt: now,
@@ -363,9 +369,11 @@ export class RfInvoicesAdminService {
         externalPayment: true,
         stripeSubId: true,
         cancelAtPeriodEnd: true,
+        catchupState: true,
         tenant: { select: { status: true, class: true, deletedAt: true, slug: true } },
       },
-    })) as (IssuerSubscription & { tenant?: { slug?: string } }) | null;
+    })) as
+      (IssuerSubscription & { tenant?: { slug?: string }; catchupState?: string | null }) | null;
     // PRODUCTION, or an allowlisted approved test tenant (RF_INVOICE_TEST_TENANT_SLUGS); never the cron's rule
     const allowlisted = rfInvoiceTestTenantSlugs().includes(sub?.tenant?.slug ?? "");
     if (
@@ -379,6 +387,9 @@ export class RfInvoicesAdminService {
         "This tenant is not on manual invoicing.",
       );
     }
+    // SA-733r3 N2: a held October catch-up claim freezes issuing for the tenant (the cron's WHERE skips it too).
+    const held = claimRefusal(sub.catchupState);
+    if (held) throw held;
     const eligible = allowlisted
       ? { ...sub, tenant: { ...sub.tenant!, class: "PRODUCTION" } }
       : sub;
@@ -421,6 +432,7 @@ export class RfInvoicesAdminService {
     expected: "OPEN" | "PAID",
     actorId: string,
     now: Date,
+    opts: { guardClaim: boolean },
     plan: (row: any) => {
       data: Record<string, unknown>;
       action: string;
@@ -432,6 +444,13 @@ export class RfInvoicesAdminService {
       const row = await tx.rfInvoice.findFirst({ where: { id }, select: ACTION_SELECT });
       if (!row) throw new NotFoundException("Invoice not found");
       if (row.status !== expected) throw this.statusConflict(row, now);
+      // SA-733r3 N2 / M5: the Tenant row lock (the house order: tenant before invoice rows) serialises this with
+      // the claim being opened, then a held claim refuses the write - a payment must never be recorded behind
+      // a card charge that is about to void this invoice.
+      if (opts.guardClaim && this.catchup) {
+        await lockTenantForLedger(tx, row.tenantId);
+        await this.catchup.assertNoClaimTx(tx, row.tenantId);
+      }
 
       const { data, action, message, meta } = plan(row);
       const { count } = await tx.rfInvoice.updateMany({ where: { id, status: expected }, data });

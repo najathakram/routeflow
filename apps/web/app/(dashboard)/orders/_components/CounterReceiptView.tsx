@@ -7,10 +7,11 @@ import {
   formatReceiptMoney as money,
   type CounterReceiptModel,
 } from "@/lib/counter-receipt";
+import { ReadOnlyHint, WriteLink } from "@/lib/read-only-gate";
 
 /**
  * The ONE printable receipt view: the live receipt and the Today's-sales reprint both render through it, so a reprint can
- * never drift from the receipt the customer first saw. `reprintLabel` ("Reprint · sold …") marks a reprint.
+ * never drift from the receipt the customer first saw. `reprintLabel` ("Reprint · Sold …") marks a reprint.
  */
 export function CounterReceiptView({
   model: m,
@@ -110,7 +111,7 @@ export function CounterReceiptView({
                   className="block text-xs text-navy/70 print:text-black"
                   data-testid="receipt-line-discount"
                 >
-                  Discount -{money(l.discount)}
+                  Discount −{money(l.discount)}
                 </span>
               </span>
             ) : (
@@ -136,12 +137,13 @@ export function CounterReceiptView({
           data-testid="counter-payment-not-recorded"
         >
           <p className="font-semibold">Sale recorded — payment not recorded</p>
-          <Link
+          <WriteLink
             href={`/invoices/${m.invoiceId}`}
             className="inline-flex min-h-[44px] min-w-[44px] items-center text-brand-700 underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 print:hidden"
           >
             Record payment
-          </Link>
+          </WriteLink>
+          <ReadOnlyHint className="text-xs text-slate-600 print:hidden" />
         </div>
       ) : null}
       <dl className="space-y-1 text-sm">
@@ -151,8 +153,8 @@ export function CounterReceiptView({
         </div>
         {m.discounts > 0 ? (
           <div className="flex justify-between" data-testid="receipt-discounts">
-            <dt>Discounts</dt>
-            <dd>-{money(m.discounts)}</dd>
+            <dt>Discount</dt>
+            <dd>−{money(m.discounts)}</dd>
           </div>
         ) : null}
         {m.tax !== 0 ? (
@@ -161,6 +163,12 @@ export function CounterReceiptView({
             <dd>{money(m.tax)}</dd>
           </div>
         ) : null}
+        {m.charges.map((c) => (
+          <div key={c.key} className="flex justify-between" data-testid={`receipt-charge-${c.key}`}>
+            <dt>{c.label}</dt>
+            <dd>{money(c.amount)}</dd>
+          </div>
+        ))}
         {m.adjustments !== 0 ? (
           <div className="flex justify-between" data-testid="receipt-adjustment">
             <dt>Adjustments</dt>
@@ -178,15 +186,46 @@ export function CounterReceiptView({
           </div>
         ) : null}
         {m.showPaid ? (
-          <div className="flex justify-between">
+          <div className="flex justify-between" data-testid="receipt-paid">
             <dt>Paid</dt>
             <dd>{money(m.paid)}</dd>
+          </div>
+        ) : null}
+        {m.returned ? (
+          // SA-838a: credit applied to this sale is its own line (never in Paid, the only return figure Balance due subtracts)
+          <div className="flex justify-between" data-testid="receipt-returned">
+            <dt>Returned</dt>
+            <dd>−{money(m.returned)}</dd>
+          </div>
+        ) : null}
+        {m.refunded ? (
+          // an info line: money handed back outside RouteFlow, never subtracted
+          <div data-testid="receipt-refunded">
+            <dt>Refunded {money(m.refunded)} (returned items)</dt>
+          </div>
+        ) : null}
+        {m.creditKept ? (
+          // an info line: credit left on the customer's account, never subtracted
+          <div data-testid="receipt-credit-kept">
+            <dt>Credit kept {money(m.creditKept)} (returned items)</dt>
+          </div>
+        ) : null}
+        {m.creditUsed ? (
+          // an info line: credit the return made that was spent on another order, never subtracted here
+          <div data-testid="receipt-credit-used">
+            <dt>Credit used {money(m.creditUsed)} (returned items)</dt>
           </div>
         ) : null}
         {m.showBalance ? (
           <div className="flex justify-between">
             <dt>Balance due</dt>
             <dd>{money(m.balanceDue)}</dd>
+          </div>
+        ) : null}
+        {m.returnPending ? (
+          // a return that is not settled yet: no amount, nothing subtracted
+          <div data-testid="receipt-return-pending">
+            <dt>Return in progress</dt>
           </div>
         ) : null}
         {m.tendered != null ? (

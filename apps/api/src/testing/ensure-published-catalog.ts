@@ -7,7 +7,14 @@
  */
 export interface CatalogNeed {
   plans: Array<{ planKey: string; name: string; monthlyPrice: number }>;
-  addons: Array<{ sku: string; name: string; monthlyPrice: number }>;
+  addons: Array<{
+    sku: string;
+    name: string;
+    monthlyPrice: number;
+    stackable?: boolean;
+    /** planKey at/above which the add-on is bundled free (null/absent = never bundled). */
+    includedAtPlan?: string;
+  }>;
 }
 
 export async function ensurePublishedCatalog(

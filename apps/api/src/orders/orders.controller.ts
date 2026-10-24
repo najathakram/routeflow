@@ -32,6 +32,7 @@ import { ChangeOrderStatusDto } from "./dto/change-order-status.dto";
 import { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
 import { UpdateShipmentDto } from "./dto/update-shipment.dto";
 import { UpdateFulfillPathDto } from "./dto/update-fulfill-path.dto";
+import { ReopenOrderDto } from "./dto/reopen-order.dto";
 import { CreateChangeRequestDto } from "./dto/create-change-request.dto";
 import { ResolveChangeRequestDto } from "./dto/resolve-change-request.dto";
 import { foldMergeItems } from "./merge-items";
@@ -44,6 +45,7 @@ import {
   isMergeContention,
   mapLockError,
 } from "./merge-contention";
+import { logDiscountedSkip, mergeBlockedByDiscount } from "./merge-discount-guard";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { BatchShipDto, PackingSlipsDto } from "./dto/batch-ship.dto";
 import { OrderBatchShipService } from "./order-batch-ship";
@@ -123,6 +125,8 @@ export class OrdersController {
     const choice: "merge" | "separate" | undefined =
       dto.mergeChoice ?? (dto.forceNew ? "separate" : undefined);
 
+    // W-762 / SA-918: an order discount on either side never merges — the order is created on its own.
+    let separateForDiscount = false;
     if (isStaff && dto.customerId) {
       // A merge target must share the incoming order's fulfil path (merge-candidates.ts).
       const mergeAs = { explicit: dto.fulfillPath, ...fulfilCaller(user) };
@@ -130,7 +134,10 @@ export class OrdersController {
         forMerge: true,
         mergeAs,
       });
-      if (activeOrder) {
+      if (activeOrder && mergeBlockedByDiscount([activeOrder, dto])) {
+        separateForDiscount = true;
+        logDiscountedSkip("orders.create", dto.customerId);
+      } else if (activeOrder) {
         // Operator hasn't told us what to do — make them choose.
         if (!choice) {
           throw new ConflictException({
@@ -174,7 +181,10 @@ export class OrdersController {
                 inlineReturn: dto.inlineReturn,
               })
             : undefined;
-          let merged: { kind: "merged"; orderId: string; replayed: boolean } | { kind: "stale" };
+          let merged:
+            | { kind: "merged"; orderId: string; replayed: boolean }
+            | { kind: "stale" }
+            | { kind: "discounted" };
           try {
             const lock = await withAdvisoryLock(
               // 10s, not the module default of 20s: the mobile api client aborts every request
@@ -198,6 +208,8 @@ export class OrdersController {
                 // back instead and let the caller take the create path, exactly as it would have
                 // had the PRE-lock read returned null.
                 if (!current) return { kind: "stale" as const };
+                // W-762: the open order took a discount while this request queued: keep the new order separate.
+                if (mergeBlockedByDiscount([current])) return { kind: "discounted" as const };
                 // F30/R8 (B196): this branch returns without ever reaching
                 // OrdersService.create, so honour the replay key HERE too — the
                 // fold computes ABSOLUTE totals, so a replayed merge (queue
@@ -260,7 +272,25 @@ export class OrdersController {
                   // operator to edit yet. The actual remedy is to not merge at all.
                   'Choose "Create as a separate order" instead.',
                 );
-                const foldResult = foldMergeItems(current.lineItems ?? [], dto.items ?? []);
+                const incomingIds = (dto.items ?? [])
+                  .map((i) => i.productId)
+                  .filter(Boolean) as string[];
+                const foldResult = foldMergeItems(current.lineItems ?? [], dto.items ?? [], {
+                  // B297 row 340 (foldTarget): the rate trio a NEW sale of each incoming product takes today —
+                  // an existing line sold at a different trio does not absorb the added quantity.
+                  liveTrioByProductId: await this.ordersService.liveTrioByProduct(incomingIds),
+                  // SA-841 (B207): the live pack map, read HERE inside the advisory lock after the in-lock
+                  // re-read (no second lock), over the stored ∪ incoming products; used only for a line with
+                  // no pack of its own, and as the SA-124e(3) price basis.
+                  liveUnitsPerBoxByProductId: await this.ordersService.liveUnitsPerBoxByProduct([
+                    ...((current.lineItems ?? [])
+                      .map((li) => li.productId)
+                      .filter(Boolean) as string[]),
+                    ...incomingIds,
+                  ]),
+                  // REG-B199: a bare staff scan qty is loose pieces
+                  bare: "pieces",
+                });
                 if (foldResult.livePackFallbackProductIds.length > 0) {
                   this.logger.warn(
                     `foldMergeItems: order ${current.id} product(s) [${foldResult.livePackFallbackProductIds.join(", ")}] had box data but no resolvable pack of their own — deferred to the live product pack in updateOrderItems (B776/SA-124)`,
@@ -281,6 +311,9 @@ export class OrdersController {
                     : {}),
                   // #2094: a return taken on a merge lands on the winner in the same tx (updateOrderItems).
                   ...(dto.inlineReturn ? { inlineReturn: dto.inlineReturn } : {}),
+                  // Row 510: the staff's acknowledgement of a restriction warning rides the fold unchanged.
+                  restrictionOverrides: dto.restrictionOverrides,
+                  warningHash: dto.warningHash,
                 } as any;
                 // B215: the idempotency key (when present) rides INTO updateOrderItems and
                 // commits inside the fold's own transaction — a crash or a later throw can no
@@ -331,7 +364,10 @@ export class OrdersController {
             // This is PRE-commit: nothing has been written, so a retryable 409 is honest here.
             mapLockError(e);
           }
-          if (merged.kind === "stale") {
+          if (merged.kind === "discounted") {
+            separateForDiscount = true;
+            logDiscountedSkip("orders.create", dto.customerId);
+          } else if (merged.kind === "stale") {
             // The merge target vanished while we queued for the lock. Nothing was written, so
             // this falls to `OrdersService.create`, whose customer-scoped key replay answers a
             // cart-mismatch 409 for a replayed merge (no second row); pre-lock-null behaviour,
@@ -374,7 +410,8 @@ export class OrdersController {
     const created = await this.ordersService.create(
       idempotencyKey ? ({ ...dto, idempotencyKey } as CreateOrderDto) : dto,
       user,
-      { skipAutoMerge: choice === "separate" },
+      // SA-923: a discount keeps this order apart ONCE; persisting skipAutoMerge would opt it out of every future merge.
+      { skipAutoMerge: choice === "separate", ...(separateForDiscount && { separateOnce: true }) },
     );
     // For non-staff (driver / customer) callers, keep the old auto-consolidate behaviour
     // for newly-created orders that don't have skipAutoMerge set.
@@ -413,8 +450,19 @@ export class OrdersController {
   @Post("sell")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR)
-  sell(@Body() dto: CreateSaleDto, @CurrentUser() user: JwtPayload) {
-    return this.ordersService.createSale(dto, user);
+  @ApiHeader({ name: "Idempotency-Key", required: false })
+  sell(
+    @Body() dto: CreateSaleDto,
+    @CurrentUser() user: JwtPayload,
+    @Headers("Idempotency-Key") rawIdempotencyKey?: string,
+  ) {
+    // Row 485: an optional per-attempt key (the body field stays internal and is refused). With it a
+    // retried ring resumes the stored order instead of writing a second one.
+    const idempotencyKey = this.normalizeIdempotencyKey(rawIdempotencyKey);
+    return this.ordersService.createSale(
+      idempotencyKey ? Object.assign(dto, { idempotencyKey }) : dto,
+      user,
+    );
   }
 
   /** #3168: mark several carrier orders shipped in one request (per-order outcomes, never all-or-nothing). */
@@ -524,8 +572,12 @@ export class OrdersController {
   @Post(":id/reopen")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR)
-  reopenOrder(@Param("id") id: string) {
-    return this.ordersService.reopenOrder(id);
+  reopenOrder(
+    @Param("id") id: string,
+    @Body() dto: ReopenOrderDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.ordersService.reopenOrder(id, user, dto);
   }
 
   @Patch(":id/items")
@@ -536,7 +588,12 @@ export class OrdersController {
     @Body() dto: UpdateOrderItemsDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.forCaller(user, await this.ordersService.updateOrderItems(id, dto, user));
+    // B297 row 352: a CUSTOMER principal on this route names its lines exactly as on the buyer route.
+    const edited =
+      user.role === UserRole.CUSTOMER
+        ? await this.ordersService.updateOrderItems(id, dto, user, { buyerLineIds: true })
+        : await this.ordersService.updateOrderItems(id, dto, user);
+    return this.forCaller(user, edited);
   }
 
   // ─── P5-09: post-dispatch change requests ───────────────────────────────────

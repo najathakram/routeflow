@@ -116,6 +116,7 @@ describeDb("B1211 product parent check: real Postgres", () => {
     inTenant(tenantId, () =>
       service.create({ name, unit: "each", pricePerUnit: "1.00", ...extra } as never, {
         actorId: null,
+        reparentVia: "editor",
       }),
     );
   const fresh = (id: string) => prisma.product.findUniqueOrThrow({ where: { id } });
@@ -140,7 +141,12 @@ describeDb("B1211 product parent check: real Postgres", () => {
 
     expect(
       await badRequest(
-        inTenant(mine, () => service.update(product.id, { parentProductId: foreign.id } as never)),
+        inTenant(mine, () =>
+          service.update(product.id, { parentProductId: foreign.id } as never, {
+            packPrecondition: "internal",
+            reparentVia: "editor",
+          }),
+        ),
       ),
     ).toMatchObject({
       reason: PRODUCT_PARENT_REASONS.NOT_FOUND,
@@ -172,12 +178,21 @@ describeDb("B1211 product parent check: real Postgres", () => {
     const family = await mk(t, "Family");
     const variant = await mk(t, "Variant", { parentProductId: family.id, variantName: "Variant" });
     const inactive = await mk(t, "Retired");
-    await inTenant(t, () => service.update(inactive.id, { isActive: false } as never));
+    await inTenant(t, () =>
+      service.update(inactive.id, { isActive: false } as never, {
+        packPrecondition: "internal",
+      }),
+    );
     const loner = await mk(t, "Loner");
 
     const reasonOf = async (id: string, parentId: string) => {
       const body = await badRequest(
-        inTenant(t, () => service.update(id, { parentProductId: parentId } as never)),
+        inTenant(t, () =>
+          service.update(id, { parentProductId: parentId } as never, {
+            packPrecondition: "internal",
+            reparentVia: "editor",
+          }),
+        ),
       );
       return body.reason;
     };
@@ -198,9 +213,19 @@ describeDb("B1211 product parent check: real Postgres", () => {
     // a FAMILY parent (written the way the families API writes it) makes a moved row a VARIANT
     await prisma.product.update({ where: { id: parent.id }, data: { kind: "FAMILY" } });
     const other = await mk(t, "Other Loner");
-    await inTenant(t, () => service.update(other.id, { parentProductId: parent.id } as never));
+    await inTenant(t, () =>
+      service.update(other.id, { parentProductId: parent.id } as never, {
+        packPrecondition: "internal",
+        reparentVia: "editor",
+      }),
+    );
     expect(await fresh(other.id)).toMatchObject({ parentProductId: parent.id, kind: "VARIANT" });
-    await inTenant(t, () => service.update(other.id, { parentProductId: null } as never));
+    await inTenant(t, () =>
+      service.update(other.id, { parentProductId: null } as never, {
+        packPrecondition: "internal",
+        reparentVia: "editor",
+      }),
+    );
     expect(await fresh(other.id)).toMatchObject({ parentProductId: null, kind: "STANDARD" });
   });
 

@@ -6,6 +6,7 @@ import {
   maskEmail,
 } from "./messaging-deliveries.service";
 import type { DeliveryHealth, DeliveryRow } from "@routeflow/types";
+import { EMAIL_KINDS, EMAIL_KIND_AUDIENCE, PLATFORM_AUDIENCE_KINDS } from "../email/email-kinds";
 
 describe("maskEmail", () => {
   it("masks the local part after the first char", () => {
@@ -238,6 +239,62 @@ describe("MessagingDeliveriesService", () => {
       expect(err).toBeInstanceOf(ForbiddenException);
       expect(err.getResponse()).toMatchObject({ code: "TENANT_CONTEXT_REQUIRED" });
       expect(prisma.forTenant).not.toHaveBeenCalled();
+    });
+  });
+});
+
+describe("email kind audience (a platform-to-tenant mail never shows in the tenant's own delivery views)", () => {
+  it("every kind declares an audience, and the platform set is derived from that one registry", () => {
+    expect(Object.keys(EMAIL_KIND_AUDIENCE).sort()).toEqual([...EMAIL_KINDS].sort());
+    for (const k of EMAIL_KINDS) expect(["tenant", "platform"]).toContain(EMAIL_KIND_AUDIENCE[k]);
+    expect([...PLATFORM_AUDIENCE_KINDS].sort()).toEqual(
+      EMAIL_KINDS.filter((k) => EMAIL_KIND_AUDIENCE[k] === "platform").sort(),
+    );
+  });
+
+  it("the failed-payment billing mail is a platform-audience kind; tenant mail kinds are not", () => {
+    expect(EMAIL_KIND_AUDIENCE.PAYMENT_FAILED).toBe("platform");
+    for (const k of ["STAFF_NEW_ORDER", "INVOICE_SENT", "RECEIPT", "Z_REPORT"] as const) {
+      expect(EMAIL_KIND_AUDIENCE[k]).toBe("tenant");
+    }
+  });
+
+  describe("MessagingDeliveriesService filters on the registry, not on a hard-coded kind", () => {
+    function make() {
+      const emailDelivery = {
+        findMany: jest.fn().mockResolvedValue([]),
+        count: jest.fn().mockResolvedValue(0),
+        groupBy: jest.fn().mockResolvedValue([]),
+      };
+      const prisma = {
+        emailDelivery,
+        forTenant: jest.fn().mockReturnValue({ emailDelivery }),
+        getTenantId: jest.fn().mockReturnValue("t1"),
+      } as any;
+      return { svc: new MessagingDeliveriesService(prisma), emailDelivery };
+    }
+
+    it("list(): rows and count both exclude every platform-audience kind", async () => {
+      const { svc, emailDelivery } = make();
+      await svc.list("TENANT_ADMIN", {});
+      expect(emailDelivery.findMany.mock.calls[0][0].where.kind).toEqual({
+        notIn: [...PLATFORM_AUDIENCE_KINDS],
+      });
+      expect(emailDelivery.count.mock.calls[0][0].where.kind).toEqual({
+        notIn: [...PLATFORM_AUDIENCE_KINDS],
+      });
+      expect(PLATFORM_AUDIENCE_KINDS).toContain("PAYMENT_FAILED");
+    });
+
+    it("health(): the status counts AND the failure sample exclude platform-audience kinds", async () => {
+      const { svc, emailDelivery } = make();
+      await svc.health();
+      expect(emailDelivery.groupBy.mock.calls[0][0].where.kind).toEqual({
+        notIn: [...PLATFORM_AUDIENCE_KINDS],
+      });
+      expect(emailDelivery.findMany.mock.calls[0][0].where.kind).toEqual({
+        notIn: [...PLATFORM_AUDIENCE_KINDS],
+      });
     });
   });
 });

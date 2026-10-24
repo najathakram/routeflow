@@ -112,7 +112,7 @@ function makeVoidHarness(returns: FakeReturn[], orderId: string | null = ORDER_I
   const { tx, writes } = makeTx(returns);
   const ledger = {
     reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined),
-    syncInvoiceEntries: jest.fn(),
+    settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
   };
   const commissionEngine = { syncInvoiceCommissionSafe: jest.fn().mockResolvedValue(undefined) };
   const release = jest.fn().mockResolvedValue({ credits: [], advances: 0 });
@@ -149,7 +149,7 @@ function expectNothingChanged(h: ReturnType<typeof makeVoidHarness>) {
   expect(h.writes.invoiceUpdate).not.toHaveBeenCalled();
   expect(h.writes.creditNoteUpdate).not.toHaveBeenCalled();
   expect(h.writes.orderItemUpdate).not.toHaveBeenCalled();
-  expect(h.ledger.reverseInvoiceEntries).not.toHaveBeenCalled();
+  expect(h.ledger.settleRegulatedLedger).not.toHaveBeenCalled();
   expect(h.commissionEngine.syncInvoiceCommissionSafe).not.toHaveBeenCalled();
 }
 
@@ -238,7 +238,7 @@ describe("voidInvoice refuses 409 INVOICE_HAS_CASH_REFUND when part of the invoi
     await h.service.voidInvoice(INVOICE_ID);
 
     expect(h.writes.invoiceUpdateMany).toHaveBeenCalledTimes(1);
-    expect(h.ledger.reverseInvoiceEntries).toHaveBeenCalledTimes(1);
+    expect(h.ledger.settleRegulatedLedger).toHaveBeenCalledTimes(1);
   });
 
   it.each(["CANCELLED", "REJECTED"])(
@@ -297,7 +297,7 @@ describe("voidInvoice refuses 409 INVOICE_HAS_CASH_REFUND when part of the invoi
     await h.service.voidInvoice(INVOICE_ID);
 
     expect(h.writes.invoiceUpdateMany).toHaveBeenCalledTimes(1);
-    expect(h.ledger.reverseInvoiceEntries).toHaveBeenCalledTimes(1);
+    expect(h.ledger.settleRegulatedLedger).toHaveBeenCalledTimes(1);
     expect(h.commissionEngine.syncInvoiceCommissionSafe).toHaveBeenCalledTimes(1);
   });
 
@@ -499,7 +499,11 @@ describe("the delete paths ask the same guards (a cash-refunded sale cannot be d
     const tx = body.indexOf("this.prisma.tenantTransaction(async (tx) => {");
     const guard = body.indexOf("await assertNoCashRefundOnOrder(tx, id);");
     expect(tx).toBeGreaterThan(-1);
-    expect(guard - tx).toBeLessThan(120); // adjacent: nothing sits between the transaction opening and the guard
+    // adjacent: only B284's write-free Order lock + status read (lockDeleteLines) sits between the
+    // transaction opening and the guard, so the guard still precedes every write, the stock credit included
+    const between = body.slice(tx, guard).split("\n").slice(1).join("\n").trim();
+    expect(between).toMatch(/^const held = await lockDeleteLines\(tx, id\);[^\n]*$/);
+    expect(guard).toBeLessThan(body.indexOf("this.settleStockForEdit("));
     expect(guard).toBeLessThan(body.indexOf("assertNoUnspentSourcedCredits("));
     expect(guard).toBeLessThan(body.indexOf("releaseOrderCreditsInTx(tx, id)"));
     expect(guard).toBeLessThan(body.indexOf("releaseWalletPaymentsInTx(tx, inv.id)"));

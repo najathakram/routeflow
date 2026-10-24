@@ -5,8 +5,8 @@ import { seedSession } from "@/test-utils/session";
 import OrderDetailPage from "./page";
 
 /**
- * POS order page, "Switch to delivery": moves the order to the account's staff fulfilment default
- * (SHIP on a ship-only account), not a hard-coded ROUTE.
+ * POS order page on a ship-only account: the only move off pickup is "Ship by carrier…" (SHIP), never a
+ * hard-coded ROUTE.
  */
 const get = jest.fn();
 const patch = jest.fn();
@@ -75,7 +75,7 @@ beforeEach(() => {
 });
 afterEach(() => seedSession(null));
 
-describe("POS order page: Switch to delivery uses the staff fulfilment default", () => {
+describe("POS order page: a ship-only account moves a pickup order to SHIP", () => {
   it("on a ship-only account it PATCHes SHIP, not ROUTE", async () => {
     render(
       <Providers>
@@ -83,7 +83,9 @@ describe("POS order page: Switch to delivery uses the staff fulfilment default",
       </Providers>,
     );
     await screen.findByText(/ORD-1/);
-    fireEvent.click(screen.getByRole("button", { name: /^Switch to delivery$/ }));
+    // M8: a ship-only account has no delivery route to switch to: the one move is "Ship by carrier…".
+    expect(screen.queryByRole("button", { name: /^Switch to delivery$/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /^Ship by carrier…$/ }));
     await screen.findByText(/Move this order off in-store pickup\?/);
     fireEvent.click(screen.getByRole("button", { name: "Move order" }));
     await waitFor(() =>

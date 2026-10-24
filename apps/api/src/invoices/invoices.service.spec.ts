@@ -17,6 +17,8 @@ jest.mock("../storage/compress.util", () => ({
   compressDocument: jest.fn(),
 }));
 
+// Row 752: a re-referenced edit takes the payment-ref lock; no DB here (real lock: payment-edit-ref.db.spec.ts R7)
+jest.mock("../common/db-locks", () => require("../common/testing/pass-through-locks").locks());
 import { Test, TestingModule } from "@nestjs/testing";
 import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
 import { InvoicesService, addCalendarDays } from "./invoices.service";
@@ -31,6 +33,7 @@ import { SystemConfigService } from "../system-config/system-config.service";
 import { StorageService } from "../storage/storage.service";
 import { compressDocument } from "../storage/compress.util";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { storedInvoiceHeader } from "../testing/stored-invoice-header";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
@@ -169,7 +172,7 @@ describe("InvoicesService", () => {
           useValue: {
             writeSaleEntries: jest.fn(),
             reverseInvoiceEntries: jest.fn(),
-            syncInvoiceEntries: jest.fn(), // B297 PR4: the changed-only re-sync
+            settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
             correctSaleForPriceChange: jest.fn(),
           },
         },
@@ -400,7 +403,10 @@ describe("InvoicesService", () => {
       // to `this.prisma` would make the `{ tx: txClient }` assertion vacuous, since
       // reserving on the base client would look identical to reserving on the tx.
       const txClient = {
-        order: { findUnique: jest.fn().mockResolvedValue(orderFixture("ord-d7-tx")) },
+        order: {
+          findUnique: jest.fn().mockResolvedValue(orderFixture("ord-d7-tx")),
+          findFirst: jest.fn().mockResolvedValue({ status: "PENDING" }), // F2b re-judge: not a DRAFT
+        },
         invoice: {
           findMany: jest.fn().mockResolvedValue([]),
           create: jest.fn(async (args: any) => ({
@@ -695,12 +701,11 @@ describe("InvoicesService", () => {
       expect(created.categoryTaxAmount).toBe(0.5); // 0.1 x 5, never 0.1 x (5*12)=6
     });
 
-    it("SA-144g: refuses ANY non-blank requested unitLabel up front — this is why the tax derivation below never sees one", async () => {
-      // update()'s pieceQty/categoryTaxAmount derivation (:3401) reads item.unitLabel with no
-      // resolveLineUnits call of its own; its safety rests entirely on this refusal running
-      // BEFORE the item loop, for every item, on ANY non-blank label — including one that
-      // would resolve to the pack itself (e.g. "Case" naming a product's own base unit).
-      prisma.invoice.findUnique.mockResolvedValue(draftInvoice);
+    it("SA-144g (VU-4a, D3): an ORDER-LINKED draft refuses ANY non-blank requested unitLabel up front, before the item loop", async () => {
+      // An order-less DRAFT now resolves a unit through resolveLineUnits (invoices.service.update-units.spec.ts);
+      // an order-linked one stays refused for every item — the back-sync would write the unit onto the order
+      // line — including a label that would resolve to the pack itself (e.g. "Case" naming the base unit).
+      prisma.invoice.findUnique.mockResolvedValue({ ...draftInvoice, orderId: "ord-1" });
 
       await expect(
         service.update("inv-box", {
@@ -977,10 +982,12 @@ describe("InvoicesService", () => {
         items: [{ productId: "prod-tob", description: "Cigs", qty: 5, unitPrice: 10 }],
       });
 
-      // B297 PR4: the draft edit re-syncs the ledger to the new lines (changed-only: the prior SALE is
-      // reversed and a fresh SALE written by `syncInvoiceEntries` for a changed line).
-      expect(ledger.syncInvoiceEntries).toHaveBeenCalledWith(
+      // SA-839 INVOICE_BILLED: the prior sale-record reversed (live returns kept), then a fresh SALE
+      // written from the new items, in one settle.
+      expect(ledger.settleRegulatedLedger).toHaveBeenCalledWith(
+        expect.anything(),
         expect.objectContaining({
+          kind: "INVOICE_BILLED",
           invoiceId: "inv-e",
           lines: [
             expect.objectContaining({
@@ -3131,7 +3138,7 @@ describe("InvoicesService", () => {
   });
 
   describe("unvoidInvoice restores invoicedQty", () => {
-    it("re-claims each line's invoicedQty (capped at line qty) when unvoiding", async () => {
+    it("re-claims each line's invoicedQty when its quantity is still free (uncapped: B299 refuses instead)", async () => {
       prisma.invoice.findUnique.mockResolvedValue({
         id: "inv-1",
         status: "VOID",
@@ -4747,19 +4754,20 @@ describe("InvoicesService", () => {
 
       await service.reconcileOrderDeliveredInvoices("ord-1", prisma);
 
-      // B297 PR4: BOTH drafts re-sync through the changed-only sync (it nets the held full-qty entries
-      // to the delivered target).
-      expect(ledger.syncInvoiceEntries).toHaveBeenCalledWith(
-        expect.objectContaining({ invoiceId: "d-base" }),
+      // Prior SALE rows reversed for BOTH drafts (nets the full-qty entries to 0).
+      expect(ledger.settleRegulatedLedger).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ kind: "INVOICE_BILLED", invoiceId: "d-base" }),
       );
-      expect(ledger.syncInvoiceEntries).toHaveBeenCalledWith(
-        expect.objectContaining({ invoiceId: "d-r1" }),
+      expect(ledger.settleRegulatedLedger).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ kind: "INVOICE_BILLED", invoiceId: "d-r1" }),
       );
-      // The regulated line (R1) now targets the DELIVERED qty (4) and its prorated netSales
-      // (20 = 4/10 of 50), not the full 10 / 50.
-      const r1Write = ledger.syncInvoiceEntries.mock.calls.find(
-        (c: any) => c[0].invoiceId === "d-r1",
-      )?.[0];
+      // Fresh SALE rows written; the regulated line (R1) now reports the DELIVERED qty (4)
+      // and its prorated netSales (20 = 4/10 of 50), not the full 10 / 50.
+      const r1Write = ledger.settleRegulatedLedger.mock.calls.find(
+        (c: any) => c[1].invoiceId === "d-r1",
+      )?.[1];
       expect(r1Write).toBeDefined();
       const regLedgerLine = r1Write.lines.find((l: any) => l.trackedCategoryId === "cat-reg");
       expect(regLedgerLine.qty).toBe(4);
@@ -5098,8 +5106,9 @@ describe("InvoicesService", () => {
 
       await service.resyncOrderInvoicesForEdit("ord-1", prisma, q);
 
-      expect(ledger.syncInvoiceEntries).toHaveBeenCalledWith(
-        expect.objectContaining({ invoiceId: "inv-1" }),
+      expect(ledger.settleRegulatedLedger).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ kind: "INVOICE_BILLED", invoiceId: "inv-1" }),
       );
     });
 
@@ -5333,7 +5342,10 @@ describe("InvoicesService", () => {
       expect(oiUpdOf("oi-std").data.invoicedQty).toBe(10);
       expect(oiUpdOf("oi-reg").data.invoicedQty).toBe(4);
       // The regulated-sales ledger is re-synced on the order basis too.
-      expect((service as any).ledger.syncInvoiceEntries).toHaveBeenCalled();
+      expect((service as any).ledger.settleRegulatedLedger).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ kind: "INVOICE_BILLED" }),
+      );
     });
 
     it("an edit that ADDED a standard line bills it on the base (grouping, not provenance)", async () => {
@@ -5582,6 +5594,7 @@ describe("InvoicesService", () => {
           })),
           findFirst: jest.fn().mockResolvedValue(null),
         },
+        order: { findFirst: jest.fn().mockResolvedValue({ status: "PENDING" }) }, // F2b re-judge
         orderItem: {
           update: jest.fn().mockResolvedValue({}),
           updateMany: jest.fn().mockResolvedValue({ count: 1 }),
@@ -6370,8 +6383,9 @@ describe("InvoicesService", () => {
           const sql = (tx.$executeRaw.mock.calls[0][0] as any).join("?");
           expect(sql).toContain('"Invoice"');
           expect(sql).toContain("FOR UPDATE");
+          // Row 752 (SA-843 ruling 5): call [0] is the unlocked key pre-read; the LOCKED read is the last call
           expect(tx.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
-            prisma.invoice.findUnique.mock.invocationCallOrder[0],
+            prisma.invoice.findUnique.mock.invocationCallOrder[1],
           );
         });
       });
@@ -6640,8 +6654,7 @@ describe("InvoicesService", () => {
         customerId: "cust-1",
         orderId: null,
         status: InvoiceStatus.SENT,
-        discount: 0,
-        shippingFee: 0,
+        ...storedInvoiceHeader([invoiceItem]),
         internalNotes: null,
         items: [invoiceItem],
       };
@@ -6777,8 +6790,7 @@ describe("InvoicesService", () => {
         customerId: "c-294b",
         orderId: null,
         status: InvoiceStatus.SENT,
-        discount: 0,
-        shippingFee: 0,
+        ...storedInvoiceHeader([invoiceItem]),
         internalNotes: null,
         items: [invoiceItem],
       };
@@ -6902,8 +6914,7 @@ describe("InvoicesService", () => {
         customerId: "c-294e",
         orderId: null,
         status: InvoiceStatus.SENT,
-        discount: 0,
-        shippingFee: 0,
+        ...storedInvoiceHeader([invoiceItem]),
         internalNotes: null,
         items: [invoiceItem],
       };
@@ -6954,8 +6965,7 @@ describe("InvoicesService", () => {
         customerId: "cust-1",
         orderId: null,
         status: InvoiceStatus.SENT,
-        discount: 0,
-        shippingFee: 0,
+        ...storedInvoiceHeader([invoiceItem]),
         internalNotes: null,
         items: [invoiceItem],
       };
@@ -7037,15 +7047,14 @@ describe("InvoicesService", () => {
         unitsPerBox: null,
         taxRate: 0,
         // 0.50 x (10 x 20 pieces) — what creation billed off the PRODUCT's box size.
-        categoryTaxAmount: 100,
+        categoryTaxAmount: opts.isTaxExempt ? 0 : 100, // foldCategoryTax zeroed an exempt line at creation
       };
       prisma.invoice.findUnique.mockResolvedValue({
         id: "inv-b57e",
         customerId: "cust-2",
         orderId: null,
         status: InvoiceStatus.SENT,
-        discount: 0,
-        shippingFee: 0,
+        ...storedInvoiceHeader([invoiceItem]),
         internalNotes: null,
         dueDate: null,
         items: [invoiceItem],
@@ -7117,8 +7126,7 @@ describe("InvoicesService", () => {
         customerId: "cust-2",
         orderId: null,
         status: InvoiceStatus.SENT,
-        discount: 0,
-        shippingFee: 0,
+        ...storedInvoiceHeader([pieceItem]),
         internalNotes: null,
         dueDate: null,
         items: [pieceItem],
@@ -7207,8 +7215,7 @@ describe("InvoicesService", () => {
         customerId: "cust-1",
         orderId: null,
         status,
-        discount: 0,
-        shippingFee: 0,
+        ...storedInvoiceHeader([invoiceItem]),
         internalNotes: null,
         dueDate: null,
         items: [invoiceItem],
@@ -7357,6 +7364,15 @@ describe("InvoicesService", () => {
           isReminder: true,
         }),
       );
+    });
+
+    it("row 401: a paid-at-sale counter invoice's e-mail hides the due date and terms", async () => {
+      const at = new Date("2026-01-01T10:00:00Z");
+      const pay = { id: "p1", amount: 500, status: "PAID", method: "CASH", createdAt: at };
+      const inv = { ...invoiceFixture(InvoiceStatus.PAID), createdAt: at, payments: [pay] };
+      prisma.invoice.findUnique.mockResolvedValue({ ...inv, order: { counterSale: true } });
+      await service.sendEmail("inv-b102");
+      expect(mockEmailService.sendInvoice.mock.calls[0][0].hideTerms).toBe(true);
     });
   });
 

@@ -1,4 +1,5 @@
 import { formatQtySplit } from "@routeflow/pricing";
+import type { BuyerOrderItemEdit } from "@routeflow/types";
 import { unitLineCount } from "./edit-items-draft";
 import { invoiceLineUnitNoun } from "./invoice-line-display";
 
@@ -27,6 +28,12 @@ export interface BuyerOrderLineLike {
 }
 
 export interface BuyerDraftItem {
+  /**
+   * B297 row 352: the stored line this row edits — Save names it so the line keeps the rate it was sold at.
+   * Unset on a row added from the catalog in this session (a new line). The draft is keyed by this id,
+   * else by the product: after a rate change one product can be two lines.
+   */
+  orderItemId?: string;
   productId: string;
   name: string;
   unit?: string;
@@ -79,6 +86,11 @@ export function readOnlyNotice(unitLabel: string): string {
  * multiple). A line whose count can't be derived keeps its stored qty WITHOUT the unit label — the
  * screen never pairs base pieces with "/ Case".
  */
+/** A draft row's key: its stored line, else (a catalog add) its product. */
+export function draftKey(i: Pick<BuyerDraftItem, "orderItemId" | "productId">): string {
+  return i.orderItemId ?? i.productId;
+}
+
 export function hydrateBuyerDraft(
   lines: readonly BuyerOrderLineLike[],
 ): Record<string, BuyerDraftItem> {
@@ -94,7 +106,8 @@ export function hydrateBuyerDraft(
     if (isCustomLine(li) || !li.productId) continue; // (!li.productId narrows the type)
     const unitLine = isBuyerUnitLine(li);
     const count = unitLine ? unitLineCount(li) : null;
-    draft[li.productId] = {
+    draft[li.id] = {
+      orderItemId: li.id,
       productId: li.productId,
       name: li.product?.name ?? "Product",
       unit: li.product?.unit,
@@ -128,8 +141,7 @@ export function readOnlyQtyText(item: BuyerDraftItem): string {
 }
 
 export type BuyerSavePlan =
-  | { kind: "refuse"; message: string }
-  | { kind: "replace"; items: Array<{ productId: string; qty: number }> };
+  { kind: "refuse"; message: string } | { kind: "replace"; items: BuyerOrderItemEdit[] };
 
 /**
  * What Save does. No live unit line on the order: the existing replace-by-product payload,
@@ -145,5 +157,12 @@ export function buyerSavePlan(
   // B889 belt: Save never sends a null productId, whatever reached the draft.
   const kept = Object.values(draft).filter((i) => i.qty > 0 && !!i.productId);
   if (kept.length === 0) return { kind: "refuse", message: "Add at least one item." };
-  return { kind: "replace", items: kept.map((i) => ({ productId: i.productId, qty: i.qty })) };
+  return {
+    kind: "replace",
+    items: kept.map((i) => ({
+      productId: i.productId,
+      qty: i.qty,
+      ...(i.orderItemId ? { orderItemId: i.orderItemId } : {}),
+    })),
+  };
 }

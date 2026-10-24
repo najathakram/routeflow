@@ -52,7 +52,9 @@ function lane(root: string, args: string[]) {
   const r = spawnSync(process.execPath, [LANE, "--root", root, ...args], {
     encoding: "utf8",
     env: scrubbedGitEnv(),
-    timeout: 60_000,
+    // The lane walks ~2.9k files; on a loaded runner a run can pass 60 s, and a killed child leaves the spec list
+    // without its FINAL summary line ("DB-LANE FULL ..."). 180 s keeps case 16 a pin on the picker, not on CI load.
+    timeout: 180_000,
   });
   return { status: r.status, out: r.stdout ?? "", err: r.stderr ?? "" };
 }
@@ -161,6 +163,91 @@ describe("db-lane.mjs — the import graph", () => {
   });
 });
 
+describe("db-lane.mjs — workspace packages and extension-less resolution", () => {
+  it("21. pin 1: `@routeflow/<pkg>` of a package with no src/ (index.ts at its root), a subpath, an exports map and a main entry all resolve", () => {
+    const root = fixture({
+      // no src/: the entry is the package's root index.ts (packages/types)
+      "packages/foo/package.json": '{"main":"./index.ts","types":"./index.ts"}\n',
+      "packages/foo/index.ts": "export const f = 1;\n",
+      "apps/api/src/p/foo.service.ts": 'import { f } from "@routeflow/foo";\nexport const s = f;\n',
+      "apps/api/src/p/foo.db.spec.ts": 'import { s } from "./foo.service";\nvoid s;\n',
+      // a subpath import: @routeflow/bar/api/thing → packages/bar/api/thing.ts
+      "packages/bar/package.json": "{}\n",
+      "packages/bar/api/thing.ts": "export const t = 1;\n",
+      "apps/api/src/p/bar.service.ts":
+        'import { t } from "@routeflow/bar/api/thing";\nexport const s = t;\n',
+      "apps/api/src/p/bar.db.spec.ts": 'import { s } from "./bar.service";\nvoid s;\n',
+      // a package WITH src/ and an exports map (packages/ui): ./web → ./src/web/index.ts
+      "packages/baz/package.json": '{"exports":{"./web":"./src/web/index.ts"}}\n',
+      "packages/baz/src/index.ts": "export const root = 1;\n",
+      "packages/baz/src/web/index.ts": "export const w = 1;\n",
+      "apps/api/src/p/baz.service.ts":
+        'import { w } from "@routeflow/baz/web";\nexport const s = w;\n',
+      "apps/api/src/p/baz.db.spec.ts": 'import { s } from "./baz.service";\nvoid s;\n',
+      // no src/, entry named only by package.json main
+      "packages/qux/package.json": '{"main":"./lib/main.ts"}\n',
+      "packages/qux/lib/main.ts": "export const q = 1;\n",
+      "apps/api/src/p/qux.service.ts": 'import { q } from "@routeflow/qux";\nexport const s = q;\n',
+      "apps/api/src/p/qux.db.spec.ts": 'import { s } from "./qux.service";\nvoid s;\n',
+    });
+    for (const [file, spec] of [
+      ["packages/foo/index.ts", "p/foo.db.spec.ts"],
+      ["packages/bar/api/thing.ts", "p/bar.db.spec.ts"],
+      ["packages/baz/src/web/index.ts", "p/baz.db.spec.ts"],
+      ["packages/qux/lib/main.ts", "p/qux.db.spec.ts"],
+    ]) {
+      const r = lane(root, ["--files", file, "--max-ratio", "1"]);
+      expect(r.status).toBe(0);
+      const l = specLines(r.out).find((s) => s.includes(spec));
+      expect(l).toContain(`import:${file} via 2 hops`);
+      expect(specLines(r.out)).toHaveLength(1);
+    }
+    // a barrel inside a src-less package is followed too
+    const barrel = fixture({
+      "packages/foo/index.ts": 'export * from "./api/inner";\n',
+      "packages/foo/api/inner.ts": "export const i = 1;\n",
+      "apps/api/src/p/foo.db.spec.ts": 'import { i } from "@routeflow/foo";\nvoid i;\n',
+    });
+    expect(
+      listed(lane(barrel, ["--files", "packages/foo/api/inner.ts"]).out, "p/foo.db.spec.ts"),
+    ).toBe(true);
+  });
+
+  it('22. pin 2: `import "./Foo"` against a real foo.ts is unresolved (exit 3) on every OS — resolution is case-exact', () => {
+    const root = fixture({
+      "apps/api/src/k/foo.ts": "export const foo = 1;\n",
+      "apps/api/src/k/user.ts": 'import "./Foo";\n',
+    });
+    const r = lane(root, ["--files", "apps/api/src/k/user.ts"]);
+    expect(r.status).toBe(3);
+    expect(r.err + r.out).toContain("./Foo");
+    // the exact-case spelling resolves
+    const ok = fixture({
+      "apps/api/src/k/foo.ts": "export const foo = 1;\n",
+      "apps/api/src/k/user.ts": 'import "./foo";\n',
+    });
+    expect(lane(ok, ["--files", "apps/api/src/k/user.ts"]).status).toBe(0);
+  });
+
+  it("23. an extension-less `./x-template` import of a .tsx (or x-template/index.ts) source resolves", () => {
+    const root = fixture({
+      "apps/api/src/t/invoice-template.tsx": "export const T = 1;\n",
+      "apps/api/src/t/dir-template/index.ts": "export const D = 1;\n",
+      "apps/api/src/t/svc.ts":
+        'import { T } from "./invoice-template";\nimport { D } from "./dir-template";\nexport const s = [T, D];\n',
+      "apps/api/src/t/t.db.spec.ts": 'import { s } from "./svc";\nvoid s;\n',
+    });
+    // svc.ts is the changed file: an unresolved import in it would be exit 3
+    expect(lane(root, ["--files", "apps/api/src/t/svc.ts"]).status).toBe(0);
+    expect(
+      listed(lane(root, ["--files", "apps/api/src/t/invoice-template.tsx"]).out, "t/t.db.spec.ts"),
+    ).toBe(true);
+    expect(
+      listed(lane(root, ["--files", "apps/api/src/t/dir-template/index.ts"]).out, "t/t.db.spec.ts"),
+    ).toBe(true);
+  });
+});
+
 describe("db-lane.mjs — the Prisma-model channel", () => {
   const diffOf = (body: string) => {
     const f = path.join(mkdtempSync(path.join(os.tmpdir(), "db-lane-diff-")), "d.diff");
@@ -217,6 +304,17 @@ describe("db-lane.mjs — FULL mode, flags and exits", () => {
     const r2 = lane(root2, ["--files", "apps/api/src/common/testing/db-spec.ts"]);
     expect(r2.out).toMatch(/DB-LANE FULL \(.*db-spec\.ts.*\)/);
     expect(specLines(r2.out)).toHaveLength(5);
+  });
+
+  it("12b. a FULL listing larger than a pipe buffer still ends with its summary line (stdout is flushed before exit)", () => {
+    // On Linux a piped stdout is asynchronous: `process.exit()` right after the last console.log cut a long listing off
+    // before its final "DB-LANE FULL (...)" line (the fixes-4 train CI). 1,700 specs is ~77 KB, past a 64 KB pipe.
+    const root = fixture({ "apps/api/src/common/testing/db-spec.ts": "export {};\n" }, 1700);
+    const r = lane(root, ["--files", "apps/api/src/common/testing/db-spec.ts"]);
+    expect(specLines(r.out)).toHaveLength(1700);
+    expect(r.out.length).toBeGreaterThan(65_536);
+    expect(r.out.trimEnd().split("\n").pop()).toMatch(/^DB-LANE FULL \(.*db-spec\.ts.*\)$/);
+    expect(r.status).toBe(0);
   });
 
   it("13. a bad --base ⇒ exit 2 with no list; a changed file importing ./missing ⇒ exit 3 naming it", () => {
@@ -283,14 +381,22 @@ describe("db-lane.mjs — this repo", () => {
     ).toContain("model:Invoice");
   });
 
-  it("16. #2707: the #2700 file list reaches the catalog/entitlement/repin specs and trips FULL at the default cutoff", () => {
+  it("16. #2707: the #2700 file list reaches the catalog/entitlement/repin specs and trips FULL above its own ratio", () => {
     const files = [
       "apps/api/prisma/publish-plan-catalog-v13.ts",
       "apps/api/src/billing/entitlements.service.ts",
       "apps/api/src/billing/plan-catalog.constants.ts",
       "apps/api/scripts/publish-and-repin.mjs",
     ];
-    const r = lane(REPO, ["--files", files.join(",")]);
+    // The scoped set first: its share of all db specs is this list's ratio. A fixed cutoff made the test a repo-size
+    // assertion (every new db spec lowers the ratio), so the FULL trip is checked just under the list's own ratio.
+    const scoped = lane(REPO, ["--files", files.join(","), "--max-ratio", "1", "--json"]);
+    const parsed = JSON.parse(scoped.out);
+    expect(parsed.mode).toBe("scoped");
+    const ratio = parsed.specs.length / parsed.total;
+    expect(ratio).toBeGreaterThan(0.4); // still a hub change
+    const cutoff = Math.max(0, ratio - 0.05).toFixed(2);
+    const r = lane(REPO, ["--files", files.join(","), "--max-ratio", cutoff]);
     expect(r.out).toMatch(/DB-LANE FULL \(ratio 0\.\d\d\)/);
     for (const s of [
       "billing/publish-plan-catalog-v12.db.spec.ts",
@@ -299,12 +405,23 @@ describe("db-lane.mjs — this repo", () => {
       "billing/addon-default-grant.db.spec.ts",
     ])
       expect(listed(r.out, s)).toBe(true);
-    // the scoped set (without the FULL fold) is a strict subset of the 124
-    const scoped = lane(REPO, ["--files", files.join(","), "--max-ratio", "1", "--json"]);
-    const parsed = JSON.parse(scoped.out);
-    expect(parsed.mode).toBe("scoped");
-    const full = JSON.parse(lane(REPO, ["--files", files.join(","), "--json"]).out);
+    // the scoped set (without the FULL fold) is a strict subset of the full run
+    const full = JSON.parse(
+      lane(REPO, ["--files", files.join(","), "--max-ratio", cutoff, "--json"]).out,
+    );
     expect(full.mode).toBe("full");
+    // FULL folds in EVERY db spec: the exact count of tracked `*.db.spec.ts` files, not a size-dependent ratio
+    const ls = spawnSync("git", ["-C", REPO, "ls-files", "apps/api"], {
+      encoding: "utf8",
+      env: scrubbedGitEnv(),
+      maxBuffer: 64 * 1024 * 1024,
+    });
+    expect(ls.status).toBe(0);
+    const tracked = ls.stdout.split("\n").filter((f) => /\.db\.spec\.ts$/.test(f));
+    expect(tracked.length).toBeGreaterThan(0);
+    expect(full.specs).toHaveLength(tracked.length);
+    expect(full.total).toBe(tracked.length);
+    expect([...full.specs].sort()).toEqual([...tracked].sort());
     expect(parsed.specs.length).toBeLessThan(full.specs.length);
     for (const sp of parsed.specs) expect(full.specs).toContain(sp);
     expect(parsed.specs).toEqual(
@@ -315,11 +432,27 @@ describe("db-lane.mjs — this repo", () => {
     );
   });
 
-  it("20. the repo graph builds in under 10 s from the working tree", () => {
-    const t0 = Date.now();
-    const r = lane(REPO, ["--files", "apps/web/x.tsx"]);
+  it("20. the repo graph builds in under 10 s of CPU time from the working tree", () => {
+    // CPU time of the lane process itself, not wall clock: a loaded host (pre-push verify runs the whole workspace in
+    // parallel) stretches wall time by the scheduler's whim but not the work the graph build does, so the bound stays at the
+    // same 10 s and no longer flakes. The probe runs the real lane in-process and prints its own cpuUsage at exit.
+    const probe =
+      'process.on("exit",()=>{const u=process.cpuUsage();process.stderr.write("CPU_MS="+Math.round((u.user+u.system)/1000)+"\\n")});' +
+      "process.argv=[process.argv[0],process.env.LANE_PATH,...JSON.parse(process.env.LANE_ARGS)];" +
+      "import(require('url').pathToFileURL(process.env.LANE_PATH).href);";
+    const r = spawnSync(process.execPath, ["-e", probe], {
+      encoding: "utf8",
+      env: {
+        ...scrubbedGitEnv(),
+        LANE_PATH: LANE,
+        LANE_ARGS: JSON.stringify(["--root", REPO, "--files", "apps/web/x.tsx"]),
+      },
+      timeout: 120_000,
+    });
     expect(r.status).toBe(0);
-    expect(Date.now() - t0).toBeLessThan(10_000);
+    const cpuMs = Number(/CPU_MS=(\d+)/.exec(r.stderr ?? "")?.[1]);
+    expect(Number.isFinite(cpuMs)).toBe(true);
+    expect(cpuMs).toBeLessThan(10_000);
   });
 });
 

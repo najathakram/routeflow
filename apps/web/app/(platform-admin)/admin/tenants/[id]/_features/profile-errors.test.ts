@@ -24,7 +24,7 @@ describe("profileErrorCopy — fixed copy chosen by the API's error code", () =>
         apiError(400, { code: API_ERROR_CODES.BUSINESS_PROFILE_UNKNOWN, message: "x is not one" }),
         FALLBACK,
       ),
-    ).toBe("That business profile does not exist.");
+    ).toBe("That setup option does not exist.");
   });
 
   it("BUSINESS_PROFILE_UNAVAILABLE → says in-store profiles open with counter sales", () => {
@@ -38,7 +38,27 @@ describe("profileErrorCopy — fixed copy chosen by the API's error code", () =>
         }),
         FALLBACK,
       ),
-    ).toBe("This business profile isn't available for this tenant.");
+    ).toBe("This isn't available for this business.");
+  });
+
+  it("FULFILMENT_CARRIER_IN_TRANSIT → the blocker in fixed copy, with the count, never the server text", () => {
+    const copy = profileErrorCopy(
+      apiError(409, {
+        code: API_ERROR_CODES.FULFILMENT_CARRIER_IN_TRANSIT,
+        count: 3,
+        message: "server text",
+      }),
+      FALLBACK,
+    );
+    expect(copy).toBe(
+      "3 orders are with the carrier right now. Change this once they are delivered: changing how orders ship now would bill them twice or not at all.",
+    );
+    expect(
+      profileErrorCopy(
+        apiError(409, { code: API_ERROR_CODES.FULFILMENT_CARRIER_IN_TRANSIT, count: 1 }),
+        FALLBACK,
+      ),
+    ).toMatch(/^1 order is with the carrier right now\./);
   });
 
   it("FULFILMENT_MODE_NEEDS_FLEET → names the fleet features, never raw keys", () => {
@@ -77,7 +97,7 @@ describe("profileErrorCopy — fixed copy chosen by the API's error code", () =>
       "That tenant was not found.",
     );
     expect(profileErrorCopy(apiError(403, { message: "Forbidden" }), FALLBACK)).toBe(
-      "Only platform admins can change a business profile.",
+      "Only platform admins can change what a business does.",
     );
   });
 
@@ -102,7 +122,7 @@ describe("profileErrorCopy — fixed copy chosen by the API's error code", () =>
           FALLBACK,
         ),
       ).toBe(
-        "The business profile was not applied: billing for At-door payment collection could not be stopped. Nothing was changed. Try again.",
+        "This change was not applied: billing for At-door payment collection could not be stopped. Nothing was changed. Try again.",
       );
     });
 
@@ -117,7 +137,7 @@ describe("profileErrorCopy — fixed copy chosen by the API's error code", () =>
         FALLBACK,
       );
       expect(copy).toBe(
-        "The business profile was only partly applied. Billing was already stopped for At-door payment collection and Ad hoc order delivery, but not for Recurring routes. Try again to finish.",
+        "This change was only partly applied. Billing was already stopped for At-door payment collection and Ad hoc order delivery, but not for Recurring routes. Try again to finish.",
       );
     });
 
@@ -133,7 +153,7 @@ describe("profileErrorCopy — fixed copy chosen by the API's error code", () =>
           FALLBACK,
         ),
       ).toBe(
-        "The business profile was only partly applied. Billing was already stopped for At-door payment collection, then saving the fulfilment model failed. Try again to finish.",
+        "This change was only partly applied. Billing was already stopped for At-door payment collection, then saving the fulfilment model failed. Try again to finish.",
       );
       expect(
         profileErrorCopy(
@@ -145,7 +165,7 @@ describe("profileErrorCopy — fixed copy chosen by the API's error code", () =>
           FALLBACK,
         ),
       ).toBe(
-        "The business profile was only partly applied. Billing was already stopped for Ad hoc order delivery, then recording the change failed. Try again to finish.",
+        "This change was only partly applied. Billing was already stopped for Ad hoc order delivery, then recording the change failed. Try again to finish.",
       );
     });
 
@@ -163,8 +183,106 @@ describe("profileErrorCopy — fixed copy chosen by the API's error code", () =>
       expect(copy).toContain("Try again to finish.");
       // No usable body at all → still the coded line, never the fallback that hides a partial apply.
       expect(profileErrorCopy(apiError(503, { code }), FALLBACK)).toBe(
-        "The business profile could not be applied because billing could not be stopped. Check the tenant's setup, then try again.",
+        "This change could not be applied because billing could not be stopped. Check the tenant's setup, then try again.",
       );
     });
+  });
+});
+
+describe("BUSINESS_PROFILE_BILLING_FAILED with the per-add-on list (ROW c)", () => {
+  const code = API_ERROR_CODES.BUSINESS_PROFILE_BILLING_FAILED;
+  const item = (key: string, wasComp: boolean, billingStopped: boolean, switchedOff: boolean) => ({
+    key,
+    wasComp,
+    billingStopped,
+    switchedOff,
+  });
+  const copyFor = (addons: unknown, extra: Record<string, unknown> = {}) =>
+    profileErrorCopy(
+      apiError(503, {
+        code,
+        message: "Stripe error sub_1Abc",
+        alreadyDisabled: [],
+        failedStep: { step: "billing", key: "recurring_routes" },
+        ...extra,
+        addons,
+      }),
+      FALLBACK,
+    );
+
+  it("a paid row whose billing was stopped says 'Billing stopped for X'", () => {
+    const copy = copyFor([item("driver_payments", false, true, true)], {
+      alreadyDisabled: ["driver_payments"],
+      failedStep: { step: "mode", key: "fulfilment_model" },
+    });
+    expect(copy).toContain("Billing stopped for At-door payment collection.");
+    expect(copy).not.toMatch(/sub_1Abc|Stripe|driver_payments/);
+  });
+
+  it("a comp row says 'X switched off' and never mentions billing for it", () => {
+    const copy = copyFor([item("order_delivery", true, false, true)], {
+      alreadyDisabled: ["order_delivery"],
+      failedStep: { step: "mode", key: "fulfilment_model" },
+    });
+    expect(copy).toContain("Ad hoc order delivery switched off.");
+    expect(copy).not.toMatch(/[Bb]illing/);
+  });
+
+  it("a paid row whose stop failed says it could not be stopped and is still on", () => {
+    const copy = copyFor([item("recurring_routes", false, false, false)]);
+    expect(copy).toContain("Billing for Recurring routes could not be stopped; it's still on.");
+  });
+
+  it("a comp row whose switch-off failed says it could not be switched off and is still on", () => {
+    const copy = copyFor([item("recurring_routes", true, false, false)]);
+    expect(copy).toContain("Recurring routes could not be switched off; it's still on.");
+    expect(copy).not.toMatch(/[Bb]illing/);
+  });
+
+  it("mixed: failed items first, each in its own phrasing, then the retry line", () => {
+    const copy = copyFor(
+      [
+        item("driver_payments", false, true, true),
+        item("recurring_routes", true, false, false),
+        item("order_delivery", true, false, true),
+      ],
+      { alreadyDisabled: ["driver_payments", "order_delivery"] },
+    );
+    expect(copy).toBe(
+      "This change was only partly applied. " +
+        "Recurring routes could not be switched off; it's still on. " +
+        "Billing stopped for At-door payment collection. " +
+        "Ad hoc order delivery switched off. " +
+        "Try again to finish.",
+    );
+  });
+
+  it("nothing switched off yet: 'not applied' and no 'partly'", () => {
+    const copy = copyFor([item("recurring_routes", false, false, false)]);
+    expect(copy).toBe(
+      "This change was not applied. Billing for Recurring routes could not be stopped; it's still on. Nothing was changed. Try again.",
+    );
+  });
+
+  it("a later step failed: the step is named after the per-add-on lines", () => {
+    const copy = copyFor([item("driver_payments", false, true, true)], {
+      alreadyDisabled: ["driver_payments"],
+      failedStep: { step: "mode", key: "fulfilment_model" },
+    });
+    expect(copy).toBe(
+      "This change was only partly applied. Billing stopped for At-door payment collection. Then saving the fulfilment model failed. Try again to finish.",
+    );
+  });
+
+  it("an unknown key becomes 'Another add-on', never the raw key; malformed items are skipped", () => {
+    const copy = copyFor([item("secret_addon_key", true, false, true), { key: 42 }, null, "x"]);
+    expect(copy).toContain("Another add-on switched off.");
+    expect(copy).not.toMatch(/secret_addon_key/);
+  });
+
+  it("an empty or missing list falls back to the older alreadyDisabled copy", () => {
+    expect(copyFor([], { alreadyDisabled: ["driver_payments"] })).toContain(
+      "Billing was already stopped for At-door payment collection",
+    );
   });
 });

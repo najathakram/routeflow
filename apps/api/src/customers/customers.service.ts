@@ -11,9 +11,11 @@ import {
   ForbiddenException,
   ServiceUnavailableException,
   UnprocessableEntityException,
+  Optional,
 } from "@nestjs/common";
 import * as crypto from "crypto";
-import { BuyerMergeRequestStatus, MergeInitiator } from "@prisma/client";
+import { BuyerMergeRequestStatus, MergeInitiator, type PaymentMethod } from "@prisma/client";
+import type { PaymentRefOpts } from "../invoices/payment-ref-dedupe";
 import { ConfigService } from "@nestjs/config";
 import * as bcrypt from "bcrypt";
 import { PrismaService } from "../prisma/prisma.service";
@@ -33,9 +35,15 @@ import {
   deleteNonBlockingInvoicesCas,
   readInvoicesAssertingNoneBlocking,
 } from "./customer-delete-preflight";
+import { assertOrdersUnchanged, releaseLiveOrderStockInTx } from "./customer-delete-stock";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { roundMoney, remainingCapacity } from "@routeflow/pricing";
+import {
+  advancePaymentKey,
+  keyedPayment,
+  type KeyedWriterOpts,
+} from "../invoices/payment-idempotency";
 import {
   collectedDateOf,
   CONFIRMED_PAYMENT,
@@ -45,7 +53,12 @@ import {
 import { settledDateFilter } from "../invoices/settled-date-filter";
 import { CREDIT_NOT_APPLICABLE } from "../invoices/invoice-status-sets";
 import { RECEIVABLE_INVOICE_SELECT, receivableBalance } from "../invoices/credit-exposure";
-import { geocodeAddress, GeocodableAddress, GeocodeCoords } from "../common/geocode.util";
+import {
+  geocodeAddress,
+  GeocodableAddress,
+  GeocodeCoords,
+  hasBlankStreet,
+} from "../common/geocode.util";
 import { withAdvisoryLock, LockTimeoutError, LockUnavailableError } from "../common/db-locks";
 import { SCHEDULED_ROUTE_KIND_WHERE } from "../routes/route-stop-filters.util";
 import { StorageService } from "../storage/storage.service";
@@ -57,12 +70,8 @@ import { omitStaffOnlyCustomerFields } from "./self-service-fields";
 import { type SelfServiceWriteArgs, writeSelfServiceProfile } from "./self-service-audit";
 import { toCustomerOrder } from "../common/staff-only-fields";
 import { customerUpdateData } from "./customer-update-data";
-import { assertSafeCustomerNames } from "./customer-name-guard";
-import {
-  assertSafeAddress,
-  assertSafeLicense,
-  assertSafePersonName,
-} from "../common/text-cell-guards";
+import { assertSafeCustomerNames, assertSafeCustomerUpdate } from "./customer-name-guard";
+import { assertSafeAddress, assertSafePersonName } from "../common/text-cell-guards";
 import { ChangeCustomerStatusDto } from "./dto/change-customer-status.dto";
 import { CreateAddressDto } from "./dto/create-address.dto";
 import { UpdateAddressDto } from "./dto/update-address.dto";
@@ -76,6 +85,7 @@ import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { buildPlanGateBody, PlanGateUpgrade } from "../billing/plan-gate";
 import { EmailService } from "../email/email.service";
 import { addressStateFields } from "./address-state";
+import { defaultAddresses, isBillingType } from "./address-state-writes";
 import * as compliance from "./customer-compliance-input";
 // Same grace window BillingCronService.expireGrace() clears hourly — the create()
 // gate applies it synchronously rather than waiting for the cron to run.
@@ -84,8 +94,14 @@ import { portalInviteEmailHtml } from "./portal-invite-email";
 import { buildCustomersCsv } from "./customers-csv";
 import { API_ERROR_CODES, PLAN_GATE_FLAG_KEYS } from "../common/api-error-codes";
 import { assertProductIdNotFamily } from "../products/sellable-lines";
+import { AuditService } from "../audit/audit.service";
+import { recordCreditLimitChange, type CreditLimitActor } from "./credit-limit-audit";
+import { lockInvoiceRowsInOrder } from "../regulated/ledger-locks";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+/** The address fields that place it on the map: a change to any of them re-geocodes. */
+const LOCATION_FIELDS = ["line1", "line2", "city", "state", "zip"] as const;
 
 @Injectable()
 export class CustomersService {
@@ -104,6 +120,7 @@ export class CustomersService {
     // once the invoice row is gone the entries can never be matched back.
     private readonly ledger: RegulatedLedgerService,
     private readonly email: EmailService,
+    @Optional() private readonly audit?: AuditService,
   ) {}
 
   /**
@@ -135,14 +152,27 @@ export class CustomersService {
     return geocodeAddress(addr, key, this.logger);
   }
 
-  /** Geocode all CustomerAddress records that are missing lat/lng. Returns counts. */
-  async geocodeAllAddresses(): Promise<{ total: number; geocoded: number; failed: number }> {
+  /**
+   * Geocode all CustomerAddress records that are missing lat/lng. Returns counts. A blank-street
+   * address (no street, no city) is skipped and counted as `skipped`, never pinned to a centroid.
+   */
+  async geocodeAllAddresses(): Promise<{
+    total: number;
+    geocoded: number;
+    failed: number;
+    skipped: number;
+  }> {
     const addresses = await this.prisma.forTenant().customerAddress.findMany({
       where: { OR: [{ lat: null }, { lng: null }] },
     });
     let geocoded = 0;
     let failed = 0;
+    let skipped = 0;
     for (const addr of addresses) {
+      if (hasBlankStreet(addr)) {
+        skipped++;
+        continue;
+      }
       const coords = await this.geocodeIfPossible(addr);
       if (coords) {
         await this.prisma.forTenant().customerAddress.update({
@@ -154,7 +184,7 @@ export class CustomersService {
         failed++;
       }
     }
-    return { total: addresses.length, geocoded, failed };
+    return { total: addresses.length, geocoded, failed, skipped };
   }
 
   /**
@@ -616,20 +646,25 @@ export class CustomersService {
     }
   }
 
-  async update(id: string, dto: UpdateCustomerDto, options?: compliance.CustomerUpdateOptions) {
+  async update(
+    id: string,
+    dto: UpdateCustomerDto,
+    options?: compliance.CustomerUpdateOptions,
+    actor?: CreditLimitActor,
+  ) {
     const existing = await this.findCustomerOrThrow(id);
     // REG-B170: refuse writes to a removed customer (its page still rendered edit controls).
     if (existing.deletedAt) {
       throw new ConflictException("Restore the customer first");
     }
     assertWalkInLoginUntouched(existing, dto); // the walk-in customer's sign-in email stays fixed
-    assertSafeCustomerNames(dto, existing); // B956: only a CHANGED name is checked
-    assertSafePersonName(dto, existing); // B984: same for salutation / first / last name
-    assertSafeLicense(options?.compliance ?? {}, existing); // B964: the importer's tobaccoLicenseNo, change-only
-    return this.prisma.forTenant().customer.update({
+    assertSafeCustomerUpdate(dto, existing, options?.compliance); // B956 / B984 / B964
+    const updated = await this.prisma.forTenant().customer.update({
       where: { id },
       data: compliance.withCompliance(options, customerUpdateData(dto)),
     });
+    await recordCreditLimitChange(this.audit, this.prisma.getTenantId(), existing, dto, actor);
+    return updated;
   }
 
   /** SA-305 (2): sole consent writer, self-opening tx; never call inside a tenantTransaction. */
@@ -715,12 +750,36 @@ export class CustomersService {
     assertSafeAddress(dto); // B964: before the geocode call and the transaction
     // Geocode before creating so lat/lng are set from the start
     const coords = await this.geocodeIfPossible(dto);
+    const hasUsableState = addressStateFields(dto.state, dto.zip).stateCode !== null;
     return this.prisma.tenantTransaction(async (tx) => {
       if (dto.isDefault) {
         await tx.customerAddress.updateMany({
           where: { customerId: id },
           data: { isDefault: false },
         });
+      }
+      // Addendum D: with no explicit choice, a billing address becomes the default when the customer
+      // has NO default address of any type, or when every default is a blank-street placeholder (a
+      // "minimal", state-only address) and this one is real: the placeholder is demoted in this
+      // transaction, so exactly one default remains. A default with a street or a city is never demoted, and
+      // neither is a placeholder when the new address has no usable state (M1: that would lose the state the
+      // placeholder carries, e.g. a bulk-set TX, and leave the customer unresolved).
+      let becomesDefaultBilling = false;
+      if (dto.isDefault !== true && isBillingType(dto.addressType ?? "BILLING")) {
+        const defaults = await defaultAddresses(tx, id);
+        const placeholders = defaults.filter((a) => hasBlankStreet(a));
+        if (defaults.length === 0) becomesDefaultBilling = true;
+        else if (
+          !hasBlankStreet(dto) &&
+          hasUsableState &&
+          placeholders.length === defaults.length
+        ) {
+          await tx.customerAddress.updateMany({
+            where: { customerId: id, isDefault: true, id: { in: placeholders.map((a) => a.id) } },
+            data: { isDefault: false },
+          });
+          becomesDefaultBilling = true;
+        }
       }
       return tx.customerAddress.create({
         data: {
@@ -732,7 +791,7 @@ export class CustomersService {
           state: dto.state,
           ...addressStateFields(dto.state, dto.zip),
           zip: dto.zip,
-          isDefault: dto.isDefault ?? false,
+          isDefault: dto.isDefault === true || becomesDefaultBilling,
           addressType: dto.addressType ?? "BILLING",
           ...(coords ?? {}),
         },
@@ -747,6 +806,7 @@ export class CustomersService {
       where: { id: addrId, customerId: id },
     });
     assertSafeAddress(dto, storedAddress);
+    let locationChanged = false;
     const updated = await this.prisma.tenantTransaction(async (tx) => {
       if (dto.isDefault) {
         await tx.customerAddress.updateMany({
@@ -758,26 +818,30 @@ export class CustomersService {
       // on every save) or the code is NULL: a written code must never contradict its zip.
       const current = await tx.customerAddress.findFirst({
         where: { id: addrId, customerId: id },
-        select: { state: true, zip: true, stateCode: true },
+        select: { line1: true, line2: true, city: true, state: true, zip: true, stateCode: true },
       });
       if (!current) throw new NotFoundException("Address not found");
       const stateChanged =
         (dto.state !== undefined && dto.state !== current.state) ||
         (dto.zip !== undefined && dto.zip !== current.zip) ||
         current.stateCode == null;
+      // Only a real change to a location field moves the pin; a default/label/type-only edit (or the
+      // form resending stored values) keeps lat/lng and skips the geocode. A blank resent for a null is no change.
+      locationChanged = LOCATION_FIELDS.some(
+        (f) => dto[f] !== undefined && (dto[f] ?? "") !== (current[f] ?? ""),
+      );
       return tx.customerAddress.update({
         where: { id: addrId, customerId: id },
-        // clear stale coords when the address changes
         data: {
           ...dto,
           ...(stateChanged
             ? addressStateFields(dto.state ?? current.state, dto.zip ?? current.zip)
             : {}),
-          lat: null,
-          lng: null,
+          ...(locationChanged ? { lat: null, lng: null } : {}),
         },
       });
     });
+    if (!locationChanged) return updated;
     // Re-geocode asynchronously (don't block the response)
     this.geocodeIfPossible(updated)
       .then((coords) => {
@@ -868,25 +932,35 @@ export class CustomersService {
     customerId: string,
     dto: {
       amount: number;
-      method: string;
+      method: PaymentMethod;
       reference?: string;
       notes?: string;
       receivedAt?: string;
     },
+    opts?: KeyedWriterOpts<any> & PaymentRefOpts,
   ) {
     await this.findCustomerOrThrow(customerId);
     if (roundMoney(dto.amount) <= 0) throw new BadRequestException("Amount must be greater than 0");
-    return this.prisma.forTenant().advancePayment.create({
-      data: {
-        customerId,
-        amount: roundMoney(dto.amount),
-        balance: roundMoney(dto.amount), // initial balance equals amount
-        method: dto.method as any,
-        reference: dto.reference,
-        notes: dto.notes,
-        receivedAt: dto.receivedAt ? new Date(dto.receivedAt) : new Date(),
-      },
-    });
+    const data = {
+      customerId,
+      amount: roundMoney(dto.amount),
+      balance: roundMoney(dto.amount), // initial balance equals amount
+      method: dto.method,
+      reference: dto.reference,
+      notes: dto.notes,
+      receivedAt: dto.receivedAt ? new Date(dto.receivedAt) : new Date(),
+    };
+    // SA-824: a key claims as the FIRST statement of one transaction with the create and its settle, or replays the
+    // stored advance. SA-837b item 2 / G4: with or without a key the create runs behind the ONE payment-reference
+    // predicate and lock (keyedPayment), so an advance repeats neither an advance nor an invoice payment.
+    return keyedPayment(this.prisma, advancePaymentKey(customerId, dto), opts, (o) =>
+      this.prisma.tenantTransaction(async (tx) => {
+        await o?.claim?.(tx);
+        const created = await tx.advancePayment.create({ data });
+        await o?.inTx?.(tx, created);
+        return created;
+      }),
+    );
   }
 
   async getAdvancePayments(customerId: string) {
@@ -1029,12 +1103,17 @@ export class CustomersService {
   async applyAdvancePaymentToInvoice(
     advancePaymentId: string,
     dto: { invoiceId: string; amount?: number },
+    /** The route's customer id (`:id`): the advance must belong to this customer (B808). */
+    routeCustomerId: string,
   ) {
     const apStub = await this.prisma.forTenant().advancePayment.findUnique({
       where: { id: advancePaymentId },
       select: { customerId: true },
     });
-    if (!apStub) throw new NotFoundException("Advance payment not found");
+    // B808: an advance under another customer is the same 404 as a missing advance.
+    if (!apStub || apStub.customerId !== routeCustomerId) {
+      throw new NotFoundException("Advance payment not found");
+    }
 
     try {
       const lock = await withAdvisoryLock(
@@ -1096,6 +1175,13 @@ export class CustomersService {
         include: { payments: true },
       });
       if (!inv) throw new NotFoundException("Invoice not found");
+      // B808: the invoice must belong to the advance's own customer (checked before any write).
+      if (inv.customerId !== ap.customerId) {
+        throw new BadRequestException({
+          code: API_ERROR_CODES.ADVANCE_CUSTOMER_MISMATCH,
+          message: "An advance payment can only be applied to an invoice of the same customer.",
+        });
+      }
       if (inv.status === "DRAFT" || CREDIT_NOT_APPLICABLE.includes(inv.status)) {
         throw new BadRequestException(
           `Cannot apply advance payment to invoice with status ${inv.status}`,
@@ -1505,10 +1591,30 @@ export class CustomersService {
     if (primary.deletedAt || secondary.deletedAt) {
       throw new ConflictException("Restore the customer first");
     }
+    // W-763 (SA-903): ONE business only, checked before the transaction reads or moves anything. A SUPER_ADMIN merge runs with
+    // no tenant, so `forTenant()` above is unscoped and the two rows can belong to different businesses. Refuse a
+    // pair of different (or missing) tenants, and a pair the session's own tenant does not own. The message names no tenant.
+    const sessionTenant = this.prisma.getTenantId() ?? null;
+    if (
+      !primary.tenantId ||
+      primary.tenantId !== secondary.tenantId ||
+      (sessionTenant !== null && primary.tenantId !== sessionTenant)
+    ) {
+      throw new BadRequestException({
+        code: API_ERROR_CODES.CUSTOMER_MERGE_TENANT_MISMATCH,
+        message: "These customers can't be merged: they don't belong to the same business.",
+      });
+    }
 
     try {
       return await this.prisma.tenantTransaction(
         async (tx) => {
+          // SA-893 (ROW_LOCK_ORDER, common/db-locks.ts): both customers' Returns are locked FIRST, id-sorted, before the
+          // first Order row lock below. Moving orders and invoices first and the returns last was Order -> Invoice ->
+          // Return, the inverse of every return path (Return -> Order): 40P01 against an inline approve on the same order.
+          // NULL-safe tenant filter (SA-900): a SUPER_ADMIN merge runs with no tenant and must still lock the Returns.
+          const tenantId = this.prisma.getTenantId() ?? null;
+          await tx.$queryRaw`SELECT id FROM "Return" WHERE "customerId" IN (${primaryId}, ${secondaryId}) AND (${tenantId}::text IS NULL OR "tenantId" = ${tenantId}) ORDER BY id FOR UPDATE`;
           // Move orders FIRST, then invoices (SA-218, house lock order: Order before Invoice).
           // Invoices first was an Invoice → Order edge: 40P01 against any Order → Invoice writer.
           await tx.order.updateMany({
@@ -1945,6 +2051,13 @@ export class CustomersService {
       await assertRecordFreeInTx(tx, id);
       await assertNoMoneyRecordsInTx(tx, [id]); // #2587/SA-516
       await assertNoDeliveryHistory(tx, [id]); // #2591/SA-516b
+      // B1241: orders that slipped in after the pre-flight booked stock; hand it back before they go.
+      const lockedOrderIds = await releaseLiveOrderStockInTx(
+        tx,
+        this.prisma.getTenantId(),
+        this.logger,
+        [id],
+      );
 
       // #2587/SA-516: credit notes are never destroyed (so no order links to clear either)
       await deleteMoneyRecordCas(tx.creditNote, { customerId: id });
@@ -1959,6 +2072,10 @@ export class CustomersService {
 
       // Orders and their items (must delete referencing records first)
       const orders = await tx.order.findMany({ where: { customerId: id }, select: { id: true } });
+      assertOrdersUnchanged(
+        orders.map((o) => o.id),
+        lockedOrderIds,
+      ); // B1241
       if (orders.length) {
         const orderIds = orders.map((o) => o.id);
         // Delivery mutations reference orders and order items
@@ -1975,7 +2092,7 @@ export class CustomersService {
           await tx.transaction.deleteMany({ where: { id: { in: txIds } } });
         }
         await tx.orderItem.deleteMany({ where: { orderId: { in: orderIds } } });
-        await tx.order.deleteMany({ where: { customerId: id } });
+        await tx.order.deleteMany({ where: { id: { in: orderIds } } });
       }
 
       // Estimates
@@ -2121,6 +2238,13 @@ export class CustomersService {
         const invoices = await readInvoicesAssertingNoneBlocking(tx, customerIds); // SA-510a (1)
         await assertNoMoneyRecordsInTx(tx, customerIds); // #2587/SA-516
         await assertNoDeliveryHistory(tx, customerIds); // #2591/SA-516b: the in-tx twin
+        // B1241: the live orders booked stock; hand it back (Order rows, then Products) before anything is deleted.
+        const lockedOrderIds = await releaseLiveOrderStockInTx(
+          tx,
+          tenantId,
+          this.logger,
+          customerIds,
+        );
         const invoiceIds = invoices.map((i) => i.id);
         if (invoiceIds.length) {
           // Reverse each invoice's regulated-sales ledger rows BEFORE its items
@@ -2131,8 +2255,11 @@ export class CustomersService {
           // carry ledger rows — createSplitInvoices writes them at creation,
           // before the DRAFT is ever sent — so filtering by status here would
           // reintroduce the leak.
+          // SA-839 F3: the Invoice rows (id order) before their ledger settles, so a concurrent
+          // return cancel / credit-note void of one of them serialises with this purge.
+          await lockInvoiceRowsInOrder(tx, this.prisma.getTenantId(), invoiceIds);
           for (const invoiceId of invoiceIds) {
-            await this.ledger.reverseInvoiceEntries({ invoiceId, db: tx });
+            await this.ledger.settleRegulatedLedger(tx, { kind: "INVOICE_ZEROED", invoiceId });
           }
           await deleteMoneyRecordCas(tx.invoicePayment, { invoiceId: { in: invoiceIds } });
           await tx.invoiceItem.deleteMany({ where: { invoiceId: { in: invoiceIds } } });
@@ -2157,6 +2284,10 @@ export class CustomersService {
           where: { customerId: { in: customerIds } },
           select: { id: true },
         });
+        assertOrdersUnchanged(
+          orders.map((o) => o.id),
+          lockedOrderIds,
+        ); // B1241
         if (orders.length) {
           const orderIds = orders.map((o) => o.id);
           await tx.deliveryMutation.deleteMany({ where: { orderId: { in: orderIds } } });
@@ -2171,7 +2302,7 @@ export class CustomersService {
             await tx.transaction.deleteMany({ where: { id: { in: txnIds } } });
           }
           await tx.orderItem.deleteMany({ where: { orderId: { in: orderIds } } });
-          await tx.order.deleteMany({ where: { customerId: { in: customerIds } } });
+          await tx.order.deleteMany({ where: { id: { in: orderIds } } });
         }
 
         const estimates = await tx.estimate.findMany({
@@ -2307,6 +2438,13 @@ export class CustomersService {
         const invoices = await readInvoicesAssertingNoneBlocking(tx, ids);
         await assertNoMoneyRecordsInTx(tx, ids); // #2587/SA-516
         await assertNoDeliveryHistory(tx, ids); // #2591/SA-516b: the in-tx twin
+        // B1241: as deleteAllCustomers: live orders hand their booked stock back first.
+        const lockedOrderIds = await releaseLiveOrderStockInTx(
+          tx,
+          this.prisma.getTenantId(),
+          this.logger,
+          ids,
+        );
         const invoiceIds = invoices.map((i) => i.id);
         if (invoiceIds.length) {
           // Reverse each invoice's regulated-sales ledger rows BEFORE its items
@@ -2317,8 +2455,11 @@ export class CustomersService {
           // carry ledger rows — createSplitInvoices writes them at creation,
           // before the DRAFT is ever sent — so filtering by status here would
           // reintroduce the leak.
+          // SA-839 F3: the Invoice rows (id order) before their ledger settles, so a concurrent
+          // return cancel / credit-note void of one of them serialises with this purge.
+          await lockInvoiceRowsInOrder(tx, this.prisma.getTenantId(), invoiceIds);
           for (const invoiceId of invoiceIds) {
-            await this.ledger.reverseInvoiceEntries({ invoiceId, db: tx });
+            await this.ledger.settleRegulatedLedger(tx, { kind: "INVOICE_ZEROED", invoiceId });
           }
           await deleteMoneyRecordCas(tx.invoicePayment, { invoiceId: { in: invoiceIds } });
           await tx.invoiceItem.deleteMany({ where: { invoiceId: { in: invoiceIds } } });
@@ -2344,6 +2485,10 @@ export class CustomersService {
           where: { customerId: { in: ids } },
           select: { id: true },
         });
+        assertOrdersUnchanged(
+          orders.map((o) => o.id),
+          lockedOrderIds,
+        ); // B1241
         if (orders.length) {
           const orderIds = orders.map((o) => o.id);
           await tx.deliveryMutation.deleteMany({ where: { orderId: { in: orderIds } } });
@@ -2358,7 +2503,7 @@ export class CustomersService {
             await tx.transaction.deleteMany({ where: { id: { in: txnIds } } });
           }
           await tx.orderItem.deleteMany({ where: { orderId: { in: orderIds } } });
-          await tx.order.deleteMany({ where: { customerId: { in: ids } } });
+          await tx.order.deleteMany({ where: { id: { in: orderIds } } });
         }
 
         // Estimates

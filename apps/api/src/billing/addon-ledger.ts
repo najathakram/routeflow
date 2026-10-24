@@ -70,10 +70,12 @@ export async function emitAddonDelta(
       status: true,
       class: true,
       deletedAt: true,
-      subscription: { select: { planKey: true } },
+      subscription: { select: { planKey: true, couponFull: true } },
     },
   });
-  if (!isPayingRow(row, row.subscription?.planKey ?? null)) return 0;
+  if (!isPayingRow(row, row.subscription?.planKey ?? null, row.subscription?.couponFull ?? false)) {
+    return 0;
+  }
 
   const type: BillingEventType =
     amountDelta > 0 ? BILLING_EVENTS.ADDON_ENABLED : BILLING_EVENTS.ADDON_DISABLED;

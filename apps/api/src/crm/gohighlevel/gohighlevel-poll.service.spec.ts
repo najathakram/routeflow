@@ -65,6 +65,14 @@ function make() {
     user: {
       findMany: jest.fn().mockResolvedValue([]),
     },
+    // SA-776: pollAll reads each connected tenant's status; every tenant is ACTIVE unless a test says otherwise.
+    tenant: {
+      findMany: jest
+        .fn()
+        .mockImplementation(async ({ where }: { where: { id: { in: string[] } } }) =>
+          where.id.in.map((id) => ({ id, status: "ACTIVE" })),
+        ),
+    },
   };
 
   const handoffService = { handle: jest.fn().mockResolvedValue(undefined) };
@@ -97,6 +105,43 @@ describe("GoHighLevelPollService", () => {
       (c: any[]) => c[0]?.where?.id === "conn-A",
     );
     expect(updateCallForA?.[0]?.data?.lastError).toBeTruthy();
+  });
+
+  // SA-776 — the poll IMPORTS opportunities as customers / orders, a TRANSACTIONAL job: only TRIAL / ACTIVE tenants.
+  it.each(["READ_ONLY", "SUSPENDED", "CANCELLED"])(
+    "SA-776 pollAll skips a %s tenant and still polls an ACTIVE one",
+    async (status) => {
+      const { svc, prisma } = make();
+      prisma.crmConnection.findMany.mockResolvedValue([
+        makeConnection({ id: "conn-A", tenantId: "tenant-A" }),
+        makeConnection({ id: "conn-B", tenantId: "tenant-B" }),
+      ]);
+      prisma.tenant.findMany.mockResolvedValue([
+        { id: "tenant-A", status },
+        { id: "tenant-B", status: "ACTIVE" },
+      ]);
+      const pollTenantSpy = jest.spyOn(svc, "pollTenant").mockResolvedValue(zeroCounts());
+
+      await svc.pollAll();
+
+      expect(pollTenantSpy).toHaveBeenCalledTimes(1);
+      expect(pollTenantSpy).toHaveBeenCalledWith("tenant-B");
+      // a skipped tenant is not an error: its connection row is left untouched
+      expect(prisma.crmConnection.update).not.toHaveBeenCalled();
+    },
+  );
+
+  it("SA-776 pollAll still polls a TRIAL tenant (the predicate is TRIAL + ACTIVE)", async () => {
+    const { svc, prisma } = make();
+    prisma.crmConnection.findMany.mockResolvedValue([
+      makeConnection({ id: "conn-A", tenantId: "tenant-A" }),
+    ]);
+    prisma.tenant.findMany.mockResolvedValue([{ id: "tenant-A", status: "TRIAL" }]);
+    const pollTenantSpy = jest.spyOn(svc, "pollTenant").mockResolvedValue(zeroCounts());
+
+    await svc.pollAll();
+
+    expect(pollTenantSpy).toHaveBeenCalledWith("tenant-A");
   });
 
   // M7 — pollAll must not select a tenant still inside its 429 cooldown window

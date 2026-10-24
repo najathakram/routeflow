@@ -112,8 +112,26 @@ describe("SettingsBillingController.createCheckout (WP3c, R2.9)", () => {
     expect(result).toEqual({ checkoutUrl: "https://checkout.stripe.com/x", sessionId: "cs_1" });
   });
 
-  it("falls back to localhost:3001 when FRONTEND_URL is unset", async () => {
+  it("uses the WEB_URL when FRONTEND_URL is unset (plan pick must never return to localhost)", async () => {
+    const savedWeb = process.env.WEB_URL;
     delete process.env.FRONTEND_URL;
+    process.env.WEB_URL = "https://www.routeflow.test";
+    try {
+      const { controller, billing } = make();
+      await controller.createCheckout({ tenantId: "t1", sub: "u1" } as any);
+      expect(billing.createCheckoutSession).toHaveBeenCalledWith("t1", {
+        successUrl: "https://www.routeflow.test/settings/billing?checkout=success",
+        cancelUrl: "https://www.routeflow.test/settings/billing?checkout=cancelled",
+      });
+    } finally {
+      if (savedWeb === undefined) delete process.env.WEB_URL;
+      else process.env.WEB_URL = savedWeb;
+    }
+  });
+
+  it("falls back to localhost:3001 when neither WEB_URL nor FRONTEND_URL is set (non-production only)", async () => {
+    delete process.env.FRONTEND_URL;
+    delete process.env.WEB_URL;
     const { controller, billing } = make();
     const user: AuthUser = { tenantId: "t1", sub: "u1" };
 

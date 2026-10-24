@@ -302,6 +302,7 @@ describeDb("#2476 webhook ledger exclusive claim on redelivery (real Postgres, S
         prisma as any,
         { log: async () => undefined } as any,
         { server: { to: () => ({ emit: () => undefined }) } } as any,
+        { flagForReview: async () => "no_matching_payment" } as any,
       );
       return { ctl, calls };
     }
@@ -395,6 +396,9 @@ describeDb("#2476 webhook ledger exclusive claim on redelivery (real Postgres, S
       {
         isConfigured: true,
         createBillingPortalSession: async () => ({ url: "https://billing.stripe.test/p/s" }),
+        // SA-736r: the coupon sync's two Stripe reads - inert (no discount; no upcoming invoice).
+        retrieveSubscriptionWithDiscounts: async () => ({ status: "active", discounts: [] }),
+        previewNextInvoice: async () => null,
       } as any,
       email as any,
       { invalidate: () => undefined } as any,
@@ -403,7 +407,7 @@ describeDb("#2476 webhook ledger exclusive claim on redelivery (real Postgres, S
       { notifyCancelled: async () => undefined, notifySuspended: async () => undefined } as any,
       planTransition as any,
       {
-        checkoutAddonLines: async () => ({ lineItems: [], skus: [] }),
+        checkoutAddonLines: async () => ({ lineItems: [], skus: [], invalid: [] }),
         adoptCheckoutAddons: async () => undefined,
       } as any, // mutations (SA-690)
     );

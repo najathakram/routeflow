@@ -8,6 +8,8 @@ import {
   sumDenominations,
   validOpeningFloat,
   validateDenominations,
+  dayCloseHandOvers,
+  dayCloseVerdictText,
 } from "./counter-day-close";
 
 describe("dayCloseDateLabel", () => {
@@ -166,16 +168,16 @@ describe("dayCloseZSections (SA-750r3 §4 order)", () => {
       handOver: { count: 2, cash: 50 },
     },
   };
-  it("prints the headline, then Money in, Credit & account, Refunds & net, Drawer, in that order", () => {
+  it("prints the headline, then Drawer, Money in, Credit & account, Refunds & net, in that order", () => {
     const z = dayCloseZSections(input);
     expect(z.headline).toEqual({ counted: 412.5, verdict: "short", amount: 2.5 });
     expect(z.groups.map((g) => g.heading)).toEqual([
+      "Drawer",
       "Money in",
       "Credit & account",
       "Refunds & net",
-      "Drawer",
     ]);
-    expect(z.groups[0].rows.map((r) => r.label)).toEqual([
+    expect(z.groups[1].rows.map((r) => r.label)).toEqual([
       "Cash",
       "Card",
       "Check",
@@ -183,16 +185,19 @@ describe("dayCloseZSections (SA-750r3 §4 order)", () => {
       "Total",
       "Pickup hand-overs (in till cash)",
     ]);
-    expect(z.groups[3].rows.map((r) => [r.label, r.amount])).toEqual([
+    // owner ruling 10-12: one name for the expected cash, "Variance" for the over/short row, and the unpaid pickups are a row in
+    // the Drawer group, not an orphan line under the report
+    expect(z.groups[0].rows.map((r) => [r.label, r.amount])).toEqual([
       ["Opening float", 100],
       ["Cash from sales", 330],
-      ["Cash in drawer", 415],
+      ["Expected cash", 415],
       ["Counted", 412.5],
-      ["Over/short", -2.5],
+      ["Variance", -2.5],
+      ["Unpaid pickups", 40],
     ]);
-    expect(z.groups[2].rows.at(-1)).toMatchObject({ label: "Net collected", bold: true });
-    expect(z.groups[3].rows[2]).toMatchObject({ label: "Cash in drawer", bold: true });
-    expect(z.notTakenAtTill).toBe(40);
+    expect(z.groups[3].rows.at(-1)).toMatchObject({ label: "Net collected", bold: true });
+    expect(z.groups[0].rows[2]).toMatchObject({ label: "Expected cash", bold: true });
+    expect(z).not.toHaveProperty("notTakenAtTill");
     expect(z.refundsTenderKnown).toBe(true);
   });
   it("every row is present at zero, over/even verdicts, and a close without handOver is 'never recorded' (null), not zero", () => {
@@ -207,10 +212,10 @@ describe("dayCloseZSections (SA-750r3 §4 order)", () => {
     };
     const z = dayCloseZSections(zero);
     expect(z.headline.verdict).toBe("even");
-    expect(z.groups[0].rows.every((r) => r.amount === 0 || r.label.startsWith("Pickup"))).toBe(
+    expect(z.groups[1].rows.every((r) => r.amount === 0 || r.label.startsWith("Pickup"))).toBe(
       true,
     );
-    expect(z.groups[0].rows.at(-1)).toEqual({
+    expect(z.groups[1].rows.at(-1)).toEqual({
       label: "Pickup hand-overs (in till cash)",
       amount: null,
     });
@@ -218,5 +223,17 @@ describe("dayCloseZSections (SA-750r3 §4 order)", () => {
       verdict: "over",
       amount: 1,
     });
+  });
+});
+
+describe("variance wording, one place (owner ruling 10-12)", () => {
+  it("Balanced, Short $X, Over $X: never Even, Under or Over/short", () => {
+    expect(dayCloseVerdictText("even", "$0.00")).toBe("Balanced");
+    expect(dayCloseVerdictText("short", "$2.50")).toBe("Short $2.50");
+    expect(dayCloseVerdictText("over", "$1.00")).toBe("Over $1.00");
+  });
+  it("hand-over counts", () => {
+    expect(dayCloseHandOvers(1)).toBe("1 hand-over");
+    expect(dayCloseHandOvers(3)).toBe("3 hand-overs");
   });
 });

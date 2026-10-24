@@ -28,6 +28,10 @@ const D = (n: number | string) => new Prisma.Decimal(n);
  * `type: "PURCHASE"` movements by effectiveAt — the compensating ADJUSTMENT is invisible to it — so it
  * would report the same delivery TWICE. This spec pins that mechanism against the real report
  * service, so the guard is not folklore: delete the guard and this is the report that gets filed.
+ *
+ * SA-808 §5: since the fix the compensation is itself a negative PURCHASE (dated at the receipt), so
+ * the same report nets; the first case below is the LEGACY ledger (rows written before the fix), the
+ * second is the ledger an edit writes now.
  */
 describe("TobaccoReportService × a compensated-and-reposted PO receipt", () => {
   let service: TobaccoReportService;
@@ -47,7 +51,7 @@ describe("TobaccoReportService × a compensated-and-reposted PO receipt", () => 
     service = module.get(TobaccoReportService);
   });
 
-  it("counts the delivery twice: the report reads only PURCHASE rows, so the compensation does not net the re-post", async () => {
+  it("LEGACY ledger: counts the delivery twice — the report reads only PURCHASE rows, so an ADJUSTMENT compensation does not net the re-post", async () => {
     prisma.product.findMany.mockResolvedValue([
       {
         id: "p1",
@@ -82,5 +86,37 @@ describe("TobaccoReportService × a compensated-and-reposted PO receipt", () => 
     expect(created.totalQtyPurchased).toBe(20);
     expect(created.totalPurchaseValue).toBe(100);
     expect(created.totalQtyPurchased).not.toBe(10); // the true receipt
+  });
+
+  it("SA-808 §5: the compensation is a negative PURCHASE, so the same delivery is filed ONCE, at the edited cost", async () => {
+    prisma.product.findMany.mockResolvedValue([
+      {
+        id: "p1",
+        name: "Cigarillos",
+        sku: "C-1",
+        unit: "pack",
+        currentStock: D(10),
+        averageCost: D(6),
+      },
+    ]);
+    // The same re-apply, as written now:
+    //   PURCHASE 10 @ $4 (original) · PURCHASE −10 @ $4 (compensation) · PURCHASE 10 @ $6 (re-post).
+    prisma.stockMovement.findMany
+      .mockResolvedValueOnce([
+        { productId: "p1", quantity: D(10), unitCost: D(4) },
+        { productId: "p1", quantity: D(-10), unitCost: D(4) },
+        { productId: "p1", quantity: D(10), unitCost: D(6) },
+      ])
+      .mockResolvedValueOnce([]);
+    prisma.invoiceItem.findMany.mockResolvedValue([]);
+    prisma.tobaccoReport.findFirst.mockResolvedValue(null);
+    prisma.tobaccoReport.create.mockResolvedValue({ id: "rep-1" });
+    prisma.tenantConfig.findUnique.mockResolvedValue({ businessName: "Acme Wholesale" });
+
+    await service.generateForPeriod(2026, 6, { userId: "user-1" });
+
+    const created = prisma.tobaccoReport.create.mock.calls[0][0].data;
+    expect(created.totalQtyPurchased).toBe(10);
+    expect(created.totalPurchaseValue).toBe(60);
   });
 });

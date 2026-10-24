@@ -3,6 +3,7 @@
  * tested directly (mobile Jest is pure-logic only) and reused by both the full
  * ProductForm screen and the compact InlineCreateProductSheet.
  */
+import { applyLadderChange } from "@routeflow/pricing";
 
 export interface ProductFormValues {
   name: string;
@@ -233,4 +234,28 @@ export function buildProductPayload(
     regUomCase: regTrio(form.regUomCase),
     regUomUnit: regTrio(form.regUomUnit),
   };
+}
+
+type TierFormKey = "priceTier2" | "priceTier3" | "priceTier4" | "priceTier5";
+
+/**
+ * The list field was committed (onEndEditing) going from `before` to `after`: the tier fields to update, by the ONE
+ * ladder rule web uses (`applyLadderChange("pricePerUnit", …)`, SA ruling 2026-10-14). A tier the operator typed in
+ * this session (`touched`) always wins; blank tiers count as 0 and stay. Returns only the fields that change.
+ */
+export function listCommitTierPatch(
+  before: string,
+  after: string,
+  form: Pick<ProductFormValues, TierFormKey>,
+  touched: ReadonlySet<string>,
+): Partial<Record<TierFormKey, string>> {
+  const untouched: Partial<Record<TierFormKey, string>> = {};
+  for (const k of ["priceTier2", "priceTier3", "priceTier4", "priceTier5"] as const) {
+    if (!touched.has(k)) untouched[k] = form[k];
+  }
+  const moved = applyLadderChange("pricePerUnit", before, after, untouched);
+  // Only untouched tiers may move: a typed one is absent above (read as 0) and must keep its value (#3470 review).
+  const out: Partial<Record<TierFormKey, string>> = {};
+  for (const k of Object.keys(moved) as TierFormKey[]) if (k in untouched) out[k] = moved[k];
+  return out;
 }

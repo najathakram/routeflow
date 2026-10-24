@@ -12,6 +12,7 @@ import {
   useGetPaymentImageUrl,
 } from "@/lib/api/invoices";
 import { Badge, Button, Card, useToast } from "@routeflow/ui/web";
+import { dayClosedCopy } from "@/lib/day-closed-copy";
 import { fmt, fmtDate } from "@/lib/formatting";
 import { paymentMethodLabel } from "@/lib/payment-methods";
 
@@ -61,8 +62,13 @@ export default function PaymentDetailPage() {
     try {
       await voidPayment.mutateAsync({ invoiceId: payment.invoice.id, paymentId: payment.id });
       toast({ title: "Payment voided", variant: "success" });
-    } catch {
-      toast({ title: "Failed to void payment", variant: "error" });
+    } catch (err: unknown) {
+      // The global toast is quiet for a closed-day refusal (the hook's meta): this one says why, once.
+      toast({
+        title: "Failed to void payment",
+        description: dayClosedCopy(err) ?? undefined,
+        variant: "error",
+      });
     }
   };
 

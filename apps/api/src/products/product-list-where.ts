@@ -26,7 +26,9 @@ export function buildProductListWhere(
     // OR: [] when the code yields no candidates — matches nothing, correctly.
     where.OR = buildScanSearchOr(query.scanCode);
   }
-  if (query.category) where.category = query.category;
+  // Case-insensitive: the category list de-duplicates by lower case and offers ONE spelling, so an exact match would drop
+  // the products stored under another casing from the very category the operator picked (counter CQ-10, the products page).
+  if (query.category) where.category = { equals: query.category.trim(), mode: "insensitive" };
   if (query.isActive !== undefined) where.isActive = query.isActive;
   if (query.isTobacco !== undefined) where.isTobacco = query.isTobacco;
   if (query.portalVisible !== undefined) {

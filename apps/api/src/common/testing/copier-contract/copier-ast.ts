@@ -46,6 +46,9 @@ const keyName = (p: ts.ObjectLiteralElementLike): string | null => {
 };
 
 /** Outermost object literals under `node` (does not descend into a literal it has collected). */
+/** Calls that return their first argument's rows unchanged but for added keys (line-author-channel.ts). */
+const PASS_THROUGH_CALLS = new Set(["withAuthor"]);
+
 function outermostLiterals(
   node: ts.Node,
   fn: ts.Node,
@@ -65,6 +68,15 @@ function outermostLiterals(
       else rets.push(n.body);
       return rets.forEach(visit);
     }
+    if (
+      ts.isCallExpression(n) &&
+      ts.isIdentifier(n.expression) &&
+      PASS_THROUGH_CALLS.has(n.expression.text) &&
+      n.arguments[0]
+    )
+      // SA ruling (#3418): `withAuthor(rows, marker)` returns `rows`, each with `authorChannel` added: the line
+      // literals are the first argument's (the marker itself is classified per copier, not key-checked).
+      return visit(n.arguments[0]);
     if (ts.isCallExpression(n)) {
       // `.map((i) => ({ … }))`: a CALLBACK's returns are lines. Any other argument (`build({ … })`, a
       // local literal passed to a helper) is that helper's INPUT, not a written row, so it is opaque.

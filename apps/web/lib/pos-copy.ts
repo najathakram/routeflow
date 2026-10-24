@@ -1,20 +1,22 @@
+import { COUNTER_COPY } from "@routeflow/types";
+
 /**
- * POS mode (SA-763r P-2) visible copy: fixed strings, never an API message (lib/raw-message-allowlist.json is a
+ * Store pickup (formerly "POS mode": SA-763r P-2; renamed by I-120 / SA-861 rule 10) visible copy: fixed strings, never an API message (lib/raw-message-allowlist.json is a
  * ratchet: a new surface must not read `.response.data.message`).
  */
 export const POS_COPY = {
   /** The builder's title and subtitle when POS mode is forced by the capability (a store-only business). */
   builderTitle: "Invoice a customer",
-  builderSubtitle:
-    "Sold in store. The invoice is made when you confirm; hand the goods over when they collect.",
-  switchLabel: "POS mode",
-  switchHint: "A named customer, invoiced now. For walk-in, pay-now sales use Counter.",
-  switchFailed: "Couldn't save your POS mode setting. Try again.",
-  confirmAndInvoice: "Confirm & invoice",
+  builderSubtitle: "Sold in store. Confirming creates the invoice. Hand goods over at pickup.",
+  switchLabel: COUNTER_COPY.storePickup,
+  switchHint: "A named customer, invoiced now. For walk-in sales paid now, use Counter sale.",
+  switchFailed: `Couldn't save your ${COUNTER_COPY.storePickup} setting. Try again.`,
+  confirmAndInvoice: "Confirm and invoice",
   confirmOnly: "Confirm only",
   confirmedInvoiced: "Order confirmed and invoiced",
   confirmedOnly: "Order confirmed",
   confirmMissing: "Order created, but it couldn't be confirmed. Open it to confirm.",
+  mergedConfirmMissing: "Order merged, but it couldn't be confirmed. Open it to confirm.",
   invoiceMissing:
     "Order confirmed, but the invoice wasn't created. Open it and choose Create invoice.",
   mergeTitle: "This customer already has an open counter order",
@@ -34,5 +36,6 @@ export const POS_COPY = {
   printInvoice: "Print invoice",
   invoiceCreated: "Invoice created",
   switchToDelivery: "Switch to delivery",
+  shipByCarrier: "Ship by carrier…",
   invoiceFailed: "Couldn't create the invoice. Try again.",
 } as const;

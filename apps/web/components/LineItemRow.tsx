@@ -3,6 +3,7 @@
 import * as React from "react";
 import { X, StickyNote, Pencil } from "lucide-react";
 import { cn, type BadgeStatus } from "@routeflow/ui/web";
+import { CasesPiecesInput } from "./CasesPiecesInput";
 import {
   computeLineSubtotal,
   perUnitPrice,
@@ -15,6 +16,7 @@ import { MoneyInput } from "@/components/MoneyInput";
 import { PriceChips, PriceHistoryButton } from "@/components/PriceHistory";
 import type { PackBase } from "@/lib/order-line-unit";
 import type { TrackedCategory } from "@/lib/api/tracked-categories";
+import type { PriceSummaryResponse } from "@routeflow/types";
 
 /**
  * A single order line item, as built by `CreateOrderModal` (and, in future, the
@@ -80,10 +82,23 @@ export interface LineItemRowProps {
     customerId?: string | null;
     customerName?: string | null;
     onUsePrice: (price: number) => void;
+    /** The order screen's ONE batched `usePriceSummary` result; the "Recent prices" chips read their
+     *  line's entry from it (no per-line request). Absent = no chips. */
+    summary?: PriceSummaryResponse;
+    /** The order being edited/copied: its own price is never shown as history (hunt2 F6). */
+    excludeOrderId?: string | null;
   };
   /** Last-scanned highlight ring (scanner-redesign-spec.md §4.1/§5.1) — unused by
    *  `CreateOrderModal`, which never passes it; reserved for the scan screen. */
   highlighted?: boolean;
+  /**
+   * Q09: whether this is the line the operator is working on. Only the active line shows the "Tap to change" hint (the
+   * pencil already says "editable" on every line). Omitted = always active, so a caller with no notion of an
+   * active line (the scan screen, other pages) keeps the hint it always had.
+   */
+  active?: boolean;
+  /** Q09: the operator focused or tapped this line - the caller makes it the active one. */
+  onActivate?: () => void;
 
   onQtyDelta: (delta: number) => void;
   onSetBoxes: (value: number) => void;
@@ -154,6 +169,9 @@ export const caseWord = (n: number | null | undefined, w: UnitWords = unitWords(
 export const unitWord = (n: number | null | undefined, w: UnitWords = unitWords()) =>
   w.baseShortFor(n ?? 0);
 
+/** Moved to CasesPiecesInput (O1); re-exported so existing importers (PriceEditor, CounterLinePriceEdit) are unchanged. */
+export { useLooseUnitsToggle } from "./CasesPiecesInput";
+
 /**
  * Renders one order line item: name/price display, the case/unit qty controls
  * (or a plain +/- stepper for non-boxed products), the live line total, the
@@ -161,21 +179,6 @@ export const unitWord = (n: number | null | undefined, w: UnitWords = unitWords(
  * `CreateOrderModal.tsx`'s inline `.map()` — every branch below existed there
  * unchanged; see that file's git history for prior art. No behavior change.
  */
-/**
- * #2696 (d): on a case-packed line in Case mode the loose-units field is OPT-IN ("+ units"), never
- * shown by default — so a new line submits pieces = 0. Shown whenever pieces > 0 regardless (an
- * edited line with boxes + pieces, or one switched back from Unit mode, never hides its units).
- * Shared by the row and the scan screen's PriceEditor so the two cannot drift.
- */
-export function useLooseUnitsToggle(pieces: number | null | undefined) {
-  const [open, setOpen] = React.useState(false);
-  return {
-    showLooseUnits: open || (pieces ?? 0) > 0,
-    openLooseUnits: () => setOpen(true),
-    closeLooseUnits: () => setOpen(false),
-  };
-}
-
 export function LineItemRow({
   item: li,
   category,
@@ -185,6 +188,8 @@ export function LineItemRow({
   priceHistoryEntry,
   customerPriceHistory,
   highlighted,
+  active = true,
+  onActivate,
   onQtyDelta,
   onSetBoxes,
   onSetPieces,
@@ -205,9 +210,15 @@ export function LineItemRow({
   onSetQty,
   rowRef,
 }: LineItemRowProps) {
-  const { showLooseUnits, openLooseUnits, closeLooseUnits } = useLooseUnitsToggle(li.pieces);
   const qtyLocked = !!pendingUnit;
+  // F08: set when a typed quantity below 1 was raised to 1, so the row says so (cleared by the next valid quantity).
+  const [qtyBelowMin, setQtyBelowMin] = React.useState(false);
+  const showQtyNote = qtyBelowMin && !li.unitsPerBox; // only the plain (unit-sold) stepper can type a 0
+  const qtyNoteId = React.useId();
   const w = unitWords({ packLabel: li.packLabel, baseUnitLabel: li.baseLabel });
+  // F15/Q12: a pack line's price is per PACK, so its suffix is the same pack word as the toggle and the qty
+  // (not the product's stored unit, e.g. "case" beside a "Box" toggle). A named-unit or single-unit line keeps its own unit.
+  const priceUnit = li.unitsPerBox && li.unitsPerBox > 1 && !li.unitLabel ? w.pack.lower : li.unit;
   const historyButton = customerPriceHistory && !li.isUnlisted && (
     <PriceHistoryButton
       customerId={customerPriceHistory.customerId}
@@ -217,18 +228,23 @@ export function LineItemRow({
       unitHint={li.unitLabel ?? (li.unitsPerBox && li.unitsPerBox > 1 ? "case" : li.unit)}
       packHint={li.unitsPerBox ?? null}
       onUsePrice={customerPriceHistory.onUsePrice}
+      excludeOrderId={customerPriceHistory.excludeOrderId}
       focusSelector="[data-line-price-input]"
     />
   );
   return (
     <li
       ref={rowRef}
+      onFocusCapture={onActivate}
+      onPointerDownCapture={onActivate}
       className={cn(
         // B565: under `sm` the row is a 2-column grid (info | actions, then qty | total) so
         // the boxed controls no longer squeeze the info column to ~40px at 390px. From `sm`
         // up it is the original single flex row — the grid-placement classes on the
         // children are inert inside a flex container.
         "grid grid-cols-[minmax(0,1fr)_auto] gap-x-2 gap-y-2 px-3 py-2.5 sm:flex sm:items-start sm:gap-3",
+        // Row 731: from `sm` the row is a flex line; while the qty-0 note shows it wraps so the note takes a line of its own.
+        showQtyNote ? "sm:flex-wrap" : "",
         category ? "border-l-2 border-l-amber-300 bg-amber-50/30" : "",
         highlighted ? "ring-2 ring-brand-500" : "",
       )}
@@ -275,78 +291,90 @@ export function LineItemRow({
         <div className="col-start-1 row-start-1 min-w-0 flex-1">
           <p className="truncate text-sm font-medium text-navy">{li.productName}</p>
           {/* Price display with special/discount indicators */}
+          {/* Q09: the price, its pencil and the history icon share ONE row (history used to sit alone on the next row). The
+              tap-to-edit target is only the price + pencil, so the history button (a sibling) never opens the editor. */}
           <div
-            className={cn(
-              "mt-0.5 flex flex-wrap items-center gap-1.5",
-              onTapPrice ? "cursor-pointer" : "",
-            )}
-            onClick={qtyLocked ? undefined : onTapPrice}
-            aria-disabled={onTapPrice && qtyLocked ? true : undefined}
-            role={onTapPrice ? "button" : undefined}
-            tabIndex={onTapPrice ? 0 : undefined}
+            data-testid="line-price-row"
+            className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5"
           >
-            {li.priceType === "SPECIAL" ? (
-              <>
-                <span className="text-xs text-navy/70 line-through">
-                  ${li.listPrice.toFixed(2)}
-                </span>
-                <span className="text-xs font-medium text-emerald-600">
-                  ${li.unitPrice.toFixed(2)} / {li.unit}
-                </span>
-                <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 ring-1 ring-emerald-200">
-                  Special price
-                </span>
-              </>
-            ) : li.priceType === "DISCOUNTED" ? (
-              <>
-                <span className="text-xs text-navy/70 line-through">
-                  ${li.listPrice.toFixed(2)}
-                </span>
-                <span className="text-xs font-medium text-amber-600">
-                  ${li.unitPrice.toFixed(2)} / {li.unit}
-                </span>
-                <span className="rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 ring-1 ring-amber-200">
-                  Discounted
-                </span>
-              </>
-            ) : li.priceType === "MANUAL" ? (
-              <>
-                {/* Upsell (sold above list). Operator-only green badge;
+            <div
+              className={cn(
+                "flex flex-wrap items-center gap-1.5",
+                onTapPrice ? "cursor-pointer" : "",
+              )}
+              onClick={qtyLocked ? undefined : onTapPrice}
+              aria-disabled={onTapPrice && qtyLocked ? true : undefined}
+              role={onTapPrice ? "button" : undefined}
+              tabIndex={onTapPrice ? 0 : undefined}
+            >
+              {li.priceType === "SPECIAL" ? (
+                <>
+                  <span className="text-xs text-navy/70 line-through">
+                    ${li.listPrice.toFixed(2)}
+                  </span>
+                  <span className="text-xs font-medium text-emerald-600">
+                    ${li.unitPrice.toFixed(2)} / {priceUnit}
+                  </span>
+                  <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 ring-1 ring-emerald-200">
+                    Special price
+                  </span>
+                </>
+              ) : li.priceType === "DISCOUNTED" ? (
+                <>
+                  <span className="text-xs text-navy/70 line-through">
+                    ${li.listPrice.toFixed(2)}
+                  </span>
+                  <span className="text-xs font-medium text-amber-600">
+                    ${li.unitPrice.toFixed(2)} / {priceUnit}
+                  </span>
+                  <span className="rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 ring-1 ring-amber-200">
+                    Discounted
+                  </span>
+                </>
+              ) : li.priceType === "MANUAL" ? (
+                <>
+                  {/* Upsell (sold above list). Operator-only green badge;
                     no strikethrough — the base is never shown to the buyer. */}
-                <span className="text-xs font-medium text-emerald-600">
-                  ${li.unitPrice.toFixed(2)} / {li.unit}
+                  <span className="text-xs font-medium text-emerald-600">
+                    ${li.unitPrice.toFixed(2)} / {priceUnit}
+                  </span>
+                  <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 ring-1 ring-emerald-200">
+                    Upsell
+                  </span>
+                </>
+              ) : (
+                <span className="text-xs text-navy/70">
+                  ${li.unitPrice.toFixed(2)} / {priceUnit}
                 </span>
-                <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 ring-1 ring-emerald-200">
-                  Upsell
-                </span>
-              </>
-            ) : (
-              <span className="text-xs text-navy/70">
-                ${li.unitPrice.toFixed(2)} / {li.unit}
-              </span>
-            )}
-            {onTapPrice && (
+              )}
+              {onTapPrice && (
+                <>
+                  <Pencil aria-label="Change price" className="h-3 w-3 text-navy/50" />
+                  {active && (
+                    <span className="text-[10px] text-navy/50 underline sm:hidden">
+                      Tap to change
+                    </span>
+                  )}
+                </>
+              )}
+            </div>
+            {historyButton && (
               <>
-                <Pencil aria-label="Change price" className="h-3 w-3 text-navy/50" />
-                <span className="text-[10px] text-navy/50 underline sm:hidden">Tap to change</span>
+                {historyButton}
+                <span className="hidden whitespace-nowrap text-[10px] text-navy/60 sm:inline">
+                  Price history
+                </span>
+                <PriceChips
+                  entry={customerPriceHistory?.summary?.[li.productId]}
+                  unitHint={
+                    li.unitLabel ?? (li.unitsPerBox && li.unitsPerBox > 1 ? "case" : li.unit)
+                  }
+                  packHint={li.unitsPerBox ?? null}
+                  onUsePrice={customerPriceHistory!.onUsePrice}
+                />
               </>
             )}
           </div>
-          {/* Price history: its own row so it shows in EVERY configuration — the price input only
-              renders without `onTapPrice`, and both real callers pass it (tap-to-edit price). */}
-          {historyButton && (
-            <div className="mt-0.5 flex items-center gap-1 text-[10px] text-navy/60">
-              {historyButton}
-              <span className="hidden whitespace-nowrap sm:inline">Price history</span>
-              <PriceChips
-                customerId={customerPriceHistory?.customerId}
-                productId={li.productId || null}
-                unitHint={li.unitLabel ?? (li.unitsPerBox && li.unitsPerBox > 1 ? "case" : li.unit)}
-                packHint={li.unitsPerBox ?? null}
-                onUsePrice={customerPriceHistory!.onUsePrice}
-              />
-            </div>
-          )}
           {/* Price per piece (when product has box packaging) */}
           {li.unitsPerBox && li.unitsPerBox > 1 && (
             <div className="mt-0.5 text-[10px] text-navy/70">
@@ -486,83 +514,15 @@ export function LineItemRow({
               </span>
             </div>
           ) : (
-            // Two no-wrap groups in a wrapping row: "[n] cases" and "+ [n] units" together
-            // need ~186px, but under `sm` the column's track can be narrower (~170-182px at
-            // 320px, less as the line total in column 2 grows). The second group drops to
-            // its own line there instead of overflowing into the line total; on one line
-            // (every `sm`+ layout) nothing changes.
-            <div
-              data-testid="line-qty-cases-row"
-              className="flex flex-wrap items-center gap-x-1.5 gap-y-1"
-            >
-              <span className="flex items-center gap-1.5 whitespace-nowrap">
-                <input
-                  disabled={qtyLocked}
-                  type="number"
-                  min={0}
-                  value={li.boxes ?? 0}
-                  onChange={(e) => onSetBoxes(parseInt(e.target.value, 10))}
-                  onFocus={(e) => e.target.select()}
-                  className="w-12 rounded border border-surface-border bg-white px-1.5 py-1 text-center text-sm font-semibold text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
-                  title={`Number of whole ${w.pack.lowerOther}`}
-                />
-                <span
-                  className="min-w-0 max-w-[6rem] truncate text-xs text-navy/70"
-                  title={w.isDefaultPack ? undefined : w.pack.other}
-                >
-                  {caseWord(li.boxes ?? 0, w)}
-                </span>
-              </span>
-              {showLooseUnits ? (
-                <span className="flex items-center gap-1.5 whitespace-nowrap">
-                  <span className="text-xs text-navy/30">+</span>
-                  <input
-                    disabled={qtyLocked}
-                    type="number"
-                    min={0}
-                    max={li.unitsPerBox - 1}
-                    value={li.pieces ?? 0}
-                    onChange={(e) => onSetPieces(parseInt(e.target.value, 10))}
-                    onFocus={(e) => e.target.select()}
-                    className="w-12 rounded border border-surface-border bg-white px-1.5 py-1 text-center text-sm font-semibold text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
-                    title={`Extra ${w.base.lowerOther} (less than a full ${w.pack.lower})`}
-                    aria-label={`Extra ${w.base.lowerOther}`}
-                  />
-                  <span
-                    className="min-w-0 max-w-[6rem] truncate text-xs text-navy/70"
-                    title={w.isDefaultBase ? undefined : w.base.other}
-                  >
-                    {unitWord(li.pieces ?? 0, w)}
-                  </span>
-                  {/* SA-563: hidden at 0 cases — the units ARE the line then, never a removable extra. */}
-                  {(li.boxes ?? 0) >= 1 && (
-                    <button
-                      disabled={qtyLocked}
-                      type="button"
-                      onClick={() => {
-                        onSetPieces(0);
-                        closeLooseUnits();
-                      }}
-                      aria-label={`Remove extra ${w.base.lowerOther}`}
-                      className="relative before:absolute before:-inset-2 before:content-[''] text-xs text-navy/50 hover:text-danger"
-                    >
-                      ×
-                    </button>
-                  )}
-                </span>
-              ) : (
-                <button
-                  type="button"
-                  disabled={qtyLocked}
-                  onClick={openLooseUnits}
-                  aria-label={`+ ${w.base.lowerOther}: add extra ${w.base.lowerOther}`}
-                  // hitSlop 8 (mobile parity, #2706): the pseudo-element grows the tap target, not the layout.
-                  className="relative before:absolute before:-inset-2 before:content-[''] whitespace-nowrap rounded border border-dashed border-surface-border px-1.5 py-0.5 text-[10px] font-medium text-navy/60 hover:bg-surface-raised"
-                >
-                  + {w.base.lowerOther}
-                </button>
-              )}
-            </div>
+            <CasesPiecesInput
+              boxes={li.boxes}
+              pieces={li.pieces}
+              unitsPerBox={li.unitsPerBox}
+              words={w}
+              disabled={qtyLocked}
+              onSetBoxes={onSetBoxes}
+              onSetPieces={onSetPieces}
+            />
           )}
           <span className="text-[10px] text-navy/30">
             1 {w.pack.lower} = {li.unitsPerBox} {w.base.short.other}
@@ -586,13 +546,17 @@ export function LineItemRow({
               ? "Line quantity controls, locked while the selling unit loads"
               : "Line quantity controls"
           }
-          className="col-start-1 row-start-2 m-0 flex min-w-0 items-center gap-1 border-0 p-0"
+          className="col-start-1 row-start-2 m-0 flex min-w-0 flex-wrap items-center gap-1 border-0 p-0"
         >
+          {/* Q13: 24 px at lg+ (a pointer), 44 px below lg (390 phone and 768 tablet are touch). */}
           <button
             type="button"
-            onClick={() => onQtyDelta(-1)}
+            onClick={() => {
+              setQtyBelowMin(false);
+              onQtyDelta(-1);
+            }}
             disabled={li.qty <= 1}
-            className="flex h-6 w-6 items-center justify-center rounded border border-surface-border text-sm text-navy/70 hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-30 transition-colors"
+            className="flex h-6 w-6 items-center justify-center rounded border border-surface-border text-sm text-navy/70 hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-30 transition-colors max-lg:h-11 max-lg:w-11 max-lg:text-lg"
           >
             −
           </button>
@@ -603,10 +567,16 @@ export function LineItemRow({
               inputMode="numeric"
               min={1}
               value={li.qty}
-              onChange={(e) => onSetQty(parseInt(e.target.value, 10))}
+              onChange={(e) => {
+                const typed = parseInt(e.target.value, 10);
+                // F08: a typed 0 (or less) is raised to 1 by the order; say so. An emptied field (NaN) is mid-edit.
+                setQtyBelowMin(Number.isFinite(typed) && typed < 1);
+                onSetQty(typed);
+              }}
               onFocus={(e) => e.target.select()}
               aria-label="Quantity"
-              className="h-6 w-10 rounded border border-surface-border bg-white px-1 text-center text-sm font-semibold text-navy [appearance:textfield] focus:outline-none focus:ring-1 focus:ring-brand-500 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+              aria-describedby={qtyBelowMin ? qtyNoteId : undefined}
+              className="h-6 w-10 max-lg:h-11 max-lg:w-14 max-lg:text-base rounded border border-surface-border bg-white px-1 text-center text-sm font-semibold text-navy [appearance:textfield] focus:outline-none focus:ring-1 focus:ring-brand-500 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
             />
           ) : (
             <span className="w-8 text-center text-sm font-semibold text-navy">{li.qty}</span>
@@ -614,8 +584,11 @@ export function LineItemRow({
           <button
             type="button"
             disabled={qtyLocked}
-            onClick={() => onQtyDelta(1)}
-            className="flex h-6 w-6 items-center justify-center rounded border border-surface-border text-sm text-navy/70 hover:bg-surface-raised transition-colors"
+            onClick={() => {
+              setQtyBelowMin(false);
+              onQtyDelta(1);
+            }}
+            className="flex h-6 w-6 items-center justify-center rounded border border-surface-border text-sm text-navy/70 hover:bg-surface-raised transition-colors max-lg:h-11 max-lg:w-11 max-lg:text-lg"
           >
             +
           </button>
@@ -659,6 +632,18 @@ export function LineItemRow({
           <X className="h-3.5 w-3.5" />
         </button>
       </div>
+      {/* Row 731 (F08): the qty-0 note is a full-row sibling of the qty controls, NOT inside the qty fieldset: its
+          max-content width inside that flex-wrap box widened the qty column and collapsed the name/price column. Last in
+          the DOM so it takes its own line (grid: row 3 across both columns; flex from sm: a full-basis wrapped line). */}
+      {showQtyNote && (
+        <p
+          id={qtyNoteId}
+          role="status"
+          className="col-span-full row-start-3 text-[11px] leading-snug text-amber-700 sm:basis-full"
+        >
+          Quantity must be at least 1. Remove the line to drop it.
+        </p>
+      )}
     </li>
   );
 }

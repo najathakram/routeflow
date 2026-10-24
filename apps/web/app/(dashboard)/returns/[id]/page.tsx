@@ -18,6 +18,7 @@ import {
 import { Button, Card, Modal, Select, cn, useToast, Badge } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import type { InlineRefundTender } from "@routeflow/types";
+import { undoAmendedPeriodNote } from "@routeflow/types";
 import { refundSuccessToast } from "@/lib/refund-toast";
 import { TENDER_OPTIONS } from "../_components/refund-copy";
 import { RefundSlipAction } from "../_components/RefundSlipAction";
@@ -491,9 +492,15 @@ export default function ReturnDetailPage() {
 
   const handleCancel = () => {
     cancelReturn.mutate(ret.id, {
-      onSuccess: () => {
+      onSuccess: (res) => {
         setIsCancelOpen(false);
-        toast({ title: "Return cancelled", variant: "info" });
+        // SA-839 §3: one more line when the return's reversal sat in an already-filed month.
+        const note = undoAmendedPeriodNote(res?.amendedPeriod, "return");
+        toast({
+          title: "Return cancelled",
+          variant: "info",
+          ...(note ? { description: note } : {}),
+        });
       },
       onError: () => {
         toast({

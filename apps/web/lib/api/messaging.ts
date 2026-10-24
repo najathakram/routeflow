@@ -65,11 +65,12 @@ export interface MessagingConfig {
   msgsMeter: MsgsMeter | null;
 }
 
-export function useMessagingConfig() {
+export function useMessagingConfig(opts?: { enabled?: boolean }) {
   return useQuery<MessagingConfig>({
     queryKey: ["messaging-config"],
     queryFn: () => apiClient.get("/messaging/config").then((r) => r.data),
     staleTime: 60_000,
+    enabled: opts?.enabled ?? true,
   });
 }
 

@@ -260,3 +260,40 @@ describe("BuyerInvoicesPage — status badge tones (B1122 fold, L-072)", () => {
     expect(await pill("Sent")).toHaveClass("bg-warning-bg");
   });
 });
+
+describe("BuyerInvoicesPage — paid at sale shows no due date (row 401 follow-up)", () => {
+  beforeEach(() => {
+    push.mockClear();
+    mockGet.mockReset();
+  });
+
+  const rows = () => [
+    invoiceListItem({
+      id: "till",
+      invoiceNumber: "INV-TILL",
+      status: "PAID",
+      balanceDue: 0,
+      paidAmount: 12,
+      total: 12,
+      paidAtSale: true,
+    }),
+    invoiceListItem({ id: "acct", invoiceNumber: "INV-ACCT", paidAtSale: false }),
+  ];
+
+  it("the table's Due Date cell is a dash for the till sale and the date for any other invoice", async () => {
+    respondWith(rows());
+    const body = await renderRows();
+    expect(cell(body[0], "Due Date")).toBe("\u2014");
+    expect(cell(body[1], "Due Date")).toBe("Oct 10, 2026");
+  });
+
+  it("the phone card drops ` · Due …` for the till sale only", async () => {
+    respondWith(rows());
+    renderWithProviders(<BuyerInvoicesPage />);
+    await screen.findByTestId("buyer-invoices-table");
+    const cards = screen.getAllByText(/Sep 10, 2026/).filter((el) => el.tagName === "P");
+    expect(cards).toHaveLength(2);
+    expect(cards[0].textContent).not.toMatch(/Due/);
+    expect(cards[1].textContent).toMatch(/Due Oct 10, 2026/);
+  });
+});

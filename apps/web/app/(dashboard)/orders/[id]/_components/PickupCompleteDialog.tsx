@@ -4,11 +4,19 @@ import * as React from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button, Modal, cn } from "@routeflow/ui/web";
 import { roundMoney } from "@routeflow/pricing";
-import { API_ERROR_CODES } from "@routeflow/types";
+import {
+  API_ERROR_CODES,
+  RECORD_ANYWAY_LABEL,
+  canRecordAnyway,
+  creditOverLimitSentence,
+  COUNTER_COPY,
+} from "@routeflow/types";
 import type { CounterSalePaymentMethod, PickupCompleteResponse } from "@routeflow/types";
 import { usePickupComplete, usePickupInvoiceBalances } from "@/lib/api/counter-sale";
+import { useOptionalAuth } from "@/lib/auth-context";
+import { duplicatePaymentRefMessage } from "@/lib/duplicate-payment-ref";
 import {
-  PAYMENT_PROBLEM_COPY,
+  paymentProblemCopy,
   PICKUP_DEAD_INVOICE,
   changeDue,
   clearHeldPickupKey,
@@ -29,7 +37,16 @@ const money = (n: number) =>
 /** The key of an attempt whose outcome is UNKNOWN, held by the parent across close/reopen, per order. */
 export type HeldPickupKey = { orderId: string; key: string } | null;
 
-type Body = { payment?: { method: CounterSalePaymentMethod; amount?: number; reference?: string } };
+type Body = {
+  payment?: {
+    method: CounterSalePaymentMethod;
+    amount?: number;
+    reference?: string;
+    recordAnyway?: boolean;
+  };
+  /** SA-913 R8: the confirmed re-send after COUNTER_COMPLETE_ON_RUN (same key) */
+  takeOffRun?: boolean;
+};
 
 /**
  * "Picked up" on a PICKUP order (order ahead): payment is taken AT pickup. Opening the dialog mints ONE
@@ -49,8 +66,10 @@ export function PickupCompleteDialog({
   invoices,
   isWalkIn,
   handOver = false,
+  completeMode = false,
   heldKey,
   storeKey = null,
+  customerName = null,
 }: {
   open: boolean;
   onClose: () => void;
@@ -61,9 +80,13 @@ export function PickupCompleteDialog({
   isWalkIn: boolean;
   /** POS-mode order (PICKUP, not a counter sale): the confirm button reads "Hand over". Counter / portal keep "Picked up". */
   handOver?: boolean;
+  /** I-120: "Complete at counter" (any open order): its title, confirm and outcome copy; the payment step is the same. */
+  completeMode?: boolean;
   heldKey?: React.MutableRefObject<HeldPickupKey>;
   /** sessionStorage key (tenant + user + order) that keeps an UNKNOWN outcome's key across a reload. */
   storeKey?: string | null;
+  /** I-120: the customer the credit-over-limit line names (falls back to "the customer"). */
+  customerName?: string | null;
 }) {
   const ownHeld = React.useRef<HeldPickupKey>(null);
   const held = heldKey ?? ownHeld;
@@ -127,7 +150,9 @@ export function PickupCompleteDialog({
         // Back to the tender step; the next attempt is the same hand-over (same key) carrying the payment.
         if (res.balanceDue > 0) setOwed(res.balanceDue);
         setErrorCode(code);
-        setError(pickupCompleteErrorCopy({ response: { data: { code } } }));
+        setError(
+          pickupCompleteErrorCopy({ response: { data: { code } } }, undefined, completeMode),
+        );
         return;
       }
       held.current = null;
@@ -140,7 +165,7 @@ export function PickupCompleteDialog({
       if (unknown) writeHeldPickupKey(storeKey, keyRef.current);
       else clearHeldPickupKey(storeKey);
       setErrorCode(pickupErrorCode(err));
-      setError(pickupCompleteErrorCopy(err));
+      setError(pickupCompleteErrorCopy(err, due ?? undefined, completeMode));
     }
   }
 
@@ -159,7 +184,7 @@ export function PickupCompleteDialog({
       reference,
       isWalkIn,
     });
-    if (problem) return setError(PAYMENT_PROBLEM_COPY[problem]);
+    if (problem) return setError(paymentProblemCopy(problem, due));
     void send({
       payment: {
         method,
@@ -170,12 +195,32 @@ export function PickupCompleteDialog({
   }
 
   const unrecorded = outcome !== null && !outcome.paymentRecorded;
+  // SA-837b item 3: the payment was refused as a duplicate reference. The shared sentence names the existing payment, and a
+  // staff role may resend THIS hand-over (same key, same body) with the generic `payment.recordAnyway` flag.
+  const role = (useOptionalAuth()?.user as { role?: string } | null | undefined)?.role;
+  const duplicateMessage =
+    unrecorded &&
+    outcome?.paymentCauseCode === API_ERROR_CODES.DUPLICATE_PAYMENT_REF &&
+    outcome.existingPayment
+      ? duplicatePaymentRefMessage({
+          response: {
+            status: 409,
+            data: {
+              code: API_ERROR_CODES.DUPLICATE_PAYMENT_REF,
+              existingPayment: outcome.existingPayment,
+            },
+          },
+        })
+      : null;
+  const sentPayment = lastBody.current?.payment;
+  const recordAnyway = () =>
+    void send({ ...lastBody.current, payment: { ...sentPayment!, recordAnyway: true } });
 
   return (
     <Modal
       open={open}
       onClose={onClose}
-      title={`${handOver ? "Hand over" : "Picked up"}${orderNumber ? ` — ${orderNumber}` : ""}`}
+      title={`${completeMode ? COUNTER_COPY.completeAtCounter : handOver ? "Hand over" : "Picked up"}${orderNumber ? ` ${orderNumber}` : ""}`}
       className="max-w-md"
       footer={
         outcome ? (
@@ -188,6 +233,16 @@ export function PickupCompleteDialog({
                 onClick={() => void send(lastBody.current)}
               >
                 Retry
+              </Button>
+            )}
+            {duplicateMessage && sentPayment && canRecordAnyway(role) && (
+              <Button
+                variant="secondary"
+                type="button"
+                loading={complete.isPending}
+                onClick={recordAnyway}
+              >
+                {RECORD_ANYWAY_LABEL}
               </Button>
             )}
             <Button type="button" onClick={onClose}>
@@ -217,14 +272,31 @@ export function PickupCompleteDialog({
                     Retry
                   </Button>
                 )}
-                <Button
-                  type="button"
-                  onClick={confirm}
-                  loading={complete.isPending}
-                  disabled={due === null}
-                >
-                  {handOver ? "Hand over" : nothingToCollect ? "Confirm picked up" : "Picked up"}
-                </Button>
+                {/* SA-913 R8: the order is on a driver's run; the alert names the driver, this re-sends with the confirm */}
+                {errorCode === API_ERROR_CODES.COUNTER_COMPLETE_ON_RUN ? (
+                  <Button
+                    type="button"
+                    loading={complete.isPending}
+                    onClick={() => void send({ ...lastBody.current, takeOffRun: true })}
+                  >
+                    {COUNTER_COPY.takeOffRun}
+                  </Button>
+                ) : (
+                  <Button
+                    type="button"
+                    onClick={confirm}
+                    loading={complete.isPending}
+                    disabled={due === null}
+                  >
+                    {completeMode
+                      ? COUNTER_COPY.completeConfirm
+                      : handOver
+                        ? "Hand over"
+                        : nothingToCollect
+                          ? "Confirm picked up"
+                          : "Picked up"}
+                  </Button>
+                )}
               </>
             )}
           </>
@@ -243,13 +315,32 @@ export function PickupCompleteDialog({
               </p>
             ) : (
               <p className="text-sm font-semibold text-navy">
-                Picked up —{" "}
-                {outcome.balanceDue > 0 ? `${money(outcome.balanceDue)} still due` : "paid"}
+                {completeMode
+                  ? outcome.emailed
+                    ? COUNTER_COPY.completedEmailed
+                    : COUNTER_COPY.completed
+                  : outcome.balanceDue > 0
+                    ? `Picked up. ${money(outcome.balanceDue)} still due.`
+                    : "Picked up and paid."}
+                {completeMode && outcome.balanceDue > 0
+                  ? ` ${money(outcome.balanceDue)} still due.`
+                  : ""}
               </p>
             )}
             {unrecorded && (
               <p className="text-xs text-navy/70">
                 The order is handed over, but the payment was not saved. Retry to record it.
+              </p>
+            )}
+            {duplicateMessage && <p className="text-sm text-navy">{duplicateMessage}</p>}
+            {/* I-120 (SA-849 on the hand-over): the gate counted this tender; without it the customer is over their limit. */}
+            {unrecorded && outcome.creditOverLimit && (
+              <p
+                role="status"
+                className="rounded border border-amber-300 bg-amber-50 p-3 text-sm"
+                data-testid="pickup-credit-over-limit"
+              >
+                {creditOverLimitSentence(customerName, outcome.creditOverLimit, money)}
               </p>
             )}
             {(outcome.change ?? 0) > 0 && (

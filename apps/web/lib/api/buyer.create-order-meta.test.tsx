@@ -1,6 +1,7 @@
 import * as React from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook } from "@testing-library/react";
+import { API_ERROR_CODES } from "@routeflow/types";
 
 jest.mock("@/lib/buyer-api-client", () => ({
   __esModule: true,
@@ -28,5 +29,10 @@ describe("useBuyerCreateOrder suppresses the global toast only for the order-exi
     expect(flag(refusal("IDEMPOTENCY_KEY_CART_MISMATCH"))).toBe(true);
     expect(flag(refusal("IDEMPOTENCY_KEY_DRAFT_MISMATCH"))).toBe(true);
     expect(flag(refusal("SOMETHING_ELSE"))).toBe(false);
+    // a paused seller: the cart renders the one seller-unavailable sentence itself, so no second (toast) message
+    expect(
+      flag({ response: { status: 403, data: { code: API_ERROR_CODES.SELLER_UNAVAILABLE } } }),
+    ).toBe(true);
+    expect(flag({ response: { status: 403, data: { message: "Forbidden" } } })).toBe(false);
   });
 });

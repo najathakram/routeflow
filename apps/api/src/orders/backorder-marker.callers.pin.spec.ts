@@ -18,7 +18,7 @@ import { join } from "path";
  *                                                 a replace-all: "recreated", see NONE)
  *   - orders.service.ts at-door CR approval       approveChangeRequestAtStop
  *  NONE (writes nothing; the marker is a fact of the sale)
- *   - orders.service.ts demote (PENDING -> DRAFT) and cancel (final = no lines)
+ *   - orders.service.ts demote (PENDING -> DRAFT), cancel and deleteOrder (final = no lines)
  *   - recreate-mode edits (B1167): new line ids, the marker is lost, documented
  *   - pickup-complete / batch-ship: changeStatus to DELIVERED / SHIPPED, no stock helper at all
  *  CARRIES: the merge fold (buildMergeLineWrites) - pinned in backorder-marker-merge.spec.ts.
@@ -41,6 +41,7 @@ describe("every caller of the stock helpers is classified for the backorder mark
       "restoreStockForReopen", // reopenOrder                      SETS (markerMode "set")
       "settleStockForEdit", //    updateOrderItems                 ADJUSTS (NONE when recreated)
       "settleStockForEdit", //    at-door CR approval              ADJUSTS
+      "settleStockForEdit", //    deleteOrder (B284)               NONE (final = [], the cancel's unwind)
     ]);
   });
   it("the template cron is the only other decrement caller (SETS)", () => {
@@ -50,6 +51,12 @@ describe("every caller of the stock helpers is classified for the backorder mark
     const src = read("orders/order-stock.ts");
     expect(calls("orders/order-stock.ts")).toEqual(["settleStockForEdit"]);
     expect(src.match(/markerMode: "set"/g)).toHaveLength(1);
+  });
+  it("the customer delete/purge release (B1241) settles once with an empty final set: NONE", () => {
+    expect(calls("customers/customer-delete-stock.ts")).toEqual(["settleStockForEdit"]);
+    expect(read("customers/customer-delete-stock.ts")).toMatch(
+      /settleStockForEdit\(\s*\{ logger, tenantId \},\s*tx,\s*order,[\s\S]*?\[\],\s*undefined,\s*\{ notes: "DELETE" \}/,
+    );
   });
   it("pickup-complete and batch-ship call no stock helper at all (NONE)", () => {
     for (const f of [

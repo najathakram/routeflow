@@ -4,7 +4,13 @@ import * as React from "react";
 import { genericToastCopy } from "@/lib/generic-toast-copy";
 import { Truck, ExternalLink, Pencil } from "lucide-react";
 import { Button, Card, Modal, cn, useToast } from "@routeflow/ui/web";
-import { isShippedOrderStatus } from "@routeflow/types";
+import {
+  CARRIER_HINT,
+  isShippedOrderStatus,
+  needsCarrierHint,
+  notShippedNote,
+  shipmentSaveDecision,
+} from "@routeflow/types";
 import { CARRIERS, carrierLabel, getTrackingUrl } from "@/lib/shipping";
 
 /**
@@ -27,6 +33,13 @@ export interface ShipmentCardProps {
    * actually shipped. Undefined (a standalone invoice) = show the date as before.
    */
   orderStatus?: string | null;
+  /**
+   * The linked order's fulfilment path. With `orderStatus`, a SHIP order that is not shipped yet says so
+   * under its saved tracking: saving tracking never ships the order, "Mark shipped" does (M8).
+   */
+  fulfillPath?: string | null;
+  /** The order-shipped notification is on for this account: only then does the note say the customer is told. */
+  customerNotified?: boolean;
   /** Persist a new carrier + tracking number. Empty strings clear the shipment. */
   onSave: (values: { shippingCarrier: string; shippingTrackingNumber: string }) => Promise<unknown>;
   isSaving?: boolean;
@@ -39,6 +52,8 @@ export function ShipmentCard({
   trackingNumber,
   shippedAt,
   orderStatus,
+  fulfillPath,
+  customerNotified,
   onSave,
   isSaving,
   readOnly = false,
@@ -47,29 +62,43 @@ export function ShipmentCard({
   const [editOpen, setEditOpen] = React.useState(false);
   // Local form state for the dialog. `carrier` defaults to UPS so the select is
   // never blank; the tracking number drives whether a shipment exists at all.
-  const [formCarrier, setFormCarrier] = React.useState<string>(carrier || CARRIERS[0].id);
+  const [formCarrier, setFormCarrier] = React.useState<string>(carrier ?? "");
   const [formTracking, setFormTracking] = React.useState<string>(trackingNumber ?? "");
 
   const hasTracking = !!(trackingNumber && trackingNumber.trim());
+  // A carrier alone is a shipment too (it saves, and a legacy carrier-only row keeps showing).
+  const hasShipment = hasTracking || !!carrier?.trim();
+  const notShippedYet =
+    hasShipment &&
+    fulfillPath === "SHIP" &&
+    !!orderStatus &&
+    !isShippedOrderStatus(orderStatus) &&
+    orderStatus !== "CANCELLED";
   const trackUrl = getTrackingUrl(carrier, trackingNumber);
 
   function openEdit() {
-    setFormCarrier(carrier || CARRIERS[0].id);
+    setFormCarrier(carrier ?? "");
     setFormTracking(trackingNumber ?? "");
     setEditOpen(true);
   }
 
   async function handleSave() {
-    const tracking = formTracking.trim();
+    // One rule shared with mobile (`shipmentSaveDecision`): nothing stored and no number typed is not a
+    // change, so close without a call or a "cleared" toast (M8c).
+    const { outcome, payload } = shipmentSaveDecision(
+      { shippingCarrier: carrier, shippingTrackingNumber: trackingNumber },
+      formCarrier,
+      formTracking,
+    );
+    if (!payload) {
+      setEditOpen(false);
+      return;
+    }
     try {
-      await onSave({
-        // Clear the carrier too when the tracking number is removed.
-        shippingCarrier: tracking ? formCarrier : "",
-        shippingTrackingNumber: tracking,
-      });
+      await onSave(payload);
       setEditOpen(false);
       toast({
-        title: tracking ? "Shipment saved" : "Shipment cleared",
+        title: outcome === "saved" ? "Shipment saved" : "Shipment cleared",
         variant: "success",
       });
     } catch (e: unknown) {
@@ -85,13 +114,13 @@ export function ShipmentCard({
   return (
     <>
       <Card title="Shipment">
-        {hasTracking ? (
+        {hasShipment ? (
           <div className="space-y-3">
             <div className="flex items-start gap-2">
               <Truck className="mt-0.5 h-4 w-4 shrink-0 text-navy/70" />
               <div className="min-w-0">
                 <p className="text-sm font-medium text-navy">{carrierLabel(carrier)}</p>
-                {trackUrl ? (
+                {!hasTracking ? null : trackUrl ? (
                   <a
                     href={trackUrl}
                     target="_blank"
@@ -108,6 +137,9 @@ export function ShipmentCard({
                   <p className="mt-0.5 text-xs text-navy/70">
                     Shipped {new Date(shippedAt).toLocaleDateString()}
                   </p>
+                )}
+                {notShippedYet && (
+                  <p className="mt-0.5 text-xs text-navy/70">{notShippedNote(customerNotified)}</p>
                 )}
               </div>
             </div>
@@ -169,12 +201,20 @@ export function ShipmentCard({
                 "focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500",
               )}
             >
+              <option value="">No carrier</option>
+              {formCarrier && !CARRIERS.some((c) => c.id === formCarrier) && (
+                // A stored carrier that is not a picker id (a label or a custom courier): keep it selectable.
+                <option value={formCarrier}>{carrierLabel(formCarrier)}</option>
+              )}
               {CARRIERS.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.label}
                 </option>
               ))}
             </select>
+            {needsCarrierHint(formCarrier, formTracking) && (
+              <p className="text-xs text-navy/50">{CARRIER_HINT}</p>
+            )}
           </div>
           <div className="space-y-1">
             <label className="block text-xs font-medium text-navy/70">Tracking number</label>
@@ -189,7 +229,7 @@ export function ShipmentCard({
               )}
             />
             <p className="text-xs text-navy/50">
-              Leave the tracking number empty and save to clear the shipment.
+              To clear the shipment, empty the tracking number and choose No carrier.
             </p>
           </div>
         </div>

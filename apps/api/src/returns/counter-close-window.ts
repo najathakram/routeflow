@@ -45,7 +45,7 @@ export async function counterWindowClosed(
 export function dayClosedConflict(): ConflictException {
   return new ConflictException({
     code: API_ERROR_CODES.COUNTER_SALE_DAY_CLOSED,
-    message: "This day has been closed. Reopen the close first.",
+    message: "This day is closed, so this can't be changed. Record it with today's date instead.",
   });
 }
 

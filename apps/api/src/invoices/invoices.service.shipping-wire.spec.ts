@@ -108,7 +108,7 @@ describe("InvoicesService — shipping fields on the wire (F3, fold 1)", () => {
           useValue: {
             writeSaleEntries: jest.fn(),
             reverseInvoiceEntries: jest.fn(),
-            syncInvoiceEntries: jest.fn(),
+            settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
           },
         },
         {
@@ -192,6 +192,7 @@ describe("InvoicesService — shipping fields on the wire (F3, fold 1)", () => {
     const args = prisma.invoice.findMany.mock.calls[0][0] as {
       include: { order?: { select: { status: boolean } } };
     };
-    expect(args.include.order).toEqual({ select: { status: true } });
+    // + counterSale (row 401: the list row's paid-at-sale flag); the status the Shipments pages read stays
+    expect(args.include.order).toEqual({ select: { status: true, counterSale: true } });
   });
 });

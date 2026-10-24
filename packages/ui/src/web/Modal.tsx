@@ -5,6 +5,13 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
 import { cn } from "./utils";
 
+/**
+ * A notice every open Modal renders at the top of its body (F3/F4): the web app's read-only gate provides the shared
+ * read-only line after a 403 READ_ONLY, so ANY dialog tells the user why the write was refused INLINE, instead of
+ * staying open with only a toast behind its overlay. `null` (the default) renders nothing.
+ */
+export const ModalNoticeContext = React.createContext<React.ReactNode>(null);
+
 export interface ModalProps {
   open: boolean;
   onClose: () => void;
@@ -48,6 +55,16 @@ export interface ModalProps {
   scroll?: boolean;
   /** Extra classes for the header X (e.g. a 44 px tap target on a touch screen). */
   closeClassName?: string;
+  /** Extra controls rendered in the header just before the X (e.g. a Minimize icon). Omit for the plain X. */
+  headerActions?: React.ReactNode;
+  /**
+   * Where the dialog rests. "center" (default) centres it vertically and enters with a zoom + slide.
+   * "top" pins its top edge 4vh from the viewport top and enters with a fade only: a long form whose
+   * rows change height as data loads would otherwise recentre (every row that mounts moves every
+   * field by half its height) and its fields would travel during the zoom, so a field measured right
+   * after the dialog opens would not be where it settles.
+   */
+  anchor?: "center" | "top";
 }
 
 export const Modal = ({
@@ -64,12 +81,31 @@ export const Modal = ({
   onCloseAutoFocus,
   scroll = false,
   closeClassName,
+  headerActions,
+  anchor = "center",
 }: ModalProps) => {
   const contentRef = React.useRef<HTMLDivElement>(null);
+  const notice = React.useContext(ModalNoticeContext);
+  // No onClick: Dialog.Close triggers onOpenChange which calls onClose via Root.
+  const closeButton = (
+    <Dialog.Close
+      className={cn(
+        "ml-auto flex-shrink-0 rounded p-1 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500",
+        closeClassName,
+      )}
+      aria-label="Close"
+    >
+      <X className="h-4 w-4" />
+    </Dialog.Close>
+  );
   return (
     <Dialog.Root open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" />
+        {/* print:hidden: a printed page never carries the dimmed, blurred backdrop (CQ-21) */}
+        <Dialog.Overlay
+          data-modal-overlay
+          className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm print:hidden data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 motion-reduce:!animate-none"
+        />
         <Dialog.Content
           ref={contentRef}
           onEscapeKeyDown={onEscapeKeyDown}
@@ -88,13 +124,21 @@ export const Modal = ({
           onOpenAutoFocus={onOpenAutoFocus}
           onCloseAutoFocus={onCloseAutoFocus}
           className={cn(
-            "fixed left-1/2 top-1/2 z-50 w-full max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-xl bg-white p-6 shadow-modal",
+            "fixed left-1/2 z-50 w-full max-w-lg -translate-x-1/2 rounded-xl bg-white p-6 shadow-modal",
+            anchor === "top" ? "top-[4vh] translate-y-0" : "top-1/2 -translate-y-1/2",
             scroll && "flex max-h-[92vh] flex-col",
             "data-[state=open]:animate-in data-[state=closed]:animate-out",
             "data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
-            "data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95",
-            "data-[state=closed]:slide-out-to-left-1/2 data-[state=closed]:slide-out-to-top-[48%]",
-            "data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-[48%]",
+            // prefers-reduced-motion: the fade / slide / zoom entry and exit do not run (important: the
+            // data-[state] variants above out-rank a plain motion-reduce utility).
+            "motion-reduce:!animate-none",
+            // The enter keyframe starts from translate(var(--tw-enter-translate-x), ...): x stays pinned at
+            // the -50% the dialog rests at in both anchors, or it would slide in from the left edge.
+            "data-[state=closed]:slide-out-to-left-1/2 data-[state=open]:slide-in-from-left-1/2",
+            anchor === "center" && [
+              "data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95",
+              "data-[state=closed]:slide-out-to-top-[48%] data-[state=open]:slide-in-from-top-[48%]",
+            ],
             className,
           )}
         >
@@ -102,7 +146,12 @@ export const Modal = ({
           <div className={cn("mb-4 flex items-start justify-between gap-4", scroll && "shrink-0")}>
             <div className="min-w-0">
               {title ? (
-                <Dialog.Title className="text-lg font-semibold text-navy">{title}</Dialog.Title>
+                <Dialog.Title
+                  tabIndex={-1}
+                  className="text-lg font-semibold text-navy outline-none"
+                >
+                  {title}
+                </Dialog.Title>
               ) : (
                 <Dialog.Title className="sr-only">Dialog</Dialog.Title>
               )}
@@ -114,17 +163,17 @@ export const Modal = ({
                 <Dialog.Description className="sr-only">Modal dialog</Dialog.Description>
               )}
             </div>
-            {/* No onClick — Dialog.Close triggers onOpenChange which calls onClose via Root */}
-            <Dialog.Close
-              className={cn(
-                "ml-auto flex-shrink-0 rounded p-1 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500",
-                closeClassName,
-              )}
-              aria-label="Close"
-            >
-              <X className="h-4 w-4" />
-            </Dialog.Close>
+            {headerActions ? (
+              <div className="ml-auto flex flex-shrink-0 items-center gap-1">
+                {headerActions}
+                {closeButton}
+              </div>
+            ) : (
+              closeButton
+            )}
           </div>
+
+          {notice ? <div className={cn("mb-3", scroll && "shrink-0")}>{notice}</div> : null}
 
           {/* Body */}
           <div

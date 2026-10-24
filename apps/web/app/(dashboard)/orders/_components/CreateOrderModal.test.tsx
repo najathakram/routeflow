@@ -85,12 +85,12 @@ jest.mock("@/lib/api-client", () => ({
 // needs getUserMedia + a dynamic @zxing/browser import, impractical in JSDOM — mock it the
 // same way the sibling pages' own barcode call sites are exercised elsewhere: capture the
 // live onScan/onError props so a test can trigger them directly, same as a real scan would.
-let capturedOnScan: ((code: string) => void) | undefined;
+let capturedOnScan: ((code: string, source?: "field") => void) | undefined;
 let capturedOnError: ((message: string) => void) | undefined;
 let capturedOnOpenContinuous: (() => void) | undefined;
 jest.mock("@/components/BarcodeScannerButton", () => ({
   BarcodeScannerButton: (props: {
-    onScan: (code: string) => void;
+    onScan: (code: string, source?: "field") => void;
     onError?: (message: string) => void;
     onOpenContinuous?: () => void;
     title?: string;
@@ -227,6 +227,86 @@ describe("CreateOrderModal", () => {
       expect(mockResolveProductByCode).toHaveBeenCalledWith("012345678905");
     });
 
+    // Row 536 (P0): 20 repeat scans of one item landed 14-15. A wedge burst outran the lookup + the
+    // post-commit search clear, so a scan was eaten mid-burst.
+    describe("a burst of repeat scans (row 536)", () => {
+      const widget = {
+        notFound: false,
+        archived: false,
+        product: { id: "prod-1", name: "Widget", pricePerUnit: "9.99", unit: "each" },
+      };
+      const searchField = () =>
+        screen.getByPlaceholderText(/search by name, sku or scan barcode/i) as HTMLInputElement;
+
+      it("scan 1 in flight, half of scan 2 typed, scan 1 resolves, scan 2 finishes -> qty 2 and the half-typed scan survives", async () => {
+        let resolveFirst!: (v: unknown) => void;
+        mockResolveProductByCode.mockReturnValueOnce(
+          new Promise((resolve) => {
+            resolveFirst = resolve;
+          }),
+        );
+        renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+
+        // scan 1: the wedge typed it into the field; the detector takes it (field cleared) and queues the lookup.
+        fireEvent.change(searchField(), { target: { value: "012345678905" } });
+        act(() => capturedOnScan!("012345678905", "field"));
+        expect(searchField().value).toBe("");
+
+        // half of scan 2 lands in the (now empty) field while scan 1's lookup is still out.
+        fireEvent.change(searchField(), { target: { value: "01234" } });
+
+        // scan 1 resolves: its post-commit clear must NOT wipe the half-typed scan 2.
+        await act(async () => {
+          resolveFirst(widget);
+        });
+        expect(await screen.findByText("Widget")).toBeInTheDocument();
+        expect(searchField().value).toBe("01234");
+
+        // scan 2 finishes: the same code again.
+        fireEvent.change(searchField(), { target: { value: "012345678905" } });
+        await act(async () => {
+          capturedOnScan!("012345678905", "field");
+        });
+
+        await waitFor(() =>
+          expect((screen.getByLabelText("Quantity") as HTMLInputElement).value).toBe("2"),
+        );
+        expect(searchField().value).toBe("");
+        // The repeat is served from the order itself: no second lookup.
+        expect(mockResolveProductByCode).toHaveBeenCalledTimes(1);
+      });
+
+      it("20 back-to-back scans of one item count 20, serialised in order", async () => {
+        mockResolveProductByCode.mockImplementation(
+          () => new Promise((resolve) => setTimeout(() => resolve(widget), 5)),
+        );
+        renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+        await act(async () => {
+          for (let i = 0; i < 20; i++) capturedOnScan!("012345678905", "field");
+        });
+        await waitFor(() =>
+          expect((screen.getByLabelText("Quantity") as HTMLInputElement).value).toBe("20"),
+        );
+        expect(mockResolveProductByCode).toHaveBeenCalledTimes(1);
+      });
+
+      it("a repeat of a code whose line was deleted looks the product up again", async () => {
+        mockResolveProductByCode.mockResolvedValue(widget);
+        renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+        await act(async () => {
+          capturedOnScan!("012345678905", "field");
+        });
+        await screen.findByText("Widget");
+        fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+        await waitFor(() => expect(screen.queryByText("Widget")).not.toBeInTheDocument());
+        await act(async () => {
+          capturedOnScan!("012345678905", "field");
+        });
+        await screen.findByText("Widget");
+        expect(mockResolveProductByCode).toHaveBeenCalledTimes(2);
+      });
+    });
+
     // Characterization of the scan-resolve ladder, written BEFORE it moved to ./scan/ (LANE-S
     // step 4 prefactor): pins the four outcomes so the extraction provably changed nothing.
     it("an ARCHIVED product is never added and never routes to create-product — it toasts instead", async () => {
@@ -361,6 +441,27 @@ describe("CreateOrderModal", () => {
       expect(await screen.findByText("Widget")).toBeInTheDocument();
       expect(screen.getByText("1 item · $9.99")).toBeInTheDocument();
       expect(mockResolveProductByCode).toHaveBeenCalledWith("012345678905");
+    });
+
+    it("row 536: a repeat of the code just scanned counts after 0.3 s out of view with ONE frame (no steady hold)", async () => {
+      let now = 1_700_000_000_000;
+      const spy = jest.spyOn(Date, "now").mockImplementation(() => now);
+      try {
+        mockResolveProductByCode.mockResolvedValue(widget);
+        await openScreen();
+        await scanCode("111"); // the first sighting earns its steady read
+        await screen.findByText("Widget");
+        for (let i = 0; i < 4; i++) {
+          now += 1000; // lifted away ~1 s, back for a single frame
+          await act(async () => {
+            cameraDetect!("111");
+          });
+        }
+        await waitFor(() => expect(screen.getByText("1 item · $49.95")).toBeInTheDocument());
+        expect(mockResolveProductByCode).toHaveBeenCalledTimes(1); // the repeats never left the order
+      } finally {
+        spy.mockRestore();
+      }
     });
 
     it("a repeat scan of the same product increments its quantity, never duplicates the row", async () => {
@@ -1031,6 +1132,90 @@ describe("CreateOrderModal", () => {
           screen.getByText(/over their \$100\.00 credit limit. Collect a payment/),
         ).toBeInTheDocument();
         expect(screen.queryByText("Over their credit limit of 100.00.")).not.toBeInTheDocument();
+      });
+    });
+
+    describe("row 510 - a staff 409 RESTRICTION_WARNING opens the warning dialog and resubmits with the ack", () => {
+      const warning409 = {
+        response: {
+          status: 409,
+          data: {
+            code: "RESTRICTION_WARNING",
+            message: "Some items are restricted.",
+            warningHash: "rw1:abc",
+            lines: [
+              {
+                lineKey: "n:0",
+                productId: "p1",
+                displayName: "Hemp Gummies",
+                outcome: "BLOCK",
+                rules: [
+                  {
+                    id: "r1",
+                    states: ["CA"],
+                    legal: true,
+                    reasonText: "This product is banned in CA by law.",
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      };
+
+      afterEach(() => {
+        mockCreateOrderError = null;
+      });
+
+      it("shows the lines, takes ONE reason, and re-sends the SAME payload and Idempotency-Key plus the ack", async () => {
+        const user = userEvent.setup();
+        mockCustomers = [acme];
+        renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+        await pickCustomer("Acme Foods");
+        fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
+        expect(createOrderMutate).toHaveBeenCalledTimes(1);
+        const first = createOrderMutate.mock.calls[0][0];
+
+        act(() => createOrderMutate.mock.calls[0][1].onError(warning409));
+
+        const dialog = await screen.findByRole("dialog", { name: /sell a restricted product/i });
+        expect(within(dialog).getByText("Hemp Gummies")).toBeInTheDocument();
+        expect(
+          within(dialog).getByText("This product is banned in CA by law."),
+        ).toBeInTheDocument();
+        await user.type(within(dialog).getByLabelText(/reason/i), "Owner approved");
+        await user.click(within(dialog).getByRole("button", { name: "Sell anyway" }));
+
+        expect(createOrderMutate).toHaveBeenCalledTimes(2);
+        const second = createOrderMutate.mock.calls[1][0];
+        expect(second).toEqual({
+          ...first,
+          restrictionOverrides: [{ lineKey: "n:0", reason: "Owner approved" }],
+          warningHash: "rw1:abc",
+        });
+        expect(second.idempotencyKey).toBe(first.idempotencyKey);
+        expect(mockToast).not.toHaveBeenCalled();
+      });
+
+      it("Go back keeps the form and the cart: no second send", async () => {
+        const user = userEvent.setup();
+        mockCustomers = [acme];
+        renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+        await pickCustomer("Acme Foods");
+        fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
+        act(() => createOrderMutate.mock.calls[0][1].onError(warning409));
+        await user.click(await screen.findByRole("button", { name: "Go back" }));
+        expect(createOrderMutate).toHaveBeenCalledTimes(1);
+        expect(screen.getByText("Acme Foods")).toBeInTheDocument(); // the customer is still picked
+      });
+
+      it("shows no inline red banner for it (the dialog is the one message)", async () => {
+        mockCustomers = [acme];
+        mockCreateOrderError = { ...warning409, message: "Request failed" };
+        renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+        await pickCustomer("Acme Foods");
+        expect(screen.queryByText(/Request failed/)).toBeNull();
+        expect(screen.queryByText(/Some items are restricted/)).toBeNull();
       });
     });
   });

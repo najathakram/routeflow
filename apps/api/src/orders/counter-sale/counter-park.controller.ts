@@ -18,6 +18,7 @@ import type {
 } from "@routeflow/pricing";
 import { JwtAuthGuard } from "../../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../../auth/guards/roles.guard";
+import { TillPermissionGuard } from "./till-permission.guard";
 import { Roles } from "../../auth/decorators/roles.decorator";
 import { CurrentUser } from "../../auth/decorators/current-user.decorator";
 import type { JwtPayload } from "../../auth/jwt-payload.interface";
@@ -33,7 +34,7 @@ import { CounterParkService } from "./counter-park.service";
  */
 @ApiTags("orders")
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, TillPermissionGuard)
 @Roles(UserRole.OPERATOR)
 @Controller("orders/counter-sale/parked")
 export class CounterParkController {

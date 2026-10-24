@@ -13,6 +13,7 @@ import { RegulatedService } from "./regulated.service";
 import { RegulatedReportService } from "./regulated-report.service";
 import { roundMoney } from "@routeflow/pricing";
 import { filingPeriod, FilingCadence } from "./period";
+import { findLockedFiling } from "./filed-periods";
 import { buildFilingCsv } from "./filing-csv";
 import { serializeReportCsv } from "./report-csv";
 import { assertNoParkedReversals, listParkedReversals } from "./parked-reversals";
@@ -218,10 +219,11 @@ export class RegulatedFilingService {
 
     // B297 PR5: a LOCKED filing is closed. It is never regenerated: the stored artifact and totals ARE the
     // filing (re-running the ledger read could only differ by what the lock exists to keep out).
-    const locked = await this.prisma.forTenant().regulatedFiling.findFirst({
-      where: { trackedCategoryId: params.trackedCategoryId, periodKey, status: "LOCKED" },
+    const locked = await findLockedFiling(this.prisma.forTenant(), {
+      trackedCategoryId: params.trackedCategoryId,
+      periodKey,
     });
-    if (locked?.status === "LOCKED") return locked;
+    if (locked) return locked;
 
     // FILING GATE: a return reversal the ledger could not book (pack unknown) is parked and NOT in these
     // figures. Refuse BEFORE anything is uploaded or upserted (a regeneration too), so a period with an

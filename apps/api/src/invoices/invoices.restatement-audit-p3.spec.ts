@@ -32,7 +32,7 @@ describe("SA-763r P-3: restating an issued invoice is audited and never shows an
   const mockLedger = {
     writeSaleEntries: jest.fn(),
     reverseInvoiceEntries: jest.fn(),
-    syncInvoiceEntries: jest.fn(),
+    settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
   };
 
   beforeEach(async () => {

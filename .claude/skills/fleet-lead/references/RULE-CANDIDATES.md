@@ -308,3 +308,12 @@ A candidate becomes a SKILL.md rule after it appears in 3 log entries. `promoted
 - candidate: Type-ownership rulings cite the spec path:line that defines the shape
   key: type ownership rulings cite the spec path line that defines the shape
   first: 2026-09-30
+- candidate: Verify before instructing
+  key: verify before instructing
+  first: 2026-10-22
+- candidate: Never put markdown backticks inside a double-quoted shell string
+  key: never put markdown backticks inside a double quoted shell string
+  first: 2026-10-23
+- candidate: Never run a bare npm ci on a shared checkout
+  key: never run a bare npm ci on a shared checkout
+  first: 2026-10-23

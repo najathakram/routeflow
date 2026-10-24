@@ -44,7 +44,7 @@ async function run() {
     const legacySub = tenantRow
       ? (
           await client.query(
-            `SELECT "planKey", "stripeSubId" FROM "TenantSubscription" WHERE "tenantId" = $1`,
+            `SELECT "planKey", "stripeSubId", "couponFull" FROM "TenantSubscription" WHERE "tenantId" = $1`,
             [tenantRow.id],
           )
         ).rows[0]

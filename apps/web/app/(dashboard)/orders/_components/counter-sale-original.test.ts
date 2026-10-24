@@ -60,25 +60,28 @@ describe("an edited line strikes the LIST total (as the receipt does), not the t
  * Struck -> net -> chip -> Discounts must agree arithmetically: every figure the cart prints about a lowered line is measured
  * from the SAME reference (the list, whenever the list is struck), never a tier price for one and the list for another.
  */
-describe("the cart's struck total, net, chip and Discounts row are one arithmetic", () => {
-  it("percent: tier 8, list 10, price 5 reads 50% off the list it is struck from (not 37.5% off the tier)", () => {
+// The struck total, net and Discounts row are ONE list-measured arithmetic (the receipt's). The chip is the clerk's own
+// typed figure while it is still true against the tier price (CQ-15); it is re-derived from the list only when the
+// tier moved under a kept edit.
+describe("the cart's struck total, net and Discounts row are one arithmetic", () => {
+  it("percent: tier 8, list 10, typed 37.5 (price 5): struck 10.00 and Discounts 5.00 from the list, the chip says the typed 37.5% (CQ-15)", () => {
     const line: SaleLine = { ...tierLine, unitPrice: 8, listPrice: 10, qty: 1 };
     const [l] = applyPriceEdit([line], "a", edit({ mode: "percent", value: 37.5, unitPrice: 5 }));
     expect(editedLineFigures(l)).toMatchObject({
       original: 10,
       net: 5,
       discount: 5,
-      chip: "50% off",
+      chip: "37.5% off",
     });
   });
 
-  it("amount: tier 10, list 12, price 8, qty 2 reads $4.00 off each: 24.00 struck, 16.00 net, Discounts 8.00", () => {
+  it("amount: tier 10, list 12, typed $2 off (price 8), qty 2: 24.00 struck, 16.00 net, Discounts 8.00, the chip the typed $2.00 off each (CQ-15)", () => {
     const [l] = applyPriceEdit([tierLine], "a", edit({ mode: "amount", value: 2, unitPrice: 8 }));
     expect(editedLineFigures(l)).toMatchObject({
       original: 24,
       net: 16,
       discount: 8,
-      chip: "$4.00 off each",
+      chip: "$2.00 off each",
     });
     expect(discountsTotal([l])).toBe(8);
   });

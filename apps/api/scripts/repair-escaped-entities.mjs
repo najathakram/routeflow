@@ -148,7 +148,7 @@ const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
   if (protectedSlugs) {
     const sub = await prisma.tenantSubscription.findUnique({
       where: { tenantId: tenant.id },
-      select: { planKey: true, stripeSubId: true },
+      select: { planKey: true, stripeSubId: true, couponFull: true },
     });
     try {
       assertWritableTenant(tenant, sub, protectedSlugs);

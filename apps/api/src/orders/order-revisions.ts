@@ -1,3 +1,4 @@
+import { EDIT_REVISIONS } from "./ship-state-markers";
 import type { Prisma } from "@prisma/client";
 import { JwtPayload } from "../auth/jwt-payload.interface";
 import { PrismaService } from "../prisma/prisma.service";
@@ -36,6 +37,8 @@ type RevisionLine = {
   trackedSubcategoryId: unknown;
   notes: unknown;
   status: unknown;
+  /** SA ruling (#3418): the line's explicit author marker; absent on a caller that did not read it. */
+  authorChannel?: string | null;
 };
 
 const LIVE_LINES = {
@@ -46,6 +49,10 @@ const LIVE_LINES = {
 
 function revisionSnapshot(lines: RevisionLine[], totals: AppendOrderRevisionArgs[2]) {
   return {
+    // F1(i) (#3418): marks a revision written by the code that records `Order.source` (`sourceRecorded`) and each
+    // line's `authorChannel`, so the author rule can tell it from older, unrecorded history on a legacy order
+    // (line-author-channel.ts). No clock.
+    sourceRecorded: true as const,
     subtotal: totals.subtotal,
     tax: totals.tax,
     total: totals.total,
@@ -65,8 +72,27 @@ function revisionSnapshot(lines: RevisionLine[], totals: AppendOrderRevisionArgs
       trackedSubcategoryId: li.trackedSubcategoryId,
       notes: li.notes,
       status: li.status,
+      // SA ruling (#3418): the line's author marker, verbatim (null = written before the marker). The author rule
+      // reads it per line; a snapshot without the field falls through to the order-level rule.
+      authorChannel: li.authorChannel ?? null,
     })),
   };
+}
+
+/**
+ * Row 372: the revision an editing client holds. ONE derivation, over the order's EDIT revisions (the same
+ * `EDIT_REVISIONS.where` `findOne` includes: ship-state markers are not edits), so the `revisionNumber` GET
+ * /orders/:id exposes and the PATCH items `expectedRevisionNumber` check always read the same number.
+ */
+export async function latestEditRevisionNumber(
+  db: { orderRevision: { aggregate(args: any): Promise<any> } },
+  orderId: string,
+): Promise<number> {
+  const max = await db.orderRevision.aggregate({
+    where: { orderId, ...EDIT_REVISIONS.where },
+    _max: { revisionNumber: true },
+  });
+  return max?._max?.revisionNumber ?? 0;
 }
 
 /** The insert, on a transaction client `tx`: the revision number is max+1 under that transaction. */
@@ -76,15 +102,13 @@ async function insertRevision(
   [orderId, user, , source, reason]: AppendOrderRevisionArgs,
   snapshot: ReturnType<typeof revisionSnapshot>,
 ): Promise<void> {
-  const max = await tx.orderRevision.aggregate({
-    where: { orderId },
-    _max: { revisionNumber: true },
-  });
   await tx.orderRevision.create({
     data: {
       tenantId,
       orderId,
-      revisionNumber: (max._max.revisionNumber ?? 0) + 1,
+      revisionNumber:
+        ((await tx.orderRevision.aggregate({ where: { orderId }, _max: { revisionNumber: true } }))
+          ._max.revisionNumber ?? 0) + 1,
       editedById: user?.sub ?? null,
       editedByName: user?.username ?? null,
       editedByRole: user?.role ?? null,
@@ -125,4 +149,63 @@ export async function appendOrderRevisionInTx(
     orderBy: LIVE_LINES.orderBy,
   });
   await insertRevision(tx, tenantId, args, revisionSnapshot(lines, args[2]));
+}
+
+/** Row 372 MF2: sources of a revision no operator edit produced (the order's lines changed under an editor). */
+export const SYSTEM_MERGE_REVISION = "SYSTEM_MERGE";
+export const SYSTEM_INVOICE_SYNC_REVISION = "SYSTEM_INVOICE_SYNC";
+export const SYSTEM_REOPEN_REVISION = "SYSTEM_REOPEN";
+
+/**
+ * Row 372 MF2: the ONE in-tx bump for a writer that changes an order's LINES without an operator edit, so
+ * an editor holding the earlier revision goes stale. Appended after the order's totals were written, from
+ * the stored totals themselves. A system revision is an EDIT revision (`EDIT_REVISIONS` only excludes
+ * ship-state markers), so it moves `revisionNumber`.
+ */
+async function appendSystemRevisionInTx(
+  tx: Prisma.TransactionClient,
+  tenantId: string | null,
+  orderId: string,
+  source: string,
+): Promise<void> {
+  const o = await tx.order.findUniqueOrThrow({
+    where: { id: orderId },
+    select: { subtotal: true, tax: true, total: true, shippingFee: true },
+  });
+  const totals = {
+    subtotal: Number(o.subtotal),
+    tax: Number(o.tax),
+    total: Number(o.total),
+    shippingFee: Number(o.shippingFee ?? 0),
+  };
+  await appendOrderRevisionInTx(tx, tenantId, orderId, undefined, totals, source);
+}
+
+/** A merge folded loser carts into the winner. */
+export const appendMergeRevisionInTx = (
+  tx: Prisma.TransactionClient,
+  tenantId: string | null,
+  winnerId: string,
+) => appendSystemRevisionInTx(tx, tenantId, winnerId, SYSTEM_MERGE_REVISION);
+
+/** A reopen put every item-CANCELLED line back live (a new sale of the whole order). */
+export const appendReopenRevisionInTx = (
+  tx: Prisma.TransactionClient,
+  tenantId: string | null,
+  orderId: string,
+) => appendSystemRevisionInTx(tx, tenantId, orderId, SYSTEM_REOPEN_REVISION);
+
+/** An invoice edit back-synced the order's lines or fee (`recomputeOrderFromInvoices`). */
+export const appendInvoiceSyncRevisionInTx = (
+  tx: Prisma.TransactionClient,
+  tenantId: string | null,
+  orderId: string,
+) => appendSystemRevisionInTx(tx, tenantId, orderId, SYSTEM_INVOICE_SYNC_REVISION);
+
+/** `GET /orders/:id`: `revisionNumber` from the EDIT revisions `findOne` already included (no extra read). */
+export function attachRevisionNumber(order: {
+  revisions?: ReadonlyArray<{ revisionNumber: number }> | null;
+}): void {
+  const latest = (order.revisions ?? []).reduce((m, r) => Math.max(m, r.revisionNumber), 0);
+  Object.assign(order, { revisionNumber: latest });
 }

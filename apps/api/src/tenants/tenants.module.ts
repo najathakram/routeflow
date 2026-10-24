@@ -5,7 +5,6 @@ import { TenantsService } from "./tenants.service";
 import { TenantsController } from "./tenants.controller";
 import { PublicTenantsController } from "./public-tenants.controller";
 import { PublicPlacesController } from "./public-places.controller";
-import { TenantGoogleOAuthService } from "./tenant-google-oauth.service";
 import { EmailModule } from "../email/email.module";
 import { StorageModule } from "../storage/storage.module";
 import { BillingModule } from "../billing/billing.module";
@@ -27,7 +26,7 @@ import { PolicyModule } from "../policy/policy.module";
     }),
   ],
   controllers: [TenantsController, PublicTenantsController, PublicPlacesController],
-  providers: [TenantsService, TenantGoogleOAuthService],
-  exports: [TenantsService, TenantGoogleOAuthService],
+  providers: [TenantsService],
+  exports: [TenantsService],
 })
 export class TenantsModule {}

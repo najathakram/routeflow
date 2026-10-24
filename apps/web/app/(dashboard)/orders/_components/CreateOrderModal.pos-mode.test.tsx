@@ -6,7 +6,7 @@ import { apiClient } from "@/lib/api-client";
 /**
  * SA-763r P-2: the "POS mode" switch in the Create Order header. Seeded from GET /users/me/preferences,
  * written with PATCH on flip (never localStorage); when on the order is sent as PICKUP, the delivery-only
- * fields step aside (restorable) and the primary action is "Confirm & invoice".
+ * fields step aside (restorable) and the primary action is "Confirm and invoice".
  */
 window.HTMLElement.prototype.scrollIntoView = jest.fn();
 
@@ -99,7 +99,7 @@ async function openWithLine() {
   await screen.findByText("Widget p1");
   return { onViewOrder };
 }
-const posSwitch = () => screen.findByRole("switch", { name: /pos mode/i });
+const posSwitch = () => screen.findByRole("switch", { name: /store pickup/i });
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -121,8 +121,8 @@ describe("CreateOrderModal: POS mode switch", () => {
     mockRole = "SUPER_ADMIN";
     mockPrefs = { "orders.posMode": "true" };
     await openWithLine();
-    expect(screen.queryByRole("switch", { name: /pos mode/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Confirm & invoice" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("switch", { name: /store pickup/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Confirm and invoice" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /^create order$/i }));
     await waitFor(() => expect(orderPosts().length).toBe(1));
     expect(orderPosts()[0][1].fulfillPath).not.toBe("PICKUP");
@@ -153,7 +153,7 @@ describe("CreateOrderModal: POS mode switch", () => {
     renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
     const sw = await posSwitch();
     await waitFor(() => expect(sw).toBeChecked());
-    expect(screen.getByRole("button", { name: "Confirm & invoice" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Confirm and invoice" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Confirm only" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /save as draft/i })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^create order$/i })).not.toBeInTheDocument();
@@ -166,7 +166,7 @@ describe("CreateOrderModal: POS mode switch", () => {
     await waitFor(() => expect(sw).toBeEnabled());
     fireEvent.click(sw);
     await waitFor(() => expect(sw).not.toBeChecked());
-    expect(await screen.findByText(/couldn't save your pos mode setting/i)).toBeInTheDocument();
+    expect(await screen.findByText(/couldn't save your store pickup setting/i)).toBeInTheDocument();
   });
 
   it("steps the delivery-only fields aside and restores them when switched off", async () => {
@@ -183,11 +183,13 @@ describe("CreateOrderModal: POS mode switch", () => {
     expect(screen.getByRole("button", { name: /^create order$/i })).toBeInTheDocument();
   });
 
-  it("Confirm & invoice: creates a PICKUP order, then PATCH status CONFIRMED, then POST from-order", async () => {
+  it("Confirm and invoice: creates a PICKUP order, then PATCH status CONFIRMED, then POST from-order", async () => {
     mockPrefs = { "orders.posMode": "true" };
     await openWithLine();
-    await waitFor(() => expect(screen.getByRole("switch", { name: /pos mode/i })).toBeChecked());
-    fireEvent.click(screen.getByRole("button", { name: "Confirm & invoice" }));
+    await waitFor(() =>
+      expect(screen.getByRole("switch", { name: /store pickup/i })).toBeChecked(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Confirm and invoice" }));
     await waitFor(() =>
       expect(patch).toHaveBeenCalledWith("/orders/o1/status", { status: "CONFIRMED" }),
     );
@@ -206,7 +208,9 @@ describe("CreateOrderModal: POS mode switch", () => {
   it("Confirm only: confirms but never invoices", async () => {
     mockPrefs = { "orders.posMode": "true" };
     await openWithLine();
-    await waitFor(() => expect(screen.getByRole("switch", { name: /pos mode/i })).toBeChecked());
+    await waitFor(() =>
+      expect(screen.getByRole("switch", { name: /store pickup/i })).toBeChecked(),
+    );
     fireEvent.click(screen.getByRole("button", { name: "Confirm only" }));
     await waitFor(() =>
       expect(patch).toHaveBeenCalledWith("/orders/o1/status", { status: "CONFIRMED" }),
@@ -227,8 +231,10 @@ describe("CreateOrderModal: POS mode switch", () => {
         : Promise.reject(new Error("nope")),
     );
     const { onViewOrder } = await openWithLine();
-    await waitFor(() => expect(screen.getByRole("switch", { name: /pos mode/i })).toBeChecked());
-    fireEvent.click(screen.getByRole("button", { name: "Confirm & invoice" }));
+    await waitFor(() =>
+      expect(screen.getByRole("switch", { name: /store pickup/i })).toBeChecked(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Confirm and invoice" }));
     await waitFor(() =>
       expect(mockToast).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -242,14 +248,16 @@ describe("CreateOrderModal: POS mode switch", () => {
     expect(onViewOrder).toHaveBeenCalledWith("o1");
   });
 
-  it("Save as Draft is kept and sends the draft as PICKUP without confirming", async () => {
+  it("Save as draft is kept and sends the draft as PICKUP without confirming", async () => {
     mockPrefs = { "orders.posMode": "true" };
     renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
     fireEvent.change(screen.getByPlaceholderText("Search by business name…"), {
       target: { value: "Acm" },
     });
     fireEvent.click(await screen.findByText("Acme Foods"));
-    await waitFor(() => expect(screen.getByRole("switch", { name: /pos mode/i })).toBeChecked());
+    await waitFor(() =>
+      expect(screen.getByRole("switch", { name: /store pickup/i })).toBeChecked(),
+    );
     fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
     await waitFor(() => expect(orderPosts()).toHaveLength(1));
     expect(orderPosts()[0][1]).toEqual(
@@ -262,9 +270,11 @@ describe("CreateOrderModal: POS mode switch", () => {
     mockPrefs = { "orders.posMode": "true" };
     mockActive = { id: "a1", orderNumber: "SO-9", status: "PENDING", itemCount: 2, total: 20 };
     await openWithLine();
-    await waitFor(() => expect(screen.getByRole("switch", { name: /pos mode/i })).toBeChecked());
+    await waitFor(() =>
+      expect(screen.getByRole("switch", { name: /store pickup/i })).toBeChecked(),
+    );
     expect(mockActiveHook).toHaveBeenLastCalledWith("c1", "PICKUP");
-    fireEvent.click(screen.getByRole("button", { name: "Confirm & invoice" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm and invoice" }));
     expect(
       await screen.findByText("This customer already has an open counter order"),
     ).toBeInTheDocument();
@@ -273,12 +283,68 @@ describe("CreateOrderModal: POS mode switch", () => {
   });
 });
 
+describe("CreateOrderModal: POS mode merge into an open DRAFT (row 311)", () => {
+  const mergeIntoDraft = async () => {
+    mockPrefs = { "orders.posMode": "true" };
+    mockActive = { id: "a1", orderNumber: "SO-9", status: "DRAFT", itemCount: 2, total: 20 };
+    post.mockImplementation((url: string) =>
+      Promise.resolve({
+        data: url === "/orders" ? { id: "a1", orderNumber: "SO-9", status: "DRAFT" } : [],
+      }),
+    );
+    const view = await openWithLine();
+    await waitFor(() =>
+      expect(screen.getByRole("switch", { name: /store pickup/i })).toBeChecked(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Confirm and invoice" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add to it" }));
+    return view;
+  };
+  const statusPatches = () =>
+    patch.mock.calls.filter((c) => String(c[0]).includes("/status")).map((c) => c[1].status);
+
+  it("promotes the DRAFT to PENDING before CONFIRMED, then invoices", async () => {
+    await mergeIntoDraft();
+    await waitFor(() => expect(post).toHaveBeenCalledWith("/invoices/from-order/a1"));
+    expect(statusPatches()).toEqual(["PENDING", "CONFIRMED"]);
+    expect(mockToast).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Order confirmed and invoiced" }),
+    );
+  });
+
+  it("when the confirm is refused, the toast says the merged order is unconfirmed and offers View Order", async () => {
+    patch.mockImplementation((url: string) =>
+      String(url).includes("/status")
+        ? Promise.reject({ response: { status: 400, data: { message: "raw server text" } } })
+        : Promise.resolve({ data: {} }),
+    );
+    const { onViewOrder } = await mergeIntoDraft();
+    await waitFor(() =>
+      expect(mockToast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: expect.stringMatching(/merged, but it couldn't be confirmed/i),
+          variant: "warning",
+        }),
+      ),
+    );
+    const t = mockToast.mock.calls.find((c) => /couldn't be confirmed/.test(c[0].title))![0];
+    expect(t.title).not.toMatch(/raw server text/);
+    t.action.onClick();
+    expect(onViewOrder).toHaveBeenCalledWith("a1");
+    expect(post.mock.calls.some((c) => String(c[0]).startsWith("/invoices/from-order"))).toBe(
+      false,
+    );
+  });
+});
+
 describe("CreateOrderModal: POS mode landing and Enter", () => {
-  it("lands on the new order's page after Confirm & invoice (not the list)", async () => {
+  it("lands on the new order's page after Confirm and invoice (not the list)", async () => {
     mockPrefs = { "orders.posMode": "true" };
     const { onViewOrder } = await openWithLine();
-    await waitFor(() => expect(screen.getByRole("switch", { name: /pos mode/i })).toBeChecked());
-    fireEvent.click(screen.getByRole("button", { name: "Confirm & invoice" }));
+    await waitFor(() =>
+      expect(screen.getByRole("switch", { name: /store pickup/i })).toBeChecked(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Confirm and invoice" }));
     await waitFor(() => expect(onViewOrder).toHaveBeenCalledWith("o1"));
     expect(post).toHaveBeenCalledWith("/invoices/from-order/o1");
   });
@@ -289,15 +355,19 @@ describe("CreateOrderModal: POS mode landing and Enter", () => {
       url === "/orders" ? Promise.resolve({ data: { id: "o1" } }) : Promise.reject(new Error("x")),
     );
     const { onViewOrder } = await openWithLine();
-    await waitFor(() => expect(screen.getByRole("switch", { name: /pos mode/i })).toBeChecked());
-    fireEvent.click(screen.getByRole("button", { name: "Confirm & invoice" }));
+    await waitFor(() =>
+      expect(screen.getByRole("switch", { name: /store pickup/i })).toBeChecked(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Confirm and invoice" }));
     await waitFor(() => expect(onViewOrder).toHaveBeenCalledWith("o1"));
   });
 
   it("an implicit (Enter) submit follows the primary, even right after a Confirm only choice", async () => {
     mockPrefs = { "orders.posMode": "true" };
     await openWithLine();
-    await waitFor(() => expect(screen.getByRole("switch", { name: /pos mode/i })).toBeChecked());
+    await waitFor(() =>
+      expect(screen.getByRole("switch", { name: /store pickup/i })).toBeChecked(),
+    );
     fireEvent.submit(document.getElementById("create-order-form")!);
     await waitFor(() => expect(post).toHaveBeenCalledWith("/invoices/from-order/o1"));
   });
@@ -331,11 +401,11 @@ describe("CreateOrderModal: a store-only tenant (row 331)", () => {
       }),
     );
 
-  it("is in POS mode with no stored preference: Confirm & invoice, no delivery steps, no switch", async () => {
+  it("is in POS mode with no stored preference: Confirm and invoice, no delivery steps, no switch", async () => {
     asStoreOnly();
     await openWithLine();
-    expect(await screen.findByRole("button", { name: "Confirm & invoice" })).toBeInTheDocument();
-    expect(screen.queryByRole("switch", { name: /pos mode/i })).not.toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Confirm and invoice" })).toBeInTheDocument();
+    expect(screen.queryByRole("switch", { name: /store pickup/i })).not.toBeInTheDocument();
     expect(screen.queryByText(/Requested Delivery Date/i)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^create order$/i })).not.toBeInTheDocument();
   });
@@ -343,7 +413,7 @@ describe("CreateOrderModal: a store-only tenant (row 331)", () => {
   it("sends the order as PICKUP", async () => {
     asStoreOnly();
     await openWithLine();
-    fireEvent.click(await screen.findByRole("button", { name: "Confirm & invoice" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm and invoice" }));
     await waitFor(() => expect(orderPosts().length).toBe(1));
     expect(orderPosts()[0][1].fulfillPath).toBe("PICKUP");
   });
@@ -353,9 +423,7 @@ describe("CreateOrderModal: a store-only tenant (row 331)", () => {
     renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
     expect(await screen.findByRole("dialog", { name: "Invoice a customer" })).toBeInTheDocument();
     expect(
-      screen.getByText(
-        "Sold in store. The invoice is made when you confirm; hand the goods over when they collect.",
-      ),
+      screen.getByText("Sold in store. Confirming creates the invoice. Hand goods over at pickup."),
     ).toBeInTheDocument();
     expect(
       screen.queryByText("Create a new order on behalf of a customer."),
@@ -364,17 +432,28 @@ describe("CreateOrderModal: a store-only tenant (row 331)", () => {
     expect(notes).toHaveAttribute("placeholder", "Special instructions…");
   });
 
+  it("row 344: every footer button is a 44 px tap target below sm (390 px was 34 px)", async () => {
+    asStoreOnly();
+    await openWithLine();
+    await screen.findByRole("button", { name: "Confirm and invoice" });
+    const names = ["Save as draft", "Confirm only", "Confirm and invoice"]; // Minimize + Close are header icons (Q08)
+    for (const name of names) {
+      const btn = screen.getByText(name, { selector: "button" });
+      expect(btn.className).toMatch(/max-sm:h-11/);
+    }
+  });
+
   it("a role without POS mode is left on the normal builder", async () => {
     asStoreOnly();
     mockRole = "SUPER_ADMIN";
     await openWithLine();
-    expect(screen.queryByRole("button", { name: "Confirm & invoice" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Confirm and invoice" })).not.toBeInTheDocument();
   });
 
   it("a delivery tenant is unchanged: POS mode stays an opt-in switch", async () => {
     await openWithLine();
     expect(await posSwitch()).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Confirm & invoice" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Confirm and invoice" })).not.toBeInTheDocument();
 
     expect(screen.getByRole("dialog", { name: "Create Order" })).toBeInTheDocument();
     expect(screen.getByText("Create a new order on behalf of a customer.")).toBeInTheDocument();
@@ -382,5 +461,43 @@ describe("CreateOrderModal: a store-only tenant (row 331)", () => {
       "placeholder",
       "Special instructions, delivery notes…",
     );
+  });
+});
+
+describe("CreateOrderModal: the View Order action stays long enough to use (F17)", () => {
+  const HOUR = 60 * 60 * 1000;
+
+  it("POS: the toast that carries View Order stays at least an hour (not the 4 s default)", async () => {
+    mockPrefs = { "orders.posMode": "true" };
+    post.mockImplementation((url: string) =>
+      url === "/orders"
+        ? Promise.resolve({ data: { id: "o1", orderNumber: "SO-1" } })
+        : Promise.reject(new Error("nope")),
+    );
+    const { onViewOrder } = await openWithLine();
+    await waitFor(() =>
+      expect(screen.getByRole("switch", { name: /store pickup/i })).toBeChecked(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Confirm and invoice" }));
+    await waitFor(() => expect(mockToast).toHaveBeenCalled());
+    const withAction = mockToast.mock.calls.map((c) => c[0]).filter((t) => t.action);
+    expect(withAction.length).toBeGreaterThan(0);
+    for (const t of withAction) {
+      expect(t.action.label).toBe("View Order");
+      expect(t.duration).toBeGreaterThanOrEqual(HOUR);
+    }
+    expect(onViewOrder).toHaveBeenCalledWith("o1");
+  });
+
+  it("the plain Create Order toast carries View Order for at least an hour", async () => {
+    const { onViewOrder } = await openWithLine();
+    fireEvent.click(screen.getByRole("button", { name: /^create order$/i }));
+    await waitFor(() => expect(mockToast).toHaveBeenCalled());
+    const t = mockToast.mock.calls[0][0];
+    expect(t.title).toBe("Order created");
+    expect(t.action.label).toBe("View Order");
+    expect(t.duration).toBeGreaterThanOrEqual(HOUR);
+    t.action.onClick();
+    expect(onViewOrder).toHaveBeenCalledWith("o1");
   });
 });

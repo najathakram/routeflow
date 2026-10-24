@@ -32,7 +32,7 @@ describe("SA-760 Q-760-1: a DRAFT partial follows order price edits (price only)
   const mockLedger = {
     writeSaleEntries: jest.fn(),
     reverseInvoiceEntries: jest.fn(),
-    syncInvoiceEntries: jest.fn(),
+    settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
   };
 
   beforeEach(async () => {

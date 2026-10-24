@@ -224,7 +224,7 @@ async function main() {
       const protectedSlugs = loadProtectedSlugs(process.env, url);
       const touched = [...new Set(plan.changes.map((c) => c.tenantId))];
       const { rows: guardRows } = await client.query(
-        `SELECT t.id, t.slug, t.status, t.class, t."deletedAt", s."planKey", s."stripeSubId"
+        `SELECT t.id, t.slug, t.status, t.class, t."deletedAt", s."planKey", s."stripeSubId", s."couponFull"
            FROM "Tenant" t LEFT JOIN "TenantSubscription" s ON s."tenantId" = t.id
           WHERE t.id = ANY($1::text[])`,
         [touched],

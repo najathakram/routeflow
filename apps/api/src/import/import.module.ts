@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { BullModule } from "@nestjs/bull";
 import { ImportController } from "./import.controller";
 import { ImportService } from "./import.service";
 import { NumberingController } from "./numbering.controller";
@@ -12,6 +13,10 @@ import { ProductAliasService } from "./product-alias.service";
 import { DuplicateMatchModule } from "./duplicate-match.module";
 import { VariantResolutionService } from "./variant-resolution.service";
 import { MigrationService } from "./migration.service";
+import { ProductFamilyImportService } from "./product-family-import.service";
+import { ProductImportJobService } from "./product-import-job.service";
+import { ProductImportProcessor } from "./product-import.processor";
+import { PRODUCT_IMPORT_QUEUE } from "./product-import-job";
 import { BatchImportService } from "./batch-import.service";
 import { SourceConnectorRegistry } from "./connectors/source-connectors";
 import { PrismaModule } from "../prisma/prisma.module";
@@ -31,6 +36,8 @@ import { SellingRestrictionsModule } from "../selling-restrictions/selling-restr
 
 @Module({
   imports: [
+    // SA-823 section 5: the queue a large family-import apply runs on
+    BullModule.registerQueue({ name: PRODUCT_IMPORT_QUEUE }),
     PrismaModule,
     VendorBillsModule,
     ProductsModule,
@@ -53,6 +60,9 @@ import { SellingRestrictionsModule } from "../selling-restrictions/selling-restr
   ],
   providers: [
     ImportService,
+    ProductFamilyImportService,
+    ProductImportJobService,
+    ProductImportProcessor,
     ExternalRefService,
     ProductAliasService,
     VariantResolutionService,

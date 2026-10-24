@@ -330,7 +330,7 @@ describe("foldDayClose: totals.handOver", () => {
     expect(f.totals.handOver).toEqual({ count: 0, cash: 0 });
   });
 
-  it("counts every hand-over row; cash is the CASH ones only (a card hand-over counts, adds no cash)", () => {
+  it("counts DISTINCT ORDERS (row 374 c): one order tendered over four rows is one hand-over; cash is the CASH rows only", () => {
     const f = foldDayClose(
       facts({
         payments: [
@@ -341,7 +341,25 @@ describe("foldDayClose: totals.handOver", () => {
         ],
       }),
     );
-    expect(f.totals.handOver).toEqual({ count: 4, cash: 30.3 });
+    expect(f.totals.handOver).toEqual({ count: 1, cash: 30.3 });
+  });
+
+  it("two orders handed over are two hand-overs, the same unit as Today's summary.handOvers.count", () => {
+    const other = "o-pickup-2";
+    const f = foldDayClose(
+      facts({
+        payments: [
+          handOver(20),
+          handOver(8, { method: "CREDIT_CARD" }),
+          pay({
+            amount: 11,
+            paymentGroupId: pickupTenderGroupId(other),
+            invoice: nonCounter(other),
+          }),
+        ],
+      }),
+    );
+    expect(f.totals.handOver).toEqual({ count: 2, cash: 31 });
   });
 
   it("ungrouped non-counter cash is NOT a hand-over (it is not a tender at all)", () => {
@@ -416,7 +434,7 @@ describe("foldDayClose: totals.handOver", () => {
     expect(f.tillCash).toBe(50);
     expect(f.totals.moneyIn).toEqual({ cash: 50, card: 15, check: 0, other: 0, total: 65 });
     expect(f.totals.netCollected).toBe(65);
-    expect(f.totals.handOver).toEqual({ count: 2, cash: 20 });
+    expect(f.totals.handOver).toEqual({ count: 1, cash: 20 }); // one order, a CASH and a CARD row
     expect(expectedCashOf(10, f)).toBe(60);
   });
 
