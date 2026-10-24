@@ -102,7 +102,6 @@ export function fold(events, { bugs = new Map() } = {}) {
     anomalies: [],
     eventCount: 0,
     lastEventAt: null,
-    lastRegisterSyncAt: null, // newest event the register sync wrote (the silent-sync alarm reads it)
     machines: {},
     sessions: new Map(), // session id -> latest heartbeat { ...data, lane, ts }
   };
@@ -222,7 +221,6 @@ export function fold(events, { bugs = new Map() } = {}) {
     const ts = Date.parse(ev.ts);
     state.eventCount++;
     state.lastEventAt = ts;
-    if (ev.actor === "register-sync") state.lastRegisterSyncAt = ts;
     state.machines[ev.machine] = ts;
     touchLane(ev, ts);
     const d = ev.data;

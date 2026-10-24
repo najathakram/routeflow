@@ -1374,27 +1374,25 @@ export function createCollector({
   }
 
   async function runCycle(name) {
-    {
-      const s = sources[name];
-      s.tried = now();
-      runCounts[name] = (runCounts[name] ?? 0) + 1;
-      try {
-        s.data = await runners[name]();
-        s.ok = true;
-        s.at = now();
-        s.error = null;
-      } catch (e) {
-        s.ok = false;
-        s.error = String(e?.message ?? e);
-        log(`source ${name} failed: ${s.error}`);
-      }
-      try {
-        onUpdate(name);
-      } catch (e) {
-        log(`onUpdate(${name}) threw: ${e?.message ?? e}`);
-      }
-      return s;
+    const s = sources[name];
+    s.tried = now();
+    runCounts[name] = (runCounts[name] ?? 0) + 1;
+    try {
+      s.data = await runners[name]();
+      s.ok = true;
+      s.at = now();
+      s.error = null;
+    } catch (e) {
+      s.ok = false;
+      s.error = String(e?.message ?? e);
+      log(`source ${name} failed: ${s.error}`);
     }
+    try {
+      onUpdate(name);
+    } catch (e) {
+      log(`onUpdate(${name}) threw: ${e?.message ?? e}`);
+    }
+    return s;
   }
 
   return {
