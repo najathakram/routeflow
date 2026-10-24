@@ -34,6 +34,7 @@ export function PosHandOverSheet({
   onRetry,
   onCancel,
   onSubmit,
+  copy = { title: POS_COPY.handOver, action: POS_COPY.handOver },
 }: {
   visible: boolean;
   /** Unknown / loading counts as not known-named: a tender is required. */
@@ -47,6 +48,8 @@ export function PosHandOverSheet({
   error?: string | null;
   onCancel: () => void;
   onSubmit: (body: PickupCompleteRequest) => void;
+  /** I-120: the words when opened from "Complete at counter" (completeAtCounterSheetCopy); the tender step is the same. */
+  copy?: { title: string; action: string };
 }) {
   const [method, setMethod] = React.useState<PosTenderMethod>("CASH");
   const [amount, setAmount] = React.useState("");
@@ -96,7 +99,7 @@ export function PosHandOverSheet({
         style={styles.sheetWrap}
       >
         <View style={styles.sheet}>
-          <Text style={styles.title}>{POS_COPY.handOver}</Text>
+          <Text style={styles.title}>{copy.title}</Text>
           <Text style={styles.hint}>
             {posMayHandOverUnpaid(isWalkIn)
               ? "Take payment now, or hand over and leave the invoice open."
@@ -175,8 +178,8 @@ export function PosHandOverSheet({
                 : !ready
                   ? "Balance unavailable"
                   : nothingOwed
-                    ? POS_COPY.handOver
-                    : `${POS_COPY.handOver} and take payment`}
+                    ? copy.action
+                    : `${copy.action} and take payment`}
             </Text>
           </Pressable>
           {posMayHandOverUnpaid(isWalkIn) && ready && !nothingOwed ? (
@@ -186,7 +189,7 @@ export function PosHandOverSheet({
               onPress={() => submit(true)}
               accessibilityRole="button"
             >
-              <Text style={styles.secondaryText}>{POS_COPY.handOver}, no payment</Text>
+              <Text style={styles.secondaryText}>{copy.action}, no payment</Text>
             </Pressable>
           ) : null}
           <Pressable

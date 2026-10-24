@@ -9,6 +9,7 @@ import {
   RECORD_ANYWAY_LABEL,
   canRecordAnyway,
   creditOverLimitSentence,
+  COUNTER_COPY,
 } from "@routeflow/types";
 import type { CounterSalePaymentMethod, PickupCompleteResponse } from "@routeflow/types";
 import { usePickupComplete, usePickupInvoiceBalances } from "@/lib/api/counter-sale";
@@ -43,6 +44,8 @@ type Body = {
     reference?: string;
     recordAnyway?: boolean;
   };
+  /** SA-913 R8: the confirmed re-send after COUNTER_COMPLETE_ON_RUN (same key) */
+  takeOffRun?: boolean;
 };
 
 /**
@@ -63,6 +66,7 @@ export function PickupCompleteDialog({
   invoices,
   isWalkIn,
   handOver = false,
+  completeMode = false,
   heldKey,
   storeKey = null,
   customerName = null,
@@ -76,6 +80,8 @@ export function PickupCompleteDialog({
   isWalkIn: boolean;
   /** POS-mode order (PICKUP, not a counter sale): the confirm button reads "Hand over". Counter / portal keep "Picked up". */
   handOver?: boolean;
+  /** I-120: "Complete at counter" (any open order): its title, confirm and outcome copy; the payment step is the same. */
+  completeMode?: boolean;
   heldKey?: React.MutableRefObject<HeldPickupKey>;
   /** sessionStorage key (tenant + user + order) that keeps an UNKNOWN outcome's key across a reload. */
   storeKey?: string | null;
@@ -144,7 +150,9 @@ export function PickupCompleteDialog({
         // Back to the tender step; the next attempt is the same hand-over (same key) carrying the payment.
         if (res.balanceDue > 0) setOwed(res.balanceDue);
         setErrorCode(code);
-        setError(pickupCompleteErrorCopy({ response: { data: { code } } }));
+        setError(
+          pickupCompleteErrorCopy({ response: { data: { code } } }, undefined, completeMode),
+        );
         return;
       }
       held.current = null;
@@ -157,7 +165,7 @@ export function PickupCompleteDialog({
       if (unknown) writeHeldPickupKey(storeKey, keyRef.current);
       else clearHeldPickupKey(storeKey);
       setErrorCode(pickupErrorCode(err));
-      setError(pickupCompleteErrorCopy(err, due ?? undefined));
+      setError(pickupCompleteErrorCopy(err, due ?? undefined, completeMode));
     }
   }
 
@@ -212,7 +220,7 @@ export function PickupCompleteDialog({
     <Modal
       open={open}
       onClose={onClose}
-      title={`${handOver ? "Hand over" : "Picked up"}${orderNumber ? ` ${orderNumber}` : ""}`}
+      title={`${completeMode ? COUNTER_COPY.completeAtCounter : handOver ? "Hand over" : "Picked up"}${orderNumber ? ` ${orderNumber}` : ""}`}
       className="max-w-md"
       footer={
         outcome ? (
@@ -264,14 +272,31 @@ export function PickupCompleteDialog({
                     Retry
                   </Button>
                 )}
-                <Button
-                  type="button"
-                  onClick={confirm}
-                  loading={complete.isPending}
-                  disabled={due === null}
-                >
-                  {handOver ? "Hand over" : nothingToCollect ? "Confirm picked up" : "Picked up"}
-                </Button>
+                {/* SA-913 R8: the order is on a driver's run; the alert names the driver, this re-sends with the confirm */}
+                {errorCode === API_ERROR_CODES.COUNTER_COMPLETE_ON_RUN ? (
+                  <Button
+                    type="button"
+                    loading={complete.isPending}
+                    onClick={() => void send({ ...lastBody.current, takeOffRun: true })}
+                  >
+                    {COUNTER_COPY.takeOffRun}
+                  </Button>
+                ) : (
+                  <Button
+                    type="button"
+                    onClick={confirm}
+                    loading={complete.isPending}
+                    disabled={due === null}
+                  >
+                    {completeMode
+                      ? COUNTER_COPY.completeConfirm
+                      : handOver
+                        ? "Hand over"
+                        : nothingToCollect
+                          ? "Confirm picked up"
+                          : "Picked up"}
+                  </Button>
+                )}
               </>
             )}
           </>
@@ -290,9 +315,16 @@ export function PickupCompleteDialog({
               </p>
             ) : (
               <p className="text-sm font-semibold text-navy">
-                {outcome.balanceDue > 0
-                  ? `Picked up. ${money(outcome.balanceDue)} still due.`
-                  : "Picked up and paid."}
+                {completeMode
+                  ? outcome.emailed
+                    ? COUNTER_COPY.completedEmailed
+                    : COUNTER_COPY.completed
+                  : outcome.balanceDue > 0
+                    ? `Picked up. ${money(outcome.balanceDue)} still due.`
+                    : "Picked up and paid."}
+                {completeMode && outcome.balanceDue > 0
+                  ? ` ${money(outcome.balanceDue)} still due.`
+                  : ""}
               </p>
             )}
             {unrecorded && (
