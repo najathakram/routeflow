@@ -32,7 +32,7 @@
     "@routeflow/scanning": "*",
     "@routeflow/types": "*",
     "@sentry/react": "^10.76.2",
-    "@tanstack/react-query": "^5.104.4",
+    "@tanstack/react-query": "^5.104.5",
     "@zxing/browser": "^0.2.1",
     "@zxing/library": "^0.23.0",
     "axios": "^1.20.0",
