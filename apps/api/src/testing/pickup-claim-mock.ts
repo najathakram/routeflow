@@ -70,4 +70,15 @@ export const pickupClaimMock = {
     }
   },
   completionAlreadyRecorded: async () => mockClaimStore.recorded,
+  // SA-919: the completion stamp is the unit specs' own hand-over moment (their T_DELIVERED, 1000), not a clock
+  stampCompletion: async (_db: unknown, _tenantId: string, id: string) => {
+    const row = rowOf(id);
+    const at = new Date(1000);
+    if (row) row.meta = { ...(row.meta ?? {}), completionAt: at.toISOString() };
+    return at;
+  },
+  completionAtOf: (meta: unknown) => {
+    const at = (meta as { completionAt?: unknown } | null)?.completionAt;
+    return typeof at === "string" ? new Date(at) : null;
+  },
 };

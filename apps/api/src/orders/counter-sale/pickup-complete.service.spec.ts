@@ -74,7 +74,14 @@ const KEY = "key-1";
 const T_DEPOSIT = 500;
 const T_DELIVERED = 1000;
 
-type Pay = { id: string; amount: number; method: string; status: string; createdAt: Date };
+type Pay = {
+  id: string;
+  amount: number;
+  method: string;
+  status: string;
+  createdAt: Date;
+  paymentGroupId: string | null;
+};
 type Inv = {
   id: string;
   total: number;
@@ -102,7 +109,15 @@ describe("PickupCompleteService.complete", () => {
     method = "CASH",
     at = T_DELIVERED + 1,
     status = "PAID",
-  ): Pay => ({ id, amount, method, status, createdAt: new Date(at) });
+  ): Pay => ({
+    id,
+    amount,
+    method,
+    status,
+    createdAt: new Date(at),
+    // SA-919: a row made at or after the hand-over is its tender (the group id written IN the create); a deposit is not
+    paymentGroupId: at >= T_DELIVERED ? TENDER_GROUP.paymentGroupId : null,
+  });
   const inv = (id: string, total: number, status = "DRAFT", payments: Pay[] = [], at = 1): Inv => ({
     id,
     total,

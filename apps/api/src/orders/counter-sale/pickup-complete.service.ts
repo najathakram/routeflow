@@ -59,7 +59,9 @@ import { RouteFlowGateway } from "../../gateways/routeflow.gateway";
 import {
   completionAlreadyRecorded,
   finishCompletionEmail,
+  completionAtOf,
   mergeClaimMeta,
+  stampCompletion,
   releaseCompletionEmail,
   reserveCompletionEmail,
 } from "./pickup-complete-claim";
@@ -96,8 +98,9 @@ type OrderRow = {
  *     payment helpers the counter sale uses (planner, oldest-first allocation, shortfall resume, cents).
  *
  * REPLAY = TRANSITION OWNER. The invoice pre-exists (deposits, portal payments), so "a tender is stored"
- * cannot mean "this request already paid". Only a tender payment created at or after the order's
- * `deliveredAt` (the moment THIS hand-over moved it to DELIVERED) is this request's; a deposit before it is
+ * cannot mean "this request already paid". Only a tender row of the order's hand-over group created at or after THIS
+ * completion's `completionAt` (SA-919: the claim's stamp; never `deliveredAt`, which a backdated order sets to its order
+ * date) is this request's; a deposit is
  * never counted. A call that finds the order already DELIVERED therefore records only the SHORTFALL between
  * this hand-over's planned tender and what is stored for it, never a second full tender, and answers the
  * stored outcome with `alreadyPickedUp`. The balance the plan is judged against is the invoice total less
@@ -163,7 +166,7 @@ export class PickupCompleteService {
     const preRows = await this.readInvoices(id);
     const preOwed = this.owedBalance(
       preRows,
-      alreadyPickedUp ? isHandOverTender(order.deliveredAt) : undefined,
+      alreadyPickedUp ? isHandOverTender(id, await this.claimCompletionAt(id)) : undefined,
     );
     const excused = !sent && preRows.length > 0 && preOwed <= 0;
     if (sent) {
@@ -201,7 +204,9 @@ export class PickupCompleteService {
     // SA-909 item 1: a tender this call would record is refused for a CLOSED day before the first write (the same
     // window check the tender runs under its lock, read-only, on the same register and the database clock), so a closed day
     // leaves the order as it was. The in-lock check stays the authority (the day closing in between: today's 409 after).
-    if (!alreadyPickedUp && sent && sent.method !== "ON_ACCOUNT") {
+    // #3678 Opus NIT: nothing owed (the same excuse rule as above) records no tender, so a closed day does not refuse it
+    const nothingOwed = preRows.length > 0 && preOwed <= 0;
+    if (!alreadyPickedUp && sent && sent.method !== "ON_ACCOUNT" && !nothingOwed) {
       await counterTenderPaidAt(
         this.prisma,
         this.prisma.getTenantId(),
@@ -209,8 +214,10 @@ export class PickupCompleteService {
         pickupRegisterOf(order, dto.registerKey),
       );
     }
+    // SA-919: THIS completion's `completionAt`, the claim's stamp (never `deliveredAt`): its tender and its email key
+    let handedOverAt: Date | null;
     try {
-      await this.claimHandOver(id, _idempotencyKey, sent, user);
+      handedOverAt = await this.claimHandOver(id, _idempotencyKey, sent, user);
     } catch (e) {
       // A lock timeout or outage before any write is a coded, retryable 503 (never a 500).
       if (e instanceof LockTimeoutError || e instanceof LockUnavailableError) {
@@ -272,7 +279,6 @@ export class PickupCompleteService {
       }
       order = (await this.readOrder(id)) ?? order;
     }
-    const handedOverAt = order.deliveredAt ?? null;
 
     // 3. Issue every draft invoice.
     let invoices = await this.readInvoices(id);
@@ -310,7 +316,8 @@ export class PickupCompleteService {
     // 4. The tender, against what is STORED now. ON_ACCOUNT takes no money: no lock. Owed is re-judged on
     // the final invoices (a remainder / rebuild at DELIVERED can differ from before the hand-over).
     const owedNow =
-      this.owedBalance(invoices, alreadyPickedUp ? isHandOverTender(handedOverAt) : undefined) > 0;
+      this.owedBalance(invoices, alreadyPickedUp ? isHandOverTender(id, handedOverAt) : undefined) >
+      0;
     let planError: string | undefined;
     let duplicate: DuplicatePaymentRefExisting | undefined;
     let shown: { method: string; amount?: number } = sent ?? { method: "ON_ACCOUNT" };
@@ -417,7 +424,7 @@ export class PickupCompleteService {
   /**
    * I-120 (SA-861 rule 8): the ONE customer email of a completion, the invoice email of every invoice of the order with
    * the COUNTER_COMPLETE wording. Only a named customer (a walk-in gets nothing), only once the tender outcome is final
-   * (recorded, or on account by choice: no `planError`). SA-909: exactly once PER COMPLETION (keyed on its `deliveredAt`),
+   * (recorded, or on account by choice: no `planError`). SA-909: exactly once PER COMPLETION (keyed on its `completionAt`, SA-919),
    * reserved by one conditional update on the claim row and sent with NO lock held (pickup-complete-claim.ts); the #2088 send
    * record is the delivery fact if the flag never got written. The hand-over is committed: a failed send is logged, never
    * thrown; the reservation is released so the same-key retry sends it.
@@ -428,9 +435,9 @@ export class PickupCompleteService {
     walkIn: boolean,
     planError: string | undefined,
     user: JwtPayload,
-    deliveredAt: Date | null,
+    handedOverAt: Date | null,
   ): Promise<boolean> {
-    if (walkIn || planError || invoices.length === 0 || !deliveredAt || !user.tenantId)
+    if (walkIn || planError || invoices.length === 0 || !handedOverAt || !user.tenantId)
       return false;
     const tenantId = user.tenantId;
     const claim = await this.prisma.forTenant().auditLog.findFirst({
@@ -439,14 +446,14 @@ export class PickupCompleteService {
       select: { id: true, meta: true },
     });
     if (!claim) return false;
-    const completionFor = deliveredAt.toISOString();
+    const completionFor = handedOverAt.toISOString();
     if (
       (claim.meta as { completionEmailedFor?: string } | null)?.completionEmailedFor ===
       completionFor
     )
       return false;
     // SA-909 item 4: the email went but the flag was never written (markSent threw): record it, send nothing.
-    if (await completionAlreadyRecorded(this.prisma, tenantId, invoices[0].id, deliveredAt)) {
+    if (await completionAlreadyRecorded(this.prisma, tenantId, invoices[0].id, handedOverAt)) {
       await finishCompletionEmail(this.prisma, tenantId, claim.id, completionFor);
       return false;
     }
@@ -487,7 +494,7 @@ export class PickupCompleteService {
     key: string,
     payment: CounterPaymentInput | undefined,
     user: JwtPayload,
-  ): Promise<void> {
+  ): Promise<Date | null> {
     const bodyHash = payment
       ? createHash("sha256")
           .update(
@@ -511,7 +518,7 @@ export class PickupCompleteService {
           orderBy: { createdAt: "asc" },
         });
         if (!row) {
-          await db.auditLog.create({
+          const created = await db.auditLog.create({
             data: {
               tenantId: user.tenantId,
               userId: user.sub,
@@ -521,7 +528,7 @@ export class PickupCompleteService {
               meta: { idempotencyKey: key, bodyHash },
             },
           });
-          return;
+          return this.completionMoment(orderId, tenantId, created.id, null, false);
         }
         const meta = (row.meta ?? {}) as { idempotencyKey?: string; bodyHash?: string | null };
         if (meta.idempotencyKey !== key || (meta.bodyHash && meta.bodyHash !== bodyHash)) {
@@ -531,12 +538,12 @@ export class PickupCompleteService {
           // hand-over tender makes a different request a conflict.
           const now = await db.order.findFirst({
             where: { id: orderId },
-            select: { status: true, deliveredAt: true },
+            select: { status: true },
           });
           const tendered =
             now?.status === "DELIVERED" &&
             (await this.readInvoices(orderId)).some((i) =>
-              (i.payments ?? []).some(isHandOverTender(now.deliveredAt ?? null)),
+              (i.payments ?? []).some(isHandOverTender(orderId, completionAtOf(row.meta))),
             );
           if (tendered) {
             throw new ConflictException({
@@ -547,16 +554,48 @@ export class PickupCompleteService {
           // SA-905 MUST 2 (a) / SA-909: the replacement merges ONLY its own keys, atomically, so the completion's email
           // fields (and a live reservation) always survive it: never a second email.
           await mergeClaimMeta(this.prisma, tenantId, row.id, { idempotencyKey: key, bodyHash });
-          return;
+          return this.completionMoment(orderId, tenantId, row.id, row.meta, false);
         }
         // A same-key retry that ADDS the payment the first call lacked (PICKUP_PAYMENT_REQUIRED) is adopted
         // on the claim, so a later, different payment under this key is a conflict, not a second tender.
         if (!meta.bodyHash && bodyHash) {
           await mergeClaimMeta(this.prisma, tenantId, row.id, { bodyHash }); // SA-909: an atomic merge
         }
+        return this.completionMoment(orderId, tenantId, row.id, row.meta, true);
       },
     );
     if (!locked.acquired) throw this.claimUnavailable();
+    return locked.value;
+  }
+
+  /**
+   * SA-919 rule 1, under the claim's counter-tender lock: a NEW completion (the order not yet delivered: the first claim, a
+   * different key, or after a reopen) stamps `completionAt`; a same-key replay with a stamp, or ANY request while the order
+   * is DELIVERED, keeps the stored one (null on a legacy claim: every row of the group is this hand-over's).
+   */
+  private async completionMoment(
+    orderId: string,
+    tenantId: string,
+    claimId: string,
+    meta: unknown,
+    sameKey: boolean,
+  ): Promise<Date | null> {
+    const stored = completionAtOf(meta);
+    const now = await this.prisma
+      .forTenant()
+      .order.findFirst({ where: { id: orderId }, select: { status: true } });
+    if (now?.status === "DELIVERED" || (sameKey && stored)) return stored;
+    return stampCompletion(this.prisma, tenantId, claimId);
+  }
+
+  /** The `completionAt` on this order's claim row (a replay judged before its claim), or null. */
+  private async claimCompletionAt(orderId: string): Promise<Date | null> {
+    const claim = await this.prisma.forTenant().auditLog.findFirst({
+      where: { entityType: "Order", entityId: orderId, action: "PICKUP_COMPLETE_CLAIM" },
+      orderBy: { createdAt: "asc" },
+      select: { meta: true },
+    });
+    return completionAtOf(claim?.meta);
   }
 
   /**
@@ -624,7 +663,7 @@ export class PickupCompleteService {
     let invoices = await this.readInvoices(orderId);
     let planError: string | undefined;
     let duplicate: DuplicatePaymentRefExisting | undefined;
-    const mine = isHandOverTender(handedOverAt);
+    const mine = isHandOverTender(orderId, handedOverAt);
     const balances = invoices.map((i) => ({
       id: i.id,
       balance: remainingCapacity(
@@ -806,7 +845,13 @@ export class PickupCompleteService {
       orderNumber: order.orderNumber ?? "",
       invoiceId: first.id,
       invoiceNumber: first.invoiceNumber ?? "",
-      ...tenderFigures(invoices, payment, isHandOverTender(handedOverAt), planError, duplicate),
+      ...tenderFigures(
+        invoices,
+        payment,
+        isHandOverTender(order.id, handedOverAt),
+        planError,
+        duplicate,
+      ),
       ...(alreadyPickedUp ? { alreadyPickedUp: true } : {}),
     };
   }

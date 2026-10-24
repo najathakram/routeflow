@@ -7,8 +7,9 @@ import type { PrismaService } from "../../prisma/prisma.service";
  *  - EVERY write to that meta is an atomic jsonb merge of its own keys (`mergeClaimMeta`), never a read-modify-write of the
  *    whole object: a writer that read `meta` before another's write and wrote after it would erase that write (a reservation,
  *    the emailed flag, the key).
- *  - The email is sent once PER COMPLETION: `completionEmailedFor` = that completion's `deliveredAt` (ISO). A different key on
- *    the same completion finds it and sends nothing; a re-completion after a reopen has a new `deliveredAt` and sends one.
+ *  - The email is sent once PER COMPLETION: `completionEmailedFor` = that completion's `completionAt` (ISO, `stampCompletion`).
+ *    A different key on the same completion finds it and sends nothing; a re-completion after a reopen has a new stamp and
+ *    sends one.
  *  - The send is RESERVED by one conditional update (`completionEmailClaim = { for, at }` where nothing is emailed for this
  *    completion and no live claim exists) and runs with NO lock held (the counter-tender pool is 4 slots shared by every
  *    till). A claim older than the lease is a crashed sender's: it may be taken over.
@@ -28,6 +29,25 @@ export async function mergeClaimMeta(
   await db.$executeRaw`
     UPDATE "AuditLog" SET "meta" = COALESCE("meta", '{}'::jsonb) || ${JSON.stringify(patch)}::jsonb
     WHERE "id" = ${claimId} AND "tenantId" = ${tenantId}`;
+}
+
+/**
+ * SA-919 (the #3678 Opus MUST, P13): this completion's moment, `completionAt` on the claim row, written through the atomic merge
+ * under the counter-tender lock when a NEW completion claims (the order not yet delivered: the first time, or after a reopen).
+ * The APP clock, the clock Prisma fills `InvoicePayment.createdAt` with, so both sides of the comparison share one clock.
+ * It identifies this completion's tender (with the group id, pickup-tender.ts) and keys its email. Never the order's
+ * `deliveredAt`: DELIVERED writes `deliveredAt ?? orderDate`, a business date, past on a backdated order.
+ */
+export async function stampCompletion(db: Db, tenantId: string, claimId: string): Promise<Date> {
+  const at = new Date();
+  await mergeClaimMeta(db, tenantId, claimId, { completionAt: at.toISOString() });
+  return at;
+}
+
+/** The `completionAt` a claim row's meta carries, or null (a legacy claim: every stored row of the group is this hand-over's). */
+export function completionAtOf(meta: unknown): Date | null {
+  const at = (meta as { completionAt?: unknown } | null)?.completionAt;
+  return typeof at === "string" ? new Date(at) : null;
 }
 
 /**
@@ -88,7 +108,7 @@ export async function releaseCompletionEmail(
 
 /**
  * SA-909 item 4: the #2088 send record is the delivery fact (written right after the provider accepts, before markSent):
- * a COUNTER_COMPLETE send record of the completion's first invoice at or after this completion's `deliveredAt` means the
+ * a COUNTER_COMPLETE send record of the completion's first invoice at or after this completion's `completionAt` means the
  * email went, even if the flag never got written (markSent threw). Residual (documented): that record's own best-effort
  * write failed AND markSent threw: a second email in that double failure only.
  */
@@ -96,7 +116,7 @@ export async function completionAlreadyRecorded(
   db: Pick<PrismaService, "forTenant">,
   tenantId: string,
   firstInvoiceId: string,
-  deliveredAt: Date,
+  handedOverAt: Date,
 ): Promise<boolean> {
   const row = await db.forTenant().auditLog.findFirst({
     where: {
@@ -104,7 +124,7 @@ export async function completionAlreadyRecorded(
       entityType: "invoice",
       entityId: firstInvoiceId,
       action: AUDIT_ACTIONS.INVOICE_EMAILED,
-      createdAt: { gte: deliveredAt },
+      createdAt: { gte: handedOverAt },
       meta: { path: ["kind"], equals: "COUNTER_COMPLETE" },
     },
     select: { id: true },
