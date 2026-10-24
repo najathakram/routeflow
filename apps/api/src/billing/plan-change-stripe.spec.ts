@@ -168,6 +168,55 @@ describe("pushPlanChange", () => {
   });
 });
 
+describe("revertPlanChange - W-832 a prior product that went inactive cannot strand the revert", () => {
+  const harness = (priorProduct: string, seed: any[]) => {
+    const fake = fakeStripeProducts(seed);
+    const base = { ...BASE, price: { ...BASE.price, product: priorProduct } };
+    const stripe = {
+      ...stripeWith({ status: "active", items: { data: [base] } }),
+      client: { products: fake.products },
+    };
+    stripe.updateSubscription.mockImplementation(async (_id: string, params: any) => {
+      for (const i of params.items) fake.assertUsable(i.price_data?.product);
+      return {};
+    });
+    return { fake, stripe };
+  };
+
+  it("reactivates an inactive prior rf_plan_* product so Stripe accepts the old price", async () => {
+    const { fake, stripe } = harness("rf_plan_growth", [{ id: "rf_plan_growth", active: true }]);
+    const push = await pushPlanChange({ stripe, logger }, args());
+    fake.table.get("rf_plan_growth")!.active = false; // inactive between push and revert
+    await expect(revertPlanChange({ stripe, logger }, push)).resolves.toEqual([]);
+    expect(fake.table.get("rf_plan_growth")!.active).toBe(true);
+  });
+
+  it("a Checkout-born (unreactivable) inactive prior product is replaced by an active one", async () => {
+    const { fake, stripe } = harness("prod_checkout_born", [
+      { id: "prod_checkout_born", active: true },
+    ]);
+    const push = await pushPlanChange({ stripe, logger }, args());
+    fake.table.get("prod_checkout_born")!.active = false;
+    await expect(revertPlanChange({ stripe, logger }, push)).resolves.toEqual([]);
+    const sent = stripe.updateSubscription.mock.calls[1][1].items[0].price_data;
+    expect(sent.product).not.toBe("prod_checkout_born");
+    expect(fake.table.get(sent.product)!.active).toBe(true);
+    expect(sent.unit_amount).toBe(34900);
+  });
+
+  it("an active prior product is used as-is (no create, no update)", async () => {
+    const { fake, stripe } = harness("prod_growth", [{ id: "prod_growth", active: true }]);
+    const push = await pushPlanChange({ stripe, logger }, args());
+    fake.products.create.mockClear();
+    await revertPlanChange({ stripe, logger }, push);
+    expect(fake.products.create).not.toHaveBeenCalled();
+    expect(fake.products.update).not.toHaveBeenCalled();
+    expect(stripe.updateSubscription.mock.calls[1][1].items[0].price_data.product).toBe(
+      "prod_growth",
+    );
+  });
+});
+
 describe("pushPlanChange - a failed update reply may still have been APPLIED (review M1)", () => {
   it("the update rejects but Stripe applied it: the push is reported as pushed, with its revert data - never 'nothing changed'", async () => {
     const stripe = fakeStripeSubscription([BASE as any]);

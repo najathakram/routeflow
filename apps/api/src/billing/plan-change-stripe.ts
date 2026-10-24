@@ -413,6 +413,44 @@ export interface RestoredItem {
   newItemId: string | null;
 }
 
+const OWNED_PRODUCT_ID = /^rf_(plan|addon)_/;
+
+/** Returns the product id the revert should send for each prior one (the same id when it is usable as it is). */
+async function healPriorProducts(
+  deps: PlanChangeDeps,
+  push: PlanChangePush,
+  ids: readonly string[],
+): Promise<(id: string) => string> {
+  const swap = new Map<string, string>();
+  const products = deps.stripe.client?.products;
+  if (products) {
+    for (const id of new Set(ids.filter((i) => typeof i === "string"))) {
+      let found: { active?: boolean } | null = null;
+      try {
+        found = await products.retrieve(id);
+      } catch (err) {
+        const e = err as { statusCode?: number; code?: string };
+        if (e?.statusCode !== 404 && e?.code !== "resource_missing") throw err;
+      }
+      if (found?.active !== false && found) continue;
+      if (found && OWNED_PRODUCT_ID.test(id)) {
+        await products.update(id, { active: true });
+      } else {
+        // a Checkout-born product is born inactive and cannot be reactivated: a fresh active one carries the price
+        const made = await products.create(
+          {
+            name: "RouteFlow subscription (restored)",
+            metadata: { restoredFromProduct: id },
+          },
+          { idempotencyKey: `${push.key}:revert:product:${id}` },
+        );
+        swap.set(id, made.id);
+      }
+    }
+  }
+  return (id) => swap.get(id) ?? id;
+}
+
 /**
  * Undo a push: ONE `subscriptions.update` putting the base item back on its prior price and re-creating every
  * deleted add-on item (a deleted item cannot be revived; the new one is tagged with the old id so the caller
@@ -424,7 +462,18 @@ export async function revertPlanChange(
   push: PlanChangePush,
 ): Promise<RestoredItem[]> {
   if (!push.pushed || !push.revert || !push.key || !push.stripeSubId) return [];
-  const { baseId, baseBefore, baseChanged, restore } = push.revert;
+  const { baseId, baseChanged } = push.revert;
+  // W-832: the prior products may have gone inactive since the push (Stripe refuses a price_data.product that is
+  // inactive, which would strand the revert). Heal them first: reactivate one we own, swap a dead Checkout-born one.
+  const heal = await healPriorProducts(deps, push, [
+    ...(baseChanged ? [push.revert.baseBefore.product] : []),
+    ...push.revert.restore.map((r) => r.price_data.product),
+  ]);
+  const baseBefore = { ...push.revert.baseBefore, product: heal(push.revert.baseBefore.product) };
+  const restore = push.revert.restore.map((r) => ({
+    ...r,
+    price_data: { ...r.price_data, product: heal(r.price_data.product) },
+  }));
   const res = await deps.stripe.updateSubscription(
     push.stripeSubId,
     {
