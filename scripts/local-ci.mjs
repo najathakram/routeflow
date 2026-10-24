@@ -103,15 +103,37 @@ export function installIsStale(entries) {
 
 const SECRET_KEY = /(TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|PRIVATE_KEY|CREDENTIAL)/i;
 const SECRET_PREFIX = /^(GH_|GITHUB_|RAILWAY_|NPM_CONFIG_)/i;
+// The local compose Postgres credentials (throwaways) that scripts/local-db-specs.mjs reads.
+const COMPOSE_KEEP = /^POSTGRES_(USER|PASSWORD|DB|HOST|PORT)$/;
 
 /** The environment PR code runs with: the host env minus anything token-shaped, plus CI=true. */
 export function buildStepEnv(base, step = {}, extra = {}) {
   const env = {};
   for (const [k, v] of Object.entries(base)) {
-    if (SECRET_KEY.test(k) || SECRET_PREFIX.test(k)) continue;
+    if (!COMPOSE_KEEP.test(k) && (SECRET_KEY.test(k) || SECRET_PREFIX.test(k))) continue;
     env[k] = v;
   }
   return { ...env, CI: "true", ...extra, ...(step.env ?? {}) };
+}
+
+/** node_modules/@routeflow/* entries that are not a link into `dir` (a copy can inline a junction). */
+export function badWorkspaceLinks(dir) {
+  const scope = path.join(dir, "node_modules", "@routeflow");
+  let names;
+  try {
+    names = fs.readdirSync(scope);
+  } catch {
+    return [];
+  }
+  return names
+    .map((n) => path.join(scope, n))
+    .filter((p) => {
+      try {
+        return !fs.lstatSync(p).isSymbolicLink() || !isInside(linkTarget(p), dir);
+      } catch {
+        return true;
+      }
+    });
 }
 
 const norm = (p) => {
@@ -449,7 +471,13 @@ function makeExec({ logStream, ctx, state }) {
       logStream.write(
         `retargeted ${moved} link(s) into the worktree; ${left.length} still leave it\n`,
       );
-      return { status: left.length === 0 ? 0 : 1 };
+      const bad = badWorkspaceLinks(ctx.dir);
+      if (bad.length) {
+        logStream.write(
+          `ABORT: ${bad.length} @routeflow entry(ies) are not links into the worktree\n`,
+        );
+      }
+      return { status: left.length === 0 && bad.length === 0 ? 0 : 1 };
     }
     if (step.cmd[0] === "cp") {
       // `cp -R` is not on a plain Windows PATH; copy natively (a real clone; links retargeted next).
@@ -607,7 +635,13 @@ export async function main(argv = process.argv.slice(2)) {
       .split("\n")
       .filter(Boolean);
     const wf = git(repo, ["show", `${mergeSha}:.github/workflows/db-migrations.yml`]);
-    dbLane = touchesDbLane(files, parseWorkflowPaths(wf));
+    const dbGlobs = parseWorkflowPaths(wf);
+    if (dbGlobs.length === 0) {
+      throw new Error(
+        "db-migrations.yml yielded no pull_request.paths (refusing to skip the DB lane)",
+      );
+    }
+    dbLane = touchesDbLane(files, dbGlobs);
     installStale = installIsStale(installEntries(repo, from, mergeSha));
     outDir = path.join(repo, "local-assets", "local-ci", resultDirName(o.pr, headSha));
     fs.mkdirSync(outDir, { recursive: true });

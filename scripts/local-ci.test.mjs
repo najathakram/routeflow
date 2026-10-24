@@ -14,6 +14,7 @@ import {
   findLinks,
   removeAllLinks,
   linksInto,
+  badWorkspaceLinks,
   retargetLinks,
   planLocalCi,
   runSteps,
@@ -328,4 +329,27 @@ test("statusPayload: success | failure (gate) | error (harness), within 140 char
 
 test("resultDirName is <pr>-<short sha>", () => {
   assert.equal(resultDirName(3700, base.headSha), "3700-abcdef123456");
+});
+
+test("buildStepEnv keeps the local compose POSTGRES_* vars but still strips other secrets", () => {
+  const env = buildStepEnv({
+    POSTGRES_PASSWORD: "pass",
+    POSTGRES_USER: "u",
+    DB_PASSWORD: "p",
+    FOO_TOKEN: "t",
+  });
+  assert.equal(env.POSTGRES_PASSWORD, "pass");
+  assert.equal(env.POSTGRES_USER, "u");
+  assert.ok(!("DB_PASSWORD" in env) && !("FOO_TOKEN" in env));
+});
+
+test("badWorkspaceLinks flags an @routeflow entry copied as a directory, or linking outside", () => {
+  const { root, main, wt } = makeTree();
+  const scope = path.join(wt, "node_modules/@routeflow");
+  fs.symlinkSync(path.join(wt, "packages/pricing"), path.join(scope, "ok"), "junction");
+  assert.deepEqual(badWorkspaceLinks(wt), []);
+  fs.mkdirSync(path.join(scope, "inlined"));
+  fs.symlinkSync(path.join(main, "packages/pricing"), path.join(scope, "outside"), "junction");
+  assert.equal(badWorkspaceLinks(wt).length, 2);
+  fs.rmSync(root, { recursive: true, force: true });
 });
