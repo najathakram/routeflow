@@ -1,5 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
+import * as types from "../../../packages/types/api/restrictions";
 
 /**
  * Row 672 (SA-924): a buyer refusal that only waits on the buyer's own state shows the ONE shared sentence
@@ -7,9 +8,6 @@ import * as path from "path";
  * read from the REAL source (the jest @routeflow/types stub is a hand copy); the screen is a source guard, per the
  * mobile pure-logic test style.
  */
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const types =
-  require("../../../packages/types/api/restrictions") as typeof import("../../../packages/types/api/restrictions");
 const src = fs.readFileSync(path.join(__dirname, "../app/(customer)/orders/cart.tsx"), "utf8");
 
 const refusal = (data: object, status = 409) => ({ response: { status, data } });
