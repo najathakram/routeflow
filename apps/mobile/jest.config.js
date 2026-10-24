@@ -29,6 +29,8 @@ module.exports = {
           esModuleInterop: true,
           allowSyntheticDefaultImports: true,
           moduleResolution: "node",
+          // a pure hook test may load a .tsx hook whose view is stubbed (use-restriction-warning-retry.recheck)
+          jsx: "react-jsx",
         },
         diagnostics: false,
       },
