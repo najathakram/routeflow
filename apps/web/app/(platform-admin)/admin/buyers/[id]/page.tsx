@@ -526,6 +526,7 @@ export default function BuyerDetailPage() {
                 { label: "Email verified", value: buyer.emailVerified ? "Yes" : "No" },
                 { label: "Joined", value: new Date(buyer.createdAt).toLocaleString() },
                 { label: "Last updated", value: new Date(buyer.updatedAt).toLocaleString() },
+                { label: "Google account", value: "Check DB" },
               ].map((item) => (
                 <div key={item.label}>
                   <dt className="text-xs text-slate-400">{item.label}</dt>

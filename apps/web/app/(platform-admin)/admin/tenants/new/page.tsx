@@ -4,7 +4,6 @@ import * as React from "react";
 import Link from "next/link";
 import { API_ERROR_CODES, PLAN_KEYS, type ManualActivationAddons } from "@routeflow/types";
 import { superAdminClient } from "@/lib/admin-api";
-import { formatMoney } from "@/lib/format";
 import { fetchPlanCatalog, type PlanCatalogEntry } from "@/lib/api/platform-pricing";
 import {
   applyBusinessCapabilities,
@@ -179,7 +178,7 @@ function priceText(entry: PlanCatalogEntry | undefined): string | null {
   if (!entry || entry.isCustom || entry.monthlyPrice == null) return null;
   const n = Number(entry.monthlyPrice);
   if (!Number.isFinite(n)) return null;
-  return `${formatMoney(n)}/month`;
+  return `$${Number.isInteger(n) ? n : n.toFixed(2)}/month`;
 }
 
 export default function AdminCreateTenantPage() {

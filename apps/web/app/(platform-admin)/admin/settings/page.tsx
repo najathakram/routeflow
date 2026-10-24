@@ -14,7 +14,6 @@ import {
   Zap,
 } from "lucide-react";
 import { superAdminClient } from "@/lib/admin-api";
-import { formatMoney } from "@/lib/format";
 import { DisabledHint } from "../../_components/DisabledHint";
 import { MobileAppLinksCard } from "./MobileAppLinksCard";
 
@@ -445,7 +444,7 @@ export default function AdminSettingsPage() {
                     </div>
                     <div className="flex items-center justify-between">
                       <dt className="text-slate-400">Est. spend</dt>
-                      <dd className="font-mono text-slate-200">{formatMoney(usage.estSpendUsd)}</dd>
+                      <dd className="font-mono text-slate-200">${usage.estSpendUsd.toFixed(2)}</dd>
                     </div>
                     <div className="flex items-center justify-between">
                       <dt className="text-slate-400">Error rate</dt>

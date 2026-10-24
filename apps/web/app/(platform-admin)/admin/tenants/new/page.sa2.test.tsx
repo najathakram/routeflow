@@ -154,7 +154,7 @@ describe("SA-2 Plan and start", () => {
 
   it("shows the plan price line and the trial billing line", async () => {
     await renderPage();
-    expect(screen.getByTestId("plan-line")).toHaveTextContent("Starter: $99.00/month.");
+    expect(screen.getByTestId("plan-line")).toHaveTextContent("Starter: $99/month.");
     expect(screen.getByTestId("billing-line")).toHaveTextContent(
       `No charge now. On ${fmt(inDays(14))} the account becomes read-only unless you activate it.`,
     );

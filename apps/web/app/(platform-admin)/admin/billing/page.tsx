@@ -355,7 +355,7 @@ export default function BillingPage() {
                       </div>
                     </td>
                     <td className="px-4 py-3">
-                      <AdminBadge>{statusLabel(s.tenantStatus)}</AdminBadge>
+                      <AdminBadge>{s.tenantStatus}</AdminBadge>
                     </td>
                     <td className="px-4 py-3">
                       <AdminBadge variant="plan">{s.currentPlan}</AdminBadge>
