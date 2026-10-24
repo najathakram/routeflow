@@ -15,7 +15,7 @@ export class BuyerRegisterDto {
   @ApiProperty({ example: "SecurePass1!", minLength: 8 })
   @IsString()
   @MinLength(8)
-  @Matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*[\d\W])/, {
+  @Matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*[\d\W_])/, {
     message:
       "password must contain at least one uppercase letter, one lowercase letter, and one number or special character",
   })

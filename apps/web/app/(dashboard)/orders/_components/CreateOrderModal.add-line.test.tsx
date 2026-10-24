@@ -124,7 +124,7 @@ const unitsOf = (name: string) =>
 
 async function pick(name: string) {
   fireEvent.change(search(), { target: { value: name.split(" ")[1].toLowerCase() } });
-  const row = await screen.findByRole("button", { name: new RegExp(name, "i") });
+  const row = await screen.findByRole("option", { name: new RegExp(name, "i") });
   fireEvent.click(row);
 }
 
@@ -178,17 +178,17 @@ describe("adding a product — one per pick, merging (#2696; was LANE-S step 10'
     renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
     await pick("Sample Chips");
     await waitFor(() => expect(lineFor("Sample Chips")).toBeTruthy());
-    expect((screen.getByTitle("Number of whole cases") as HTMLInputElement).value).toBe("1");
+    expect((screen.getByTitle("Number of whole boxes") as HTMLInputElement).value).toBe("1");
 
     await pick("Sample Chips"); // +1 case
     await waitFor(() =>
-      expect((screen.getByTitle("Number of whole cases") as HTMLInputElement).value).toBe("2"),
+      expect((screen.getByTitle("Number of whole boxes") as HTMLInputElement).value).toBe("2"),
     );
-    // #2696 (d): loose units are opt-in — no field until "+ units" is tapped.
-    expect(screen.queryByLabelText("Extra loose units")).not.toBeInTheDocument();
+    // #2696 (d): loose units are opt-in — no field until "+ pieces" is tapped.
+    expect(screen.queryByLabelText("Extra pieces")).not.toBeInTheDocument();
     expect(lineFor("Sample Chips").textContent).toContain("24 pcs total"); // 2 x 12
     expect(mockToast).toHaveBeenCalledWith(
-      expect.objectContaining({ description: "Sample Chips — now 2 cases" }),
+      expect.objectContaining({ description: "Sample Chips — now 2 boxes" }),
     );
   });
 });

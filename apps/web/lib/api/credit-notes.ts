@@ -3,9 +3,11 @@ import { apiClient } from "../api-client";
 import type {
   CreditNoteStatus,
   CreditNoteVoidPreview,
+  FiledPeriod,
   ReissueCreditNoteInput,
   ReissueCreditNoteResult,
 } from "@routeflow/types";
+import type { LocalErrorToastOption } from "@/lib/local-error-toast";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -106,9 +108,10 @@ export interface CreateCreditNoteDto {
   expiresAt?: string;
 }
 
-export function useCreateCreditNote() {
+export function useCreateCreditNote(options?: LocalErrorToastOption) {
   const qc = useQueryClient();
   return useMutation<CreditNote, Error, CreateCreditNoteDto>({
+    meta: options?.localErrorToast ? { localErrorToast: options.localErrorToast } : undefined,
     mutationFn: (dto) => apiClient.post("/credit-notes", dto).then((r) => r.data),
     // B343: the customer statement's outstanding/available-credit figures come from a
     // separate query (useCustomerStatement) that this mutation never invalidated — a
@@ -196,6 +199,8 @@ export function useVoidWithReversal() {
     {
       creditNote: CreditNote;
       reopened: Array<{ invoiceId: string; invoiceNumber: string; amount: number }>;
+      /** SA-839 §3: the filed month the void's ledger correction answers (null when none). */
+      amendedPeriod?: FiledPeriod | null;
     },
     Error,
     { id: string; reason?: string }

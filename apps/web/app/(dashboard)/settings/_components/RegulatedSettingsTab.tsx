@@ -16,6 +16,8 @@ import {
 import { taxRuleLabel, treatmentLabel } from "@/lib/regulated-format";
 import { CategoryFormModal } from "@/components/CategoryFormModal";
 import { AssignProductsModal } from "@/components/AssignProductsModal";
+import { safeTextErrorCopy } from "@/lib/safe-text-error-copy";
+import { localToastForSafeTextRefusal } from "@/lib/local-error-toast";
 
 /**
  * TENANT_ADMIN management home for regulated sections + subcategories (Phase 4 C).
@@ -169,19 +171,19 @@ function SectionPanel({
 function SubcategoryManager({ section }: { section: TrackedCategory }) {
   const { toast } = useToast();
   const { data: subs = [], isLoading } = useTrackedSubcategories(section.id);
-  const create = useCreateSubcategory();
-  const update = useUpdateSubcategory();
-  const toggleSub = useToggleSubcategory();
+  const create = useCreateSubcategory({ localErrorToast: localToastForSafeTextRefusal });
+  const update = useUpdateSubcategory({ localErrorToast: localToastForSafeTextRefusal });
+  const toggleSub = useToggleSubcategory({ localErrorToast: localToastForSafeTextRefusal });
 
   const [newName, setNewName] = React.useState("");
   const [renamingId, setRenamingId] = React.useState<string | null>(null);
   const [renameValue, setRenameValue] = React.useState("");
 
-  const errMsg = (e: any, fallback: string) =>
-    toast({
-      title: e?.response?.data?.message ?? fallback,
-      variant: "error",
-    });
+  // Only the formula-led refusal is rendered here (fixed labelled copy); any other error already reached the global toast.
+  const errMsg = (e: unknown, title: string) => {
+    const copy = safeTextErrorCopy(e);
+    if (copy) toast({ title, description: copy, variant: "error" });
+  };
 
   const addSub = (e: React.FormEvent) => {
     e.preventDefault();

@@ -67,12 +67,14 @@ test.describe("Impersonation sign-out (F14 / B138)", () => {
       const tenant = matches[0] as { id: string; slug: string };
 
       // 3. Enter impersonation through the real UI (fallback: API + localStorage).
-      await page.goto("/admin/tenants");
-      await page.getByPlaceholder("Search by slug or name...").fill(TENANT_SLUG);
-      const row = page.getByRole("row", { name: new RegExp(TENANT_SLUG) }).first();
-      const impersonateBtn = row.getByRole("button", { name: "Impersonate" });
+      // Back-office P2: Impersonate lives on the tenant page only (the list row no longer has it).
+      await page.goto(`/admin/tenants/${tenant.id}`);
+      const impersonateBtn = page.getByRole("button", { name: "Impersonate" });
       if (await impersonateBtn.count()) {
         await impersonateBtn.click();
+        // The button only opens a confirmation (cancel is focused first); the session starts here.
+        const confirm = page.getByRole("dialog", { name: /^Impersonate / });
+        await confirm.getByRole("button", { name: "Impersonate" }).click();
       } else {
         const imp = await (
           await page.request.post(`${api}/platform-admin/tenants/${tenant.id}/impersonate`, {
@@ -80,15 +82,17 @@ test.describe("Impersonation sign-out (F14 / B138)", () => {
           })
         ).json();
         await page.evaluate(
-          ([token, slug, username]) => {
+          ([token, slug, username, sourceId]) => {
             localStorage.setItem("impersonationToken", token);
             localStorage.setItem("impersonationTenantSlug", slug);
             if (username) localStorage.setItem("impersonationUsername", username);
+            localStorage.setItem("impersonationSourceTenantId", sourceId);
           },
           [
             imp.accessToken as string,
             tenant.slug,
             (imp.impersonatedUser?.username ?? "") as string,
+            tenant.id,
           ],
         );
         await context.setExtraHTTPHeaders({ "x-tenant-slug": TENANT_SLUG });
@@ -118,13 +122,13 @@ test.describe("Impersonation sign-out (F14 / B138)", () => {
       ).length;
       expect(nBefore).toBeGreaterThanOrEqual(1);
 
-      // 4. The menu: no "Sign out"; "Exit impersonation" lands on /admin/tenants.
+      // 4. The menu: no "Sign out"; "Exit impersonation" returns to the tenant it started from.
       await page.getByRole("button", { name: "Open user menu" }).click();
       await expect(page.getByRole("menuitem", { name: "Sign out" })).toHaveCount(0);
       const exitItem = page.getByRole("menuitem", { name: "Exit impersonation" });
       await expect(exitItem).toBeVisible();
       await exitItem.click();
-      await page.waitForURL("**/admin/tenants", { timeout: 30_000 });
+      await page.waitForURL(`**/admin/tenants/${tenant.id}`, { timeout: 30_000 });
       expect(await page.evaluate(() => localStorage.getItem("impersonationToken"))).toBeNull();
       expect(logoutCalls).toBe(0);
 
@@ -138,6 +142,40 @@ test.describe("Impersonation sign-out (F14 / B138)", () => {
       await page.request
         .delete(`${api}/auth/sessions/${protectedSessionId}`, { headers: adminHeaders })
         .catch(() => null);
+      await logout(page);
+    }
+  });
+
+  test("back office P1: the Impersonate confirm opens with Cancel focused; Escape closes it and no impersonation starts", async ({
+    page,
+    baseURL,
+  }) => {
+    test.skip(!HAS_SUPER_ADMIN_CREDS, "PLAYWRIGHT_SA_USERNAME / PLAYWRIGHT_SA_PASSWORD not set");
+    const api = `${apiBase(baseURL ?? page.url())}/api/v1`;
+    try {
+      await loginAsSuperAdmin(page);
+      const saToken = await page.evaluate(() => localStorage.getItem("superAdminToken") ?? "");
+      const list = await (
+        await page.request.get(`${api}/platform-admin/tenants?search=${TENANT_SLUG}&limit=50`, {
+          headers: { Authorization: `Bearer ${saToken}` },
+        })
+      ).json();
+      const matches = (list?.data ?? []).filter((t: { slug: string }) => t.slug === TENANT_SLUG);
+      test.skip(matches.length !== 1, `e2e tenant not found by slug (${matches.length} matches)`);
+      await page.goto(`/admin/tenants/${(matches[0] as { id: string }).id}`);
+      const impersonateBtn = page.getByRole("button", { name: "Impersonate" });
+      test.skip((await impersonateBtn.count()) === 0, "e2e tenant page has no Impersonate action");
+
+      await impersonateBtn.click();
+      const dialog = page.getByRole("dialog", { name: /^Impersonate / });
+      await expect(dialog).toBeVisible();
+      await expect(dialog.getByRole("button", { name: "Cancel" })).toBeFocused();
+
+      await page.keyboard.press("Escape");
+      await expect(dialog).toHaveCount(0);
+      await expect(page).toHaveURL(/\/admin\/tenants\//);
+      expect(await page.evaluate(() => localStorage.getItem("impersonationToken"))).toBeNull();
+    } finally {
       await logout(page);
     }
   });

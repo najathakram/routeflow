@@ -678,7 +678,9 @@ describe("visibility-watchdog.mjs: argument validation and single instance (#207
     } finally {
       holder.kill("SIGKILL");
     }
-  }, 30_000);
+    // Load flake (row 272): passes alone, took 111 s on a saturated shared host (the replacer's
+    // PowerShell process-identity check is slow under load). Timeout only; assertions unchanged.
+  }, 240_000);
 
   it("a lock left by a dead pid is stale: the new start just takes it", async () => {
     const logFile = newLogPath("stale-lock");

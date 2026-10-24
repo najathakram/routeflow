@@ -3,14 +3,23 @@
 import * as React from "react";
 import { ChevronDown, Search, X, Check } from "lucide-react";
 import { cn, mergeRefs } from "@routeflow/ui/web";
+import { useListboxNav } from "@/lib/use-listbox-nav";
 import { useProducts } from "@/lib/api/products";
 import { displayProductName } from "@/lib/product-display";
+import { AnchoredList, isInsideAnchoredList } from "./AnchoredList";
+import { sellableFlat } from "@/lib/product-search-groups";
 
 interface PickerProduct {
   id: string;
   name: string;
   sku?: string;
   isActive?: boolean;
+  /** STANDARD | FAMILY | VARIANT | RECIPE: a FAMILY is a container and is never offered as a line. */
+  kind?: string | null;
+  /** Selling unit label (shown beside the name so two pack sizes are told apart). */
+  unit?: string;
+  /** Nested variants of a FAMILY row (async mode flattens them under the parent's name). */
+  variants?: PickerProduct[];
   /** Optional richer fields — populated by /products rows, used by the floating preview. */
   barcode?: string;
   variantName?: string | null;
@@ -40,6 +49,12 @@ interface SearchableProductPickerProps {
   placeholder?: string;
   className?: string;
   disabled?: boolean;
+  /**
+   * Why the field is disabled, drawn INSIDE the field over the (empty) input: no extra line, so the row keeps its
+   * height. The span is mounted whenever this prop is given (pass "" for no reason) so the DOM does not change when a
+   * reason appears; the input's aria-describedby points at it only while it has text.
+   */
+  disabledHint?: string;
   /** Optional empty-state hint (e.g., "No standalone products yet — create one first") */
   emptyHint?: string;
   /**
@@ -71,6 +86,10 @@ interface SearchableProductPickerProps {
   preview?: boolean;
 }
 
+// A stable empty default: a fresh `[]` per render would change `sourceProducts` every render and
+// (with the flattened async list now a new array too) loop the preview-position effect.
+const NO_PRODUCTS: PickerProduct[] = [];
+
 /**
  * A real searchable combobox that replaces the native `<select>` for product
  * pickers. Native selects don't support type-to-search reliably across browsers
@@ -85,11 +104,12 @@ interface SearchableProductPickerProps {
 export function SearchableProductPicker({
   value,
   onChange,
-  products = [],
+  products = NO_PRODUCTS,
   excludeIds,
   placeholder = "Search products…",
   className,
   disabled,
+  disabledHint,
   emptyHint,
   inputRef: externalInputRef,
   async: asyncMode,
@@ -99,8 +119,10 @@ export function SearchableProductPicker({
   const [open, setOpen] = React.useState(false);
   const [search, setSearch] = React.useState("");
   const [debouncedSearch, setDebouncedSearch] = React.useState("");
-  const [highlight, setHighlight] = React.useState(0);
   const containerRef = React.useRef<HTMLDivElement>(null);
+  const listId = React.useId();
+  const hintId = React.useId();
+  const showHint = !!disabled && !!disabledHint;
   const inputRef = React.useRef<HTMLInputElement>(null);
 
   const excludeSet = React.useMemo(() => new Set(excludeIds ?? []), [excludeIds]);
@@ -124,8 +146,11 @@ export function SearchableProductPicker({
     { enabled: !!asyncMode && open },
   );
 
+  // Async mode picks a sellable product: a FAMILY row is replaced by its variants (named under the
+  // parent) and is never itself offered (B1215 C7). Static mode is caller-curated (it also serves
+  // the "choose a parent" pickers, which need families), so it is left alone.
   const sourceProducts = React.useMemo<PickerProduct[]>(
-    () => (asyncMode ? (asyncData?.data ?? []) : products),
+    () => (asyncMode ? sellableFlat<PickerProduct>(asyncData?.data ?? []) : products),
     [asyncMode, asyncData, products],
   );
 
@@ -164,7 +189,11 @@ export function SearchableProductPicker({
   React.useEffect(() => {
     if (!open) return;
     const onClick = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(e.target as Node) &&
+        !isInsideAnchoredList(e.target)
+      ) {
         setOpen(false);
       }
     };
@@ -172,10 +201,17 @@ export function SearchableProductPicker({
     return () => document.removeEventListener("mousedown", onClick);
   }, [open]);
 
-  // Reset highlight when filtered list changes
-  React.useEffect(() => {
-    setHighlight(0);
-  }, [search, open]);
+  const nav = useListboxNav<PickerProduct>({
+    items: visibleProducts,
+    open,
+    onPick: (p) => handleSelect(p),
+    onClose: () => setOpen(false),
+    resetKey: search,
+    initial: 0,
+    idPrefix: "product-picker",
+  });
+  const highlight = nav.highlight;
+  const setHighlight = nav.setHighlight;
 
   // Floating preview panel position, recomputed whenever the open/highlighted
   // option changes. `position: fixed` so it escapes the `overflow-y-auto`
@@ -216,45 +252,55 @@ export function SearchableProductPicker({
       setOpen(true);
       return;
     }
-    if (e.key === "ArrowDown") {
-      e.preventDefault();
-      setHighlight((h) => Math.min(h + 1, visibleProducts.length - 1));
-    } else if (e.key === "ArrowUp") {
-      e.preventDefault();
-      setHighlight((h) => Math.max(h - 1, 0));
-    } else if (e.key === "Enter") {
-      e.preventDefault();
-      const pick = visibleProducts[highlight];
-      if (pick) handleSelect(pick);
-    } else if (e.key === "Escape") {
-      setOpen(false);
-    }
+    if (!nav.onKeyDown(e) && e.key === "Enter") e.preventDefault(); // Enter never submits an enclosing form
   };
+
+  const inputEl = (
+    <input
+      ref={mergeRefs(inputRef, externalInputRef)}
+      type="text"
+      value={open ? search : closedLabel}
+      placeholder={hasSelection || showHint ? "" : placeholder}
+      onChange={(e) => {
+        setSearch(e.target.value);
+        if (!open) setOpen(true);
+      }}
+      onFocus={() => setOpen(true)}
+      onKeyDown={handleKeyDown}
+      aria-controls={open ? listId : undefined}
+      aria-activedescendant={
+        open && visibleProducts[highlight] ? `${listId}-${highlight}` : undefined
+      }
+      disabled={disabled}
+      aria-describedby={showHint ? hintId : undefined}
+      className="flex-1 bg-transparent text-sm text-navy placeholder:text-navy/30 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+    />
+  );
 
   return (
     <div ref={containerRef} className={cn("relative", className)}>
       <div
         className={cn(
           "flex items-center gap-2 rounded-lg border border-surface-border bg-white px-2.5 py-1.5 transition-colors focus-within:border-transparent focus-within:ring-2 focus-within:ring-brand-500",
-          disabled && "cursor-not-allowed opacity-60",
+          disabled && "cursor-not-allowed bg-surface-raised",
           open && "ring-2 ring-brand-500",
         )}
       >
-        <Search className="h-3.5 w-3.5 shrink-0 text-navy/70" />
-        <input
-          ref={mergeRefs(inputRef, externalInputRef)}
-          type="text"
-          value={open ? search : closedLabel}
-          placeholder={hasSelection ? "" : placeholder}
-          onChange={(e) => {
-            setSearch(e.target.value);
-            if (!open) setOpen(true);
-          }}
-          onFocus={() => setOpen(true)}
-          onKeyDown={handleKeyDown}
-          disabled={disabled}
-          className="flex-1 bg-transparent text-sm text-navy placeholder:text-navy/30 focus:outline-none disabled:cursor-not-allowed"
-        />
+        <Search className={cn("h-3.5 w-3.5 shrink-0 text-navy/70", disabled && "opacity-60")} />
+        {disabledHint === undefined ? (
+          inputEl
+        ) : (
+          <div className="relative flex min-w-0 flex-1">
+            {inputEl}
+            <span
+              id={hintId}
+              title={showHint ? disabledHint : undefined}
+              className="pointer-events-none absolute inset-x-0 top-1/2 block -translate-y-1/2 truncate text-xs text-navy/70"
+            >
+              {showHint ? disabledHint : ""}
+            </span>
+          </div>
+        )}
         {hasSelection && !open ? (
           <button
             type="button"
@@ -270,63 +316,70 @@ export function SearchableProductPicker({
           </button>
         ) : (
           <ChevronDown
-            className={cn("h-3.5 w-3.5 text-navy/70 transition-transform", open && "rotate-180")}
+            className={cn(
+              "h-3.5 w-3.5 text-navy/70 transition-transform",
+              open && "rotate-180",
+              disabled && "opacity-60",
+            )}
           />
         )}
       </div>
 
-      {open && (
-        <div className="absolute left-0 right-0 top-full z-30 mt-1 max-h-72 overflow-y-auto rounded-lg border border-surface-border bg-white shadow-lg">
-          {visibleProducts.length === 0 ? (
-            <p className="px-3 py-2 text-xs text-navy/70">
-              {search.trim() ? "No matches." : (emptyHint ?? "No products yet.")}
+      <AnchoredList anchorRef={containerRef} open={open} id={listId} maxHeight={288}>
+        {visibleProducts.length === 0 ? (
+          <p className="px-3 py-2 text-xs text-navy/70">
+            {search.trim() ? "No matches." : (emptyHint ?? "No products yet.")}
+          </p>
+        ) : (
+          <>
+            <p className="border-b border-surface-border px-3 py-1 text-[10px] font-medium uppercase tracking-wide text-navy/70">
+              {visibleProducts.length} result{visibleProducts.length === 1 ? "" : "s"}
+              {sourceProducts.length > visibleProducts.length + excludeSet.size && (
+                <> of {sourceProducts.length - excludeSet.size}</>
+              )}
             </p>
-          ) : (
-            <>
-              <p className="border-b border-surface-border px-3 py-1 text-[10px] font-medium uppercase tracking-wide text-navy/70">
-                {visibleProducts.length} result{visibleProducts.length === 1 ? "" : "s"}
-                {sourceProducts.length > visibleProducts.length + excludeSet.size && (
-                  <> of {sourceProducts.length - excludeSet.size}</>
-                )}
-              </p>
-              <ul role="listbox">
-                {visibleProducts.map((p, idx) => (
-                  <li
-                    key={p.id}
-                    role="option"
-                    aria-selected={p.id === value}
-                    onMouseDown={(e) => {
-                      // mousedown so it fires before the input loses focus / closes
-                      e.preventDefault();
-                      handleSelect(p);
-                    }}
-                    onMouseEnter={() => setHighlight(idx)}
-                    className={cn(
-                      "flex cursor-pointer items-center justify-between gap-2 px-3 py-1.5 text-sm transition-colors",
-                      idx === highlight
-                        ? "bg-brand-50 text-brand-700"
-                        : "text-navy hover:bg-surface-raised",
-                    )}
-                  >
-                    <div className="min-w-0 flex-1">
-                      <p className="line-clamp-2 break-words" title={displayProductName(p)}>
-                        {displayProductName(p)}
+            <ul role="listbox">
+              {visibleProducts.map((p, idx) => (
+                <li
+                  key={p.id}
+                  id={`${listId}-${idx}`}
+                  role="option"
+                  aria-selected={p.id === value}
+                  onMouseDown={(e) => {
+                    // mousedown so it fires before the input loses focus / closes
+                    e.preventDefault();
+                    handleSelect(p);
+                  }}
+                  onMouseEnter={() => setHighlight(idx)}
+                  className={cn(
+                    "flex cursor-pointer items-center justify-between gap-2 px-3 py-1.5 text-sm transition-colors",
+                    idx === highlight
+                      ? "bg-brand-50 text-brand-700"
+                      : "text-navy hover:bg-surface-raised",
+                  )}
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="line-clamp-2 break-words" title={displayProductName(p)}>
+                      {displayProductName(p)}
+                    </p>
+                    {(p.sku || p.unit) && (
+                      <p className="truncate text-[11px] text-navy/70">
+                        {[p.sku ? `SKU: ${p.sku}` : null, p.unit].filter(Boolean).join(" · ")}
                       </p>
-                      {p.sku && <p className="truncate text-[11px] text-navy/70">SKU: {p.sku}</p>}
-                    </div>
-                    {p.isActive === false && (
-                      <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-navy/70">
-                        Inactive
-                      </span>
                     )}
-                    {p.id === value && <Check className="h-3.5 w-3.5 shrink-0 text-brand-600" />}
-                  </li>
-                ))}
-              </ul>
-            </>
-          )}
-        </div>
-      )}
+                  </div>
+                  {p.isActive === false && (
+                    <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-navy/70">
+                      Inactive
+                    </span>
+                  )}
+                  {p.id === value && <Check className="h-3.5 w-3.5 shrink-0 text-brand-600" />}
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+      </AnchoredList>
 
       {open && preview && previewPos && visibleProducts[highlight] && (
         <ProductPreviewPanel

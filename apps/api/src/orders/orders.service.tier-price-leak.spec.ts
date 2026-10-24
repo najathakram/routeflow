@@ -28,6 +28,7 @@ jest.mock("../notifications/notifications.service", () => ({
   })),
 }));
 
+import { oversellReaderOffProvider } from "./testing/policy-reader-provider";
 import { Test, TestingModule } from "@nestjs/testing";
 import { getQueueToken } from "@nestjs/bull";
 import { ConfigService } from "@nestjs/config";
@@ -101,6 +102,7 @@ describe("OrdersService.findOne — tier-price leak (SA-085f)", () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
+        oversellReaderOffProvider,
         OrdersService,
         {
           provide: TenantContextService,
@@ -164,7 +166,13 @@ describe("OrdersService.findOne — tier-price leak (SA-085f)", () => {
           useValue: { syncInvoiceCommissionSafe: jest.fn() },
         },
         { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(true) } },
-        { provide: RegulatedLedgerService, useValue: { reverseInvoiceEntries: jest.fn() } },
+        {
+          provide: RegulatedLedgerService,
+          useValue: {
+            reverseInvoiceEntries: jest.fn(),
+            settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
+          },
+        },
       ],
     }).compile();
 

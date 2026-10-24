@@ -2,6 +2,7 @@ import { ConflictException, Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuthorizationOverridesService } from "./authorization-overrides.service";
 import { scopeApplies } from "./authorization-scope";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 export interface BlockedCategory {
   trackedCategoryId: string;
@@ -83,7 +84,10 @@ export class AuthorizationGuardService {
   async assertAuthorizedOrThrow(params: AuthCheckParams): Promise<void> {
     const { blocked } = await this.checkAuthorized(params);
     if (blocked.length > 0) {
-      throw new ConflictException({ code: "REGULATED_AUTH_REQUIRED", blockedCategories: blocked });
+      throw new ConflictException({
+        code: API_ERROR_CODES.REGULATED_AUTH_REQUIRED,
+        blockedCategories: blocked,
+      });
     }
   }
 }

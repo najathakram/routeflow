@@ -66,16 +66,22 @@ describe("assertInvoiceRewriteAllowed", () => {
     },
   });
 
-  it("refuses when the invoice's own lines carry a unitLabel (read through the invoice relation)", async () => {
+  it("refuses when an ORDER-LINKED invoice's own lines carry a unitLabel (read through the invoice relation)", async () => {
     const d = db([{ unitLabel: "Case" }], []);
-    await expect(assertInvoiceRewriteAllowed(d as never, { id: "inv" })).rejects.toMatchObject({
-      response: { code: UNIT_AWARE_LINE },
-    });
+    await expect(
+      assertInvoiceRewriteAllowed(d as never, { id: "inv", orderId: "ord-1" }),
+    ).rejects.toMatchObject({ response: { code: UNIT_AWARE_LINE } });
     expect(d.invoice.findFirst).toHaveBeenCalledWith({
       where: { id: "inv" },
       select: { items: expect.objectContaining({ where: { unitLabel: { not: null } } }) },
     });
-    expect(d.order.findFirst).not.toHaveBeenCalled(); // no order link, no order read
+  });
+
+  it("VU-4a (D3): an ORDER-LESS draft's own unit rows are editable; the invoice is still read (fail closed), no order read", async () => {
+    const d = db([{ unitLabel: "Case" }], []);
+    await expect(assertInvoiceRewriteAllowed(d as never, { id: "inv" })).resolves.toBeUndefined();
+    expect(d.invoice.findFirst).toHaveBeenCalled();
+    expect(d.order.findFirst).not.toHaveBeenCalled();
   });
 
   it("refuses when the invoice carries NO label but its LINKED ORDER holds a unit-aware line (the back-sync would write onto it)", async () => {

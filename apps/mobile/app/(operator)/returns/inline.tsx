@@ -60,6 +60,7 @@ import {
   inlineReturnsGate,
   linesFromOrder,
   onlyPurchasedRequote,
+  sourceSaleOf,
   type PrefilledReturnLine,
 } from "../../../lib/inline-return-screen";
 import { useAuthStore } from "../../../lib/auth-store";
@@ -97,6 +98,7 @@ export default function InlineReturnScreen() {
     customerId?: string;
     orderId?: string;
     customerName?: string;
+    sourceOrderId?: string;
   }>();
   const customerId = params.customerId ?? "";
   const orderId = params.orderId ?? "";
@@ -159,6 +161,13 @@ export default function InlineReturnScreen() {
 
   // Pre-fill the order's own lines once (sold pack + sold quantities as context).
   const { data: order } = useAdminOrder(orderId);
+  // SA-740: the sale the goods are from. A walk-in's order is that sale (the server refuses a walk-in quote without one);
+  // a named customer's return stays unpinned. The order is loaded before the clerk can reach "Get quote" with lines.
+  const sourceOrderId = sourceSaleOf({
+    routeSourceOrderId: params.sourceOrderId,
+    orderId,
+    customerIsWalkIn: order?.customer?.isWalkIn,
+  });
   const prefilled = useRef(false);
   useEffect(() => {
     if (prefilled.current || !order) return;
@@ -192,7 +201,7 @@ export default function InlineReturnScreen() {
     });
 
   const getQuote = () =>
-    requote(buildQuoteRequest(customerId, lines), (quote) =>
+    requote(buildQuoteRequest(customerId, lines, undefined, sourceOrderId), (quote) =>
       dispatch({ type: "quoted", quote, lines }),
     );
 
@@ -204,12 +213,15 @@ export default function InlineReturnScreen() {
     }
     // #2693: nothing matched to an invoice ⇒ the re-quote would be EMPTY; never send it.
     if (!canReturnOnlyPurchased(screen.quote)) return;
-    requote(onlyPurchasedRequote(customerId, screen.quote, screen.quotedLines), (quote) => {
-      // Capture reads the quoted snapshot, so the reduced amount goes into the snapshot too.
-      const reduced = applyCoveredPiecesToLines(screen.quotedLines, quote);
-      setLines((prev) => applyCoveredPiecesToLines(prev, quote) as PrefilledReturnLine[]);
-      dispatch({ type: "quoted", quote, lines: reduced, excessOption: option });
-    });
+    requote(
+      onlyPurchasedRequote(customerId, screen.quote, screen.quotedLines, sourceOrderId),
+      (quote) => {
+        // Capture reads the quoted snapshot, so the reduced amount goes into the snapshot too.
+        const reduced = applyCoveredPiecesToLines(screen.quotedLines, quote);
+        setLines((prev) => applyCoveredPiecesToLines(prev, quote) as PrefilledReturnLine[]);
+        dispatch({ type: "quoted", quote, lines: reduced, excessOption: option });
+      },
+    );
   };
 
   const confirm = () => {
@@ -219,6 +231,7 @@ export default function InlineReturnScreen() {
       orderId,
       nonce: getOrCreateNonce(inlineReturnNonceKey(customerId, orderId)),
       reason: reason as ReturnReason,
+      sourceOrderId,
     });
     if (!request) return;
     dispatch({ type: "captureStarted" });

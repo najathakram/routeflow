@@ -2,7 +2,15 @@
  * Source scanners shared by the writer tripwires (family-price-writer-tripwire.spec.ts,
  * family-price-override-tripwire.spec.ts). Pure text functions; no fs.
  */
-export const WRITE_METHODS = ["create", "update", "upsert", "createMany", "updateMany"];
+export const WRITE_METHODS = [
+  "create",
+  "update",
+  "upsert",
+  "createMany",
+  "updateMany",
+  "createManyAndReturn",
+  "updateManyAndReturn",
+];
 
 export function balanced(text: string, openIdx: number): string {
   let depth = 1;

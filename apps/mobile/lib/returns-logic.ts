@@ -11,7 +11,24 @@ import type { RouteRunStop } from "./api/routes";
 
 export type ReturnPillVariant = "orange" | "brand" | "green" | "gray" | "red";
 
-export function returnPillFor(status: string): { variant: ReturnPillVariant; label: string } {
+/** How a return was resolved, when the screen knows (the web panel's `resolutionLabel` twin). */
+export interface ReturnResolution {
+  refundMethod?: string | null;
+  creditNoteId?: string | null;
+}
+
+export function returnPillFor(
+  status: string,
+  resolution?: ReturnResolution,
+): { variant: ReturnPillVariant; label: string } {
+  // A REFUNDED return resolved as store credit (a credit note) reads "Store credit"; a cash/card/check refund keeps "Refunded".
+  if (
+    status === "REFUNDED" &&
+    resolution?.refundMethod !== "EXTERNAL_REFUND" &&
+    (resolution?.refundMethod === "CREDIT_NOTE" || resolution?.creditNoteId)
+  ) {
+    return { variant: "green", label: "Store credit" };
+  }
   switch (status) {
     case "PENDING":
       return { variant: "orange", label: "Pending" };

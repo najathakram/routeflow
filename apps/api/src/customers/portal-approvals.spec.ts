@@ -1,6 +1,6 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
-import { ConflictException, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { CustomersService } from "./customers.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -64,7 +64,10 @@ describe("Portal approvals — decline endpoint + richer pending payloads", () =
         // invoice's regulated-ledger entries, so the collaborator must be provided.
         {
           provide: RegulatedLedgerService,
-          useValue: { reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined) },
+          useValue: {
+            reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined),
+            settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
+          },
         },
         {
           provide: EmailService,
@@ -182,6 +185,22 @@ describe("Portal approvals — decline endpoint + richer pending payloads", () =
       await expect(service.approveBuyerRequest(CUSTOMER_ID, TENANT_ID)).rejects.toThrow(
         ConflictException,
       );
+      expect(prisma.customerLink.update).not.toHaveBeenCalled();
+    });
+
+    it("refuses a pending link whose customer is the walk-in customer and writes nothing", async () => {
+      prisma.customerLink.findFirst.mockResolvedValue({
+        ...PENDING_LINK,
+        customer: { id: CUSTOMER_ID, isWalkIn: true },
+      } as any);
+
+      const e: any = await service.approveBuyerRequest(CUSTOMER_ID, TENANT_ID).then(
+        () => null,
+        (err) => err,
+      );
+
+      expect(e).toBeInstanceOf(BadRequestException);
+      expect(e.getResponse()).toMatchObject({ code: "WALK_IN_PROTECTED" });
       expect(prisma.customerLink.update).not.toHaveBeenCalled();
     });
 

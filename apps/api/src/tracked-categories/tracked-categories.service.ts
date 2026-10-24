@@ -13,10 +13,12 @@ import { CreateSubcategoryDto } from "./dto/create-subcategory.dto";
 import { UpdateSubcategoryDto } from "./dto/update-subcategory.dto";
 import { templateByKey, allColumnKeys } from "../regulated/template-registry";
 import { isTobaccoCategoryName } from "../common/tobacco-category";
+import { syncCategoryLabelForProducts } from "../product-categories/label-writer";
 import {
   assertNoOpenRecipe,
   lockProductsForCategoryWrite,
 } from "../products/recipe-category-guard";
+import { assertSafeCategoryName, assertSafeSubcategoryName } from "../common/text-cell-guards";
 
 /**
  * CRUD for tenant-defined regulated ("tracked") categories — the generic system
@@ -123,6 +125,7 @@ export class TrackedCategoriesService {
     if (!tenantId) {
       throw new BadRequestException("A tenant context is required to create a category.");
     }
+    assertSafeCategoryName(dto.name); // B983: refuse a formula-led name before any write
     this.assertSupportedTaxConfig(dto.taxType, dto.rate, dto.priceIncludesTax);
     this.assertValidReportColumnPrefs((dto as any).reportColumnPrefs);
     try {
@@ -140,6 +143,7 @@ export class TrackedCategoriesService {
 
   async update(id: string, dto: UpdateTrackedCategoryDto) {
     const existing = await this.findOne(id);
+    if (dto.name !== undefined) assertSafeCategoryName(dto.name, (existing as any).name); // B983: change-only
     // Validate the MERGED config so a partial update (e.g. flipping only
     // priceIncludesTax) is checked against the row's existing taxType/rate.
     this.assertSupportedTaxConfig(
@@ -211,7 +215,13 @@ export class TrackedCategoriesService {
       // subcategory's parent must equal the product's section — leaving the old
       // one behind strands an invariant violation that 400s later product
       // updates). Rows already in this section are untouched.
-      const moverWhere = { id: { in: productIds }, NOT: { trackedCategoryId: id } };
+      // NOT a `NOT: { trackedCategoryId: id }`: `NOT (col = id)` is NULL for a product with no
+      // category, so the most common mover (an uncategorised row) was silently skipped and the
+      // bulk assign answered `assigned: 0`. A NULL category is a mover, spelled out.
+      const moverWhere = {
+        id: { in: productIds },
+        OR: [{ trackedCategoryId: null }, { trackedCategoryId: { not: id } }],
+      };
       // One-category-axis rule: a mover's free-text Product.category is cleared
       // too, but ONLY when it was synced to its OLD subcategory's name — a
       // diverged free-text category (legacy) survives the move. updateMany can't
@@ -246,7 +256,7 @@ export class TrackedCategoriesService {
         data: { isTobacco: isTobaccoCategoryName((category as { name?: string }).name) },
       });
       // `assigned` is MOVERS ONLY — rows already in this category are excluded by
-      // the NOT clause though they were processed just the same. `processed` is
+      // the mover clause though they were processed just the same. `processed` is
       // every requested row this tenant can see (the mirror sync above spans the
       // full id set), so a caller can tell "already in this type" from "not in
       // this tenant" instead of reporting the first as a skip.
@@ -342,6 +352,7 @@ export class TrackedCategoriesService {
     if (!name) {
       throw new BadRequestException("Subcategory name is required.");
     }
+    assertSafeSubcategoryName(name); // B983: refuse a formula-led name before any read or write
     const existing = await this.prisma.forTenant().trackedSubcategory.findFirst({
       where: {
         trackedCategoryId: categoryId,
@@ -382,6 +393,7 @@ export class TrackedCategoriesService {
       if (!name) {
         throw new BadRequestException("Subcategory name is required.");
       }
+      assertSafeSubcategoryName(name, existingSub.name); // B983: change-only; before the product mirror
       const existing = await this.prisma.forTenant().trackedSubcategory.findFirst({
         where: {
           trackedCategoryId: categoryId,
@@ -396,27 +408,44 @@ export class TrackedCategoriesService {
       }
     }
     try {
-      const row = await this.prisma.forTenant().trackedSubcategory.update({
-        where: { id: subId },
-        data: {
-          ...(name !== undefined ? { name } : {}),
-          ...(dto.active !== undefined ? { active: dto.active } : {}),
-        },
-        include: WITH_COUNT,
-      });
-      // One-category-axis rule: a rename must propagate to every product whose
-      // Product.category mirrors this subcategory — either already synced to
-      // the OLD name, or never synced (NULL). Products whose category diverged
-      // (legacy free-text) are left alone until the one-time tidy script.
-      if (name !== undefined && name !== existingSub.name) {
-        await this.prisma.forTenant().product.updateMany({
-          where: {
-            trackedSubcategoryId: subId,
-            OR: [{ category: existingSub.name }, { category: null }],
+      // ONE tx: the rename and its product mirror (+ the add-only label sync) commit together, so a busy label lock
+      // (a coded 409) rolls the rename back too and a retry re-mirrors — never a renamed subcategory with stale products.
+      const row = await this.prisma.tenantTransaction(async (tx: any) => {
+        const updated = await tx.trackedSubcategory.update({
+          where: { id: subId },
+          data: {
+            ...(name !== undefined ? { name } : {}),
+            ...(dto.active !== undefined ? { active: dto.active } : {}),
           },
-          data: { category: name },
+          include: WITH_COUNT,
         });
-      }
+        // One-category-axis rule: a rename must propagate to every product whose
+        // Product.category mirrors this subcategory — either already synced to
+        // the OLD name, or never synced (NULL). Products whose category diverged
+        // (legacy free-text) are left alone until the one-time tidy script.
+        if (name !== undefined && name !== existingSub.name) {
+          const tenantId = this.tenantIdOrThrow();
+          const newName = name;
+          // The SAME guard as before (still mirroring the old name, or blank) in the write itself, so a product
+          // whose text changed meanwhile is never overwritten; only the rows actually renamed are synced.
+          const renamed: Array<{ id: string }> = await tx.product.updateManyAndReturn({
+            where: {
+              trackedSubcategoryId: subId,
+              OR: [{ category: existingSub.name }, { category: null }],
+            },
+            data: { category: newName },
+            select: { id: true },
+          });
+          if (renamed.length > 0) {
+            await syncCategoryLabelForProducts(tx, {
+              tenantId,
+              productIds: renamed.map((p) => p.id),
+              text: newName,
+            });
+          }
+        }
+        return updated;
+      });
       return this.serializeSub(row);
     } catch (e) {
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {

@@ -1,4 +1,6 @@
 import { PartialType } from "@nestjs/mapped-types";
+import { IsNumber, Min } from "class-validator";
+import { IsOptionalNotNull } from "../../common/validators/optional-not-null";
 import { CreateRecurringInvoiceDto } from "./create-recurring-invoice.dto";
 
 /**
@@ -9,4 +11,9 @@ import { CreateRecurringInvoiceDto } from "./create-recurring-invoice.dto";
  * validation, ArrayMinSize(1) and the whitelist still apply when `items` is sent.
  * Deliberately no `isActive`: pause/resume are DELETE /:id and POST /:id/activate.
  */
-export class UpdateRecurringInvoiceDto extends PartialType(CreateRecurringInvoiceDto) {}
+export class UpdateRecurringInvoiceDto extends PartialType(CreateRecurringInvoiceDto) {
+  // PartialType() re-adds @IsOptional(), which lets a JSON null skip @IsNumber() (row 602): redeclared so a
+  // present null is refused (own metadata replaces the inherited kind).
+  @IsOptionalNotNull() @IsNumber() @Min(0) discount?: number;
+  @IsOptionalNotNull() @IsNumber() @Min(0) shippingFee?: number;
+}

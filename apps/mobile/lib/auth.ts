@@ -373,3 +373,6 @@ export async function setPassword(newPassword: string): Promise<void> {
   );
   await storeRotatedPair(data);
 }
+
+/** The one account-admin check (TENANT_ADMIN or SUPER_ADMIN); see lib/user-admin. */
+export { isAccountAdmin } from "./user-admin";

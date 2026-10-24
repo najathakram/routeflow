@@ -5,7 +5,15 @@ import { Button, Modal, Textarea, useToast } from "@routeflow/ui/web";
 import { REASON_MAX } from "@/lib/restriction-rule-form";
 import { useLiftRestriction } from "@/lib/api/restrictions-admin-write";
 import type { SellingRestrictionListItemDto } from "@/lib/api/restrictions-admin";
-import { ruleTarget } from "@/lib/restriction-rules";
+import { ruleCardTarget } from "@/lib/rule-targets";
+
+/** "Hemp will" for one target, "The 12 products and labels in this rule will" for many. */
+function liftSubject(rule: SellingRestrictionListItemDto): string {
+  const t = ruleCardTarget(rule);
+  return t.total !== null && t.total > 1
+    ? `The ${t.total} products and labels in this rule will`
+    : `${t.name} will`;
+}
 
 /**
  * Lift-rule dialog (Lane R step 5b-3): ends a rule now, with a reason for the audit trail. A server
@@ -69,7 +77,7 @@ export function LiftRuleDialog({
       title="Lift this rule?"
       description={
         rule
-          ? `${ruleTarget(rule).name} will stop being restricted straight away. This can't be undone; add a new rule to restrict it again.`
+          ? `${liftSubject(rule)} stop being restricted straight away. This can't be undone; add a new rule to restrict ${(ruleCardTarget(rule).total ?? 1) > 1 ? "them" : "it"} again.`
           : undefined
       }
     >

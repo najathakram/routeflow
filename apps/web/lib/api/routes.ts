@@ -733,10 +733,11 @@ export function useAnalyzeRouteRun() {
 
 // ─── Route Settings ───────────────────────────────────────────────────────────
 
-export function useRouteSettings() {
+export function useRouteSettings(options: { enabled?: boolean } = {}) {
   return useQuery<RouteSettings>({
     queryKey: ["route-settings"],
     queryFn: () => apiClient.get("/settings/route").then((r) => r.data),
+    enabled: options.enabled ?? true,
   });
 }
 

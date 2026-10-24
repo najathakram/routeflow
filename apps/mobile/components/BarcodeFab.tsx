@@ -13,6 +13,8 @@ type Base = {
   continuous?: boolean;
   /** OPT-IN aim box + steady-read on the camera (default off; only the driver screen passes it). */
   aimAssist?: boolean;
+  /** Swallow scans while a confirm/picker prompt is open so prompts never stack. */
+  paused?: boolean;
 };
 
 /**
@@ -76,6 +78,7 @@ export function BarcodeFab({
   hidden = false,
   continuous = false,
   aimAssist = false,
+  paused = false,
 }: Props) {
   const { width, height } = Dimensions.get("window");
   const persisted = useFabPositionStore();
@@ -192,6 +195,7 @@ export function BarcodeFab({
           <BarcodeScanner
             continuous={continuous}
             aimAssist={aimAssist}
+            paused={paused}
             onScanned={(code) => {
               // Continuous mode: the scanner stays open and shows the outcome's
               // feedback itself; it closes via the outcome or the Done button.

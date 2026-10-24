@@ -276,7 +276,11 @@ describe("cancel() undoes a RESOLVED restock exactly (36 pieces, not the typed 3
         { provide: RouteFlowGateway, useValue: { emitReturnCreated: jest.fn() } },
         {
           provide: RegulatedLedgerService,
-          useValue: { reverseReturnEntries: jest.fn(), unreverseReturnEntries: jest.fn() },
+          useValue: {
+            reverseReturnEntries: jest.fn(),
+            unreverseReturnEntries: jest.fn(),
+            settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
+          },
         },
         { provide: CreditNotesService, useValue: { create: jest.fn() } },
         { provide: NumberingService, useValue: { reserveNext: jest.fn() } },
@@ -325,6 +329,8 @@ describe("cancel() undoes a RESOLVED restock exactly (36 pieces, not the typed 3
         create: jest.fn().mockResolvedValue({ id: "mv-rev" }),
       },
       returnParkedRestock: { deleteMany: jest.fn(() => order.push("void-parked")) },
+      // SA-839 F3: the cancel reads its ledger rows to lock their Orders / Invoices (none here).
+      regulatedSalesLedger: { findMany: jest.fn().mockResolvedValue([]) },
       $executeRaw: jest.fn().mockResolvedValue(0),
     };
     prisma.tenantTransaction.mockImplementation((fn: any) => fn(tx));

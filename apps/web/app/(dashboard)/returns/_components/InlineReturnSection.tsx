@@ -14,7 +14,10 @@ import * as React from "react";
 import { Button, Input, Select, useToast } from "@routeflow/ui/web";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { useScanCodeHandler } from "../../orders/_components/scan/useScanCodeHandler";
+import { DidYouMeanPicker } from "@/components/scan/DidYouMeanPicker";
 import { useOrder } from "@/lib/api/orders";
+import { returnReasonOptions } from "@/lib/reason-copy";
+import { LINE_UNDO_MS } from "@/app/(dashboard)/orders/_components/useCounterLineUndo";
 import { useProducts } from "@/lib/api/products";
 import { useInlineReturnQuote } from "@/lib/api/inline-returns";
 import { useOptionalAuth } from "@/lib/auth-context";
@@ -49,19 +52,15 @@ import {
   ALREADY_RETURNED_NOTE,
   alreadyReturnedProductIds,
 } from "@routeflow/returns";
+import { unitWords } from "@routeflow/pricing";
+
+// U-3a: returns carry no per-product label yet, so this prints the default words.
+const UW = unitWords();
 
 // See RecordInlineReturnDialog's original SA-108 comment: `lineKey` is a section-local
 // synthetic row identity (never sent on the wire) so two rows of the same product — a Case
 // line and a pack line from a source order, say — can be edited/removed independently.
 type SectionLine = InlineReturnLineDraft & { lineKey: string };
-
-const REASON_OPTIONS: { value: ReturnReason; label: string }[] = [
-  { value: "DAMAGED", label: "Damaged" },
-  { value: "WRONG_ITEM", label: "Wrong Item" },
-  { value: "CUSTOMER_REFUSED", label: "Customer Refused" },
-  { value: "QUALITY_ISSUE", label: "Quality Issue" },
-  { value: "EXCESS_ORDER", label: "Excess / Overdelivery" },
-];
 
 function money(n: number): string {
   return n.toLocaleString("en-US", { style: "currency", currency: "USD" });
@@ -83,6 +82,9 @@ export interface InlineReturnSectionProps {
    *  "opened from an order" hydration) — used by the dialog and the order-edit host. Omit for
    *  a customer with no carrying order yet (CreateOrderModal — the order doesn't exist yet). */
   entryOrderId?: string;
+  /** SA-740: the sale this return is from, sent on the quote and the excess re-quote (REQUIRED for a walk-in; the host
+   *  also sends it on the capture). Omit for a named customer, whose return may spill across orders. */
+  sourceOrderId?: string;
   /** Bumping this value resets every field and re-seeds from `entryOrderId` — mirrors the
    *  original dialog's "fresh attempt every time it opens" effect. */
   resetToken?: string | number;
@@ -92,8 +94,18 @@ export interface InlineReturnSectionProps {
   onStateChange?: (state: InlineReturnSectionState) => void;
   /** Rendered next to "Get quote" on the lines step (e.g. the dialog's own Cancel button). */
   renderLinesActions?: () => React.ReactNode;
+  /** POS-4b: hide "Back" once a capture is saved (its lines can no longer change). */
+  hideBack?: boolean;
   /** Rendered next to "Back" on the quote step (e.g. the dialog's confirm/capture button). */
   renderQuoteActions?: (quote: InlineReturnQuoteResponse) => React.ReactNode;
+  /** POS-4b: rendered above the quote step's action row (the dialog's refund-vs-credit choice). */
+  renderQuoteFooter?: (quote: InlineReturnQuoteResponse) => React.ReactNode;
+  /** POS-4b: a re-fetched quote (REFUND_AMOUNT_CHANGED) that replaces the one on screen. */
+  quoteOverride?: InlineReturnQuoteResponse | null;
+  /** Show only the Total: the host replaced the total with the server's own figure, so the old breakdown would no longer add up. */
+  totalOnly?: boolean;
+  /** W21b: replaces the default "issued as credit note" line under the totals (the dialog sets it when Refund is chosen). */
+  quoteNote?: string;
   /** Called (in addition to the section's own inline error) when the Step-1 quote or the
    *  excess re-quote is refused — the dialog uses this to switch to its full "refused" screen. */
   onQuoteRefused?: (message: string) => void;
@@ -103,20 +115,34 @@ export interface InlineReturnSectionProps {
    *  draft the operator already typed/fetched, and so its own same-named actions (e.g. "Back")
    *  never collide with this section's DOM while it is hidden. */
   hidden?: boolean;
+  /** Id of the host's "Choose a reason to continue" hint: the quote step's Reason select points at it while no reason is chosen. */
+  reasonHintId?: string;
 }
 
 export function InlineReturnSection({
   customerId,
   entryOrderId,
+  sourceOrderId,
   resetToken,
   getQuoteEnabled = true,
   onStateChange,
   renderLinesActions,
   renderQuoteActions,
+  renderQuoteFooter,
+  hideBack,
+  quoteOverride,
+  totalOnly = false,
+  quoteNote,
   onQuoteRefused,
   hidden = false,
+  reasonHintId,
 }: InlineReturnSectionProps) {
   const { data: entryOrder } = useOrder(entryOrderId ?? "");
+  // R7b 3.1: a counter sale's reasons read in register words (same enum values)
+  const REASON_OPTIONS = React.useMemo(
+    () => returnReasonOptions(entryOrder?.counterSale ? "counter" : "delivery"),
+    [entryOrder?.counterSale],
+  );
 
   const [step, setStep] = React.useState<InlineReturnSectionStep>("lines");
   const [lines, setLines] = React.useState<SectionLine[]>([]);
@@ -127,6 +153,9 @@ export function InlineReturnSection({
   const [productSearch, setProductSearch] = React.useState("");
 
   const quoteMutation = useInlineReturnQuote();
+  React.useEffect(() => {
+    if (quoteOverride) setQuote(quoteOverride);
+  }, [quoteOverride]);
   // #2695 (SA-557): staff only — the server refuses the fields from anyone else with a 400.
   const canOverrideCredit = canOverrideReturnCredit(useOptionalAuth()?.user?.role);
 
@@ -175,8 +204,44 @@ export function InlineReturnSection({
     setLines((prev) => prev.map((l) => (l.lineKey === lineKey ? { ...l, ...patch } : l)));
   }
 
+  // R7b 3.1: Remove keeps the line for LINE_UNDO_MS in ONE slot (a newer removal makes the older one final), shown in
+  // the line's own place as "Removed {name} · Undo"
+  const [removed, setRemoved] = React.useState<{ line: SectionLine; index: number } | null>(null);
+  const removedTimer = React.useRef<number | null>(null);
+  const clearRemoved = React.useCallback(() => {
+    if (removedTimer.current !== null) window.clearTimeout(removedTimer.current);
+    removedTimer.current = null;
+    setRemoved(null);
+  }, []);
+  React.useEffect(
+    () => () => {
+      if (removedTimer.current !== null) window.clearTimeout(removedTimer.current);
+    },
+    [],
+  );
+  // a fresh attempt (reset or another order) never offers to undo into the old one
+  React.useEffect(() => {
+    clearRemoved();
+  }, [resetToken, entryOrderId, entryOrder?.id, clearRemoved]);
+
   function removeLine(lineKey: string) {
+    const index = lines.findIndex((l) => l.lineKey === lineKey);
+    if (index < 0) return;
+    const line = lines[index];
     setLines((prev) => prev.filter((l) => l.lineKey !== lineKey));
+    if (removedTimer.current !== null) window.clearTimeout(removedTimer.current);
+    setRemoved({ line, index });
+    removedTimer.current = window.setTimeout(clearRemoved, LINE_UNDO_MS);
+  }
+
+  function undoRemove() {
+    if (!removed) return;
+    const { line, index } = removed;
+    setLines((prev) => {
+      const at = Math.min(index, prev.length);
+      return [...prev.slice(0, at), line, ...prev.slice(at)];
+    });
+    clearRemoved();
   }
 
   function addProduct(product: {
@@ -186,6 +251,8 @@ export function InlineReturnSection({
     unitsPerBox?: number | null;
   }) {
     if (lines.some((l) => l.productId === product.id)) return;
+    // the product sits in the Undo slot: adding it again replaces that, so it is never in the list twice
+    if (removed?.line.productId === product.id) clearRemoved();
     setLines((prev) => [
       ...prev,
       {
@@ -211,19 +278,23 @@ export function InlineReturnSection({
   const productSearchRef = React.useRef<HTMLInputElement>(null);
   const linesRef = React.useRef(lines);
   linesRef.current = lines;
+  // B1219: a single fuzzy match is offered here ("Did you mean ...?"), never added unasked.
+  const [scanMatches, setScanMatches] = React.useState<any[]>([]);
+  const addScanned = (product: any) => {
+    const created = !linesRef.current.some((l) => l.productId === product.id);
+    setLines(
+      (prev) =>
+        applyReturnScan<SectionLine>(prev, product, (base) => ({
+          ...base,
+          lineKey: crypto.randomUUID(),
+        })).lines,
+    );
+    setProductSearch("");
+    return { created };
+  };
   const scanHandlerRef = useScanCodeHandler({
-    addLineItem: (product) => {
-      const created = !linesRef.current.some((l) => l.productId === product.id);
-      setLines(
-        (prev) =>
-          applyReturnScan<SectionLine>(prev, product, (base) => ({
-            ...base,
-            lineKey: crypto.randomUUID(),
-          })).lines,
-      );
-      setProductSearch("");
-      return { created };
-    },
+    addLineItem: (product) => addScanned(product),
+    onSuggestion: (matches) => setScanMatches(matches),
     onUnknownCode: (code) => toast({ variant: "error", title: `No product with barcode ${code}` }),
     toast,
   });
@@ -236,7 +307,7 @@ export function InlineReturnSection({
 
   function handleGetQuote() {
     setQuoteError("");
-    quoteMutation.mutate(buildQuoteRequest(customerId, lines), {
+    quoteMutation.mutate(buildQuoteRequest(customerId, lines, undefined, sourceOrderId), {
       onSuccess: (data) => {
         setQuote(data);
         // A new quote from the lines step credits its excess at current price by default —
@@ -262,7 +333,7 @@ export function InlineReturnSection({
     const previousOption = excessOption;
     setExcessOption(option);
     if (option !== "RETURN_ONLY_PURCHASED" || !quote) return;
-    quoteMutation.mutate(dropExcessAndRequote(customerId, quote, undefined, lines), {
+    quoteMutation.mutate(dropExcessAndRequote(customerId, quote, undefined, lines, sourceOrderId), {
       onSuccess: (data) => {
         setQuote(data);
         // Cast is safe: applyCoveredPiecesToLines spreads each input line into its output, so a
@@ -298,6 +369,23 @@ export function InlineReturnSection({
 
   if (hidden) return null;
 
+  const undoRow = removed ? (
+    <div
+      role="status"
+      className="flex items-center justify-between gap-2 rounded-lg border border-dashed border-surface-border bg-navy/5 p-3 text-sm text-navy"
+      data-testid="return-line-undo"
+    >
+      <span className="min-w-0 break-words">Removed {removed.line.productName}</span>
+      <button
+        type="button"
+        className="min-h-11 shrink-0 px-2 text-sm font-medium text-brand-600 hover:underline"
+        onClick={undoRemove}
+      >
+        Undo
+      </button>
+    </div>
+  ) : null;
+
   return (
     <div className="space-y-4">
       {step === "lines" && (
@@ -308,103 +396,109 @@ export function InlineReturnSection({
               {lines.length === 0 && (
                 <p className="text-sm text-navy/70">No products yet — search below to add one.</p>
               )}
-              {lines.map((line) => {
+              {lines.map((line, lineIndex) => {
                 const boxed = isBoxedProduct(line);
                 return (
-                  <div key={line.lineKey} className="rounded-lg border border-surface-border p-3">
-                    <div className="flex items-center justify-between gap-2">
-                      <div>
-                        <p className="text-sm font-medium text-navy">{line.productName}</p>
-                        {typeof line.qtySold === "number" && (
-                          <p className="text-xs text-navy/70">
-                            Sold {line.qtySold} {line.unit ?? "unit"}
-                            {line.qtyAlreadyReturned
-                              ? ` · Returned ${line.qtyAlreadyReturned}`
-                              : ""}
-                          </p>
-                        )}
+                  <React.Fragment key={line.lineKey}>
+                    {removed && removed.index === lineIndex ? undoRow : null}
+                    <div className="rounded-lg border border-surface-border p-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <div>
+                          <p className="text-sm font-medium text-navy">{line.productName}</p>
+                          {typeof line.qtySold === "number" && (
+                            <p className="text-xs text-navy/70">
+                              Sold {line.qtySold} {line.unit ?? "unit"}
+                              {line.qtyAlreadyReturned
+                                ? ` · Returned ${line.qtyAlreadyReturned}`
+                                : ""}
+                            </p>
+                          )}
+                        </div>
+                        <button
+                          type="button"
+                          className="text-xs text-navy/50 hover:text-danger"
+                          onClick={() => removeLine(line.lineKey)}
+                        >
+                          Remove
+                        </button>
                       </div>
-                      <button
-                        type="button"
-                        className="text-xs text-navy/50 hover:text-danger"
-                        onClick={() => removeLine(line.lineKey)}
-                      >
-                        Remove
-                      </button>
-                    </div>
-                    <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
-                      {boxed ? (
-                        <>
+                      <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                        {boxed ? (
+                          <>
+                            <Input
+                              label={UW.pack.other}
+                              type="number"
+                              min={0}
+                              inputMode="numeric"
+                              value={line.boxes}
+                              onChange={(e) => updateLine(line.lineKey, { boxes: e.target.value })}
+                            />
+                            <Input
+                              label={UW.base.other}
+                              type="number"
+                              min={0}
+                              inputMode="numeric"
+                              value={line.pieces}
+                              onChange={(e) => updateLine(line.lineKey, { pieces: e.target.value })}
+                            />
+                          </>
+                        ) : (
                           <Input
-                            label="Boxes"
-                            type="number"
-                            min={0}
-                            inputMode="numeric"
-                            value={line.boxes}
-                            onChange={(e) => updateLine(line.lineKey, { boxes: e.target.value })}
-                          />
-                          <Input
-                            label="Pieces"
+                            label={UW.base.other}
                             type="number"
                             min={0}
                             inputMode="numeric"
                             value={line.pieces}
                             onChange={(e) => updateLine(line.lineKey, { pieces: e.target.value })}
                           />
-                        </>
-                      ) : (
-                        <Input
-                          label="Qty (pieces)"
-                          type="number"
-                          min={0}
-                          inputMode="numeric"
-                          value={line.pieces}
-                          onChange={(e) => updateLine(line.lineKey, { pieces: e.target.value })}
-                        />
-                      )}
-                      <Select
-                        label="Reason (optional)"
-                        value={line.reason}
-                        onChange={(e) =>
-                          updateLine(line.lineKey, {
-                            reason: e.target.value as ReturnReason | "",
-                          })
-                        }
-                        options={[{ value: "", label: "Use default" }, ...REASON_OPTIONS]}
-                      />
-                      <Input
-                        label="Note (optional)"
-                        value={line.note}
-                        onChange={(e) => updateLine(line.lineKey, { note: e.target.value })}
-                      />
-                    </div>
-                    {canOverrideCredit && (
-                      <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-[10rem_1fr]">
-                        <Input
-                          label={
-                            boxed ? "Credit price per box (optional)" : "Credit price (optional)"
-                          }
-                          type="text"
-                          inputMode="decimal"
-                          placeholder="Quoted price"
-                          value={line.creditUnitPrice ?? ""}
+                        )}
+                        <Select
+                          label="Reason (optional)"
+                          value={line.reason}
                           onChange={(e) =>
-                            updateLine(line.lineKey, { creditUnitPrice: e.target.value })
+                            updateLine(line.lineKey, {
+                              reason: e.target.value as ReturnReason | "",
+                            })
                           }
+                          options={[{ value: "", label: "Use default" }, ...REASON_OPTIONS]}
                         />
                         <Input
-                          label="Why the lower price"
-                          maxLength={CREDIT_OVERRIDE_REASON_MAX}
-                          value={line.overrideReason ?? ""}
-                          onChange={(e) =>
-                            updateLine(line.lineKey, { overrideReason: e.target.value })
-                          }
+                          label="Note (optional)"
+                          value={line.note}
+                          onChange={(e) => updateLine(line.lineKey, { note: e.target.value })}
                         />
                       </div>
-                    )}
-                  </div>
+                      {canOverrideCredit && (
+                        <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-[10rem_1fr]">
+                          <Input
+                            label={
+                              boxed
+                                ? `Credit price per ${UW.pack.lower} (optional)`
+                                : "Credit price (optional)"
+                            }
+                            type="text"
+                            inputMode="decimal"
+                            placeholder="Quoted price"
+                            value={line.creditUnitPrice ?? ""}
+                            onChange={(e) =>
+                              updateLine(line.lineKey, { creditUnitPrice: e.target.value })
+                            }
+                          />
+                          <Input
+                            label="Why the lower price"
+                            maxLength={CREDIT_OVERRIDE_REASON_MAX}
+                            value={line.overrideReason ?? ""}
+                            onChange={(e) =>
+                              updateLine(line.lineKey, { overrideReason: e.target.value })
+                            }
+                          />
+                        </div>
+                      )}
+                    </div>
+                  </React.Fragment>
                 );
               })}
+              {removed && removed.index >= lines.length ? undoRow : null}
             </div>
           </div>
 
@@ -436,6 +530,18 @@ export function InlineReturnSection({
                 title="Scan barcode"
               />
             </div>
+            {scanMatches.length > 0 && (
+              <div className="mt-2">
+                <DidYouMeanPicker
+                  matches={scanMatches}
+                  onConfirm={(product) => {
+                    setScanMatches([]);
+                    addScanned(product);
+                  }}
+                  onCancel={() => setScanMatches([])}
+                />
+              </div>
+            )}
             {productSearch.trim().length > 1 && (productResults?.data?.length ?? 0) > 0 && (
               <div className="absolute z-10 mt-1 w-full rounded-lg border border-surface-border bg-white shadow-card">
                 {productResults!.data
@@ -541,8 +647,8 @@ export function InlineReturnSection({
                   );
                 })}
               <p className="text-xs text-navy/70">
-                {excess.reduce((s, c) => s + c.pieces, 0)} piece(s) priced at the customer&apos;s
-                current price.
+                {excess.reduce((s, c) => s + c.pieces, 0)} {UW.base.lower}(s) priced at the
+                customer&apos;s current price.
               </p>
               {excess.map((c, i) => (
                 <CreditOverrideNote
@@ -606,15 +712,19 @@ export function InlineReturnSection({
           )}
 
           <div className="rounded-lg bg-surface-raised p-3">
-            <div className="flex justify-between text-sm text-navy">
-              <span>Subtotal</span>
-              <span>{money(quote.subtotal)}</span>
-            </div>
-            <div className="flex justify-between text-sm text-navy">
-              <span>Tax</span>
-              <span>{money(quote.taxAmount)}</span>
-            </div>
-            {quote.categoryTax > 0 && (
+            {!totalOnly && (
+              <div className="flex justify-between text-sm text-navy">
+                <span>Subtotal</span>
+                <span>{money(quote.subtotal)}</span>
+              </div>
+            )}
+            {!totalOnly && (
+              <div className="flex justify-between text-sm text-navy">
+                <span>Tax</span>
+                <span>{money(quote.taxAmount)}</span>
+              </div>
+            )}
+            {!totalOnly && quote.categoryTax > 0 && (
               <div className="flex justify-between text-sm text-navy">
                 <span>Category levy</span>
                 <span>{money(quote.categoryTax)}</span>
@@ -625,7 +735,7 @@ export function InlineReturnSection({
               <span>{money(quote.total)}</span>
             </div>
             <p className="mt-2 text-xs text-navy/70">
-              This will be issued as credit note on the customer&apos;s balance.
+              {quoteNote ?? <>This will be issued as credit note on the customer&apos;s balance.</>}
             </p>
           </div>
 
@@ -634,12 +744,16 @@ export function InlineReturnSection({
             value={captureReason}
             onChange={(e) => setCaptureReason(e.target.value as ReturnReason | "")}
             options={[{ value: "", label: "Select a reason…" }, ...REASON_OPTIONS]}
+            aria-describedby={!captureReason && reasonHintId ? reasonHintId : undefined}
           />
 
-          <div className="flex justify-end gap-2">
-            <Button variant="ghost" onClick={() => setStep("lines")}>
-              Back
-            </Button>
+          {renderQuoteFooter?.(quote)}
+          <div className="flex flex-wrap justify-end gap-2">
+            {!hideBack && (
+              <Button variant="ghost" onClick={() => setStep("lines")}>
+                Back
+              </Button>
+            )}
             {renderQuoteActions?.(quote)}
           </div>
         </div>
@@ -657,7 +771,9 @@ function CoveredChunkRow({ chunk, boxed }: { chunk: InlineReturnQuoteChunk; boxe
           {sourceOrder ? `From order #${sourceOrder.orderNumber}` : "From an earlier order"}
           {sourceOrder?.orderDate && ` · ${new Date(sourceOrder.orderDate).toLocaleDateString()}`}
         </span>
-        <span className="text-navy/70">{chunk.pieces} pc</span>
+        <span className="text-navy/70">
+          {chunk.pieces} {UW.base.short.one}
+        </span>
       </div>
       <div className="mt-1 flex justify-between text-navy/70">
         <span>Net {money(chunk.subtotal)}</span>

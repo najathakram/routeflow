@@ -3,6 +3,8 @@ import { UserRole } from "@prisma/client";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
+import { CurrentUser } from "../auth/decorators/current-user.decorator";
+import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { PlanFlagGuard } from "../billing/plan-flag.guard";
 import { RequirePlanFlag } from "../billing/require-plan-flag.decorator";
 import { ProductUnitsService } from "./product-units.service";
@@ -26,8 +28,12 @@ export class ProductUnitsController {
 
   @Post()
   @Roles(UserRole.OPERATOR)
-  create(@Param("productId") productId: string, @Body() dto: CreateProductUnitDto) {
-    return this.units.create(productId, dto);
+  create(
+    @Param("productId") productId: string,
+    @Body() dto: CreateProductUnitDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.units.create(productId, dto, user.sub);
   }
 
   @Patch(":unitId")
@@ -36,8 +42,9 @@ export class ProductUnitsController {
     @Param("productId") productId: string,
     @Param("unitId") unitId: string,
     @Body() dto: UpdateProductUnitDto,
+    @CurrentUser() user: JwtPayload,
   ) {
-    return this.units.update(productId, unitId, dto);
+    return this.units.update(productId, unitId, dto, user.sub);
   }
 
   @Delete(":unitId")

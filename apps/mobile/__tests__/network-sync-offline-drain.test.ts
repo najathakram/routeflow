@@ -129,6 +129,7 @@ describe("drainQueue: network-class failures never count toward MAX_RETRIES (#23
     expect(r).toEqual({
       delivered: [],
       retriedIds: [],
+      creditsPending: [],
       unreachedIds: ["a", "b"],
       failedActions: [],
     });

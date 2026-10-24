@@ -307,6 +307,11 @@
   earned rate, never above the snapshot, capped at `units - 1`) and feeds BOTH the `lineTotal` preview
   and the submitted `CreateInvoiceItem.promoFreeUnits`. The PATCH delete-and-recreates every line, so
   omitting the field re-prices an agreed $350 (12 × $35, 2 free) line to $420.
+  **Unit lines (units_v1, B641):** the edit page FAILS CLOSED — `hasUnitLine(invoice.items)` renders a notice
+  (names `unitLabelsOf`, "Back to Invoice", no form/Save) because `update()` refuses a unit line and this form
+  holds no unit state (a save would store a pack line: 864 pieces → 72, money unchanged).
+  `lib/invoice-line-unit.ts`: `isUnitLine`/`hasUnitLine`/`unitLabelsOf`/`invoiceLineQtyText(it)` — a unit line
+  reads `3 Case`; no `unitLabel` is byte-identical to `formatQtySplit`. Detail page qty cell uses it.
   **Line-type round-trip (2026-08-21):** the snapshot is declared on the edit-form line types in
   BOTH `lib/api/orders.ts` (`OrderItem.promoFreeUnits`) and `lib/api/invoices.ts` (`InvoiceItem` +
   `CreateInvoiceItem.promoFreeUnits`). Any form that PATCHes items MUST echo it back — those paths

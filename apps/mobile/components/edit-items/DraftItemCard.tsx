@@ -17,7 +17,12 @@ import {
 import { marginFloorPrice } from "../../lib/margin-floor-price";
 import { freeUnitsLabel } from "../../lib/buyer-cart-logic";
 import { setLineUnits } from "../../lib/sale-line";
-import { draftFreeUnits, ladderProductFor, type DraftItem } from "../../lib/edit-items-draft";
+import {
+  draftFreeUnits,
+  ladderProductFor,
+  startsOnDefaultUnit,
+  type DraftItem,
+} from "../../lib/edit-items-draft";
 import { StepperRow } from "../../components/EditItemsStepperRow";
 import { SellByToggle } from "../../components/SellByToggle";
 import { canRemoveLooseUnits, looseUnitsVisible } from "../../lib/loose-units";
@@ -49,6 +54,7 @@ export function DraftItemCard({
   canEditPrice,
   pricingReady,
   tier,
+  pricesUnconfirmed,
   marginFloor,
   acked,
   onSetToFloor,
@@ -72,6 +78,8 @@ export function DraftItemCard({
   canEditPrice: boolean;
   /** units_v1: the EFFECTIVE numeric tier for `UnitPickerRow` to resolve the ladder price at. */
   tier: number;
+  /** S19b: the layer is not confirmed: the unit picker shows an ellipsis and stays closed. */
+  pricesUnconfirmed?: boolean;
   /** B62 (REG-B62): false while the customer/customer-price queries are in
    *  flight — gates Substitute, which prices (and SENDS) the replacement line
    *  off the tier that isn't known yet. */
@@ -246,9 +254,13 @@ export function DraftItemCard({
           productId: item.productId,
           unitPrice: item.unitPrice,
           unitLabel: item.unitLabel,
+          derivedBase: item.derivedBase,
         }}
         product={ladderProductFor(item)}
         tier={tier}
+        // A line added this session starts on the product's default selling unit (once, never over a held unit).
+        startOnDefaultUnit={startsOnDefaultUnit(item)}
+        pricesUnconfirmed={pricesUnconfirmed}
         onChange={onSetUnit}
         style={{ marginBottom: isBoxed ? 2 : 8 }}
       />

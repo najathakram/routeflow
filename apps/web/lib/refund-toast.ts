@@ -22,7 +22,7 @@ export function refundSuccessToast(
         ? "A credit note has been minted for the customer."
         : method === "CREDIT_NOTE"
           ? "No credit note was needed."
-          : "The return has been marked as refunded outside RouteFlow.",
+          : "The return has been marked as refunded.",
       ...unbilled.map((u) => u.message),
     ].join(" "),
   };

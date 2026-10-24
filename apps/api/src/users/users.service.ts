@@ -1,12 +1,20 @@
 import {
   Injectable,
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Logger,
   NotFoundException,
+  Optional,
 } from "@nestjs/common";
+import { AuditService } from "../audit/audit.service";
+import { AUDIT_ACTIONS } from "../audit/audit-actions.constant";
+import { API_ERROR_CODES } from "../common/api-error-codes";
+import { SUPPORT_SESSION_REFUSAL_MESSAGE } from "../auth/guards/no-impersonation.guard";
+import { assertNotWalkIn } from "../customers/walk-in-protected";
+import { assertMayChangeAccount } from "./admin-account-protection";
 import { ConfigService } from "@nestjs/config";
-import { User, UserRole } from "@prisma/client";
+import { User, UserRole, UserStatus } from "@prisma/client";
 import * as crypto from "crypto";
 import * as bcrypt from "bcrypt";
 import { PrismaService } from "../prisma/prisma.service";
@@ -26,6 +34,8 @@ export class UsersService {
     private readonly prisma: PrismaService,
     private readonly email: EmailService,
     private readonly configService: ConfigService<AppConfig>,
+    // SA-778: records a refused support-session identity edit. Optional so a bare unit module still builds.
+    @Optional() private readonly audit?: AuditService,
   ) {}
 
   /**
@@ -102,20 +112,35 @@ export class UsersService {
     return matches.length === 1 ? matches[0] : null;
   }
 
-  async findById(
-    id: string,
-  ): Promise<
-    (Omit<User, "password" | "googleId"> & { googleLinked: boolean; hasPassword: boolean }) | null
+  async findById(id: string): Promise<
+    | (Omit<User, "password" | "googleId" | "deniedPermissionGroups" | "permissionsVersion"> & {
+        googleLinked: boolean;
+        hasPassword: boolean;
+      })
+    | null
   > {
     const user = await this.prisma.forTenant().user.findUnique({ where: { id } });
     if (!user) return null;
-    const { password, googleId, ...rest } = user;
+    // The feature-group columns are reported by the admin listing and GET /users/me/permissions only.
+    const {
+      password,
+      googleId,
+      deniedPermissionGroups: _deniedPermissionGroups,
+      permissionsVersion: _permissionsVersion,
+      ...rest
+    } = user;
     return { ...rest, googleLinked: !!googleId, hasPassword: !!password };
   }
 
-  async findAll(query: ListUsersDto) {
+  /**
+   * `callerRole` decides whether each row carries the feature-group columns: an account admin (or the
+   * platform super admin) gets `deniedPermissionGroups` + `permissionsVersion`, every other caller does not.
+   */
+  async findAll(query: ListUsersDto, callerRole?: UserRole) {
     const { search, status, page = 1, limit = 20 } = query;
     const skip = (page - 1) * limit;
+    const includePermissions =
+      callerRole === UserRole.TENANT_ADMIN || callerRole === UserRole.SUPER_ADMIN;
     const where: any = {
       role: { not: UserRole.CUSTOMER },
     };
@@ -140,6 +165,7 @@ export class UsersService {
           isAdmin: true,
           canActAsDriver: true,
           createdAt: true,
+          ...(includePermissions ? { deniedPermissionGroups: true, permissionsVersion: true } : {}),
         },
         skip,
         take: limit,
@@ -185,19 +211,100 @@ export class UsersService {
     return { user, tempPassword };
   }
 
-  async changeStatus(userId: string, dto: ChangeUserStatusDto) {
+  async changeStatus(
+    userId: string,
+    dto: ChangeUserStatusDto,
+    callerRole: UserRole,
+    callerId?: string,
+  ) {
     const user = await this.prisma.forTenant().user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException("User not found");
-    return this.prisma.forTenant().user.update({
-      where: { id: userId },
-      data: { status: dto.status },
-      select: { id: true, username: true, email: true, role: true, status: true },
+    assertMayChangeAccount(user, callerRole);
+    await this.assertNotWalkInAccount(userId);
+    const deactivating = dto.status !== UserStatus.ACTIVE;
+    // Perms PR1 M2: a workspace can never lock itself out of account administration.
+    if (deactivating && callerId && userId === callerId) {
+      throw new ConflictException({
+        code: API_ERROR_CODES.SELF_DEACTIVATION_REFUSED,
+        message: "You can't deactivate your own account. Ask another admin to do it.",
+      });
+    }
+    const select = { id: true, username: true, email: true, role: true, status: true } as const;
+    if (!(
+      deactivating &&
+      user.role === UserRole.TENANT_ADMIN &&
+      user.status === UserStatus.ACTIVE
+    )) {
+      return this.prisma.forTenant().user.update({
+        where: { id: userId },
+        data: { status: dto.status },
+        select,
+      });
+    }
+    // Deactivating an active admin: read the tenant's active admins FOR UPDATE inside the same transaction as the
+    // write, so two admins deactivating each other at once serialize and the second sees the first's change.
+    const tenantId = this.prisma.getTenantId();
+    return this.prisma.tenantTransaction(async (tx) => {
+      const admins = await tx.$queryRaw<{ id: string }[]>`
+        SELECT id FROM "User"
+        WHERE "tenantId" = ${tenantId} AND role = 'TENANT_ADMIN' AND status = 'ACTIVE' AND "deletedAt" IS NULL
+        FOR UPDATE`;
+      if (!admins.some((a) => a.id !== userId)) {
+        throw new ConflictException({
+          code: API_ERROR_CODES.LAST_TENANT_ADMIN,
+          message:
+            "This is the workspace's only active admin. Make someone else an admin before deactivating this account.",
+        });
+      }
+      return tx.user.update({ where: { id: userId }, data: { status: dto.status }, select });
     });
   }
 
-  async updateUser(userId: string, dto: UpdateUserDto, changedByUsername?: string) {
+  async updateUser(
+    userId: string,
+    dto: UpdateUserDto,
+    changedByUsername: string | undefined,
+    callerRole: UserRole,
+    impersonatedBy?: string,
+  ) {
     const user = await this.prisma.forTenant().user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException("User not found");
+    // Only an ACTUAL change of the sign-in identity (email or username) on an admin account is guarded: the
+    // edit form always sends both, so an unchanged value must pass.
+    // ONE normalized comparison drives the guard, the write and every email side effect below.
+    const normalizedEmail = dto.email ? dto.email.trim().toLowerCase() : dto.email;
+    const emailEdit =
+      !!normalizedEmail && normalizedEmail !== (user.email ?? "").trim().toLowerCase();
+    // Login matches usernames EXACTLY (findByUsername), so only padding is normalized: trim, never lowercase.
+    const normalizedUsername = dto.username !== undefined ? dto.username.trim() : undefined;
+    const usernameEdit =
+      normalizedUsername !== undefined && normalizedUsername !== (user.username ?? "").trim();
+    // SA-778: a support session may not change a sign-in identity (an email is the way to a reset link in its
+    // own inbox; a username is how the account is found at login).
+    if ((emailEdit || usernameEdit) && impersonatedBy != null) {
+      await this.audit?.log({
+        tenantId: user.tenantId ?? null,
+        userId: null,
+        impersonatedBy,
+        action: AUDIT_ACTIONS.IMPERSONATION_ACTION_REFUSED,
+        entityType: "account",
+        entityId: userId,
+        meta: {
+          superAdminId: impersonatedBy,
+          tenantId: user.tenantId ?? null,
+          method: "PATCH",
+          route: "/users/:id",
+        },
+      });
+      throw new ForbiddenException({
+        code: API_ERROR_CODES.IMPERSONATION_NOT_ALLOWED,
+        message: SUPPORT_SESSION_REFUSAL_MESSAGE,
+      });
+    }
+    if (emailEdit || usernameEdit) assertMayChangeAccount(user, callerRole);
+    if (emailEdit || usernameEdit || (dto.role && dto.role !== user.role)) {
+      await this.assertNotWalkInAccount(userId);
+    }
 
     // Prevent changing role of TENANT_ADMIN users
     if (user.role === UserRole.TENANT_ADMIN && dto.role && dto.role !== UserRole.TENANT_ADMIN) {
@@ -214,21 +321,25 @@ export class UsersService {
       throw new BadRequestException("Users can only be assigned OPERATOR or DRIVER roles.");
     }
 
-    // N2 review fix: normalize BEFORE compare and write — a case-only edit
-    // ("Acme@Example.com" -> "acme@example.com") must not read as a change (it
-    // fires both notices for nothing) and must not persist inconsistently with
-    // every other email lookup in this codebase, which is case-sensitive as
-    // stored.
-    const normalizedEmail = dto.email ? dto.email.trim().toLowerCase() : dto.email;
-
+    // N2 review fix: a case-only or padding-only edit ("Acme@Example.com" -> "acme@example.com")
+    // is not a change: it fires no notices and does not rewrite the stored email.
     const previousEmail = user.email;
     const previousRole = user.role;
-    const emailChanged = !!normalizedEmail && normalizedEmail !== previousEmail;
+    const emailChanged = emailEdit;
     const roleChanged = !!dto.role && dto.role !== previousRole;
 
+    // An EXPLICIT field pick, never a spread of the body (SA-726 M5): whatever a caller manages to put on
+    // the DTO, only these three columns are ever written here. `status`, `canActAsDriver`, `tenantId` and
+    // the permission columns have their own endpoints. Email and username are omitted unless they
+    // actually changed; a change writes the normalized value.
+    const data = {
+      ...(dto.role !== undefined ? { role: dto.role } : {}),
+      ...(emailChanged ? { email: normalizedEmail } : {}),
+      ...(usernameEdit ? { username: normalizedUsername } : {}),
+    };
     const updated = await this.prisma.forTenant().user.update({
       where: { id: userId },
-      data: { ...dto, email: normalizedEmail },
+      data,
       select: {
         id: true,
         username: true,
@@ -340,9 +451,18 @@ export class UsersService {
     }
   }
 
-  async unlockUser(userId: string) {
+  /** The walk-in customer's login account stays as it is: refuse before any write (WALK_IN_PROTECTED). */
+  private async assertNotWalkInAccount(userId: string) {
+    const customer = await this.prisma
+      .forTenant()
+      .customer.findFirst({ where: { userId }, select: { id: true, isWalkIn: true } });
+    assertNotWalkIn(customer);
+  }
+
+  async unlockUser(userId: string, callerRole: UserRole) {
     const user = await this.prisma.forTenant().user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException("User not found");
+    assertMayChangeAccount(user, callerRole);
     await this.prisma.forTenant().user.update({
       where: { id: userId },
       data: { failedLoginAttempts: 0, lockedUntil: null },
@@ -350,9 +470,11 @@ export class UsersService {
     return { id: userId, unlocked: true };
   }
 
-  async resetPassword(userId: string) {
+  async resetPassword(userId: string, callerRole: UserRole) {
     const user = await this.prisma.forTenant().user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException("User not found");
+    assertMayChangeAccount(user, callerRole);
+    await this.assertNotWalkInAccount(userId);
     const tempPassword = `${crypto.randomBytes(3).toString("hex").toUpperCase()}-${crypto.randomBytes(3).toString("hex").toUpperCase()}`;
     const hashedPassword = await bcrypt.hash(tempPassword, 10);
     await this.prisma.forTenant().user.update({
@@ -370,6 +492,7 @@ export class UsersService {
     return { tempPassword };
   }
 
+  /** Flips the LEGACY `isAdmin` display flag; it grants nothing (authority is the TENANT_ADMIN role). */
   async toggleAdmin(userId: string, callerIsAdmin: boolean) {
     if (!callerIsAdmin) {
       throw new ForbiddenException("Only admins can assign admin rights.");
@@ -394,9 +517,10 @@ export class UsersService {
     });
   }
 
-  async toggleDriverPermit(userId: string) {
+  async toggleDriverPermit(userId: string, callerRole: UserRole) {
     const user = await this.prisma.forTenant().user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException("User not found");
+    assertMayChangeAccount(user, callerRole);
     if (user.role !== UserRole.OPERATOR && user.role !== UserRole.TENANT_ADMIN) {
       throw new BadRequestException("Driver permit can only be assigned to operators.");
     }

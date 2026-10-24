@@ -62,6 +62,7 @@ import { SellingRestrictionsService } from "../selling-restrictions/selling-rest
 import { OrdersService } from "../orders/orders.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-authority-provider";
+import { INVOICE_EDIT_STUBS } from "../orders/testing/invoice-edit-stubs";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -186,7 +187,13 @@ describeDb(
           { provide: SystemConfigService, useValue: systemConfig },
           {
             provide: RegulatedLedgerService,
-            useValue: { writeSaleEntries: jest.fn(), reverseInvoiceEntries: jest.fn() },
+            useValue: {
+              writeSaleEntries: jest.fn(),
+              reverseInvoiceEntries: jest.fn(),
+              settleRegulatedLedger: jest
+                .fn()
+                .mockResolvedValue({ written: 0, amendedPeriod: null }),
+            },
           },
           {
             provide: AuthorizationGuardService,
@@ -251,6 +258,7 @@ describeDb(
       const invoicesForOrders = Object.assign(Object.create(invoices), {
         reconcileOrderDraftInvoice: async () => undefined,
         resyncOrderInvoicesForEdit: async () => [],
+        ...INVOICE_EDIT_STUBS,
       });
       orders = Object.assign(Object.create(OrdersService.prototype), {
         prisma,

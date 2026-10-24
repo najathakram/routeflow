@@ -61,6 +61,36 @@ describe("GoHighLevelSettingsTab", () => {
     expect(screen.getByText("No email or phone on the contact")).toBeInTheDocument();
   });
 
+  // B956: a formula-led contact name is its own plain-words outcome that NAMES the refused field,
+  // on a real run (NEEDS_REVIEW) and on the dry-run preview row.
+  it.each([
+    ["NEEDS_REVIEW", "name-refused:businessName", "Business name"],
+    ["NEEDS_REVIEW", "name-refused:contactName", "Contact name"],
+    ["DRY_RUN", "name-refused:displayName", "Display name"],
+    ["DRY_RUN", "name-refused", "This field"],
+  ])("B956: a %s row with reason %s names %s", (status, reason, label) => {
+    render(
+      <GoHighLevelSettingsTab
+        status="CONNECTED"
+        locationName="Acme HQ"
+        activity={[
+          {
+            id: "h1",
+            status,
+            reason,
+            opportunityName: "Big Order",
+            contactName: "Acme Foods",
+          },
+        ]}
+      />,
+    );
+
+    expect(
+      screen.getByText(`${label} can't start with =, +, -, @ or a tab/line break.`),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/name-refused/)).not.toBeInTheDocument();
+  });
+
   // M14 / ux-spec Card 2 — the stage picker renders the selected pipeline's
   // stages and "Save" sends the trigger patch (triggerMode/pipelineId/stageId).
   it("M14: stage picker renders the pipeline's stages and saving sends the trigger patch", async () => {
@@ -102,6 +132,13 @@ describe("GoHighLevelSettingsTab", () => {
 });
 
 // ─── Container tests (M15/M16/m5) — mock `apiClient`, mount the real hooks ─────
+
+// The container's connection / rules controls are admin-only (Perms PR1); these flows run as a tenant admin.
+let mockRole = "TENANT_ADMIN";
+jest.mock("@/lib/auth-context", () => ({
+  ...jest.requireActual("@/lib/auth-context"),
+  useAuth: () => ({ user: { id: "u1", role: mockRole } }),
+}));
 
 jest.mock("@/lib/api-client", () => ({
   apiClient: {
@@ -281,5 +318,20 @@ describe("GoHighLevelSettingsTabConnected (container)", () => {
 
     expect(await screen.findByText(/key ending in/)).toBeInTheDocument();
     expect(screen.queryByLabelText("Connection key")).not.toBeInTheDocument();
+  });
+});
+
+describe("Perms PR1: an operator reads GoHighLevel but cannot connect or change its rules", () => {
+  afterEach(() => {
+    mockRole = "TENANT_ADMIN";
+  });
+  it("no connection key form, and the admin-only line instead", async () => {
+    mockRole = "OPERATOR";
+    renderWithProviders(<GoHighLevelSettingsTabConnected />);
+    expect(
+      await screen.findByText(/Only an admin can (connect GoHighLevel|change these settings)/),
+    ).toBeInTheDocument();
+    expect(screen.queryByLabelText("Connection key")).toBeNull();
+    expect(screen.queryByRole("button", { name: /Save & test|Disconnect|Replace key/ })).toBeNull();
   });
 });

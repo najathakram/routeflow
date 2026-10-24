@@ -196,6 +196,10 @@ export function resolveConfirmedAmounts(
  *  NOT be built on this set. */
 export const HELD_STATUSES = ["PAID", "PENDING"] as const;
 
+/** Payment-reference dedupe (row 498): a non-void payment with the same ref is a duplicate, in-flight
+ *  DRAFT/PENDING included; a bounced check is VOID (P5-12) and never deduped. */
+export const DEDUPE_STATUSES = [...HELD_STATUSES, "DRAFT"] as const;
+
 /** Prisma `where: { status: { in: [...] } }` filter for `HELD_STATUSES`. */
 export const HELD_PAYMENT = { status: { in: [...HELD_STATUSES] } } as const;
 
@@ -267,17 +271,82 @@ export function collectedDateOf(p: { settledAt?: unknown; paidAt?: unknown }): u
  * this money held/confirmed", a different question from "does this row already consume
  * capacity against the invoice/allocation it was recorded on".
  *
- * Internal to this module — `remainingCapacity` below is the public entry point. Not exported
- * because "not void" is a capacity concept, not a payment-confirmation concept, and giving it
- * its own top-level export would invite a second, competing "which payments count" predicate in
- * this file.
+ * Internal to this module: `remainingCapacity` and `capacityRefusal` below are the public entry points, and
+ * `consumesCapacity` is the ONE per-row predicate they sum with (row 2299 / SA-858 ruling 1).
  */
 function sumNotVoid(
   payments: ReadonlyArray<Pick<ConfirmablePaymentRow, "amount" | "status">> | null | undefined,
 ): number {
   return (payments ?? [])
-    .filter((p) => p.status !== "VOID")
+    .filter((p) => consumesCapacity(p.status))
     .reduce((sum, p) => sum + Number(p.amount), 0);
+}
+
+/**
+ * Row 2299 / SA-858 ruling 1: does a payment row in this status consume its invoice's capacity? CAPACITY = every
+ * non-VOID row (DRAFT + PAID + PENDING), the N4 rule below. The ONE predicate: every capacity guard (API writers,
+ * the mobile edit cap via remainingCapacity) reads it; a fifth PaymentStatus fails payment-capacity.spec.ts.
+ */
+export function consumesCapacity(status: string | null | undefined): boolean {
+  return status !== "VOID";
+}
+
+/** The capacity writers' tolerance for a sub-cent float residue (their existing `+ 0.001`), named once. */
+export const CAPACITY_EPSILON = 0.001;
+
+/**
+ * SA-863: what a writer does with an amount above the remaining capacity. REQUIRED at every call (no default), like
+ * statusFromPayments' `onOverpaid`, so the compiler lists every caller. "ALLOW_IF_NO_UNCONFIRMED" is the office
+ * standalone payment's [L-O2] deliberate overpayment: allowed while no DRAFT/PENDING row reserves the invoice (capacity
+ * then equals the confirmed balance), else refused RESERVED_BY_UNCONFIRMED. Every other writer passes "REFUSE".
+ */
+export type CapacityOverpayPolicy = "REFUSE" | "ALLOW_IF_NO_UNCONFIRMED";
+
+const RESERVED_BY_UNCONFIRMED_COPY =
+  "Invoice's remaining balance is already reserved by unconfirmed payments";
+
+/** Why a capacity-consuming write is refused, with the fixed copy every writer shows (recordPayment's three cases). */
+export interface CapacityRefusal {
+  kind: "FULLY_PAID" | "RESERVED_BY_UNCONFIRMED" | "EXCEEDS";
+  remaining: number;
+  message: string;
+}
+
+/**
+ * Row 2299 / SA-858: null when a write of `amount` in `status` fits the invoice's remaining CAPACITY (`existing` =
+ * its other payment rows; VOID ones are ignored), else the refusal. A write that consumes nothing (VOID) never refuses.
+ * `remaining` can hit 0 while CONFIRMED money is still below the total: the rest is then RESERVED by unconfirmed rows.
+ */
+export function capacityRefusal(p: {
+  total: number;
+  existing: ReadonlyArray<Pick<ConfirmablePaymentRow, "amount" | "status">> | null | undefined;
+  amount: number;
+  status: string;
+  overpay: CapacityOverpayPolicy;
+}): CapacityRefusal | null {
+  if (!consumesCapacity(p.status)) return null;
+  const total = Number(p.total);
+  const remaining = remainingCapacity(total, p.existing);
+  if (p.overpay === "ALLOW_IF_NO_UNCONFIRMED") {
+    // SA-863: only the breach unconfirmed rows cause is refused; with none, [L-O2] deliberate overpayment stands.
+    const unconfirmed = (p.existing ?? []).some(
+      (r) => consumesCapacity(r.status) && r.status !== CONFIRMED_STATUS,
+    );
+    if (!unconfirmed || p.amount <= remaining + CAPACITY_EPSILON) return null;
+    return { kind: "RESERVED_BY_UNCONFIRMED", remaining, message: RESERVED_BY_UNCONFIRMED_COPY };
+  }
+  if (remaining <= 0) {
+    return sumConfirmed(p.existing) >= total - CAPACITY_EPSILON
+      ? { kind: "FULLY_PAID", remaining, message: "Invoice is already fully paid" }
+      : { kind: "RESERVED_BY_UNCONFIRMED", remaining, message: RESERVED_BY_UNCONFIRMED_COPY };
+  }
+  if (p.amount > remaining + CAPACITY_EPSILON)
+    return {
+      kind: "EXCEEDS",
+      remaining,
+      message: `Payment exceeds remaining balance of ${remaining.toFixed(2)}`,
+    };
+  return null;
 }
 
 /**
@@ -307,3 +376,12 @@ export function remainingCapacity(
 ): number {
   return roundMoney(Number(total) - sumNotVoid(payments));
 }
+
+/**
+ * SA-763r P-3 (B1098): half a cent. Confirmed payments beyond an invoice's total by MORE than this are an
+ * OVERPAYMENT: `statusFromPayments` holds such an invoice out of PAID, the `overpaidBy` read and the audit
+ * rows report the excess, and the order-edit overpay judge refuses an edit that would create one. ONE
+ * named constant for all of them (a raw band literal in apps/api/src/orders is pinned out by
+ * no-override-band-tokens.spec.ts), so the status rule and the judge can never disagree by a rounding cent.
+ */
+export const OVERPAID_EPSILON = 0.005;

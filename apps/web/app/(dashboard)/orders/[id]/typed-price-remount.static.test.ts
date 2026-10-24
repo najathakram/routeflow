@@ -7,7 +7,7 @@
 import { readFileSync } from "fs";
 import { join } from "path";
 
-const src = readFileSync(join(__dirname, "page.tsx"), "utf8");
+const src = readFileSync(join(__dirname, "_components", "order-line-edit.tsx"), "utf8");
 
 describe("order-edit typed price survives a picker remount (#2381)", () => {
   it("typing a price marks the line", () => {

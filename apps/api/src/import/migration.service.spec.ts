@@ -65,6 +65,78 @@ describe("MigrationService", () => {
         expect.objectContaining({ data: expect.objectContaining({ status: "STAGED" }) }),
       );
     });
+    it("B964-2: a formula-led product name is staged SKIPPED (flagged), so the preview agrees with the commit", async () => {
+      prisma.migrationJob.findUnique.mockResolvedValue({
+        id: "j1",
+        source: "ZOHO",
+        status: "FETCHING",
+      });
+      await service.stageRecords("j1", [
+        { entityType: "PRODUCT", externalId: "item_1", payload: { name: "=HYPERLINK(1)" } },
+        { entityType: "PRODUCT", externalId: "item_2", payload: { name: "Fine" } },
+      ]);
+      const rows = prisma.migrationStagingRecord.create.mock.calls.map((c) => c[0].data);
+      expect(rows[0]).toMatchObject({ status: "SKIPPED", flags: ["unsafe-name"] });
+      expect(rows[1]).toMatchObject({ status: "PENDING" });
+    });
+  });
+
+  describe("B990: the free-text category of a staged product", () => {
+    it("stage: a formula-led category is staged SKIPPED (flag unsafe-category), the preview agrees", async () => {
+      prisma.migrationJob.findUnique.mockResolvedValue({
+        id: "j1",
+        source: "ZOHO",
+        status: "FETCHING",
+      });
+      await service.stageRecords("j1", [
+        {
+          entityType: "PRODUCT",
+          externalId: "item_1",
+          payload: { name: "Fine", category: "=HYPERLINK(1)" },
+        },
+        {
+          entityType: "PRODUCT",
+          externalId: "item_2",
+          payload: { name: "Fine too", category: "Drinks" },
+        },
+      ]);
+      const rows = prisma.migrationStagingRecord.create.mock.calls.map((c) => c[0].data);
+      expect(rows[0]).toMatchObject({ status: "SKIPPED", flags: ["unsafe-category"] });
+      expect(rows[1]).toMatchObject({ status: "PENDING" });
+    });
+
+    it("confirm: a staged formula-led category is SKIPPED and never reaches products.create (the job is never wedged)", async () => {
+      prisma.migrationJob.findUnique.mockResolvedValue({
+        id: "j1",
+        source: "ZOHO",
+        status: "STAGED",
+      });
+      prisma.migrationStagingRecord.findMany.mockResolvedValue([
+        {
+          id: "r1",
+          entityType: "PRODUCT",
+          externalId: "item_1",
+          rawPayload: { name: "Fine", category: "@cmd" },
+          flags: [],
+        },
+        {
+          id: "r2",
+          entityType: "PRODUCT",
+          externalId: "item_2",
+          rawPayload: { name: "Ok", pricePerUnit: "5" },
+          flags: [],
+        },
+      ]);
+      const res = await service.confirmJob("j1");
+      expect(products.create).toHaveBeenCalledTimes(1);
+      expect(prisma.migrationStagingRecord.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "r1" },
+          data: { status: "SKIPPED", flags: ["unsafe-category"] },
+        }),
+      );
+      expect(res).toMatchObject({ committed: 1, skipped: 1 });
+    });
   });
 
   describe("confirmJob", () => {
@@ -95,6 +167,43 @@ describe("MigrationService", () => {
         }),
       );
       expect(res.committed).toBe(1);
+    });
+
+    it("B964-2: a staged formula-led product is SKIPPED at commit (never reaches products.create), the rest commit, and the job still CONFIRMS (never wedged)", async () => {
+      prisma.migrationJob.findUnique.mockResolvedValue({
+        id: "j1",
+        source: "ZOHO",
+        status: "STAGED",
+      });
+      prisma.migrationStagingRecord.findMany.mockResolvedValue([
+        {
+          id: "r1",
+          entityType: "PRODUCT",
+          externalId: "item_1",
+          rawPayload: { name: "@cmd" },
+          flags: [],
+        },
+        {
+          id: "r2",
+          entityType: "PRODUCT",
+          externalId: "item_2",
+          rawPayload: { name: "Fine", pricePerUnit: "5" },
+          flags: [],
+        },
+      ]);
+      const res = await service.confirmJob("j1");
+      expect(products.create).toHaveBeenCalledTimes(1);
+      expect(products.create).toHaveBeenCalledWith(expect.objectContaining({ name: "Fine" }));
+      expect(prisma.migrationStagingRecord.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "r1" },
+          data: { status: "SKIPPED", flags: ["unsafe-name"] },
+        }),
+      );
+      expect(res).toMatchObject({ committed: 1, skipped: 1 });
+      expect(prisma.migrationJob.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ status: "CONFIRMED" }) }),
+      );
     });
 
     it("rejects a second confirm", async () => {

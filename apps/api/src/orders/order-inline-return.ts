@@ -3,7 +3,7 @@ import {
   assertReplayItems,
   type InlineReturnReplayLines,
 } from "../returns/inline-return-fingerprint";
-import { retryOnTxConflict, TX_CONFLICT_BACKOFF_MS } from "../common/tx-retry";
+import { stockTxBounded } from "../common/stock-tx";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import type { InlineReturnLinesDto } from "../returns/dto/capture-inline-return.dto";
 import { INLINE_RETURN_KEY_TAKEN } from "../returns/inline-returns.service";
@@ -238,35 +238,14 @@ export async function reserveEditReturnNumber(p: PreparedInlineReturn | null): P
 }
 
 /**
- * The edit tx: a request carrying a return (`p` non-null) retries a write conflict (40001 / 40P01 /
- * P2034 / TransactionWriteConflict, house helper common/tx-retry.ts, SA-340) with the SAME reserved
- * credit-note number (the edit tx is idempotent: its revert and its replay key see to that). A plain
- * edit keeps its single attempt. The return adds the lock edge Product (sale) -> Return counter ->
- * Product (restock), the reason the return path can conflict at all.
+ * The edit tx (`prisma.tenantTransaction(fn, opts)`) inside `retryStockTx` (SA-767 r-note 3 (b); it was
+ * a conflict-only retry, for a request carrying a return alone, SA-340): EVERY edit now re-runs the whole
+ * tx on a write conflict (40001 / 40P01 / P2034), a lock wait that gave up (55P03) or an expired tx budget
+ * (P2028), 3 attempts at most; an exhausted retry is the coded 503 LOCK_UNAVAILABLE with nothing saved.
+ * A request carrying a return re-runs with the SAME reserved credit-note number (the edit tx is
+ * idempotent: its revert and its replay key see to that). One call site in orders.service.ts, so the
+ * retried callback carries no wrapper of its own.
  */
-export function runWithConflictRetry<T>(
-  p: PreparedInlineReturn | null,
-  label: string,
-  run: () => Promise<T>,
-): Promise<T> {
-  return p ? retryOnTxConflict(label, run) : run();
+export function runEditTx<T>(prisma: any, fn: (tx: any) => Promise<T>, opts?: any): Promise<T> {
+  return stockTxBounded(prisma, "orders.updateOrderItems", fn, opts);
 }
-
-/**
- * The edit tx (`prisma.tenantTransaction(fn, opts)`) under `runWithConflictRetry`: one call site in
- * orders.service.ts, so the retried callback carries no wrapper of its own.
- */
-export function runEditTx<T>(
-  p: PreparedInlineReturn | null,
-  prisma: any,
-  fn: (tx: any) => Promise<T>,
-  opts?: any,
-): Promise<T> {
-  return runWithConflictRetry(p, "orders.updateOrderItems", () =>
-    prisma.tenantTransaction(fn, opts),
-  );
-}
-
-/** create()'s own retry loop backs off like the house helper (100 ms, then 300 ms) before its next attempt. */
-export const conflictBackoff = (attempt: number): Promise<void> =>
-  new Promise((r) => setTimeout(r, TX_CONFLICT_BACKOFF_MS[attempt] ?? 300));

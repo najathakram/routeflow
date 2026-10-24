@@ -10,7 +10,9 @@ export function securityHeaders(): Record<string, string> {
     "Cache-Control": "no-store",
     "Content-Security-Policy": CSP,
     "X-Content-Type-Options": "nosniff",
-    "Referrer-Policy": "no-referrer",
+    // Row 684: `same-origin`, never `no-referrer`. Under `no-referrer` a same-origin form POST carries `Origin: null`,
+    // which the login's Origin check refused for every sign-in. Cross-site requests still get no referrer.
+    "Referrer-Policy": "same-origin",
     "X-Frame-Options": "DENY",
     "Strict-Transport-Security": "max-age=63072000; includeSubDomains",
   };

@@ -16,16 +16,16 @@ function read(relPath: string): string {
 
 describe("B510 — detail-screen tables scroll instead of clipping at mobile widths", () => {
   it("customers/[id] statement ledger uses overflow-x-auto, not overflow-hidden", () => {
-    const src = read("customers/[id]/page.tsx");
+    const src = read("customers/[id]/customer-statement-card.tsx"); // B1005: the card moved out of page.tsx
     expect(src).toContain('<div className="-mx-8 overflow-x-auto">');
     expect(src).toContain('<table className="w-full min-w-[640px] text-sm">');
     expect(src).not.toContain('<div className="-mx-8 overflow-hidden">');
   });
 
-  it("customers/[id] statement summary strip stacks to 2 columns below sm", () => {
-    const src = read("customers/[id]/page.tsx");
-    expect(src).toContain("grid grid-cols-2 gap-px overflow-hidden rounded-lg");
-    expect(src).toContain("sm:grid-cols-4");
+  it("customers/[id] statement summary strip stacks to one column below sm (three tiles since B1005)", () => {
+    const src = read("customers/[id]/customer-statement-card.tsx");
+    expect(src).toContain("grid grid-cols-1 gap-px overflow-hidden rounded-lg");
+    expect(src).toContain("sm:grid-cols-3");
   });
 
   it("returns/[id] items table uses overflow-x-auto, not overflow-hidden", () => {

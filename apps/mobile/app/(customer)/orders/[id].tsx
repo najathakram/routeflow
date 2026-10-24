@@ -31,6 +31,7 @@ import { invoiceLineQtyText } from "@routeflow/pricing";
 import { invoiceLineUnitNoun, usesUnitDisplay } from "../../../lib/invoice-line-display";
 import { freeUnitsLabel } from "../../../lib/buyer-cart-logic";
 import { showToast } from "../../../lib/toast";
+import { reorderErrorCopy } from "../../../lib/buyer-qty-split";
 import { confirm } from "../../../lib/confirm";
 import { fmtCalendarDate } from "../../../lib/format-date";
 
@@ -141,8 +142,7 @@ export default function CustomerOrderDetailScreen() {
               showToast("Order created");
               router.push(`/(customer)/orders/${newOrder.id}`);
             },
-            onError: (e: any) =>
-              showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+            onError: (e: any) => showToast(reorderErrorCopy(e)),
           },
         ),
       { confirmText: "Reorder" },
@@ -209,7 +209,7 @@ export default function CustomerOrderDetailScreen() {
           {order.subtotal != null && order.tax != null ? (
             <View style={{ marginTop: 4 }}>
               <Text style={styles.totalLine}>Subtotal: ${Number(order.subtotal).toFixed(2)}</Text>
-              <Text style={styles.totalLine}>GST (10%): ${Number(order.tax).toFixed(2)}</Text>
+              <Text style={styles.totalLine}>Tax: ${Number(order.tax).toFixed(2)}</Text>
               {/* RF-4: regulated (category) tax the server folded into order.total. */}
               {(() => {
                 const catTax = (order.lineItems ?? [])

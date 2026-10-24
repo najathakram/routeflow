@@ -140,7 +140,7 @@ function ReturnRow({
   onMarkInTransit: () => void;
   onReceive: () => void;
 }) {
-  const s = returnPillFor(r.status);
+  const s = returnPillFor(r.status, r);
   const flags = returnActionFlags(r.status);
 
   return (

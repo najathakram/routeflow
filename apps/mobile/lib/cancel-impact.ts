@@ -18,6 +18,8 @@ export interface CancelImpactLike {
    * before live invoices are voided.
    */
   deliveredUnits?: number;
+  /** B692: delivered / partly delivered with no quantity recorded (legacy rows): the server refuses the cancel. */
+  deliveryQuantitiesMissing?: boolean;
 }
 
 const money = (n: number) => `$${Number(n).toFixed(2)}`;
@@ -66,6 +68,15 @@ export function describeCancelImpact(impact: CancelImpactLike | undefined): Canc
         confirmLabel: null,
       };
     }
+    if (impact.deliveryQuantitiesMissing) {
+      return {
+        title: "Can't cancel",
+        lines: [],
+        blockedReason: "Delivery quantities are missing; set them before cancelling.",
+        confirmLabel: null,
+      };
+    }
+
     return {
       title: "Can't cancel",
       lines: [],

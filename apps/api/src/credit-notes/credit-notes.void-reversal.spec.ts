@@ -21,13 +21,18 @@ import { createMockPrisma } from "../testing/prisma-mock";
 describe("CreditNotesService — SA-436 PR-2 void-with-reversal", () => {
   let service: CreditNotesService;
   let prisma: ReturnType<typeof createMockPrisma>;
-  let ledger: { unreverseCreditNoteEntries: jest.Mock; reverseCreditNoteEntries: jest.Mock };
+  let ledger: {
+    unreverseCreditNoteEntries: jest.Mock;
+    reverseCreditNoteEntries: jest.Mock;
+    settleRegulatedLedger: jest.Mock;
+  };
   let gateway: { emitCreditNoteVoided: jest.Mock; emitCreditNoteCreated: jest.Mock };
 
   beforeEach(async () => {
     prisma = createMockPrisma();
     ledger = {
       unreverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
+      settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
       reverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
     };
     gateway = { emitCreditNoteVoided: jest.fn(), emitCreditNoteCreated: jest.fn() };
@@ -107,7 +112,7 @@ describe("CreditNotesService — SA-436 PR-2 void-with-reversal", () => {
     expect(prisma.creditNoteApplyBlock.createMany).not.toHaveBeenCalled();
     expect(prisma.orderCreditNote.deleteMany).not.toHaveBeenCalled();
     expect(prisma.creditNote.updateMany).not.toHaveBeenCalled();
-    expect(ledger.unreverseCreditNoteEntries).not.toHaveBeenCalled();
+    expect(ledger.settleRegulatedLedger).not.toHaveBeenCalled();
     expect(prisma.auditLog.create).not.toHaveBeenCalled();
   };
 
@@ -177,6 +182,30 @@ describe("CreditNotesService — SA-436 PR-2 void-with-reversal", () => {
         "Invoice:inv-2",
         "CreditNote:cn-a",
       ]);
+    });
+
+    it("B1052: every lock the void takes is tenant-scoped (a foreign id can't lock another tenant's rows)", async () => {
+      armNote();
+      armRestore();
+      prisma.invoicePayment.findMany.mockResolvedValue(livePayments);
+      const exec = jest.fn().mockResolvedValue(0);
+      await service.voidWithReversalInTx({ ...prisma, $executeRaw: exec }, "cn-a", "user-7", null);
+      const locks = exec.mock.calls
+        .map((c: any[]) => ({ sql: c[0].join("?"), values: c.slice(1) }))
+        .filter((l) => /FOR (NO KEY )?UPDATE/.test(l.sql));
+      // 2 orders + 2 invoices + the note itself (the restores' own note locks come after).
+      expect(locks.length).toBeGreaterThanOrEqual(5);
+      // SA-706a: the note's own lock is NO KEY UPDATE (its FK holders take KEY SHARE); Order and
+      // Invoice locks stay FOR UPDATE.
+      for (const l of locks) {
+        expect(l.sql).toMatch(
+          /FROM "CreditNote"/.test(l.sql) ? / FOR NO KEY UPDATE$/ : /(?<!NO KEY) FOR UPDATE$/,
+        );
+      }
+      for (const l of locks) {
+        expect(l.sql).toMatch(/"tenantId"/);
+        expect(l.values).toContain("test-tenant");
+      }
     });
 
     it("B949: the note's OWN void passes voidingNoteId to every restore (the one exemption from the SOURCE_DELETED guard, scoped to THAT note)", async () => {
@@ -305,10 +334,10 @@ describe("CreditNotesService — SA-436 PR-2 void-with-reversal", () => {
         where: { id: "cn-a", status: { not: "VOID" }, amountUsed: 0 },
         data: { status: "VOID" },
       });
-      expect(ledger.unreverseCreditNoteEntries).toHaveBeenCalledWith({
-        creditNoteId: "cn-a",
-        db: expect.objectContaining({ creditNote: prisma.creditNote }), // the void's own tx
-      });
+      expect(ledger.settleRegulatedLedger).toHaveBeenCalledWith(
+        expect.objectContaining({ creditNote: prisma.creditNote }), // the void's own tx
+        { kind: "ADJUSTMENT_UNDONE", creditNoteId: "cn-a" },
+      );
       expect(prisma.auditLog.create).toHaveBeenCalledWith({
         data: expect.objectContaining({
           userId: "user-7",
@@ -415,6 +444,16 @@ describe("CreditNotesService — SA-436 PR-2 void-with-reversal", () => {
         const res: any = await door();
         expect(res).toMatchObject({ id: "cn-a", status: "VOID" });
         expect(res.creditNote).toBeUndefined();
+      });
+      it("SA-839 §3: the kept URL's row also carries the filed month the void's correction answers", async () => {
+        armNote({ status: "ISSUED", amountUsed: 0 });
+        armRestore();
+        prisma.invoicePayment.findMany.mockResolvedValue([]);
+        prisma.creditNote.findUnique.mockResolvedValue({ id: "cn-a", status: "VOID" });
+        const filed = { periodKey: "2026-09", status: "GENERATED", trackedCategoryId: "cat-1" };
+        ledger.settleRegulatedLedger.mockResolvedValueOnce({ written: 1, amendedPeriod: filed });
+        const res: any = await door();
+        expect(res).toMatchObject({ id: "cn-a", status: "VOID", amendedPeriod: filed });
       });
       it("a return-backed note is a 409 CREDIT_NOTE_RETURN_BACKED and NOTHING changes", async () => {
         armNote();
@@ -542,7 +581,7 @@ describe("CreditNotesService — SA-436 PR-2 void-with-reversal", () => {
       await expect(service.voidWithReversal("cn-a", "user-7")).rejects.toBeInstanceOf(
         BadRequestException,
       );
-      expect(ledger.unreverseCreditNoteEntries).not.toHaveBeenCalled();
+      expect(ledger.settleRegulatedLedger).not.toHaveBeenCalled();
       expect(prisma.auditLog.create).not.toHaveBeenCalled();
     });
   });

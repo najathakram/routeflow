@@ -102,6 +102,27 @@ describe("enableTenantAddon", () => {
     });
   });
 
+  it("SA-693: sends comp: true only for an explicit free grant, never for a billed or unflagged call", async () => {
+    mockPost.mockResolvedValue({ data: { id: "addon-1" } });
+
+    await enableTenantAddon("tenant-1", "ocr", undefined, undefined, true);
+    expect(mockPost).toHaveBeenLastCalledWith("/platform-admin/tenants/tenant-1/addons/enable", {
+      addonKey: "ocr",
+      comp: true,
+    });
+
+    await enableTenantAddon("tenant-1", "ocr", "price_123", undefined, false);
+    expect(mockPost).toHaveBeenLastCalledWith("/platform-admin/tenants/tenant-1/addons/enable", {
+      addonKey: "ocr",
+      stripePriceId: "price_123",
+    });
+
+    await enableTenantAddon("tenant-1", "ocr");
+    expect(mockPost).toHaveBeenLastCalledWith("/platform-admin/tenants/tenant-1/addons/enable", {
+      addonKey: "ocr",
+    });
+  });
+
   it("omits acknowledgeUnmetRequires when false or absent — absent/false must mean 'enforce'", async () => {
     mockPost.mockResolvedValueOnce({ data: { id: "addon-1" } });
 

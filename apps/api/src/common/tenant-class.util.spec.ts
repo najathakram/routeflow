@@ -2,7 +2,11 @@ import { spawnSync } from "child_process";
 import path from "path";
 import { pathToFileURL } from "url";
 import { TenantClass } from "@prisma/client";
-import { classifyTenantSlug } from "./tenant-class.util";
+import {
+  assertApprovedTestTenantSlug,
+  classifyTenantSlug,
+  isApprovedTestTenantSlug,
+} from "./tenant-class.util";
 
 // Specs are excluded from the API's build (tsconfig.build.json), so a `require` reaching outside
 // apps/api into the repo-root scripts/ folder is fine here — this is the only place allowed to
@@ -95,5 +99,31 @@ describe("backfill-tenant-class.mjs classify() vs classifyTenantSlug (no DB)", (
     const fromCli = classifyViaCli(CROSS_CHECK_SLUGS);
     const fromUtil = CROSS_CHECK_SLUGS.map((slug) => classifyTenantSlug(slug));
     expect(fromCli).toEqual(fromUtil);
+  });
+});
+
+describe("isApprovedTestTenantSlug / assertApprovedTestTenantSlug (inlined policy)", () => {
+  it.each([
+    "test",
+    "e2e-routeflow",
+    "routeflow-demo",
+    "qa-1",
+    "e2e-x",
+    "ux-audit-9",
+    "acme",
+    "QA-upper",
+    "qa",
+    "",
+    "routeflow-hq",
+    undefined,
+    null,
+    42,
+  ])("agrees with scripts/lib/test-tenants.cjs for %p", (slug) => {
+    expect(isApprovedTestTenantSlug(slug)).toBe(testTenantsCjs.isTestTenant(slug));
+  });
+
+  it("assert returns an approved slug and throws for a live one", () => {
+    expect(assertApprovedTestTenantSlug("qa-1")).toBe("qa-1");
+    expect(() => assertApprovedTestTenantSlug("acme", "ctx")).toThrow(/ctx.*not an approved/);
   });
 });

@@ -2,13 +2,20 @@ import * as React from "react";
 import { Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { ios } from "@routeflow/ui/tokens";
-import type { LadderProduct } from "@routeflow/pricing";
+import type { DerivedBaseMarker, LadderProduct } from "@routeflow/pricing";
 import { useProductUnits, useUnitsEnabled } from "../lib/api/product-units";
-import { buildUnitOptions, unitOptionDetail, type UnitOption } from "../lib/unit-options";
+import {
+  buildUnitOptions,
+  defaultStartOption,
+  unitOptionDetail,
+  unitPickerValue,
+  type UnitOption,
+} from "../lib/unit-options";
+import { unitDetailOrUnconfirmed } from "../lib/price-layer-gate";
 import { OptionPickerSheet, type PickerOption } from "./OptionPickerSheet";
 
 /** The line fields this control reads (structurally satisfied by CartRow's/DraftItemCard's own line). */
-export interface UnitPickerLine {
+export interface UnitPickerLine extends DerivedBaseMarker {
   productId: string;
   isUnlisted?: boolean;
   /**
@@ -40,6 +47,8 @@ export function UnitPickerRow({
   tier,
   onChange,
   style,
+  startOnDefaultUnit = false,
+  pricesUnconfirmed = false,
 }: {
   line: UnitPickerLine;
   /**
@@ -51,7 +60,11 @@ export function UnitPickerRow({
    * product's own record, unclobbered by anything a line mutates.
    */
   product: LadderProduct;
-  /** The EFFECTIVE tier for this product (`CustomerPrice.pricingTier ?? customer.pricingTier ?? 1`). */
+  /**
+   * The EFFECTIVE tier for this product (`CustomerPrice.pricingTier ?? customer.pricingTier ?? 1`). This row only builds the
+   * tier's unit LADDER; the price a customer is charged for a unit comes from `customerLinePrice` (@routeflow/pricing, S19b:
+   * the customer's layer row when there is one, else this tier ladder), applied by the screen.
+   */
   tier: number;
   onChange: (option: UnitOption) => void;
   /**
@@ -60,6 +73,14 @@ export function UnitPickerRow({
    * adding 2–8px of dead space to EVERY row for every tenant.
    */
   style?: StyleProp<ViewStyle>;
+  /** #2784: a NEW line starts on the level flagged `isDefaultSelling` (once, never over a held unit). */
+  startOnDefaultUnit?: boolean;
+  /**
+   * S19b (SA-813 M3): the customer's price layer is pending, failed or incomplete. The unit prices are the tier's, not yet
+   * confirmed, so the options show an ellipsis, the picker is closed, and the default unit is not started (it would bake a
+   * tier price into the line).
+   */
+  pricesUnconfirmed?: boolean;
 }) {
   const [open, setOpen] = React.useState(false);
   const enabled = useUnitsEnabled();
@@ -78,21 +99,43 @@ export function UnitPickerRow({
     }
   }, [enabled, units, product, tier, packPrice]);
 
+  const startedRef = React.useRef(false);
+  React.useEffect(() => {
+    if (!startOnDefaultUnit || startedRef.current || options.length <= 1 || !units) return;
+    if (pricesUnconfirmed) return; // wait for the layer: the default unit would bake in the tier price
+    startedRef.current = true; // one shot per mount: a later choice is never re-overridden
+    const start = defaultStartOption(product, units, tier, { hasUnit: !!unitPickerValue(line) });
+    if (start) onChange(start);
+  }, [
+    startOnDefaultUnit,
+    pricesUnconfirmed,
+    options,
+    units,
+    product,
+    tier,
+    line.unitLabel,
+    line.derivedBase,
+    onChange,
+  ]);
+
   // Mirrors web's UnitPicker: a product with no ladder (or only the pack) shows no control at all.
   if (options.length <= 1) return null;
 
-  const selected = options.find((o) => o.value === (line.unitLabel ?? "")) ?? options[0]!;
+  // Units P0b: the held unit, else a DERIVED Piece (the marker), else the pack. A pack-pieces line without it is the pack.
+  const selected = options.find((o) => o.value === unitPickerValue(line)) ?? options[0]!;
   const pickerOptions: PickerOption[] = options.map((o) => ({
     id: o.value,
     label: o.label,
-    subtitle: unitOptionDetail(o),
+    subtitle: unitDetailOrUnconfirmed(unitOptionDetail(o), !!pricesUnconfirmed),
   }));
 
   return (
     <View style={style}>
       <Pressable
         style={styles.trigger}
+        hitSlop={{ top: 4, bottom: 4 }}
         onPress={() => setOpen(true)}
+        disabled={pricesUnconfirmed}
         accessibilityRole="button"
         accessibilityLabel={`Sell by, currently ${selected.label}`}
       >

@@ -5,9 +5,12 @@ import { ios } from "@routeflow/ui/tokens";
 import { FormField, FormSection, FormSheet, FormTextInput } from "./FormSheet";
 import { AddressAutocompleteInput } from "./AddressAutocompleteInput";
 import { isInternalEmail } from "../lib/internal-email";
+import { buildPayload } from "../lib/customer-payload";
 import { useTierLabels } from "../lib/api/tier-labels";
 import { tierLabel } from "../lib/tier-label";
 import { shouldConfirmDiscard } from "../lib/discard-guard";
+import { formFulfillPath } from "../lib/customer-fulfill-path";
+import type { FulfillPath } from "@routeflow/types";
 
 export interface CustomerFormValues {
   businessName: string;
@@ -28,7 +31,7 @@ export interface CustomerFormValues {
    * customer's own orders, which can still be overridden per-order. ROUTE
    * (delivery route) is the default; SHIP = ships via carrier, never routed.
    */
-  fulfillPath: "ROUTE" | "SHIP";
+  fulfillPath: FulfillPath;
   // Create-only: bundled into the create payload as the customer's first
   // address (mirrors web's CustomerFormModal). Editing an existing
   // customer's address(es) happens on the dedicated Addresses screen
@@ -80,7 +83,7 @@ export function customerFormFromValues(c: Record<string, any>): CustomerFormValu
     deliveryWindowEnd: c.deliveryWindowEnd ?? "",
     isTaxExempt: c.isTaxExempt ?? false,
     taxId: c.taxId ?? "",
-    fulfillPath: c.fulfillPath === "SHIP" ? "SHIP" : "ROUTE",
+    fulfillPath: formFulfillPath(c.fulfillPath),
     // Edit mode never renders or submits the address section (see comment on
     // CustomerFormValues) — leave blank rather than prefill fields the form
     // can't save.
@@ -101,15 +104,15 @@ export interface CustomerPayload {
   username?: string;
   contactName?: string;
   email?: string;
-  phone?: string;
+  phone?: string | null;
   creditLimit?: number;
   pricingTier?: number;
   currency?: string;
-  notes?: string;
-  deliveryWindowStart?: string;
-  deliveryWindowEnd?: string;
+  notes?: string | null;
+  deliveryWindowStart?: string | null;
+  deliveryWindowEnd?: string | null;
   isTaxExempt?: boolean;
-  taxId?: string;
+  taxId?: string | null;
   /**
    * The customer's default fulfillment mode — seeds new orders' fulfillment
    * row (mobile `NewOrderScreen`, web `CreateOrderModal`). Accepted on both
@@ -130,85 +133,6 @@ export interface CustomerPayload {
     zip: string;
     isDefault?: boolean;
   }>;
-}
-
-function parseOptionalNumber(v: string): number | undefined {
-  const t = v.trim();
-  if (!t) return undefined;
-  const n = Number(t);
-  return Number.isFinite(n) ? n : undefined;
-}
-
-/**
- * Mirrors web's CustomerFormModal: the username no longer depends on the (now
- * optional) email — take the email local-part when there is one, else the
- * business or contact name, slugified, with a short suffix so it stays unique.
- */
-function deriveUsername(email: string, businessName: string, contactName: string): string {
-  const base =
-    (email ? email.split("@")[0] : businessName || contactName)
-      .replace(/[^a-z0-9]/gi, "")
-      .toLowerCase()
-      .slice(0, 24) || "customer";
-  return `${base}_${Date.now().toString(36)}`;
-}
-
-function buildPayload(
-  form: CustomerFormValues,
-  mode: "create" | "edit",
-): CustomerPayload | { error: string } {
-  const businessName = form.businessName.trim();
-  if (!businessName) return { error: "Business name is required." };
-
-  // Address is optional on create (you can always add one later from the
-  // Addresses screen) — but once the operator starts filling it in, require
-  // the full set, same rule AddAddressForm uses on the Addresses screen.
-  const street = form.street.trim();
-  const city = form.city.trim();
-  const state = form.state.trim();
-  const zip = form.zip.trim();
-  const hasAnyAddressInput = mode === "create" && !!(street || city || state || zip);
-  const hasFullAddress = !!(street && city && state && zip);
-  if (hasAnyAddressInput && !hasFullAddress) {
-    return { error: "Street, city, state, and ZIP are all required to add an address." };
-  }
-
-  const contactName = form.contactName.trim();
-  const email = form.email.trim();
-
-  return {
-    businessName,
-    // Create-only — see CustomerPayload.username.
-    username: mode === "create" ? deriveUsername(email, businessName, contactName) : undefined,
-    // CreateCustomerDto declares contactName as a REQUIRED @IsString, so create
-    // must always send a string ("" is accepted, and is what web sends when the
-    // field is blank); edit keeps `undefined` = leave as-is.
-    contactName: mode === "create" ? contactName : contactName || undefined,
-    // Edit sends "" so a blanked field CLEARS the stored email server-side
-    // (UpdateCustomerDto emptyToNull) — `|| undefined` made clearing a silent
-    // no-op, so a sentinel could never be removed. Create keeps `undefined`:
-    // CreateCustomerDto's @IsEmail rejects "" and the service mints its own
-    // placeholder for an absent email.
-    email: mode === "edit" ? email : email || undefined,
-    phone: form.phone.trim() || undefined,
-    creditLimit: parseOptionalNumber(form.creditLimit),
-    pricingTier: form.pricingTier,
-    currency: form.currency.trim() || undefined,
-    notes: form.notes.trim() || undefined,
-    // Edit-only: CreateCustomerDto has no delivery-window fields, and
-    // `forbidNonWhitelisted` rejects the ENTIRE create payload over one unknown
-    // property — a filled window would take the address bundle down with it.
-    // The window is set from the edit screen instead (section below matches).
-    deliveryWindowStart: mode === "edit" ? form.deliveryWindowStart.trim() || undefined : undefined,
-    deliveryWindowEnd: mode === "edit" ? form.deliveryWindowEnd.trim() || undefined : undefined,
-    isTaxExempt: form.isTaxExempt,
-    taxId: form.taxId.trim() || undefined,
-    fulfillPath: form.fulfillPath,
-    addresses:
-      mode === "create" && hasFullAddress
-        ? [{ label: "Main", line1: street, city, state, zip, isDefault: true }]
-        : undefined,
-  };
 }
 
 interface Props {
@@ -243,7 +167,7 @@ export function CustomerForm({
   }, [form, initial]);
 
   const submit = () => {
-    const res = buildPayload(form, mode);
+    const res = buildPayload(form, initial, mode);
     if ("error" in res) {
       setError(res.error);
       return;

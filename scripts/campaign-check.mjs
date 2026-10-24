@@ -87,6 +87,16 @@
 // result set being empty — the check is "every declared obligation is
 // discharged", not "the result set is non-empty".
 //
+// FAST VERIFY (owner ruling 2026-10-10, "Fast local check, full in CI"): a local pre-push runs only the
+// Jest tests RELATED to the diff, so the campaign reports it leaves behind are partial by design and
+// can never show "a test titled REG-B### in the jest report" for every claim. When — and only when —
+// the verify chain was started with the explicit switch RF_VERIFY_MODE=fast (exported by .husky/pre-push
+// after scripts/verify-mode.mjs decided; ignored under CI or FULL_VERIFY=1, see `isFastMode`), the
+// REPORT-dependent enforcement (R1/R2/R4/R9 freshness + the T1 title-coverage scan) is skipped and
+// replaced by one line, "campaign-check: report coverage deferred to CI (fast verify)". Every other
+// check (ledger shape, tiers, states, duplicates, evidence-only states, T2 evidence, T3 build-plan
+// rows) still runs. CI never sets it, so CI keeps the full enforcement. No heuristic: no switch, no skip.
+//
 // B523 (2026-09-18): "missing report" vs "report checked, no matching test" must never render
 // the same. Root cause was turbo's shared-worktree local cache replaying a HIT for a workspace's
 // #test task without ever invoking jest — a cache replay restores only declared `outputs`
@@ -105,6 +115,7 @@ import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { scrubbedGitEnv } from "./lib/check-git-hooks.mjs";
+import { isFastMode } from "./lib/verify-scope.mjs";
 import { normalizeEvidence } from "./campaign/normalize-evidence.mjs";
 import {
   REG_TOKEN_RE,
@@ -127,6 +138,14 @@ function main() {
   const runsDir = path.resolve(REPO_ROOT, flag("runs-dir") || ".campaign/runs");
   // --freshness-only: R4's pre-step. Boolean, no value — checked by presence, not flag().
   const freshnessOnly = args.includes("--freshness-only");
+  // FAST VERIFY switch (see the header): explicit env only, never inferred from the reports.
+  const fastVerify = isFastMode(process.env);
+  if (process.env.RF_VERIFY_MODE === "fast" && !fastVerify) {
+    console.error(
+      "campaign-check: RF_VERIFY_MODE=fast ignored (CI or FULL_VERIFY=1) — report coverage is enforced",
+    );
+  }
+  const REPORT_COVERAGE_DEFERRED = "campaign-check: report coverage deferred to CI (fast verify)";
   // Overridable via CAMPAIGN_CHECK_STATUS_DIR (mirrors bugs.mjs's BUGS_ROOT
   // seam) so a self-test can drive this REAL command against a throwaway
   // fixture ledger instead of the repo's own .claude/campaign/status.
@@ -942,15 +961,23 @@ function main() {
     return;
   }
 
+  if (freshnessOnly && fastVerify) {
+    // The pre-step exists to force a real test run when turbo would replay a stale report from cache;
+    // a fast verify does not enforce reports locally, so forcing a full run here would defeat it.
+    console.log(REPORT_COVERAGE_DEFERRED);
+    process.exit(0);
+  }
+
   if (freshnessOnly) {
     checkFreshness("freshness-only");
     // checkFreshness always exits in freshness-only mode; unreachable, but explicit for clarity.
     return;
   }
-  checkFreshness("full");
+  if (fastVerify) console.log(REPORT_COVERAGE_DEFERRED);
+  else checkFreshness("full");
 
   let jestIndex = null;
-  if (t1Needed) {
+  if (t1Needed && !fastVerify) {
     const getters = {
       api: getApiJson,
       mobile: getMobileJson,
@@ -1202,7 +1229,9 @@ function main() {
   }
 
   console.log(
-    `✔ every affirmative claim in scope is backed by a real proof (${passes.length} checked).`,
+    fastVerify
+      ? `✔ ledger checks passed (${passes.length} checked); T1 report coverage deferred to CI (fast verify).`
+      : `✔ every affirmative claim in scope is backed by a real proof (${passes.length} checked).`,
   );
 }
 

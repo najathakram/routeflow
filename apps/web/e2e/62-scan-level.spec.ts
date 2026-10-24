@@ -98,7 +98,7 @@ for (const vp of VIEWPORTS) {
       await wedgeScan(page, CODES.unit.code);
       await expect(page.getByTestId("order-line-cases")).toHaveValue("0");
       await expect(page.getByTestId("order-line-loose")).toHaveValue("1");
-      await expect(page.getByTestId("order-line-pcs-total")).toContainText("1 pcs total");
+      await expect(page.getByTestId("order-line-pcs-total")).toContainText("1 pc total");
     });
 
     test("R1: a box code adds one CASE — 1 case, no loose", async ({ page }) => {

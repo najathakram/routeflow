@@ -23,11 +23,13 @@ jest.mock("../notifications/notifications.service", () => ({
   })),
 }));
 
+import { oversellReaderOffProvider } from "./testing/policy-reader-provider";
 import { Test, TestingModule } from "@nestjs/testing";
 import { ConflictException, ForbiddenException } from "@nestjs/common";
 import { getQueueToken } from "@nestjs/bull";
 import { ConfigService } from "@nestjs/config";
 
+import { FeatureConfigService } from "../billing/feature-config.service";
 import { OrdersService } from "./orders.service";
 import { InvoicesService } from "../invoices/invoices.service";
 import { SystemConfigService } from "../system-config/system-config.service";
@@ -51,6 +53,7 @@ const customerPayload = {
   sub: "user-cust",
   username: "customer1",
   role: "CUSTOMER" as const,
+  tenantId: "test-tenant",
   status: "ACTIVE" as const,
   forcePasswordChange: false,
 };
@@ -65,14 +68,18 @@ const operatorPayload = {
 
 describe("OrdersService.create — selling restrictions call site (lane R 2a-5)", () => {
   let service: OrdersService;
+  const featureConfig = { getEffectiveMode: jest.fn() };
   let prisma: ReturnType<typeof createMockPrisma>;
 
   beforeEach(async () => {
+    featureConfig.getEffectiveMode.mockReset().mockResolvedValue("unset");
     prisma = createMockPrisma();
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
+        oversellReaderOffProvider,
         OrdersService,
+        { provide: FeatureConfigService, useValue: featureConfig },
         {
           provide: TenantContextService,
           // B323: sweepAllPendingOrders() now takes TenantContextService; this spec never
@@ -104,6 +111,8 @@ describe("OrdersService.create — selling restrictions call site (lane R 2a-5)"
             findOpenOrderDraft: jest.fn().mockResolvedValue(null),
             reconcileOrderDraftInvoice: jest.fn().mockResolvedValue({ id: "inv-1" }),
             resyncOrderInvoicesForEdit: jest.fn().mockResolvedValue([{ id: "inv-1" }]),
+            followPartialPrices: jest.fn().mockResolvedValue({ issuedPartialsUnchanged: [] }),
+            projectEditedInvoiceTotals: jest.fn().mockResolvedValue([]),
             revertLinkedInvoicesForOrderEdit: jest.fn().mockResolvedValue([]),
             voidInvoice: jest.fn().mockResolvedValue({ id: "inv-1", status: "VOID" }),
             voidInvoiceInTx: jest.fn().mockResolvedValue({ id: "inv-1", status: "VOID" }),
@@ -184,7 +193,10 @@ describe("OrdersService.create — selling restrictions call site (lane R 2a-5)"
         // B65: deleteOrder's per-invoice teardown reverses regulated-ledger entries.
         {
           provide: RegulatedLedgerService,
-          useValue: { reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined) },
+          useValue: {
+            reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined),
+            settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
+          },
         },
       ],
     }).compile();
@@ -201,6 +213,10 @@ describe("OrdersService.create — selling restrictions call site (lane R 2a-5)"
     trackedCategoryId: null,
     trackedSubcategoryId: null,
     isActive: true,
+    // a real Product row always carries these; the buyer gate (WS6) judges them, never defaults
+    kind: "STANDARD",
+    portalVisible: true,
+    parent: null,
   };
   const NEW_ORDER = {
     id: "ord-new",
@@ -266,14 +282,64 @@ describe("OrdersService.create — selling restrictions call site (lane R 2a-5)"
     );
 
     expect(restrictions.assertLinesSellable).toHaveBeenCalledTimes(1);
-    expect(restrictions.assertLinesSellable).toHaveBeenCalledWith({
-      tenantId: "t-1",
-      customerId: "cust-1",
-      lines: [{ productId: "prod-1" }], // every line of a new order is a NEW line: no qtyDelta
-      channel: "STAFF",
-    });
+    expect(restrictions.assertLinesSellable).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: "t-1",
+        customerId: "cust-1",
+        // every line of a new order is a NEW line: no qtyDelta; row 510: keyed by its index in the payload
+        lines: [{ productId: "prod-1", lineKey: "n:0" }],
+        channel: "STAFF",
+        fulfilmentKind: "DELIVERY",
+        document: "ORDER",
+      }),
+    );
     expect(order).toEqual(["restrictions", "stock-tx"]);
   });
+
+  it.each([
+    [{ counterSale: true, fulfillPath: "PICKUP" }, "COUNTER"],
+    [{ fulfillPath: "PICKUP" }, "PICKUP"],
+    [{}, "DELIVERY"],
+  ])(
+    "L8: create with options %j is judged as %s (counter / pickup: the store's state)",
+    async (options, kind) => {
+      prisma.customer.findUnique.mockResolvedValue({
+        id: "cust-1",
+        pricingTier: 1,
+        user: { status: "ACTIVE" },
+        deletedAt: null,
+      });
+      await service.create(
+        input({ customerId: "cust-1" }),
+        { ...operatorPayload, tenantId: "t-1" } as never,
+        options as never,
+      );
+      expect(restrictions.assertLinesSellable).toHaveBeenCalledWith(
+        expect.objectContaining({ fulfilmentKind: kind }),
+      );
+    },
+  );
+
+  // L8 M1: the buyer's CHOSEN path decides the state: pickup -> the store's, ship -> the buyer's own.
+  it.each([
+    ["pickup", undefined, "PICKUP"], // pickup-only: a buyer order is always an in-store pickup
+    ["pickup", "PICKUP", "PICKUP"],
+    ["pickup_ship", "PICKUP", "PICKUP"],
+    ["pickup_ship", "SHIP", "DELIVERY"],
+  ])(
+    "L8 checkout: a buyer on a %s tenant who picks %s is judged as %s",
+    async (mode, chosen, kind) => {
+      featureConfig.getEffectiveMode.mockResolvedValue(mode);
+      prisma.customer.findUnique.mockResolvedValue(activeCustomer);
+      await service.create(input({ customerId: "cust-1", fulfillPath: chosen }), {
+        ...buyerPrincipal,
+        tenantId: "t-1",
+      } as never);
+      expect(restrictions.assertLinesSellable).toHaveBeenCalledWith(
+        expect.objectContaining({ channel: "BUYER_PORTAL", fulfilmentKind: kind }),
+      );
+    },
+  );
 
   it("the channel comes from the PRINCIPAL: the buyer pseudo-user (type BUYER) and the plain CUSTOMER role are BUYER_PORTAL", async () => {
     for (const user of [buyerPrincipal, customerPayload]) {
@@ -342,8 +408,15 @@ describe("OrdersService.create — selling restrictions call site (lane R 2a-5)"
   });
 
   it("a DRAFT is not a sale yet: never checked here (its promotion is the enforcement point)", async () => {
-    await service.create(input({ status: "DRAFT" }), {
-      ...customerPayload,
+    // F1(ii): a buyer can no longer start a draft at all; a staff draft is the case that skips the check.
+    prisma.customer.findUnique.mockResolvedValue({
+      id: "cust-1",
+      pricingTier: 1,
+      user: { status: "ACTIVE" },
+      deletedAt: null,
+    });
+    await service.create(input({ status: "DRAFT", customerId: "cust-1" }), {
+      ...operatorPayload,
       tenantId: "t-1",
     } as never);
     expect(restrictions.assertLinesSellable).not.toHaveBeenCalled();
@@ -353,7 +426,7 @@ describe("OrdersService.create — selling restrictions call site (lane R 2a-5)"
   // cannot name one is refused rather than assumed OFF (fail closed; the price of a check that can
   // never be skipped by omitting the tenant). Staff and buyer alike.
   it.each([
-    ["a buyer", customerPayload],
+    ["a buyer", { ...customerPayload, tenantId: null }],
     ["a staff principal", operatorPayload],
   ])(
     "%s with no tenant on the caller and none ambient: refused (403) rather than skipped",

@@ -349,7 +349,8 @@ describeDb("Bill-state locks — real Postgres, parked first writer", () => {
         `status=${finalBill.status} payments=${rows.length} totalPaid=${finalBill.totalPaid}`,
     );
     expect(first.status).toBe("fulfilled");
-    expect(codeOf(second)).toBe("BILL_STATE_CHANGED");
+    // B288 (aa7f90025): once the parked payment commits, the more specific cash-payment guard refuses first.
+    expect(codeOf(second)).toBe("BILL_HAS_PAYMENTS");
     expect(Number(finalBill.totalPaid)).toBe(20);
     expect(rows).toHaveLength(1);
     expect(finalBill.status).not.toBe("VOID");
@@ -507,12 +508,18 @@ describeDb("Bill-state locks — real Postgres, parked first writer", () => {
     expect(Number(finalBill.totalOwed)).toBe(42); // 7 x 6
   });
 
-  it("(p2) an edit that clears every line leaves none", async () => {
+  it("(p2) an edit that clears every line is refused (BILL_NEEDS_A_LINE) and the lines stay", async () => {
     const w = await seedWorld("p2");
     const bill = await draftBill(w);
-    await inTenant(A, w, () => A.bills.update(bill.id, { items: [] }));
+    const [outcome] = await Promise.allSettled([
+      inTenant(A, w, () => A.bills.update(bill.id, { items: [] })),
+    ]);
+    // B292: this used to pin the opposite (the edit deleted every line and recreated none).
+    expect(outcome.status).toBe("rejected");
+    expect(codeOf(outcome)).toBe("BILL_NEEDS_A_LINE");
     const items = await A.prisma.vendorBillItem.findMany({ where: { vendorBillId: bill.id } });
-    expect(items).toHaveLength(0);
+    expect(items).toHaveLength(1);
+    expect(Number(items[0].qty)).toBe(10);
   });
 
   it("(q) a payment that rounds to zero is refused, not written as a 0.00 row", async () => {
@@ -537,7 +544,8 @@ describeDb("Bill-state locks — real Postgres, parked first writer", () => {
         `stock=${(await productOf(w)).currentStock} status=${finalBill.status} totalPaid=${finalBill.totalPaid}`,
     );
     expect(first.status).toBe("fulfilled");
-    expect(codeOf(second)).toBe("BILL_STATE_CHANGED");
+    // B288 (aa7f90025): once the parked payment commits, the more specific cash-payment guard refuses first.
+    expect(codeOf(second)).toBe("BILL_HAS_PAYMENTS");
     expect(Number((await productOf(w)).currentStock)).toBe(60);
     expect(finalBill.status).toBe("PARTIAL");
     expect(Number(finalBill.totalPaid)).toBe(20);

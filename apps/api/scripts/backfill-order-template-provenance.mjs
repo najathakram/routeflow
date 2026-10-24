@@ -38,6 +38,13 @@ import pg from "pg";
 import { isTestTenant } from "../../../scripts/lib/test-tenants.cjs";
 import { isLocalDbTarget } from "./lib/local-db-target.cjs";
 import { redactUrl, resolveDatabaseUrl } from "./lib/railway-db-url.mjs";
+import guard from "./lib/live-target-guard.cjs";
+import protectedSlugsLib from "./lib/protected-slugs.cjs";
+
+// Row 195: protected tenants (paying | stripe-linked | PROTECTED_TENANT_SLUGS) are never planned or
+// written, with or without --live-tenant-override. Counts only, never a slug.
+const { protectedTenantIds } = guard;
+const { loadProtectedSlugs } = protectedSlugsLib;
 
 const TAG = "backfill-template-provenance";
 const WINDOW_MS = 60_000;
@@ -153,6 +160,7 @@ async function fingerprint(client) {
 
 async function dryRun() {
   const url = await resolveTarget();
+  const protectedSlugs = loadProtectedSlugs(process.env, url);
   console.log(`${TAG}: target ${redactUrl(url)} DRY-RUN`);
   const client = new pg.Client({ connectionString: url });
   await client.connect();
@@ -161,7 +169,11 @@ async function dryRun() {
     await client.query("SET LOCAL statement_timeout = '120s'");
     const fp = await fingerprint(client);
     const excluded = excludedTenantsFrom(process.argv);
-    const all = (await client.query(TEMPLATES_SQL)).rows;
+    const everything = (await client.query(TEMPLATES_SQL)).rows;
+    const protectedIds = (await protectedTenantIds(client, protectedSlugs)).map((id) =>
+      id.toLowerCase(),
+    );
+    const { kept: all, excluded: protectedRows } = splitExcluded(everything, protectedIds);
     const { kept: templates, excluded: excludedRows } = splitExcluded(all, excluded);
     const tenantIds = [...new Set(templates.map((t) => t.tenantId))];
     const audit = tenantIds.length ? (await client.query(AUDIT_SQL, [tenantIds])).rows : [];
@@ -204,6 +216,9 @@ async function dryRun() {
     console.log(`\n${TAG}: ${templates.length} template(s) with NULL provenance scanned`);
     console.log(
       `  EXCLUDED:  ${excludedRows.length} template(s) in ${excluded.length} tenant(s) given with --exclude-tenant (never in the plan)`,
+    );
+    console.log(
+      `  PROTECTED: ${protectedRows.length} template(s) of protected tenant(s) (never in the plan)`,
     );
     console.log(`  APPLY:     ${apply.length}`);
     // Which way each APPLY row goes, BEFORE anything is written. The role is the user's CURRENT role
@@ -276,6 +291,7 @@ async function apply() {
     return e.refuse ? 1 : 2;
   }
   const url = await resolveTarget();
+  const protectedSlugs = loadProtectedSlugs(process.env, url);
   console.log(`${TAG}: target ${redactUrl(url)} APPLY (${plan.apply.length} template(s))`);
   const client = new pg.Client({ connectionString: url });
   await client.connect();
@@ -285,6 +301,12 @@ async function apply() {
       throw refuse("DB fingerprint changed since the dry run (database or tenants differ)");
     }
     const tenantIds = [...new Set(plan.apply.map((a) => a.tenantId))];
+    // A tenant that is protected NOW (it may have become so since the dry run) refuses the whole apply.
+    const protectedIds = await protectedTenantIds(client, protectedSlugs);
+    const protectedHit = tenantIds.filter((id) => protectedIds.includes(id));
+    if (protectedHit.length > 0) {
+      throw refuse(`${protectedHit.length} protected tenant(s) in this plan; re-run the dry run`);
+    }
     const slugs = await client.query('SELECT id, slug FROM "Tenant" WHERE id = ANY($1::text[])', [
       tenantIds,
     ]);
@@ -311,7 +333,7 @@ async function apply() {
       const res = await client.query(
         `UPDATE "OrderTemplate" SET "createdByRole" = $1::"UserRole", "createdByUserId" = $2
          WHERE id = $3 AND "createdByRole" IS NULL AND NOT ("tenantId" = ANY($4::text[]))`,
-        [a.role, a.userId, a.templateId, excluded],
+        [a.role, a.userId, a.templateId, [...excluded, ...protectedIds]],
       );
       written += res.rowCount;
     }

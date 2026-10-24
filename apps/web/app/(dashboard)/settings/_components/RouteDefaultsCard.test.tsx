@@ -142,10 +142,12 @@ describe("RouteDefaultsCard", () => {
     renderWithProviders(<RouteDefaultsCard />);
     await field(/depot latitude/i);
     fireEvent.click(screen.getByRole("button", { name: /save/i }));
-    await waitFor(() => expect(patch).toHaveBeenCalled());
+    // Load flake (row 272): passes alone but timed out on a saturated shared host, so the wait and
+    // the test budget are generous. Wait budget only; the assertions are unchanged.
+    await waitFor(() => expect(patch).toHaveBeenCalled(), { timeout: 20_000 });
     expect(patch.mock.calls[0][1]).not.toHaveProperty("depotLat");
     expect(patch.mock.calls[0][1]).not.toHaveProperty("depotLng");
-  });
+  }, 60_000);
 
   it("toasts an error when the save fails", async () => {
     patch.mockRejectedValue(new Error("nope"));

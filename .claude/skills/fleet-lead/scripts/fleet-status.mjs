@@ -2,7 +2,7 @@
 // fleet-status.mjs — read-only "where are we" snapshot for RouteFlow.
 //
 // Prints a compact markdown report (~120 lines) covering: master HEAD +
-// recent merges, repo visibility, open PRs + CI rollup, the board's (#2554)
+// recent merges, repo visibility, open PRs + CI rollup, the board's (#3686)
 // recent comments, local worktree hygiene, bug-registry counts, and the
 // newest handoff pointers. Every section fails soft — a section that can't
 // be gathered prints "unavailable: <reason>" and the script keeps going.
@@ -13,13 +13,10 @@
 // Usage:
 //   node .claude/skills/fleet-lead/scripts/fleet-status.mjs [--json] [--out <file>]
 
-import { execFileSync, execFile as execFileCb } from "node:child_process";
-import { promisify } from "node:util";
 import { readFileSync, writeFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-
-const execFile = promisify(execFileCb);
+import { makeProc } from "../../../../scripts/lib/proc.mjs";
 
 const args = process.argv.slice(2);
 const wantJson = args.includes("--json");
@@ -30,43 +27,13 @@ const __filename = fileURLToPath(import.meta.url);
 const REPO_ROOT = resolve(dirname(__filename), "..", "..", "..", "..");
 const OWNER_REPO = "najathakram/routeflow";
 // The live board of record. #938 hit GitHub's 2,500-comment cap on 2026-09-27; its successor is
-// #2554. Roll to a new board at ~2,300 comments (L-240) and change this one constant.
-const BOARD_ISSUE = Number(process.env.FLEET_BOARD_ISSUE || 2554);
+// #3686 (successor of #2554, capped 2026-10-23). Roll to a new board at ~2,300 comments (L-240) and change this one constant.
+const BOARD_ISSUE = Number(process.env.FLEET_BOARD_ISSUE || 3686);
 
 const report = {}; // machine-readable accumulator for --json
 
-function run(cmd, cmdArgs, opts = {}) {
-  return execFileSync(cmd, cmdArgs, {
-    cwd: REPO_ROOT,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-    maxBuffer: 1024 * 1024 * 32,
-    ...opts,
-  });
-}
-
-function tryRun(cmd, cmdArgs, opts = {}) {
-  try {
-    return { ok: true, out: run(cmd, cmdArgs, opts) };
-  } catch (err) {
-    const stderr = err.stderr ? String(err.stderr).trim().split("\n")[0] : err.message;
-    return { ok: false, error: stderr || String(err.message || err) };
-  }
-}
-
-async function tryRunAsync(cmd, cmdArgs, opts = {}) {
-  try {
-    const { stdout } = await execFile(cmd, cmdArgs, {
-      cwd: REPO_ROOT,
-      maxBuffer: 1024 * 1024 * 32,
-      ...opts,
-    });
-    return { ok: true, out: stdout };
-  } catch (err) {
-    const stderr = err.stderr ? String(err.stderr).trim().split("\n")[0] : err.message;
-    return { ok: false, error: stderr || String(err.message || err) };
-  }
-}
+// run / tryRun / tryRunAsync live in scripts/lib/proc.mjs (shared with scripts/lead-status.mjs).
+const { run, tryRun, tryRunAsync } = makeProc(REPO_ROOT);
 
 // Runs `fn(item)` over `items` with at most `limit` in flight at once.
 async function pooled(items, limit, fn) {

@@ -11,7 +11,6 @@
  * where the original `continue`d (a normalized qty <= 0).
  */
 import {
-  isSpecialTier,
   categoryTaxSnapshotOf,
   computeLineSubtotal,
   getTierPrice,
@@ -21,10 +20,12 @@ import {
   type TrackedCategoryRow,
 } from "@routeflow/pricing";
 import { PriceType } from "@prisma/client";
+import { isSpecialPrice, type CustomerLayerPrice } from "@routeflow/pricing";
 import { rescaleBogoFreeUnits, resolveBuyerLinePrice } from "./buyer-merge-pricing";
 import { decideTierOverride } from "./staff-override";
 import type { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
 import { decideReplaceAllLinePrice } from "./staff-line-price";
+import { carriedCategory, type CarriedCategorySource } from "./carry-line-category";
 
 interface ExistingLineForReplaceAll {
   unitPrice: number;
@@ -32,6 +33,10 @@ interface ExistingLineForReplaceAll {
   originalPrice: number | null;
   overrideReason: string | null;
   overriddenBy: string | null;
+  /** B297 row 340: the line's own category and rate trio, carried onto a folded re-creation of it. */
+  category: CarriedCategorySource;
+  /** B297 row 355: its createdAt, carried too (the free-unit allocation is oldest first by createdAt). */
+  createdAt?: Date | string | null;
 }
 
 /**
@@ -62,16 +67,19 @@ export function buildBogoCounterpart(li: any) {
  * one incoming line for that product) as the fallback for a caller with no sourceLineId.
  */
 export function buildExistingLineMaps(
-  lineItems: Array<{
-    id?: string | null;
-    productId?: string | null;
-    status?: string | null;
-    unitPrice: unknown;
-    priceType: PriceType;
-    originalPrice: unknown;
-    overrideReason?: string | null;
-    overriddenBy?: string | null;
-  }>,
+  lineItems: Array<
+    {
+      id?: string | null;
+      productId?: string | null;
+      status?: string | null;
+      createdAt?: Date | string | null;
+      unitPrice: unknown;
+      priceType: PriceType;
+      originalPrice: unknown;
+      overrideReason?: string | null;
+      overriddenBy?: string | null;
+    } & CarriedCategorySource
+  >,
   preEditLinesByProduct: Map<string, number>,
   incomingLinesByProduct: Map<string, number>,
 ): {
@@ -83,11 +91,21 @@ export function buildExistingLineMaps(
   for (const li of lineItems ?? []) {
     if (!li.id || li.status === "CANCELLED") continue;
     const entry: ExistingLineForReplaceAll = {
+      ...(li.createdAt ? { createdAt: li.createdAt } : {}),
       unitPrice: Number(li.unitPrice),
       priceType: li.priceType,
       originalPrice: li.originalPrice != null ? Number(li.originalPrice) : null,
       overrideReason: li.overrideReason ?? null,
       overriddenBy: li.overriddenBy ?? null,
+      category: {
+        productId: li.productId,
+        trackedCategoryId: li.trackedCategoryId,
+        trackedSubcategoryId: li.trackedSubcategoryId,
+        categoryTaxType: li.categoryTaxType,
+        categoryTaxRate: li.categoryTaxRate,
+        categoryPriceIncludesTax: li.categoryPriceIncludesTax,
+        categoryTaxAmount: li.categoryTaxAmount,
+      },
     };
     existingLineById.set(li.id, entry);
     if (
@@ -125,9 +143,12 @@ export interface ReplaceAllLineBuildCtx {
   // ambiguous and skips both). No DTO field: sourceLineId only ever travels on the internal
   // fold -> updateOrderItems call, never through the public DTO (which still rejects it).
   existingLineById: Map<string, ExistingLineForReplaceAll>;
-  isStaffEdit: boolean;
+  /** linesPriceAtCustomerTier(user): the ONE predicate that chooses the customer's tier / layer (not a role test). */
+  atCustomerTier: boolean;
   operatorCpMap: Map<string, number | null>;
   operatorDefaultTier: number;
+  /** S19, flag.units_prices_v2 only: the pack's customer-layer price per product (the tier price's replacement). */
+  layerOf?: (product: any) => CustomerLayerPrice | null;
   isCreateMerge?: boolean;
   buyerPromos: PromotionRule[];
   userId?: string | null;
@@ -169,7 +190,7 @@ export function buildReplaceAllLineData(
   if (qty <= 0) return null;
 
   const catalogPrice = Number(product.pricePerUnit);
-  const overridePrice = item.unitPrice !== undefined ? Number(item.unitPrice) : null;
+  const overridePrice = item.unitPrice != null ? Number(item.unitPrice) : null;
   // B60 (REG-B60): a client price that is ABSENT or merely ECHOES this
   // line's pre-edit BOGO snapshot price (tolerance 0.005 — float/decimal
   // round-trip, not an override decision) is not a repricing decision —
@@ -204,7 +225,7 @@ export function buildReplaceAllLineData(
   const replaceAllExisting = sourceLineId
     ? ctx.existingLineById.get(sourceLineId)
     : ctx.existingLineByProduct.get(productId);
-  const replaceAllTierForProduct = ctx.isStaffEdit
+  const replaceAllTierForProduct = ctx.atCustomerTier
     ? (ctx.operatorCpMap.get(productId) ?? ctx.operatorDefaultTier)
     : 1;
   const replaceAllHasOverrideReason = !!(
@@ -228,12 +249,19 @@ export function buildReplaceAllLineData(
   // own replaceAll:true edit of an EXISTING order (isCreateMerge
   // unset) still needs the guard for a brand-new OR ambiguous line.
   const skipAsCreateMergeNewLine = !!ctx.isCreateMerge && replaceAllExisting == null;
+  const layer = ctx.layerOf?.(product) ?? null; // S19, flag.units_prices_v2 only
   // #2696(c) SA-558d (i): that NEW line IS a staff create, so it takes create's rule A
   // (decideTierOverride: tier baseline, the sent reason, the same 400; within ½¢ of tier ⇒ the
   // tier ladder below) — a fresh order and a folded one price the same payload identically.
   const createMergeDecision =
     skipAsCreateMergeNewLine && overridePrice !== null && !bogoPriceUnchanged
-      ? decideTierOverride(product, replaceAllTierForProduct, overridePrice, item.overrideReason)
+      ? decideTierOverride(
+          product,
+          replaceAllTierForProduct,
+          overridePrice,
+          item.overrideReason,
+          layer,
+        )
       : null;
   const createMergeOverride = createMergeDecision?.overridden ? createMergeDecision : null;
   // #2716c / SA-558d: ONE rule (staff-line-price.ts -> decideStaffOverride) for a typed price that
@@ -247,12 +275,17 @@ export function buildReplaceAllLineData(
       ? decideReplaceAllLinePrice({
           overridePrice,
           existing: replaceAllExisting ?? null,
-          tierPrice: Number(getTierPrice(product, replaceAllTierForProduct)),
-          listPrice: catalogPrice,
-          isSpecialTier: isSpecialTier(replaceAllTierForProduct),
+          tierPrice: layer?.price ?? Number(getTierPrice(product, replaceAllTierForProduct)),
+          listPrice: layer?.listPrice ?? catalogPrice,
+          isSpecialTier: isSpecialPrice(
+            replaceAllTierForProduct,
+            layer?.listPrice ?? catalogPrice,
+            layer?.price,
+          ),
           hasReason: replaceAllHasOverrideReason,
           skipReasonGuard: skipAsCreateMergeNewLine,
           productName: product.name,
+          aboveList: layer?.aboveList,
         })
       : null;
   const isManualOverride = createMergeDecision
@@ -310,7 +343,7 @@ export function buildReplaceAllLineData(
             priceType: replaceAllDecision.priceType,
             freeUnits: 0,
           }
-        : ctx.isStaffEdit
+        : ctx.atCustomerTier
           ? resolveBuyerLinePrice(
               product,
               ctx.operatorCpMap.get(productId) ?? ctx.operatorDefaultTier,
@@ -320,6 +353,7 @@ export function buildReplaceAllLineData(
               null,
               // REG-B109: the exact denomination this line bills with below.
               { boxes, pieces, unitsPerBox: upb },
+              layer,
             )
           : {
               // Non-staff caller: legacy list pricing, no tier resolution.
@@ -381,6 +415,16 @@ export function buildReplaceAllLineData(
         ? (ctx.operatorReplaceCategoryMap.get(product.trackedCategoryId) ?? null)
         : null,
     ),
+    // B297 row 340: ...EXCEPT a folded line that comes from an existing line (`sourceLineId`), which carries
+    // that line's own category and trio, never the product's current ones (a fold is not a new sale).
+    ...(sourceLineId
+      ? (carriedCategory(ctx.existingLineById.get(sourceLineId)?.category, productId) ?? {})
+      : {}),
+    // B297 row 355 (r-note 7): ...and its createdAt, or a re-created old line sorts AFTER a newer one and
+    // the split's free units (allocated oldest first by createdAt) move onto the wrong line.
+    ...(sourceLineId && ctx.existingLineById.get(sourceLineId)?.createdAt
+      ? { createdAt: ctx.existingLineById.get(sourceLineId)!.createdAt as Date }
+      : {}),
   };
 }
 

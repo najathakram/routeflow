@@ -3,6 +3,7 @@ import { CreditNoteStatus } from "@prisma/client";
 import { roundMoney } from "@routeflow/pricing";
 
 import { lockRowsNoWait } from "../common/db-locks";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /**
  * B214 (REG-B214): the ONE home of "a credit note sourced by an invoice still carries spendable
@@ -81,7 +82,7 @@ export async function assertNoUnspentSourcedCredits(
   const unspent = roundMoney(open.reduce((s: number, cn: any) => s + remainingOf(cn), 0));
   const numbers = open.map((cn: any) => cn.creditNoteNumber).join(", ");
   throw new ConflictException({
-    code: "INVOICE_HAS_UNSPENT_CREDIT",
+    code: API_ERROR_CODES.INVOICE_HAS_UNSPENT_CREDIT,
     message: opts?.afterRelease
       ? `Deleting this order would hand credit ${numbers} (${unspent.toFixed(2)} unspent) back ` +
         `to the customer. Void the invoice instead.`

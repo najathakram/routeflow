@@ -74,7 +74,7 @@ describe("inline-return screen: 'return only what was bought' with nothing bough
   it("the re-quote is guarded by the shared canReturnOnlyPurchased BEFORE the re-quote (#2695: onlyPurchasedRequote wraps dropExcessAndRequote and carries the credit override)", () => {
     const guard = screen.indexOf("if (!canReturnOnlyPurchased(screen.quote)) return;");
     const requote = screen.indexOf(
-      "onlyPurchasedRequote(customerId, screen.quote, screen.quotedLines)",
+      "onlyPurchasedRequote(customerId, screen.quote, screen.quotedLines, sourceOrderId)",
     );
     expect(guard).toBeGreaterThan(-1);
     expect(requote).toBeGreaterThan(guard);

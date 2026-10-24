@@ -1111,7 +1111,11 @@ describe("RouteFlowGateway on a live Socket.IO server", () => {
           findMany: jest.fn(async () => []),
           updateMany: jest.fn(async () => ({ count: 0 })),
         },
-        invoiceItem: { deleteMany: jest.fn(async () => ({ count: 0 })) },
+        invoiceItem: {
+          findMany: jest.fn(async () => []), // the cash-refund guard reads the invoice's lines
+          deleteMany: jest.fn(async () => ({ count: 0 })),
+        },
+        return: { findFirst: jest.fn(async () => null) }, // ... and finds no cash refund
       };
       const db = {
         tenantTransaction: (fn: (t: typeof tx) => unknown) => fn(tx),
@@ -1124,7 +1128,10 @@ describe("RouteFlowGateway on a live Socket.IO server", () => {
         none, // email
         none, // pdf
         none, // system config
-        { reverseInvoiceEntries: jest.fn(async () => undefined) } as never,
+        {
+          reverseInvoiceEntries: jest.fn(async () => undefined),
+          settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
+        } as never,
         none, // authorization guard
         none, // credit notes
         none, // messaging

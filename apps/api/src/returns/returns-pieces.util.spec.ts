@@ -9,8 +9,10 @@
 import { ConflictException } from "@nestjs/common";
 import {
   firstNonCancelledLine,
+  returnPricingAxis,
   returnedPiecesByProduct,
   soldQtyForProduct,
+  standardPackBasesForOrders,
   standardReturnPieces,
 } from "./returns-pieces.util";
 
@@ -174,5 +176,71 @@ describe("returnedPiecesByProduct (B4 shared reader, kind-aware)", () => {
     });
     const result = await returnedPiecesByProduct(tx as any, "ord-1");
     expect(result).toEqual({ p1: { pieces: 6 }, p2: { pieces: 3 } });
+  });
+});
+
+describe("returnPricingAxis (B969): the ONE axis a STANDARD return is priced on", () => {
+  const boxItem = { qty: 2, boxes: null, pieces: null, unitsPerBox: 12 }; // counts boxes
+  const pieceItem = { qty: 24, boxes: 2, pieces: 0, unitsPerBox: 12 }; // counts pieces
+  it("a known pack factor converts the returned qty to PIECES", () => {
+    const bases = new Map([["p1", { factor: 12 }]]);
+    expect(returnPricingAxis(bases, "p1", 1, [pieceItem])).toEqual({ pieces: true, returned: 12 });
+  });
+  it("an unknown pack on EVERY live line (singleUnit) keeps the legacy line-unit axis, raw qty", () => {
+    const bases = new Map([["p1", { unknown: true as const, reason: "x", singleUnit: true }]]);
+    expect(returnPricingAxis(bases, "p1", 1, [boxItem])).toEqual({ pieces: false, returned: 1 });
+  });
+  it("mixed, or unknown beside a resolvable line: no single axis", () => {
+    const mixed = new Map([["p1", { mixed: true as const, factors: [1, 12] }]]);
+    const unknown = new Map([["p1", { unknown: true as const, reason: "x", singleUnit: false }]]);
+    expect(returnPricingAxis(mixed, "p1", 1, [pieceItem])).toEqual({ unresolved: true });
+    expect(returnPricingAxis(unknown, "p1", 1, [pieceItem])).toEqual({ unresolved: true });
+  });
+  it("no live order line: the billed items' single factor, or unresolved when they differ", () => {
+    expect(returnPricingAxis(new Map(), "p1", 1, [boxItem])).toEqual({
+      pieces: true,
+      returned: 12,
+    });
+    expect(returnPricingAxis(new Map(), "p1", 1, [boxItem, pieceItem])).toEqual({
+      unresolved: true,
+    });
+  });
+});
+
+describe("standardPackBasesForOrders (B969): one invoice-item read for a whole page of orders", () => {
+  const line = (id: string, over: Record<string, unknown> = {}) => ({
+    id,
+    productId: "p1",
+    qty: 2,
+    status: "CONFIRMED",
+    boxes: null,
+    pieces: null,
+    unitsPerBox: 12,
+    unitLabel: null,
+    product: { unitsPerBox: 12 },
+    ...over,
+  });
+  it("reads the evidence for every ambiguous line of every order in ONE query", async () => {
+    const findMany = jest.fn().mockResolvedValue([
+      { orderItemId: "a1", qty: 24, boxes: 2, pieces: 0, unitsPerBox: 12 },
+      { orderItemId: "b1", qty: 24, boxes: 2, pieces: 0, unitsPerBox: 12 },
+    ]);
+    const tx = { invoiceItem: { findMany } };
+    const out = await standardPackBasesForOrders(tx, [
+      { id: "o1", lineItems: [line("a1")] },
+      { id: "o2", lineItems: [line("b1")] },
+      { id: "o1", lineItems: [line("a1")] }, // a second return on the same order costs nothing
+    ]);
+    expect(findMany).toHaveBeenCalledTimes(1);
+    expect(out.get("o1")?.get("p1")).toEqual({ factor: 12 });
+    expect(out.get("o2")?.get("p1")).toEqual({ factor: 12 });
+  });
+  it("a page with no ambiguous line (a split line) issues no query", async () => {
+    const findMany = jest.fn();
+    const out = await standardPackBasesForOrders({ invoiceItem: { findMany } }, [
+      { id: "o1", lineItems: [line("a1", { boxes: 2, pieces: 0, qty: 24 })] },
+    ]);
+    expect(findMany).not.toHaveBeenCalled();
+    expect(out.get("o1")?.get("p1")).toEqual({ factor: 1 });
   });
 });

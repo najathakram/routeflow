@@ -1,4 +1,5 @@
 import { normalizeBoxesPieces, roundMoney, splitMatchesQty } from "@routeflow/pricing";
+import { finiteStoredMoney } from "../common/money-invariants.util";
 import { assertUnitLineSplit } from "../orders/unit-line-split";
 
 /**
@@ -112,6 +113,8 @@ export function orderLineUnchanged(
     unitLabel?: string | null;
   },
   agg: { unitPrice: number; subtotal: number; categoryTax: number; freeUnits: number },
+  /** Columns left out of the comparison (row 372: `invoicedQty` / the levy are bookkeeping, not the sale). */
+  ignore: ReadonlyArray<string> = [],
 ): boolean {
   const freeUnits = Math.max(0, Math.trunc(agg.freeUnits) || 0);
   // [column, value] pairs (a comparison, not a write: no object literal keyed by the levy column).
@@ -120,9 +123,13 @@ export function orderLineUnchanged(
     ["boxes", shape.boxes],
     ["pieces", shape.pieces],
     ["unitsPerBox", shape.unitsPerBox],
-    ["unitPrice", agg.unitPrice],
-    ["subtotal", roundMoney(agg.subtotal)],
-    ["categoryTaxAmount", roundMoney(agg.categoryTax)],
+    // SA-816b: a non-finite aggregate must not read as 0 (equal to a stored 0, so the line looked unchanged).
+    ["unitPrice", finiteStoredMoney(agg.unitPrice, "The order line unit price")],
+    ["subtotal", roundMoney(finiteStoredMoney(agg.subtotal, "The order line subtotal"))],
+    [
+      "categoryTaxAmount",
+      roundMoney(finiteStoredMoney(agg.categoryTax, "The order line category tax")),
+    ],
     ["promoFreeUnits", freeUnits > 0 ? freeUnits : null],
     ["invoicedQty", shape.qty],
     ["status", "PENDING"],
@@ -130,8 +137,11 @@ export function orderLineUnchanged(
       ? [["unitLabel", shape.unitLabel ?? null] as [string, unknown]]
       : []),
   ];
-  return want.every(([k, v]) => sameValue(existing[k], v));
+  return want.every(([k, v]) => ignore.includes(k) || sameValue(existing[k], v));
 }
+
+/** Row 372: the columns whose rewrite is bookkeeping, never a change to what the order sells. */
+export const SALE_NEUTRAL_COLUMNS = ["invoicedQty", "categoryTaxAmount"] as const;
 
 /** Does `row` already hold every `[column, value]` pair? Then writing them again would change nothing. */
 export const holdsValues = (row: any, want: ReadonlyArray<readonly [string, unknown]>): boolean =>

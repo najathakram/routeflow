@@ -166,9 +166,11 @@ describe("buildUnitLine — an order line sold by a non-pack unit", () => {
     expect(l.categoryPriceIncludesTax).toBe(false);
   });
 
-  it("a typed price is compared to the TIER-1 unit price, exactly like the pack branch", () => {
-    // tier 2 Pallet = 9600, tier 1 = 10080: typing 9800 sits BETWEEN them -> below list = DISCOUNTED
-    const l = build({ qty: 1, unitPrice: 9800 }, 2, "Pallet");
+  it("H3: a typed price is judged against the customer's TIER unit price; the TIER-1 unit price stays the original", () => {
+    // tier 2 Pallet = 9600, tier 1 = 10080: typing 9800 moves the special price (needs a reason)
+    // and sits BETWEEN them -> below list = DISCOUNTED, original = the tier-1 unit price
+    expect(() => build({ qty: 1, unitPrice: 9800 }, 2, "Pallet")).toThrow(/reason is required/);
+    const l = build({ qty: 1, unitPrice: 9800, overrideReason: "volume" }, 2, "Pallet");
     expect(l).toMatchObject({
       unitPrice: 9800,
       priceType: PriceType.DISCOUNTED,
@@ -217,6 +219,76 @@ describe("buildUnitLine — an order line sold by a non-pack unit", () => {
   it("carries the item note (itemNote wins over notes)", () => {
     expect(build({ notes: "a", itemNote: "b" }).notes).toBe("b");
     expect(build({ notes: "a" }).notes).toBe("a");
+  });
+});
+
+// H3 (SA ruling): a typed unit price is judged against the CUSTOMER's price for that unit (the tier
+// price), through the ONE staff-override rule (`decideStaffOverride`) — never against the list price.
+describe("buildUnitLine — a typed price is decided against the customer's TIER unit price (H3)", () => {
+  // Case: list $24 / tier-3 $20, three of them.
+  const tierProduct = { ...product, unitsPerBox: 24, pricePerUnit: "1.00", priceTier3: "0.8333" };
+  const tierUnits = [
+    level({ label: "Case", factorToBase: 288, price: "24.00", priceTier3: "20.00" }),
+  ];
+  const tierBuild = (item: Record<string, unknown>, tier = 3) =>
+    buildUnitLine({
+      product: tierProduct,
+      units: tierUnits,
+      resolved: resolveLineUnits(tierProduct, tierUnits, { unitLabel: "Case" }),
+      item: { productId: "p1", qty: 3, unitLabel: "Case", ...item },
+      tier,
+      taxFor,
+      position: 0,
+      tenantId: "t1",
+      overriddenBy: "user-1",
+    });
+
+  it("typed $24 (the LIST price) with a reason bills $24 x 3 = $72, MANUAL, and carries the reason", () => {
+    const l = tierBuild({ unitPrice: 24, overrideReason: "  agreed at list  " });
+    expect(l).toMatchObject({
+      unitPrice: 24,
+      subtotal: 72,
+      priceType: PriceType.MANUAL,
+      originalPrice: 24,
+      overrideReason: "agreed at list",
+      overriddenBy: "user-1",
+    });
+  });
+
+  it("typed $24 with no reason on a special tier is a 400 naming the reason, not a silent SPECIAL $60", () => {
+    expect(() => tierBuild({ unitPrice: 24 })).toThrow(BadRequestException);
+    expect(() => tierBuild({ unitPrice: 24, overrideReason: "   " })).toThrow(
+      /reason is required/i,
+    );
+  });
+
+  it("typed $20 (equal to the tier price) is no override: SPECIAL $20, no reason, no attribution", () => {
+    const l = tierBuild({ unitPrice: 20 });
+    expect(l).toMatchObject({ unitPrice: 20, subtotal: 60, priceType: PriceType.SPECIAL });
+    expect(l.originalPrice).toBe(24);
+    expect(l).not.toHaveProperty("overrideReason");
+    expect(l).not.toHaveProperty("overriddenBy");
+  });
+
+  it("a DISCOUNTED price below the tier carries its reason too", () => {
+    const l = tierBuild({ unitPrice: 18, overrideReason: "damaged cartons" });
+    expect(l).toMatchObject({
+      unitPrice: 18,
+      priceType: PriceType.DISCOUNTED,
+      originalPrice: 24,
+      overrideReason: "damaged cartons",
+      overriddenBy: "user-1",
+    });
+  });
+
+  it("a standard (tier 1) customer needs no reason, but a real override is still attributed", () => {
+    const l = tierBuild({ unitPrice: 22 }, 1);
+    expect(l).toMatchObject({
+      unitPrice: 22,
+      priceType: PriceType.DISCOUNTED,
+      overriddenBy: "user-1",
+    });
+    expect(l.overrideReason).toBeNull();
   });
 });
 
@@ -358,5 +430,65 @@ describe("buildUnitLine — a held unit the product no longer offers (#2277)", (
     expect(((caught as BadRequestException).getResponse() as { code?: string }).code).toBe(
       "UNIT_NOT_OFFERED",
     );
+  });
+});
+
+describe("buildUnitLine — snapshot fallback for an EXISTING line (units P0b)", () => {
+  // The line was sold as a "Carton" (12 pcs @ $100); the level has since been renamed/removed.
+  const liveUnits = [level({ label: "Case", factorToBase: 288, price: "480.00" })];
+  const existing = {
+    unitLabel: "Carton",
+    unitsPerBox: 12,
+    unitPrice: 100,
+    originalPrice: null,
+    priceType: PriceType.STANDARD,
+  };
+  const rebuild = (withExisting: boolean) =>
+    buildUnitLine({
+      product,
+      units: liveUnits,
+      resolved: resolveLineUnits(product, liveUnits, undefined, existing),
+      item: { productId: "p1", qty: 3, unitLabel: "Carton" },
+      tier: 1,
+      taxFor,
+      position: 0,
+      tenantId: "t1",
+      ...(withExisting ? { existing } : {}),
+    } as never);
+
+  it("re-resolves from its own snapshot: factor = unitsPerBox, price = unitPrice, no UnknownUnitError", () => {
+    const line = rebuild(true);
+    expect(line).toMatchObject({
+      unitLabel: "Carton",
+      unitsPerBox: 12,
+      unitPrice: 100,
+      qty: 36,
+      boxes: 3,
+      subtotal: 300,
+      priceType: PriceType.STANDARD,
+    });
+  });
+  it("a NEW line (no snapshot) naming an unknown unit is still the 400 UNIT_NOT_OFFERED", () => {
+    expect(() => rebuild(false)).toThrow(BadRequestException);
+  });
+  it("SA M2: the held word matches by unitNameKey, so an NFD snapshot and an NFC request are the same unit", () => {
+    // "Étui" stored decomposed (E + U+0301), re-sent composed: trim().toLowerCase() calls them different words.
+    const held = { ...existing, unitLabel: "E\u0301tui" };
+    const line = buildUnitLine({
+      product,
+      units: liveUnits,
+      // buildUnitLine's own compare: a caller that resolved the word composed (NFC) while the line holds it decomposed.
+      resolved: {
+        ...resolveLineUnits(product, liveUnits, undefined, held),
+        unitLabel: "\u00c9tui",
+      },
+      item: { productId: "p1", qty: 3, unitLabel: "\u00c9tui" },
+      tier: 1,
+      taxFor,
+      position: 0,
+      tenantId: "t1",
+      existing: held,
+    } as never);
+    expect(line).toMatchObject({ unitsPerBox: 12, unitPrice: 100, qty: 36, subtotal: 300 });
   });
 });

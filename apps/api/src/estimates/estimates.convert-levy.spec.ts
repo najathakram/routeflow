@@ -109,6 +109,9 @@ describe("EstimatesService.convertToInvoice — regulated levy and quoted pack (
     const subtotal = opts.subtotal ?? 100;
     const taxAmount = opts.taxAmount ?? 0;
     const discount = opts.discount ?? 0;
+    // H5: a convert re-takes TODAY's tenant rate (settings.taxRate, a percent). A quote that carries regular tax
+    // (taxAmount 10 on 100) is the 10% tenant; one that carries none is a tenant with no rate (the levy alone).
+    (prisma as any).systemConfig.findFirst.mockResolvedValue({ value: taxAmount > 0 ? "10" : "0" });
     prisma.estimate.findUnique.mockResolvedValue({
       id: "est-1",
       status: "ACCEPTED",
@@ -157,13 +160,28 @@ describe("EstimatesService.convertToInvoice — regulated levy and quoted pack (
     expect(ledger.writeSaleEntries.mock.calls[0][0].lines[0].categoryTax).toBe(20);
   });
 
-  it("B294 one source: the regular tax is recovered from the quote's regular tax ONLY, and the fresh levy is added, never subtracted", async () => {
-    // est.taxAmount = 10 is REGULAR tax on a 100 subtotal (rate 0.10); the levy is 10% = 10 on top.
+  it("B294 one source: the regular tax is today's rate on the subtotal ONLY, and the fresh levy is added, never subtracted", async () => {
+    // H5: today's rate is 10%, so the regular tax on a 100 subtotal is 10; the levy is 10% = 10 on top.
     arm({ items: [line()], taxAmount: 10 });
     await service.convertToInvoice("est-1");
     expect(created().items.create[0]).toMatchObject({ taxRate: 0.1, categoryTaxAmount: 10 });
     expect(created().taxAmount).toBe(20); // regular 10 + levy 10
     expect(created().total).toBe(120);
+  });
+
+  it("H5 (SA must 2): the levy the quote never carried is REPORTED - taxBasis names it and changed is true even when the regular tax did not move", async () => {
+    // quoted at 10% regular tax (10 on 100); today's rate is still 10%; the regulated line adds a 10% levy = 10
+    arm({ items: [line()], taxAmount: 10 });
+    const inv: any = await service.convertToInvoice("est-1");
+    expect(created().taxAmount).toBe(20);
+    expect(inv.taxBasis).toMatchObject({
+      quotedTax: 10,
+      currentTax: 10,
+      delta: 0,
+      currentLevy: 10,
+      invoiceTax: 20,
+      changed: true,
+    });
   });
 
   it("an exempt customer owes $0 of BOTH, and the ledger row records the $0 that was billed", async () => {

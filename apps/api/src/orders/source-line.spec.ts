@@ -82,6 +82,7 @@ describe("the hand-off is INTERNAL and structurally intact (contract pin for C8)
     const allowed = new Set([
       "orders/source-line.ts",
       "orders/orders.service.ts",
+      "orders/order-create-options.ts", // the INTERNAL options type of create(): names the hand-off, no route
       "orders/change-requests.service.ts",
       "common/testing/copier-contract/copier-registry.ts", // comments naming the hand-off, no code
       "common/testing/copier-contract/copier-ast.ts", // a comment naming the hand-off

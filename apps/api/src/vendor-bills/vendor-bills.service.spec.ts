@@ -3,6 +3,7 @@ import {
   BadRequestException,
   ConflictException,
   Logger,
+  NotFoundException,
   ServiceUnavailableException,
   UnprocessableEntityException,
 } from "@nestjs/common";
@@ -55,6 +56,19 @@ const bill = (overrides: Record<string, unknown> = {}) => ({
   supplier: { id: "sup-1", name: "Acme Foods" },
   ...overrides,
 });
+
+/** B846: revert reads back the PURCHASE row(s) receive() wrote, then appends one reversal per row. */
+const receiptRows = (prisma: any, rows: { qty: Prisma.Decimal; unitCost?: Prisma.Decimal }[]) =>
+  prisma.stockMovement.findMany.mockImplementation(async ({ where }: any) =>
+    where.notes && typeof where.notes === "object"
+      ? []
+      : rows.map((r, i) => ({
+          id: `mv-${i + 1}`,
+          quantity: r.qty,
+          unitCost: r.unitCost ?? D(3.5),
+          effectiveAt: new Date("2026-06-01"),
+        })),
+  );
 
 /** An existing bill as the matcher reports it. */
 const duplicateMatch = (overrides: Record<string, unknown> = {}) => ({
@@ -116,6 +130,10 @@ describe("VendorBillsService", () => {
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    // B1236: bill lines are validated against the catalog; by default every named id resolves.
+    prisma.product.findMany.mockImplementation(async (args: any) =>
+      (args?.where?.id?.in ?? []).map((id: string) => ({ id })),
+    );
     // receive() re-reads the bill inside its transaction (B285 row lock): repeat the last bill read
     prisma.vendorBill.findUnique.mockImplementation(
       () =>
@@ -757,11 +775,31 @@ describe("VendorBillsService", () => {
       );
       prisma.product.findFirst.mockResolvedValue({ currentStock: D(15), averageCost: D(2.5) });
       prisma.stockLot.findMany.mockResolvedValue([]);
+      receiptRows(prisma, [{ qty: D(5) }]);
 
       await service.revertToDraft("bill-1");
 
       const productArgs = prisma.product.update.mock.calls[0][0].data;
       expect(productArgs.averageCost.toString()).toBe("2");
+      expect(productArgs.currentStock).toEqual({ decrement: D(5) });
+    });
+
+    it("row 647: a STANDARD product keeps its operator-set cost through a revert", async () => {
+      prisma.vendorBill.findUnique.mockResolvedValue(
+        bill({ status: "RECEIVED", receivedDate: new Date("2026-06-02") }),
+      );
+      prisma.product.findFirst.mockResolvedValue({
+        currentStock: D(15),
+        averageCost: D(2.5),
+        costingMethod: "STANDARD",
+      });
+      prisma.stockLot.findMany.mockResolvedValue([]);
+      receiptRows(prisma, [{ qty: D(5) }]);
+
+      await service.revertToDraft("bill-1");
+
+      const productArgs = prisma.product.update.mock.calls[0][0].data;
+      expect(productArgs.averageCost).toBeUndefined();
       expect(productArgs.currentStock).toEqual({ decrement: D(5) });
     });
 
@@ -771,6 +809,7 @@ describe("VendorBillsService", () => {
       );
       prisma.product.findFirst.mockResolvedValue({ currentStock: D(5), averageCost: D(3.5) });
       prisma.stockLot.findMany.mockResolvedValue([]);
+      receiptRows(prisma, [{ qty: D(5) }]);
 
       await service.revertToDraft("bill-1");
 
@@ -784,10 +823,11 @@ describe("VendorBillsService", () => {
         bill({ status: "RECEIVED", receivedDate: new Date("2026-06-02") }),
       );
       prisma.product.findFirst.mockResolvedValue({ currentStock: D(15), averageCost: D(2.5) });
-      prisma.stockLot.findMany.mockResolvedValue([
-        { id: "lot-1", qty: D(5), remainingQty: D(5), notes: null },
-        { id: "lot-2", qty: D(5), remainingQty: D(2), notes: null },
-      ]);
+      // Two receipt rows (a top-up), each with its own lot matched by the row's full tuple.
+      receiptRows(prisma, [{ qty: D(2) }, { qty: D(3) }]);
+      prisma.stockLot.findMany
+        .mockResolvedValueOnce([{ id: "lot-1", qty: D(2), remainingQty: D(2), notes: null }])
+        .mockResolvedValueOnce([{ id: "lot-2", qty: D(3), remainingQty: D(1), notes: null }]);
 
       await service.revertToDraft("bill-1");
 
@@ -810,6 +850,29 @@ describe("VendorBillsService", () => {
       expect(prisma.stockMovement.deleteMany).not.toHaveBeenCalled();
     });
 
+    it("B846: never deletes a StockMovement — it appends one signed reversal row per receipt row", async () => {
+      prisma.vendorBill.findUnique.mockResolvedValue(
+        bill({ status: "RECEIVED", receivedDate: new Date("2026-06-02") }),
+      );
+      prisma.product.findFirst.mockResolvedValue({ currentStock: D(15), averageCost: D(2.5) });
+      prisma.stockLot.findMany.mockResolvedValue([]);
+      receiptRows(prisma, [{ qty: D(5) }]);
+
+      await service.revertToDraft("bill-1", "user-9");
+
+      expect(prisma.stockMovement.deleteMany).not.toHaveBeenCalled();
+      expect(prisma.stockMovement.create).toHaveBeenCalledTimes(1);
+      expect(prisma.stockMovement.create.mock.calls[0][0].data).toMatchObject({
+        type: "PURCHASE",
+        quantity: D(-5),
+        unitCost: D(3.5),
+        reference: "BILL-2026-0001",
+        notes: "BILL_REVERTED — reverses mv-1",
+        performedById: "user-9",
+        effectiveAt: new Date("2026-06-01"),
+      });
+    });
+
     it("G2: reverses a case-priced line in the SAME converted denomination", async () => {
       // Received as 12 pieces (2 cases × 6); revert must decrement 12, not 2.
       prisma.vendorBill.findUnique.mockResolvedValue(
@@ -821,6 +884,7 @@ describe("VendorBillsService", () => {
       );
       prisma.product.findFirst.mockResolvedValue({ currentStock: D(12), averageCost: D(2) });
       prisma.stockLot.findMany.mockResolvedValue([]);
+      receiptRows(prisma, [{ qty: D(12), unitCost: D(2) }]);
 
       await service.revertToDraft("bill-1");
 
@@ -839,6 +903,7 @@ describe("VendorBillsService", () => {
       );
       prisma.product.findFirst.mockResolvedValue({ currentStock: D(14), averageCost: D(2.5) });
       prisma.stockLot.findMany.mockResolvedValue([]);
+      receiptRows(prisma, [{ qty: D(4) }]);
 
       await service.revertToDraft("bill-1");
 
@@ -854,17 +919,21 @@ describe("VendorBillsService", () => {
   // ─── voidBill ───────────────────────────────────────────────────────────────
 
   describe("voidBill", () => {
-    it("writes a costed compensating ADJUSTMENT with snapshots and keeps avg on stock-empty", async () => {
+    it("appends a costed signed PURCHASE reversal with snapshots and keeps avg on stock-empty", async () => {
       prisma.vendorBill.findUnique.mockResolvedValue(
         bill({ status: "RECEIVED", receivedDate: new Date("2026-06-02") }),
       );
       prisma.product.findFirst.mockResolvedValue({ currentStock: D(5), averageCost: D(3.5) });
       prisma.stockLot.findMany.mockResolvedValue([]);
+      receiptRows(prisma, [{ qty: D(5) }]);
 
       await service.voidBill("bill-1", "user-1");
 
+      // B846 sibling: PURCHASE (what the tobacco filing sums), dated at the receipt, paired by note.
       const movementArgs = prisma.stockMovement.create.mock.calls[0][0].data;
-      expect(movementArgs.type).toBe("ADJUSTMENT");
+      expect(movementArgs.type).toBe("PURCHASE");
+      expect(movementArgs.notes).toBe("BILL_REVERTED — reverses mv-1");
+      expect(movementArgs.effectiveAt).toEqual(new Date("2026-06-01"));
       expect(movementArgs.quantity.toString()).toBe("-5");
       expect(movementArgs.unitCost.toString()).toBe("3.5");
       // Reversal empties stock → average carried forward, not zeroed
@@ -874,6 +943,28 @@ describe("VendorBillsService", () => {
 
       const productArgs = prisma.product.update.mock.calls[0][0].data;
       expect(productArgs.averageCost).toBeUndefined();
+    });
+
+    it("row 647: a STANDARD product keeps its operator-set cost through a void (receive never moved it)", async () => {
+      prisma.vendorBill.findUnique.mockResolvedValue(
+        bill({ status: "RECEIVED", receivedDate: new Date("2026-06-02") }),
+      );
+      // 15 on hand at an operator-set 2.50: an average reversal would write (15 * 2.5 - 5 * 3.5) / 10 = 2.
+      prisma.product.findFirst.mockResolvedValue({
+        currentStock: D(15),
+        averageCost: D(2.5),
+        costingMethod: "STANDARD",
+      });
+      prisma.stockLot.findMany.mockResolvedValue([]);
+      receiptRows(prisma, [{ qty: D(5) }]);
+
+      await service.voidBill("bill-1", "user-1");
+
+      const productArgs = prisma.product.update.mock.calls[0][0].data;
+      expect(productArgs.averageCost).toBeUndefined();
+      expect(productArgs.currentStock).toEqual({ decrement: D(5) });
+      // The reversing row records the unchanged average, not a reversed one.
+      expect(prisma.stockMovement.create.mock.calls[0][0].data.avgCostAfter.toString()).toBe("2.5");
     });
 
     it("G1: voiding a PAID-but-never-received bill skips the stock reversal", async () => {
@@ -925,8 +1016,35 @@ describe("VendorBillsService", () => {
 
   describe("create", () => {
     beforeEach(() => {
+      prisma.supplier.findMany.mockResolvedValue([{ id: "sup-1" }]); // the supplier is this tenant's
       prisma.vendorBill.findFirst.mockResolvedValue(null); // nextBillNumber
       prisma.vendorBill.create.mockResolvedValue(bill());
+    });
+
+    it("rejects a reference from another business (no bill written)", async () => {
+      prisma.supplier.findMany.mockResolvedValue([]); // not this tenant's supplier
+      await expect(
+        service.create({ supplierId: "other-biz-supplier", items: [], totalOwed: 5 }),
+      ).rejects.toThrow(/not found/i);
+      expect(prisma.vendorBill.create).not.toHaveBeenCalled();
+    });
+
+    it("B1236: refuses with missingProductIds when the catalog read returns fewer ids than the lines name, and writes nothing", async () => {
+      prisma.product.findMany.mockResolvedValue([{ id: "prod-1" }]);
+      const items = [
+        { productId: "prod-1", description: "ok", qty: 1, unitCost: 1 },
+        { productId: "prod-2", description: "missing", qty: 1, unitCost: 1 },
+        { productId: "prod-2", description: "missing again", qty: 1, unitCost: 1 },
+      ];
+
+      const err: any = await service.create({ requireSupplier: false, items }).then(
+        () => null,
+        (e) => e,
+      );
+
+      expect(err).toBeInstanceOf(NotFoundException);
+      expect(err.getResponse()).toMatchObject({ missingProductIds: ["prod-2"] });
+      expect(prisma.vendorBill.create).not.toHaveBeenCalled();
     });
 
     it("rounds totalOwed computed from items (no float artifacts)", async () => {
@@ -1121,7 +1239,7 @@ describe("VendorBillsService", () => {
       });
 
       it("repro (dark): raises the PO with the piece-basis unaffected — TODAY's silent wrong value, on purpose while dark", async () => {
-        prisma.product.findMany.mockResolvedValueOnce([
+        prisma.product.findMany.mockResolvedValue([
           { id: "prod-1", name: "Flour 25lb", unitsPerBox: 10, units: [] },
         ]);
 
@@ -1134,7 +1252,7 @@ describe("VendorBillsService", () => {
 
       it("Opus review finding 5: PACK_SIZE_GATE_ENFORCED=on alone never refuses raising the PO — the code constant stays false until PR D", async () => {
         process.env.PACK_SIZE_GATE_ENFORCED = "on";
-        prisma.product.findMany.mockResolvedValueOnce([
+        prisma.product.findMany.mockResolvedValue([
           { id: "prod-1", name: "Flour 25lb", unitsPerBox: 10, units: [] },
         ]);
 
@@ -1149,7 +1267,7 @@ describe("VendorBillsService", () => {
       it("Opus review finding 2: the dark would-deny log fires for the raise-PO path (path=raise-po, bill=new before the bill exists)", async () => {
         const warnSpy = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
         try {
-          prisma.product.findMany.mockResolvedValueOnce([
+          prisma.product.findMany.mockResolvedValue([
             { id: "prod-1", name: "Flour 25lb", unitsPerBox: 10, units: [] },
           ]);
 
@@ -1170,7 +1288,7 @@ describe("VendorBillsService", () => {
 
       it("enforced + acknowledgePackSizeUnknown: raises the PO through exactly like dark mode", async () => {
         process.env.PACK_SIZE_GATE_ENFORCED = "on";
-        prisma.product.findMany.mockResolvedValueOnce([
+        prisma.product.findMany.mockResolvedValue([
           { id: "prod-1", name: "Flour 25lb", unitsPerBox: 10, units: [] },
         ]);
 
@@ -1181,7 +1299,7 @@ describe("VendorBillsService", () => {
 
       it("enforced: a stated pack never trips the gate", async () => {
         process.env.PACK_SIZE_GATE_ENFORCED = "on";
-        prisma.product.findMany.mockResolvedValueOnce([
+        prisma.product.findMany.mockResolvedValue([
           { id: "prod-1", name: "Flour 25lb", unitsPerBox: 10, units: [] },
         ]);
 
@@ -1194,7 +1312,7 @@ describe("VendorBillsService", () => {
 
       it("enforced: a product with no pack ladder never trips the gate", async () => {
         process.env.PACK_SIZE_GATE_ENFORCED = "on";
-        prisma.product.findMany.mockResolvedValueOnce([
+        prisma.product.findMany.mockResolvedValue([
           { id: "prod-1", name: "Napkins", unitsPerBox: null, units: [] },
         ]);
 
@@ -1209,6 +1327,7 @@ describe("VendorBillsService", () => {
 
   describe("create — duplicate guard", () => {
     beforeEach(() => {
+      prisma.supplier.findMany.mockResolvedValue([{ id: "sup-1" }]); // the supplier is this tenant's
       prisma.vendorBill.findFirst.mockResolvedValue(null); // nextBillNumber
       prisma.vendorBill.create.mockResolvedValue(bill());
       prisma.supplier.findFirst.mockResolvedValue({ name: "Acme Foods" });
@@ -1891,7 +2010,7 @@ describe("VendorBillsService", () => {
             sku: null,
             barcode: null,
             parentProductId: "parent-1",
-            parent: { name: "Big Red Chewing Gum" },
+            parent: { name: "Big Red Chewing Gum", tenantId: "test-tenant" },
           },
         },
       ]);
@@ -1927,6 +2046,63 @@ describe("VendorBillsService", () => {
         confidence: "high",
       });
       expect(result.items[0].candidates).toBeUndefined();
+    });
+
+    it("never composes a name from a parent that belongs to another tenant (B1211)", async () => {
+      prisma.productMapping.findMany.mockResolvedValue([
+        {
+          supplierName: "Acme Foods",
+          rawDescription: "cinnamon",
+          productId: "prod-9",
+          product: {
+            id: "prod-9",
+            name: "Cinnamon",
+            sku: null,
+            barcode: null,
+            parentProductId: "parent-1",
+            parent: { name: "Foreign Family", tenantId: "other-tenant" },
+          },
+        },
+      ]);
+      prisma.product.findMany.mockResolvedValue([
+        {
+          id: "prod-8",
+          name: "Mint",
+          sku: null,
+          barcode: null,
+          parentProductId: "parent-2",
+          parent: { name: "Foreign Family", tenantId: "other-tenant" },
+        },
+      ]);
+      mockAnthropicCreate.mockResolvedValue({
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              supplier: "Acme Foods",
+              items: [
+                { extractedName: "Cinnamon", qty: 1, unitCost: 3 },
+                { extractedName: "Mint", qty: 1, unitCost: 3 },
+              ],
+            }),
+          },
+        ],
+      });
+
+      const result = await service.scanInvoice([jpegPage]);
+
+      expect(JSON.stringify(result)).not.toContain("Foreign Family");
+      expect(result.items[0]).toMatchObject({
+        matchedProductId: "prod-9",
+        matchedProductName: "Cinnamon",
+      });
+      const selects = [
+        prisma.product.findMany.mock.calls[0][0].select,
+        prisma.productMapping.findMany.mock.calls[0][0].include.product.select,
+      ];
+      for (const sel of selects) {
+        expect(sel.parent).toEqual({ select: { name: true, tenantId: true } });
+      }
     });
 
     // ── matching tiers + supplier resolution (2026-08-18: scanner memory) ────

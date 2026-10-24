@@ -2,7 +2,8 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import type { SelectablePaymentMethod } from "../payment-methods";
 import { shouldRetryCustomerPrices } from "../query-retry-policy";
-import type { CustomerComment, CustomerDocument } from "@routeflow/types";
+import { sendWithPaymentKey, type PaymentKeyHolder } from "../payment-submit-key";
+import type { CustomerComment, CustomerDocument, FulfillPath } from "@routeflow/types";
 export type { CustomerComment, CustomerDocument } from "@routeflow/types";
 
 export interface CustomerSummary {
@@ -30,6 +31,8 @@ export function useCustomers(search?: string) {
 
 export interface CustomerDetail {
   id: string;
+  /** The tenant's system walk-in customer (counter sales); it cannot be deleted. */
+  isWalkIn?: boolean | null;
   businessName: string;
   contactName: string;
   phone?: string;
@@ -47,7 +50,7 @@ export interface CustomerDetail {
    * since launch (`Customer.fulfillPath @default(ROUTE)`) but older cached
    * payloads may predate this client reading it.
    */
-  fulfillPath?: "ROUTE" | "SHIP";
+  fulfillPath?: FulfillPath;
   addresses: Array<{
     id: string;
     label?: string;
@@ -155,14 +158,20 @@ export interface CreateAdvancePaymentDto {
   method: SelectablePaymentMethod;
   reference?: string;
   notes?: string;
+  /** SA-824: the screen's Idempotency-Key holder (never sent in the body). */
+  submitKey?: PaymentKeyHolder;
 }
 
 /** POST /customers/:id/advance-payments — take a deposit into the wallet. */
 export function useCreateAdvancePayment() {
   const qc = useQueryClient();
   return useMutation<AdvancePayment, Error, CreateAdvancePaymentDto>({
-    mutationFn: ({ customerId, ...body }) =>
-      apiClient.post(`/customers/${customerId}/advance-payments`, body).then((r) => r.data),
+    mutationFn: ({ customerId, submitKey, ...body }) =>
+      sendWithPaymentKey(submitKey, body, (config) =>
+        apiClient
+          .post(`/customers/${customerId}/advance-payments`, body, ...config)
+          .then((r) => r.data),
+      ),
     onSuccess: (_, { customerId }) => {
       qc.invalidateQueries({ queryKey: ["customers", customerId] });
       qc.invalidateQueries({ queryKey: ["admin", "customers"] });
@@ -177,7 +186,8 @@ export function useCreateAdvancePayment() {
  * `amount` applies min(wallet balance, invoice balance). Server guards
  * (verbatim): "Advance payment has no remaining balance", "Cannot apply
  * advance payment to invoice with status <S>", "Invoice has no outstanding
- * balance". ⚠️ Its status recompute is inline and does NOT preserve DRAFT —
+ * balance"; a 400 with code ADVANCE_CUSTOMER_MISMATCH when the invoice is
+ * another customer's, a 404 when the advance is not this customer's. ⚠️ Its status recompute is inline and does NOT preserve DRAFT —
  * gate the UI to SENT/VIEWED/PARTIAL/OVERDUE so a draft is never silently
  * flipped. Returns the UPDATED INVOICE.
  */
@@ -346,6 +356,13 @@ export function useMyAccountSummary() {
 
 // ─── Mutations (operator) ────────────────────────────────────────────────────
 
+/** Edit may send `null` to CLEAR these nullable columns (currency is NOT NULL) (see lib/clearable-field). */
+export type UpdateCustomerDto = Partial<Omit<CreateCustomerDto, NullableOnUpdate>> & {
+  [K in NullableOnUpdate]?: CreateCustomerDto[K] | null;
+};
+
+type NullableOnUpdate = "phone" | "notes" | "taxId" | "deliveryWindowStart" | "deliveryWindowEnd";
+
 export interface CreateCustomerDto {
   businessName: string;
   /** Create-only, and REQUIRED there — the API mints the linked User from it. */
@@ -389,7 +406,7 @@ export function useCreateCustomer() {
 
 export function useUpdateCustomer() {
   const qc = useQueryClient();
-  return useMutation<{ id: string }, Error, { id: string } & Partial<CreateCustomerDto>>({
+  return useMutation<{ id: string }, Error, { id: string } & UpdateCustomerDto>({
     mutationFn: ({ id, ...dto }) => apiClient.patch(`/customers/${id}`, dto).then((r) => r.data),
     onSuccess: (_, { id }) => {
       qc.invalidateQueries({ queryKey: ["customers"] });
@@ -572,7 +589,12 @@ export function useAddContactPerson(customerId: string) {
 
 export function useUpdateContactPerson(customerId: string) {
   const qc = useQueryClient();
-  return useMutation<ContactPerson, Error, { contactId: string } & Partial<ContactPersonInput>>({
+  // An optional field may be null on edit: that CLEARS it (contact-person-payload.ts).
+  return useMutation<
+    ContactPerson,
+    Error,
+    { contactId: string } & { [K in keyof ContactPersonInput]?: ContactPersonInput[K] | null }
+  >({
     mutationFn: ({ contactId, ...dto }) =>
       apiClient.patch(`/customers/${customerId}/contacts/${contactId}`, dto).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: contactsKey(customerId) }),

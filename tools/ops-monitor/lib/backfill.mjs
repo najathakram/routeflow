@@ -1,0 +1,626 @@
+// One-time import of the hand-kept files (register, release plan, owner queue, Work Board
+// state.json) into item.new events. Pure parsers + a pure event builder + one IO wrapper.
+// Bugs are NOT imported: they are derived live from the bug registry on origin/master.
+import { createHash } from "node:crypto";
+import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+
+import { ITEM_ID_RE, STATUSES, TYPES } from "./schema.mjs";
+import { DEFAULT_CONFIG, loadConfig, machineId, normalizeLane } from "./config.mjs";
+import { newEventId, nextItemId, tagRank } from "./ids.mjs";
+import { guessDomainFromText } from "./areas.mjs";
+
+// ---------------------------------------------------------------------------------------------
+// Markdown helpers
+
+/** Markdown cell/text to plain text: links keep their text, bold/code/<br> removed. */
+export function plain(md) {
+  if (md === null || md === undefined) return "";
+  return String(md)
+    .replace(/<br\s*\/?>/gi, " ")
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/\*\*/g, "")
+    .replace(/`/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+const clip = (s, n) => (s.length > n ? s.slice(0, n).trimEnd() : s);
+const isEmptyCell = (s) => s === "" || s === "-" || s === "—";
+
+function splitRow(line) {
+  let s = line.trim();
+  if (s.startsWith("|")) s = s.slice(1);
+  if (s.endsWith("|") && !s.endsWith("\\|")) s = s.slice(0, -1);
+  return s.split(/(?<!\\)\|/).map((c) => c.trim().replace(/\\\|/g, "|"));
+}
+
+/** All pipe tables in a markdown text: [{ header: string[], rows: [{ cells, line }] }]. */
+export function tables(md) {
+  const lines = String(md).split(/\r?\n/);
+  const out = [];
+  let cur = null;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line.trim().startsWith("|")) {
+      cur = null;
+      continue;
+    }
+    const cells = splitRow(line);
+    if (!cur) {
+      cur = { header: cells, rows: [] };
+      out.push(cur);
+    } else if (cells.every((c) => /^:?-{2,}:?$/.test(c) || c === "")) {
+      // separator row
+    } else {
+      cur.rows.push({ cells, line: i + 1 });
+    }
+  }
+  return out;
+}
+
+const colIndex = (header) => {
+  const m = new Map();
+  header.forEach((h, i) => {
+    const k = plain(h).toLowerCase();
+    if (!m.has(k)) m.set(k, i);
+  });
+  return m;
+};
+
+// ---------------------------------------------------------------------------------------------
+// Register
+
+/** Register status words the monitor reads as one of its own statuses (lead ruling 10-19). */
+const STATUS_SYNONYMS = {
+  done: "verified",
+  closed: "verified",
+  fixed: "verified",
+  complete: "verified",
+  completed: "verified",
+  resolved: "verified",
+  shipped: "live",
+  deployed: "live",
+  "in-progress": "building",
+  wip: "building",
+};
+
+/**
+ * A register Status cell -> { status?, statusText?, blocked? }. A known word is itself; synonyms
+ * map (done -> verified, shipped -> live, wip -> building); `blocked` keeps whatever status the
+ * item already has (no status field) and returns the raw cell as `blocked`; any other word is
+ * "planned" plus `statusText` (the raw cell), so the monitor can say it does not know it.
+ * An empty cell is plain planned.
+ */
+export function parseStatusCell(cellText, mask = (t) => t) {
+  const text = plain(cellText);
+  const m = /^([a-z][a-z-]*)/.exec(text.toLowerCase());
+  const word = m ? m[1] : "";
+  if (STATUSES.includes(word)) return { status: word };
+  if (STATUS_SYNONYMS[word]) return { status: STATUS_SYNONYMS[word] };
+  if (word === "blocked") return { blocked: clip(text, 280) };
+  if (isEmptyCell(text)) return { status: "planned" };
+  // Masked BEFORE the cut: a client name must never survive as an 80-character fragment.
+  return { status: "planned", statusText: clip(mask(text), 80) };
+}
+
+/**
+ * Register table -> { drafts: [{ id, fields }], failed: [{ line, reason, raw }] }.
+ * Fields are item.new data; empty cells are omitted.
+ */
+export function parseRegisterReport(md, config = DEFAULT_CONFIG, mask = (t) => t) {
+  const drafts = [];
+  const failed = [];
+  for (const t of tables(md)) {
+    const cols = colIndex(t.header);
+    if (!cols.has("id") || !cols.has("title")) continue;
+    for (const row of t.rows) {
+      const c = row.cells;
+      const cell = (name) => (cols.has(name) ? (c[cols.get(name)] ?? "") : "");
+      if (c.length < t.header.length) {
+        failed.push({ line: row.line, reason: "too few cells", raw: c.join(" | ").slice(0, 80) });
+        continue;
+      }
+      const id = plain(cell("id"));
+      if (!ITEM_ID_RE.test(id)) {
+        failed.push({ line: row.line, reason: `bad id "${id}"`, raw: c.join(" | ").slice(0, 80) });
+        continue;
+      }
+      const title = clip(plain(cell("title")), 300);
+      if (!title) {
+        failed.push({ line: row.line, reason: "empty title", raw: id });
+        continue;
+      }
+      const rawType = plain(cell("type")).toLowerCase();
+      const type = rawType === "fix" ? "bug" : TYPES.includes(rawType) ? rawType : "chore";
+      const prio = plain(cell("priority")).toUpperCase();
+      const priority = /^P[0-3]$/.test(prio) ? prio : "P2";
+      const st = parseStatusCell(cell("status"), mask);
+      const fields = { title, type, priority, source: "register" };
+      if (st.status) fields.status = st.status;
+      if (st.statusText) fields.statusText = st.statusText;
+      const lane = normalizeLane(plain(cell("lane")), config);
+      if (lane) fields.lane = lane;
+      const trainText = plain(cell("train"));
+      if (!isEmptyCell(trainText)) {
+        fields.trainLabel = clip(trainText, 120);
+        const tm = /\b([RT]\d{1,2}[a-z]?)\b/.exec(trainText);
+        if (tm) fields.train = tm[1];
+      }
+      const gate = plain(cell("gate"));
+      if (!isEmptyCell(gate)) fields.gate = clip(gate, 400);
+      const eta = plain(cell("eta"));
+      if (!isEmptyCell(eta)) fields.eta = clip(eta, 80);
+      const prs = [];
+      for (const m of String(cell("links")).matchAll(/\/pull\/(\d+)|#(\d{3,5})\b/g)) {
+        const n = Number(m[1] ?? m[2]);
+        if (n > 0 && !prs.includes(n)) prs.push(n);
+      }
+      if (prs.length) fields.links = { prs };
+      const dom = guessDomainFromText(title);
+      if (dom) fields.area = `domain:${dom}`;
+      drafts.push(st.blocked ? { id, fields, blocked: st.blocked } : { id, fields });
+    }
+  }
+  return { drafts, failed };
+}
+
+export function parseRegister(md, config = DEFAULT_CONFIG) {
+  return parseRegisterReport(md, config).drafts;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Release plan, owner queue, board
+
+/**
+ * Plan train tables -> [{ id, title, membersText, lanes, gates, eta, lane, tier, depends, budget,
+ * tag }]. Two shapes: the old `Train | Members | Lanes | Gates | ETA` table (id leads the train
+ * cell) and the 10-23 shape `# | Train and goal | Items | Lane | Tier | Depends | Budget | Tag`
+ * (id in `#`, or in the train cell when there is no `#`). Other tables (budget summaries) are
+ * ignored: they need an id column AND an items/members column.
+ */
+export function parsePlanTrains(md) {
+  const out = [];
+  for (const t of tables(md)) {
+    const cols = colIndex(t.header);
+    const key = (pred) => [...cols.keys()].find(pred);
+    const trainKey = key((k) => k === "train" || k.startsWith("train "));
+    const itemsKey = key((k) => k === "members" || k.startsWith("items"));
+    if (trainKey === undefined || itemsKey === undefined) continue;
+    const hasHash = cols.has("#");
+    const at = (row, name) => plain(row.cells[cols.get(name)] ?? "");
+    const opt = (row, k) => (k === undefined ? "" : at(row, k));
+    const etaKey = key((k) => k.startsWith("eta"));
+    const laneKey = key((k) => k === "lane" || k === "lanes");
+    for (const row of t.rows) {
+      const first = at(row, hasHash ? "#" : trainKey);
+      let id;
+      let title;
+      if (hasHash) {
+        if (!/^[RT]\d{1,2}[a-z]?$/.test(first)) continue;
+        id = first;
+        title = at(row, trainKey) || id;
+      } else {
+        const m = /^([RT]\d{1,2}[a-z]?)\b[\s:.-]*(.*)$/.exec(first);
+        if (!m) continue;
+        id = m[1];
+        title = m[2] || id;
+      }
+      out.push({
+        id,
+        title,
+        membersText: at(row, itemsKey),
+        lanes: opt(row, laneKey),
+        gates: opt(
+          row,
+          key((k) => k === "gates"),
+        ),
+        eta: opt(row, etaKey),
+        lane: opt(row, laneKey),
+        tier: opt(
+          row,
+          key((k) => k === "tier"),
+        ),
+        depends: opt(
+          row,
+          key((k) => k === "depends"),
+        ),
+        budget: opt(
+          row,
+          key((k) => k === "budget"),
+        ),
+        tag: opt(
+          row,
+          key((k) => k === "tag"),
+        ),
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * Plan rows -> one entry per train FAMILY (id without its trailing letter: T5a + T5b -> T5):
+ * [{ id, title, members, parts }]. `parts` keeps each row (id, goal, lane, tier, budget, tag,
+ * depends, members) so "what lands when" survives the grouping; they are ordered earliest tag
+ * first. Numeric members are kept only when in `known`; `extraMembers(familyId)` adds more.
+ */
+export function planFamilies(rows, { known = null, extraMembers = () => [] } = {}) {
+  const fams = new Map();
+  for (const r of rows) {
+    const id = r.id.replace(/[a-z]$/, "");
+    if (!fams.has(id)) fams.set(id, []);
+    fams.get(id).push(r);
+  }
+  const put = (o, k, v, n) => {
+    if (v) o[k] = clip(v, n);
+  };
+  return [...fams].map(([id, list]) => {
+    const parts = list.map((r) => {
+      const p = {
+        id: r.id,
+        goal: clip(r.title, 200),
+        members: trainMembers(r.membersText, known, { bare: true }),
+      };
+      put(p, "tag", /^(?:U|A\d)(?:-A\d)?/i.exec(r.tag)?.[0] ?? r.tag, 20);
+      put(p, "lane", r.lane, 60);
+      put(p, "budget", r.budget, 40);
+      put(p, "tier", r.tier, 40);
+      put(p, "depends", r.depends, 120);
+      return p;
+    });
+    parts.sort((a, b) => tagRank(a.tag) - tagRank(b.tag));
+    const goals = [...new Set(parts.map((p) => p.goal))];
+    const members = [];
+    for (const m of [...parts.flatMap((p) => p.members), ...extraMembers(id)])
+      if (!members.includes(m)) members.push(m);
+    return { id, title: clip(goals.join(" · "), 300), members: members.slice(0, 200), parts };
+  });
+}
+
+const PLAN_FILE_RE = /^PLAN-(\d{4}-\d{2}-\d{2})(?:-v(\d+))?\.md$/;
+
+/**
+ * The plan file to read: the newest PLAN-YYYY-MM-DD(-vN).md (highest -vN on a date, none = v1),
+ * skipping any whose first lines say "superseded". `readHead(name)` returns the file's start.
+ */
+export function pickLatestPlan(fileNames, readHead = () => "") {
+  const ranked = [];
+  for (const name of fileNames ?? []) {
+    const m = PLAN_FILE_RE.exec(name);
+    if (!m) continue;
+    const head = String(readHead(name) ?? "")
+      .split(/\r?\n/)
+      .slice(0, 10)
+      .join("\n");
+    if (/superseded by/i.test(head)) continue;
+    ranked.push({ name, key: `${m[1]}-${String(m[2] ?? 1).padStart(4, "0")}` });
+  }
+  ranked.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+  return ranked.length ? ranked[ranked.length - 1].name : null;
+}
+
+/**
+ * Item ids mentioned in free text: `row 593`, `rows 555/556`, `rows 1, 2` and `B###`. Numeric ids
+ * are kept only when in `knownIds` (when given); B ids are always kept. Order of appearance.
+ */
+export function trainMembers(text, knownIds = null, { bare = false } = {}) {
+  const out = [];
+  const add = (id) => {
+    if (!out.includes(id)) out.push(id);
+  };
+  const re = /\b[Rr]ows?\s+(\d+(?:\s*[/,]\s*\d+)*)|\b(B\d{2,5})\b/g;
+  for (const m of String(text ?? "").matchAll(re)) {
+    if (m[2]) add(m[2]);
+    else
+      for (const n of m[1].split(/\s*[/,]\s*/)) {
+        if (!knownIds || knownIds.has(n)) add(n);
+      }
+  }
+  // Plan cells also list rows as bare numbers ("740 · 741 · 551"). With `bare` and a known-id set,
+  // a standalone 2-4 digit number that is a known item id counts too; never a PR (#3597), a date
+  // (10-26), a decimal (1.4), a money amount or a count ("27 rows").
+  if (bare && knownIds) {
+    const bareRe =
+      /(?<![\w#$.,/:-])(\d{2,4})(?![\w.,/:%-]|\s+(?:rows?|items?|high|PRs?|days?|min|bugs?)\b)/g;
+    for (const m of String(text ?? "").matchAll(bareRe)) if (knownIds.has(m[1])) add(m[1]);
+  }
+  return out;
+}
+
+// Owner-queue status words (the first one found in the first cell wins).
+const QUEUE_STATUS_RE = /\b(ANSWERED|DONE|STANDING YES|DEFAULT IN EFFECT|BOOKED|OPEN|CHECK)\b/;
+const DECISION_FILE_RE = /\bD-\d{4}-\d{2}-\d{2}-[A-Za-z0-9._-]*?\.md\b/;
+
+/**
+ * Every table with a "Recommended answer" header ->
+ * [{ key, title, register, recommended, why, statusWord, decisionFile }]. The first cell of a real
+ * row reads `N1 · **ANSWERED 10-18 → D-….md**`: `key` is its leading token, `statusWord` the first
+ * status word in it (null when none) and `decisionFile` the first `D-….md` anywhere in the row.
+ */
+export function parseOwnerQueue(md) {
+  const out = [];
+  for (const t of tables(md)) {
+    const cols = colIndex(t.header);
+    if (!cols.has("recommended answer") || !cols.has("item")) continue;
+    const keyCol = cols.has("#") ? cols.get("#") : 0;
+    for (const row of t.rows) {
+      const c = row.cells;
+      const first = plain(c[keyCol] ?? "");
+      const key = (/^\S+/.exec(first) ?? [""])[0];
+      const title = plain(c[cols.get("item")] ?? "");
+      if (!key || !title) continue;
+      const statusWord = QUEUE_STATUS_RE.exec(first)?.[1] ?? null;
+      const decisionFile = DECISION_FILE_RE.exec(c.join(" "))?.[0] ?? null;
+      const regCell = cols.has("register") ? plain(c[cols.get("register")] ?? "") : "";
+      const register = [];
+      for (const m of regCell.matchAll(/\d+/g)) if (!register.includes(m[0])) register.push(m[0]);
+      out.push({
+        key,
+        title,
+        register,
+        recommended: plain(c[cols.get("recommended answer")] ?? ""),
+        why: cols.has("why") ? plain(c[cols.get("why")] ?? "") : "",
+        statusWord,
+        decisionFile,
+      });
+    }
+  }
+  return out;
+}
+
+/** state.json of the Work Board export (text or object). Bad input -> empty board. */
+export function parseBoardState(input) {
+  let j = input;
+  if (typeof input === "string") {
+    try {
+      j = JSON.parse(input);
+    } catch {
+      j = null;
+    }
+  }
+  const arr = (v) => (Array.isArray(v) ? v : []);
+  if (!j || typeof j !== "object") j = {};
+  return {
+    asOf: typeof j.asOf === "string" ? j.asOf : null,
+    trains: arr(j.trains),
+    lanes: arr(j.lanes),
+    owner: arr(j.owner),
+    problems: arr(j.problems),
+  };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Events
+
+const BOARD_STATUS = {
+  proofs: "building",
+  fixing: "building",
+  testing: "building",
+  building: "building",
+  waiting: "planned",
+  planned: "planned",
+  shipped: "live",
+  live: "live",
+};
+
+const normTitle = (s) =>
+  String(s ?? "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+const trainNum = (id) => Number(String(id).slice(1));
+const s = (v) => (typeof v === "string" ? v : v === null || v === undefined ? "" : String(v));
+
+/**
+ * Pure: drafts -> item.new events. `parsed` = { register: drafts, plan, ownerQueue, board }.
+ * Trains first, then register rows (ids from the register, skipping ids in state), then owner
+ * queue decisions, board owner asks and board problems (new sequential ids; skipped when an item
+ * with the same normalized title exists).
+ */
+export function buildBackfillEvents(
+  { register = [], plan = [], ownerQueue = [], board = parseBoardState({}) },
+  { state, config = DEFAULT_CONFIG, machine, now, actor = "backfill", rand = Math.random },
+) {
+  void config;
+  const items = state?.items ?? new Map();
+  const known = new Set([...register.map((d) => d.id), ...items.keys()]);
+  const existingTitles = new Set([...items.values()].map((i) => normTitle(i.title)));
+
+  const events = [];
+  const usedEventIds = new Set();
+  const push = (item, data) => {
+    const tsMs = now + events.length;
+    let id = newEventId(machine, tsMs, rand);
+    while (usedEventIds.has(id)) id = newEventId(machine, tsMs, rand);
+    usedEventIds.add(id);
+    events.push({
+      v: 1,
+      id,
+      ts: new Date(tsMs).toISOString(),
+      machine,
+      actor,
+      lane: null,
+      kind: "item.new",
+      item,
+      data,
+    });
+  };
+
+  // Trains
+  const planBy = new Map(plan.filter((t) => /^R\d{1,2}$/.test(t.id)).map((t) => [t.id, t]));
+  const boardBy = new Map();
+  for (const t of board.trains) {
+    const id = s(t?.train).trim();
+    if (/^R\d{1,2}$/.test(id)) boardBy.set(id, t);
+  }
+  const trainIds = [...new Set([...planBy.keys(), ...boardBy.keys()])].sort(
+    (a, b) => trainNum(a) - trainNum(b),
+  );
+  for (const id of trainIds) {
+    if (items.has(id)) continue;
+    const p = planBy.get(id);
+    const b = boardBy.get(id);
+    const members = [];
+    const addMembers = (ids) => {
+      for (const m of ids) if (!members.includes(m)) members.push(m);
+    };
+    if (p) addMembers(trainMembers(p.membersText, known));
+    if (b) addMembers(trainMembers(s(b.members), known));
+    addMembers(register.filter((d) => d.fields.train === id).map((d) => d.id));
+    const data = {
+      title: clip(plain(s(b?.name)) || p?.title || id, 300),
+      type: "release",
+      priority: "P1",
+      status: BOARD_STATUS[s(b?.state).toLowerCase()] ?? "planned",
+      source: b ? "board" : "plan",
+    };
+    const eta = plain(s(b?.target)) || p?.eta || "";
+    if (eta) data.eta = clip(eta, 80);
+    if (p?.gates) data.gate = clip(p.gates, 400);
+    if (members.length) data.members = members.slice(0, 200);
+    push(id, data);
+  }
+
+  // Register rows
+  for (const d of register) {
+    if (items.has(d.id)) continue;
+    push(d.id, d.fields);
+  }
+
+  // New sequential ids for everything else
+  let nextId = Math.max(
+    Number(nextItemId({ items })),
+    ...register.filter((d) => /^\d+$/.test(d.id)).map((d) => Number(d.id) + 1),
+  );
+  const draft = (title, data) => {
+    const key = normTitle(title);
+    if (!key || existingTitles.has(key)) return;
+    existingTitles.add(key);
+    push(String(nextId++), { title: clip(title, 300), ...data });
+  };
+  const recGate = (rec) => (rec ? clip(`Recommended: ${rec}`, 400) : undefined);
+  const compact = (o) => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined));
+
+  for (const q of ownerQueue) {
+    const related = q.register.filter((r) => known.has(r) && ITEM_ID_RE.test(r)).slice(0, 50);
+    draft(
+      q.title,
+      compact({
+        type: "decision",
+        lane: "owner",
+        priority: "P1",
+        status: "planned",
+        gate: recGate(q.recommended),
+        related: related.length ? related : undefined,
+        tags: ["owner-queue", clip(q.key, 60)],
+        source: "owner-queue",
+      }),
+    );
+  }
+  // The board state.json (owner asks, problems) is a generated view, never a source (lead 10-19):
+  // problems come from P0/P1 register rows and incidents, owner asks from the owner queue.
+  return events;
+}
+
+// ---------------------------------------------------------------------------------------------
+// IO
+
+const sha256 = (text) => createHash("sha256").update(text).digest("hex");
+
+async function resolveDeps(deps = {}) {
+  const d = { ...deps };
+  d.readText ??= (p) => {
+    try {
+      return readFileSync(p, "utf8");
+    } catch {
+      return null;
+    }
+  };
+  d.listDir ??= (p) => {
+    try {
+      return readdirSync(p);
+    } catch {
+      return [];
+    }
+  };
+  d.writeText ??= (p, t) => {
+    mkdirSync(dirname(p), { recursive: true });
+    writeFileSync(p, t);
+  };
+  d.loadConfig ??= loadConfig;
+  d.machineId ??= machineId;
+  d.now ??= () => Date.now();
+  if (!d.readAllEvents || !d.appendEvents) {
+    const store = await import("./store.mjs");
+    d.readAllEvents ??= store.readAllEvents;
+    d.appendEvents ??= store.appendEvents;
+  }
+  if (!d.fold) d.fold = (await import("./fold.mjs")).fold;
+  return d;
+}
+
+/**
+ * Reads the hand-kept sources, folds the existing events, builds the backfill events and appends
+ * them in one commit (unless `dry`). Records ops/state/backfill.json { at, registerSha256, counts }.
+ */
+export async function runBackfill({ specsDir, boardDir, dry = false, deps = {} }) {
+  const d = await resolveDeps(deps);
+  const read = (...parts) => d.readText(join(...parts));
+  const missing = [];
+  const need = (name, text) => {
+    if (text === null || text === undefined) missing.push(name);
+    return text ?? "";
+  };
+  const registerText = need(
+    "register/WORK-REGISTER.md",
+    read(specsDir, "register", "WORK-REGISTER.md"),
+  );
+  const planDir = join(specsDir, "releases");
+  const planFile = pickLatestPlan(d.listDir(planDir), (f) =>
+    (read(planDir, f) ?? "").slice(0, 2000),
+  );
+  const planText = planFile
+    ? need(`releases/${planFile}`, read(specsDir, "releases", planFile))
+    : (missing.push("releases/PLAN-*.md"), "");
+  const queueText = need(
+    "priorities/OWNER-QUEUE.md",
+    read(specsDir, "priorities", "OWNER-QUEUE.md"),
+  );
+  const boardText = need("board/state.json", read(boardDir, "state.json"));
+
+  const config = d.loadConfig(specsDir);
+  const machine = d.machineId(config);
+  const now = d.now();
+  const state = d.fold(await d.readAllEvents(specsDir), { bugs: new Map() });
+  const report = parseRegisterReport(registerText, config);
+  const events = buildBackfillEvents(
+    {
+      register: report.drafts,
+      plan: parsePlanTrains(planText),
+      ownerQueue: parseOwnerQueue(queueText),
+      board: parseBoardState(boardText),
+    },
+    { state, config, machine, now, actor: "backfill", rand: d.rand ?? Math.random },
+  );
+  const counts = {
+    trains: events.filter((e) => e.data.type === "release").length,
+    register: events.filter((e) => e.data.source === "register").length,
+    owner: events.filter((e) => e.data.type === "decision" && e.data.source !== "register").length,
+    problems: events.filter((e) => e.data.type === "incident").length,
+    events: events.length,
+    failedRows: report.failed.length,
+  };
+  const result = { dry: Boolean(dry), counts, missing, failed: report.failed, pushed: false };
+  if (dry) return result;
+  if (events.length) {
+    const r = await d.appendEvents(events, { dir: specsDir });
+    result.pushed = Boolean(r?.pushed);
+    result.warnings = r?.warnings ?? [];
+  }
+  d.writeText(
+    join(specsDir, "ops", "state", "backfill.json"),
+    `${JSON.stringify({ at: new Date(now).toISOString(), registerSha256: sha256(registerText), counts }, null, 2)}\n`,
+  );
+  return result;
+}

@@ -37,7 +37,9 @@ describe("tenant onboarding (#2159 S4)", () => {
 
   it("every 409 code the tenant service throws is in the shared contract, and vice versa", () => {
     const src = fs.readFileSync(path.join(__dirname, "onboarding-tenant.service.ts"), "utf8");
-    const thrown = new Set([...src.matchAll(/code: "(ONBOARDING_[A-Z_]+)"/g)].map((m) => m[1]));
+    const thrown = new Set(
+      [...src.matchAll(/code: (?:"|API_ERROR_CODES\.)(ONBOARDING_[A-Z_]+)\b/g)].map((m) => m[1]),
+    );
     expect([...thrown].sort()).toEqual([...TENANT_ONBOARDING_CONFLICT_CODES].sort());
   });
 

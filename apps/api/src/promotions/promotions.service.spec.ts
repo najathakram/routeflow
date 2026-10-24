@@ -50,6 +50,40 @@ describe("PromotionsService", () => {
     });
   });
 
+  describe("B1216: a FAMILY container is never promoted", () => {
+    const family = { id: "fam", name: "Acme Soda", kind: "FAMILY" };
+    const variant = { id: "v1", name: "Cherry", kind: "VARIANT" };
+
+    it("create refuses a PRODUCTS-scoped promotion naming a family (coded 400, nothing written)", async () => {
+      prisma.product.findMany.mockResolvedValue([family, variant]);
+      const err = await service
+        .create({ ...base, scope: "PRODUCTS", productIds: ["fam", "v1"] })
+        .catch((e) => e);
+      expect(err).toBeInstanceOf(BadRequestException);
+      expect(err.getResponse()).toMatchObject({
+        code: "FAMILY_NOT_PRICEABLE",
+        productIds: ["fam"],
+      });
+      expect(prisma.promotion.create).not.toHaveBeenCalled();
+      expect(prisma.promotionProduct.createMany).not.toHaveBeenCalled();
+    });
+
+    it("update refuses a replacement product set that names a family", async () => {
+      prisma.product.findMany.mockResolvedValue([family]);
+      await expect(service.update("promo-1", { productIds: ["fam"] })).rejects.toMatchObject({
+        response: expect.objectContaining({ code: "FAMILY_NOT_PRICEABLE" }),
+      });
+      expect(prisma.promotion.update).not.toHaveBeenCalled();
+      expect(prisma.promotionProduct.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it("variants and standalone products are accepted", async () => {
+      prisma.product.findMany.mockResolvedValue([variant]);
+      await service.create({ ...base, scope: "PRODUCTS", productIds: ["v1"] });
+      expect(prisma.promotionProduct.createMany).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it("rejects a QTY_BREAK without a minQty", async () => {
     await expect(service.create({ ...base, type: "QTY_BREAK" })).rejects.toThrow(
       BadRequestException,

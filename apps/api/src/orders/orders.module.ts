@@ -29,6 +29,38 @@ import { SellingRestrictionsModule } from "../selling-restrictions/selling-restr
 // #2094: OrdersService takes a return inside an order create/edit via InlineReturnsService. The
 // returns module imports nothing from orders, so there is no cycle.
 import { ReturnsModule } from "../returns/returns.module";
+// WS9: PolicyModule imports nothing (PrismaModule is global) — no cycle with OrdersModule.
+import { PolicyModule } from "../policy/policy.module";
+import { PolicyOversellReader } from "./policy-oversell-reader";
+import { BuyerBackorderViewResolver } from "./buyer-backorder-view";
+// SA-655: staff counter sales (POST /orders/counter-sale). Dark until a tenant's fulfilment capability offers a counter.
+import { CounterSaleController } from "./counter-sale/counter-sale.controller";
+import { CounterSaleService } from "./counter-sale/counter-sale.service";
+import { CounterSaleTodayService } from "./counter-sale/counter-sale-today.service";
+// SA-750r3: counter day close + Z report (separate controller: the counter-sale controller's constructor is pinned by its specs).
+import { CounterDayCloseController } from "./counter-sale/day-close/day-close.controller";
+import { CounterDayCloseService } from "./counter-sale/day-close/day-close.service";
+import { EmailModule } from "../email/email.module";
+// SA-748: parked counter sales (POST|GET /orders/counter-sale/parked, .../:id/resume, DELETE .../:id) + the hourly sweep.
+import { CounterParkController } from "./counter-sale/counter-park.controller";
+import { CounterParkService } from "./counter-sale/counter-park.service";
+import { CounterParkSweepService } from "./counter-sale/counter-park.sweep";
+import { QuickKeysService } from "./counter-sale/quick-keys.service";
+import { CounterSaleVoidController } from "./counter-sale/counter-sale-void.controller";
+import { CounterSaleVoidService } from "./counter-sale/counter-sale-void.service";
+import { CustomersModule } from "../customers/customers.module";
+import { BillingModule } from "../billing/billing.module";
+import { WalkInCustomerService } from "./counter-sale/walk-in-customer";
+// Pickup mode: POST /orders/:id/pickup-complete hands an order-ahead PICKUP order over at the till.
+import { PickupCompleteController } from "./counter-sale/pickup-complete.controller";
+import { PickupCompleteService } from "./counter-sale/pickup-complete.service";
+import {
+  DefaultFulfilmentCapabilityReader,
+  FULFILMENT_CAPABILITY_READER,
+} from "./counter-sale/fulfilment-capability-reader";
+import { OrderBatchShipService } from "./order-batch-ship";
+import { PackingSlipService } from "./packing-slip.service";
+import { StorageModule } from "../storage/storage.module";
 
 @Module({
   imports: [
@@ -48,9 +80,42 @@ import { ReturnsModule } from "../returns/returns.module";
     RegulatedModule,
     SellingRestrictionsModule,
     ReturnsModule,
+    PolicyModule,
+    // WalkInCustomerService restores a removed walk-in through CustomersService.restoreCustomer.
+    CustomersModule,
+    // DefaultFulfilmentCapabilityReader needs AddonService (FeatureConfigService is global, and
+    // FeatureOverrideService comes from EntitlementsModule). BillingModule never reaches OrdersModule: no cycle.
+    BillingModule,
+    StorageModule,
+    // CounterDayCloseService sends the Z report through EmailService.
+    EmailModule,
   ],
-  controllers: [OrdersController],
-  providers: [OrdersService, ChangeRequestsService],
-  exports: [OrdersService, ChangeRequestsService],
+  controllers: [
+    OrdersController,
+    CounterSaleController,
+    CounterSaleVoidController,
+    CounterParkController,
+    CounterDayCloseController,
+    PickupCompleteController,
+  ],
+  providers: [
+    OrdersService,
+    ChangeRequestsService,
+    PolicyOversellReader,
+    BuyerBackorderViewResolver,
+    CounterSaleService,
+    CounterSaleTodayService,
+    CounterDayCloseService,
+    CounterParkService,
+    CounterParkSweepService,
+    QuickKeysService,
+    CounterSaleVoidService,
+    PickupCompleteService,
+    WalkInCustomerService,
+    { provide: FULFILMENT_CAPABILITY_READER, useClass: DefaultFulfilmentCapabilityReader },
+    OrderBatchShipService,
+    PackingSlipService,
+  ],
+  exports: [OrdersService, ChangeRequestsService, PolicyOversellReader, BuyerBackorderViewResolver],
 })
 export class OrdersModule {}

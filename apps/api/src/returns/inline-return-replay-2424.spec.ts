@@ -63,6 +63,7 @@ describe("#2424 fold: every returnKey replay compares items (the lead's Opus FAI
             // the merge wave's own key row, same cart (no requestHash given)
             findFirst: jest.fn().mockResolvedValue({ orderId: "ord-1", responseHash: "h" }),
           },
+          order: { findFirst: jest.fn().mockResolvedValue({ id: "ord-1", lineItems: [] }) },
           return: {
             findFirst: jest.fn().mockResolvedValue(row(inlineReturnItemsFingerprint(BOXED))),
           },
@@ -74,6 +75,7 @@ describe("#2424 fold: every returnKey replay compares items (the lead's Opus FAI
         "cust-1",
         undefined,
         { returnKey: "k", items: [{ productId: "p1", boxes: 9, pieces: 0 }] },
+        { items: [] },
       ).catch((e) => e);
       expect(caught).toBeInstanceOf(ConflictException);
       expect(bodyOf(caught)?.code).toBe(INLINE_RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS);

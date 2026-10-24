@@ -3,12 +3,19 @@ import {
   ArrayMinSize,
   IsArray,
   IsInt,
+  IsISO8601,
+  IsNumber,
   IsOptional,
+  IsString,
   IsUUID,
+  MaxLength,
   Min,
   ValidateNested,
 } from "class-validator";
 import { Type } from "class-transformer";
+import { Trim } from "../../common/transforms/trim.transform";
+import { IsOptionalNotNull } from "../../common/validators/optional-not-null";
+import { MAX_SHIPPING_CARRIER, MAX_SHIPPING_TRACKING } from "../../orders/shipment-text";
 import { CreateInvoiceDto, CreateInvoiceItemDto } from "./create-invoice.dto";
 
 /**
@@ -38,11 +45,37 @@ export class UpdateInvoiceItemDto extends CreateInvoiceItemDto {
  * nested item validation (UpdateInvoiceItemDto's own decorators, including
  * qty/unitPrice's @Min) and the whitelist still apply when `items` is sent.
  */
-export class UpdateInvoiceDto extends PartialType(OmitType(CreateInvoiceDto, ["items"] as const)) {
+export class UpdateInvoiceDto extends PartialType(
+  OmitType(CreateInvoiceDto, ["items", "shippingCarrier", "shippingTrackingNumber"] as const),
+) {
+  // PartialType() re-adds @IsOptional() to every inherited field, and @IsOptional() lets a JSON null skip
+  // @IsNumber() (row 602). Redeclared so a present null is refused; own metadata replaces the inherited kind.
+  // depositPercent is NOT redeclared: PATCH null deliberately clears the deposit (money-dto-null.spec.ts).
+  @IsOptionalNotNull() @IsNumber() @Min(0) discount?: number;
+  @IsOptionalNotNull() @IsNumber() @Min(0) shippingFee?: number;
+
+  // Accepted for old clients that echo them, never written by PATCH /invoices/:id: trimmed and capped, but NOT
+  // formula-checked (an echoed legacy value must not block an unrelated edit). The shipment PATCH owns them.
+  @IsOptional() @IsString() @MaxLength(MAX_SHIPPING_CARRIER) @Trim() shippingCarrier?: string;
+  @IsOptional()
+  @IsString()
+  @MaxLength(MAX_SHIPPING_TRACKING)
+  @Trim()
+  shippingTrackingNumber?: string;
+
   @IsOptional()
   @IsArray()
   @ArrayMinSize(1)
   @ValidateNested({ each: true })
   @Type(() => UpdateInvoiceItemDto)
   items?: UpdateInvoiceItemDto[];
+
+  /**
+   * H4: the invoice's `updatedAt` as the editor loaded it (GET /invoices/:id). When another save landed
+   * since, the PATCH is 409 INVOICE_STALE before any write. Optional for one release: a client that omits
+   * it keeps the old last-writer behaviour and the server logs a warning (then it becomes required).
+   */
+  @IsOptional()
+  @IsISO8601()
+  expectedUpdatedAt?: string;
 }

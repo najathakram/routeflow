@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import { invalidateProductSet } from "./products";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -41,7 +42,7 @@ export function useCompleteSetup() {
       apiClient.patch(`/import/resolution/${id}/complete`, data).then((r) => r.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: [...KEY, "incomplete"] });
-      qc.invalidateQueries({ queryKey: ["products"] });
+      invalidateProductSet(qc);
     },
   });
 }
@@ -56,7 +57,7 @@ export function useCreateVariant() {
     { parentProductId: string; variantName: string; sku?: string }
   >({
     mutationFn: (dto) => apiClient.post("/import/resolution/variant", dto).then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["products"] }),
+    onSuccess: () => invalidateProductSet(qc),
   });
 }
 
@@ -69,7 +70,7 @@ export function useCreateBrandNew() {
   >({
     mutationFn: (dto) => apiClient.post("/import/resolution/brand-new", dto).then((r) => r.data),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["products"] });
+      invalidateProductSet(qc);
       qc.invalidateQueries({ queryKey: [...KEY, "incomplete"] });
     },
   });

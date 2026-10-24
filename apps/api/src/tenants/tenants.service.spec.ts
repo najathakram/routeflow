@@ -1,7 +1,7 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { ConfigService } from "@nestjs/config";
 import { JwtService } from "@nestjs/jwt";
-import { ConflictException } from "@nestjs/common";
+import { BadRequestException, ConflictException } from "@nestjs/common";
 import { TenantsService } from "./tenants.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { createMockPrisma } from "../testing/prisma-mock";
@@ -80,7 +80,7 @@ describe("TenantsService", () => {
           useValue: {
             get: jest.fn((key: string) => {
               if (key === "WEB_URL") return "https://app.test";
-              if (key === "jwt.secret") return "test-secret";
+              if (key === "jwt.secret") return "test-jwt-secret-0123456789-abcdefghijklmnop";
               return undefined;
             }),
           },
@@ -136,6 +136,24 @@ describe("TenantsService", () => {
       expect(loggerErrorSpy).toHaveBeenCalledWith(expect.stringContaining("ECONNREFUSED"));
     });
 
+    // Row 195: the test-tenant slug patterns are reserved; a real signup can never land on one.
+    it.each(["qa-foods", "e2e-run-1", "ux-audit-7", "test", "e2e-routeflow", "routeflow-demo"])(
+      "row 195 refuses the reserved test slug %s with a neutral 400 and writes nothing",
+      async (slug) => {
+        const err = await service.register({ ...REGISTER_DTO, slug }).catch((e) => e);
+        expect(err).toBeInstanceOf(BadRequestException);
+        expect(err.message).toMatch(/not available/);
+        expect(prisma.tenant.findUnique).not.toHaveBeenCalled();
+        expect(prisma.tenant.create).not.toHaveBeenCalled();
+        expect(email.send).not.toHaveBeenCalled();
+      },
+    );
+
+    it("row 195 the availability check reports a reserved test slug as unavailable", async () => {
+      await expect(service.isSlugAvailable("qa-foods")).resolves.toBe(false);
+      expect(prisma.tenant.findUnique).not.toHaveBeenCalled();
+    });
+
     it("rejects a taken slug before touching email", async () => {
       (prisma.tenant.findUnique as jest.Mock).mockResolvedValue({ id: "existing" });
       await expect(service.register(REGISTER_DTO)).rejects.toBeInstanceOf(ConflictException);
@@ -163,6 +181,30 @@ describe("TenantsService", () => {
       });
     });
 
+    // SA-738: signup never relies on the column default; the zone is always written explicitly.
+    describe("timezone (SA-738)", () => {
+      const configCreate = () => (prisma as any).tenantConfig.create as jest.Mock;
+      beforeEach(() => email.send.mockResolvedValue({ delivered: true, transport: "resend" }));
+
+      it("stores UTC when the signup sends no zone", async () => {
+        await service.register(REGISTER_DTO);
+        expect(configCreate().mock.calls[0][0].data.timezone).toBe("UTC");
+      });
+
+      it("stores the zone the signup sent", async () => {
+        await service.register({ ...REGISTER_DTO, timezone: "America/Chicago" });
+        expect(configCreate().mock.calls[0][0].data.timezone).toBe("America/Chicago");
+      });
+
+      it("rejects an unknown zone with 400 INVALID_TIME_ZONE and writes nothing", async () => {
+        const err: any = await service
+          .register({ ...REGISTER_DTO, timezone: "Mars/Base" })
+          .catch((e) => e);
+        expect(err).toBeInstanceOf(BadRequestException);
+        expect(err.getResponse()).toMatchObject({ code: "INVALID_TIME_ZONE" });
+        expect(prisma.tenant.create).not.toHaveBeenCalled();
+      });
+    });
     it("creates the admin user as INACTIVE regardless of email outcome (gates login until verified)", async () => {
       email.send.mockResolvedValue({ delivered: true, transport: "resend" });
       await service.register(REGISTER_DTO);
@@ -177,9 +219,16 @@ describe("TenantsService", () => {
       email: "owner@acme.example",
       username: "acme_admin",
       status: "INACTIVE",
+      role: "TENANT_ADMIN",
+      lastLoginAt: null,
+      createdAt: new Date("2026-10-01T00:00:00Z"),
       deletedAt: null,
       tenant: { id: "tenant-1", name: "Acme Distribution", slug: "acme-distribution" },
     };
+
+    beforeEach(() => {
+      (prisma.refreshToken.count as jest.Mock).mockResolvedValue(0);
+    });
 
     it("returns true and dispatches the email for a real pending account", async () => {
       (prisma.user.findFirst as jest.Mock).mockResolvedValue(PENDING_USER);
@@ -209,6 +258,39 @@ describe("TenantsService", () => {
 
       expect(sent).toBe(false);
       expect(loggerErrorSpy).toHaveBeenCalledWith(expect.stringContaining("NOT delivered"));
+    });
+  });
+
+  // B956: the tenant name is mirrored into a Customer row (tenant-mirror) and printed on buyer
+  // documents, so signup and the branding edit refuse a formula-led name like the customer DTOs.
+  describe("business name guard (B956)", () => {
+    it("register refuses a formula-led businessName with a readable 400 and writes nothing", async () => {
+      const err = await service
+        .register({ ...REGISTER_DTO, businessName: "=HYPERLINK(1)" })
+        .catch((e) => e);
+      expect(err).toBeInstanceOf(BadRequestException);
+      expect(err.getResponse()).toMatchObject({
+        code: "TEXT_CELL_FORMULA_LEAD",
+        field: "businessName",
+      });
+      expect(prisma.tenant.create).not.toHaveBeenCalled();
+    });
+
+    it("updateBranding refuses a CHANGED formula-led name; an unchanged legacy one passes", async () => {
+      (prisma.tenantConfig.findFirst as jest.Mock).mockResolvedValue({
+        tenantId: "t1",
+        businessName: "=LEGACY",
+        primaryColor: null,
+        logoKey: null,
+      });
+      (prisma.tenantConfig.update as jest.Mock).mockResolvedValue({ logoKey: null });
+      await expect(service.updateBranding("t1", { businessName: "@NEW" })).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(prisma.tenantConfig.update).not.toHaveBeenCalled();
+      await expect(
+        service.updateBranding("t1", { businessName: "=LEGACY", primaryColor: "#FFF" }),
+      ).resolves.toBeDefined();
     });
   });
 });

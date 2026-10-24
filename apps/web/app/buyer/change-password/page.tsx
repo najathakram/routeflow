@@ -8,7 +8,8 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, KeyRound } from "lucide-react";
 import { PasswordInput, Button } from "@routeflow/ui/web";
-import { AuthShell } from "@/components/auth";
+import { AuthShell, PasswordChecklist } from "@/components/auth";
+import { newPasswordSchema, passwordErrorMessage } from "@/lib/password-policy";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import {
   buyerChangePassword,
@@ -25,13 +26,8 @@ import { BUYER_KEYS } from "@/lib/auth-keys";
 const schema = z
   .object({
     currentPassword: z.string(),
-    // Mirrors the server policy (BuyerChangePasswordDto): upper + lower + digit-or-special.
-    newPassword: z
-      .string()
-      .min(8, "New password must be at least 8 characters")
-      .regex(/[A-Z]/, "Must contain at least one uppercase letter")
-      .regex(/[a-z]/, "Must contain at least one lowercase letter")
-      .regex(/[\d\W]/, "Must contain at least one number or special character"),
+    // Mirrors the server policy (BuyerChangePasswordDto) and names exactly what is missing.
+    newPassword: newPasswordSchema,
     confirmPassword: z.string().min(1, "Please confirm your new password"),
   })
   .refine((d) => d.newPassword === d.confirmPassword, {
@@ -85,10 +81,13 @@ export default function BuyerChangePasswordPage() {
     handleSubmit,
     formState: { errors, isSubmitting },
     reset,
+    watch,
   } = useForm<FormValues>({
     resolver: zodResolver(schema),
     defaultValues: { currentPassword: "", newPassword: "", confirmPassword: "" },
   });
+  const newPassword = watch("newPassword") ?? "";
+  const checklistId = React.useId();
 
   const onSubmit = async (data: FormValues) => {
     setApiError(null);
@@ -111,10 +110,7 @@ export default function BuyerChangePasswordPage() {
       // Return to portal after a short delay
       setTimeout(() => router.push("/buyer/portal"), 2000);
     } catch (err: unknown) {
-      const msg =
-        (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
-        "Failed to change password. Please check your current password and try again.";
-      setApiError(typeof msg === "string" ? msg : "Failed to change password.");
+      setApiError(passwordErrorMessage(err, data.newPassword));
     }
   };
 
@@ -189,11 +185,10 @@ export default function BuyerChangePasswordPage() {
             label="New password"
             autoComplete="new-password"
             register={register("newPassword")}
+            aria-describedby={checklistId}
             error={errors.newPassword?.message}
           />
-          <p className="text-xs text-navy/70">
-            At least 8 characters, with upper and lower case and a number or symbol.
-          </p>
+          <PasswordChecklist value={newPassword} id={checklistId} />
           <PasswordInput
             label="Confirm new password"
             autoComplete="new-password"

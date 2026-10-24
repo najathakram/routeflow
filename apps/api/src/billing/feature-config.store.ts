@@ -41,7 +41,7 @@ const CACHE_TTL_MS = 30_000;
  * injects THIS provider optionally, so this provider must never depend back on the authority
  * (or anything that transitively does), or the two would deadlock Nest's DI graph at boot.
  * Fails open to the registry default on any DB error — a config-store outage must never take
- * down entitlement resolution or route dispatch.
+ * down entitlement resolution or route dispatch. Only a successful read is cached.
  */
 @Injectable()
 export class FeatureConfigStore implements FeatureModeProvider {
@@ -70,12 +70,13 @@ export class FeatureConfigStore implements FeatureModeProvider {
     } catch (err) {
       // Fail open to the registry default — never throw out of a mode read. A config-store
       // hiccup must degrade to "unset" behavior, not break dispatch/entitlement resolution.
+      // NOT cached: the next read retries, so one blip never pins a tenant to the default for 30 s.
       this.logger.warn(
         `FeatureConfigStore.getMode(${tenantId}, ${key}) DB error, falling back to registry default: ${
           (err as Error)?.message ?? err
         }`,
       );
-      result = this.defaultResult(key);
+      return this.defaultResult(key);
     }
 
     this.cache.set(cacheKey, { value: result, expiresAt: now + CACHE_TTL_MS });

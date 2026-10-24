@@ -1,4 +1,10 @@
-import { formatQtySplit, normalizeBoxesPieces, type SellLevel } from "@routeflow/pricing";
+import {
+  formatQtySplit,
+  normalizeBoxesPieces,
+  unitWords,
+  type SellLevel,
+  type UnitWordsInput,
+} from "@routeflow/pricing";
 
 /**
  * Pure logic behind "add a product to the order" in `CreateOrderModal` (quick-order extras,
@@ -80,14 +86,21 @@ export function mergePieceIntoLine<T extends QtyLine>(line: T, n: number): T {
   return mergeQtyIntoLine(line, n);
 }
 
-/** The toast body after a merge, e.g. "Sample Cola — now 3" / "Sample Cola — now 2 cases + 3 pcs". */
-export function mergedLineMessage(name: string, merged: QtyLine): string {
+/** The toast body after a merge, e.g. "Sample Cola — now 3" / "Sample Cola — now 2 boxes + 3 pcs". */
+export function mergedLineMessage(
+  name: string,
+  merged: QtyLine,
+  labels: UnitWordsInput = {},
+): string {
+  const w = unitWords(labels);
   const label = merged.unitsPerBox
     ? formatQtySplit({
         qty: merged.qty,
         boxes: merged.boxes,
         pieces: merged.pieces,
-        boxLabel: "case", // the line row says "cases"
+        boxLabel: w.pack.lower, // the line row says the same word
+        // The default base keeps formatQtySplit's own "pcs"; a tenant word is spelled out.
+        unitLabel: w.isDefaultBase ? undefined : w.baseFor(merged.pieces ?? 0),
       })
     : String(merged.qty);
   return `${name} — now ${label}`;

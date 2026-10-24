@@ -2,6 +2,7 @@ import { render, screen } from "@testing-library/react";
 import {
   STOCK_FILTER_CHIPS,
   ProductStatusBadge,
+  stockCountLabel,
   getProductStatus,
   stockFilterParams,
 } from "./product-status";
@@ -48,11 +49,35 @@ describe("stockFilterParams — the Inactive chip asks the server for isActive=f
 describe("ProductStatusBadge", () => {
   it.each([
     ["INACTIVE", "Inactive"],
-    ["OUT_OF_STOCK", "Out of Stock"],
     ["LOW", "Low Stock"],
     ["IN_STOCK", "In Stock"],
   ] as const)("%s renders %s", (status, label) => {
-    render(<ProductStatusBadge status={status} />);
+    render(<ProductStatusBadge status={status} currentStock={3} />);
     expect(screen.getByText(label)).toBeInTheDocument();
+  });
+
+  // Row 330b (owner ruling): an empty product shows the real count in amber, never "Out of Stock" in red.
+  it("OUT_OF_STOCK renders the real count in the warning tone, not the danger one", () => {
+    render(<ProductStatusBadge status="OUT_OF_STOCK" currentStock={0} />);
+    const badge = screen.getByText("0 in stock").closest("span")!;
+    expect(badge.className).toContain("bg-warning-bg");
+    expect(badge.className).not.toContain("danger");
+    expect(screen.queryByText(/out of stock/i)).toBeNull();
+  });
+
+  // UX CHANGE (330b follow-up): a negative count never shows as "-2 in stock": it clamps to 0 and says how many
+  // were sold past it, in the same amber (the product stays sellable).
+  it("clamps a negative count: -2 reads '0 in stock · 2 oversold'", () => {
+    render(<ProductStatusBadge status="OUT_OF_STOCK" currentStock={-2} />);
+    const badge = screen.getByText("0 in stock · 2 oversold").closest("span")!;
+    expect(badge.className).toContain("bg-warning-bg");
+    expect(screen.queryByText(/-\d/)).toBeNull();
+  });
+
+  it("one formatter feeds every badge: zero, positive and negative", () => {
+    expect(stockCountLabel(0)).toBe("0 in stock");
+    expect(stockCountLabel(4)).toBe("4 in stock");
+    expect(stockCountLabel(-2)).toBe("0 in stock · 2 oversold");
+    expect(stockCountLabel(null)).toBe("0 in stock");
   });
 });

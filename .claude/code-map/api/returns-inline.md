@@ -197,3 +197,7 @@ Alerts, web/mobile UI, `CreditNote.taxAmount`, and B467 (DB-backed specs proving
 invariants — advisory locking, `Order FOR UPDATE`, the driver-cap Σ, `returnKey` replay races —
 against a real Postgres, not mocked Prisma; **required before PR-1d or any tenant grant**) — PR-1d/e,
 per the design's §10 PR plan.
+
+## Counter refund (SA-727, W21a)
+
+Refund-in-cash/card/check as a RESOLUTION of a captured inline return (`POST /returns/inline/:id/refund`, `.../store-credit`, `capture` `resolution`), the pure helpers in `returns/inline-return-refund.ts`, and the `?pendingRefund=true` list: see `api/landing-2026-10-06-w4-w10.md` section "Late: W21a merge train", bullet #3307 / #3295.

@@ -103,4 +103,61 @@ describe("OrderReturnsPanel (#2406)", () => {
     expect(screen.getByText("#R-2")).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /credit note/i })).not.toBeInTheDocument();
   });
+
+  const base = {
+    customerId: "c1",
+    orderId: "o1",
+    reason: "DAMAGED",
+    items: [],
+    createdAt: "2026-09-03",
+    updatedAt: "2026-09-03",
+  };
+  it("W21b: a store-credit inline return reads 'Store credit', not 'Refunded'", () => {
+    mockReturns = [
+      {
+        ...base,
+        id: "r1",
+        returnNumber: "R-5",
+        kind: "INLINE",
+        status: "REFUNDED",
+        refundMethod: "CREDIT_NOTE",
+        creditNoteId: "cn-5",
+        refundAmount: "9.0000",
+      } as unknown as Return,
+    ];
+    renderWithProviders(<OrderReturnsPanel orderId="o1" />);
+    const row = screen.getByTestId("order-return-row");
+    expect(row).toHaveTextContent("Store credit");
+    expect(row).not.toHaveTextContent(/refunded/i);
+  });
+  it("W21b: a store-credit return with only a credit note id (no method) is store credit", () => {
+    mockReturns = [
+      {
+        ...base,
+        id: "r2",
+        returnNumber: "R-6",
+        status: "REFUNDED",
+        creditNoteId: "cn-6",
+      } as unknown as Return,
+    ];
+    renderWithProviders(<OrderReturnsPanel orderId="o1" />);
+    expect(screen.getByTestId("order-return-row")).toHaveTextContent("Store credit");
+  });
+  it("W21b: a cash/card/check refund (EXTERNAL_REFUND) keeps 'Refunded'", () => {
+    mockReturns = [
+      {
+        ...base,
+        id: "r3",
+        returnNumber: "R-7",
+        kind: "INLINE",
+        status: "REFUNDED",
+        refundMethod: "EXTERNAL_REFUND",
+        refundAmount: "9.0000",
+      } as unknown as Return,
+    ];
+    renderWithProviders(<OrderReturnsPanel orderId="o1" />);
+    const row = screen.getByTestId("order-return-row");
+    expect(row).toHaveTextContent("Refunded");
+    expect(row).not.toHaveTextContent("Store credit");
+  });
 });

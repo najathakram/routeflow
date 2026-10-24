@@ -17,6 +17,8 @@ const buttonVariants = cva(
           "bg-paper text-navy border border-line-strong shadow-card hover:bg-surface-raised focus-visible:ring-navy",
         ghost: "text-ink-500 hover:bg-sunken hover:text-navy focus-visible:ring-navy",
         danger: "bg-danger text-white hover:bg-danger/90 focus-visible:ring-danger",
+        "danger-outline":
+          "bg-paper text-danger border border-danger/40 hover:bg-danger/5 focus-visible:ring-danger",
         link: "text-accent-deep underline underline-offset-[3px] hover:no-underline focus-visible:ring-accent",
       },
       // Ledger control heights: sm 28 / md 34 / lg 40, 6px corners.

@@ -44,6 +44,11 @@ function VerifyEmailInner() {
 
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
+          if ((body as { code?: string }).code === "ALREADY_VERIFIED") {
+            // Already verified: nothing to do here but sign in the normal way.
+            window.location.replace("/login");
+            return;
+          }
           const msg =
             (body as { message?: string }).message ??
             "Verification failed. The link may have expired.";

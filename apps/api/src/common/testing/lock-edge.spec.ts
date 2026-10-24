@@ -34,7 +34,8 @@ describe("isFirstWaiterOnEditorRow", () => {
 describe("pollUntil", () => {
   it("returns the first defined value", async () => {
     let n = 0;
-    await expect(pollUntil(async () => (++n >= 3 ? n : undefined), 500, 1)).resolves.toBe(3);
+    // Row 668: a 5 s budget (was 500 ms) so a loaded machine cannot time out three 1 ms probes.
+    await expect(pollUntil(async () => (++n >= 3 ? n : undefined), 5_000, 1)).resolves.toBe(3);
   });
   it("returns undefined after the timeout and probes at least once", async () => {
     const probe = jest.fn(async () => undefined);

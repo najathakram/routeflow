@@ -13,12 +13,15 @@ import { UserRole } from "@prisma/client";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
+import { NoImpersonation } from "../auth/decorators/no-impersonation.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { StripeConnectService } from "./stripe-connect.service";
 
 /**
  * Tenant-side Stripe Connect management. TENANT_ADMIN satisfies @Roles(OPERATOR).
+ * SA-778: the two mutations (`link`, `disconnect`) carry `@NoImpersonation("billing")` (payment setup is not
+ * available in a support session); billing-support-session.pin.spec.ts fails the build if a new one lacks it.
  */
 @Controller("settings/stripe-connect")
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -33,6 +36,8 @@ export class StripeConnectController {
 
   /** Returns the Stripe authorize URL; the web client navigates the browser there. */
   @Post("link")
+  @NoImpersonation("billing")
+  @Roles(UserRole.TENANT_ADMIN)
   async link(@CurrentUser() user: JwtPayload) {
     const url = await this.connect.buildAuthorizeUrl(
       user.tenantId!,
@@ -43,6 +48,8 @@ export class StripeConnectController {
   }
 
   @Delete()
+  @NoImpersonation("billing")
+  @Roles(UserRole.TENANT_ADMIN)
   disconnect(@CurrentUser() user: JwtPayload) {
     return this.connect.disconnect(user.tenantId!);
   }
@@ -66,6 +73,14 @@ const OAUTH_ERROR_MESSAGES: Record<string, string> = {
   platform_account_not_allowed:
     "That's RouteFlow's own Stripe account — sign in to your business's Stripe account and try again.",
   platform_account_check_failed: "Couldn't verify that Stripe account — try connecting again.",
+  // The three workspace-status refusals show the SHARED sentence for the status
+  // (packages/types/read-only-copy.ts). This app never value-imports @routeflow/types at runtime
+  // (no-runtime-workspace-imports.spec.ts), so these are literal copies; the controller spec
+  // asserts each byte-equal to the shared constant.
+  workspace_read_only:
+    "This workspace is currently in read-only mode. You can view records, but changes and new transactions are temporarily unavailable.",
+  workspace_suspended: "This workspace is currently suspended. Please contact support.",
+  workspace_cancelled: "This workspace has been cancelled. Please contact support.",
 };
 const OAUTH_GENERIC_ERROR = "Could not connect Stripe — try again from Settings.";
 

@@ -113,4 +113,11 @@ describe("returns.service.ts — every order.lineItems select fetches status (PR
       }),
     );
   });
+
+  it("SA-740r2: findOne() selects order.counterSale (the web requires a refund tender for a counter order)", async () => {
+    prisma.return.findUnique.mockResolvedValue(null);
+    await service.findOne("ret-1").catch(() => {});
+    const args = prisma.return.findUnique.mock.calls[0][0];
+    expect(args.include.order.select.counterSale).toBe(true);
+  });
 });

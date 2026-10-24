@@ -11,3 +11,863 @@
 - Harness trap on this Mac: `git show $VAR:path` is mangled — resolve blobs with `git ls-tree <sha> -- <path>` + `git cat-file -p <blob>`, or quote a literal `'ref:path'`. Shared compose stack belongs to the prover: clear any use through the Mac Lead first (SA-E11).
 - Master at 02:50Z 09-24: f51ca6af (#1256 c222f972 merged after #1255 and #1252). Release 1 declared after the SA-068 list landed. Pilot pack-edit HOLD LIFTED 2026-09-23 (SA-078(b) deployed).
 - READ QUEUE (at the exact sha, before merge, verdict to both leads): PENDING — #1246 B681 routine HOLD (SA-076/076a) awaiting Lane F's revision; #1257 LANDED 4fa97882, deployed 00:40Z — HOLD lifted (SA-078e); LANDED: #1256 4xx @ c222f972 (SA-077g), #1255 park guard @ 3ff8b142 deployed 23:27Z — the routine's --guard-sha anchor (SA-070(c)) (SA-080; its merge sha anchors the routine's apply gate, SA-070(c)). LANDED, verified post-merge: #1250 (contract read, SA-071c), #1219, #1232, #1234, #1236, #1237, #1243, #1245, #1253 (deployed 21:48Z). Not the SA's: #1241/#1248, #1252. Standing: B648 unowned by design (R-028); B681 chain order SA-070(c): guard merged+deployed → routine dry run → owner live run (plan hash, guard-sha ancestry against the served commit, DB fingerprint, evidence hash).
+- 09-25 update: RULINGS through SA-212. #2083 @fdf59174 PASS (SA-211) and #2112 @5f163579 PASS WITH LOWS (SA-212, three phase-1 limits accepted) sent to the fleet lead (msg 8ddb8292, delivery unconfirmed — re-send if no ack); both await the prover DB pass. Temp refs refs/sa/pr-* deleted. Standing waits unchanged: #2046 buyer screen (SA-168 HOLD), #1358 rebuild (SA-156 HOLD), #1246 revision (drop SA-069b clause), #1324 owner migration, resolver SALE-row ratio evidence.
+- 09-25 later: RULINGS through SA-220 (SA-214 lock order + SA-218 two master Invoice→Order edges land BEFORE #2083; SA-215 connect-state P0 shape; SA-216 #2114 PASS WITH LOWS; SA-217 #2060 PASS; SA-219 loose-line pack attest; SA-220 tombstones global). Awaiting: #2108 pushed sha (SA-213 applied), #2094 PR-A plan read (SA-194), #2116 family first PR.
+- 09-25: SA-221 = #2094 PR-A plan verdict (PASS WITH 3 CHANGES). SA-218 → PC builder as #2116 first PR (before #2083); SA-219 → Lane B; SA-220 → Lane IR. Next reads: #2116 first PR sha, #2108 pushed sha, #2083 re-delta after items 1b/2/3/5/6, #1270 revision, #2094 PR-A sha.
+- 09-25: SA-222/223/224 sent (#2083 @15740682, #1270 @f4841c13, #2127 @c177d5bd). Waiting: #2116 part 1 (SA-218 builder), #2108 pushed sha, #2094 PR-A build, prover DB passes.
+- 09-25: SA-225 (#2083 @9ee750cb PASS, skip-when-identical accepted; SA-E14 logged) and SA-226 (#2128 @4ed0426b PASS). Waiting: #2116 part 1, #2094 PR-A build, F2 DB lanes on #2083/#2128, #2127 after #1270.
+- 09-25: F-05 queue ruled SA-228..232 (#2117 HOLD(1) qty-increase netting; #2125 PASS WITH LOWS gated on owner migration; #2129 PASS; #2130 PASS; #2084 PASS). Waiting: #2116 part 1 sha, #2117 fix delta, #2094 PR-A build, prover DB lanes.
+- 09-25: SA-233 issued (#2083: always full recompute + skip-identical; changed-set deleted; formula (b); SA-227 folded). Next read: #2083 at its new sha after the fold + red-first pins; F2 DB lane required.
+- 09-25: SA-234 canon for the split-dialog Case guidance (web additive remainder; helpers into @routeflow/pricing); #2084 held pending rebase onto the pricing module. Next reads: #2083 new sha (SA-233 fold), #2116 part 1, #2117 fix, #2094 PR-A, pricing split-bill module PR.
+- 09-25: SA-236/237/238 sent (#2117 PASS lifts HOLD; #2125 PASS gated on migration; #2132 PASS). Waiting: #2083 new sha (SA-233/235), #2116 part 1, #2094 PR-A, SA-234 pricing helpers PR, #2084 rebase.
+- 09-25: SA-239 (pieces input canon, helper into pricing) + SA-240 (#2128 fold-before-merge; SA-E17). Next reads: #2128 folded sha, #2083 new sha, #2116 part 1, #2094 PR-A, pricing helpers PR, #2084/web rebase.
+- 09-25: SA-241 (#2083 @014b2024 PASS, F2 required) + SA-242 (#2128 @8b8a146e PASS). F2 passed #2117 @aa91ac16 and #2125 @31f7831b. Waiting: #2116 part 1, #2094 PR-A, SA-234/239 pricing helpers PR, #2084 + web split-dialog rebases, #2122 part 2.
+- 09-25: SA-243 (#1270 @71b2997e PASS WITH LOW) + SA-244 (#2137 @7f115bca PASS WITH LOW). Waiting: #2116 part 1, #2094 PR-A, pricing helpers PR (SA-234/239), split-dialog rebases, #2122 part 2, the SA-243/244 follow-up.
+- 09-25: SA-245/246 — #2138 @0fa651d7 and #2139 @4dfc240e PASS on content (Opus xhigh + F2 DB required). Asked for #2136 (watchdog lock guarding the private flip) after the R1 items. Waiting: #2116 part 1, pricing helpers PR (SA-234/239), split-dialog rebases, #2122 part 2, SA-243/244 follow-up, #2136 sha.
+- 09-25: SA-247 issued (F-05 Opus round: channel least-privileged, skipped cycle never billed, reopenStop covered; SA-E18/E19 logged). Waiting: R-ui's F-05 fix shas, #2116 part 1, pricing helpers PR, split-dialog rebases, #2136 sha, #2122 part 2, SA-243/244 follow-up.
+- 09-25: SA-248 (#2083 LOW folds agreed; PENDING reset ruled not a bug, two pins + tier-3 dead-branch note). Next read: #2083 at the folded sha; then R-ui F-05 fixes, #2116 part 1, pricing helpers PR, split-dialog rebases, #2136, #2122 part 2.
+- 09-25: SA-249 (#2112 @e482c653 PASS). Waiting: #2083 folded sha (SA-248), R-ui F-05 fixes (SA-247), #2116 part 1, pricing helpers PR, split-dialog rebases, #2136, #2122 part 2, SA-243/244 follow-up.
+- 09-25: SA-250..253 (F-05 folds: #2117 PASS WITH LOW + lock-order landing condition after #2083; #2125 PASS WITH LOW, owner migration at ecac5062; #2129 PASS; #2130 PASS, executed proof). Waiting: #2083 folded sha, #2116 part 1, pricing helpers PR, split-dialog rebases, #2136, #2122 part 2, SA-243/244 follow-up, #2117 rebase after #2083.
+- 09-25: SA-254 (#2083 @0d90fe41 PASS, first in landing order). Waiting: #2116 part 1, #2117 rebase after #2083, pricing helpers PR (SA-234/239), split-dialog rebases, #2136, #2122 part 2, SA-243/244 follow-up, #2125 LOW fold.
+- 09-25: SA-256 (#2142 @32ddb9c1 PASS WITH LOWS). Waiting: #2116 part 1, #2117 rebase after #2083, pricing helpers PR, split-dialog rebases, #2136, #2122 part 2, SA-243/244 follow-up, #2125 LOW fold, R-ui merge-and-warn (SA-255).
+- 09-25: SA-245/246 amended (Opus REQUIRED on #2138/#2139; SA-E20/E21). Re-read #2138/#2139 at their new heads against: replay + inlineReturn, guard vs revertLinkedInvoices commit, CN number hoisted before the edit tx, merge replay hash incl. inlineReturn, DB pins driving create()/updateOrderItems, Product→counter→Product 40P01 retry. #2139 after #2116 part 1.
+- 09-25: SA-257 (split invariant into @routeflow/pricing; #2083 fold before landing). Next read: #2083 at the folded sha; then #2138/#2139 new heads, #2116 part 1, #2117 rebase, pricing helpers PR, split-dialog rebases, #2136.
+- 09-25: SA-258/259/260 (F-05 PR5/6/7 PASS; PR7 LOW). Waiting: #2083 folded sha (SA-257), #2138/#2139 new heads, #2116 part 1, #2117 rebase, pricing helpers PR, split-dialog rebases, #2136, #2122 part 2, SA-243/244 follow-up, #2125 LOW fold.
+- 09-25: SA-261..267 issued (#2128 @21db7de1 PASS lands; zero-total CN gap accepted; #2138/#2139 PASS + uniform reserve-ahead fold; #1330 PASS; #1180 HOLD drop .claude edits; #2136 PASS WITH LOW). Waiting: #2083 SA-257 fold, #2116 part 1, #2117 rebase, pricing helpers PR, split-dialog rebases, #2122 part 2, SA-243/244 follow-up, #2125 LOW fold, #1180 fix sha, #2138/#2139 fold shas.
+- 09-25: SA-268 (activate() advances stale nextRunAt on every reactivation; #2130 proof = named spec) + SA-269/270/271 (#2152 PASS + retry; #1270 @e30006f7 PASS; #2137 @05368977 PASS). Waiting: #2083 SA-257 fold, #2129/#2125 fix shas, #2117 rebase, #2138/#2139 fold shas, #1180 fix sha, pricing helpers PR, split-dialog rebases, #2122 part 2, offlineQueue guard follow-up.
+- 09-25: SA-272 (SA-258 amended: reopen checks every catalog line; #2149/#2150 W/N rulings) + SA-273 (#2083 @5e9140de PASS, lands after #2152). Waiting: #2148/#2149/#2150 fix shas, #2129/#2125 fix shas, #2117 rebase onto #2083, #2138/#2139 fold shas, #1180 cleanup sha, #2152 retry fold, pricing helpers PR (SA-234/239), split-dialog rebases, #2122 part 2, offlineQueue guard follow-up.
+- 09-25: SA-274 B861 numbering design ruling sent to the lane "Let invoices continue a client's old numbering (B861)" (posts within the hour; landing verdict to the fleet lead).
+- 09-25: SA-275/276 (F-10b #2114 @a1429830 PASS, #2160 @0df16762 PASS; #2079 block lifts after landing). From Opus via the lead: #1330 W/N (report scans paused templates too) and #1180 REQUIRED (partial return after a price correction under-reverses — bookReversalChunk uses the base SALE only; InvoiceItem→Invoice lock edge in the price-adjustment tx) — both with the MacBook; re-read at their shas. Waiting: #2148/#2149/#2150, #2129/#2125, #2117 rebase, #2138/#2139 folds, #2152 retry fold, pricing helpers PR, split-dialog rebases, #2122 part 2, B861 PR.
+- 09-25: SA-277 B863–B866 billing ruling sent to the lane "Fix billing MRR and ledger defects (B863–B866)" (posts within the hour; landing verdict via the fleet lead; F2 NEED-DB).
+- 09-25: B863–B866 lane acknowledged SA-277 (recorded at its pipeline dir cause-ruling.md); building; landing verdict request will arrive at the PR sha. Proration under-quote on non-30/365 manual rows to be filed separately.
+- 09-25: SA-278..283 sent (#2160/#2125/#2129/#2130/#2161 PASS; #2162 PASS WITH LOW). Waiting: #2148/#2149/#2150 fixes, #2117 rebase onto #2083, #2138/#2139 folds, #2152 retry fold, #1180 rebuild (bookReversalChunk + lock edge) + cleanup, #1330 paused-template scan, pricing helpers PR, split-dialog rebases, #2122 part 2, B861 PR, B863–B866 PR, offlineQueue guard follow-up, #2125 SA-251 LOW.
+- 09-25: SA-284 (B858/B859 importer columns ruling; relay via the Mac Lead). Waiting: #2148/#2149/#2150 fixes, #2117 rebase, #2138/#2139 folds, #2152 retry fold, #1180 rebuild + cleanup, #1330 paused scan, pricing helpers PR, split-dialog rebases, #2122 part 2, B861 PR, B863–B866 PR, #2156/#2157 build, offlineQueue guard follow-up, #2125 SA-251 LOW.
+- 09-25: SA-285 (#2142 @928dd584 PASS) + SA-286 (#2102 @16c29cea delta PASS). Waiting: #2148/#2149/#2150 fixes, #2117 rebase, #2138/#2139 folds, #2152 retry fold, #1180 rebuild + cleanup, #1330 paused scan, pricing helpers PR, split-dialog rebases, #2122 part 2, B861 PR, B863–B866 PR, #2156/#2157 build, offlineQueue guard follow-up, #2125 SA-251 LOW.
+- 09-25: SA-287 (#2170 B861 PASS on content; owner Q4 count + F2 DB spec gate landing) + SA-288 (#2166 PASS). #2150 W1 ruled by the lead: fee lines excluded by productId null AND the exported NSF prefix constant; systemKind marker = #2169 (R1.1). Waiting: #2148/#2149/#2150 fixes, #2117 rebase, #2138/#2139 folds, #2152 retry fold, #1180 rebuild + cleanup, #1330 paused scan, pricing helpers PR, split-dialog rebases, #2122 part 2, B863–B866 PR, #2156/#2157 build, offlineQueue guard follow-up, #2125 SA-251 LOW, B861 owner count.
+- 09-25: SA-289 (#2118 rulings; read #2118 at its sha when pushed against (1)–(3)). Waiting also: #2162/#2161 R-ui deltas (SA-E25/E26 criteria), #2142 W1/W2 fold, #2148/#2149/#2150, #2117 rebase, #2138/#2139 folds, #2152 retry fold, #1180, #1330, pricing helpers PR, split-dialog rebases, #2122 part 2, B863–B866 PR, #2156/#2157, B861 owner count.
+- 09-25: SA-290 (customer restore applies SA-268; three folds agreed). Re-read #2125/#2129/#2130 at the fold shas.
+- 09-25: SA-287a (#2170 @3225df30 PASS re-confirmed). Waiting unchanged.
+- 09-25: SA-291..295 (#2138 PASS; #2139 PASS + edit-reserve fold; #2172 PASS; #1330 HOLD node_modules symlink; #2136 PASS). Waiting: #2139 fold sha, #1330 symlink removal, #2125/#2129/#2130 fold shas, #2118, #2162/#2161 deltas, #2148/#2149/#2150, #2117 rebase, #2152 retry fold, pricing helpers PR, split-dialog rebases, #2122 part 2, B863–B866, #2156/#2157, B861 owner count, #2142 W1/W2.
+- 09-25: SA-296 (#2142 @a70b913f PASS). Waiting unchanged (#2139 fold, #1330 symlink removal, #2125/#2129/#2130 folds, #2118, #2162/#2161, #2148–#2150, #2117 rebase, #2152 retry fold, pricing helpers, split-dialog rebases, #2122 part 2, B863–B866, #2156/#2157, B861 owner count).
+- 09-25: SA-287b (three #2170 folds agreed; row lock preferred). Re-read #2170 at the fold sha.
+- 09-25: SA-297..302 (F-05 folds all PASS; #2129 LOW REG-B46 comment; F2 executed restore proof). B861 Q4 prod count = 0/0 (owner at 3225df30, on #938 with SA-274). Waiting: #2170 fold sha (SA-287b), #2139 fold, #1330 symlink removal, #2118, #2162/#2161, #2117 rebase, #2152 retry fold, pricing helpers, split-dialog rebases, #2122 part 2, B863–B866, #2156/#2157.
+- 09-25: R-030 recorded (two live paying tenants: no prod writes to their rows; slugs never written) + SA-303 answers. Standing check for every read: does the PR's deploy or any script write existing rows of live tenants?
+- 09-25: SA-298 LOW withdrawn (SA-E27); SA-304 #2161 C8 design accepted with the source-line-key precision. Owner: skip-on-resume/restore for all tenants. Waiting unchanged.
+- 09-25: SA-305 (B858/B859 round 1: unmapped terms warning, notes overflow skip, consent writer in one tx). Waiting unchanged; #2156/#2157 read at their shas.
+- 09-25: SA-306 (#2170 @fc93feda PASS, two small folds). Waiting: #2170 fold sha, #2139 fold, #1330 symlink removal, #2118, #2162/#2161, #2117 rebase, #2152 retry fold, pricing helpers, split-dialog rebases, #2122 part 2, B863–B866, #2156/#2157.
+- 09-25: SA-307 (#2125 @d3deb11d PASS); SA-E28 logged; #2138 re-read criterion: preflight refuses only a key held by another customer/order, own key → replay path. #2177 filed for the per-year first-save race. Waiting: #2138 fix sha, #2170 fold sha, #2139 (lands after #2152), #1330 symlink removal, #2118, #2162/#2161, #2117 rebase, #2152 retry fold, pricing helpers, split-dialog rebases, #2122 part 2, B863–B866, #2156/#2157.
+- 09-25: SA-308 (restore advances only when a tick fell inside the removal window; SA-E30). Re-read #2129 at the fold sha. Waiting otherwise unchanged.
+- 09-25 housekeeping: the live-tenant standing ruling is **R-030** (R-029 = the pack rule, SA-063); renumbered in RULINGS.md :557/:558/:562 and HANDOFF.md; the lead removed the wrong label from PR #2179.
+- 09-25: SA-309 (#2170 @4698f134 PASS). Waiting: #2138 fix sha (SA-E28 criterion), #2129 fold (SA-308), #2172 fold (SA-E29 criteria), #2139 (after #2152), #1330 symlink removal, #2118, #2162/#2161, #2117 rebase, #2152 retry fold, pricing helpers, split-dialog rebases, #2122 part 2, B863–B866, #2156/#2157.
+- 09-25: SA-277b (B863–B866 subscribe() widening accepted; PR to follow — read at its sha with the lock-order + crossing pins).
+- 09-25: SA-310 (#1330 @1c11b946 PASS; gitignore nit). Window A (coordinator back): #2154, #2128 @21db7de1, #2112 @e482c653, #2114 @a1429830, #2148 @26916cc7, #2130 @3ccefa20, #1270 @e30006f7, #2166 @7bc0449f — land only at the passed shas. Waiting: #2138 fix, #2129 fold (SA-308), #2172 fold (SA-E29), #2139 after #2152, #2118, #2162/#2161, #2117 rebase, #2152 retry fold, pricing helpers, split-dialog rebases, #2122 part 2, B863–B866 PR, #2156/#2157.
+- 09-25: SA-311 (#2170 @cbae3b85 PASS) + SA-289 item 1 corrected (SA-E31; CreditNoteItem writer fix via bug-pipeline, own PR). Posted verbatim on #938 by the lead: SA-270, 288, 299, 300, 310. Waiting unchanged.
+- 09-25: SA-312 (#2138 @6b59fefd PASS) + SA-313 (#2172 @c2e5732b PASS). Owner's local mint: operator/customer/buyer OK; local-sa login did not reach /admin/dashboard — F2 diagnosing read-only (#2162 LOW territory). Waiting: #2139 (merges #2138 + SA-292 fold, new call shape for the size cap), #2129 fold (SA-308), #2118, #2162/#2161, #2117 rebase, #2152 retry fold, pricing helpers, split-dialog rebases, #2122 part 2, B863–B866 PR, #2156/#2157, #2170 F2.
+- 09-25: SA-314 (#2179 @f2671e20 PASS WITH LOW; index migration ruling). Master moved to fdf8e75c (window A landings). Waiting: #2139 (merges #2138 + SA-292 fold), #2129 fold (SA-308), #2118 EXPLAIN attachment, #2162/#2161, #2117 rebase, #2152 retry fold, pricing helpers, split-dialog rebases, #2122 part 2, B863–B866 PR, #2156/#2157, #2181 writer fix, #2170 F2.
+- 09-25: SA-315 (#2186 @a35c0ec2 PASS on content, via the lane; F2 gate), SA-316 (#2185 @6cc41908 PASS WITH LOWS), SA-317 (#2179 @890a3d14 PASS). Master moved to 61908363. Waiting: #2139, #2129 fold (SA-308), #2162/#2161, #2117 rebase, #2152 retry fold, pricing helpers, split-dialog rebases, #2122 part 2, #2181 writer fix, #2170 F2, #2186 F2, #2185 Opus + captures, #2177.
+- 09-25: SA-318/319/320 (#2138, #2139, #2172 PASS on content; all three conflict with master dd33057a → JIT rebase; SA re-reads the resolved inline-returns.service.ts hunk for #2138/#2139). Waiting: rebased shas + F2, #2139 L1 residual line, #2129 fold (SA-308), #2162/#2161, #2117 rebase, #2152 retry fold, pricing helpers, split-dialog rebases, #2122 part 2, #2181, #2186 F2, #2185 Opus + captures, #2177.
+- 09-25: SA-321 (#2139 L1 documented residual; #2178 fix shape). Waiting: rebased shas for #2138/#2139/#2172 (resolved inline-returns hunk re-read), #2129 fold, #2162/#2161, #2117 rebase, #2152 retry fold, pricing helpers, split-dialog rebases, #2122 part 2, #2181, #2186 F2, #2185 Opus + captures, #2177, #2178.
+- 09-25: SA-322 #2185 @325ea7a4 HOLD (1 fix: forecasting gate on the new reorder writers + importer column gate) + LOW (in-file sku/barcode claims). Waiting on the fold sha.
+- 09-25: SA-323..328 — #2125 @b4bdbdd3, #2129 @d0923a1f, #2130 @9aee56fb, #2149 @fba0c7f6, #2150 @4d7c0b3f, #2161 @f70129f3 all PASS (conditions: F2 executed proofs for #2129 and #2161; #2130/#2149 stacking re-resolve to 5/12 for the second lander). Still open: #2185 fold (SA-322), #2138/#2139/#2172 rebased shas, #2162, #2117, #2152, #2181, #2177, #2178, #2186 F2, #2170 F2, #2118 EXPLAIN.
+- 09-25: SA-329 #2185 @3c9f741d PASS (authority.can deviation accepted; msrp parity filing suggested); SA-E32 logged. #2197 filed by the lead for the #2150 issueDate note.
+- 09-25: SA-330 #2161 price ruling (a) sent; awaiting the fold sha (sourceLines snapshot, parity pin, red control $27).
+- 09-25: SA-331 #2160 @a730b624 merge PASS. Open: #2161 SA-330 fold, #2185 landing, #2138/#2139/#2172 rebased shas, #2130/#2149 second-lander re-count, #2162, #2117, #2152, #2181, #2177, #2178, #2186 F2, #2170 F2, #2118 EXPLAIN, #2197 (issueDate filing).
+- 09-25: SA-332 #2185 @87d85f55 PASS — landing on Opus confirm + F2 DB lane + boot gate.
+- 09-25: SA-333 #2142 @22fc7d11 PASS.
+- 09-25: SA-334 #2138 @69aa1292 PASS · SA-335 #2139 @e56f6a97 HOLD (ratchet row 5507 → 5488) · SA-336 #2172 @0c398ae3 PASS. Waiting: #2139 row fix sha, #2161 SA-330 fold, #2130/#2149 second-lander re-count, #2162, #2117, #2152, #2181, #2177, #2178, #2186 F2, #2170 F2, #2118 EXPLAIN.
+- 09-25: SA-337 #2161 @164b46bd PASS · SA-338 #2125 @97ff4c36 PASS. MAC DISK: Data volume 100% (1.6 GiB free); /private/tmp/claude-501 = 31 GB session scratch; Docker ~7.6 GB reclaimable; reported to the lead, SA deletes nothing. Temporary refs deleted (refs/sa/ empty).
+- 09-25: SA-339 #2139 @e2cea6fe PASS (row 5488, file 5494).
+- 09-25: SA-340 #2152 @0bfc9e28 PASS + one-helper ruling (#2139 folds retryTxOnDeadlock onto common/tx-retry.ts after #2152 lands; filing: credit-notes/billing predicates import txConflictState → filed #2200; swallowed conflict in syncInvoiceCommissionSafe → #2201).
+- 09-25: SA-341 #2161 @1e2bf38f PASS (overriddenBy = original overrider) · SA-342 #2149 @aa535c9d PASS · SA-343 #2150 @dfb77034 PASS · SA-344 #2162 @53e37737 PASS (PC Windows proof = landing condition; posted PASS).
+- 09-25: SA-345/345a #1353 HOLD (1 fix): delivered-basis readers take `deliveredQty ?? 0` for a line with no own evidence row (per line, rows win when present); B652 specs stay unchanged; census read-only in parallel, not a gate. SA-346: deliveredQtyRecompute rule accepted (force set from the rows actually deleted, selected before the deleteMany). #1353 @be7eb34b is NOT on origin (PR ref and branch both at bc50acf0) — the fold read waits for the push (Lane F folds SA-346 first, one sha).
+- 09-25: SA-347 #2161 @4a6b73c5 PASS · SA-348 #2150 @38c3a671 PASS (both spec-only).
+- 09-25: SA-346a (#1353 force set = qualifying deleted rows only; final sha 068d97a2 still pushing from the PC) · SA-349 #2205 @bffcf228 PASS WITH LOW (spawn cost in the default lane) → SA-351 @05ecf3db PASS, LOW folded. SA-350: SA-315 stands at #2186 @11a4d01c (window E landing sha; modal copy needs no captures).
+- 09-25: master 35a3d5af now carries #2161, #2172, #2152, #2142, #2160, #2150, #2162. SA-352 #2083 @2186b919 PASS (merge; #2107/#2117 rebase onto it) · SA-353 #2149 @0307e2b4 PASS (orders.service.ts 5534 vs cap 5535 — one line of headroom). pg-connection-string undeclared on master → #2205 declaration delta to confirm.
+- 09-25: #2130 landed (master 35a3d5af, coverage 7). SA-354 #2125 @05b763cf merge PASS (PENDING 6 confirmed; migration blob 48838a10 identical to the applied sha). #2149 is now the second lander on the coverage table → 4/12.
+- 09-25: SA-355 #1353 @cbd773a552fd PASS on SA-345a/346 (routes.service.ts one line under its cap) · SA-356 #2205 @5e4b9453 PASS (pg-connection-string declared; lands now).
+- 09-25: SA-357 #2138 @fbb53d74 PASS (merge) · SA-358 #2139 @74de3fec HOLD (1 fix: restore applyInlineReturnInTx's named ctx — positional ids refused on a money path; headroom to 5513 exists). SA-359 #2129 @f82ff527 merge PASS (SA-308 intact; customers.service.ts one line under its cap).
+- 09-25: SA-360/360a #2086 @e3f7041b HOLD + v2 requirements (P0 #2080: min-width 0 globally + site widths, -webkit-appearance, non-circular cascade-order spec; Opus BLOCKED e3f7041b too; v2 sha pending). SA-E33 logged (circular spec endorsed from prose). SA-360b: option A accepted (JS adjuster mirroring RenderThemeIOS's post-cascade conditions, visited ≥ 2 precondition); my cascade-order mechanism withdrawn, SA-E34 logged. SA-362 #2129 @583379fe PASS (spec-only; inclusive tick window confirmed as SA-308 intent).
+- 09-25: master 0671706c. SA-363 #2149 @af99efc7 PASS (coverage 4/12 confirmed from the table; orders.service.ts 5528 vs cap 5535) · SA-364 #2129 @0829dcb6 PASS (long-overdue resume pin). Waiting: #2086 v2 sha, #1353 cases-1/6 sha, #2139 ctx-restore sha. SA-361 #1353: cap ENFORCED + same-window web default; mixed legacy line accepted as residual; cases 1/6 rewrite only if they exercise the delivered readers. Waiting: #2086 v2 sha, #1353 cases-1/6 sha, #2139 ctx-restore sha, #2149 re-count (4/12), #1353 @068d97a2 push, #2139 retry fold sha, #2130/#2149 second-lander re-count, #2162, #2117, #2152, #2181, #2177, #2178, #2186 F2, #2170 F2, #2118 EXPLAIN.
+- 09-26 03:35Z: SA resumed after the ~01:46Z org-access outage (session "RouteFlow SA resumption post-outage [f3cc9e]"). SA-363 (#2149 @af99efc7) and SA-364 (#2129 @0829dcb6) were NEVER posted to #938 (last comment 01:37:19Z); both heads unchanged, both verdicts stand. "Routeflow Lead" (PC) is UNREACHABLE from this Mac; both rulings + the state report were sent verbatim to "RouteFlow landing coordinator resume [079c77]" (msgs 12d0a54e, a60ad3b7) for OP-15 posting/forwarding — no ack yet. Register truth: this file's dir is untracked in the main checkout, through SA-364; origin docs/sa-registers-0922 (PR #1229) stops at SA-195. Master 0671706c. Waiting: coordinator ack; second PASSes on #2149/#2129; next PR + exact sha.
+- 09-26 03:37Z: Mac Lead ("RouteFlow Mac Lead coordination", reply address uds:/tmp/cc-socks/86605.sock) asked for SA-363/364 directly; sent verbatim (msg 6465781c) with confirmation both were ruled at the current heads (#2149 @af99efc7, #2129 @0829dcb6) — no re-read needed. Mac Lead is the reachable lead from this Mac; PC "Routeflow Lead" still unreachable.
+- 09-26 03:38Z: Mac Lead ACK — SA-363/364 posted verbatim on #938 (issuecomment-5842827333), heads re-checked by the lead; verified by me via the API. Relay closed. Waiting: second PASSes + CI on #2149 @af99efc7 / #2129 @0829dcb6; next read.
+- 09-26 04:06Z: SA-365/366/367 (#1353 merge resolution vs #2130; `remaining` served by the API; #2060 consumer) sent to "Routeflow Lead" (bridge:session_017HtwhJu9iYezKnjnqcKSmw, unconfirmed) + Mac Lead (uds:/tmp/cc-socks/91846.sock). Temp refs refs/sa/pr-1353 (b55b7179e), refs/sa/pr-2060 (3bc71b43). PC lead reachable again over the bridge. OPEN asks: #2031 tax-hydration shape (Mac Lead + lane "Extract and fix vendor-bills poTotal drift", uds:/tmp/cc-socks/92160.sock); B718 web remainder (Mac Lead). Backup: ~/RULINGS-backup-2026-09-26.md.
+- 09-26 04:20Z: PC lead ACKED SA-365/366/367 (posting to #938). SA-368 (#2031 shape A + 3 requirements) and SA-369 (B718 web: mirror #1343 at page.tsx:591/:676, then close) sent to Mac Lead (uds 91846), the #2031 lane (uds 92160) and the PC lead (bridge, unconfirmed). Waiting: #1353 pushed sha after SA-365/366 (re-read), #2060 post-SA-367 sha, #2031 sha, B718 web PR sha, second PASSes on #2149/#2129.
+- 09-26 04:25Z: SA-370 (RecurringInvoiceForm:222 sibling = UNRELATED) sent to Mac Lead + PC lead. Waiting unchanged: #1353/#2060/#2031/B718-web shas; second PASSes on #2149/#2129.
+- 09-26 04:45Z: SA-371 (#2117 placement OK → R-ui uds 221 + lead), SA-372/373 (B562 PR-3 design points, PR-4 D2 gaps → lead for #938; the cloud builder reads only #938). Temp refs refs/sa/pr-{1358,2054,2058,2117}. Waiting: #2117 pushed sha; #1358 refreshed sha (fresh SA read); #1353/#2060/#2031/B718 shas; second PASSes on #2149/#2129.
+- 09-26 04:50Z: R-ui reports #2117 local 8ac6438d (SA-250 LOW folded, ratchet by spec 6133 ≤ 6158, one calendarDayOf) — UNPUSHED, awaiting a Mac Lead verify slot. SA delta read 9ded5195 → pushed head pending the push.
+- 09-26 04:58Z: SA-368a (per-line decision replaces the no-0-rate gate; SA-E61 logged) → lane, Mac Lead, PC lead. Mac Lead asked to file the blended-rate MINOR as a B-id.
+- 09-26 05:05Z OWNER RULE (via the lead): send "Routeflow Lead" ONLY numbered rulings (verbatim) and genuine blockers — no acks, status, or progress; keep window output minimal.
+- 09-26 05:30Z: SA-374 (#2107 @256469e0 PASS, LOW pins follow-up) and SA-375 (#2139 @3efed9bb PASS; #2138 superseded after merge) sent to the lead. Temp refs refs/sa/pr-{2107,2138,2139}. Open: the two DB flakes need a B-id (not mine to file); #2117 pushed sha; #1358 refreshed sha; #1353/#2060/#2031/B718 shas; second PASSes on #2149/#2129.
+- 09-26 05:50Z: SA-376 (#2117 @aed86754 PASS) → lead + R-ui. Master now 5f8ecf74 (#2149, #2129 landed 04:18–04:22Z — second PASSes no longer pending). Waiting: Opus/F2 on #2117, #2107, #2139; #1358 refreshed sha; #1353/#2060/#2031/B718 shas.
+- 09-26 06:00Z: SA-374a (#2107 @06374704 PASS; SA-E62 logged) → lead.
+- 09-26 06:10Z: SA-374a posted (#938 5843250684) + Opus PASS on #2107 @06374704. SA-377 (#2117 repack false-409 fold, amends SA-250) → lead + R-ui; #2117's next sha needs SA delta + Opus delta + F2.
+- 09-26 06:20Z: SA-378 (#2220 NOTE A fold, unit-line scoped) → lead. Temp ref refs/sa/pr-2220. Next: #2220 folded sha (one-hunk re-pin), #2117 folded sha (SA-377), F2/Opus on #2107/#2139.
+- 09-26 06:40Z: SA-379 (#1353 @bb2c4eeb PASS) → lead. Waiting: Opus/F2 on #1353, #2107 @06374704, #2139 @3efed9bb; folded shas for #2117 (SA-377) and #2220 (SA-378); #2060 post-SA-367 sha; #1358 refreshed; #2031 sha.
+- 09-26 06:50Z: SA-380 (#2117 @13c0c1a7 PASS) → lead. #2046 round-4 (mobile customer order detail :313 unit suffix) will need an SA-168 one-hunk re-pin. Waiting: Opus/F2 on #2117 @13c0c1a7, #1353 @bb2c4eeb, #2107 @06374704, #2139 @3efed9bb; #2220 folded sha (SA-378); #2046 round-4 sha; #2060/#1358/#2031 shas.
+- 09-26 07:05Z: SA-381 (#2131 scope: 700 ms gap accepted as owner-number amendment; #2059 split conditional — #2059 milestone null) → lead. Temp ref refs/sa/pr-2131. NOTE: memory file project_scan_aimbox_hold_to_scan_2026-09-24 is absent on this Mac — owner scanner ruling text unverified.
+- 09-26 07:20Z: SA-381 posted with the owner's verified words; #2059 now on R1.1 with the SA-381 scope list ⇒ SA-381(b) conditions met. SA-378a (#2220 @061a1d41 PASS) + SA-365 R7 constant clarification → lead. #1353 @bb2c4eeb gate-complete (SA-379 + Opus + F2) pending CI. Waiting: #2131 fixed sha; Opus/F2 on #2117 @13c0c1a7, #2107 @06374704, #2139 @3efed9bb; #2046 round 4; #2060/#1358/#2031 shas.
+- 09-26 07:35Z: SA-168a (#2046 @922495ab PASS) → lead; follow-up B-id asked for cart/edit-items unit suffixes. Temp ref refs/sa/pr-2046. Waiting: #2131 fixed sha; Opus/F2 on #2117 @13c0c1a7, #2107 @06374704, #2139 @3efed9bb; #2060/#1358/#2031 shas.
+- 09-26 07:45Z: Owner accepted SA-381(a) as R-031 (0.7 s rolling gap). Cart/edit-items follow-up filed as #2222 (R1.1, P2). Pending from the lead: "F-07 officially closed" ruling after #2046 merges.
+- 09-26 07:55Z: SA-380a (#2117 @ce9de695 PASS) → lead. Waiting: F2/Opus at ce9de695; #2131 fixed sha; Opus/F2 on #2107 @06374704, #2139 @3efed9bb; #2060/#1358/#2031 shas; F-07 closure ruling after #2046 merges.
+- 09-26 08:15Z: SA-382 (#2190 sign rule) + SA-383 (#2187 proration (a), both methods; custom-fee rows = own B-id) → Mac Lead + PC lead. Temp ref refs/sa/pr-2185. Waiting unchanged.
+- 09-26 08:40Z: SA-384 (#2131 @892dd3b7 PASS on content) → lead; SA-385 (#2188 helper shape) → Mac Lead + lead. Waiting: F2/Opus at ce9de695 (#2117), #2107 @06374704, #2139 @3efed9bb; #2131 Opus + device recording; #2060/#1358/#2031 shas; F-07 closure after #2046 merges.
+- 09-26 08:50Z: SA-385a (aggregate-counts amendment; SA-368 amended alike; SA-E63) → lead. #2046 gate-complete at 922495ab, first in the coordinator's window; F-07 closure ruling due when it lands.
+- 09-26 09:05Z: SA-386 (#1291 @717acb1e PASS) + SA-384a (#2131 fold: ABSENCE_GAP_MS 800 + candidate-wide clear) → lead. Master 920fac6c (#2139 landed). Expected: #2117 merge-only re-pin (ratchet conflict); #2131 folded sha; F-07 closure after #2046. Temp ref refs/sa/pr-1291.
+- 09-26 09:15Z: SA-387 (#2227 @506dd1f9 PASS) → lead. Temp ref refs/sa/pr-2227.
+- 09-26 09:25Z: SA-384b (scoped steady absence gap) → Mac Lead + lead. Waiting: #2131 folded sha; #2117 merge-only re-pin; Opus on #1291/#2227; F-07 closure after #2046.
+- 09-26 09:35Z: SA-380b (#2117 @853f7962 merge-only PASS) → lead. #2060 local ecc1be23 pending push (SA-367 re-read). Waiting: #2131 folded sha; Opus on #1291/#2227; F-07 closure after #2046.
+- 09-26 09:55Z: SA-388 (#2220 HOLD, tier 1; SA-369/378a withdrawn; SA-E64 money error) → lead. Next: #2220 fixed sha (SA-388 pins + F2 realistic-row proof); mobile follow-up B-id; server guard B-id.
+- 09-26 10:05Z: SA-386a (#1291 @12213a29 PASS) → lead. Follow-ups filed: #2230 (server guard for boxes:0 unit lines), #2231 (mobile draft hydration). Waiting: #2220 fixed sha (SA-388); #2060 push; #2131 folded sha; Opus on #2227; F-07 closure after #2046.
+- 09-26 10:15Z: SA-388a (#2231 refuse-at-save accepted) → Mac Lead + lead.
+- 09-26 10:20Z: SA-388b (#2220 qty-0 LOCKED + substitute refused, confirmed) → Mac Lead. Waiting: #2220 pushed sha; #2231 pushed sha; #2060; #2131 folded; Opus #2227; F-07 closure.
+- 09-26 10:30Z: SA-385b (#2188 pin pairs adjusted) → Mac Lead. Waiting: #2188/#2220/#2231/#2060 pushed shas; #2131 folded; Opus #2227; F-07 closure.
+- 09-26 10:45Z: SA-389 (#2189) → Mac Lead + lead. Waiting: pushed shas #2188/#2189/#2220/#2231/#2060; #2131 folded; Opus #2227; F-07 closure.
+- 09-26 10:50Z: #2188 (local 6b755f31): pin (b) uses a SEEDED subscribe()-shaped row (subscribe() cannot write a legacy-mapped SKU today) — acceptable, no reply sent per the lane's framing; verify the seed's shape (addonKey = sku, active, snapshot) at the pushed sha.
+- 09-26 11:15Z: #2046 LANDED 67fb1bd8 (deploy SUCCESS, post-deploy PASS). SA-390 (F-07 closed; units_v1 flip = per-tenant Backoffice GRANT; demo tenant first) → lead. NOTE: D-19 text absent on this Mac. Waiting: pushed shas #2188/#2189/#2220/#2231/#2060; #2131 folded; Opus #2227; #1358/#2031.
+- 09-26 11:25Z: SA-389a (#2189 flipped race pin accepted) → Mac Lead + lead.
+- 09-26 12:00Z: SA-391 (#1358 @9ec88e91 PASS; no prior verdict existed at 39d63c39) and SA-392 (#2234 PASS + required retry wrappers on the three CN paths) → lead. Temp refs refs/sa/pr-{1358,2234}. Waiting: #2234 next sha; #2188/#2189/#2220/#2231/#2060 pushed shas; #2131 folded; Opus #2227; #2031.
+- 09-26 12:15Z: SA-392 content PASS superseded (F2 red on Postgres; SA-E65 logged — "proves" before execution, again). SA-393 (#2236 = SAVEPOINT shape) → lead. BINDING for every future verdict: a DB spec is described, never "proves", until F2's run at the sha is on #938.
+- 09-26 12:35Z: SA-394 (#2234: itx detection flip + SAVEPOINT in one push; verified on the runtime) → lead. Fresh read only when F2 is green on Postgres at the sha.
+- 09-26 06:43Z (real, date -u): CLOCK CORRECTION — the handoff times written after "05:05Z" today were estimates and run ~5–6 h fast (SA-E66); the GitHub timestamps on #938 are authoritative. SA-388c (#2220 @85b71740 PASS; F2 proof 5843973272) → lead. Waiting: #2234 green sha; #2188/#2189/#2231/#2060 pushed shas; #2131 folded; Opus #2227; #2031.
+- 09-26 06:55Z: SA-384c (#2131 @e024a4e2 PASS on content) → lead. Waiting: #2234 green sha; #2188/#2189/#2231/#2060 pushed shas; Opus #2227; #2031.
+- 09-26 07:00Z: SA-395 (#2169 systemKind, five asks) → lane + PC lead + Mac Lead (two B-ids to file). Waiting: #2234 green sha; #2188/#2189/#2231/#2060 pushed shas; Opus #2227/#2131; #2031.
+- 09-26 07:02Z: SA-396 (#2234 @0e8775c3 PASS) → lead. Waiting: #2188/#2189/#2231/#2060 pushed shas; Opus #2227/#2131/#2234; #2031.
+- 09-26 14:13Z: batch SA-397..403 (#2239, #2240, #2185, #2179, #2245, #2241, #2250 guard) → lead; SA-404 (#2255) → Mac Lead + lead. Temp refs refs/sa/pr-{2239,2240,2185,2179,2245,2241}. Waiting: #2239/#2240 spec commits; #2241 fold; #2179 SA-314 owed items; #2231/#2060 pushed shas; Opus #2227/#2131/#2234; #2031.
+- 09-26 14:14Z: SA-401a (#2245 qty cap, option a) → lead.
+- 09-26 14:28Z: SA-396a (#2234 @15c30bad PASS) → lead. #2239 moved to aa553f18 (spec committed) — re-pin after F2 runs the committed spec. Waiting otherwise unchanged.
+- 09-26 14:46Z: SA-401b (#2245 @2d586fdd PASS) → lead; LOW carried to #2179 (pin the amount-only credit select). Waiting: #2239 aa553f18 F2 + re-pin; #2240 spec commit; #2241 fold; #2179 owed items; #2231/#2060; Opus #2227/#2131; #2031.
+- 09-26 16:00Z: SA-404a (#2258 sendEmail (A) + payment-writer invariant) → Mac Lead + lead.
+- 09-26 16:04Z: SA-404b (#2258 import writers exempt + B-id) → Mac Lead + lead. #2258 local 53f1e7b5 (SA-404a built) — read at the pushed sha.
+- 09-26 17:04Z: batch SA-397a/398a/399a/402a/404c/405 + SA-400a (#2179 timing = option a) → lead. Owed: #2249 + #2258 spec commits (re-pin spec-only); #2179 owner count + follow-up issue. Temp refs refs/sa/pr-{2239,2240,2241,2185,2249,2258}.
+- 09-26 17:09Z: SA-404d (#2258 HOLD: cancel tx lock+re-check; unconditional payment-writer touch; SA-E67) → lead + Mac Lead. Next: #2258 fixed sha with F2 green on both new races.
+- 09-26 17:13Z: SA-388d (#2230 CHECK shape) → R-ui + lead; follow-up B-id for the web partial-unit display.
+- 09-26 17:20Z: SA-406 (#2250 @8bdee9f5 PASS on content) → lead. Master now 3d678032. Temp ref refs/sa/pr-2250.
+- 09-26 17:37Z: SA-407 (#2272 buyer unit-line edits, option B design) → lead. Low urgency; build waits on #2270 (option A) landing.
+- 09-26 17:49Z: SA-408 (#2275 first; flip blocker for paying tenants; tier fix in #2272) → lead.
+- 09-26 17:51Z: SA-388e (#2269 @3c7f1079 PASS, LOW qty-0 parity) → lead; unblocks #2270.
+- 09-26 18:00Z: PRE-READ #2278 @e9657f6f (#2275, SA-408) — content matches: order-edit-lines.ts unitLineEdit nets count × held factor (splitBoxSize: snapshot first, live fallback) − stored pieces; different label or no factor ⇒ unsized (checked); pack lines unchanged; unit pins (+12 refused / −12 allowed / repack nets 0 / no-snapshot fallback / different unit checked / pack unchanged) + unit-line-restriction-netting.db.spec.ts (banned 3→4 refused, 3→2 allowed, repack 0). VERDICT DRAFT: PASS at e9657f6f once F2's executed run is on #938; then the SA-408 flip blocker lifts on deploy. Master now 55eb52a8. Temp ref refs/sa/pr-2278.
+- 09-26 18:11Z: SA-408a (#2278 @e9657f6f PASS on content; spec-only fold pending) → lead.
+- 09-26 18:19Z: SA-408b (#2278 option (a): null-snapshot unit line unsized; label normaliser; SA-E68) → lead. Re-pin at the fold sha.
+- 09-26 18:29Z: SA-379a (#1353 @791b225f merge-only PASS) → lead. Master 4e83f6d5.
+- 09-26 18:38Z: SA-408c (#2278 @2c62b3ae PASS) → lead.
+- 09-26 18:41Z: SA-400b (#2179 @c6584be4 PASS on delta) → lead.
+- 09-26 18:43Z: SA-405a (#2249 @225e158d PASS) → lead.
+- 09-26 18:45Z: SA-406a (#2250 @143f0bce PASS) → lead; landing on the owner's prod migration (SA-406 ii).
+- 09-26 18:55Z: SA-409 (#2177 policy: no deferred proof for the no-tx path; verdict at the pushed sha) → lead. #2258 fold answer → Mac Lead (commit F2's two-connection cases).
+- 09-26 18:57Z: SA-404e (#2258 R2 = DRAFT; SA-E69) → lead + Mac Lead. Lane B pushes after Opus's re-read at bceaf3d2.
+- 09-26 18:59Z: SA-388f (#2274 @f559aad0 PASS on content; census-0 gates the deploy) → lead. Temp ref refs/sa/pr-2274. Master 4e83f6d5.
+- 09-26 19:03Z: SA-404f (#2258 ships; F1/F2/N1 follow-up shapes ruled) → lead.
+- 09-26 19:06Z: SA-388g (#2274 N1: 409 + capture) → lead.
+- 09-26 19:11Z: SA-404g (N1 delivery writer skip-to-next accepted) → Mac Lead + lead.
+- 09-26 19:18Z: SA-404h (#2258 @c6ed3caf PASS) + SA-388h (#2274 @81a5af77 PASS on content) → lead.
+- 09-26 19:22Z: SA-410 (#2289 @91018d81 PASS on content) → lead. Temp ref refs/sa/pr-2289.
+- 09-26 19:23Z: SA-388i (#2274 HOLD: writers must pass ids; writer-driven pins; SA-E70) → lead.
+- 09-26 19:31Z: SA-388j (#2274 @229dec73 PASS on content) → lead.
+- 09-26 20:02Z: SA-411 (#2294 @aac0612a PASS on content) → Mac Lead + lead. Temp ref refs/sa/pr-2294.
+- 09-26 21:05Z: SA-412 (#2298 PASS on content) + SA-413 (#2296 PASS) → lead. Temp refs refs/sa/pr-{2298,2296}.
+- 09-26 21:19Z: SA-414 (#2060 @ecc1be23 PASS) → Mac Lead + lead; W3 window closes 21:47Z.
+- 09-26 21:31Z: SA-415 (#2299 buyer path stays on confirmed balance) → lead.
+- 09-26 22:17Z: SA-416 (#2297 one basis; draft-branch residual = own B-id) → lead.
+- 09-26 22:20Z: SA-417 (#2304 Option 1, evidence basis from :2600 only) → lead.
+- 09-26 22:21Z: SA-404h re-sent verbatim to Mac Lead for #938 (#2258 head still c6ed3caf); SA-411/412/413 posted 5850410516/5850410661.
+- 09-26 22:22Z: SA-417a (#2304 shape confirmed) → lead.
+- 09-26 22:33Z: SA-418 (Sign in with Apple design) → lead.
+- 09-26 22:39Z: SA-419 (#2314 anonymising delete) → lead.
+- 09-26 23:00Z: SA-420 (#2315 PASS) → Mac Lead.
+- 09-26 23:07Z: SA-418a (#2309 option a) → Mac Lead (for R-ui) + lead.
+- 09-26 23:23Z: SA-421 (#2316 PASS) → Mac Lead.
+- 09-26 23:28Z: SA-391a (#1358 @05e6b3aa re-pin PASS) → Mac Lead.
+- 09-26 23:28Z: SA-419a (#2314 merge-request reject + script in-PR) → Mac Lead (for R-ui).
+- 09-26 23:39Z: SA-422 (buyer edit never revives a cancelled line) → Mac Lead.
+- 09-26 23:47Z: SA-421a (#2316 @91dd41f8 PASS) → lead + Mac Lead.
+- 09-27 00:02Z: SA-423 (#2247 fold maxDecimalPlaces) → Mac Lead.
+- 09-27 00:06Z: SA-424 (#2281 PASS as-is; F1 = option a) → Mac Lead.
+- 09-27 00:22Z: SA-380c/425/426/427/428/423a (#2117, #2135, #2151, #2063, #2133, #2247) → Mac Lead.
+- 09-27 00:25Z: SA-411a (#2294 @4a61ce3d re-pin PASS) → Mac Lead.
+- 09-27 01:01Z: SA-401c (#2245 @7d352dbd PASS) → Mac Lead.
+- 09-27 01:25Z: SA-422a (#2376 PASS on content + ownership-before-noop fold) → Mac Lead.
+- 09-27 01:27Z: SA-429 (#2377 driver edit predicate) → Mac Lead.
+- 09-27 01:28Z: SA-422b (#2376 guard order a+b) → Mac Lead.
+- 09-27 01:33Z: SA-430 (#1362 PASS) → Mac Lead.
+- 09-27 01:40Z: SA-431 (dev-parity-login 07ad897a PASS on content) → Mac Lead.
+- 09-27 01:41Z: SA-422c (#2376 @fade9b9f PASS) → Mac Lead.
+- 09-27 01:57Z: SA-405b (#2249 @af4b22ec PASS) → Mac Lead.
+- 09-27 02:03Z: SA-431a (dev-parity-login @538ff524 PASS on content) → Mac Lead.
+- 09-27 02:09Z: SA-429a (#2386 PASS) + SA-422d (#2376 @0bebefad PASS) → Mac Lead.
+- 09-27 02:26Z: SA-432 (#2387 PASS) + SA-433 (#2388 PASS) → Mac Lead.
+- 09-27 02:43Z: SA-434 (#2391 predicate reuse) + SA-391b (#1358 @b0eaaabf hold for re-merge) → Mac Lead.
+- 09-27 02:47Z: SA-434a (#2391 next-delivery two-tx shape accepted) → Mac Lead.
+- 09-27 03:02Z: SA-422e (#2376 @defa9dc8 PASS) + SA-435 (#2220 @5860e460 PASS, local only — await push) → Mac Lead.
+- 09-27 03:51Z: SA-434b (#2398 PASS) → Mac Lead.
+- 09-27 04:16Z: SA-436 (credit-note P0 design) + SA-437 (safe post-invoice Case-line edits design) → Mac Lead.
+- 09-27 04:25Z: SA-391c (#1358 @ba7eaadb re-pin PASS) → Mac Lead.
+- 09-27 04:28Z: SA-438 (#2389 PASS) → Mac Lead.
+- 09-26 04:29Z: SA-436a (#2401 re-amount rule fixed; SA-E71 logged) → Mac Lead.
+- 09-27 04:41Z: SA-439 (#2411 PASS) → Mac Lead.
+- 09-27 04:45Z: SA-422f (#2376 @4dcaa5b8 hunk PASS; strip the unrelated billing-spec reflow before push) → Mac Lead.
+- 09-27 04:47Z: SA-422g (#2376 reflow accepted, check = two files) → Mac Lead.
+- 09-27 04:49Z: SA-440 (#2414 PASS) → Mac Lead.
+- 09-27 05:02Z: SA-441 (#2090 spec), SA-442 (#2405 shape), SA-443 (#2159 order), SA-444 (#2223 option a) → Mac Lead.
+- 09-27 05:02Z: SA-444a (#2223 basePriceSnapshot rule) → Mac Lead.
+- 09-27 05:23Z: SA-445 (#2419 PASS) → Mac Lead.
+- 09-27 05:29Z: SA-446 (#2420 PASS) → Mac Lead.
+- 09-27 05:38Z: SA-436b (#2423 PASS) → Mac Lead.
+- 09-27 05:46Z: SA-447 (#2288 option A) → Mac Lead.
+- 09-27 05:50Z: SA-443a (#2425 S1 PASS on content; migration name must follow the apply order) → Mac Lead.
+- 09-27 05:51Z: SA-447a (#2288 deviation accepted) → Mac Lead.
+- 09-27 05:58Z: SA-448 (#2426 PASS on content; ratchet-row re-merge needed) → Mac Lead.
+- 09-27 06:01Z: SA-448a (#2426 @fb1c4e3a re-pin PASS; not on origin yet) → Mac Lead.
+- 09-27 06:04Z: SA-436c (#2423 @6f288186 PASS) → Mac Lead.
+- 09-27 06:19Z: SA-448b (#2426 @063763fa PASS) → Mac Lead.
+- 09-27 06:32Z: SA-436d (#2404 review/2404 PASS on content) → Mac Lead.
+- 09-27 06:33Z: SA-422h (#2376 @53d741f6 — three-file check, land) → Mac Lead.
+- 09-27 06:39Z: SA-446a (#2420 @27271e9c PASS) → Mac Lead.
+- 09-27 06:56Z: SA-449 (#2430 PASS) → Mac Lead.
+- 09-27 07:10Z: SA-436e (review/2404 @8a5d4b00 PASS on content) → Mac Lead.
+- 09-27 07:17Z: OWNER PRIORITY — Stripe epic #2435; Lane B's #2436 (P0) then #2440 verdicts jump the queue when their shas arrive. PRE-READ on master (billing.service.ts): the period is read off the SUBSCRIPTION object at :832–833/:839–840 (checkout.session.completed), :1005–1006 (invoice.payment_succeeded, swallowed) and :1180–1181 (customer.subscription.updated) — under SDK 22.6.2 / API 2026-08-26.dahlia current_period_* live on items.data[0], so the diagnosis holds; the three Stripe clients (billing/stripe.service.ts :26, payment-requests/provider/stripe-payment-provider.ts :50, stripe-connect/provider/stripe-connect-oauth.provider.ts :36) pass no apiVersion. Expected #2436 shape: ONE period reader (items.data[0].current_period_* ⇒ fallback to the top-level fields, refuse/skip on neither — never an Invalid Date write), used at all three sites; apiVersion pinned identically on all three clients (one constant); dahlia-shaped fixtures red-first; the read-only report (stripeCustomerId set, stripeSubId null) counts-only, owner-run. Guards to keep: the double-subscription guard :306–330 (reads stripeSubId), the overdue cron's stripeSubId filter (memory: never drop it), the idempotent "already applied" branches (:757/:944), the free-pilot rule. #2440 shape: deleted matches on stripeSubId (not stripeCustomerId :1113), maps Stripe status → tenant state (never CANCELLED from TRIAL), updated syncs status, payment_failed ⇒ PAST_DUE/grace + portal link; ledger MRR deltas exactly once (existing CAS at :1118–1125).
+- 09-27 07:19Z: SA-446b (#2420 @97be67f8 PASS) → Mac Lead.
+- 09-27 07:24Z: SA-450 (#2440 proposal accepted, no PAST_DUE) → Mac Lead.
+- 09-27 07:26Z: SA-451 (#2444 PASS) → Mac Lead.
+- 09-27 07:34Z: SA-452 (#2446 PASS, P0) → Mac Lead.
+- 09-27 07:39Z: SA-453 (#2432 PASS) → Mac Lead.
+- SA-454 (07:47Z 2026-09-27) #2445 @a909a18f PASS on content (tier 1); gates Opus + CI + F2 working set-password link proof.
+- SA-455 (07:50Z 2026-09-27) #2433 @5b4b0a04 PASS on content (tier 1); condition: file the importInventory non-atomic item; gates Opus + F2 db lane.
+- SA-456 (07:52Z 2026-09-27) #2431 ruling: ONBOARDING_TOKEN_SECRET prod-only fatal ACCEPTED + one 32 threshold + loud non-prod warn + pinned request-time refusals; Railway env set before deploy.
+- SA-454a (08:26Z 2026-09-27) #2445 re-pinned at c7b4c69a (WEB_URL guard before mint).
+- SA-457 (08:26Z 2026-09-27) #2448 @f49f2778 PASS on content; runbook must add the exclusion consequence + exact backup command; CI red = billing block.
+- SA-458 (08:26Z 2026-09-27) #2451 interim: retrieve(null); prefill = admin-owned email; folds agreed; verdict at folded sha.
+- SA-457a (08:30Z 2026-09-27) #2448 re-pinned PASS at 1c34dcc5 (docs-only amendments verified).
+- SA-459 (08:32Z 2026-09-27) #2453 @4abd6f51 PASS (type-only; one PASS + CI).
+- SA-460 (08:44Z 2026-09-27) #2451 @9d4d8ca9 PASS on content (tier 1); gates Opus + CI + F2 authorize-URL proof.
+- SA-461 (08:49Z 2026-09-27) #2440 branch @49cc302f PASS on content vs SA-450; fold: price sync refuses an all-add-on pick; real-PG proof gate.
+- SA-461a (08:59Z 2026-09-27) #2440 branch re-pinned PASS at cb487a5b (fold met; db spec in branch; F2 runs it).
+- SA-462 (09:13Z 2026-09-27) #2442 branch @69937bdf PASS on content (tier 1 + additive migration; prod-migrate before merge).
+- SA-444b (09:26Z 2026-09-27) #2458 @1f410faf PASS on content (first verdict at a sha for #2223; patch-ids verified); gates Opus + CI + F2 real-PG proof.
+- SA-463 (09:38Z 2026-09-27) #2459 @13251cf0 PASS (test-only #2226 pins; CI gate).
+- SA-464 (09:41Z 2026-09-27) #2460 ruling: activation snapshots override ?? catalog on the paying-set crossing only + upgrade() nets against the stored snapshot (NULL ⇒ 0); lands after #2458.
+- SA-465 (09:47Z 2026-09-27) #2461 @d4bf8561 PASS (test+doc; S1 premise holds per inPlacePatch; CI + F2 db spec).
+- SA-466 (09:50Z 2026-09-27) #2462 @a6fe9759 PASS (test-only 60 s timeout on (a2); CI gate).
+- SA-465a (09:57Z 2026-09-27) #2461: S1 discrimination claim withdrawn (SA-E72); fold = held row with a stored pack; re-pin at the folded sha.
+- SA-467 (09:59Z 2026-09-27) #2464 @eb8eb3a9 PASS on content (SA-424 follow-up met; gates Opus + CI + F2 case (b) revert-red/green).
+- SA-465b (10:00Z 2026-09-27) #2461 re-pinned PASS at 36486d41 (unsplit+stored-12 fixture; split option confirmed non-discriminating); merge only when the PR head equals it.
+- SA-461b (10:13Z 2026-09-27) #2465 @dd24aaef re-pinned PASS (10/10 patch-ids + 6 files byte-identical to cb487a5b).
+- SA-468 (10:19Z 2026-09-27) #2464 closes #2290 (same writer, both orderings); file the importInvoices re-import resurrection as its own item.
+- SA-469 (10:21Z 2026-09-27) #2467 @738f0353 PASS on content (B735 parked-reversal visibility; first verdict; gates Opus + CI + F2 executed read + Playwright 3 widths).
+- SA-460a (10:26Z 2026-09-27) #2451 re-pinned PASS at 4946e9c3 (one conflict hunk = apiVersion pin + typed client, verified against the source guard).
+- SA-462a (10:31Z 2026-09-27) #2442 v2 @6c4717ce re-pinned PASS (3/3 patch-ids + 10 files byte-identical to 69937bdf; squawk 0).
+- SA-470 (10:46Z 2026-09-27) #2469 @e65dc4fc PASS on content; conditions: F2 count-0 ⇒ 409 pin + the real-PG two-connection spec in the PR.
+- SA-470a (11:00Z 2026-09-27) #2469 re-pinned PASS at af08cdfa (both conditions met; CI red = billing block).
+- SA-464a (11:05Z 2026-09-27) #2460 branch @2b51d2f7 PASS on content vs SA-464; condition: subscribe() re-entry executed in the DB spec; re-pin at the PR sha after #2458.
+- SA-470b (11:13Z 2026-09-27) #2469 R2 harness: keep intent; queue the payment first, then the void, both blocked, then commit; retries ≤ 1; Invoice-lock variant deadlocks too.
+- SA-470c (11:14Z 2026-09-27) #2469 R2 either-outcome invariant pin ACCEPTED; payment queued first + observed branch logged; re-pin at the pushed sha.
+- SA-470d (11:24Z 2026-09-27) #2469 re-pinned PASS at 3db8d2b6 (R2 payment-first, either-outcome, branch logged; nit: blockedCount not pid-scoped; CI red = billing block).
+- SA-468a (11:29Z 2026-09-27) #2468 branch @7b97d4f9 PASS on content (both re-import branches lock + re-read + refuse; widened scope confirmed); real-PG spec in the PR; re-pin after #2464.
+- SA-468b (11:35Z 2026-09-27) #2468 re-pinned PASS at ca925dce (real-PG spec in branch: both branches, void-first + race with blocked entry asserted).
+- SA-454b (11:39Z 2026-09-27) #2445 re-pinned PASS at 2a1632be (spec-only typing; merge IDENTICAL; real green CI; F2 proof carries).
+- SA-444c (13:31Z 2026-09-27) #2458: fix the cron + subscribe() snapshot WRITES (override ?? catalog, Δ0 for override rows) + downgrade note in #2458; netting stays #2460's; #2460 re-stacks after.
+- SA-444d (13:32Z 2026-09-27) #2470 item 1 folded into #2458 (SA-444c ii); #2470 keeps the rest.
+- SA-444e (13:44Z 2026-09-27) #2458 re-pinned PASS at 29ca0cd2 (SA-444c met; merge import-only; F2 extended to cron + subscribe override cases).
+- SA-464b (13:47Z 2026-09-27) #2460 v2 @df176c2b re-pinned PASS; pin change accepted (consistent override ⇒ Δ0, NULL-snapshot override ⇒ +fee); condition: pin the NULL-snapshot override case; subscribe() executed in the DB spec.
+- SA-464c (13:59Z 2026-09-27) #2460 v2 re-pinned PASS at 64258278 (null-snapshot override pins added; condition met).
+- SA-462b (14:05Z 2026-09-27) #2474 @d9b80075 re-pinned PASS (2/3 patch-ids identical, third context-only; migration byte-identical; hand-off in body).
+- SA-468c (14:28Z 2026-09-27) #2475 @cd274ec0 re-pinned PASS (4/4 patch-ids + 3 files byte-identical to ca925dce; CI red = billing block).
+- 14:33Z 2026-09-27 SAFE POINT (owner order): handoff written to .claude/handoffs/2026-09-27-sa.md; SA stopped.
+- SA-471 (14:45Z 2026-09-27) Delegation scope while the owner is away: product/technical rulings yes; prod actions, live tenants, and reversals of owner rulings deferred.
+- SA-472 (14:46Z 2026-09-27) #2476 design: no migration; outcome NULL + processedAt as the lease clock; claim via one updateMany; 503 while in flight; lease 5 min shared const; error rows claimable at once.
+- SA-473 (14:54Z 2026-09-27) B690 close stale-image; B689 stays open pending F2 current-image re-proof; pins PR + proof-stack guard.
+- SA-474 (14:54Z 2026-09-27) #2443: refuse 409 UNIT_AWARE_LINE for null/pack label on a held-Case line; (b) post-freeze.
+- SA-475 (14:55Z 2026-09-27) #2481 @2c871d0b PASS (test-only unitLineCount tripwire; CI gate).
+- SA-474a (15:09Z 2026-09-27) #2443 @dd2deefc PASS on content (local sha; merge only when pushed head equals it; CI + F2 db spec).
+- SA-450a (15:18Z 2026-09-27) #2473: payment-failed email links to /settings/billing via safeLinkHref, no portal session minted — SA-450 (4) amended.
+- SA-476 (15:22Z 2026-09-27) #2485 @d06c5193 PASS on content (due dates = literal calendar day on every invoice write path; vendor-bills sibling to file).
+- SA-477 (15:25Z 2026-09-27) #2486 @f9978331 PASS on content (Apple sign-in API + additive migration; owner steps + APPLE_* env before merge; part B on hold).
+- SA-478 (15:25Z 2026-09-27) #2392: option A — NSF predicate + prefix in packages/pricing; api delegates; mobile excludes NSF from inference + fill; backfill SQL filter.
+- SA-441a (15:26Z 2026-09-27) #2090 S4 dropped iff F2 measures 3 taps on the plain path at 390; else built.
+- SA-478a (15:28Z 2026-09-27) #2392: pricing keeps its own NSF_FEE_SYSTEM_KIND, spec-pinned to types' enum; no runtime import of @routeflow/types (boot trap).
+- 15:32Z 2026-09-27 RESYNC PR (lead request, after #1229 lands): bring .claude/sa/* + .claude/skills/senior-architect/** on master up to the local registers (SA-478a). Pre-checked: #1229 @78710380 is OPEN; its RULINGS/HANDOFF/PLAN-CLOCK/b681-sizing are PREFIXES of the local files (append-only); LEAD-ERRORS has nothing local lacks (37 local-only entries); POLICY-LAYER/B297/B562 specs and the four differing skill files differ by Prettier formatting only (table padding, emphasis) — the local files are the source, lint-staged reformats on commit. Identifier scan of .claude/sa/* and the skill dir: clean (no live slugs, UUIDs, emails, Stripe ids). Note RULINGS.md is ~922 KB of text. Branch off master AFTER #1229 lands; docs-only; needs a verify slot for the push (pre-push hook); PR base master.
+- SA-479 (15:36Z 2026-09-27) #2490 @9684801b PASS on content (three scripts guarded, import-zoho retired, API-host guard, unscoped-write scanner + allow-list).
+- SA-480 (15:40Z 2026-09-27) #2492 @226e46e9 PASS (idempotent approve retry; key exclusive to approvals; CI gate).
+- SA-436e (15:48Z 2026-09-27) #2494 @a942476d re-pinned PASS (17/21 files byte-identical, 4 context-only; migration identical, already in prod per owner).
+- SA-473a (15:52Z 2026-09-27) #2496 @cff1ee28 PASS on content; condition: dirty image fails when PROOF_STACK_REQUIRE is set; F2 real round trip.
+- SA-481 (16:05Z 2026-09-27) #2500: option B — one resolved URL for pool/banner/guard; --local vs --live-tenant-override (proxy-only, backup-taken, type-back); (A) recorded as an owner question.
+- SA-473b (16:06Z 2026-09-27) #2496 re-pinned PASS at 5ac814f8 (dirty image fails under PROOF_STACK_REQUIRE; F2 round trip gate).
+- SA-482 (16:15Z 2026-09-27) #2434 @d7842143 PASS (tier 2 by content; merge-tree clean vs 23829311; CI real green).
+- SA-483 (16:16Z 2026-09-27) #2501 @5de28c90 PASS (verbatim extraction of payment-image methods; ratchet 6111 → 6075; CI gate).
+- SA-484 (16:25Z 2026-09-27) #2406 design: proposal accepted; extraction required (10 lines headroom); Idempotency-Key + returnKey reused on retry; server figures authoritative; API echo as follow-up.
+- SA-480a (16:26Z 2026-09-27) #2477: no replayed flag; a DIFFERENT amount on a retried approve ⇒ 409 RETURN_ALREADY_APPROVED (SA-480 amended); same/absent ⇒ 200 idempotent.
+- SA-464d (16:36Z 2026-09-27) #2503 @ca461a7b PASS on content, HELD: DB spec stub lacks entitlementsService.invalidate (updatePlan :918) — real CI red; fix + re-pin.
+- SA-485 (16:36Z 2026-09-27) #2506 @7a7d9396 PASS on content (guard matches the fee it read; race pinned on real PG).
+- SA-481a (16:40Z 2026-09-27) #2508 @6fe80146 PASS on content (SA-481 B hardened: one resolved target, two paths, exclusion list, backup command, scanner widened).
+- SA-486 (16:47Z 2026-09-27) #2415 @ee70fdea: skip CAS 'not COMPLETED' ACCEPTED (enum has no other terminal state; re-skip side-effect-free); content PASS; push + CI + F2 race.
+- SA-464e (16:47Z 2026-09-27) #2503 re-pinned PASS at b98b56c1 (entitlements stub fixed; real BillingService in the Pricing step).
+- SA-487 (16:56Z 2026-09-27) #2175: option A per site + a tiny afterCommit helper; not the wrapper (retry double-emit risk); zero-emit-on-failure pins + an AST tripwire; slice if the ratchet forces it.
+- SA-488 (17:09Z 2026-09-27) #2493 item 3: one isOverdue predicate (end of due day, tenant zone, UTC fallback); recomputeStatus gains optional timeZone; credit-notes copy delegates; not split off.
+- SA-489 (17:09Z 2026-09-27) #1924: close as obsolete — qtyApplied exists nowhere; a read-only sizing report is a new owner-triaged item.
+- SA-481b (17:09Z 2026-09-27) #2508 re-pinned PASS at 8335f397 (exclusion list fails closed; backup command printed).
+- SA-486a (17:14Z 2026-09-27) #2511 @d7ca35c5 re-pinned PASS (spec-only: deterministic latch pin + specific losing errors).
+- SA-490 (17:28Z 2026-09-27) #2516 @551146e9 PASS (verbatim POD-ingest extraction; ratchet 3189 → 3142; clean vs #2511 too).
+- SA-486b (17:28Z 2026-09-27) #2511 HELD: the latch pin failed F2's revert probe; re-pin at the folded sha with the probe record.
+- SA-491 (17:32Z 2026-09-27) #2518 @1926ef7e PASS on content (SA-488 met; L-047 applied not violated; note: markOverdue is dead code — file delete-or-schedule).
+- SA-486c (17:45Z 2026-09-27) #2511 @29bbb584 re-pinned PASS; hold lifted (F2: head green, revert red).
+- SA-492 (17:45Z 2026-09-27) #2515 @d77996f9 PASS on content; unit pins are the discriminating proof; condition: pg_stat_clear_snapshot in R2's poll.
+- SA-485a (17:45Z 2026-09-27) #2519 @cf44346d PASS on content (supersedes SA-485/#2506); condition: fix the '⇒ 400' title.
+- SA-464f (17:46Z 2026-09-27) #2509 shape accepted; the activation plan-switch renewal extends SA-464 (1) (snapshot = override ?? new catalog, Δ vs stored snapshot) as its OWN item, not in #2509.
+- SA-485b (18:01Z 2026-09-27) #2519 fold (2) FAILS (Opus upheld): guarded updateMany on the subscription + tenant rows as read → 409; #2509's reconcile takes the Tenant lock first; both PRs; real-PG pin + F2 revert-red.
+- SA-492a (18:01Z 2026-09-27) #2515 re-pin criteria: pass the LOCKED order to settleStockForEdit + a non-mocked inverse pin, with the pg_stat_clear_snapshot fold.
+- SA-493 (18:01Z 2026-09-27) #2523 @8b401690 PASS (tier 2; vendor-bill dueDate literal day); billDate/effectiveAt follow-up REQUIRED (tier 1).
+- SA-494 (18:09Z 2026-09-27) #2526 @c825e9ab content PASS, HOLD: ratchet routes.service.ts 3215 > 3214 on the MERGED tree (master moved with #2511); shed ≥2 lines, never widen; re-pin at the pushed sha; tier 2 + Opus + real green.
+- SA-494a (18:11Z 2026-09-27) #2526: shed withdrawn — merged onto d7d1cb88 routes.service.ts 3150 ≤ 3167; PASS stands at c825e9ab; CI must run on a d7d1cb88+ merge ref.
+- SA-492b (18:14Z 2026-09-27) #2515 @4c14ab9a HOLD: fold right; the inverse pin arranges no active items so the real credit never reaches a write — arrange one line + assert the stock write (and its DRAFT revert writes nothing); re-pin at the pushed sha.
+- SA-495 (18:25Z 2026-09-27) #2518 @36035935 PASS content (isOverdue = SQL twin; Intl-oracle DST table; zone-as-data pins; bookkeeping zone spec); tier 1: Opus + real green.
+- SA-496 (18:25Z 2026-09-27) #2532 @21abfb62 PASS content tier 1; REQUIRED: two env names in apps/api/.env.example; re-pin + Opus + CI + F Playwright 1440/768/390; #2533 key path has no tenant id.
+- SA-497 (18:29Z 2026-09-27) #2535 @d3a0d9ce PASS tier 2: verbatim extraction (this.→deps. only), delegates keep names; row 5487→5419 = measured; #2518/#2515 fit after it (5424 ≤ 5444).
+- SA-498 (18:34Z 2026-09-27) #2536 @b97ef853 PASS content (FIRST SA verdict on #2402, not a re-pin); tier 1: Opus at sha + F2 8 pins + real green; follow-up: Serializable-cycle race pin.
+- SA-398b (18:35Z 2026-09-27) #2240 @e43706c7 RE-PINNED PASS: 5 master merges only, hand hunks = resolutions/unions (5-field locked select, fixture 149); F re-proof of the DB spec required (select change) + real green.
+- SA-499 (18:42Z 2026-09-27) #2538 @02635cf8 PASS content (SECURITY tier 1); fold: widen the tripwire to all api src; census script read-only CONFIRMED (owner-run); gates Opus + F2 probe + real green.
+- SA-500 (18:45Z 2026-09-27) Ledger immutability ruling: rows in a LOCKED filing period are immutable; corrections = counter-entries at now (discriminator + reader audit first); lock endpoint is schema-only today; #2536 not blocked, ticket filed + cross-referenced.
+- SA-498a (18:45Z 2026-09-27) #2536 fold: union intent orderIds into the Order lock set; re-pin at the pushed sha.
+- SA-496a (18:46Z 2026-09-27) #2532 @6844b6ea RE-PINNED PASS: fast-forward, .env.example only; gates F Playwright + real green.
+- SA-499a (18:52Z 2026-09-27) #2538 @2815897d RE-PINNED PASS: spec-only fast-forward, tripwire widened to all api src; F2 probe applies (src identical).
+- SA-499b (18:54Z 2026-09-27) #2538 residual (list returns raw imageKeys incl. a self-planted foreign string) NOT blocking → tier-2 follow-up; land on green at 2815897d.
+- SA-501 (18:57Z 2026-09-27) #2545 @9715f14d PASS tier 2: capture's null read-back ⇒ 404 like approve(); + the owed #2143 pin.
+- SA-495a (18:58Z 2026-09-27) #2518 F1 (writers recompute on UTC; 15 sites omit tz) NOT blocking → tier-1 follow-up with #2520: required tz param + once-per-request resolver + tenant-zone cron; #2518 lands on Opus + real green.
+- SA-501a (19:00Z 2026-09-27) #2545 pin note amended: :314 green on master (default mock carries cn-1); :320 is the discriminator; lead's tier-1 + F2 unit proof welcome.
+- SA-502 (19:11Z 2026-09-27) #2547 @b8c403e2 PASS content (SECURITY tier 1); census follow-up ticket required before landing; gates Opus + F2 4-point probe + real green.
+- SA-503 (19:17Z 2026-09-27) #2528 @ff010003 PASS content tier 1 (Tenant lock first → read → CAS → emit in tx; no self-deadlock; real green at sha).
+- SA-485c (19:17Z 2026-09-27) #2519 @3bf762ba RE-PINNED PASS (guarded updateMany on the row as read + tenant status; real-PG 409 pin); F2 revert-red + Opus + green.
+- SA-492c (19:17Z 2026-09-27) #2515 @d000aab0 RE-PINNED PASS (inverse pin proves the +5 credit write; DRAFT mirror writes nothing).
+- SA-503a (19:20Z 2026-09-27) #2528 PASS→HOLD (Opus upheld; SA-E74): fold retryOnTxConflict + real-sequence pins; sibling PR makes upgrade/cron/cancel/resume take lockTenantForLedger first; sibling lands first.
+- SA-498b (19:31Z 2026-09-27) #2536 @69c42d91 RE-PINNED PASS (intent orders in the sorted lock set; #2541 cross-ref); Opus + F2 8 pins + green.
+- SA-504 (19:31Z 2026-09-27) #2553 @9379d527 PASS tier 2 (refusal only when a write would happen; #2468 invariant intact).
+- (19:36Z 2026-09-27) BOARD = #2554 from now on (#938 capped at 2,500 comments). SA relays via the Mac Lead, never posts (OP-15).
+- SA-474b (19:39Z 2026-09-27) #2443 @4b83adff (local) RE-PINNED PASS: plain auto-merge of dd2deefc + 8cbe60b4, fix patch-identical, clean vs 538d81c6; needs push slot + real green.
+- SA-505 (19:41Z 2026-09-27) #2555 @7979993c PASS tier 1 (Tenant lock after the hook in upgrade/cron; first in cancel/resume; F2 head green, revert 40P01); lands before #2528.
+- SA-506 (19:53Z 2026-09-27) #2556 @3645839c PASS content tier 1; FOLD: ship the sweep DARK (OVERDUE_SWEEP_MODE, count-only default); ratchet slice AFTER; #2536 lands first, #2556 adapts the 4 helper calls.
+- SA-505a (19:53Z 2026-09-27) #2555: two more inverting writers (downgrade(), updatePlan's scheduled-downgrade) — fold into #2555; tripwire recommended; hook-vs-lock uniformity → later ticket.
+- SA-503b (19:53Z 2026-09-27) #2528 @a75879e2 RE-PINNED PASS (retryOnTxConflict per attempt; real-sequence + Tenant-held pins); lands after #2555.
+- SA-507 (19:59Z 2026-09-27) #2286 @d11631a3 (local; #2272 build) FIRST SA verdict: PASS content tier 1 (SA-407 shape, owner-first 403, customer tier, held factor; 67ee2165 hand hunks verified); push slot → Opus + F2 + green.
+- SA-508 (19:59Z 2026-09-27) #2560 ruling: lockTenantForLedger after the hook in onCheckoutCompleted; retryOnTxConflict recommended; own tier-1 PR after #2555/#2528.
+- SA-505b (20:00Z 2026-09-27) #2555 @cb5e2715 (local) RE-PINNED PASS: downgrade() + updatePlan scheduled-downgrade lock first; tripwire sound (nit: scans $transaction only); lands first once pushed.
+- SA-425a (20:07Z 2026-09-27) #2562 @f596f75f PASS content (SA-425 verbatim); HOLD: ratchet-row conflict → resolve to measured 3126; no CI run yet; then Opus + F2.
+- SA-507a (20:07Z 2026-09-27) #2286/#2561 PASS WITHDRAWN → HOLD (F2 red: classifier before guard after the merges); fix order + order pin; re-pin with F2 green. SA-E75.
+- SA-425b (20:08Z 2026-09-27) #2562: fold a real-PG race pin for the RouteRun lock (T2 holds a run-status UPDATE ⇒ reorder blocked ⇒ 400 after commit; revert red) — same push as the ratchet re-merge.
+- SA-507b (20:10Z 2026-09-27) #2561 Opus HIGH confirmed (buyer bare-id removal cross-order): verdict requires byId membership → 400 shape (not 404); ownership before classify; tier fix pinned; staff bare-id write scoping = separate tier-1 SECURITY ticket.
+- SA-509 (20:12Z 2026-09-27) #2564 @123cb158 PASS tier 2: KPI tiles extracted verbatim; addCalendarDays moved + re-exported; row 6075→5926 = measured; #2556 merges clean onto it; lands before #2556.
+- SA-507c (20:17Z 2026-09-27) #2561 @27da5547 (local) PASS content tier 1: classify pure → planCancelledLines → guard → assertBuyerDiffShape (owner-first 400); foreign-id removal ⇒ shape; tier-3 pin. Push slot → Opus + F2 green + real green.
+- SA-505c (20:18Z 2026-09-27) #2555: F2's unit+tripwire reds satisfy SA-505b (mechanism proven once on PG via upgrade()); no further push; PG downgrade case welcome in #2560.
+- SA-505d (20:19Z 2026-09-27) #2555: adopt the lead's stricter gate — one real-PG pin on downgrade() (blocked, both commit; revert ⇒ 40P01); scheduled-downgrade rides on unit+tripwire; re-pin at the pushed sha.
+- SA-506b (20:22Z 2026-09-27) #2556 @55a128c4 RE-PINNED PASS: SA-506a modes verbatim; B2 SENT/VIEWED; B3 explicit zone; count script read-only; #2536 merge union correct; lands after #2564 (merge-only re-pin).
+- SA-505e (20:22Z 2026-09-27) #2555 @f542ba30 (local) RE-PINNED PASS: spec-only; the SA-505d downgrade() real-PG case verbatim (blocked, both commit, SQLSTATE-captured errors []); push → delta + F2 + real green; lands first.
+- SA-474c (20:25Z 2026-09-27) #2559 × SA-447: the 409 UNIT_AWARE_LINE wins (SA-474's ordering); the DB case is rewritten to expect it with seen [] and no write; spec-only; re-pin + real green incl. DB job.
+- SA-474d (20:29Z 2026-09-27) #2559 @7bb6b220 (local) RE-PINNED PASS: tree = auto-merge + the one SA-474c spec hunk (UNIT_AWARE_LINE, seen [], lines + stock unchanged); push → real green incl. DB job.
+- SA-510 (20:37Z 2026-09-27) #2566 @07ce4794 PASS content TIER 1 (hard-delete of money records); fold: WRITTEN_OFF blocks — set = enum − {DRAFT, VOID} with a set-equality pin; deleteImportedCustomers (no guard) → separate tier-1 ticket; CI red = billing block.
+- SA-464g (20:39Z 2026-09-27) #2568 @c3723907 PASS content tier 1 (SA-464f (B) verbatim: planSwitch rebases snapshot, books newBase − stored in-tx; override Δ0; NULL self-heals); CI red = billing block.
+- SA-510a (20:41Z 2026-09-27) #2566 TOCTOU confirmed: re-check in tx (409) + write-time CAS on the invoice deleteMany (notIn BLOCKING, count = read) — scoping alone refused (no cascade ⇒ raw P2003); same for the single record-free path; line-neutral via a preflight module extraction.
+- SA-474e (20:47Z 2026-09-27) #2559 @4e31bffa (origin) RE-PINNED PASS: merge of 7bb6b220 + the remote update-branch 0e3e894a, tree identical to SA-474d's; CI pending.
+- SA-511 (20:51Z 2026-09-27) #2563 @7cf46b84 (local) PASS content SECURITY tier 1: writeLineRemoval scoped { id, orderId }, count 0 ⇒ 404 in-tx; rows lowered to measured; spec block moved verbatim; clean with #2561; push → Opus + F2 + real green.
+- SA-512 (20:55Z 2026-09-27) #2565 @2456a75c (local) PASS content tier 1: unconditional buyer ownership first after the order read, before the CANCELLED 400 / classify / plan / guard / revert; pins unit + real PG; clean with #2561/#2563; lands after them.
+- SA-511a (20:55Z 2026-09-27) #2563 conflict = the 3 adjacent ratchet rows only; resolve lower-of (5408 / 5926 / 9439); merge-only re-pin on the pushed sha.
+- SA-511b (20:57Z 2026-09-27) #2563 @3ff5d975 (local) RE-PINNED PASS: tree = auto-merge + the SA-511a lower-of ratchet resolution only; push GO is the Mac Lead's.
+- SA-510b (21:08Z 2026-09-27) #2566 @f095bfba RE-PINNED PASS tier 1: enum-exclusion set (WRITTEN_OFF blocks); preflight module with in-tx re-check + delete CAS + record-free guard; row 3307→3276 = measured; F2 race queued; real green owed.
+- SA-474f (21:12Z 2026-09-27) #2559 @7adddd52 RE-PINNED PASS (update-branch merge, tree = auto-merge, content patch-identical); #2561/#2568 reds = billing block.
+- (21:13Z 2026-09-27) INTEGRITY SWEEP: all 11 merged PRs landed this window (#2555 #2545 #2538 #2547 #2536 #2564 #2526 #2240 #2535 #2519 #2515) have final heads = an update-branch merge of my pinned sha + master whose tree EQUALS git's auto-merge — no unpinned content landed. Open pins current: #2528 a75879e2 (Verify pass) · #2556 55a128c4 (pass; awaits the #2564 re-merge) · #2559 7adddd52 (SA-474f, CI pending) · #2561 27da5547 / #2568 c3723907 (Verify red = billing block; real run owed) · #2566 f095bfba (pending) · #2562 f596f75f (HOLD: re-merge + lock pin) · #2523 8b401690 (pass) · #2532 6844b6ea (pass) · local unpushed: #2563 3ff5d975, #2565 2456a75c.
+- SA-507d (21:14Z 2026-09-27) #2561 @a24f91ad RE-PINNED PASS (update-branch merge, tree = auto-merge, content e06ba713 identical); real CI run pending; Opus + F2 owed.
+- (21:14Z 2026-09-27) #2559 LANDED at d4e84dc9 (DB job green) — SA-474 line closed. SA-474f process note corrected: the Mac Lead posts tree-identity evidence on #2554; scan for 'Mac Lead · tree-identity check' before noting a head move.
+- (21:15Z 2026-09-27) SWEEP vs master d4e84dc9: every open pinned head merge-clean and within ratchet caps (#2528 #2556 #2566 #2568 #2523 #2532 #2563 #2565 #2561) except #2562 (the known SA-425a ratchet-row conflict; merged routes.service.ts = 3126 lines → resolve the row to measured 3126, plus the SA-425b lock pin, then re-pin by tree identity).
+- SA-508a (21:24Z 2026-09-27) #2560 @d94a8d3d PASS content tier 1: checkout tx = advisory → hook → Tenant lock → CAS/upsert → audit, retryOnTxConflict; tripwire hardened, KNOWN empty + must-still-violate pin; push → Opus + real green.
+- SA-502a (21:25Z 2026-09-27) #2575 @7fac34bf PASS tier 2: POD-key census read-only confirmed (read-only session, one SELECT, no values/slugs printed; mirror pinned to the real isPodStorageKey); owner-run.
+- (21:26Z 2026-09-27) #2561 LANDED at f7f92241 (#2272 build) — the SA-507 line (507 → 507d) is closed. SWEEP vs f7f92241: all open pinned heads clean except #2562 (known ratchet conflict) and #2565 @2456a75c, which alone would breach the orders.service ratchet on the merged tree (5448 > 5444) — SA-512's 'lands after #2563' is load-bearing: projected after #2563 = 5425 vs cap 5433.
+- SA-512a (21:27Z 2026-09-27) #2565 must land AFTER #2563 (5448 > 5444 alone; 5425 ≤ 5433 after); re-merge + merge-only re-pin before its push.
+- SA-510c (21:27Z 2026-09-27) #2569 null-tenant refusal WELCOME (fail-closed, mirrors deleteAllCustomers); review at the cherry-picked sha.
+- SA-511c (21:29Z 2026-09-27) #2563 PASS → HOLD (Opus upheld; SA-E76): id-less CANCEL/DELETE ⇒ Prisma drops undefined id ⇒ whole-order strike-off; fold = presence precondition in writeLineRemoval + loop guard + 4 role cases + real-PG multi-line case.
+- SA-510d (21:31Z 2026-09-27) #2566: F2's executed probe accepted; the committed race spec must be code-agnostic (flip at the shared tenantTransaction seam) — spec-only fold + re-pin before landing. Master sweep for SA-E76 many-write class: none on master.
+- SA-510e (21:31Z 2026-09-27) #2566 lands on F2's executed probe (SA-505c precedent; live data-loss fix); the committed race spec → behavioural (FOR UPDATE + pg_blocking_pids flip) follow-up, tier 2, after #2569.
+- SA-511d (21:34Z 2026-09-27) #2563 @8187a035 (local) RE-PINNED PASS: writer precondition + payload-first assertRemovalsNameALine (placement accepted), 4 role cases + real-PG multi-line; push → Opus + F2 + real green; lands before #2565.
+- (21:35Z 2026-09-27) #2523 LANDED at cafabfa9 (vendor-bill dueDate literal day; SA-493) — the SA-493 line is closed; its billDate follow-up is #2527 (tier 1, invoice-dates lane).
+- SA-510f (21:35Z 2026-09-27) #2566 @449f7962 RE-PINNED PASS (update-branch merge = auto-merge); lands on delta + F2 probe + real green.
+- SA-511e (21:37Z 2026-09-27) #2563: keep the first-statement placement (payload-only validation may precede ownership); staff ADD pin welcome (spec-only re-pin if committed).
+- SA-503c (21:37Z 2026-09-27) #2528 × #2578 duplicate tx-retry import on the merged tree (verified): #2578 first, #2528 re-merges + drops its duplicate → re-pin; pairwise duplicate-import sweep adopted.
+- (21:39Z 2026-09-27) #2578 (#2560's PR) is on origin at d94a8d3d = the SA-508a pin — the verdict attaches; gates Opus + real green; lands BEFORE #2528 (SA-503c).
+- SA-485d (21:41Z 2026-09-27) #2580 @477596e9 PASS tier 2 (P2002 on the first create ⇒ the same 409; nothing-after-commit pins). Sweep heuristic refined to duplicated binding names (#2563×#2565 = false positive).
+- SA-502b (21:44Z 2026-09-27) #2582 @e9b31eef PASS tier 2 (per-stop pin on write, null refused, unicode/trailing-dot rows, tidy); real green owed.
+- (21:45Z 2026-09-27) GATE SNAPSHOT (master cafabfa9): Verify PASS at pin — #2528 a75879e2 (awaits #2578 first + its re-merge, SA-503c), #2556 55a128c4 (awaits the #2564 re-merge), #2566 449f7962 (landable: SA-510f + delta + F2 probe), #2532 6844b6ea (awaits F Playwright), #2578 d94a8d3d (awaits Opus), #2575 7fac34bf; pending — #2580, #2582; #2568 Verify fail (classification below); #2562 CONFLICT (known); local — #2563 8187a035, #2565 2456a75c.
+- (21:46Z 2026-09-27) #2566 LANDED at 7e59b42b (customer-delete pre-flight + in-tx guards; SA-510 → 510f) — the SA-510 line is closed; #2569 (deleteImportedCustomers) may now be cherry-picked onto master; the behavioural race-spec follow-up (SA-510e) is owed as its own ticket after #2569.
+- SA-506c (21:47Z 2026-09-27) #2556 @d1e633cb RE-PINNED PASS (update-branch = auto-merge; 5943 ≤ 5951); Opus + F2 + real green.
+- SA-513 (21:47Z 2026-09-27) #2045 item (3): unify subscribe/upgrade on isPayingRow under the lock — own tier-1 ticket after #2528/#2578/#2568 land; snapshot written regardless, booked iff paying.
+- SA-511g (21:50Z 2026-09-27) #2563 @9f429df6 RE-PINNED PASS (auto-merge + lower-of ratchet resolution 5408/9439/3276); lands before #2565 (projected 5426 ≤ 5433).
+- SA-514 (21:52Z 2026-09-27) #2045 @1867f093 (local) PASS content tier 1: class read under the Tenant lock; mrr doc accurate; paying-set gate pins; no clashes with open billing PRs; push → Opus + real green.
+- SA-425c (22:02Z 2026-09-27) #2562 @d157b37d RE-PINNED PASS (re-merge with row = measured 3126; SA-425b status-race lock pin); gates delta + F2 revert-red + first real green.
+- SA-510g (22:02Z 2026-09-27) #2586 @6f05d281 PASS content tier 1 (null-tenant 403 + the three #2566 guards on deleteImportedCustomers); Opus + real green.
+- (22:02Z 2026-09-27) #2556 LANDED at b55042b0 (overdue sweep dark + tz on every status writer) — the SA-506 line is closed; OVERDUE_SWEEP_MODE enforcement is the owner's action.
+- SA-515 (22:06Z 2026-09-27) #1534 B113: option (A) — staff re-validation on connect + resync now; the expiry kick only together with client recovery; role must equal the token's.
+- SA-516 (22:06Z 2026-09-27) #2587: import-only selector needs a real marker (owner's word on the product question); money records (credit notes, payments, advances) refuse + in-tx re-check + zero-count CAS — tier 1, MacBook after #2579.
+- SA-510h (22:06Z 2026-09-27) #2586: F2 executed probe adopted as a gate.
+- SA-514a (22:08Z 2026-09-27) #2584 @f06e5a6b (local) RE-PINNED PASS: spec-only; concurrent class-flip case discriminates (1 vs 2 events); push → Opus + F2 + real green.
+- (22:08Z 2026-09-27) #2532 LANDED at e6f74e09 (product images: uploads throttler + stable URLs; SA-496/496a) — the SA-496 line is closed.
+- (22:08Z 2026-09-27) #2584 (#2045) is on origin at 1867f093 = the SA-514 pin (attaches); the SA-514a spec fold f06e5a6b awaits its push.
+- SA-511h (22:09Z 2026-09-27) #2573 @c188bbdd RE-PINNED PASS (update-branch merge = auto-merge; content identical); CI pending; lands before #2565.
+- SA-516a (22:09Z 2026-09-27) #2587 single deleteCustomer path: money record ⇒ 409 without force / soft-delete with force; hard branch's in-tx twin widened — confirmed.
+- SA-510i (22:10Z 2026-09-27) #2589 @16ea24f8 PASS tier 2: behavioural CAS race spec (T2 holds the invoice FOR UPDATE, flips, commits ⇒ 409 rows identical; e35abb0b destroys), spec-only, uncoupled.
+- SA-484a (22:13Z 2026-09-27) #2406 @aa168419 (local) PASS content tier 1 with ONE fold: web create sends Idempotency-Key per attempt paired with the returnKey (server reads it only on POST; PATCH items has none — P2002 backstop; follow-up 409 mapping). Gates: Opus + Playwright 1440/768/390 × 4 states + F2 compose + real green.
+- (22:14Z 2026-09-27) GATE SNAPSHOT (master e6f74e09; landed this window incl. #2523 #2559 #2561 #2564 #2566 #2556 #2532): open pins on origin, all merge-clean/within caps — #2528 a75879e2 (Verify pass; lands AFTER #2578, then re-merges dropping its duplicate tx-retry import → re-pin, SA-503c) · #2578 d94a8d3d (pass; awaits Opus) · #2562 d157b37d (pass; awaits delta + F2 revert-red) · #2573 c188bbdd (pending; lands before #2565) · #2586 6f05d281 (pass; awaits Opus + F2 executed probe, SA-510h) · #2589 16ea24f8 (pending; F2 head/revert) · #2575 7fac34bf · #2580 477596e9 · #2582 e9b31eef (all pass; await Opus/landing) · #2584 1867f093 (SA-514; the f06e5a6b spec fold awaits push) · #2568 c3723907 (Verify red = billing block; re-trigger owed; awaits Opus + F2). Local, awaiting push: #2565 2456a75c (re-merge onto master after #2573 lands; 5426 ≤ 5433), #2406 aa168419 (SA-484a fold: web create Idempotency-Key). Tickets owed: SA-513 (#2583), SA-516 (#2587), SA-515 (#1534 PR), the PATCH-items P2002→409 follow-up, the #2577 siblings.
+- SA-516b (22:16Z 2026-09-27) cleanup-imported FK 500: refuse customers with RouteRunStops (delivery history) in the pre-flight + in-tx twin + zero-count CAS; joins #2587's PR.
+- SA-484b (22:17Z 2026-09-27) #2406 @64ff5f1d (local) RE-PINNED PASS: Idempotency-Key minted/cleared with the returnKey, header-only, pinned; merge = auto-merge; push → Opus + Playwright ×4 states + F2 compose + real green.
+- (22:18Z 2026-09-27) #2573 (#2563) LANDED at e1805008 — the SA-511 line (511 → 511h) is closed; #2565's re-merge onto e1805008 is now due (SA-512a; projected orders.service 5426 ≤ 5433).
+- (22:18Z 2026-09-27) #2584 is on origin at f06e5a6b = the SA-514a pin (attaches); F2's DB re-run starting.
+- SA-510j (22:18Z 2026-09-27) #2586 @ac38f602 RE-PINNED PASS (update-branch merge = auto-merge; content identical); gates Opus + F2 probe + real green.
+- SA-512b (22:20Z 2026-09-27) #2574 on origin at 2456a75c (SA-512 attaches); expected update-branch tree 947a52d8 (= a25c3279's; 5426/9441 within caps) — re-pin by tree identity when it appears.
+- SA-516c (22:22Z 2026-09-27) #2587/#2591: retiring REG-B189 delete-assertion pins is right (inverse pins replace them; row down only); the single path treats delivery history like a money record — confirmed.
+- (22:23Z 2026-09-27) #2587/#2591 (local 3d0ddaa99, stacked on #2586): SA-516c(1) condition reported MET — each retired REG-B189 delete-assertion has its inverse (deleteAll/deleteImported with a credit note ⇒ 409 'cust-1: 1 record(s)', creditNote.deleteMany never called, no tx; the single hard path ⇒ 409 nothing deleted; a no-credit-note control proceeds with only the zero-row CAS); spec row 3209 → 3138 down only. To be verified at the PR's sha once #2586 lands.
+- SA-515a (22:25Z 2026-09-27) #1534: fail-open resync on a FAILED read acceptable (connect fail-closed; logged; next resync re-checks; negative answers always disconnect).
+- SA-515b (22:27Z 2026-09-27) #1534 @4891f55b (local) PASS content tier 2: staff sockets re-validated at connect (fail-closed) + resync (fail-open per SA-515a, pinned); no expiry kick; real-PG select case; push → real green.
+- (22:28Z 2026-09-27) #2586 (#2569) LANDED at a2bb6344 — the SA-510 line (510 → 510j) is closed; the #2587/#2591 PR may now be cherry-picked onto master.
+- SA-510k (22:29Z 2026-09-27) #2589 @2d940816 RE-PINNED PASS (update-branch = auto-merge; spec-only); real green owed.
+- SA-512c (22:29Z 2026-09-27) #2574 expected update-branch tree vs a2bb6344 = 6c8c506e (5426/9441 within caps).
+- SA-510l (22:30Z 2026-09-27) #2589: F2's 16ea24f8 run carries to 2d940816 (spec + exercised code identical; only #2586's deleteImportedCustomers hunks differ).
+- SA-484c (2026-09-27T22:39Z) #2406: GET /returns `kind=STANDARD|INLINE|ALL` default STANDARD, 400 on other; no priceReturn on INLINE rows (refundEstimate null); scoping unchanged; panel kind=ALL; real-PG pins + captures; re-pin.
+- SA-515c (2026-09-27T22:43Z) #2593: Google staff issuer mints canActAsDriver; gateway compares only when the claim is present, mismatch either way disconnects; pins listed; re-pin at fold sha by full read. SA-E77 logged.
+- SA-517 (2026-09-27T22:43Z) #1529 scope: AR rows carry deposit fields + top-level depositOverdue summary, totals unchanged; pure helper with todayIso; no server-side default; two PRs (API tier 1, UI tier 2).
+- SA-515d (2026-09-27T22:44Z) #2593 re-pin @ffd5098d (local ff): hunks = SA-515c; users loaded without select; PASS attaches on push.
+- sweep (2026-09-27T22:45Z): master a2bb6344→23c36079 (#2589 landed); #2574 expected tree recomputed = 736876a6 (merge-tree 2456a75c+23c36079); #2593 still @4891f55b on origin (fold ffd5098d unpushed); #2584 head moved f06e5a6b→8276d86f (tree check: match).
+- SA-514b (2026-09-27T22:46Z) #2584 @8276d86f carries SA-514/514a by tree identity (pure merge of f06e5a6b + 23c36079).
+- SA-516d (2026-09-27T22:52Z) #2594 @3399d9c5: code PASS (1 of 2); gate needs executed Payment + InvoicePayment relation-filter cases in the db.spec, real green, Opus #2.
+- 2026-09-27T22:54Z: #2568 @082a2997 carries SA-464g (SA-464h) and #2575 @67c32242 carries SA-502a (SA-502b) by tree identity (pure merges with 1f9f48f0) — ids corrected per SA-E78; #2593 pushed ffd5098d (SA-515d attached); #2574 expected tree now bfda15a1.
+- SA-516e (2026-09-27T22:57Z) #2594: Opus FAIL upheld (#2589 race fixture seeds an InvoicePayment ⇒ pre-flight 409, race unexercised); fold = InvoiceItem child + SA-516d seeds; LOW1 ordering safe; LOW2 covered, no change.
+- SA-484d (2026-09-27T22:59Z) #2406 fold @12244655 (local): PASS on content = SA-484c verbatim; attaches on push; gates unchanged.
+- SA-517a (2026-09-27T22:59Z) #1529 PR-A @1ee9c671 (local): PASS on content (1 of 2); helper pure, tenant-day via symbolic stamp, ratchet 5916 measured; Opus #2 + real green + F2 db.spec.
+- SA-502c (2026-09-27T23:00Z) #2575 @fce096b6 carries SA-502a (pure merge with 31b1e18d). #2593 real green at ffd5098d. #2594 replay job red — classifying. #2574 expected tree 3b6abb03.
+- 2026-09-27T23:01Z: #2594 replay red = real (race spec :152 blocked=false on the merge ref) — SA-516e confirmed by CI.
+- SA-516f (2026-09-27T23:06Z) #2594 @d6c5850f re-pinned PASS (1 of 2): executed relation-filter seeds + InvoiceItem race child + pure merge of 1f9f48f0; needs replay+Verify green, Opus #2, F2.
+- 2026-09-27T23:07Z #2578 @dc3551e7 carries SA-508a by tree identity (pure merge with 31b1e18d).
+- SA-503d (2026-09-27T23:14Z) #2528 fold @528ae8f9 (local): re-pinned by tree identity + one import hunk; reconcilePriceLedger byte-identical ⇒ F2 carries; attaches on push.
+- SA-516g (2026-09-27T23:15Z) #2594 @b2acc8cf carries SA-516f by tree identity; replay job now GREEN (SA-516e proven); Verify pending; Opus #2 + F2 owed.
+- SA-516g restated (2026-09-27T23:16Z): #2594 @b2acc8cf only Verify remains (lead delta PASS + F2 PASS carry, replay green). SA-E79 logged.
+- SA-484e (2026-09-27T23:19Z) #2406 @6d52c2c4 (local): boot-crash fix (Prisma enum whitelist + import-type tripwire) PASS on content, attaches on push; SA-E80 logged (my types value-import instruction).
+- SA-502d (2026-09-27T23:19Z) #2575 @ec5b2b38 carries SA-502a.
+- SA-512c (2026-09-27T23:19Z) #2562 conflicts on size-ratchet.spec only: master's rows except routes.service 3126; hand-merge ⇒ re-pin by read. #2574 expected tree 1359b949.
+- SA-484f (2026-09-27T23:20Z) #2406 pixel question: panel = full return/CN amount; Applied credits = order-capped intent (#2094) vs applied-so-far; expected, no gate.
+- SA-484g (2026-09-27T23:22Z) #2406 label fold pre-ruled: web-only, both figures already in the order GET (oc.amount + creditNote.amount), 'of' only when intent < CN, comparison-only, 3 RTL pins + 1 re-capture.
+- SA-484h (2026-09-27T23:24Z) #2406 = PR #2601 @6d52c2c4 attached (clean merge, page.tsx 3732 ≤ 3745, trailer ok); gates: Opus, captures ✓, F2, real green. SA-484g → #2600.
+- SA-518 (2026-09-27T23:32Z) #2577 @f5cd189e (local): PASS on content (1 of 2, tier 1); writeLineUpdate {id, orderId} + 400 on missing id; remaining bare updates are DB-read or membership-checked; after #2574.
+- SA-484i (2026-09-27T23:32Z) #2601 Opus FAIL pins: collapsed ⇒ no inlineReturn in payload, collapse discards the draft; hide Resolve/Cancel on INLINE; SA-E81 logged.
+- SA-484j (2026-09-27T23:34Z) #2601 fold @48a0f2f3 (local): PASS on content (collapsed draft never in payload + discard confirm; isInline gates all 5 actions); attaches on push; re-captures + Opus + F2 + real green.
+- 2026-09-27T23:35Z: #2528 @528ae8f9 attached (SA-503d); both CI reds = billing block (jobs never started) — rerun owed. #2601 @6d52c2c4 real green. #2574 expected tree ab99eb0d.
+- SA-517b (2026-09-27T23:39Z) #2603 @1ee9c671 attached; CI reds = BILLING BLOCK (no job ran); Opus #2 + real green + F2 owed.
+- SA-516h (2026-09-27T23:39Z) #2602 @35967645 PASS on content, tier 2; CI DB lane = executed proof only if a REAL run.
+- SA-484k (2026-09-27T23:39Z) #2601 @5c479654 (local) PASS on content; BLOCK not drop for unquoted; attaches on push.
+- SA-519 (2026-09-27T23:39Z) #2585(a): blank signatureUrl/photo entry ⇒ 400; absent = omitted; no coercion.
+- 2026-09-27T23:40Z: #2602 @35967645 Verify red = billing block (no job ran); its DB lane must be a REAL run to count as SA-516h's executed proof.
+- 2026-09-27T23:41Z: #2602 @35967645 SA-516h attached — F2 5860881427 4/4 head + 4/4 master-preflight; real green owed.
+- SA-517c (2026-09-27T23:41Z) #2603: SA-517 (4) not waived — db.spec lacks the CONFIRMED-≥-deposit and DRAFT-ignored payment cases; Lane B folds spec-only; re-pin by delta. SA-E82 logged.
+- SA-517d (2026-09-27T23:46Z) #2603 fold @04574f20 (local, spec-only): SA-517 (4) met (PAID ≥ deposit ⇒ false; DRAFT ignored); attaches on push; Opus #2 + real green.
+- SA-515e (2026-09-27T23:47Z) #2593 @91eb88bd carries SA-515d (pure merge with 341e5e82).
+- SA-520 (2026-09-27T23:47Z) #2605 @1ec2762c PASS tier 2: SAME_TENANT_OTHER_STOP census class, read-only, anonymous; no F2; real green owed.
+- 2026-09-27T23:47Z: #2601 will re-pin at a new head (prompt-close fix on top of 5c479654).
+- SA-484l (2026-09-27T23:59Z) #2601 @50f0e4eb attached (prompt-close delta read; captures per PROOF.md); Opus + F2 + Verify owed.
+- sweep (2026-09-28T00:00Z): master 341e5e82→4ccc69f4 (#2593 landed). #2605 @1ec2762c Verify PASS — SA-520's real-green gate met. #2574 expected tree now ceb74ca9 = merge-tree(2456a75c, 4ccc69f4). #2528/#2602/#2603 reds still the billing block; #2562 still conflicts on size-ratchet.spec only; #2600 not a PR yet; #2577 (f5cd189e) and #2603 fold (04574f20) not yet pushed.
+- SA-521 (2026-09-28T00:02Z) #2607 @b9464e51 PASS tier 2: P2003 on the customer-row delete only ⇒ 409 in-tx; 3 sites; real-PG race pin; clean with master and with #2602.
+- 2026-09-28T00:02Z: #2601 @50f0e4eb Verify + replay PASS — SA-484l's real-green gate met; Opus + F2 at 50f0e4eb remain. #2607 CI pending. Master 4ccc69f4; #2574 expected tree ceb74ca9.
+- SA-512d (2026-09-28T00:04Z) #2574 @cb774f48 carries SA-512 by tree identity (== merge-tree(2456a75c, 341e5e82)); clean with 2b026c85; ratchet 5426/9441 ok; CI pending.
+- 2026-09-28T00:05Z #2580 @319fe12d carries SA-485d by tree identity; SA-512d: F2 must run at cb774f48.
+- SA-522 (2026-09-28T00:16Z) #2611 @02791716 PASS tier 2: blank OVERDUE_SWEEP_MODE warns + dark; enforced-case data pin; cutoff parity pin.
+- SA-523 (2026-09-28T00:16Z) #2070 pre-build: CAS-only on read values (invoicedQty, qty, status) is sufficient; no lock required; count≠1 ⇒ 409; defined-key assert; pins listed.
+- SA-523a (2026-09-28T00:17Z) #2070: lead's conditions confirmed; CAS predicate must be the EXACT read values (money basis), not headroom.
+- 2026-09-28T00:18Z: #2601 @2f6a350a carries SA-484l (pure merge); #2574 real green (F2 at cb774f48 owed); #2607 real green — SA-521 complete; #2580 landed.
+- 2026-09-28T00:19Z: #2601 F2 carry verified by me — returns/orders api+web, packages/types inline-returns and packages/returns are byte-identical 50f0e4eb → 2f6a350a (the merge touched only master's #2593/#2571/#2580 files).
+- 2026-09-28T00:19Z CORRECTION to the previous line: apps/api/src/orders/* DID change 50f0e4eb → 2f6a350a (master's #2573 arrived via the merge), so byte identity vs bare 50f0e4eb is NOT the basis. The carry holds because F2 ran on 50f0e4eb merged with 4ccc69f4 (which already contains #2573) and the 4ccc69f4 → 916733f5 delta (#2571, #2580) touches no returns/orders/web-returns code — the Mac Lead's basis (#2554 5861127378). #2601: only the lead's Opus owed. #2607: F2 PASS posted — SA-521 complete.
+- SA-517e (2026-09-28T00:24Z) #2603 @04574f20 attached; Opus #2 + real green owed.
+- SA-524 (2026-09-28T00:24Z) #2613 @052b1fe9 PASS tier 2: roundMoney on newBase both arms; DB pin exactly one plan.changed at +(GROWTH−STARTER).
+- SA-525 (2026-09-28T00:25Z) #2609 @98967e07 PASS tier 2: per-commit patch-ids identical to the originals; tripwire shapes + CAS order pin; addon-ledger comment-only; Verify pass.
+- SA-524a (2026-09-28T00:25Z) #2613: unit revert-red suffices (Decimal(10,2) columns; JS-side figure is the defect); real-PG 3dp case optional.
+- sweep (2026-09-28T00:27Z): master → f3e3454b (#2601 landed — #2406 shipped). #2613 @052b1fe9 real green — SA-524 complete. #2603 @04574f20 replay pass, Verify pending. #2607 head → 0723ec6f (pure merge, SA-521 carries). #2528/#2602 reds = billing block; #2562 conflicts on size-ratchet.spec only; #2600 not a PR; #2577 still local.
+- SA-515f (2026-09-28T00:29Z) #2615 @48f5cd64 PASS tier 2: spec-only real-PG + unit pins for the absent-claim rule and both mismatch directions; real green/F2 owed.
+- 2026-09-28T00:29Z: #2603 @04574f20 Verify + replay PASS — SA-517's real-green gate met; only Opus PASS #2 owed. Master f3e3454b; #2607/#2615 CI pending; #2528/#2602 reds = billing block; #2562 conflicts on size-ratchet.spec only; #2600 not a PR; #2577 still local.
+- SA-526 (2026-09-28T00:36Z) #2616 @a7738935 PASS tier 2: strict parseArgs first in main; scheduler goes via run.mjs (--apply) — no silent dry-run regression.
+- SA-393a (2026-09-28T00:36Z) #2236: (A) confirmed — SA-393 stands; spec-only real-PG pin (non-conflict ⇒ caller commits, no 25P02; conflict ⇒ rethrow; clean ⇒ RELEASE); tier 2.
+- SA-525a (2026-09-28T00:36Z) #2609 @aad7f0ed carries SA-525. #2607 landed.
+- 2026-09-28T00:50Z: #2602 @021e3cf5 carries SA-516h by tree identity, F2 re-run required (preflight.ts changed via #2607); #2574 @65e6cdff carries SA-512 + F2 (orders/** identical).
+- sweep (2026-09-28T00:50Z): master → 3d9b027b (#2609 landed — SA-525 shipped). #2615 @48f5cd64 Verify + replay PASS — SA-515f gates met. #2616 @a7738935 Verify PASS — SA-526 gate met. #2574 replay pass / Verify pending; #2602 Verify pending (F2 re-running). #2528 reds = billing block; #2562 conflicts on size-ratchet.spec only; #2600 not a PR; #2577 still local.
+- SA-527 (2026-09-28T00:52Z) #2617 @f9350a01 PASS tier 2: tripwire tracks helper tx parameter positions to a fixpoint; cherry-picks patch-identical; Verify owed.
+- SA-484n (2026-09-28T00:59Z) #2600 @c16756a1 (local) PASS on content = SA-484g verbatim; captures + Opus + real green owed.
+- SA-518a (2026-09-28T00:59Z) #2577 local merge 248bb99a pure (== merge-tree(f5cd189e, 65a1fd34)); carries on push; #2574 landed (master 65a1fd34).
+- 2026-09-28T01:00Z: #2582 @015d7254 carries SA-502b by tree identity. #2602 @021e3cf5 Verify PASS (SA-516h waits on F2's re-run at that sha). #2617 Verify pending. Master 65a1fd34.
+- 2026-09-28T01:01Z SA-E83: SA-502b/c/d carry labels for #2575 renamed SA-502a-r1/r2/r3 (collision with #2582's SA-502b). #2582 @015d7254 carries SA-502b (SA-502b-r1).
+- SA-512g (2026-09-28T01:02Z) #2562 @028c25ff hand-merge read: routes.service identical, ratchet resolved per SA-512c (only routes.service 3126 differs from master's rows); merge with 65a1fd34 clean; CI pending. #2602 and #2617 complete.
+- SA-393b (2026-09-28T01:05Z) #2618 @e377d832 PASS tier 2: real-PG savepoint pin, all three SA-393a conditions (22012 swallowed + no 25P02, 40001 rethrown, clean RELEASE); real green/F2 owed.
+- 2026-09-28T01:06Z: master → a4dfa6bb (#2582 landed — SA-502b shipped). #2562 @a26fb5f0 carries SA-512 by tree identity (SA-512h). #2618 CI pending; #2528 red = billing block; #2577/#2600 still local.
+- SA-518b (2026-09-28T01:08Z) #2577 = PR #2619 @248bb99a attached; Opus #2 + F2 + real green owed.
+- SA-518c (2026-09-28T01:11Z) #2619 F2 finding (operator unit edit of a foreign id ⇒ 200 skip) is #2604's class, out of #2619's scope; #2604 must list the unit-edit path.
+- SA-528 (2026-09-28T01:11Z) #2113 PR1 mailbox alerts design approved with conditions: seen non-null guard, AfterCommit claim, lease ≥ 3× cadence + delivery deadline, clear-CAS count-0 ⇒ no-op; tier 1 (migration).
+- sweep (2026-09-28T01:12Z): master a4dfa6bb unchanged. Replay PASS on #2562 @a26fb5f0, #2618 @e377d832, #2619 @248bb99a (Verify pending on all three). #2528 red = billing block. #2600 (c16756a1) still local. Owed: Opus on #2603/#2619/#2600/#2618; F2 on #2618; #2528 rerun.
+- SA-484o (2026-09-28T01:19Z) #2600 = PR #2620 @c16756a1 attached; captures ✓; Opus + real green owed.
+- SA-519a (2026-09-28T01:27Z) #2621 @743c2941 PASS on content (SA-519 verbatim, hand-merge hunks read); GATE: HEAD merge commit lacks the Bookkeeping trailer — fold + re-pin by tree identity.
+- SA-529 (2026-09-28T01:27Z) #2449 pre-build: no lot writes but reuse inventory's adjust primitive; keep per-row tx; tier 1; pins incl. concurrent-adjust real-PG.
+- sweep (2026-09-28T01:28Z): master → 969da6b3 (#2602 landed — SA-516h/i shipped). #2618 @e377d832 Verify + replay PASS — SA-393b real-green gate met (F2 owed if not posted). #2619 head → a325d788: pure merge, SA-518 + F2 carry (SA-518d). #2620/#2621 Verify pending; #2528 red = billing block.
+- SA-519b (2026-09-28T01:31Z) #2621 @de7cda76 = empty trailer commit on 743c2941 (identical tree): carries, trailer met, Verify owed. #2620 real green (Opus owed). #2619 Opus carries — real green owed. #2618 complete.
+- 2026-09-28T03:36Z owner decisions read (5862783064). SA-530 #2628 shape (NON_BLOCKING=[DRAFT]); SA-531 #2629 shape (code guard, 409 CLEANUP_IMPORTED_DISABLED on both endpoints, UI hidden); SA-532 #2630 shape (LOST arm on closedAt ≥90d, same rules, own-prefix); SA-533 #2514 pre-build (run FOR UPDATE + CAS approved; complete* re-check filed separately with lock-edge enumeration). #2425 @d9bf678c hand-merge = one spec hunk; migrations identical; no SA pin on d6315eba.
+- sweep (2026-09-28T03:37Z): master → 065dd683 — landed: #2619 (SA-518 shipped), #2528 (SA-503d shipped), #2605 (SA-520 shipped), #2546, #2595. #2621 @de7cda76 Verify PASS — SA-519a/b complete. #2620 Verify PASS (Opus owed). New PRs on origin not yet sent for review: #2622 (mobile Remember-me), #2623 (dependabot minor/patch ×32), #2624 (api invoice split/import banned lines — money-adjacent, expect tier 1), #2625/#2627 (web UI), #2626 (docs bookkeeping follow-up).
+- SA-503e (2026-09-28T03:38Z) #2528 landed via 00b17ae0 = pure merge of 528ae8f9 + 44d66789 with real green — carry confirmed post hoc; #2619/#2605 landings real-green too.
+- 2026-09-28T03:40Z #2611 @c6c9aeb6 carries SA-522 (pure merge). SA-443b pre-read of #2425 logged (efcd8123 SET LOCAL ✓, 30681b8b nits ✓, 3 hand merges = both-sides resolutions ✓); verdict held for the post-#2610 head.
+- SA-533a (2026-09-28T03:41Z) #2514 @7dd882dc: content PASS pending a spec fold — #2415 latch must NOT widen to any-409; re-seed on a 2-stop run and keep the exact STOP_ALREADY_COMPLETED pin; ratchet 3119 measured.
+- SA-533b (2026-09-28T03:43Z) #2514 fold @787953ab (local, spec-only): two-stop seed + exact STOP_ALREADY_COMPLETED restored; PASS on content, attaches on push; Opus #2 + real green + F2 owed.
+- SA-533c (2026-09-28T03:44Z) #2514 @da7f76d5 (local): race case re-seeded two-stop, assertions unchanged — PASS on content carries; attaches on push.
+- SA-523b (2026-09-28T03:54Z) #2632 @33ede7d4 PASS (1 of 2, tier 1): exact-value per-line CAS in the invoice tx, whole-partial rollback, pre-tx 400s; defined-key assert is a raw Error but unreachable (nit); ratchet 5940 fits before/after #2603.
+- SA-533d (2026-09-28T03:55Z) #2514 = PR #2633 @da7f76d5 attached; Opus #2 + real green + F2 owed.
+- SA-443c (2026-09-28T03:55Z) #2425 @3d136389 pre-read: barrel = both exports kept; onboarding src + prisma identical; next head must resolve no-bare-cron to 21 incl. onboarding.refreshAutoChecks.
+- SA-531a (2026-09-28T03:55Z) #2629: no UI exists — delete the dead hooks, static no-reference pin replaces the Playwright gate; API guard unchanged.
+- SA-443d (2026-09-28T03:59Z) #2425 @7d393ff2 TIER-1 PASS (cron hunk = 21 incl. onboarding.refreshAutoChecks, verified; prod+prisma identical to the read d6315eba); real green then the owner's migrate→drift→land sequence.
+- SA-517f (2026-09-28T03:59Z) #2603 @5f8021bc carries SA-517 + F2 (exercised files identical).
+- SA-513a (2026-09-28T03:59Z) #2583: Δ0 plan.changed on a non-paying upgrade is correct (add the one-Δ0-row pin); ACTIVE fixture move correct with an explicit TRIAL Δ0 case kept.
+- SA-533e (2026-09-28T04:07Z) #2633: lead's FAIL upheld; house order = stop → run; reshape the helper stop-CAS-first then run FOR UPDATE + 409 (option C, no new edge); restore the one-stop race + add the two-stop run-latch + a no-40P01 pin; ticket reorder (#2562) as the outlier and stop↔order for #2631. SA-E84 logged.
+- SA-531b (2026-09-28T04:07Z) #2629: guard + delegate (a); 14 specs retarget the internal methods; public 409 pinned.
+- 2026-09-28T04:07Z: #2603 @5f8021bc — the lead's Opus carries (#2554 5863022362); with SA-517f, only real green at 5f8021bc remains. #2633 ruling = SA-533e (option C), sent 04:1xZ; the lead's A/B question crossed it.
+- sweep (2026-09-28T04:09Z): master → b4afa69b — #2425 LANDED (SA-443d; the owner's prod-migrate 060000 + NO-DRIFT readback preceded it per the train order). #2603 @5f8021bc Verify + replay PASS — with SA-517f, the lead's Opus carry and F2's carry, SA-517 is COMPLETE (ready to land). #2632 @33ede7d4 real green (SA-523b + lead PASS-with-nits; F2 result awaited on the board). #2633 @da7f76d5 real green but FAILED by the lead — SA-533e reshape pending. #2613/#2615/#2616/#2617/#2618/#2620/#2621 remain gate-complete and unlanded.
+- 2026-09-28T04:09Z: #2632 @33ede7d4 COMPLETE — F2 PASS posted (race 201+409 with 96/1; CANCEL ⇒ 409; revert ⇒ 192 billed + cancelled line billed) + SA-523b + the lead's PASS + real green. Ready to land.
+- SA-517g (2026-09-28T04:12Z) #2603 @ae19d8c4 carries everything by tree identity; real green at the new head owed.
+- SA-530a (2026-09-28T04:18Z) #2636 @11fec7d6 PASS (1 of 2, tier 1): one change of truth (NON_BLOCKING=[DRAFT]), comments only elsewhere, set pin + fixtures updated, real-PG VOID cases; Opus #2 + real green + F2 owed.
+- SA-523c (2026-09-28T04:32Z) #2632 @26bcdde5 carries SA-523b + F2 (createPartialFromOrder identical; the file delta is exactly #2603's); real green owed. #2603 landed. #2636 real green.
+- SA-533f (2026-09-28T04:35Z) #2514 reshaped @72ecb947 (local): stop-first helper per SA-533e, one-stop latch + 8-round no-deadlock race + run-latch; my infeasible two-stop scenario corrected; PASS on content, attaches on push.
+- SA-481c (2026-09-28T04:37Z) #2508 @8335f397 covered by SA-481b (same sha); MED follow-up = separate ticket (refuse active-subscription targets without --allow-paying-tenant + type-back).
+- SA-456a (2026-09-28T04:39Z) #2431 @4d6ed562 TIER-1 PASS (S2 intake: HMAC token/404-alike/POST-only, own-prefix files 25MB, scoped delete, schema-validated answers, idempotent acceptance; migration == d88481a5 applied NO-DRIFT; hand hunks = dedup only; enum 104=104). #2508 covered by SA-481b (SA-481c).
+- SA-531c (2026-09-28T04:39Z) #2629 @1ae4957c PASS on content (guard+delegate, controller scan, repo-truth no-client pin); attaches on push.
+- SA-513b (2026-09-28T04:41Z) #2638 @6b6930dc PASS (1 of 2, tier 1): isPayingRow both paths under the Tenant lock; Δ0 one-row + TRIAL + class-under-lock + deleted-404 pins; Opus #2 + real green + F2 owed.
+- SA-535 (2026-09-28T04:41Z) credit-note edit: (a) non-money in-place PATCH + audit; (b) amount/line = void-with-reversal + mint, one tx, SA-214 order, re-capped, minted UNAPPLIED, idempotency key, refusals; (c) explicit UI line; tier 1.
+- sweep (2026-09-28T04:41Z): master 3f0c9c28 (#2632 landed at 04:33Z — SA-523 shipped). #2431 @4d6ed562 and #2508 @8335f397 real green + both SA verdicts ⇒ fully gated, with the coordinator. #2636 real green (Opus #2 + F2 owed); #2638 CI pending; #2633 @da7f76d5 awaits the 72ecb947 push; #2629 (1ae4957c) unpushed. Seven gate-complete PRs still unlanded. No new PRs since #2638.
+- 2026-09-28T05:33Z: SA back online after the outage (remote control on; Routeflow Lead [f65420] + Mac Lead + coordinator told). #2633 @72ecb947 SA-533f ATTACHED (+ lead Opus #2 = tier-1 complete, CI green). #2646 (=#2629) @33a8d9c6 SA-531c-r1 (spec-only rename delta). #2496 @072d0859 SA-473b-r1 (tree identity). Master afe1b2d4. In review: #2640 (tier 1), #2643 (tier 1), #2454 S4, #2301 SA items 2+3; #2474 waits for the 54b96f16 push.
+- SA-536 (2026-09-28T05:38Z) #2643 @ba945d68 TIER-1 PASS — CAS on the split path inside runCreation before settle; F2 ×2 + lead + green ⇒ COMPLETE, ready to land.
+- SA-537 (2026-09-28T05:38Z) #2640 @de95854b TIER-1 PASS; legacy-null = accept + warn CONFIRMED (refusal ⇒ new key ⇒ double credit); transitional arm, remove in R1.2; LOW drop ignored `qty` from the fingerprint. Gates: F2 case 4 read on the board + real green.
+- SA-462c (2026-09-28T05:38Z) #2474 @54b96f16 carries SA-462b (tree == merge-tree; prod-diff patch-id identical); migration order acceptable with a no-cross-reference condition on #2486/#2113; owner runs prod-migrate from the master-merged checkout BEFORE the merge; real green owed.
+- SA-538 (2026-09-28T05:38Z) #2454 @0a491c5b S4 PASS on content (hand hunks = union in module + types barrel; import type only); Playwright 1440/768/390 + Expo web proof REQUIRED before landing.
+- SA-539 (2026-09-28T05:38Z) #2301 @c2ff8971: finding 2 = follow-up ticket (evidence in the CAS or withOrderRecomputeLock), finding 3 = correct default (no fee on a fully refused delivery; owner policy question, non-blocking); money content PASS pending the updateMany stub fold + delta re-pin.
+- SA-540 (2026-09-28T05:38Z) inline returns default-on: defaultGranted = preset term; denies win; requires-flag is a separate conjunct; one predicate; no prod writes; no MRR effect; tier 1.
+- SA-478b (2026-09-28T05:41Z) #2392 @b231fb71 (local) PASS on content — the SA-478/478a shape verbatim; report read-only + exclusion list outside the repo; F2 PASS at the sha; attaches on push; Opus + real green owed. LOW: confirm web's hydration excludes NSF.
+- SA-472a (2026-09-28T05:41Z) #2476 design: raw INSERT ON CONFLICT DO NOTHING RETURNING + raw claim on the DB clock; outcome write = Prisma updateMany fenced on processedAt; #2474 lands as reviewed.
+- SA-541 (2026-09-28T05:45Z) #2624 @823c1512 TIER-1 PASS (2 of 2 with the lead) — flag-never-block per the owner's ruling; hand hunks = import union + spec stubs; MED follow-up: after-commit the check/audit on the caller-tx (delivery) path (REG-B100-C class). Ready to land.
+- SA-535a (2026-09-28T05:45Z) #2648 plan CONFIRMED: keep the return superset refusal (edit the return instead); EDITED/REISSUED accepted + SUPERSEDED on the old note.
+- SA-524a-r1 (2026-09-28T05:45Z) #2613 @51cabe3d carries by tree identity.
+- SA-472b (2026-09-28T05:46Z) #2476 local e3883a57: (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') accepted — required for a timestamp(3) column; one SQL fragment in all three places; non-UTC session pin.
+- SA-528a (2026-09-28T05:49Z) #2650 @0d91dd96 PASS on content (SA-528 verbatim; 7 real-PG pins) with ONE condition: no-bare-cron count is a semantic conflict — merged tree has 22 sites, spec says 21 ⇒ rebuild on master, set 22; delta re-pin. CI not yet run.
+- 2026-09-28T05:50Z: OWNER (~06:05Z via the lead): "No fee on a fully refused delivery" — closes SA-539 finding 3, #2301's default stands. Colima being installed on the MacBook (own DB lane + Playwright).
+- SA-472c (2026-09-28T05:50Z) #2476 pre-read @686dab99 (local): matches SA-472/472a/472b (DB_NOW_UTC once; raw insert/claim; fenced outcome write; best-effort email after the increment; non-UTC pin). Formal pin at the PR sha after the rebuild.
+- SA-531c-r2 (2026-09-28T05:52Z) #2646 @697d90be carries (auto master merge + one spec-only fold; src patch-ids identical). GitHub GraphQL rate limit is being hit fleet-wide — using git fetch + REST for the sweep.
+- SA-542 (2026-09-28T06:04Z) #2653 hybrid shell: v1 = one-time handoff (own-secret signed code, sha256 row, CAS single-use, 60 s, code in the URL FRAGMENT never the query string, fresh token pair for the web — the web session is localStorage, not cookies); bridge = versioned schema, url-origin check, 5 request types, no tokens over the bridge; SIWA: TestFlight email+password OK, hide Google inside the shell, SIWA before any store submission.
+- SA-536-r1 (2026-09-28T06:08Z) #2643 @5f8f2cce carries (tree identity; exercised files byte-identical) — tier 1 complete, lands on real green after the 5538b9f3 deploy.
+- SA-478b ATTACHED (2026-09-28T06:08Z) #2392 = PR #2654 @b231fb71; LOW closed (web hydrates stored taxRate). Opus + real green owed.
+- SA-543 (2026-09-28T06:08Z) #1528 plan confirmed, TIER 2; gates = one PASS + green + one executed stale→fresh proof; grep-proof of every stock-reading query root.
+- (2026-09-28T06:08Z) Board read 05:52→06:06Z: #2613 landed 3c00d592, #2633 landed 5538b9f3; #2646 lead PASS + F2 GREEN ⇒ complete; #2650 lead FAIL on mergeability (= SA-528a's condition); owner: no Colima on the MacBook, #2648 → S-order after #2404; SA-542 relayed verbatim by the lead.
+- SA-544 (2026-09-28T06:11Z) #2641 plan CONFIRMED: Q1 SKIP under the lock (own sentinel class, full rollback, breaker untouched, row stays armed; class only zeroes); Q2 TEST class keeps READ_ONLY with Δ0; cancellations get the tx + lock-first + invalidations after commit; pins listed.
+- SA-542a (2026-09-28T06:15Z) #2653 handoff contract: mint (JWT, 10/min, 403 roles/impersonation, 409 unconfigured, per-user sweep, 60 s row) + exchange (login throttle, HMAC first, ONE deleteMany consume = single-use, same 401 body for every refusal, fresh pair deviceName hybrid-shell:<id>); AuthHandoffCode {tokenHash @id,…} in tenancy; web app/handoff/page.tsx reads the hash, strips it pre-await, shared adoptTokenPair, full navigation; UA marker RouteFlowShell/; bridge envelope in packages/ui confirmed.
+- SA-545 (2026-09-28T06:15Z) #2655 Plaid design: EncryptionService cipher (no second secret), PLAID_ENV sandbox outside prod, Plaid-Verification JWT + raw-body sha256, webhook = trigger only + daily LeaderCron, cursor+rows in one tx under an item advisory lock, 3-tier pure matcher (never acts), confirm = CAS + the existing setCheckStatus (grep tripwire), dark addon key, one additive migration (3 tables in finance), 3 tier-1 slices.
+- SA-544a (2026-09-28T06:16Z) #2641 pre-read @c89929ab (local): SA-544 implemented point for point (own sentinel before the breaker, re-reads under the lock, Δ from locked rows, cancellations in one tx with invalidations after commit; 21 unit + 3 real-PG pins). Attaches on push; Opus + green + F2 owed.
+- SA-537-r1 (2026-09-28T06:17Z) #2640 @531e3f02 carries (tree identity; exercised files byte-identical). #2643 landed a9c8f2a1 (SA-536 shipped). #2654 lead Opus PASS ⇒ only real green left.
+- SA-543a (2026-09-28T06:21Z) #2657 @ade30d1b: grep-proof confirmed in part — MISSED mobile ["admin","products"] (carries currentStock; stock-count writers already invalidate it) ⇒ fold the 3 mobile hooks + pins; tobacco/admin-dashboard exclusion confirmed with a REQUIRED all-writers follow-up ticket; buyer exclusion correct. PASS pending the fold; delta re-pin.
+- (2026-09-28T06:21Z) OWNER (away, via the lead): "run everything and get everything ready… carefully merged, reviews done… accurately" — verdicts keep flowing at exact shas; owner-only steps untouched. Open: #2650 re-pin (U-po rebuild), #2476 formal pin (rebuild), #2637 re-check at MacBook's new head.
+- SA-541-r1 (2026-09-28T06:26Z) #2624 @c0a0d36c: flag (pre-tx read + audit) → creates → ledger → CAS (last write) → settle; a CAS miss still rolls back every flagged sibling; ratchet 5896 ≤ 5926. Content carries; F must RE-RUN at this head (+ a flagged-split race case); then real green.
+- SA-544a-r1 (2026-09-28T06:33Z) #2641 = PR #2659 @21d5296e carries (spec-only tuple typing; service + DB spec identical to c89929ab; F2 carries). Opus + green owed.
+- 2026-09-28T06:35Z: OWNER: "message sessions in all 3 computers, establish connections, resume work"; the lead's address is now "Routeflow Lead" (new instance). #2640 landed e1ad317e (SA-537 shipped). #2474 owner prod step DONE (120000 NO DRIFT).
+- SA-462c-r1 (2026-09-28T06:35Z) #2474 @a3e9dc24 carries (tree identity; PR files identical). SA-531c-r3 #2646 @2dd1dda9 carries. SA-546 #2637 @3ee0c313: the lead's condition met (one poDisplayTotal in pricing; mobile bodies deleted; web type fixed) — PASS on content; LOW no-mirrors entry; 1440/768/390 capture per the UI rule unless the lead waives.
+- SA-535b (2026-09-28T06:38Z) #2648 S-order plan CONFIRMED: excludeCreditNoteId dry run accepted (internal, both aggregates, in-tx re-cap without it stays authoritative); expired old note + no new expiry ⇒ 400; keep invoiceId. Build red-first.
+- SA-547 (2026-09-28T06:45Z) #2639 plan CONFIRMED: two predicates (isPayingTenant ≡ isPayingRow parity-pinned; isProtectedTenant adds the Stripe-sub arm) — scripts refuse on protected; build on #2508 (wait to land); dry-run PAYING-HELD bucket right, plan never trusted, ids not slugs in files; #2654 lands first.
+- SA-523d (2026-09-28T06:49Z) #2645 item 3: pin the whole invoice-line basis (unitPrice, subtotal, promoFreeUnits, taxRate, categoryTaxAmount, boxes) via one exported const + a coverage tripwire; rename the 409 code ORDER_LINE_CHANGED.
+- SA-543a-r1 (2026-09-28T06:49Z) #2657 @cae0373c PASS (the admin-products fold in); green + F2 stale→fresh proof owed. SA-472d #2476 = PR #2663 @8ec24825 TIER-1 PASS #1 (six patch-ids identical to 686dab99 + two spec-only lines); Opus + green + F2 re-proof owed. #2508 @98ca12bf verified auto-merge (SA-481c carries).
+- 2026-09-28T06:50Z: #2474 LANDED 0e1645e8 (SA-462 shipped; the Stripe billing event ledger + 120000 migration). #2646 re-pins when the coordinator re-updates it onto 0e1645e8.
+- SA-523e (2026-09-28T06:51Z) #2645: taxRate dropped (no column), updatedAt not pinned (raw writes), the lane's wider INVOICE_LINE_CAS_FIELDS confirmed. SA-E86 logged.
+- SA-535c (2026-09-28T06:56Z) #2648: the line-linked-note guard KEPT (400 pre-reserve; header-only notes exempt); findOne items prefill accepted with executed proof; regulated reissue ledger pin.
+- SA-535d (2026-09-28T06:58Z) #2648: option (A) — the lifted void deletes old REVERSAL rows (today's behaviour on every void; no LOCKED period exists yet); pin net filing = new amount; #2541 owns the counter-entry for all void paths. SA-535's wording corrected (SA-E87).
+- SA-523f (2026-09-28T07:01Z) #2645 pre-read @8a63921d (local): 19-column basis CAS per SA-523d/e, tripwire both ways, ORDER_LINE_CHANGED wired end to end (parity spec + mobile retry); PASS on content, attaches on push; Opus + green + F2 owed.
+- 2026-09-28T07:08Z: master → 83d841cb; landings since 0e1645e8: test(api): real-PG absent-claim and token-true socket cases;fix(api): disable "cleanup imported customers" until imports;. #2645 will carry hand hunks in the three error-code registries (CLEANUP_IMPORTED_DISABLED + ORDER_LINE_CHANGED) — read them at the new sha before re-pinning SA-523f.
+- 2026-09-28T07:09Z: #2624 ROLLED on a real red (its split-restricted-lines spec mocks lack {count:1} for #2643's CAS) — spec-only fold coming, SA-541-r2 by delta then. CI DB lane: reconcile-cas-2509.db.spec case 1 (concurrent upgrade) failed once on master 83d841cb; pre-read for F2's triage: the CAS runs UNDER the Tenant FOR UPDATE (billing.service.ts reconcilePriceLedger), T2 holds that lock before the sync starts, so the plan/snapshot/events assertions are deterministic; the only timing-dependent fields are the harness's blocked/tenantLock observation (400 × 25 ms poll of pg_stat_activity). Call ready: blocked/tenantLock false with planKey SCALE, snapshot 499, events 0 ⇒ harness flake (poll window; make the wait condition-based); events ≠ 0 or snapshot ≠ 499 ⇒ a real race, escalate to me with the row state.
+- SA-548 (2026-09-28T07:14Z) #2666: the CI red is blocked:true/tenantLock:false with money intact — INCONCLUSIVE lock identity (query-text capture), not the poll flake; fix = pg_locks structural assertion + condition-based wait + print waitingOn; escalate if the wait is ever on TenantSubscription. Corrects my pre-triage relay.
+- SA-523f-r1 (2026-09-28T07:19Z) #2645 = PR #2667 @7e9d5b68 carries (hand hunks = marker removal keeping both error codes; src identical). SA-548a #2666 fold: the tuple-lock-on-Tenant + ungranted-lock assertion accepted (correct PG semantics).
+- 2026-09-28T07:23Z: #2666 @55e45d2b F2: 20/20 green, revert 3/3 red with the waiter shown onSubscription/onTenant — the structural assertion discriminates (SA-548a confirmed executed). Gap: the waitingOn dump is swallowed by expect.any ⇒ SA-548 (3) is NOT met until a real print lands; the fold before the push is a condition, not optional. Re-pin by delta at the pushed sha.
+- SA-548b (2026-09-28T07:37Z) #2666 = PR #2668 @92a8696f PASS (tier 2): the miss now throws the full waiter dump from both the entry check and expectTenantWait; F2's 55e45d2b proof carries. Master → dd51e65b (#2657 landed — SA-543 shipped).
+- SA-549 (2026-09-28T07:41Z) #2656 plan CONFIRMED: build on #2654 then cherry-pick; one rounded inferredGoodsFlatRate in pricing; Q1 (a) 400 NSF_LINE_UNTAXED on every per-line taxRate path + client locks; Q2 yes; b294 REVIEW shape; Q3 split the devDependency into a tiny tooling PR.
+- SA-542b (2026-09-28T07:54Z) #2653: two realms, one realm-tagged AuthHandoffCode (userId | buyerAccountId, tenantId null for buyers), one shared core, one endpoint pair per realm, realm in the consume where; staff = OPERATOR/TENANT_ADMIN only (CUSTOMER legacy, out); impersonatedBy is the claim in both realms; two web adopters picked by the returned realm; optional &seller=<slug>.
+- SA-549a (2026-09-28T07:55Z) #2656: fold duplicate() (NSF copy at taxRate 0; the header recomputes from lines — pin it); items (1)–(3) as built per SA-549; formal pin at the rebuilt sha.
+- 2026-09-28T07:56Z: Mac mini disk critical (5 GB) — SA holds all disk-writing work (no npm ci/jest; static git reads + register appends only); scratchpad copies removed.
+- 2026-09-28T07:58Z: #2656 SA-549a fold is in U-units' working tree (duplicate() NSF copy at 0; pin in invoices.service.nsf-untaxed-2656.spec.ts: copy subtotal 125 / tax 7.5 / total 132.5); unrun and uncommitted under the ALL STOP; invoices.service.ts 5927 ≤ row 5916 + 25. Successor sha to pre-read when the stop lifts.
+- SA-542b clarification (2026-09-28T08:01Z): the code carries TWO spellings — the buyer ACCESS payload interface says type: "BUYER" (BuyerJwtPayload), the REFRESH tokens say type: "buyer" (google-oauth.service.ts:872) against the staff refresh check type !== "staff" (auth.service.ts:275). The ruling's HandoffRealm (STAFF | BUYER) is the NEW Prisma enum for the handoff row, not a JWT field: the realm is decided by which guarded endpoint minted the code, never by parsing the JWT's type string; no JWT spelling changes in #2653.
+- SA-549b (2026-09-28T08:09Z) #2656 pre-read @48c07eb0 (local on b231fb71) PASS on content — nothing to fold; formal pin at the rebuilt sha (patch-ids must match the four commits).
+- SA-472e (2026-09-28T08:27Z) #2663 @78f9c3c2 TIER-1 PASS at the PR head (ff from 8ec24825; the portal-call cap inside the lease; claim SQL identical) — the coordinator's hold is lifted from the SA side; real green owed.
+- 2026-09-28T08:27Z: master → c9ad8d7b. LANDED: #2654 (SA-478 shipped), #2659 (SA-544), #2667 (SA-523), #2668 (SA-548), #2657 (SA-543), #2084 (tier 2). #2656 can now be rebuilt onto master by cherry-pick (SA-549b pre-read); #2639 part C can merge master in. Still open for the SA: #2663 green, #2624 fold, #2650 rebuild, #2637 captures, #2648 push, #2653 build.
+- SA-549c (2026-09-28T08:29Z) #2656 rebuilt @afb0e93f (local): 3/4 patch-ids identical, the guard commit context-only (+/− lines identical), registries ordered CLEANUP/ORDER_LINE/NSF in all three; carries, attaches on push.
+- SA-549d (2026-09-28T08:37Z) #2656 @c1c5f600 (local, types-only on afb0e93f) carries; attaches on push.
+- SA-549d ATTACHED (2026-09-28T08:43Z) #2656 = PR #2673 @c1c5f600; Opus + green + F2 owed.
+- 2026-09-28T08:49Z: #2673 lead Opus PASS-with-condition (B142 'billing must never pause'): the nightly recurring run zeroes a legacy template's NSF-prefixed line rate + logs instead of hitting the 400 (create/update keep the 400) + a pin — consistent with SA-549 (the guard is for hand writes; a legacy template is the owner's backfill class). Re-pin by delta at the new head. F2 PASS at c1c5f600 (4 revert red).
+- SA-549e (2026-09-28T09:00Z) #2673 @98c3f1fd: B142 fold read — nightly zero+log correct; (a) "Run now" must KEEP the 400 (the function's own unattended branch precedent, SA-205) — small fold required; (b) description-only detection OK, with a note for the prefix-leg removal PR (template items lack systemKind).
+- 2026-09-28T09:02Z: #2673 case (e) on real PG @98c3f1fd: head issues (NSF 0 / goods 0.075, SUCCESS, one warn); the REVERT takes the 400 path ⇒ NO invoice, lastRunStatus FAILED — so B142's failure is BILLING PAUSED, not a stale rate (U-units' '0.08 billed' red was mock-only). Incoming Run-now fold checks assertNsfLinesUntaxed as the FIRST statement when !unattended (before the cycle claim) — stricter than SA-549e's 'before the mapping'; that is the better placement: a refused Run now writes and claims nothing.
+- 2026-09-28T09:08Z: #2661 'Open RET-…' 400 question WITHDRAWN by the Mac Lead (stale compose API image on the PC). My read agrees: on master the five INLINE_RETURN_USE_INLINE_ENDPOINTS refusals are all MUTATIONS (approve/reject/markInTransit/receive/refund :500-:816); findOne is not kind-gated (SA-484c (4), shipped in #2601). PC F re-takes the capture against an API built at dc462aca; a ruling only if it reproduces.
+- SA-549f (2026-09-28T09:10Z) #2673 @f2e89d9b TIER-1 PASS at the head (Run now keeps the 400 as the first statement; nightly zeroes + logs); lead re-check + green + F2 (e)/(e2) owed. Master → a8116e4e.
+- 2026-09-28T09:10Z: LANDED: #2508 (SA-481 shipped — wipe confirms its DB), #2663 (SA-472 shipped — webhook exclusive claim), #2674, #2075. #2639 part B can now build on master (SA-547). Open for the SA: #2673 gates, #2624 fold, #2650 rebuild, #2637 captures, #2648 push, #2653 build, N-buyer plan, #2639 rebuild.
+- SA-547a (2026-09-28T09:12Z) #2639 pre-read @3522e89f (local, rebuilt on a8116e4e): A/B/C per SA-547; the id-only refusal design accepted; ONE fold — drop tenant.name from the wipe refusal (client identifier). Formal pin at the PR sha after the disk stop lifts.
+- SA-547b (2026-09-28T09:18Z) #2639 = PR #2677 @bab211b5: the name fold is in; one more one-liner (the #2508 excluded-tenant refusal at :173 still prints the name) then the pass attaches. Master → f0dd9f1c.
+- 2026-09-28T09:19Z: #2677 revert caveat: a whole-file revert of the 3 scripts is a STRUCTURAL red (helpers absent ⇒ every case fails in beforeAll) and proves nothing per guard; F2's BEHAVIOURAL revert on real PG (exports kept, protection neutralized) is the discriminator of record — the unit spec stays as is. The :173 name fold (SA-547b) is still required before the pass attaches.
+- SA-547c (2026-09-28T09:31Z) #2677 @7d14d7ec TIER-1 PASS at the head (name fold complete incl. :175; Opus HIGH-1 plan-hash round trip fixed with one pure pair; HIGH-2 banner id-only). Lead Opus + green + F2 behavioural revert owed. Master → b48a9e84.
+- 2026-09-28T09:31Z: LANDED #2617 (the lock-order tripwire by parameter position). The Mac Lead's 'pin #2677 at 7d14d7ec' request crossed SA-547c (already sent).
+- 2026-09-28T09:40Z: #2677 @7d14d7ec BLOCKED by F2: PROTECTION_SQL + the wipe read `stripeSubscriptionId`; the column is `stripeSubId`. My miss (SA-E88). U-units fixes with a schema-name pin; delta re-pin at the new sha with every raw-SQL column verified against the model block.
+- SA-547d (2026-09-28T09:47Z) #2677 @9f24b0b2 TIER-1 PASS at the head; every raw-SQL/select column verified against the model blocks; F2's real-PG run is the gate of record.
+- SA-550 (2026-09-28T10:03Z) #2631: option (d) — updateRunStatus locks the run's stops first (ORDER BY id) then run then orders; completions read RouteRun.status in-tx via assertRunInProgress ⇒ 409; reopenStop/deleteRoute keep Order-first under retryOnTxConflict; reorder's inverse goes to #2635; pins listed.
+- SA-550a (2026-09-28T10:05Z) #2631 Q1 reuse assertRunInProgress as-is (403); Q2 new routes lock-order source tripwire (+ reopen/delete under retryOnTxConflict).
+- SA-551 (2026-09-28T10:05Z) #2678 @41fd2963: N1 — the legacy-sweep 'Automatic' fallback is sound for pre-#2423 payments but unbounded (a later manual applyToInvoice on a swept note would read Automatic) ⇒ DATE it to payments created before the 20260927043000 flag migration (select createdAt); PASS on content with that fold; delta re-pin.
+- SA-551a (2026-09-28T10:18Z) #2678 cutoff = 2026-09-27T17:13:37Z (the #2494 squash 471a7670 that landed the flag-writing code; the migration name 043000 is a sort key ~13 h earlier) — option (b); pins adjusted.
+- SA-550b (2026-09-28T10:20Z) #2631 = PR #2679 @55660fbb TIER-1 PASS #1 (SA-550/550a verbatim; raw SQL columns verified); Opus + green + F2 owed. Master → 1e9f1581.
+- 2026-09-28T10:20Z: LANDED #2677 (SA-547 shipped — the paying/Stripe-linked belt), #2621 (blank POD), #2622. The Mac Lead's 'pin #2679' crossed SA-550b (sent).
+- 2026-09-28T10:22Z: #2679 F2 12/12 PASS; revert: latch ×2 + pg_locks RED (discriminate the mechanism), race ×6 stays green (timing-dependent) — accepted as a REGRESSION GUARD, labelled so; no rework.
+- SA-550c (2026-09-28T10:36Z) #2679 @0192fc52 carries + PASS at the head (terminal tx under retryOnTxConflict for the reorder/optimize inverse; race retitled; tripwire iv). Lead re-check + green owed.
+- 2026-09-28T10:36Z: the Mac Lead's #2679 re-pin request crossed SA-550c (sent). F2 adds cancel × reorder on SCHEDULED + the one-stop auto-complete × cancel at 0192fc52 — welcome; a red there is a finding, not a formality.
+- SA-550d (2026-09-28T10:41Z) #2679 HOLD: fold #2635's stop-first reorder in (structural), belt reorder + the optimizer's three batch writers with retryOnTxConflict, tripwire (v)/(vi), two-sided race pins; SA-E89 logged.
+- SA-550d note (2026-09-28T10:42Z): #2635 is owned by Lane salvage (PC) — one-owner rule holds; #2679 stays HOLD until #2635 lands or salvage cedes (Mac Lead re-routing); the alternative is #2679 stacked on #2635. Optimizer writers: rebuild the PrismaPromise array per attempt (single-use) ✓; :579 writes RouteStop (template), NOT RouteRunStop — it is not in the inverted family; my listing was wrong; leave it unwrapped so the tripwire tells the truth (:793 and :1216 only).
+- SA-550e/SA-533g (2026-09-28T10:44Z): the lead's (c) sequencing accepted (#2635 first, #2679 carries belts + tripwires; :579 not in the family); #2635 pre-ruled for a quick pin at its PR sha (stop lock first, run lock kept, PATCH × reorder primary pin).
+- SA-550f (2026-09-28T10:53Z) #2679 @1896dcd9: the belts (reorderRunStops + the two RouteRunStop optimizer writers, batches rebuilt per attempt; :579 excluded) PASS on content; final pin after #2635 + (v). #2682 = the optimizer structural follow-up. Master → 9a4f3c19.
+- 2026-09-28T10:53Z: LANDED #2652 (mobile B669), #2625 (web B750). The Mac Lead's #2679 belts pre-read request crossed SA-550f (sent).
+- SA-552 (2026-09-28T11:49Z) #2683 @fb9f9722 TIER-1 PASS #1 (NSF rows skipped by the resync partition; select change ⇒ F2's run is the gate); #2673 interaction clean and disjoint. SA-541-r2 #2624 @ba13dbb0 carries (spec-only + auto merges; src patch-id identical) — F's run owed at THIS head (#2667 changed the CAS helper under it).
+- SA-553 (2026-09-28T11:50Z) #2669 @37801751 PASS on content (P2028 ⇒ 503 'nothing saved'; !inv guard before any read); re-pin after #2624 lands (restrictedLines after the guard); LOW machine code on the 503.
+- SA-546-r1 (2026-09-28T11:52Z) #2637 @8d7a85b6 carries (hand hunk = marker removal keeping both barrel exports; PR files identical). SA-538a #2454 @0a491c5b: proof posted + green ⇒ the SA gate is complete; the lead's re-pin owed.
+- 2026-09-28T11:53Z: SA-541-r2 record corrected (F2 ran #2624 at c0a0d36c 06:44Z; the ba13dbb0 run is still the one of record because #2667 changed the exercised helper after). #2683 F2 9/9 ⇒ SA-552 complete, lands on green.
+- SA-553 LOW resolved (2026-09-28T11:54Z): SKIP the SPLIT_INVOICE_RETRY code — mobile's queue drain already retries every 503 (only 4xx dead-letter), so a code would be a behavioural no-op; the LOW is withdrawn; SA-536's nit (1) (a code on the CAS 409) is different — a 4xx dead-letters, so the 409 needed its code. #2669 prep at local 1b6fae50 noted; the restrictedLines placement waits for #2624.
+- SA-553a (2026-09-28T12:28Z) #2669 @765c3aaa TIER-1 PASS #1 (guard before the flag; hand hunk = markers only). Lead Opus + F2 + green owed.
+- SA-554 (2026-09-28T12:36Z) #2489 @2e60e884 S5 FIRST READ: PASS on content (hand hunks = unions; reminders self-throttling, link never sent; purge bounded to LIVE 30+ d rows; funnel read-only); gate = real green incl. the DB lane; #2650 vs S5 cron count: second to land folds. SA-541-r3: the pre-tx audit row after a rolled-back split is by design; no dedupe.
+- 2026-09-28T12:39Z: SA-553a (#2669 @765c3aaa) was logged at 12:0xZ but NOT relayed until the Mac Lead asked — the relay slipped when the #2489 read consumed the response. Rule: a register entry is not delivered until the relay message is sent in the SAME response; check the outbox against the register before moving on. Relayed now; #2669 waits on real green only.
+- SA-539b (2026-09-28T12:49Z) #2301 @116de9ac TIER-1 PASS #1 (SA-539 nits folded; spec-only hand hunks; composes cap → flag → create → CAS on the merged tree; 5920 ≤ 5941). Lead ✓; F2 (a)+(b) at this head + green owed.
+- SA-111b (2026-09-28T12:58Z) completeStop-never-reconciles = the known B783 gap (SA-111 decision: delegate the bare route to completeWithPayment); revive PR #1325 (open, 226 behind, ratchet-spec conflict only) by cherry-pick — no new ticket. #2301 unaffected.
+- SA-539c (2026-09-28T13:00Z) #2301 @485a6cca carries on content (tree identity); F2 re-runs (a)+(b) there per SA-510l (#2669's guard lines are inside the exercised split path).
+- SA-539d (2026-09-28T13:11Z) #2301 CI red = spec fold (case (2) must create the draft before seeding the REFUSED row); the no-draft create outcome is SA-539 finding 3 = the owner's ruling; B785's reconcile expectation holds; DB lane + F2 (a)+(b)+this file at the folded head.
+- SA-533h (2026-09-28T14:21Z) #2635 = PR #2691 @c3736f17 PASS on content; FOLD required: the undefined-runId guard before the first raw query — without it the Prisma findFirst/findMany/updateMany at :23/:30/:56/:62 drop the key and widen to the whole tenant (SA-E76), no 404. Delta re-pin.
+- SA-555 (2026-09-28T14:46Z) #2066 @8ff0e8c4 PASS on content (linePack moved verbatim to pricing, web re-exports, mobile uses it); F2 N/A; fold: no-mirrors entry for linePack.
+- SA-556 (2026-09-28T14:55Z) #2190 plan CONFIRMED: blank = default, present-unparseable ⇒ whole invoice skipped pre-write (prefix parses count as unparseable); negatives allowed on line columns only, invoice-level ≥ 0 (negative total ⇒ credit-note message); Quantity in scope (>0, finite); payments/expenses NaN = separate ticket.
+- SA-556a (2026-09-28T15:01Z) #2190: qty rule refined — <0 ⇒ skip; 0 with an amount ⇒ skip; 0 without an amount ⇒ drop the row, all-zero ⇒ the Services fallback (kept reachable); blank ⇒ 1; unparseable ⇒ skip. Restore the T6 spec shape.
+  2026-09-28T15:08Z SA-540a #2689 @cd0235a0 — SA PASS #1 (tier 1); landing gate = lead Opus PASS + real green (public window; 15:02Z red is the private-window artefact) + blast-radius aggregate post (script verified read-only/aggregate). Lite note: excluded by requires flag.returns unless a GRANT override — SA-540's own consequence.
+  2026-09-28T15:39Z SA-539e #2301 @5712498c — delta re-pin (spec-only SA-539d fold, source unchanged, merge clean); PASS #1 carries; gate = F2 full lane + lead PASS + real green.
+  2026-09-28T15:55Z SA-557 #2695 credit price override pre-ruling: cap = engine default (lower only), audit cols + auditLog row + fingerprint, staff only (driver ⇒ 400), tax at the replaced chunk's snapshot rate, excise carried. SA-558 #2696(c): override on SPECIAL ⇒ DISCOUNTED/MANUAL per the update path's rule, lifted into create; prints as today.
+  2026-09-28T16:00Z SA-557a #2695 plan ACK — two PRs (server tier 1 + F2; UI tier 2 web+mobile + captures); refinements: == default keeps the default chunk (no MANUAL/audit); reason required on quote too; no-field ⇒ byte-identical pin.
+  2026-09-28T16:07Z SA-528b #2650 @834c7c29 — delta re-pin PASS; hand hunks = the no-bare-cron count fold only (24 = 24 verified); migration unchanged; gate = real green + prod column applied + drift 0 before merge.
+  2026-09-28T16:28Z SA-559 #2700 Lite + flag.returns: v13 publisher (LITE-only delta, v12 untouched); pickup = flags-gain-forward union in compute (no re-pin, no snapshot migration); #2689 then covers inline returns; blast radius = flip report LITE/REQUIRES_UNMET before/after + audit DISCREPANCIES counts; owner runs db:publish:catalog:v13 via railway run.
+  2026-09-28T16:35Z SA-533i #2691 @3ca2c079 — delta re-pin PASS (SA-533h guard folded as statement 1; source + runtime pins; datname filter); gate = F2 full routes lane + lead PASS + real green; then #2679 follows.
+  2026-09-28T16:47Z SA-557b #2702 @475b41e9 — #2695 PR-1 SA PASS #1 (engine transform, quote-side role/validation, one audit row, fingerprint; all SA-557/557a points met); gate = lead Opus + F2 full returns lane + real green (16:45Z red = private-window artefact).
+  2026-09-28T16:54Z R-030a — three live paying tenants (owner 16:55Z): every prod write excludes all three or is held per-tenant; PAYING-HELD counts trusted only after a per-tenant read-only breakdown (ids to the lead's chat only). SA-559a — #2700 blast-radius post adds 'paying tenants on LITE: n' (count only); owner acknowledges before the v13 publish.
+  2026-09-28T16:55Z SA-E91 logged (passed a float-unsafe cents check); SA-557c — #2702 fold = isWholeCents via roundMoney in packages/pricing, executed 0..10000-cent pin; @routeflow/returns has no such check; SA-557b withdrawn at 475b41e9, re-attaches at the folded sha.
+  2026-09-28T17:14Z SA-557d #2702 @fc63694e — SA PASS re-attached (executed isWholeCents proof: 0/10001 refused, boundaries right; additive pricing.ts; trim-before-MaxLength; tripwire); (a) CUSTOMER keeps 403; (b) F2 = full returns lane + whole pricing suite, no invoices/orders/routes lanes (additive-only delta).
+  2026-09-28T17:20Z SA-560 — Native 2.0 buyer P1 × kit map (decision document): F first; B ∥ C ∥ D on the A/S stack; waves; hybrid makes #2353's store gate + buyer nav moot; #2347 flagged as first pick — dedupe PR-1 now, #2352 first Ledger screen; T0.11 slices issue missing; #2325 closed unmerged (kit D). Relayed for the #2554 post.
+  2026-09-28T17:23Z SA-560a — corrections folded (#2339 landed as #2697 caf825f5; orders/index.tsx is a Redirect, #2347 fully kit-blocked/parked); Q1 separate route ✓, Q2 30/page infinite + chips ✓, Q3 BuyerOrder → @routeflow/types required first ✓, Q4 #2348 shipped by #2610 — B7 consumes; kit-free lane work: (a) types extraction, (b) #2332(b) web Badge, (c) proof harness.
+  2026-09-28T17:23Z SA-550g — #2679 tripwire (v): option (b), (v) restated as 'first DB statement after the guard'; #2691's spec is the single pin.
+  2026-09-28T17:24Z SA-560b — (b) waits for #2606 then branches from master (no stacked PRs; not folded into #2606); SA-E92 logged; #2703 = Q3 noted.
+  2026-09-28T17:30Z SA-561 #2704 @77c8d817 — returns scan PASS with one fold (tray write-back must re-split boxes/pieces via the pack; money unchanged, form semantics kept); gate = lead PASS + green + web/mobile captures; before #2693.
+  2026-09-28T17:33Z SA-562 #2703 — option (A) server-truth; BuyerOrderListItem folded in as a shared shape; favorites = typing fix in-PR (bug id only if a visible wrong value is found); orderNumber nullable + guards in-PR; type-level assignability pins against the API; tier 2, before #2347.
+  2026-09-28T17:33Z SA-563 — 'Remove extra units' hidden when cases = 0 (both #2699 web and #2698 mobile); never removes the line; pins listed. #2704 fold local 1350140e noted.
+  2026-09-28T17:43Z SA-562a #2703 — Decimal wire: option (1) via a named DecimalWire = number alias + a tier-1 follow-up (API Decimal serializer, full money lanes); one-way assignability pin correct, pin findAll and findOne.
+  2026-09-28T17:49Z SA-561a #2704 @1350140e — fold verified (normalizeBoxesPieces write-back, 4 pins incl. the case boundary); PASS carries; gate = lead PASS + green + captures; returns specs on the merged tree.
+  2026-09-28T17:50Z SA-559b #2700 plan ACK; publish-and-repin.mjs included in the mirror set (zero-loss report must agree with compute); parity fixture for the no-loss case; nits: reuse getPublishedVersion, pin read-only compute.
+  2026-09-28T18:07Z SA-564 #2706 @b1f9253c — PASS (CartRow opt-in units via lib/loose-units, SA-563 hide rule, payload unchanged, 13 pins); scope: PR-1 lands, #2698 closes on PR-2 covering the picker band + invoices/new + DraftItemCard + driver adjust with the same helpers.
+  2026-09-28T18:10Z SA-561b #2704 @c5562328 — wedge double-add fold verified (defaultPrevented guard = CreateOrderModal :1565 pattern; real-button red pin); PASS carries.
+  2026-09-28T18:19Z SA-559c #2707 @c2f91354 — #2700 SA PASS #1 (v13 = LITE-only delta, publisher marker-only change, union predicate + line-for-line mirror in 3 scripts, paying counts; pins read); gate = lead Opus + F2 v13 db spec + entitlements DB lane + real green; then the owner's publish steps.
+  2026-09-28T18:23Z SA-565 #2699 @d9697e70 — web (a)(b)(d) PASS (qty box gone/+1; typed qty plain lines only; price via the shared PriceEditor, SPECIAL guarded; one loose-units hook with SA-563 in row + sheet); gate = lead PASS + green + captures.
+  2026-09-28T18:26Z SA-559d — #2707 PASS withdrawn (lead FAIL verified: resolver/preview readers missed; SA-E93 logged with the reader-list rule); folds F1–F4 + pins accepted; F1 = #2689 case (3) becomes DENY-on-flag.returns (plan-absence proven on the fresh-DB run); #2708 follow-up; re-pin by delta.
+  2026-09-28T18:44Z SA-559e #2707 @25582500 — PASS #1 re-attached (reader list complete at the head; F2/F3 via the predicate; F4 refuses before any write); F1 conditional assertion accepted with the both-branches-executed condition on F2's post.
+  2026-09-28T18:45Z SA-559f — lead's (3a)/(3b) unconditional pins adopted over SA-559e's conditional acceptance; delta read at the next #2707 sha.
+  2026-09-28T18:58Z SA-549g #2673 @dbc9f2e1 — server-side master merge read (no hand hunks; guard first statement of create, inside-tx-before-write on edit; b294 classifier intact next to #2677; mobile disjoint); PASS carries; gate = F2 full invoices lane + lead + green. SA-559g #2707 @0f3a59b0 — (3a)/(3b) accepted; demote/restore safe only under the serial DB lane (note for the lead).
+  2026-09-28T18:59Z SA-564a — #2698 PR-2: BoxedQtyBand once (NewOrderScreen picker + invoices/new + VariantSplitSheet all IN), invoice edit IN; purchase orders + driver adjust OUT (SA-564's adjust listing withdrawn).
+  2026-09-28T19:02Z SA-566 #2709 @cbc628ec — B889 PASS with one fold (isCustomLine = !productId only, one definition with web + server); gate = lead PASS + green + 390/768 captures.
+  2026-09-28T19:28Z SA-567 #2712 @2a031b87 — #2693 PASS (shared canReturnOnlyPurchased/notBoughtBeforeNames on the same coveredPiecesByProduct as the re-quote; web + mobile guard before the empty re-quote; owner wording); gate = lead PASS + green + captures.
+  2026-09-28T19:29Z SA-564b #2713 @368dab0e — #2698 PR-2 PASS (one rule on every sale surface incl. the shared band ⇒ VariantSplitSheet; per-surface pins); gate = lead PASS + green + captures for all surfaces (3 pending); api.json not in this head.
+  2026-09-28T19:45Z SA-568 #2715 PR-2 — (a) same LineItemRow + unitSlot picker + Case/Unit rule (both axes, as create); (b) one needsOverrideReason in web lib used by PriceEditor + both gates, SA-558 (c) lands first; (c) per-row menu for substitute/cancel/delete; golden ItemUpdate payload pin.
+  2026-09-28T19:49Z SA-558a — #2696(c) plan ACK: decideStaffOverride moves to @routeflow/pricing (one function for api/web/mobile; clients' needsOverrideReason derived from it); mobile LinePriceModal in the SAME PR (no split); pins + gates listed.
+  2026-09-28T19:52Z SA-558b — three update rules verified; decideStaffOverride = A for create + substitute; (B) untouched (baseline right; classification = owner recommendation); (C) reason guard converges to A now, classification pinned; one needsOverrideReason predicate with the act's baseline; edit-page clients: stored baseline for existing lines, tier for substitute/add.
+  2026-09-28T19:55Z SA-558c #2716 — scope confirmed (B + C classification → A via decideStaffOverride, reason baseline kept, no backfill/re-stamp); before/after pins on isUpsellLine, upsell redaction, PDF showOriginalPrice, the copiers into invoices, email lines, web+mobile badges; analytics has no priceType consumer.
+  2026-09-28T20:10Z SA-566a #2709 @983d9880 — fold verified (isCustomLine = !productId; orphan-relation pin); PASS carries; gate = F-prover full verify + green + lead PASS + captures.
+  2026-09-28T20:12Z SA-569 — #2718 @227e7d66 (B890 grid, layout only, handlers byte-identical) PASS; #2719 @72710173 (#2715 PR-1 scanner + defaultPrevented guard + one card, no payload change) PASS; gate = F-prover verify + green + lead PASS + captures.
+  2026-09-28T20:15Z SA-570 #2720 @28d9b7cd — B891 PASS (useId default in the 4 shared primitives + AddressAutocomplete; explicit ids win; every #id/getElementById consumer explicit; no orphaned static htmlFor); gate = F-prover verify + green + lead PASS + captures.
+  2026-09-28T20:17Z SA-558d — salvage #2696(c) plan ACK; create auto-merge NEW-line arm on decideStaffOverride (option i, parity pin); operator replace-all arm untouched → #2716 scope (fourth rule); mobile edit-items locked = follow-up OK; cases+ wording = LineItemRow's.
+  2026-09-28T20:32Z SA-571 #2723 — (1) merge locks stops first (NO KEY UPDATE) + retry belt; (2) terminal stop lock → FOR NO KEY UPDATE family-wide (run stays FOR UPDATE); (3) deleteRun reordered stops → run → orders + retry; six two-sided race pins with reverts red; stale comments + spec pointer carried.
+  2026-09-28T20:42Z SA-542c — Routeflow Lead's fold on #2653 login eligibility CONFIRMED (one helper called by validateUser + buyer login; behaviour-neutral commit with the parity spec green before/after; bcrypt-before-status order pinned).
+  2026-09-28T21:21Z SA-562b #2725 @847f3cac — #2703 PASS (server-truth shared buyer types, DecimalWire alias, one-way assignability pins over the real return types, enum parity extended, favorites workaround removed; API edits type-only); gate = lead PASS + green + captures; before #2347.
+  2026-09-28T21:28Z SA-559h — #2707 publish-and-repin db spec reshape OK: loss/keys tenants → STARTER (real losses absent from pinned AND published), D1b = exactly the 3 addon-gate keys, one DB-level no-false-loss assertion, applied GRANT set == applicable set; fresh + seeded identical (LITE-only v13 delta).
+  2026-09-28T21:43Z SA-559i #2707 @544889d3 — SA-559h fold verified (STARTER fixtures, asserted counts, D1b exact 3, DB-level no-false-loss, written set == applicable set, guarded baseline teardown); PASS carries; gate = lead Opus + F2 fresh/seeded + green; then the owner's publish steps.
+  2026-09-28T21:45Z SA-572 #2717 design ruling: model + invariants accepted with 5 amendments (displayUnitPrice4 display-only + tripwire; pricing helpers in the package; family price authority = named change behind the flag with counts-only report; no partial uniques — nullable-key uniques; I11/I12); M1–M6 accepted, M1 backfill INSERT-only, held for the three live tenants until the owner's yes; §7 recommendations 1–6.
+  2026-09-28T21:56Z SA-572a #2717 M1 — @@unique([tenantId, code, level]) with two rows for one code (BOX ENTERED + UNIT COPIED), cross-product uniqueness a service invariant + report; level resolution = the line's unit, else the default sell unit; a copied unit code counts as confirmed for printing; M1 carry-list (schema, MODEL_DOMAIN, DTOs/parity, INSERT-only backfill held for the three live tenants, dual write, read fallback, scanner unchanged until M4, pins).
+  2026-09-28T22:02Z SA-573 #2729 @71f87b71 — #2727 PASS (registered QTY_INPUT_WIDTH per the root-fix precedent, width + flexShrink 0 on both buyer screens, it.each pin); gate = lead PASS + green + 390/768 captures.
+  2026-09-28T22:10Z SA-572b #2728 M1 Q1–Q8: symbology helper in api/common for M1 (scanning compiled in M4 — SA-572a amended); normaliser M4; 409 BARCODE_TAKEN on the new path; one tx + xact advisory lock per (tenant, code); fallback only in the new readers; all four writers dual-write via one helper pair + tripwire; owner runs the paying breakdown; defaultSellLevel lifted from newLineQty into pricing.
+  2026-09-28T22:13Z SA-572c — SA-572b corrected on two verified premises: Q4 = pg_advisory_xact_lock inside the tx, sorted codes (withAdvisoryLock is session-scoped on a pinned pool); Q8 = defaultSellLevel for scan-level resolution only, add paths unchanged, upb=1 pinned; the web/mobile upb=1 divergence filed as a parity ticket.
+  2026-09-28T22:41Z SA-558e — #2696(c): both New-sale screens post /orders/sell → create(); option (i): reason field in both in this PR, pinned + captures; SA-E94 logged (endpoint, not screen name).
+  2026-09-28T23:09Z SA-572d #2733 @7979bf4e — M1 SA PASS #1 (schema/migration per SA-572/572a/572c; xact lock sorted + same-product exemption + 409; dual write via one helper pair with the SA-E76 guard + tripwire; fallback only in the read model; INSERT-only counts-only backfill with the owner-override gate); gate = lead Opus + F2 real-PG (seeded + fresh + drift) + green; owner applies the migration first.
+  2026-09-28T23:13Z SA-572e — #2733 PASS withdrawn (Opus block verified; SA-E95: tripwire must cover every derivation input); folds F1–F3 + minors accepted; raw-SQL scripts DELETE the product's mirror rows in-tx + scripts tripwire + unmirrored count; delta read at the folded sha.
+  2026-09-28T23:25Z SA-555a #2066 @01506d92 — fold verified (no-mirrors-linepack.spec scanning all app roots; stored-wins pin), four auto-merge carries, PR content = the SA-555 set; PASS carries; gate = real green (public).
+  2026-09-28T23:26Z SA-572f — #2733 image-sync P2002 block confirmed (dedupe; skip cross-product keys; reader fallback; count); race pin = mapper-never-invoked with the lock + observed revert-red; buyer-rooms spec added; report read-only, no slug.
+  2026-09-28T23:27Z SA-572g — #2733 fold 2 confirmed: own-keys-only deduped image mirror (non-own keys are dead per #2533; belt = product row-less + counted); 409 productId = winner as the discriminating race pin (spy optional); backfill skips a code changed under the lock.
+  2026-09-28T23:28Z SA-572g note — no objection to own-keys-only; Lane B keeping BOTH shapes (own keys + per-key skip + per-key LEGACY merge in findOne; spy + winner-productId race pin) is fine — no rework; delta read at the pushed sha.
+  2026-09-29T02:31Z PAUSE (owner via the lead ~02:31Z): SA at a safe point — no command in flight, registers appended through SA-572g; nothing owed but delta reads (#2733 folded sha, #2679 @46352e40, #2707 F2) that wait on other sessions. Resume only on the lead's next message. PC .git/config (core.bare=true) is the owner's repair — untouched.
+  2026-09-29T03:59Z Check-in (owner via the Mac Lead): sent 'ready' to Routeflow Lead [f2f4e9] (Remote Control, idle; [2c0759]/[f65420]/[87a1b6] offline). PAUSE still in force until the lead's resume.
+  2026-09-29T04:00Z Handoff card written: .claude/handoffs/2026-09-29-sa.md (lead's one task during the PAUSE); stopping.
+  2026-09-29T04:09Z RESUMED (owner via the lead ~03:40Z). SA-572h #2733 @da0fcaad — SA-572e/f/g folds verified; (a) FOLD the P2002 mapper (reads only meta.target; the real adapter error misses it ⇒ raw 500; map every shape, real-PG pin per constraint); (b) unit pin enough for M1 (ProductBarcode.productId NOT NULL; carried: real-PG pin when the first tray writer lands); PASS re-attaches at the (a)-folded sha. SA-550h #2679 @46352e40 — FINAL SA PASS (exercised code unchanged on master; (v)/(vi) observed red; cancel × optimize red on the retry revert; CI green).
+  2026-09-29T04:10Z Posted by the Mac Lead on #2554: SA-572h = 5883476383, SA-550h = 5883476518 (verified by REST). Lane B folding (a) test-first; coordinator cleared for #2679. Next SA action: delta read of #2733 at the (a)-folded sha.
+  2026-09-29T04:20Z OWNER RULE (~04:25Z): no chat between tool calls, ≤1 line per turn; full rulings in RULINGS.md only, ≤3-line pointer to the lead/Mac Lead. Memory updated.
+  2026-09-29T04:22Z SA-572i #2733 @96c57dba — (a) fold verified (name + field-set match in both meta shapes, two barcode constraints only; unit ×8 + real-PG ×3 incl. a negative); SA PASS #1 re-attached; gate = lead Opus + CI DB lane + green; owner migrates first.
+  2026-09-29T04:37Z SA-574 (#2717 plans; SA-573 was taken) — helpers: H1/H3/H4/H5 accept; H2 AMENDED to the linear basis (prorateLineSubtotal is non-monotone on free-unit lines: 9 pcs $18 vs 10 pcs $12 — file a bug). M2: Q1–Q9 accept (Q2 with all five price columns + a scripts scan; Q4 adds a CustomerPrice-tier count); Q10 AMENDED (other pack size only with familyPriceOverride); schema FROZEN.
+  2026-09-29T04:38Z SA-574 posted by the Mac Lead: #2554 5883742897 (verified by REST).
+- 2026-09-29T04:40Z Lead direct route confirmed (ack sent). Queue: M2 c1 schema → M2 full → helpers PR → prorate bug ruling → #2664 2nd PASS @27a6f1b, #2678 post-SA-551a → M3/M4a plans.
+- 2026-09-29T04:41Z SA-575 FAIL M2 c1 @2e59d820 (no CREATE TYPE RecipeStatus); shape otherwise = SA-574 frozen. Pointer → Mac Lead + lead.
+- 2026-09-29T04:46Z SA-576 B894 ruling: slice callers (inline-returns, regulated) → linear; delivered-basis curve unchanged, separate owner-visible B-id; prod count yes; one PR. Pointer → lead + Mac Lead.
+- ≤2026-09-29T04:48Z (corrected, SA-E98) SA-577 #2664 @27a6f1b SA PASS (2nd); landing needs a CI run on the current master merge ref.
+- 2026-09-29T04:48Z SA-576 posted #2554 5883826736; SA-577 posted #2554 5883841071 (both verified by REST).
+- ≤2026-09-29T04:54Z (corrected, SA-E98) SA-578 M4a plan: Q1 split PR (M4a-0 master-only, M4a-1 after M1), Q2 parity correction at upb≤1, Q3 scope param, Q5 collision warn.
+- ≤2026-09-29T04:56Z (corrected, SA-E98) SA-579 M3 plan: Q3 owner picks QR host; S1 qty Int; S2 drop orderItemComponentId; S3 soft-delete; M2 components immutable non-DRAFT; QR gated on mixed_packs. SA-578 posted #2554 5883901817.
+- 2026-09-29T04:56Z SA-578 #2554 5883901817 + SA-579 #2554 5883914633 verified by REST; Lane B told of the M2 immutability condition.
+- ≤2026-09-29T05:00Z (corrected, SA-E98) SA-580 owner scan rule amends SA-572a/SA-578 (code decides level; shared→BOX; customer default = follow-up Q); QR = web portal; M3 FIXED first.
+- 2026-09-29T05:00Z SA-580 posted #2554 5883954773 (verified by REST); the M4a session is not online yet (the Mac Lead forwards it).
+- ≤2026-09-29T05:00Z (corrected, SA-E98) SA-580a: buyer scan surfaces keep default unit (owner 09-19 v1); R1–R4 staff only.
+- 2026-09-29T05:01Z SA-580a posted #2554 5883967133 (verified by REST).
+- 2026-09-29T05:01Z Lead ack SA-580a; buyer-scan + per-customer default-unit Qs in owner return packet (PC local-assets/handoff/2026-09-29-owner-return.md).
+- 2026-09-29T05:07Z Lead address now bridge:session_01QUQcvXXZhLJM4danyeMw2e ('Routeflow Lead [6071dc]'); old rows dead. State resent.
+- ≤2026-09-29T05:14Z (corrected, SA-E98) SA-581 #2739 @4b185b13 SA PASS (executed sweep 269,613 events, 0 bad); gate = CI green + lead Opus.
+- 2026-09-29T05:14Z SA-581 posted #2554 5884109781 (verified by REST).
+- ≤2026-09-29T05:17Z (corrected, SA-E98) SA-582 non-atomic migrations: fold BEGIN/SET LOCAL/COMMIT on M2 @40f5db24 and M1 #2733; HOLD owner M1 prod-migrate; F2 (i)-(iii); tooling B-id; SA-E96.
+- ≤2026-09-29T05:17Z (corrected, SA-E98) SA-582a: M1 already applied (#2554 5883602132); leave file as-is, HOLD withdrawn, SA-572i restored; SA-582 stands for M2. SA-E97.
+- 2026-09-29T05:17Z SA-582+582a posted #2554 5884141931 (verified by REST); #2733 released to the coordinator.
+- ≤2026-09-29T05:29Z (corrected, SA-E98) SA-583 M2 c1 PIN @6f938ffa (fold proved by F2 5884252908); conditions (a) exactly-one BEGIN/COMMIT count, (b) operator note in owner hand-off.
+- 2026-09-29T05:29Z SA-583 posted #2554 5884267336 (verified); 6f938ffa migration sha256 0242336628fcf44e0a1c4f072fc8e62ddf6df8b89eada7e54a47a5db69b85fa3 (recomputed).
+- 2026-09-29T05:44Z SA-584 #2741 M2 full @dd75875d FAIL: B1 inventory V→F deadlock, B2 recipe invariants not kept (reparent/upb/activate re-validate, locks), B3 stacked base; C1 override tripwire, C2 operator note. SA-E98 header times corrected.
+- 2026-09-29T05:45Z SA-585 #2678 landed w/o SA-551a fold: display-only mislabel, prod safe, follow-up next window (tier 2), no rollback.
+- 2026-09-29T05:45Z SA-584 + SA-E98 line posted #2554 5884437584 (verified by REST); routed to Lane B.
+- 2026-09-29T05:45Z SA-585 posted #2554 5884444203 (verified by REST).
+- 2026-09-29T05:55Z SA-584a: familyPriceOverride writer out of M2 (C1 tripwire); first writer re-runs Q10.
+- 2026-09-29T05:56Z SA-584a posted #2554 5884550718 (verified by REST); routed to Lane B + U-units.
+- 2026-09-29T06:01Z SA-584b: (1) accept, (2) accept, (3) overruled — createVersion must clone as-is; activate is the gate; recovery pin.
+- 2026-09-29T06:02Z SA-584b posted #2554 5884618352 (verified by REST); routed to Lane B.
+- 2026-09-29T06:17Z SA-586 #2740 M4a-0 @f9fcb51c SA PASS (behaviour-neutral move verified by diff; cacheDirectory false alarm cleared).
+- 2026-09-29T06:17Z SA-586 posted #2554 5884788802 (verified by REST); coordinator has it.
+- 2026-09-29T06:23Z SA-587 #2741 fold @444b0a3a: B1 closed, B2 closed except post-lock ownRecipe decision (fix + race pin); final pin after B3 retarget + F2 + CI.
+- 2026-09-29T06:23Z SA-587 posted #2554 5884860846 (verified by REST); routed to Lane B.
+- 2026-09-29T06:43Z SA-587a: tracked-categories I6 bypass folds (tx + house order + 409 atomic + tripwire); createVersion drops revalidateShape.
+- 2026-09-29T06:43Z SA-587a posted #2554 5885099209 (verified by REST); routed to Lane B.
+- 2026-09-29T06:52Z SA-587b: tobacco backfill allow-list only with open-recipe skip bucket (counts) + pin.
+- 2026-09-29T06:52Z SA-587b posted #2554 5885210707 (verified by REST); routed to Lane B.
+- 2026-09-29T07:07Z Lead FYI #2185 (B858/B859): SA-322/329 reorder gate rides #2185 DARK (DARK_PLAN_FLAGS, allow+would-deny warn, EntitlementAuthority, dark+enforced specs); SA accepts shape (= SA-329); pin at next sha.
+- 2026-09-29T07:12Z SA-587c #2741 @e1446598 delta PASS on content; final pin after F2 races run + B3 + CI + Opus.
+- 2026-09-29T07:13Z SA-587c posted #2554 5885486925 (verified by REST); F2 running #2741 races.
+- 2026-09-29T07:16Z SA-587d: B1 pin must show revert 40P01 every round, fix no-40P01 same interleaving, pg_locks edge (assign blocked on F holding no V), end state.
+- 2026-09-29T07:17Z SA-587d posted #2554 5885536250 (verified by REST); routed to Lane B.
+- 2026-09-29T07:20Z SA-587e: assignToVariants gets retryOnTxConflict in-service (per-attempt reset, alerts once) + pins; spec drops its retry; recipe writers no retry needed.
+- 2026-09-29T07:20Z SA-587e posted #2554 5885586130 (verified by REST); routed to Lane B.
+- 2026-09-29T07:34Z F2 5885777128: service retry absorbs revert 40P01; discriminator = retried-attempt codes (fixed: 0×40P01, 40001 ok; revert: 40P01 every round) — satisfies SA-587d(a); (c) pg_locks edge still required (fix NOT granted misuse).
+- 2026-09-29T07:41Z SA-587f #2741 @ab3c79c8 delta PASS (retry wrap verified; F2 5885856447); all SA content closed; final pin after B3 + CI + Opus.
+- 2026-09-29T07:41Z SA-587f posted #2554 5885871775 (verified by REST).
+- 2026-09-29T07:58Z SA-588 #2751 @85c50d78 PASS on content w/ 2 folds: deterministic ½¢ band (executed: 3,224/28,572 boundary float noise), shared isSpecialTier; gates F2/CI/Playwright/Opus.
+- 2026-09-29T07:59Z SA-588 posted #2554 5886113506 (verified); fold (1) = Math.round(|p−b|×1e4) ≤ 50 — executed 666,668 exact-±½¢ cases all in band.
+- 2026-09-29T08:06Z SA-588a #2751 fold @a6fe09e7 SA delta PASS (executed 3,333,340 band cases, 0 bad; isSpecialTier 12 copies → shared); carries to pushed sha if identical.
+- 2026-09-29T08:07Z SA-588a posted #2554 5886223977 (verified by REST).
+- 2026-09-29T08:23Z SA-589 M3 schema: displayUnitPrice4 on component models only; CompositionMode created in M3; recipeId no FK; SA-579 S1–S4 + SA-582 stand.
+- 2026-09-29T08:23Z SA-589 posted #2554 5886473178 (verified by REST); routed to U-units.
+- 2026-09-29T08:25Z SA-590 M3 c1 @197b187c FAIL: qty DECIMAL (S1 needs Int), orderItemComponentId present (S2 drops it).
+- 2026-09-29T08:26Z SA-590 posted #2554 5886506436 (verified by REST); routed to U-units; F2 proof at 197b187c cancelled.
+- 2026-09-29T08:28Z SA-590a M3 c1 @def1d4ac SHAPE PASS (migration sha256 5bc06fca…); pin on F2 (i)–(iii) at this sha.
+- 2026-09-29T08:29Z SA-590a posted #2554 5886551079 (verified by REST); F2 proving M3 c1 at def1d4ac.
+- 2026-09-29T08:57Z SA-591 M3 ph2: (a) no-ACTIVE recipe line = plain; (b) edits keep stored composition (case 8), only new lines resolve ACTIVE; deviations accepted.
+- 2026-09-29T08:57Z SA-591 posted #2554 5886981843 (verified by REST); routed to U-units.
+- 2026-09-29T09:23Z SA-592 #2753 @4b02cc5a HOLD: fold1 raw ½¢ band (use withinStaffOverrideTolerance), fold2 SPECIAL restore at tier on edits; listed gaps; retarget after #2751.
+- 2026-09-29T09:24Z SA-592 posted #2554 5887387985 (verified by REST); routed to Lane B.
+- 2026-09-29T09:35Z SA-592a #2753 fold @eca26eb3: folds MET; token-scan pin; BOGO-copy + email-strike behaviour pins required here.
+- 2026-09-29T09:35Z SA-592a posted #2554 5887573200 (verified by REST); routed to Lane B.
+- 2026-09-29T09:39Z SA-593 #2754 M3 @7fc0cea6: SA-591 folds met; allow-list (1) sound, (2) narrow to count/delegate; gates F2/retarget/CI/Opus/captures.
+- 2026-09-29T09:40Z SA-592b #2753 fold @0334b854 delta PASS (token scan, byte-identical bogo extract + pin, email behaviour pin).
+- 2026-09-29T09:40Z SA-593 #2554 5887642492 + SA-592b 5887642709 posted (verified by REST).
+- 2026-09-29T09:41Z SA-593 (vi) fold on #2754 local f19a305e: allow-list (2) count-bounded + delegate-keyed with negative controls — MET (test-only delta verified).
+- 2026-09-29T09:57Z SA-594: wipe script lacks recipe/recipeComponent (RESTRICT) → fold into #2741 + dmmf structural pin + real-PG seeded wipe; M3 32b seeds a recipe.
+- 2026-09-29T09:58Z SA-594 posted #2554 5887915534 (verified by REST); routed Lane B + U-units.
+- 2026-09-29T10:11Z SA-594a #2741 @0bad14a4 delta PASS (wipe fold + structural pin + F2 5888096079); final pin after B3/CI/Opus.
+- 2026-09-29T10:11Z SA-594a posted #2554 5888110776 (verified by REST).
+- 2026-09-29T13:21Z Lead back as 'Routeflow Lead [1b6054]' (same bridge id); state resent (SA-588a..594a).
+- 2026-09-29T13:22Z Verified pushed heads: #2751=a6fe09e7 (SA-588a), #2753=0334b854 (SA-592b); #2754 F2 PASS @7fc0cea6 (5887730546, 5887755792), fold waits on HEAP_MB PR; remaining for SA: #2741 final pin after #2733, #2754 fold push.
+- 2026-09-29T13:54Z SA-593a #2754 @33356816 delta PASS: merge resolutions (authority msrp, barrel union, master whole-cents allocator; allocateComponentPieces untouched) correct.
+- 2026-09-29T13:54Z SA-593a posted #2554 5891728738 (verified by REST).
+- 2026-09-29T15:06Z SA-588b: plain-invoice tier prefill ACKED; SA-588a overclaim withdrawn (SA-E99) — 7 copies fold + widened pin.
+- 2026-09-29T15:06Z SA-588b posted #2554 5892956142 (verified by REST); Lane B folds all 7 copies.
+- 2026-09-29T15:12Z SA-588c: revert returns '> 1' hunk out of #2751, allow-list + follow-up; rest of SA-588b fold accepted pending delta read.
+- 2026-09-29T15:13Z SA-588c posted #2554 5893065870 (verified by REST); B-id requested from lead.
+- 2026-09-29T15:21Z SA-580b: shared code ⇒ product's default sell unit = the picker's tap-add (defaultSellLevel; units_v1 isDefaultSelling); supersedes SA-580 R2.
+- 2026-09-29T15:21Z SA-588d #2751 @3ab964ea delta PASS (7 copies routed, 0 remain by grep, returns hunk reverted).
+- 2026-09-29T15:21Z SA-580b posted #2554 5893215377 (verified by REST); routed to MacBook M4a.
+- 2026-09-29T15:22Z SA-588d posted #2554 5893223746 (verified by REST); returns follow-up = B900 (allow-list B-TBD→B900 next #2751 push; string-only, carries SA-588d).
+- 2026-09-29T15:26Z SA-580c: M4a-1 option (a) — shared code = picker tap as-is; units_v1 isDefaultSelling clause withdrawn; follow-up for picker+scan.
+- 2026-09-29T15:26Z SA-580c posted #2554 5893305224 (verified by REST); routed to M4a; isDefaultSelling follow-up with lead.
+- 2026-09-29T16:31Z SA-591a: M3 t31 break-it = gate between recipe read and components read + mutation re-resolving ACTIVE for components; content assert.
+- 2026-09-29T16:31Z SA-591a posted #2554 5894392202 (verified by REST); routed to U-units.
+- 2026-09-29T16:34Z SA-591b: t31 fallback — prove P1 (row lock) and P2 (read-by-id+immutability) independently: lock edge; -P1 green; mutation-only green; both red.
+- 2026-09-29T16:34Z SA-591b posted #2554 5894438179 (verified by REST); routed to U-units.
+- 2026-09-29T16:41Z SA-591c: t31 matrix met (F2 5894534773 @519927c3); re-pin M3 at pushed sha.
+- 2026-09-29T16:46Z SA-593b #2754 M3 @519927c3 SA content pin (spec-only delta, migration unchanged); landing after M2 retarget + CI + Opus + captures.
+- 2026-09-29T17:23Z SA-595 #2764 M4a-1 @1c26b9a6 HOLD: levelsForScannedCode ignores sku/unitSku when rows present → client fast path unitSku adds BOX; fix + parity pins; R4 BOX@upb≤1 pin.
+- 2026-09-29T17:24Z SA-595 posted #2554 5895209221 (verified by REST); routed to M4a.
+- 2026-09-29T17:39Z SA-596 #2741 retarget @d534dfca: carry proven (prod lines identical; spec DI only); SA final content pin; landing on real CI + F2 + owner migrate order.
+- 2026-09-29T17:40Z SA-595a #2764 @5100c9d0 delta PASS (one derivation, parity pin; BOX scan +upb accepted); point at R4 add-path pin. SA-596 posted #2554 5895446262 (verified); F2 M2 retarget proof 5895432404.
+- 2026-09-29T17:40Z SA-595a posted #2554 5895456454 (verified by REST); routed to M4a.
+- 2026-09-29T17:46Z SA-595a R4 add-path pins at #2764 PR head 79214dc5 (REST) — verified test-only; SA-595a ask CLOSED.
+- 2026-09-29T17:47Z SA-588e: #2751×#2760 merge — special-line refusal removed is intended; pins: scan-tray pencil reason matrix + required-actions shape.
+- 2026-09-29T17:48Z SA-588e posted #2554 5895578028 (verified by REST); routed to Lane B.
+- 2026-09-29T17:51Z SA-588e pins in (#2751 local 0ea37070, verified 2 test files only) — CLOSED; carry to pushed sha if identical.
+- 2026-09-29T19:14Z SA-595b #2764 @3798423d delta PASS (shared code = tap +1; only distinct BOX +upb); lead's catch noted.
+- 2026-09-29T19:14Z SA-595b posted #2554 5896941611 (verified by REST); routed to M4a.
+- 2026-09-29T19:17Z SA-595c: #2764 gaps — (1) web invoices/new + [id]/edit BLOCK (SA-E100), (3) route or delete resolveBuyerScanSellLevel, (2) driver adjust follow-up, (4) none.
+- 2026-09-29T19:17Z SA-595c posted #2554 5896990545 (verified by REST); routed to M4a; driver-adjust follow-up with lead.
+- 2026-09-29T19:22Z SA-597 #2765 @207c9db0: security PASS (single-use CAS delete, TTL 60s, hash-only, realm+tenant binding, one eligibility rule); fold: wrap per SA-582 + rename folder after newest master migration; request-time secret deviation accepted.
+- 2026-09-29T19:23Z SA-597 posted #2554 5897074192 (verified by REST); routed via lead to #2653 lane.
+- 2026-09-29T19:44Z Confirmed: add-during-edit at tier = MANUAL in #2751 (SA-558b(2)), SPECIAL under #2753 rule A (SA-558c); the special-override-2696 db assertion flips IN #2753, not #2751 (F2 5897391939).
+- 2026-09-29T19:48Z SA-576a #2769 B894 @f53675b7 SA PIN: linear slice callers, creditedThrough shared (SA-576c), read-only anonymous census; LOW follow-up telescope priceMatchedChunk (½¢/slice drift).
+- 2026-09-29T19:48Z SA-576a posted #2554 5897475530 (verified by REST); LOW telescope follow-up with lead.
+- 2026-09-29T20:22Z SA-597a #2765 @5d5db5ba SA PIN (wrap + rename after M3; enum union 109); landing on F2 + CI + owner migrate/secret.
+- 2026-09-29T20:23Z SA-597a posted #2554 5898092135 (verified by REST).
+- 2026-09-29T20:46Z OWNER ORDER (~20:40Z via lead/Mac Lead): SLOW DOWN — reading/planning only, ≤1 light command at a time, no heavy jobs; holds until owner says resume.
+- 2026-09-29T22:58Z OWNER RESUMED (via Mac Lead). Task: pre-read #2486 SIWA API.
+- 2026-09-29T22:59Z SA-598 #2486 SIWA pre-read: P1 OR-lookup defect (adopt #2664 sub-first/409/CAS, shared helper), P2 isLoginEligible, P3 wrap+rename, P4 error allow-list.
+- 2026-09-29T23:00Z SA-598 posted #2554 5900697301 (verified by REST); routed to Lane B + lead.
+- 2026-09-29T23:00Z SA-593c: ACK buyer-portal sub-lines (same mapper + own-order pin; mobile customer parity if shared helper, else ticket; captures).
+- 2026-09-29T23:01Z SA-593c posted #2554 5900709657 (verified by REST); routed to U-units + lead.
+- 2026-09-29T23:18Z SA-598a #2486 @b3e31a2e delta PASS (shared oauth-account-link helper, isLoginEligible identical blob to #2765, wrap+rename 0929200000, P4 JSON-body deviation ok); follow-up: google through the shared helper.
+- 2026-09-29T23:18Z SA-598a posted #2554 5900911962 (verified by REST); google-oauth convergence follow-up with lead.
+- 2026-09-29T23:27Z SA-593d M3 @640f93c4 delta PASS (same mapper, scope + key allow-list pins; mobile customer detail = ticket).
+- 2026-09-29T23:27Z SA-593d posted #2554 5901013238 (verified by REST); mobile customer sub-lines ticket with lead.
+- 2026-09-29T23:52Z SA-593e: M3 folds — (1) staff order detail sub-lines (renderer-at-breakpoint pins), (2) selling-unit RECIPE line composes as qty whole packs (non-integer 400).
+- 2026-09-29T23:53Z SA-593e posted #2554 5901279865 (verified by REST); routed U-units + lead.
+- 2026-09-29T23:58Z SA-593f: (a) effectiveBoxes local ACK; (b) unit-aware qty-only stays plain ACK + ticket (refuse ProductUnits on recipe products); buyer merge case required.
+- 2026-09-29T23:58Z SA-593f posted #2554 5901336294 (verified by REST); ProductUnit-on-recipe ticket via lead; buyer-merge case with F2.
+- 2026-09-30T00:28Z SA-599 #2779 pre-read: order #2664→#2486→#2779; #2779 lacks #2664's isAdmin/client hunks so must rebase not supersede; conditions (1)-(4). #2486 has 2 new commits (baddd1ae, ff035d2d) pending delta read.
+- 2026-09-30T00:29Z SA-598b #2486 @ff035d2d delta PASS (ids-only logs + pins). SA-599a: trade stated (supersede makes R1.1b wait for Apple #2486); if lead supersedes, #2779 must carry all #2664 hunks incl. isAdmin.
+- 2026-09-30T00:30Z SA-577a #2664 re-read vs master c38f2b01: api auth untouched, web login change is redirect-only, mobile mismatch mapping intact in merged tree ee07a2e2 — PASS carries; land on fresh CI.
+- 2026-09-30T00:30Z SA-598b 5901663373, SA-599a 5901663552, SA-577a 5901672620 posted on #2554 (verified by REST); lead accepted order #2664→#2486→#2779.
+- 2026-09-30T00:35Z SA-593g: buyer-merge qty-only recipe line — option (B): compose from pieces when divisible, else 400; (A) rejected; check mobile buyer cart payload; ticket to unify qty meaning.
+- 2026-09-30T00:35Z Lead leaned (A) on SA-593g; SA held (B): merge payloads arrive piece-denominated (REG-B47) so (A) risks silent ×upp over-order; parity goes to the unify ticket.
+- 2026-09-30T00:36Z SA-593g posted #2554 5901728957 (verified). Required mobile check CLOSED: cartStore.boxedFields (read at master :37-44) sends boxes=N, pieces=0, qty=N×upb for upb>1 — no qty-only boxed lines from real clients; no pre-existing bug. Unify-qty ticket with lead (owner's call).
+- 2026-09-30T00:36Z Lead ACCEPTED SA-593g (B); lead files 'unify buyer qty meaning for boxed products' ticket (owner-visible).
+- 2026-09-30T00:58Z SA-329a #2185 @0e86178c SA PIN: dark reorder gate per contract; gate kept on create/update/bulk/import through merges.
+- 2026-09-30T00:58Z SA-329a posted #2554 5901957774 (verified by REST).
+- 2026-09-30T01:04Z Handoff card written .claude/handoffs/2026-09-30-sa.md (usage 90% rung).
+- 2026-09-30T01:05Z SA-593h M3 @24c74998 delta PASS (folds e/f/g met; F2 12/12).
+- 2026-09-30T01:05Z SA-593h posted #2554 5902027084 (verified by REST).
+- 2026-09-30T01:22Z SA-600 #2781 @49ac11de SA PIN (linePack stored pack wins on receive, web+mobile agree; F2 5902195205).
+- 2026-09-30T01:22Z SA-600 posted #2554 5902205812 (verified by REST).
+- 2026-09-30T02:06Z Weekly usage 90%: finish in-flight only (none), start nothing new; handoff card updated.
+- 2026-09-30T02:29Z Owner recs via lead: Q1 #2780 recommend explicit-unit-required (400) for buyer boxed qty on all paths, alt packs-everywhere; Q2 #2762 recommend allow merge (head 44bc6848 Verify+DB green, only speed bar waived; record waiver + speed ticket), alt send back.
+- 2026-09-30T02:35Z SA-601 owner #2780: plain buyer qty = default selling unit via resolveLineUnits (pack for upb>1; recipe composes); all buyer paths identical; staff/driver arms unchanged; isDefaultSelling gap folded into widened SA-580c ticket.
+- 2026-09-30T02:36Z U-units #2780 plan confirmed = SA-601 (pack only; isDefaultSelling → widened SA-580c ticket). M2 #2741 reported landed c684aba9.
+- 2026-09-30T02:36Z SA-601 posted #2554 5902954812 (verified by REST); SA-580c ticket widening with lead.
+- 2026-09-30T02:47Z SA-599b #2779: (b) linkGoogleAccount → casLinkProviderId FOLD, (a) extraWhere tenantId FOLD, (c) no change (helper guards before user query).
+- 2026-09-30T02:48Z SA-599b posted #2554 5903078927 (verified by REST); routed to Lane B.
+- 2026-09-30T03:10Z SA-598c #2486: Apple staff token missing isAdmin + canActAsDriver → FOLD + key-set parity pin vs AuthService.login; same pin on #2779 Google + check #2765 handoff; ticket for one shared claims builder.
+- 2026-09-30T03:10Z SA-598c posted #2554 5903301309 (verified by REST); Lane B (#2486 then #2779) + lead (#2765 issuer check, claims-builder ticket).
+- 2026-09-30T03:12Z SA-601a M3 @b54e8cb9 delta PASS (#2780 one-clause removal; F2 5903313235); landing pin needs carry proof + CI + Opus + captures + owner migrate.
+- 2026-09-30T03:12Z SA-601a posted #2554 5903321164 (verified by REST).
+- 2026-09-30T03:14Z SA-602 settings home by kind: behaviour→policy store (credit flags wait for #1337), config data→SystemConfig/settings (depot lat/lng now), user prefs→users/me/preferences typed (now); #1337 stale/dirty → rebase + SA delta + F2 + next sitting.
+- 2026-09-30T03:19Z SA-603 Sitting-B bundle: 20260929220000 after Apple+policy; portalVisible ADD COLUMN; (2) reshaped to retired* columns + release-on-deactivate (no partial index: Prisma can't express, drift); EmailDelivery table+enum+3 idx, 180d LeaderCron purge; wrap; pre-checks P1-P4.
+- 2026-09-30T03:19Z SA-603 posted #2554 5903384404 (verified by REST); routed U-units + lead; #1337 folder pin 20260929210000 to N-buyer.
+- 2026-09-30T03:24Z SA-598d #2486 @abe494c1 delta PASS (claims + key-set parity spec vs real AuthService.login).
+- 2026-09-30T03:25Z SA-598d posted #2554 5903436095 (verified). SA-603a fact re-verified: name uniqueness = app nameTaken findFirst at products.service.ts:634 (create) / :898 (update) on master, no DB unique.
+- 2026-09-30T03:26Z SA-603a written to RULINGS.md (re-write: first attempt did not persist).
+- 2026-09-30T03:27Z SA-603a posted #2554 5903460231 (verified by REST); routed U-units + lead.
+- 2026-09-30T03:29Z SA-603b name uniqueness: option (i) drop-IF-EXISTS + active-only partial uniques in bundle, gated on F2 drift proof + owner count-only dup check + pg_indexes step 0; fallback SA-603a(a). SA-E101 logged. Ticket: real product names in catalog.prisma comment.
+- 2026-09-30T03:29Z SA-603b posted #2554 5903483323 (verified by REST, incl. SA-E101 correction); acme-placeholder ticket with lead.
+- 2026-09-30T03:40Z SA-603c bundle scope: +NotificationEvent ADD VALUE (legal in wrap, unused in-tx), fold #1337 PolicyValue (supersedes 210000 pin), +contentFingerprint (entityType/Id = related), #2417/#2182 conditional on SA design pre-ruling + STEP0 row counts.
+- 2026-09-30T03:40Z SA-603c posted #2554 5903588187 (verified by REST); lead relays to salvage + N-buyer.
+- 2026-09-30T06:03Z USAGE 97%: handoff card rewritten (last SA-603c); waiting for new lead; nothing in flight.
+- 2026-09-30T07:26Z SA-602a #2792 @25d554e7: kinds per SA-602 met; fold = preferences allow-list (grep client keys, reject unknown); LOW two-key depot write; null-clear ticket.
+- 2026-09-30T07:26Z SA-602a posted #2554 5906319706 (verified by REST); routed Lane B + lead.
+- 2026-09-30T15:54Z Pre-handoff open items sent to Mac Lead: owner Qs (buyer scan rule, per-customer default unit, isDefaultSelling widening); lead: STEP 0 results, #2417/#2182 designs.
+- 2026-09-30T15:56Z Lead: owner Qs already ruled (SA-580a product default; #2780 customer-else-product; #2784 isDefaultSelling ticket); #2417/#2182 out of bundle. Card updated.

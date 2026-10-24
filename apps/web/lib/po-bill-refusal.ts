@@ -47,6 +47,6 @@ export function getPoBillRefusal(err: unknown): PoBillRefusal | null {
     ? (data.violations as PoRefusalViolation[])
     : [];
   const lines = violations.map((v) => describe(v, poNumber));
-  if (lines.length === 0 && typeof data.message === "string") lines.push(data.message);
+  if (lines.length === 0) lines.push(`This bill is more than ${poNumber} allows.`);
   return { poNumber, lines, advice: ADVICE };
 }

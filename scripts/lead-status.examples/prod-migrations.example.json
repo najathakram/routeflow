@@ -1,0 +1,5 @@
+{
+  "recordedAt": "2026-10-08T00:00:00Z",
+  "sittingRef": "board comment id or URL of the migration sitting",
+  "folders": ["20260101000000_example_migration"]
+}

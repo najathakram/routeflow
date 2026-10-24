@@ -1,12 +1,10 @@
+import { RECORD_KEEPING_EXCLUDED_STATUSES } from "../tenant/tenant-automation";
 import { Injectable, Logger } from "@nestjs/common";
 import { CronExpression } from "@nestjs/schedule";
 import { LeaderCron } from "../common/cron-lock";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
-
-/** Matches TenantConfig.timezone's own schema default — used only when a tenant somehow
- * has no config row (config is otherwise created alongside every tenant). */
-const FALLBACK_TIMEZONE = "America/New_York";
+import { TENANT_ZONE_SELECT, zoneFromConfig } from "../common/tenant-time-zone";
 
 /** The `UserPreference.key` a tenant admin's opt-out is stored under (N4). Missing row =
  * enabled, same convention as `notifications.service.ts`'s `pushEnabled` (B04). */
@@ -83,11 +81,11 @@ export class LowStockDigestService {
   @LeaderCron(CronExpression.EVERY_HOUR, "inventory.sendLowStockDigest")
   async sendLowStockDigest(now: Date = new Date()): Promise<void> {
     const tenants = await this.prisma.tenant.findMany({
-      where: { deletedAt: null, status: { notIn: ["SUSPENDED", "CANCELLED"] } },
+      where: { deletedAt: null, status: { notIn: [...RECORD_KEEPING_EXCLUDED_STATUSES] } },
       select: {
         id: true,
         config: {
-          select: { timezone: true, businessName: true, lowStockDigestSentForDay: true },
+          select: { ...TENANT_ZONE_SELECT, businessName: true, lowStockDigestSentForDay: true },
         },
       },
     });
@@ -108,13 +106,15 @@ export class LowStockDigestService {
   private async processTenant(
     tenantId: string,
     config: {
-      timezone: string;
+      timezone?: string | null;
       businessName: string | null;
       lowStockDigestSentForDay: Date | null;
     } | null,
     now: Date,
   ): Promise<void> {
-    const timeZone = config?.timezone || FALLBACK_TIMEZONE;
+    // SA-738: the batched-read exception to resolveZone (one query for ALL tenants, then this pure
+    // resolver per tenant) — a tenant with no row or an invalid zone is on UTC, like every other server path.
+    const { zone: timeZone } = zoneFromConfig(config, { tenantId });
     const { dateKey, hour } = readLocalDateAndHour(now, timeZone);
     if (hour !== 7) return;
     if (sentForDayKey(config?.lowStockDigestSentForDay ?? null) === dateKey) return;

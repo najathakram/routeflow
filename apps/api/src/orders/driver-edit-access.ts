@@ -1,4 +1,5 @@
 import { ConflictException, ForbiddenException } from "@nestjs/common";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /**
  * SA-429 (#2377) — the DRIVER ownership predicate for `OrdersService.updateOrderItems`.
@@ -94,7 +95,7 @@ export function confirmPendingAsDriver(
     });
     if (count === 0)
       throw new ConflictException({
-        code: "ORDER_CHANGED_DURING_EDIT",
+        code: API_ERROR_CODES.ORDER_CHANGED_DURING_EDIT,
         message: "The order changed while your update was being applied — review it and try again.",
       });
     return tx.order.findUnique({ where: { id: orderId } });

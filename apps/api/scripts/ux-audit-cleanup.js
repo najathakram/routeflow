@@ -18,7 +18,9 @@ const { Client } = require("pg");
 const path = require("path");
 const fs = require("fs");
 const readline = require("readline");
-const { assertTestTenant } = require("../../../scripts/lib/test-tenants.cjs");
+const { assertTestTenant, isTestTenant } = require("../../../scripts/lib/test-tenants.cjs");
+const { loadProtectedSlugs } = require("./lib/protected-slugs.cjs");
+const { assertWritableTenant } = require("./lib/live-target-guard.cjs");
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -100,6 +102,14 @@ async function main() {
   // Only approved test tenants may be cleaned up — never a live client.
   assertTestTenant(m.tenantSlug, "ux-audit-cleanup manifest");
 
+  // Row 195: the manifest's slug alone does not bind the ids/tenantId it carries, so every delete
+  // below is gated on the tenant row the manifest NAMES (loaded once, from the URL dialled below).
+  if (!m.tenantId) {
+    console.error("\n❌ Manifest has no tenantId: refusing (cannot bind it to a tenant).\n");
+    process.exit(1);
+  }
+  const protectedSlugs = loadProtectedSlugs(process.env, DB_URL);
+
   console.log("\n╔══════════════════════════════════════════════════════════╗");
   console.log("║  RouteFlow UX Audit — Cleanup Script                    ║");
   console.log("╠══════════════════════════════════════════════════════════╣");
@@ -121,6 +131,30 @@ async function main() {
   const pg = new Client({ connectionString: DB_URL });
   await pg.connect();
   console.log("\n✔ Connected to Railway DB");
+
+  // Before the first delete: the named tenant must exist, carry the manifest's (test) slug, and
+  // not be protected (paying | stripe-linked | PROTECTED_TENANT_SLUGS). No override is offered.
+  try {
+    const tr0 = await pg.query(
+      `SELECT id, slug, status, class, "deletedAt" FROM "Tenant" WHERE id = $1`,
+      [m.tenantId],
+    );
+    const tenantRow = tr0.rows[0];
+    if (!tenantRow) throw new Error(`tenant ${m.tenantId} not found: refusing`);
+    if (String(tenantRow.slug).trim().toLowerCase() !== String(m.tenantSlug).trim().toLowerCase())
+      throw new Error(`tenant ${m.tenantId} does not match the manifest's tenantSlug: refusing`);
+    if (!isTestTenant(tenantRow.slug))
+      throw new Error(`tenant ${m.tenantId} is not an approved test tenant: refusing`);
+    const sr0 = await pg.query(
+      `SELECT "planKey", "stripeSubId", "couponFull" FROM "TenantSubscription" WHERE "tenantId" = $1`,
+      [m.tenantId],
+    );
+    assertWritableTenant(tenantRow, sr0.rows[0] ?? null, protectedSlugs);
+  } catch (err) {
+    await pg.end();
+    console.error(`\n❌ ${err.message}\n`);
+    process.exit(1);
+  }
 
   let total = 0;
 

@@ -10,7 +10,7 @@ export function confirm(
   title: string,
   message: string,
   onConfirm: () => void,
-  options?: { confirmText?: string; destructive?: boolean },
+  options?: { confirmText?: string; destructive?: boolean; onCancel?: () => void },
 ): void {
   const confirmText = options?.confirmText ?? "OK";
   const destructive = options?.destructive ?? false;
@@ -20,7 +20,7 @@ export function confirm(
       title,
       message,
       actions: [
-        { label: "Cancel", style: "cancel" },
+        { label: "Cancel", style: "cancel", onPress: options?.onCancel },
         {
           label: confirmText,
           style: destructive ? "destructive" : "default",
@@ -30,14 +30,19 @@ export function confirm(
     });
     return;
   }
-  Alert.alert(title, message, [
-    { text: "Cancel", style: "cancel" },
-    {
-      text: confirmText,
-      style: destructive ? "destructive" : "default",
-      onPress: onConfirm,
-    },
-  ]);
+  Alert.alert(
+    title,
+    message,
+    [
+      { text: "Cancel", style: "cancel", onPress: options?.onCancel },
+      {
+        text: confirmText,
+        style: destructive ? "destructive" : "default",
+        onPress: onConfirm,
+      },
+    ],
+    { cancelable: true, onDismiss: options?.onCancel },
+  );
 }
 
 /**

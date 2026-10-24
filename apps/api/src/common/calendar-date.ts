@@ -118,6 +118,22 @@ export function startOfLocalDay(day: string, timeZone?: string | null): Date {
   return localMidnightUtc(parts.year, parts.month, parts.day, timeZone || "UTC");
 }
 
+/**
+ * [fromDay, toDay] as REAL instants in the tenant's zone, half-open (SA-869): the filter for a real-instant column
+ * (`CreditNote.createdAt`, `Return.refundedAt`; plan A5), so a credit at 23:30 local on the 31st belongs to the 31st.
+ * The ONE derivation: sales-facts' `instantWindow` and the accrual net-sales row reader both call it.
+ */
+export function localInstantWindow(
+  fromDay: string,
+  toDay: string,
+  timeZone?: string | null,
+): { gte: Date; lt: Date } {
+  const nextDay = addCalendarDays(new Date(`${toDay}T00:00:00.000Z`), 1)
+    .toISOString()
+    .slice(0, 10);
+  return { gte: startOfLocalDay(fromDay, timeZone), lt: startOfLocalDay(nextDay, timeZone) };
+}
+
 /** UTC-midnight instant (`iso.slice(0,10)`) → its calendar-date string. `""` for null/invalid. */
 export function calendarDateFromIso(iso: string | Date | null | undefined): string {
   if (!iso) return "";
@@ -168,6 +184,11 @@ export function startOfCalendarDay(
   return new Date(
     `${String(year)}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}T00:00:00.000Z`,
   );
+}
+
+/** The tenant's calendar day (YYYY-MM-DD) at `now` in `zone` (UTC when the zone is null): the ONE tenant-today reader. */
+export function tenantTodayDay(zone: string | null | undefined, now: Date = new Date()): string {
+  return calendarDateFromIso(startOfCalendarDay(now, zone));
 }
 
 /**

@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { PLAN_KEYS } from "@routeflow/types";
+import { API_ERROR_CODES, PLAN_KEYS } from "@routeflow/types";
 import { planLabel } from "../../../../_components/AdminBadge";
 import {
   fetchEntitlementsMode,
@@ -11,10 +11,19 @@ import {
   previewTenantFeatures,
   writeTenantFeatureConfig,
 } from "@/lib/platform-admin/features";
-import { BADGE_COLORS, BADGE_LABELS, deriveBadge } from "./badge";
-import { blockedReason, isOptionBlocked, selectableOptions, MIXED_LABEL } from "./mode-utils";
+import { BADGE_COLORS, deriveReadout, type StateReadout } from "./badge";
+import {
+  blockedReason,
+  explainModeSentence,
+  isOptionBlocked,
+  modeLabel,
+  modeSourceLabel,
+  selectableOptions,
+  MIXED_LABEL,
+} from "./mode-utils";
 import { PreviewDrawer } from "./PreviewDrawer";
 import { EnableAddonModal } from "./EnableAddonModal";
+import { currentRoleIsSuperAdmin } from "./super-admin";
 import type {
   EffectiveFeature,
   EntitlementsMode,
@@ -22,21 +31,6 @@ import type {
   FeaturePreviewResponse,
   FeatureRegistryRow,
 } from "./types";
-
-/** Best-effort client-side check — the real gate is the server + the route's SuperAdminGuard. */
-function currentRoleIsSuperAdmin(): boolean {
-  if (typeof window === "undefined") return false;
-  try {
-    const token = window.localStorage.getItem("superAdminToken");
-    if (!token) return false;
-    const part = token.split(".")[1];
-    if (!part) return false;
-    const payload = JSON.parse(atob(part.replace(/-/g, "+").replace(/_/g, "/")));
-    return payload?.role === "SUPER_ADMIN";
-  } catch {
-    return false;
-  }
-}
 
 type PendingPreview =
   | { kind: "tier"; planKey: string; response: FeaturePreviewResponse }
@@ -108,7 +102,9 @@ function describeUnmetRequirement(
 }
 
 export interface FeatureConsoleProps {
-  tenant: { id: string; plan: string };
+  /** `planKey` is the resolved plan (what the header and Overview show); `plan` is the legacy enum
+   *  and is only the fallback when there is no planKey (BO-10). */
+  tenant: { id: string; plan: string; planKey?: string | null };
   /** Shown in the "Enable as add-on" modal's two-step confirm; falls back to `tenant.id`. */
   tenantLabel?: string;
   /** Calls the page's EXISTING plan-change action (`handleAction("change-plan", { plan })`) —
@@ -118,6 +114,37 @@ export interface FeatureConsoleProps {
   /** Opens #795's FeatureOverridesSection drawer, prefilled for this key ("Customise"). */
   onCustomise: (featureKey: string) => void;
 }
+
+/** "Set override": a quiet link-button, no fill, so the only filled indigo buttons on the page are
+ *  real primaries (BO-09). 44 px tall below md (important: the .surface-admin 40 px button floor
+ *  outranks a plain min-h), 24 px from md up. */
+const QUIET_ACTION =
+  "inline-flex !min-h-11 items-center rounded px-2 py-1 text-xs font-semibold text-indigo-300 hover:text-indigo-200 hover:underline md:!min-h-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-800";
+/** "Turn on as add-on": an outlined secondary, no fill (BO-09). */
+const OUTLINED_ACTION =
+  "inline-flex !min-h-11 items-center rounded-lg px-3 py-1.5 text-xs font-semibold text-slate-200 ring-1 ring-slate-500 hover:bg-slate-700 md:!min-h-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-800";
+
+/** The dark-gate note, shown in the Details panel (BO-12). */
+const DARK_NOTE =
+  "Not enforced yet. This check only logs a warning when it would refuse the feature, and still allows it.";
+/** Release stage, in plain words, shown in the Details panel (BO-12). */
+const RELEASE_STAGE: Record<string, string> = {
+  ga: "Release stage: Released.",
+  beta: "Release stage: Beta. Released for testing and may still change.",
+  proposed: "Release stage: Planned. Not released yet, and nothing relies on it today.",
+  deprecated: "Release stage: Being phased out. Avoid turning it on for new businesses.",
+  sunset: "Release stage: Retired. No longer offered.",
+};
+/** The only lifecycle stages worth a word on the row itself (muted plain text, not a chip). */
+const LIFECYCLE_WORD: Record<string, string> = {
+  deprecated: "Being phased out",
+  sunset: "Retired",
+};
+const NOT_REPORTED_NOTE = "The server did not report a state for this feature.";
+
+/** The Details toggle: quiet, 44 px tall below md (BO-09 tap rules). */
+const DETAILS_TOGGLE =
+  "inline-flex min-h-11 items-center rounded px-2 py-1 text-xs text-slate-400 hover:bg-slate-700 hover:text-white md:min-h-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-800";
 
 export function FeatureConsole({
   tenant,
@@ -140,10 +167,19 @@ export function FeatureConsole({
   const [showInternal, setShowInternal] = React.useState(false);
   const [openWhy, setOpenWhy] = React.useState<string | null>(null);
 
-  const [selectedPlan, setSelectedPlan] = React.useState(tenant.plan);
+  const currentPlan = tenant.planKey ?? tenant.plan;
+  const [selectedPlan, setSelectedPlan] = React.useState(currentPlan);
   const [pending, setPending] = React.useState<PendingPreview | null>(null);
   const [previewLoading, setPreviewLoading] = React.useState(false);
   const [previewError, setPreviewError] = React.useState<string | null>(null);
+  /** The mode radio whose preview is being fetched (a visible pending state) and the row whose preview failed. */
+  const [modeTarget, setModeTarget] = React.useState<{
+    featureKey: string;
+    newMode: string;
+  } | null>(null);
+  const [modeError, setModeError] = React.useState<{ featureKey: string; text: string } | null>(
+    null,
+  );
   const [applying, setApplying] = React.useState(false);
 
   const load = React.useCallback(() => {
@@ -178,8 +214,8 @@ export function FeatureConsole({
   }, [load]);
 
   React.useEffect(() => {
-    setSelectedPlan(tenant.plan);
-  }, [tenant.plan]);
+    setSelectedPlan(currentPlan);
+  }, [currentPlan]);
 
   const registryByKey = React.useMemo(
     () => Object.fromEntries((registry ?? []).map((r) => [r.key, r])),
@@ -210,9 +246,9 @@ export function FeatureConsole({
   // tier selectable and visibly current, so it's appended when missing.
   const tierOptions = React.useMemo(() => {
     const keys: string[] = [...PLAN_KEYS];
-    if (!keys.includes(tenant.plan)) keys.push(tenant.plan);
+    if (!keys.includes(currentPlan)) keys.push(currentPlan);
     return keys;
-  }, [tenant.plan]);
+  }, [currentPlan]);
 
   // Every hook above runs unconditionally on every render (rules-of-hooks) — the SUPER_ADMIN
   // gate and the loading/error/empty early returns come only after all of them are declared.
@@ -237,6 +273,8 @@ export function FeatureConsole({
 
   async function startModePreview(featureKey: string, newMode: string) {
     setPreviewError(null);
+    setModeError(null);
+    setModeTarget({ featureKey, newMode });
     setPreviewLoading(true);
     try {
       const response = await previewTenantFeatures(tenant.id, {
@@ -244,9 +282,11 @@ export function FeatureConsole({
       });
       setPending({ kind: "mode", featureKey, newMode, response });
     } catch {
-      setPreviewError("Could not preview that mode change. Try again.");
+      // The drawer is closed on a failed preview, so the failure is shown on the row that was clicked.
+      setModeError({ featureKey, text: "Could not preview that mode change. Try again." });
     } finally {
       setPreviewLoading(false);
+      setModeTarget(null);
     }
   }
 
@@ -264,8 +304,16 @@ export function FeatureConsole({
       }
       setPending(null);
       load();
-    } catch {
-      setPreviewError("Could not apply that change. Try again.");
+    } catch (err) {
+      const code = (err as { response?: { data?: { code?: unknown } } } | null)?.response?.data
+        ?.code;
+      setPreviewError(
+        code === API_ERROR_CODES.FULFILMENT_MODE_NEEDS_FLEET
+          ? "This business has no delivery fleet, so Delivery and shipping can't be turned on yet."
+          : code === API_ERROR_CODES.FULFILMENT_CARRIER_IN_TRANSIT
+            ? "A carrier shipment is still in transit. Change the mode once it is delivered."
+            : "Could not apply that change. Try again.",
+      );
     } finally {
       setApplying(false);
     }
@@ -312,12 +360,12 @@ export function FeatureConsole({
               <option key={p} value={p}>
                 {planLabel(p)}
                 {p === "LITE" ? " (invite-only)" : ""}
-                {p === tenant.plan ? " — current" : ""}
+                {p === currentPlan ? " — current" : ""}
               </option>
             ))}
           </select>
           <button
-            disabled={selectedPlan === tenant.plan || previewLoading || changePlanLoading}
+            disabled={selectedPlan === currentPlan || previewLoading || changePlanLoading}
             onClick={startTierPreview}
             className="rounded-lg bg-slate-600 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-500 disabled:opacity-50"
           >
@@ -325,7 +373,7 @@ export function FeatureConsole({
               ? "Applying..."
               : previewLoading
                 ? "Loading preview..."
-                : "Preview tier change"}
+                : "Preview plan change"}
           </button>
         </div>
         <div className="flex items-center gap-3 text-xs text-slate-400">
@@ -365,62 +413,64 @@ export function FeatureConsole({
           <div className="flex flex-col gap-2">
             {rows.map((row) => {
               const feature = effectiveByKey[row.key];
-              const badge = feature ? deriveBadge(feature) : "unknown";
+              // A free configuration row (no plan flag or add-on gates it): its answer is the applied
+              // mode and where it came from, never on/off or "inherited from the plan" (B1132).
+              const appliedMode =
+                row.config && row.gate.via === "none" && feature?.mode ? feature.mode : null;
               const unmetRequirement = describeUnmetRequirement(
                 checkRequires(row.requires, effectiveKeys),
                 registryByKey,
               );
+              const isOpen = openWhy === row.key;
+              const lifecycleWord = LIFECYCLE_WORD[row.lifecycle];
               return (
                 <div
                   key={row.key}
                   className="rounded-xl bg-slate-800 p-4 ring-1 ring-white/5"
                   data-feature-key={row.key}
+                  id={`feature-${row.key}`}
                 >
-                  <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between lg:gap-3">
                     <div>
-                      <div className="flex flex-wrap items-center gap-2">
+                      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
                         <span className="text-sm font-semibold text-white">{row.label}</span>
-                        <span
-                          data-testid="badge"
-                          className={`rounded px-1.5 py-0.5 text-[10px] font-medium ring-1 ${BADGE_COLORS[badge]}`}
-                        >
-                          {BADGE_LABELS[badge]}
-                        </span>
-                        <span className="rounded bg-slate-700 px-1.5 py-0.5 text-[10px] text-slate-400">
-                          {row.lifecycle}
-                        </span>
-                        {row.gate.state === "dark" && (
-                          <span className="rounded bg-amber-900/40 px-1.5 py-0.5 text-[10px] text-amber-300">
-                            dark
+                        {appliedMode ? (
+                          <span data-testid="readout" className="text-xs">
+                            <span data-testid="applied-mode" className="font-medium text-slate-200">
+                              {modeLabel(row.config?.modes ?? [], appliedMode.effective)}
+                            </span>{" "}
+                            <span data-testid="applied-mode-source" className="text-slate-400">
+                              · {modeSourceLabel(appliedMode)}
+                            </span>
                           </span>
+                        ) : (
+                          <StateReadoutText readout={deriveReadout(row.gate, feature)} />
                         )}
-                        <span
-                          className={
-                            feature?.serving ? "text-emerald-400 text-xs" : "text-slate-400 text-xs"
-                          }
-                        >
-                          {feature?.serving ? "On" : "Off"}
-                        </span>
+                        {lifecycleWord && (
+                          <span className="text-xs text-slate-400">· {lifecycleWord}</span>
+                        )}
                       </div>
                       <p className="mt-1 text-xs text-slate-400">{row.description}</p>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <button
-                        onClick={() => setOpenWhy(openWhy === row.key ? null : row.key)}
-                        className="rounded px-2 py-1 text-xs text-slate-400 hover:bg-slate-700 hover:text-white"
-                        aria-expanded={openWhy === row.key}
+                        onClick={() => setOpenWhy(isOpen ? null : row.key)}
+                        className={DETAILS_TOGGLE}
+                        aria-expanded={isOpen}
                         aria-controls={`why-panel-${row.key}`}
-                        aria-label={`Why is ${row.label} on or off?`}
+                        aria-label={`Details for ${row.label}`}
                       >
-                        Why is this on/off?
+                        Details
                       </button>
-                      <button
-                        onClick={() => onCustomise(row.key)}
-                        className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500"
-                        aria-label={`Customise ${row.label}`}
-                      >
-                        Customise
-                      </button>
+                      {row.gate.via !== "none" && (
+                        <button
+                          onClick={() => onCustomise(row.key)}
+                          className={QUIET_ACTION}
+                          aria-label={`Set override ${row.label}`}
+                        >
+                          Set override
+                        </button>
+                      )}
                       {ADDON_ROW_KEY_BY_REGISTRY_KEY[row.key] && (
                         <button
                           onClick={() =>
@@ -430,41 +480,67 @@ export function FeatureConsole({
                               unmetRequirement,
                             })
                           }
-                          className="rounded-lg bg-slate-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-500"
-                          aria-label={`Enable ${row.label} as an add-on`}
+                          className={OUTLINED_ACTION}
+                          aria-label={`Turn on ${row.label} as an add-on`}
                         >
-                          Enable as add-on
+                          Turn on as add-on
                         </button>
                       )}
                     </div>
                   </div>
 
-                  {openWhy === row.key && feature && (
-                    <div
-                      id={`why-panel-${row.key}`}
-                      className="mt-3 rounded-lg bg-slate-900/50 p-3 text-xs text-slate-300 ring-1 ring-white/5"
-                    >
-                      <p>{explainSentence(feature)}</p>
-                      {feature.resolver !== feature.serving && (
-                        <p className="mt-2 text-amber-300">
-                          Note: the new resolver disagrees — it would say this is{" "}
-                          {feature.resolver ? "ON" : "OFF"}. Still in preview mode, so nothing
-                          changes for customers yet.
-                        </p>
-                      )}
-                    </div>
-                  )}
-
-                  {row.config && feature?.serving && feature.mode && (
+                  {/* Gated on the reported mode, not on `serving`: a gate-less config row (fulfilment_model)
+                      reports serving:false yet is still settable. The server refuses delivery/both
+                      without a fleet (FeatureConfigService.set). */}
+                  {row.config && feature?.mode && (feature.serving || row.gate.via === "none") && (
                     <ModeSelector
                       featureKey={row.key}
+                      label={row.label}
                       options={row.config.modes}
                       mode={feature.mode}
                       effectiveKeys={effectiveKeys}
                       disabled={previewLoading}
+                      pendingOption={modeTarget?.featureKey === row.key ? modeTarget.newMode : null}
+                      error={modeError?.featureKey === row.key ? modeError.text : null}
                       onSelect={(newMode) => startModePreview(row.key, newMode)}
                     />
                   )}
+
+                  {/* Always mounted so aria-controls points at a real element; opening it never
+                      moves focus. After the mode radios, full width (BO-12 U8, U9, D5). */}
+                  <div
+                    id={`why-panel-${row.key}`}
+                    hidden={!isOpen}
+                    className="mt-3 rounded-lg bg-slate-900/50 p-3 text-xs text-slate-300 ring-1 ring-white/5"
+                  >
+                    {isOpen && (
+                      <>
+                        <p>
+                          {!feature
+                            ? NOT_REPORTED_NOTE
+                            : appliedMode
+                              ? explainModeSentence(row.config?.modes ?? [], appliedMode)
+                              : explainSentence(feature)}
+                        </p>
+                        {row.gate.via === "none" && !row.config && (
+                          <p className="mt-2">
+                            Nothing checks this setting yet, so an override would have no effect.
+                          </p>
+                        )}
+                        {feature && !appliedMode && feature.resolver !== feature.serving && (
+                          <p className="mt-2 text-amber-300">
+                            Note: the new resolver disagrees — it would say this is{" "}
+                            {feature.resolver ? "ON" : "OFF"}. Still in preview mode, so nothing
+                            changes for customers yet.
+                          </p>
+                        )}
+                        {RELEASE_STAGE[row.lifecycle] && (
+                          <p className="mt-2">{RELEASE_STAGE[row.lifecycle]}</p>
+                        )}
+                        {row.gate.state === "dark" && <p className="mt-2">{DARK_NOTE}</p>}
+                      </>
+                    )}
+                  </div>
                 </div>
               );
             })}
@@ -474,7 +550,7 @@ export function FeatureConsole({
 
       <PreviewDrawer
         open={!!pending}
-        title={pending?.kind === "tier" ? "Preview tier change" : "Preview mode change"}
+        title={pending?.kind === "tier" ? "Preview plan change" : "Preview mode change"}
         response={pending?.response ?? null}
         registryByKey={registryByKey}
         confirming={applying}
@@ -494,9 +570,30 @@ export function FeatureConsole({
         addonKey={enabling?.addonKey ?? ""}
         addonLabel={enabling?.label ?? ""}
         unmetRequirement={enabling?.unmetRequirement}
+        onCustomise={onCustomise}
         onEnabled={load}
       />
     </div>
+  );
+}
+
+// ─── State readout ─────────────────────────────────────────────────────────────
+
+/** The one state readout on a row: plain visible text, no tooltip, no aria-label, no hidden copy,
+ *  so the state is read once. Only a readout that carries a source colour is a 10 px chip. */
+function StateReadoutText({ readout }: { readout: StateReadout }) {
+  const style =
+    readout.kind === "chip" && readout.badge
+      ? `rounded px-1.5 py-0.5 text-[10px] font-medium ring-1 ${BADGE_COLORS[readout.badge]}`
+      : readout.kind === "not-reported" || readout.kind === "not-enforced"
+        ? "text-xs text-amber-300"
+        : readout.kind === "on"
+          ? "text-xs text-emerald-400"
+          : "text-xs text-slate-400";
+  return (
+    <span data-testid="readout" className={style}>
+      {readout.text}
+    </span>
   );
 }
 
@@ -504,17 +601,25 @@ export function FeatureConsole({
 
 function ModeSelector({
   featureKey,
+  label,
   options,
   mode,
   effectiveKeys,
   disabled,
+  pendingOption,
+  error,
   onSelect,
 }: {
   featureKey: string;
+  label: string;
   options: FeatureModeOption[];
   mode: NonNullable<EffectiveFeature["mode"]>;
   effectiveKeys: ReadonlySet<string>;
   disabled?: boolean;
+  /** The option whose preview is loading: it shows a visible pending state, so a click is never silent. */
+  pendingOption?: string | null;
+  /** A failed preview for this row, shown here because the drawer never opened. */
+  error?: string | null;
   onSelect: (newMode: string) => void;
 }) {
   const radios = selectableOptions(options);
@@ -527,31 +632,60 @@ function ModeSelector({
           {MIXED_LABEL}
         </span>
       )}
-      <div role="radiogroup" aria-label={`${featureKey} mode`} className="flex flex-wrap gap-3">
+      <div
+        role="radiogroup"
+        aria-label={label.toLowerCase().endsWith(" mode") ? label : `${label} mode`}
+        className="flex flex-wrap gap-3"
+      >
         {radios.map((option) => {
           const blocked = isOptionBlocked(option, mode);
           const checked = !isMixed && mode.effective === option.key;
+          const pending = pendingOption === option.key;
+          const reason = blocked ? blockedReason(option, effectiveKeys) : null;
+          const reasonId = `mode-${featureKey}-${option.key}-why`;
+          const pendingId = `mode-${featureKey}-${option.key}-pending`;
+          const describedBy = [reason ? reasonId : "", pending ? pendingId : ""]
+            .filter(Boolean)
+            .join(" ");
           return (
-            <label
-              key={option.key}
-              title={blocked ? (blockedReason(option, effectiveKeys) ?? undefined) : undefined}
-              className={`flex items-center gap-1.5 text-xs ${
-                blocked ? "cursor-not-allowed text-slate-400" : "text-slate-300"
-              }`}
-            >
-              <input
-                type="radio"
-                name={`mode-${featureKey}`}
-                value={option.key}
-                checked={checked}
-                disabled={disabled || blocked}
-                onChange={() => onSelect(option.key)}
-              />
-              {option.label}
-            </label>
+            <div key={option.key} className="flex flex-col">
+              <label
+                title={reason ?? undefined}
+                className={`flex min-h-[44px] items-center gap-1.5 text-xs sm:min-h-6 ${
+                  blocked ? "cursor-not-allowed text-slate-400" : "text-slate-300"
+                }`}
+              >
+                <input
+                  type="radio"
+                  name={`mode-${featureKey}`}
+                  value={option.key}
+                  checked={checked}
+                  disabled={disabled || blocked}
+                  aria-busy={pending || undefined}
+                  aria-describedby={describedBy || undefined}
+                  onChange={() => onSelect(option.key)}
+                />
+                {option.label}
+              </label>
+              {reason && (
+                <span id={reasonId} className="max-w-[16rem] text-[11px] text-slate-400">
+                  {reason}
+                </span>
+              )}
+              {pending && (
+                <span id={pendingId} className="text-[11px] text-indigo-300">
+                  Checking what would change…
+                </span>
+              )}
+            </div>
           );
         })}
       </div>
+      {error && (
+        <p role="alert" className="w-full text-xs text-red-400">
+          {error}
+        </p>
+      )}
     </div>
   );
 }

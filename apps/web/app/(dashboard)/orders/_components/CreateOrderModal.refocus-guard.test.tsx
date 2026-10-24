@@ -84,7 +84,7 @@ const search = () =>
 
 async function pick(name: string) {
   fireEvent.change(search(), { target: { value: name.split(" ")[1].toLowerCase() } });
-  const row = await screen.findByRole("button", { name: new RegExp(name, "i") });
+  const row = await screen.findByRole("option", { name: new RegExp(name, "i") });
   fireEvent.click(row);
 }
 
@@ -183,7 +183,7 @@ describe("B744 pins — scanning never dies", () => {
   it("P2: a focused BUTTON (the dialog's close X) does not block the re-arm", async () => {
     renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
     await pick("Sample Cola");
-    const close = screen.getByRole("button", { name: /close/i });
+    const close = screen.getByLabelText("Close");
     act(() => close.focus());
     expect(document.activeElement).toBe(close);
 

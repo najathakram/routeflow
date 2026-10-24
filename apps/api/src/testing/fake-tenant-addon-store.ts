@@ -15,6 +15,7 @@ export interface FakeAddonRow {
   priceSnapshot: number | null;
   stripePriceId?: string | null;
   stripeItemId?: string | null;
+  isComp?: boolean;
   createdAt: Date;
 }
 
@@ -33,6 +34,7 @@ function whereMatches(row: FakeAddonRow, where: any): boolean {
   if (where.tenantId !== undefined && row.tenantId !== where.tenantId) return false;
   if (where.active !== undefined && row.active !== where.active) return false;
   if (where.id !== undefined && row.id !== where.id) return false;
+  if (where.isComp !== undefined && (row.isComp ?? false) !== where.isComp) return false;
   if (where.OR && !where.OR.some((c: Cond) => condMatches(row, c))) return false;
   return true;
 }

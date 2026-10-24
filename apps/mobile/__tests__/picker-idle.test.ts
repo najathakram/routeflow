@@ -96,9 +96,7 @@ describe("ProductPickerSheet — scanned-variant parent resolution survives the 
     // into page rows that are now empty until the operator acts, so a
     // scanned variant would always report "No product for ...".
     expect(pickerSheetSrc).not.toMatch(/products\.find\(\(p\) => p\.id === hit\.parentProductId\)/);
-    expect(pickerSheetSrc).toMatch(
-      /apiClient\.get<AdminProduct>\(\s*`\/products\/\$\{hit\.parentProductId\}`/,
-    );
+    expect(pickerSheetSrc).toMatch(/apiClient\.get<AdminProduct>\(\s*`\/products\/\$\{parentId\}`/);
   });
 });
 

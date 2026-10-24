@@ -1,6 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import type { EstimateTaxBasis } from "../estimate-tax-basis";
 import { apiClient } from "../api-client";
 import type { Estimate, EstimateStatus } from "@routeflow/types";
+import { splitIdAck, type IdWithAck } from "@/lib/api/restriction-warning";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -104,8 +106,16 @@ export function useDeclineEstimate() {
 export function useConvertEstimateToInvoice() {
   const qc = useQueryClient();
   // Server returns the created Invoice keyed `id` (B15-NAV) — not `invoiceId`.
-  return useMutation<{ id: string }, Error, string>({
-    mutationFn: (id) => apiClient.post(`/estimates/${id}/convert`).then((r) => r.data),
+  // H5: `taxBasis` is the quote's tax against the tax the invoice was issued with (today's rate); absent on an older API.
+  return useMutation<{ id: string; taxBasis?: EstimateTaxBasis }, Error, IdWithAck>({
+    mutationFn: (v) => {
+      const { id, ack } = splitIdAck(v); // row 510: the new invoice is judged, so a convert can carry an ack
+      return (
+        ack
+          ? apiClient.post(`/estimates/${id}/convert`, ack)
+          : apiClient.post(`/estimates/${id}/convert`)
+      ).then((r) => r.data);
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["estimates"] });
       qc.invalidateQueries({ queryKey: ["invoices"] });

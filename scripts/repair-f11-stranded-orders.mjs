@@ -137,6 +137,11 @@ import pg from "pg";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import guardLib from "../apps/api/scripts/lib/live-target-guard.cjs";
+import protectedSlugsLib from "../apps/api/scripts/lib/protected-slugs.cjs";
+
+const { protectedTenantIds } = guardLib;
+const { loadProtectedSlugs } = protectedSlugsLib;
 
 const argv = process.argv.slice(2);
 const EXECUTE = argv.includes("--execute");
@@ -194,6 +199,16 @@ if (!url) {
     "No usable connection string. Set DATABASE_URL, or run via:\n" +
       "  railway run --service postgres node scripts/repair-f11-stranded-orders.mjs",
   );
+  process.exit(2);
+}
+
+// Row 195: the protected-tenant list is loaded ONCE, before connecting, from the URL this script
+// dials. A protected tenant's runs (paying, Stripe-linked, env-listed) are never repaired here.
+let protectedSlugs;
+try {
+  protectedSlugs = loadProtectedSlugs(process.env, url);
+} catch (e) {
+  console.error(`\n✖ ${e.message}`);
   process.exit(2);
 }
 
@@ -306,6 +321,11 @@ async function main() {
   );
   console.log("=".repeat(78));
 
+  // SELECT-only (read-only in a dry run): ids of every protected tenant, to drop their runs from the
+  // plan and to pin both Order writes below.
+  const protectedIds = await protectedTenantIds(client, protectedSlugs);
+  const protectedSet = new Set(protectedIds);
+
   // Resolve --tenant to an id FIRST. Inlining the lookup in the scope query
   // would turn an unknown slug into `o."tenantId" = NULL` — zero rows, exit 0,
   // and a typo reads as "this tenant is clean".
@@ -352,7 +372,17 @@ async function main() {
       releasable.push(r);
     }
   }
-  const runs = groupByRun(releasable);
+  const allRuns = groupByRun(releasable);
+  // Row 195: a protected tenant's runs are listed by count only and never planned or written.
+  const runs = new Map([...allRuns].filter(([, run]) => !protectedSet.has(run.tenantId)));
+  const protectedRuns = [...allRuns.values()].filter((run) => protectedSet.has(run.tenantId));
+  if (protectedRuns.length > 0) {
+    console.log(
+      `\nprotected-tenant guard: ${protectedRuns.length} run(s) / ` +
+        `${protectedRuns.reduce((n, run) => n + run.orders.length, 0)} order(s) belong to ` +
+        `protected tenant(s) and are never repaired by this script`,
+    );
+  }
 
   console.log(
     `\nStranded orders on cancelled / completed-with-skipped runs (B129 / B211): ` +
@@ -553,13 +583,15 @@ async function main() {
       // Same three writes, same order, over the same stop set (non-COMPLETED
       // stops only) as releaseUndeliveredOrders (routes.service.ts).
       await client.query(
-        `UPDATE "Order" SET status = 'CONFIRMED' WHERE id = ANY($1::text[]) AND status = 'OUT_FOR_DELIVERY'`,
-        [ids],
+        `UPDATE "Order" SET status = 'CONFIRMED' WHERE id = ANY($1::text[]) AND status = 'OUT_FOR_DELIVERY' ` +
+          `AND "tenantId" <> ALL($2::text[])`,
+        [ids, protectedIds],
       );
       await client.query(
         `UPDATE "Order" SET "routeRunId" = NULL, "routeRunStopId" = NULL ` +
-          `WHERE id = ANY($1::text[]) AND status NOT IN ('DELIVERED','CANCELLED')`,
-        [ids],
+          `WHERE id = ANY($1::text[]) AND status NOT IN ('DELIVERED','CANCELLED') ` +
+          `AND "tenantId" <> ALL($2::text[])`,
+        [ids, protectedIds],
       );
       // Write 3, keyed by the SAME id array as write 2, which the drift check
       // above proves is exactly the released set (every one of those orders was

@@ -22,7 +22,11 @@
 import { Pool } from "pg";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "@prisma/client";
-import { mirrorableImageKeys, planBarcodeRows } from "../src/products/product-barcode-rules";
+import {
+  liveBarcodeRows,
+  mirrorableImageKeys,
+  planBarcodeRows,
+} from "../src/products/product-barcode-rules";
 
 export interface BarcodeConflictRow {
   tenantId: string;
@@ -252,7 +256,7 @@ export async function loadCounts(
     });
 
     return countBarcodeConflicts(
-      rows,
+      liveBarcodeRows(rows), // a released (NULL) code is not a live code (SA-603a)
       products.map((p) => ({
         ...p,
         hasRows: rowProductIds.has(p.id),

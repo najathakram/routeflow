@@ -129,6 +129,50 @@ function git(root, args) {
   return r.stdout;
 }
 
+/**
+ * FAST VERIFY (owner ruling 2026-10-10, "Fast local check, full in CI").
+ *
+ * A feature-branch push runs check-types + lint for the affected workspaces and ONLY the Jest tests
+ * related to the changed files (`--changedSince=<merge-base with origin/master>`); the full suite runs
+ * in CI on every train/PR, which is the authority. Three pure pieces, one policy:
+ *  - `wantsFastVerify`  the POLICY (not CI, not FULL_VERIFY=1, not master/main/detached) — the pre-push
+ *                       hook asks it through `scripts/verify-mode.mjs` and, on "fast", exports
+ *                       RF_VERIFY_MODE=fast.
+ *  - `isFastMode`       the explicit SWITCH every consumer reads (verify-turbo, decideScope,
+ *                       campaign-check): RF_VERIFY_MODE is exactly "fast" AND the run is neither CI nor
+ *                       FULL_VERIFY=1 — so a stray exported value can never narrow CI or a landing run.
+ *  - `mergeBaseSha`     the one sha the related-only filter hangs off; null = uncomputable, and every
+ *                       caller then falls back to the FULL plan (loudly).
+ */
+export const FAST_VERIFY_BANNER =
+  "FAST VERIFY (owner 2026-10-10): types + lint for affected workspaces, related tests only; the full suite runs in CI. FULL_VERIFY=1 runs everything.";
+
+const TRUNK = new Set(["master", "main", "HEAD"]);
+
+export function wantsFastVerify({ env = process.env, branch } = {}) {
+  if (env.CI) return false;
+  if (env.FULL_VERIFY === "1") return false;
+  if (!branch || TRUNK.has(branch)) return false;
+  return true;
+}
+
+export function isFastMode(env = process.env) {
+  return env.RF_VERIFY_MODE === "fast" && !env.CI && env.FULL_VERIFY !== "1";
+}
+
+/** The checked-out branch name ("HEAD" when detached), or null when git cannot say. */
+export function currentBranch(root) {
+  const out = git(root, ["rev-parse", "--abbrev-ref", "HEAD"]);
+  return out === null ? null : out.trim() || null;
+}
+
+/** 40-hex merge-base of `base` and HEAD, or null when it cannot be computed. */
+export function mergeBaseSha(root, base = "origin/master") {
+  const out = git(root, ["merge-base", base, "HEAD"]);
+  const sha = out === null ? "" : out.trim();
+  return /^[0-9a-f]{40}$/.test(sha) ? sha : null;
+}
+
 /** Every file that differs from the merge-base with `base` (committed, staged, unstaged, untracked). */
 export function changedFilesSince(root, base = "origin/master") {
   const mergeBase = git(root, ["merge-base", base, "HEAD"]);
@@ -166,6 +210,10 @@ export function decideScope(root, env = process.env, probe = {}) {
   // diff that tripped a FULL pattern never pays the spawn. `probe.stale` is the same kind of test
   // seam as branch/files: the workspaces whose campaign report is refused (see staleWorkspaces).
   if (scope.mode !== "scoped") return scope;
+  // FAST VERIFY (isFastMode): local runs execute related tests only, and campaign-check defers report
+  // coverage to CI, so a stale report is no reason to widen the run — and the --print-stale spawn is
+  // skipped outright. Outside fast mode this is exactly the previous behaviour.
+  if (isFastMode(env)) return withStale(scope, []);
   const stale = "stale" in probe ? probe.stale : staleWorkspaces(root, workspaces);
   return withStale(scope, stale);
 }

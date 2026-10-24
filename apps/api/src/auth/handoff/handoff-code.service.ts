@@ -7,6 +7,7 @@ import {
 import type { HandoffRealm } from "@prisma/client";
 import { PrismaService } from "../../prisma/prisma.service";
 import { hashSignedToken, mintSignedToken, verifySignedToken } from "../../common/signed-token";
+import { API_ERROR_CODES } from "../../common/api-error-codes";
 
 /**
  * #2653 sign-in handoff (SA-542a/b): the shared core behind BOTH realms' mint + exchange.
@@ -57,7 +58,7 @@ export function handoffTokenSecret(env: NodeJS.ProcessEnv = process.env): string
 export function handoffRoleNotAllowed(): ForbiddenException {
   return new ForbiddenException({
     statusCode: 403,
-    code: "HANDOFF_ROLE_NOT_ALLOWED",
+    code: API_ERROR_CODES.HANDOFF_ROLE_NOT_ALLOWED,
     message: "In-app sign-in is not available for this account.",
   });
 }
@@ -66,7 +67,7 @@ export function handoffRoleNotAllowed(): ForbiddenException {
 export function handoffCodeInvalid(): UnauthorizedException {
   return new UnauthorizedException({
     statusCode: 401,
-    code: "HANDOFF_CODE_INVALID",
+    code: API_ERROR_CODES.HANDOFF_CODE_INVALID,
     message: "This sign-in link is invalid or has expired. Sign in again.",
   });
 }
@@ -84,7 +85,7 @@ export class HandoffCodeService {
     if (!secret) {
       throw new ConflictException({
         statusCode: 409,
-        code: "HANDOFF_NOT_CONFIGURED",
+        code: API_ERROR_CODES.HANDOFF_NOT_CONFIGURED,
         message: "In-app sign-in is not available yet.",
       });
     }

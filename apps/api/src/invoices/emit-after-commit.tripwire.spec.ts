@@ -11,7 +11,8 @@ import * as ts from "typescript";
  * (common/after-commit.ts). Credit notes already emit outside the tx (B343); this pins that.
  */
 const SRC = path.resolve(__dirname, "..");
-const TX_OPENERS = /(^|\.)(tenantTransaction|\$transaction|withAfterCommit)$/;
+// withPaymentEditRef (row 752, payment-edit-ref.ts) opens updatePayment's withAfterCommit under the payment-ref lock
+const TX_OPENERS = /(^|\.)(tenantTransaction|\$transaction|withAfterCommit|withPaymentEditRef)$/;
 const DIRECT_EMIT = /(^|\.)gateway\.emit\w+$/;
 
 /** Every direct `gateway.emit*` call that sits inside a tx-opener's function argument. */
@@ -55,20 +56,31 @@ describe("#2175 tripwire: no gateway.emit* inside a transaction callback", () =>
     for (const src of clean) expect(emitsInsideTx("control.ts", src)).toEqual([]);
   });
 
-  it.each(["invoices/invoices.service.ts", "credit-notes/credit-notes.service.ts"])(
-    "%s has no direct emit inside a transaction callback",
-    (rel) => {
-      expect(emitsInsideTx(rel, fs.readFileSync(path.join(SRC, rel), "utf8"))).toEqual([]);
-    },
-  );
+  it.each([
+    "invoices/invoices.service.ts",
+    "invoices/payment-void-tx.ts",
+    "credit-notes/credit-notes.service.ts",
+  ])("%s has no direct emit inside a transaction callback", (rel) => {
+    expect(emitsInsideTx(rel, fs.readFileSync(path.join(SRC, rel), "utf8"))).toEqual([]);
+  });
 
   it("never passes vacuously: the queued sites exist, and credit notes still emit (after the tx)", () => {
     const inv = fs.readFileSync(path.join(SRC, "invoices/invoices.service.ts"), "utf8");
     const cn = fs.readFileSync(path.join(SRC, "credit-notes/credit-notes.service.ts"), "utf8");
-    // recordPayment, updatePayment, deletePayment, deleteInvoice, voidPayment, setCheckStatus x2,
-    // recordDeliveryPaymentInTx
-    expect(inv.match(/after\.defer\(this\.gateway\)\.emitInvoiceUpdated\(/g)).toHaveLength(8);
-    expect(inv.match(/withAfterCommit\(this\.prisma, async \(tx, after\) =>/g)).toHaveLength(6);
+    // recordPayment, updatePayment, deletePayment, deleteInvoice, setCheckStatus x2, recordDeliveryPaymentInTx
+    // (voidPayment's emit moved verbatim to payment-void-tx.ts, SA-762r: voidPaymentInTx, queued on the caller's after)
+    const voidTx = fs.readFileSync(path.join(SRC, "invoices/payment-void-tx.ts"), "utf8");
+    expect(inv.match(/after\.defer\(this\.gateway\)\.emitInvoiceUpdated\(/g)).toHaveLength(7);
+    expect(voidTx.match(/after\.defer\(deps\.gateway\)\.emitInvoiceUpdated\(/g)).toHaveLength(1);
+    // + voidPayment's wrapper (lock, window check, then voidPaymentInTx on the same `after`)
+    expect(inv.match(/withAfterCommit\(this\.prisma, async \(tx, after\) =>/g)).toHaveLength(5);
+    // + updatePayment (row 752): its transaction is opened by withPaymentEditRef, a TX_OPENER above
+    expect(
+      inv.match(/withPaymentEditRef\(this\.prisma, ids, dto, opts, async \(tx, after, edit\) =>/g),
+    ).toHaveLength(1);
+    const editOpener =
+      "withPaymentEditRef(p, i, d, o, async (tx, after, edit) => { this.gateway.emitInvoiceUpdated(t, p); });";
+    expect(emitsInsideTx("control.ts", editOpener)).toHaveLength(1);
     expect(cn.match(/this\.gateway\.emitCreditNote\w+\(/g)?.length).toBeGreaterThanOrEqual(2);
   });
 });

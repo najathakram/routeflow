@@ -1,5 +1,6 @@
 import { ConflictException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /**
  * The bill-vs-PO HARD gate (units/PO step 7).
@@ -175,7 +176,7 @@ export function assertBillWithinPo(
     })
     .join("; ");
   throw new ConflictException({
-    code: "BILL_EXCEEDS_PO",
+    code: API_ERROR_CODES.BILL_EXCEEDS_PO,
     message:
       `This bill is more than purchase order ${poNumber} authorised — ${detail}. ` +
       "Edit the purchase order to match the invoice first (or correct the bill), then try again.",

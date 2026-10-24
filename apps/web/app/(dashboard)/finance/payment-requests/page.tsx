@@ -9,6 +9,9 @@ import {
   type PaymentRequest,
 } from "@/lib/api/payment-requests";
 import { useToast, EmptyState, Button, Badge, Modal, Textarea } from "@routeflow/ui/web";
+import { dayClosedCopy } from "@/lib/day-closed-copy";
+import { useAuth } from "@/lib/auth-context";
+import { toastDuplicatePaymentRef } from "@/lib/duplicate-payment-ref";
 import { fmt, fmtCalendarDate, fmtDate } from "@/lib/formatting";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -161,6 +164,7 @@ export default function PaymentRequestsPage() {
     setTitle("Payment Requests");
   }, [setTitle]);
   const { toast } = useToast();
+  const { user } = useAuth();
 
   const [status, setStatus] = React.useState("PENDING");
   const { data, isLoading, isError, refetch, isRefetching } = usePaymentRequests(
@@ -175,10 +179,12 @@ export default function PaymentRequestsPage() {
   const [rejectTarget, setRejectTarget] = React.useState<PaymentRequest | null>(null);
   const [rejectReason, setRejectReason] = React.useState("");
 
-  const handleApprove = async () => {
+  const handleApprove = async (recordAnyway = false) => {
     if (!approveTarget) return;
     try {
-      const res = await approve.mutateAsync(approveTarget.id);
+      const res = await approve.mutateAsync(
+        recordAnyway ? { id: approveTarget.id, recordAnyway: true } : approveTarget.id,
+      );
       toast({
         title: "Payment approved",
         description:
@@ -187,7 +193,13 @@ export default function PaymentRequestsPage() {
       });
       setApproveTarget(null);
     } catch (err: unknown) {
-      toast({ title: extractErrorMessage(err) ?? "Failed to approve payment", variant: "error" });
+      // SA-837b item 2: a duplicate reference names the existing payment; the approving staff member may "Record anyway".
+      if (toastDuplicatePaymentRef(err, toast, user?.role, () => void handleApprove(true))) return;
+      // A closed-day refusal is fixed copy (the global toast is quiet for it via the hook's meta): this is the one toast.
+      toast({
+        title: dayClosedCopy(err) ?? extractErrorMessage(err) ?? "Failed to approve payment",
+        variant: "error",
+      });
     }
   };
 
@@ -228,7 +240,7 @@ export default function PaymentRequestsPage() {
             >
               Cancel
             </Button>
-            <Button onClick={handleApprove} loading={approve.isPending}>
+            <Button onClick={() => void handleApprove()} loading={approve.isPending}>
               Approve
             </Button>
           </>

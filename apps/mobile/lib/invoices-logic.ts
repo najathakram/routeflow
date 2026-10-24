@@ -2,10 +2,26 @@
  * Pure invoice/payment gating helpers (no api-client/react-query imports so they
  * stay unit-testable in the node Jest env). Mirror the server's guards.
  */
+import { OPEN_INVOICE_STATUS_VALUES } from "@routeflow/types";
+import {
+  sendsAfterLabel,
+  canEmailAgain,
+  invoiceResendCopy,
+  type InvoiceSendLock,
+  type InvoiceSendState,
+} from "./invoice-send-state";
+
+/**
+ * True for the shared OPEN invoice statuses (SENT, VIEWED, PARTIAL, OVERDUE: issued and not settled).
+ * The one place a screen asks "is this invoice open?": never hand-type the list (a pin fails on it).
+ */
+export function isOpenInvoiceStatus(status: string | null | undefined): boolean {
+  return status != null && (OPEN_INVOICE_STATUS_VALUES as readonly string[]).includes(status);
+}
 
 /** An invoice can be written off only from these unpaid-but-live statuses. */
 export function canWriteOff(status: string): boolean {
-  return status === "SENT" || status === "VIEWED" || status === "PARTIAL" || status === "OVERDUE";
+  return isOpenInvoiceStatus(status);
 }
 
 /**
@@ -16,7 +32,7 @@ export function canWriteOff(status: string): boolean {
  * web's allow-list exactly (invoices/[id]/page.tsx canRecordPayment gate).
  */
 export function canRecordPayment(status: string): boolean {
-  return status === "SENT" || status === "VIEWED" || status === "PARTIAL" || status === "OVERDUE";
+  return isOpenInvoiceStatus(status);
 }
 
 /**
@@ -36,6 +52,13 @@ export function isPaymentEditable(
   return true;
 }
 
+/** A known, finite balance above zero (same test as web's canSendReminder): unknown / NaN / Infinity is not. */
+function owesBalance(balanceDue: number | string | null | undefined): boolean {
+  if (balanceDue == null) return false;
+  const balance = Number(balanceDue);
+  return Number.isFinite(balance) && balance > 0;
+}
+
 export interface InvoiceActionInput {
   status: string;
   /** ALL payment rows INCLUDING VOID ones — the server's revert-to-draft gate is
@@ -44,13 +67,18 @@ export interface InvoiceActionInput {
    *  and gets a guaranteed error toast in that state; we mirror the server.) */
   paymentCount: number;
   isOrderLinked: boolean;
+  /**
+   * The server-derived balance (`balanceDue` on the invoice DTO). Row 318d: the reminder tile needs it, like web's
+   * `canSendReminder` and the API's REMINDER_NO_BALANCE_DUE refusal; absent / non-numeric hides the tile.
+   */
+  balanceDue?: number | string | null;
 }
 
 export interface InvoiceActionFlags {
   /** PATCH /invoices/:id items path — "Only DRAFT invoices can be edited". */
   canEdit: boolean;
-  /** Server blocks only VOID/PAID; surfaced on the "waiting on money" statuses
-   *  (DRAFT has Send already — a reminder there would be a second send control). */
+  /** The API refuses anything but an issued, unpaid invoice that still owes (SENT/VIEWED/PARTIAL/OVERDUE with a
+   *  balance due > 0). DRAFT has Send already, so a reminder there would be a second send control. */
   canSendReminder: boolean;
   /** RF-011: order-linked invoices can't be duplicated (server guard). */
   canDuplicate: boolean;
@@ -69,7 +97,7 @@ export function invoiceActionFlags(i: InvoiceActionInput): InvoiceActionFlags {
   const s = i.status;
   return {
     canEdit: s === "DRAFT",
-    canSendReminder: s === "SENT" || s === "VIEWED" || s === "OVERDUE" || s === "PARTIAL",
+    canSendReminder: isOpenInvoiceStatus(s) && owesBalance(i.balanceDue),
     canDuplicate: !i.isOrderLinked,
     canReopen: s === "PAID",
     canUnvoid: s === "VOID",
@@ -85,10 +113,13 @@ export function invoiceActionFlags(i: InvoiceActionInput): InvoiceActionFlags {
  * invoices.service.ts:2438). Edit the ORDER instead; the invoice follows.
  */
 export function isPendingOrderMirror(inv: {
+  /** The server's own answer (it knows the tenant's fulfilment mode; clients cannot). Wins when present. */
+  pendingMirror?: boolean | null;
   orderId?: string | null;
   deliveryBatchId?: string | null;
   orderStatus?: string | null;
 }): boolean {
+  if (typeof inv.pendingMirror === "boolean") return inv.pendingMirror;
   if (!inv.orderId) return false;
   if (inv.deliveryBatchId != null) return false;
   return inv.orderStatus !== "DELIVERED" && inv.orderStatus !== "PARTIALLY_DELIVERED";
@@ -102,4 +133,37 @@ export function isPendingOrderMirror(inv: {
  */
 export function canSendInvoiceNow(status: string, pendingMirror: boolean): boolean {
   return status === "DRAFT" && !pendingMirror;
+}
+
+/**
+ * #2088: the Send / "Email again" tile. A DRAFT sends (first send, or "Email again" if the invoice was emailed before
+ * a revert); SENT/VIEWED/OVERDUE/PARTIAL/PAID can be emailed again; a pending order mirror shows the tile LOCKED with
+ * the reason (never a missing tile). The words come from the shared module, so web says the same.
+ */
+export function invoiceSendAction(input: {
+  status: string;
+  pendingMirror: boolean;
+  sendState?: InvoiceSendState | null;
+  sendLocked?: InvoiceSendLock | null;
+  /** True/false once known; null/absent = not known, so neither "delivery" nor "pickup" is named. */
+  storeOnly?: boolean | null;
+}): {
+  show: boolean;
+  locked: boolean;
+  label: string;
+  confirm: string | null;
+  confirmButton: string;
+} {
+  const copy = invoiceResendCopy(input.sendState);
+  // The SERVER decides the lock (`sendLocked`), from the one predicate it refuses on; the client never re-derives it.
+  const locked = Boolean(input.sendLocked);
+  const show =
+    locked || canSendInvoiceNow(input.status, input.pendingMirror) || canEmailAgain(input.status);
+  return {
+    show,
+    locked,
+    label: locked ? sendsAfterLabel(input.storeOnly ?? null) : copy.action,
+    confirm: locked ? null : copy.confirm,
+    confirmButton: copy.confirmButton,
+  };
 }

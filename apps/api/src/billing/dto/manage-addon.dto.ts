@@ -32,6 +32,50 @@ export class EnableAddonDto {
   @IsOptional()
   @IsBoolean()
   acknowledgeUnmetRequires?: boolean;
+
+  @ApiPropertyOptional({
+    description:
+      "SA-693: grant this add-on as a COMP — free on purpose: no Stripe item even on a subscribed " +
+      "tenant (a stripePriceId is ignored), price 0, never billed, never blocks a checkout. An " +
+      "EXPLICIT choice: omitted/false means a normal enable (billed when a price is given). " +
+      "Audited as ADDON_COMPED.",
+    default: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  comp?: boolean;
+
+  @ApiPropertyOptional({
+    description: "Why (audit trail only; written to the ADDON_COMPED row). Max 500 characters.",
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  reason?: string;
+}
+
+export class UncompAddonDto {
+  @ApiProperty({
+    description: "Key of the comp add-on to make billable",
+    example: "tobacco_dealer",
+  })
+  @IsString()
+  addonKey: string;
+
+  @ApiPropertyOptional({
+    description:
+      "Required when the tenant has a Stripe subscription: the catalog Stripe price the add-on is " +
+      "billed at (uncomping goes through the normal billed enable). Ignored otherwise.",
+  })
+  @IsOptional()
+  @IsString()
+  stripePriceId?: string;
+
+  @ApiPropertyOptional({ description: "Why (audit trail only). Max 500 characters." })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  reason?: string;
 }
 
 export class DisableAddonDto {

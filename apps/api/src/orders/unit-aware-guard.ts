@@ -1,4 +1,5 @@
 import { ConflictException, ForbiddenException } from "@nestjs/common";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /**
  * units_v1 — the fail-closed net under every path that REWRITES existing lines.
@@ -18,7 +19,7 @@ import { ConflictException, ForbiddenException } from "@nestjs/common";
  * Order create (4b-2b) and manual-invoice create (4c-1) now mint unit-aware lines (behind flag.units_v1);
  * every REWRITE path stays fenced here until it is converted.
  */
-export const UNIT_AWARE_LINE = "UNIT_AWARE_LINE";
+export const UNIT_AWARE_LINE = API_ERROR_CODES.UNIT_AWARE_LINE;
 
 interface LineLike {
   unitLabel?: string | null;
@@ -240,7 +241,9 @@ interface ParentDb {
 /**
  * Draft-invoice rewrite guard. Checks the invoice's OWN lines AND its linked order's lines: an
  * invoice built by a path that drops `unitLabel` carries none, but the back-sync
- * (recomputeOrderFromInvoices) writes this edit straight onto the order line that does.
+ * (recomputeOrderFromInvoices) writes this edit straight onto the order line that does. The
+ * invoice's own unit rows are judged only when it is order-linked (VU-4a); the parent is still
+ * read either way so an unreadable one fails closed.
  */
 export async function assertInvoiceRewriteAllowed(
   db: ParentDb,
@@ -266,12 +269,17 @@ export async function assertInvoiceRewriteAllowed(
   // Fail CLOSED: a parent we cannot read (NULL-tenant / cross-tenant / vanished) proves nothing.
   if (!own || (invoice.orderId && !linked)) {
     throw new ConflictException({
-      code: "UNIT_AWARE_LINE_UNVERIFIABLE",
+      code: API_ERROR_CODES.UNIT_AWARE_LINE_UNVERIFIABLE,
       message: "This invoice's lines could not be verified, so it can't be edited. Ask an admin.",
     });
   }
+  // VU-4a (D3): an ORDER-LESS draft's own unit rows are rewritten by update() through resolveLineUnits;
+  // nothing back-syncs them onto an order line. A linked draft keeps the full refusal.
   assertNoUnitAwareLines(
-    [...((own.items ?? []) as LineLike[]), ...((linked?.lineItems ?? []) as LineLike[])],
+    [
+      ...((invoice.orderId ? (own.items ?? []) : []) as LineLike[]),
+      ...((linked?.lineItems ?? []) as LineLike[]),
+    ],
     "edited",
   );
 }

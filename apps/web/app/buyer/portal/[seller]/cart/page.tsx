@@ -2,12 +2,11 @@
 
 import * as React from "react";
 import { useParams, useRouter } from "next/navigation";
+import Link from "next/link";
 import {
   ArrowLeft,
   ShoppingCart,
   Trash2,
-  Minus,
-  Plus,
   Package,
   Loader2,
   AlertTriangle,
@@ -15,7 +14,19 @@ import {
 } from "lucide-react";
 import { Button } from "@routeflow/ui/web";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
+import { useBuyerCartForceNew } from "@/lib/buyer-cart-intent";
 import { useBuyerCart } from "@/lib/buyer-cart";
+import {
+  BUYER_QTY_SPLIT_MISMATCH_COPY,
+  cartOrderItems,
+  completeLineFromCatalog,
+} from "@/lib/buyer-cart-line";
+import { CartRowQty } from "../_components/CartRowQty";
+import {
+  BUYER_ORDER_CONFLICT_COPY,
+  BUYER_ORDER_CONFLICT_NO_ID_COPY,
+  buyerOrderConflict,
+} from "@/lib/buyer-order-conflict";
 import {
   useBuyerProducts,
   useBuyerCreateOrder,
@@ -23,9 +34,24 @@ import {
   useBuyerPromotions,
   toPromotionRules,
 } from "@/lib/api/buyer";
+import type { FulfilmentMethod } from "@routeflow/types";
 import { computeLineSubtotal, normalizeBoxesPieces, applyBestPromotion } from "@routeflow/pricing";
+import { useBuyerSellerCapabilities } from "@/lib/api/buyer-capabilities";
 import { objectPositionForUrl } from "@/lib/image-focal";
+import {
+  FULFIL_METHOD_LABEL,
+  FULFIL_METHOD_NOT_OFFERED_COPY,
+  buyerFulfilmentChoice,
+  isFulfilMethodNotOffered,
+} from "@/lib/buyer-fulfilment";
 import { buyerBlockedMessage, parseSellingRestricted } from "@/lib/api/selling-restricted";
+import { API_ERROR_CODES } from "@routeflow/types";
+import { isSellerUnavailableRefusal, sellerUnavailableCopy } from "@/lib/seller-unavailable";
+import { BUYER_INSUFFICIENT_STOCK_COPY } from "@/lib/buyer-backorder";
+import {
+  SellerUnavailableLine,
+  useSellerAcceptingOrders,
+} from "@/components/SellerUnavailableLine";
 
 function fmt(n: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
@@ -39,27 +65,80 @@ export default function BuyerCartPage() {
 
   const cart = useBuyerCart(buyer?.id, sellerSlug);
   const createOrder = useBuyerCreateOrder();
-  const { data: activeOrder } = useBuyerActiveOrder();
 
   const [notes, setNotes] = React.useState("");
   const [deliveryDate, setDeliveryDate] = React.useState("");
   const [urgent, setUrgent] = React.useState(false);
-  const [forceNew, setForceNew] = React.useState(false);
+  const [forceNew, setForceNew] = useBuyerCartForceNew(buyer?.id, sellerSlug, cart.items.length);
   const [orderPlaced, setOrderPlaced] = React.useState<{ id: string; orderNumber: string } | null>(
     null,
   );
   const [orderError, setOrderError] = React.useState<string | null>(null);
+  // An idempotency refusal means the order already exists: fixed copy, linked when its id is known.
+  const [conflict, setConflict] = React.useState<{ orderId?: string } | null>(null);
+
+  // Order ahead: the seller's offer from the ONE buyer capability source (GET /buyer/capabilities).
+  // Loading / error / 503 => no data => no choice and no fulfillPath (the server default applies).
+  const { data: capability, refetch: refetchCapability } = useBuyerSellerCapabilities();
+  // SA-733r6: a paused seller takes no online orders; the quiet line above says so and Checkout is disabled.
+  const sellerAccepting = useSellerAcceptingOrders();
+  const choice = buyerFulfilmentChoice(capability);
+  const [pickedMethod, setPickedMethod] = React.useState<FulfilmentMethod | null>(null);
+  const fulfillPath =
+    pickedMethod && choice.methods.includes(pickedMethod) ? pickedMethod : choice.defaultMethod;
+
+  // Read the active order for the CHOSEN path (the server's merge search is path-scoped), so the
+  // banner can only name an order this cart would really fold into.
+  const activeQuery = useBuyerActiveOrder(fulfillPath ?? undefined);
+  const activeOrder = activeQuery.data;
+  // The cart only knows whether an open order exists once this read has SUCCEEDED. Until then (or if it
+  // failed) the server would still fold the cart into an open order, so the button must not offer to
+  // place one: it is disabled while the read is pending and never submits after an error.
+  const activeReady = activeQuery.isSuccess;
+  const activeFailed = activeQuery.isError;
 
   // Whether we'll merge into the existing order
-  const willMerge = !forceNew && activeOrder != null;
+  // The server folds a buyer cart only into an order on the SAME fulfil path, so with a path being
+  // sent a differing active order is not a merge target. No path sent => today's rule.
+  const pathMatches = !fulfillPath || activeOrder?.fulfillPath === fulfillPath;
+  // "No open order" arrives as an empty body (read client-side as ""), not null, so test truthiness.
+  // `mergeTarget` is the ONE derived value for the banner, the button label and the post-submit
+  // destination ("added to ORD-x" vs "order placed"), so they cannot disagree. The REQUEST sends
+  // `forceNew` only for the buyer's explicit "Create new order instead": the server folds into the
+  // open order whenever `forceNew` is absent, and `forceNew` also pins the new order out of every
+  // later merge, so it is never sent for a buyer who simply has no open order.
+  const mergeable = activeReady && Boolean(activeOrder) && pathMatches;
+  const willMerge = !forceNew && mergeable;
+  const mergeTarget = willMerge ? activeOrder : null;
 
   // Resolve prices for exactly the cart's products. This MUST be an id filter:
   // a plain page of the catalog silently omits any product outside it, and the
   // lookup below then prices those lines at 0.
   const cartProductIds = React.useMemo(() => cart.items.map((i) => i.productId), [cart.items]);
-  const { data: productsResult } = useBuyerProducts(
+  const { data: productsResult, isSuccess: catalogLoaded } = useBuyerProducts(
     cartProductIds.length > 0 ? { ids: cartProductIds } : { limit: 0 },
   );
+
+  // State portal limits (spec §4): a line the catalog no longer returns for this buyer is taken out of the cart, but
+  // only after a SUCCESSFUL load (a failed fetch removes nothing), and the buyer is told calmly, by name, once.
+  const [removedNames, setRemovedNames] = React.useState<string[]>([]);
+  React.useEffect(() => {
+    if (!catalogLoaded || cartProductIds.length === 0) return;
+    const known = new Set((productsResult?.data ?? []).map((p) => p.id));
+    const gone = cart.items.filter((i) => !known.has(i.productId));
+    if (gone.length === 0) return;
+    for (const g of gone) cart.removeItem(g.productId);
+    setRemovedNames((prev) => [...prev, ...gone.map((g) => g.name)]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs once per loaded catalog result
+  }, [catalogLoaded, productsResult]);
+  // An older Add (dashboard / favorites) may have stored a boxed product without its pack size;
+  // give it the catalog's pack as whole Cases BEFORE it is priced, so the row, the subtotal and
+  // the payload agree.
+  const { adoptCatalogPacks } = cart;
+  React.useEffect(() => {
+    if (!catalogLoaded) return;
+    adoptCatalogPacks(new Map((productsResult?.data ?? []).map((p) => [p.id, p.unitsPerBox])));
+  }, [catalogLoaded, productsResult, adoptCatalogPacks]);
   const { data: promotions } = useBuyerPromotions();
 
   // Catalog meta (price/category/box) keyed by product id — category drives
@@ -85,14 +164,29 @@ export default function BuyerCartPage() {
   // `original` is the pre-promo price for the strikethrough (null = no promo).
   const promoRules = React.useMemo(() => toPromotionRules(promotions), [promotions]);
 
+  // R1: the server enforces and bills the CATALOG's pack, so every line is read in it. A line stored
+  // with a different pack (a repack), none, or for a product that is no longer boxed is rebuilt here
+  // before it is priced, shown or sent; `adoptCatalogPacks` (above) writes the same rebuild back to
+  // storage. A product with NO catalog row is passed through as stored (it is priced "unavailable").
+  const lines = React.useMemo(
+    () =>
+      cart.items.map((i) => {
+        const row = productMeta.get(i.productId);
+        return row ? completeLineFromCatalog(i, row.unitsPerBox) : i;
+      }),
+    [cart.items, productMeta],
+  );
+
   const pricedLines = React.useMemo(() => {
-    return cart.items.map((item) => {
+    return lines.map((item) => {
       const meta = productMeta.get(item.productId);
       // No catalog row = the product was removed, deactivated, or is gated by
       // the regulated-category rules. Never quietly price it at 0 — say so.
       const unresolved = meta == null;
       const base = meta?.buyerPrice ?? 0;
-      const unitsPerBox = item.unitsPerBox ?? meta?.unitsPerBox ?? null;
+      // The CATALOG's pack when the row exists (null = not boxed: the server bills qty x price), never the
+      // stored pack; only an unresolved line falls back to what it was stored with.
+      const unitsPerBox = meta ? meta.unitsPerBox : (item.unitsPerBox ?? null);
       const norm = normalizeBoxesPieces({
         boxes: item.boxes ?? null,
         pieces: item.pieces ?? null,
@@ -139,7 +233,7 @@ export default function BuyerCartPage() {
         lineOriginalSubtotal: computeLineSubtotal({ unitPrice: original ?? net, ...lineArgs }),
       };
     });
-  }, [cart.items, productMeta, promoRules]);
+  }, [lines, productMeta, promoRules]);
 
   const lineByProduct = React.useMemo(
     () => new Map(pricedLines.map((l) => [l.item.productId, l])),
@@ -161,32 +255,37 @@ export default function BuyerCartPage() {
   }, [authLoading, activeSeller, router]);
 
   const handlePlaceOrder = async () => {
+    // Never submit before the open-order read has succeeded: the label would be a guess.
+    if (!activeReady) return;
     setOrderError(null);
+    setConflict(null);
     try {
       const result = await createOrder.mutateAsync({
-        items: cart.items.map((i) => ({
-          productId: i.productId,
-          qty: i.qty,
-          ...(i.boxes != null ? { boxes: i.boxes } : {}),
-          ...(i.pieces != null ? { pieces: i.pieces } : {}),
-        })),
+        items: cartOrderItems(lines),
         notes: notes || undefined,
         urgent,
         requestedDeliveryDate: deliveryDate || undefined,
         status: "PENDING",
         forceNew,
+        ...(fulfillPath ? { fulfillPath } : {}),
       });
 
       // Clear cart ONLY after confirmed success to avoid data loss on network failure
       cart.clearCart();
+      setForceNew(false);
 
-      if (willMerge && activeOrder) {
-        router.push(`/buyer/portal/${sellerSlug}/orders/${activeOrder.id}`);
+      if (mergeTarget) {
+        router.push(`/buyer/portal/${sellerSlug}/orders/${mergeTarget.id}`);
       } else {
         setOrderPlaced(result);
       }
     } catch (err: any) {
       const data = err?.response?.data;
+      const existing = buyerOrderConflict(err);
+      if (existing) {
+        setConflict(existing);
+        return;
+      }
       // A regulated line the buyer isn't licensed for (e.g. a stale cart item whose
       // license lapsed) — point them at the Licenses page instead of a generic retry.
       if (err?.response?.status === 409 && data?.code === "REGULATED_AUTH_REQUIRED") {
@@ -198,9 +297,30 @@ export default function BuyerCartPage() {
         );
         return;
       }
+      // Row 531: the server refused a cart whose qty and box split disagree; nothing was saved.
+      if (err?.response?.status === 400 && data?.code === API_ERROR_CODES.QTY_SPLIT_MISMATCH) {
+        setOrderError(BUYER_QTY_SPLIT_MISMATCH_COPY);
+        return;
+      }
+      // OOS PR2 (R4): a stock refusal is coded; show the portal's own fixed copy, never a raw server string.
+      if (err?.response?.status === 409 && data?.code === API_ERROR_CODES.INSUFFICIENT_STOCK) {
+        setOrderError(BUYER_INSUFFICIENT_STOCK_COPY);
+        return;
+      }
+      // A paused seller: the one seller-unavailable sentence (the toast is opted out), then re-read the capability so
+      // the line and the disabled button show the same state.
+      if (isSellerUnavailableRefusal(err)) {
+        setOrderError(sellerUnavailableCopy(activeSeller?.tenant.name));
+        void refetchCapability?.();
+        return;
+      }
       const restricted = parseSellingRestricted(err);
       if (restricted) {
         setOrderError(buyerBlockedMessage(restricted));
+        return;
+      }
+      if (isFulfilMethodNotOffered(err)) {
+        setOrderError(FULFIL_METHOD_NOT_OFFERED_COPY);
         return;
       }
       setOrderError(data?.message ?? "Failed to create order. Please try again.");
@@ -247,9 +367,57 @@ export default function BuyerCartPage() {
   }
 
   // Empty cart
+
+  // Calm and non-error: no toast, no red; its only action is OK.
+  const removedNotice =
+    removedNames.length > 0 ? (
+      <div
+        role="status"
+        data-testid="cart-removed-notice"
+        className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg bg-surface-raised px-4 py-3 text-sm text-navy"
+      >
+        <span>
+          Some items are no longer available to you, so we took them out of your cart:{" "}
+          {removedNames.join(", ")}.
+        </span>
+        <button
+          type="button"
+          className="font-medium text-brand-600 hover:underline"
+          onClick={() => setRemovedNames([])}
+        >
+          OK
+        </button>
+      </div>
+    ) : null;
+
+  // Row 531 R2: a stored line whose quantity was rebuilt (its qty and split disagreed, or its product was
+  // repacked) is announced ONCE, calmly (status, not alert). OK clears the flags in state and storage.
+  const correctedCount = cart.items.filter((i) => i.corrected).length;
+  const correctedNotice =
+    correctedCount > 0 ? (
+      <div
+        role="status"
+        data-testid="cart-corrected-notice"
+        className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg bg-surface-raised px-4 py-3 text-sm text-navy"
+      >
+        <span>
+          We corrected the quantity on {correctedCount} {correctedCount === 1 ? "item" : "items"}.
+          Please review.
+        </span>
+        <button
+          type="button"
+          className="min-h-11 min-w-11 font-medium text-brand-600 hover:underline"
+          onClick={() => cart.acknowledgeCorrections()}
+        >
+          OK
+        </button>
+      </div>
+    ) : null;
+
   if (cart.items.length === 0) {
     return (
       <div className="p-6">
+        {removedNotice}
         <button
           onClick={() => router.push(`/buyer/portal/${sellerSlug}/shop`)}
           className="mb-4 flex items-center gap-1.5 text-sm text-navy/70 hover:text-navy transition-colors"
@@ -264,7 +432,7 @@ export default function BuyerCartPage() {
             className="bg-buyer-500 hover:bg-buyer-600 focus-visible:ring-buyer-500"
             onClick={() => router.push(`/buyer/portal/${sellerSlug}/shop`)}
           >
-            <Store className="mr-1.5 h-4 w-4" /> Browse Products
+            <Store className="mr-1.5 h-4 w-4" /> Browse products
           </Button>
         </div>
       </div>
@@ -272,7 +440,7 @@ export default function BuyerCartPage() {
   }
 
   return (
-    <div className="p-6 max-w-4xl">
+    <div className="p-6 max-w-4xl xl:max-w-6xl">
       <button
         onClick={() => router.push(`/buyer/portal/${sellerSlug}/shop`)}
         className="mb-4 flex items-center gap-1.5 text-sm text-navy/70 hover:text-navy transition-colors"
@@ -281,63 +449,82 @@ export default function BuyerCartPage() {
       </button>
 
       <h1 className="text-2xl font-bold text-navy mb-4">Cart</h1>
+      {removedNotice}
+      {correctedNotice}
 
       {/* Active order merge banner */}
-      {willMerge && activeOrder && (
-        <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-buyer-200 bg-buyer-50 px-4 py-3">
+      {mergeTarget && (
+        <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-buyer-200 bg-buyer-50 px-4 py-1">
           <div className="flex items-center gap-2 text-sm text-buyer-700">
             <ShoppingCart className="h-4 w-4 flex-shrink-0" />
             <span>
               Items will be added to your existing order{" "}
-              <strong>#{(activeOrder as any).orderNumber ?? activeOrder.id.slice(0, 8)}</strong>
+              <strong>#{(mergeTarget as any).orderNumber ?? mergeTarget.id.slice(0, 8)}</strong>
             </span>
           </div>
           <button
             onClick={() => setForceNew(true)}
-            className="text-xs font-medium text-buyer-500 hover:text-buyer-700 underline whitespace-nowrap"
+            className="inline-flex min-h-[44px] items-center text-xs font-medium text-buyer-500 hover:text-buyer-700 underline whitespace-nowrap"
           >
             Create new order instead
           </button>
         </div>
       )}
 
-      {forceNew && activeOrder && (
-        <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-surface-border bg-surface-raised px-4 py-3">
+      {forceNew && mergeable && (
+        <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-surface-border bg-surface-raised px-4 py-1">
           <p className="text-sm text-navy/70">A new order will be created.</p>
           <button
             onClick={() => setForceNew(false)}
-            className="text-xs font-medium text-buyer-500 hover:text-buyer-700 underline whitespace-nowrap"
+            className="inline-flex min-h-[44px] items-center text-xs font-medium text-buyer-500 hover:text-buyer-700 underline whitespace-nowrap"
           >
             Add to existing order instead
           </button>
         </div>
       )}
 
-      <div className="grid gap-6 lg:grid-cols-3">
+      {/* W-665: 3-up only from xl (with the wider page), so the 2/3 column always holds the table's 640px; at lg
+          beside the portal sidebar it got ~470-555px and the table scrolled inside its card, hiding Remove. */}
+      <div className="grid gap-6 xl:grid-cols-3">
         {/* Items */}
-        {/* min-w-0: below lg the grid is one auto column, which grew to the items table's 640px min-width and made the whole page (and the refusal banner) scroll sideways at 390px. */}
-        <div className="min-w-0 lg:col-span-2">
+        {/* min-w-0: below xl the grid is one auto column, which grew to the items table's 640px min-width and made the whole page (and the refusal banner) scroll sideways at 390px. */}
+        <div className="min-w-0 xl:col-span-2">
           <div className="rounded-xl border border-surface-border bg-white overflow-hidden">
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[640px]">
-                <thead>
-                  <tr className="border-b border-surface-border bg-surface-raised text-xs text-navy/70 uppercase tracking-wider">
-                    <th className="px-4 py-2.5 text-left">Product</th>
-                    <th className="px-4 py-2.5 text-center w-32">Qty</th>
-                    <th className="px-4 py-2.5 text-right w-24">Price</th>
-                    <th className="px-4 py-2.5 text-right w-24">Subtotal</th>
-                    <th className="px-4 py-2.5 w-12"></th>
+              <table role="table" className="w-full max-md:block md:min-w-[640px]">
+                <thead role="rowgroup" className="max-md:hidden">
+                  <tr
+                    role="row"
+                    className="border-b border-surface-border bg-surface-raised text-xs text-navy/70 uppercase tracking-wider"
+                  >
+                    <th role="columnheader" className="px-4 py-2.5 text-left">
+                      Product
+                    </th>
+                    <th role="columnheader" className="px-4 py-2.5 text-center w-32">
+                      Qty
+                    </th>
+                    <th role="columnheader" className="px-4 py-2.5 text-right w-24">
+                      Price
+                    </th>
+                    <th role="columnheader" className="px-4 py-2.5 text-right w-24">
+                      Subtotal
+                    </th>
+                    <th role="columnheader" className="px-4 py-2.5 w-12"></th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-surface-border">
-                  {cart.items.map((item) => {
+                <tbody role="rowgroup" className="divide-y divide-surface-border max-md:block">
+                  {lines.map((item) => {
                     const priced = lineByProduct.get(item.productId);
                     const price = priced?.net ?? 0;
                     const original = priced?.original ?? null;
                     const freeUnits = priced?.freeUnits ?? 0;
                     return (
-                      <tr key={item.productId} className="hover:bg-surface-raised/50">
-                        <td className="px-4 py-3">
+                      <tr
+                        role="row"
+                        key={item.productId}
+                        className="hover:bg-surface-raised/50 max-md:flex max-md:flex-wrap max-md:items-center max-md:gap-x-4 max-md:gap-y-2 max-md:p-3"
+                      >
+                        <td role="cell" className="px-4 py-3 max-md:w-full max-md:p-0">
                           <div className="flex items-center gap-3">
                             <div className="h-10 w-10 flex-shrink-0 rounded-lg bg-surface-raised flex items-center justify-center overflow-hidden">
                               {item.thumbnailUrl ? (
@@ -364,117 +551,25 @@ export default function BuyerCartPage() {
                             </div>
                           </div>
                         </td>
-                        <td className="px-4 py-3">
-                          {item.unitsPerBox && item.unitsPerBox > 0 ? (
-                            // Boxes + Pieces input
-                            <div className="flex flex-col items-center gap-1">
-                              <div className="flex items-center gap-1.5 text-xs">
-                                <div className="flex items-center gap-0.5">
-                                  <button
-                                    onClick={() => {
-                                      const b = Math.max(0, (item.boxes ?? 0) - 1);
-                                      const p = item.pieces ?? 0;
-                                      const qty = b * item.unitsPerBox! + p;
-                                      if (qty > 0) {
-                                        cart.addItem({ ...item, qty, boxes: b, pieces: p });
-                                      } else {
-                                        cart.removeItem(item.productId);
-                                      }
-                                    }}
-                                    className="rounded p-1 text-navy/70 hover:bg-surface-raised"
-                                  >
-                                    <Minus className="h-3 w-3" />
-                                  </button>
-                                  <input
-                                    type="number"
-                                    min={0}
-                                    value={item.boxes ?? 0}
-                                    onChange={(e) => {
-                                      const b = Math.max(0, Number(e.target.value));
-                                      const p = item.pieces ?? 0;
-                                      const qty = b * item.unitsPerBox! + p;
-                                      if (qty > 0)
-                                        cart.addItem({ ...item, qty, boxes: b, pieces: p });
-                                    }}
-                                    className="w-10 rounded border border-surface-border bg-white px-1 py-0.5 text-center text-xs text-navy"
-                                  />
-                                  <button
-                                    onClick={() => {
-                                      const b = (item.boxes ?? 0) + 1;
-                                      const p = item.pieces ?? 0;
-                                      cart.addItem({
-                                        ...item,
-                                        qty: b * item.unitsPerBox! + p,
-                                        boxes: b,
-                                        pieces: p,
-                                      });
-                                    }}
-                                    className="rounded p-1 text-navy/70 hover:bg-surface-raised"
-                                  >
-                                    <Plus className="h-3 w-3" />
-                                  </button>
-                                  <span className="text-navy/70 ml-0.5">box</span>
-                                </div>
-                                <span className="text-navy/30">+</span>
-                                <div className="flex items-center gap-0.5">
-                                  <input
-                                    type="number"
-                                    min={0}
-                                    max={(item.unitsPerBox ?? 1) - 1}
-                                    value={item.pieces ?? 0}
-                                    onChange={(e) => {
-                                      const b = item.boxes ?? 0;
-                                      const p = Math.max(
-                                        0,
-                                        Math.min(
-                                          Number(e.target.value),
-                                          (item.unitsPerBox ?? 1) - 1,
-                                        ),
-                                      );
-                                      const qty = b * item.unitsPerBox! + p;
-                                      if (qty > 0)
-                                        cart.addItem({ ...item, qty, boxes: b, pieces: p });
-                                    }}
-                                    className="w-10 rounded border border-surface-border bg-white px-1 py-0.5 text-center text-xs text-navy"
-                                  />
-                                  <span className="text-navy/70">pcs</span>
-                                </div>
-                              </div>
-                              <p className="text-[10px] text-navy/70">
-                                = {item.qty} {item.unit}
-                              </p>
-                            </div>
-                          ) : (
-                            // Simple qty input
-                            <div className="flex items-center justify-center gap-1">
-                              <button
-                                onClick={() => cart.updateQty(item.productId, item.qty - 1)}
-                                className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy"
-                              >
-                                <Minus className="h-3.5 w-3.5" />
-                              </button>
-                              <input
-                                type="number"
-                                min={1}
-                                value={item.qty}
-                                onChange={(e) =>
-                                  cart.updateQty(
-                                    item.productId,
-                                    Math.max(1, Number(e.target.value)),
-                                  )
-                                }
-                                className="w-14 rounded border border-surface-border bg-white px-2 py-1 text-center text-sm text-navy"
-                              />
-                              <button
-                                onClick={() => cart.updateQty(item.productId, item.qty + 1)}
-                                className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy"
-                              >
-                                <Plus className="h-3.5 w-3.5" />
-                              </button>
-                            </div>
-                          )}
+                        <td
+                          role="cell"
+                          className="px-4 py-3 max-md:w-full max-md:min-w-0 max-md:p-0"
+                        >
+                          <CartRowQty
+                            item={item}
+                            name={item.name}
+                            onCount={(n) => cart.updateQty(item.productId, n)}
+                            onUnit={(unit) => cart.setUnit(item.productId, unit)}
+                            onRemove={() => cart.removeItem(item.productId)}
+                          />
                         </td>
-                        <td className="px-4 py-3 text-right text-sm">
+                        <td
+                          role="cell"
+                          className="px-4 py-3 text-right text-sm max-md:p-0 max-md:text-left"
+                        >
+                          <span className="block text-[10px] uppercase tracking-wider text-navy/60 md:hidden">
+                            Price
+                          </span>
                           {priced?.unresolved ? (
                             <span className="text-[11px] text-navy/50">Price unavailable</span>
                           ) : original != null && original > price ? (
@@ -488,17 +583,24 @@ export default function BuyerCartPage() {
                             <span className="text-navy/70">{fmt(price)}</span>
                           )}
                         </td>
-                        <td className="px-4 py-3 text-right text-sm font-medium text-navy">
+                        <td
+                          role="cell"
+                          className="px-4 py-3 text-right text-sm font-medium text-navy max-md:p-0 max-md:text-left"
+                        >
+                          <span className="block text-[10px] font-normal uppercase tracking-wider text-navy/60 md:hidden">
+                            Subtotal
+                          </span>
                           {priced?.unresolved ? (
                             <span className="text-navy/40">—</span>
                           ) : (
                             fmt(priced?.lineSubtotal ?? 0)
                           )}
                         </td>
-                        <td className="px-4 py-3">
+                        <td role="cell" className="px-4 py-3 max-md:ml-auto max-md:p-0">
                           <button
                             onClick={() => cart.removeItem(item.productId)}
-                            className="rounded p-1.5 text-navy/30 hover:bg-danger-bg hover:text-danger transition-colors"
+                            aria-label={`Remove ${item.name}`}
+                            className="inline-flex min-h-11 min-w-11 items-center justify-center rounded p-1.5 text-navy/30 hover:bg-danger-bg hover:text-danger transition-colors"
                           >
                             <Trash2 className="h-4 w-4" />
                           </button>
@@ -527,6 +629,30 @@ export default function BuyerCartPage() {
                 className="h-9 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-buyer-500 focus:outline-none focus:ring-1 focus:ring-buyer-500"
               />
             </div>
+
+            {choice.showChoice && (
+              <fieldset>
+                <legend className="block text-xs text-navy/70 mb-1">How do you want it?</legend>
+                <div className="space-y-1.5">
+                  {choice.methods.map((m) => (
+                    <label
+                      key={m}
+                      className="flex items-center gap-2 cursor-pointer text-sm text-navy"
+                    >
+                      <input
+                        type="radio"
+                        name="fulfillPath"
+                        value={m}
+                        checked={fulfillPath === m}
+                        onChange={() => setPickedMethod(m)}
+                        className="h-4 w-4 accent-buyer-500"
+                      />
+                      {FULFIL_METHOD_LABEL[m]}
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+            )}
 
             <div>
               <label className="block text-xs text-navy/70 mb-1">Order Notes</label>
@@ -577,7 +703,7 @@ export default function BuyerCartPage() {
               <span className="text-navy/70">Calculated at checkout</span>
             </div>
             <div className="border-t border-surface-border pt-3 flex justify-between">
-              <span className="text-sm font-semibold text-navy">Estimated Total</span>
+              <span className="text-sm font-semibold text-navy">Estimated total</span>
               <span className="text-lg font-bold text-navy">{fmt(subtotal)}</span>
             </div>
             {unresolvedCount > 0 && (
@@ -592,15 +718,51 @@ export default function BuyerCartPage() {
 
           {/* Actions */}
           <div className="space-y-2">
+            <SellerUnavailableLine className="rounded-lg bg-surface-raised px-3 py-2 text-xs text-navy/80" />
+            {activeFailed && (
+              <div
+                role="alert"
+                className="flex items-center justify-between gap-3 rounded-lg bg-danger-bg px-3 py-1 text-xs text-danger"
+              >
+                <span>Couldn&apos;t check for an open order.</span>
+                <button
+                  type="button"
+                  onClick={() => activeQuery.refetch()}
+                  className="inline-flex min-h-[44px] items-center font-medium underline"
+                >
+                  Retry
+                </button>
+              </div>
+            )}
             <Button
-              className="w-full bg-buyer-500 hover:bg-buyer-600 focus-visible:ring-buyer-500"
+              className="min-h-[44px] w-full bg-buyer-500 hover:bg-buyer-600 focus-visible:ring-buyer-500"
               onClick={handlePlaceOrder}
-              loading={createOrder.isPending}
-              disabled={createOrder.isPending}
+              loading={createOrder.isPending || (!activeReady && !activeFailed)}
+              disabled={createOrder.isPending || !activeReady || !sellerAccepting}
+              aria-describedby={sellerAccepting ? undefined : "seller-unavailable-line"}
             >
-              {willMerge ? "Add to existing order" : "Place Order"}
+              {!activeReady && !activeFailed
+                ? "Checking your orders"
+                : willMerge
+                  ? "Add to existing order"
+                  : "Place order"}
             </Button>
           </div>
+
+          {conflict && (
+            <div role="alert" className="rounded-lg bg-danger-bg px-3 py-2 text-xs text-danger">
+              {conflict.orderId ? (
+                <Link
+                  href={`/buyer/portal/${sellerSlug}/orders/${conflict.orderId}`}
+                  className="underline"
+                >
+                  {BUYER_ORDER_CONFLICT_COPY}
+                </Link>
+              ) : (
+                BUYER_ORDER_CONFLICT_NO_ID_COPY
+              )}
+            </div>
+          )}
 
           {orderError && (
             <div role="alert" className="rounded-lg bg-danger-bg px-3 py-2 text-xs text-danger">

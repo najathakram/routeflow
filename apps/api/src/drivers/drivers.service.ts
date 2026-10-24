@@ -11,6 +11,7 @@ import * as bcrypt from "bcrypt";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtPayload } from "../auth/jwt-payload.interface";
 import { UserRole } from "@prisma/client";
+import { assertMayChangeAccount, touchesDriverIdentity } from "../users/admin-account-protection";
 import { ListDriversDto } from "./dto/list-drivers.dto";
 import { CreateDriverDto } from "./dto/create-driver.dto";
 import { UpdateDriverDto } from "./dto/update-driver.dto";
@@ -84,10 +85,10 @@ export class DriversService {
     return driver;
   }
 
-  async updateByUserId(userId: string, dto: UpdateDriverDto) {
+  async updateByUserId(userId: string, dto: UpdateDriverDto, callerRole: UserRole | undefined) {
     const driver = await this.prisma.forTenant().driver.findFirst({ where: { userId } });
     if (!driver) throw new NotFoundException("Driver profile not found");
-    return this.update(driver.id, dto);
+    return this.update(driver.id, dto, callerRole);
   }
 
   async recordLocation(userId: string, dto: PostLocationDto) {
@@ -183,8 +184,13 @@ export class DriversService {
     });
   }
 
-  async update(id: string, dto: UpdateDriverDto) {
-    await this.findOneOrThrow(id);
+  async update(id: string, dto: UpdateDriverDto, callerRole: UserRole | undefined) {
+    const driver = await this.findOneOrThrow(id);
+    // B1061: operators edit operational fields freely; only an identity / account-linking change on an
+    // admin-linked driver needs an admin caller (DRIVER_IDENTITY_FIELDS), and before the geocoder call.
+    if (touchesDriverIdentity(dto, driver)) {
+      await this.assertMayChangeDriver(driver.userId, callerRole);
+    }
     const { homeLine1, homeCity, homeState, homeZip, ...rest } = dto;
     const data: Record<string, unknown> = { ...rest };
     const homeFieldPresent =
@@ -221,8 +227,9 @@ export class DriversService {
     });
   }
 
-  async changeStatus(id: string, dto: ChangeDriverStatusDto) {
-    await this.findOneOrThrow(id);
+  async changeStatus(id: string, dto: ChangeDriverStatusDto, callerRole: UserRole | undefined) {
+    const driver = await this.findOneOrThrow(id);
+    await this.assertMayChangeDriver(driver.userId, callerRole);
     await this.prisma.forTenant().driver.update({ where: { id }, data: { status: dto.status } });
     return { success: true };
   }
@@ -255,8 +262,12 @@ export class DriversService {
     return { completedRuns, totalRuns };
   }
 
-  async remove(id: string) {
+  async remove(id: string, callerRole: UserRole | undefined) {
     const driver = await this.findOneOrThrow(id);
+
+    // B1061: the admin-account rule, before any write. Re-checked on the row read inside the transaction
+    // below, so a role change between the two reads cannot slip past it.
+    await this.assertMayChangeDriver(driver.userId, callerRole);
 
     // Block deletion if the driver has any active or scheduled runs
     const activeRuns = await this.prisma.forTenant().routeRun.count({
@@ -269,15 +280,16 @@ export class DriversService {
     }
 
     await this.prisma.tenantTransaction(async (tx) => {
-      // Nullify driver foreign keys so historical records are preserved
-      await tx.route.updateMany({ where: { driverId: id }, data: { driverId: null } });
-      await tx.routeRun.updateMany({ where: { driverId: id }, data: { driverId: null } });
-      await tx.deliveryMutation.updateMany({ where: { driverId: id }, data: { driverId: null } });
-
       const linkedUser = await tx.user.findUnique({
         where: { id: driver.userId },
         select: { role: true },
       });
+      if (linkedUser) assertMayChangeAccount(linkedUser, callerRole);
+
+      // Nullify driver foreign keys so historical records are preserved
+      await tx.route.updateMany({ where: { driverId: id }, data: { driverId: null } });
+      await tx.routeRun.updateMany({ where: { driverId: id }, data: { driverId: null } });
+      await tx.deliveryMutation.updateMany({ where: { driverId: id }, data: { driverId: null } });
 
       // Delete the driver profile, then decide what happens to the linked login
       await tx.driver.delete({ where: { id } });
@@ -297,6 +309,18 @@ export class DriversService {
     });
 
     return { success: true };
+  }
+
+  /**
+   * B1061: editing, re-statusing or removing the driver record of an admin account needs an admin caller:
+   * the users module's rule (users/admin-account-protection.ts), on the linked user's role (tenant-scoped
+   * read), fail-closed on a missing caller role. Call it before any write or external call.
+   */
+  private async assertMayChangeDriver(userId: string, callerRole: UserRole | undefined) {
+    const linked = await this.prisma
+      .forTenant()
+      .user.findUnique({ where: { id: userId }, select: { role: true } });
+    if (linked) assertMayChangeAccount(linked, callerRole);
   }
 
   private async findOneOrThrow(id: string) {

@@ -8,11 +8,28 @@
 // A workspace whose campaign report is missing/partial/stale (`campaign-check --print-stale`) is
 // added to a scoped run so its tests execute — see scripts/lib/verify-scope.mjs `withStale`.
 // CI's full run is the authority.
-import { spawnSync } from "node:child_process";
-import { totalmem } from "node:os";
+//
+// FAST VERIFY (owner ruling 2026-10-10, "Fast local check, full in CI"): when the pre-push hook has
+// exported RF_VERIFY_MODE=fast (scripts/verify-mode.mjs decides: not CI, not master/detached,
+// FULL_VERIFY unset) the plan keeps check-types + lint for the affected scope but runs Jest with
+// `--changedSince=<merge-base with origin/master>` — only the tests related to the diff. The two
+// always-run tripwires stay FULL (`@routeflow/pricing` tests, api `test:repo-truth`). CI, master,
+// FULL_VERIFY=1 and a bare `npm run verify` (no RF_VERIFY_MODE) are byte-identical to before. See
+// `planTurboCalls({ fast })`, `argvForCall` and `chooseRunMode` below.
+import { cpus as osCpus, totalmem } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
-import { decideScope, loadWorkspaces } from "./lib/verify-scope.mjs";
+import { spawnAsync, withHeavySlot } from "./lib/heavy-slot.mjs";
+import {
+  FAST_VERIFY_BANNER,
+  currentBranch,
+  decideScope,
+  isFastMode,
+  loadWorkspaces,
+  mergeBaseSha,
+  wantsFastVerify,
+} from "./lib/verify-scope.mjs";
+import { prismaPreflight } from "./lib/prisma-fresh.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -50,9 +67,21 @@ export function buildTurboFlags(verifyConcurrency) {
 }
 
 /** `[]` (byte-identical to no passthrough at all) when unset; `["--", "--maxWorkers=<n>"]`
- *  when set — the `--` must be the LAST thing before it on the argv, after every turbo flag. */
-export function jestPassthrough(jestMaxWorkers) {
-  return jestMaxWorkers ? ["--", `--maxWorkers=${jestMaxWorkers}`] : [];
+ *  when set — the `--` must be the LAST thing before it on the argv, after every turbo flag.
+ *  FAST VERIFY adds `--changedSince=<sha> --passWithNoTests` (jest-only flags: a workspace with no
+ *  related test must pass, not exit 1 "No tests found"); `changedSince` must be a 40-hex sha. */
+export function jestPassthrough(jestMaxWorkers, changedSince) {
+  const flags = [];
+  if (jestMaxWorkers) flags.push(`--maxWorkers=${jestMaxWorkers}`);
+  if (changedSince) {
+    if (!/^[0-9a-f]{40}$/.test(changedSince)) {
+      throw new Error(
+        `verify: refusing a non-sha --changedSince base ${JSON.stringify(String(changedSince).slice(0, 60))}`,
+      );
+    }
+    flags.push(`--changedSince=${changedSince}`, "--passWithNoTests");
+  }
+  return flags.length ? ["--", ...flags] : [];
 }
 
 /** Pure argv builder (no spawn) so a self-test can assert the exact command line for every
@@ -119,8 +148,9 @@ export function excludedLine(excluded) {
  *    workspace is left that call is skipped; the api `test:repo-truth` tripwire is skipped only if
  *    api itself is excluded. `note` is set when no call is left at all.
  */
-export function planTurboCalls({ scope, excluded = [], splitJest }) {
+export function planTurboCalls({ scope, excluded = [], splitJest, fast = false }) {
   const drop = new Set(excluded);
+  if (fast) return planFastCalls({ scope, drop, excluded });
   if (scope.mode === "full") {
     const negatives = excluded.map((name) => `--filter=!${name}`);
     return splitJest
@@ -163,6 +193,79 @@ export function planTurboCalls({ scope, excluded = [], splitJest }) {
 }
 
 /**
+ * FAST VERIFY plan (owner 2026-10-10). Same scope selection as above, but jest is never bundled with
+ * tsc/eslint and only the `test` task of the NON-tripwire workspaces is narrowed:
+ *   1. check-types + lint              — exactly the affected-scope call (no jest flags ever);
+ *   2. `test` with `changedSince: true` — the related-only run (main appends --changedSince=<sha>);
+ *   3. `@routeflow/pricing` `test`      — the cross-workspace tripwire stays FULL;
+ *   4. api `test:repo-truth`            — the structural-pin tripwire stays FULL.
+ * `changedSince` is set on call 2 ONLY — never on a `jest: false` call and never on a tripwire.
+ */
+const PRICING = "@routeflow/pricing";
+function planFastCalls({ scope, drop, excluded }) {
+  const API = "@routeflow/api";
+  const calls = [];
+  if (scope.mode === "full") {
+    const negatives = excluded.map((name) => `--filter=!${name}`);
+    calls.push({ jest: false, args: ["check-types", "lint", ...negatives] });
+    // "only negative filters = everything except those": all workspaces but pricing (its own full call).
+    calls.push({
+      jest: true,
+      changedSince: true,
+      args: ["test", `--filter=!${PRICING}`, ...negatives],
+    });
+    if (!drop.has(PRICING)) calls.push({ jest: true, args: ["test", `--filter=${PRICING}`] });
+    calls.push({ jest: true, args: ["test:repo-truth", ...negatives] });
+    return { calls, note: null };
+  }
+  const selected = scope.workspaces.filter((w) => !drop.has(w));
+  const filters = selected.map((w) => `--filter=${w}`);
+  const related = selected.filter((w) => w !== PRICING).map((w) => `--filter=${w}`);
+  if (filters.length) calls.push({ jest: false, args: ["check-types", "lint", ...filters] });
+  if (related.length) calls.push({ jest: true, changedSince: true, args: ["test", ...related] });
+  if (selected.includes(PRICING)) calls.push({ jest: true, args: ["test", `--filter=${PRICING}`] });
+  if (!drop.has(API)) calls.push({ jest: true, args: ["test:repo-truth", `--filter=${API}`] });
+  return {
+    calls,
+    note: calls.length
+      ? null
+      : `nothing left to verify after the exclusions (${excluded.join(", ")}) — no turbo calls`,
+  };
+}
+
+/**
+ * The argv of one planned call (pure). jest calls get the `--` passthrough (`--maxWorkers` when set,
+ * `--changedSince=<sha> --passWithNoTests` on a related-only call); `jest: false` calls (tsc/eslint)
+ * get NOTHING after the turbo flags, whatever else is configured.
+ */
+export function argvForCall(call, { turboFlags, jestMaxWorkers, changedSince }) {
+  if (!call.jest) return buildArgv(call.args, turboFlags);
+  return buildArgv(
+    call.args,
+    turboFlags,
+    jestPassthrough(jestMaxWorkers, call.changedSince ? changedSince : undefined),
+  );
+}
+
+/**
+ * Pure: may this run be FAST? `requested` = the explicit switch (RF_VERIFY_MODE=fast, already checked
+ * against CI/FULL_VERIFY by `isFastMode`) AND the branch policy; `mergeBase` = the sha the related-only
+ * filter needs. Requested but no merge-base -> FULL plan, with a loud message (never a silent narrow).
+ */
+export function chooseRunMode({ requested, mergeBase }) {
+  if (!requested) return { fast: false, changedSince: null, message: null };
+  if (!mergeBase) {
+    return {
+      fast: false,
+      changedSince: null,
+      message:
+        "FAST VERIFY UNAVAILABLE: cannot compute the merge-base with origin/master — falling back to the FULL plan (every test of the selected scope).",
+    };
+  }
+  return { fast: true, changedSince: mergeBase, message: FAST_VERIFY_BANNER };
+}
+
+/**
  * B772: the Mac mini is 16 GB — a bare `git push` there can't reach the memory-pressure
  * incident line (2026-09-22) unless VERIFY_CONCURRENCY=1 / JEST_MAX_WORKERS=2 are set inline,
  * which lanes forgot twice in one night. Below 24 GB total memory, default BOTH to the
@@ -184,11 +287,17 @@ export const LOW_MEM_THRESHOLD_BYTES = 24 * 1024 ** 3;
 const LOW_MEM_VERIFY_CONCURRENCY = "1";
 const LOW_MEM_JEST_MAX_WORKERS = "2";
 
+/** `max(2, floor(cpus * 0.75 / concurrency))`: jest workers per test task on a roomy shared host. */
+export function jestWorkerBudget({ cpus, concurrency }) {
+  return Math.max(2, Math.floor((cpus * 0.75) / concurrency));
+}
+
 /** Pure — no env/os read inside. `env` is a plain object (e.g. `process.env`); `totalMemBytes`
- *  is the host's total memory in bytes (e.g. `os.totalmem()`). Returns the two resolved values
+ *  is the host's total memory in bytes (e.g. `os.totalmem()`); `cpus` the logical cpu count (e.g.
+ *  `os.cpus().length`; omitted/invalid = no worker budget). Returns the two resolved values
  *  plus `message` (a single explanatory line) — `null` when nothing was defaulted, so CI, a
  *  real high-memory host, or an already-fully-explicit low-memory host prints nothing new. */
-export function chooseVerifyDefaults({ totalMemBytes, env }) {
+export function chooseVerifyDefaults({ totalMemBytes, env, cpus }) {
   const hasEnvConcurrency = "VERIFY_CONCURRENCY" in env;
   const hasEnvJestWorkers = "JEST_MAX_WORKERS" in env;
   const envConcurrency = env.VERIFY_CONCURRENCY || "";
@@ -215,6 +324,22 @@ export function chooseVerifyDefaults({ totalMemBytes, env }) {
     message = `verify: low-memory host (${gb} GB) → concurrency ${verifyConcurrency}, jest workers ${jestMaxWorkers}`;
   }
 
+  // Worker budget for a >= 24 GB, non-CI host whose JEST_MAX_WORKERS is not in env (a presence check,
+  // like every other rule here): jest's own default is cpus-1 workers PER test task, and turbo runs
+  // VERIFY_CONCURRENCY (2) tasks at once, so a bare push on a 14-cpu box asked for ~26 workers and
+  // starved every other job on the host. Budget ~75% of the cpus across the concurrent tasks.
+  const hasBudgetInputs = Number.isInteger(cpus) && cpus > 0;
+  if (!env.CI && !isLowMem && !hasEnvJestWorkers && hasBudgetInputs) {
+    const parsed = Number.parseInt(verifyConcurrency, 10);
+    const concurrency = Number.isInteger(parsed) && parsed > 0 ? parsed : 2;
+    const workers = jestWorkerBudget({ cpus, concurrency });
+    return {
+      verifyConcurrency,
+      jestMaxWorkers: String(workers),
+      message: `verify: worker budget → jest workers ${workers} per task (cpus ${cpus}, concurrency ${concurrency})`,
+    };
+  }
+
   return { verifyConcurrency, jestMaxWorkers, message };
 }
 
@@ -226,15 +351,21 @@ export function chooseVerifyDefaults({ totalMemBytes, env }) {
  * spawn `npx turbo` and call `process.exit` inside the test process). Same pattern as
  * `scripts/janitor.mjs`.
  */
-export function main() {
-  const defaults = chooseVerifyDefaults({ totalMemBytes: totalmem(), env: process.env });
+export async function main() {
+  const defaults = chooseVerifyDefaults({
+    totalMemBytes: totalmem(),
+    env: process.env,
+    cpus: osCpus().length,
+  });
   if (defaults.message) console.log(defaults.message);
   const JEST_MAX_WORKERS = defaults.jestMaxWorkers;
   const VERIFY_CONCURRENCY = defaults.verifyConcurrency;
   const TURBO_FLAGS = buildTurboFlags(VERIFY_CONCURRENCY);
 
-  function turbo(args) {
-    const r = spawnSync("npx", buildArgv(args, TURBO_FLAGS), {
+  // Awaited async spawns (not spawnSync): the heavy-slot heartbeat is a timer and must keep firing
+  // for the whole turbo run, or a long verify would look dead and lose its slot.
+  async function turbo(args) {
+    const r = await spawnAsync("npx", buildArgv(args, TURBO_FLAGS), {
       cwd: ROOT,
       stdio: "inherit",
       shell: process.platform === "win32",
@@ -245,16 +376,24 @@ export function main() {
   /** Like `turbo`, but for a jest-only task (`test`/`test:repo-truth`) — appends the
    *  `--maxWorkers` passthrough when `JEST_MAX_WORKERS` is set, appends nothing (byte-identical
    *  argv to plain `turbo`) when it is not. NEVER call this with `check-types`/`lint` in `args`. */
-  function turboJest(args) {
-    const r = spawnSync("npx", buildArgv(args, TURBO_FLAGS, jestPassthrough(JEST_MAX_WORKERS)), {
-      cwd: ROOT,
-      stdio: "inherit",
-      shell: process.platform === "win32",
-    });
+  async function turboJest(args, changedSince) {
+    const r = await spawnAsync(
+      "npx",
+      buildArgv(args, TURBO_FLAGS, jestPassthrough(JEST_MAX_WORKERS, changedSince)),
+      { cwd: ROOT, stdio: "inherit", shell: process.platform === "win32" },
+    );
     return r.status ?? 1;
   }
 
   const scope = decideScope(ROOT);
+  // FAST VERIFY: the explicit switch (hook-exported RF_VERIFY_MODE=fast) + the branch policy + a
+  // computable merge-base. Anything else is the unchanged plan.
+  const runMode = chooseRunMode({
+    requested:
+      isFastMode(process.env) && wantsFastVerify({ env: process.env, branch: currentBranch(ROOT) }),
+    mergeBase: mergeBaseSha(ROOT),
+  });
+  if (runMode.message) console.log(runMode.message);
   let excluded;
   try {
     excluded = parseVerifyExclude(
@@ -289,12 +428,45 @@ export function main() {
   // the jest run and hide its results from one push's report — a single bundled invocation gives the
   // unsplit path that property by itself. With JEST_MAX_WORKERS set the calls are split so the
   // --maxWorkers passthrough only ever reaches jest, never tsc/eslint. Exit = first non-zero status.
-  const plan = planTurboCalls({ scope, excluded, splitJest: Boolean(JEST_MAX_WORKERS) });
+  const plan = planTurboCalls({
+    scope,
+    excluded,
+    splitJest: Boolean(JEST_MAX_WORKERS),
+    fast: runMode.fast,
+  });
   if (plan.note) console.log(plan.note);
-  const statuses = plan.calls.map((c) => (c.jest ? turboJest(c.args) : turbo(c.args)));
-  process.exit(statuses.find((status) => status !== 0) ?? 0);
+  // Fail fast BEFORE queueing for the slot: a generated Prisma client that predates this checkout's
+  // schema folder otherwise surfaces ~45 min into the hold (api check-types + schema specs red).
+  // Seconds, offline, skipped on CI. See scripts/lib/prisma-fresh.mjs.
+  const prisma = prismaPreflight({
+    env: process.env,
+    scope,
+    excluded,
+    apiDir: join(ROOT, "apps", "api"),
+  });
+  if (prisma.ran && !prisma.fresh) {
+    console.error(prisma.message);
+    process.exit(1);
+  }
+  // The whole turbo step is ONE heavy-slot hold (scripts/lib/heavy-slot.mjs): one verify at a time
+  // per host, FIFO, fail closed when the wait cap passes. Calls run strictly in order, awaited.
+  const status = await withHeavySlot({ label: "verify" }, async () => {
+    const statuses = [];
+    for (const c of plan.calls)
+      statuses.push(
+        await (c.jest
+          ? turboJest(c.args, c.changedSince ? runMode.changedSince : undefined)
+          : turbo(c.args)),
+      );
+    return statuses.find((s) => s !== 0) ?? 0;
+  });
+  process.exit(status);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main();
+  main().catch((e) => {
+    // HeavySlotTimeout (and any other failure) is a closed failure: non-zero, nothing run.
+    console.error(e instanceof Error ? e.message : String(e));
+    process.exit(e?.name === "HeavySlotTimeout" ? 75 : 1);
+  });
 }

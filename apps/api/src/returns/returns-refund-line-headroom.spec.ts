@@ -38,6 +38,8 @@ describe("ReturnsService.processRefund: itemised refund under the shared per-lin
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    // SA-737: the claim re-reads the Return's status under its row lock
+    prisma.return.findFirst.mockResolvedValue({ id: "ret", status: "RECEIVED", kind: "STANDARD" });
     creditNotesCreate = jest.fn().mockResolvedValue({ id: "cn-1" });
     const mod: TestingModule = await Test.createTestingModule({
       providers: [
@@ -302,6 +304,6 @@ describe("ReturnsService.processRefund: itemised refund under the shared per-lin
       expect.objectContaining({ amount: 75 }),
       expect.anything(),
     );
-    expect((service as any).priceReturn(ret.items, ret.order).amount).toBe(75);
+    expect((service as any).priceReturn(ret.items, ret.order, new Map()).amount).toBe(75);
   });
 });

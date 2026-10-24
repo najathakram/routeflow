@@ -215,6 +215,7 @@ async function phase0_setup() {
           adminEmail: td.adminEmail,
           adminPassword: "Admin@123",
           plan: "PROFESSIONAL",
+          timezone: "America/New_York", // SA-738: create-tenant requires an IANA zone
         },
         { headers: authHeader(SA_TOKEN) },
       );

@@ -33,6 +33,7 @@ import {
 } from "@/lib/api/supplier-payments";
 import { RecordSupplierPaymentModal } from "@/components/RecordSupplierPaymentModal";
 import { fmtCalendarDate } from "@/lib/formatting";
+import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -486,12 +487,13 @@ function SupplierDetailPageInner() {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <Button
+            <WriteButton
               leftIcon={<Wallet className="h-4 w-4" />}
               onClick={() => setShowRecordPayment(true)}
             >
               Record payment
-            </Button>
+            </WriteButton>
+            <ReadOnlyHint />
             <Button
               variant="secondary"
               leftIcon={<Pencil className="h-4 w-4" />}

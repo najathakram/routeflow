@@ -87,7 +87,7 @@ async function main() {
         const hashedPassword = await bcrypt.hash(password, 10);
         const now = new Date().toISOString();
         await pool.query(
-          `UPDATE "User" SET password = $1, "updatedAt" = $2 WHERE username = $3 AND role = 'SUPER_ADMIN'`,
+          `UPDATE "User" SET password = $1, "updatedAt" = $2 WHERE username = $3 AND role = 'SUPER_ADMIN' AND "tenantId" IS NULL`,
           [hashedPassword, now, username],
         );
         console.log("\nSUPER_ADMIN password updated successfully (--force)!");

@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Body,
+  Headers,
   Controller,
   Delete,
   Get,
@@ -22,12 +23,13 @@ import { UserRole } from "@prisma/client";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
-import { PlanFlagGuard } from "../billing/plan-flag.guard";
-import { RequirePlanFlag } from "../billing/require-plan-flag.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
+import { PlanFlagGuard } from "../billing/plan-flag.guard";
+import { RequirePlanFlag } from "../billing/require-plan-flag.decorator";
 import { ProductsService } from "./products.service";
 import { ProductsExportService } from "./products-export.service";
+import { ProductOpenOrdersService, clampOpenOrdersLimit } from "./product-open-orders.service";
 import { streamCsv } from "./products-export.stream";
 import { ExportProductsDto } from "./dto/export-products.dto";
 import { CreateProductDto } from "./dto/create-product.dto";
@@ -45,6 +47,7 @@ export class ProductsController {
   constructor(
     private readonly productsService: ProductsService,
     private readonly exporter: ProductsExportService,
+    private readonly openOrders: ProductOpenOrdersService,
   ) {}
 
   @Get()
@@ -79,11 +82,27 @@ export class ProductsController {
     return this.productsService.listCategories();
   }
 
+  // Row 509: the ids of every product the list filters match (catalog "Select all N matching"), capped at 1,000.
+  // Must be declared before :id to avoid route collision.
+  @Get("ids")
+  @Roles(UserRole.OPERATOR)
+  findIds(@Query() query: ListProductsDto) {
+    return this.productsService.findIds(query);
+  }
+
   // Must be declared before :id to avoid route collision
   @Get("barcode/:barcode")
   @Roles(UserRole.OPERATOR, UserRole.DRIVER)
   findByBarcode(@Param("barcode") barcode: string) {
     return this.productsService.findByBarcode(barcode);
+  }
+
+  /** Open orders still to be billed for this product (the product page's "Open orders" card).
+   *  Operational, not analytics: no flag.analytics. `limit` is clamped 1-500 (default 200). */
+  @Get(":id/open-orders")
+  @Roles(UserRole.OPERATOR)
+  getOpenOrders(@Param("id") id: string, @Query("limit") limit?: string) {
+    return this.openOrders.getOpenOrders(id, clampOpenOrdersLimit(limit));
   }
 
   @Get(":id")
@@ -94,13 +113,17 @@ export class ProductsController {
 
   @Post()
   @Roles(UserRole.OPERATOR)
-  create(@Body() dto: CreateProductDto) {
-    return this.productsService.create(dto);
+  create(@Body() dto: CreateProductDto, @CurrentUser() user: JwtPayload) {
+    return this.productsService.create(dto, {
+      reparentVia: "editor",
+      actorId: user.sub ?? null,
+      actorName: user.username ?? null,
+    });
   }
 
   // Must be declared before :id to avoid route collision
   @Post("import")
-  @Roles(UserRole.OPERATOR)
+  @Roles(UserRole.TENANT_ADMIN)
   importFromZoho(@Body() dto: ImportProductsDto) {
     return this.productsService.importFromZoho(dto);
   }
@@ -108,8 +131,11 @@ export class ProductsController {
   // Must be declared before :id to avoid route collision
   @Post("bulk-assign-parent")
   @Roles(UserRole.OPERATOR)
-  bulkAssignParent(@Body() dto: BulkAssignParentDto) {
-    return this.productsService.bulkAssignParent(dto);
+  bulkAssignParent(@Body() dto: BulkAssignParentDto, @CurrentUser() user: JwtPayload) {
+    return this.productsService.bulkAssignParent(dto, {
+      actorId: user.sub ?? null,
+      actorName: user.username ?? null,
+    });
   }
 
   // Must be declared before :id to avoid route collision. The primary MSRP
@@ -131,7 +157,7 @@ export class ProductsController {
   // real outcomes and the response carries the {deleted, softDeleted, skipped}
   // breakdown rather than a bare count that would under-report the result.
   @Delete("clear-all")
-  @Roles(UserRole.OPERATOR)
+  @Roles(UserRole.TENANT_ADMIN)
   clearAll(@Query("confirm") confirm?: string) {
     if (confirm !== "true") {
       throw new BadRequestException(
@@ -152,14 +178,26 @@ export class ProductsController {
 
   @Patch(":id")
   @Roles(UserRole.OPERATOR)
-  update(@Param("id") id: string, @Body() dto: UpdateProductDto) {
-    return this.productsService.update(id, dto);
+  update(
+    @Param("id") id: string,
+    @Body() dto: UpdateProductDto,
+    @CurrentUser() user: JwtPayload,
+    @Headers("user-agent") userAgent?: string,
+  ) {
+    // SA-797a: the one "client" writer: a pack field without its expected twin is an echo or a 409.
+    return this.productsService.update(id, dto, {
+      packPrecondition: "client",
+      reparentVia: "editor",
+      clientAgent: userAgent ?? null,
+      actorId: user.sub ?? null,
+      actorName: user.username ?? null,
+    });
   }
 
   @Delete(":id")
   @Roles(UserRole.OPERATOR)
-  remove(@Param("id") id: string) {
-    return this.productsService.remove(id);
+  remove(@Param("id") id: string, @Query("confirmCascade") confirmCascade?: string) {
+    return this.productsService.remove(id, { confirmCascade: confirmCascade === "true" });
   }
 
   // ─── Image endpoints (declared after :id to avoid prefix collision) ──────────

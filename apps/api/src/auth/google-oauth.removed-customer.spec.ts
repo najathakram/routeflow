@@ -35,7 +35,7 @@ function buildService(prisma: ReturnType<typeof createMockPrisma>) {
     get: (key: string) => {
       if (key === "jwt")
         return {
-          secret: "s",
+          secret: "test-jwt-secret-0123456789-abcdefghijklmnop",
           refreshSecret: "rs",
           expiresIn: "15m",
           refreshExpiresIn: "30d",
@@ -133,6 +133,8 @@ describe("GoogleOAuthService — a removed customer's invite is not redeemed (B1
     inviteToken: "tok-invite",
     status: "INVITED",
     inviteExpiresAt: null,
+    tenantId: "tn-1",
+    tenant: { id: "tn-1", status: "ACTIVE" },
     customer: { id: "c-1", deletedAt },
   });
 

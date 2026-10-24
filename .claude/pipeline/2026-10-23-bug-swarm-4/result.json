@@ -1,0 +1,73 @@
+{
+  "run": "2026-10-23-bug-swarm-4",
+  "profile": "bug-swarm",
+  "mode": "bugfix",
+  "scale": "small",
+  "engine": "bug-swarm v1.1 workflow (wf_504dfe00-f6d + wf_580f3f24-a60), idSpace row",
+  "started": "2026-10-23T09:25:25Z",
+  "ended": "2026-10-23T10:20:45Z",
+  "phaseReport": [
+    {
+      "phase": "Workflow attempt 1 (Triage+Pack, Cluster; resolver failed closed: stale --repo)",
+      "ran": true,
+      "agents": 2,
+      "tokens": 1540255,
+      "estUsd": 0.6435557,
+      "model": "mixed",
+      "effort": "per role"
+    },
+    {
+      "phase": "Workflow attempt 2 (Triage+Pack, Cluster, 3x Build/Gate/Review)",
+      "ran": true,
+      "agents": 15,
+      "tokens": 11612413,
+      "estUsd": 7.1787898000000006,
+      "model": "mixed",
+      "effort": "per role",
+      "note": "haiku-5-5 1.93M tokens unpriced"
+    },
+    {
+      "phase": "Orchestrator (delta)",
+      "ran": true,
+      "agents": 0,
+      "tokens": 9210399,
+      "estUsd": 4.9701,
+      "model": "claude-opus-5-5",
+      "effort": "session",
+      "note": "includes attempt-1 diagnosis, commit relabel, CI-pin coordination"
+    }
+  ],
+  "bugsFixed": 5,
+  "requestedIds": 7,
+  "builtIds": [
+    "599",
+    "745",
+    "W-652",
+    "W-679",
+    "W-687"
+  ],
+  "excluded": {
+    "W-685": "HIGH"
+  },
+  "unaccounted": {
+    "302": "title entity mismatch (&gt; vs ›)"
+  },
+  "quality": {
+    "firstPassGate": {
+      "c1": "GREEN",
+      "c2": "GREEN",
+      "c3": "GREEN"
+    },
+    "reviewMusts": {
+      "c1": 0,
+      "c2": 0,
+      "c3": 0
+    },
+    "orchestratorRelabel": "builders labelled rows as B-ids; reworded before push"
+  },
+  "totalUsdKnown": 12.79,
+  "usdPerBug": 2.56,
+  "subagentUsd": 7.82,
+  "orchestratorShare": 0.39,
+  "remainingFindings": []
+}

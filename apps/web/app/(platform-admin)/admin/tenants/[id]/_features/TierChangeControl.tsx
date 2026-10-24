@@ -109,7 +109,7 @@ export function TierChangeControl({
       )}
       <PreviewDrawer
         open={!!pending}
-        title="Preview tier change"
+        title="Preview plan change"
         subtitle={pending ? `${planLabel(currentPlan)} → ${planLabel(pending.planKey)}` : undefined}
         allowEmptyConfirm
         emptyMessage="No feature differences — this plan change does not turn any feature on or off. The plan itself (and its price and allowances) still changes when you confirm."

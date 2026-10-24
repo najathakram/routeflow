@@ -12,6 +12,7 @@ import {
 } from "class-validator";
 import { TrackedCategoryTaxType, InvoiceTreatment, ReportCadence } from "@prisma/client";
 import { TX_UOM_CODES } from "../../regulated/tx-report";
+import { IsOptionalNotNull } from "../../common/validators/optional-not-null";
 
 // Flattened across item types — cross-checking a UOM against its item type is a
 // service-level concern (or left to the operator); the DTO just validates "is
@@ -21,7 +22,7 @@ const TX_UOM_ALL = Object.values(TX_UOM_CODES).flat();
 export class CreateTrackedCategoryDto {
   @IsString() @MaxLength(120) name: string;
   @IsOptional() @IsEnum(TrackedCategoryTaxType) taxType?: TrackedCategoryTaxType;
-  @IsOptional() @IsNumber() @Min(0) rate?: number;
+  @IsOptionalNotNull() @IsNumber() @Min(0) rate?: number;
   @IsOptional() @IsString() @MaxLength(40) unitBasis?: string;
   @IsOptional() @IsBoolean() priceIncludesTax?: boolean;
   @IsOptional() @IsEnum(InvoiceTreatment) invoiceTreatment?: InvoiceTreatment;

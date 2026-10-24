@@ -157,8 +157,24 @@ export function onlyPurchasedRequote(
   customerId: string,
   quote: InlineReturnQuoteResponse,
   quotedLines: InlineReturnLineDraft[],
+  /** SA-740: the re-quote stays pinned to the sale the first quote was. */
+  sourceOrderId?: string,
 ) {
-  return dropExcessAndRequote(customerId, quote, undefined, quotedLines);
+  return dropExcessAndRequote(customerId, quote, undefined, quotedLines, sourceOrderId);
+}
+
+/**
+ * SA-740 (row 190): the sale this return is from. An explicit route param wins; otherwise a WALK-IN's order (the screen was
+ * opened from that sale) is the source, because the walk-in is one shared customer row and the server refuses a quote without
+ * one. A named customer's return is left unpinned (it may spill across orders), as is a customer-detail entry (no order).
+ */
+export function sourceSaleOf(args: {
+  routeSourceOrderId?: string | null;
+  orderId?: string | null;
+  customerIsWalkIn?: boolean | null;
+}): string | undefined {
+  if (args.routeSourceOrderId) return args.routeSourceOrderId;
+  return args.orderId && args.customerIsWalkIn === true ? args.orderId : undefined;
 }
 
 export function canConfirmInlineReturn(reason: ReturnReason | ""): boolean {
@@ -176,7 +192,14 @@ export function screenReturnKey(customerId: string, orderId: string, nonce: stri
  *  live lines, so the two can never diverge. Null when there is no quote to capture. */
 export function buildInlineReturnCapture(
   state: InlineReturnScreenState,
-  params: { customerId: string; orderId: string; nonce: string; reason: ReturnReason },
+  params: {
+    customerId: string;
+    orderId: string;
+    nonce: string;
+    reason: ReturnReason;
+    /** SA-740: the SAME source sale the quote priced. */
+    sourceOrderId?: string;
+  },
 ): CaptureInlineReturnRequest | null {
   if (state.step !== "quote" && state.step !== "capturing") return null;
   return buildCaptureRequest({
@@ -185,6 +208,7 @@ export function buildInlineReturnCapture(
     lines: state.quotedLines,
     returnKey: screenReturnKey(params.customerId, params.orderId, params.nonce),
     reason: params.reason,
+    sourceOrderId: params.sourceOrderId,
   });
 }
 
@@ -274,12 +298,15 @@ export function inlineReturnHref(args: {
   customerId: string;
   orderId?: string | null;
   customerName?: string | null;
+  /** SA-740: the sale the goods are from (a counter return); a walk-in's order is derived by the screen when absent. */
+  sourceOrderId?: string | null;
 }): { pathname: "/(operator)/returns/inline"; params: Record<string, string> } {
   return {
     pathname: "/(operator)/returns/inline",
     params: {
       customerId: args.customerId,
       ...(args.orderId ? { orderId: args.orderId } : {}),
+      ...(args.sourceOrderId ? { sourceOrderId: args.sourceOrderId } : {}),
       ...(args.customerName ? { customerName: args.customerName } : {}),
     },
   };

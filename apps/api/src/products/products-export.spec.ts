@@ -6,6 +6,7 @@ import { Reflector } from "@nestjs/core";
 import { UserRole } from "@prisma/client";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { ROLES_KEY } from "../auth/decorators/roles.decorator";
+import { INSIGHT_MAX_WINDOW_MONTHS } from "../analytics/demand-range";
 import { SalesFactsService } from "../sales-facts/sales-facts.service";
 import { CSV_BOM } from "../common/csv";
 import { createMockPrisma } from "../testing/prisma-mock";
@@ -38,7 +39,7 @@ interface P {
   currentStock?: number;
   isActive?: boolean;
   isTobacco?: boolean;
-  parent?: { name: string } | null;
+  parent?: { name: string; tenantId?: string } | null;
 }
 
 const product = (p: P) => ({
@@ -193,9 +194,10 @@ describe("products export.csv", () => {
         "Units sold",
         "Net sales",
         "Last sold date",
+        "Product ID",
       ].join(","),
     );
-    expect(PRODUCTS_EXPORT_HEADER).toHaveLength(16);
+    expect(PRODUCTS_EXPORT_HEADER).toHaveLength(17);
   });
 
   it("an empty result is header-only (no truncation or failure row)", async () => {
@@ -223,7 +225,7 @@ describe("products export.csv", () => {
           id: "p2",
           tenantId: TENANT_A,
           name: "Cola Diet",
-          parent: { name: "Cola 12pk" },
+          parent: { name: "Cola 12pk", tenantId: TENANT_A },
           isActive: false,
         }),
       ],
@@ -248,8 +250,33 @@ describe("products export.csv", () => {
     });
     const { out } = await run(svc, WINDOW);
     const [, r1, r2] = rows(out);
-    expect(r1).toBe("Cola 12pk,C-1,,,Drinks,each,24.5,10.1235,,7,Yes,Yes,,8,80,2026-09-20");
-    expect(r2).toBe("Cola Diet,,,,,each,1,,,0,No,No,Cola 12pk,0,0,");
+    expect(r1).toBe("Cola 12pk,C-1,,,Drinks,each,24.5,10.1235,,7,Yes,Yes,,8,80,2026-09-20,p1");
+    expect(r2).toBe("Cola Diet,,,,,each,1,,,0,No,No,Cola 12pk,0,0,,p2");
+  });
+
+  it("leaves the parent column empty for a parent that belongs to another tenant (B1211)", async () => {
+    const { svc, productCalls } = build({
+      products: [
+        product({
+          id: "p1",
+          tenantId: TENANT_A,
+          name: "Cola Cherry",
+          parent: { name: "Foreign Family", tenantId: TENANT_B },
+        }),
+        product({
+          id: "p2",
+          tenantId: TENANT_A,
+          name: "Cola Diet",
+          parent: { name: "Own Family", tenantId: TENANT_A },
+        }),
+      ],
+    });
+    const { out } = await run(svc, WINDOW);
+    const [, r1, r2] = rows(out);
+    expect(r1.split(",")[12]).toBe("");
+    expect(r2.split(",")[12]).toBe("Own Family");
+    expect(out).not.toContain("Foreign Family");
+    expect(productCalls[0].select.parent).toEqual({ select: { name: true, tenantId: true } });
   });
 
   it("Avg cost uses @routeflow/pricing round4 (half away from zero; L-248), not a local Math.round nudge", async () => {
@@ -269,6 +296,21 @@ describe("products export.csv", () => {
     const src = readFileSync(join(__dirname, "products-export.service.ts"), "utf8");
     expect(src).toMatch(/import \{[^}]*\bround4\b[^}]*\} from "@routeflow\/pricing"/);
     expect(src).not.toMatch(/(const|function)\s+round4\b/);
+  });
+
+  it("the export honours the list's portalVisible filter through the shared where builder (N1, #2856)", async () => {
+    const { svc, productCalls } = build({
+      products: [product({ id: "p1", tenantId: TENANT_A, name: "Cola" })],
+    });
+    await run(svc, { ...WINDOW, portalVisible: false });
+    const hidden = { OR: [{ portalVisible: false }, { parent: { portalVisible: false } }] };
+    expect(productCalls[0].where.AND).toContainEqual(hidden);
+    productCalls.length = 0;
+    await run(svc, { ...WINDOW, portalVisible: true });
+    expect(productCalls[0].where.AND).toContainEqual({ NOT: hidden });
+    productCalls.length = 0;
+    await run(svc, WINDOW);
+    expect(JSON.stringify(productCalls[0].where)).not.toContain("portalVisible");
   });
 
   it("stats come from accrual invoices only: DRAFT/VOID, other tenants and out-of-window lines never count, a PAID invoice does, and no order is read", async () => {
@@ -334,7 +376,7 @@ describe("products export.csv", () => {
       ],
     });
     const { out } = await run(svc, WINDOW);
-    expect(rows(out)[1]).toBe("Cola,,,,,each,1,,,0,Yes,No,,4,35.01,2026-09-12");
+    expect(rows(out)[1]).toBe("Cola,,,,,each,1,,,0,Yes,No,,4,35.01,2026-09-12,p1");
     expect(itemCalls).toHaveLength(1); // one grouped read per batch
     const where = itemCalls[0].where;
     expect(where.invoice.tenantId).toBe(TENANT_A);
@@ -548,6 +590,34 @@ describe("products export.csv", () => {
   });
 });
 
+describe("B987-E (d): the export's window refusals carry a code and a reason (status and message unchanged)", () => {
+  const window = (q: { from?: string; to?: string }) => {
+    const { svc } = build({ products: [] });
+    return svc.prepare(q, { userId: "u1" }).catch((e) => e);
+  };
+
+  it.each([
+    [{ from: "2026-09-01", to: "2026-9-29" }, "TO_NOT_A_DAY", {}],
+    [{ from: "2026-13-40", to: "2026-09-29" }, "FROM_NOT_A_DAY", {}],
+    [{ to: "2026-02-30" }, "NOT_A_DAY", {}],
+    [{ from: "2026-09-29", to: "2026-09-01" }, "TO_BEFORE_FROM", {}],
+    [
+      { from: "2020-01-01", to: "2026-09-29" },
+      "WINDOW_TOO_LONG",
+      { maxMonths: INSIGHT_MAX_WINDOW_MONTHS },
+    ],
+  ])("%j -> INSIGHT_WINDOW_INVALID / %s", async (q, reason, extra) => {
+    const err: any = await window(q);
+    expect(err.getStatus()).toBe(400);
+    const body = err.getResponse();
+    expect(body).toMatchObject({ code: "INSIGHT_WINDOW_INVALID", reason, ...extra });
+    expect(typeof body.message).toBe("string"); // unchanged server sentence
+    expect(Object.keys(body).sort()).toEqual(
+      ["code", "message", "reason", ...Object.keys(extra)].sort(),
+    );
+  });
+});
+
 describe("ProductsController.exportCsv — route contract", () => {
   const handler = ProductsController.prototype.exportCsv;
   const guard = new RolesGuard(new Reflector());
@@ -592,7 +662,7 @@ describe("ProductsController.exportCsv — route contract", () => {
         })(),
       }),
     };
-    const ctl = new ProductsController({} as any, exporter as any);
+    const ctl = new ProductsController({} as any, exporter as any, {} as any);
     const res: any = {
       headers: {} as Record<string, string>,
       body: "",

@@ -13,6 +13,7 @@ import {
   cn,
   useToast,
 } from "@routeflow/ui/web";
+import { isAccountAdmin } from "@/lib/auth";
 import { useAuth } from "@/lib/auth-context";
 import { LowStockDigestToggle } from "./LowStockDigestToggle";
 import { useNotificationsStatus, useSendTestNotification } from "@/lib/api/notifications";
@@ -81,7 +82,7 @@ const SAMPLE_VARS: Record<string, string> = {
 
 export function NotificationsSettingsTab() {
   const { user } = useAuth();
-  const isAdmin = user?.role === "TENANT_ADMIN";
+  const isAdmin = isAccountAdmin(user);
   const { data, isLoading, isError, refetch } = useMessagingConfig();
   const { sender } = useEmailSender(isAdmin);
 

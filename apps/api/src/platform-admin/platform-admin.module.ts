@@ -7,6 +7,10 @@ import { PlatformConfigService } from "./platform-config.service";
 import { TenantMirrorService } from "./tenant-mirror.service";
 import { PlatformAdminBuyersController } from "./platform-admin-buyers.controller";
 import { PlatformAdminBuyersService } from "./platform-admin-buyers.service";
+import { RfInvoicesController } from "./rf-invoices.controller";
+import { CatchupAdminController } from "./catchup-admin.controller";
+import { AutoLocksAdminController } from "./auto-locks-admin.controller";
+import { RfInvoicesAdminService } from "./rf-invoices.service";
 import { AppConfig } from "../config/configuration";
 import { EmailModule } from "../email/email.module";
 import { BillingModule } from "../billing/billing.module";
@@ -27,12 +31,19 @@ import { BillingModule } from "../billing/billing.module";
     EmailModule,
     BillingModule,
   ],
-  controllers: [PlatformAdminController, PlatformAdminBuyersController],
+  controllers: [
+    PlatformAdminController,
+    PlatformAdminBuyersController,
+    RfInvoicesController,
+    CatchupAdminController,
+    AutoLocksAdminController,
+  ],
   providers: [
     PlatformAdminService,
     PlatformConfigService,
     TenantMirrorService,
     PlatformAdminBuyersService,
+    RfInvoicesAdminService,
   ],
   exports: [PlatformConfigService],
 })

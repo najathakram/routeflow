@@ -17,14 +17,17 @@ const editItemsSrc = readFileSync(
 );
 // B775/SA-108: a re-scan's merge-into-existing-entry transform (applyPickToDraft)
 // moved out of this screen into the pure lib, so its unit-guard is pinned there.
+const adapterSrc = readFileSync(join(__dirname, "..", "lib", "pending-unit-adapter.ts"), "utf8"); // #2865: the add moved here
 const editItemsDraftSrc = readFileSync(join(__dirname, "..", "lib", "edit-items-draft.ts"), "utf8");
 
 describe("NewOrderScreen.tsx routes every +/- through stepLineQty (create flow)", () => {
   it("addOne/removeOne route through the unit-aware writers, never the raw pack box math", () => {
     // addOne goes through addScannedLevelToLine (SA-580: the scanned level decides), which itself
     // steps a unit line's COUNT — pinned in the next test.
-    expect(newOrderSrc).toMatch(/addScannedLevelToLine\(prev, level, isBoxed, upb\)/);
-    expect(newOrderSrc).toMatch(/stepLineQty\(prev, -1, isBoxed, upb\)/);
+    expect(adapterSrc).toMatch(
+      /addScannedLevelToLine\(cur \?\? \{ qty: 0 \}, a\.level, a\.upb > 1, a\.upb\)/,
+    );
+    expect(newOrderSrc).toMatch(/stepLineQty\(prev, -1, upbNum\(id\) > 1, upbNum\(id\)\)/);
     // incrementLine/decrementLine are no longer imported or called directly anywhere in this
     // screen — every case a unit-aware line could reach them is gone, not just guarded.
     expect(newOrderSrc).not.toMatch(/[^.]\bincrementLine\(/);
@@ -32,7 +35,9 @@ describe("NewOrderScreen.tsx routes every +/- through stepLineQty (create flow)"
   });
 
   it("a scan's level goes through addScannedLevelToLine, which steps a unit line's COUNT (never box math)", () => {
-    expect(newOrderSrc).toMatch(/addScannedLevelToLine\(prev, level, isBoxed, upb\)/);
+    expect(adapterSrc).toMatch(
+      /addScannedLevelToLine\(cur \?\? \{ qty: 0 \}, a\.level, a\.upb > 1, a\.upb\)/,
+    );
     const src = readFileSync(join(__dirname, "..", "lib", "sale-line.ts"), "utf8");
     const body = src.slice(
       src.indexOf("export function addScannedLevelToLine"),

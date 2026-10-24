@@ -150,6 +150,9 @@ describe("no second box-unaware qty*pack multiplication in apps/api/src (B661)",
     { file: "invoices/manual-invoice-lines.ts", count: 1 }, // buildManualInvoiceLines()
     { file: "order-templates/order-templates.service.ts", count: 1 }, // createOrderFromTemplate()
     { file: "returns/inline-returns-quote.service.ts", count: 1 }, // fetchMatchingSet()
+    // SA-841: the ONE stored-line add rule converts a bare selling unit and a box-unaware line to pieces at the line's own
+    // pack, by design. PR-2/PR-3 move the merge cores onto it, retiring their own sites.
+    { file: "orders/stored-line-merge.ts", count: 2 }, // mergeIntoStoredLine()
     { file: "returns/inline-returns-pricing.ts", count: 1 }, // returnRequestPieces() — found by
     // running this very scan before the tag/count were added (2026-09-21); not in the original
     // manual audit.

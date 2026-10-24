@@ -40,6 +40,8 @@ function build() {
     undefined as never,
     undefined as never,
     snapshotAdmin as never,
+    undefined as never, // businessProfiles
+    undefined as never, // featureConfig
   );
   return { controller, snapshotAdmin, configSnapshotFlag, svc };
 }

@@ -36,7 +36,7 @@ describe("refundSuccessToast (B959)", () => {
   it("an external refund keeps its own wording", () => {
     expect(refundSuccessToast("EXTERNAL_REFUND", {})).toEqual({
       title: "Refund recorded",
-      description: "The return has been marked as refunded outside RouteFlow.",
+      description: "The return has been marked as refunded.",
     });
   });
 });

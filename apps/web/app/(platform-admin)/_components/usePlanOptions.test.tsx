@@ -65,14 +65,14 @@ describe("usePlanOptions", () => {
     });
   });
 
-  it("falls back to PLAN_KEYS when the catalog cannot be read", async () => {
+  it("falls back to PLAN_KEYS without the frozen LITE when the catalog cannot be read", async () => {
     mockFetchPlanCatalog.mockRejectedValue(new Error("down"));
     const { result } = renderHook(() => usePlanOptions());
     await waitFor(() => expect(result.current.unavailable).toBe(true));
-    expect(result.current.planKeys).toEqual([...PLAN_KEYS]);
+    expect(result.current.planKeys).toEqual(PLAN_KEYS.filter((k) => k !== "LITE"));
   });
 
-  it("falls back to PLAN_KEYS when no catalog row is eligible", async () => {
+  it("falls back to PLAN_KEYS without the frozen LITE when no catalog row is eligible", async () => {
     mockFetchPlanCatalog.mockResolvedValue({
       version: 1,
       effectiveAt: null,
@@ -80,6 +80,6 @@ describe("usePlanOptions", () => {
     });
     const { result } = renderHook(() => usePlanOptions());
     await waitFor(() => expect(result.current.unavailable).toBe(true));
-    expect(result.current.planKeys).toEqual([...PLAN_KEYS]);
+    expect(result.current.planKeys).toEqual(PLAN_KEYS.filter((k) => k !== "LITE"));
   });
 });

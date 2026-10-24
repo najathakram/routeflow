@@ -66,6 +66,10 @@ describeDb("#2509 reconcilePriceLedger compare-and-set (real Postgres, two conne
       pricing as any,
       { notifyCancelled: async () => undefined, notifySuspended: async () => undefined } as any,
       planTransition as any,
+      {
+        checkoutAddonLines: async () => ({ lineItems: [], skus: [], invalid: [] }),
+        adoptCheckoutAddons: async () => undefined,
+      } as any, // mutations (SA-690)
     );
   });
 

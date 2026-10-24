@@ -17,6 +17,13 @@ import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import { resolveDatabaseUrl, redactUrl, scrubSecrets } from "./lib/railway-db-url.mjs";
+import guard from "./lib/live-target-guard.cjs";
+import protectedSlugsLib from "./lib/protected-slugs.cjs";
+
+// Row 195: `--apply` never reclassifies a PROTECTED tenant (paying | stripe-linked |
+// PROTECTED_TENANT_SLUGS). The dry-run table still lists everyone.
+const { filterWritableTenants } = guard;
+const { loadProtectedSlugs } = protectedSlugsLib;
 
 // Hoisted to module scope so the top-level `.catch` below can scrub a connection string out
 // of an error message.
@@ -65,6 +72,16 @@ async function main() {
     console.error(err.message);
     process.exit(1);
   }
+  // Loaded ONCE, against the URL this script dials, before connecting. Dry-run writes nothing.
+  let protectedSlugs = null;
+  if (apply) {
+    try {
+      protectedSlugs = loadProtectedSlugs(process.env, databaseUrl);
+    } catch (err) {
+      console.error(err.message);
+      process.exit(1);
+    }
+  }
   console.log(`Resolved database host: ${redactUrl(databaseUrl)}`);
   const pool = new Pool({ connectionString: databaseUrl });
   const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
@@ -72,7 +89,7 @@ async function main() {
   try {
     const tenants = await prisma.tenant.findMany({
       where: slugPrefix ? { slug: { startsWith: slugPrefix } } : undefined,
-      select: { id: true, slug: true, name: true, class: true },
+      select: { id: true, slug: true, name: true, class: true, status: true, deletedAt: true },
       orderBy: { slug: "asc" },
     });
 
@@ -101,9 +118,18 @@ async function main() {
     // crash). P2025 is a defensive fallback for any single-record path; P2034 is Prisma's
     // write-conflict/deadlock code under concurrent writers. Every tenant is its own statement —
     // never wrap this loop in one transaction, or a single race turns into a full-run rollback.
+    const subs = new Map(
+      (
+        await prisma.tenantSubscription.findMany({
+          where: { tenantId: { in: changes.map((c) => c.id) } },
+          select: { tenantId: true, planKey: true, stripeSubId: true, couponFull: true },
+        })
+      ).map((x) => [x.tenantId, x]),
+    );
+    const { writable } = filterWritableTenants(changes, subs, protectedSlugs);
     let applied = 0;
     let skipped = 0;
-    for (const c of changes) {
+    for (const c of writable) {
       try {
         const result = await prisma.tenant.updateMany({
           where: { id: c.id, class: c.class },

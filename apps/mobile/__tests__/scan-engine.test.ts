@@ -23,6 +23,7 @@ import {
   scanSettled,
   type ScanEngineState,
 } from "../lib/scan-engine";
+import { PENDING_BUFFER_DEPTH } from "../lib/scan-pending-buffer";
 
 describe("scan-engine (REG-B202)", () => {
   it("REG-B202/W1: three distinct codes arriving while the first resolves all land, in order", () => {
@@ -377,87 +378,24 @@ describe("scan-engine (REG-B202)", () => {
     });
   });
 
-  it("REG-B202: buffer depth overflow follows scan-pending-buffer.ts's cap verbatim — a 4th distinct code is gate-accepted but buffer-dropped", () => {
-    // Three scans already in flight (one resolving + PENDING_BUFFER_DEPTH=2
-    // queued) is the buffer's documented cap (scan-pending-buffer.ts). A 4th
-    // genuinely new code is still a fresh gate slot (the gate has no notion
-    // of buffer depth), but the buffer must silently hold its ground rather
-    // than growing past the cap.
-    const state0 = createScanEngine();
-    const p1 = frameScanned(state0, "P1", 2000);
-    expect(p1).toEqual({
-      next: {
-        gate: {
-          lastCode: "P1",
-          lastAcceptAt: 2000,
-          lastSeenAt: 2000,
-          slots: [{ code: "P1", lastAcceptAt: 2000, lastSeenAt: 2000 }],
-        },
-        buffer: { isResolving: true, current: "P1", pending: [] },
-      },
-      startResolving: "P1",
-      indicator: "on",
-    });
-
-    const p2 = frameScanned(p1.next, "P2", 2010);
-    expect(p2).toEqual({
-      next: {
-        gate: {
-          lastCode: "P2",
-          lastAcceptAt: 2010,
-          lastSeenAt: 2010,
-          slots: [
-            { code: "P2", lastAcceptAt: 2010, lastSeenAt: 2010 },
-            { code: "P1", lastAcceptAt: 2000, lastSeenAt: 2000 },
-          ],
-        },
-        buffer: { isResolving: true, current: "P1", pending: ["P2"] },
-      },
-      startResolving: null,
-      indicator: null,
-    });
-
-    const p3 = frameScanned(p2.next, "P3", 2020);
-    expect(p3).toEqual({
-      next: {
-        gate: {
-          lastCode: "P3",
-          lastAcceptAt: 2020,
-          lastSeenAt: 2020,
-          slots: [
-            { code: "P3", lastAcceptAt: 2020, lastSeenAt: 2020 },
-            { code: "P2", lastAcceptAt: 2010, lastSeenAt: 2010 },
-            { code: "P1", lastAcceptAt: 2000, lastSeenAt: 2000 },
-          ],
-        },
-        buffer: { isResolving: true, current: "P1", pending: ["P2", "P3"] },
-      },
-      startResolving: null,
-      indicator: null,
-    });
-
-    const p4 = frameScanned(p3.next, "P4", 2030);
-    expect(p4).toEqual({
-      next: {
-        gate: {
-          lastCode: "P4",
-          lastAcceptAt: 2030,
-          lastSeenAt: 2030,
-          slots: [
-            { code: "P4", lastAcceptAt: 2030, lastSeenAt: 2030 },
-            { code: "P3", lastAcceptAt: 2020, lastSeenAt: 2020 },
-            { code: "P2", lastAcceptAt: 2010, lastSeenAt: 2010 },
-            { code: "P1", lastAcceptAt: 2000, lastSeenAt: 2000 },
-          ],
-        },
-        // Unchanged from p3 — P4 was accepted by the gate but dropped by the
-        // buffer's depth cap, exactly like scan-pending-buffer.ts's own
-        // "holds the depth-2 cap" test.
-        buffer: { isResolving: true, current: "P1", pending: ["P2", "P3"] },
-      },
-      startResolving: null,
-      indicator: null,
-    });
+  it("REG-B202: a scan past the buffer cap is gate-accepted but buffer-dropped, and the step REPORTS it", () => {
+    // One resolving + PENDING_BUFFER_DEPTH queued is the cap. The next genuinely new code is still a fresh gate
+    // slot (the gate has no notion of buffer depth), but the buffer holds its ground and flags `dropped`.
+    let state = createScanEngine();
+    const first = frameScanned(state, "P0", 2000);
+    expect(first.startResolving).toBe("P0");
+    state = first.next;
+    for (let i = 1; i <= PENDING_BUFFER_DEPTH; i++) {
+      const step = frameScanned(state, `P${i}`, 2000 + i * 10);
+      expect(step.startResolving).toBeNull();
+      expect(step.dropped).toBeUndefined();
+      state = step.next;
+    }
+    expect(state.buffer.pending).toHaveLength(PENDING_BUFFER_DEPTH);
+    const over = frameScanned(state, "OVER", 3000);
+    expect(over.startResolving).toBeNull();
+    expect(over.dropped).toBe(true);
+    expect(over.next.buffer).toEqual(state.buffer);
   });
 
   it("REG-B202: a rejected frame still advances the gate's clock (regression pin against the frozen-clock bug)", () => {

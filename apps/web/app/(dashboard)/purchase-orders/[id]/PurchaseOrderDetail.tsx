@@ -11,6 +11,8 @@ import { usePageTitle } from "@/lib/page-title-context";
 import { usePlanFlag } from "@/lib/api/plan-flags";
 import { planFlagVisible } from "@/lib/plan-gated-nav";
 import { useProducts } from "@/lib/api/products";
+import { displayProductName } from "@/lib/product-display";
+import { sellableOnly } from "@/lib/product-search-groups";
 import {
   useClosePurchaseOrder,
   usePurchaseOrder,
@@ -50,9 +52,10 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
     setTitle(po?.poNumber ?? "Purchase Order");
   }, [setTitle, po?.poNumber]);
 
-  const products = (productsData?.data ?? []).map((p: any) => ({
+  // A FAMILY is a container, never a purchasable line (B1215 C7); a variant reads "<Parent> - <Variant>".
+  const products = sellableOnly<any>(productsData?.data ?? []).map((p: any) => ({
     id: p.id,
-    name: p.name,
+    name: displayProductName(p),
     sku: p.sku,
     unitsPerBox: p.unitsPerBox ?? null,
   }));

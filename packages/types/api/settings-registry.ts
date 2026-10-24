@@ -9,12 +9,22 @@ import { PREF } from "./preferences";
  * Homes (SA-602, split by KIND):
  *  - `policy`       tenant BEHAVIOUR switches (policy store, #1337);
  *  - `systemConfig` tenant CONFIG DATA (SystemConfig); no new behaviour key may live here;
- *  - `userPref`     per-USER preferences (`users/me/preferences`).
+ *  - `userPref`     per-USER preferences (`users/me/preferences`);
+ *  - `tenantConfig` tenant CONFIG DATA stored as columns on `TenantConfig` (e.g. `timezone`,
+ *    SA-738); the key is the column name;
+ *  - `featureConfig` tenant BEHAVIOUR modes stored as `TenantFeatureConfig` rows (the feature
+ *    registry's config blocks, e.g. `fulfilment_model`); the key IS the feature key.
  */
-export type SettingHome = "policy" | "systemConfig" | "userPref";
+export type SettingHome = "policy" | "systemConfig" | "userPref" | "featureConfig" | "tenantConfig";
 export type SettingKind = "config" | "behaviour" | "preference" | "memo";
 export type SettingStatus =
-  "live" | "legacy" | "pending #1337" | "moves to policy (PR-3)" | "pending WS4";
+  | "live"
+  | "legacy"
+  | "pending #1337"
+  | "moves to policy (PR-3)"
+  | "pending WS4"
+  // Units program S6: registered dark, no reader or writer until the settings slice (S18) ships.
+  | "pending units S18";
 
 export interface SettingRow {
   /** Exact key, or a prefix pattern ending in `*` (e.g. `margin.floor.category.*`). */
@@ -65,6 +75,14 @@ export const OFF_HUB_SCREENS: Record<string, string> = {
   "app:language-switcher": "Web language switcher (locale)",
   "mobile:settings": "Mobile operator settings (push notifications)",
   implicit: "Remembered last-used default; not a setting anyone edits",
+  "/settings?tab=fulfilment#delivery-method":
+    "Fulfillment tab, Delivery method card: listed in the admin hub / rail (Fulfillment row) and reached by its ?tab= link, only when self-serve is on",
+  "/settings?tab=fulfilment#counter-sales":
+    "Fulfillment tab, Counter sales card: listed in the admin hub / rail (Counter sales row) and reached by its ?tab= link, only when self-serve is on",
+  "/orders/counter-sale":
+    "Counter sale screen: the Quick keys grid's Edit keys dialog saves the pins and hides here; opened from the till, not the settings hub",
+  "/orders":
+    "Create Order header: the POS mode switch saves orders.posMode here; opened from the orders list, not the settings hub",
 };
 
 const cfg = (key: string, screen: string, extra: Partial<SettingRow> = {}): SettingRow => ({
@@ -80,6 +98,9 @@ export const SETTINGS_REGISTRY: SettingRow[] = [
   // ── systemConfig: settings controller writers ────────────────────────────────
   cfg("settings.taxRate", "/settings?tab=profile"),
   cfg("settings.logoUrl", "/settings?tab=profile"),
+  // Counter sale quick keys (SA-747): pins, hides, window and cap as one JSON value; edited from the counter screen.
+  cfg("settings.quickKeys", "/orders/counter-sale"),
+  cfg("settings.receiptFooter", "/settings?tab=profile"),
   ...[
     "fromName",
     "fromEmail",
@@ -88,9 +109,10 @@ export const SETTINGS_REGISTRY: SettingRow[] = [
     "smtpUser",
     "smtpPassword",
     "smtpSecure",
-  ].map((k) => cfg(`email.${k}`, "/settings?tab=email")),
-  cfg("email.sendingDomain", "/settings?tab=email"),
-  cfg("anthropic.apiKey", "/settings?tab=integrations"),
+  ].map((k) => cfg(`email.${k}`, "/settings?tab=email", { adminOnly: true })),
+  // Perms PR1: every email (SMTP) and Claude AI settings endpoint is TENANT_ADMIN-only
+  cfg("email.sendingDomain", "/settings?tab=email", { adminOnly: true }),
+  cfg("anthropic.apiKey", "/settings?tab=integrations", { adminOnly: true }),
   ...[
     "serviceTimeMinutes",
     "defaultStartTime",
@@ -113,6 +135,40 @@ export const SETTINGS_REGISTRY: SettingRow[] = [
   cfg("margin.floor.category.*", "/settings?tab=costing"),
   cfg("remittance.config", "/settings?tab=remittance"),
   cfg("pricing.tierLabels", "/settings"),
+  // Units program S6 (PLAN §1.2, SA-795 (h)): dark CONFIG rows; nothing reads or writes them yet. Their defaults
+  // (0% tier rules, order unit "pack", invoice unit "legacy" = today) live in @routeflow/pricing: the keys and
+  // unit defaults in units-prices-v2.ts, the tier rules' DEFAULT_TIER_RULES in the units core (price-ladder.ts).
+  ...(
+    [
+      [
+        "pricing.tierRules",
+        "Settings > Pricing: tier rules (% below Retail) with an impact preview (units S18)",
+      ],
+      [
+        "units.orderUnit",
+        "Settings > Units: the business order unit, new products only (units S18)",
+      ],
+      ["units.invoiceUnit", "Settings > Units: the business invoice unit (units S18, S23)"],
+    ] as const
+  ).map(([key, plannedSurface]): SettingRow => ({
+    key,
+    home: "systemConfig",
+    kind: "config",
+    status: "pending units S18",
+    plannedSurface,
+  })),
+  // Receipt email limits (SA-751r change 4): read with their defaults (3 per order, 100 per tenant per day); no editor yet.
+  ...[
+    "receipts.email.perOrder",
+    "receipts.email.perTenantPerDay",
+    "receipts.email.perAddressPerDay",
+  ].map((key): SettingRow => ({
+    key,
+    home: "systemConfig",
+    kind: "config",
+    status: "pending WS4",
+    plannedSurface: "Receipt email limits (no editor yet; the defaults apply until one ships)",
+  })),
   // ── systemConfig: other writers ──────────────────────────────────────────────
   cfg("tobacco.excludeFromMainAnalytics", "/compliance/[categoryId]", { adminOnly: true }),
   {
@@ -140,11 +196,21 @@ export const SETTINGS_REGISTRY: SettingRow[] = [
       plannedSurface: "PR-3 credit Off/Watch card",
     }),
   ),
+  // WS4 (SA-606) staff order email "Also send to" list: tenant CONFIG DATA (a JSON array of
+  // addresses, written by `StaffEmailSettingsService` via `PUT /messaging/staff-email-settings`).
+  // The switch that decides whether anything is sent is the policy row below, not this key.
+  {
+    key: "notifications.staffCc",
+    home: "systemConfig",
+    kind: "config",
+    status: "pending WS4",
+    plannedSurface: "WS4 staff order email 'Also send to' list (Settings → Notifications tab)",
+    adminOnly: true,
+  },
   // ── policy (#1337): pending, no code yet ─────────────────────────────────────
   ...(
     [
       ["notifications.staffOrderEmail", "WS4 staff order email switch (Notifications tab)"],
-      ["orders.buyerOversell", "WS8 buyer oversell switch (Selling & catalog)"],
       ["credit.enforceNewOrders", "PR-3 credit Off/Watch card"],
       ["credit.enforceDelivery", "PR-3 credit Off/Watch card"],
     ] as const
@@ -156,6 +222,39 @@ export const SETTINGS_REGISTRY: SettingRow[] = [
     plannedSurface,
     adminOnly: true,
   })),
+  // WS8: the out-of-stock ordering switch (Settings -> Orders & stock), `PATCH /settings/inventory`.
+  // Operators open the card read-only; only a TENANT_ADMIN changes it, so the row is not adminOnly.
+  {
+    key: "orders.buyerOversell",
+    home: "policy",
+    kind: "behaviour",
+    status: "live",
+    screen: "#out-of-stock-ordering",
+  },
+  // ── featureConfig: tenant-admin Fulfillment tab (`/settings/fulfilment`), dark behind
+  // FULFILMENT_SELF_SERVE. The key is the feature-registry key; both rows are admin-only (an
+  // operator reads the tab but cannot change it).
+  ...(["fulfilment_model", "counter_sales"] as const).map((key): SettingRow => ({
+    key,
+    home: "featureConfig",
+    kind: "behaviour",
+    status: "live",
+    screen:
+      key === "fulfilment_model"
+        ? "/settings?tab=fulfilment#delivery-method"
+        : "/settings?tab=fulfilment#counter-sales",
+    adminOnly: true,
+  })),
+  // -- tenantConfig (SA-738): the business time zone, a `TenantConfig.timezone` column written by
+  // `PATCH /settings` (and by signup / create-tenant). Only a TENANT_ADMIN changes it.
+  {
+    key: "timezone",
+    home: "tenantConfig",
+    kind: "config",
+    status: "live",
+    screen: "/settings?tab=profile",
+    adminOnly: true,
+  },
   // ── userPref: derived from PREF so the list cannot drift ─────────────────────
   {
     key: PREF.lowStockDigestEnabled,
@@ -209,6 +308,13 @@ export const SETTINGS_REGISTRY: SettingRow[] = [
     status: "live",
     screen: "implicit",
   },
+  {
+    key: PREF.ordersPosMode,
+    home: "userPref",
+    kind: "preference",
+    status: "live",
+    screen: "/orders",
+  },
 ];
 
 /** True when `key` is covered by an exact row or a `prefix*` pattern row. */
@@ -224,6 +330,11 @@ export function isRegisteredSettingKey(
 /** Every rule the registry must satisfy; an empty array means valid. */
 export function validateSettingsRegistry(
   rows: readonly SettingRow[] = SETTINGS_REGISTRY,
+  /**
+   * The feature-registry keys that carry a `config` block (the api owns that registry; this package
+   * cannot import it). When given, every `featureConfig` row must name one of them.
+   */
+  featureConfigKeys?: readonly string[],
 ): string[] {
   const problems: string[] = [];
   const seen = new Set<string>();
@@ -246,6 +357,14 @@ export function validateSettingsRegistry(
       problems.push(`${r.key}: policy rows are "pending #1337" until #1337 lands`);
     if (r.home === "policy" && r.kind !== "behaviour")
       problems.push(`${r.key}: the policy store holds behaviour switches only`);
+    if (r.home === "featureConfig") {
+      if (r.kind !== "behaviour")
+        problems.push(`${r.key}: feature-config rows are behaviour modes only`);
+      if (featureConfigKeys && !featureConfigKeys.includes(r.key))
+        problems.push(`${r.key}: not a feature-registry key with a config block`);
+    }
+    if (r.home === "tenantConfig" && r.kind !== "config")
+      problems.push(`${r.key}: tenant-config rows are config data only`);
     if (r.home === "userPref" && r.kind !== "preference" && r.kind !== "memo")
       problems.push(`${r.key}: per-user home holds preferences only`);
     if (r.home === "systemConfig" && r.kind === "behaviour") {

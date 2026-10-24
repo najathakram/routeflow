@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable } from "@nestjs/common";
+import { assertRefsInTenant } from "../common/assert-refs-in-tenant";
 import { PrismaService } from "../prisma/prisma.service";
 
 export interface AliasTarget {
@@ -63,6 +64,11 @@ export class ProductAliasService {
     const sid = supplierId ?? "";
     const norm = this.normalize(rawText);
     if (!norm) throw new BadRequestException("Alias text is required.");
+    await assertRefsInTenant(this.prisma, {
+      productIds: [target.productId],
+      expenseCategoryIds: [target.expenseCategoryId],
+      supplierIds: [sid],
+    });
     await this.prisma.forTenant().productAlias.upsert({
       where: { tenantId_supplierId_rawText: { tenantId, supplierId: sid, rawText: norm } },
       create: {

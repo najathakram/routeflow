@@ -168,6 +168,19 @@ describe("B963 repair-integrity: source pin", () => {
     }
   });
 
+  it("row 195: the script is RETIRED — any mode other than --list refuses to connect (exit 2)", () => {
+    for (const args of [[], ["--execute", "--i-have-a-fresh-backup"]]) {
+      const r = spawnSync(process.execPath, [SCRIPT, ...args], {
+        cwd: ROOT,
+        encoding: "utf8",
+        timeout: 60_000,
+        env: { ...process.env, DATABASE_URL: "postgresql://u:p@localhost:1/none" },
+      });
+      expect(r.status).toBe(2);
+      expect(r.stderr).toMatch(/RETIRED/);
+    }
+  });
+
   it("the module only connects when run as a script (importing it for a spec never opens a connection)", () => {
     expect(src).toMatch(
       /import\.meta\.url === pathToFileURL\(fs\.realpathSync\(process\.argv\[1\] \?\? ""\)\)\.href/,

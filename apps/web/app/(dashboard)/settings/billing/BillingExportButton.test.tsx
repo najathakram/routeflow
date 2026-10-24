@@ -31,8 +31,9 @@ beforeEach(() => {
 
 describe("BillingExportButton", () => {
   it.each([
-    ["OPERATOR", true],
+    ["OPERATOR", false],
     ["TENANT_ADMIN", true],
+    ["SUPER_ADMIN", true],
     ["DRIVER", false],
     ["CUSTOMER", false],
   ])("role %s -> shown: %s", (r, shown) => {

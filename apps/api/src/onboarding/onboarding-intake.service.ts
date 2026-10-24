@@ -33,6 +33,7 @@ import {
 } from "../platform-admin/audit-actions.constant";
 import { INTAKE_SCHEMA_VERSION, validateSectionAnswers } from "./dto/intake-sections.dto";
 import { onboardingTokenSecret } from "./onboarding-token-secret";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /** Every token failure — forged, unknown, expired, revoked, closed case — looks exactly alike (L-178). */
 export const LINK_NOT_FOUND = "Link not found or expired.";
@@ -131,7 +132,7 @@ export class OnboardingIntakeService {
     if (c.status !== "OPEN") {
       throw new ConflictException({
         statusCode: 409,
-        code: "ONBOARDING_CASE_NOT_OPEN",
+        code: API_ERROR_CODES.ONBOARDING_CASE_NOT_OPEN,
         message: `This case is ${c.status}; reopen it before issuing a link`,
       });
     }
@@ -273,7 +274,7 @@ export class OnboardingIntakeService {
     if (!snapshot) {
       throw new ConflictException({
         statusCode: 409,
-        code: "INTAKE_ORDER_NOT_READY",
+        code: API_ERROR_CODES.INTAKE_ORDER_NOT_READY,
         message: "Your order isn't ready to accept yet — we'll let you know when it is",
       });
     }
@@ -458,7 +459,7 @@ export class OnboardingIntakeService {
       if (!allowed) {
         throw new ConflictException({
           statusCode: 409,
-          code: "INTAKE_SECTION_NOT_REVIEWABLE",
+          code: API_ERROR_CODES.INTAKE_SECTION_NOT_REVIEWABLE,
           message: `This section is ${s.status}`,
         });
       }
@@ -612,7 +613,7 @@ export class OnboardingIntakeService {
     if (!EDITABLE.has(status)) {
       throw new ConflictException({
         statusCode: 409,
-        code: "INTAKE_SECTION_LOCKED",
+        code: API_ERROR_CODES.INTAKE_SECTION_LOCKED,
         message:
           "This section has been sent to us and can't be changed now — contact us if something is wrong",
       });

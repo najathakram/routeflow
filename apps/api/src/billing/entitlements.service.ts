@@ -2,6 +2,7 @@ import { Injectable, Logger } from "@nestjs/common";
 import { TenantStatus } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { PlanCatalogService } from "./plan-catalog.service";
+import { resolvePlanVersionId } from "./plan-version-pin";
 import { FeatureOverrideService } from "./feature-override.service";
 import {
   addonSkuCode,
@@ -113,6 +114,22 @@ export class EntitlementsService {
   }
 
   /**
+   * hasFlag() for a caller that must tell "the flag is off" from "the flag could not be read".
+   * Same decision order, but a failed override lookup (which hasFlag() reads as "no override")
+   * or a failed plan resolution THROWS instead of answering false. Used by units_prices_v2,
+   * a flag no plan carries (override-only), where a swallowed override error would quietly
+   * bill a typed-price customer the tier price.
+   */
+  async hasFlagStrict(tenantId: string, flagKey: string): Promise<boolean> {
+    const override = await this.featureOverrides.get(tenantId, flagKey, { strict: true });
+    if (override === "GRANT") return true;
+    if (override === "DENY") return false;
+
+    const ent = await this.resolve(tenantId);
+    return ent.flags.includes(flagKey);
+  }
+
+  /**
    * True when `tenantId`'s plan is an always-enforced plan (R3a.3/R3a.7 — today just
    * LITE): such a tenant never gets the PLAN_FLAG_ENFORCEMENT kill switch's dark-flag
    * courtesy allow, on PlanFlagGuard or AddonGuard. Never throws — an unresolvable
@@ -173,7 +190,10 @@ export class EntitlementsService {
 
     const planKey =
       (tenant.subscription?.planKey as PlanKey | null) ?? planKeyFromEnum(tenant.plan);
-    const version = await this.catalog.getVersionForTenant(tenant.planVersionId);
+    // SA-815a (G1c-1): the plan version is read through the ONE resolver (the subscription's pin, else the tenant's,
+    // else the published version), the same one every add-on inclusion judgment uses.
+    const pinnedVersionId = resolvePlanVersionId(tenant.subscription, tenant);
+    const version = await this.catalog.getVersionForTenant(pinnedVersionId);
 
     // Resolve the definition for the tenant's planKey. If the pinned version has
     // no matching definition (e.g. a later published version dropped/renamed a
@@ -207,7 +227,7 @@ export class EntitlementsService {
     // query, only when the tenant is pinned to a version that is not itself the published one
     // (this whole result sits behind the 30 s cache); it also serves the SKU fallback below.
     const published =
-      tenant.planVersionId && version.status !== "PUBLISHED"
+      pinnedVersionId && version.status !== "PUBLISHED"
         ? await this.catalog.getPublishedVersion()
         : null;
     const activeCodes: string[] = [];

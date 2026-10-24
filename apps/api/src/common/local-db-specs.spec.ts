@@ -5,7 +5,7 @@ import { pathToFileURL } from "node:url";
 // #2183: `npm run local:test:db` runs the DB lane on its own fresh database
 // (scripts/local-db-specs.mjs). These pins cover the parts that must never drift, without touching
 // a database: the only names it will create or DROP are its own `rf_dbspec_*` ones (so
-// `routeflow_dev` can never be dropped), the target is always the compose Postgres on localhost,
+// `routeflow_dev` can never be dropped), the target is always the compose Postgres on loopback (127.0.0.1, never the name `localhost`),
 // and the CLI refuses anything it does not know before any side effect (the #2076 lesson).
 
 const SCRIPT = path.resolve(__dirname, "../../../../scripts/local-db-specs.mjs");
@@ -56,7 +56,7 @@ describe("#2183 local:test:db runs on its own fresh database", () => {
     expect(ok).toBe(true);
   });
 
-  it("targets the compose Postgres on localhost with the compose credential defaults", () => {
+  it("targets the compose Postgres on 127.0.0.1 with the compose credential defaults", () => {
     expect(
       probe(`[
         m.connectionUrl(m.composeConnection({}, "rf_dbspec_a_1")),
@@ -64,9 +64,27 @@ describe("#2183 local:test:db runs on its own fresh database", () => {
         m.composeConnection({ POSTGRES_USER: "" }, "postgres").user,
       ]`),
     ).toEqual([
-      "postgresql://user:pass@localhost:5432/rf_dbspec_a_1",
-      "postgresql://u%40x:p%2Fw@localhost:5432/postgres",
+      "postgresql://user:pass@127.0.0.1:5432/rf_dbspec_a_1",
+      "postgresql://u%40x:p%2Fw@127.0.0.1:5432/postgres",
       "user",
+    ]);
+  });
+
+  it("RF_DBSPEC_HOST overrides the default host, loopback only; an empty value keeps the default", () => {
+    expect(
+      probe(`[
+        m.composeConnection({ RF_DBSPEC_HOST: "localhost" }, "postgres").host,
+        m.composeConnection({ RF_DBSPEC_HOST: "127.0.0.2" }, "postgres").host,
+        m.composeConnection({ RF_DBSPEC_HOST: "" }, "postgres").host,
+        ["db.example.com", "10.0.0.5", "127.0.0.1.evil.com", "[::1]"].map((h) => {
+          try { return m.composeConnection({ RF_DBSPEC_HOST: h }, "postgres").host; } catch (e) { return "refused"; }
+        }),
+      ]`),
+    ).toEqual([
+      "localhost",
+      "127.0.0.2",
+      "127.0.0.1",
+      ["refused", "refused", "refused", "refused"],
     ]);
   });
 

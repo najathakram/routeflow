@@ -1,0 +1,557 @@
+[
+ {
+  "route": "GET /api/v1/analytics/price-history/:productId",
+  "controller": "analytics/analytics.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "POST /api/v1/auth/handoff",
+  "controller": "auth/auth.controller.ts",
+  "deadConfidence": "low"
+ },
+ {
+  "route": "POST /api/v1/auth/apple/nonce",
+  "controller": "auth/auth.controller.ts",
+  "deadConfidence": "low"
+ },
+ {
+  "route": "POST /api/v1/auth/apple",
+  "controller": "auth/auth.controller.ts",
+  "deadConfidence": "low"
+ },
+ {
+  "route": "POST /api/v1/auth/apple/link",
+  "controller": "auth/auth.controller.ts",
+  "deadConfidence": "low"
+ },
+ {
+  "route": "GET /api/v1/platform-admin/auth/google/link",
+  "controller": "auth/platform-google-auth.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "GET /api/v1/billing/tenants/:tenantId",
+  "controller": "billing/billing.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "POST /api/v1/billing/tenants/:tenantId/portal",
+  "controller": "billing/billing.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "POST /api/v1/billing/tenants/:tenantId/ensure-customer",
+  "controller": "billing/billing.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "DELETE /api/v1/platform-admin/tenants/:id/feature-config/:key",
+  "controller": "billing/feature-config.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "GET /api/v1/billing/admin/plans/versions",
+  "controller": "billing/plan-admin.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "POST /api/v1/billing/admin/plans/versions",
+  "controller": "billing/plan-admin.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "PATCH /api/v1/billing/admin/plans/versions/:versionId/definitions/:planKey",
+  "controller": "billing/plan-admin.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "PATCH /api/v1/billing/admin/plans/versions/:versionId/skus/:sku",
+  "controller": "billing/plan-admin.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "POST /api/v1/billing/admin/plans/versions/:versionId/publish",
+  "controller": "billing/plan-admin.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "DELETE /api/v1/billing/admin/plans/versions/:versionId",
+  "controller": "billing/plan-admin.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "POST /api/v1/platform-admin/buyer-merge-requests",
+  "controller": "buyer/buyer-admin-merge.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "POST /api/v1/buyer/auth/handoff",
+  "controller": "buyer/buyer-auth.controller.ts",
+  "deadConfidence": "low"
+ },
+ {
+  "route": "PATCH /api/v1/buyer/auth/profile",
+  "controller": "buyer/buyer-auth.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "GET /api/v1/buyer/auth/sessions",
+  "controller": "buyer/buyer-auth.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "DELETE /api/v1/buyer/auth/sessions/:id",
+  "controller": "buyer/buyer-auth.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "GET /api/v1/buyer/orders/:id/change-requests",
+  "controller": "buyer/buyer.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "GET /api/v1/buyer/me",
+  "controller": "buyer/buyer.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "PATCH /api/v1/buyer/me",
+  "controller": "buyer/buyer.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "GET /api/v1/buyer/standing-orders",
+  "controller": "buyer/buyer.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "POST /api/v1/credit-notes/:id/void",
+  "controller": "credit-notes/credit-notes.controller.ts",
+  "deadConfidence": "high"
+ },
+ {
+  "route": "PATCH /api/v1/credit-notes/:id/auto-apply-exclusion",
+  "controller": "credit-notes/credit-notes.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "PATCH /api/v1/customers/me",
+  "controller": "customers/customers.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "GET /api/v1/customers/cleanup-preview",
+  "controller": "customers/customers.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "DELETE /api/v1/customers/cleanup-imported",
+  "controller": "customers/customers.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "POST /api/v1/customers/suggest-merge",
+  "controller": "customers/customers.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "PATCH /api/v1/drivers/me",
+  "controller": "drivers/drivers.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "GET /api/v1/import/aliases",
+  "controller": "import/alias.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "POST /api/v1/import/aliases",
+  "controller": "import/alias.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "DELETE /api/v1/import/aliases/:id",
+  "controller": "import/alias.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "GET /api/v1/import/expenses/batches",
+  "controller": "import/import.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "POST /api/v1/import/expenses/repair-inventory",
+  "controller": "import/import.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "DELETE /api/v1/import/expenses/batch/:batchId",
+  "controller": "import/import.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "POST /api/v1/import/contacts/mark-supplier-only",
+  "controller": "import/import.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "GET /api/v1/import/contacts/orphans",
+  "controller": "import/import.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "POST /api/v1/import/contacts/adopt-orphans",
+  "controller": "import/import.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "POST /api/v1/messaging/threads/:customerId/messages",
+  "controller": "messaging/messaging.controller.ts",
+  "deadConfidence": "high"
+ },
+ {
+  "route": "POST /api/v1/messaging/notify",
+  "controller": "messaging/messaging.controller.ts",
+  "deadConfidence": "high"
+ },
+ {
+  "route": "GET /api/v1/messaging/threads",
+  "controller": "messaging/messaging.controller.ts",
+  "deadConfidence": "high"
+ },
+ {
+  "route": "GET /api/v1/messaging/threads/:id",
+  "controller": "messaging/messaging.controller.ts",
+  "deadConfidence": "high"
+ },
+ {
+  "route": "GET /api/v1/messaging/settings",
+  "controller": "messaging/messaging.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "GET /api/v1/platform-admin/onboarding/cases",
+  "controller": "onboarding/onboarding.controller.ts",
+  "deadConfidence": "low"
+ },
+ {
+  "route": "GET /api/v1/platform-admin/onboarding/cases/counts",
+  "controller": "onboarding/onboarding.controller.ts",
+  "deadConfidence": "low"
+ },
+ {
+  "route": "POST /api/v1/platform-admin/onboarding/cases",
+  "controller": "onboarding/onboarding.controller.ts",
+  "deadConfidence": "low"
+ },
+ {
+  "route": "GET /api/v1/platform-admin/onboarding/cases/:id",
+  "controller": "onboarding/onboarding.controller.ts",
+  "deadConfidence": "low"
+ },
+ {
+  "route": "PATCH /api/v1/platform-admin/onboarding/cases/:id",
+  "controller": "onboarding/onboarding.controller.ts",
+  "deadConfidence": "low"
+ },
+ {
+  "route": "POST /api/v1/platform-admin/onboarding/cases/:id/advance",
+  "controller": "onboarding/onboarding.controller.ts",
+  "deadConfidence": "low"
+ },
+ {
+  "route": "POST /api/v1/platform-admin/onboarding/cases/:id/steps/:key/complete",
+  "controller": "onboarding/onboarding.controller.ts",
+  "deadConfidence": "low"
+ },
+ {
+  "route": "POST /api/v1/platform-admin/onboarding/cases/:id/steps/:key/waive",
+  "controller": "onboarding/onboarding.controller.ts",
+  "deadConfidence": "low"
+ },
+ {
+  "route": "POST /api/v1/platform-admin/onboarding/cases/:id/steps/:key/reopen",
+  "controller": "onboarding/onboarding.controller.ts",
+  "deadConfidence": "low"
+ },
+ {
+  "route": "POST /api/v1/platform-admin/onboarding/cases/:id/auto-checks",
+  "controller": "onboarding/onboarding.controller.ts",
+  "deadConfidence": "low"
+ },
+ {
+  "route": "POST /api/v1/platform-admin/onboarding/cases/:id/adopt-catalog",
+  "controller": "onboarding/onboarding.controller.ts",
+  "deadConfidence": "low"
+ },
+ {
+  "route": "POST /api/v1/platform-admin/onboarding/cases/:id/intake-link",
+  "controller": "onboarding/onboarding.controller.ts",
+  "deadConfidence": "low"
+ },
+ {
+  "route": "POST /api/v1/platform-admin/onboarding/cases/:id/intake-link/revoke",
+  "controller": "onboarding/onboarding.controller.ts",
+  "deadConfidence": "low"
+ },
+ {
+  "route": "GET /api/v1/platform-admin/onboarding/cases/:id/intake",
+  "controller": "onboarding/onboarding.controller.ts",
+  "deadConfidence": "low"
+ },
+ {
+  "route": "POST /api/v1/platform-admin/onboarding/cases/:id/sections/:key/review",
+  "controller": "onboarding/onboarding.controller.ts",
+  "deadConfidence": "low"
+ },
+ {
+  "route": "POST /api/v1/platform-admin/onboarding/cases/:id/files",
+  "controller": "onboarding/onboarding.controller.ts",
+  "deadConfidence": "low"
+ },
+ {
+  "route": "GET /api/v1/platform-admin/onboarding/cases/:id/files/:fileId/url",
+  "controller": "onboarding/onboarding.controller.ts",
+  "deadConfidence": "low"
+ },
+ {
+  "route": "GET /api/v1/platform-admin/demo-bookings",
+  "controller": "onboarding/onboarding.controller.ts",
+  "deadConfidence": "low"
+ },
+ {
+  "route": "POST /api/v1/public/onboarding/session",
+  "controller": "onboarding/public-onboarding.controller.ts",
+  "deadConfidence": "low"
+ },
+ {
+  "route": "POST /api/v1/public/onboarding/sections/save",
+  "controller": "onboarding/public-onboarding.controller.ts",
+  "deadConfidence": "low"
+ },
+ {
+  "route": "POST /api/v1/public/onboarding/sections/submit",
+  "controller": "onboarding/public-onboarding.controller.ts",
+  "deadConfidence": "low"
+ },
+ {
+  "route": "POST /api/v1/public/onboarding/accept",
+  "controller": "onboarding/public-onboarding.controller.ts",
+  "deadConfidence": "low"
+ },
+ {
+  "route": "POST /api/v1/public/onboarding/files",
+  "controller": "onboarding/public-onboarding.controller.ts",
+  "deadConfidence": "low"
+ },
+ {
+  "route": "POST /api/v1/public/onboarding/files/delete",
+  "controller": "onboarding/public-onboarding.controller.ts",
+  "deadConfidence": "low"
+ },
+ {
+  "route": "POST /api/v1/order-templates/:id/items/:itemId/lift-suspension",
+  "controller": "order-templates/order-templates.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "POST /api/v1/orders/sweep-pending",
+  "controller": "orders/orders.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "POST /api/v1/orders/force-consolidate/:customerId",
+  "controller": "orders/orders.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "GET /api/v1/buyer/payments/requests",
+  "controller": "payment-requests/buyer-payments.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "PATCH /api/v1/platform-admin/tenants/:id/class",
+  "controller": "platform-admin/platform-admin.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "GET /api/v1/platform-admin/tenants/:id/entitlements",
+  "controller": "platform-admin/platform-admin.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "GET /api/v1/platform-admin/tenants/:id/addons",
+  "controller": "platform-admin/platform-admin.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "POST /api/v1/platform-admin/tenants/:id/addons/disable",
+  "controller": "platform-admin/platform-admin.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "PUT /api/v1/platform-admin/entitlements/mode",
+  "controller": "platform-admin/platform-admin.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "GET /api/v1/platform-admin/entitlements/config-snapshot",
+  "controller": "platform-admin/platform-admin.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "PUT /api/v1/platform-admin/entitlements/config-snapshot",
+  "controller": "platform-admin/platform-admin.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "POST /api/v1/platform-admin/features/diffs/:id/explain",
+  "controller": "platform-admin/platform-admin.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "GET /api/v1/platform-admin/tenants/:id/features/effective/:key",
+  "controller": "platform-admin/platform-admin.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "POST /api/v1/products/msrp/bulk",
+  "controller": "products/products.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "GET /api/v1/recipes",
+  "controller": "products/recipes.controller.ts",
+  "deadConfidence": "low"
+ },
+ {
+  "route": "GET /api/v1/recipes/:id",
+  "controller": "products/recipes.controller.ts",
+  "deadConfidence": "low"
+ },
+ {
+  "route": "POST /api/v1/recipes",
+  "controller": "products/recipes.controller.ts",
+  "deadConfidence": "low"
+ },
+ {
+  "route": "PATCH /api/v1/recipes/:id",
+  "controller": "products/recipes.controller.ts",
+  "deadConfidence": "low"
+ },
+ {
+  "route": "POST /api/v1/recipes/:id/versions",
+  "controller": "products/recipes.controller.ts",
+  "deadConfidence": "low"
+ },
+ {
+  "route": "POST /api/v1/recipes/:id/activate",
+  "controller": "products/recipes.controller.ts",
+  "deadConfidence": "low"
+ },
+ {
+  "route": "GET /api/v1/regulated/parked-reversals",
+  "controller": "regulated/regulated.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "POST /api/v1/regulated/parked-reversals/:id/resolve",
+  "controller": "regulated/regulated.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "POST /api/v1/returns/inline/:id/approve",
+  "controller": "returns/returns.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "POST /api/v1/returns/inline/:id/reject",
+  "controller": "returns/returns.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "POST /api/v1/returns/inline/:id/cancel",
+  "controller": "returns/returns.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "GET /api/v1/returns/parked-restocks",
+  "controller": "returns/returns.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "POST /api/v1/returns/parked-restocks/:id/resolve",
+  "controller": "returns/returns.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "POST /api/v1/route-runs/:id/stops/:stopId/complete",
+  "controller": "routes/routes.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "GET /api/v1/commission-statements/:id/payouts",
+  "controller": "sales-agents/commission-statements.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "GET /api/v1/tenants/me/config/email",
+  "controller": "tenants/tenants.controller.ts",
+  "deadConfidence": "high"
+ },
+ {
+  "route": "PUT /api/v1/tenants/me/config/email",
+  "controller": "tenants/tenants.controller.ts",
+  "deadConfidence": "high"
+ },
+ {
+  "route": "POST /api/v1/tenants/me/config/email/test",
+  "controller": "tenants/tenants.controller.ts",
+  "deadConfidence": "high"
+ },
+ {
+  "route": "GET /api/v1/tenants/me/config/google-oauth",
+  "controller": "tenants/tenants.controller.ts",
+  "deadConfidence": "high"
+ },
+ {
+  "route": "PUT /api/v1/tenants/me/config/google-oauth",
+  "controller": "tenants/tenants.controller.ts",
+  "deadConfidence": "high"
+ },
+ {
+  "route": "POST /api/v1/tenants/me/config/google-oauth/test",
+  "controller": "tenants/tenants.controller.ts",
+  "deadConfidence": "high"
+ },
+ {
+  "route": "GET /api/v1/tenants/me/config/branding",
+  "controller": "tenants/tenants.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "PUT /api/v1/tenants/me/config/branding",
+  "controller": "tenants/tenants.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "POST /api/v1/users/:id/unlock",
+  "controller": "users/users.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "PATCH /api/v1/users/:id/admin",
+  "controller": "users/users.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "GET /api/v1/vendor-bills/scans",
+  "controller": "vendor-bills/vendor-bills.controller.ts",
+  "deadConfidence": "medium"
+ },
+ {
+  "route": "GET /api/v1/vendor-bills/scans/:id",
+  "controller": "vendor-bills/vendor-bills.controller.ts",
+  "deadConfidence": "medium"
+ }
+]

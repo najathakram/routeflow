@@ -142,7 +142,7 @@ test.describe("Operator — Boxed order entry (WP2-13)", () => {
         // behind the modal. Row-visibility fixes the same race without that coupling.
         const row = lines.last();
         await expect(row).toBeVisible({ timeout: 10_000 });
-        const boxesInput = row.locator('input[title="Number of whole cases"]');
+        const boxesInput = row.locator('input[title="Number of whole boxes"]');
         if (await boxesInput.isVisible().catch(() => false)) return row;
 
         await row.getByTitle("Remove").click();
@@ -207,7 +207,7 @@ test.describe("Operator — Boxed order entry (WP2-13)", () => {
     // (li.unitPrice) always renders first, but matching on the unit word
     // rather than position keeps this safe against markup reordering.
     const priceMatch = priceMatches.find((m) => m[2].toLowerCase() !== "piece");
-    const packMatch = text.match(/1 case = (\d+) units?/);
+    const packMatch = text.match(/1 box = (\d+) pcs?/);
     if (!priceMatch || !packMatch) {
       throw new Error(`Could not read box price / pack size off the row:\n${text}`);
     }
@@ -267,16 +267,16 @@ test.describe("Operator — Boxed order entry (WP2-13)", () => {
     await waitForPostAddRefocus(page);
 
     const { boxPrice, unitsPerBox } = await readBoxedFacts(row);
-    const boxesInput = row.locator('input[title="Number of whole cases"]');
-    const piecesInput = row.locator('input[title="Extra loose units (less than a full case)"]');
+    const boxesInput = row.locator('input[title="Number of whole boxes"]');
+    const piecesInput = row.locator('input[title="Extra pieces (less than a full box)"]');
 
-    // Pieces-only: 0 cases + 2 loose units. Loose units are opt-in (#2696 d): open the field.
+    // Pieces-only: 0 boxes + 2 pieces. Extra pieces are opt-in (#2696 d): open the field.
     await setBoxedQty(page, boxesInput, "0");
-    await row.getByRole("button", { name: "+ units" }).click();
+    await row.getByRole("button", { name: "+ pieces" }).click();
     await setBoxedQty(page, piecesInput, "2");
     await assertLineTotal(row, boxPrice, unitsPerBox, 0, 2);
 
-    // Mixed: 1 case + 2 loose units.
+    // Mixed: 1 box + 2 pieces.
     await setBoxedQty(page, boxesInput, "1");
     await assertLineTotal(row, boxPrice, unitsPerBox, 1, 2);
 

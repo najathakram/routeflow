@@ -1,6 +1,7 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { NotFoundException, ForbiddenException, BadRequestException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import { UserRole } from "@prisma/client";
 import { DriversService } from "./drivers.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { createMockPrisma } from "../testing/prisma-mock";
@@ -142,7 +143,11 @@ describe("DriversService", () => {
       prisma.driver.findUnique.mockResolvedValue(MOCK_DRIVER);
       prisma.driver.update.mockResolvedValue({});
 
-      const result = await service.changeStatus("drv-1", { status: "INACTIVE" as any });
+      const result = await service.changeStatus(
+        "drv-1",
+        { status: "INACTIVE" as any },
+        UserRole.OPERATOR,
+      );
 
       expect(result).toEqual({ success: true });
       expect(prisma.driver.update).toHaveBeenCalledWith({
@@ -154,7 +159,7 @@ describe("DriversService", () => {
     it("should throw NotFoundException for non-existent driver", async () => {
       prisma.driver.findUnique.mockResolvedValue(null);
       await expect(
-        service.changeStatus("nonexistent", { status: "INACTIVE" as any }),
+        service.changeStatus("nonexistent", { status: "INACTIVE" as any }, UserRole.OPERATOR),
       ).rejects.toThrow(NotFoundException);
     });
   });
@@ -190,12 +195,16 @@ describe("DriversService", () => {
         }),
       }) as any;
 
-      await service.update("drv-1", {
-        homeLine1: "123 Main St",
-        homeCity: "Springfield",
-        homeState: "IL",
-        homeZip: "62701",
-      });
+      await service.update(
+        "drv-1",
+        {
+          homeLine1: "123 Main St",
+          homeCity: "Springfield",
+          homeState: "IL",
+          homeZip: "62701",
+        },
+        UserRole.OPERATOR,
+      );
 
       expect(prisma.driver.update).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -218,12 +227,16 @@ describe("DriversService", () => {
       global.fetch = jest.fn().mockRejectedValue(new Error("network down")) as any;
 
       await expect(
-        service.update("drv-1", {
-          homeLine1: "123 Main St",
-          homeCity: "Springfield",
-          homeState: "IL",
-          homeZip: "62701",
-        }),
+        service.update(
+          "drv-1",
+          {
+            homeLine1: "123 Main St",
+            homeCity: "Springfield",
+            homeState: "IL",
+            homeZip: "62701",
+          },
+          UserRole.OPERATOR,
+        ),
       ).resolves.toEqual(MOCK_DRIVER);
 
       expect(prisma.driver.update).toHaveBeenCalledWith(
@@ -245,7 +258,7 @@ describe("DriversService", () => {
       );
       global.fetch = jest.fn();
 
-      await service.update("drv-1", { contactName: "New Name" });
+      await service.update("drv-1", { contactName: "New Name" }, UserRole.OPERATOR);
 
       expect(global.fetch).not.toHaveBeenCalled();
       expect(prisma.driver.update).toHaveBeenCalledWith(
@@ -309,6 +322,134 @@ describe("DriversService", () => {
     });
   });
 
+  // ─── admin-target check on edits (B1061, same rule as remove and the users module) ─────
+
+  describe("edits of an admin account's driver record", () => {
+    const noWrites = () => {
+      expect(prisma.driver.update).not.toHaveBeenCalled();
+      expect(prisma.user.update).not.toHaveBeenCalled();
+    };
+    const arrange = (linkedRole: string) => {
+      prisma.driver.findUnique.mockResolvedValue(MOCK_DRIVER);
+      prisma.driver.update.mockResolvedValue(MOCK_DRIVER);
+      prisma.user.findUnique.mockResolvedValue({ role: linkedRole } as any);
+    };
+    const edits: [string, (role: UserRole | undefined) => Promise<unknown>][] = [
+      ["update", (role) => service.update("drv-1", { contactName: "New" }, role)],
+      [
+        "changeStatus",
+        (role) => service.changeStatus("drv-1", { status: "INACTIVE" } as any, role),
+      ],
+    ];
+
+    it.each(edits)(
+      "%s: an OPERATOR is refused for an admin target, before any write",
+      async (_n, run) => {
+        arrange("TENANT_ADMIN");
+        await expect(run(UserRole.OPERATOR)).rejects.toThrow(ForbiddenException);
+        noWrites();
+      },
+    );
+
+    it.each(edits)("%s: fail-closed when the caller role is missing", async (_n, run) => {
+      arrange("TENANT_ADMIN");
+      await expect(run(undefined)).rejects.toThrow(ForbiddenException);
+      noWrites();
+    });
+
+    it.each(edits)("%s: a TENANT_ADMIN may edit an admin's driver record", async (_n, run) => {
+      arrange("TENANT_ADMIN");
+      await expect(run(UserRole.TENANT_ADMIN)).resolves.toBeDefined();
+      expect(prisma.driver.update).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(edits)(
+      "%s: an OPERATOR may still edit a driver or operator target",
+      async (_n, run) => {
+        arrange("DRIVER");
+        await expect(run(UserRole.OPERATOR)).resolves.toBeDefined();
+        arrange("OPERATOR");
+        await expect(run(UserRole.OPERATOR)).resolves.toBeDefined();
+        expect(prisma.driver.update).toHaveBeenCalledTimes(2);
+      },
+    );
+
+    describe("update: only identity / account-linking fields are guarded", () => {
+      const run = (dto: Record<string, unknown>, role: UserRole | undefined) =>
+        service.update("drv-1", dto as any, role);
+
+      it.each([
+        ["vehicle", { vehicleMake: "Ford", vehicleModel: "Transit", vehiclePlate: "XYZ-9" }],
+        ["phone", { phone: "555-0300" }],
+        ["home address", { homeLine1: "1 Main St", homeCity: "Springfield" }],
+        ["an unchanged name echoed back", { contactName: "Jane Smith", phone: "555-0301" }],
+      ])("an OPERATOR may edit %s of an admin-linked driver", async (_n, dto) => {
+        arrange("TENANT_ADMIN");
+        await expect(run(dto, UserRole.OPERATOR)).resolves.toBeDefined();
+        expect(prisma.driver.update).toHaveBeenCalledTimes(1);
+      });
+
+      it("an operational edit does not need a caller role (the DTO decides whether the check applies)", async () => {
+        arrange("TENANT_ADMIN");
+        await expect(run({ phone: "555-0302" }, undefined)).resolves.toBeDefined();
+      });
+
+      it.each([
+        ["the user link", { userId: "other-user" }],
+        ["the login email", { email: "x@example.com" }],
+        ["the login username", { username: "someone" }],
+        ["the name", { contactName: "Renamed" }],
+        ["the name alongside an operational field", { contactName: "Renamed", phone: "1" }],
+      ])("an OPERATOR changing %s of an admin-linked driver is refused", async (_n, dto) => {
+        arrange("TENANT_ADMIN");
+        await expect(run(dto, UserRole.OPERATOR)).rejects.toThrow(ForbiddenException);
+        await expect(run(dto, undefined)).rejects.toThrow(ForbiddenException);
+        noWrites();
+      });
+
+      it.each([
+        ["the user link", { userId: "other-user" }],
+        ["the login email", { email: "x@example.com" }],
+        ["the name", { contactName: "Renamed" }],
+      ])("a TENANT_ADMIN may change %s of an admin-linked driver", async (_n, dto) => {
+        arrange("TENANT_ADMIN");
+        await expect(run(dto, UserRole.TENANT_ADMIN)).resolves.toBeDefined();
+      });
+
+      it("an identity change on a non-admin-linked driver is allowed for an OPERATOR", async () => {
+        arrange("DRIVER");
+        await expect(run({ contactName: "Renamed" }, UserRole.OPERATOR)).resolves.toBeDefined();
+      });
+
+      it("the self-edit path (updateByUserId) is unaffected", async () => {
+        arrange("TENANT_ADMIN");
+        prisma.driver.findFirst.mockResolvedValue(MOCK_DRIVER);
+        await expect(
+          service.updateByUserId("user-drv", { phone: "555-0303" }, UserRole.TENANT_ADMIN),
+        ).resolves.toBeDefined();
+        await expect(
+          service.updateByUserId("user-drv", { contactName: "Renamed" }, UserRole.TENANT_ADMIN),
+        ).resolves.toBeDefined();
+      });
+    });
+
+    it("update refuses an identity change before the geocoder is called", async () => {
+      arrange("TENANT_ADMIN");
+      configGet.mockImplementation((key: string) =>
+        key === "googleMaps.apiKey" ? "test-key" : null,
+      );
+      global.fetch = jest.fn() as any;
+      await expect(
+        service.update(
+          "drv-1",
+          { homeLine1: "1 Main St", contactName: "Renamed" },
+          UserRole.OPERATOR,
+        ),
+      ).rejects.toThrow(ForbiddenException);
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
+  });
+
   // ─── remove ───────────────────────────────────────────────────────────────
 
   describe("remove", () => {
@@ -317,7 +458,7 @@ describe("DriversService", () => {
       prisma.routeRun.count.mockResolvedValue(0);
       prisma.user.findUnique.mockResolvedValue({ role: "DRIVER" } as any);
 
-      const result = await service.remove("drv-1");
+      const result = await service.remove("drv-1", UserRole.OPERATOR);
 
       expect(result).toEqual({ success: true });
       expect(prisma.driver.delete).toHaveBeenCalledWith({ where: { id: "drv-1" } });
@@ -330,7 +471,7 @@ describe("DriversService", () => {
       prisma.routeRun.count.mockResolvedValue(0);
       prisma.user.findUnique.mockResolvedValue({ role: "TENANT_ADMIN" } as any);
 
-      const result = await service.remove("drv-1");
+      const result = await service.remove("drv-1", UserRole.TENANT_ADMIN);
 
       expect(result).toEqual({ success: true });
       expect(prisma.driver.delete).toHaveBeenCalledWith({ where: { id: "drv-1" } });
@@ -345,11 +486,81 @@ describe("DriversService", () => {
       prisma.driver.findUnique.mockResolvedValue(MOCK_DRIVER);
       prisma.routeRun.count.mockResolvedValue(1);
 
-      await expect(service.remove("drv-1")).rejects.toThrow(BadRequestException);
+      await expect(service.remove("drv-1", UserRole.OPERATOR)).rejects.toThrow(BadRequestException);
 
       expect(prisma.driver.delete).not.toHaveBeenCalled();
       expect(prisma.user.delete).not.toHaveBeenCalled();
       expect(prisma.user.update).not.toHaveBeenCalled();
+    });
+
+    // B1061 (the DELETE /drivers/:id residual of B1056): the users module's admin-account rule applies here too.
+    describe("admin-target check (same rule as the users module)", () => {
+      const noWrites = () => {
+        expect(prisma.tenantTransaction).not.toHaveBeenCalled();
+        expect(prisma.route.updateMany).not.toHaveBeenCalled();
+        expect(prisma.driver.delete).not.toHaveBeenCalled();
+        expect(prisma.user.delete).not.toHaveBeenCalled();
+        expect(prisma.user.update).not.toHaveBeenCalled();
+      };
+      const arrange = (linkedRole: string) => {
+        prisma.driver.findUnique.mockResolvedValue(MOCK_DRIVER);
+        prisma.routeRun.count.mockResolvedValue(0);
+        prisma.user.findUnique.mockResolvedValue({ role: linkedRole } as any);
+      };
+
+      it("refuses an OPERATOR deleting the driver record of an admin account, before any write", async () => {
+        arrange("TENANT_ADMIN");
+        await expect(service.remove("drv-1", UserRole.OPERATOR)).rejects.toThrow(
+          ForbiddenException,
+        );
+        noWrites();
+      });
+
+      it("is fail-closed: an admin target with no caller role is refused", async () => {
+        arrange("TENANT_ADMIN");
+        await expect(service.remove("drv-1", undefined)).rejects.toThrow(ForbiddenException);
+        noWrites();
+      });
+
+      it("re-checks the linked user inside the transaction: a role change between the two reads is refused", async () => {
+        prisma.driver.findUnique.mockResolvedValue(MOCK_DRIVER);
+        prisma.routeRun.count.mockResolvedValue(0);
+        prisma.user.findUnique
+          .mockResolvedValueOnce({ role: "DRIVER" } as any)
+          .mockResolvedValueOnce({ role: "TENANT_ADMIN" } as any);
+        await expect(service.remove("drv-1", UserRole.OPERATOR)).rejects.toThrow(
+          ForbiddenException,
+        );
+        expect(prisma.driver.delete).not.toHaveBeenCalled();
+        expect(prisma.user.delete).not.toHaveBeenCalled();
+        expect(prisma.user.update).not.toHaveBeenCalled();
+      });
+
+      it("lets a TENANT_ADMIN remove an admin's driver record (login kept, flag cleared)", async () => {
+        arrange("TENANT_ADMIN");
+        await expect(service.remove("drv-1", UserRole.TENANT_ADMIN)).resolves.toEqual({
+          success: true,
+        });
+        expect(prisma.user.delete).not.toHaveBeenCalled();
+        expect(prisma.user.update).toHaveBeenCalledWith({
+          where: { id: "user-drv" },
+          data: { canActAsDriver: false },
+        });
+      });
+
+      it("an OPERATOR can still delete a pure DRIVER record and an operator's driver record", async () => {
+        arrange("DRIVER");
+        await expect(service.remove("drv-1", UserRole.OPERATOR)).resolves.toEqual({
+          success: true,
+        });
+        expect(prisma.user.delete).toHaveBeenCalledWith({ where: { id: "user-drv" } });
+        prisma.user.delete.mockClear();
+        arrange("OPERATOR");
+        await expect(service.remove("drv-1", UserRole.OPERATOR)).resolves.toEqual({
+          success: true,
+        });
+        expect(prisma.user.delete).not.toHaveBeenCalled();
+      });
     });
   });
 });

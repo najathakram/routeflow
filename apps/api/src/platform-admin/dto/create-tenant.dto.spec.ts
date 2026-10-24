@@ -13,6 +13,7 @@ describe("CreateTenantDto — plan + trialLengthDays validation", () => {
     businessName: "Acme Wholesale",
     adminEmail: "owner@acme.example.com",
     adminUsername: "acme_owner",
+    timezone: "America/Chicago",
   };
   const run = async (overrides: Record<string, unknown>) => {
     const dto = plainToInstance(CreateTenantDto, { ...base, ...overrides });
@@ -63,6 +64,7 @@ const validDto = {
   businessName: "Acme Distribution",
   adminEmail: "owner@acme.example",
   adminUsername: "acme_admin",
+  timezone: "America/Chicago",
 };
 
 describe("CreateTenantDto.adminPassword complexity (B03-class)", () => {

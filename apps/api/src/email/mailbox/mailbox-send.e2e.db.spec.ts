@@ -68,7 +68,9 @@ describeDb("D-14: tenant-own-mailbox send — real Postgres round trip", () => {
     prisma = new PrismaService(tenantCtx);
     await prisma.$connect();
     encryption = new EncryptionService(config);
-    service = new MailboxSendService(prisma, encryption, config);
+    service = new MailboxSendService(prisma, encryption, config, {
+      decide: jest.fn().mockResolvedValue({ outcome: "granted", overrides: new Map() }),
+    } as any);
   });
 
   afterAll(async () => {

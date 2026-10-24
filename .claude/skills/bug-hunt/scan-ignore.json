@@ -143,7 +143,6 @@
     "apps/api/src/authorizations/authorization-expiry.service.ts::this.prisma.trackedCategory.findMany({",
     "apps/api/src/authorizations/authorization-guard.service.ts::const cats = await this.prisma.forTenant().trackedCategory.findMany({",
     "apps/api/src/authorizations/authorizations.service.ts::const categories = await this.prisma.forTenant().trackedCategory.findMany({",
-    "apps/api/src/billing/subscription.service.ts::this.prisma.rfInvoice.findMany({",
     "apps/api/src/bookkeeping/bookkeeping.service.ts::const rate = await this.prisma.forTenant().mileageRate.findUnique({ where: { id } });",
     "apps/api/src/bookkeeping/bookkeeping.service.ts::return this.prisma.forTenant().mileageRate.findFirst({",
     "apps/api/src/bookkeeping/bookkeeping.service.ts::return this.prisma.forTenant().mileageRate.findMany({ orderBy: { startDate: \"desc\" } });",

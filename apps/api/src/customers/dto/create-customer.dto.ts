@@ -1,11 +1,11 @@
 import {
   IsBoolean,
   IsEmail,
-  IsEnum,
   IsIn,
   IsInt,
   IsNumber,
   IsOptional,
+  ValidateIf,
   IsString,
   IsUUID,
   Max,
@@ -18,8 +18,10 @@ import { Type } from "class-transformer";
 import { FulfillPath } from "@prisma/client";
 import { CreateAddressDto } from "./create-address.dto";
 import { StripHtml } from "../../common/transforms/strip-html.transform";
+import { WRITABLE_FULFILL_PATHS } from "../../orders/writable-fulfill-paths";
 import { MAX_DECIMAL_10_2 } from "../../common/decimal-bounds.constant";
 import { VALID_TERMS } from "../../system-config/dto/update-invoice-settings.dto";
+import { IsOptionalNotNull } from "../../common/validators/optional-not-null";
 
 // Canonical list plus "" to allow explicitly leaving this customer on the
 // tenant default at create time.
@@ -40,7 +42,7 @@ export class CreateCustomerDto {
   @IsString() @MaxLength(120) contactName: string;
   @IsOptional() @IsString() @MaxLength(40) phone?: string;
   @IsOptional() @IsString() @MaxLength(2000) notes?: string;
-  @IsOptional() @IsEnum(FulfillPath) fulfillPath?: FulfillPath;
+  @IsOptional() @IsIn(WRITABLE_FULFILL_PATHS) fulfillPath?: FulfillPath;
   @IsOptional()
   @ValidateNested({ each: true })
   @Type(() => CreateAddressDto)
@@ -54,7 +56,8 @@ export class CreateCustomerDto {
   @IsOptional() @IsString() @MaxLength(40) taxId?: string;
   @IsOptional() @IsBoolean() isTaxExempt?: boolean;
   // SA-423: scale is part of the Decimal(10,2) bound — refuse a third decimal, never round it.
-  @IsOptional()
+  // B1018 / SA-642: only an UPDATE may send null (clear the limit); a create may omit the field but not send null.
+  @ValidateIf((_o, v) => v !== undefined)
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   @Max(MAX_DECIMAL_10_2)
@@ -78,7 +81,7 @@ export class CreateCustomerDto {
    * orders that don't already carry an explicit depositPercent. Omitted
    * leaves the customer without a deposit default.
    */
-  @IsOptional() @IsNumber() @Min(0) @Max(100) defaultDepositPercent?: number;
+  @IsOptionalNotNull() @IsNumber() @Min(0) @Max(100) defaultDepositPercent?: number;
   /**
    * Sales agents & commissions: opens the customer's first attribution window
    * (AgentAssignment, effectiveFrom = now) inside the create tx.

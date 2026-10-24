@@ -13,7 +13,12 @@
  *       (barcode -> BOX+UNIT when upb>1 else UNIT; sku -> BOX; unitSku -> UNIT).
  */
 import { defaultSellLevel, SELL_LEVEL_VALUES, type SellLevel } from "@routeflow/pricing";
-import { levelsForScannedCode, resolveScanSellLevel, scanMatchIsForCode } from "./scan-level";
+import {
+  levelsForScannedCode,
+  isSharedScanCode,
+  resolveScanSellLevel,
+  scanMatchIsForCode,
+} from "./scan-level";
 
 const BOX: SellLevel = "BOX";
 const UNIT: SellLevel = "UNIT";
@@ -247,5 +252,26 @@ describe("levelsForScannedCode — a row whose level is not BOX/UNIT never contr
       { code: "SH", level: "UNIT" },
     ] as any;
     expect(levelsForScannedCode("SH", { barcodes: rows, unitsPerBox: 6 })).toEqual(["UNIT"]);
+  });
+});
+
+describe("isSharedScanCode (SA-626): the ONE rule web and mobile share for 'start on the default unit'", () => {
+  it("is true only when the code resolves at BOTH levels", () => {
+    expect(isSharedScanCode(["BOX", "UNIT"])).toBe(true);
+    expect(isSharedScanCode(["UNIT", "BOX"])).toBe(true);
+  });
+
+  it("is false for a box-only, a unit-only and an unmatched code (the code decides the level)", () => {
+    expect(isSharedScanCode(["BOX"])).toBe(false);
+    expect(isSharedScanCode(["UNIT"])).toBe(false);
+    expect(isSharedScanCode([])).toBe(false);
+  });
+});
+
+describe("no second 'which unit label' rule lives in @routeflow/scanning (SA-626a)", () => {
+  it("resolveScanSellChoice / ScanSellChoice / ScanDefaultUnits are not exported (defaultSellingLabel in pricing is the one rule)", () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const mod = require("./scan-level") as Record<string, unknown>;
+    expect(mod.resolveScanSellChoice).toBeUndefined();
   });
 });

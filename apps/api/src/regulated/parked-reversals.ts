@@ -1,5 +1,6 @@
 import { ConflictException } from "@nestjs/common";
 import type { RegulatedReport } from "./report-types";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /**
  * The FILING GATE's reader (Senior Architect ruling 2026-09-21). A return reversal the ledger could not book
@@ -95,7 +96,7 @@ export function assertNoParkedReversals(
   if (parked.length === 0) return;
   const unresolvable = parked.filter((p) => !p.categoryResolved);
   throw new ConflictException({
-    code: "PARKED_REVERSALS_UNRESOLVED",
+    code: API_ERROR_CODES.PARKED_REVERSALS_UNRESOLVED,
     count: parked.length,
     returnIds: [...new Set(parked.map((p) => p.returnId))],
     message:

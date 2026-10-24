@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import { useQueryClient } from "@tanstack/react-query";
 import { ios } from "@routeflow/ui/tokens";
 import {
   FormField,
@@ -21,11 +22,20 @@ import {
 } from "../../../../../lib/api/admin";
 import { resolveScanSellLevel } from "@routeflow/scanning";
 import { archivedMessage, resolveProductByCode } from "../../../../../lib/barcode-resolve";
+import { decideScanResult, promptText, runScanDecision } from "../../../../../lib/scan-suggestion";
+import { ScanMatchPickerSheet } from "../../../../../components/ScanMatchPickerSheet";
+import { useScanMatchPicker } from "../../../../../lib/use-scan-match-picker";
 import { levelsForScan } from "../../../../../lib/wedge-scan";
 import type { ScanOutcome } from "../../../../../lib/scan-loop";
 import { canRemoveLooseUnits, looseUnitsVisible } from "../../../../../lib/loose-units";
 import { useUpdateInvoice } from "../../../../../lib/api/invoices";
-import { alertInfo } from "../../../../../lib/confirm";
+import { useRestrictionWarningRetry } from "../../../../../lib/use-restriction-warning-retry";
+import { alertInfo, confirm } from "../../../../../lib/confirm";
+import {
+  INVOICE_STALE_COPY,
+  INVOICE_STALE_TITLE,
+  isInvoiceStale,
+} from "../../../../../lib/invoice-stale";
 import { ISO_DATE } from "../../../../../lib/invoice-terms";
 import {
   computeInvoiceTotals,
@@ -41,12 +51,16 @@ import {
   packFromOwnSplit,
   type SellLevel,
 } from "@routeflow/pricing";
+import { scanHaptic } from "../../../../../lib/haptics";
 import { showToast } from "../../../../../lib/toast";
 import {
   hasUnsavedInvoiceLineEdits,
   type InvoiceEditSnapshot,
 } from "../../../../../lib/discard-guard";
 import { hydratedLineTax } from "../../../../../lib/invoice-edit-tax";
+import { reasonField, showsReason } from "../../../../../lib/invoice-edit-reason";
+import { safeTextErrorCopy } from "../../../../../lib/safe-text-error-copy";
+import { taxStateStaleCopy } from "../../../../../lib/invoice-tax-state-copy";
 
 /**
  * Invoice edit screen — DRAFT-only, mirroring web's invoices/[id]/edit page.
@@ -95,6 +109,11 @@ type EditLine = {
   promoFreeUnits: number | null;
   /** Whole selling units the snapshot was earned at, so a qty edit rescales it. */
   promoBaseUnits: number | null;
+  /** H3b: the price the line was offered at (the stored price on load). Absent on a line added here, whose
+   *  price is the catalog list the server judges against the customer's tier price. */
+  offeredPrice?: number;
+  /** H3b: why the price moved off the customer's special price; sent with a moved or newly added price. */
+  overrideReason?: string;
 };
 
 let lineSeq = 0;
@@ -107,9 +126,10 @@ export default function EditInvoiceScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { data: invoice, isLoading } = useAdminInvoice(id ?? "");
-  const { data: settings } = useBusinessSettings();
+  const { data: settings, isLoading: settingsLoading } = useBusinessSettings();
   const { data: customer } = useAdminCustomer(invoice?.customer?.id ?? "");
   const updateMut = useUpdateInvoice();
+  const rw = useRestrictionWarningRetry(); // row 510: staff warning + override dialog
 
   const isTaxExempt = !!customer?.isTaxExempt;
   const tenantTaxRate = (Number(settings?.taxRate) || 0) / 100;
@@ -124,18 +144,31 @@ export default function EditInvoiceScreen() {
   const [notes, setNotes] = useState("");
   const [terms, setTerms] = useState("");
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [scanPromptOpen, setScanPromptOpen] = useState(false);
+  const matchPicker = useScanMatchPicker<AdminProduct>();
 
   // Hydrate once per invoice id — refetches must not clobber in-progress edits.
   const hydratedFor = useRef<string | null>(null);
+  // H4: the updatedAt the form hydrated from — sent as expectedUpdatedAt; a refetch never moves it.
+  const openedUpdatedAt = useRef<string | undefined>(undefined);
+  const qc = useQueryClient();
   // Snapshot taken at hydration, compared against the live form by `dirty`
   // below (lib/discard-guard.ts#hasUnsavedInvoiceLineEdits). Null until the
   // effect below has run once for this invoice.
   const originalRef = useRef<InvoiceEditSnapshot | null>(null);
   useEffect(() => {
-    if (!invoice || invoice.status !== "DRAFT" || hydratedFor.current === invoice.id) return;
+    // Hydrate once the tenant settings have resolved: the tenant rate is the inference's preferred rate (review SHOULD).
+    if (
+      !invoice ||
+      invoice.status !== "DRAFT" ||
+      hydratedFor.current === invoice.id ||
+      settingsLoading
+    )
+      return;
     hydratedFor.current = invoice.id;
+    openedUpdatedAt.current = invoice.updatedAt;
     // B294 (SA-141): a legacy invoice's 0-rate lines load at its verified inferred rate.
-    const lineTax = hydratedLineTax(invoice);
+    const lineTax = hydratedLineTax(invoice, tenantTaxRate); // the tenant rate wins when it reproduces the tax
     const hydratedLines = (invoice.items ?? []).map((it, i) => ({
       key: newKey(),
       id: it.id,
@@ -164,6 +197,7 @@ export default function EditInvoiceScreen() {
         packFromOwnSplit({ qty: Number(it.qty), boxes: it.boxes, pieces: it.pieces }) ??
         null,
       unitPrice: Number(it.unitPrice),
+      offeredPrice: Number(it.unitPrice),
       discount: it.discount != null && Number(it.discount) > 0 ? Number(it.discount) : null,
       ...lineTax[i],
       note: it.notes ?? "",
@@ -203,7 +237,7 @@ export default function EditInvoiceScreen() {
       notes: hydratedNotes,
       terms: hydratedTerms,
     };
-  }, [invoice]);
+  }, [invoice, settingsLoading]);
 
   const patch = (key: string, up: Partial<EditLine>) =>
     setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...up } : l)));
@@ -266,12 +300,22 @@ export default function EditInvoiceScreen() {
       if (result.archived) {
         return { feedback: { kind: "error", text: archivedMessage(result.product) } };
       }
-      if (!result.notFound) {
-        addCatalogLine(
-          result.product,
-          resolveScanSellLevel(result.product, levelsForScan(trimmed, result.product)),
-        );
-        return { feedback: { kind: "added", text: `${result.product.name} added` } };
+      const decision = decideScanResult(result, "add");
+      // B1220: a lone fuzzy match asks first, 2+ matches open a list; neither adds unprompted.
+      if (
+        runScanDecision(
+          decision,
+          (p) => addCatalogLine(p, resolveScanSellLevel(p, levelsForScan(trimmed, p))),
+          confirm,
+          { pick: matchPicker.open, onPromptChange: setScanPromptOpen },
+        )
+      ) {
+        if (decision.kind === "add") {
+          return { feedback: { kind: "added", text: `${decision.product.name} added` } };
+        }
+        // A confirm/picker prompt is not a failure: neutral haptic, not the error buzz.
+        scanHaptic("info");
+        return { feedback: { kind: "info", text: promptText(decision) } };
       }
     } catch {
       // network error → fall through to the toast
@@ -389,8 +433,9 @@ export default function EditInvoiceScreen() {
       return;
     }
     updateMut.mutate(
-      {
+      rw.attach({
         id,
+        expectedUpdatedAt: openedUpdatedAt.current,
         ...(issueDate.trim() ? { issueDate: issueDate.trim() } : {}),
         dueDate,
         discount: invDiscount ?? 0,
@@ -404,6 +449,8 @@ export default function EditInvoiceScreen() {
           ...(l.locked ? { boxes: l.storedBoxes ?? 0, pieces: l.storedPieces ?? 0 } : {}),
           // SA-189: only an operator-attested pack is ever sent.
           ...(l.attestedPack ? { unitsPerBox: l.attestedPack } : {}),
+          // H3b: the reason a price moved off the customer's special price (the server decides if it needs one)
+          ...reasonField(l),
           ...invoiceLineDto(
             {
               description: l.description.trim(),
@@ -422,7 +469,7 @@ export default function EditInvoiceScreen() {
           ),
           ...(l.locked ? { boxes: l.storedBoxes ?? 0, pieces: l.storedPieces ?? 0 } : {}),
         })),
-      },
+      }),
       {
         onSuccess: () => {
           showToast("Invoice updated");
@@ -430,8 +477,25 @@ export default function EditInvoiceScreen() {
         },
         // Server messages here are actionable (mirror guard, number conflict…) —
         // surface them verbatim instead of a fixed string.
-        onError: (e: any) =>
-          alertInfo("Couldn't save", e?.response?.data?.message ?? e?.message ?? "Try again."),
+        onError: (e: any) => {
+          if (rw.handle(e, submit)) return; // row 510
+          if (isInvoiceStale(e)) {
+            // H4: Reload refetches and re-hydrates the form (and its token) for the user to re-apply.
+            confirm(
+              INVOICE_STALE_TITLE,
+              INVOICE_STALE_COPY,
+              () => {
+                hydratedFor.current = null;
+                void qc.invalidateQueries({ queryKey: ["admin", "invoices", id] });
+              },
+              { confirmText: "Reload" },
+            );
+            return;
+          }
+          const fallback =
+            safeTextErrorCopy(e) ?? e?.response?.data?.message ?? e?.message ?? "Try again.";
+          alertInfo("Couldn't save", taxStateStaleCopy(e) ?? fallback);
+        },
       },
     );
   };
@@ -468,6 +532,7 @@ export default function EditInvoiceScreen() {
   }
   if (
     isPendingOrderMirror({
+      pendingMirror: invoice.pendingMirror,
       orderId: invoice.orderId,
       deliveryBatchId: invoice.deliveryBatchId,
       orderStatus: invoice.order?.status,
@@ -618,7 +683,9 @@ export default function EditInvoiceScreen() {
           onSelect={addCatalogLine}
         />
       </FormSheet>
-      <BarcodeFab onScanned={onScanned} continuous hidden={pickerOpen} />
+      <BarcodeFab onScanned={onScanned} continuous hidden={pickerOpen} paused={scanPromptOpen} />
+      <ScanMatchPickerSheet {...matchPicker.props} />
+      {rw.modal}
     </>
   );
 }
@@ -746,6 +813,17 @@ function LineCard({
               />
             </View>
           </View>
+          {showsReason(line) ? (
+            <TextInput
+              style={styles.reasonInput}
+              value={line.overrideReason ?? ""}
+              onChangeText={(t) => onPatch({ overrideReason: t })}
+              maxLength={200}
+              placeholder="Reason (needed off a special price)"
+              placeholderTextColor={ios.label3}
+              accessibilityLabel="Reason for the price change"
+            />
+          ) : null}
 
           {isSplit ? (
             <>
@@ -919,6 +997,15 @@ const styles = StyleSheet.create({
     paddingVertical: 7,
     fontSize: 14,
     fontFamily: "Inter_600SemiBold",
+    color: ios.label,
+  },
+  reasonInput: {
+    backgroundColor: ios.fill3,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
     color: ios.label,
   },
   lineMeta: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },

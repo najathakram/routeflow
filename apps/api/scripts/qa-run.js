@@ -290,6 +290,7 @@ async function setup() {
       adminUsername: opUsername,
       adminEmail: `${state.qaSlug}@qa-test.example.com`,
       adminPassword: opPassword,
+      timezone: "America/New_York", // SA-738: create-tenant requires an IANA zone
     },
     state.superAdminToken,
   );
@@ -832,6 +833,7 @@ async function section1() {
         adminUsername: "qa2_admin",
         adminEmail: `${state.qa2Slug}@qa-test.example.com`,
         adminPassword: "QaAdmin2!",
+        timezone: "America/New_York", // SA-738: create-tenant requires an IANA zone
       },
       state.superAdminToken,
     );

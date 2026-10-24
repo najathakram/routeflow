@@ -1,3 +1,4 @@
+import { oversellReaderOffProvider } from "./testing/policy-reader-provider";
 import { Test, TestingModule } from "@nestjs/testing";
 import { getQueueToken } from "@nestjs/bull";
 import { ConfigService } from "@nestjs/config";
@@ -88,6 +89,7 @@ describe("OrdersService.create — discount-overflow negative total (B451 gap 4)
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
+        oversellReaderOffProvider,
         OrdersService,
         { provide: PrismaService, useValue: prisma },
         { provide: getQueueToken("invoices"), useValue: mockQueue },
@@ -173,7 +175,10 @@ describe("OrdersService.create — discount-overflow negative total (B451 gap 4)
         { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(true) } },
         {
           provide: RegulatedLedgerService,
-          useValue: { reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined) },
+          useValue: {
+            reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined),
+            settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
+          },
         },
         { provide: TenantContextService, useValue: tenantCtx },
       ],

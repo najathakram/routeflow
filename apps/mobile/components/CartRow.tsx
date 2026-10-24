@@ -14,6 +14,7 @@ import { displayProductName as displayName } from "../lib/product-display";
 import { marginFactorFor, unitPriceBase, type UnitOption } from "../lib/unit-options";
 import { MONEY_INPUT_MAX_WIDTH } from "../lib/row-layout";
 import { effectiveUnitPrice, toNumber, type LineState, type Product } from "../lib/cart-line-state";
+import { isPendingDefaultUnit } from "../lib/default-unit-line";
 import { MoneyTextInput } from "./MoneyTextInput";
 import { SellByToggle } from "./SellByToggle";
 import { CostHistorySheet } from "./CostHistorySheet";
@@ -31,6 +32,8 @@ export function CartRow({
   catalogPrice,
   isSpecial,
   tier,
+  layerUnitBase,
+  pricesUnconfirmed,
   marginFloor,
   historyPrice,
   onChangeBoxes,
@@ -58,6 +61,10 @@ export function CartRow({
   isSpecial: boolean;
   /** units_v1: the EFFECTIVE numeric tier for `UnitPickerRow` to resolve the ladder price at. */
   tier: number;
+  /** S19b: a unit line whose unit is in the customer's price layer compares against THAT price, not the pack-level `catalogPrice`. */
+  layerUnitBase?: number;
+  /** S19b: the layer is not confirmed, so the unit picker shows an ellipsis and stays closed. */
+  pricesUnconfirmed?: boolean;
   /** Category margin floor (fraction) for the live cost/margin hint. */
   marginFloor: number;
   historyPrice?: number;
@@ -87,7 +94,7 @@ export function CartRow({
   const isBoxed = upb > 1 && !line.unitLabel;
   const sellBy = line.sellBy ?? "case";
   // units_v1: see lib/unit-options.ts#unitPriceBase.
-  const priceBase = unitPriceBase(line, catalogPrice);
+  const priceBase = layerUnitBase ?? unitPriceBase(line, catalogPrice);
   const effUnit = isSpecial ? priceBase : effectiveUnitPrice(line, priceBase);
   const isOverridden = !isSpecial && line.unitPrice != null && line.unitPrice !== priceBase;
   const qty = effectiveQty(line, product.unitsPerBox);
@@ -235,9 +242,13 @@ export function CartRow({
           productId: product.id,
           unitPrice: effUnit,
           unitLabel: line.unitLabel,
+          derivedBase: line.derivedBase,
         }}
         product={product}
         tier={tier}
+        // Only while no qty/price edit consumed the flag (the screen clears it) and no operator price (Opus #2865 B2/r2).
+        startOnDefaultUnit={isPendingDefaultUnit(line)}
+        pricesUnconfirmed={pricesUnconfirmed}
         onChange={onChangeUnit}
         style={{ marginBottom: isBoxed ? 2 : 8 }}
       />

@@ -1,5 +1,6 @@
 import { BadRequestException } from "@nestjs/common";
 import { roundMoney } from "@routeflow/pricing";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /**
  * B769 / SA-112 — the money totals of a standalone (multi-invoice) payment, decided BEFORE any
@@ -22,7 +23,7 @@ export function standaloneAllocationTotals(dto: {
   );
   if (allocatedTotal > total) {
     throw new BadRequestException({
-      code: "ALLOCATIONS_EXCEED_PAYMENT",
+      code: API_ERROR_CODES.ALLOCATIONS_EXCEED_PAYMENT,
       message:
         `The allocations add up to $${allocatedTotal.toFixed(2)}, more than the ` +
         `$${total.toFixed(2)} payment. Lower an allocation or raise the payment amount.`,

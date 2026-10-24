@@ -17,6 +17,17 @@ export interface OrderReturnsPanelProps {
   orderId: string;
 }
 
+/** W21b: label a REFUNDED return by how it was resolved: a store-credit resolution (a credit note, or refundMethod
+ *  CREDIT_NOTE) reads "Store credit"; a cash/card/check refund (refundMethod EXTERNAL_REFUND) keeps "Refunded". */
+function resolutionLabel(ret: {
+  status: string;
+  refundMethod?: string | null;
+  creditNoteId?: string | null;
+}): string | undefined {
+  if (ret.status !== "REFUNDED" || ret.refundMethod === "EXTERNAL_REFUND") return undefined;
+  return ret.refundMethod === "CREDIT_NOTE" || ret.creditNoteId ? "Store credit" : undefined;
+}
+
 export function OrderReturnsPanel({ orderId }: OrderReturnsPanelProps) {
   // #2406: "ALL" so a captured INLINE return (every return this panel is meant to show) is
   // included alongside any STANDARD (post-delivery RMA) return on this order.
@@ -43,7 +54,7 @@ export function OrderReturnsPanel({ orderId }: OrderReturnsPanelProps) {
                 >
                   #{ret.returnNumber}
                 </Link>
-                <Badge status={ret.status as BadgeStatus} />
+                <Badge status={ret.status as BadgeStatus} label={resolutionLabel(ret)} />
               </div>
               <div className="flex items-center gap-2 text-navy/70">
                 {amount !== null && <span className="money text-navy">{formatMoney(amount)}</span>}

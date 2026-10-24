@@ -13,7 +13,11 @@ import { createMockPrisma } from "../testing/prisma-mock";
 describe("CreditNotesService — W5c regulated reversal", () => {
   let service: CreditNotesService;
   let prisma: ReturnType<typeof createMockPrisma>;
-  let ledger: { reverseCreditNoteEntries: jest.Mock; unreverseCreditNoteEntries: jest.Mock };
+  let ledger: {
+    reverseCreditNoteEntries: jest.Mock;
+    unreverseCreditNoteEntries: jest.Mock;
+    settleRegulatedLedger: jest.Mock;
+  };
   let gateway: { emitCreditNoteCreated: jest.Mock; emitCreditNoteVoided: jest.Mock };
 
   beforeEach(async () => {
@@ -21,6 +25,7 @@ describe("CreditNotesService — W5c regulated reversal", () => {
     ledger = {
       reverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
       unreverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
+      settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
     };
     gateway = { emitCreditNoteCreated: jest.fn(), emitCreditNoteVoided: jest.fn() };
     const mod = await Test.createTestingModule({
@@ -415,6 +420,7 @@ describe("CreditNotesService — P5-13 apply-math + auto-apply", () => {
           useValue: {
             reverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
             unreverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
+            settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
           },
         },
         {
@@ -842,6 +848,7 @@ describe("CreditNotesService — order credit-note intents (unapply / settle / v
           useValue: {
             reverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
             unreverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
+            settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
           },
         },
         {
@@ -1583,13 +1590,15 @@ describe("CreditNotesService — order credit-note intents (unapply / settle / v
   });
 
   describe("validateSelectionsForCustomer", () => {
+    // B1204: every refusal carries CREDIT_NOTE_UNAVAILABLE so the web shows its fixed copy by CODE.
+    const UNAVAILABLE = { response: { code: "CREDIT_NOTE_UNAVAILABLE" } };
     it("rejects a duplicate creditNoteId in the selection list", async () => {
       await expect(
         service.validateSelectionsForCustomer(prisma as any, "c1", [
           { creditNoteId: "cn-1" },
           { creditNoteId: "cn-1" },
         ]),
-      ).rejects.toThrow(/duplicate/i);
+      ).rejects.toMatchObject(UNAVAILABLE);
     });
 
     it("rejects an unknown credit note id", async () => {
@@ -1598,7 +1607,7 @@ describe("CreditNotesService — order credit-note intents (unapply / settle / v
         service.validateSelectionsForCustomer(prisma as any, "c1", [
           { creditNoteId: "cn-missing" },
         ]),
-      ).rejects.toThrow(/not found/i);
+      ).rejects.toMatchObject(UNAVAILABLE);
     });
 
     it("rejects a credit note belonging to a different customer", async () => {
@@ -1607,7 +1616,7 @@ describe("CreditNotesService — order credit-note intents (unapply / settle / v
       ]);
       await expect(
         service.validateSelectionsForCustomer(prisma as any, "c1", [{ creditNoteId: "cn-1" }]),
-      ).rejects.toThrow(/customer/i);
+      ).rejects.toMatchObject(UNAVAILABLE);
     });
 
     it("rejects a VOID credit note", async () => {
@@ -1616,7 +1625,7 @@ describe("CreditNotesService — order credit-note intents (unapply / settle / v
       ]);
       await expect(
         service.validateSelectionsForCustomer(prisma as any, "c1", [{ creditNoteId: "cn-1" }]),
-      ).rejects.toThrow(/voided/i);
+      ).rejects.toMatchObject(UNAVAILABLE);
     });
 
     it("rejects an expired credit note", async () => {
@@ -1630,7 +1639,7 @@ describe("CreditNotesService — order credit-note intents (unapply / settle / v
       ]);
       await expect(
         service.validateSelectionsForCustomer(prisma as any, "c1", [{ creditNoteId: "cn-1" }]),
-      ).rejects.toThrow(/expired/i);
+      ).rejects.toMatchObject(UNAVAILABLE);
     });
 
     it("ACCEPTS a fully-consumed selection (idempotent resubmit) — no remaining-balance check", async () => {
@@ -1951,6 +1960,7 @@ describe("CreditNotesService — REG-B267 pin: numbering reservation", () => {
           useValue: {
             reverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
             unreverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
+            settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
           },
         },
         {
@@ -2037,10 +2047,14 @@ describe("CreditNotesService — REG-B267 pin: numbering reservation", () => {
   // constraint names creditNoteNumber is a number conflict. (a)/(b) are the two
   // shapes Prisma emits for that constraint; (c) proves a different unique is
   // NOT relabelled as a retryable numbering conflict.
-  it("REG-B267 P2002 (a): a creditNoteNumber field-array target maps to ConflictException", async () => {
+  it("REG-B267 P2002 (a): the pg adapter's constraint.index (no meta.target) maps to ConflictException", async () => {
     prisma.creditNote.create.mockRejectedValue({
       code: "P2002",
-      meta: { target: ["tenantId", "creditNoteNumber"] },
+      meta: {
+        driverAdapterError: {
+          cause: { constraint: { index: "CreditNote_tenantId_creditNoteNumber_key" } },
+        },
+      },
     });
 
     await expect(service.create({ customerId: "c1", amount: 25 })).rejects.toBeInstanceOf(

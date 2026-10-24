@@ -90,13 +90,6 @@ export function zonedDateKey(instant: Date, timeZone: string): string {
   return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
-/** True when `timeZone` is a zone this runtime's ICU actually knows. */
-export function isValidTimeZone(timeZone: string): boolean {
-  if (!timeZone || typeof timeZone !== "string") return false;
-  try {
-    new Intl.DateTimeFormat("en-US", { timeZone }).format(new Date());
-    return true;
-  } catch {
-    return false;
-  }
-}
+// SA-738: ONE zone validator lives in common/tenant-time-zone.ts; re-exported so demo-booking
+// callers keep their import path.
+export { isValidTimeZone } from "../common/tenant-time-zone";

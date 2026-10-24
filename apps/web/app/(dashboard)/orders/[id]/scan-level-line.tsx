@@ -1,9 +1,14 @@
-import type { SellLevel } from "@routeflow/pricing";
+import { unitWords, type SellLevel, type UnitWords } from "@routeflow/pricing";
 import type { PriceType } from "@/lib/api/orders";
+import { displayProductName } from "@/lib/product-display";
 
 export type { SellLevel };
-import { scanLevelForHit, scanLevelsForHit } from "../_components/scan/useScanCodeHandler";
-export { scanLevelForHit };
+import {
+  scanCodeIsShared,
+  scanLevelForHit,
+  scanLevelsForHit,
+} from "../_components/scan/useScanCodeHandler";
+export { scanCodeIsShared, scanLevelForHit };
 
 /** addProduct's (level, explicit bump level) for a scanned hit. */
 export function scanArgsForHit(code: string, p: any): [SellLevel, SellLevel | undefined] {
@@ -45,14 +50,16 @@ export function bumpLineForScan<
     : { ...it, qty: it.qty + 1 };
 }
 
-/** "1 case + 0 loose", "2 cases + 1 loose" — the count word agrees with its number. */
-export function splitLineHintText(qty: number, upb: number): string {
-  const cases = Math.floor(qty / upb);
-  return `${cases} ${cases === 1 ? "case" : "cases"} + ${qty % upb} loose`;
+/** "1 box + 0 pcs", "2 boxes + 1 pc" — the count word agrees with its number. */
+export function splitLineHintText(qty: number, upb: number, w: UnitWords = unitWords()): string {
+  const packs = Math.floor(qty / upb);
+  const rest = qty % upb;
+  return `${packs} ${w.packFor(packs)} + ${rest} ${w.baseShortFor(rest)}`;
 }
 
 /** No hidden quantity (SA-580): a split line counts PIECES, so say cases + loose. */
 export function SplitLineHint({ item }: { item: any }) {
+  const w = unitWords(item);
   const upb = Number(item.unitsPerBox ?? 0);
   if (!(item.boxSplit && upb > 1 && item.unitLabel == null)) return null;
   return (
@@ -60,7 +67,7 @@ export function SplitLineHint({ item }: { item: any }) {
       data-testid="edit-line-split"
       className="text-[11px] normal-case tracking-normal text-navy/60"
     >
-      pcs = {splitLineHintText(item.qty, upb)}
+      {w.base.short.other} = {splitLineHintText(item.qty, upb, w)}
     </span>
   );
 }
@@ -68,7 +75,15 @@ export function SplitLineHint({ item }: { item: any }) {
 /** The new order line the add-product flow appends (moved verbatim out of page.tsx). */
 export function buildNewLine(
   p: any,
-  o: { newId: string; startPrice: number; base: number; unitScan: boolean; special: boolean },
+  o: {
+    newId: string;
+    startPrice: number;
+    base: number;
+    unitScan: boolean;
+    special: boolean;
+    /** A picker tap / shared-code scan: the line starts on the product's default selling unit. */
+    startOnDefaultUnit?: boolean;
+  },
 ) {
   const { newId, startPrice, base, unitScan } = o;
   const priceType: PriceType = o.special ? "SPECIAL" : "STANDARD";
@@ -76,10 +91,11 @@ export function buildNewLine(
     id: newId,
     isNew: true,
     originalProductId: p.id,
-    originalProductName: p.name,
+    // "<Parent> - <Variant>" for a variant (its own `name` is just the flavor).
+    originalProductName: displayProductName(p),
     originalQty: 1,
     productId: p.id,
-    productName: p.name,
+    productName: displayProductName(p),
     qty: 1,
     // A UNIT scan on a boxed product is ONE loose piece: the split form (qty = pieces).
     ...(unitScan ? { boxSplit: true } : {}),
@@ -96,5 +112,6 @@ export function buildNewLine(
     // units_v1: OrderLineUnitPicker's required fields (pack unit label + price type).
     unit: p.unit ?? "",
     priceType,
+    ...(o.startOnDefaultUnit ? { startOnDefaultUnit: true } : {}),
   };
 }

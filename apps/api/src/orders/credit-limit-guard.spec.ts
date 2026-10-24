@@ -185,4 +185,45 @@ describe("assertWithinCreditLimit (the hard block)", () => {
     const db = makeDb({ creditLimit: 0.3, invoices: [sent(0.1)] });
     await expect(assertWithinCreditLimit(db, "c-1", "o-1", 0.2, true)).resolves.toBeUndefined();
   });
+
+  describe("an action that adds nothing owed is not judged against the limit (exposure 120, limit 100)", () => {
+    const over = () => makeDb({ creditLimit: 100, invoices: [sent(120)] });
+
+    it("projected 0 passes", async () => {
+      await expect(assertWithinCreditLimit(over(), "c-1", null, 0, true)).resolves.toBeUndefined();
+    });
+
+    it("projected 0.01 is still 409 (the comparison itself is unchanged)", async () => {
+      await expect(assertWithinCreditLimit(over(), "c-1", null, 0.01, true)).rejects.toMatchObject({
+        response: { code: "CREDIT_LIMIT_EXCEEDED", exposure: 120.01 },
+      });
+    });
+
+    it("a negative projected total passes", async () => {
+      await expect(assertWithinCreditLimit(over(), "c-1", null, -5, true)).resolves.toBeUndefined();
+    });
+
+    it("an over-limit customer's positive edit is still 409", async () => {
+      await expect(assertWithinCreditLimit(over(), "c-1", "o-1", 15, true)).rejects.toMatchObject({
+        response: { code: "CREDIT_LIMIT_EXCEEDED", exposure: 135 },
+      });
+    });
+
+    it("a prepaid edit (total > 0, already paid >= total) passes", async () => {
+      const db = makeDb({
+        creditLimit: 100,
+        invoices: [
+          sent(120),
+          {
+            total: 50,
+            status: "PAID",
+            orderId: "o-1",
+            order: null,
+            payments: [{ amount: 50, status: "PAID" }],
+          },
+        ],
+      });
+      await expect(assertWithinCreditLimit(db, "c-1", "o-1", 50, true)).resolves.toBeUndefined();
+    });
+  });
 });

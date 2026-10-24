@@ -7,6 +7,7 @@ import { AdminStatCard } from "../../_components/AdminStatCard";
 import { AdminBadge } from "../../_components/AdminBadge";
 import { AdminCard } from "../../_components/AdminCard";
 import { DisabledHint } from "../../_components/DisabledHint";
+import { AutoLocksCard } from "../../_components/AutoLocksCard";
 import { CreditCard, Users, AlertTriangle, TrendingUp, Download, Search } from "lucide-react";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
@@ -191,6 +192,9 @@ export default function BillingPage() {
           No subscriptions match the current filters, so there is nothing to export.
         </DisabledHint>
       </div>
+
+      {/* SA-775: the rollout pause on automatic tenant locks (super admin only; the whole console is). */}
+      <AutoLocksCard />
 
       {/* Summary Cards */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">

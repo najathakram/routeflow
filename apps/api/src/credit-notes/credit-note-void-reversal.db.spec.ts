@@ -8,7 +8,7 @@
  *    the note via `restoreCreditFromPaymentInTx` (each invoice's status is recomputed from its
  *    remaining payments), writes one `CreditNoteApplyBlock` (reason `VOID_REVERSAL`, `createdById`
  *    = actor) per reopened invoice, deletes the note's `OrderCreditNote` rows, compare-and-set
- *    voids the note, calls `RegulatedLedgerService.unreverseCreditNoteEntries`, and writes one
+ *    voids the note, settles the ledger (`settleRegulatedLedger` ADJUSTMENT_UNDONE, SA-839), and writes one
  *    `AuditLog` (`entityType` `CreditNote`, `action` `VOIDED`, `userId` = actor).
  *  - `voidWithReversalRefusal` (shared by both): refuses BEFORE any write when the note is
  *    already VOID, when it backs a live (non-CANCELLED/REJECTED) `Return`, or when `amountUsed`
@@ -19,7 +19,7 @@
  * create`, `applyToInvoice`, `syncOrderCreditSelections` + `settleOrderCreditsInTx`). Stubbed
  * collaborators are the same set every credit-notes DB spec stubs (gateway, email, pdf,
  * messaging, storage, entitlements, selling-restrictions, commission engine); `RegulatedLedgerService`
- * stays a mock so its `unreverseCreditNoteEntries` jest.fn can be asserted on directly.
+ * stays a mock so its `settleRegulatedLedger` jest.fn can be asserted on directly.
  *
  * Runs only under `npm run local:test:db` (jest.db.config.js collects `*.db.spec.ts`, run via
  * `node scripts/local-env.mjs --db --db-specs -- "npm run test:db -w apps/api"`, RUN_DB_SPECS set,
@@ -76,6 +76,7 @@ describeDb("SA-436 PR-2 credit-note void-with-reversal (#2402)", () => {
   const mockLedger = {
     reverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
     unreverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
+    settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
   };
   const mockCommissionEngine = {
     syncInvoiceCommissionSafe: jest.fn().mockResolvedValue(undefined),
@@ -159,6 +160,7 @@ describeDb("SA-436 PR-2 credit-note void-with-reversal (#2402)", () => {
   afterEach(() => {
     mockLedger.reverseCreditNoteEntries.mockClear();
     mockLedger.unreverseCreditNoteEntries.mockClear();
+    mockLedger.settleRegulatedLedger.mockClear();
   });
 
   afterAll(async () => {
@@ -300,10 +302,10 @@ describeDb("SA-436 PR-2 credit-note void-with-reversal (#2402)", () => {
     expect(audits).toHaveLength(1);
     expect(audits[0].userId).toBe(actorId);
 
-    expect(mockLedger.unreverseCreditNoteEntries).toHaveBeenCalledTimes(1);
-    expect(mockLedger.unreverseCreditNoteEntries).toHaveBeenCalledWith({
+    expect(mockLedger.settleRegulatedLedger).toHaveBeenCalledTimes(1);
+    expect(mockLedger.settleRegulatedLedger).toHaveBeenCalledWith(expect.anything(), {
+      kind: "ADJUSTMENT_UNDONE",
       creditNoteId: noteId,
-      db: expect.anything(),
     });
 
     const reopened = result.reopened as Array<{ invoiceId: string; amount: number }>;
@@ -385,7 +387,7 @@ describeDb("SA-436 PR-2 credit-note void-with-reversal (#2402)", () => {
     expect(result.creditNote.status).toBe("VOID");
     expect(result.reopened).toHaveLength(0);
     expect(await blocksFor(noteId)).toHaveLength(0);
-    expect(mockLedger.unreverseCreditNoteEntries).toHaveBeenCalledTimes(1);
+    expect(mockLedger.settleRegulatedLedger).toHaveBeenCalledTimes(1);
   }, 30_000);
 
   it("5: already-VOID refuses — a second call adds no AuditLog and no block rows", async () => {
@@ -395,6 +397,7 @@ describeDb("SA-436 PR-2 credit-note void-with-reversal (#2402)", () => {
 
     await tenantCtx.run(tenantId, () => creditNotes.voidWithReversal(noteId, actorId));
     mockLedger.unreverseCreditNoteEntries.mockClear();
+    mockLedger.settleRegulatedLedger.mockClear();
 
     await expect(
       tenantCtx.run(tenantId, () => creditNotes.voidWithReversal(noteId, actorId)),
@@ -405,7 +408,7 @@ describeDb("SA-436 PR-2 credit-note void-with-reversal (#2402)", () => {
     });
     expect(audits).toHaveLength(1); // only the first call's row
     expect(await blocksFor(noteId)).toHaveLength(0);
-    expect(mockLedger.unreverseCreditNoteEntries).not.toHaveBeenCalled();
+    expect(mockLedger.settleRegulatedLedger).not.toHaveBeenCalled();
   }, 30_000);
 
   it("6: backs a live return — refuses with 'Cancel the return', zero writes", async () => {
@@ -438,7 +441,7 @@ describeDb("SA-436 PR-2 credit-note void-with-reversal (#2402)", () => {
       where: { tenantId, entityType: "CreditNote", action: "VOIDED", entityId: noteId },
     });
     expect(audits).toHaveLength(0);
-    expect(mockLedger.unreverseCreditNoteEntries).not.toHaveBeenCalled();
+    expect(mockLedger.settleRegulatedLedger).not.toHaveBeenCalled();
   }, 30_000);
 
   it("7: consumed beyond its applications refuses RETURN_CREDIT_CONSUMED, zero writes; preview matches", async () => {
@@ -460,7 +463,7 @@ describeDb("SA-436 PR-2 credit-note void-with-reversal (#2402)", () => {
       where: { tenantId, entityType: "CreditNote", action: "VOIDED", entityId: noteId },
     });
     expect(audits).toHaveLength(0);
-    expect(mockLedger.unreverseCreditNoteEntries).not.toHaveBeenCalled();
+    expect(mockLedger.settleRegulatedLedger).not.toHaveBeenCalled();
 
     const preview = await tenantCtx.run(tenantId, () => creditNotes.voidPreview(noteId));
     expect(preview.refusal).toMatch(/RETURN_CREDIT_CONSUMED/);

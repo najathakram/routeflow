@@ -18,7 +18,9 @@ import {
   estimatePillFor,
 } from "../../../lib/estimates-logic";
 import { showToast } from "../../../lib/toast";
+import { estimateTaxBasisNotice } from "../../../lib/estimate-tax-basis";
 import { confirm } from "../../../lib/confirm";
+import { useRestrictionWarningRetry } from "../../../lib/use-restriction-warning-retry";
 import { fmtCalendarDate } from "../../../lib/format-date";
 
 function fmtCurrency(n: number | string | undefined): string {
@@ -37,6 +39,7 @@ export default function EstimateDetailScreen() {
   const acceptMut = useAcceptEstimate();
   const declineMut = useDeclineEstimate();
   const convertMut = useConvertEstimateToInvoice();
+  const rw = useRestrictionWarningRetry(); // row 510: staff warning + override dialog
   const voidMut = useVoidEstimate();
 
   if (isLoading || !estimate) {
@@ -94,13 +97,15 @@ export default function EstimateDetailScreen() {
 
   const handleConvert = () => {
     if (!id) return;
-    convertMut.mutate(id, {
+    convertMut.mutate(rw.attach(id), {
       onSuccess: (inv) => {
-        showToast("Converted to invoice");
+        // H5: the invoice is taxed at TODAY's rate (and carries any regulated levy); say so when that differs.
+        const taxNotice = estimateTaxBasisNotice(inv.taxBasis);
+        showToast(taxNotice ? `Converted to invoice. ${taxNotice}` : "Converted to invoice");
         // Server returns the created Invoice keyed `id` (not `invoiceId`).
         router.push(`/(operator)/invoices/${inv.id}`);
       },
-      onError: onErr,
+      onError: (e: any) => rw.handle(e, handleConvert) || onErr(e),
     });
   };
 
@@ -243,6 +248,7 @@ export default function EstimateDetailScreen() {
         </View>
         <View style={{ height: 24 }} />
       </ScrollView>
+      {rw.modal}
     </SafeAreaView>
   );
 }

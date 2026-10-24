@@ -159,7 +159,7 @@ describe("ProductsService.clearAll — cross-tenant wipe regression", () => {
       softDeleted: 0,
       skipped: [],
     });
-    expect(prisma.$transaction).toHaveBeenCalled();
+    expect(prisma.tenantTransaction).toHaveBeenCalled();
   });
 
   it("is a no-op when the tenant has no products", async () => {

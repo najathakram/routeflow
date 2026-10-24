@@ -9,12 +9,20 @@ import * as bcrypt from "bcrypt";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { productionGuard } = require("./lib/production-guard");
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { loadProtectedSlugs } = require("./lib/protected-slugs.cjs");
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { assertNoLiveProtectedTenants } = require("./lib/live-target-guard.cjs");
 // #2206: PrismaClient() below reads DATABASE_URL, so that is the URL to prove local.
+// Row 195: productionGuard trusts a host allow-list a tunnel can fake, so this wipe ALSO refuses a database
+// that holds a protected non-test tenant (paying, Stripe-linked or PROTECTED_TENANT_SLUGS).
+const protectedSlugs = loadProtectedSlugs(process.env, process.env.DATABASE_URL);
 productionGuard({ requireFlag: "--confirm", dbUrl: process.env.DATABASE_URL });
 
 const prisma = new PrismaClient();
 
 async function main() {
+  await assertNoLiveProtectedTenants(prisma, protectedSlugs);
   console.log("🗑  Clearing existing data (keeping operator users)...");
 
   // Delete in dependency order

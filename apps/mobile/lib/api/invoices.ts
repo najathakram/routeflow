@@ -1,7 +1,10 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import { keptDraftInvoiceId } from "../kept-draft-invoice";
 import type { InvoicePdfVariant } from "../invoice-pdf-variant";
-import type { PaymentMethod } from "@routeflow/types";
+import type { OverrideStampView, PaymentMethod, RestrictionAck } from "@routeflow/types";
+import { splitIdAck, type IdWithAck } from "../restriction-warning";
+import { sendWithPaymentKey, type PaymentKeyHolder } from "../payment-submit-key";
 import type {
   CreateInvoiceItem,
   CreatePartialInvoiceDto,
@@ -14,7 +17,9 @@ import type {
 export type InvoiceStatus =
   "DRAFT" | "SENT" | "VIEWED" | "PARTIAL" | "PAID" | "OVERDUE" | "VOID" | "WRITTEN_OFF";
 
-export interface InvoiceItem {
+/** Row 510: a STAFF read also carries the override stamp (and may carry the resolved name). */
+export interface InvoiceItem extends Partial<OverrideStampView> {
+  restrictionOverrideByName?: string | null;
   id: string;
   description: string;
   /** #2169: the system line kind ("NSF_FEE" for the bounce-fee line), null for a normal line. */
@@ -130,6 +135,10 @@ export interface RecordPaymentDto {
   paidAt?: string;
   /** Bank landing date. May be in the future; omit when unknown. */
   settledAt?: string | null;
+  /** SA-824: the screen's Idempotency-Key holder (never sent in the body). */
+  submitKey?: PaymentKeyHolder;
+  /** Row 498: the staff "Record anyway" resend of a payment refused 409 DUPLICATE_PAYMENT_REF. */
+  recordAnyway?: boolean;
 }
 
 export function useRecordInvoicePayment() {
@@ -137,8 +146,10 @@ export function useRecordInvoicePayment() {
   // Backend returns the updated Invoice (not InvoicePayment), plus the id of
   // the payment row it just created — needed to attach a receipt photo.
   return useMutation<Invoice & { createdPaymentId?: string }, Error, RecordPaymentDto>({
-    mutationFn: ({ invoiceId, ...body }) =>
-      apiClient.post(`/invoices/${invoiceId}/payments`, body).then((r) => r.data),
+    mutationFn: ({ invoiceId, submitKey, ...body }) =>
+      sendWithPaymentKey(submitKey, body, (config) =>
+        apiClient.post(`/invoices/${invoiceId}/payments`, body, ...config).then((r) => r.data),
+      ),
     onSuccess: (_, { invoiceId }) => {
       qc.invalidateQueries({ queryKey: ["invoices", invoiceId] });
       qc.invalidateQueries({ queryKey: ["invoices", "mine"] });
@@ -147,7 +158,7 @@ export function useRecordInvoicePayment() {
   });
 }
 
-export interface CreateInvoiceDto {
+export interface CreateInvoiceDto extends RestrictionAck {
   customerId: string;
   items: CreateInvoiceItem[];
   /** Business date of the invoice (YYYY-MM-DD); defaults to today server-side. */
@@ -177,6 +188,13 @@ export function useCreateInvoice() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["invoices"] });
       qc.invalidateQueries({ queryKey: ["admin", "invoices"] });
+    },
+    // Row 466: a send that failed after the draft committed still created an invoice.
+    onError: (err) => {
+      if (keptDraftInvoiceId(err)) {
+        qc.invalidateQueries({ queryKey: ["invoices"] });
+        qc.invalidateQueries({ queryKey: ["admin", "invoices"] });
+      }
     },
   });
 }
@@ -274,7 +292,14 @@ export function useDeleteInvoice() {
  */
 export function useUpdateInvoice() {
   const qc = useQueryClient();
-  return useMutation<Invoice, Error, { id: string } & Partial<CreateInvoiceDto>>({
+  return useMutation<
+    Invoice,
+    Error,
+    { id: string } & Partial<CreateInvoiceDto> & {
+        /** H4: the invoice's updatedAt when the editor opened it; behind the server's it is 409 INVOICE_STALE. */
+        expectedUpdatedAt?: string;
+      }
+  >({
     mutationFn: ({ id, ...body }) => apiClient.patch(`/invoices/${id}`, body).then((r) => r.data),
     onSuccess: (_, { id }) => {
       qc.invalidateQueries({ queryKey: ["invoices"] });
@@ -310,8 +335,15 @@ export function useSendInvoiceReminder() {
  */
 export function useDuplicateInvoice() {
   const qc = useQueryClient();
-  return useMutation<Invoice, Error, string>({
-    mutationFn: (id) => apiClient.post(`/invoices/${id}/duplicate`).then((r) => r.data),
+  return useMutation<Invoice, Error, IdWithAck>({
+    mutationFn: (v) => {
+      const { id, ack } = splitIdAck(v); // row 510: the copy is a new sale, re-judged
+      return (
+        ack
+          ? apiClient.post(`/invoices/${id}/duplicate`, ack)
+          : apiClient.post(`/invoices/${id}/duplicate`)
+      ).then((r) => r.data);
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["invoices"] });
       qc.invalidateQueries({ queryKey: ["admin", "invoices"] });

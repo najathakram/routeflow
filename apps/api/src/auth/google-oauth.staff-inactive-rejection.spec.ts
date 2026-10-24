@@ -35,7 +35,12 @@ describe("GoogleOAuthService.handleTenantAuth — INACTIVE staff is rejected, ne
     const config = {
       get: (key: string) => {
         if (key === "jwt") {
-          return { secret: "s", refreshSecret: "rs", expiresIn: "15m", refreshExpiresIn: "30d" };
+          return {
+            secret: "test-jwt-secret-0123456789-abcdefghijklmnop",
+            refreshSecret: "rs",
+            expiresIn: "15m",
+            refreshExpiresIn: "30d",
+          };
         }
         return undefined;
       },

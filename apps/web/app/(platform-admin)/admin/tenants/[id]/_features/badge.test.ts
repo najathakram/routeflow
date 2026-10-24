@@ -1,4 +1,4 @@
-import { BADGE_COLORS, deriveBadge } from "./badge";
+import { BADGE_COLORS, deriveBadge, deriveReadout } from "./badge";
 import type { EffectiveFeature } from "./types";
 
 function feature(
@@ -79,5 +79,85 @@ describe("BADGE_COLORS contrast (WCAG AA 4.5:1)", () => {
   it("no pill uses a slate-500/600 text colour", () => {
     for (const cls of Object.values(BADGE_COLORS))
       expect(cls).not.toMatch(/text-slate-(500|600)\b/);
+  });
+});
+
+// BO-12: one state readout per row. The first rule that applies wins.
+describe("deriveReadout: one readout, first rule wins", () => {
+  const eff = (over: Partial<EffectiveFeature>): EffectiveFeature => ({
+    key: "k",
+    area: "a",
+    serving: false,
+    resolver: false,
+    source: "NONE",
+    detail: { planKey: "GROWTH", catalogVersionId: "catalog-v11", enforced: true },
+    billing: { charged: false },
+    ...over,
+  });
+  const enforced = { state: "enforced" as const };
+  const dark = { state: "dark" as const };
+
+  it("no effective data, or a resolver error, is Not reported", () => {
+    expect(deriveReadout(enforced, undefined)).toEqual({
+      kind: "not-reported",
+      text: "Not reported",
+    });
+    expect(deriveReadout(dark, eff({ source: "UNKNOWN", serving: true })).kind).toBe(
+      "not-reported",
+    );
+  });
+
+  it("serving + dark gate + source none or an override that removes it is On, not enforced yet", () => {
+    for (const source of ["NONE", "OVERRIDE_DENY"] as const) {
+      expect(deriveReadout(dark, eff({ source, serving: true }))).toEqual({
+        kind: "not-enforced",
+        text: "On, not enforced yet",
+      });
+    }
+    // not serving, or not dark, does not qualify
+    expect(deriveReadout(dark, eff({ source: "NONE", serving: false })).kind).toBe("off");
+    expect(deriveReadout(enforced, eff({ source: "NONE", serving: true })).kind).toBe("on");
+  });
+
+  it("folds the four source badges into one chip, and drops Inherited and Off", () => {
+    const chip = (source: EffectiveFeature["source"], serving: boolean, kind?: string) =>
+      deriveReadout(
+        enforced,
+        eff({ source, serving, detail: { ...eff({}).detail, ...(kind ? { kind } : {}) } }),
+      );
+    expect(chip("OVERRIDE_GRANT", true, "PILOT")).toEqual({
+      kind: "chip",
+      text: "On, added by override",
+      badge: "added",
+    });
+    expect(chip("OVERRIDE_DENY", false)).toEqual({
+      kind: "chip",
+      text: "Off, removed by override",
+      badge: "removed",
+    });
+    expect(chip("ADDON_SKU", true)).toEqual({
+      kind: "chip",
+      text: "On, paid add-on",
+      badge: "purchased",
+    });
+    expect(chip("OVERRIDE_GRANT", true, "GRANDFATHER")).toEqual({
+      kind: "chip",
+      text: "On, kept from an earlier plan",
+      badge: "grandfathered",
+    });
+    expect(chip("PRESET", true)).toEqual({ kind: "on", text: "On" });
+    expect(chip("PRESET", false)).toEqual({ kind: "off", text: "Off" });
+    expect(chip("NONE", false)).toEqual({ kind: "off", text: "Off" });
+  });
+
+  it("a chip that contradicts what the row is serving is not shown", () => {
+    expect(deriveReadout(enforced, eff({ source: "OVERRIDE_GRANT", serving: false }))).toEqual({
+      kind: "off",
+      text: "Off",
+    });
+    expect(deriveReadout(enforced, eff({ source: "OVERRIDE_DENY", serving: true }))).toEqual({
+      kind: "on",
+      text: "On",
+    });
   });
 });

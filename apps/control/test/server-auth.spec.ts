@@ -112,7 +112,7 @@ describe("headers.ts", () => {
       "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'",
     );
     expect(lower["x-content-type-options"]).toBe("nosniff");
-    expect(lower["referrer-policy"]).toBe("no-referrer");
+    expect(lower["referrer-policy"]).toBe("same-origin");
     expect(lower["x-frame-options"]).toBe("DENY");
     expect(lower["strict-transport-security"]).toBeDefined();
   });
@@ -208,7 +208,7 @@ describe("T38 unauthenticated access over HTTP", () => {
       expect(String(r.headers["content-security-policy"])).toContain("script-src 'self'");
       expect(r.headers["x-content-type-options"]).toBe("nosniff");
       expect(r.headers["x-frame-options"]).toBe("DENY");
-      expect(r.headers["referrer-policy"]).toBe("no-referrer");
+      expect(r.headers["referrer-policy"]).toBe("same-origin");
     }
   });
   it("the login page has no inline script and no inline event handlers", async () => {

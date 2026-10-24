@@ -31,3 +31,15 @@ describe("resolvePickTarget — the unit-label guard needs upb > 1 (SA-580b)", (
     expect(r.key).toBe("U1");
   });
 });
+
+describe("a FAMILY container is never added to an order edit", () => {
+  it("applyPickToDraft returns the draft untouched for a FAMILY", () => {
+    const draft = {};
+    const r = resolvePickTarget(draft, { ...base, unitsPerBox: 1, level: "BOX", kind: "FAMILY" });
+    expect(r.apply(draft)).toBe(draft);
+  });
+  it("a variant still adds", () => {
+    const r = resolvePickTarget({}, { ...base, unitsPerBox: 1, level: "BOX", kind: "VARIANT" });
+    expect(Object.keys(r.apply({}))).toHaveLength(1);
+  });
+});

@@ -20,6 +20,7 @@ import { ios } from "@routeflow/ui/tokens";
 import { NavAction, NavBar, Pill } from "@routeflow/ui/mobile/ios";
 import { useBuyerDashboard, useBuyerInvoices } from "../../../lib/api/buyer";
 import { useBuyerSessionStore } from "../../../lib/buyer-session-store";
+import { buyerHomeInvoiceParams, buyerHomeOverdueCount } from "../../../lib/buyer-home-invoices";
 
 export default function BuyerHomeScreen() {
   const router = useRouter();
@@ -37,7 +38,7 @@ export default function BuyerHomeScreen() {
     data: invoiceData,
     isFetching: invFetching,
     refetch: refetchInv,
-  } = useBuyerInvoices({ statuses: ["SENT", "OVERDUE", "PARTIAL"], limit: 50 });
+  } = useBuyerInvoices(buyerHomeInvoiceParams());
 
   const isLoading = dashLoading;
   const isFetching = dashFetching || invFetching;
@@ -54,9 +55,7 @@ export default function BuyerHomeScreen() {
     (sum, inv) => sum + Number(inv.amountDue ?? inv.balanceDue ?? inv.total ?? 0),
     0,
   );
-  const overdueCount = (invoiceData?.data ?? []).filter(
-    (inv) => inv.status === "OVERDUE" || inv.isOverdue,
-  ).length;
+  const overdueCount = buyerHomeOverdueCount(invoiceData?.data);
 
   const templateCount = stats?.templateCount ?? 0;
   const activeOrderCount = stats?.activeOrders ?? 0;

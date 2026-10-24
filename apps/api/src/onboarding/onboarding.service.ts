@@ -42,6 +42,7 @@ import type {
   ListOnboardingCasesQueryDto,
   UpdateOnboardingCaseDto,
 } from "./dto/onboarding.dto";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 type Tx = Prisma.TransactionClient;
 type CaseRow = Prisma.OnboardingCaseGetPayload<{ include: { steps: true } }>;
@@ -235,7 +236,7 @@ export class OnboardingService {
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
         throw new ConflictException({
           statusCode: 409,
-          code: "ONBOARDING_BOOKING_HAS_CASE",
+          code: API_ERROR_CODES.ONBOARDING_BOOKING_HAS_CASE,
           message: "An onboarding case already exists for that demo booking",
         });
       }
@@ -258,7 +259,7 @@ export class OnboardingService {
       if (c.status === "LIVE" || c.status === "LOST") {
         throw new ConflictException({
           statusCode: 409,
-          code: "ONBOARDING_CASE_CLOSED",
+          code: API_ERROR_CODES.ONBOARDING_CASE_CLOSED,
           message: `This case is ${c.status} and can no longer be changed`,
         });
       }
@@ -327,7 +328,7 @@ export class OnboardingService {
       if (blockers.length > 0) {
         throw new ConflictException({
           statusCode: 409,
-          code: "ONBOARDING_GATE_BLOCKED",
+          code: API_ERROR_CODES.ONBOARDING_GATE_BLOCKED,
           message: `${blockers.length} required step${blockers.length === 1 ? "" : "s"} still open in ${c.stage}`,
           stage: c.stage,
           blockers,
@@ -371,7 +372,7 @@ export class OnboardingService {
       if (step.status === "WAIVED") {
         throw new ConflictException({
           statusCode: 409,
-          code: "ONBOARDING_STEP_WAIVED",
+          code: API_ERROR_CODES.ONBOARDING_STEP_WAIVED,
           message: "This step was waived — reopen it before completing it",
         });
       }
@@ -404,7 +405,7 @@ export class OnboardingService {
       if (step.status !== "PENDING") {
         throw new ConflictException({
           statusCode: 409,
-          code: "ONBOARDING_STEP_NOT_PENDING",
+          code: API_ERROR_CODES.ONBOARDING_STEP_NOT_PENDING,
           message: `This step is already ${step.status} — reopen it first`,
         });
       }
@@ -429,7 +430,7 @@ export class OnboardingService {
       if (step.stage !== c.stage) {
         throw new ConflictException({
           statusCode: 409,
-          code: "ONBOARDING_STEP_BEHIND_GATE",
+          code: API_ERROR_CODES.ONBOARDING_STEP_BEHIND_GATE,
           message: "Only steps in the current stage can be reopened",
         });
       }
@@ -564,7 +565,7 @@ export class OnboardingService {
     if (stageIndex(step.stage) > stageIndex(c.stage)) {
       throw new ConflictException({
         statusCode: 409,
-        code: "ONBOARDING_STEP_NOT_REACHED",
+        code: API_ERROR_CODES.ONBOARDING_STEP_NOT_REACHED,
         message: `This step belongs to ${step.stage}; the case is at ${c.stage}`,
       });
     }
@@ -575,7 +576,7 @@ export class OnboardingService {
     if (c.status !== "OPEN") {
       throw new ConflictException({
         statusCode: 409,
-        code: "ONBOARDING_CASE_NOT_OPEN",
+        code: API_ERROR_CODES.ONBOARDING_CASE_NOT_OPEN,
         message: `This case is ${c.status}; reopen it before changing steps or stages`,
       });
     }

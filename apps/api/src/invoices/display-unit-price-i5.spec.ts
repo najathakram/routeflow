@@ -16,6 +16,8 @@ const ALLOW: Record<string, string> = {
   "invoices/invoice-composed-edit.ts": "writer: re-stamps the rows on a DRAFT edit",
   "invoices/invoice-pdf-item.ts": "reader: the PDF sub-line price text",
   "orders/component-view.ts": "reader: read mapper for the component view (findOne)",
+  "common/staff-only-fields.ts":
+    "carry: the customer-facing allowlist copies the component view's field through, never summed",
   "orders/order-edit-composition.ts":
     "carry: restores the stored rows' value on an edit (SA-591), never summed",
 };

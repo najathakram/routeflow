@@ -40,17 +40,22 @@ const renderIt = () =>
 describe("Duplicate refusals surface visibly through the real global handler", () => {
   beforeEach(() => jest.clearAllMocks());
 
-  it("an ORDER-LINKED invoice: the server's message is shown, exactly once", async () => {
+  it("an ORDER-LINKED invoice: the fixed copy is shown (B980), exactly once", async () => {
+    const copy =
+      "This invoice came from an order, so it can't be duplicated. Create a new invoice or issue a credit note instead.";
     const message =
       "Cannot duplicate an order-linked invoice. Create a new invoice or issue a credit note instead.";
     post.mockRejectedValue({ response: { status: 400, data: { message } } });
     renderIt();
     fireEvent.click(screen.getByRole("button", { name: "Duplicate" }));
-    expect(await screen.findByText(message)).toBeInTheDocument();
-    expect(screen.getAllByText(message)).toHaveLength(1);
+    expect(await screen.findByText(copy)).toBeInTheDocument();
+    expect(screen.getAllByText(copy)).toHaveLength(1);
+    expect(screen.queryByText(message)).toBeNull();
   });
 
-  it("an invoice with a UNIT line (409 UNIT_AWARE_LINE): the server's message is shown, exactly once", async () => {
+  it("an invoice with a UNIT line (409 UNIT_AWARE_LINE): the fixed copy is shown (B980), exactly once", async () => {
+    const copy =
+      "A line on this order is sold by a unit such as a case, so this action isn't available for it yet.";
     const message =
       "A line on this order is sold by the Case, so it can't be duplicated yet. Edit it from the web order screen.";
     post.mockRejectedValue({
@@ -58,7 +63,8 @@ describe("Duplicate refusals surface visibly through the real global handler", (
     });
     renderIt();
     fireEvent.click(screen.getByRole("button", { name: "Duplicate" }));
-    expect(await screen.findByText(message)).toBeInTheDocument();
-    expect(screen.getAllByText(message)).toHaveLength(1);
+    expect(await screen.findByText(copy)).toBeInTheDocument();
+    expect(screen.getAllByText(copy)).toHaveLength(1);
+    expect(screen.queryByText(message)).toBeNull();
   });
 });

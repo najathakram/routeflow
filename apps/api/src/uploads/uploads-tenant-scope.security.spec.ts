@@ -118,6 +118,7 @@ describe("UploadsController — JWT-path tenant scoping", () => {
     write("regulated-filings/t1/cat/2026-01.csv");
     write("tobacco-reports/t1/2026-01.csv");
     write("tenants/t1/doc.txt");
+    write("packing-slips/t1/slip.pdf");
     write("products/p1/img.txt");
     write("customers/c1/documents/doc.txt");
     write("payments/pay1/receipt.txt");
@@ -190,6 +191,14 @@ describe("UploadsController — JWT-path tenant scoping", () => {
 
   it("blocks a regulated filing for a DIFFERENT tenant (403)", async () => {
     expect((await get("regulated-filings/t1/cat/2026-01.csv", "t2")).status).toBe(403);
+  });
+
+  it("serves a packing-slips/ pdf to its OWN tenant (#3168)", async () => {
+    expect((await get("packing-slips/t1/slip.pdf", "t1")).status).toBe(200);
+  });
+
+  it("blocks a packing-slips/ pdf for a DIFFERENT tenant (403)", async () => {
+    expect((await get("packing-slips/t1/slip.pdf", "t2")).status).toBe(403);
   });
 
   it("blocks a tobacco report for a different tenant (403)", async () => {

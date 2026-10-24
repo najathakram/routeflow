@@ -5,10 +5,14 @@ import { ios } from "@routeflow/ui/tokens";
 import { BarcodeScanner } from "../../../components/BarcodeScanner";
 import { resolveProductByCode } from "../../../lib/barcode-resolve";
 import { showToast } from "../../../lib/toast";
+import { decideScanResult } from "../../../lib/scan-suggestion";
+import { ScanMatchPickerSheet } from "../../../components/ScanMatchPickerSheet";
+import { useScanMatchPicker } from "../../../lib/use-scan-match-picker";
 
 export default function ScanProductScreen() {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
+  const matchPicker = useScanMatchPicker();
 
   const handleScanned = async (code: string) => {
     if (busy) return;
@@ -24,6 +28,17 @@ export default function ScanProductScreen() {
           pathname: "/(operator)/products/new",
           params: { barcode: code },
         });
+        return;
+      }
+      // B1220 parity: several fuzzy matches -> choose one; never silently open the first.
+      const decision = decideScanResult(result, "add");
+      if (decision.kind === "pick-from-list") {
+        matchPicker.open(
+          decision.matches,
+          "Open",
+          (p: { id: string }) => router.replace(`/(operator)/products/${p.id}`),
+          () => setBusy(false),
+        );
         return;
       }
       router.replace(`/(operator)/products/${result.product.id}`);
@@ -43,6 +58,7 @@ export default function ScanProductScreen() {
           <Text style={styles.busyText}>Looking up…</Text>
         </View>
       ) : null}
+      <ScanMatchPickerSheet {...matchPicker.props} />
     </View>
   );
 }

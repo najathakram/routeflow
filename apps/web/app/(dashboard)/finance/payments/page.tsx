@@ -15,8 +15,14 @@ import {
   type PaymentListParams,
   type StandalonePaymentDto,
 } from "@/lib/api/invoices";
-import { useInvoices, type InvoiceStatus } from "@/lib/api/invoices";
+import { useInvoices } from "@/lib/api/invoices";
+import { isOpenInvoiceStatus } from "@/lib/open-invoice-status";
 import { waterfallAllocations, allocationTotals } from "@/lib/api/supplier-payments";
+import { clampAllocationInput } from "@/lib/payment-allocation";
+import { genericToastCopy } from "@/lib/generic-toast-copy";
+import { useAuth } from "@/lib/auth-context";
+import { toastDuplicatePaymentRef } from "@/lib/duplicate-payment-ref";
+import { dayClosedCopy } from "@/lib/day-closed-copy";
 import { useCustomers } from "@/lib/api/customers";
 import { useToast, EmptyState, Button, Badge } from "@routeflow/ui/web";
 import Link from "next/link";
@@ -28,6 +34,18 @@ import {
   PAYMENT_METHOD_COLORS as METHOD_COLORS,
   type SelectablePaymentMethod,
 } from "@/lib/payment-methods";
+import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
+import {
+  PAYMENT_PHOTO_LATER_COPY,
+  finishFoundPayment,
+  forgetPaymentProof,
+  paymentKeyScope,
+  rememberPaymentProof,
+  usePaymentSubmitKey,
+} from "@/lib/payment-submit-key";
+import { usePaymentStatusCheck } from "@/lib/use-payment-status-check";
+import { PaymentStatusCheck } from "@/components/PaymentStatusCheck";
+import { PAYMENT_STATUS_COPY } from "@routeflow/types/payment-submit-key";
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
 
@@ -38,10 +56,8 @@ const BANK_DATE_LABEL = "Money received in bank";
 const BANK_DATE_HELP =
   "When the funds actually landed in your account — e.g. a post-dated check's clearing date. Leave blank if unknown.";
 
-/** Statuses a payment can land on. Filtered CLIENT-side: ListInvoicesDto
- *  validates `status` as a single enum value, so a comma-list 400s server-side
- *  (mirrors mobile payments/record). */
-const OPEN_STATUSES: InvoiceStatus[] = ["SENT", "VIEWED", "PARTIAL", "OVERDUE"];
+// A payment can land on the open statuses (isOpenInvoiceStatus). Filtered CLIENT-side: ListInvoicesDto
+// validates `status` as a single enum value, so a comma-list 400s server-side (mirrors mobile payments/record).
 
 // ─── Sort helper ───────────────────────────────────────────────────────────────
 
@@ -61,10 +77,41 @@ interface Allocation {
 
 function RecordPaymentModal({ onClose }: { onClose: () => void }) {
   const { toast } = useToast();
+  const { user } = useAuth();
   const record = useRecordPaymentStandalone();
-  const uploadPaymentImage = useUploadPaymentImage();
-  const { data: customersData } = useCustomers({ limit: 200 });
   const [customerId, setCustomerId] = React.useState("");
+  // SA-824: the holder scope is the writer + target (`standalone:<customerId>`), shared with
+  // CustomerRecordPaymentModal, resolved when the customer is chosen: no key exists before that. One key per
+  // open, kept across a Cancel -> reopen while the outcome is unknown.
+  const keyScope = customerId ? paymentKeyScope.standalone(customerId) : null;
+  const paymentKey = usePaymentSubmitKey(true, keyScope);
+  const uploadPaymentImage = useUploadPaymentImage();
+  // SA-824: an unknown outcome offers "Check payment status"; found closes like a 2xx, and attaches the
+  // selected proof photo to the found payment (the same upload the 2xx path runs).
+  const statusCheck = usePaymentStatusCheck(paymentKey, async (payment) => {
+    // No scope (no customer chosen) means no key and no remembered proof: skip the lookup.
+    const photo = keyScope
+      ? await finishFoundPayment<File>(keyScope, payment, (paymentId, f) =>
+          uploadPaymentImage.mutateAsync({ paymentId, file: f }),
+        )
+      : "none";
+    toast(
+      photo === "later"
+        ? { title: PAYMENT_PHOTO_LATER_COPY, variant: "info" }
+        : { title: PAYMENT_STATUS_COPY.recorded, variant: "success" },
+    );
+    if (photo === "failed") {
+      toast({
+        title: "Payment saved, image upload failed",
+        description: "You can attach it later from the payment detail page.",
+        variant: "error",
+      });
+    }
+    onClose();
+  });
+  const { data: customersData } = useCustomers({ limit: 200 });
+  // An attempt for this customer is unknown or in flight: never re-scope it to another customer.
+  const customerLocked = paymentKey.hasUnknown();
   const [totalAmount, setTotalAmount] = React.useState("");
   const [bankCharges, setBankCharges] = React.useState("");
   const [paidAt, setPaidAt] = React.useState(new Date().toISOString().split("T")[0]);
@@ -85,7 +132,7 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
   const customerInvoices = React.useMemo(() => {
     if (!customerId || !invoicesData?.data) return [];
     return invoicesData.data
-      .filter((inv) => OPEN_STATUSES.includes(inv.status) && (inv.balanceDue ?? 0) > 0.001)
+      .filter((inv) => isOpenInvoiceStatus(inv.status) && (inv.balanceDue ?? 0) > 0.001)
       .sort((a, b) =>
         (a.issueDate ?? a.createdAt ?? "").localeCompare(b.issueDate ?? b.createdAt ?? ""),
       );
@@ -116,25 +163,40 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
   }, [customerId, customerInvoices.length, totalAmount]);
 
   const total = parseFloat(totalAmount) || 0;
-  const { allocated: allocatedTotal, excess } = allocationTotals(
+  const {
+    allocated: allocatedTotal,
+    excess,
+    overAllocated,
+  } = allocationTotals(
     total,
     // `|| null` also swallows a NaN from a half-typed value, as the old
     // `parseFloat(a.amount) || 0` did.
     allocations.map((a) => ({ amount: parseFloat(a.amount) || null })),
   );
 
+  // REG-B1002 / B313: cap each row at its invoice's balance, same helper as
+  // CustomerRecordPaymentModal.
   const updateAlloc = (idx: number, val: string) =>
-    setAllocations((prev) => prev.map((a, i) => (i === idx ? { ...a, amount: val } : a)));
+    setAllocations((prev) =>
+      prev.map((a, i) =>
+        i === idx ? { ...a, amount: clampAllocationInput(val, a.amountDue) } : a,
+      ),
+    );
 
   const customers = customersData?.data ?? [];
 
-  const handleSave = async (status: "DRAFT" | "PAID") => {
-    if (!customerId) {
+  const handleSave = async (status: "DRAFT" | "PAID", recordAnyway = false) => {
+    if (paymentKey.hasUnknown()) return; // SA-824: the status check comes before any new attempt
+    if (!customerId || !keyScope) {
       toast({ title: "Select a customer", variant: "error" });
       return;
     }
     if (!total || total <= 0) {
       toast({ title: "Enter a valid amount", variant: "error" });
+      return;
+    }
+    if (overAllocated) {
+      toast({ title: "Allocated more than the amount received", variant: "error" });
       return;
     }
     const validAllocs = allocations.filter((a) => a.amount && parseFloat(a.amount) > 0);
@@ -152,13 +214,16 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
       reference: reference || undefined,
       notes: notes || undefined,
       status,
+      ...(recordAnyway ? { recordAnyway: true } : {}),
       allocations: validAllocs.map((a) => ({
         invoiceId: a.invoiceId,
         amount: parseFloat(a.amount),
       })),
     };
+    rememberPaymentProof(keyScope, file); // so a status check that finds the payment can attach it
     try {
-      const res = await record.mutateAsync(dto);
+      const res = await record.mutateAsync({ ...dto, submitKey: paymentKey });
+      forgetPaymentProof(keyScope);
       toast({
         title: `Payment ${status === "DRAFT" ? "saved as draft" : "recorded"}`,
         variant: "success",
@@ -181,8 +246,14 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
       }
       onClose();
     } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
-      toast({ title: msg ?? "Failed to record payment", variant: "error" });
+      // Row 498: a duplicate reference names the existing payment; staff may "Record anyway".
+      if (toastDuplicatePaymentRef(err, toast, user?.role, () => void handleSave(status, true)))
+        return;
+      toast({
+        title: "Failed to record payment",
+        description: genericToastCopy(err),
+        variant: "error",
+      });
     }
   };
 
@@ -202,7 +273,11 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
               <label className="mb-1.5 block text-sm font-medium text-navy">Customer *</label>
               <select
                 value={customerId}
-                onChange={(e) => setCustomerId(e.target.value)}
+                onChange={(e) => {
+                  if (paymentKey.hasUnknown()) return; // SA-824: never re-scope an unknown attempt
+                  setCustomerId(e.target.value);
+                }}
+                disabled={customerLocked}
                 className={fieldCls}
               >
                 <option value="">Select customer...</option>
@@ -212,6 +287,9 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
                   </option>
                 ))}
               </select>
+              {customerLocked && (
+                <p className="mt-1 text-xs text-navy/70">{PAYMENT_STATUS_COPY.customerLocked}</p>
+              )}
             </div>
             <div>
               <label className="mb-1.5 block text-sm font-medium text-navy">
@@ -389,17 +467,27 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
                   <span>Total received:</span>
                   <span>{fmt(total)}</span>
                 </div>
-                {excess > 0.001 && (
-                  <div className="flex justify-between font-medium text-amber-600">
-                    <span>⚠ Unallocated (→ advance):</span>
-                    <span>{fmt(excess)}</span>
+                {overAllocated ? (
+                  <div className="flex justify-between font-medium text-danger">
+                    <span>⚠ Allocated more than received:</span>
+                    <span>{fmt(allocatedTotal - total)}</span>
                   </div>
+                ) : (
+                  excess > 0.001 && (
+                    <div className="flex justify-between font-medium text-amber-600">
+                      <span>⚠ Unallocated (→ advance):</span>
+                      <span>{fmt(excess)}</span>
+                    </div>
+                  )
                 )}
               </div>
             </div>
           )}
         </div>
 
+        <div className="px-6 pb-2">
+          <PaymentStatusCheck status={statusCheck} />
+        </div>
         <div className="flex items-center justify-end gap-3 border-t border-surface-border px-6 py-4">
           <button
             onClick={onClose}
@@ -409,14 +497,14 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
           </button>
           <button
             onClick={() => handleSave("DRAFT")}
-            disabled={record.isPending}
+            disabled={record.isPending || overAllocated || statusCheck.unknown}
             className="rounded-lg border border-surface-border px-4 py-2 text-sm text-navy hover:bg-surface-raised disabled:opacity-50"
           >
-            Save as Draft
+            Save as draft
           </button>
           <button
             onClick={() => handleSave("PAID")}
-            disabled={record.isPending}
+            disabled={record.isPending || overAllocated || statusCheck.unknown}
             className="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-50"
           >
             {record.isPending ? "Saving..." : "Save as Paid"}
@@ -492,8 +580,13 @@ export default function FinancePaymentsPage() {
       await voidPayment.mutateAsync(voidConfirm);
       toast({ title: "Payment voided", variant: "success" });
       setVoidConfirm(null);
-    } catch {
-      toast({ title: "Failed to void payment", variant: "error" });
+    } catch (err: unknown) {
+      // The global toast is quiet for a closed-day refusal (the hook's meta): this one says why, once.
+      toast({
+        title: "Failed to void payment",
+        description: dayClosedCopy(err) ?? undefined,
+        variant: "error",
+      });
     }
   };
 
@@ -567,12 +660,10 @@ export default function FinancePaymentsPage() {
           <h2 className="text-xl font-semibold text-navy">Payments Received</h2>
           <p className="text-sm text-navy/70">All payments recorded against invoices</p>
         </div>
-        <button
-          onClick={() => setShowModal(true)}
-          className="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 transition-colors"
-        >
-          + Record Payment
-        </button>
+        <div className="flex flex-col items-end">
+          <WriteButton onClick={() => setShowModal(true)}>+ Record Payment</WriteButton>
+          <ReadOnlyHint />
+        </div>
       </div>
 
       {/* Summary cards */}
@@ -774,9 +865,9 @@ export default function FinancePaymentsPage() {
                           title="No payments yet"
                           description="Record a payment to mark invoices as paid and track receipts."
                           action={
-                            <Button size="sm" onClick={() => setShowModal(true)}>
+                            <WriteButton size="sm" onClick={() => setShowModal(true)}>
                               Record payment
-                            </Button>
+                            </WriteButton>
                           }
                         />
                       )}

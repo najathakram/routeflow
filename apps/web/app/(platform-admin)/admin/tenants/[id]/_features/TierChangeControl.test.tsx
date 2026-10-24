@@ -79,7 +79,7 @@ describe("TierChangeControl — preview before apply (B539)", () => {
     pickPlan("STARTER");
     fireEvent.click(screen.getByRole("button", { name: "Change Plan" }));
 
-    expect(await screen.findByText("Preview tier change", { selector: "h3" })).toBeInTheDocument();
+    expect(await screen.findByText("Preview plan change", { selector: "h3" })).toBeInTheDocument();
     expect(mockPreview).toHaveBeenCalledWith(TENANT_ID, { planKey: "STARTER" });
     expect(onChangePlan).not.toHaveBeenCalled();
   });
@@ -117,7 +117,7 @@ describe("TierChangeControl — preview before apply (B539)", () => {
 
     await waitFor(() => expect(onChangePlan).toHaveBeenCalledWith("STARTER"));
     await waitFor(() =>
-      expect(screen.queryByText("Preview tier change", { selector: "h3" })).not.toBeInTheDocument(),
+      expect(screen.queryByText("Preview plan change", { selector: "h3" })).not.toBeInTheDocument(),
     );
   });
 
@@ -130,7 +130,7 @@ describe("TierChangeControl — preview before apply (B539)", () => {
     await screen.findByTestId("preview-diff");
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
 
-    expect(screen.queryByText("Preview tier change", { selector: "h3" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Preview plan change", { selector: "h3" })).not.toBeInTheDocument();
     expect(onChangePlan).not.toHaveBeenCalled();
   });
 
@@ -183,11 +183,11 @@ describe("TierChangeControl — preview before apply (B539)", () => {
     expect(await screen.findByRole("button", { name: "Applying..." })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
     fireEvent.keyDown(document, { key: "Escape" });
-    expect(screen.getByText("Preview tier change", { selector: "h3" })).toBeInTheDocument();
+    expect(screen.getByText("Preview plan change", { selector: "h3" })).toBeInTheDocument();
 
     finish();
     await waitFor(() =>
-      expect(screen.queryByText("Preview tier change", { selector: "h3" })).not.toBeInTheDocument(),
+      expect(screen.queryByText("Preview plan change", { selector: "h3" })).not.toBeInTheDocument(),
     );
   });
 });
@@ -203,7 +203,7 @@ describe("TierChangeControl — failure paths", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Could not preview that plan change. Try again.",
     );
-    expect(screen.queryByText("Preview tier change", { selector: "h3" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Preview plan change", { selector: "h3" })).not.toBeInTheDocument();
     expect(onChangePlan).not.toHaveBeenCalled();
   });
 
@@ -220,7 +220,7 @@ describe("TierChangeControl — failure paths", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Could not apply that change. Try again.",
     );
-    expect(screen.getByText("Preview tier change", { selector: "h3" })).toBeInTheDocument();
+    expect(screen.getByText("Preview plan change", { selector: "h3" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Confirm" })).not.toBeDisabled();
   });
 

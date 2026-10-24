@@ -114,7 +114,7 @@ describe("NOTIFICATION_TRIGGERS (#1965)", () => {
     expect(NOTIFICATION_TRIGGERS.has(NotificationEvent.PAYMENT_REMINDER)).toBe(false);
   });
 
-  it("REG-1965 T2: every NotificationEvent has an audience; the five internal events are STAFF, the rest CUSTOMER", () => {
+  it("REG-1965 T2: every NotificationEvent has an audience; the five internal events and the three SA-603c buyer-order events are STAFF, the rest CUSTOMER", () => {
     for (const ev of ALL_EVENTS) expect(["CUSTOMER", "STAFF"]).toContain(notificationAudience(ev));
     const staff = ALL_EVENTS.filter((e) => notificationAudience(e) === "STAFF").sort();
     expect(staff).toEqual(
@@ -124,6 +124,10 @@ describe("NOTIFICATION_TRIGGERS (#1965)", () => {
         NotificationEvent.FAILED_DELIVERY,
         NotificationEvent.PAYMENT_FAILED_NSF,
         NotificationEvent.CHECK_RETURNED,
+        // SA-603c / SA-606 WS4: emailed to the tenant's staff admins (no firing site yet).
+        NotificationEvent.STAFF_NEW_ORDER,
+        NotificationEvent.BUYER_ORDER_EDITED,
+        NotificationEvent.BUYER_ORDER_CANCELLED,
       ].sort(),
     );
     expect(Object.keys(NOTIFICATION_AUDIENCE).sort()).toEqual([...ALL_EVENTS].sort());

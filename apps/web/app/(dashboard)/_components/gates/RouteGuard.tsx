@@ -19,9 +19,16 @@ import { PlanGateBoundary } from "./PlanGateBoundary";
 // ─── Role-based route guard ───────────────────────────────────────────────────
 
 /** Paths that CUSTOMER users may access (prefix-matched) */
-const CUSTOMER_ALLOWED: string[] = ["/dashboard", "/orders", "/returns", "/invoices", "/settings"];
+const CUSTOMER_ALLOWED: string[] = ["/dashboard", "/orders", "/returns", "/invoices"];
 /** Paths that DRIVER users may access (prefix-matched) */
-const DRIVER_ALLOWED: string[] = ["/dashboard", "/routes", "/settings"];
+const DRIVER_ALLOWED: string[] = ["/dashboard", "/routes"];
+/**
+ * REG-B1013: `/settings` is a CUSTOMER/DRIVER's own account page (password, sessions, Google sign-in),
+ * matched EXACTLY — every business sub-page under it (billing, restrictions, imports, migration,
+ * product categories) is staff-only. The settings page itself also hides the hub from these roles.
+ * `/get-the-app` (row 559) is the install page every dashboard role may open.
+ */
+const ROLE_EXACT_ALLOWED: string[] = ["/settings", "/get-the-app"];
 /**
  * In-development surfaces gated per-feature addon (owner decision 2026-08-25:
  * recurring routes and ad-hoc order delivery are separate addons; owner
@@ -36,7 +43,10 @@ const GATED_PREFIXES: { prefix: string; need: "routes" | "delivery" | "either" }
 ];
 
 function isPathAllowed(pathname: string, allowed: string[]): boolean {
-  return allowed.some((p) => pathname === p || pathname.startsWith(p + "/"));
+  return (
+    ROLE_EXACT_ALLOWED.includes(pathname) ||
+    allowed.some((p) => pathname === p || pathname.startsWith(p + "/"))
+  );
 }
 
 /**

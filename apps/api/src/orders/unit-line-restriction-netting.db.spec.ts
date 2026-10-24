@@ -32,6 +32,7 @@ import { EncryptionService } from "../common/encryption.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { OrdersService } from "./orders.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
+import { INVOICE_EDIT_STUBS } from "./testing/invoice-edit-stubs";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -140,9 +141,10 @@ describeDb(
         sellingRestrictions: {
           getPolicy: async () => ({ enabled: true, addressPrecedence: "BILLING_FIRST" }),
           assertLinesSellable: async (a: {
-            lines: Array<{ productId: string; qtyDelta?: number }>;
+            lines: Array<{ productId: string; qtyDelta?: number; lineKey?: string }>;
           }) => {
-            seen.push(...a.lines);
+            // row 510: each judged line also carries the key a warning echoes; the netting is what these specs pin
+            seen.push(...a.lines.map(({ lineKey: _lineKey, ...line }) => line));
             const grows = a.lines.some(
               (l) => l.productId === banned && (l.qtyDelta === undefined || l.qtyDelta > 0),
             );
@@ -156,6 +158,7 @@ describeDb(
         invoicesService: {
           revertLinkedInvoicesForOrderEdit: async () => undefined,
           resyncOrderInvoicesForEdit: async () => [],
+          ...INVOICE_EDIT_STUBS,
           reconcileOrderDraftInvoice: async () => undefined,
         },
         logger: new Logger(OrdersService.name),

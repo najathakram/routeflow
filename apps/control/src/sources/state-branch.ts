@@ -47,11 +47,12 @@ const LANE_FILE_RE = /^([a-z0-9][a-z0-9._-]{0,40})\.jsonl$/;
 const RENAME_RETRIES = 8;
 
 /**
- * Rename a directory, retrying the transient refusals Windows gives while a virus scanner, the
- * search indexer or a just-exited git child still holds a handle inside it (EPERM / EBUSY / EACCES;
- * a clone is renamed into place right after git exits). POSIX never raises these for a rename, so
- * there this is a plain `renameSync`. Anything else, and the last failure, is thrown unchanged.
- * `rename` / `sleep` are seams for the spec.
+ * Rename a directory. On Windows only, retry the transient refusals it gives while a virus scanner,
+ * the search indexer or a just-exited git child still holds a handle inside it (EPERM / EBUSY /
+ * EACCES; a clone is renamed into place right after git exits). On POSIX this is a direct rename
+ * with no retry and no sleep: a rename there never raises those codes for this, and the back-off
+ * blocks the thread (Atomics.wait), which a Linux server must never pay. Anything else, and the
+ * last failure, is thrown unchanged. `rename` / `sleep` / `win` are seams for the spec.
  */
 export function renameDirRetrying(
   from: string,
@@ -59,7 +60,12 @@ export function renameDirRetrying(
   rename: (a: string, b: string) => void = fs.renameSync,
   sleep: (ms: number) => void = (ms) =>
     void Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms),
+  win: boolean = process.platform === "win32",
 ): void {
+  if (!win) {
+    rename(from, to);
+    return;
+  }
   for (let attempt = 0; ; attempt++) {
     try {
       rename(from, to);

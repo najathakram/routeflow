@@ -69,6 +69,12 @@ updates:
         update-types: ["version-update:semver-minor"]
       - dependency-name: "react-native-svg"
         update-types: ["version-update:semver-minor", "version-update:semver-patch"]
+      # Expo SDK 55 pins react-native-webview 13.16.0 (expo/bundledNativeModules.json).
+      # #3597 offered 13.17.0: it broke the WebView types AND listed @typescript/native-preview
+      # (a ~28 MB TS-Go snapshot) as a RUNTIME dependency, hoisted into the root node_modules
+      # that the api Dockerfile copies into the prod image. Moves only with an Expo SDK upgrade.
+      - dependency-name: "react-native-webview"
+        update-types: ["version-update:semver-minor", "version-update:semver-patch"]
       # sanitize-html >= 2.17.6 swapped in an ESM-only htmlparser2 12 and
       # requires Node >= 22.12 (Jest can't load it; prod containers ran
       # node:20 when this was written). Pinned at 2.17.5 in apps/api. The

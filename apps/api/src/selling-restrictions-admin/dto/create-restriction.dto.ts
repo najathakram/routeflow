@@ -7,16 +7,24 @@ import {
   IsString,
   MaxLength,
   MinLength,
+  ValidateNested,
 } from "class-validator";
-import { Transform } from "class-transformer";
+import { Transform, Type } from "class-transformer";
 import { RestrictionJurisdiction, RestrictionSurface } from "@prisma/client";
+import { CreateTargetsDto } from "./rule-targets.dto";
 
 const trim = ({ value }: { value: unknown }) => (typeof value === "string" ? value.trim() : value);
 
-/** Exactly one of categoryId / productId; the service enforces that (and the tenant). */
+/**
+ * The legacy single `categoryId` / `productId` OR (row 509) `targets` with many products and labels. Exactly one of
+ * those forms; the service enforces that (and the tenant).
+ */
 export class CreateRestrictionDto {
   @IsOptional() @IsString() @MaxLength(64) categoryId?: string;
   @IsOptional() @IsString() @MaxLength(64) productId?: string;
+
+  /** Row 509: the products and/or labels the rule covers (1..1,000 ids in all, checked by the service). */
+  @IsOptional() @ValidateNested() @Type(() => CreateTargetsDto) targets?: CreateTargetsDto;
 
   @IsEnum(RestrictionJurisdiction) jurisdiction: RestrictionJurisdiction;
 

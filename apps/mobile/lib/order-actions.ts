@@ -5,7 +5,18 @@
  * fulfillment-aware relabeling (plan §WP11) can be pinned against
  * `canTransitionOrder` (`lib/order-status-flow.ts`) without mounting the screen.
  */
+import type { OrderCancelBlockedReason } from "@routeflow/types";
 import type { OrderStatus } from "./api/orders";
+import { isPosOrder, posStatusMoveAllowed } from "./order-status-flow";
+
+/** Fixed copy for a cancel the server refuses (ORDER_WITH_CARRIER_NO_CANCEL): the web's exact words. */
+export const WITH_CARRIER_COPY =
+  "This order is already with the carrier. Use a return instead of cancelling.";
+
+/** The note shown in place of Cancel for a `cancelBlockedReason` (the server's answer), or null. */
+export function cancelBlockedNote(reason?: OrderCancelBlockedReason | null): string | null {
+  return reason === "WITH_CARRIER" ? WITH_CARRIER_COPY : null;
+}
 
 export interface StatusAction {
   label: string;
@@ -88,12 +99,9 @@ function routeStatusActions(current: OrderStatus): StatusAction[] {
           style: "primary",
           icon: "checkmark-done-circle-outline",
         },
-        {
-          label: "Partial delivery",
-          toStatus: "PARTIALLY_DELIVERED",
-          style: "secondary",
-          icon: "git-branch-outline",
-        },
+        // B692 (SA-814 R4-3): no manual "Partial delivery" here. The server refuses a PARTIALLY_DELIVERED without
+        // per-line quantities (409 ORDER_PD_NEEDS_QUANTITIES) and this screen has no quantity dialog yet; a route
+        // stop's completion records partials. Do not re-add until that dialog exists.
         {
           label: "Back to confirmed",
           toStatus: "CONFIRMED",
@@ -184,9 +192,18 @@ function routeStatusActions(current: OrderStatus): StatusAction[] {
  */
 export function statusActions(
   status: OrderStatus,
-  fulfillPath: "ROUTE" | "SHIP" = "ROUTE",
+  fulfillPath: "ROUTE" | "SHIP" | "PICKUP" = "ROUTE",
+  /** `GET /orders/:id`'s `cancelBlockedReason`: the server's one answer, never derived from the status. */
+  cancelBlockedReason?: OrderCancelBlockedReason | null,
+  /** `GET /orders/:id`'s `counterSale`: PICKUP + counterSale is a walk-in sale, not a POS-mode order. */
+  counterSale?: boolean | null,
 ): StatusAction[] {
-  const actions = routeStatusActions(status);
+  const all = routeStatusActions(status);
+  const actions = cancelBlockedReason ? all.filter((a) => a.toStatus !== "CANCELLED") : all;
+  // POS mode (SA-763r P-2): no Out-for-delivery and no DELIVERED action (hand-over completes it).
+  if (isPosOrder({ fulfillPath, counterSale })) {
+    return actions.filter((a) => posStatusMoveAllowed({ fulfillPath, counterSale }, a.toStatus));
+  }
   if (fulfillPath !== "SHIP") return actions;
   return actions
     .filter((a) => a.toStatus !== "PARTIALLY_DELIVERED")

@@ -32,14 +32,16 @@ function build(primary: Acct, secondary: Acct) {
   const calls: Array<{ id: string; data: Record<string, unknown> }> = [];
   const order: string[] = [];
   const tx = {
-    customerLink: { updateMany: jest.fn() },
+    // Row 424: the links are read inside the tx, after the decide claim.
+    customerLink: { updateMany: jest.fn(), findMany: jest.fn().mockResolvedValue([]) },
     buyerAccount: {
       update: jest.fn(async (args: { where: { id: string }; data: Record<string, unknown> }) => {
         calls.push({ id: args.where.id, data: args.data });
       }),
     },
     buyerRefreshToken: { deleteMany: jest.fn() },
-    buyerMergeRequest: { update: jest.fn() },
+    // Row 424: the decide claim (compare-and-set on the status) wins.
+    buyerMergeRequest: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
   };
   const prisma = {
     buyerMergeRequest: {
@@ -51,7 +53,7 @@ function build(primary: Acct, secondary: Acct) {
       }),
     },
     customerLink: { findMany: jest.fn().mockResolvedValue([]) },
-    $transaction: jest.fn(async (fn: (t: typeof tx) => Promise<void>) => {
+    $transaction: jest.fn(async (fn: (t: typeof tx) => Promise<unknown>) => {
       order.push("transaction");
       return fn(tx);
     }),

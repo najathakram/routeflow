@@ -3,6 +3,8 @@ import { setTenantCookie, clearTenantCookie } from "./tenant-cookie";
 import { OP_KEYS } from "./auth-keys";
 import { setOpPresenceCookie, clearOpPresenceCookie } from "./presence-cookies";
 import { getImpersonation, clearImpersonation } from "./impersonation";
+import { clearAllLiveCarts } from "./counter-live-cart-keys";
+import { clearAllInvoiceDrafts, resumeInvoiceDraftWrites } from "./invoice-draft-storage";
 
 export { OP_PRESENCE_COOKIE, clearOpPresenceCookie } from "./presence-cookies";
 
@@ -17,6 +19,8 @@ export interface AuthUser {
   isAdmin?: boolean;
   canActAsDriver?: boolean;
   tenantSlug?: string | null;
+  /** From the JWT (`tenantId`): the tenant segment of the local unsent-order copy key (SA-817). */
+  tenantId?: string | null;
 }
 
 export interface AuthResponse {
@@ -58,7 +62,17 @@ export function getStoredUser(): AuthUser | null {
     isAdmin: (payload.isAdmin as boolean) ?? false,
     canActAsDriver: (payload.canActAsDriver as boolean) ?? false,
     tenantSlug: (payload.tenantSlug as string) ?? (imp && !imp.expired ? imp.slug : null),
+    tenantId: (payload.tenantId as string | null | undefined) ?? null,
   };
+}
+
+/**
+ * True only for the account-admin roles (TENANT_ADMIN, SUPER_ADMIN). The api gates account-level
+ * settings (billing export, numbering, import, SMTP, CRM, user management ...) to these roles, so
+ * the UI offers those controls to nobody else (Perms PR1).
+ */
+export function isAccountAdmin(user: { role?: string } | null | undefined): boolean {
+  return user?.role === "TENANT_ADMIN" || user?.role === "SUPER_ADMIN";
 }
 
 /** Tenant slug of the CURRENT session (JWT beats any cookie); null when logged out. */
@@ -99,6 +113,7 @@ export async function login(username: string, password: string): Promise<AuthRes
     password,
   });
   adoptTokenPair(data);
+  resumeInvoiceDraftWrites(); // a fresh sign-in may save drafts again
   return data;
 }
 
@@ -112,7 +127,10 @@ export async function logout(): Promise<void> {
   localStorage.removeItem(OP_KEYS.refreshToken);
   clearOpPresenceCookie();
   clearTenantCookie();
+  // Before the impersonation marker goes: a support session's sign-out must leave the real user's drafts alone.
+  clearAllInvoiceDrafts(); // nor an unsaved new invoice (ROW 447)
   clearImpersonation();
+  clearAllLiveCarts(); // an unfinished counter sale never outlives its cashier's session
   window.location.href = "/login";
 }
 

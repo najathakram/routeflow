@@ -259,7 +259,7 @@ export interface ScanFeedbackAction {
 
 /** Feedback shown inside the scanner overlay after each continuous scan. */
 export interface ScanFeedback {
-  kind: "added" | "error";
+  kind: "added" | "error" | "info";
   text: string;
   /**
    * Renders a button in the pill instead of stranding the operator, and the
@@ -297,6 +297,16 @@ function findSlot(
     readSlots(state).find((slot) => intersectsCandidates(candidates, slot.code, candidatesOf)) ??
     null
   );
+}
+
+/** True when the gate has really ACCEPTED `code` before (a look-only `touchSeen` slot does not count). */
+export function hasBeenAccepted(
+  state: ScanGateState | null,
+  code: string,
+  candidatesOf: ScanCandidates = rawCandidates,
+): boolean {
+  const slot = findSlot(state, code, candidatesOf);
+  return slot !== null && slot.lastAcceptAt !== NEVER_ACCEPTED;
 }
 
 /** True when the gate already tracks `code` (same candidate matching as `gateScan`). */

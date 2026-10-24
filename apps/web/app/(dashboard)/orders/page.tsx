@@ -18,31 +18,58 @@ import {
   Download,
   History,
   Package,
-  Truck,
   Route as RouteIcon,
+  SlidersHorizontal,
 } from "lucide-react";
-import { PageHeader, Badge, Select, Button, cn, useToast, EmptyState } from "@routeflow/ui/web";
+import {
+  PageHeader,
+  Badge,
+  Select,
+  Button,
+  Modal,
+  ScrollShadow,
+  cn,
+  useToast,
+  EmptyState,
+} from "@routeflow/ui/web";
+import { useAuth } from "@/lib/auth-context";
+import { staffMay } from "@routeflow/types";
+import { OrdersMoreMenu } from "./_components/OrdersMoreMenu";
 import { usePageTitle } from "@/lib/page-title-context";
 import { humanizeEnum } from "@/lib/format";
 import { useOrders, useUpdateOrderStatus, useBulkDeleteOrders, type Order } from "@/lib/api/orders";
 import { useProduct } from "@/lib/api/products";
+import { useShippedWeek } from "@/lib/tenant-timezone";
 import { SearchableProductPicker } from "@/components/SearchableProductPicker";
 import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
+import { useBelowMd } from "@/lib/hooks/useBelowMd";
 import { useUrlPage, useResetPageOnChange, useClampPage } from "@/lib/hooks/useUrlPage";
 import { downloadCsv, csvDate } from "@/lib/export";
 import { apiClient } from "@/lib/api-client";
-import { useDeliveryAccess } from "@/lib/api/addons";
+import { useDeliveryAccess, useFleetAccess } from "@/lib/api/addons";
+import { useOrderStatusLabel, useStaffFulfilment } from "@/lib/fulfilment-caps";
+import { useDrafts } from "@/lib/api/drafts";
 import { saveTripDraft } from "@/lib/trip-draft";
+import { bulkCancelFailureTitle } from "@/lib/bulk-cancel-summary";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { CreateOrderModal } from "./_components/CreateOrderModal";
+import { BatchShipActions } from "./_components/BatchShipActions";
+import { useCounterSaleGate } from "@/lib/api/counter-sale";
+import { quickCreateRule } from "@/lib/counter-sale";
+import { genericToastCopy } from "@/lib/generic-toast-copy";
+import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 
 // ─── Saved view definitions ───────────────────────────────────────────────────
 
 const SAVED_VIEWS = [
   { id: "all", label: "All", filters: {} as Record<string, string | boolean> },
+  // O4 (P04): the status dropdown is gone, so every status it offered is a pill here.
+  { id: "draft", label: "Draft", filters: { status: "DRAFT" } },
   { id: "pending", label: "Pending", filters: { status: "PENDING" } },
   { id: "confirmed", label: "Confirmed", filters: { status: "CONFIRMED" } },
   { id: "delivery", label: "Out for Delivery", filters: { status: "OUT_FOR_DELIVERY" } },
+  { id: "partial", label: "Partly delivered", filters: { status: "PARTIALLY_DELIVERED" } },
   { id: "urgent", label: "Urgent", filters: { urgent: true } },
   { id: "delivered", label: "Delivered", filters: { status: "DELIVERED" } },
   { id: "cancelled", label: "Cancelled", filters: { status: "CANCELLED" } },
@@ -56,7 +83,7 @@ const STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: "PENDING", label: "Pending" },
   { value: "CONFIRMED", label: "Confirmed" },
   { value: "OUT_FOR_DELIVERY", label: "Out for Delivery" },
-  { value: "PARTIALLY_DELIVERED", label: "Partially Delivered" },
+  { value: "PARTIALLY_DELIVERED", label: "Partly delivered" },
   { value: "DELIVERED", label: "Delivered" },
   { value: "CANCELLED", label: "Cancelled" },
 ];
@@ -70,11 +97,7 @@ function orderStatusLabel(status: string): string {
 
 // ─── Fulfillment filter options ───────────────────────────────────────────────
 
-const FULFILLMENT_OPTIONS: { value: string; label: string }[] = [
-  { value: "", label: "All Fulfillment" },
-  { value: "ROUTE", label: "Delivery route" },
-  { value: "SHIP", label: "Ship via carrier" },
-];
+const FULFILLMENT_LABEL = { ROUTE: "Delivery route", SHIP: "Ship via carrier" } as const;
 
 // ─── Date column ──────────────────────────────────────────────────────────────
 
@@ -114,18 +137,220 @@ function OrderDateCell({ order }: { order: Order }) {
   );
 }
 
+// ─── Pager (shared by the desktop table-card footer and the mobile-only card) ─────
+
+interface PagerMeta {
+  total: number;
+  totalPages?: number;
+}
+
+/** "Showing X to Y of N" / an empty-result message. */
+function PagerInfo({
+  meta,
+  page,
+  limit,
+  customerSearch,
+}: {
+  meta: PagerMeta;
+  page: number;
+  limit: number;
+  customerSearch: string;
+}) {
+  return (
+    <span>
+      {meta.total > 0 ? (
+        <>
+          Showing{" "}
+          <span className="font-mono tabular-nums text-navy">
+            {(page - 1) * limit + 1} to {Math.min(page * limit, meta.total)}
+          </span>{" "}
+          of <span className="font-mono tabular-nums text-navy">{meta.total}</span>
+          {customerSearch ? " (filtered)" : ""}
+        </>
+      ) : customerSearch ? (
+        "No orders match your search"
+      ) : (
+        "No orders found"
+      )}
+    </span>
+  );
+}
+
+/** Per-page select + prev/page-number/next controls. */
+function PagerControls({
+  meta,
+  page,
+  limit,
+  setLimit,
+  setPage,
+}: {
+  meta: PagerMeta;
+  page: number;
+  limit: number;
+  setLimit: (n: number) => void;
+  setPage: (next: number | ((prev: number) => number)) => void;
+}) {
+  return (
+    <>
+      <div className="flex items-center gap-1.5">
+        <span>Per page</span>
+        <select
+          value={limit}
+          onChange={(e) => {
+            setLimit(Number(e.target.value));
+            setPage(1);
+          }}
+          className="h-7 rounded-ctl border border-surface-border bg-white px-2 font-mono text-xs text-navy focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+        >
+          {[10, 20, 50, 100].map((n) => (
+            <option key={n} value={n}>
+              {n}
+            </option>
+          ))}
+        </select>
+      </div>
+      {(meta.totalPages ?? 1) > 1 && (
+        <div className="ml-auto flex items-center gap-0.5">
+          <button
+            disabled={page <= 1}
+            onClick={() => setPage((p) => p - 1)}
+            aria-label="Previous page"
+            className="grid h-7 w-7 place-items-center rounded-ctl text-navy/70 hover:bg-surface-raised disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          >
+            <ChevronLeft className="h-3.5 w-3.5" />
+          </button>
+          {Array.from({ length: Math.min(meta.totalPages ?? 1, 7) }, (_, i) => {
+            const totalPages = meta.totalPages ?? 1;
+            const p = totalPages <= 7 ? i + 1 : page <= 4 ? i + 1 : page + i - 3;
+            if (p < 1 || p > totalPages) return null;
+            return (
+              <button
+                key={p}
+                onClick={() => setPage(p)}
+                className={cn(
+                  "grid h-7 min-w-7 place-items-center rounded-ctl px-2 font-mono text-xs tabular-nums transition-colors",
+                  p === page ? "bg-navy text-white" : "text-navy/70 hover:bg-surface-raised",
+                )}
+              >
+                {p}
+              </button>
+            );
+          })}
+          <button
+            disabled={page >= (meta.totalPages ?? 1)}
+            onClick={() => setPage((p) => p + 1)}
+            aria-label="Next page"
+            className="grid h-7 w-7 place-items-center rounded-ctl text-navy/70 hover:bg-surface-raised disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          >
+            <ChevronRight className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
+    </>
+  );
+}
+
+// ─── Delivery date range (inline at md+, a From / to / To row in the phone Filters panel) ─────
+
+function DeliveryRange({
+  stacked,
+  dateFrom,
+  dateTo,
+  onFrom,
+  onTo,
+  onClear,
+}: {
+  stacked: boolean;
+  dateFrom: string;
+  dateTo: string;
+  onFrom: (v: string) => void;
+  onTo: (v: string) => void;
+  onClear: () => void;
+}) {
+  const clear =
+    dateFrom || dateTo ? (
+      <button
+        type="button"
+        onClick={onClear}
+        className={cn(
+          "rounded p-1.5 text-navy/70 hover:text-danger transition-colors",
+          stacked && "ml-auto",
+        )}
+        title="Clear dates"
+      >
+        <X className="h-3.5 w-3.5" />
+      </button>
+    ) : null;
+  const dateClass =
+    "h-10 rounded-ctl border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500";
+  const fromInput = (
+    <input
+      type="date"
+      value={dateFrom}
+      onChange={(e) => onFrom(e.target.value)}
+      max={dateTo || undefined}
+      className={cn(dateClass, stacked ? "w-full min-w-0" : "w-32")}
+      title="Delivery date from"
+    />
+  );
+  const toInput = (
+    <input
+      type="date"
+      value={dateTo}
+      onChange={(e) => onTo(e.target.value)}
+      min={dateFrom || undefined}
+      className={cn(dateClass, stacked ? "w-full min-w-0" : "w-32")}
+      title="Delivery date to"
+    />
+  );
+  if (stacked) {
+    // Q05: "From … to …" is ONE row of two equal fields with "to" between them, so the range never wraps with the
+    // second date alone on a line. The label and the clear X sit on their own line above it.
+    return (
+      <div className="space-y-1.5">
+        <div className="flex items-center gap-1.5 text-xs font-medium text-navy/70">
+          <Calendar className="h-4 w-4" aria-hidden />
+          Delivery
+          {clear}
+        </div>
+        <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2">
+          {fromInput}
+          <span className="text-xs text-navy/40">to</span>
+          {toInput}
+        </div>
+      </div>
+    );
+  }
+  // flex-wrap: this whole block is a single flex item in the filter bar (B506).
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      <Calendar className="h-4 w-4 text-navy/70" />
+      <span className="text-xs text-navy/70 font-medium">Delivery:</span>
+      {fromInput}
+      <span className="text-xs text-navy/40">to</span>
+      {toInput}
+      {clear}
+    </div>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function OrdersPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { user } = useAuth();
+  // Same staff test as the shell's gate callers (layout.tsx, CommandPalette): everyone but CUSTOMER / DRIVER.
+  const counterGate = useCounterSaleGate({
+    enabled: user?.role !== "CUSTOMER" && user?.role !== "DRIVER",
+  });
   const { setTitle } = usePageTitle();
   React.useEffect(() => {
     setTitle("Orders");
   }, [setTitle]);
 
   // URL-backed filter state
-  const [urlFilters, setFilter, clearFilters] = useUrlFilters({
+  const [urlFilters, setFilter, clearFilters, setFilters] = useUrlFilters({
     status: "",
     urgent: false,
     dateFrom: "",
@@ -136,6 +361,8 @@ export default function OrdersPage() {
     // Ad-hoc trips: ROUTE (dispatched) vs SHIP (supplier/carrier-shipped,
     // excluded from trip/route dispatch) — same URL-chip treatment as status.
     fulfillPath: "",
+    // Dashboard shipping cards: "no-tracking" (shipped, no tracking number) | "week" (shipped since Sunday 00:00 in the business's timezone).
+    shipView: "",
   });
   const statusFilter = (urlFilters.status as string) ?? "";
   const urgentOnly = (urlFilters.urgent as boolean) ?? false;
@@ -143,6 +370,14 @@ export default function OrdersPage() {
   const dateTo = (urlFilters.dateTo as string) ?? "";
   const productIdFilter = (urlFilters.productId as string) ?? "";
   const fulfillPathFilter = (urlFilters.fulfillPath as string) ?? "";
+  const shipView = (urlFilters.shipView as string) ?? "";
+  // Sunday 00:00 in the business's timezone — the dashboard card uses the same helper.
+  const week = useShippedWeek(shipView === "week");
+  const weekStart = week.from;
+  const shipParams = {
+    hasTracking: shipView === "no-tracking" ? (false as const) : undefined,
+    shippedFrom: shipView === "week" ? weekStart : undefined,
+  };
   // Only fetched to render the chip's label — the filter itself is the id.
   const { data: filterProduct } = useProduct(productIdFilter);
   // Hide-only gate for the ad-hoc delivery builder entry point — bulkbar action
@@ -159,6 +394,8 @@ export default function OrdersPage() {
   // an optional barcode to add on open.
   const [resumeDraftId, setResumeDraftId] = React.useState<string | null>(null);
   const [initialScanCode, setInitialScanCode] = React.useState<string | null>(null);
+  // B1210: ?preselect=SHIP (the counter sale's "Ship this order instead") opens a FRESH builder on "Ship via carrier".
+  const [initialFulfillPath, setInitialFulfillPath] = React.useState<"SHIP" | null>(null);
 
   // Open the builder from URL intents: ?action=new (fresh), ?resumeDraft=<id>
   // (resume a parked draft), optional &scan=<code> (add on open). Runs on mount and
@@ -169,12 +406,26 @@ export default function OrdersPage() {
     const resume = searchParams.get("resumeDraft");
     const scan = searchParams.get("scan");
     if (!resume && action !== "new") return;
+    // A business whose staff default is the counter: "New order" OPENS AS the counter sale, unless the operator chose
+    // "Ship this order instead" (?ship=1), which falls through to the normal builder.
+    if (
+      !resume &&
+      action === "new" &&
+      counterGate.opensAsCounter &&
+      searchParams.get("ship") !== "1" &&
+      // ?builder=1 (the /orders/new target and the "Invoice order" link) asks for the builder itself.
+      searchParams.get("builder") !== "1"
+    ) {
+      router.replace("/orders/counter-sale");
+      return;
+    }
     if (resume) {
       setResumeDraftId(resume);
     } else {
       setResumeDraftId(null);
     }
     setInitialScanCode(scan);
+    setInitialFulfillPath(!resume && searchParams.get("preselect") === "SHIP" ? "SHIP" : null);
     setIsCreateOpen(true);
     // Strip ONLY the intent params. This used to replace with a bare "/orders",
     // which also discarded the status/date chips and the search — so opening the
@@ -183,19 +434,28 @@ export default function OrdersPage() {
     params.delete("action");
     params.delete("resumeDraft");
     params.delete("scan");
+    params.delete("ship");
+    params.delete("builder");
+    params.delete("preselect");
     const qs = params.toString();
     router.replace(qs ? `/orders?${qs}` : "/orders", { scroll: false });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams]);
+  }, [searchParams, counterGate.opensAsCounter]);
   const [selectMode, setSelectMode] = React.useState(false);
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const [isCancelling, setIsCancelling] = React.useState(false);
   const [isDeleting, setIsDeleting] = React.useState(false);
   const [deleteConfirm, setDeleteConfirm] = React.useState(false);
+  // REG-B2: cancelling voids the orders' linked invoices, so the bulk bar asks first.
+  const [cancelConfirm, setCancelConfirm] = React.useState(false);
   const [page, setPage] = useUrlPage();
   const [limit, setLimit] = React.useState(20);
   const [sortCol, setSortCol] = React.useState<string>("createdAt");
   const [sortDir, setSortDir] = React.useState<"asc" | "desc">("desc");
+  // Below md the secondary filters live behind one "Filters" button (orders apple-ux r4 Q01); md+ keeps them inline.
+  const narrow = useBelowMd();
+  const [filtersOpen, setFiltersOpen] = React.useState(false);
+  const filtersButtonRef = React.useRef<HTMLButtonElement>(null);
 
   const toggleSort = (col: string) => {
     if (sortCol === col) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -214,8 +474,35 @@ export default function OrdersPage() {
     );
   };
   const { toast } = useToast();
-  const updateStatus = useUpdateOrderStatus();
+  // Status words come from the shared fulfilment table (display only): per ORDER by its fulfillPath,
+  // and the account's default method for the filters below.
+  const statusLabel = useOrderStatusLabel();
+  // The fulfilment filter lists only the paths the account offers (plus an active URL filter).
+  const fulfilMethods = useStaffFulfilment().formMethods;
+  // A carrier-only (fleet-off) account has no delivery runs: the requested-delivery-date filter, sort and
+  // column are noise there. An active date filter in the URL keeps them, so it can still be cleared.
+  const { fleet } = useFleetAccess();
+  const showDelivery = fleet || !!dateFrom || !!dateTo;
+  // A sort left on the hidden Delivery Date column would order rows by a key the user can no longer see.
+  React.useEffect(() => {
+    if (!showDelivery && sortCol === "deliveryDate") {
+      setSortCol("createdAt");
+      setSortDir("desc");
+    }
+  }, [showDelivery, sortCol]);
+
+  const savedViews = SAVED_VIEWS.map((v) => ({
+    ...v,
+    label: statusLabel(String(v.filters.status ?? ""), v.label),
+  }));
+  // The bulk cancel shows its own single summary toast — no per-order global error toasts.
+  const updateStatus = useUpdateOrderStatus({ localErrorToast: true });
   const bulkDelete = useBulkDeleteOrders();
+  // B823: DraftDock (layout.tsx) floats over the bottom-left of every dashboard screen. Below md the list reserves bottom
+  // clearance (the spacer after the pager) only when a draft is actually parked, so the last card can clear the dock — same
+  // react-query cache key as the dock's own fetch, so this costs no extra request.
+  const { data: drafts } = useDrafts();
+  const hasDrafts = (drafts?.length ?? 0) > 0;
 
   const toggleSelect = (id: string) =>
     setSelected((prev) => {
@@ -228,24 +515,30 @@ export default function OrdersPage() {
     setSelectMode(false);
     setSelected(new Set());
     setDeleteConfirm(false);
+    setCancelConfirm(false);
   };
 
   const handleBulkCancel = async () => {
     if (isCancelling) return;
     setIsCancelling(true);
     try {
-      await Promise.all(
+      const results = await Promise.allSettled(
         Array.from(selected).map((id) => updateStatus.mutateAsync({ id, status: "CANCELLED" })),
       );
-      toast({
-        title: `${selected.size} order${selected.size !== 1 ? "s" : ""} cancelled`,
-        variant: "success",
-      });
-      exitSelectMode();
-    } catch {
-      toast({ title: "Failed to cancel some orders", variant: "error" });
+      const failures = results.flatMap((r) => (r.status === "rejected" ? [r.reason] : []));
+      if (failures.length > 0) {
+        // Orders with the carrier are refused (ORDER_WITH_CARRIER_NO_CANCEL): name them, with the count.
+        toast({ title: bulkCancelFailureTitle(failures), variant: "error" });
+      } else {
+        toast({
+          title: `${selected.size} order${selected.size !== 1 ? "s" : ""} cancelled`,
+          variant: "success",
+        });
+        exitSelectMode();
+      }
     } finally {
       setIsCancelling(false);
+      setCancelConfirm(false);
     }
   };
 
@@ -284,6 +577,7 @@ export default function OrdersPage() {
     dateTo,
     productIdFilter,
     fulfillPathFilter,
+    shipView,
     debouncedCustomerSearch,
   ]);
 
@@ -294,6 +588,7 @@ export default function OrdersPage() {
   React.useEffect(() => {
     setSelected(new Set());
     setDeleteConfirm(false);
+    setCancelConfirm(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     page,
@@ -319,7 +614,8 @@ export default function OrdersPage() {
             !dateFrom &&
             !dateTo &&
             !productIdFilter &&
-            !fulfillPathFilter
+            !fulfillPathFilter &&
+            !shipView
           );
         }
         return keys.every(
@@ -332,23 +628,41 @@ export default function OrdersPage() {
   }, [urlFilters, statusFilter, urgentOnly, dateFrom, dateTo, productIdFilter, fulfillPathFilter]);
 
   const applyView = (view: (typeof SAVED_VIEWS)[0]) => {
+    // A status-only pill replaces just the status, like the dropdown it replaced: the date range,
+    // product and fulfilment filters (and ?shipView) stay. Every other view starts clean.
+    const viewKeys = Object.keys(view.filters);
+    if (viewKeys.length === 1 && viewKeys[0] === "status") {
+      setFilter("status", view.filters.status as string);
+      return;
+    }
     clearFilters();
     for (const [k, val] of Object.entries(view.filters)) {
       setFilter(k as never, val as string | boolean);
     }
   };
 
-  const { data, isLoading, isError } = useOrders({
-    status: statusFilter || undefined,
-    urgent: urgentOnly || undefined,
-    deliveryDateFrom: dateFrom || undefined,
-    deliveryDateTo: dateTo || undefined,
-    productId: productIdFilter || undefined,
-    fulfillPath: (fulfillPathFilter as "ROUTE" | "SHIP" | "") || undefined,
-    search: debouncedCustomerSearch || undefined,
-    page,
-    limit,
-  });
+  // The week view waits for the business timezone: never fetch (or show) an unfiltered list for it.
+  const weekPending = shipView === "week" && !weekStart;
+  const {
+    data,
+    isLoading: ordersLoading,
+    isError,
+  } = useOrders(
+    {
+      status: statusFilter || undefined,
+      urgent: urgentOnly || undefined,
+      deliveryDateFrom: dateFrom || undefined,
+      deliveryDateTo: dateTo || undefined,
+      productId: productIdFilter || undefined,
+      fulfillPath: (fulfillPathFilter as "ROUTE" | "SHIP" | "") || undefined,
+      ...shipParams,
+      search: debouncedCustomerSearch || undefined,
+      page,
+      limit,
+    },
+    { enabled: !weekPending },
+  );
+  const isLoading = ordersLoading || weekPending;
 
   const orders = data?.data ?? [];
   const meta = data?.meta;
@@ -383,7 +697,7 @@ export default function OrdersPage() {
   const [isExporting, setIsExporting] = React.useState(false);
 
   const handleExport = async () => {
-    if (isExporting) return;
+    if (isExporting || weekPending) return;
     setIsExporting(true);
     try {
       const EXPORT_LIMIT = 1000;
@@ -395,6 +709,7 @@ export default function OrdersPage() {
           deliveryDateTo: dateTo || undefined,
           productId: productIdFilter || undefined,
           fulfillPath: fulfillPathFilter || undefined,
+          ...shipParams,
           search: debouncedCustomerSearch || undefined,
           page: 1,
           limit: EXPORT_LIMIT,
@@ -434,17 +749,155 @@ export default function OrdersPage() {
         });
       }
     } catch (err) {
-      toast({ title: "Export failed", description: (err as Error).message, variant: "error" });
+      toast({
+        title: "Export failed",
+        description: genericToastCopy(
+          err,
+          "The orders export couldn't be created. Check the filters, then try again.",
+        ),
+        variant: "error",
+      });
     } finally {
       setIsExporting(false);
     }
   };
+
+  // A store-only tenant (capabilities.fulfilment: PICKUP only): "New Order" went to the same place as "Counter sale",
+  // so the header has Counter sale (primary) and Invoice a customer (secondary) and nothing else duplicated.
+  const storeOnlyHeader = quickCreateRule(counterGate).storeOnly;
 
   const headerSubtitle = meta
     ? `${meta.total.toLocaleString("en-US")} order${meta.total !== 1 ? "s" : ""}${
         urgentCount > 0 ? ` · ${urgentCount} urgent` : ""
       }`
     : undefined;
+
+  // Q01: the SECONDARY filters (sort, fulfilment, urgent only, product, delivery range). The search box and the status
+  // chips are not among them: they stay on the page at every width. A non-default sort counts, so nothing hides.
+  const secondaryActive =
+    (fulfillPathFilter ? 1 : 0) +
+    (urgentOnly ? 1 : 0) +
+    (productIdFilter ? 1 : 0) +
+    (dateFrom || dateTo ? 1 : 0) +
+    (sortCol !== "createdAt" || sortDir !== "desc" ? 1 : 0);
+  // ONE write: separate setFilter calls each start from the URL as it was, so only the last would stick.
+  const clearSecondary = () => {
+    setFilters({ urgent: false, fulfillPath: "", productId: "", dateFrom: "", dateTo: "" });
+    setSortCol("createdAt");
+    setSortDir("desc");
+  };
+  const closeFilters = () => setFiltersOpen(false);
+
+  // The five controls are the same inline (md+) and in the Filters panel (below md); only the width differs.
+  // B823 review (Opus): mobile had no way to sort at all (the desktop table sorts by column-header clicks, invisible
+  // below md), so the sort select + direction button live in the phone panel only.
+  const sortControl = (
+    <div className="flex items-center gap-1.5">
+      <div className="min-w-0 flex-1">
+        <Select
+          aria-label="Sort orders by"
+          options={[
+            { value: "createdAt", label: "Created" },
+            ...(showDelivery ? [{ value: "deliveryDate", label: "Delivery Date" }] : []),
+            { value: "orderNumber", label: "Order #" },
+            { value: "customer", label: "Customer" },
+            { value: "total", label: "Total" },
+            { value: "status", label: "Status" },
+          ]}
+          value={sortCol}
+          onChange={(e) => {
+            const col = e.target.value;
+            if (col === sortCol) return;
+            setSortCol(col);
+            setSortDir(col === "createdAt" || col === "deliveryDate" ? "desc" : "asc");
+          }}
+          className="h-10"
+        />
+      </div>
+      <button
+        type="button"
+        onClick={() => toggleSort(sortCol)}
+        aria-label={sortDir === "asc" ? "Sort ascending" : "Sort descending"}
+        className="grid h-10 w-10 shrink-0 place-items-center rounded-ctl border border-surface-border bg-white text-navy/70 hover:bg-surface-raised"
+      >
+        <SortIcon col={sortCol} />
+      </button>
+    </div>
+  );
+  const fulfilmentControl = (
+    <div className={narrow ? "w-full" : "w-44"}>
+      <Select
+        aria-label="Fulfillment"
+        options={[
+          { value: "", label: "All Fulfillment" },
+          ...Array.from(new Set([...fulfilMethods, fulfillPathFilter].filter(Boolean))).map(
+            (m) => ({
+              value: m,
+              label: FULFILLMENT_LABEL[m as "ROUTE" | "SHIP"] ?? m,
+            }),
+          ),
+        ]}
+        value={fulfillPathFilter}
+        onChange={(e) => setFilter("fulfillPath", e.target.value)}
+      />
+    </div>
+  );
+  const urgentControl = (
+    <button
+      onClick={() => setFilter("urgent", !urgentOnly)}
+      className={cn(
+        "flex h-10 items-center gap-2 rounded-ctl border px-3 text-sm font-medium transition-colors",
+        narrow && "w-full",
+        urgentOnly
+          ? "border-danger/40 bg-danger-bg text-danger"
+          : "border-line-strong bg-white text-navy/70 hover:text-navy",
+      )}
+    >
+      <AlertTriangle className="h-4 w-4" />
+      Urgent only
+      {urgentOnly && urgentCount > 0 && (
+        <span className="flex h-[17px] min-w-[17px] items-center justify-center rounded-full bg-danger-bg px-1.5 font-mono text-[11px] font-semibold text-[#B91C1C]">
+          {urgentCount}
+        </span>
+      )}
+    </button>
+  );
+  // Product filter — "which orders had this item?" (PR-B). Selecting a product swaps the picker for a removable chip
+  // (X clears it back to the picker), mirroring the urgent toggle / date-clear affordances.
+  const productControl = productIdFilter ? (
+    <button
+      type="button"
+      onClick={() => setFilter("productId", "")}
+      className={cn(
+        "flex h-10 items-center gap-2 rounded-ctl border border-brand-200 bg-brand-50 px-3 text-sm font-medium text-brand-700 transition-colors hover:bg-brand-100",
+        narrow && "w-full",
+      )}
+      title="Remove product filter"
+    >
+      <Package className="h-4 w-4 shrink-0" />
+      <span className="min-w-0 truncate">{filterProduct?.name ?? "Loading…"}</span>
+      <X className="ml-auto h-3.5 w-3.5 shrink-0" />
+    </button>
+  ) : (
+    <div className={narrow ? "w-full" : "w-56"}>
+      <SearchableProductPicker
+        async
+        value=""
+        onChange={(id) => setFilter("productId", id)}
+        placeholder="Filter by product…"
+      />
+    </div>
+  );
+  const deliveryControl = showDelivery ? (
+    <DeliveryRange
+      stacked={narrow}
+      dateFrom={dateFrom}
+      dateTo={dateTo}
+      onFrom={(v) => setFilter("dateFrom", v)}
+      onTo={(v) => setFilter("dateTo", v)}
+      onClear={() => setFilters({ dateFrom: "", dateTo: "" })}
+    />
+  ) : null;
 
   return (
     <div className="space-y-5 p-6">
@@ -468,12 +921,16 @@ export default function OrdersPage() {
               onClick={handleExport}
               disabled={isExporting}
               title="Export filtered orders as CSV"
+              className={cn(storeOnlyHeader && "max-sm:hidden")}
             >
               {isExporting ? "Exporting…" : "Export"}
             </Button>
             <Button
               variant="secondary"
-              className={cn(selectMode && "border-brand-600 bg-brand-50 text-brand-700")}
+              className={cn(
+                selectMode && "border-brand-600 bg-brand-50 text-brand-700",
+                storeOnlyHeader && "max-sm:hidden",
+              )}
               leftIcon={
                 selectMode ? <X className="h-4 w-4" /> : <CheckSquare className="h-4 w-4" />
               }
@@ -481,7 +938,55 @@ export default function OrdersPage() {
             >
               {selectMode ? "Cancel" : "Select"}
             </Button>
-            <Button onClick={() => setIsCreateOpen(true)}>New Order</Button>
+            {storeOnlyHeader ? (
+              <OrdersMoreMenu
+                className="sm:hidden"
+                items={[
+                  {
+                    label: isExporting ? "Exporting…" : "Export",
+                    onSelect: handleExport,
+                    disabled: isExporting,
+                  },
+                  {
+                    label: selectMode ? "Cancel selection" : "Select",
+                    onSelect: () => (selectMode ? exitSelectMode() : setSelectMode(true)),
+                  },
+                ]}
+              />
+            ) : null}
+            {storeOnlyHeader &&
+            counterGate.permsKnown &&
+            staffMay(user?.role, "USE_POS_MODE", counterGate.deniedGroups) ? (
+              <Button
+                variant="secondary"
+                className="max-sm:h-11"
+                onClick={() => setIsCreateOpen(true)}
+              >
+                Invoice a customer
+              </Button>
+            ) : null}
+            {counterGate.showButton ? (
+              <WriteButton
+                // A store-only tenant has one place to ring a sale: the counter is the filled primary (UX G7).
+                variant={storeOnlyHeader ? undefined : "secondary"}
+                className={cn(storeOnlyHeader && "max-sm:h-11")}
+                onClick={() => router.push("/orders/counter-sale")}
+              >
+                Counter sale
+              </WriteButton>
+            ) : null}
+            {storeOnlyHeader ? null : (
+              <WriteButton
+                onClick={() =>
+                  counterGate.opensAsCounter
+                    ? router.push("/orders/counter-sale")
+                    : setIsCreateOpen(true)
+                }
+              >
+                New Order
+              </WriteButton>
+            )}
+            <ReadOnlyHint className="basis-full text-right text-xs text-slate-600" />
           </div>
         }
       />
@@ -498,13 +1003,23 @@ export default function OrdersPage() {
           </button>
           <span className="h-[18px] w-px bg-white/20" />
           <button
-            onClick={handleBulkCancel}
+            onClick={() => setCancelConfirm(true)}
             disabled={isCancelling}
             className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-white/75 hover:text-white transition-colors disabled:opacity-60"
           >
             {isCancelling && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
             Cancel {selected.size}
           </button>
+          <BatchShipActions
+            orders={filtered
+              .filter((o) => selected.has(o.id))
+              .map((o) => ({
+                id: o.id,
+                orderNumber: o.orderNumber,
+                customerName: o.customer?.businessName,
+              }))}
+            onDone={exitSelectMode}
+          />
           {deliveryAccessEnabled && (
             <>
               <span className="h-[18px] w-px bg-white/20" />
@@ -556,8 +1071,12 @@ export default function OrdersPage() {
       )}
 
       {/* Saved view chips */}
-      <div className="flex items-center gap-2 overflow-x-auto pb-1">
-        {SAVED_VIEWS.map((view) => {
+      {/* Q07: the row scrolls sideways; ScrollShadow fades the cut edge so it reads as scrollable, not clipped. */}
+      <ScrollShadow
+        scrollLabel="Order status filters"
+        scrollerClassName="flex items-center gap-2 pb-1"
+      >
+        {savedViews.map((view) => {
           const isActive = activeSavedView === view.id;
           // Only the counts we actually have from the loaded data are shown
           // (total for "All", urgent count for the urgent view); others omit
@@ -595,7 +1114,7 @@ export default function OrdersPage() {
             </button>
           );
         })}
-      </div>
+      </ScrollShadow>
 
       {/* Filter bar */}
       <div className="flex flex-wrap items-center gap-3">
@@ -624,104 +1143,63 @@ export default function OrdersPage() {
           placeholder="Search customer or order #…"
           value={customerSearch}
           onChange={(e) => setCustomerSearch(e.target.value)}
-          className="h-10 w-64 rounded-ctl border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/40 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
-        />
-        <div className="w-48">
-          <Select
-            options={STATUS_OPTIONS}
-            value={statusFilter}
-            onChange={(e) => setFilter("status", e.target.value)}
-          />
-        </div>
-        <div className="w-44">
-          <Select
-            options={FULFILLMENT_OPTIONS}
-            value={fulfillPathFilter}
-            onChange={(e) => setFilter("fulfillPath", e.target.value)}
-          />
-        </div>
-        {/* Urgent toggle */}
-        <button
-          onClick={() => setFilter("urgent", !urgentOnly)}
           className={cn(
-            "flex h-10 items-center gap-2 rounded-ctl border px-3 text-sm font-medium transition-colors",
-            urgentOnly
-              ? "border-danger/40 bg-danger-bg text-danger"
-              : "border-line-strong bg-white text-navy/70 hover:text-navy",
+            "h-10 rounded-ctl border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/40 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500",
+            narrow ? "min-w-0 flex-1 basis-40" : "w-64",
           )}
-        >
-          <AlertTriangle className="h-4 w-4" />
-          Urgent only
-          {urgentOnly && urgentCount > 0 && (
-            <span className="flex h-[17px] min-w-[17px] items-center justify-center rounded-full bg-danger-bg px-1.5 font-mono text-[11px] font-semibold text-[#B91C1C]">
-              {urgentCount}
-            </span>
-          )}
-        </button>
-
-        {/* Product filter — "which orders had this item?" (PR-B). Selecting a
-            product swaps the picker for a removable chip (X clears it back
-            to the picker), mirroring the urgent toggle / date-clear affordances. */}
-        {productIdFilter ? (
-          <button
-            type="button"
-            onClick={() => setFilter("productId", "")}
-            className="flex h-10 items-center gap-2 rounded-ctl border border-brand-200 bg-brand-50 px-3 text-sm font-medium text-brand-700 transition-colors hover:bg-brand-100"
-            title="Remove product filter"
+        />
+        {/* F04: keyboard reach. The sidebar, header, status chips and filters sit before the rows (51 Tabs). One
+            Tab stop after the search box jumps to the first row; Enter on the row then opens it. Only rendered
+            when there is a row to land on (a loading or empty list has nowhere to skip to, so no dead stop).
+            The layout's own "Skip to content" link stays; this one skips the filters within the page. */}
+        {!isLoading && !isError && filtered.length > 0 && (
+          <a
+            href="#orders-list"
+            onClick={(e) => {
+              e.preventDefault();
+              const rows = Array.from(document.querySelectorAll<HTMLElement>("[data-order-row]"));
+              // The card list (below md) and the table (md+) are both in the DOM; focus the one on screen.
+              (rows.find((r) => r.getClientRects().length > 0) ?? rows[0])?.focus();
+            }}
+            className="sr-only focus:not-sr-only focus:fixed focus:left-2 focus:top-2 focus:z-50 focus:flex focus:h-11 focus:items-center focus:rounded-ctl focus:bg-white focus:px-4 focus:text-sm focus:font-medium focus:text-navy focus:shadow-card focus:outline-none focus:ring-2 focus:ring-brand-500"
           >
-            <Package className="h-4 w-4" />
-            {filterProduct?.name ?? "Loading…"}
-            <X className="h-3.5 w-3.5" />
+            Skip to orders ({filtered.length})
+          </a>
+        )}
+        {narrow ? (
+          /* Q01: one button for the secondary filters. The count badge says how many are on, so nothing is hidden. */
+          <button
+            ref={filtersButtonRef}
+            type="button"
+            onClick={() => setFiltersOpen(true)}
+            aria-haspopup="dialog"
+            aria-label={secondaryActive > 0 ? `Filters, ${secondaryActive} active` : "Filters"}
+            className={cn(
+              "flex h-10 shrink-0 items-center gap-2 rounded-ctl border px-3 text-sm font-medium transition-colors",
+              secondaryActive > 0
+                ? "border-brand-200 bg-brand-50 text-brand-700"
+                : "border-line-strong bg-white text-navy/70 hover:text-navy",
+            )}
+          >
+            <SlidersHorizontal className="h-4 w-4" aria-hidden />
+            Filters
+            {secondaryActive > 0 && (
+              <span
+                aria-hidden
+                className="flex h-[17px] min-w-[17px] items-center justify-center rounded-full bg-navy px-1.5 font-mono text-[11px] font-semibold text-white"
+              >
+                {secondaryActive}
+              </span>
+            )}
           </button>
         ) : (
-          <div className="w-56">
-            <SearchableProductPicker
-              async
-              value=""
-              onChange={(id) => setFilter("productId", id)}
-              placeholder="Filter by product…"
-            />
-          </div>
+          <>
+            {fulfilmentControl}
+            {urgentControl}
+            {productControl}
+            {deliveryControl}
+          </>
         )}
-
-        {/* Delivery date range filter. flex-wrap here (not just on the outer
-            filter bar) matters: this whole block is a single flex item in
-            that row, so without its own wrap the "to [date]" half ran past
-            the viewport edge at 390px instead of dropping to a second line
-            the way every other filter control already does (B506). */}
-        <div className="flex flex-wrap items-center gap-1.5">
-          <Calendar className="h-4 w-4 text-navy/70" />
-          <span className="text-xs text-navy/70 font-medium">Delivery:</span>
-          <input
-            type="date"
-            value={dateFrom}
-            onChange={(e) => setFilter("dateFrom", e.target.value)}
-            max={dateTo || undefined}
-            className="h-10 w-32 rounded-ctl border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
-            title="Delivery date from"
-          />
-          <span className="text-xs text-navy/40">to</span>
-          <input
-            type="date"
-            value={dateTo}
-            onChange={(e) => setFilter("dateTo", e.target.value)}
-            min={dateFrom || undefined}
-            className="h-10 w-32 rounded-ctl border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
-            title="Delivery date to"
-          />
-          {(dateFrom || dateTo) && (
-            <button
-              onClick={() => {
-                setFilter("dateFrom", "");
-                setFilter("dateTo", "");
-              }}
-              className="rounded p-1.5 text-navy/70 hover:text-danger transition-colors"
-              title="Clear dates"
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
-          )}
-        </div>
 
         {/* Clear active filters */}
         {(statusFilter ||
@@ -730,6 +1208,7 @@ export default function OrdersPage() {
           dateTo ||
           productIdFilter ||
           fulfillPathFilter ||
+          shipView ||
           customerSearch) && (
           <button
             onClick={() => {
@@ -744,302 +1223,430 @@ export default function OrdersPage() {
         )}
       </div>
 
-      {/* Table card — urgent rows get red left border via wrapper trick */}
-      <div className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="border-b border-surface-border bg-surface-raised">
-              <tr>
-                {selectMode && <th className="w-10 px-3 py-3" />}
-                <th className="w-4 px-3 py-3" />
-                <th
-                  className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
-                  onClick={() => toggleSort("orderNumber")}
+      {narrow && (
+        <Modal
+          open={filtersOpen}
+          onClose={closeFilters}
+          title="Filters"
+          scroll
+          className="max-w-[calc(100vw-2rem)] p-4"
+          // Radix has no trigger to hand focus back to here, and Safari does not focus a button on tap: return it ourselves.
+          onCloseAutoFocus={(e) => {
+            e.preventDefault();
+            filtersButtonRef.current?.focus();
+          }}
+          footer={
+            <>
+              <Button
+                variant="secondary"
+                size="lg"
+                className="mr-auto"
+                onClick={clearSecondary}
+                disabled={secondaryActive === 0}
+              >
+                Clear filters
+              </Button>
+              <Button size="lg" onClick={closeFilters}>
+                Done
+              </Button>
+            </>
+          }
+        >
+          <div className="space-y-3">
+            {sortControl}
+            {fulfilmentControl}
+            {urgentControl}
+            {productControl}
+            {deliveryControl}
+          </div>
+        </Modal>
+      )}
+
+      {/* Results — loading/error/empty are shared across both layouts below; only "has
+          data" branches into the mobile card list (below md) vs. the desktop table (md+). */}
+      {weekPending && week.isError ? (
+        <div
+          role="alert"
+          className="flex flex-col items-center gap-3 rounded-lg border border-surface-border bg-white py-16 text-center text-sm text-danger shadow-card"
+        >
+          <span>Couldn&apos;t load your time zone.</span>
+          <Button variant="secondary" size="sm" onClick={week.retry}>
+            Retry
+          </Button>
+        </div>
+      ) : isLoading ? (
+        <div className="flex items-center justify-center rounded-lg border border-surface-border bg-white py-16 shadow-card">
+          <Loader2 className="h-6 w-6 animate-spin text-navy/70" />
+        </div>
+      ) : isError ? (
+        <div className="rounded-lg border border-surface-border bg-white py-16 text-center text-sm text-danger shadow-card">
+          Failed to load orders. Please try again.
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card">
+          {statusFilter ||
+          urgentOnly ||
+          dateFrom ||
+          dateTo ||
+          productIdFilter ||
+          fulfillPathFilter ||
+          shipView ||
+          customerSearch ? (
+            <EmptyState
+              variant="orders"
+              title="No matching orders"
+              description="No orders match your current search and filters."
+              action={
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => {
+                    setCustomerSearch("");
+                    clearFilters();
+                  }}
                 >
-                  Order # <SortIcon col="orderNumber" />
-                </th>
-                <th
-                  className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
-                  onClick={() => toggleSort("customer")}
-                >
-                  Customer <SortIcon col="customer" />
-                </th>
-                <th className="px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70">
-                  Items
-                </th>
-                <th
-                  className="px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
-                  onClick={() => toggleSort("total")}
-                >
-                  Total <SortIcon col="total" />
-                </th>
-                <th
-                  className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
-                  onClick={() => toggleSort("status")}
-                >
-                  Status <SortIcon col="status" />
-                </th>
-                <th
-                  className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
-                  onClick={() => toggleSort("deliveryDate")}
-                >
-                  Delivery Date <SortIcon col="deliveryDate" />
-                </th>
-                <th
-                  className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
-                  onClick={() => toggleSort("createdAt")}
-                >
-                  Created <SortIcon col="createdAt" />
-                </th>
-                <th className="w-10 px-3 py-3" />
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-surface-border bg-white">
-              {isLoading ? (
-                <tr>
-                  <td colSpan={selectMode ? 10 : 9} className="px-4 py-12 text-center">
-                    <Loader2 className="mx-auto h-6 w-6 animate-spin text-navy/70" />
-                  </td>
-                </tr>
-              ) : isError ? (
-                <tr>
-                  <td
-                    colSpan={selectMode ? 10 : 9}
-                    className="px-4 py-12 text-center text-sm text-danger"
-                  >
-                    Failed to load orders. Please try again.
-                  </td>
-                </tr>
-              ) : filtered.length === 0 ? (
-                <tr>
-                  <td colSpan={selectMode ? 10 : 9} className="p-0">
-                    {statusFilter ||
-                    urgentOnly ||
-                    dateFrom ||
-                    dateTo ||
-                    productIdFilter ||
-                    fulfillPathFilter ||
-                    customerSearch ? (
-                      <EmptyState
-                        variant="orders"
-                        title="No matching orders"
-                        description="No orders match your current search and filters."
-                        action={
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            onClick={() => {
-                              setCustomerSearch("");
-                              clearFilters();
-                            }}
-                          >
-                            Clear filters
-                          </Button>
-                        }
-                      />
-                    ) : (
-                      <EmptyState
-                        variant="orders"
-                        title="No orders yet"
-                        description="Create an order on behalf of a customer to get started."
-                        action={
-                          <Button size="sm" onClick={() => setIsCreateOpen(true)}>
-                            Create order
-                          </Button>
-                        }
-                      />
-                    )}
-                  </td>
-                </tr>
-              ) : (
-                filtered.map((order) => (
-                  <tr
-                    key={order.id}
-                    role="link"
-                    tabIndex={0}
-                    onClick={() => {
+                  Clear filters
+                </Button>
+              }
+            />
+          ) : (
+            <EmptyState
+              variant="orders"
+              title="No orders yet"
+              description="Create an order on behalf of a customer to get started."
+              action={
+                <WriteButton size="sm" onClick={() => setIsCreateOpen(true)}>
+                  Create order
+                </WriteButton>
+              }
+            />
+          )}
+        </div>
+      ) : (
+        // W-673: a real box (not `contents`), so the page's space-y-5 rhythm sets the gap under the search/Filters row: one
+        // fixed gap whatever the draft state. The dock is pinned to the bottom (and a pill on narrow screens, B668), so only
+        // the bottom clearance below the pager is needed.
+        <div id="orders-list">
+          {/* Card list — below md the desktop table only scrolled sideways with TOTAL
+              off-screen and no visible affordance that it could scroll at all (B823).
+              One tappable card per order instead, mirroring the buyer orders list
+              pattern (buyer/portal/[seller]/orders/page.tsx). */}
+          <ul className="space-y-3 md:hidden">
+            {filtered.map((order) => (
+              <li key={order.id}>
+                <div
+                  role="link"
+                  tabIndex={0}
+                  data-order-row
+                  onClick={() => {
+                    if (selectMode) toggleSelect(order.id);
+                    else router.push(`/orders/${order.id}`);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
                       if (selectMode) toggleSelect(order.id);
                       else router.push(`/orders/${order.id}`);
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        if (selectMode) toggleSelect(order.id);
-                        else router.push(`/orders/${order.id}`);
-                      }
-                    }}
-                    className={cn(
-                      "cursor-pointer transition-colors hover:bg-surface-raised focus:outline-none focus:ring-2 focus:ring-inset focus:ring-brand-500",
-                      order.urgent && "border-l-2 border-l-danger",
-                      selected.has(order.id) && "bg-brand-50",
-                    )}
-                  >
-                    {selectMode && (
-                      <td
-                        className="px-3 py-3"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          toggleSelect(order.id);
-                        }}
-                      >
+                    }
+                  }}
+                  className={cn(
+                    "flex cursor-pointer flex-col gap-2 rounded-xl border border-surface-border bg-white p-4 shadow-card transition-colors hover:bg-surface-raised focus:outline-none focus:ring-2 focus:ring-inset focus:ring-brand-500",
+                    order.urgent && "border-l-2 border-l-danger",
+                    selected.has(order.id) && "bg-brand-50",
+                  )}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-2">
+                      {selectMode && (
                         <input
                           type="checkbox"
                           checked={selected.has(order.id)}
                           onChange={() => toggleSelect(order.id)}
-                          // Without this, a click ON the checkbox toggles twice:
-                          // onChange here, then the bubble reaches the td's
-                          // onClick — net zero, the box appears dead.
                           onClick={(e) => e.stopPropagation()}
-                          className="h-4 w-4 cursor-pointer rounded border-navy/30 accent-brand-500"
+                          className="h-4 w-4 shrink-0 cursor-pointer rounded border-navy/30 accent-brand-500"
                         />
-                      </td>
+                      )}
+                      {order.urgent && <AlertTriangle className="h-4 w-4 shrink-0 text-danger" />}
+                      <span className="truncate font-mono text-xs font-semibold text-ink-900">
+                        {order.orderNumber}
+                      </span>
+                    </div>
+                    <span className="shrink-0 font-mono text-sm font-semibold text-ink-900">
+                      $
+                      {Number(order.total).toLocaleString("en-US", {
+                        minimumFractionDigits: 2,
+                      })}
+                    </span>
+                  </div>
+                  <p className="truncate text-sm font-medium text-navy">
+                    {order.customer?.businessName ?? "—"}
+                  </p>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <Badge
+                      status={order.status}
+                      label={statusLabel(
+                        order.status,
+                        orderStatusLabel(order.status),
+                        order.fulfillPath,
+                      )}
+                    />
+                    {order.fulfillPath === "SHIP" && (
+                      <Badge variant="neutral" title="Shipped by supplier/carrier">
+                        Shipped
+                      </Badge>
                     )}
-                    <td className="px-3 py-3">
-                      {order.urgent && <AlertTriangle className="h-4 w-4 text-danger" />}
-                    </td>
-                    <td className="px-4 py-3 font-mono text-xs font-semibold text-ink-900">
-                      {order.orderNumber}
-                    </td>
-                    <td className="px-4 py-3 font-medium text-navy">
-                      {order.customer?.businessName ?? "—"}
-                    </td>
-                    <td className="px-4 py-3 text-right font-mono tabular-nums text-navy/70">
-                      {order.lineItems.length}
-                    </td>
-                    <td className="px-4 py-3 text-right font-mono tabular-nums font-medium text-ink-900">
-                      ${Number(order.total).toLocaleString("en-US", { minimumFractionDigits: 2 })}
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-1.5">
-                        <Badge status={order.status} label={orderStatusLabel(order.status)} />
-                        {order.fulfillPath === "SHIP" && (
-                          <span
-                            title="Shipped by supplier/carrier — won't appear on delivery routes"
-                            className="inline-flex h-[21px] items-center gap-1 rounded-full bg-sky-50 px-2 text-[11px] font-semibold text-sky-700 ring-1 ring-sky-200"
-                          >
-                            <Truck className="h-3 w-3" aria-hidden />
-                            Shipped
-                          </span>
-                        )}
-                        {/* P5-11: pending post-dispatch change requests on this order
-                            (filtered _count from the list endpoint; absent = no pill). */}
-                        {(order._count?.changeRequests ?? 0) > 0 && (
-                          <span
-                            title={`${order._count!.changeRequests} pending change request${
-                              (order._count!.changeRequests ?? 0) > 1 ? "s" : ""
-                            }`}
-                            className="inline-flex h-[21px] items-center rounded-full bg-amber-50 px-2 text-[11px] font-semibold text-amber-700 ring-1 ring-amber-200"
-                          >
-                            {order._count!.changeRequests} change
-                            {(order._count!.changeRequests ?? 0) > 1 ? "s" : ""}
-                          </span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-sm">
+                    {(order._count?.changeRequests ?? 0) > 0 && (
+                      <span
+                        title={`${order._count!.changeRequests} pending change request${
+                          (order._count!.changeRequests ?? 0) > 1 ? "s" : ""
+                        }`}
+                        className="inline-flex h-[21px] items-center rounded-full bg-amber-50 px-2 text-[11px] font-semibold text-amber-700 ring-1 ring-amber-200"
+                      >
+                        {order._count!.changeRequests} change
+                        {(order._count!.changeRequests ?? 0) > 1 ? "s" : ""}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center justify-between text-xs text-navy/60">
+                    <span>
+                      {order.lineItems.length} item{order.lineItems.length === 1 ? "" : "s"}
+                    </span>
+                    <OrderDateCell order={order} />
+                  </div>
+                  {/* B823 review (Opus): the desktop table's own Delivery Date column,
+                      missing from the card entirely — same formatDateOnly, same em-dash
+                      fallback. */}
+                  {showDelivery && (
+                    <div className="text-xs text-navy/60">
+                      Delivery:{" "}
                       {order.requestedDeliveryDate ? (
-                        <span className="text-navy/70">
-                          {formatDateOnly(order.requestedDeliveryDate)}
-                        </span>
+                        formatDateOnly(order.requestedDeliveryDate)
                       ) : (
                         <span className="text-navy/30">—</span>
                       )}
-                    </td>
-                    <td className="px-4 py-3 text-sm text-navy/70">
-                      <OrderDateCell order={order} />
-                    </td>
-                    <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
-                      <button
-                        title="View order"
-                        aria-label="View order details"
-                        onClick={() => router.push(`/orders/${order.id}`)}
-                        className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
-                      >
-                        <Eye className="h-4 w-4" />
-                      </button>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
+                    </div>
+                  )}
+                </div>
+              </li>
+            ))}
+          </ul>
 
-        {/* Pager — Ledger card footer */}
-        {meta && (
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-surface-border px-4 py-3 text-[12.5px] text-navy/70">
-            <span>
-              {meta.total > 0 ? (
-                <>
-                  Showing{" "}
-                  <span className="font-mono tabular-nums text-navy">
-                    {(page - 1) * limit + 1} to {Math.min(page * limit, meta.total)}
-                  </span>{" "}
-                  of <span className="font-mono tabular-nums text-navy">{meta.total}</span>
-                  {customerSearch ? " (filtered)" : ""}
-                </>
-              ) : customerSearch ? (
-                "No orders match your search"
-              ) : (
-                "No orders found"
-              )}
-            </span>
-            <div className="flex items-center gap-1.5">
-              <span>Per page</span>
-              <select
-                value={limit}
-                onChange={(e) => {
-                  setLimit(Number(e.target.value));
-                  setPage(1);
-                }}
-                className="h-7 rounded-ctl border border-surface-border bg-white px-2 font-mono text-xs text-navy focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-              >
-                {[10, 20, 50, 100].map((n) => (
-                  <option key={n} value={n}>
-                    {n}
-                  </option>
-                ))}
-              </select>
-            </div>
-            {(meta.totalPages ?? 1) > 1 && (
-              <div className="ml-auto flex items-center gap-0.5">
-                <button
-                  disabled={page <= 1}
-                  onClick={() => setPage((p) => p - 1)}
-                  aria-label="Previous page"
-                  className="grid h-7 w-7 place-items-center rounded-ctl text-navy/70 hover:bg-surface-raised disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                >
-                  <ChevronLeft className="h-3.5 w-3.5" />
-                </button>
-                {Array.from({ length: Math.min(meta.totalPages ?? 1, 7) }, (_, i) => {
-                  const totalPages = meta.totalPages ?? 1;
-                  const p = totalPages <= 7 ? i + 1 : page <= 4 ? i + 1 : page + i - 3;
-                  if (p < 1 || p > totalPages) return null;
-                  return (
-                    <button
-                      key={p}
-                      onClick={() => setPage(p)}
+          {/* Table — from md up. Urgent rows get red left border via wrapper trick. */}
+          <div className="hidden overflow-hidden rounded-lg border border-surface-border bg-white shadow-card md:block">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="border-b border-surface-border bg-surface-raised">
+                  <tr>
+                    {selectMode && <th className="w-10 px-3 py-3" />}
+                    <th className="w-4 px-3 py-3" />
+                    <th
+                      className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
+                      onClick={() => toggleSort("orderNumber")}
+                    >
+                      Order # <SortIcon col="orderNumber" />
+                    </th>
+                    <th
+                      className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
+                      onClick={() => toggleSort("customer")}
+                    >
+                      Customer <SortIcon col="customer" />
+                    </th>
+                    <th className="px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70">
+                      Items
+                    </th>
+                    <th
+                      className="px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
+                      onClick={() => toggleSort("total")}
+                    >
+                      Total <SortIcon col="total" />
+                    </th>
+                    <th
+                      className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
+                      onClick={() => toggleSort("status")}
+                    >
+                      Status <SortIcon col="status" />
+                    </th>
+                    {showDelivery && (
+                      <th
+                        className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
+                        onClick={() => toggleSort("deliveryDate")}
+                      >
+                        Delivery Date <SortIcon col="deliveryDate" />
+                      </th>
+                    )}
+                    <th
+                      className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
+                      onClick={() => toggleSort("createdAt")}
+                    >
+                      Created <SortIcon col="createdAt" />
+                    </th>
+                    <th className="w-10 px-3 py-3" />
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-surface-border bg-white">
+                  {filtered.map((order) => (
+                    <tr
+                      key={order.id}
+                      role="link"
+                      tabIndex={0}
+                      data-order-row
+                      onClick={() => {
+                        if (selectMode) toggleSelect(order.id);
+                        else router.push(`/orders/${order.id}`);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          if (selectMode) toggleSelect(order.id);
+                          else router.push(`/orders/${order.id}`);
+                        }
+                      }}
                       className={cn(
-                        "grid h-7 min-w-7 place-items-center rounded-ctl px-2 font-mono text-xs tabular-nums transition-colors",
-                        p === page ? "bg-navy text-white" : "text-navy/70 hover:bg-surface-raised",
+                        "cursor-pointer transition-colors hover:bg-surface-raised focus:outline-none focus:ring-2 focus:ring-inset focus:ring-brand-500",
+                        order.urgent && "border-l-2 border-l-danger",
+                        selected.has(order.id) && "bg-brand-50",
                       )}
                     >
-                      {p}
-                    </button>
-                  );
-                })}
-                <button
-                  disabled={page >= (meta.totalPages ?? 1)}
-                  onClick={() => setPage((p) => p + 1)}
-                  aria-label="Next page"
-                  className="grid h-7 w-7 place-items-center rounded-ctl text-navy/70 hover:bg-surface-raised disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                >
-                  <ChevronRight className="h-3.5 w-3.5" />
-                </button>
+                      {selectMode && (
+                        <td
+                          className="px-3 py-3"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleSelect(order.id);
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selected.has(order.id)}
+                            onChange={() => toggleSelect(order.id)}
+                            // Without this, a click ON the checkbox toggles twice:
+                            // onChange here, then the bubble reaches the td's
+                            // onClick — net zero, the box appears dead.
+                            onClick={(e) => e.stopPropagation()}
+                            className="h-4 w-4 cursor-pointer rounded border-navy/30 accent-brand-500"
+                          />
+                        </td>
+                      )}
+                      <td className="px-3 py-3">
+                        {order.urgent && <AlertTriangle className="h-4 w-4 text-danger" />}
+                      </td>
+                      <td className="px-4 py-3 font-mono text-xs font-semibold text-ink-900">
+                        {order.orderNumber}
+                      </td>
+                      <td className="px-4 py-3 font-medium text-navy">
+                        {order.customer?.businessName ?? "—"}
+                      </td>
+                      <td className="px-4 py-3 text-right font-mono tabular-nums text-navy/70">
+                        {order.lineItems.length}
+                      </td>
+                      <td className="px-4 py-3 text-right font-mono tabular-nums font-medium text-ink-900">
+                        $
+                        {Number(order.total).toLocaleString("en-US", {
+                          minimumFractionDigits: 2,
+                        })}
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-1.5">
+                          <Badge
+                            status={order.status}
+                            label={statusLabel(
+                              order.status,
+                              orderStatusLabel(order.status),
+                              order.fulfillPath,
+                            )}
+                          />
+                          {order.fulfillPath === "SHIP" && (
+                            <Badge variant="neutral" title="Shipped by supplier/carrier">
+                              Shipped
+                            </Badge>
+                          )}
+                          {/* P5-11: pending post-dispatch change requests on this order
+                              (filtered _count from the list endpoint; absent = no pill). */}
+                          {(order._count?.changeRequests ?? 0) > 0 && (
+                            <span
+                              title={`${order._count!.changeRequests} pending change request${
+                                (order._count!.changeRequests ?? 0) > 1 ? "s" : ""
+                              }`}
+                              className="inline-flex h-[21px] items-center rounded-full bg-amber-50 px-2 text-[11px] font-semibold text-amber-700 ring-1 ring-amber-200"
+                            >
+                              {order._count!.changeRequests} change
+                              {(order._count!.changeRequests ?? 0) > 1 ? "s" : ""}
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      {showDelivery && (
+                        <td className="px-4 py-3 text-sm">
+                          {order.requestedDeliveryDate ? (
+                            <span className="text-navy/70">
+                              {formatDateOnly(order.requestedDeliveryDate)}
+                            </span>
+                          ) : (
+                            <span className="text-navy/30">—</span>
+                          )}
+                        </td>
+                      )}
+                      <td className="px-4 py-3 text-sm text-navy/70">
+                        <OrderDateCell order={order} />
+                      </td>
+                      <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
+                        <button
+                          title="View order"
+                          aria-label="View order details"
+                          onClick={() => router.push(`/orders/${order.id}`)}
+                          className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
+                        >
+                          <Eye className="h-4 w-4" />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {/* #2057 review (Opus): the pager lives INSIDE the table's own card at md+ —
+                pulling it into a separate shadow card (below) added a visible 20px gap and
+                a second card border on desktop too, which the "≥768 unchanged" pass
+                criterion forbids. Mobile keeps the separate always-visible card (below)
+                since the table itself — and this nested footer — is hidden below md. */}
+            {meta && (
+              <div className="hidden flex-wrap items-center gap-x-4 gap-y-2 border-t border-surface-border px-4 py-3 text-[12.5px] text-navy/70 md:flex">
+                <PagerInfo meta={meta} page={page} limit={limit} customerSearch={customerSearch} />
+                <PagerControls
+                  meta={meta}
+                  page={page}
+                  limit={limit}
+                  setLimit={setLimit}
+                  setPage={setPage}
+                />
               </div>
             )}
           </div>
-        )}
-      </div>
+        </div>
+      )}
+
+      {/* Pager — mobile-only card (see the nested md+ footer above), visible at every
+          width regardless of card list vs. table state. data-testid disambiguates it
+          from the md+ footer above for e2e — both render the same "Showing X to Y" text,
+          one of them always `hidden` at any given viewport. */}
+      {meta && (
+        <div
+          data-testid="pager-mobile"
+          className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-surface-border bg-white px-4 py-3 text-[12.5px] text-navy/70 shadow-card md:hidden"
+        >
+          <PagerInfo meta={meta} page={page} limit={limit} customerSearch={customerSearch} />
+          <PagerControls
+            meta={meta}
+            page={page}
+            limit={limit}
+            setLimit={setLimit}
+            setPage={setPage}
+          />
+        </div>
+      )}
+
+      {/* B823 review (Opus): the DraftDock sits `absolute` outside <main>'s scroll container, so it stays pinned to the same
+          screen band regardless of scroll position. Scrolled all the way down, the LAST card and this pager land in that
+          exact band: this bottom clearance lets the end of the list clear it. */}
+      {hasDrafts && <div className="h-40 md:hidden" aria-hidden />}
 
       <CreateOrderModal
         isOpen={isCreateOpen}
@@ -1047,10 +1654,26 @@ export default function OrdersPage() {
           setIsCreateOpen(false);
           setResumeDraftId(null);
           setInitialScanCode(null);
+          setInitialFulfillPath(null);
         }}
         resumeDraftId={resumeDraftId}
         initialScanCode={initialScanCode}
+        initialFulfillPath={initialFulfillPath}
         onViewOrder={(orderId) => router.push(`/orders/${orderId}`)}
+      />
+
+      {/* REG-B2: the bulk bar's Cancel used to fire the cancel for every selected order on the
+          first click. Cancelling voids each order's linked invoices, so ask first — fixed copy
+          (a per-order impact preview would be N requests; the server still refuses a paid or
+          delivered order and that surfaces as the generic failure toast). */}
+      <ConfirmDialog
+        open={cancelConfirm}
+        onClose={() => setCancelConfirm(false)}
+        onConfirm={handleBulkCancel}
+        loading={isCancelling}
+        title={`Cancel ${selected.size} order${selected.size !== 1 ? "s" : ""}?`}
+        description="The linked invoices will be voided. Orders that have been paid or delivered can't be cancelled."
+        confirmLabel={`Cancel ${selected.size} order${selected.size !== 1 ? "s" : ""}`}
       />
     </div>
   );

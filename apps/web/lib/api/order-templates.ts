@@ -1,6 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import type { OrderTemplateItem } from "@routeflow/types";
+import { splitIdAck, type IdWithAck } from "@/lib/api/restriction-warning";
+import type { LocalErrorToastOption } from "@/lib/local-error-toast";
 export type { OrderTemplateItem } from "@routeflow/types";
 
 export interface OrderTemplate {
@@ -35,7 +37,7 @@ export function useOrderTemplate(id: string) {
   });
 }
 
-export function useCreateOrderTemplate() {
+export function useCreateOrderTemplate(options?: LocalErrorToastOption) {
   const qc = useQueryClient();
   return useMutation<
     OrderTemplate,
@@ -48,6 +50,7 @@ export function useCreateOrderTemplate() {
       items: { productId: string; qty: number; notes?: string }[];
     }
   >({
+    meta: options?.localErrorToast ? { localErrorToast: options.localErrorToast } : undefined,
     mutationFn: (dto) => apiClient.post("/order-templates", dto).then((r) => r.data),
     onSuccess: (data) => {
       qc.invalidateQueries({ queryKey: ["order-templates", data.customerId] });
@@ -56,7 +59,7 @@ export function useCreateOrderTemplate() {
   });
 }
 
-export function useUpdateOrderTemplate() {
+export function useUpdateOrderTemplate(options?: LocalErrorToastOption) {
   const qc = useQueryClient();
   return useMutation<
     OrderTemplate,
@@ -70,6 +73,7 @@ export function useUpdateOrderTemplate() {
       items?: { productId: string; qty: number; notes?: string }[];
     }
   >({
+    meta: options?.localErrorToast ? { localErrorToast: options.localErrorToast } : undefined,
     mutationFn: ({ id, ...dto }) =>
       apiClient.patch(`/order-templates/${id}`, dto).then((r) => r.data),
     onSuccess: (data) => {
@@ -118,9 +122,15 @@ export function useRemoveTemplateItem() {
 
 export function useGenerateTemplateOrder() {
   const qc = useQueryClient();
-  return useMutation<unknown, Error, string>({
-    mutationFn: (templateId) =>
-      apiClient.post(`/order-templates/${templateId}/generate`).then((r) => r.data),
+  return useMutation<unknown, Error, IdWithAck>({
+    mutationFn: (v) => {
+      const { id, ack } = splitIdAck(v); // row 510 Q2: a manual Generate is judged for the clicker
+      return (
+        ack
+          ? apiClient.post(`/order-templates/${id}/generate`, ack)
+          : apiClient.post(`/order-templates/${id}/generate`)
+      ).then((r) => r.data);
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["orders"] });
     },

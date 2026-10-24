@@ -41,6 +41,7 @@ import { SystemConfigService } from "../system-config/system-config.service";
 import { OrdersService } from "./orders.service";
 import { ChangeRequestsService } from "./change-requests.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
+import { INVOICE_EDIT_STUBS } from "./testing/invoice-edit-stubs";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -198,6 +199,7 @@ describeDb(
         invoicesService: {
           revertLinkedInvoicesForOrderEdit: async () => undefined,
           resyncOrderInvoicesForEdit: async () => [],
+          ...INVOICE_EDIT_STUBS,
           reconcileOrderDraftInvoice: async () => undefined,
         },
         notifications: {
@@ -234,6 +236,12 @@ describeDb(
         },
         authGuard: { assertAuthorizedOrThrow: async () => undefined },
         messaging: { notify: async () => [], notifyEvent: async () => undefined },
+        // Required dep since F1(iii): the buyer-visibility + BUYER_PORTAL judge in approveNextDelivery. A stub (no
+        // rules: nothing hidden, everything sellable) keeps this spec about the lock/claim/compensation protocol.
+        sellingRestrictions: {
+          restrictedProductIdsFor: async () => new Set<string>(),
+          assertLinesSellable: async () => undefined,
+        },
       });
       tenantId = (await raw.tenant.create({ data: { slug, name: `2391 ${slug}` } })).id;
       for (const who of ["me", "other"] as const) {

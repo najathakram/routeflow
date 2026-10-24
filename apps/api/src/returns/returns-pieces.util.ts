@@ -29,7 +29,13 @@
  */
 
 import { ConflictException } from "@nestjs/common";
-import { resolvePackFactors, type PackLine } from "../common/line-pack-factors";
+import {
+  needsPackResolution,
+  resolvePackFactors,
+  type PackLine,
+} from "../common/line-pack-factors";
+import { piecesPerQtyOf } from "../credit-notes/line-credit-headroom";
+import { DEAD_RETURN_STATUSES } from "./return-statuses";
 import {
   liveInvoiceItemsByLine,
   productPackBasis,
@@ -113,17 +119,48 @@ export async function standardPackBases(
   tx: any,
   orderId: string,
   lines: OrderLineForPieces[],
+  loadInvoiceItems: (lineIds: string[]) => Promise<Map<string, any[]>> = liveInvoiceItemsByLine(tx),
 ): Promise<Map<string, ProductPackBasis>> {
   const live = (lines ?? []).filter((li) => li.productId && li.status !== "CANCELLED");
   const packs = await resolvePackFactors({
     orderId,
     lines: live as PackLine[],
-    loadInvoiceItems: liveInvoiceItemsByLine(tx),
+    loadInvoiceItems,
   });
   const out = new Map<string, ProductPackBasis>();
   for (const li of live) {
     if (!out.has(li.productId as string))
       out.set(li.productId as string, productPackBasis(live, packs, li.productId as string));
+  }
+  return out;
+}
+
+/**
+ * The pack basis of every product on each of SEVERAL orders (the returns list prices a page of rows), keyed by order id, with ONE
+ * invoice-item read for the whole page instead of one per row: only the ambiguous lines (a pack with no split) need the
+ * evidence, so a page with none costs no query at all.
+ */
+export async function standardPackBasesForOrders(
+  tx: any,
+  orders: Array<{ id?: string | null; lineItems?: OrderLineForPieces[] | null }>,
+): Promise<Map<string, Map<string, ProductPackBasis>>> {
+  const out = new Map<string, Map<string, ProductPackBasis>>();
+  const withLines = orders.filter((o) => o?.id && (o.lineItems?.length ?? 0) > 0);
+  const ambiguousIds = new Set<string>();
+  for (const o of withLines)
+    for (const li of o.lineItems as OrderLineForPieces[])
+      if (li.id && li.productId && li.status !== "CANCELLED" && needsPackResolution(li as PackLine))
+        ambiguousIds.add(li.id);
+  const evidence =
+    ambiguousIds.size > 0
+      ? await liveInvoiceItemsByLine(tx)([...ambiguousIds])
+      : new Map<string, any[]>();
+  const fromCache = async (ids: string[]) =>
+    new Map(ids.filter((id) => evidence.has(id)).map((id) => [id, evidence.get(id) as any[]]));
+  for (const o of withLines) {
+    const id = o.id as string;
+    if (out.has(id)) continue;
+    out.set(id, await standardPackBases(tx, id, o.lineItems as OrderLineForPieces[], fromCache));
   }
   return out;
 }
@@ -196,6 +233,47 @@ export function standardReturnPieces(
   };
 }
 
+/**
+ * B969 (SA-628p): the ONE axis a STANDARD return is priced on, shared by the refund preview (`priceReturn`), the single-invoice
+ * itemiser and the mint, so they can never disagree. `pieces: true` => the returned qty is converted with `standardReturnPieces`
+ * (the order line's pack factor) and each BILLED invoice item with `piecesPerQtyOf` (a box-split item's qty is already pieces,
+ * a selling-unit item's is boxes x upb): pieces on BOTH sides, never a third axis. `pieces: false` is the legacy shape whose pack
+ * no evidence proves (every live line unresolvable, `create()`'s `lineUnit` cap): typed and billed qty share the line's unit, so
+ * the price runs in raw qty exactly as before. A mixed basis, an unknown basis beside a resolvable line, or billed items with
+ * different factors on a product with no live line has no single axis: `unresolved`. So does the legacy line-unit shape
+ * once a billed item carries a split (it counts pieces), the items' factors differ, or the order has 2+ creditable invoices. The mint refuses an
+ * unresolved product 409 RETURN_MIXED_UNIT_PRODUCT; the preview reports 0 with a reason.
+ */
+export type ReturnPricingAxis = { pieces: boolean; returned: number } | { unresolved: true };
+
+export function returnPricingAxis(
+  bases: Map<string, ProductPackBasis>,
+  productId: string,
+  qty: number,
+  billedItems: ReadonlyArray<Parameters<typeof piecesPerQtyOf>[0] & { qty?: unknown }>,
+  /** 2+ creditable invoices: the order pool counts in pieces and refuses an unknown basis (`poolPieces`), so the price must too. */
+  opts: { pooled?: boolean } = {},
+): ReturnPricingAxis {
+  const basis = bases.get(productId);
+  if (basis && "factor" in basis)
+    return { pieces: true, returned: standardReturnPieces(bases, productId, qty).pieces };
+  if (basis && "unknown" in basis && basis.singleUnit) {
+    // The legacy line-unit price needs a billed side that is ALSO in the line's unit. A billed item carrying a boxes/pieces
+    // split counts PIECES (provably not the line's boxes), and items with different pieces-per-qty cannot be summed: both
+    // are ambiguous (a line billed across several items parks, it is never read from the split), so refused, never priced raw.
+    if (opts.pooled) return { unresolved: true };
+    const live = billedItems.filter((it) => Number(it.qty) > 0);
+    const hasSplit = live.some((it) => it.boxes != null || it.pieces != null);
+    if (hasSplit || new Set(live.map(piecesPerQtyOf)).size > 1) return { unresolved: true };
+    return { pieces: false, returned: qty };
+  }
+  if (basis && ("unknown" in basis || "mixed" in basis)) return { unresolved: true };
+  // No live order line for the product (the pre-line / fixture shape): the billed items' own single factor, as the pool does.
+  const factors = new Set(billedItems.filter((it) => Number(it.qty) > 0).map(piecesPerQtyOf));
+  if (factors.size > 1) return { unresolved: true };
+  return { pieces: true, returned: qty * ([...factors][0] ?? 1) };
+}
+
 /** Prior-returned for one product: pieces, or why it cannot be classified (SA-159/SA-161). */
 export type PriorReturned =
   | { pieces: number }
@@ -239,13 +317,13 @@ export async function returnedPiecesByProduct(
 ): Promise<Record<string, PriorReturned>> {
   const [standardReturns, inlineItems] = await Promise.all([
     tx.return.findMany({
-      where: { orderId, kind: "STANDARD", status: { notIn: ["REJECTED", "CANCELLED"] } },
+      where: { orderId, kind: "STANDARD", status: { notIn: DEAD_RETURN_STATUSES } },
       include: { items: { select: { productId: true, qty: true } } },
     }),
     tx.returnItem.findMany({
       where: {
         sourceOrderId: orderId,
-        return: { kind: "INLINE", status: { notIn: ["REJECTED", "CANCELLED"] } },
+        return: { kind: "INLINE", status: { notIn: DEAD_RETURN_STATUSES } },
       },
       select: { productId: true, qty: true },
     }),

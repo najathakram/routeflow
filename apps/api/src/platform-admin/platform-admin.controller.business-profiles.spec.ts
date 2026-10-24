@@ -1,0 +1,1462 @@
+jest.mock("../common/db-locks", () => ({
+  ...jest.requireActual("../common/db-locks"),
+  withAdvisoryLock: jest.fn(async (_opts: unknown, fn: () => Promise<unknown>) => ({
+    acquired: true,
+    value: await fn(),
+  })),
+  // the confirm's multi-key lock: a pass-through here (no DB); its own spec is db-locks.multi.spec.ts
+  withAdvisoryLocks: jest.fn(async (_opts: unknown, fn: () => Promise<unknown>) => fn()),
+}));
+/**
+ * Business profiles — the platform-admin routes. Red-first: written before the routes existed.
+ *
+ * The confirm path is the EXISTING one: the controller's own `createFeatureOverride` /
+ * `revokeFeatureOverride` (requires check + FEATURE_OVERRIDE_* audit each) and
+ * `FeatureConfigService.set` (fleet 409 + FEATURE_CONFIG_SET audit), then ONE
+ * BUSINESS_PROFILE_APPLIED audit row. Nothing here writes a config row directly.
+ *
+ * The fake tenant below is an in-memory model of the saved state the real services enforce:
+ * `set()` refuses delivery/both unless a fleet key is held IN THE SAVED STATE (SA note on
+ * feature-config.service.ts ~:192), and `create()` refuses a second active override on a key
+ * (the partial unique index). Both profile transitions must land whole under those rules.
+ */
+import "reflect-metadata";
+import { ConflictException, ServiceUnavailableException } from "@nestjs/common";
+import { GUARDS_METADATA } from "@nestjs/common/constants";
+import { UserRole } from "@prisma/client";
+import { PlatformAdminController } from "./platform-admin.controller";
+import { SuperAdminGuard } from "../tenant/super-admin.guard";
+import { BusinessProfileService } from "../billing/business-profile.service";
+import { AdminAuditAction } from "./audit-actions.constant";
+import { FEATURE_REGISTRY } from "../billing/feature-registry";
+import { deriveFulfilmentCapability } from "../billing/fulfilment-capability";
+import * as capabilities from "../billing/business-capabilities";
+import { businessProfileByKey } from "../billing/business-profiles";
+
+const T = "tenant-a";
+const FLEET = ["recurring_routes", "order_delivery"];
+
+interface Row {
+  id: string;
+  tenantId: string;
+  featureKey: string;
+  effect: "GRANT" | "DENY";
+  revokedAt: Date | null;
+  expiresAt: Date | null;
+}
+
+/** The saved state of one tenant, plus the ordered log of every write that reached it. */
+function fakeTenant(start: {
+  overrides?: Record<string, "GRANT" | "DENY">;
+  /** Add-on rows the tenant PAYS for (a Stripe item / a price). */
+  addons?: string[];
+  /** Comped add-on rows (no Stripe item, no price) — held, but not paid for. */
+  comped?: string[];
+  /** The add-on whose (existing) disable fails, e.g. Stripe unavailable. */
+  disableFails?: string;
+  /** A config key whose (existing) set() rejects — a DB blip after billing was stopped. */
+  setFails?: string;
+  modes?: Record<string, string>;
+  /** Open SHIP orders already with the carrier (item 8). */
+  inTransit?: number;
+  /** This replica's 30s mode cache is stale: getState answers these until forgetCachedModes(). */
+  staleCache?: Record<string, string>;
+}) {
+  let seq = 0;
+  const rows: Row[] = Object.entries(start.overrides ?? {}).map(([featureKey, effect]) => ({
+    id: `seed-${++seq}`,
+    tenantId: T,
+    featureKey,
+    effect,
+    revokedAt: null,
+    expiresAt: null,
+  }));
+  const addons = new Set([...(start.addons ?? []), ...(start.comped ?? [])]);
+  const failing = {
+    key: start.disableFails as string | undefined,
+    setKey: start.setFails as string | undefined,
+  };
+  const paid = new Set(start.addons ?? []);
+  // SA-769: rows written by a comp enable (the SA-693 path) and seeded comp rows carry isComp
+  const compRows = new Set<string>(start.comped ?? []);
+  const modes: Record<string, string> = {
+    fulfilment_model: "unset",
+    counter_sales: "unset",
+    ...start.modes,
+  };
+  const stored = new Set<string>(Object.keys(start.modes ?? {}));
+  const writes: string[] = [];
+  const active = (key: string) => rows.find((r) => r.featureKey === key && !r.revokedAt);
+  const can = (key: string) => {
+    const ov = active(key);
+    if (ov) return ov.effect === "GRANT";
+    // driver-payments.guard.ts: no override → an add-on row or 403 (NOT on by default, SA-671 M2)
+    return addons.has(key);
+  };
+
+  const featureOverrides = {
+    list: jest.fn(async (tenantId: string) => rows.filter((r) => r.tenantId === tenantId)),
+    allActive: jest.fn(
+      async () =>
+        new Map(rows.filter((r) => !r.revokedAt).map((r) => [r.featureKey, r.effect] as const)),
+    ),
+    create: jest.fn(
+      async (p: { tenantId: string; featureKey: string; effect: "GRANT" | "DENY" }) => {
+        if (active(p.featureKey)) throw new ConflictException("active override exists");
+        const row = { id: `ov-${++seq}`, revokedAt: null, expiresAt: null, ...p } as Row;
+        rows.push(row);
+        writes.push(`override ${p.effect} ${p.featureKey}`);
+        return { ...row, kind: "COMP" };
+      },
+    ),
+    revoke: jest.fn(async (_t: string, id: string) => {
+      const row = rows.find((r) => r.id === id)!;
+      row.revokedAt = new Date();
+      writes.push(`revoke ${row.effect} ${row.featureKey}`);
+      return row;
+    }),
+  };
+  const addonService = {
+    getActiveAddons: jest.fn(async () => [...addons]),
+    // SA-769: the SA-693 comp path (isComp true, no Stripe call, books nothing) - modelled here; the
+    // real AddonService body is exercised in platform-admin.controller.business-profile-comps.sa769.spec.ts
+    enableAddon: jest.fn(
+      async (
+        _t: string,
+        key: string,
+        _price?: string,
+        _ack?: boolean,
+        opts?: { comp?: boolean; lockHeld?: boolean },
+      ) => {
+        if (addons.has(key)) throw new ConflictException(`Add-on "${key}" is already active`);
+        addons.add(key);
+        if (opts?.comp) compRows.add(key);
+        writes.push(`comp ${key}`);
+        return { addonKey: key, active: true, isComp: opts?.comp === true };
+      },
+    ),
+    // The EXISTING disable (Stripe item removal + the locked ledger update) — modelled here.
+    disableAddon: jest.fn(async (_t: string, key: string) => {
+      if (key === failing.key) {
+        throw new ServiceUnavailableException(`Could not remove the Stripe item for "${key}"`);
+      }
+      addons.delete(key);
+      paid.delete(key);
+      compRows.delete(key);
+      writes.push(`disable ${key}`);
+      return { addonKey: key, active: false };
+    }),
+  };
+  let stale: Record<string, string> = { ...(start.staleCache ?? {}) };
+  const featureConfig = {
+    forgetCachedModes: jest.fn(() => {
+      stale = {};
+    }),
+    getState: jest.fn(async (_t: string, key: string) => ({
+      value: stale[key] ?? modes[key],
+      effective: stale[key] ?? modes[key],
+      // a stored row is TENANT; a key never written reads its registry default (like the real store)
+      source: stored.has(key) ? ("TENANT" as const) : ("REGISTRY_DEFAULT" as const),
+      allowed: [] as string[],
+      blocked: [] as string[],
+    })),
+    set: jest.fn(async (_t: string, key: string, mode: string) => {
+      if (key === failing.setKey) throw new Error("connection terminated unexpectedly");
+      if (key === "fulfilment_model" && (mode === "delivery" || mode === "both")) {
+        if (!FLEET.some(can)) {
+          throw new ConflictException({ code: "FULFILMENT_MODE_NEEDS_FLEET", key, mode });
+        }
+      }
+      modes[key] = mode;
+      stored.add(key);
+      writes.push(`mode ${key}=${mode}`);
+    }),
+  };
+  const authority = {
+    // B524: a GRANT of driver_payments needs a fleet key in the SAVED state.
+    assertFeatureRequiresMet: jest.fn(async (_t: string, key: string) => {
+      if (key === "driver_payments" && !FLEET.some(can)) {
+        throw new ConflictException({ code: "FEATURE_REQUIRES_UNMET" });
+      }
+    }),
+    invalidate: jest.fn(),
+    // the explain trace (B1132): every registry key resolves ON from the plan default, exactly the
+    // "the new resolver says ON, the old path says OFF" shape the demo console showed
+    resolveAll: jest.fn(async () => ({
+      planKey: "SCALE",
+      catalogVersionId: "cat-1",
+      computedAt: "2026-10-05T00:00:00.000Z",
+      byKey: new Map(
+        FEATURE_REGISTRY.map((f) => [
+          f.key,
+          { key: f.key, effective: true, source: "PRESET", term: "default", charged: false },
+        ]),
+      ),
+    })),
+    computeOldPathAll: jest.fn(async () => new Map(FEATURE_REGISTRY.map((f) => [f.key, false]))),
+  };
+  const entitlementsMode = { getMode: jest.fn(async () => "shadow") };
+  const featurePreview = {
+    preview: jest.fn(async () => ({ before: [], after: [], changed: ["fleet-change"] })),
+  };
+  const svc = { recordAdminAction: jest.fn().mockResolvedValue(undefined) };
+  const prisma = {
+    order: { count: jest.fn(async () => start.inTransit ?? 0) },
+    tenant: { findUnique: jest.fn().mockResolvedValue({ id: T }) },
+    tenantAddon: {
+      findFirst: jest.fn(async ({ where }: any) => {
+        const key = where.OR[0].addonKey;
+        if (!addons.has(key)) return null;
+        const isPaid = paid.has(key);
+        return {
+          addonKey: key,
+          active: true,
+          stripeItemId: isPaid ? "si_x" : null,
+          priceSnapshot: isPaid ? "49.00" : null,
+          isComp: compRows.has(key),
+        };
+      }),
+    },
+  };
+  const businessProfiles = new BusinessProfileService(
+    prisma as never,
+    featureOverrides as never,
+    addonService as never,
+    featureConfig as never,
+    featurePreview as never,
+  );
+  const stub = () => ({});
+  const controller = new PlatformAdminController(
+    svc as any,
+    stub() as any, // platformConfig
+    stub() as any, // billingService
+    addonService as any,
+    featureOverrides as any,
+    entitlementsMode as any,
+    stub() as any, // configSnapshotFlag
+    stub() as any, // featureDiffs
+    authority as any,
+    featurePreview as any,
+    stub() as any, // snapshotAdmin
+    businessProfiles,
+    featureConfig as any,
+  ) as Omit<PlatformAdminController, "applyBusinessProfile"> & {
+    // the confirm as these tests call it: `planFingerprint` may be left out, the preview-first
+    // wrapper below fills it in exactly as the web does (rawConfirm sends the body unchanged)
+    applyBusinessProfile(
+      id: string,
+      dto: { profile: string; reason?: string; planFingerprint?: string },
+      admin: unknown,
+    ): ReturnType<PlatformAdminController["applyBusinessProfile"]>;
+  };
+  // Confirm as the web does it: preview first, send that planFingerprint back (#3199 review).
+  // A test that passes its own fingerprint keeps it; a preview that refuses leaves a dummy one,
+  // so the confirm's own refusal (unknown profile, ...) is what the test sees.
+  const confirm = controller.applyBusinessProfile.bind(controller); // the real route, no auto-fill
+  controller.applyBusinessProfile = (async (id: string, dto: any, user: any) => {
+    const planFingerprint =
+      dto.planFingerprint ??
+      (await controller
+        .previewBusinessProfile(id, { profile: dto.profile })
+        .then((p) => p.planFingerprint)
+        .catch(() => "0".repeat(64)));
+    return confirm(id, { ...dto, planFingerprint }, user);
+  }) as typeof controller.applyBusinessProfile;
+  const state = () => ({
+    modes: { ...modes },
+    held: Object.fromEntries(
+      ["recurring_routes", "order_delivery", "driver_payments"].map((k) => [k, can(k)]),
+    ),
+    activeOverrides: rows.filter((r) => !r.revokedAt).length,
+  });
+  return {
+    /** The confirm route WITHOUT the preview-first wrapper. */
+    rawConfirm: confirm,
+    /** A paid add-on switched on behind the admin's back (between preview and confirm). */
+    enablePaid: (key: string) => {
+      addons.add(key);
+      paid.add(key);
+    },
+    failNoMore: () => {
+      failing.key = undefined;
+      failing.setKey = undefined;
+    },
+    controller,
+    svc,
+    featureOverrides,
+    featureConfig,
+    authority,
+    addonService,
+    writes,
+    state,
+  };
+}
+
+const admin = { sub: "admin-1", role: UserRole.SUPER_ADMIN } as any;
+
+describe("business-profile routes are platform-admin only", () => {
+  it("the controller carries SuperAdminGuard, and that guard refuses every tenant role", () => {
+    const guards = Reflect.getMetadata(GUARDS_METADATA, PlatformAdminController) as unknown[];
+    expect(guards).toContain(SuperAdminGuard);
+    const guard = new SuperAdminGuard();
+    const ctx = (role: UserRole) =>
+      ({ switchToHttp: () => ({ getRequest: () => ({ user: { role, tenantId: T } }) }) }) as any;
+    for (const role of [
+      UserRole.TENANT_ADMIN,
+      UserRole.OPERATOR,
+      UserRole.DRIVER,
+      UserRole.CUSTOMER,
+    ]) {
+      expect(guard.canActivate(ctx(role))).toBe(false);
+    }
+    expect(guard.canActivate(ctx(UserRole.SUPER_ADMIN))).toBe(true);
+  });
+
+  it("the three routes exist on that controller", () => {
+    const proto = PlatformAdminController.prototype as any;
+    expect(typeof proto.listBusinessProfiles).toBe("function");
+    expect(typeof proto.previewBusinessProfile).toBe("function");
+    expect(typeof proto.applyBusinessProfile).toBe("function");
+  });
+});
+
+describe("GET business-profiles / POST preview", () => {
+  it("lists the seven profiles (BO-04: + Delivery + shipping, Everything)", () => {
+    const { controller } = fakeTenant({});
+    expect(controller.listBusinessProfiles().profiles).toHaveLength(7);
+  });
+
+  it("preview writes nothing", async () => {
+    const { controller, writes } = fakeTenant({});
+    const res = await controller.previewBusinessProfile(T, { profile: "delivery_distributor" });
+    expect(res.profile).toBe("delivery_distributor");
+    expect(res.summary.length).toBeGreaterThan(0);
+    expect(writes).toEqual([]);
+  });
+
+  it("preview returns a stable planFingerprint (the same plan hashes the same)", async () => {
+    const { controller } = fakeTenant({});
+    const a = await controller.previewBusinessProfile(T, { profile: "delivery_distributor" });
+    const b = await controller.previewBusinessProfile(T, { profile: "delivery_distributor" });
+    expect(a.planFingerprint).toMatch(/^[0-9a-f]{64}$/);
+    expect(b.planFingerprint).toBe(a.planFingerprint);
+    const other = await controller.previewBusinessProfile(T, { profile: "shipping_wholesaler" });
+    expect(other.planFingerprint).not.toBe(a.planFingerprint);
+  });
+});
+
+describe("confirm applies only the plan that was previewed (#3199 review)", () => {
+  it("a plan that changed since the preview is a 409 PROFILE_PLAN_CHANGED and NOTHING is written", async () => {
+    const t = fakeTenant({});
+    const shown = await t.controller.previewBusinessProfile(T, { profile: "delivery_distributor" });
+    // between preview and confirm, the tenant's state moves (here: the confirm targets a plan
+    // other than the one shown, exactly what an add-on turned on in between produces)
+    const stale = { ...shown, planFingerprint: "f".repeat(64) };
+    await expect(
+      t.controller.applyBusinessProfile(
+        T,
+        { profile: "delivery_distributor", planFingerprint: stale.planFingerprint } as any,
+        admin,
+      ),
+    ).rejects.toMatchObject({
+      status: 409,
+      response: expect.objectContaining({ code: "PROFILE_PLAN_CHANGED" }),
+    });
+    expect(t.writes).toEqual([]);
+    expect(t.addonService.disableAddon).not.toHaveBeenCalled();
+  });
+
+  it("a confirm with NO fingerprint is a 400 and writes nothing (the route itself, no auto-fill)", async () => {
+    const t = fakeTenant({});
+    await expect(
+      t.rawConfirm(T, { profile: "delivery_distributor" } as any, admin),
+    ).rejects.toMatchObject({ status: 400 });
+    expect(t.writes).toEqual([]);
+  });
+
+  it("a PAID add-on switched on between preview and confirm changes the plan: 409, nothing written or stopped", async () => {
+    const t = fakeTenant({});
+    const shown = await t.controller.previewBusinessProfile(T, { profile: "shipping_wholesaler" });
+    expect(shown.plan.billing).toEqual([]); // nothing to stop when the admin looked
+    t.enablePaid("driver_payments"); // now the tenant PAYS for a module the profile switches off
+    await expect(
+      t.rawConfirm(
+        T,
+        { profile: "shipping_wholesaler", planFingerprint: shown.planFingerprint } as any,
+        admin,
+      ),
+    ).rejects.toMatchObject({
+      status: 409,
+      response: expect.objectContaining({ code: "PROFILE_PLAN_CHANGED" }),
+    });
+    expect(t.writes).toEqual([]);
+    expect(t.addonService.disableAddon).not.toHaveBeenCalled();
+  });
+
+  it("billing and its manual / comp flags are part of the fingerprint", async () => {
+    const paidStripe = fakeTenant({ addons: ["driver_payments"] });
+    const a = await paidStripe.controller.previewBusinessProfile(T, {
+      profile: "shipping_wholesaler",
+    });
+    const comped = fakeTenant({ comped: ["driver_payments"] });
+    const b = await comped.controller.previewBusinessProfile(T, { profile: "shipping_wholesaler" });
+    expect(a.plan.billing.length).toBe(1);
+    // SA-769: a comp row is switched off through the same disable, flagged comp (no billing to stop)
+    expect(b.plan.billing).toEqual([
+      { featureKey: "driver_payments", action: "disable", manual: false, comp: true },
+    ]);
+    expect(a.planFingerprint).not.toBe(b.planFingerprint);
+  });
+
+  it("plan-then-apply holds the add-on enable path's keys (billing family, addon:<tenant>:<sku>) in ONE multi-key lock", async () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { withAdvisoryLocks } = require("../common/db-locks");
+    (withAdvisoryLocks as jest.Mock).mockClear();
+    const t = fakeTenant({});
+    await t.controller.applyBusinessProfile(T, { profile: "delivery_distributor" } as any, admin);
+    expect(withAdvisoryLocks).toHaveBeenCalledTimes(1); // one connection for all three keys
+    const [opts] = (withAdvisoryLocks as jest.Mock).mock.calls[0];
+    expect(opts.family).toBe("billing");
+    expect(opts.keys).toHaveLength(3);
+    for (const k of opts.keys) expect(k.startsWith(`addon:${T}:`)).toBe(true);
+  });
+
+  it.each([
+    [
+      "a lock timeout",
+      () => new (jest.requireActual("../common/db-locks").LockTimeoutError)("billing", "k", 10_000),
+    ],
+    [
+      "no lock connection",
+      () => new (jest.requireActual("../common/db-locks").LockUnavailableError)(null),
+    ],
+  ])(
+    "%s on the confirm lock is a 503 LOCK_UNAVAILABLE and nothing is written",
+    async (_name, err) => {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { withAdvisoryLocks } = require("../common/db-locks");
+      (withAdvisoryLocks as jest.Mock).mockRejectedValueOnce(err());
+      const t = fakeTenant({});
+      await expect(
+        t.controller.applyBusinessProfile(T, { profile: "delivery_distributor" } as any, admin),
+      ).rejects.toMatchObject({
+        status: 503,
+        response: expect.objectContaining({ code: "LOCK_UNAVAILABLE" }),
+      });
+      expect(t.writes).toEqual([]);
+    },
+  );
+
+  it("the previewed fingerprint confirms", async () => {
+    const t = fakeTenant({});
+    const shown = await t.controller.previewBusinessProfile(T, { profile: "delivery_distributor" });
+    await t.controller.applyBusinessProfile(
+      T,
+      { profile: "delivery_distributor", planFingerprint: shown.planFingerprint } as any,
+      admin,
+    );
+    expect(t.writes.length).toBeGreaterThan(0);
+  });
+});
+
+describe("POST business-profile (confirm) — through the existing audited writes", () => {
+  it("unset tenant → delivery distributor: fleet grants land BEFORE the delivery mode; one profile audit row", async () => {
+    const t = fakeTenant({});
+    const res = await t.controller.applyBusinessProfile(
+      T,
+      { profile: "delivery_distributor" },
+      admin,
+    );
+    // SA-769: the grants are COMP rows (the SA-693 path), never GRANT overrides
+    expect(t.writes).toEqual([
+      "comp recurring_routes",
+      "comp order_delivery",
+      "comp driver_payments", // M2: not on by default, so the profile turns it on
+      "mode fulfilment_model=delivery",
+    ]);
+    expect(t.featureOverrides.create).not.toHaveBeenCalled();
+    expect(t.addonService.enableAddon).toHaveBeenCalledWith(
+      T,
+      "recurring_routes",
+      undefined,
+      undefined,
+      expect.objectContaining({ comp: true, lockHeld: true, source: "profile.apply" }),
+    );
+    expect(t.state().modes.fulfilment_model).toBe("delivery");
+    // every comp went through the controller's own audited path (ADDON_COMPED, reason names the profile)
+    expect(t.svc.recordAdminAction).toHaveBeenCalledWith(
+      T,
+      "admin-1",
+      AdminAuditAction.ADDON_COMPED,
+      expect.objectContaining({
+        addonKey: "recurring_routes",
+        reason: "business profile delivery_distributor",
+      }),
+    );
+    expect(t.featureConfig.set).toHaveBeenCalledWith(
+      T,
+      "fulfilment_model",
+      "delivery",
+      "Business profile: Delivery distributor",
+      "admin-1",
+    );
+    const profileRows = t.svc.recordAdminAction.mock.calls.filter(
+      (c: unknown[]) => c[2] === AdminAuditAction.BUSINESS_PROFILE_APPLIED,
+    );
+    expect(profileRows).toEqual([
+      [
+        T,
+        "admin-1",
+        AdminAuditAction.BUSINESS_PROFILE_APPLIED,
+        expect.objectContaining({
+          profile: "delivery_distributor",
+          reason: "Business profile: Delivery distributor",
+        }),
+      ],
+    ]);
+    expect(res).toMatchObject({ profile: "delivery_distributor", changed: ["fleet-change"] });
+  });
+
+  it("Delivery distributor → Shipping wholesaler: the mode moves to ship BEFORE the fleet is denied — lands whole", async () => {
+    const t = fakeTenant({
+      overrides: { recurring_routes: "GRANT", order_delivery: "GRANT", driver_payments: "GRANT" },
+      modes: { fulfilment_model: "delivery" },
+    });
+    await t.controller.applyBusinessProfile(T, { profile: "shipping_wholesaler" }, admin);
+    expect(t.writes).toEqual([
+      "mode fulfilment_model=ship",
+      "revoke GRANT recurring_routes",
+      "override DENY recurring_routes",
+      "revoke GRANT order_delivery",
+      "override DENY order_delivery",
+      "revoke GRANT driver_payments",
+      "override DENY driver_payments",
+    ]);
+    expect(t.state()).toEqual({
+      modes: { fulfilment_model: "ship", counter_sales: "unset" },
+      held: { recurring_routes: false, order_delivery: false, driver_payments: false },
+      activeOverrides: 3,
+    });
+  });
+
+  it("Shipping wholesaler → Delivery distributor: the fleet is granted BEFORE the delivery mode — no 409, lands whole", async () => {
+    const t = fakeTenant({
+      overrides: { recurring_routes: "DENY", order_delivery: "DENY", driver_payments: "DENY" },
+      modes: { fulfilment_model: "ship" },
+    });
+    await t.controller.applyBusinessProfile(T, { profile: "delivery_distributor" }, admin);
+    // SA-769: each DENY is revoked, then the module is comped (no GRANT override is written)
+    expect(t.writes).toEqual([
+      "revoke DENY recurring_routes",
+      "comp recurring_routes",
+      "revoke DENY order_delivery",
+      "comp order_delivery",
+      "revoke DENY driver_payments",
+      "comp driver_payments",
+      "mode fulfilment_model=delivery",
+    ]);
+    expect(t.state()).toEqual({
+      modes: { fulfilment_model: "delivery", counter_sales: "unset" },
+      held: { recurring_routes: true, order_delivery: true, driver_payments: true },
+      activeOverrides: 0,
+    });
+  });
+
+  it("re-applying the same profile is idempotent: no writes, still one audit row", async () => {
+    const t = fakeTenant({ comped: ["order_delivery"] });
+    await t.controller.applyBusinessProfile(T, { profile: "shipping_wholesaler" }, admin);
+    const first = [...t.writes];
+    t.writes.length = 0;
+    await t.controller.applyBusinessProfile(T, { profile: "shipping_wholesaler" }, admin);
+    // SA-769: a comp row is switched off by the disable path (no Stripe item, so no billing call)
+    expect(first).toEqual(["disable order_delivery", "mode fulfilment_model=ship"]);
+    expect(t.writes).toEqual([]);
+  });
+
+  it.each([
+    ["in_store_retailer", "pickup"],
+    ["in_store_shipping_retailer", "pickup_ship"],
+  ])(
+    "SA-671 M1 lifted: %s (%s, now available) applies through the audited writes",
+    async (profile, mode) => {
+      const t = fakeTenant({ addons: ["recurring_routes"] });
+      await t.controller.applyBusinessProfile(T, { profile: profile as never }, admin);
+      expect(t.writes).toEqual(
+        expect.arrayContaining([
+          `mode fulfilment_model=${mode}`,
+          "mode counter_sales=on",
+          "disable recurring_routes",
+        ]),
+      );
+      expect(t.svc.recordAdminAction).toHaveBeenCalled();
+      expect(t.state().modes).toMatchObject({ fulfilment_model: mode, counter_sales: "on" });
+    },
+  );
+
+  // The refusal is DERIVED from registry availability (unavailableModes), so it stays covered by marking the
+  // live registry row unavailable for one test (restored in finally).
+  const withUnavailable = async (mode: string, run: () => Promise<void>) => {
+    const row = FEATURE_REGISTRY.find((f) => f.key === "fulfilment_model")!.config!.modes[mode] as {
+      available: boolean;
+    };
+    row.available = false;
+    try {
+      await run();
+    } finally {
+      row.available = true;
+    }
+  };
+
+  it.each([
+    ["in_store_retailer", "pickup"],
+    ["in_store_shipping_retailer", "pickup_ship"],
+  ])(
+    "SA-671 M1 (registry fixture: %s's mode %s marked unavailable) is refused with BUSINESS_PROFILE_UNAVAILABLE before ANY write",
+    async (profile, mode) => {
+      await withUnavailable(mode, async () => {
+        const t = fakeTenant({ addons: ["recurring_routes"] });
+        const err = await t.controller
+          .applyBusinessProfile(T, { profile: profile as never }, admin)
+          .catch((e) => e);
+        expect(err.getResponse()).toMatchObject({ code: "BUSINESS_PROFILE_UNAVAILABLE" });
+        expect(t.writes).toEqual([]);
+        expect(t.svc.recordAdminAction).not.toHaveBeenCalled();
+      });
+    },
+  );
+
+  it("SA-671 M1 bypass (registry fixture): a tenant ALREADY stored in-store is still refused while its mode is unavailable — no counter_sales, no DENYs", async () => {
+    await withUnavailable("pickup", async () => {
+      const t = fakeTenant({
+        addons: ["recurring_routes"],
+        modes: { fulfilment_model: "pickup", counter_sales: "unset" },
+      });
+      const err = await t.controller
+        .applyBusinessProfile(T, { profile: "in_store_retailer" }, admin)
+        .catch((e) => e);
+      expect(err.getResponse()).toMatchObject({ code: "BUSINESS_PROFILE_UNAVAILABLE" });
+      expect(t.writes).toEqual([]);
+    });
+  });
+
+  it("an unknown profile is refused before ANY write", async () => {
+    const t = fakeTenant({});
+    const err = await t.controller
+      .applyBusinessProfile(T, { profile: "pickup_counter" as never }, admin)
+      .catch((e) => e);
+    expect(err.getResponse()).toMatchObject({ code: "BUSINESS_PROFILE_UNKNOWN" });
+    expect(t.writes).toEqual([]);
+    expect(t.svc.recordAdminAction).not.toHaveBeenCalled();
+  });
+
+  it("a caller-supplied reason is used on every audit row", async () => {
+    const t = fakeTenant({});
+    await t.controller.applyBusinessProfile(
+      T,
+      { profile: "shipping_wholesaler", reason: "onboarding call" },
+      admin,
+    );
+    expect(t.featureConfig.set).toHaveBeenCalledWith(
+      T,
+      "fulfilment_model",
+      "ship",
+      "onboarding call",
+      "admin-1",
+    );
+  });
+
+  it("is tenant-scoped: every write names the :id tenant", async () => {
+    const t = fakeTenant({});
+    await t.controller.applyBusinessProfile(T, { profile: "delivery_distributor" }, admin);
+    for (const c of t.featureOverrides.create.mock.calls) expect(c[0].tenantId).toBe(T);
+    for (const c of t.featureConfig.set.mock.calls) expect(c[0]).toBe(T);
+  });
+});
+
+describe("OWNER RULING (money, tier 1): switching OFF a module the tenant PAYS for stops its billing", () => {
+  const audits = (t: ReturnType<typeof fakeTenant>, action: string) =>
+    t.svc.recordAdminAction.mock.calls.filter((c: unknown[]) => c[2] === action);
+
+  it("a paying tenant: the EXISTING add-on disable is called once per paid module, FIRST, in reverse dependency order, each audited", async () => {
+    const t = fakeTenant({
+      addons: ["recurring_routes", "order_delivery"],
+      overrides: { driver_payments: "GRANT" },
+      modes: { fulfilment_model: "delivery" },
+    });
+    await t.controller.applyBusinessProfile(T, { profile: "shipping_wholesaler" }, admin);
+    expect(t.addonService.disableAddon.mock.calls).toEqual([
+      [T, "order_delivery", "admin-1", "profile.apply"], // SA-822: the record names its true source
+      [T, "recurring_routes", "admin-1", "profile.apply"],
+    ]);
+    expect(t.writes).toEqual([
+      "disable order_delivery",
+      "disable recurring_routes",
+      "mode fulfilment_model=ship",
+      "revoke GRANT driver_payments",
+      "override DENY driver_payments",
+    ]);
+    expect(audits(t, AdminAuditAction.ADDON_DISABLED).map((c) => c[3])).toEqual([
+      { addonKey: "order_delivery" },
+      { addonKey: "recurring_routes" },
+    ]);
+    expect(t.state().held).toEqual({
+      recurring_routes: false,
+      order_delivery: false,
+      driver_payments: false,
+    });
+  });
+
+  it("SA-769: a comp add-on row (isComp) is switched off by the add-on disable - it has no Stripe item, so no billing is stopped - and needs no DENY override", async () => {
+    const t = fakeTenant({ comped: ["recurring_routes"] });
+    await t.controller.applyBusinessProfile(T, { profile: "shipping_wholesaler" }, admin);
+    expect(t.addonService.disableAddon.mock.calls).toEqual([
+      [T, "recurring_routes", "admin-1", "profile.apply"],
+    ]);
+    expect(t.writes).toEqual(["disable recurring_routes", "mode fulfilment_model=ship"]);
+    expect(t.featureOverrides.create).not.toHaveBeenCalled();
+  });
+
+  it("a comp via GRANT override: NO billing call", async () => {
+    const t = fakeTenant({ overrides: { order_delivery: "GRANT" } });
+    await t.controller.applyBusinessProfile(T, { profile: "shipping_wholesaler" }, admin);
+    expect(t.addonService.disableAddon).not.toHaveBeenCalled();
+  });
+
+  it("the disable fails: the WHOLE apply is refused with a fixed code and nothing is applied", async () => {
+    const t = fakeTenant({
+      addons: ["recurring_routes"],
+      overrides: { driver_payments: "GRANT" },
+      modes: { fulfilment_model: "delivery" },
+      disableFails: "recurring_routes",
+    });
+    const err = await t.controller
+      .applyBusinessProfile(T, { profile: "shipping_wholesaler" }, admin)
+      .catch((e) => e);
+    expect(err.getStatus()).toBe(503);
+    expect(err.getResponse()).toMatchObject({
+      code: "BUSINESS_PROFILE_BILLING_FAILED",
+      featureKey: "recurring_routes",
+      alreadyDisabled: [],
+    });
+    expect(t.writes).toEqual([]); // no mode, no override, no DENY
+    expect(t.state().modes.fulfilment_model).toBe("delivery");
+    expect(audits(t, AdminAuditAction.BUSINESS_PROFILE_APPLIED)).toEqual([]);
+  });
+
+  describe("LEAD RULING (all-or-nothing as far as Stripe allows): a disable fails at EACH step — the tenant is left in a VALID configuration", () => {
+    /** Valid = no delivery-family mode without a fleet key; driver payments never without one. */
+    const isValid = (st: ReturnType<ReturnType<typeof fakeTenant>["state"]>) => {
+      const fleet = st.held.recurring_routes || st.held.order_delivery;
+      const mode = st.modes.fulfilment_model;
+      return (
+        !((mode === "delivery" || mode === "both") && !fleet) &&
+        !(st.held.driver_payments && !fleet)
+      );
+    };
+
+    it.each([
+      ["driver_payments", [], "none"],
+      ["order_delivery", ["driver_payments"], "At-door payment collection"],
+      [
+        "recurring_routes",
+        ["driver_payments", "order_delivery"],
+        "At-door payment collection, Ad hoc order delivery",
+      ],
+    ] as const)(
+      "fails at %s: only the earlier disables happened, the mode is untouched, the state is valid, the message names them",
+      async (failing, before, named) => {
+        const t = fakeTenant({
+          addons: ["recurring_routes", "order_delivery", "driver_payments"],
+          modes: { fulfilment_model: "delivery" },
+          disableFails: failing,
+        });
+        expect(isValid(t.state())).toBe(true);
+        const err = await t.controller
+          .applyBusinessProfile(T, { profile: "shipping_wholesaler" }, admin)
+          .catch((e) => e);
+        expect(err.getStatus()).toBe(503);
+        const body = err.getResponse();
+        expect(body).toMatchObject({
+          code: "BUSINESS_PROFILE_BILLING_FAILED",
+          featureKey: failing,
+          alreadyDisabled: [...before],
+        });
+        expect(body.message).toContain(`Already switched off with billing stopped: ${named}.`);
+        expect(body).not.toHaveProperty("cause"); // no server text in the body (SA)
+        expect(body.failedStep).toEqual({ step: "billing", key: failing });
+        // the disables that ran are exactly the earlier ones; no mode / override write followed
+        expect(t.writes).toEqual(before.map((k) => `disable ${k}`));
+        expect(t.state().modes.fulfilment_model).toBe("delivery");
+        expect(isValid(t.state())).toBe(true);
+        expect(audits(t, AdminAuditAction.BUSINESS_PROFILE_APPLIED)).toEqual([]);
+      },
+    );
+
+    it("no failure: all three disables (reverse dependency order), THEN the mode — the end state is valid", async () => {
+      const t = fakeTenant({
+        addons: ["recurring_routes", "order_delivery", "driver_payments"],
+        modes: { fulfilment_model: "delivery" },
+      });
+      await t.controller.applyBusinessProfile(T, { profile: "shipping_wholesaler" }, admin);
+      expect(t.writes).toEqual([
+        "disable driver_payments",
+        "disable order_delivery",
+        "disable recurring_routes",
+        "mode fulfilment_model=ship",
+      ]);
+      expect(isValid(t.state())).toBe(true);
+    });
+
+    it("a retry after a failure finishes the job: only the remaining disables run", async () => {
+      const t = fakeTenant({
+        addons: ["recurring_routes", "order_delivery", "driver_payments"],
+        modes: { fulfilment_model: "delivery" },
+        disableFails: "recurring_routes",
+      });
+      await t.controller
+        .applyBusinessProfile(T, { profile: "shipping_wholesaler" }, admin)
+        .catch(() => undefined);
+      t.writes.length = 0;
+      t.addonService.disableAddon.mockClear();
+      t.failNoMore();
+      await t.controller.applyBusinessProfile(T, { profile: "shipping_wholesaler" }, admin);
+      expect(t.writes).toEqual(["disable recurring_routes", "mode fulfilment_model=ship"]);
+      expect(isValid(t.state())).toBe(true);
+    });
+  });
+
+  it("re-applying after a paid disable is idempotent: no second billing call", async () => {
+    const t = fakeTenant({ addons: ["recurring_routes"] });
+    await t.controller.applyBusinessProfile(T, { profile: "shipping_wholesaler" }, admin);
+    t.addonService.disableAddon.mockClear();
+    await t.controller.applyBusinessProfile(T, { profile: "shipping_wholesaler" }, admin);
+    expect(t.addonService.disableAddon).not.toHaveBeenCalled();
+  });
+});
+
+describe("SA-769: a COMP switch-off that fails never claims billing was (or could not be) stopped", () => {
+  const compTenant = (over: Parameters<typeof fakeTenant>[0] = {}) =>
+    fakeTenant({
+      comped: ["recurring_routes", "order_delivery", "driver_payments"],
+      modes: { fulfilment_model: "delivery" },
+      ...over,
+    });
+
+  it("the first comp disable fails: the message says it could not be switched off, with no billing wording", async () => {
+    const t = compTenant({ disableFails: "driver_payments" });
+    const err = await t.controller
+      .applyBusinessProfile(T, { profile: "shipping_wholesaler" }, admin)
+      .catch((e) => e);
+    expect(err.getStatus()).toBe(503);
+    const body = err.getResponse();
+    expect(body).toMatchObject({
+      code: "BUSINESS_PROFILE_BILLING_FAILED",
+      featureKey: "driver_payments",
+      alreadyDisabled: [],
+    });
+    expect(body.message).toContain("At-door payment collection could not be switched off");
+    expect(body.message).not.toMatch(/billing/i);
+    expect(t.writes).toEqual([]);
+  });
+
+  it("a later comp disable fails: the earlier ones are named as switched off, with no billing wording", async () => {
+    const t = compTenant({ disableFails: "recurring_routes" });
+    const err = await t.controller
+      .applyBusinessProfile(T, { profile: "shipping_wholesaler" }, admin)
+      .catch((e) => e);
+    const body = err.getResponse();
+    expect(body.alreadyDisabled).toEqual(["driver_payments", "order_delivery"]);
+    expect(body.message).toContain(
+      "Already switched off: At-door payment collection, Ad hoc order delivery.",
+    );
+    expect(body.message).not.toMatch(/billing/i);
+  });
+
+  it("a mode failure after comp switch-offs: the partial-apply copy says add-ons were switched off, not that billing stopped", async () => {
+    const t = compTenant({ setFails: "fulfilment_model" });
+    const err = await t.controller
+      .applyBusinessProfile(T, { profile: "shipping_wholesaler" }, admin)
+      .catch((e) => e);
+    const body = err.getResponse();
+    expect(body.failedStep).toEqual({ step: "mode", key: "fulfilment_model" });
+    expect(body.message).toContain("failed after the add-ons were switched off");
+    expect(body.message).not.toMatch(/billing/i);
+  });
+
+  it("when a PAID add-on was stopped the billing wording stays (the existing contract)", async () => {
+    const t = fakeTenant({
+      addons: ["driver_payments"],
+      comped: ["recurring_routes"],
+      modes: { fulfilment_model: "delivery" },
+      setFails: "fulfilment_model",
+    });
+    const err = await t.controller
+      .applyBusinessProfile(T, { profile: "shipping_wholesaler" }, admin)
+      .catch((e) => e);
+    expect(err.getResponse().message).toContain("Already switched off with billing stopped:");
+    expect(err.getResponse().message).toContain("failed after billing was stopped");
+  });
+});
+
+describe("SA MUST: a failure AFTER a successful billing disable returns the SAME coded 503", () => {
+  it("disable ok, then set() rejects → 503 BUSINESS_PROFILE_BILLING_FAILED naming what was stopped and the failing step; a second confirm completes with NO further billing call", async () => {
+    const t = fakeTenant({
+      addons: ["recurring_routes"],
+      modes: { fulfilment_model: "delivery" },
+      setFails: "fulfilment_model",
+    });
+    const err = await t.controller
+      .applyBusinessProfile(T, { profile: "shipping_wholesaler" }, admin)
+      .catch((e) => e);
+    expect(err.getStatus()).toBe(503);
+    const body = err.getResponse();
+    expect(body).toMatchObject({
+      code: "BUSINESS_PROFILE_BILLING_FAILED",
+      alreadyDisabled: ["recurring_routes"],
+      failedStep: { step: "mode", key: "fulfilment_model" },
+    });
+    expect(body).not.toHaveProperty("cause");
+    expect(JSON.stringify(body)).not.toContain("connection terminated"); // no server text
+    expect(body.message).toContain("Already switched off with billing stopped: Recurring routes.");
+    expect(t.writes).toEqual(["disable recurring_routes"]);
+
+    // the admin retries
+    t.failNoMore();
+    t.writes.length = 0;
+    t.addonService.disableAddon.mockClear();
+    await t.controller.applyBusinessProfile(T, { profile: "shipping_wholesaler" }, admin);
+    expect(t.addonService.disableAddon).not.toHaveBeenCalled();
+    expect(t.writes).toEqual(["mode fulfilment_model=ship"]);
+    expect(t.state().modes.fulfilment_model).toBe("ship");
+  });
+
+  it("a failing override write after a disable is reported the same way, naming the override step", async () => {
+    const t = fakeTenant({
+      addons: ["recurring_routes"],
+      overrides: { order_delivery: "GRANT" },
+      modes: { fulfilment_model: "delivery" },
+    });
+    t.featureOverrides.create.mockRejectedValueOnce(new Error("deadlock detected"));
+    const err = await t.controller
+      .applyBusinessProfile(T, { profile: "shipping_wholesaler" }, admin)
+      .catch((e) => e);
+    expect(err.getResponse()).toMatchObject({
+      code: "BUSINESS_PROFILE_BILLING_FAILED",
+      alreadyDisabled: ["recurring_routes"],
+      failedStep: { step: "deny", key: "order_delivery" },
+    });
+    expect(err.getResponse()).not.toHaveProperty("cause");
+  });
+
+  it("with NO billing disable done, a later failure keeps its own error (nothing was stopped to report)", async () => {
+    const t = fakeTenant({
+      overrides: { recurring_routes: "GRANT" },
+      setFails: "fulfilment_model",
+    });
+    const err = await t.controller
+      .applyBusinessProfile(T, { profile: "shipping_wholesaler" }, admin)
+      .catch((e) => e);
+    expect(err.message).toBe("connection terminated unexpectedly");
+    expect(t.addonService.disableAddon).not.toHaveBeenCalled();
+  });
+});
+
+describe("effective-features carries the applied fulfilment mode (B1132)", () => {
+  const consoleRow = async (t: ReturnType<typeof fakeTenant>, key: string) => {
+    const res = (await t.controller.getTenantFeaturesEffective(T)) as {
+      effective: Array<{ key: string; mode?: Record<string, unknown> }>;
+    };
+    return res.effective.find((f) => f.key === key);
+  };
+
+  it("after a profile is applied, the console row's mode IS the one the Current setup card reads", async () => {
+    const t = fakeTenant({ addons: [] });
+    await t.controller.applyBusinessProfile(T, { profile: "shipping_wholesaler" }, admin);
+
+    // the card: GET feature-config/fulfilment_model -> featureConfig.getState(...).value
+    const card = await t.featureConfig.getState(T, "fulfilment_model");
+    expect(card.value).toBe("ship");
+
+    // the console row: effective-features, same resolver, with its true source
+    const row = await consoleRow(t, "fulfilment_model");
+    expect(row?.mode).toMatchObject({ value: "ship", effective: "ship", source: "TENANT" });
+    expect(row?.mode?.value).toBe(card.value);
+    // ...and the capability the apps act on agrees: SHIP only
+    expect(
+      deriveFulfilmentCapability({
+        mode: String(row?.mode?.effective),
+        counterSales: "off",
+        fleet: false,
+      }).methods,
+    ).toEqual(["SHIP"]);
+  });
+
+  it("a never-configured tenant reads its registry default, not a tenant value", async () => {
+    const t = fakeTenant({});
+    const row = await consoleRow(t, "fulfilment_model");
+    expect(row?.mode).toMatchObject({
+      value: "unset",
+      effective: "unset",
+      source: "REGISTRY_DEFAULT",
+    });
+  });
+
+  it("the single-key route carries the same mode", async () => {
+    const t = fakeTenant({});
+    await t.controller.applyBusinessProfile(T, { profile: "shipping_wholesaler" }, admin);
+    const one = (await t.controller.getTenantFeatureEffective(T, "fulfilment_model")) as {
+      mode?: { value: string };
+    };
+    expect(one.mode?.value).toBe("ship");
+  });
+
+  it("a key with no config block carries no mode", async () => {
+    const t = fakeTenant({});
+    const plain = FEATURE_REGISTRY.find((f) => !f.config)!;
+    expect((await consoleRow(t, plain.key))?.mode).toBeUndefined();
+  });
+
+  it("a failed mode read leaves the row without a mode instead of failing the whole trace", async () => {
+    const t = fakeTenant({});
+    t.featureConfig.getState.mockRejectedValueOnce(new Error("db blip"));
+    const res = (await t.controller.getTenantFeaturesEffective(T)) as { effective: unknown[] };
+    expect(res.effective.length).toBe(FEATURE_REGISTRY.length);
+  });
+});
+
+describe("ROW (c): the BUSINESS_PROFILE_BILLING_FAILED body says, per add-on, what happened", () => {
+  const apply = async (t: ReturnType<typeof fakeTenant>) => {
+    const err = await t.controller
+      .applyBusinessProfile(T, { profile: "shipping_wholesaler" }, admin)
+      .catch((e) => e);
+    expect(err.getStatus()).toBe(503);
+    return err.getResponse();
+  };
+
+  it("a comp row switched off, then a later step fails: wasComp true, switched off, billing never stopped", async () => {
+    const t = fakeTenant({
+      comped: ["recurring_routes"],
+      modes: { fulfilment_model: "delivery" },
+      setFails: "fulfilment_model",
+    });
+    const body = await apply(t);
+    expect(body.addons).toEqual([
+      { key: "recurring_routes", wasComp: true, billingStopped: false, switchedOff: true },
+    ]);
+    // additive: the older top-level fields still ride along
+    expect(body.alreadyDisabled).toEqual(["recurring_routes"]);
+    expect(body.failedStep).toEqual({ step: "mode", key: "fulfilment_model" });
+  });
+
+  it("a paid row stopped, then a later add-on's switch-off failed: the failed one comes first", async () => {
+    const t = fakeTenant({
+      addons: ["driver_payments", "order_delivery"],
+      modes: { fulfilment_model: "delivery" },
+      disableFails: "order_delivery",
+    });
+    const body = await apply(t);
+    expect(body.addons).toEqual([
+      { key: "order_delivery", wasComp: false, billingStopped: false, switchedOff: false },
+      { key: "driver_payments", wasComp: false, billingStopped: true, switchedOff: true },
+    ]);
+  });
+
+  it("a paid row whose stop failed (nothing done before): one entry, still on", async () => {
+    const t = fakeTenant({ addons: ["recurring_routes"], disableFails: "recurring_routes" });
+    const body = await apply(t);
+    expect(body.addons).toEqual([
+      { key: "recurring_routes", wasComp: false, billingStopped: false, switchedOff: false },
+    ]);
+    expect(body.alreadyDisabled).toEqual([]);
+  });
+
+  it("a comp row whose switch-off failed: wasComp true, not switched off", async () => {
+    const t = fakeTenant({ comped: ["driver_payments"], disableFails: "driver_payments" });
+    const body = await apply(t);
+    expect(body.addons).toEqual([
+      { key: "driver_payments", wasComp: true, billingStopped: false, switchedOff: false },
+    ]);
+  });
+
+  it("mixed: paid stopped + comp switched off + a comp that failed, in failed-first then disable order", async () => {
+    const t = fakeTenant({
+      addons: ["driver_payments"],
+      comped: ["order_delivery", "recurring_routes"],
+      modes: { fulfilment_model: "delivery" },
+      disableFails: "recurring_routes",
+    });
+    const body = await apply(t);
+    expect(body.addons).toEqual([
+      { key: "recurring_routes", wasComp: true, billingStopped: false, switchedOff: false },
+      { key: "driver_payments", wasComp: false, billingStopped: true, switchedOff: true },
+      { key: "order_delivery", wasComp: true, billingStopped: false, switchedOff: true },
+    ]);
+    expect(JSON.stringify(body)).not.toContain("connection terminated");
+  });
+});
+
+describe("item 8 — the apply keeps the Settings in-transit guard", () => {
+  it("a profile that moves the billing moment while a carrier order is in transit: 409, nothing written or stopped", async () => {
+    const t = fakeTenant({ addons: ["recurring_routes"], inTransit: 1 });
+    await expect(
+      t.controller.previewBusinessProfile(T, { profile: "shipping_wholesaler" }),
+    ).rejects.toMatchObject({
+      status: 409,
+      response: expect.objectContaining({ code: "FULFILMENT_CARRIER_IN_TRANSIT" }),
+    });
+    await expect(
+      t.controller.applyBusinessProfile(T, { profile: "shipping_wholesaler" }, admin),
+    ).rejects.toMatchObject({
+      status: 409,
+      response: expect.objectContaining({ code: "FULFILMENT_CARRIER_IN_TRANSIT" }),
+    });
+    expect(t.writes).toEqual([]);
+    expect(t.addonService.disableAddon).not.toHaveBeenCalled();
+    expect(t.state().modes.fulfilment_model ?? "unset").toBe("unset");
+  });
+
+  it("guard row: no order in transit — the profile applies as today", async () => {
+    const t = fakeTenant({ addons: ["recurring_routes"] });
+    await t.controller.applyBusinessProfile(T, { profile: "shipping_wholesaler" }, admin);
+    expect(t.state().modes.fulfilment_model).toBe("ship");
+  });
+});
+
+/**
+ * BO-04: the capability ticks are a second INPUT to the same plan -> blocked -> fingerprint -> apply path.
+ * The two new routes sit on the same SuperAdminGuard'd controller; the preset routes are thin aliases.
+ */
+describe("BO-04 business-capabilities routes", () => {
+  const profileRows = (t: ReturnType<typeof fakeTenant>) =>
+    t.svc.recordAdminAction.mock.calls.filter(
+      (c: unknown[]) => c[2] === AdminAuditAction.BUSINESS_PROFILE_APPLIED,
+    );
+  const preview = (t: ReturnType<typeof fakeTenant>, body: object) =>
+    (t.controller as any).previewBusinessCapabilities(T, body);
+  /** Confirm as the web does it: preview first, send that planFingerprint back. */
+  const confirm = async (t: ReturnType<typeof fakeTenant>, body: object) => {
+    const shown = await preview(t, body);
+    return (t.controller as any).applyBusinessCapabilities(
+      T,
+      { ...body, planFingerprint: shown.planFingerprint },
+      admin,
+    );
+  };
+
+  it("the two routes exist, are POSTs under tenants/:id, and live on the SuperAdminGuard'd controller", () => {
+    const proto = PlatformAdminController.prototype as any;
+    const guards = Reflect.getMetadata(GUARDS_METADATA, PlatformAdminController) as unknown[];
+    expect(guards).toContain(SuperAdminGuard);
+    for (const [fn, path] of [
+      ["previewBusinessCapabilities", "tenants/:id/business-capabilities/preview"],
+      ["applyBusinessCapabilities", "tenants/:id/business-capabilities"],
+    ] as const) {
+      expect(typeof proto[fn]).toBe("function");
+      expect(Reflect.getMetadata("path", proto[fn])).toBe(path);
+      expect(Reflect.getMetadata("method", proto[fn])).toBe(1); // RequestMethod.POST
+    }
+  });
+
+  it("nothing ticked: 400 BUSINESS_CAPABILITIES_EMPTY on preview and confirm, nothing written", async () => {
+    const t = fakeTenant({});
+    await expect(preview(t, {})).rejects.toMatchObject({
+      status: 400,
+      response: expect.objectContaining({ code: "BUSINESS_CAPABILITIES_EMPTY" }),
+    });
+    await expect(
+      (t.controller as any).applyBusinessCapabilities(T, { planFingerprint: "x" }, admin),
+    ).rejects.toMatchObject({
+      status: 400,
+      response: expect.objectContaining({ code: "BUSINESS_CAPABILITIES_EMPTY" }),
+    });
+    expect(t.writes).toEqual([]);
+  });
+
+  it("preview writes nothing and returns the normalised ticks, the preset, the plan and the fingerprint", async () => {
+    const t = fakeTenant({});
+    const res = await preview(t, { delivery: true, doorPayments: true, counter: true });
+    expect(res).toMatchObject({
+      capabilities: { delivery: true, doorPayments: true, shipping: false, counter: true },
+      preset: "delivery_pos",
+      blocked: null,
+      planFingerprint: expect.stringMatching(/^[0-9a-f]{64}$/),
+    });
+    expect(res.plan.modes).toEqual([
+      { key: "fulfilment_model", from: "unset", to: "delivery" },
+      { key: "counter_sales", from: "unset", to: "on" },
+    ]);
+    expect(t.writes).toEqual([]);
+  });
+
+  it("a stale planFingerprint is a 409 PROFILE_PLAN_CHANGED and NOTHING is written", async () => {
+    const t = fakeTenant({});
+    const shown = await preview(t, { shipping: true });
+    t.enablePaid("recurring_routes"); // the account moved after the preview
+    await expect(
+      (t.controller as any).applyBusinessCapabilities(
+        T,
+        { shipping: true, planFingerprint: shown.planFingerprint },
+        admin,
+      ),
+    ).rejects.toMatchObject({
+      status: 409,
+      response: expect.objectContaining({ code: "PROFILE_PLAN_CHANGED" }),
+    });
+    expect(t.writes).toEqual([]);
+    expect(t.addonService.disableAddon).not.toHaveBeenCalled();
+  });
+
+  it("a confirm with no fingerprint is a 400 and writes nothing", async () => {
+    const t = fakeTenant({});
+    await expect(
+      (t.controller as any).applyBusinessCapabilities(T, { shipping: true }, admin),
+    ).rejects.toMatchObject({ status: 400 });
+    expect(t.writes).toEqual([]);
+  });
+
+  it("the alias `delivery_pos` and the ticks {delivery, counter} yield the identical plan, fingerprint and audit capabilities", async () => {
+    const alias = fakeTenant({});
+    const ticks = fakeTenant({});
+    const aliasShown = await alias.controller.previewBusinessProfile(T, {
+      profile: "delivery_pos",
+    });
+    const ticksShown = await preview(ticks, {
+      delivery: true,
+      doorPayments: true,
+      counter: true,
+    });
+    expect(ticksShown.plan).toEqual(aliasShown.plan);
+    expect(ticksShown.planFingerprint).toBe(aliasShown.planFingerprint);
+
+    await alias.controller.applyBusinessProfile(
+      T,
+      { profile: "delivery_pos", planFingerprint: aliasShown.planFingerprint } as any,
+      admin,
+    );
+    await confirm(ticks, { delivery: true, doorPayments: true, counter: true });
+    expect(ticks.writes).toEqual(alias.writes);
+
+    const [[, , , aliasMeta]] = profileRows(alias) as [[unknown, unknown, unknown, any]];
+    const [[, , , ticksMeta]] = profileRows(ticks) as [[unknown, unknown, unknown, any]];
+    expect(aliasMeta.capabilities).toEqual(ticksMeta.capabilities);
+    expect(aliasMeta.capabilities).toEqual({
+      delivery: true,
+      doorPayments: true,
+      shipping: false,
+      counter: true,
+      opensAs: "order",
+    });
+    expect(aliasMeta.preset).toBe("delivery_pos");
+    expect(ticksMeta.preset).toBe("delivery_pos");
+    expect(aliasMeta.plan).toEqual(ticksMeta.plan);
+    expect(aliasMeta.profile).toBe("delivery_pos"); // alias calls keep `profile`
+    expect(ticksMeta).not.toHaveProperty("profile"); // ticks calls do not
+  });
+
+  it("an omitted doorPayments on a tenant without driver_payments comps only the two fleet keys (keep current, BO-02 review)", async () => {
+    const t = fakeTenant({});
+    const res = await confirm(t, { delivery: true });
+    expect(res.preset).toBeNull();
+    expect(t.writes).toEqual([
+      "comp recurring_routes",
+      "comp order_delivery",
+      "mode fulfilment_model=delivery",
+    ]);
+  });
+
+  it("a combination no preset names is `custom`: preset null in the audit row, the reason names it", async () => {
+    const t = fakeTenant({});
+    const res = await confirm(t, { delivery: true, doorPayments: false });
+    expect(res.preset).toBeNull();
+    const [[, , , meta]] = profileRows(t) as [[unknown, unknown, unknown, any]];
+    expect(meta).toMatchObject({
+      preset: null,
+      capabilities: { delivery: true, doorPayments: false },
+      reason: "Business profile: Custom capabilities",
+    });
+    // the two fleet keys are comped; driver_payments is NOT
+    expect(t.writes).toEqual([
+      "comp recurring_routes",
+      "comp order_delivery",
+      "mode fulfilment_model=delivery",
+    ]);
+  });
+
+  it("the counter is always written: Shipping only on a Delivery + counter tenant switches counter_sales off", async () => {
+    const t = fakeTenant({
+      overrides: { recurring_routes: "GRANT", order_delivery: "GRANT", driver_payments: "GRANT" },
+      modes: { fulfilment_model: "delivery", counter_sales: "on" },
+    });
+    await confirm(t, { shipping: true });
+    expect(t.state().modes).toMatchObject({ fulfilment_model: "ship", counter_sales: "unset" });
+    expect(t.writes).toContain("mode counter_sales=unset");
+  });
+
+  it("{delivery, doorPayments:false} on a tenant PAYING driver_payments: the billing stop runs first, then the two fleet comps", async () => {
+    const t = fakeTenant({ addons: ["driver_payments"] });
+    await confirm(t, { delivery: true, doorPayments: false });
+    expect(t.writes).toEqual([
+      "disable driver_payments",
+      "comp recurring_routes",
+      "comp order_delivery",
+      "mode fulfilment_model=delivery",
+    ]);
+    expect(t.addonService.disableAddon).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-applying the same ticks writes nothing but one more audit row", async () => {
+    const t = fakeTenant({});
+    await confirm(t, { delivery: true, shipping: true, counter: true });
+    const writesAfterFirst = [...t.writes];
+    await confirm(t, { delivery: true, shipping: true, counter: true });
+    expect(t.writes).toEqual(writesAfterFirst);
+    expect(profileRows(t)).toHaveLength(2);
+  });
+
+  describe("carrier in transit", () => {
+    it("preview is a 200 with `blocked` and the plan (Confirm is the web's to disable)", async () => {
+      const t = fakeTenant({ addons: ["recurring_routes"], inTransit: 2 });
+      const res = await preview(t, { shipping: true });
+      expect(res.blocked).toEqual({ code: "FULFILMENT_CARRIER_IN_TRANSIT", count: 2 });
+      expect(res.plan.modes).toEqual([{ key: "fulfilment_model", from: "unset", to: "ship" }]);
+      expect(t.writes).toEqual([]);
+    });
+
+    it("confirm: 409 FULFILMENT_CARRIER_IN_TRANSIT before the first billing disable - nothing written or stopped", async () => {
+      const t = fakeTenant({
+        addons: ["recurring_routes", "order_delivery", "driver_payments"],
+        modes: { fulfilment_model: "delivery" },
+        inTransit: 1,
+      });
+      const shown = await preview(t, { shipping: true });
+      expect(shown.plan.billing.length).toBeGreaterThan(0);
+      await expect(
+        (t.controller as any).applyBusinessCapabilities(
+          T,
+          { shipping: true, planFingerprint: shown.planFingerprint },
+          admin,
+        ),
+      ).rejects.toMatchObject({
+        status: 409,
+        response: expect.objectContaining({ code: "FULFILMENT_CARRIER_IN_TRANSIT", count: 1 }),
+      });
+      expect(t.addonService.disableAddon).not.toHaveBeenCalled();
+      expect(t.writes).toEqual([]);
+      expect(profileRows(t)).toEqual([]);
+    });
+
+    it("BO-04 review MUST: a stale cached mode never lets billing stop before the in-transit refusal", async () => {
+      // Another replica moved the tenant to ship; this replica still caches unset, and an order shipped.
+      const t = fakeTenant({
+        addons: ["recurring_routes", "order_delivery", "driver_payments"],
+        modes: { fulfilment_model: "ship" },
+        staleCache: { fulfilment_model: "unset" },
+        inTransit: 1,
+      });
+      await expect(confirm(t, { delivery: true, doorPayments: false })).rejects.toMatchObject({
+        status: 409,
+        response: expect.objectContaining({ code: "FULFILMENT_CARRIER_IN_TRANSIT", count: 1 }),
+      });
+      expect(t.addonService.disableAddon).not.toHaveBeenCalled();
+      expect(t.writes).toEqual([]);
+    });
+
+    it("the refusal comes before the fingerprint check (a blocked plan is never 'changed')", async () => {
+      const t = fakeTenant({ addons: ["recurring_routes"], inTransit: 1 });
+      await expect(
+        (t.controller as any).applyBusinessCapabilities(
+          T,
+          { shipping: true, planFingerprint: "f".repeat(64) },
+          admin,
+        ),
+      ).rejects.toMatchObject({
+        status: 409,
+        response: expect.objectContaining({ code: "FULFILMENT_CARRIER_IN_TRANSIT" }),
+      });
+    });
+  });
+
+  describe("a comp the comp path would refuse is `blocked`, never discovered after a billing disable", () => {
+    // Door payments wanted with no fleet key anywhere, on a tenant paying for a fleet key: the apply would
+    // disable the fleet key (billing stops) and THEN be refused when it comps driver_payments. The ticks
+    // cannot produce this def today, so the mapping is stubbed to hand it to the real planner and apply.
+    const oddDef = () => ({
+      ...businessProfileByKey("shipping_wholesaler")!,
+      key: "custom",
+      modules: { driver_payments: true },
+    });
+    let spy: jest.SpyInstance;
+    beforeEach(() => {
+      spy = jest.spyOn(capabilities, "ticksToProfileDef").mockImplementation(() => ({
+        def: oddDef(),
+        normalised: capabilities.presetTicks(oddDef()),
+        preset: null,
+      }));
+    });
+    afterEach(() => spy.mockRestore());
+
+    it("the preview shows `blocked` FEATURE_REQUIRES_UNMET (200) and writes nothing", async () => {
+      const t = fakeTenant({ addons: ["recurring_routes"] });
+      const res = await preview(t, { counter: true });
+      expect(res.plan.billing.map((b: { featureKey: string }) => b.featureKey)).toEqual([
+        "recurring_routes",
+      ]);
+      expect(res.blocked).toEqual({
+        code: "FEATURE_REQUIRES_UNMET",
+        key: "driver_payments",
+        missing: "Recurring routes or Ad hoc order delivery",
+      });
+      expect(t.writes).toEqual([]);
+    });
+
+    it("confirm refuses BEFORE step 1: no disableAddon, no comp, no mode, no audit", async () => {
+      const t = fakeTenant({ addons: ["recurring_routes"] });
+      const shown = await preview(t, { counter: true });
+      await expect(
+        (t.controller as any).applyBusinessCapabilities(
+          T,
+          { counter: true, planFingerprint: shown.planFingerprint },
+          admin,
+        ),
+      ).rejects.toMatchObject({
+        status: 400,
+        response: expect.objectContaining({
+          code: "FEATURE_REQUIRES_UNMET",
+          key: "driver_payments",
+        }),
+      });
+      expect(t.addonService.disableAddon).not.toHaveBeenCalled();
+      expect(t.addonService.enableAddon).not.toHaveBeenCalled();
+      expect(t.writes).toEqual([]);
+      expect(profileRows(t)).toEqual([]);
+    });
+  });
+
+  it("the alias preview keeps the in-transit 409 (the current picker has no `blocked` to show)", async () => {
+    const t = fakeTenant({ addons: ["recurring_routes"], inTransit: 1 });
+    await expect(
+      t.controller.previewBusinessProfile(T, { profile: "shipping_wholesaler" }),
+    ).rejects.toMatchObject({
+      status: 409,
+      response: expect.objectContaining({ code: "FULFILMENT_CARRIER_IN_TRANSIT" }),
+    });
+  });
+});
+
+describe("SA-788 A3 / SA-822: the CALLER decides the source of a disable record, and the actor rides on both", () => {
+  it("the direct admin route passes admin.disable with the acting super-admin's id", async () => {
+    const t = fakeTenant({ addons: ["recurring_routes"] });
+    await t.controller.disableAddon(T, { addonKey: "recurring_routes" } as any, admin);
+    expect(t.addonService.disableAddon.mock.calls).toEqual([
+      [T, "recurring_routes", "admin-1", "admin.disable"],
+    ]);
+  });
+
+  it("a business-profile apply passes profile.apply with the same actor", async () => {
+    const t = fakeTenant({ addons: ["recurring_routes"] });
+    await t.controller.applyBusinessProfile(T, { profile: "shipping_wholesaler" }, admin);
+    expect(t.addonService.disableAddon.mock.calls).toEqual([
+      [T, "recurring_routes", "admin-1", "profile.apply"],
+    ]);
+  });
+});

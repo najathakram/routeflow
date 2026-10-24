@@ -1,3 +1,4 @@
+import { isFormulaLedText } from "../common/safe-text-cell";
 import { Injectable, Logger } from "@nestjs/common";
 import { TenantClass, UserRole } from "@prisma/client";
 import * as bcrypt from "bcrypt"; // match the hasher import used at customers.service.ts:484-509
@@ -131,7 +132,8 @@ export class TenantMirrorService {
               data: {
                 customerId,
                 tenantId: houseTenantId,
-                firstName: admin.username,
+                // B964: an admin username is user-typed; never mirror a formula-led one into an exported name column
+                firstName: isFormulaLedText(admin.username) ? "Admin" : admin.username,
                 lastName: "",
                 email: admin.email,
               },
@@ -202,7 +204,11 @@ export class TenantMirrorService {
           tenantId: houseTenantId,
           userId: placeholder.id,
           businessName: tenant.name,
-          contactName: firstAdmin?.username ?? tenant.name,
+          // B964: the first admin's USERNAME is user-typed; a formula-led one falls back to the (guarded) tenant name
+          contactName:
+            firstAdmin?.username && !isFormulaLedText(firstAdmin.username)
+              ? firstAdmin.username
+              : tenant.name,
           representsTenantId: tenantId,
         },
       });

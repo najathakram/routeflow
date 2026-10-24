@@ -1,3 +1,4 @@
+import { AUDIT_ACTIONS } from "../audit/audit-actions.constant";
 import { ConflictException, Logger } from "@nestjs/common";
 import { roundMoney } from "@routeflow/pricing";
 import type { EntitlementsService } from "../billing/entitlements.service";
@@ -8,6 +9,8 @@ import {
   type ChannelPrincipal,
 } from "../selling-restrictions/selling-restrictions.core";
 import type { PrismaService } from "../prisma/prisma.service";
+import { API_ERROR_CODES } from "../common/api-error-codes";
+import { advisoryXactLock } from "../common/db-locks";
 
 /**
  * The credit-limit guard, lifted out of `OrdersService` (B585) so that new enforcement points cost
@@ -154,18 +157,22 @@ export async function assertWithinCreditLimit(
     await loadCreditExposure(db, customerId, { excludeOrderId: currentOrderId });
 
   // The edited order counts its still-UNPAID projected total, floored by its unsettled invoices.
-  const exposure = roundMoney(
-    counted +
-      editedOrderContribution(
-        projectedOrderTotal,
-        excludedOrderPaid ?? 0,
-        excludedOrderUnsettledOutstanding ?? 0,
-        invoicesSurviveEdit,
-      ),
+  const contribution = roundMoney(
+    editedOrderContribution(
+      projectedOrderTotal,
+      excludedOrderPaid ?? 0,
+      excludedOrderUnsettledOutstanding ?? 0,
+      invoicesSurviveEdit,
+    ),
   );
+  // S1: an action that adds nothing to what the customer owes is not judged against the limit (a sale
+  // paid in full at the till, a prepaid edit). Only this comparison is skipped; a positive contribution
+  // is still compared exactly as before.
+  if (contribution <= 0) return;
+  const exposure = roundMoney(counted + contribution);
   if (exposure > limit) {
     throw new ConflictException({
-      code: "CREDIT_LIMIT_EXCEEDED",
+      code: API_ERROR_CODES.CREDIT_LIMIT_EXCEEDED,
       message:
         `This ${action} would take the customer's exposure to ${exposure.toFixed(2)}, ` +
         `over their credit limit of ${limit.toFixed(2)}.`,
@@ -220,12 +227,27 @@ export async function creditEnforcementMode(
 
 const isCreditLimitExceeded = (e: unknown): e is ConflictException =>
   e instanceof ConflictException &&
-  (e.getResponse() as { code?: string } | undefined)?.code === "CREDIT_LIMIT_EXCEEDED";
+  (e.getResponse() as { code?: string } | undefined)?.code ===
+    API_ERROR_CODES.CREDIT_LIMIT_EXCEEDED;
 
 const ACTION_LABEL = { order: "new order", delivery: "delivery" } as const;
 
 /** What an ENFORCED denial tells someone who may not see the customer's figures (a buyer). */
 const GENERIC_DENIAL = "This order can't be placed right now. Please contact your account manager.";
+
+/**
+ * The amount the B585 credit gate judges for a NEW order: the server total less what this request pays
+ * at the till (S1, C42). Whole cents; the paid part is clamped to [0, total], so the projection is never
+ * negative and never above the total (a garbage `creditPaidNow` cannot loosen the gate beyond the total).
+ */
+export function creditProjectedTotal(
+  total: number,
+  options: { creditPaidNow?: (total: number) => number },
+): number {
+  const paid = options.creditPaidNow?.(total) ?? 0;
+  const safePaid = Number.isFinite(paid) ? Math.min(Math.max(paid, 0), total) : 0;
+  return roundMoney(total - safePaid);
+}
 
 /** One enforcement point's facts (the tenant is added by the caller's own client). */
 export interface CreditPointParams {
@@ -297,7 +319,10 @@ export async function assertCreditAtEnforcementPoint(
   } catch (e) {
     if (mode === "ENFORCED") {
       if (isCreditLimitExceeded(e) && restrictionChannelForPrincipal(p.principal) !== "STAFF")
-        throw new ConflictException({ code: "CREDIT_LIMIT_EXCEEDED", message: GENERIC_DENIAL });
+        throw new ConflictException({
+          code: API_ERROR_CODES.CREDIT_LIMIT_EXCEEDED,
+          message: GENERIC_DENIAL,
+        });
       throw e;
     }
     if (!isCreditLimitExceeded(e)) {
@@ -312,5 +337,99 @@ export async function assertCreditAtEnforcementPoint(
       `credit limit would DENY a ${ACTION_LABEL[action]} (dark): tenant=${p.tenantId} ` +
         `customer=${p.customerId} exposure=${exposure} limit=${limit}`,
     );
+  }
+}
+
+/**
+ * SA-849 (S1 S-1): the ONE post-tender credit re-check. The counter sale's gate counted the till's tender (`netted`, the
+ * S1 netting) and let the sale through; the sale is committed before the tender, which can then fail. When it did not fully
+ * record (`planError`), re-run the SAME derivation on live state (it nets what was really paid, so a partly recorded tender
+ * alerts only when the remainder still breaches). Never blocks, never reverses the sale: the remedy is the existing retry /
+ * Record anyway. Reads the SAME switch as the gate (`order`): OFF returns before any other read. DARK: one warn line.
+ * ENFORCED: the warn line, ONE audit row per order (a retried sale that fails again writes no second), and the figures for
+ * the response. Any other error is logged and swallowed (an alert never fails a finished sale).
+ * `readOnly` (W-736, a GET re-serving the stored sale): the same derivation, ENFORCED figures only; no warn line, no audit
+ * row (the POST that failed already logged and audited it, and a polled read must not repeat either).
+ */
+export async function creditAfterTender(
+  deps: CreditEnforcementDeps & {
+    prisma: Pick<PrismaService, "getTenantId" | "forTenant" | "tenantTransaction">;
+  },
+  p: {
+    tenantId: string | null | undefined;
+    customerId: string | null | undefined;
+    orderId: string;
+    total: number;
+    netted: number;
+    planError: string;
+    actor?: string | null;
+    impersonatedBy?: string | null;
+    readOnly?: boolean;
+    /** The gate this tender was netted at: the SAME switch and label (SA-849 rule 1). "order" = the counter sale (create,
+     *  enforce_new_orders); "delivery" = the pickup hand-over / Complete at counter (DELIVERED, enforce_delivery). */
+    action: "order" | "delivery";
+  },
+): Promise<{ limit: number; exposure: number } | null> {
+  if (!(p.netted > 0) || !p.tenantId || !p.customerId) return null;
+  try {
+    const mode = await creditEnforcementMode(deps.prisma, p.tenantId, p.action);
+    if (mode === "OFF") return null;
+    const enabled = await isCreditLimitCheckEnabled(deps);
+    const db = deps.prisma.forTenant();
+    try {
+      await assertWithinCreditLimit(db, p.customerId, p.orderId, p.total, enabled, {
+        invoicesSurviveEdit: true,
+        action: p.action,
+      });
+      return null;
+    } catch (e) {
+      if (!isCreditLimitExceeded(e)) throw e;
+      const { limit, exposure } = e.getResponse() as { limit: number; exposure: number };
+      if (p.readOnly) return mode === "ENFORCED" ? { limit, exposure } : null;
+      deps.logger.warn(
+        `credit limit would DENY a ${ACTION_LABEL[p.action]} (after-tender, ${mode === "ENFORCED" ? "enforced" : "dark"}): ` +
+          `tenant=${p.tenantId} customer=${p.customerId} order=${p.orderId} exposure=${exposure} limit=${limit} ` +
+          `netted=${p.netted} planError=${p.planError}`,
+      );
+      if (mode !== "ENFORCED") return null;
+      const where = {
+        tenantId: p.tenantId,
+        entityType: "Order",
+        entityId: p.orderId,
+        action: AUDIT_ACTIONS.CREDIT_LIMIT_OVER_AFTER_TENDER,
+      };
+      // One row per order, atomically: AuditLog has no unique key to catch a P2002 on (adding one is a migration), so the
+      // check-then-insert runs in one short transaction under a per-order xact lock. Its own key in the counter-tender
+      // family: it never waits behind a live tender's session lock on the order (the lock-not-taken path re-checks too).
+      // SA-877: a pure LEAF (lock -> findFirst -> create; no other lock, no FOR UPDATE; the exposure read stays above),
+      // ENFORCED only; a 55P03 or any other failure here falls to the catch below (logged, null), never to the sale.
+      // SA-878: keep READ COMMITTED - under REPEATABLE READ/SERIALIZABLE the snapshot predates the lock wait and the
+      // findFirst would miss the other row.
+      await deps.prisma.tenantTransaction(async (tx) => {
+        await advisoryXactLock(tx, "counter-tender", `after-tender:${p.orderId}`);
+        if (await tx.auditLog.findFirst({ where, select: { id: true } })) return;
+        await tx.auditLog.create({
+          data: {
+            ...where,
+            userId: p.actor ?? null,
+            impersonatedBy: p.impersonatedBy ?? null,
+            meta: {
+              customerId: p.customerId,
+              limit,
+              exposure,
+              netted: p.netted,
+              planError: p.planError,
+            },
+          },
+        });
+      });
+      return { limit, exposure };
+    }
+  } catch (err) {
+    deps.logger.error(
+      `credit re-check after a failed tender unavailable (allowed): tenant=${p.tenantId} order=${p.orderId}`,
+      err,
+    );
+    return null;
   }
 }

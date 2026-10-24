@@ -10,7 +10,7 @@ export function parseSellingRestricted(err: unknown): BlockedLine[] | null {
     err as {
       response?: {
         status?: number;
-        data?: { code?: string; blockedLines?: BlockedLine[]; message?: string };
+        data?: { code?: string; blockedLines?: BlockedLine[] };
       };
     }
   )?.response;
@@ -25,7 +25,7 @@ export function parseSellingRestricted(err: unknown): BlockedLine[] | null {
       productName: "An item on this order",
       ruleId: null,
       reason: "UNKNOWN_PRODUCT",
-      message: res.data.message ?? "",
+      message: "",
     },
   ];
 }
@@ -40,6 +40,7 @@ export function restrictionReasonText(line: Pick<BlockedLine, "reason" | "state"
     INDETERMINATE_ADDRESS:
       "We can't tell where this customer is. Set a default address with a state, then try again",
     UNKNOWN_PRODUCT: "This item couldn't be checked, so it can't be sold right now",
+    HIDDEN_FROM_PORTAL: "Not available for online ordering",
   };
   return byReason[line.reason] ?? "Restricted";
 }

@@ -3,9 +3,10 @@
 import * as React from "react";
 import { X } from "lucide-react";
 import { Button, cn } from "@routeflow/ui/web";
-import { computeLineSubtotal, perUnitPrice } from "@routeflow/pricing";
+import { computeLineSubtotal, perUnitPrice, pillLabel, unitWords } from "@routeflow/pricing";
 import { MarginHint } from "@/components/MarginHint";
 import { MoneyInput } from "@/components/MoneyInput";
+import { PendingUnitStatus, type LineItemRowProps } from "@/components/LineItemRow";
 import {
   caseWord,
   unitWord,
@@ -21,6 +22,8 @@ export interface PriceEditorProps {
   costRevealed: boolean;
   priceHistoryEntry?: { lastPrice: number };
   onQtyDelta: (delta: number) => void;
+  /** #2865 case c (SA-632): set while the line's default selling unit is not yet resolved: the qty controls are locked. */
+  pendingUnit?: LineItemRowProps["pendingUnit"];
   onSetBoxes: (value: number) => void;
   onSetPieces: (value: number) => void;
   onSetUnitQty: (value: number) => void;
@@ -57,6 +60,7 @@ export function PriceEditor({
   costRevealed,
   priceHistoryEntry,
   onQtyDelta,
+  pendingUnit,
   onSetBoxes,
   onSetPieces,
   onSetUnitQty,
@@ -71,8 +75,10 @@ export function PriceEditor({
 }: PriceEditorProps) {
   // #2696 (d): the loose-units field is opt-in ("+ units"); shown whenever pieces > 0 regardless.
   const { showLooseUnits, openLooseUnits, closeLooseUnits } = useLooseUnitsToggle(li.pieces);
+  const qtyLocked = !!pendingUnit;
+  const w = unitWords({ packLabel: li.packLabel, baseUnitLabel: li.baseLabel });
   const boxed = !!li.unitsPerBox;
-  // The row labels the price "Case price" only for a real pack (> 1), though it shows the case
+  // The row labels the price "{Pack} price" only for a real pack (> 1), though it shows the case
   // qty controls for any unitsPerBox — mirror both.
   const packed = (li.unitsPerBox ?? 0) > 1;
   const dialogRef = React.useRef<HTMLDivElement>(null);
@@ -127,27 +133,42 @@ export function PriceEditor({
         </div>
 
         {/* Quantity — the row's own case/unit control, one field at a time. */}
-        <section className="space-y-2">
+        <fieldset
+          disabled={qtyLocked}
+          aria-busy={qtyLocked}
+          aria-label={
+            qtyLocked
+              ? "Line quantity controls, locked while the selling unit loads"
+              : "Line quantity controls"
+          }
+          className="m-0 border-0 p-0 min-w-0 space-y-2"
+        >
           {boxed ? (
             <>
               <div className="inline-flex overflow-hidden rounded border border-surface-border text-xs font-medium">
-                {(["case", "unit"] as const).map((mode) => (
-                  <button
-                    key={mode}
-                    type="button"
-                    onClick={() => onSetSellBy(mode)}
-                    aria-pressed={(li.sellBy ?? "case") === mode}
-                    className={cn(
-                      "px-3 py-1.5 transition-colors",
-                      mode === "unit" && "border-l border-surface-border",
-                      (li.sellBy ?? "case") === mode
-                        ? "bg-brand-500 text-white"
-                        : "bg-white text-navy/70 hover:bg-surface-raised",
-                    )}
-                  >
-                    {mode === "case" ? "Case" : "Unit"}
-                  </button>
-                ))}
+                {(["case", "unit"] as const).map((mode) => {
+                  const full = mode === "case" ? w.pack.one : w.base.one;
+                  const cut = pillLabel(full) !== full;
+                  return (
+                    <button
+                      key={mode}
+                      type="button"
+                      onClick={() => onSetSellBy(mode)}
+                      aria-pressed={(li.sellBy ?? "case") === mode}
+                      aria-label={cut ? full : undefined}
+                      title={cut ? full : undefined}
+                      className={cn(
+                        "max-w-[104px] truncate whitespace-nowrap px-3 py-1.5 transition-colors",
+                        mode === "unit" && "border-l border-surface-border",
+                        (li.sellBy ?? "case") === mode
+                          ? "bg-brand-500 text-white"
+                          : "bg-white text-navy/70 hover:bg-surface-raised",
+                      )}
+                    >
+                      {pillLabel(full)}
+                    </button>
+                  );
+                })}
               </div>
               {li.sellBy === "unit" ? (
                 <label className="flex items-center gap-2 text-sm text-navy/70">
@@ -158,9 +179,9 @@ export function PriceEditor({
                     onChange={(e) => onSetUnitQty(parseInt(e.target.value, 10) || 0)}
                     onFocus={(e) => e.target.select()}
                     className={cn(inputCls, "w-24")}
-                    aria-label="Total units"
+                    aria-label={`Total ${w.base.lowerOther}`}
                   />
-                  units
+                  {w.base.short.other}
                 </label>
               ) : (
                 <div className="flex items-center gap-2 text-sm text-navy/70">
@@ -171,9 +192,14 @@ export function PriceEditor({
                     onChange={(e) => onSetBoxes(parseInt(e.target.value, 10) || 0)}
                     onFocus={(e) => e.target.select()}
                     className={cn(inputCls, "w-20")}
-                    aria-label="Cases"
+                    aria-label={w.pack.other}
                   />
-                  <span>{caseWord(li.boxes ?? 0)}</span>
+                  <span
+                    className="min-w-0 max-w-[6rem] truncate"
+                    title={w.isDefaultPack ? undefined : w.pack.other}
+                  >
+                    {caseWord(li.boxes ?? 0, w)}
+                  </span>
                   {/* #2696 (d): loose units on top of cases are opt-in, as on the row. */}
                   {showLooseUnits ? (
                     <>
@@ -187,9 +213,14 @@ export function PriceEditor({
                         onChange={(e) => onSetPieces(parseInt(e.target.value, 10) || 0)}
                         onFocus={(e) => e.target.select()}
                         className={cn(inputCls, "w-20")}
-                        aria-label="Extra loose units"
+                        aria-label={`Extra ${w.base.lowerOther}`}
                       />
-                      <span>{unitWord(li.pieces ?? 0)}</span>
+                      <span
+                        className="min-w-0 max-w-[6rem] truncate"
+                        title={w.isDefaultBase ? undefined : w.base.other}
+                      >
+                        {unitWord(li.pieces ?? 0, w)}
+                      </span>
                       {/* SA-563: hidden at 0 cases, as on the row. */}
                       {(li.boxes ?? 0) >= 1 && (
                         <button
@@ -198,7 +229,7 @@ export function PriceEditor({
                             onSetPieces(0);
                             closeLooseUnits();
                           }}
-                          aria-label="Remove extra units"
+                          aria-label={`Remove extra ${w.base.lowerOther}`}
                           className="relative before:absolute before:-inset-2 before:content-[''] text-navy/50 hover:text-danger"
                         >
                           ×
@@ -209,15 +240,17 @@ export function PriceEditor({
                     <button
                       type="button"
                       onClick={openLooseUnits}
+                      aria-label={`+ ${w.base.lowerOther}: add extra ${w.base.lowerOther}`}
                       className="relative before:absolute before:-inset-2 before:content-[''] rounded border border-dashed border-surface-border px-2 py-1 text-xs font-medium text-navy/60 hover:bg-surface-raised"
                     >
-                      + units
+                      + {w.base.lowerOther}
                     </button>
                   )}
                 </div>
               )}
               <p className="text-xs text-navy/50">
-                1 case = {li.unitsPerBox} units · {li.qty} units total
+                1 {w.pack.lower} = {li.unitsPerBox} {w.base.short.other} · {li.qty}{" "}
+                {w.baseShortFor(li.qty)} total
               </p>
             </>
           ) : (
@@ -247,13 +280,14 @@ export function PriceEditor({
               </button>
             </div>
           )}
-        </section>
+        </fieldset>
+        {pendingUnit && <PendingUnitStatus pending={pendingUnit} />}
 
         {/* Price — #2696(c): a special (customer) price is the default here, never locked; moving
             off it needs a reason (below), as the server requires. */}
         <section className="space-y-1">
           <label className="block text-xs font-medium text-navy/70">
-            {packed ? "Case price" : "Price"}
+            {packed ? `${w.pack.one} price` : "Price"}
           </label>
           <div className="flex flex-wrap items-center gap-2">
             <span className="flex items-center rounded border border-surface-border bg-white px-2 focus-within:ring-2 focus-within:ring-brand-500">
@@ -264,6 +298,7 @@ export function PriceEditor({
                 value={li.discountedPrice ?? null}
                 onChange={(v) => onSetDiscountedPrice(v)}
                 aria-label="Price"
+                disabled={qtyLocked}
                 className="w-24 rounded-none border-0 bg-transparent px-1 py-1.5 text-right text-sm focus:ring-0"
               />
             </span>
@@ -305,6 +340,12 @@ export function PriceEditor({
               )}
             </div>
           )}
+          {packed && li.sellBy === "unit" && perPiece != null ? (
+            <p className="text-[11px] text-navy/60" data-testid="sell-mode-hint">
+              Selling by the {w.base.lower}: each {w.base.lower} is the {w.pack.lower} price ÷{" "}
+              {li.unitsPerBox} (${perPiece.toFixed(2)})
+            </p>
+          ) : null}
         </section>
 
         {/* The negotiation floor: the SAME component the row renders. */}
@@ -328,7 +369,9 @@ export function PriceEditor({
               ${lineTotal.toFixed(2)}
             </p>
             {perPiece != null && (
-              <p className="text-[11px] text-navy/50">${perPiece.toFixed(2)} / piece</p>
+              <p className="text-[11px] text-navy/50">
+                ${perPiece.toFixed(2)} / {w.base.lower}
+              </p>
             )}
           </div>
           <Button type="button" onClick={onClose}>

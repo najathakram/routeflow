@@ -129,7 +129,11 @@ describe("NewOrderScreen.addOne honours the scanned level (wiring pin)", () => {
 
   it("addOne takes a BOX|UNIT level and routes through addScannedLevelToLine", () => {
     expect(src).toMatch(/addOne\s*=\s*\([^)]*level[^)]*\)/);
-    expect(src).toContain("addScannedLevelToLine");
+    // #2865: the add is the pure applyAddToItems (lib/pending-unit-adapter), which calls addScannedLevelToLine
+    expect(src).toContain("applyAddToItems");
+    expect(
+      fs.readFileSync(path.join(__dirname, "..", "lib", "pending-unit-adapter.ts"), "utf8"),
+    ).toContain("addScannedLevelToLine(cur ?? { qty: 0 }, a.level");
   });
 
   it('no `"case" | "piece"` unit-kind plumbing is left in the screen', () => {

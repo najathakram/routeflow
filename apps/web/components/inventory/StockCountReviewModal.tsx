@@ -37,6 +37,18 @@ interface StockCountReviewModalProps {
   onRemoveRow: (productId: string) => void;
   /** Active products with no line in this session at all — "uncounted". */
   uncountedCount: number;
+  /**
+   * SA-767 L-2.4: the state of a commit that is running or did not finish. `savingCopy` is the
+   * "Saving count… N of M" line, `notice` the count-specific failure sentence; "Finish with skips"
+   * is offered only when `canFinishWithSkips` (a partly saved count that hit a permanent refusal).
+   */
+  commitStatus?: {
+    savingCopy: string | null;
+    notice: string | null;
+    canFinishWithSkips: boolean;
+    finishWithSkipsLabel: string;
+    onFinishWithSkips: () => void;
+  };
 }
 
 export function StockCountReviewModal({
@@ -54,6 +66,7 @@ export function StockCountReviewModal({
   onChangeUnitCost,
   onRemoveRow,
   uncountedCount,
+  commitStatus,
 }: StockCountReviewModalProps) {
   const [showMatches, setShowMatches] = React.useState(false);
 
@@ -267,11 +280,31 @@ export function StockCountReviewModal({
 
         {/* Footer */}
         <div className="border-t border-surface-border px-6 py-4">
+          {commitStatus?.savingCopy && (
+            <p role="status" className="mb-2 text-sm font-medium text-warning">
+              {commitStatus.savingCopy}
+            </p>
+          )}
+          {commitStatus?.notice && (
+            <p role="alert" className="mb-2 text-sm font-medium text-danger">
+              {commitStatus.notice}
+            </p>
+          )}
           <p className="mb-3 text-sm text-navy">{commitSummary}</p>
           <div className="flex items-center justify-end gap-2">
             <Button variant="secondary" type="button" onClick={onClose} disabled={isSubmitting}>
               Cancel
             </Button>
+            {commitStatus?.canFinishWithSkips && (
+              <Button
+                variant="secondary"
+                type="button"
+                onClick={commitStatus.onFinishWithSkips}
+                disabled={isSubmitting}
+              >
+                {commitStatus.finishWithSkipsLabel}
+              </Button>
+            )}
             <Button type="button" onClick={onConfirm} loading={isSubmitting} disabled={!canCommit}>
               Commit {changed.length} change{changed.length === 1 ? "" : "s"}
             </Button>

@@ -3,6 +3,13 @@ import userEvent from "@testing-library/user-event";
 import { fireEvent, renderWithProviders, screen, within } from "@/test-utils/render";
 import { LineItemRow, type LineItemRowItem, type LineItemRowProps } from "./LineItemRow";
 
+import { unitWords } from "@routeflow/pricing";
+
+// U-3a: the add-extra control is named by the default unit words.
+// WCAG 2.5.3: the accessible name contains the visible "+ pieces" text.
+const ADD_EXTRA = `+ ${unitWords().base.lowerOther}: add extra ${unitWords().base.lowerOther}`;
+const REMOVE_EXTRA = `Remove extra ${unitWords().base.lowerOther}`;
+
 /**
  * Characterization + layout-contract tests for the shared editable row.
  *
@@ -83,7 +90,7 @@ describe("LineItemRow layout contract (B565)", () => {
     const info = within(li).getByText("Sample Cola 12pk").parentElement!;
     expect(info).toHaveClass("col-start-1", "row-start-1");
 
-    const qty = within(li).getByText(/1 case = 12 units/).parentElement!;
+    const qty = within(li).getByText(/1 box = 12 pcs/).parentElement!;
     expect(qty).toHaveClass("col-start-1", "row-start-2");
 
     const total = within(li).getByText("$32.99", { selector: "span.font-semibold" });
@@ -110,28 +117,28 @@ describe("LineItemRow layout contract (B565)", () => {
     renderRow(makeProps({ ...boxedItem, pieces: 2 }));
     const row = screen.getByTestId("line-qty-cases-row");
     expect(row).toHaveClass("flex", "flex-wrap");
-    const cases = screen.getByTitle("Number of whole cases").parentElement!;
-    const units = screen.getByTitle("Extra loose units (less than a full case)").parentElement!;
+    const cases = screen.getByTitle("Number of whole boxes").parentElement!;
+    const units = screen.getByTitle("Extra pieces (less than a full box)").parentElement!;
     expect(cases).not.toBe(units);
     for (const group of [cases, units]) {
       expect(group.parentElement).toBe(row);
       expect(group).toHaveClass("whitespace-nowrap");
     }
-    expect(within(cases).getByText(/^cases?$/)).toBeInTheDocument();
+    expect(within(cases).getByText(/^box(es)?$/)).toBeInTheDocument();
     expect(within(units).getByText("+")).toBeInTheDocument();
-    expect(within(units).getByText(/^units?$/)).toBeInTheDocument();
+    expect(within(units).getByText(/^pcs?$/)).toBeInTheDocument();
   });
 
   // SA-558d: one wording in the row and the sheet (PriceEditor.test "case wording").
   it("says '1 case' / 'n cases' and '1 unit' / 'n units'", () => {
     const row = () => within(screen.getByTestId("line-qty-cases-row"));
     const { unmount } = renderRow(makeProps({ ...boxedItem, boxes: 1, pieces: 1 }));
-    expect(row().getByText("case")).toBeInTheDocument();
-    expect(row().getByText("unit")).toBeInTheDocument();
+    expect(row().getByText("box")).toBeInTheDocument();
+    expect(row().getByText("pc")).toBeInTheDocument();
     unmount();
     renderRow(makeProps({ ...boxedItem, boxes: 3, pieces: 2 }));
-    expect(row().getByText("cases")).toBeInTheDocument();
-    expect(row().getByText("units")).toBeInTheDocument();
+    expect(row().getByText("boxes")).toBeInTheDocument();
+    expect(row().getByText("pcs")).toBeInTheDocument();
   });
 });
 
@@ -141,7 +148,7 @@ describe("LineItemRow behaviour is unchanged by the layout wrapper", () => {
     const props = makeProps(boxedItem);
     renderRow(props);
 
-    await user.click(screen.getByRole("button", { name: "Unit" }));
+    await user.click(screen.getByRole("button", { name: "Piece" }));
     expect(props.onSetSellBy).toHaveBeenCalledWith("unit");
 
     await user.click(screen.getByTitle("Add flavor / note"));
@@ -150,7 +157,7 @@ describe("LineItemRow behaviour is unchanged by the layout wrapper", () => {
     await user.click(screen.getByTitle("Remove"));
     expect(props.onRemove).toHaveBeenCalledTimes(1);
 
-    await user.clear(screen.getByTitle("Number of whole cases"));
+    await user.clear(screen.getByTitle("Number of whole boxes"));
     expect(props.onSetBoxes).toHaveBeenCalled();
   });
 
@@ -235,32 +242,150 @@ describe("multi-line per-item notes", () => {
   });
 });
 
-// SA-563 (#2696 d): "Remove extra units" is hidden at 0 cases — the units are then the whole line.
+// SA-563 (#2696 d): "Remove extra pieces" is hidden at 0 cases — the units are then the whole line.
 describe("SA-563: the remove-extra-units control needs at least one case", () => {
   it("cases 0 + units n ⇒ the control is absent", () => {
     renderRow(makeProps({ ...boxedItem, boxes: 0, pieces: 3, qty: 3 }));
-    expect(screen.getByLabelText("Extra loose units")).toBeInTheDocument();
-    expect(screen.queryByLabelText("Remove extra units")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Extra pieces")).toBeInTheDocument();
+    expect(screen.queryByLabelText(REMOVE_EXTRA)).not.toBeInTheDocument();
   });
 
   it("cases ≥ 1 + units n ⇒ present; tapping it sets units 0, leaves cases alone and keeps the line", () => {
     const props = makeProps({ ...boxedItem, boxes: 2, pieces: 3, qty: 27 });
     renderRow(props);
-    fireEvent.click(screen.getByLabelText("Remove extra units"));
+    fireEvent.click(screen.getByLabelText(REMOVE_EXTRA));
     expect(props.onSetPieces).toHaveBeenCalledWith(0);
     expect(props.onSetBoxes).not.toHaveBeenCalled();
     expect(props.onRemove).not.toHaveBeenCalled();
   });
 });
 
-// #2706 parity: mobile's "+ units" carries hitSlop={8}; web grows the tap target by the same 8px
+// #2706 parity: mobile's "+ pieces" carries hitSlop={8}; web grows the tap target by the same 8px
 // with a pseudo-element (layout unchanged).
-it("the '+ units' and remove-units controls carry an 8px hit-area extension", () => {
+it("the '+ pieces' and remove-units controls carry an 8px hit-area extension", () => {
   renderRow(makeProps({ ...boxedItem, boxes: 1, pieces: 0 }));
-  expect(screen.getByRole("button", { name: "+ units" })).toHaveClass(
+  expect(screen.getByRole("button", { name: ADD_EXTRA })).toHaveClass(
     "relative",
     "before:-inset-2",
   );
-  fireEvent.click(screen.getByRole("button", { name: "+ units" }));
-  expect(screen.getByLabelText("Remove extra units")).toHaveClass("relative", "before:-inset-2");
+  fireEvent.click(screen.getByRole("button", { name: ADD_EXTRA }));
+  expect(screen.getByLabelText(REMOVE_EXTRA)).toHaveClass("relative", "before:-inset-2");
+});
+
+// ── r4 gap-closer (PR-F): Q09 / Q13 / F08 ────────────────────────────────────
+// The history control is mocked to a bare labelled button: this block pins WHERE the row puts it, not what it opens.
+jest.mock("@/components/PriceHistory", () => ({
+  PriceHistoryButton: () => <button type="button" aria-label="Price history" />,
+  PriceChips: () => null,
+}));
+
+describe("Q09: 'Tap to change' shows on the active line only; the history icon sits inline after the pencil", () => {
+  it("shows the hint while the line is active and hides it when another line is", () => {
+    const { rerender } = renderRow({
+      ...makeProps(plainItem),
+      onTapPrice: jest.fn(),
+      active: true,
+    });
+    expect(screen.getByText("Tap to change")).toBeInTheDocument();
+    rerender(
+      <ul>
+        <LineItemRow {...makeProps(plainItem)} onTapPrice={jest.fn()} active={false} />
+      </ul>,
+    );
+    expect(screen.queryByText("Tap to change")).not.toBeInTheDocument();
+    // the pencil itself stays: it is the always-on affordance
+    expect(screen.getByLabelText("Change price")).toBeInTheDocument();
+  });
+
+  it("an active-less caller (scan screen, other pages) keeps the hint it always had", () => {
+    renderRow({ ...makeProps(plainItem), onTapPrice: jest.fn() });
+    expect(screen.getByText("Tap to change")).toBeInTheDocument();
+  });
+
+  it("puts the price-history button in the SAME row as the price and pencil, not in a row of its own", () => {
+    renderRow({
+      ...makeProps(plainItem),
+      onTapPrice: jest.fn(),
+      active: false,
+      customerPriceHistory: { customerId: "c1", customerName: "Acme", onUsePrice: jest.fn() },
+    });
+    const priceRow = screen.getByTestId("line-price-row");
+    expect(priceRow).toContainElement(screen.getByLabelText("Change price"));
+    expect(priceRow).toContainElement(screen.getByRole("button", { name: "Price history" }));
+  });
+
+  it("tapping the history button does not open the price editor (it is not inside the tap-price target)", async () => {
+    const user = userEvent.setup();
+    const onTapPrice = jest.fn();
+    renderRow({
+      ...makeProps(plainItem),
+      onTapPrice,
+      customerPriceHistory: { customerId: "c1", customerName: "Acme", onUsePrice: jest.fn() },
+    });
+    await user.click(screen.getByRole("button", { name: "Price history" }));
+    expect(onTapPrice).not.toHaveBeenCalled();
+  });
+
+  it("marks the line active on focus so the modal can move the hint", async () => {
+    const user = userEvent.setup();
+    const onActivate = jest.fn();
+    renderRow({ ...makeProps(plainItem), onActivate, onSetQty: jest.fn() });
+    await user.click(screen.getByLabelText("Quantity"));
+    expect(onActivate).toHaveBeenCalled();
+  });
+});
+
+describe("Q13: the plain-line stepper is a 44 px touch target below lg, input height matching", () => {
+  it("the minus, plus and typed-quantity controls carry the 44 px sizing below lg", () => {
+    renderRow({ ...makeProps(plainItem), onSetQty: jest.fn() });
+    for (const el of [
+      screen.getByRole("button", { name: "+" }),
+      screen.getByRole("button", { name: "−" }),
+    ]) {
+      expect(el).toHaveClass("max-lg:h-11", "max-lg:w-11");
+    }
+    expect(screen.getByLabelText("Quantity")).toHaveClass("max-lg:h-11");
+  });
+});
+
+describe("F08: a typed 0 says why it became 1", () => {
+  it("shows a short status next to the field, tied to the input, and clears it on the next valid quantity", () => {
+    const props = { ...makeProps(plainItem), onSetQty: jest.fn() };
+    renderRow(props);
+    const input = screen.getByLabelText("Quantity");
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    fireEvent.change(input, { target: { value: "0" } });
+    expect(props.onSetQty).toHaveBeenCalledWith(0);
+    expect(screen.getByRole("status")).toHaveTextContent(/at least 1/i);
+    expect(screen.getByRole("status")).toHaveTextContent(/remove the line/i);
+    expect(input).toHaveAccessibleDescription(/at least 1/i);
+    fireEvent.change(input, { target: { value: "5" } });
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it("row 731: the note is a full-row sibling of the qty fieldset, not inside it (it widened the qty column and collapsed the name)", () => {
+    // jsdom has no layout, so pin the structure that fixes it: a max-content note INSIDE the
+    // flex-wrap fieldset sets the qty column's width; as a direct child of the row spanning every
+    // column (grid under sm, a full-basis flex line from sm) it cannot.
+    renderRow({ ...makeProps(plainItem), onSetQty: jest.fn() });
+    const input = screen.getByLabelText("Quantity");
+    const li = screen.getByRole("listitem");
+    expect(li).not.toHaveClass("sm:flex-wrap"); // nothing changes while there is no note
+    fireEvent.change(input, { target: { value: "0" } });
+    const note = screen.getByRole("status");
+    expect(note).toHaveTextContent("Quantity must be at least 1. Remove the line to drop it.");
+    expect(note.closest("fieldset")).toBeNull();
+    expect(note.parentElement).toBe(li);
+    expect(note).toHaveClass("col-span-full", "sm:basis-full");
+    expect(li).toHaveClass("sm:flex-wrap");
+    expect(input.closest("fieldset")).toHaveAttribute("aria-label", "Line quantity controls");
+    expect(input).toHaveAttribute("aria-describedby", note.id);
+    expect(note.id).not.toBe("");
+  });
+
+  it("an emptied field (mid-edit) is not the same as a 0 and shows no message", () => {
+    renderRow({ ...makeProps(plainItem), onSetQty: jest.fn() });
+    fireEvent.change(screen.getByLabelText("Quantity"), { target: { value: "" } });
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
 });

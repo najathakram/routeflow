@@ -64,7 +64,15 @@ export function isTextEntryActive(doc: Document = document): boolean {
 export function scheduleScannerRefocus(
   ref: RefObject<HTMLInputElement | HTMLTextAreaElement | null>,
   delaysMs: number | readonly number[],
-  opts: { select?: boolean } = {},
+  opts: {
+    select?: boolean;
+    /**
+     * Text-entry fields this re-arm may take focus FROM: the screen's own scan field when the target is another of its
+     * fields (the register hands the cursor to the customer search), or the field whose Enter just finished its job
+     * (a typed quantity). Any other text-entry control stays protected.
+     */
+    yieldFrom?: ReadonlyArray<RefObject<HTMLElement | null>>;
+  } = {},
 ): () => void {
   const delays = typeof delaysMs === "number" ? [delaysMs] : delaysMs;
   const timers = delays.map((ms) =>
@@ -72,7 +80,8 @@ export function scheduleScannerRefocus(
       const target = ref.current;
       if (!target || !target.isConnected) return;
       const active = target.ownerDocument.activeElement;
-      if (active !== target && isTextEntryElement(active)) return;
+      const yields = (opts.yieldFrom ?? []).some((r) => r.current !== null && r.current === active);
+      if (active !== target && isTextEntryElement(active) && !yields) return;
       target.focus();
       if (opts.select) target.select();
     }, ms),

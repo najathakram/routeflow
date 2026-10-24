@@ -20,8 +20,20 @@ import { BarcodeFab } from "../../../../components/BarcodeFab";
 import { ProductPickerSheet } from "../../../../components/ProductPickerSheet";
 import { InlineCreateProductSheet } from "../../../../components/InlineCreateProductSheet";
 import { archivedMessage, resolveProductByCode } from "../../../../lib/barcode-resolve";
+import { decideScanResult, promptText, runScanDecision } from "../../../../lib/scan-suggestion";
+import { ScanMatchPickerSheet } from "../../../../components/ScanMatchPickerSheet";
+import { useScanMatchPicker } from "../../../../lib/use-scan-match-picker";
 import { sanitizeIntInput } from "../../../../lib/qty";
 import { showToast } from "../../../../lib/toast";
+import {
+  STOCK_COUNT_FINISH_WITH_SKIPS_LABEL,
+  STOCK_COUNT_RECOUNT_COPY,
+  STOCK_COUNT_ENTER_AS_YOU_GO_COPY,
+  stockCountCommitFailure,
+  stockCountCommitPollMs,
+  stockCountProductInOpenCount,
+  stockCountSavingLine,
+} from "@routeflow/types/stock-count-commit-copy";
 import { confirm, chooseAction } from "../../../../lib/confirm";
 import { scanHaptic } from "../../../../lib/haptics";
 import { fmtCurrency, fmtDate } from "../../../../utils/format";
@@ -65,7 +77,11 @@ const STATUS_PILL: Record<StockCountSessionStatus, PillVariant> = {
 export default function StockCountSessionScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const sessionQuery = useStockCountSession(id);
+  const commitMut = useCommitStockCountSession(id);
+  // While a commit runs, re-read the session every 2 s: its `commit` is the "Saving count… N of M".
+  const sessionQuery = useStockCountSession(id, {
+    pollMs: stockCountCommitPollMs(commitMut.isPending),
+  });
   const session = sessionQuery.data;
   const editable = session ? isEditableStockCountStatus(session.status) : false;
 
@@ -82,6 +98,8 @@ export default function StockCountSessionScreen() {
   modeRef.current = defaultMode;
 
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [scanPromptOpen, setScanPromptOpen] = useState(false);
+  const matchPicker = useScanMatchPicker();
   const [reviewOpen, setReviewOpen] = useState(false);
   const [notes, setNotes] = useState("");
   const [createSheet, setCreateSheet] = useState<{ code?: string } | null>(null);
@@ -90,7 +108,6 @@ export default function StockCountSessionScreen() {
 
   const upsertLineMut = useUpsertStockCountLine(id);
   const removeLineMut = useRemoveStockCountLine(id);
-  const commitMut = useCommitStockCountSession(id);
   const discardMut = useDiscardStockCountSession();
   const amendMut = useStartStockCount();
   const updateProductMut = useUpdateProduct();
@@ -139,7 +156,18 @@ export default function StockCountSessionScreen() {
         return line;
       }),
     removeLine: (productId) => removeLineMut.mutateAsync(productId),
-    onError: () => showToast("Couldn't save a counted line — will retry"),
+    // SA-767 r-note 5 SA-3: a product that is on another open count is refused for good - say which
+    // count has it and take the row off this one; any other failure keeps its "will retry" toast.
+    isPermanent: (e) => stockCountProductInOpenCount(e) !== null,
+    onError: (e, productId) => {
+      const open = stockCountProductInOpenCount(e);
+      if (!open) {
+        showToast("Couldn't save a counted line — will retry");
+        return;
+      }
+      showToast(open.copy);
+      setRows((prev) => prev.filter((r) => r.productId !== productId));
+    },
   });
 
   // Hydrate local rows from the server ONCE (a background refetch while the
@@ -278,6 +306,20 @@ export default function StockCountSessionScreen() {
         },
       };
     }
+    const decision = decideScanResult(res, "stock");
+    if (decision.kind !== "add") {
+      // B1220: a lone fuzzy match or 2+ matches write nothing until the counter confirms / picks.
+      const qty = qtyRef.current;
+      if (
+        runScanDecision(decision, (p) => addCountedProduct(p as any, qty), confirm, {
+          pick: matchPicker.open,
+          onPromptChange: setScanPromptOpen,
+        })
+      ) {
+        promptShownRef.current = true;
+        return { feedback: { kind: "info", text: promptText(decision) } };
+      }
+    }
     const product = res.product as any;
     const existing = rowsRef.current.find((r) => r.productId === product.id);
     const newTotal = (existing?.counted ?? 0) + qtyRef.current;
@@ -285,9 +327,13 @@ export default function StockCountSessionScreen() {
     return { feedback: { kind: "added", text: `${product.name} — now ${newTotal}` } };
   };
 
+  const promptShownRef = useRef(false);
   const wrappedHandleScanned = async (code: string): Promise<ScanOutcome> => {
     const outcome = await handleScanned(code);
-    scanHaptic(outcome?.feedback?.kind === "error" ? "error" : "added");
+    const prompted = promptShownRef.current;
+    promptShownRef.current = false;
+    // A confirm/picker prompt is not a failure: neutral haptic, not the error buzz.
+    scanHaptic(prompted ? "info" : outcome?.feedback?.kind === "error" ? "error" : "added");
     return outcome;
   };
 
@@ -304,24 +350,49 @@ export default function StockCountSessionScreen() {
 
   const summary = buildRowCommitSummary(rows);
 
-  const onCommit = () => {
+  const onCommit = (finishWithSkips = false) => {
     if (!id) return;
     commitMut.mutate(
-      { notes: notes.trim() || undefined },
+      { notes: notes.trim() || undefined, ...(finishWithSkips ? { finishWithSkips: true } : {}) },
       {
         onSuccess: (r) => {
           const netText =
             summary.netVarianceMoney !== 0 ? ` (${fmtCurrency(summary.netVarianceMoney)} net)` : "";
+          const skippedText = r.skippedProducts?.length
+            ? ` ${r.skippedProducts.length} skipped: ${r.skippedProducts
+                .map((p) => p.name ?? "a deleted product")
+                .join(", ")}. ${STOCK_COUNT_RECOUNT_COPY}.`
+            : "";
           showToast(
             r.alreadyCommitted
               ? "This count was already committed."
-              : `Count committed — ${r.applied} updated${netText}${r.skipped ? `, ${r.skipped} unchanged` : ""}`,
+              : `Count committed — ${r.applied} updated${netText}${r.skipped ? `, ${r.skipped} unchanged` : ""}${skippedText}`,
           );
           setReviewOpen(false);
           router.replace(`/(operator)/products/stock-count/${id}` as any);
         },
-        onError: (e: any) =>
-          showToast(e?.response?.data?.message ?? e?.message ?? "Couldn't commit the count."),
+        onError: async (e: any) => {
+          // SA-767 L-2.4 D: count-specific copy by state ("Partly saved — commit again to finish",
+          // "Nothing was saved — try again"); the numbers are server fields, not the message.
+          const failure = stockCountCommitFailure(e);
+          if (failure && !failure.permanent) {
+            showToast(failure.copy);
+            return;
+          }
+          if (failure?.permanent) {
+            // A product this count can never save. Only a PARTLY saved count (the detail's `commit`,
+            // re-read now: the failed attempt may have changed it) has the escape.
+            const fresh = await sessionQuery.refetch();
+            if (fresh.data?.commit) {
+              chooseAction("Can't finish saving", failure.copy, [
+                { label: "Cancel", style: "cancel" },
+                { label: STOCK_COUNT_FINISH_WITH_SKIPS_LABEL, onPress: () => onCommit(true) },
+              ]);
+              return;
+            }
+          }
+          showToast(e?.response?.data?.message ?? e?.message ?? "Couldn't commit the count.");
+        },
       },
     );
   };
@@ -415,6 +486,7 @@ export default function StockCountSessionScreen() {
       >
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Scan settings</Text>
+          <Text style={styles.helpText}>{STOCK_COUNT_ENTER_AS_YOU_GO_COPY}</Text>
           <View style={styles.settingRow}>
             <Text style={styles.settingLabel}>Per scan</Text>
             <View style={styles.stepper}>
@@ -565,8 +637,10 @@ export default function StockCountSessionScreen() {
       <BarcodeFab
         continuous
         onScanned={wrappedHandleScanned}
+        paused={scanPromptOpen}
         hidden={pickerOpen || reviewOpen || !!createSheet || !!attachCode}
       />
+      <ScanMatchPickerSheet {...matchPicker.props} />
 
       <ProductPickerSheet
         visible={pickerOpen}
@@ -619,8 +693,9 @@ export default function StockCountSessionScreen() {
         notes={notes}
         onNotes={setNotes}
         committing={commitMut.isPending}
+        savingCopy={stockCountSavingLine({ pending: commitMut.isPending, commit: session?.commit })}
         onClose={() => setReviewOpen(false)}
-        onCommit={onCommit}
+        onCommit={() => onCommit()}
         onSetCounted={setCounted}
         onRemove={removeRow}
         onSetUnitCost={setUnitCostOverride}
@@ -636,6 +711,7 @@ function ReviewModal({
   notes,
   onNotes,
   committing,
+  savingCopy,
   onClose,
   onCommit,
   onSetCounted,
@@ -648,6 +724,8 @@ function ReviewModal({
   notes: string;
   onNotes: (v: string) => void;
   committing: boolean;
+  /** "Saving count… N of M" while a commit runs or is unfinished; null otherwise. */
+  savingCopy: string | null;
   onClose: () => void;
   onCommit: () => void;
   onSetCounted: (productId: string, counted: number) => void;
@@ -734,6 +812,7 @@ function ReviewModal({
             />
           </View>
 
+          {savingCopy ? <Text style={styles.savingLine}>{savingCopy}</Text> : null}
           <Pressable
             style={[styles.commitBtn, (committing || rows.length === 0) && { opacity: 0.5 }]}
             disabled={committing || rows.length === 0}
@@ -1116,6 +1195,13 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     paddingVertical: 16,
     alignItems: "center",
+  },
+  helpText: { color: ios.label2, fontSize: 13, fontFamily: "Inter_400Regular" },
+  savingLine: {
+    color: ios.label2,
+    fontSize: 14,
+    fontFamily: "Inter_500Medium",
+    textAlign: "center",
   },
   commitBtnText: { color: "#fff", fontSize: 16, fontFamily: "Inter_600SemiBold" },
 });

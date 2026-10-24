@@ -152,7 +152,7 @@ describe("ReturnsService — kind branch (M6/§2.3): every standard-path method 
     prisma.return.count.mockResolvedValue(1);
     const spy = jest.spyOn(service as any, "priceReturn");
     const { data } = await service.findAll({});
-    expect(spy).toHaveBeenCalledWith([], undefined);
+    expect(spy).toHaveBeenCalledWith([], undefined, expect.any(Map));
     expect(data[0].refundEstimateReason).not.toBe("INLINE");
   });
 
@@ -188,5 +188,78 @@ describe("ReturnsService — kind branch (M6/§2.3): every standard-path method 
     expect(txReturn.create).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ kind: "STANDARD" }) }),
     );
+  });
+});
+
+describe("ReturnsService.findAll — pendingRefund filter and marker (SA-727b)", () => {
+  let service: ReturnsService;
+  let prisma: ReturnType<typeof createMockPrisma>;
+  beforeEach(async () => {
+    prisma = createMockPrisma();
+    const mod: TestingModule = await Test.createTestingModule({
+      providers: [
+        ReturnsService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: RouteFlowGateway, useValue: { emitReturnCreated: jest.fn() } },
+        { provide: RegulatedLedgerService, useValue: {} },
+        { provide: CreditNotesService, useValue: {} },
+        { provide: NumberingService, useValue: { reserveNext: jest.fn() } },
+      ],
+    }).compile();
+    service = mod.get(ReturnsService);
+  });
+
+  it("pendingRefund lists exactly: INLINE, RECEIVED, EXTERNAL_REFUND stored, refundedAt null, no credit note (whatever kind/status the caller sent)", async () => {
+    prisma.return.findMany.mockResolvedValue([]);
+    await service.findAll({ pendingRefund: true, kind: "STANDARD", status: "REFUNDED" });
+    const where = prisma.return.findMany.mock.calls[0][0].where;
+    expect(where).toMatchObject({
+      kind: "INLINE",
+      status: "RECEIVED",
+      refundMethod: "EXTERNAL_REFUND",
+      refundedAt: null,
+      creditNoteId: null,
+    });
+    expect(prisma.return.count).toHaveBeenCalledWith({
+      where: expect.objectContaining({ refundedAt: null }),
+    });
+  });
+
+  it("without the flag the list is unchanged (no refund keys in where)", async () => {
+    prisma.return.findMany.mockResolvedValue([]);
+    await service.findAll({ kind: "INLINE" });
+    const where = prisma.return.findMany.mock.calls[0][0].where;
+    expect(where).not.toHaveProperty("refundMethod");
+    expect(where).not.toHaveProperty("refundedAt");
+  });
+
+  it("an INLINE row exposes refundPending (true only for a pending refund); the raw refundMethod/refundedAt/refundAmount/creditNoteId/status stay on the row for returned.state", async () => {
+    const pending = {
+      id: "a",
+      kind: "INLINE",
+      status: "RECEIVED",
+      refundMethod: "EXTERNAL_REFUND",
+      refundedAt: null,
+      refundAmount: null,
+      creditNoteId: null,
+      items: [],
+      order: null,
+    };
+    const done = {
+      ...pending,
+      id: "b",
+      status: "REFUNDED",
+      refundedAt: new Date(),
+      refundAmount: "30",
+    };
+    prisma.return.findMany.mockResolvedValue([pending, done] as any);
+    prisma.return.count.mockResolvedValue(2);
+    const { data } = await service.findAll({ kind: "INLINE" });
+    expect(data[0]).toMatchObject({
+      refundPending: true,
+      refundMethod: "EXTERNAL_REFUND",
+      refundedAt: null,
+    });
+    expect(data[1]).toMatchObject({ refundPending: false, status: "REFUNDED" });
   });
 });

@@ -5,6 +5,19 @@ const { isLocalDbTarget, LOCAL_DB_HOSTS } = require("../../../scripts/lib/local-
   LOCAL_DB_HOSTS: string[];
 };
 
+/**
+ * Row 359: every connection a DB spec opens (a `pg` Pool or Client, the Prisma pg adapter, the advisory-lock pool)
+ * runs with the session TIME ZONE pinned to UTC. The schema's DateTime columns are `timestamp without time zone`
+ * holding UTC, and the Prisma adapter reads a timestamptz as UTC: on a server (or role) whose timezone is not UTC,
+ * `clock_timestamp()` / `now()` come back shifted by the offset and every window check reads the wrong instant (the
+ * closed-day specs failed on a Chicago-TZ Postgres). The libpq startup option rides every new connection through
+ * node-postgres's `PGOPTIONS` fallback, so no spec has to remember a `SET TIME ZONE`. Production runs a UTC server.
+ */
+const UTC_OPTION = "-c timezone=UTC";
+if (!/\btimezone\s*=/.test(process.env.PGOPTIONS ?? "")) {
+  process.env.PGOPTIONS = `${process.env.PGOPTIONS ?? ""} ${UTC_OPTION}`.trim();
+}
+
 export function requireLocalDatabaseUrl(env: NodeJS.ProcessEnv = process.env): string {
   const url = env.DATABASE_URL;
   if (!url) throw new Error("DB-backed specs need DATABASE_URL — run `npm run local:test:db`");

@@ -36,6 +36,23 @@ export const INVOICE_STATUS_VALUES = [
 ] as const;
 export type InvoiceStatus = (typeof INVOICE_STATUS_VALUES)[number];
 
+/** SA-827: the customer-wide invoice unit (Customer.invoiceUnitDefault). LEGACY = not set (falls through). */
+export const INVOICE_UNIT_DEFAULT_VALUES = ["LEGACY", "PIECES", "PACK"] as const;
+export type InvoiceUnitDefault = (typeof INVOICE_UNIT_DEFAULT_VALUES)[number];
+
+/**
+ * SA-770: the OPEN invoice statuses - issued and not settled, so they can still be owed and can be overdue
+ * (a reminder is sent for them, the Unpaid chip lists them). A SUBSET of INVOICE_STATUS_VALUES, not a Prisma
+ * enum: the API keeps its own `OPEN_INVOICE_STATUSES` (invoice-status-sets.ts; it never value-imports this
+ * package) and invoices/open-invoice-statuses-pin.spec.ts pins the two set-equal.
+ */
+export const OPEN_INVOICE_STATUS_VALUES = [
+  "SENT",
+  "VIEWED",
+  "PARTIAL",
+  "OVERDUE",
+] as const satisfies readonly InvoiceStatus[];
+
 export const RETURN_STATUS_VALUES = [
   "PENDING",
   "APPROVED",
@@ -190,6 +207,18 @@ export type DocumentNumberType = (typeof DOCUMENT_NUMBER_TYPE_VALUES)[number];
 export const COSTING_METHOD_VALUES = ["FIFO", "LIFO", "AVCO", "STANDARD", "LAST_COST"] as const;
 export type CostingMethod = (typeof COSTING_METHOD_VALUES)[number];
 
+/**
+ * SA-804 (1) / B1232: FIFO and LIFO stay in the Prisma enum (removing a Postgres enum value is destructive, and
+ * old rows keep their value) but no write may SET them. A stored FIFO/LIFO is costed as AVCO (B1233). The API keeps
+ * a literal mirror in `apps/api/src/inventory/costing-method-policy.ts` (it never value-imports this package);
+ * `common/costing-method-retired.spec.ts` pins the two equal.
+ */
+export const RETIRED_COSTING_METHODS = ["FIFO", "LIFO"] as const;
+export type RetiredCostingMethod = (typeof RETIRED_COSTING_METHODS)[number];
+/** What a picker may offer: every method that is not retired. */
+export const SELECTABLE_COSTING_METHODS = ["AVCO", "STANDARD", "LAST_COST"] as const;
+export type SelectableCostingMethod = (typeof SELECTABLE_COSTING_METHODS)[number];
+
 export const AUTHORIZATION_STATUS_VALUES = [
   "NONE",
   "PENDING_REVIEW",
@@ -310,6 +339,21 @@ export const MOVEMENT_TYPE_VALUES = [
   "COST_BASIS",
 ] as const;
 export type MovementType = (typeof MOVEMENT_TYPE_VALUES)[number];
+
+/**
+ * SA-804(3): why a stock ADJUSTMENT was made (NULL on history and on every other movement type).
+ * A write-off is DERIVED, never stored: a negative ADJUSTMENT whose reason is in
+ * WRITE_OFF_ADJUSTMENT_REASONS (see `isWriteOff` in @routeflow/pricing). OTHER needs a note.
+ */
+export const ADJUSTMENT_REASON_VALUES = [
+  "DAMAGED",
+  "EXPIRED",
+  "THEFT",
+  "SAMPLE",
+  "COUNT_CORRECTION",
+  "OTHER",
+] as const;
+export type AdjustmentReason = (typeof ADJUSTMENT_REASON_VALUES)[number];
 
 export const CRM_CONNECTION_STATUS_VALUES = [
   "CONNECTED",
@@ -513,6 +557,21 @@ export type BarcodeOrigin = (typeof BARCODE_ORIGIN_VALUES)[number];
 export const RECIPE_STATUS_VALUES = ["DRAFT", "ACTIVE", "RETIRED"] as const;
 export type RecipeStatus = (typeof RECIPE_STATUS_VALUES)[number];
 
+// SA-603: lifecycle of one outbound transactional email attempt (EmailDelivery.status).
+export const EMAIL_DELIVERY_STATUS_VALUES = [
+  "QUEUED",
+  "SENT",
+  "FAILED",
+  "BOUNCED",
+  "WOULD_SEND",
+  "OPTED_OUT",
+] as const;
+export type EmailDeliveryStatus = (typeof EMAIL_DELIVERY_STATUS_VALUES)[number];
+
+/** SA-138: the layer a tenant POLICY value applies to (PolicyValue.scopeType). */
+export const POLICY_SCOPE_TYPE_VALUES = ["TENANT", "CATEGORY", "CUSTOMER"] as const;
+export type PolicyScopeTypeValue = (typeof POLICY_SCOPE_TYPE_VALUES)[number];
+
 /** #2653 (SA-542b): which realm minted a sign-in handoff code (Prisma `HandoffRealm`). */
 export const HANDOFF_REALM_VALUES = ["STAFF", "BUYER"] as const;
 export type HandoffRealm = (typeof HANDOFF_REALM_VALUES)[number];
@@ -522,3 +581,56 @@ export type HandoffRealm = (typeof HANDOFF_REALM_VALUES)[number];
 // reserved for M3b.
 export const COMPOSITION_MODE_VALUES = ["SINGLE", "FIXED", "FLEX"] as const;
 export type CompositionMode = (typeof COMPOSITION_MODE_VALUES)[number];
+
+// SA-650 (counter sales): how an order is fulfilled (Prisma `FulfillPath`). PICKUP = counter sale /
+// in-store pickup; the API refuses it on every write DTO until the counter-sale API lands.
+export const FULFILL_PATH_VALUES = ["ROUTE", "SHIP", "PICKUP"] as const;
+export type FulfillPath = (typeof FULFILL_PATH_VALUES)[number];
+
+// Per-operator feature groups (Prisma `OperatorPermissionGroup`, `User.deniedPermissionGroups`). The
+// order here is the display order of the switches (see `PERMISSION_GROUPS` in ./permissions).
+export const OPERATOR_PERMISSION_GROUP_VALUES = [
+  "ORDERS",
+  "DISPATCH",
+  "CUSTOMERS",
+  "CATALOG",
+  "PRICING",
+  "REGULATED",
+  "FINANCE",
+  "NOTIFICATIONS",
+  "REPORTS",
+] as const;
+export type OperatorPermissionGroup = (typeof OPERATOR_PERMISSION_GROUP_VALUES)[number];
+
+// M11: the billing usage meters (Prisma `MeterKey`, returned by `GET /billing/usage`). The web
+// meter labels are keyed on this union, so a new server meter is a type error, not a raw key.
+export const METER_KEY_VALUES = ["SEATS", "ROUTES", "SCANS", "MSGS", "CUSTOMERS"] as const;
+export type MeterKey = (typeof METER_KEY_VALUES)[number];
+
+// SA-761 / SA-772 folder 1 (sitting 4): where `Order.taxRate` was taken from when the order was stamped (Prisma
+// `TaxRateSource`). LEGACY_INFERRED labels a pre-snapshot order whose rate the B294 backfill inferred from its totals.
+export const TAX_RATE_SOURCE_VALUES = [
+  "TENANT_DEFAULT",
+  "CUSTOMER_EXEMPT",
+  "LEGACY_INFERRED",
+] as const;
+export type TaxRateSource = (typeof TAX_RATE_SOURCE_VALUES)[number];
+
+// SA-760 R-3 / SA-772 folder 3 (sitting 4): an order invoice's billing role (Prisma `InvoiceOrderBillingRole`,
+// `Invoice.orderBillingRole`). Only MIRROR drafts are ever rebuilt automatically; a PARTIAL is never re-billed.
+export const INVOICE_ORDER_BILLING_ROLE_VALUES = [
+  "MIRROR",
+  "PARTIAL",
+  "REMAINDER",
+  "MANUAL",
+] as const;
+export type InvoiceOrderBillingRole = (typeof INVOICE_ORDER_BILLING_ROLE_VALUES)[number];
+
+// SA-824: the scope of a payment Idempotency-Key (Prisma `PaymentIdempotencyScope`): the three money-in writers
+// that claim a key. Shared by the api and the key-status answers the web and mobile read (L-072).
+export const PAYMENT_IDEMPOTENCY_SCOPE_VALUES = [
+  "STANDALONE_PAYMENT",
+  "INVOICE_PAYMENT",
+  "ADVANCE_PAYMENT",
+] as const;
+export type PaymentIdempotencyScope = (typeof PAYMENT_IDEMPOTENCY_SCOPE_VALUES)[number];

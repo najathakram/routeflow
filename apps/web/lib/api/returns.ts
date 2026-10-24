@@ -1,6 +1,13 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
-import type { CreateReturnItemDto, ReturnKind, UnbilledReturnItem } from "@routeflow/types";
+import { isDayClosedRefusal } from "../day-closed-copy";
+import type {
+  CreateReturnItemDto,
+  FiledPeriod,
+  InlineRefundTender,
+  ReturnKind,
+  UnbilledReturnItem,
+} from "@routeflow/types";
 export type { CreateReturnItemDto, UnbilledReturnItem } from "@routeflow/types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -47,7 +54,7 @@ export interface Return {
   customerId: string;
   customer?: { id: string; businessName: string; contactName?: string };
   orderId: string;
-  order?: { id: string; orderNumber: string };
+  order?: { id: string; orderNumber: string; counterSale?: boolean | null };
   status: ReturnStatus;
   reason: ReturnReason;
   notes?: string;
@@ -60,6 +67,8 @@ export interface Return {
   creditNote?: { id: string; creditNoteNumber: string; amount: number; status: string };
   refundAmount?: number | null;
   refundMethod?: RefundMethod | null;
+  /** The tender an EXTERNAL_REFUND was paid out in (SA-740r2, `Return.refundTender`); null when none was recorded. */
+  refundTender?: "CASH" | "CARD" | "CHECK" | null;
   refundedAt?: string | null;
   /**
    * Server-computed Σ qty × (subtotal/qty) across the return's items — the same
@@ -192,6 +201,8 @@ export interface ProcessRefundDto {
   id: string;
   /** CREDIT_NOTE (default) mints store credit; EXTERNAL_REFUND records nothing minted. */
   method?: RefundMethod;
+  /** SA-740r2: how a recorded refund (EXTERNAL_REFUND) was paid out. Optional; never sent with store credit (the server 400s). */
+  tender?: InlineRefundTender;
 }
 
 export type ProcessRefundResult = Return & { unbilledItems?: UnbilledReturnItem[] };
@@ -201,6 +212,8 @@ export function useProcessRefund() {
   return useMutation<ProcessRefundResult, Error, ProcessRefundDto>({
     mutationFn: ({ id, ...data }) =>
       apiClient.post(`/returns/${id}/refund`, data).then((r) => r.data),
+    // SA-750r3: the return page answers a closed-day refusal with its own fixed copy (refundErrorMessage): no second toast.
+    meta: { localErrorToast: isDayClosedRefusal },
     onSuccess: (_, { id }) => {
       qc.invalidateQueries({ queryKey: ["returns"] });
       qc.invalidateQueries({ queryKey: ["returns", id] });
@@ -211,7 +224,8 @@ export function useProcessRefund() {
 
 export function useCancelReturn() {
   const qc = useQueryClient();
-  return useMutation<Return, Error, string>({
+  // SA-839 §3: `amendedPeriod` = the filed month the undo corrected (null when none).
+  return useMutation<Return & { amendedPeriod?: FiledPeriod | null }, Error, string>({
     mutationFn: (id) => apiClient.post(`/returns/${id}/cancel`).then((r) => r.data),
     onSuccess: (_, id) => {
       qc.invalidateQueries({ queryKey: ["returns"] });

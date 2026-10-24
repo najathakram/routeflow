@@ -110,7 +110,11 @@ describe("InlineReturnsService", () => {
     settleOrderCreditsInTx: jest.Mock;
     cancelStandaloneInTx: jest.Mock;
   };
-  let ledger: { reverseReturnEntries: jest.Mock; unreverseReturnEntries: jest.Mock };
+  let ledger: {
+    reverseReturnEntries: jest.Mock;
+    unreverseReturnEntries: jest.Mock;
+    settleRegulatedLedger: jest.Mock;
+  };
   let addonService: { hasAddon: jest.Mock };
   let gateway: { emitCreditNoteCreated: jest.Mock };
   let numbering: { reserveNext: jest.Mock };
@@ -137,6 +141,7 @@ describe("InlineReturnsService", () => {
     ledger = {
       reverseReturnEntries: jest.fn().mockResolvedValue(undefined),
       unreverseReturnEntries: jest.fn().mockResolvedValue(undefined),
+      settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
     };
     addonService = { hasAddon: jest.fn().mockResolvedValue(true) };
     gateway = { emitCreditNoteCreated: jest.fn() };
@@ -597,7 +602,9 @@ describe("InlineReturnsService", () => {
       prisma.tenantTransaction.mockImplementationOnce(async () => {
         const err: any = new Error("Unique constraint failed");
         err.code = "P2002";
-        err.meta = { target: ["tenantId", "returnKey"] };
+        err.meta = {
+          driverAdapterError: { cause: { constraint: { index: "Return_tenantId_returnKey_key" } } },
+        }; // the pg driver adapter's shape (B1186)
         throw err;
       });
       prisma.return.findFirst.mockResolvedValueOnce(null); // pre-tx: nothing yet
@@ -779,7 +786,9 @@ describe("InlineReturnsService", () => {
       prisma.tenantTransaction.mockImplementationOnce(async () => {
         const err: any = new Error("Unique constraint failed");
         err.code = "P2002";
-        err.meta = { target: ["tenantId", "returnKey"] };
+        err.meta = {
+          driverAdapterError: { cause: { constraint: { index: "Return_tenantId_returnKey_key" } } },
+        }; // the pg driver adapter's shape (B1186)
         throw err;
       });
       const raced = {
@@ -806,7 +815,9 @@ describe("InlineReturnsService", () => {
       prisma.tenantTransaction.mockImplementationOnce(async () => {
         const err: any = new Error("Unique constraint failed");
         err.code = "P2002";
-        err.meta = { target: ["tenantId", "returnKey"] };
+        err.meta = {
+          driverAdapterError: { cause: { constraint: { index: "Return_tenantId_returnKey_key" } } },
+        }; // the pg driver adapter's shape (B1186)
         throw err;
       });
       prisma.return.findFirst.mockResolvedValueOnce(null);
@@ -1548,7 +1559,7 @@ describe("InlineReturnsService", () => {
 
       expect(prisma.product.update).not.toHaveBeenCalled();
       expect(prisma.stockMovement.create).not.toHaveBeenCalled();
-      expect(ledger.unreverseReturnEntries).not.toHaveBeenCalled();
+      expect(ledger.settleRegulatedLedger).not.toHaveBeenCalled();
     });
 
     it("HIGH-4: a RECEIVED return STILL held (DRIVER_CAP, awaiting approval) writes NO stock on cancel — it was never applied", async () => {
@@ -1567,7 +1578,7 @@ describe("InlineReturnsService", () => {
 
       expect(prisma.product.update).not.toHaveBeenCalled();
       expect(prisma.stockMovement.create).not.toHaveBeenCalled();
-      expect(ledger.unreverseReturnEntries).not.toHaveBeenCalled();
+      expect(ledger.settleRegulatedLedger).not.toHaveBeenCalled();
     });
 
     it("HIGH-4: a REJECTED (declined-from-hold) return writes NO stock on cancel — it was never applied either", async () => {
@@ -1586,7 +1597,7 @@ describe("InlineReturnsService", () => {
 
       expect(prisma.product.update).not.toHaveBeenCalled();
       expect(prisma.stockMovement.create).not.toHaveBeenCalled();
-      expect(ledger.unreverseReturnEntries).not.toHaveBeenCalled();
+      expect(ledger.settleRegulatedLedger).not.toHaveBeenCalled();
     });
 
     it("a RECEIVED (captured, not yet issued) return unrestocks + writes a COMPENSATING movement on cancel", async () => {
@@ -1621,9 +1632,10 @@ describe("InlineReturnsService", () => {
         }),
       );
       expect(prisma.stockMovement.deleteMany).not.toHaveBeenCalled();
-      expect(ledger.unreverseReturnEntries).toHaveBeenCalledWith(
-        expect.objectContaining({ returnId: "ret-received" }),
-      );
+      expect(ledger.settleRegulatedLedger).toHaveBeenCalledWith(expect.anything(), {
+        kind: "ADJUSTMENT_UNDONE",
+        returnId: "ret-received",
+      });
       expect(creditNotes.cancelStandaloneInTx).not.toHaveBeenCalled();
     });
 

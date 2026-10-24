@@ -17,16 +17,23 @@
 const { PrismaClient } = require("@prisma/client");
 const { PrismaPg } = require("@prisma/adapter-pg");
 const { Pool } = require("pg");
+const { loadProtectedSlugs } = require("./lib/protected-slugs.cjs");
+const { protectedTenantIds } = require("./lib/live-target-guard.cjs");
 
 async function main() {
+  // Row 195: load the protected list BEFORE connecting, from the URL this script dials.
+  const protectedSlugs = loadProtectedSlugs(process.env, process.env.DATABASE_URL);
   const pool = new Pool({ connectionString: process.env.DATABASE_URL });
   const adapter = new PrismaPg(pool);
   const prisma = new PrismaClient({ adapter });
 
   try {
+    // Protected tenants (paying, Stripe-linked or env-listed) are never renamed by this script.
+    const protectedIds = new Set(await protectedTenantIds(prisma, protectedSlugs));
+
     // Find all (tenantId, orderNumber) groups with more than one row,
     // excluding already-renamed duplicates.
-    const dupes = await prisma.$queryRaw`
+    const allDupes = await prisma.$queryRaw`
       SELECT "tenantId", "orderNumber", COUNT(*) AS cnt
       FROM "Order"
       WHERE "orderNumber" IS NOT NULL
@@ -34,6 +41,13 @@ async function main() {
       GROUP BY "tenantId", "orderNumber"
       HAVING COUNT(*) > 1
     `;
+    const dupes = allDupes.filter((d) => !protectedIds.has(d.tenantId));
+    if (dupes.length < allDupes.length) {
+      console.log(
+        `protected-tenant guard: skipped ${allDupes.length - dupes.length} duplicate group(s) ` +
+          "that belong to protected tenant(s).",
+      );
+    }
 
     if (dupes.length === 0) {
       console.log("No duplicate orderNumbers found — nothing to do.");
