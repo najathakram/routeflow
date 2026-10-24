@@ -71,6 +71,8 @@ export function prorationAllowedFor(status: string): boolean {
 export const PRICE_PUSH_FAILURE_REASONS: readonly string[] = [
   "stripe_retrieve_failed",
   "stripe_product_create_failed",
+  // The pricing / catalog read under the push failed (database), before anything reached Stripe.
+  "pricing_lookup_failed",
   "stripe_update_failed",
   // W-810: Stripe REFUSED the update (a 4xx other than 409 / 429): a retry sends the same request.
   "stripe_update_rejected",

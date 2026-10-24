@@ -555,3 +555,24 @@ describe("needsReconcile — SA-733r3 N4 (armed BEFORE the Stripe write, cleared
     });
   });
 });
+
+describe("pushPlanChange - W-810 a Checkout-born subscription whose product is inactive", () => {
+  it("a plan change prices the new item on the owned rf_plan product and never touches the inactive one", async () => {
+    const fake = fakeStripeProducts([{ id: "prod_growth", active: false, name: "Growth" }]);
+    const stripe = {
+      ...stripeWith(),
+      client: { products: fake.products },
+      updateSubscription: jest.fn(async (_id: string, params: any) => {
+        for (const i of params.items ?? []) fake.assertUsable(i.price_data?.product);
+        return {};
+      }),
+    };
+
+    const push = await pushPlanChange({ stripe, logger }, args());
+
+    expect(push.pushed).toBe(true);
+    const [, params] = stripe.updateSubscription.mock.calls[0];
+    expect(params.items[0].price_data.product).toBe("rf_plan_growth");
+    expect(fake.products.update).not.toHaveBeenCalledWith("prod_growth", expect.anything());
+  });
+});
