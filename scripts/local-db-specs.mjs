@@ -99,11 +99,20 @@ export function parseArgs(argv) {
 /**
  * How the command after `--` is spawned (item 726). One token is a command STRING (the
  * `npm run local:test:db` form) and goes through the shell. Two or more tokens are an argv and are
- * spawned WITHOUT a shell, so a test pattern such as `(a|b)` or `a&b` reaches the child literally
+ * spawned WITHOUT a shell (unless the first token is a command string or an npm/npx shim), so a test pattern such as `(a|b)` or `a&b` reaches the child literally
  * instead of being mangled by cmd.exe on Windows.
  */
 export function commandSpawn(tokens) {
+  const shellForm = () => ({ cmd: tokens.join(" "), args: [], shell: true });
   if (tokens.length === 1) return { cmd: tokens[0], args: [], shell: true };
+  // A first token holding whitespace is a command STRING with args appended after it (npm appends
+  // `-- <spec>` to a package script), and npm/npx are .cmd shims on Windows that cannot be
+  // spawned without a shell: both keep the shell form. Only a real executable (node) is argv.
+  if (
+    (/\s/.test(tokens[0]) && !path.isAbsolute(tokens[0])) ||
+    /^(npm|npx)(\.cmd)?$/i.test(tokens[0])
+  )
+    return shellForm();
   return { cmd: tokens[0], args: tokens.slice(1), shell: false };
 }
 
