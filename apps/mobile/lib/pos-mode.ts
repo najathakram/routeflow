@@ -44,7 +44,8 @@ export function posModePrefPatch(next: boolean): Record<string, string> {
 /** Fixed visible copy (never an API message). Same words as web `POS_COPY`. */
 export const POS_COPY = {
   switchLabel: COUNTER_COPY.storePickup,
-  switchHint: "A named customer, invoiced now. For walk-in, pay-now sales use Counter sale.",
+  // W-818: what the switch does when on; never a pointer to Counter sale, which mobile does not have.
+  switchHint: "Invoices a named customer now, and they pick the order up in store.",
   switchFailed: `Couldn't save your ${COUNTER_COPY.storePickup} setting. Try again.`,
   confirmAndInvoice: "Confirm & invoice",
   confirmOnly: "Confirm only",

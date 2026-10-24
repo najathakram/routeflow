@@ -145,9 +145,14 @@ describe("pickupCompleteErrorCopy: Complete at counter refusals (I-120, mobile)"
       "Already completed. Record any payment on the invoice.",
     );
   });
-  it("the New order switch hint names Counter sale", () => {
+  // W-818: mobile has no Counter sale screen (route-parity-manifest), so the hint never points to one. It says what the
+  // switch does when it's on.
+  it("the New order Store pickup hint says what the switch does, and names no screen mobile lacks", () => {
     const { POS_COPY } = require("../lib/pos-mode");
-    expect(POS_COPY.switchHint).toMatch(/use Counter sale\.$/);
+    expect(POS_COPY.switchHint).toBe(
+      "Invoices a named customer now, and they pick the order up in store.",
+    );
+    expect(POS_COPY.switchHint).not.toMatch(/Counter sale/i);
   });
 });
 
