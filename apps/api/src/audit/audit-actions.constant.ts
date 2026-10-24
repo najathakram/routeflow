@@ -30,6 +30,13 @@ export const AUDIT_ACTIONS = {
   PRODUCT_PRICES_SAVED: "product.prices-saved",
   /** Units v2 (SA-799 b): the Undo of a PRODUCT_PRICES_SAVED row; meta {undoes, skipped, revisionBefore, revisionAfter, actor, request: {skip}, priceStateAfter (SA-845 replay)}. */
   PRODUCT_PRICES_UNDONE: "product.prices-undone",
+  /**
+   * Row 510: a staff member sold a restricted product with a reason. ONE row per newly stamped line, written in the
+   * write's own tx (selling-restrictions/restriction-override-audit.ts); entityType OrderItem | InvoiceItem, entityId the
+   * line; meta {documentType, documentId, productId, ruleIds, reason, lineKey, warningHash, basis} (ruleIds are the stamp's
+   * `ruleId:STATE` keys). A carried stamp writes none.
+   */
+  SELLING_RESTRICTION_OVERRIDDEN: "selling_restriction.overridden",
   /** SA-823 R11: a product moved under (or out of) a family; meta {productId, fromParentId, toParentId, variantName, via}. Written in the reparent's own transaction. */
   PRODUCT_FAMILY_ASSIGNED: "product.family_assigned",
   /** SA-823 (row 655 PR-2): one summary row per apply of a product import that carried Family columns; meta {fileName, created, updated, unchanged, skipped, familiesCreated, grouped, moves, familiesDeactivated, actor}. */

@@ -226,8 +226,9 @@ export function editPaymentDto(
     paymentId: f.paymentId,
     method: f.method,
     amount: f.amount,
-    reference: (f.reference ?? "").trim() || undefined,
-    notes: (f.notes ?? "").trim() || undefined,
+    // W-663: an emptied field is sent as null so the server clears it (as settledAt); undefined kept the old value
+    reference: (f.reference ?? "").trim() || null,
+    notes: (f.notes ?? "").trim() || null,
     bankCharges: (f.bankCharges ?? "").trim() ? Number(f.bankCharges) || undefined : undefined,
     paidAt: (f.paidAt ?? "").trim() || undefined,
     // Always sent: an emptied field has to clear the stored bank date.

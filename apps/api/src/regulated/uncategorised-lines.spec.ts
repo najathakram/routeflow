@@ -146,7 +146,7 @@ describe("uncategorisedLineWarnings", () => {
     expect(w[0].message).toContain("in an unknown state");
   });
 
-  it("no overlapping rule, or the engine OFF, reads no invoice and lists nothing", async () => {
+  it("no overlapping rule reads no invoice and lists nothing", async () => {
     const none = await run([], [inv("1", [addr("CA")])]);
     expect(none.w).toEqual([]);
     expect(none.db.invoice.findMany).not.toHaveBeenCalled();

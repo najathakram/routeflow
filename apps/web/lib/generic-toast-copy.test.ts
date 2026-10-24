@@ -807,6 +807,31 @@ describe("a selling-restriction refusal (409 SELLING_RESTRICTED) in a dialog wit
   });
 });
 
+describe("row 510: the staff restriction codes have fixed copy", () => {
+  it("RESTRICTION_WARNING and RESTRICTION_OVERRIDE_REASON_INVALID are never the neutral status sentence, never the raw text", () => {
+    for (const [status, code] of [
+      [409, API_ERROR_CODES.RESTRICTION_WARNING],
+      [400, API_ERROR_CODES.RESTRICTION_OVERRIDE_REASON_INVALID],
+    ] as const) {
+      const copy = genericToastCopy(err(status, { code }));
+      expect(copy).not.toBe(NEUTRAL_409);
+      expect(copy).not.toContain(RAW);
+      expect(codedToastCopy(err(status, { code }))).toBe(copy);
+    }
+    expect(
+      genericToastCopy(err(400, { code: API_ERROR_CODES.RESTRICTION_OVERRIDE_REASON_INVALID })),
+    ).toBe("Give a reason of 3 to 200 characters to sell a restricted item.");
+  });
+
+  it("RESTRICTION_WARNING is handled by the dialog: the global handler stays silent", () => {
+    const toast = jest.fn();
+    handleMutationError(err(409, { code: API_ERROR_CODES.RESTRICTION_WARNING }), undefined, toast, {
+      push: jest.fn(),
+    });
+    expect(toast).not.toHaveBeenCalled();
+  });
+});
+
 describe("SA-814g: 409 INVOICE_TAX_STATE_STALE copy follows the kind of invoice that refused", () => {
   const stale = (data: Record<string, unknown> = {}) =>
     err(409, { code: API_ERROR_CODES.INVOICE_TAX_STATE_STALE, ...data });
