@@ -50,6 +50,22 @@ export function isNoCheckFile(sf) {
 
 const fileOf = (d) => d.file ?? "<no file>";
 
+const DB_SPEC_FILE = /\.db\.spec\.ts$/;
+
+/**
+ * W-756 (W-738 option b): the src + specs program sat at its heap edge on an 8 GB host, so the check runs TWO programs,
+ * one after the other in their own workers (the peak is the larger of the two, not the sum): the unit specs, and the
+ * `*.db.spec.ts` lane with the source it imports. Each keeps its own ratchet baseline. Their roots partition
+ * tsconfig.spec.json exactly (pinned by check-types-ratchet-script.spec.ts), so no file drops out of the check.
+ */
+export const PROGRAMS = [
+  { name: "unit", config: "tsconfig.spec-unit.json", baseline: "check-types.spec-baseline.json" },
+  { name: "db", config: "tsconfig.spec-db.json", baseline: "check-types.db-spec-baseline.json" },
+];
+
+/** Does a baseline entry belong to this program? (db = `*.db.spec.ts` only; unit = every other spec.) */
+const belongsTo = (program, file) => (program === "db") === DB_SPEC_FILE.test(file);
+
 /** Per-file diagnostic counts. A diagnostic with no file is keyed "<no file>" (a source error). */
 export function countByFile(diagnostics) {
   const counts = new Map();
@@ -60,14 +76,18 @@ export function countByFile(diagnostics) {
 /**
  * @param {{file: string|null, code: number, line: number, message: string}[]} diagnostics
  * @param {Record<string, number>} baseline spec file -> allowed error count
+ * @param {string[]} nocheckFiles files that carry `// @ts-nocheck`
+ * @param {"unit"|"db"} [program] W-756: when set, a baseline entry for the other program's specs fails
  */
-export function evaluate(diagnostics, baseline, nocheckFiles = []) {
+export function evaluate(diagnostics, baseline, nocheckFiles = [], program) {
   const counts = countByFile(diagnostics);
   const failures = [];
   // A `// @ts-nocheck` file reports no diagnostics at all, so it would silently lower its own count.
   for (const file of [...nocheckFiles].sort()) failures.push({ kind: "ts-nocheck", file });
   for (const file of Object.keys(baseline).sort()) {
     if (!SPEC_FILE.test(file)) failures.push({ kind: "baseline-non-spec", file });
+    else if (program && !belongsTo(program, file))
+      failures.push({ kind: "baseline-wrong-program", file, program });
   }
   for (const [file, actual] of [...counts].sort(([a], [b]) => a.localeCompare(b))) {
     if (!SPEC_FILE.test(file)) {
@@ -116,6 +136,8 @@ export function describeFailure(f) {
       return `${f.file}: only ${f.actual} type error(s) left but the baseline still allows ${f.allowed}. Lower it: node scripts/check-types-ratchet.mjs --lower-baseline`;
     case "ts-nocheck":
       return `${f.file}: \`// @ts-nocheck\` switches the type-check off for the whole file, which would hide its errors from this gate. Remove it and fix (or baseline) the errors.`;
+    case "baseline-wrong-program":
+      return `${f.file}: listed in the ${f.program} program's baseline, but that program does not check it (W-756: *.db.spec.ts belong to the db baseline, every other spec to the unit one). Move the entry.`;
     case "baseline-non-spec":
       return `${f.file}: the baseline lists a non-spec file. Only *.spec.ts files can be allow-listed; remove the entry.`;
     default:

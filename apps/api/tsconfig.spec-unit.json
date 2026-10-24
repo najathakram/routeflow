@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.spec.json",
+  "exclude": [
+    "prisma.config.ts",
+    "scripts/**",
+    "prisma/migrations/**",
+    "dist",
+    "node_modules",
+    "**/*.db.spec.ts"
+  ]
+}
