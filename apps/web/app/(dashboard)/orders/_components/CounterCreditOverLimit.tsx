@@ -1,16 +1,19 @@
 "use client";
 
 import * as React from "react";
-import type { CounterSaleResponse } from "@routeflow/types";
+import {
+  creditOverLimitSentence as sharedSentence,
+  type CounterSaleResponse,
+  type CreditOverLimit,
+} from "@routeflow/types";
 import { formatMoney } from "@/lib/format";
 
-/** SA-849: the one sentence (server figures, formatted only). */
+/** SA-849: the one sentence (packages/types, shared with mobile), in web money. */
 export function creditOverLimitSentence(
   customerName: string | null | undefined,
-  over: { limit: number; exposure: number },
+  over: CreditOverLimit,
 ): string {
-  const who = customerName?.trim() || "the customer";
-  return `Until this payment is recorded, ${who} is over their credit limit (${formatMoney(over.exposure)} of ${formatMoney(over.limit)}).`;
+  return sharedSentence(customerName, over, formatMoney);
 }
 
 /**

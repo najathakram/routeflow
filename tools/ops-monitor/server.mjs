@@ -808,7 +808,9 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
     }
     if (env.GITHUB_WEBHOOK_SECRET) {
       const { createWebhookDispatcher, routeWebhook } = await import("./lib/webhooks.mjs");
-      const dispatcher = createWebhookDispatcher({ runOnce: (n) => collector.runOnce(n) });
+      const dispatcher = createWebhookDispatcher({
+        runOnce: (n) => collector.runOnce(n, { requeue: true }),
+      });
       webhook = {
         secret: env.GITHUB_WEBHOOK_SECRET,
         onEvent: (name, payload) => dispatcher.dispatch(routeWebhook(name, payload)),

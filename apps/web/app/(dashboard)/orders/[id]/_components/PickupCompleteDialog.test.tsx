@@ -670,3 +670,35 @@ describe("PickupCompleteDialog: SA-837b Record anyway on a duplicate payment ref
     expect(screen.queryByRole("button", { name: "Record anyway" })).toBeNull();
   });
 });
+
+describe("PickupCompleteDialog: I-120 the hand-over's credit-over-limit line (SA-849 on the hand-over)", () => {
+  const over = () =>
+    result({
+      paymentRecorded: false,
+      paymentErrorCode: "COUNTER_PAYMENT_NOT_RECORDED",
+      paid: 0,
+      balanceDue: 25,
+      creditOverLimit: { limit: 20, exposure: 25 },
+    });
+
+  it("a netted tender that did not record: the one sentence inside the not-recorded state", async () => {
+    balance(25);
+    post.mockResolvedValueOnce(over());
+    mount({ customerName: "Acme Co" });
+    fireEvent.click(await screen.findByRole("button", { name: "Card" }));
+    confirm();
+    expect(await screen.findByTestId("pickup-credit-over-limit")).toHaveTextContent(
+      "Until this payment is recorded, Acme Co is over their credit limit ($25.00 of $20.00).",
+    );
+  });
+
+  it("nothing without the field, and nothing once the payment is recorded", async () => {
+    balance(25);
+    post.mockResolvedValueOnce(result({ paymentRecorded: false, paid: 0, balanceDue: 25 }));
+    mount({ customerName: "Acme Co" });
+    fireEvent.click(await screen.findByRole("button", { name: "Card" }));
+    confirm();
+    expect(await screen.findByText("Payment not recorded")).toBeVisible();
+    expect(screen.queryByTestId("pickup-credit-over-limit")).toBeNull();
+  });
+});
