@@ -7,6 +7,9 @@ import { PlanFlagGuard } from "../billing/plan-flag.guard";
 import { RequirePlanFlag } from "../billing/require-plan-flag.decorator";
 import { EstimatesService } from "./estimates.service";
 import { CreateEstimateDto } from "./dto/create-estimate.dto";
+import { ConvertEstimateDto } from "./dto/convert-estimate.dto";
+import { CurrentUser } from "../auth/decorators/current-user.decorator";
+import type { JwtPayload } from "../auth/jwt-payload.interface";
 
 // WP5a (R3b.3, R3b.5): flag.estimates ships dark (DARK_PLAN_FLAGS in
 // plan-flag-policy.ts) — this class-level guard is a courtesy allow until the
@@ -52,11 +55,19 @@ export class EstimatesController {
   @Post(":id/decline") decline(@Param("id") id: string) {
     return this.estimatesService.decline(id);
   }
-  @Post(":id/convert-to-invoice") convertToInvoice(@Param("id") id: string) {
-    return this.estimatesService.convertToInvoice(id);
+  @Post(":id/convert-to-invoice") convertToInvoice(
+    @Param("id") id: string,
+    @Body() dto: ConvertEstimateDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.estimatesService.convertToInvoice(id, user, dto);
   }
-  @Post(":id/convert") convert(@Param("id") id: string) {
-    return this.estimatesService.convertToInvoice(id);
+  @Post(":id/convert") convert(
+    @Param("id") id: string,
+    @Body() dto: ConvertEstimateDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.estimatesService.convertToInvoice(id, user, dto);
   }
 
   @Post(":id/void") void(@Param("id") id: string) {

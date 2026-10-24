@@ -20,6 +20,7 @@ import { Transform, Type } from "class-transformer";
 import { CheckStatus, PaymentMethod } from "@prisma/client";
 import type { KeyedWriterOpts, PaymentKeyRefs } from "../payment-idempotency";
 import { StripHtml } from "../../common/transforms/strip-html.transform";
+import { RestrictionAckDto } from "../../selling-restrictions/dto/restriction-ack.dto";
 import { Trim } from "../../common/transforms/trim.transform";
 import { SafeTextCell } from "../../common/transforms/safe-text-cell.transform";
 import { MAX_SHIPPING_CARRIER, MAX_SHIPPING_TRACKING } from "../../orders/shipment-text";
@@ -65,7 +66,7 @@ export class CreateInvoiceItemDto {
   overrideReason?: string;
 }
 
-export class CreateInvoiceDto {
+export class CreateInvoiceDto extends RestrictionAckDto {
   @IsUUID() customerId: string;
   @IsArray()
   @ArrayMinSize(1)

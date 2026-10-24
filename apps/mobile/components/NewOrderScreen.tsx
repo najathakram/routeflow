@@ -105,6 +105,7 @@ import {
 } from "../lib/sale-line";
 import { LicenseGuardModal } from "./LicenseGuardModal";
 import { BlockedLinesModal } from "./BlockedLinesModal";
+import { useRestrictionWarningRetry } from "../lib/use-restriction-warning-retry";
 import { parseSellingRestricted } from "../lib/selling-restricted";
 import type { BlockedLine } from "@routeflow/types";
 import {
@@ -160,6 +161,7 @@ import { UnlistedItemModal } from "./new-order/UnlistedItemModal";
 import { styles } from "./new-order/styles";
 import { CatalogSectionLabel, RowSpacer } from "./new-order/CatalogParts";
 import type { UnlistedLine } from "./new-order/types";
+import * as ul from "./new-order/unlisted-lines";
 import { usePosModeState } from "../lib/use-pos-mode";
 import { PosConfirmOnly, PosModeSwitch } from "./PosModeSwitch";
 import { canUsePosMode, posConfirmLabel, posMergeAlert } from "../lib/pos-mode";
@@ -925,19 +927,11 @@ function ProductPickView({
   // ── Unlisted (ad-hoc, non-catalog) line helpers ──────────────────────────
   const addUnlisted = (name: string, unitPrice: number, qty: number) =>
     setUnlisted((u) => [...u, { id: newLocalId(), name: name.trim(), unitPrice, qty }]);
-  const updateUnlistedQty = (id: string, qty: number) =>
-    setUnlisted((u) =>
-      qty <= 0 ? u.filter((x) => x.id !== id) : u.map((x) => (x.id === id ? { ...x, qty } : x)),
-    );
+  const updateUnlistedQty = (id: string, qty: number) => setUnlisted((u) => ul.qty(u, id, qty));
   const updateUnlistedPrice = (id: string, value: number | null) =>
-    setUnlisted((u) => {
-      const price = value == null || value < 0 ? 0 : value;
-      return u.map((x) => (x.id === id ? { ...x, unitPrice: price } : x));
-    });
-  const updateUnlistedNote = (id: string, note: string) =>
-    setUnlisted((u) => u.map((x) => (x.id === id ? { ...x, note } : x)));
-  const toggleUnlistedNote = (id: string) =>
-    setUnlisted((u) => u.map((x) => (x.id === id ? { ...x, noteOpen: !x.noteOpen } : x)));
+    setUnlisted((u) => ul.price(u, id, value));
+  const updateUnlistedNote = (id: string, note: string) => setUnlisted((u) => ul.note(u, id, note));
+  const toggleUnlistedNote = (id: string) => setUnlisted((u) => ul.toggleNote(u, id));
   const removeUnlisted = (id: string) => setUnlisted((u) => u.filter((x) => x.id !== id));
 
   /** Newest scanned line to the top of the tray, and flash it. */
@@ -1676,6 +1670,7 @@ function ProductPickView({
   };
 
   const createOrder = useCreateOrderAsDriver();
+  const rw = useRestrictionWarningRetry(); // row 510: staff warning + override (a driver gets the hard block)
   // Pre-check the customer's open draft/pending order so we can ask before submitting.
   // POS mode (SA-763r P-2): staff only, never a driver's at-door cart (lib/use-pos-mode.ts).
   const showPosSwitch = canUsePosMode(userRole) && !runId && !stopId;
@@ -1797,7 +1792,7 @@ function ProductPickView({
     // Blank = today (the server stamps it); only staff can reach the field.
     const orderDateTrim = isStaff ? orderDate.trim() : "";
     createOrder.mutate(
-      {
+      rw.attach({
         customerId,
         items: itemPayload,
         routeRunId: runId,
@@ -1822,7 +1817,7 @@ function ProductPickView({
         // Sent as the Idempotency-Key header (see useCreateOrderAsDriver). The
         // SAME value on every retry/replay of this cart is the point.
         idempotencyKey: getOrderSubmitKey(customerId),
-      },
+      }),
       {
         onSuccess: async (order) => {
           // This cart is now a real order; anything submitted next for THIS customer is a NEW
@@ -1855,6 +1850,7 @@ function ProductPickView({
               { status: order.status, merged: mergeChoice === "merge" },
               showToast,
               () => router.replace(`/(operator)/orders/${order.id}` as any),
+              rw, // row 510: a confirm into a judged DRAFT opens the same warning modal
             );
             return;
           }
@@ -1970,6 +1966,7 @@ function ProductPickView({
             );
             return;
           }
+          if (rw.handle(err, () => submitOrder(mergeChoice, asDraft))) return; // row 510
           const restricted = parseSellingRestricted(err);
           if (restricted) {
             setRestrictedBlock(restricted);
@@ -2414,6 +2411,7 @@ function ProductPickView({
       />
 
       <BlockedLinesModal lines={restrictedBlock} onClose={() => setRestrictedBlock(null)} />
+      {rw.modal}
 
       <LicenseGuardModal
         open={!!licenseBlock}

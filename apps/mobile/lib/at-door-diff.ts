@@ -112,6 +112,34 @@ export function dropSucceededAddedLine<
 }
 
 /**
+ * Row 510: an entry the API refused with the driver's restricted block is NOT applied and NOT declined: its change
+ * request stays PENDING for the office to approve with an override. The entry now belongs to the office, so drop its
+ * local edit, or a bare re-tap of "Save changes" rebuilds the diff and files a SECOND change request for the same edit.
+ * An ADD_ITEM draft is reconciled exactly like a succeeded one (it subtracts what was sent); same no-op rules.
+ */
+export function dropHandedOffAdded<
+  T extends { productId: string; qty: number; boxes?: number; pieces?: number },
+>(added: T[], entry: CreateChangeRequestInput): T[] {
+  return dropSucceededAddedLine(added, entry);
+}
+
+/**
+ * The CHANGE_QTY / REMOVE_ITEM half of the same hand-off: the line's edited qty is dropped (the stepper reads the
+ * order's own qty again), because the diff against a refetched order would NOT self-heal an edit that is only pending.
+ * Returns the SAME object when there is nothing to drop.
+ */
+export function dropHandedOffQty(
+  qtyById: Record<string, number>,
+  entry: CreateChangeRequestInput,
+): Record<string, number> {
+  const id = entry.orderItemId;
+  if (!id || !(id in qtyById)) return qtyById;
+  const rest = { ...qtyById };
+  delete rest[id];
+  return rest;
+}
+
+/**
  * The toast shown when a batch finishes but `added` still holds units a
  * concurrent re-scan grew mid-flight -- never silently discard them by
  * navigating away (Opus review, #1302 round 2). null when nothing is left.

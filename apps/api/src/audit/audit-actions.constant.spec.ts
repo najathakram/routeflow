@@ -10,6 +10,10 @@ describe("AUDIT_ACTIONS", () => {
     expect(AUDIT_ACTIONS.COUNTER_SALE_VOIDED).toBe("counter-sale.voided");
   });
 
+  it("pins the row-510 restriction-override action name", () => {
+    expect(AUDIT_ACTIONS.SELLING_RESTRICTION_OVERRIDDEN).toBe("selling_restriction.overridden");
+  });
+
   it("pins the STANDARD recorded-refund action name (SA-737)", () => {
     expect(AUDIT_ACTIONS.STANDARD_REFUND_RECORDED).toBe("return.refund-recorded");
   });

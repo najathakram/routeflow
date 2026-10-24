@@ -11,6 +11,7 @@ import {
 } from "class-validator";
 import { Type } from "class-transformer";
 import { OrderStatus } from "@prisma/client";
+import { RestrictionAckDto } from "../../selling-restrictions/dto/restriction-ack.dto";
 
 /** B692: what was delivered on one line, for a manual PARTIALLY_DELIVERED (fit-checked against the line's qty). */
 export class OfficeDeliveryLineDto {
@@ -19,7 +20,7 @@ export class OfficeDeliveryLineDto {
   @IsOptional() @IsString() @MaxLength(500) note?: string;
 }
 
-export class ChangeOrderStatusDto {
+export class ChangeOrderStatusDto extends RestrictionAckDto {
   @IsEnum(OrderStatus) status: OrderStatus;
 
   /**

@@ -12,6 +12,12 @@
 export const SALE_FULFILMENT_KINDS = ["COUNTER", "PICKUP", "DELIVERY"] as const;
 export type SaleFulfilmentKind = (typeof SALE_FULFILMENT_KINDS)[number];
 
+/**
+ * Row 510: what a sale was judged against, the buyer's governing address or the store's state (a COUNTER / PICKUP
+ * kind, or the system walk-in on any kind). Also the `basis` in the RESTRICTION_WARNING hash.
+ */
+export type JurisdictionBasis = "CUSTOMER" | "STORE";
+
 /** The order columns that decide the kind (`Order.counterSale`, `Order.fulfillPath`). */
 export interface SaleFulfilmentFacts {
   counterSale: boolean | null | undefined;
