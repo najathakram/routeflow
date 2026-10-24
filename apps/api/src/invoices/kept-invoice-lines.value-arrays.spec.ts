@@ -119,7 +119,7 @@ describe("SA-938 MUST 5: splitKeptItems with a scalar list column", () => {
   });
 
   it("(ii) only the override ids changed: KEPT, one in-place update carrying all four stamp columns", () => {
-    const d = data(stamp(["r1", "r2"]));
+    const d = data({ ...stamp(["r1", "r2"]) });
     const r = splitKeptItems([row()], [d]);
     expect(r.keepIds).toEqual(["ii-1"]);
     expect(r.create).toEqual([]);
@@ -151,7 +151,10 @@ describe("SA-938 MUST 5: splitKeptItems with a scalar list column", () => {
   });
 
   it("a reordered list, or a stored NULL against a rebuilt [], is one in-place write, never a rebuild", () => {
-    const reordered = splitKeptItems([row(stamp(["r1", "r2"]))], [data(stamp(["r2", "r1"]))]);
+    const reordered = splitKeptItems(
+      [row({ ...stamp(["r1", "r2"]) })],
+      [data({ ...stamp(["r2", "r1"]) })],
+    );
     expect(reordered.keepIds).toEqual(["ii-1"]);
     expect(reordered.updates).toHaveLength(1);
     const nullVsEmpty = splitKeptItems(

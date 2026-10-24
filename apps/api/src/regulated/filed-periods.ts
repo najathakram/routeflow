@@ -109,7 +109,7 @@ export async function anyLockedFiling(db: FilingsDb, tenantId: string): Promise<
 export async function findLockedFiling(
   db: { regulatedFiling: { findFirst(args: any): Promise<any> } },
   where: { trackedCategoryId: string; periodKey: string },
-): Promise<any | null> {
+): Promise<any> {
   return (await db.regulatedFiling.findFirst({ where: { ...where, status: "LOCKED" } })) ?? null;
 }
 
@@ -324,7 +324,7 @@ export async function findGeneratedTobaccoReport(
   db: { tobaccoReport: { findFirst(args: any): Promise<any> } },
   tenantId: string,
   period: { year: number; month: number },
-): Promise<any | null> {
+): Promise<any> {
   requireTenant(tenantId);
   return (
     (await db.tobaccoReport.findFirst({
