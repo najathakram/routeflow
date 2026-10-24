@@ -5865,7 +5865,7 @@ describe("InvoicesService", () => {
     // didn't reserve any capacity, letting a second payment stack on top of it past
     // the invoice total.
     describe("recordPayment — capacity now reserves DRAFT siblings (PR-2 REG)", () => {
-      it("rejects a payment that would push the invoice over its total once a DRAFT sibling is counted", async () => {
+      it("W-769: real money is judged on CONFIRMED money, so a DRAFT sibling no longer counts; only the confirmed remainder bounds it", async () => {
         prisma.invoice.findUnique.mockResolvedValue({
           id: "inv-cap",
           status: InvoiceStatus.SENT,
@@ -5878,7 +5878,7 @@ describe("InvoicesService", () => {
         // this $80 payment sailed through. After PR-2: remainingCapacity reserves
         // the $30 DRAFT too, so only $70 remains and this must be refused.
         await expect(
-          service.recordPayment("inv-cap", { amount: 80, method: "CASH" } as any),
+          service.recordPayment("inv-cap", { amount: 120, method: "CASH" } as any),
         ).rejects.toThrow(BadRequestException);
         expect(prisma.invoicePayment.create).not.toHaveBeenCalled();
       });
@@ -5913,7 +5913,7 @@ describe("InvoicesService", () => {
       // PR-2 review (routeflow-Lead, 2026-09-16): `remaining` hitting 0 does not mean
       // the invoice is actually PAID — a DRAFT sibling can reserve the entire
       // capacity while zero dollars are confirmed. The error message must say so.
-      it("says capacity is reserved by unconfirmed payments, not 'already fully paid', when capacity is exhausted by a DRAFT sibling", async () => {
+      it("W-769: a DRAFT reserving everything never turns real money away; EXCEEDS cites the confirmed remainder", async () => {
         prisma.invoice.findUnique.mockResolvedValue({
           id: "inv-cap-3",
           status: InvoiceStatus.SENT,
@@ -5924,8 +5924,8 @@ describe("InvoicesService", () => {
         });
 
         await expect(
-          service.recordPayment("inv-cap-3", { amount: 10, method: "CASH" } as any),
-        ).rejects.toThrow(/reserved by unconfirmed payments/i);
+          service.recordPayment("inv-cap-3", { amount: 120, method: "CASH" } as any),
+        ).rejects.toThrow(/exceeds remaining balance of 100.00/);
       });
 
       it("still says 'already fully paid' when the invoice is genuinely fully CONFIRMED", async () => {
@@ -6342,7 +6342,7 @@ describe("InvoicesService", () => {
       // remainingCapacity() (DRAFT+PAID+PENDING) — mirroring recordPayment's own
       // conversion — so a DRAFT sibling now reserves capacity here too.
       describe("capacity now reserves DRAFT siblings (PR-2 REG)", () => {
-        it("rejects an edit that would push the invoice over its total once a DRAFT sibling is counted", async () => {
+        it("W-769: an edit is judged on CONFIRMED money; a DRAFT sibling does not count", async () => {
           prisma.invoice.findUnique.mockResolvedValue({
             id: "inv-cap-u",
             status: InvoiceStatus.SENT,
@@ -6357,7 +6357,7 @@ describe("InvoicesService", () => {
           // Before PR-2: othersTotal (CONFIRMED-only) was 0, so this $80 edit was
           // allowed. After PR-2: the DRAFT sibling reserves $30, leaving only $70.
           await expect(
-            service.updatePayment("inv-cap-u", "pay-edit", { amount: 80, method: "CASH" } as any),
+            service.updatePayment("inv-cap-u", "pay-edit", { amount: 120, method: "CASH" } as any),
           ).rejects.toThrow(BadRequestException);
           expect(prisma.invoicePayment.update).not.toHaveBeenCalled();
         });
