@@ -10,7 +10,6 @@ import { Modal, Textarea, Button, cn, useToast } from "@routeflow/ui/web";
 import { useQuery } from "@tanstack/react-query";
 import { useCustomers, useCustomerPrices, useCustomer } from "@/lib/api/customers";
 import { countNoun } from "@/lib/plural";
-import { formatMoney } from "@/lib/format";
 import { useProducts } from "@/lib/api/products";
 import {
   attachParent,
@@ -259,7 +258,7 @@ export interface CreateOrderModalProps {
   initialScanCode?: string | null;
   /** B1210: open a FRESH order on "Ship via carrier" (?preselect=SHIP). Ignored when resuming a draft: that keeps its own path. */
   initialFulfillPath?: "SHIP" | null;
-  /** Wired by the orders page to `router.push` — powers the "View order" toast action. */
+  /** Wired by the orders page to `router.push` — powers the "View Order" toast action. */
   onViewOrder?: (orderId: string) => void;
 }
 
@@ -1832,7 +1831,7 @@ export function CreateOrderModal({
     merged?: { fromStatus?: string | null },
   ) => {
     const action = viewOrder
-      ? { label: "View order", onClick: () => viewOrder(created.id) }
+      ? { label: "View Order", onClick: () => viewOrder(created.id) }
       : undefined;
     posFinish
       .mutateAsync({
@@ -1845,7 +1844,7 @@ export function CreateOrderModal({
           title: finish === "invoice" ? POS_COPY.confirmedInvoiced : POS_COPY.confirmedOnly,
           variant: "success",
           action,
-          // F17: a toast that carries View order stays until used (the 4 s default is gone before a click lands).
+          // F17: a toast that carries View Order stays until used (the 4 s default is gone before a click lands).
           ...(action ? { duration: ACTION_TOAST_MS } : {}),
         });
       })
@@ -2383,9 +2382,7 @@ export function CreateOrderModal({
               className="mr-auto flex min-w-0 items-baseline gap-2 tabular-nums text-navy"
             >
               <span className="text-sm text-navy/70">Total</span>
-              <span className="min-w-0 break-all text-base font-semibold">
-                {formatMoney(total)}
-              </span>
+              <span className="min-w-0 break-all text-base font-semibold">${total.toFixed(2)}</span>
             </div>
           )}
           {/* Two-tier hierarchy: secondary (alt save) <
@@ -2803,7 +2800,7 @@ export function CreateOrderModal({
                               </div>
                               {!hasVariants && (
                                 <span className="text-xs font-medium text-navy/70 shrink-0 ml-2">
-                                  {formatMoney(p.pricePerUnit)}
+                                  ${Number(p.pricePerUnit ?? 0).toFixed(2)}
                                 </span>
                               )}
                             </button>
@@ -2843,7 +2840,7 @@ export function CreateOrderModal({
                                       </span>
                                     </div>
                                     <span className="text-xs font-medium text-navy/70 shrink-0 ml-2">
-                                      {formatMoney(v.pricePerUnit)}
+                                      ${Number(v.pricePerUnit ?? 0).toFixed(2)}
                                     </span>
                                   </button>
                                 </li>
@@ -3027,7 +3024,7 @@ export function CreateOrderModal({
                       ({g.count} {g.count === 1 ? "item" : "items"})
                     </span>
                   </span>
-                  <span>{formatMoney(g.subtotal)}</span>
+                  <span>${g.subtotal.toFixed(2)}</span>
                 </div>
               ))}
               <p className="pt-0.5 text-[10px] text-navy/50">
@@ -3042,11 +3039,11 @@ export function CreateOrderModal({
             <div className="space-y-1.5 rounded-lg border border-surface-border bg-surface-raised px-4 py-3 text-sm">
               <div className="flex justify-between text-navy/70">
                 <span>Subtotal</span>
-                <span>{formatMoney(subtotal)}</span>
+                <span>${subtotal.toFixed(2)}</span>
               </div>
               <div className="flex justify-between text-navy/70">
                 <span>Tax ({settings?.taxRate ?? 10}%)</span>
-                <span>{formatMoney(tax)}</span>
+                <span>${tax.toFixed(2)}</span>
               </div>
               {/* Order-level discount */}
               <div className="flex items-center justify-between text-navy/70">
@@ -3061,7 +3058,7 @@ export function CreateOrderModal({
                   />
                 </label>
                 {discountAmt > 0 && (
-                  <span className="text-amber-600">−{formatMoney(discountAmt)}</span>
+                  <span className="text-amber-600">−${discountAmt.toFixed(2)}</span>
                 )}
               </div>
               {/* Shipping fee (optional, never taxed) */}
@@ -3076,11 +3073,11 @@ export function CreateOrderModal({
                     className="w-20 rounded border border-surface-border bg-white px-2 py-0.5 text-xs text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
                   />
                 </label>
-                {shippingAmt > 0 && <span className="text-navy">+{formatMoney(shippingAmt)}</span>}
+                {shippingAmt > 0 && <span className="text-navy">+${shippingAmt.toFixed(2)}</span>}
               </div>
               <div className="flex justify-between border-t border-surface-border pt-1.5 font-semibold text-navy">
                 <span>Total</span>
-                <span>{formatMoney(total)}</span>
+                <span>${total.toFixed(2)}</span>
               </div>
             </div>
           )}
@@ -3226,7 +3223,7 @@ export function CreateOrderModal({
                   className={cn("h-4 w-4", isUrgent ? "text-danger" : "text-navy/30")}
                 />
                 <span className={cn("text-sm font-medium", isUrgent ? "text-danger" : "text-navy")}>
-                  Mark as urgent
+                  Mark as Urgent
                 </span>
               </label>
             )}
@@ -3362,18 +3359,12 @@ export function CreateOrderModal({
             if (retry) submitOrder(retry.data, retry.options);
           }}
           onRemoveLines={(categoryIds) => {
-            const removedCount = lineItems.filter(
-              (li) => li.trackedCategoryId && categoryIds.includes(li.trackedCategoryId),
-            ).length;
             setLineItems((prev) =>
               prev.filter(
                 (li) => !li.trackedCategoryId || !categoryIds.includes(li.trackedCategoryId),
               ),
             );
-            toast({
-              title: `Removed ${removedCount} regulated ${removedCount === 1 ? "line" : "lines"}`,
-              variant: "success",
-            });
+            toast({ title: "Removed regulated line(s)", variant: "success" });
           }}
           onClose={() => setLicenseBlock(null)}
         />

@@ -175,11 +175,11 @@ describe("CreateOrderModal: POS mode switch", () => {
     const sw = await posSwitch();
     await waitFor(() => expect(sw).toBeChecked());
     expect(screen.queryByLabelText(/requested delivery date/i)).not.toBeInTheDocument();
-    expect(screen.queryByText("Mark as urgent")).not.toBeInTheDocument();
+    expect(screen.queryByText("Mark as Urgent")).not.toBeInTheDocument();
     fireEvent.click(sw);
     await waitFor(() => expect(sw).not.toBeChecked());
     expect(screen.getByLabelText(/requested delivery date/i)).toBeInTheDocument();
-    expect(screen.getByText("Mark as urgent")).toBeInTheDocument();
+    expect(screen.getByText("Mark as Urgent")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^create order$/i })).toBeInTheDocument();
   });
 
@@ -312,7 +312,7 @@ describe("CreateOrderModal: POS mode merge into an open DRAFT (row 311)", () => 
     );
   });
 
-  it("when the confirm is refused, the toast says the merged order is unconfirmed and offers View order", async () => {
+  it("when the confirm is refused, the toast says the merged order is unconfirmed and offers View Order", async () => {
     patch.mockImplementation((url: string) =>
       String(url).includes("/status")
         ? Promise.reject({ response: { status: 400, data: { message: "raw server text" } } })
@@ -406,7 +406,7 @@ describe("CreateOrderModal: a store-only tenant (row 331)", () => {
     await openWithLine();
     expect(await screen.findByRole("button", { name: "Confirm and invoice" })).toBeInTheDocument();
     expect(screen.queryByRole("switch", { name: /store pickup/i })).not.toBeInTheDocument();
-    expect(screen.queryByText(/Requested Delivery date/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Requested Delivery Date/i)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^create order$/i })).not.toBeInTheDocument();
   });
 
@@ -464,10 +464,10 @@ describe("CreateOrderModal: a store-only tenant (row 331)", () => {
   });
 });
 
-describe("CreateOrderModal: the View order action stays long enough to use (F17)", () => {
+describe("CreateOrderModal: the View Order action stays long enough to use (F17)", () => {
   const HOUR = 60 * 60 * 1000;
 
-  it("POS: the toast that carries View order stays at least an hour (not the 4 s default)", async () => {
+  it("POS: the toast that carries View Order stays at least an hour (not the 4 s default)", async () => {
     mockPrefs = { "orders.posMode": "true" };
     post.mockImplementation((url: string) =>
       url === "/orders"
@@ -483,19 +483,19 @@ describe("CreateOrderModal: the View order action stays long enough to use (F17)
     const withAction = mockToast.mock.calls.map((c) => c[0]).filter((t) => t.action);
     expect(withAction.length).toBeGreaterThan(0);
     for (const t of withAction) {
-      expect(t.action.label).toBe("View order");
+      expect(t.action.label).toBe("View Order");
       expect(t.duration).toBeGreaterThanOrEqual(HOUR);
     }
     expect(onViewOrder).toHaveBeenCalledWith("o1");
   });
 
-  it("the plain Create Order toast carries View order for at least an hour", async () => {
+  it("the plain Create Order toast carries View Order for at least an hour", async () => {
     const { onViewOrder } = await openWithLine();
     fireEvent.click(screen.getByRole("button", { name: /^create order$/i }));
     await waitFor(() => expect(mockToast).toHaveBeenCalled());
     const t = mockToast.mock.calls[0][0];
     expect(t.title).toBe("Order created");
-    expect(t.action.label).toBe("View order");
+    expect(t.action.label).toBe("View Order");
     expect(t.duration).toBeGreaterThanOrEqual(HOUR);
     t.action.onClick();
     expect(onViewOrder).toHaveBeenCalledWith("o1");

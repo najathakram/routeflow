@@ -13,7 +13,6 @@ import {
 } from "@routeflow/pricing";
 import { MarginHint } from "@/components/MarginHint";
 import { MoneyInput } from "@/components/MoneyInput";
-import { formatMoney } from "@/lib/format";
 import { PriceChips, PriceHistoryButton } from "@/components/PriceHistory";
 import type { PackBase } from "@/lib/order-line-unit";
 import type { TrackedCategory } from "@/lib/api/tracked-categories";
@@ -311,10 +310,10 @@ export function LineItemRow({
               {li.priceType === "SPECIAL" ? (
                 <>
                   <span className="text-xs text-navy/70 line-through">
-                    {formatMoney(li.listPrice)}
+                    ${li.listPrice.toFixed(2)}
                   </span>
                   <span className="text-xs font-medium text-emerald-600">
-                    {formatMoney(li.unitPrice)} / {priceUnit}
+                    ${li.unitPrice.toFixed(2)} / {priceUnit}
                   </span>
                   <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 ring-1 ring-emerald-200">
                     Special price
@@ -323,10 +322,10 @@ export function LineItemRow({
               ) : li.priceType === "DISCOUNTED" ? (
                 <>
                   <span className="text-xs text-navy/70 line-through">
-                    {formatMoney(li.listPrice)}
+                    ${li.listPrice.toFixed(2)}
                   </span>
                   <span className="text-xs font-medium text-amber-600">
-                    {formatMoney(li.unitPrice)} / {priceUnit}
+                    ${li.unitPrice.toFixed(2)} / {priceUnit}
                   </span>
                   <span className="rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 ring-1 ring-amber-200">
                     Discounted
@@ -337,7 +336,7 @@ export function LineItemRow({
                   {/* Upsell (sold above list). Operator-only green badge;
                     no strikethrough — the base is never shown to the buyer. */}
                   <span className="text-xs font-medium text-emerald-600">
-                    {formatMoney(li.unitPrice)} / {priceUnit}
+                    ${li.unitPrice.toFixed(2)} / {priceUnit}
                   </span>
                   <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 ring-1 ring-emerald-200">
                     Upsell
@@ -345,7 +344,7 @@ export function LineItemRow({
                 </>
               ) : (
                 <span className="text-xs text-navy/70">
-                  {formatMoney(li.unitPrice)} / {priceUnit}
+                  ${li.unitPrice.toFixed(2)} / {priceUnit}
                 </span>
               )}
               {onTapPrice && (
@@ -379,7 +378,7 @@ export function LineItemRow({
           {/* Price per piece (when product has box packaging) */}
           {li.unitsPerBox && li.unitsPerBox > 1 && (
             <div className="mt-0.5 text-[10px] text-navy/70">
-              {formatMoney(perUnitPrice(li.unitPrice, li.unitsPerBox))} / {w.base.lower}
+              ${perUnitPrice(li.unitPrice, li.unitsPerBox)?.toFixed(2)} / {w.base.lower}
             </div>
           )}
           {unitSlot && <div className="mt-1">{unitSlot}</div>}
@@ -410,7 +409,7 @@ export function LineItemRow({
               />
               {priceHistoryEntry && priceHistoryEntry.lastPrice !== li.listPrice && (
                 <span className="text-[10px] text-navy/50">
-                  Last: {formatMoney(priceHistoryEntry.lastPrice)}
+                  Last: ${priceHistoryEntry.lastPrice.toFixed(2)}
                 </span>
               )}
             </div>
@@ -600,15 +599,14 @@ export function LineItemRow({
         data-testid="line-total"
         className="col-start-2 row-start-2 self-center text-right text-sm font-semibold text-navy sm:w-16 sm:self-auto"
       >
-        {formatMoney(
-          computeLineSubtotal({
-            unitPrice: li.unitPrice,
-            qty: li.qty,
-            boxes: li.boxes ?? null,
-            pieces: li.pieces ?? null,
-            unitsPerBox: li.unitsPerBox ?? null,
-          }),
-        )}
+        $
+        {computeLineSubtotal({
+          unitPrice: li.unitPrice,
+          qty: li.qty,
+          boxes: li.boxes ?? null,
+          pieces: li.pieces ?? null,
+          unitsPerBox: li.unitsPerBox ?? null,
+        }).toFixed(2)}
       </span>
       <div
         data-testid="line-actions-column"
