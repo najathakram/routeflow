@@ -7,23 +7,32 @@
 // WHY: Actions minutes are scarce and the PC is idle between lanes. This reproduces ci.yml's Verify
 // job (and db-migrations.yml's replay when the diff touches the Prisma lane) in a clean detached
 // worktree, then posts the verdict as the commit status `local-ci/verify` on the PR head sha.
+// Informational only: it is not a required check.
 //
 // Steps, in ci.yml order (see .github/workflows/ci.yml `verify` job):
 //   lockdeps (semver@6.3.1 into a side dir) -> validate-lock-edges (NODE_PATH=lockdeps)
-//   -> [npm ci, only when package-lock.json differs from the cloned node_modules]
-//   -> prisma generate -> npm run verify (VERIFY_EXCLUDE=@routeflow/control) -> ci-audit-critical
+//   -> [npm ci --ignore-scripts, when package-lock.json or ANY package.json differs from the clone]
+//   -> husky (`prepare` is skipped by --ignore-scripts) -> prisma generate
+//   -> npm run verify (VERIFY_EXCLUDE=@routeflow/control) -> ci-audit-critical
 //   -> ci-audit high report (advisory, never fails the run).
-// DB lane (only when the diff touches db-migrations.yml's paths): squawk lint, then
-// scripts/local-db-specs.mjs (fresh rf_dbspec_* DB, migrate deploy) running drift + the DB specs.
+// DB lane (only when the diff touches a path listed under pull_request.paths in the merge tree's own
+// db-migrations.yml): squawk lint, then scripts/local-db-specs.mjs (fresh rf_dbspec_* DB, migrate
+// deploy) running drift + the DB specs.
+//
+// SAFETY. node_modules is cloned from the main checkout. A copy recreates the workspace links
+// (@routeflow/*) as ABSOLUTE links into the main checkout, which would (a) test the main checkout's
+// packages/* instead of the PR's and (b) let `git worktree remove` delete THROUGH them into main.
+// So the clone is retargeted into the worktree right after the copy, the run aborts if any link
+// still leaves the worktree, and removal first deletes every link in the whole tree and refuses to
+// continue if one survives. Children get a scrubbed environment (no tokens), run under step
+// timeouts, and are killed (own process tree only) on SIGINT/SIGTERM.
 //
 // DIFFERENCES from CI that cannot be matched on Windows (reported, not hidden):
-//   * Node: CI pins NODE_VERSION 24; this runs the host Node (see result.json `node`).
-//   * node_modules is a clone of the main checkout, not `npm ci` from scratch (npm ci runs only
-//     when the lockfile differs). CI is a cold ubuntu runner with no turbo cache; here the turbo
-//     cache is whatever the clone carries (verify-turbo is told no cache via TURBO_FORCE=true).
+//   * Node: CI pins NODE_VERSION 24; this runs the host Node (logged, and in result.json).
+//   * node_modules is a clone of the main checkout, not a cold `npm ci` (npm ci runs when stale).
 //   * OS: win32 vs ubuntu-latest (path separators, symlinks, line endings) can matter.
 //   * Heavy steps take the machine-wide heavy slot (RF_HEAVY_SLOTS, default 3 here) and jest runs
-//     with JEST_MAX_WORKERS=2, so wall time differs from CI's 30-minute timeout budget.
+//     with JEST_MAX_WORKERS=2, so wall time differs from CI's budget.
 //   * The DB lane uses the compose Postgres (local-db-specs), not postgres:16-alpine in the job.
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -37,28 +46,146 @@ import { withHeavySlot } from "./lib/heavy-slot.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO_SLUG = "najathakram/routeflow";
+const CI_NODE_MAJOR = 24;
+const MIN = 60_000;
 export const STATUS_CONTEXT = "local-ci/verify";
 
-/** Paths whose change runs .github/workflows/db-migrations.yml (prefixes, plus the .db.spec.ts glob). */
-const DB_LANE_PREFIXES = [
-  "apps/api/prisma/",
-  "apps/api/src/prisma/",
-  "apps/api/prisma.config.ts",
-  "apps/api/scripts/schema-drift.mjs",
-  "apps/api/scripts/lib/",
-  "apps/api/jest.db.config.js",
-  "apps/api/package.json",
-  "apps/api/src/common/testing/",
-  "apps/api/.squawk.toml",
-  "scripts/lint-migrations.mjs",
-  ".github/workflows/db-migrations.yml",
-];
+// ---------------------------------------------------------------------------------------------
+// Pure helpers
+// ---------------------------------------------------------------------------------------------
 
-export function touchesDbLane(files) {
-  return files.some(
-    (f) =>
-      DB_LANE_PREFIXES.some((p) => f.startsWith(p)) || /^apps\/api\/src\/.*\.db\.spec\.ts$/.test(f),
-  );
+/** The `paths:` list under `pull_request:` of a workflow file (comments and blanks skipped). */
+export function parseWorkflowPaths(yamlText) {
+  const lines = yamlText.split(/\r?\n/);
+  const pr = lines.findIndex((l) => /^\s*pull_request:\s*$/.test(l));
+  if (pr < 0) return [];
+  const start = lines.findIndex((l, i) => i > pr && /^\s*paths:\s*$/.test(l));
+  if (start < 0) return [];
+  const out = [];
+  for (let i = start + 1; i < lines.length; i++) {
+    const l = lines[i];
+    if (/^\s*(#.*)?$/.test(l)) continue;
+    const m = /^\s*-\s*["']?([^"'\s#][^"'#]*?)["']?\s*(#.*)?$/.exec(l);
+    if (!m) break;
+    out.push(m[1]);
+  }
+  return out;
+}
+
+export function globToRegExp(glob) {
+  let re = "";
+  for (let i = 0; i < glob.length; i++) {
+    const c = glob[i];
+    if (c === "*" && glob[i + 1] === "*") {
+      if (glob[i + 2] === "/") {
+        re += "(?:.*/)?";
+        i += 2;
+      } else {
+        re += ".*";
+        i += 1;
+      }
+    } else if (c === "*") re += "[^/]*";
+    else re += c.replace(/[.+^${}()|[\]\\?]/g, "\\$&");
+  }
+  return new RegExp(`^${re}$`);
+}
+
+/** True when any changed file matches one of the workflow's own path globs. */
+export function touchesDbLane(files, globs) {
+  const res = globs.map(globToRegExp);
+  return files.some((f) => res.some((r) => r.test(f)));
+}
+
+/** entries: [{ path, merge, local }] blob ids; stale when any differs or the clone lacks the file. */
+export function installIsStale(entries) {
+  return entries.some((e) => !e.local || e.local !== e.merge);
+}
+
+const SECRET_KEY = /(TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|PRIVATE_KEY|CREDENTIAL)/i;
+const SECRET_PREFIX = /^(GH_|GITHUB_|RAILWAY_|NPM_CONFIG_)/i;
+
+/** The environment PR code runs with: the host env minus anything token-shaped, plus CI=true. */
+export function buildStepEnv(base, step = {}, extra = {}) {
+  const env = {};
+  for (const [k, v] of Object.entries(base)) {
+    if (SECRET_KEY.test(k) || SECRET_PREFIX.test(k)) continue;
+    env[k] = v;
+  }
+  return { ...env, CI: "true", ...extra, ...(step.env ?? {}) };
+}
+
+const norm = (p) => {
+  const n = path.resolve(p.replace(/^\\\\\?\\/, ""));
+  return process.platform === "win32" ? n.toLowerCase() : n;
+};
+const isInside = (child, parent) => {
+  const c = norm(child);
+  const p = norm(parent);
+  return c === p || c.startsWith(p.endsWith(path.sep) ? p : p + path.sep);
+};
+
+/** Every symlink / junction under `root` (not descended into). */
+export function findLinks(root) {
+  const out = [];
+  const walk = (d) => {
+    let ents;
+    try {
+      ents = fs.readdirSync(d, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of ents) {
+      const p = path.join(d, e.name);
+      if (e.isSymbolicLink()) out.push(p);
+      else if (e.isDirectory()) walk(p);
+    }
+  };
+  walk(root);
+  return out;
+}
+
+function removeLink(p) {
+  try {
+    fs.rmdirSync(p); // a directory link / junction: removes the link only
+  } catch {
+    fs.unlinkSync(p);
+  }
+}
+
+/** Deletes every link under root, then rescans; returns the links that survived. */
+export function removeAllLinks(root) {
+  for (const l of findLinks(root)) {
+    try {
+      removeLink(l);
+    } catch {
+      /* rescan below reports it */
+    }
+  }
+  return findLinks(root);
+}
+
+function linkTarget(l) {
+  return path.resolve(path.dirname(l), fs.readlinkSync(l).replace(/^\\\\\?\\/, ""));
+}
+
+/** Links under `dir` whose target is inside `from`. */
+export function linksInto(dir, from) {
+  return findLinks(dir).filter((l) => isInside(linkTarget(l), from));
+}
+
+/**
+ * Re-points every link under `dir` that targets `from` at the same relative path inside `dir`
+ * (the copy made them absolute links into the main checkout). Returns how many were moved.
+ */
+export function retargetLinks(dir, from) {
+  let n = 0;
+  for (const l of linksInto(dir, from)) {
+    const target = path.join(dir, path.relative(path.resolve(from), linkTarget(l)));
+    removeLink(l);
+    fs.symlinkSync(target, l, "junction");
+    n++;
+  }
+  return n;
 }
 
 export function parseArgs(argv) {
@@ -85,10 +212,12 @@ export function resultDirName(pr, headSha) {
 }
 
 /**
- * The ordered plan (pure). Each step: { name, cwd, cmd, env?, heavy?, advisory?, when? }.
- * `when` marks a conditional step so `--dry` can show why it may be absent.
+ * The ordered plan (pure). Each step: { name, cwd, cmd | action, env?, heavy?, advisory?, gate?,
+ * timeoutMs?, when? }. `gate` marks a step whose failure is a real CI-gate failure (state
+ * `failure`); any other failing step is an infrastructure fault (state `error`). `when` marks a
+ * conditional step so `--dry` can show why it may be absent.
  */
-export function planLocalCi({ mergeSha, dir, from, lockdeps, lockChanged, dbLane, platform }) {
+export function planLocalCi({ mergeSha, dir, from, lockdeps, installStale, dbLane, platform }) {
   const wt = planWorktree({
     repo: from,
     dir,
@@ -103,6 +232,15 @@ export function planLocalCi({ mergeSha, dir, from, lockdeps, lockChanged, dbLane
   for (const s of wt) {
     if (s.cmd[0] === "git" && s.cmd[1] === "fetch") continue; // main() fetches the PR refs itself
     if (s.cmd[0] === "npx" && s.cmd[1] === "prisma") continue; // re-added below in ci.yml order
+    if (s.cmd[0] === "npx") {
+      // the packages build comes after the clone has been retargeted into the worktree
+      plan.push({
+        name: "retarget-links",
+        cwd: dir,
+        action: "retarget-links",
+        timeoutMs: 20 * MIN,
+      });
+    }
     const cmd =
       s.cmd[0] === "git" && s.cmd[1] === "worktree"
         ? ["git", "worktree", "add", "--detach", dir, mergeSha]
@@ -112,9 +250,9 @@ export function planLocalCi({ mergeSha, dir, from, lockdeps, lockChanged, dbLane
       cwd: s.cwd,
       cmd,
       heavy: cmd[0] === "npx", // the packages build
+      timeoutMs: (cmd[0] === "npx" ? 30 : 20) * MIN,
     });
   }
-  const nm = (p) => path.join(lockdeps, "node_modules", p);
   plan.push(
     {
       name: "lockdeps",
@@ -130,30 +268,35 @@ export function planLocalCi({ mergeSha, dir, from, lockdeps, lockChanged, dbLane
         "--ignore-scripts",
         "semver@6.3.1",
       ],
+      timeoutMs: 10 * MIN,
     },
     {
       name: "validate-lock-edges",
       cwd: dir,
       cmd: ["node", "scripts/validate-lock-edges.mjs"],
-      env: { NODE_PATH: path.dirname(nm("x")) },
+      env: { NODE_PATH: path.join(lockdeps, "node_modules") },
+      gate: true,
+      timeoutMs: 10 * MIN,
     },
   );
-  if (lockChanged) {
+  if (installStale) {
     plan.push({
       name: "npm-ci",
       cwd: dir,
       cmd: ["npm", "ci", "--ignore-scripts", "--engine-strict=false"],
       heavy: true,
-      when: "package-lock.json differs from the cloned node_modules",
+      timeoutMs: 20 * MIN,
+      when: "package-lock.json or a package.json differs from the cloned node_modules",
     });
   }
   plan.push(
-    // `npm ci --ignore-scripts` skips `prepare` (husky); verify's check-git-hooks needs .husky/_ to exist.
-    { name: "husky", cwd: dir, cmd: ["npx", "husky"] },
+    // `npm ci --ignore-scripts` skips `prepare` (husky); verify's check-git-hooks needs .husky/_.
+    { name: "husky", cwd: dir, cmd: ["npx", "husky"], timeoutMs: 5 * MIN },
     {
       name: "prisma-generate",
       cwd: path.join(dir, "apps/api"),
       cmd: ["npx", "prisma", "generate"],
+      timeoutMs: 10 * MIN,
     },
     {
       name: "verify",
@@ -166,13 +309,22 @@ export function planLocalCi({ mergeSha, dir, from, lockdeps, lockChanged, dbLane
         TURBO_FORCE: "true",
       },
       heavy: true,
+      gate: true,
+      timeoutMs: 60 * MIN,
     },
-    { name: "audit-critical", cwd: dir, cmd: ["node", "scripts/ci-audit-critical.mjs"] },
+    {
+      name: "audit-critical",
+      cwd: dir,
+      cmd: ["node", "scripts/ci-audit-critical.mjs"],
+      gate: true,
+      timeoutMs: 20 * MIN,
+    },
     {
       name: "audit-high-report",
       cwd: dir,
       cmd: ["node", "scripts/ci-audit-critical.mjs", "--level", "high", "--report-only"],
       advisory: true,
+      timeoutMs: 20 * MIN,
     },
   );
   if (dbLane) {
@@ -181,7 +333,9 @@ export function planLocalCi({ mergeSha, dir, from, lockdeps, lockChanged, dbLane
         name: "lint-migrations",
         cwd: dir,
         cmd: ["node", "scripts/lint-migrations.mjs", "--base", "origin/master"],
-        when: "diff touches the Prisma / DB-lane paths",
+        gate: true,
+        timeoutMs: 10 * MIN,
+        when: "diff touches the DB-lane paths",
       },
       {
         name: "db-replay",
@@ -192,8 +346,11 @@ export function planLocalCi({ mergeSha, dir, from, lockdeps, lockChanged, dbLane
           "--",
           "npm run db:drift -w apps/api && npm run test:db -w apps/api",
         ],
-        heavy: false, // local-db-specs takes the heavy slot itself
-        when: "diff touches the Prisma / DB-lane paths",
+        env: { CI: "" }, // local-db-specs takes the heavy slot itself, and CI would bypass it
+        heavy: false,
+        gate: true,
+        timeoutMs: 60 * MIN,
+        when: "diff touches the DB-lane paths",
       },
     );
   }
@@ -205,6 +362,7 @@ export async function runSteps({ steps, exec, now = Date.now, log = () => {} }) 
   const t0 = now();
   const out = [];
   let failedStep = null;
+  let infra = false;
   for (const step of steps) {
     if (failedStep && !step.advisory) {
       out.push({ name: step.name, status: "skipped", ms: 0, exit: null });
@@ -223,13 +381,17 @@ export async function runSteps({ steps, exec, now = Date.now, log = () => {} }) 
       status: ok ? "pass" : "fail",
       ms: now() - s0,
       exit: r.status ?? null,
+      ...(r.timedOut ? { timedOut: true } : {}),
     });
     log(
-      `local-ci: ${step.name} ${ok ? "ok" : `FAILED (exit ${r.status})`}${step.advisory && !ok ? " [advisory]" : ""}`,
+      `local-ci: ${step.name} ${ok ? "ok" : `FAILED (exit ${r.status}${r.timedOut ? ", timed out" : ""})`}${step.advisory && !ok ? " [advisory]" : ""}`,
     );
-    if (!ok && !step.advisory) failedStep = step.name;
+    if (!ok && !step.advisory) {
+      failedStep = step.name;
+      infra = !step.gate || Boolean(r.timedOut); // only a real gate failing on its own merits is `failure`
+    }
   }
-  return { ok: failedStep === null, failedStep, durationMs: now() - t0, steps: out };
+  return { ok: failedStep === null, failedStep, infra, durationMs: now() - t0, steps: out };
 }
 
 const fmtDuration = (ms) => {
@@ -237,32 +399,60 @@ const fmtDuration = (ms) => {
   return `${Math.floor(s / 60)}m${String(s % 60).padStart(2, "0")}s`;
 };
 
-export function statusPayload({ ok, durationMs, failedStep }) {
+/** GitHub states: success | failure (a gate failed) | error (the harness itself faulted). */
+export function statusPayload({ ok, durationMs, failedStep, infra = false }) {
   const d = fmtDuration(durationMs);
   const step = String(failedStep).slice(0, 60);
-  const description = ok ? `passed in ${d}` : `failed at ${step} after ${d}`;
+  const description = ok
+    ? `passed in ${d}`
+    : infra
+      ? `harness error at ${step} after ${d} (not a CI verdict)`
+      : `failed at ${step} after ${d}`;
   return {
     context: STATUS_CONTEXT,
-    state: ok ? "success" : "failure",
+    state: ok ? "success" : infra ? "error" : "failure",
     description: description.slice(0, 140),
   };
 }
 
 // ---------------------------------------------------------------------------------------------
-// Side-effecting orchestration (not exercised by the self-test; the dry run and a real run cover it)
+// Side-effecting orchestration (the dry run and real runs cover it)
 // ---------------------------------------------------------------------------------------------
 
 const q = (a) => (/[\s"]/.test(a) ? JSON.stringify(a) : a);
 
 function git(cwd, args) {
-  return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+  return execFileSync("git", args, { cwd, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 }).trim();
 }
 
-function makeExec({ logStream, env }) {
+/** Kills one process tree: the child we started, nothing else. */
+function killTree(pid) {
+  if (!pid) return;
+  if (process.platform === "win32") {
+    spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore" });
+  } else {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      /* gone */
+    }
+  }
+}
+
+function makeExec({ logStream, ctx, state }) {
   return async (step) => {
-    logStream.write(`\n$ (cd ${step.cwd}) ${step.cmd.map(q).join(" ")}\n`);
+    if (state.aborted) return { status: 130 };
+    logStream.write(`\n$ (cd ${step.cwd}) ${step.cmd ? step.cmd.map(q).join(" ") : step.action}\n`);
+    if (step.action === "retarget-links") {
+      const moved = retargetLinks(ctx.dir, ctx.from);
+      const left = linksInto(ctx.dir, ctx.from);
+      logStream.write(
+        `retargeted ${moved} link(s) into the worktree; ${left.length} still leave it\n`,
+      );
+      return { status: left.length === 0 ? 0 : 1 };
+    }
     if (step.cmd[0] === "cp") {
-      // `cp -R` is not on a plain Windows PATH; copy natively (same result: a real clone, no junction).
+      // `cp -R` is not on a plain Windows PATH; copy natively (a real clone; links retargeted next).
       const [src, dst] = step.cmd.slice(-2);
       fs.cpSync(src, dst, { recursive: true });
       return { status: 0 };
@@ -275,45 +465,73 @@ function makeExec({ logStream, env }) {
           step.cmd.slice(1).map((a) => (win ? q(a) : a)),
           {
             cwd: step.cwd,
-            env: { ...process.env, ...env, ...(step.env ?? {}), CI: "" },
+            env: buildStepEnv(process.env, step),
             shell: win,
             stdio: ["ignore", "pipe", "pipe"],
           },
         );
+        state.child = child;
+        let timedOut = false;
+        const timer = step.timeoutMs
+          ? setTimeout(() => {
+              timedOut = true;
+              killTree(child.pid);
+            }, step.timeoutMs)
+          : null;
         const tee = (chunk) => {
           logStream.write(chunk);
           process.stdout.write(chunk);
         };
         child.stdout.on("data", tee);
         child.stderr.on("data", tee);
-        child.on("error", (error) => resolve({ status: 1, error }));
-        child.on("exit", (status) => resolve({ status: status ?? 1 }));
+        const done = (r) => {
+          clearTimeout(timer);
+          state.child = null;
+          resolve(r);
+        };
+        child.on("error", (error) => done({ status: 1, error }));
+        child.on("exit", (status) => done({ status: timedOut ? 124 : (status ?? 1), timedOut }));
       });
     if (!step.heavy) return run();
-    return withHeavySlot({ label: `local-ci-${env.LOCAL_CI_PR}`, branch: "local-ci" }, async () => {
-      const r = await run();
-      return Object.assign(r, { valueOf: () => r.status });
-    });
+    return withHeavySlot({ label: `local-ci-${ctx.pr}`, branch: "local-ci" }, run);
   };
 }
 
+/** Removes the worktree; returns false (and leaves it) if any link survives or git refuses. */
 function removeWorktree(repo, dir, log) {
-  // Junctions first (a worktree remove deletes THROUGH a junction into its target), never --force.
-  for (const rel of discoverNodeModules(dir)) {
-    const p = path.join(dir, rel, "node_modules");
-    try {
-      if (fs.lstatSync(p).isSymbolicLink()) fs.rmdirSync(p);
-    } catch {
-      /* gone */
-    }
+  const left = removeAllLinks(dir);
+  if (left.length) {
+    log(
+      `local-ci: ${left.length} link(s) survived removal under ${dir}; worktree left in place, remove by hand`,
+    );
+    return false;
   }
   const r = spawnSync("git", ["worktree", "remove", dir], { cwd: repo, encoding: "utf8" });
   if (r.status !== 0) {
     log(`local-ci: worktree left in place (${r.stderr.trim()}); remove ${dir} by hand`);
-  } else if (fs.existsSync(dir) && /^rf-lci-[0-9]+$/.test(path.basename(dir))) {
-    // git leaves ignored files (the cloned node_modules) behind; the links are already gone, so this is safe.
+    return false;
+  }
+  if (fs.existsSync(dir) && /^rf-lci-[0-9]+$/.test(path.basename(dir))) {
+    // git leaves ignored files (the cloned node_modules) behind; every link is already gone.
     fs.rmSync(dir, { recursive: true, force: true });
   }
+  return true;
+}
+
+/** Blob ids of package-lock.json and every tracked package.json: the merge tree vs the clone source. */
+function installEntries(repo, from, mergeSha) {
+  const files = git(repo, ["ls-tree", "-r", "--name-only", mergeSha])
+    .split("\n")
+    .filter((f) => f === "package-lock.json" || /(^|\/)package\.json$/.test(f));
+  return files.map((f) => {
+    let local = null;
+    try {
+      local = git(from, ["hash-object", f]);
+    } catch {
+      /* missing in the clone source */
+    }
+    return { path: f, merge: git(repo, ["rev-parse", `${mergeSha}:${f}`]), local };
+  });
 }
 
 export async function main(argv = process.argv.slice(2)) {
@@ -337,6 +555,10 @@ export async function main(argv = process.argv.slice(2)) {
   const from = path.resolve(o.from ?? repo);
   const dir = path.resolve(repo, "..", `rf-lci-${o.pr}`);
   const log = (m) => console.error(m);
+  const nodeMajor = Number(process.versions.node.split(".")[0]);
+  log(
+    `local-ci: host Node ${process.version}, CI pins ${CI_NODE_MAJOR}${nodeMajor === CI_NODE_MAJOR ? "" : " (MISMATCH: results may differ from CI)"}`,
+  );
 
   if (o.dry) {
     const plan = planLocalCi({
@@ -344,102 +566,137 @@ export async function main(argv = process.argv.slice(2)) {
       dir,
       from,
       lockdeps: path.join("local-assets", "local-ci", `${o.pr}-<sha>`, "lockdeps"),
-      lockChanged: true,
+      installStale: true,
       dbLane: true,
       platform: process.platform,
     });
-    console.log(`local-ci plan for PR #${o.pr} (node ${process.version}, CI pins 24):`);
+    console.log(`local-ci plan for PR #${o.pr}:`);
     for (const s of plan) {
       const tags = [
         s.heavy ? "heavy-slot" : null,
         s.advisory ? "advisory" : null,
+        s.gate ? "gate" : null,
+        s.timeoutMs ? `${s.timeoutMs / MIN}m cap` : null,
         s.when ? `if ${s.when}` : null,
       ]
         .filter(Boolean)
         .join(", ");
-      console.log(`  ${s.name.padEnd(20)} ${s.cmd.map(q).join(" ")}${tags ? `   [${tags}]` : ""}`);
+      console.log(
+        `  ${s.name.padEnd(20)} ${s.cmd ? s.cmd.map(q).join(" ") : s.action}${tags ? `   [${tags}]` : ""}`,
+      );
     }
     console.log(
-      `  then: gh api repos/${REPO_SLUG}/statuses/<head sha> (context ${STATUS_CONTEXT}), remove worktree`,
+      `  then: gh api repos/${REPO_SLUG}/statuses/<head sha> (context ${STATUS_CONTEXT}: success | failure for a gate | error for the harness), remove worktree`,
     );
     return 0;
   }
 
-  // Fetch the exact tree GitHub CI tests, plus the base.
-  git(repo, [
-    "fetch",
-    "origin",
-    "master",
-    `+refs/pull/${o.pr}/merge:refs/local-ci/${o.pr}/merge`,
-    `+refs/pull/${o.pr}/head:refs/local-ci/${o.pr}/head`,
-  ]);
-  const mergeSha = git(repo, ["rev-parse", `refs/local-ci/${o.pr}/merge`]);
-  const headSha = git(repo, ["rev-parse", `refs/local-ci/${o.pr}/head`]);
-  const files = git(repo, ["diff", "--name-only", "origin/master", mergeSha])
-    .split("\n")
-    .filter(Boolean);
-  const lockChanged =
-    git(from, ["hash-object", "package-lock.json"]) !==
-    git(repo, ["rev-parse", `${mergeSha}:package-lock.json`]);
-  const outDir = path.join(repo, "local-assets", "local-ci", resultDirName(o.pr, headSha));
-  fs.mkdirSync(outDir, { recursive: true });
-  const logStream = fs.createWriteStream(path.join(outDir, "local-ci.log"));
-  const plan = planLocalCi({
-    mergeSha,
-    dir,
-    from,
-    lockdeps: path.join(outDir, "lockdeps"),
-    lockChanged,
-    dbLane: touchesDbLane(files),
-    platform: process.platform,
-  });
-  const env = { RF_HEAVY_SLOTS: process.env.RF_HEAVY_SLOTS ?? "3", LOCAL_CI_PR: String(o.pr) };
-  const result = await runSteps({ steps: plan, exec: makeExec({ logStream, env }), log });
-  const payload = statusPayload(result);
-  fs.writeFileSync(
-    path.join(outDir, "result.json"),
-    JSON.stringify(
-      {
-        pr: o.pr,
-        headSha,
-        mergeSha,
-        node: process.version,
-        ciNode: "24",
-        platform: process.platform,
-        dbLane: touchesDbLane(files),
-        lockChanged,
-        ...result,
-        status: payload,
-      },
-      null,
-      2,
-    ),
-  );
-  logStream.end();
-  if (!o.noStatus) {
-    const r = spawnSync(
-      "gh",
-      [
-        "api",
-        `repos/${REPO_SLUG}/statuses/${headSha}`,
-        "-f",
-        `state=${payload.state}`,
-        "-f",
-        `context=${payload.context}`,
-        "-f",
-        `description=${payload.description}`,
-      ],
-      { encoding: "utf8" },
-    );
-    log(
-      r.status === 0
-        ? `local-ci: posted ${payload.context} ${payload.state} on ${headSha.slice(0, 9)}`
-        : `local-ci: status post FAILED: ${r.stderr.trim()}`,
-    );
+  let mergeSha, headSha, plan, outDir, dbLane, installStale;
+  try {
+    // Fetch the exact tree GitHub CI tests, plus the base.
+    git(repo, [
+      "fetch",
+      "origin",
+      "master",
+      `+refs/pull/${o.pr}/merge:refs/local-ci/${o.pr}/merge`,
+      `+refs/pull/${o.pr}/head:refs/local-ci/${o.pr}/head`,
+    ]);
+    mergeSha = git(repo, ["rev-parse", `refs/local-ci/${o.pr}/merge`]);
+    headSha = git(repo, ["rev-parse", `refs/local-ci/${o.pr}/head`]);
+    const files = git(repo, ["diff", "--name-only", "origin/master", mergeSha])
+      .split("\n")
+      .filter(Boolean);
+    const wf = git(repo, ["show", `${mergeSha}:.github/workflows/db-migrations.yml`]);
+    dbLane = touchesDbLane(files, parseWorkflowPaths(wf));
+    installStale = installIsStale(installEntries(repo, from, mergeSha));
+    outDir = path.join(repo, "local-assets", "local-ci", resultDirName(o.pr, headSha));
+    fs.mkdirSync(outDir, { recursive: true });
+    plan = planLocalCi({
+      mergeSha,
+      dir,
+      from,
+      lockdeps: path.join(outDir, "lockdeps"),
+      installStale,
+      dbLane,
+      platform: process.platform,
+    });
+  } catch (e) {
+    log(`local-ci: setup failed before any step ran (no status posted): ${e.message}`);
+    return 2;
   }
-  if (!o.keep) removeWorktree(repo, dir, log);
-  log(`local-ci: PR #${o.pr} ${payload.state} - ${payload.description}; results in ${outDir}`);
-  return result.ok ? 0 : 1;
+
+  const logStream = fs.createWriteStream(path.join(outDir, "local-ci.log"));
+  const state = { aborted: null, child: null };
+  const onSignal = (sig) => {
+    state.aborted = sig;
+    killTree(state.child?.pid);
+  };
+  process.on("SIGINT", onSignal);
+  process.on("SIGTERM", onSignal);
+  process.env.RF_HEAVY_SLOTS ??= "3";
+  let result;
+  let postFailed = false;
+  try {
+    result = await runSteps({
+      steps: plan,
+      exec: makeExec({ logStream, ctx: { dir, from, pr: o.pr }, state }),
+      log,
+    });
+    if (state.aborted) {
+      log(`local-ci: aborted by ${state.aborted}; no status posted`);
+      return 130;
+    }
+    const payload = statusPayload(result);
+    fs.writeFileSync(
+      path.join(outDir, "result.json"),
+      JSON.stringify(
+        {
+          pr: o.pr,
+          headSha,
+          mergeSha,
+          node: process.version,
+          ciNode: String(CI_NODE_MAJOR),
+          platform: process.platform,
+          dbLane,
+          installStale,
+          ...result,
+          status: payload,
+        },
+        null,
+        2,
+      ),
+    );
+    if (!o.noStatus) {
+      const r = spawnSync(
+        "gh",
+        [
+          "api",
+          `repos/${REPO_SLUG}/statuses/${headSha}`,
+          "-f",
+          `state=${payload.state}`,
+          "-f",
+          `context=${payload.context}`,
+          "-f",
+          `description=${payload.description}`,
+        ],
+        { encoding: "utf8" },
+      );
+      postFailed = r.status !== 0;
+      log(
+        postFailed
+          ? `local-ci: status post FAILED: ${r.stderr.trim()}`
+          : `local-ci: posted ${payload.context} ${payload.state} on ${headSha.slice(0, 9)}`,
+      );
+    }
+    log(`local-ci: PR #${o.pr} ${payload.state} - ${payload.description}; results in ${outDir}`);
+    return result.ok ? (postFailed ? 3 : 0) : 1;
+  } finally {
+    process.off("SIGINT", onSignal);
+    process.off("SIGTERM", onSignal);
+    killTree(state.child?.pid);
+    logStream.end();
+    if (!o.keep && fs.existsSync(dir)) removeWorktree(repo, dir, log);
+  }
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
