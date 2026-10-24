@@ -141,7 +141,7 @@ export function PickupCompleteDialog({
   // reported later) until the cashier types. One press fewer on an exact cash hand-over; a typed amount is never replaced.
   React.useEffect(() => {
     if (!open || due === null || due <= 0) return;
-    const next = String(due);
+    const next = String(roundMoney(due)); // the same string Exact sets (quickTenderOptions)
     setTendered((cur) => {
       if (cur !== autoTendered.current) return cur;
       autoTendered.current = next;
