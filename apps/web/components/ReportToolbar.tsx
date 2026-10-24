@@ -27,15 +27,15 @@ function getPresets(): DatePreset[] {
   const fmt = (d: Date) => d.toISOString().split("T")[0];
 
   return [
-    { label: "This Month", from: fmt(new Date(y, m, 1)), to: fmt(new Date(y, m + 1, 0)) },
-    { label: "Last Month", from: fmt(new Date(y, m - 1, 1)), to: fmt(new Date(y, m, 0)) },
+    { label: "This month", from: fmt(new Date(y, m, 1)), to: fmt(new Date(y, m + 1, 0)) },
+    { label: "Last month", from: fmt(new Date(y, m - 1, 1)), to: fmt(new Date(y, m, 0)) },
     {
-      label: "This Quarter",
+      label: "This quarter",
       from: fmt(new Date(y, Math.floor(m / 3) * 3, 1)),
       to: fmt(new Date(y, Math.floor(m / 3) * 3 + 3, 0)),
     },
-    { label: "This Year", from: fmt(new Date(y, 0, 1)), to: fmt(new Date(y, 11, 31)) },
-    { label: "Last Year", from: fmt(new Date(y - 1, 0, 1)), to: fmt(new Date(y - 1, 11, 31)) },
+    { label: "This year", from: fmt(new Date(y, 0, 1)), to: fmt(new Date(y, 11, 31)) },
+    { label: "Last year", from: fmt(new Date(y - 1, 0, 1)), to: fmt(new Date(y - 1, 11, 31)) },
   ];
 }
 

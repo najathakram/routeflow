@@ -357,7 +357,7 @@ function StatementsPageInner() {
                 )}
                 {!applied && result.appliedAt && <> · applied {fmtDate(result.appliedAt)}</>}.
               </p>
-              <div className="mt-3 overflow-hidden rounded-lg border border-surface-border">
+              <div className="mt-3 overflow-x-auto rounded-lg border border-surface-border">
                 <table className="w-full text-sm">
                   <thead className="bg-surface-raised text-xs font-medium text-navy/70">
                     <tr>

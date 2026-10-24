@@ -112,7 +112,7 @@ describe("order edit Substitute picker (B1215 C7)", () => {
   it("offers the variant under the parent name and substitutes with it, never the family", async () => {
     renderEditor();
     fireEvent.click(screen.getByRole("button", { name: "Substitute" }));
-    fireEvent.change(screen.getByPlaceholderText("Search products..."), {
+    fireEvent.change(screen.getByPlaceholderText("Search products…"), {
       target: { value: "pod" },
     });
     const option = await screen.findByRole("button", { name: /Sample Pod - Mint/ });

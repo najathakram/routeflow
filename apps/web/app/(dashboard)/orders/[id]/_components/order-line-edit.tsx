@@ -615,7 +615,7 @@ function SubstitutePicker({
         <input
           autoFocus
           className="w-full bg-transparent text-sm text-navy placeholder:text-navy/30 focus:outline-none"
-          placeholder="Search products..."
+          placeholder="Search products…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />

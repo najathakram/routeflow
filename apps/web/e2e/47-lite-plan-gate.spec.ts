@@ -167,7 +167,7 @@ test.describe("Lite-plan nav/route gating (lite-L2)", () => {
         "Warehouse",
         "Finance",
         "Analytics",
-        "Regulated Items",
+        "Regulated items",
         "Settings",
       ]);
   });

@@ -290,11 +290,11 @@ export function ConfirmedPrimaryAction({
             ? "Mark shipped"
             : fulfillPath === "PICKUP"
               ? "Ready for pickup"
-              : "Out for Delivery"}
+              : "Out for delivery"}
         </Button>
         {fulfillPath === "SHIP" && (
           <p className="text-[11px] text-navy/50">
-            {`Sets the order to ${statusLabel("OUT_FOR_DELIVERY", "Out for Delivery", fulfillPath as "SHIP")} — the customer is notified it's on the way.`}
+            {`Sets the order to ${statusLabel("OUT_FOR_DELIVERY", "Out for delivery", fulfillPath as "SHIP")} — the customer is notified it's on the way.`}
           </p>
         )}
       </div>
@@ -328,7 +328,7 @@ export function OutForDeliveryPrimary({
           onClick={onDeliver}
           loading={pending}
         >
-          {fulfillPath === "SHIP" ? "Mark delivered" : "Mark as Delivered"}
+          Mark delivered
         </Button>
       )}
     </ActionTier>

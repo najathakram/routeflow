@@ -840,7 +840,7 @@ export default function PromotionsPage() {
           />
         </div>
       ) : (
-        <div className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card">
+        <div className="overflow-x-auto rounded-lg border border-surface-border bg-white shadow-card">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-surface-border bg-surface-raised/50 text-left text-xs font-medium uppercase tracking-wide text-navy/50">

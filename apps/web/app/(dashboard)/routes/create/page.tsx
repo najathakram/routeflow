@@ -9,6 +9,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@routeflow/ui/web";
+import { genericToastCopy } from "@/lib/generic-toast-copy";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useCustomers } from "@/lib/api/customers";
 import { useDrivers } from "@/lib/api/drivers";
@@ -199,7 +200,7 @@ export default function CreateRoutePage() {
   const { toast } = useToast();
 
   React.useEffect(() => {
-    setTitle("Create Route");
+    setTitle("Create route");
   }, [setTitle]);
 
   // ── Data fetching ──
@@ -246,7 +247,7 @@ export default function CreateRoutePage() {
           customerId: customer.id,
           customerName: customer.businessName,
           address: addr
-            ? `${addr.line1 ?? addr.street ?? ""}, ${addr.city ?? ""}, ${addr.state ?? ""}`
+            ? [addr.line1 ?? addr.street, addr.city, addr.state].filter(Boolean).join(", ") || "—"
             : "—",
           addressId: addr?.id,
           lat: addr?.lat ?? undefined,
@@ -405,13 +406,16 @@ export default function CreateRoutePage() {
       await queryClient.invalidateQueries({ queryKey: ["customer-route-assignments"] });
       toast({
         title: "Route created",
-        description: `${data.name} created with ${stops.length} stop(s).`,
+        description: `${data.name} created with ${stops.length} ${stops.length === 1 ? "stop" : "stops"}.`,
         variant: "success",
       });
       router.push("/routes");
     } catch (err: unknown) {
-      const msg = (err as { message?: string })?.message ?? "Failed to create route.";
-      toast({ title: "Error", description: msg, variant: "error" });
+      toast({
+        title: "Couldn't create the route",
+        description: genericToastCopy(err),
+        variant: "error",
+      });
     } finally {
       setIsSubmitting(false);
     }
@@ -439,7 +443,7 @@ export default function CreateRoutePage() {
             Routes
           </Link>
           <div className="h-4 w-px bg-surface-border" />
-          <h2 className="text-2xl font-bold text-navy">Create Route</h2>
+          <h2 className="text-2xl font-bold text-navy">Create route</h2>
         </div>
       </div>
 

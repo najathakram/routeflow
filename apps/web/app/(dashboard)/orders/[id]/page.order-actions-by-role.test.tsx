@@ -6,7 +6,7 @@ import OrderDetailPage from "./page";
 
 /**
  * B1134: this page is reachable by CUSTOMER sessions (RouteGuard's CUSTOMER_ALLOWED lists /orders), but
- * its action bar was gated by order status alone. A customer saw Confirm, Out for Delivery, Mark
+ * its action bar was gated by order status alone. A customer saw Confirm, Out for delivery, Mark
  * delivered, Unconfirm, Reopen, Delete and Edit Items after dispatch; the server refuses every one of
  * them. Now: a customer sees Edit Items + Cancel only while the order is PENDING or DRAFT, and nothing
  * else. Staff (OPERATOR, TENANT_ADMIN, SUPER_ADMIN) are unchanged. Any other role, and no session at all
@@ -71,17 +71,17 @@ const open = async (role: Role, status: string, extra: Record<string, unknown> =
 /** Every action-bar control the page offers, by its accessible name (the ROUTE-path labels). */
 const ACTIONS: Array<[string, RegExp]> = [
   ["Edit Items", /^Edit Items$/],
-  ["Save Draft", /^Save Draft$/],
+  ["Save draft", /^Save draft$/],
   ["Record return", /^Record return$/],
-  ["Publish Order", /^Publish Order$/],
-  ["Delete Draft", /^Delete Draft$/],
-  ["Confirm Order", /^Confirm Order$/],
-  ["Out for Delivery", /^Out for Delivery$/],
+  ["Publish order", /^Publish order$/],
+  ["Delete draft", /^Delete draft$/],
+  ["Confirm order", /^Confirm order$/],
+  ["Out for delivery", /^Out for delivery$/],
   ["Unconfirm", /^Unconfirm$/],
-  ["Mark as Delivered", /^Mark as Delivered$/],
+  ["Mark delivered", /^Mark delivered$/],
   ["Return to Confirmed", /^Return to Confirmed$/],
-  ["Reopen Order", /^Reopen Order$/],
-  ["Cancel Order", /^Cancel Order$/],
+  ["Reopen order", /^Reopen order$/],
+  ["Cancel order", /^Cancel order$/],
   ["Delete", /^Delete( order)?$/],
 ];
 const visibleActions = () =>
@@ -93,16 +93,16 @@ beforeEach(() => jest.clearAllMocks());
 afterEach(() => seedSession(null));
 
 describe("B1134: a CUSTOMER session on the staff order page", () => {
-  it("PENDING: only Edit Items and Cancel Order are offered", async () => {
+  it("PENDING: only Edit Items and Cancel order are offered", async () => {
     await open("CUSTOMER", "PENDING");
-    expect(visibleActions()).toEqual(["Edit Items", "Cancel Order"]);
+    expect(visibleActions()).toEqual(["Edit Items", "Cancel order"]);
   });
 
-  it("DRAFT: the edit form offers Save Draft but no Publish; out of edit mode, Edit Items and Cancel Order only", async () => {
+  it("DRAFT: the edit form offers Save draft but no Publish; out of edit mode, Edit Items and Cancel order only", async () => {
     await open("CUSTOMER", "DRAFT");
-    expect(visibleActions()).toEqual(["Save Draft"]);
+    expect(visibleActions()).toEqual(["Save draft"]);
     leaveDraftEditMode();
-    expect(visibleActions()).toEqual(["Edit Items", "Cancel Order"]);
+    expect(visibleActions()).toEqual(["Edit Items", "Cancel order"]);
   });
 
   it.each(["CONFIRMED", "OUT_FOR_DELIVERY", "PARTIALLY_DELIVERED", "DELIVERED", "CANCELLED"])(
@@ -139,24 +139,24 @@ describe("B1134 regression pin: staff see the same actions as before", () => {
     ["SUPER_ADMIN", "SUPER_ADMIN"],
   ];
   const EXPECTED: Array<[string, string[]]> = [
-    ["PENDING", ["Edit Items", "Record return", "Confirm Order", "Cancel Order", "Delete"]],
+    ["PENDING", ["Edit Items", "Record return", "Confirm order", "Cancel order", "Delete"]],
     [
       "CONFIRMED",
-      ["Edit Items", "Record return", "Out for Delivery", "Unconfirm", "Cancel Order", "Delete"],
+      ["Edit Items", "Record return", "Out for delivery", "Unconfirm", "Cancel order", "Delete"],
     ],
     [
       "OUT_FOR_DELIVERY",
       [
         "Edit Items",
         "Record return",
-        "Mark as Delivered",
+        "Mark delivered",
         "Return to Confirmed",
-        "Cancel Order",
+        "Cancel order",
         "Delete",
       ],
     ],
-    ["DELIVERED", ["Edit Items", "Record return", "Reopen Order"]],
-    ["CANCELLED", ["Record return", "Reopen Order", "Delete"]],
+    ["DELIVERED", ["Edit Items", "Record return", "Reopen order"]],
+    ["CANCELLED", ["Record return", "Reopen order", "Delete"]],
   ];
 
   describe.each(STAFF)("%s", (_name, role) => {
@@ -165,15 +165,15 @@ describe("B1134 regression pin: staff see the same actions as before", () => {
       expect(visibleActions()).toEqual(expected);
     });
 
-    it("DRAFT: Save Draft and Publish Order in the edit form, then the draft actions", async () => {
+    it("DRAFT: Save draft and Publish order in the edit form, then the draft actions", async () => {
       await open(role, "DRAFT");
-      expect(visibleActions()).toEqual(["Save Draft", "Publish Order"]);
+      expect(visibleActions()).toEqual(["Save draft", "Publish order"]);
       leaveDraftEditMode();
       expect(visibleActions()).toEqual([
         "Edit Items",
         "Record return",
-        "Publish Order",
-        "Delete Draft",
+        "Publish order",
+        "Delete draft",
       ]);
     });
   });

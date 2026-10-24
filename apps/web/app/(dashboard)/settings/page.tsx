@@ -935,7 +935,7 @@ function UserManagementTab() {
       </div>
       <ReadOnlyHint className="text-xs text-slate-600" />
 
-      <div className="overflow-hidden rounded-lg border border-surface-border bg-white">
+      <div className="overflow-x-auto rounded-lg border border-surface-border bg-white">
         <table className="w-full text-sm">
           <thead className="border-b border-surface-border bg-surface-raised">
             <tr>

@@ -96,7 +96,7 @@
     "why": "B986-6 invoices + bills + finance: per-surface raw message read, pending"
   },
   "app/(dashboard)/invoices/[id]/page.tsx": {
-    "count": 15,
+    "count": 14,
     "why": "B986-6 invoices + bills + finance: per-surface raw message read, pending"
   },
   "app/(dashboard)/invoices/page.tsx": {
@@ -157,10 +157,6 @@
     "why": "B986-5 routes + deliveries: per-surface raw message read, pending"
   },
   "app/(dashboard)/routes/_components/EditRunModal.tsx": {
-    "count": 1,
-    "why": "B986-5 routes + deliveries: per-surface raw message read, pending"
-  },
-  "app/(dashboard)/routes/create/page.tsx": {
     "count": 1,
     "why": "B986-5 routes + deliveries: per-surface raw message read, pending"
   },

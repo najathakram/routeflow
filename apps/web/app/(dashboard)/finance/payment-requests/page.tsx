@@ -57,7 +57,7 @@ function AllocationPreview({ lines }: { lines: PaymentRequest["allocationPreview
     );
   }
   return (
-    <div className="overflow-hidden rounded-lg border border-surface-border bg-white">
+    <div className="overflow-x-auto rounded-lg border border-surface-border bg-white">
       <table className="w-full text-sm">
         <thead className="bg-surface-raised text-xs font-medium text-navy/70">
           <tr>

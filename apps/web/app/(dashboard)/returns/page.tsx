@@ -369,7 +369,7 @@ function CreateReturnModal({
           <div>
             <label className="mb-2 block text-sm font-medium text-navy">Items to Return</label>
             {errors.items && <p className="mb-2 text-xs text-danger">{errors.items}</p>}
-            <div className="overflow-hidden rounded-lg border border-surface-border">
+            <div className="overflow-x-auto rounded-lg border border-surface-border">
               <table className="w-full text-sm">
                 <thead className="border-b border-surface-border bg-surface-raised">
                   <tr>

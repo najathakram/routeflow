@@ -13,7 +13,7 @@ import * as path from "path";
  */
 const WEB = path.resolve(__dirname, "..");
 const LABEL =
-  /Record Payment|Create (Order|Invoice|Estimate)|New (Order|Invoice|Estimate|sale|Product|Customer)|Add User|Add customer(?! rate)|Void Invoice|Mark (cleared|bounced)|Apply Advance|Write Off/i;
+  /Record payment|Create (Order|Invoice|Estimate)|New (Order|Invoice|Estimate|sale|Product|Customer)|Add User|Add customer(?! rate)|Void invoice|Mark (cleared|bounced)|Apply advance|Write off/i;
 /** Elements that are controls (headings, paragraphs and spans that merely mention a label are not). */
 const CONTROL_TAGS = new Set(["Button", "button", "Link", "a", "WriteButton", "WriteLink"]);
 const GATED_TAGS = new Set(["WriteButton", "WriteLink"]);
@@ -21,8 +21,8 @@ const GATED_TAGS = new Set(["WriteButton", "WriteLink"]);
 /** file (posix, from apps/web) -> the exact label texts reviewed as intentionally NOT gated, with why. */
 const EXEMPT: Record<string, { labels: string[]; why: string }> = {
   "app/(dashboard)/invoices/[id]/page.tsx": {
-    labels: ["Mark Bounced", "Record Payment", "Write Off"],
-    why: "(1) the mark-bounced, record-payment and write-off MODALS' own submits: they open only from gated triggers and the server refuses the write; (2) the read-only twin of the Record Payment trigger, a deliberately disabled button",
+    labels: ["Mark Bounced", "Record payment", "Write off"],
+    why: "(1) the mark-bounced, record-payment and write-off MODALS' own submits: they open only from gated triggers and the server refuses the write; (2) the read-only twin of the Record payment trigger, a deliberately disabled button",
   },
   "app/(dashboard)/bookkeeping/[transactionId]/page.tsx": {
     labels: ["Record Payment"],
@@ -33,11 +33,11 @@ const EXEMPT: Record<string, { labels: string[]; why: string }> = {
     why: "the record-payment MODAL's own submit: it opens only from the gated triggers in this file; the server refuses the write",
   },
   "app/(dashboard)/estimates/page.tsx": {
-    labels: ["Create Estimate"],
-    why: "the new-estimate MODAL's own submit: it opens only from the gated New Estimate triggers; the server refuses the write",
+    labels: ["Create estimate"],
+    why: "the new-estimate MODAL's own submit: it opens only from the gated New estimate triggers; the server refuses the write",
   },
   "components/RecordSupplierPaymentModal.tsx": {
-    labels: ["Record Payment"],
+    labels: ["Record payment"],
     why: "the supplier payment MODAL's own submit: mounted only from the gated Record payment trigger; the server refuses the write",
   },
   "app/(dashboard)/orders/_components/CounterSaleScreen.tsx": {
@@ -141,9 +141,9 @@ describe("read-only gate inventory (B4)", () => {
     }
   });
 
-  it("F3/F4: the order-items save controls (Save Draft / Save Changes / Publish Order) are WriteButtons", () => {
+  it("F3/F4: the order-items save controls (Save draft / Save changes / Publish order) are WriteButtons", () => {
     const src = fs.readFileSync(path.join(WEB, "app/(dashboard)/orders/[id]/page.tsx"), "utf8");
-    const re = />\s*(Save Draft|Save Changes|Publish Order)\s*<\/(\w+)>/g;
+    const re = />\s*(Save draft|Save changes|Publish order)\s*<\/(\w+)>/g;
     const seen: string[] = [];
     let m: RegExpExecArray | null;
     while ((m = re.exec(src)))

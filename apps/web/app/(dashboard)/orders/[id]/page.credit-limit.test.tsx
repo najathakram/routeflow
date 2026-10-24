@@ -81,9 +81,9 @@ beforeEach(() => {
 });
 
 describe("order detail — CREDIT_LIMIT_EXCEEDED", () => {
-  it("Mark as Delivered refused for credit: the dialog with the fixed sentence built from the server's numbers, no toast", async () => {
+  it("Mark delivered refused for credit: the dialog with the fixed sentence built from the server's numbers, no toast", async () => {
     reject(409, credit409);
-    await open("OUT_FOR_DELIVERY", /Mark as Delivered/);
+    await open("OUT_FOR_DELIVERY", /Mark delivered/);
     const dialog = await screen.findByRole("dialog", { name: /credit limit exceeded/i });
     expect(dialog).toHaveTextContent("$100.00");
     expect(dialog).toHaveTextContent("$110.00");
@@ -93,13 +93,13 @@ describe("order detail — CREDIT_LIMIT_EXCEEDED", () => {
 
   it("Collect payment goes to the customer and closes the dialog; Cancel just closes", async () => {
     reject(409, credit409);
-    await open("OUT_FOR_DELIVERY", /Mark as Delivered/);
+    await open("OUT_FOR_DELIVERY", /Mark delivered/);
     fireEvent.click(await screen.findByRole("button", { name: "Collect payment" }));
     expect(push).toHaveBeenCalledWith("/customers/cust-9");
     await waitFor(() => expect(screen.queryByRole("dialog", { name: /credit limit/i })).toBeNull());
 
     reject(409, credit409);
-    fireEvent.click(await screen.findByRole("button", { name: /Mark as Delivered/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Mark delivered/ }));
     fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: /credit limit/i })).toBeNull());
     expect(push).toHaveBeenCalledTimes(1);
@@ -107,7 +107,7 @@ describe("order detail — CREDIT_LIMIT_EXCEEDED", () => {
 
   it("any other delivery failure still gets the single global toast and no dialog", async () => {
     reject(500, { message: "Boom" });
-    await open("OUT_FOR_DELIVERY", /Mark as Delivered/);
+    await open("OUT_FOR_DELIVERY", /Mark delivered/);
     await waitFor(() => expect(toast).toHaveBeenCalledTimes(1));
     expect(screen.queryByRole("dialog", { name: /credit limit/i })).toBeNull();
   });

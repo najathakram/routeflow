@@ -107,7 +107,7 @@ describe("Dashboard KPIs — unknown is never zero (REG-B1015)", () => {
     // 250 + 30 + 5. The old code counted the newest 100 rows and read 100.
     expect(tile("Active Orders")).toHaveTextContent("285");
     // the pipeline strip uses the same exact counts
-    expect(screen.getByText("Out for Delivery").previousSibling).toHaveTextContent("5");
+    expect(screen.getByText("Out for delivery").previousSibling).toHaveTextContent("5");
     expect(screen.getByText("Delivered").previousSibling).toHaveTextContent("400");
   });
 

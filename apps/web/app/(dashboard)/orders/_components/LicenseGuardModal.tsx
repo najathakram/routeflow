@@ -156,7 +156,7 @@ export function LicenseGuardModal({
           Back
         </Button>
         <Button type="button" variant="danger" onClick={submitOverride} loading={busy}>
-          Accept responsibility &amp; continue
+          Accept responsibility and continue
         </Button>
       </>
     );
@@ -202,7 +202,7 @@ export function LicenseGuardModal({
             <span>
               <span className="block text-sm font-medium text-navy">Sell under responsibility</span>
               <span className="block text-xs text-navy/60">
-                Proceed without a license on file — logged with your acknowledgment (§8).
+                Proceed without a license on file. This is logged with your acknowledgment.
               </span>
             </span>
           </button>

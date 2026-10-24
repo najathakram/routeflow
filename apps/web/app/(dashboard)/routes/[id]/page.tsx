@@ -43,6 +43,7 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { Badge, Button, Card, Modal, cn, useToast } from "@routeflow/ui/web";
+import { formatMoney } from "@/lib/format";
 import { useQueryClient } from "@tanstack/react-query";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useAuth } from "@/lib/auth-context";
@@ -149,7 +150,7 @@ function planningOriginLabel(route?: Route | null): string {
   if (!route) return "Loading…";
   if (route.originKind === "DRIVER") return route.depotAddress || "Driver's home base";
   if (route.originKind === "ADDRESS") return route.depotAddress || "Custom address";
-  return route.depotAddress || "Tenant depot";
+  return route.depotAddress || "Your depot";
 }
 
 function planningEndLabel(route?: Route | null): string {
@@ -303,7 +304,7 @@ function StopPodSection({ runId, stopId }: { runId: string; stopId: string }) {
               )}
             >
               <ShieldCheck className="h-3 w-3" />
-              {pod.ageVerified ? "Age verified" : "Age NOT verified"}
+              {pod.ageVerified ? "Age verified" : "Age not verified"}
             </span>
           )}
           {pod.identityCheckRequired && (
@@ -345,7 +346,7 @@ function StopItem({
     : null;
 
   const completedAt = stop.completedAt
-    ? new Date(stop.completedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    ? new Date(stop.completedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
     : null;
 
   return (
@@ -382,7 +383,7 @@ function StopItem({
               </span>
               {stop.status === "IN_PROGRESS" && (
                 <span className="ml-auto shrink-0 rounded-full bg-brand-500 px-2 py-0.5 text-[10px] font-bold text-white">
-                  CURRENT
+                  Current
                 </span>
               )}
             </div>
@@ -836,7 +837,7 @@ export default function RouteRunDetailPage() {
       <div className="flex flex-col items-center gap-4 p-12 text-center">
         <p className="text-base font-medium text-navy">Route run not found.</p>
         <Button variant="secondary" href="/routes">
-          Back to Routes
+          Back to routes
         </Button>
       </div>
     );
@@ -847,7 +848,7 @@ export default function RouteRunDetailPage() {
   const total = stops.length;
   const driverName = run.driver?.contactName ?? "Unassigned";
   const startTime = run.startedAt
-    ? new Date(run.startedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    ? new Date(run.startedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
     : null;
 
   const canReorder = isOperator && run.status === "SCHEDULED";
@@ -887,7 +888,7 @@ export default function RouteRunDetailPage() {
         open={confirmCancel}
         onClose={() => setConfirmCancel(false)}
         title="Cancel this run?"
-        description={`Cancel the run for ${run.route?.name ?? "this route"}? The run will be marked CANCELLED and the route can be dispatched again.`}
+        description={`Cancel the run for ${run.route?.name ?? "this route"}? The run will be marked cancelled and the route can be dispatched again.`}
         footer={
           <>
             <Button
@@ -911,7 +912,7 @@ export default function RouteRunDetailPage() {
       <Modal
         open={confirmDelete}
         onClose={() => setConfirmDelete(false)}
-        title="Delete Route Run?"
+        title="Delete route run?"
         description={`Delete this route run for ${run.route?.name ?? "this route"}? This cannot be undone.`}
         footer={
           <>
@@ -923,7 +924,7 @@ export default function RouteRunDetailPage() {
               Cancel
             </Button>
             <Button variant="danger" onClick={handleDelete} loading={isDeleting}>
-              Delete Route Run
+              Delete route run
             </Button>
           </>
         }
@@ -1017,7 +1018,7 @@ export default function RouteRunDetailPage() {
             {/* Cancel — SCHEDULED or IN_PROGRESS */}
             {canCancel && run.status !== "CANCELLED" && !canDelete && (
               <Button variant="secondary" size="sm" onClick={() => setConfirmCancel(true)}>
-                Cancel Run
+                Cancel run
               </Button>
             )}
 
@@ -1053,9 +1054,9 @@ export default function RouteRunDetailPage() {
             {/* Open in Google Maps */}
             <GmapsExportButton points={gmapsPoints} />
 
-            {/* Dispatch Panel */}
+            {/* Dispatch panel */}
             <Button variant="primary" size="sm" href={`/routes/${run.id}/dispatch`}>
-              Dispatch Panel
+              Dispatch panel
             </Button>
           </div>
         </div>
@@ -1072,7 +1073,7 @@ export default function RouteRunDetailPage() {
                   <Badge
                     data-testid="settlement-variance"
                     variant={settlementVarianceNumber! >= 0 ? "success" : "danger"}
-                    label={`${settlementVarianceNumber! >= 0 ? "+" : "-"}$${Math.abs(settlementVarianceNumber!).toFixed(2)}`}
+                    label={`${settlementVarianceNumber! >= 0 ? "+" : "−"}${formatMoney(Math.abs(settlementVarianceNumber!))}`}
                   />
                 </div>
               )}

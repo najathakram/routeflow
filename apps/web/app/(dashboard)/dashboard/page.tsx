@@ -1170,7 +1170,7 @@ export default function DashboardPage() {
                 bg: "bg-brand-50",
               },
               {
-                label: statusLabel("OUT_FOR_DELIVERY", "Out for Delivery"),
+                label: statusLabel("OUT_FOR_DELIVERY", "Out for delivery"),
                 key: "OUT_FOR_DELIVERY" as const,
                 color: "text-blue-600",
                 bg: "bg-blue-50",

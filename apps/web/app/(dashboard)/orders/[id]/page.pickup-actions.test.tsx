@@ -6,8 +6,8 @@ import OrderDetailPage from "./page";
 
 /**
  * Order ahead, staff side: a PICKUP order is "Ready for pickup" -> "Picked up". The OUT_FOR_DELIVERY
- * action reads "Ready for pickup" (not Out for Delivery); "Picked up" opens the hand-over dialog while
- * the order is CONFIRMED or OUT_FOR_DELIVERY; "Mark as Delivered" is hidden for PICKUP (Picked up is the
+ * action reads "Ready for pickup" (not Out for delivery); "Picked up" opens the hand-over dialog while
+ * the order is CONFIRMED or OUT_FOR_DELIVERY; "Mark delivered" is hidden for PICKUP (Picked up is the
  * completion path) and unchanged for ROUTE / SHIP.
  */
 const get = jest.fn();
@@ -89,10 +89,10 @@ beforeEach(() => jest.clearAllMocks());
 afterEach(() => seedSession(null));
 
 describe("PICKUP order actions", () => {
-  it("CONFIRMED (POS mode, SA-763r): Ready for pickup is secondary, no Out for Delivery; 'Hand over' is offered", async () => {
+  it("CONFIRMED (POS mode, SA-763r): Ready for pickup is secondary, no Out for delivery; 'Hand over' is offered", async () => {
     await open("OPERATOR", "CONFIRMED", { fulfillPath: "PICKUP" });
     expect(has(/^Ready for pickup$/)).toBe(true);
-    expect(has(/^Out for Delivery$/)).toBe(false);
+    expect(has(/^Out for delivery$/)).toBe(false);
     expect(has(/^Mark shipped$/)).toBe(false);
     expect(has(/^Hand over$/)).toBe(true);
   });
@@ -104,10 +104,10 @@ describe("PICKUP order actions", () => {
     expect(has(/^Hand over$/)).toBe(false);
   });
 
-  it("OUT_FOR_DELIVERY (Ready for pickup): 'Picked up' is the completion; Mark as Delivered is hidden", async () => {
+  it("OUT_FOR_DELIVERY (Ready for pickup): 'Picked up' is the completion; Mark delivered is hidden", async () => {
     await open("OPERATOR", "OUT_FOR_DELIVERY", { fulfillPath: "PICKUP" });
     expect(has(/^Hand over$/)).toBe(true);
-    expect(has(/^Mark as Delivered$/)).toBe(false);
+    expect(has(/^Mark delivered$/)).toBe(false);
     expect(has(/^Mark delivered$/)).toBe(false);
   });
 
@@ -130,9 +130,9 @@ describe("PICKUP order actions", () => {
     expect(has(/^Picked up$/)).toBe(false);
   });
 
-  it("ROUTE keeps Mark as Delivered and gets no Picked up", async () => {
+  it("ROUTE keeps Mark delivered and gets no Picked up", async () => {
     await open("OPERATOR", "OUT_FOR_DELIVERY", { fulfillPath: "ROUTE" });
-    expect(has(/^Mark as Delivered$/)).toBe(true);
+    expect(has(/^Mark delivered$/)).toBe(true);
     expect(has(/^Picked up$/)).toBe(false);
   });
 
@@ -142,9 +142,9 @@ describe("PICKUP order actions", () => {
     expect(has(/^Picked up$/)).toBe(false);
   });
 
-  it("ROUTE CONFIRMED still reads Out for Delivery", async () => {
+  it("ROUTE CONFIRMED still reads Out for delivery", async () => {
     await open("OPERATOR", "CONFIRMED", { fulfillPath: "ROUTE" });
-    expect(has(/^Out for Delivery$/)).toBe(true);
+    expect(has(/^Out for delivery$/)).toBe(true);
     expect(has(/^Ready for pickup$/)).toBe(false);
   });
 });
@@ -206,7 +206,7 @@ describe("Picked up result survives the order refetch (the order flips to DELIVE
   });
 });
 
-describe("leaving in-store pickup asks first", () => {
+describe("leaving store pickup asks first", () => {
   const selectWith = (value: string) =>
     screen
       .getAllByRole("combobox")
@@ -216,7 +216,7 @@ describe("leaving in-store pickup asks first", () => {
     patch.mockResolvedValue({ data: {} });
     await open("OPERATOR", "CONFIRMED", { fulfillPath: "PICKUP" });
     fireEvent.change(selectWith("PICKUP"), { target: { value: "SHIP" } });
-    expect(await screen.findByText(/Move this order off in-store pickup\?/)).toBeInTheDocument();
+    expect(await screen.findByText(/Move this order off store pickup\?/)).toBeInTheDocument();
     expect(patch).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(patch).not.toHaveBeenCalled();
@@ -227,7 +227,7 @@ describe("leaving in-store pickup asks first", () => {
     patch.mockResolvedValue({ data: {} });
     await open("OPERATOR", "CONFIRMED", { fulfillPath: "PICKUP" });
     fireEvent.change(selectWith("PICKUP"), { target: { value: "ROUTE" } });
-    await screen.findByText(/Move this order off in-store pickup\?/);
+    await screen.findByText(/Move this order off store pickup\?/);
     fireEvent.click(screen.getByRole("button", { name: "Move order" }));
     await waitFor(() => expect(patch).toHaveBeenCalledTimes(1));
     expect(patch.mock.calls[0][0]).toBe("/orders/o1/fulfill-path");
@@ -239,6 +239,6 @@ describe("leaving in-store pickup asks first", () => {
     await open("OPERATOR", "CONFIRMED", { fulfillPath: "ROUTE" });
     fireEvent.change(selectWith("ROUTE"), { target: { value: "SHIP" } });
     await waitFor(() => expect(patch).toHaveBeenCalledTimes(1));
-    expect(screen.queryByText(/Move this order off in-store pickup/)).toBeNull();
+    expect(screen.queryByText(/Move this order off store pickup/)).toBeNull();
   });
 });

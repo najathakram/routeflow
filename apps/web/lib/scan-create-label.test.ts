@@ -10,12 +10,12 @@ const base = {
 
 describe("scanCreateLabel", () => {
   it("bill intent: the three single-invoice labels (unchanged)", () => {
-    expect(scanCreateLabel({ ...base, intent: "bill" })).toBe("Create Vendor Bill");
+    expect(scanCreateLabel({ ...base, intent: "bill" })).toBe("Create supplier bill");
     expect(scanCreateLabel({ ...base, intent: "bill", createMode: "expense" })).toBe(
-      "Record Expense",
+      "Record expense",
     );
     expect(scanCreateLabel({ ...base, intent: "bill", createMode: "both" })).toBe(
-      "Create Bill & Expense",
+      "Create bill and expense",
     );
   });
 

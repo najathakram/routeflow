@@ -247,7 +247,7 @@ function renderInvoiceStatus(status: string, dueDate?: string | null): React.Rea
   if (status === "PAID") return <span className="text-xs font-semibold text-green-600">Paid</span>;
   if (status === "VOID") return <span className="text-xs font-semibold text-gray-400">Void</span>;
   if (status === "WRITTEN_OFF")
-    return <span className="text-xs font-semibold text-stone-500">Written Off</span>;
+    return <span className="text-xs font-semibold text-stone-500">Written off</span>;
   if (status === "DRAFT") return <span className="text-xs font-semibold text-gray-500">Draft</span>;
 
   if (dueDate) {
@@ -3255,7 +3255,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                     { value: "CONFIRMED", label: "Confirmed" },
                     {
                       value: "OUT_FOR_DELIVERY",
-                      label: statusLabel("OUT_FOR_DELIVERY", "Out for Delivery"),
+                      label: statusLabel("OUT_FOR_DELIVERY", "Out for delivery"),
                     },
                     { value: "COMPLETED", label: "Completed" },
                     { value: "CANCELLED", label: "Cancelled" },

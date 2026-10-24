@@ -5,7 +5,7 @@ import Link from "next/link";
 import { MovementsExportButton } from "./_components/MovementsExportButton";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, ChevronLeft, ChevronRight } from "lucide-react";
-import { Badge, Button, cn } from "@routeflow/ui/web";
+import { Badge, Button, cn, badgeStatusLabel } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useStockMovements } from "@/lib/api/inventory";
 import { useProducts } from "@/lib/api/products";
@@ -18,7 +18,7 @@ const MOVEMENT_TYPE_LABELS: Record<string, string> = {
   SALE: "Sale",
   ADJUSTMENT: "Adjustment",
   RETURN: "Return",
-  WRITE_OFF: "Write-Off",
+  WRITE_OFF: "Write-off",
 };
 
 const MOVEMENT_TYPE_VARIANTS: Record<string, "success" | "danger" | "neutral" | "warning"> = {
@@ -256,7 +256,7 @@ export default function MovementsPage() {
                     <td className="px-4 py-3">
                       <Badge
                         variant={MOVEMENT_TYPE_VARIANTS[m.type] ?? "secondary"}
-                        label={MOVEMENT_TYPE_LABELS[m.type] ?? m.type}
+                        label={MOVEMENT_TYPE_LABELS[m.type] ?? badgeStatusLabel(m.type)}
                       />
                     </td>
                     <td
