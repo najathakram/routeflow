@@ -42,7 +42,8 @@ const ROUTES = [
 /** Every gate open: the superset an admin of a fleet + counter + self-serve tenant can reach. */
 const ALL = { isAdmin: true, fleet: true, selfServe: true, counter: true };
 const full = buildIndex(ALL);
-const ids = (o: Partial<typeof ALL>) => buildIndex({ ...ALL, ...o }).map((e) => e.id);
+const ids = (o: Partial<Parameters<typeof buildIndex>[0]>) =>
+  buildIndex({ ...ALL, ...o }).map((e) => e.id);
 
 describe("PR1 groups (direction 2b)", () => {
   it("has the 7 groups, in order, with the approved titles", () => {
@@ -146,8 +147,9 @@ describe("PR1 gates", () => {
     expect(ids({ fleet: false })).not.toContain("route-defaults");
     const op = ids({ isAdmin: false });
     for (const id of ["regulated-sections", "product-labels"]) expect(op).not.toContain(id);
+    expect(op).toEqual(expect.arrayContaining(["restrictions-selling"]));
     // Owner 10-07 OK-6: operators receive the low-stock digest, so its row (the opt-out) is theirs too.
-    expect(op).toEqual(expect.arrayContaining(["restrictions-selling", "low-stock-digest"]));
+    expect(ids({ isAdmin: false, role: "OPERATOR" })).toContain("low-stock-digest");
   });
 
   it("OK-2: Selling restrictions is one link, under Selling, for every viewer", () => {

@@ -22,7 +22,8 @@ export type IndexEntry = {
   /** Breadcrumb tail, e.g. "Invoicing" (defaults to the label). */
   page?: string;
   keywords: string[];
-  show?: "admin";
+  /** admin = account admins only; staff = admins and operators (never a driver), e.g. the low-stock digest (OK-6). */
+  show?: "admin" | "staff";
   /**
    * fleet = routes/drivers on the plan; selfServe = Settings > Fulfillment is open to this tenant; counter = counter
    * sales on; unitsSettings = flag.units_settings_v1; driverAccess = the Driver access card renders (an admin on a
@@ -632,8 +633,8 @@ const ENTRIES: IndexEntry[] = [
     "notifications",
     "Notifications",
     ["low stock", "reorder", "digest", "stock alert", "inventory email"],
-    // Owner 10-07 OK-6: operators receive the digest too, so its opt-out row is not admin-only.
-    { anchor: "low-stock-digest" },
+    // Owner 10-07 OK-6: operators receive the digest too, so its opt-out row is theirs; a driver gets none.
+    { show: "staff", anchor: "low-stock-digest" },
   ),
   ...card(
     "push",
@@ -825,6 +826,8 @@ export function buildIndex(o: {
   unitsSettings?: boolean;
   /** The viewer can act as a driver (their Driver access card shows even off-fleet and for an operator). */
   canActAsDriver?: boolean;
+  /** The viewer's role: `show: "staff"` rows need an admin or an OPERATOR (never a driver). */
+  role?: string | null;
 }): IndexEntry[] {
   const open = {
     fleet: o.fleet,
@@ -833,7 +836,8 @@ export function buildIndex(o: {
     unitsSettings: !!o.unitsSettings,
     driverAccess: !!o.canActAsDriver || (o.isAdmin && o.fleet),
   };
-  return ENTRIES.filter((e) => (e.show === "admin" ? o.isAdmin : true))
+  const staff = o.isAdmin || o.role === "OPERATOR";
+  return ENTRIES.filter((e) => (e.show === "admin" ? o.isAdmin : e.show === "staff" ? staff : true))
     .filter((e) => (e.needs ? open[e.needs] : true))
     .map((e) =>
       e.id === "user-management" && !o.fleet

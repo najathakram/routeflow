@@ -316,6 +316,48 @@ describe("LowStockDigestService (N4)", () => {
   });
 
   describe("recipients (owner 10-07 OK-6)", () => {
+    // #3725 review: the user read is FILTERED here (tenant, role, status), so a wrong where-clause shows up as a wrong
+    // recipient, not just a different query object.
+    const users = [
+      { ...makeAdmin("a1", "admin@acme.example"), tenantId: "t1" },
+      { ...makeAdmin("o1", "op@acme.example"), role: "OPERATOR", tenantId: "t1" },
+      { ...makeAdmin("o2", "op@other.example"), role: "OPERATOR", tenantId: "t2" },
+      { ...makeAdmin("d1", "driver@acme.example"), role: "DRIVER", tenantId: "t1" },
+    ];
+    const filtering = (all: any[]) =>
+      jest.fn(async ({ where }: any) =>
+        all.filter(
+          (u) =>
+            u.tenantId === where.tenantId &&
+            (where.role?.in ? where.role.in.includes(u.role) : u.role === where.role) &&
+            u.status === where.status,
+        ),
+      );
+    const recipients = (email: any) =>
+      email.sendLowStockDigest.mock.calls.map((c: any[]) => c[0].to).sort();
+
+    it("OK-6: this tenant's admins and operators get it; another tenant's operator and a driver never do", async () => {
+      const { svc, prisma, email } = make({
+        tenants: [tenant()],
+        products: [product({ currentStock: 1, reorderPoint: 10 })],
+        optOuts: [],
+      });
+      prisma.user.findMany = filtering(users);
+      await svc.sendLowStockDigest(AT_SEVEN_LOCAL);
+      expect(recipients(email)).toEqual(["admin@acme.example", "op@acme.example"]);
+    });
+
+    it("OK-6: an operator's opt-out is honoured like an admin's", async () => {
+      const { svc, prisma, email } = make({
+        tenants: [tenant()],
+        products: [product({ currentStock: 1, reorderPoint: 10 })],
+        optOuts: [{ userId: "o1" }],
+      });
+      prisma.user.findMany = filtering(users);
+      await svc.sendLowStockDigest(AT_SEVEN_LOCAL);
+      expect(recipients(email)).toEqual(["admin@acme.example"]);
+    });
+
     it("OK-6: operators get the digest as well as tenant admins (active users of this tenant only)", async () => {
       const { svc, prisma } = make({
         tenants: [tenant()],

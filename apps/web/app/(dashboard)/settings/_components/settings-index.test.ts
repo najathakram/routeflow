@@ -115,9 +115,13 @@ describe("#3320 review folds", () => {
   });
 
   // Owner 10-07 OK-6 replaces #3320 N2: operators receive the digest too, so they find its opt-out.
-  it("OK-6 the low-stock digest row is shown to operators as well as admins", () => {
-    expect(byId("low-stock-digest", buildIndex({ isAdmin: false, fleet: true }))).toBeDefined();
+  it("OK-6 the low-stock digest row is shown to operators as well as admins, never to a driver", () => {
+    const as = (role: string) => buildIndex({ isAdmin: false, fleet: true, role });
+    expect(byId("low-stock-digest", as("OPERATOR"))).toBeDefined();
     expect(byId("low-stock-digest")).toBeDefined();
+    // #3725 review: a driver who reaches Settings must not see a row that leads to nothing they receive.
+    expect(byId("low-stock-digest", as("DRIVER"))).toBeUndefined();
+    expect(byId("low-stock-digest", buildIndex({ isAdmin: false, fleet: true }))).toBeUndefined();
   });
 
   it("N3 card descriptions say what the card really holds", () => {
