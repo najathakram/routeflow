@@ -288,7 +288,7 @@ describeDb("a date-only paid date for a Chicago tenant, real Postgres (SA-943)",
     expect(after.paidAt.toISOString()).toBe(realTime);
   });
 
-  it("an edit that moves a past payment to TODAY stamps the DATABASE clock, not the app clock", async () => {
+  it("an edit that moves a past payment (and its settled date) to TODAY stamps the DATABASE clock, not the app clock", async () => {
     const s = await seed("edit-today", false);
     await record(s.tenantId, s.invoiceId, "ACH", "2026-10-01");
     const [before] = await stored(s.invoiceId);
@@ -320,6 +320,7 @@ describeDb("a date-only paid date for a Chicago tenant, real Postgres (SA-943)",
           amount: 20,
           method: "ACH",
           paidAt: "2020-01-15",
+          settledAt: "2020-01-15",
         } as any),
       );
     } finally {
@@ -327,6 +328,7 @@ describeDb("a date-only paid date for a Chicago tenant, real Postgres (SA-943)",
     }
     const [after] = await stored(s.invoiceId);
     expect(Math.abs(after.paidAt.getTime() - realNow())).toBeLessThan(60_000); // the app clock would give 2020-01-15T18:00Z
+    expect(Math.abs((after.settledAt as Date).getTime() - realNow())).toBeLessThan(60_000);
   });
 
   it("the standalone (allocation) payment dated today lands on today in Chicago, and a past settledAt on its local start", async () => {

@@ -19,12 +19,21 @@ const at2000CdtOct24 = new Date("2026-10-25T01:00:00.000Z");
 
 describe("tenantTodayIso / tenantDateOf (SA-943)", () => {
   it("with no zone (loading, or none on file) it is the UTC day - the server's own fallback - never the browser's day", () => {
-    // Either side of UTC midnight: a browser in ANY non-UTC zone names a different day for one of the two.
+    // Pin a Chicago browser at 20:00 CDT on 10-24 (its local day getters say 10-24) so this is red on a browser-local
+    // fallback even on a UTC host such as CI. Pattern: estimates/page.f1-issue-date-default.test.tsx.
+    const spies = [
+      jest.spyOn(Date.prototype, "getFullYear").mockReturnValue(2026),
+      jest.spyOn(Date.prototype, "getMonth").mockReturnValue(9),
+      jest.spyOn(Date.prototype, "getDate").mockReturnValue(24),
+    ];
+    try {
+      // A business with no zone: the box sends the server's day, 10-25 (master's 00:00Z), not the browser's 10-24.
+      expect(tenantTodayIso(undefined, at2000CdtOct24)).toBe("2026-10-25");
+      expect(tenantDateOf("2026-10-25T01:00:00.000Z", undefined)).toBe("2026-10-25");
+    } finally {
+      spies.forEach((s) => s.mockRestore());
+    }
     expect(tenantTodayIso(undefined, new Date("2026-10-24T23:30:00.000Z"))).toBe("2026-10-24");
-    expect(tenantTodayIso(undefined, new Date("2026-10-25T00:30:00.000Z"))).toBe("2026-10-25");
-    // A business with no zone, a Chicago browser at 20:00 CDT: the box sends the server's day, 10-25 (master's 00:00Z).
-    expect(tenantTodayIso(undefined, at2000CdtOct24)).toBe("2026-10-25");
-    expect(tenantDateOf("2026-10-25T00:30:00.000Z", undefined)).toBe("2026-10-25");
   });
 
   it("20:00 CDT on 10-24 is 2026-10-24 for a Chicago business (the UTC todayIso says 10-25)", () => {
@@ -72,6 +81,18 @@ describe("useResyncOnZone (SA-943)", () => {
     const { apply, hook } = mount("2026-10-20");
     hook.rerender({ zone: CHI, current: "2026-10-20" });
     expect(apply).not.toHaveBeenCalled();
+  });
+
+  it("the edit box (tenantDateOf default) moves a 21:00 CDT payment from the UTC 10-22 to 10-21 when the zone arrives", () => {
+    const storedPaidAt = "2026-10-22T02:00:00.000Z";
+    const apply = jest.fn();
+    const hook = renderHook(
+      ({ zone, current }: { zone: string | undefined; current: string }) =>
+        useResyncOnZone(zone, (z) => tenantDateOf(storedPaidAt, z), current, apply),
+      { initialProps: { zone: undefined as string | undefined, current: "2026-10-22" } },
+    );
+    hook.rerender({ zone: CHI, current: "2026-10-22" });
+    expect(apply).toHaveBeenCalledWith("2026-10-21");
   });
 
   it("nothing happens while the zone stays the same", () => {

@@ -84,7 +84,8 @@ function utcDay(d: Date): string {
 /**
  * SA-943: keeps a date box that was defaulted from `defaultFor(zone)` in step with the zone. When the zone arrives (or
  * changes) and the box still holds the default computed under the previous zone, it moves to the new zone's default;
- * a date the user typed is never touched.
+ * a date the user typed is never touched. Known edge: a typed date EQUAL to the previous default is indistinguishable
+ * from the default and does move (only possible in the brief window before the zone loads).
  */
 export function useResyncOnZone(
   zone: string | undefined,

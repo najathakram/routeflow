@@ -26,12 +26,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { overpaidByOf, statusFromPayments } from "./invoice-status";
 import { voidPaymentInTx } from "./payment-void-tx";
 import { TENANT_ZONE_SELECT, configuredZone, tenantTimeZone } from "../common/tenant-time-zone";
-import {
-  givenPaidInstant,
-  keptGivenPaidInstant,
-  keptPaidInstantOf,
-  paidInstantOf,
-} from "../common/paid-instant";
+import { givenPaidInstant, keptGivenPaidInstant, paidInstantOf } from "../common/paid-instant";
 import { assertNoDuplicateLineIds } from "../common/duplicate-line-ids";
 import { StorageService } from "../storage/storage.service";
 import {
@@ -4832,10 +4827,18 @@ export class InvoicesService {
       // SA-943 MUST 2: the edit form resends the date it shows; that date keeps the stored instant (no re-stamp to 00:00Z).
       const keptGiven = dto.paidAt ? keptGivenPaidInstant(dto.paidAt, payment.paidAt, tz) : null;
       // An edit to TODAY is "now" on the DATABASE clock, the clock a new payment's default and the close cutoff use.
-      const keptPaidAt =
-        dto.paidAt && keptGiven === null
-          ? (await tx.$queryRaw<{ now: Date }[]>`SELECT CURRENT_TIMESTAMP AS now`)[0].now
-          : keptGiven;
+      let dbNowAt: Date | undefined;
+      const dbNow = async () =>
+        (dbNowAt ??= (await tx.$queryRaw<{ now: Date }[]>`SELECT CURRENT_TIMESTAMP AS now`)[0].now);
+      const keptPaidAt = dto.paidAt && keptGiven === null ? await dbNow() : keptGiven;
+      // Key present = set or (null) clear; key absent = keep what is stored. Same DB-clock rule as paidAt.
+      const keptSettledAt =
+        dto.settledAt === undefined
+          ? undefined
+          : dto.settledAt
+            ? (keptGivenPaidInstant(dto.settledAt, payment.settledAt, tz, undefined, "settledAt") ??
+              (await dbNow()))
+            : null;
       const movedPaidAt =
         keptPaidAt && keptPaidAt.getTime() !== payment.paidAt.getTime() ? keptPaidAt : undefined;
       const datedDto = { ...dto, paidAt: keptPaidAt ?? undefined };
@@ -4897,12 +4900,7 @@ export class InvoicesService {
           reference: dto.reference,
           notes: dto.notes,
           ...(movedPaidAt && { paidAt: movedPaidAt }),
-          // Key present = set or (null) clear; key absent = keep what is stored.
-          ...(dto.settledAt !== undefined && {
-            settledAt: dto.settledAt
-              ? keptPaidInstantOf(dto.settledAt, payment.settledAt, tz, new Date(), "settledAt")
-              : null,
-          }),
+          ...(keptSettledAt !== undefined && { settledAt: keptSettledAt }),
           ...(dto.bankCharges !== undefined && { bankCharges: roundMoneyOrNull(dto.bankCharges) }),
           status: newPaymentStatus,
         },
