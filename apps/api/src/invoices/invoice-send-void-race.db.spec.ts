@@ -68,7 +68,7 @@ const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs")
 const RUN_SUFFIX = randomUUID().slice(0, 8);
 // One shared wait for "T1 is blocked on T2's lock": 1600 x 25 ms = 40 s, and the loop exits the moment T1 blocks, so it costs
 // nothing when healthy. The lane's 30 s testTimeout is below it, so every test in this file gets an explicit limit above the
-// wait plus the 45 s a stuck T2 can still hold FOR UPDATE, and a stuck run fails as "not blocked", not as a Jest timeout.
+// wait plus the cleanup after it, and a stuck run fails as "not blocked", not as a Jest timeout.
 const BLOCKED_WAIT_ITERS = 1600;
 jest.setTimeout(120_000);
 let tenantSeq = 0;
@@ -262,6 +262,7 @@ describeDb(
         );
         let blocked = false;
         for (let i = 0; i < BLOCKED_WAIT_ITERS && !blocked; i++) {
+          await t2.query("SELECT pg_stat_clear_snapshot()"); // pg_stat_activity is cached for the open tx; a fresh read sees a new pooled connection
           const r = await t2.query(
             `SELECT count(*)::int n FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))`,
             [pid],
@@ -602,6 +603,7 @@ describeDb(
               (e: any) => ({ ok: false, e }),
             );
           for (let i = 0; i < BLOCKED_WAIT_ITERS && !blocked; i++) {
+            await t2.query("SELECT pg_stat_clear_snapshot()"); // pg_stat_activity is cached for the open tx; a fresh read sees a new pooled connection
             const q = await t2.query(
               `SELECT count(*)::int n FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))`,
               [pid],
@@ -707,6 +709,7 @@ describeDb(
         );
         let blocked = false;
         for (let i = 0; i < BLOCKED_WAIT_ITERS && !blocked; i++) {
+          await t2.query("SELECT pg_stat_clear_snapshot()"); // pg_stat_activity is cached for the open tx; a fresh read sees a new pooled connection
           const q = await t2.query(
             `SELECT count(*)::int n FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))`,
             [pid],
@@ -1226,6 +1229,7 @@ describeDb(
               (e: any) => ({ ok: false as const, e }),
             );
           for (let i = 0; i < BLOCKED_WAIT_ITERS && !blocked; i++) {
+            await t2.query("SELECT pg_stat_clear_snapshot()"); // pg_stat_activity is cached for the open tx; a fresh read sees a new pooled connection
             const q = await t2.query(
               `SELECT count(*)::int n FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))`,
               [pid],
