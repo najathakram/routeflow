@@ -3130,7 +3130,10 @@ export class InvoicesService {
     // discount or shipping edit re-syncs them, so it is refused when they sit in a LOCKED filing period.
     // (SA-819 MUST 4: after resolveShipmentText, whose 400 names a field the caller can fix.)
     if (dto.items || dto.discount !== undefined || dto.shippingFee !== undefined)
-      await assertSalesNotLockedForEdit(this.prisma.forTenant(), { invoiceId: id });
+      await assertSalesNotLockedForEdit(this.prisma.forTenant(), {
+        tenantId: iGate.tenantId(this.prisma),
+        invoiceId: id,
+      });
     // #2197: the same literal calendar-day stamp create() writes.
     const issueDate = dto.issueDate ? issueDateStamp(dto.issueDate) : undefined;
     const due = dueDateStamps(dto); // #2256: and the due dates, before either rewrite path runs
@@ -5584,6 +5587,7 @@ export class InvoicesService {
       // B297 PR5 (D4a): a price change moves money on every adjusted line, so it is refused (409
       // FILED_PERIOD_LOCKED) when the invoice's regulated SALE rows sit in a LOCKED filing period.
       await assertSalesNotLockedForEdit(this.prisma.forTenant(), {
+        tenantId: iGate.tenantId(this.prisma),
         invoiceId: inv.id,
         lineIds: { invoiceItemIds: [...localPriceMap.keys()] },
       });
@@ -5688,7 +5692,13 @@ export class InvoicesService {
         this.prisma.forTenant(),
         plans.map((p) => p.inv.orderId),
       ); // SA-814e: the guard's per-order allocation tolerance
-      await preflightBulkPriceAdjustment(plans, isTaxExempt, this.prisma.forTenant(), orderCounts);
+      await preflightBulkPriceAdjustment(
+        plans,
+        isTaxExempt,
+        this.prisma.forTenant(),
+        iGate.tenantId(this.prisma),
+        orderCounts,
+      );
       // SA-651 MED-1: each tx re-judges under its own lock; a race refusal is named, and a partial batch is reported.
       await applyBulkPriceAdjustment(plans, applyToInvoice);
     }

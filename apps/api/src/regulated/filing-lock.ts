@@ -6,6 +6,7 @@ import {
   type BucketRef,
   type FilingsDb,
 } from "./filed-periods";
+import { editReplacesLines } from "../orders/order-edit-payload";
 
 /**
  * B297 PR5 (SA-088 D4, SA-734r2 B6): what a LOCKED `RegulatedFiling` means for writes.
@@ -49,6 +50,8 @@ export async function assertLedgerRowsNotLocked(db: LockDb, rows: BucketRef[]): 
 export async function assertSalesNotLockedForEdit(
   db: LockDb,
   where: {
+    /** Explicit, never taken from the client: the bulk preflight passes a client that is not tenant-scoped. */
+    tenantId: string;
     orderId?: string;
     invoiceId?: string;
     lineIds?: { orderItemIds?: string[]; invoiceItemIds?: string[] };
@@ -56,7 +59,7 @@ export async function assertSalesNotLockedForEdit(
 ): Promise<void> {
   // Cheap exit for the overwhelmingly common tenant: nothing is locked, so no ledger read at all.
   if (!db.regulatedFiling?.findMany || !db.regulatedSalesLedger?.findMany) return;
-  if (!(await anyLockedFiling(db))) return;
+  if (!(await anyLockedFiling(db, where.tenantId))) return;
   const { lineIds, ...scope } = where;
   const rows = await db.regulatedSalesLedger.findMany({
     where: {
@@ -91,7 +94,7 @@ export async function assertSalesNotLockedForEdit(
   const live = [...net.values()]
     .filter((n) => Math.abs(n.qty) >= 0.0005 || Math.abs(n.money) >= 0.005)
     .map((n) => n.ref);
-  const hit = (await lockedFilingsCovering(db, live))[0];
+  const hit = (await lockedFilingsCovering(db, live, where.tenantId))[0];
   if (!hit) return;
   throw new ConflictException({
     code: API_ERROR_CODES.FILED_PERIOD_LOCKED,
@@ -108,11 +111,17 @@ export async function assertSalesNotLockedForEdit(
  * strike-off, or any change to a quantity / split / unit / price is. A note, an override reason or a
  * substitution note alone is not: it proceeds (and, with the changed-only ledger re-sync, writes no ledger rows).
  */
-export function isMoneyBearingEdit(dto: {
-  replaceAll?: boolean | null;
-  items?: Array<Record<string, unknown>> | null;
-}): boolean {
+export function isMoneyBearingEdit(
+  dto: {
+    replaceAll?: boolean | null;
+    items?: Array<Record<string, unknown>> | null;
+  },
+  role?: string,
+): boolean {
   if (dto.replaceAll === true) return true;
+  // Any edit that will delete and re-create the lines is money-bearing, whatever it carries: judged by the
+  // SAME predicate `updateOrderItems` branches on (a buyer / driver `items: []` still runs deleteMany).
+  if (role !== undefined && editReplacesLines(dto, role)) return true;
   const moneyKeys = [
     "qty",
     "boxes",
@@ -140,15 +149,18 @@ export async function assertOrderEditNotLocked(
   db: LockDb,
   orderId: string,
   dto: Parameters<typeof isMoneyBearingEdit>[0],
+  ctx: { tenantId: string; role?: string },
 ): Promise<void> {
-  if (!isMoneyBearingEdit(dto)) return;
+  if (!isMoneyBearingEdit(dto, ctx.role)) return;
   // A diff payload that names only existing lines (no replace-all, no new line) can only move THOSE lines.
   const items = dto.items ?? [];
   const named =
+    !editReplacesLines(dto, ctx.role) &&
     dto.replaceAll !== true &&
     items.length > 0 &&
     items.every((i) => typeof i.id === "string" && i.id);
   await assertSalesNotLockedForEdit(db, {
+    tenantId: ctx.tenantId,
     orderId,
     ...(named ? { lineIds: { orderItemIds: items.map((i) => String(i.id)) } } : {}),
   });

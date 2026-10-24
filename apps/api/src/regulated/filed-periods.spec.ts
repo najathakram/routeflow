@@ -1,3 +1,4 @@
+import { assertSalesNotLockedForEdit } from "./filing-lock";
 import * as fs from "fs";
 import * as path from "path";
 import {
@@ -49,8 +50,8 @@ describe("tier 1 - lockedFilingsCovering: LOCKED only, per bucket", () => {
 
   it("the helpers on the same tier send LOCKED too", async () => {
     const findMany = jest.fn().mockResolvedValue([]);
-    await anyLockedFiling({ regulatedFiling: { findMany } });
-    expect(findMany).toHaveBeenCalledWith({ where: { status: "LOCKED" }, take: 1 });
+    await anyLockedFiling({ regulatedFiling: { findMany } }, "t1");
+    expect(findMany).toHaveBeenCalledWith({ where: { tenantId: "t1", status: "LOCKED" }, take: 1 });
     const findFirst = jest.fn().mockResolvedValue(null);
     await findLockedFiling(
       { regulatedFiling: { findFirst } },
@@ -151,10 +152,59 @@ describe("tier 3 - findFiledPeriod: GENERATED | LOCKED, per bucket (a label, nev
 describe("the legacy tobacco cron probe", () => {
   it("looks for a GENERATED report of the month", async () => {
     const findFirst = jest.fn().mockResolvedValue(null);
-    await findGeneratedTobaccoReport({ tobaccoReport: { findFirst } }, { year: 2026, month: 8 });
-    expect(findFirst).toHaveBeenCalledWith({
-      where: { periodYear: 2026, periodMonth: 8, status: "GENERATED" },
+    await findGeneratedTobaccoReport({ tobaccoReport: { findFirst } }, "t1", {
+      year: 2026,
+      month: 8,
     });
+    expect(findFirst).toHaveBeenCalledWith({
+      where: { tenantId: "t1", periodYear: 2026, periodMonth: 8, status: "GENERATED" },
+    });
+  });
+
+  // Opus review of #3726, finding 2: the bulk price-adjustment preflight passes a client that is not
+  // necessarily tenant-scoped, so the tenant must be in the where itself.
+  it("both probes put the explicit tenantId in the where and refuse an empty one", async () => {
+    const findMany = jest.fn().mockResolvedValue([]);
+    const findFirst = jest.fn().mockResolvedValue(null);
+    await anyLockedFiling({ regulatedFiling: { findMany } }, "t-a");
+    await findGeneratedTobaccoReport({ tobaccoReport: { findFirst } }, "t-b", {
+      year: 2026,
+      month: 1,
+    });
+    expect(findMany.mock.calls[0][0].where.tenantId).toBe("t-a");
+    expect(findFirst.mock.calls[0][0].where.tenantId).toBe("t-b");
+    await expect(anyLockedFiling({ regulatedFiling: { findMany } }, "")).rejects.toThrow(
+      /tenantId/,
+    );
+    await expect(
+      findGeneratedTobaccoReport({ tobaccoReport: { findFirst } }, "", { year: 2026, month: 1 }),
+    ).rejects.toThrow(/tenantId/);
+  });
+
+  it("the edit guard sends its tenant to the filings probe and to the ledger read", async () => {
+    const regulatedFiling = {
+      findMany: jest
+        .fn()
+        .mockResolvedValueOnce([{ id: "f" }]) // anyLockedFiling
+        .mockResolvedValue([]), // lockedFilingsCovering
+    };
+    const regulatedSalesLedger = { findMany: jest.fn().mockResolvedValue([]) };
+    await assertSalesNotLockedForEdit(
+      { regulatedFiling, regulatedSalesLedger },
+      { tenantId: "t-x", invoiceId: "i1" },
+    );
+    expect(regulatedFiling.findMany.mock.calls[0][0].where.tenantId).toBe("t-x");
+    expect(regulatedSalesLedger.findMany.mock.calls[0][0].where.tenantId).toBe("t-x");
+  });
+
+  it("lockedFilingsCovering applies a given tenantId to its where", async () => {
+    const findMany = jest.fn().mockResolvedValue([]);
+    await lockedFilingsCovering(
+      { regulatedFiling: { findMany } },
+      [{ trackedCategoryId: "c1", periodBucket: "2026-08" }],
+      "t-y",
+    );
+    expect(findMany.mock.calls[0][0].where).toMatchObject({ tenantId: "t-y", status: "LOCKED" });
   });
 });
 

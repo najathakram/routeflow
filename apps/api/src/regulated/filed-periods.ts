@@ -24,6 +24,11 @@ export type FilingsDb = {
   };
 };
 
+/** Fail closed: an empty tenant id would match no row (`tenantId: null`) and so read as "nothing is locked". */
+function requireTenant(tenantId: string): void {
+  if (!tenantId) throw new Error("A filed-period read needs an explicit tenantId");
+}
+
 // ---------------------------------------------------------------------------------------------------------
 // Tier 1 - LOCKED only, per bucket (sales edits, the ledger guard, the undo guard)
 // ---------------------------------------------------------------------------------------------------------
@@ -52,6 +57,8 @@ export interface BucketRef {
 export async function lockedFilingsCovering(
   db: FilingsDb,
   refs: BucketRef[],
+  /** When given it is applied to the where, whatever client `db` is (the ledger writers run on a tenant tx). */
+  tenantId?: string,
 ): Promise<Array<{ filing: LockedFilingRow; trackedCategoryId: string; periodBucket: string }>> {
   const withCategory = refs.filter((r): r is BucketRef & { trackedCategoryId: string } =>
     Boolean(r.trackedCategoryId),
@@ -59,7 +66,11 @@ export async function lockedFilingsCovering(
   if (withCategory.length === 0 || !db.regulatedFiling?.findMany) return [];
   const categoryIds = [...new Set(withCategory.map((r) => r.trackedCategoryId))];
   const filings = (await db.regulatedFiling.findMany({
-    where: { trackedCategoryId: { in: categoryIds }, status: "LOCKED" },
+    where: {
+      ...(tenantId ? { tenantId } : {}),
+      trackedCategoryId: { in: categoryIds },
+      status: "LOCKED",
+    },
   })) as LockedFilingRow[];
   if (filings.length === 0) return [];
   const out: Array<{ filing: LockedFilingRow; trackedCategoryId: string; periodBucket: string }> =
@@ -83,9 +94,13 @@ export async function lockedFilingsCovering(
 }
 
 /** Cheap exit probe for the edit guard: does ANY filing hold the LOCKED status? (LOCKED tier.) */
-export async function anyLockedFiling(db: FilingsDb): Promise<boolean> {
+export async function anyLockedFiling(db: FilingsDb, tenantId: string): Promise<boolean> {
+  requireTenant(tenantId);
   if (!db.regulatedFiling?.findMany) return false;
-  const rows = await db.regulatedFiling.findMany({ where: { status: "LOCKED" }, take: 1 });
+  const rows = await db.regulatedFiling.findMany({
+    where: { tenantId, status: "LOCKED" },
+    take: 1,
+  });
   return rows.length > 0;
 }
 
@@ -306,11 +321,18 @@ export async function findFiledPeriod(
 /** The tenant's already-GENERATED tobacco report for a month, or null (the cron's idempotency probe). */
 export async function findGeneratedTobaccoReport(
   db: { tobaccoReport: { findFirst(args: any): Promise<any> } },
+  tenantId: string,
   period: { year: number; month: number },
 ): Promise<any | null> {
+  requireTenant(tenantId);
   return (
     (await db.tobaccoReport.findFirst({
-      where: { periodYear: period.year, periodMonth: period.month, status: "GENERATED" },
+      where: {
+        tenantId,
+        periodYear: period.year,
+        periodMonth: period.month,
+        status: "GENERATED",
+      },
     })) ?? null
   );
 }

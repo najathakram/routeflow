@@ -483,6 +483,8 @@ export async function preflightBulkPriceAdjustment(
   }>,
   isTaxExempt: boolean,
   db: PriceReferenceDb,
+  /** Explicit: `db` here is not necessarily a tenant-scoped client, so the lock probe cannot lean on it. */
+  tenantId: string,
   /** SA-814e: non-VOID invoices per order (`countOrdersInvoices`), the guard's allocation tolerance. */
   orderInvoiceCounts?: ReadonlyMap<string, number>,
 ): Promise<ReadonlyMap<string, number>> {
@@ -498,6 +500,7 @@ export async function preflightBulkPriceAdjustment(
       // B297 PR5 (D4a): judged here, with every other refusal, BEFORE any invoice is written: a locked-period
       // invoice in a bulk run must not stop it partway through.
       await assertSalesNotLockedForEdit(db as any, {
+        tenantId,
         invoiceId: inv.id,
         lineIds: { invoiceItemIds: [...localMap.keys()] },
       });

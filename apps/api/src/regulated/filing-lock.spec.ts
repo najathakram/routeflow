@@ -27,6 +27,7 @@ const filing = (over: Record<string, unknown> = {}) => ({
   status: "LOCKED",
   ...over,
 });
+const CTX = { tenantId: "t1" };
 const db = (filings: any[], sales: any[] = []) => ({
   regulatedFiling: {
     findMany: jest.fn(async (a: any) =>
@@ -103,7 +104,10 @@ describe("assertSalesNotLockedForEdit", () => {
     ...over,
   });
   it("refuses with FILED_PERIOD_LOCKED naming the filing and period", async () => {
-    const p = assertSalesNotLockedForEdit(db([filing()], [sale()]), { orderId: "o1" });
+    const p = assertSalesNotLockedForEdit(db([filing()], [sale()]), {
+      tenantId: "t1",
+      orderId: "o1",
+    });
     await expect(p).rejects.toBeInstanceOf(ConflictException);
     await expect(p).rejects.toMatchObject({
       response: { code: "FILED_PERIOD_LOCKED", filingId: "f-1", periodKey: "2026-09" },
@@ -112,17 +116,35 @@ describe("assertSalesNotLockedForEdit", () => {
   it("passes when the line's sales are in an open period or no sale exists", async () => {
     await expect(
       assertSalesNotLockedForEdit(db([filing()], [sale({ periodBucket: "2026-10" })]), {
+        tenantId: "t1",
         orderId: "o1",
       }),
     ).resolves.toBeUndefined();
     await expect(
-      assertSalesNotLockedForEdit(db([filing()], []), { orderId: "o1" }),
+      assertSalesNotLockedForEdit(db([filing()], []), { tenantId: "t1", orderId: "o1" }),
     ).resolves.toBeUndefined();
   });
   it("does not read the ledger at all when the tenant has no locked filing", async () => {
     const d = db([], [sale()]);
-    await assertSalesNotLockedForEdit(d, { orderId: "o1" });
+    await assertSalesNotLockedForEdit(d, { tenantId: "t1", orderId: "o1" });
     expect(d.regulatedSalesLedger.findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("isMoneyBearingEdit decides from the service's own full-replace condition", () => {
+  it("any edit that will deleteMany the lines is money-bearing", () => {
+    // CUSTOMER / DRIVER and not a diff payload -> the full-replace branch (deleteMany), even with items: []
+    expect(isMoneyBearingEdit({ items: [] }, "CUSTOMER")).toBe(true);
+    expect(isMoneyBearingEdit({ items: [] }, "DRIVER")).toBe(true);
+    expect(isMoneyBearingEdit({ items: null }, "CUSTOMER")).toBe(true);
+    // ...but a diff payload (replaceAll:false, or an id / action / substitute) merges instead
+    expect(isMoneyBearingEdit({ replaceAll: false, items: [] }, "CUSTOMER")).toBe(false);
+    expect(isMoneyBearingEdit({ items: [{ id: "a", notes: "n" }] }, "DRIVER")).toBe(false);
+    // staff replace only on an explicit replaceAll:true
+    expect(isMoneyBearingEdit({ items: [] }, "OPERATOR")).toBe(false);
+    expect(isMoneyBearingEdit({ replaceAll: true, items: [] }, "OPERATOR")).toBe(true);
+    // a DRIVER never replaces-all on the staff branch, but a non-diff driver list replaces on the buyer branch
+    expect(isMoneyBearingEdit({ replaceAll: true, items: [] }, "DRIVER")).toBe(true);
   });
 });
 
@@ -174,23 +196,50 @@ describe("the edit guard is scoped to the lines the edit changes and ignores a s
   it("a change to ONE named line passes when only ANOTHER line was sold in the locked period", async () => {
     const d = dbRows([filing()], [sold("tobacco-line")]);
     await expect(
-      assertOrderEditNotLocked(d as any, "o1", { items: [{ id: "soda-line", qty: 3 }] }),
+      assertOrderEditNotLocked(d as any, "o1", { items: [{ id: "soda-line", qty: 3 }] }, CTX),
     ).resolves.toBeUndefined();
     await expect(
-      assertOrderEditNotLocked(d as any, "o1", { items: [{ id: "tobacco-line", qty: 3 }] }),
+      assertOrderEditNotLocked(d as any, "o1", { items: [{ id: "tobacco-line", qty: 3 }] }, CTX),
     ).rejects.toMatchObject({ response: { code: "FILED_PERIOD_LOCKED" } });
   });
 
   it("a replace-all or a new line is judged against the whole order", async () => {
     const d = dbRows([filing()], [sold("tobacco-line")]);
     await expect(
-      assertOrderEditNotLocked(d as any, "o1", { replaceAll: true, items: [] }),
+      assertOrderEditNotLocked(d as any, "o1", { replaceAll: true, items: [] }, CTX),
     ).rejects.toMatchObject({
       response: { code: "FILED_PERIOD_LOCKED" },
     });
     await expect(
-      assertOrderEditNotLocked(d as any, "o1", { items: [{ productId: "p1", qty: 1 }] }),
+      assertOrderEditNotLocked(d as any, "o1", { items: [{ productId: "p1", qty: 1 }] }, CTX),
     ).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  // Opus review of #3726, finding 1: the CUSTOMER / DRIVER non-diff path runs `orderItem.deleteMany` on EVERY
+  // line even when `items` is empty and `replaceAll` is absent, so "no items" is not "no money".
+  it("an empty-items full replace deletes the lines, so it is refused for a CUSTOMER or DRIVER and nothing is read past the guard", async () => {
+    const d = dbRows([filing()], [sold("tobacco-line")]);
+    for (const role of ["CUSTOMER", "DRIVER"])
+      await expect(
+        assertOrderEditNotLocked(d as any, "o1", { items: [] }, { tenantId: "t1", role }),
+      ).rejects.toMatchObject({ response: { code: "FILED_PERIOD_LOCKED" } });
+    // the same payload from staff takes the merge branch (no replaceAll flag): it deletes nothing
+    for (const role of ["TENANT_ADMIN", "OPERATOR"])
+      await expect(
+        assertOrderEditNotLocked(d as any, "o1", { items: [] }, { tenantId: "t1", role }),
+      ).resolves.toBeUndefined();
+  });
+
+  it("a buyer's id-less full list and a driver's non-diff list replace every line", async () => {
+    const d = dbRows([filing()], [sold("tobacco-line")]);
+    await expect(
+      assertOrderEditNotLocked(
+        d as any,
+        "o1",
+        { items: [{ productId: "p1", notes: "n" }] },
+        { tenantId: "t1", role: "CUSTOMER" },
+      ),
+    ).rejects.toMatchObject({ response: { code: "FILED_PERIOD_LOCKED" } });
   });
 
   it("a sale already fully reversed in that period is not at stake", async () => {
@@ -207,7 +256,7 @@ describe("the edit guard is scoped to the lines the edit changes and ignores a s
       ],
     );
     await expect(
-      assertOrderEditNotLocked(d as any, "o1", { items: [{ id: "tobacco-line", qty: 3 }] }),
+      assertOrderEditNotLocked(d as any, "o1", { items: [{ id: "tobacco-line", qty: 3 }] }, CTX),
     ).resolves.toBeUndefined();
   });
 });
@@ -221,6 +270,15 @@ describe("caller pin: every money-moving entry point is behind a guard (B297 PR5
       src("../invoices/invoices.service.ts").match(/assertSalesNotLockedForEdit\(/g)?.length,
     ).toBeGreaterThanOrEqual(2);
     expect(src("../invoices/price-adjustment-ledger.ts")).toMatch(/assertSalesNotLockedForEdit\(/);
+  });
+  it("updateOrderItems judges the edit with the caller's role and tenant BEFORE the first line delete", () => {
+    const svc = src("../orders/orders.service.ts");
+    const call = svc.indexOf("assertOrderEditNotLocked(");
+    expect(svc.slice(call, call + 200)).toMatch(/role: user\?\.role/);
+    expect(call).toBeGreaterThan(0);
+    expect(call).toBeLessThan(svc.indexOf("tx.orderItem.deleteMany", call));
+    // the service's full-replace branch and the guard share ONE predicate
+    expect(svc).toMatch(/takesBuyerDriverReplace\(/);
   });
   it("every ledger writer runs the ledger guard and both undo entry points run the undo guard", () => {
     const ledger = src("regulated-ledger.service.ts");

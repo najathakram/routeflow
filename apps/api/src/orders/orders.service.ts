@@ -140,7 +140,11 @@ import {
 import { cancelOrderInTx, lockDeleteLines, type CancelOrderTxOptions } from "./order-cancel-tx";
 import { claimReopenInTx } from "./order-reopen-claim";
 import { assertNoCashRefundOnOrder } from "../invoices/invoice-cash-refund-guard";
-import { assertBuyerDiffShape, classifyEditPayload } from "./order-edit-payload";
+import {
+  assertBuyerDiffShape,
+  classifyEditPayload,
+  takesBuyerDriverReplace,
+} from "./order-edit-payload";
 import {
   applyBuyerMergeHeaderImpl,
   bulkDeleteOrdersImpl,
@@ -2731,7 +2735,12 @@ export class OrdersService implements OnApplicationBootstrap {
     await assertRevisionCurrent(this.prisma.forTenant(), orderId, dto.expectedRevisionNumber);
     // B297 PR5 (D4a), SA-819 MUST 4: after the revision check, so an editor on an outdated order meets the 409
     // for the stale revision first.
-    await assertOrderEditNotLocked(this.prisma.forTenant(), orderId, dto as any);
+    // The guard asks the service's own replace predicate (role + diff shape), so an `items: []` buyer / driver
+    // replace, which still runs deleteMany below, is judged as the money-bearing edit it is.
+    await assertOrderEditNotLocked(this.prisma.forTenant(), orderId, dto as any, {
+      tenantId: (user?.tenantId ?? this.prisma.getTenantId()) as string,
+      role: user?.role,
+    });
     const isDiffPayload = classifyEditPayload(order, dto, user); // A4/B13: see order-edit-payload.ts
     // SA-422: never revive a seller-CANCELLED line (409 before any write; a strike-off of one is a
     // no-op). SA-422b: BEFORE every unit check, so a cancelled line's id gets this answer first.
@@ -2989,10 +2998,7 @@ export class OrdersService implements OnApplicationBootstrap {
         // SA-407: a buyer's per-line diff (a unit line's count / a removal) merges like staff's too.
         // SA-696a (decided, fail closed): this path recreates every line (new ids), so a carrier order with an
         // unlisted line reads as a removal and is refused NO_REDUCE even when nothing changed; nothing written.
-        if (
-          (user?.role === UserRole.CUSTOMER || user?.role === UserRole.DRIVER) &&
-          !isDiffPayload
-        ) {
+        if (takesBuyerDriverReplace(user?.role, isDiffPayload) && user) {
           if (user.role === UserRole.CUSTOMER) {
             // REG-B131: `deletedAt: null` — the buyer replace-all path is the last door a
             // removed customer's still-valid session could mutate an order through.

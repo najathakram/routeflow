@@ -344,7 +344,7 @@ export class TobaccoReportService {
       await this.tenantCtx.run(tenant.id, async () => {
         try {
           // Idempotent: skip if this period already generated (deploy restarts)
-          const existing = await findGeneratedTobaccoReport(this.prisma.forTenant(), {
+          const existing = await findGeneratedTobaccoReport(this.prisma.forTenant(), tenant.id, {
             year,
             month,
           });
