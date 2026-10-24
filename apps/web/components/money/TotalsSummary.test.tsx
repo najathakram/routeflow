@@ -10,6 +10,15 @@ describe("TotalsSummary (W-882)", () => {
     expect(screen.getByTestId("totals-summary-total")).toHaveTextContent("$12,345.67");
   });
 
+  it('the last row reads exactly "Total", never Order total, Estimated total or Amount due (owner ruling 10-24)', () => {
+    const totals = orderBuilderTotals([{ unitPrice: 10, qty: 1 }]);
+    render(<TotalsSummary totals={totals} />);
+    const row = screen.getByTestId("totals-summary-total").parentElement as HTMLElement;
+    expect(row.firstElementChild).toHaveTextContent(/^Total$/);
+    expect(row.parentElement?.lastElementChild).toBe(row);
+    expect(screen.queryByText(/order total|estimated total|amount due/i)).toBeNull();
+  });
+
   it("the tax label names a percent only when a rate is set", () => {
     const totals = orderBuilderTotals([{ unitPrice: 10, qty: 1 }]);
     const { rerender } = render(<TotalsSummary totals={totals} taxRatePct={null} />);
