@@ -301,17 +301,15 @@ function BillRow({ bill }: { bill: VendorBill }) {
       <td className="px-5 py-3">
         <Badge variant={STATUS_VARIANTS[bill.status]} label={STATUS_LABELS[bill.status]} />
       </td>
-      <td className="px-5 py-3 text-right text-sm text-navy tabular-nums">{fmt(bill.totalOwed)}</td>
-      <td className="px-5 py-3 text-right text-sm text-navy/70 tabular-nums">
-        {fmt(bill.totalPaid)}
-      </td>
+      <td className="px-5 py-3 text-right text-sm text-navy">{fmt(bill.totalOwed)}</td>
+      <td className="px-5 py-3 text-right text-sm text-navy/70">{fmt(bill.totalPaid)}</td>
       <td
         className={cn(
           "px-5 py-3 text-right text-sm font-medium",
           outstanding > 0 ? "text-warning" : "text-navy/70",
         )}
       >
-        {fmt(outstanding)}
+        {outstanding > 0 ? fmt(outstanding) : "—"}
       </td>
       <td className="px-5 py-3 text-xs text-navy/70 max-w-xs truncate">{bill.notes ?? "—"}</td>
     </tr>
@@ -527,7 +525,7 @@ function SupplierDetailPageInner() {
           <p
             className={cn("text-2xl font-bold", outstanding > 0 ? "text-warning" : "text-navy/30")}
           >
-            {fmt(outstanding)}
+            {outstanding > 0 ? fmt(outstanding) : "—"}
           </p>
           {outstanding > 0 && (
             <p className="mt-1 text-xs text-navy/70">
@@ -544,7 +542,7 @@ function SupplierDetailPageInner() {
               Total billed
             </span>
           </div>
-          <p className="text-2xl font-bold text-navy">{fmt(totalOwed)}</p>
+          <p className="text-2xl font-bold text-navy">{totalOwed > 0 ? fmt(totalOwed) : "—"}</p>
           <p className="mt-1 text-xs text-navy/70">
             {bills.filter((b) => b.status !== "VOID").length} bills
           </p>
@@ -558,7 +556,7 @@ function SupplierDetailPageInner() {
               Total paid
             </span>
           </div>
-          <p className="text-2xl font-bold text-navy">{fmt(totalPaid)}</p>
+          <p className="text-2xl font-bold text-navy">{totalPaid > 0 ? fmt(totalPaid) : "—"}</p>
           <p className="mt-1 text-xs text-navy/70">
             {bills.filter((b) => b.status === "PAID").length} paid bills
           </p>

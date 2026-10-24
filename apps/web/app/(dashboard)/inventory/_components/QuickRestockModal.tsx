@@ -11,7 +11,6 @@ import { normalizeBoxesPieces } from "@routeflow/pricing";
 import { unitsLabel } from "@/lib/stock-label";
 import { useRecordPurchase, usePurchaseOrders } from "@/lib/api/inventory";
 import { useVendorBills } from "@/lib/api/vendor-bills";
-import { fmtDate } from "@/lib/formatting";
 import { SupplierSelect } from "@/components/SupplierSelect";
 import type { Supplier } from "./purchase-orders-shared";
 
@@ -111,7 +110,7 @@ export function QuickRestockModal({
 
   const refOptions = [
     ...vendorBills.map((b: any) => ({
-      label: `${b.billNumber} — ${b.supplier?.name ?? ""} (${fmtDate(b.createdAt)})`,
+      label: `${b.billNumber} — ${b.supplier?.name ?? ""} (${new Date(b.createdAt).toLocaleDateString()})`,
       value: b.billNumber,
       supplierId: b.supplierId,
     })),
@@ -154,7 +153,7 @@ export function QuickRestockModal({
       const pieces = Math.max(0, Math.trunc(Number(form.pieces) || 0));
       const totalPieces = normalizeBoxesPieces({ boxes, pieces, unitsPerBox }).qty;
       if (totalPieces <= 0) {
-        scanToast({ title: "Enter at least one box or piece to receive", variant: "error" });
+        alert("Enter at least one box or piece to receive");
         return;
       }
       // `boxes`/`pieces` — never `quantity` — for a boxed receive; the API
@@ -166,14 +165,11 @@ export function QuickRestockModal({
 
     const qty = Number(form.quantity);
     if (!decimalQty && !Number.isInteger(qty)) {
-      scanToast({
-        title: `Quantity must be a whole number for ${selectedProduct?.unit ?? "this unit"}`,
-        variant: "error",
-      });
+      alert(`Quantity must be a whole number for unit "${selectedProduct?.unit}"`);
       return;
     }
     if (!(qty > 0)) {
-      scanToast({ title: "Quantity must be greater than 0", variant: "error" });
+      alert("Quantity must be greater than zero");
       return;
     }
     restock.mutate({ ...base, quantity: qty }, { onSuccess: onClose });

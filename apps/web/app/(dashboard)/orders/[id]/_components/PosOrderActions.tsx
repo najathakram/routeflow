@@ -328,7 +328,7 @@ export function OutForDeliveryPrimary({
           onClick={onDeliver}
           loading={pending}
         >
-          Mark delivered
+          {fulfillPath === "SHIP" ? "Mark delivered" : "Mark as Delivered"}
         </Button>
       )}
     </ActionTier>

@@ -4,7 +4,6 @@ import React from "react";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useToast } from "@routeflow/ui/web";
 import { cn } from "@routeflow/ui/web";
-import { formatMoney } from "@/lib/format";
 import { Upload, Check, AlertTriangle, Copy, FileWarning, CheckCircle2 } from "lucide-react";
 import {
   useBatch,
@@ -322,7 +321,7 @@ function QueueRow({
           {item.invoiceNumber ? ` · ${item.invoiceNumber}` : ""}
         </p>
         <p className="text-xs text-navy/50">
-          {item.total != null ? formatMoney(item.total) : "—"}
+          {item.total ? `$${item.total}` : "—"}
           {item.status === "NEEDS_REVIEW" && item.unreviewedLines > 0
             ? ` · ${item.unreviewedLines} ${item.unreviewedLines === 1 ? "line needs" : "lines need"} review`
             : ""}
