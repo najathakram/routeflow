@@ -49,6 +49,8 @@ export interface PricePushResult {
   unchanged?: boolean;
   /** SA-733r3 N4: this push raised `needsReconcile` before the Stripe write; the flow clears it after its local write. */
   reconcile?: { owned: boolean };
+  /** Stripe's own message for a refusal (`stripe_update_rejected`): shown to the operator, never to a tenant. */
+  detail?: string;
 }
 
 export function prorationBehaviorFor(effective: PriceOverrideEffective): StripeProrationBehavior {
@@ -70,6 +72,8 @@ export const PRICE_PUSH_FAILURE_REASONS: readonly string[] = [
   "stripe_retrieve_failed",
   "stripe_product_create_failed",
   "stripe_update_failed",
+  // W-810: Stripe REFUSED the update (a 4xx other than 409 / 429): a retry sends the same request.
+  "stripe_update_rejected",
   // N4: the needsReconcile flag could not be committed BEFORE the Stripe write, so nothing was sent.
   "reconcile_flag_failed",
   // A live stripeSubId whose Stripe side cannot be repriced (no base item, or Stripe unconfigured) must

@@ -9,6 +9,7 @@ import { toCents } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { PrismaService } from "../prisma/prisma.service";
 import { findPlanDefinition } from "./plan-catalog.constants";
+import { ensurePlanProduct } from "./stripe-product";
 import { PlanCatalogService } from "./plan-catalog.service";
 import { markNeedsReconcile } from "./needs-reconcile";
 import { PLAN_CHANGE_BILLING_FAILED, type PlanChangeAudience } from "./plan-change-stripe";
@@ -283,9 +284,10 @@ export class ScheduledPriceChangeService {
     // A fresh key per restore: Stripe replays a repeated key for 24 h, which would swallow a SECOND legitimate
     // restore after another push. Replays are made harmless by the amount check above.
     const key = `${sub.stripeSubId}:scheduled-price-restore:${clearedCents}-${keptCents}:${Date.now()}`;
-    const product = await this.stripe.client.products.create(
-      { name: `RouteFlow ${keptDef?.name ?? sub.planKey}` },
-      { idempotencyKey: `${key}:product` },
+    const productId = await ensurePlanProduct(
+      this.stripe.client,
+      sub.planKey,
+      keptDef?.name ?? sub.planKey,
     );
     await this.stripe.updateSubscription(
       sub.stripeSubId,
@@ -297,7 +299,7 @@ export class ScheduledPriceChangeService {
               currency: typeof base.price?.currency === "string" ? base.price.currency : "usd",
               unit_amount: keptCents,
               recurring: { interval: "month" },
-              product: product.id,
+              product: productId,
             },
           },
         ],
@@ -404,10 +406,7 @@ export class ScheduledPriceChangeService {
     const nonce = randomUUID();
     const key = `${sub.stripeSubId}:scheduled-price:${sub.downgradeEffectiveAt.toISOString()}:${version.id}:${target}:${priorAmountCents}-${amountCents}:${base.price?.id ?? "-"}:${nonce}`;
     try {
-      const product = await this.stripe.client.products.create(
-        { name: `RouteFlow ${targetDef.name}` },
-        { idempotencyKey: `${key}:product` },
-      );
+      const productId = await ensurePlanProduct(this.stripe.client, target, targetDef.name);
       this.logger.log(
         `billing.scheduled_price.push ${JSON.stringify({
           tenantId,
@@ -431,7 +430,7 @@ export class ScheduledPriceChangeService {
               currency: typeof base.price?.currency === "string" ? base.price.currency : "usd",
               unit_amount: amountCents,
               recurring: { interval: "month" as const },
-              product: product.id,
+              product: productId,
             },
           },
         ],

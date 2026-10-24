@@ -1,3 +1,5 @@
+import { fakeStripeProducts, type FakeProduct } from "./fake-stripe-products";
+
 /**
  * A STATEFUL fake of the slice of StripeService a plan change touches (SA-733r M7). It applies each
  * `subscriptions.update` to its own item list — a new `price_data` replaces an item's price, `deleted` removes
@@ -14,7 +16,17 @@ export interface FakeStripeItem {
   current_period_end?: number;
 }
 
-export function fakeStripeSubscription(items: FakeStripeItem[], status = "active") {
+export function fakeStripeSubscription(
+  items: FakeStripeItem[],
+  status = "active",
+  productSeed: FakeProduct[] = [],
+) {
+  // An item already on the subscription references a product Stripe knows (and that is active unless seeded otherwise).
+  const known = items
+    .map((i) => i.price?.product)
+    .filter((id): id is string => typeof id === "string" && !productSeed.some((p) => p.id === id))
+    .map((id): FakeProduct => ({ id, active: true, name: id }));
+  const productTable = fakeStripeProducts([...known, ...productSeed]);
   const state = {
     status,
     items: items.map((i) => structuredClone(i)),
@@ -34,6 +46,8 @@ export function fakeStripeSubscription(items: FakeStripeItem[], status = "active
           if (state.keys.has(_opts.idempotencyKey)) return snapshot();
           state.keys.add(_opts.idempotencyKey);
         }
+        // Stripe refuses an inactive / unknown product BEFORE it applies any item.
+        for (const it of params.items ?? []) productTable.assertUsable(it.price_data?.product);
         for (const it of params.items ?? []) {
           if (it.deleted) {
             state.items = state.items.filter((x) => x.id !== it.id);
@@ -53,7 +67,8 @@ export function fakeStripeSubscription(items: FakeStripeItem[], status = "active
         return snapshot();
       },
     ),
-    client: { products: { create: jest.fn(async () => ({ id: "prod_scale" })) } },
+    client: { products: productTable.products },
+    products: productTable,
     /** The base item's current unit amount in cents, as Stripe would bill it. */
     amountOf: (id: string) => state.items.find((x) => x.id === id)?.price.unit_amount,
   };

@@ -209,8 +209,8 @@ export class CatchupCheckoutService {
     const lines = await this.mutations.checkoutAddonLines(tenantId, "month", { quiet: true });
     // B1102: a held add-on whose catalog includedAtPlan names no plan is CATALOG_INVALID, not "not card billable".
     if (lines.invalid.length > 0) ineligible.push("addon_catalog_invalid");
-    const addons: CatchupAddon[] = lines.lineItems.map((li: any) => ({
-      sku: String(li.price_data?.product_data?.metadata?.addonSku ?? "ADDON"),
+    const addons: CatchupAddon[] = lines.lineItems.map((li: any, i: number) => ({
+      sku: String(lines.skus[i] ?? "ADDON"), // skus is built in lineItems' order
       unitPrice: fromCents(Number(li.price_data?.unit_amount ?? 0)),
       quantity: Number(li.quantity ?? 0),
     }));

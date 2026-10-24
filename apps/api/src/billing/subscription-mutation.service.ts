@@ -24,6 +24,7 @@ import {
   checkoutAddonLineItem,
   isOwnedAddonItem,
 } from "./stripe-addon-items";
+import { ensureAddonProduct } from "./stripe-product";
 import { emitAddonDelta, lockTenantForLedger, bookAddonsOnCrossing } from "./addon-ledger";
 import {
   addonCodeOf,
@@ -2306,13 +2307,15 @@ export class SubscriptionMutationService {
       });
     }
     return {
-      lineItems: billable.map((b) =>
-        checkoutAddonLineItem({
-          sku: b.def.sku,
-          name: b.def.name,
-          monthlyPrice: b.def.monthlyPrice,
-          quantity: b.quantity,
-        }),
+      lineItems: await Promise.all(
+        billable.map(async (b) =>
+          checkoutAddonLineItem({
+            sku: b.def.sku,
+            productId: await ensureAddonProduct(this.stripe.client, b.def.sku, b.def.name),
+            monthlyPrice: b.def.monthlyPrice,
+            quantity: b.quantity,
+          }),
+        ),
       ),
       skus: billable.map((b) => b.def.sku),
       invalid,
@@ -3658,10 +3661,7 @@ export class SubscriptionMutationService {
     const adopted = await this.adoptOrphanItem(tenantId, sku, subId, qty);
     if (adopted) return { itemId: adopted, createdItemId: null };
     try {
-      const product = await this.stripe.client.products.create({
-        name: `RouteFlow add-on — ${skuDef.name}`,
-        metadata: { tenantId, sku },
-      });
+      const productId = await ensureAddonProduct(this.stripe.client, sku, skuDef.name);
       const item = await this.stripe.client.subscriptionItems.create(
         {
           subscription: subId,
@@ -3674,7 +3674,7 @@ export class SubscriptionMutationService {
             currency: "usd",
             unit_amount: toCents(Number(skuDef.monthlyPrice)),
             recurring: { interval: "month" },
-            product: product.id,
+            product: productId,
           },
           metadata: { tenantId, sku },
         },

@@ -22,7 +22,8 @@ export const CHECKOUT_ADDON_EXPAND = ["items.data.price.product"];
 /** One add-on's checkout line: a MONTHLY inline price at the catalog amount, tagged with its SKU. */
 export function checkoutAddonLineItem(a: {
   sku: string;
-  name: string;
+  /** The shared `rf_addon_<sku>` product (ensureAddonProduct): it carries the SKU tag and is always active. */
+  productId: string;
   monthlyPrice: unknown;
   quantity: number;
 }) {
@@ -31,10 +32,7 @@ export function checkoutAddonLineItem(a: {
       currency: "usd",
       unit_amount: toCents(Number(a.monthlyPrice)),
       recurring: { interval: "month" as const },
-      product_data: {
-        name: `RouteFlow add-on — ${a.name}`,
-        metadata: { [CHECKOUT_ADDON_SKU_KEY]: a.sku },
-      },
+      product: a.productId,
     },
     quantity: a.quantity,
   };

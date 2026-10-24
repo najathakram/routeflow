@@ -8,6 +8,7 @@
 jest.mock("./needs-reconcile", () =>
   require("../testing/needs-reconcile-mock").needsReconcileMock(),
 );
+import { fakeStripeProducts } from "../testing/fake-stripe-products";
 import { fakeStripeSubscription } from "../testing/fake-stripe-subscription";
 import {
   BadGatewayException,
@@ -40,7 +41,7 @@ function stripeWith(sub: any = { status: "active", items: { data: [BASE] } }) {
     isConfigured: true,
     getSubscription: jest.fn().mockResolvedValue(sub),
     updateSubscription: jest.fn().mockResolvedValue({}),
-    client: { products: { create: jest.fn().mockResolvedValue({ id: "prod_new" }) } },
+    client: { products: fakeStripeProducts().products },
   };
 }
 
@@ -74,7 +75,7 @@ describe("pushPlanChange", () => {
           currency: "usd",
           unit_amount: 24900,
           recurring: { interval: "month" },
-          product: "prod_new",
+          product: "rf_plan_growth",
         },
       },
     ]);
