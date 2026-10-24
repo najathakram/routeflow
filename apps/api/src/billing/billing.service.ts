@@ -818,6 +818,12 @@ export class BillingService {
         `Failed to ensure the Stripe plan product for tenant ${tenantId}'s price sync`,
         err as Error,
       );
+      // A database error (the catalog or Prisma read under checkoutPriceData) is not Stripe failing: label it
+      // as the lookup failure it is. Both are transient and both stop a Stripe-first write.
+      const e = err as { name?: string; code?: string };
+      if (e?.name?.startsWith("Prisma") || /^Pd{4}$/.test(e?.code ?? "")) {
+        return { synced: false, reason: "pricing_lookup_failed" };
+      }
       return { synced: false, reason: "stripe_product_create_failed" };
     }
     const effective = opts?.effective ?? "next_cycle";
