@@ -307,3 +307,42 @@ describe("SA-837b: the AdvancePayment writer census", () => {
     );
   });
 });
+
+/**
+ * W-769 (owner 7b = A, SA-910 Part 2 as SA-922 corrects it): the confirmed-basis axis. Every real-money (PAID) writer —
+ * recordPayment (invoice page, till, hand-over), the office standalone (and the buyer approval / captured settle through it),
+ * delivery cash, bookkeeping, and updatePayment's confirm — reaches ONE per-writer helper, invoices/confirmed-basis.ts, which
+ * applies the CONFIRMED_BASIS policy and writes the over-reserved audit row from the ONE pricing predicate. Stored value
+ * (credit notes, advances) stays on capacity (SA-922 answer 3). Master: the helper does not exist (the RED).
+ */
+describe("W-769: the confirmed-basis axis (S1/S2)", () => {
+  const exists = (f: string) => fs.existsSync(path.join(SRC, f));
+
+  it("S1 the ONE per-writer helper exists, uses the pricing predicate, and writes the over-reserved audit row", () => {
+    expect(exists("invoices/confirmed-basis.ts")).toBe(true);
+    const helper = read("invoices/confirmed-basis.ts");
+    expect(helper).toMatch(/unconfirmedNoLongerFitting\(/);
+    expect(helper).toContain("PAYMENT_UNCONFIRMED_OVER_RESERVED");
+  });
+
+  it("S1 every real-money writer file reaches it; the stored-value appliers do not (they stay on capacity)", () => {
+    for (const f of ["invoices/invoices.service.ts", "bookkeeping/bookkeeping.service.ts"])
+      expect({
+        f,
+        reaches:
+          read(f).includes("./confirmed-basis") || read(f).includes("../invoices/confirmed-basis"),
+      }).toEqual({
+        f,
+        reaches: true,
+      });
+    for (const f of ["credit-notes/credit-notes.service.ts", "customers/customers.service.ts"])
+      expect({ f, confirmed: /CONFIRMED_BASIS/.test(read(f)) }).toEqual({ f, confirmed: false });
+  });
+
+  it("S2 nothing outside the helper computes 'no longer fits' (one predicate, one caller file)", () => {
+    const callers = walk(SRC)
+      .filter((f) => /unconfirmedNoLongerFitting\(/.test(fs.readFileSync(f, "utf8")))
+      .map((f) => rel(f));
+    expect(callers).toEqual(["invoices/confirmed-basis.ts"]);
+  });
+});

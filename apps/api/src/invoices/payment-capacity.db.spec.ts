@@ -41,6 +41,7 @@ import { NumberingService } from "../import/numbering.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { _resetLockPoolForTests } from "../common/db-locks";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
+import { BookkeepingService } from "../bookkeeping/bookkeeping.service";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -279,6 +280,27 @@ describeDb("row 2299 payment capacity — real Postgres", () => {
     await s.asTenant(() =>
       invoices.recordStandalonePayment(standalone(s.customer.id, s.invs[0].id, 100)),
     );
+    expect(await shape(s.invs[0].id)).toEqual(["DRAFT 100", "PAID 100"]);
+    const rows = await overReserved(s.tenant.id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].meta).toMatchObject({ displaced: [d.id] });
+  }, 60_000);
+
+  it("W5 bookkeeping (REG-B11) PAID 100 over a DRAFT 100: recorded and D flagged once (master: recorded, no audit row)", async () => {
+    const s = await seed("w769-w5");
+    const d = await s.row(s.invs[0].id, 100, "DRAFT");
+    const unused = {} as never;
+    const commissions = { syncInvoiceCommissionSafe: async () => undefined } as never;
+    const ledger = new BookkeepingService(
+      prisma,
+      unused,
+      unused,
+      unused,
+      unused,
+      unused,
+      commissions,
+    );
+    await s.asTenant(() => ledger.recordPayment(s.invs[0].id, cash(100)));
     expect(await shape(s.invs[0].id)).toEqual(["DRAFT 100", "PAID 100"]);
     const rows = await overReserved(s.tenant.id);
     expect(rows).toHaveLength(1);
