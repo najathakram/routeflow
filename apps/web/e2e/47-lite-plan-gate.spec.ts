@@ -187,7 +187,7 @@ test.describe("Lite-plan nav/route gating (lite-L2)", () => {
     // 18-sales-agents-gate.spec.ts uses for a live addon flag: green either way.
     const completePayment = page.getByRole("button", { name: "Complete payment" });
     const isActive = await page
-      .getByText("ACTIVE", { exact: true })
+      .getByText("Active", { exact: true })
       .isVisible()
       .catch(() => false);
     if (isActive) {
