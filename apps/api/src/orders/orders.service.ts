@@ -19,7 +19,7 @@ import { InlineReturnsService } from "../returns/inline-returns.service";
 import * as inlineReturn from "./order-inline-return";
 import { attachPaymentCreditNotes, ORDER_INVOICES_SELECT } from "./order-payment-credit-notes";
 import { attachInvoicesNeedReview } from "./order-invoices-review";
-import { customerIsTaxExempt, orderTotalsOf } from "./order-totals";
+import { customerIsTaxExempt, editedOrderTotals, orderTotalsOf } from "./order-totals";
 import { prepareInlineReturn, replayAfterCheck } from "./order-inline-return";
 import { reserveInlineReturnNumber as reserveReturnNo } from "./order-inline-return";
 import { applyInlineReturnInTx as applyReturn } from "./order-inline-return";
@@ -809,6 +809,7 @@ export class OrdersService implements OnApplicationBootstrap {
               taxRate,
               isTaxExempt,
               shipping: Number(winner.shippingFee ?? 0),
+              discount: 0, // SA-918: no participant carries one (readMergeGroup refuses or skips)
             });
             await tx.order.update({
               where: { id: winner.id },
@@ -1049,6 +1050,7 @@ export class OrdersService implements OnApplicationBootstrap {
               taxRate,
               isTaxExempt,
               shipping: Number(winner.shippingFee ?? 0),
+              discount: 0, // SA-918: no participant carries one (readMergeGroup refuses or skips)
             });
             const routeUpdate = routeAssignment
               ? {
@@ -1460,7 +1462,7 @@ export class OrdersService implements OnApplicationBootstrap {
     // An auto-merge folds these items into an EXISTING order whose own business
     // date stays authoritative, so a supplied orderDate would be silently dropped.
     // Refuse instead — the operator can re-submit as a separate order.
-    if (orderDate && !options.skipAutoMerge) {
+    if (orderDate && !options.skipAutoMerge && !options.separateOnce) {
       await assertNoBackdatedMerge(this, customerId, {
         explicit: dto.fulfillPath,
         ...fulfilCaller(user),
@@ -4019,19 +4021,13 @@ export class OrdersService implements OnApplicationBootstrap {
         const shippingFee = isStaffFeeEdit
           ? roundMoney(Math.max(0, dto.shippingFee!))
           : roundMoney(Number((order as any).shippingFee ?? 0));
-        const totals = orderTotalsOf(activeItems, { taxRate, isTaxExempt, shipping: shippingFee });
-        const { regularTax: tax, categoryTax, total } = totals;
-
-        // B451 gap 4: defense-in-depth — UpdateOrderItemsDto carries no
-        // discountAmount today (only create() does), so this path has no
-        // live negative-total vector yet, but the shared guard keeps it
-        // covered against a future field addition without a second review.
-        assertMoneyInvariantsOrThrow({
-          subtotal,
-          tax: tax + categoryTax,
+        const totals = editedOrderTotals(activeItems, order, {
+          taxRate,
+          isTaxExempt,
           shipping: shippingFee,
-          total,
+          subtotal,
         });
+        const { regularTax: tax, categoryTax, total } = totals;
 
         // Returns Inside Order Creation PR-1c (design.md §4/§6.4, M7): a DRIVER edit that
         // drops this order's gross below the credit already issued/held against its own
@@ -4082,8 +4078,7 @@ export class OrdersService implements OnApplicationBootstrap {
               orderId,
               // The exact total the order.update below writes — Σ of stored
               // computeLineSubtotal results + regular tax + category tax, cents-
-              // rounded. Note: mirrors the existing edit recompute, which
-              // (pre-existing) does not subtract Order.discountAmount.
+              // rounded, less the order's discount (W-762).
               total,
               creditCheckEnabled,
               // B577: do the issued invoices survive this edit? Only a delivered, partially invoiced
@@ -4630,6 +4625,7 @@ export class OrdersService implements OnApplicationBootstrap {
             // Money input to the total below — read here, under the Order FOR UPDATE lock, so a
             // shipping-fee edit that landed after the pre-tx snapshot is not billed away.
             shippingFee: true,
+            discountAmount: true, // W-762: the edit re-total carries it
             routeRun: { select: { status: true } },
             routeRunStop: { select: { status: true } },
           },
@@ -5036,7 +5032,12 @@ export class OrdersService implements OnApplicationBootstrap {
         const isTaxExempt = await customerIsTaxExempt(tx, order.customerId);
         await this.recomputeLineCategoryTaxes(tx, activeItems, isTaxExempt);
         const shippingFee = Number((live as any).shippingFee ?? 0);
-        const totals = orderTotalsOf(activeItems, { taxRate, isTaxExempt, shipping: shippingFee });
+        const totals = editedOrderTotals(activeItems, live, {
+          taxRate,
+          isTaxExempt,
+          shipping: shippingFee,
+          subtotal,
+        });
         const { regularTax: tax, categoryTax, total } = totals;
 
         // ── G6: stock + credit guards RE-RUN inside the tx (:2175-2187).
