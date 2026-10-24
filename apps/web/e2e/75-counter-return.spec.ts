@@ -122,6 +122,9 @@ test("W-711 F23: the optional line fields sit behind More; the pieces field stay
     "true",
   );
   await expect(dialog.getByLabel(/note \(optional\)/i)).toHaveValue("Dented can");
+  await page.screenshot({ path: "test-results/w783-returns-more-390.png" });
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.screenshot({ path: "test-results/w783-returns-more-1280.png" });
 });
 
 test("W-711 F22 + W-712 F25: the quote names the product and says where the money goes (390)", async ({
@@ -187,4 +190,7 @@ test("W-711 F22 + W-712 F25: the quote names the product and says where the mone
     dialog.getByRole("button", { name: "Take back items and refund $1.50" }),
   ).toBeVisible();
   await expect(dialog).not.toContainText(/credit note/i);
+  await page.screenshot({ path: "test-results/w783-returns-quote-390.png" });
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.screenshot({ path: "test-results/w783-returns-quote-1280.png" });
 });
