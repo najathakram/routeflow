@@ -447,6 +447,51 @@ describeDb("I-120 Complete at counter — real Postgres", () => {
       }
     }, 60_000);
 
+  // W-776 (SA-925): an order ALREADY handed over, then the day closes: the replay's tender is refused with the post-claim code
+  // (the hand-over stands), never the pre-check's "nothing changed".
+  it("S1r a handed-over order (balance due), the day then closes: the replay is COUNTER_SALE_DAY_CLOSED, still DELIVERED, invoice issued, no payment", async () => {
+    const { orderId, invoiceId } = await seed("CONFIRMED", "PICKUP", { total: 10 });
+    await as(() => engine().complete(orderId, {} as never, operator(), `key-${run}-s1r-a`));
+    const now = new Date();
+    await raw.counterDayClose.create({
+      data: {
+        tenantId,
+        registerKey: "main",
+        day: now,
+        zone: "UTC",
+        windowStart: new Date(now.getTime() - 3_600_000),
+        windowEnd: new Date(now.getTime() + 3_600_000),
+        closedAt: now,
+        expectedCash: 0,
+        countedCash: 0,
+        variance: 0,
+        denominations: {},
+        totals: {},
+      },
+    });
+    try {
+      const err: any = await as(() =>
+        engine().complete(
+          orderId,
+          { payment: { method: "CASH", amount: 10 } } as never,
+          operator(),
+          `key-${run}-s1r-b`,
+        ),
+      ).catch((e) => e);
+      expect(err?.getStatus?.()).toBe(409);
+      expect(err.getResponse()).toMatchObject({ code: "COUNTER_SALE_DAY_CLOSED" });
+      expect((await raw.order.findUniqueOrThrow({ where: { id: orderId } })).status).toBe(
+        "DELIVERED",
+      );
+      expect((await raw.invoice.findUniqueOrThrow({ where: { id: invoiceId } })).status).not.toBe(
+        "DRAFT",
+      );
+      expect(await raw.invoicePayment.count({ where: { invoiceId } })).toBe(0);
+    } finally {
+      await raw.counterDayClose.deleteMany({ where: { tenantId } });
+    }
+  }, 60_000);
+
   // Item 2: the flag is per COMPLETION (head: completionEmailedAt lived for the order's lifetime, so a re-completion after a
   // reopen sent nothing).
   it("S2 complete, reopen, re-complete: 2 emails in all (a different key on the same completion still sends none)", async () => {
