@@ -26,6 +26,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { overpaidByOf, statusFromPayments } from "./invoice-status";
 import { voidPaymentInTx } from "./payment-void-tx";
 import { TENANT_ZONE_SELECT, configuredZone, tenantTimeZone } from "../common/tenant-time-zone";
+import { givenPaidInstant, keptPaidInstantOf, paidInstantOf } from "../common/paid-instant";
 import { assertNoDuplicateLineIds } from "../common/duplicate-line-ids";
 import { StorageService } from "../storage/storage.service";
 import {
@@ -4430,11 +4431,12 @@ export class InvoicesService {
       const overCapacity = capacityRefusal({ total, existing, amount, status, overpay: "REFUSE" });
       if (overCapacity) throw new BadRequestException(overCapacity.message);
 
+      // SA-943: a date-only paidAt is the tenant-local day (today = now, the guard's DB clock), never 00:00Z.
       const paidAt = await counterPay.assertDatedOk(
         tx,
         till,
         inv.orderId,
-        dto,
+        { ...dto, paidAt: givenPaidInstant(dto.paidAt, tz) },
         paymentStatus,
         opts?.paymentGroupId,
       );
@@ -4460,7 +4462,9 @@ export class InvoicesService {
           notes: dto.notes,
           paidAt,
           // Never clamped: a post-dated check settles in the future.
-          settledAt: dto.settledAt ? new Date(dto.settledAt) : null,
+          settledAt: dto.settledAt
+            ? paidInstantOf(dto.settledAt, tz, new Date(), "settledAt")
+            : null,
           bankCharges: roundMoneyOrNull(dto.bankCharges),
           status: paymentStatus as any,
           paymentNumber,
@@ -4820,7 +4824,12 @@ export class InvoicesService {
 
       const payment = inv.payments.find((p) => p.id === paymentId);
       if (!payment) throw new NotFoundException("Payment not found");
-      await counterPay.assertEditDated(tx, till, inv.orderId, payment, dto); // per-row closed window, then till-CASH before the close
+      // SA-943 MUST 2: the edit form resends the date it shows; that date keeps the stored instant (no re-stamp to 00:00Z).
+      const keptPaidAt = dto.paidAt ? keptPaidInstantOf(dto.paidAt, payment.paidAt, tz) : null;
+      const movedPaidAt =
+        keptPaidAt && keptPaidAt.getTime() !== payment.paidAt.getTime() ? keptPaidAt : undefined;
+      const datedDto = { ...dto, paidAt: keptPaidAt ?? undefined };
+      await counterPay.assertEditDated(tx, till, inv.orderId, payment, datedDto); // per-row closed window, then till-CASH before the close
 
       // F03/R5/T-B81: read the STORED method, not just the incoming dto — the same
       // guard deletePayment (:4653) and voidPayment (:4941) already have. Neither
@@ -4877,10 +4886,12 @@ export class InvoicesService {
           method: dto.method,
           reference: dto.reference,
           notes: dto.notes,
-          ...(dto.paidAt && { paidAt: new Date(dto.paidAt) }),
+          ...(movedPaidAt && { paidAt: movedPaidAt }),
           // Key present = set or (null) clear; key absent = keep what is stored.
           ...(dto.settledAt !== undefined && {
-            settledAt: dto.settledAt ? new Date(dto.settledAt) : null,
+            settledAt: dto.settledAt
+              ? keptPaidInstantOf(dto.settledAt, payment.settledAt, tz, new Date(), "settledAt")
+              : null,
           }),
           ...(dto.bankCharges !== undefined && { bankCharges: roundMoneyOrNull(dto.bankCharges) }),
           status: newPaymentStatus,
@@ -5134,9 +5145,11 @@ export class InvoicesService {
   private async writeStandalonePayment(dto: StandalonePaymentDto, opts?: StandalonePaymentOpts) {
     const tz = await tenantTimeZone(this.prisma); // SA-495a: the tenant's due day, once per call
     const paymentGroupId = randomUUID();
-    const paidAt = dto.paidAt ? new Date(dto.paidAt) : new Date();
+    const paidAt = paidInstantOf(dto.paidAt, tz); // SA-943: tenant-local day, today = now
     // One bank date for the whole allocation group — the money landed once.
-    const settledAt = dto.settledAt ? new Date(dto.settledAt) : null;
+    const settledAt = dto.settledAt
+      ? paidInstantOf(dto.settledAt, tz, new Date(), "settledAt")
+      : null;
     const status = dto.status ?? "PAID";
     // B769 / SA-112: rounded totals, and Σ allocations ≤ payment — refused before any write.
     const { excess } = standaloneAllocationTotals(dto);
@@ -5368,7 +5381,9 @@ export class InvoicesService {
       // historical payment into the current period and restate a closed one. Absent
       // an explicit date the column stays as it is (NULL rows keep falling back to
       // paidAt); an explicit date is authoritative and drives both fields.
-      const explicitSettledAt = dto.settledAt ? new Date(dto.settledAt) : null;
+      const explicitSettledAt = dto.settledAt
+        ? paidInstantOf(dto.settledAt, tz, new Date(), "settledAt") // SA-943: tenant-local day
+        : null;
 
       // SA ruling C: RECORDED -> DEPOSITED / CLEARED takes no close lock (accepted): it changes the CHECK grouping of a fresh
       // fold, never cash and never a stored close.

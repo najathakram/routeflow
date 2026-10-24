@@ -75,6 +75,7 @@ import { ScanInvoiceModal } from "@/components/ScanInvoiceModal";
 import { SupplierSelect } from "@/components/SupplierSelect";
 import Link from "next/link";
 import { fmt, fmtCalendarDate, fmtDate, todayIso } from "@/lib/formatting";
+import { tenantTodayIso, useTenantTimeZone } from "@/lib/tenant-timezone";
 import { apiClient } from "@/lib/api-client";
 import { SELECTABLE_PAYMENT_METHODS, PAYMENT_METHOD_LABELS } from "@/lib/payment-methods";
 import { roundMoney } from "@routeflow/pricing";
@@ -878,7 +879,8 @@ function InventoryPurchasesTab() {
   // every selected id, including ones whose row is no longer on the visible page.
   const [selectedBills, setSelectedBills] = React.useState<Map<string, number>>(new Map());
   const [markPaidMethod, setMarkPaidMethod] = React.useState("ACH");
-  const [markPaidDate, setMarkPaidDate] = React.useState(todayIso());
+  const zone = useTenantTimeZone(); // SA-943: the paid date is the business's today, not the UTC day
+  const [markPaidDate, setMarkPaidDate] = React.useState(() => tenantTodayIso(zone));
   const bulkDelete = useBulkDeleteVendorBills();
   const qc = useQueryClient();
   const bulkMarkPaid = useMutation<

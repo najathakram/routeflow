@@ -51,3 +51,28 @@ export function useShippedWeek(enabled = true) {
     retry,
   };
 }
+
+/**
+ * SA-943 (W-765): the default for a payment / settled / received date box - the BUSINESS's today in its zone, so the
+ * API (which reads a date-only tenant-local today as "now") never sees yesterday's UTC day or tomorrow's. While the zone
+ * is still loading it falls back to the browser's LOCAL day, never the UTC day (`todayIso()` is `toISOString()`: after
+ * 19:00 CDT that is already tomorrow). Pinned by `payment-date-defaults.inventory.test.ts`.
+ */
+export function tenantTodayIso(zone: string | undefined, now: Date = new Date()): string {
+  return zone ? calendarDayInZone(zone, now) : localDay(now);
+}
+
+/**
+ * SA-943 MUST 2: a stored payment instant as the date its edit box shows - the tenant-local day, the same day the API's
+ * "kept" rule compares against, so resending it unchanged keeps the stored instant. "" for no instant.
+ */
+export function tenantDateOf(iso: string | null | undefined, zone: string | undefined): string {
+  if (!iso) return "";
+  const at = new Date(iso);
+  return zone ? calendarDayInZone(zone, at) : localDay(at);
+}
+
+function localDay(d: Date): string {
+  const pad = (n: number, len = 2) => String(n).padStart(len, "0");
+  return `${pad(d.getFullYear(), 4)}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}

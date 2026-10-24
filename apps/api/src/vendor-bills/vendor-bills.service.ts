@@ -54,6 +54,8 @@ import { API_ERROR_CODES } from "../common/api-error-codes";
 import { AUDIT_ACTIONS } from "../audit/audit-actions.constant";
 import { assertSellableLines } from "../products/sellable-lines";
 import { tenantSafeParentView } from "../products/product-parent";
+import { tenantTimeZone } from "../common/tenant-time-zone";
+import { paidInstantOf } from "../common/paid-instant";
 
 /** What clients render when a bill is blocked as a duplicate. */
 export interface VendorBillDuplicatePayload {
@@ -3242,7 +3244,7 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
     }
 
     const paymentGroupId = randomUUID();
-    const paidAt = dto.paidAt ? new Date(dto.paidAt) : new Date();
+    const paidAt = paidInstantOf(dto.paidAt, await tenantTimeZone(this.prisma)); // SA-943: tenant-local day, today = now
 
     return this.prisma.tenantTransaction(async (tx) => {
       // B285: lock EVERY allocated bill (sorted) before reading any payments, so a recordPayment /
