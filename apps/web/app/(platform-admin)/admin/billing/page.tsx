@@ -300,7 +300,7 @@ export default function BillingPage() {
               <option value="all">All statuses</option>
               {statusOptions.map((s) => (
                 <option key={s} value={s}>
-                  {s}
+                  {statusLabel(s)}
                 </option>
               ))}
             </select>
