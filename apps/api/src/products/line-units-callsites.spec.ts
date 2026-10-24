@@ -110,6 +110,9 @@ const BASELINE: Record<string, number> = {
 
 // Files that legitimately read a product's pack and are not line writers.
 const NON_WRITERS = new Set([
+  // B562 D2 (row 635, SA-902 MUST 4): reads `p.unitsPerBox` only as order-stock's `toPieces` live-pack fallback for a
+  // LEGACY line with no own snapshot (and marks the product APPROX); it writes no line.
+  "inventory/b562-repair/d2-repair.ts",
   "products/products.service.ts",
   "products/product-units.service.ts",
   "products/line-units.ts",

@@ -37,6 +37,7 @@ import { poLineFromInput } from "./po-line-input";
 import { bareVariantLabel } from "../products/product-variant-name";
 import { effectiveCostingMethod } from "./costing-method-policy";
 import { costDecimal, nextAverageCost, planLotConsumption, reverseAverageCost } from "./costing";
+import { REPLAY_CORRECTION_PREFIX, foldLedger, isReplayCorrection } from "./fold-ledger";
 import { recordSaleMovement, resolveSaleCost } from "./sale-movement";
 import { poReversalNote, poReversalOf } from "./bill-revert";
 import { poGoodsUsedConflict, productsUsedSinceReceipt } from "./po-use-since-receipt";
@@ -99,21 +100,8 @@ import { writeFamilyAssigned } from "../products/product-parent";
  */
 const COUNT_ADD_TX_OPTIONS = STOCK_TX_OPTIONS;
 
-/** B562 PR-3 (SA-136 §4): the reference prefix of a replay's own COST_BASIS correction. */
-export const REPLAY_CORRECTION_PREFIX = "RECOMPUTE:";
-/**
- * A replay correction is the fold's OUTPUT, never an input (see replayProduct). SA-372: all three
- * marks are required — a COST_BASIS row, quantity 0, and the `RECOMPUTE:` reference — so a manual
- * or `B562:REPAIR:` cost-basis row (or any other movement) can never be skipped as one.
- */
-export const isReplayCorrection = (m: {
-  type: string;
-  quantity: Prisma.Decimal | number | string;
-  reference: string | null | undefined;
-}) =>
-  m.type === MovementType.COST_BASIS &&
-  new Prisma.Decimal(m.quantity).isZero() &&
-  (m.reference?.startsWith(REPLAY_CORRECTION_PREFIX) ?? false);
+// B562 PR-3: the fold and its correction marks live in fold-ledger.ts (row 635, SA-902 MUST 3); re-exported for callers.
+export { REPLAY_CORRECTION_PREFIX, isReplayCorrection } from "./fold-ledger";
 // Row 563: the date gate lives in stock-write-date.ts; re-exported for this module's existing spec.
 export { effectiveDateOf } from "./stock-write-date";
 /** Averages closer than this are the same cost (costDecimal keeps 4dp). */
@@ -3720,58 +3708,11 @@ export class InventoryService {
     // weighted average here would fabricate a bogus correction, so mirror that:
     // carry the existing average forward untouched and never correct it.
     const isStandard = product.costingMethod === CostingMethod.STANDARD;
-
-    let stock = new Prisma.Decimal(0);
-    let avg: Prisma.Decimal | null = isStandard
-      ? product.averageCost != null
-        ? costDecimal(product.averageCost)
-        : null
-      : null;
-    let hasCostfulHistory = isStandard && avg != null;
-
-    for (const m of movements) {
-      const qty = new Prisma.Decimal(m.quantity);
-      const unitCost = m.unitCost != null ? new Prisma.Decimal(m.unitCost) : null;
-
-      if (!isStandard) {
-        switch (m.type) {
-          case MovementType.COST_BASIS:
-            if (unitCost != null && !isReplayCorrection(m)) {
-              avg = costDecimal(unitCost);
-              hasCostfulHistory = true;
-            }
-            break;
-          case MovementType.PURCHASE:
-            if (unitCost != null) {
-              if (qty.lt(0)) {
-                // B846: a bill-revert row is the exact inverse of its receipt — reverse the average
-                // (kept when the reversal empties stock), never feed a negative qty to nextAverageCost
-                // (stock + qty = 0 divides by zero).
-                if (avg != null) {
-                  avg = reverseAverageCost(stock, avg, qty.neg(), unitCost) ?? avg;
-                  hasCostfulHistory = true;
-                }
-              } else {
-                avg = nextAverageCost(stock, avg, qty, unitCost);
-                hasCostfulHistory = true;
-              }
-            }
-            break;
-          case MovementType.ADJUSTMENT:
-            // Costed adjustments are bill-void compensations: reverse the average
-            if (unitCost != null && avg != null) {
-              if (qty.gt(0)) avg = nextAverageCost(stock, avg, qty, unitCost);
-              else if (qty.lt(0)) avg = reverseAverageCost(stock, avg, qty.neg(), unitCost) ?? avg;
-            }
-            break;
-          default:
-            // SALE / RETURN / WRITE_OFF: quantity only, average carries forward
-            break;
-        }
-      }
-
-      stock = stock.add(qty);
-    }
+    // Row 635 (SA-902 MUST 3): the ONE fold, shared with the B562 D2 repair.
+    const { stock, avg, hasCostfulHistory } = foldLedger(movements, {
+      isStandard,
+      averageCost: product.averageCost,
+    });
 
     const stockDrift = new Prisma.Decimal(product.currentStock).sub(stock);
     const gapDetected = !stockDrift.isZero();
