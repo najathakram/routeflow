@@ -744,7 +744,7 @@ const warning409 = {
               id: "r1",
               states: ["CA"],
               legal: true,
-              reasonText: "This product is banned in CA by law.",
+              reasonText: "Restriction text for the test.",
             },
           ],
         },
@@ -762,7 +762,7 @@ describe("PickupCompleteDialog — W-775 restriction warning", () => {
     mount();
     await screen.findByText("Paid — nothing to collect");
     confirm();
-    expect(await screen.findByText("This product is banned in CA by law.")).toBeInTheDocument();
+    expect(await screen.findByText("Restriction text for the test.")).toBeInTheDocument();
     // not the generic refusal line, and the hand-over is not held as an unknown outcome
     expect(screen.queryByRole("alert")).toBeNull();
     expect(window.sessionStorage.length).toBe(0);
@@ -785,10 +785,10 @@ describe("PickupCompleteDialog — W-775 restriction warning", () => {
     mount();
     await screen.findByText("Paid — nothing to collect");
     confirm();
-    await screen.findByText("This product is banned in CA by law.");
+    await screen.findByText("Restriction text for the test.");
     await user.click(screen.getByRole("button", { name: "Go back" }));
     expect(post).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole("alert")).toBeNull();
-    expect(screen.queryByText("This product is banned in CA by law.")).toBeNull();
+    expect(screen.queryByText("Restriction text for the test.")).toBeNull();
   });
 });
