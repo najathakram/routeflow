@@ -46,8 +46,6 @@ import {
   copyCategoryTaxSnapshot,
   roundMoney,
   normalizeBoxesPieces,
-  remainingCapacity,
-  capacityRefusal,
   OVERPAID_EPSILON,
   isPaidAtSale,
 } from "@routeflow/pricing";
@@ -5172,8 +5170,11 @@ export class InvoicesService {
     const { tenantShort, start } = await this.nextPaymentNumber(dto.allocations.length);
 
     // #2472 (1): a multi-invoice payment can deadlock (40P01) with completeWithPayment — re-run it.
-    return retryOnTxConflict(`standalone payment group=${paymentGroupId}`, () =>
+    // W-769: displaced rows are collected per attempt (a retried tx starts empty) and handed out once, after commit
+    let displacedRun: Array<[string, string[]]> = [];
+    const committed = await retryOnTxConflict(`standalone payment group=${paymentGroupId}`, () =>
       this.prisma.tenantTransaction(async (tx) => {
+        displacedRun = [];
         await opts?.claim?.(tx); // SA-824: the key claim is the FIRST statement (throws, unwritten, when held)
         // B311: the buyer/online path's anti-overpay guard reads the invoice's balance and
         // THEN checks it — with no row lock between the two, a concurrent office payment on the
@@ -5254,7 +5255,7 @@ export class InvoicesService {
           if (status === "PAID") {
             const at = { id: alloc.invoiceId, tenantId: invoice.tenantId, total: invoice.total };
             const displaced = await flagUnconfirmedOverReserved(tx, at, payment.id);
-            if (displaced.length > 0) opts?.onDisplaced?.(alloc.invoiceId, displaced);
+            if (displaced.length > 0) displacedRun.push([alloc.invoiceId, displaced]);
             // F03/R1: CONFIRMED (PAID) rows only feed recomputeStatus.
             const allPayments = await tx.invoicePayment.findMany({
               where: { invoiceId: alloc.invoiceId, ...CONFIRMED_PAYMENT },
@@ -5318,6 +5319,8 @@ export class InvoicesService {
         return result;
       }),
     );
+    for (const [invoiceId, ids] of displacedRun) opts?.onDisplaced?.(invoiceId, ids);
+    return committed;
   }
 
   // ─── Void a single payment ────────────────────────────────────────────────

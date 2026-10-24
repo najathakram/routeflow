@@ -91,6 +91,12 @@ describe("unconfirmedNoLongerFitting: the ONE no-longer-fits predicate (W-769)",
     ).toEqual(["t3"]);
   });
 
+  it("P6c three DRAFT 0.10 on a 0.30 total all fit (the running room is rounded, no float residue)", () => {
+    expect(
+      unconfirmedNoLongerFitting(0.3, [draft(0.1, "a", 1), draft(0.1, "b", 2), draft(0.1, "c", 3)]),
+    ).toEqual([]);
+  });
+
   it("P7 confirmed money covers the total: every unconfirmed row, newest first; a VOID row never", () => {
     expect(
       unconfirmedNoLongerFitting(100, [

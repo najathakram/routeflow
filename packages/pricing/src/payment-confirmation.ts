@@ -406,7 +406,7 @@ export function unconfirmedNoLongerFitting(
   const out: string[] = [];
   for (const r of unconfirmed) {
     const amount = Number(r.amount);
-    if (out.length === 0 && amount <= room + CAPACITY_EPSILON) room -= amount;
+    if (out.length === 0 && amount <= room + CAPACITY_EPSILON) room = roundMoney(room - amount);
     else out.push(r.id);
   }
   return out.reverse();

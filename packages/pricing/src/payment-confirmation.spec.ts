@@ -290,6 +290,10 @@ describe("remainingCapacity", () => {
 });
 
 describe("W-769 confirmedRemaining rounding + editPaymentCap", () => {
+  it("rounds a single subtraction: 0.3 less a confirmed 0.1 is exactly 0.2 (raw float is 0.19999999999999998)", () => {
+    expect(confirmedRemaining(0.3, [{ amount: 0.1, status: "PAID" }])).toBe(0.2);
+  });
+
   it("rounds the float residue: 0.3 total less 0.1 + 0.2 confirmed is exactly 0", () => {
     expect(
       confirmedRemaining(0.3, [
