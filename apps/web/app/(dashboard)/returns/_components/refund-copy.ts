@@ -57,8 +57,6 @@ export const REFUND_COPY = {
   /** The same refusal for a walk-in, who can't hold store credit: only the later date is left. */
   dayClosedWalkIn:
     "Return saved. This day is closed, so the refund can't be paid out now. Record the refund on a later date.",
-  /** W21b: the quote-step note when Refund is the chosen resolution (store credit keeps the credit-note line). */
-  quoteRefundNote: "This will be refunded to the customer, not added to their balance.",
   /** SA-727b: a saved REFUND-intent return with no refund yet (shown on the receipt; no amount paid). */
   pendingReceipt: "Return — refund pending, nothing paid out",
 } as const;
@@ -102,6 +100,22 @@ export function handBackLine(tender: InlineRefundTender, amount: string): string
   return tender === "CARD"
     ? `Give ${amount} back on the customer's card at the terminal.`
     : `Hand ${amount} back to the customer.`;
+}
+
+/** W-712: what the money does, in the cashier's words (the quote-step note under the Total). */
+export function creditOutcomeLine(amount: string, customerName?: string): string {
+  const who = customerName ? `${customerName}'s` : "the customer's";
+  return `${amount} goes on ${who} account as credit for the next order.`;
+}
+export function refundOutcomeLine(amount: string): string {
+  return `${amount} goes back to the customer, not onto their account.`;
+}
+/** W-712: the confirm button names the action and the amount. */
+export function takeBackCreditLabel(amount: string): string {
+  return `Take back items and add ${amount} credit`;
+}
+export function takeBackRefundLabel(amount: string): string {
+  return `Take back items and refund ${amount}`;
 }
 
 export const TENDER_OPTIONS: { value: InlineRefundTender; label: string }[] = [

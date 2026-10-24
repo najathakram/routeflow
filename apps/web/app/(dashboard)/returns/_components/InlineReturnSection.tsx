@@ -53,6 +53,7 @@ import {
   alreadyReturnedProductIds,
 } from "@routeflow/returns";
 import { unitWords } from "@routeflow/pricing";
+import { creditOutcomeLine } from "./refund-copy";
 
 // U-3a: returns carry no per-product label yet, so this prints the default words.
 const UW = unitWords();
@@ -452,48 +453,59 @@ export function InlineReturnSection({
                             onChange={(e) => updateLine(line.lineKey, { pieces: e.target.value })}
                           />
                         )}
-                        <Select
-                          label="Reason (optional)"
-                          value={line.reason}
-                          onChange={(e) =>
-                            updateLine(line.lineKey, {
-                              reason: e.target.value as ReturnReason | "",
-                            })
-                          }
-                          options={[{ value: "", label: "Use default" }, ...REASON_OPTIONS]}
-                        />
-                        <Input
-                          label="Note (optional)"
-                          value={line.note}
-                          onChange={(e) => updateLine(line.lineKey, { note: e.target.value })}
-                        />
                       </div>
-                      {canOverrideCredit && (
-                        <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-[10rem_1fr]">
-                          <Input
-                            label={
-                              boxed
-                                ? `Credit price per ${UW.pack.lower} (optional)`
-                                : "Credit price (optional)"
-                            }
-                            type="text"
-                            inputMode="decimal"
-                            placeholder="Quoted price"
-                            value={line.creditUnitPrice ?? ""}
+                      <LineExtras
+                        hasValue={
+                          !!line.reason ||
+                          !!line.note ||
+                          !!line.creditUnitPrice ||
+                          !!line.overrideReason
+                        }
+                      >
+                        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                          <Select
+                            label="Reason (optional)"
+                            value={line.reason}
                             onChange={(e) =>
-                              updateLine(line.lineKey, { creditUnitPrice: e.target.value })
+                              updateLine(line.lineKey, {
+                                reason: e.target.value as ReturnReason | "",
+                              })
                             }
+                            options={[{ value: "", label: "Use default" }, ...REASON_OPTIONS]}
                           />
                           <Input
-                            label="Why the lower price"
-                            maxLength={CREDIT_OVERRIDE_REASON_MAX}
-                            value={line.overrideReason ?? ""}
-                            onChange={(e) =>
-                              updateLine(line.lineKey, { overrideReason: e.target.value })
-                            }
+                            label="Note (optional)"
+                            value={line.note}
+                            onChange={(e) => updateLine(line.lineKey, { note: e.target.value })}
                           />
                         </div>
-                      )}
+                        {canOverrideCredit && (
+                          <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-[10rem_1fr]">
+                            <Input
+                              label={
+                                boxed
+                                  ? `Credit price per ${UW.pack.lower} (optional)`
+                                  : "Credit price (optional)"
+                              }
+                              type="text"
+                              inputMode="decimal"
+                              placeholder="Quoted price"
+                              value={line.creditUnitPrice ?? ""}
+                              onChange={(e) =>
+                                updateLine(line.lineKey, { creditUnitPrice: e.target.value })
+                              }
+                            />
+                            <Input
+                              label="Why the lower price"
+                              maxLength={CREDIT_OVERRIDE_REASON_MAX}
+                              value={line.overrideReason ?? ""}
+                              onChange={(e) =>
+                                updateLine(line.lineKey, { overrideReason: e.target.value })
+                              }
+                            />
+                          </div>
+                        )}
+                      </LineExtras>
                     </div>
                   </React.Fragment>
                 );
@@ -610,6 +622,9 @@ export function InlineReturnSection({
                 <CoveredChunkRow
                   key={`${chunk.sourceOrderId}-${chunk.sourceInvoiceItemId}-${i}`}
                   chunk={chunk}
+                  productName={
+                    lines.find((l) => l.productId === chunk.productId)?.productName ?? "Item"
+                  }
                   boxed={boxedIds.has(chunk.productId)}
                 />
               ))}
@@ -735,7 +750,7 @@ export function InlineReturnSection({
               <span>{money(quote.total)}</span>
             </div>
             <p className="mt-2 text-xs text-navy/70">
-              {quoteNote ?? <>This will be issued as credit note on the customer&apos;s balance.</>}
+              {quoteNote ?? creditOutcomeLine(money(quote.total))}
             </p>
           </div>
 
@@ -762,16 +777,53 @@ export function InlineReturnSection({
   );
 }
 
-function CoveredChunkRow({ chunk, boxed }: { chunk: InlineReturnQuoteChunk; boxed: boolean }) {
+/** F23: a return line's optional extras (Reason, Note, staff Credit price) behind "More". It opens
+ *  itself while any of them holds a value, so a typed note or price is never out of sight. */
+function LineExtras({ hasValue, children }: { hasValue: boolean; children: React.ReactNode }) {
+  const [userOpen, setUserOpen] = React.useState(false);
+  const open = userOpen || hasValue;
+  const panelId = React.useId();
+  return (
+    <div className="mt-2">
+      <button
+        type="button"
+        className="min-h-11 text-sm font-medium text-brand-600 hover:underline"
+        aria-expanded={open}
+        aria-controls={panelId}
+        onClick={() => setUserOpen((v) => !v)}
+      >
+        More
+      </button>
+      {open && (
+        <div id={panelId} className="space-y-2">
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CoveredChunkRow({
+  chunk,
+  boxed,
+  productName,
+}: {
+  chunk: InlineReturnQuoteChunk;
+  boxed: boolean;
+  productName: string;
+}) {
   const { data: sourceOrder } = useOrder(chunk.sourceOrderId ?? "");
   return (
     <div className="rounded-lg border border-surface-border p-3 text-sm">
-      <div className="flex justify-between">
-        <span className="font-medium text-navy">
-          {sourceOrder ? `From order #${sourceOrder.orderNumber}` : "From an earlier order"}
-          {sourceOrder?.orderDate && ` · ${new Date(sourceOrder.orderDate).toLocaleDateString()}`}
-        </span>
-        <span className="text-navy/70">
+      <div className="flex justify-between gap-2">
+        <div className="min-w-0">
+          <p className="font-medium text-navy">{productName}</p>
+          <p className="text-xs text-navy/70">
+            {sourceOrder ? `From order #${sourceOrder.orderNumber}` : "From an earlier order"}
+            {sourceOrder?.orderDate && ` · ${new Date(sourceOrder.orderDate).toLocaleDateString()}`}
+          </p>
+        </div>
+        <span className="shrink-0 text-navy/70">
           {chunk.pieces} {UW.base.short.one}
         </span>
       </div>
