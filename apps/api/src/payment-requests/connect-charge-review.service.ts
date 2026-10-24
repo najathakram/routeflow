@@ -153,13 +153,6 @@ export class ConnectChargeReviewService {
   }
 
   /**
-   * SA-837b: a Stripe-captured payment repeated an existing payment's customer, method, reference and amount. It was
-   * RECORDED (the money moved; refusing would strand a real charge) and the audit row inside its transaction is the
-   * durable flag. This adds the same `[REVIEW]` breadcrumb on the invoice's internal notes the refund / dispute flags use
-   * (no schema field exists for it) and alerts the operators once, so staff can refund the duplicate in Stripe.
-   * Best-effort and idempotent per payment intent + invoice; the caller never fails a webhook over it.
-   */
-  /**
    * SA-862: a captured card payment filled an invoice that unconfirmed (DRAFT/PENDING) rows were holding room on.
    * Best-effort and idempotent per payment intent + invoice; the audit row in the payment tx is the durable record.
    */
@@ -171,28 +164,38 @@ export class ConnectChargeReviewService {
   }): Promise<void> {
     const { tenantId, paymentIntentId, invoiceId, excess } = input;
     if (!tenantId) return;
-    const inv = await this.prisma.forTenant().invoice.findFirst({
-      where: { id: invoiceId },
-      select: { id: true, invoiceNumber: true, internalNotes: true },
-    });
-    if (!inv || inv.internalNotes?.includes(`${paymentIntentId} over-reserved`)) return;
     const line =
-      `[REVIEW] The card payment ${paymentIntentId} over-reserved: it paid this invoice in full while an unconfirmed ` +
-      `payment (${excess.toFixed(2)}) was still pending. The card payment is recorded because the money moved. ` +
-      `Void the unconfirmed payment, or move it to the customer's credit.`;
-    const { count } = await this.prisma.forTenant().invoice.updateMany({
-      where: { id: inv.id, internalNotes: inv.internalNotes },
-      data: {
-        internalNotes: inv.internalNotes
-          ? `${inv.internalNotes}
+      `[REVIEW] The card payment ${paymentIntentId} over-reserved this invoice: it was recorded while unconfirmed ` +
+      `payment(s) still held room, and together they exceed the invoice total by ${excess.toFixed(2)}. ` +
+      `The card payment is recorded because the money moved. Void the unconfirmed payment, or move it to the customer's credit.`;
+    // A lost compare-and-set (a concurrent note write) re-reads once; a second loss is logged loudly but the operator
+    // alert below still goes out, so the flag is never silently dropped (the payment-tx audit row is the record).
+    let invoiceNumber = "";
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const inv = await this.prisma.forTenant().invoice.findFirst({
+        where: { id: invoiceId },
+        select: { id: true, invoiceNumber: true, internalNotes: true },
+      });
+      if (!inv || inv.internalNotes?.includes(`${paymentIntentId} over-reserved`)) return;
+      invoiceNumber = inv.invoiceNumber;
+      const { count } = await this.prisma.forTenant().invoice.updateMany({
+        where: { id: inv.id, internalNotes: inv.internalNotes },
+        data: {
+          internalNotes: inv.internalNotes
+            ? `${inv.internalNotes}
 ${line}`
-          : line,
-      },
-    });
-    if (count !== 1) throw new Error(`Invoice ${inv.invoiceNumber} changed while flagging — retry`);
+            : line,
+        },
+      });
+      if (count === 1) break;
+      if (attempt === 1)
+        this.logger.error(
+          `over-reserved note for ${paymentIntentId} on ${inv.invoiceNumber} lost its compare-and-set twice; alerting without the note`,
+        );
+    }
     const title = "Card payment arrived with an unconfirmed payment pending";
     const body =
-      `Invoice ${inv.invoiceNumber} was paid by card while an unconfirmed payment still held room on it. ` +
+      `A card payment was recorded on invoice ${invoiceNumber} while an unconfirmed payment still held room on it. ` +
       `Void the unconfirmed payment, or move it to the customer's credit.`;
     try {
       const operators = await this.prisma.user.findMany({
@@ -207,6 +210,13 @@ ${line}`
     }
   }
 
+  /**
+   * SA-837b: a Stripe-captured payment repeated an existing payment's customer, method, reference and amount. It was
+   * RECORDED (the money moved; refusing would strand a real charge) and the audit row inside its transaction is the
+   * durable flag. This adds the same `[REVIEW]` breadcrumb on the invoice's internal notes the refund / dispute flags use
+   * (no schema field exists for it) and alerts the operators once, so staff can refund the duplicate in Stripe.
+   * Best-effort and idempotent per payment intent + invoice; the caller never fails a webhook over it.
+   */
   async flagDuplicateSuspect(input: {
     tenantId: string | null;
     paymentIntentId: string;

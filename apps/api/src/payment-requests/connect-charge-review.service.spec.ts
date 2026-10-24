@@ -245,6 +245,32 @@ describe("ConnectChargeReviewService", () => {
       );
     });
 
+    it("words the note by the overlap, not as 'paid in full' (a card can cover only part)", async () => {
+      await service.flagOverReserved({ ...over, excess: 200 });
+      const note = (prisma as any).invoice.updateMany.mock.calls[0][0].data.internalNotes as string;
+      expect(note).not.toMatch(/in full/i);
+      expect(note).toContain("exceed the invoice total by 200.00");
+    });
+
+    it("a lost compare-and-set re-reads and retries once; the note lands", async () => {
+      (prisma as any).invoice.updateMany = jest
+        .fn()
+        .mockResolvedValueOnce({ count: 0 })
+        .mockResolvedValueOnce({ count: 1 });
+      await service.flagOverReserved(over);
+      expect((prisma as any).invoice.findFirst).toHaveBeenCalledTimes(2);
+      expect((prisma as any).invoice.updateMany).toHaveBeenCalledTimes(2);
+      expect(notifications.sendToUser).toHaveBeenCalled();
+    });
+
+    it("a second lost compare-and-set is logged loudly and the operators are STILL alerted", async () => {
+      (prisma as any).invoice.updateMany = jest.fn().mockResolvedValue({ count: 0 });
+      const err = jest.spyOn((service as any).logger, "error").mockImplementation(() => undefined);
+      await service.flagOverReserved(over);
+      expect(err).toHaveBeenCalledWith(expect.stringContaining("lost its compare-and-set twice"));
+      expect(notifications.sendToUser).toHaveBeenCalled();
+    });
+
     it("is idempotent per payment intent: a breadcrumb that already names it adds nothing", async () => {
       (prisma as any).invoice.findFirst = jest.fn().mockResolvedValue({
         id: "inv-1",

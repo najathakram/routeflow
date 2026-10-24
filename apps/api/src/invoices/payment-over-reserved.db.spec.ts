@@ -147,7 +147,7 @@ describeDb("W-706 captured payment over-reserves an invoice — real Postgres", 
   }
 
   /** A tenant with one $1000 SENT invoice, optionally carrying one unconfirmed row for the full amount. */
-  async function seed(label: string, unconfirmed?: "DRAFT" | "PENDING") {
+  async function seed(label: string, unconfirmed?: "DRAFT" | "PENDING", heldAmount = 1000) {
     const slug = freshTenantSlug(label);
     const tenant = await prisma.tenant.create({ data: { slug, name: `W706 ${slug}` } });
     createdTenantIds.push(tenant.id);
@@ -177,7 +177,7 @@ describeDb("W-706 captured payment over-reserves an invoice — real Postgres", 
           data: {
             tenantId: tenant.id,
             invoiceId: invoice.id,
-            amount: 1000,
+            amount: heldAmount,
             method: "CHECK",
             status: unconfirmed as any,
             paidAt: new Date("2026-10-01"),
@@ -193,15 +193,19 @@ describeDb("W-706 captured payment over-reserves an invoice — real Postgres", 
       suspects: [] as any[],
       overReserved: [] as any[],
     });
-    const settle = (cap: ReturnType<typeof capture>, extra: Record<string, unknown> = {}) =>
+    const settle = (
+      cap: ReturnType<typeof capture>,
+      extra: Record<string, unknown> = {},
+      cardAmount = 1000,
+    ) =>
       asTenant(() =>
         invoices.recordStandalonePayment(
           {
             customerId: customer.id,
-            totalAmount: 1000,
+            totalAmount: cardAmount,
             method: "CREDIT_CARD",
             reference: cap.sourceRef,
-            allocations: [{ invoiceId: invoice.id, amount: 1000 }],
+            allocations: [{ invoiceId: invoice.id, amount: cardAmount }],
           } as any,
           { capturedExternally: cap, ...extra } as any,
         ),
@@ -210,7 +214,42 @@ describeDb("W-706 captured payment over-reserves an invoice — real Postgres", 
       prisma.auditLog.findMany({
         where: { tenantId: tenant.id, action: "payment.unconfirmed-over-reserved" },
       });
-    return { tenant, customer, invoice, row, asTenant, capture, settle, overReservedAudits };
+    const addInvoiceWithDraft = async () => {
+      const inv2 = await prisma.invoice.create({
+        data: {
+          tenantId: tenant.id,
+          customerId: customer.id,
+          invoiceNumber: `INV-W706-${randomUUID().slice(0, 8)}`,
+          status: "SENT",
+          subtotal: 1000,
+          total: 1000,
+        },
+      });
+      const draft2 = await prisma.invoicePayment.create({
+        data: {
+          tenantId: tenant.id,
+          invoiceId: inv2.id,
+          amount: 1000,
+          method: "CHECK",
+          status: "DRAFT",
+          paidAt: new Date("2026-10-01"),
+          paymentNumber: `PAY-W706-${randomUUID().slice(0, 8)}`,
+          reference: "CHK-W706-2",
+        } as any,
+      });
+      return { inv2, draft2 };
+    };
+    return {
+      tenant,
+      customer,
+      invoice,
+      row,
+      asTenant,
+      capture,
+      settle,
+      overReservedAudits,
+      addInvoiceWithDraft,
+    };
   }
 
   it("R1 a card settle on an invoice with a full-amount DRAFT: PAID, one audit row naming the DRAFT, one overReserved entry", async () => {
@@ -286,5 +325,74 @@ describeDb("W-706 captured payment over-reserves an invoice — real Postgres", 
     expect(audits).toHaveLength(1);
     expect(audits[0].meta).toMatchObject({ unconfirmedPaymentIds: [s.row!.id] });
     expect(cap.overReserved).toHaveLength(1);
+  }, 60_000);
+
+  it("R6 a card that covers only PART of the total: the excess is the overlap (200), the invoice stays unpaid, the DRAFT is named", async () => {
+    const s = await seed("r6", "DRAFT", 600);
+    const cap = s.capture();
+    await s.settle(cap, {}, 600);
+    const inv = await prisma.invoice.findUnique({ where: { id: s.invoice.id } });
+    expect(inv?.status).not.toBe("PAID");
+    const audits = await s.overReservedAudits();
+    expect(audits).toHaveLength(1);
+    expect(audits[0].meta).toMatchObject({ unconfirmedPaymentIds: [s.row!.id], excess: 200 });
+    expect(cap.overReserved).toEqual([expect.objectContaining({ excess: 200 })]);
+  }, 60_000);
+
+  it("R7 one card payment allocated across SEVERAL invoices: one audit row and one entry per over-reserved invoice", async () => {
+    const s = await seed("r7", "DRAFT");
+    const { inv2, draft2 } = await s.addInvoiceWithDraft();
+    const cap = s.capture();
+    await s.asTenant(() =>
+      invoices.recordStandalonePayment(
+        {
+          customerId: s.customer.id,
+          totalAmount: 2000,
+          method: "CREDIT_CARD",
+          reference: cap.sourceRef,
+          allocations: [
+            { invoiceId: s.invoice.id, amount: 1000 },
+            { invoiceId: inv2.id, amount: 1000 },
+          ],
+        } as any,
+        { capturedExternally: cap } as any,
+      ),
+    );
+    const audits = await s.overReservedAudits();
+    expect(audits).toHaveLength(2);
+    expect(cap.overReserved.map((o: any) => o.invoiceId).sort()).toEqual(
+      [s.invoice.id, inv2.id].sort(),
+    );
+    expect(audits.flatMap((a: any) => a.meta.unconfirmedPaymentIds).sort()).toEqual(
+      [s.row!.id, draft2.id].sort(),
+    );
+  }, 60_000);
+
+  it("R8 after the 409, the DRAFT can still be VOIDED (the refusal never traps the row)", async () => {
+    const s = await seed("r8", "DRAFT");
+    await s.settle(s.capture());
+    const confirm: any = await s
+      .asTenant(() =>
+        invoices.updatePayment(s.invoice.id, s.row!.id, {
+          amount: 1000,
+          method: "CHECK",
+          status: "PAID",
+          reference: "CHK-W706",
+          paidAt: "2026-10-01",
+        } as any),
+      )
+      .catch((e) => e);
+    expect(confirm.getStatus()).toBe(409);
+    await s.asTenant(() =>
+      invoices.updatePayment(s.invoice.id, s.row!.id, {
+        amount: 1000,
+        method: "CHECK",
+        status: "VOID",
+        reference: "CHK-W706",
+        paidAt: "2026-10-01",
+      } as any),
+    );
+    const after = await prisma.invoicePayment.findUnique({ where: { id: s.row!.id } });
+    expect(after?.status).toBe("VOID");
   }, 60_000);
 });

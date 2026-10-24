@@ -139,8 +139,9 @@ describe("row 498: the InvoicePayment writer census", () => {
       const n = (fs.readFileSync(file, "utf8").match(/capacityRefusal\(/g) ?? []).length;
       if (n) callers[rel(file)] = n;
     }
-    // recordPayment only today; the SA-864 owner answer lowers or raises this in the same diff
-    expect(callers).toEqual({ "invoices/invoices.service.ts": 1 });
+    // recordPayment (overpay REFUSE) + updatePayment's SA-862 supersede check (reads only the FULLY_PAID kind, never
+    // writes a payment); the SA-864 owner answer lowers or raises this in the same diff
+    expect(callers).toEqual({ "invoices/invoices.service.ts": 2 });
   });
 
   it("row 2299: every CONFIRMED site names its hold (SA-867 condition 1)", () => {
@@ -151,7 +152,7 @@ describe("row 498: the InvoicePayment writer census", () => {
 
   it("row 2299: recordPayment reaches the ONE capacity helper with an explicit policy; the CONFIRMED sites do not (SA-864)", () => {
     const inv = read("invoices/invoices.service.ts");
-    expect(inv.match(/capacityRefusal\(/g)?.length).toBe(1); // recordPayment only, until the owner answers
+    expect(inv.match(/capacityRefusal\(/g)?.length).toBe(2); // recordPayment + updatePayment (SA-862 supersede check)
     expect(inv).toMatch(/capacityRefusal\(\{[^}]*overpay: "REFUSE"/);
     expect(read("bookkeeping/bookkeeping.service.ts")).not.toMatch(/capacityRefusal\(/);
   });
