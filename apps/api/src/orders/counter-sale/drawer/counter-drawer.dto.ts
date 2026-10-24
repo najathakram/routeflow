@@ -67,6 +67,8 @@ export class RecordOpeningFloatDto {
 export class CorrectOpeningFloatDto {
   @IsISO8601({ strict: true }) windowStart!: string;
   @IsFloatAmount() amount!: number;
+  /** The amount the admin's screen showed; a different stored amount is 409 COUNTER_FLOAT_CHANGED. */
+  @IsFloatAmount() expectedAmount!: number;
   @Transform(trim)
   @IsString()
   @MinLength(FLOAT_REASON_MIN)

@@ -10,6 +10,30 @@ import { API_ERROR_CODES } from "../../../common/api-error-codes";
 import { AdminAuditAction } from "../../../platform-admin/audit-actions.constant";
 import { CounterDrawerService } from "./counter-drawer.service";
 
+// The tenant zone is UTC here, so the open window of a register with no close starts at 2026-10-24T00:00Z (the faked "now").
+jest.mock("../../../common/tenant-time-zone", () => ({
+  ...jest.requireActual("../../../common/tenant-time-zone"),
+  tenantTimeZone: async () => null,
+}));
+beforeAll(() => {
+  jest.useFakeTimers({
+    now: new Date("2026-10-24T13:00:00.000Z"),
+    doNotFake: [
+      "nextTick",
+      "setImmediate",
+      "clearImmediate",
+      "setInterval",
+      "clearInterval",
+      "setTimeout",
+      "clearTimeout",
+      "queueMicrotask",
+      "performance",
+      "hrtime",
+    ],
+  });
+});
+afterAll(() => jest.useRealTimers());
+
 /**
  * W-819 part 1, the drawer service: record (once per window, idempotent replay, race), read (with the counter's name),
  * correct (reason, same-transaction audit, CAS), tenant isolation and rounding. An in-memory fake stands in for Prisma; the
@@ -17,15 +41,24 @@ import { CounterDrawerService } from "./counter-drawer.service";
  */
 const A = "tenant-a";
 const B = "tenant-b";
-const WS = "2026-10-24T04:00:00.000Z";
+const WS = "2026-10-24T00:00:00.000Z";
 const tens = (n: number): DenominationCount[] => [{ kind: "bill", value: 10, count: n }];
 const op = (tenantId = A, sub = "u-op"): JwtPayload =>
   ({ sub, username: "op-acme", role: "OPERATOR", tenantId }) as unknown as JwtPayload;
 const admin = (tenantId = A): JwtPayload =>
   ({ sub: "u-admin", role: "TENANT_ADMIN", tenantId }) as unknown as JwtPayload;
 
+const close = (registerKey: string, start: string, end: string) => ({
+  tenantId: A,
+  registerKey,
+  windowStart: new Date(start),
+  windowEnd: new Date(end),
+  reopenedAt: null as Date | null,
+});
+
 function setup(tenant = A, counter: "optional" | "off" = "optional") {
   const rows: any[] = [];
+  const closes: any[] = [];
   const audits: any[] = [];
   const log: string[] = [];
   let seq = 0;
@@ -69,6 +102,14 @@ function setup(tenant = A, counter: "optional" | "off" = "optional") {
         return { count: hit.length };
       }),
     },
+    counterDayClose: {
+      findFirst: jest.fn(async ({ where }: any) => {
+        const hit = closes
+          .filter((c) => c.tenantId === where.tenantId && c.registerKey === where.registerKey)
+          .sort((a, b) => b.windowEnd.getTime() - a.windowEnd.getTime());
+        return hit[0] ?? null;
+      }),
+    },
     user: {
       findFirst: jest.fn(async ({ where }: any) =>
         where.tenantId === A && where.id === "u-op" ? { username: "op-acme" } : null,
@@ -102,7 +143,7 @@ function setup(tenant = A, counter: "optional" | "off" = "optional") {
   };
   const capability = { get: jest.fn(async () => ({ counter })) };
   const service = new CounterDrawerService(prisma as never, capability as never);
-  return { service, rows, audits, log, db };
+  return { service, rows, closes, audits, log, db };
 }
 
 describe("CounterDrawerService.record", () => {
@@ -175,11 +216,39 @@ describe("CounterDrawerService.record", () => {
   });
 
   it("another window, another register and another kind-of-day are separate rows", async () => {
+    const { service, rows, closes } = setup();
+    await service.record({ windowStart: WS, amount: 150 }, op());
+    await service.record({ windowStart: WS, amount: 75, registerKey: "b" }, op());
+    closes.push(close("main", WS, "2026-10-24T10:00:00.000Z"));
+    await service.record({ windowStart: "2026-10-24T10:00:00.000Z", amount: 100 }, op());
+    expect(rows).toHaveLength(3);
+  });
+
+  it("the window must be the register's open window: window+1ms cannot dodge the unique lock (409 COUNTER_FLOAT_WINDOW_NOT_OPEN)", async () => {
     const { service, rows } = setup();
     await service.record({ windowStart: WS, amount: 150 }, op());
-    await service.record({ windowStart: "2026-10-23T04:00:00.000Z", amount: 100 }, op());
-    await service.record({ windowStart: WS, amount: 75, registerKey: "b" }, op());
-    expect(rows).toHaveLength(3);
+    const err: any = await service
+      .record({ windowStart: "2026-10-24T00:00:00.001Z", amount: 90 }, op())
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(err.getResponse().code).toBe(API_ERROR_CODES.COUNTER_FLOAT_WINDOW_NOT_OPEN);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].amount).toBe(150);
+  });
+
+  it("a window a close already covers is refused; the window after the close is the open one", async () => {
+    const { service, rows, closes } = setup();
+    closes.push(close("main", WS, "2026-10-24T10:00:00.000Z"));
+    const err: any = await service.record({ windowStart: WS, amount: 150 }, op()).catch((e) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(err.getResponse().code).toBe(API_ERROR_CODES.COUNTER_FLOAT_WINDOW_NOT_OPEN);
+    expect(rows).toHaveLength(0);
+    await service.record({ windowStart: "2026-10-24T10:00:00.000Z", amount: 150 }, op());
+    expect(rows).toHaveLength(1);
+    // a reopened close previews its stored window again, exactly as the day-close state does
+    closes[0].reopenedAt = new Date();
+    await service.record({ windowStart: WS, amount: 60 }, op());
+    expect(rows).toHaveLength(2);
   });
 
   it("rounds to cents and refuses a fraction of a cent, a negative, and a huge float", async () => {
@@ -242,6 +311,7 @@ describe("CounterDrawerService.correct", () => {
   const fix = (over: Record<string, unknown> = {}) => ({
     windowStart: WS,
     amount: 120,
+    expectedAmount: 150,
     reason: "Miscounted the rolls",
     ...over,
   });
@@ -311,9 +381,9 @@ describe("CounterDrawerService.correct", () => {
     expect(err).toBeInstanceOf(NotFoundException);
     expect(err.getResponse().code).toBe(API_ERROR_CODES.COUNTER_FLOAT_NOT_COUNTED);
     await service.record({ windowStart: WS, amount: 120 }, op());
-    await expect(service.correct(fix() as never, admin())).rejects.toBeInstanceOf(
-      BadRequestException,
-    );
+    await expect(
+      service.correct(fix({ expectedAmount: 120 }) as never, admin()),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it("another tenant's admin cannot correct this tenant's event (404, nothing written)", async () => {
@@ -342,9 +412,45 @@ describe("CounterDrawerService.correct", () => {
         return fn(tx);
       }),
     );
-    await expect(service.correct(fix() as never, admin())).rejects.toBeInstanceOf(
-      ConflictException,
-    );
+    const err: any = await service.correct(fix() as never, admin()).catch((e) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(err.getResponse().code).toBe(API_ERROR_CODES.COUNTER_FLOAT_CHANGED);
     expect(audits).toHaveLength(0);
+  });
+
+  it("a stale screen cannot overwrite a correction that already committed: admin B (old expectedAmount) gets 409 and the row keeps A's value", async () => {
+    const { service, rows, audits } = setup();
+    await service.record({ windowStart: WS, amount: 150 }, op());
+    await service.correct(fix({ amount: 120, reason: "Admin A recount" }) as never, admin());
+    const err: any = await service
+      .correct(fix({ amount: 130, expectedAmount: 150, reason: "Admin B stale" }) as never, admin())
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(err.getResponse().code).toBe(API_ERROR_CODES.COUNTER_FLOAT_CHANGED);
+    expect(rows[0].amount).toBe(120);
+    expect(rows[0].reason).toBe("Admin A recount");
+    expect(audits).toHaveLength(1);
+  });
+
+  it("with the current expectedAmount a second correction goes through (A then A)", async () => {
+    const { service, rows, audits } = setup();
+    await service.record({ windowStart: WS, amount: 150 }, op());
+    await service.correct(fix() as never, admin());
+    await service.correct(fix({ amount: 125, expectedAmount: 120 }) as never, admin());
+    expect(rows[0].amount).toBe(125);
+    expect(audits).toHaveLength(2);
+  });
+
+  it("a breakdown-only correction (same amount, new denominations) is allowed when expectedAmount matches; same amount with no breakdown is still 400", async () => {
+    const { service, rows, audits } = setup();
+    await service.record({ windowStart: WS, amount: 150 }, op());
+    await expect(service.correct(fix({ amount: 150 }) as never, admin())).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    await service.correct(fix({ amount: 150, denominations: tens(15) }) as never, admin());
+    expect(rows[0].denominations).toEqual(tens(15));
+    expect(rows[0].amount).toBe(150);
+    expect(audits).toHaveLength(1);
+    expect(audits[0].meta).toMatchObject({ from: 150, to: 150 });
   });
 });

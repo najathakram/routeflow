@@ -106,11 +106,19 @@ describe("the body / query pipe (the app's global ValidationPipe)", () => {
   });
 
   it("the correction needs a trimmed reason of 5 to 500 characters", async () => {
-    const ok = { windowStart: ws, amount: 10, reason: "  Recount at open  " };
+    const ok = { windowStart: ws, amount: 10, expectedAmount: 20, reason: "  Recount at open  " };
     const out: any = await run(ok, CorrectOpeningFloatDto);
     expect(out.reason).toBe("Recount at open");
     for (const reason of [undefined, "", "    ", "abcd", "x".repeat(501)]) {
       await expect(run({ ...ok, reason }, CorrectOpeningFloatDto)).rejects.toBeDefined();
+    }
+  });
+
+  it("the correction requires expectedAmount (whole cents, 0 or more)", async () => {
+    const ok = { windowStart: ws, amount: 10, expectedAmount: 20, reason: "Recount at open" };
+    await expect(run(ok, CorrectOpeningFloatDto)).resolves.toBeDefined();
+    for (const expectedAmount of [undefined, null, -1, 0.001, "20"]) {
+      await expect(run({ ...ok, expectedAmount }, CorrectOpeningFloatDto)).rejects.toBeDefined();
     }
   });
 

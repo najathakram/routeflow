@@ -36,7 +36,7 @@ export interface OpeningFloatState {
 }
 
 export interface RecordOpeningFloatRequest {
-  /** ISO instant, DayCloseState.preview.windowStart */
+  /** ISO instant, DayCloseState.preview.windowStart; anything but the register's open window is 409 COUNTER_FLOAT_WINDOW_NOT_OPEN */
   windowStart: string;
   amount: number;
   /** optional; when sent, its sum must equal `amount` */
@@ -52,8 +52,10 @@ export interface RecordOpeningFloatResult {
 
 export interface CorrectOpeningFloatRequest {
   windowStart: string;
-  /** the corrected amount; must differ from the current one */
+  /** the corrected amount; must differ from the current one unless a new breakdown is sent */
   amount: number;
+  /** required: the amount the screen showed. If the stored amount is no longer this, 409 COUNTER_FLOAT_CHANGED and nothing is written */
+  expectedAmount: number;
   /** 5..500 characters, required */
   reason: string;
   /** optional; when sent, its sum must equal `amount`; when omitted the old breakdown is dropped */

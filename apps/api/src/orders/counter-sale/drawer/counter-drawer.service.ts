@@ -21,9 +21,12 @@ import type {
 } from "@routeflow/types";
 import type { JwtPayload } from "../../../auth/jwt-payload.interface";
 import { API_ERROR_CODES } from "../../../common/api-error-codes";
+import { calendarDayBounds } from "../../../common/calendar-date";
+import { tenantTimeZone } from "../../../common/tenant-time-zone";
 import { PrismaService } from "../../../prisma/prisma.service";
 import { AdminAuditAction } from "../../../platform-admin/audit-actions.constant";
 import { counterSaleGate } from "../capability-shape";
+import { effectiveZone } from "../counter-sale-today.service";
 import {
   FULFILMENT_CAPABILITY_READER,
   type FulfilmentCapabilityReader,
@@ -38,6 +41,22 @@ const OPENING_FLOAT = "OPENING_FLOAT" as const;
 const FUTURE_SKEW_MS = 5 * 60_000;
 const REASON_MIN = 5;
 const REASON_MAX = 500;
+
+/** The slice of the tenant-scoped client this service uses (the day-close service types it the same loose way). */
+interface DrawerDb {
+  counterDrawerEvent: {
+    findFirst(args: unknown): Promise<EventRow | null>;
+    create(args: unknown): Promise<EventRow>;
+    updateMany(args: unknown): Promise<{ count: number }>;
+  };
+  counterDayClose: {
+    findFirst(
+      args: unknown,
+    ): Promise<{ windowStart: Date; windowEnd: Date; reopenedAt: Date | null } | null>;
+  };
+  user: { findFirst(args: unknown): Promise<{ username: string } | null> };
+  auditLog: { create(args: unknown): Promise<unknown> };
+}
 
 interface EventRow {
   id: string;
@@ -69,6 +88,25 @@ export class CounterDrawerService {
     const tenantId = this.prisma.getTenantId();
     if (!tenantId) throw new ForbiddenException("The drawer needs a tenant-scoped session");
     return tenantId;
+  }
+
+  /**
+   * The start of the register's OPEN window, derived exactly as DayCloseService.state() does: the latest close's windowEnd (a
+   * reopened close previews its stored windowStart), else the start of the tenant-zone day. The client's windowStart must equal it.
+   */
+  private async openWindowStart(
+    db: DrawerDb,
+    tenantId: string,
+    registerKey: string,
+    now: Date,
+  ): Promise<Date> {
+    const last = await db.counterDayClose.findFirst({
+      where: { tenantId, registerKey },
+      orderBy: [{ windowEnd: "desc" }, { id: "desc" }],
+    });
+    if (last) return last.reopenedAt != null ? last.windowStart : last.windowEnd;
+    const zone = effectiveZone(await tenantTimeZone(this.prisma));
+    return calendarDayBounds(zone, now).start;
   }
 
   private async assertCounterOn(tenantId: string): Promise<void> {
@@ -109,7 +147,11 @@ export class CounterDrawerService {
     return { amount: cents, rows: rows as DenominationCount[] };
   }
 
-  private async view(db: any, tenantId: string, row: EventRow): Promise<CounterDrawerEventView> {
+  private async view(
+    db: DrawerDb,
+    tenantId: string,
+    row: EventRow,
+  ): Promise<CounterDrawerEventView> {
     const user = await db.user.findFirst({
       where: { id: row.byId, tenantId },
       select: { username: true },
@@ -129,7 +171,7 @@ export class CounterDrawerService {
   }
 
   private find(
-    db: any,
+    db: DrawerDb,
     tenantId: string,
     registerKey: string,
     windowStart: Date,
@@ -171,6 +213,16 @@ export class CounterDrawerService {
     const existing = await this.find(db, tenantId, registerKey, windowStart);
     if (existing) return this.replay(db, tenantId, existing, amount);
 
+    // A NEW row only for the register's open window: window+1ms would dodge the unique key, and a window a close covers is final.
+    const open = await this.openWindowStart(db, tenantId, registerKey, new Date());
+    if (open.getTime() !== windowStart.getTime()) {
+      throw new ConflictException({
+        code: API_ERROR_CODES.COUNTER_FLOAT_WINDOW_NOT_OPEN,
+        message:
+          "That drawer window is not the open one. Reload the day-close screen and try again.",
+      });
+    }
+
     let created: EventRow;
     try {
       created = await db.counterDrawerEvent.create({
@@ -195,7 +247,7 @@ export class CounterDrawerService {
   }
 
   private async replay(
-    db: any,
+    db: DrawerDb,
     tenantId: string,
     row: EventRow,
     amount: number,
@@ -211,19 +263,31 @@ export class CounterDrawerService {
 
   // PATCH (admin correction)
 
+  private changed(): ConflictException {
+    return new ConflictException({
+      code: API_ERROR_CODES.COUNTER_FLOAT_CHANGED,
+      message:
+        "The opening float changed since you loaded it. Reload to see the current figure, then correct it again.",
+    });
+  }
+
   async correct(dto: CorrectOpeningFloatDto, user: JwtPayload): Promise<CounterDrawerEventView> {
     const tenantId = this.tenantId();
     await this.assertCounterOn(tenantId);
     const registerKey = parseRegisterKey(dto.registerKey);
     const windowStart = this.parseWindowStart(dto.windowStart);
     const { amount, rows } = this.checkAmount(dto.amount, dto.denominations);
+    if (!validOpeningFloat(dto.expectedAmount)) {
+      throw new BadRequestException("expectedAmount must be a whole-cents amount of 0 or more");
+    }
+    const expectedAmount = roundMoney(dto.expectedAmount);
     const reason = (dto.reason ?? "").trim();
     if (reason.length < REASON_MIN || reason.length > REASON_MAX) {
       throw new BadRequestException("reason is required: 5 to 500 characters");
     }
 
     return this.prisma.tenantTransaction(
-      async (tx: any) => {
+      async (tx: DrawerDb) => {
         const cur = await this.find(tx, tenantId, registerKey, windowStart);
         if (!cur) {
           throw new NotFoundException({
@@ -232,23 +296,24 @@ export class CounterDrawerService {
           });
         }
         const from = roundMoney(Number(cur.amount));
-        if (from === amount) {
-          throw new BadRequestException("The corrected amount is the same as the counted one.");
+        // The screen's figure must still be the stored one: a stale screen never overwrites a correction that already committed.
+        if (from !== expectedAmount) throw this.changed();
+        if (from === amount && rows === null) {
+          throw new BadRequestException(
+            "The corrected amount is the same as the counted one. Send a new breakdown to change only that.",
+          );
         }
-        // CAS on the amount read: two admins correcting at once cannot both write over a figure neither saw.
+        // The same compare again as a CAS in the UPDATE (amount = expectedAmount): two admins racing between our read and our write
+        // cannot both win, whichever read first.
         const res = await tx.counterDrawerEvent.updateMany({
-          where: { id: cur.id, tenantId, amount: from },
+          where: { id: cur.id, tenantId, amount: expectedAmount },
           data: {
             amount,
             denominations: rows === null ? null : (rows as unknown as Prisma.InputJsonValue),
             reason,
           },
         });
-        if (res.count !== 1) {
-          throw new ConflictException(
-            "The opening float changed while you were correcting it. Reload and retry.",
-          );
-        }
+        if (res.count !== 1) throw this.changed();
         // AWAITED in this transaction (not AuditService, which swallows a write error): the correction exists exactly when
         // its audit row does.
         await tx.auditLog.create({
