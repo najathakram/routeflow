@@ -867,6 +867,14 @@ describe("PickupCompleteDialog: W-778 complete-at-counter refusals (apple-ux 202
     );
   });
 
+  it("ORDER_ON_ACTIVE_RUN with a run id: links to the run it must come off", async () => {
+    await refuse("ORDER_ON_ACTIVE_RUN", { runId: "run-4" });
+    expect(screen.getByRole("link", { name: "Open the route" })).toHaveAttribute(
+      "href",
+      "/routes/run-4",
+    );
+  });
+
   it("COUNTER_COMPLETE_STOP_STARTED without a run id: no route link", async () => {
     await refuse("COUNTER_COMPLETE_STOP_STARTED");
     expect(screen.queryByRole("link", { name: "Open the route" })).toBeNull();

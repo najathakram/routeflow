@@ -173,12 +173,14 @@ export async function updateFulfillPathImpl(
       routeRunStopId: true,
       routeRunStop: {
         select: {
-          routeRun: { select: { status: true, driver: { select: { contactName: true } } } },
+          routeRun: {
+            select: { id: true, status: true, driver: { select: { contactName: true } } },
+          },
         },
       },
       // A driver-created order can carry a bare routeRunId with no stop (create writes both columns
       // independently), so the run is also read through routeRunId.
-      routeRun: { select: { status: true, driver: { select: { contactName: true } } } },
+      routeRun: { select: { id: true, status: true, driver: { select: { contactName: true } } } },
     },
   });
   if (!order) throw new NotFoundException("Order not found");
@@ -210,6 +212,7 @@ export async function updateFulfillPathImpl(
   ) {
     throw new BadRequestException({
       code: API_ERROR_CODES.ORDER_ON_ACTIVE_RUN,
+      runId: run?.id ?? null, // W-778: the clients link to the run the order must come off
       message: `This order is out on an active delivery run${
         run?.driver?.contactName ? ` with ${run.driver.contactName}` : ""
       }. Remove it from the run before switching it to ${

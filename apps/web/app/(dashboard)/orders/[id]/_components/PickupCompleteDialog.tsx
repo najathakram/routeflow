@@ -494,14 +494,16 @@ export function PickupCompleteDialog({
             {error}
           </p>
         )}
-        {errorCode === API_ERROR_CODES.COUNTER_COMPLETE_STOP_STARTED && errorRunId && (
-          <Link
-            href={`/routes/${errorRunId}`}
-            className="text-sm font-semibold text-brand-600 underline"
-          >
-            Open the route
-          </Link>
-        )}
+        {(errorCode === API_ERROR_CODES.COUNTER_COMPLETE_STOP_STARTED ||
+          errorCode === API_ERROR_CODES.ORDER_ON_ACTIVE_RUN) &&
+          errorRunId && (
+            <Link
+              href={`/routes/${errorRunId}`}
+              className="text-sm font-semibold text-brand-600 underline"
+            >
+              Open the route
+            </Link>
+          )}
       </div>
       {rw.dialog}
     </Modal>
