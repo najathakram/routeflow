@@ -289,6 +289,54 @@ test("failing run keeps last good data and sets error", async () => {
   assert.equal(s.at, NOW);
 });
 
+test("a requeue request landing mid-run is not lost: one more run follows, several coalesce; a plain call does not rerun", async () => {
+  let release;
+  let n = 0;
+  const gate = () => new Promise((r) => (release = r));
+  const { c } = mk(
+    {},
+    {
+      "gh api graphql": async () => {
+        n++;
+        if (n === 1) await gate();
+        return { code: 0, stdout: read("collector-graphql.json"), stderr: "" };
+      },
+    },
+  );
+  const first = c.runOnce("github");
+  while (!release) await new Promise((r) => setImmediate(r));
+  const a = c.runOnce("github", { requeue: true });
+  const b = c.runOnce("github", { requeue: true });
+  const tick = c.runOnce("github"); // a timer tick: joins, asks for nothing
+  assert.equal(n, 1);
+  release();
+  await Promise.all([first, a, b, tick]);
+  assert.equal(n, 2, "exactly one rerun for the coalesced webhook requests");
+  await c.runOnce("github");
+  assert.equal(n, 3);
+});
+
+test("a plain mid-run call joins the run and does not rerun", async () => {
+  let release;
+  let n = 0;
+  const { c } = mk(
+    {},
+    {
+      "gh api graphql": async () => {
+        n++;
+        await new Promise((r) => (release = r));
+        return { code: 0, stdout: read("collector-graphql.json"), stderr: "" };
+      },
+    },
+  );
+  const first = c.runOnce("github");
+  while (!release) await new Promise((r) => setImmediate(r));
+  const joined = c.runOnce("github");
+  release();
+  await Promise.all([first, joined]);
+  assert.equal(n, 1);
+});
+
 test("runOnce never throws; onUpdate errors are swallowed", async () => {
   const { c } = mk(
     {
@@ -955,7 +1003,7 @@ test("Railway documents are read-only: queries only, runtime guard refuses mutat
 test("cloud collector: cloud intervals, fetch every run, specs by fetch+reset, never push/commit/rebase", async () => {
   assert.deepEqual(CLOUD_INTERVALS, {
     github: 120,
-    specs: 120,
+    specs: 30,
     branches: 300,
     bugs: 300,
     areas: 600,
