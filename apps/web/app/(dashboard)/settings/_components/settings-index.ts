@@ -345,15 +345,6 @@ const ENTRIES: IndexEntry[] = [
     ],
   },
   {
-    id: "restrictions-compliance",
-    kind: "item",
-    label: "Selling restrictions",
-    desc: "Block restricted products by the customer's state",
-    href: R,
-    groupKey: "compliance",
-    keywords: ["restriction", "state", "blocked", "banned", "age", "tobacco", "vape", "compliance"],
-  },
-  {
     id: "restriction-rules-compliance",
     kind: "item",
     label: "Portal limits & rules",
@@ -641,7 +632,8 @@ const ENTRIES: IndexEntry[] = [
     "notifications",
     "Notifications",
     ["low stock", "reorder", "digest", "stock alert", "inventory email"],
-    { show: "admin", anchor: "low-stock-digest" },
+    // Owner 10-07 OK-6: operators receive the digest too, so its opt-out row is not admin-only.
+    { anchor: "low-stock-digest" },
   ),
   ...card(
     "push",
@@ -907,7 +899,7 @@ export const GROUP_ROWS: Record<string, string[]> = {
   payments: ["invoicing", "how-to-pay", "card-payments"],
   selling: ["tier-names", "costing", "restrictions-selling", "restriction-rules", "product-labels"],
   notifications: ["notifications", "email-smtp"],
-  compliance: ["regulated-sections", "restrictions-compliance"],
+  compliance: ["regulated-sections"],
   integrations: [
     "claude-scanner",
     "gohighlevel",
@@ -947,8 +939,7 @@ export function searchSettings(q: string, entries: IndexEntry[]): IndexEntry[] {
   const linked = hits.filter((e) => e.kind !== "info");
   const seen = new Set<string>();
   const out = linked.filter((e) => {
-    // one result per destination: a row listed in two groups (Selling restrictions in Selling and Compliance) is
-    // one answer to a search, the first group's
+    // one result per destination: a row listed in two groups is one answer to a search, the first group's
     const k = `${e.href}|${e.label}`;
     return seen.has(k) ? false : (seen.add(k), true);
   });
@@ -989,7 +980,7 @@ export function activeEntryIds(
     .filter((e) => e.kind === "item" && e.href)
     .map((e) => ({ id: e.id, ...parseHref(e.href!) }));
   if (loc.pathname !== "/settings") {
-    // Selling restrictions is listed in two groups; only the first is the open row.
+    // A destination listed in two groups opens only its first row.
     const hit = rows.find((r) => r.path === loc.pathname);
     return hit ? [hit.id] : [];
   }

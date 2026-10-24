@@ -71,11 +71,8 @@ describe("PR1 groups (direction 2b)", () => {
       "product-labels",
     ]);
     expect(rows("notifications")).toEqual(["notifications", "email-smtp"]);
-    expect(rows("compliance")).toEqual([
-      "regulated-sections",
-      "restrictions-compliance",
-      "restriction-rules-compliance",
-    ]);
+    // Owner 10-07 OK-2: Selling restrictions is listed once, under Selling (the Compliance copy was a duplicate link).
+    expect(rows("compliance")).toEqual(["regulated-sections", "restriction-rules-compliance"]);
     expect(rows("integrations")).toEqual([
       "claude-scanner",
       "gohighlevel",
@@ -118,10 +115,10 @@ describe("PR1 groups (direction 2b)", () => {
     ).toEqual(["fulfillment", "counter-sales", "out-of-stock-ordering"]);
   });
 
-  it("Selling restrictions stays listed in BOTH Selling & pricing and Compliance", () => {
+  it("OK-2: Selling restrictions is listed once (Selling & pricing)", () => {
     expect(
       full.filter((e) => e.href === "/settings/restrictions" && e.kind === "item"),
-    ).toHaveLength(2);
+    ).toHaveLength(1);
   });
 });
 
@@ -145,12 +142,21 @@ describe("PR1 gates", () => {
     );
   });
 
-  it("fleet off still hides Route defaults; operators never see regulated / product labels / digest", () => {
+  it("fleet off still hides Route defaults; operators never see regulated / product labels", () => {
     expect(ids({ fleet: false })).not.toContain("route-defaults");
     const op = ids({ isAdmin: false });
-    for (const id of ["regulated-sections", "product-labels", "low-stock-digest"])
-      expect(op).not.toContain(id);
-    expect(op).toEqual(expect.arrayContaining(["restrictions-selling", "restrictions-compliance"]));
+    for (const id of ["regulated-sections", "product-labels"]) expect(op).not.toContain(id);
+    // Owner 10-07 OK-6: operators receive the low-stock digest, so its row (the opt-out) is theirs too.
+    expect(op).toEqual(expect.arrayContaining(["restrictions-selling", "low-stock-digest"]));
+  });
+
+  it("OK-2: Selling restrictions is one link, under Selling, for every viewer", () => {
+    for (const isAdmin of [true, false]) {
+      const hits = buildIndex({ isAdmin, fleet: true, counter: true }).filter(
+        (e) => e.label === "Selling restrictions",
+      );
+      expect(hits.map((e) => [e.id, e.groupKey])).toEqual([["restrictions-selling", "selling"]]);
+    }
   });
 
   it("defaults are dark: no self-serve / counter flag means no Fulfillment or Counter rows", () => {

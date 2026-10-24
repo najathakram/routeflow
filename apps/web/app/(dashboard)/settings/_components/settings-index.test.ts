@@ -50,7 +50,7 @@ describe("settings index", () => {
     for (const m of MASTER_ITEMS) {
       expect(admin.some((e) => e.href === m.href && e.label === m.label)).toBe(true);
     }
-    expect(admin.filter((e) => e.href === "/settings/restrictions")).toHaveLength(2);
+    expect(admin.filter((e) => e.href === "/settings/restrictions")).toHaveLength(1); // OK-2
   });
 
   it("every ?tab= key is one the settings page knows", () => {
@@ -114,8 +114,9 @@ describe("#3320 review folds", () => {
     expect(byId("driver-access", buildIndex({ isAdmin: true, fleet: false }))).toBeUndefined();
   });
 
-  it("N2 the low-stock digest is admin-only", () => {
-    expect(byId("low-stock-digest", buildIndex({ isAdmin: false, fleet: true }))).toBeUndefined();
+  // Owner 10-07 OK-6 replaces #3320 N2: operators receive the digest too, so they find its opt-out.
+  it("OK-6 the low-stock digest row is shown to operators as well as admins", () => {
+    expect(byId("low-stock-digest", buildIndex({ isAdmin: false, fleet: true }))).toBeDefined();
     expect(byId("low-stock-digest")).toBeDefined();
   });
 
