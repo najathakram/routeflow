@@ -102,7 +102,8 @@ async function build(payments: unknown[]) {
   const tx = {
     ...prisma,
     $executeRaw: jest.fn().mockResolvedValue(0),
-    $queryRaw: jest.fn().mockResolvedValue([{ id: "inv-1" }]),
+    // the invoice lock answers [{ id }]; the stock helper's locked read is answered by the wiring
+    $queryRaw: h.stock.queryRaw(jest.fn().mockResolvedValue([{ id: "inv-1" }])),
   };
   prisma.tenantTransaction.mockImplementation((fn: any) => fn(tx));
   const invoices = h.module.get(InvoicesService) as unknown as Record<string, jest.Mock>;

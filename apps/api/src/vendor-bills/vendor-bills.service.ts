@@ -18,7 +18,13 @@ import { PrismaService } from "../prisma/prisma.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { PlatformConfigService } from "../platform-admin/platform-config.service";
 import { Prisma, MovementType, PaymentMethod } from "@prisma/client";
-import { costDecimal, nextAverageCost, reverseAverageCost } from "../inventory/costing";
+import { costDecimal, reverseAverageCost } from "../inventory/costing";
+import {
+  applyStockMovements,
+  type LockedStock,
+  type StockAverage,
+  type StockMovementRow,
+} from "../inventory/stock-movements";
 import {
   BILL_VOID_SHORTFALL_NOTE,
   billReceiptNote,
@@ -1433,31 +1439,14 @@ export class VendorBillsService {
         });
         const rowDate = stockDates.get(item.productId)?.effectiveAt ?? effectiveDate;
 
-        // Read fresh state inside the tx so multi-line bills of the same
-        // product compound correctly instead of using the pre-tx snapshot
+        // Fresh existence/shape read (no counter): the helper below reads the counter, average and
+        // costing method under the product lock, so multi-line bills of one product compound correctly.
         const product = await tx.product.findFirst({
           where: { id: item.productId },
-          select: {
-            name: true,
-            kind: true,
-            currentStock: true,
-            averageCost: true,
-            costingMethod: true,
-          },
+          select: { name: true, kind: true },
         });
         if (!product) continue;
         assertSellableLines([{ id: item.productId, ...product }]); // WS8: a FAMILY is never stocked
-
-        const newAvgCost = nextAverageCost(
-          product.currentStock,
-          product.averageCost,
-          qty,
-          unitCost,
-        );
-        // STANDARD keeps its operator-set cost — mirrors recordPurchase; bill
-        // receive used to clobber it (G7).
-        const updatesAverage = product.costingMethod !== "STANDARD";
-        const stockAfter = product.currentStock.add(qty);
 
         // StockLot keeps FIFO/LIFO parity with manual purchases and PO receive
         await tx.stockLot.create({
@@ -1471,33 +1460,28 @@ export class VendorBillsService {
           },
         });
 
-        await tx.stockMovement.create({
-          data: {
-            productId: item.productId,
-            type: MovementType.PURCHASE,
-            quantity: qty,
-            unitCost,
-            avgCostAfter: updatesAverage ? newAvgCost : (product.averageCost ?? null),
-            stockAfter,
-            supplierId: bill.supplierId,
-            reference: bill.billNumber,
-            notes: billReceiptNote(bill.billNumber),
-            performedById: performedById ?? null,
-            // Stamp the movement at the BILL date, matching the lot — a
-            // backdated bill's cost snapshot must sit at the right point in
-            // the ledger (the lot and the movement used to disagree). B562:
-            // on effectiveAt (the accounting date); createdAt stays write-once.
-            effectiveAt: rowDate,
-          },
-        });
-
-        await tx.product.update({
-          where: { id: item.productId },
-          data: {
-            currentStock: { increment: qty },
-            ...(updatesAverage ? { averageCost: newAvgCost } : {}),
-          },
-        });
+        // SA-927: AVCO receipt through the one writer. STANDARD keeps its operator-set cost (G7) — the
+        // helper's {receive} leaves a STANDARD average alone. Stamped at the BILL date, matching the lot
+        // (B562: effectiveAt is the accounting date; createdAt stays write-once).
+        await applyStockMovements(
+          tx,
+          this.prisma.getTenantId() as string,
+          [
+            {
+              productId: item.productId,
+              type: MovementType.PURCHASE,
+              quantity: qty,
+              unitCost,
+              average: { receive: unitCost },
+              supplierId: bill.supplierId,
+              reference: bill.billNumber,
+              notes: billReceiptNote(bill.billNumber),
+              performedById: performedById ?? null,
+              effectiveAt: rowDate,
+            },
+          ],
+          { productIds: [item.productId] },
+        );
 
         // Backdated bill: the average later rows imply may have moved — replay the
         // product like recordPurchase (a dated COST_BASIS correction, SA-136 §4).
@@ -1717,109 +1701,113 @@ export class VendorBillsService {
       return dateMemo.get(key) as DocumentStockDate;
     };
 
-    // The product's rows are written once, after its LAST line moved the counter (SA-808b item 3:
-    // which row belongs to which line is not knowable, and per-line money does not need it).
+    // The product's rows are written once, after its LAST line (SA-808b item 3: which row belongs to
+    // which line is not knowable, and per-line money does not need it).
     const lastLineOf = new Map<string, number>();
     for (const [lineNo, p] of plan.entries()) lastLineOf.set(p.item.productId as string, lineNo);
+    const linesOfProduct = new Map<string, { qty: Prisma.Decimal; unitCost: Prisma.Decimal }[]>();
 
     for (const [lineNo, { item, name, qty, unitCost }] of plan.entries()) {
       const productId = item.productId as string;
+      const seen = linesOfProduct.get(productId) ?? [];
+      seen.push({ qty, unitCost });
+      linesOfProduct.set(productId, seen);
       const isLast = lastLineOf.get(productId) === lineNo;
-      const found = isLast ? receiptsByProduct.get(productId) : undefined;
+      if (!isLast) continue;
+      const found = receiptsByProduct.get(productId);
       const mine = found?.rows ?? [];
       const shortfall = found?.shortfall ?? new Prisma.Decimal(0);
 
-      // Read current product state within the transaction for accurate AVCO reversal
-      const product = await tx.product.findFirst({
-        where: { id: productId },
-        select: { currentStock: true, averageCost: true, costingMethod: true },
-      });
-      if (!product) continue;
+      const exists = await tx.product.findFirst({ where: { id: productId }, select: { id: true } });
+      if (!exists) continue;
 
-      // Exact AVCO reversal; null ⇒ reversal empties stock — KEEP the
-      // previous average so the product's cost basis survives the revert.
-      // Row 647: a STANDARD product keeps its operator-set cost — receive() never moved its
-      // average (updatesAverage), so the reversal must not "undo" a move that never happened.
-      const reversedAvg =
-        product.averageCost != null && product.costingMethod !== "STANDARD"
-          ? reverseAverageCost(product.currentStock, product.averageCost, qty, unitCost)
-          : null;
-
-      const updated = await tx.product.update({
-        where: { id: productId },
-        data: {
-          currentStock: { decrement: qty },
-          ...(reversedAvg !== null ? { averageCost: reversedAvg } : {}),
-        },
-        select: { currentStock: true },
-      });
-
-      // One reversing row per receipt row, written AFTER the update from the counter it returned
-      // (SA-136 §1). The product's rows (plus any shortfall) sum to the product's total received,
-      // so the counter walks down from (counter + that total) to `updated` on the last row.
-      let stockAfter = new Prisma.Decimal(updated.currentStock)
-        .add(mine.reduce((t, r) => t.add(r.quantity), new Prisma.Decimal(0)))
-        .add(shortfall);
+      // SA-808 §3 (A): each row dated at the receipt's own instant so every period nets, UNLESS that
+      // instant is in a filed period for this product — then dated now, and the note says so.
+      const dated: { original: (typeof mine)[number]; when: DocumentStockDate }[] = [];
       for (const original of mine) {
-        stockAfter = stockAfter.sub(original.quantity);
-        // SA-808 §3 (A): dated at the receipt's own instant so every period nets, UNLESS that
-        // instant is in a filed period for this product — then dated now, and the note says so.
         const when = await stockDateOf(productId, original.effectiveAt);
         reversedReceipts.push({ ...original, productId, name });
         const prior = earliestReversal.get(productId);
         if (!prior || when.effectiveAt < prior) earliestReversal.set(productId, when.effectiveAt);
-        await tx.stockMovement.create({
-          data: {
+        dated.push({ original, when });
+      }
+      const shortfallWhen = shortfall.gt(0) ? await stockDateOf(productId, now) : null;
+      const productLines = linesOfProduct.get(productId) ?? [];
+
+      // SA-927: ONE call per product. The plan function replays each LINE's AVCO reversal against the
+      // locked counter/average (exact reverseAverageCost; null ⇒ keep the previous average; STANDARD
+      // keeps its operator-set cost - row 647), then the product's rows walk the counter down. Every
+      // row of the product carries that final average ("one instant": the replay recomputes later rows).
+      await applyStockMovements(
+        tx,
+        tenantId as string,
+        (locked) => {
+          const lk = locked.get(productId) as LockedStock;
+          let stock = lk.currentStock;
+          let avg = lk.averageCost;
+          for (const l of productLines) {
+            const reversedAvg =
+              avg != null && lk.costingMethod !== "STANDARD"
+                ? reverseAverageCost(stock, avg, l.qty, l.unitCost)
+                : null;
+            if (reversedAvg !== null) avg = reversedAvg;
+            stock = stock.sub(l.qty);
+          }
+          const average: StockAverage =
+            avg != null && (lk.averageCost == null || !avg.eq(lk.averageCost))
+              ? { set: avg }
+              : "keep";
+          const rows: StockMovementRow[] = dated.map(({ original, when }, i) => ({
             productId,
             type: MovementType.PURCHASE,
             quantity: new Prisma.Decimal(original.quantity).negated(),
             unitCost: original.unitCost,
-            // One instant: every row of a multi-line product carries the LAST line's average here;
-            // the replay recomputes the later rows.
-            avgCostAfter: reversedAvg ?? product.averageCost ?? null,
-            stockAfter,
+            average: i === 0 ? average : "keep",
             supplierId: original.supplierId,
             reference: bill.billNumber,
             notes: billReversalNote(original.id, when.movedFromPeriod),
             performedById: performedById ?? null,
             effectiveAt: when.effectiveAt,
-          },
-        });
-      }
+          }));
+          // SA-808b: a void never strands on a missing receipt. The part with no PURCHASE record gets
+          // ONE ADJUSTMENT per product dated now (no purchase was ever counted for it, so purchases
+          // stay as filed; now is open or documentStockDate refuses, so no closed ending moves).
+          if (shortfall.gt(0) && shortfallWhen) {
+            const totalQty = productLines.reduce((t, l) => t.add(l.qty), new Prisma.Decimal(0));
+            const lineCost = costDecimal(
+              productLines
+                .reduce((t, l) => t.add(l.qty.mul(l.unitCost)), new Prisma.Decimal(0))
+                .div(totalQty),
+            );
+            rows.push({
+              productId,
+              type: MovementType.ADJUSTMENT,
+              quantity: shortfall.negated(),
+              unitCost: lineCost,
+              average: rows.length === 0 ? average : "keep",
+              supplierId: bill.supplierId ?? null,
+              reference: bill.billNumber,
+              notes: `${BILL_VOID_SHORTFALL_NOTE}${bill.billNumber}: ${shortfall.toString()} had no receipt record`,
+              performedById: performedById ?? null,
+              effectiveAt: shortfallWhen.effectiveAt,
+            });
+          }
+          return rows;
+        },
+        { productIds: [productId] },
+      );
 
-      // SA-808b: a void never strands on a missing receipt. The part with no PURCHASE record gets
-      // ONE ADJUSTMENT per product dated now (no purchase was ever counted for it, so purchases stay
-      // as filed; now is open or documentStockDate refuses, so no closed ending moves).
       if (shortfall.gt(0)) {
-        const when = await stockDateOf(productId, now);
-        const costs = plan.filter((p) => p.item.productId === productId);
-        const totalQty = costs.reduce((t, p) => t.add(p.qty), new Prisma.Decimal(0));
-        const lineCost = costDecimal(
-          costs.reduce((t, p) => t.add(p.qty.mul(p.unitCost)), new Prisma.Decimal(0)).div(totalQty),
-        );
-        stockAfter = stockAfter.sub(shortfall);
-        await tx.stockMovement.create({
-          data: {
-            productId,
-            type: MovementType.ADJUSTMENT,
-            quantity: shortfall.negated(),
-            unitCost: lineCost,
-            avgCostAfter: reversedAvg ?? product.averageCost ?? null,
-            stockAfter,
-            supplierId: bill.supplierId ?? null,
-            reference: bill.billNumber,
-            notes: `${BILL_VOID_SHORTFALL_NOTE}${bill.billNumber}: ${shortfall.toString()} had no receipt record`,
-            performedById: performedById ?? null,
-            effectiveAt: when.effectiveAt,
-          },
-        });
         gapsDetected.push({
           productId,
           name,
           stockDrift: shortfall.toNumber(),
           noReceiptQty: shortfall.toNumber(),
         });
-        shortfalls.set(productId, { name, lines: costs });
+        shortfalls.set(productId, {
+          name,
+          lines: plan.filter((p) => p.item.productId === productId),
+        });
       }
     }
 

@@ -1,7 +1,8 @@
 import { ConflictException } from "@nestjs/common";
 import { Prisma, UserRole } from "@prisma/client";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
-import { recordSaleMovement } from "../inventory/sale-movement";
+import { saleMovementRow } from "../inventory/sale-movement";
+import { applyStockMovements, type StockMovementRow } from "../inventory/stock-movements";
 import { linePieceQty } from "./line-piece-qty";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { lockProductsForStock } from "../common/product-locks";
@@ -148,7 +149,7 @@ export async function decrementStockForSale(
 
   const lockedProducts = await tx.product.findMany({
     where: { id: { in: productIds } },
-    select: { id: true, name: true, currentStock: true, unitsPerBox: true },
+    select: { id: true, name: true, unitsPerBox: true },
   });
   // B703 (SA-136b): each line in PIECES, once — the oversell check, the decrement and the SALE row
   // all read this one number (a 2-box line of a 12-pack is 24, never 2).
@@ -164,85 +165,67 @@ export async function decrementStockForSale(
   // B920: ONE per-product total, summed before anything is judged — the oversell check below, the
   // decrement and the SALE row all read it, so two lines of one product can never each pass alone.
   const qtyByProduct = sumPiecesByProduct(pieceLines);
-  const oosItems: string[] = [];
-  for (const [productId, requested] of qtyByProduct) {
-    const p = lockedProducts.find((lp: any) => lp.id === productId);
-    if (p && Number(p.currentStock) < requested) {
-      oosItems.push(
-        `${p.name ?? productId} (available: ${Number(p.currentStock)}, requested: ${requested})`,
-      );
-    }
-  }
-  if (oosItems.length > 0) {
-    if (allowOversell) {
-      deps.logger.warn(`Operator-initiated order will go below stock: ${oosItems.join("; ")}`);
-    } else {
-      throw new ConflictException({
-        code: API_ERROR_CODES.INSUFFICIENT_STOCK,
-        message: event.customerFacing
-          ? CUSTOMER_INSUFFICIENT_STOCK_MESSAGE
-          : `Insufficient stock: ${oosItems.join("; ")}`,
-      });
-    }
-  }
 
-  // SA-714 R1 / SA-716: SET each line's backorder marker from THIS decrement's own result, from the
-  // pre-decrement locked stock, in this tx. A line with a row is written now; a new line's value is
-  // returned for the caller's nested create (informational only, nothing else reads it).
-  const pending = await writeSaleMarkers(
+  // SA-927: the oversell check, the backorder markers and the cost resolution run on the helper's
+  // locked read (inside the plan function); the helper moves the counter and stamps stockAfter. A
+  // product id of another tenant is a 404 from the helper before any write.
+  let pending: Map<StockLine, number> = new Map();
+  await applyStockMovements(
     tx,
-    saleMarkers({
-      lines: stockLines,
-      packByProduct: new Map(lockedProducts.map((lp: any) => [lp.id, lp.unitsPerBox])),
-      availableByProduct: new Map(
-        lockedProducts.map((lp: any) => [lp.id, Number(lp.currentStock)]),
-      ),
-      allowOversell,
-    }),
-  );
+    deps.tenantId as string,
+    async (locked) => {
+      const available = (id: string) => Number(locked.get(id)?.currentStock ?? 0);
+      const oosItems: string[] = [];
+      for (const [productId, requested] of qtyByProduct) {
+        const p = lockedProducts.find((lp: any) => lp.id === productId);
+        if (p && available(productId) < requested) {
+          oosItems.push(
+            `${p.name ?? productId} (available: ${available(productId)}, requested: ${requested})`,
+          );
+        }
+      }
+      if (oosItems.length > 0) {
+        if (allowOversell) {
+          deps.logger.warn(`Operator-initiated order will go below stock: ${oosItems.join("; ")}`);
+        } else {
+          throw new ConflictException({
+            code: API_ERROR_CODES.INSUFFICIENT_STOCK,
+            message: event.customerFacing
+              ? CUSTOMER_INSUFFICIENT_STOCK_MESSAGE
+              : `Insufficient stock: ${oosItems.join("; ")}`,
+          });
+        }
+      }
 
-  // Decrement stock atomically while the lock is held. For operator-initiated
-  // overselling, this lets currentStock go negative — the inventory page can
-  // surface that and the operator can reconcile after restock.
-  //
-  // B116 (REG-B116): ONE aggregated, set-based UPDATE instead of a per-line
-  // ORM call — a per-line write ordering is why multiple lines for the same
-  // product used to touch it twice instead of once. Aggregate first:
-  // `UPDATE … FROM (VALUES …)` applies at most one row per join key, so
-  // summing qty per product BEFORE the statement is load-bearing.
-  //
-  // Raw SQL bypasses the tenant proxy that scoped the ORM call it replaces,
-  // so the tenant predicate is re-stated explicitly here — a cross-tenant
-  // productId must not be able to move another tenant's stock. A missing tenantId never reaches this
-  // statement (lockProductsForStock above throws without one), so the predicate below is always applied; the
-  // empty arm is unreachable defence only.
-  const stockTenantId = deps.tenantId;
-  const stockValues = Prisma.join(
-    [...qtyByProduct.entries()].map(
-      ([productId, qty]) => Prisma.sql`(${productId}::text, ${qty}::numeric)`,
-    ),
+      // SA-714 R1 / SA-716: SET each line's backorder marker from THIS decrement's own result, from the
+      // pre-decrement locked stock, in this tx. A line with a row is written now; a new line's value is
+      // returned for the caller's nested create (informational only, nothing else reads it).
+      pending = await writeSaleMarkers(
+        tx,
+        saleMarkers({
+          lines: stockLines,
+          packByProduct: new Map(lockedProducts.map((lp: any) => [lp.id, lp.unitsPerBox])),
+          availableByProduct: new Map(lockedProducts.map((lp: any) => [lp.id, available(lp.id)])),
+          allowOversell,
+        }),
+      );
+
+      // B116 / B920: ONE aggregated SALE row per product (duplicate lines sum first).
+      const rows: StockMovementRow[] = [];
+      for (const [productId, qty] of qtyByProduct) {
+        const row = await saleMovementRow(tx, {
+          productId,
+          quantity: -qty,
+          reference: orderStockReference(event.orderId),
+          notes: event.notes,
+          performedById: event.performedById,
+        });
+        if (row) rows.push(row);
+      }
+      return rows;
+    },
+    { productIds: [...qtyByProduct.keys()] },
   );
-  // B562 PR-2: RETURNING the counter each row now holds — the SALE movement's `stockAfter` is read
-  // from the write that moved it (SA-136 §2), never from the pre-lock read above. A product the
-  // UPDATE did not match (cross-tenant id) returns no row and gets no movement, as it moved nothing.
-  const moved: Array<{ id: string; currentStock: Prisma.Decimal }> = await tx.$queryRaw`
-    UPDATE "Product" AS p
-    SET "currentStock" = p."currentStock" - v.qty
-    FROM (VALUES ${stockValues}) AS v(id, qty)
-    WHERE p.id = v.id
-      ${stockTenantId ? Prisma.sql`AND p."tenantId" = ${stockTenantId}` : Prisma.empty}
-    RETURNING p.id, p."currentStock"
-  `;
-  for (const row of moved) {
-    await recordSaleMovement(tx, {
-      productId: row.id,
-      quantity: -(qtyByProduct.get(row.id) ?? 0),
-      stockAfter: row.currentStock,
-      reference: orderStockReference(event.orderId),
-      notes: event.notes,
-      performedById: event.performedById,
-    });
-  }
   return pending;
 }
 
@@ -747,33 +730,27 @@ export async function settleStockForEdit(
   // ~:4205); crediting a delivered line's full qty would invent inventory that physically left. No
   // pooled cap: the floor is already inside the delta. B562 PR-2: every write appends its SALE
   // movement (−increase / +credit), `stockAfter` from the update's own row.
-  const saleRow = (productId: string, quantity: number, updated: { currentStock: any }) =>
-    recordSaleMovement(db, {
-      productId,
-      quantity,
-      stockAfter: updated.currentStock,
-      reference: orderStockReference(order.id),
-      notes: event.notes,
-      performedById: user?.sub ?? event.performedById ?? null,
-    });
-  for (const [productId, delta] of deltas) {
-    if (delta > 0) {
-      const updated = await db.product.update({
-        where: { id: productId },
-        data: { currentStock: { decrement: delta } },
-      });
-      await saleRow(productId, -delta, updated);
-      continue;
-    }
-    // B1050: the delta already nets the delivered floor per line (max(q, d)), so a decrease credits
-    // exactly what it frees — no pooled per-product cap.
-    const credit = -delta;
-    const updated = await db.product.update({
-      where: { id: productId },
-      data: { currentStock: { increment: credit } },
-    });
-    await saleRow(productId, credit, updated);
-  }
+  await applyStockMovements(
+    db,
+    deps.tenantId as string,
+    async () => {
+      const rows: StockMovementRow[] = [];
+      for (const [productId, delta] of deltas) {
+        // A rise books −delta; B1050: the delta already nets the delivered floor per line (max(q, d)),
+        // so a decrease credits exactly what it frees — no pooled per-product cap.
+        const row = await saleMovementRow(db, {
+          productId,
+          quantity: -delta,
+          reference: orderStockReference(order.id),
+          notes: event.notes,
+          performedById: user?.sub ?? event.performedById ?? null,
+        });
+        if (row) rows.push(row);
+      }
+      return rows;
+    },
+    { productIds: [...deltas.keys()] },
+  );
 }
 
 /**

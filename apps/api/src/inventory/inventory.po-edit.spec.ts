@@ -6,6 +6,7 @@ import { PRODUCT_LOCK_RANK_SQL } from "../common/product-locks";
 import { PrismaService } from "../prisma/prisma.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { StockAlertService } from "../stock-alerts/stock-alert.service";
+import { wireStockHelper, StockHelperMock } from "./testing/stock-helper-mock";
 
 /**
  * LANE-U step 6 — `InventoryService.updatePurchaseOrder` (PATCH purchase-orders/:id).
@@ -76,20 +77,24 @@ const lot = (o: Record<string, unknown> = {}) => ({
 describe("InventoryService.updatePurchaseOrder (LANE-U step 6)", () => {
   let service: InventoryService;
   let prisma: ReturnType<typeof createMockPrisma>;
+  let stock: StockHelperMock;
   let lock: jest.Mock;
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    stock = wireStockHelper(prisma, { track: true }); // SA-927: the real stock helper over the mock
     lock = jest.fn().mockResolvedValue(0);
     (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) =>
       // The helper's lock_timeout default (SA-767 r-note 2 (c); a set_config) is not a lock statement: `lock` sees only those.
-      fn({
-        ...prisma,
-        $executeRaw: (strings: TemplateStringsArray, ...rest: unknown[]) =>
-          /set_config\('lock_timeout'/.test(strings.join("?"))
-            ? Promise.resolve(0)
-            : lock(strings, ...rest),
-      }),
+      fn(
+        stock.wrapTx({
+          ...prisma,
+          $executeRaw: (strings: TemplateStringsArray, ...rest: unknown[]) =>
+            /set_config\('lock_timeout'/.test(strings.join("?"))
+              ? Promise.resolve(0)
+              : lock(strings, ...rest),
+        }),
+      ),
     );
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -112,7 +117,7 @@ describe("InventoryService.updatePurchaseOrder (LANE-U step 6)", () => {
   });
 
   const stockWrites = () => [
-    prisma.stockMovement.create,
+    prisma.stockMovement.createManyAndReturn,
     prisma.stockMovement.deleteMany,
     prisma.stockLot.create,
     prisma.stockLot.delete,
@@ -149,8 +154,10 @@ describe("InventoryService.updatePurchaseOrder (LANE-U step 6)", () => {
       { items: [{ itemId: "poi-1", receivedQty: 4 }] },
       "u",
     );
-    // PO row first (before the read), then the product it will restock
-    expect(lock).toHaveBeenCalledTimes(2);
+    // PO row first (before the read), then the product it will restock; SA-927: the helper re-locks the same
+    // product (a no-op in the same tx), so that is one more statement with the same (tenant, ids) shape
+    expect(lock).toHaveBeenCalledTimes(3);
+    expect(lock.mock.calls[2].slice(1)).toEqual(lock.mock.calls[1].slice(1));
     expect(sql(0)).toMatch(/"PurchaseOrder".*FOR UPDATE/);
     expect(sql(1)).toMatch(/"Product"[\s\S]*FOR UPDATE/);
     // SA-767 L-1: one tenant-filtered statement, (tenantId, ids)
@@ -159,7 +166,7 @@ describe("InventoryService.updatePurchaseOrder (LANE-U step 6)", () => {
       prisma.purchaseOrder.findUnique.mock.invocationCallOrder[0],
     );
     // a plain receive stamps no date - the movement defaults to now()
-    expect(prisma.stockMovement.create.mock.calls[0][0].data).not.toHaveProperty("createdAt");
+    expect(stock.written()[0]).not.toHaveProperty("createdAt");
   });
 
   it("404s a missing PO and rejects a CLOSED one", async () => {
@@ -349,7 +356,7 @@ describe("InventoryService.updatePurchaseOrder (LANE-U step 6)", () => {
   // ─── PARTIAL / RECEIVED, re-apply ──────────────────────────────────────────
 
   describe("reapplyInventory: true", () => {
-    const movementCalls = () => prisma.stockMovement.create.mock.calls.map((c: any) => c[0].data);
+    const movementCalls = () => stock.written();
 
     it("RECEIVED: compensates the receipt (never deletes it), then re-posts the SAME quantity at the edited cost — in that order", async () => {
       prisma.purchaseOrder.findUnique.mockResolvedValue(po());
@@ -396,13 +403,11 @@ describe("InventoryService.updatePurchaseOrder (LANE-U step 6)", () => {
 
       // stock + lot
       const reversal = prisma.product.update.mock.calls[0][0].data;
-      expect(reversal.currentStock.decrement.toString()).toBe("10");
+      expect(reversal.currentStock.toString()).toBe("0"); // 10 on hand - 10, written absolute
       expect(reversal.averageCost).toBeUndefined(); // empties stock → average KEPT, not zeroed
       expect(prisma.stockLot.deleteMany).toHaveBeenCalledWith({ where: { id: { in: ["lot-1"] } } });
       expect(prisma.stockLot.create.mock.calls[0][0].data.qty.toString()).toBe("10");
-      expect(prisma.product.update.mock.calls[1][0].data.currentStock.increment.toString()).toBe(
-        "10",
-      );
+      expect(prisma.product.update.mock.calls[1][0].data.currentStock.toString()).toBe("10"); // 0 + the re-post
 
       // edit: received quantity is exactly what was received; status stays RECEIVED
       const data = prisma.purchaseOrder.update.mock.calls[0][0].data;
@@ -412,11 +417,11 @@ describe("InventoryService.updatePurchaseOrder (LANE-U step 6)", () => {
 
       // order: compensate → edit → re-post
       const at = (fn: jest.Mock, n = 0) => fn.mock.invocationCallOrder[n];
-      expect(at(prisma.stockMovement.create as jest.Mock, 0)).toBeLessThan(
+      expect(at((prisma.stockMovement as any).createManyAndReturn as jest.Mock, 0)).toBeLessThan(
         at(prisma.purchaseOrder.update as jest.Mock),
       );
       expect(at(prisma.purchaseOrder.update as jest.Mock)).toBeLessThan(
-        at(prisma.stockMovement.create as jest.Mock, 1),
+        at((prisma.stockMovement as any).createManyAndReturn as jest.Mock, 1),
       );
     });
 
@@ -441,7 +446,7 @@ describe("InventoryService.updatePurchaseOrder (LANE-U step 6)", () => {
       expect(err.getResponse().message).toMatch(/document-only/);
       expect(prisma.purchaseOrder.update).not.toHaveBeenCalled();
       expectNoStockWrites();
-      expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+      expect(stock.written()).toHaveLength(0);
     });
 
     it("B583: the refusal is by ANY lot — a fully-consumed one (remaining 0) refuses too", async () => {
@@ -528,7 +533,7 @@ describe("InventoryService.updatePurchaseOrder (LANE-U step 6)", () => {
       ).rejects.toThrow(/regulated product/);
       expect(prisma.purchaseOrder.update).not.toHaveBeenCalled();
       expectNoStockWrites();
-      expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+      expect(stock.written()).toHaveLength(0);
     });
 
     it("a raised qtyOrdered and an added line are OUTSTANDING — no stock the old movements don't prove", async () => {
@@ -609,9 +614,7 @@ describe("InventoryService.updatePurchaseOrder (LANE-U step 6)", () => {
       expect(comp.notes).toBe("PO edit reversal — reverses mv-3"); // the live one only
       expect(comp.quantity.toString()).toBe("-10");
       expect(comp.unitCost.toString()).toBe("4");
-      expect(prisma.product.update.mock.calls[0][0].data.currentStock.decrement.toString()).toBe(
-        "10",
-      );
+      expect(prisma.product.update.mock.calls[0][0].data.currentStock.toString()).toBe("0"); // 10 - 10
     });
 
     it("a STANDARD product's average is never moved by the reversal", async () => {
@@ -651,7 +654,7 @@ describe("InventoryService.updatePurchaseOrder (LANE-U step 6)", () => {
         "u",
       );
       const reversal = prisma.product.update.mock.calls[0][0].data;
-      expect(reversal.currentStock.decrement.toString()).toBe("10");
+      expect(reversal.currentStock.toString()).toBe("10"); // 20 - 10
       expect(reversal.averageCost.toString()).toBe("2");
       const comp = movementCalls()[0];
       expect(comp.avgCostAfter.toString()).toBe("2"); // the replay reads this snapshot
@@ -722,14 +725,15 @@ describe("InventoryService.updatePurchaseOrder (LANE-U step 6)", () => {
       );
       expect(sql(0)).toMatch(/"PurchaseOrder"/);
       // SA-767 L-1: ONE tenant-filtered statement for every product (the SQL orders the rows)
-      expect(lock).toHaveBeenCalledTimes(2);
+      // SA-927: plus one no-op re-lock per helper call (compensation, re-post), same (tenant, ids)
+      expect(lock).toHaveBeenCalledTimes(4);
       expect(lock.mock.calls[1].slice(1)).toEqual([
         "test-tenant",
         ["prod-1", "prod-2"],
         PRODUCT_LOCK_RANK_SQL,
       ]);
       expect(lock.mock.invocationCallOrder[1]).toBeLessThan(
-        prisma.stockMovement.create.mock.invocationCallOrder[0],
+        (prisma.stockMovement as any).createManyAndReturn.mock.invocationCallOrder[0],
       );
     });
 
@@ -748,14 +752,14 @@ describe("InventoryService.updatePurchaseOrder (LANE-U step 6)", () => {
       ).rejects.toBeInstanceOf(BadRequestException);
       expect(prisma.purchaseOrder.update).not.toHaveBeenCalled();
       expectNoStockWrites();
-      expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+      expect(stock.written()).toHaveLength(0);
     });
   });
 
   // ─── B583 follow-ups (lead): deterministic replay order + legacy-lot remediation ─────────
 
   describe("B583 follow-ups", () => {
-    const calls = () => prisma.stockMovement.create.mock.calls.map((c: any) => c[0].data);
+    const calls = () => stock.written();
     const edit = () =>
       service.updatePurchaseOrder(
         "po-1",
@@ -920,7 +924,7 @@ describe("InventoryService.updatePurchaseOrder (LANE-U step 6)", () => {
           "u",
         ),
       ).rejects.toMatchObject({ response: { code: "PO_HAS_LINKED_BILL" } });
-      expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+      expect(stock.written()).toHaveLength(0);
     });
 
     it("still allows a header-only edit (notes, expected date) — and does not even look for a bill", async () => {

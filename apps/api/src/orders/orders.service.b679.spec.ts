@@ -23,6 +23,9 @@ import { PrismaService } from "../prisma/prisma.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { wireStockHelper } from "../inventory/testing/stock-helper-mock";
+
+let stock!: ReturnType<typeof wireStockHelper>;
 
 const operatorPayload = {
   sub: "user-op",
@@ -67,6 +70,7 @@ describe("OrdersService.create — RF-4 per-category regulated tax (B679/SA-144f
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    stock = wireStockHelper(prisma, { ample: true });
     const module = await Test.createTestingModule({ providers: [OrdersService] })
       .useMocker((token) => {
         if (token === PrismaService) return prisma;
@@ -102,7 +106,7 @@ describe("OrdersService.create — RF-4 per-category regulated tax (B679/SA-144f
     (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) =>
       fn({
         ...prisma,
-        $queryRaw: jest.fn().mockResolvedValue([{ max: null }]),
+        $queryRaw: stock.queryRaw(jest.fn().mockResolvedValue([{ max: null }])),
         $executeRaw: jest.fn().mockResolvedValue(0),
       }),
     );

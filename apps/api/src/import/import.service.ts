@@ -42,7 +42,8 @@ import {
 import { parseImportMoney, parseImportNumber } from "./parse-import-number";
 import { parse } from "csv-parse/sync";
 import { ImportEntityType, InvoiceStatus, MovementType, Prisma, UserRole } from "@prisma/client";
-import { lockProductsForStock, STOCK_TX_OPTIONS } from "../common/product-locks";
+import { STOCK_TX_OPTIONS } from "../common/product-locks";
+import { applyStockMovements, type LockedStock } from "../inventory/stock-movements";
 import { retryStockTx } from "../common/tx-retry";
 import * as bcrypt from "bcrypt";
 import * as crypto from "crypto";
@@ -3253,30 +3254,27 @@ export class ImportService {
           const syncTenantId = this.prisma.getTenantId();
           await retryStockTx("import.importInventory", () =>
             this.prisma.tenantTransaction(async (tx: any) => {
-              await lockProductsForStock(tx, syncTenantId, [productId]);
-              const locked = await tx.product.findFirst({
-                where: { id: productId },
-                select: { currentStock: true, averageCost: true },
-              });
-              if (!locked) throw new NotFoundException("Product not found");
-              const delta = new Prisma.Decimal(closingStock).minus(locked.currentStock);
-              if (delta.eq(0)) return;
-              const after = await tx.product.update({
-                where: { id: productId },
-                data: { currentStock: { increment: delta } },
-                select: { currentStock: true },
-              });
-              await tx.stockMovement.create({
-                data: {
-                  productId,
-                  type: MovementType.ADJUSTMENT,
-                  quantity: delta,
-                  stockAfter: after.currentStock,
-                  avgCostAfter: locked.averageCost,
-                  notes: "Zoho stock sync",
-                  performedById: userId,
-                },
-              });
+              // SA-927: lock, locked read and the ADJUSTMENT row are the one writer's job. The delta is
+              // `closing - locked` (computed from the locked counter, so a sale that committed after
+              // the pre-read above survives); a zero delta writes nothing. A movement failure rolls the
+              // counter back with it. Positive deltas still open no StockLot (unchanged).
+              await applyStockMovements(
+                tx,
+                syncTenantId as string,
+                (lockedRows) => [
+                  {
+                    productId,
+                    type: MovementType.ADJUSTMENT,
+                    quantity: new Prisma.Decimal(closingStock).minus(
+                      (lockedRows.get(productId) as LockedStock).currentStock,
+                    ),
+                    average: "keep",
+                    notes: "Zoho stock sync",
+                    performedById: userId,
+                  },
+                ],
+                { productIds: [productId] },
+              );
             }, STOCK_TX_OPTIONS),
           );
           updated++;
@@ -3328,7 +3326,7 @@ export class ImportService {
                   name,
                   barcode: zohoBarcode,
                   sku: rawSku || null,
-                  currentStock: closingStock,
+                  // currentStock keeps its default 0; the helper books the opening row (SA-927).
                   pricePerUnit: 0,
                   unit: "unit",
                   isActive: true,
@@ -3338,15 +3336,24 @@ export class ImportService {
               mapBarcodeUniqueViolation(e, zohoBarcode ?? "");
             }
             if (closingStock !== 0) {
-              await tx.stockMovement.create({
-                data: {
-                  productId: createdProduct.id,
-                  type: MovementType.PURCHASE,
-                  quantity: closingStock,
-                  notes: "Opening stock (Zoho import)",
-                  performedById: userId,
-                },
-              });
+              // SA-927a: the opening PURCHASE row goes through the one writer, which stamps
+              // stockAfter = closingStock. No unitCost and "keep" average, so avgCostAfter / unitCost /
+              // Product.averageCost stay NULL (this CSV has no cost column).
+              await applyStockMovements(
+                tx,
+                tenantIdForZoho,
+                [
+                  {
+                    productId: createdProduct.id,
+                    type: MovementType.PURCHASE,
+                    quantity: closingStock,
+                    average: "keep",
+                    notes: "Opening stock (Zoho import)",
+                    performedById: userId,
+                  },
+                ],
+                { productIds: [createdProduct.id] },
+              );
             }
             await syncProductBarcodesFromLegacy(tx, {
               tenantId: tenantIdForZoho,

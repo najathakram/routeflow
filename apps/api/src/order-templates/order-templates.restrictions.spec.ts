@@ -34,10 +34,12 @@ import { SellingRestrictionsService } from "../selling-restrictions/selling-rest
 import { AuditService } from "../audit/audit.service";
 import * as orderStock from "../orders/order-stock";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { wireStockHelper } from "../inventory/testing/stock-helper-mock";
 
 describe("OrderTemplatesService — selling restrictions (F-05)", () => {
   let service: OrderTemplatesService;
   let prisma: ReturnType<typeof createMockPrisma>;
+  let stock: ReturnType<typeof wireStockHelper>;
   const restrictions = { assertLinesSellable: jest.fn(), checkLinesSellable: jest.fn() };
   const notifications = { sendToCustomer: jest.fn(), sendToUser: jest.fn() };
   const audit = { log: jest.fn() };
@@ -88,6 +90,7 @@ describe("OrderTemplatesService — selling restrictions (F-05)", () => {
   beforeEach(async () => {
     jest.clearAllMocks();
     prisma = createMockPrisma();
+    stock = wireStockHelper(prisma, { ample: true });
     prisma.getTenantId.mockReturnValue("test-tenant");
     restrictions.assertLinesSellable.mockResolvedValue(undefined);
     restrictions.checkLinesSellable.mockResolvedValue({ outcome: "ALLOW", reasons: [] });

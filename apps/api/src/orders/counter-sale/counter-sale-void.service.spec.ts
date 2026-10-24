@@ -2,6 +2,8 @@
 import { buildOrdersService } from "../testing/orders-service-harness";
 import { InvoicesService } from "../../invoices/invoices.service";
 import { decrementStockForSale } from "../order-stock";
+import { createMockPrisma } from "../../testing/prisma-mock";
+import { wireStockHelper } from "../../inventory/testing/stock-helper-mock";
 import { LockTimeoutError, LockUnavailableError, withAdvisoryLock } from "../../common/db-locks";
 import { RouteFlowGateway } from "../../gateways/routeflow.gateway";
 import { CounterSaleVoidService } from "./counter-sale-void.service";
@@ -127,7 +129,8 @@ async function build(
   const tx = {
     ...prisma,
     $executeRaw: jest.fn().mockResolvedValue(0),
-    $queryRaw: jest.fn().mockResolvedValue([{ id: "inv-1" }, { id: "inv-2" }]),
+    // the invoice lock answers [{ id }]; the stock helper's locked read is answered by the wiring
+    $queryRaw: h.stock.queryRaw(jest.fn().mockResolvedValue([{ id: "inv-1" }, { id: "inv-2" }])),
   };
   prisma.tenantTransaction.mockImplementation((fn: any) => fn(tx));
   const invoices = h.module.get(InvoicesService) as unknown as Record<string, jest.Mock>;
@@ -186,10 +189,10 @@ describe("CounterSaleVoidService: a same-day cash + card sale (test 4)", () => {
       where: { id: ORDER_ID, status: { in: ["DELIVERED"] } },
       data: { status: "CANCELLED" },
     });
-    expect(b.prisma.product.update).toHaveBeenCalledWith({
-      where: { id: "prod-1" },
-      data: { currentStock: { increment: 5 } },
-    });
+    // the stock helper writes the counter absolute: the 50 on hand + the 5 restocked
+    expect(b.prisma.product.update).toHaveBeenCalledTimes(1);
+    expect(b.prisma.product.update.mock.calls[0][0].where).toEqual({ id: "prod-1" });
+    expect(Number(b.prisma.product.update.mock.calls[0][0].data.currentStock)).toBe(55);
     const voided = b.module.get(InvoicesService) as unknown as Record<string, jest.Mock>;
     expect(voided.voidInvoiceInTx).toHaveBeenCalledWith(b.tx, "inv-1", ORDER_ID);
     expect(voided.voidInvoiceInTx).toHaveBeenCalledWith(b.tx, "inv-2", ORDER_ID);
@@ -260,40 +263,41 @@ describe("CounterSaleVoidService: a same-day cash + card sale (test 4)", () => {
       unitLabel: null,
       ...units,
     };
-    // create()'s decrement for this exact line, from the real helper: the piece quantity it writes
-    const sql: Array<{ values: unknown[] }> = [];
-    const sale = {
+    // create()'s decrement for this exact line, from the real helper: the piece quantity its SALE row writes
+    const helper = wireStockHelper(createMockPrisma(), {
+      stateOf: (ids) => ids.map((id) => ({ id, currentStock: 100 })),
+    });
+    const sale = helper.wrapTx({
       $executeRaw: jest.fn(),
       product: {
         findMany: jest
           .fn()
           .mockResolvedValue([{ id: "prod-1", name: "P", currentStock: 100, unitsPerBox: 12 }]),
+        findFirst: jest
+          .fn()
+          .mockResolvedValue({ costingMethod: "AVCO", averageCost: 1, standardCost: null }),
+        update: jest.fn(),
       },
-      $queryRaw: jest.fn(async (_s: TemplateStringsArray, ...values: unknown[]) => {
-        sql.push(
-          ...(values.filter(
-            (v) => typeof v === "object" && v !== null && "values" in v,
-          ) as never[]),
-        );
-        return [];
-      }),
-    };
+      stockLot: { findMany: jest.fn().mockResolvedValue([]) },
+      stockMovement: { create: jest.fn() },
+    });
     await decrementStockForSale(
       { logger: { warn: jest.fn() } as never, tenantId: "t" },
-      sale,
+      sale as never,
       [line as never],
       true,
       { orderId: "o", notes: "SALE" } as never,
     );
-    const decremented = Number(sql[0].values[1]);
+    const decremented = -Number((sale as any).stockMovement.create.mock.calls[0][0].data.quantity);
     expect(decremented).toBe(pieces);
 
     const b = await build({ lines: [line], pack: 12 });
     await run(b);
-    expect(b.prisma.product.update).toHaveBeenCalledWith({
-      where: { id: "prod-1" },
-      data: { currentStock: { increment: decremented } },
-    });
+    // absolute counter: the 50 on hand + the pieces create() took
+    expect(b.prisma.product.update.mock.calls[0][0].where).toEqual({ id: "prod-1" });
+    expect(Number(b.prisma.product.update.mock.calls[0][0].data.currentStock)).toBe(
+      50 + decremented,
+    );
   });
 
   it("the invoice.updated events voidPaymentInTx queues (SENT/OVERDUE) are dropped: the invoices end VOID, only the order event goes out", async () => {
@@ -348,8 +352,10 @@ describe("CounterSaleVoidService: the void undoes the hand-over (a DELIVERED wri
     ...over,
   });
   const incrementOf = (b: Built, productId: string) =>
-    b.prisma.product.update.mock.calls.find((c: any[]) => c[0].where.id === productId)?.[0].data
-      .currentStock.increment;
+    // the helper writes absolute; the restock is the rise over the 50 on hand
+    ((call: any) => (call ? Number(call[0].data.currentStock) - 50 : undefined))(
+      b.prisma.product.update.mock.calls.find((c: any[]) => c[0].where.id === productId),
+    );
 
   it("lines left with deliveredQty = qty (POS mode) are fully restocked, a boxed line included", async () => {
     const b = await build({

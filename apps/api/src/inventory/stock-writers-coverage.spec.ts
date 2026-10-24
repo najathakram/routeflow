@@ -19,7 +19,9 @@ import * as ts from "typescript";
  */
 
 /** Shared movement writers: a call to one of these pairs the site that calls it. */
-const MOVEMENT_WRITERS = new Set(["recordSaleMovement", "bookRestockMovement"]);
+// SA-927 PR-A: the one helper is the only shared writer (recordSaleMovement is now a row builder, and
+// bookRestockMovement books through the helper).
+const MOVEMENT_WRITERS = new Set(["applyStockMovements"]);
 
 /** `<file>::<enclosing function>` → why the counter write has no movement in the same function. */
 const ALLOW_UNPAIRED: Record<string, string> = {};
@@ -136,7 +138,7 @@ function writesMovement(fn: ts.Node, sf: ts.SourceFile): boolean {
       const callee = n.expression;
       if (
         ts.isPropertyAccessExpression(callee) &&
-        ["create", "createMany"].includes(callee.name.text) &&
+        ["create", "createMany", "createManyAndReturn"].includes(callee.name.text) &&
         ts.isPropertyAccessExpression(callee.expression) &&
         callee.expression.name.text === "stockMovement"
       )
@@ -199,10 +201,9 @@ describe("stock-ledger writer coverage (B562 SA-136 §6.2)", () => {
 
   it("finds the known writers (the scan is live, not vacuous)", () => {
     const keys = new Set(sites.map((s) => s.key));
-    expect(keys).toContain("orders/order-stock.ts::decrementStockForSale");
-    expect(keys).toContain("orders/order-stock.ts::settleStockForEdit");
-    expect(keys).toContain("inventory/inventory.service.ts::InventoryService.recordPurchase");
-    expect(sites.length).toBeGreaterThan(10);
+    // SA-927 PR-A: the helper is the one counter writer (the exact census is pinned below).
+    expect(keys).toContain("inventory/stock-movements.ts::applyStockMovements");
+    expect(sites.length).toBeGreaterThan(0);
   });
 
   it("every currentStock write is paired with a StockMovement in the same function", () => {
@@ -238,10 +239,10 @@ describe("stock-ledger writer coverage (B562 SA-136 §6.2)", () => {
     expect(s).toMatchObject({ key: "x.ts::S.m", paired: false });
   });
 
-  it("control: a raw-SQL SET currentStock paired by recordSaleMovement in a free function", () => {
+  it("control: a raw-SQL SET currentStock paired by applyStockMovements in a free function", () => {
     const [s] = scan(
       "x.ts",
-      'async function f(tx) { await tx.$queryRaw`UPDATE "Product" SET "currentStock" = 1`; await recordSaleMovement(tx, {}); }',
+      'async function f(tx) { await tx.$queryRaw`UPDATE "Product" SET "currentStock" = 1`; await applyStockMovements(tx, "t", []); }',
     );
     expect(s).toMatchObject({ key: "x.ts::f", paired: true });
   });
@@ -291,7 +292,8 @@ describe("stock-ledger writer coverage (B562 SA-136 §6.2)", () => {
 const INVENTORY_SERVICE = "inventory/inventory.service.ts";
 
 /** Calls that take the Product row locks. */
-const LOCK_CALL = /^(?:this\.lockProducts|lockProductsForStock)$/;
+// SA-927: applyStockMovements takes the Product locks itself, before its own read.
+const LOCK_CALL = /^(?:this\.lockProducts|lockProductsForStock|applyStockMovements)$/;
 /** A Product value read (or written) through the tx - or the helper that reads the locked rows. */
 const PRODUCT_ACCESS_CALL =
   /^(?:tx\.product\.(?:findUnique|findFirst|findMany|update|updateMany|upsert)|this\.readLockedStockRows)$/;
@@ -307,7 +309,6 @@ const INVENTORY_WRITERS: Record<string, WriterClass> = {
   // SA-767 L-2: lock first, then read in-tx (this pin checks the order).
   "InventoryService.recordPurchase": { kind: "locks-first" },
   "InventoryService.recordAdjustment": { kind: "locks-first" },
-  "InventoryService.recordSale": { kind: "locks-first" },
   "InventoryService.assignToVariants": { kind: "locks-first" },
   "InventoryService.commitStockCount": { kind: "locks-first" },
   // SA-767 L-2.2: the session commit is a chain: commitStockCountSession (pre-checks + the
@@ -591,16 +592,8 @@ describe("SA-767 L-2 - every InventoryService stock writer locks before it reads
  * build until it locks or is named; a stale entry fails too.
  */
 const OTHER_WRITERS: Record<string, string> = {
-  // The returns restock chain writes stock without the Product lock: SA-767 L-4 moves it under the helper.
-  "returns/returns-restock.util.ts::bookRestockMovement":
-    "SA-767 L-4/L-5: returns restock books the movement and counter without the Product lock",
-  "returns/returns.service.ts::ReturnsService.cancel":
-    "SA-767 L-4/L-5: a return cancel re-takes stock without the Product lock",
-  "returns/inline-returns.service.ts::InlineReturnsService.cancel":
-    "SA-767 L-4/L-5: an inline-return cancel re-takes stock without the Product lock",
-  // The Zoho product import CREATES rows with their opening stock: nothing exists to lock yet.
-  "products/products.service.ts::ProductsService.importFromZoho":
-    "new-row create: opening stock is written on a product created in the same transaction",
+  // SA-927 PR-A: the returns restock / cancel chain and the Zoho opening stock now book through
+  // applyStockMovements, which locks first; their entries are gone.
   // Not a stock-value write: it nulls a link on the stock tables only.
   "suppliers/suppliers.service.ts::SuppliersService.remove":
     "link null: nulls StockMovement.supplierId only; no quantity, cost or lot changes",
@@ -608,7 +601,7 @@ const OTHER_WRITERS: Record<string, string> = {
 
 const OTHER_REASON = /^(?:SA-767 L-[45]\b|new-row create\b|row delete\b|link null\b)/;
 /** The lock call as written anywhere in the tree (`this.inventory.lockProducts(...)` included). */
-const WIDE_LOCK_CALL = /(?:^|\.)(?:lockProducts|lockProductsForStock)$/;
+const WIDE_LOCK_CALL = /(?:^|\.)(?:lockProducts|lockProductsForStock|applyStockMovements)$/;
 /** Test support, not production code. */
 const OTHER_WRITERS_SKIP = /(?:^|\/)testing\//;
 
@@ -746,7 +739,9 @@ describe("SA-767 R6 - every stock writer outside InventoryService locks first or
 
   it("the scan is live: it sees writers outside InventoryService", () => {
     expect([...all.values()].filter((i) => i.writes).length).toBeGreaterThan(5);
-    expect(all.get("orders/order-stock.ts::decrementStockForSale")).toMatchObject({ writes: true });
+    expect(all.get("inventory/stock-movements.ts::applyStockMovements")).toMatchObject({
+      writes: true,
+    });
   });
 
   it("every such writer is locks-first or on the named allow-list", () => {
@@ -993,5 +988,125 @@ describe("SA-767 L-2.2 - the batched count committer (structural pins)", () => {
     expect(m).toMatch(/status: \{ in: \["OPEN", "REVIEW"\] \}/);
     expect(m).toMatch(/flipped\.count === 0\) throw stockCountCommitting\(\)/);
     expect(m).not.toMatch(/stockCountSession\.update\(/);
+  });
+});
+
+/**
+ * SA-927 §2 PR-A (card 1) - the ONE stock helper. `applyStockMovements` (inventory/stock-movements.ts) is the only
+ * production writer of `Product.currentStock` and the only StockMovement insert under apps/api/src. The census is
+ * EXACT (file::function -> count): a new writer anywhere, or a second insert inside a listed function, is a red
+ * `npm run verify`. The named exceptions are the two quantity-0 COST_BASIS rows that only restate the average
+ * (`replayProduct`, `applyD2InTx`); SA-927 moves them onto the helper with the trigger in PR-B, not here.
+ * Test support under a `testing/` folder (DB-spec fixtures that set up a booked state) is skipped, as in R6.
+ */
+const HELPER = "inventory/stock-movements.ts::applyStockMovements";
+const COUNTER_WRITERS: Record<string, number> = { [HELPER]: 1 };
+const MOVEMENT_INSERTS: Record<string, number> = {
+  [HELPER]: 1,
+  // Named exceptions (quantity-0 COST_BASIS, the counter untouched): PR-B moves them onto the helper.
+  "inventory/inventory.service.ts::InventoryService.replayProduct": 1,
+  "inventory/b562-repair/d2-repair.ts::applyD2InTx": 1,
+};
+const HELPER_SKIP = /(?:^|\/)testing\//;
+
+/** StockMovement inserts: `<x>.stockMovement.create|createMany|createManyAndReturn|upsert(...)` and raw INSERTs. */
+function movementInsertSites(sf: ts.SourceFile): ts.Node[] {
+  const out: ts.Node[] = [];
+  const visit = (n: ts.Node) => {
+    if (
+      ts.isCallExpression(n) &&
+      ts.isPropertyAccessExpression(n.expression) &&
+      ["create", "createMany", "createManyAndReturn", "upsert"].includes(n.expression.name.text) &&
+      ts.isPropertyAccessExpression(n.expression.expression) &&
+      n.expression.expression.name.text === "stockMovement"
+    )
+      out.push(n);
+    if (
+      (ts.isTaggedTemplateExpression(n) &&
+        /INSERT\s+INTO\s+"StockMovement"/i.test(n.template.getText(sf))) ||
+      ((ts.isStringLiteral(n) ||
+        ts.isNoSubstitutionTemplateLiteral(n) ||
+        ts.isTemplateExpression(n)) &&
+        !ts.isTaggedTemplateExpression(n.parent) &&
+        /INSERT\s+INTO\s+"StockMovement"/i.test(n.getText(sf)))
+    )
+      out.push(n);
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  return out;
+}
+
+function helperCensus(files: Array<{ rel: string; text: string }>): {
+  counter: Record<string, number>;
+  inserts: Record<string, number>;
+} {
+  const counter: Record<string, number> = {};
+  const inserts: Record<string, number> = {};
+  for (const { rel, text } of files) {
+    const sf = parse(rel, text);
+    const key = (n: ts.Node) => {
+      const fn = nearestFunction(n);
+      return `${rel}::${fn ? functionName(fn, sf) : "<module>"}`;
+    };
+    for (const n of stockWriteSites(sf)) counter[key(n)] = (counter[key(n)] ?? 0) + 1;
+    for (const n of movementInsertSites(sf)) inserts[key(n)] = (inserts[key(n)] ?? 0) + 1;
+  }
+  return { counter, inserts };
+}
+
+describe("SA-927 PR-A - applyStockMovements is the ONE writer of currentStock and StockMovement (exact census)", () => {
+  const files = collectSourceFiles(SRC_ROOT)
+    .map((abs) => ({ abs, rel: path.relative(SRC_ROOT, abs).split(path.sep).join("/") }))
+    .filter(({ rel }) => !HELPER_SKIP.test(rel))
+    .map(({ abs, rel }) => ({ rel, text: fs.readFileSync(abs, "utf8") }));
+  const census = helperCensus(files);
+
+  it("the only currentStock writer in src is the helper, exactly once", () => {
+    expect(census.counter).toEqual(COUNTER_WRITERS);
+  });
+
+  it("the only StockMovement inserts are the helper's one insert and the two named COST_BASIS exceptions", () => {
+    expect(census.inserts).toEqual(MOVEMENT_INSERTS);
+  });
+
+  it("the named exceptions still write only quantity-0 COST_BASIS rows", () => {
+    // The census pins WHICH function holds each insert; here, each file holds exactly one, and its data is a
+    // quantity-0 COST_BASIS row.
+    for (const rel of ["inventory/inventory.service.ts", "inventory/b562-repair/d2-repair.ts"]) {
+      const text = fs.readFileSync(path.join(SRC_ROOT, rel), "utf8");
+      const at = [...text.matchAll(/stockMovement\.create\(/g)].map((m) => m.index as number);
+      expect(at).toHaveLength(1);
+      const call = text.slice(at[0]);
+      const data = call.slice(0, call.indexOf("select:"));
+      expect(data).toMatch(/type:\s*MovementType\.COST_BASIS/);
+      expect(data).toMatch(/quantity:\s*new Prisma\.Decimal\(0\)/);
+    }
+  });
+
+  describe("the pin has teeth (inline sources)", () => {
+    const run = (src: string) => helperCensus([{ rel: "x.ts", text: src }]);
+
+    it("an increment, an absolute data write and a raw SET are counter writers", () => {
+      expect(
+        run(
+          "async function a(tx) { await tx.product.update({ data: { currentStock: { increment: 1 } } }); }\n" +
+            "async function b(tx) { await tx.product.update({ data: { currentStock: 5 } }); }\n" +
+            'async function c(tx) { await tx.$executeRaw`UPDATE "Product" SET "currentStock" = 1`; }',
+        ).counter,
+      ).toEqual({ "x.ts::a": 1, "x.ts::b": 1, "x.ts::c": 1 });
+    });
+
+    it("every insert form counts, twice in one function counts twice, and a comment or response mapping does not", () => {
+      const r = run(
+        "async function a(tx) { await tx.stockMovement.create({}); await tx.stockMovement.createMany({}); }\n" +
+          "async function b(tx) { await tx.stockMovement.createManyAndReturn({}); }\n" +
+          'async function c(db) { await db.query(`INSERT INTO "StockMovement" (id) VALUES ($1)`, [1]); }\n' +
+          "// tx.stockMovement.create({}) in a comment\n" +
+          "const d = (p) => ({ ...p, currentStock: Number(p.currentStock) });",
+      );
+      expect(r.inserts).toEqual({ "x.ts::a": 2, "x.ts::b": 1, "x.ts::c": 1 });
+      expect(r.counter).toEqual({});
+    });
   });
 });

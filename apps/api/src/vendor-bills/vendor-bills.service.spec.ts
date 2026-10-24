@@ -17,6 +17,9 @@ import { ProductAliasService } from "../import/product-alias.service";
 import { StorageService } from "../storage/storage.service";
 import { InventoryService } from "../inventory/inventory.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { wireStockHelper } from "../inventory/testing/stock-helper-mock";
+
+let stock!: ReturnType<typeof wireStockHelper>;
 
 const mockAnthropicCreate = jest.fn();
 jest.mock("@anthropic-ai/sdk", () => ({
@@ -130,6 +133,7 @@ describe("VendorBillsService", () => {
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    stock = wireStockHelper(prisma, { ample: true });
     // B1236: bill lines are validated against the catalog; by default every named id resolves.
     prisma.product.findMany.mockImplementation(async (args: any) =>
       (args?.where?.id?.in ?? []).map((id: string) => ({ id })),
@@ -229,6 +233,9 @@ describe("VendorBillsService", () => {
         }),
       );
       prisma.product.findFirst.mockResolvedValue({ currentStock: D(10), averageCost: D(2) });
+      stock.setState((ids) =>
+        ids.map((id) => ({ id, ...{ currentStock: D(10), averageCost: D(2) } })),
+      );
 
       await service.receive("bill-1", { acknowledgeUnlinked: true }, "user-1");
 
@@ -240,6 +247,9 @@ describe("VendorBillsService", () => {
     it("updates the weighted average, creates a StockLot, and stamps snapshots", async () => {
       prisma.vendorBill.findUnique.mockResolvedValueOnce(bill());
       prisma.product.findFirst.mockResolvedValue({ currentStock: D(10), averageCost: D(2) });
+      stock.setState((ids) =>
+        ids.map((id) => ({ id, ...{ currentStock: D(10), averageCost: D(2) } })),
+      );
 
       const result = await service.receive("bill-1", undefined, "user-1");
 
@@ -292,6 +302,16 @@ describe("VendorBillsService", () => {
         averageCost: null,
         costingMethod: "AVCO",
       });
+      stock.setState((ids) =>
+        ids.map((id) => ({
+          id,
+          ...{
+            currentStock: D(0),
+            averageCost: null,
+            costingMethod: "AVCO",
+          },
+        })),
+      );
 
       await service.receive("bill-1", undefined, "user-1");
 
@@ -303,7 +323,7 @@ describe("VendorBillsService", () => {
       expect(lotArgs.qty.toString()).toBe("12");
       expect(lotArgs.unitCost.toString()).toBe("2");
       const productArgs = prisma.product.update.mock.calls[0][0].data;
-      expect(productArgs.currentStock).toEqual({ increment: movementArgs.quantity });
+      expect(productArgs.currentStock.toString()).toBe("12");
       expect(productArgs.averageCost.toString()).toBe("2");
     });
 
@@ -314,6 +334,16 @@ describe("VendorBillsService", () => {
         averageCost: D(2),
         costingMethod: "STANDARD",
       });
+      stock.setState((ids) =>
+        ids.map((id) => ({
+          id,
+          ...{
+            currentStock: D(10),
+            averageCost: D(2),
+            costingMethod: "STANDARD",
+          },
+        })),
+      );
 
       await service.receive("bill-1", undefined, "user-1");
 
@@ -326,6 +356,9 @@ describe("VendorBillsService", () => {
     it("G7: stamps the PURCHASE movement at the bill date (matching the lot)", async () => {
       prisma.vendorBill.findUnique.mockResolvedValueOnce(bill());
       prisma.product.findFirst.mockResolvedValue({ currentStock: D(10), averageCost: D(2) });
+      stock.setState((ids) =>
+        ids.map((id) => ({ id, ...{ currentStock: D(10), averageCost: D(2) } })),
+      );
 
       await service.receive("bill-1", undefined, "user-1");
 
@@ -340,6 +373,9 @@ describe("VendorBillsService", () => {
     it("G7: a backdated bill with later movements triggers the replay repair", async () => {
       prisma.vendorBill.findUnique.mockResolvedValueOnce(bill());
       prisma.product.findFirst.mockResolvedValue({ currentStock: D(10), averageCost: D(2) });
+      stock.setState((ids) =>
+        ids.map((id) => ({ id, ...{ currentStock: D(10), averageCost: D(2) } })),
+      );
       prisma.stockMovement.count.mockResolvedValue(3); // newer movements exist
 
       await service.receive("bill-1", undefined, "user-1");
@@ -486,6 +522,9 @@ describe("VendorBillsService", () => {
         }),
       );
       prisma.product.findFirst.mockResolvedValue({ currentStock: D(0), averageCost: null });
+      stock.setState((ids) =>
+        ids.map((id) => ({ id, ...{ currentStock: D(0), averageCost: null } })),
+      );
 
       await service.receive("bill-1", { items: [{ itemId: "item-1", qty: 2 }] }, "user-1");
 
@@ -512,6 +551,9 @@ describe("VendorBillsService", () => {
         }),
       );
       prisma.product.findFirst.mockResolvedValue({ currentStock: D(4), averageCost: D(3.5) });
+      stock.setState((ids) =>
+        ids.map((id) => ({ id, ...{ currentStock: D(4), averageCost: D(3.5) } })),
+      );
 
       await service.receive("bill-1", undefined, "user-1");
 
@@ -580,6 +622,16 @@ describe("VendorBillsService", () => {
           averageCost: null,
           costingMethod: "AVCO",
         });
+        stock.setState((ids) =>
+          ids.map((id) => ({
+            id,
+            ...{
+              currentStock: D(0),
+              averageCost: null,
+              costingMethod: "AVCO",
+            },
+          })),
+        );
 
         await service.receive("bill-1", undefined, "user-1");
 
@@ -602,6 +654,16 @@ describe("VendorBillsService", () => {
           averageCost: null,
           costingMethod: "AVCO",
         });
+        stock.setState((ids) =>
+          ids.map((id) => ({
+            id,
+            ...{
+              currentStock: D(0),
+              averageCost: null,
+              costingMethod: "AVCO",
+            },
+          })),
+        );
 
         await service.receive("bill-1", undefined, "user-1");
 
@@ -619,6 +681,16 @@ describe("VendorBillsService", () => {
             averageCost: null,
             costingMethod: "AVCO",
           });
+          stock.setState((ids) =>
+            ids.map((id) => ({
+              id,
+              ...{
+                currentStock: D(0),
+                averageCost: null,
+                costingMethod: "AVCO",
+              },
+            })),
+          );
 
           await service.receive("bill-1", undefined, "user-1");
 
@@ -644,6 +716,16 @@ describe("VendorBillsService", () => {
           averageCost: null,
           costingMethod: "AVCO",
         });
+        stock.setState((ids) =>
+          ids.map((id) => ({
+            id,
+            ...{
+              currentStock: D(0),
+              averageCost: null,
+              costingMethod: "AVCO",
+            },
+          })),
+        );
 
         await service.receive("bill-1", { acknowledgePackSizeUnknown: true }, "user-1");
 
@@ -660,6 +742,16 @@ describe("VendorBillsService", () => {
           averageCost: null,
           costingMethod: "AVCO",
         });
+        stock.setState((ids) =>
+          ids.map((id) => ({
+            id,
+            ...{
+              currentStock: D(0),
+              averageCost: null,
+              costingMethod: "AVCO",
+            },
+          })),
+        );
 
         await service.receive("bill-1", undefined, "user-1");
 
@@ -683,6 +775,16 @@ describe("VendorBillsService", () => {
           averageCost: null,
           costingMethod: "AVCO",
         });
+        stock.setState((ids) =>
+          ids.map((id) => ({
+            id,
+            ...{
+              currentStock: D(0),
+              averageCost: null,
+              costingMethod: "AVCO",
+            },
+          })),
+        );
 
         await service.receive("bill-1", undefined, "user-1");
 
@@ -718,6 +820,16 @@ describe("VendorBillsService", () => {
             averageCost: null,
             costingMethod: "AVCO",
           });
+          stock.setState((ids) =>
+            ids.map((id) => ({
+              id,
+              ...{
+                currentStock: D(0),
+                averageCost: null,
+                costingMethod: "AVCO",
+              },
+            })),
+          );
 
           await service.receive("bill-1", undefined, "user-1");
 
@@ -745,6 +857,16 @@ describe("VendorBillsService", () => {
           averageCost: null,
           costingMethod: "AVCO",
         });
+        stock.setState((ids) =>
+          ids.map((id) => ({
+            id,
+            ...{
+              currentStock: D(0),
+              averageCost: null,
+              costingMethod: "AVCO",
+            },
+          })),
+        );
 
         await service.receive("bill-1", undefined, "user-1");
 
@@ -774,6 +896,9 @@ describe("VendorBillsService", () => {
         bill({ status: "RECEIVED", receivedDate: new Date("2026-06-02") }),
       );
       prisma.product.findFirst.mockResolvedValue({ currentStock: D(15), averageCost: D(2.5) });
+      stock.setState((ids) =>
+        ids.map((id) => ({ id, ...{ currentStock: D(15), averageCost: D(2.5) } })),
+      );
       prisma.stockLot.findMany.mockResolvedValue([]);
       receiptRows(prisma, [{ qty: D(5) }]);
 
@@ -781,7 +906,7 @@ describe("VendorBillsService", () => {
 
       const productArgs = prisma.product.update.mock.calls[0][0].data;
       expect(productArgs.averageCost.toString()).toBe("2");
-      expect(productArgs.currentStock).toEqual({ decrement: D(5) });
+      expect(productArgs.currentStock.toString()).toBe("10");
     });
 
     it("row 647: a STANDARD product keeps its operator-set cost through a revert", async () => {
@@ -793,6 +918,16 @@ describe("VendorBillsService", () => {
         averageCost: D(2.5),
         costingMethod: "STANDARD",
       });
+      stock.setState((ids) =>
+        ids.map((id) => ({
+          id,
+          ...{
+            currentStock: D(15),
+            averageCost: D(2.5),
+            costingMethod: "STANDARD",
+          },
+        })),
+      );
       prisma.stockLot.findMany.mockResolvedValue([]);
       receiptRows(prisma, [{ qty: D(5) }]);
 
@@ -800,7 +935,7 @@ describe("VendorBillsService", () => {
 
       const productArgs = prisma.product.update.mock.calls[0][0].data;
       expect(productArgs.averageCost).toBeUndefined();
-      expect(productArgs.currentStock).toEqual({ decrement: D(5) });
+      expect(productArgs.currentStock.toString()).toBe("10");
     });
 
     it("KEEPS the average when the revert empties stock (no more zeroing)", async () => {
@@ -808,6 +943,9 @@ describe("VendorBillsService", () => {
         bill({ status: "RECEIVED", receivedDate: new Date("2026-06-02") }),
       );
       prisma.product.findFirst.mockResolvedValue({ currentStock: D(5), averageCost: D(3.5) });
+      stock.setState((ids) =>
+        ids.map((id) => ({ id, ...{ currentStock: D(5), averageCost: D(3.5) } })),
+      );
       prisma.stockLot.findMany.mockResolvedValue([]);
       receiptRows(prisma, [{ qty: D(5) }]);
 
@@ -815,7 +953,7 @@ describe("VendorBillsService", () => {
 
       const productArgs = prisma.product.update.mock.calls[0][0].data;
       expect(productArgs.averageCost).toBeUndefined();
-      expect(productArgs.currentStock).toEqual({ decrement: D(5) });
+      expect(productArgs.currentStock.toString()).toBe("0");
     });
 
     it("deletes untouched lots and zeroes partially-consumed ones", async () => {
@@ -823,6 +961,9 @@ describe("VendorBillsService", () => {
         bill({ status: "RECEIVED", receivedDate: new Date("2026-06-02") }),
       );
       prisma.product.findFirst.mockResolvedValue({ currentStock: D(15), averageCost: D(2.5) });
+      stock.setState((ids) =>
+        ids.map((id) => ({ id, ...{ currentStock: D(15), averageCost: D(2.5) } })),
+      );
       // Two receipt rows (a top-up), each with its own lot matched by the row's full tuple.
       receiptRows(prisma, [{ qty: D(2) }, { qty: D(3) }]);
       prisma.stockLot.findMany
@@ -855,6 +996,9 @@ describe("VendorBillsService", () => {
         bill({ status: "RECEIVED", receivedDate: new Date("2026-06-02") }),
       );
       prisma.product.findFirst.mockResolvedValue({ currentStock: D(15), averageCost: D(2.5) });
+      stock.setState((ids) =>
+        ids.map((id) => ({ id, ...{ currentStock: D(15), averageCost: D(2.5) } })),
+      );
       prisma.stockLot.findMany.mockResolvedValue([]);
       receiptRows(prisma, [{ qty: D(5) }]);
 
@@ -883,13 +1027,16 @@ describe("VendorBillsService", () => {
         }),
       );
       prisma.product.findFirst.mockResolvedValue({ currentStock: D(12), averageCost: D(2) });
+      stock.setState((ids) =>
+        ids.map((id) => ({ id, ...{ currentStock: D(12), averageCost: D(2) } })),
+      );
       prisma.stockLot.findMany.mockResolvedValue([]);
       receiptRows(prisma, [{ qty: D(12), unitCost: D(2) }]);
 
       await service.revertToDraft("bill-1");
 
       const productArgs = prisma.product.update.mock.calls[0][0].data;
-      expect(productArgs.currentStock).toEqual({ decrement: D(2).mul(6) });
+      expect(productArgs.currentStock.toString()).toBe("0");
     });
 
     it("G3: reverting a partially received bill reverses only what arrived", async () => {
@@ -902,13 +1049,16 @@ describe("VendorBillsService", () => {
         }),
       );
       prisma.product.findFirst.mockResolvedValue({ currentStock: D(14), averageCost: D(2.5) });
+      stock.setState((ids) =>
+        ids.map((id) => ({ id, ...{ currentStock: D(14), averageCost: D(2.5) } })),
+      );
       prisma.stockLot.findMany.mockResolvedValue([]);
       receiptRows(prisma, [{ qty: D(4) }]);
 
       await service.revertToDraft("bill-1");
 
       const productArgs = prisma.product.update.mock.calls[0][0].data;
-      expect(productArgs.currentStock).toEqual({ decrement: D("4") });
+      expect(productArgs.currentStock.toString()).toBe("10");
       const billArgs = prisma.vendorBill.update.mock.calls[0][0].data;
       expect(billArgs.items).toEqual({
         updateMany: { where: {}, data: { qtyReceived: null } },
@@ -924,6 +1074,9 @@ describe("VendorBillsService", () => {
         bill({ status: "RECEIVED", receivedDate: new Date("2026-06-02") }),
       );
       prisma.product.findFirst.mockResolvedValue({ currentStock: D(5), averageCost: D(3.5) });
+      stock.setState((ids) =>
+        ids.map((id) => ({ id, ...{ currentStock: D(5), averageCost: D(3.5) } })),
+      );
       prisma.stockLot.findMany.mockResolvedValue([]);
       receiptRows(prisma, [{ qty: D(5) }]);
 
@@ -955,6 +1108,16 @@ describe("VendorBillsService", () => {
         averageCost: D(2.5),
         costingMethod: "STANDARD",
       });
+      stock.setState((ids) =>
+        ids.map((id) => ({
+          id,
+          ...{
+            currentStock: D(15),
+            averageCost: D(2.5),
+            costingMethod: "STANDARD",
+          },
+        })),
+      );
       prisma.stockLot.findMany.mockResolvedValue([]);
       receiptRows(prisma, [{ qty: D(5) }]);
 
@@ -962,7 +1125,7 @@ describe("VendorBillsService", () => {
 
       const productArgs = prisma.product.update.mock.calls[0][0].data;
       expect(productArgs.averageCost).toBeUndefined();
-      expect(productArgs.currentStock).toEqual({ decrement: D(5) });
+      expect(productArgs.currentStock.toString()).toBe("10");
       // The reversing row records the unchanged average, not a reversed one.
       expect(prisma.stockMovement.create.mock.calls[0][0].data.avgCostAfter.toString()).toBe("2.5");
     });

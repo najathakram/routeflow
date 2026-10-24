@@ -36,9 +36,10 @@ import { fetchInvoicedSaleLines, roundQty } from "../common/invoiced-sales";
 import { poLineFromInput } from "./po-line-input";
 import { bareVariantLabel } from "../products/product-variant-name";
 import { effectiveCostingMethod } from "./costing-method-policy";
-import { costDecimal, nextAverageCost, planLotConsumption, reverseAverageCost } from "./costing";
+import { costDecimal, planLotConsumption } from "./costing";
 import { REPLAY_CORRECTION_PREFIX, foldLedger, isReplayCorrection } from "./fold-ledger";
-import { recordSaleMovement, resolveSaleCost } from "./sale-movement";
+import { resolveSaleCost, saleMovementRow } from "./sale-movement";
+import { applyStockMovements, type LockedStock, type StockMovementRow } from "./stock-movements";
 import { poReversalNote, poReversalOf } from "./bill-revert";
 import { poGoodsUsedConflict, productsUsedSinceReceipt } from "./po-use-since-receipt";
 import { documentStockDate, stockWriteDate, type DocumentStockDate } from "./stock-write-date";
@@ -313,17 +314,23 @@ export class InventoryService {
     // alert fires after the commit.
     const result = await retryStockTx("inventory.recordPurchase", () =>
       this.stockTx(async (tx) => {
-        await this.lockProducts(tx, [dto.productId]);
-        const locked = await tx.product.findUnique({
-          where: { id: dto.productId },
-          select: { currentStock: true, averageCost: true, costingMethod: true },
-        });
-        if (!locked) throw new NotFoundException("Product not found");
-
-        // New weighted average (used for AVCO; FIFO/LIFO still update for display)
-        const newAvgCost = nextAverageCost(locked.currentStock, locked.averageCost, qty, unitCost);
-        const updatesAverage = locked.costingMethod !== CostingMethod.STANDARD;
-        const avgCostAfter = updatesAverage ? newAvgCost : (locked.averageCost ?? null);
+        // SA-927 §1: the helper locks, reads the counter/average under the lock, stamps stockAfter and
+        // avgCostAfter (AVCO blends; STANDARD keeps) and writes the counter - the one writer.
+        const [applied] = await applyStockMovements(tx, this.stockTenantId(), [
+          {
+            productId: dto.productId,
+            type: MovementType.PURCHASE,
+            quantity: qty,
+            unitCost,
+            average: { receive: unitCost },
+            supplierId: dto.supplierId,
+            reference: dto.reference,
+            notes: dto.notes,
+            performedById,
+            // B562: the effective date is the accounting date; createdAt stays write-once.
+            effectiveAt: effectiveDate,
+          },
+        ]);
 
         // Always create a StockLot for lot-tracking (used by FIFO/LIFO)
         await tx.stockLot.create({
@@ -338,38 +345,7 @@ export class InventoryService {
           },
         });
 
-        // Update stock and cost based on costing method
-        const costUpdate: any = { currentStock: { increment: qty } };
-        if (updatesAverage) {
-          // For FIFO/LIFO we still store the running average in averageCost for reference
-          costUpdate.averageCost = newAvgCost;
-        }
-        // STANDARD: don't touch averageCost
-
-        // B562 PR-3: snapshots are write-once now (SA-136 §4), so `stockAfter` is the counter this
-        // update RETURNED (SA-136 §1), never a read made before it — the row is written after it.
-        const updated = await tx.product.update({
-          where: { id: dto.productId },
-          data: costUpdate,
-          select: { currentStock: true },
-        });
-
-        const movement = await tx.stockMovement.create({
-          data: {
-            productId: dto.productId,
-            type: MovementType.PURCHASE,
-            quantity: qty,
-            unitCost,
-            avgCostAfter,
-            stockAfter: updated.currentStock,
-            supplierId: dto.supplierId,
-            reference: dto.reference,
-            notes: dto.notes,
-            performedById,
-            // B562: the effective date is the accounting date; createdAt stays write-once.
-            effectiveAt: effectiveDate,
-          },
-        });
+        const movement = await tx.stockMovement.findUniqueOrThrow({ where: { id: applied.id } });
 
         // A backdated purchase can change the average every later row implies. Later snapshots stay
         // as written (SA-136 §4); the replay appends one dated COST_BASIS correction if needed.
@@ -411,35 +387,32 @@ export class InventoryService {
     // re-runs on a 40P01 / 40001 / P2034; nothing is captured across attempts.
     const result = await retryStockTx("inventory.recordAdjustment", () =>
       this.stockTx(async (tx) => {
-        await this.lockProducts(tx, [dto.productId]);
-        const locked = await tx.product.findUnique({
-          where: { id: dto.productId },
-          select: { averageCost: true },
-        });
-        if (!locked) throw new NotFoundException("Product not found");
-
-        // B562 PR-3: `stockAfter` from the update's own returned row (SA-136 §1) — write-once now.
-        const updated = await tx.product.update({
-          where: { id: dto.productId },
-          data: { currentStock: { increment: qty } },
-          select: { currentStock: true },
-        });
-
-        const movement = await tx.stockMovement.create({
-          data: {
-            productId: dto.productId,
-            type: MovementType.ADJUSTMENT,
-            quantity: qty,
-            // Quantity-only adjustments never move the average
-            avgCostAfter: locked.averageCost ?? null,
-            stockAfter: updated.currentStock,
-            reference: dto.reference,
-            notes: dto.notes,
-            performedById,
-            // B562: the effective date is the accounting date; createdAt stays write-once.
-            effectiveAt: effectiveDate,
+        // SA-927 §1: the helper locks and reads under the lock; the average the lot is stamped with is
+        // the one it read. Quantity-only adjustments never move the average ("keep").
+        let lockedAverage: Prisma.Decimal | null = null;
+        const [applied] = await applyStockMovements(
+          tx,
+          this.stockTenantId(),
+          (locked) => {
+            lockedAverage = locked.get(dto.productId)?.averageCost ?? null;
+            return [
+              {
+                productId: dto.productId,
+                type: MovementType.ADJUSTMENT,
+                quantity: qty,
+                average: "keep",
+                reference: dto.reference,
+                notes: dto.notes,
+                performedById,
+                // B562: the effective date is the accounting date; createdAt stays write-once.
+                effectiveAt: effectiveDate,
+              },
+            ];
           },
-        });
+          { productIds: [dto.productId] },
+        );
+        const locked = { averageCost: lockedAverage as Prisma.Decimal | null };
+        const movement = await tx.stockMovement.findUniqueOrThrow({ where: { id: applied.id } });
 
         // If positive adjustment, add to lots
         if (qty.gt(0)) {
@@ -856,20 +829,19 @@ export class InventoryService {
             ? `${dto.notes} — Split into variants`
             : "Split into variants";
 
-          const movementIds: string[] = [];
-          const parentMovement = await tx.stockMovement.create({
-            data: {
+          // SA-927 §1: every row (parent out, variants in) goes through applyStockMovements once, after
+          // the variants exist; the parent leg is first, and the helper returns ids in input order (master order).
+          const stockRows: StockMovementRow[] = [
+            {
               productId: parent.id,
               type: MovementType.ADJUSTMENT,
               quantity: totalQtyDecimal.neg(),
-              avgCostAfter: parent.averageCost ?? null,
-              stockAfter: parentStockAfter,
+              average: "keep",
               reference,
               notes: parentNotes,
               performedById,
             },
-          });
-          movementIds.push(parentMovement.id);
+          ];
 
           const assignmentResults: {
             productId: string;
@@ -902,13 +874,6 @@ export class InventoryService {
             const unitCost = costDecimal(resolvedCost ?? 0);
             const updatesAverage =
               variant.costingMethod !== CostingMethod.STANDARD && resolvedCost != null;
-            const newAvgCost = nextAverageCost(
-              variant.currentStock,
-              variant.averageCost,
-              qtyDecimal,
-              unitCost,
-            );
-            const variantStockAfter = variant.currentStock.add(qtyDecimal);
             const variantNotes = dto.notes
               ? `${dto.notes} — Assigned from ${parent.name}`
               : `Assigned from ${parent.name}`;
@@ -929,27 +894,15 @@ export class InventoryService {
               lotCredit = lotCredit.sub(lotQty);
             }
 
-            const variantMovement = await tx.stockMovement.create({
-              data: {
-                productId: variant.id,
-                type: MovementType.ADJUSTMENT,
-                quantity: qtyDecimal,
-                unitCost,
-                avgCostAfter: updatesAverage ? newAvgCost : (variant.averageCost ?? null),
-                stockAfter: variantStockAfter,
-                reference,
-                notes: variantNotes,
-                performedById,
-              },
-            });
-            movementIds.push(variantMovement.id);
-
-            await tx.product.update({
-              where: { id: variant.id },
-              data: {
-                currentStock: { increment: qtyDecimal },
-                ...(updatesAverage ? { averageCost: newAvgCost } : {}),
-              },
+            stockRows.push({
+              productId: variant.id,
+              type: MovementType.ADJUSTMENT,
+              quantity: qtyDecimal,
+              unitCost,
+              average: updatesAverage ? { receive: unitCost } : "keep",
+              reference,
+              notes: variantNotes,
+              performedById,
             });
 
             restockedProductIds.push(variant.id);
@@ -962,10 +915,8 @@ export class InventoryService {
             });
           }
 
-          await tx.product.update({
-            where: { id: parent.id },
-            data: { currentStock: { decrement: totalQtyDecimal } },
-          });
+          const applied = await applyStockMovements(tx, this.stockTenantId(), stockRows);
+          const movementIds = applied.map((m) => m.id);
 
           return {
             reference,
@@ -1120,11 +1071,19 @@ export class InventoryService {
     },
   ): Promise<{ movementIds: string[]; skipped: number }> {
     const { items, lockedMap, reference, effectiveDate, notes, performedById } = args;
-    const movementIds: string[] = [];
     let skipped = 0;
     // Running stock per product so repeated items in one count session
     // produce truthful deltas against the stock left by the previous item.
     const runningStock = new Map<string, Prisma.Decimal>();
+    // SA-927 §1: the rows are collected and written once through applyStockMovements; a positive
+    // delta's lot is opened after, from the same cost the row carries.
+    const stockRows: StockMovementRow[] = [];
+    const lotsToOpen: {
+      productId: string;
+      delta: Prisma.Decimal;
+      avgCost: Prisma.Decimal | null;
+      itemNotes: string;
+    }[] = [];
 
     for (const item of items) {
       const product = lockedMap.get(item.productId);
@@ -1148,44 +1107,46 @@ export class InventoryService {
       // stale on the very rows it was meant to fix.
       const avgCost = args.correctedCosts?.get(item.productId) ?? product.averageCost ?? null;
 
-      const updated = await tx.product.update({
-        where: { id: item.productId },
-        data: { currentStock: { increment: delta } },
-        select: { currentStock: true },
-      });
-      const stockAfter = updated.currentStock;
-      runningStock.set(item.productId, stockAfter);
+      runningStock.set(
+        item.productId,
+        (runningStock.get(item.productId) ?? product.currentStock).add(delta),
+      );
 
-      const movement = await tx.stockMovement.create({
+      // SA-929 §5: a REPLACE against the live counter is the helper's absolute `target` form (it takes
+      // q = counted - the locked counter under its own lock); a durable line with an expectedQty
+      // snapshot and an ADD stay deltas, as master books them. "keep" stamps the locked average, which
+      // already holds a cost corrected earlier in this tx (setCostBasisInTx writes it through the helper).
+      const replaceLive = item.mode === "REPLACE" && item.expectedQty == null;
+      stockRows.push({
+        productId: item.productId,
+        type: MovementType.ADJUSTMENT,
+        ...(replaceLive ? { target: counted } : { quantity: delta }),
+        average: "keep",
+        reference,
+        notes: itemNotes,
+        performedById,
+        // B562: the count's effective date is the accounting date; createdAt stays write-once.
+        effectiveAt: effectiveDate,
+      });
+      if (delta.gt(0)) lotsToOpen.push({ productId: item.productId, delta, avgCost, itemNotes });
+    }
+
+    const applied = await applyStockMovements(tx, this.stockTenantId(), stockRows);
+    const movementIds = applied.map((m) => m.id);
+
+    for (const lot of lotsToOpen) {
+      await tx.stockLot.create({
         data: {
-          productId: item.productId,
-          type: MovementType.ADJUSTMENT,
-          quantity: delta,
-          avgCostAfter: avgCost,
-          stockAfter,
+          productId: lot.productId,
+          purchaseDate: effectiveDate,
+          qty: lot.delta,
+          remainingQty: lot.delta,
+          unitCost: lot.avgCost ?? new Prisma.Decimal(0),
           reference,
-          notes: itemNotes,
-          performedById,
-          // B562: the count's effective date is the accounting date; createdAt stays write-once.
-          effectiveAt: effectiveDate,
+          notes: lot.itemNotes,
         },
       });
-      movementIds.push(movement.id);
-
-      if (delta.gt(0)) {
-        await tx.stockLot.create({
-          data: {
-            productId: item.productId,
-            purchaseDate: effectiveDate,
-            qty: delta,
-            remainingQty: delta,
-            unitCost: avgCost ?? new Prisma.Decimal(0),
-            reference,
-            notes: itemNotes,
-          },
-        });
-        args.restockedProductIds.push(item.productId);
-      }
+      args.restockedProductIds.push(lot.productId);
     }
 
     return { movementIds, skipped };
@@ -1207,29 +1168,33 @@ export class InventoryService {
   ): Promise<{ unitCost: Prisma.Decimal; stockAfter: Prisma.Decimal }> {
     // SA-767 L-2: a no-op when the caller already holds the row (the live order paths lock first); it keeps
     // this writer safe if it is ever called on its own.
-    await this.lockProducts(tx, [productId]);
-    // B562 PR-2: the cost resolver and the SALE row writer live in sale-movement.ts, shared with
-    // the order stock paths (orders/order-stock.ts) so a sale is costed one way everywhere.
-    // SA-136b: the row is written AFTER the counter moves, with `stockAfter` read off the update's
-    // own returned row — never a pre-read (a concurrent writer between the two would falsify it).
-    const cost = await resolveSaleCost(tx, productId, quantity);
-    const { unitCost } = cost;
-
-    const updated = await tx.product.update({
-      where: { id: productId },
-      data: { currentStock: { decrement: quantity } },
-      select: { currentStock: true },
-    });
-    const stockAfter = updated.currentStock;
-
-    await recordSaleMovement(tx, {
-      productId,
-      quantity: quantity.neg(),
-      stockAfter,
-      reference,
-      performedById,
-      cost,
-    });
+    // SA-927 §1: the sale row (cost resolved by sale-movement.ts, shared with the order stock paths, so a
+    // sale is costed one way everywhere) is built INSIDE the helper's plan function, i.e. under the
+    // product lock; the helper moves the counter and stamps stockAfter. A foreign product id is a
+    // 404 from the helper with nothing written.
+    let unitCost = new Prisma.Decimal(0);
+    let stockAfter = new Prisma.Decimal(0);
+    const applied = await applyStockMovements(
+      tx,
+      this.stockTenantId(),
+      async (locked) => {
+        stockAfter = (locked.get(productId) as LockedStock).currentStock;
+        const row = await saleMovementRow(tx, {
+          productId,
+          quantity: quantity.neg(),
+          reference,
+          performedById,
+        });
+        if (!row) {
+          unitCost = (await resolveSaleCost(tx, productId, quantity)).unitCost;
+          return [];
+        }
+        unitCost = row.unitCost as Prisma.Decimal;
+        return [row];
+      },
+      { productIds: [productId] },
+    );
+    if (applied[0]?.stockAfter != null) stockAfter = applied[0].stockAfter;
 
     return { unitCost, stockAfter };
   }
@@ -1670,6 +1635,13 @@ export class InventoryService {
    * currentStock is written as an increment, but the average is derived from
    * the read - the lock is what keeps that read consistent with the write.
    */
+  /** The caller's tenant for `applyStockMovements` (never read from a product row); a tenantless call is a bug. */
+  private stockTenantId(): string {
+    const id = this.prisma.getTenantId();
+    if (!id) throw new Error("InventoryService: stock writes need a tenant context");
+    return id;
+  }
+
   /** A stock-writer transaction with the 15 s budget (`STOCK_TX_OPTIONS`): the 5 s lock timeout fires before P2028. */
   private stockTx<T>(fn: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> {
     return this.prisma.tenantTransaction(fn, STOCK_TX_OPTIONS);
@@ -1705,7 +1677,7 @@ export class InventoryService {
     tx: Prisma.TransactionClient,
     po: { poNumber: string; supplierId: string },
     item: { productId: string; unitCost: Prisma.Decimal | number | string },
-    prod: {
+    _prod: {
       currentStock: Prisma.Decimal;
       averageCost: Prisma.Decimal | null;
       costingMethod: CostingMethod;
@@ -1748,31 +1720,23 @@ export class InventoryService {
     // dividing the cost again would value the same goods at 1/unitsPerBox.
     const itemUnitCost = costDecimal(item.unitCost);
 
-    const newAvgCost = prod
-      ? nextAverageCost(prod.currentStock, prod.averageCost, qtyReceived, itemUnitCost)
-      : itemUnitCost;
-    const stockAfter = (prod?.currentStock ?? new Prisma.Decimal(0)).add(qtyReceived);
-    // STANDARD products are valued from their operator-set cost, so a receipt
-    // must not move averageCost. Mirrors recordPurchase and the vendor-bill
-    // receive path, which already guard this (the bill path was fixed for this
-    // exact bug class; PO receive was missed).
-    const updatesAverage = prod ? prod.costingMethod !== CostingMethod.STANDARD : true;
-
-    const posted = await tx.stockMovement.create({
-      select: { id: true },
-      data: {
+    // SA-927 §1: the helper reads the counter/average under the lock and stamps stockAfter and
+    // avgCostAfter (AVCO blends; a STANDARD product's average is left alone - a receipt must not move
+    // it, same guard as recordPurchase and the vendor-bill receive path). A product missing from the
+    // tenant is a 404 (master wrote an orphan movement and no counter write when `prod` was null).
+    const [posted] = await applyStockMovements(tx, this.stockTenantId(), [
+      {
         productId: item.productId,
-        type: "PURCHASE",
+        type: MovementType.PURCHASE,
         quantity: qtyReceived,
         unitCost: itemUnitCost,
-        avgCostAfter: updatesAverage ? newAvgCost : (prod?.averageCost ?? null),
-        stockAfter,
+        average: { receive: itemUnitCost },
         supplierId: po.supplierId,
         reference: po.poNumber,
         performedById: userId,
         ...(movementAt ? { createdAt: movementAt, effectiveAt: effectiveAt ?? movementAt } : {}),
       },
-    });
+    ]);
 
     // Create StockLot for FIFO/LIFO tracking
     if (lotQty !== false) {
@@ -1789,15 +1753,6 @@ export class InventoryService {
       });
     }
 
-    if (prod) {
-      await tx.product.update({
-        where: { id: item.productId },
-        data: {
-          currentStock: { increment: qtyReceived },
-          ...(updatesAverage ? { averageCost: newAvgCost } : {}),
-        },
-      });
-    }
     return posted?.id ?? null;
   }
 
@@ -1997,65 +1952,36 @@ export class InventoryService {
           };
         }),
       );
-      const product = await tx.product.findUnique({
-        where: { id: productId },
-        select: { currentStock: true, averageCost: true, costingMethod: true },
-      });
-      if (!product) continue;
-      // STANDARD products never had their average moved by the receipt, so the
-      // reversal must not move it either.
-      const tracksAverage = product.costingMethod !== CostingMethod.STANDARD;
-      let stock = product.currentStock;
-      let avg = product.averageCost;
-      let totalQty = new Prisma.Decimal(0);
-      for (const m of list) {
-        if (tracksAverage && avg != null && m.unitCost != null) {
-          // null ⇒ the reversal empties stock: KEEP the previous average so the
-          // product's cost basis survives (same contract as revertToDraft).
-          const before = reverseAverageCost(stock, avg, m.quantity, m.unitCost);
-          if (before !== null) avg = before;
-        }
-        stock = stock.sub(m.quantity);
-        totalQty = totalQty.add(m.quantity);
+      // SA-927 §1: the whole product's reversal rows go through the helper in one call, newest receipt
+      // first. {reverse: cost} is reverseAverageCost (a reversal that would empty stock keeps the
+      // average; a STANDARD product's average is never moved); the helper stamps stockAfter and writes
+      // the counter. A product missing from the tenant is a 404 (master skipped it silently).
+      const rows: StockMovementRow[] = list.map((m) => {
         const at = nextAt();
         const when = whenOf.get(m.id) as DocumentStockDate;
         // Filed period ⇒ books now (this row's own stamp); else the receipt's own instant.
         const effectiveAt = when.movedFromPeriod ? at : when.effectiveAt;
         noteEarliest(productId, effectiveAt);
-        const reversal = await tx.stockMovement.create({
-          data: {
-            productId,
-            // SA-808 §5: a negative PURCHASE, not ADJUSTMENT — the tobacco filing sums signed
-            // PURCHASE rows, so an ADJUSTMENT left the original receipt AND its re-post counted.
-            type: MovementType.PURCHASE,
-            quantity: new Prisma.Decimal(m.quantity).negated(),
-            unitCost: m.unitCost,
-            avgCostAfter: tracksAverage ? avg : (product.averageCost ?? null),
-            stockAfter: stock,
-            supplierId: m.supplierId,
-            reference: po.poNumber,
-            notes: poReversalNote(m.id, when.movedFromPeriod),
-            performedById: userId,
-            // B562: createdAt is the strictly increasing stamp (replay tiebreak); effectiveAt is the
-            // accounting date above.
-            createdAt: at,
-            effectiveAt,
-          },
-          select: { id: true },
-        });
-        if (reversal?.id) ownRowIds.push(reversal.id);
-      }
-      // Write the average only when the reversal actually moved it — writing the
-      // unchanged value back would clobber a concurrent cost update for nothing.
-      const avgMoved =
-        tracksAverage && avg != null && product.averageCost != null && !avg.eq(product.averageCost);
-      await tx.product.update({
-        where: { id: productId },
-        data: {
-          currentStock: { decrement: totalQty },
-          ...(avgMoved ? { averageCost: avg! } : {}),
-        },
+        return {
+          productId,
+          // SA-808 §5: a negative PURCHASE, not ADJUSTMENT — the tobacco filing sums signed
+          // PURCHASE rows, so an ADJUSTMENT left the original receipt AND its re-post counted.
+          type: MovementType.PURCHASE,
+          quantity: new Prisma.Decimal(m.quantity).negated(),
+          unitCost: m.unitCost,
+          average: { reverse: m.unitCost },
+          supplierId: m.supplierId,
+          reference: po.poNumber,
+          notes: poReversalNote(m.id, when.movedFromPeriod),
+          performedById: userId,
+          // B562: createdAt is the strictly increasing stamp (replay tiebreak); effectiveAt is the
+          // accounting date above.
+          createdAt: at,
+          effectiveAt,
+        };
       });
+      const applied = await applyStockMovements(tx, this.stockTenantId(), rows);
+      for (const r of applied) if (r?.id) ownRowIds.push(r.id);
     }
 
     // ── Lots: every one is untouched (checked above), so each is reversed by its
@@ -2610,30 +2536,23 @@ export class InventoryService {
     // A STANDARD product is valued from standardCost, so also set it — otherwise
     // "Set cost" writes averageCost only and the stock table (which reads
     // standardCost for STANDARD) never clears its "No cost set" state.
-    const updated = await tx.product.update({
-      where: { id: product.id },
-      data:
-        product.costingMethod === CostingMethod.STANDARD
-          ? { averageCost: unitCost, standardCost: unitCost }
-          : { averageCost: unitCost },
-      select: { currentStock: true },
-    });
-
-    // The snapshot is the counter this update RETURNED, never a read made before it.
-    const movement = await tx.stockMovement.create({
-      data: {
+    // SA-927 §1: {set, standard: true} sets the average (and standardCost for a STANDARD product, read
+    // under the lock by the helper); the COST_BASIS row (qty 0) is kept by the helper and carries the
+    // counter it read as stockAfter.
+    const [applied] = await applyStockMovements(tx, this.stockTenantId(), [
+      {
         productId: product.id,
         type: MovementType.COST_BASIS,
         quantity: 0,
         unitCost,
-        avgCostAfter: unitCost,
-        stockAfter: updated.currentStock,
+        average: { set: unitCost, standard: true },
         notes: dto.notes,
         performedById,
         // A count's cost correction carries the session reference: it is what makes the batch resumable.
         ...(reference ? { reference } : {}),
       },
-    });
+    ]);
+    const movement = await tx.stockMovement.findUniqueOrThrow({ where: { id: applied.id } });
 
     if (dto.applyToLots) {
       await tx.stockLot.updateMany({

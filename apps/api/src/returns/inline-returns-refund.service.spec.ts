@@ -26,6 +26,9 @@ import { IdempotencyService } from "../common/idempotency.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
+import { wireStockHelper } from "../inventory/testing/stock-helper-mock";
+
+let stock!: ReturnType<typeof wireStockHelper>;
 
 const user = (role: string, extra: Partial<JwtPayload> = {}): JwtPayload =>
   ({
@@ -100,6 +103,7 @@ describe("InlineReturnsService.refund (SA-727)", () => {
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    stock = wireStockHelper(prisma, { ample: true });
     row = receivedReturn();
     rawCalls = [];
     rawValues = [];
@@ -358,7 +362,7 @@ describe("InlineReturnsService.refund (SA-727)", () => {
       prisma.tenantTransaction.mockImplementation((fn: any) =>
         fn({
           ...prisma,
-          $queryRaw: q,
+          $queryRaw: stock.queryRaw(q),
           $executeRaw: jest.fn((strings: TemplateStringsArray, ...values: unknown[]) => {
             rawCalls.push(strings.join("?").replace(/\s+/g, " ").trim());
             rawValues.push(values);
@@ -717,7 +721,7 @@ describe("InlineReturnsService.refund (SA-727)", () => {
       expect(prisma.return.updateMany).toHaveBeenCalledTimes(1);
       expect(prisma.return.updateMany.mock.calls[0][0].data.status).toBe("CANCELLED");
       expect(prisma.product.update).toHaveBeenCalledWith(
-        expect.objectContaining({ data: { currentStock: { decrement: expect.anything() } } }),
+        expect.objectContaining({ data: { currentStock: expect.anything() } }),
       );
       expect(prisma.stockMovement.create).toHaveBeenCalledTimes(1);
     });
@@ -1247,6 +1251,7 @@ describe("InlineReturnsQuoteService.quote: the additive refund fields (SA-727)",
 
   beforeEach(() => {
     prisma = createMockPrisma();
+    stock = wireStockHelper(prisma, { ample: true });
     quote = new InlineReturnsQuoteService(prisma as any, {} as SystemConfigService);
     prisma.customer.findFirst.mockResolvedValue({ isWalkIn: true });
     prisma.invoiceItem.findMany.mockResolvedValue([{ id: "ii-1", invoiceId: "inv-1" }]);

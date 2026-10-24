@@ -18,6 +18,9 @@ import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { NumberingService } from "../import/numbering.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { wireStockHelper } from "../inventory/testing/stock-helper-mock";
+
+let stock!: ReturnType<typeof wireStockHelper>;
 
 /** A box-unaware boxed line: a standing-order line of 6 BOXES of a 12-pack (no split, no snapshot). */
 const boxLine = (over: Record<string, unknown> = {}) => ({
@@ -53,6 +56,7 @@ describe("standardRestockResolver (B665)", () => {
 
   beforeEach(() => {
     prisma = createMockPrisma();
+    stock = wireStockHelper(prisma, { ample: true });
   });
 
   it("MONEY-SHAPE: 3 boxes typed on a box-unaware 12-pack line restock 36 PIECES, via the InvoiceItem's split", async () => {
@@ -193,6 +197,7 @@ describe("standardRestockResolver — unit-aware lines (A4-F3)", () => {
 
   beforeEach(() => {
     prisma = createMockPrisma();
+    stock = wireStockHelper(prisma, { ample: true });
   });
 
   it("REG-A4F3-1: 4 returned from a factor-1 Piece line on a 12-pack product restocks 4 pieces, never parks", async () => {
@@ -248,6 +253,7 @@ describe("restockReturnItems with a resolver (B665)", () => {
 
   beforeEach(() => {
     prisma = createMockPrisma();
+    stock = wireStockHelper(prisma, { ample: true });
     prisma.product.findFirst.mockResolvedValue({
       currentStock: new Prisma.Decimal(100),
       averageCost: new Prisma.Decimal(2),
@@ -264,9 +270,9 @@ describe("restockReturnItems with a resolver (B665)", () => {
     expect(mv.reference).toBe("RET-ret-1234");
     expect(prisma.product.update).toHaveBeenCalledWith({
       where: { id: "p1" },
-      data: { currentStock: { increment: expect.anything() } },
+      data: { currentStock: expect.anything() },
     });
-    expect(Number(prisma.product.update.mock.calls[0][0].data.currentStock.increment)).toBe(36);
+    expect(Number(prisma.product.update.mock.calls[0][0].data.currentStock)).toBe(136); // 100 + 36
     expect(prisma.returnParkedRestock.createMany).not.toHaveBeenCalled();
   });
 
@@ -319,6 +325,7 @@ describe("ReturnsService receive() and cancel() (B665)", () => {
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    stock = wireStockHelper(prisma, { ample: true });
     const mod: TestingModule = await Test.createTestingModule({
       providers: [
         ReturnsService,
@@ -381,7 +388,9 @@ describe("ReturnsService receive() and cancel() (B665)", () => {
       regulatedSalesLedger: { findMany: jest.fn().mockResolvedValue([]) },
       $executeRaw: jest.fn().mockResolvedValue(0),
     };
-    prisma.tenantTransaction.mockImplementation((fn: any) => fn(tx));
+    prisma.tenantTransaction.mockImplementation((fn: any) => fn(stock.wrapTx(tx)));
+    // 40 on hand: the 36 undone pieces leave 4
+    stock.setState((ids) => ids.map((id) => ({ id, currentStock: 40, averageCost: 2 })));
     prisma.return.findUnique.mockResolvedValue({
       id: "ret-12345678",
       status: "APPROVED",
@@ -394,14 +403,13 @@ describe("ReturnsService receive() and cancel() (B665)", () => {
       select: { productId: true, quantity: true },
     });
     expect(tx.product.update).toHaveBeenCalledTimes(1);
-    expect(tx.product.update).toHaveBeenCalledWith({
-      where: { id: "p1" },
-      data: { currentStock: { decrement: 36 } },
-    });
+    expect(tx.product.update.mock.calls[0][0].where).toEqual({ id: "p1" });
+    expect(Number(tx.product.update.mock.calls[0][0].data.currentStock)).toBe(4); // 40 - 36
     // B562 PR-2: the 36 pieces are reversed by an APPENDED RETURN row, never a delete.
     expect(tx.stockMovement.deleteMany).not.toHaveBeenCalled();
     const rev = tx.stockMovement.create.mock.calls[0][0].data;
-    expect(rev).toMatchObject({ type: "RETURN", reference: "RET-ret-1234", stockAfter: 4 });
+    expect(rev).toMatchObject({ type: "RETURN", reference: "RET-ret-1234" });
+    expect(Number(rev.stockAfter)).toBe(4);
     expect(rev.quantity.toString()).toBe("-36");
     expect(tx.returnParkedRestock.deleteMany).toHaveBeenCalledWith({
       where: { returnId: "ret-12345678", resolvedAt: null },

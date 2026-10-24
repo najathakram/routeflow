@@ -162,7 +162,7 @@ describeDb("B568 Zoho stock sync is atomic and serialized with sales (real Postg
     }
   }
 
-  /** Make the NEXT tenantTransaction's stockMovement.create throw (the update before it is in the same tx). */
+  /** Make the NEXT tenantTransaction's movement insert (the stock helper's createManyAndReturn) throw. */
   function breakNextMovementCreate(): { fired: number } {
     const state = { fired: 0 };
     const real = prisma.tenantTransaction.bind(prisma);
@@ -175,7 +175,7 @@ describeDb("B568 Zoho stock sync is atomic and serialized with sales (real Postg
                 k === "stockMovement"
                   ? new Proxy(t[k], {
                       get: (d, m) =>
-                        m === "create"
+                        m === "createManyAndReturn"
                           ? async () => {
                               state.fired++;
                               throw new Error("forced stockMovement.create failure");
