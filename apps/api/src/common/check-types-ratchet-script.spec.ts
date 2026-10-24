@@ -161,3 +161,66 @@ describe("check-types ratchet rules (B806)", () => {
     expect(worker).toMatch(/import \{ isNoCheckFile \} from "\.\/check-types-ratchet-core\.mjs"/);
   });
 });
+
+/**
+ * W-756 (W-738 option b): the src + specs program sat at its heap edge on an 8 GB host. The check now runs TWO programs,
+ * one after the other in their own workers (so the peak is the larger of the two, not the sum): the unit specs, and the
+ * `*.db.spec.ts` lane with the source they import. Each keeps its own ratchet baseline. Together they must check exactly
+ * what tsconfig.spec.json does, so splitting never drops a file.
+ */
+describe("check-types: two programs (W-756)", () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const ts = require("typescript") as typeof import("typescript");
+  const filesOf = (config: string): string[] => {
+    const parsed = ts.getParsedCommandLineOfConfigFile(
+      path.join(API_DIR, config),
+      {},
+      {
+        ...ts.sys,
+        onUnRecoverableConfigFileDiagnostic: (d) => {
+          throw new Error(ts.flattenDiagnosticMessageText(d.messageText, "\n"));
+        },
+      },
+    );
+    if (!parsed) throw new Error(`could not parse ${config}`);
+    return parsed.fileNames.map((f) => path.relative(API_DIR, f).split(path.sep).join("/")).sort();
+  };
+  type Program = { name: string; config: string; baseline: string };
+  const programs = core(`console.log(JSON.stringify(c.PROGRAMS));`) as Program[];
+
+  it("declares the unit and db programs, each with its own config and baseline file", () => {
+    expect(programs.map((p) => p.name)).toEqual(["unit", "db"]);
+    for (const p of programs) {
+      expect(readFileSync(path.join(API_DIR, p.config), "utf8")).toContain("tsconfig.spec.json");
+      expect(() => readFileSync(path.join(API_DIR, p.baseline), "utf8")).not.toThrow();
+    }
+    expect(new Set(programs.map((p) => p.baseline)).size).toBe(2);
+  });
+
+  it("the two programs' roots partition tsconfig.spec.json exactly: nothing dropped, nothing twice", () => {
+    const [unit, db] = programs.map((p) => filesOf(p.config));
+    const all = filesOf("tsconfig.spec.json");
+    expect(unit.filter((f) => /\.db\.spec\.ts$/.test(f))).toEqual([]);
+    expect(db.filter((f) => !/\.db\.spec\.ts$/.test(f))).toEqual([]);
+    expect(db.length).toBeGreaterThan(100); // the db lane really is in the second program
+    expect([...unit, ...db].sort()).toEqual(all);
+  });
+
+  it("RED: a baseline entry in the wrong program fails (a db spec in the unit baseline, a unit spec in the db one)", () => {
+    const out = core(`
+      const one = (file) => [{ file, line: 1, code: 2339, message: "m" }];
+      const u = c.evaluate(one("src/a.db.spec.ts"), { "src/a.db.spec.ts": 1 }, [], "unit");
+      const d = c.evaluate(one("src/a.spec.ts"), { "src/a.spec.ts": 1 }, [], "db");
+      const ok = c.evaluate([], {}, [], "db");
+      console.log(JSON.stringify([u.failures.map((f) => f.kind), d.failures.map((f) => f.kind), ok.ok]));`);
+    expect(out).toEqual([["baseline-wrong-program"], ["baseline-wrong-program"], true]);
+  });
+
+  it("the CLI runs every program in its own worker, one after the other", () => {
+    const cli = readFileSync(path.join(API_DIR, "scripts/check-types-ratchet.mjs"), "utf8");
+    expect(cli).toMatch(/for \(const program of PROGRAMS\)/);
+    expect(cli).toMatch(
+      /spawnSync\(process\.execPath, \[heapFlag, WORKER, path\.join\(API_DIR, program\.config\)\]/,
+    );
+  });
+});
