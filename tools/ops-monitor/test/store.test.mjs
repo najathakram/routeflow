@@ -1183,3 +1183,54 @@ test(
     rmSync(lock, { recursive: true, force: true });
   },
 );
+
+// W-880 (W-651): on 10-24 a crash left events/windows/2026-10-24.jsonl with its first 325 events turned into
+// 97,256 NUL bytes, and later appends and commits carried the zeroed region along. A NUL-bearing events file is
+// now an alarm (the surviving events still load), and nothing appends to or commits it.
+test("W-880: a NUL-prefixed events file loads its surviving events and raises a corrupt-file anomaly", () => {
+  const d = mkdtempSync(join(tmpdir(), "rfops-nul-"));
+  try {
+    mkdirSync(join(d, "events", "m-z"), { recursive: true });
+    const good = ev("m-z", "note", null, { text: "survived" });
+    writeFileSync(
+      join(d, "events", "m-z", "2026-10-19.jsonl"),
+      "\0".repeat(512) + JSON.stringify(good) + "\n",
+    );
+    const all = readAllEvents(d);
+    assert.ok(
+      all.some((e) => e.id === good.id),
+      "the event behind the NULs still loads",
+    );
+    const st = fold(all);
+    const a = (st.anomalies ?? []).find((x) => x.kind === "corrupt-events-file");
+    assert.ok(a, "corrupt-events-file anomaly raised");
+    assert.match(a.detail, /events\/m-z\/2026-10-19\.jsonl/);
+    assert.match(a.detail, /512 NUL/);
+  } finally {
+    rmSync(d, { recursive: true, force: true });
+  }
+});
+
+test(
+  "W-880: appendEvents refuses to append to (or commit) an events file that holds NUL bytes",
+  { timeout: 240000 },
+  async () => {
+    const C = join(tmp, "clone-nul");
+    git(tmp, "clone", "--quiet", remote, C);
+    git(C, "config", "user.name", "Machine c");
+    git(C, "config", "user.email", "c@example.com");
+    const e = ev("m-c", "note", null, { text: "after the crash" });
+    const f = join(C, "events", "m-c", `${e.ts.slice(0, 10)}.jsonl`);
+    mkdirSync(join(C, "events", "m-c"), { recursive: true });
+    const zeroed =
+      "\0".repeat(256) + JSON.stringify(ev("m-c", "note", null, { text: "kept" })) + "\n";
+    writeFileSync(f, zeroed);
+    const head = git(C, "rev-parse", "HEAD").trim();
+    await assert.rejects(
+      appendEvents([e], { dir: C, home: join(tmp, "home-c"), push: false }),
+      /NUL/,
+    );
+    assert.equal(readFileSync(f, "utf8"), zeroed, "nothing appended");
+    assert.equal(git(C, "rev-parse", "HEAD").trim(), head, "nothing committed");
+  },
+);
