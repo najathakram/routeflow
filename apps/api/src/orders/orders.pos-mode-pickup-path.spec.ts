@@ -130,15 +130,21 @@ describe("resolveFulfilPath: staff POS mode", () => {
   });
 
   it("fulfilCaller: a CUSTOMER is the buyer audience, every other role is staff, the role rides along", () => {
-    expect(fulfilCaller({ role: UserRole.CUSTOMER })).toEqual({
+    expect(fulfilCaller({ role: UserRole.CUSTOMER }, [])).toEqual({
       audience: "buyer",
       role: "CUSTOMER",
+      deniedGroups: [],
     });
-    expect(fulfilCaller({ role: UserRole.OPERATOR })).toEqual({
+    expect(fulfilCaller({ role: UserRole.OPERATOR }, [])).toEqual({
       audience: "staff",
       role: "OPERATOR",
+      deniedGroups: [],
     });
-    expect(fulfilCaller({ role: UserRole.DRIVER })).toEqual({ audience: "staff", role: "DRIVER" });
+    expect(fulfilCaller({ role: UserRole.DRIVER }, [])).toEqual({
+      audience: "staff",
+      role: "DRIVER",
+      deniedGroups: [],
+    });
   });
 });
 

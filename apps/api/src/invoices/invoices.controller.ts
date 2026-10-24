@@ -294,8 +294,12 @@ export class InvoicesController {
 
   @Patch(":id/payments/:paymentId/void")
   @Roles(UserRole.OPERATOR)
-  voidPayment(@Param("id") id: string, @Param("paymentId") paymentId: string) {
-    return this.invoicesService.voidPayment(id, paymentId);
+  voidPayment(
+    @Param("id") id: string,
+    @Param("paymentId") paymentId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.invoicesService.voidPayment(id, paymentId, user);
   }
 
   /** P5-12: advance a CHECK payment through Recorded→Deposited→Cleared→Bounced. */

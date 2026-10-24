@@ -222,6 +222,8 @@ import {
 import { calendarFieldStamp, dueDateStamps, dueStamp } from "./invoice-due-dates";
 import { lockRowsNoWait } from "../common/db-locks";
 import { counterPay, type CounterPayOpts } from "./counter-payment-guard";
+import type { PermissionPrincipal } from "../auth/permissions/operator-permissions.service";
+import { assertStaffMay } from "../orders/counter-sale/till-permission.guard";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { planInvoicedQtyAdjustment } from "./unvoid-billing-claim";
 import { UNVOID_REFUSAL_COPY, assertUnvoidOrderNotCancelled } from "./unvoid-billing-refusal";
@@ -5336,9 +5338,13 @@ export class InvoicesService {
 
   // ─── Void a single payment ────────────────────────────────────────────────
 
-  async voidPayment(invoiceId: string, paymentId: string) {
+  /** `user`: the request principal (the controller always passes it); absent = a system caller, not judged. */
+  async voidPayment(invoiceId: string, paymentId: string, user?: PermissionPrincipal) {
     const tz = await tenantTimeZone(this.prisma); // SA-495a: the tenant's due day, once per call
     const till = await counterPay.scope(this.prisma, invoiceId); // SA-750r3: counter sales only
+    // W-870: unwinding a TILL payment from the office is the same act as the counter-sale void, so it asks the same
+    // VOID_SALE predicate over the operator's live denied groups (ORDERS switched off = refused, nothing written).
+    if (till && user) await assertStaffMay(this.prisma, user, "VOID_SALE");
     return withAfterCommit(this.prisma, async (tx, after) => {
       // SA-750r3: the shared close lock FIRST, then the window check on the payment's date, then the void (payment-void-tx.ts).
       await counterPay.lock(tx, till);

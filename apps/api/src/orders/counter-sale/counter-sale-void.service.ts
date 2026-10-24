@@ -20,6 +20,7 @@ import { InvoicesService } from "../../invoices/invoices.service";
 import { PrismaService } from "../../prisma/prisma.service";
 import { clearUnevidencedDelivered, unevidencedDeliveredFloor } from "../delivered-stamp";
 import { lockOrderAndInvoicesInTx } from "../order-cancel-impact";
+import { operatorDeniedGroups } from "./till-permission.guard";
 import { OrdersService } from "../orders.service";
 import { saleVoidedConflict, storedSaleState } from "../sale-replay-guard";
 import type { CounterSaleVoidDto } from "./counter-sale-void.dto";
@@ -79,7 +80,8 @@ export class CounterSaleVoidService {
     if (!this.prisma.getTenantId()) {
       throw new ForbiddenException("Voiding a counter sale requires a tenant-scoped session");
     }
-    if (!staffMay(user.role, "VOID_SALE")) {
+    // W-870: an OPERATOR's denied groups are read live, like the till guard (an admin who switched ORDERS off).
+    if (!staffMay(user.role, "VOID_SALE", await operatorDeniedGroups(this.prisma, user))) {
       throw new ForbiddenException("You are not allowed to void a sale");
     }
     // A tenant-scoped read BEFORE any lock: another tenant's id (or an ordinary order) is a plain 404 and never
