@@ -14,6 +14,7 @@ import type {
 import { Button, Modal, Textarea, useToast } from "@routeflow/ui/web";
 import { useAuth } from "@/lib/auth-context";
 import { useEditRule, useRuleEditPreview } from "@/lib/api/restrictions-admin-write";
+import { useRestrictionsSettings } from "@/lib/api/restrictions-settings";
 import {
   ruleSettingsSchema,
   ruleToFormValues,
@@ -155,6 +156,8 @@ export function EditRuleDialog({
   };
 
   const impactCount = review ? review.preview.impact.openOrders + review.preview.impact.drafts : 0;
+  // The owner-only staff-orders switch decides what the impact line promises; unknown (still loading) never claims a warning.
+  const staffChecked = useRestrictionsSettings().data?.enabled === true;
   // SA: the scan is bounded, never the edit. Capped = counting stopped at the cap (a lower bound).
   const impactCapped = review?.preview.impact.capped === true;
 
@@ -212,9 +215,9 @@ export function EditRuleDialog({
             <div className="space-y-1">
               <p className="text-sm text-navy/80">
                 {impactCapped
-                  ? ruleEditImpactCopy(impactCount, true)
+                  ? ruleEditImpactCopy(impactCount, true, staffChecked)
                   : impactCount > 0
-                    ? ruleEditImpactCopy(impactCount)
+                    ? ruleEditImpactCopy(impactCount, false, staffChecked)
                     : "No open orders are affected."}
               </p>
               {(impactCount > 0 || impactCapped) && (

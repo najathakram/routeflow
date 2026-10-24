@@ -42,7 +42,7 @@ Workflow script once v0 has proven them on the ledger. Improve it through the le
    RED → one fix round for the same builder (resume it), then park the cluster with its log.
 6. **Review, Opus @ medium, one independent reviewer per cluster PR.** Input: the manifest rows, the diff,
    the gate output and every `SPEC-EDIT` line as a required question. Cap ≤ 12 tool calls. Return
-   PASS|FAIL plus MUSTs. The verdict goes on the board (#2554) at the exact sha.
+   PASS|FAIL plus MUSTs. The verdict goes on the board (#3686) at the exact sha.
 7. **Land, the lead.** One public window per batch. merge-gate.sh per PR. After each merge, a cluster sharing a
    package update-branches and re-runs CI (L-335). Never flip private while a deploy is BUILDING.
 8. **Close, Haiku @ low.** `node scripts/campaign/bugs.mjs prove B### --pr N` per bug; `rf status <row> live`

@@ -4,10 +4,15 @@
  * and `PosOrderActions.tsx`. The order's `fulfillPath` is the snapshot: see `isPosOrder`.
  */
 import { API_ERROR_CODES, PREF, staffMay } from "@routeflow/types";
-import type { PickupCompleteRequest, PickupCompleteResponse } from "@routeflow/types";
+import type {
+  PickupCompleteRequest,
+  PickupCompleteResponse,
+  RestrictionAck,
+} from "@routeflow/types";
 import { roundMoney } from "@routeflow/pricing";
 import { fmtCurrency } from "../utils/format";
 import { duplicateRefPrompt } from "./duplicate-payment-ref";
+import { creditOverLimitSentence } from "@routeflow/types/credit-over-limit-copy";
 
 import { isPosOrder } from "./order-status-flow";
 
@@ -284,6 +289,17 @@ export function posFinishFailureMessage(step: PosFinishStep, merged = false): st
 }
 
 /**
+ * Row 510: the body of one status PATCH of the finish. Promoting a judged DRAFT answers 409 RESTRICTION_WARNING; the modal's
+ * "Sell anyway" re-runs the finish and the ack rides BOTH PATCHes as top-level fields (like web's usePosFinish).
+ */
+export function posStatusBody(
+  status: "PENDING" | "CONFIRMED",
+  ack?: RestrictionAck | null,
+): { status: "PENDING" | "CONFIRMED" } & RestrictionAck {
+  return ack ? { status, ...ack } : { status };
+}
+
+/**
  * The status PATCHes of "Confirm & invoice". The API has no DRAFT -> CONFIRMED edge (DRAFT goes to
  * PENDING or CANCELLED), so "Add to it" on an open DRAFT promotes it to PENDING first.
  */
@@ -535,11 +551,22 @@ export type PickupDecision =
  * (`paymentRecorded: false`): when the tender was required or short, go back to the tender step with the
  * SAME Idempotency-Key (so the retry adds the payment to this hand-over) owing `balanceDue`. The key is
  * released only when the payment was recorded (or none was requested). Mirrors web's PickupCompleteDialog.
+ * I-120: an unrecorded tender the credit gate counted (`creditOverLimit`) adds the ONE shared sentence to the message.
  */
 export function decidePickupResponse(
   res: PickupCompleteResponse,
   role?: string | null,
+  customerName?: string | null,
 ): PickupDecision {
+  const d = decidePickup(res, role);
+  if (res.paymentRecorded || !res.creditOverLimit) return d;
+  return {
+    ...d,
+    message: `${d.message} ${creditOverLimitSentence(customerName, res.creditOverLimit, fmtCurrency)}`,
+  };
+}
+
+function decidePickup(res: PickupCompleteResponse, role?: string | null): PickupDecision {
   const code = res.paymentRecorded ? undefined : res.paymentErrorCode;
   if (!res.paymentRecorded && res.paymentCauseCode === API_ERROR_CODES.DUPLICATE_PAYMENT_REF) {
     const prompt = duplicateRefPrompt(

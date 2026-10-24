@@ -1,5 +1,10 @@
 // OrdersService / InvoicesService pull ESM-only modules (@react-pdf/renderer, expo-server-sdk)
 // Jest's CommonJS parser cannot load; this spec drives them through mocks at the module boundary.
+// SA-909: the claim row's atomic jsonb writes, on the spec's in-memory claims (the real SQL: the DB spec)
+jest.mock(
+  "./pickup-complete-claim",
+  () => require("../../testing/pickup-claim-mock").pickupClaimMock,
+);
 jest.mock("../orders.service", () => ({ OrdersService: class OrdersService {} }));
 jest.mock("../../invoices/invoices.service", () => ({ InvoicesService: class InvoicesService {} }));
 
@@ -41,6 +46,7 @@ import { BadRequestException, ConflictException } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import { LockTimeoutError, LockUnavailableError } from "../../common/db-locks";
 import { PickupCompleteService } from "./pickup-complete.service";
+import { FULFILMENT_CAPABILITY_READER } from "./fulfilment-capability-reader";
 import { OrdersService } from "../orders.service";
 import { InvoicesService } from "../../invoices/invoices.service";
 import { PrismaService } from "../../prisma/prisma.service";
@@ -68,7 +74,14 @@ const KEY = "key-1";
 const T_DEPOSIT = 500;
 const T_DELIVERED = 1000;
 
-type Pay = { id: string; amount: number; method: string; status: string; createdAt: Date };
+type Pay = {
+  id: string;
+  amount: number;
+  method: string;
+  status: string;
+  createdAt: Date;
+  paymentGroupId: string | null;
+};
 type Inv = {
   id: string;
   total: number;
@@ -84,6 +97,7 @@ describe("PickupCompleteService.complete", () => {
   let invoices: Inv[];
   let changeStatus: jest.Mock;
   let decrementStockForSale: jest.Mock;
+  let updateFulfillPath: jest.Mock;
   let send: jest.Mock;
   let recordPayment: jest.Mock;
   let tick: number;
@@ -95,7 +109,15 @@ describe("PickupCompleteService.complete", () => {
     method = "CASH",
     at = T_DELIVERED + 1,
     status = "PAID",
-  ): Pay => ({ id, amount, method, status, createdAt: new Date(at) });
+  ): Pay => ({
+    id,
+    amount,
+    method,
+    status,
+    createdAt: new Date(at),
+    // SA-919: a row made at or after the hand-over is its tender (the group id written IN the create); a deposit is not
+    paymentGroupId: at >= T_DELIVERED ? TENDER_GROUP.paymentGroupId : null,
+  });
   const inv = (id: string, total: number, status = "DRAFT", payments: Pay[] = [], at = 1): Inv => ({
     id,
     total,
@@ -135,6 +157,8 @@ describe("PickupCompleteService.complete", () => {
   beforeEach(async () => {
     calls.length = 0;
     claims = [];
+    require("../../testing/pickup-claim-mock").mockClaimStore.rows = claims;
+    require("../../testing/pickup-claim-mock").mockClaimStore.recorded = false;
     mockSettle.mockReset();
     mockSweepOn.on = false;
     mockLockCalls.length = 0;
@@ -150,6 +174,12 @@ describe("PickupCompleteService.complete", () => {
       return order;
     });
     decrementStockForSale = jest.fn();
+    // I-120 (SA-861 rule 4): the ONE path switch, ahead of the transitions for a ROUTE / SHIP order.
+    updateFulfillPath = jest.fn(async (_id: string, dto: { fulfillPath: string }) => {
+      calls.push("updateFulfillPath");
+      order = { ...order, fulfillPath: dto.fulfillPath };
+      return order;
+    });
     send = jest.fn(async (id: string) => {
       calls.push("send");
       invoices.find((i) => i.id === id)!.status = "SENT";
@@ -177,9 +207,24 @@ describe("PickupCompleteService.complete", () => {
     const mod = await Test.createTestingModule({
       providers: [
         PickupCompleteService,
-        { provide: OrdersService, useValue: { changeStatus, decrementStockForSale } },
+        {
+          provide: OrdersService,
+          useValue: {
+            changeStatus,
+            decrementStockForSale,
+            updateFulfillPath,
+            assertDeliveryCreditGate: jest.fn(async () => undefined), // SA-905: the pre-judge
+          },
+        },
         { provide: InvoicesService, useValue: { send, recordPayment } },
         { provide: PrismaService, useValue: prisma },
+        // I-120: a business that hands over at the store (the engine's capability gate)
+        {
+          provide: FULFILMENT_CAPABILITY_READER,
+          useValue: {
+            get: async () => ({ methods: ["ROUTE", "SHIP", "PICKUP"], counter: "off" }),
+          } as never,
+        },
       ],
     }).compile();
     service = mod.get(PickupCompleteService);
@@ -188,16 +233,18 @@ describe("PickupCompleteService.complete", () => {
   // ── refusals write nothing ─────────────────────────────────────────────────
   describe("refusals", () => {
     it.each(["ROUTE", "SHIP"])(
-      "a %s order is 400 PICKUP_ONLY and nothing is written",
+      "I-120: a %s order is no longer PICKUP_ONLY: it is switched to Store pickup before the hand-over",
       async (fulfillPath) => {
         order = orderRow("CONFIRMED", { fulfillPath });
-        const e = await errorOf(run());
-        expect(e.getStatus()).toBe(400);
-        expect(e.getResponse().code).toBe("PICKUP_ONLY");
-        nothingWritten();
+        await run();
+        // SA-913: the engine pins the ONE switch option (it lets an OUT_FOR_DELIVERY order switch)
+        expect(updateFulfillPath).toHaveBeenCalledWith("ord-1", { fulfillPath: "PICKUP" }, staff, {
+          fromOutForDelivery: true,
+        });
+        expect(calls.slice(0, 3)).toEqual(["claim", "updateFulfillPath", "changeStatus"]);
       },
     );
-    it.each(["PENDING", "DRAFT", "CANCELLED", "PARTIALLY_DELIVERED"])(
+    it.each(["DRAFT", "CANCELLED", "PARTIALLY_DELIVERED"])(
       "a %s pickup order is 409 PICKUP_NOT_READY and nothing is written",
       async (status) => {
         order = orderRow(status);
@@ -228,9 +275,12 @@ describe("PickupCompleteService.complete", () => {
         order = orderRow(status);
         const res = await run();
         expect(changeStatus).toHaveBeenCalledTimes(1);
-        expect(changeStatus).toHaveBeenCalledWith("ord-1", { status: "DELIVERED" }, staff);
+        expect(changeStatus).toHaveBeenCalledWith("ord-1", { status: "DELIVERED" }, staff, {
+          silent: true, // I-120 rule 5
+          creditPaidNow: expect.any(Function), // I-120 rule 6: the till tender nets the delivery gate
+        });
         expect(decrementStockForSale).not.toHaveBeenCalled();
-        expect(send).toHaveBeenCalledWith("inv-1");
+        expect(send).toHaveBeenCalledWith("inv-1", { suppressNotify: true }); // I-120: quiet for everyone
         expect(calls).toEqual(["claim", "changeStatus", "send", "recordPayment"]);
         expect(recordPayment).toHaveBeenCalledWith(
           "inv-1",
@@ -640,7 +690,8 @@ describe("PickupCompleteService.complete", () => {
   describe("the counter-tender advisory lock", () => {
     it("the payment runs under the shared counter-tender lock keyed on the order, in wait mode", async () => {
       await run();
-      // the claim section, then the tender, both under the per-order lock (never nested)
+      // the claim section, then the tender, each under the per-order lock (never nested); the completion email holds no
+      // lock (SA-909: a conditional reservation on the claim row)
       expect(mockLockCalls).toEqual([
         { family: "counter-tender", key: "ord-1", mode: "wait" },
         { family: "counter-tender", key: "ord-1", mode: "wait" },
@@ -648,7 +699,7 @@ describe("PickupCompleteService.complete", () => {
     });
     it("ON_ACCOUNT takes no money and no lock", async () => {
       await run({ payment: { method: "ON_ACCOUNT" } });
-      expect(mockLockCalls).toHaveLength(1); // the claim only: no tender lock
+      expect(mockLockCalls).toHaveLength(1); // the claim only: no tender lock, and the email holds none (SA-909)
     });
     it.each([
       ["a lock timeout", () => new LockTimeoutError("counter-tender", "ord-1", 20000)],

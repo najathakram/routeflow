@@ -9,7 +9,7 @@
 
 import { ConflictException } from "@nestjs/common";
 
-import { lockRowsNoWait, NOWAIT_LOCK_TABLES } from "./db-locks";
+import { isLockUnavailableError, lockRowsNoWait, NOWAIT_LOCK_TABLES } from "./db-locks";
 
 const fakeTx = () => ({ $executeRaw: jest.fn().mockResolvedValue(0) });
 // The tagged-template strings, re-joined with a placeholder per interpolated value.
@@ -90,5 +90,30 @@ describe("db-locks — lockRowsNoWait", () => {
       /unknown table/,
     );
     expect(tx.$executeRaw).not.toHaveBeenCalled();
+  });
+});
+
+describe("db-locks — isLockUnavailableError (SQLSTATE 55P03, whatever the driver shape)", () => {
+  it.each([
+    ["meta.code", Object.assign(new Error("x"), { meta: { code: "55P03" } })],
+    [
+      "the driver adapter's cause",
+      Object.assign(new Error("x"), {
+        meta: { driverAdapterError: { cause: { originalCode: "55P03" } } },
+      }),
+    ],
+    ["a wrapped cause", Object.assign(new Error("x"), { cause: { originalCode: "55P03" } })],
+    ["the message", new Error("Raw query failed. Code: `55P03`")],
+    ["a NOWAIT miss", new Error('could not obtain lock on row in relation "Order"')],
+  ])("%s is a lock-unavailable error", (_label, err) => {
+    expect(isLockUnavailableError(err)).toBe(true);
+  });
+
+  it.each([
+    ["a deadlock", Object.assign(new Error("deadlock detected"), { meta: { code: "40P01" } })],
+    ["a plain failure", new Error("connection terminated unexpectedly")],
+    ["nothing", undefined],
+  ])("%s is not", (_label, err) => {
+    expect(isLockUnavailableError(err)).toBe(false);
   });
 });

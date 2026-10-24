@@ -130,13 +130,16 @@ describe("OrdersService.updateOrderItems — selling restrictions (lane R 2a-7)"
       await edit(ADD_X);
 
       expect(h.restrictions.assertLinesSellable).toHaveBeenCalledTimes(1);
-      expect(h.restrictions.assertLinesSellable).toHaveBeenCalledWith({
-        tenantId: "t-row",
-        customerId: "cust-1",
-        lines: [{ productId: "prod-x" }],
-        channel: "STAFF",
-        fulfilmentKind: "DELIVERY",
-      });
+      expect(h.restrictions.assertLinesSellable).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tenantId: "t-row",
+          customerId: "cust-1",
+          lines: [{ productId: "prod-x", lineKey: "n:0" }], // row 510: keyed by its payload index
+          channel: "STAFF",
+          fulfilmentKind: "DELIVERY",
+          document: "ORDER",
+        }),
+      );
       const asked = firstCall(h.restrictions.assertLinesSellable);
       expect(asked).toBeLessThan(firstCall(revert));
       expect(asked).toBeLessThan(firstCall(h.prisma.tenantTransaction));
@@ -208,7 +211,8 @@ describe("OrdersService.updateOrderItems — selling restrictions (lane R 2a-7)"
               });
         const call = h.restrictions.assertLinesSellable.mock.calls[0][0];
         expect(call.channel).toBe(channel);
-        expect(call.lines).toEqual(expected);
+        // row 510: the same lines, each now carrying the key a warning echoes back
+        expect(call.lines).toEqual(expected.map((l) => ({ ...l, lineKey: expect.any(String) })));
       },
     );
 
@@ -225,7 +229,7 @@ describe("OrdersService.updateOrderItems — selling restrictions (lane R 2a-7)"
       await edit({ ...extra, items: [{ productId: "prod-a", qty: 3, pieces: 5 }] }, user as never);
 
       expect(h.restrictions.assertLinesSellable.mock.calls[0][0].lines).toEqual([
-        { productId: "prod-a", qtyDelta: delta },
+        { productId: "prod-a", qtyDelta: delta, lineKey: "n:0" },
       ]);
     });
 

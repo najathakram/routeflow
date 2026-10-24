@@ -309,6 +309,7 @@ export const API_ERROR_CODES = {
   CREDIT_NOTE_CREDIT_CONSUMED: "CREDIT_NOTE_CREDIT_CONSUMED",
   CREDIT_NOTE_OVER_HEADROOM: "CREDIT_NOTE_OVER_HEADROOM",
   RETURN_REFUND_OVER_LINE_HEADROOM: "RETURN_REFUND_OVER_LINE_HEADROOM",
+  RETURN_REFUND_BASIS_CHANGED: "RETURN_REFUND_BASIS_CHANGED",
   RETURN_MIXED_UNIT_PRODUCT: "RETURN_MIXED_UNIT_PRODUCT",
   CREDIT_NOTE_SOURCE_GONE: "CREDIT_NOTE_SOURCE_GONE",
   CREDIT_NOTE_NO_SOURCE_CAP: "CREDIT_NOTE_NO_SOURCE_CAP",
@@ -421,6 +422,9 @@ export const API_ERROR_CODES = {
   RULE_STALE: "RULE_STALE",
   RULE_IMPACT_CHANGED: "RULE_IMPACT_CHANGED",
   RULE_END_USE_LIFT: "RULE_END_USE_LIFT",
+  // Row 510: a staff write that needs an override reason (409), and a reason outside 3..200 after trim (400).
+  RESTRICTION_WARNING: "RESTRICTION_WARNING",
+  RESTRICTION_OVERRIDE_REASON_INVALID: "RESTRICTION_OVERRIDE_REASON_INVALID",
   PO_LINK_CONFLICT: "PO_LINK_CONFLICT",
   SCAN_ALREADY_POSTED: "SCAN_ALREADY_POSTED",
   PO_LINK_BROKEN: "PO_LINK_BROKEN",
@@ -438,7 +442,10 @@ export const API_ERROR_CODES = {
   PO_LOT_PARTIALLY_CONSUMED: "PO_LOT_PARTIALLY_CONSUMED",
   PO_HAS_LINKED_BILL: "PO_HAS_LINKED_BILL",
   INVENTORY_LEDGER_GAP: "INVENTORY_LEDGER_GAP",
+  // 409 body: productId, period (the filed period's label) and filedFor ("Tobacco" or the tracked category's name, W-755).
   STOCK_DATE_IN_FILED_PERIOD: "STOCK_DATE_IN_FILED_PERIOD",
+  // 683 (SA-896): DELETE /settings/financial-data refused while the tenant holds regulated records.
+  FINANCIAL_WIPE_BLOCKED_REGULATED: "FINANCIAL_WIPE_BLOCKED_REGULATED",
   ALLOCATIONS_EXCEED_PAYMENT: "ALLOCATIONS_EXCEED_PAYMENT",
   INVOICE_CHANGED_DURING_EDIT: "INVOICE_CHANGED_DURING_EDIT",
   EMAIL_NOT_CONFIGURED: "EMAIL_NOT_CONFIGURED",
@@ -733,6 +740,22 @@ export const API_ERROR_CODES = {
    * PENDING, PARTIALLY_DELIVERED, or CANCELLED). Nothing was written.
    */
   PICKUP_NOT_READY: "PICKUP_NOT_READY",
+  /** I-120 (SA-861 rule 2): POST /orders/:id/pickup-complete, 409: this business does not hand orders over at the store (no PICKUP method and the counter off). */
+  COUNTER_COMPLETE_UNAVAILABLE: "COUNTER_COMPLETE_UNAVAILABLE",
+  /**
+   * 400 from a path switch to SHIP / PICKUP (PATCH /orders/:id/fulfill-path, and Complete at counter's switch): the order is on
+   * an ACTIVE delivery run (SCHEDULED / IN_PROGRESS); remove it from the run first. Nothing was written.
+   */
+  ORDER_ON_ACTIVE_RUN: "ORDER_ON_ACTIVE_RUN",
+  /** I-120 R9 (owner 7a Q2 = A): POST /orders/:id/pickup-complete, 409: the order has shipped with the carrier. Nothing written. */
+  COUNTER_COMPLETE_SHIPPED: "COUNTER_COMPLETE_SHIPPED",
+  /**
+   * I-120 R8 (owner 7a Q1 = A): POST /orders/:id/pickup-complete, 409: the order is on a driver's run (SA-913); the body
+   * carries `driverName` and `runId` for the confirm, which re-sends with `takeOffRun: true`. Nothing written.
+   */
+  COUNTER_COMPLETE_ON_RUN: "COUNTER_COMPLETE_ON_RUN",
+  /** I-120 R8: POST /orders/:id/pickup-complete, 409: the driver has started that stop (with or without `takeOffRun`). Nothing written. */
+  COUNTER_COMPLETE_STOP_STARTED: "COUNTER_COMPLETE_STOP_STARTED",
   /**
    * `paymentErrorCode` of a 200 from POST /orders/:id/pickup-complete: handed over with no payment sent, but
    * the final invoices leave money owing (a remainder or rebuild at DELIVERED). Retry with a payment.
@@ -889,6 +912,8 @@ export const API_ERROR_CODES = {
    * body carries `field` (the link's name). Nothing was written.
    */
   APP_LINK_URL_INVALID: "APP_LINK_URL_INVALID",
+  /** 400 from POST /customers/merge: the two customers are not both of the session's one business (W-763). Names no tenant. */
+  CUSTOMER_MERGE_TENANT_MISMATCH: "CUSTOMER_MERGE_TENANT_MISMATCH",
 } as const;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */

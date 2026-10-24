@@ -10,6 +10,8 @@ export const AUDIT_ACTIONS = {
   CREDIT_LIMIT_OVER_AFTER_TENDER: "credit-limit.over-after-tender",
   /** SA-762r: a counter sale voided in one transaction; meta {orderId, reason, handBack, actor} feeds the replay. */
   COUNTER_SALE_VOIDED: "counter-sale.voided",
+  /** I-120 R8 (SA-913 d): an order taken off a driver's run by Complete at counter; meta {orderId, runId, stopId, driverId, stopSkipped}. */
+  COUNTER_COMPLETE_TAKEN_OFF_RUN: "counter-complete.taken-off-run",
   /** #2088: an invoice emailed to the customer; meta {to, fp, sentAt, variant}. fp = the versioned content fingerprint. */
   INVOICE_EMAILED: "invoice.emailed",
   /** SA-763r P-3: a non-DRAFT invoice restated by an order edit; meta {invoiceId, orderId, actor, totalBefore, totalAfter, linesChanged}. */
@@ -30,6 +32,13 @@ export const AUDIT_ACTIONS = {
   PRODUCT_PRICES_SAVED: "product.prices-saved",
   /** Units v2 (SA-799 b): the Undo of a PRODUCT_PRICES_SAVED row; meta {undoes, skipped, revisionBefore, revisionAfter, actor, request: {skip}, priceStateAfter (SA-845 replay)}. */
   PRODUCT_PRICES_UNDONE: "product.prices-undone",
+  /**
+   * Row 510: a staff member sold a restricted product with a reason. ONE row per newly stamped line, written in the
+   * write's own tx (selling-restrictions/restriction-override-audit.ts); entityType OrderItem | InvoiceItem, entityId the
+   * line; meta {documentType, documentId, productId, ruleIds, reason, lineKey, warningHash, basis} (ruleIds are the stamp's
+   * `ruleId:STATE` keys). A carried stamp writes none.
+   */
+  SELLING_RESTRICTION_OVERRIDDEN: "selling_restriction.overridden",
   /** SA-823 R11: a product moved under (or out of) a family; meta {productId, fromParentId, toParentId, variantName, via}. Written in the reparent's own transaction. */
   PRODUCT_FAMILY_ASSIGNED: "product.family_assigned",
   /** SA-823 (row 655 PR-2): one summary row per apply of a product import that carried Family columns; meta {fileName, created, updated, unchanged, skipped, familiesCreated, grouped, moves, familiesDeactivated, actor}. */
@@ -46,6 +55,8 @@ export const AUDIT_ACTIONS = {
   PAYMENT_REF_DUPLICATE_SUSPECT: "payment.ref-duplicate-suspect",
   /** Row 587 (SA-833): PARTIALLY_DELIVERED -> DELIVERED completed an office-evidenced line; meta {orderId, lineId, from, to, summary}. */
   ORDER_LINE_OFFICE_COMPLETED: "order.line-office-completed",
+  /** SA-737: a STANDARD return's cash/card/check refund recorded; meta {returnId, returnNumber, orderId, customerId, invoiceIds, amount, tender, actor, impersonatedBy}. */
+  STANDARD_REFUND_RECORDED: "return.refund-recorded",
 } as const;
 
 export type AuditActionName = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS];

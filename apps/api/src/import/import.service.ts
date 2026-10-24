@@ -105,7 +105,6 @@ export interface ImportRowPlan {
   /** SA-823: the family detail of a row that carried a Family cell. */
   family?: ImportFamilyRowInfo;
 }
-import { defaultSaleFulfilmentKind } from "../orders/default-sale-fulfilment";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import {
   assertBarcodeAvailable,
@@ -114,10 +113,12 @@ import {
   syncProductBarcodesFromLegacy,
 } from "../products/product-catalog-sync";
 import { claimCodes, codeClaims } from "../products/product-code-release";
+import { writeRestrictedLinesAudit } from "../selling-restrictions/restricted-lines-flag";
 import {
-  flagRestrictedLines,
-  writeRestrictedLinesAudit,
-} from "../selling-restrictions/restricted-lines-flag";
+  markImportedRestrictedLines,
+  type ImportedCandidate,
+  type ImportRestrictedLine,
+} from "./import-restriction-marker";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { columnEntitlementDenied } from "./import-column-entitlement";
 
@@ -1196,17 +1197,14 @@ export class ImportService {
   async importInvoices(
     buffer: Buffer,
     userId: string,
+    /** Row 510: the support agent's id when the import runs in a support session (the marker's audit rows name it). */
+    impersonatedBy?: string | null,
   ): Promise<{
     imported: number;
     updated: number;
     skipped: number;
     errors: string[];
-    restrictedLines: Array<{
-      invoiceNumber: string;
-      productId: string;
-      productName: string;
-      message: string;
-    }>;
+    restrictedLines: ImportRestrictedLine[];
   }> {
     const rows = this.parseCsv(buffer);
     let imported = 0,
@@ -1216,11 +1214,7 @@ export class ImportService {
     // (customer + catalog productIds per newly-created invoice), checked in ONE batch per
     // customer AFTER the loop (never per row) so a 500-row file issues a handful of reads, not
     // hundreds.
-    const flagCandidates: Array<{
-      customerId: string;
-      invoiceNumber: string;
-      productIds: string[];
-    }> = [];
+    const flagCandidates: ImportedCandidate[] = [];
     // Invoice import auto-creates missing customers as a side effect; track that so
     // the CUSTOMERS grace window still opens if those rows push the tenant over cap.
     // No pre-check here — the soft cap blocks only a deliberate new-customer create,
@@ -1778,6 +1772,7 @@ export class ImportService {
         if (importedProductIds.length > 0) {
           flagCandidates.push({
             customerId,
+            invoiceId: newInvoice.id,
             invoiceNumber: newInvoice.invoiceNumber,
             productIds: importedProductIds,
           });
@@ -1801,38 +1796,16 @@ export class ImportService {
     // whole run — written here, outside every per-invoice transaction above, and never
     // throwing or retroactively touching a row that already committed.
     const tenantId = this.prisma.getTenantId() ?? "";
-    const restrictedLines: Array<{
-      invoiceNumber: string;
-      productId: string;
-      productName: string;
-      message: string;
-    }> = [];
-    const byCustomer = new Map<string, typeof flagCandidates>();
-    for (const c of flagCandidates)
-      byCustomer.set(c.customerId, [...(byCustomer.get(c.customerId) ?? []), c]);
-    for (const [customerId, entries] of byCustomer) {
-      const flagged = await flagRestrictedLines(
-        { restrictions: this.sellingRestrictions, warn: (m) => this.logger.warn(m) },
-        {
-          tenantId,
-          customerId,
-          productIds: entries.flatMap((e) => e.productIds),
-          fulfilmentKind: await defaultSaleFulfilmentKind(this.prisma, tenantId, customerId), // no order: how the next order would go
-        },
-      );
-      const byProduct = new Map(flagged.map((f) => [f.productId, f]));
-      for (const e of entries)
-        for (const pid of e.productIds) {
-          const f = byProduct.get(pid);
-          if (f)
-            restrictedLines.push({
-              invoiceNumber: e.invoiceNumber,
-              productId: pid,
-              productName: f.productName,
-              message: f.message,
-            });
-        }
-    }
+    // Row 510 (ruling #2093): historical import is exempt; a breached catalog line is MARKED (fixed reason, the
+    // importing user, the rules matched) with an audit row per line, never refused. See import-restriction-marker.ts.
+    const restrictedLines = await markImportedRestrictedLines(
+      {
+        restrictions: this.sellingRestrictions,
+        prisma: this.prisma,
+        warn: (m) => this.logger.warn(m),
+      },
+      { tenantId, userId, impersonatedBy, candidates: flagCandidates },
+    );
     if (restrictedLines.length > 0) {
       await writeRestrictedLinesAudit(
         { prisma: this.prisma, warn: (m) => this.logger.warn(m) },

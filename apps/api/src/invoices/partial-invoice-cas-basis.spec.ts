@@ -28,10 +28,17 @@ function bodyOf(src: string, signature: RegExp): string {
 }
 
 const RELATIONS = new Set(["product"]);
+/**
+ * Row 510: the staff restriction-override stamp (`restrictionOverride*`) is an AUDIT ANNOTATION the builder copies
+ * verbatim, never money, pack or quantity, so it is not part of the billing basis the CAS pins: a stamp added or cleared
+ * between the read and the bump cannot over-bill a line (a clear by a product swap moves `productId`, which IS pinned).
+ * It also could not be pinned as a plain `where` value: a NULL list column reads as `[]`, which `equals: []` never matches.
+ */
+const ANNOTATIONS = /^restrictionOverride/;
 const readFields = (body: string) =>
   [...stripComments(body).matchAll(/\bli\??\.(\w+)/g)]
     .map((m) => m[1])
-    .filter((f) => !RELATIONS.has(f));
+    .filter((f) => !RELATIONS.has(f) && !ANNOTATIONS.test(f));
 
 describe("#2645 / SA-523d INVOICE_LINE_CAS_FIELDS covers the whole invoice-line basis", () => {
   const svc = readFileSync(join(__dirname, "invoices.service.ts"), "utf8");

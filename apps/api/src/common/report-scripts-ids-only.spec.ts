@@ -6,8 +6,9 @@ import * as path from "path";
  * Lead rule for owner-run reports (R5): the output carries counts and internal ids / anonymous labels ONLY - never a
  * slug, a business name or an email - and the session is read-only (`default_transaction_read_only`, statement and lock
  * timeouts). Each report has a `--self-test` that needs no database. Covered here: the dunning pause blast-radius report,
- * the RF invoice calendar census, the READ_ONLY-sellers-with-buyers count (the A3 flip gate), and the sitting-4 sizing
- * + rounding census.
+ * the RF invoice calendar census, the READ_ONLY-sellers-with-buyers count (the A3 flip gate), the sitting-4 sizing
+ * + rounding census, and the two money censuses (exempt customers' orders carrying tax, and the SA-780 order-discount
+ * census).
  */
 const API_DIR = path.resolve(__dirname, "../..");
 const REPORTS = [
@@ -15,6 +16,8 @@ const REPORTS = [
   "report-rf-invoice-calendar-census",
   "report-read-only-sellers-with-buyers",
   "report-sitting4-sizing", // SA-772 §4 step 5 + SA-814 §3 C1-C4 (sitting 4)
+  "report-exempt-orders-taxed",
+  "report-order-discounts",
 ].map((n) => ({ name: n, file: path.resolve(API_DIR, "scripts", `${n}.mjs`) }));
 
 const read = (f: string) => fs.readFileSync(f, "utf8");

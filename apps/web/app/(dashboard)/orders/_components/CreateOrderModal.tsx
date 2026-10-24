@@ -117,6 +117,8 @@ import { API_ERROR_CODES, staffMay } from "@routeflow/types";
 import { parseRegulatedAuthError, type BlockedCategory } from "@/lib/api/authorizations";
 import { parseSellingRestricted } from "@/lib/api/selling-restricted";
 import { BlockedLinesDialog } from "@/components/BlockedLinesDialog";
+import { parseRestrictionWarning } from "@/lib/api/restriction-warning";
+import { useRestrictionWarningRetry } from "@/lib/use-restriction-warning-retry";
 import type { BlockedLine } from "@routeflow/types";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { CreditNotePicker, type CreditSelection } from "./CreditNotePicker";
@@ -273,7 +275,8 @@ function isSameAttemptRefusal(err: any): boolean {
   ) {
     return true;
   }
-  return (parseRegulatedAuthError(err)?.length ?? 0) > 0;
+  // Row 510: a RESTRICTION_WARNING wrote nothing; the dialog resubmits this SAME attempt (same key) with the ack.
+  return parseRestrictionWarning(err) !== null || (parseRegulatedAuthError(err)?.length ?? 0) > 0;
 }
 
 /**
@@ -295,6 +298,7 @@ export function CreateOrderModal({
   const { toast, dismiss: dismissToast } = useToast();
   const toastApi = { toast, dismiss: dismissToast };
   const createOrder = useCreateOrder({ localErrorToast: true });
+  const rw = useRestrictionWarningRetry(); // row 510: staff warning + override dialog
   const pos = usePosMode(); // SA-763r P-2: server-backed preference, never localStorage
   const { user: posUser } = useAuth();
   // The switch and PICKUP are for roles with USE_POS_MODE only: a stored preference never applies without it.
@@ -1798,7 +1802,8 @@ export function CreateOrderModal({
     if (!lineItems.some(isPendingDefaultUnit)) return doSubmitOrder(data, options, lineItems);
     if (resolvingRef.current) return; // a double click while the units load must not submit twice
     resolvingRef.current = true;
-    void resolveDefaultUnits(lineItems)
+    // Returned so a Sell-anyway retry keeps its ack until the units have loaded and the request has been built.
+    return resolveDefaultUnits(lineItems)
       .then(({ lines, blocked, folds }) => {
         if (blocked.length) {
           setMergePrompt(null);
@@ -1828,7 +1833,7 @@ export function CreateOrderModal({
       : undefined;
     posFinish
       .mutateAsync({
-        orderId: created.id,
+        ...rw.attach({ orderId: created.id }),
         invoice: finish === "invoice",
         fromStatus: created.status ?? merged?.fromStatus,
       })
@@ -1842,6 +1847,7 @@ export function CreateOrderModal({
         });
       })
       .catch((err: unknown) => {
+        if (rw.handle(err, () => finishPosOrder(created, finish, viewOrder, merged))) return; // row 510: promote
         const step = err instanceof PosFinishError ? err.step : "confirm";
         toast({
           title:
@@ -1943,9 +1949,12 @@ export function CreateOrderModal({
     lastSubmitRef.current = { data, options, cartJson: draftPayloadJson };
     // SA-817 A6: the key is DURABLE before it is sent - the local copy (with `_submitKey`) is written and the server copy saved
     // (short budget, never gating the order) before the POST, so a lost response followed by a reload can replay the same key.
+    // Row 510: the Sell-anyway ack is read NOW, synchronously, not inside `send`: the durable write below awaits, and the
+    // retry has returned (so the hook has dropped the ack) before a deferred `attach` would run.
+    const sentBody = rw.attach(payload);
     const send = () =>
       createOrder.mutate(
-        { ...payload, idempotencyKey: attemptKey },
+        { ...sentBody, idempotencyKey: attemptKey },
         {
           onSuccess: (created: any) => {
             submitKey.settle("success");
@@ -2033,6 +2042,13 @@ export function CreateOrderModal({
               setMergePrompt(body.activeOrder as ActiveOrderSummary);
               return;
             }
+            if (
+              rw.handle(err, () => {
+                const r = submitOrder(data, options); // a boolean is the submit's result, not the retry's
+                return typeof r === "object" ? r : undefined; // the default-unit path: hold the ack until it has built
+              })
+            )
+              return; // row 510
             // Row 718: the tenant's day called the date past. The refusal is on the date field (above); a merge-or-separate
             // prompt that led here must not stay over it, so close it (as its onClose does) and put focus on the field.
             if (body?.code === API_ERROR_CODES.DELIVERY_DATE_IN_PAST) {
@@ -2154,7 +2170,7 @@ export function CreateOrderModal({
     if (!err) return null;
     // A SELLING_RESTRICTED 409 has its own dialog; the banner would repeat it (with the rule's
     // admin-written reason) and outlive the dialog's OK.
-    if (parseSellingRestricted(err)) return null;
+    if (parseSellingRestricted(err) || parseRestrictionWarning(err)) return null;
     // Row 718: the server's past-delivery-day refusal sits on the date field, not in this banner.
     if (deliveryDateRefusal) return null;
     // B986-7 (Opus): a RECOGNISED refusal (a coded one, a stock shortfall, a credit limit...) is fixed copy; an UNCODED one keeps
@@ -3311,6 +3327,7 @@ export function CreateOrderModal({
 
       {/* License guard (W6b): the sale hit a 409 REGULATED_AUTH_REQUIRED. */}
       <BlockedLinesDialog lines={restrictedBlock} onClose={() => setRestrictedBlock(null)} />
+      {rw.dialog}
       {licenseBlock && selectedCustomer && (
         <LicenseGuardModal
           open

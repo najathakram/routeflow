@@ -310,6 +310,53 @@ describe("EmailService — attachments threaded to every transport", () => {
 
     expect(sendSpy).toHaveBeenCalledWith(expect.objectContaining({ attachments: undefined }));
   });
+
+  // I-120 (SA-861 rule 8): the ONE completion email of "Complete at counter".
+  it("sendInvoice with `completion`: the order-complete subject + intro, and every invoice of the order attached", async () => {
+    const svc = makeService();
+    const sendSpy = jest
+      .spyOn(svc, "send")
+      .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
+    const second = { ...attachment, filename: "Invoice-INV-2.pdf" };
+
+    await svc.sendInvoice({
+      to: "buyer@example.com",
+      customerName: "Acme Buyer",
+      invoiceNumber: "INV-1",
+      invoiceId: "inv-1",
+      issueDate: "Jan 1, 2026",
+      dueDate: "Jan 31, 2026",
+      total: 100,
+      items: [],
+      attachment,
+      completion: { orderNumber: "ORD-7" },
+      extraAttachments: [second],
+    } as any);
+
+    const sent = sendSpy.mock.calls[0][0] as any;
+    expect(sent.subject).toBe("Your order ORD-7 is complete — invoice attached");
+    expect(sent.attachments).toEqual([attachment, second]);
+    expect(sent.html).toContain("Your order is complete");
+    expect(sent.text).toContain("Your order is complete");
+  });
+
+  it("sendInvoice without `completion` keeps today's subject (guard)", async () => {
+    const svc = makeService();
+    const sendSpy = jest
+      .spyOn(svc, "send")
+      .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
+    await svc.sendInvoice({
+      to: "buyer@example.com",
+      customerName: "Acme Buyer",
+      invoiceNumber: "INV-1",
+      invoiceId: "inv-1",
+      issueDate: "Jan 1, 2026",
+      dueDate: "Jan 31, 2026",
+      total: 100,
+      items: [],
+    } as any);
+    expect((sendSpy.mock.calls[0][0] as any).subject).toBe("Invoice INV-1");
+  });
 });
 
 /**

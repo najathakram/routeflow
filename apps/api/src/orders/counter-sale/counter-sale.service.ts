@@ -167,6 +167,10 @@ export class CounterSaleService {
         notes: dto.notes,
         deliveredNow: true,
         idempotencyKey,
+        // Row 510: the till's acknowledgement of a RESTRICTION_WARNING. create() judges the sale at the STORE's state
+        // (counterSale -> COUNTER -> sale-fulfilment.ts) and stamps for THIS user; it is not part of the replay's cart.
+        restrictionOverrides: dto.restrictionOverrides,
+        warningHash: dto.warningHash,
       } as never,
       user,
       {
@@ -334,7 +338,15 @@ export class CounterSaleService {
       entitlements: this.orders.entitlements,
       logger: this.logger,
     };
-    const at = { tenantId: this.prisma.getTenantId(), customerId, orderId, total: sum, netted };
+    // SA-849 rule 1: the SAME switch as the gate that netted the till tender (the counter sale's create gate: "order")
+    const at = {
+      tenantId: this.prisma.getTenantId(),
+      customerId,
+      orderId,
+      total: sum,
+      netted,
+      action: "order" as const,
+    };
     if (user === "read-only") return creditAfterTender(deps, { ...at, planError, readOnly: true });
     return creditAfterTender(deps, {
       ...at,

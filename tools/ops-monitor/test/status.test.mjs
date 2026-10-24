@@ -13,6 +13,7 @@ import {
   lastAssistantText,
   orientationLines,
   scrubText,
+  statusSyncDue,
 } from "../../../.claude/hooks/ops-status.mjs";
 import { fold } from "../lib/fold.mjs";
 import { validateEvent } from "../lib/schema.mjs";
@@ -464,5 +465,28 @@ test("hook watchdog: slow git and gh stubs, exits 0 within the budget", { timeou
     assert.ok(Date.now() - t0 < 2500, `took ${Date.now() - t0} ms`);
   } finally {
     rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("statusSyncDue: only with a specs clone, at most every 2 min, never under RF_NO_SYNC / CI / gate off", () => {
+  const base = { home: "/h", specs: "/s", env: {}, now: 1_000_000_000, exists: () => true };
+  assert.equal(statusSyncDue({ ...base, mtimeMs: () => null }), true, "no stamp yet");
+  assert.equal(
+    statusSyncDue({ ...base, mtimeMs: () => base.now - 119_000 }),
+    false,
+    "stamped 119 s ago",
+  );
+  assert.equal(
+    statusSyncDue({ ...base, mtimeMs: () => base.now - 120_000 }),
+    true,
+    "stamped 120 s ago",
+  );
+  assert.equal(
+    statusSyncDue({ ...base, exists: () => false, mtimeMs: () => null }),
+    false,
+    "no specs clone",
+  );
+  for (const env of [{ RF_NO_SYNC: "1" }, { CI: "1" }, { RF_OPS_GATE: "off" }]) {
+    assert.equal(statusSyncDue({ ...base, env, mtimeMs: () => null }), false);
   }
 });
