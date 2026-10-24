@@ -129,20 +129,20 @@ describe("choice block visibility", () => {
     expect(screen.getByText("How do you want to give the money back?")).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: "Store credit" })).toBeChecked();
     expect(screen.getByRole("radio", { name: "Refund $12.40" })).not.toBeChecked();
-    expect(confirmBtn(/^take back items and add \$[\d.]+ credit$/i)).toBeInTheDocument();
+    expect(confirmBtn(/^take back items and add \$[\d.]+ store credit$/i)).toBeInTheDocument();
   });
 
   it("not fully paid: no choice block, today's dialog exactly", async () => {
     await toQuote(quote({ canRefund: false, paidInFull: false }));
     expect(screen.queryByText(/give the money back/i)).toBeNull();
     expect(screen.queryByRole("radio", { name: /store credit/i })).toBeNull();
-    expect(confirmBtn(/^take back items and add \$[\d.]+ credit$/i)).toBeInTheDocument();
+    expect(confirmBtn(/^take back items and add \$[\d.]+ store credit$/i)).toBeInTheDocument();
   });
 
   it("customer-detail entry (no allowRefund): no choice block even when canRefund", async () => {
     await toQuote(quote(), { allowRefund: false, orderId: "order-1" });
     expect(screen.queryByText(/give the money back/i)).toBeNull();
-    expect(confirmBtn(/^take back items and add \$[\d.]+ credit$/i)).toBeInTheDocument();
+    expect(confirmBtn(/^take back items and add \$[\d.]+ store credit$/i)).toBeInTheDocument();
   });
 
   it("walk-in: only Refund, preselected, with the explanatory line", async () => {
@@ -157,42 +157,34 @@ describe("choice block visibility", () => {
 
   it("W21b: the quote note follows the choice (credit note vs refund; no choice block = unchanged)", async () => {
     await toQuote(quote());
-    expect(screen.getByText(/goes on .* account as credit/i)).toBeInTheDocument();
+    expect(screen.getByText(/is added as store credit for/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("radio", { name: "Refund $12.40" }));
-    expect(screen.queryByText(/as credit for the next order/i)).toBeNull();
-    expect(
-      screen.getByText(/goes back to the customer, not onto their account/i),
-    ).toBeInTheDocument();
+    expect(screen.queryByText(/store credit for/i)).toBeNull();
+    expect(screen.getByText(/goes back to the customer\./i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("radio", { name: "Store credit" }));
-    expect(screen.getByText(/goes on .* account as credit/i)).toBeInTheDocument();
+    expect(screen.getByText(/is added as store credit for/i)).toBeInTheDocument();
     expect(screen.queryByText(/goes back to the customer/i)).toBeNull();
   });
 
   it("W-712: the note and button name the real amount and where it goes (credit vs refund)", async () => {
     await toQuote(quote());
-    expect(
-      screen.getByText("$12.40 goes on Acme Foods's account as credit for the next order."),
-    ).toBeInTheDocument();
-    expect(confirmBtn(/^take back items and add \$12\.40 credit$/i)).toBeInTheDocument();
+    expect(screen.getByText("$12.40 is added as store credit for Acme Foods.")).toBeInTheDocument();
+    expect(confirmBtn(/^take back items and add \$12\.40 store credit$/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("radio", { name: "Refund $12.40" }));
-    expect(
-      screen.getByText("$12.40 goes back to the customer, not onto their account."),
-    ).toBeInTheDocument();
+    expect(screen.getByText("$12.40 goes back to the customer.")).toBeInTheDocument();
     expect(confirmBtn(/^take back items and refund \$12\.40$/i)).toBeInTheDocument();
     expect(screen.queryByText(/credit note/i)).toBeNull();
   });
 
   it("W21b: with no choice block the credit line is today's", async () => {
     await toQuote(quote({ canRefund: false, paidInFull: false }));
-    expect(screen.getByText(/goes on .* account as credit/i)).toBeInTheDocument();
+    expect(screen.getByText(/is added as store credit for/i)).toBeInTheDocument();
   });
 
   it("W21b: walk-in (Refund preselected) never shows the credit-note line", async () => {
     await toQuote(quote({ customerIsWalkIn: true }));
-    expect(screen.queryByText(/as credit for the next order/i)).toBeNull();
-    expect(
-      screen.getByText(/goes back to the customer, not onto their account/i),
-    ).toBeInTheDocument();
+    expect(screen.queryByText(/store credit for/i)).toBeNull();
+    expect(screen.getByText("$12.40 goes back to the customer.")).toBeInTheDocument();
   });
 
   it("W21b: closing hands focus to onCloseAutoFocus (the opener restores it)", async () => {
@@ -251,7 +243,7 @@ describe("refund flow", () => {
     await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
     captureOk();
     await screen.findByText(
-      "Refund recorded. Give $12.40 back on the customer's card at the terminal.",
+      "Refunded $12.40 to the card. Give it back on the customer's card at the terminal.",
     );
     const slip = await screen.findByTestId("slip-action");
     expect(slip).toHaveAttribute("data-return-id", "ret-1");
@@ -278,7 +270,7 @@ describe("refund flow", () => {
     await waitFor(() => expect(refundReturn).toHaveBeenCalledTimes(1));
     expect(refundReturn).toHaveBeenCalledWith("ret-1", { tender: "CARD", expectedAmount: 12.4 });
     await screen.findByText(
-      "Refund recorded. Give $12.40 back on the customer's card at the terminal.",
+      "Refunded $12.40 to the card. Give it back on the customer's card at the terminal.",
     );
     expect(onRecorded).toHaveBeenCalledWith(
       expect.objectContaining({ id: "ret-1" }),
@@ -292,12 +284,12 @@ describe("refund flow", () => {
     fireEvent.click(confirmBtn(/^take back items and refund/i));
     await waitFor(() => expect(captureMutate).toHaveBeenCalled());
     captureOk();
-    await screen.findByText("Refund recorded. Hand $12.40 back to the customer.");
+    await screen.findByText("Refunded $12.40 in cash. Hand it back to the customer.");
   });
 
   it("store credit with the block sends resolution STORE_CREDIT and never refunds", async () => {
     const { onRecorded } = await toQuote(quote());
-    fireEvent.click(confirmBtn(/^take back items and add \$[\d.]+ credit$/i));
+    fireEvent.click(confirmBtn(/^take back items and add \$[\d.]+ store credit$/i));
     await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
     expect(captureMutate.mock.calls[0][0].resolution).toBe("STORE_CREDIT");
     captureOk({ ...RECORD, creditNoteId: "cn-1" });
@@ -311,7 +303,7 @@ describe("refund flow", () => {
 
   it("hidden block: capture request carries no resolution field (today's payload)", async () => {
     const { onRecorded } = await toQuote(quote({ canRefund: false }));
-    fireEvent.click(confirmBtn(/^take back items and add \$[\d.]+ credit$/i));
+    fireEvent.click(confirmBtn(/^take back items and add \$[\d.]+ store credit$/i));
     await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
     expect("resolution" in captureMutate.mock.calls[0][0]).toBe(false);
     // a not-fully-paid sale is credited too: the caller still learns it was store credit, and how much
@@ -352,7 +344,7 @@ describe("refund flow", () => {
     await waitFor(() => expect(refundReturn).toHaveBeenCalledTimes(2));
     expect(captureMutate).toHaveBeenCalledTimes(1);
     expect(refundReturn.mock.calls[1]).toEqual(refundReturn.mock.calls[0]);
-    await screen.findByText(/^Refund recorded\./);
+    await screen.findByText(/^Refunded \$12\.40/);
   });
 
   it("SA-749r2 #9: a cash refund over the sale's cash gets fixed copy; the clerk switches to Card and retries, or gives store credit", async () => {
@@ -593,7 +585,7 @@ describe("refund flow", () => {
     await waitFor(() => expect(refundReturn).toHaveBeenCalledTimes(1));
     expect(refundReturn).toHaveBeenCalledWith("ret-1", { tender: "CARD", expectedAmount: 11.9 });
     await screen.findByText(
-      "Refund recorded. Give $11.90 back on the customer's card at the terminal.",
+      "Refunded $11.90 to the card. Give it back on the customer's card at the terminal.",
     );
     expect(onRecorded).toHaveBeenCalledWith(
       expect.anything(),
@@ -603,7 +595,7 @@ describe("refund flow", () => {
 
   it("store credit: the receipt credit uses the server's refundAmount when present", async () => {
     const { onRecorded } = await toQuote(quote());
-    fireEvent.click(confirmBtn(/^take back items and add \$[\d.]+ credit$/i));
+    fireEvent.click(confirmBtn(/^take back items and add \$[\d.]+ store credit$/i));
     await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
     captureOk({ ...RECORD, creditNoteId: "cn-1", refundAmount: "11.9000" });
     await waitFor(() => expect(onRecorded).toHaveBeenCalled());
@@ -657,7 +649,7 @@ describe("refund flow", () => {
     await refundFlow();
     quotePending = true;
     fireEvent.click(screen.getByRole("radio", { name: "Store credit" }));
-    expect(confirmBtn(/^take back items and add \$[\d.]+ credit$/i)).toBeDisabled();
+    expect(confirmBtn(/^take back items and add \$[\d.]+ store credit$/i)).toBeDisabled();
   });
 
   it("RETURN_ALREADY_RESOLVED after a retry says to check before handing anything over", async () => {
@@ -732,7 +724,7 @@ describe("refund flow", () => {
     captureOk({ ...RECORD, refundAmount: null });
     fireEvent.click(await screen.findByRole("button", { name: "Retry refund" }));
     await screen.findByText(
-      "Refund recorded. Give $12.40 back on the customer's card at the terminal.",
+      "Refunded $12.40 to the card. Give it back on the customer's card at the terminal.",
     );
     expect(refundReturn).toHaveBeenNthCalledWith(2, "ret-1", {
       tender: "CARD",
@@ -885,7 +877,7 @@ describe("refund flow", () => {
     ).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: "Store credit" })).toBeChecked();
     expect(screen.getByRole("radio", { name: /^refund/i })).toBeDisabled();
-    fireEvent.click(confirmBtn(/^take back items and add \$[\d.]+ credit$/i));
+    fireEvent.click(confirmBtn(/^take back items and add \$[\d.]+ store credit$/i));
     await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
     expect(captureMutate.mock.calls[0][0].resolution).toBe("STORE_CREDIT");
   });
@@ -936,5 +928,104 @@ describe("refund flow", () => {
     expect(JSON.stringify(captureMutate.mock.calls[1][0])).toBe(
       JSON.stringify(captureMutate.mock.calls[0][0]),
     );
+  });
+});
+
+describe("W-712 credit words per host (SA-929)", () => {
+  it("Returns page / order detail: neutral store-credit line, no 'next order' next to the apply-to choice", async () => {
+    await toQuote(quote());
+    expect(screen.getByText("$12.40 is added as store credit for Acme Foods.")).toBeInTheDocument();
+    expect(screen.queryByText(/next order/i)).toBeNull();
+  });
+
+  it("counter (settled sale): the credit is for the next order", async () => {
+    await toQuote(quote(), { sourceOrderId: "order-1" });
+    expect(
+      screen.getByText("$12.40 is added as store credit for Acme Foods, to use on the next order."),
+    ).toBeInTheDocument();
+  });
+
+  it("names ending in s need no possessive", async () => {
+    await toQuote(quote(), { customerName: "Jones Foods Inc" });
+    expect(
+      screen.getByText("$12.40 is added as store credit for Jones Foods Inc."),
+    ).toBeInTheDocument();
+  });
+
+  it("walk-in that cannot be refunded (store credit by default): walk-in wording, never 'account' or a possessive", async () => {
+    await toQuote(quote({ customerIsWalkIn: true, canRefund: false, paidInFull: false }), {
+      customerName: "Walk-in",
+    });
+    expect(
+      screen.getByText(
+        "Walk-in sales can't hold store credit. $12.40 is recorded as a credit note on this sale.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/account/i)).toBeNull();
+    expect(screen.queryByText(/walk-in's/i)).toBeNull();
+    expect(confirmBtn(/^take back items and record \$12\.40 credit note$/i)).toBeInTheDocument();
+  });
+});
+
+describe("SA-929: the words after submit come from the server's answer", () => {
+  it("a refund the server recorded differently (amount, tender) is what the success screen and onRecorded say", async () => {
+    refundReturn.mockResolvedValue({
+      ...RECORD,
+      refundMethod: "EXTERNAL_REFUND",
+      refundAmount: "11.5000",
+      refundTender: "CHECK",
+    });
+    const { onRecorded } = await refundFlow(); // client: $12.40 on CARD
+    fireEvent.click(confirmBtn(/^take back items and refund \$12\.40$/i));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+    captureOk();
+    await screen.findByText("Refunded $11.50 by check. Hand it back to the customer.");
+    expect(screen.queryByText(/12\.40/)).toBeNull();
+    expect(onRecorded).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ resolution: "REFUND", tender: "CHECK", amount: 11.5 }),
+    );
+  });
+
+  it("a store-credit answer reads 'added as store credit' with the server's figure", async () => {
+    const { onRecorded } = await toQuote(quote());
+    fireEvent.click(confirmBtn(/^take back items and add \$12\.40 store credit$/i));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+    captureOk({ ...RECORD, creditNoteId: "cn-1", refundAmount: "10.0000" });
+    await screen.findByText("$10.00 added as store credit.");
+    expect(onRecorded).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ resolution: "STORE_CREDIT", amount: 10 }),
+    );
+  });
+
+  it("a capture the server already refunded is worded as a refund, not as the client's store-credit choice", async () => {
+    const { onRecorded } = await toQuote(quote());
+    fireEvent.click(confirmBtn(/^take back items and add \$12\.40 store credit$/i));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+    captureOk({
+      ...RECORD,
+      refundMethod: "EXTERNAL_REFUND",
+      refundedAt: "2026-10-24T10:00:00.000Z",
+      refundAmount: "12.4000",
+    });
+    expect(onRecorded).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ resolution: "REFUND", amount: 12.4 }),
+    );
+  });
+
+  it("409 REFUND_AMOUNT_CHANGED: the NOTE under the Total (not only the button) shows the server's figure", async () => {
+    refundReturn.mockRejectedValueOnce({
+      response: { status: 409, data: { code: "REFUND_AMOUNT_CHANGED", amount: 10 } },
+    });
+    await refundFlow();
+    expect(screen.getByText("$12.40 goes back to the customer.")).toBeInTheDocument();
+    fireEvent.click(confirmBtn(/^take back items and refund/i));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+    captureOk();
+    await screen.findByRole("button", { name: /^take back items and refund \$10\.00$/i });
+    expect(screen.getByText("$10.00 goes back to the customer.")).toBeInTheDocument();
+    expect(screen.queryByText("$12.40 goes back to the customer.")).toBeNull();
   });
 });

@@ -85,6 +85,7 @@ describe("InlineReturnSection — returns say what happens (W-711)", () => {
 
     const row = (await screen.findByText(/from order #ORD-7/i)).closest("div.rounded-lg");
     expect(row).not.toBeNull();
+    expect(row).toHaveTextContent("Widget");
     const title = within(row as HTMLElement).getByText("Widget");
     expect(title).toBeInTheDocument();
     // the product comes first, the order reference is the quieter line after it
@@ -98,15 +99,67 @@ describe("InlineReturnSection — returns say what happens (W-711)", () => {
     renderWithProviders(<InlineReturnSection customerId="cust-1" />);
     await addWidget();
     expect(screen.getByLabelText(/^pieces$/i)).toBeVisible();
-    expect(screen.queryByLabelText(/note \(optional\)/i)).toBeNull();
-    expect(screen.queryByLabelText(/reason \(optional\)/i)).toBeNull();
+    expect(screen.getByLabelText(/note \(optional\)/i)).not.toBeVisible();
+    expect(screen.getByLabelText(/reason \(optional\)/i)).not.toBeVisible();
 
-    const more = screen.getByRole("button", { name: /more/i });
+    const more = screen.getByRole("button", { name: "More for Widget" });
     expect(more).toHaveAttribute("aria-expanded", "false");
     fireEvent.click(more);
     expect(more).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByLabelText(/note \(optional\)/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/reason \(optional\)/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/note \(optional\)/i)).toBeVisible();
+    expect(screen.getByLabelText(/reason \(optional\)/i)).toBeVisible();
+  });
+
+  it("More accessibility: aria-controls points at a real element, mounted while collapsed", async () => {
+    renderWithProviders(<InlineReturnSection customerId="cust-1" />);
+    await addWidget();
+    const more = screen.getByRole("button", { name: "More for Widget" });
+    const panel = document.getElementById(more.getAttribute("aria-controls") as string);
+    expect(panel).not.toBeNull();
+    expect(panel).toHaveAttribute("hidden");
+    fireEvent.click(more);
+    expect(panel).not.toHaveAttribute("hidden");
+  });
+
+  it("More collapses back (label Less) while every field is empty", async () => {
+    renderWithProviders(<InlineReturnSection customerId="cust-1" />);
+    await addWidget();
+    fireEvent.click(screen.getByRole("button", { name: "More for Widget" }));
+    const less = screen.getByRole("button", { name: "Less for Widget" });
+    expect(less).toHaveTextContent("Less");
+    expect(less).toBeEnabled();
+    fireEvent.click(less);
+    expect(screen.getByLabelText(/note \(optional\)/i)).not.toBeVisible();
+    expect(screen.getByRole("button", { name: "More for Widget" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+  });
+
+  it("More is not a dead button: while a field holds a value the toggle is disabled and says Less", async () => {
+    renderWithProviders(<InlineReturnSection customerId="cust-1" />);
+    await addWidget();
+    fireEvent.click(screen.getByRole("button", { name: "More for Widget" }));
+    fireEvent.change(screen.getByLabelText(/note \(optional\)/i), { target: { value: "dented" } });
+    const less = screen.getByRole("button", { name: "Less for Widget" });
+    expect(less).toBeDisabled();
+    expect(screen.getByLabelText(/note \(optional\)/i)).toBeVisible();
+    // clearing the value frees it again
+    fireEvent.change(screen.getByLabelText(/note \(optional\)/i), { target: { value: "" } });
+    expect(screen.getByRole("button", { name: "Less for Widget" })).toBeEnabled();
+  });
+
+  it("a DRIVER (or no role) opening More never sees the staff Credit price field", async () => {
+    for (const role of ["DRIVER", undefined]) {
+      authRole = role;
+      const { unmount } = renderWithProviders(<InlineReturnSection customerId="cust-1" />);
+      await addWidget();
+      fireEvent.click(screen.getByRole("button", { name: "More for Widget" }));
+      expect(screen.getByLabelText(/note \(optional\)/i)).toBeVisible();
+      expect(screen.queryByLabelText(/credit price/i)).toBeNull();
+      expect(screen.queryByLabelText(/why the lower price/i)).toBeNull();
+      unmount();
+    }
   });
 
   it("F23: a line that holds a note opens its More by itself and keeps the value", async () => {
@@ -117,7 +170,8 @@ describe("InlineReturnSection — returns say what happens (W-711)", () => {
     // a fresh re-mount of the row (Remove then Undo) restores the line with the note showing
     fireEvent.click(screen.getByRole("button", { name: /^remove$/i }));
     fireEvent.click(screen.getByRole("button", { name: /^undo$/i }));
-    expect(screen.getByRole("button", { name: /more/i })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("button", { name: /less/i })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByLabelText(/note \(optional\)/i)).toBeVisible();
     expect(screen.getByLabelText(/note \(optional\)/i)).toHaveValue("dented");
   });
 
@@ -125,12 +179,13 @@ describe("InlineReturnSection — returns say what happens (W-711)", () => {
     authRole = "OPERATOR";
     renderWithProviders(<InlineReturnSection customerId="cust-1" />);
     await addWidget();
-    expect(screen.queryByLabelText(/credit price/i)).toBeNull();
+    expect(screen.getByLabelText(/credit price/i)).not.toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: /more/i }));
     fireEvent.change(screen.getByLabelText(/credit price/i), { target: { value: "1.50" } });
     fireEvent.click(screen.getByRole("button", { name: /^remove$/i }));
     fireEvent.click(screen.getByRole("button", { name: /^undo$/i }));
+    expect(screen.getByLabelText(/credit price/i)).toBeVisible();
     expect(screen.getByLabelText(/credit price/i)).toHaveValue("1.50");
-    expect(screen.getByLabelText(/why the lower price/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/why the lower price/i)).toBeVisible();
   });
 });

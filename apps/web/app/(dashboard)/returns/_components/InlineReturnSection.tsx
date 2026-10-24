@@ -53,7 +53,7 @@ import {
   alreadyReturnedProductIds,
 } from "@routeflow/returns";
 import { unitWords } from "@routeflow/pricing";
-import { creditOutcomeLine } from "./refund-copy";
+import { creditOutcomeLine, type CreditContext } from "./refund-copy";
 
 // U-3a: returns carry no per-product label yet, so this prints the default words.
 const UW = unitWords();
@@ -105,8 +105,13 @@ export interface InlineReturnSectionProps {
   quoteOverride?: InlineReturnQuoteResponse | null;
   /** Show only the Total: the host replaced the total with the server's own figure, so the old breakdown would no longer add up. */
   totalOnly?: boolean;
-  /** W21b: replaces the default "issued as credit note" line under the totals (the dialog sets it when Refund is chosen). */
+  /** W21b: replaces the default store-credit line under the totals (the dialog sets it when Refund is chosen). */
   quoteNote?: string;
+  /** Where the credit goes, for the default note under the totals: "thisOrder" on order create/edit (the credit is held for
+   *  the carrying order first). Defaults to the neutral "account" line, which promises nothing about which order uses it. */
+  creditContext?: CreditContext;
+  /** Named in the default credit note ("for Acme Foods"); omitted = "the customer". */
+  customerName?: string;
   /** Called (in addition to the section's own inline error) when the Step-1 quote or the
    *  excess re-quote is refused — the dialog uses this to switch to its full "refused" screen. */
   onQuoteRefused?: (message: string) => void;
@@ -134,6 +139,8 @@ export function InlineReturnSection({
   quoteOverride,
   totalOnly = false,
   quoteNote,
+  creditContext = "account",
+  customerName,
   onQuoteRefused,
   hidden = false,
   reasonHintId,
@@ -455,6 +462,7 @@ export function InlineReturnSection({
                         )}
                       </div>
                       <LineExtras
+                        productName={line.productName}
                         hasValue={
                           !!line.reason ||
                           !!line.note ||
@@ -750,7 +758,7 @@ export function InlineReturnSection({
               <span>{money(quote.total)}</span>
             </div>
             <p className="mt-2 text-xs text-navy/70">
-              {quoteNote ?? creditOutcomeLine(money(quote.total))}
+              {quoteNote ?? creditOutcomeLine(money(quote.total), creditContext, customerName)}
             </p>
           </div>
 
@@ -777,9 +785,19 @@ export function InlineReturnSection({
   );
 }
 
-/** F23: a return line's optional extras (Reason, Note, staff Credit price) behind "More". It opens
- *  itself while any of them holds a value, so a typed note or price is never out of sight. */
-function LineExtras({ hasValue, children }: { hasValue: boolean; children: React.ReactNode }) {
+/** F23: a return line's optional extras (Reason, Note, staff Credit price) behind "More". The panel
+ *  stays mounted (hidden while collapsed) so the button's aria-controls always points at a real
+ *  element. While any extra holds a value the panel stays open, so a typed note or price is never
+ *  out of sight; the toggle then reads "Less" and is disabled until the fields are empty again. */
+function LineExtras({
+  hasValue,
+  productName,
+  children,
+}: {
+  hasValue: boolean;
+  productName: string;
+  children: React.ReactNode;
+}) {
   const [userOpen, setUserOpen] = React.useState(false);
   const open = userOpen || hasValue;
   const panelId = React.useId();
@@ -787,18 +805,19 @@ function LineExtras({ hasValue, children }: { hasValue: boolean; children: React
     <div className="mt-2">
       <button
         type="button"
-        className="min-h-11 text-sm font-medium text-brand-600 hover:underline"
+        className="min-h-11 text-sm font-medium text-brand-600 hover:underline disabled:cursor-not-allowed disabled:no-underline disabled:opacity-60"
+        aria-label={`${open ? "Less" : "More"} for ${productName}`}
         aria-expanded={open}
         aria-controls={panelId}
+        disabled={hasValue}
+        title={hasValue ? "Clear these fields to hide them" : undefined}
         onClick={() => setUserOpen((v) => !v)}
       >
-        More
+        {open ? "Less" : "More"}
       </button>
-      {open && (
-        <div id={panelId} className="space-y-2">
-          {children}
-        </div>
-      )}
+      <div id={panelId} hidden={!open} className="space-y-2">
+        {children}
+      </div>
     </div>
   );
 }

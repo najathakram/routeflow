@@ -84,7 +84,7 @@ describe("CounterReturnAction", () => {
     fireEvent.click(screen.getByRole("button", { name: "Return items" }));
     React.act(() => recorded?.({}, { resolution: "STORE_CREDIT", amount: 12.4 }));
     expect(screen.getByRole("status")).toHaveTextContent(
-      "Return recorded. Store credit of $12.40 added to Acme Deli.",
+      "Return recorded. $12.40 added as store credit for Acme Deli.",
     );
     expect(screen.getByRole("status").textContent).not.toMatch(
       /hand|cash|back to the customer|card/i,
@@ -97,7 +97,7 @@ describe("CounterReturnAction", () => {
     fireEvent.click(screen.getByRole("button", { name: "Return items" }));
     React.act(() => recorded?.({}, undefined));
     expect(screen.getByRole("status")).toHaveTextContent(
-      "Return recorded. Store credit added to the customer's account.",
+      "Return recorded. Store credit added for the customer.",
     );
     expect(screen.getByRole("status").textContent).not.toMatch(/hand|cash|back to the customer/i);
   });
@@ -106,7 +106,7 @@ describe("CounterReturnAction", () => {
     fireEvent.click(screen.getByRole("button", { name: "Return items" }));
     React.act(() => recorded?.({}, { resolution: "REFUND", tender: "CASH", amount: 12.4 }));
     expect(screen.getByRole("status")).toHaveTextContent(
-      "Return recorded. Hand $12.40 back to the customer.",
+      "Return recorded. Refunded $12.40 in cash. Hand it back to the customer.",
     );
   });
   it("W21b: a whole-sale return keeps its success line when the row flips to fully returned", () => {
@@ -116,7 +116,7 @@ describe("CounterReturnAction", () => {
     // the refetch marks the sale FULL: the component must stay mounted with its success line
     rerender(<CounterReturnAction orderId="o1" canReturn={false} />);
     expect(screen.getByRole("status")).toHaveTextContent(
-      "Return recorded. Hand $12.40 back to the customer.",
+      "Return recorded. Refunded $12.40 in cash. Hand it back to the customer.",
     );
     expect(screen.getByRole("button", { name: "Return items" })).toBeInTheDocument();
   });
@@ -129,7 +129,7 @@ describe("CounterReturnAction", () => {
     React.act(() => onClose());
     expect(screen.queryByRole("button", { name: "Return items" })).toBeNull();
     expect(screen.getByRole("status")).toHaveTextContent(
-      "Return recorded. Hand $12.40 back to the customer.",
+      "Return recorded. Refunded $12.40 in cash. Hand it back to the customer.",
     );
   });
   it("W21b: a sale that is already fully returned offers no Return items button", () => {
@@ -141,7 +141,7 @@ describe("CounterReturnAction", () => {
     fireEvent.click(screen.getByRole("button", { name: "Return items" }));
     React.act(() => recorded?.({}, { resolution: "REFUND", tender: "CARD", amount: 12.4 }));
     expect(screen.getByRole("status")).toHaveTextContent(
-      "Return recorded. Give $12.40 back on the customer's card at the terminal.",
+      "Return recorded. Refunded $12.40 to the card. Give it back on the customer's card at the terminal.",
     );
   });
   it("a saved return with the refund still pending says so and never says to hand money over", () => {
@@ -156,6 +156,29 @@ describe("CounterReturnAction", () => {
     );
     expect(screen.getByRole("status").textContent).not.toMatch(/\$/);
     expect(screen.getByRole("status").textContent).not.toMatch(/^Return recorded/);
+  });
+  it("SA-929: the toast words the server's recorded figures (check, $9.50), whatever was chosen on screen", () => {
+    render(<CounterReturnAction orderId="o1" />);
+    fireEvent.click(screen.getByRole("button", { name: "Return items" }));
+    React.act(() => recorded?.({}, { resolution: "REFUND", tender: "CHECK", amount: 9.5 }));
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Return recorded. Refunded $9.50 by check. Hand it back to the customer.",
+    );
+  });
+  it("SA-929: a refund the server recorded with no tender says only what it knows", () => {
+    render(<CounterReturnAction orderId="o1" />);
+    fireEvent.click(screen.getByRole("button", { name: "Return items" }));
+    React.act(() => recorded?.({}, { resolution: "REFUND", amount: 9.5 }));
+    expect(screen.getByRole("status").textContent).toBe("Return recorded. Refunded $9.50.");
+  });
+  it("walk-in store credit: a credit note on the sale, never an account or a possessive", () => {
+    orderState = { data: { id: "o1", customerId: "c1", customer: { businessName: "Walk-in" } } };
+    render(<CounterReturnAction orderId="o1" />);
+    fireEvent.click(screen.getByRole("button", { name: "Return items" }));
+    React.act(() => recorded?.({}, { resolution: "STORE_CREDIT", amount: 12.4, walkIn: true }));
+    expect(screen.getByRole("status").textContent).toBe(
+      "Return recorded. $12.40 recorded as a credit note on this sale.",
+    );
   });
   it("W21b: Done returns focus to the Return items button, not body", () => {
     render(<CounterReturnAction orderId="o1" />);

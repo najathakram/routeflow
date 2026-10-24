@@ -104,16 +104,20 @@ test("W-711 F23: the optional line fields sit behind More; the pieces field stay
   await page.getByRole("button", { name: /record return|return items/i }).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog.getByLabel(/^pieces$/i)).toBeVisible();
-  await expect(dialog.getByLabel(/note \(optional\)/i)).toHaveCount(0);
-  const more = dialog.getByRole("button", { name: "More" });
+  // collapsed: the panel stays mounted but hidden
+  await expect(dialog.getByLabel(/note \(optional\)/i)).toBeHidden();
+  const more = dialog.getByRole("button", { name: "More for Cola 12oz Can" });
   await expect(more).toHaveAttribute("aria-expanded", "false");
   await more.click();
-  await expect(more).toHaveAttribute("aria-expanded", "true");
+  await expect(dialog.getByRole("button", { name: "Less for Cola 12oz Can" })).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
   await dialog.getByLabel(/note \(optional\)/i).fill("Dented can");
   // a note keeps its line open and its value
   await dialog.getByRole("button", { name: "Remove" }).click();
   await dialog.getByRole("button", { name: "Undo" }).click();
-  await expect(dialog.getByRole("button", { name: "More" })).toHaveAttribute(
+  await expect(dialog.getByRole("button", { name: "Less for Cola 12oz Can" })).toHaveAttribute(
     "aria-expanded",
     "true",
   );
@@ -168,10 +172,17 @@ test("W-711 F22 + W-712 F25: the quote names the product and says where the mone
   await dialog.getByLabel(/^reason$/i).selectOption({ index: 1 });
   await dialog.getByRole("button", { name: /get quote/i }).click();
   // the quote line is titled by its product; the order is the quieter line under it
-  await expect(dialog.getByText("Cola 12oz Can").first()).toBeVisible();
-  await expect(dialog).toContainText("From order #ORD-00001");
+  const quoteRow = dialog
+    .locator("div.rounded-lg")
+    .filter({ hasText: /From order #ORD-00001/ })
+    .last();
+  await expect(quoteRow.getByText("Cola 12oz Can")).toBeVisible();
+  await expect(quoteRow.getByText(/From order #ORD-00001/)).toBeVisible();
+  const rowText = await quoteRow.innerText();
+  expect(rowText.indexOf("Cola 12oz Can")).toBeGreaterThanOrEqual(0);
+  expect(rowText.indexOf("Cola 12oz Can")).toBeLessThan(rowText.indexOf("From order #ORD-00001"));
   // walk-in sales refund: the note and the button say so, with the real amount
-  await expect(dialog).toContainText("$1.50 goes back to the customer");
+  await expect(dialog).toContainText("$1.50 goes back to the customer.");
   await expect(
     dialog.getByRole("button", { name: "Take back items and refund $1.50" }),
   ).toBeVisible();

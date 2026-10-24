@@ -242,7 +242,7 @@ describe("InlineReturnSection — #2695 staff credit price override", () => {
     fireEvent.click(await screen.findByText("Widget"));
     fireEvent.change(screen.getByLabelText(/^pieces$/i), { target: { value: pieces } });
     // W-711: the credit price sits behind the line's More
-    fireEvent.click(screen.getByRole("button", { name: /^more$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^more for /i }));
   }
 
   it.each([["DRIVER"], ["CUSTOMER"], [undefined]])(
@@ -385,7 +385,7 @@ describe("InlineReturnSection — #2695 staff credit price override", () => {
     const qtyInputs = () => screen.getAllByLabelText(/^pieces$/i);
     const openAllMore = () =>
       screen
-        .getAllByRole("button", { name: /^more$/i })
+        .getAllByRole("button", { name: /^(more|less) for /i })
         .forEach((b) => b.getAttribute("aria-expanded") === "false" && fireEvent.click(b));
     const priceInputs = () => (openAllMore(), screen.getAllByLabelText(/credit price/i));
     const reasonInputs = () => (openAllMore(), screen.getAllByLabelText(/why the lower price/i));

@@ -15,7 +15,13 @@ import {
   RecordInlineReturnDialog,
   type RecordedInfo,
 } from "@/app/(dashboard)/returns/_components/RecordInlineReturnDialog";
-import { handBackLine, REFUND_COPY } from "@/app/(dashboard)/returns/_components/refund-copy";
+import {
+  creditNoteRecordedLine,
+  handOverLine,
+  REFUND_COPY,
+  refundedLine,
+  storeCreditAddedLine,
+} from "@/app/(dashboard)/returns/_components/refund-copy";
 import { orderActionAccess } from "../[id]/order-action-access";
 
 function money(n: number): string {
@@ -23,12 +29,30 @@ function money(n: number): string {
 }
 
 /** Store credit stays on the account: this line must never tell the clerk to hand money back
- *  (that would give the value twice). Only the refund path says "Hand $X back". */
-function storeCreditLine(amount: number | undefined, customer: string | null | undefined): string {
-  const who = customer?.trim() || "the customer's account";
+ *  (that would give the value twice). Only the refund path says to hand it back. A walk-in has no
+ *  account, so its credit note stays on the sale. */
+function storeCreditLine(
+  amount: number | undefined,
+  customer: string | null | undefined,
+  walkIn: boolean | undefined,
+): string {
+  if (walkIn && amount !== undefined) {
+    return `Return recorded. ${creditNoteRecordedLine(money(amount))}`;
+  }
+  const who = customer?.trim() || "the customer";
   return amount !== undefined
-    ? `Return recorded. Store credit of ${money(amount)} added to ${who}.`
-    : `Return recorded. Store credit added to ${who}.`;
+    ? `Return recorded. ${storeCreditAddedLine(money(amount)).replace(/\.$/, "")} for ${who}.`
+    : `Return recorded. Store credit added for ${who}.`;
+}
+
+/** SA-929: the words come from what the server recorded (RecordedInfo is read off its answer). */
+function recordedLine(recorded: RecordedInfo, customer: string | null | undefined): string {
+  if (recorded.pending) return REFUND_COPY.pendingReceipt;
+  if (recorded.resolution === "REFUND" && recorded.amount !== undefined) {
+    const hand = recorded.tender ? ` ${handOverLine(recorded.tender)}` : "";
+    return `Return recorded. ${refundedLine(recorded.tender, money(recorded.amount))}${hand}`;
+  }
+  return storeCreditLine(recorded.amount, customer, recorded.walkIn);
 }
 
 export function CounterReturnAction({
@@ -99,11 +123,7 @@ export function CounterReturnAction({
       />
       {recorded ? (
         <p role="status" className="order-last basis-full text-sm font-medium text-navy">
-          {recorded.pending
-            ? REFUND_COPY.pendingReceipt
-            : recorded.resolution === "REFUND" && recorded.tender && recorded.amount !== undefined
-              ? `Return recorded. ${handBackLine(recorded.tender, money(recorded.amount))}`
-              : storeCreditLine(recorded.amount, order.customer?.businessName)}
+          {recordedLine(recorded, order.customer?.businessName)}
         </p>
       ) : null}
     </>

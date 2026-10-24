@@ -33,6 +33,7 @@ import type {
   InlineReturnQuoteResponse,
   InlineReturnRecord,
   InlineReturnRefundEligibility,
+  InlineReturnRefundResponse,
   InlineRefundTender,
   InlineReturnResolution,
 } from "@routeflow/types";
@@ -50,14 +51,20 @@ import {
 import {
   REFUND_COPY,
   TENDER_OPTIONS,
+  creditNoteRecordedLine,
   creditOutcomeLine,
   handBackLine,
+  handOverLine,
+  refundedLine,
   refundErrorKind,
   refundOutcomeLine,
+  storeCreditAddedLine,
   takeBackCreditLabel,
   takeBackRefundLabel,
+  takeBackWalkInLabel,
   tenderFromPaidMethods,
   TERMINAL_REFUND_ERRORS,
+  type CreditContext,
   type RefundErrorKind,
 } from "./refund-copy";
 import { InlineReturnSection, type InlineReturnSectionState } from "./InlineReturnSection";
@@ -117,6 +124,23 @@ export interface RecordedInfo {
   amount?: number;
   /** SA-727b: the return is saved but its refund is still pending (nothing paid out). */
   pending?: boolean;
+  /** A walk-in's store-credit return: no account holds it, the credit note stays on the sale. */
+  walkIn?: boolean;
+}
+
+/** SA-929: what the SERVER recorded for a capture/store-credit answer. A return the server already refunded
+ *  (refundMethod EXTERNAL_REFUND with refundedAt) is a refund whatever was chosen; anything else is store credit.
+ *  The capture answer carries no tender, so a refund read from it names none. */
+function recordedFromServer(
+  ret: InlineReturnRecord,
+  fallbackAmount: number,
+  walkIn: boolean,
+): RecordedInfo {
+  const amount = refundAmountOf(ret.refundAmount) ?? fallbackAmount;
+  if (ret.refundMethod === "EXTERNAL_REFUND" && ret.refundedAt) {
+    return { resolution: "REFUND", amount };
+  }
+  return { resolution: "STORE_CREDIT", amount, ...(walkIn ? { walkIn: true } : {}) };
 }
 
 type DialogPhase = "capture" | "success" | "refused";
@@ -182,6 +206,8 @@ export function RecordInlineReturnDialog({
     tender: InlineRefundTender;
     amount: number;
   } | null>(null);
+  // SA-929: the outcome as the server recorded it; the success screen's words come from here, not from the choice.
+  const [outcome, setOutcome] = React.useState<RecordedInfo | null>(null);
   const [requoteOverride, setRequoteOverride] = React.useState<InlineReturnQuoteResponse | null>(
     null,
   );
@@ -214,6 +240,7 @@ export function RecordInlineReturnDialog({
     setRefunding(false);
     setRefundError(null);
     setRefundDone(null);
+    setOutcome(null);
     setRequoteOverride(null);
     setServerAmount(null);
     setCrediting(false);
@@ -233,6 +260,13 @@ export function RecordInlineReturnDialog({
   const walkIn = showChoice && !!quoted?.canRefund && !!quoted?.customerIsWalkIn;
   const effResolution: InlineReturnResolution =
     !showChoice || paidWithCredit ? "STORE_CREDIT" : walkIn ? "REFUND" : resolution;
+  const walkInCredit = !!quoted?.customerIsWalkIn && effResolution === "STORE_CREDIT";
+  // Which order the credit lands on decides how far the note can go: only the settled counter sale is "the next order".
+  const creditContext: CreditContext = walkInCredit
+    ? "walkIn"
+    : sourceOrderId
+      ? "nextOrder"
+      : "account";
   const effTender: InlineRefundTender = tender ?? tenderFromPaidMethods(quoted?.paidMethods);
   const quotedAmount = quoted?.total ?? 0;
   const shownAmount = serverAmount ?? quotedAmount;
@@ -279,12 +313,11 @@ export function RecordInlineReturnDialog({
         busyRef.current = false;
         setCrediting(false);
         pendingReportedRef.current = true;
+        const info = recordedFromServer(rec, savedAmountOf(ret), walkInCredit);
         setResult(rec);
+        setOutcome(info);
         setPhase("success");
-        onRecorded?.(rec, {
-          resolution: "STORE_CREDIT",
-          amount: refundAmountOf(rec.refundAmount) ?? savedAmountOf(ret),
-        });
+        onRecorded?.(rec, info);
       },
       (err: unknown) => {
         busyRef.current = false;
@@ -316,14 +349,24 @@ export function RecordInlineReturnDialog({
     const amount = savedAmountOf(ret);
     const used = effTender;
     refundReturn(ret.id, { tender: used, expectedAmount: amount }).then(
-      () => {
+      (answer) => {
         busyRef.current = false;
         setRefunding(false);
         pendingReportedRef.current = true;
-        setRefundDone({ tender: used, amount });
+        // SA-929: the words come from what the server recorded (its amount and tender), not from what was sent.
+        const recorded = answer as Partial<InlineReturnRefundResponse> | null | undefined;
+        const finalTender = recorded?.refundTender ?? used;
+        const finalAmount = refundAmountOf(recorded?.refundAmount) ?? amount;
+        const info: RecordedInfo = {
+          resolution: "REFUND",
+          tender: finalTender,
+          amount: finalAmount,
+        };
+        setRefundDone({ tender: finalTender, amount: finalAmount });
+        setOutcome(info);
         setResult(ret);
         setPhase("success");
-        onRecorded?.(ret, { resolution: "REFUND", tender: used, amount });
+        onRecorded?.(ret, info);
       },
       (err: unknown) => {
         busyRef.current = false;
@@ -390,12 +433,11 @@ export function RecordInlineReturnDialog({
             return;
           }
           busyRef.current = false;
+          const info = recordedFromServer(data, quotedAmount, walkInCredit);
           setResult(data);
+          setOutcome(info);
           setPhase("success");
-          onRecorded?.(data, {
-            resolution: "STORE_CREDIT",
-            amount: refundAmountOf(data.refundAmount) ?? quotedAmount,
-          });
+          onRecorded?.(data, info);
         },
         onError: (err) => {
           busyRef.current = false;
@@ -466,7 +508,7 @@ export function RecordInlineReturnDialog({
         quoteNote={
           effResolution === "REFUND"
             ? refundOutcomeLine(money(shownAmount))
-            : creditOutcomeLine(money(shownAmount), customerName)
+            : creditOutcomeLine(money(shownAmount), creditContext, customerName)
         }
         renderQuoteFooter={() =>
           showChoice ? (
@@ -557,7 +599,9 @@ export function RecordInlineReturnDialog({
                   ? "Refunding…"
                   : showChoice && effResolution === "REFUND"
                     ? takeBackRefundLabel(money(shownAmount))
-                    : takeBackCreditLabel(money(shownAmount))}
+                    : walkInCredit
+                      ? takeBackWalkInLabel(money(shownAmount))
+                      : takeBackCreditLabel(money(shownAmount))}
               </Button>
             </>
           )
@@ -610,11 +654,20 @@ export function RecordInlineReturnDialog({
               </dd>
             </div>
           </dl>
-          {refundDone && (
+          {refundDone ? (
             <p role="status" className="text-sm text-navy">
-              Refund recorded. {handBackLine(refundDone.tender, money(refundDone.amount))}
+              {refundedLine(refundDone.tender, money(refundDone.amount))}{" "}
+              {handOverLine(refundDone.tender)}
             </p>
-          )}
+          ) : outcome ? (
+            <p role="status" className="text-sm text-navy">
+              {outcome.resolution === "REFUND"
+                ? refundedLine(outcome.tender, money(outcome.amount ?? 0))
+                : outcome.walkIn
+                  ? creditNoteRecordedLine(money(outcome.amount ?? 0))
+                  : storeCreditAddedLine(money(outcome.amount ?? 0))}
+            </p>
+          ) : null}
           {(refundDone || result.creditNoteId) && (
             <RefundSlipAction returnId={result.id} autoPrint={readAutoPrint()} />
           )}
