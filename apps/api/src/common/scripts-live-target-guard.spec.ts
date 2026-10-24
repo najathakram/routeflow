@@ -142,6 +142,7 @@ const EXEMPT: Record<string, Reason> = {
   "apps/api/scripts/seed-marketing-screenshot-products.js": "local-only",
   "apps/api/scripts/seed-test-catalog.js": "test-slug-only",
   "apps/api/scripts/stock-ledger-gap.mjs": "read-only",
+  "apps/api/scripts/lib/pg-utc-types.cjs": "read-only", // W-781: type parser only, no queries
   "apps/api/scripts/report-sa740-walkin-return-source.mjs": "read-only",
   "apps/api/scripts/report-sitting4-sizing.mjs": "read-only", // SA-772 §4 step 5 + SA-814 §3 C1-C4
   "apps/api/scripts/report-640-restored-grants.mjs": "read-only", // row 640 census: read-only counts, no writes
