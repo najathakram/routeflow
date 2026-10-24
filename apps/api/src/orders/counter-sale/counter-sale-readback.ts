@@ -198,6 +198,7 @@ export function buildCounterSaleResponse(input: {
   // Change is handed back ONLY for a CASH sale whose STORED balance is fully covered (a replay must never read
   // an unpaid sibling's share as change); the same gate the Today's-sales row uses.
   const change = servedChange(order.counterCashTendered, payments, balanceDue);
+  const checkReference = checkReferenceOf(payments);
 
   return {
     orderId: order.id,
@@ -210,7 +211,7 @@ export function buildCounterSaleResponse(input: {
     ...(change != null ? { change } : {}),
     ...(firstTender ? { paymentId: firstTender.id } : {}),
     // W-713: the check number rides back so the receipt reads "Check #1042" (a check tender with a number only)
-    ...(checkReferenceOf(payments) ? { checkReference: checkReferenceOf(payments)! } : {}),
+    ...(checkReference ? { checkReference } : {}),
     ...(method ? { method } : {}),
     paymentRecorded: settled,
     ...(!settled

@@ -188,9 +188,12 @@ export function CounterVoidSaleDialog({
 export function CounterVoidSaleAction({
   orderNumber,
   onOpen,
+  describedBy,
 }: {
   orderNumber: string;
   onOpen: () => void;
+  /** the id of the read-only line this control points at while read-only; Today's sales' own line by default, the receipt passes its own */
+  describedBy?: string;
 }) {
   const role = useOptionalAuth()?.user?.role;
   const gate = useReadOnlyGate();
@@ -203,7 +206,7 @@ export function CounterVoidSaleAction({
       className="min-h-11 inline-flex items-center justify-center rounded border border-red-300 px-3 text-sm text-red-700 disabled:cursor-not-allowed disabled:opacity-50"
       aria-label={`Void sale ${orderNumber}`}
       disabled={gate.readOnly}
-      aria-describedby={gate.readOnly ? `${gate.hintId}-today` : undefined}
+      aria-describedby={gate.readOnly ? (describedBy ?? `${gate.hintId}-today`) : undefined}
       title={gate.readOnly ? (gate.line ?? undefined) : undefined}
       onClick={onOpen}
     >

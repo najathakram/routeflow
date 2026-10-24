@@ -909,6 +909,7 @@ export function toTodaysSaleRow(
   const live = o.invoices.filter((i) => !isDeadInvoice(i.status));
   const voided = o.status === OrderStatus.CANCELLED || (o.invoices.length > 0 && live.length === 0);
   const payments = live.flatMap((i) => i.payments);
+  const checkReference = checkReferenceOf(payments);
   const total = roundMoney(num(o.total));
   const paid = roundMoney(
     sumConfirmed(payments.map((p) => ({ amount: p.amount, status: p.status }))),
@@ -977,7 +978,7 @@ export function toTodaysSaleRow(
     returnCredit,
     tenderMethods,
     returnLines,
-    ...(checkReferenceOf(payments) ? { checkReference: checkReferenceOf(payments)! } : {}),
+    ...(checkReference ? { checkReference } : {}),
     paymentState,
     cashTendered: o.counterCashTendered == null ? null : roundMoney(num(o.counterCashTendered)),
     change: servedChange(o.counterCashTendered, payments, balanceDue),

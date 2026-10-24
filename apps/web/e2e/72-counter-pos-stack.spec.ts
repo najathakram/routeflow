@@ -334,6 +334,20 @@ test.describe("W-715 / W-716: the receipt's Change row, its actions at 1440 and 
     expect(await size("receipt-change")).toBeLessThan(await size("receipt-total"));
     await page.screenshot({ path: "test-results/w783-receipt-1440.png", fullPage: true });
 
+    // W-715: at 1440 Print, Email receipt and New sale share ONE row
+    const y1440 = async (name: string) => {
+      const b = await page.getByRole("button", { name, exact: true }).boundingBox();
+      expect(b, `${name} is on screen at 1440`).not.toBeNull();
+      return b!.y;
+    };
+    const [printY, emailY, newSaleY] = [
+      await y1440("Print"),
+      await y1440("Email receipt"),
+      await y1440("New sale"),
+    ];
+    expect(Math.abs(printY - emailY)).toBeLessThanOrEqual(2);
+    expect(Math.abs(printY - newSaleY)).toBeLessThanOrEqual(2);
+
     // W-715 + P-RCPT-1: at 390 the actions are a 2×2 grid (Print · Email receipt / Return items · Void sale) with New sale
     // full width under it; nothing hidden, nothing off screen. At 1440 they were one row.
     await page.setViewportSize({ width: 390, height: 844 });
@@ -353,6 +367,13 @@ test.describe("W-715 / W-716: the receipt's Change row, its actions at 1440 and 
     expect(Math.abs(print.y - email.y)).toBeLessThan(2); // first row: two across
     expect(newSale.y).toBeGreaterThan(print.y); // the primary sits under the grid
     expect(newSale.width).toBeGreaterThan(print.width * 1.8); // full width
+    // the secondary actions are on screen too (Return items needs the add-on, so it is boxed when present)
+    if ((await page.getByRole("button", { name: "Return items", exact: true }).count()) > 0) {
+      await box("Return items");
+    }
+    if ((await page.getByRole("button", { name: /^Void sale ORD/ }).count()) > 0) {
+      await box(/^Void sale ORD/);
+    }
     await page.screenshot({ path: "test-results/w783-receipt-390.png", fullPage: true });
 
     // W-716 / F14: Void sale opens the void dialog for this sale; the reason is marked required up front

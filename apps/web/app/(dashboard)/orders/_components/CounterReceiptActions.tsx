@@ -7,10 +7,12 @@ import { staffMay } from "@routeflow/types";
 import { receiptEmailPrefill } from "@/lib/email-receipt";
 import { useOrder } from "@/lib/api/orders";
 import { useOptionalAuth } from "@/lib/auth-context";
-import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
+import { useCounterSaleRow } from "@/lib/api/counter-sale-today";
+import { ReadOnlyHint, useReadOnlyGate, WriteButton } from "@/lib/read-only-gate";
 import { CounterReturnAction } from "./CounterReturnAction";
 import { CounterVoidSaleAction, CounterVoidSaleDialog } from "./CounterVoidSaleDialog";
 import { EmailReceiptButton, EmailReceiptRow } from "./EmailReceipt";
+import { METHOD_LABEL } from "./HandOverRows";
 import { useEmailReceipt } from "./useEmailReceipt";
 
 /** The receipt's own controls: a full 44 px target with a visible keyboard focus ring. */
@@ -25,7 +27,10 @@ const RECEIPT_BTN = "min-h-[44px] min-w-[44px] focus-visible:ring-2 focus-visibl
  *
  * W-716: Void sale opens the same void dialog Today's sales uses, for THIS sale (same role gate: `staffMay(role, "VOID_SALE")`,
  * disabled in a read-only workspace). After the void the receipt stays on screen and says so; the control reads Voided.
- * `methodsText` is how the sale was paid, already worded ("Cash + Card"); omit it and the dialog just does not show methods.
+ * The dialog's methods line comes from the sale's own Today's-sales row (the order read carries no tender), worded as that sheet
+ * words it ("Cash + Card", "On account" when nothing was paid); a passed `methodsText` wins. The same row says whether the sale is
+ * already voided or has a return recorded: Void sale shows only in the state Today's sales shows it (not voided, no return),
+ * a voided sale reads Voided, and Return items goes once the sale is voided.
  */
 export function CounterReceiptActions({
   orderId,
@@ -40,13 +45,26 @@ export function CounterReceiptActions({
 }) {
   const email = useEmailReceipt({ orderId, prefill: receiptEmailPrefill(customer) });
   const { data: order } = useOrder(orderId);
+  const { row, isPending: rowPending } = useCounterSaleRow(orderId);
+  const gate = useReadOnlyGate();
   const role = useOptionalAuth()?.user?.role;
   const [voidOpen, setVoidOpen] = React.useState(false);
   const [voided, setVoided] = React.useState(false);
   const items: CounterItemName[] = (order?.lineItems ?? [])
     .filter((l) => (l as { status?: string }).status !== "CANCELLED")
     .map((l) => ({ name: l.product?.name || l.name || "Item", qty: Number(l.qty) || 0 }));
-  const canVoid = !!order && staffMay(role, "VOID_SALE");
+  const [returnedHere, setReturnedHere] = React.useState(false);
+  const voidedNow = voided || order?.status === "CANCELLED" || !!row?.voided;
+  const hasReturn = returnedHere || (!!row && row.returned.state !== "NONE");
+  const methods =
+    methodsText ??
+    (row
+      ? row.methods.length > 0
+        ? row.methods.map((m) => METHOD_LABEL[m.method]).join(" + ")
+        : "On account"
+      : undefined);
+  // wait for the row (voided / returned / how it was paid) before offering Void; a failed read falls back to the order alone
+  const canVoid = !!order && staffMay(role, "VOID_SALE") && !rowPending;
   return (
     <>
       {/* W-715 + P-RCPT-1 (lead ruling): ONE row from sm up; at phone width a 2×2 grid with New sale, the one primary, full
@@ -59,9 +77,13 @@ export function CounterReceiptActions({
           Print
         </Button>
         <EmailReceiptButton email={email} />
-        <CounterReturnAction orderId={orderId} />
-        {canVoid ? (
-          voided ? (
+        <CounterReturnAction
+          orderId={orderId}
+          canReturn={!voidedNow}
+          onRecorded={() => setReturnedHere(true)}
+        />
+        {canVoid && (voidedNow || !hasReturn) ? (
+          voidedNow ? (
             <Button className={RECEIPT_BTN} variant="secondary" disabled>
               Voided
             </Button>
@@ -69,6 +91,7 @@ export function CounterReceiptActions({
             <CounterVoidSaleAction
               orderNumber={order.orderNumber}
               onOpen={() => setVoidOpen(true)}
+              describedBy={gate.hintId}
             />
           )
         ) : null}
@@ -79,7 +102,7 @@ export function CounterReceiptActions({
       </div>
       <ReadOnlyHint className="text-xs text-slate-600 print:hidden" />
       <EmailReceiptRow email={email} />
-      {voided ? (
+      {voidedNow ? (
         <p role="status" className="text-sm font-medium text-navy" data-testid="receipt-voided">
           This sale was voided.
         </p>
@@ -90,7 +113,7 @@ export function CounterReceiptActions({
           orderId={orderId}
           orderNumber={order.orderNumber}
           total={Number(order.total) || 0}
-          methodsText={methodsText}
+          methodsText={methods}
           items={items}
           itemCount={items.length}
           onClose={() => setVoidOpen(false)}

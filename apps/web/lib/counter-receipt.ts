@@ -504,15 +504,7 @@ export function receiptModelFromOrder(input: {
     // the split path prints pricing's ONE Payment method line (the emailed receipt's too); an older server keeps master's labels
     methodLabel: hasTender
       ? split
-        ? checkRef
-          ? tenders
-              .map((t) => {
-                const line = counterMethodLine([t]);
-                // the check number sits right after the word "Check", on the check leg only
-                return t.method === "CHECK" ? line.replace("Check", `Check #${checkRef}`) : line;
-              })
-              .join(" + ")
-          : counterMethodLine(tenders)
+        ? counterMethodLine(tenders, { checkReference: checkRef })
         : tenders
             .map((m) =>
               m.method === "CHECK" && checkRef

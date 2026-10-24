@@ -34,6 +34,7 @@ function storeCreditLine(amount: number | undefined, customer: string | null | u
 export function CounterReturnAction({
   orderId,
   onDone,
+  onRecorded: onRecordedProp,
   canReturn = true,
 }: {
   orderId: string;
@@ -42,6 +43,8 @@ export function CounterReturnAction({
   canReturn?: boolean;
   /** called when the return dialog closes or records (Today's sales refetches its list) */
   onDone?: () => void;
+  /** called once a return is recorded (the receipt stops offering Void sale for a sale with a return) */
+  onRecorded?: () => void;
 }) {
   const [open, setOpen] = React.useState(false);
   const buttonRef = React.useRef<HTMLButtonElement>(null);
@@ -94,11 +97,12 @@ export function CounterReturnAction({
         }}
         onRecorded={(_ret, info) => {
           setRecorded(info ?? { resolution: "STORE_CREDIT" });
+          onRecordedProp?.();
           onDone?.();
         }}
       />
       {recorded ? (
-        <p role="status" className="order-last basis-full text-sm font-medium text-navy">
+        <p role="status" className="order-last col-span-2 basis-full text-sm font-medium text-navy">
           {recorded.pending
             ? REFUND_COPY.pendingReceipt
             : recorded.resolution === "REFUND" && recorded.tender && recorded.amount !== undefined
