@@ -100,7 +100,7 @@ describe("RestrictionWarningDialog: the row-672 remedy beside the override", () 
     expect(onConfirm).not.toHaveBeenCalled(); // no ack: the server judges the cart afresh
   });
 
-  it("one default address (e.g. a state awaiting review): sets and confirms the state on that address", async () => {
+  it("the server-named governing address (e.g. a state awaiting review): sets and confirms the state on it", async () => {
     mockCustomer = {
       id: "cust-1",
       businessName: "Acme Market",
@@ -109,7 +109,7 @@ describe("RestrictionWarningDialog: the row-672 remedy beside the override", () 
         { id: "a-2", isDefault: false },
       ],
     };
-    open([unresolved()]);
+    open([unresolved({ addressId: "a-1" })]);
     fireEvent.click(await screen.findByRole("button", { name: noStateOnFileLine("Acme Market") }));
     await screen.findByLabelText(REMEDY_COPY.stateLabel);
     fireEvent.change(screen.getByLabelText(REMEDY_COPY.stateLabel), { target: { value: "TX" } });
@@ -121,6 +121,27 @@ describe("RestrictionWarningDialog: the row-672 remedy beside the override", () 
       }),
     );
     expect(mockPost).not.toHaveBeenCalled();
+  });
+
+  it("one address and no default (SA-924): the engine reads it, so the state is set on it, not 'choose a default'", async () => {
+    mockCustomer = {
+      id: "cust-1",
+      businessName: "Acme Market",
+      addresses: [{ id: "a-9", isDefault: false }],
+    };
+    open([unresolved({ addressId: "a-9" })]);
+    fireEvent.click(await screen.findByRole("button", { name: noStateOnFileLine("Acme Market") }));
+    fireEvent.change(await screen.findByLabelText(REMEDY_COPY.stateLabel), {
+      target: { value: "TX" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: REMEDY_COPY.save }));
+    await waitFor(() =>
+      expect(mockPatch).toHaveBeenCalledWith("/customers/cust-1/addresses/a-9/state", {
+        state: "TX",
+        confirmReview: true,
+      }),
+    );
+    expect(screen.queryByText(REMEDY_COPY.chooseDefault)).not.toBeInTheDocument();
   });
 
   it("several addresses and no single default: points to the full fixer instead of guessing which address governs", async () => {

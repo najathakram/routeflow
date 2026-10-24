@@ -66,14 +66,23 @@ function RemedyAction({ action, onRecheck }: { action: RemedyAction; onRecheck?:
       </NextLink>
     );
   }
-  return <AddCustomerState customerId={action.customerId} onRecheck={onRecheck} />;
+  return (
+    <AddCustomerState
+      customerId={action.customerId}
+      addressId={action.addressId}
+      onRecheck={onRecheck}
+    />
+  );
 }
 
 function AddCustomerState({
   customerId,
+  addressId,
   onRecheck,
 }: {
   customerId: string;
+  /** The address the engine reads (server-named, SA-924); absent = create one or choose a default. */
+  addressId?: string;
   onRecheck?: () => void;
 }) {
   const qc = useQueryClient();
@@ -87,7 +96,7 @@ function AddCustomerState({
   const panelId = React.useId();
 
   const name: string = customer.data?.businessName ?? REMEDY_COPY.thisCustomer;
-  const fix = customerStateFix(customer.data?.addresses ?? []);
+  const fix = customerStateFix(customer.data?.addresses ?? [], addressId);
   const saving = create.isPending || setState.isPending;
 
   const save = async () => {

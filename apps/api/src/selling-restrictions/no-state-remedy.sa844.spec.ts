@@ -198,6 +198,65 @@ describe("row 672 / SA-844: a sale whose state can't be resolved names its remed
     });
   });
 
+  // SA-924: the client sets the state on the address the ENGINE reads (`governingAddresses`), never a second rule.
+  describe("SA-924: the remedy names the one address the engine reads", () => {
+    const remedyOf = async (addresses: unknown[]) => {
+      customer(addresses);
+      return (await reject(staff())).lines[0];
+    };
+
+    it.each<[string, unknown[], string | undefined]>([
+      [
+        "one address and no default (the engine reads it)",
+        [addr({ id: "a1", isDefault: false, stateCode: null })],
+        "a1",
+      ],
+      [
+        "the default among others",
+        [addr({ id: "a1", isDefault: false }), addr({ id: "a2", stateCode: null })],
+        "a2",
+      ],
+      [
+        "the preferred-type default beside another default",
+        [
+          addr({ id: "a1", addressType: "SHIPPING", stateCode: "NV" }),
+          addr({ id: "a2", stateNeedsReview: true }),
+        ],
+        "a2",
+      ],
+      ["no address at all (create one)", [], undefined],
+      [
+        "several and no default (choose one)",
+        [
+          addr({ id: "a1", isDefault: false, stateCode: null }),
+          addr({ id: "a2", isDefault: false, stateCode: null }),
+        ],
+        undefined,
+      ],
+      [
+        "two defaults of the governing type (choose one)",
+        [addr({ id: "a1", stateCode: null }), addr({ id: "a2", stateCode: null })],
+        undefined,
+      ],
+    ])("%s", async (_label, addresses, addressId) => {
+      const line = await remedyOf(addresses);
+      expect(line).toMatchObject({
+        outcome: "INDETERMINATE",
+        remedy: "ADD_CUSTOMER_STATE",
+        customerId: "c1",
+      });
+      if (addressId) expect(line.addressId).toBe(addressId);
+      else expect(line).not.toHaveProperty("addressId");
+    });
+
+    it("the address is display only: the warning hash is the same whichever address is named", async () => {
+      customer([addr({ id: "a1", stateCode: null })]);
+      const h1 = (await reject(staff())).warningHash;
+      customer([addr({ id: "zz", stateCode: null })]);
+      expect((await reject(staff())).warningHash).toBe(h1);
+    });
+  });
+
   it("R3: switch OFF, the staff channel is not judged at all: no warning, no remedy (owner ruling 09-25)", async () => {
     switchOn(false);
     await expect(service.assertLinesSellable(staff())).resolves.toMatchObject({

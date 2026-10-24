@@ -301,6 +301,7 @@ function warningLine(row: WarningRow, judgement: StaffJudgement): RestrictionWar
     // row 672: display only, never hashed (the hash reads lineKey / productId / outcome / breachKeys)
     ...(breach.remedy ? { remedy: breach.remedy } : {}),
     ...(breach.customerId ? { customerId: breach.customerId } : {}),
+    ...(breach.addressId ? { addressId: breach.addressId } : {}),
   };
 }
 

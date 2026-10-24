@@ -203,7 +203,8 @@ export function ruleText(rule: RestrictionWarningRule): string {
 
 /** One fix the warned lines ask for: give this customer a state, or give the store one. */
 export type RemedyAction =
-  { kind: "ADD_CUSTOMER_STATE"; customerId: string } | { kind: "ADD_STORE_STATE" };
+  | { kind: "ADD_CUSTOMER_STATE"; customerId: string; addressId?: string }
+  | { kind: "ADD_STORE_STATE" };
 
 /** The distinct remedies of the warned lines, in line order: one per customer, one for the store. */
 export function remedyActions(lines: readonly RestrictionWarningLine[]): RemedyAction[] {
@@ -215,28 +216,31 @@ export function remedyActions(lines: readonly RestrictionWarningLine[]): RemedyA
       out.push({ kind: "ADD_STORE_STATE" });
     } else if (l.remedy === "ADD_CUSTOMER_STATE" && l.customerId && !seen.has(l.customerId)) {
       seen.add(l.customerId);
-      out.push({ kind: "ADD_CUSTOMER_STATE", customerId: l.customerId });
+      out.push({
+        kind: "ADD_CUSTOMER_STATE",
+        customerId: l.customerId,
+        ...(l.addressId ? { addressId: l.addressId } : {}),
+      });
     }
   }
   return out;
 }
 
 /**
- * How to give a customer a governing state in place: no address = create the minimal default address; exactly one
- * default = set the state on it (a state awaiting review is confirmed by the same write); otherwise (several addresses
- * and no single default) the full "Customers without a state" fixer chooses the default first.
+ * How to give a customer a governing state in place. The server names the address the engine reads (`addressId`, from
+ * the core's `governingAddresses`, SA-924): set the state on it (a state awaiting review is confirmed by the same
+ * write). Without one: no address = create the minimal default address; otherwise the engine reads none or several,
+ * so the full "Customers without a state" fixer chooses the default first.
  */
 export type CustomerStateFix =
   { kind: "create" } | { kind: "setState"; addressId: string } | { kind: "chooseDefault" };
 
 export function customerStateFix(
-  addresses: ReadonlyArray<{ id: string; isDefault?: boolean | null }>,
+  addresses: ReadonlyArray<{ id: string }>,
+  governingAddressId?: string,
 ): CustomerStateFix {
-  if (addresses.length === 0) return { kind: "create" };
-  const defaults = addresses.filter((a) => a.isDefault === true);
-  return defaults.length === 1
-    ? { kind: "setState", addressId: defaults[0].id }
-    : { kind: "chooseDefault" };
+  if (governingAddressId) return { kind: "setState", addressId: governingAddressId };
+  return addresses.length === 0 ? { kind: "create" } : { kind: "chooseDefault" };
 }
 
 /** Fixed copy for the remedy action, shared by the web dialog and the mobile modal. */

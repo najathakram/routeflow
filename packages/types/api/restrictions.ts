@@ -56,6 +56,11 @@ export interface RestrictionRemedyFields {
   remedy?: RestrictionRemedy;
   /** ADD_CUSTOMER_STATE only: the customer whose address needs a state. */
   customerId?: string;
+  /**
+   * ADD_CUSTOMER_STATE only (SA-924): the one address the engine reads for this customer, whose state is the fix. Absent
+   * when it reads none (no address yet, or several and no default) or several (defaults that disagree).
+   */
+  addressId?: string;
 }
 
 /** The staff action beside "Sell anyway" on a line with `remedy: "ADD_CUSTOMER_STATE"`. */
