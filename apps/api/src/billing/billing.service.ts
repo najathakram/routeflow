@@ -638,11 +638,12 @@ export class BillingService {
     // pilot's) is billed on THIS checkout as one extra line. The live-subscription guard above runs
     // first (a tenant that cannot check out never has its add-on rows read); an annual checkout with
     // such an add-on is refused (409, ADDON_ANNUAL_NOT_SUPPORTED) before the customer or the session
-    // is created.
+    // is created. (The add-on lines are built first, which ensures their owned Stripe products; that is the one
+    // Stripe write ahead of the refusal.)
     const addons = await this.mutations.checkoutAddonLines(tenantId, interval);
 
     // SA-733 D6: a new subscription is MONTHLY only - an anchored annual checkout would bill a prorated slice of
-    // the YEAR now (10-03 ruling: annual Stripe subscriptions are not offered). Refused before any Stripe call.
+    // the YEAR now (10-03 ruling: annual Stripe subscriptions are not offered). Refused before the customer or the session is created.
     if (interval === "year") {
       throw new BadRequestException({
         code: API_ERROR_CODES.CHECKOUT_ANNUAL_NOT_SUPPORTED,

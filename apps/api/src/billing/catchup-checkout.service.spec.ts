@@ -676,6 +676,21 @@ describe("Opus review: planning under the claim, the plan key, billing start", (
     expect(h.stripe.client.checkout.sessions.create).not.toHaveBeenCalled();
   });
 
+  it("W-810: the price is re-read for the session; a change since the re-plan aborts and creates nothing", async () => {
+    const h = make({ invoices: [OCT_OPEN] });
+    const real = h.pricing.checkoutPriceData.getMockImplementation()!;
+    // call 1 = dry-run plan, call 2 = re-plan under the claim, call 3 = the session read
+    h.pricing.checkoutPriceData
+      .mockImplementationOnce(real)
+      .mockImplementationOnce(real)
+      .mockImplementationOnce(async () => ({ ...(await real()), unit_amount: 32000 }));
+    await expect(h.svc.open("t1", { now: NOW, expectedStubCents: 31000 })).rejects.toMatchObject({
+      response: { code: API_ERROR_CODES.CATCHUP_AMOUNT_CHANGED },
+    });
+    expect(h.sub().catchupState).toBeNull();
+    expect(h.stripe.client.checkout.sessions.create).not.toHaveBeenCalled();
+  });
+
   it("the re-plan under the claim does not refuse its own claim (claim_held is not a reason against itself)", async () => {
     const h = make({ invoices: [OCT_OPEN] });
     const out = await h.svc.open("t1", { now: NOW, expectedStubCents: 31000 });

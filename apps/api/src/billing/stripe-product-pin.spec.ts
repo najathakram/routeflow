@@ -9,8 +9,13 @@ const dir = __dirname;
 // Comments may explain the rule by naming the thing it bans.
 const stripComments = (t: string) =>
   t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
-const sources = readdirSync(dir)
-  .filter((f) => f.endsWith(".ts") && !/\.spec\.ts$|\.db\.spec\.ts$/.test(f))
+// Recursive: a helper dropped into a subfolder (rf-invoice/, dto/) is scanned too.
+const walk = (d: string, rel = ""): string[] =>
+  readdirSync(d, { withFileTypes: true }).flatMap((e) =>
+    e.isDirectory() ? walk(join(d, e.name), `${rel}${e.name}/`) : [`${rel}${e.name}`],
+  );
+const sources = walk(dir)
+  .filter((f) => f.endsWith(".ts") && !/.spec.ts$|.db.spec.ts$/.test(f))
   .map((f) => ({ f, text: stripComments(readFileSync(join(dir, f), "utf8")) }));
 
 describe("W-810 product pin", () => {

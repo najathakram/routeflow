@@ -422,6 +422,22 @@ export class CatchupCheckoutService {
       const addonLines = await this.mutations.checkoutAddonLines(tenantId, "month", {
         quiet: true,
       });
+      // The lines are re-read (they make the products), so they must still be what plan() priced just above:
+      // a price or add-on edited in between would otherwise be charged without the amount ever being confirmed.
+      const sig = (pd: any, lines: any[], skus: string[]) =>
+        JSON.stringify([
+          pd?.unit_amount,
+          pd?.product,
+          lines.map((l) => [l?.price_data?.unit_amount, l?.price_data?.product]),
+          skus,
+        ]);
+      if (
+        fresh._inputs &&
+        sig(planPriceData, addonLines.lineItems, addonLines.skus) !==
+          sig(fresh._inputs.planPriceData, fresh._inputs.addonLines, fresh._inputs.addonSkus)
+      ) {
+        throw new ChangedUnderClaim();
+      }
       const customerId = await this.billing.ensureStripeCustomer(tenantId);
       const base = webBaseUrl();
       const params = buildCatchupSessionParams({
