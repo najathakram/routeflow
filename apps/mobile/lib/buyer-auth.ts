@@ -240,6 +240,19 @@ export async function buyerLogout(): Promise<void> {
   clearBuyerSubmitKey(); // B1094: the next buyer on this device must not inherit this one's key
 }
 
+/**
+ * W-830: drop the native buyer session from this device WITHOUT calling the server. Once the hybrid
+ * shell is on the web holds its own buyer session, and the server logout revokes every refresh
+ * token of the account (including that one). Clearing the three buyer-namespaced keys leaves no
+ * token for a later shell-off build to reuse.
+ */
+export async function clearBuyerSessionLocal(): Promise<void> {
+  await storage.del(BUYER_KEYS.accessToken);
+  await storage.del(BUYER_KEYS.refreshToken);
+  await storage.del(BUYER_KEYS.activeSeller);
+  clearBuyerSubmitKey();
+}
+
 export async function buyerRefreshTokens(): Promise<BuyerAuthResponse | null> {
   const refreshToken = await storage.get(BUYER_KEYS.refreshToken);
   if (!refreshToken) return null;

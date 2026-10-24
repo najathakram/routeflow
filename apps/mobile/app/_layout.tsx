@@ -34,7 +34,7 @@ import { useTenantStore } from "../lib/tenant-store";
 import { useBuyerSessionStore } from "../lib/buyer-session-store";
 import { rootBuyerGate } from "../lib/buyer-route-guard";
 import { SHELL_ON } from "../lib/web-shell/shell-env";
-import { shellGate } from "../lib/web-shell/shell-routing";
+import { shellGate, shouldClearNativeBuyer } from "../lib/web-shell/shell-routing";
 import { useDeveloperMode } from "../lib/api/addons";
 import { ConfirmModal } from "../components/ConfirmModal";
 import { initSentry } from "../lib/sentry";
@@ -63,6 +63,7 @@ function RootLayoutNav() {
     activeSeller,
     isLoading: buyerLoading,
     initialize: initBuyer,
+    clearForShell: clearBuyerForShell,
   } = useBuyerSessionStore();
   // Self-disables pre-auth (see lib/api/addons.ts); safe to call unconditionally
   // here since this component is inside QueryClientProvider.
@@ -91,8 +92,33 @@ function RootLayoutNav() {
   useEffect(() => {
     if (isLoading || tenantLoading || buyerLoading) return;
 
+    // W-830: with the hybrid shell ON the old native buyer screens are never shown. A buyer with a
+    // native session, or a signed-out user on a (customer) / customer-login route, goes to the
+    // shell as a buyer (the web's own login and portal; the shell takes no path, so a deep link
+    // lands on its home). The native buyer session is then cleared locally so no token lingers for
+    // a later shell-off build. This runs BEFORE rootBuyerGate, which would send the buyer to the
+    // old native (customer) home.
+    const clearNativeBuyer = shouldClearNativeBuyer({ shellOn: SHELL_ON, hasBuyer: !!buyer });
+    if (!user) {
+      const shellBuyer = shellGate({
+        shellOn: SHELL_ON,
+        segments,
+        hasStaffUser: false,
+        hasBuyerSession: !!buyer,
+      });
+      if (shellBuyer.handled) {
+        if (shellBuyer.to) router.replace(shellBuyer.to as any);
+        if (clearNativeBuyer) void clearBuyerForShell();
+        return;
+      }
+    } else if (clearNativeBuyer) {
+      // Staff with a stale native buyer session: drop it; the staff routing below carries on.
+      void clearBuyerForShell();
+    }
+
     // Buyer portal (buyer signed in, no staff session): with a seller → customer section
-    // (RF-218: home tab); with 0 sellers → sellers/connect only (#2341).
+    // (RF-218: home tab); with 0 sellers → sellers/connect only (#2341). Shell OFF only: with the
+    // shell on, the block above has already handled every buyer.
     const buyerGate = rootBuyerGate({
       hasBuyer: !!buyer,
       hasSeller: !!activeSeller,
@@ -108,10 +134,6 @@ function RootLayoutNav() {
     // BUG-B2-5: when the requested route is buyer-protected (e.g. a deep-linked
     // /invoices/<uuid>), send the user to /customer-login with returnTo so post-
     // login they land back on the intended page instead of the marketing home.
-    // #2653: a signed-out buyer may stay in the shell (the web's own buyer login, until the
-    // sign-in handoff lands). Every other signed-out route falls through unchanged.
-    if (!user && shellGate({ shellOn: SHELL_ON, segments, hasStaffUser: false }).handled) return;
-
     if (!user) {
       if (segments.length > 0 && segments[0] !== "(auth)") {
         const isBuyerRoute = segments[0] === "(customer)";
@@ -171,7 +193,10 @@ function RootLayoutNav() {
     // "driver"   → driver tabs
     //
     // RF-087: staff users must be able to access /(auth)/customer-login to sign
-    // in to the buyer portal. Do NOT redirect them away from that screen.
+    // in to the buyer portal. Do NOT redirect them away from that screen. W-830: that portal is
+    // the web now, so with the shell ON this exemption does not exist: an operator on
+    // customer-login is sent to the shell as a buyer (shellGate), and a driver is moved back to
+    // the driver app (the shell is not a driver surface). The exemption is the shell-OFF path.
     const onCustomerLogin = segments[0] === "(auth)" && segments[1] === "customer-login";
 
     // BUG-OPS1-3: shared resource paths like /invoices/[id] live under both
@@ -194,13 +219,11 @@ function RootLayoutNav() {
 
     if (activeRole === "operator") {
       // #2653: with the shell ON, operators and tenant admins get the NEW web in the WebShell
-      // (RF-087's customer-login exemption still wins). Shell OFF → the native screens below.
-      if (!onCustomerLogin) {
-        const shell = shellGate({ shellOn: SHELL_ON, segments, hasStaffUser: true, activeRole });
-        if (shell.handled) {
-          if (shell.to) router.replace(shell.to as any);
-          return;
-        }
+      // Shell OFF → the native screens below (with RF-087's customer-login exemption).
+      const shell = shellGate({ shellOn: SHELL_ON, segments, hasStaffUser: true, activeRole });
+      if (shell.handled) {
+        if (shell.to) router.replace(shell.to as any);
+        return;
       }
       if (segments[0] !== "(operator)" && !onCustomerLogin) {
         const mapped = mapSharedCustomerPathToOperator();
@@ -229,7 +252,7 @@ function RootLayoutNav() {
         setActiveRole("operator");
         return;
       }
-      if (segments[0] !== "(driver)" && !onCustomerLogin) {
+      if (segments[0] !== "(driver)" && !(onCustomerLogin && !SHELL_ON)) {
         router.replace("/(driver)/route");
       }
       return;
@@ -243,6 +266,7 @@ function RootLayoutNav() {
     buyer,
     activeSeller,
     buyerLoading,
+    clearBuyerForShell,
     segments,
     devMode,
     devLoading,

@@ -5,6 +5,7 @@ import {
   getActiveSeller,
   setActiveSeller as persistActiveSeller,
   buyerLogout,
+  clearBuyerSessionLocal,
   registerBuyerSessionExpiredHandler,
   type BuyerUser,
   type BuyerSeller,
@@ -21,6 +22,8 @@ interface BuyerSessionState {
   setBuyer: (buyer: BuyerUser | null) => void;
   setActiveSeller: (seller: BuyerSeller) => Promise<void>;
   signOut: () => Promise<void>;
+  /** W-830: the shell is on; drop the native buyer session locally (no server logout). */
+  clearForShell: () => Promise<void>;
 }
 
 export const useBuyerSessionStore = create<BuyerSessionState>()((set) => ({
@@ -68,6 +71,15 @@ export const useBuyerSessionStore = create<BuyerSessionState>()((set) => ({
     // RF-013: clear local cart so next buyer session starts empty
     useCartStore.getState().clear();
     set({ buyer: null, activeSeller: null });
+  },
+
+  clearForShell: async () => {
+    try {
+      await clearBuyerSessionLocal();
+    } finally {
+      useCartStore.getState().clear();
+      set({ buyer: null, activeSeller: null });
+    }
   },
 }));
 
