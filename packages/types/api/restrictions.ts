@@ -3,7 +3,7 @@
 // MASTER-EXECUTION-PLAN.md §6 contracts 7-8.
 
 import type { RestrictionAddressPrecedence } from "./enums";
-import type { API_ERROR_CODES } from "./error-codes";
+import { API_ERROR_CODES } from "./error-codes";
 
 /**
  * Tenant policy. `addressPrecedence` = which customer address TYPE governs a STATE rule first
@@ -116,7 +116,7 @@ export function buyerNeedsStateCopy(err: unknown): string | null {
   const res = (err as { response?: { status?: number; data?: { code?: string; remedy?: string } } })
     ?.response;
   return res?.status === 409 &&
-    res.data?.code === "SELLING_RESTRICTED" &&
+    res.data?.code === API_ERROR_CODES.SELLING_RESTRICTED &&
     res.data.remedy === "ADD_CUSTOMER_STATE"
     ? PORTAL_NEEDS_STATE_MESSAGE
     : null;
