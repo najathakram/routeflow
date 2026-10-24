@@ -70,6 +70,16 @@ const CODE_COPY: Record<string, string> = {
   ORDER_DELIVERY_ADDRESS_MISSING:
     "This customer has no delivery address on file. Add one before switching the order to delivery.",
   ORDER_CHANGED_DURING_EDIT: "This order changed while you were editing it. Refresh and try again.",
+  // B297 PR5: the filing lock and the locked-period guards (fixed copy, never the server's text).
+  [API_ERROR_CODES.FILING_PERIOD_RUNNING]:
+    "This period hasn't ended yet. Lock the filing after the period ends.",
+  [API_ERROR_CODES.FILING_ALREADY_LOCKED]: "This filing is already locked.",
+  [API_ERROR_CODES.FILING_NOT_LOCKABLE]:
+    "Only a filing that generated successfully can be locked. Generate it again, then lock it.",
+  [API_ERROR_CODES.FILED_PERIOD_LOCKED]:
+    "This change would move money in a filed, locked period. Record a return or a credit note instead.",
+  [API_ERROR_CODES.LEDGER_PERIOD_LOCKED]:
+    "The filing for this period is locked, so this can't be saved. Refresh and try again.",
   // F3: the edit named one line twice; nothing was saved.
   DUPLICATE_LINE_ID: "A line appears twice. Refresh the page and try again.",
   // Row 531: a buyer cart whose quantity and box split disagree; nothing was saved.
