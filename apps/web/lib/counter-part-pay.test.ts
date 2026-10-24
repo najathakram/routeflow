@@ -1,4 +1,10 @@
-import { counterPaymentAmount, partPayCopy, partPaySplit } from "./counter-part-pay";
+import {
+  PART_PAY_AMOUNT_COPY,
+  counterPaymentAmount,
+  partPayAmountProblem,
+  partPayCopy,
+  partPaySplit,
+} from "./counter-part-pay";
 import { resolveCounterDefaultTender } from "./counter-default-tender";
 
 /**
@@ -146,5 +152,40 @@ describe("resolveCounterDefaultTender: when the default is known (SA-933)", () =
         settings: ready({ taxRate: 0 }),
       }),
     ).toBeNull();
+  });
+});
+
+describe("partPayAmountProblem: Amount paying now that is not a positive number", () => {
+  const input = (tendered: string) => ({ method: "CARD" as const, isWalkIn: false, tendered });
+
+  it("blank or spaces is a full payment, not a problem", () => {
+    expect(partPayAmountProblem(input(""))).toBeNull();
+    expect(partPayAmountProblem(input("   "))).toBeNull();
+  });
+
+  it("zero, negative, comma-decimal and text are refused with the one sentence", () => {
+    for (const bad of ["0", "0.00", "-5", "5,00", "abc", "5 dollars", "1e2", "--"]) {
+      expect(partPayAmountProblem(input(bad))).toBe(PART_PAY_AMOUNT_COPY);
+    }
+    expect(PART_PAY_AMOUNT_COPY).toBe(
+      "Enter an amount above zero, or leave it empty to pay in full.",
+    );
+  });
+
+  it("positive amounts pass, including ones at or above the total (those mean a full payment)", () => {
+    for (const ok of ["5", "5.5", "5.05", ".5", "12.50", "400"]) {
+      expect(partPayAmountProblem(input(ok))).toBeNull();
+    }
+  });
+
+  it("only applies to an identified customer's CHECK or CARD", () => {
+    expect(partPayAmountProblem({ method: "CASH", isWalkIn: false, tendered: "abc" })).toBeNull();
+    expect(
+      partPayAmountProblem({ method: "ON_ACCOUNT", isWalkIn: false, tendered: "abc" }),
+    ).toBeNull();
+    expect(partPayAmountProblem({ method: "CARD", isWalkIn: true, tendered: "abc" })).toBeNull();
+    expect(partPayAmountProblem({ method: "CHECK", isWalkIn: false, tendered: "abc" })).toBe(
+      PART_PAY_AMOUNT_COPY,
+    );
   });
 });

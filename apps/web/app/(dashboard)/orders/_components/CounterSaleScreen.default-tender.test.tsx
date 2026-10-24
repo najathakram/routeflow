@@ -29,6 +29,7 @@ const CUSTOMERS = [
   { id: "c-net", businessName: "Net Cafe", pricingTier: 1 },
   { id: "c-cod", businessName: "Receipt Cafe", pricingTier: 1 },
   { id: "c-plain", businessName: "Plain Cafe", pricingTier: 1 },
+  { id: "c-walkin", businessName: "Walk-in Record", pricingTier: 1, isWalkIn: true },
 ];
 jest.mock("@/lib/api/customers", () => ({
   useCustomers: () => ({ data: { data: CUSTOMERS } }),
@@ -224,6 +225,73 @@ describe("a tender the clerk chose is never overwritten", () => {
   });
 });
 
+describe("cash in the drawer decides the tender (late terms read)", () => {
+  const lateRead = () => {
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((r) => (release = r));
+    customerRead = async (id) => {
+      await held;
+      return { data: { id, defaultPaymentTerms: OWN_TERMS[id] } };
+    };
+    return () => release();
+  };
+
+  it("typing a cash amount before a Net-30 terms read lands keeps Cash", async () => {
+    const release = lateRead();
+    renderTill(<CounterSaleScreen />);
+    pick("Net Cafe");
+    fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "50" } });
+    release();
+    await settled("Net 30");
+    expect(checked("Cash")).toBe(true);
+    expect(checked("On account")).toBe(false);
+    expect(screen.getByLabelText("Amount tendered")).toHaveValue("50");
+  });
+
+  it("tapping a quick-cash button before the terms read lands keeps Cash", async () => {
+    const release = lateRead();
+    renderTill(<CounterSaleScreen />);
+    pick("Net Cafe");
+    fireEvent.click(screen.getByRole("button", { name: "$20" }));
+    release();
+    await settled("Net 30");
+    expect(checked("Cash")).toBe(true);
+    expect(checked("On account")).toBe(false);
+  });
+});
+
+describe("an unknown second read does not keep the first customer's default", () => {
+  it("Net customer, then one whose terms are still unknown: back to Cash until they are known", async () => {
+    renderTill(<CounterSaleScreen />);
+    pick("Net Cafe");
+    await waitFor(() => expect(checked("On account")).toBe(true));
+    customerRead = () => new Promise(() => undefined);
+    pick("Receipt Cafe");
+    await waitFor(() => expect(checked("Cash")).toBe(true));
+    expect(checked("On account")).toBe(false);
+  });
+
+  it("a FAILED second read leaves Cash, not the first customer's On account", async () => {
+    renderTill(<CounterSaleScreen />);
+    pick("Net Cafe");
+    await waitFor(() => expect(checked("On account")).toBe(true));
+    customerRead = () => Promise.reject({ response: { status: 500 } });
+    pick("Plain Cafe");
+    await waitFor(() => expect(checked("Cash")).toBe(true));
+  });
+});
+
+describe("the walk-in customer RECORD is a walk-in", () => {
+  it("picking it after a Net customer returns to Cash and reads no terms", async () => {
+    renderTill(<CounterSaleScreen />);
+    pick("Net Cafe");
+    await waitFor(() => expect(checked("On account")).toBe(true));
+    pick("Walk-in Record");
+    await waitFor(() => expect(checked("Cash")).toBe(true));
+    expect(get).not.toHaveBeenCalledWith("/customers/c-walkin");
+  });
+});
+
 describe("a restored sale keeps the tender it was saved with", () => {
   it("a held (outcome unknown) sale, and its replay once unlocked, are never overwritten", async () => {
     writeHeldAttempt("rf.counterSale.heldAttempt:acme:u-a", {
@@ -299,6 +367,31 @@ describe("a restored sale keeps the tender it was saved with", () => {
       "Pay $5.00 now \u00b7 $2.50 goes on account",
     );
   });
+
+  it.each(["CARD", "CHECK"])(
+    "a cart restored after a refresh keeps its %s part amount (cash is still not restored)",
+    async (method) => {
+      window.sessionStorage.setItem("rf.counterSale.tabId", "tab-from-before-the-refresh");
+      window.localStorage.setItem(
+        "rf.counterSale.liveCart:acme:u-a",
+        JSON.stringify({
+          v: 1,
+          owner: "tab-from-before-the-refresh",
+          lines: [colaLine],
+          customer: NET_CUSTOMER,
+          method,
+          tendered: "5",
+          reference: "1042",
+        }),
+      );
+      renderTill(<CounterSaleScreen />);
+      await screen.findByTestId("counter-cart-restored");
+      expect(screen.getByLabelText("Amount paying now")).toHaveValue("5");
+      expect(screen.getByTestId("counter-part-pay-split").textContent).toBe(
+        "Pay $5.00 now \u00b7 $2.50 goes on account",
+      );
+    },
+  );
 
   it("a cart restored after a refresh keeps its tender", async () => {
     window.sessionStorage.setItem("rf.counterSale.tabId", "tab-from-before-the-refresh");

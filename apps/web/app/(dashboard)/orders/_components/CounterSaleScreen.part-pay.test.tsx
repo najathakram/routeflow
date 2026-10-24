@@ -25,7 +25,12 @@ jest.mock("@/lib/barcode-resolve", () => ({
 }));
 jest.mock("@/lib/api/customers", () => ({
   useCustomers: () => ({
-    data: { data: [{ id: "c-plain", businessName: "Plain Cafe", pricingTier: 1 }] },
+    data: {
+      data: [
+        { id: "c-plain", businessName: "Plain Cafe", pricingTier: 1 },
+        { id: "c-walkin", businessName: "Walk-in Record", pricingTier: 1, isWalkIn: true },
+      ],
+    },
   }),
   useCustomerPrices: () => ({
     data: [],
@@ -236,6 +241,66 @@ describe("a stale tender never becomes a silent part payment", () => {
     fireEvent.change(screen.getByLabelText("Amount paying now"), { target: { value: "5" } });
     fireEvent.click(screen.getByRole("radio", { name: "Card" }));
     expect(screen.getByLabelText("Amount paying now")).toHaveValue("5");
+  });
+});
+
+describe("an amount that is not a positive number is refused, not read as a full payment", () => {
+  const REFUSAL = "Enter an amount above zero, or leave it empty to pay in full.";
+  it.each([
+    ["Card", "0"],
+    ["Card", "-5"],
+    ["Card", "5,00"],
+    ["Card", "abc"],
+    ["Check", "0"],
+    ["Check", "-5"],
+    ["Check", "5,00"],
+    ["Check", "abc"],
+  ])("%s with %j: says so and sends nothing", async (name, typed) => {
+    renderTill(<CounterSaleScreen />);
+    pickPlain();
+    await scanCase();
+    fireEvent.click(screen.getByRole("radio", { name }));
+    if (name === "Check") {
+      fireEvent.change(screen.getByLabelText("Check number"), { target: { value: "1042" } });
+    }
+    fireEvent.change(screen.getByLabelText("Amount paying now"), { target: { value: typed } });
+    complete();
+    expect(await screen.findByText(REFUSAL)).toBeInTheDocument();
+    expect(mutateAsync).not.toHaveBeenCalled();
+    // fixing the amount clears the refusal
+    fireEvent.change(screen.getByLabelText("Amount paying now"), { target: { value: "5" } });
+    expect(screen.queryByText(REFUSAL)).toBeNull();
+  });
+
+  it("blank (or only spaces) is still a full payment", async () => {
+    renderTill(<CounterSaleScreen />);
+    pickPlain();
+    await scanCase();
+    fireEvent.click(screen.getByRole("radio", { name: "Card" }));
+    fireEvent.change(screen.getByLabelText("Amount paying now"), { target: { value: "  " } });
+    complete();
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    expect(sentPayment()).toEqual({ method: "CARD" });
+  });
+});
+
+describe("the walk-in customer RECORD pays the full total", () => {
+  const pickRecord = () => {
+    fireEvent.change(screen.getByLabelText("Find a customer"), { target: { value: "walk" } });
+    fireEvent.click(screen.getByRole("option", { name: "Walk-in Record" }));
+  };
+  it("defaults to Cash, refuses a short cash tender, and has no part-pay field or split", async () => {
+    renderTill(<CounterSaleScreen />);
+    pickRecord();
+    await scanCase();
+    expect(screen.getByRole("radio", { name: "Cash" })).toHaveAttribute("aria-checked", "true");
+    fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "5" } });
+    expect(split()).toBeNull();
+    complete();
+    expect(await screen.findByText("Enter at least $12.50.")).toBeInTheDocument();
+    expect(mutateAsync).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("radio", { name: "Card" }));
+    expect(screen.queryByLabelText("Amount paying now")).toBeNull();
   });
 });
 

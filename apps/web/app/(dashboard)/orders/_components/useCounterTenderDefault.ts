@@ -23,7 +23,16 @@ export function useCounterTenderDefault({
   // A walk-in only takes the default back from a customer's: at mount (nothing picked) the method is left exactly as it is.
   const appliedRef = React.useRef(false);
   React.useEffect(() => {
-    if (decidedRef.current || tender === null) return;
+    if (decidedRef.current) return;
+    if (tender === null) {
+      // The new customer's terms are not known (still reading, or the read failed): the previous customer's default must
+      // not ride along. Back to Cash until they are known.
+      if (customerId !== null && appliedRef.current) {
+        appliedRef.current = false;
+        setMethod("CASH");
+      }
+      return;
+    }
     if (customerId === null && !appliedRef.current) return;
     appliedRef.current = customerId !== null;
     setMethod(tender);

@@ -139,7 +139,12 @@ import { QuickKeysGrid } from "./QuickKeysGrid";
 import { CounterCheckDetails } from "./CounterCheckDetails";
 import { CounterPartPayField, CounterPartPaySplit } from "./CounterPartPay";
 import { useCounterTenderDefault } from "./useCounterTenderDefault";
-import { counterPaymentAmount, partPaySplit } from "@/lib/counter-part-pay";
+import {
+  PART_PAY_AMOUNT_COPY,
+  counterPaymentAmount,
+  partPayAmountProblem,
+  partPaySplit,
+} from "@/lib/counter-part-pay";
 import { ReadOnlyHint, WriteButton, useReadOnlyGate } from "@/lib/read-only-gate";
 
 interface PickedCustomer {
@@ -315,7 +320,9 @@ export function CounterSaleScreen() {
       buyerChoice.restore((snap.customer as PickedCustomer | null) ?? null, snap.walkIn === true);
       decideTender(); // a refreshed cart keeps the tender it was saved with
       setMethod(snap.method as CounterSalePaymentMethod);
-      // The cash is not restored: prices may have moved since it was tapped, so it is entered against today's total.
+      // The cash is not restored: prices may have moved since it was tapped, so it is entered against today's total. A
+      // check or card PART amount is the clerk's stated figure, so it comes back (blank = a full payment).
+      if (snap.method === "CHECK" || snap.method === "CARD") setTendered(snap.tendered);
       setReference(snap.reference);
       setCheckDate(snap.checkDate ?? "");
     },
@@ -965,6 +972,12 @@ export function CounterSaleScreen() {
       );
       return null;
     }
+    const partPayProblem = partPayAmountProblem({ method, isWalkIn: walkInBuyer, tendered });
+    if (partPayProblem) {
+      setError(partPayProblem);
+      setTenderFix((n) => n + 1); // focus the Amount paying now field
+      return null;
+    }
     const problem = validatePayment({
       method,
       total: totals.total,
@@ -1601,6 +1614,7 @@ export function CounterSaleScreen() {
                       disabled={q.disabled || locked}
                       className={cn(TAP_TARGET, "rounded border px-3 text-sm disabled:opacity-40")}
                       onClick={(e) => {
+                        decideTender(); // cash is in the drawer: a late terms read must not flip the sale
                         setTendered(String(q.amount));
                         clearUnderpaidError();
                         refocusAfterPointer(e);
@@ -1620,6 +1634,7 @@ export function CounterSaleScreen() {
                     value={tendered}
                     disabled={locked}
                     onChange={(e) => {
+                      decideTender(); // cash is in the drawer: a late terms read must not flip the sale
                       setTendered(e.target.value);
                       clearUnderpaidError();
                     }}
@@ -1661,6 +1676,7 @@ export function CounterSaleScreen() {
                 onChange={(v) => {
                   setTendered(v);
                   clearUnderpaidError();
+                  setError((e) => (e === PART_PAY_AMOUNT_COPY ? "" : e));
                 }}
                 disabled={locked}
                 inputRef={tenderRef}

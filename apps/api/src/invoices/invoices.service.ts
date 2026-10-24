@@ -265,7 +265,7 @@ import { selectEditRevertedInvoices } from "./order-edit-revert-set";
 import { assertNoCashRefundOnInvoice } from "./invoice-cash-refund-guard";
 import { assertPartialRequestShape, bumpInvoicedQtyCas } from "./partial-invoice-cas";
 
-const TERM_DAYS: Record<string, number> = {
+export const TERM_DAYS: Record<string, number> = {
   "Due on Receipt": 0,
   "Net 15": 15,
   "Net 30": 30,

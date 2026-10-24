@@ -43,3 +43,23 @@ export function counterPaymentAmount(
   if (input.method === "ON_ACCOUNT" || input.isWalkIn) return {};
   return isPart(input.total, input.tendered) ? { amount: roundMoney(input.tendered) } : {};
 }
+
+/** The refusal for an "Amount paying now" that is not a positive number (it is also the screen's stale-error key). */
+export const PART_PAY_AMOUNT_COPY = "Enter an amount above zero, or leave it empty to pay in full.";
+
+/**
+ * An identified customer's CHECK or CARD "Amount paying now" that is typed but is not a positive plain number ("0", "-5",
+ * "5,00", "abc") is refused: read as zero it would silently become a FULL payment. Blank (or spaces) is the one way to say
+ * "pay in full". Applies to nothing else (cash has its own rule; a walk-in has no such field).
+ */
+export function partPayAmountProblem(input: {
+  method: CounterSalePaymentMethod;
+  isWalkIn: boolean;
+  tendered: string;
+}): string | null {
+  if (input.isWalkIn || (input.method !== "CHECK" && input.method !== "CARD")) return null;
+  const raw = input.tendered.trim();
+  if (raw === "") return null;
+  const plain = /^(\d+\.?\d*|\.\d+)$/.test(raw);
+  return plain && Number(raw) > 0 ? null : PART_PAY_AMOUNT_COPY;
+}
