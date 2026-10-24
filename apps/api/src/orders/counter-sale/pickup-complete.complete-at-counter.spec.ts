@@ -317,27 +317,60 @@ describe("PickupCompleteService.complete: Complete at counter (I-120, SA-861)", 
       order = orderRow("CONFIRMED", onRun(runStatus, "PENDING"));
       const e = await errorOf(run());
       expect(e.getStatus()).toBe(409);
-      expect(e.getResponse()).toMatchObject({ code: "COUNTER_COMPLETE_ON_RUN", driverName: "Sam" });
+      expect(e.getResponse()).toMatchObject({
+        code: "COUNTER_COMPLETE_ON_RUN",
+        driverName: "Sam",
+        runId: "run-1",
+      });
       expect(calls).toEqual([]);
     },
   );
 
-  it.each(["IN_PROGRESS", "COMPLETED", "SKIPPED"])(
+  it.each(["IN_PROGRESS", "COMPLETED"])(
     "R8 (Q1 = A) the driver has started that stop (%s): refused even WITH the confirm, nothing written",
     async (stopStatus) => {
       order = orderRow("CONFIRMED", onRun("IN_PROGRESS", stopStatus));
-      const e = await errorOf(run({ ...(cash as object), removeFromRun: true }));
+      const e = await errorOf(run({ ...(cash as object), takeOffRun: true }));
       expect(e.getStatus()).toBe(409);
-      expect(e.getResponse()).toMatchObject({ code: "COUNTER_COMPLETE_STOP_STARTED" });
+      expect(e.getResponse()).toMatchObject({
+        code: "COUNTER_COMPLETE_STOP_STARTED",
+        message: "The driver has started this stop. Finish it on the route.",
+      });
       expect(calls).toEqual([]);
     },
   );
 
-  it("R8 an OUT_FOR_DELIVERY route order with no run link is treated as on its way: 409 naming no driver", async () => {
-    order = orderRow("OUT_FOR_DELIVERY", { fulfillPath: "ROUTE" });
+  it("R8g (SA-913) an office-SKIPPED stop is not started: the confirm is asked (COUNTER_COMPLETE_ON_RUN), nothing written", async () => {
+    order = orderRow("CONFIRMED", onRun("IN_PROGRESS", "SKIPPED"));
     const e = await errorOf(run());
-    expect(e.getResponse()).toMatchObject({ code: "COUNTER_COMPLETE_ON_RUN" });
+    expect(e.getResponse()).toMatchObject({ code: "COUNTER_COMPLETE_ON_RUN", driverName: "Sam" });
     expect(calls).toEqual([]);
+  });
+
+  it("R8 a bare run link with no stop (a driver-created order) on an active run: COUNTER_COMPLETE_STOP_STARTED even WITH the confirm", async () => {
+    order = orderRow("CONFIRMED", {
+      ...onRun("IN_PROGRESS", "PENDING"),
+      routeRunStopId: null,
+      routeRunStop: null,
+    });
+    const e = await errorOf(run({ ...(cash as object), takeOffRun: true }));
+    expect(e.getResponse()).toMatchObject({ code: "COUNTER_COMPLETE_STOP_STARTED" });
+    expect(calls).toEqual([]);
+  });
+
+  it("SA-913 an OUT_FOR_DELIVERY route order on no run: the switch with the ONE pinned option, then DELIVERED (no CONFIRMED)", async () => {
+    order = orderRow("OUT_FOR_DELIVERY", { fulfillPath: "ROUTE" });
+    await run();
+    expect(orders.updateFulfillPath).toHaveBeenCalledWith(
+      order.id,
+      { fulfillPath: "PICKUP" },
+      staff,
+      { fromOutForDelivery: true },
+    );
+    expect(calls.slice(0, 2)).toEqual([
+      "updateFulfillPath:PICKUP",
+      "changeStatus:DELIVERED:silent",
+    ]);
   });
 
   it("R12 a finished run (COMPLETED) is not active: no confirm needed", async () => {
@@ -346,7 +379,6 @@ describe("PickupCompleteService.complete: Complete at counter (I-120, SA-861)", 
     expect(calls[0]).toBe("updateFulfillPath:PICKUP");
   });
 
-  it.todo(
-    "R8 (Q1 = A) WITH the confirm: off the run in the same step, then completed (mechanics: SA ruling pending)",
-  );
+  // SA-913 R8 WITH the confirm (the locked take-off, its CAS, the skipped stop, the resume): R8b-d in
+  // pickup-complete.complete-at-counter.db.spec.ts, on real Postgres.
 });

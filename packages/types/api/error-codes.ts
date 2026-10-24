@@ -743,11 +743,11 @@ export const API_ERROR_CODES = {
   /** I-120 R9 (owner 7a Q2 = A): POST /orders/:id/pickup-complete, 409: the order has shipped with the carrier. Nothing written. */
   COUNTER_COMPLETE_SHIPPED: "COUNTER_COMPLETE_SHIPPED",
   /**
-   * I-120 R8 (owner 7a Q1 = A): POST /orders/:id/pickup-complete, 409: the order is on a driver's run; the body carries
-   * `driverName` for the confirm ("This order is on Sam's run. Completing it here takes it off the run."). Nothing written.
+   * I-120 R8 (owner 7a Q1 = A): POST /orders/:id/pickup-complete, 409: the order is on a driver's run (SA-913); the body
+   * carries `driverName` and `runId` for the confirm, which re-sends with `takeOffRun: true`. Nothing written.
    */
   COUNTER_COMPLETE_ON_RUN: "COUNTER_COMPLETE_ON_RUN",
-  /** I-120 R8: POST /orders/:id/pickup-complete, 409: the driver has already started that stop. Nothing written. */
+  /** I-120 R8: POST /orders/:id/pickup-complete, 409: the driver has started that stop (with or without `takeOffRun`). Nothing written. */
   COUNTER_COMPLETE_STOP_STARTED: "COUNTER_COMPLETE_STOP_STARTED",
   /**
    * `paymentErrorCode` of a 200 from POST /orders/:id/pickup-complete: handed over with no payment sent, but

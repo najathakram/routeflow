@@ -148,6 +148,7 @@ import {
   setCommissionRateImpl,
   toggleUrgentImpl,
   updateFulfillPathImpl,
+  type UpdateFulfillPathArgs,
   updateShipmentImpl,
 } from "./order-lifecycle";
 import {
@@ -167,7 +168,6 @@ import { CreateSaleDto } from "./dto/create-sale.dto";
 import { ChangeOrderStatusDto } from "./dto/change-order-status.dto";
 import { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
 import { UpdateShipmentDto } from "./dto/update-shipment.dto";
-import { UpdateFulfillPathDto } from "./dto/update-fulfill-path.dto";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { openTenantGroups } from "./sweep-tenant-gate";
@@ -5132,8 +5132,8 @@ export class OrdersService implements OnApplicationBootstrap {
   }
 
   /** Extracted verbatim to `order-lifecycle.ts` (size-ratchet headroom move); thin delegator. */
-  async updateFulfillPath(orderId: string, dto: UpdateFulfillPathDto, _user?: JwtPayload) {
-    return updateFulfillPathImpl(this, orderId, dto, _user, this.sellingRestrictions);
+  async updateFulfillPath(...[orderId, dto, user, opts]: UpdateFulfillPathArgs) {
+    return updateFulfillPathImpl(this, orderId, dto, user, this.sellingRestrictions, opts);
   }
 
   /** Extracted verbatim to `order-lifecycle.ts` (size-ratchet headroom move); thin delegator. */

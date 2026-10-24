@@ -7,6 +7,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from "@nestjs/common";
 import { createHash } from "crypto";
 import { mayCompleteAtCounter, roundMoney, remainingCapacity } from "@routeflow/pricing";
@@ -46,7 +47,15 @@ import {
 import { tenantTodayDay } from "../../common/calendar-date";
 import { tenantTimeZone } from "../../common/tenant-time-zone";
 import { creditAfterTender } from "../credit-limit-guard";
-import { completeAtCounterRunRefusal, type RunOrder } from "./complete-at-counter-run";
+import {
+  activeRunLink,
+  completeAtCounterRunRefusal,
+  takeOrderOffRun,
+  type RunOrder,
+} from "./complete-at-counter-run";
+import { retryOnTxConflict } from "../../common/tx-retry";
+import { RouteRealtime } from "../../routes/route-realtime";
+import { RouteFlowGateway } from "../../gateways/routeflow.gateway";
 import {
   completionAlreadyRecorded,
   finishCompletionEmail,
@@ -107,6 +116,8 @@ export class PickupCompleteService {
     private readonly invoices: InvoicesService,
     private readonly prisma: PrismaService,
     @Inject(FULFILMENT_CAPABILITY_READER) private readonly capability: FulfilmentCapabilityReader,
+    // SA-913 (b): the office skip's post-commit run update after a take-off empties a stop
+    @Optional() private readonly gateway?: RouteFlowGateway,
   ) {}
 
   async complete(
@@ -138,9 +149,10 @@ export class PickupCompleteService {
         message: "This order is not ready for pickup yet, or it was cancelled",
       });
     }
-    // I-120 R8/R9 (owner 7a): a shipped order, an order on a driver's run, a stop the driver has started: judged now.
+    // I-120 R8/R9 (owner 7a, SA-913): a shipped order, an order on a driver's run, a started stop: judged now. `takeOffRun`
+    // is not part of the claim's body hash, so the confirm re-sends under the same key.
     if (!alreadyPickedUp) {
-      const refused = completeAtCounterRunRefusal(order as RunOrder, dto.removeFromRun === true);
+      const refused = completeAtCounterRunRefusal(order as RunOrder, dto.takeOffRun === true);
       if (refused) throw refused;
     }
     const walkIn = !!order.customer?.isWalkIn;
@@ -213,8 +225,27 @@ export class PickupCompleteService {
       // I-120 (SA-861 rules 4, 5, 9). Each step is skipped when the row already shows it done, so a crash between steps
       // resumes. 4: the path becomes Store pickup first, through the ONE switch (it re-judges selling restrictions at the
       // store's state and releases a finished run's link; its refusals propagate with nothing else written).
+      // SA-913 R8: off the driver's run first, its own locked tx (Orders → stop → run; refused with nothing written when
+      // the stop started or the link moved; a deadlock is retried in a fresh tx). A resume with no run link skips it.
+      const link = activeRunLink(order as RunOrder);
+      if (link) {
+        const actor = { tenantId: user.tenantId as string, userId: user.sub };
+        const { stopSkipped } = await retryOnTxConflict("pickup-complete.take-off-run", () =>
+          this.prisma.tenantTransaction((tx) =>
+            takeOrderOffRun(tx, { orderId: id, ...link }, actor),
+          ),
+        );
+        // SA-913 (b): the same post-commit update the office skip sends, so the driver's run shows the stop skipped
+        if (stopSkipped && this.gateway)
+          await new RouteRealtime(this.prisma, this.gateway, this.logger).runProgress(link.runId);
+        order = (await this.readOrder(id)) ?? order;
+      }
       if (order.fulfillPath !== "PICKUP") {
-        await this.orders.updateFulfillPath(id, { fulfillPath: "PICKUP" } as never, user);
+        // SA-913 (c): the ONE caller-pinned option lets an OUT_FOR_DELIVERY order with no run link switch (no demotion);
+        // its DELIVERED step then runs alreadyOut, ungated.
+        await this.orders.updateFulfillPath(id, { fulfillPath: "PICKUP" } as never, user, {
+          fromOutForDelivery: true,
+        });
         order = (await this.readOrder(id)) ?? order;
       }
       // 5: PENDING cannot go straight to DELIVERED; both transitions are silent (the ONE completion email follows).
@@ -730,6 +761,8 @@ export class PickupCompleteService {
         total: true,
         // I-120 R8/R9: the run (through its stop, or a bare routeRunId), the stop's state, the carrier shipment
         shippedAt: true,
+        routeRunId: true,
+        routeRunStopId: true,
         routeRun: { select: { status: true, driver: { select: { contactName: true } } } },
         routeRunStop: {
           select: {
