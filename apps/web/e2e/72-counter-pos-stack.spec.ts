@@ -305,6 +305,66 @@ test.describe("POS stack counter: ring the sale @ 1440", () => {
   });
 });
 
+test.describe("W-715 / W-716: the receipt's Change row, its actions at 1440 and 390, and Void sale", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test("an exact cash sale: Change reads as a normal row, one action row at 1440 and a 2×2 grid at 390, Void sale opens the dialog", async ({
+    page,
+    context,
+  }) => {
+    await setTenantCookie(context, BASE);
+    const { products } = await discover(page);
+    await page.goto("/orders/counter-sale");
+    const scanField = page.getByLabel("Scan or search items");
+    await expect(scanField).toBeVisible({ timeout: 15_000 });
+    await scanField.fill(String(products[0].sku));
+    await scanField.press("Enter");
+    await expect(page.getByRole("list", { name: "Items" }).getByRole("listitem")).toHaveCount(1, {
+      timeout: 15_000,
+    });
+    await page.getByRole("button", { name: "Exact" }).click();
+    await page.getByRole("button", { name: "Complete & show receipt" }).click();
+    await expect(page.getByTestId("counter-sale-receipt")).toBeVisible({ timeout: 20_000 });
+
+    // W-715: Change $0.00 is not a second headline (same size as Subtotal, smaller than Total)
+    const size = (id: string) =>
+      page.getByTestId(id).evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
+    await expect(page.getByTestId("receipt-change")).toContainText("$0.00");
+    expect(await size("receipt-change")).toBe(await size("receipt-subtotal"));
+    expect(await size("receipt-change")).toBeLessThan(await size("receipt-total"));
+    await page.screenshot({ path: "test-results/w783-receipt-1440.png", fullPage: true });
+
+    // W-715 + P-RCPT-1: at 390 the actions are a 2×2 grid (Print · Email receipt / Return items · Void sale) with New sale
+    // full width under it; nothing hidden, nothing off screen. At 1440 they were one row.
+    await page.setViewportSize({ width: 390, height: 844 });
+    const box = async (name: string | RegExp) => {
+      const b = await page
+        .getByRole("button", { name, exact: typeof name === "string" })
+        .boundingBox();
+      expect(b, `${name} is on screen`).not.toBeNull();
+      expect(b!.x + b!.width).toBeLessThanOrEqual(390);
+      return b!;
+    };
+    const [print, email, newSale] = [
+      await box("Print"),
+      await box("Email receipt"),
+      await box("New sale"),
+    ];
+    expect(Math.abs(print.y - email.y)).toBeLessThan(2); // first row: two across
+    expect(newSale.y).toBeGreaterThan(print.y); // the primary sits under the grid
+    expect(newSale.width).toBeGreaterThan(print.width * 1.8); // full width
+    await page.screenshot({ path: "test-results/w783-receipt-390.png", fullPage: true });
+
+    // W-716 / F14: Void sale opens the void dialog for this sale; the reason is marked required up front
+    await page.getByRole("button", { name: /^Void sale ORD/ }).click();
+    const dialog = page.getByRole("dialog", { name: /Void sale/ });
+    await expect(dialog).toContainText("$");
+    await expect(dialog.getByLabel("Reason for voiding (required)")).toBeVisible();
+    await dialog.getByRole("button", { name: "Keep sale" }).click();
+    await expect(dialog).toBeHidden();
+  });
+});
+
 /**
  * R7b batch 1 "say the money at the till". Written against the real stack like the rest of this file; the lead runs it on the
  * one proof stack (it is not run in the build lane). Each test rings at most one cash sale on the approved test tenant.

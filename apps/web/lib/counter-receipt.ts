@@ -265,7 +265,12 @@ export function buildCounterReceipt(input: {
     paymentNotRecorded,
     showPaid: hasTender,
     showBalance: paymentNotRecorded || onAccount || receipt.balanceDue > 0,
-    methodLabel: hasTender && method ? METHOD_LABEL[method] : null,
+    methodLabel:
+      hasTender && method
+        ? method === "CHECK" && clean(receipt.checkReference)
+          ? `${METHOD_LABEL[method]} #${clean(receipt.checkReference)}`
+          : METHOD_LABEL[method]
+        : null,
     tendered,
     tenderedAsEntered,
     change,
@@ -322,6 +327,8 @@ export interface ReprintSaleFacts {
   change?: number | null;
   /** the sale's single stored tax rate in percent (the row's `taxRatePercent`); null/absent: no rate known */
   taxRatePercent?: number | null;
+  /** W-713: the check number of the sale's CHECK tender (the row's `checkReference`); null/absent: "Check" alone */
+  checkReference?: string | null;
   /** the regulated levies the invoices billed, each a named charge (the row's `charges`); absent: none */
   charges?: ReadonlyArray<{ key: string; label: string; amount: number }>;
   /** the row's customer name; null/absent for a walk-in (the row's `isWalkIn`): no customer line prints */
@@ -472,6 +479,8 @@ export function receiptModelFromOrder(input: {
     ratePercent: sale.taxRatePercent,
   });
   const tendered = sale.cashTendered ?? null;
+  // W-713: the check number the row carries (older servers omit it); it prints only beside a CHECK tender
+  const checkRef = clean(sale.checkReference);
   return {
     header: receiptHeader(profile),
     orderNumber: order.orderNumber,
@@ -495,8 +504,22 @@ export function receiptModelFromOrder(input: {
     // the split path prints pricing's ONE Payment method line (the emailed receipt's too); an older server keeps master's labels
     methodLabel: hasTender
       ? split
-        ? counterMethodLine(tenders)
-        : tenders.map((m) => REPRINT_METHOD_LABEL[m.method]).join(" + ")
+        ? checkRef
+          ? tenders
+              .map((t) => {
+                const line = counterMethodLine([t]);
+                // the check number sits right after the word "Check", on the check leg only
+                return t.method === "CHECK" ? line.replace("Check", `Check #${checkRef}`) : line;
+              })
+              .join(" + ")
+          : counterMethodLine(tenders)
+        : tenders
+            .map((m) =>
+              m.method === "CHECK" && checkRef
+                ? `${REPRINT_METHOD_LABEL[m.method]} #${checkRef}`
+                : REPRINT_METHOD_LABEL[m.method],
+            )
+            .join(" + ")
       : null,
     ...(lines
       ? {

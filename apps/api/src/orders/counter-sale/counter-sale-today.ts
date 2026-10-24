@@ -33,7 +33,7 @@ import type {
   TodaysSalesSummary,
 } from "@routeflow/types";
 import { ACCRUAL_CREDIT_NOTE_FILTER } from "../../common/invoiced-sales";
-import { counterMethodOf, servedChange } from "./counter-sale-readback";
+import { checkReferenceOf, counterMethodOf, servedChange } from "./counter-sale-readback";
 import { DEAD_RETURN_STATUSES } from "../../returns/return-statuses";
 import { refundTenderOfColumn } from "../../returns/refund-tender";
 import { isCounterTenderRow } from "./counter-tender-row";
@@ -430,6 +430,8 @@ export function pageQuery(tenantId: string, w: DayWindow, page: number, limit: n
               method: true,
               amount: true,
               status: true,
+              // W-713: the check number the receipt prints beside "Check"
+              reference: true,
               creditNoteId: true,
               creditNote: { select: { invoiceId: true } },
             },
@@ -623,6 +625,8 @@ export interface TodayOrderRecord {
       method: string;
       amount: unknown;
       status: string;
+      /** W-713: the check number / card reference typed at the till */
+      reference?: string | null;
       /** B1262 / SA-838: the credit note this payment applied, and the invoice that note was issued against */
       creditNoteId?: string | null;
       creditNote?: { invoiceId: string | null } | null;
@@ -973,6 +977,7 @@ export function toTodaysSaleRow(
     returnCredit,
     tenderMethods,
     returnLines,
+    ...(checkReferenceOf(payments) ? { checkReference: checkReferenceOf(payments)! } : {}),
     paymentState,
     cashTendered: o.counterCashTendered == null ? null : roundMoney(num(o.counterCashTendered)),
     change: servedChange(o.counterCashTendered, payments, balanceDue),

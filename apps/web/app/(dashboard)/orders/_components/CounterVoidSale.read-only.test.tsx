@@ -101,7 +101,7 @@ describe("Void sale in a read-only workspace (CQ-34)", () => {
     expect(btn).toHaveAttribute("aria-describedby", line.id);
     expect(btn).toHaveAttribute("title", line.textContent as string);
     fireEvent.click(btn);
-    expect(screen.queryByLabelText("Reason for voiding")).toBeNull();
+    expect(screen.queryByLabelText("Reason for voiding (required)")).toBeNull();
     expect(screen.queryByRole("button", { name: "Void sale" })).toBeNull();
     expect(post).not.toHaveBeenCalled();
   });
@@ -113,6 +113,6 @@ describe("Void sale in a read-only workspace (CQ-34)", () => {
     expect(btn).not.toHaveAttribute("aria-describedby");
     expect(screen.queryByTestId("today-read-only-line")).toBeNull();
     fireEvent.click(btn);
-    expect(await screen.findByLabelText("Reason for voiding")).toBeInTheDocument();
+    expect(await screen.findByLabelText("Reason for voiding (required)")).toBeInTheDocument();
   });
 });
