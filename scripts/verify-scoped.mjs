@@ -69,9 +69,12 @@ if (specs.length) {
     args: [
       path.join(a.root, "scripts", "local-db-specs.mjs"),
       "--",
-      `npm run test:db -w apps/api -- ${rel.join(" ")}`,
+      // argv, no shell (item 726): the specs reach run-db-tests.mjs (and jest) literally.
+      process.execPath,
+      path.join(apiDir, "scripts", "run-db-tests.mjs"),
+      ...rel,
     ],
-    show: `node scripts/local-db-specs.mjs -- "npm run test:db -w apps/api -- ${rel.join(" ")}"`,
+    show: `node scripts/local-db-specs.mjs -- node apps/api/scripts/run-db-tests.mjs ${rel.join(" ")}`,
   });
 }
 steps.push({ cwd: apiDir, ...jest(["-c", "jest.repo-truth.config.js", "size-ratchet"]) });

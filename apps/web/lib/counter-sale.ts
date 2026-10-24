@@ -15,6 +15,8 @@ import {
 } from "@routeflow/types/sale-attempt";
 import {
   API_ERROR_CODES,
+  COMPLETE_MODE_ERROR_COPY,
+  counterCompleteRefusalCopy,
   type CounterSalePaymentMethod,
   type FulfilmentCapability,
 } from "@routeflow/types";
@@ -534,10 +536,21 @@ export function pickupErrorCode(err: unknown): string | undefined {
   return typeof code === "string" ? code : undefined;
 }
 
-/** Fixed copy by error code; the server's own message is never shown. */
-export function pickupCompleteErrorCopy(err: unknown, balanceDue?: number): string {
+/** Fixed copy by error code; the server's own message is never shown. `complete`: opened from "Complete at counter". */
+export function pickupCompleteErrorCopy(
+  err: unknown,
+  balanceDue?: number,
+  complete = false,
+): string {
   const res = (err as { response?: { status?: number; data?: { code?: unknown } } } | null)
     ?.response;
+  // I-120: the refusals before any write (the shared copy), then complete mode's own words for the shared lines
+  const refused = counterCompleteRefusalCopy(res?.data, formatReceiptMoney);
+  if (refused) return refused;
+  if (complete && res?.data?.code === API_ERROR_CODES.PICKUP_NOT_READY)
+    return COMPLETE_MODE_ERROR_COPY.notReady;
+  if (complete && res?.data?.code === API_ERROR_CODES.PICKUP_KEY_CONFLICT)
+    return COMPLETE_MODE_ERROR_COPY.keyConflict;
   if (res?.data?.code === API_ERROR_CODES.PICKUP_PAYMENT_REQUIRED)
     return PICKUP_PAYMENT_REQUIRED_COPY;
   if (res?.data?.code === API_ERROR_CODES.COUNTER_TENDER_SHORT) return PICKUP_TENDER_SHORT_COPY;
@@ -557,7 +570,7 @@ export function pickupCompleteErrorCopy(err: unknown, balanceDue?: number): stri
     return PAYMENT_PROBLEM_COPY.CHECK_NUMBER_REQUIRED;
   if (res?.data?.code === API_ERROR_CODES.COUNTER_CHECK_POSTDATED)
     return COUNTER_CHECK_POSTDATED_COPY;
-  return PICKUP_GENERIC_COPY;
+  return complete ? COMPLETE_MODE_ERROR_COPY.generic : PICKUP_GENERIC_COPY;
 }
 
 /**

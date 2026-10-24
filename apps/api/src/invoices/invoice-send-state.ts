@@ -343,7 +343,17 @@ export type SendEmailArgs = [
   overrideEmail?: string,
   variant?: "draft" | "final",
   actorId?: string | null,
+  opts?: SendEmailOpts,
 ];
+
+/** I-120 (SA-861 rule 8): a COUNTER_COMPLETE send (the completion email): its wording, and the order's other invoices. */
+export interface SendEmailOpts {
+  kind?: "COUNTER_COMPLETE";
+  /** The completed order (its number is the subject's). */
+  orderId?: string;
+  /** The order's OTHER invoices, attached beside this one. */
+  withInvoiceIds?: string[];
+}
 
 type PrismaLike = { forTenant(): any; getTenantId(): string | null | undefined };
 
@@ -356,6 +366,8 @@ export async function recordInvoiceEmailed(
     to: string;
     fingerprint: string | null;
     variant?: string | null;
+    /** I-120: the completion email's kind (COUNTER_COMPLETE); absent for a plain send. */
+    kind?: string | null;
     /** A breadcrumb for a CORRECTION record (SA-860): why this row exists beside the one before it. */
     note?: string;
   },
@@ -374,6 +386,7 @@ export async function recordInvoiceEmailed(
           fp: p.fingerprint,
           sentAt: new Date().toISOString(),
           ...(p.variant ? { variant: p.variant } : {}),
+          ...(p.kind ? { kind: p.kind } : {}),
           ...(p.note ? { note: p.note } : {}),
         },
       },

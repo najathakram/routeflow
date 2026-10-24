@@ -2,12 +2,15 @@ import {
   BadRequestException,
   ServiceUnavailableException,
   ConflictException,
+  ForbiddenException,
+  Inject,
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from "@nestjs/common";
 import { createHash } from "crypto";
-import { roundMoney, remainingCapacity } from "@routeflow/pricing";
+import { mayCompleteAtCounter, roundMoney, remainingCapacity } from "@routeflow/pricing";
 import type { PickupCompleteResponse } from "@routeflow/types";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
 import { LockTimeoutError, LockUnavailableError, withAdvisoryLock } from "../../common/db-locks";
@@ -25,6 +28,7 @@ import {
 import {
   allocateOldestFirst,
   assertCheckNotPostdatedForTenant,
+  counterCreditPaidNow,
   assertPaymentShape,
   planCounterPayment,
   toPrismaMethod,
@@ -36,6 +40,34 @@ import type { DuplicatePaymentRefExisting } from "@routeflow/types";
 import { duplicateOf, tenderRefDedupe } from "./counter-duplicate-ref";
 import type { PickupCompleteDto } from "./pickup-complete.dto";
 import { counterCloseShared, counterTenderPaidAt, pickupRegisterOf } from "./counter-tender-window";
+import {
+  FULFILMENT_CAPABILITY_READER,
+  type FulfilmentCapabilityReader,
+} from "./fulfilment-capability-reader";
+import { tenantTodayDay } from "../../common/calendar-date";
+import { tenantTimeZone } from "../../common/tenant-time-zone";
+import { creditAfterTender } from "../credit-limit-guard";
+import {
+  activeRunLink,
+  completeAtCounterRunRefusal,
+  takeOrderOffRun,
+  type RunOrder,
+} from "./complete-at-counter-run";
+import { retryOnTxConflict } from "../../common/tx-retry";
+import { RouteRealtime } from "../../routes/route-realtime";
+import { RouteFlowGateway } from "../../gateways/routeflow.gateway";
+import {
+  completionAlreadyRecorded,
+  finishCompletionEmail,
+  completionAtOf,
+  mergeClaimMeta,
+  stampCompletion,
+  releaseCompletionEmail,
+  reserveCompletionEmail,
+} from "./pickup-complete-claim";
+
+/** I-120 (SA-861 rule 3): the statuses "Complete at counter" finishes; DELIVERED is the replay. */
+const COMPLETABLE = new Set(["PENDING", "CONFIRMED", "OUT_FOR_DELIVERY"]);
 
 type OrderRow = {
   id: string;
@@ -47,6 +79,7 @@ type OrderRow = {
   customer: { isWalkIn: boolean | null } | null;
   counterSale?: boolean | null; // SA-750r3: a COUNTER order's tender is a till event (the day-close lock + window)
   registerKey?: string | null;
+  total?: unknown; // SA-849: what the B585 gate netted this hand-over's tender against
 };
 
 /**
@@ -65,8 +98,9 @@ type OrderRow = {
  *     payment helpers the counter sale uses (planner, oldest-first allocation, shortfall resume, cents).
  *
  * REPLAY = TRANSITION OWNER. The invoice pre-exists (deposits, portal payments), so "a tender is stored"
- * cannot mean "this request already paid". Only a tender payment created at or after the order's
- * `deliveredAt` (the moment THIS hand-over moved it to DELIVERED) is this request's; a deposit before it is
+ * cannot mean "this request already paid". Only a tender row of the order's hand-over group created at or after THIS
+ * completion's `completionAt` (SA-919: the claim's stamp; never `deliveredAt`, which a backdated order sets to its order
+ * date) is this request's; a deposit is
  * never counted. A call that finds the order already DELIVERED therefore records only the SHORTFALL between
  * this hand-over's planned tender and what is stored for it, never a second full tender, and answers the
  * stored outcome with `alreadyPickedUp`. The balance the plan is judged against is the invoice total less
@@ -84,6 +118,9 @@ export class PickupCompleteService {
     private readonly orders: OrdersService,
     private readonly invoices: InvoicesService,
     private readonly prisma: PrismaService,
+    @Inject(FULFILMENT_CAPABILITY_READER) private readonly capability: FulfilmentCapabilityReader,
+    // SA-913 (b): the office skip's post-commit run update after a take-off empties a stop
+    @Optional() private readonly gateway?: RouteFlowGateway,
   ) {}
 
   async complete(
@@ -95,18 +132,31 @@ export class PickupCompleteService {
     // 1. The order, tenant-scoped, and everything judged from the row and the request alone.
     let order = await this.readOrder(id);
     if (!order) throw new NotFoundException("Order not found");
-    if (order.fulfillPath !== "PICKUP") {
-      throw new BadRequestException({
-        code: API_ERROR_CODES.PICKUP_ONLY,
-        message: "Only a pickup order can be handed over this way",
+    // I-120 (SA-861 rule 2): a business that hands over at the store. The till permission half of the ONE predicate is
+    // the route's TillPermissionGuard (a principal without it is a 403 before this runs).
+    const cap = await this.capability.get(this.prisma.getTenantId() ?? null);
+    if (!mayCompleteAtCounter({ mayUseTill: true, methods: cap.methods, counter: cap.counter })) {
+      throw new ConflictException({
+        code: API_ERROR_CODES.COUNTER_COMPLETE_UNAVAILABLE,
+        message: "This business does not hand orders over at the store.",
       });
     }
+    // I-120 (SA-861 rule 3): any not-yet-delivered order, any path (rule 4 switches it to Store pickup first). PICKUP_ONLY
+    // is no longer thrown (it stays in the codes list).
     let alreadyPickedUp = order.status === "DELIVERED";
-    if (!alreadyPickedUp && order.status !== "CONFIRMED" && order.status !== "OUT_FOR_DELIVERY") {
+    // SA-849 on the hand-over (SA-872 cond. 2): set only when THIS call's B585 gate netted the till tender.
+    let gateNetted: ((total: number) => number) | undefined;
+    if (!alreadyPickedUp && !COMPLETABLE.has(order.status)) {
       throw new ConflictException({
         code: API_ERROR_CODES.PICKUP_NOT_READY,
         message: "This order is not ready for pickup yet, or it was cancelled",
       });
+    }
+    // I-120 R8/R9 (owner 7a, SA-913): a shipped order, an order on a driver's run, a started stop: judged now. `takeOffRun`
+    // is not part of the claim's body hash, so the confirm re-sends under the same key.
+    if (!alreadyPickedUp) {
+      const refused = completeAtCounterRunRefusal(order as RunOrder, dto.takeOffRun === true);
+      if (refused) throw refused;
     }
     const walkIn = !!order.customer?.isWalkIn;
     // The request's real payment: never overwritten. Absent + nothing owed (same invoice set and capacity
@@ -116,7 +166,7 @@ export class PickupCompleteService {
     const preRows = await this.readInvoices(id);
     const preOwed = this.owedBalance(
       preRows,
-      alreadyPickedUp ? isHandOverTender(order.deliveredAt) : undefined,
+      alreadyPickedUp ? isHandOverTender(id, await this.claimCompletionAt(id)) : undefined,
     );
     const excused = !sent && preRows.length > 0 && preOwed <= 0;
     if (sent) {
@@ -140,8 +190,34 @@ export class PickupCompleteService {
       }
       await this.assertNoOpenCredit(order.customerId);
     }
+    // SA-905 MUST 1: the delivery credit gate the DELIVERED step runs (B585, netted), judged NOW through the same ONE entry,
+    // read-only, so a refusal writes nothing (no claim, no switch, no silent CONFIRMED). The DELIVERED step's own gate stays
+    // the authority. Residual (documented): a limit or exposure moving between here and DELIVERED leaves a switched order
+    // that is not yet confirmed to the customer. OUT_FOR_DELIVERY was gated on its way out (changeStatus' alreadyOut).
+    if (!alreadyPickedUp && (order.status === "PENDING" || order.status === "CONFIRMED")) {
+      const creditPaidNow = await this.tenderCreditPaidNow(sent);
+      if (order.customerId) {
+        const at = { id: order.id, customerId: order.customerId, total: order.total };
+        await this.orders.assertDeliveryCreditGate(at, user, { creditPaidNow });
+      }
+    }
+    // SA-909 item 1: a tender this call would record is refused for a CLOSED day before the first write (the same
+    // window check the tender runs under its lock, read-only, on the same register and the database clock), so a closed day
+    // leaves the order as it was. The in-lock check stays the authority (the day closing in between: today's 409 after).
+    // #3678 Opus NIT: nothing owed (the same excuse rule as above) records no tender, so a closed day does not refuse it
+    const nothingOwed = preRows.length > 0 && preOwed <= 0;
+    if (!alreadyPickedUp && sent && sent.method !== "ON_ACCOUNT" && !nothingOwed) {
+      await counterTenderPaidAt(
+        this.prisma,
+        this.prisma.getTenantId(),
+        order,
+        pickupRegisterOf(order, dto.registerKey),
+      );
+    }
+    // SA-919: THIS completion's `completionAt`, the claim's stamp (never `deliveredAt`): its tender and its email key
+    let handedOverAt: Date | null;
     try {
-      await this.claimHandOver(id, _idempotencyKey, sent, user);
+      handedOverAt = await this.claimHandOver(id, _idempotencyKey, sent, user);
     } catch (e) {
       // A lock timeout or outage before any write is a coded, retryable 503 (never a 500).
       if (e instanceof LockTimeoutError || e instanceof LockUnavailableError) {
@@ -153,8 +229,49 @@ export class PickupCompleteService {
     // 2. The hand-over: the existing status change (invoice + no stock). Its own refusals propagate,
     // except the race loser's: a concurrent call that delivered it first makes this one the replay.
     if (!alreadyPickedUp) {
+      // I-120 (SA-861 rules 4, 5, 9). Each step is skipped when the row already shows it done, so a crash between steps
+      // resumes. 4: the path becomes Store pickup first, through the ONE switch (it re-judges selling restrictions at the
+      // store's state and releases a finished run's link; its refusals propagate with nothing else written).
+      // SA-913 R8: off the driver's run first, its own locked tx (Orders → stop → run; refused with nothing written when
+      // the stop started or the link moved; a deadlock is retried in a fresh tx). A resume with no run link skips it.
+      const link = activeRunLink(order as RunOrder);
+      if (link) {
+        const actor = { tenantId: user.tenantId as string, userId: user.sub };
+        const { stopSkipped } = await retryOnTxConflict("pickup-complete.take-off-run", () =>
+          this.prisma.tenantTransaction((tx) =>
+            takeOrderOffRun(tx, { orderId: id, ...link }, actor),
+          ),
+        );
+        // SA-913 (b): the same post-commit update the office skip sends, so the driver's run shows the stop skipped
+        if (stopSkipped && this.gateway)
+          await new RouteRealtime(this.prisma, this.gateway, this.logger).runProgress(link.runId);
+        order = (await this.readOrder(id)) ?? order;
+      }
+      if (order.fulfillPath !== "PICKUP") {
+        // SA-913 (c): the ONE caller-pinned option lets an OUT_FOR_DELIVERY order with no run link switch (no demotion);
+        // its DELIVERED step then runs alreadyOut, ungated.
+        await this.orders.updateFulfillPath(id, { fulfillPath: "PICKUP" } as never, user, {
+          fromOutForDelivery: true,
+        });
+        order = (await this.readOrder(id)) ?? order;
+      }
+      // 5: PENDING cannot go straight to DELIVERED; both transitions are silent (the ONE completion email follows).
+      if (order.status === "PENDING") {
+        await this.orders.changeStatus(id, { status: "CONFIRMED" } as never, user, {
+          silent: true,
+        });
+        order = (await this.readOrder(id)) ?? order;
+      }
+      const creditPaidNow = await this.tenderCreditPaidNow(sent);
+      // the B585 delivery gate runs on this step only for goods not already out (changeStatus' alreadyOut)
+      const gated = order.status !== "OUT_FOR_DELIVERY" && order.status !== "PARTIALLY_DELIVERED";
       try {
-        await this.orders.changeStatus(id, { status: "DELIVERED" } as never, user);
+        await this.orders.changeStatus(id, { status: "DELIVERED" } as never, user, {
+          silent: true,
+          creditPaidNow,
+        });
+        // THIS call's gate counted the tender (a lost race, or goods already out, netted nothing of ours)
+        if (gated) gateNetted = creditPaidNow;
       } catch (e) {
         const now = await this.readOrder(id);
         if (now?.status !== "DELIVERED") throw e;
@@ -162,7 +279,6 @@ export class PickupCompleteService {
       }
       order = (await this.readOrder(id)) ?? order;
     }
-    const handedOverAt = order.deliveredAt ?? null;
 
     // 3. Issue every draft invoice.
     let invoices = await this.readInvoices(id);
@@ -180,7 +296,8 @@ export class PickupCompleteService {
         });
       }
     }
-    const sendOpts = walkIn ? [{ suppressNotify: true }] : [];
+    // I-120 (SA-861 rule 5): no INVOICE_SENT on this path for anyone; a named customer gets the ONE completion email.
+    const sendOpts = [{ suppressNotify: true }];
     let issued = false;
     for (const inv of invoices) {
       if (inv.status !== "DRAFT") continue;
@@ -199,7 +316,8 @@ export class PickupCompleteService {
     // 4. The tender, against what is STORED now. ON_ACCOUNT takes no money: no lock. Owed is re-judged on
     // the final invoices (a remainder / rebuild at DELIVERED can differ from before the hand-over).
     const owedNow =
-      this.owedBalance(invoices, alreadyPickedUp ? isHandOverTender(handedOverAt) : undefined) > 0;
+      this.owedBalance(invoices, alreadyPickedUp ? isHandOverTender(id, handedOverAt) : undefined) >
+      0;
     let planError: string | undefined;
     let duplicate: DuplicatePaymentRefExisting | undefined;
     let shown: { method: string; amount?: number } = sent ?? { method: "ON_ACCOUNT" };
@@ -227,7 +345,14 @@ export class PickupCompleteService {
         // The hand-over is already committed: a contended or unavailable lock must not turn into a 500
         // over a finished hand-over. It reads as an unrecorded payment (the retry finishes it). Errors
         // from inside the locked section are not lock errors and still propagate.
-        if (!(e instanceof LockTimeoutError || e instanceof LockUnavailableError)) throw e;
+        if (!(e instanceof LockTimeoutError || e instanceof LockUnavailableError)) {
+          // SA-849 path (d): a closed day's 409 after the hand-over committed gets the re-check's log + audit; the 409 is
+          // unchanged (SA-876: never replaced by a re-check that fails).
+          const code = (e as { getResponse?: () => { code?: string } })?.getResponse?.()?.code;
+          if (code === API_ERROR_CODES.COUNTER_SALE_DAY_CLOSED)
+            await this.creditRecheck(order, gateNetted, code, user).catch(() => undefined);
+          throw e;
+        }
         this.logger.warn(`pickup complete ${id}: tender lock not taken (${e.message})`);
         planError = API_ERROR_CODES.COUNTER_PAYMENT_NOT_RECORDED;
         invoices = await this.readInvoices(id);
@@ -238,15 +363,123 @@ export class PickupCompleteService {
     // neither the register nor the cashier, so a closed day's rows never gain a writer.
     await this.stampSoldBy(id, user);
 
-    return this.respond(
-      order,
-      invoices,
-      shown,
-      handedOverAt,
-      planError,
-      alreadyPickedUp,
-      duplicate,
+    // SA-849: the gate counted this tender and it did not fully record -> the ONE post-tender re-check (never blocks).
+    const creditOverLimit =
+      planError && planError !== API_ERROR_CODES.PICKUP_PAYMENT_REQUIRED
+        ? await this.creditRecheck(order, gateNetted, planError, user).catch(() => null)
+        : null;
+
+    const emailed = await this.completionEmail(id, invoices, walkIn, planError, user, handedOverAt);
+    return {
+      ...this.respond(order, invoices, shown, handedOverAt, planError, alreadyPickedUp, duplicate),
+      ...(emailed ? { emailed: true } : {}),
+      ...(creditOverLimit ? { creditOverLimit } : {}),
+    };
+  }
+
+  /**
+   * SA-849 (S1 S-1) on the hand-over: what THIS call's gate netted (`creditPaidNow` over the stored total) and, when it
+   * was anything, `creditAfterTender` (DARK warns; ENFORCED warns + audits once per order + answers the figures). A call
+   * whose gate did not run (already picked up, a lost race) netted nothing: no re-check.
+   */
+  private async creditRecheck(
+    order: OrderRow,
+    gateNetted: ((total: number) => number) | undefined,
+    planError: string,
+    user: JwtPayload,
+  ) {
+    if (!gateNetted) return null;
+    const total = Number(order.total ?? 0);
+    return creditAfterTender(
+      { prisma: this.prisma, entitlements: this.orders.entitlements, logger: this.logger },
+      {
+        tenantId: this.prisma.getTenantId(),
+        customerId: order.customerId,
+        orderId: order.id,
+        total,
+        netted: gateNetted(total),
+        planError,
+        action: "delivery", // SA-849 rule 1: the hand-over is netted at the DELIVERED gate (enforce_delivery)
+        actor: user.sub ?? null,
+        impersonatedBy: user.impersonatedBy ?? null,
+      },
     );
+  }
+
+  /**
+   * I-120 (SA-861 rule 6): what the till takes NOW, for the B585 delivery gate (the S1 netting): cash / card / a check
+   * dated today or earlier count, a post-dated check and on account count 0 (`counterCreditPaidNow`).
+   */
+  private async tenderCreditPaidNow(
+    sent: CounterPaymentInput | undefined,
+  ): Promise<((total: number) => number) | undefined> {
+    if (!sent || sent.method === "ON_ACCOUNT") return undefined;
+    let today: string | undefined;
+    if (sent.method === "CHECK" && sent.checkDate) {
+      today = tenantTodayDay(await tenantTimeZone(this.prisma), new Date());
+    }
+    return (total: number) => counterCreditPaidNow(sent, total, today);
+  }
+
+  /**
+   * I-120 (SA-861 rule 8): the ONE customer email of a completion, the invoice email of every invoice of the order with
+   * the COUNTER_COMPLETE wording. Only a named customer (a walk-in gets nothing), only once the tender outcome is final
+   * (recorded, or on account by choice: no `planError`). SA-909: exactly once PER COMPLETION (keyed on its `completionAt`, SA-919),
+   * reserved by one conditional update on the claim row and sent with NO lock held (pickup-complete-claim.ts); the #2088 send
+   * record is the delivery fact if the flag never got written. The hand-over is committed: a failed send is logged, never
+   * thrown; the reservation is released so the same-key retry sends it.
+   */
+  private async completionEmail(
+    orderId: string,
+    invoices: InvoiceRow[],
+    walkIn: boolean,
+    planError: string | undefined,
+    user: JwtPayload,
+    handedOverAt: Date | null,
+  ): Promise<boolean> {
+    if (walkIn || planError || invoices.length === 0 || !handedOverAt || !user.tenantId)
+      return false;
+    const tenantId = user.tenantId;
+    const claim = await this.prisma.forTenant().auditLog.findFirst({
+      where: { tenantId, entityType: "Order", entityId: orderId, action: "PICKUP_COMPLETE_CLAIM" },
+      orderBy: { createdAt: "asc" },
+      select: { id: true, meta: true },
+    });
+    if (!claim) return false;
+    const completionFor = handedOverAt.toISOString();
+    if (
+      (claim.meta as { completionEmailedFor?: string } | null)?.completionEmailedFor ===
+      completionFor
+    )
+      return false;
+    // SA-909 item 4: the email went but the flag was never written (markSent threw): record it, send nothing.
+    if (await completionAlreadyRecorded(this.prisma, tenantId, invoices[0].id, handedOverAt)) {
+      await finishCompletionEmail(this.prisma, tenantId, claim.id, completionFor);
+      return false;
+    }
+    const at = await reserveCompletionEmail(this.prisma, tenantId, claim.id, completionFor);
+    if (!at) return false; // emailed already, or another call holds a live reservation
+    try {
+      const sent = await this.invoices.sendCompletionEmail(
+        orderId,
+        invoices.map((i) => i.id),
+        user.sub ?? null,
+      );
+      if (!sent?.delivered) {
+        await releaseCompletionEmail(this.prisma, tenantId, claim.id, completionFor, at);
+        return false;
+      }
+      await finishCompletionEmail(this.prisma, tenantId, claim.id, completionFor);
+      return true;
+    } catch (e) {
+      this.logger.warn(
+        `pickup complete ${orderId}: completion email not sent (${(e as Error)?.message ?? e})`,
+      );
+      await releaseCompletionEmail(this.prisma, tenantId, claim.id, completionFor, at).catch(
+        () => undefined,
+      );
+      return false;
+    }
   }
 
   /**
@@ -261,7 +494,7 @@ export class PickupCompleteService {
     key: string,
     payment: CounterPaymentInput | undefined,
     user: JwtPayload,
-  ): Promise<void> {
+  ): Promise<Date | null> {
     const bodyHash = payment
       ? createHash("sha256")
           .update(
@@ -269,6 +502,8 @@ export class PickupCompleteService {
           )
           .digest("hex")
       : null;
+    const tenantId = user.tenantId;
+    if (!tenantId) throw new ForbiddenException("A tenant-scoped session is required"); // the claim is per tenant
     const db = this.prisma.forTenant();
     const locked = await withAdvisoryLock(
       { family: "counter-tender", key: orderId, mode: "wait" },
@@ -283,7 +518,7 @@ export class PickupCompleteService {
           orderBy: { createdAt: "asc" },
         });
         if (!row) {
-          await db.auditLog.create({
+          const created = await db.auditLog.create({
             data: {
               tenantId: user.tenantId,
               userId: user.sub,
@@ -293,7 +528,7 @@ export class PickupCompleteService {
               meta: { idempotencyKey: key, bodyHash },
             },
           });
-          return;
+          return this.completionMoment(orderId, tenantId, created.id, null, false);
         }
         const meta = (row.meta ?? {}) as { idempotencyKey?: string; bodyHash?: string | null };
         if (meta.idempotencyKey !== key || (meta.bodyHash && meta.bodyHash !== bodyHash)) {
@@ -303,12 +538,12 @@ export class PickupCompleteService {
           // hand-over tender makes a different request a conflict.
           const now = await db.order.findFirst({
             where: { id: orderId },
-            select: { status: true, deliveredAt: true },
+            select: { status: true },
           });
           const tendered =
             now?.status === "DELIVERED" &&
             (await this.readInvoices(orderId)).some((i) =>
-              (i.payments ?? []).some(isHandOverTender(now.deliveredAt ?? null)),
+              (i.payments ?? []).some(isHandOverTender(orderId, completionAtOf(row.meta))),
             );
           if (tendered) {
             throw new ConflictException({
@@ -316,23 +551,51 @@ export class PickupCompleteService {
               message: "Already picked up. Record any payment on the invoice.",
             });
           }
-          await db.auditLog.update({
-            where: { id: row.id },
-            data: { meta: { idempotencyKey: key, bodyHash } },
-          });
-          return;
+          // SA-905 MUST 2 (a) / SA-909: the replacement merges ONLY its own keys, atomically, so the completion's email
+          // fields (and a live reservation) always survive it: never a second email.
+          await mergeClaimMeta(this.prisma, tenantId, row.id, { idempotencyKey: key, bodyHash });
+          return this.completionMoment(orderId, tenantId, row.id, row.meta, false);
         }
         // A same-key retry that ADDS the payment the first call lacked (PICKUP_PAYMENT_REQUIRED) is adopted
         // on the claim, so a later, different payment under this key is a conflict, not a second tender.
         if (!meta.bodyHash && bodyHash) {
-          await db.auditLog.update({
-            where: { id: row.id },
-            data: { meta: { ...meta, bodyHash } },
-          });
+          await mergeClaimMeta(this.prisma, tenantId, row.id, { bodyHash }); // SA-909: an atomic merge
         }
+        return this.completionMoment(orderId, tenantId, row.id, row.meta, true);
       },
     );
     if (!locked.acquired) throw this.claimUnavailable();
+    return locked.value;
+  }
+
+  /**
+   * SA-919 rule 1, under the claim's counter-tender lock: a NEW completion (the order not yet delivered: the first claim, a
+   * different key, or after a reopen) stamps `completionAt`; a same-key replay with a stamp, or ANY request while the order
+   * is DELIVERED, keeps the stored one (null on a legacy claim: every row of the group is this hand-over's).
+   */
+  private async completionMoment(
+    orderId: string,
+    tenantId: string,
+    claimId: string,
+    meta: unknown,
+    sameKey: boolean,
+  ): Promise<Date | null> {
+    const stored = completionAtOf(meta);
+    const now = await this.prisma
+      .forTenant()
+      .order.findFirst({ where: { id: orderId }, select: { status: true } });
+    if (now?.status === "DELIVERED" || (sameKey && stored)) return stored;
+    return stampCompletion(this.prisma, tenantId, claimId);
+  }
+
+  /** The `completionAt` on this order's claim row (a replay judged before its claim), or null. */
+  private async claimCompletionAt(orderId: string): Promise<Date | null> {
+    const claim = await this.prisma.forTenant().auditLog.findFirst({
+      where: { entityType: "Order", entityId: orderId, action: "PICKUP_COMPLETE_CLAIM" },
+      orderBy: { createdAt: "asc" },
+      select: { meta: true },
+    });
+    return completionAtOf(claim?.meta);
   }
 
   /**
@@ -400,7 +663,7 @@ export class PickupCompleteService {
     let invoices = await this.readInvoices(orderId);
     let planError: string | undefined;
     let duplicate: DuplicatePaymentRefExisting | undefined;
-    const mine = isHandOverTender(handedOverAt);
+    const mine = isHandOverTender(orderId, handedOverAt);
     const balances = invoices.map((i) => ({
       id: i.id,
       balance: remainingCapacity(
@@ -534,6 +797,18 @@ export class PickupCompleteService {
         customer: { select: { isWalkIn: true } },
         counterSale: true,
         registerKey: true,
+        total: true,
+        // I-120 R8/R9: the run (through its stop, or a bare routeRunId), the stop's state, the carrier shipment
+        shippedAt: true,
+        routeRunId: true,
+        routeRunStopId: true,
+        routeRun: { select: { status: true, driver: { select: { contactName: true } } } },
+        routeRunStop: {
+          select: {
+            status: true,
+            routeRun: { select: { status: true, driver: { select: { contactName: true } } } },
+          },
+        },
       },
     });
   }
@@ -570,7 +845,13 @@ export class PickupCompleteService {
       orderNumber: order.orderNumber ?? "",
       invoiceId: first.id,
       invoiceNumber: first.invoiceNumber ?? "",
-      ...tenderFigures(invoices, payment, isHandOverTender(handedOverAt), planError, duplicate),
+      ...tenderFigures(
+        invoices,
+        payment,
+        isHandOverTender(order.id, handedOverAt),
+        planError,
+        duplicate,
+      ),
       ...(alreadyPickedUp ? { alreadyPickedUp: true } : {}),
     };
   }

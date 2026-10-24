@@ -26,6 +26,8 @@ module.exports = {
       {
         tsconfig: {
           strict: false,
+          // W-830: the render tests of app/_layout.tsx and the redirect screens compile real .tsx.
+          jsx: "react-jsx",
           esModuleInterop: true,
           allowSyntheticDefaultImports: true,
           moduleResolution: "node",
@@ -72,6 +74,11 @@ module.exports = {
     "^@routeflow/types/payment-submit-key$": "<rootDir>/../../packages/types/payment-submit-key.ts",
     // Row 498: the shared duplicate-payment-reference copy and 409 reader (pure), same subpath trick.
     "^@routeflow/types/payment-ref-copy$": "<rootDir>/../../packages/types/payment-ref-copy.ts",
+    // I-120: the shared credit-over-limit sentence (pure, no imports), same subpath trick.
+    "^@routeflow/types/credit-over-limit-copy$":
+      "<rootDir>/../../packages/types/credit-over-limit-copy.ts",
+    // I-120: the shared Counter sale / Store pickup / Complete at counter words (pure, no imports), same subpath trick.
+    "^@routeflow/types/counter-copy$": "<rootDir>/../../packages/types/counter-copy.ts",
     // M8: the shared shipment save rule + not-shipped line (pure, no imports), same subpath trick.
     "^@routeflow/types/shipment-save$": "<rootDir>/../../packages/types/shipment-save.ts",
     // SA-817 A: the one persisted-submit-key rule for a draft (pure, no imports), same subpath trick.

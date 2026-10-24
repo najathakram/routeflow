@@ -82,6 +82,7 @@ import { phoneActionItems } from "./_components/phone-action-items";
 import { useInvoiceDraftNotice } from "./_components/use-invoice-draft-notice";
 import { SAVE_CHORD_KEYS, saveChordHandler } from "./_components/use-save-chord";
 import { PickupHandOverButton, PickupHandOverDialog } from "./_components/PickupHandOver";
+import { CompleteAtCounterAction, CompleteAtCounterDialog } from "./_components/CompleteAtCounter";
 import {
   ConfirmedPrimaryAction,
   OutForDeliveryPrimary,
@@ -254,6 +255,8 @@ export default function OrderDetailPage() {
   const [showUnmarkConfirm, setShowUnmarkConfirm] = React.useState(false);
   // Picked-up dialog + a pending move off pickup: page-level so they outlive the status-gated action rows.
   const [pickupOpen, setPickupOpen] = React.useState(false);
+  const [completeOpen, setCompleteOpen] = React.useState(false); // I-120: Complete at counter
+  const openComplete = () => setCompleteOpen(true);
   const [pendingPath, setPendingPath] = React.useState<"ROUTE" | "SHIP" | null>(null);
 
   // Order-level commission override (staff + sales_agents addon only — the
@@ -1167,6 +1170,9 @@ export default function OrderDetailPage() {
                   </Button>
                 </ActionTier>
               )}
+              {access.staff && (
+                <CompleteAtCounterAction order={order} status={localStatus} onOpen={openComplete} />
+              )}
             </>
           )}
 
@@ -1257,6 +1263,7 @@ export default function OrderDetailPage() {
                   <PickupHandOverButton onOpen={() => setPickupOpen(true)} />
                 </ActionTier>
               )}
+              <CompleteAtCounterAction order={order} status={localStatus} onOpen={openComplete} />
               {/* CONFIRMED→PENDING is a demotion — the server rejects it without a
                   reason, so the ONLY path is the DemoteReasonModal. A second
                   "Unconfirm" button used to submit directly (predating the
@@ -1296,6 +1303,7 @@ export default function OrderDetailPage() {
                 onDeliver={handleDeliver}
                 pending={updateStatus.isPending}
               />
+              <CompleteAtCounterAction order={order} status={localStatus} onOpen={openComplete} />
               {!phone && (
                 <ActionTier tier="secondary">
                   <Button
@@ -2135,6 +2143,13 @@ export default function OrderDetailPage() {
           order={order}
           open={pickupOpen}
           onClose={() => setPickupOpen(false)}
+        />
+      )}
+      {access.staff && (
+        <CompleteAtCounterDialog
+          order={order}
+          open={completeOpen}
+          onClose={() => setCompleteOpen(false)}
         />
       )}
       <FulfillPathMoveConfirm

@@ -16,6 +16,26 @@ import type { InvoiceEmailAttachment } from "./invoice-attachment";
  * totalPaid is cash-only - a CREDIT_NOTE or ADVANCE application must never render as "Amount Paid"; balanceDue stays on
  * the full confirmed total. F03/R9: the item table honours the hide-original-price preference like the PDF does.
  */
+/**
+ * The ONE paid basis of every invoice email (W-680, SA-848 LOW 2): the invoice email and the reminder both read this.
+ * F03/R8/T-B102: CONFIRMED (PAID) rows only, so a DRAFT payment never inflates what the customer is told they paid and a
+ * reminder demands the true outstanding balance. B421: `totalPaid` is cash only; a CREDIT_NOTE or ADVANCE application never
+ * reads as "Amount Paid", and the credit notes that were applied are listed once each.
+ */
+export function emailPaidBasis(inv: { total: unknown; payments?: any[] | null }) {
+  const { cash: totalPaid, creditApplied, advanceApplied } = splitConfirmed(inv.payments);
+  const balanceDue = confirmedBalance(inv.total as never, inv.payments as never);
+  const creditNoteNumbers: string[] = Array.from(
+    new Set<string>(
+      (inv.payments ?? [])
+        .filter((p: any) => p.method === CREDIT_NOTE_METHOD)
+        .map((p: any) => p.creditNote?.creditNoteNumber)
+        .filter((n: unknown): n is string => !!n),
+    ),
+  );
+  return { totalPaid, creditApplied, advanceApplied, creditNoteNumbers, balanceDue };
+}
+
 export function buildInvoiceEmailPayload(
   inv: any,
   ctx: {
@@ -25,16 +45,8 @@ export function buildInvoiceEmailPayload(
     hideOriginalPrice: boolean;
   },
 ) {
-  const { cash: totalPaid, creditApplied, advanceApplied } = splitConfirmed(inv.payments);
-  const balanceDue = confirmedBalance(inv.total, inv.payments);
-  const creditNoteNumbers: string[] = Array.from(
-    new Set<string>(
-      (inv.payments ?? [])
-        .filter((p: any) => p.method === CREDIT_NOTE_METHOD)
-        .map((p: any) => p.creditNote?.creditNoteNumber)
-        .filter((n: unknown): n is string => !!n),
-    ),
-  );
+  const { totalPaid, creditApplied, advanceApplied, creditNoteNumbers, balanceDue } =
+    emailPaidBasis(inv);
   return {
     to: ctx.recipientEmail,
     customerName: inv.customer?.businessName ?? "Customer",
@@ -74,14 +86,9 @@ export function buildInvoiceEmailPayload(
   };
 }
 
-/** The pre-computed paid basis + delivery inputs `buildReminderEmailPayload` takes (its caller computes the totals). */
+/** The delivery inputs `buildReminderEmailPayload` takes; the paid basis is derived from the invoice (`emailPaidBasis`). */
 export interface EmailPayloadParts {
   recipientEmail: string;
-  totalPaid: number;
-  creditApplied: number;
-  advanceApplied: number;
-  creditNoteNumbers: string[];
-  balanceDue: number;
   pdfUrl: string | undefined;
   attachment: InvoiceEmailAttachment | undefined;
   hideOriginalPrice: boolean;
@@ -89,15 +96,9 @@ export interface EmailPayloadParts {
 
 /** `InvoicesService.sendReminder`'s payload (the same item table, without the sendEmail-only terms / deposit fields). */
 export function buildReminderEmailPayload(inv: any, x: EmailPayloadParts) {
-  const {
-    recipientEmail,
-    totalPaid,
-    creditApplied,
-    advanceApplied,
-    creditNoteNumbers,
-    balanceDue,
-  } = x;
-  const { pdfUrl, attachment, hideOriginalPrice } = x;
+  const { recipientEmail, pdfUrl, attachment, hideOriginalPrice } = x;
+  const { totalPaid, creditApplied, advanceApplied, creditNoteNumbers, balanceDue } =
+    emailPaidBasis(inv);
   return {
     to: recipientEmail,
     customerName: inv.customer?.businessName ?? "Customer",
