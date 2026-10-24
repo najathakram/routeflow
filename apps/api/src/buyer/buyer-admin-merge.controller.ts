@@ -13,11 +13,13 @@ import { ApiTags, ApiOperation, ApiBearerAuth } from "@nestjs/swagger";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { SuperAdminGuard } from "../tenant/super-admin.guard";
 import { BuyerMergeService } from "./buyer-merge.service";
+import { PlatformScoped } from "../tenant/platform-scoped.decorator";
 
 @ApiTags("platform-admin-buyer-merge")
 @ApiBearerAuth()
 @Controller("platform-admin/buyer-merge-requests")
 @UseGuards(JwtAuthGuard, SuperAdminGuard)
+@PlatformScoped()
 export class BuyerAdminMergeController {
   constructor(private readonly mergeService: BuyerMergeService) {}
 

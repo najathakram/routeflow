@@ -85,6 +85,7 @@ import type {
   BusinessProfileListResponse,
   BusinessProfilePreviewResponse,
 } from "@routeflow/types";
+import { PlatformScoped } from "../tenant/platform-scoped.decorator";
 
 /** Attach a config key's applied mode to its explain-trace row (B1132); no mode, no change. */
 function withConfigMode(feature: EffectiveFeature, mode?: FeatureModeState): EffectiveFeature {
@@ -94,6 +95,7 @@ function withConfigMode(feature: EffectiveFeature, mode?: FeatureModeState): Eff
 @ApiTags("platform-admin")
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, SuperAdminGuard)
+@PlatformScoped()
 @Controller("platform-admin")
 export class PlatformAdminController {
   constructor(

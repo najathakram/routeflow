@@ -112,6 +112,8 @@
 //   TENANT_CONTEXT_REQUIRED — `body.code` of the 403 the messaging delivery-log / health / staff-email-settings
 //                    endpoints answer when the caller has no tenant context (SUPER_ADMIN without an
 //                    impersonated tenant): their unscoped client would read or write another tenant's rows.
+//                    W-767: also the 403 of TenantRequiredInterceptor (enforced mode) for ANY SUPER_ADMIN write with
+//                    no business in the session on a route that is not @PlatformScoped().
 //   STAFF_CC_INVALID — `body.code` of the 400 a PUT /messaging/staff-email-settings answers for a
 //                    bad "Also send to" list; `body.details` is `{ index, reason }` (WS4, SA-606).
 //   CREDIT_NOTE_*  — `body.code` of the credit-note edit / reissue / void refusals (#2648, #2848; the
