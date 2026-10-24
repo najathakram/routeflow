@@ -8,3 +8,12 @@ export type OrderCancelBlockedReason = "WITH_CARRIER";
 export interface OrderCancelBlockedField {
   cancelBlockedReason: OrderCancelBlockedReason | null;
 }
+
+/**
+ * Row 673 (SA-831b M6): the field `GET /orders/:id` adds for the fulfil-path switch. true = the server refuses
+ * `PATCH /orders/:id/fulfill-path` (shipped / Ready for pickup, delivered, cancelled), so "Switch to delivery" and "Ship
+ * by carrier…" are not offered. A client reads this; it never re-derives it from the status.
+ */
+export interface OrderFulfillPathLockField {
+  fulfillPathLocked: boolean;
+}
