@@ -822,7 +822,7 @@ export class BillingService {
       // A database error (the catalog or Prisma read under checkoutPriceData) is not Stripe failing: label it
       // as the lookup failure it is. Both are transient and both stop a Stripe-first write.
       const e = err as { name?: string; code?: string };
-      if (e?.name?.startsWith("Prisma") || /^Pd{4}$/.test(e?.code ?? "")) {
+      if (e?.name?.startsWith("Prisma") || /^P\d{4}$/.test(e?.code ?? "")) {
         return { synced: false, reason: "pricing_lookup_failed" };
       }
       return { synced: false, reason: "stripe_product_create_failed" };
