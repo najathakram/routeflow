@@ -148,7 +148,7 @@ export function CounterVoidSaleDialog({
             can&apos;t undo this.
           </p>
           <label className="block">
-            Reason for voiding <span className="text-danger">(required)</span>
+            Reason for voiding <span className="text-slate-600">(required)</span>
             <textarea
               aria-label="Reason for voiding (required)"
               aria-required="true"

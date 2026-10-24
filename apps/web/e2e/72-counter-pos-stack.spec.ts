@@ -345,14 +345,17 @@ test.describe("W-715 / W-716: the receipt's Change row, its actions at 1440 and 
       expect(b, `${name} is on screen at 1440`).not.toBeNull();
       return b!;
     };
-    const [p1440, e1440, r1440, n1440] = [
+    const [p1440, e1440, n1440] = [
       await box1440("Print"),
       await box1440("Email receipt"),
-      await box1440(/^Return items/),
       await box1440("New sale"),
     ];
     expect(Math.abs(p1440.y - e1440.y)).toBeLessThanOrEqual(2);
-    expect(Math.abs(p1440.y - r1440.y)).toBeLessThanOrEqual(2);
+    // Return items exists only with the inline-returns add-on: checked when present, as at 390
+    const ret1440 = page.getByRole("button", { name: /^Return items/ });
+    if (await ret1440.count()) {
+      expect(Math.abs(p1440.y - (await box1440(/^Return items/)).y)).toBeLessThanOrEqual(2);
+    }
     expect(n1440.y).toBeGreaterThan(p1440.y);
 
     // W-715 + P-RCPT-1: at 390 the actions are a 2×2 grid (Print · Email receipt / Return items · Void sale) with New sale
@@ -708,3 +711,54 @@ test.describe("R7b till: a post-dated check is not tendered", () => {
     });
   }
 });
+
+/**
+ * W-713 + F14 proof shots for mm-ux (#3743): a CHECK sale's receipt names the check number, and the void dialog marks the
+ * reason required. The shared stack's API is master's image, which does not send `checkReference` yet: the sale POST's
+ * answer is passed through with the number added, exactly as the new server sends it (pinned by the api unit tests).
+ */
+for (const vp of [
+  { name: "390", width: 390, height: 844 },
+  { name: "1440", width: 1440, height: 900 },
+]) {
+  test.describe(`W-713 / F14 shots @ ${vp.name}`, () => {
+    test.use({ viewport: { width: vp.width, height: vp.height } });
+    test("a check sale's receipt reads Check #1042, and the void dialog marks the reason required", async ({
+      page,
+      context,
+    }) => {
+      await setTenantCookie(context, BASE);
+      const { products } = await discover(page);
+      await page.route(/\/api\/v1\/orders\/counter-sale$/, async (route) => {
+        if (route.request().method() !== "POST") return route.continue();
+        const res = await route.fetch();
+        const json = await res.json();
+        await route.fulfill({ response: res, json: { ...json, checkReference: "1042" } });
+      });
+      await page.goto("/orders/counter-sale");
+      const scanField = page.getByLabel("Scan or search items");
+      await expect(scanField).toBeVisible({ timeout: 15_000 });
+      await scanField.fill(String(products[0].sku));
+      await scanField.press("Enter");
+      await expect(page.getByRole("list", { name: "Items" }).getByRole("listitem")).toHaveCount(1, {
+        timeout: 15_000,
+      });
+      await page.getByRole("button", { name: "Walk-in", exact: true }).click();
+      await page.getByRole("radio", { name: "Check" }).click();
+      await page.getByLabel("Check number").fill("1042");
+      await page.getByRole("button", { name: "Complete & show receipt" }).click();
+      await expect(page.getByTestId("counter-sale-receipt")).toBeVisible({ timeout: 20_000 });
+      await expect(page.getByTestId("counter-sale-receipt")).toContainText("Check #1042");
+      await page.screenshot({
+        path: `test-results/w783-receipt-check-${vp.name}.png`,
+        fullPage: true,
+      });
+      await page.getByRole("button", { name: /^Void sale ORD/ }).click();
+      const dialog = page.getByRole("dialog", { name: /Void sale/ });
+      await expect(dialog.getByLabel("Reason for voiding (required)")).toBeVisible();
+      await page.waitForTimeout(400); // the dialog eases in over 200 ms: shoot the settled frame
+      await page.screenshot({ path: `test-results/w783-receipt-void-${vp.name}.png` });
+      await dialog.getByRole("button", { name: "Keep sale" }).click();
+    });
+  });
+}
