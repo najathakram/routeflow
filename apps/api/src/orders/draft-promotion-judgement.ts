@@ -5,6 +5,8 @@ import type { PrismaService } from "../prisma/prisma.service";
 import { restrictionChannelForPrincipal } from "../selling-restrictions/selling-restrictions.core";
 import type { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { saleFulfilmentKind } from "../selling-restrictions/sale-fulfilment";
+import type { StaffWriteDecision } from "../selling-restrictions/restriction-warning";
+import * as rGate from "./order-restriction-gate";
 import { channelsToJudge, resolveLineAuthors } from "./line-author-channel";
 import { latestEditRevisionNumber } from "./order-revisions";
 import { EDIT_REVISIONS } from "./ship-state-markers";
@@ -18,6 +20,8 @@ import { EDIT_REVISIONS } from "./ship-state-markers";
 export interface DraftPromotionJudgement {
   productIds: ReadonlySet<string>;
   revision: number;
+  /** Row 510: the STAFF-channel lines' warning / override decision, stamped in the promotion transaction. */
+  decision?: StaffWriteDecision;
 }
 
 /**
@@ -26,6 +30,10 @@ export interface DraftPromotionJudgement {
  * ratchet) and extended (F1 i): each LISTED line is judged at the STRICTER of the promoter's channel and the channel of
  * the line's author (`line-author-channel.ts`), one choke-point call per distinct channel (ONE for a staff-built draft
  * a staff member promotes). Runs before any status write; a refusal throws with nothing written.
+ *
+ * Row 510: the STAFF group is judged through the warning protocol (`rGate.whole`: the promoter, the acknowledgement,
+ * every line of the draft held for coverage, keyed `l:<lineId>`), so a staff member who may override is warned and
+ * may sell with a reason; the BUYER_PORTAL group keeps its hard 409.
  */
 export async function judgeDraftPromotion(
   deps: {
@@ -45,14 +53,20 @@ export async function judgeDraftPromotion(
     };
     user: JwtPayload;
     tenantId: string;
+    /** Row 510: the promoter's acknowledgement of a RESTRICTION_WARNING (the status DTO carries it). */
+    ack?: rGate.Ack;
   },
 ): Promise<DraftPromotionJudgement> {
   const { prisma, authGuard, restrictions } = deps;
   const { order, user, tenantId } = a;
   const items = await prisma.forTenant().orderItem.findMany({
     where: { orderId: order.id, status: { not: "CANCELLED" } },
-    // SA ruling (#3418): each line's explicit author marker; never its createdAt.
-    select: { productId: true, trackedCategoryId: true, authorChannel: true },
+    // SA ruling (#3418): each line's explicit author marker; never its createdAt. Row 510: the stamp columns.
+    select: {
+      ...rGate.WHOLE_LINE_SELECT,
+      trackedCategoryId: true,
+      authorChannel: true,
+    },
   });
   const pids = items.map((li) => li.productId).filter(Boolean) as string[];
   const products = pids.length
@@ -93,15 +107,20 @@ export async function judgeDraftPromotion(
       lines: lines(idsOn("BUYER_PORTAL")),
       channel: "BUYER_PORTAL",
     });
-  if (idsOn("STAFF").length)
-    await restrictions.assertLinesSellable({
-      ...base,
-      lines: lines(idsOn("STAFF")),
+  let decision: StaffWriteDecision | undefined;
+  if (idsOn("STAFF").length) {
+    const staffIds = new Set(idsOn("STAFF"));
+    const whole = rGate.whole({ tenant: tenantId, order, user, lines: items, dto: a.ack });
+    decision = await restrictions.assertLinesSellable({
+      ...whole,
+      lines: whole.lines.filter((l) => staffIds.has(l.productId)),
       channel: "STAFF",
     });
+  }
   return {
     productIds: new Set(pids),
     revision: Math.max(0, ...revisions.map((r) => r.revisionNumber ?? 0)),
+    decision,
   };
 }
 
