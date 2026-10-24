@@ -94,6 +94,9 @@ function pushedRefs() {
 const isDocsOnly = (files) => files.length > 0 && files.every(isDocsPath);
 
 const refs = pushedRefs();
+// Ref lines were handed over but none is a gateable push (all deletions or malformed): the HEAD
+// values describe a different commit, so the push is unknown, never HEAD's docs-only verdict.
+const refsUnparsed = refs.length === 0 && splitLines(process.env.RF_PUSH_REFS).length > 0;
 const entries =
   refs.length > 0
     ? refs.map((r) => ({
@@ -101,13 +104,15 @@ const entries =
         sha: r.sha,
         files: r.files,
       }))
-    : [
-        {
-          label: process.env.RF_BRANCH ?? "",
-          sha: process.env.RF_HEAD ?? "",
-          files: splitLines(process.env.RF_CHANGED_FILES),
-        },
-      ];
+    : refsUnparsed
+      ? [{ label: "(no gateable pushed ref)", sha: "", files: [] }]
+      : [
+          {
+            label: process.env.RF_BRANCH ?? "",
+            sha: process.env.RF_HEAD ?? "",
+            files: splitLines(process.env.RF_CHANGED_FILES),
+          },
+        ];
 
 for (const entry of entries) {
   if (!isDocsOnly(entry.files) && reason === "") {

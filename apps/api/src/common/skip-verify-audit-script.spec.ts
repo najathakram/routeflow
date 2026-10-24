@@ -20,10 +20,12 @@ const { scrubbedGitEnv } = require("../../../../scripts/lib/scrubbed-git-env.cjs
   scrubbedGitEnv: () => NodeJS.ProcessEnv;
 };
 
+// RF_PUSH_REFS defaults to "": verify runs this spec from inside pre-push, where the hook may have
+// exported the real push's refs, and a case that leaves it unset must not gate on those.
 function run(env: Record<string, string>) {
   return spawnSync(process.execPath, [SCRIPT], {
     encoding: "utf8",
-    env: { ...scrubbedGitEnv(), ...env },
+    env: { ...scrubbedGitEnv(), RF_PUSH_REFS: "", ...env },
   });
 }
 
@@ -264,7 +266,7 @@ function runIn(cwd: string, env: Record<string, string>) {
   return spawnSync(process.execPath, [SCRIPT], {
     cwd,
     encoding: "utf8",
-    env: { ...scrubbedGitEnv(), ...env },
+    env: { ...scrubbedGitEnv(), RF_PUSH_REFS: "", ...env },
   });
 }
 
@@ -354,6 +356,74 @@ describe("B892: skip-verify audits the PUSHED refs, not the checked-out HEAD", (
     expect(res.status).toBe(0);
     expect(fs.readFileSync(logPath, "utf8")).toContain("fix/example | abc1234");
   });
+
+  it("fails closed when a pushed ref's diff cannot be computed: a new docs-only branch with no origin/master refuses", () => {
+    const { dir, headSha } = fixtureRepo();
+    try {
+      // A clone with no fetched origin/master: `git diff origin/master...<sha>` fails, so the file
+      // list is unknown — and unknown is never docs-only, even for a branch that IS docs-only.
+      git(dir, "update-ref", "-d", "refs/remotes/origin/master");
+      const logPath = tempLogPath();
+      const res = runIn(dir, {
+        RF_PUSH_REFS: `refs/heads/docs/notes ${headSha} refs/heads/docs/notes ${ZERO}\n`,
+        RF_AUDIT_LOG: logPath,
+        SKIP_VERIFY_REASON: "",
+      });
+      expect(res.stderr).toContain("could not determine the changed files for docs/notes");
+      expect(res.status).toBe(1);
+      expect(fs.existsSync(logPath)).toBe(false);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("an update of an existing branch diffs against its remote sha, not origin/master", () => {
+    const { dir, codeSha } = fixtureRepo();
+    try {
+      // feat/code is already on the remote at codeSha; this push adds only a .md on top of it.
+      git(dir, "checkout", "-q", "feat/code");
+      fs.writeFileSync(path.join(dir, "CHANGES.md"), "more notes\n");
+      git(dir, "add", "-A");
+      git(dir, "commit", "-q", "-m", "docs on top");
+      const newSha = git(dir, "rev-parse", "HEAD");
+      const logPath = tempLogPath();
+      const res = runIn(dir, {
+        RF_PUSH_REFS: `refs/heads/feat/code ${newSha} refs/heads/feat/code ${codeSha}\n`,
+        RF_AUDIT_LOG: logPath,
+        SKIP_VERIFY_REASON: "",
+      });
+      // Against origin/master the push would include apps/a.ts and refuse; against the remote sha
+      // it is the one .md, so it passes with no reason.
+      expect(res.stderr).not.toContain("SKIP_VERIFY_REASON");
+      expect(res.status).toBe(0);
+      const log = fs.readFileSync(logPath, "utf8");
+      expect(log).toContain(`feat/code | ${newSha.slice(0, 7)}`);
+      expect(log).toContain("docs-only=yes");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("ref lines that are all deletions or malformed are an unknown push, never HEAD's docs-only verdict", () => {
+    const { dir, codeSha } = fixtureRepo();
+    try {
+      const logPath = tempLogPath();
+      const res = runIn(dir, {
+        // HEAD (docs/notes) is docs-only; it is not what is being pushed.
+        RF_BRANCH: "docs/notes",
+        RF_HEAD: "abc1234",
+        RF_CHANGED_FILES: "NOTES.md",
+        RF_PUSH_REFS: [`(delete) ${ZERO} refs/heads/old-branch ${codeSha}`, "garbage"].join("\n"),
+        RF_AUDIT_LOG: logPath,
+        SKIP_VERIFY_REASON: "",
+      });
+      expect(res.stderr).toContain("could not determine the changed files");
+      expect(res.status).toBe(1);
+      expect(fs.existsSync(logPath)).toBe(false);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 // ─── B892: the REAL .husky/pre-push, run by a REAL `git push`, hands the audit the pushed refs ───
@@ -422,8 +492,8 @@ describe("B892: the real .husky/pre-push forwards git's pushed refs to the audit
     const exportAt = HOOK_TEXT.indexOf(FIXED_EXPORT);
     expect(exportAt).toBeGreaterThan(skipAt);
     expect(exportAt).toBeLessThan(HOOK_TEXT.indexOf("node scripts/skip-verify-audit.mjs"));
-    // and no terminal guard: the hook never re-reads stdin, so there is nothing to guard
-    expect(HOOK_TEXT).not.toMatch(/-t 0/);
+    // and the old second read of stdin is gone
+    expect(HOOK_TEXT).not.toContain(OLD_DOUBLE_CAT);
   });
 
   it(
