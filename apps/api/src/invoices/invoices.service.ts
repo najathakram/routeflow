@@ -11,6 +11,13 @@ import { syncOrderLineCompositions } from "../orders/order-composition";
 import { sendAfterCommit } from "./send-after-commit";
 import { invoiceCompositionFields } from "./invoice-line-composition";
 import { applyComposedLineEdits } from "./invoice-composed-edit";
+import {
+  assertEditFits,
+  assertPaymentFits,
+  assertUnconfirmedAllocationFits,
+  flagUnconfirmedOverReserved,
+  withNoLongerFits,
+} from "./confirmed-basis";
 import { FeatureConfigService } from "../billing/feature-config.service";
 import * as unitAware from "../orders/unit-aware-guard";
 import {
@@ -3083,6 +3090,7 @@ export class InvoicesService {
       ),
       revisedAt: (await revisedAtByInvoice(this.prisma.forTenant(), [id])).get(id) ?? null,
       items: withComponentViews(inv.items) as typeof inv.items, // #2717 M3: displayUnitPrice4 as a number
+      payments: withNoLongerFits(inv).payments, // W-769: each row's derived noLongerFits flag
       hideOriginalPrice,
       paidAtSale: isPaidAtSale(inv), // row 401: a counter sale paid at the till shows no due date / terms
       pendingMirror: await resolvePendingMirror(this.featureConfig, inv.tenantId, inv, inv.order),
@@ -4424,11 +4432,10 @@ export class InvoicesService {
       const alreadyPaid = sumConfirmed(inv.payments);
       const paymentStatus = dto.status ?? "PAID";
       const amount = roundMoney(dto.amount); // #2293: ONE rounded value — guard, write, status
-      // Row 2299 (SA-858): EVERY capacity-consuming write is checked, a DRAFT too (it was PAID only).
+      // Row 2299 (SA-858): EVERY capacity-consuming write is checked, a DRAFT on capacity; W-769: PAID on CONFIRMED money.
       const existing = inv.payments;
       const status = paymentStatus;
-      const overCapacity = capacityRefusal({ total, existing, amount, status, overpay: "REFUSE" });
-      if (overCapacity) throw new BadRequestException(overCapacity.message);
+      assertPaymentFits({ total, existing, amount, status, realMoney: "CONFIRMED_BASIS" });
 
       const paidAt = await counterPay.assertDatedOk(
         tx,
@@ -4469,6 +4476,9 @@ export class InvoicesService {
         },
       });
 
+      // W-769: the unconfirmed rows this real money displaced are flagged (one audit row)
+      if (paymentStatus === "PAID")
+        await flagUnconfirmedOverReserved(tx, { id, tenantId, total }, createdPayment.id);
       const newPaid = paymentStatus === "PAID" ? alreadyPaid + amount : alreadyPaid;
       const newStatus =
         paymentStatus === "PAID"
@@ -4644,6 +4654,9 @@ export class InvoicesService {
           checkStatus: method === "CHECK" ? CheckStatus.RECORDED : null,
         },
       });
+      // W-769 (W-707 folded): the confirmed basis and the spill stay; the displaced unconfirmed rows are flagged
+      const at = { id: inv.id, tenantId: this.prisma.getTenantId(), total };
+      await flagUnconfirmedOverReserved(tx, at, pay.id);
 
       const newStatus = statusFromPayments(
         alreadyPaid + applyHere,
@@ -4859,15 +4872,17 @@ export class InvoicesService {
       const otherPayments = inv.payments.filter((p) => p.id !== paymentId);
       const othersTotal = sumConfirmed(otherPayments);
       const total = Number(inv.total);
-      // PR-2 (B1 hardening, review-opus-v2 condition #6): the remaining-balance
-      // *guard* moves to remainingCapacity() (DRAFT+PAID+PENDING) — a DRAFT "other"
-      // payment now also reserves capacity here, closing the same double-book gap
-      // recordPayment's conversion closes, so this edit can no longer be parked
-      // above what the invoice can actually hold once that DRAFT confirms.
-      const capacity = remainingCapacity(total, otherPayments);
-      if (newPaymentStatus !== "VOID" && amount > capacity + 0.001) {
-        throw new BadRequestException(`Payment amount exceeds remaining balance`);
-      }
+      // PR-2 (B1): an unconfirmed edit stays on CAPACITY (a DRAFT "other" reserves it, #3645). W-769 (SA-922 answer 2): a PAID
+      // edit, a confirm (DRAFT → PAID) and a reopen (VOID → PAID) are real money on CONFIRMED money, through the ONE policy
+      // (SA-862 rule 4: a confirm / reopen that confirmed money already covers is 409 UNCONFIRMED_PAYMENT_SUPERSEDED).
+      const confirming = payment.status !== "PAID";
+      assertEditFits({
+        total,
+        others: otherPayments,
+        amount,
+        status: newPaymentStatus,
+        confirming,
+      });
 
       const guard = await edit.check(tx, payment, inv.customerId); // a NEW dedupe identity only
       await tx.invoicePayment.update({
@@ -4887,6 +4902,7 @@ export class InvoicesService {
         },
       });
       await guard?.recorded(tx, [paymentId], invoiceId);
+      if (newPaymentStatus === "PAID") await flagUnconfirmedOverReserved(tx, inv, paymentId); // W-769: what this confirm displaced
 
       const newPaid = othersTotal + effectiveAmount;
       const newStatus = statusFromPayments(newPaid, total, inv.dueDate, inv.status, tz, "NOT_PAID");
@@ -5198,6 +5214,14 @@ export class InvoicesService {
             }
           }
 
+          // W-769 (SA-922 answer 1): an unconfirmed (DRAFT) allocation must fit CAPACITY (#3645); a PAID one is [L-O2]'s
+          // CONFIRMED_BASIS_ALLOW_OVERPAY (never refused by an unconfirmed row; the rows it displaces are flagged below)
+          await assertUnconfirmedAllocationFits(
+            tx,
+            { id: alloc.invoiceId, total: invoice.total },
+            roundMoney(alloc.amount),
+            status,
+          );
           const payment = await tx.invoicePayment.create({
             data: {
               invoiceId: alloc.invoiceId,
@@ -5221,6 +5245,9 @@ export class InvoicesService {
           // concurrent void conflicts (40001) and its retry re-reads it (the #2258 writer invariant).
           let invoiceData: Prisma.InvoiceUpdateInput = { updatedAt: new Date() };
           if (status === "PAID") {
+            const at = { id: alloc.invoiceId, tenantId: invoice.tenantId, total: invoice.total };
+            const displaced = await flagUnconfirmedOverReserved(tx, at, payment.id);
+            if (displaced.length > 0) opts?.onDisplaced?.(alloc.invoiceId, displaced);
             // F03/R1: CONFIRMED (PAID) rows only feed recomputeStatus.
             const allPayments = await tx.invoicePayment.findMany({
               where: { invoiceId: alloc.invoiceId, ...CONFIRMED_PAYMENT },

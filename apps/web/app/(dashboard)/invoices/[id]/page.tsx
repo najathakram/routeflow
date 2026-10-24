@@ -81,7 +81,7 @@ import { RestrictionOverrideNote } from "@/components/RestrictionOverrideNote";
 import { invoiceLineQtyText } from "@/lib/invoice-line-unit";
 import { ComponentSubLines } from "@/components/ComponentSubLines";
 import type { LineComponentView } from "@routeflow/types";
-import { CHECK_TRANSITIONS, withRecordAnyway } from "@routeflow/types";
+import { CHECK_TRANSITIONS, PAYMENT_NO_LONGER_FITS_COPY, withRecordAnyway } from "@routeflow/types";
 import { unvoidAmendedPeriodNote, type UnvoidInvoiceResult } from "@routeflow/types";
 import { InvoiceTotalsSummary } from "./InvoiceTotalsSummary";
 import { InvoiceLineAmount } from "./InvoiceLineAmount";
@@ -1959,6 +1959,28 @@ export default function InvoiceDetailPage() {
     );
   };
 
+  // W-769: the flagged unconfirmed row's Void is the EXISTING payment PATCH with status VOID (amount and method kept: the DTO needs them)
+  const handleVoidPayment = (pmt: InvoicePayment) => {
+    updatePayment.mutate(
+      {
+        invoiceId: invoice.id,
+        paymentId: pmt.id,
+        method: pmt.method as SelectablePaymentMethod,
+        amount: Number(pmt.amount),
+        status: "VOID",
+      },
+      {
+        onSuccess: () => toast({ title: "Payment voided", variant: "info" }),
+        onError: (err: any) =>
+          toast({
+            title: "Failed to void payment",
+            description: err?.response?.data?.message ?? undefined,
+            variant: "error",
+          }),
+      },
+    );
+  };
+
   const handleDeletePayment = () => {
     if (!deletingPayment) return;
     deletePayment.mutate(
@@ -2734,6 +2756,18 @@ export default function InvoiceDetailPage() {
                                 </span>
                               )}
                             </span>
+                            {pmt.noLongerFits && !isVoided && (
+                              <button
+                                onClick={() => handleVoidPayment(pmt)}
+                                className={cn(
+                                  TAP_TARGET,
+                                  "rounded p-1 text-navy/30 transition-all hover:text-danger",
+                                )}
+                                title="Void payment"
+                              >
+                                <XCircle className="h-3.5 w-3.5" />
+                              </button>
+                            )}
                             {isEditable && (
                               <>
                                 <button
@@ -2775,6 +2809,11 @@ export default function InvoiceDetailPage() {
                             <span className="text-xs text-navy/70">· {pmt.reference}</span>
                           )}
                         </div>
+                        {pmt.noLongerFits && !isVoided && (
+                          <p className="mt-1 text-xs font-medium text-warning">
+                            {PAYMENT_NO_LONGER_FITS_COPY}
+                          </p>
+                        )}
                         {pmt.notes && <p className="mt-0.5 text-xs text-navy/70">{pmt.notes}</p>}
                         {pmt.imageKey && (
                           <button

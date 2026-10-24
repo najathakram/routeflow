@@ -139,8 +139,8 @@ describe("row 498: the InvoicePayment writer census", () => {
       const n = (fs.readFileSync(file, "utf8").match(/capacityRefusal\(/g) ?? []).length;
       if (n) callers[rel(file)] = n;
     }
-    // recordPayment only today; the SA-864 owner answer lowers or raises this in the same diff
-    expect(callers).toEqual({ "invoices/invoices.service.ts": 1 });
+    // W-769: the ONE api call site is invoices/confirmed-basis.ts; every writer reaches it through assertPaymentFits
+    expect(callers).toEqual({ "invoices/confirmed-basis.ts": 1 });
   });
 
   it("row 2299: every CONFIRMED site names its hold (SA-867 condition 1)", () => {
@@ -149,10 +149,11 @@ describe("row 498: the InvoicePayment writer census", () => {
         if (c.kind === "CONFIRMED") expect(c.why).toContain("held: SA-864, owner question 7b");
   });
 
-  it("row 2299: recordPayment reaches the ONE capacity helper with an explicit policy; the CONFIRMED sites do not (SA-864)", () => {
+  it("row 2299 (W-769): recordPayment takes CONFIRMED_BASIS through the ONE helper; bookkeeping only flags", () => {
     const inv = read("invoices/invoices.service.ts");
-    expect(inv.match(/capacityRefusal\(/g)?.length).toBe(1); // recordPayment only, until the owner answers
-    expect(inv).toMatch(/capacityRefusal\(\{[^}]*overpay: "REFUSE"/);
+    expect(inv).not.toMatch(/capacityRefusal\(/);
+    expect(inv).toMatch(/assertPaymentFits\(\{[^}]*realMoney: "CONFIRMED_BASIS/);
+    expect(read("invoices/confirmed-basis.ts")).toMatch(/overpay: p\.status === "PAID"/);
     expect(read("bookkeeping/bookkeeping.service.ts")).not.toMatch(/capacityRefusal\(/);
   });
 

@@ -77,6 +77,9 @@ module.exports = {
       "<rootDir>/../../packages/types/credit-over-limit-copy.ts",
     // I-120: the shared Counter sale / Store pickup / Complete at counter words (pure, no imports), same subpath trick.
     "^@routeflow/types/counter-copy$": "<rootDir>/../../packages/types/counter-copy.ts",
+    // W-769: the shared no-longer-fits sentence (pure, no imports), same subpath trick.
+    "^@routeflow/types/no-longer-fits-copy$":
+      "<rootDir>/../../packages/types/no-longer-fits-copy.ts",
     // M8: the shared shipment save rule + not-shipped line (pure, no imports), same subpath trick.
     "^@routeflow/types/shipment-save$": "<rootDir>/../../packages/types/shipment-save.ts",
     // SA-817 A: the one persisted-submit-key rule for a draft (pure, no imports), same subpath trick.
