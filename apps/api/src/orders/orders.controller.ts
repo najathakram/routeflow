@@ -410,7 +410,8 @@ export class OrdersController {
     const created = await this.ordersService.create(
       idempotencyKey ? ({ ...dto, idempotencyKey } as CreateOrderDto) : dto,
       user,
-      { skipAutoMerge: choice === "separate" || separateForDiscount },
+      // SA-923: a discount keeps this order apart ONCE; persisting skipAutoMerge would opt it out of every future merge.
+      { skipAutoMerge: choice === "separate", ...(separateForDiscount && { separateOnce: true }) },
     );
     // For non-staff (driver / customer) callers, keep the old auto-consolidate behaviour
     // for newly-created orders that don't have skipAutoMerge set.

@@ -1466,7 +1466,7 @@ export class OrdersService implements OnApplicationBootstrap {
     // An auto-merge folds these items into an EXISTING order whose own business
     // date stays authoritative, so a supplied orderDate would be silently dropped.
     // Refuse instead — the operator can re-submit as a separate order.
-    if (orderDate && !options.skipAutoMerge) {
+    if (orderDate && !options.skipAutoMerge && !options.separateOnce) {
       await assertNoBackdatedMerge(this, customerId, {
         explicit: dto.fulfillPath,
         ...fulfilCaller(user),

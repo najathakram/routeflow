@@ -277,7 +277,7 @@ describe("OrdersController — merge choice vs orderDate", () => {
       expect(ordersService.create).toHaveBeenCalledWith(
         expect.objectContaining({ discountAmount: 5 }),
         operatorPayload,
-        { skipAutoMerge: true },
+        { skipAutoMerge: false, separateOnce: true }, // SA-923: apart this once, never opted out of future merges
       );
     });
 
@@ -293,7 +293,8 @@ describe("OrdersController — merge choice vs orderDate", () => {
       );
       expect(ordersService.updateOrderItems).not.toHaveBeenCalled();
       expect(ordersService.create).toHaveBeenCalledWith(expect.anything(), operatorPayload, {
-        skipAutoMerge: true,
+        skipAutoMerge: false,
+        separateOnce: true,
       });
     });
 
@@ -311,7 +312,8 @@ describe("OrdersController — merge choice vs orderDate", () => {
       );
       expect(ordersService.updateOrderItems).not.toHaveBeenCalled();
       expect(ordersService.create).toHaveBeenCalledWith(expect.anything(), operatorPayload, {
-        skipAutoMerge: true,
+        skipAutoMerge: false,
+        separateOnce: true,
       });
     });
 

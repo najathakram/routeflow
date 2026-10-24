@@ -5,6 +5,8 @@
  *   create() and invoice generation already do: total = lines + tax − discount (head: lines + tax, over by the discount),
  *   and the order equals its draft invoice after the rebuild. An edit that shrinks the order below its discount is
  *   refused (B451) and writes nothing.
+ * - SA-923 Fold 1: the CR apply equals Σ its draft invoices; a CR shrink below the discount is refused; the staff create
+ *   beside a discounted open order is a separate order that stays mergeable later (Fold 2: no persisted skipAutoMerge).
  * - Merges (SA-918 §2, GUARD): force-consolidate with a discounted loser OR winner is 409 ORDER_MERGE_DISCOUNTED and
  *   moves nothing; the automatic merge (mergeAllPendingForCustomer: the post-commit fold, the buyer fold's sweep, the
  *   template cron and the hourly sweep all call it) skips and leaves the orders separate.
@@ -24,6 +26,7 @@ import { TenantContextService } from "../tenant/tenant-context.service";
 import { EncryptionService } from "../common/encryption.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { OrdersService } from "./orders.service";
+import { OrdersController } from "./orders.controller";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { INVOICE_EDIT_STUBS } from "./testing/invoice-edit-stubs";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
@@ -392,9 +395,9 @@ describeDb(
       expect(n((await orderRow(id)).total)).toBe(10);
     }, 120_000);
 
-    it("E2: a change-request apply on a discounted order re-totals as lines − discount", async () => {
-      const id = await createOrder(20, 10);
-      const route = await raw.route.create({ data: { name: `r-${run}`, tenantId } as any });
+    /** Put the order on an IN_PROGRESS run's stop, so a driver's change request can be approved at it. */
+    async function atStop(id: string) {
+      const route = await raw.route.create({ data: { name: `r-${run}-${id}`, tenantId } as any });
       routeIds.push(route.id);
       const routeStop = await raw.routeStop.create({
         data: { tenantId, routeId: route.id, stopNumber: 1, customerId } as any,
@@ -421,20 +424,79 @@ describeDb(
         where: { id },
         data: { routeRunId: rr.id, routeRunStopId: stop.id },
       });
-      const cr = await raw.changeRequest.create({
+      return stop.id;
+    }
+    const changeRequest = (
+      id: string,
+      stopId: string,
+      type: string,
+      payload: object,
+      orderItemId?: string,
+    ) =>
+      raw.changeRequest.create({
         data: {
           tenantId,
           orderId: id,
           productId,
-          routeRunStopId: stop.id,
-          type: "ADD_ITEM" as any,
-          payload: { productId, qty: 5 },
+          routeRunStopId: stopId,
+          type: type as any,
+          payload,
+          orderItemId,
         },
       });
-      await inTenant(() => orders.approveChangeRequestAtStop(cr.id, driver()));
+    const liveInvoiceTotal = async (id: string) =>
+      (
+        await raw.invoice.findMany({
+          where: { orderId: id, status: { notIn: ["VOID", "WRITTEN_OFF"] } },
+        })
+      ).reduce((s, i) => s + n(i.total), 0);
+
+    it("E2: a change-request apply on a discounted order re-totals as lines − discount, and the order equals Σ its draft invoices (SA-923)", async () => {
+      const id = await createOrder(20, 10);
+      const stopId = await atStop(id);
+      const cr = await changeRequest(id, stopId, "ADD_ITEM", { productId, qty: 5 });
+      await withRealInvoices(async () => {
+        await inTenant(() => realInvoices.createInvoiceFromOrder(id));
+        await inTenant(() => orders.approveChangeRequestAtStop(cr.id, driver()));
+      });
       const after = await orderRow(id);
       expect(n(after.subtotal)).toBe(25);
       expect(n(after.total)).toBe(15); // head: 25
+      expect(await liveInvoiceTotal(id)).toBe(15);
+    }, 120_000);
+
+    it("E4 (SA-923): a change request that shrinks the order below its discount is refused (B451) and writes nothing", async () => {
+      const id = await createOrder(20, 10);
+      const stopId = await atStop(id);
+      const [line] = await raw.orderItem.findMany({ where: { orderId: id } });
+      const cr = await changeRequest(id, stopId, "CHANGE_QTY", { newQty: 5 }, line.id);
+      const err: any = await inTenant(() =>
+        orders.approveChangeRequestAtStop(cr.id, driver()),
+      ).catch((e: unknown) => e);
+      expect(err?.getStatus?.()).toBe(400);
+      expect(err.getResponse()).toMatchObject({ code: "MONEY_INVARIANT" });
+      expect(n((await raw.orderItem.findUniqueOrThrow({ where: { id: line.id } })).qty)).toBe(20);
+      expect(n((await orderRow(id)).total)).toBe(10);
+      expect((await raw.changeRequest.findUniqueOrThrow({ where: { id: cr.id } })).status).toBe(
+        "PENDING",
+      );
+    }, 120_000);
+
+    it("S (SA-923): a staff create beside a discounted open order is created separately, and NOT opted out of future merges", async () => {
+      const open = await createOrder(4, 3);
+      const before = await orderRow(open);
+      const controller = new OrdersController(orders, {} as any, {} as any, {} as any);
+      const created: any = await inTenant(() =>
+        controller.create(
+          { customerId, items: [{ productId, qty: 2 }], mergeChoice: "merge" } as any,
+          operator(),
+        ),
+      );
+      expect(created.id).not.toBe(open);
+      expect(await raw.order.count({ where: { tenantId } })).toBe(2);
+      expect((await orderRow(created.id)).skipAutoMerge).toBe(false); // head: true (opted out of every future merge)
+      const after = await orderRow(open);
+      expect([n(after.total), n(after.discountAmount)]).toEqual([n(before.total), 3]);
     }, 120_000);
 
     const twoOrders = async (winnerDiscount: number, loserDiscount: number) => {
