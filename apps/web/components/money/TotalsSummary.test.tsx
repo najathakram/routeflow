@@ -19,6 +19,19 @@ describe("TotalsSummary (W-882)", () => {
     expect(screen.queryByText(/order total|estimated total|amount due/i)).toBeNull();
   });
 
+  it("names the discount and shipping inputs by their labels (e2e 56 uses getByLabel)", () => {
+    const totals = orderBuilderTotals([{ unitPrice: 10, qty: 1 }]);
+    render(
+      <TotalsSummary
+        totals={totals}
+        discountInput={<input type="number" />}
+        shippingInput={<input type="number" />}
+      />,
+    );
+    expect(screen.getByLabelText("Order discount")).toBeInTheDocument();
+    expect(screen.getByLabelText("Shipping fee")).toBeInTheDocument();
+  });
+
   it("the tax label names a percent only when a rate is set", () => {
     const totals = orderBuilderTotals([{ unitPrice: 10, qty: 1 }]);
     const { rerender } = render(<TotalsSummary totals={totals} taxRatePct={null} />);

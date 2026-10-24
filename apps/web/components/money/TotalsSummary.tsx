@@ -45,10 +45,10 @@ export function TotalsSummary({
       </div>
       {(discountInput || totals.discount > 0) && (
         <div className={row}>
-          <span className="flex items-center gap-2">
+          <label className="flex items-center gap-2">
             {discountInput ? "Order discount" : "Discount"}
             {discountInput}
-          </span>
+          </label>
           {totals.discount > 0 && (
             <span className="text-amber-600">−{formatMoney(totals.discount)}</span>
           )}
@@ -66,10 +66,10 @@ export function TotalsSummary({
       ))}
       {(shippingInput || totals.shipping > 0) && (
         <div className={row}>
-          <span className="flex items-center gap-2">
+          <label className="flex items-center gap-2">
             Shipping fee
             {shippingInput}
-          </span>
+          </label>
           {totals.shipping > 0 && (
             <span className="text-navy">+{formatMoney(totals.shipping)}</span>
           )}

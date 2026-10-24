@@ -12,15 +12,20 @@ const ROOTS = [
   join(WEB, "components", "LineItemRow.tsx"),
 ];
 
-/** a template `$${…toFixed(`, a JSX `$` + `{…toFixed(2)}` / `{…toLocaleString(`, or `"$" +` */
+/**
+ * a template `$${…toFixed(`, a JSX `$` + `{…toFixed(2)}` / `{Number(…).toLocaleString(` with cent digits, or `"$" +`.
+ * `\s*` after the `$` is what catches Prettier's two-line form, so these run against the WHOLE file, not line by line.
+ */
 export const HAND_MONEY = [
   /\$\$\{[^}]*toFixed\(/,
-  /\$\{[^}]*(?:toFixed\(2\)|toLocaleString\()[^}]*\}/,
+  /\$\s*\{[^}]*?toFixed\(2\)[^}]*\}/,
+  /\$\s*\{\s*[^}]*?toLocaleString\([\s\S]{0,80}?(?:minimumFractionDigits|currency)/,
   /["']\$["']\s*\+/,
 ];
 
-export const countHandMoney = (src: string): number =>
-  src.split("\n").filter((line) => HAND_MONEY.some((re) => re.test(line))).length;
+/** One alternation, so a site that two patterns both match is counted once. */
+const HAND_MONEY_ANY = new RegExp(HAND_MONEY.map((re) => re.source).join("|"), "g");
+export const countHandMoney = (src: string): number => src.match(HAND_MONEY_ANY)?.length ?? 0;
 
 /** Remaining hand-rolled sites, by path relative to apps/web. Lower only. */
 const MAX: Record<string, number> = {
@@ -28,7 +33,7 @@ const MAX: Record<string, number> = {
   "app/(dashboard)/orders/_components/scan/PriceEditor.tsx": 6,
   "app/(dashboard)/orders/_components/CreditNotePicker.tsx": 3,
   "app/(dashboard)/orders/_components/SplitInvoiceModal.tsx": 2,
-  "app/(dashboard)/orders/page.tsx": 1,
+  "app/(dashboard)/orders/page.tsx": 2,
   "app/(dashboard)/orders/_components/scan/ScanOrderScreen.tsx": 1,
   "app/(dashboard)/orders/_components/CounterDayClose.tsx": 1,
 };
@@ -50,6 +55,20 @@ describe("money text pin (W-882)", () => {
     expect(countHandMoney("<span>${total.toFixed(2)}</span>")).toBe(1);
     expect(countHandMoney('const b = "$" + n;')).toBe(1);
     expect(countHandMoney("const c = formatMoney(n);")).toBe(0);
+  });
+
+  it("catches Prettier's two-line form: the `$` ends one line and the `{…}` opens the next", () => {
+    expect(countHandMoney("<div>3 items · $\n  {total.toFixed(2)}\n</div>")).toBe(1);
+    expect(
+      countHandMoney(
+        '<td>$\n{Number(t).toLocaleString("en-US", {\n minimumFractionDigits: 2,\n })}</td>',
+      ),
+    ).toBe(1);
+  });
+
+  it("does not flag a date or a count printed inside a template", () => {
+    expect(countHandMoney('`on ${when.toLocaleString("en-US", { month: "short" })}`')).toBe(0);
+    expect(countHandMoney('`${meta.total.toLocaleString("en-US")} orders`')).toBe(0);
   });
 
   it("no file prints money by hand beyond its recorded maximum", () => {

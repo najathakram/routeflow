@@ -3316,8 +3316,8 @@ export function CreateOrderModal({
               {mergePrompt.orderNumber ?? mergePrompt.id.slice(0, 8)}
             </div>
             <div className="text-navy/70">
-              {mergePrompt.itemCount} item{mergePrompt.itemCount === 1 ? "" : "s"} · $
-              {mergePrompt.total.toFixed(2)}
+              {mergePrompt.itemCount} item{mergePrompt.itemCount === 1 ? "" : "s"} ·{" "}
+              {formatMoney(mergePrompt.total)}
             </div>
           </div>
         )}
