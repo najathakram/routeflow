@@ -292,9 +292,10 @@ export function isPostdatedCheck(checkDate: string, today: string): boolean {
 
 /**
  * "2*code" / "2x code" / "2 x code": a 1-3 digit quantity, a star or an x, then the code. A star needs no space; an x needs one
- * after it (or the x is part of the code: "2xCOLA", "12x100"). Four digits are not a quantity, so "1000*A" stays one code.
+ * after it (or the x is part of the code: "2xCOLA", "12x100"). The code after the prefix has NO spaces (a barcode never does), so a typed name search ("2 x 4 stud", "6 x 330ml can") stays one whole search.
+ * Four digits are not a quantity, so "1000*A" stays one code.
  */
-const QTY_PREFIX = /^(\d{1,3})\s*(?:\*|[x\u00d7](?=\s))\s*(\S.*)$/i;
+const QTY_PREFIX = /^(\d{1,3})\s*(?:\*|[x\u00d7](?=\s))\s*(\S+)$/i;
 
 /**
  * The scan field: 1-3 digits are a QUANTITY to multiply the next scan by; "2*code" / "2x code" is that quantity AND the code

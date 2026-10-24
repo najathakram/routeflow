@@ -102,7 +102,8 @@ export function useCounterSaleScan(deps: Deps) {
       while (queueRef.current.length > 0 && !pausedRef.current) {
         const epoch = epochRef.current;
         const item = queueRef.current[0];
-        if (item.kind === "code" && item.qty) carryRef.current = item.qty; // F01: the prefix is this code's quantity
+        // F01: the prefix is this code's quantity; it never touches the carry (a dropped item must leave none behind)
+        const qty = item.kind === "code" && item.qty ? item.qty : carryRef.current;
         let result: BarcodeResolveResult | null = null;
         let lookupFailed = false;
         if (!depsRef.current.locked) {
@@ -137,7 +138,7 @@ export function useCounterSaleScan(deps: Deps) {
             pausedRef.current = true;
             setPicker({
               code: item.code,
-              qty: carryRef.current,
+              qty,
               matches: byCategory.products,
               category: {
                 name: byCategory.category,
@@ -157,14 +158,10 @@ export function useCounterSaleScan(deps: Deps) {
           setCarry(1);
         } else if (result.ambiguous && result.matches) {
           pausedRef.current = true;
-          setPicker({ code: item.code, qty: carryRef.current, matches: result.matches });
+          setPicker({ code: item.code, qty, matches: result.matches });
           return; // the item stays at the head until one is chosen
         } else {
-          depsRef.current.add(
-            result.product,
-            scanLevelForHit(item.code, result.product),
-            carryRef.current,
-          );
+          depsRef.current.add(result.product, scanLevelForHit(item.code, result.product), qty);
           confirmAdded(result.product);
           setMessage("");
           setCarry(1);

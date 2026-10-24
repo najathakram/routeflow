@@ -38,6 +38,7 @@ export function useCustomerListbox<C extends CustomerMatch>(
     "aria-autocomplete": "list" as const,
     "aria-expanded": open,
     "aria-controls": open ? `${baseId}-list` : undefined,
+    "aria-describedby": open ? `${baseId}-keys` : undefined,
     "aria-activedescendant": open && active >= 0 ? optionId(active) : undefined,
     onKeyDown: (e: React.KeyboardEvent<HTMLInputElement>) => {
       if (matches.length === 0) return;
@@ -61,7 +62,7 @@ export function useCustomerListbox<C extends CustomerMatch>(
   };
   return {
     inputProps,
-    listbox: { id: `${baseId}-list`, open, active, optionId },
+    listbox: { id: `${baseId}-list`, keysId: `${baseId}-keys`, open, active, optionId },
   };
 }
 
@@ -119,9 +120,15 @@ export function CounterCustomerMatches<C extends CustomerMatch>({
             </li>
           ))}
         </ul>
-        {listbox ? (
-          <p className="text-xs text-navy/70" data-testid="counter-customer-keys">
-            ↑↓ to choose · Enter to pick
+        {listbox && !disabled ? (
+          // arrow keys exist on a keyboard only: phones and tablets never see the line
+          <p
+            id={listbox.keysId}
+            className="hidden text-xs text-navy/70 lg:block"
+            data-testid="counter-customer-keys"
+          >
+            <span aria-hidden="true">↑↓ to choose · Enter to pick</span>
+            <span className="sr-only">Up and down arrows to choose, Enter to pick</span>
           </p>
         ) : null}
       </>

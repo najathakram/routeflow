@@ -4,7 +4,7 @@ import { Modal } from "@routeflow/ui";
 
 /**
  * W-710 / FE1: a dialog eases out on the way in (about 200 ms) and eases in on the way out (about
- * 150 ms), instead of the plugin's linear default. jsdom runs no animation, so this pins the
+ * 150 ms), instead of tailwindcss-animate's default (CSS `ease` at 150 ms). jsdom runs no animation, so this pins the
  * classes that the tailwindcss-animate plugin turns into the timing function and duration, and
  * that reduced motion still switches every animation off.
  */

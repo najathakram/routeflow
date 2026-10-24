@@ -284,6 +284,12 @@ describe("parseScanField: type a quantity, then scan, to multiply", () => {
     });
     expect(parseScanField("3 \u00d7 COLA")).toEqual({ kind: "code", code: "COLA", qty: 3 });
   });
+  it("F01: a typed name search with spaces after the prefix stays one whole search", () => {
+    expect(parseScanField("2 x 4 stud")).toEqual({ kind: "code", code: "2 x 4 stud" });
+    expect(parseScanField("6 x 330ml can")).toEqual({ kind: "code", code: "6 x 330ml can" });
+    expect(parseScanField("2*4 stud")).toEqual({ kind: "code", code: "2*4 stud" });
+    expect(parseScanField("2*COLA")).toEqual({ kind: "code", code: "COLA", qty: 2 });
+  });
   it("F01: the prefix quantity is capped at the 3-digit maximum a bare quantity has", () => {
     expect(parseScanField("999*COLA")).toEqual({ kind: "code", code: "COLA", qty: 999 });
     // a 4-digit prefix is not a quantity: the whole text stays one code, as before
