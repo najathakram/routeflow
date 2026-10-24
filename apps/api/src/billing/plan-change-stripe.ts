@@ -11,7 +11,7 @@ import type { StripeService } from "./stripe.service";
 import { CHECKOUT_ADDON_EXPAND, checkoutAddonItems } from "./stripe-addon-items";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { prorationAllowedFor } from "./price-override";
-import { createRestoredProduct, ensurePlanProduct } from "./stripe-product";
+import { ensureAddonProduct, ensurePlanProduct, type StripeProductKind } from "./stripe-product";
 import {
   armNeedsReconcile,
   clearNeedsReconcile,
@@ -98,6 +98,8 @@ export interface PlanChangePushArgs {
   /** Every Stripe item id a TenantAddon row owns — how the base-plan item is told from an add-on item. */
   knownAddonItemIds: ReadonlySet<string>;
   deleteItems: readonly DeletableAddonItem[];
+  /** The plan being left: a revert that finds the base item's old product dead puts the item on that plan's owned product. */
+  fromPlanKey?: string | null;
   /** The local row's state, carried only into the needs-reconcile alert. */
   localState?: Record<string, unknown>;
   /** Who reads an error from this push (default: the tenant). */
@@ -117,7 +119,16 @@ interface RevertPlan {
   baseBefore: PriceData;
   /** False when the base item was left out of the update (its amount did not change): a revert leaves it alone. */
   baseChanged: boolean;
-  restore: { oldItemId: string; rowId: string; price_data: PriceData; quantity: number }[];
+  /** The plan the base item was on, so its owned product can stand in for a dead one. */
+  baseBeforePlanKey: string | null;
+  /** `sku` is the add-on's SKU (its product's `addonSku` tag), null when Stripe's object does not carry it. */
+  restore: {
+    oldItemId: string;
+    rowId: string;
+    sku: string | null;
+    price_data: PriceData;
+    quantity: number;
+  }[];
 }
 
 export interface PlanChangePush {
@@ -239,7 +250,14 @@ export async function pushPlanChange(
   // snapshotted so a revert can re-create them.
   const present = new Map<string, any>(items.map((i) => [i.id, i]));
   const settled = new Set<string>();
-  const deletes: { itemId: string; rowId: string; price_data: PriceData; quantity: number }[] = [];
+  const addonSkuByItem = new Map(checkoutAddonItems(sub).map((i) => [i.itemId, i.sku]));
+  const deletes: {
+    itemId: string;
+    rowId: string;
+    sku: string | null;
+    price_data: PriceData;
+    quantity: number;
+  }[] = [];
   for (const d of a.deleteItems) {
     const item = present.get(d.itemId);
     if (!item) {
@@ -251,7 +269,12 @@ export async function pushPlanChange(
       logger.error(`Plan change tenant ${a.tenantId}: add-on item ${d.itemId} is not restorable`);
       throw new ServiceUnavailableException(PLAN_CHANGE_BILLING_FAILED);
     }
-    deletes.push({ ...d, price_data, quantity: item.quantity });
+    deletes.push({
+      ...d,
+      sku: addonSkuByItem.get(d.itemId) ?? null,
+      price_data,
+      quantity: item.quantity,
+    });
   }
 
   const interval = basePrior.recurring.interval;
@@ -396,9 +419,11 @@ export async function pushPlanChange(
       baseId: base.id,
       baseBefore: basePrior,
       baseChanged,
+      baseBeforePlanKey: a.fromPlanKey ?? null,
       restore: deletes.map((d) => ({
         oldItemId: d.itemId,
         rowId: d.rowId,
+        sku: d.sku,
         price_data: d.price_data,
         quantity: d.quantity,
       })),
@@ -413,37 +438,46 @@ export interface RestoredItem {
   newItemId: string | null;
 }
 
-const OWNED_PRODUCT_ID = /^rf_(plan|addon)_/;
+/** A prior product and what it stood for, so a dead one can be replaced by the shared product we own. */
+interface PriorProduct {
+  id: string;
+  /** "plan" -> `rf_plan_<key>`, "addon" -> `rf_addon_<key>`; key null = the push did not learn it. */
+  kind: StripeProductKind;
+  key: string | null;
+}
 
-/** Returns the product id the revert should send for each prior one (the same id when it is usable as it is). */
+/**
+ * Returns the product id the revert should send for each prior one (the same id when it is usable as it is). A
+ * product that is inactive or gone (Stripe refuses it in price_data, which would strand the revert) is replaced
+ * by the OWNED product of the same plan code or add-on SKU: ensureStripeProduct reactivates or creates it, so the
+ * restored item keeps its `addonSku` tag and a stable name, and a retried revert lands on the same id.
+ */
 async function healPriorProducts(
   deps: PlanChangeDeps,
-  push: PlanChangePush,
-  ids: readonly string[],
+  prior: readonly PriorProduct[],
 ): Promise<(id: string) => string> {
   const swap = new Map<string, string>();
-  const products = deps.stripe.client?.products;
-  if (products) {
-    for (const id of new Set(ids.filter((i) => typeof i === "string"))) {
+  const client = deps.stripe.client;
+  if (client) {
+    for (const p of prior) {
+      if (typeof p.id !== "string" || swap.has(p.id)) continue;
       let found: { active?: boolean } | null = null;
       try {
-        found = await products.retrieve(id);
+        found = await client.products.retrieve(p.id);
       } catch (err) {
         const e = err as { statusCode?: number; code?: string };
         if (e?.statusCode !== 404 && e?.code !== "resource_missing") throw err;
       }
-      if (found?.active !== false && found) continue;
-      if (found && OWNED_PRODUCT_ID.test(id)) {
-        await products.update(id, { active: true });
-      } else {
-        // a Checkout-born product is born inactive and cannot be reactivated: a fresh active one carries the price
-        const madeId = await createRestoredProduct(
-          deps.stripe.client,
-          id,
-          `${push.key}:revert:product:${id}`,
-        );
-        swap.set(id, madeId);
+      if (found && found.active !== false) continue;
+      if (!p.key) {
+        // Nothing says which owned product this item belongs on: refuse rather than invent one.
+        throw new Error(`revert: prior product ${p.id} is unusable and its ${p.kind} is unknown`);
       }
+      const owned =
+        p.kind === "plan"
+          ? await ensurePlanProduct(client, p.key, p.key)
+          : await ensureAddonProduct(client, p.key, p.key);
+      if (owned !== p.id) swap.set(p.id, owned);
     }
   }
   return (id) => swap.get(id) ?? id;
@@ -462,10 +496,23 @@ export async function revertPlanChange(
   if (!push.pushed || !push.revert || !push.key || !push.stripeSubId) return [];
   const { baseId, baseChanged } = push.revert;
   // W-832: the prior products may have gone inactive since the push (Stripe refuses a price_data.product that is
-  // inactive, which would strand the revert). Heal them first: reactivate one we own, swap a dead Checkout-born one.
-  const heal = await healPriorProducts(deps, push, [
-    ...(baseChanged ? [push.revert.baseBefore.product] : []),
-    ...push.revert.restore.map((r) => r.price_data.product),
+  // inactive, which would strand the revert). Heal them first: each dead one is replaced by the owned product of its
+  // plan code or add-on SKU.
+  const heal = await healPriorProducts(deps, [
+    ...(baseChanged
+      ? [
+          {
+            id: push.revert.baseBefore.product,
+            kind: "plan" as const,
+            key: push.revert.baseBeforePlanKey,
+          },
+        ]
+      : []),
+    ...push.revert.restore.map((r) => ({
+      id: r.price_data.product,
+      kind: "addon" as const,
+      key: r.sku,
+    })),
   ]);
   const baseBefore = { ...push.revert.baseBefore, product: heal(push.revert.baseBefore.product) };
   const restore = push.revert.restore.map((r) => ({

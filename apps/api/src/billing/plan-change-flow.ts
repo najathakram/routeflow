@@ -169,6 +169,7 @@ export async function beginStripeFirstPlanChange(
       proration: a.proration,
       knownAddonItemIds,
       deleteItems,
+      fromPlanKey: a.fromPlanKey,
       localState: a.localState,
       audience: a.audience,
     },

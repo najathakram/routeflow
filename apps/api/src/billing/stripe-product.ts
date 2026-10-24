@@ -14,10 +14,7 @@ export interface StripeProductsClient {
   products: {
     retrieve(id: string): Promise<{ id: string; active?: boolean; name?: string }>;
     update(id: string, params: Record<string, unknown>): Promise<{ id: string }>;
-    create(
-      params: Record<string, unknown>,
-      options?: { idempotencyKey?: string },
-    ): Promise<{ id: string }>;
+    create(params: Record<string, unknown>): Promise<{ id: string }>;
   };
 }
 
@@ -61,26 +58,6 @@ export async function ensureStripeProduct(
     if (!raced) throw err;
     return reconcile(client, id, raced);
   }
-}
-
-/**
- * W-832: a fresh ACTIVE product standing in for one that cannot carry a price any more (a Checkout-born product is
- * born inactive and cannot be reactivated, or it is gone). Not deterministic by id; the idempotency key makes a
- * retried revert reuse the same product.
- */
-export async function createRestoredProduct(
-  client: StripeProductsClient,
-  fromProductId: string,
-  idempotencyKey: string,
-): Promise<string> {
-  const made = await client.products.create(
-    {
-      name: "RouteFlow subscription (restored)",
-      metadata: { restoredFromProduct: fromProductId },
-    },
-    { idempotencyKey },
-  );
-  return made.id;
 }
 
 async function retrieveOrNull(client: StripeProductsClient, id: string) {
