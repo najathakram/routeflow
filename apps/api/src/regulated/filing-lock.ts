@@ -17,8 +17,10 @@ import { editReplacesLines } from "../orders/order-edit-payload";
  *      filing and the period;
  *  (b) LEDGER GUARD (the last line, `assertLedgerRowsNotLocked`): the ledger writers refuse any row whose
  *      `periodBucket` is covered by a LOCKED filing for the row's category (409 LEDGER_PERIOD_LOCKED, no rows).
- *      Under never-backdate a row books into the CURRENT bucket and a filing cannot lock before its period
- *      ends, so this can only fire across a bucket boundary: it exists to make the invariant structural.
+ *      A sale row books into its invoice's issueDate bucket (`writeSaleEntries`), and an issueDate can be in the
+ *      past: a manual past `issueDate` on an invoice, or an invoice made from a backdated order. When that date
+ *      is in a locked month this guard refuses it on EVERY retry (a permanent cause, not only a race across a
+ *      bucket boundary), so the user-facing copy asks for a date in the current period.
  * Returns and credit notes against a locked-period sale are NOT blocked at the edit guard: a return is a new
  * event booked today, and the locked period's SUM is untouched.
  */

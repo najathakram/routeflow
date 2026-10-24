@@ -21,7 +21,7 @@ describe("genericToastCopy: filing-lock codes", () => {
     [API_ERROR_CODES.FILING_ALREADY_LOCKED, "This filing is already locked."],
     [
       API_ERROR_CODES.FILING_NOT_LOCKABLE,
-      "Only a filing that generated successfully can be locked. Generate it again, then lock it.",
+      "Only a filing that was generated can be locked. Generate it again, then lock it.",
     ],
     [
       API_ERROR_CODES.FILED_PERIOD_LOCKED,
@@ -29,7 +29,7 @@ describe("genericToastCopy: filing-lock codes", () => {
     ],
     [
       API_ERROR_CODES.LEDGER_PERIOD_LOCKED,
-      "The filing for this period is locked, so this can't be saved. Refresh and try again.",
+      "This date is in a filed, locked period. Use a date in the current period.",
     ],
   ])("%s has its own sentence, never the neutral 409 or the raw text", (code, copy) => {
     const shown = genericToastCopy(err(code));
