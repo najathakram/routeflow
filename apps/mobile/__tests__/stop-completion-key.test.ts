@@ -5,6 +5,7 @@ import {
   isLockUnavailable,
   keepsStopCompletionKey,
   releaseStopCompletionKey,
+  retryOnLockUnavailable,
   stopCompletionKey,
 } from "../lib/stop-completion-key";
 
@@ -73,14 +74,69 @@ describe("the driver payment screen's closeStop", () => {
     expect(src).toContain("stopCompletionKey(stopId)");
     expect(src).not.toMatch(/stop-\$\{stopId\}-\$\{Date\.now\(\)\}/);
   });
-  it("retries a 503 LOCK_UNAVAILABLE with the same key, on the LOCK_RETRY_DELAYS_MS schedule", () => {
-    expect(src).toMatch(/isLockUnavailable\(e\)/);
-    expect(src).toContain("LOCK_RETRY_DELAYS_MS");
+  it("sends the completion through retryOnLockUnavailable (the loop tested above)", () => {
+    expect(src).toMatch(/retryOnLockUnavailable\(/);
   });
   it("releases the key when the completion lands, is queued, already completed, or refused for good", () => {
     expect((src.match(/releaseStopCompletionKey\(stopId\)/g) ?? []).length).toBeGreaterThanOrEqual(
       3,
     );
     expect(src).toMatch(/if \(!keepsStopCompletionKey\(e\)\) releaseStopCompletionKey\(stopId\)/);
+  });
+});
+
+// #3723 review: a behaviour test of the retry loop itself, not only regexes on the screen.
+describe("retryOnLockUnavailable", () => {
+  const lockErr = (retryAfter?: string) => ({
+    response: {
+      status: 503,
+      data: { code: "LOCK_UNAVAILABLE" },
+      headers: retryAfter === undefined ? {} : { "retry-after": retryAfter },
+    },
+  });
+  const run = () => {
+    const sleeps: number[] = [];
+    return { sleeps, sleep: async (ms: number) => void sleeps.push(ms) };
+  };
+
+  it("retries LOCK_UNAVAILABLE twice, then throws the last error", async () => {
+    const { sleeps, sleep } = run();
+    const fn = jest.fn().mockRejectedValue(lockErr());
+    await expect(retryOnLockUnavailable(fn, { sleep })).rejects.toEqual(lockErr());
+    expect(fn).toHaveBeenCalledTimes(3);
+    expect(sleeps).toEqual([...LOCK_RETRY_DELAYS_MS]);
+  });
+
+  it("honours the server's Retry-After (seconds) over the schedule", async () => {
+    const { sleeps, sleep } = run();
+    const fn = jest.fn().mockRejectedValueOnce(lockErr("2")).mockResolvedValueOnce("done");
+    await expect(retryOnLockUnavailable(fn, { sleep })).resolves.toBe("done");
+    expect(sleeps).toEqual([2000]);
+  });
+
+  it("never retries a 500, or a 503 without the LOCK_UNAVAILABLE code", async () => {
+    for (const e of [
+      { response: { status: 500, data: {} } },
+      { response: { status: 503, data: { code: "OTHER" } } },
+    ]) {
+      const { sleeps, sleep } = run();
+      const fn = jest.fn().mockRejectedValue(e);
+      await expect(retryOnLockUnavailable(fn, { sleep })).rejects.toBe(e);
+      expect(fn).toHaveBeenCalledTimes(1);
+      expect(sleeps).toEqual([]);
+    }
+  });
+
+  it("every attempt is the same request (the caller's key is captured once, the loop re-sends it)", async () => {
+    const keys: string[] = [];
+    const key = stopCompletionKey("s9");
+    const fn = jest.fn(async () => {
+      keys.push(key);
+      throw lockErr();
+    });
+    await expect(retryOnLockUnavailable(fn, { sleep: async () => undefined })).rejects.toBeTruthy();
+    expect(new Set(keys).size).toBe(1);
+    expect(keys).toHaveLength(3);
+    releaseStopCompletionKey("s9");
   });
 });

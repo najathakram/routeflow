@@ -25,10 +25,9 @@ import {
   type RouteRunOrder,
 } from "../../../../../lib/api/routes";
 import {
-  LOCK_RETRY_DELAYS_MS,
-  isLockUnavailable,
   keepsStopCompletionKey,
   releaseStopCompletionKey,
+  retryOnLockUnavailable,
   stopCompletionKey,
 } from "../../../../../lib/stop-completion-key";
 import { podPhotoArtifactId } from "../../../../../lib/pod-artifacts";
@@ -787,17 +786,7 @@ export default function PaymentScreen() {
           payment: collected > 0 ? { amount: collected, method: apiMethod } : undefined,
           idempotencyKey,
         });
-      let result: Awaited<ReturnType<typeof complete>> | undefined;
-      for (let attempt = 0; ; attempt++) {
-        try {
-          result = await complete();
-          break;
-        } catch (e) {
-          const delay = LOCK_RETRY_DELAYS_MS[attempt];
-          if (!isLockUnavailable(e) || delay === undefined) throw e;
-          await new Promise((r) => setTimeout(r, delay));
-        }
-      }
+      const result = await retryOnLockUnavailable(complete);
       releaseStopCompletionKey(stopId);
       // paymentIds rides on the response but isn't in RouteRunStop's type yet
       // (routes.ts is out of scope for this change — already-returned/just-

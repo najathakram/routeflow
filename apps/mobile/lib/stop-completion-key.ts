@@ -41,3 +41,33 @@ export function keepsStopCompletionKey(err: unknown): boolean {
 
 /** The automatic retries of a LOCK_UNAVAILABLE completion before the driver is told (same key every time). */
 export const LOCK_RETRY_DELAYS_MS = [1000, 2000] as const;
+
+/** The server's `Retry-After` (seconds, lock-conflict.filter.ts) on a LOCK_UNAVAILABLE, in ms, or null. */
+function retryAfterMs(err: unknown): number | null {
+  const headers = (err as { response?: { headers?: Record<string, unknown> } } | null)?.response
+    ?.headers;
+  const raw = headers?.["retry-after"] ?? headers?.["Retry-After"];
+  const secs = typeof raw === "string" || typeof raw === "number" ? Number(raw) : NaN;
+  return Number.isFinite(secs) && secs >= 0 && secs <= 30 ? secs * 1000 : null;
+}
+
+/**
+ * Row 108 (SA-706h): run the completion, retrying ONLY a 503 LOCK_UNAVAILABLE (refused before any write), at most
+ * LOCK_RETRY_DELAYS_MS.length times, waiting the server's Retry-After when it sends one (else the schedule). Every
+ * attempt is the same request: the caller builds it once, with its kept key. Anything else is thrown at once.
+ */
+export async function retryOnLockUnavailable<T>(
+  run: () => Promise<T>,
+  opts: { sleep?: (ms: number) => Promise<void> } = {},
+): Promise<T> {
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await run();
+    } catch (e) {
+      const scheduled = LOCK_RETRY_DELAYS_MS[attempt];
+      if (!isLockUnavailable(e) || scheduled === undefined) throw e;
+      await sleep(retryAfterMs(e) ?? scheduled);
+    }
+  }
+}
