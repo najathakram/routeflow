@@ -1,4 +1,4 @@
-import { OrderStatus } from "@prisma/client";
+import { FulfillPath, OrderStatus } from "@prisma/client";
 // the harness first: it loads OrdersService through the module graph the Nest injector expects
 import { buildOrdersService, operatorPayload } from "./testing/orders-service-harness";
 import { fulfillPathLocked } from "./fulfil-path-lock";
@@ -44,8 +44,8 @@ describe("row 673: fulfillPathLocked, the one fulfil-path predicate", () => {
       });
       const run = h.service.updateFulfillPath(
         "ord-1",
-        { fulfillPath: "ROUTE" } as any,
-        operatorPayload as any,
+        { fulfillPath: FulfillPath.ROUTE },
+        operatorPayload as any, // the harness payload is not typed as a JwtPayload (as in the sibling specs)
       );
       if (fulfillPathLocked({ status })) {
         await expect(run).rejects.toMatchObject({ status: 400 });
