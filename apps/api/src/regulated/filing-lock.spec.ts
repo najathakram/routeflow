@@ -7,8 +7,6 @@ import {
   assertOrderEditNotLocked,
   isMoneyBearingEdit,
   assertSalesNotLockedForEdit,
-  assertUndoNotLocked,
-  undoLockedMessage,
 } from "./filing-lock";
 import { lockedFilingsCovering } from "./filed-periods";
 
@@ -280,74 +278,49 @@ describe("caller pin: every money-moving entry point is behind a guard (B297 PR5
     // the service's full-replace branch and the guard share ONE predicate
     expect(svc).toMatch(/takesBuyerDriverReplace\(/);
   });
-  it("every ledger writer runs the ledger guard and both undo entry points run the undo guard", () => {
+  it("every ledger writer runs the ledger guard, and an undo is a counter-entry with no undo guard (SA-819 call 2)", () => {
     const ledger = src("regulated-ledger.service.ts");
     expect(ledger.match(/assertLedgerRowsNotLocked\(/g)?.length).toBeGreaterThanOrEqual(7);
-    expect(ledger).toMatch(
-      /counterDocumentRows\(db, \{ returnId \}, undefined, \{\s*refuseLocked: true/,
-    );
-    expect(ledger).toMatch(
-      /counterDocumentRows\(db, \{ creditNoteId \}, undefined, \{ refuseLocked: true/,
-    );
-    expect(ledger).toMatch(/if \(opts\.refuseLocked\) await assertUndoNotLocked\(/);
+    expect(ledger).not.toMatch(/assertUndoNotLocked|refuseLocked/);
   });
 });
 
 /**
- * SA-819 MUST 6: the undo guard's 409 names the next step. The copy is exact, with the period filled in.
+ * SA-819 call 2 (the SA's ruling): the undo guard is DROPPED. Since SA-839 an undo books a counter-entry into the
+ * CURRENT period and never touches a locked filing's rows, so voiding a credit note or cancelling a return whose
+ * REVERSAL rows sit in a locked bucket is allowed. The ledger guard on the writers stays.
  */
-describe("assertUndoNotLocked (the undo guard)", () => {
-  it("refuses an undo whose REVERSAL rows sit in a locked bucket, with the exact copy", async () => {
-    const err: any = await assertUndoNotLocked(db([filing()]) as any, [
-      { trackedCategoryId: "cat-1", periodBucket: "2026-09" },
-    ]).catch((e) => e);
-    expect(err).toBeInstanceOf(ConflictException);
-    expect(err.getResponse()).toMatchObject({
-      code: "LEDGER_PERIOD_LOCKED",
-      message:
-        "This credit is part of a locked filing (2026-09). Record a new charge instead of voiding it.",
-      periodKey: "2026-09",
-    });
-    expect(undoLockedMessage("2026-09")).toBe(
-      "This credit is part of a locked filing (2026-09). Record a new charge instead of voiding it.",
-    );
-  });
-
-  it("lets an undo through when no locked filing covers the rows", async () => {
-    await expect(
-      assertUndoNotLocked(db([filing({ status: "GENERATED" })]) as any, [
-        { trackedCategoryId: "cat-1", periodBucket: "2026-09" },
-      ]),
-    ).resolves.toBeUndefined();
-  });
-});
-
-describe("the undo guard on the ledger service (SA-819 MUST 6)", () => {
-  const rows = [{ trackedCategoryId: "cat-1", periodBucket: "2026-09" }];
-  const withLedger = () => {
-    const createMany = jest.fn();
-    const d: any = db([filing()], rows);
-    d.regulatedSalesLedger.createMany = createMany;
-    return { d, createMany };
+describe("an undo of a document in a locked period is allowed and books a counter-entry now", () => {
+  const original = {
+    id: "rev-1",
+    tenantId: "t1",
+    trackedCategoryId: "cat-1",
+    trackedSubcategoryId: null,
+    entryType: "REVERSAL",
+    orderId: "o1",
+    orderItemId: "ol-1",
+    invoiceId: "i1",
+    invoiceItemId: "ii-1",
+    creditNoteId: "cn-1",
+    correctsEntryId: null,
+    qty: -1,
+    unitBasisQty: -1,
+    netSales: -10,
+    categoryTax: 0,
+    soldAt: new Date("2026-09-12T00:00:00Z"),
+    periodBucket: "2026-09",
   };
-  const copy =
-    "This credit is part of a locked filing (2026-09). Record a new charge instead of voiding it.";
-
-  it("voiding a credit note in a locked period is refused and books nothing", async () => {
-    const { d, createMany } = withLedger();
+  it("voiding a credit note whose reversal sits in a locked bucket writes its counter-entry", async () => {
+    const createMany = jest.fn();
+    const d: any = db([filing()], [original]);
+    d.regulatedSalesLedger.findMany = jest.fn(async () => [original]);
+    d.regulatedSalesLedger.createMany = createMany;
+    d.regulatedFiling.findFirst = jest.fn(async () => filing()); // the amended-period label read
     const svc: any = new RegulatedLedgerService({} as any);
-    await expect(
-      svc.unreverseCreditNoteEntries({ creditNoteId: "cn-1", db: d }),
-    ).rejects.toMatchObject({ response: { code: "LEDGER_PERIOD_LOCKED", message: copy } });
-    expect(createMany).not.toHaveBeenCalled();
-  });
-
-  it("cancelling a return in a locked period is refused and books nothing", async () => {
-    const { d, createMany } = withLedger();
-    const svc: any = new RegulatedLedgerService({} as any);
-    await expect(svc.unreverseReturnEntries({ returnId: "r-1", db: d })).rejects.toMatchObject({
-      response: { code: "LEDGER_PERIOD_LOCKED", message: copy },
-    });
-    expect(createMany).not.toHaveBeenCalled();
+    const out = await svc.unreverseCreditNoteEntries({ creditNoteId: "cn-1", db: d });
+    expect(out.written).toBe(1);
+    const [row] = createMany.mock.calls[0][0].data;
+    expect(row).toMatchObject({ correctsEntryId: "rev-1", netSales: 10, qty: 1 });
+    expect(row.periodBucket).not.toBe("2026-09"); // the current period, never the locked one
   });
 });

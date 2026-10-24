@@ -165,26 +165,3 @@ export async function assertOrderEditNotLocked(
     ...(named ? { lineIds: { orderItemIds: items.map((i) => String(i.id)) } } : {}),
   });
 }
-
-/**
- * SA-819 MUST 6: the undo guard. Voiding a credit note or cancelling a return whose REVERSAL rows sit in a
- * LOCKED filing's bucket is refused (409 LEDGER_PERIOD_LOCKED) with the next step in the copy: the figures of
- * a closed period stay explained by the document that produced them, and the owner records a new charge.
- */
-export async function assertUndoNotLocked(db: LockDb, rows: BucketRef[]): Promise<void> {
-  const unique = [
-    ...new Map(rows.map((r) => [`${r.trackedCategoryId}|${r.periodBucket}`, r])).values(),
-  ];
-  const hit = (await lockedFilingsCovering(db, unique))[0];
-  if (!hit) return;
-  throw new ConflictException({
-    code: API_ERROR_CODES.LEDGER_PERIOD_LOCKED,
-    message: undoLockedMessage(hit.filing.periodKey),
-    filingId: hit.filing.id,
-    periodKey: hit.filing.periodKey,
-  });
-}
-
-/** The exact 409 copy of the undo guard ({period} is the locked filing's period key). */
-export const undoLockedMessage = (period: string): string =>
-  `This credit is part of a locked filing (${period}). Record a new charge instead of voiding it.`;

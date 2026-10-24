@@ -402,7 +402,7 @@ describeDb("B297 PR5 — a LOCKED filing closes its period, real Postgres", () =
     }
   }, 120_000);
 
-  it("voiding a credit note or cancelling a return is refused for reversal rows of a locked period (SA-819 MUST 6 copy)", async () => {
+  it("voiding a credit note whose reversal sits in a locked period is allowed: a counter-entry books now, the locked rows are untouched (SA-819 call 2)", async () => {
     const f = await makeFiling();
     await raw.regulatedSalesLedger.create({
       data: {
@@ -420,24 +420,9 @@ describeDb("B297 PR5 — a LOCKED filing closes its period, real Postgres", () =
       },
     });
     await lockAs(f.id);
-    for (const call of [
-      () => asLedger().unreverseCreditNoteEntries({ creditNoteId: "cn-locked", db: prisma }),
-      () => asLedger().unreverseReturnEntries({ returnId: "ret-locked", db: prisma }),
-    ])
-      await expect(inTenant(call)).rejects.toMatchObject({
-        response: {
-          code: "LEDGER_PERIOD_LOCKED",
-          message: expect.stringMatching(
-            /^This credit is part of a locked filing \(.+\)\. Record a new charge instead of voiding it\.$/,
-          ),
-        },
-      });
-    expect(
-      await raw.regulatedSalesLedger.count({ where: { tenantId, creditNoteId: "cn-locked" } }),
-    ).toBe(1);
-    // once the period is not locked the same undo is allowed; since SA-839 F1 it books a counter-entry (the
-    // original row stays), so the document now has two rows that net to zero
-    await raw.regulatedFiling.update({ where: { id: f.id }, data: { status: "GENERATED" } });
+    const original = await raw.regulatedSalesLedger.findFirstOrThrow({
+      where: { tenantId, creditNoteId: "cn-locked" },
+    });
     await inTenant(() =>
       asLedger().unreverseCreditNoteEntries({ creditNoteId: "cn-locked", db: prisma }),
     );
@@ -446,6 +431,11 @@ describeDb("B297 PR5 — a LOCKED filing closes its period, real Postgres", () =
     });
     expect(after).toHaveLength(2);
     expect(after.reduce((n, r) => n + Number(r.netSales), 0)).toBe(0);
+    // the original stays in the locked bucket, unchanged; the counter books into the current one
+    const kept = after.find((r) => r.id === original.id)!;
+    expect(kept.periodBucket).toBe(SOLD_BUCKET);
+    expect(Number(kept.netSales)).toBe(Number(original.netSales));
+    expect(after.find((r) => r.id !== original.id)!.periodBucket).not.toBe(SOLD_BUCKET);
   }, 120_000);
 
   it("prepareFiling on a LOCKED filing returns the stored row and never regenerates", async () => {
