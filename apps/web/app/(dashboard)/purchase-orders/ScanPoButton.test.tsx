@@ -42,15 +42,13 @@ describe("ScanPoButton", () => {
     expect(modalProps?.intent).toBe("purchase-order");
   });
 
-  it("toasts 'drafted — open it below' and reports the PO id when a PO is raised", () => {
+  it("toasts 'drafted' (no pointer to a list that is navigated away from) and reports the PO id when a PO is raised", () => {
     const onDrafted = jest.fn();
     render(<ScanPoButton onDrafted={onDrafted} />);
     fireEvent.click(screen.getByRole("button", { name: /Scan supplier invoice/ }));
     act(() => modalProps!.onPurchaseOrderCreated({ id: "po1", poNumber: "PO-0007" }));
     expect(onDrafted).toHaveBeenCalledWith("po1");
-    expect(toast).toHaveBeenCalledWith(
-      expect.objectContaining({ title: "PO PO-0007 drafted — open it below" }),
-    );
+    expect(toast).toHaveBeenCalledWith(expect.objectContaining({ title: "PO PO-0007 drafted" }));
   });
 
   it("opens the drafted PO's detail page when a PO is raised (row 128)", () => {
