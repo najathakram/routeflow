@@ -83,6 +83,8 @@ const SAMPLE_VARS: Record<string, string> = {
 export function NotificationsSettingsTab() {
   const { user } = useAuth();
   const isAdmin = isAccountAdmin(user);
+  // Owner 10-07 OK-6: operators receive the low-stock digest too (low-stock-digest.service.ts), so they get its opt-out.
+  const getsLowStockDigest = isAdmin || user?.role === "OPERATOR";
   const { data, isLoading, isError, refetch } = useMessagingConfig();
   const { sender } = useEmailSender(isAdmin);
 
@@ -153,7 +155,7 @@ export function NotificationsSettingsTab() {
 
       <QuietHoursCard settings={data.settings} isAdmin={isAdmin} />
 
-      {isAdmin && <LowStockDigestToggle />}
+      {getsLowStockDigest && <LowStockDigestToggle />}
 
       <PushStatusCard />
 

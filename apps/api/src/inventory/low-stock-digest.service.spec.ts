@@ -315,6 +315,29 @@ describe("LowStockDigestService (N4)", () => {
     });
   });
 
+  describe("recipients (owner 10-07 OK-6)", () => {
+    it("OK-6: operators get the digest as well as tenant admins (active users of this tenant only)", async () => {
+      const { svc, prisma } = make({
+        tenants: [tenant()],
+        products: [product({ currentStock: 1, reorderPoint: 10 })],
+        admins: [makeAdmin("u1", "admin@acme.example")],
+        optOuts: [],
+      });
+
+      await svc.sendLowStockDigest(AT_SEVEN_LOCAL);
+
+      expect(prisma.user.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            role: { in: ["TENANT_ADMIN", "OPERATOR"] },
+            status: "ACTIVE",
+            deletedAt: null,
+          }),
+        }),
+      );
+    });
+  });
+
   describe("opt-out", () => {
     it("REG-N4: an admin with lowStockDigestEnabled=false is excluded; the other admin still receives it", async () => {
       const { svc, prisma, email } = make({
