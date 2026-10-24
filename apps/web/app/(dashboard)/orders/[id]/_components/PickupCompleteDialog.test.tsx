@@ -390,7 +390,7 @@ describe("PickupCompleteDialog — the API's pickup codes", () => {
   });
 
   // W-776 (SA-925): the pre-check refused before any write: nothing changed, the tender step stays (Cancel + confirm), no Reload
-  it("409 COUNTER_COMPLETE_DAY_CLOSED: says nothing changed and keeps the tender step, not Reload", async () => {
+  it("409 COUNTER_COMPLETE_DAY_CLOSED: says nothing changed and locks the tender step, Close not Reload", async () => {
     balance(25);
     post.mockRejectedValueOnce({
       response: { status: 409, data: { code: "COUNTER_COMPLETE_DAY_CLOSED", message: "raw text" } },
@@ -400,12 +400,12 @@ describe("PickupCompleteDialog — the API's pickup codes", () => {
     fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "25" } });
     confirm();
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Nothing changed. This register's day is closed. A manager or owner can reopen it.",
+      "Nothing changed. This register's day is closed. A manager or owner can reopen it on the till.",
     );
     expect(screen.queryByText(/Handed over/)).toBeNull();
     expect(screen.queryByText(/raw text/)).toBeNull();
     expect(screen.queryByRole("button", { name: "Reload" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Cancel" })).toBeTruthy();
+    expect(screen.getAllByRole("button", { name: "Close" }).length).toBeGreaterThan(1); // W-778: the footer's one live action
   });
 
   it("409 PICKUP_INVOICE_MISSING: fixed copy, Retry reposts under the SAME key", async () => {
@@ -618,6 +618,13 @@ describe("PickupCompleteDialog — the global error toast", () => {
     "PICKUP_NOT_READY",
     "PICKUP_ONLY",
     "COUNTER_SALE_DAY_CLOSED",
+    "COUNTER_COMPLETE_SHIPPED",
+    "COUNTER_COMPLETE_ON_RUN",
+    "COUNTER_COMPLETE_STOP_STARTED",
+    "COUNTER_COMPLETE_DAY_CLOSED",
+    "COUNTER_COMPLETE_UNAVAILABLE",
+    "ORDER_ON_ACTIVE_RUN",
+    "ORDER_RUN_LINK_CHANGED",
   ])("%s: the dialog's own copy shows and NO global toast fires", async (code) => {
     toast.mockClear();
     post.mockRejectedValueOnce({ response: { status: 409, data: { code } } });
@@ -790,5 +797,102 @@ describe("PickupCompleteDialog — W-775 restriction warning", () => {
     expect(post).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole("alert")).toBeNull();
     expect(screen.queryByText("This product is banned in CA by law.")).toBeNull();
+  });
+});
+
+describe("PickupCompleteDialog: W-778 complete-at-counter refusals (apple-ux 2026-10-24)", () => {
+  const refuse = async (code: string, extra: Record<string, unknown> = {}) => {
+    balance(25);
+    post.mockRejectedValueOnce({ response: { status: 409, data: { code, ...extra } } });
+    const utils = mount({ completeMode: true });
+    fireEvent.click(await screen.findByRole("button", { name: "Cash" }));
+    fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "25" } });
+    fireEvent.click(screen.getByRole("button", { name: "Complete" }));
+    await screen.findByRole("alert");
+    return utils;
+  };
+
+  // item 2 + B-1: a closed day names the fix and links the till
+  it("COUNTER_COMPLETE_DAY_CLOSED: names the till and links to it", async () => {
+    await refuse("COUNTER_COMPLETE_DAY_CLOSED");
+    expect(screen.getByRole("alert")).toHaveTextContent("reopen it on the till");
+    expect(screen.getByRole("link", { name: "Open the till" })).toHaveAttribute(
+      "href",
+      "/orders/counter-sale",
+    );
+  });
+
+  // item 6 + B-3: after a hard refusal nothing looks ready to retry
+  it.each([
+    "COUNTER_COMPLETE_DAY_CLOSED",
+    "COUNTER_COMPLETE_STOP_STARTED",
+    "COUNTER_COMPLETE_SHIPPED",
+    "COUNTER_COMPLETE_UNAVAILABLE",
+    "ORDER_ON_ACTIVE_RUN",
+  ])(
+    "%s: no Complete, the tender controls are disabled and Close is the one live action",
+    async (code) => {
+      const { onClose } = await refuse(code);
+      expect(screen.queryByRole("button", { name: "Complete" })).toBeNull();
+      expect(screen.getByRole("button", { name: "Cash" })).toBeDisabled();
+      expect(screen.getByLabelText("Amount tendered")).toBeDisabled();
+      expect(screen.getAllByRole("button", { name: "Close" })).toHaveLength(2); // W-778: the header X + the footer's one live action
+      fireEvent.click(screen.getAllByRole("button", { name: "Close" }).at(-1)!);
+      expect(onClose).toHaveBeenCalled();
+    },
+  );
+
+  it("B-3: pressing a method after the refusal does not hide the error", async () => {
+    await refuse("COUNTER_COMPLETE_DAY_CLOSED");
+    fireEvent.click(screen.getByRole("button", { name: "Cash" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("Nothing changed.");
+  });
+
+  // item 7: the way out of a started stop
+  it("COUNTER_COMPLETE_STOP_STARTED with a run id: links to the route", async () => {
+    await refuse("COUNTER_COMPLETE_STOP_STARTED", { runId: "run-9" });
+    expect(screen.getByRole("link", { name: "Open the route" })).toHaveAttribute(
+      "href",
+      "/routes/run-9",
+    );
+  });
+
+  it("COUNTER_COMPLETE_STOP_STARTED without a run id: no route link", async () => {
+    await refuse("COUNTER_COMPLETE_STOP_STARTED");
+    expect(screen.queryByRole("link", { name: "Open the route" })).toBeNull();
+  });
+
+  // item 8: the run confirm is a warning the clerk can answer, not an error
+  it("COUNTER_COMPLETE_ON_RUN: amber warning, no 'Nothing changed', the confirm stays live", async () => {
+    await refuse("COUNTER_COMPLETE_ON_RUN", { driverName: "Sam" });
+    const box = screen.getByRole("alert");
+    expect(box).toHaveTextContent("This order is on Sam's run.");
+    expect(box).not.toHaveTextContent("Nothing changed");
+    expect(box.className).toMatch(/amber/);
+    expect(box.className).not.toMatch(/danger/);
+    expect(screen.getByRole("button", { name: "Take off run and complete" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Cash" })).toBeEnabled();
+  });
+
+  // item 5 + B-2: the short-cash line is live
+  it("a short cash amount shows 'Enter at least' as it is typed, and clears when enough", async () => {
+    balance(25);
+    mount({ completeMode: true });
+    fireEvent.click(await screen.findByRole("button", { name: "Cash" }));
+    const amount = screen.getByLabelText("Amount tendered");
+    fireEvent.change(amount, { target: { value: "3" } });
+    expect(screen.getByTestId("pickup-short-hint")).toHaveTextContent("Enter at least $25.00.");
+    fireEvent.change(amount, { target: { value: "30" } });
+    expect(screen.queryByTestId("pickup-short-hint")).toBeNull();
+  });
+
+  it("B-2: a stale 'Enter at least' error from an empty Complete goes when an amount is chosen", async () => {
+    balance(25);
+    mount({ completeMode: true });
+    fireEvent.click(await screen.findByRole("button", { name: "Cash" }));
+    fireEvent.click(screen.getByRole("button", { name: "Complete" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Enter at least $25.00.");
+    fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "50" } });
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 });

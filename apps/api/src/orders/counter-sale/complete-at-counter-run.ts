@@ -65,6 +65,7 @@ export function completeAtCounterRunRefusal(
     return new ConflictException({
       code: API_ERROR_CODES.COUNTER_COMPLETE_STOP_STARTED,
       message: STOP_STARTED_MESSAGE,
+      runId: order.routeRunId ?? run.id ?? null, // W-778: the client's "Open the route" link
     });
   }
   if (takeOffRun) return null;

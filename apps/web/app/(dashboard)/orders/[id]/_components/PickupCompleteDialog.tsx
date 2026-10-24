@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button, Modal, cn } from "@routeflow/ui/web";
 import { roundMoney } from "@routeflow/pricing";
@@ -19,6 +20,7 @@ import { duplicatePaymentRefMessage } from "@/lib/duplicate-payment-ref";
 import {
   paymentProblemCopy,
   PICKUP_DEAD_INVOICE,
+  COMPLETE_HARD_REFUSAL_CODES,
   changeDue,
   clearHeldPickupKey,
   newIdempotencyKey,
@@ -28,6 +30,8 @@ import {
   pickupErrorCode,
   quickTenderOptions,
   readHeldPickupKey,
+  isTenderShortCopy,
+  tenderShortCopy,
   validatePayment,
   writeHeldPickupKey,
 } from "@/lib/counter-sale";
@@ -115,6 +119,7 @@ export function PickupCompleteDialog({
   const [reference, setReference] = React.useState("");
   const [error, setError] = React.useState<string | null>(null);
   const [errorCode, setErrorCode] = React.useState<string | undefined>();
+  const [errorRunId, setErrorRunId] = React.useState<string | null>(null); // W-778: the run a started stop belongs to
   const [outcome, setOutcome] = React.useState<PickupCompleteResponse | null>(null);
   const lastBody = React.useRef<Body>({});
 
@@ -130,6 +135,7 @@ export function PickupCompleteDialog({
       setReference("");
       setError(null);
       setErrorCode(undefined);
+      setErrorRunId(null);
       setOwed(null);
       setOutcome(null);
     }
@@ -137,10 +143,21 @@ export function PickupCompleteDialog({
   }, [open]);
 
   const tenderedNum = Number(tendered) || 0;
+  // W-778 (apple-ux): a refusal no retry can fix locks the controls; the run confirm is a warning the clerk can answer.
+  const hardRefusal = errorCode !== undefined && COMPLETE_HARD_REFUSAL_CODES.has(errorCode);
+  const onRunWarning = errorCode === API_ERROR_CODES.COUNTER_COMPLETE_ON_RUN;
+  // A typed amount re-opens the question: drop the last answer (the stale "Enter at least" line, the run warning).
+  const editedTender = () => {
+    if (hardRefusal) return;
+    setError(null);
+    setErrorCode(undefined);
+    setErrorRunId(null);
+  };
 
   async function send(body: Body) {
     setError(null);
     setErrorCode(undefined);
+    setErrorRunId(null);
     lastBody.current = body;
     try {
       const res = await complete.mutateAsync({
@@ -172,6 +189,9 @@ export function PickupCompleteDialog({
       if (unknown) writeHeldPickupKey(storeKey, keyRef.current);
       else clearHeldPickupKey(storeKey);
       setErrorCode(pickupErrorCode(err));
+      const runId = (err as { response?: { data?: { runId?: unknown } } } | null)?.response?.data
+        ?.runId;
+      setErrorRunId(typeof runId === "string" && runId ? runId : null);
       setError(pickupCompleteErrorCopy(err, due ?? undefined, completeMode));
     }
   }
@@ -201,6 +221,13 @@ export function PickupCompleteDialog({
     });
   }
 
+  // W-778 (F12): a cash amount below what is owed says so while it is typed (not only after Complete), and clears the moment it is enough
+  const shortLive =
+    method === "CASH" &&
+    due !== null &&
+    tendered.trim() !== "" &&
+    roundMoney(tenderedNum) < roundMoney(due) &&
+    !(error && isTenderShortCopy(error));
   const unrecorded = outcome !== null && !outcome.paymentRecorded;
   // SA-837b item 3: the payment was refused as a duplicate reference. The shared sentence names the existing payment, and a
   // staff role may resend THIS hand-over (same key, same body) with the generic `payment.recordAnyway` flag.
@@ -258,12 +285,22 @@ export function PickupCompleteDialog({
           </>
         ) : (
           <>
-            <Button variant="ghost" type="button" disabled={complete.isPending} onClick={onClose}>
-              Cancel
-            </Button>
+            {hardRefusal ? (
+              // W-778: nothing was written and nothing here can retry it: one live action
+              <Button
+                type="button"
+                onClick={errorCode === API_ERROR_CODES.ORDER_RUN_LINK_CHANGED ? reload : onClose}
+              >
+                {errorCode === API_ERROR_CODES.ORDER_RUN_LINK_CHANGED ? "Reload" : "Close"}
+              </Button>
+            ) : (
+              <Button variant="ghost" type="button" disabled={complete.isPending} onClick={onClose}>
+                Cancel
+              </Button>
+            )}
             {/* Both mean the order is already handed over: nothing to retry, only to reload what the page shows. */}
-            {errorCode === API_ERROR_CODES.PICKUP_KEY_CONFLICT ||
-            errorCode === API_ERROR_CODES.COUNTER_SALE_DAY_CLOSED ? (
+            {hardRefusal ? null : errorCode === API_ERROR_CODES.PICKUP_KEY_CONFLICT ||
+              errorCode === API_ERROR_CODES.COUNTER_SALE_DAY_CLOSED ? (
               <Button type="button" onClick={reload}>
                 Reload
               </Button>
@@ -372,7 +409,7 @@ export function PickupCompleteDialog({
                   <button
                     key={m.method}
                     type="button"
-                    disabled={m.disabled}
+                    disabled={m.disabled || hardRefusal}
                     aria-pressed={method === m.method}
                     className={cn(
                       "rounded border px-3 py-2 text-sm disabled:opacity-40",
@@ -380,7 +417,7 @@ export function PickupCompleteDialog({
                     )}
                     onClick={() => {
                       setMethod(m.method);
-                      setError(null);
+                      editedTender();
                     }}
                   >
                     {m.label}
@@ -394,9 +431,12 @@ export function PickupCompleteDialog({
                     <button
                       key={q.label}
                       type="button"
-                      disabled={q.disabled}
+                      disabled={q.disabled || hardRefusal}
                       className="rounded border px-3 py-2 text-sm disabled:opacity-40"
-                      onClick={() => setTendered(String(q.amount))}
+                      onClick={() => {
+                        setTendered(String(q.amount));
+                        editedTender();
+                      }}
                     >
                       {q.label}
                     </button>
@@ -409,12 +449,22 @@ export function PickupCompleteDialog({
                     inputMode="decimal"
                     className="mt-1 w-full rounded border px-3 py-2"
                     value={tendered}
-                    onChange={(e) => setTendered(e.target.value)}
+                    disabled={hardRefusal}
+                    onChange={(e) => {
+                      setTendered(e.target.value);
+                      editedTender();
+                    }}
                   />
                 </label>
-                <p className="text-2xl font-bold" data-testid="pickup-change-due">
-                  Change {money(changeDue(due, tenderedNum))}
-                </p>
+                {shortLive ? (
+                  <p className="text-sm font-medium text-navy" data-testid="pickup-short-hint">
+                    {tenderShortCopy(due)}
+                  </p>
+                ) : (
+                  <p className="text-2xl font-bold" data-testid="pickup-change-due">
+                    Change {money(changeDue(due, tenderedNum))}
+                  </p>
+                )}
               </div>
             )}
             {method === "CHECK" && (
@@ -424,6 +474,7 @@ export function PickupCompleteDialog({
                   aria-label="Check number"
                   className="mt-1 w-full rounded border px-3 py-2"
                   value={reference}
+                  disabled={hardRefusal}
                   onChange={(e) => setReference(e.target.value)}
                 />
               </label>
@@ -431,9 +482,33 @@ export function PickupCompleteDialog({
           </section>
         )}
         {error && (
-          <p role="alert" className="rounded bg-danger-bg px-3 py-2 text-xs text-danger">
+          <p
+            role="alert"
+            className={cn(
+              "rounded px-3 py-2 text-xs",
+              onRunWarning
+                ? "border border-amber-300 bg-amber-50 text-navy"
+                : "bg-danger-bg text-danger",
+            )}
+          >
             {error}
           </p>
+        )}
+        {errorCode === API_ERROR_CODES.COUNTER_COMPLETE_DAY_CLOSED && (
+          <Link
+            href="/orders/counter-sale"
+            className="text-sm font-semibold text-brand-600 underline"
+          >
+            Open the till
+          </Link>
+        )}
+        {errorCode === API_ERROR_CODES.COUNTER_COMPLETE_STOP_STARTED && errorRunId && (
+          <Link
+            href={`/routes/${errorRunId}`}
+            className="text-sm font-semibold text-brand-600 underline"
+          >
+            Open the route
+          </Link>
         )}
       </div>
       {rw.dialog}
