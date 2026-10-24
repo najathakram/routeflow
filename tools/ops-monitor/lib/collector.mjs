@@ -19,7 +19,7 @@ export const DEFAULT_INTERVALS = {
 // Cloud: webhooks make it real time; the polls are the backstop.
 export const CLOUD_INTERVALS = {
   github: 120,
-  specs: 120,
+  specs: 30,
   branches: 300,
   bugs: 300,
   areas: 600,
@@ -1352,32 +1352,47 @@ export function createCollector({
     },
   };
 
-  function runOnce(name) {
+  // A `requeue` request that lands while a run is in flight (a webhook) is REMEMBERED, not dropped: the run that is going may have read
+  // state from before the event, so one more run follows it. Several mid-run requests coalesce into that one rerun.
+  const requeued = new Set();
+  function runOnce(name, { requeue = false } = {}) {
     if (!runners[name]) return Promise.reject(new Error(`unknown source ${name}`));
-    if (running.has(name)) return running.get(name);
+    if (running.has(name)) {
+      if (requeue) requeued.add(name); // only an event (webhook) asks for this; a timer tick need not
+      return running.get(name);
+    }
     const p = (async () => {
-      const s = sources[name];
-      s.tried = now();
-      runCounts[name] = (runCounts[name] ?? 0) + 1;
-      try {
-        s.data = await runners[name]();
-        s.ok = true;
-        s.at = now();
-        s.error = null;
-      } catch (e) {
-        s.ok = false;
-        s.error = String(e?.message ?? e);
-        log(`source ${name} failed: ${s.error}`);
-      }
-      try {
-        onUpdate(name);
-      } catch (e) {
-        log(`onUpdate(${name}) threw: ${e?.message ?? e}`);
-      }
+      let s;
+      do {
+        requeued.delete(name);
+        s = await runCycle(name);
+      } while (requeued.has(name));
       return s;
     })().finally(() => running.delete(name));
     running.set(name, p);
     return p;
+  }
+
+  async function runCycle(name) {
+    const s = sources[name];
+    s.tried = now();
+    runCounts[name] = (runCounts[name] ?? 0) + 1;
+    try {
+      s.data = await runners[name]();
+      s.ok = true;
+      s.at = now();
+      s.error = null;
+    } catch (e) {
+      s.ok = false;
+      s.error = String(e?.message ?? e);
+      log(`source ${name} failed: ${s.error}`);
+    }
+    try {
+      onUpdate(name);
+    } catch (e) {
+      log(`onUpdate(${name}) threw: ${e?.message ?? e}`);
+    }
+    return s;
   }
 
   return {

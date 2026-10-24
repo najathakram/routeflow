@@ -511,3 +511,30 @@ test("heartbeat: lastHeartbeatAt tracks the newest heartbeat per lane, apart fro
   // A lane that only has non-heartbeat events has no heartbeat.
   assert.equal(s.lanes.get("macmini").lastHeartbeatAt ?? null, null);
 });
+
+test("a merge pr event moves an in-flight item to shipping once every linked PR has merged; never a done one, never early", () => {
+  const items = ["10", "11", "12", "13"];
+  const evs = items.map((id, i) => newItem(id, {}, { min: i }));
+  evs.push(ev("status", "10", { status: "building" }, { min: 5 }));
+  evs.push(ev("status", "11", { status: "building" }, { min: 5 }));
+  evs.push(ev("status", "12", { status: "live" }, { min: 5 }));
+  evs.push(ev("status", "13", { status: "parked" }, { min: 5 }));
+  evs.push(ev("link", "11", { prs: [201, 202] }, { min: 6 }));
+  evs.push(ev("pr", "10", { number: 200, action: "merge" }, { min: 10 }));
+  evs.push(ev("pr", "11", { number: 201, action: "merge" }, { min: 10 }));
+  evs.push(ev("pr", "12", { number: 203, action: "merge" }, { min: 10 }));
+  evs.push(ev("pr", "13", { number: 204, action: "merge" }, { min: 10 }));
+  let s = fold(evs);
+  assert.equal(s.items.get("10").status, "shipping", "its only PR merged");
+  assert.equal(s.items.get("11").status, "building", "PR 202 is not merged yet");
+  assert.equal(s.items.get("12").status, "live", "done stays done");
+  assert.equal(s.items.get("13").status, "parked");
+  s = fold([...evs, ev("pr", "11", { number: 202, action: "merge" }, { min: 20 })]);
+  assert.equal(s.items.get("11").status, "shipping", "the last linked PR merged");
+  // an explicit later status wins; an earlier merge never undoes it
+  s = fold([...evs, ev("status", "10", { status: "live" }, { min: 30 })]);
+  assert.equal(s.items.get("10").status, "live");
+  // a non-merge pr event never moves status
+  s = fold([...evs.slice(0, 5), ev("pr", "10", { number: 300, action: "create" }, { min: 11 })]);
+  assert.equal(s.items.get("10").status, "building");
+});

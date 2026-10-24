@@ -12,8 +12,16 @@
  * FAIL OPEN and FAST: any error -> exit 0, nothing on stdout for Stop, hard 2 s budget.
  * CI and RF_OPS_GATE=off skip it.
  */
-import { execFileSync } from "node:child_process";
-import { closeSync, mkdirSync, openSync, readFileSync, readSync, readdirSync } from "node:fs";
+import { execFileSync, spawn } from "node:child_process";
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  readSync,
+  readdirSync,
+} from "node:fs";
 import { renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -277,6 +285,49 @@ export function prune(dir, now) {
   }
 }
 
+// Status sync on EVERY machine (not only a local --views monitor): the hook writes the status file, then, at most every
+// STATUS_SYNC_EVERY_MS, hands it to `rf status-sync` in a detached process so heartbeats reach the specs repo and the
+// shared board. Only where a specs clone exists; never blocks or fails the hook.
+export const STATUS_SYNC_EVERY_MS = 120_000;
+export function statusSyncDue({ home, specs, env, now, exists = existsSync, mtimeMs }) {
+  if (env.RF_NO_SYNC || env.RF_OPS_GATE === "off" || env.CI) return false;
+  if (!exists(join(specs, ".git"))) return false;
+  const last = mtimeMs ? mtimeMs(join(home, "status-sync.stamp")) : null;
+  return last === null || last === undefined || now - last >= STATUS_SYNC_EVERY_MS;
+}
+function spawnStatusSync(home, specs, env, now) {
+  const stamp = join(home, "status-sync.stamp");
+  const due = statusSyncDue({
+    home,
+    specs,
+    env,
+    now,
+    mtimeMs: (f) => {
+      try {
+        return statSync(f).mtimeMs;
+      } catch {
+        return null;
+      }
+    },
+  });
+  if (!due) return false;
+  writeFileSync(stamp, String(now)); // claim the slot first, so a second hook in the same minute does not spawn too
+  const child = spawn(
+    process.execPath,
+    [join(ROOT, "tools", "ops-monitor", "bin", "rf.mjs"), "status-sync"],
+    {
+      cwd: ROOT,
+      detached: true,
+      stdio: "ignore",
+      windowsHide: true,
+      env,
+    },
+  );
+  child.on("error", () => {});
+  child.unref();
+  return true;
+}
+
 async function main(t0) {
   T0 = t0;
   if (process.env.RF_OPS_GATE === "off" || process.env.CI) return;
@@ -312,6 +363,11 @@ async function main(t0) {
   if (!rec.sessionId) return;
   writeAtomic(join(statusDir, `${rec.sessionId}.json`), rec);
   prune(statusDir, now);
+  try {
+    spawnStatusSync(home, config.specsDir(env), env, now);
+  } catch {
+    // best effort
+  }
 
   if (rec.event !== "SessionStart") return;
   const parts = [];
