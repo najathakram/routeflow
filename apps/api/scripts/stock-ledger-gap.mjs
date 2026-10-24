@@ -30,6 +30,7 @@
  */
 import pg from "pg";
 import { resolveReportDbUrl } from "./lib/report-db-url.mjs";
+import { DRIFTED_PRODUCTS_SQL } from "./lib/stock-drift-sql.mjs";
 
 const argv = process.argv.slice(2);
 const opt = (name) => {
@@ -40,27 +41,8 @@ const tenantSlug = opt("--tenant") ?? process.env.REPORT_TENANT_SLUG ?? null;
 const asJson = argv.includes("--json");
 const limit = Number(opt("--limit") ?? 50);
 
-// Σ is taken per product over EVERY movement row (all types): the invariant is about quantity,
-// not cost. A product with no movements at all compares its counter against 0.
-const SQL = `
-  SELECT t.slug              AS "tenantSlug",
-         p.id                AS "productId",
-         p.name              AS "name",
-         p."currentStock"    AS "counter",
-         COALESCE(m.total, 0) AS "ledger",
-         p."currentStock" - COALESCE(m.total, 0) AS "drift",
-         m.last              AS "lastMovementAt"
-    FROM "Product" p
-    LEFT JOIN "Tenant" t ON t.id = p."tenantId"
-    LEFT JOIN (
-      SELECT "productId", SUM(quantity) AS total, MAX("effectiveAt") AS last
-        FROM "StockMovement"
-       GROUP BY "productId"
-    ) m ON m."productId" = p.id
-   WHERE ($1::text IS NULL OR t.slug = $1)
-     AND p."currentStock" - COALESCE(m.total, 0) <> 0
-   ORDER BY t.slug NULLS FIRST, abs(p."currentStock" - COALESCE(m.total, 0)) DESC, p.id
-`;
+// Row 635 (SA-902 MUST 1): the one drift query, shared with the D1 backfill.
+const SQL = DRIFTED_PRODUCTS_SQL;
 
 async function main() {
   const url = resolveReportDbUrl("stock-ledger-gap");

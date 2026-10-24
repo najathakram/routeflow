@@ -70,6 +70,13 @@ ARG EXPO_PUBLIC_BUILD_SHA
 ARG RAILWAY_GIT_COMMIT_SHA
 ENV EXPO_PUBLIC_BUILD_SHA=${EXPO_PUBLIC_BUILD_SHA:-$RAILWAY_GIT_COMMIT_SHA}
 
+# W-830: the hybrid shell (lib/web-shell) hosts the web in react-native-webview, which has no web
+# implementation, so this static web export can never run it. Say "off" outright instead of leaving
+# EXPO_PUBLIC_WEB_URL unset: an unset URL is the silent fail-open the store/OTA guard
+# (scripts/assert-shell-env.cjs) exists to refuse, and an explicit flag keeps this a decision.
+# Pinned by __tests__/web-shell-publish-guard.test.ts.
+ENV EXPO_PUBLIC_WEB_SHELL=off
+
 WORKDIR /app/apps/mobile
 
 # babel-preset-expo probes for optional integrations (expo-router, reanimated,

@@ -110,6 +110,7 @@ import {
   type ProductDeleteOutcome,
 } from "./product-delete-classify";
 import { boundedTenantTx, stockTxBounded } from "../common/stock-tx";
+import { assertRefsInTenant } from "../common/assert-refs-in-tenant";
 import { lockAndAssertRecipeGuards } from "./recipe-update-guard";
 import {
   applyFamilyPriceBeforeUpdate,
@@ -826,6 +827,8 @@ export class ProductsService {
     // B990: the typed free-text category too, UNCONDITIONALLY: even with a structured subcategory chosen or a parent without one
     // the written value can still be the typed text, and checking at the top is before any read or write.
     if (dto.category !== undefined) assertSafeProductCategory(dto.category);
+    // 681 site 16: a client-sent tracked category must be this tenant's own, proven before any tx.
+    await assertRefsInTenant(this.prisma, { trackedCategoryIds: [dto.trackedCategoryId] });
     await this.assertCanFlagTobacco(dto.isTobacco);
     if (dto.msrp !== undefined) await this.assertMsrpAllowed();
     if (dto.reorderPoint !== undefined || dto.reorderQty !== undefined) {
@@ -1116,6 +1119,8 @@ export class ProductsService {
       reparentVia?: FamilyAssignVia;
     },
   ) {
+    // 681 site 16: a client-sent tracked category must be this tenant's own, proven before any tx.
+    await assertRefsInTenant(this.prisma, { trackedCategoryIds: [dto.trackedCategoryId] });
     await this.assertCanFlagTobacco(dto.isTobacco);
     if (dto.msrp !== undefined) await this.assertMsrpAllowed();
     if (dto.reorderPoint !== undefined || dto.reorderQty !== undefined) {

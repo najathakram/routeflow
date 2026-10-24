@@ -55,6 +55,11 @@ export interface CustomerRecordPaymentModalProps {
   customerName?: string;
   onClose: () => void;
   onSuccess?: () => void;
+  /**
+   * Row 661: "Mark paid" from the New order Account strip. That invoice goes first and the amount starts at its balance;
+   * every row stays editable. An id that is not among the open invoices is ignored (no amount is invented).
+   */
+  focusInvoiceId?: string;
 }
 
 /**
@@ -72,6 +77,7 @@ export function CustomerRecordPaymentModal({
   customerName,
   onClose,
   onSuccess,
+  focusInvoiceId,
 }: CustomerRecordPaymentModalProps) {
   const { toast } = useToast();
   const { user } = useAuth();
@@ -122,13 +128,25 @@ export function CustomerRecordPaymentModal({
     const rows = (invoicesData?.data ?? []).filter(
       (inv) => isOpenInvoiceStatus(inv.status) && (inv.balanceDue ?? 0) > 0.001,
     );
-    return [...rows].sort((a, b) => {
+    const oldestFirst = [...rows].sort((a, b) => {
       const ad = a.issueDate ?? "";
       const bd = b.issueDate ?? "";
       if (ad !== bd) return ad.localeCompare(bd);
       return (a.createdAt ?? "").localeCompare(b.createdAt ?? "");
     });
-  }, [invoicesData]);
+    const focus = focusInvoiceId ? oldestFirst.find((inv) => inv.id === focusInvoiceId) : undefined;
+    return focus ? [focus, ...oldestFirst.filter((inv) => inv !== focus)] : oldestFirst;
+  }, [invoicesData, focusInvoiceId]);
+
+  // Row 661: the amount starts at the focused invoice's balance, once, when it first loads (a later edit is the user's).
+  const focusSeeded = React.useRef(false);
+  React.useEffect(() => {
+    if (focusSeeded.current || !focusInvoiceId) return;
+    const focus = openInvoices.find((inv) => inv.id === focusInvoiceId);
+    if (!focus) return;
+    focusSeeded.current = true;
+    setTotalAmount(String(focus.balanceDue ?? ""));
+  }, [openInvoices, focusInvoiceId]);
 
   // Oldest-first is the DEFAULT pre-fill, not a cage — every row stays
   // editable below. Re-runs (overwriting manual edits) whenever the total or

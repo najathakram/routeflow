@@ -500,6 +500,21 @@ describe("verify-scoped.mjs", () => {
     expect(scoped(root, ["--dry-run", "--base"]).status).toBe(2);
   });
 
+  it("18a. item 726: the DB lane command is argv tokens (no joined shell string), run-db-tests direct", () => {
+    const { root, log } = scopedFixture(0);
+    scoped(root, ["--files", "apps/api/src/a/x.service.ts"], log);
+    const line = readFileSync(log, "utf8")
+      .split("\n")
+      .find((l) => l.startsWith("DBRUN"));
+    // Tokens are logged space-joined (the node path may itself contain a space), so match the shape.
+    const rest = (line ?? "").replace(/^DBRUN -- /, "");
+    expect(rest.startsWith(process.execPath + " ")).toBe(true);
+    expect(rest.slice(process.execPath.length + 1)).toMatch(
+      /run-db-tests\.mjs src\/a\/x\.db\.spec\.ts$/,
+    );
+    expect(rest).not.toContain("npm run");
+  });
+
   it("18. --dry-run with 0 DB specs prints no test:db line", () => {
     const { root } = scopedFixture(0);
     const r = scoped(root, ["--dry-run", "--files", "apps/web/x.tsx"]);

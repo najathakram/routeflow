@@ -16,7 +16,6 @@ import {
   posMergeAlert,
   posMayHandOverUnpaid,
   posBalanceDue,
-  posCanSwitchToDelivery,
   posSwitchToDeliveryHint,
   posCartSaveLabel,
   posCutNote,
@@ -50,15 +49,17 @@ describe("POS preference", () => {
 
 describe("posOrderActions", () => {
   it("PENDING: only Switch to delivery (Confirm lives in the status bar)", () => {
-    expect(keys(posOrderActions({ invoices: [] }, "PENDING"))).toEqual(["switchToDelivery"]);
+    expect(keys(posOrderActions({ invoices: [], fulfillPathLocked: false }, "PENDING"))).toEqual([
+      "switchToDelivery",
+    ]);
   });
   it("CONFIRMED without an invoice: Create invoice is the one primary, Hand over secondary", () => {
-    const a = posOrderActions({ invoices: [] }, "CONFIRMED");
+    const a = posOrderActions({ invoices: [], fulfillPathLocked: false }, "CONFIRMED");
     expect(keys(a)).toEqual(["createInvoice", "handOver", "readyForPickup", "switchToDelivery"]);
     expect(a.filter((x) => x.tier === "primary").map((x) => x.key)).toEqual(["createInvoice"]);
   });
   it("CONFIRMED with an invoice: Hand over is the one primary; Ready for pickup stays secondary", () => {
-    const a = posOrderActions({ invoices: [inv("DRAFT")] }, "CONFIRMED");
+    const a = posOrderActions({ invoices: [inv("DRAFT")], fulfillPathLocked: false }, "CONFIRMED");
     expect(keys(a)).toEqual(["handOver", "readyForPickup", "switchToDelivery"]);
     expect(a.filter((x) => x.tier === "primary").map((x) => x.key)).toEqual(["handOver"]);
     expect(a.find((x) => x.key === "readyForPickup")?.tier).toBe("secondary");
@@ -87,12 +88,23 @@ describe("posOrderActions", () => {
       expect(keys(posOrderActions({ invoices: [inv("SENT")] }, st))).not.toContain("markDelivered");
     }
   });
-  it("Switch to delivery only while the order is open (mirrors order-lifecycle's blocked set)", () => {
-    expect(posCanSwitchToDelivery("PENDING")).toBe(true);
-    expect(posCanSwitchToDelivery("CONFIRMED")).toBe(true);
-    expect(posCanSwitchToDelivery("OUT_FOR_DELIVERY")).toBe(false);
-    expect(posCanSwitchToDelivery("DELIVERED")).toBe(false);
-    expect(posCanSwitchToDelivery("CANCELLED")).toBe(false);
+  // Row 673 (SA-831b M6): the moves follow the server's `fulfillPathLocked` (the PATCH's own predicate), never the status.
+  const moveKeys = (o: object, st: string) =>
+    keys(posOrderActions({ invoices: [], ...o }, st)).filter(
+      (k) => k === "switchToDelivery" || k === "shipByCarrier",
+    );
+  it("row 673: the server says locked -> no move, whatever the status", () => {
+    expect(moveKeys({ fulfillPathLocked: true }, "CONFIRMED")).toEqual([]);
+    expect(moveKeys({ fulfillPathLocked: true }, "PENDING")).toEqual([]);
+  });
+  it("row 673: the server says open -> the move is offered, whatever the status", () => {
+    expect(moveKeys({ fulfillPathLocked: false }, "OUT_FOR_DELIVERY")).toEqual([
+      "switchToDelivery",
+    ]);
+  });
+  it("row 673: no answer from the server -> no move (fail closed, never a button that always fails)", () => {
+    expect(moveKeys({}, "CONFIRMED")).toEqual([]);
+    expect(moveKeys({ fulfillPathLocked: null }, "PENDING")).toEqual([]);
   });
 });
 
@@ -501,10 +513,17 @@ describe("posStatusBody (row 510)", () => {
 });
 
 describe("M6 posSwitchToDeliveryHint", () => {
-  it("explains the lock only on a Ready-for-pickup order", () => {
-    expect(posSwitchToDeliveryHint("OUT_FOR_DELIVERY")).toMatch(/back to Confirmed/);
+  it("explains the lock on a Ready-for-pickup order the server has locked", () => {
+    expect(
+      posSwitchToDeliveryHint({ status: "OUT_FOR_DELIVERY", fulfillPathLocked: true }),
+    ).toMatch(/back to Confirmed/);
+  });
+  it("no hint when the server allows the move, or when nothing walks back (delivered / cancelled)", () => {
+    expect(
+      posSwitchToDeliveryHint({ status: "OUT_FOR_DELIVERY", fulfillPathLocked: false }),
+    ).toBeNull();
     for (const s of ["PENDING", "CONFIRMED", "DELIVERED", "CANCELLED"]) {
-      expect(posSwitchToDeliveryHint(s)).toBeNull();
+      expect(posSwitchToDeliveryHint({ status: s, fulfillPathLocked: true })).toBeNull();
     }
   });
 });

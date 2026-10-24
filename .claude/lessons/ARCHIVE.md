@@ -169,6 +169,24 @@
   file:line beside any factual claim, and a landing-procedure reminder to run `date -u` before
   quoting a time. Related: [[L-213]].
 
+### L-200 · 2026-09-18 · process · removing a UI control is a different risk class than removing dead code (#866, B519)
+
+- **Symptom:** removing the legacy `AVAILABLE_ADDONS` toggle cards (superseded by the Feature
+  Console) nearly shipped as if it fully retired the `driver_payments` dependency-enforcement gap
+  (B519) — the legacy toggle was ONE of two unenforced paths to enable `driver_payments`, but the
+  Feature Console's own `EnableAddonModal.tsx` "Enable as add-on" action has the exact same
+  missing check and was untouched by the removal.
+- **Root cause:** treating "delete this UI control" like "delete this dead code" — dead code has
+  no side effect once removed, but a UI control can be the only CLIENT-SIDE path that provisions
+  or gates something server-side reads from a DIFFERENT table/flag. A sibling control can still
+  reach the same server capability unguarded after the removed one's key is clean.
+- **Lesson:** **Before removing a UI control (a toggle, a button, a form field), grep for every
+  OTHER client entry point that reaches the same server capability/endpoint — not just whether
+  server-side code still references the control's own key. A control can be safely deletable as
+  UI while the gap it exposed is still wide open through a sibling surface.**
+- **Guard:** none yet — propose a removal checklist item: "list every client call site of the
+  endpoint(s) this control posts to, not just this control's own references."
+
 ## tooling
 
 ### L-067 · 2026-09-04 · tooling · #597
@@ -303,6 +321,54 @@ apps/<ws> && npx jest --maxWorkers=2`) before push — a cache-hit never reruns 
 - **Root cause:** `routeflow-api:local` and `routeflow-web:local` are single tags for the whole machine; whichever build finished last owns them, and two concurrent builds overwrite each other.
 - **Lesson:** **Never run two stack builds at once, and read an image's `org.routeflow.sha` label (`docker image inspect`) before claiming whose it is or that a proof ran on your sha.**
 - **Guard:** none automatic; cf. [[L-272]] and the Mac slot rule.
+
+### L-179 · 2026-09-16 · tooling · campaign-check freshness ritual
+
+- **Symptom:** every push cost 2–3 failed attempts against `campaign-check`'s freshness gate.
+- **Root cause:** the gate compares each workspace report against the newest commit timestamp of
+  ANY file, and `turbo run test --force` can still cache-skip the report-writing step — so the
+  report can never get newer than the commit that triggers the check.
+- **Lesson:** **A freshness gate keyed on "newest commit, any file" false-fails when its own
+  report-writing step can be cache-skipped.** Ritual until fixed: commit everything first, run
+  `npx jest --maxWorkers=2` per workspace directly (bypasses the turbo cache), then push
+  immediately.
+- **Guard:** none yet — propose keying freshness on source/test/ledger paths only, and having
+  the pre-push hook regenerate reports itself.
+
+### L-194 · 2026-09-17 · tooling · preview_start binds to the main checkout, not the calling session's worktree
+
+- **Symptom:** a UI proof for a worktree branch via `preview_start({name})` produced
+  plausible-looking screenshots, but a breakpoint that definitely existed in the branch appeared
+  completely broken — the main checkout's own copy of the changed file had zero references to
+  the new component.
+- **Root cause:** `preview_start` launches its named `launch.json` configs from the MAIN
+  CHECKOUT's working directory, never the calling session's worktree — a worktree whose changes
+  aren't ALSO in the main checkout gets proofed against stale, unrelated code with no warning.
+- **Lesson:** **A UI proof for a worktree/branch not checked out in the main checkout must run
+  its OWN dev server FROM the worktree, and must positively verify what's being served — grep the
+  rendered HTML for something only the branch's changes would produce — before trusting any
+  screenshot. A server coming up and a page looking plausible is not evidence the right code is
+  running.**
+- **Guard:** none yet — propose a one-line reminder in the worktree UI-proof runbook: confirm
+  the served code matches the branch BEFORE capturing.
+
+### L-198 · 2026-09-18 · tooling · `gh run rerun` replays the original checkout, not a fresh merge-ref
+
+- **Symptom:** across ~12 PRs in one landing window, the first "fresh" `gh run rerun` after a
+  root-cause fix landed on master kept failing on the SAME already-fixed assertion — costing
+  several burned branches before the mechanism was understood.
+- **Root cause:** `gh run rerun <run-id>` re-executes using the exact commit/merge ref GitHub
+  resolved at that run's ORIGINAL trigger time — it does not recompute the PR's merge ref against
+  the current base. Only a genuine new `pull_request: synchronize` event (a new commit) makes
+  GitHub recompute and pick up whatever changed on the base since the PR opened.
+- **Lesson:** **To re-test a PR against the CURRENT base branch, push a genuinely NEW commit,
+  never `gh run rerun`. An empty commit works when there's nothing real to add
+  (`git commit --allow-empty`, or `git commit-tree` plumbing when the branch can't be checked
+  out locally). Reserve `gh run rerun` for a genuinely flaky failure on an otherwise-current
+  merge ref.**
+- **Guard:** none yet — propose a landing-tool helper that pushes an empty commit instead of
+  calling `gh run rerun` whenever the PR predates a relevant base-branch fix.
+- **Fold-in 2026-09-27 (CI base must equal master):** a close/reopen or empty commit is not proof either. GitHub recomputes `refs/pull/N/merge` asynchronously, so a run started seconds after can still check out the OLD base (seen three times in one night). Before trusting a green run, read its checkout line (`HEAD is now at <merge> into <base>`) and require `<base>` to equal the current master; if not, wait until `git ls-remote origin refs/pull/N/merge` shows a merge commit whose first parent is master, then trigger again.
 
 ## testing
 
@@ -493,6 +559,22 @@ apps/<ws> && npx jest --maxWorkers=2`) before push — a cache-hit never reruns 
   its own explicit `BEGIN` and end with `COMMIT`; otherwise the statement is a silent no-op.**
 - **Guard:** `scripts/lint-migrations.mjs` (`npm run lint:migrations`) refuses `SET LOCAL` with no
   enclosing BEGIN/COMMIT (B896, #2746); pinned by `lint-migrations-script.spec.ts`.
+
+### L-183 · 2026-09-16 · deploy · Railway dual-service deploy status race
+
+- **Symptom:** a merge that changed only ONE of two Railway services showed its fresh deploy
+  flip from `success` to `inactive` seconds later, reading as failed when the code had shipped
+  fine.
+- **Root cause:** Railway's two services share ONE GitHub deployment environment. The UNTOUCHED
+  service re-posts its own `success` on its OLD sha shortly after the push (a routine re-affirm),
+  and GitHub's deployment-status API treats both services' postings as one shared history — the
+  untouched service's later post reads as superseding the just-shipped one.
+- **Lesson:** **Never judge a Railway deploy by `.statuses[0].state` alone — that slot can be
+  overwritten by the OTHER service's unrelated re-affirm within seconds. Read the full status
+  history, or confirm the actually-served commit directly, before declaring a deploy failed or
+  successful.**
+- **Guard:** none yet — propose `post-deploy-check` reading the full status array (not just
+  index 0) or verifying the served commit sha directly.
 
 ## domain
 
@@ -711,6 +793,19 @@ col + delta)` has no read-modify-write window at all. And such a fix is regressi
   the transaction body calls, and pin it with a tripwire that fails on a direct emit.**
 - **Guard:** `common/after-commit.ts` (`AfterCommit`, `withAfterCommit`), `after-commit.spec.ts`,
   `invoices/emit-after-commit.tripwire.spec.ts`. Cf. [[L-221]].
+
+### L-185 · 2026-09-17 · domain · B440 (report `total` repurposed, footer stopped matching its own column)
+
+- **Symptom:** a report's `total` field was repurposed from "sum of the displayed column" to a
+  pre-tax, windowed expense figure — the footer stopped equalling the sum of its own column.
+- **Root cause:** one field was serving two consumers at once: a UI sum-of-column invariant and a
+  cross-report reconciliation value. Changing the value for one silently broke the other, because
+  nothing named which contract the field promised.
+- **Lesson:** **When a report field feeds both a displayed column's own sum AND a value another
+  report must reconcile against, give the two consumers separate named fields — never let one
+  field serve both.**
+- **Guard:** none yet — propose a regression test with a fixture where the two diverge (nonzero
+  tax), asserting both formulas independently.
 
 ## security
 
@@ -3650,7 +3745,6 @@ citations, closed-out with its own post-init assertion guard).
 - **Guard:** `scripts/check-git-hooks.mjs` (the SessionStart `--warn` line and the first step of `npm run verify`); the fleet shim of [[L-254]].
   (Archived 2026-10-07 whole and verbatim to make room at cap: L-263 is guarded by `scripts/check-git-hooks.mjs` (the SessionStart `--warn` line and the first step of `npm run verify`); least-cited and fully guarded.)
 
-
 ### L-180 · 2026-09-16/22 · tooling · npm/dir junctions across worktrees are unsafe near git worktree ops (recurred: 2026-09-22)
 
 - **Symptom:** (a) after `git worktree move`, invalid-hook-call errors and mangled Jest paths;
@@ -4249,3 +4343,31 @@ citations, closed-out with its own post-init assertion guard).
 - **Root cause:** the slot was treated as a rule for the big gates only; a "small" unit run still starts one worker per core, and several at once overload the machine.
 - **Lesson:** **Every jest, check-types or DB run, unit ones too, goes through `scripts/heavy-slot.mjs` with a capped worker count. Put this in every subagent brief; a subagent that runs a test outside the slot is a defect in the brief.**
 - **Guard:** `scripts/heavy-slot.mjs` (FIFO); none automatic for a bare `npx jest`.
+
+### L-330 · 2026-10-21 · domain · an origin or state is derived from structured fields, never from a free-text note prefix
+
+- **Symptom:** office-recorded partial deliveries were recognised by a marker at the start of the evidence note. Rows written before the marker existed were stranded, and anyone could type the marker into a note to be treated as the office.
+- **Root cause:** semantics were encoded in free text. A prefix test misses every historical row that lacks it and trusts whatever a user can type.
+- **Lesson:** **Derive origin and state from structured fields (route stop id, driver id, type) that only the intended writers set. When no structured field can tell, add a column; never parse a note.**
+- **Guard:** `orders/office-evidence-completion.ts` tests a null route stop and no driver; its spec includes a clerk-typed note that must still complete. Cf. [[L-294]].
+
+### L-331 · 2026-10-21 · domain · rate inference prefers the configured rate when it reproduces the stored figure, then the shortest precision
+
+- **Symptom:** an edit or a duplicate of an invoice re-billed lines at a non-round rate (8.88% for a tenant that charges 8.875%), and a half-way rate (8.625%) was stored one unit off.
+- **Root cause:** the inference took the nearest higher-precision rate that fit the stored tax instead of the tenant's configured rate, and rounded a float product (8.625 / 100 * 1e4 is 862.4999999999999) without snapping it first.
+- **Lesson:** **Infer a rate in this order: the configured rate when the single totals builder reproduces the stored figure to the cent, then the shortest precision that does. Snap a float product to the stored precision before `Math.round`.**
+- **Guard:** `packages/pricing/src/inferred-flat-rate.ts` (`preferredRate`) and `tax-precision.ts` (`sameRateAtLegacyPrecision`), pinned in `packages/pricing/src/pricing.spec.ts` and `invoices.duplicate-tax-rate.spec.ts`.
+
+### L-333 · 2026-10-21 · domain · state that depends on other state is derived during render, not cleared by an effect afterwards
+
+- **Symptom:** the capabilities card showed the fresh plan and the stale-plan notice together for one frame, and its 409 test failed under parallel load (7 of 16 runs).
+- **Root cause:** the notice was cleared by an effect that ran one commit after the fresh preview rendered, so the render in between had both. A test that reads the DOM between commits catches it only when the machine is slow.
+- **Lesson:** **When a value is a function of props or other state, compute it in the render (`fresh ? null : notice`); do not mirror it into state and clear it in an effect. An effect-driven reset is a visible intermediate frame and a flaky test.**
+- **Guard:** the CapabilitiesCard 409 test, plus a test that a second plan change shows the notice again. `DetailsMore.tsx` follows the same shape (open set during render on edit).
+
+### L-334 · 2026-10-21 · domain · a page that loads late holds its final height and mounts one layout, so nothing shifts when the data lands
+
+- **Symptom:** the product page's price grid showed one "Loading prices…" line and then grew about 870 px at 390 wide (CLS 0.11); the page also mounted its flag-off layout and swapped to the v2 one when the subscription answered (CLS 0.10).
+- **Root cause:** the loading state was shorter than the loaded content, and the layout choice waited on an async flag the page did not wait for.
+- **Lesson:** **Give a loading state the height of what replaces it (one placeholder per expected row, counted from what the page already knows), and let the page wait for the flag that picks its layout before it mounts one. Read media queries in the initializer, not after paint.**
+- **Guard:** `ProductPricesGrid.k14-fe1.test.tsx` (placeholder per unit); `usePricesV2Pending` in `lib/api/units-v2.ts`; `PriceEditBar`/`ProductJumpLinks` reserve their space the same way.
