@@ -63,6 +63,7 @@
 //   node scripts/campaign/bugs.mjs index                        # rebuild bugs.jsonl from the records (regenerate, never hand-edit)
 //   node scripts/campaign/bugs.mjs brief <F##|B###>             # everything an agent needs to start a batch, in one output
 //   node scripts/campaign/bugs.mjs prove <B###> --pr <n> --proof "REG-B### ..." [--pending-deploy] [--build-plan <path>]  (--build-plan is REQUIRED for a T3 row)
+//   node scripts/campaign/bugs.mjs close <B###> --sha <commit sha> --why "<how verified fixed>" [--batch F## --tier T1|T2|T3]   # registry state already-fixed; a bug with no ledger row needs --batch + --tier
 //   node scripts/campaign/bugs.mjs discharge <F##> --evidence "<post-deploy proof>" [--evidence-B### "<per-row proof>"]   # per-row evidence is REQUIRED for every T2 row
 //   node scripts/campaign/bugs.mjs reopen <B###> --why "<failing REG-B### token or the run that showed the regression>"
 //   node scripts/campaign/bugs.mjs claim <F##>                  # flip that batch's workable rows to in-flight (next/waves skip it)
@@ -2696,6 +2697,65 @@ cmds["already-fixed"] = (args) => {
       );
     }
     console.log(`${id}: ${batch} row ${what} → already-fixed (PR #${pr})`);
+  });
+};
+
+// A bug closed OUTSIDE the ledger (a History note, a fix that landed without `prove`) has no
+// ledger row, so `show`/`stats`/`sync` read "uncampaigned" forever (item 642). `close` writes the
+// registry state: the row becomes `already-fixed` (the evidence-only terminal state) carrying the
+// fixing commit's sha. A bug with no row yet needs `--batch` + `--tier` to get its first one
+// (reusing `move`'s triage path); a queued/in-flight row closes in place; anything else is refused
+// (it is not a replacement for `reopen`).
+cmds.close = (args) => {
+  const typed = (args[0] ?? "").toUpperCase();
+  const sha = flag(args, "sha");
+  const why = flag(args, "why");
+  const usage =
+    'usage: close <B###> --sha <commit sha> --why "<how this was verified fixed>" [--batch F## --tier T1|T2|T3]';
+  if (!BUG_ID_RE.test(typed) || !sha || !why) fail(usage);
+  if (!/^[0-9a-f]{7,40}$/i.test(sha)) fail(`--sha must be 7-40 hex characters (got "${sha}")`);
+  if (why.length < 20)
+    fail(`--why must be at least 20 characters (got ${why.length}) — cite where it was verified`);
+  const id = resolveId(typed);
+  const proof = sha.toLowerCase();
+
+  if (!findShardOf(id)) {
+    const batchArg = flag(args, "batch");
+    const tierArg = flag(args, "tier");
+    if (!batchArg || !tierArg)
+      fail(`${id} has no ledger row yet — pass --batch F## and --tier T1|T2|T3 to create it`);
+    cmds.move([id, "--to", batchArg, "--tier", tierArg, "--why", `triage for close (${proof})`]);
+  }
+  const batch = findShardOf(id);
+  if (!batch) fail(`${id} is in no ledger shard after the triage-move`);
+
+  withShardLock(batch, () => {
+    const row = readShard(batch).rows.find((r) => r.id === id);
+    if (!row) fail(`${id} vanished from ${batch}.jsonl while this close waited for the lock`);
+    if (!["queued", "in-flight"].includes(row.state))
+      fail(
+        `${id} is "${row.state}" — close only applies to a queued or in-flight row (it is not a replacement for reopen)`,
+      );
+    const evidence = `${why} (fixed in ${proof})`;
+    const { what, row: after } = upsertLedgerRow(batch, {
+      ...row,
+      state: "already-fixed",
+      sha: proof,
+      evidence,
+    });
+    if (after?.state !== "already-fixed" || after?.sha !== proof || after?.evidence !== evidence)
+      fail(
+        `ledger write for ${id} did not land as intended — re-read row is ${JSON.stringify(after)}`,
+      );
+    const rec = readRecord(id);
+    if (rec) {
+      writeRecord(
+        id,
+        { ...rec.front, state: "already-fixed", closed: "yes" },
+        appendEvent(rec.body, `state-closed-${proof}`, "already-fixed", `closed at ${proof}`),
+      );
+    }
+    console.log(`${id}: ${batch} row ${what} → already-fixed (${proof})`);
   });
 };
 
@@ -8294,6 +8354,96 @@ cmds["self-test"] = () => {
     } finally {
       if (prevRoot === undefined) delete process.env.BUGS_ROOT;
       else process.env.BUGS_ROOT = prevRoot;
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+
+  // Item 642: `close <B###> --sha <sha> --why "<>=20 chars>" [--batch F## --tier T#]` — the verb a
+  // bug closed outside the ledger was missing. An uncampaigned bug (no ledger row) reads "state:
+  // uncampaigned" forever when it is closed only by a History note; `close` writes the registry
+  // state (already-fixed + the proof sha) so `show`/`stats`/`sync` tell the truth.
+  {
+    const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
+    try {
+      runCli(
+        ["file", "Close fixture A", "--location", "apps/api/src/x.ts", "--severity", "low"],
+        tmp,
+      );
+      runCli(
+        [
+          "file",
+          "Close fixture B",
+          "--location",
+          "apps/api/src/x.ts",
+          "--severity",
+          "low",
+          "--batch",
+          "F01",
+          "--tier",
+          "T1",
+        ],
+        tmp,
+      );
+      const rowOf = (batch, id) => {
+        const shard = join(tmp, "status", `${batch}.jsonl`);
+        if (!existsSync(shard)) return null;
+        return (
+          readFileSync(shard, "utf8")
+            .split(/\r?\n/)
+            .filter(Boolean)
+            .map((l) => JSON.parse(l))
+            .find((r) => r.id === id) ?? null
+        );
+      };
+      const why = "closed by the merged fix; verified on master";
+      const noBatch = runCli(["close", "B1", "--sha", "abc1234", "--why", why], tmp);
+      const badSha = runCli(["close", "B2", "--sha", "not-a-sha", "--why", why], tmp);
+      check(
+        "642: close refuses an uncampaigned bug without --batch/--tier, and a non-hex sha",
+        {
+          noBatchCode: noBatch.code,
+          noBatchAsksBatch: noBatch.out.includes("--batch"),
+          noRowYet: rowOf("F05", "B1"),
+          badShaCode: badSha.code,
+          bStillQueued: rowOf("F01", "B2")?.state,
+        },
+        {
+          noBatchCode: 1,
+          noBatchAsksBatch: true,
+          noRowYet: null,
+          badShaCode: 1,
+          bStillQueued: "queued",
+        },
+      );
+
+      const closeA = runCli(
+        ["close", "B1", "--sha", "abc1234", "--why", why, "--batch", "F05", "--tier", "T1"],
+        tmp,
+      );
+      const closeB = runCli(["close", "B2", "--sha", "ABCDEF1234", "--why", why], tmp);
+      check(
+        "642: close sets the registry state + proof sha (uncampaigned and queued bugs)",
+        {
+          a: [closeA.code, rowOf("F05", "B1")?.state, rowOf("F05", "B1")?.sha],
+          b: [closeB.code, rowOf("F01", "B2")?.state, rowOf("F01", "B2")?.sha],
+          aShow: runCli(["show", "B1"], tmp).out.includes("state: already-fixed"),
+          aEvidenceCitesSha: String(rowOf("F05", "B1")?.evidence).includes("abc1234"),
+        },
+        {
+          a: [0, "already-fixed", "abc1234"],
+          b: [0, "already-fixed", "abcdef1234"],
+          aShow: true,
+          aEvidenceCitesSha: true,
+        },
+      );
+
+      const replay = runCli(["close", "B1", "--sha", "abc1234", "--why", why], tmp);
+      check(
+        "642: close refuses a replay on a row that is no longer queued/in-flight",
+        { code: replay.code, state: rowOf("F05", "B1")?.state },
+        { code: 1, state: "already-fixed" },
+      );
+    } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
   }
