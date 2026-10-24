@@ -40,6 +40,8 @@ import { CounterSaleTodayService } from "./counter-sale/counter-sale-today.servi
 // SA-750r3: counter day close + Z report (separate controller: the counter-sale controller's constructor is pinned by its specs).
 import { CounterDayCloseController } from "./counter-sale/day-close/day-close.controller";
 import { CounterDayCloseService } from "./counter-sale/day-close/day-close.service";
+import { CounterDrawerController } from "./counter-sale/drawer/counter-drawer.controller";
+import { CounterDrawerService } from "./counter-sale/drawer/counter-drawer.service";
 import { EmailModule } from "../email/email.module";
 // SA-748: parked counter sales (POST|GET /orders/counter-sale/parked, .../:id/resume, DELETE .../:id) + the hourly sweep.
 import { CounterParkController } from "./counter-sale/counter-park.controller";
@@ -96,6 +98,7 @@ import { StorageModule } from "../storage/storage.module";
     CounterSaleVoidController,
     CounterParkController,
     CounterDayCloseController,
+    CounterDrawerController,
     PickupCompleteController,
   ],
   providers: [
@@ -106,6 +109,7 @@ import { StorageModule } from "../storage/storage.module";
     CounterSaleService,
     CounterSaleTodayService,
     CounterDayCloseService,
+    CounterDrawerService,
     CounterParkService,
     CounterParkSweepService,
     QuickKeysService,

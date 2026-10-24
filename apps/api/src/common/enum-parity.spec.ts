@@ -49,6 +49,7 @@ const SHARED = readSharedEnums();
 /** [array export name in packages/types/api/enums.ts, key on @prisma/client's enum namespace] */
 const ENUM_TABLE: Array<[string, keyof typeof PrismaEnums]> = [
   ["ESTIMATE_STATUS_VALUES", "EstimateStatus"],
+  ["COUNTER_DRAWER_EVENT_KIND_VALUES", "CounterDrawerEventKind"],
   ["EXPENSE_STATUS_VALUES", "ExpenseStatus"],
   ["INVOICE_STATUS_VALUES", "InvoiceStatus"],
   ["RETURN_STATUS_VALUES", "ReturnStatus"],
@@ -294,7 +295,9 @@ describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
 // AdjustmentReason (SA-804(3), SA-828 row 657, migration 20261020130000_stock_movement_adjustment_reason): two
 // brand-new Prisma enums, mirrored as `INVOICE_UNIT_DEFAULT_VALUES` / `ADJUSTMENT_REASON_VALUES` + their `ENUM_TABLE`
 // rows (118 → 120).
-const PINNED_PRISMA_ENUM_COUNT = 120;
+// Triage for CounterDrawerEventKind (W-819, migration 20261024120000_counter_drawer_event): mirrored as
+// `COUNTER_DRAWER_EVENT_KIND_VALUES` + its `ENUM_TABLE` row (the till reads `kind` in the event body) (120 → 121).
+const PINNED_PRISMA_ENUM_COUNT = 121;
 
 describe("enum triage tripwire: generated Prisma enum count (L-072)", () => {
   it("pins the number of generated Prisma enums — a new enum must be triaged into ENUM_TABLE or explicitly left unmirrored", () => {

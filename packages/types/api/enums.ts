@@ -634,3 +634,7 @@ export const PAYMENT_IDEMPOTENCY_SCOPE_VALUES = [
   "ADVANCE_PAYMENT",
 ] as const;
 export type PaymentIdempotencyScope = (typeof PAYMENT_IDEMPOTENCY_SCOPE_VALUES)[number];
+
+/** W-819 / SA-930 section 4: what a counter drawer event records. OPENING_FLOAT today; cash drops and paid-outs are the seam. */
+export const COUNTER_DRAWER_EVENT_KIND_VALUES = ["OPENING_FLOAT"] as const;
+export type CounterDrawerEventKind = (typeof COUNTER_DRAWER_EVENT_KIND_VALUES)[number];
