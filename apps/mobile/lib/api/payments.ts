@@ -126,8 +126,10 @@ export interface UpdatePaymentDto {
   /** Omit to keep the stored bank date; send null to clear it. */
   settledAt?: string | null;
   bankCharges?: number;
-  reference?: string;
-  notes?: string;
+  /** W-663: null clears the stored reference (an emptied field); omit to keep it. */
+  reference?: string | null;
+  /** W-663: null clears the stored notes. */
+  notes?: string | null;
   /** W-718: the staff "Record anyway" resend of an edit refused 409 DUPLICATE_PAYMENT_REF. */
   recordAnyway?: boolean;
 }

@@ -21,10 +21,14 @@ jest.mock("@/lib/auth-context", () => ({
   ...jest.requireActual("@/lib/auth-context"),
   useAuth: () => ({ user: { role } }),
 }));
+let mockSwitchOn = true;
 jest.mock("@/lib/api-client", () => ({
   ...jest.requireActual("@/lib/api-client"),
   apiClient: {
-    get: jest.fn(() => Promise.resolve({ data: [] })),
+    // the owner-only staff-orders switch the impact line reads (ON unless a test says otherwise)
+    get: jest.fn((url: string) =>
+      Promise.resolve({ data: url === "/settings/restrictions" ? { enabled: mockSwitchOn } : [] }),
+    ),
     post: (...a: unknown[]) => post(...a),
     put: (...a: unknown[]) => put(...a),
   },
@@ -108,7 +112,7 @@ describe("EditRuleDialog", () => {
     expect(screen.getByText("Tightens")).toBeInTheDocument();
     expect(screen.getByText("Reason")).toBeInTheDocument();
     expect(screen.queryByText("Loosens")).toBeNull();
-    expect(screen.getByText(ruleEditImpactCopy(3))).toBeInTheDocument();
+    expect(screen.getByText(ruleEditImpactCopy(3, false, true))).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "View open orders" })).toHaveAttribute(
       "href",
       "/orders",
@@ -214,7 +218,7 @@ describe("EditRuleDialog", () => {
     addCA();
     save();
     fireEvent.click(await screen.findByRole("button", { name: "Confirm change" }));
-    expect(await screen.findByText(ruleEditImpactCopy(7))).toBeInTheDocument();
+    expect(await screen.findByText(ruleEditImpactCopy(7, false, true))).toBeInTheDocument();
     expect(post).toHaveBeenCalledTimes(2);
     expect(toast).not.toHaveBeenCalled();
     expect(
@@ -271,7 +275,21 @@ describe("EditRuleDialog", () => {
     addCA();
     save();
     expect(await screen.findByRole("button", { name: "Confirm change" })).toBeEnabled();
-    expect(screen.getByText(ruleEditImpactCopy(2000, true))).toBeInTheDocument();
-    expect(ruleEditImpactCopy(2000, true)).toMatch(/^2,000\+ open orders and drafts/);
+    expect(screen.getByText(ruleEditImpactCopy(2000, true, true))).toBeInTheDocument();
+    expect(ruleEditImpactCopy(2000, true, true)).toMatch(/^2,000\+ open orders and drafts/);
+  });
+
+  it("review MUST-1: with the staff-orders switch OFF the impact line never says staff are warned", async () => {
+    mockSwitchOn = false;
+    try {
+      post.mockResolvedValueOnce({ data: preview({ impact: { openOrders: 2, drafts: 1 } }) });
+      open();
+      addCA();
+      save();
+      expect(await screen.findByText(ruleEditImpactCopy(3, false, false))).toBeInTheDocument();
+      expect(screen.queryByText(/Staff will be warned/)).toBeNull();
+    } finally {
+      mockSwitchOn = true;
+    }
   });
 });

@@ -342,6 +342,33 @@ describeDb("row 752 editing a payment into a duplicate — real Postgres", () =>
     expect(Number((await s.get(sixty.id))?.amount)).toBe(40);
   }, 60_000);
 
+  // W-663 (SA-843 filing): an emptied edit field must CLEAR the stored value. The wrong value is pinned first: an absent key
+  // (what the clients sent) keeps the old reference. A cleared reference has no dedupe identity (normalised ref null), so it
+  // never trips DUPLICATE_PAYMENT_REF, even beside a same-amount payment that keeps the same reference.
+  it("W-663 undefined keeps the old reference; null CLEARS reference and notes; clearing never trips the dedupe", async () => {
+    const s = await seed("w663");
+    const pay = await s.row(s.invs[0].id, { amount: 25, reference: "R9" });
+    await s.row(s.invs[1].id, { amount: 25, reference: "R9" }); // the same reference and amount, elsewhere
+    await prismaA.invoicePayment.update({ where: { id: pay.id }, data: { notes: "old note" } });
+    const edit = (body: Record<string, unknown>) =>
+      s
+        .asTenant(() =>
+          invoicesA.updatePayment(
+            s.invs[0].id,
+            pay.id,
+            { amount: 25, method: "CHECK", ...body } as any,
+            s.staffOpts(false),
+          ),
+        )
+        .catch((e) => e);
+    expect(status(await edit({ reference: undefined, notes: undefined }))).toBe("ok");
+    expect((await s.get(pay.id))?.reference).toBe("R9"); // the wrong value the clients produced
+    expect(status(await edit({ reference: null, notes: null }))).toBe("ok"); // no 409: no dedupe identity
+    const after = await s.get(pay.id);
+    expect(after?.reference).toBeNull();
+    expect(after?.notes).toBeNull();
+  }, 60_000);
+
   it("R6 no reference key in the body: the stored reference collides (409)", async () => {
     const s = await seed("r6");
     await s.row(s.invs[0].id, { amount: 100, reference: "CHK 100" });

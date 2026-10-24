@@ -85,6 +85,7 @@ import { useTenantTimeZoneQuery } from "@/lib/tenant-timezone";
 import { keptSaleHref } from "@/lib/kept-draft-invoice";
 import { receiptCustomerName, type ReceiptBusinessProfile } from "@/lib/counter-receipt";
 import { isCounterSaleDayClosed } from "@/lib/day-closed-copy";
+import { useRestrictionWarningRetry } from "@/lib/use-restriction-warning-retry";
 import { CounterPaymentNotRecorded } from "./CounterPaymentNotRecorded";
 import { CounterCreditOverLimit } from "./CounterCreditOverLimit";
 import { CounterReceiptBody } from "./CounterReceiptBody";
@@ -168,6 +169,7 @@ export function CounterSaleScreen() {
   else if (!gate.loading) gateWasFailedRef.current = false;
   const keepRetryPanel = gate.failed || (gate.loading && gateWasFailedRef.current);
   const createSale = useCreateCounterSale();
+  const rw = useRestrictionWarningRetry(); // row 510: staff warning + override dialog
   const lookupSale = useCounterSaleByKey();
   const createDraft = useCreateDraft();
   const authUser = useOptionalAuth()?.user;
@@ -854,7 +856,14 @@ export function CounterSaleScreen() {
       return res;
     } catch (err) {
       const finalCopy = finalCounterSaleCopy(err);
-      if (finalCopy) {
+      if (rw.handle(err, () => void completeSale(attempt.next))) {
+        // Row 510: a warning (or a driver's block) wrote nothing. Keep the key for the re-ring with the ack, unfreeze the cart.
+        offlineKeyRef.current = attempt.key;
+        attemptRef.current = null;
+        clearHeldAttempt(heldKey);
+        setOutcomeUnknown(false);
+        liveCart.endSend();
+      } else if (finalCopy) {
         // FINAL (even for an unknown attempt): voided or changed after it was rung. Drop the key, unlock, never retry.
         attemptRef.current = null;
         clearHeldAttempt(heldKey);
@@ -965,7 +974,8 @@ export function CounterSaleScreen() {
       return null;
     }
     const tenderAmount = roundMoney(tenderedNum);
-    const dto: CounterSaleRequest = {
+    // Row 510: the ack (once, from "Sell anyway") rides IN the attempt's body, so a resend of an unknown outcome repeats it.
+    const dto: CounterSaleRequest = rw.attach({
       ...(customer ? { customerId: customer.id } : { walkIn: true }),
       items: lines.map(toSaleItem),
       payment: {
@@ -974,7 +984,7 @@ export function CounterSaleScreen() {
         ...(reference.trim() ? { reference: reference.trim() } : {}),
         ...(method === "CHECK" && submitCheckDate ? { checkDate: submitCheckDate } : {}),
       },
-    };
+    } as CounterSaleRequest);
     dropUndo(); // the sale is going out: a removed line can no longer come back
     attemptRef.current = {
       key: offlineKeyRef.current ?? newIdempotencyKey(),
@@ -1863,6 +1873,7 @@ export function CounterSaleScreen() {
           </div>
         </div>
       </div>
+      {rw.dialog}
     </div>
   );
 }

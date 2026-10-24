@@ -23,7 +23,12 @@ describe("OrdersService.changeStatus — DRAFT promotion and selling restriction
   };
   const operator = { ...operatorPayload, tenantId: "t-1" } as never;
   const tenantAdmin = { ...operatorPayload, role: "TENANT_ADMIN", tenantId: "t-1" } as never;
-  const line = (productId: string | null) => ({ productId, qty: 2, trackedCategoryId: null });
+  const line = (productId: string | null) => ({
+    id: productId ? `li-${productId}` : "li-unlisted",
+    productId,
+    qty: 2,
+    trackedCategoryId: null,
+  });
 
   let h: Awaited<ReturnType<typeof buildOrdersService>>;
   const promote = (user: never = operator) =>
@@ -51,16 +56,21 @@ describe("OrdersService.changeStatus — DRAFT promotion and selling restriction
     await promote();
 
     expect(h.restrictions.assertLinesSellable).toHaveBeenCalledTimes(1);
-    expect(h.restrictions.assertLinesSellable).toHaveBeenCalledWith({
-      tenantId: "t-1",
-      customerId: "cust-1",
-      lines: [{ productId: "prod-1" }],
-      // The stricter of the PROMOTING principal's channel and the line author's (F1 i): a staff-built
-      // draft promoted by staff is STAFF; buyer-authored lines are judged on BUYER_PORTAL
-      // (orders.promotion-line-authors.spec.ts). No `at`: judged at entry time, like the license guard.
-      channel: "STAFF",
-      fulfilmentKind: "DELIVERY",
-    });
+    expect(h.restrictions.assertLinesSellable).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: "t-1",
+        customerId: "cust-1",
+        // row 510: each judged line carries the key the client echoes on a warning
+        lines: [{ productId: "prod-1", lineKey: "l:li-prod-1" }],
+        // The channel is the PROMOTING principal's, so a draft a BUYER started and staff promotes is
+        // judged on STAFF (not BUYER_PORTAL): an open ruling, flagged in the PR. No `at`: judged at
+        // entry time, like the license guard (owner ruling pending).
+        channel: "STAFF",
+        fulfilmentKind: "DELIVERY",
+        document: "ORDER",
+        principal: operator,
+      }),
+    );
   });
 
   it.each([
