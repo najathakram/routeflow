@@ -908,7 +908,7 @@ describeDb("I-120 Complete at counter — real Postgres", () => {
     try {
       const err: any = await withFlag(orderId, `key-${run}-r8d`, true).catch((e) => e);
       expect(err?.getStatus?.()).toBe(409);
-      expect(err.getResponse()).toMatchObject({ code: "COUNTER_COMPLETE_STOP_STARTED" });
+      expect(err.getResponse()).toMatchObject({ code: "COUNTER_COMPLETE_STOP_STARTED", runId });
     } finally {
       gate.mockRestore();
     }

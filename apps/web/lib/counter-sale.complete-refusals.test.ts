@@ -79,7 +79,7 @@ describe("pickupCompleteErrorCopy: R8/R9 refusals (owner 7a)", () => {
   // W-776 (SA-925): the pre-check's closed day says nothing changed; the post-claim code keeps "Handed over"
   it("a closed day refused before any write says nothing changed, not handed over", () => {
     expect(pickupCompleteErrorCopy(refusal({ code: "COUNTER_COMPLETE_DAY_CLOSED" }), 25)).toBe(
-      "Nothing changed. This register's day is closed. A manager or owner can reopen it on the till.",
+      "Nothing changed. This register's day is closed. Ask a manager or owner to reopen it.",
     );
     expect(pickupCompleteErrorCopy(refusal({ code: "COUNTER_SALE_DAY_CLOSED" }), 25)).toBe(
       "Handed over. $25.00 still due.",

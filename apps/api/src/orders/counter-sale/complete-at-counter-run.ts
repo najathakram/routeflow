@@ -113,6 +113,7 @@ export async function takeOrderOffRun(
     throw new ConflictException({
       code: API_ERROR_CODES.COUNTER_COMPLETE_STOP_STARTED,
       message: STOP_STARTED_MESSAGE,
+      runId: link.runId,
     });
   }
   const [run]: Array<{ status: string; driverId: string | null }> = await tx.$queryRaw`

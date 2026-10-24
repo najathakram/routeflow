@@ -51,7 +51,7 @@ export function counterCompleteRefusalCopy(
       return "Nothing changed. This order's delivery run just changed. Reload and try again.";
     // W-776 (SA-925): the pre-check refused a closed day before any write. W-778: it names where the fix is (the till).
     case API_ERROR_CODES.COUNTER_COMPLETE_DAY_CLOSED:
-      return "Nothing changed. This register's day is closed. A manager or owner can reopen it on the till.";
+      return "Nothing changed. This register's day is closed. Ask a manager or owner to reopen it.";
     case API_ERROR_CODES.COUNTER_COMPLETE_UNAVAILABLE:
       return "Nothing changed. This business doesn't hand orders over at the store.";
     case API_ERROR_CODES.CREDIT_LIMIT_EXCEEDED: {

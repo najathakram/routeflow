@@ -400,7 +400,7 @@ describe("PickupCompleteDialog — the API's pickup codes", () => {
     fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "25" } });
     confirm();
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Nothing changed. This register's day is closed. A manager or owner can reopen it on the till.",
+      "Nothing changed. This register's day is closed. Ask a manager or owner to reopen it.",
     );
     expect(screen.queryByText(/Handed over/)).toBeNull();
     expect(screen.queryByText(/raw text/)).toBeNull();
@@ -812,14 +812,11 @@ describe("PickupCompleteDialog: W-778 complete-at-counter refusals (apple-ux 202
     return utils;
   };
 
-  // item 2 + B-1: a closed day names the fix and links the till
-  it("COUNTER_COMPLETE_DAY_CLOSED: names the till and links to it", async () => {
+  // item 2 + MUST 1: a closed day asks for a reopen and promises no till link (the plain Reopen day has not landed)
+  it("COUNTER_COMPLETE_DAY_CLOSED: asks a manager to reopen it and links nowhere", async () => {
     await refuse("COUNTER_COMPLETE_DAY_CLOSED");
-    expect(screen.getByRole("alert")).toHaveTextContent("reopen it on the till");
-    expect(screen.getByRole("link", { name: "Open the till" })).toHaveAttribute(
-      "href",
-      "/orders/counter-sale",
-    );
+    expect(screen.getByRole("alert")).toHaveTextContent("Ask a manager or owner to reopen it.");
+    expect(screen.queryByRole("link", { name: "Open the till" })).toBeNull();
   });
 
   // item 6 + B-3: after a hard refusal nothing looks ready to retry
@@ -842,6 +839,18 @@ describe("PickupCompleteDialog: W-778 complete-at-counter refusals (apple-ux 202
       expect(onClose).toHaveBeenCalled();
     },
   );
+
+  // MUST 3: the run link changed under the dialog: Reload is the one live action (a footer Close would hide the stale page)
+  it("ORDER_RUN_LINK_CHANGED: no Complete, controls locked, Reload is the only live action and refetches orders", async () => {
+    const { onClose, invalidate } = await refuse("ORDER_RUN_LINK_CHANGED");
+    expect(screen.queryByRole("button", { name: "Complete" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Cash" })).toBeDisabled();
+    expect(screen.getByLabelText("Amount tendered")).toBeDisabled();
+    expect(screen.getAllByRole("button", { name: "Close" })).toHaveLength(1); // only the header X: the footer action is Reload
+    fireEvent.click(screen.getByRole("button", { name: "Reload" }));
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["orders"] });
+    expect(onClose).toHaveBeenCalledTimes(1); // Reload refetches, then closes
+  });
 
   it("B-3: pressing a method after the refusal does not hide the error", async () => {
     await refuse("COUNTER_COMPLETE_DAY_CLOSED");

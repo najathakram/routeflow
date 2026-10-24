@@ -494,14 +494,6 @@ export function PickupCompleteDialog({
             {error}
           </p>
         )}
-        {errorCode === API_ERROR_CODES.COUNTER_COMPLETE_DAY_CLOSED && (
-          <Link
-            href="/orders/counter-sale"
-            className="text-sm font-semibold text-brand-600 underline"
-          >
-            Open the till
-          </Link>
-        )}
         {errorCode === API_ERROR_CODES.COUNTER_COMPLETE_STOP_STARTED && errorRunId && (
           <Link
             href={`/routes/${errorRunId}`}
