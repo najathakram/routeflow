@@ -110,6 +110,8 @@ export function PickupCompleteDialog({
   const keyRef = React.useRef<string>("");
   const [method, setMethod] = React.useState<CounterSalePaymentMethod>("CASH");
   const [tendered, setTendered] = React.useState("");
+  /** Row 312(b): the value the dialog itself put in the cash field; a different value is the cashier's own. */
+  const autoTendered = React.useRef("");
   const [reference, setReference] = React.useState("");
   const [error, setError] = React.useState<string | null>(null);
   const [errorCode, setErrorCode] = React.useState<string | undefined>();
@@ -124,6 +126,7 @@ export function PickupCompleteDialog({
       }
       keyRef.current = held.current?.orderId === orderId ? held.current.key : newIdempotencyKey();
       setMethod("CASH");
+      autoTendered.current = "";
       setTendered("");
       setReference("");
       setError(null);
@@ -133,6 +136,18 @@ export function PickupCompleteDialog({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+
+  // Row 312(b): the cash amount starts at the amount due (as Exact sets it), and follows it (a balance the server
+  // reported later) until the cashier types. One press fewer on an exact cash hand-over; a typed amount is never replaced.
+  React.useEffect(() => {
+    if (!open || due === null || due <= 0) return;
+    const next = String(due);
+    setTendered((cur) => {
+      if (cur !== autoTendered.current) return cur;
+      autoTendered.current = next;
+      return next;
+    });
+  }, [open, due]);
 
   const tenderedNum = Number(tendered) || 0;
 

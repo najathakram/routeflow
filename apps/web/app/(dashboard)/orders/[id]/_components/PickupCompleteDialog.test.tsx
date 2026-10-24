@@ -165,6 +165,39 @@ describe("PickupCompleteDialog — tender", () => {
     expect(document.body.textContent).not.toMatch(/Picked up —/);
   });
 
+  // Row 312(b): POS presses 8 vs target 7. The cash amount starts at the amount due (as Exact would set it), so an
+  // exact cash hand-over is one press less; it follows the due amount until the cashier types, and never overwrites them.
+  it("row 312: the cash amount starts at the amount due, so Picked up needs no typing", async () => {
+    balance(25);
+    post.mockResolvedValue(result({ change: 0, paid: 25 }));
+    mount();
+    await waitFor(() => expect(screen.getByLabelText("Amount tendered")).toHaveValue("25"));
+    confirm();
+    await waitFor(() => expect(post).toHaveBeenCalled());
+    expect(post.mock.calls[0][1]).toEqual({ payment: { method: "CASH", amount: 25 } });
+  });
+
+  it("row 312: what the cashier typed is kept when the dialog re-renders", async () => {
+    balance(25);
+    const { rerender } = mount();
+    await waitFor(() => expect(screen.getByLabelText("Amount tendered")).toHaveValue("25"));
+    fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "40" } });
+    rerender(
+      <QueryClientProvider client={new QueryClient()}>
+        <PickupCompleteDialog
+          open
+          onClose={jest.fn()}
+          orderId="o1"
+          orderNumber="ORD-1"
+          total={25}
+          invoices={invoices(25)}
+          isWalkIn={false}
+        />
+      </QueryClientProvider>,
+    );
+    expect(screen.getByLabelText("Amount tendered")).toHaveValue("40");
+  });
+
   it("quick tender fills the amount", async () => {
     balance(25);
     mount();
