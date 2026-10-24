@@ -51,7 +51,9 @@ async function liveReplay(
 }
 
 // Every row has its third element: `it.each` passes `done` to a test fn that takes more params than the row has.
-const CASES: Array<[string, Row[], { costingMethod?: CostingMethod; averageCost?: number }]> = [
+const CASES: Array<
+  [string, Row[], { costingMethod?: CostingMethod; averageCost?: number }, number]
+> = [
   [
     "§0 pair with the sale on the ledger: 10@1, sell 8, 10@3 → 2.6667",
     [
@@ -60,6 +62,7 @@ const CASES: Array<[string, Row[], { costingMethod?: CostingMethod; averageCost?
       { type: MovementType.PURCHASE, quantity: 10, unitCost: 3 },
     ],
     {},
+    2.6667, // the average, worked by hand (Opus #3696 MUST 4: a literal, so a fold mutation goes red)
   ],
   [
     "sales-blind: 10@1, 10@3, then the backfill −8 → 2.0",
@@ -69,6 +72,7 @@ const CASES: Array<[string, Row[], { costingMethod?: CostingMethod; averageCost?
       { type: MovementType.SALE, quantity: -8, reference: "B562:BACKFILL:h" },
     ],
     {},
+    2, // the average, worked by hand (Opus #3696 MUST 4: a literal, so a fold mutation goes red)
   ],
   [
     "a bill revert reverses the average (negative PURCHASE)",
@@ -78,6 +82,7 @@ const CASES: Array<[string, Row[], { costingMethod?: CostingMethod; averageCost?
       { type: MovementType.PURCHASE, quantity: -5, unitCost: 5 },
     ],
     {},
+    2, // the average, worked by hand (Opus #3696 MUST 4: a literal, so a fold mutation goes red)
   ],
   [
     "costed adjustments both ways",
@@ -87,6 +92,7 @@ const CASES: Array<[string, Row[], { costingMethod?: CostingMethod; averageCost?
       { type: MovementType.ADJUSTMENT, quantity: -2, unitCost: 3.5 },
     ],
     {},
+    2.25, // the average, worked by hand (Opus #3696 MUST 4: a literal, so a fold mutation goes red)
   ],
   [
     "a manual cost basis and a REPAIR row are inputs; a RECOMPUTE row is not",
@@ -99,16 +105,18 @@ const CASES: Array<[string, Row[], { costingMethod?: CostingMethod; averageCost?
       { type: MovementType.SALE, quantity: -3 },
     ],
     {},
+    7, // the average, worked by hand (Opus #3696 MUST 4: a literal, so a fold mutation goes red)
   ],
   [
     "STANDARD carries its frozen average",
     [{ type: MovementType.PURCHASE, quantity: 10, unitCost: 2 }],
     { costingMethod: CostingMethod.STANDARD, averageCost: 1.5 },
+    1.5, // the average, worked by hand (Opus #3696 MUST 4: a literal, so a fold mutation goes red)
   ],
 ];
 
 describe("foldLedger (row 635, SA-902 MUST 3): one fold, the replay's own", () => {
-  it.each(CASES)("parity with the live replay: %s", async (_name, r, opts) => {
+  it.each(CASES)("parity with the live replay: %s", async (_name, r, opts, expected) => {
     const movements = rows(...r);
     const live = await liveReplay(movements, opts);
     const isStandard = opts?.costingMethod === CostingMethod.STANDARD;
@@ -116,7 +124,8 @@ describe("foldLedger (row 635, SA-902 MUST 3): one fold, the replay's own", () =
       isStandard,
       averageCost: opts?.averageCost == null ? null : D(opts.averageCost),
     });
-    expect(folded.avg == null ? null : Number(folded.avg)).toBe(live?.newAvgCost ?? null);
+    expect(Number(folded.avg)).toBe(expected); // the literal: both sides could not drift together unseen
+    expect(live?.newAvgCost).toBe(expected);
     expect(folded.stock.toString()).toBe(
       movements.reduce((s, m) => s.add(m.quantity), D(0)).toString(),
     );

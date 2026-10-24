@@ -169,7 +169,7 @@ describeDb("B562 D2 average repair — real Postgres (row 635, SA-902)", () => {
    */
   async function seed(
     label: string,
-    opts: { sold?: number; anchorQty?: number } = {},
+    opts: { sold?: number; anchorQty?: number; costingMethod?: "AVCO" | "FIFO" | "LIFO" } = {},
   ): Promise<World> {
     seq += 1;
     const slug = assertTestTenant(`qa-b562-d2-${RUN}-${seq}-${label}`, "d2-repair.db.spec.ts");
@@ -200,7 +200,7 @@ describeDb("B562 D2 average repair — real Postgres (row 635, SA-902)", () => {
         pricePerUnit: 5,
         currentStock: 20 - anchorQty,
         averageCost: 2,
-        costingMethod: "AVCO",
+        costingMethod: opts.costingMethod ?? "AVCO",
         tenantId: tenant.id,
       },
     });
@@ -384,6 +384,53 @@ describeDb("B562 D2 average repair — real Postgres (row 635, SA-902)", () => {
     expect((await rowsOf(w)).filter((r) => r.reference?.startsWith("B562:REPAIR:"))).toHaveLength(
       1,
     );
+  }, 120_000);
+
+  it("Opus #3696 MUST 1: a stored FIFO product is costed at the average (SA-804), so it is repaired: 2.0 → 2.6667 (head: skipped NOT_AVCO)", async () => {
+    const w = await seed("fifo", { costingMethod: "FIFO" });
+    const p = await plan(w);
+    expect(p.skipped).toEqual([]);
+    expect(p.entries[0]).toMatchObject({ xC: "2.6667", xNow: "2.6667" });
+  }, 120_000);
+
+  it("SA-911: a pre-cutover draft promoted AFTER the cutover (its ORDER:<id> PROMOTE row) is not interposed; residual 0", async () => {
+    const w = await seed("promoted");
+    // A draft created 09-08 for 5, promoted 09-26 by PR-2's code: the ledger holds its PROMOTE SALE row; the counter moved.
+    const draft = await prisma.order.create({
+      data: {
+        tenantId: w.tenantId,
+        customerId: w.customerId,
+        status: "PENDING",
+        createdAt: at("2026-09-08T00:00:00.000Z"),
+        updatedAt: at("2026-09-26T00:00:00.000Z"),
+      } as any,
+    });
+    await prisma.orderItem.create({
+      data: {
+        tenantId: w.tenantId,
+        orderId: draft.id,
+        productId: w.productId,
+        qty: 5,
+        unitPrice: 5,
+        pieces: 5,
+        unitsPerBox: 1,
+      } as any,
+    });
+    await prisma.stockMovement.create({
+      data: {
+        tenantId: w.tenantId,
+        productId: w.productId,
+        type: MovementType.SALE,
+        quantity: -5,
+        reference: `ORDER:${draft.id}`,
+        notes: "PROMOTE",
+        effectiveAt: at("2026-09-26T00:00:00.000Z"),
+        createdAt: at("2026-09-26T00:00:00.000Z"),
+      },
+    });
+    await prisma.product.update({ where: { id: w.productId }, data: { currentStock: 7 } });
+    const p = await plan(w);
+    expect(p.entries[0]).toMatchObject({ legacyOrders: 2, residual: "0", xC: "2.6667" });
   }, 120_000);
 
   describe("guards", () => {

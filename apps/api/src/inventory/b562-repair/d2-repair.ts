@@ -1,6 +1,8 @@
 import { createHash } from "crypto";
 import { CostingMethod, MovementType, Prisma } from "@prisma/client";
 import { lockProductsForStock } from "../../common/product-locks";
+import { orderStockReference } from "../../orders/order-stock";
+import { effectiveCostingMethod } from "../costing-method-policy";
 import { foldLedger } from "../fold-ledger";
 import {
   interposeOrder,
@@ -21,8 +23,9 @@ import {
  * `scripts/b562-d2-average-repair.mjs`.
  *
  * PLAN (read-only, one tenant): per product that carries exactly one D1 anchor (`B562:BACKFILL:`), the reconstruction
- * (d2-reconstruct.ts) — X_c at the cutover, X_now, EXACT/APPROX with reasons. Skipped and listed: not AVCO (STANDARD /
- * LAST_COST / the retired FIFO-LIFO are out of D2's scope), no anchor, several anchors, already repaired (one repair per
+ * (d2-reconstruct.ts) — X_c at the cutover, X_now, EXACT/APPROX with reasons. Skipped and listed: not effectively AVCO
+ * (STANDARD, LAST_COST; a stored FIFO/LIFO is costed at the average, SA-804, so it IS in scope), no anchor, several
+ * anchors, already repaired (one repair per
  * product; the manual cost setter is the owner's later override), drift ≠ 0 (D1 first), no cost history before the
  * cutover, already correct.
  *
@@ -90,6 +93,9 @@ export function planHashOf(entries: D2Entry[]): string {
   return createHash("sha256").update(JSON.stringify(covered)).digest("hex");
 }
 
+/** PR-2's order-event reference (`ORDER:<orderId>`), from its own helper. */
+const ORDER_REF_PREFIX = orderStockReference("");
+
 const LINE_SELECT = {
   productId: true,
   qty: true,
@@ -131,6 +137,7 @@ async function legacyOrdersOf(
       status: true,
       createdAt: true,
       updatedAt: true,
+      counterSale: true, // SA-911: a counter sale cannot have been a draft
       lineItems: { select: LINE_SELECT },
       revisions: {
         select: { createdAt: true, snapshot: true },
@@ -143,6 +150,7 @@ async function legacyOrdersOf(
     status: String(o.status),
     createdAt: o.createdAt,
     updatedAt: o.updatedAt,
+    counterSale: o.counterSale === true,
     lines: o.lineItems as LegacyLine[],
     revisions: o.revisions.map((r: any) => ({
       createdAt: r.createdAt,
@@ -197,12 +205,14 @@ export async function planD2(
         quantity: true,
         unitCost: true,
         reference: true,
+        notes: true, // PR-2's order event kind (CREATE | EDIT | … | PROMOTE) on an ORDER:<id> row
         effectiveAt: true,
         createdAt: true,
       },
     });
     const anchors = ledger.filter((r) => r.reference?.startsWith(BACKFILL_PREFIX));
-    if (p.costingMethod !== CostingMethod.AVCO) {
+    // Opus #3696 MUST 1: stored FIFO/LIFO are costed at the average (SA-804): only what is EFFECTIVELY AVCO is in scope.
+    if (effectiveCostingMethod(p.costingMethod) !== CostingMethod.AVCO) {
       skip("NOT_AVCO", String(p.costingMethod));
       continue;
     }
@@ -229,8 +239,24 @@ export async function planD2(
     const orders = await legacyOrdersOf(db, opts.tenantId, p.id, anchor.effectiveAt);
     const events: PlacedEvent[] = [];
     const approx: string[] = [];
+    // SA-911: each order's own ORDER:<id> rows for THIS product (PR-2, after the cutover) — the skip rule and PROMOTE.
+    const byOrder = new Map<string, { rows: number; qty: Prisma.Decimal; promoted: boolean }>();
+    for (const m of ledger as Array<LedgerRow & { notes?: string | null }>) {
+      if (!m.reference?.startsWith(ORDER_REF_PREFIX)) continue;
+      const id = m.reference.slice(ORDER_REF_PREFIX.length);
+      const cur = byOrder.get(id) ?? { rows: 0, qty: new Prisma.Decimal(0), promoted: false };
+      cur.rows += 1;
+      cur.qty = cur.qty.add(m.quantity);
+      if (m.notes === "PROMOTE") cur.promoted = true;
+      byOrder.set(id, cur);
+    }
     for (const o of orders) {
-      const r = interposeOrder(o, p.id, p.unitsPerBox, anchor.effectiveAt);
+      const r = interposeOrder(
+        { ...o, ledger: byOrder.get(o.id) },
+        p.id,
+        p.unitsPerBox,
+        anchor.effectiveAt,
+      );
       events.push(...r.events);
       approx.push(...r.approx);
     }
@@ -296,7 +322,7 @@ export interface D2Applied {
 
 /**
  * The apply, inside ONE tenant transaction the caller opens (`prisma.tenantTransaction` under the tenant's context).
- * `assertXNow` exists only for R-D2b's forced-mismatch row; the runner never passes it.
+ * `expectXNow` exists only for R-D2b's forced-mismatch row; the runner never passes it.
  */
 export async function applyD2InTx(
   tx: any,

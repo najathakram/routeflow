@@ -9,9 +9,12 @@
 // Product.averageCost). Nothing is rewritten; no snapshot moves.
 // Report per product: was / at cutover / now / EXACT|APPROX with reasons (a costful row inside an uncertain window, a
 // residual between D1's quantity and the interposed sales, a line sized by the live pack, a window across the cutover).
-// Blind spot (SA-373 e): order stock writers that wrote no OrderRevision are invisible here; their quantity lands in
-// the residual. Residual (SA-902): a purchase dated BEFORE the cutover and entered AFTER the repair folds before the
-// repair input, so the input hides its cost; use the manual cost setter for such a product.
+// Blind spots (SA-373 e, SA-911): order stock writers that wrote no OrderRevision are invisible here, and their quantity
+// lands in the residual; an order saved as a draft took stock when it was confirmed, and that time is not stored, so its
+// sale is placed anywhere in [createdAt, updatedAt] (APPROX when a cost row falls there). Residual (SA-902): a purchase
+// dated BEFORE the cutover and entered AFTER the repair folds before the repair input, so the input hides its cost; use
+// the manual cost setter for such a product. EXACT/APPROX informs the owner's per-product decision; nothing applies on
+// confidence alone (every apply is the owner's, from a reviewed plan).
 //
 // It runs the app's compiled code (dist/inventory/b562-repair/d2-runner.js): build first (npm run build -w apps/api).
 //
@@ -113,10 +116,9 @@ async function fingerprint(url, tenantSlug) {
     const ro = (await client.query("SHOW default_transaction_read_only")).rows[0];
     if (ro?.default_transaction_read_only !== "on") throw new Error("the session is not read-only");
     const db = (await client.query("SELECT current_database() AS db")).rows[0].db;
-    const t = (await client.query('SELECT id, slug FROM "Tenant" WHERE slug = $1', [tenantSlug]))
-      .rows[0];
-    if (!t) throw refuse(`no tenant ${tenantSlug}`);
-    return { database: db, tenantId: t.id, tenantSlug: t.slug };
+    const t = (await client.query('SELECT id FROM "Tenant" WHERE slug = $1', [tenantSlug])).rows[0];
+    if (!t) throw refuse("no such tenant");
+    return { database: db, tenantId: t.id };
   } finally {
     await client.end().catch(() => undefined);
   }
@@ -130,13 +132,14 @@ async function loadRunner() {
 async function dryRun() {
   const tenantSlug = argOf("--tenant");
   if (!tenantSlug) {
-    console.error(`${TAG}: --tenant <slug> is required (one tenant per plan)`);
+    console.error(`${TAG}: --tenant is required (one tenant per plan)`);
     return 1;
   }
   const productIds = argOf("--products")?.split(",").filter(Boolean);
   const url = await resolveTarget();
-  console.log(`${TAG}: target ${redactUrl(url)} DRY-RUN (tenant ${tenantSlug})`);
   const fp = await fingerprint(url, tenantSlug);
+  // Opus #3696 MUST 3: ids and counts only — the tenant by its id, never its slug.
+  console.log(`${TAG}: target ${redactUrl(url)} DRY-RUN (tenant ${fp.tenantId})`);
   process.env.DATABASE_URL = readOnlyUrl(url);
   const runner = await loadRunner();
   const plan = await runner.runD2Plan({ tenantId: fp.tenantId, productIds });
@@ -170,6 +173,10 @@ async function dryRun() {
   const bySkip = plan.skipped.reduce((m, s) => ({ ...m, [s.reason]: (m[s.reason] ?? 0) + 1 }), {});
   if (plan.skipped.length)
     console.log(`  skipped: ${JSON.stringify(bySkip)} (ids in the plan file)`);
+  console.log(
+    "\nblind spots: order writers with no revision (in the residual); a draft's confirmation time is not stored" +
+      " (its sale spans [createdAt, updatedAt]). EXACT/APPROX informs the decision; nothing applies on it alone.",
+  );
   console.log(`\nplan: ${file}\nplan hash: ${plan.planHash}`);
   if (plan.entries.length > 0) {
     console.log(
@@ -199,7 +206,7 @@ async function apply() {
     !planFile ||
     !confirmPlan ||
     !guardSha ||
-    !hasBackupAttestation(process.argv, "--backup-taken")
+    !hasBackupAttestation(process.argv, "--i-have-a-fresh-backup") // the alias D1 also takes
   ) {
     console.error(`${TAG}: --apply needs --plan, --confirm-plan, --guard-sha and --backup-taken`);
     return 1;

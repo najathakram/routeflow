@@ -148,16 +148,17 @@ async function resolveTarget() {
  * The DB the plan was built over: its name and the tenant universe — every tenant, or the one
  * `--tenant` scoped the dry run to (the plan then touches only that tenant).
  */
-async function fingerprint(client, tenantSlug) {
+async function fingerprint(client, tenantId) {
   const [db, tenants] = await Promise.all([
     client.query("SELECT current_database() AS db"),
-    client.query('SELECT id FROM "Tenant" WHERE ($1::text IS NULL OR slug = $1) ORDER BY id', [
-      tenantSlug,
+    client.query('SELECT id FROM "Tenant" WHERE ($1::text IS NULL OR id = $1) ORDER BY id', [
+      tenantId,
     ]),
   ]);
   return {
     database: db.rows[0].db,
-    tenantScope: tenantSlug,
+    // Opus #3696 MUST 3: ids and counts only — the plan file never carries a slug or a name.
+    tenantScope: tenantId,
     tenantIds: tenants.rows.map((t) => t.id),
   };
 }
@@ -170,16 +171,22 @@ async function dryRun() {
     return 1;
   }
   const tenantSlug = argOf("--tenant") ?? null;
+  const scoped = tenantSlug != null;
   const url = await resolveTarget();
   console.log(
-    `${TAG}: target ${redactUrl(url)} DRY-RUN (cutover ${cutover.toISOString()}${tenantSlug ? `, tenant ${tenantSlug}` : ""})`,
+    `${TAG}: target ${redactUrl(url)} DRY-RUN (cutover ${cutover.toISOString()}${scoped ? ", one tenant" : ""})`,
   );
   const client = new pg.Client({ connectionString: url });
   await client.connect();
   try {
     await client.query("BEGIN TRANSACTION READ ONLY");
     await client.query("SET LOCAL statement_timeout = '120s'");
-    const fp = await fingerprint(client, tenantSlug);
+    const scopeId = tenantSlug
+      ? ((await client.query('SELECT id FROM "Tenant" WHERE slug = $1', [tenantSlug])).rows[0]
+          ?.id ?? null)
+      : null;
+    if (tenantSlug && !scopeId) throw new Error("no such tenant");
+    const fp = await fingerprint(client, scopeId);
     const products = (await client.query(PRODUCTS_SQL, [tenantSlug])).rows;
     const lines = products.length
       ? (await client.query(LEGACY_LINES_SQL, [products.map((p) => p.productId)])).rows
@@ -198,9 +205,8 @@ async function dryRun() {
       const orders = new Set(own.map((l) => l.orderId));
       const revised = new Set(own.filter((l) => l.hasRevision).map((l) => l.orderId));
       report.push({
-        tenantSlug: p.tenantSlug,
+        tenantId: p.tenantId,
         productId: p.productId,
-        name: p.name,
         drift: row.quantity,
         lastMovementAt: p.lastMovementAt ? new Date(p.lastMovementAt).toISOString() : null,
         unseenOrders: orders.size,
@@ -240,9 +246,9 @@ async function dryRun() {
     console.log(`\n${TAG}: ${apply.length} drifted product(s)`);
     for (const r of report.slice(0, 50)) {
       console.log(
-        `  ${r.tenantSlug ?? "<no tenant>"}  ${r.productId}  drift=${r.drift}  unseenOrders=${r.unseenOrders}` +
+        `  tenant ${r.tenantId ?? "<none>"}  ${r.productId}  drift=${r.drift}  unseenOrders=${r.unseenOrders}` +
           ` (Σqty ${r.unseenLineQty}, ${r.ordersWithRevisions} revised)  boxUnaware×(pack−1)=${r.boxUnawareUnderDecrement}` +
-          `  last=${r.lastMovementAt ?? "-"}  ${r.name}`,
+          `  last=${r.lastMovementAt ?? "-"}`,
       );
     }
     if (report.length > 50) console.log(`  … ${report.length - 50} more (see the plan file)`);
