@@ -240,12 +240,12 @@ function StatusRibbon({ status }: { status: InvoiceStatus }) {
     <div className="pointer-events-none absolute right-0 top-0 h-24 w-24 overflow-hidden">
       <div
         className={cn(
-          "absolute right-[-28px] top-[18px] w-[120px] rotate-45 py-1 text-center text-xs font-bold tracking-wider shadow-sm",
+          "absolute right-[-28px] top-[18px] w-[120px] rotate-45 py-1 text-center text-xs font-bold tracking-wider shadow-sm uppercase",
           r.bg,
           r.text,
         )}
       >
-        {r.label.toUpperCase()}
+        {r.label}
       </div>
     </div>
   );

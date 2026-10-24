@@ -11,6 +11,20 @@ import { useStockMovements } from "@/lib/api/inventory";
 import { useProducts } from "@/lib/api/products";
 import { useUrlPage, useClampPage } from "@/lib/hooks/useUrlPage";
 
+/** W-785: order flows write a system marker in a movement's notes ("CREATE", "EDIT"…); show words, keep free text as is. */
+const MOVEMENT_NOTE_LABELS: Record<string, string> = {
+  CREATE: "Order placed",
+  EDIT: "Order edited",
+  CANCEL: "Order cancelled",
+  UNCANCEL: "Order reopened",
+  DELETE: "Order deleted",
+  PROMOTE: "Draft placed",
+  DEMOTE: "Returned to draft",
+  RETURN_CANCELLED: "Return cancelled",
+};
+const movementNoteLabel = (notes: string | null | undefined) =>
+  notes ? (MOVEMENT_NOTE_LABELS[notes] ?? notes) : "—";
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 const MOVEMENT_TYPE_LABELS: Record<string, string> = {
@@ -284,7 +298,7 @@ export default function MovementsPage() {
                       )}
                     </td>
                     <td className="px-4 py-3 font-mono text-navy/70">{m.reference ?? "—"}</td>
-                    <td className="px-4 py-3 text-navy/70">{m.notes ?? "—"}</td>
+                    <td className="px-4 py-3 text-navy/70">{movementNoteLabel(m.notes)}</td>
                     <td className="px-4 py-3 text-navy/70">{m.performedBy?.username ?? "—"}</td>
                   </tr>
                 );
