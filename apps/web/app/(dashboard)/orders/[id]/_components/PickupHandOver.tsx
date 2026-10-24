@@ -43,10 +43,13 @@ export function PickupHandOverDialog({
   order,
   open,
   onClose,
+  complete = false,
 }: {
   order: Order;
   open: boolean;
   onClose: () => void;
+  /** I-120: opened from "Complete at counter" */
+  complete?: boolean;
 }) {
   // An UNKNOWN outcome's key outlives the dialog's close/reopen (cleared only on a known outcome).
   const heldKey = React.useRef<HeldPickupKey>(null);
@@ -63,7 +66,9 @@ export function PickupHandOverDialog({
       total={Number(order.total)}
       invoices={order.invoices ?? []}
       isWalkIn={order.customer?.isWalkIn === true}
+      customerName={order.customer?.businessName ?? null}
       handOver={isPosOrder(order)}
+      completeMode={complete}
     />
   );
 }

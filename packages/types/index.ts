@@ -153,6 +153,8 @@ export * from "./api/orders";
 export * from "./api/payment-key";
 export * from "./api/payment-ref";
 export * from "./payment-ref-copy";
+export * from "./credit-over-limit-copy";
+export * from "./counter-copy";
 export * from "./api/purchase-orders";
 export * from "./api/customers";
 export * from "./api/products";

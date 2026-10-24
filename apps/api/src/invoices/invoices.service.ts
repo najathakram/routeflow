@@ -125,6 +125,7 @@ import type { InvoiceKpiSummary } from "@routeflow/types";
 import { computeInvoiceKpiSummary } from "./invoice-kpi-summary";
 import { CHECK_TRANSITIONS } from "../common/check-transitions";
 import { invoicePaymentKey, keyedPayment, standalonePaymentKey } from "./payment-idempotency";
+import { completionEmailParts } from "./invoice-completion-email";
 import { withPaymentEditRef, type RefOpts } from "./payment-edit-ref";
 import {
   RecordInvoicePaymentDto,
@@ -3595,8 +3596,16 @@ export class InvoicesService {
     return guardedEmail(this.prisma, args[0], () => this.deliverEmail(...args));
   }
 
+  /** I-120 (SA-861 rule 8): the ONE completion email (every invoice of the order attached), the "Email again" path. */
+  async sendCompletionEmail(orderId: string, invoiceIds: string[], actorId: string | null) {
+    const [first, ...withInvoiceIds] = invoiceIds;
+    const opts = { kind: "COUNTER_COMPLETE" as const, orderId, withInvoiceIds };
+    const sent = await this.sendEmail(first, undefined, "final", actorId, opts);
+    return { delivered: sent?.success === true };
+  }
+
   private async deliverEmail(...args: SendEmailArgs) {
-    const [id, overrideEmail, variant, actorId = null] = args;
+    const [id, overrideEmail, variant, actorId = null, opts] = args;
     // The cheap pre-read: only what the fast guards and the recipient check need. The document itself is built from the
     // snapshot below (SA-860), never from this row.
     const inv = await this.prisma.forTenant().invoice.findUnique({
@@ -3673,6 +3682,8 @@ export class InvoicesService {
       attachment,
       hideOriginalPrice,
     });
+    const parts = [this.prisma, this.pdfService, this.storage, this.logger, opts] as const;
+    Object.assign(emailPayload, await completionEmailParts(...parts)); // I-120: COUNTER_COMPLETE only
     const sendResult = await this.emailService.sendInvoice(emailPayload);
 
     // R5: the email server was configured but the actual send did NOT succeed
@@ -3693,6 +3704,7 @@ export class InvoicesService {
       to: recipientEmail,
       fingerprint,
       variant,
+      kind: opts?.kind,
     });
     // Mark as SENT. P5-13: SENT flip + oldest-first credit auto-apply are ONE atomic
     // operation. PDF/email I/O above stays OUTSIDE the tx (a retry never re-sends the email).
@@ -3711,6 +3723,7 @@ export class InvoicesService {
           to: recipientEmail,
           fingerprint: null,
           variant,
+          kind: opts?.kind, // I-120: a completion email's correction keeps its kind
           note: "the copy emailed may not match the credits applied",
         });
       }

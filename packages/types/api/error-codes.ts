@@ -741,6 +741,22 @@ export const API_ERROR_CODES = {
    * PENDING, PARTIALLY_DELIVERED, or CANCELLED). Nothing was written.
    */
   PICKUP_NOT_READY: "PICKUP_NOT_READY",
+  /** I-120 (SA-861 rule 2): POST /orders/:id/pickup-complete, 409: this business does not hand orders over at the store (no PICKUP method and the counter off). */
+  COUNTER_COMPLETE_UNAVAILABLE: "COUNTER_COMPLETE_UNAVAILABLE",
+  /**
+   * 400 from a path switch to SHIP / PICKUP (PATCH /orders/:id/fulfill-path, and Complete at counter's switch): the order is on
+   * an ACTIVE delivery run (SCHEDULED / IN_PROGRESS); remove it from the run first. Nothing was written.
+   */
+  ORDER_ON_ACTIVE_RUN: "ORDER_ON_ACTIVE_RUN",
+  /** I-120 R9 (owner 7a Q2 = A): POST /orders/:id/pickup-complete, 409: the order has shipped with the carrier. Nothing written. */
+  COUNTER_COMPLETE_SHIPPED: "COUNTER_COMPLETE_SHIPPED",
+  /**
+   * I-120 R8 (owner 7a Q1 = A): POST /orders/:id/pickup-complete, 409: the order is on a driver's run (SA-913); the body
+   * carries `driverName` and `runId` for the confirm, which re-sends with `takeOffRun: true`. Nothing written.
+   */
+  COUNTER_COMPLETE_ON_RUN: "COUNTER_COMPLETE_ON_RUN",
+  /** I-120 R8: POST /orders/:id/pickup-complete, 409: the driver has started that stop (with or without `takeOffRun`). Nothing written. */
+  COUNTER_COMPLETE_STOP_STARTED: "COUNTER_COMPLETE_STOP_STARTED",
   /**
    * `paymentErrorCode` of a 200 from POST /orders/:id/pickup-complete: handed over with no payment sent, but
    * the final invoices leave money owing (a remainder or rebuild at DELIVERED). Retry with a payment.
@@ -899,6 +915,8 @@ export const API_ERROR_CODES = {
   APP_LINK_URL_INVALID: "APP_LINK_URL_INVALID",
   /** 400 from POST /customers/merge: the two customers are not both of the session's one business (W-763). Names no tenant. */
   CUSTOMER_MERGE_TENANT_MISMATCH: "CUSTOMER_MERGE_TENANT_MISMATCH",
+  /** 409 from an inline return cancel: the credit note gained a payment on another invoice while the cancel locked its rows (SA-920). Retryable: the retry locks the full set. */
+  RETURN_CANCEL_RETRY: "RETURN_CANCEL_RETRY",
 } as const;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */

@@ -190,7 +190,9 @@ export interface PaymentRefGuard {
  * hard-deleted row: the payment DELETE, an invoice or order delete). A link to an EXISTING row of another group is never
  * overridden by a date (two same-reference groups on one day exist after a Record anyway). Residual (documented, SA-879
  * / SA-897): a group whose linked row is gone (or that never had one) AND whose EVERY remaining row's paidAt was edited
- * loses its advance; that is a false 409 with Record anyway, never silent money. A date is never the identity.
+ * loses its advance; that is a false 409 with Record anyway, never silent money. And a group whose ONLY row was
+ * hard-deleted leaves its advance dangling, so a same-reference group 2 on the same day picks it up by date (group 2 is
+ * then judged that advance high: at worst a false 409 with Record anyway). A date is never the identity.
  */
 export async function groupExcessAdvances(
   tx: any,
