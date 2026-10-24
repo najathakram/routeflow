@@ -4249,3 +4249,31 @@ citations, closed-out with its own post-init assertion guard).
 - **Root cause:** the slot was treated as a rule for the big gates only; a "small" unit run still starts one worker per core, and several at once overload the machine.
 - **Lesson:** **Every jest, check-types or DB run, unit ones too, goes through `scripts/heavy-slot.mjs` with a capped worker count. Put this in every subagent brief; a subagent that runs a test outside the slot is a defect in the brief.**
 - **Guard:** `scripts/heavy-slot.mjs` (FIFO); none automatic for a bare `npx jest`.
+
+### L-330 · 2026-10-21 · domain · an origin or state is derived from structured fields, never from a free-text note prefix
+
+- **Symptom:** office-recorded partial deliveries were recognised by a marker at the start of the evidence note. Rows written before the marker existed were stranded, and anyone could type the marker into a note to be treated as the office.
+- **Root cause:** semantics were encoded in free text. A prefix test misses every historical row that lacks it and trusts whatever a user can type.
+- **Lesson:** **Derive origin and state from structured fields (route stop id, driver id, type) that only the intended writers set. When no structured field can tell, add a column; never parse a note.**
+- **Guard:** `orders/office-evidence-completion.ts` tests a null route stop and no driver; its spec includes a clerk-typed note that must still complete. Cf. [[L-294]].
+
+### L-331 · 2026-10-21 · domain · rate inference prefers the configured rate when it reproduces the stored figure, then the shortest precision
+
+- **Symptom:** an edit or a duplicate of an invoice re-billed lines at a non-round rate (8.88% for a tenant that charges 8.875%), and a half-way rate (8.625%) was stored one unit off.
+- **Root cause:** the inference took the nearest higher-precision rate that fit the stored tax instead of the tenant's configured rate, and rounded a float product (8.625 / 100 * 1e4 is 862.4999999999999) without snapping it first.
+- **Lesson:** **Infer a rate in this order: the configured rate when the single totals builder reproduces the stored figure to the cent, then the shortest precision that does. Snap a float product to the stored precision before `Math.round`.**
+- **Guard:** `packages/pricing/src/inferred-flat-rate.ts` (`preferredRate`) and `tax-precision.ts` (`sameRateAtLegacyPrecision`), pinned in `packages/pricing/src/pricing.spec.ts` and `invoices.duplicate-tax-rate.spec.ts`.
+
+### L-333 · 2026-10-21 · domain · state that depends on other state is derived during render, not cleared by an effect afterwards
+
+- **Symptom:** the capabilities card showed the fresh plan and the stale-plan notice together for one frame, and its 409 test failed under parallel load (7 of 16 runs).
+- **Root cause:** the notice was cleared by an effect that ran one commit after the fresh preview rendered, so the render in between had both. A test that reads the DOM between commits catches it only when the machine is slow.
+- **Lesson:** **When a value is a function of props or other state, compute it in the render (`fresh ? null : notice`); do not mirror it into state and clear it in an effect. An effect-driven reset is a visible intermediate frame and a flaky test.**
+- **Guard:** the CapabilitiesCard 409 test, plus a test that a second plan change shows the notice again. `DetailsMore.tsx` follows the same shape (open set during render on edit).
+
+### L-334 · 2026-10-21 · domain · a page that loads late holds its final height and mounts one layout, so nothing shifts when the data lands
+
+- **Symptom:** the product page's price grid showed one "Loading prices…" line and then grew about 870 px at 390 wide (CLS 0.11); the page also mounted its flag-off layout and swapped to the v2 one when the subscription answered (CLS 0.10).
+- **Root cause:** the loading state was shorter than the loaded content, and the layout choice waited on an async flag the page did not wait for.
+- **Lesson:** **Give a loading state the height of what replaces it (one placeholder per expected row, counted from what the page already knows), and let the page wait for the flag that picks its layout before it mounts one. Read media queries in the initializer, not after paint.**
+- **Guard:** `ProductPricesGrid.k14-fe1.test.tsx` (placeholder per unit); `usePricesV2Pending` in `lib/api/units-v2.ts`; `PriceEditBar`/`ProductJumpLinks` reserve their space the same way.

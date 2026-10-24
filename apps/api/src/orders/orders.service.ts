@@ -131,6 +131,7 @@ import {
   type IdempotencyLookupDeps,
 } from "./merge-idempotency";
 import { BUYER_EDIT_CLOSED_STATUSES, computeEditWindow } from "./edit-window";
+import { fulfillPathLocked } from "./fulfil-path-lock";
 import {
   assertQuantitiesKnown,
   cancelBlockedMessage,
@@ -250,7 +251,7 @@ import { collectUnlistedLoserItems } from "./merge-unlisted-lines";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { PromotionsService } from "../promotions/promotions.service";
 import { MessagingService } from "../messaging/messaging.service";
-import type { OrderCancelBlockedField } from "@routeflow/types";
+import type { OrderCancelBlockedField, OrderFulfillPathLockField } from "@routeflow/types";
 import { attachInvoiceStages } from "./order-invoice-stage";
 import { HANDOVER_SOLD_BY_SELECT, seesHandOverStamp, stampHandedOverBy } from "./handover-stamp";
 import { EDIT_REVISIONS, updateStatusWithShipMarker } from "./order-ship-state";
@@ -509,7 +510,8 @@ export class OrdersService implements OnApplicationBootstrap {
     // B1083: the web disables Cancel from this (one server predicate, never re-derived client-side).
     Object.assign(order, {
       cancelBlockedReason: await carrierGuard.carrierBlocked(this, order),
-    } satisfies OrderCancelBlockedField);
+      fulfillPathLocked: fulfillPathLocked(order), // row 673: the PATCH's own predicate
+    } satisfies OrderCancelBlockedField & OrderFulfillPathLockField);
     await attachInvoiceStages(this.featureConfig, order); // fold 4: each invoice's pdfVariant
     attachRevisionNumber(order); // row 372
     order.lineItems = withComponentViews(order.lineItems) as typeof order.lineItems; // #2717 M3

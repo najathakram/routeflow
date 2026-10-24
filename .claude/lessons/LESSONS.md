@@ -12,6 +12,20 @@
 
 ## process
 
+### L-337 · 2026-10-22 · process · merge only through a gate that lists EVERY check run at the exact head sha, required or not
+
+- **Symptom:** a merge window merged #3563 and #3585 while the "Replay migrations on a fresh database" check was FAILURE at the merged sha. #3563 carried three red DB specs (two variant-name specs hit the SA-823 R11 `reparentVia` guard in `ProductsService.update`; products-export gained a new last column) plus one from #3574 (a warning became an object). All spec-only; #3589 fixed them.
+- **Root cause:** the merge watcher printed one check (Verify) and was read as all-green. The replay job is path-filtered, so whether it exists varies per PR, and nothing asserted it.
+- **Lesson:** **Merge only through a gate that lists EVERY check run at the exact head sha, required or not, and refuses on FAILURE, CANCELLED, TIMED_OUT or pending (SKIPPED and NEUTRAL pass). The same gate asserts head == the reviewed sha, base == master and not draft. A watcher that prints one check is not a gate.**
+- **Guard:** `tools/lead-kit/merge-gate.sh` in the specs repo (every check at the head sha; head/base/draft asserts). Cf. [[L-335]].
+
+### L-335 · 2026-10-22 · process · a PR's green CI can be for a stale merge ref; after master moves, the check must run on a merge ref whose base is current master
+
+- **Symptom:** #3586 needed update-branch twice before it could merge: its CI was green, but GitHub's merge ref had been built against an older master, so the green said nothing about the merge that would actually land.
+- **Root cause:** GitHub recomputes the PR merge ref lazily; a check that ran before master moved (or after a close/reopen) tested the old base. "All green" was true of a different commit than the one the merge would create.
+- **Lesson:** **Before merging, confirm the checks ran on a merge ref whose base is the CURRENT master: `pulls/N`'s `merge_commit_sha` must have current master among its parents (the run log's "Merge X into Y" names it). If not, update the branch (a merge commit, never a force push), check the PR's own patch-id is unchanged, get the reviewer's re-pin at the new head, and wait for fresh checks; a green from an older base is not a gate.**
+- **Guard:** the lead's merge procedure (update-branch, then fresh CI) and the memory note on close/reopen testing a stale merge ref; none automatic. Cf. [[L-323]].
+
 ### L-304 · 2026-10-12 · process · a suspected display gap is judged against the payload the surface receives, not the JSX that reads the field
 
 - **Symptom:** a review reported that the staff order page's invoice card still printed a due date on a paid till sale; the follow-up spent a lane checking it. The card's `inv.dueDate` was never populated: the order read's invoice stubs are a narrow `select` with no `dueDate`.
@@ -267,6 +281,13 @@
 
 ## testing
 
+### L-336 · 2026-10-22 · testing · a layout change to a cell or control is proven in a browser hit-test at every width; jsdom cannot see an overlap
+
+- **Symptom:** row 688's invoice-edit Boxes + Pieces inputs passed every unit test, but in the browser Pieces sat UNDER Unit Price at 1440, 768 and 390 (`elementFromPoint` at its centre returned Unit Price), so loose pieces could not be reached by mouse. #3564 merged without UI captures; the proof of #3570 found it.
+- **Root cause:** jsdom computes no layout, so a control squeezed out of a 70 px grid column renders "fine" there; the unit tests checked values and labels, never geometry.
+- **Lesson:** **Any change that adds or resizes controls in a fixed-width cell, row or bar ships with a browser proof at 1440/768/390: a hit-test that the centre of each control resolves to that control, 44 px targets, and no horizontal overflow, kept as a permanent e2e spec on the local lane. Capture before merge, not after.**
+- **Guard:** `apps/web/e2e/78-invoice-edit-boxed-qty-hit.spec.ts` (project `invoice-edit-boxed-qty-hit`, on the `local:e2e` allow-list). Cf. [[L-334]].
+
 ### L-322 · 2026-10-20 · testing · a move-only extraction re-runs the static source-pin specs, and the pin reads the moved files too
 
 - **Symptom:** a refactor that only moved code into new files passed a move-only review and its unit tests, then failed the pre-push run: specs that read a source file's text and assert on it no longer found the code.
@@ -355,40 +376,12 @@
 
 ## domain
 
-### L-330 · 2026-10-21 · domain · an origin or state is derived from structured fields, never from a free-text note prefix
-
-- **Symptom:** office-recorded partial deliveries were recognised by a marker at the start of the evidence note. Rows written before the marker existed were stranded, and anyone could type the marker into a note to be treated as the office.
-- **Root cause:** semantics were encoded in free text. A prefix test misses every historical row that lacks it and trusts whatever a user can type.
-- **Lesson:** **Derive origin and state from structured fields (route stop id, driver id, type) that only the intended writers set. When no structured field can tell, add a column; never parse a note.**
-- **Guard:** `orders/office-evidence-completion.ts` tests a null route stop and no driver; its spec includes a clerk-typed note that must still complete. Cf. [[L-294]].
-
-### L-331 · 2026-10-21 · domain · rate inference prefers the configured rate when it reproduces the stored figure, then the shortest precision
-
-- **Symptom:** an edit or a duplicate of an invoice re-billed lines at a non-round rate (8.88% for a tenant that charges 8.875%), and a half-way rate (8.625%) was stored one unit off.
-- **Root cause:** the inference took the nearest higher-precision rate that fit the stored tax instead of the tenant's configured rate, and rounded a float product (8.625 / 100 * 1e4 is 862.4999999999999) without snapping it first.
-- **Lesson:** **Infer a rate in this order: the configured rate when the single totals builder reproduces the stored figure to the cent, then the shortest precision that does. Snap a float product to the stored precision before `Math.round`.**
-- **Guard:** `packages/pricing/src/inferred-flat-rate.ts` (`preferredRate`) and `tax-precision.ts` (`sameRateAtLegacyPrecision`), pinned in `packages/pricing/src/pricing.spec.ts` and `invoices.duplicate-tax-rate.spec.ts`.
-
 ### L-332 · 2026-10-21 · domain · an existing line is shown, edited and previewed in the unit it was sold in, at its own stored pack and price
 
 - **Symptom:** the invoice edit form opened a boxed line as one total-pieces Qty (48) beside the per-box price (21.60), and a boxed line with no product posted a bare qty that re-billed 48 times the box price. Siblings: a repacked product previewed a stored 12-per-box line's Piece at the live size and list price, and a Today's-sales row read "24" for a line sold as 2 cases.
 - **Root cause:** the form, preview or row took its unit from the live product or from total pieces instead of the line's stored sold unit (boxes, pieces, pack size, unit label, price), so quantity and price sat in different units.
 - **Lesson:** **Read, edit and preview an existing line in the unit it was sold in, from its stored boxes, pieces, pack, unit label and price; convert to total pieces only at the edge, and post the split for every boxed line. Never put a pieces quantity beside a per-box price, and never price a stored line from the live product.**
 - **Guard:** `SoldUnitQty.tsx` with the row-688 test; `orders/[id]/stored-pack-basis.ts` (`ownPack`, row 630); `foldItemNames` in `packages/pricing/src/counter-park.ts` (receipt quantity text). Cf. [[L-300]].
-
-### L-333 · 2026-10-21 · domain · state that depends on other state is derived during render, not cleared by an effect afterwards
-
-- **Symptom:** the capabilities card showed the fresh plan and the stale-plan notice together for one frame, and its 409 test failed under parallel load (7 of 16 runs).
-- **Root cause:** the notice was cleared by an effect that ran one commit after the fresh preview rendered, so the render in between had both. A test that reads the DOM between commits catches it only when the machine is slow.
-- **Lesson:** **When a value is a function of props or other state, compute it in the render (`fresh ? null : notice`); do not mirror it into state and clear it in an effect. An effect-driven reset is a visible intermediate frame and a flaky test.**
-- **Guard:** the CapabilitiesCard 409 test, plus a test that a second plan change shows the notice again. `DetailsMore.tsx` follows the same shape (open set during render on edit).
-
-### L-334 · 2026-10-21 · domain · a page that loads late holds its final height and mounts one layout, so nothing shifts when the data lands
-
-- **Symptom:** the product page's price grid showed one "Loading prices…" line and then grew about 870 px at 390 wide (CLS 0.11); the page also mounted its flag-off layout and swapped to the v2 one when the subscription answered (CLS 0.10).
-- **Root cause:** the loading state was shorter than the loaded content, and the layout choice waited on an async flag the page did not wait for.
-- **Lesson:** **Give a loading state the height of what replaces it (one placeholder per expected row, counted from what the page already knows), and let the page wait for the flag that picks its layout before it mounts one. Read media queries in the initializer, not after paint.**
-- **Guard:** `ProductPricesGrid.k14-fe1.test.tsx` (placeholder per unit); `usePricesV2Pending` in `lib/api/units-v2.ts`; `PriceEditBar`/`ProductJumpLinks` reserve their space the same way.
 
 ### L-317 · 2026-10-18 · domain · removing a whole-catalog fetch (limit=0) from a picker is a behavior change; prove what each consumer needs first
 

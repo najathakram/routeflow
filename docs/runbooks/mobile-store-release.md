@@ -65,3 +65,21 @@ true` (the existing "Always" usage string is reused). **App Review note:** "Disp
 - Play's Background Location declaration (with a video) and the Data Safety form.
 - Apple's App Privacy label (Sentry, push notifications, maps, location). Listing text and privacy
   answers are drafted in #2313.
+
+## 7. The new web shell must be in every build and every OTA (W-830)
+
+Buyers and operators use the new web inside the app (`lib/web-shell`). If `EXPO_PUBLIC_WEB_URL` is
+empty the shell is off and the old native screens come back, silently. `eas.json` sets both shell
+variables on every build profile, but `eas update` takes its env from the shell that runs it.
+
+- **EAS builds:** `apps/mobile/package.json` has an `eas-build-post-install` hook that runs
+  `scripts/assert-shell-env.cjs --eas` and fails the build when either variable is missing.
+  Development and preview may use a LAN `http` web; every other profile needs `https`.
+- **OTA:** publish with `npm run ota:publish -w apps/mobile -- <eas update flags>`. It runs
+  `scripts/assert-shell-env.cjs --ota` first and refuses to publish without both variables and an
+  `https` web. Running `eas update` directly skips the check.
+- **Any env:** `npm run check:shell-env -w apps/mobile` checks the env you are in. Run it in the
+  same shell, with the same variables, as the publish.
+- **Railway mobile web export:** stays native on purpose. `react-native-webview` has no web
+  implementation, so the `Dockerfile` sets `EXPO_PUBLIC_WEB_SHELL=off` outright.
+- **Runtime backstop:** if a store build still reaches a device with no usable web URL, the app shows an "Update RouteFlow" screen for the buyer and staff screens instead of the old native ones (`shellMode` in `lib/web-shell/shell-config.ts`). Drivers and the sign-in screens still work. Development builds without a URL keep the native screens.
