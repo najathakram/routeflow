@@ -174,8 +174,9 @@ async function dryRun() {
   if (plan.skipped.length)
     console.log(`  skipped: ${JSON.stringify(bySkip)} (ids in the plan file)`);
   console.log(
-    "\nblind spots: order writers with no revision (in the residual); a draft's confirmation time is not stored" +
-      " (its sale spans [createdAt, updatedAt]). EXACT/APPROX informs the decision; nothing applies on it alone.",
+    "\nblind spots: order writers with no revision (in the residual); an order's promotion, demotion or reopen time is not" +
+      " stored, so a touched order's events span [createdAt, updatedAt] and a cost row inside that span is APPROX (SA-921)." +
+      " EXACT/APPROX informs the decision; nothing applies on it alone.",
   );
   console.log(`\nplan: ${file}\nplan hash: ${plan.planHash}`);
   if (plan.entries.length > 0) {

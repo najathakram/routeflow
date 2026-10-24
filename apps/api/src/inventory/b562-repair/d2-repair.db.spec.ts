@@ -433,6 +433,102 @@ describeDb("B562 D2 average repair — real Postgres (row 635, SA-902)", () => {
     expect(p.entries[0]).toMatchObject({ legacyOrders: 2, residual: "0", xC: "2.6667" });
   }, 120_000);
 
+  /** An extra legacy order of `qty` pieces (status DELIVERED) with its line; returns its id. */
+  async function extraOrder(
+    w: World,
+    qty: number,
+    o: { createdAt: Date; updatedAt: Date; counterSale?: boolean },
+  ) {
+    const order = await prisma.order.create({
+      data: {
+        tenantId: w.tenantId,
+        customerId: w.customerId,
+        status: "DELIVERED",
+        counterSale: o.counterSale ?? false,
+        createdAt: o.createdAt,
+        updatedAt: o.updatedAt,
+      } as any,
+    });
+    await prisma.orderItem.create({
+      data: {
+        tenantId: w.tenantId,
+        orderId: order.id,
+        productId: w.productId,
+        qty,
+        unitPrice: 5,
+        pieces: qty,
+        unitsPerBox: 1,
+      } as any,
+    });
+    return order.id;
+  }
+
+  it("SA-921 MUST 2: a touched staff order (created 09-08, last updated 09-12) around the 09-10 bill is APPROX, the order named (head: EXACT)", async () => {
+    const w = await seed("unrecorded", { anchorQty: 10 });
+    const id = await extraOrder(w, 2, {
+      createdAt: at("2026-09-08T00:00:00.000Z"),
+      updatedAt: at("2026-09-12T00:00:00.000Z"),
+    });
+    const p = await plan(w);
+    expect(p.entries[0]).toMatchObject({ legacyOrders: 2, residual: "0", confidence: "APPROX" });
+    expect(p.entries[0].reasons).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining(
+          `order ${id}: its stock may have moved any time from created to last updated`,
+        ),
+      ]),
+    );
+  }, 120_000);
+
+  it("SA-921 Q5: a counter sale of 4 edited after the cutover to 6 (its EDIT row and a post-cutover snapshot) is backed out to 4: residual 0, EXACT (head: −6, APPROX)", async () => {
+    const w = await seed("q5", { anchorQty: 12 });
+    const id = await extraOrder(w, 6, {
+      counterSale: true,
+      createdAt: at("2026-09-12T00:00:00.000Z"),
+      updatedAt: at("2026-09-28T00:00:00.000Z"),
+    });
+    await prisma.orderRevision.create({
+      data: {
+        tenantId: w.tenantId,
+        orderId: id,
+        revisionNumber: 1,
+        createdAt: at("2026-09-28T00:00:00.000Z"),
+        snapshot: {
+          lineItems: [
+            {
+              productId: w.productId,
+              qty: 6,
+              boxes: null,
+              pieces: 6,
+              unitsPerBox: 1,
+              status: "PENDING",
+            },
+          ],
+        },
+      } as any,
+    });
+    await prisma.stockMovement.create({
+      data: {
+        tenantId: w.tenantId,
+        productId: w.productId,
+        type: MovementType.SALE,
+        quantity: -2,
+        reference: `ORDER:${id}`,
+        notes: "EDIT",
+        effectiveAt: at("2026-09-28T00:00:00.000Z"),
+        createdAt: at("2026-09-28T00:00:00.000Z"),
+      },
+    });
+    await prisma.product.update({ where: { id: w.productId }, data: { currentStock: 6 } });
+    const p = await plan(w);
+    expect(p.entries[0]).toMatchObject({
+      legacyOrders: 2,
+      residual: "0",
+      confidence: "EXACT",
+      xC: "2.6667",
+    });
+  }, 120_000);
+
   describe("guards", () => {
     it("D2-8: drift ≠ 0 is excluded (D1 first)", async () => {
       const w = await seed("drift");
@@ -486,7 +582,11 @@ describeDb("B562 D2 average repair — real Postgres (row 635, SA-902)", () => {
       const p = await plan(w);
       expect(p.entries[0]).toMatchObject({ legacyOrders: 2, residual: "0", confidence: "APPROX" });
       expect(p.entries[0].reasons).toEqual(
-        expect.arrayContaining([expect.stringMatching(/costful row .* FINAL window/)]),
+        expect.arrayContaining([
+          expect.stringMatching(
+            /its stock may have moved any time from created to last updated \(costful row /,
+          ),
+        ]),
       );
     }, 120_000);
   });

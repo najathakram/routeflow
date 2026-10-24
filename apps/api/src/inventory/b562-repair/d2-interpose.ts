@@ -7,25 +7,27 @@ import { needsLivePack, toPieces, type StockLineUnits } from "../../orders/order
  * Before B562 PR-2 an order moved `Product.currentStock` with no StockMovement, so the ledger is blind to when its sales
  * happened. Each event is placed on the COUNTER's clock (PR-2 dates live rows at the counter write, so D2 must too; never
  * `orderDate`):
- * - the CREATE (its lines, or the FIRST revision snapshot when there are revisions) at `createdAt`. SA-911: an order saved
- *   as a DRAFT took its stock when it was confirmed, and that time is not stored (promotion only bumps `updatedAt`), so
- *   the CREATE is a point only for an order that cannot have been a draft — a counter sale (`counterSale`, created
- *   DELIVERED). Every other CREATE's window is [createdAt, updatedAt];
+ * - the CREATE (its lines, or the FIRST revision snapshot when there are revisions) at `createdAt`;
  * - with revisions: a snapshot is the state AFTER an edit and none is written at create; each later revision adds its Δ
  *   at its own `createdAt`, window [the previous revision, it]; the lines now differing from the last snapshot add a
  *   final Δ at `updatedAt`, window [the last revision, updatedAt];
  * - a CANCELLED order also credits back its undelivered pieces at `updatedAt`, window [the last known event, updatedAt]
  *   (D2-3: never dropped).
+ * SA-921 (supersedes SA-911's draft rule): a promotion, a demote/re-promote and a cancel → reopen moved stock at a time
+ * nothing stores, each bounded by `updatedAt`. So EVERY event of a legacy order takes the window [createdAt, updatedAt],
+ * except a counter sale (created DELIVERED, never a draft) and an order never updated after creation; a costful row in
+ * that window makes the product APPROX ("its stock may have moved any time from created to last updated").
  * Quantities are pieces, through the order path's one conversion (`toPieces`, PR-2/B703). A line that needs the product's
  * LIVE pack is sized by it but makes the product APPROX (the pack may have changed since).
- * The interposition stops at the cutover (SA-902 MUST 4, SA-911):
+ * The interposition stops at the cutover (SA-902 MUST 4, SA-911, SA-921 Q5):
  * - an order whose ledger holds its `ORDER:<id>` PROMOTE row for this product was still a DRAFT at the cutover: its stock
  *   moved only at that (ledgered) promotion, so nothing of it is interposed;
  * - an event at or after the cutover of an order that HAS `ORDER:<id>` rows for this product IS one of those rows: it is
  *   dropped (SKIP). For an order with NO such row it can only be a legacy change: it is clamped to 1 ms before the cutover
  *   and the product is APPROX (as is any event whose window crosses the cutover);
- * - SHOULD: for an order with ledger rows, what was placed must equal its net effect now minus its ledger rows; a
- *   mismatch is named ("order X: N pieces unplaced").
+ * - Q5: an order with `ORDER:<id>` rows places exactly (its net effect now − Σ those rows): the difference, the
+ *   post-cutover part a snapshot may embed, comes off its LAST pre-cutover event (known exactly, so no APPROX; its windows
+ *   are clamped). With no pre-cutover event it is placed at the CREATE and named (SA-911's SHOULD).
  * Stock-wise a sale is negative and a credit positive (the signs `StockMovement.quantity` uses).
  */
 export interface LegacyLine extends StockLineUnits {
@@ -57,6 +59,8 @@ export interface PlacedEvent {
   qty: Prisma.Decimal;
   /** Where the event may really have happened, inclusive; clamped to before the cutover. */
   window: [Date, Date];
+  /** SA-921: the order may have moved stock at an unrecorded time, so the window is its whole [createdAt, updatedAt]. */
+  unrecorded?: boolean;
 }
 
 const isLive = (li: LegacyLine) => li.status !== "CANCELLED";
@@ -90,14 +94,23 @@ export function interposeOrder(
   // SA-911: a draft promoted after the cutover took its stock at that ledgered PROMOTE: nothing here is legacy.
   if (order.ledger?.promoted) return { events: [], approx: [] };
   const revs = order.revisions;
-  // SA-911: a point only when the order cannot have been a draft; otherwise the stock moved by `updatedAt` at the latest.
-  const createWindow = (pointEnd: Date): [Date, Date] =>
-    order.counterSale ? [order.createdAt, pointEnd] : [order.createdAt, order.updatedAt];
+  // SA-921: a promotion, a demote/re-promote or a cancel → reopen moved stock at a time nothing stores, but each is an
+  // update. Only a counter sale (never a draft) and an order never updated after creation keep their placed windows.
+  const unrecorded = !order.counterSale && order.createdAt.getTime() !== order.updatedAt.getTime();
+  const createWindow = (pointEnd: Date): [Date, Date] => [order.createdAt, pointEnd];
   if (revs.length === 0) {
     place("CREATE", order.createdAt, pieces(held).neg(), createWindow(order.createdAt));
   } else {
     let prev = pieces(revs[0].lineItems.filter(isLive));
-    place("CREATE", order.createdAt, prev.neg(), createWindow(revs[0].createdAt));
+    // The first snapshot may embed edits made before it. SA-921 Q5: a snapshot written after the cutover of an order with
+    // ledger rows embeds only post-cutover edits, which are backed out exactly below, so the CREATE stays a point.
+    const firstIsLedgers = revs[0].createdAt >= cutover && (order.ledger?.rows ?? 0) > 0;
+    place(
+      "CREATE",
+      order.createdAt,
+      prev.neg(),
+      createWindow(firstIsLedgers ? order.createdAt : revs[0].createdAt),
+    );
     for (let k = 1; k < revs.length; k += 1) {
       const cur = pieces(revs[k].lineItems.filter(isLive));
       place("REVISION", revs[k].createdAt, cur.sub(prev).neg(), [
@@ -119,6 +132,12 @@ export function interposeOrder(
 
   // The interposition stops at the cutover (SA-902 MUST 4, SA-911).
   const beforeCut = new Date(cutover.getTime() - 1);
+  if (unrecorded) {
+    for (const e of raw) {
+      e.window = [order.createdAt, order.updatedAt];
+      e.unrecorded = true;
+    }
+  }
   const ledgered = (order.ledger?.rows ?? 0) > 0;
   const events: PlacedEvent[] = [];
   for (const e of raw) {
@@ -126,7 +145,8 @@ export function interposeOrder(
     if (start >= cutover) continue; // wholly the ledger's
     if (e.at >= cutover && ledgered) continue; // SKIP: this event IS one of the order's ORDER:<id> rows
     if (end >= cutover || e.at >= cutover) {
-      approx.add(`order ${order.id}: a ${e.kind} window crosses the cutover`);
+      // SA-921 Q5: an order with ledger rows has its post-cutover part backed out below, so only the window is clamped.
+      if (!ledgered) approx.add(`order ${order.id}: a ${e.kind} window crosses the cutover`);
       events.push({
         ...e,
         orderId: order.id,
@@ -137,14 +157,33 @@ export function interposeOrder(
     }
     events.push({ ...e, orderId: order.id });
   }
-  // SHOULD (SA-911): an order with ledger rows must have placed exactly its net effect now minus those rows.
+  // SA-921 Q5: for an order with ledger rows, the pre-cutover net is its net effect now minus those rows; the difference
+  // (the post-cutover part a snapshot may embed, known exactly from the ledger) comes off its LAST pre-cutover event.
   if (ledgered) {
     const net = cancelled
       ? pieces(held, (li) => Number(li.deliveredQty ?? 0)).neg() // a cancel keeps only the delivered pieces out
       : pieces(held).neg();
     const placed = events.reduce((s, e) => s.add(e.qty), new Prisma.Decimal(0));
-    const unplaced = net.sub(order.ledger!.qty).sub(placed);
-    if (!unplaced.isZero()) approx.add(`order ${order.id}: ${unplaced.toString()} pieces unplaced`);
+    const diff = net.sub(order.ledger!.qty).sub(placed);
+    if (!diff.isZero()) {
+      const last = events[events.length - 1];
+      if (last) last.qty = last.qty.add(diff);
+      else {
+        // SHOULD (SA-911): nothing to adjust — placed at its CREATE and named, so the owner sees which order.
+        approx.add(
+          `order ${order.id}: ${diff.toString()} pieces had no pre-cutover event; placed at its CREATE`,
+        );
+        const w = unrecorded ? [order.createdAt, order.updatedAt] : createWindow(order.createdAt);
+        events.push({
+          orderId: order.id,
+          kind: "CREATE",
+          at: order.createdAt,
+          qty: diff,
+          window: [w[0], w[1] >= cutover ? beforeCut : w[1]],
+          ...(unrecorded ? { unrecorded: true } : {}),
+        });
+      }
+    }
   }
   return { events, approx: [...approx] };
 }

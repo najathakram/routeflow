@@ -89,7 +89,11 @@ export function reconstruct(input: {
     const [a, b] = e.window;
     for (const r of base) {
       if (isCostful(r) && r.effectiveAt >= a && r.effectiveAt <= b) {
-        reasons.push(`costful row ${r.id} inside order ${e.orderId}'s ${e.kind} window`);
+        reasons.push(
+          e.unrecorded
+            ? `order ${e.orderId}: its stock may have moved any time from created to last updated (costful row ${r.id})`
+            : `costful row ${r.id} inside order ${e.orderId}'s ${e.kind} window`,
+        );
       }
     }
   }
