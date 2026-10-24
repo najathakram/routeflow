@@ -47,6 +47,7 @@ describe("RegulatedFilingService", () => {
     regulated = { getLedger: jest.fn().mockResolvedValue({ rows: [], totals: {} }) };
     storage = {
       upload: jest.fn().mockResolvedValue("key"),
+      delete: jest.fn().mockResolvedValue(undefined),
       presignedUrl: jest.fn().mockResolvedValue("https://signed"),
     };
     audit = { log: jest.fn().mockResolvedValue(undefined) };
@@ -97,10 +98,11 @@ describe("RegulatedFilingService", () => {
       expect(filing.totalNetSales).toBe(100);
       expect(filing.totalCategoryTax).toBe(5);
       expect(storage.upload).toHaveBeenCalledTimes(1);
-      // csv key is deterministic + tenant-scoped
-      expect(storage.upload.mock.calls[0][0]).toBe(
-        `regulated-filings/test-tenant/cat-1/${pastYear}-01.csv`,
+      // csv key is tenant-scoped and unique per generation (a lock can never lose its CSV to a rewrite)
+      expect(storage.upload.mock.calls[0][0]).toMatch(
+        new RegExp(`^regulated-filings/test-tenant/cat-1/${pastYear}-01\\..+\\.csv$`),
       );
+      expect(filing.csvKey).toBe(storage.upload.mock.calls[0][0]);
     });
 
     it("does NOT clamp a reversal-heavy period that nets negative", async () => {

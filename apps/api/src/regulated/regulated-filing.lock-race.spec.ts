@@ -18,6 +18,8 @@ describe("prepareFiling vs a concurrent lock", () => {
     generationCount: 2,
     trackedCategoryId: "cat-1",
     periodKey: "2026-09",
+    // the key the locked filing's CSV was stored at (the old deterministic one)
+    csvKey: "regulated-filings/t1/cat-1/2020-01.csv",
   };
 
   function build(opts: { earlyStatus: string; lateStatus: string }) {
@@ -43,7 +45,10 @@ describe("prepareFiling vs a concurrent lock", () => {
         regulatedSalesLedger: { findMany: jest.fn().mockResolvedValue([]) },
       }),
     };
-    const storage = { upload: jest.fn().mockResolvedValue(undefined) };
+    const storage = {
+      upload: jest.fn().mockResolvedValue(undefined),
+      delete: jest.fn().mockResolvedValue(undefined),
+    };
     const audit = { log: jest.fn().mockResolvedValue(undefined) };
     const regulated = { getLedger: jest.fn().mockResolvedValue({ rows: [] }) };
     const svc = new (RegulatedFilingService as any)(prisma, storage, audit, regulated, {});
@@ -83,5 +88,57 @@ describe("prepareFiling vs a concurrent lock", () => {
     );
     expect(out.status).toBe("LOCKED"); // the stored locked row, not a regenerated one
     expect(audit.log).not.toHaveBeenCalled();
+  });
+
+  // Opus review of #3726, finding 3 (MUST): the lock commits DURING the CSV upload. The regenerated CSV must
+  // never land on the locked filing's stored object, and the locked row keeps pointing at its own CSV.
+  it("a lock committing during the CSV upload leaves the locked filing's CSV untouched and reports it locked", async () => {
+    const { svc, regulatedFiling, storage, audit } = build({
+      earlyStatus: "GENERATED",
+      lateStatus: "GENERATED",
+    });
+    // the lock commits while the upload is in flight: the conditional update then matches no row
+    storage.upload.mockImplementation(async () => {
+      regulatedFiling.update.mockRejectedValue({ code: "P2025" });
+    });
+    regulatedFiling.findUniqueOrThrow.mockResolvedValue({ ...lockedRow, status: "LOCKED" });
+    const out = await svc.prepareFiling({
+      trackedCategoryId: "cat-1",
+      cadence: "MONTHLY",
+      year: 2020,
+      index: 1,
+    });
+    const uploadedKey: string = storage.upload.mock.calls[0][0];
+    expect(uploadedKey).not.toBe(lockedRow.csvKey); // never the locked filing's object
+    expect(uploadedKey).toMatch(/^regulated-filings\/t1\/cat-1\/2020-01\..+\.csv$/);
+    expect(storage.upload.mock.calls.every((c: any[]) => c[0] !== lockedRow.csvKey)).toBe(true);
+    // the staged copy is removed, the locked object is never deleted
+    expect(storage.delete).toHaveBeenCalledWith(uploadedKey);
+    expect(storage.delete).not.toHaveBeenCalledWith(lockedRow.csvKey);
+    // the call reports the filing as locked, unchanged: same csvKey, no audit row
+    expect(out).toMatchObject({ status: "LOCKED", csvKey: lockedRow.csvKey });
+    expect(audit.log).not.toHaveBeenCalled();
+  });
+
+  it("a regeneration that wins points the row at the new key and drops the previous object", async () => {
+    const { svc, regulatedFiling, storage } = build({
+      earlyStatus: "NONE",
+      lateStatus: "GENERATED",
+    });
+    regulatedFiling.update.mockImplementation(async (a: any) => ({
+      ...lockedRow,
+      status: "GENERATED",
+      ...a.data,
+    }));
+    const out = await svc.prepareFiling({
+      trackedCategoryId: "cat-1",
+      cadence: "MONTHLY",
+      year: 2020,
+      index: 1,
+    });
+    const uploadedKey: string = storage.upload.mock.calls[0][0];
+    expect(out.csvKey).toBe(uploadedKey);
+    expect(storage.delete).toHaveBeenCalledWith(lockedRow.csvKey);
+    expect(storage.delete).not.toHaveBeenCalledWith(uploadedKey);
   });
 });

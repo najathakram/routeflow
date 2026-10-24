@@ -5,6 +5,7 @@ import {
   Logger,
   NotFoundException,
 } from "@nestjs/common";
+import { randomUUID } from "crypto";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
@@ -164,6 +165,15 @@ export class RegulatedFilingService {
     }
   }
 
+  /** Best-effort object delete: a leaked object is harmless, a failed delete must not fail the filing. */
+  private async dropObject(key: string): Promise<void> {
+    try {
+      await this.storage.delete(key);
+    } catch (err: any) {
+      this.logger.warn(`Could not delete superseded filing object ${key}: ${err?.message ?? err}`);
+    }
+  }
+
   /** The 1-based month / quarter index of a period's start (ANNUAL ignores it). */
   private indexOf(cadence: FilingCadence, start: Date): number {
     const m = start.getUTCMonth();
@@ -311,10 +321,11 @@ export class RegulatedFilingService {
       });
       rowsJson = rows as unknown as Prisma.InputJsonValue;
     }
-    // Deterministic, tenant-scoped key — regeneration overwrites in place. B297 PR5: re-read the lock right
-    // before the overwrite (a lock may have committed since the early check, while the ledger was read), so a
-    // closed filing's artifact is never replaced; the row write below is conditional for the residual window.
-    const csvKey = `regulated-filings/${tenantId}/${params.trackedCategoryId}/${periodKey}.csv`;
+    // Tenant-scoped, UNIQUE-per-generation key. B297 PR5 (Opus review of #3726, MUST 3): the CSV is staged at a
+    // fresh key and the row is pointed at it only when the conditional write below wins, so a lock that commits
+    // anywhere between the re-read and the write can never have its stored CSV overwritten. The re-read is
+    // still here as the cheap exit; the conditional row write is the actual guard.
+    const csvKey = `regulated-filings/${tenantId}/${params.trackedCategoryId}/${periodKey}.${randomUUID()}.csv`;
     const lockedNow = await this.prisma.forTenant().regulatedFiling.findFirst({
       where: { trackedCategoryId: params.trackedCategoryId, periodKey },
     });
@@ -368,8 +379,14 @@ export class RegulatedFilingService {
       });
     }
 
-    // A lock that committed while this regeneration ran won: nothing was regenerated, so nothing is audited as such.
-    if (filing.status === "LOCKED") return filing;
+    // A lock that committed while this regeneration ran won: nothing was regenerated, so nothing is audited as
+    // such, the staged CSV is dropped, and the locked row (and its own CSV) is returned untouched.
+    if (filing.status === "LOCKED") {
+      await this.dropObject(csvKey);
+      return filing;
+    }
+    // The row now points at the staged CSV: the previous generation's object is orphaned.
+    if (existing?.csvKey && existing.csvKey !== csvKey) await this.dropObject(existing.csvKey);
 
     await this.audit.log({
       tenantId,
