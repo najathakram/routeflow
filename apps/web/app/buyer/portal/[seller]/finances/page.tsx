@@ -24,13 +24,6 @@ function fmt(amount: number): string {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(amount);
 }
 
-const fmtCompact = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
-  notation: "compact",
-  maximumFractionDigits: 1,
-});
-
 function fmtMonth(monthStr: string): string {
   const [year, month] = monthStr.split("-");
   return new Date(Number(year), Number(month) - 1).toLocaleDateString("en-US", {
@@ -221,7 +214,7 @@ export default function FinancesPage() {
                 tick={{ fontSize: 11, fill: "#94a3b8" }}
                 axisLine={false}
                 tickLine={false}
-                tickFormatter={(v) => fmtCompact.format(v)}
+                tickFormatter={(v) => `$${v >= 1000 ? `${(v / 1000).toFixed(0)}k` : v}`}
               />
               <Tooltip content={<ChartTooltip />} cursor={{ fill: "#f1faf5" }} />
               <Bar dataKey="spend" fill="#10b981" radius={[4, 4, 0, 0]} maxBarSize={40} />
