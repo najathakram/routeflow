@@ -289,6 +289,19 @@ describeDb("I-120 Complete at counter — real Postgres", () => {
       );
       expect(sent).toEqual([]);
       expect(email).not.toHaveBeenCalled();
+      // #3678 Opus NIT: nothing owed records no tender, so the same CLOSED window does not refuse it (head: 409)
+      const owesNothing = await seed("CONFIRMED", "ROUTE");
+      await as(() =>
+        engine().complete(
+          owesNothing.orderId,
+          { payment: { method: "CASH", amount: 10 } } as never,
+          operator(),
+          `key-${run}-s1b`,
+        ),
+      );
+      expect(
+        (await raw.order.findUniqueOrThrow({ where: { id: owesNothing.orderId } })).status,
+      ).toBe("DELIVERED");
     } finally {
       await raw.systemConfig.deleteMany({
         where: { tenantId, key: "credit_limit.enforce_delivery" },
@@ -442,15 +455,15 @@ describeDb("I-120 Complete at counter — real Postgres", () => {
     const key = `key-${run}-s3`;
     await as(() => engine().complete(orderId, {} as never, operator(), key));
     const claim = await claimOf(orderId);
-    const deliveredAt = (await raw.order.findUniqueOrThrow({ where: { id: orderId } }))
-      .deliveredAt!;
+    // SA-919: the completion is keyed on the claim's completionAt (never deliveredAt)
+    const completionAt: string = (claim.meta as any).completionAt;
     const crash = (at: Date) =>
       raw.auditLog.update({
         where: { id: claim.id },
         data: {
           meta: {
             ...(claim.meta as object),
-            completionEmailClaim: { for: deliveredAt.toISOString(), at: at.toISOString() },
+            completionEmailClaim: { for: completionAt, at: at.toISOString() },
           },
         },
       });
@@ -536,6 +549,99 @@ describeDb("I-120 Complete at counter — real Postgres", () => {
       email.mockImplementation(async () => ({ delivered: true }));
     }
   }, 90_000);
+
+  // ── SA-919 (the #3678 Opus MUST, P13): THIS completion's tender = a row of the order's hand-over group created at or after
+  // the claim's completionAt; its email is keyed on completionAt too. Head keyed both on deliveredAt, which DELIVERED sets to a
+  // backdated order's orderDate: a deposit taken after the order date counted as counter tender.
+  const daysAgo = (d: number) => new Date(Date.now() - d * 86_400_000);
+  /** recordPayment writes a real PAID row, the tender's group id included, so the stored rows are what is read back. */
+  const recordForReal = () =>
+    recordPayment.mockImplementation(async (invoiceId: string, dto: any, opts: any) =>
+      raw.invoicePayment.create({
+        data: {
+          invoiceId,
+          amount: dto.amount,
+          method: dto.method,
+          tenantId,
+          paymentGroupId: opts?.paymentGroupId ?? null,
+        },
+      }),
+    );
+  const amountsOf = async (invoiceId: string, tenderOnly = false) =>
+    (
+      await raw.invoicePayment.findMany({
+        where: { invoiceId, ...(tenderOnly ? { paymentGroupId: { not: null } } : {}) },
+        orderBy: { createdAt: "asc" },
+      })
+    ).map((p) => Number(p.amount));
+  const completeWith = (orderId: string, amount: number, key: string) =>
+    as(() =>
+      engine().complete(orderId, { payment: { method: "CASH", amount } } as never, operator(), key),
+    );
+  const claimMeta = async (orderId: string) => (await claimOf(orderId)).meta as any;
+
+  it.each(["ROUTE", "PICKUP"] as const)(
+    "P13 (%s) a $70 order dated 3 days ago with a $30 deposit yesterday, $40 CASH at the counter: tender [40], paid 70, balance 0",
+    async (path) => {
+      const { orderId, invoiceId } = await seed("CONFIRMED", path, { total: 70 });
+      await raw.order.update({ where: { id: orderId }, data: { orderDate: daysAgo(3) } });
+      await raw.invoicePayment.create({
+        data: { invoiceId, amount: 30, method: "CASH", tenantId, createdAt: daysAgo(1) },
+      });
+      recordForReal();
+      const r: any = await completeWith(orderId, 40, `key-${run}-p13-${path}`);
+      expect(await amountsOf(invoiceId, true)).toEqual([40]);
+      expect(await amountsOf(invoiceId)).toEqual([30, 40]);
+      expect(r).toMatchObject({ paid: 70, balanceDue: 0, paymentRecorded: true });
+    },
+    60_000,
+  );
+
+  it("P13.reopen a backdated order: $50 cash, reopened, +$20, re-completed with $20: the 2nd tender IS recorded and a 2nd email goes", async () => {
+    const { orderId, invoiceId } = await seed("CONFIRMED", "ROUTE", { total: 50 });
+    await raw.order.update({ where: { id: orderId }, data: { orderDate: daysAgo(3) } });
+    recordForReal();
+    await completeWith(orderId, 50, `key-${run}-p13r-a`);
+    expect(emailsFor(orderId)).toBe(1);
+    // the reopen and the +$20 edit, as their rows leave them (DELIVERED undone, deliveredAt cleared, the invoice restated)
+    await raw.order.update({
+      where: { id: orderId },
+      data: { status: "CONFIRMED", deliveredAt: null, subtotal: "70", total: "70" },
+    });
+    await raw.invoice.update({
+      where: { id: invoiceId },
+      data: { subtotal: 70, total: 70, status: "SENT" },
+    });
+    await completeWith(orderId, 20, `key-${run}-p13r-b`);
+    expect(await amountsOf(invoiceId, true)).toEqual([50, 20]);
+    expect(emailsFor(orderId)).toBe(2);
+  }, 60_000);
+
+  it("P13.key a different key while DELIVERED changes nothing: completionAt kept, no second tender, no second email", async () => {
+    const { orderId, invoiceId } = await seed("CONFIRMED", "ROUTE", { total: 50 });
+    recordForReal();
+    await completeWith(orderId, 50, `key-${run}-p13k-a`);
+    const stamp = (await claimMeta(orderId)).completionAt;
+    expect(typeof stamp).toBe("string");
+    await completeWith(orderId, 50, `key-${run}-p13k-b`).catch((e) => e);
+    expect((await claimMeta(orderId)).completionAt).toBe(stamp);
+    expect(await amountsOf(invoiceId, true)).toEqual([50]);
+    expect(emailsFor(orderId)).toBe(1);
+  }, 60_000);
+
+  it("P13.legacy a DELIVERED claim with no completionAt: a same-key replay records nothing more", async () => {
+    const { orderId, invoiceId } = await seed("CONFIRMED", "ROUTE", { total: 50 });
+    recordForReal();
+    const key = `key-${run}-p13l`;
+    await completeWith(orderId, 50, key);
+    const claim = await claimOf(orderId);
+    const { completionAt: _drop, ...legacy } = claim.meta as any;
+    await raw.auditLog.update({ where: { id: claim.id }, data: { meta: legacy } });
+    recordPayment.mockClear();
+    await completeWith(orderId, 50, key);
+    expect(recordPayment).not.toHaveBeenCalled();
+    expect(await amountsOf(invoiceId, true)).toEqual([50]);
+  }, 60_000);
 
   // ── SA-913 R8 / R9 (owner 7a): judged before the claim; the confirmed take-off is one locked tx (Orders → stop → run) ──
   let runSeq = 0;
