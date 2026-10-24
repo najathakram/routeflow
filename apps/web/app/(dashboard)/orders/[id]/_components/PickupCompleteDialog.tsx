@@ -456,7 +456,7 @@ export function PickupCompleteDialog({
                     }}
                   />
                 </label>
-                {shortLive ? (
+                {hardRefusal ? null : shortLive ? (
                   <p className="text-sm font-medium text-navy" data-testid="pickup-short-hint">
                     {tenderShortCopy(due)}
                   </p>

@@ -836,6 +836,7 @@ describe("PickupCompleteDialog: W-778 complete-at-counter refusals (apple-ux 202
       expect(screen.queryByRole("button", { name: "Complete" })).toBeNull();
       expect(screen.getByRole("button", { name: "Cash" })).toBeDisabled();
       expect(screen.getByLabelText("Amount tendered")).toBeDisabled();
+      expect(screen.queryByTestId("pickup-change-due")).toBeNull(); // W-778 wording: no "Change $X" beside "Nothing changed"
       expect(screen.getAllByRole("button", { name: "Close" })).toHaveLength(2); // W-778: the header X + the footer's one live action
       fireEvent.click(screen.getAllByRole("button", { name: "Close" }).at(-1)!);
       expect(onClose).toHaveBeenCalled();
