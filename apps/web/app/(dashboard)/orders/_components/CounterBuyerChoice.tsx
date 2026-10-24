@@ -7,8 +7,8 @@ import { BUYER_HINT_COPY, BUYER_QUESTION_COPY, type BuyerKind } from "./counter-
 
 /**
  * S5: the top of the register. Unanswered, it asks "Who's buying?" with one-tap Walk-in (the customer search sits right
- * under it, in the screen); answered, it names the buyer. "New customer" is S6: pass `onNewCustomer` once that exists,
- * until then the button is not drawn (no dead control).
+ * under it, in the screen); answered, it names the buyer. "New customer" (row 240) opens the existing customer form: pass
+ * `onNewCustomer`; without it the button is not drawn (no dead control).
  */
 export function CounterBuyerChoice({
   kind,

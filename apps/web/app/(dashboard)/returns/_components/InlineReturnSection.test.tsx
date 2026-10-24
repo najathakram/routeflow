@@ -241,6 +241,8 @@ describe("InlineReturnSection — #2695 staff credit price override", () => {
     fireEvent.change(screen.getByLabelText(/add another product/i), { target: { value: "wid" } });
     fireEvent.click(await screen.findByText("Widget"));
     fireEvent.change(screen.getByLabelText(/^pieces$/i), { target: { value: pieces } });
+    // W-711: the credit price sits behind the line's More
+    fireEvent.click(screen.getByRole("button", { name: /^more$/i }));
   }
 
   it.each([["DRIVER"], ["CUSTOMER"], [undefined]])(
@@ -381,8 +383,12 @@ describe("InlineReturnSection — #2695 staff credit price override", () => {
       renderSection({ entryOrderId: "ord-1" });
     };
     const qtyInputs = () => screen.getAllByLabelText(/^pieces$/i);
-    const priceInputs = () => screen.getAllByLabelText(/credit price/i);
-    const reasonInputs = () => screen.getAllByLabelText(/why the lower price/i);
+    const openAllMore = () =>
+      screen
+        .getAllByRole("button", { name: /^more$/i })
+        .forEach((b) => b.getAttribute("aria-expanded") === "false" && fireEvent.click(b));
+    const priceInputs = () => (openAllMore(), screen.getAllByLabelText(/credit price/i));
+    const reasonInputs = () => (openAllMore(), screen.getAllByLabelText(/why the lower price/i));
     const quoteButton = () => screen.getByRole("button", { name: /get quote/i });
 
     it("two priced rows with DIFFERENT overrides disable Get quote and say why", async () => {

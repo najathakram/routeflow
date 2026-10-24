@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { Button, TAP_TARGET, cn } from "@routeflow/ui/web";
 import {
+  COUNTER_METHOD_LABEL,
   formatReceiptMoney as money,
   isCalendarDay,
   normalizeBoxesPieces,
@@ -131,6 +132,8 @@ import { CounterScanFeedback } from "./CounterScanFeedback";
 import { CounterBuyerChoice } from "./CounterBuyerChoice";
 import { BUYER_REASON_COPY, kindOfPick } from "./counter-buyer-choice";
 import { useCounterBuyerChoice } from "./useCounterBuyerChoice";
+import { useCounterNewCustomer } from "./useCounterNewCustomer";
+import { CustomerFormModal } from "../../customers/_components/CustomerFormModal";
 import { useCounterScanFocus } from "./useCounterScanFocus";
 import { CounterReceiptActions } from "./CounterReceiptActions";
 import { CounterTodaysSales } from "./CounterTodaysSales";
@@ -155,6 +158,10 @@ export { lineQtyLabel, toSaleItem } from "./counter-sale-line-edit";
 
 /** An empty Enter in the scan box moves to the payment only this long after the last scan submit or scan-box keystroke. */
 export const EMPTY_ENTER_QUIET_MS = 150;
+
+/** W-716: how the sale was paid, for the receipt's void dialog ("Cash"); undefined when the server did not echo it. */
+const receiptMethodText = (m: CounterSaleResponse["method"]) =>
+  m === "ON_ACCOUNT" ? "On account" : m ? COUNTER_METHOD_LABEL[m] : undefined;
 
 export function CounterSaleScreen() {
   const readOnlyGate = useReadOnlyGate();
@@ -481,6 +488,8 @@ export function CounterSaleScreen() {
   const licenseNeeded = lines.some(needsLicense);
   const discounts = discountsTotal(lines, settings?.hideOriginalPrice === true); // POS-5: the `Discounts` row (display only; the total already includes it)
   const tenderedNum = Number(tendered) || 0;
+  // Row 188: while a cash amount is being typed, how far it is from the total. Quiet, not an error until Complete is pressed.
+  const tenderShort = tenderedNum > 0 ? amountDue(totals.total, tenderedNum) : 0;
 
   const { data: customersData, isFetching: customersFetching } = useCustomers({
     search: customerSearch.trim() || undefined,
@@ -499,6 +508,8 @@ export function CounterSaleScreen() {
     customerSearch,
     pickCustomer,
   );
+  // Row 240: a customer created from the counter becomes this sale's customer.
+  const newCustomer = useCounterNewCustomer((created) => pickCustomer(created));
 
   // The fulfilment pre-selection for "Ship this order instead": the customer's own path first, then the staff default.
   const shipPreselected = preselectFulfilment(customer?.fulfillPath, gate.capability) === "SHIP";
@@ -580,8 +591,12 @@ export function CounterSaleScreen() {
 
   // The scan field is disabled during the POST: hand focus back when the POST ends without a receipt.
   const wasPendingRef = React.useRef(false);
+  const keepFocusOnRecoveryRef = React.useRef(false);
   React.useEffect(() => {
-    if (wasPendingRef.current && !salePosting && !receipt && !locked) refocus();
+    if (wasPendingRef.current && !salePosting && !receipt && !locked) {
+      if (keepFocusOnRecoveryRef.current) keepFocusOnRecoveryRef.current = false;
+      else refocus();
+    }
     wasPendingRef.current = salePosting;
   }, [salePosting, receipt, locked, refocus]);
 
@@ -657,6 +672,17 @@ export function CounterSaleScreen() {
     el.scrollIntoView?.({ block: "nearest" });
     focusPaymentControl(el); // the ONE owner of payment focus (counter-focus.structure.test.ts)
   }, [tenderFix]);
+  // F07: an offline Complete ("No connection") puts the cursor on the Complete button that was pressed, the action that recovers.
+  const [offlineRecovery, setOfflineRecovery] = React.useState<{ n: number; next: boolean } | null>(
+    null,
+  );
+  React.useEffect(() => {
+    if (!offlineRecovery) return;
+    const buttons = document.querySelectorAll<HTMLElement>(
+      '[data-testid="counter-checkout-actions"] button',
+    );
+    focusPaymentControl(buttons[offlineRecovery.next ? 1 : 0]);
+  }, [offlineRecovery]);
   const focusPayment = () =>
     focusPaymentControl(
       method === "CASH" && tenderRef.current
@@ -878,6 +904,9 @@ export function CounterSaleScreen() {
         setOutcomeUnknown(false);
         setError(COUNTER_OFFLINE_COPY);
         liveCart.endSend();
+        // F07: the way out of this is Complete again, so the cursor goes there (not back to the scan box).
+        keepFocusOnRecoveryRef.current = true;
+        setOfflineRecovery({ n: Date.now(), next: attempt.next });
       } else if (!attempt.unknown && isDefinitiveCounterSaleRefusal(err)) {
         attemptRef.current = null;
         clearHeldAttempt(heldKey);
@@ -1181,6 +1210,7 @@ export function CounterSaleScreen() {
         <CounterReceiptActions
           orderId={receipt.orderId}
           customer={customer}
+          methodsText={receiptMethodText(receipt.method)}
           onNewSale={resetSale}
         />
       </div>
@@ -1256,6 +1286,7 @@ export function CounterSaleScreen() {
                 setCustomer(null);
                 buyerChoice.chooseWalkIn();
               }}
+              onNewCustomer={() => newCustomer.openWith(customerSearch)}
             />
             <input
               {...customerListbox.inputProps}
@@ -1329,7 +1360,7 @@ export function CounterSaleScreen() {
           {/* scan / search: always focused; a typed quantity multiplies the next scan */}
           <form
             onSubmit={onScanSubmit}
-            className="sticky top-0 z-20 flex items-center gap-2 bg-white py-2"
+            className="sticky top-0 z-20 flex items-center gap-2 border-b border-navy/10 bg-white py-2"
             data-testid="counter-scan-bar"
           >
             <input
@@ -1380,7 +1411,9 @@ export function CounterSaleScreen() {
           </form>
           {/* The multiply tip lives under the field: in the placeholder it was cut off at 390px. */}
           <p id="counter-scan-hint" className="-mt-1 text-xs text-navy/70" data-testid="scan-hint">
-            Type a quantity first to multiply.
+            {lines.length > 0 && !scanText
+              ? "Press Enter to pay."
+              : "Type a quantity first to multiply."}
           </p>
           <CounterScanFeedback miss={scan.message} cue={scanCue} added={scan.added} />
           {scan.failed ? (
@@ -1595,8 +1628,18 @@ export function CounterSaleScreen() {
                         void completeSale(false);
                       }
                     }}
+                    aria-describedby={tenderShort > 0 ? "counter-tender-short" : undefined}
                   />
                 </label>
+                {tenderShort > 0 ? (
+                  <p
+                    id="counter-tender-short"
+                    className="text-sm text-navy/70"
+                    data-testid="tender-short"
+                  >
+                    {money(tenderShort)} short
+                  </p>
+                ) : null}
               </div>
             ) : null}
 
@@ -1874,6 +1917,16 @@ export function CounterSaleScreen() {
         </div>
       </div>
       {rw.dialog}
+      {/* Row 240: the customers page's own form, mounted only while it is open (its hooks run on mount). */}
+      {newCustomer.open ? (
+        <CustomerFormModal
+          isOpen
+          onClose={newCustomer.close}
+          mode="add"
+          prefillName={newCustomer.prefillName}
+          onCreated={newCustomer.onCreated}
+        />
+      ) : null}
     </div>
   );
 }

@@ -155,6 +155,14 @@ for (const vp of VIEWPORTS) {
 
       await page.getByRole("button", { name: "Exit counter" }).click();
       await expect(page.getByText("Discard this sale?")).toBeVisible();
+      // W-710: the dialog eases out on the way in (about 200 ms), never the linear default
+      const motion = await page.getByRole("dialog").evaluate((el) => ({
+        fn: getComputedStyle(el).animationTimingFunction,
+        duration: getComputedStyle(el).animationDuration,
+      }));
+      expect(motion.fn, "an ease-out curve, not linear").not.toBe("linear");
+      expect(motion.fn).toMatch(/ease-out|cubic-bezier\(0, ?0, 0\.2, ?1\)/);
+      expect(motion.duration).toBe("0.2s");
       await expect(page.getByRole("button", { name: "Keep selling" })).toBeFocused();
       await page.keyboard.press("Escape");
       await expect(page.getByText("Discard this sale?")).toHaveCount(0);
@@ -197,6 +205,144 @@ for (const vp of VIEWPORTS) {
       } finally {
         await page.evaluate(() => localStorage.removeItem("rf-open-counter"));
       }
+    });
+  });
+}
+
+// ── Row 676 / W-717 / F01 / BUILD-BRIEF 1.5: the sale line says what it sells, and its controls share one weight ──────────
+// Written for the local lane (not run by the builder): the product is DISCOVERED, so every step reads the line it got
+// (a plain product or a boxed one) and the boxed-only steps skip themselves on a plain product.
+for (const vp of VIEWPORTS.filter((v) => v.name !== "1024")) {
+  test.describe(`counter line says what it sells @ ${vp.name}`, () => {
+    test.use({ viewport: { width: vp.width, height: vp.height } });
+    const touch = vp.width < 1024;
+
+    const lineRows = (page: Page) =>
+      page.getByRole("list", { name: "Items" }).getByRole("listitem").filter({
+        hasNotText: "No items yet",
+      });
+
+    async function openCounterWithLine(
+      page: Page,
+      context: Parameters<typeof setTenantCookie>[0],
+      scan: (sku: string) => string,
+    ) {
+      await setTenantCookie(context, BASE);
+      await page.goto("/orders");
+      const sku = await discoverSku(page);
+      await enterCounterFromNav(page, vp.width);
+      const scanField = page.getByLabel("Scan or search items");
+      await expect(scanField).toBeVisible({ timeout: 15_000 });
+      await scanField.fill(scan(sku));
+      await scanField.press("Enter");
+      await expect(lineRows(page)).toHaveCount(1, { timeout: 15_000 });
+      return { sku, scanField, row: lineRows(page).first() };
+    }
+
+    async function discardSale(page: Page) {
+      await page.getByRole("button", { name: "Exit counter" }).click();
+      await page.getByRole("button", { name: "Discard", exact: true }).click();
+      await expect(page).toHaveURL(/\/orders$/);
+    }
+
+    test("one stepper with its unit always named, and one weight for the line's controls", async ({
+      page,
+      context,
+    }) => {
+      const { row } = await openCounterWithLine(page, context, (sku) => sku);
+
+      // ONE stepper: minus, count, plus (no row of four step buttons), and the unit word is on the line
+      const stepper = row.getByRole("group", { name: /^Quantity of / });
+      await expect(stepper.getByRole("button")).toHaveCount(2);
+      await expect(stepper.getByRole("spinbutton")).toHaveCount(1);
+      await expect(row.getByTestId("line-sell-unit")).toHaveText(/^\d+ \S+/);
+      expect(await overflow(page), "no horizontal overflow").toBeLessThanOrEqual(0);
+
+      // the stepper is the one bordered control; Add note and remove are quiet (no border), still 44 px on touch widths
+      const border = (loc: ReturnType<Page["locator"]>) =>
+        loc.evaluate((el) => parseFloat(getComputedStyle(el).borderTopWidth));
+      expect(await border(stepper)).toBeGreaterThan(0);
+      const addNote = row.getByRole("button", { name: /^Add a note to / });
+      const remove = row.getByRole("button", { name: /^Remove (?!a |one )/ });
+      for (const quiet of [addNote, remove]) {
+        expect(await border(quiet), "a quiet control draws no box").toBe(0);
+        if (touch) {
+          const box = (await quiet.boundingBox())!;
+          expect(box.height, "a 44 px touch target").toBeGreaterThanOrEqual(43.5);
+        }
+      }
+      expect(await remove.locator("svg").count(), "remove is an icon").toBe(1);
+      expect((await remove.innerText()).trim()).toBe("");
+
+      // no stray white block on the line: the row, the stepper and its buttons paint no background of their own
+      const paints = await row.evaluate((li) => {
+        const white = (el: Element) => {
+          const c = getComputedStyle(el).backgroundColor;
+          return c === "rgb(255, 255, 255)" || c === "rgba(255, 255, 255, 1)";
+        };
+        return [li, ...li.querySelectorAll('[role="group"], [role="group"] > *')].filter(white)
+          .length;
+      });
+      expect(paints, "no white band behind the line's controls").toBe(0);
+
+      await discardSale(page);
+    });
+
+    test("a quantity prefix (2*code, 2x code, 2 x code) puts that many on the line", async ({
+      page,
+      context,
+    }) => {
+      const { sku, scanField, row } = await openCounterWithLine(page, context, (s) => `2*${s}`);
+      await expect(row.getByTestId("line-sell-unit")).toHaveText(/^2 \S+/);
+
+      // a second prefix form merges into the same line: 2 + 3
+      await scanField.fill(`3 x ${sku}`);
+      await scanField.press("Enter");
+      await expect(row.getByTestId("line-sell-unit")).toHaveText(/^5 \S+/);
+      await expect(lineRows(page)).toHaveCount(1);
+
+      await scanField.fill(`1X ${sku}`);
+      await scanField.press("Enter");
+      await expect(row.getByTestId("line-sell-unit")).toHaveText(/^6 \S+/);
+
+      // a bare number still sets the quantity for the NEXT scan
+      await scanField.fill("2");
+      await scanField.press("Enter");
+      await scanField.fill(sku);
+      await scanField.press("Enter");
+      await expect(row.getByTestId("line-sell-unit")).toHaveText(/^8 \S+/);
+
+      await discardSale(page);
+    });
+
+    test("a boxed product: Box and Each switch what the stepper counts, and the total never moves", async ({
+      page,
+      context,
+    }) => {
+      const { row } = await openCounterWithLine(page, context, (sku) => sku);
+      const soldBy = row.getByRole("group", { name: /^Sold by, / });
+      test.skip((await soldBy.count()) === 0, "the discovered product is not case-packed");
+
+      const total = page.getByTestId("running-total");
+      const before = (await total.innerText()).trim();
+      const unitLabel = row.getByTestId("line-sell-unit");
+      const boxed = (await unitLabel.innerText()).trim();
+
+      await soldBy.getByRole("button", { name: /by the each$/ }).click();
+      await expect(unitLabel).toHaveText(/^\d+ each$/);
+      await expect(total, "switching the unit never moves the money").toHaveText(before);
+
+      // one piece up: loose pieces now, so Box is unavailable until they are gone, and the total went up by a piece
+      await row.getByRole("button", { name: /^Add a piece to / }).click();
+      await expect(soldBy.getByRole("button", { name: /^Sell .* by the (?!each)/ })).toBeDisabled();
+      await row.getByRole("button", { name: /^Remove a piece from / }).click();
+      await expect(total).toHaveText(before);
+
+      // back to whole boxes: the original reading returns
+      await soldBy.getByRole("button", { name: /^Sell .* by the (?!each)/ }).click();
+      await expect(unitLabel).toHaveText(boxed);
+
+      await discardSale(page);
     });
   });
 }

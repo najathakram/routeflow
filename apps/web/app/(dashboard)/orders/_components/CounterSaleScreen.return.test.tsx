@@ -79,7 +79,8 @@ it("the receipt mounts the return action for the sale's order", async () => {
   expect(print).toBeGreaterThanOrEqual(0);
   // SA-751r: Email receipt follows Print, then Return items, then New sale
   const email = order.indexOf("Email receipt");
-  expect(email).toBe(print + 1);
+  expect(order[print + 1]).toBe("More"); // W-715: the phone-only More toggle (hidden from sm up)
+  expect(email).toBe(print + 2);
   expect(ret).toBe(email + 1);
   expect(next).toBe(ret + 1);
 });

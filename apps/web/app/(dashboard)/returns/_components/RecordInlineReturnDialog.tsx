@@ -50,8 +50,12 @@ import {
 import {
   REFUND_COPY,
   TENDER_OPTIONS,
+  creditOutcomeLine,
   handBackLine,
   refundErrorKind,
+  refundOutcomeLine,
+  takeBackCreditLabel,
+  takeBackRefundLabel,
   tenderFromPaidMethods,
   TERMINAL_REFUND_ERRORS,
   type RefundErrorKind,
@@ -460,7 +464,9 @@ export function RecordInlineReturnDialog({
         totalOnly={!!serverQuote}
         hideBack={!!saved}
         quoteNote={
-          showChoice && effResolution === "REFUND" ? REFUND_COPY.quoteRefundNote : undefined
+          effResolution === "REFUND"
+            ? refundOutcomeLine(money(shownAmount))
+            : creditOutcomeLine(money(shownAmount), customerName)
         }
         renderQuoteFooter={() =>
           showChoice ? (
@@ -547,13 +553,11 @@ export function RecordInlineReturnDialog({
                 loading={captureMutation.isPending}
                 onClick={handleConfirm}
               >
-                {!showChoice
-                  ? "Issue credit note and receive goods"
-                  : refunding
-                    ? "Refunding…"
-                    : effResolution === "REFUND"
-                      ? `Return & refund ${money(shownAmount)}`
-                      : "Return & issue store credit"}
+                {refunding
+                  ? "Refunding…"
+                  : showChoice && effResolution === "REFUND"
+                    ? takeBackRefundLabel(money(shownAmount))
+                    : takeBackCreditLabel(money(shownAmount))}
               </Button>
             </>
           )

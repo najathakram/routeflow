@@ -23,6 +23,8 @@ export interface SaleLine {
   unitsPerBox?: number;
   boxes?: number;
   pieces?: number;
+  /** The product's own pack word ("Case") when it has one; the line reads it in place of the tenant's default. */
+  packLabel?: string;
   /** POS-3: an optional per-line note (max NOTE_MAX); sent as the wire item's `note`. */
   note?: string;
   /**
@@ -95,6 +97,9 @@ export function addScannedProduct(
       unitsPerBox: upb,
       listPrice: Number(product.pricePerUnit ?? 0),
       unit: product.unit ?? "each",
+      ...(String(product.packLabel ?? "").trim()
+        ? { packLabel: String(product.packLabel).trim() }
+        : {}),
       priceType: lp.isSpecial ? "SPECIAL" : "STANDARD",
       ...(lp.layered ? { special: lp.isSpecial } : {}),
       ...(product.category ? { category: String(product.category) } : {}),

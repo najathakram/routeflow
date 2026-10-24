@@ -240,7 +240,13 @@ export function CounterReceiptView({
           </div>
         ) : null}
         {m.change != null ? (
-          <div className="flex justify-between text-lg font-semibold" data-testid="receipt-change">
+          // W-715: change is the headline only when there is change; an exact sale reads it as a normal row (Total stays the one headline)
+          <div
+            className={
+              m.change > 0 ? "flex justify-between text-lg font-semibold" : "flex justify-between"
+            }
+            data-testid="receipt-change"
+          >
             <dt>Change</dt>
             <dd>
               {money(m.change)}

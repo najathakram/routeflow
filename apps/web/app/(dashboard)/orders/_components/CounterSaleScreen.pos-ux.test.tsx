@@ -89,6 +89,7 @@ async function buildCart() {
   await scan("COLA");
   await scan("WATER");
   await waitFor(() => expect(screen.getByText(/Water/)).toBeInTheDocument());
+  click("Sell Water by the each");
   for (let i = 0; i < 3; i++) click("Add a piece to Water");
 }
 const itemNames = () =>
@@ -140,32 +141,41 @@ describe("typed quantity editor (steppers stay)", () => {
     expect(screen.getByRole("button", { name: "Remove Cola" })).toBeInTheDocument();
   });
 
-  it("Tab from the Boxes field of a boxed line is natural (never redirected), even with a draft", async () => {
+  it("Tab from the typed field of a boxed line with a draft commits it and hands focus on (it is the one field)", async () => {
     await buildCart();
-    const boxes = screen.getByLabelText("Boxes of Water") as HTMLInputElement;
-    boxes.focus();
-    fireEvent.change(boxes, { target: { value: "2" } });
-    expect(fireEvent.keyDown(boxes, { key: "Tab" })).toBe(true);
+    const pieces = screen.getByLabelText("Pieces of Water") as HTMLInputElement;
+    pieces.focus();
+    fireEvent.change(pieces, { target: { value: "20" } });
+    expect(fireEvent.keyDown(pieces, { key: "Tab" })).toBe(false); // redirected, as the last quantity field was
+    expect(lineOf("Water")).toHaveTextContent("1 box + 8 pcs");
   });
 
-  it("a boxed line has box and piece inputs, normalized through normalizeBoxesPieces (42 pcs -> 3 boxes + 6 pcs)", async () => {
-    await buildCart(); // Water 1 box + 3 pcs
-    const boxes = screen.getByLabelText("Boxes of Water") as HTMLInputElement;
+  it("a boxed line types in its selling unit, normalized through normalizeBoxesPieces (42 pcs -> 3 boxes + 6 pcs)", async () => {
+    await buildCart(); // Water 1 box + 3 pcs: loose pieces, so it counts each
     const pieces = screen.getByLabelText("Pieces of Water") as HTMLInputElement;
-    expect([boxes.value, pieces.value]).toEqual(["1", "3"]);
-    fireEvent.change(pieces, { target: { value: "30" } });
+    expect(pieces.value).toBe("15");
+    expect(screen.getByRole("button", { name: "Sell Water by the box" })).toBeDisabled();
+    fireEvent.change(pieces, { target: { value: "42" } });
     fireEvent.blur(pieces);
     expect(lineOf("Water")).toHaveTextContent("3 boxes + 6 pcs");
-    expect((screen.getByLabelText("Boxes of Water") as HTMLInputElement).value).toBe("3");
-    expect((screen.getByLabelText("Pieces of Water") as HTMLInputElement).value).toBe("6");
+    expect((screen.getByLabelText("Pieces of Water") as HTMLInputElement).value).toBe("42");
     expect(screen.getByTestId("running-total")).toHaveTextContent("$47.00");
+    // whole boxes typed in Each land on the same line, and Box then counts them
+    fireEvent.change(screen.getByLabelText("Pieces of Water"), { target: { value: "36" } });
+    fireEvent.blur(screen.getByLabelText("Pieces of Water"));
+    expect(lineOf("Water")).toHaveTextContent("3 boxes");
+    fireEvent.click(screen.getByRole("button", { name: "Sell Water by the box" }));
+    expect((screen.getByLabelText("Boxes of Water") as HTMLInputElement).value).toBe("3");
   });
 
-  it("a boxed line typed down to nothing (0 boxes, 0 pieces) reverts the last edit", async () => {
+  it("a boxed line typed down to nothing reverts the last edit, in Each and in Box", async () => {
     await buildCart(); // Water 1 box + 3 pcs
     fireEvent.change(screen.getByLabelText("Pieces of Water"), { target: { value: "0" } });
     fireEvent.blur(screen.getByLabelText("Pieces of Water"));
-    expect(lineOf("Water")).toHaveTextContent("1 box");
+    expect(lineOf("Water")).toHaveTextContent("1 box + 3 pcs");
+    fireEvent.change(screen.getByLabelText("Pieces of Water"), { target: { value: "12" } });
+    fireEvent.blur(screen.getByLabelText("Pieces of Water"));
+    fireEvent.click(screen.getByRole("button", { name: "Sell Water by the box" }));
     fireEvent.change(screen.getByLabelText("Boxes of Water"), { target: { value: "0" } });
     fireEvent.blur(screen.getByLabelText("Boxes of Water"));
     expect(lineOf("Water")).toHaveTextContent("1 box");

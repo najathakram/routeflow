@@ -17,8 +17,12 @@ import { ADDED_CONFIRMATION_MS, addedCopy, noProductCopy } from "./counter-scan-
 export const COUNTER_SCAN_FAILED_COPY =
   "Couldn't look up the code. Check the connection and try again.";
 
-/** One entry of the scan queue: a code, or a 1-3 digit entry that is a code only if a product matches it EXACTLY. */
-type ScanItem = { kind: "code"; code: string } | { kind: "short"; n: number; code: string };
+/**
+ * One entry of the scan queue: a code (`qty` set when it came as "2*code" / "2x code", F01), or a 1-3 digit entry that is a
+ * code only if a product matches it EXACTLY.
+ */
+type ScanItem =
+  { kind: "code"; code: string; qty?: number } | { kind: "short"; n: number; code: string };
 
 export interface ScanPicker {
   code: string;
@@ -98,6 +102,7 @@ export function useCounterSaleScan(deps: Deps) {
       while (queueRef.current.length > 0 && !pausedRef.current) {
         const epoch = epochRef.current;
         const item = queueRef.current[0];
+        if (item.kind === "code" && item.qty) carryRef.current = item.qty; // F01: the prefix is this code's quantity
         let result: BarcodeResolveResult | null = null;
         let lookupFailed = false;
         if (!depsRef.current.locked) {
@@ -186,7 +191,7 @@ export function useCounterSaleScan(deps: Deps) {
       setPendingQty(parsed.qty); // shown at once; confirmed (or turned into a code) when it is processed
     } else {
       if (!parsed.code) return;
-      queueRef.current.push({ kind: "code", code: parsed.code });
+      queueRef.current.push({ kind: "code", code: parsed.code, qty: parsed.qty });
       setPendingQty(1);
     }
     setWaiting(queueRef.current.length);

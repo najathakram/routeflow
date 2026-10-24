@@ -113,8 +113,7 @@ describe("CounterLineRow per-unit price", () => {
     expect(screen.getByTestId("line-unit-price")).toHaveTextContent("$12.00 / box");
   });
 
-  it("a scanned case reads 'case of 24' with the price per case and each", () => {
-    // the tenant's pack word (unitWords) is "box" until a pack label rides on the line; the shape is what is pinned
+  it("a scanned case reads 'box of 24' with the price per box and each when the product names no pack", () => {
     renderRow(
       line({ unitPrice: 18, listPrice: 18, unitsPerBox: 24, boxes: 1, pieces: 0, qty: 24 }),
     );
@@ -122,10 +121,41 @@ describe("CounterLineRow per-unit price", () => {
     expect(screen.getByRole("listitem")).toHaveTextContent("1 box of 24");
   });
 
+  it("a scanned case reads 'case of 24' with the price per case and each", () => {
+    renderRow(
+      line({
+        unitPrice: 18,
+        listPrice: 18,
+        unitsPerBox: 24,
+        boxes: 1,
+        pieces: 0,
+        qty: 24,
+        packLabel: "Case",
+      }),
+    );
+    expect(screen.getByTestId("line-unit-price")).toHaveTextContent("$18.00 / case · $0.75 each");
+    expect(screen.getByRole("listitem")).toHaveTextContent("1 case of 24");
+    expect(screen.getByRole("listitem")).not.toHaveTextContent("box");
+  });
+
   it("loose pieces of a case read in pcs, still naming the pack", () => {
     renderRow(line({ unitPrice: 18, listPrice: 18, unitsPerBox: 24, boxes: 0, pieces: 3, qty: 3 }));
     expect(screen.getByRole("listitem")).toHaveTextContent("0 boxes + 3 pcs · box of 24");
     expect(screen.getByTestId("line-unit-price")).toHaveTextContent("$18.00 / box · $0.75 each");
+  });
+
+  it("loose pieces of a labelled case name that pack", () => {
+    renderRow(
+      line({
+        unitPrice: 18,
+        unitsPerBox: 24,
+        boxes: 0,
+        pieces: 3,
+        qty: 3,
+        packLabel: "Case",
+      }),
+    );
+    expect(screen.getByRole("listitem")).toHaveTextContent("0 cases + 3 pcs · case of 24");
   });
 
   it("B1230: unit 'each' never reads '/ piece'", () => {

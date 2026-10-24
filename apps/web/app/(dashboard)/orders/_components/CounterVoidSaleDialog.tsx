@@ -148,9 +148,10 @@ export function CounterVoidSaleDialog({
             can&apos;t undo this.
           </p>
           <label className="block">
-            Reason for voiding
+            Reason for voiding <span className="text-danger">(required)</span>
             <textarea
-              aria-label="Reason for voiding"
+              aria-label="Reason for voiding (required)"
+              aria-required="true"
               aria-invalid={touched && reasonProblem ? true : undefined}
               className="mt-1 min-h-[88px] w-full rounded border px-3 py-2"
               maxLength={VOID_REASON_MAX}

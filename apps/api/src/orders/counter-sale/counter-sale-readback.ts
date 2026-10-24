@@ -35,7 +35,14 @@ export type InvoiceRow = {
     trackedCategory?: { id?: string | null; name?: string | null; taxType?: string | null } | null;
     categoryTaxType?: string | null;
   }>;
-  payments?: Array<{ id: string; amount: unknown; method?: string; status?: string }>;
+  payments?: Array<{
+    id: string;
+    amount: unknown;
+    method?: string;
+    status?: string;
+    /** the check number / card reference typed at the till (`Payment.reference`) */
+    reference?: string | null;
+  }>;
 };
 
 type ScanOrdered = {
@@ -109,6 +116,14 @@ export function servedChange(
   if (!firstTender || counterMethodOf(firstTender.method) !== "CASH") return null;
   if (balanceDue > 0) return null;
   return storedChange(tendered, payments);
+}
+
+/** W-713: the number on the sale's first CHECK tender (trimmed); undefined when there is no check tender or it has no number. */
+export function checkReferenceOf(
+  payments: ReadonlyArray<{ method?: string; status?: string; reference?: string | null }>,
+): string | undefined {
+  const check = payments.find((p) => isTender(p) && p.method === "CHECK");
+  return check?.reference?.trim() || undefined;
 }
 
 /** The counter method of a stored tender (Prisma CREDIT_CARD reads back as CARD); undefined for any other. */
@@ -194,6 +209,8 @@ export function buildCounterSaleResponse(input: {
     balanceDue,
     ...(change != null ? { change } : {}),
     ...(firstTender ? { paymentId: firstTender.id } : {}),
+    // W-713: the check number rides back so the receipt reads "Check #1042" (a check tender with a number only)
+    ...(checkReferenceOf(payments) ? { checkReference: checkReferenceOf(payments)! } : {}),
     ...(method ? { method } : {}),
     paymentRecorded: settled,
     ...(!settled

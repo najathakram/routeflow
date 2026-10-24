@@ -1,5 +1,12 @@
-import { normalizeBoxesPieces, perUnitPrice, type UnitWords } from "@routeflow/pricing";
+import {
+  normalizeBoxesPieces,
+  perUnitPrice,
+  plural,
+  unitWords,
+  type UnitWords,
+} from "@routeflow/pricing";
 import type { CounterSaleItem } from "@routeflow/types";
+import { lineCount, lineUnit, type CartUnit } from "@/lib/buyer-cart-line";
 import { mergePieceIntoLine } from "./add-line-merge";
 import type { SaleLine } from "./counter-sale-scan";
 
@@ -25,13 +32,18 @@ export const lineQtyLabel = (l: SaleLine): string => {
   return `${boxes} box${boxes === 1 ? "" : "es"}${n.pieces ? ` + ${n.pieces} pcs` : ""}`;
 };
 
+/** The words a line reads in: the PRODUCT's pack word when it has one, else the tenant's (`words`). */
+export const lineUnitWords = (l: SaleLine, words: UnitWords): UnitWords =>
+  l.packLabel?.trim() ? unitWords({ packLabel: l.packLabel }) : words;
+
 /**
- * The register line's quantity: `lineQtyLabel`'s shape in the tenant's pack word (`unitWords`), then the pack size. A boxed line
- * with whole boxes only reads "1 box of 24"; with loose pieces "1 box + 3 pcs · box of 24" (so the pack is always named).
+ * The register line's quantity: `lineQtyLabel`'s shape in the pack word (`unitWords`), then the pack size. A boxed line
+ * with whole boxes only reads "1 case of 24"; with loose pieces "1 case + 3 pcs · case of 24" (so the pack is always named).
  * The receipt keeps `lineQtyLabel` unchanged. Money is never derived here.
  */
-export const registerQtyLabel = (l: SaleLine, words: UnitWords): string => {
+export const registerQtyLabel = (l: SaleLine, tenantWords: UnitWords): string => {
   if (!isBoxedLine(l)) return `× ${l.qty}`;
+  const words = lineUnitWords(l, tenantWords);
   const n = normalizeBoxesPieces({
     boxes: l.boxes,
     pieces: l.pieces,
@@ -48,15 +60,66 @@ export const registerQtyLabel = (l: SaleLine, words: UnitWords): string => {
 /** The register line's price: per pack, then the per-piece figure (`perUnitPrice`); a plain line per its unit word. */
 export const registerPriceLabel = (
   l: SaleLine,
-  words: UnitWords,
+  tenantWords: UnitWords,
   money: (n: number) => string,
   unitWord: (unit: string) => string,
 ): string => {
+  const words = lineUnitWords(l, tenantWords);
   if (!isBoxedLine(l))
     return `${money(l.unitPrice)} / ${l.unit ? unitWord(l.unit) : words.base.lower}`;
   const each = perUnitPrice(l.unitPrice, l.unitsPerBox);
   return `${money(l.unitPrice)} / ${words.pack.lower}${each != null ? ` · ${money(each)} each` : ""}`;
 };
+
+/**
+ * Row 676 (SA-831b M13, the row-531 rule on a counter line): the ONE stepper counts the line's SELLING UNIT. These are thin
+ * adapters over `lib/buyer-cart-line` (`lineUnit` / `lineCount`, the one rule), reading the line through
+ * `normalizeBoxesPieces` so a stored split that does not add up still counts what the receipt would bill. A whole-case line
+ * defaults to CASE, one holding loose pieces to EACH, and a chosen CASE is honoured only when no piece is loose. Nothing here
+ * changes a stored qty/boxes/pieces: stepping and typing still go through `stepLine` / `setLineQty`.
+ */
+const unitShape = (l: SaleLine, chosen?: CartUnit) => {
+  const n = normalizeBoxesPieces({
+    boxes: l.boxes,
+    pieces: l.pieces,
+    qty: l.qty,
+    unitsPerBox: l.unitsPerBox,
+  });
+  return { qty: n.qty, unitsPerBox: l.unitsPerBox, sellBy: chosen };
+};
+
+export const lineSellUnit = (l: SaleLine, chosen?: CartUnit): CartUnit =>
+  isBoxedLine(l) ? lineUnit(unitShape(l, chosen)) : "EACH";
+
+/** The count the stepper shows: whole cases in CASE, pieces (a plain line's qty) in EACH. */
+export const lineSellCount = (l: SaleLine, unit: CartUnit): number =>
+  isBoxedLine(l) && unit === "CASE" ? lineCount(unitShape(l, "CASE")) : unitShape(l).qty;
+
+/** True when a boxed line may switch to CASE: no loose pieces, so the count stays exact. */
+export const canSellByCase = (l: SaleLine): boolean =>
+  isBoxedLine(l) && lineUnit(unitShape(l, "CASE")) === "CASE";
+
+/** The always-visible unit word beside the count: "boxes" / "cases" (the pack word), "each", or a plain line's own unit. */
+export const sellUnitWord = (
+  l: SaleLine,
+  unit: CartUnit,
+  count: number,
+  tenantWords: UnitWords,
+): string => {
+  const words = lineUnitWords(l, tenantWords);
+  if (isBoxedLine(l)) return unit === "CASE" ? words.packFor(count) : "each";
+  const own = (l.unit ?? "").trim().toLowerCase();
+  if (!own) return words.baseFor(count);
+  return own === "each" ? own : plural(own, count).toLowerCase();
+};
+
+/** What the typed count means in the chosen unit, as the editor's raw boxes + pieces (a plain line: its qty). */
+export const typedForSellUnit = (l: SaleLine, unit: CartUnit, text: string): TypedQty =>
+  !isBoxedLine(l)
+    ? { qty: text }
+    : unit === "CASE"
+      ? { boxes: text, pieces: "0" }
+      : { boxes: "0", pieces: text };
 
 /**
  * The wire item for one line, shaped the way the server's normaliser reads it (`normalizeBoxesPieces`): a boxed product

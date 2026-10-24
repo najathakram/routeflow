@@ -251,10 +251,18 @@ describe("B1208: the scanned level decides the line", () => {
     renderTill(<CounterSaleScreen />);
     await scan("400500600011"); // 1 box = 30.00
     await waitFor(() => expect(lines()).toHaveLength(1));
+    // row 676: one stepper counts the selling unit; a whole box steps in Box, a piece in Each
+    fireEvent.click(screen.getByRole("button", { name: "Add a box to Sample Cola 24pk" }));
+    expect(lines()[0]).toHaveTextContent("2 boxes");
+    fireEvent.click(screen.getByRole("button", { name: "Remove a box from Sample Cola 24pk" }));
+    expect(lines()[0]).toHaveTextContent("1 box");
+    fireEvent.click(screen.getByRole("button", { name: "Sell Sample Cola 24pk by the each" }));
     fireEvent.click(screen.getByRole("button", { name: "Add a piece to Sample Cola 24pk" }));
     expect(lines()[0]).toHaveTextContent("1 box + 1 pcs");
     expect(screen.getByTestId("running-total")).toHaveTextContent("$31.25");
-    fireEvent.click(screen.getByRole("button", { name: "Remove a box from Sample Cola 24pk" }));
+    const pieces = screen.getByLabelText("Pieces of Sample Cola 24pk");
+    fireEvent.change(pieces, { target: { value: "1" } });
+    fireEvent.blur(pieces);
     expect(lines()[0]).toHaveTextContent("0 boxes + 1 pcs");
     expect(screen.getByTestId("running-total")).toHaveTextContent("$1.25");
     // the last piece cannot be stepped away (the × button removes a line)

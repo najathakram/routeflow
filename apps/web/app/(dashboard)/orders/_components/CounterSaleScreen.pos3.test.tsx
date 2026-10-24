@@ -93,6 +93,7 @@ async function buildCart() {
   await scan("COLA");
   await scan("WATER");
   await waitFor(() => expect(screen.getByText(/Water/)).toBeInTheDocument());
+  click("Sell Water by the each");
   for (let i = 0; i < 3; i++) click("Add a piece to Water");
 }
 const itemNames = () =>
@@ -108,10 +109,10 @@ describe("POS-3 control inventory (nothing removed or hidden)", () => {
       "Remove one Cola",
       "Add one Cola",
       "Remove Cola",
-      "Remove a box from Water",
-      "Add a box to Water",
       "Remove a piece from Water",
       "Add a piece to Water",
+      "Sell Water by the box",
+      "Sell Water by the each",
       "Remove Water",
       "Cash",
       "Card",
@@ -366,7 +367,7 @@ describe("POS-3 layout and touch targets", () => {
     }
     expect(small).toEqual([]);
     // compact controls (stepper, remove, Undo) are 44 wide as well, not just tall
-    for (const name of ["Add a box to Water", "Remove Water", UNDO, "Cash", "Exact"]) {
+    for (const name of ["Add a piece to Water", "Remove Water", UNDO, "Cash", "Exact"]) {
       expect(
         screen.getByRole(TENDERS.test(String(name)) ? "radio" : "button", { name }).className,
       ).toMatch(/min-w-\[44px\]/);

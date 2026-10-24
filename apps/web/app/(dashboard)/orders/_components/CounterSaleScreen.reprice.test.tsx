@@ -148,6 +148,7 @@ describe("CounterSaleScreen: re-price when a customer is picked (POS-2)", () => 
   it("a boxed line with loose pieces re-prices through the box proration, never qty x price", async () => {
     renderWithProviders(<CounterSaleScreen />);
     await scan("WATER");
+    fireEvent.click(screen.getByRole("button", { name: "Sell Water by the each" }));
     for (let i = 0; i < 3; i++) {
       fireEvent.click(screen.getByRole("button", { name: "Add a piece to Water" }));
     }

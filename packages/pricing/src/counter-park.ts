@@ -93,6 +93,8 @@ export interface ParkedCartLine {
   note?: string;
   listPrice?: number;
   unit?: string;
+  /** The product's pack word ("case"); absent = the tenant's default word (BUILD-BRIEF 1.5). */
+  packLabel?: string;
   priceType?: "STANDARD" | "SPECIAL";
   category?: string;
   /** The product's regulated category, so a resumed cart's estimate still carries the levy (CQ-01). */
@@ -213,6 +215,8 @@ function rebuildLine(raw: unknown): ParkedCartLine | null {
   if (isNum(raw.listPrice)) line.listPrice = raw.listPrice;
   const unit = str(raw.unit, 40);
   if (unit !== undefined) line.unit = unit;
+  const packLabel = str(raw.packLabel, 40);
+  if (packLabel !== undefined) line.packLabel = packLabel;
   if (raw.priceType === "STANDARD" || raw.priceType === "SPECIAL") line.priceType = raw.priceType;
   const category = str(raw.category, 100);
   if (category !== undefined) line.category = category;

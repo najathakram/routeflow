@@ -305,6 +305,60 @@ test.describe("POS stack counter: ring the sale @ 1440", () => {
   });
 });
 
+test.describe("W-715 / W-716: the receipt's Change row, one action row at 390, and Void sale", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test("an exact cash sale: Change reads as a normal row, the actions are one row at 390, Void sale opens the dialog", async ({
+    page,
+    context,
+  }) => {
+    await setTenantCookie(context, BASE);
+    const { products } = await discover(page);
+    await page.goto("/orders/counter-sale");
+    const scanField = page.getByLabel("Scan or search items");
+    await expect(scanField).toBeVisible({ timeout: 15_000 });
+    await scanField.fill(String(products[0].sku));
+    await scanField.press("Enter");
+    await expect(page.getByRole("list", { name: "Items" }).getByRole("listitem")).toHaveCount(1, {
+      timeout: 15_000,
+    });
+    await page.getByRole("button", { name: "Exact" }).click();
+    await page.getByRole("button", { name: "Complete & show receipt" }).click();
+    await expect(page.getByTestId("counter-sale-receipt")).toBeVisible({ timeout: 20_000 });
+
+    // W-715: Change $0.00 is not a second headline (same size as Subtotal, smaller than Total)
+    const size = (id: string) =>
+      page.getByTestId(id).evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
+    await expect(page.getByTestId("receipt-change")).toContainText("$0.00");
+    expect(await size("receipt-change")).toBe(await size("receipt-subtotal"));
+    expect(await size("receipt-change")).toBeLessThan(await size("receipt-total"));
+
+    // W-715: New sale, Print and More share one row at 390 and none runs off the screen
+    await page.setViewportSize({ width: 390, height: 844 });
+    const box = async (name: string) => {
+      const b = await page.getByRole("button", { name, exact: true }).boundingBox();
+      expect(b, `${name} is on screen`).not.toBeNull();
+      return b!;
+    };
+    const [newSale, print, more] = [await box("New sale"), await box("Print"), await box("More")];
+    expect(Math.abs(newSale.y - print.y)).toBeLessThan(2);
+    expect(Math.abs(newSale.y - more.y)).toBeLessThan(2);
+    expect(more.x + more.width).toBeLessThanOrEqual(390);
+
+    // the rest stay reachable behind More
+    await page.getByRole("button", { name: "More", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Email receipt" })).toBeVisible();
+
+    // W-716 / F14: Void sale opens the void dialog for this sale; the reason is marked required up front
+    await page.getByRole("button", { name: /^Void sale ORD/ }).click();
+    const dialog = page.getByRole("dialog", { name: /Void sale/ });
+    await expect(dialog).toContainText("$");
+    await expect(dialog.getByLabel("Reason for voiding (required)")).toBeVisible();
+    await dialog.getByRole("button", { name: "Keep sale" }).click();
+    await expect(dialog).toBeHidden();
+  });
+});
+
 /**
  * R7b batch 1 "say the money at the till". Written against the real stack like the rest of this file; the lead runs it on the
  * one proof stack (it is not run in the build lane). Each test rings at most one cash sale on the approved test tenant.
@@ -446,6 +500,94 @@ test.describe("R7b till: change due note and the keyboard path to pay", () => {
 });
 
 /** B1182: below md a toast sits above the sticky checkout bar (the register publishes --toast-bottom-inset). No sale is rung. */
+/**
+ * Counter audit, batch "register and payment" (538 re-check F02 / F07, vital-few #7, rows 188 and 240). Nothing is sold and no
+ * customer is created: a line is put on the cart, an amount is typed, the new-customer form is opened and cancelled.
+ */
+test.describe("register and payment polish", () => {
+  for (const vp of VIEWPORTS) {
+    test(`the scan field has an edge, the hint names Enter, a short tender says how short, New customer opens the form @ ${vp.name}`, async ({
+      page,
+      context,
+    }) => {
+      await page.setViewportSize({ width: vp.width, height: vp.height });
+      await setTenantCookie(context, BASE);
+      const { products } = await discover(page);
+      await page.goto("/orders/counter-sale");
+      const scanField = page.getByLabel("Scan or search items");
+      await expect(scanField).toBeVisible({ timeout: 15_000 });
+
+      // before any line: the multiply tip; no key hint yet
+      await expect(page.getByTestId("scan-hint")).toHaveText("Type a quantity first to multiply.");
+
+      // New customer (row 240): the typed text is the form's Business Name; cancelling creates nothing
+      await page.getByLabel("Find a customer").fill("Qa Counter Prefill");
+      await page.getByRole("button", { name: "New customer" }).click();
+      const form = page.getByRole("dialog");
+      await expect(form.getByLabel("Business Name")).toHaveValue("Qa Counter Prefill");
+      await form.getByRole("button", { name: "Cancel" }).click();
+      await expect(form).toHaveCount(0);
+      await page.getByLabel("Find a customer").fill("");
+      await page.getByRole("button", { name: "Walk-in" }).click();
+
+      await scanField.fill(String(products[0].sku));
+      await scanField.press("Enter");
+      await expect(page.getByRole("list", { name: "Items" }).getByRole("listitem")).toHaveCount(1, {
+        timeout: 15_000,
+      });
+
+      // vital-few #7: the sticky scan field carries a bottom edge
+      const edge = await page
+        .getByTestId("counter-scan-bar")
+        .evaluate((el) => getComputedStyle(el).borderBottomWidth);
+      expect(edge).toBe("1px");
+      // F02: line in the cart + empty field -> the hint names the key that pays
+      await expect(page.getByTestId("scan-hint")).toHaveText("Press Enter to pay.");
+
+      // row 188: a small cash amount is short; the line says so while it is typed, and is not an alert
+      const tender = page.getByLabel("Amount tendered");
+      await tender.fill("0.01");
+      await expect(page.getByTestId("tender-short")).toContainText("short");
+      await expect(page.getByTestId("tender-short")).toBeVisible();
+      await tender.fill("");
+      await expect(page.getByTestId("tender-short")).toHaveCount(0);
+
+      // W-714 decision: the bar's tender row stays below md (the Payment toggles sit under the bar at 390)
+      if (vp.width < 768) await expect(page.getByTestId("counter-bar-tender")).toBeVisible();
+    });
+  }
+
+  test("an offline Complete leaves the cursor on Complete, not the scan field @ 1440", async ({
+    page,
+    context,
+  }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await setTenantCookie(context, BASE);
+    const { products } = await discover(page);
+    await page.goto("/orders/counter-sale");
+    const scanField = page.getByLabel("Scan or search items");
+    await expect(scanField).toBeVisible({ timeout: 15_000 });
+    await page.getByRole("button", { name: "Walk-in" }).click();
+    await scanField.fill(String(products[0].sku));
+    await scanField.press("Enter");
+    await expect(page.getByRole("list", { name: "Items" }).getByRole("listitem")).toHaveCount(1, {
+      timeout: 15_000,
+    });
+    await page.getByLabel("Amount tendered").fill("1000");
+    await context.setOffline(true);
+    try {
+      const complete = page.getByRole("button", { name: "Complete & show receipt" });
+      await complete.click();
+      await expect(page.getByRole("alert").filter({ hasText: "No connection" })).toBeVisible({
+        timeout: 15_000,
+      });
+      await expect(complete).toBeFocused();
+    } finally {
+      await context.setOffline(false);
+    }
+  });
+});
+
 test.describe("R7b till: toasts clear the sticky bar", () => {
   test("the Counter opened toast does not cover the checkout bar @ 390", async ({
     page,

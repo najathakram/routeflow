@@ -101,6 +101,10 @@ export interface CustomerFormModalProps {
   isOpen: boolean;
   onClose: () => void;
   mode: "add" | "edit";
+  /** Add mode: called with the created customer after a successful create (row 240: the counter makes it the sale's buyer). */
+  onCreated?: (customer: { id: string; businessName: string }) => void;
+  /** Add mode: the business name to start from (the counter's typed search); every other field keeps the new-customer defaults. */
+  prefillName?: string;
   initialData?: {
     id?: string;
     businessName: string;
@@ -132,6 +136,10 @@ export interface CustomerFormModalProps {
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/** Row 240: a new customer started from a typed name keeps every other new-customer default (the account's fulfilment included). */
+const withPrefill = (v: CustomerFormValues, name?: string): CustomerFormValues =>
+  name?.trim() ? { ...v, businessName: name.trim() } : v;
 
 function buildDefaultValues(
   initialData?: CustomerFormModalProps["initialData"],
@@ -192,7 +200,14 @@ function buildDefaultValues(
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export function CustomerFormModal({ isOpen, onClose, mode, initialData }: CustomerFormModalProps) {
+export function CustomerFormModal({
+  isOpen,
+  onClose,
+  mode,
+  initialData,
+  onCreated,
+  prefillName,
+}: CustomerFormModalProps) {
   const { toast } = useToast();
   const router = useRouter();
   const qc = useQueryClient();
@@ -231,7 +246,10 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
     // onInvalid (handleSubmit's second argument) is the single focus owner: it announces "Fix N field(s)" and
     // scrolls to the first invalid control, so a failed submit never looks like a dead button (row 328).
     shouldFocusError: false,
-    defaultValues: buildDefaultValues(initialData, newCustomerPath),
+    defaultValues: withPrefill(
+      buildDefaultValues(initialData, newCustomerPath),
+      initialData ? undefined : prefillName,
+    ),
   });
   const onInvalid = useInvalidFocus();
 
@@ -243,7 +261,12 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
     if (isOpen) {
       createCustomer.reset();
       updateCustomer.reset();
-      reset(buildDefaultValues(initialData, newCustomerPath));
+      reset(
+        withPrefill(
+          buildDefaultValues(initialData, newCustomerPath),
+          initialData ? undefined : prefillName,
+        ),
+      );
       setStreetError("");
       setCityError("");
       setZipError("");
@@ -352,8 +375,14 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
           ...(salesAgentId ? { salesAgentId } : {}),
         },
         {
-          onSuccess: () => {
+          onSuccess: (res) => {
             toast({ title: "Customer added", variant: "success" });
+            const created = (
+              res as { customer?: { id?: unknown; businessName?: unknown } } | undefined
+            )?.customer;
+            if (typeof created?.id === "string" && typeof created.businessName === "string") {
+              onCreated?.({ id: created.id, businessName: created.businessName });
+            }
             onClose();
           },
         },

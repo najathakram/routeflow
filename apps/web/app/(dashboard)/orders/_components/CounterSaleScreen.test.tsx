@@ -146,7 +146,7 @@ describe("CounterSaleScreen", () => {
     renderTill(<CounterSaleScreen />);
     await scan("WATER");
     await scan("WATER");
-    await waitFor(() => expect(screen.getByText(/2 boxes/)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/2 boxes of 12/)).toBeInTheDocument());
     expect(screen.getAllByRole("listitem", { name: "" }).length).toBeGreaterThan(0);
     expect(screen.getByTestId("running-total")).toHaveTextContent("$24.00");
   });
@@ -2506,12 +2506,13 @@ describe("digital receipt on the live receipt (SA-751r)", () => {
     api.post.mockResolvedValue({ data: { channel: "email", to: "x" } });
   });
 
-  it("the receipt's row reads Print · Email receipt · New sale, and the email row is closed", async () => {
+  it("the receipt's row reads Print · More · Email receipt · New sale, and the email row is closed", async () => {
     renderTill(<CounterSaleScreen />);
     await finishCashSale();
     const root = screen.getByTestId("counter-sale-receipt");
     const names = Array.from(root.querySelectorAll("button")).map((b) => b.textContent);
-    expect(names).toEqual(["Print", "Email receipt", "New sale"]);
+    // W-715: the phone-only More toggle sits after Print (hidden from sm up); Email receipt is behind it on a phone
+    expect(names).toEqual(["Print", "More", "Email receipt", "New sale"]);
     expect(screen.queryByRole("textbox", { name: "Email address" })).toBeNull();
     expect(api.post).not.toHaveBeenCalled();
   });

@@ -68,6 +68,11 @@ describe("sanitizeParkedPayload", () => {
     expect(v.customer).toEqual({ id: "c1", businessName: "Acme", isTaxExempt: true });
   });
 
+  it("keeps a line's pack word, so a resumed case line still reads 'case of 24' (BUILD-BRIEF 1.5)", () => {
+    const v = ok(cart({ lines: [line({ unitsPerBox: 24, packLabel: "case" })] }));
+    expect(v.lines[0].packLabel).toBe("case");
+  });
+
   it("a non-boolean exemption or a non-string category is dropped, not stored", () => {
     const v = ok(
       cart({
