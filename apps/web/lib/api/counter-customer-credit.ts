@@ -1,5 +1,7 @@
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
+import type { CounterDefaultTender } from "@routeflow/types";
 import { apiClient } from "../api-client";
+import { resolveCounterDefaultTender } from "../counter-default-tender";
 import {
   counterCustomerCreditView,
   type CounterCustomerCreditView,
@@ -20,21 +22,28 @@ function sourceOf(q: UseQueryResult<unknown>): CreditSource {
   return { state: "loading" };
 }
 
-export function useCounterCustomerCredit(customerId: string | null) {
-  const id = customerId ?? "";
+/** The two reads that decide a customer's terms (their own record, then the business default): the same keys as the customer
+ *  page and the invoice settings, so the panel and the default tender share one fetch each. */
+function useTermsReads(id: string) {
   const customer = useQuery({
     queryKey: ["customers", id],
     queryFn: () => apiClient.get(`/customers/${id}`).then((r) => r.data),
     enabled: !!id,
   });
-  const statement = useQuery({
-    queryKey: ["customers", id, "statement"],
-    queryFn: () => apiClient.get(`/customers/${id}/statement`).then((r) => r.data),
-    enabled: !!id,
-  });
   const settings = useQuery({
     queryKey: ["invoice-settings"],
     queryFn: () => apiClient.get("/settings/invoice").then((r) => r.data),
+    enabled: !!id,
+  });
+  return { customer, settings };
+}
+
+export function useCounterCustomerCredit(customerId: string | null) {
+  const id = customerId ?? "";
+  const { customer, settings } = useTermsReads(id);
+  const statement = useQuery({
+    queryKey: ["customers", id, "statement"],
+    queryFn: () => apiClient.get(`/customers/${id}/statement`).then((r) => r.data),
     enabled: !!id,
   });
   const view: CounterCustomerCreditView = counterCustomerCreditView({
@@ -43,4 +52,17 @@ export function useCounterCustomerCredit(customerId: string | null) {
     settings: sourceOf(settings),
   });
   return { view };
+}
+
+/**
+ * SA-933 / W-822(a): the default tender for the picked customer (`null` customer id = a walk-in), from the same two terms
+ * reads as the panel above. `null` until those reads have answered; see `resolveCounterDefaultTender`. Nothing is written.
+ */
+export function useCounterDefaultTender(customerId: string | null): CounterDefaultTender | null {
+  const { customer, settings } = useTermsReads(customerId ?? "");
+  return resolveCounterDefaultTender({
+    customerId,
+    customer: sourceOf(customer),
+    settings: sourceOf(settings),
+  });
 }

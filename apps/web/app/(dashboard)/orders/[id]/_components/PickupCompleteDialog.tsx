@@ -183,6 +183,7 @@ export function PickupCompleteDialog({
       tendered: tenderedNum,
       reference,
       isWalkIn,
+      fullTenderOnly: true, // SA-933 S4 opened part payment at the counter sale only; this dialog keeps the full-tender rule
     });
     if (problem) return setError(paymentProblemCopy(problem, due));
     void send({
