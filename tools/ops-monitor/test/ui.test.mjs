@@ -247,3 +247,15 @@ test("gateLabel: every gate state has its own label and tone; not-run is never r
   assert.deepEqual(UI.gateLabel("not-run"), { label: "gate not run", kind: "warn" });
   assert.equal(UI.gateLabel("something-new"), null);
 });
+
+test("phone CSS: 44 px nav targets, a visible 'updated', and the PR table stacks into labelled cards", () => {
+  const css = readFileSync(new URL("../public/app.css", import.meta.url), "utf8");
+  const phone = css.slice(css.lastIndexOf("@media (max-width: 600px) {"));
+  assert.match(phone, /\.navlink\s*\{[^}]*min-height:\s*44px/);
+  assert.doesNotMatch(css, /min-height:\s*34px/, "no 34 px nav override left");
+  assert.match(phone, /#updated\s*\{[^}]*display:\s*inline/);
+  assert.doesNotMatch(phone, /#updated,\s*\.hdr-machine\s*\{\s*display:\s*none/);
+  assert.match(css, /table\.wide-table td::before\s*\{[^}]*attr\(data-label\)/);
+  const js = readFileSync(new URL("../public/app.js", import.meta.url), "utf8");
+  assert.match(js, /setAttribute\("data-label", PR_COLS\[i\]\)/);
+});

@@ -115,6 +115,13 @@ describe("selling restrictions: counter / pickup judge the STORE state (L8)", ()
     expect((await judge("c-ca", "DELIVERY")).outcome).toBe("ALLOW");
   });
 
+  it("a JS caller that passes no options is judged as a DELIVERY on the portal channel, never a TypeError", async () => {
+    prisma.sellingRestriction.findMany.mockResolvedValue([stateRule(["CA"])]);
+    storeIn("TX");
+    const res = await service.evaluate(T, "c-ca", [{ productId: "p1" }], undefined as never);
+    expect(res.outcome).toBe("BLOCK"); // the customer's CA address, not the TX store
+  });
+
   it("(c) PICKUP -> the store state, for a named customer", async () => {
     storeIn("TX");
     prisma.sellingRestriction.findMany.mockResolvedValue([stateRule(["CA"])]);
@@ -184,9 +191,10 @@ describe("selling restrictions: counter / pickup judge the STORE state (L8)", ()
       "ALLOW",
     );
     await expect(service.assertLinesSellable(base)).rejects.toMatchObject({ status: 409 });
+    // Row 510: a clean sale resolves to the (empty) decision, not undefined.
     await expect(
       service.assertLinesSellable({ ...base, fulfilmentKind: "PICKUP" }),
-    ).resolves.toBeUndefined();
+    ).resolves.toMatchObject({ stamps: [], active: false });
   });
 });
 

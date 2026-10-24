@@ -48,6 +48,10 @@ const TABLE: Record<string, Row> = {
   // F1(i): the DRAFT promotion check moved out of changeStatus (size ratchet); it judges each line at its author's channel too.
   "orders/draft-promotion-judgement.ts::judgeDraftPromotion": G,
   [ord("reopenOrder")]: G,
+  // Row 510: the path switch moves WHICH state judges the sale (PICKUP = the store's, ROUTE / SHIP = the customer's), so
+  // it re-judges the order at the path it switches TO. The class method passes the choke point down to the lifecycle
+  // helper (order-lifecycle.ts), which calls it just before the write (fulfil-path-restrictions.ts).
+  [ord("updateFulfillPath")]: G,
   [ord("mergeAllPendingForCustomer")]: X(
     "owner ruling 2026-09-25 (#2093) / SA-255: MERGE AND WARN — folds orders each checked when placed, never blocked; warns via merge-restriction-warning.ts (pinned in orders.merge-warn.spec.ts)",
   ),
@@ -85,8 +89,6 @@ const TABLE: Record<string, Row> = {
   [inv("duplicate")]: G,
   // F2: the one place a DRAFT order's billing is judged; createSplitInvoices + createPartialFromOrder call it.
   "invoices/draft-order-restrictions.ts::assertDraftOrderSellable": G,
-  // L8: the manual-invoice / copy sell check moved out of invoices.service (size ratchet); create + duplicate call it.
-  "invoices/invoice-restriction-lines.ts::assertOrderlessSellable": G,
   [inv("createSplitInvoices")]: X(
     "owner ruling 2026-09-25 (#2093): SPLIT IS EXEMPT for a placed (non-DRAFT) order — quantity-neutral (siblings sum to the " +
       "parent order, already checked when placed); flagged + audited via restricted-lines-flag.ts " +
@@ -94,9 +96,10 @@ const TABLE: Record<string, Row> = {
   ),
   "estimates/estimates.service.ts::EstimatesService.convertToInvoice": G,
   "import/import.service.ts::ImportService.importInvoices": X(
-    "owner ruling 2026-09-25 (#2093): historical IMPORT IS EXEMPT — every row imports unchanged " +
-      "(history is never rewritten); flagged + audited via restricted-lines-flag.ts (pinned in " +
-      "import-invoices-restrictions.spec.ts), never blocked",
+    "owner ruling 2026-09-25 (#2093), row 510 2026-10-13: historical IMPORT IS EXEMPT — every row imports " +
+      "unchanged (history is never rewritten); a breached catalog line is MARKED (Imported (historical) " +
+      "stamp + audit row) and flagged in the report via import-restriction-marker.ts (pinned in " +
+      "import-invoices-restrictions.spec.ts), never blocked. It is the only import that writes a customer sale",
   ),
   [inv("applyPriceAdjustment")]: X("price only"),
   [inv("reconcileOrderDraftInvoiceLocked")]: X(
@@ -145,14 +148,14 @@ const TABLE: Record<string, Row> = {
 /** The RATCHET: how many rows are still PENDING. Lower it in the PR that flips a row to GUARDED. */
 const PENDING_BASELINE = 0; // was 2: createSplitInvoices + importInvoices both EXEMPT with written reasons (F-05 #2093 split/import PR)
 /** GUARDED + PENDING: reclassifying a PENDING row to EXEMPT (an escape, not progress) must change THIS. */
-const ENFORCEMENT_POINTS = 13; // L8: +1 (assertOrderlessSellable, the create/duplicate wrapper); was 12: F2b: rejudgeDraftOrderInTx only COMPARES in the tx (409), it is not an enforcement point; was 13: +1 (F2b); was 12: +1 (F1 iii: assertBuyerMayFile); was 11: +1 (F2: assertDraftOrderSellable); was 10: -2 (#2093 split/import EXEMPT, this PR); prior -2 (completeWithPayment/reopenStop) + -2 (merge/consolidate, SA-255)
+const ENFORCEMENT_POINTS = 13; // row 510: +1 (the fulfil-path switch, updateFulfillPath), -1 (assertOrderlessSellable folded back into create / duplicate, which carry the 510 gate); was 13: L8 +1 (assertOrderlessSellable); was 12: F2b: rejudgeDraftOrderInTx only COMPARES in the tx (409), it is not an enforcement point; was 13: +1 (F2b); was 12: +1 (F1 iii: assertBuyerMayFile); was 11: +1 (F2: assertDraftOrderSellable); was 10: -2 (#2093 split/import EXEMPT); prior -2 (completeWithPayment/reopenStop) + -2 (merge/consolidate, SA-255)
 const CHOKE_POINT = ["assertLinesSellable", "checkLinesSellable"];
 /**
  * Free functions that WRAP the choke point and are themselves classified GUARDED above (so the table proves each
  * really awaits it before any write). A GUARDED method may satisfy its own guard by awaiting one of them first; the
  * same await / dead-branch / swallowed-try / dead-closure rules apply to the wrapper call as to the choke point.
  */
-const CHOKE_WRAPPERS = ["assertOrderlessSellable"];
+const CHOKE_WRAPPERS: string[] = []; // row 510: create / duplicate call the choke point directly again
 
 // ─── scanner (same rules as orders/unit-line-writers.ast.spec.ts; exercised on inline source) ──
 const WRITE_OPS = new Set([
