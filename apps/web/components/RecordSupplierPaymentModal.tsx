@@ -12,7 +12,7 @@ import {
   type RecordSupplierPaymentDto,
 } from "@/lib/api/supplier-payments";
 import { fmt, fmtCalendarDate } from "@/lib/formatting";
-import { tenantTodayIso, useTenantTimeZone } from "@/lib/tenant-timezone";
+import { tenantTodayIso, useResyncOnZone, useTenantTimeZone } from "@/lib/tenant-timezone";
 import { SELECTABLE_PAYMENT_METHODS, PAYMENT_METHOD_LABELS } from "@/lib/payment-methods";
 
 const fieldCls =
@@ -54,6 +54,7 @@ export function RecordSupplierPaymentModal({
   const [totalAmount, setTotalAmount] = React.useState("");
   const zone = useTenantTimeZone(); // SA-943: the business's today, not the UTC day
   const [paidAt, setPaidAt] = React.useState(() => tenantTodayIso(zone));
+  useResyncOnZone(zone, tenantTodayIso, paidAt, setPaidAt);
   const [method, setMethod] = React.useState<SupplierPaymentMethod>("CASH");
   const [reference, setReference] = React.useState("");
   const [notes, setNotes] = React.useState("");

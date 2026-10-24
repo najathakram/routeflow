@@ -1,3 +1,4 @@
+import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "./api-client";
 import { calendarDayInZone } from "./calendar-date";
@@ -54,25 +55,49 @@ export function useShippedWeek(enabled = true) {
 
 /**
  * SA-943 (W-765): the default for a payment / settled / received date box - the BUSINESS's today in its zone, so the
- * API (which reads a date-only tenant-local today as "now") never sees yesterday's UTC day or tomorrow's. While the zone
- * is still loading it falls back to the browser's LOCAL day, never the UTC day (`todayIso()` is `toISOString()`: after
- * 19:00 CDT that is already tomorrow). Pinned by `payment-date-defaults.inventory.test.ts`.
+ * API (which reads a date-only tenant-local today as "now") never sees yesterday's UTC day or tomorrow's. With no zone
+ * (still loading, or none on file) it is the UTC day: the SAME fallback the API applies to a business without a zone, so
+ * the box and the server always name the same day. Never the browser's day - for a business with no zone a Chicago
+ * browser at 20:00 CDT would send 10-24, which the UTC-zoned server stores as 10-24T00:00Z, 20 hours early. A box
+ * defaulted while the zone was loading moves to the zone's day when it arrives (`useResyncOnZone`). Pinned by
+ * `payment-date-defaults.inventory.test.ts`.
  */
 export function tenantTodayIso(zone: string | undefined, now: Date = new Date()): string {
-  return zone ? calendarDayInZone(zone, now) : localDay(now);
+  return zone ? calendarDayInZone(zone, now) : utcDay(now);
 }
 
 /**
  * SA-943 MUST 2: a stored payment instant as the date its edit box shows - the tenant-local day, the same day the API's
- * "kept" rule compares against, so resending it unchanged keeps the stored instant. "" for no instant.
+ * "kept" rule compares against, so resending it unchanged keeps the stored instant. "" for no instant. With no zone it
+ * is the UTC day, the server's own fallback for that comparison.
  */
 export function tenantDateOf(iso: string | null | undefined, zone: string | undefined): string {
   if (!iso) return "";
   const at = new Date(iso);
-  return zone ? calendarDayInZone(zone, at) : localDay(at);
+  return zone ? calendarDayInZone(zone, at) : utcDay(at);
 }
 
-function localDay(d: Date): string {
-  const pad = (n: number, len = 2) => String(n).padStart(len, "0");
-  return `${pad(d.getFullYear(), 4)}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+function utcDay(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * SA-943: keeps a date box that was defaulted from `defaultFor(zone)` in step with the zone. When the zone arrives (or
+ * changes) and the box still holds the default computed under the previous zone, it moves to the new zone's default;
+ * a date the user typed is never touched.
+ */
+export function useResyncOnZone(
+  zone: string | undefined,
+  defaultFor: (zone: string | undefined) => string,
+  current: string,
+  apply: (next: string) => void,
+): void {
+  const prevZone = React.useRef(zone);
+  React.useEffect(() => {
+    if (prevZone.current === zone) return;
+    const before = defaultFor(prevZone.current);
+    prevZone.current = zone;
+    const next = defaultFor(zone);
+    if (current === before && next !== before) apply(next);
+  }, [zone, defaultFor, current, apply]);
 }

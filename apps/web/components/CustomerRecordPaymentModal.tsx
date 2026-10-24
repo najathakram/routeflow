@@ -14,7 +14,7 @@ import {
 } from "@/lib/api/invoices";
 import { waterfallAllocations, allocationTotals } from "@/lib/api/supplier-payments";
 import { fmt } from "@/lib/formatting";
-import { tenantTodayIso, useTenantTimeZone } from "@/lib/tenant-timezone";
+import { tenantTodayIso, useResyncOnZone, useTenantTimeZone } from "@/lib/tenant-timezone";
 import { isOpenInvoiceStatus } from "@/lib/open-invoice-status";
 import {
   PAYMENT_PHOTO_LATER_COPY,
@@ -112,6 +112,7 @@ export function CustomerRecordPaymentModal({
   const [bankCharges, setBankCharges] = React.useState("");
   const zone = useTenantTimeZone(); // SA-943: the business's today, not the UTC day
   const [paidAt, setPaidAt] = React.useState(() => tenantTodayIso(zone));
+  useResyncOnZone(zone, tenantTodayIso, paidAt, setPaidAt);
   const [settledAt, setSettledAt] = React.useState("");
   const [method, setMethod] = React.useState<SelectablePaymentMethod>("CASH");
   const [reference, setReference] = React.useState("");

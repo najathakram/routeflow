@@ -27,7 +27,7 @@ import { useCustomers } from "@/lib/api/customers";
 import { useToast, EmptyState, Button, Badge } from "@routeflow/ui/web";
 import Link from "next/link";
 import { fmt, fmtDate } from "@/lib/formatting";
-import { tenantTodayIso, useTenantTimeZone } from "@/lib/tenant-timezone";
+import { tenantTodayIso, useResyncOnZone, useTenantTimeZone } from "@/lib/tenant-timezone";
 import {
   SELECTABLE_PAYMENT_METHODS,
   ALL_PAYMENT_METHODS,
@@ -117,6 +117,7 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
   const [bankCharges, setBankCharges] = React.useState("");
   const zone = useTenantTimeZone(); // SA-943: the business's today, not the UTC day
   const [paidAt, setPaidAt] = React.useState(() => tenantTodayIso(zone));
+  useResyncOnZone(zone, tenantTodayIso, paidAt, setPaidAt);
   const [settledAt, setSettledAt] = React.useState("");
   const [method, setMethod] = React.useState<SelectablePaymentMethod>("CASH");
   const [reference, setReference] = React.useState("");

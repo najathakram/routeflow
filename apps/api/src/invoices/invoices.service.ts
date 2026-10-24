@@ -26,7 +26,12 @@ import { PrismaService } from "../prisma/prisma.service";
 import { overpaidByOf, statusFromPayments } from "./invoice-status";
 import { voidPaymentInTx } from "./payment-void-tx";
 import { TENANT_ZONE_SELECT, configuredZone, tenantTimeZone } from "../common/tenant-time-zone";
-import { givenPaidInstant, keptPaidInstantOf, paidInstantOf } from "../common/paid-instant";
+import {
+  givenPaidInstant,
+  keptGivenPaidInstant,
+  keptPaidInstantOf,
+  paidInstantOf,
+} from "../common/paid-instant";
 import { assertNoDuplicateLineIds } from "../common/duplicate-line-ids";
 import { StorageService } from "../storage/storage.service";
 import {
@@ -4825,7 +4830,12 @@ export class InvoicesService {
       const payment = inv.payments.find((p) => p.id === paymentId);
       if (!payment) throw new NotFoundException("Payment not found");
       // SA-943 MUST 2: the edit form resends the date it shows; that date keeps the stored instant (no re-stamp to 00:00Z).
-      const keptPaidAt = dto.paidAt ? keptPaidInstantOf(dto.paidAt, payment.paidAt, tz) : null;
+      const keptGiven = dto.paidAt ? keptGivenPaidInstant(dto.paidAt, payment.paidAt, tz) : null;
+      // An edit to TODAY is "now" on the DATABASE clock, the clock a new payment's default and the close cutoff use.
+      const keptPaidAt =
+        dto.paidAt && keptGiven === null
+          ? (await tx.$queryRaw<{ now: Date }[]>`SELECT CURRENT_TIMESTAMP AS now`)[0].now
+          : keptGiven;
       const movedPaidAt =
         keptPaidAt && keptPaidAt.getTime() !== payment.paidAt.getTime() ? keptPaidAt : undefined;
       const datedDto = { ...dto, paidAt: keptPaidAt ?? undefined };

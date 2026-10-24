@@ -1,4 +1,9 @@
-import { givenPaidInstant, keptPaidInstantOf, paidInstantOf } from "./paid-instant";
+import {
+  givenPaidInstant,
+  keptGivenPaidInstant,
+  keptPaidInstantOf,
+  paidInstantOf,
+} from "./paid-instant";
 
 // SA-943 PR-A: the write-seam helper for a date-only paid / settled / received date.
 const CHI = "America/Chicago";
@@ -74,6 +79,14 @@ describe("keptPaidInstantOf (SA-943 MUST 2: an edit never re-stamps)", () => {
     expect(
       keptPaidInstantOf("2026-10-21T15:00:00.000Z", stored, CHI, at2000CdtOct24).toISOString(),
     ).toBe("2026-10-21T15:00:00.000Z");
+  });
+
+  it("keptGivenPaidInstant leaves an edit to TODAY to the caller's clock (null); kept and other days as above", () => {
+    expect(keptGivenPaidInstant("2026-10-24", stored, CHI, at2000CdtOct24)).toBeNull();
+    expect(keptGivenPaidInstant("2026-10-21", stored, CHI, at2000CdtOct24)).toBe(stored);
+    expect(keptGivenPaidInstant("2026-10-20", stored, CHI, at2000CdtOct24)?.toISOString()).toBe(
+      "2026-10-20T05:00:00.000Z",
+    );
   });
 
   it("no stored instant (a cleared settledAt): plain paidInstantOf", () => {

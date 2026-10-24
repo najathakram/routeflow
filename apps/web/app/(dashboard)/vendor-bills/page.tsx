@@ -75,7 +75,7 @@ import { ScanInvoiceModal } from "@/components/ScanInvoiceModal";
 import { SupplierSelect } from "@/components/SupplierSelect";
 import Link from "next/link";
 import { fmt, fmtCalendarDate, fmtDate, todayIso } from "@/lib/formatting";
-import { tenantTodayIso, useTenantTimeZone } from "@/lib/tenant-timezone";
+import { tenantTodayIso, useResyncOnZone, useTenantTimeZone } from "@/lib/tenant-timezone";
 import { apiClient } from "@/lib/api-client";
 import { SELECTABLE_PAYMENT_METHODS, PAYMENT_METHOD_LABELS } from "@/lib/payment-methods";
 import { roundMoney } from "@routeflow/pricing";
@@ -881,6 +881,7 @@ function InventoryPurchasesTab() {
   const [markPaidMethod, setMarkPaidMethod] = React.useState("ACH");
   const zone = useTenantTimeZone(); // SA-943: the paid date is the business's today, not the UTC day
   const [markPaidDate, setMarkPaidDate] = React.useState(() => tenantTodayIso(zone));
+  useResyncOnZone(zone, tenantTodayIso, markPaidDate, setMarkPaidDate);
   const bulkDelete = useBulkDeleteVendorBills();
   const qc = useQueryClient();
   const bulkMarkPaid = useMutation<

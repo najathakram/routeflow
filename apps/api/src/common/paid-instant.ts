@@ -65,6 +65,20 @@ export function keptPaidInstantOf(
   now: Date = new Date(),
   field = "paidAt",
 ): Date {
+  return keptGivenPaidInstant(input, stored, zone, now, field) ?? now;
+}
+
+/**
+ * `keptPaidInstantOf` that leaves "now" to the caller (null), like `givenPaidInstant`: an edit to the tenant-local
+ * today takes the caller's clock (invoices `updatePayment` reads the DATABASE clock).
+ */
+export function keptGivenPaidInstant(
+  input: PaidInput,
+  stored: Date | null | undefined,
+  zone: string | null | undefined,
+  now: Date = new Date(),
+  field = "paidAt",
+): Date | null {
   if (stored && isDateOnly(input) && input.trim() === tenantTodayDay(zone, stored)) return stored;
-  return paidInstantOf(input, zone, now, field);
+  return givenPaidInstant(input, zone, now, field);
 }

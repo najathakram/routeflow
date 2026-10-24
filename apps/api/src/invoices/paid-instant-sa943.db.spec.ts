@@ -288,6 +288,47 @@ describeDb("a date-only paid date for a Chicago tenant, real Postgres (SA-943)",
     expect(after.paidAt.toISOString()).toBe(realTime);
   });
 
+  it("an edit that moves a past payment to TODAY stamps the DATABASE clock, not the app clock", async () => {
+    const s = await seed("edit-today", false);
+    await record(s.tenantId, s.invoiceId, "ACH", "2026-10-01");
+    const [before] = await stored(s.invoiceId);
+    // Only Date is faked: the app clock reads 2020-01-15 (Chicago midday), timers and the pg socket run as normal.
+    const realNow = () => performance.timeOrigin + performance.now();
+    jest.useFakeTimers({
+      now: new Date("2020-01-15T18:00:00.000Z"),
+      doNotFake: [
+        "hrtime",
+        "nextTick",
+        "performance",
+        "queueMicrotask",
+        "requestAnimationFrame",
+        "cancelAnimationFrame",
+        "requestIdleCallback",
+        "cancelIdleCallback",
+        "setImmediate",
+        "clearImmediate",
+        "setInterval",
+        "clearInterval",
+        "setTimeout",
+        "clearTimeout",
+      ],
+    });
+    try {
+      // The edit box sends the business's today by the app clock; the stored instant must come from the DB.
+      await tenantCtx.run(s.tenantId, () =>
+        invoices.updatePayment(s.invoiceId, before.id, {
+          amount: 20,
+          method: "ACH",
+          paidAt: "2020-01-15",
+        } as any),
+      );
+    } finally {
+      jest.useRealTimers();
+    }
+    const [after] = await stored(s.invoiceId);
+    expect(Math.abs(after.paidAt.getTime() - realNow())).toBeLessThan(60_000); // the app clock would give 2020-01-15T18:00Z
+  });
+
   it("the standalone (allocation) payment dated today lands on today in Chicago, and a past settledAt on its local start", async () => {
     const s = await seed("standalone", false);
     const today = chicagoToday();

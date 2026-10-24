@@ -1,7 +1,8 @@
 import * as fs from "fs";
 import * as path from "path";
 import { todayIso } from "./formatting";
-import { tenantDateOf, tenantTodayIso } from "./tenant-timezone";
+import { renderHook } from "@testing-library/react";
+import { tenantDateOf, tenantTodayIso, useResyncOnZone } from "./tenant-timezone";
 
 /**
  * SA-943 PR-A (W-765): a payment / settled / received date box defaults to the BUSINESS's today in its zone, and an edit
@@ -17,6 +18,15 @@ const CHI = "America/Chicago";
 const at2000CdtOct24 = new Date("2026-10-25T01:00:00.000Z");
 
 describe("tenantTodayIso / tenantDateOf (SA-943)", () => {
+  it("with no zone (loading, or none on file) it is the UTC day - the server's own fallback - never the browser's day", () => {
+    // Either side of UTC midnight: a browser in ANY non-UTC zone names a different day for one of the two.
+    expect(tenantTodayIso(undefined, new Date("2026-10-24T23:30:00.000Z"))).toBe("2026-10-24");
+    expect(tenantTodayIso(undefined, new Date("2026-10-25T00:30:00.000Z"))).toBe("2026-10-25");
+    // A business with no zone, a Chicago browser at 20:00 CDT: the box sends the server's day, 10-25 (master's 00:00Z).
+    expect(tenantTodayIso(undefined, at2000CdtOct24)).toBe("2026-10-25");
+    expect(tenantDateOf("2026-10-25T00:30:00.000Z", undefined)).toBe("2026-10-25");
+  });
+
   it("20:00 CDT on 10-24 is 2026-10-24 for a Chicago business (the UTC todayIso says 10-25)", () => {
     expect(tenantTodayIso(CHI, at2000CdtOct24)).toBe("2026-10-24");
     jest.useFakeTimers().setSystemTime(at2000CdtOct24);
@@ -34,6 +44,40 @@ describe("tenantTodayIso / tenantDateOf (SA-943)", () => {
   it("the edit box shows a 21:00 CDT payment on 10-21 as 2026-10-21, not the UTC 10-22", () => {
     expect(tenantDateOf("2026-10-22T02:00:00.000Z", CHI)).toBe("2026-10-21");
     expect(tenantDateOf(null, CHI)).toBe("");
+  });
+});
+
+describe("useResyncOnZone (SA-943)", () => {
+  afterEach(() => jest.useRealTimers());
+
+  function mount(initial: string) {
+    const apply = jest.fn();
+    const hook = renderHook(
+      ({ zone, current }: { zone: string | undefined; current: string }) =>
+        useResyncOnZone(zone, (z) => tenantTodayIso(z), current, apply),
+      { initialProps: { zone: undefined as string | undefined, current: initial } },
+    );
+    return { apply, hook };
+  }
+
+  it("a box still on the no-zone default moves to the business's day when the zone arrives", () => {
+    jest.useFakeTimers().setSystemTime(at2000CdtOct24);
+    const { apply, hook } = mount(tenantTodayIso(undefined)); // "2026-10-25", the UTC day
+    hook.rerender({ zone: CHI, current: "2026-10-25" });
+    expect(apply).toHaveBeenCalledWith("2026-10-24");
+  });
+
+  it("a date the user typed is never overwritten", () => {
+    jest.useFakeTimers().setSystemTime(at2000CdtOct24);
+    const { apply, hook } = mount("2026-10-20");
+    hook.rerender({ zone: CHI, current: "2026-10-20" });
+    expect(apply).not.toHaveBeenCalled();
+  });
+
+  it("nothing happens while the zone stays the same", () => {
+    const { apply, hook } = mount("2026-10-25");
+    hook.rerender({ zone: undefined, current: "2026-10-25" });
+    expect(apply).not.toHaveBeenCalled();
   });
 });
 

@@ -107,7 +107,12 @@ import { ReviewFlagNotice } from "@/components/ReviewFlagNotice";
 import { HandOverStamp } from "@/components/HandOverStamp";
 import { seesHandOverStamp } from "@/lib/handover-stamp";
 import { isPaidAtSale, termsAndConditionsToShow } from "@/lib/invoice-sale-terms";
-import { tenantDateOf, tenantTodayIso, useTenantTimeZone } from "@/lib/tenant-timezone";
+import {
+  tenantDateOf,
+  tenantTodayIso,
+  useResyncOnZone,
+  useTenantTimeZone,
+} from "@/lib/tenant-timezone";
 import { OrderPreviewModal } from "../../_components/LinkedDocPreviewModal";
 import { printPdfBlob } from "@/lib/print-pdf-blob";
 import { dayClosedCopy } from "@/lib/day-closed-copy";
@@ -397,6 +402,9 @@ function RecordPaymentModal({
     reference: "",
     notes: "",
   });
+  useResyncOnZone(zone, tenantTodayIso, form.paidAt, (paidAt) =>
+    setForm((f) => ({ ...f, paidAt })),
+  );
   const [amountError, setAmountError] = React.useState("");
   const [file, setFile] = React.useState<File | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
@@ -701,6 +709,19 @@ function EditPaymentModal({
     reference: "",
     notes: "",
   });
+  // The edit box shows the stored instants in the zone that arrives after the modal opened.
+  useResyncOnZone(
+    zone,
+    (z) => (payment ? tenantDateOf(payment.paidAt ?? payment.createdAt, z) : tenantTodayIso(z)),
+    form.paidAt,
+    (paidAt) => setForm((f) => ({ ...f, paidAt })),
+  );
+  useResyncOnZone(
+    zone,
+    (z) => tenantDateOf(payment?.settledAt, z),
+    form.settledAt,
+    (settledAt) => setForm((f) => ({ ...f, settledAt })),
+  );
   const [amountError, setAmountError] = React.useState("");
   const imageFileInputRef = React.useRef<HTMLInputElement>(null);
   const uploadPaymentImage = useUploadPaymentImage();
