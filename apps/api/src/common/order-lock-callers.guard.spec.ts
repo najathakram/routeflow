@@ -451,8 +451,10 @@ describe("SA-893: every transaction takes Return -> Order -> Invoice -> CreditNo
     "credit-notes/credit-notes.service.ts#autoApplyOldestCreditsInTx":
       "Order > Invoice > CreditNote",
     "credit-notes/credit-notes.service.ts#create": "Return > Order > Invoice", // SA-893: the linked Return locked before the Invoice
-    "credit-notes/credit-notes.service.ts#restoreCreditFromPaymentInTx": "CreditNote > Invoice",
+    "credit-notes/credit-notes.service.ts#restoreCreditFromPaymentInTx":
+      "Order > Invoice > CreditNote",
     "credit-notes/credit-notes.service.ts#settleOrderCreditsInTx": "Order > Invoice > CreditNote",
+    "credit-notes/credit-notes.service.ts#unapplyFromInvoice": "Order > Invoice",
     "credit-notes/credit-notes.service.ts#voidWithReversalInTx": "Order > Invoice > CreditNote",
     "credit-notes/line-credit-headroom.ts#lockOrderPoolRows": "Order > Invoice",
     "customers/customer-delete-stock.ts#releaseLiveOrderStockInTx": "Return > Order",
@@ -485,7 +487,7 @@ describe("SA-893: every transaction takes Return -> Order -> Invoice -> CreditNo
     "regulated/ledger-locks.ts#lockLedgerDocumentRows": "Order > Invoice",
     "regulated/parked-reversal-resolution.service.ts#resolve": "Return > Order",
     "returns/inline-returns.service.ts#approve": "Return > Order",
-    "returns/inline-returns.service.ts#cancel": "Return > Order > Invoice",
+    "returns/inline-returns.service.ts#cancel": "Return > Order > Invoice > CreditNote",
     "returns/inline-returns.service.ts#issueCredit": "Return > Order",
     "returns/inline-returns.service.ts#refund": "Return > Order > Invoice",
     "returns/inline-returns.service.ts#storeCreditInstead": "Return > Order > Invoice",
@@ -502,10 +504,8 @@ describe("SA-893: every transaction takes Return -> Order -> Invoice -> CreditNo
   };
 
   /** KNOWN inverses: NOT safe, each tied to the work item that removes it. Never add one without a W- item. */
-  const KNOWN_INVERSE: Record<string, string> = {
-    "credit-notes/credit-notes.service.ts#restoreCreditFromPaymentInTx":
-      "W-757 (SA-898/SA-900): CreditNote -> Invoice. Traced: pullBackOrderCreditPair and releaseCreditsInTx are SAFE; unapplyFromInvoice and cancelStandaloneInTx (via inline cancel, no retry: a 500) are REAL inverses; the rest are to be verified there",
-  };
+  // W-757 removed the last entry: restoreCreditFromPaymentInTx now takes its payment's Order -> Invoice first.
+  const KNOWN_INVERSE: Record<string, string> = {};
 
   it("the order is the one constant: Return -> Order -> Invoice -> CreditNote", () => {
     expect([...ROW_LOCK_ORDER]).toEqual(["Return", "Order", "Invoice", "CreditNote"]);
@@ -530,15 +530,16 @@ describe("SA-893: every transaction takes Return -> Order -> Invoice -> CreditNo
     for (const why of Object.values(KNOWN_INVERSE)) expect(why).toMatch(/^W-\d+/);
   });
 
-  it("SA-898: the restoreCreditFromPaymentInTx known inverse cannot widen: exactly its 6 classified callers", () => {
+  it("SA-898: restoreCreditFromPaymentInTx has exactly its 6 classified callers, each holding the Order first", () => {
     const CS = "credit-notes/credit-notes.service.ts";
+    // W-757 verified all six: each holds the payment's Order before the restore takes its Invoice, then the note.
     const callers = [
-      "cancelStandaloneInTx", // UNVERIFIED (W-757)
-      "pullBackOrderCreditPair", // UNVERIFIED (W-757)
-      "releaseCreditsInTx", // UNVERIFIED (W-757)
-      "settleOrderCreditsInTx",
-      "unapplyFromInvoice", // UNVERIFIED (W-757)
-      "voidWithReversalInTx",
+      "cancelStandaloneInTx", // InlineReturnsService.cancel: one sorted pass incl. the payment targets (W-757)
+      "pullBackOrderCreditPair", // syncOrderCreditSelections: the caller's lockOrderRow
+      "releaseCreditsInTx", // order cancel (lockOrderAndInvoicesInTx), delete (lockDeleteLines), wallet release
+      "settleOrderCreditsInTx", // lockOrderCreditSettle: the Order, its invoices, then the notes
+      "unapplyFromInvoice", // lockInvoiceForCredit as its first statement (W-757)
+      "voidWithReversalInTx", // sorted Orders, then Invoices, then the note
     ].map((m) => `${CS}#${m}`);
     expect(callSites("restoreCreditFromPaymentInTx")).toEqual(callers);
     const src = strip(fs.readFileSync(path.join(SRC, CS), "utf8"));

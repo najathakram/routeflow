@@ -692,6 +692,8 @@ export const API_ERROR_CODES = {
   APP_LINK_URL_INVALID: "APP_LINK_URL_INVALID",
   /** 400 from POST /customers/merge: the two customers are not both of the session's one business (W-763). Names no tenant. */
   CUSTOMER_MERGE_TENANT_MISMATCH: "CUSTOMER_MERGE_TENANT_MISMATCH",
+  /** 409 from an inline return cancel: the credit note gained a payment on another invoice while the cancel locked its rows (SA-920). Retryable: the retry locks the full set. */
+  RETURN_CANCEL_RETRY: "RETURN_CANCEL_RETRY",
 } as const satisfies Record<string, ApiErrorCode>;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */

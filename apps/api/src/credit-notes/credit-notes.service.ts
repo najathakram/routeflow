@@ -1124,7 +1124,8 @@ export class CreditNotesService {
       data: { status: "VOID" },
     });
     if (flipped.count > 0) {
-      // SA-839: counter-entries for this note's rows (the caller holds their Orders and Invoices);
+      // SA-839: counter-entries for this note's rows. The caller (InlineReturnsService.cancel) holds, in one sorted pass,
+      // the Orders and Invoices of the note's ledger rows AND of its credit payments restored above (W-757);
       // §3: `amendedPeriod` when one of them corrected a filed month.
       const settled = await this.ledger.settleRegulatedLedger(tx, {
         kind: "ADJUSTMENT_UNDONE",
@@ -1451,6 +1452,10 @@ export class CreditNotesService {
     const payAmt = roundMoney(Number(payment.amount));
     const restore = roundMoney(Math.min(payAmt, reduceBy ?? payAmt));
     if (!(restore > 0.001)) return 0;
+    // W-757 (ROW_LOCK_ORDER): the payment's Order -> Invoice BEFORE the note below, so a restore never takes
+    // CreditNote -> Invoice. Every caller already holds the payment's Order (most also its Invoice, in one sorted pass), so
+    // this takes no Order after an Invoice: a no-op or the Invoice alone, and the helper is in order on its own.
+    await lockInvoiceForCredit(tx, this.prisma.getTenantId(), payment.invoiceId);
     // B949: the backstop of the pre-pass below. A restore would hand a SOURCE_DELETED note's money back as SPENDABLE wallet
     // credit with no provenance; every path that restores refuses, before it writes any RESTORE (an operation such as an order cancel may already have written its own claim in the same transaction; the refusal rolls the whole transaction back).
     if (payment.creditNoteId !== opts.voidingNoteId)
@@ -2035,6 +2040,10 @@ export class CreditNotesService {
     return retryCreditTx(`credit unapply cn=${creditNoteId} inv=${invoiceId}`, () =>
       this.prisma.tenantTransaction(
         async (tx: any) => {
+          // W-757 (ROW_LOCK_ORDER): FIRST statement, the invoice's Order -> Invoice, before the restores below take the
+          // note. Without it the unapply took CreditNote -> Invoice and deadlocked against markSent (Order -> Invoice ->
+          // CreditNote) on the same pair.
+          await lockInvoiceForCredit(tx, this.prisma.getTenantId(), invoiceId);
           // scan-ok: draft-payment-not-void — method-scoped to CREDIT_NOTE (see
           // pullBackOrderCreditPair above).
           const payments = await tx.invoicePayment.findMany({
