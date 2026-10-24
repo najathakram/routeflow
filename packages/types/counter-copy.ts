@@ -32,7 +32,13 @@ export function onDriverRunCopy(driverName: unknown): string {
  */
 export function counterCompleteRefusalCopy(
   body:
-    | { code?: unknown; limit?: unknown; exposure?: unknown; driverName?: unknown }
+    | {
+        code?: unknown;
+        limit?: unknown;
+        exposure?: unknown;
+        driverName?: unknown;
+        runId?: unknown;
+      }
     | null
     | undefined,
   money: (n: number) => string,
