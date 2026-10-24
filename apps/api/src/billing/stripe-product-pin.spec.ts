@@ -15,7 +15,7 @@ const walk = (d: string, rel = ""): string[] =>
     e.isDirectory() ? walk(join(d, e.name), `${rel}${e.name}/`) : [`${rel}${e.name}`],
   );
 const sources = walk(dir)
-  .filter((f) => f.endsWith(".ts") && !/.spec.ts$|.db.spec.ts$/.test(f))
+  .filter((f) => f.endsWith(".ts") && !/\.spec\.ts$|\.db\.spec\.ts$/.test(f))
   .map((f) => ({ f, text: stripComments(readFileSync(join(dir, f), "utf8")) }));
 
 describe("W-810 product pin", () => {
