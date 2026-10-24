@@ -194,6 +194,9 @@ export const API_ERROR_CODES = {
   RULE_STALE: "RULE_STALE",
   RULE_IMPACT_CHANGED: "RULE_IMPACT_CHANGED",
   RULE_END_USE_LIFT: "RULE_END_USE_LIFT",
+  // Row 510: a staff write that needs an override reason (409), and a reason outside 3..200 after trim (400).
+  RESTRICTION_WARNING: "RESTRICTION_WARNING",
+  RESTRICTION_OVERRIDE_REASON_INVALID: "RESTRICTION_OVERRIDE_REASON_INVALID",
   PO_LINK_CONFLICT: "PO_LINK_CONFLICT",
   SCAN_ALREADY_POSTED: "SCAN_ALREADY_POSTED",
   PO_LINK_BROKEN: "PO_LINK_BROKEN",
@@ -671,6 +674,8 @@ export const API_ERROR_CODES = {
   BILL_PAYMENT_NO_SUPPLIER: "BILL_PAYMENT_NO_SUPPLIER",
   /** 400 from PUT /platform-admin/app-links: a link is not an https URL with a host; body carries `field`. */
   APP_LINK_URL_INVALID: "APP_LINK_URL_INVALID",
+  /** 400 from POST /customers/merge: the two customers are not both of the session's one business (W-763). Names no tenant. */
+  CUSTOMER_MERGE_TENANT_MISMATCH: "CUSTOMER_MERGE_TENANT_MISMATCH",
 } as const satisfies Record<string, ApiErrorCode>;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */

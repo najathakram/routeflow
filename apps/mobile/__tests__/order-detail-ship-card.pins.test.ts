@@ -75,7 +75,8 @@ describe("the POS action area", () => {
 describe("the move endpoint", () => {
   it("PATCHes /orders/:id/fulfill-path with the chosen path (web usePatchOrderFulfillPath), no hard-coded ROUTE", () => {
     const m = posApi.slice(posApi.indexOf("export function useMoveOrderOffPickup"));
-    expect(m).toContain("apiClient.patch(`/orders/${id}/fulfill-path`, { fulfillPath })");
+    // row 510: the restriction ack rides along (`...ack`); the path is still the chosen one
+    expect(m).toContain("apiClient.patch(`/orders/${id}/fulfill-path`, { fulfillPath, ...ack })");
     const fn = m.split("\n").find((l) => l.includes("mutationFn")) ?? "";
     expect(fn).not.toContain("ROUTE");
   });

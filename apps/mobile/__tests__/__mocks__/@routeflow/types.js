@@ -41,6 +41,7 @@ module.exports = {
     VOID_SALE: { roles: ["OPERATOR", "TENANT_ADMIN", "SUPER_ADMIN"], group: "ORDERS" },
     USE_POS_MODE: { roles: ["OPERATOR", "TENANT_ADMIN"], group: "ORDERS" },
     EDIT_AFTER_FINAL: { roles: ["OPERATOR", "TENANT_ADMIN"], group: "FINANCE" },
+    OVERRIDE_SELLING_RESTRICTION: { roles: ["OPERATOR", "TENANT_ADMIN"], group: "ORDERS" },
   },
   staffMay: (role, action, deniedGroups = []) => {
     const rule = module.exports.STAFF_CAPABILITY_RULES[action];
@@ -48,6 +49,13 @@ module.exports = {
     if (role === "OPERATOR" && deniedGroups.includes(rule.group)) return false;
     return true;
   },
+  // Row 510: hand copies of packages/types/api/restrictions.ts; pinned equal by
+  // apps/mobile/__tests__/restriction-warning-constants.test.ts (which reads the REAL source).
+  RESTRICTION_OVERRIDE_REASON_MIN: 3,
+  RESTRICTION_OVERRIDE_REASON_MAX: 200,
+  DRIVER_RESTRICTION_BLOCK_MESSAGE: "Ask the office to approve this sale",
+  SUPPORT_SESSION_RESTRICTION_BLOCK_MESSAGE: "Ask the account admin",
+  RESTRICTION_OVERRIDE_LABEL: "Sold despite restriction",
   FULFILL_PATH_VALUES: ["ROUTE", "SHIP", "PICKUP"],
   EMAIL_DELIVERY_STATUS_VALUES: ["QUEUED", "SENT", "FAILED", "BOUNCED", "WOULD_SEND", "OPTED_OUT"],
   // Hand copy of packages/types/api/preferences.ts PREF; pinned equal by
@@ -255,6 +263,8 @@ module.exports = {
     RULE_STALE: "RULE_STALE",
     RULE_IMPACT_CHANGED: "RULE_IMPACT_CHANGED",
     RULE_END_USE_LIFT: "RULE_END_USE_LIFT",
+    RESTRICTION_WARNING: "RESTRICTION_WARNING",
+    RESTRICTION_OVERRIDE_REASON_INVALID: "RESTRICTION_OVERRIDE_REASON_INVALID",
     PO_LINK_CONFLICT: "PO_LINK_CONFLICT",
     SCAN_ALREADY_POSTED: "SCAN_ALREADY_POSTED",
     PO_LINK_BROKEN: "PO_LINK_BROKEN",
@@ -482,6 +492,7 @@ module.exports = {
     BILL_PAYMENT_NOT_CASH: "BILL_PAYMENT_NOT_CASH",
     BILL_PAYMENT_NO_SUPPLIER: "BILL_PAYMENT_NO_SUPPLIER",
     APP_LINK_URL_INVALID: "APP_LINK_URL_INVALID",
+    CUSTOMER_MERGE_TENANT_MISMATCH: "CUSTOMER_MERGE_TENANT_MISMATCH",
   },
   // SA-814e: hand copy of packages/types/api/error-codes.ts (pinned to the API's literal by the API parity spec).
   INVOICE_TAX_STATE_STALE_COPY: {

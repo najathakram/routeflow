@@ -4,6 +4,8 @@ import {
   regulatedAuthErrorCopy,
   type BlockedCategory,
 } from "./authorizations-logic";
+import { leftoverAddedMessage } from "./at-door-diff";
+import { parseRestrictionHardBlock } from "./restriction-warning";
 
 /**
  * B790 — the at-door adjust screen's submitEntry() creates a change request, then
@@ -17,6 +19,12 @@ import {
  * first sits orphaned forever. This is live today, independent of any other in-flight
  * change to this flow.
  *
+ * Row 510: the SECOND deliberate exception, `restricted`. A DRIVER may not override a selling restriction (the API
+ * answers the resolve with the fixed 409 "Ask the office to approve this sale"), and the office can only approve a
+ * request that is still PENDING. So, exactly like the REGULATED case, the caller leaves the CR PENDING and never
+ * declines it. It also never arms the regulated deferred cleanup: nothing the driver does afterwards (Remove/Cancel)
+ * may decline a request that the office is meant to approve.
+ *
  * Pure classification of a resolve failure — no mutation calls here, so this is
  * directly unit-testable without RN rendering (adjust.tsx just acts on the result).
  * Keyed on the server's `code` where one exists; anything NOT explicitly matched
@@ -26,6 +34,7 @@ import {
 export type AtStopResolveOutcome =
   | { action: "offline" }
   | { action: "regulated"; blocked: BlockedCategory[] }
+  | { action: "restricted" }
   | { action: "already-resolved"; status?: string }
   | { action: "credit"; info: CreditLimitExceededInfo; reason: string }
   | { action: "decline"; reason: string };
@@ -38,6 +47,11 @@ export function classifyAtStopResolveError(e: unknown): AtStopResolveOutcome {
   const blocked = parseRegulatedAuthError(e);
   if (blocked && blocked.length > 0) {
     return { action: "regulated", blocked };
+  }
+  // Row 510: the driver's hard block. The screen shows it through the shared warning modal (`rw.handle(e, ...)`), which
+  // reads the same body; nothing is declined (see the header above).
+  if (parseRestrictionHardBlock(e)) {
+    return { action: "restricted" };
   }
   const data = (e as { response?: { data?: { code?: string; message?: string } } } | null)?.response
     ?.data;
@@ -62,4 +76,37 @@ export function classifyAtStopResolveError(e: unknown): AtStopResolveOutcome {
     (e as { message?: string } | null)?.message ??
     "Couldn't save that change.";
   return { action: "decline", reason };
+}
+
+/** The confirmation when a batch finished but a restricted change was handed to the office instead of applied. */
+export const AT_STOP_RESTRICTED_SENT_TITLE = "Sent to the office";
+export const AT_STOP_RESTRICTED_SENT_COPY =
+  "Order updated. The office will review the restricted item.";
+
+/**
+ * How an at-door batch ends. Pure, so it is unit-tested, and it reads the SETTLED state:
+ *   - leftover: units a concurrent re-scan left in the draft are never discarded (the driver stays and taps Save again);
+ *   - sent-to-office: a restricted entry went to the office. This is a confirmation that STAYS until the driver taps
+ *     Done (no timed toast, no automatic navigation): the driver just read a block and must see that the rest went through;
+ *   - done: a plain finish, "Order updated", then back.
+ */
+export type AtStopBatchEnd =
+  | { kind: "leftover"; message: string }
+  | { kind: "sent-to-office"; title: string; body: string }
+  | { kind: "done"; message: string };
+
+export function decideAtStopBatchEnd(p: {
+  added: ReadonlyArray<unknown>;
+  handedToOffice: boolean;
+}): AtStopBatchEnd {
+  const leftover = leftoverAddedMessage(p.added);
+  if (leftover) return { kind: "leftover", message: leftover };
+  if (p.handedToOffice) {
+    return {
+      kind: "sent-to-office",
+      title: AT_STOP_RESTRICTED_SENT_TITLE,
+      body: AT_STOP_RESTRICTED_SENT_COPY,
+    };
+  }
+  return { kind: "done", message: "Order updated" };
 }

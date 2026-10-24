@@ -5,11 +5,8 @@ import {
   type LadderProduct,
   type LadderUnit,
 } from "@routeflow/pricing";
-import { defaultSaleFulfilmentKind } from "../orders/default-sale-fulfilment";
-import { requireRestrictionTenantId } from "../selling-restrictions/restriction-tenant";
-import type { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
-import type { PrismaService } from "../prisma/prisma.service";
 import { keepsHeldUnit, norm } from "../orders/unit-label-norm";
+import { OVERRIDE_STAMP_SELECT, type OverrideStamp } from "../common/restriction-override-columns";
 import { checkableProductIds } from "../selling-restrictions/selling-restrictions.core";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 
@@ -177,6 +174,7 @@ const HELD_SELECT = {
   pieces: true,
   unitsPerBox: true,
   unitLabel: true,
+  ...OVERRIDE_STAMP_SELECT, // row 510: the coverage test reads the held lines' stamps
 };
 type Reader = {
   invoiceItem: { findMany(args: any): Promise<EditRow[]> };
@@ -192,6 +190,18 @@ export async function addedRestrictionLines(
   invoiceId: string,
   items: ReadonlyArray<EditRow>,
 ): Promise<{ productId: string; qtyDelta?: number }[]> {
+  return (await addedRestrictionLinesWithHeld(db, invoiceId, items)).lines;
+}
+
+/** `addedRestrictionLines` plus the held rows it read (with their override stamps), for the coverage test (row 510). */
+export async function addedRestrictionLinesWithHeld(
+  db: Reader,
+  invoiceId: string,
+  items: ReadonlyArray<EditRow>,
+): Promise<{
+  lines: { productId: string; qtyDelta?: number }[];
+  held: Array<EditRow & Partial<OverrideStamp>>;
+}> {
   const held = await db.invoiceItem.findMany({ where: { invoiceId }, select: HELD_SELECT });
   const ids = [...new Set([...held, ...items].flatMap((r) => (r.productId ? [r.productId] : [])))];
   const products = ids.length
@@ -232,7 +242,7 @@ export async function addedRestrictionLines(
         },
       ]),
   );
-  return netEditRestrictionLines(held, items, livePacks, ladders);
+  return { lines: netEditRestrictionLines(held, items, livePacks, ladders), held };
 }
 
 /**
@@ -256,25 +266,4 @@ export async function assertEditStillJudged(
       code: API_ERROR_CODES.INVOICE_CHANGED_DURING_EDIT,
       message: "The invoice changed while your edit was being applied — review it and try again.",
     });
-}
-
-/**
- * F-05 / L8: the sell check for an invoice with NO order of its own (a manual invoice, a copy). Judged as STAFF, and
- * as the customer's NEXT order would be (`defaultSaleFulfilmentKind`: a pickup-only tenant is judged on the store's
- * state), so the kind is never assumed. Kept out of `invoices.service.ts` (size ratchet).
- */
-export async function assertOrderlessSellable(
-  prisma: PrismaService,
-  restrictions: Pick<SellingRestrictionsService, "assertLinesSellable">,
-  customerId: string,
-  items: ReadonlyArray<{ productId?: string | null }>,
-): Promise<void> {
-  const tenantId = requireRestrictionTenantId(prisma.getTenantId());
-  await restrictions.assertLinesSellable({
-    tenantId,
-    customerId,
-    lines: catalogRestrictionLines(items),
-    channel: "STAFF",
-    fulfilmentKind: await defaultSaleFulfilmentKind(prisma, tenantId, customerId),
-  });
 }

@@ -77,6 +77,7 @@ import { getDaysForTerms, addDaysIso } from "@/lib/invoice-terms";
 import { remainingCapacity, resolveConfirmedAmounts } from "@routeflow/pricing";
 import { useInvoiceTaxSplit } from "@/lib/use-invoice-tax-split";
 import { useDuplicateInvoiceAction } from "@/lib/use-duplicate-invoice-action";
+import { RestrictionOverrideNote } from "@/components/RestrictionOverrideNote";
 import { invoiceLineQtyText } from "@/lib/invoice-line-unit";
 import { ComponentSubLines } from "@/components/ComponentSubLines";
 import type { LineComponentView } from "@routeflow/types";
@@ -1445,7 +1446,7 @@ export default function InvoiceDetailPage() {
   const voidInvoice = useVoidInvoice();
   const reopenInvoice = useReopenInvoice();
   const recordPayment = useRecordInvoicePayment();
-  const { duplicate: duplicateInvoice } = useDuplicateInvoiceAction();
+  const { duplicate: duplicateInvoice, dialog: duplicateDialog } = useDuplicateInvoiceAction();
   const writeOffInvoice = useWriteOffInvoice();
   const updatePayment = useUpdateInvoicePayment();
   const deletePayment = useDeleteInvoicePayment();
@@ -1933,8 +1934,9 @@ export default function InvoiceDetailPage() {
       paidAt: data.paidAt || undefined,
       // Explicit null so emptying the field clears the stored bank date.
       settledAt: data.settledAt || null,
-      reference: data.reference.trim() || undefined,
-      notes: data.notes.trim() || undefined,
+      // W-663: an emptied field is sent as null so the server clears it (as settledAt); undefined kept the old value
+      reference: data.reference.trim() || null,
+      notes: data.notes.trim() || null,
     };
     updatePayment.mutate(
       recordAnyway ? withRecordAnyway(body) : body, // W-718: the resend is the SAME body plus the flag
@@ -2553,6 +2555,7 @@ export default function InvoiceDetailPage() {
                           <ComponentSubLines
                             components={(item as { components?: LineComponentView[] }).components}
                           />
+                          <RestrictionOverrideNote line={item} />
                         </td>
                         <td className="px-4 py-3 text-right">
                           <span
@@ -3134,6 +3137,7 @@ export default function InvoiceDetailPage() {
           orderId={(invoice as any).orderId}
         />
       )}
+      {duplicateDialog}
     </div>
   );
 }
