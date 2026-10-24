@@ -92,10 +92,12 @@ describe("CustomersWithoutState (Addendum D)", () => {
     expect(await screen.findByText(/Staff orders and invoices aren't checked/)).toBeInTheDocument();
   });
 
-  it("header says the products cannot be sold on any order when the switch is on", async () => {
+  it("row 510: with the switch on the header says staff are warned and can override", async () => {
     renderWithProviders(<CustomersWithoutState canFix staffOrdersChecked />);
     expect(
-      await screen.findByText(/they can't be sold those products on any order/),
+      await screen.findByText(
+        "5 customers need a state. Until it's set, products with a legal state ban stay hidden from them in your portal and can't be ordered there. Other state limits won't reach them. On staff orders and invoices, staff are warned and can choose Sell anyway with a reason; drivers can't.",
+      ),
     ).toBeInTheDocument();
     expect(screen.queryByText(/Staff orders and invoices aren't checked/)).toBeNull();
   });

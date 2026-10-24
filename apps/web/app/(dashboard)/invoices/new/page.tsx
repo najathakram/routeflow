@@ -35,6 +35,7 @@ import {
   type CreateInvoiceItem,
 } from "@/lib/api/invoices";
 import { useCreateSale, useUninvoicedOrders, type CreateSaleDto } from "@/lib/api/orders";
+import { useRestrictionWarningRetry } from "@/lib/use-restriction-warning-retry";
 import { SplitInvoiceModal } from "../../orders/_components/SplitInvoiceModal";
 import { toSplitInvoiceLine, type SplitInvoiceLine } from "@/lib/split-invoice-line";
 import {
@@ -818,6 +819,7 @@ export default function NewInvoicePage() {
   const createInvoice = useCreateInvoice();
   const updateInvoice = useUpdateInvoice();
   const createSale = useCreateSale();
+  const rw = useRestrictionWarningRetry(); // row 510: staff warning + override dialog
   const saleKey = useSaleAttemptKey(); // row 485: one Idempotency-Key per sale attempt
   // Row 485: set while the outcome of a sale is UNKNOWN; the cart is locked behind it.
   const [saleUnknown, setSaleUnknown] = React.useState<UnknownSale | null>(null);
@@ -848,16 +850,18 @@ export default function NewInvoicePage() {
   /** Creates the preview draft, or saves the dto onto it; returns its id and keeps the token current. */
   async function upsertDraft(dto: unknown): Promise<string> {
     if (currentDraftId) {
-      const saved: any = await updateInvoice.mutateAsync({
-        id: currentDraftId,
-        ...(dto as object),
-        expectedUpdatedAt: draftToken.current,
-      } as any);
+      const saved: any = await updateInvoice.mutateAsync(
+        rw.attach({
+          id: currentDraftId,
+          ...(dto as object),
+          expectedUpdatedAt: draftToken.current,
+        }) as any, // row 510: the ack, after a restriction warning
+      );
       draftToken.current = saved?.updatedAt;
       return currentDraftId;
     }
     const created: any = await createInvoice.mutateAsync(
-      dto as Parameters<typeof createInvoice.mutate>[0],
+      rw.attach(dto as object) as Parameters<typeof createInvoice.mutate>[0],
     );
     draftToken.current = created?.updatedAt;
     setCurrentDraftId(created.id);
@@ -1819,6 +1823,7 @@ export default function NewInvoicePage() {
         });
       }
     } catch (err) {
+      if (rw.handle(err, () => handlePreview(lines))) return; // row 510
       toast({
         title: "Couldn't build preview",
         description:
@@ -1862,6 +1867,7 @@ export default function NewInvoicePage() {
       setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
       toast({ title: "Invoice downloaded", variant: "success" });
     } catch (err) {
+      if (rw.handle(err, () => handleDownload(lines))) return; // row 510
       toast({
         title: "Couldn't generate PDF",
         description: staleCopy(err) ?? unitRefusal(err, lines) ?? "Please try again.",
@@ -1975,9 +1981,13 @@ export default function NewInvoicePage() {
     saleLines: LineItemState[],
     send: boolean,
   ) {
-    const idempotencyKey = saleKey.keyFor(JSON.stringify(saleDto));
+    // Row 510: a resubmit after the restriction warning carries the ack, so it is a new payload (a new key).
+    const body = rw.attach(saleDto) as CreateSaleDto & { paymentTermsLabel?: string };
+    // Try again after an unknown outcome must resend exactly what was sent (the ack included), under the held key.
+    if (lastSaleRef.current) lastSaleRef.current = { ...lastSaleRef.current, saleDto: body };
+    const idempotencyKey = saleKey.keyFor(JSON.stringify(body));
     createSale.mutate(
-      { ...saleDto, idempotencyKey },
+      { ...body, idempotencyKey },
       {
         onSuccess: (inv) => {
           saleKey.settle({ ok: true });
@@ -2000,6 +2010,7 @@ export default function NewInvoicePage() {
             draft.clear();
             return; // locked: the panel offers Try again / Open / Start a new sale
           }
+          if (rw.handle(err, () => postSale(saleDto, saleLines, send))) return; // row 510
           toast({
             title: "Could not create the sale",
             description: unitRefusal(err, saleLines) ?? "Please check your inputs and try again.",
@@ -2018,7 +2029,7 @@ export default function NewInvoicePage() {
     if (currentDraftId) {
       const dto = buildInvoiceDto(false, lines);
       updateInvoice.mutate(
-        { id: currentDraftId, ...dto, expectedUpdatedAt: draftToken.current } as any,
+        rw.attach({ id: currentDraftId, ...dto, expectedUpdatedAt: draftToken.current }) as any,
         {
           onSuccess: async () => {
             draft.clear(); // saved to the server draft (ROW 447)
@@ -2040,6 +2051,7 @@ export default function NewInvoicePage() {
             router.push(`/invoices/${currentDraftId}`);
           },
           onError: (err: unknown) => {
+            if (rw.handle(err, () => handleSubmit(sendNow, lines))) return; // row 510
             toast({
               title: "Failed to save invoice",
               description:
@@ -2056,7 +2068,7 @@ export default function NewInvoicePage() {
 
     const dto = buildInvoiceDto(sendNow, lines);
 
-    createInvoice.mutate(dto as Parameters<typeof createInvoice.mutate>[0], {
+    createInvoice.mutate(rw.attach(dto) as Parameters<typeof createInvoice.mutate>[0], {
       onSuccess: (invoice) => {
         draft.clear();
         toast({
@@ -2069,6 +2081,7 @@ export default function NewInvoicePage() {
         router.push(`/invoices/${invoice.id}`);
       },
       onError: (err: unknown) => {
+        if (rw.handle(err, () => handleSubmit(sendNow, lines))) return; // row 510
         // Row 466: the draft was committed and only the send failed. Open it; never offer a
         // second create (a retry here would duplicate the invoice).
         const keptId = keptDraftInvoiceId(err);
@@ -3229,6 +3242,7 @@ export default function NewInvoicePage() {
           </div>
         </div>
       ) : null}
+      {rw.dialog}
     </div>
   );
 }

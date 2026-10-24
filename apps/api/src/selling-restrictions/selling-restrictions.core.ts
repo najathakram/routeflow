@@ -4,7 +4,7 @@
  * loads the facts and hands them in, so every outcome below is unit-testable without a database.
  *
  * Three outcomes never share a code path (owner ruling):
- *   OFF            — the tenant switch is off. Nothing is read or evaluated (see `offEvaluation`).
+ *   OFF            — the tenant switch is off (STAFF channel only). Nothing is read or evaluated (see `offEvaluation`).
  *   ALLOW / BLOCK  — switch on, the governing state (if a rule needs it) is known.
  *   INDETERMINATE  — switch on, a STATE rule matches a line, but the customer's state can't be
  *                    resolved (no address / unnormalised state). Fail closed: block + explain.
@@ -130,6 +130,14 @@ export interface ChannelPrincipal {
   role?: string | null;
   /** `"BUYER"` on the buyer-portal principal (`BuyerJwtStrategy`); absent on tenant users. */
   type?: string | null;
+  /**
+   * Row 510: the platform operator's id on a SUPPORT SESSION token (a tenant admin's claims plus this). A support
+   * session can't override a restriction: the stamp and the audit row would credit the account admin with a sale
+   * someone else made, so the protocol hard-blocks it ("Ask the account admin").
+   */
+  impersonatedBy?: string | null;
+  /** The caller's effective denied staff groups (perms PR7 fills it; absent today = none denied). */
+  deniedGroups?: readonly string[];
 }
 
 /** Roles that positively sell as staff. Compared as strings so the core stays free of Prisma. */

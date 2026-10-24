@@ -43,6 +43,8 @@ import {
 } from "../../../../lib/invoice-send-logic";
 import { showToast } from "../../../../lib/toast";
 import { BlockedLinesModal } from "../../../../components/BlockedLinesModal";
+import { RestrictionOverrideNote } from "../../../../components/RestrictionOverrideNote";
+import { useRestrictionWarningRetry } from "../../../../lib/use-restriction-warning-retry";
 import { CreditLimitGuardModal } from "../../../../components/CreditLimitGuardModal";
 import {
   parseCreditLimitError,
@@ -156,6 +158,7 @@ export default function OrderDetailScreen() {
   const orderUiV2 = useOrderUiV2();
   const changeMut = useChangeOrderStatus();
   const reopenMut = useReopenOrder();
+  const rw = useRestrictionWarningRetry(); // row 510: staff warning + override dialog
   const deleteMut = useDeleteOrder();
   const urgentMut = useToggleOrderUrgent();
   const shipmentMut = useUpdateOrderShipment();
@@ -393,22 +396,16 @@ export default function OrderDetailScreen() {
         // ONE handler for both moves: the action carries its own path (Ship by carrier… is always SHIP).
         const path = a.path ?? (a.key === "shipByCarrier" ? "SHIP" : "ROUTE");
         const copy = posMoveConfirm(path);
-        confirm(
-          copy.title,
-          copy.message,
-          () =>
-            moveOffPickupMut.mutate(
-              { id: order.id, fulfillPath: path },
-              {
-                onSuccess: () => {
-                  showToast(posMoveSuccessCopy(path));
-                  refetch();
-                },
-                onError: (e) => toastPosError(e, posMoveFailedCopy(path)),
-              },
-            ),
-          { confirmText: copy.confirmText },
-        );
+        // Row 510: the switch is re-judged; a restriction warning re-runs THIS move with the ack attached.
+        const moveNow = () =>
+          moveOffPickupMut.mutate(rw.attach({ id: order.id, fulfillPath: path }), {
+            onSuccess: () => {
+              showToast(posMoveSuccessCopy(path));
+              refetch();
+            },
+            onError: (e) => rw.handle(e, moveNow) || toastPosError(e, posMoveFailedCopy(path)),
+          });
+        confirm(copy.title, copy.message, moveNow, { confirmText: copy.confirmText });
         return;
       }
       case "recordPayment":
@@ -429,30 +426,27 @@ export default function OrderDetailScreen() {
         showToast(msg);
         refetch();
       },
-      onError: (e: unknown) => toastError(e),
+      onError: (e: unknown) => rw.handle(e, () => runStatusChange(action)) || toastError(e),
     });
     if (action.reopenCancelled) {
-      reopenMut.mutate(order.id, onDone("Order reopened"));
+      reopenMut.mutate(rw.attach(order.id), onDone("Order reopened"));
       return;
     }
-    changeMut.mutate(
-      { id: order.id, status: action.toStatus, reason: action.reason },
-      {
-        onSuccess: () => {
-          // Only close the sheet once the server accepted it; on failure it stays
-          // open with the text intact so the reason isn't retyped.
-          setReasonFor(null);
-          showToast(`Order ${action.toStatus.toLowerCase().replace(/_/g, " ")}`);
-          refetch();
-          // Post-delivery: offer to send the invoice (any path into DELIVERED).
-          // PR-4: confirming just toasts and stays — it no longer auto-opens the
-          // invoice, which used to push the operator onto a locked
-          // pending-mirror invoice they couldn't edit or send.
-          if (action.toStatus === "DELIVERED") openSendForOrder();
-        },
-        onError: (e: unknown) => toastError(e),
+    changeMut.mutate(rw.attach({ id: order.id, status: action.toStatus, reason: action.reason }), {
+      onSuccess: () => {
+        // Only close the sheet once the server accepted it; on failure it stays
+        // open with the text intact so the reason isn't retyped.
+        setReasonFor(null);
+        showToast(`Order ${action.toStatus.toLowerCase().replace(/_/g, " ")}`);
+        refetch();
+        // Post-delivery: offer to send the invoice (any path into DELIVERED).
+        // PR-4: confirming just toasts and stays — it no longer auto-opens the
+        // invoice, which used to push the operator onto a locked
+        // pending-mirror invoice they couldn't edit or send.
+        if (action.toStatus === "DELIVERED") openSendForOrder();
       },
-    );
+      onError: (e: unknown) => rw.handle(e, () => runStatusChange(action)) || toastError(e),
+    });
   };
 
   const handleStatusChange = (action: StatusAction) => {
@@ -868,6 +862,7 @@ export default function OrderDetailScreen() {
             ) : (
               order.lineItems.map((li, i) => {
                 if (orderUiV2.enabled) {
+                  // Row 510: the override note rides INSIDE its card (model.overrideNote), not as a block between cards.
                   return (
                     <OrderLineCard
                       key={li.id}
@@ -934,6 +929,7 @@ export default function OrderDetailScreen() {
                           {li.notes}
                         </Text>
                       ) : null}
+                      <RestrictionOverrideNote line={li} />
                       {li.priceType === "MANUAL" &&
                       li.originalPrice != null &&
                       Number(li.unitPrice) > Number(li.originalPrice) ? (
@@ -1354,6 +1350,7 @@ export default function OrderDetailScreen() {
       />
 
       <BlockedLinesModal lines={restrictedBlock} onClose={() => setRestrictedBlock(null)} />
+      {rw.modal}
 
       <CreditLimitGuardModal
         open={!!creditBlock}

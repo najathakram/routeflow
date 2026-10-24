@@ -20,6 +20,7 @@ import { Transform, Type } from "class-transformer";
 import { FulfillPath } from "@prisma/client";
 import { StripHtml } from "../../common/transforms/strip-html.transform";
 import { InlineReturnLinesDto } from "../../returns/dto/capture-inline-return.dto";
+import { RestrictionAckDto } from "../../selling-restrictions/dto/restriction-ack.dto";
 import { IsOptionalNotNull } from "../../common/validators/optional-not-null";
 
 // BUG-B1-6: bound numeric inputs server-side. The audit submitted a
@@ -72,7 +73,7 @@ export class AppliedCreditNoteDto {
   amount?: number;
 }
 
-export class CreateOrderDto {
+export class CreateOrderDto extends RestrictionAckDto {
   @IsOptional() @IsString() customerId?: string;
   @IsOptional() @IsEnum(["DRAFT", "PENDING"]) status?: "DRAFT" | "PENDING";
   @IsArray()

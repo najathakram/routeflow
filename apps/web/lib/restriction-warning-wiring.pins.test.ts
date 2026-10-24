@@ -1,0 +1,127 @@
+import * as fs from "fs";
+import * as path from "path";
+
+/**
+ * Row 510, L-305: the staff write flows are ENUMERATED BY SEARCH, never from memory. Every non-test source that
+ * calls a staff write hook of the plan's path inventory must be wired to the warning dialog (it uses
+ * `useRestrictionWarningRetry`, or one of the two wrapper hooks that do), or be on the EXEMPT list with a reason.
+ * A new flow that calls one of these hooks and forgets the dialog turns this red: its 409 RESTRICTION_WARNING
+ * would otherwise be swallowed silently (the code is in HANDLED_CODES), leaving a save that does nothing.
+ */
+const WEB = path.resolve(__dirname, "..");
+const STAFF_WRITE_HOOKS = [
+  "useCreateOrder",
+  "useUpdateOrderItems",
+  "useUpdateOrderStatus",
+  "useReopenOrder",
+  "useResolveChangeRequest",
+  "usePatchOrderFulfillPath",
+  "useCreateSale",
+  "usePosFinish",
+  "useCreateCounterSale",
+  "useCreateInvoice",
+  "useUpdateInvoice",
+  "useDuplicateInvoice",
+  "useConvertEstimateToInvoice",
+  "useRunRecurringInvoice",
+  "useGenerateTemplateOrder",
+];
+const CALL = new RegExp(`\\b(${STAFF_WRITE_HOOKS.join("|")})\\b`);
+const WIRED =
+  /\b(useRestrictionWarningRetry|useDuplicateInvoiceAction|useGenerateTemplateOrderAction)\b/;
+
+/** file (relative to apps/web) -> why it needs no dialog. */
+const EXEMPT: Record<string, string> = {
+  "app/(dashboard)/orders/page.tsx":
+    "bulk CANCEL only (useUpdateOrderStatus with status CANCELLED): a cancel is never judged",
+  // the two wrapper hooks themselves call the api hook; the wrapper is what the flows use
+  "lib/use-duplicate-invoice-action.ts":
+    "the wrapper: it uses useRestrictionWarningRetry (checked below)",
+  "lib/use-generate-template-order-action.tsx":
+    "the wrapper: it uses useRestrictionWarningRetry (checked below)",
+  // SA-837b "Record anyway" (#3611): the resend of a sale that already rang
+  "app/(dashboard)/orders/_components/CounterPaymentNotRecorded.tsx":
+    "re-sends the SAME rung sale (same key, the remembered dto that succeeded, which already carries any restriction ack) only to record its refused payment",
+  "lib/counter-last-sale.ts":
+    "names useCreateCounterSale in a comment only: it stores the last sale for the Record-anyway resend and calls no hook",
+};
+
+function walk(dir: string, out: string[] = []): string[] {
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (e.name === "node_modules" || e.name === ".next" || e.name === "e2e") continue;
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) walk(p, out);
+    else if (/\.(ts|tsx)$/.test(e.name) && !/\.test\.(ts|tsx)$/.test(e.name)) out.push(p);
+  }
+  return out;
+}
+const rel = (p: string) => path.relative(WEB, p).split(path.sep).join("/");
+const sources = ["app", "components", "lib", "hooks"]
+  .flatMap((d) => walk(path.join(WEB, d)))
+  .filter((p) => !rel(p).startsWith("lib/api/"));
+const callers = sources.filter((p) => CALL.test(fs.readFileSync(p, "utf8")));
+
+describe("row 510: every staff write flow is wired to the warning dialog (search-derived)", () => {
+  it("finds the flows (a vacuous list would prove nothing)", () => {
+    expect(callers.map(rel)).toEqual(
+      expect.arrayContaining([
+        "app/(dashboard)/orders/_components/CreateOrderModal.tsx",
+        "app/(dashboard)/orders/[id]/page.tsx",
+        "app/(dashboard)/invoices/new/page.tsx",
+        "app/(dashboard)/orders/_components/CounterSaleScreen.tsx",
+      ]),
+    );
+  });
+
+  it.each(callers.map(rel))("%s", (file) => {
+    const src = fs.readFileSync(path.join(WEB, file), "utf8");
+    if (EXEMPT[file]) {
+      expect(EXEMPT[file].length).toBeGreaterThan(10); // a reason, not a bare allow
+      return;
+    }
+    expect(src).toMatch(WIRED);
+    // the dialog must also be RENDERED, or the hook would open nothing
+    expect(src).toMatch(/\b(rw\.dialog|dialog)\b/);
+  });
+
+  it("the order page's change-request approval re-sends through rw.attach inside run() (the loop-forever guard)", () => {
+    const src = fs.readFileSync(path.join(WEB, "app/(dashboard)/orders/[id]/page.tsx"), "utf8");
+    const at = src.indexOf("function handleResolve(");
+    expect(at).toBeGreaterThan(-1);
+    const body = src.slice(at, src.indexOf("// ── Edit mode", at)).replace(/^\s*\/\/.*$/gm, ""); // comments between the call and its first argument are not code
+    // run() builds the request: the pending ack rides it, so "Sell anyway" can not re-send the bare payload
+    expect(body).toMatch(/const run = \(\) =>\s*resolveCr\.mutate\(\s*rw\.attach\(\{\s*orderId:/);
+    // and the 409 routes back into run() through the shared guard handler
+    expect(body).toMatch(/guardError\(run\)\(err\)/);
+  });
+
+  it("the two wrapper hooks use the shared hook and return its dialog", () => {
+    for (const f of [
+      "lib/use-duplicate-invoice-action.ts",
+      "lib/use-generate-template-order-action.tsx",
+    ]) {
+      const src = fs.readFileSync(path.join(WEB, f), "utf8");
+      expect(src).toContain("useRestrictionWarningRetry");
+      expect(src).toMatch(/dialog: rw\.dialog/);
+    }
+  });
+
+  it("the wrapper hooks' consumers render the dialog they return", () => {
+    const inv = fs.readFileSync(path.join(WEB, "app/(dashboard)/invoices/[id]/page.tsx"), "utf8");
+    expect(inv).toMatch(/useDuplicateInvoiceAction\(\)/);
+    expect(inv).toContain("{duplicateDialog}");
+    const cust = fs.readFileSync(path.join(WEB, "app/(dashboard)/customers/[id]/page.tsx"), "utf8");
+    expect(cust).toContain("useGenerateTemplateOrderAction");
+    expect(cust).toContain("{generateOrder.dialog}");
+  });
+
+  it("the buyer portal never builds the staff dialog or note", () => {
+    const buyer = walk(path.join(WEB, "app/buyer"));
+    for (const p of buyer) {
+      const src = fs.readFileSync(p, "utf8");
+      expect(src).not.toMatch(
+        /RestrictionWarningDialog|useRestrictionWarningRetry|RestrictionOverrideNote/,
+      );
+    }
+  });
+});
