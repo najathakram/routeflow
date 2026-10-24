@@ -4,6 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { API_ERROR_CODES, PLAN_KEYS, type ManualActivationAddons } from "@routeflow/types";
 import { superAdminClient } from "@/lib/admin-api";
+import { formatMoney } from "@/lib/format";
 import { fetchPlanCatalog, type PlanCatalogEntry } from "@/lib/api/platform-pricing";
 import {
   applyBusinessCapabilities,
@@ -86,7 +87,7 @@ const FIELD_COPY: Record<FieldKey, string> = {
   adminEmail: "Enter a valid email address.",
   adminUsername: "Use 3 to 50 characters.",
   adminPassword:
-    "Use 8 or more characters with an upper-case letter, a lower-case letter and a number or symbol.",
+    "Use 8 or more characters with an uppercase letter, a lowercase letter and a number or symbol.",
 };
 
 /** Fixed copy for a trial with no usable length (client guard and the server's TENANT_TRIAL_DAYS_REQUIRED). */
@@ -178,7 +179,7 @@ function priceText(entry: PlanCatalogEntry | undefined): string | null {
   if (!entry || entry.isCustom || entry.monthlyPrice == null) return null;
   const n = Number(entry.monthlyPrice);
   if (!Number.isFinite(n)) return null;
-  return `$${Number.isInteger(n) ? n : n.toFixed(2)}/month`;
+  return `${formatMoney(n)}/month`;
 }
 
 export default function AdminCreateTenantPage() {
@@ -573,9 +574,9 @@ export default function AdminCreateTenantPage() {
           href="/admin/tenants"
           className="admin-tap-text text-sm text-slate-400 hover:text-slate-300"
         >
-          ← Back to Tenants
+          ← Back to tenants
         </Link>
-        <h1 className="text-2xl font-bold text-white">Create New Tenant</h1>
+        <h1 className="text-2xl font-bold text-white">Create tenant</h1>
       </div>
 
       <div className="mx-auto max-w-[640px]">
@@ -631,7 +632,7 @@ export default function AdminCreateTenantPage() {
               </div>
             ) : (
               <>
-                <p className="font-semibold text-green-400">Tenant created successfully!</p>
+                <p className="font-semibold text-green-400">Tenant created</p>
                 <p className="mt-1 text-sm text-green-300">
                   Slug: <span className="font-mono">{success.slug}</span>
                 </p>
@@ -796,16 +797,16 @@ export default function AdminCreateTenantPage() {
                   role="status"
                   data-testid="test-tenant-notice"
                 >
-                  This will be a TEST tenant: its slug matches a test-tenant pattern.
+                  This will be a test tenant: its slug matches a test-tenant pattern.
                 </p>
               )}
             </div>
 
             {/* Business Name */}
             <div className="flex flex-col gap-1.5">
-              <label className="text-sm font-medium text-slate-300">Business Name</label>
+              <label className="text-sm font-medium text-slate-300">Business name</label>
               <input
-                aria-label="Business Name"
+                aria-label="Business name"
                 value={form.businessName}
                 onChange={onChange("businessName")}
                 placeholder="e.g. Acme Foods Ltd."
@@ -859,9 +860,9 @@ export default function AdminCreateTenantPage() {
 
           {/* Admin Email */}
           <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium text-slate-300">Admin Email</label>
+            <label className="text-sm font-medium text-slate-300">Admin email</label>
             <input
-              aria-label="Admin Email"
+              aria-label="Admin email"
               type="email"
               value={form.adminEmail}
               onChange={onChange("adminEmail")}
@@ -875,9 +876,9 @@ export default function AdminCreateTenantPage() {
 
           {/* Admin Username */}
           <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium text-slate-300">Admin Username</label>
+            <label className="text-sm font-medium text-slate-300">Admin username</label>
             <input
-              aria-label="Admin Username"
+              aria-label="Admin username"
               value={form.adminUsername}
               onChange={onChange("adminUsername")}
               placeholder="acme_admin"
@@ -891,11 +892,11 @@ export default function AdminCreateTenantPage() {
           {/* Admin Password */}
           <div className="flex flex-col gap-1.5">
             <label className="text-sm font-medium text-slate-300">
-              Admin Password <span className="font-normal text-slate-400">(optional)</span>
+              Admin password <span className="font-normal text-slate-400">(optional)</span>
             </label>
             <div className="relative">
               <input
-                aria-label="Admin Password"
+                aria-label="Admin password"
                 type={showPw ? "text" : "password"}
                 value={form.adminPassword}
                 onChange={onChange("adminPassword")}
@@ -1047,7 +1048,7 @@ export default function AdminCreateTenantPage() {
               disabled={isLoading}
               className="flex min-h-[44px] w-full items-center justify-center rounded-lg bg-indigo-600 px-6 text-sm font-semibold text-white transition-colors hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
             >
-              {isLoading ? "Creating…" : "Create Tenant"}
+              {isLoading ? "Creating…" : "Create tenant"}
             </button>
           </div>
         </form>

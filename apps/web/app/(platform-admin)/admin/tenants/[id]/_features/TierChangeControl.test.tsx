@@ -180,7 +180,7 @@ describe("TierChangeControl — preview before apply (B539)", () => {
     await screen.findByTestId("preview-diff");
     fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
 
-    expect(await screen.findByRole("button", { name: "Applying..." })).toBeDisabled();
+    expect(await screen.findByRole("button", { name: "Applying…" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
     fireEvent.keyDown(document, { key: "Escape" });
     expect(screen.getByText("Preview plan change", { selector: "h3" })).toBeInTheDocument();
