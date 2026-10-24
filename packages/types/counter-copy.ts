@@ -13,7 +13,15 @@ export const COUNTER_COPY = {
   completeConfirm: "Complete",
   completed: "Completed at counter.",
   completedEmailed: "Completed at counter. The invoice was emailed to the customer.",
+  /** SA-913 R8: the run confirm's action; it re-sends the same request with `takeOffRun: true` */
+  takeOffRun: "Take off run and complete",
 } as const;
+
+/** SA-913 R8: the run confirm's sentence, naming the driver the api sent with COUNTER_COMPLETE_ON_RUN. */
+export function onDriverRunCopy(driverName: unknown): string {
+  const who = typeof driverName === "string" && driverName ? `${driverName}'s` : "a delivery";
+  return `This order is on ${who} run. Completing it here takes it off the run.`;
+}
 
 /**
  * I-120 (#3689 review MUST 4): the fixed copy of a refused "Complete at counter" (and pickup hand-over), shared by web
@@ -30,18 +38,16 @@ export function counterCompleteRefusalCopy(
   money: (n: number) => string,
 ): string | null {
   switch (body?.code) {
-    // I-120 R8/R9 (owner 7a), all refused before any write
+    // I-120 R8/R9 (owner 7a, SA-913), all refused before any write
     case API_ERROR_CODES.COUNTER_COMPLETE_SHIPPED:
       return "Nothing changed. This order has shipped with the carrier.";
-    case API_ERROR_CODES.COUNTER_COMPLETE_ON_RUN: {
-      const who =
-        typeof body.driverName === "string" && body.driverName
-          ? `${body.driverName}'s`
-          : "a delivery";
-      return `Nothing changed. This order is on ${who} run. Completing it here takes it off the run.`;
-    }
+    case API_ERROR_CODES.COUNTER_COMPLETE_ON_RUN:
+      return `Nothing changed. ${onDriverRunCopy(body.driverName)}`;
     case API_ERROR_CODES.COUNTER_COMPLETE_STOP_STARTED:
-      return "Nothing changed. The driver has already started this stop.";
+      return "Nothing changed. The driver has started this stop. Finish it on the route.";
+    // SA-913 R8: the take-off lost a race (a dispatch or the run finishing moved the link); the removal rolled back
+    case API_ERROR_CODES.ORDER_RUN_LINK_CHANGED:
+      return "Nothing changed. This order's delivery run just changed. Reload and try again.";
     case API_ERROR_CODES.COUNTER_COMPLETE_UNAVAILABLE:
       return "Nothing changed. This business doesn't hand orders over at the store.";
     case API_ERROR_CODES.CREDIT_LIMIT_EXCEEDED: {

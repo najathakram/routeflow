@@ -44,6 +44,8 @@ type Body = {
     reference?: string;
     recordAnyway?: boolean;
   };
+  /** SA-913 R8: the confirmed re-send after COUNTER_COMPLETE_ON_RUN (same key) */
+  takeOffRun?: boolean;
 };
 
 /**
@@ -270,20 +272,31 @@ export function PickupCompleteDialog({
                     Retry
                   </Button>
                 )}
-                <Button
-                  type="button"
-                  onClick={confirm}
-                  loading={complete.isPending}
-                  disabled={due === null}
-                >
-                  {completeMode
-                    ? COUNTER_COPY.completeConfirm
-                    : handOver
-                      ? "Hand over"
-                      : nothingToCollect
-                        ? "Confirm picked up"
-                        : "Picked up"}
-                </Button>
+                {/* SA-913 R8: the order is on a driver's run; the alert names the driver, this re-sends with the confirm */}
+                {errorCode === API_ERROR_CODES.COUNTER_COMPLETE_ON_RUN ? (
+                  <Button
+                    type="button"
+                    loading={complete.isPending}
+                    onClick={() => void send({ ...lastBody.current, takeOffRun: true })}
+                  >
+                    {COUNTER_COPY.takeOffRun}
+                  </Button>
+                ) : (
+                  <Button
+                    type="button"
+                    onClick={confirm}
+                    loading={complete.isPending}
+                    disabled={due === null}
+                  >
+                    {completeMode
+                      ? COUNTER_COPY.completeConfirm
+                      : handOver
+                        ? "Hand over"
+                        : nothingToCollect
+                          ? "Confirm picked up"
+                          : "Picked up"}
+                  </Button>
+                )}
               </>
             )}
           </>

@@ -39,8 +39,8 @@ jest.mock("@/lib/api-client", () => ({
 /**
  * I-120 PR-2 (SA-861 rules 1-3, G7; the lead's rulings 2026-10-23): "Complete at counter" on an open order. It is a
  * SECONDARY action next to the order's primary status action. It never shows beside the pickup hand-over (the same
- * engine: one control per action), and it is held where OWNER-QUEUE 7a applies (R8/R9: with a driver or carrier, or
- * shipped). The dialog is the till's own payment step in complete mode, and confirm POSTs pickup-complete.
+ * engine: one control per action), and it is never offered once shipped with the carrier (SA-913 R9). An order on a
+ * driver's run is offered: the api asks to confirm taking it off the run (R8). The dialog is the till's own payment step in complete mode, and confirm POSTs pickup-complete.
  */
 let caps: Record<string, unknown> | null = {
   counter: "optional",
@@ -143,34 +143,22 @@ describe("order page: Complete at counter (I-120 PR-2)", () => {
     expect(!!completeButton() && !!handOverButton()).toBe(false);
   });
 
-  // OWNER-QUEUE 7a (R8/R9 + SA-905 LOW): each held case beside its OFFERED twin, the same wait before both, so an absence
-  // can never pass because the gate had not answered yet (a COMPLETE_AT_COUNTER_AWAITS_OWNER_7A=false mutation turns it red).
+  // SA-913 R9: each hidden case beside its OFFERED twin, the same wait before both, so an absence can never pass because the
+  // gate had not answered yet.
   it.each([
     [
-      "a driver (R8)",
-      "OUT_FOR_DELIVERY",
-      { fulfillPath: "ROUTE" },
-      { status: "CONFIRMED", extra: { fulfillPath: "ROUTE" } },
-    ],
-    [
-      "a carrier (R8)",
+      "with the carrier (OUT_FOR_DELIVERY)",
       "OUT_FOR_DELIVERY",
       { fulfillPath: "SHIP" },
       { status: "CONFIRMED", extra: { fulfillPath: "SHIP" } },
     ],
     [
-      "shipped (R9)",
+      "shipped (shippedAt)",
       "CONFIRMED",
       { fulfillPath: "SHIP", shippedAt: "2026-10-20T10:00:00.000Z" },
       { status: "CONFIRMED", extra: { fulfillPath: "SHIP", shippedAt: null } },
     ],
-    [
-      "an active run (Q1, SA-905 LOW)",
-      "PENDING",
-      { routeRun: { status: "SCHEDULED" } },
-      { status: "PENDING", extra: { routeRun: { status: "COMPLETED" } } },
-    ],
-  ])("OWNER-QUEUE 7a: %s is held, while its twin is offered", async (_n, status, extra, twin) => {
+  ])("R9: %s is not offered, while its twin is", async (_n, status, extra, twin) => {
     await open(twin.status, twin.extra); // positive control: the gate has answered and offers the twin
     expect(await screen.findByRole("button", { name: COMPLETE })).toBeInTheDocument();
     cleanup();
@@ -178,6 +166,17 @@ describe("order page: Complete at counter (I-120 PR-2)", () => {
     expect(screen.getAllByRole("button").length).toBeGreaterThan(0); // the page rendered its actions
     expect(completeButton()).toBeNull();
   });
+
+  it.each([
+    ["OUT_FOR_DELIVERY on a route", "OUT_FOR_DELIVERY", { fulfillPath: "ROUTE" }],
+    ["on an active run", "PENDING", { routeRun: { status: "SCHEDULED" } }],
+  ])(
+    "R8 (SA-913): %s is offered (the api asks to take it off the run)",
+    async (_n, status, extra) => {
+      await open(status, extra);
+      expect(await screen.findByRole("button", { name: COMPLETE })).toBeInTheDocument();
+    },
+  );
 
   it("a counter sale, or a business that cannot hand over at the store: not offered", async () => {
     await open("PENDING", { counterSale: true, fulfillPath: "PICKUP" });
@@ -218,5 +217,45 @@ describe("order page: Complete at counter (I-120 PR-2)", () => {
         "Completed at counter. The invoice was emailed to the customer.",
       ),
     ).toBeInTheDocument();
+  });
+
+  it("R8 (SA-913): COUNTER_COMPLETE_ON_RUN names the driver; the confirm re-sends the same request with takeOffRun, same key", async () => {
+    post
+      .mockRejectedValueOnce({
+        response: {
+          status: 409,
+          data: { code: "COUNTER_COMPLETE_ON_RUN", driverName: "Sam", runId: "run-1" },
+        },
+      })
+      .mockResolvedValueOnce({
+        data: {
+          orderId: "o1",
+          orderNumber: "ORD-1",
+          invoiceId: "i1",
+          invoiceNumber: "INV-1",
+          total: 10,
+          paid: 10,
+          balanceDue: 0,
+          paymentRecorded: true,
+          emailed: false,
+        },
+      });
+    await open("CONFIRMED", { routeRun: { status: "SCHEDULED" } });
+    fireEvent.click(await screen.findByRole("button", { name: COMPLETE }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Card" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: /^complete$/i }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "Nothing changed. This order is on Sam's run. Completing it here takes it off the run.",
+    );
+    expect(within(dialog).queryByRole("button", { name: /^complete$/i })).toBeNull();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Take off run and complete" }));
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
+    const [, first, firstConfig] = post.mock.calls[0];
+    const [, second, secondConfig] = post.mock.calls[1];
+    expect(first.takeOffRun).toBeUndefined();
+    expect(second).toEqual({ ...first, takeOffRun: true });
+    expect(secondConfig.headers["Idempotency-Key"]).toBe(firstConfig.headers["Idempotency-Key"]);
+    expect(await within(dialog).findByText("Completed at counter.")).toBeInTheDocument();
   });
 });

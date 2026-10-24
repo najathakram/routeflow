@@ -13,6 +13,7 @@ import {
   COMPLETE_MODE_ERROR_COPY,
   COUNTER_COPY,
   counterCompleteRefusalCopy,
+  onDriverRunCopy,
 } from "@routeflow/types/counter-copy";
 
 import { isPosOrder } from "./order-status-flow";
@@ -387,6 +388,23 @@ export function pickupCompleteErrorCopy(err: unknown, complete = false): string 
   }
 }
 
+/**
+ * SA-913 R8 (mirrors web's PickupCompleteDialog): a 409 COUNTER_COMPLETE_ON_RUN is a question, not a failure. The confirm names
+ * the driver and its action re-sends the SAME request (same Idempotency-Key) with `takeOffRun: true`. null = not that 409.
+ */
+export function pickupRunConfirm(
+  err: unknown,
+): { title: string; message: string; action: string } | null {
+  const data = (err as { response?: { data?: { code?: unknown; driverName?: unknown } } } | null)
+    ?.response?.data;
+  if (data?.code !== API_ERROR_CODES.COUNTER_COMPLETE_ON_RUN) return null;
+  return {
+    title: COUNTER_COPY.completeAtCounter,
+    message: onDriverRunCopy(data.driverName),
+    action: COUNTER_COPY.takeOffRun,
+  };
+}
+
 export const POS_READY_FAILED = "Couldn't mark the order ready for pickup. Try again.";
 export const POS_SWITCH_FAILED = "Couldn't switch to delivery. Check the order and try again.";
 export const POS_SHIP_FAILED = "Couldn't ship by carrier. Check the order and try again.";
@@ -643,7 +661,6 @@ export function completeAtCounterShown(
         fulfillPath?: string | null;
         counterSale?: boolean | null;
         shippedAt?: string | null;
-        routeRun?: { status?: string } | null;
       }
     | null
     | undefined,
@@ -661,7 +678,6 @@ export function completeAtCounterShown(
     fulfillPath: order.fulfillPath,
     counterSale: order.counterSale,
     shippedAt: order.shippedAt,
-    runStatus: order.routeRun?.status, // SA-905 LOW: an active run is held for 7a
   });
 }
 

@@ -25,7 +25,7 @@ export function CompleteAtCounterDialog(props: {
 
 /**
  * The action-bar slot: a SECONDARY tier holding the button, in the PENDING, CONFIRMED and OUT_FOR_DELIVERY rows (the
- * shared rule decides; OUT_FOR_DELIVERY on a route stays held for OWNER-QUEUE 7a until the constant flips). `status` is
+ * shared rule decides; an order on a driver's run is offered and the dialog confirms taking it off the run). `status` is
  * the page's LOCAL status, the one the rows render from, so the hand-over and this button never flash together.
  */
 export function CompleteAtCounterAction(props: {
@@ -45,7 +45,7 @@ export function CompleteAtCounterAction(props: {
  * invoice, take payment like the till) through the pickup hand-over engine. A SECONDARY action next to the order's primary
  * status action. Where it shows is the ONE shared rule `completeAtCounterOffered` (@routeflow/pricing): the till
  * permission and a business that hands over at the store, an open order, never beside the pickup hand-over (the same
- * engine), and held for OWNER-QUEUE 7a. The server refuses everything else on its own.
+ * engine), never shipped with the carrier (SA-913 R9). The server refuses everything else on its own.
  */
 export function CompleteAtCounterButton({
   order,
@@ -67,7 +67,6 @@ export function CompleteAtCounterButton({
       fulfillPath: order.fulfillPath,
       counterSale: (order as { counterSale?: boolean | null }).counterSale,
       shippedAt: (order as { shippedAt?: string | null }).shippedAt,
-      runStatus: (order as { routeRun?: { status?: string } | null }).routeRun?.status,
     });
   if (!offered) return null;
   return (

@@ -78,7 +78,7 @@ describe("pickupCompleteErrorCopy: R8/R9 refusals (owner 7a)", () => {
   });
   it("the driver has started the stop", () => {
     expect(pickupCompleteErrorCopy(refusal({ code: "COUNTER_COMPLETE_STOP_STARTED" }))).toBe(
-      "Nothing changed. The driver has already started this stop.",
+      "Nothing changed. The driver has started this stop. Finish it on the route.",
     );
   });
 });

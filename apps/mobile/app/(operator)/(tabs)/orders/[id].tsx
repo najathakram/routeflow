@@ -84,6 +84,7 @@ import {
   POS_COPY,
   POS_READY_FAILED,
   pickupCompleteErrorCopy,
+  pickupRunConfirm,
   decidePickupResponse,
   withPickupRecordAnyway,
   completeAtCounterShown,
@@ -1378,7 +1379,19 @@ export default function OrderDetailScreen() {
               showToast(d.message);
               refetch();
             },
-            onError: (e) => setHandOverError(pickupCompleteErrorCopy(e, completeMode)),
+            onError: (e) => {
+              // SA-913 R8: on a driver's run: confirm, then the same request (same key) with takeOffRun
+              const runConfirm = pickupRunConfirm(e);
+              if (runConfirm)
+                return chooseAction(runConfirm.title, runConfirm.message, [
+                  { label: "Cancel", style: "cancel" },
+                  {
+                    label: runConfirm.action,
+                    onPress: () => submitHandOver({ ...body, takeOffRun: true }),
+                  },
+                ]);
+              setHandOverError(pickupCompleteErrorCopy(e, completeMode));
+            },
           });
         }}
       />

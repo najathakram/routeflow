@@ -30,10 +30,8 @@ describe("completeAtCounterShown (I-120 PR-2)", () => {
     );
   });
 
-  it("OWNER-QUEUE 7a (R8/R9): not with a driver or carrier, nor once shipped", () => {
-    expect(completeAtCounterShown(order("OUT_FOR_DELIVERY", "ROUTE"), "OPERATOR", caps)).toBe(
-      false,
-    );
+  it("R9 (SA-913): not with the carrier, nor once shipped", () => {
+    expect(completeAtCounterShown(order("OUT_FOR_DELIVERY", "SHIP"), "OPERATOR", caps)).toBe(false);
     expect(
       completeAtCounterShown(
         order("CONFIRMED", "SHIP", { shippedAt: "2026-10-20T10:00:00Z" }),
@@ -43,14 +41,15 @@ describe("completeAtCounterShown (I-120 PR-2)", () => {
     ).toBe(false);
   });
 
-  it("OWNER-QUEUE 7a (Q1), SA-905 LOW: hidden on an ACTIVE run", () => {
+  it("R8 (SA-913): with a driver, or on an active run: shown (the api asks to take it off the run)", () => {
+    expect(completeAtCounterShown(order("OUT_FOR_DELIVERY", "ROUTE"), "OPERATOR", caps)).toBe(true);
     expect(
       completeAtCounterShown(
         order("PENDING", "ROUTE", { routeRun: { status: "IN_PROGRESS" } }),
         "OPERATOR",
         caps,
       ),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("a role without the till, a business that cannot hand over at the store, an unknown answer: hidden", () => {
@@ -79,6 +78,12 @@ describe("order screen wiring (source-pinned: RN screens aren't renderable in th
     expect(src).toMatch(/setCompleteMode\(true\)/);
     expect(src).toMatch(
       /<PosHandOverSheet[\s\S]*?copy=\{completeAtCounterSheetCopy\(completeMode\)\}/,
+    );
+  });
+
+  it("SA-913 R8: a 409 COUNTER_COMPLETE_ON_RUN asks first, then re-sends the same body with takeOffRun", () => {
+    expect(src).toMatch(
+      /const runConfirm = pickupRunConfirm\(e\);[\s\S]*?onPress: \(\) => submitHandOver\(\{ \.\.\.body, takeOffRun: true \}\)/,
     );
   });
 });
@@ -158,7 +163,26 @@ describe("pickupCompleteErrorCopy: R8/R9 refusals (mobile)", () => {
       pickupCompleteErrorCopy(refusal({ code: "COUNTER_COMPLETE_ON_RUN", driverName: "Sam" })),
     ).toBe("Nothing changed. This order is on Sam's run. Completing it here takes it off the run.");
     expect(pickupCompleteErrorCopy(refusal({ code: "COUNTER_COMPLETE_STOP_STARTED" }))).toBe(
-      "Nothing changed. The driver has already started this stop.",
+      "Nothing changed. The driver has started this stop. Finish it on the route.",
     );
+  });
+});
+
+// SA-913 R8: the run confirm (mirrors web): a question naming the driver, its action re-sends with takeOffRun.
+describe("pickupRunConfirm (mobile)", () => {
+  const { pickupRunConfirm } = require("../lib/pos-mode");
+  const refusal = (data: Record<string, unknown>) => ({ response: { status: 409, data } });
+  it("COUNTER_COMPLETE_ON_RUN: the driver's name and the take-off action", () => {
+    expect(
+      pickupRunConfirm(refusal({ code: "COUNTER_COMPLETE_ON_RUN", driverName: "Sam" })),
+    ).toEqual({
+      title: "Complete at counter",
+      message: "This order is on Sam's run. Completing it here takes it off the run.",
+      action: "Take off run and complete",
+    });
+  });
+  it("any other refusal is not a confirm", () => {
+    expect(pickupRunConfirm(refusal({ code: "COUNTER_COMPLETE_STOP_STARTED" }))).toBeNull();
+    expect(pickupRunConfirm(new Error("network"))).toBeNull();
   });
 });

@@ -1,8 +1,4 @@
-import {
-  COMPLETE_AT_COUNTER_AWAITS_OWNER_7A,
-  completeAtCounterOffered,
-  pickupHandOverOffered,
-} from "./complete-at-counter";
+import { completeAtCounterOffered, pickupHandOverOffered } from "./complete-at-counter";
 
 /**
  * I-120 PR-2 (SA-861 rules 2-3, G7; the lead's rulings 2026-10-23): where "Complete at counter" is OFFERED. Web and mobile
@@ -35,19 +31,16 @@ describe("completeAtCounterOffered", () => {
         expect(offered(status, path) && pickupHandOverOffered(status, path)).toBe(false);
   });
 
-  it("OWNER-QUEUE 7a (Q1/Q2, R8/R9) holds: an order with a driver or a carrier, and a shipped order, are not offered", () => {
-    expect(COMPLETE_AT_COUNTER_AWAITS_OWNER_7A).toBe(true); // flip with the owner's answers, and update these cases
-    expect(offered("OUT_FOR_DELIVERY", "ROUTE")).toBe(false); // R8 / Q1
-    expect(offered("OUT_FOR_DELIVERY", "SHIP")).toBe(false); // R8 / Q1
-    expect(offered("CONFIRMED", "SHIP", { shippedAt: "2026-10-20T10:00:00Z" })).toBe(false); // R9 / Q2
+  it("R9 (SA-913): shipped with the carrier is not offered, the api's COUNTER_COMPLETE_SHIPPED predicate", () => {
+    expect(offered("CONFIRMED", "SHIP", { shippedAt: "2026-10-20T10:00:00Z" })).toBe(false);
+    expect(offered("OUT_FOR_DELIVERY", "SHIP")).toBe(false);
     expect(offered("CONFIRMED", "SHIP", { shippedAt: null })).toBe(true);
   });
 
-  it("OWNER-QUEUE 7a (Q1), SA-905 LOW: an order on an ACTIVE run (SCHEDULED / IN_PROGRESS) is not offered", () => {
-    expect(offered("PENDING", "ROUTE", { runStatus: "SCHEDULED" })).toBe(false);
-    expect(offered("CONFIRMED", "ROUTE", { runStatus: "IN_PROGRESS" })).toBe(false);
-    expect(offered("CONFIRMED", "ROUTE", { runStatus: "COMPLETED" })).toBe(true); // a finished run's link is released at the switch
-    expect(offered("CONFIRMED", "ROUTE", { runStatus: null })).toBe(true);
+  it("R8 (SA-913): an order with a driver IS offered; the api asks to confirm taking it off the run", () => {
+    expect(offered("OUT_FOR_DELIVERY", "ROUTE")).toBe(true);
+    // the run never hides it now (the old 7a input is ignored, not read)
+    expect(offered("CONFIRMED", "ROUTE", { runStatus: "IN_PROGRESS" } as object)).toBe(true);
   });
 
   it("a counter sale keeps the till", () => {
