@@ -31,6 +31,25 @@ describe("PosHandOverSheet copy", () => {
     expect(src).toContain("HAND_OVER_SHEET_COPY.cashReceived");
     expect(src).not.toContain("Amount ($)");
   });
+  // #3716 review N1/N2: with the label no longer saying "unavailable", the guard alone stops a payment against a balance
+  // that isn't known, so it is pinned, and the button looks and announces disabled whenever it is.
+  describe("the primary button while the balance is unknown", () => {
+    const button = (() => {
+      const at = src.indexOf("handOverPrimaryLabel(");
+      const start = src.lastIndexOf("<Pressable", at);
+      return src.slice(start, at);
+    })();
+    it("is disabled until the balance is ready (the only guard against paying an unknown balance)", () => {
+      expect(button).toContain("disabled={submitting || !ready}");
+    });
+    it("is dimmed whenever it is disabled", () => {
+      expect(button).toMatch(/\(submitting \|\| !ready\) && \{ opacity: 0\.5 \}/);
+    });
+    it("tells VoiceOver it is disabled", () => {
+      expect(button).toContain("accessibilityState={{ disabled: submitting || !ready }}");
+    });
+  });
+
   it("the primary button reads handOverPrimaryLabel, and no state label is left in the sheet", () => {
     expect(src).toContain("handOverPrimaryLabel(");
     expect(src).not.toContain("Balance unavailable");

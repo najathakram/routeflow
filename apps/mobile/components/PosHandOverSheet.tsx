@@ -168,10 +168,11 @@ export function PosHandOverSheet({
           )}
           {problem || error ? <Text style={styles.error}>{problem ?? error}</Text> : null}
           <Pressable
-            style={[styles.primary, submitting && { opacity: 0.5 }]}
+            style={[styles.primary, (submitting || !ready) && { opacity: 0.5 }]}
             disabled={submitting || !ready}
             onPress={() => submit(false)}
             accessibilityRole="button"
+            accessibilityState={{ disabled: submitting || !ready }}
           >
             <Text style={styles.primaryText}>
               {handOverPrimaryLabel({
