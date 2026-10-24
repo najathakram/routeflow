@@ -5,8 +5,8 @@
  *
  * W-830 (owner 2026-10-24: "not the old native UIs"): with the shell ON no buyer and no staff user
  * reaches the old native `(customer)` screens. A buyer with a native session, a signed-out user on
- * a `(customer)` route, and anyone (buyer or staff) on native customer-login all land in the shell
- * as a buyer. The shell takes no path, so a deep link to a buyer page (BUG-B2-5 returnTo) lands on
+ * a `(customer)` route, and a signed-out user on native customer-login all land in the shell as a
+ * buyer; an operator on any of those lands in the operator shell. The shell takes no path, so a deep link to a buyer page (BUG-B2-5 returnTo) lands on
  * the shell home: the web's own buyer login and portal.
  */
 export const SHELL_ROUTE = "/(shell)/web";
@@ -24,6 +24,8 @@ export interface ShellGateInput {
   activeRole?: string | null;
   /** A native buyer session exists (W-830). */
   hasBuyerSession?: boolean;
+  /** The role the shell was opened with (the `role` param of the shell route), when in it. */
+  shellRole?: string | null;
 }
 
 /** Whether the segments are a native buyer screen: the `(customer)` group or customer-login. */
@@ -50,14 +52,13 @@ export function shellGate(s: ShellGateInput): { handled: boolean; to: string | n
 
   // Staff: operators / tenant admins get the web; drivers keep the native app.
   if (s.activeRole === "operator") {
-    if (inShell) return { handled: true, to: null };
-    // RF-087 let staff reach native customer-login to sign in to the buyer portal. That portal is
-    // the web now, so the same intent lands in the shell as a buyer (W-830).
-    const onCustomerLogin = s.segments[0] === "(auth)" && s.segments[1] === "customer-login";
-    return {
-      handled: true,
-      to: onCustomerLogin ? SHELL_BUYER_ROUTE : `${SHELL_ROUTE}?role=operator`,
-    };
+    // Route by the role the shell was opened with: an operator in a buyer-role shell (a deep link
+    // to customer-login, or a buyer shell left open when staff signed in) would otherwise be stuck
+    // there until a restart. A missing role param is the staff default.
+    if (inShell && s.shellRole !== "buyer") return { handled: true, to: null };
+    // RF-087 let staff reach native customer-login. That native screen is gone with the shell on:
+    // staff land in their own (operator) shell, never a buyer one (W-830).
+    return { handled: true, to: `${SHELL_ROUTE}?role=operator` };
   }
   // A driver (or an unresolved role) is the native gate's call — its driver branch moves anyone
   // off a non-driver route, the shell included.
@@ -70,8 +71,30 @@ export function shellGate(s: ShellGateInput): { handled: boolean; to: string | n
  * clear does NOT call the server's buyer logout: that revokes every refresh token of the account,
  * including the web session the shell is about to use.
  */
-export function shouldClearNativeBuyer(s: { shellOn: boolean; hasBuyer: boolean }): boolean {
-  return s.shellOn && s.hasBuyer;
+export function shouldClearNativeBuyer(s: {
+  shellOn: boolean;
+  hasBuyer: boolean;
+  /** Any buyer key stored: an expired access token leaves a refresh token (buyer is then null). */
+  hasStoredSession?: boolean;
+}): boolean {
+  return s.shellOn && (s.hasBuyer || !!s.hasStoredSession);
+}
+
+/**
+ * W-830: with the shell unavailable (a store build with no usable web URL) the old native screens
+ * for the web roles must not render. Drivers and the plain auth screens stay (a driver still has
+ * to sign in natively).
+ */
+export function shellBlocksRoute(mode: string, segments: string[]): boolean {
+  if (mode !== "unavailable") return false;
+  const g = segments[0];
+  return (
+    g === "(customer)" ||
+    g === "(operator)" ||
+    g === "(tenant)" ||
+    g === "(shell)" ||
+    (g === "(auth)" && segments[1] === "customer-login")
+  );
 }
 
 /** Where a "buyer" entry button goes: the shell when it is on, native customer-login otherwise. */

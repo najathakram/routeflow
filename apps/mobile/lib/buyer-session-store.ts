@@ -6,6 +6,7 @@ import {
   setActiveSeller as persistActiveSeller,
   buyerLogout,
   clearBuyerSessionLocal,
+  hasStoredBuyerSession,
   registerBuyerSessionExpiredHandler,
   type BuyerUser,
   type BuyerSeller,
@@ -17,6 +18,8 @@ import { useCartStore } from "../store/cartStore";
 interface BuyerSessionState {
   buyer: BuyerUser | null;
   activeSeller: BuyerSeller | null;
+  /** W-830: any buyer key is stored (an expired access token still leaves a refresh token). */
+  hasStoredSession: boolean;
   isLoading: boolean;
   initialize: () => Promise<void>;
   setBuyer: (buyer: BuyerUser | null) => void;
@@ -29,6 +32,7 @@ interface BuyerSessionState {
 export const useBuyerSessionStore = create<BuyerSessionState>()((set) => ({
   buyer: null,
   activeSeller: null,
+  hasStoredSession: false,
   isLoading: true,
 
   initialize: async () => {
@@ -38,10 +42,14 @@ export const useBuyerSessionStore = create<BuyerSessionState>()((set) => ({
     // -namespaced keys) left the app on the splash spinner forever. A failed
     // read must resolve to "signed out", never to an eternal gate.
     try {
-      const [buyer, seller] = await Promise.all([getStoredBuyer(), getActiveSeller()]);
-      set({ buyer, activeSeller: seller });
+      const [buyer, seller, stored] = await Promise.all([
+        getStoredBuyer(),
+        getActiveSeller(),
+        hasStoredBuyerSession(),
+      ]);
+      set({ buyer, activeSeller: seller, hasStoredSession: stored });
     } catch {
-      set({ buyer: null, activeSeller: null });
+      set({ buyer: null, activeSeller: null, hasStoredSession: false });
     } finally {
       set({ isLoading: false });
     }
@@ -78,7 +86,7 @@ export const useBuyerSessionStore = create<BuyerSessionState>()((set) => ({
       await clearBuyerSessionLocal();
     } finally {
       useCartStore.getState().clear();
-      set({ buyer: null, activeSeller: null });
+      set({ buyer: null, activeSeller: null, hasStoredSession: false });
     }
   },
 }));

@@ -253,6 +253,20 @@ export async function clearBuyerSessionLocal(): Promise<void> {
   clearBuyerSubmitKey();
 }
 
+/**
+ * W-830: whether ANY buyer key is stored on this device. `getStoredBuyer` is null for an expired
+ * access token even while a valid refresh token sits next to it, so the shell handover asks this
+ * instead: a stored refresh token must be cleared too.
+ */
+export async function hasStoredBuyerSession(): Promise<boolean> {
+  const [access, refresh, seller] = await Promise.all([
+    storage.get(BUYER_KEYS.accessToken),
+    storage.get(BUYER_KEYS.refreshToken),
+    storage.get(BUYER_KEYS.activeSeller),
+  ]);
+  return !!access || !!refresh || !!seller;
+}
+
 export async function buyerRefreshTokens(): Promise<BuyerAuthResponse | null> {
   const refreshToken = await storage.get(BUYER_KEYS.refreshToken);
   if (!refreshToken) return null;

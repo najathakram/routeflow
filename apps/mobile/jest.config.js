@@ -26,6 +26,8 @@ module.exports = {
       {
         tsconfig: {
           strict: false,
+          // W-830: the render tests of app/_layout.tsx and the redirect screens compile real .tsx.
+          jsx: "react-jsx",
           esModuleInterop: true,
           allowSyntheticDefaultImports: true,
           moduleResolution: "node",

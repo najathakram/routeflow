@@ -82,3 +82,4 @@ variables on every build profile, but `eas update` takes its env from the shell 
   same shell, with the same variables, as the publish.
 - **Railway mobile web export:** stays native on purpose. `react-native-webview` has no web
   implementation, so the `Dockerfile` sets `EXPO_PUBLIC_WEB_SHELL=off` outright.
+- **Runtime backstop:** if a store build still reaches a device with no usable web URL, the app shows an "Update RouteFlow" screen for the buyer and staff screens instead of the old native ones (`shellMode` in `lib/web-shell/shell-config.ts`). Drivers and the sign-in screens still work. Development builds without a URL keep the native screens.

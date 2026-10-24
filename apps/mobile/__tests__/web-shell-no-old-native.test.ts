@@ -3,7 +3,7 @@
  * staff user may reach the old native buyer screens. Pure routing decisions, pinned here:
  *   1. a buyer with a native session, a signed-out buyer on a (customer) route, and a buyer who
  *      opened native customer-login all go to the shell (role=buyer);
- *   2. staff on customer-login (the RF-087 exemption) go to the shell too;
+ *   2. staff on customer-login (the RF-087 exemption) go to their own (operator) shell too;
  *   3. the native buyer session is cleared locally, so a later shell-off build finds no token;
  *   4. the (customer) layout and the entry buttons never offer the native route;
  *   5. the offline-drain "Open order" action never pushes an operator route the shell would bounce.
@@ -80,10 +80,10 @@ describe("shellGate: buyers (W-830 leak 1)", () => {
 describe("shellGate: staff on customer-login (W-830 leak 2, RF-087)", () => {
   const staff = { shellOn: true, hasStaffUser: true, hasBuyerSession: false };
 
-  it("sends an operator on native customer-login to the shell as a buyer", () => {
+  it("sends an operator on native customer-login to the operator shell (review nit 2: never stuck in a buyer shell)", () => {
     expect(
       shellGate({ ...staff, activeRole: "operator", segments: ["(auth)", "customer-login"] }),
-    ).toEqual({ handled: true, to: buyerShell });
+    ).toEqual({ handled: true, to: `${SHELL_ROUTE}?role=operator` });
   });
 
   it("an operator who reaches a (customer) route is moved to the shell, never the native page", () => {
