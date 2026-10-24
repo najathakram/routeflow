@@ -8,7 +8,7 @@
  * over the real `PlatformConfig` table (its original row is restored afterwards).
  *
  * Writers exercised through their real entry points: `BillingCronService.expireTrials` /
- * `applyScheduledCancellations`, `BillingService.suspendOverdueTenants` and the `customer.subscription.deleted`
+ * `applyScheduledCancellations`, `BillingService.reconcileCanceledSubscriptions` and the `customer.subscription.deleted`
  * webhook (`cancelFromStripe`), `DunningService.sweep` (the `enforced` pause), and
  * `SubscriptionMutationService.cancel` (a tenant admin's own trial cancel). A manual super-admin lock
  * (`PlatformAdminService.updateStatus`) must keep working while paused.
@@ -432,9 +432,9 @@ describeDb("SA-775 automatic locks pause (real Postgres)", () => {
     });
   });
 
-  // ─── row 3: suspendOverdueTenants ───────────────────────────────────────────
+  // ─── row 3: reconcileCanceledSubscriptions ───────────────────────────────────────────
 
-  describe("suspendOverdueTenants", () => {
+  describe("reconcileCanceledSubscriptions", () => {
     async function overdue(label: string, cls: TenantClass) {
       const t = await mkTenant(label, cls, TenantStatus.ACTIVE);
       const subId = `sub_${run}_${label}`;
@@ -447,31 +447,56 @@ describeDb("SA-775 automatic locks pause (real Postgres)", () => {
       return { t, subId };
     }
 
-    it("PRODUCTION, paused: no SUSPENDED, no notice, ONE skip record keyed by the Stripe sub id", async () => {
+    it("PRODUCTION, paused: no status write, no notice, ONE skip record keyed by the Stripe sub id, quiet repeat passes", async () => {
       await setSwitch("paused");
       const { t, subId } = await overdue("od-prod", TenantClass.PRODUCTION);
-      await billing.suspendOverdueTenants();
-      await billing.suspendOverdueTenants();
-      await billing.suspendOverdueTenants();
+      await billing.reconcileCanceledSubscriptions();
+      // SA-934 §3: the first pass records what Stripe said (the flag, the disarmed downgrade); a repeat writes nothing.
+      const afterFirst = await prisma.tenantSubscription.findUniqueOrThrow({
+        where: { tenantId: t },
+      });
+      await billing.reconcileCanceledSubscriptions();
+      await billing.reconcileCanceledSubscriptions();
+      const afterThird = await prisma.tenantSubscription.findUniqueOrThrow({
+        where: { tenantId: t },
+      });
+      expect(afterThird.updatedAt).toEqual(afterFirst.updatedAt);
       expect((await tenantRow(t)).status).toBe("ACTIVE");
       expect(notifySuspended.mock.calls.filter((c) => c[0] === t)).toHaveLength(0);
       expect(await events(t, BILLING_EVENTS.SUBSCRIPTION_SUSPENDED)).toHaveLength(0);
-      const c = await claims(t, "overdue_suspended");
+      expect(await events(t, BILLING_EVENTS.SUBSCRIPTION_CANCELED)).toHaveLength(0);
+      const c = await claims(t, "stripe_cancelled");
       expect(c).toHaveLength(1);
       expect(c[0].key).toBe(subId);
       expect(await audits(t)).toHaveLength(1);
     });
 
-    it("TEST class, paused: still SUSPENDED; PRODUCTION, unpaused: SUSPENDED", async () => {
+    it("TEST class, paused: still CANCELLED; PRODUCTION, unpaused: CANCELLED (never SUSPENDED); a webhook redelivery adds nothing", async () => {
       await setSwitch("paused");
       const test = await overdue("od-test", TenantClass.TEST);
-      await billing.suspendOverdueTenants();
-      expect((await tenantRow(test.t)).status).toBe("SUSPENDED");
+      await billing.reconcileCanceledSubscriptions();
+      expect((await tenantRow(test.t)).status).toBe("CANCELLED");
 
       await setSwitch("unpaused");
       const prod = await overdue("od-prod2", TenantClass.PRODUCTION);
-      await billing.suspendOverdueTenants();
-      expect((await tenantRow(prod.t)).status).toBe("SUSPENDED");
+      await billing.reconcileCanceledSubscriptions();
+      const row = await tenantRow(prod.t);
+      expect(row.status).toBe("CANCELLED");
+      expect(row.readOnlyReason).toBe("stripe_cancelled");
+      expect(await events(prod.t, BILLING_EVENTS.SUBSCRIPTION_CANCELED)).toHaveLength(1);
+      expect(await events(prod.t, BILLING_EVENTS.SUBSCRIPTION_SUSPENDED)).toHaveLength(0);
+      // the missed webhook finally redelivered: no second delta
+      await (billing as any).cancelFromStripe(
+        {
+          tenantId: prod.t,
+          stripeSubId: prod.subId,
+          planKey: "STARTER",
+          basePriceSnapshot: 349,
+          discount: 0,
+        },
+        "subscription_deleted",
+      );
+      expect(await events(prod.t, BILLING_EVENTS.SUBSCRIPTION_CANCELED)).toHaveLength(1);
     });
   });
 
