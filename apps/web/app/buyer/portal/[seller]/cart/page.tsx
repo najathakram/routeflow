@@ -45,7 +45,7 @@ import {
   isFulfilMethodNotOffered,
 } from "@/lib/buyer-fulfilment";
 import { buyerBlockedMessage, parseSellingRestricted } from "@/lib/api/selling-restricted";
-import { API_ERROR_CODES } from "@routeflow/types";
+import { API_ERROR_CODES, buyerNeedsStateCopy } from "@routeflow/types";
 import { isSellerUnavailableRefusal, sellerUnavailableCopy } from "@/lib/seller-unavailable";
 import { BUYER_INSUFFICIENT_STOCK_COPY } from "@/lib/buyer-backorder";
 import {
@@ -316,7 +316,8 @@ export default function BuyerCartPage() {
       }
       const restricted = parseSellingRestricted(err);
       if (restricted) {
-        setOrderError(buyerBlockedMessage(restricted));
+        // Row 672 (SA-924): a refusal that only waits on the buyer's own state asks for it.
+        setOrderError(buyerNeedsStateCopy(err) ?? buyerBlockedMessage(restricted));
         return;
       }
       if (isFulfilMethodNotOffered(err)) {

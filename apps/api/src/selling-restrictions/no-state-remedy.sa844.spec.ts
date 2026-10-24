@@ -240,6 +240,7 @@ describe("row 672 / SA-844: a sale whose state can't be resolved names its remed
             code: "SELLING_RESTRICTED",
             message: PORTAL_NEEDS_STATE_MESSAGE,
             blockedLines: [{ productId: "p1", productName: "Gummies" }],
+            remedy: "ADD_CUSTOMER_STATE",
           });
         },
       );
@@ -257,9 +258,9 @@ describe("row 672 / SA-844: a sale whose state can't be resolved names its remed
 
   it("R4: a buyer refused for a known ban keeps the ordinary copy (the state copy is only for a missing state)", async () => {
     customer([addr({ stateCode: "CA" })]);
-    expect((await reject(buyerCreate("ROUTE"))).message).toBe(
-      '"Gummies" can\'t be ordered right now.',
-    );
+    const body = await reject(buyerCreate("ROUTE"));
+    expect(body.message).toBe('"Gummies" can\'t be ordered right now.');
+    expect(body).not.toHaveProperty("remedy");
   });
 
   it("R5: no customer at all (an order-less staff judgement) is INDETERMINATE with no remedy to offer", async () => {

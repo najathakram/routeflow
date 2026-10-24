@@ -837,6 +837,7 @@ export class SellingRestrictionsService {
       code: API_ERROR_CODES.SELLING_RESTRICTED,
       message: needsOwnState ? PORTAL_NEEDS_STATE_MESSAGE : buyerRestrictedSummary(blockedLines),
       blockedLines,
+      ...(needsOwnState ? { remedy: "ADD_CUSTOMER_STATE" as const } : {}),
     };
     throw new ConflictException(body);
   }

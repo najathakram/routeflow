@@ -110,6 +110,12 @@ export default function CartScreen() {
             qc.invalidateQueries({ queryKey: BUYER_CAPABILITIES_KEY });
             return;
           }
+          // Row 672 (SA-924): a refusal that only waits on the buyer's own state asks for it.
+          const needsState = buyerNeedsStateCopy(e);
+          if (needsState) {
+            showToast(needsState);
+            return;
+          }
           // Row 531: the quantity and the box split disagreed; the server saved nothing.
           if (isQtySplitMismatch(e)) {
             showToast(BUYER_QTY_SPLIT_MISMATCH_COPY);

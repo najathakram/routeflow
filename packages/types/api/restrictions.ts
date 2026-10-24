@@ -102,6 +102,19 @@ export interface BuyerSellingRestrictedError {
   code: typeof API_ERROR_CODES.SELLING_RESTRICTED;
   message: string;
   blockedLines: BuyerBlockedLine[];
+  /** Row 672 (SA-924): set only when every refused line waits on the buyer's own state; the carts then show {@link PORTAL_NEEDS_STATE_MESSAGE}. */
+  remedy?: "ADD_CUSTOMER_STATE";
+}
+
+/** The buyer cart's copy for a refusal that waits on the buyer's own state, or null for any other error (web and mobile). */
+export function buyerNeedsStateCopy(err: unknown): string | null {
+  const res = (err as { response?: { status?: number; data?: { code?: string; remedy?: string } } })
+    ?.response;
+  return res?.status === 409 &&
+    res.data?.code === "SELLING_RESTRICTED" &&
+    res.data.remedy === "ADD_CUSTOMER_STATE"
+    ? PORTAL_NEEDS_STATE_MESSAGE
+    : null;
 }
 
 export type RestrictionJurisdiction = "FEDERAL" | "STATE";
