@@ -549,7 +549,11 @@ export class RegulatedLedgerService {
     // B297 PR4 (SA-819): bring the sale-record to `lines` writing ONLY WHAT CHANGED. The live returns / credit
     // notes stand (preserveReturns), exactly as the reverse-all-then-rewrite this replaced; an unchanged line
     // writes nothing, a changed one gets one REVERSAL + SALE pair, a removed one is reversed. After a void
-    // (INVOICE_ZEROED) every line is square, so an unvoid books every line fresh, as before.
+    // (INVOICE_ZEROED) a line with NO live return is square, so an unvoid books it fresh, as before. A line with
+    // a live return is NOT square: the void reversed only what remained (sold - returned), so with the return
+    // left standing the sync holds the returned quantity and writes one REVERSAL of that residue plus the fresh
+    // SALE. The pair nets to the same figures master's reverse-all-then-rewrite booked (pinned by the
+    // differential db spec, "void then unvoid with a live return").
     written += await this.syncInvoiceEntries({
       invoiceId: e.invoiceId,
       orderId: e.orderId,

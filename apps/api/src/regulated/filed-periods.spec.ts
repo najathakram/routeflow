@@ -1,3 +1,4 @@
+import { ForbiddenException } from "@nestjs/common";
 import { assertSalesNotLockedForEdit } from "./filing-lock";
 import * as fs from "fs";
 import * as path from "path";
@@ -178,7 +179,7 @@ describe("the legacy tobacco cron probe", () => {
     );
     await expect(
       findGeneratedTobaccoReport({ tobaccoReport: { findFirst } }, "", { year: 2026, month: 1 }),
-    ).rejects.toThrow(/tenantId/);
+    ).rejects.toBeInstanceOf(ForbiddenException);
   });
 
   it("the edit guard sends its tenant to the filings probe and to the ledger read", async () => {

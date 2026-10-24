@@ -14,7 +14,7 @@ describe("RegulatedFilingService", () => {
   let service: RegulatedFilingService;
   let prisma: ReturnType<typeof createMockPrisma>;
   let regulated: { getLedger: jest.Mock };
-  let storage: { upload: jest.Mock; presignedUrl: jest.Mock };
+  let storage: { upload: jest.Mock; delete: jest.Mock; presignedUrl: jest.Mock };
   let audit: { log: jest.Mock };
 
   // A period 2 years back is always complete regardless of the wall clock.

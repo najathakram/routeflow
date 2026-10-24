@@ -1,3 +1,4 @@
+import { ForbiddenException } from "@nestjs/common";
 import { monthRange } from "./period";
 
 /**
@@ -26,7 +27,7 @@ export type FilingsDb = {
 
 /** Fail closed: an empty tenant id would match no row (`tenantId: null`) and so read as "nothing is locked". */
 function requireTenant(tenantId: string): void {
-  if (!tenantId) throw new Error("A filed-period read needs an explicit tenantId");
+  if (!tenantId) throw new ForbiddenException("A filed-period read needs an explicit tenantId");
 }
 
 // ---------------------------------------------------------------------------------------------------------
