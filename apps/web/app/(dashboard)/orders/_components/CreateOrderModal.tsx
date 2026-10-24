@@ -127,6 +127,8 @@ import { STALE_CREDIT_COPY, isStaleCreditRefusal } from "./stale-credit-refusal"
 import { useCustomerChangeUndo } from "./use-customer-change-undo";
 import { useListboxNav } from "@/lib/use-listbox-nav";
 import { useAuth } from "@/lib/auth-context";
+import { CustomerAccountStrip } from "@/components/CustomerAccountStrip";
+import { CreditRefusalRecordPayment } from "@/components/CreditRefusalRecordPayment";
 import { useCounterSaleGate } from "@/lib/api/counter-sale";
 import { useHasAddon } from "@/lib/api/tobacco";
 import { SALES_AGENTS_ADDON, useOrderUiV2, useScanV2 } from "@/lib/api/addons";
@@ -2548,8 +2550,19 @@ export function CreateOrderModal({
 
           {/* API error */}
           {apiError && (
-            <div className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 ring-1 ring-red-200">
-              {apiError}
+            <div
+              data-testid="order-api-error"
+              className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 ring-1 ring-red-200"
+            >
+              <span>{apiError}</span>
+              {selectedCustomer && (
+                <CreditRefusalRecordPayment
+                  error={createOrder.error}
+                  customerId={selectedCustomer.id}
+                  customerName={selectedCustomer.businessName}
+                  onPaid={() => createOrder.reset()}
+                />
+              )}
             </div>
           )}
 
@@ -2647,6 +2660,13 @@ export function CreateOrderModal({
                   </p>
                 )}
               </div>
+            )}
+
+            {selectedCustomer && (
+              <CustomerAccountStrip
+                customerId={selectedCustomer.id}
+                customerName={selectedCustomer.businessName}
+              />
             )}
 
             {selectedCustomer && (

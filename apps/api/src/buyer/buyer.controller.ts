@@ -64,6 +64,7 @@ import {
   normalizeBoxUnawareSnapshots,
 } from "../orders/merge-items";
 import { withAdvisoryLock } from "../common/db-locks";
+import { logDiscountedSkip, mergeBlockedByDiscount } from "../orders/merge-discount-guard";
 import { overdueCutoff } from "../common/calendar-date";
 import { tenantTimeZone } from "../common/tenant-time-zone";
 import { summarizeOpenInvoices } from "../invoices/invoice-balance-classify";
@@ -658,6 +659,12 @@ export class BuyerController {
                 );
                 return { orderId: replayed.orderId, replayed: true };
               }
+            }
+            // W-762 / SA-918: never fold into an order that carries an order discount (SA-780 decides the
+            // allocation): the cart becomes its own order. After the replay branch, so a landed fold still replays.
+            if (mergeBlockedByDiscount([activeOrder])) {
+              logDiscountedSkip("buyer.createOrder", ctx.customerId);
+              return null;
             }
             // Row 718: the cart's delivery day is a CHANGE of this order's date. A day before the TENANT's today is refused
             // (400 DELIVERY_DATE_IN_PAST) before anything is folded - applyBuyerMergeHeader below is best-effort by design, so

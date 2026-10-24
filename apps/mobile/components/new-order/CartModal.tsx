@@ -17,6 +17,7 @@ import { MoneyTextInput } from "../MoneyTextInput";
 import { fmtCalendarDate } from "../../lib/format-date";
 import { styles } from "./styles";
 import type { UnlistedLine, OrderOptions, CreditPicker } from "./types";
+import { COUNTER_COPY } from "@routeflow/types/counter-copy";
 
 /** Collapsed-by-default disclosure inside the cart sheet. */
 function CartSection({
@@ -53,7 +54,7 @@ function CartSection({
 
 function OrderOptionsSection({ options: o }: { options: OrderOptions }) {
   const summary = [
-    o.posMode ? "POS mode" : null,
+    o.posMode ? COUNTER_COPY.storePickup : null,
     !o.posMode && o.urgent ? "Urgent" : null,
     // ROUTE is the default majority — only call it out when it isn't.
     !o.posMode && o.fulfillPath === "SHIP" ? "Ship via carrier" : null,

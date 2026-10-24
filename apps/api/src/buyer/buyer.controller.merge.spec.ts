@@ -481,4 +481,29 @@ describe("BuyerController.createOrder merge branch (TP3 / REG-B47 / REG-B78)", (
       expect(result).toEqual(createdOrder);
     });
   });
+
+  // W-762 / SA-918 §2: the buyer cart fold is an AUTOMATIC merge — into an order that carries an order discount it
+  // skips (reason DISCOUNTED) and the cart becomes its own order; nothing is folded.
+  it("W-762: a cart never folds into an active order that carries an order discount — it is created on its own", async () => {
+    const activeOrder = {
+      id: "order-active-discounted",
+      customerId: MOCK_CTX.customerId,
+      discountAmount: 4,
+      lineItems: [
+        {
+          id: "li-1",
+          productId: "p1",
+          qty: 2,
+          boxes: null,
+          pieces: null,
+          unitPrice: 10,
+          name: null,
+        },
+      ],
+    };
+    ordersService.findActiveOrder.mockResolvedValue(activeOrder);
+    await controller.createOrder({ items: [{ productId: "p1", qty: 1 }] } as any, MOCK_CTX as any);
+    expect(ordersService.updateOrderItems).not.toHaveBeenCalled();
+    expect(ordersService.create).toHaveBeenCalledTimes(1);
+  });
 });

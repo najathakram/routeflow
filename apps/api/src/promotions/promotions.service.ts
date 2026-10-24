@@ -11,6 +11,7 @@ import { CreatePromotionDto } from "./dto/create-promotion.dto";
 import { UpdatePromotionDto } from "./dto/update-promotion.dto";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { assertNoFamilyProducts } from "../products/sellable-lines";
+import { assertRefsInTenant } from "../common/assert-refs-in-tenant";
 
 /**
  * The stored promotion fields the zero-price guard reads back. `value` is a Prisma
@@ -158,7 +159,11 @@ export class PromotionsService {
 
   async create(dto: CreatePromotionDto) {
     this.validateRule(dto);
-    if (dto.scope === PromotionScope.PRODUCTS) await this.refuseFamilyProducts(dto.productIds);
+    if (dto.scope === PromotionScope.PRODUCTS) {
+      // 681 site 7: proof (existence + tenant) first, then the family policy, before the write tx.
+      await assertRefsInTenant(this.prisma, { productIds: dto.productIds });
+      await this.refuseFamilyProducts(dto.productIds);
+    }
     await this.assertNoZeroPricedProducts(dto);
     const tenantId = this.prisma.getTenantId();
     return this.prisma.tenantTransaction(async (tx: any) => {
@@ -204,6 +209,7 @@ export class PromotionsService {
   async update(id: string, dto: UpdatePromotionDto) {
     const existing: StoredPromotion = await this.findOne(id); // tenant-scoped existence + 404
     this.validateRule(dto);
+    await assertRefsInTenant(this.prisma, { productIds: dto.productIds }); // 681 site 7: proof before policy
     await this.refuseFamilyProducts(dto.productIds); // the set a PATCH replaces
     await this.assertNoZeroPricedProducts(dto, existing);
     const tenantId = this.prisma.getTenantId();

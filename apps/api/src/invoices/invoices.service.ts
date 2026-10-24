@@ -11,6 +11,13 @@ import { syncOrderLineCompositions } from "../orders/order-composition";
 import { sendAfterCommit } from "./send-after-commit";
 import { invoiceCompositionFields } from "./invoice-line-composition";
 import { applyComposedLineEdits } from "./invoice-composed-edit";
+import {
+  assertEditFits,
+  assertPaymentFits,
+  assertUnconfirmedAllocationFits,
+  flagUnconfirmedOverReserved,
+  withNoLongerFits,
+} from "./confirmed-basis";
 import { FeatureConfigService } from "../billing/feature-config.service";
 import * as unitAware from "../orders/unit-aware-guard";
 import {
@@ -22,6 +29,7 @@ import {
   sumInvoiceTotalsStrict,
 } from "../common/money-invariants.util";
 import { randomUUID } from "crypto";
+import { assertRefsInTenant } from "../common/assert-refs-in-tenant";
 import { PrismaService } from "../prisma/prisma.service";
 import { overpaidByOf, statusFromPayments } from "./invoice-status";
 import { voidPaymentInTx } from "./payment-void-tx";
@@ -39,8 +47,6 @@ import {
   copyCategoryTaxSnapshot,
   roundMoney,
   normalizeBoxesPieces,
-  remainingCapacity,
-  capacityRefusal,
   OVERPAID_EPSILON,
   isPaidAtSale,
 } from "@routeflow/pricing";
@@ -120,6 +126,7 @@ import type { InvoiceKpiSummary } from "@routeflow/types";
 import { computeInvoiceKpiSummary } from "./invoice-kpi-summary";
 import { CHECK_TRANSITIONS } from "../common/check-transitions";
 import { invoicePaymentKey, keyedPayment, standalonePaymentKey } from "./payment-idempotency";
+import { completionEmailParts } from "./invoice-completion-email";
 import { withPaymentEditRef, type RefOpts } from "./payment-edit-ref";
 import {
   RecordInvoicePaymentDto,
@@ -435,6 +442,9 @@ export class InvoicesService {
     // REG-B131: a removed (soft-deleted) customer cannot be invoiced; same 404 as a missing one. Checked
     // on the row just read (L-081), so restoreCustomer() re-enables it with no other write.
     if (!customer || customer.deletedAt) throw new NotFoundException("Customer not found");
+    // 681 (R5-5): every manual line's product must be in THIS tenant (same 404 as a missing one), proven before
+    // the selling-restrictions policy below and before anything is numbered or written.
+    await assertRefsInTenant(this.prisma, { productIds: dto.items.map((it) => it.productId) });
     // F-05 (#2093): a manual invoice SELLS its lines — a banned product refuses (409) before anything is read.
     // L8: an order-less invoice is judged as the customer's NEXT order would be (`defaultSaleFulfilmentKind`).
     const tenant = iGate.tenantId(this.prisma);
@@ -3082,6 +3092,7 @@ export class InvoicesService {
       ),
       revisedAt: (await revisedAtByInvoice(this.prisma.forTenant(), [id])).get(id) ?? null,
       items: withComponentViews(inv.items) as typeof inv.items, // #2717 M3: displayUnitPrice4 as a number
+      payments: withNoLongerFits(inv).payments, // W-769: each row's derived noLongerFits flag
       hideOriginalPrice,
       paidAtSale: isPaidAtSale(inv), // row 401: a counter sale paid at the till shows no due date / terms
       pendingMirror: await resolvePendingMirror(this.featureConfig, inv.tenantId, inv, inv.order),
@@ -3122,6 +3133,9 @@ export class InvoicesService {
 
     const items = dto.items;
     if (items) {
+      // 681 (R5-5): the edited lines' products are proven in-tenant on the outer client, before the policy reads
+      // and before the edit tx opens. Existence only: an archived product's round-tripped line still passes.
+      await assertRefsInTenant(this.prisma, { productIds: items.map((it) => it.productId) });
       // F-05: netted per product (qtyDelta = requested - held); re-checked under the row lock in the tx below.
       const gate = await iGate.editParams(this.prisma, inv, items, actor, dto);
       const restriction = await this.sellingRestrictions.assertLinesSellable({
@@ -3590,8 +3604,16 @@ export class InvoicesService {
     return guardedEmail(this.prisma, args[0], () => this.deliverEmail(...args));
   }
 
+  /** I-120 (SA-861 rule 8): the ONE completion email (every invoice of the order attached), the "Email again" path. */
+  async sendCompletionEmail(orderId: string, invoiceIds: string[], actorId: string | null) {
+    const [first, ...withInvoiceIds] = invoiceIds;
+    const opts = { kind: "COUNTER_COMPLETE" as const, orderId, withInvoiceIds };
+    const sent = await this.sendEmail(first, undefined, "final", actorId, opts);
+    return { delivered: sent?.success === true };
+  }
+
   private async deliverEmail(...args: SendEmailArgs) {
-    const [id, overrideEmail, variant, actorId = null] = args;
+    const [id, overrideEmail, variant, actorId = null, opts] = args;
     // The cheap pre-read: only what the fast guards and the recipient check need. The document itself is built from the
     // snapshot below (SA-860), never from this row.
     const inv = await this.prisma.forTenant().invoice.findUnique({
@@ -3668,6 +3690,8 @@ export class InvoicesService {
       attachment,
       hideOriginalPrice,
     });
+    const parts = [this.prisma, this.pdfService, this.storage, this.logger, opts] as const;
+    Object.assign(emailPayload, await completionEmailParts(...parts)); // I-120: COUNTER_COMPLETE only
     const sendResult = await this.emailService.sendInvoice(emailPayload);
 
     // R5: the email server was configured but the actual send did NOT succeed
@@ -3688,6 +3712,7 @@ export class InvoicesService {
       to: recipientEmail,
       fingerprint,
       variant,
+      kind: opts?.kind,
     });
     // Mark as SENT. P5-13: SENT flip + oldest-first credit auto-apply are ONE atomic
     // operation. PDF/email I/O above stays OUTSIDE the tx (a retry never re-sends the email).
@@ -3706,6 +3731,7 @@ export class InvoicesService {
           to: recipientEmail,
           fingerprint: null,
           variant,
+          kind: opts?.kind, // I-120: a completion email's correction keeps its kind
           note: "the copy emailed may not match the credits applied",
         });
       }
@@ -4411,11 +4437,10 @@ export class InvoicesService {
       const alreadyPaid = sumConfirmed(inv.payments);
       const paymentStatus = dto.status ?? "PAID";
       const amount = roundMoney(dto.amount); // #2293: ONE rounded value — guard, write, status
-      // Row 2299 (SA-858): EVERY capacity-consuming write is checked, a DRAFT too (it was PAID only).
+      // Row 2299 (SA-858): EVERY capacity-consuming write is checked, a DRAFT on capacity; W-769: PAID on CONFIRMED money.
       const existing = inv.payments;
       const status = paymentStatus;
-      const overCapacity = capacityRefusal({ total, existing, amount, status, overpay: "REFUSE" });
-      if (overCapacity) throw new BadRequestException(overCapacity.message);
+      assertPaymentFits({ total, existing, amount, status, realMoney: "CONFIRMED_BASIS" });
 
       const paidAt = await counterPay.assertDatedOk(
         tx,
@@ -4456,6 +4481,9 @@ export class InvoicesService {
         },
       });
 
+      // W-769: the unconfirmed rows this real money displaced are flagged (one audit row)
+      if (paymentStatus === "PAID")
+        await flagUnconfirmedOverReserved(tx, { id, tenantId, total }, createdPayment.id);
       const newPaid = paymentStatus === "PAID" ? alreadyPaid + amount : alreadyPaid;
       const newStatus =
         paymentStatus === "PAID"
@@ -4631,6 +4659,9 @@ export class InvoicesService {
           checkStatus: method === "CHECK" ? CheckStatus.RECORDED : null,
         },
       });
+      // W-769 (W-707 folded): the confirmed basis and the spill stay; the displaced unconfirmed rows are flagged
+      const at = { id: inv.id, tenantId: this.prisma.getTenantId(), total };
+      await flagUnconfirmedOverReserved(tx, at, pay.id);
 
       const newStatus = statusFromPayments(
         alreadyPaid + applyHere,
@@ -4846,15 +4877,17 @@ export class InvoicesService {
       const otherPayments = inv.payments.filter((p) => p.id !== paymentId);
       const othersTotal = sumConfirmed(otherPayments);
       const total = Number(inv.total);
-      // PR-2 (B1 hardening, review-opus-v2 condition #6): the remaining-balance
-      // *guard* moves to remainingCapacity() (DRAFT+PAID+PENDING) — a DRAFT "other"
-      // payment now also reserves capacity here, closing the same double-book gap
-      // recordPayment's conversion closes, so this edit can no longer be parked
-      // above what the invoice can actually hold once that DRAFT confirms.
-      const capacity = remainingCapacity(total, otherPayments);
-      if (newPaymentStatus !== "VOID" && amount > capacity + 0.001) {
-        throw new BadRequestException(`Payment amount exceeds remaining balance`);
-      }
+      // PR-2 (B1): an unconfirmed edit stays on CAPACITY (a DRAFT "other" reserves it, #3645). W-769 (SA-922 answer 2): a PAID
+      // edit, a confirm (DRAFT → PAID) and a reopen (VOID → PAID) are real money on CONFIRMED money, through the ONE policy
+      // (SA-862 rule 4: a confirm / reopen that confirmed money already covers is 409 UNCONFIRMED_PAYMENT_SUPERSEDED).
+      const confirming = payment.status !== "PAID";
+      assertEditFits({
+        total,
+        others: otherPayments,
+        amount,
+        status: newPaymentStatus,
+        confirming,
+      });
 
       const guard = await edit.check(tx, payment, inv.customerId); // a NEW dedupe identity only
       await tx.invoicePayment.update({
@@ -4874,12 +4907,20 @@ export class InvoicesService {
         },
       });
       await guard?.recorded(tx, [paymentId], invoiceId);
+      if (newPaymentStatus === "PAID") await flagUnconfirmedOverReserved(tx, inv, paymentId); // W-769: what this confirm displaced
 
       const newPaid = othersTotal + effectiveAmount;
       const newStatus = statusFromPayments(newPaid, total, inv.dueDate, inv.status, tz, "NOT_PAID");
       const updated = await tx.invoice.update({
         where: { id: invoiceId },
-        data: { status: newStatus, paidAt: newStatus === InvoiceStatus.PAID ? new Date() : null },
+        data: {
+          status: newStatus,
+          // W-769: an invoice that stays PAID keeps the stamp it earned (voiding a displaced DRAFT must not re-date it).
+          paidAt:
+            newStatus === InvoiceStatus.PAID
+              ? (inv.status === InvoiceStatus.PAID && inv.paidAt) || new Date()
+              : null,
+        },
         include: {
           customer: { select: { id: true, businessName: true } },
           items: true,
@@ -5127,6 +5168,10 @@ export class InvoicesService {
     const status = dto.status ?? "PAID";
     // B769 / SA-112: rounded totals, and Σ allocations ≤ payment — refused before any write.
     const { excess } = standaloneAllocationTotals(dto);
+    // 681 (R5-5): the AdvancePayment below stores dto.customerId, and `allocations: []` (an advance-only receipt)
+    // skips the per-allocation customer match, so the customer is proven here at the writer, before the payment
+    // number is reserved and before the tx opens. Covers the payment-request callers too. No ArrayMinSize.
+    await assertRefsInTenant(this.prisma, { customerIds: [dto.customerId] });
 
     // Standalone reservation, committed BEFORE the payment tx opens (B269): a
     // rolled-back booking burns the reserved block instead of re-minting the
@@ -5136,8 +5181,11 @@ export class InvoicesService {
     const { tenantShort, start } = await this.nextPaymentNumber(dto.allocations.length);
 
     // #2472 (1): a multi-invoice payment can deadlock (40P01) with completeWithPayment — re-run it.
-    return retryOnTxConflict(`standalone payment group=${paymentGroupId}`, () =>
+    // W-769: displaced rows are collected per attempt (a retried tx starts empty) and handed out once, after commit
+    let displacedRun: Array<[string, string[]]> = [];
+    const committed = await retryOnTxConflict(`standalone payment group=${paymentGroupId}`, () =>
       this.prisma.tenantTransaction(async (tx) => {
+        displacedRun = [];
         await opts?.claim?.(tx); // SA-824: the key claim is the FIRST statement (throws, unwritten, when held)
         // B311: the buyer/online path's anti-overpay guard reads the invoice's balance and
         // THEN checks it — with no row lock between the two, a concurrent office payment on the
@@ -5185,6 +5233,14 @@ export class InvoicesService {
             }
           }
 
+          // W-769 (SA-922 answer 1): an unconfirmed (DRAFT) allocation must fit CAPACITY (#3645); a PAID one is [L-O2]'s
+          // CONFIRMED_BASIS_ALLOW_OVERPAY (never refused by an unconfirmed row; the rows it displaces are flagged below)
+          await assertUnconfirmedAllocationFits(
+            tx,
+            { id: alloc.invoiceId, total: invoice.total },
+            roundMoney(alloc.amount),
+            status,
+          );
           const payment = await tx.invoicePayment.create({
             data: {
               invoiceId: alloc.invoiceId,
@@ -5208,6 +5264,9 @@ export class InvoicesService {
           // concurrent void conflicts (40001) and its retry re-reads it (the #2258 writer invariant).
           let invoiceData: Prisma.InvoiceUpdateInput = { updatedAt: new Date() };
           if (status === "PAID") {
+            const at = { id: alloc.invoiceId, tenantId: invoice.tenantId, total: invoice.total };
+            const displaced = await flagUnconfirmedOverReserved(tx, at, payment.id);
+            if (displaced.length > 0) displacedRun.push([alloc.invoiceId, displaced]);
             // F03/R1: CONFIRMED (PAID) rows only feed recomputeStatus.
             const allPayments = await tx.invoicePayment.findMany({
               where: { invoiceId: alloc.invoiceId, ...CONFIRMED_PAYMENT },
@@ -5271,6 +5330,8 @@ export class InvoicesService {
         return result;
       }),
     );
+    for (const [invoiceId, ids] of displacedRun) opts?.onDisplaced?.(invoiceId, ids);
+    return committed;
   }
 
   // ─── Void a single payment ────────────────────────────────────────────────
