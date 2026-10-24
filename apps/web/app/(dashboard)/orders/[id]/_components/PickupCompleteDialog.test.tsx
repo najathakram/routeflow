@@ -1,5 +1,6 @@
 import * as React from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MutationCache, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { handleMutationError } from "@/lib/mutation-error-toast";
 import { PickupCompleteDialog } from "./PickupCompleteDialog";
@@ -719,5 +720,75 @@ describe("PickupCompleteDialog: I-120 the hand-over's credit-over-limit line (SA
     confirm();
     expect(await screen.findByText("Payment not recorded")).toBeVisible();
     expect(screen.queryByTestId("pickup-credit-over-limit")).toBeNull();
+  });
+});
+
+// W-775 (W-773's client half): a hand-over the API answers with 409 RESTRICTION_WARNING (nothing written, pre-judged before
+// the claim) opens the warning dialog; "Sell anyway" re-sends the SAME hand-over (same key, same body) plus the
+// acknowledgement; "Go back" leaves the dialog as it was. Head: the 409 was only a generic error line, no way to proceed.
+const warning409 = {
+  response: {
+    status: 409,
+    data: {
+      code: "RESTRICTION_WARNING",
+      message: "Some items are restricted.",
+      warningHash: "rw1:abc",
+      lines: [
+        {
+          lineKey: "l:li1",
+          productId: "p1",
+          displayName: "Cola",
+          outcome: "BLOCK",
+          rules: [
+            {
+              id: "r1",
+              states: ["CA"],
+              legal: true,
+              reasonText: "This product is banned in CA by law.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+};
+
+describe("PickupCompleteDialog — W-775 restriction warning", () => {
+  it("warns, then re-sends the same hand-over with the same key and the acknowledgement", async () => {
+    const user = userEvent.setup();
+    balance(0, "PAID");
+    post.mockRejectedValueOnce(warning409);
+    post.mockResolvedValueOnce(result());
+    mount();
+    await screen.findByText("Paid — nothing to collect");
+    confirm();
+    expect(await screen.findByText("This product is banned in CA by law.")).toBeInTheDocument();
+    // not the generic refusal line, and the hand-over is not held as an unknown outcome
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(window.sessionStorage.length).toBe(0);
+    await user.type(screen.getByLabelText(/reason/i), "Owner approved");
+    await user.click(screen.getByRole("button", { name: "Sell anyway" }));
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
+    const [first, second] = post.mock.calls;
+    expect(second[2].headers["Idempotency-Key"]).toBe(first[2].headers["Idempotency-Key"]);
+    expect(second[1]).toEqual({
+      ...first[1],
+      restrictionOverrides: [{ lineKey: "l:li1", reason: "Owner approved" }],
+      warningHash: "rw1:abc",
+    });
+  });
+
+  it("Go back sends nothing more and shows no error", async () => {
+    const user = userEvent.setup();
+    balance(0, "PAID");
+    post.mockRejectedValueOnce(warning409);
+    mount();
+    await screen.findByText("Paid — nothing to collect");
+    confirm();
+    await screen.findByText("This product is banned in CA by law.");
+    await user.click(screen.getByRole("button", { name: "Go back" }));
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByText("This product is banned in CA by law.")).toBeNull();
   });
 });

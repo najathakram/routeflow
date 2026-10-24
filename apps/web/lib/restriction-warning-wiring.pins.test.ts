@@ -19,6 +19,7 @@ const STAFF_WRITE_HOOKS = [
   "useCreateSale",
   "usePosFinish",
   "useCreateCounterSale",
+  "usePickupComplete",
   "useCreateInvoice",
   "useUpdateInvoice",
   "useDuplicateInvoice",

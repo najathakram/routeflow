@@ -14,6 +14,7 @@ import {
 import type { CounterSalePaymentMethod, PickupCompleteResponse } from "@routeflow/types";
 import { usePickupComplete, usePickupInvoiceBalances } from "@/lib/api/counter-sale";
 import { useOptionalAuth } from "@/lib/auth-context";
+import { useRestrictionWarningRetry } from "@/lib/use-restriction-warning-retry";
 import { duplicatePaymentRefMessage } from "@/lib/duplicate-payment-ref";
 import {
   paymentProblemCopy,
@@ -91,6 +92,7 @@ export function PickupCompleteDialog({
   const ownHeld = React.useRef<HeldPickupKey>(null);
   const held = heldKey ?? ownHeld;
   const complete = usePickupComplete(orderId);
+  const rw = useRestrictionWarningRetry(); // W-775: the staff warning + override dialog (the switch is judged at the store's state)
   const liveIds = invoices.filter((i) => !PICKUP_DEAD_INVOICE.has(i.status)).map((i) => i.id);
   const balances = usePickupInvoiceBalances(liveIds, open);
   const loading = liveIds.length > 0 && balances.isLoading;
@@ -141,7 +143,10 @@ export function PickupCompleteDialog({
     setErrorCode(undefined);
     lastBody.current = body;
     try {
-      const res = await complete.mutateAsync({ body, idempotencyKey: keyRef.current });
+      const res = await complete.mutateAsync({
+        body: rw.attach(body),
+        idempotencyKey: keyRef.current,
+      });
       const code = res.paymentRecorded ? undefined : res.paymentErrorCode;
       if (
         code === API_ERROR_CODES.PICKUP_PAYMENT_REQUIRED ||
@@ -159,6 +164,8 @@ export function PickupCompleteDialog({
       clearHeldPickupKey(storeKey);
       setOutcome(res);
     } catch (err) {
+      // W-775: a RESTRICTION_WARNING wrote nothing (pre-judged before the claim): the dialog re-sends THIS hand-over, same key
+      if (rw.handle(err, () => send(lastBody.current))) return;
       const status = (err as { response?: { status?: number } } | null)?.response?.status;
       const unknown = status === undefined || status >= 500;
       held.current = unknown ? { orderId, key: keyRef.current } : null;
@@ -429,6 +436,7 @@ export function PickupCompleteDialog({
           </p>
         )}
       </div>
+      {rw.dialog}
     </Modal>
   );
 }

@@ -1333,7 +1333,7 @@ export default function OrderDetailScreen() {
           setCompleteMode(false);
         }}
         onSubmit={function submitHandOver(body: PickupCompleteRequest) {
-          pickupMut.mutate(body, {
+          pickupMut.mutate(rw.attach(body), {
             onSuccess: (res) => {
               const d = decidePickupResponse(
                 res,
@@ -1376,6 +1376,8 @@ export default function OrderDetailScreen() {
               refetch();
             },
             onError: (e) => {
+              // W-775: a RESTRICTION_WARNING wrote nothing (pre-judged before the claim): the modal re-sends THIS hand-over, same key
+              if (rw.handle(e, () => submitHandOver(body))) return;
               // SA-913 R8: on a driver's run: confirm, then the same request (same key) with takeOffRun
               const runConfirm = pickupRunConfirm(e);
               if (runConfirm)
