@@ -95,12 +95,40 @@ describe("#2183 local:test:db runs on its own fresh database", () => {
         ["--db", "--", "x"], ["--"], [],
       ].map((a) => { try { return m.parseArgs(a); } catch (e) { return String(e.message); } })`),
     ).toEqual([
-      { keep: false, command: "npm run test:db -w apps/api" },
-      { keep: true, command: "x y" },
+      { keep: false, command: "npm run test:db -w apps/api", tokens: ["npm run test:db -w apps/api"] },
+      { keep: true, command: "x y", tokens: ["x", "y"] },
       { help: true },
       "unknown flag(s): --db",
       'expected `-- "<command string>"`',
       'expected `-- "<command string>"`',
     ]);
+  });
+});
+
+// Item 726: a test pattern with shell metacharacters (`(a|b)`, `&`, `|`) must reach jest as literal
+// argv. A single quoted string still runs through the shell (the `npm run local:test:db` form); two
+// or more tokens after `--` are an argv and are spawned WITHOUT a shell, so cmd.exe never sees them.
+describe("item 726: argv after `--` reaches the lane literally", () => {
+  const PATTERNS = ["(a|b)", "a&b", "x|y", "50%", "'q'"];
+  const list = PATTERNS.map((p) => JSON.stringify(p)).join(", ");
+
+  it("a multi-token command is spawned without a shell, tokens untouched", () => {
+    expect(
+      probe(`[
+        m.commandSpawn(["node", "run-db-tests.mjs", ${list}]),
+        m.commandSpawn(["npm run test:db -w apps/api"]),
+      ]`),
+    ).toEqual([
+      { cmd: "node", args: ["run-db-tests.mjs", ...PATTERNS], shell: false },
+      { cmd: "npm run test:db -w apps/api", args: [], shell: true },
+    ]);
+  });
+
+  it("the spawn spec round-trips every metacharacter pattern through a real child", () => {
+    const spec = probe(
+      `m.commandSpawn([process.execPath, "-e", "console.log(JSON.stringify(process.argv.slice(1)))", ${list}])`,
+    ) as { cmd: string; args: string[]; shell: boolean };
+    const res = spawnSync(spec.cmd, spec.args, { encoding: "utf8", shell: spec.shell });
+    expect(JSON.parse(res.stdout)).toEqual(PATTERNS);
   });
 });

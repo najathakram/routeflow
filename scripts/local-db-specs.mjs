@@ -16,6 +16,7 @@
 // purpose (for debugging) and prints the name.
 //
 // Usage: node scripts/local-db-specs.mjs [--keep] -- "<command string>"
+//        node scripts/local-db-specs.mjs [--keep] -- <cmd> <arg>...   (argv, no shell: patterns stay literal)
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -91,7 +92,19 @@ export function parseArgs(argv) {
   const flags = argv.slice(0, sep);
   const unknown = flags.filter((f) => f !== "--keep");
   if (unknown.length) throw new Error(`unknown flag(s): ${unknown.join(", ")}`);
-  return { keep: flags.includes("--keep"), command: argv.slice(sep + 1).join(" ") };
+  const tokens = argv.slice(sep + 1);
+  return { keep: flags.includes("--keep"), command: tokens.join(" "), tokens };
+}
+
+/**
+ * How the command after `--` is spawned (item 726). One token is a command STRING (the
+ * `npm run local:test:db` form) and goes through the shell. Two or more tokens are an argv and are
+ * spawned WITHOUT a shell, so a test pattern such as `(a|b)` or `a&b` reaches the child literally
+ * instead of being mangled by cmd.exe on Windows.
+ */
+export function commandSpawn(tokens) {
+  if (tokens.length === 1) return { cmd: tokens[0], args: [], shell: true };
+  return { cmd: tokens[0], args: tokens.slice(1), shell: false };
 }
 
 const HELP = `${TAG}.mjs — run the DB spec lane on its own fresh database
@@ -175,7 +188,12 @@ async function main() {
         console.error(`${TAG}: migrate deploy failed on ${name}; not running the specs`);
         return migrate.status || 1;
       }
-      const run = await spawnAsync(opts.command, [], { shell: true, stdio: "inherit", env });
+      const spec = commandSpawn(opts.tokens);
+      const run = await spawnAsync(spec.cmd, spec.args, {
+        shell: spec.shell,
+        stdio: "inherit",
+        env,
+      });
       if (run.error) console.error(`${TAG}: ${run.error.message}`);
       return run.status ?? 1;
     });
