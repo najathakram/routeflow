@@ -4,11 +4,10 @@
  * toLocaleDateString inline; import from here. Display only — money MATH stays
  * in lib/pricing.ts.
  */
-const moneyFmt = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
+import { formatReceiptMoney } from "@routeflow/pricing";
 
 export function formatMoney(value: number | string | null | undefined): string {
-  const n = Number(value ?? 0);
-  return moneyFmt.format(Number.isFinite(n) ? n : 0);
+  return formatReceiptMoney(value);
 }
 
 /** Whole numbers render bare ("61"), fractional quantities keep up to 2 dp ("1.5"). */

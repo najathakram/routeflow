@@ -18,6 +18,26 @@ describe("formatReceiptMoney", () => {
     expect(formatReceiptMoney(2.5)).toBe("$2.50");
     expect(formatReceiptMoney(-1)).toBe("-$1.00");
   });
+
+  it("W-882: groups thousands and never prints a negative zero", () => {
+    expect(formatReceiptMoney(12345.67)).toBe("$12,345.67");
+    expect(formatReceiptMoney(-0)).toBe("$0.00");
+    expect(formatReceiptMoney(-0.001)).toBe("$0.00");
+  });
+
+  it("W-882: NaN and infinities read $0.00; strings and null are accepted", () => {
+    expect(formatReceiptMoney(NaN)).toBe("$0.00");
+    expect(formatReceiptMoney(Infinity)).toBe("$0.00");
+    expect(formatReceiptMoney(-Infinity)).toBe("$0.00");
+    expect(formatReceiptMoney("1234.5")).toBe("$1,234.50");
+    expect(formatReceiptMoney("abc")).toBe("$0.00");
+    expect(formatReceiptMoney(null)).toBe("$0.00");
+    expect(formatReceiptMoney(undefined)).toBe("$0.00");
+  });
+
+  it("W-882: rounds to cents before printing", () => {
+    expect(formatReceiptMoney(10.825)).toBe("$10.83");
+  });
 });
 
 describe("receiptLineDetail", () => {
