@@ -11,7 +11,7 @@ import type { StripeService } from "./stripe.service";
 import { CHECKOUT_ADDON_EXPAND, checkoutAddonItems } from "./stripe-addon-items";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { prorationAllowedFor } from "./price-override";
-import { ensurePlanProduct } from "./stripe-product";
+import { createRestoredProduct, ensurePlanProduct } from "./stripe-product";
 import {
   armNeedsReconcile,
   clearNeedsReconcile,
@@ -437,14 +437,12 @@ async function healPriorProducts(
         await products.update(id, { active: true });
       } else {
         // a Checkout-born product is born inactive and cannot be reactivated: a fresh active one carries the price
-        const made = await products.create(
-          {
-            name: "RouteFlow subscription (restored)",
-            metadata: { restoredFromProduct: id },
-          },
-          { idempotencyKey: `${push.key}:revert:product:${id}` },
+        const madeId = await createRestoredProduct(
+          deps.stripe.client,
+          id,
+          `${push.key}:revert:product:${id}`,
         );
-        swap.set(id, made.id);
+        swap.set(id, madeId);
       }
     }
   }
