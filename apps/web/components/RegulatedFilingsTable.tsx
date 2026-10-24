@@ -5,6 +5,7 @@ import { Download, Lock } from "lucide-react";
 import { Badge, Button, Modal, Textarea, useToast } from "@routeflow/ui/web";
 import { fmt } from "@/lib/formatting";
 import { useAuth } from "@/lib/auth-context";
+import { genericToastCopy } from "@/lib/generic-toast-copy";
 import {
   fetchRegulatedFilingUrl,
   useLockRegulatedFiling,
@@ -52,7 +53,7 @@ export function RegulatedFilingsTable({
         onError: (e) =>
           toast({
             title: "Could not lock the filing",
-            description: (e as Error)?.message,
+            description: genericToastCopy(e),
             variant: "error",
           }),
       },

@@ -144,6 +144,11 @@ export function isMoneyBearingEdit(
  * The order-edit guard in one call: refuse (409 FILED_PERIOD_LOCKED) a MONEY-bearing edit to an order whose
  * regulated SALE rows are booked into a LOCKED filing period. A note, an override reason or a delivery date
  * proceeds; a return or a credit note is not an edit and books today.
+ *
+ * B297 PR5 (D4a), SA-819 MUST 4: `updateOrderItems` calls it after the revision check, so an editor on an
+ * outdated order meets the 409 for the stale revision first. It asks the service's own replace predicate
+ * (role + diff shape), so an `items: []` buyer / driver replace, which still runs deleteMany, is judged as
+ * the money-bearing edit it is.
  */
 export async function assertOrderEditNotLocked(
   db: LockDb,

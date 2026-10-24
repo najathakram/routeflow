@@ -54,7 +54,7 @@ function sites(): Site[] {
         }
         const above = lines.slice(Math.max(0, i - WINDOW), i + 1).join("\n");
         found.push({
-          file: path.relative(SRC, file),
+          file: path.relative(SRC, file).split(path.sep).join("/"),
           method,
           call: m[1],
           line: i + 1,

@@ -275,7 +275,7 @@ import { tenantSafeParentView } from "../products/product-parent";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
-import { assertOrderEditFilingOpen } from "./order-edit-filing-lock";
+import { assertOrderEditNotLocked } from "../regulated/filing-lock";
 import { clearLoserDraftForDelete } from "./merge-loser-draft";
 import { sumInlineReturnCredit } from "../returns/inline-return-credit.util";
 
@@ -2733,7 +2733,10 @@ export class OrdersService implements OnApplicationBootstrap {
     // Row 372 (MF4 nit e): an editor on an outdated order meets the 409 BEFORE any refusal can mask it and any
     // un-tx'd side effect (the invoice revert, the return number). Advisory; the in-tx check below is the lock.
     await assertRevisionCurrent(this.prisma.forTenant(), orderId, dto.expectedRevisionNumber);
-    await assertOrderEditFilingOpen(this.prisma, orderId, dto, user); // B297 PR5 (D4a): see that file
+    await assertOrderEditNotLocked(this.prisma.forTenant(), orderId, dto as any, {
+      tenantId: (user?.tenantId ?? this.prisma.getTenantId()) as string, // B297 PR5 (D4a): see that guard
+      role: user?.role,
+    });
     const isDiffPayload = classifyEditPayload(order, dto, user); // A4/B13: see order-edit-payload.ts
     // SA-422: never revive a seller-CANCELLED line (409 before any write; a strike-off of one is a
     // no-op). SA-422b: BEFORE every unit check, so a cancelled line's id gets this answer first.
