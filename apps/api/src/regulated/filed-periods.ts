@@ -38,7 +38,8 @@ export interface LockedFilingRow {
 }
 
 export interface BucketRef {
-  trackedCategoryId: string;
+  /** A row with no tracked category belongs to no filing (nothing can lock it). */
+  trackedCategoryId: string | null;
   periodBucket: string;
 }
 
@@ -52,15 +53,18 @@ export async function lockedFilingsCovering(
   db: FilingsDb,
   refs: BucketRef[],
 ): Promise<Array<{ filing: LockedFilingRow; trackedCategoryId: string; periodBucket: string }>> {
-  if (refs.length === 0 || !db.regulatedFiling?.findMany) return [];
-  const categoryIds = [...new Set(refs.map((r) => r.trackedCategoryId))];
+  const withCategory = refs.filter((r): r is BucketRef & { trackedCategoryId: string } =>
+    Boolean(r.trackedCategoryId),
+  );
+  if (withCategory.length === 0 || !db.regulatedFiling?.findMany) return [];
+  const categoryIds = [...new Set(withCategory.map((r) => r.trackedCategoryId))];
   const filings = (await db.regulatedFiling.findMany({
     where: { trackedCategoryId: { in: categoryIds }, status: "LOCKED" },
   })) as LockedFilingRow[];
   if (filings.length === 0) return [];
   const out: Array<{ filing: LockedFilingRow; trackedCategoryId: string; periodBucket: string }> =
     [];
-  for (const ref of refs) {
+  for (const ref of withCategory) {
     const from = monthRange(ref.periodBucket).from.getTime();
     for (const f of filings) {
       if (
@@ -91,6 +95,37 @@ export async function findLockedFiling(
   where: { trackedCategoryId: string; periodKey: string },
 ): Promise<any | null> {
   return (await db.regulatedFiling.findFirst({ where: { ...where, status: "LOCKED" } })) ?? null;
+}
+
+/**
+ * The lock transition: GENERATED -> LOCKED on one row, conditional on it still being GENERATED so a concurrent
+ * lock (or a regeneration that flipped it) cannot double-lock. Returns the rows claimed (1, or 0 when lost).
+ */
+export async function claimFilingLock(
+  db: { regulatedFiling: { updateMany(args: any): Promise<{ count: number }> } },
+  params: { id: string; lockedById: string | null; reason: string },
+): Promise<{ count: number }> {
+  return db.regulatedFiling.updateMany({
+    where: { id: params.id, status: "GENERATED" },
+    data: {
+      status: "LOCKED",
+      lockedAt: new Date(),
+      lockedById: params.lockedById,
+      lockReason: params.reason,
+    },
+  });
+}
+
+/**
+ * A regeneration's row write that can never UNLOCK a filing: conditional on the row not being LOCKED. Throws
+ * Prisma P2025 when a lock committed first (the caller returns the stored, locked row instead).
+ */
+export async function updateFilingUnlessLocked(
+  db: { regulatedFiling: { update(args: any): Promise<any> } },
+  id: string,
+  data: Record<string, unknown>,
+): Promise<any> {
+  return db.regulatedFiling.update({ where: { id, status: { not: "LOCKED" } }, data });
 }
 
 // ---------------------------------------------------------------------------------------------------------

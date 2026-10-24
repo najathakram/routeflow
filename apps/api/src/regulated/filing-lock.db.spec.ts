@@ -398,7 +398,7 @@ describeDb("B297 PR5 — a LOCKED filing closes its period, real Postgres", () =
     }
   }, 120_000);
 
-  it("voiding a credit note or cancelling a return cannot delete reversal rows of a locked period", async () => {
+  it("voiding a credit note or cancelling a return is refused for reversal rows of a locked period (SA-819 MUST 6 copy)", async () => {
     const f = await makeFiling();
     await raw.regulatedSalesLedger.create({
       data: {
@@ -421,19 +421,27 @@ describeDb("B297 PR5 — a LOCKED filing closes its period, real Postgres", () =
       () => asLedger().unreverseReturnEntries({ returnId: "ret-locked", db: prisma }),
     ])
       await expect(inTenant(call)).rejects.toMatchObject({
-        response: { code: "LEDGER_PERIOD_LOCKED" },
+        response: {
+          code: "LEDGER_PERIOD_LOCKED",
+          message: expect.stringMatching(
+            /^This credit is part of a locked filing \(.+\)\. Record a new charge instead of voiding it\.$/,
+          ),
+        },
       });
     expect(
       await raw.regulatedSalesLedger.count({ where: { tenantId, creditNoteId: "cn-locked" } }),
     ).toBe(1);
-    // once the period is not locked the same undo is allowed
+    // once the period is not locked the same undo is allowed; since SA-839 F1 it books a counter-entry (the
+    // original row stays), so the document now has two rows that net to zero
     await raw.regulatedFiling.update({ where: { id: f.id }, data: { status: "GENERATED" } });
     await inTenant(() =>
       asLedger().unreverseCreditNoteEntries({ creditNoteId: "cn-locked", db: prisma }),
     );
-    expect(
-      await raw.regulatedSalesLedger.count({ where: { tenantId, creditNoteId: "cn-locked" } }),
-    ).toBe(0);
+    const after = await raw.regulatedSalesLedger.findMany({
+      where: { tenantId, creditNoteId: "cn-locked" },
+    });
+    expect(after).toHaveLength(2);
+    expect(after.reduce((n, r) => n + Number(r.netSales), 0)).toBe(0);
   }, 120_000);
 
   it("prepareFiling on a LOCKED filing returns the stored row and never regenerates", async () => {

@@ -502,8 +502,8 @@ export class RegulatedLedgerService {
    * or updates a row. Every row it writes books `soldAt = now` in the current period (§3).
    *
    *  - INVOICE_ZEROED: (a) sweep, (b) reverse each line's full remaining (net 0).
-   *  - INVOICE_BILLED: (a) sweep, (b) refuse a VOID invoice, (c) reverse the remaining sale-record
-   *    (the LIVE returns / credit notes stand), (d) fresh SALE rows from `lines`.
+   *  - INVOICE_BILLED: (a) sweep, (b) refuse a VOID invoice, (c) `syncInvoiceEntries`: bring the sale-record to
+   *    `lines` writing only what changed (the LIVE returns / credit notes stand; B297 PR4, SA-819).
    *  - ADJUSTMENT_UNDONE: (a) one counter-entry per un-countered row of that document, (b) every
    *    invoice of those rows that is VOID or gone is zeroed again; a live invoice gets nothing more.
    *
@@ -596,6 +596,7 @@ export class RegulatedLedgerService {
     db: any,
     doc: { returnId: string } | { creditNoteId: string },
     invoiceId?: string,
+    opts: { refuseLocked?: boolean } = {},
   ): Promise<{ written: number; invoiceIds: string[]; amendedPeriod: FiledPeriod | null }> {
     const rows: any[] =
       (await db.regulatedSalesLedger.findMany({
@@ -604,6 +605,12 @@ export class RegulatedLedgerService {
     const invoiceIds = [...new Set(rows.map((r) => r.invoiceId).filter(Boolean))] as string[];
     const countered = new Set(rows.filter(isCounterEntry).map((r) => r.correctsEntryId as string));
     const originals = rows.filter((r) => r.correctsEntryId == null && !countered.has(r.id));
+    // B297 PR5 / SA-819 MUST 6: the undo guard. Voiding a credit note or cancelling a return whose REVERSAL
+    // rows sit in a LOCKED filing's bucket is refused (409 LEDGER_PERIOD_LOCKED, the copy names the next
+    // step). Since SA-839 F1 the undo books a counter-entry into the current period, so the locked filing's
+    // figures are never touched; the refusal is the owner's policy that a closed period's documents are
+    // final. Only the document's own un-countered rows count; the dead-document sweep does not refuse.
+    if (opts.refuseLocked) await assertUndoNotLocked(db, originals);
     const now = new Date();
     const bucket = periodBucketOf(now);
     const data = originals
@@ -1630,8 +1637,9 @@ export class RegulatedLedgerService {
     // SA-839 F1: an undo books counter-entries now (append-only), never a delete. SA-819 MUST 6 keeps the
     // B297 PR5 undo policy on top: a return whose REVERSAL rows sit in a LOCKED filing's bucket is not
     // cancelled, the figures of a closed period stay explained by the document that produced them.
-    await this.assertUnreverseNotLocked(db, { returnId, entryType: "REVERSAL" });
-    const countered = await this.counterDocumentRows(db, { returnId });
+    const countered = await this.counterDocumentRows(db, { returnId }, undefined, {
+      refuseLocked: true,
+    });
     // B681/SA-067(4): a return this guard parked (because its sale row's box/piece axis
     // couldn't be classified) leaves a RegulatedLedgerParkedReversal row blocking its period's
     // filing. Without this, cancelling that return before the park is ever resolved leaves the
@@ -1910,6 +1918,7 @@ export class RegulatedLedgerService {
         categoryTax: 0,
         periodBucket: bucketNow,
       };
+      await assertLedgerRowsNotLocked(db, [correction]); // SA-819 MUST 2: the ledger guard, before any row is written (current bucket today, so safe; guarded for the class)
       const created = await db.regulatedSalesLedger.create({ data: correction });
       correctionEntryId = created.id;
 
@@ -1963,6 +1972,7 @@ export class RegulatedLedgerService {
             categoryTax: 0,
             periodBucket: bucketNow,
           };
+          await assertLedgerRowsNotLocked(db, [reversalCorrection]); // SA-819 MUST 2: the ledger guard, before any row is written (current bucket today, so safe; guarded for the class)
           await db.regulatedSalesLedger.create({ data: reversalCorrection });
         }
       }
@@ -2176,6 +2186,7 @@ export class RegulatedLedgerService {
     let bookedQty = 0;
     let bookedNet = 0;
     let bookedTax = 0;
+    await assertLedgerRowsNotLocked(db, rows); // SA-819 MUST 2: the ledger guard, before any row is written (current bucket today, so safe; guarded for the class)
     for (const row of rows) {
       const created = await db.regulatedSalesLedger.create({ data: row });
       firstId ??= created.id;
@@ -2626,24 +2637,6 @@ export class RegulatedLedgerService {
     db: any;
   }): Promise<{ written: number; invoiceIds: string[]; amendedPeriod: FiledPeriod | null }> {
     const { creditNoteId, db } = params;
-    await this.assertUnreverseNotLocked(db, { creditNoteId, entryType: "REVERSAL" });
-    return this.counterDocumentRows(db, { creditNoteId });
-  }
-
-  /**
-   * B297 PR5 / SA-819 MUST 6: the undo guard. Voiding a credit note or cancelling a return whose REVERSAL
-   * rows sit in a LOCKED filing's bucket is refused with 409 LEDGER_PERIOD_LOCKED and a message that names
-   * the next step. (Since SA-839 F1 the undo books counter-entries into the current period, so a locked
-   * filing's figures are never touched; the refusal is the owner's policy that a closed period's documents
-   * are final, not a data-safety need.) Only the document's original rows count: a counter-entry is the
-   * undo itself.
-   */
-  private async assertUnreverseNotLocked(db: any, where: Record<string, unknown>): Promise<void> {
-    const rows: Array<{ trackedCategoryId: string; periodBucket: string }> =
-      (await db.regulatedSalesLedger.findMany?.({
-        where: { ...where, correctsEntryId: null },
-        select: { trackedCategoryId: true, periodBucket: true },
-      })) ?? [];
-    await assertUndoNotLocked(db, rows);
+    return this.counterDocumentRows(db, { creditNoteId }, undefined, { refuseLocked: true });
   }
 }

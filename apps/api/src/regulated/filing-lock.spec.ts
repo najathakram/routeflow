@@ -1,4 +1,5 @@
 import { ConflictException } from "@nestjs/common";
+import { RegulatedLedgerService } from "./regulated-ledger.service";
 import * as fs from "fs";
 import * as path from "path";
 import {
@@ -6,6 +7,8 @@ import {
   assertOrderEditNotLocked,
   isMoneyBearingEdit,
   assertSalesNotLockedForEdit,
+  assertUndoNotLocked,
+  undoLockedMessage,
 } from "./filing-lock";
 import { lockedFilingsCovering } from "./filed-periods";
 
@@ -219,10 +222,74 @@ describe("caller pin: every money-moving entry point is behind a guard (B297 PR5
     ).toBeGreaterThanOrEqual(2);
     expect(src("../invoices/price-adjustment-ledger.ts")).toMatch(/assertSalesNotLockedForEdit\(/);
   });
-  it("every ledger writer and both un-reverse deletes run the ledger guard", () => {
+  it("every ledger writer runs the ledger guard and both undo entry points run the undo guard", () => {
     const ledger = src("regulated-ledger.service.ts");
     expect(ledger.match(/assertLedgerRowsNotLocked\(/g)?.length).toBeGreaterThanOrEqual(7);
-    expect(ledger).toMatch(/assertUnreverseNotLocked\(db, \{ returnId/);
-    expect(ledger).toMatch(/assertUnreverseNotLocked\(db, \{ creditNoteId/);
+    expect(ledger).toMatch(
+      /counterDocumentRows\(db, \{ returnId \}, undefined, \{\s*refuseLocked: true/,
+    );
+    expect(ledger).toMatch(
+      /counterDocumentRows\(db, \{ creditNoteId \}, undefined, \{ refuseLocked: true/,
+    );
+    expect(ledger).toMatch(/if \(opts\.refuseLocked\) await assertUndoNotLocked\(/);
+  });
+});
+
+/**
+ * SA-819 MUST 6: the undo guard's 409 names the next step. The copy is exact, with the period filled in.
+ */
+describe("assertUndoNotLocked (the undo guard)", () => {
+  it("refuses an undo whose REVERSAL rows sit in a locked bucket, with the exact copy", async () => {
+    const err: any = await assertUndoNotLocked(db([filing()]) as any, [
+      { trackedCategoryId: "cat-1", periodBucket: "2026-09" },
+    ]).catch((e) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(err.getResponse()).toMatchObject({
+      code: "LEDGER_PERIOD_LOCKED",
+      message:
+        "This credit is part of a locked filing (2026-09). Record a new charge instead of voiding it.",
+      periodKey: "2026-09",
+    });
+    expect(undoLockedMessage("2026-09")).toBe(
+      "This credit is part of a locked filing (2026-09). Record a new charge instead of voiding it.",
+    );
+  });
+
+  it("lets an undo through when no locked filing covers the rows", async () => {
+    await expect(
+      assertUndoNotLocked(db([filing({ status: "GENERATED" })]) as any, [
+        { trackedCategoryId: "cat-1", periodBucket: "2026-09" },
+      ]),
+    ).resolves.toBeUndefined();
+  });
+});
+
+describe("the undo guard on the ledger service (SA-819 MUST 6)", () => {
+  const rows = [{ trackedCategoryId: "cat-1", periodBucket: "2026-09" }];
+  const withLedger = () => {
+    const createMany = jest.fn();
+    const d: any = db([filing()], rows);
+    d.regulatedSalesLedger.createMany = createMany;
+    return { d, createMany };
+  };
+  const copy =
+    "This credit is part of a locked filing (2026-09). Record a new charge instead of voiding it.";
+
+  it("voiding a credit note in a locked period is refused and books nothing", async () => {
+    const { d, createMany } = withLedger();
+    const svc: any = new RegulatedLedgerService({} as any);
+    await expect(
+      svc.unreverseCreditNoteEntries({ creditNoteId: "cn-1", db: d }),
+    ).rejects.toMatchObject({ response: { code: "LEDGER_PERIOD_LOCKED", message: copy } });
+    expect(createMany).not.toHaveBeenCalled();
+  });
+
+  it("cancelling a return in a locked period is refused and books nothing", async () => {
+    const { d, createMany } = withLedger();
+    const svc: any = new RegulatedLedgerService({} as any);
+    await expect(svc.unreverseReturnEntries({ returnId: "r-1", db: d })).rejects.toMatchObject({
+      response: { code: "LEDGER_PERIOD_LOCKED", message: copy },
+    });
+    expect(createMany).not.toHaveBeenCalled();
   });
 });

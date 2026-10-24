@@ -13,7 +13,7 @@ import { RegulatedService } from "./regulated.service";
 import { RegulatedReportService } from "./regulated-report.service";
 import { roundMoney } from "@routeflow/pricing";
 import { filingPeriod, FilingCadence } from "./period";
-import { findLockedFiling } from "./filed-periods";
+import { claimFilingLock, findLockedFiling, updateFilingUnlessLocked } from "./filed-periods";
 import { buildFilingCsv } from "./filing-csv";
 import { serializeReportCsv } from "./report-csv";
 import { assertNoParkedReversals, listParkedReversals } from "./parked-reversals";
@@ -122,14 +122,10 @@ export class RegulatedFilingService {
     );
 
     // Claimed conditionally: a concurrent lock (or a regeneration that flipped it) cannot double-lock.
-    const claimed = await this.prisma.forTenant().regulatedFiling.updateMany({
-      where: { id, status: "GENERATED" },
-      data: {
-        status: "LOCKED",
-        lockedAt: new Date(),
-        lockedById: params.userId,
-        lockReason: reason,
-      },
+    const claimed = await claimFilingLock(this.prisma.forTenant(), {
+      id,
+      lockedById: params.userId,
+      reason,
     });
     if (claimed.count !== 1)
       throw new ConflictException({
@@ -161,10 +157,7 @@ export class RegulatedFilingService {
   private async regenerateUnlessLocked(id: string, data: Record<string, unknown>) {
     const db = this.prisma.forTenant();
     try {
-      return await db.regulatedFiling.update({
-        where: { id, status: { not: "LOCKED" } } as any,
-        data: data as any,
-      });
+      return await updateFilingUnlessLocked(db, id, data);
     } catch (err: any) {
       if (err?.code !== "P2025") throw err; // no row matched: it is LOCKED now
       return db.regulatedFiling.findUniqueOrThrow({ where: { id } });
@@ -223,7 +216,7 @@ export class RegulatedFilingService {
       trackedCategoryId: params.trackedCategoryId,
       periodKey,
     });
-    if (locked) return locked;
+    if (locked?.status === "LOCKED") return locked;
 
     // FILING GATE: a return reversal the ledger could not book (pack unknown) is parked and NOT in these
     // figures. Refuse BEFORE anything is uploaded or upserted (a regeneration too), so a period with an
