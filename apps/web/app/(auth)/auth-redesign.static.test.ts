@@ -7,7 +7,7 @@ import * as path from "path";
 const WEB_ROOT = path.resolve(__dirname, "..", "..");
 
 // ---------------------------------------------------------------------------
-// T2a — the 15 real auth pages are reskinned onto <AuthShell> from
+// T2a — the 16 real auth pages are reskinned onto <AuthShell> from
 // "@/components/auth".
 // ---------------------------------------------------------------------------
 
@@ -27,13 +27,14 @@ const AUTH_PAGE_PATHS = [
   "app/buyer/invite/[token]/page.tsx",
   "app/change-password/page.tsx",
   "app/verify-email/page.tsx",
+  "app/(auth)/choose-role/page.tsx", // W-839 / SA-937: the post-sign-in role step
 ];
 
 function readAuthPage(relPath: string): string {
   return fs.readFileSync(path.join(WEB_ROOT, relPath), "utf8");
 }
 
-describe("all 15 auth pages are reskinned onto AuthShell — T2a (R2)", () => {
+describe("all 16 auth pages are reskinned onto AuthShell — T2a (R2)", () => {
   it('every page imports from "@/components/auth" and renders <AuthShell (T2a)', () => {
     const missing = AUTH_PAGE_PATHS.filter((relPath) => {
       const source = readAuthPage(relPath);
