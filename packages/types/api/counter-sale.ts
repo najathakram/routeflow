@@ -176,7 +176,7 @@ export interface PickupCompleteRequest {
   /** SA-750r3: the till register this hand-over's cash counts on when the order has none stamped yet; default 'main' */
   registerKey?: string;
   /** I-120 R8 (owner 7a Q1 = A): the operator confirmed taking an order on a driver's run off the run (after a 409 COUNTER_COMPLETE_ON_RUN). */
-  removeFromRun?: boolean;
+  takeOffRun?: boolean;
 }
 
 export interface PickupCompleteResponse {

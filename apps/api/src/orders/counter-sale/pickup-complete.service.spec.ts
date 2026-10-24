@@ -222,7 +222,10 @@ describe("PickupCompleteService.complete", () => {
       async (fulfillPath) => {
         order = orderRow("CONFIRMED", { fulfillPath });
         await run();
-        expect(updateFulfillPath).toHaveBeenCalledWith("ord-1", { fulfillPath: "PICKUP" }, staff);
+        // SA-913: the engine pins the ONE switch option (it lets an OUT_FOR_DELIVERY order switch)
+        expect(updateFulfillPath).toHaveBeenCalledWith("ord-1", { fulfillPath: "PICKUP" }, staff, {
+          fromOutForDelivery: true,
+        });
         expect(calls.slice(0, 3)).toEqual(["claim", "updateFulfillPath", "changeStatus"]);
       },
     );

@@ -72,6 +72,68 @@ describe("OrdersService.updateFulfillPath: switch to PICKUP", () => {
     },
   );
 
+  // SA-913 (c): the ONE caller-pinned option (only Complete at counter pins it) lets an OUT_FOR_DELIVERY order with NO run
+  // link switch, nothing else.
+  const pinned = () =>
+    h.service.updateFulfillPath("ord-1", { fulfillPath: "PICKUP" } as any, operatorPayload as any, {
+      fromOutForDelivery: true,
+    });
+  it("the pinned option: an OUT_FOR_DELIVERY order with no run link is stored as PICKUP", async () => {
+    open({ status: "OUT_FOR_DELIVERY", routeRunId: null });
+    await pinned();
+    expect(h.prisma.order.update).toHaveBeenCalledWith({
+      where: { id: "ord-1" },
+      data: { fulfillPath: "PICKUP" },
+    });
+  });
+  it.each([
+    [
+      "an active run",
+      {
+        routeRunId: "run-1",
+        routeRunStopId: "stop-1",
+        routeRunStop: { routeRun: { status: "IN_PROGRESS" } },
+      },
+    ],
+    [
+      "a finished run",
+      {
+        routeRunId: "run-1",
+        routeRunStopId: "stop-1",
+        routeRunStop: { routeRun: { status: "COMPLETED" } },
+      },
+    ],
+  ])(
+    "the pinned option: an OUT_FOR_DELIVERY order still linked to %s is refused, nothing written",
+    async (_n, link) => {
+      open({ status: "OUT_FOR_DELIVERY", ...link });
+      await expect(pinned()).rejects.toThrow(/only be changed while the order is open/);
+      expect(h.prisma.order.update).not.toHaveBeenCalled();
+      expect(h.prisma.order.updateMany).not.toHaveBeenCalled();
+    },
+  );
+  it.each(["DELIVERED", "CANCELLED"])(
+    "the pinned option: %s is still refused, nothing written",
+    async (status) => {
+      open({ status });
+      await expect(pinned()).rejects.toThrow(/only be changed while the order is open/);
+      expect(h.prisma.order.update).not.toHaveBeenCalled();
+    },
+  );
+  it("the pinned option is caller-pinned: only Complete at counter's engine passes it (grep)", () => {
+    const { execSync } = require("child_process");
+    const root = require("path").join(__dirname, "..");
+    const hits: string[] = execSync(`git grep -l "fromOutForDelivery" -- "*.ts"`, { cwd: root })
+      .toString()
+      .trim()
+      .split(/\r?\n/)
+      .filter((f: string) => !f.endsWith(".spec.ts"));
+    expect(hits.sort()).toEqual([
+      "orders/counter-sale/pickup-complete.service.ts",
+      "orders/order-lifecycle.ts",
+    ]);
+  });
+
   it("a role without USE_POS_MODE (driver, customer, no principal) is refused before anything is read", async () => {
     open();
     for (const user of [{ ...operatorPayload, role: "DRIVER" }, customerPayload, undefined]) {

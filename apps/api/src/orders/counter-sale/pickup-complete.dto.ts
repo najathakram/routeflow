@@ -37,5 +37,5 @@ export class PickupCompleteDto {
   /** I-120 R8 (owner 7a Q1 = A): the operator confirmed taking an order on a driver's run off the run. */
   @IsOptional()
   @IsBoolean()
-  removeFromRun?: boolean;
+  takeOffRun?: boolean;
 }

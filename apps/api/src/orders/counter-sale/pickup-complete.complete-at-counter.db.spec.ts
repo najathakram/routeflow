@@ -30,6 +30,7 @@ import { TenantContextService } from "../../tenant/tenant-context.service";
 import type { JwtPayload } from "../../auth/jwt-payload.interface";
 import { PickupCompleteService } from "./pickup-complete.service";
 import { buildDbOrdersService } from "../../common/testing/orders-service-db-harness";
+import { claimStopStatusChangeOnLiveRun } from "../../routes/delivery-lines.util";
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../../scripts/lib/test-tenants.cjs");
 
@@ -107,8 +108,18 @@ describeDb("I-120 Complete at counter — real Postgres", () => {
     invoiceIds.push(invoice.id);
     return { orderId: order.id, invoiceId: invoice.id };
   }
+  const routeProgress = jest.fn();
   const engine = () =>
-    new PickupCompleteService(orders, orders.invoicesService, prisma, storePickup as never);
+    // the 5th (optional) arg is the gateway the take-off's skipped-stop update goes through
+    new (PickupCompleteService as any)(
+      orders,
+      orders.invoicesService,
+      prisma,
+      storePickup as never,
+      {
+        emitRouteProgress: routeProgress,
+      } as never,
+    );
   const complete = (orderId: string) =>
     as(() => engine().complete(orderId, {} as never, operator(), `key-${run}-${n}`));
 
@@ -174,6 +185,11 @@ describeDb("I-120 Complete at counter — real Postgres", () => {
       await raw.invoice.deleteMany({ where: { id: { in: invoiceIds } } });
       await raw.orderItem.deleteMany({ where: { orderId: { in: orderIds } } });
       await raw.order.deleteMany({ where: { id: { in: orderIds } } });
+      await raw.routeRunStop.deleteMany({ where: { tenantId } });
+      await raw.routeRun.deleteMany({ where: { tenantId } });
+      await raw.routeStop.deleteMany({ where: { tenantId } });
+      await raw.route.deleteMany({ where: { tenantId } });
+      await raw.driver.deleteMany({ where: { tenantId } });
       await raw.product.deleteMany({ where: { tenantId } });
       await raw.customer.deleteMany({ where: { tenantId } });
       await raw.user.deleteMany({ where: { tenantId } });
@@ -187,6 +203,7 @@ describeDb("I-120 Complete at counter — real Postgres", () => {
 
   beforeEach(() => {
     pushes.mockClear();
+    routeProgress.mockClear();
     events.mockClear();
     email.mockClear();
     recordPayment.mockReset();
@@ -519,4 +536,299 @@ describeDb("I-120 Complete at counter — real Postgres", () => {
       email.mockImplementation(async () => ({ delivered: true }));
     }
   }, 90_000);
+
+  // ── SA-913 R8 / R9 (owner 7a): judged before the claim; the confirmed take-off is one locked tx (Orders → stop → run) ──
+  let runSeq = 0;
+  /** A SCHEDULED run of this tenant with one stop for the shared customer, driven by "Sam"; the orders linked to it. */
+  async function onDriverRun(orderIds: string[], stopStatus = "PENDING") {
+    runSeq += 1;
+    const driverUser = await raw.user.create({
+      data: {
+        email: `d-${run}-${runSeq}@example.test`,
+        username: `d-${run}-${runSeq}`,
+        role: "DRIVER",
+        tenantId,
+      },
+    });
+    const driver = await raw.driver.create({
+      data: { userId: driverUser.id, contactName: "Sam", tenantId },
+    });
+    const route = await raw.route.create({ data: { name: `R8 ${run}-${runSeq}`, tenantId } });
+    const routeStop = await raw.routeStop.create({
+      data: { routeId: route.id, stopNumber: 1, customerId, tenantId },
+    });
+    const routeRun = await raw.routeRun.create({
+      data: { routeId: route.id, scheduledDate: new Date(), driverId: driver.id, tenantId },
+    });
+    const stop = await raw.routeRunStop.create({
+      data: {
+        routeRunId: routeRun.id,
+        routeStopId: routeStop.id,
+        stopNumber: 1,
+        customerId,
+        tenantId,
+        status: stopStatus as never,
+      },
+    });
+    await raw.order.updateMany({
+      where: { id: { in: orderIds } },
+      data: { routeRunId: routeRun.id, routeRunStopId: stop.id },
+    });
+    return { runId: routeRun.id, stopId: stop.id };
+  }
+  const claimCount = (orderId: string) =>
+    raw.auditLog.count({
+      where: { tenantId, entityId: orderId, action: "PICKUP_COMPLETE_CLAIM" },
+    });
+  const takeOffRows = (orderId: string) =>
+    raw.auditLog.findMany({
+      where: { tenantId, entityId: orderId, action: AUDIT_ACTIONS.COUNTER_COMPLETE_TAKEN_OFF_RUN },
+    });
+  const linkOf = async (orderId: string) => {
+    const o = await raw.order.findUniqueOrThrow({ where: { id: orderId } });
+    return {
+      path: o.fulfillPath,
+      status: o.status,
+      routeRunId: o.routeRunId,
+      routeRunStopId: o.routeRunStopId,
+    };
+  };
+  const stopOf = (stopId: string) => raw.routeRunStop.findUniqueOrThrow({ where: { id: stopId } });
+  async function expectUntouched(orderId: string, invoiceId: string, want: object) {
+    expect(await linkOf(orderId)).toEqual(want);
+    expect((await raw.invoice.findUniqueOrThrow({ where: { id: invoiceId } })).status).toBe(
+      "DRAFT",
+    );
+    expect(sent).toEqual([]);
+    expect(email).not.toHaveBeenCalled();
+  }
+  const withFlag = (orderId: string, key: string, takeOffRun?: boolean) =>
+    as(() =>
+      engine().complete(
+        orderId,
+        (takeOffRun === undefined ? {} : { takeOffRun }) as never,
+        operator(),
+        key,
+      ),
+    );
+  const delivered = { path: "PICKUP", status: "DELIVERED", routeRunId: null, routeRunStopId: null };
+
+  it("R8a a PENDING stop, no confirm: 409 COUNTER_COMPLETE_ON_RUN {driverName, runId} before the claim; the confirm under the SAME key takes it off, the emptied stop SKIPPED", async () => {
+    const { orderId, invoiceId } = await seed("CONFIRMED", "ROUTE");
+    const { runId, stopId } = await onDriverRun([orderId]);
+    const key = `key-${run}-r8a`;
+    const err: any = await withFlag(orderId, key).catch((e) => e);
+    expect(err?.getStatus?.()).toBe(409);
+    expect(err.getResponse()).toMatchObject({
+      code: "COUNTER_COMPLETE_ON_RUN",
+      driverName: "Sam",
+      runId,
+    });
+    await expectUntouched(orderId, invoiceId, {
+      path: "ROUTE",
+      status: "CONFIRMED",
+      routeRunId: runId,
+      routeRunStopId: stopId,
+    });
+    expect(await claimCount(orderId)).toBe(0); // judged before the claim
+    await withFlag(orderId, key, true); // takeOffRun is not in the claim's body hash
+    await new Promise((r) => setImmediate(r));
+    expect(await linkOf(orderId)).toEqual(delivered);
+    const stop = await stopOf(stopId);
+    expect({ status: stop.status, skipReason: stop.skipReason }).toEqual({
+      status: "SKIPPED",
+      skipReason: "Completed at counter",
+    });
+    expect((await raw.routeRun.findUniqueOrThrow({ where: { id: runId } })).status).toBe(
+      "SCHEDULED",
+    );
+    const rows = await takeOffRows(orderId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].meta).toMatchObject({ runId, stopId, stopSkipped: true });
+    expect(routeProgress).toHaveBeenCalledWith(tenantId, [customerId], { runId }); // the office skip's update
+    expect(sent).toEqual([`${invoiceId}:quiet`]);
+    expect(pushes).not.toHaveBeenCalled();
+    expect(events).not.toHaveBeenCalled();
+    expect(email).toHaveBeenCalledTimes(1); // the ONE completion email, nothing about the run
+  }, 60_000);
+
+  it("R8b an OUT_FOR_DELIVERY order on the run: taken off with NO demotion (no CONFIRMED write, no delivery-gate pre-judge), DELIVERED alreadyOut", async () => {
+    const { orderId } = await seed("OUT_FOR_DELIVERY", "ROUTE");
+    await onDriverRun([orderId]);
+    const change = jest.spyOn(orders, "changeStatus");
+    const gate = jest.spyOn(orders, "assertDeliveryCreditGate");
+    try {
+      await withFlag(orderId, `key-${run}-r8b`, true);
+      expect(await linkOf(orderId)).toEqual(delivered);
+      expect(change.mock.calls.map((c: any[]) => c[1]?.status)).toEqual(["DELIVERED"]);
+      expect(gate).not.toHaveBeenCalled();
+    } finally {
+      change.mockRestore();
+      gate.mockRestore();
+    }
+  }, 60_000);
+
+  it.each(["IN_PROGRESS", "COMPLETED"])(
+    "R8c the driver has started the stop (%s): 409 COUNTER_COMPLETE_STOP_STARTED with or without the confirm, nothing written",
+    async (stopStatus) => {
+      const { orderId, invoiceId } = await seed("CONFIRMED", "ROUTE");
+      const { runId, stopId } = await onDriverRun([orderId], stopStatus);
+      await raw.routeRun.update({ where: { id: runId }, data: { status: "IN_PROGRESS" } });
+      for (const takeOffRun of [undefined, true]) {
+        const err: any = await withFlag(orderId, `key-${run}-r8c-${stopStatus}`, takeOffRun).catch(
+          (e) => e,
+        );
+        expect(err?.getStatus?.()).toBe(409);
+        expect(err.getResponse()).toMatchObject({
+          code: "COUNTER_COMPLETE_STOP_STARTED",
+          message: "The driver has started this stop. Finish it on the route.",
+        });
+      }
+      await expectUntouched(orderId, invoiceId, {
+        path: "ROUTE",
+        status: "CONFIRMED",
+        routeRunId: runId,
+        routeRunStopId: stopId,
+      });
+      expect(await claimCount(orderId)).toBe(0);
+    },
+    60_000,
+  );
+
+  it("R8d the driver starts the stop after the pre-judge: the take-off's stop lock refuses COUNTER_COMPLETE_STOP_STARTED, path / status / link unchanged", async () => {
+    const { orderId, invoiceId } = await seed("CONFIRMED", "ROUTE");
+    const { runId, stopId } = await onDriverRun([orderId]);
+    // the credit pre-judge runs after the run pre-judge and before the take-off: the driver starts the stop there
+    const gate = jest.spyOn(orders, "assertDeliveryCreditGate").mockImplementationOnce(async () => {
+      await raw.routeRunStop.update({ where: { id: stopId }, data: { status: "IN_PROGRESS" } });
+    });
+    try {
+      const err: any = await withFlag(orderId, `key-${run}-r8d`, true).catch((e) => e);
+      expect(err?.getStatus?.()).toBe(409);
+      expect(err.getResponse()).toMatchObject({ code: "COUNTER_COMPLETE_STOP_STARTED" });
+    } finally {
+      gate.mockRestore();
+    }
+    await expectUntouched(orderId, invoiceId, {
+      path: "ROUTE",
+      status: "CONFIRMED",
+      routeRunId: runId,
+      routeRunStopId: stopId,
+    });
+    expect(await takeOffRows(orderId)).toHaveLength(0);
+  }, 60_000);
+
+  it("R8e a stop holding the customer's OTHER order too: ours is unlinked, the stop stays PENDING with the other order", async () => {
+    const { orderId } = await seed("CONFIRMED", "ROUTE");
+    const other = await seed("CONFIRMED", "ROUTE");
+    const { runId, stopId } = await onDriverRun([orderId, other.orderId]);
+    await withFlag(orderId, `key-${run}-r8e`, true);
+    expect(await linkOf(orderId)).toEqual(delivered);
+    expect(await linkOf(other.orderId)).toEqual({
+      path: "ROUTE",
+      status: "CONFIRMED",
+      routeRunId: runId,
+      routeRunStopId: stopId,
+    });
+    const stop = await stopOf(stopId);
+    expect({ status: stop.status, skipReason: stop.skipReason }).toEqual({
+      status: "PENDING",
+      skipReason: null,
+    });
+    expect((await takeOffRows(orderId))[0]?.meta).toMatchObject({ stopSkipped: false });
+    expect(routeProgress).not.toHaveBeenCalled();
+  }, 60_000);
+
+  it("R8f lock order: 20 reps of the take-off vs the driver's IN_PROGRESS on the same stop, 0 deadlocks, never an order unlinked from a started stop", async () => {
+    const outcomes = { takenOff: 0, refused: 0 };
+    for (let rep = 0; rep < 20; rep++) {
+      const { orderId } = await seed("CONFIRMED", "ROUTE");
+      const { runId, stopId } = await onDriverRun([orderId]);
+      await raw.routeRun.update({ where: { id: runId }, data: { status: "IN_PROGRESS" } });
+      let release!: () => void;
+      const barrier = new Promise<void>((r) => (release = r));
+      const takeOff = barrier.then(() =>
+        withFlag(orderId, `key-${run}-r8f-${rep}`, true).then(
+          () => "ok" as const,
+          (e: any) => e,
+        ),
+      );
+      const driver = barrier.then(() =>
+        as(() =>
+          claimStopStatusChangeOnLiveRun(prisma, runId, stopId, { status: "IN_PROGRESS" }),
+        ).then(
+          () => "ok" as const,
+          (e: any) => e,
+        ),
+      );
+      release();
+      const [mine, theirs] = await Promise.all([takeOff, driver]);
+      for (const r of [mine, theirs])
+        if (r !== "ok") expect(String(r?.code ?? r?.message ?? r)).not.toMatch(/40P01|deadlock/i);
+      expect(theirs).toBe("ok"); // the driver's start never fails over a take-off
+      const after = await linkOf(orderId);
+      if (mine === "ok") {
+        outcomes.takenOff += 1;
+        expect(after).toEqual(delivered);
+        // the take-off committed before the driver's start: it found the stop PENDING (one audit row, the stop skipped)
+        expect((await takeOffRows(orderId))[0]?.meta).toMatchObject({ stopSkipped: true });
+      } else {
+        outcomes.refused += 1;
+        expect(mine.getResponse?.()).toMatchObject({ code: "COUNTER_COMPLETE_STOP_STARTED" });
+        expect(after).toEqual({
+          path: "ROUTE",
+          status: "CONFIRMED",
+          routeRunId: runId,
+          routeRunStopId: stopId,
+        });
+        expect(await takeOffRows(orderId)).toHaveLength(0);
+      }
+    }
+    expect(outcomes.takenOff + outcomes.refused).toBe(20);
+  }, 180_000);
+
+  it("R8g an office-SKIPPED stop: unlinked, and the stop stays SKIPPED with its own reason", async () => {
+    const { orderId } = await seed("CONFIRMED", "ROUTE");
+    const { stopId } = await onDriverRun([orderId], "SKIPPED");
+    await raw.routeRunStop.update({ where: { id: stopId }, data: { skipReason: "Closed today" } });
+    await withFlag(orderId, `key-${run}-r8g`, true);
+    expect(await linkOf(orderId)).toEqual(delivered);
+    const stop = await stopOf(stopId);
+    expect({ status: stop.status, skipReason: stop.skipReason }).toEqual({
+      status: "SKIPPED",
+      skipReason: "Closed today",
+    });
+  }, 60_000);
+
+  it("R9 a SHIP order shipped with the carrier (shippedAt): 409 COUNTER_COMPLETE_SHIPPED before the claim, nothing written", async () => {
+    const { orderId, invoiceId } = await seed("CONFIRMED", "SHIP");
+    await raw.order.update({ where: { id: orderId }, data: { shippedAt: new Date() } });
+    const err: any = await withFlag(orderId, `key-${run}-r9`, true).catch((e) => e);
+    expect(err?.getStatus?.()).toBe(409);
+    expect(err.getResponse()).toMatchObject({
+      code: "COUNTER_COMPLETE_SHIPPED",
+      message: "This order has shipped with the carrier.",
+    });
+    await expectUntouched(orderId, invoiceId, {
+      path: "SHIP",
+      status: "CONFIRMED",
+      routeRunId: null,
+      routeRunStopId: null,
+    });
+    expect(await claimCount(orderId)).toBe(0);
+  }, 60_000);
+
+  it("R9b a SHIP order OUT_FOR_DELIVERY with no shippedAt: 409 COUNTER_COMPLETE_SHIPPED before the claim, nothing written", async () => {
+    const { orderId, invoiceId } = await seed("OUT_FOR_DELIVERY", "SHIP");
+    const err: any = await withFlag(orderId, `key-${run}-r9b`).catch((e) => e);
+    expect(err?.getStatus?.()).toBe(409);
+    expect(err.getResponse()).toMatchObject({ code: "COUNTER_COMPLETE_SHIPPED" });
+    await expectUntouched(orderId, invoiceId, {
+      path: "SHIP",
+      status: "OUT_FOR_DELIVERY",
+      routeRunId: null,
+      routeRunStopId: null,
+    });
+    expect(await claimCount(orderId)).toBe(0);
+  }, 60_000);
 });

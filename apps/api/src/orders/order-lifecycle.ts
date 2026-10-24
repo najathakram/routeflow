@@ -106,12 +106,28 @@ export async function updateShipmentImpl(
  * shouldn't move out from under its trip/shipment records after the fact —
  * and locked toward SHIP or PICKUP while the order sits on a live run.
  */
+/**
+ * SA-913 (c): the ONE caller-pinned switch option. Only "Complete at counter" pins `fromOutForDelivery` (a grep spec holds
+ * it there): it accepts an OUT_FOR_DELIVERY order ONLY once its run link is null (just taken off the run in that flow), and
+ * the DELIVERED step then runs with alreadyOut. PATCH /orders/:id/fulfill-path never passes it, so it keeps refusing
+ * OUT_FOR_DELIVERY, and ORDER_ON_ACTIVE_RUN holds for every caller.
+ */
+export type FulfillPathSwitchOptions = { fromOutForDelivery?: true };
+/** OrdersService.updateFulfillPath's arguments (the delegator stays a one-liner under the size ratchet). */
+export type UpdateFulfillPathArgs = [
+  orderId: string,
+  dto: UpdateFulfillPathDto,
+  user?: JwtPayload,
+  opts?: FulfillPathSwitchOptions,
+];
+
 export async function updateFulfillPathImpl(
   self: OrdersService,
   orderId: string,
   dto: UpdateFulfillPathDto,
   user?: JwtPayload,
   restrictions?: Pick<SellingRestrictionsService, "assertLinesSellable">,
+  opts?: FulfillPathSwitchOptions,
 ) {
   // POS mode (SA-763r R3): switching an order to PICKUP is a hand-over at the till, a staff capability.
   // BO-07: the ONE till predicate (an OPERATOR's denied ORDERS group is read live; only for the PICKUP switch).
@@ -161,8 +177,9 @@ export async function updateFulfillPathImpl(
     },
   });
   if (!order) throw new NotFoundException("Order not found");
+  const linked = order.routeRunId != null || order.routeRunStopId != null;
   if (
-    order.status === OrderStatus.OUT_FOR_DELIVERY ||
+    (order.status === OrderStatus.OUT_FOR_DELIVERY && !(opts?.fromOutForDelivery && !linked)) ||
     order.status === OrderStatus.DELIVERED ||
     order.status === OrderStatus.CANCELLED
   ) {
@@ -203,8 +220,7 @@ export async function updateFulfillPathImpl(
       principal: user,
       ambientTenantId: self.prisma.getTenantId(),
     });
-  const hasLink = order.routeRunId != null || order.routeRunStopId != null;
-  if (dto.fulfillPath !== FulfillPath.PICKUP || !hasLink) {
+  if (dto.fulfillPath !== FulfillPath.PICKUP || !linked) {
     return self.prisma.forTenant().order.update({
       where: { id: orderId },
       data: { fulfillPath: dto.fulfillPath },
