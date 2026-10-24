@@ -11,6 +11,7 @@
 
 import type { BuyerSeller } from "./buyer-auth";
 import { canOpenSeller } from "./seller-directory-logic";
+import { SHELL_BUYER_ROUTE } from "./web-shell/shell-routing";
 
 export const SELLERLESS_LANDING = "/(customer)/sellers/connect";
 /** A buyer whose only links are INVITED / PENDING_SELLER_APPROVAL waits on the seller list. */
@@ -25,12 +26,17 @@ export function isSellerlessRoute(segments: string[]): boolean {
   return rest === "sellers" || rest === "sellers/connect";
 }
 
-/** (customer)/_layout: where to send the buyer, or null to stay. */
+/**
+ * (customer)/_layout: where to send the buyer, or null to stay. W-830: with the hybrid shell on
+ * the native (customer) group is never shown: every state goes to the shell as a buyer.
+ */
 export function customerLayoutTarget(s: {
   hasBuyer: boolean;
   hasSeller: boolean;
   segments: string[];
+  shellOn?: boolean;
 }): string | null {
+  if (s.shellOn) return SHELL_BUYER_ROUTE;
   if (!s.hasBuyer) {
     return s.segments[0] === "(auth)" && s.segments[1] === "customer-login" ? null : CUSTOMER_LOGIN;
   }
