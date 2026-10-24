@@ -98,15 +98,15 @@ export const STOCK_SETTLE_SELECT = {
   ...STOCK_LINE_UNIT_SELECT,
 } as const;
 
-/** A box-unaware line with no own snapshot: only the product's live pack can size it. */
-const needsLivePack = (li: StockLineUnits) =>
+/** A box-unaware line with no own snapshot: only the product's live pack can size it. Row 635: the D2 repair reads it too. */
+export const needsLivePack = (li: StockLineUnits) =>
   li.unitsPerBox == null &&
   li.boxes == null &&
   li.pieces == null &&
   !(typeof li.unitLabel === "string" && li.unitLabel.trim() !== "");
 
-/** `qty` (the line's own unit) in pieces, at the column's 3 decimals. */
-const toPieces = (li: StockLineUnits, qty: unknown, livePack: unknown): number => {
+/** `qty` (the line's own unit) in pieces, at the column's 3 decimals. Row 635: the ONE conversion the D2 repair uses too. */
+export const toPieces = (li: StockLineUnits, qty: unknown, livePack: unknown): number => {
   const pack = livePack != null ? Number(livePack) : undefined;
   return Math.round(linePieceQty({ ...li, boxes: li.boxes ?? null, qty }, pack) * 1000) / 1000;
 };

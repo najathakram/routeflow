@@ -47,4 +47,31 @@ describe("one order-totals formula (G4)", () => {
       expect(readFileSync(join(SRC, rel), "utf8")).toContain("orderTotalsOf(");
     }
   });
+
+  // W-762 / SA-918 §3: `discount` is REQUIRED (the compiler lists every caller); this names each call that still
+  // passes none. An order re-total that drops the order's discount over-states the order against its invoices.
+  it("every orderTotalsOf / orderTotalsOfSums call passes `discount`", () => {
+    const missing: string[] = [];
+    for (const file of walk(SRC)) {
+      const rel = relative(SRC, file).split(sep).join("/");
+      const text = readFileSync(file, "utf8");
+      const call = /\borderTotalsOf(?:Sums)?\(/g;
+      let m: RegExpExecArray | null;
+      while ((m = call.exec(text))) {
+        if (/export function\s*$/.test(text.slice(Math.max(0, m.index - 20), m.index))) continue;
+        // the argument text up to the matching close paren
+        let depth = 0;
+        let end = m.index + m[0].length - 1;
+        for (; end < text.length; end += 1) {
+          if (text[end] === "(") depth += 1;
+          else if (text[end] === ")" && (depth -= 1) === 0) break;
+        }
+        const args = text.slice(m.index, end);
+        if (!/\bdiscount\b/.test(args)) {
+          missing.push(`${rel}:${text.slice(0, m.index).split("\n").length}`);
+        }
+      }
+    }
+    expect(missing).toEqual([]);
+  });
 });

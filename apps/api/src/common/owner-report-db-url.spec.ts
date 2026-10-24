@@ -45,6 +45,9 @@ const B768_REPORTS = [
  * reads the prod DB through it by default.
  */
 const ALLOWED: Record<string, string> = {
+  // Row 635: a WRITER (resolveDatabaseUrl, requireProxy unless --local); it sets DATABASE_URL to the resolved target for
+  // the compiled runner's PrismaService, which reads nothing else.
+  "b562-d2-average-repair.mjs": "a writer: hands the resolved target to the compiled runner",
   // `--local` mode only: production goes through resolveDatabaseUrl(); DATABASE_URL is read solely
   // when the operator explicitly asks for a local run.
   "data-questions-report.mjs": "--local mode only",

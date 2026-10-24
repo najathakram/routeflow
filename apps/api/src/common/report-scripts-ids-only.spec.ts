@@ -89,3 +89,46 @@ describe.each(REPORTS)("$name", ({ file }) => {
     expect(templates).not.toMatch(/\bslug\b|\bemail\b|businessName|\b[a-z]\."?name"?\b/i);
   });
 });
+
+/**
+ * Opus #3696 MUST 3: the same rule for the owner-run WRITERS' output. They may read a slug to classify a tenant (test or
+ * live) but never print one, a business name or a product name, nor store one in a plan file: every console line, every
+ * report row and every file they write carries ids and counts only.
+ */
+const WRITERS = ["b562-d1-ledger-gap-backfill", "b562-d2-average-repair"].map((n) => ({
+  name: n,
+  file: path.resolve(API_DIR, "scripts", `${n}.mjs`),
+}));
+const SLUG_OR_NAME = /\bslug\b|tenantSlug|\.name\b|\bname\s*:|businessName|\bemail\b/;
+/** The source text of every call to `callee(`, comments stripped, by balanced parentheses. */
+function callTexts(src: string, callee: RegExp): string[] {
+  const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+  const out: string[] = [];
+  for (const m of code.matchAll(callee)) {
+    let depth = 0;
+    let i = (m.index ?? 0) + m[0].length - 1;
+    const start = i;
+    for (; i < code.length; i += 1) {
+      if (code[i] === "(") depth += 1;
+      else if (code[i] === ")" && (depth -= 1) === 0) break;
+    }
+    out.push(code.slice(start, i + 1));
+  }
+  return out;
+}
+
+describe.each(WRITERS)(
+  "$name: output carries ids and counts only (no slug, no name)",
+  ({ file }) => {
+    const src = fs.readFileSync(file, "utf8");
+    it("no console line, report row or written file names a slug, a business or a product name", () => {
+      const emitted = [
+        ...callTexts(src, /\bconsole\.(?:log|error|warn)\(/g),
+        ...callTexts(src, /\breport\.push\(/g),
+        ...callTexts(src, /\bwriteFileSync\(/g),
+      ];
+      expect(emitted.length).toBeGreaterThan(0);
+      expect(emitted.filter((t) => SLUG_OR_NAME.test(t))).toEqual([]);
+    });
+  },
+);

@@ -350,9 +350,14 @@ export async function finalizeOrderRecompute(params: {
   );
   // RF-4: fold the billed category tax (Σ per line) back into the order total, so the order
   // stays in step with what the invoices actually charged. The ONE formula (`sumInvoiceTotals`).
+  // W-762 / SA-918: the order's discount, as its invoices carry it (generation allocates Order.discountAmount across
+  // them exactly), read the way the fee is read above.
+  const discountSum = roundMoney(
+    invoices.reduce((s: number, inv: any) => s + Number(inv.discount ?? 0), 0),
+  );
   const { regularTax: tax, total } = orderTotalsOfSums(
     { subtotal, levy: categoryTaxSum },
-    { taxRate: effectiveTaxRate, shipping: shippingFeeSum },
+    { taxRate: effectiveTaxRate, shipping: shippingFeeSum, discount: discountSum },
   );
   // SA-235: the Order row is written only when a column it would write differs (an identical save moves no updatedAt).
   const orderWrites: Array<[string, unknown]> = [

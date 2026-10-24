@@ -24,6 +24,11 @@ import { InvoiceStatus, ItemStatus, OrderStatus, Prisma } from "@prisma/client";
 import { lockRowsNoWait } from "../common/db-locks";
 import { mergeInProgress } from "./merge-contention";
 import { sameFulfilPathAsWinner, unshipped } from "./merge-candidates";
+import {
+  logDiscountedSkip,
+  mergeBlockedByDiscount,
+  orderMergeDiscounted,
+} from "./merge-discount-guard";
 import * as unitAware from "./unit-aware-guard";
 
 export type MergeKind = "auto" | "force";
@@ -82,7 +87,7 @@ export async function readMergeGroup(
   customerId: string,
   kind: MergeKind,
   focusOrderId?: string,
-): Promise<{ group: MergeOrder[]; unitAware: boolean }> {
+): Promise<{ group: MergeOrder[]; unitAware: boolean; discounted: boolean }> {
   const found: MergeOrder[] = await db.order.findMany({
     where: { customerId, ...mergeEligibleWhere(kind) },
     include: {
@@ -101,9 +106,17 @@ export async function readMergeGroup(
     unshipped(eligible),
     kind === "auto" ? focusOrderId : undefined,
   );
+  // W-762 / SA-918: any discounted participant (the winner included) blocks the merge. `force` refuses (409); `auto`
+  // skips by returning an empty group, which every auto caller already reads as "nothing to fold".
+  if (group.length > 1 && mergeBlockedByDiscount(group)) {
+    if (kind === "force") throw orderMergeDiscounted();
+    logDiscountedSkip(`readMergeGroup(${kind})`, customerId);
+    return { group: [], unitAware: false, discounted: true };
+  }
   return {
     group,
     unitAware: group.length > 1 && group.some((o) => o.lineItems.some(unitAware.isUnitAwareLine)),
+    discounted: false,
   };
 }
 
@@ -172,7 +185,12 @@ export async function lockAndRecheckMergeInputs(
   }
   await tx.$executeRaw`SET LOCAL lock_timeout = '3s'`; // = MERGE_WRITE_LOCK_TIMEOUT (a literal: no Unsafe raw)
   const now = await readMergeGroup(tx, args.customerId, args.kind, args.focusOrderId);
-  if (now.unitAware || mergeInputFingerprint(now.group) !== mergeInputFingerprint(args.pre)) {
+  // W-762: a participant discounted since the pre-read (auto) empties the group, so the fingerprint differs: contention.
+  if (
+    now.unitAware ||
+    now.discounted ||
+    mergeInputFingerprint(now.group) !== mergeInputFingerprint(args.pre)
+  ) {
     throw mergeInProgress();
   }
 }
