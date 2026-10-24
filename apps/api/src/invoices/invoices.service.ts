@@ -22,6 +22,7 @@ import {
   sumInvoiceTotalsStrict,
 } from "../common/money-invariants.util";
 import { randomUUID } from "crypto";
+import { assertRefsInTenant } from "../common/assert-refs-in-tenant";
 import { PrismaService } from "../prisma/prisma.service";
 import { overpaidByOf, statusFromPayments } from "./invoice-status";
 import { voidPaymentInTx } from "./payment-void-tx";
@@ -436,6 +437,9 @@ export class InvoicesService {
     // REG-B131: a removed (soft-deleted) customer cannot be invoiced; same 404 as a missing one. Checked
     // on the row just read (L-081), so restoreCustomer() re-enables it with no other write.
     if (!customer || customer.deletedAt) throw new NotFoundException("Customer not found");
+    // 681 (R5-5): every manual line's product must be in THIS tenant (same 404 as a missing one), proven before
+    // the selling-restrictions policy below and before anything is numbered or written.
+    await assertRefsInTenant(this.prisma, { productIds: dto.items.map((it) => it.productId) });
     // F-05 (#2093): a manual invoice SELLS its lines — a banned product refuses (409) before anything is read.
     // L8: an order-less invoice is judged as the customer's NEXT order would be (`defaultSaleFulfilmentKind`).
     const tenant = iGate.tenantId(this.prisma);
@@ -3123,6 +3127,9 @@ export class InvoicesService {
 
     const items = dto.items;
     if (items) {
+      // 681 (R5-5): the edited lines' products are proven in-tenant on the outer client, before the policy reads
+      // and before the edit tx opens. Existence only: an archived product's round-tripped line still passes.
+      await assertRefsInTenant(this.prisma, { productIds: items.map((it) => it.productId) });
       // F-05: netted per product (qtyDelta = requested - held); re-checked under the row lock in the tx below.
       const gate = await iGate.editParams(this.prisma, inv, items, actor, dto);
       const restriction = await this.sellingRestrictions.assertLinesSellable({
@@ -5140,6 +5147,10 @@ export class InvoicesService {
     const status = dto.status ?? "PAID";
     // B769 / SA-112: rounded totals, and Σ allocations ≤ payment — refused before any write.
     const { excess } = standaloneAllocationTotals(dto);
+    // 681 (R5-5): the AdvancePayment below stores dto.customerId, and `allocations: []` (an advance-only receipt)
+    // skips the per-allocation customer match, so the customer is proven here at the writer, before the payment
+    // number is reserved and before the tx opens. Covers the payment-request callers too. No ArrayMinSize.
+    await assertRefsInTenant(this.prisma, { customerIds: [dto.customerId] });
 
     // Standalone reservation, committed BEFORE the payment tx opens (B269): a
     // rolled-back booking burns the reserved block instead of re-minting the

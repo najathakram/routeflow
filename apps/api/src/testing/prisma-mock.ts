@@ -85,6 +85,33 @@ export function createMockPrisma(): MockPrisma {
     return proxy;
   };
 
+  // 681: `assertRefsInTenant` proves ids with `findMany({ where: { id: { in } }, select: { id: true } })` and compares counts.
+  // The default answers each id it is asked about (an id-only select), so a spec that is not about tenant refs keeps
+  // passing; a spec that IS about them stubs a scoped findMany (the *.tenant-refs.spec.ts files). Any other read is untouched.
+  const idEcho = <T extends ReturnType<typeof modelProxy>>(proxy: T, rebindStubs = false): T => {
+    // `rebindStubs` (product only): a spec that stubs the rows a writer READS (`findMany.mockResolvedValue([...])`) still has
+    // to answer the id-only proof, so mockResolvedValue is rebound to: id-only select -> echo the asked ids; any other read ->
+    // the stubbed rows. Customer/category keep the plain stub, so a spec that stubs [] to model a foreign id still gets its 404.
+    const withRows = (rows: unknown) =>
+      proxy.findMany.mockImplementation(
+        async (args?: { where?: { id?: { in?: string[] } }; select?: Record<string, unknown> }) => {
+          const keys = Object.keys(args?.select ?? {});
+          const ids = args?.where?.id?.in;
+          if (keys.length === 1 && keys[0] === "id" && Array.isArray(ids)) {
+            return ids.map((id) => ({ id }));
+          }
+          return rows as never;
+        },
+      );
+    withRows([]);
+    if (rebindStubs) {
+      (
+        proxy.findMany as unknown as { mockResolvedValue: (v: unknown) => unknown }
+      ).mockResolvedValue = (rows: unknown) => withRows(rows);
+    }
+    return proxy;
+  };
+
   // Prisma's update() returns the written row. B562 PR-2's order stock paths read the counter the
   // update returned (the SALE movement's stockAfter), so the product mock returns one by default.
   const productProxy = () => {
@@ -102,12 +129,12 @@ export function createMockPrisma(): MockPrisma {
     // id — a spec that doesn't stub product.create needs a non-empty id, or the sync call 500s on
     // "productId required" instead of the no-op it should be (no barcode -> nothing to sync).
     proxy.create.mockResolvedValue({ id: "mock-product-id", barcode: null, unitsPerBox: null });
-    return proxy;
+    return idEcho(proxy, true);
   };
 
   const allModels = () => ({
     user: modelProxy(),
-    customer: modelProxy(),
+    customer: idEcho(modelProxy()),
     customerAddress: modelProxy(),
     driver: modelProxy(),
     driverLocation: modelProxy(),
@@ -189,7 +216,7 @@ export function createMockPrisma(): MockPrisma {
     orderIdempotencyKey: modelProxy(),
     passwordResetToken: modelProxy(),
     saleDraft: modelProxy(),
-    trackedCategory: modelProxy(),
+    trackedCategory: idEcho(modelProxy()),
     trackedSubcategory: modelProxy(),
     // The add-only label sync (`syncCategoryLabel`) every Product.category writer runs in its tx: it finds no
     // label by default, so a writer's spec writes nothing extra unless it stubs a matching label.
@@ -281,7 +308,7 @@ export function createMockPrisma(): MockPrisma {
     billPayment: modelProxy(),
     refreshToken: modelProxy(),
     idempotencyKey: modelProxy(),
-    trackedCategory: modelProxy(),
+    trackedCategory: idEcho(modelProxy()),
     trackedSubcategory: modelProxy(),
     // The add-only label sync (`syncCategoryLabel`) every Product.category writer runs in its tx: it finds no
     // label by default, so a writer's spec writes nothing extra unless it stubs a matching label.
