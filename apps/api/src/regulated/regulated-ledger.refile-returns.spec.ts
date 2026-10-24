@@ -53,6 +53,8 @@ function dbOver(rows: any[], extra: Record<string, any> = {}) {
       createMany,
     },
     invoiceItem: { findMany: jest.fn().mockResolvedValue([{ id: "ii-1", productId: "p1" }]) },
+    // SA-789: the sale-line resolver also reads the order line (the rows here carry an orderItemId)
+    orderItem: { findMany: jest.fn().mockResolvedValue([]) },
     creditNoteItem: { findMany: jest.fn().mockResolvedValue([]) },
     ...extra,
   };
