@@ -5,14 +5,6 @@ import { Button, Modal, useToast } from "@routeflow/ui/web";
 import { useSetCostBasis } from "@/lib/api/inventory";
 import { unitsLabel } from "@/lib/stock-label";
 
-// Unit costs keep sub-cent precision (formatMoney rounds to cents and would hide it).
-const unitCostFmt = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 4,
-});
-
 /**
  * Minimal shape `SetCostModal` needs to render and submit. Satisfied
  * structurally by both the Inventory Stock tab's `StockItem` and the product
@@ -57,7 +49,7 @@ export function SetCostModal({ item, onClose }: { item: CostBasisTarget; onClose
         onSuccess: () => {
           toast({
             title: "Cost basis set",
-            description: `${item.name} now carries a unit cost of ${unitCostFmt.format(Number(unitCost))}.`,
+            description: `${item.name} now carries a unit cost of $${Number(unitCost).toFixed(4)}.`,
             variant: "success",
           });
           onClose();
@@ -94,9 +86,8 @@ export function SetCostModal({ item, onClose }: { item: CostBasisTarget; onClose
             placeholder="0.0000"
           />
           <p className="mt-1 text-xs text-navy/70">
-            Current:{" "}
-            {item.averageCost != null ? unitCostFmt.format(Number(item.averageCost)) : "none"} ·
-            Stock: {unitsLabel(item.currentStock, item.unitsPerBox, item.unit)}
+            Current: {item.averageCost != null ? `$${Number(item.averageCost).toFixed(4)}` : "none"}{" "}
+            · Stock: {unitsLabel(item.currentStock, item.unitsPerBox, item.unit)}
           </p>
         </div>
         <div>

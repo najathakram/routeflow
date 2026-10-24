@@ -327,7 +327,7 @@ function StatementDetailBody({ statement }: { statement: CommissionStatementDeta
                       )}
                     </td>
                     <td
-                      className={`px-3 py-2 text-right tabular-nums ${amount < 0 ? "text-danger" : "text-navy"}`}
+                      className={`px-3 py-2 text-right ${amount < 0 ? "text-danger" : "text-navy"}`}
                     >
                       {fmt(amount)}
                     </td>
@@ -362,9 +362,7 @@ function StatementDetailBody({ statement }: { statement: CommissionStatementDeta
                     <td className="px-3 py-2 text-navy/70">{fmtDate(p.paidAt)}</td>
                     <td className="px-3 py-2 text-navy">{paymentMethodLabel(p.method)}</td>
                     <td className="px-3 py-2 text-navy/70">{p.reference ?? "—"}</td>
-                    <td className="px-3 py-2 text-right tabular-nums text-navy">
-                      {fmt(Number(p.amount))}
-                    </td>
+                    <td className="px-3 py-2 text-right text-navy">{fmt(Number(p.amount))}</td>
                   </tr>
                 ))}
               </tbody>

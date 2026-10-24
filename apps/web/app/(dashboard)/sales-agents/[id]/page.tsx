@@ -941,9 +941,7 @@ function LedgerCard({ agentId }: { agentId: string }) {
                       </Link>
                     </td>
                     <td className="px-3 py-2 text-navy/70">{fmtCalendarDate(row.basisDate)}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">
-                      {fmt(Number(row.baseAmount))}
-                    </td>
+                    <td className="px-3 py-2 text-right">{fmt(Number(row.baseAmount))}</td>
                     <td className="px-3 py-2">
                       <div className="flex flex-col">
                         <span>{pctLabel(row.ratePct)}</span>
@@ -952,18 +950,12 @@ function LedgerCard({ agentId }: { agentId: string }) {
                         </span>
                       </div>
                     </td>
-                    <td className="px-3 py-2 text-right tabular-nums">
-                      {fmt(Number(row.accruedAmount))}
-                    </td>
-                    <td className="px-3 py-2 text-right tabular-nums">
-                      {fmt(Number(row.payableAmount))}
-                    </td>
-                    <td className="px-3 py-2 text-right tabular-nums">
-                      {fmt(Number(row.claimedAmount))}
-                    </td>
+                    <td className="px-3 py-2 text-right">{fmt(Number(row.accruedAmount))}</td>
+                    <td className="px-3 py-2 text-right">{fmt(Number(row.payableAmount))}</td>
+                    <td className="px-3 py-2 text-right">{fmt(Number(row.claimedAmount))}</td>
                     {/* `drift` is the API's own remainder — rendered verbatim, never
                         subtracted from the columns beside it. */}
-                    <td className="px-3 py-2 text-right tabular-nums">{fmt(Number(row.drift))}</td>
+                    <td className="px-3 py-2 text-right">{fmt(Number(row.drift))}</td>
                     <td className="px-3 py-2">
                       <Badge
                         variant={ACCRUAL_STATUS_VARIANT[row.status]}

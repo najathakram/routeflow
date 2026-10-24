@@ -196,12 +196,8 @@ export default function CommissionStatementsPage() {
                         ? `${fmtCalendarDate(s.periodFrom)} – ${fmtCalendarDate(s.periodTo)}`
                         : "Open period"}
                     </td>
-                    <td className="px-4 py-3 text-right tabular-nums text-navy">
-                      {fmt(Number(s.totalAmount))}
-                    </td>
-                    <td className="px-4 py-3 text-right tabular-nums text-navy">
-                      {fmt(Number(s.paidAmount))}
-                    </td>
+                    <td className="px-4 py-3 text-right text-navy">{fmt(Number(s.totalAmount))}</td>
+                    <td className="px-4 py-3 text-right text-navy">{fmt(Number(s.paidAmount))}</td>
                     <td className="px-4 py-3 text-navy/70">{fmtDate(s.createdAt)}</td>
                   </tr>
                 ))

@@ -78,7 +78,6 @@ import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { bumpInvoiceLine, scanLevelForHit, seedLineQty } from "../invoice-scan-level";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { fmt, fmtCalendarDate } from "@/lib/formatting";
-import { formatMoney } from "@/lib/format";
 import { getDaysForTerms, addDaysIso } from "@/lib/invoice-terms";
 import {
   computeInvoiceLineTotal,
@@ -2859,8 +2858,8 @@ export default function NewInvoicePage() {
                         />
                       )}
                       {item.unitsPerBox && item.unitsPerBox > 1 && item.unitPrice > 0 && (
-                        <p className="text-xs text-navy/70 text-right mt-0.5">
-                          {formatMoney(perUnitPrice(item.unitPrice, item.unitsPerBox))}/
+                        <p className="text-[9px] text-navy/70 text-right mt-0.5">
+                          ${perUnitPrice(item.unitPrice, item.unitsPerBox)?.toFixed(2)}/
                           {w.base.short.one}
                         </p>
                       )}

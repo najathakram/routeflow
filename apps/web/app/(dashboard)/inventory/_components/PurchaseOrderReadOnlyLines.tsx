@@ -44,14 +44,14 @@ export function PurchaseOrderReadOnlyLines({
                 <td className="px-3 py-2 font-medium text-navy">
                   {item.product?.name ?? catalogById.get(item.productId)?.name ?? "—"}
                 </td>
-                <td className="px-3 py-2 text-right text-navy/70 tabular-nums">
+                <td className="px-3 py-2 text-right text-navy/70">
                   {isBoxed ? unitsLabel(ordered, upb) : ordered}
                 </td>
-                <td className="px-3 py-2 text-right text-navy/70 tabular-nums">
+                <td className="px-3 py-2 text-right text-navy/70">
                   ${Number(item.unitCost).toFixed(isBoxed ? 4 : 2)}
                   {isBoxed && <span className="text-navy/30"> /{UW.base.short.one}</span>}
                 </td>
-                <td className="px-3 py-2 text-right text-navy/70 tabular-nums">
+                <td className="px-3 py-2 text-right text-navy/70">
                   {item.qtyReceived != null ? (
                     isBoxed ? (
                       unitsLabel(received, upb)
@@ -62,9 +62,7 @@ export function PurchaseOrderReadOnlyLines({
                     <span className="text-navy/30">—</span>
                   )}
                 </td>
-                <td className="px-3 py-2 text-right text-navy/70 tabular-nums">
-                  {formatMoney(subtotal)}
-                </td>
+                <td className="px-3 py-2 text-right text-navy/70">{formatMoney(subtotal)}</td>
               </tr>
             );
           })}

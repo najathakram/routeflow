@@ -857,10 +857,8 @@ export function StatementReviewGrid({ result, onApplied }: Props) {
                       </Link>
                     </td>
                     <td className="px-3 py-2 text-navy/70">{fmtCalendarDate(b.billDate)}</td>
-                    <td className="px-3 py-2 text-right tabular-nums text-navy/70">
-                      {fmt(b.totalOwed)}
-                    </td>
-                    <td className="px-3 py-2 text-right font-medium tabular-nums text-navy">
+                    <td className="px-3 py-2 text-right text-navy/70">{fmt(b.totalOwed)}</td>
+                    <td className="px-3 py-2 text-right font-medium text-navy">
                       {fmt(b.outstanding)}
                     </td>
                   </tr>
@@ -1007,17 +1005,13 @@ function ImpliedPaidConfirmOverlay({
                   <tr key={b.billId}>
                     <td className="px-3 py-2 font-medium text-navy">{b.billNumber}</td>
                     <td className="px-3 py-2 text-navy/70">{fmtCalendarDate(b.billDate)}</td>
-                    <td className="px-3 py-2 text-right tabular-nums text-navy">
-                      {fmt(b.outstanding)}
-                    </td>
+                    <td className="px-3 py-2 text-right text-navy">{fmt(b.outstanding)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-          <p className="mt-3 text-right text-sm font-semibold tabular-nums text-navy">
-            Total: {fmt(total)}
-          </p>
+          <p className="mt-3 text-right text-sm font-semibold text-navy">Total: {fmt(total)}</p>
         </div>
         <div className="flex items-center justify-end gap-3 border-t border-surface-border px-6 py-4">
           <Button variant="secondary" onClick={onCancel}>

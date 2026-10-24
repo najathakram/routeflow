@@ -8,7 +8,7 @@ import { Badge, Button, Modal, PageHeader, ScrollShadow, cn, useToast } from "@r
 import { usePageTitle } from "@/lib/page-title-context";
 import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
-import { formatMoney, formatQty } from "@/lib/format";
+import { formatMoney } from "@/lib/format";
 import { unitsLabel } from "@/lib/stock-label";
 import {
   useStockOverview,
@@ -938,7 +938,7 @@ function ForecastingTab({
                   )}
                 >
                   <td className="px-4 py-3 font-medium text-navy">{item.name}</td>
-                  <td className="px-4 py-3 text-navy/70">{formatQty(item.currentStock)}</td>
+                  <td className="px-4 py-3 text-navy/70">{Number(item.currentStock).toFixed(2)}</td>
                   <td className="px-4 py-3 text-navy/70">
                     {item.avgDailySales != null ? Number(item.avgDailySales).toFixed(2) : "—"}
                   </td>

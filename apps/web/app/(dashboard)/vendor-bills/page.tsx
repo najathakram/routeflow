@@ -1418,10 +1418,10 @@ function InventoryPurchasesTab() {
                           <span className="ml-1.5 text-xs font-semibold text-red-500">Overdue</span>
                         )}
                       </td>
-                      <td className="px-4 py-3 text-right font-medium text-navy tabular-nums">
+                      <td className="px-4 py-3 text-right font-medium text-navy">
                         {fmt(Number(bill.totalOwed ?? 0))}
                       </td>
-                      <td className="px-4 py-3 text-right text-navy tabular-nums">
+                      <td className="px-4 py-3 text-right text-navy">
                         {fmt(Number(bill.totalPaid ?? 0))}
                       </td>
                       <td className="px-4 py-3 text-right">
@@ -1620,7 +1620,7 @@ function PurchaseOrdersTab() {
                     <td className="px-4 py-3">
                       <Badge variant={b.variant} label={b.label} />
                     </td>
-                    <td className="px-4 py-3 text-right font-medium text-navy tabular-nums">
+                    <td className="px-4 py-3 text-right font-medium text-navy">
                       {fmt(poTotal(po))}
                     </td>
                   </tr>
@@ -2029,7 +2029,7 @@ function OtherExpensesTab() {
                       </div>
                     )}
                   </td>
-                  <td className="px-5 py-3 text-right font-semibold text-navy tabular-nums">
+                  <td className="px-5 py-3 text-right font-semibold text-navy">
                     {fmt(Number(e.amount))}
                   </td>
                   <td className="px-5 py-3">

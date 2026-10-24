@@ -13,7 +13,6 @@ import {
 import { useSuppliers } from "@/lib/api/suppliers";
 import { useCustomers } from "@/lib/api/customers";
 import { useToast } from "@routeflow/ui/web";
-import { fmt } from "@/lib/formatting";
 import { SupplierSelect } from "@/components/SupplierSelect";
 import { SELECTABLE_PAYMENT_METHODS, PAYMENT_METHOD_LABELS } from "@/lib/payment-methods";
 
@@ -411,7 +410,7 @@ function RecordExpenseTab({ onSaved }: { onSaved: () => void }) {
             Add row
           </button>
           <div className="flex justify-end border-t border-surface-border pt-2 mt-2">
-            <span className="text-sm font-semibold text-navy">Total: {fmt(lineTotal)}</span>
+            <span className="text-sm font-semibold text-navy">Total: ${lineTotal.toFixed(2)}</span>
           </div>
         </div>
       )}
@@ -624,7 +623,7 @@ function RecordMileageTab({ onSaved }: { onSaved: () => void }) {
           <label className={labelCls}>Amount (auto-calculated)</label>
           <div className="rounded-lg border border-surface-border bg-surface-raised px-3 py-2 text-sm text-navy/70">
             {applicableRate ? (
-              `${fmt(amount)} (${distance} ${unitWord} × $${Number(applicableRate.ratePerUnit).toFixed(4)}/${unitOne})`
+              `$${amount.toFixed(2)} (${distance} ${form.unit.toLowerCase()}s × $${Number(applicableRate.ratePerUnit).toFixed(4)}/${form.unit.toLowerCase()})`
             ) : (
               <span className="text-amber-600">No mileage rate set for this date</span>
             )}

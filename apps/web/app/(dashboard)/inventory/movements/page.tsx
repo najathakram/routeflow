@@ -280,7 +280,7 @@ export default function MovementsPage() {
                       )}
                     >
                       {isNegative ? "" : "+"}
-                      {String(Number(qty.toFixed(3)))} {m.product?.unit}
+                      {qty.toFixed(3)} {m.product?.unit}
                     </td>
                     <td className="px-4 py-3 text-navy/70">
                       {m.unitCost != null ? `$${Number(m.unitCost).toFixed(4)}` : "—"}

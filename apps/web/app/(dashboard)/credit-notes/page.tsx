@@ -23,7 +23,6 @@ import {
 import { useCustomers } from "@/lib/api/customers";
 import { useInvoices, useInvoice } from "@/lib/api/invoices";
 import { fmt } from "@/lib/formatting";
-import { formatQty } from "@/lib/format";
 import { roundMoney } from "@routeflow/pricing";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
 import { useUrlPage, useClampPage } from "@/lib/hooks/useUrlPage";
@@ -412,7 +411,7 @@ function CreateCreditNoteModal({
                         )}
                       </div>
                       <span className="text-xs text-navy/50">
-                        Qty {formatQty(it.qty)} · {fmt(Number(it.subtotal ?? 0))}
+                        {Number(it.qty)} × · line {fmt(Number(it.subtotal ?? 0))}
                       </span>
                     </div>
                     <div className="relative w-24 flex-shrink-0">

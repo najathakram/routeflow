@@ -64,7 +64,6 @@ import { dayClosedCopy, isDayClosedRefusal } from "@/lib/day-closed-copy";
 import { useAuth } from "@/lib/auth-context";
 import { toastDuplicatePaymentRef } from "@/lib/duplicate-payment-ref";
 import { fmt, fmtCalendarDate, fmtDate } from "@/lib/formatting";
-import { formatQty } from "@/lib/format";
 import { useUrlPage, useClampPage } from "@/lib/hooks/useUrlPage";
 import { useFleetAccess } from "@/lib/api/addons";
 import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
@@ -331,7 +330,7 @@ function ArAgingReport({
                       {c.buckets[col.key] ? fmt(c.buckets[col.key]) : "\u2014"}
                     </td>
                   ))}
-                  <td className="px-4 py-2.5 text-right tabular-nums font-semibold text-navy">
+                  <td className="px-4 py-2.5 text-right font-semibold text-navy">
                     {fmt(rowTotal)}
                   </td>
                 </tr>
@@ -347,9 +346,7 @@ function ArAgingReport({
                 {fmt((totals as Record<string, number>)[col.key] ?? 0)}
               </td>
             ))}
-            <td className="px-4 py-2.5 text-right tabular-nums font-bold text-navy">
-              {fmt(totals.total)}
-            </td>
+            <td className="px-4 py-2.5 text-right font-bold text-navy">{fmt(totals.total)}</td>
           </tr>
         </tfoot>
       </table>
@@ -447,8 +444,8 @@ function SalesByCustomerReport({
                 onClick={() => onSelectReport?.("customer-balance", { customerId: r.customerId })}
               >
                 <td className="px-4 py-2.5 font-medium text-brand-600">{r.businessName}</td>
-                <td className="px-4 py-2.5 text-right tabular-nums text-navy">{r.invoiceCount}</td>
-                <td className="px-4 py-2.5 text-right tabular-nums font-semibold text-navy">
+                <td className="px-4 py-2.5 text-right text-navy">{r.invoiceCount}</td>
+                <td className="px-4 py-2.5 text-right font-semibold text-navy">
                   {fmt(r.salesAmount)}
                 </td>
               </tr>
@@ -461,9 +458,7 @@ function SalesByCustomerReport({
               <td className="px-4 py-2.5 font-semibold text-navy" colSpan={2}>
                 Total
               </td>
-              <td className="px-4 py-2.5 text-right tabular-nums font-bold text-navy">
-                {fmt(grandTotal)}
-              </td>
+              <td className="px-4 py-2.5 text-right font-bold text-navy">{fmt(grandTotal)}</td>
             </tr>
           </tfoot>
         )}
@@ -539,12 +534,8 @@ function SalesByItemReport({ from, to }: { from?: string; to?: string }) {
             rows.map((r, i) => (
               <tr key={i} className="hover:bg-surface-raised/50">
                 <td className="px-4 py-2.5 font-medium text-navy">{r.name}</td>
-                <td className="px-4 py-2.5 text-right tabular-nums text-navy">
-                  {formatQty(r.qty)}
-                </td>
-                <td className="px-4 py-2.5 text-right tabular-nums font-semibold text-navy">
-                  {fmt(r.amount)}
-                </td>
+                <td className="px-4 py-2.5 text-right text-navy">{Number(r.qty).toFixed(2)}</td>
+                <td className="px-4 py-2.5 text-right font-semibold text-navy">{fmt(r.amount)}</td>
               </tr>
             ))
           )}
@@ -555,9 +546,7 @@ function SalesByItemReport({ from, to }: { from?: string; to?: string }) {
               <td className="px-4 py-2.5 font-semibold text-navy" colSpan={2}>
                 Total
               </td>
-              <td className="px-4 py-2.5 text-right tabular-nums font-bold text-navy">
-                {fmt(grandTotal)}
-              </td>
+              <td className="px-4 py-2.5 text-right font-bold text-navy">{fmt(grandTotal)}</td>
             </tr>
           </tfoot>
         )}
@@ -640,13 +629,11 @@ function SalesByDriverReport({ from, to }: { from?: string; to?: string }) {
             rows.map((r, i) => (
               <tr key={i} className="hover:bg-surface-raised/50">
                 <td className="px-4 py-2.5 font-medium text-navy">{r.driverName}</td>
-                <td className="px-4 py-2.5 text-right tabular-nums text-navy">{r.invoiceCount}</td>
-                <td className="px-4 py-2.5 text-right tabular-nums font-semibold text-navy">
+                <td className="px-4 py-2.5 text-right text-navy">{r.invoiceCount}</td>
+                <td className="px-4 py-2.5 text-right font-semibold text-navy">
                   {fmt(r.salesTotal)}
                 </td>
-                <td className="px-4 py-2.5 text-right tabular-nums text-navy">
-                  {fmt(r.salesWithTax)}
-                </td>
+                <td className="px-4 py-2.5 text-right text-navy">{fmt(r.salesWithTax)}</td>
               </tr>
             ))
           )}
@@ -657,10 +644,8 @@ function SalesByDriverReport({ from, to }: { from?: string; to?: string }) {
               <td className="px-4 py-2.5 font-semibold text-navy" colSpan={2}>
                 Total
               </td>
-              <td className="px-4 py-2.5 text-right tabular-nums font-bold text-navy">
-                {fmt(grandTotal)}
-              </td>
-              <td className="px-4 py-2.5 text-right tabular-nums font-bold text-navy">
+              <td className="px-4 py-2.5 text-right font-bold text-navy">{fmt(grandTotal)}</td>
+              <td className="px-4 py-2.5 text-right font-bold text-navy">
                 {fmt(rows.reduce((s, r) => s + r.salesWithTax, 0))}
               </td>
             </tr>
@@ -761,10 +746,8 @@ function InvoiceDetailsReport({
                 <td className="px-4 py-2.5">
                   <StatusBadge status={r.status} />
                 </td>
-                <td className="px-4 py-2.5 text-right tabular-nums text-navy">{fmt(r.total)}</td>
-                <td className="px-4 py-2.5 text-right tabular-nums font-semibold text-navy">
-                  {fmt(r.balance)}
-                </td>
+                <td className="px-4 py-2.5 text-right text-navy">{fmt(r.total)}</td>
+                <td className="px-4 py-2.5 text-right font-semibold text-navy">{fmt(r.balance)}</td>
               </tr>
             ))
           )}
@@ -826,9 +809,7 @@ function BadDebtsReport() {
               >
                 {r.writeOffReason ?? "\u2014"}
               </td>
-              <td className="px-4 py-2.5 text-right tabular-nums font-semibold text-danger">
-                {fmt(r.balance)}
-              </td>
+              <td className="px-4 py-2.5 text-right font-semibold text-danger">{fmt(r.balance)}</td>
             </tr>
           ))
         )}
@@ -839,7 +820,7 @@ function BadDebtsReport() {
             <td colSpan={4} className="px-4 py-2.5 font-semibold text-navy">
               Total Bad Debts
             </td>
-            <td className="px-4 py-2.5 text-right tabular-nums font-bold text-danger">
+            <td className="px-4 py-2.5 text-right font-bold text-danger">
               {fmt((data as { total?: number })?.total ?? 0)}
             </td>
           </tr>
@@ -949,11 +930,9 @@ function CustomerBalanceReport({
                 onClick={() => onSelectReport?.("invoice-details", { customerId: r.customerId })}
               >
                 <td className="px-4 py-2.5 font-medium text-brand-600">{r.businessName}</td>
-                <td className="px-4 py-2.5 text-right tabular-nums text-navy">{r.invoiceCount}</td>
-                <td className="px-4 py-2.5 text-right tabular-nums font-semibold text-navy">
-                  {fmt(r.balance)}
-                </td>
-                <td className="px-4 py-2.5 text-right tabular-nums font-semibold text-danger">
+                <td className="px-4 py-2.5 text-right text-navy">{r.invoiceCount}</td>
+                <td className="px-4 py-2.5 text-right font-semibold text-navy">{fmt(r.balance)}</td>
+                <td className="px-4 py-2.5 text-right font-semibold text-danger">
                   {r.overdue > 0 ? fmt(r.overdue) : "\u2014"}
                 </td>
               </tr>
@@ -966,10 +945,10 @@ function CustomerBalanceReport({
               <td colSpan={2} className="px-4 py-2.5 font-semibold text-navy">
                 Total
               </td>
-              <td className="px-4 py-2.5 text-right tabular-nums font-bold text-navy">
+              <td className="px-4 py-2.5 text-right font-bold text-navy">
                 {fmt(displayRows.reduce((s, r) => s + r.balance, 0))}
               </td>
-              <td className="px-4 py-2.5 text-right tabular-nums font-bold text-danger">
+              <td className="px-4 py-2.5 text-right font-bold text-danger">
                 {fmt(displayRows.reduce((s, r) => s + r.overdue, 0))}
               </td>
             </tr>
@@ -1046,11 +1025,9 @@ function ArAgingDetailsReport({
                 <StatusBadge status={r.status} />
               </td>
               <td className="px-4 py-2.5 text-navy">{r.customerName}</td>
-              <td className="px-4 py-2.5 text-right tabular-nums text-navy">{r.ageDays}</td>
-              <td className="px-4 py-2.5 text-right tabular-nums text-navy">{fmt(r.amount)}</td>
-              <td className="px-4 py-2.5 text-right tabular-nums font-semibold text-navy">
-                {fmt(r.balance)}
-              </td>
+              <td className="px-4 py-2.5 text-right text-navy">{r.ageDays}</td>
+              <td className="px-4 py-2.5 text-right text-navy">{fmt(r.amount)}</td>
+              <td className="px-4 py-2.5 text-right font-semibold text-navy">{fmt(r.balance)}</td>
             </tr>
           ))
         )}
@@ -1061,10 +1038,10 @@ function ArAgingDetailsReport({
             <td colSpan={6} className="px-4 py-2.5 font-semibold text-navy">
               Total
             </td>
-            <td className="px-4 py-2.5 text-right tabular-nums font-bold text-navy">
+            <td className="px-4 py-2.5 text-right font-bold text-navy">
               {fmt(rows.reduce((s, r) => s + r.amount, 0))}
             </td>
-            <td className="px-4 py-2.5 text-right tabular-nums font-bold text-navy">
+            <td className="px-4 py-2.5 text-right font-bold text-navy">
               {fmt(rows.reduce((s, r) => s + r.balance, 0))}
             </td>
           </tr>
@@ -1150,9 +1127,7 @@ function EstimateDetailsReport({ from, to }: { from?: string; to?: string }) {
                 </td>
                 <td className="px-4 py-2.5 font-medium text-brand-600">{r.estimateNumber}</td>
                 <td className="px-4 py-2.5 text-navy">{r.customerName}</td>
-                <td className="px-4 py-2.5 text-right tabular-nums font-semibold text-navy">
-                  {fmt(r.total)}
-                </td>
+                <td className="px-4 py-2.5 text-right font-semibold text-navy">{fmt(r.total)}</td>
               </tr>
             ))
           )}
@@ -1163,7 +1138,7 @@ function EstimateDetailsReport({ from, to }: { from?: string; to?: string }) {
               <td colSpan={5} className="px-4 py-2.5 font-semibold text-navy">
                 Total
               </td>
-              <td className="px-4 py-2.5 text-right tabular-nums font-bold text-navy">
+              <td className="px-4 py-2.5 text-right font-bold text-navy">
                 {fmt(rows.reduce((s, r) => s + r.total, 0))}
               </td>
             </tr>
@@ -1220,7 +1195,7 @@ function RefundHistoryReport({ from, to }: { from?: string; to?: string }) {
                 <td className="px-4 py-2.5 font-medium text-navy">{r.reference}</td>
                 <td className="px-4 py-2.5 text-navy">{r.customerName}</td>
                 <td className="px-4 py-2.5 text-navy/70">{paymentMethodLabel(r.method)}</td>
-                <td className="px-4 py-2.5 text-right tabular-nums font-semibold text-danger">
+                <td className="px-4 py-2.5 text-right font-semibold text-danger">
                   {fmt(r.amount)}
                 </td>
                 <td className="px-4 py-2.5">
@@ -1289,10 +1264,8 @@ function ReceivableSummaryReport({ from, to }: { from?: string; to?: string }) {
               <td className="px-4 py-2.5">
                 <StatusBadge status={r.status} />
               </td>
-              <td className="px-4 py-2.5 text-right tabular-nums text-navy">{fmt(r.total)}</td>
-              <td className="px-4 py-2.5 text-right tabular-nums font-semibold text-navy">
-                {fmt(r.balance)}
-              </td>
+              <td className="px-4 py-2.5 text-right text-navy">{fmt(r.total)}</td>
+              <td className="px-4 py-2.5 text-right font-semibold text-navy">{fmt(r.balance)}</td>
             </tr>
           ))
         )}
@@ -1303,10 +1276,10 @@ function ReceivableSummaryReport({ from, to }: { from?: string; to?: string }) {
             <td colSpan={5} className="px-4 py-2.5 font-semibold text-navy">
               Total (overpayments not netted)
             </td>
-            <td className="px-4 py-2.5 text-right tabular-nums font-bold text-navy">
+            <td className="px-4 py-2.5 text-right font-bold text-navy">
               {fmt(rows.reduce((s, r) => s + r.total, 0))}
             </td>
-            <td className="px-4 py-2.5 text-right tabular-nums font-bold text-navy">
+            <td className="px-4 py-2.5 text-right font-bold text-navy">
               {fmt(receivableSummaryBalanceTotal(rows))}
             </td>
           </tr>
@@ -1372,7 +1345,7 @@ function PaymentsReceivedReport({ from, to }: { from?: string; to?: string }) {
                 <td className="px-4 py-2.5 text-navy">{r.customer?.businessName}</td>
                 <td className="px-4 py-2.5 text-navy/70">{paymentMethodLabel(r.method)}</td>
                 <td className="px-4 py-2.5 text-navy/70">{r.reference ?? "\u2014"}</td>
-                <td className="px-4 py-2.5 text-right tabular-nums font-semibold text-success">
+                <td className="px-4 py-2.5 text-right font-semibold text-success">
                   {fmt(r.amount)}
                 </td>
               </tr>
@@ -1497,12 +1470,8 @@ function TimeToGetPaidReport({ from, to }: { from?: string; to?: string }) {
                 <td className="px-4 py-2.5 text-navy">{r.customer?.businessName}</td>
                 <td className="px-4 py-2.5 text-navy/70">{fmtCalendarDate(r.issueDate)}</td>
                 <td className="px-4 py-2.5 text-navy/70">{fmtDate(r.paidAt)}</td>
-                <td className="px-4 py-2.5 text-right tabular-nums text-navy">
-                  {r.daysToPayment ?? "\u2014"}
-                </td>
-                <td className="px-4 py-2.5 text-right tabular-nums font-semibold text-navy">
-                  {fmt(r.total)}
-                </td>
+                <td className="px-4 py-2.5 text-right text-navy">{r.daysToPayment ?? "\u2014"}</td>
+                <td className="px-4 py-2.5 text-right font-semibold text-navy">{fmt(r.total)}</td>
               </tr>
             ))
           )}
@@ -1574,9 +1543,7 @@ function ExpenseDetailsReport({
                 >
                   {r.description ?? "\u2014"}
                 </td>
-                <td className="px-4 py-2.5 text-right tabular-nums font-semibold text-navy">
-                  {fmt(r.amount)}
-                </td>
+                <td className="px-4 py-2.5 text-right font-semibold text-navy">{fmt(r.amount)}</td>
               </tr>
             ))
           )}
@@ -1664,11 +1631,9 @@ function ExpensesByCategoryReport({
                 onClick={() => onSelectReport?.("expense-details", { categoryId: r.categoryId })}
               >
                 <td className="px-4 py-2.5 font-medium text-navy">{r.categoryName}</td>
-                <td className="px-4 py-2.5 text-right tabular-nums text-navy">{r.count}</td>
-                <td className="px-4 py-2.5 text-right tabular-nums font-semibold text-navy">
-                  {fmt(r.total)}
-                </td>
-                <td className="px-4 py-2.5 text-right tabular-nums text-navy/70">
+                <td className="px-4 py-2.5 text-right text-navy">{r.count}</td>
+                <td className="px-4 py-2.5 text-right font-semibold text-navy">{fmt(r.total)}</td>
+                <td className="px-4 py-2.5 text-right text-navy/70">
                   {grandTotal > 0 ? `${((r.total / grandTotal) * 100).toFixed(1)}%` : "\u2014"}
                 </td>
               </tr>
@@ -1681,9 +1646,7 @@ function ExpensesByCategoryReport({
               <td colSpan={2} className="px-4 py-2.5 font-semibold text-navy">
                 Total
               </td>
-              <td className="px-4 py-2.5 text-right tabular-nums font-bold text-navy">
-                {fmt(grandTotal)}
-              </td>
+              <td className="px-4 py-2.5 text-right font-bold text-navy">{fmt(grandTotal)}</td>
               <td />
             </tr>
           </tfoot>
@@ -1767,8 +1730,8 @@ function ExpensesByCustomerReport({ from, to }: { from?: string; to?: string }) 
             rows.map((r, i) => (
               <tr key={i} className="hover:bg-surface-raised/50">
                 <td className="px-4 py-2.5 font-medium text-brand-600">{r.customerName}</td>
-                <td className="px-4 py-2.5 text-right tabular-nums text-navy">{r.count}</td>
-                <td className="px-4 py-2.5 text-right tabular-nums font-semibold text-navy">
+                <td className="px-4 py-2.5 text-right text-navy">{r.count}</td>
+                <td className="px-4 py-2.5 text-right font-semibold text-navy">
                   {fmt(r.totalAmount)}
                 </td>
               </tr>
@@ -1781,9 +1744,7 @@ function ExpensesByCustomerReport({ from, to }: { from?: string; to?: string }) 
               <td className="px-4 py-2.5 font-semibold text-navy" colSpan={2}>
                 Total
               </td>
-              <td className="px-4 py-2.5 text-right tabular-nums font-bold text-navy">
-                {fmt(grandTotal)}
-              </td>
+              <td className="px-4 py-2.5 text-right font-bold text-navy">{fmt(grandTotal)}</td>
             </tr>
           </tfoot>
         )}
@@ -1847,31 +1808,29 @@ function ProfitLossReport({ from, to }: { from?: string; to?: string }) {
           <tbody className="divide-y divide-surface-border">
             <tr className="bg-surface-raised/50">
               <td className="px-4 py-2.5 font-semibold text-navy">Revenue</td>
-              <td className="px-4 py-2.5 text-right tabular-nums font-semibold text-success">
+              <td className="px-4 py-2.5 text-right font-semibold text-success">
                 {fmt(d.revenue)}
               </td>
             </tr>
             <tr>
               <td className="px-4 py-2.5 pl-8 text-navy/70">Cost of Goods Sold</td>
-              <td className="px-4 py-2.5 text-right tabular-nums text-navy">{fmt(d.cogs)}</td>
+              <td className="px-4 py-2.5 text-right text-navy">{fmt(d.cogs)}</td>
             </tr>
             <tr className="bg-surface-raised/50">
               <td className="px-4 py-2.5 font-semibold text-navy">Gross Profit</td>
-              <td className="px-4 py-2.5 text-right tabular-nums font-semibold text-navy">
+              <td className="px-4 py-2.5 text-right font-semibold text-navy">
                 {fmt(d.grossProfit)}
               </td>
             </tr>
             {Object.entries(d.expensesByCategory ?? {}).map(([cat, amt]) => (
               <tr key={cat}>
                 <td className="px-4 py-2.5 pl-8 text-navy/70">{cat}</td>
-                <td className="px-4 py-2.5 text-right tabular-nums text-navy">
-                  {fmt(amt as number)}
-                </td>
+                <td className="px-4 py-2.5 text-right text-navy">{fmt(amt as number)}</td>
               </tr>
             ))}
             <tr className="bg-surface-raised/50">
               <td className="px-4 py-2.5 font-semibold text-navy">Total Operating Expenses</td>
-              <td className="px-4 py-2.5 text-right tabular-nums font-semibold text-danger">
+              <td className="px-4 py-2.5 text-right font-semibold text-danger">
                 {fmt(d.operatingExpenses)}
               </td>
             </tr>
@@ -1880,7 +1839,7 @@ function ProfitLossReport({ from, to }: { from?: string; to?: string }) {
                 <td className="px-4 py-2.5 font-semibold text-navy">
                   Bad Debt Expense (written-off invoices)
                 </td>
-                <td className="px-4 py-2.5 text-right tabular-nums font-semibold text-danger">
+                <td className="px-4 py-2.5 text-right font-semibold text-danger">
                   {fmt(d.badDebtExpense)}
                 </td>
               </tr>
@@ -2141,12 +2100,10 @@ function LedgerReport() {
                     {tx.customer?.businessName ?? "\u2014"}
                   </td>
                   <td className="px-4 py-2.5 text-navy/70">{fmtDate(tx.createdAt)}</td>
-                  <td className="px-4 py-2.5 text-right tabular-nums font-medium text-navy">
+                  <td className="px-4 py-2.5 text-right font-medium text-navy">
                     {fmt(tx.totalOwed)}
                   </td>
-                  <td className="px-4 py-2.5 text-right tabular-nums text-navy/70">
-                    {fmt(tx.totalPaid)}
-                  </td>
+                  <td className="px-4 py-2.5 text-right text-navy/70">{fmt(tx.totalPaid)}</td>
                   <td className="px-4 py-2.5 text-right">
                     <span
                       className={cn("font-medium", balance > 0 ? "text-danger" : "text-navy/70")}

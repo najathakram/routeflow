@@ -23,7 +23,6 @@ import { PageHeader, Table, Button, Select, cn, EmptyState } from "@routeflow/ui
 import { usePageTitle } from "@/lib/page-title-context";
 import { useToast } from "@routeflow/ui/web";
 import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
-import { formatMoney } from "@/lib/format";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
 import { useUrlPage, useResetPageOnChange, useClampPage } from "@/lib/hooks/useUrlPage";
 import {
@@ -252,7 +251,7 @@ function ProductCard({
         </div>
         <div className="mt-auto flex items-end justify-between gap-1">
           <p className="font-mono tabular-nums text-base font-bold text-navy">
-            {formatMoney(parseFloat(String(product.pricePerUnit)))}
+            ${parseFloat(String(product.pricePerUnit)).toFixed(2)}
             <span className="ml-1 font-sans text-xs font-normal text-navy/70">
               / {product.unit}
             </span>
@@ -401,7 +400,7 @@ function makeTableColumns(
         <span className="font-mono tabular-nums text-sm text-navy/70">
           {p.msrp != null && parseFloat(String(p.msrp)) > 0 ? (
             <>
-              {formatMoney(parseFloat(String(p.msrp)))}
+              ${parseFloat(String(p.msrp)).toFixed(2)}
               <span className="ml-0.5 text-[10px] text-navy/40">/{UW.base.short.one}</span>
             </>
           ) : (
@@ -613,7 +612,7 @@ function makeTableColumns(
         return (
           <div className="group flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
             <span className="font-mono tabular-nums font-medium text-navy">
-              {formatMoney(parseFloat(String(p.pricePerUnit)))}
+              ${parseFloat(String(p.pricePerUnit)).toFixed(2)}
             </span>
             <button
               onClick={() => onEditPrice(p)}
@@ -642,7 +641,7 @@ function makeTableColumns(
             </span>
           );
         }
-        return <span className="font-mono tabular-nums text-navy/70">{formatMoney(cost)}</span>;
+        return <span className="font-mono tabular-nums text-navy/70">{`$${cost.toFixed(2)}`}</span>;
       },
     },
     {
@@ -699,7 +698,7 @@ function makeTableColumns(
         return (
           <span className="font-mono tabular-nums text-sm text-navy/70">
             {val && parseFloat(String(val)) > 0 ? (
-              formatMoney(parseFloat(String(val)))
+              `$${parseFloat(String(val)).toFixed(2)}`
             ) : (
               <span className="text-navy/30">—</span>
             )}

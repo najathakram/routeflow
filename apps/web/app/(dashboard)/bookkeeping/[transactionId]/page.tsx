@@ -24,7 +24,7 @@ import {
   PAYMENT_METHOD_LABELS,
   paymentMethodLabel,
 } from "@/lib/payment-methods";
-import { fmt, fmtCalendarDate } from "@/lib/formatting";
+import { fmtCalendarDate } from "@/lib/formatting";
 import { BrandMark } from "@/components/brand";
 import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 
@@ -341,11 +341,11 @@ export default function TransactionDetailPage() {
               <div className="ml-auto w-56 space-y-2 text-sm">
                 <div className="flex justify-between border-t border-surface-border pt-2 text-base font-bold text-navy">
                   <span>Total</span>
-                  <span>{fmt(total)}</span>
+                  <span>${total.toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between text-success">
                   <span className="font-medium">Amount Paid</span>
-                  <span className="font-bold">-{fmt(paid)}</span>
+                  <span className="font-bold">-${paid.toFixed(2)}</span>
                 </div>
                 <div
                   className={cn(
@@ -354,7 +354,7 @@ export default function TransactionDetailPage() {
                   )}
                 >
                   <span>Balance Due</span>
-                  <span>{fmt(bal)}</span>
+                  <span>${bal.toFixed(2)}</span>
                 </div>
               </div>
             </div>
@@ -376,7 +376,7 @@ export default function TransactionDetailPage() {
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center justify-between gap-2">
                         <span className="text-sm font-semibold text-navy">
-                          {fmt(Number(pmt.amount))}
+                          ${Number(pmt.amount).toFixed(2)}
                         </span>
                         <span className="text-xs text-navy/70">
                           {new Date(pmt.createdAt).toLocaleDateString("en-US", {
@@ -416,11 +416,11 @@ export default function TransactionDetailPage() {
             <dl className="space-y-2 text-sm">
               <div className="flex justify-between">
                 <dt className="text-navy/70">Invoice total</dt>
-                <dd className="font-medium text-navy">{fmt(total)}</dd>
+                <dd className="font-medium text-navy">${total.toFixed(2)}</dd>
               </div>
               <div className="flex justify-between">
                 <dt className="text-navy/70">Paid</dt>
-                <dd className="font-medium text-success">{fmt(paid)}</dd>
+                <dd className="font-medium text-success">${paid.toFixed(2)}</dd>
               </div>
               <div
                 className={cn(
@@ -429,7 +429,7 @@ export default function TransactionDetailPage() {
                 )}
               >
                 <dt>Balance due</dt>
-                <dd>{fmt(bal)}</dd>
+                <dd>${bal.toFixed(2)}</dd>
               </div>
             </dl>
           </Card>

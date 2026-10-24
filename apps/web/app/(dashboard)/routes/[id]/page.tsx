@@ -43,7 +43,6 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { Badge, Button, Card, Modal, cn, useToast } from "@routeflow/ui/web";
-import { formatMoney } from "@/lib/format";
 import { useQueryClient } from "@tanstack/react-query";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useAuth } from "@/lib/auth-context";
@@ -1073,7 +1072,7 @@ export default function RouteRunDetailPage() {
                   <Badge
                     data-testid="settlement-variance"
                     variant={settlementVarianceNumber! >= 0 ? "success" : "danger"}
-                    label={`${settlementVarianceNumber! >= 0 ? "+" : "−"}${formatMoney(Math.abs(settlementVarianceNumber!))}`}
+                    label={`${settlementVarianceNumber! >= 0 ? "+" : "-"}$${Math.abs(settlementVarianceNumber!).toFixed(2)}`}
                   />
                 </div>
               )}

@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { formatMoney } from "@/lib/format";
 import { unitsLabel } from "@/lib/stock-label";
 
 /**
@@ -76,7 +75,7 @@ export function ProductStockCostCard({
           <span className="text-navy/70">Avg cost</span>
           {product.averageCost != null ? (
             <span className="font-mono font-medium tabular-nums text-navy">
-              {formatMoney(parseFloat(String(product.averageCost)))}
+              ${parseFloat(String(product.averageCost)).toFixed(2)}
             </span>
           ) : (
             <button
