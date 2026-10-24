@@ -308,7 +308,7 @@ test.describe("POS stack counter: ring the sale @ 1440", () => {
 test.describe("W-715 / W-716: the receipt's Change row, its actions at 1440 and 390, and Void sale", () => {
   test.use({ viewport: { width: 1440, height: 900 } });
 
-  test("an exact cash sale: Change reads as a normal row, one action row at 1440 and a 2×2 grid at 390, Void sale opens the dialog", async ({
+  test("an exact cash sale: Change reads as a normal row, secondary actions in one row at 1440 and a 2×2 grid at 390, Void sale opens the dialog", async ({
     page,
     context,
   }) => {
@@ -322,6 +322,8 @@ test.describe("W-715 / W-716: the receipt's Change row, its actions at 1440 and 
     await expect(page.getByRole("list", { name: "Items" }).getByRole("listitem")).toHaveCount(1, {
       timeout: 15_000,
     });
+    // S5: the buyer is asked first; this sale is a walk-in
+    await page.getByRole("button", { name: "Walk-in", exact: true }).click();
     await page.getByRole("button", { name: "Exact" }).click();
     await page.getByRole("button", { name: "Complete & show receipt" }).click();
     await expect(page.getByTestId("counter-sale-receipt")).toBeVisible({ timeout: 20_000 });
@@ -334,19 +336,24 @@ test.describe("W-715 / W-716: the receipt's Change row, its actions at 1440 and 
     expect(await size("receipt-change")).toBeLessThan(await size("receipt-total"));
     await page.screenshot({ path: "test-results/w783-receipt-1440.png", fullPage: true });
 
-    // W-715: at 1440 Print, Email receipt and New sale share ONE row
-    const y1440 = async (name: string) => {
-      const b = await page.getByRole("button", { name, exact: true }).boundingBox();
+    // W-715 at 1440: the receipt column is max-w-md, so the secondary actions share ONE row and New sale (the primary)
+    // follows under them; nothing is cut off or hidden.
+    const box1440 = async (name: string | RegExp) => {
+      const b = await page
+        .getByRole("button", { name, exact: typeof name === "string" })
+        .boundingBox();
       expect(b, `${name} is on screen at 1440`).not.toBeNull();
-      return b!.y;
+      return b!;
     };
-    const [printY, emailY, newSaleY] = [
-      await y1440("Print"),
-      await y1440("Email receipt"),
-      await y1440("New sale"),
+    const [p1440, e1440, r1440, n1440] = [
+      await box1440("Print"),
+      await box1440("Email receipt"),
+      await box1440(/^Return items/),
+      await box1440("New sale"),
     ];
-    expect(Math.abs(printY - emailY)).toBeLessThanOrEqual(2);
-    expect(Math.abs(printY - newSaleY)).toBeLessThanOrEqual(2);
+    expect(Math.abs(p1440.y - e1440.y)).toBeLessThanOrEqual(2);
+    expect(Math.abs(p1440.y - r1440.y)).toBeLessThanOrEqual(2);
+    expect(n1440.y).toBeGreaterThan(p1440.y);
 
     // W-715 + P-RCPT-1: at 390 the actions are a 2×2 grid (Print · Email receipt / Return items · Void sale) with New sale
     // full width under it; nothing hidden, nothing off screen. At 1440 they were one row.
