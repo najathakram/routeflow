@@ -103,6 +103,7 @@
 }
 
 .glass-page .eyebrow {
+  text-transform: uppercase;
   color: var(--g-eyebrow);
   font-size: 9px;
   font-weight: 700;
@@ -1181,6 +1182,7 @@
 }
 
 .glass-page .ai-review-steps small {
+  text-transform: uppercase;
   display: block;
   font-size: 9px;
   font-weight: 700;
