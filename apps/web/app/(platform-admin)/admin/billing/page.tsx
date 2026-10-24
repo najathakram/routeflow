@@ -4,7 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { superAdminClient } from "@/lib/admin-api";
 import { AdminStatCard } from "../../_components/AdminStatCard";
-import { AdminBadge, planLabel } from "../../_components/AdminBadge";
+import { AdminBadge, planLabel, statusLabel } from "../../_components/AdminBadge";
 import { AdminCard } from "../../_components/AdminCard";
 import { DisabledHint } from "../../_components/DisabledHint";
 import { AutoLocksCard } from "../../_components/AutoLocksCard";
@@ -355,7 +355,7 @@ export default function BillingPage() {
                       </div>
                     </td>
                     <td className="px-4 py-3">
-                      <AdminBadge>{s.tenantStatus}</AdminBadge>
+                      <AdminBadge>{statusLabel(s.tenantStatus)}</AdminBadge>
                     </td>
                     <td className="px-4 py-3">
                       <AdminBadge variant="plan">{s.currentPlan}</AdminBadge>
