@@ -5122,13 +5122,21 @@ export class OrdersService implements OnApplicationBootstrap {
   }
 
   /** Row 510: the STAFF choke point the fulfil-path switch judges through; W-774: the counter's read-only pre-judge too. */
-  staffSellable(p: rGate.Args) {
-    return this.sellingRestrictions.assertLinesSellable({ ...p, channel: "STAFF" });
+  async staffSellable(p: rGate.Args) {
+    return await this.sellingRestrictions.assertLinesSellable({ ...p, channel: "STAFF" });
   }
 
   /** Extracted verbatim to `order-lifecycle.ts` (size-ratchet headroom move); thin delegator. */
   async updateFulfillPath(...[orderId, dto, _user, opts]: UpdateFulfillPathArgs) {
-    return updateFulfillPathImpl(this, orderId, dto, _user, (p) => this.staffSellable(p), opts);
+    return updateFulfillPathImpl(
+      this,
+      orderId,
+      dto,
+      _user,
+      async (p: rGate.Args) =>
+        await this.sellingRestrictions.assertLinesSellable({ ...p, channel: "STAFF" }),
+      opts,
+    );
   }
 
   /** Extracted verbatim to `order-lifecycle.ts` (size-ratchet headroom move); thin delegator. */
