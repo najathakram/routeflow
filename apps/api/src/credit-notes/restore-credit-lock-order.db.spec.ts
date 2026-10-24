@@ -388,5 +388,242 @@ describeDb(
         erroredReps: s.erroredReps,
       }).toEqual({ deadlockedReps: 0, serverDelta: 0, erroredReps: 0 });
     }, 600_000);
+
+    it("P3 (SA-920): a CREDIT_NOTE payment of the same note committed between the target read and the lock pass, on a THIRD order's invoice, vs an Order -> Invoice -> CreditNote writer: the cancel must refuse with RETURN_CANCEL_RETRY (409), not deadlock", async () => {
+      const REPS_P3 = 5;
+      const tenantId = await newTenant("p3");
+      const before = await serverDeadlocks();
+
+      type P3Rep = {
+        cancel: unknown; // undefined = resolved
+        writer: unknown;
+        blocked: boolean;
+        returnStatus: string;
+        livePayments: number;
+        amountUsed: string;
+        noteStatus: string;
+        retryError: unknown;
+        retryStatus: string;
+      };
+      const reps: P3Rep[] = [];
+
+      const httpStatus = (e: any): number | undefined =>
+        typeof e?.getStatus === "function" ? e.getStatus() : undefined;
+      const respCode = (e: any): string | undefined =>
+        typeof e?.getResponse === "function" ? e.getResponse()?.code : undefined;
+
+      for (let i = 0; i < REPS_P3; i++) {
+        const { customerId, userId } = await seedCustomer(tenantId, "p3");
+        const a = await seedOrderWithInvoice(tenantId, customerId); // the return's carrying order
+        const b = await seedOrderWithInvoice(tenantId, customerId); // paid by the note before the cancel
+        const c = await seedOrderWithInvoice(tenantId, customerId); // paid by the note DURING the cancel
+        const creditNoteId = await seedCreditNote(tenantId, customerId, "40.00", "20.00", "ISSUED");
+        await seedCreditPayment(tenantId, b.invoiceId, creditNoteId, "20.00");
+        rowSeq += 1;
+        const ret = await raw.return.create({
+          data: {
+            tenantId,
+            orderId: a.orderId,
+            customerId,
+            kind: "INLINE",
+            status: "REFUNDED",
+            reason: "DAMAGED",
+            creditNoteId,
+            refundMethod: "CREDIT_NOTE",
+            creditSubtotal: 20,
+            creditTax: 0,
+            creditCategoryTax: 0,
+            returnNumber: `RET-W757-${run}-${rowSeq}`,
+          },
+        });
+
+        // Barrier: right after the cancel's creditPaymentTargets read (the invoicePayment.findMany that selects
+        // invoice.orderId) resolves, the cancel waits here until released.
+        let reached!: () => void;
+        const reachedP = new Promise<void>((r) => (reached = r));
+        let release!: () => void;
+        const releaseP = new Promise<void>((r) => (release = r));
+        let fired = false;
+        const original = prisma.tenantTransaction.bind(prisma);
+        const spy = jest
+          .spyOn(prisma, "tenantTransaction")
+          .mockImplementation((fn: any, options?: any) =>
+            original((tx: any) => {
+              const wrapped = new Proxy(tx, {
+                get(target, prop, receiver) {
+                  const value = Reflect.get(target, prop, receiver);
+                  if (prop === "invoicePayment") {
+                    return new Proxy(value, {
+                      get(t2, p2) {
+                        const v2 = Reflect.get(t2, p2);
+                        if (p2 !== "findMany" || typeof v2 !== "function") {
+                          return typeof v2 === "function" ? v2.bind(t2) : v2;
+                        }
+                        return async (args: any) => {
+                          const result = await v2.call(t2, args);
+                          if (!fired && args?.select?.invoice?.select?.orderId) {
+                            fired = true;
+                            reached();
+                            await releaseP;
+                          }
+                          return result;
+                        };
+                      },
+                    });
+                  }
+                  return typeof value === "function" ? value.bind(target) : value;
+                },
+              });
+              return fn(wrapped);
+            }, options),
+          );
+
+        let cancelError: unknown;
+        let writerError: unknown;
+        let blocked = false;
+        const writer = await pool.connect();
+        try {
+          let settled = false;
+          const running = tenantCtx
+            .run(tenantId, () => inlineSvc.cancel(ret.id, { sub: userId } as any))
+            .then(
+              () => undefined,
+              (err) => {
+                cancelError = err;
+              },
+            )
+            .finally(() => {
+              settled = true;
+            });
+
+          // 2. wait until the cancel is parked in the gap (or ended early)
+          await Promise.race([reachedP, running]);
+
+          // 3. another transaction COMMITS a second CREDIT_NOTE payment of the same note, on invoice C
+          const committer = await pool.connect();
+          try {
+            await committer.query("BEGIN");
+            // createdAt is back-dated so cancelStandaloneInTx (orderBy createdAt desc) restores the B payment
+            // FIRST (taking the note) and reaches invoice C second: CreditNote -> Invoice C.
+            await committer.query(
+              `INSERT INTO "InvoicePayment" (id, "invoiceId", amount, method, status, "creditNoteId", "tenantId", "createdAt")
+               VALUES ($1, $2, 20, 'CREDIT_NOTE', 'PAID', $3, $4, now() - interval '1 day')`,
+              [randomUUID(), c.invoiceId, creditNoteId, tenantId],
+            );
+            await committer.query(
+              `UPDATE "CreditNote" SET "amountUsed" = 40, status = 'APPLIED' WHERE id = $1`,
+              [creditNoteId],
+            );
+            await committer.query("COMMIT");
+          } catch (err) {
+            await committer.query("ROLLBACK").catch(() => undefined);
+            throw err;
+          } finally {
+            committer.release();
+          }
+
+          // 4. WRITER: Order C -> Invoice C (markSent's prefix), hold
+          await writer.query("BEGIN");
+          await writer.query("SET LOCAL lock_timeout = '15s'");
+          const pid = Number((await writer.query("SELECT pg_backend_pid() AS pid")).rows[0].pid);
+          await writer.query('SELECT id FROM "Order" WHERE id = $1 FOR UPDATE', [c.orderId]);
+          await writer.query('SELECT id FROM "Invoice" WHERE id = $1 FOR UPDATE', [c.invoiceId]);
+
+          // 5. release the cancel; wait until the writer blocks it (or it settles)
+          release();
+          blocked = await waitUntilBlockedBy(pid, () => settled);
+
+          // 6. WRITER: the CreditNote
+          try {
+            await writer.query('SELECT id FROM "CreditNote" WHERE id = $1 FOR NO KEY UPDATE', [
+              creditNoteId,
+            ]);
+            await writer.query("COMMIT");
+          } catch (err) {
+            writerError = err;
+            await writer.query("ROLLBACK").catch(() => undefined);
+          }
+          await running;
+        } finally {
+          release();
+          writer.release();
+          spy.mockRestore();
+        }
+
+        const afterReturn = await raw.return.findUnique({ where: { id: ret.id } });
+        const livePayments = await raw.invoicePayment.count({
+          where: { creditNoteId, method: "CREDIT_NOTE", status: { not: "VOID" } },
+        });
+        const note = await raw.creditNote.findUnique({ where: { id: creditNoteId } });
+        const snapshot = {
+          returnStatus: String(afterReturn?.status),
+          livePayments,
+          amountUsed: String(note?.amountUsed),
+          noteStatus: String(note?.status),
+        };
+
+        // RETRY: no barrier, no writer
+        let retryError: unknown;
+        try {
+          await tenantCtx.run(tenantId, () => inlineSvc.cancel(ret.id, { sub: userId } as any));
+        } catch (err) {
+          retryError = err;
+        }
+        const afterRetry = await raw.return.findUnique({ where: { id: ret.id } });
+
+        reps.push({
+          cancel: cancelError,
+          writer: writerError,
+          blocked,
+          ...snapshot,
+          retryError,
+          retryStatus: String(afterRetry?.status),
+        });
+      }
+
+      await new Promise((r) => setTimeout(r, 2_500));
+      const serverDelta = (await serverDeadlocks()) - before;
+      const deadlocked = reps.filter((r) => isDeadlock(r.cancel) || isDeadlock(r.writer)).length;
+      const outcome = (e: unknown) =>
+        e === undefined
+          ? "resolved"
+          : `${httpStatus(e) ?? sqlState(e) ?? "?"}/${respCode(e) ?? "-"}`;
+      const tally = (xs: string[]) => {
+        const m = new Map<string, number>();
+        for (const x of xs) m.set(x, (m.get(x) ?? 0) + 1);
+        return [...m].map(([k, n]) => `${k}x${n}`).join(",") || "none";
+      };
+      // eslint-disable-next-line no-console
+      console.log(
+        `W757 P3 (SA-920 race): ${deadlocked}/${REPS_P3} deadlocked; ` +
+          `cancel outcomes=${tally(reps.map((r) => outcome(r.cancel)))}; ` +
+          `writer errors=${tally(reps.map((r) => (r.writer === undefined ? "none" : (sqlState(r.writer) ?? "?"))))}; ` +
+          `server delta=${serverDelta}; ` +
+          `blocked=${reps.filter((r) => r.blocked).length}/${REPS_P3}; ` +
+          `after-state=${tally(reps.map((r) => `${r.returnStatus}|payments=${r.livePayments}|used=${r.amountUsed}|${r.noteStatus}`))}; ` +
+          `retry=${tally(reps.map((r) => `${r.retryError === undefined ? "resolved" : describeErr(r.retryError)}->${r.retryStatus}`))}`,
+      );
+
+      expect({
+        cancel: reps.map((r) => ({ status: httpStatus(r.cancel), code: respCode(r.cancel) })),
+        writer: reps.map((r) => (r.writer === undefined ? "none" : sqlState(r.writer))),
+        serverDelta,
+        after: reps.map((r) => ({
+          returnStatus: r.returnStatus,
+          livePayments: r.livePayments,
+          amountUsed: r.amountUsed,
+        })),
+        retry: reps.map((r) => ({
+          error: r.retryError === undefined ? "none" : describeErr(r.retryError),
+          returnStatus: r.retryStatus,
+        })),
+      }).toEqual({
+        cancel: reps.map(() => ({ status: 409, code: "RETURN_CANCEL_RETRY" })),
+        writer: reps.map(() => "none"),
+        serverDelta: 0,
+        after: reps.map(() => ({ returnStatus: "REFUNDED", livePayments: 2, amountUsed: "40" })),
+        retry: reps.map(() => ({ error: "none", returnStatus: "CANCELLED" })),
+      });
+    }, 600_000);
   },
 );
