@@ -45,6 +45,16 @@ export const registerQtyLabel = (l: SaleLine, words: UnitWords): string => {
   return `${boxes} ${pack} + ${n.pieces} ${words.base.short.other} · ${words.pack.lower} of ${size}`;
 };
 
+/**
+ * The selling unit a box step moves by, always visible on the stepper: "1 Box (24 pcs)" in the tenant's pack and base words.
+ * Display only: the step itself is `stepLine`, which re-splits through `normalizeBoxesPieces`.
+ */
+export const sellingUnitLabel = (l: SaleLine, words: UnitWords): string => {
+  const size = l.unitsPerBox ?? 0;
+  const pack = words.pack.lower;
+  return `1 ${pack.charAt(0).toUpperCase()}${pack.slice(1)} (${size} ${words.baseShortFor(size)})`;
+};
+
 /** The register line's price: per pack, then the per-piece figure (`perUnitPrice`); a plain line per its unit word. */
 export const registerPriceLabel = (
   l: SaleLine,

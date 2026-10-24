@@ -8,6 +8,7 @@ import {
   isBoxedLine,
   registerPriceLabel,
   registerQtyLabel,
+  sellingUnitLabel,
   type TypedQty,
 } from "./counter-sale-line-edit";
 import { qtyRefusalMessage, type QtyFieldKind } from "./counter-qty-refusal";
@@ -42,16 +43,17 @@ export function LineStepper({
       {text}
     </button>
   );
+  const unitLabel = sellingUnitLabel(line, UW);
   return isBoxedLine(line) ? (
     <span
       className="flex flex-wrap items-center gap-1"
       role="group"
       aria-label={`Quantity of ${line.name}`}
     >
-      {btn(`Remove a box from ${line.name}`, "\u2212 box", "box", -1)}
-      {btn(`Add a box to ${line.name}`, "+ box", "box", 1)}
-      {btn(`Remove a piece from ${line.name}`, "\u2212 pc", "piece", -1)}
-      {btn(`Add a piece to ${line.name}`, "+ pc", "piece", 1)}
+      {btn(`Remove a box from ${line.name}`, `\u2212 ${unitLabel}`, "box", -1)}
+      {btn(`Add a box to ${line.name}`, `+ ${unitLabel}`, "box", 1)}
+      {btn(`Remove a piece from ${line.name}`, "\u2212 1 pc", "piece", -1)}
+      {btn(`Add a piece to ${line.name}`, "+ 1 pc", "piece", 1)}
     </span>
   ) : (
     <span
