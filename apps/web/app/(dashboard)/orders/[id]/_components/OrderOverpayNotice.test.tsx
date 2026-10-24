@@ -35,6 +35,25 @@ function Harness({ error, editing = true }: { error: unknown; editing?: boolean 
 }
 
 describe("useOrderOverpayGuard", () => {
+  // Row 313: the notice renders near the line items, far above Save on a long order, so a refused save looked like
+  // nothing happened. On a new refusal it scrolls into view and takes focus (role="alert" alone is not enough).
+  it("row 313: a refusal scrolls the notice into view and moves focus to it", () => {
+    const scroll = jest.fn();
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = scroll;
+    try {
+      render(<Harness error={err} />);
+      fireEvent.click(screen.getByText("go"));
+      const notice = screen.getByTestId("order-overpay-notice");
+      expect(scroll).toHaveBeenCalledWith({ block: "center", behavior: "smooth" });
+      expect(scroll.mock.contexts[0]).toBe(notice);
+      expect(document.activeElement).toBe(notice);
+      expect(notice).toHaveAttribute("tabindex", "-1");
+    } finally {
+      Element.prototype.scrollIntoView = original;
+    }
+  });
+
   it("captures the 409, shows fixed copy and opens the return flow", () => {
     render(<Harness error={err} />);
     fireEvent.click(screen.getByText("go"));
