@@ -1,7 +1,10 @@
 import { ConflictException, Injectable, Logger } from "@nestjs/common";
 import type {
+  BlockedLine,
   BuyerBlockedLine,
+  RestrictionWarningLine,
   BuyerSellingRestrictedError,
+  RestrictionAck,
   RestrictionAddressPrecedence,
   RestrictionChannel,
   RestrictionsEvaluation,
@@ -14,8 +17,18 @@ import { excludeWalkIn } from "../customers/walk-in-protected";
 import { PrismaService } from "../prisma/prisma.service";
 import { tenantBusinessState } from "./tenant-business-state";
 import { tenantIsPickupOnly, tenantOffersPickup } from "./tenant-fulfilment-model";
-import { judgedAtStore, type SaleFulfilmentKind } from "./sale-fulfilment";
+import { judgedAtStore, type JurisdictionBasis, type SaleFulfilmentKind } from "./sale-fulfilment";
 import { ProductLabelsService } from "../product-labels/product-labels.service";
+import {
+  decideStaffWrite,
+  noRestrictionOverride,
+  type GateLine,
+  type HeldLine,
+  type StaffJudgement,
+  type StaffWriteDecision,
+  type StampTarget,
+} from "./restriction-warning";
+import { staffBreaches } from "./staff-breaches";
 import {
   activeRuleWhere,
   buyerRestrictedSummary,
@@ -33,6 +46,8 @@ import {
   ruleStates,
   stateRuleInPlay,
   UNRESOLVED_STATE,
+  type ChannelPrincipal,
+  type EvaluateInput,
   type ProductFacts,
   type RestrictionRuleFacts,
 } from "./selling-restrictions.core";
@@ -166,6 +181,8 @@ export const ADDRESS_SELECT = {
 export interface SellableLine {
   productId: string;
   qtyDelta?: number;
+  /** Row 510: the line's stable key in a RESTRICTION_WARNING ("n:<i>" / "l:<lineId>" / "cr:<id>"); omitted = not warnable. */
+  lineKey?: string;
 }
 
 export interface SellableLinesParams {
@@ -189,13 +206,33 @@ export interface SellableLinesParams {
   skipPortalOnlyRules?: boolean;
   /** As `EvaluateOptions.fulfilmentKind`: REQUIRED, so every caller states how the goods change hands. */
   fulfilmentKind: SaleFulfilmentKind;
+  /**
+   * Row 510, STAFF channel only: who is selling, the acknowledgement the client sent, and the document's lines already
+   * held (for coverage). With `principal` omitted (a system caller) a breach is a hard block, never a warning.
+   */
+  principal?: (ChannelPrincipal & { sub?: string | null }) | null;
+  ack?: RestrictionAck | null;
+  held?: readonly HeldLine[];
+  /** Whose lines a stamp lands on (`decision.stamp(tx, parentId)`): an order's or an invoice's. */
+  document?: "ORDER" | "INVOICE";
 }
+
+/**
+ * What a row-510 gate builder returns: the choke point's parameters WITHOUT the channel. The call site states its own
+ * channel (`channel-required.spec.ts` demands an explicit `channel:` on every call), so a builder can never decide it.
+ */
+export type SellableLinesArgs = Omit<SellableLinesParams, "channel">;
 
 export interface EvaluateOptions {
   /** As `SellableLinesParams.channel`: required, and an omitted value fails closed to BUYER_PORTAL. */
   channel: RestrictionChannel;
   /** Point-in-time evaluation; defaults to now. */
   at?: Date;
+  /**
+   * L8: how the goods change hands (`sale-fulfilment.ts`), REQUIRED so no caller can forget to say. COUNTER / PICKUP
+   * judge a STATE rule on the STORE's state for every customer, named or walk-in; DELIVERY keeps the customer's address.
+   */
+  fulfilmentKind: SaleFulfilmentKind;
   /**
    * The tenant switch gates this call as it gates STAFF (off = OFF) whatever the channel. For STAFF-side
    * warnings that judge at the portal channel but must stay silent until the tenant turns restrictions on
@@ -208,11 +245,6 @@ export interface EvaluateOptions {
    * order of legacy provenance (a NULL creator/editor role beside known staff), which is staff-built.
    */
   skipPortalOnlyRules?: boolean;
-  /**
-   * L8: how the goods change hands (`sale-fulfilment.ts`), REQUIRED so no caller can forget to say. COUNTER / PICKUP
-   * judge a STATE rule on the STORE's state for every customer, named or walk-in; DELIVERY keeps the customer's address.
-   */
-  fulfilmentKind: SaleFulfilmentKind;
 }
 
 /**
@@ -412,35 +444,53 @@ export class SellingRestrictionsService {
     lines: readonly EvaluateLine[],
     options: EvaluateOptions,
   ): Promise<RestrictionsEvaluation> {
-    const policy = await this.getPolicy(tenantId);
+    return (await this.evaluateFacts(tenantId, customerId, lines, options)).evaluation;
+  }
+
+  /**
+   * `evaluate` plus the facts it decided on (`input`), so a staff write can list EVERY breached rule
+   * (`staffBreaches`) without a second read. `input` is null when nothing was decided (no product, no active rule).
+   * The tenant switch gates STAFF only (`restrictionsApply`); a tenant with no active rule costs one indexed read.
+   */
+  private async evaluateFacts(
+    tenantId: string,
+    customerId: string | null,
+    lines: readonly EvaluateLine[],
+    options: EvaluateOptions,
+  ): Promise<{
+    evaluation: RestrictionsEvaluation;
+    input: EvaluateInput | null;
+    basis: JurisdictionBasis;
+  }> {
+    const policy = await this.getPolicy(tenantId); // asserts the ambient tenant before ANY read
     const channel = options?.channel ?? "BUYER_PORTAL"; // fail closed: the channel that binds more
-    // The switch adds STAFF enforcement only: the portal channel always applies its rules (restrictionsApply).
+    const storeJudged = judgedAtStore(options?.fulfilmentKind); // a JS caller with no options: DELIVERY
+    let basis: JurisdictionBasis = storeJudged ? "STORE" : "CUSTOMER";
+    const allowed = { evaluation: { outcome: "ALLOW" as const, reasons: [] }, input: null, basis };
+    // The owner's per-tenant switch (D-2026-09-25-banned-items-rules) adds STAFF enforcement only: with it off a staff
+    // sale is never warned or blocked, whatever else the row-510 protocol would do. The portal channel always applies.
     if (!restrictionsApply(policy, options?.switchGated ? "STAFF" : channel))
-      return offEvaluation();
+      return { evaluation: offEvaluation(), input: null, basis };
 
     const productIds = [...new Set(lines.map((l) => l.productId))];
-    if (productIds.length === 0) return { outcome: "ALLOW", reasons: [] };
+    if (productIds.length === 0) return allowed;
 
     const at = options?.at ?? new Date();
     const db = this.prisma.forTenant();
 
-    // The switch is off and only the portal reaches here: a tenant that has set no limit at all is judged exactly
-    // as before the portal ignored the switch (nothing to apply, no product reads). Switch ON never takes this exit,
-    // so its fail-closed handling of an unresolvable product is unchanged.
-    if (!restrictionsApply(policy, "STAFF")) {
-      // (the staff channel applies only with the switch on, so this reads "the switch is off")
-      const anyRule = await db.sellingRestriction.findMany({
-        where: {
-          tenantId,
-          AND: [activeRuleWhere(at)],
-          // a run that ignores portal-only limits must not be kept busy by one existing
-          ...(options?.skipPortalOnlyRules ? { surface: { not: "BUYER_PORTAL" as const } } : {}),
-        },
-        select: { id: true },
-        take: 1,
-      });
-      if (anyRule.length === 0) return { outcome: "ALLOW", reasons: [] };
-    }
+    // A tenant that has set no rule at all is judged ALLOW after this one indexed read (row 510, Q6: the fast path is
+    // unconditional, so a rule-less tenant never meets a warning, even for a product whose label chain cannot be read).
+    const anyRule = await db.sellingRestriction.findMany({
+      where: {
+        tenantId,
+        AND: [activeRuleWhere(at)],
+        // a run that ignores portal-only limits must not be kept busy by one existing
+        ...(options?.skipPortalOnlyRules ? { surface: { not: "BUYER_PORTAL" as const } } : {}),
+      },
+      select: { id: true },
+      take: 1,
+    });
+    if (anyRule.length === 0) return allowed;
 
     const labels = await this.productLabels.effectiveLabels(tenantId, productIds);
     const products: ProductFacts[] = productIds.map((id) => {
@@ -511,8 +561,8 @@ export class SellingRestrictionsService {
       }
     }
     let governingState = UNRESOLVED_STATE;
-    const stateInPlay = stateRuleInPlay(matched, channel, at); // asked ONCE (readiness asks the same)
-    if (stateInPlay && judgedAtStore(options.fulfilmentKind)) {
+    const stateInPlay = stateRuleInPlay(matched, channel, at); // asked ONCE (the no-state card asks the same)
+    if (stateInPlay && storeJudged) {
       // L8: a counter sale / pickup is judged where the STORE is, whoever the customer is (or none). No usable store
       // state stays UNRESOLVED (INDETERMINATE, fail closed) — never the customer's address instead.
       const state = await tenantBusinessState(this.prisma, tenantId);
@@ -533,6 +583,7 @@ export class SellingRestrictionsService {
         // The tenant's system walk-in (the SYSTEM flag, never the name) has no address of its own: a counter sale is
         // judged where the store is. A walk-in's own address, if one is ever added, is intentionally ignored in
         // favour of the tenant state. No usable business state stays UNRESOLVED (INDETERMINATE), as before.
+        basis = "STORE";
         const state = await tenantBusinessState(this.prisma, tenantId);
         governingState = state ? { resolved: true, state } : UNRESOLVED_STATE;
       } else {
@@ -554,15 +605,16 @@ export class SellingRestrictionsService {
       for (const c of cats) categoryNames.set(c.id, c.name);
     }
 
-    return evaluateRestrictions({
+    const input: EvaluateInput = {
       channel,
       at,
       products,
       rules,
       governingState,
       categoryNames,
-      storeJudged: judgedAtStore(options.fulfilmentKind),
-    });
+      storeJudged,
+    };
+    return { evaluation: evaluateRestrictions(input), input, basis };
   }
 
   /**
@@ -693,36 +745,83 @@ export class SellingRestrictionsService {
       {
         channel: params.channel,
         at: params.at,
+        fulfilmentKind: params.fulfilmentKind,
         switchGated: params.switchGated,
         skipPortalOnlyRules: params.skipPortalOnlyRules,
-        fulfilmentKind: params.fulfilmentKind,
       },
     );
   }
 
   /**
+   * Row 510: the engine's verdict for a STAFF write, with EVERY breached rule listed (`staffBreaches`) and the basis the
+   * sale was judged on. Wraps the same netting as `checkLinesSellable` (a decrease / removal / repack is never judged)
+   * and, like it, never throws for a business outcome: `assertLinesSellable` decides what to do with it.
+   */
+  async judgeStaffWrite(params: SellableLinesParams): Promise<StaffJudgement> {
+    if (!params.tenantId) throw new Error("judgeStaffWrite requires a tenantId");
+    const checkable = checkableProductIds(params.lines);
+    const basis: JurisdictionBasis = judgedAtStore(params.fulfilmentKind) ? "STORE" : "CUSTOMER";
+    if (checkable.length === 0) return { outcome: "ALLOW", reasons: [], breaches: [], basis };
+    const {
+      evaluation,
+      input,
+      basis: judgedBasis,
+    } = await this.evaluateFacts(
+      params.tenantId,
+      params.customerId,
+      checkable.map((productId) => ({ productId })),
+      {
+        channel: params.channel,
+        at: params.at,
+        fulfilmentKind: params.fulfilmentKind,
+        switchGated: params.switchGated,
+        skipPortalOnlyRules: params.skipPortalOnlyRules,
+      },
+    );
+    return {
+      outcome: evaluation.outcome,
+      reasons: evaluation.reasons,
+      breaches: input ? staffBreaches(input) : [],
+      basis: judgedBasis,
+    };
+  }
+
+  /**
    * The choke point every line-writing path calls BEFORE it writes: BLOCK and INDETERMINATE
-   * (fail closed) throw a structured 409 mirroring `REGULATED_AUTH_REQUIRED`'s shape; OFF and
-   * ALLOW return. Read-only — a throw here leaves nothing mutated.
+   * (fail closed) throw a structured 409 mirroring `REGULATED_AUTH_REQUIRED`'s shape; ALLOW
+   * returns. Read-only — a throw here leaves nothing mutated.
    *
    * The body is redacted BY AUDIENCE, HERE, where the exception is built (B612): only an explicit
    * `STAFF` channel gets the rule id, reason, state, category and rule text. Anything else — a
    * buyer, an omitted or unrecognised channel — gets `{ productId, productName }` lines (deduped,
    * so the number of rules per product is not disclosed either) and a sentence built from names.
    * The web UI happens to render only the names; the leak is in the payload, not the pixels.
+   *
+   * Row 510: a STAFF breach no longer refuses outright when the principal may override. It resolves to the
+   * `StaffWriteDecision` the caller stamps in its own transaction (`restriction-override-stamps.ts`), or throws the
+   * 409 RESTRICTION_WARNING (`restriction-warning.ts`) the client acknowledges and resubmits. A principal who may not
+   * override (DRIVER, SUPER_ADMIN) or a system caller with none (`principal` omitted) is still hard-blocked here.
+   * Every other channel (a buyer) keeps the hard 409 and resolves to a no-op decision.
    */
-  async assertLinesSellable(params: SellableLinesParams): Promise<void> {
-    const evaluation = await this.checkLinesSellable(params);
-    if (evaluation.outcome !== "BLOCK" && evaluation.outcome !== "INDETERMINATE") return;
-    // Same value the evaluation was judged on; only the literal "STAFF" is trusted with the detail.
+  async assertLinesSellable(params: SellableLinesParams): Promise<StaffWriteDecision> {
     if (params.channel === "STAFF") {
-      const body: SellingRestrictedError = {
-        code: API_ERROR_CODES.SELLING_RESTRICTED,
-        message: restrictedSummary(evaluation.reasons),
-        blockedLines: evaluation.reasons,
-      };
-      throw new ConflictException(body);
+      const judgement = await this.judgeStaffWrite(params);
+      return decideStaffWrite({
+        target: stampTargetOf(params),
+        judgement,
+        lines: params.lines.flatMap((l, i): GateLine[] => [
+          { productId: l.productId, qtyDelta: l.qtyDelta, lineKey: l.lineKey ?? `n:${i}` },
+        ]),
+        held: params.held,
+        principal: params.principal,
+        ack: params.ack,
+        customerId: params.customerId,
+        blocked: staffRestrictedError,
+      });
     }
+    const evaluation = await this.checkLinesSellable(params);
+    if (evaluation.outcome !== "BLOCK" && evaluation.outcome !== "INDETERMINATE")
+      return noRestrictionOverride("CUSTOMER", stampTargetOf(params));
     const seen = new Set<string>();
     const blockedLines: BuyerBlockedLine[] = [];
     for (const r of evaluation.reasons) {
@@ -737,6 +836,37 @@ export class SellingRestrictionsService {
     };
     throw new ConflictException(body);
   }
+}
+
+/** Where `decision.stamp` writes: the document kind, the tenant and the acting user (null for a system caller). */
+function stampTargetOf(params: SellableLinesParams): StampTarget | null {
+  return params.document
+    ? {
+        document: params.document,
+        tenantId: params.tenantId,
+        by: params.principal?.sub ?? null,
+        impersonatedBy: params.principal?.impersonatedBy ?? null,
+      }
+    : null;
+}
+
+/**
+ * The STAFF 409 SELLING_RESTRICTED (rule id, reason, state, category and rule text): the staff branch of
+ * `assertLinesSellable` and the protocol's hard block for a principal who may not override. Built HERE with the buyer
+ * body, at the one construction site (the B612 pin). `message` overrides the summary (the DRIVER's "ask the office").
+ */
+export function staffRestrictedError(
+  reasons: BlockedLine[],
+  message?: string,
+  lines?: RestrictionWarningLine[],
+): ConflictException {
+  const body: SellingRestrictedError = {
+    code: API_ERROR_CODES.SELLING_RESTRICTED,
+    message: message ?? restrictedSummary(reasons),
+    blockedLines: reasons,
+    ...(lines && lines.length > 0 ? { lines } : {}),
+  };
+  return new ConflictException(body);
 }
 
 /**

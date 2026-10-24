@@ -24,8 +24,11 @@ import {
   DEFAULT_SLOTS,
   bareNpmReason,
   HISTORY_MAX_LINES,
+  HOLD_CAP_EXIT_CODE,
   HeavySlotTimeout,
   STALE_MS,
+  activeChildCount,
+  spawnAsync,
   formatStatus,
   formatWaitLine,
   historyRecord,
@@ -145,9 +148,9 @@ check(
   [43_200_000, 1200, 300_000, 43_200_000, 43_200_000, 43_200_000],
 );
 check(
-  "P2b parseMaxHoldMs: default 180 min; fractions allowed; junk and negatives fall back",
+  "P2b parseMaxHoldMs: default 90 min; fractions allowed; junk and negatives fall back",
   [undefined, "0.02", "5", "-1", "abc", ""].map(parseMaxHoldMs),
-  [10_800_000, 1200, 300_000, 10_800_000, 10_800_000, 10_800_000],
+  [5_400_000, 1200, 300_000, 5_400_000, 5_400_000, 5_400_000],
 );
 check(
   "P2c holderOverCap: strictly longer than the cap; no holder is never over",
@@ -403,8 +406,8 @@ for (const [name, over] of [
   let ran = false;
   let err = null;
   const waiter = withHeavySlot(
-    // default caps from env {}: 720 min total wait, 180 min hold. staleMs huge: the ghost has no
-    // heartbeat timer, and a 130 min skew would otherwise make it look dead.
+    // default caps from env {}: 720 min total wait, 90 min hold (+5 min grace). staleMs huge: the
+    // ghost has no heartbeat timer, and the skew would otherwise make it look dead.
     { label: "patient", branch: "b", dir, env: {}, now: clock, staleMs: 1e12, ...FAST, ...NO_LOG },
     async () => {
       ran = true;
@@ -413,14 +416,14 @@ for (const [name, over] of [
     err = e;
   });
   await sleep(60);
-  skew = 130 * 60_000; // past the old 120 min cap; the holder is at ~131 min, under the 180 min hold cap
+  skew = 60 * 60_000; // the holder is at ~61 min, under the 90 min hold cap
   await sleep(100);
   const stillWaiting =
     !ran && err === null && existsSync(lockFile(dir)) && queued(dir).length === 1;
   rmSync(lockFile(dir), { force: true }); // the healthy holder finishes
   await waiter;
   check(
-    "I5b a healthy holder under the hold cap: the waiter is still queued 130 min in, then gets the slot",
+    "I5b a healthy holder under the hold cap: the waiter is still queued 60 min in, then gets the slot",
     [stillWaiting, ran, err],
     [true, true, null],
   );
@@ -443,13 +446,13 @@ for (const [name, over] of [
     err = e;
   }
   check(
-    "I5c a holder over the hold cap (200 min > 180) fails the waiter closed: names the holder and its " +
+    "I5c a holder over the hold cap and its grace (200 min > 95) fails the waiter closed: names the holder and its " +
       "hold age, never runs fn, keeps the holder's lock, withdraws the ticket",
     [
       ran,
       err instanceof HeavySlotTimeout,
       (err?.message ?? "").includes("held by ghost on feat/ghost"),
-      /for 200\.\d min, over the 180\.00 min hold cap/.test(err?.message ?? ""),
+      /for 200\.\d min, over the 90\.00 min hold cap/.test(err?.message ?? ""),
       existsSync(lockFile(dir)),
       queued(dir),
     ],
@@ -474,6 +477,7 @@ for (const [name, over] of [
         branch: "b",
         dir: dir2,
         env: { RF_HEAVY_SLOT_MAX_HOLD_MIN: "0.0005" },
+        holdGraceMs: 0, // no grace: the knob alone decides
         ...FAST,
         ...NO_LOG,
       },
@@ -961,6 +965,103 @@ const t=setInterval(()=>{let n=[];try{n=fs.readdirSync(q)}catch{}if(n.length||Da
     "W9 nothing reached a real npm: temp cwd has no node_modules / package-lock",
     readdirSync(work),
     [],
+  );
+}
+
+// ---- J: W-759 the holder enforces its own hold cap ----------------------------------------------
+{
+  // J1: a live, heartbeating holder whose job hangs is ended at the cap (its OWN child tree), the slot is released and the run
+  // is recorded as capped (exit 76, capped: true). Without the cap this child would sleep 60 s.
+  const dir = mkTmp();
+  let childResult = null;
+  let during = -1;
+  const out = await withHeavySlot(
+    { label: "hung", branch: "b", dir, env: {}, maxHoldMs: 400, ...FAST, ...NO_LOG },
+    async () => {
+      const p = spawnAsync(process.execPath, ["-e", "setTimeout(() => {}, 60000)"]);
+      during = activeChildCount();
+      childResult = await p;
+      return childResult.status;
+    },
+  );
+  const h = history(dir);
+  check(
+    "J1 a holder that hangs past the cap is ended: HOLD_CAP_EXIT_CODE, lock released, history exit 76 and capped",
+    [out, existsSync(lockFile(dir)), h.length, h[0]?.exit, h[0]?.capped],
+    [HOLD_CAP_EXIT_CODE, false, 1, HOLD_CAP_EXIT_CODE, true],
+  );
+  check(
+    "J1b the guarded child was tracked while it ran, was terminated (not a normal exit), and leaves no tracked child behind",
+    [during, childResult?.status === 0, activeChildCount()],
+    [1, false, 0],
+  );
+
+  // J2: a job that finishes inside the cap is untouched: its own exit code, no capped marker
+  const dir2 = mkTmp();
+  const ok = await withHeavySlot(
+    { label: "fine", branch: "b", dir: dir2, env: {}, maxHoldMs: 60_000, ...FAST, ...NO_LOG },
+    async () => (await spawnAsync(process.execPath, ["-e", "0"])).status,
+  );
+  check(
+    "J2 a job inside the cap keeps its own exit code and is not marked capped",
+    [ok, history(dir2)[0]?.exit, history(dir2)[0]?.capped],
+    [0, 0, undefined],
+  );
+
+  // J3 (a): a QUEUED waiter runs once the capped holder releases. Waiters give up only at cap + grace, so this one is not
+  // failed at the very moment the slot frees (the #3688 review's probe p3: both waiters threw and nobody got the slot).
+  const dir3 = mkTmp();
+  let waiterRan = false;
+  let waiterErr = null;
+  const holder = withHeavySlot(
+    {
+      label: "capped",
+      branch: "b",
+      dir: dir3,
+      env: {},
+      maxHoldMs: 400,
+      holdKillMs: 300,
+      ...FAST,
+      ...NO_LOG,
+    },
+    async () => (await spawnAsync(process.execPath, ["-e", "setTimeout(() => {}, 60000)"])).status,
+  );
+  await sleep(100); // the holder has the slot
+  const waiter = withHeavySlot(
+    { label: "queued", branch: "b", dir: dir3, env: {}, maxHoldMs: 400, ...FAST, ...NO_LOG },
+    async () => {
+      waiterRan = true;
+    },
+  ).catch((e) => {
+    waiterErr = e;
+  });
+  const holderOut = await holder;
+  await waiter;
+  check(
+    "J3 a queued waiter gets the slot after the holder is capped: it runs, never times out",
+    [holderOut, waiterRan, waiterErr],
+    [HOLD_CAP_EXIT_CODE, true, null],
+  );
+
+  // J4 (c): a job that never returns (it ignores the killed child) still loses the slot at the hard deadline
+  const dir4 = mkTmp();
+  const hung = await withHeavySlot(
+    {
+      label: "stuck",
+      branch: "b",
+      dir: dir4,
+      env: {},
+      maxHoldMs: 150,
+      holdKillMs: 150,
+      ...FAST,
+      ...NO_LOG,
+    },
+    () => new Promise(() => {}),
+  );
+  check(
+    "J4 a job that never returns is released at the hard deadline: capped history, lock gone",
+    [hung, existsSync(lockFile(dir4)), history(dir4)[0]?.capped],
+    [HOLD_CAP_EXIT_CODE, false, true],
   );
 }
 

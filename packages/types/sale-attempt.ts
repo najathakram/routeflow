@@ -158,6 +158,9 @@ export function createSaleKeyHolder(mint: () => string = mintSaleKey) {
     },
     settle(outcome: { ok: true } | { ok: false; error: unknown }): void {
       if (!held) return;
+      // A refusal that follows an UNKNOWN outcome (a timeout or 5xx under this same key) proves nothing about the
+      // first call, which may still be committing: keep the key and the lock, or the next ring mints a second sale.
+      if (unknown && !outcome.ok && isDefinitiveSaleRefusal(outcome.error)) return;
       held = heldAfterSale(held, outcome);
       if (!held || outcome.ok) {
         held = null;

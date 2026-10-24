@@ -36,6 +36,8 @@ const B768_REPORTS = [
   "report-addon-comp-candidates.mjs", // SA-693 — born on the resolver
   "report-sitting4-sizing.mjs", // SA-772 / SA-814 sitting 4 — born on the resolver
   "report-640-restored-grants.mjs", // row 640 (SA-834) - born on the resolver
+  "report-exempt-orders-taxed.mjs", // row 635 PR A (B293) - born on the resolver
+  "report-order-discounts.mjs", // row 635 PR A (SA-780) - born on the resolver
 ];
 
 /**

@@ -37,6 +37,7 @@ import {
   type CreateSaleDto,
   type CreateSaleItemInput,
 } from "../../../../lib/api/orders";
+import { useRestrictionWarningRetry } from "../../../../lib/use-restriction-warning-retry";
 import { decideTrayPrice, reasonRequiredMessage } from "../../../../lib/staff-price-override";
 import { useTrackedCategories } from "../../../../lib/api/tracked-categories";
 import { saleModeGate } from "../../../../lib/sale-mode";
@@ -1263,6 +1264,7 @@ function InvoiceComposer({
 
   const createMut = useCreateInvoice();
   const createSaleMut = useCreateSale();
+  const rw = useRestrictionWarningRetry(); // row 510: staff warning + override dialog
   const [saleKey] = useState(createSaleAttemptKey); // row 485: one Idempotency-Key per sale attempt
   // Set while the sale's outcome is UNKNOWN: the cart is locked behind SaleUnknownPanel.
   const [saleUnknown, setSaleUnknown] = useState<UnknownSale | null>(null);
@@ -1362,9 +1364,13 @@ function InvoiceComposer({
    * unlocks it.
    */
   const postSale = (saleDto: CreateSaleDto) => {
-    const idempotencyKey = saleKey.keyFor(JSON.stringify(saleDto));
+    // Row 510: a resubmit after the restriction warning carries the ack, so it is a new payload (a new key).
+    const body = rw.attach(saleDto) as CreateSaleDto;
+    // Try again after an unknown outcome must resend exactly what was sent (the ack included), under the held key.
+    lastSaleRef.current = body;
+    const idempotencyKey = saleKey.keyFor(JSON.stringify(body));
     createSaleMut.mutate(
-      { ...saleDto, idempotencyKey },
+      { ...body, idempotencyKey },
       {
         // POST /orders/sell resolves to the created INVOICE (not the order) —
         // see CreatedSaleInvoice in lib/api/orders.ts.
@@ -1393,6 +1399,7 @@ function InvoiceComposer({
           }
           saleLockRef.current = false;
           setSaleUnknown(null);
+          if (rw.handle(err, () => postSale(saleDto))) return; // row 510
           if (unitNotOfferedCode(err)) return void onUnitNotOffered("Couldn't record the sale");
           alertInfo(
             "Couldn't record the sale",
@@ -1580,7 +1587,7 @@ function InvoiceComposer({
       );
     }
     createMut.mutate(
-      {
+      rw.attach({
         customerId,
         items: payload,
         dueDate,
@@ -1592,12 +1599,13 @@ function InvoiceComposer({
         ...(referenceNumber.trim() ? { referenceNumber: referenceNumber.trim() } : {}),
         ...(subject.trim() ? { subject: subject.trim() } : {}),
         ...depositPayload(depositOpen, depositPercent, depositDueDate.trim()),
-      },
+      }),
       {
         onSuccess: (inv) => {
           onSaved(inv.id, inv.invoiceNumber);
         },
         onError: (err: any) => {
+          if (rw.handle(err, () => onSave(fromReview))) return; // row 510
           const keptId = keptDraftInvoiceId(err);
           if (keptId) return void onKeptDraft(keptId);
           if (unitNotOfferedCode(err)) return void onUnitNotOffered("Couldn't create invoice");
@@ -1972,6 +1980,7 @@ function InvoiceComposer({
         onClose={() => setCreateCode(null)}
         onCreated={handleInlineCreated}
       />
+      {rw.modal}
     </>
   );
 }

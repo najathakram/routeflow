@@ -141,9 +141,10 @@ describeDb(
         sellingRestrictions: {
           getPolicy: async () => ({ enabled: true, addressPrecedence: "BILLING_FIRST" }),
           assertLinesSellable: async (a: {
-            lines: Array<{ productId: string; qtyDelta?: number }>;
+            lines: Array<{ productId: string; qtyDelta?: number; lineKey?: string }>;
           }) => {
-            seen.push(...a.lines);
+            // row 510: each judged line also carries the key a warning echoes; the netting is what these specs pin
+            seen.push(...a.lines.map(({ lineKey: _lineKey, ...line }) => line));
             const grows = a.lines.some(
               (l) => l.productId === banned && (l.qtyDelta === undefined || l.qtyDelta > 0),
             );

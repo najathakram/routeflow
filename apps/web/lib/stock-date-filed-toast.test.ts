@@ -18,3 +18,15 @@ it("the filed-period refusal names the period and the next step (fixed copy, B98
     "September 2026 is already filed for this product, so stock can't be dated on or before it. Choose a later date.",
   );
 });
+
+it("W-755 (SA-894 LOW-1): the refusal names WHAT is filed when the api sends it", () => {
+  const err = {
+    response: {
+      status: 409,
+      data: { code: "STOCK_DATE_IN_FILED_PERIOD", period: "September 2026", filedFor: "Tobacco" },
+    },
+  };
+  expect(genericToastCopy(err)).toBe(
+    "September 2026 is already filed for Tobacco, so stock can't be dated on or before it. Choose a later date.",
+  );
+});

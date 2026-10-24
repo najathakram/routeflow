@@ -109,4 +109,11 @@ describe("CreateOrderModal default selling unit wiring (#2784)", () => {
     expect(src).toMatch(/pendingScanDecision\(/);
     expect(src).toMatch(/UNITS_LOADING_SCAN_MESSAGE/);
   });
+
+  it("row 510: the async default-unit path returns its promise and the Sell-anyway retry hands it to the hook (the ack survives the await)", () => {
+    expect(src).toMatch(/return resolveDefaultUnits\(lineItems\)/);
+    expect(src).toMatch(
+      /const r = submitOrder\(data, options\);[\s\S]*?return typeof r === "object" \? r : undefined;/,
+    );
+  });
 });

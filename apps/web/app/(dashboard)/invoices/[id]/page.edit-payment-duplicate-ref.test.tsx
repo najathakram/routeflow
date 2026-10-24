@@ -151,3 +151,25 @@ describe("invoices/[id]: editing a payment onto a used reference (W-718)", () =>
     expect(dupToast().action).toBeUndefined();
   });
 });
+
+// W-663 (SA-843 filing): emptying the reference (or the notes) in the edit dialog CLEARS it: the PATCH sends null, the way
+// an emptied bank date already does. Head: undefined, so the server kept the old reference.
+describe("invoices/[id]: an emptied reference is cleared (W-663)", () => {
+  beforeEach(() => jest.clearAllMocks());
+  afterEach(() => seedSession(null));
+
+  it("the PATCH sends reference: null and notes: null for emptied fields", async () => {
+    seedSession("OPERATOR");
+    mockPatch.mockResolvedValueOnce({ data: { id: "inv-1" } });
+    renderWithProviders(<InvoiceDetailPage />, {
+      queryClient: queryClientWithGlobalErrorToast(mockGlobalToast),
+    });
+    fireEvent.click(screen.getByTitle("Edit payment"));
+    fireEvent.change(screen.getByDisplayValue("1042"), { target: { value: "   " } });
+    fireEvent.click(screen.getByRole("button", { name: "Save Changes" }));
+    await waitFor(() => expect(mockPatch).toHaveBeenCalled());
+    const body = mockPatch.mock.calls[0][1];
+    expect(body.reference).toBeNull();
+    expect(body.notes).toBeNull();
+  });
+});

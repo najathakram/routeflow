@@ -11,6 +11,7 @@ import { formatMoney } from "@/lib/format";
 import { unitPriceNote } from "@/lib/line-unit-price-note";
 import type { OrderItem } from "@/lib/api/orders";
 import { orderLineName } from "@/lib/product-display";
+import { RestrictionOverrideNote } from "@/components/RestrictionOverrideNote";
 import { displayLineStatus } from "./line-status";
 import { ComponentSubLines } from "@/components/ComponentSubLines";
 
@@ -121,6 +122,7 @@ export function OrderLineItemsTable({
                       </p>
                     )}
                     <ComponentSubLines components={li.components} />
+                    <RestrictionOverrideNote line={li} />
                   </div>
                   {!li.productId && (
                     <span className="rounded-full bg-brand-50 px-1.5 py-0.5 text-[10px] font-medium text-brand-700 ring-1 ring-brand-200 max-md:shrink-0">

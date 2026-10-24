@@ -10,6 +10,7 @@ import { usePageTitle } from "@/lib/page-title-context";
 import { useDismissOnLeave } from "@/lib/use-dismiss-on-leave";
 import { codedToastCopy } from "@/lib/generic-toast-copy";
 import { useInvoice, useUpdateInvoice, type UpdateInvoiceItem } from "@/lib/api/invoices";
+import { useRestrictionWarningRetry } from "@/lib/use-restriction-warning-retry";
 import { isPendingMirrorInvoice } from "@/lib/invoice-pending-mirror";
 import { INVOICE_STALE_COPY, isInvoiceStale } from "@/lib/invoice-stale";
 import { hasUnitLine, unitLabelsOf } from "@/lib/invoice-line-unit";
@@ -436,6 +437,7 @@ export default function EditInvoicePage() {
   const openedUpdatedAt = React.useRef<string | undefined>(undefined);
   const [stale, setStale] = React.useState(false);
   const updateInvoice = useUpdateInvoice();
+  const rw = useRestrictionWarningRetry(); // row 510: staff warning + override dialog
 
   // #2791: a pending-mirror draft can't be edited here (the API refuses by design — the order is the
   // source of truth until delivery). Send the user to the order instead of showing a form that can only fail.
@@ -732,7 +734,7 @@ export default function EditInvoicePage() {
       }),
     };
 
-    updateInvoice.mutate(dto, {
+    updateInvoice.mutate(rw.attach(dto), {
       onSuccess: () => {
         toast({
           title: "Invoice updated",
@@ -742,6 +744,7 @@ export default function EditInvoicePage() {
         router.push(`/invoices/${id}`);
       },
       onError: (err: any) => {
+        if (rw.handle(err, handleSubmit)) return; // row 510
         if (isInvoiceStale(err)) {
           setStale(true); // H4: the notice owns it; no toast
           return;
@@ -1293,6 +1296,7 @@ export default function EditInvoicePage() {
         initialName={createProductInitialName}
         initialSku={createProductInitialSku}
       />
+      {rw.dialog}
     </div>
   );
 }
