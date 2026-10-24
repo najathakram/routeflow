@@ -53,6 +53,21 @@ describe("useOrderOverpayGuard", () => {
       Element.prototype.scrollIntoView = original;
     }
   });
+  it("row 313 (#3721 review): a SECOND refusal, with the notice already up, scrolls it back into view", () => {
+    const scroll = jest.fn();
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = scroll;
+    try {
+      render(<Harness error={err} />);
+      fireEvent.click(screen.getByText("go"));
+      (document.activeElement as HTMLElement | null)?.blur();
+      fireEvent.click(screen.getByText("go"));
+      expect(scroll).toHaveBeenCalledTimes(2);
+      expect(document.activeElement).toBe(screen.getByTestId("order-overpay-notice"));
+    } finally {
+      Element.prototype.scrollIntoView = original;
+    }
+  });
 
   it("captures the 409, shows fixed copy and opens the return flow", () => {
     render(<Harness error={err} />);
