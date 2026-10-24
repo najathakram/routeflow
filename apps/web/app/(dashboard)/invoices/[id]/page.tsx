@@ -1971,12 +1971,7 @@ export default function InvoiceDetailPage() {
       },
       {
         onSuccess: () => toast({ title: "Payment voided", variant: "info" }),
-        onError: (err: any) =>
-          toast({
-            title: "Failed to void payment",
-            description: err?.response?.data?.message ?? undefined,
-            variant: "error",
-          }),
+        onError: () => toast({ title: "Couldn't void this payment. Try again.", variant: "error" }),
       },
     );
   };
