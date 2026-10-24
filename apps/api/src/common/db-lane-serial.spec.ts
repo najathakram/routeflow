@@ -63,6 +63,31 @@ describe("#2183 DB lane is serial whatever the caller asks for", () => {
   });
 });
 
+// Item 726 review: a pattern that matches no spec must FAIL the lane, even when a caller passes
+// --passWithNoTests through (a typo'd pattern otherwise reads as a green DB run).
+describe("a zero-spec DB run is never green", () => {
+  it("the runner drops --passWithNoTests (and says so); the lane config does not set it", () => {
+    const probe = `
+      const m = await import(${JSON.stringify(pathToFileURL(path.join(API_DIR, "scripts/run-db-tests.mjs")).href)});
+      console.log(JSON.stringify([
+        m.dropPassWithNoTests(["--passWithNoTests", "(a|b)"]),
+        m.dropPassWithNoTests(["--passWithNoTests=true", "x", "--ci"]),
+        m.dropPassWithNoTests(["x"]),
+      ]));`;
+    const res = spawnSync(process.execPath, ["--input-type=module", "-e", probe], {
+      encoding: "utf8",
+    });
+    expect(res.stderr).toBe("");
+    expect(JSON.parse(res.stdout)).toEqual([
+      { kept: ["(a|b)"], dropped: ["--passWithNoTests"] },
+      { kept: ["x", "--ci"], dropped: ["--passWithNoTests=true"] },
+      { kept: ["x"], dropped: [] },
+    ]);
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    expect(require(path.join(API_DIR, "jest.db.config.js")).passWithNoTests).not.toBe(true);
+  });
+});
+
 // W-699: a DB-lane run that never exits (an open handle after "Tests:") would hold the machine's
 // heavy slot for every other lane, so the runner kills jest after a hard timeout and exits 124.
 describe("W-699 the DB lane runner has a hard timeout", () => {

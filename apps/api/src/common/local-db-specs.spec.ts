@@ -95,12 +95,83 @@ describe("#2183 local:test:db runs on its own fresh database", () => {
         ["--db", "--", "x"], ["--"], [],
       ].map((a) => { try { return m.parseArgs(a); } catch (e) { return String(e.message); } })`),
     ).toEqual([
-      { keep: false, command: "npm run test:db -w apps/api" },
-      { keep: true, command: "x y" },
+      {
+        keep: false,
+        command: "npm run test:db -w apps/api",
+        tokens: ["npm run test:db -w apps/api"],
+      },
+      { keep: true, command: "x y", tokens: ["x", "y"] },
       { help: true },
       "unknown flag(s): --db",
       'expected `-- "<command string>"`',
       'expected `-- "<command string>"`',
     ]);
+  });
+});
+
+// Item 726: a test pattern with shell metacharacters (`(a|b)`, `&`, `|`) must reach jest as literal
+// argv. A single quoted string still runs through the shell (the `npm run local:test:db` form); two
+// or more tokens after `--` are an argv and are spawned WITHOUT a shell, so cmd.exe never sees them.
+describe("item 726: argv after `--` reaches the lane literally", () => {
+  const PATTERNS = ["(a|b)", "a&b", "x|y", "50%", "'q'"];
+  const list = PATTERNS.map((p) => JSON.stringify(p)).join(", ");
+
+  it("a multi-token command is spawned without a shell, tokens untouched", () => {
+    expect(
+      probe(`[
+        m.commandSpawn(["node", "run-db-tests.mjs", ${list}]),
+        m.commandSpawn(["npm run test:db -w apps/api"]),
+      ]`),
+    ).toEqual([
+      { cmd: "node", args: ["run-db-tests.mjs", ...PATTERNS], shell: false },
+      { cmd: "npm run test:db -w apps/api", args: [], shell: true },
+    ]);
+  });
+
+  it("the spawn spec round-trips every metacharacter pattern through a real child", () => {
+    const spec = probe(
+      `m.commandSpawn([process.execPath, "-e", "console.log(JSON.stringify(process.argv.slice(1)))", ${list}])`,
+    ) as { cmd: string; args: string[]; shell: boolean };
+    const res = spawnSync(spec.cmd, spec.args, { encoding: "utf8", shell: spec.shell });
+    expect(JSON.parse(res.stdout)).toEqual(PATTERNS);
+  });
+});
+
+// Review of #3718: the command string form must keep working when npm appends args, a first token
+// that is a command string or an npm/npx shim (a .cmd on Windows) cannot be spawned without a
+// shell, and `npm run local:test:db -- <spec>` must reach the runner as a spawnable argv.
+describe("item 726: commandSpawn is safe for every caller form", () => {
+  const ROOT_PKG = path.resolve(__dirname, "../../../../package.json");
+
+  it("a first token holding a space (a command string plus appended args) runs through the shell, joined", () => {
+    expect(
+      probe(`[
+        m.commandSpawn(["npm run test:db -w apps/api", "src/x.db.spec.ts"]),
+        m.commandSpawn(["npm", "run", "test:db"]),
+        m.commandSpawn(["npx", "jest"]),
+      ]`),
+    ).toEqual([
+      { cmd: "npm run test:db -w apps/api src/x.db.spec.ts", args: [], shell: true },
+      { cmd: "npm run test:db", args: [], shell: true },
+      { cmd: "npx jest", args: [], shell: true },
+    ]);
+  });
+
+  it("the npm-append form: local:test:db plus a spec path is spawned as node + argv, never ENOENT", () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const script: string = require(ROOT_PKG).scripts["local:test:db"];
+    // npm runs `<script> <appended args>`; split the way a shell would for these simple words.
+    const words = [...script.split(" ").slice(2), "src/x.db.spec.ts"];
+    const sep = words.indexOf("--");
+    const spec = probe(`m.commandSpawn(${JSON.stringify(words.slice(sep + 1))})`) as {
+      cmd: string;
+      args: string[];
+      shell: boolean;
+    };
+    expect(spec).toEqual({
+      cmd: "node",
+      args: ["apps/api/scripts/run-db-tests.mjs", "src/x.db.spec.ts"],
+      shell: false,
+    });
   });
 });
