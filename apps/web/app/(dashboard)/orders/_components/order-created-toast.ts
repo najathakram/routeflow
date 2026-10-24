@@ -73,10 +73,10 @@ export interface OrderCreatedToastInput {
 /**
  * The success toast for CreateOrderModal. The modal closes on success and the operator used to
  * have no path from the confirmation to the order (order-ui-redesign-spec.md §8): a forced
- * redirect would fight rapid multi-order entry, so this offers a one-click "View order" action
+ * redirect would fight rapid multi-order entry, so this offers a one-click "View Order" action
  * on the toast instead of navigating on its own.
  */
-/** F28: with an action the toast stays until dismissed (the X), so a glance away never loses "View order". */
+/** F28: with an action the toast stays until dismissed (the X), so a glance away never loses "View Order". */
 export const ACTION_TOAST_MS = 24 * 60 * 60 * 1000;
 
 export function orderCreatedToast({
@@ -93,7 +93,7 @@ export function orderCreatedToast({
   const action =
     orderId && onViewOrder
       ? {
-          label: merged ? "View merged order" : "View order",
+          label: merged ? "View Merged Order" : "View Order",
           onClick: () => onViewOrder(orderId),
         }
       : undefined;

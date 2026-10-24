@@ -9,12 +9,12 @@ import { wasCreatedHere } from "@/lib/order-created-echo";
 describe("orderCreatedToast", () => {
   const created = { id: "ord-123456789", orderNumber: "ORD-00042" };
 
-  it("create: 'Order created' with a View order action that navigates to the new order", () => {
+  it("create: 'Order created' with a View Order action that navigates to the new order", () => {
     const onViewOrder = jest.fn();
     const t = orderCreatedToast({ asDraft: false, created, onViewOrder });
     expect(t.title).toBe("Order created");
     expect(t.variant).toBe("success");
-    expect(t.action?.label).toBe("View order");
+    expect(t.action?.label).toBe("View Order");
     t.action?.onClick();
     expect(onViewOrder).toHaveBeenCalledWith("ord-123456789");
   });
@@ -23,16 +23,16 @@ describe("orderCreatedToast", () => {
     const onViewOrder = jest.fn();
     const t = orderCreatedToast({ asDraft: true, created, onViewOrder });
     expect(t.title).toBe("Order saved as draft");
-    expect(t.action?.label).toBe("View order");
+    expect(t.action?.label).toBe("View Order");
     t.action?.onClick();
     expect(onViewOrder).toHaveBeenCalledWith("ord-123456789");
   });
 
-  it("merge: names the merged order and offers 'View merged order' to that order's id", () => {
+  it("merge: names the merged order and offers 'View Merged Order' to that order's id", () => {
     const onViewOrder = jest.fn();
     const t = orderCreatedToast({ mergeChoice: "merge", asDraft: false, created, onViewOrder });
     expect(t.title).toBe("Merged into order ORD-00042");
-    expect(t.action?.label).toBe("View merged order");
+    expect(t.action?.label).toBe("View Merged Order");
     t.action?.onClick();
     expect(onViewOrder).toHaveBeenCalledWith("ord-123456789");
   });
@@ -127,7 +127,7 @@ describe("N01: the merged toast says what the merge added and the order's new to
     expect(t.description).toBe("+1 A, +1 B, +1 C, +2 more · new total $131.94");
   });
 
-  it("keeps the persistent duration and the View merged order action", () => {
+  it("keeps the persistent duration and the View Merged Order action", () => {
     const onViewOrder = jest.fn();
     const t = orderCreatedToast({
       mergeChoice: "merge",
@@ -135,7 +135,7 @@ describe("N01: the merged toast says what the merge added and the order's new to
       onViewOrder,
       addedLines: [{ name: "Corn Chips", qty: "3 cases" }],
     });
-    expect(t.action?.label).toBe("View merged order");
+    expect(t.action?.label).toBe("View Merged Order");
     expect(t.duration).toBe(ACTION_TOAST_MS);
   });
 

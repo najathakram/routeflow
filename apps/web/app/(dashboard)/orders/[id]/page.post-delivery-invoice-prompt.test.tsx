@@ -70,7 +70,7 @@ const deliver = async (invoiceStatus: string) => {
       <OrderDetailPage />
     </Providers>,
   );
-  fireEvent.click(await screen.findByRole("button", { name: /Mark delivered/ }));
+  fireEvent.click(await screen.findByRole("button", { name: /Mark as Delivered/ }));
 };
 
 // B1134: the action bar is staff-only; these specs exercise staff behaviour, so sign in as one.

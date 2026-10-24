@@ -7,7 +7,7 @@ import OrderDetailPage from "./page";
 /**
  * Order ahead, staff side: a PICKUP order is "Ready for pickup" -> "Picked up". The OUT_FOR_DELIVERY
  * action reads "Ready for pickup" (not Out for delivery); "Picked up" opens the hand-over dialog while
- * the order is CONFIRMED or OUT_FOR_DELIVERY; "Mark delivered" is hidden for PICKUP (Picked up is the
+ * the order is CONFIRMED or OUT_FOR_DELIVERY; "Mark as Delivered" is hidden for PICKUP (Picked up is the
  * completion path) and unchanged for ROUTE / SHIP.
  */
 const get = jest.fn();
@@ -104,10 +104,10 @@ describe("PICKUP order actions", () => {
     expect(has(/^Hand over$/)).toBe(false);
   });
 
-  it("OUT_FOR_DELIVERY (Ready for pickup): 'Picked up' is the completion; Mark delivered is hidden", async () => {
+  it("OUT_FOR_DELIVERY (Ready for pickup): 'Picked up' is the completion; Mark as Delivered is hidden", async () => {
     await open("OPERATOR", "OUT_FOR_DELIVERY", { fulfillPath: "PICKUP" });
     expect(has(/^Hand over$/)).toBe(true);
-    expect(has(/^Mark delivered$/)).toBe(false);
+    expect(has(/^Mark as Delivered$/)).toBe(false);
     expect(has(/^Mark delivered$/)).toBe(false);
   });
 
@@ -130,9 +130,9 @@ describe("PICKUP order actions", () => {
     expect(has(/^Picked up$/)).toBe(false);
   });
 
-  it("ROUTE keeps Mark delivered and gets no Picked up", async () => {
+  it("ROUTE keeps Mark as Delivered and gets no Picked up", async () => {
     await open("OPERATOR", "OUT_FOR_DELIVERY", { fulfillPath: "ROUTE" });
-    expect(has(/^Mark delivered$/)).toBe(true);
+    expect(has(/^Mark as Delivered$/)).toBe(true);
     expect(has(/^Picked up$/)).toBe(false);
   });
 

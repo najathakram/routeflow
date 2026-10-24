@@ -78,7 +78,7 @@ const ACTIONS: Array<[string, RegExp]> = [
   ["Confirm order", /^Confirm order$/],
   ["Out for delivery", /^Out for delivery$/],
   ["Unconfirm", /^Unconfirm$/],
-  ["Mark delivered", /^Mark delivered$/],
+  ["Mark as Delivered", /^Mark as Delivered$/],
   ["Return to Confirmed", /^Return to Confirmed$/],
   ["Reopen order", /^Reopen order$/],
   ["Cancel order", /^Cancel order$/],
@@ -149,7 +149,7 @@ describe("B1134 regression pin: staff see the same actions as before", () => {
       [
         "Edit Items",
         "Record return",
-        "Mark delivered",
+        "Mark as Delivered",
         "Return to Confirmed",
         "Cancel order",
         "Delete",

@@ -126,7 +126,7 @@ describe("order-detail action bar tiers (page wiring)", () => {
         "Out for delivery",
         "Ready for pickup",
         "Mark delivered",
-        "Mark delivered",
+        "Mark as Delivered",
       ]),
     );
   });
@@ -164,7 +164,7 @@ describe("order-detail action bar tiers (page wiring)", () => {
       "Publish order",
       "Confirm order",
       "Out for delivery",
-      "Mark delivered",
+      "Mark as Delivered",
       "Unconfirm",
       "Return to Confirmed",
       "Reopen order",
