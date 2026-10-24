@@ -37,9 +37,16 @@ const READ_VERBS = new Set(["GET", "HEAD", "OPTIONS"]);
  * per route per process.
  *
  * An interceptor, not a global guard: every APP_GUARD runs before the per-route JwtAuthGuard and sees only UNVERIFIED claims
- * (the guard-order invariant in app.module.ts); interceptors run after every guard, on the verified `req.user`. Other
- * tenantless callers are not this rule's business: a buyer (CUSTOMER) token carries no tenant and is gated by the buyer
- * guards, and public and webhook routes have no user.
+ * (the guard-order invariant in app.module.ts); interceptors run after every guard, on the verified `req.user`. Public and
+ * webhook routes have no user.
+ *
+ * SA-917, the CUSTOMER sibling: a STAFF-token CUSTOMER (a portal account, role CUSTOMER) must carry its business. One with a
+ * null tenantId on a write is only MEASURED: warned once per route, never refused in either mode, until the census decides.
+ * A buyer-app token is not this case: the buyer strategy sets no `role` on `req.user` (pinned in
+ * tenant-required-customer.pin.spec.ts), and the buyer layer resolves its tenant per route.
+ *
+ * Registered in TenantModule, which the module graph scans before AuditModule and RouteHitsModule, so it refuses before
+ * either records the write (tenant-required.order.spec.ts).
  */
 @Injectable()
 export class TenantRequiredInterceptor implements NestInterceptor {
@@ -55,14 +62,23 @@ export class TenantRequiredInterceptor implements NestInterceptor {
     if (context.getType() !== "http") return next.handle();
     const req = context.switchToHttp().getRequest();
     const user = req?.user as JwtPayload | undefined;
-    if (!user || user.role !== UserRole.SUPER_ADMIN || user.tenantId != null) return next.handle();
+    if (!user || user.tenantId != null) return next.handle();
+    const method = String(req.method ?? "").toUpperCase();
+    const route = `${method} ${req.route?.path ?? req.path ?? req.url}`;
+    if (user.role === UserRole.CUSTOMER) {
+      if (!READ_VERBS.has(method) && this.once(`customer ${route}`)) {
+        this.logger.warn(
+          `[tenant-required] tenantless-customer-write ${route} (role CUSTOMER, no tenant)`,
+        );
+      }
+      return next.handle();
+    }
+    if (user.role !== UserRole.SUPER_ADMIN) return next.handle();
     const platform = this.reflector.getAllAndOverride<boolean>(PLATFORM_SCOPED_KEY, [
       context.getHandler(),
       context.getClass(),
     ]);
     if (platform) return next.handle();
-    const method = String(req.method ?? "").toUpperCase();
-    const route = `${method} ${req.route?.path ?? req.path ?? req.url}`;
 
     // SA-908 item 4: reads are out of the first cut (they aggregate across businesses, an exposure, not a corruption).
     // They are only LISTED for the census, once per route per process, and never refused here.

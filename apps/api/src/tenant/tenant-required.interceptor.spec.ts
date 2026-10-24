@@ -98,8 +98,13 @@ describe("TenantRequiredInterceptor (W-767, SA-908)", () => {
     ["a tenantless SUPER_ADMIN read", SUPER, "GET"],
     ["a tenantless SUPER_ADMIN HEAD", SUPER, "HEAD"],
     [
-      "a buyer (CUSTOMER) token, which carries no tenant",
-      { sub: "b-1", role: "CUSTOMER", tenantId: null },
+      "a buyer-app token (the buyer strategy sets no role and no tenant)",
+      { sub: "b-1", email: "b@acme.test", type: "BUYER" },
+      "POST",
+    ],
+    [
+      "a portal CUSTOMER with its business",
+      { sub: "c-1", role: "CUSTOMER", tenantId: "t-1" },
       "POST",
     ],
     ["an OPERATOR", { sub: "o-1", role: "OPERATOR", tenantId: "t-1" }, "POST"],
@@ -111,6 +116,26 @@ describe("TenantRequiredInterceptor (W-767, SA-908)", () => {
       lastValueFrom(build("enforced").intercept(ctx(OrdersController, "create", req), next)),
     ).resolves.toBe("handled");
     expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("SA-917: a staff-token CUSTOMER with NO business is only measured: the write passes (even enforced) with one warning per route", async () => {
+    const i = build("enforced");
+    const user = { sub: "c-1", role: "CUSTOMER", tenantId: null };
+    const req = { method: "PATCH", route: { path: "/api/v1/orders/:id/items" }, user };
+    for (let n = 0; n < 2; n++) {
+      await expect(
+        lastValueFrom(i.intercept(ctx(OrdersController, "create", req), nextOk())),
+      ).resolves.toBe("handled");
+    }
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toContain(
+      "tenantless-customer-write PATCH /api/v1/orders/:id/items",
+    );
+    // ...and its reads are not this rule's business.
+    await lastValueFrom(
+      i.intercept(ctx(OrdersController, "create", { ...req, method: "GET" }), nextOk()),
+    );
+    expect(warn).toHaveBeenCalledTimes(1);
   });
 
   it("lists a tenantless SUPER_ADMIN read for the census: ONE log line per route, never a warning or a refusal", async () => {

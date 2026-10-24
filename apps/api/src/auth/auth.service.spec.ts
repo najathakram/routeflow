@@ -550,7 +550,7 @@ describe("AuthService", () => {
         .mockResolvedValueOnce(true) // current password is correct
         .mockResolvedValueOnce(false); // new password differs from old
       (bcrypt.hash as jest.Mock).mockResolvedValue("new-hash");
-      prisma.user.update.mockResolvedValue({} as any);
+      prisma.user.update.mockResolvedValue({ ...MOCK_USER, tenantId: "tenant-1" } as any);
 
       const result = await service.changePassword("user-1", "old", "new");
 
@@ -590,7 +590,7 @@ describe("AuthService", () => {
       prisma.user.findUnique.mockResolvedValue(MOCK_USER);
       (bcrypt.compare as jest.Mock).mockResolvedValueOnce(true).mockResolvedValueOnce(false);
       (bcrypt.hash as jest.Mock).mockResolvedValue("new-hash");
-      prisma.user.update.mockResolvedValue({} as any);
+      prisma.user.update.mockResolvedValue({ ...MOCK_USER, tenantId: "tenant-1" } as any);
 
       await service.changePassword("user-1", "old", "new");
 
