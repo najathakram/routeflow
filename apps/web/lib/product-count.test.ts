@@ -1,14 +1,16 @@
+import { readFileSync } from "fs";
+import { resolve } from "path";
 import {
-  buildCountRequest,
-  formatStockQty,
-  unitDisplayLabel,
-  countUnitOptions,
-  previewLine,
-  previewPieces,
-  resultingStock,
   belowZeroWarning,
-  reasonHint,
+  buildCountRequest,
+  countParts,
+  countUnitOptions,
+  formatStockQty,
   noteHint,
+  previewLines,
+  reasonHint,
+  resultingStock,
+  rowProblem,
   validateCount,
   type CountForm,
 } from "./product-count";
@@ -18,15 +20,23 @@ const ladder = [
   { label: "Piece", factorToBase: 1 },
 ];
 const opts = countUnitOptions({ unit: "Case", unitsPerBox: 12 }, ladder);
+// 12-pack "jug" with a Case of 24: rows jug (12) / Case (24) / Piece (1)
+const jugs = countUnitOptions({ unit: "jug", unitsPerBox: 12 }, [
+  { label: "Case", factorToBase: 24 },
+]);
 const base: CountForm = {
   mode: "SET",
   sign: "-",
-  quantity: "3",
-  unit: "",
+  quantities: { "": "3" },
   reason: "COUNT_CORRECTION",
   note: "",
   date: "",
 };
+const q = (quantities: Record<string, string>, over: Partial<CountForm> = {}): CountForm => ({
+  ...base,
+  quantities,
+  ...over,
+});
 
 describe("countUnitOptions", () => {
   it("uses the ladder when there is one", () => {
@@ -45,16 +55,11 @@ describe("countUnitOptions", () => {
       { label: "Piece", factor: 1, value: "Piece" },
     ]);
   });
-  it("sends the pack as unit null and a level or Piece by label", () => {
+  it("names the pack, the levels and the base word as rows, in that order", () => {
     const o = countUnitOptions({ unit: "jug", unitsPerBox: 12 }, [
       { label: "Case", factorToBase: 24 },
     ]);
-    const send = (value: string) =>
-      (buildCountRequest({ ...base, unit: value }) as { parts: { unit: string | null }[] }).parts[0]
-        .unit;
-    expect(send(o[0].value)).toBeNull();
-    expect(send(o[1].value)).toBe("Case");
-    expect(send(o[2].value)).toBe("Piece");
+    expect(o.map((x) => x.value)).toEqual(["", "Case", "Piece"]);
   });
   it("shadows a level row named like the pack", () => {
     const o = countUnitOptions({ unit: "jug", unitsPerBox: 12 }, [
@@ -79,103 +84,85 @@ describe("countUnitOptions", () => {
   });
 });
 
-describe("preview", () => {
-  it("pieces = quantity x factor, without float noise", () => {
-    expect(previewPieces(3, 12)).toBe(36);
-    expect(previewPieces(0.1, 3)).toBe(0.3);
+describe("countParts (one row per unit; blank = 0 and is not sent)", () => {
+  it("keeps the typed rows in the options' order, zero included", () => {
+    expect(countParts(q({ Piece: "4", "": "3", Case: "" }), jugs)).toEqual([
+      { option: jugs[0], quantity: 3 },
+      { option: jugs[2], quantity: 4 },
+    ]);
+    expect(countParts(q({ "": "0" }), jugs)).toEqual([{ option: jugs[0], quantity: 0 }]);
   });
-  it("SET shows the new count and the old one", () => {
-    expect(previewLine(base, opts, 10)).toBe("Stock will be 36 pcs (was 10)");
+  it("ignores unparsable text (the row's own problem says so)", () => {
+    expect(countParts(q({ "": "abc" }), jugs)).toEqual([]);
+  });
+});
+
+describe("preview (the arithmetic is @routeflow/pricing's countPieces)", () => {
+  it('parity with the API\'s piecesOf: "3 Case + 4 jug" on 24 / 12 = 120', () => {
+    expect(resultingStock(q({ Case: "3", "": "4" }), jugs, 0)).toBe(120);
+  });
+  it("parity with the API's piecesOf table: 3-place base quantity, pack of 1, pack of null", () => {
+    const each = countUnitOptions({ unit: "Each", unitsPerBox: null }, []);
+    expect(resultingStock(q({ "": "0.125" }), each, 0)).toBe(0.125);
+    expect(
+      resultingStock(q({ "": "7" }), countUnitOptions({ unit: "Each", unitsPerBox: 1 }), 0),
+    ).toBe(7);
+    expect(
+      resultingStock(
+        q({ "": "2", Piece: "2.5" }),
+        countUnitOptions({ unit: "Box", unitsPerBox: 12 }, [{ label: "Case", factorToBase: 24 }]),
+        0,
+      ),
+    ).toBe(26.5);
+  });
+  it("SET shows the new count (in the base word) and the old one", () => {
+    expect(previewLines(base, opts, 10)).toEqual(["Stock will be 36 Pieces (was 10)"]);
   });
   it("ADJUST shows the arithmetic and may go negative", () => {
-    const f = { ...base, mode: "ADJUST" as const, quantity: "1" };
-    expect(previewLine(f, opts, 10)).toBe("Stock will be 10 − 12 = −2 pcs");
+    const f = q({ "": "1" }, { mode: "ADJUST" });
+    expect(previewLines(f, opts, 10)).toEqual(["Stock will be 10 − 12 = −2 Pieces"]);
     expect(resultingStock({ ...f, sign: "+" }, opts, 10)).toBe(22);
   });
+  it("with two or more non-zero rows the parts come first, as the movement note names them", () => {
+    expect(previewLines(q({ Case: "3", "": "4" }), jugs, 88)).toEqual([
+      "4 jug (×12) + 3 Case (×24) = 120 Pieces",
+      "Stock will be 120 Pieces (was 88)",
+    ]);
+    expect(previewLines(q({ Case: "1", "": "0" }, { mode: "ADJUST" }), jugs, 88)).toEqual([
+      "Stock will be 88 − 24 = 64 Pieces",
+    ]);
+  });
+  it("says One Piece in the singular and a loose product's own word, pluralised", () => {
+    expect(previewLines(q({ Piece: "1" }), jugs, 5)[0]).toBe("Stock will be 1 Piece (was 5)");
+    const bags = countUnitOptions({ unit: "bag", unitsPerBox: 1 }, []);
+    expect(previewLines(q({ "": "10" }), bags, 4)).toEqual(["Stock will be 10 bags (was 4)"]);
+  });
   it("uses a true minus sign for negative stock throughout", () => {
-    const f = { ...base, quantity: "1", unit: "Piece" };
-    expect(previewLine(f, opts, -5)).toBe("Stock will be 1 pcs (was −5)");
+    expect(previewLines(q({ Piece: "1" }), jugs, -5)).toEqual(["Stock will be 1 Piece (was −5)"]);
     expect(formatStockQty(-1234)).toBe("−1,234");
     expect(formatStockQty(1234)).toBe("1,234");
   });
-  it("shows the factor-1 Piece as pcs in display text only", () => {
-    expect(unitDisplayLabel({ label: "Piece", factor: 1, value: "Piece" })).toBe("pcs");
-    expect(unitDisplayLabel({ label: "Case", factor: 12, value: "" })).toBe("Case");
-    expect(opts[1].label).toBe("Piece");
-  });
-  it("has nothing to show for a blank quantity", () => {
-    expect(previewLine({ ...base, quantity: "" }, opts, 10)).toBeNull();
+  it("has nothing to show while every row is blank", () => {
+    expect(previewLines(q({}), jugs, 10)).toEqual([]);
   });
 });
 
-describe("validateCount", () => {
-  it("accepts a good form", () => expect(validateCount(base, opts)).toBeNull());
-  it("refuses a fractional packed unit but allows fractional pieces", () => {
-    expect(validateCount({ ...base, quantity: "1.5" }, opts)).toBe(
-      "Use a whole number, or switch to pcs.",
+describe("belowZeroWarning (a result under zero is said, not blocked)", () => {
+  const remove = (n: string) => q({ "": n }, { mode: "ADJUST", sign: "-" });
+  it("SA-958 red row: 40 on hand, Remove 48 names the shortfall in the base word", () => {
+    expect(belowZeroWarning(remove("4"), opts, 40)).toBe(
+      "This takes stock below zero (−8 Pieces).",
     );
-    expect(validateCount({ ...base, quantity: "1.5", unit: "Piece" }, opts)).toBeNull();
   });
-  it("needs a reason, and a 3+ character note for Other", () => {
-    expect(validateCount({ ...base, reason: "" }, opts)).toBe("Pick a reason.");
-    expect(validateCount({ ...base, reason: "OTHER" }, opts)).toBe("Add a note for Other.");
-    expect(validateCount({ ...base, reason: "OTHER", note: "ab" }, opts)).toBe(
-      "Add a note for Other.",
-    );
-    expect(validateCount({ ...base, reason: "OTHER", note: "lost" }, opts)).toBeNull();
-  });
-  it("SET allows zero, ADJUST does not, negatives never", () => {
-    expect(validateCount({ ...base, quantity: "0" }, opts)).toBeNull();
-    expect(validateCount({ ...base, mode: "ADJUST", quantity: "0" }, opts)).toMatch(/above zero/);
-    expect(validateCount({ ...base, quantity: "-1" }, opts)).toMatch(/zero or more/);
+  it("is silent at exactly zero, above zero, for a SET, and with nothing typed", () => {
+    expect(belowZeroWarning(remove("1"), opts, 12)).toBeNull();
+    expect(belowZeroWarning(remove("1"), opts, 40)).toBeNull();
+    expect(belowZeroWarning(q({ "": "0" }), opts, 40)).toBeNull();
+    expect(belowZeroWarning(q({}, { mode: "ADJUST" }), opts, 40)).toBeNull();
   });
 });
 
-describe("buildCountRequest", () => {
-  it("builds a SET body", () => {
-    expect(buildCountRequest(base)).toEqual({
-      mode: "SET",
-      parts: [{ unit: null, quantity: 3 }],
-      reason: "COUNT_CORRECTION",
-    });
-  });
-  it("builds an ADJUST body with note and date", () => {
-    expect(
-      buildCountRequest({
-        ...base,
-        mode: "ADJUST",
-        quantity: "1",
-        reason: "OTHER",
-        note: " lost ",
-        date: "2026-10-01",
-      }),
-    ).toEqual({
-      mode: "ADJUST",
-      parts: [{ unit: null, quantity: 1 }],
-      sign: "-",
-      reason: "OTHER",
-      reasonNote: "lost",
-      effectiveDate: "2026-10-01",
-    });
-  });
-});
-
-describe("belowZeroWarning (M3 #1: a result under zero is said, not blocked)", () => {
-  const adj: CountForm = { ...base, mode: "ADJUST", sign: "-", quantity: "2", unit: opts[0].value };
-  it("names the negative result in pieces", () => {
-    expect(belowZeroWarning(adj, opts, 10)).toBe("This takes stock below zero (\u221214 pcs).");
-    expect(
-      belowZeroWarning({ ...adj, mode: "SET", sign: "+", quantity: "0" }, opts, 10),
-    ).toBeNull();
-  });
-  it("is silent at exactly zero, above zero, and with no usable quantity", () => {
-    expect(belowZeroWarning({ ...adj, quantity: "10", unit: opts[1].value }, opts, 10)).toBeNull();
-    expect(belowZeroWarning({ ...adj, sign: "+" }, opts, 10)).toBeNull();
-    expect(belowZeroWarning({ ...adj, quantity: "" }, opts, 10)).toBeNull();
-  });
-});
-
-describe("reasonHint / noteHint (M3 #3: each message sits under its own field)", () => {
+describe("reasonHint / noteHint (each message sits under its own field)", () => {
   it("asks for a reason until one is chosen", () => {
     expect(reasonHint({ ...base, reason: "" })).toBe("Pick a reason.");
     expect(reasonHint(base)).toBeNull();
@@ -184,5 +171,89 @@ describe("reasonHint / noteHint (M3 #3: each message sits under its own field)",
     expect(noteHint({ ...base, reason: "OTHER", note: "ab" })).toBe("Add a note for Other.");
     expect(noteHint({ ...base, reason: "OTHER", note: "abc" })).toBeNull();
     expect(noteHint({ ...base, reason: "DAMAGED", note: "" })).toBeNull();
+  });
+});
+
+describe("rowProblem (under its own row)", () => {
+  it("refuses a fractional packed unit and names the base word's row; allows fractional pieces", () => {
+    expect(rowProblem(jugs[1], "1.5", jugs)).toBe(
+      "Count whole cases, or count the rest in Piece rows.",
+    );
+    expect(rowProblem(jugs[2], "1.5", jugs)).toBeNull();
+  });
+  it("refuses a negative; blank is fine", () => {
+    expect(rowProblem(jugs[0], "-1", jugs)).toMatch(/zero or more/);
+    expect(rowProblem(jugs[0], "", jugs)).toBeNull();
+  });
+});
+
+describe("validateCount", () => {
+  it("accepts a good form", () => expect(validateCount(base, opts)).toBeNull());
+  it("SET needs at least one row; zero is a real count", () => {
+    expect(validateCount(q({}), opts)).toBe("Enter a count.");
+    expect(validateCount(q({ "": "0" }), opts)).toBeNull();
+  });
+  it("ADJUST needs a quantity above zero in some row", () => {
+    expect(validateCount(q({}, { mode: "ADJUST" }), opts)).toBe("Enter a quantity.");
+    expect(validateCount(q({ "": "0", Piece: "" }, { mode: "ADJUST" }), opts)).toMatch(
+      /above zero/,
+    );
+    expect(validateCount(q({ "": "0", Piece: "2" }, { mode: "ADJUST" }), opts)).toBeNull();
+  });
+  it("a row's problem blocks Save", () => {
+    expect(validateCount(q({ "": "1.5" }), opts)).toMatch(/Count whole/);
+    expect(validateCount(q({ "": "-1" }), opts)).toMatch(/zero or more/);
+  });
+  it("needs a reason, and a 3+ character note for Other", () => {
+    expect(validateCount({ ...base, reason: "" }, opts)).toBe("Pick a reason.");
+    expect(validateCount({ ...base, reason: "OTHER" }, opts)).toBe("Add a note for Other.");
+    expect(validateCount({ ...base, reason: "OTHER", note: "lost" }, opts)).toBeNull();
+  });
+});
+
+describe("buildCountRequest", () => {
+  it("sends one part per non-blank row: the pack as unit null, a level or Piece by label", () => {
+    expect(buildCountRequest(q({ Case: "3", "": "4", Piece: "" }), jugs) as unknown).toEqual({
+      mode: "SET",
+      parts: [
+        { unit: null, quantity: 4 },
+        { unit: "Case", quantity: 3 },
+      ],
+      reason: "COUNT_CORRECTION",
+    });
+  });
+  it("an ADJUST carries one sign for the whole delta", () => {
+    expect(
+      buildCountRequest(
+        q(
+          { Case: "1", Piece: "2" },
+          { mode: "ADJUST", sign: "-", reason: "OTHER", note: " lost ", date: "2026-10-01" },
+        ),
+        jugs,
+      ),
+    ).toEqual({
+      mode: "ADJUST",
+      parts: [
+        { unit: "Case", quantity: 1 },
+        { unit: "Piece", quantity: 2 },
+      ],
+      sign: "-",
+      reason: "OTHER",
+      reasonNote: "lost",
+      effectiveDate: "2026-10-01",
+    });
+  });
+});
+
+describe("no second copy of the count math (SA-957 M2: one rule in @routeflow/pricing)", () => {
+  const src = readFileSync(resolve(__dirname, "product-count.ts"), "utf8");
+  it("takes its factor and its sum from countFactorOf / countPieces", () => {
+    expect(src).toMatch(/countFactorOf\(/);
+    expect(src).toMatch(/countPieces\(/);
+  });
+  it("has no local factor rule, rounding, or pieces-multiplication of its own", () => {
+    expect(src).not.toMatch(/1e6/);
+    expect(src).not.toMatch(/previewPieces/);
+    expect(src).not.toMatch(/factorToBase\s*<=\s*1/);
   });
 });

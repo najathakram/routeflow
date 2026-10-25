@@ -139,6 +139,40 @@ describe("piecesOf", () => {
     expect(describeParts(r.parts, r.pieces)).toBe("3 Case (x12) + 4 Piece (x1) = 40 pieces");
   });
 
+  it("SA-957 M2 parity table: the same fixtures the web preview is pinned to (equal pieces)", () => {
+    // Mirrored literally in apps/web/lib/product-count.test.ts ("parity with the API's piecesOf").
+    const each = { unit: "Each", unitsPerBox: null };
+    const one = { unit: "Each", unitsPerBox: 1 };
+    const ladder2412 = [level("Box", 12), level("Case", 24)];
+    const table: Array<
+      [string, any, any, Array<{ unit?: string | null; quantity: number }>, string]
+    > = [
+      ["3-place base quantity on a no-pack product", each, [], [{ quantity: 0.125 }], "0.125"],
+      ["a pack of 1", one, [], [{ quantity: 7 }], "7"],
+      ["a pack of null", each, [], [{ unit: "Each", quantity: 7 }], "7"],
+      [
+        "3 Case + 4 Box on 24 / 12",
+        { unit: "Piece", unitsPerBox: null },
+        ladder2412,
+        [
+          { unit: "Case", quantity: 3 },
+          { unit: "Box", quantity: 4 },
+        ],
+        "120",
+      ],
+      [
+        "the pack's own size",
+        pack12,
+        ladder,
+        [{ quantity: 2 }, { unit: "Piece", quantity: 2.5 }],
+        "26.5",
+      ],
+    ];
+    for (const [, product, lad, parts, want] of table) {
+      expect(pieces(product, lad, parts)).toBe(want);
+    }
+  });
+
   it("rounds to 3 decimal places", () => {
     expect(pieces({ unit: "Each", unitsPerBox: null }, [], [{ quantity: 1.0004 }])).toBe("1");
   });

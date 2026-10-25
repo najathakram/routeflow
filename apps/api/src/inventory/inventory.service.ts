@@ -45,7 +45,7 @@ import { documentStockDate, stockWriteDate, type DocumentStockDate } from "./sto
 import { RecordPurchaseDto } from "./dto/record-purchase.dto";
 import { RecordAdjustmentDto } from "./dto/record-adjustment.dto";
 import { ProductCountDto } from "./dto/product-count.dto";
-import { describeParts, lockedLadderOf, piecesOf } from "./product-count";
+import { MAX_PIECES, describeParts, lockedLadderOf, piecesOf } from "./product-count";
 import { CommitStockCountDto } from "./dto/commit-stock-count.dto";
 import {
   CommitStockCountSessionDto,
@@ -548,6 +548,11 @@ export class InventoryService {
         const signed = dto.mode === "ADJUST" && dto.sign === "-" ? pieces.neg() : pieces;
         if (dto.mode === "ADJUST" && signed.eq(0)) {
           throw new BadRequestException("An adjustment must move at least some stock");
+        }
+        // SA-957 L4: the stock this leaves must fit the column too (Decimal(10,3)): a 400, not a database error.
+        const stockAfter = dto.mode === "SET" ? pieces : stockBefore.plus(signed);
+        if (stockAfter.abs().gt(MAX_PIECES)) {
+          throw new BadRequestException("That is more pieces than one count can hold. Count less.");
         }
         const note = `Product count: ${verb} ${describeParts(parts, pieces)}`;
 

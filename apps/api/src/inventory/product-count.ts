@@ -1,6 +1,12 @@
 import { BadRequestException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
-import { packLabelOf, type LadderUnit } from "@routeflow/pricing";
+import {
+  countFactorOf,
+  countPieces,
+  packLabelOf,
+  pluralize,
+  type LadderUnit,
+} from "@routeflow/pricing";
 import { loadUnitLadders } from "../orders/unit-line-build";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { resolveLineUnits, type LineUnitsProduct } from "../products/line-units";
@@ -35,10 +41,7 @@ export type CountProduct = LineUnitsProduct & {
   packLabel?: string | null;
 };
 
-const MAX_PIECES = new Prisma.Decimal("9999999.999");
-
-/** "Case" -> "Cases", "Box" -> "Boxes". */
-const plural = (label: string) => (/(s|x|z|ch|sh)$/i.test(label) ? `${label}es` : `${label}s`);
+export const MAX_PIECES = new Prisma.Decimal("9999999.999");
 
 /**
  * The pieces in `parts` (each part resolved and checked on its own, then summed), rounded to 3 dp -
@@ -52,13 +55,8 @@ export function piecesOf(
   const seen = new Set<string>();
   const counted = parts.map((part): CountedPart => {
     const resolved = resolveLineUnits(product, ladder, { unitLabel: part.unit ?? null });
-    // A plain pack counts its real size; a pack that has none (or 1) is one piece.
-    const factor =
-      resolved.kind === "pack"
-        ? resolved.unitsPerBox > 1
-          ? resolved.unitsPerBox
-          : 1
-        : resolved.unitsPerBox;
+    // The factor rule and the sum are @routeflow/pricing's (SA-957 M2): the web preview uses the same two.
+    const factor = countFactorOf({ kind: resolved.kind, factorToBase: resolved.unitsPerBox });
     const unit = resolved.unitLabel ?? packLabelOf(product);
     // At most one part per ladder level, judged on the RESOLVED unit: the pack named two ways
     // (no unit and its own label) is one unit, as are labels that differ only in case.
@@ -66,14 +64,14 @@ export function piecesOf(
     if (seen.has(key)) {
       throw new BadRequestException({
         code: API_ERROR_CODES.COUNT_DUPLICATE_UNIT,
-        message: `Count ${plural(unit)} once.`,
+        message: `Count ${pluralize(unit)} once.`,
       });
     }
     seen.add(key);
     if (factor > 1 && !Number.isInteger(part.quantity)) {
       throw new BadRequestException({
         code: API_ERROR_CODES.COUNT_FRACTIONAL_PACK,
-        message: `Count whole ${plural(unit)}, or count in pieces.`,
+        message: `Count whole ${pluralize(unit)}, or count in pieces.`,
       });
     }
     return {
@@ -83,9 +81,9 @@ export function piecesOf(
       pieces: new Prisma.Decimal(part.quantity).times(factor),
     };
   });
-  const pieces = counted
-    .reduce((sum, p) => sum.plus(p.pieces), new Prisma.Decimal(0))
-    .toDecimalPlaces(3);
+  const pieces = new Prisma.Decimal(
+    countPieces(counted.map((p) => ({ quantity: p.quantity, factor: p.factor }))),
+  );
   // The movement column is Decimal(10,3): a count that cannot be stored is a 400, not a database error.
   if (pieces.gt(MAX_PIECES)) {
     throw new BadRequestException("That is more pieces than one count can hold. Count less.");

@@ -328,6 +328,29 @@ describe("InventoryService reasons and countProduct (SA-828 / SA-804(3))", () =>
       expect(prisma.tenantTransaction.mock.invocationCallOrder[0]).toBeLessThan(ladderAt);
     });
 
+    it("SA-957 L4: an ADJUST that takes the stock past the column's bound is a 400, not a database error", async () => {
+      prisma.product.findMany.mockResolvedValue([row({ currentStock: D("9999990") })]);
+      await expect(
+        service.countProduct(
+          "prod-1",
+          adjust({ parts: [{ unit: "Piece", quantity: 20 }], sign: "+" }),
+          "u-1",
+        ),
+      ).rejects.toMatchObject({
+        response: { message: expect.stringContaining("more pieces than one count can hold") },
+      });
+      nothingWrittenInTx();
+      prisma.product.findMany.mockResolvedValue([row({ currentStock: D("-9999990") })]);
+      await expect(
+        service.countProduct(
+          "prod-1",
+          adjust({ parts: [{ unit: "Piece", quantity: 20 }], sign: "-" }),
+          "u-1",
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      nothingWrittenInTx();
+    });
+
     it("a SET equal to the stock writes no movement and returns movementId null", async () => {
       // 20 pieces on hand = 20 Piece
       const result = await service.countProduct(

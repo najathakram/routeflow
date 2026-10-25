@@ -12,13 +12,13 @@ import { useProductUnits, useUnitsEnabled } from "@/lib/api/product-units";
 import {
   belowZeroWarning,
   buildCountRequest,
-  noteHint,
-  reasonHint,
   countUnitOptions,
-  previewLine,
-  formatStockQty,
+  noteHint,
+  previewLines,
+  reasonHint,
+  rowProblem,
+  stockWithWord,
   todayISO,
-  unitDisplayLabel,
   validateCount,
   type CountForm,
   type CountMode,
@@ -36,12 +36,52 @@ export interface CountTarget {
   currentStock: number;
 }
 
-const INPUT =
-  "w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500";
+// Every control is at least 44 px tall below `sm` (staff use the web at 390 px).
+const TALL = "min-h-[44px] sm:min-h-0";
+const INPUT = `w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500 ${TALL}`;
+
+/** A labelled two-option control (tabs, Add | Remove): a sunken track, the selected segment raised. */
+function Segmented<T extends string>({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: T;
+  options: [T, string][];
+  onChange: (v: T) => void;
+}) {
+  return (
+    <div
+      role="radiogroup"
+      aria-label={label}
+      className="flex gap-1 rounded-lg bg-navy/10 p-1 shadow-inner"
+    >
+      {options.map(([v, text]) => (
+        <button
+          key={v}
+          type="button"
+          role="radio"
+          aria-checked={value === v}
+          onClick={() => onChange(v)}
+          className={`flex-1 rounded-md px-3 py-1.5 text-sm font-medium ${TALL} ${
+            value === v
+              ? "bg-white text-navy shadow-card ring-1 ring-surface-border"
+              : "text-navy/70"
+          }`}
+        >
+          {text}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 /**
- * SA-828 (row 657): count the stock, or adjust it by an amount, in any of the product's units. The
- * preview line shows the RESULTING stock before anything is written; the server re-validates.
+ * SA-828 (row 657) + SA-957 M1 / SA-958: count the stock, or adjust it, as one quantity row per unit the
+ * product offers ("3 Case + 4 Box"; blank = 0). The preview shows the RESULTING stock before anything is
+ * written; a result under zero is warned about, not blocked; the server re-validates.
  */
 export function CountAdjustModal({
   product,
@@ -61,8 +101,7 @@ export function CountAdjustModal({
   const [form, setForm] = React.useState<CountForm>({
     mode: "SET",
     sign: "-",
-    quantity: "",
-    unit: "",
+    quantities: {},
     reason: "",
     note: "",
     date: "",
@@ -70,34 +109,28 @@ export function CountAdjustModal({
   const [showDate, setShowDate] = React.useState(false);
   const [serverError, setServerError] = React.useState<string | null>(null);
 
-  // Default to the pack (first option); keep a chosen unit that is still offered.
-  const unit = options.some((o) => o.value === form.unit) ? form.unit : (options[0]?.value ?? "");
-  const f: CountForm = { ...form, unit };
   const patch = (p: Partial<CountForm>) => {
     setServerError(null);
     setForm((prev) => ({ ...prev, ...p }));
   };
+  const setRow = (value: string, text: string) =>
+    patch({ quantities: { ...form.quantities, [value]: text } });
 
-  const problem = validateCount(f, options);
-  // The inline line is about the quantity only (the reason and note are marked required); quiet until typed.
-  const inlineError =
-    f.quantity.trim() === ""
-      ? null
-      : validateCount({ ...f, reason: "COUNT_CORRECTION", note: "" }, options);
-  const preview = previewLine(f, options, product.currentStock);
-  const belowZero = belowZeroWarning(f, options, product.currentStock);
-  const typed = f.quantity.trim() !== "";
-  const reasonProblem = typed ? reasonHint(f) : null;
-  const noteProblem = typed ? noteHint(f) : null;
+  const problem = validateCount(form, options);
+  const lines = previewLines(form, options, product.currentStock);
+  const belowZero = belowZeroWarning(form, options, product.currentStock);
+  const typed = Object.values(form.quantities).some((t) => t.trim() !== "");
+  const reasonProblem = typed ? reasonHint(form) : null;
+  const noteProblem = typed ? noteHint(form) : null;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (problem || count.isPending) return;
     setServerError(null);
-    count.mutate(buildCountRequest(f), {
+    count.mutate(buildCountRequest(form, options), {
       onSuccess: (res) => {
         toast({
-          title: `Stock updated to ${formatStockQty(res.stockAfter)} pcs`,
+          title: `Stock updated to ${stockWithWord(res.stockAfter, options)}`,
           variant: "success",
         });
         onClose();
@@ -114,95 +147,89 @@ export function CountAdjustModal({
   return (
     <Modal open onClose={onClose} anchor="top" title={`Count / Adjust — ${product.name}`}>
       <form onSubmit={handleSubmit} className="space-y-4">
-        <div
-          role="radiogroup"
-          aria-label="What to do"
-          className="flex gap-1 rounded-lg bg-surface-muted p-1"
-        >
-          {modes.map(([m, label]) => (
-            <button
-              key={m}
-              type="button"
-              role="radio"
-              aria-checked={f.mode === m}
-              onClick={() => patch({ mode: m })}
-              className={`flex-1 rounded-md px-3 py-1.5 text-sm font-medium ${
-                f.mode === m ? "bg-white text-navy shadow-card" : "text-navy/70"
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+        <Segmented
+          label="What to do"
+          value={form.mode}
+          options={modes}
+          onChange={(mode) => patch({ mode })}
+        />
 
-        <div>
-          <label htmlFor="count-qty" className="mb-1 block text-xs text-navy">
-            {f.mode === "SET" ? "Counted" : "Amount"}
-          </label>
-          <div className="flex gap-2">
-            {f.mode === "ADJUST" && (
-              <button
-                type="button"
-                aria-label={f.sign === "+" ? "Adding stock" : "Removing stock"}
-                onClick={() => patch({ sign: f.sign === "+" ? "-" : "+" })}
-                className="w-10 shrink-0 rounded border border-surface-border text-base font-semibold text-navy"
-              >
-                {f.sign === "+" ? "+" : "−"}
-              </button>
-            )}
-            <input
-              id="count-qty"
-              autoFocus
-              inputMode="decimal"
-              value={f.quantity}
-              onChange={(e) => patch({ quantity: e.target.value })}
-              className={INPUT}
-              placeholder="0"
-              aria-describedby="count-preview count-inline-error"
-            />
-            {options.length > 1 ? (
-              <select
-                aria-label="Unit"
-                value={unit}
-                onChange={(e) => patch({ unit: e.target.value })}
-                className={`${INPUT} !w-auto min-w-[6rem]`}
-              >
-                {options.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {unitDisplayLabel(o)}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <span className="flex items-center px-2 text-sm text-navy" data-testid="count-unit">
-                {options[0] ? unitDisplayLabel(options[0]) : ""}
-              </span>
-            )}
-          </div>
-          {inlineError && (
-            <p id="count-inline-error" role="alert" className="mt-1 text-xs text-red-600">
-              {inlineError}
-            </p>
+        {form.mode === "ADJUST" && (
+          <Segmented
+            label="Add or remove"
+            value={form.sign}
+            options={[
+              ["+", "Add"],
+              ["-", "Remove"],
+            ]}
+            onChange={(sign) => patch({ sign })}
+          />
+        )}
+
+        <fieldset className="space-y-2">
+          <legend className="mb-1 block text-xs text-navy">
+            {form.mode === "SET" ? "Counted" : "Amount"}
+          </legend>
+          {options.map((o, i) => {
+            const text = form.quantities[o.value] ?? "";
+            const err = rowProblem(o, text, options);
+            const errId = `count-row-error-${i}`;
+            return (
+              <div key={o.value || "pack"}>
+                <div className="flex items-center gap-2">
+                  <label htmlFor={`count-qty-${i}`} className="w-28 shrink-0 text-sm text-navy">
+                    {o.label}
+                    {o.factor > 1 && (
+                      <span className="block text-xs text-navy/60">
+                        {"\u00d7"}
+                        {o.factor}
+                      </span>
+                    )}
+                  </label>
+                  <input
+                    id={`count-qty-${i}`}
+                    autoFocus={i === 0}
+                    inputMode="decimal"
+                    value={text}
+                    onChange={(e) => setRow(o.value, e.target.value)}
+                    className={INPUT}
+                    placeholder="0"
+                    aria-describedby={err ? errId : "count-preview"}
+                    aria-invalid={err ? true : undefined}
+                  />
+                </div>
+                {err && (
+                  <p
+                    id={errId}
+                    role="alert"
+                    className="mt-1 text-xs text-red-600"
+                    data-testid={`count-row-error-${o.label}`}
+                  >
+                    {err}
+                  </p>
+                )}
+              </div>
+            );
+          })}
+          {lines.length > 0 && (
+            <div id="count-preview" className="space-y-0.5 pt-1" data-testid="count-preview">
+              {lines.map((l) => (
+                <p key={l} className="text-xs font-medium text-navy">
+                  {l}
+                </p>
+              ))}
+            </div>
           )}
-          {preview && !inlineError && (
-            <p
-              id="count-preview"
-              className="mt-1 text-xs font-medium text-navy"
-              data-testid="count-preview"
-            >
-              {preview}
-            </p>
-          )}
-          {belowZero && !inlineError && (
+          {belowZero && (
             <p
               role="status"
-              className="mt-1 text-xs font-medium text-amber-700"
+              className="text-xs font-medium text-amber-700"
               data-testid="count-below-zero"
             >
               {belowZero}
             </p>
           )}
-        </div>
+        </fieldset>
 
         <div>
           <label htmlFor="count-reason" className="mb-1 block text-xs text-navy">
@@ -210,7 +237,7 @@ export function CountAdjustModal({
           </label>
           <select
             id="count-reason"
-            value={f.reason}
+            value={form.reason}
             onChange={(e) => patch({ reason: e.target.value as AdjustmentReason | "" })}
             className={INPUT}
             aria-describedby={reasonProblem ? "count-reason-hint" : undefined}
@@ -235,13 +262,13 @@ export function CountAdjustModal({
 
         <div>
           <label htmlFor="count-note" className="mb-1 block text-xs text-navy">
-            Note{f.reason === "OTHER" ? " *" : " (optional)"}
+            Note{form.reason === "OTHER" ? " *" : " (optional)"}
           </label>
           <textarea
             id="count-note"
             rows={2}
             maxLength={ADJUSTMENT_REASON_NOTE_MAX}
-            value={f.note}
+            value={form.note}
             onChange={(e) => patch({ note: e.target.value })}
             className={`${INPUT} resize-none`}
             aria-describedby={noteProblem ? "count-note-hint" : undefined}
@@ -255,7 +282,7 @@ export function CountAdjustModal({
               <span />
             )}
             <span className="text-navy/50">
-              {f.note.length}/{ADJUSTMENT_REASON_NOTE_MAX}
+              {form.note.length}/{ADJUSTMENT_REASON_NOTE_MAX}
             </span>
           </div>
         </div>
@@ -269,7 +296,7 @@ export function CountAdjustModal({
               id="count-date"
               type="date"
               max={todayISO()}
-              value={f.date || todayISO()}
+              value={form.date || todayISO()}
               onChange={(e) => patch({ date: e.target.value })}
               className={INPUT}
             />
@@ -278,7 +305,7 @@ export function CountAdjustModal({
           <button
             type="button"
             onClick={() => setShowDate(true)}
-            className="text-xs font-medium text-brand-600 hover:underline"
+            className={`text-xs font-medium text-brand-600 hover:underline ${TALL}`}
           >
             Change date
           </button>
@@ -291,10 +318,15 @@ export function CountAdjustModal({
         )}
 
         <div className="flex justify-end gap-2 pt-2">
-          <Button variant="secondary" type="button" onClick={onClose}>
+          <Button variant="secondary" type="button" onClick={onClose} className={TALL}>
             Cancel
           </Button>
-          <Button type="submit" disabled={problem !== null} loading={count.isPending}>
+          <Button
+            type="submit"
+            disabled={problem !== null}
+            loading={count.isPending}
+            className={TALL}
+          >
             Save
           </Button>
         </div>

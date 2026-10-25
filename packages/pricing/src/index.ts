@@ -31,6 +31,7 @@ export * from "./pending-unit";
 export * from "./invoice-totals";
 export * from "./unit-chain";
 export * from "./unit-options";
+export * from "./count-pieces";
 export * from "./sale-totals";
 export * from "./charge-lines";
 export * from "./receipt-figures";

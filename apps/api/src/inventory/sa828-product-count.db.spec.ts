@@ -161,6 +161,27 @@ describeDb("SA-828 countProduct (DB)", () => {
     expect(await t.stockOf(id)).toBe(20);
   });
 
+  it("SA-957 L5: another tenant's product id is a 404, with no movement or stock change in either tenant", async () => {
+    const mine = await t.newWorld("iso-a");
+    const theirs = await t.newWorld("iso-b");
+    const theirProduct = await caseProduct(theirs, 12, 20);
+    await expect(
+      t.inTenant(mine, () =>
+        t.inventory.countProduct(
+          theirProduct,
+          {
+            mode: "SET",
+            parts: [{ unit: "Case", quantity: 3 }],
+            reason: "COUNT_CORRECTION",
+          } as any,
+          mine.userId,
+        ),
+      ),
+    ).rejects.toMatchObject({ status: 404 });
+    expect(await t.movementsOf(theirProduct)).toHaveLength(0);
+    expect(await t.stockOf(theirProduct)).toBe(20);
+  });
+
   it("a session count commit's movement carries reason COUNT_CORRECTION", async () => {
     const w = await t.newWorld("sess");
     const id = await t.newProduct(w, "Acme Widget");
