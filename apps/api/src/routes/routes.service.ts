@@ -6,7 +6,7 @@ import {
   Logger,
   NotFoundException,
 } from "@nestjs/common";
-import { createHash, randomUUID } from "crypto";
+import { randomUUID } from "crypto";
 import { ConfigService } from "@nestjs/config";
 import {
   assertStopNotSkipped,
@@ -103,6 +103,7 @@ import {
 import { withDeliveredSoFar } from "./run-delivered-so-far";
 import { DeletedEvidenceRow, deliveredQtyRecompute } from "./delivered-so-far";
 import { withPayableInvoicesFlat } from "./run-projections";
+import { checkRouteIdempotencyKey, saveRouteIdempotencyKey } from "./route-idempotency";
 import { withRunStopProjections, withRunStopProjectionsForRunsPage } from "./run-projections";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 export {
@@ -1969,47 +1970,6 @@ export class RoutesService {
     return updated;
   }
 
-  // ── RF-019: Idempotency helpers ───────────────────────────────────────────
-  // Uses raw SQL so the feature works before the IdempotencyKey table migration
-  // is applied — queries are wrapped in try/catch and fail silently if the table
-  // does not yet exist.
-
-  private makeKeyHash(key: string, scope: string): string {
-    return createHash("sha256").update(`${scope}:${key}`).digest("hex");
-  }
-
-  private async checkIdempotencyKey(key: string, scope: string): Promise<unknown> {
-    const hash = this.makeKeyHash(key, scope);
-    const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    try {
-      const rows = await this.prisma.$queryRaw<{ response: string }[]>`
-        SELECT response FROM "IdempotencyKey"
-        WHERE "keyHash" = ${hash} AND "createdAt" >= ${cutoff}
-        LIMIT 1
-      `;
-      if (!rows || rows.length === 0) return null;
-      return JSON.parse(rows[0].response);
-    } catch {
-      return null; // table doesn't exist yet — degrade gracefully
-    }
-  }
-
-  private async saveIdempotencyKey(key: string, scope: string, response: unknown): Promise<void> {
-    const hash = this.makeKeyHash(key, scope);
-    try {
-      const responseJson = JSON.stringify(response);
-      await this.prisma.$executeRaw`
-        INSERT INTO "IdempotencyKey" ("id", "keyHash", "response", "createdAt")
-        VALUES (gen_random_uuid(), ${hash}, ${responseJson}, now())
-        ON CONFLICT ("keyHash") DO UPDATE
-          SET response   = EXCLUDED.response,
-              "createdAt" = now()
-      `;
-    } catch {
-      // best-effort — don't fail the request if idempotency storage errors
-    }
-  }
-
   // ── Durable proof-of-delivery artifacts ────────────────────────────────
   // POD photos/signatures arrive as data URLs inside plain JSON (never
   // multipart — FormData is excluded from the mobile offline queue) and are
@@ -2196,7 +2156,7 @@ export class RoutesService {
     // RF-019: Idempotency check (outside transaction for speed)
     if (dto.idempotencyKey) {
       const scope = `completeStop:${runId}:${stopId}`;
-      const cached = await this.checkIdempotencyKey(dto.idempotencyKey, scope);
+      const cached = await checkRouteIdempotencyKey(this.prisma, dto.idempotencyKey, scope);
       if (cached) return cached;
     }
 
@@ -2362,7 +2322,7 @@ export class RoutesService {
     // RF-019: persist idempotency key after successful write
     if (dto.idempotencyKey) {
       const scope = `completeStop:${runId}:${stopId}`;
-      await this.saveIdempotencyKey(dto.idempotencyKey, scope, result);
+      await saveRouteIdempotencyKey(this.prisma, dto.idempotencyKey, scope, result);
     }
 
     return result;
@@ -2422,7 +2382,7 @@ export class RoutesService {
     // RF-019: Idempotency check
     if (dto.idempotencyKey) {
       const scope = `completeWithPayment:${runId}:${stopId}`;
-      const cached = await this.checkIdempotencyKey(dto.idempotencyKey, scope);
+      const cached = await checkRouteIdempotencyKey(this.prisma, dto.idempotencyKey, scope);
       if (cached) return cached;
     }
 
@@ -2662,7 +2622,7 @@ export class RoutesService {
     // RF-019: persist idempotency key
     if (dto.idempotencyKey) {
       const scope = `completeWithPayment:${runId}:${stopId}`;
-      await this.saveIdempotencyKey(dto.idempotencyKey, scope, response);
+      await saveRouteIdempotencyKey(this.prisma, dto.idempotencyKey, scope, response);
     }
 
     return response;
