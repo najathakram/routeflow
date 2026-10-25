@@ -59,7 +59,7 @@ export interface CancelOrderTxOptions {
  *  - delivered units (B56): some active line reads deliveredQty > 0 (409 here: the order changed under the cancel);
  *  - legacy rows: DELIVERED / PARTIALLY_DELIVERED with no recorded quantity (B692, 409 ORDER_DELIVERY_QUANTITIES_MISSING).
  * `refuseDeliveredUnits: false` runs only the legacy predicate (the hard delete: its broader "any delivered unit
- * refuses a delete" rule is a separate row; this helper is where it would plug in). `order.status`, when the caller
+ * refuses a delete" rule, row 585, runs in `lockDeleteLines` before this helper). `order.status`, when the caller
  * already read it under the lock, saves a query. Call it AFTER the Order lock, before any write.
  */
 export async function assertCancelDeliveryStateUnderLock(
@@ -184,6 +184,17 @@ export async function lockDeleteLines(tx: any, id: string) {
   // $queryRaw, not $executeRaw: deleteOrder's lock-order pins count its $executeRaw row locks (the Invoice NOWAIT one).
   await tx.$queryRaw`SELECT id FROM "Order" WHERE id = ${id} FOR UPDATE`;
   const status = await lockedOrderStatus(tx, id);
+  // Row 585 (SA-814): ANY delivered unit (a cancelled line included) refuses the delete, under the lock.
+  const everyLine: Array<{ deliveredQty: unknown }> = await tx.orderItem.findMany({
+    where: { orderId: id },
+    select: { deliveredQty: true },
+  });
+  if (everyLine.some((l) => Number(l.deliveredQty ?? 0) > 0.001))
+    throw new ConflictException({
+      code: API_ERROR_CODES.ORDER_DELETE_HAS_DELIVERED,
+      message:
+        "This order has delivered items, so it cannot be deleted. Record a return for the delivered goods instead.",
+    });
   // SA-814h: a legacy delivered row (no recorded quantity) is refused here, under the lock, before any restock.
   await assertCancelDeliveryStateUnderLock(
     tx,
