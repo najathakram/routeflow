@@ -10,7 +10,10 @@ import {
 import { useProductCount } from "@/lib/api/inventory";
 import { useProductUnits, useUnitsEnabled } from "@/lib/api/product-units";
 import {
+  belowZeroWarning,
   buildCountRequest,
+  noteHint,
+  reasonHint,
   countUnitOptions,
   previewLine,
   formatStockQty,
@@ -82,6 +85,10 @@ export function CountAdjustModal({
       ? null
       : validateCount({ ...f, reason: "COUNT_CORRECTION", note: "" }, options);
   const preview = previewLine(f, options, product.currentStock);
+  const belowZero = belowZeroWarning(f, options, product.currentStock);
+  const typed = f.quantity.trim() !== "";
+  const reasonProblem = typed ? reasonHint(f) : null;
+  const noteProblem = typed ? noteHint(f) : null;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -105,7 +112,7 @@ export function CountAdjustModal({
   ];
 
   return (
-    <Modal open onClose={onClose} title={`Count / Adjust — ${product.name}`}>
+    <Modal open onClose={onClose} anchor="top" title={`Count / Adjust — ${product.name}`}>
       <form onSubmit={handleSubmit} className="space-y-4">
         <div
           role="radiogroup"
@@ -186,6 +193,15 @@ export function CountAdjustModal({
               {preview}
             </p>
           )}
+          {belowZero && !inlineError && (
+            <p
+              role="status"
+              className="mt-1 text-xs font-medium text-amber-700"
+              data-testid="count-below-zero"
+            >
+              {belowZero}
+            </p>
+          )}
         </div>
 
         <div>
@@ -197,6 +213,7 @@ export function CountAdjustModal({
             value={f.reason}
             onChange={(e) => patch({ reason: e.target.value as AdjustmentReason | "" })}
             className={INPUT}
+            aria-describedby={reasonProblem ? "count-reason-hint" : undefined}
           >
             <option value="">Choose a reason</option>
             {(Object.keys(ADJUSTMENT_REASON_LABELS) as AdjustmentReason[]).map((r) => (
@@ -205,6 +222,15 @@ export function CountAdjustModal({
               </option>
             ))}
           </select>
+          {reasonProblem && (
+            <p
+              id="count-reason-hint"
+              className="mt-1 text-xs text-navy/70"
+              data-testid="count-reason-hint"
+            >
+              {reasonProblem}
+            </p>
+          )}
         </div>
 
         <div>
@@ -218,10 +244,20 @@ export function CountAdjustModal({
             value={f.note}
             onChange={(e) => patch({ note: e.target.value })}
             className={`${INPUT} resize-none`}
+            aria-describedby={noteProblem ? "count-note-hint" : undefined}
           />
-          <p className="mt-1 text-right text-xs text-navy/50">
-            {f.note.length}/{ADJUSTMENT_REASON_NOTE_MAX}
-          </p>
+          <div className="mt-1 flex justify-between gap-2 text-xs">
+            {noteProblem ? (
+              <span id="count-note-hint" className="text-navy/70" data-testid="count-note-hint">
+                {noteProblem}
+              </span>
+            ) : (
+              <span />
+            )}
+            <span className="text-navy/50">
+              {f.note.length}/{ADJUSTMENT_REASON_NOTE_MAX}
+            </span>
+          </div>
         </div>
 
         {showDate ? (
@@ -254,11 +290,6 @@ export function CountAdjustModal({
           </p>
         )}
 
-        {problem && f.quantity.trim() !== "" && !inlineError && (
-          <p className="text-right text-xs text-navy/70" data-testid="count-save-hint">
-            {problem}
-          </p>
-        )}
         <div className="flex justify-end gap-2 pt-2">
           <Button variant="secondary" type="button" onClick={onClose}>
             Cancel

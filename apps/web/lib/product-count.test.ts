@@ -6,6 +6,9 @@ import {
   previewLine,
   previewPieces,
   resultingStock,
+  belowZeroWarning,
+  reasonHint,
+  noteHint,
   validateCount,
   type CountForm,
 } from "./product-count";
@@ -154,5 +157,32 @@ describe("buildCountRequest", () => {
       reasonNote: "lost",
       effectiveDate: "2026-10-01",
     });
+  });
+});
+
+describe("belowZeroWarning (M3 #1: a result under zero is said, not blocked)", () => {
+  const adj: CountForm = { ...base, mode: "ADJUST", sign: "-", quantity: "2", unit: opts[0].value };
+  it("names the negative result in pieces", () => {
+    expect(belowZeroWarning(adj, opts, 10)).toBe("This takes stock below zero (\u221214 pcs).");
+    expect(
+      belowZeroWarning({ ...adj, mode: "SET", sign: "+", quantity: "0" }, opts, 10),
+    ).toBeNull();
+  });
+  it("is silent at exactly zero, above zero, and with no usable quantity", () => {
+    expect(belowZeroWarning({ ...adj, quantity: "10", unit: opts[1].value }, opts, 10)).toBeNull();
+    expect(belowZeroWarning({ ...adj, sign: "+" }, opts, 10)).toBeNull();
+    expect(belowZeroWarning({ ...adj, quantity: "" }, opts, 10)).toBeNull();
+  });
+});
+
+describe("reasonHint / noteHint (M3 #3: each message sits under its own field)", () => {
+  it("asks for a reason until one is chosen", () => {
+    expect(reasonHint({ ...base, reason: "" })).toBe("Pick a reason.");
+    expect(reasonHint(base)).toBeNull();
+  });
+  it("asks for a note only for Other, 3-200 characters", () => {
+    expect(noteHint({ ...base, reason: "OTHER", note: "ab" })).toBe("Add a note for Other.");
+    expect(noteHint({ ...base, reason: "OTHER", note: "abc" })).toBeNull();
+    expect(noteHint({ ...base, reason: "DAMAGED", note: "" })).toBeNull();
   });
 });

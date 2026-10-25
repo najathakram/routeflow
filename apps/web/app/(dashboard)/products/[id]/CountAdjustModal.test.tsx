@@ -74,15 +74,41 @@ describe("CountAdjustModal", () => {
     expect(save()).toBeDisabled();
   });
 
-  it("tells the user why Save is off once a quantity is typed", () => {
+  it("puts each requirement under its own field once a quantity is typed", () => {
     setup();
-    expect(screen.queryByTestId("count-save-hint")).toBeNull();
+    expect(screen.queryByTestId("count-reason-hint")).toBeNull();
     fireEvent.change(qty(), { target: { value: "2" } });
-    expect(screen.getByTestId("count-save-hint")).toHaveTextContent("Pick a reason.");
+    const reasonField = screen.getByLabelText(/reason/i);
+    expect(screen.getByTestId("count-reason-hint")).toHaveTextContent("Pick a reason.");
+    expect(reasonField).toHaveAttribute("aria-describedby", "count-reason-hint");
+    expect(screen.queryByTestId("count-save-hint")).toBeNull(); // no right-aligned line above the buttons
     reason("OTHER");
-    expect(screen.getByTestId("count-save-hint")).toHaveTextContent("Add a note for Other.");
+    expect(screen.queryByTestId("count-reason-hint")).toBeNull();
+    expect(screen.getByTestId("count-note-hint")).toHaveTextContent("Add a note for Other.");
+    expect(screen.getByLabelText(/note/i)).toHaveAttribute("aria-describedby", "count-note-hint");
     fireEvent.change(screen.getByLabelText(/note/i), { target: { value: "dropped" } });
-    expect(screen.queryByTestId("count-save-hint")).toBeNull();
+    expect(screen.queryByTestId("count-note-hint")).toBeNull();
+  });
+
+  it("warns, without blocking Save, when the result is below zero", () => {
+    setup();
+    fireEvent.click(screen.getByRole("radio", { name: "Adjust" }));
+    fireEvent.change(qty(), { target: { value: "2" } }); // 2 Case = 24 pcs off 10
+    reason("DAMAGED");
+    expect(screen.getByTestId("count-below-zero")).toHaveTextContent(
+      "This takes stock below zero (\u221214 pcs).",
+    );
+    expect(save()).toBeEnabled();
+    fireEvent.change(qty(), { target: { value: "0.5" } });
+    fireEvent.change(screen.getByLabelText("Unit"), { target: { value: "Piece" } });
+    expect(screen.queryByTestId("count-below-zero")).toBeNull();
+  });
+
+  it("anchors the dialog at the top so Save and Cancel do not jump as rows appear", () => {
+    setup();
+    expect(readFileSync(resolve(__dirname, "CountAdjustModal.tsx"), "utf8")).toMatch(
+      /<Modal[^>]*anchor="top"/,
+    );
   });
 
   it("points the quantity at the preview and error lines", () => {
@@ -101,12 +127,17 @@ describe("CountAdjustModal", () => {
     expect(save()).toBeEnabled();
   });
 
-  it("shows the server message for a filed-period 409", () => {
+  it("says what is filed, in fixed copy, for a filed-period 409", () => {
     mockMutate.mockImplementation((_b, opts) =>
       opts.onError({
         response: {
           status: 409,
-          data: { code: "STOCK_DATE_IN_FILED_PERIOD", message: "Q3 2026 is already filed." },
+          data: {
+            code: "STOCK_DATE_IN_FILED_PERIOD",
+            message: "This date is on or before September 30, 2026, which is already filed.",
+            filedFor: "Tobacco",
+            period: "Sep 2026",
+          },
         },
       }),
     );
@@ -114,7 +145,9 @@ describe("CountAdjustModal", () => {
     fireEvent.change(qty(), { target: { value: "2" } });
     reason("DAMAGED");
     fireEvent.click(save());
-    expect(screen.getByRole("alert")).toHaveTextContent("Q3 2026 is already filed.");
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Tobacco is filed for Sep 2026. Choose a later date.",
+    );
     mockMutate.mockReset();
   });
 });

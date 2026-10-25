@@ -139,6 +139,32 @@ function parseQuantity(text: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+/** "Pick a reason." until one is chosen (shown under the Reason field). */
+export function reasonHint(form: Pick<CountForm, "reason">): string | null {
+  return form.reason ? null : "Pick a reason.";
+}
+
+/** "Add a note for Other." when the reason is Other and the note is not 3-200 characters (under the Note field). */
+export function noteHint(form: Pick<CountForm, "reason" | "note">): string | null {
+  if (form.reason !== "OTHER") return null;
+  const n = form.note.trim().length;
+  return n < ADJUSTMENT_REASON_NOTE_MIN || n > ADJUSTMENT_REASON_NOTE_MAX
+    ? "Add a note for Other."
+    : null;
+}
+
+/** An amber line (not a block: whether to refuse is a stock rule) when the result would be under zero. */
+export function belowZeroWarning(
+  form: Pick<CountForm, "mode" | "sign" | "quantity" | "unit">,
+  options: CountUnitOption[],
+  currentStock: number,
+): string | null {
+  const after = resultingStock(form, options, currentStock);
+  return after !== null && after < 0
+    ? `This takes stock below zero (${formatStockQty(after)} pcs).`
+    : null;
+}
+
 /** The first thing wrong with the form (shown inline), or null when it can be saved. */
 export function validateCount(form: CountForm, options: CountUnitOption[]): string | null {
   const qty = parseQuantity(form.quantity);
@@ -148,13 +174,7 @@ export function validateCount(form: CountForm, options: CountUnitOption[]): stri
   if (qty < 0) return "Enter zero or more. Use Adjust to take stock off.";
   if (form.mode === "ADJUST" && qty === 0) return "Enter a quantity above zero.";
   if (opt.factor > 1 && !Number.isInteger(qty)) return COUNT_WHOLE_NUMBER_COPY;
-  if (!form.reason) return "Pick a reason.";
-  if (form.reason === "OTHER") {
-    const n = form.note.trim().length;
-    if (n < ADJUSTMENT_REASON_NOTE_MIN || n > ADJUSTMENT_REASON_NOTE_MAX)
-      return "Add a note for Other.";
-  }
-  return null;
+  return reasonHint(form) ?? noteHint(form);
 }
 
 /** The request body. Call only when `validateCount` returned null. */
