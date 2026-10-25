@@ -56,7 +56,7 @@ describe("RoutesService — delivery lines must belong to this stop and fit the 
     recordDeliveryPaymentInTx: jest.Mock;
     reconcileDeliveredOrdersInTx: jest.Mock;
     reverseRunAdvancesInTx: jest.Mock;
-    loadUnitCatalogs: jest.Mock;
+    loadUnitCatalog: jest.Mock;
   };
   let storage: { upload: jest.Mock; presignedUrl: jest.Mock; delete: jest.Mock };
 
@@ -69,7 +69,7 @@ describe("RoutesService — delivery lines must belong to this stop and fit the 
         .mockResolvedValue({ applied: 0, invoiceIds: [], paymentIds: [] }),
       reconcileDeliveredOrdersInTx: jest.fn().mockResolvedValue(undefined),
       reverseRunAdvancesInTx: jest.fn().mockResolvedValue(0),
-      loadUnitCatalogs: jest.fn().mockResolvedValue(new Map()), // SA-827
+      loadUnitCatalog: jest.fn().mockResolvedValue(null), // SA-967
     };
 
     gateway = {

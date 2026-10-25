@@ -20,8 +20,8 @@ jest.mock("./invoice-display-unit", () => {
     resolveIssueDisplayUnits: jest.fn(),
     writeIssueDisplayUnits: jest.fn().mockResolvedValue(undefined),
     freezeDraftIssueUnits: jest.fn().mockResolvedValue(undefined),
-    freezeDraftFromCatalogs: jest.fn().mockResolvedValue(undefined),
-    loadDeliveryDisplayCatalogs: jest.fn().mockResolvedValue(new Map()),
+    freezeIssueUnitsFromCatalog: jest.fn().mockResolvedValue(undefined),
+    loadStopDisplayUnitCatalog: jest.fn().mockResolvedValue(null),
     clearIssueDisplayUnits: jest.fn().mockResolvedValue(undefined),
   };
 });
@@ -49,10 +49,10 @@ import { SellingRestrictionsService } from "../selling-restrictions/selling-rest
 
 import {
   clearIssueDisplayUnits,
-  freezeDraftFromCatalogs,
   freezeDraftIssueUnits,
+  freezeIssueUnitsFromCatalog,
   itemsWithDisplayUnits,
-  loadDeliveryDisplayCatalogs,
+  loadStopDisplayUnitCatalog,
   resolveDraftIssueUnits,
   resolveIssueDisplayUnits,
   writeIssueDisplayUnits,
@@ -240,7 +240,7 @@ describe("InvoicesService display-unit wiring (SA-827)", () => {
     const run = () =>
       (service as any).recordDeliveryPaymentInTx(prisma, new AfterCommit(), ["ord-1"], 100, "CASH");
 
-    const CATALOGS = new Map([[CUSTOMER_ID, {} as any]]);
+    const CATALOG = { customerId: CUSTOMER_ID } as any;
     const runWith = () =>
       (service as any).recordDeliveryPaymentInTx(
         prisma,
@@ -248,45 +248,131 @@ describe("InvoicesService display-unit wiring (SA-827)", () => {
         ["ord-1"],
         100,
         "CASH",
-        undefined,
-        CATALOGS,
+        CATALOG,
       );
 
-    it("a finalized DRAFT freezes from the catalogs loaded BEFORE the tx: nothing but the caller's tx is used (no second pooled connection)", async () => {
+    it("a finalized DRAFT freezes from the catalog loaded BEFORE the tx: nothing but the caller's tx is used (no second pooled connection)", async () => {
       arm(InvoiceStatus.DRAFT);
       const forTenant = jest.spyOn(prisma, "forTenant");
       await runWith();
-      expect(freezeDraftFromCatalogs).toHaveBeenCalledTimes(1);
-      const [tx, inv, catalogs] = (freezeDraftFromCatalogs as jest.Mock).mock.calls[0];
+      expect(freezeIssueUnitsFromCatalog).toHaveBeenCalledTimes(1);
+      const [tx, inv, catalog] = (freezeIssueUnitsFromCatalog as jest.Mock).mock.calls[0];
       expect(tx).toBe(prisma); // the caller's tx
       expect(inv).toMatchObject({ id: INVOICE_ID, tenantId: TENANT_ID });
-      expect(catalogs).toBe(CATALOGS);
+      expect(catalog).toBe(CATALOG);
       expect(freezeDraftIssueUnits).not.toHaveBeenCalled(); // the old call took a readDb off the pool, inside the tx
       expect(forTenant).not.toHaveBeenCalled();
     });
 
-    it("loadUnitCatalogs (the pre-tx half the route calls) reads the catalog through the tenant client with the service's entitlements", async () => {
-      (loadDeliveryDisplayCatalogs as jest.Mock).mockClear();
-      const out = await service.loadUnitCatalogs(["ord-1", "ord-2"]);
-      expect(out).toBeInstanceOf(Map);
-      const [db, orderIds, entitlements] = (loadDeliveryDisplayCatalogs as jest.Mock).mock.calls[0];
+    it("loadUnitCatalog (the pre-tx half the route calls) reads through the tenant client with the service's entitlements", async () => {
+      (loadStopDisplayUnitCatalog as jest.Mock).mockClear();
+      const stop = { customerId: CUSTOMER_ID, orders: [{ id: "ord-1" }, { id: "ord-2" }] };
+      await service.loadUnitCatalog(stop);
+      const [db, passedStop, entitlements] = (loadStopDisplayUnitCatalog as jest.Mock).mock
+        .calls[0];
       expect(db).toBe(prisma); // forTenant() / getTenantId() are read inside, before any tx
-      expect(orderIds).toEqual(["ord-1", "ord-2"]);
+      expect(passedStop).toBe(stop);
       expect(entitlements).toBe((service as any).entitlements);
     });
 
-    it("with no catalogs passed (an older caller) nothing is frozen and the payment still lands", async () => {
+    it("a null catalog (flag off, a failed load, a multi-customer stop) is handed on as null: the line reads legacy and the payment still lands", async () => {
       arm(InvoiceStatus.DRAFT);
-      await run();
-      expect(freezeDraftFromCatalogs).toHaveBeenCalledWith(prisma, expect.anything(), undefined);
+      await (service as any).recordDeliveryPaymentInTx(
+        prisma,
+        new AfterCommit(),
+        ["ord-1"],
+        100,
+        "CASH",
+        null,
+      );
+      expect(freezeIssueUnitsFromCatalog).toHaveBeenCalledWith(prisma, expect.anything(), null);
       expect(prisma.invoicePayment.create).toHaveBeenCalled();
+    });
+
+    it("SA-967 red row: a pool that counts calls sees NONE while the delivery tx is open (7 at 6ef25abeb: 1 flag read + 6 catalog queries), and the labels equal resolveLiveDisplayUnits", async () => {
+      const actual = jest.requireActual("./invoice-display-unit");
+      for (const name of [
+        "freezeIssueUnitsFromCatalog",
+        "freezeDraftIssueUnits",
+        "loadStopDisplayUnitCatalog",
+      ])
+        (
+          ({
+            freezeIssueUnitsFromCatalog,
+            freezeDraftIssueUnits,
+            loadStopDisplayUnitCatalog,
+          }) as any
+        )[name].mockImplementation(actual[name]);
+      const poolCalls = { n: 0 };
+      const counted = (v: unknown) =>
+        jest.fn(async () => {
+          poolCalls.n += 1;
+          return v;
+        });
+      const productRow = {
+        id: "p1",
+        unit: "Box",
+        packLabel: "Box",
+        baseUnitLabel: "Piece",
+        unitsPerBox: 15,
+        pricePerUnit: "30.01",
+        priceTier2: null,
+        priceTier3: null,
+        priceTier4: null,
+        priceTier5: null,
+        orderUnitRef: null,
+        packAuto: null,
+        invoiceUnitRef: null,
+      };
+      const pool = {
+        customer: { findFirst: counted({ pricingTier: 1 }) },
+        customerPrice: { findMany: counted([]) },
+        productTierUnit: { findMany: counted([]) },
+        product: { findMany: counted([productRow]) },
+        productUnit: { findMany: counted([]) },
+        systemConfig: { findFirst: counted({ value: "smallest" }) },
+        orderItem: { findMany: counted([{ productId: "p1" }]) },
+      };
+      const entitlements = { hasFlagStrict: counted(true) };
+      (prisma.forTenant as jest.Mock).mockReturnValue(pool);
+      (prisma.getTenantId as jest.Mock).mockReturnValue(TENANT_ID);
+      (service as any).entitlements = entitlements;
+      prisma.invoice.findFirst.mockResolvedValue({ customerId: CUSTOMER_ID });
+      prisma.invoiceItem.findMany.mockResolvedValue([{ id: "it-1", productId: "p1" }]);
+      prisma.invoiceItem.updateMany.mockResolvedValue({ count: 1 });
+      prisma.$executeRaw.mockResolvedValue(0);
+      arm(InvoiceStatus.DRAFT);
+
+      // the pre-tx half the route runs (it does not exist at 6ef25abeb, where the freeze reads the pool inside the tx)
+      const stop = { customerId: CUSTOMER_ID, orders: [{ id: "ord-1" }] };
+      const catalog = (await (service as any).loadUnitCatalog?.(stop)) ?? null;
+      const before = poolCalls.n;
+      await (service as any).recordDeliveryPaymentInTx(
+        prisma,
+        new AfterCommit(),
+        ["ord-1"],
+        100,
+        "CASH",
+        catalog,
+      );
+      expect(poolCalls.n - before).toBe(0); // observed: 7 at 6ef25abeb
+
+      const frozen = prisma.invoiceItem.updateMany.mock.calls[0][0].data.invoiceUnitLabel;
+      const live = await actual.resolveLiveDisplayUnits(
+        pool,
+        TENANT_ID,
+        { customerId: CUSTOMER_ID, items: [{ id: "it-1", productId: "p1" }] },
+        entitlements,
+      );
+      expect(frozen).toBe(live.get("it-1").label);
+      expect(frozen).toBe("Piece");
     });
 
     it("an already issued invoice makes no freeze call", async () => {
       arm(InvoiceStatus.SENT);
       await runWith();
       expect(freezeDraftIssueUnits).not.toHaveBeenCalled();
-      expect(freezeDraftFromCatalogs).not.toHaveBeenCalled();
+      expect(freezeIssueUnitsFromCatalog).not.toHaveBeenCalled();
     });
   });
 

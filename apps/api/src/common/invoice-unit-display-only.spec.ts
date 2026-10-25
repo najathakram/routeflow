@@ -20,7 +20,7 @@ const FORBIDDEN =
  * place that decides when a snapshot is written, so it must be added here on purpose.
  */
 const CALLER =
-  /\b(?:resolveLiveDisplayUnits|withItemDisplayUnits|resolveDraftIssueUnits|itemsWithDisplayUnits|resolveIssueDisplayUnits|writeIssueDisplayUnits|freezeDraftIssueUnits|freezeDraftFromCatalogs|loadDeliveryDisplayCatalogs|clearIssueDisplayUnits|displayUnit)\b/;
+  /\b(?:resolveLiveDisplayUnits|withItemDisplayUnits|resolveDraftIssueUnits|itemsWithDisplayUnits|resolveIssueDisplayUnits|writeIssueDisplayUnits|freezeDraftIssueUnits|freezeIssueUnitsFromCatalog|loadStopDisplayUnitCatalog|clearIssueDisplayUnits|displayUnit)\b/;
 const CALLER_FILES = [
   "apps/api/src/invoices/invoices.service.ts",
   "apps/api/src/bookkeeping/bookkeeping.service.ts",
@@ -139,8 +139,8 @@ describe("G1: the invoice unit never reaches a money writer", () => {
       "resolveIssueDisplayUnits",
       "writeIssueDisplayUnits",
       "freezeDraftIssueUnits",
-      "freezeDraftFromCatalogs",
-      "loadDeliveryDisplayCatalogs",
+      "freezeIssueUnitsFromCatalog",
+      "loadStopDisplayUnitCatalog",
       "clearIssueDisplayUnits",
       "displayUnit",
     ])
@@ -164,8 +164,8 @@ describe("G1: the invoice unit never reaches a money writer", () => {
       "resolveIssueDisplayUnits",
       "writeIssueDisplayUnits",
       "freezeDraftIssueUnits",
-      "freezeDraftFromCatalogs",
-      "loadDeliveryDisplayCatalogs",
+      "freezeIssueUnitsFromCatalog",
+      "loadStopDisplayUnitCatalog",
       "clearIssueDisplayUnits",
     ]);
     const named = new Set<string>();
@@ -175,7 +175,7 @@ describe("G1: the invoice unit never reaches a money writer", () => {
       for (const m of src.matchAll(new RegExp(CALLER.source, "g"))) named.add(m[0]);
       writeCalls += (
         src.match(
-          /\b(?:writeIssueDisplayUnits|freezeDraftIssueUnits|freezeDraftFromCatalogs)\(/g,
+          /\b(?:writeIssueDisplayUnits|freezeDraftIssueUnits|freezeIssueUnitsFromCatalog)\(/g,
         ) ?? []
       ).length;
     }

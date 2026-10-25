@@ -4509,9 +4509,9 @@ export class InvoicesService {
     );
   }
 
-  /** SA-827: the pre-tx half of the delivery freeze (the route calls it before its tx opens; see recordDeliveryPaymentInTx). */
-  loadUnitCatalogs(orderIds: string[]) {
-    return du.loadDeliveryDisplayCatalogs(this.prisma, orderIds, this.entitlements);
+  /** SA-827 / SA-967: the pre-tx half of the delivery freeze; routes loads it once before its tx (see recordDeliveryPaymentInTx). */
+  loadUnitCatalog(stop: { customerId: string | null; orders: { id: string }[] }) {
+    return du.loadStopDisplayUnitCatalog(this.prisma, stop, this.entitlements);
   }
 
   /**
@@ -4547,8 +4547,8 @@ export class InvoicesService {
     orderIds: string[],
     amount: number,
     method: string,
+    catalog: du.DisplayUnitCatalog | null, // SA-967: REQUIRED, loaded BEFORE the tx (loadUnitCatalog); null = legacy
     context?: { runId?: string; stopId?: string },
-    unitCatalogs?: du.DisplayUnitCatalogs, // SA-827: loaded BEFORE the tx (loadUnitCatalogs); no catalog read inside it
   ): Promise<{
     applied: number;
     invoiceIds: string[];
@@ -4655,7 +4655,7 @@ export class InvoicesService {
           ...(wasDraft ? { sentAt: new Date() } : {}),
         },
       });
-      if (wasDraft) await du.freezeDraftFromCatalogs(tx, inv, unitCatalogs); // SA-827
+      if (wasDraft) await du.freezeIssueUnitsFromCatalog(tx, inv, catalog); // SA-827
       await this.commissionEngine.syncInvoiceCommissionSafe(inv.id, tx);
       after.defer(this.gateway).emitInvoiceUpdated(this.prisma.getTenantId(), {
         invoiceId: inv.id,

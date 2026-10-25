@@ -80,7 +80,7 @@ const driverPayload = {
   tenantSlug: "test",
 };
 
-const UNIT_CATALOGS = new Map([["cust-acme", {} as any]]); // SA-827: what the pre-tx load returns
+const CATALOG = { customerId: "cust-1" } as any; // SA-967: what the pre-tx load returns
 
 describe("RoutesService", () => {
   let service: RoutesService;
@@ -102,7 +102,7 @@ describe("RoutesService", () => {
     recordDeliveryPaymentInTx: jest.Mock;
     reconcileDeliveredOrdersInTx: jest.Mock;
     reverseRunAdvancesInTx: jest.Mock;
-    loadUnitCatalogs: jest.Mock;
+    loadUnitCatalog: jest.Mock;
   };
   let storage: { upload: jest.Mock; presignedUrl: jest.Mock; delete: jest.Mock };
 
@@ -115,7 +115,7 @@ describe("RoutesService", () => {
         .mockResolvedValue({ applied: 0, invoiceIds: [], paymentIds: [] }),
       reconcileDeliveredOrdersInTx: jest.fn().mockResolvedValue(undefined),
       reverseRunAdvancesInTx: jest.fn().mockResolvedValue(1),
-      loadUnitCatalogs: jest.fn().mockResolvedValue(UNIT_CATALOGS),
+      loadUnitCatalog: jest.fn().mockResolvedValue(CATALOG),
     };
 
     gateway = {
@@ -2001,8 +2001,8 @@ describe("RoutesService", () => {
         ["ord-1"],
         50,
         "CASH",
+        CATALOG, // SA-967: REQUIRED, loaded BEFORE the tx opened
         { runId: "run-1", stopId: "stop-1" },
-        UNIT_CATALOGS, // SA-827: loaded BEFORE the tx opened
       );
       // B663: reconciled unconditionally too, even though a payment was ALSO
       // collected here — no deliveries were sent in this payload, so nothing is
@@ -2083,8 +2083,8 @@ describe("RoutesService", () => {
         ["ord-1", "ord-2"],
         50,
         "CASH",
+        CATALOG, // SA-967: REQUIRED, loaded BEFORE the tx opened
         { runId: "run-1", stopId: "stop-1" },
-        UNIT_CATALOGS, // SA-827: loaded BEFORE the tx opened
       );
       // reconcile-to-delivered ONLY ord-1 — ord-2 (not delivered here) must keep its
       // invoice, not be zeroed.
@@ -2218,7 +2218,7 @@ describe("RoutesService", () => {
     // most tenants) had no coverage in the CI-run unit lane, and the DB lane's path
     // filter doesn't cover routes/**, so a regression that moved the reconcile call
     // back behind `if (dto.payment...)` — B663's ENTIRE bug — would pass CI unnoticed.
-    it("SA-827: the unit catalog is loaded for the stop's orders BEFORE the tx opens, never inside it", async () => {
+    it("SA-967: the stop's unit catalog is loaded ONCE before the tx opens, never inside it", async () => {
       prisma.routeRun.findUnique.mockResolvedValue(IN_PROGRESS_RUN);
       prisma.routeRunStop.findFirst.mockResolvedValue({
         id: "stop-1",
@@ -2233,9 +2233,9 @@ describe("RoutesService", () => {
       const txMock: any = { ...prisma, $executeRaw: jest.fn().mockResolvedValue(0) };
       (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) => fn(txMock));
       let loadedBeforeTx = false;
-      invoicesService.loadUnitCatalogs.mockImplementation(async () => {
+      invoicesService.loadUnitCatalog.mockImplementation(async () => {
         loadedBeforeTx = (prisma.tenantTransaction as jest.Mock).mock.calls.length === 0;
-        return UNIT_CATALOGS;
+        return CATALOG;
       });
       await service
         .completeWithPayment(
@@ -2245,9 +2245,12 @@ describe("RoutesService", () => {
           operatorPayload,
         )
         .catch(() => undefined);
-      expect(invoicesService.loadUnitCatalogs).toHaveBeenCalledTimes(1);
-      expect(invoicesService.loadUnitCatalogs).toHaveBeenCalledWith(
-        expect.arrayContaining(["ord-1"]),
+      expect(invoicesService.loadUnitCatalog).toHaveBeenCalledTimes(1);
+      expect(invoicesService.loadUnitCatalog).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: "stop-1",
+          orders: [expect.objectContaining({ id: "ord-1" })],
+        }),
       );
       expect(loadedBeforeTx).toBe(true);
     });
