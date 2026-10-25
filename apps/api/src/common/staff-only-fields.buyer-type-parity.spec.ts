@@ -108,6 +108,7 @@ const ORDER = {
     many: true,
   },
   changeRequests: { plan: CHANGE_REQUEST, many: true },
+  revisionNumber: "keep", // row 380
   editWindow: "keep",
   fulfillPath: "keep",
   shippingCarrier: "keep",
