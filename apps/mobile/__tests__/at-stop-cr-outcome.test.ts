@@ -184,7 +184,7 @@ describe("classifyAtStopResolveError", () => {
                   id: "r1",
                   states: ["CA"],
                   legal: true,
-                  reasonText: "Restricted in CA: State ban.",
+                  reasonText: "This product is banned in CA by law.",
                 },
               ],
             },

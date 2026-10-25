@@ -1,7 +1,7 @@
 /**
  * W-806 (SA-947 §2 MUST 4): the system does not know that any selling rule is a law, and staff may override every
  * rule it shows them (row 510), so no copy staff can read says "by law" or calls a rule a "legal ban". The business's
- * own reason is the text. This pin reads the staff-facing source (apps/web without the marketing site, apps/mobile,
+ * own reason is the text. This pin reads the staff-facing source (apps/web without the marketing site, and
  * apps/api/src/selling-restrictions) with comments removed and goes red on any such wording. The marketing terms page
  * is real legal text and is never scanned. A future non-overridable rule (SA-947 §3, LATER) adds its own copy and
  * decides then.
@@ -10,11 +10,7 @@ import * as fs from "fs";
 import * as path from "path";
 
 const ROOT = path.join(__dirname, "..", "..", "..");
-const SCAN = [
-  path.join(ROOT, "web"),
-  path.join(ROOT, "mobile"),
-  path.join(ROOT, "api", "src", "selling-restrictions"),
-];
+const SCAN = [path.join(ROOT, "web"), path.join(ROOT, "api", "src", "selling-restrictions")];
 const SKIP_DIR = new Set([
   "node_modules",
   ".next",

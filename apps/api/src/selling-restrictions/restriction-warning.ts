@@ -267,6 +267,8 @@ function ruleReasonText(
     case "FEDERAL":
       return reasonLine("Restricted everywhere", rule.reason);
     case "STATE_HIT":
+      // A STATE_HIT always carries its state (staff-breaches.ts builds it only from a resolved one); the bare
+      // "Restricted: <reason>." is a guard for a breach that somehow has none, never a reachable case (SA-961).
       return reasonLine(breach.state ? `Restricted in ${breach.state}` : "Restricted", rule.reason);
     case "MALFORMED_STATE":
     case "UNRECOGNISED":

@@ -90,9 +90,10 @@ export interface RuleRow {
 }
 
 /**
- * The rule lines to DISPLAY for one product. The merge is keyed on exactly what is DISPLAYED, the rendered sentence: the
- * sentence names only the state the sale was judged at, so rules for [CA] and [CA, NV] both read "banned in CA" and show
- * ONE line. A merged line is legal if any merged rule is. Display only: the ack and the server's `warningHash` still cover
+ * The rule lines to DISPLAY for one product. The merge is keyed on exactly what is DISPLAYED, the rendered sentence:
+ * the sentence is the business's own reason (SA-947), so rules with the same sentence show ONE line and rules with
+ * different reasons show one line each. That is intended (SA-947 MUST 1, SA-961). A merged line is legal if any merged
+ * rule is. Display only: the ack and the server's `warningHash` still cover
  * every rule, because they are built from the lines and the hash, never from these rows.
  */
 export function lineRuleRows(rules: readonly RestrictionWarningRule[]): RuleRow[] {

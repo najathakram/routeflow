@@ -34,7 +34,7 @@ export type RestrictionModalView =
       kind: "blocked";
       message: string;
       lines: BlockedLine[];
-      /** Per-rule lines the server adds to the driver body: the same text staff see. */
+      /** Per-rule lines the server adds to the driver body: the same text and badge staff see. */
       ruleLines?: RestrictionWarningLine[];
     };
 
@@ -52,8 +52,8 @@ interface Props {
 }
 
 /**
- * Row 510: the ONE staff warning, mobile twin of web's RestrictionWarningDialog. Lists the breached lines (name, rules),
- * asks for ONE reason (3-200 characters, sent for every listed line) and resolves the ack. A
+ * Row 510: the ONE staff warning, mobile twin of web's RestrictionWarningDialog. Lists the breached lines (name, rules,
+ * a "Legal ban" badge), asks for ONE reason (3-200 characters, sent for every listed line) and resolves the ack. A
  * DRIVER, who may not override, gets the same modal in its "blocked" form: "Ask the office to approve this sale", no
  * reason field and no override. Mount it with a `key` per warning (the hook does) so a re-show starts from the kept reason.
  */
@@ -97,6 +97,7 @@ export function RestrictionWarningModal({
                     {row.items.map((it, i) => (
                       <View key={i} style={styles.ruleRow}>
                         <Text style={styles.reason}>{it.text}</Text>
+                        {it.legal ? <Text style={styles.badge}>{COPY.legalBadge}</Text> : null}
                       </View>
                     ))}
                   </View>
@@ -117,6 +118,7 @@ export function RestrictionWarningModal({
                         lineRuleRows(l.rules).map((row) => (
                           <View key={row.key} style={styles.ruleRow}>
                             <Text style={styles.reason}>{row.text}</Text>
+                            {row.legal ? <Text style={styles.badge}>{COPY.legalBadge}</Text> : null}
                           </View>
                         ))
                       )}
@@ -188,6 +190,16 @@ const styles = StyleSheet.create({
   name: { fontSize: 15, fontFamily: "Inter_700Bold", color: ios.label },
   ruleRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 8 },
   reason: { fontSize: 13, fontFamily: "Inter_400Regular", color: ios.system.red },
+  badge: {
+    fontSize: 11,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.system.red,
+    borderWidth: 1,
+    borderColor: ios.system.red,
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+  },
   input: { minHeight: 72, paddingTop: 10, textAlignVertical: "top" },
   buttons: { flexDirection: "row", gap: 10 },
   btn: { flex: 1, paddingVertical: 13, borderRadius: 12, alignItems: "center" },
