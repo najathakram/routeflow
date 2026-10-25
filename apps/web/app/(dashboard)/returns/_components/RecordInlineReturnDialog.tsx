@@ -495,19 +495,27 @@ export function RecordInlineReturnDialog({
         quoteOverride={serverQuote ?? requoteOverride}
         totalOnly={!!serverQuote}
         hideBack={!!saved}
+        refusal={walkInNoRefund ? REFUND_COPY.walkInNoRefund : undefined}
+        // The money sentence: under the Total only when there is no choice block (a walk-in's one sentence, or no refund
+        // offered); with the Store credit / Refund choice it sits with the radio and follows it (mm-ux 93.8%).
         quoteNote={
           walkInNoRefund
-            ? REFUND_COPY.walkInNoRefund
+            ? null
             : walkIn
               ? REFUND_COPY.walkIn
-              : effResolution === "REFUND"
-                ? refundOutcomeLine(money(shownAmount))
+              : showChoice
+                ? null
                 : creditOutcomeLine(money(shownAmount), creditContext, customerName)
         }
         renderQuoteFooter={() =>
           showChoice ? (
             <RefundChoice
               amount={money(shownAmount)}
+              note={
+                effResolution === "REFUND"
+                  ? refundOutcomeLine(money(shownAmount))
+                  : creditOutcomeLine(money(shownAmount), creditContext, customerName)
+              }
               walkIn={walkIn}
               refundUnavailable={paidWithCredit}
               resolution={effResolution}
@@ -711,6 +719,7 @@ export function RecordInlineReturnDialog({
 
 function RefundChoice({
   amount,
+  note,
   walkIn,
   refundUnavailable = false,
   resolution,
@@ -722,6 +731,8 @@ function RefundChoice({
   error,
 }: {
   amount: string;
+  /** What this choice does with the money (store credit: where it lands; refund: that it goes back). */
+  note: string;
   walkIn: boolean;
   refundUnavailable?: boolean;
   resolution: InlineReturnResolution;
@@ -786,6 +797,7 @@ function RefundChoice({
           />
           Refund {amount}
         </label>
+        <p className="text-xs text-navy/70">{note}</p>
         {refundUnavailable && <p className="text-xs text-navy/70">{REFUND_COPY.paidWithCredit}</p>}
         {refund && (
           <>

@@ -32,8 +32,8 @@ export const TERMINAL_REFUND_ERRORS: ReadonlySet<RefundErrorKind> = new Set([
 ]);
 
 export const REFUND_COPY = {
-  heading: "How do you want to give the money back?",
-  walkIn: "Walk-in sales can't hold store credit, so give the money back.",
+  heading: "How do you want to refund the money?",
+  walkIn: "Walk-in sales can't hold store credit, so refund the money.",
   /** SA-959: a walk-in return never becomes a credit note (the shared walk-in row cannot hold it). When it cannot be
    *  refunded here the dialog says so and offers no take-back; the server's cause replaces this once it sends one. */
   walkInNoRefund: "This sale can't be refunded here. Ask office staff to refund it.",

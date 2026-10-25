@@ -114,6 +114,27 @@ async function toQuote(q: RefundQuote, props: Record<string, unknown> = {}) {
   await screen.findByRole("button", { name: /take back items/i });
   return { onRecorded };
 }
+/** The quote step for a return that offers no take-back button (a refusal): waits for the step's heading instead. */
+async function toRefusalQuote(q: RefundQuote, props: Record<string, unknown> = {}) {
+  renderWithProviders(
+    <RecordInlineReturnDialog
+      open
+      onClose={jest.fn()}
+      customerId="cust-1"
+      orderId="order-1"
+      customerName="Walk-in"
+      allowRefund
+      {...props}
+    />,
+  );
+  await screen.findByText(/what came back/i);
+  fireEvent.change(screen.getByLabelText(/^pieces$/i), { target: { value: "5" } });
+  fireEvent.change(screen.getByLabelText(/^reason$/i), { target: { value: "DAMAGED" } });
+  fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
+  await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(1));
+  act(() => lastCall(quoteMutate)[1].onSuccess(q));
+  await screen.findByText(/check the return/i);
+}
 const captureOk = (data: unknown = RECORD) => act(() => lastCall(captureMutate)[1].onSuccess(data));
 const confirmBtn = (re: RegExp) => screen.getByRole("button", { name: re });
 
@@ -1010,9 +1031,7 @@ describe("W-712 credit words per host (SA-929)", () => {
   });
 
   it("SA-959 + mm-ux 93.8%: the refusal is the step's main message and the Reason select is gone", async () => {
-    await toQuote(quote({ customerIsWalkIn: true, canRefund: false, paidInFull: false }), {
-      customerName: "Walk-in",
-    });
+    await toRefusalQuote(quote({ customerIsWalkIn: true, canRefund: false, paidInFull: false }));
     const msg = await screen.findByText(
       "This sale can't be refunded here. Ask office staff to refund it.",
     );

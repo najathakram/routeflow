@@ -105,8 +105,12 @@ export interface InlineReturnSectionProps {
   quoteOverride?: InlineReturnQuoteResponse | null;
   /** Show only the Total: the host replaced the total with the server's own figure, so the old breakdown would no longer add up. */
   totalOnly?: boolean;
-  /** W21b: replaces the default store-credit line under the totals (the dialog sets it when Refund is chosen). */
-  quoteNote?: string;
+  /** W21b: replaces the default store-credit line under the totals (the dialog sets it when Refund is chosen).
+   *  null = no line under the totals (the host shows it with its own choice). */
+  quoteNote?: string | null;
+  /** SA-959: this return cannot be refunded here. The sentence is the step's main message, and the step has no Reason
+   *  select and no footer: there is nothing to confirm. */
+  refusal?: string;
   /** Where the credit goes, for the default note under the totals: "thisOrder" on order create/edit (the credit is held for
    *  the carrying order first). Defaults to the neutral "account" line, which promises nothing about which order uses it. */
   creditContext?: CreditContext;
@@ -139,6 +143,7 @@ export function InlineReturnSection({
   quoteOverride,
   totalOnly = false,
   quoteNote,
+  refusal,
   creditContext = "account",
   customerName,
   onQuoteRefused,
@@ -620,6 +625,14 @@ export function InlineReturnSection({
         <div className="space-y-4">
           <div>
             <h4 className="mb-2 text-sm font-semibold text-navy">Check the return</h4>
+            {refusal && (
+              <p
+                role="status"
+                className="mb-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm font-medium text-navy"
+              >
+                {refusal}
+              </p>
+            )}
             {new Set(covered.map((c) => c.sourceOrderId)).size > 1 && (
               <p className="mb-2 text-xs text-navy/70">
                 Goods can come from more than one earlier order — each line below shows exactly
@@ -758,20 +771,24 @@ export function InlineReturnSection({
               <span>Total</span>
               <span>{money(quote.total)}</span>
             </div>
-            <p className="mt-2 text-xs text-navy/70">
-              {quoteNote ?? creditOutcomeLine(money(quote.total), creditContext, customerName)}
-            </p>
+            {quoteNote !== null && !refusal && (
+              <p className="mt-2 text-xs text-navy/70">
+                {quoteNote ?? creditOutcomeLine(money(quote.total), creditContext, customerName)}
+              </p>
+            )}
           </div>
 
-          <Select
-            label="Reason"
-            value={captureReason}
-            onChange={(e) => setCaptureReason(e.target.value as ReturnReason | "")}
-            options={[{ value: "", label: "Choose a reason" }, ...REASON_OPTIONS]}
-            aria-describedby={!captureReason && reasonHintId ? reasonHintId : undefined}
-          />
+          {!refusal && (
+            <Select
+              label="Reason"
+              value={captureReason}
+              onChange={(e) => setCaptureReason(e.target.value as ReturnReason | "")}
+              options={[{ value: "", label: "Choose a reason" }, ...REASON_OPTIONS]}
+              aria-describedby={!captureReason && reasonHintId ? reasonHintId : undefined}
+            />
+          )}
 
-          {renderQuoteFooter?.(quote)}
+          {!refusal && renderQuoteFooter?.(quote)}
           <div className="flex flex-wrap justify-end gap-2">
             {!hideBack && (
               <Button variant="ghost" onClick={() => setStep("lines")}>
