@@ -95,7 +95,7 @@ import { DeleteOrderTier } from "./_components/DeleteOrderTier";
 import { isPosOrder } from "@/lib/api/pos-orders";
 import { FulfillPathMoveConfirm } from "./_components/FulfillPathMoveConfirm";
 import { InvoicesNeedReviewBadge } from "./_components/InvoicesNeedReviewBadge";
-import { InvoicedEditNotice } from "./_components/InvoicedEditNotice";
+import { EditItemsLockedNote, InvoicedEditNotice } from "./_components/InvoicedEditNotice";
 import { StickyEditBar } from "./_components/StickyEditBar";
 import { DemoteReasonModal } from "./_components/DemoteReasonModal";
 import { EditTaxLabel } from "./_components/EditTaxLabel";
@@ -1102,17 +1102,7 @@ export default function OrderDetailPage() {
             </span>
           )}
 
-          {/* W-861: a paid walk-in sale is not edited; the server's own verdict says so, with what to do. */}
-          {order?.editItemsLocked && access.editItems && !isEditing && (
-            <span
-              data-testid="edit-items-locked"
-              className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-1 text-xs font-medium text-amber-700 ring-1 ring-amber-200"
-            >
-              This sale is paid. Ring up added items as a new sale, or use Return to take items
-              back.
-            </span>
-          )}
-
+          <EditItemsLockedNote show={!!order?.editItemsLocked && access.editItems && !isEditing} />
           {/* P5-08: revision count + log (append-only edit history), one tap (row 330d). */}
           {!isEditing && <OrderRevisionLog revisions={order?.revisions ?? []} />}
 

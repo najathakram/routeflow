@@ -1,6 +1,7 @@
 import { ConflictException } from "@nestjs/common";
 import { InvoiceStatus } from "@prisma/client";
 import { BLOCKING_PAYMENT } from "@routeflow/pricing";
+import type { OrderEditItemsLockField } from "@routeflow/types";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
 
 /**
@@ -21,7 +22,7 @@ type PaymentReader = {
 export async function walkInSaleLocked(
   db: PaymentReader,
   order: { id: string; customer?: { isWalkIn?: boolean | null } | null },
-): Promise<boolean> {
+): Promise<OrderEditItemsLockField["editItemsLocked"]> {
   if (order.customer?.isWalkIn !== true) return false; // a named customer: no read
   const live = await db.invoicePayment.findFirst({
     where: {

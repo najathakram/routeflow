@@ -1,6 +1,9 @@
 import { ConflictException } from "@nestjs/common";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { orderEditMode } from "./order-edit-restrictions";
+import { assertWalkInSaleEditable } from "./counter-sale/walk-in-sale-lock";
+
+export { walkInSaleLocked } from "./counter-sale/walk-in-sale-lock";
 
 /**
  * W-871 (SA-948 §2 MUST 1): a replace deletes every line of the order and re-creates it. Each
@@ -25,4 +28,20 @@ export function assertNoReplaceAfterDelivery(
     code: API_ERROR_CODES.LINES_REPLACE_AFTER_DELIVERY,
     message: LINES_REPLACE_AFTER_DELIVERY_MESSAGE,
   });
+}
+
+/**
+ * updateOrderItems' one call, before any write: W-861's paid walk-in lock first (SA-948 §2 MUST 3: a walk-in gets
+ * WALK_IN_SALE_PAID), then the W-871 replace refusal (a named customer's paid sale).
+ */
+export async function paidSaleEditGuard(
+  deps: { prisma: { forTenant(): any } },
+  order: { id: string; customer?: { isWalkIn?: boolean | null } | null },
+  postDeliveryEdit: boolean,
+  user: { role?: string } | undefined,
+  dto: { replaceAll?: boolean },
+  isDiffPayload: boolean,
+): Promise<void> {
+  await assertWalkInSaleEditable(deps.prisma.forTenant(), order);
+  assertNoReplaceAfterDelivery(postDeliveryEdit, user, dto, isDiffPayload);
 }

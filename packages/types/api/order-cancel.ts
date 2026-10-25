@@ -27,3 +27,8 @@ export interface OrderFulfillPathLockField {
 export interface OrderEditItemsLockField {
   editItemsLocked: boolean;
 }
+
+/** Every gate field `GET /orders/:id` adds for the web's action bar (the read's `satisfies` names this one type). */
+export type OrderReadGateFields = OrderCancelBlockedField &
+  OrderFulfillPathLockField &
+  OrderEditItemsLockField;
