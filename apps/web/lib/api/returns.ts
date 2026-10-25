@@ -3,6 +3,7 @@ import { apiClient } from "../api-client";
 import { isDayClosedRefusal } from "../day-closed-copy";
 import type {
   CreateReturnItemDto,
+  FiledPeriod,
   InlineRefundTender,
   ReturnKind,
   UnbilledReturnItem,
@@ -223,7 +224,8 @@ export function useProcessRefund() {
 
 export function useCancelReturn() {
   const qc = useQueryClient();
-  return useMutation<Return, Error, string>({
+  // SA-839 §3: `amendedPeriod` = the filed month the undo corrected (null when none).
+  return useMutation<Return & { amendedPeriod?: FiledPeriod | null }, Error, string>({
     mutationFn: (id) => apiClient.post(`/returns/${id}/cancel`).then((r) => r.data),
     onSuccess: (_, id) => {
       qc.invalidateQueries({ queryKey: ["returns"] });

@@ -7,7 +7,11 @@ import * as fs from "fs";
 import * as path from "path";
 import * as React from "react";
 import { fireEvent, renderWithProviders, screen } from "@/test-utils/render";
-import { EditableLineItems, buildItemUpdates, type EditItemState } from "./page";
+import {
+  EditableLineItems,
+  buildItemUpdates,
+  type EditItemState,
+} from "./_components/order-line-edit";
 
 let mockDefaultSelling = false;
 jest.mock("@/lib/api/product-units", () => ({
@@ -238,7 +242,9 @@ describe("order edit: the SPECIAL judgement is per line", () => {
 });
 
 describe("order edit page wiring (static)", () => {
-  const src = fs.readFileSync(path.join(__dirname, "page.tsx"), "utf8");
+  const src = ["page.tsx", "_components/order-line-edit.tsx"]
+    .map((f) => fs.readFileSync(path.join(__dirname, f), "utf8"))
+    .join("\n");
   it("the page hands the layer to the editable lines and the picker", () => {
     expect(src).toMatch(/layerOf=\{priceLayer\.layerOf\}/);
     expect(src).toMatch(

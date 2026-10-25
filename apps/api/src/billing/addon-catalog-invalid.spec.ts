@@ -415,3 +415,14 @@ describe("SA-815a: the self-serve 'already in your plan' refusal is judged by th
     });
   });
 });
+
+describe("W-810 a readOnly add-on read (catch-up plan, census, payment-due) makes zero Stripe calls", () => {
+  it("names the product by its deterministic id and never touches the products API", async () => {
+    const { svc, stripeClient } = makeSvc(null);
+    const lines = await svc.checkoutAddonLines("t1", "month", { quiet: true, readOnly: true });
+    expect(lines.lineItems).toHaveLength(1);
+    expect((lines.lineItems[0] as any).price_data.product).toBe("rf_addon_forecasting");
+    // the stub has no retrieve/update at all, so any ensure* call would have thrown; create is the write
+    expect(stripeClient.products.create).not.toHaveBeenCalled();
+  });
+});

@@ -68,7 +68,7 @@ beforeEach(() => {
 
 const pickAcme = () => {
   fireEvent.change(screen.getByLabelText("Find a customer"), { target: { value: "acme" } });
-  fireEvent.click(screen.getByRole("button", { name: "Acme Cafe" }));
+  fireEvent.click(screen.getByRole("option", { name: "Acme Cafe" }));
 };
 
 describe("CounterSaleScreen: a picked customer's account signal (CQ-07)", () => {

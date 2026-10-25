@@ -23,6 +23,7 @@ import { ProrationService } from "./proration.service";
 import { BillingEventService } from "./billing-event.service";
 import { underTenantPriceLock } from "./price-lock";
 import { dropPublishedCatalog, ensurePublishedCatalog } from "../testing/ensure-published-catalog";
+import { fakeStripeProducts } from "../testing/fake-stripe-products";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -116,7 +117,7 @@ describeDb("G1a: the plan-change add-on bill holds the add-on lock (real Postgre
     const stripe: any = {
       isConfigured: true,
       client: {
-        products: { create: jest.fn(async () => ({ id: "prod_qa" })) },
+        products: fakeStripeProducts().products, // W-810: the owned-product path retrieves first
         invoiceItems: { list: jest.fn(async () => ({ data: [] })) },
         subscriptionItems: {
           list: jest.fn(async () => ({ data: items.map((i) => ({ ...i })) })),

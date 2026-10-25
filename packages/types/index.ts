@@ -132,6 +132,8 @@ export * from "./stock-count-commit-copy";
 
 export * from "./post-delivery-invoice-prompt";
 export * from "./order-applied-credits";
+// SA-839 §3: the filed-month note an unvoid's success toast adds (web + mobile)
+export * from "./unvoid-amended-period";
 
 // ─── Shared API DTOs + Prisma-enum parity (wave E / imp-10b) ──────────────────
 //
@@ -148,6 +150,12 @@ export * from "./api/enums";
 export * from "./api/billing";
 export * from "./api/platform-admin-activation";
 export * from "./api/orders";
+export * from "./api/payment-key";
+export * from "./api/payment-ref";
+export * from "./payment-ref-copy";
+export * from "./credit-over-limit-copy";
+export * from "./counter-copy";
+export * from "./no-longer-fits-copy";
 export * from "./api/purchase-orders";
 export * from "./api/customers";
 export * from "./api/products";

@@ -1,4 +1,5 @@
 import * as Sentry from "@sentry/node";
+import { redactSentryEvent } from "./common/sentry-redact";
 
 // DSN-optional: with SENTRY_DSN unset this init is a no-op and the SDK
 // stays fully inert (enabled:false disables transport + instrumentation).
@@ -22,4 +23,7 @@ Sentry.init({
   environment: process.env.RAILWAY_ENVIRONMENT_NAME ?? process.env.NODE_ENV ?? "development",
   release: process.env.RAILWAY_GIT_COMMIT_SHA || undefined,
   tracesSampleRate: 0,
+  // SA-824: a payment Idempotency-Key in a by-key URL must never reach Sentry (url, query, transaction name).
+  beforeSend: (event) => redactSentryEvent(event),
+  beforeSendTransaction: (event) => redactSentryEvent(event),
 });

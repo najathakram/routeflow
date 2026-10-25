@@ -2,7 +2,12 @@
 
 import * as React from "react";
 import type { ProductPriceGridRowDto } from "@routeflow/types";
-import { ProductPricesGrid, type GridDensity, type GridLayout } from "../../ProductPricesGrid";
+import {
+  PricesTitle,
+  ProductPricesGrid,
+  type GridDensity,
+  type GridLayout,
+} from "../../ProductPricesGrid";
 import type { UnitsCardProduct } from "../../ProductUnitsCard";
 import { UNITS_V2_TESTIDS as T } from "../../units-v2-testids";
 import { AlsoUpdatePanel } from "../change-prices/AlsoUpdatePanel";
@@ -29,6 +34,7 @@ export function EditablePricesGrid({
   changePricesRef,
   panel,
   unitControls,
+  afterGrid,
   rowAction,
   surface = "inline",
   idSuffix,
@@ -45,6 +51,8 @@ export function EditablePricesGrid({
   panel?: React.ReactNode;
   /** K10d: Add a unit and Reset to Auto, rendered under `panel` and above the grid. */
   unitControls?: React.ReactNode;
+  /** K13: rendered directly after the grid card, before the order-unit footer and the also-update panel (Name / Contains). */
+  afterGrid?: React.ReactNode;
   /** K10d: a control under each unit's name (Remove). */
   rowAction?: (row: ProductPriceGridRowDto, layout: "table" | "card") => React.ReactNode;
   /** K11-20: which editor this is. Default "inline" (the page's own section). */
@@ -74,6 +82,12 @@ export function EditablePricesGrid({
   // Every row family-governed (each says `editable: false`): nothing to edit or change here.
   const anyEditable = d.grid?.rows.some((r) => r.editable) ?? true;
   const pendingFocus = d.api.focus;
+  // K13 F05/F12: the audit id of an inline save this render reports (null otherwise).
+  const savedHere =
+    surface === "inline" && d.lastSave?.surface === "inline" ? d.lastSave.auditId : null;
+  const lastSaved = React.useRef<string | null>(null);
+  const justSaved = savedHere !== null && savedHere !== lastSaved.current;
+  lastSaved.current = savedHere;
   React.useEffect(() => {
     if (editing && !was.current) {
       // K11-13: a price the user opened (Enter or a click on it) is the target, recorded by `begin` before this render.
@@ -94,6 +108,7 @@ export function EditablePricesGrid({
     if (
       !editing &&
       was.current &&
+      !justSaved && // K13 F12: after a save the saved line takes the focus (Undo is then the next Tab)
       (!document.activeElement || document.activeElement === document.body)
     ) {
       editBtn.current?.focus({ preventScroll: true });
@@ -102,11 +117,36 @@ export function EditablePricesGrid({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editing]);
 
+  // K13 F05/F11: a save collapses the editor (order unit, the reserved slot and the bar leave the flow in one commit), and
+  // the page could end up away from the grid. Once that commit is laid out, a grid whose top left the viewport is
+  // scrolled back to the top; one still in view is left alone. Checked again a frame later, after the refetch settles.
+  React.useLayoutEffect(() => {
+    if (!savedHere) return undefined;
+    const keep = () => {
+      const el = root.current;
+      if (!el?.isConnected) return;
+      const top = el.getBoundingClientRect().top;
+      if (top < 0 || top > window.innerHeight) el.scrollIntoView?.({ block: "start" });
+    };
+    keep();
+    if (typeof requestAnimationFrame === "undefined") return undefined;
+    const raf = requestAnimationFrame(keep);
+    return () => cancelAnimationFrame(raf);
+  }, [savedHere]);
+
   return (
     <AddUnitIntentProvider>
-      <div ref={root} className="relative">
+      <div ref={root} data-testid="units-v2-grid-root" className="relative">
         {editing && surface === "inline" && <SkipToSave />}
-        <div className="mb-2 flex flex-wrap items-center justify-end gap-2">
+        <div
+          data-testid="units-v2-actions-row"
+          data-wide-inset=""
+          className="mb-2 flex flex-wrap items-center justify-end gap-2"
+        >
+          {/* K13: the region's heading leads the actions row, so on a phone it is one of the first things on the page. */}
+          {surface === "inline" && (
+            <PricesTitle id={`units-v2-grid-title${sfx}`} className="mr-auto" />
+          )}
           {editing && surface === "inline" && (
             <span
               data-testid={T.editingPill}
@@ -134,6 +174,9 @@ export function EditablePricesGrid({
               ref={editBtn}
               type="button"
               data-testid={T.btnEdit}
+              // Visible name stays "Edit" (the removed price-window opener owned "Edit prices"); the region heading in
+              // this row says what it edits.
+              aria-describedby={`units-v2-grid-title${sfx}`}
               className={BTN}
               onClick={() => d.startEditing()}
             >
@@ -142,19 +185,37 @@ export function EditablePricesGrid({
           )}
         </div>
         {panel}
-        {unitControls}
+        {unitControls ? (
+          // `group` + data-panel: below sm the opener row drops its top margin only while Change prices is closed;
+          // with the panel open above it the 12 px gap stays (K11-19).
+          <div
+            data-wide-inset=""
+            data-panel={changePricesOpen ? "open" : "closed"}
+            className="group"
+          >
+            {unitControls}
+          </div>
+        ) : null}
         <ProductPricesGrid
           product={product}
           edit={edit}
-          rowAction={rowAction}
+          rowAction={editing ? rowAction : undefined}
           layout={layout}
           density={density}
           idSuffix={sfx}
+          hideTitle={surface === "inline"}
           // The window has no Add a unit control of its own; the pointer would click a hidden page control.
           addUnitPointers={surface !== "window"}
         />
+        {afterGrid}
         {editing && <OrderUnitDraft />}
-        {editing && d.plan && <AlsoUpdatePanel plan={d.plan.plan} />}
+        {/* K12 F13: the slot is held (8rem) while a plan exists, so its panel never shoves the page; with no plan it is
+            empty and takes no height. */}
+        {editing && (
+          <div data-testid="also-update-slot" className={d.plan ? "min-h-[8rem]" : undefined}>
+            {d.plan && <AlsoUpdatePanel plan={d.plan.plan} />}
+          </div>
+        )}
       </div>
     </AddUnitIntentProvider>
   );

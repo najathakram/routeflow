@@ -6,6 +6,7 @@ import {
   DELIVERY_REASON_CODE_VALUES,
   deliveryFixTarget,
   describeDeliveryReason,
+  returnReasonOptions,
 } from "./reason-copy";
 
 describe("reason-copy (#1965)", () => {
@@ -163,5 +164,31 @@ describe("every reason code renders a whole, well-formed sentence (#1965 review)
       expect(s).not.toContain(code);
       expect(s).toMatch(/\.$/);
     }
+  });
+});
+
+describe("returnReasonOptions (R7b 3.1)", () => {
+  it("delivery context keeps the delivery words", () => {
+    expect(returnReasonOptions("delivery")).toEqual([
+      { value: "DAMAGED", label: "Damaged" },
+      { value: "WRONG_ITEM", label: "Wrong Item" },
+      { value: "CUSTOMER_REFUSED", label: "Customer Refused" },
+      { value: "QUALITY_ISSUE", label: "Quality Issue" },
+      { value: "EXCESS_ORDER", label: "Excess / Overdelivery" },
+    ]);
+  });
+
+  it("counter context says what happened at the register, with the same enum values", () => {
+    const counter = returnReasonOptions("counter");
+    expect(counter.map((o) => o.value)).toEqual(
+      returnReasonOptions("delivery").map((o) => o.value),
+    );
+    expect(Object.fromEntries(counter.map((o) => [o.value, o.label]))).toEqual({
+      DAMAGED: "Damaged",
+      WRONG_ITEM: "Wrong item",
+      CUSTOMER_REFUSED: "Changed their mind",
+      QUALITY_ISSUE: "Faulty",
+      EXCESS_ORDER: "Bought too many",
+    });
   });
 });

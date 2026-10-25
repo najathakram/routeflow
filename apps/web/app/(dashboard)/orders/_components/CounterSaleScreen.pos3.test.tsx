@@ -1,6 +1,7 @@
 import * as React from "react";
 import { act } from "@testing-library/react";
 import { renderWithProviders, screen, waitFor, fireEvent, within } from "@/test-utils/render";
+import { renderTill } from "@/test-utils/render-till";
 import { CounterSaleScreen } from "./CounterSaleScreen";
 import { LINE_UNDO_MS } from "./useCounterLineUndo";
 
@@ -79,11 +80,15 @@ const scan = async (text: string) => {
   await waitFor(() => expect((field as HTMLInputElement).value).toBe(""));
 };
 const UNDO = /^Undo: put back /;
-const click = (name: string | RegExp) => fireEvent.click(screen.getByRole("button", { name }));
+const TENDERS = /^(Cash|Card|Check|On account)$/;
+const click = (name: string | RegExp) =>
+  fireEvent.click(
+    screen.getByRole(typeof name === "string" && TENDERS.test(name) ? "radio" : "button", { name }),
+  );
 
 /** Cola x2 (first line, plain) and Water 1 box + 3 pcs (second line, boxed). */
 async function buildCart() {
-  renderWithProviders(<CounterSaleScreen />);
+  renderTill(<CounterSaleScreen />);
   await scan("COLA");
   await scan("COLA");
   await scan("WATER");
@@ -119,7 +124,9 @@ describe("POS-3 control inventory (nothing removed or hidden)", () => {
       "Complete & show receipt",
       "Complete & next sale",
     ]) {
-      expect(screen.getByRole("button", { name })).toBeInTheDocument();
+      expect(
+        screen.getByRole(TENDERS.test(name) ? "radio" : "button", { name }),
+      ).toBeInTheDocument();
     }
     for (const label of ["Find a customer", "Scan or search items", "Amount tendered"]) {
       expect(screen.getByLabelText(label)).toBeInTheDocument();
@@ -324,12 +331,12 @@ describe("POS-3 layout and touch targets", () => {
     expect(pay.className).toMatch(/\bcontents\b/); // below md its children flow in the one column
     expect(within(cart).getByRole("list", { name: "Items" })).toBeInTheDocument();
     expect(within(cart).getByLabelText("Scan or search items")).toBeInTheDocument();
-    expect(within(pay).getByRole("button", { name: "Cash" })).toBeInTheDocument();
+    expect(within(pay).getByRole("radio", { name: "Cash" })).toBeInTheDocument();
     expect(
       within(pay).getByRole("button", { name: "Complete & show receipt" }),
     ).toBeInTheDocument();
     expect(within(pay).getByTestId("running-total")).toBeInTheDocument();
-    expect(within(cart).queryByRole("button", { name: "Cash" })).toBeNull();
+    expect(within(cart).queryByRole("radio", { name: "Cash" })).toBeNull();
   });
 
   it("below md the scan field and the checkout bar (total + both Complete buttons) are sticky", async () => {
@@ -360,7 +367,9 @@ describe("POS-3 layout and touch targets", () => {
     expect(small).toEqual([]);
     // compact controls (stepper, remove, Undo) are 44 wide as well, not just tall
     for (const name of ["Add a box to Water", "Remove Water", UNDO, "Cash", "Exact"]) {
-      expect(screen.getByRole("button", { name }).className).toMatch(/min-w-\[44px\]/);
+      expect(
+        screen.getByRole(TENDERS.test(String(name)) ? "radio" : "button", { name }).className,
+      ).toMatch(/min-w-\[44px\]/);
     }
     const autoPrint = screen.getByLabelText("Print receipt automatically").closest("label")!;
     expect(autoPrint.className).toMatch(/min-h-\[44px\]/);

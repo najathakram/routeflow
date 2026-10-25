@@ -291,6 +291,27 @@ export function holdConfigEntry(
 }
 
 /**
+ * Row 640: move ONE to-be-created override out of `overrides.create` into `overrides.skipped` with `reason`
+ * (pure; the input plan is never mutated). Applied AFTER `planRestore` by the same guarded step as the
+ * delivery-method hold, so preview and apply hold the same override by construction.
+ */
+export function holdOverrideEntry(
+  plan: RestorePlan,
+  featureKey: string,
+  reason: SkippedEntry["reason"],
+): RestorePlan {
+  if (!plan.overrides.create.some((e) => e.featureKey === featureKey)) return plan;
+  return {
+    ...plan,
+    overrides: {
+      ...plan.overrides,
+      create: plan.overrides.create.filter((e) => e.featureKey !== featureKey),
+      skipped: [...plan.overrides.skipped, { featureKey, reason }],
+    },
+  };
+}
+
+/**
  * BO-13: does the tenant hold a fleet module (Routes / Order delivery) AFTER this restore's own
  * override writes? Same rule as `isFleetHeld` (add-on rows, an override absolute: GRANT adds, DENY
  * removes), but over the tx-read rows plus the overrides this plan is about to create, so the answer is

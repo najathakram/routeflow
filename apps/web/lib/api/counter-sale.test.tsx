@@ -1,6 +1,8 @@
 import * as React from "react";
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MutationCache, QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { handleMutationError } from "../mutation-error-toast";
+import { counterSaleToResend, forgetCounterSale } from "../counter-last-sale";
 import { useCounterSaleByKey, useCounterSaleGate, useCreateCounterSale } from "./counter-sale";
 
 const post = jest.fn();
@@ -30,6 +32,66 @@ const wrapper = ({ children }: { children: React.ReactNode }) => (
     {children}
   </QueryClientProvider>
 );
+
+describe("useCreateCounterSale: remembers an unrecorded sale for Record anyway (SA-837b)", () => {
+  beforeEach(() => {
+    post.mockReset();
+    forgetCounterSale();
+  });
+  const dto = { walkIn: true, items: [], payment: { method: "CHECK" as const, reference: "1042" } };
+
+  it("an unrecorded payment keeps the sale's key and cart under its order id", async () => {
+    post.mockResolvedValue({ data: { orderId: "o9", paymentRecorded: false } });
+    const { result } = renderHook(() => useCreateCounterSale(), { wrapper });
+    await act(async () => {
+      await result.current.mutateAsync({ dto, idempotencyKey: "key-9" });
+    });
+    expect(counterSaleToResend("o9")).toEqual({ orderId: "o9", key: "key-9", dto });
+    expect(counterSaleToResend("o-other")).toBeNull();
+  });
+
+  it("a recorded payment keeps nothing", async () => {
+    post.mockResolvedValue({ data: { orderId: "o9", paymentRecorded: true } });
+    const { result } = renderHook(() => useCreateCounterSale(), { wrapper });
+    await act(async () => {
+      await result.current.mutateAsync({ dto, idempotencyKey: "key-9" });
+    });
+    expect(counterSaleToResend("o9")).toBeNull();
+  });
+});
+
+describe("useCreateCounterSale: the till's own refusals raise no generic toast (#3615 review)", () => {
+  const dto = { walkIn: true, items: [], payment: { method: "CHECK" as const, reference: "1042" } };
+  const run = async (err: unknown) => {
+    const toast = jest.fn();
+    const client = new QueryClient({
+      defaultOptions: { mutations: { retry: false } },
+      mutationCache: new MutationCache({
+        onError: (e, _v, _c, m) => handleMutationError(e, m, toast, { push: jest.fn() }),
+      }),
+    });
+    const w = ({ children }: { children: React.ReactNode }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+    post.mockReset();
+    post.mockRejectedValue(err);
+    const { result } = renderHook(() => useCreateCounterSale(), { wrapper: w });
+    await act(async () => {
+      await result.current.mutateAsync({ dto, idempotencyKey: "k1" }).catch(() => undefined);
+    });
+    return toast;
+  };
+  const refusal = (status: number, code: string) => ({ response: { status, data: { code } } });
+  it("400 COUNTER_CHECK_POSTDATED: no toast (the till shows the sentence)", async () => {
+    expect(await run(refusal(400, "COUNTER_CHECK_POSTDATED"))).not.toHaveBeenCalled();
+  });
+  it("400 COUNTER_TENDER_SHORT: no toast (the till shows its own copy)", async () => {
+    expect(await run(refusal(400, "COUNTER_TENDER_SHORT"))).not.toHaveBeenCalled();
+  });
+  it("any other failure still gets the generic toast", async () => {
+    expect(await run(refusal(500, "INTERNAL"))).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe("useCreateCounterSale: the Idempotency-Key header", () => {
   beforeEach(() => post.mockReset());

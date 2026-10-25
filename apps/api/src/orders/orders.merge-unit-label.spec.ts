@@ -132,6 +132,7 @@ function fakeOrdersService() {
     findActiveOrder: jest.fn(async () => ({ ...activeOrderFixture })),
     findOrderIdByIdempotencyKey: jest.fn().mockResolvedValue(null),
     liveTrioByProduct: jest.fn().mockResolvedValue(new Map()),
+    liveUnitsPerBoxByProduct: jest.fn().mockResolvedValue(new Map()), // SA-841
     updateOrderItems: jest.fn().mockResolvedValue(undefined),
     recordIdempotencyKey: jest.fn().mockResolvedValue(undefined),
     // Post-commit sweep, unrelated to this bug — always reached on a non-replayed merge.
@@ -189,6 +190,7 @@ describe("OrdersController.create — staff merge refuses a unit-aware incoming 
     const { items: merged } = foldMergeItems(
       [],
       [{ productId: "prod-2", qty: 3, unitLabel: "Case" } as any],
+      { liveUnitsPerBoxByProductId: new Map(), bare: "pieces" },
     );
 
     expect(merged).toHaveLength(1);

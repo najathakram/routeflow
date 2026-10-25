@@ -45,6 +45,7 @@ import { PlanFlagGuard } from "../billing/plan-flag.guard";
 
 import { ProductsController } from "../products/products.controller";
 import { ProductsExportService } from "../products/products-export.service";
+import { ProductOpenOrdersService } from "../products/product-open-orders.service";
 import { ProductsService } from "../products/products.service";
 import { CustomersController } from "../customers/customers.controller";
 import { CustomersService } from "../customers/customers.service";
@@ -64,6 +65,7 @@ import { BookkeepingController } from "../bookkeeping/bookkeeping.controller";
 import { BookkeepingService } from "../bookkeeping/bookkeeping.service";
 import { ImportController } from "../import/import.controller";
 import { ImportService } from "../import/import.service";
+import { ProductImportJobService } from "../import/product-import-job.service";
 import { listenOnLoopback } from "../common/testing/listen-loopback";
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -147,6 +149,7 @@ describe("POST /products/:id/images", () => {
   beforeAll(async () => {
     app = await bootstrap(ProductsController, [
       { provide: ProductsExportService, useValue: {} },
+      { provide: ProductOpenOrdersService, useValue: {} },
       {
         provide: ProductsService,
         useValue: {
@@ -549,7 +552,10 @@ describe("POST /import/* (7 spreadsheet routes)", () => {
         return Promise.resolve({ ok: true });
       };
     }
-    app = await bootstrap(ImportController, [{ provide: ImportService, useValue }]);
+    app = await bootstrap(ImportController, [
+      { provide: ImportService, useValue },
+      { provide: ProductImportJobService, useValue: { status: jest.fn() } },
+    ]);
   });
 
   afterAll(async () => await app.close());

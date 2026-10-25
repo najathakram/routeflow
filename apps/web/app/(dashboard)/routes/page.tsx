@@ -215,7 +215,7 @@ function DispatchModal({
     <Modal
       open={open}
       onClose={onClose}
-      title="Dispatch Route Run"
+      title="Dispatch route run"
       footer={
         <>
           <Button variant="secondary" onClick={onClose} disabled={createRun.isPending}>
@@ -289,7 +289,7 @@ function DispatchModal({
           />
         </div>
         <div>
-          <label className="mb-1 block text-sm font-medium text-navy">Departure Time</label>
+          <label className="mb-1 block text-sm font-medium text-navy">Departure time</label>
           <input
             type="time"
             value={startTime}
@@ -350,7 +350,7 @@ function useTemplateColumns(
         : []),
       {
         accessorKey: "name",
-        header: "Route Name",
+        header: "Route name",
         cell: ({ row }) => <span className="font-medium text-navy">{row.original.name}</span>,
       },
       {
@@ -524,7 +524,7 @@ export default function RoutesPage() {
         title="Cancel this run?"
         description={
           cancellingRun
-            ? `Cancel the run for ${cancellingRun.route?.name ?? "this route"}? The run will be marked CANCELLED and the route can be dispatched again.`
+            ? `Cancel the run for ${cancellingRun.route?.name ?? "this route"}? The run will be marked cancelled and the route can be dispatched again.`
             : ""
         }
         footer={
@@ -564,14 +564,14 @@ export default function RoutesPage() {
             >
               {selectMode ? "Cancel" : "Select"}
             </Button>
-            <Button onClick={() => router.push("/routes/create")}>New Route</Button>
+            <Button onClick={() => router.push("/routes/create")}>New route</Button>
           </div>
         }
       />
 
       {/* ── Active route runs (SCHEDULED + IN_PROGRESS, any date) ── */}
       <section className="space-y-3">
-        <h2 className="text-sm font-semibold text-navy">Active Runs</h2>
+        <h2 className="text-sm font-semibold text-navy">Active runs</h2>
         {runsLoading ? (
           <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-4">
             {[1, 2, 3].map((i) => (
@@ -612,13 +612,13 @@ export default function RoutesPage() {
               })();
               const startTime = run.startedAt
                 ? new Date(run.startedAt).toLocaleTimeString([], {
-                    hour: "2-digit",
+                    hour: "numeric",
                     minute: "2-digit",
                   })
                 : null;
               const endTime = run.completedAt
                 ? new Date(run.completedAt).toLocaleTimeString([], {
-                    hour: "2-digit",
+                    hour: "numeric",
                     minute: "2-digit",
                   })
                 : null;
@@ -680,7 +680,7 @@ export default function RoutesPage() {
       {/* ── Route templates ── */}
       <section className="space-y-3">
         <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-navy">Route Templates</h2>
+          <h2 className="text-sm font-semibold text-navy">Route templates</h2>
           {selectMode && routeTemplates.length > 0 && (
             <label className="flex items-center gap-2 cursor-pointer select-none">
               <input

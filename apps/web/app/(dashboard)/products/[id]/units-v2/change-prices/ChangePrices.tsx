@@ -4,7 +4,7 @@ import * as React from "react";
 import { usePricesV2Enabled } from "@/lib/api/units-v2";
 import { UNITS_V2_TESTIDS } from "../../units-v2-testids";
 import { useEscapeCloses } from "../confirm/useEscapeCloses";
-import { ChangePricesPanel } from "./ChangePricesPanel";
+import { ChangePricesPanel, type PanelMemory } from "./ChangePricesPanel";
 
 /**
  * State for "Change prices": the opener button lives in K3's Edit row (V08), the panel below it. `close` returns
@@ -47,11 +47,23 @@ export function ChangePrices({
       setToSave(0);
     }
   }, [toSave, idSuffix]);
+  // K12 F04: Cancel and Escape keep the typed amount for the next open; Apply (the change is staged) starts clean.
+  const memory = React.useRef<PanelMemory | null>(null);
+  const remember = React.useCallback((m: PanelMemory) => {
+    memory.current = m;
+  }, []);
   const applied = () => {
+    memory.current = null;
     onClose();
     setToSave(1);
   };
   return open ? (
-    <ChangePricesPanel onClose={onClose} onApplied={applied} idSuffix={idSuffix} />
+    <ChangePricesPanel
+      onClose={onClose}
+      onApplied={applied}
+      idSuffix={idSuffix}
+      memory={memory.current}
+      onRemember={remember}
+    />
   ) : null;
 }

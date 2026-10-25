@@ -8,7 +8,11 @@
  */
 import * as React from "react";
 import { fireEvent, renderWithProviders, screen } from "@/test-utils/render";
-import { EditableLineItems, buildItemUpdates, type EditItemState } from "./page";
+import {
+  EditableLineItems,
+  buildItemUpdates,
+  type EditItemState,
+} from "./_components/order-line-edit";
 
 let mockEnabled = true;
 let mockUnits: Array<Record<string, unknown>> = [];

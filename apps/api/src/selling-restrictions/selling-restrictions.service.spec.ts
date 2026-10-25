@@ -72,6 +72,14 @@ describe("SellingRestrictionsService.evaluate", () => {
     ...over,
   });
 
+  /** The rule-loading query (the one with targets), not the one-row "is there any rule" probe before it. */
+  const rulesQuery = () =>
+    prisma.sellingRestriction.findMany.mock.calls
+      .map((c: unknown[]) => c[0] as any)
+      .find((a: any) => a?.select?.targets);
+  /** A tenant that has set at least one rule (the evaluation proceeds past the no-rule fast path). */
+  const someRule = () => prisma.sellingRestriction.findMany.mockResolvedValue([dbRule()]);
+
   const withAddresses = (addresses: unknown[]) =>
     prisma.customer.findFirst.mockResolvedValue({ addresses });
 
@@ -133,6 +141,20 @@ describe("SellingRestrictionsService.evaluate", () => {
     expect(prisma.sellingRestriction.findMany).not.toHaveBeenCalled();
   });
 
+  it("row 510: with the owner's switch ON, a tenant with NO active rule is ALLOW after one probe for STAFF too, with no product read", async () => {
+    enable(true);
+    prisma.sellingRestriction.findMany.mockResolvedValue([]);
+    const res = await service.evaluate(T, "c1", [{ productId: "p1" }], {
+      fulfilmentKind: "DELIVERY",
+      at: NOW,
+      channel: "STAFF",
+    });
+    expect(res).toEqual({ outcome: "ALLOW", reasons: [] });
+    expect(prisma.sellingRestriction.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.product.findMany).not.toHaveBeenCalled();
+    expect(prisma.customer.findFirst).not.toHaveBeenCalled();
+  });
+
   it("PORTAL: the switch is staff-channel only — switch off, a live FEDERAL rule still BLOCKs the portal", async () => {
     enable(false);
     withProduct();
@@ -154,6 +176,7 @@ describe("SellingRestrictionsService.evaluate", () => {
       dbRule({ jurisdiction: "FEDERAL", states: [] }),
     ]);
     const res = await service.evaluate(T, "c1", [{ productId: "p1" }], {
+      channel: "BUYER_PORTAL",
       fulfilmentKind: "DELIVERY",
       at: NOW,
     });
@@ -234,7 +257,9 @@ describe("SellingRestrictionsService.evaluate", () => {
 
   it("ALLOW: enabled, no lines → ALLOW without touching the catalog", async () => {
     enable(true);
-    expect(await service.evaluate(T, "c1", [])).toEqual({ outcome: "ALLOW", reasons: [] });
+    expect(
+      await service.evaluate(T, "c1", [], { channel: "BUYER_PORTAL", fulfilmentKind: "DELIVERY" }),
+    ).toEqual({ outcome: "ALLOW", reasons: [] });
     expect(prisma.product.findMany).not.toHaveBeenCalled();
   });
 
@@ -242,6 +267,7 @@ describe("SellingRestrictionsService.evaluate", () => {
     enable(true);
     withProduct();
     const res = await service.evaluate(T, "c1", [{ productId: "p1" }], {
+      channel: "BUYER_PORTAL",
       fulfilmentKind: "DELIVERY",
       at: NOW,
     });
@@ -257,6 +283,7 @@ describe("SellingRestrictionsService.evaluate", () => {
       { isDefault: true, addressType: "BILLING", stateCode: "TX", stateNeedsReview: false },
     ]);
     const res = await service.evaluate(T, "c1", [{ productId: "p1" }, { productId: "p1" }], {
+      channel: "BUYER_PORTAL",
       fulfilmentKind: "DELIVERY",
       at: NOW,
     });
@@ -272,6 +299,7 @@ describe("SellingRestrictionsService.evaluate", () => {
       dbRule({ jurisdiction: "FEDERAL", states: [] }),
     ]);
     const res = await service.evaluate(T, null, [{ productId: "p1" }], {
+      channel: "BUYER_PORTAL",
       fulfilmentKind: "DELIVERY",
       at: NOW,
     });
@@ -287,6 +315,7 @@ describe("SellingRestrictionsService.evaluate", () => {
     expect(
       (
         await service.evaluate(T, "c1", [{ productId: "p1" }], {
+          channel: "BUYER_PORTAL",
           fulfilmentKind: "DELIVERY",
           at: NOW,
         })
@@ -301,6 +330,7 @@ describe("SellingRestrictionsService.evaluate", () => {
     expect(
       (
         await service.evaluate(T, null, [{ productId: "p1" }], {
+          channel: "BUYER_PORTAL",
           fulfilmentKind: "DELIVERY",
           at: NOW,
         })
@@ -420,6 +450,7 @@ describe("SellingRestrictionsService.evaluate", () => {
     expect(
       (
         await service.evaluate(T, "c1", [{ productId: "p1" }], {
+          channel: "BUYER_PORTAL",
           fulfilmentKind: "DELIVERY",
           at: NOW,
         })
@@ -429,6 +460,7 @@ describe("SellingRestrictionsService.evaluate", () => {
 
   it("variant opt-out: a variant that excludes its parent's label is not blocked by the label rule", async () => {
     enable(true);
+    someRule(); // the tenant has a rule (the label rule), so the evaluation proceeds past the probe
     prisma.product.findMany
       .mockResolvedValueOnce([
         {
@@ -452,6 +484,7 @@ describe("SellingRestrictionsService.evaluate", () => {
       { isDefault: true, addressType: "BILLING", stateCode: "TX", stateNeedsReview: false },
     ]);
     const res = await service.evaluate(T, "c1", [{ productId: "v1" }], {
+      channel: "BUYER_PORTAL",
       fulfilmentKind: "DELIVERY",
       at: NOW,
     });
@@ -459,7 +492,7 @@ describe("SellingRestrictionsService.evaluate", () => {
     // no label survives the opt-out, so no category-scoped rule query is even built; the
     // product-scoped prefilter covers the variant AND its parent (lineage)
     // row 509: the same scope OR, once on the legacy columns and once on the rule's target rows
-    expect(prisma.sellingRestriction.findMany.mock.calls[0][0].where.OR).toEqual([
+    expect(rulesQuery().where.OR).toEqual([
       { productId: { in: ["v1", "p1"] } },
       {
         targets: {
@@ -497,6 +530,7 @@ describe("SellingRestrictionsService.evaluate", () => {
     expect(
       (
         await service.evaluate(T, "c1", [{ productId: "v1" }], {
+          channel: "BUYER_PORTAL",
           fulfilmentKind: "DELIVERY",
           at: NOW,
         })
@@ -509,13 +543,18 @@ describe("SellingRestrictionsService.evaluate", () => {
     withProduct();
     prisma.sellingRestriction.findMany.mockResolvedValue([dbRule()]);
     withAddresses([]);
-    await service.evaluate(T, "c1", [{ productId: "p1" }], { fulfilmentKind: "DELIVERY", at: NOW });
+    await service.evaluate(T, "c1", [{ productId: "p1" }], {
+      channel: "BUYER_PORTAL",
+      fulfilmentKind: "DELIVERY",
+      at: NOW,
+    });
     expect(prisma.systemConfig.findMany.mock.calls[0][0].where).toEqual({
       tenantId: T,
       key: { in: [ENABLED, GOVERNING] },
     });
     expect(prisma.product.findMany.mock.calls[0][0].where.tenantId).toBe(T);
-    expect(prisma.sellingRestriction.findMany.mock.calls[0][0].where.tenantId).toBe(T);
+    expect(prisma.sellingRestriction.findMany.mock.calls[0][0].where.tenantId).toBe(T); // the probe
+    expect(rulesQuery().where.tenantId).toBe(T);
     expect(prisma.customer.findFirst.mock.calls[0][0].where).toEqual({ id: "c1", tenantId: T });
     expect(prisma.productCategory.findMany.mock.calls[0][0].where.tenantId).toBe(T);
   });
@@ -524,7 +563,11 @@ describe("SellingRestrictionsService.evaluate", () => {
     enable(true);
     withProduct();
     prisma.sellingRestriction.findMany.mockResolvedValue([dbRule()]);
-    await service.evaluate(T, "c1", [{ productId: "p1" }], { fulfilmentKind: "DELIVERY", at: NOW });
+    await service.evaluate(T, "c1", [{ productId: "p1" }], {
+      channel: "BUYER_PORTAL",
+      fulfilmentKind: "DELIVERY",
+      at: NOW,
+    });
     for (const model of [
       "systemConfig",
       "product",
@@ -551,6 +594,7 @@ describe("SellingRestrictionsService.evaluate", () => {
       dbRule({ categoryId: null, productId: "p1", jurisdiction: "FEDERAL", states: [] }),
     ]);
     const res = await service.evaluate(T, "c1", [{ productId: "v1" }], {
+      channel: "BUYER_PORTAL",
       fulfilmentKind: "DELIVERY",
       at: NOW,
     });
@@ -560,8 +604,10 @@ describe("SellingRestrictionsService.evaluate", () => {
 
   it("REGRESSION (review #6): a product id not found in this tenant is INDETERMINATE, not ALLOW", async () => {
     enable(true);
+    someRule(); // a tenant with no rule at all never reaches the label read (row 510, Q6)
     prisma.product.findMany.mockResolvedValue([]);
     const res = await service.evaluate(T, "c1", [{ productId: "ghost" }], {
+      channel: "BUYER_PORTAL",
       fulfilmentKind: "DELIVERY",
       at: NOW,
     });
@@ -571,6 +617,7 @@ describe("SellingRestrictionsService.evaluate", () => {
 
   it("REGRESSION (review #8): an ancestor chain that cannot be fully loaded fails closed", async () => {
     enable(true);
+    someRule();
     // v1's parent p1 is never returned (missing / another tenant's / beyond the depth cap)
     prisma.product.findMany
       .mockResolvedValueOnce([
@@ -578,6 +625,7 @@ describe("SellingRestrictionsService.evaluate", () => {
       ])
       .mockResolvedValue([]);
     const res = await service.evaluate(T, "c1", [{ productId: "v1" }], {
+      channel: "BUYER_PORTAL",
       fulfilmentKind: "DELIVERY",
       at: NOW,
     });
@@ -587,11 +635,13 @@ describe("SellingRestrictionsService.evaluate", () => {
 
   it("a parent cycle terminates and fails closed", async () => {
     enable(true);
+    someRule();
     prisma.product.findMany
       .mockResolvedValueOnce([{ id: "a", name: "A", parentProductId: "b", categoryLabels: [] }])
       .mockResolvedValueOnce([{ id: "b", name: "B", parentProductId: "a", categoryLabels: [] }])
       .mockResolvedValue([]);
     const res = await service.evaluate(T, "c1", [{ productId: "a" }], {
+      channel: "BUYER_PORTAL",
       fulfilmentKind: "DELIVERY",
       at: NOW,
     });
@@ -606,6 +656,7 @@ describe("SellingRestrictionsService.evaluate", () => {
     expect(
       (
         await service.evaluate(T, "someone-elses", [{ productId: "p1" }], {
+          channel: "BUYER_PORTAL",
           fulfilmentKind: "DELIVERY",
           at: NOW,
         })
@@ -615,9 +666,12 @@ describe("SellingRestrictionsService.evaluate", () => {
 
   it("REGRESSION (review #9): refuses to evaluate for a tenant other than the ambient one", async () => {
     mockAmbient("tenant-2");
-    await expect(service.evaluate(T, "c1", [{ productId: "p1" }])).rejects.toThrow(
-      InternalServerErrorException,
-    );
+    await expect(
+      service.evaluate(T, "c1", [{ productId: "p1" }], {
+        channel: "BUYER_PORTAL",
+        fulfilmentKind: "DELIVERY",
+      }),
+    ).rejects.toThrow(InternalServerErrorException);
     expect(prisma.systemConfig.findMany).not.toHaveBeenCalled();
   });
 
@@ -669,7 +723,12 @@ describe("SellingRestrictionsService.evaluate", () => {
 
     it("a DB error propagates — an unreadable switch is never silently OFF", async () => {
       prisma.systemConfig.findMany.mockRejectedValue(new Error("db down"));
-      await expect(service.evaluate(T, "c1", [{ productId: "p1" }])).rejects.toThrow("db down");
+      await expect(
+        service.evaluate(T, "c1", [{ productId: "p1" }], {
+          fulfilmentKind: "DELIVERY",
+          channel: "STAFF",
+        }),
+      ).rejects.toThrow("db down");
     });
   });
 
@@ -740,6 +799,7 @@ describe("SellingRestrictionsService.evaluate", () => {
       }),
     ]);
     const res = await service.evaluate(T, "c1", [{ productId: "v1" }], {
+      channel: "BUYER_PORTAL",
       fulfilmentKind: "DELIVERY",
       at: NOW,
     });
@@ -775,6 +835,7 @@ describe("SellingRestrictionsService.evaluate", () => {
     expect(
       (
         await service.evaluate(T, "c1", [{ productId: "v1" }], {
+          channel: "BUYER_PORTAL",
           fulfilmentKind: "DELIVERY",
           at: NOW,
         })
@@ -795,6 +856,7 @@ describe("SellingRestrictionsService.evaluate", () => {
       dbRule({ id: "r-vape", categoryId: "cat-vape" }),
     ]);
     const res = await service.evaluate(T, "c1", [{ productId: "v1" }], {
+      channel: "BUYER_PORTAL",
       fulfilmentKind: "DELIVERY",
       at: NOW,
     });
@@ -811,6 +873,7 @@ describe("SellingRestrictionsService.evaluate", () => {
         dbRule({ id: "typo", states: ["Tex"] }),
       ]);
       const res = await service.evaluate(T, "c1", [{ productId: "p1" }], {
+        channel: "BUYER_PORTAL",
         fulfilmentKind: "DELIVERY",
         at: NOW,
       });
@@ -847,6 +910,7 @@ describe("SellingRestrictionsService.evaluate", () => {
         dbRule({ jurisdiction: "FEDERAL", states: [] }),
       ]);
       return service.evaluate(T, "c1", [{ productId: "v1" }], {
+        channel: "BUYER_PORTAL",
         fulfilmentKind: "DELIVERY",
         at: NOW,
       });
@@ -880,6 +944,7 @@ describe("SellingRestrictionsService.evaluate", () => {
         dbRule({ id: "typo", states: ["Tex"] }),
       ]);
       const res = await service.evaluate(T, "c1", [{ productId: "p1" }], {
+        channel: "BUYER_PORTAL",
         fulfilmentKind: "DELIVERY",
         at: NOW,
       });
@@ -897,14 +962,13 @@ describe("SellingRestrictionsService.evaluate", () => {
     it("asks the DB for a total order (effectiveFrom desc, id asc)", async () => {
       enable(true);
       withProduct();
+      someRule();
       await service.evaluate(T, "c1", [{ productId: "p1" }], {
+        channel: "BUYER_PORTAL",
         fulfilmentKind: "DELIVERY",
         at: NOW,
       });
-      expect(prisma.sellingRestriction.findMany.mock.calls[0][0].orderBy).toEqual([
-        { effectiveFrom: "desc" },
-        { id: "asc" },
-      ]);
+      expect(rulesQuery().orderBy).toEqual([{ effectiveFrom: "desc" }, { id: "asc" }]);
     });
 
     it("cites the same rule whatever order the DB returns the rows in (tie on effectiveFrom broken by id)", async () => {
@@ -925,6 +989,7 @@ describe("SellingRestrictionsService.evaluate", () => {
       for (const order of orders) {
         prisma.sellingRestriction.findMany.mockResolvedValue(order);
         const res = await service.evaluate(T, null, [{ productId: "p1" }], {
+          channel: "BUYER_PORTAL",
           fulfilmentKind: "DELIVERY",
           at: NOW,
         });
@@ -938,11 +1003,13 @@ describe("SellingRestrictionsService.evaluate", () => {
     it("ANDs activeRuleWhere(at) with the tenant/scope OR", async () => {
       enable(true);
       withProduct();
+      someRule();
       await service.evaluate(T, "c1", [{ productId: "p1" }], {
+        channel: "BUYER_PORTAL",
         fulfilmentKind: "DELIVERY",
         at: NOW,
       });
-      const where = prisma.sellingRestriction.findMany.mock.calls[0][0].where;
+      const where = rulesQuery().where;
       expect(where.tenantId).toBe(T);
       const scope = [{ productId: { in: ["p1"] } }, { categoryId: { in: ["cat-thc"] } }];
       const activeTarget = {
@@ -963,6 +1030,7 @@ describe("SellingRestrictionsService.evaluate", () => {
         dbRule({ jurisdiction: "FEDERAL", states: [], liftedAt: new Date("2026-09-01T00:00:00Z") }),
       ]);
       const res = await service.evaluate(T, null, [{ productId: "p1" }], {
+        channel: "BUYER_PORTAL",
         fulfilmentKind: "DELIVERY",
         at: NOW,
       });
@@ -993,8 +1061,10 @@ describe("SellingRestrictionsService.evaluate", () => {
       "an unknown product %s: generic productName, message without the id, productId keeps it",
       async (id) => {
         enable(true);
+        someRule();
         prisma.product.findMany.mockResolvedValue([]);
         const res = await service.evaluate(T, "c1", [{ productId: id }], {
+          channel: "BUYER_PORTAL",
           fulfilmentKind: "DELIVERY",
           at: NOW,
         });
@@ -1012,12 +1082,14 @@ describe("SellingRestrictionsService.evaluate", () => {
   describe("round 1 (Opus): a KNOWN name survives when only an ancestor is missing", () => {
     it("a variant whose parent is gone reports the variant's own name (no id) so the operator can find the line", async () => {
       enable(true);
+      someRule();
       prisma.product.findMany
         .mockResolvedValueOnce([
           { id: "v-uuid-1", name: "Bourbon 750ml", parentProductId: "gone", categoryLabels: [] },
         ])
         .mockResolvedValue([]);
       const res = await service.evaluate(T, "c1", [{ productId: "v-uuid-1" }], {
+        channel: "BUYER_PORTAL",
         fulfilmentKind: "DELIVERY",
         at: NOW,
       });
@@ -1502,6 +1574,7 @@ describe("SellingRestrictionsService.evaluate", () => {
       prisma.sellingRestriction.findMany.mockResolvedValue([dbRule()]);
       withAddresses([addr({ stateCode: null })]); // state not backfilled yet
       const res = await service.evaluate(T, "c1", [{ productId: "p1" }], {
+        channel: "BUYER_PORTAL",
         fulfilmentKind: "DELIVERY",
         at: NOW,
       });
@@ -1520,6 +1593,8 @@ describe("SellingRestrictionsService.evaluate", () => {
         productId: string;
         qtyDelta?: number;
       };
+    /** The no-op staff-write decision: nothing to stamp or carry, nothing breached. */
+    const NO_OVERRIDE = { stamps: [], carried: [], active: false, warningHash: null };
     const args = (lines: Array<{ productId: string; qtyDelta?: number }>, over = {}) => ({
       tenantId: T,
       customerId: "c1",
@@ -1549,7 +1624,7 @@ describe("SellingRestrictionsService.evaluate", () => {
         outcome: "ALLOW",
         reasons: [],
       });
-      await expect(service.assertLinesSellable(args(lines))).resolves.toBeUndefined();
+      await expect(service.assertLinesSellable(args(lines))).resolves.toMatchObject(NO_OVERRIDE);
       expectNoReads();
     });
 
@@ -1567,7 +1642,7 @@ describe("SellingRestrictionsService.evaluate", () => {
       ]);
       await expect(
         service.assertLinesSellable(args([line("p1", -5), line("p1", 0)])),
-      ).resolves.toBeUndefined();
+      ).resolves.toMatchObject(NO_OVERRIDE);
       expectNoReads();
     });
 
@@ -1814,7 +1889,9 @@ describe("SellingRestrictionsService.evaluate", () => {
       withProduct();
       const evaluation = await service.checkLinesSellable(args([line("p1")]));
       expect(evaluation).toEqual({ outcome: "ALLOW", reasons: [] });
-      await expect(service.assertLinesSellable(args([line("p1")]))).resolves.toBeUndefined();
+      await expect(service.assertLinesSellable(args([line("p1")]))).resolves.toMatchObject(
+        NO_OVERRIDE,
+      );
     });
 
     it("OFF resolves — and stays reachable: a checkable line still reaches the policy read", async () => {
@@ -1823,7 +1900,10 @@ describe("SellingRestrictionsService.evaluate", () => {
         outcome: "OFF",
         reasons: [],
       });
-      await expect(service.assertLinesSellable(args([line("p1", 4)]))).resolves.toBeUndefined();
+      await expect(service.assertLinesSellable(args([line("p1", 4)]))).resolves.toMatchObject({
+        ...NO_OVERRIDE,
+        off: true,
+      });
       expect(prisma.sellingRestriction.findMany).not.toHaveBeenCalled(); // OFF evaluates nothing else
     });
 
@@ -1918,7 +1998,7 @@ describe("SellingRestrictionsService.evaluate", () => {
         [line("p1", -12), line("p1", 12)],
         [line("p1", -12), line("p1", 5)],
       ]) {
-        await expect(service.assertLinesSellable(args(lines))).resolves.toBeUndefined();
+        await expect(service.assertLinesSellable(args(lines))).resolves.toMatchObject(NO_OVERRIDE);
       }
       expectNoReads();
     });

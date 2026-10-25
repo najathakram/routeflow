@@ -1,4 +1,4 @@
-import { IsOptional, ValidateNested, registerDecorator } from "class-validator";
+import { IsBoolean, IsOptional, ValidateNested, registerDecorator } from "class-validator";
 import { Transform, Type } from "class-transformer";
 import { REGISTER_KEY_PATTERN } from "@routeflow/pricing";
 import { CounterSalePaymentDto } from "./counter-sale.dto";
@@ -33,4 +33,9 @@ export class PickupCompleteDto {
   @IsOptional()
   @IsRegisterKey()
   registerKey?: string;
+
+  /** I-120 R8 (owner 7a Q1 = A): the operator confirmed taking an order on a driver's run off the run. */
+  @IsOptional()
+  @IsBoolean()
+  takeOffRun?: boolean;
 }

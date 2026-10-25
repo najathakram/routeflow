@@ -70,7 +70,10 @@ describe("updateOrderItems — a DRAFT order with a live linked invoice is judge
     );
     await expect(edit()).rejects.toMatchObject({ response: { code: "SELLING_RESTRICTED" } });
     expect(h.restrictions.assertLinesSellable).toHaveBeenCalledWith(
-      expect.objectContaining({ channel: "STAFF", lines: [{ productId: "prod-x" }] }),
+      expect.objectContaining({
+        channel: "STAFF",
+        lines: [expect.objectContaining({ productId: "prod-x" })], // row 510: a staff line also has a lineKey
+      }),
     );
     expect(h.prisma.tenantTransaction).not.toHaveBeenCalled();
     expect(h.prisma.orderItem.create).not.toHaveBeenCalled();

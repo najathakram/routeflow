@@ -10,6 +10,8 @@ import {
 } from "@/lib/api/payment-requests";
 import { useToast, EmptyState, Button, Badge, Modal, Textarea } from "@routeflow/ui/web";
 import { dayClosedCopy } from "@/lib/day-closed-copy";
+import { useAuth } from "@/lib/auth-context";
+import { toastDuplicatePaymentRef } from "@/lib/duplicate-payment-ref";
 import { fmt, fmtCalendarDate, fmtDate } from "@/lib/formatting";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -55,7 +57,7 @@ function AllocationPreview({ lines }: { lines: PaymentRequest["allocationPreview
     );
   }
   return (
-    <div className="overflow-hidden rounded-lg border border-surface-border bg-white">
+    <div className="overflow-x-auto rounded-lg border border-surface-border bg-white">
       <table className="w-full text-sm">
         <thead className="bg-surface-raised text-xs font-medium text-navy/70">
           <tr>
@@ -159,9 +161,10 @@ function RequestRow({
 export default function PaymentRequestsPage() {
   const { setTitle } = usePageTitle();
   React.useEffect(() => {
-    setTitle("Payment Requests");
+    setTitle("Payment requests");
   }, [setTitle]);
   const { toast } = useToast();
+  const { user } = useAuth();
 
   const [status, setStatus] = React.useState("PENDING");
   const { data, isLoading, isError, refetch, isRefetching } = usePaymentRequests(
@@ -176,10 +179,12 @@ export default function PaymentRequestsPage() {
   const [rejectTarget, setRejectTarget] = React.useState<PaymentRequest | null>(null);
   const [rejectReason, setRejectReason] = React.useState("");
 
-  const handleApprove = async () => {
+  const handleApprove = async (recordAnyway = false) => {
     if (!approveTarget) return;
     try {
-      const res = await approve.mutateAsync(approveTarget.id);
+      const res = await approve.mutateAsync(
+        recordAnyway ? { id: approveTarget.id, recordAnyway: true } : approveTarget.id,
+      );
       toast({
         title: "Payment approved",
         description:
@@ -188,6 +193,8 @@ export default function PaymentRequestsPage() {
       });
       setApproveTarget(null);
     } catch (err: unknown) {
+      // SA-837b item 2: a duplicate reference names the existing payment; the approving staff member may "Record anyway".
+      if (toastDuplicatePaymentRef(err, toast, user?.role, () => void handleApprove(true))) return;
       // A closed-day refusal is fixed copy (the global toast is quiet for it via the hook's meta): this is the one toast.
       toast({
         title: dayClosedCopy(err) ?? extractErrorMessage(err) ?? "Failed to approve payment",
@@ -233,7 +240,7 @@ export default function PaymentRequestsPage() {
             >
               Cancel
             </Button>
-            <Button onClick={handleApprove} loading={approve.isPending}>
+            <Button onClick={() => void handleApprove()} loading={approve.isPending}>
               Approve
             </Button>
           </>
@@ -274,7 +281,7 @@ export default function PaymentRequestsPage() {
 
       {/* Header */}
       <div>
-        <h2 className="text-xl font-semibold text-navy">Payment Requests</h2>
+        <h2 className="text-2xl font-bold text-navy">Payment requests</h2>
         <p className="text-sm text-navy/70">
           Buyer-declared cash payments awaiting approval, plus card payment history.
         </p>

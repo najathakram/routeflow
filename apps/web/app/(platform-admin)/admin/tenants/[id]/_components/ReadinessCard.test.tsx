@@ -210,7 +210,7 @@ describe("ReadinessCard (SA-3, BO-02)", () => {
         expect.stringContaining("Account can sell"),
         expect.stringContaining("Sells at the counter"),
         expect.stringContaining("Has at least one product"),
-        expect.stringContaining("Payment at the till"),
+        expect.stringContaining("Payment at the counter"),
       ]);
     });
   });
@@ -237,7 +237,7 @@ describe("ReadinessCard (SA-3, BO-02)", () => {
     render(<Card tenant={tenant({ counts: { products: 0 } })} />);
     await ready();
     expect(
-      screen.getByText("Payment at the till: cash, card, check and on account all work."),
+      screen.getByText("Payment at the counter: cash, card, check and on account all work."),
     ).toBeInTheDocument();
     expect(screen.getByText("Nothing to set up.")).toBeInTheDocument();
   });
@@ -279,11 +279,11 @@ describe("ReadinessCard (SA-3, BO-02)", () => {
   });
 
   it.each(["READ_ONLY", "SUSPENDED", "CANCELLED", "ACTIVE"])(
-    "T8 pin: %s never links or names Extend Trial",
+    "T8 pin: %s never links or names Extend trial",
     async (status) => {
       render(<Card tenant={tenant({ status })} />);
       await ready();
-      expect(screen.queryByText(/Extend Trial/i)).toBeNull();
+      expect(screen.queryByText(/Extend trial/i)).toBeNull();
       expect(screen.queryByRole("link", { name: /Extend/i })).toBeNull();
     },
   );

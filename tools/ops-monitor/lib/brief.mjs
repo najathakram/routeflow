@@ -6,6 +6,7 @@
 // Item ids appear only in [brackets]; priorities and statuses are plain words (Urgent, Being built).
 import { DONE_STATUSES } from "./schema.mjs";
 import { parseEta } from "./ids.mjs";
+import { deepMasker, maskText } from "./mask.mjs";
 import { laneNow, pickNext } from "./next.mjs";
 
 // Same owner-facing words as snapshot.mjs STATUS_WORDS (not imported: the hooks must load fast).
@@ -32,19 +33,6 @@ const one = (s) =>
     .trim();
 const clip = (s, n) => (s.length > n ? `${s.slice(0, n - 1).trimEnd()}…` : s);
 
-/**
- * Masks every word or phrase in `config.clientNames` (case-insensitive, whole word) as
- * "a live business". Empty / missing / non-string entries -> text unchanged.
- */
-export function maskClientNames(text, config) {
-  const names = (Array.isArray(config?.clientNames) ? config.clientNames : [])
-    .filter((n) => typeof n === "string" && n.trim())
-    .map((n) => n.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
-    .sort((a, b) => b.length - a.length);
-  if (names.length === 0) return text;
-  const re = new RegExp(`(?<![A-Za-z0-9])(?:${names.join("|")})(?![A-Za-z0-9])`, "gi");
-  return text.replace(re, "a live business");
-}
 const isDone = (it) => DONE_STATUSES.includes(it.status);
 const plural = (n, one_, many) => `${n} ${n === 1 ? one_ : many}`;
 
@@ -99,15 +87,27 @@ const hurtWords = (it) =>
 
 // ── sections ────────────────────────────────────────────────────────────────
 
-function hurtingNow(state) {
-  const rows = [...state.items.values()]
-    .filter(
-      (it) =>
-        !isDone(it) &&
-        !["release", "epic", "decision"].includes(it.type) &&
-        (it.priority === "P0" || it.type === "incident"),
-    )
-    .sort(byPriorityThenId);
+function hurtingNow(state, snapshot) {
+  // Same rule as the page: the snapshot's own problems list wins (an id the fold does not know,
+  // e.g. an incident file, uses the snapshot's own item); else open P0/P1 bug/incident items
+  // whose harm is not latent/none.
+  const ids = Array.isArray(snapshot?.problems) ? snapshot.problems.map(String) : null;
+  const rows = (
+    ids
+      ? ids.map(
+          (id) =>
+            state.items.get(id) ??
+            snapshot.items?.find((i) => i?.id === id) ?? { id, title: id, status: "planned" },
+        )
+      : [...state.items.values()].filter(
+          (it) =>
+            !isDone(it) &&
+            ["bug", "incident"].includes(it.type) &&
+            (it.priority === "P0" || it.priority === "P1") &&
+            it.harm !== "latent" &&
+            it.harm !== "none",
+        )
+  ).sort(byPriorityThenId);
   return {
     total: rows.length,
     lines: rows.slice(0, 5).map((it) => `- ${withId(it)} · ${hurtWords(it)}`),
@@ -124,14 +124,7 @@ function waitingOnOwner(state, snapshot) {
     }));
   } else {
     rows = [...state.items.values()]
-      .filter(
-        (it) =>
-          !isDone(it) &&
-          it.answeredAt === null &&
-          (it.ownerAsk ||
-            it.lane === "owner" ||
-            (it.type === "decision" && /owner/i.test(it.gate ?? ""))),
-      )
+      .filter((it) => !isDone(it) && it.answeredAt === null && it.type === "decision")
       .sort(byPriorityThenId);
   }
   return {
@@ -239,6 +232,19 @@ function driftLines(snapshot, state, now) {
   ];
 }
 
+/** The brief's inputs with every string masked (a copy; no names -> the inputs themselves). */
+function maskInputs(inputs, names) {
+  const deep = deepMasker(names);
+  const { state, snapshot, config } = inputs;
+  const items = new Map();
+  for (const [k, v] of state.items) items.set(k, deep(v));
+  return {
+    state: { ...state, items },
+    snapshot: snapshot ? deep(snapshot) : snapshot,
+    config: config ? deep(config) : config,
+  };
+}
+
 // ── brief ───────────────────────────────────────────────────────────────────
 
 /**
@@ -253,17 +259,21 @@ export function renderBrief(
     now = Date.now(),
     snapshot = null,
     config = null,
+    clientNames = [],
     maxLines = 25,
     short = false,
     utcOffsetMin = 0,
   } = {},
 ) {
+  // Mask every input text BEFORE a line is built, clipped or cut: a client name must never
+  // survive as a fragment. (The final maskText below stays as a belt-and-braces pass.)
+  ({ state, snapshot, config } = maskInputs({ state, snapshot, config }, clientNames));
   const sections = [];
   const add = (key, title, part) => {
     if (part.lines.length === 0) return;
     sections.push({ key, title, total: part.total, lines: part.lines });
   };
-  add("hurting", "Hurting now", hurtingNow(state));
+  add("hurting", "Hurting now", hurtingNow(state, snapshot));
   add("owner", "Waiting on the owner", waitingOnOwner(state, snapshot));
   if (!short) {
     if (lane) add("queue", "Your queue", yourQueue(state, lane, config, now));
@@ -296,7 +306,7 @@ export function renderBrief(
     out.push(`${s.title}${count}:`, ...s.lines);
   }
   out.push(...footer);
-  return maskClientNames(out.slice(0, maxLines).join("\n"), config);
+  return maskText(out.slice(0, maxLines).join("\n"), clientNames);
 }
 
 // Display order (differs from trim priority: shipping reads before the owner's list).
@@ -315,8 +325,11 @@ const ids4 = (ids) =>
 export function renderSince(
   before,
   now,
-  { lane = null, nowMs = Date.now(), utcOffsetMin = 0, config = null } = {},
+  { lane = null, nowMs = Date.now(), utcOffsetMin = 0, config = null, clientNames = [] } = {},
 ) {
+  // Mask the item texts BEFORE any clip (a trainLabel is cut at 40 characters).
+  ({ state: before } = maskInputs({ state: before }, clientNames));
+  ({ state: now } = maskInputs({ state: now }, clientNames));
   const done = [];
   const created = [];
   const blocked = [];
@@ -378,7 +391,7 @@ export function renderSince(
     }).length;
     if (mine > 0) line += ` (${mine} in your lane)`;
   }
-  return maskClientNames(`${line}.`, config);
+  return maskText(`${line}.`, clientNames);
 }
 
 // ── last-seen bookkeeping ───────────────────────────────────────────────────

@@ -483,6 +483,38 @@ describe("CapabilitiesCard: apply", () => {
     expect(mockApply.mock.calls[1]![2]).toBe("9".repeat(64));
   });
 
+  it("row 705: a second plan change after a fresh preview shows the stale notice again", async () => {
+    const notice = "This business changed. Check the preview again.";
+    mockApply
+      .mockRejectedValueOnce(apiError(409, { code: API_ERROR_CODES.PROFILE_PLAN_CHANGED }))
+      .mockRejectedValueOnce(apiError(409, { code: API_ERROR_CODES.PROFILE_PLAN_CHANGED }));
+    await renderCard();
+    fireEvent.click(box(SHIPPING));
+    await waitFor(() => expect(applyButton()).toBeEnabled(), { timeout: 4000 });
+
+    // First change: the notice shows, then goes with the fresh preview.
+    mockPreview.mockResolvedValue(
+      capabilitiesPreview({ changes: ["Fresh plan"], planFingerprint: "9".repeat(64) }),
+    );
+    fireEvent.click(applyButton());
+    expect(await screen.findByText("Fresh plan", {}, { timeout: 4000 })).toBeVisible();
+    expect(screen.queryByText(notice)).toBeNull();
+
+    // Second change: a fresh preview on screen must not hide a new stale warning.
+    const next = deferred<BusinessCapabilitiesPreviewResponse>();
+    mockPreview.mockReturnValue(next.promise);
+    await waitFor(() => expect(applyButton()).toBeEnabled(), { timeout: 4000 });
+    fireEvent.click(applyButton());
+    expect(await screen.findByText(notice, {}, { timeout: 4000 })).toBeVisible();
+    await act(async () => {
+      next.resolve(
+        capabilitiesPreview({ changes: ["Newer plan"], planFingerprint: "8".repeat(64) }),
+      );
+    });
+    expect(await screen.findByText("Newer plan", {}, { timeout: 4000 })).toBeVisible();
+    expect(screen.queryByText(notice)).toBeNull();
+  });
+
   it("another failure is fixed copy, never the server text, and nothing is hidden", async () => {
     mockApply.mockRejectedValueOnce(
       Object.assign(new Error("secret server text"), { response: { status: 500, data: {} } }),

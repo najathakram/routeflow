@@ -7,6 +7,7 @@ import {
   POS_MODE_PREF_KEY,
   pickupCompleteErrorCopy,
   decidePickupResponse,
+  withPickupRecordAnyway,
   pendingRefusalIsDone,
   planPosTender,
   posConfirmStepsAfterPending,
@@ -15,7 +16,6 @@ import {
   posMergeAlert,
   posMayHandOverUnpaid,
   posBalanceDue,
-  posCanSwitchToDelivery,
   posSwitchToDeliveryHint,
   posCartSaveLabel,
   posCutNote,
@@ -27,6 +27,7 @@ import {
   posModePrefPatch,
   posOrderActions,
   posProgressSteps,
+  posStatusBody,
 } from "../lib/pos-mode";
 
 const inv = (status: string, id = "i1") => ({ id, status });
@@ -48,15 +49,17 @@ describe("POS preference", () => {
 
 describe("posOrderActions", () => {
   it("PENDING: only Switch to delivery (Confirm lives in the status bar)", () => {
-    expect(keys(posOrderActions({ invoices: [] }, "PENDING"))).toEqual(["switchToDelivery"]);
+    expect(keys(posOrderActions({ invoices: [], fulfillPathLocked: false }, "PENDING"))).toEqual([
+      "switchToDelivery",
+    ]);
   });
   it("CONFIRMED without an invoice: Create invoice is the one primary, Hand over secondary", () => {
-    const a = posOrderActions({ invoices: [] }, "CONFIRMED");
+    const a = posOrderActions({ invoices: [], fulfillPathLocked: false }, "CONFIRMED");
     expect(keys(a)).toEqual(["createInvoice", "handOver", "readyForPickup", "switchToDelivery"]);
     expect(a.filter((x) => x.tier === "primary").map((x) => x.key)).toEqual(["createInvoice"]);
   });
   it("CONFIRMED with an invoice: Hand over is the one primary; Ready for pickup stays secondary", () => {
-    const a = posOrderActions({ invoices: [inv("DRAFT")] }, "CONFIRMED");
+    const a = posOrderActions({ invoices: [inv("DRAFT")], fulfillPathLocked: false }, "CONFIRMED");
     expect(keys(a)).toEqual(["handOver", "readyForPickup", "switchToDelivery"]);
     expect(a.filter((x) => x.tier === "primary").map((x) => x.key)).toEqual(["handOver"]);
     expect(a.find((x) => x.key === "readyForPickup")?.tier).toBe("secondary");
@@ -85,12 +88,23 @@ describe("posOrderActions", () => {
       expect(keys(posOrderActions({ invoices: [inv("SENT")] }, st))).not.toContain("markDelivered");
     }
   });
-  it("Switch to delivery only while the order is open (mirrors order-lifecycle's blocked set)", () => {
-    expect(posCanSwitchToDelivery("PENDING")).toBe(true);
-    expect(posCanSwitchToDelivery("CONFIRMED")).toBe(true);
-    expect(posCanSwitchToDelivery("OUT_FOR_DELIVERY")).toBe(false);
-    expect(posCanSwitchToDelivery("DELIVERED")).toBe(false);
-    expect(posCanSwitchToDelivery("CANCELLED")).toBe(false);
+  // Row 673 (SA-831b M6): the moves follow the server's `fulfillPathLocked` (the PATCH's own predicate), never the status.
+  const moveKeys = (o: object, st: string) =>
+    keys(posOrderActions({ invoices: [], ...o }, st)).filter(
+      (k) => k === "switchToDelivery" || k === "shipByCarrier",
+    );
+  it("row 673: the server says locked -> no move, whatever the status", () => {
+    expect(moveKeys({ fulfillPathLocked: true }, "CONFIRMED")).toEqual([]);
+    expect(moveKeys({ fulfillPathLocked: true }, "PENDING")).toEqual([]);
+  });
+  it("row 673: the server says open -> the move is offered, whatever the status", () => {
+    expect(moveKeys({ fulfillPathLocked: false }, "OUT_FOR_DELIVERY")).toEqual([
+      "switchToDelivery",
+    ]);
+  });
+  it("row 673: no answer from the server -> no move (fail closed, never a button that always fails)", () => {
+    expect(moveKeys({}, "CONFIRMED")).toEqual([]);
+    expect(moveKeys({ fulfillPathLocked: null }, "PENDING")).toEqual([]);
   });
 });
 
@@ -207,6 +221,9 @@ describe("hand-over tender and fixed error copy", () => {
     expect(pickupCompleteErrorCopy(e("COUNTER_TENDER_SHORT"))).toBe(
       "A walk-in customer must pay the full balance.",
     );
+    expect(pickupCompleteErrorCopy(e("COUNTER_CHECK_POSTDATED"))).toBe(
+      "Post-dated check: put this sale on account and record the check when it clears.",
+    );
     const generic = pickupCompleteErrorCopy(e("SOMETHING_ELSE"));
     expect(generic).toMatch(/Couldn't complete the pickup/);
     expect(generic).not.toMatch(/SERVER TEXT/);
@@ -290,6 +307,44 @@ describe("pickup-complete 200 response decision (money)", () => {
     expect((d as { message: string }).message).toBe(
       "A walk-in customer must pay the full balance.",
     );
+  });
+  describe("SA-837b: a duplicate payment reference on the hand-over", () => {
+    const dup = {
+      paymentRecorded: false,
+      paymentErrorCode: "COUNTER_PAYMENT_NOT_RECORDED",
+      paymentCauseCode: "DUPLICATE_PAYMENT_REF",
+      existingPayment: {
+        id: "pay-1",
+        paymentNumber: "PAY-A-0001",
+        paidAt: "2026-10-01T12:00:00.000Z",
+        amount: 40,
+        invoiceId: "inv-9",
+        invoiceNumber: "INV-0042",
+      },
+    };
+    const SENTENCE =
+      "A payment with this reference was already recorded on Oct 1, 2026 for $40.00 (INV-0042).";
+    it("returns to the tender step with the SAME key, the shared sentence, and Record anyway for staff", () => {
+      expect(decidePickupResponse(res(dup), "OPERATOR")).toMatchObject({
+        kind: "duplicate-ref",
+        releaseKey: false,
+        owed: 40,
+        message: SENTENCE,
+        recordAnywayLabel: "Record anyway",
+      });
+    });
+    it("a role that may not use the flag gets the sentence and no action", () => {
+      expect(decidePickupResponse(res(dup), "DRIVER")).toMatchObject({
+        kind: "duplicate-ref",
+        message: SENTENCE,
+        recordAnywayLabel: null,
+      });
+    });
+    it("the resend body is the same hand-over with payment.recordAnyway", () => {
+      expect(
+        withPickupRecordAnyway({ payment: { method: "CARD", amount: 40, reference: "4242" } }),
+      ).toEqual({ payment: { method: "CARD", amount: 40, reference: "4242", recordAnyway: true } });
+    });
   });
   it("any other unrecorded payment is done (hand-over committed) but says so, and releases the key", () => {
     const d = decidePickupResponse(res({ paymentRecorded: false, paymentErrorCode: "SOMETHING" }));
@@ -442,11 +497,80 @@ describe("misc money-safety", () => {
   });
 });
 
+describe("posStatusBody (row 510)", () => {
+  const ack = {
+    restrictionOverrides: [{ lineKey: "l:i1", reason: "Owner approved" }],
+    warningHash: "rw1:abc",
+  };
+  it("is the bare status when there is no acknowledgement (a plain finish is unchanged)", () => {
+    expect(posStatusBody("CONFIRMED")).toEqual({ status: "CONFIRMED" });
+    expect(posStatusBody("PENDING", undefined)).toEqual({ status: "PENDING" });
+  });
+  it("carries the overrides and the hash as top-level fields, for each of the two steps", () => {
+    expect(posStatusBody("PENDING", ack)).toEqual({ status: "PENDING", ...ack });
+    expect(posStatusBody("CONFIRMED", ack)).toEqual({ status: "CONFIRMED", ...ack });
+  });
+});
+
 describe("M6 posSwitchToDeliveryHint", () => {
-  it("explains the lock only on a Ready-for-pickup order", () => {
-    expect(posSwitchToDeliveryHint("OUT_FOR_DELIVERY")).toMatch(/back to Confirmed/);
+  it("explains the lock on a Ready-for-pickup order the server has locked", () => {
+    expect(
+      posSwitchToDeliveryHint({ status: "OUT_FOR_DELIVERY", fulfillPathLocked: true }),
+    ).toMatch(/back to Confirmed/);
+  });
+  it("no hint when the server allows the move, or when nothing walks back (delivered / cancelled)", () => {
+    expect(
+      posSwitchToDeliveryHint({ status: "OUT_FOR_DELIVERY", fulfillPathLocked: false }),
+    ).toBeNull();
     for (const s of ["PENDING", "CONFIRMED", "DELIVERED", "CANCELLED"]) {
-      expect(posSwitchToDeliveryHint(s)).toBeNull();
+      expect(posSwitchToDeliveryHint({ status: s, fulfillPathLocked: true })).toBeNull();
     }
+  });
+});
+
+// I-120 (SA-872 cond. 2): the hand-over's credit-over-limit line, the ONE shared sentence (packages/types), appended to
+// what the screen shows for an unrecorded payment. Mirrors web's PickupCompleteDialog.
+describe("pickup-complete: the credit-over-limit line (I-120)", () => {
+  const res = (over: Record<string, unknown>) =>
+    ({
+      orderId: "o",
+      orderNumber: "1",
+      invoiceId: "i",
+      invoiceNumber: "I-1",
+      total: 25,
+      paid: 0,
+      balanceDue: 25,
+      paymentRecorded: false,
+      paymentErrorCode: "COUNTER_PAYMENT_NOT_RECORDED",
+      creditOverLimit: { limit: 20, exposure: 25 },
+      ...over,
+    }) as never;
+  const SENTENCE =
+    "Until this payment is recorded, Acme Co is over their credit limit ($25.00 of $20.00).";
+
+  it("an unrecorded netted tender: the one sentence follows the not-recorded message", () => {
+    const d = decidePickupResponse(res({}), "OPERATOR", "Acme Co");
+    expect(d.kind).toBe("done");
+    expect((d as { message: string }).message).toBe(
+      `Handed over, but the payment wasn't recorded. Record it on the invoice. ${SENTENCE}`,
+    );
+  });
+
+  it("no name: 'the customer'", () => {
+    const d = decidePickupResponse(res({}), "OPERATOR");
+    expect((d as { message: string }).message).toContain(
+      "Until this payment is recorded, the customer is over their credit limit",
+    );
+  });
+
+  it("nothing without the field, and nothing once the payment is recorded", () => {
+    const none = decidePickupResponse(res({ creditOverLimit: undefined }), "OPERATOR", "Acme Co");
+    expect((none as { message: string }).message).not.toContain("credit limit");
+    const paid = decidePickupResponse(
+      res({ paymentRecorded: true, paid: 25, balanceDue: 0 }),
+      "OPERATOR",
+      "Acme Co",
+    );
+    expect((paid as { message: string }).message).toBe("Handed over");
   });
 });

@@ -76,11 +76,11 @@ function VerifyMergeContent() {
   // exactly as the old page's own per-state heading did (MED-1).
   const title =
     status === "success"
-      ? "Account Verified!"
+      ? "Account verified"
       : status === "error"
-        ? "Verification Failed"
+        ? "Verification failed"
         : status === "loading"
-          ? "Verifying..."
+          ? "Verifying…"
           : "Confirm account merge";
 
   return (
@@ -136,8 +136,8 @@ function VerifyMergeContent() {
             </div>
             <p className="mt-2 text-sm text-navy/70">{message}</p>
             <p className="mt-4 text-xs text-navy/70">
-              If your verification link expired, please log in and submit a new merge request from
-              Account Settings.
+              If your verification link expired, please sign in and submit a new merge request from
+              Account settings.
             </p>
             <Link
               href="/buyer/login"

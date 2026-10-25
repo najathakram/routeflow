@@ -8,6 +8,7 @@ import { Button, Modal } from "@routeflow/ui/web";
 import type { ParkedCartListItem } from "@routeflow/pricing";
 import { apiClient } from "@/lib/api-client";
 import { cartTotals } from "@/lib/counter-sale";
+import { itemNamesLine } from "@/lib/counter-item-names";
 import { formatMoney } from "@/lib/format";
 import {
   PARKED_EMPTY_COPY,
@@ -40,6 +41,7 @@ function ParkedRow({
   // No price lines (an older server, or none priceable) = no total, never a $0.00.
   const total =
     row.priceLines && row.priceLines.length > 0 ? cartTotals(row.priceLines, taxRate).total : null;
+  const names = itemNamesLine(row.items, row.itemCount);
   const busyHere = parked.work?.id === row.id;
   return (
     <li className="space-y-2 py-3" data-testid={`parked-row-${row.id}`}>
@@ -52,8 +54,14 @@ function ParkedRow({
         )}
       </div>
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <p className="text-xs text-navy/70">
-          {lineCountLabel(row.lineCount)}
+        <p className="min-w-0 text-xs text-navy/70">
+          {names ? (
+            <span data-testid="parked-row-items" className="break-words">
+              {names}
+            </span>
+          ) : (
+            lineCountLabel(row.lineCount)
+          )}
           {row.customerName ? ` · ${row.customerName}` : ""}
         </p>
         {total !== null ? (

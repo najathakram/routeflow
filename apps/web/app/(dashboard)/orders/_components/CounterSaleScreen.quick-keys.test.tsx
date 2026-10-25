@@ -1,6 +1,7 @@
 import * as React from "react";
 import { renderWithProviders, screen, waitFor, fireEvent, within } from "@/test-utils/render";
 import { apiClient } from "@/lib/api-client";
+import { renderTill } from "@/test-utils/render-till";
 import { CounterSaleScreen } from "./CounterSaleScreen";
 import { QUICK_KEYS_COLLAPSED_STORAGE_KEY } from "./QuickKeysGrid";
 
@@ -124,7 +125,7 @@ const total = () => screen.getByTestId("running-total");
 
 describe("QuickKeysGrid: a tap is the scan add path", () => {
   it("one tap adds exactly ONE line at the walk-in price, with no request beyond the quick-keys query", async () => {
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     fireEvent.click(await colaKey());
     await waitFor(() => expect(lines()).toHaveLength(1));
     expect(total()).toHaveTextContent("$2.50");
@@ -135,7 +136,7 @@ describe("QuickKeysGrid: a tap is the scan add path", () => {
   });
 
   it("#3356: a price changed server-side after the grid loaded is the price the next tap adds", async () => {
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     const cola = await colaKey();
     quickKeysAnswer = async () => ({
       data: {
@@ -150,7 +151,7 @@ describe("QuickKeysGrid: a tap is the scan add path", () => {
   });
 
   it("#3356: if the refresh fails the tap still adds from the loaded key", async () => {
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     const cola = await colaKey();
     quickKeysAnswer = async () => {
       throw new Error("offline");
@@ -161,7 +162,7 @@ describe("QuickKeysGrid: a tap is the scan add path", () => {
   });
 
   it("a second tap on the same product adds to the SAME line", async () => {
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     fireEvent.click(await colaKey());
     fireEvent.click(await colaKey());
     await waitFor(() => expect(screen.getByText(/Sample Cola · × 2/)).toBeInTheDocument());
@@ -170,29 +171,29 @@ describe("QuickKeysGrid: a tap is the scan add path", () => {
   });
 
   it("a boxed product lands as a whole case at its sell level", async () => {
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     fireEvent.click(await screen.findByTestId("quick-key-p-water"));
     await waitFor(() => expect(lines()).toHaveLength(1));
     expect(total()).toHaveTextContent("$12.00");
   });
 
   it("prices at the picked customer's tier", async () => {
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     fireEvent.change(screen.getByLabelText("Find a customer"), { target: { value: "acme" } });
-    fireEvent.click(screen.getByRole("button", { name: "Acme Cafe" }));
+    fireEvent.click(screen.getByRole("option", { name: "Acme Cafe" }));
     fireEvent.click(await colaKey());
     await waitFor(() => expect(lines()).toHaveLength(1));
     expect(total()).toHaveTextContent("$2.00"); // tier 2, not the 2.50 walk-in price
   });
 
   it("hands focus back to the scan field after a POINTER tap", async () => {
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     fireEvent.click(await colaKey(), { detail: 1 });
     await waitFor(() => expect(screen.getByLabelText("Scan or search items")).toHaveFocus());
   });
 
   it("a KEYBOARD activation (detail 0) keeps focus on the key so Tab/Enter can walk the grid", async () => {
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     const cola = await colaKey();
     const water = await screen.findByTestId("quick-key-p-water");
     cola.focus();
@@ -239,13 +240,13 @@ describe("QuickKeysGrid: a tap is the scan add path", () => {
         ],
       },
     });
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     expect(await screen.findByTestId("quick-key-v-a")).toHaveTextContent("Brand A - Strawberry");
     expect(screen.getByTestId("quick-key-v-b")).toHaveTextContent("Brand B - Strawberry");
   });
 
   it("shows no price on a key", async () => {
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     const key = await colaKey();
     expect(key.textContent).not.toMatch(/\$|\d+\.\d{2}/);
     expect(key).toHaveTextContent("Sample Cola");
@@ -255,7 +256,7 @@ describe("QuickKeysGrid: a tap is the scan add path", () => {
 describe("QuickKeysGrid: frozen carts ignore taps", () => {
   it("an UNKNOWN-outcome (held) cart: keys are aria-disabled and a tap adds nothing", async () => {
     sendSale.mockRejectedValue({ response: { status: 500 } });
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     fireEvent.click(await colaKey());
     await waitFor(() => expect(lines()).toHaveLength(1));
     fireEvent.click(screen.getByRole("button", { name: "Exact" }));
@@ -272,7 +273,7 @@ describe("QuickKeysGrid: frozen carts ignore taps", () => {
   it("while the sale request is in flight a tap adds nothing", async () => {
     let resolveSale!: (v: unknown) => void;
     sendSale.mockReturnValue(new Promise((r) => (resolveSale = r)));
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     fireEvent.click(await colaKey());
     await waitFor(() => expect(lines()).toHaveLength(1));
     fireEvent.click(screen.getByRole("button", { name: "Exact" }));
@@ -299,7 +300,7 @@ describe("QuickKeysGrid: frozen carts ignore taps", () => {
   });
 
   it("#3356: a tap whose refresh outlives the sale never lands in the finished sale or the next cart", async () => {
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     fireEvent.click(await colaKey());
     await waitFor(() => expect(lines()).toHaveLength(1));
     // the NEXT tap's refresh hangs on a promise the test controls
@@ -326,7 +327,7 @@ describe("QuickKeysGrid: frozen carts ignore taps", () => {
   });
 
   it("the receipt view has no grid to tap", async () => {
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     fireEvent.click(await colaKey());
     await waitFor(() => expect(lines()).toHaveLength(1));
     fireEvent.click(screen.getByRole("button", { name: "Exact" }));
@@ -339,7 +340,7 @@ describe("QuickKeysGrid: frozen carts ignore taps", () => {
 describe("QuickKeysGrid: states", () => {
   it("empty answer: the fixed empty-state text and an Edit keys link", async () => {
     quickKeysAnswer = async () => ({ data: { register: "main", cap: 12, keys: [] } });
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     expect(await screen.findByTestId("quick-keys-empty")).toHaveTextContent(
       "Your best sellers appear here after a few sales — or pin products now.",
     );
@@ -348,7 +349,7 @@ describe("QuickKeysGrid: states", () => {
 
   it("a failed quick-keys query shows no grid and no empty-state claim, and the till still works", async () => {
     quickKeysAnswer = () => Promise.reject({ response: { status: 500 } });
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await waitFor(() =>
       expect(get.mock.calls.some((c) => c[0] === "/orders/counter-sale/quick-keys")).toBe(true),
     );
@@ -359,12 +360,12 @@ describe("QuickKeysGrid: states", () => {
   });
 
   it("the collapsed state is remembered in localStorage and restored", async () => {
-    const first = renderWithProviders(<CounterSaleScreen />);
+    const first = renderTill(<CounterSaleScreen />);
     await colaKey();
     fireEvent.click(screen.getByRole("button", { name: /Quick keys/ }));
     expect(screen.queryByTestId("quick-key-p-cola")).toBeNull();
     first.unmount();
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     const toggle = await screen.findByRole("button", { name: /Quick keys/ });
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByTestId("quick-key-p-cola")).toBeNull();
@@ -394,7 +395,7 @@ describe("QuickKeysGrid: states", () => {
       }),
     ];
     try {
-      renderWithProviders(<CounterSaleScreen />);
+      renderTill(<CounterSaleScreen />);
       fireEvent.click(await colaKey());
       await waitFor(() => expect(lines()).toHaveLength(1));
       const toggle = screen.getByRole("button", { name: /Quick keys/ });
@@ -407,7 +408,7 @@ describe("QuickKeysGrid: states", () => {
   });
 
   it("keys are 44 px targets and the pinned one carries a marker", async () => {
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     const key = await colaKey();
     expect(key.className).toContain("min-h-[44px]");
     expect(within(key).getByTestId("quick-key-pin")).toBeInTheDocument();
@@ -417,7 +418,7 @@ describe("QuickKeysGrid: states", () => {
   });
 
   it("Edit keys opens the editor dialog", async () => {
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await colaKey();
     fireEvent.click(screen.getByRole("button", { name: "Edit keys" }));
     expect(await screen.findByRole("dialog", { name: "Edit quick keys" })).toBeInTheDocument();

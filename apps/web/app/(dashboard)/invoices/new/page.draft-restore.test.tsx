@@ -118,7 +118,7 @@ function seed(over: Record<string, unknown> = {}, savedAt = NOW - 5 * 60_000, ke
   );
 }
 
-const footerTotal = () => screen.getByText("Total Amount").nextElementSibling?.textContent;
+const footerTotal = () => screen.getByText("Total amount").nextElementSibling?.textContent;
 const stored = (key = KEY) => window.localStorage.getItem(key);
 
 beforeEach(() => {

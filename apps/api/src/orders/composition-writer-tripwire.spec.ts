@@ -35,6 +35,11 @@ const REGISTRY: Record<string, Entry> = {
     kind: "exempt",
     reason: "manual invoice lines carry no order provenance and are never composed",
   },
+  "import/import-restriction-marker.ts::markImportedRestrictedLines": {
+    kind: "exempt",
+    reason:
+      "row 510: writes only the four restrictionOverride* stamp columns on a just-imported invoice line (an audit mark); no qty, price or composition column",
+  },
   "invoices/invoices.service.ts::createSplitInvoices": { kind: "invoice" },
   "invoices/invoices.service.ts::reconcileOrderDraftInvoiceLocked": { kind: "invoice" },
   // SA-760 Q-760-1: the DRAFT-partial price follow. Its lines come from the shared builder (planned via
@@ -63,6 +68,11 @@ const REGISTRY: Record<string, Entry> = {
   "orders/delivered-stamp.ts::stampDeliveredInFull": {
     kind: "exempt",
     reason: "SA-763r: writes only OrderItem.deliveredQty, on lines with no delivery evidence",
+  },
+  "orders/office-evidence-completion.ts::completeOfficeEvidencedLines": {
+    kind: "exempt",
+    reason:
+      "row 587: writes only OrderItem.deliveredQty, on office-evidenced lines at a DELIVERED write",
   },
   "orders/order-pd-quantities.ts::writeOfficeDeliveries": {
     kind: "exempt",

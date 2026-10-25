@@ -1,13 +1,14 @@
-# RouteFlow ops monitor (cloud). Build context = repo root:
-#   docker build -f tools/ops-monitor/Dockerfile .
-# Zero npm dependencies, so there is no install step. The image carries only tools/ops-monitor/
-# (see Dockerfile.dockerignore). git is needed for the read-only clones made at boot.
+# RouteFlow ops monitor (cloud). Deployed with `railway up tools/ops-monitor --path-as-root`, so the
+# build context root IS tools/ops-monitor. Zero npm dependencies: no install step. git is needed for
+# the read-only clones made at boot.
 FROM node:20-alpine
 
-RUN apk add --no-cache git
+# tini is PID 1: node never reaps the orphaned git grandchildren (git-remote-https, lazy-fetch
+# children), and unreaped zombies fill the container PID limit ("cannot fork()").
+RUN apk add --no-cache git tini
 
 WORKDIR /app
-COPY --chown=node:node tools/ops-monitor/ tools/ops-monitor/
+COPY --chown=node:node . /app/tools/ops-monitor/
 RUN mkdir -p /tmp/ops && chown node:node /tmp/ops
 
 # Non-root. Nothing is on disk at boot: the clones go to RF_OPS_HOME (container-local).
@@ -18,5 +19,7 @@ ENV NODE_ENV=production \
     RF_OPS_HOME=/tmp/ops
 
 # Secrets (set in the Railway dashboard, never here): GITHUB_TOKEN (read-only),
-# RAILWAY_API_TOKEN, OPS_PASSWORD_HASH, OPS_SESSION_SECRET, GITHUB_WEBHOOK_SECRET.
+# RAILWAY_API_TOKEN, OPS_PASSWORD_HASH, OPS_SESSION_SECRET, GITHUB_WEBHOOK_SECRET,
+# CLIENT_NAMES_JSON (a JSON array of live-client names to mask; the cloud refuses to start without it).
+ENTRYPOINT ["/sbin/tini", "--"]
 CMD ["node", "tools/ops-monitor/server.mjs", "--cloud"]

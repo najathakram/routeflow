@@ -11,7 +11,6 @@
   "src/credit-notes/credit-notes.service.spec.ts": 2,
   "src/crm/crm.controller.spec.ts": 3,
   "src/customers/customers.service.spec.ts": 30,
-  "src/drafts/drafts.service.spec.ts": 7,
   "src/drivers/drivers.service.spec.ts": 4,
   "src/email/mailbox/mailbox-connection.microsoft.spec.ts": 2,
   "src/email/mailbox/mailbox-connection.service.spec.ts": 2,
@@ -41,7 +40,6 @@
   "src/products/line-units.spec.ts": 1,
   "src/regulated/tx-report.spec.ts": 46,
   "src/routes/routes.service.spec.ts": 1,
-  "src/selling-restrictions/selling-restrictions.service.spec.ts": 32,
   "src/supplier-statements/supplier-statements.service.spec.ts": 2,
   "src/tobacco/tobacco.service.spec.ts": 1,
   "src/vendor-bills/vendor-bills-variant-hint.spec.ts": 3

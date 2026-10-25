@@ -106,9 +106,9 @@ const UNPAID_STATUSES: string[] = [...OPEN_INVOICE_STATUS_LIST];
 type DueChipKey = "today" | "tomorrow" | "7d";
 
 const DUE_CHIPS: { key: DueChipKey; label: string }[] = [
-  { key: "today", label: "Due Today" },
-  { key: "tomorrow", label: "Due Tomorrow" },
-  { key: "7d", label: "Next 7 Days" },
+  { key: "today", label: "Due today" },
+  { key: "tomorrow", label: "Due tomorrow" },
+  { key: "7d", label: "Next 7 days" },
 ];
 
 // ─── Contextual status display (Zoho-style) ───────────────────────────────────
@@ -121,7 +121,7 @@ function renderStatus(status: InvoiceStatus, dueDate?: string | null): React.Rea
     return <span className="text-xs font-semibold text-navy/40">Void</span>;
   }
   if (status === "WRITTEN_OFF") {
-    return <span className="text-xs font-semibold text-navy/50">Written Off</span>;
+    return <span className="text-xs font-semibold text-navy/50">Written off</span>;
   }
   if (status === "DRAFT") {
     return <span className="text-xs font-semibold text-navy/50">Draft</span>;
@@ -155,9 +155,9 @@ function renderStatus(status: InvoiceStatus, dueDate?: string | null): React.Rea
 
     if (diffDays === 0) {
       if (status === "PARTIAL") {
-        return <span className="text-xs font-semibold text-warning">Partial · Due Today</span>;
+        return <span className="text-xs font-semibold text-warning">Partial · Due today</span>;
       }
-      return <span className="text-xs font-semibold text-warning">Due Today</span>;
+      return <span className="text-xs font-semibold text-warning">Due today</span>;
     }
 
     if (status === "PARTIAL") {
@@ -285,7 +285,7 @@ function PaymentSummaryBar({
 
   const items = [
     {
-      label: "Total Outstanding",
+      label: "Total outstanding",
       value: fmt(kpis.totalOutstanding),
       hint: undefined as string | undefined,
       money: true,
@@ -295,7 +295,7 @@ function PaymentSummaryBar({
       ariaLabel: undefined as string | undefined,
     },
     {
-      label: "Due Today",
+      label: "Due today",
       value: fmt(kpis.dueToday),
       hint: undefined as string | undefined,
       money: true,
@@ -305,7 +305,7 @@ function PaymentSummaryBar({
       ariaLabel: "Filter invoices due today",
     },
     {
-      label: "Due Within 30 Days",
+      label: "Due within 30 days",
       value: fmt(kpis.dueIn30),
       hint: undefined as string | undefined,
       money: true,
@@ -325,8 +325,8 @@ function PaymentSummaryBar({
       ariaLabel: undefined as string | undefined,
     },
     {
-      label: "Avg. Days to Get Paid",
-      value: kpis.avgDays > 0 ? `${Math.round(kpis.avgDays)} Days` : "N/A",
+      label: "Avg. days to get paid",
+      value: kpis.avgDays > 0 ? `${Math.round(kpis.avgDays)} days` : "—",
       hint: undefined as string | undefined,
       money: false,
       valueClass: undefined as string | undefined,
@@ -338,7 +338,7 @@ function PaymentSummaryBar({
       // F03/R2 (REG-B11) — count of DRAFT (unconfirmed) payments across all
       // invoices; not an invoice-status filter (DRAFT is a payment-level
       // status here), so this tile is a read-only counter, not a toggle.
-      label: "Awaiting Confirmation",
+      label: "Awaiting confirmation",
       value: String(kpis.awaitingConfirmationCount),
       hint: "Draft payments not yet counted as paid",
       money: false,
@@ -379,7 +379,7 @@ const STATUS_TABS = [
   { value: "OVERDUE", label: "Overdue" },
   { value: "PAID", label: "Paid" },
   { value: "VOID", label: "Void" },
-  { value: "WRITTEN_OFF", label: "Written Off" },
+  { value: "WRITTEN_OFF", label: "Written off" },
 ];
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
@@ -607,7 +607,7 @@ export default function InvoicesPage() {
                 leftIcon={<Plus className="h-4 w-4" />}
                 onClick={() => router.push("/invoices/new")}
               >
-                New Invoice
+                New invoice
               </WriteButton>
               <ReadOnlyHint className="basis-full text-right text-xs text-slate-600" />
             </div>
@@ -722,7 +722,7 @@ export default function InvoicesPage() {
                   Invoice # <SortIcon col="invoiceNumber" />
                 </th>
                 <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/70">
-                  Customer Name
+                  Customer
                 </th>
                 <th
                   className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
@@ -795,7 +795,7 @@ export default function InvoicesPage() {
                         description="Create an invoice to bill a customer and start tracking receivables."
                         action={
                           <WriteButton size="sm" onClick={() => router.push("/invoices/new")}>
-                            New Invoice
+                            New invoice
                           </WriteButton>
                         }
                       />

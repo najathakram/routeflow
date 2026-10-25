@@ -61,11 +61,13 @@ import { useExpiringAuthorizations, type ExpiringAuthorization } from "@/lib/api
 import { usePendingPortalApprovals } from "@/lib/api/portal-approvals";
 import { PwaInstallPrompt } from "@/components/PwaInstallPrompt";
 import { DraftDock } from "@/components/DraftDock";
+import { useGuardedSignOut } from "@/components/SignOutUnsentGuard";
 import { useHasAddon, useTenantAddons } from "@/lib/api/tobacco";
 import { useRoutesAccess, useDeliveryAccess, SALES_AGENTS_ADDON } from "@/lib/api/addons";
 import { useCounterSaleGate } from "@/lib/api/counter-sale";
 import { RegisterHeader } from "@/components/RegisterHeader";
 import { guardCounterLeave } from "@/lib/counter-cart-signal";
+import { NumberWheelGuard } from "@/components/NumberWheelGuard";
 import { useGuardedRouter } from "@/lib/use-guarded-router";
 import { isRegisterPath, recordPreviousPath } from "@/lib/register-mode";
 import { useCounterLanding, useOpenCounterPref } from "@/lib/use-counter-device-pref";
@@ -534,6 +536,8 @@ function HeaderTools({
   clerkTestId?: string;
 }) {
   const { user, logout } = useAuth();
+  // SA-817 A8: an explicit sign-out with unsent orders on this device asks first; a session expiry never comes through here.
+  const { requestSignOut, dialog: signOutDialog } = useGuardedSignOut(() => void logout(), user);
   const { locale, setLocale, t } = useI18n();
   const pathname = usePathname();
   const router = useGuardedRouter();
@@ -887,8 +891,8 @@ function HeaderTools({
               <DropdownMenu.Item
                 className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm text-danger outline-none hover:bg-danger-bg"
                 onSelect={() => {
-                  if (guardCounterLeave(() => void logout())) return;
-                  void logout();
+                  if (guardCounterLeave(requestSignOut)) return;
+                  requestSignOut();
                 }}
               >
                 <LogOut className="h-4 w-4" />
@@ -898,6 +902,7 @@ function HeaderTools({
           </DropdownMenu.Content>
         </DropdownMenu.Portal>
       </DropdownMenu.Root>
+      {signOutDialog}
     </div>
   );
 }
@@ -1088,7 +1093,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
     } else if (sections.length > 0) {
       inject.push({
         kind: "group",
-        label: "Regulated Items",
+        label: "Regulated items",
         icon: ShieldCheck,
         children: sections.map((s) => ({
           kind: "leaf" as const,
@@ -1117,7 +1122,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
         if (entry.kind === "leaf" && entry.href === "/customers") {
           return [
             entry,
-            { kind: "leaf", label: "Sales Agents", href: "/sales-agents", icon: Handshake },
+            { kind: "leaf", label: "Sales agents", href: "/sales-agents", icon: Handshake },
           ];
         }
         if (entry.kind === "group" && entry.label === "Finance") {
@@ -1256,8 +1261,8 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
         { keys: ["g", "f"], label: "Go to Finance" },
         { keys: ["g", "s"], label: "Go to Settings" },
         { keys: ["g", "t"], label: "Go to Counter sale" },
-        { keys: ["⌘", "K"], label: "Open Command Palette" },
-        { keys: ["?"], label: "Show Keyboard Shortcuts" },
+        { keys: ["⌘", "K"], label: "Open command palette" },
+        { keys: ["?"], label: "Show keyboard shortcuts" },
       ].filter(
         (s) =>
           (routesAccess || (s.label !== "Go to Routes" && s.label !== "Go to Drivers")) &&
@@ -1454,7 +1459,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between border-b border-surface-border px-5 py-3.5">
-              <p className="text-sm font-semibold text-navy">Keyboard Shortcuts</p>
+              <p className="text-sm font-semibold text-navy">Keyboard shortcuts</p>
               <button
                 onClick={() => setShortcutHelpOpen(false)}
                 className="rounded p-1 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
@@ -1492,6 +1497,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   return (
     <ToastProvider>
+      <NumberWheelGuard />
       <PageTitleProvider>
         <AuthGuard>{children}</AuthGuard>
       </PageTitleProvider>

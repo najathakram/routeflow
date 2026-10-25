@@ -6,6 +6,7 @@ import { useToast } from "@routeflow/ui/web";
 import { connectSocket, disconnectSocket } from "../socket";
 import { OP_KEYS } from "../auth-keys";
 import { describeReturnReason } from "@/lib/reason-copy";
+import { ECHO_GRACE_MS, wasCreatedHere } from "@/lib/order-created-echo";
 
 export function useRealtimeUpdates() {
   const qc = useQueryClient();
@@ -17,6 +18,7 @@ export function useRealtimeUpdates() {
     const token = localStorage.getItem(OP_KEYS.accessToken);
     if (!token) return;
 
+    const echoTimers = new Set<ReturnType<typeof setTimeout>>();
     const socket = connectSocket(token);
 
     socket.on("connect_error", (err) => {
@@ -38,11 +40,18 @@ export function useRealtimeUpdates() {
       (data: { orderNumber: string; customerName: string; urgent: boolean }) => {
         void qc.invalidateQueries({ queryKey: ["orders"] });
         void qc.invalidateQueries({ queryKey: ["dashboard"] });
-        toast({
-          title: data.urgent ? "🚨 Urgent order placed" : "New order placed",
-          description: `${data.customerName} — order ${data.orderNumber}`,
-          variant: data.urgent ? "error" : undefined,
-        });
+        // F17: this tab's own create is announced by its "Order created" toast; wait a beat so the create response
+        // can claim the event before we decide whether it is somebody else's order.
+        const timer = setTimeout(() => {
+          echoTimers.delete(timer);
+          if (wasCreatedHere(data.orderNumber)) return;
+          toast({
+            title: data.urgent ? "🚨 Urgent order placed" : "New order placed",
+            description: `${data.customerName} — order ${data.orderNumber}`,
+            variant: data.urgent ? "error" : undefined,
+          });
+        }, ECHO_GRACE_MS);
+        echoTimers.add(timer);
       },
     );
 
@@ -127,6 +136,7 @@ export function useRealtimeUpdates() {
     );
 
     return () => {
+      echoTimers.forEach(clearTimeout);
       socket.off("connect_error");
       socket.off("route.stop.completed");
       socket.off("order.created");

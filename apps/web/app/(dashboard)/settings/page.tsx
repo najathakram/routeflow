@@ -97,6 +97,7 @@ import { useFulfilmentSettings } from "@/lib/api/fulfilment-settings";
 import NextLink from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
 import { describeSaveError } from "@/lib/reason-copy";
+import { TAX_PERCENT_PRECISION_MESSAGE, taxPercentPrecisionError } from "@routeflow/pricing";
 import { isInShell } from "@/lib/in-shell";
 import { TimeZoneDatalist } from "@/components/TimeZoneInput";
 import { TIME_ZONE_REQUIRED_COPY, canonicalTimeZone, isValidTimeZone } from "@/lib/timezones";
@@ -128,9 +129,14 @@ const profileShape = {
   }),
 };
 /** The zone is validated only when the viewer can edit it, so a hidden field can never block a save. */
-const profileSchemaFor = (canEditTimeZone: boolean) =>
+const profileSchemaFor = (canEditTimeZone: boolean, savedTaxRate?: unknown) =>
   z.object({
     ...profileShape,
+    // Review Q5: the 4-decimal cap holds a CHANGED rate only; the tenant's stored rate passes as it is.
+    taxRate: profileShape.taxRate.refine(
+      (v) => taxPercentPrecisionError(v, savedTaxRate) === null,
+      TAX_PERCENT_PRECISION_MESSAGE,
+    ),
     timezone: canEditTimeZone
       ? z.string().refine((v) => isValidTimeZone(v), TIME_ZONE_REQUIRED_COPY)
       : z.string().optional(),
@@ -187,7 +193,7 @@ function BusinessProfileTab() {
               description: `Use plain text of ${RECEIPT_FOOTER_MAX_CHARS} characters or fewer.`,
               variant: "error",
             }
-          : { title: "Failed to save settings", variant: "error" },
+          : { title: "Couldn't save settings", variant: "error" },
       );
     },
   });
@@ -228,7 +234,7 @@ function BusinessProfileTab() {
   // tax rate; a field the user edits, or clears, is still checked. With nothing edited, the whole form is checked.
   const dirtyRef = React.useRef<Record<string, unknown>>({});
   const profileResolver = React.useMemo<Resolver<ProfileFormValues>>(() => {
-    const schema = profileSchemaFor(canEditTimeZone);
+    const schema = profileSchemaFor(canEditTimeZone, savedSettings?.taxRate);
     return async (values, context, options) => {
       const mask: Record<string, true> = {};
       for (const key of Object.keys(schema.shape)) if (dirtyRef.current[key]) mask[key] = true;
@@ -240,7 +246,7 @@ function BusinessProfileTab() {
         ? { values: { ...values, ...res.values }, errors: {} }
         : res;
     };
-  }, [canEditTimeZone]);
+  }, [canEditTimeZone, savedSettings?.taxRate]);
 
   const {
     register,
@@ -315,21 +321,21 @@ function BusinessProfileTab() {
 
   return (
     <form onSubmit={handleSubmit(onSubmit, onInvalid)} noValidate className="space-y-6">
-      <Card title="Business Information">
+      <Card title="Business information">
         <div className="grid grid-cols-2 gap-4">
           <Input
-            label="Business Name"
+            label="Business name"
             register={register("businessName")}
             error={errors.businessName?.message}
           />
           <Input
-            label="Account Email"
+            label="Account email"
             type="email"
             register={register("email")}
             error={errors.email?.message}
           />
           <Input
-            label="Owner / Manager Name"
+            label="Owner / manager name"
             register={register("ownerName")}
             error={errors.ownerName?.message}
           />
@@ -341,7 +347,7 @@ function BusinessProfileTab() {
           />
           <div className="col-span-2">
             <Input
-              label="Customer-Facing Email"
+              label="Customer-facing email"
               type="email"
               placeholder="invoices@yourbusiness.com"
               register={register("customerEmail")}
@@ -385,7 +391,7 @@ function BusinessProfileTab() {
         </div>
       </Card>
 
-      <Card title="Business Address">
+      <Card title="Business address">
         <div className="space-y-3">
           <AddressAutocomplete
             label="Street"
@@ -414,7 +420,7 @@ function BusinessProfileTab() {
             </div>
           </div>
           <div className="w-40">
-            <Input label="ZIP Code" register={register("zip")} error={errors.zip?.message} />
+            <Input label="ZIP code" register={register("zip")} error={errors.zip?.message} />
           </div>
         </div>
       </Card>
@@ -455,7 +461,7 @@ function BusinessProfileTab() {
               onClick={() => fileInputRef.current?.click()}
               disabled={uploadLogo.isPending}
             >
-              {uploadLogo.isPending ? "Uploading…" : "Choose File"}
+              {uploadLogo.isPending ? "Uploading…" : "Choose file"}
             </Button>
             <input
               ref={fileInputRef}
@@ -468,13 +474,13 @@ function BusinessProfileTab() {
         </div>
       </Card>
 
-      <Card title="Tax Settings">
+      <Card title="Tax settings">
         <div className="w-48">
           <div className="relative">
             <Input
-              label="Default Tax Rate"
+              label="Default tax rate"
               type="number"
-              step="0.01"
+              step="0.0001"
               min="0"
               max="100"
               register={register("taxRate")}
@@ -504,7 +510,7 @@ function BusinessProfileTab() {
 
       <div className="flex justify-end">
         <Button type="submit" loading={isSubmitting}>
-          Save Changes
+          Save changes
         </Button>
       </div>
     </form>
@@ -606,7 +612,7 @@ function AddUserModal({
     <Modal
       open={isOpen}
       onClose={handleClose}
-      title={tempPassword ? "User Created" : "Add User"}
+      title={tempPassword ? "User created" : "Add user"}
       description={
         tempPassword
           ? "Share the temporary password. The user will be prompted to change it on first login."
@@ -625,7 +631,7 @@ function AddUserModal({
               form="add-user-form"
               loading={isSubmitting || createOperator.isPending}
             >
-              Create User
+              Create user
             </Button>
           </>
         )
@@ -780,7 +786,7 @@ function EditUserModal({
     <Modal
       open={isOpen}
       onClose={onClose}
-      title="Edit User"
+      title="Edit user"
       description="Update the user's details or reset their password."
       footer={
         <>
@@ -792,7 +798,7 @@ function EditUserModal({
             form="edit-user-form"
             loading={isSubmitting || updateUser.isPending}
           >
-            Save Changes
+            Save changes
           </Button>
         </>
       }
@@ -875,7 +881,7 @@ function EditUserModal({
               loading={resetPassword.isPending}
               onClick={handleResetPassword}
             >
-              Reset Password
+              Reset password
             </Button>
           )}
         </div>
@@ -919,17 +925,17 @@ function UserManagementTab() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-sm text-navy/70">
-          {isLoading ? "Loading..." : `${data?.meta.total ?? 0} users total`}
+          {isLoading ? "Loading…" : `${data?.meta.total ?? 0} users total`}
         </p>
         {isAdmin && (
           <WriteButton size="sm" onClick={() => setIsAddOpen(true)}>
-            Add User
+            Add user
           </WriteButton>
         )}
       </div>
       <ReadOnlyHint className="text-xs text-slate-600" />
 
-      <div className="overflow-hidden rounded-lg border border-surface-border bg-white">
+      <div className="overflow-x-auto rounded-lg border border-surface-border bg-white">
         <table className="w-full text-sm">
           <thead className="border-b border-surface-border bg-surface-raised">
             <tr>
@@ -945,7 +951,7 @@ function UserManagementTab() {
             {isLoading ? (
               <tr>
                 <td colSpan={6} className="px-4 py-8 text-center text-sm text-navy/70">
-                  Loading users...
+                  Loading users…
                 </td>
               </tr>
             ) : users.length === 0 ? (
@@ -1073,7 +1079,7 @@ function AIIntegrationsTab() {
 
   return (
     <div className="space-y-5">
-      <Card title="Claude AI (Invoice Scanner)">
+      <Card title="Claude AI (invoice scanner)">
         <div className="space-y-5">
           {/* Status row */}
           <div className="flex items-center justify-between rounded-lg border border-surface-border bg-surface-raised p-4">
@@ -1085,7 +1091,7 @@ function AIIntegrationsTab() {
                 <p className="text-sm font-semibold text-navy">Anthropic Claude</p>
                 <p className="text-xs text-navy/70">
                   {isLoading
-                    ? "Checking status..."
+                    ? "Checking status…"
                     : isConfigured
                       ? `Key configured${keyPreview ? ` · ${keyPreview}` : ""}`
                       : "No API key configured"}
@@ -1130,7 +1136,7 @@ function AIIntegrationsTab() {
               leftIcon={<Sparkles className="h-4 w-4" />}
               onClick={() => setIsEditing(true)}
             >
-              Add API Key
+              Add API key
             </Button>
           ) : isEditing ? (
             <div className="space-y-3">
@@ -1157,7 +1163,7 @@ function AIIntegrationsTab() {
                   disabled={!keyInput.trim()}
                   onClick={() => saveKey.mutate(keyInput.trim())}
                 >
-                  Save Key
+                  Save key
                 </Button>
                 <Button
                   variant="secondary"
@@ -1179,7 +1185,7 @@ function AIIntegrationsTab() {
                 leftIcon={<Sparkles className="h-4 w-4" />}
                 onClick={() => setIsEditing(true)}
               >
-                Replace Key
+                Replace key
               </Button>
               <Button
                 variant="danger"
@@ -1188,7 +1194,7 @@ function AIIntegrationsTab() {
                 loading={removeKey.isPending}
                 onClick={() => removeKey.mutate()}
               >
-                Remove Key
+                Remove key
               </Button>
             </div>
           )}
@@ -1271,7 +1277,7 @@ const EMAIL_PROVIDERS = [
     passwordPlaceholder: "Your email password",
     helpTitle: "An admin must switch SMTP on for this mailbox",
     helpSteps: [
-      "Personal Outlook.com, Hotmail, Live and MSN addresses will NOT work — Microsoft ended password sign-in for them on 30 April 2026, and they need OAuth instead",
+      "Personal Outlook.com, Hotmail, Live and MSN addresses will not work — Microsoft ended password sign-in for them on 30 April 2026, and they need OAuth instead",
       "For a business Microsoft 365 mailbox, SMTP sign-in is off by default — an admin enables it once",
       "Microsoft 365 admin center → Users → Active users → select the user → Mail → Manage email apps",
       'Tick "Authenticated SMTP", save, then wait a few minutes before testing',
@@ -1472,7 +1478,7 @@ function EmailSettingsTab() {
       toast({ title: "Email settings saved", variant: "success" });
     } catch (err) {
       if (showReadOnlyRefusal(err, toast)) return;
-      toast({ title: "Failed to save settings", variant: "error" });
+      toast({ title: "Couldn't save settings", variant: "error" });
     } finally {
       setIsSaving(false);
     }
@@ -1493,7 +1499,7 @@ function EmailSettingsTab() {
         // it's still a success, but the tenant's own mail is broken.
         const isFallbackWarning = !!data.message && data.message !== "Test email sent successfully";
         toast({
-          title: isFallbackWarning ? "Sent via RouteFlow's mail service" : "Test email sent!",
+          title: isFallbackWarning ? "Sent via RouteFlow's mail service" : "Test email sent",
           description: isFallbackWarning
             ? data.message
             : `Check ${emailAddress} for the test message.`,
@@ -1730,7 +1736,7 @@ function EmailSettingsTab() {
                     leftIcon={<Send className="h-4 w-4" />}
                     onClick={handleTest}
                   >
-                    Send Test Email
+                    Send test email
                   </Button>
                 )}
               </div>
@@ -1867,7 +1873,7 @@ function SessionsCard() {
   };
 
   return (
-    <Card title="Active Sessions">
+    <Card title="Active sessions">
       <div className="space-y-4">
         <p className="text-sm text-navy/70">
           These are all devices currently signed into your account. Revoke any session you
@@ -2181,12 +2187,12 @@ function MyAccountTab() {
   return (
     <div className="space-y-5">
       {canToggleDriver && !isAdmin && me?.canActAsDriver && (
-        <Card title="Driver Access">
+        <Card title="Driver access">
           <p className="text-sm text-navy/70">Driver access is on. Ask an admin to change it.</p>
         </Card>
       )}
       {canToggleDriver && isAdmin && (
-        <Card title="Driver Access">
+        <Card title="Driver access">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-surface-border bg-surface-raised">
@@ -2223,7 +2229,7 @@ function MyAccountTab() {
 
       {/* #2653: Google sign-in isn't offered inside the app shell (app/shell.css). */}
       <div data-google-signin>
-        <Card title="Google Sign-In">
+        <Card title="Google sign-in">
           <div className="space-y-4">
             <p className="text-sm text-navy/70">
               Connect your Google account to sign in without a password.
@@ -2326,7 +2332,7 @@ function CostingTab() {
         onError: (err) =>
           isReadOnlyRefusal(err) ||
           toast({
-            title: "Could not save",
+            title: "Couldn't save",
             description: "Only admins can change costing settings.",
             variant: "error",
           }),
@@ -2422,7 +2428,7 @@ function RemittanceTab() {
       onError: (err) =>
         isReadOnlyRefusal(err) ||
         toast({
-          title: "Could not save",
+          title: "Couldn't save",
           description: "Only admins can change how-to-pay settings.",
           variant: "error",
         }),
@@ -2557,7 +2563,7 @@ function TierLabelsCard() {
       onError: (err: any) =>
         isReadOnlyRefusal(err) ||
         toast({
-          title: "Could not save",
+          title: "Couldn't save",
           description: err?.response?.data?.message ?? "Please try again.",
           variant: "error",
         }),
@@ -2644,7 +2650,7 @@ function InvoicingTab() {
         onError: (err) =>
           isReadOnlyRefusal(err) ||
           toast({
-            title: "Failed to save",
+            title: "Couldn't save settings",
             description: "Could not update invoice settings.",
             variant: "error",
           }),
@@ -2760,7 +2766,7 @@ function InvoicingTab() {
 
   return (
     <div className="space-y-5">
-      <Card title="Default Invoice Terms">
+      <Card title="Default invoice terms">
         <div className="space-y-4">
           <p className="text-sm text-navy/70">
             Automatically applied to invoices created from deliveries
@@ -2771,10 +2777,10 @@ function InvoicingTab() {
               <FileText className="h-5 w-5 text-brand-500" />
             </div>
             <div className="flex-1 space-y-1">
-              <p className="text-sm font-semibold text-navy">Payment Terms</p>
+              <p className="text-sm font-semibold text-navy">Payment terms</p>
               <select
                 className="w-full rounded-lg border border-surface-border bg-white px-3 py-2 text-sm text-navy focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-                aria-label="Payment Terms"
+                aria-label="Payment terms"
                 value={shownTerms}
                 onChange={(e) => handleTermsChange(e.target.value)}
                 disabled={isLoading || updateSettings.isPending}
@@ -2880,10 +2886,10 @@ function InvoicingTab() {
         termsDisabled={isLoading || updateSettings.isPending}
       />
 
-      <Card title="Invoice Defaults">
+      <Card title="Invoice defaults">
         <div className="space-y-4">
           <div>
-            <label className="text-sm font-medium text-navy">Customer Notes</label>
+            <label className="text-sm font-medium text-navy">Customer notes</label>
             <textarea
               value={invoiceNotes}
               onChange={(e) => setInvoiceNotes(e.target.value)}
@@ -2913,7 +2919,7 @@ function InvoicingTab() {
           </div>
           <div className="flex justify-end">
             <Button onClick={handleSaveDefaults} loading={savingDefaults}>
-              Save Defaults
+              Save defaults
             </Button>
           </div>
         </div>
@@ -2940,7 +2946,7 @@ function SettingsPageInner() {
     const params = new URLSearchParams(window.location.search);
     if (params.get("linked") === "google") {
       toast({
-        title: "Google account connected!",
+        title: "Google account connected",
         description: "You can now sign in with Google.",
         variant: "success",
       });

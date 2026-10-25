@@ -94,7 +94,10 @@ describeDb("a VOID invoice blocks a customer hard delete (#2628, SA-530)", () =>
       stub,
       { can: async () => false } as never, // EntitlementAuthority (#2241)
       stub,
-      { reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined) } as never,
+      {
+        reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined),
+        settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
+      } as never,
       stub,
     );
   });

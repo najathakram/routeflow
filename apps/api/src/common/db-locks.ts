@@ -113,12 +113,15 @@ export const LOCK_FAMILIES = [
   "demo-booking",
   "mailbox",
   "policy-write",
+  // Key space (SA-877): `<orderId>` = the counter tender window (session lock: ring's tender, void, pickup hand-over);
+  // `after-tender:<orderId>` = SA-849's over-after-tender audit write (xact LEAF lock: lock -> findFirst -> create only).
   "counter-tender",
   "fulfilment-settings",
   "tenant-price",
   "counter-park",
   "stock-count",
   "stock-count-product",
+  "payment-ref",
 ] as const;
 export type LockFamily = (typeof LOCK_FAMILIES)[number];
 /**
@@ -126,6 +129,18 @@ export type LockFamily = (typeof LOCK_FAMILIES)[number];
  * (the shared lock rides the first lock's pinned connection); the list is closed for the same typo reason as `LOCK_FAMILIES`.
  */
 export const SHARED_LOCK_FAMILIES = ["counter-close"] as const;
+
+/**
+ * SA-893 (row 631, amends SA-821 MUST 1): THE ONE LOCK ORDER. A transaction takes its advisory locks first, in the order
+ * order-merge -> payment-ref -> counter-tender -> counter-close (SA-851), and then its ROW locks in this order, each
+ * table's rows id-sorted: Return -> Order -> Invoice -> CreditNote. Two transactions that take two of these tables in
+ * opposite orders deadlock (40P01), so every path follows it. That includes the implicit row lock of an UPDATE or DELETE:
+ * an Order-centric path that must touch EXISTING Return rows locks them first, in one query by order or customer id, as
+ * `releaseLiveOrderStockInTx` does (an insert locks no other row and is exempt). `order-lock-callers.guard.spec.ts`
+ * reads this constant and classifies every transaction that touches two of the tables.
+ */
+export const ROW_LOCK_ORDER = ["Return", "Order", "Invoice", "CreditNote"] as const;
+export type RowLockTable = (typeof ROW_LOCK_ORDER)[number];
 export interface AdvisoryLockOptions {
   family: string;
   key: string;
@@ -230,6 +245,13 @@ const POOL_MAX: Record<string, number | undefined> = {
   // across every tenant; a committer that finds no slot gets the retryable 503 LOCK_UNAVAILABLE, and a
   // second commit of the same session loses the try-lock at once (409 STOCK_COUNT_COMMITTING).
   "stock-count": 4,
+  // `payment-ref` (row 498, SA-837): every InvoicePayment writer that carries a typed reference serialises per
+  // `tenant:method:normalisedRef` around its transaction, so two NEW attempts with the same reference cannot both
+  // pass the duplicate check. Staff/counter request-path and short (one payment transaction); a waiter pins a slot,
+  // bounded by its 10 s wait (a retryable 503). LOCK ORDER: the customer merge lock ("order-merge"), when a path
+  // holds it, is ALWAYS taken BEFORE this lock; nothing under this lock takes it (pinned by
+  // invoices/payment-ref-writers.census.spec.ts).
+  "payment-ref": 8,
   // `stock-count-product` (SA-767 r-note 5 SA-3) opens no lock pool: it is the one-open-count-per-product lock,
   // a transaction-scoped `pg_advisory_xact_lock` on the adder's own Prisma connection ({@link advisoryXactLock}),
   // keyed `<tenantId>:<productId>`. It is listed so the family name is reserved in the one namespace.
@@ -474,6 +496,22 @@ export const NOWAIT_LOCK_TABLES = ["RouteRunStop", "Invoice", "Order"] as const;
 export type NoWaitLockTable = (typeof NOWAIT_LOCK_TABLES)[number];
 
 /**
+ * True for Postgres `lock_not_available` (SQLSTATE 55P03: a NOWAIT miss or a `lock_timeout`), however Prisma wraps it.
+ * Prisma surfaces the SQLSTATE on `meta.code` for a raw query, but not on every driver/error shape, so the message check is the
+ * fallback: a wrapped error is never mistaken for a real failure and rethrown as a 500.
+ */
+export function isLockUnavailableError(err: unknown): boolean {
+  const e = err as any;
+  return (
+    e?.meta?.code === "55P03" ||
+    // the driver-adapter shape (the SQLSTATE rides on the cause, as the SA-218 lane reads it)
+    e?.meta?.driverAdapterError?.cause?.originalCode === "55P03" ||
+    e?.cause?.originalCode === "55P03" ||
+    /55P03|could not obtain lock/i.test(String(e?.message ?? ""))
+  );
+}
+
+/**
  * Take `FOR NO KEY UPDATE NOWAIT` on the given rows inside `tx`; a lock held by an in-flight
  * writer surfaces as 409 CONCURRENT_UPDATE (retryable) instead of a wait.
  *
@@ -518,10 +556,7 @@ export async function lockRowsNoWait(
     // Prisma surfaces the SQLSTATE on `meta.code` for a raw query, but not on every driver/error
     // shape — the message check is the fallback so a wrapped error is never mistaken for a real
     // failure and rethrown as a 500.
-    const lockUnavailable =
-      (err as any)?.meta?.code === "55P03" ||
-      /55P03|could not obtain lock/i.test(String((err as any)?.message ?? ""));
-    if (!lockUnavailable) throw err;
+    if (!isLockUnavailableError(err)) throw err;
     throw new ConflictException({
       code: API_ERROR_CODES.CONCURRENT_UPDATE,
       reason,

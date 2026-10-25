@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import type { SelectablePaymentMethod } from "../payment-methods";
 import { shouldRetryCustomerPrices } from "../query-retry-policy";
+import { sendWithPaymentKey, type PaymentKeyHolder } from "../payment-submit-key";
 import type { CustomerComment, CustomerDocument, FulfillPath } from "@routeflow/types";
 export type { CustomerComment, CustomerDocument } from "@routeflow/types";
 
@@ -157,14 +158,20 @@ export interface CreateAdvancePaymentDto {
   method: SelectablePaymentMethod;
   reference?: string;
   notes?: string;
+  /** SA-824: the screen's Idempotency-Key holder (never sent in the body). */
+  submitKey?: PaymentKeyHolder;
 }
 
 /** POST /customers/:id/advance-payments — take a deposit into the wallet. */
 export function useCreateAdvancePayment() {
   const qc = useQueryClient();
   return useMutation<AdvancePayment, Error, CreateAdvancePaymentDto>({
-    mutationFn: ({ customerId, ...body }) =>
-      apiClient.post(`/customers/${customerId}/advance-payments`, body).then((r) => r.data),
+    mutationFn: ({ customerId, submitKey, ...body }) =>
+      sendWithPaymentKey(submitKey, body, (config) =>
+        apiClient
+          .post(`/customers/${customerId}/advance-payments`, body, ...config)
+          .then((r) => r.data),
+      ),
     onSuccess: (_, { customerId }) => {
       qc.invalidateQueries({ queryKey: ["customers", customerId] });
       qc.invalidateQueries({ queryKey: ["admin", "customers"] });
@@ -349,6 +356,13 @@ export function useMyAccountSummary() {
 
 // ─── Mutations (operator) ────────────────────────────────────────────────────
 
+/** Edit may send `null` to CLEAR these nullable columns (currency is NOT NULL) (see lib/clearable-field). */
+export type UpdateCustomerDto = Partial<Omit<CreateCustomerDto, NullableOnUpdate>> & {
+  [K in NullableOnUpdate]?: CreateCustomerDto[K] | null;
+};
+
+type NullableOnUpdate = "phone" | "notes" | "taxId" | "deliveryWindowStart" | "deliveryWindowEnd";
+
 export interface CreateCustomerDto {
   businessName: string;
   /** Create-only, and REQUIRED there — the API mints the linked User from it. */
@@ -392,7 +406,7 @@ export function useCreateCustomer() {
 
 export function useUpdateCustomer() {
   const qc = useQueryClient();
-  return useMutation<{ id: string }, Error, { id: string } & Partial<CreateCustomerDto>>({
+  return useMutation<{ id: string }, Error, { id: string } & UpdateCustomerDto>({
     mutationFn: ({ id, ...dto }) => apiClient.patch(`/customers/${id}`, dto).then((r) => r.data),
     onSuccess: (_, { id }) => {
       qc.invalidateQueries({ queryKey: ["customers"] });

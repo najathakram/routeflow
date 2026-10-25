@@ -18,6 +18,7 @@ const MOUNTED: Array<[tag: string, file: string]> = [
   ["ProductPortalVisibilityCard", "ProductPortalVisibilityCard.tsx"],
   ["ProductUnitsCard", "ProductUnitsCard.tsx"],
   ["DemandCard", "DemandCard.tsx"],
+  ["OpenOrdersCard", "OpenOrdersCard.tsx"],
   ["SalesHistoryCard", "SalesHistoryCard.tsx"],
   ["ProductInsightsExport", "ProductInsightsExport.tsx"],
   ["LegacyVariantsActions", "LegacyVariantsActions.tsx"],
@@ -31,28 +32,34 @@ describe("product page parity inventory (T38)", () => {
     expect(fs.existsSync(path.join(__dirname, file))).toBe(true);
   });
 
-  it("the old Units card stays mounted whenever the page is not a v2 family", () => {
-    expect(page).toMatch(/const v2Family = v2 && product\.kind === "FAMILY";/);
+  it("row 742 (owner: keep structure, drop prices): under v2 the old card is only on a variant or recipe, structure only", () => {
+    expect(page).not.toMatch(/const v2Family/);
+    expect(page).not.toMatch(/cardRo/);
     // K10d: the v2 flag also drops the old always-open Add form (the shell's Add a unit replaces it)
     expect(page).toMatch(
-      /\{!v2Family && <ProductUnitsCard product=\{product\} hideAddForm=\{v2\} \/>\}/,
+      /\{\(!v2 \|\| \(!isFamily && unitStructureGoverned\(product\)\)\) && \(\s*<ProductUnitsCard product=\{product\} hideAddForm=\{v2\} structureOnly=\{v2\} \/>\s*\)\}/,
     );
+    // the gate cites the row that retires the card for good
+    expect(page).toMatch(/row 659 \(family ladder with variant inherit \/ override\)/);
   });
 
-  it("with the flag on and a non-FAMILY product, the v2 grid AND the old units card both render", () => {
+  it("with the flag on and a non-FAMILY product, the v2 grid renders and the old units card does not", () => {
     // K11-20c: the section sits in ProductPricingRegion (the inline edit mode's full-width wrapper)
     expect(page).toMatch(
-      /\{v2 && product\.kind !== "FAMILY" \? \(\s*<ProductPricingRegion>\s*<ProductPricingV2 product=\{product\} \/>\s*<\/ProductPricingRegion>\s*\) : null\}/,
+      /\{pricingSplit \? \(\s*<div[^>]*>\s*<ProductPricingRegion>\s*<ProductPricingV2 product=\{product\} \/>\s*<\/ProductPricingRegion>\s*<\/div>\s*\) : null\}/,
     );
-    // the old card's gate never mentions v2 except to hide it for a v2 FAMILY
+    expect(page).toMatch(/const pricingSplit = v2 && product\.kind !== "FAMILY";/);
+    // under v2 the old card's gate keeps only a non-family governed product (variant or recipe)
     const oldGate = page.match(/\{([^{}]*)<ProductUnitsCard/);
-    expect(oldGate?.[1]).toBe("!v2Family && ");
+    expect(oldGate?.[1].replace(/\s+/g, " ")).toBe(
+      "(!v2 || (!isFamily && unitStructureGoverned(product))) && ( ",
+    );
   });
 
   it("the v2 shell is mounted exactly once, only behind the flag", () => {
     expect(page.match(/<ProductPricingV2/g)?.length).toBe(1);
     const upTo = page.slice(0, page.indexOf("<ProductPricingV2"));
-    expect(upTo.split("\n").slice(-3, -2)[0]).toMatch(/\{v2 && /);
+    expect(upTo.split("\n").slice(-4, -3)[0]).toMatch(/\{pricingSplit \? \(/);
   });
 
   it("the old Units card keeps its edit controls (name, price, tiers, default, save, remove)", () => {
@@ -114,7 +121,12 @@ describe("K11-20c: where every legacy-card control lives after the change (secti
       figs,
       "aria-label={`Edit ${productTierLabel(names, tier)} ${row.label} price`}",
     ],
-    ["5 Tier prices disclosure stays", card, "Tier prices</summary>"],
+    [
+      "5 Tier prices disclosure stays (not on a structure-only card)",
+      card,
+      '{!noPrices && (\n        <details className="mt-2">',
+    ],
+    ["5 Tier prices summary", card, "Tier prices\n          </summary>"],
     ["5 four tier figures", card, "{figure(t as (typeof TIERS)[number])}"],
     [
       "6 helper sentence replaced by the Auto or Set word",
@@ -129,12 +141,12 @@ describe("K11-20c: where every legacy-card control lives after the change (secti
     [
       "12 Add unit: Name and factor stay, Price hidden in v2",
       card,
-      '{!figures && (\n              <div>\n                <label className={LABEL} htmlFor="new-unit-price">',
+      '{!figures && !structureOnly && (\n              <div>\n                <label className={LABEL} htmlFor="new-unit-price">',
     ],
     [
       "13 cascade never offered when no price moved",
       card,
-      "if (!figures) setProposals(proposeCascade(",
+      "if (!figures && !structureOnly) {\n          setProposals(proposeCascade(",
     ],
     ["14 Remove confirm dialog", card, "Its prices are deleted."],
     ["15 header Edit prices button", card, "Edit prices\n            </button>"],
@@ -163,7 +175,7 @@ describe("K11-20c: where every legacy-card control lives after the change (secti
     expect(win + grid + figs + read("units-v2/edit/EditablePricesGrid.tsx")).toContain(needle);
     // and in v2 Details, the legacy controls are not rendered
     expect(page).toContain("{!isFamily && !pricesInWindow && priceEachRow}");
-    expect(page).toMatch(/pricesInWindow \? \(\s*<DetailsPriceLine/);
+    expect(page).toMatch(/pricesInWindow \? null/);
   });
 
   it("the flag-off card and Details keep every price input path", () => {
@@ -176,10 +188,9 @@ describe("K11-20c: where every legacy-card control lives after the change (secti
     );
   });
 
-  it("Details in v2 shows the one price line, and a governed product never gets it", () => {
+  it("Details in v2 shows no price row (the grid owns it), and a governed product never gets the window", () => {
     expect(page).toContain("const pricesInWindow = v2 && !unitStructureGoverned(product);");
-    expect(page).toMatch(/pricesInWindow \? \(\s*<DetailsPriceLine/);
-    expect(read("PriceFigures.tsx")).toContain("Save or cancel Details first");
+    expect(page).toMatch(/pricesInWindow \? null/);
   });
 
   it("the covered image column is marked for the inline full-width region, dims while inert, and the Details heading is the figures' fallback", () => {
@@ -189,7 +200,6 @@ describe("K11-20c: where every legacy-card control lives after the change (secti
     expect(page).toContain("motion-safe:lg:transition-opacity");
     expect(page).toContain("motion-safe:lg:duration-200");
     expect(page).toContain('data-testid="product-details-heading"');
-    expect(page).toMatch(/<DetailsPriceLine[\s\S]*?fallback=\{/);
   });
 
   it("the page mounts the price host once, around the whole page", () => {

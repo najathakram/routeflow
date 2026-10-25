@@ -37,14 +37,15 @@ import {
   useUnapplyCreditNote,
 } from "../../../../lib/api/credit-notes";
 import { useApplyAdvancePayment, useCustomerAdvancePayments } from "../../../../lib/api/customers";
-import { useGetPaymentImageUrl } from "../../../../lib/api/payments";
+import { useGetPaymentImageUrl, useUpdatePayment } from "../../../../lib/api/payments";
+import { noLongerFitsCopy, voidPaymentBody } from "../../../../lib/payment-no-longer-fits";
 import { deriveInvoiceVariant } from "../../../../lib/invoice-pdf-variant";
 import { invoiceShowsTerms } from "../../../../lib/invoice-sale-terms";
 import { fmtCalendarDate } from "../../../../lib/format-date";
 import { isInternalEmail } from "../../../../lib/internal-email";
 import {
   canRecordPayment,
-  canSendInvoiceNow,
+  invoiceSendAction,
   canWriteOff,
   invoiceActionFlags,
   isOpenInvoiceStatus,
@@ -52,6 +53,7 @@ import {
   isPendingOrderMirror,
 } from "../../../../lib/invoices-logic";
 import { reminderErrorCopy } from "../../../../lib/invoice-reminder-error-copy";
+import { invoiceSendStateLine } from "../../../../lib/invoice-send-state";
 import { isCreditOpenForApply, openCreditBalance } from "../../../../lib/credit-notes-logic";
 import { siblingInvoicesOf } from "../../../../lib/invoice-siblings";
 import { showToast } from "../../../../lib/toast";
@@ -65,9 +67,12 @@ import { invoiceTaxLines } from "../../../../lib/invoice-tax-lines";
 import { invoiceDisplayCategoryTax, invoiceLineQtyText } from "@routeflow/pricing";
 import type { InvoiceDisplayUnitView } from "@routeflow/types";
 import { shipmentSaveDecision } from "@routeflow/types/shipment-save";
+import { unvoidAmendedPeriodNote } from "@routeflow/types/unvoid-amended-period";
 import { freeUnitsLabel } from "../../../../lib/buyer-cart-logic";
 import { ACTIVATION_BUDGET_MS, sharePdf } from "../../../../lib/share-pdf";
 import { printPdf } from "../../../../lib/print-pdf";
+import { RestrictionOverrideNote } from "../../../../components/RestrictionOverrideNote";
+import { useRestrictionWarningRetry } from "../../../../lib/use-restriction-warning-retry";
 import { overpaidText, revisedBadgeText } from "../../../../lib/invoice-revision";
 import {
   nextPdfSharePhase,
@@ -167,8 +172,10 @@ export default function InvoiceDetailScreen() {
   const updateMut = useUpdateInvoice();
   const shipmentMut = useUpdateInvoiceShipment();
   const getImageUrlMut = useGetPaymentImageUrl();
+  const voidPaymentMut = useUpdatePayment();
   const reminderMut = useSendInvoiceReminder();
   const duplicateMut = useDuplicateInvoice();
+  const rw = useRestrictionWarningRetry(); // row 510: staff warning + override dialog
   const reopenMut = useReopenInvoice();
   const unvoidMut = useUnvoidInvoice();
   const revertMut = useRevertInvoiceToDraft();
@@ -234,7 +241,13 @@ export default function InvoiceDetailScreen() {
     deliveryBatchId: invoice.deliveryBatchId,
     orderStatus: invoice.order?.status,
   });
-  const canSend = canSendInvoiceNow(invoice.status, pendingMirror);
+  // #2088: Send / "Email again" (with the tracked state in the confirmation) / locked-with-reason.
+  const sendAction = invoiceSendAction({
+    status: invoice.status,
+    pendingMirror,
+    sendState: invoice.sendState,
+    sendLocked: invoice.sendLocked,
+  });
   // Draft/Final PDF stage (mirrors web): smart default per stage, operator-overridable
   // via the toggle. Governs BOTH Share and Send.
   const defaultPdfVariant = deriveInvoiceVariant(invoice);
@@ -298,6 +311,11 @@ export default function InvoiceDetailScreen() {
         onError: (e: any) => {
           const code = e?.response?.data?.code;
           const msg = e?.response?.data?.message ?? e?.message ?? "Try again.";
+          if (code === "EMAIL_SEND_FAILED" && invoice.status !== "DRAFT") {
+            // #2088: a re-send of an invoice that was already sent: it is NOT "not sent", and Mark as Sent is meaningless.
+            showToast(msg);
+            return;
+          }
           if (code === "EMAIL_SEND_FAILED") {
             // Invoice is still DRAFT (R5 honesty). Offer Mark as Sent so a broken
             // mail transport can't leave it stuck. Mirrors the web recovery modal.
@@ -568,12 +586,14 @@ export default function InvoiceDetailScreen() {
     // Real POST /invoices/:id/duplicate — preserves the box split + per-line
     // discount/taxRate (web hand-rolls a lossy re-create here; deliberately
     // not mirrored, RF-011).
-    duplicateMut.mutate(id, {
+    duplicateMut.mutate(rw.attach(id), {
       onSuccess: (inv) => {
         showToast(`New draft ${inv.invoiceNumber} created`);
         router.push(`/(operator)/invoices/${inv.id}`);
       },
-      onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+      onError: (e: any) =>
+        rw.handle(e, handleDuplicate) ||
+        showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
     });
   };
 
@@ -612,7 +632,13 @@ export default function InvoiceDetailScreen() {
       `${invoice.invoiceNumber} returns to Draft and re-claims its billed quantities on the source order.`,
       () =>
         unvoidMut.mutate(id, {
-          onSuccess: () => showToast("Invoice unvoided — now in Draft"),
+          onSuccess: (res: any) => {
+            // SA-839 §3: one more line when the void sat in an already-filed month.
+            const note = unvoidAmendedPeriodNote(res?.amendedPeriod);
+            showToast(
+              note ? `Invoice unvoided — now in Draft. ${note}` : "Invoice unvoided — now in Draft",
+            );
+          },
           onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
         }),
       { confirmText: "Unvoid" },
@@ -773,6 +799,13 @@ export default function InvoiceDetailScreen() {
             </View>
           ) : null}
 
+          {/* #2088: what was emailed and whether it changed since (same words as web). */}
+          {invoiceSendStateLine(invoice.sendState) ? (
+            <Text testID="invoice-send-state-line" style={styles.mirrorHintText}>
+              {invoiceSendStateLine(invoice.sendState)}
+            </Text>
+          ) : null}
+
           {/* Action grid */}
           <View style={styles.actionsGrid}>
             {canRecord ? (
@@ -782,13 +815,19 @@ export default function InvoiceDetailScreen() {
                 onPress={() => router.push(`/(operator)/invoices/${id}/record-payment`)}
               />
             ) : null}
-            {canSend ? (
+            {sendAction.show ? (
               <ActionTile
                 icon="paper-plane-outline"
-                label={sendMut.isPending ? "Sending…" : "Send"}
+                label={sendMut.isPending ? "Sending…" : sendAction.label}
                 // B6: was tappable while pending — a fast double-tap fired two send emails.
-                disabled={sendMut.isPending}
-                onPress={handleSend}
+                disabled={sendMut.isPending || sendAction.locked}
+                onPress={() =>
+                  sendAction.confirm
+                    ? confirm(sendAction.label, sendAction.confirm, handleSend, {
+                        confirmText: sendAction.confirmButton,
+                      })
+                    : handleSend()
+                }
               />
             ) : null}
             {flags.canEdit && !pendingMirror ? (
@@ -953,6 +992,7 @@ export default function InvoiceDetailScreen() {
                           {it.notes}
                         </Text>
                       ) : null}
+                      <RestrictionOverrideNote line={it} />
                       {displayRows.subLines.map((text, i) => (
                         <Text key={i} style={styles.itemSub} testID="line-component-sub-line">
                           {text}
@@ -1092,6 +1132,9 @@ export default function InvoiceDetailScreen() {
                           </Text>
                         </Pressable>
                       ) : null}
+                      {noLongerFitsCopy(p as never) ? (
+                        <Text style={styles.payMeta}>{noLongerFitsCopy(p as never)}</Text>
+                      ) : null}
                       {pay.imageKey ? (
                         <Pressable
                           style={styles.viewReceiptRow}
@@ -1105,6 +1148,22 @@ export default function InvoiceDetailScreen() {
                         </Pressable>
                       ) : null}
                     </View>
+                    {noLongerFitsCopy(p as never) ? (
+                      <Pressable
+                        hitSlop={8}
+                        style={styles.payEditBtn}
+                        onPress={() =>
+                          voidPaymentMut.mutate({
+                            invoiceId: String(id),
+                            paymentId: p.id,
+                            ...voidPaymentBody(p),
+                          } as never)
+                        }
+                        accessibilityLabel="Void payment"
+                      >
+                        <Ionicons name="close-circle-outline" size={16} color={ios.brand} />
+                      </Pressable>
+                    ) : null}
                     <Text style={styles.payAmount}>+{fmtCurrency(p.amount)}</Text>
                     {isPaymentEditable(p.method, p.status, invoice.status) ? (
                       <Pressable
@@ -1162,28 +1221,31 @@ export default function InvoiceDetailScreen() {
                 ]}
                 onPress={() => {
                   if (!id) return;
-                  updateMut.mutate(
-                    {
-                      id,
-                      dueDate: dueDateInput.trim() || undefined,
-                      expectedUpdatedAt: dueDateToken.current, // H4: as the modal opened
-                    },
-                    {
-                      onSuccess: () => {
-                        showToast("Due date updated");
-                        setDueDateModal(false);
-                        refetch();
-                      },
-                      onError: (e: any) => {
-                        if (isInvoiceStale(e)) {
-                          showToast(INVOICE_STALE_COPY); // H4: fixed copy, then the latest
+                  const saveDueDate = () =>
+                    updateMut.mutate(
+                      rw.attach({
+                        id,
+                        dueDate: dueDateInput.trim() || undefined,
+                        expectedUpdatedAt: dueDateToken.current, // H4: as the modal opened
+                      }),
+                      {
+                        onSuccess: () => {
+                          showToast("Due date updated");
+                          setDueDateModal(false);
                           refetch();
-                          return;
-                        }
-                        showToast(e?.response?.data?.message ?? e?.message ?? "Try again.");
+                        },
+                        onError: (e: any) => {
+                          if (rw.handle(e, saveDueDate)) return; // row 510
+                          if (isInvoiceStale(e)) {
+                            showToast(INVOICE_STALE_COPY); // H4: fixed copy, then the latest
+                            refetch();
+                            return;
+                          }
+                          showToast(e?.response?.data?.message ?? e?.message ?? "Try again.");
+                        },
                       },
-                    },
-                  );
+                    );
+                  saveDueDate();
                 }}
                 disabled={updateMut.isPending}
               >
@@ -1197,6 +1259,7 @@ export default function InvoiceDetailScreen() {
           </Pressable>
         </Pressable>
       </Modal>
+      {rw.modal}
 
       <ShipmentEditModal
         open={shipmentModal}

@@ -7,6 +7,7 @@ import {
   buildUnitOptions,
   defaultUnitValue,
   withLayerPrices,
+  type OwnPackBasis,
   type UnitOption,
 } from "@/lib/unit-options";
 import { isShapedLine } from "@/lib/default-unit-line";
@@ -38,6 +39,11 @@ export interface OrderLineUnitPickerLine extends DerivedBaseMarker {
    * system price. Absent or false = master: every MANUAL line is the operator's and the picker never re-prices it.
    */
   layerManual?: boolean;
+  /**
+   * Row 630: an EXISTING line's own pack price and size as stored (the order edit's loaded pack lines). Its derived Piece is
+   * that price over that size, never the customer's live layer price over the product's current pack size. Absent = a fresh line.
+   */
+  ownPack?: OwnPackBasis | null;
 }
 
 /**
@@ -54,8 +60,14 @@ function OrderLineUnitPickerInner({
   layer,
   onChange,
   startOnDefaultUnit = false,
+  disabled = false,
 }: {
   line: OrderLineUnitPickerLine;
+  /**
+   * W-745: the customer's prices are not confirmed (a read pending or failed): the control is closed and nothing re-prices the
+   * line, neither a pick nor the automatic default-unit / ladder-refresh changes, until they are (the tier would read as 1).
+   */
+  disabled?: boolean;
   /**
    * #2784: a NEW line (the picker tap / a scan) starts on the level flagged `isDefaultSelling`, else stays on the pack.
    * Applied once when the ladder first arrives, and never over a unit the line already holds or a price the operator typed.
@@ -83,6 +95,12 @@ function OrderLineUnitPickerInner({
     [line.unit, line.unitsPerBox, line.listPrice, line.packBase, line.tierPrices],
   );
   const packPrice = line.packBase?.unitPrice ?? line.unitPrice;
+  // a stable reference (the caller builds the object each render): the options below must not re-derive on every render
+  const ownPack = React.useMemo(
+    () => line.ownPack ?? null,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [line.ownPack?.unitPrice, line.ownPack?.unitsPerBox],
+  );
   const options = React.useMemo<UnitOption[]>(() => {
     if (!enabled || !units.data || units.data.length === 0) return [];
     try {
@@ -91,15 +109,16 @@ function OrderLineUnitPickerInner({
         product,
         tier,
         layer,
+        ownPack,
       );
     } catch {
       return []; // display-only: a bad tier never unmounts the order form (the server 400s on save)
     }
-  }, [enabled, units.data, product, tier, packPrice, layer]);
+  }, [enabled, units.data, product, tier, packPrice, layer, ownPack]);
 
   const startedRef = React.useRef(false);
   React.useEffect(() => {
-    if (!startOnDefaultUnit || startedRef.current || options.length === 0) return;
+    if (disabled || !startOnDefaultUnit || startedRef.current || options.length === 0) return;
     startedRef.current = true; // one shot per mount: the operator's later choice is never re-overridden
     // Only a line whose price the operator has not shaped (Opus #2865 B1/r2). Qty is NOT a guard: on a boxed line it is total
     // pieces (a fresh 1-box line is 24); the modal clears the flag in every qty/price handler instead.
@@ -108,6 +127,7 @@ function OrderLineUnitPickerInner({
     const option = value ? options.find((o) => o.value === value) : undefined;
     if (option) onChange(option, false);
   }, [
+    disabled,
     startOnDefaultUnit,
     options,
     units.data,
@@ -139,7 +159,7 @@ function OrderLineUnitPickerInner({
   const held = options.find((o) => o.value === (line.unitLabel ?? ""));
   const lastLadderPrice = React.useRef<number | undefined>(undefined);
   React.useEffect(() => {
-    if (!line.unitLabel || !held) return;
+    if (disabled || !line.unitLabel || !held) return; // W-745: not recorded, so the first confirmed ladder is a first sight
     const firstSight = lastLadderPrice.current === undefined;
     const ladderMoved = lastLadderPrice.current !== held.price;
     lastLadderPrice.current = held.price;
@@ -159,6 +179,7 @@ function OrderLineUnitPickerInner({
     line.priceEdited,
     held,
     onChange,
+    disabled,
   ]);
 
   return (
@@ -168,9 +189,12 @@ function OrderLineUnitPickerInner({
       tier={tier}
       packPrice={packPrice}
       layer={layer}
+      ownPack={ownPack}
       ariaLabel={`Sell ${line.productName} by`}
       value={unitPickerValueOf(line)}
+      disabled={disabled}
       onChange={(label) => {
+        if (disabled) return;
         // "" = back to the pack, which must work even when the ladder is gone (no options to look in):
         // the held unit would otherwise be unfixable and the save would 400 on it.
         const option =

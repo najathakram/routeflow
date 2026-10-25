@@ -18,6 +18,28 @@ export function useLooseUnitsToggle(pieces: number | null | undefined) {
   };
 }
 
+/**
+ * F09: a controlled number field that snaps a cleared value to "0" makes the next digit read "03". A cleared field now
+ * stays empty while it is being retyped (blur restores the committed number); every digit is committed at once.
+ */
+function useTypedNumber(value: number | null | undefined, commit: (n: number) => void) {
+  const committed = value ?? 0;
+  // Only ever "" (a cleared field): any other typed value is committed at once, so the parent's number is what shows.
+  const [cleared, setCleared] = React.useState(false);
+  return {
+    value: cleared ? "" : String(committed),
+    onChange: (e: React.ChangeEvent<HTMLInputElement>) => {
+      const raw = e.target.value;
+      setCleared(raw === "");
+      commit(parseInt(raw, 10)); // "" -> NaN: the caller normalises, exactly as before
+    },
+    onBlur: () => setCleared(false),
+  };
+}
+
+const DEFAULT_INPUT =
+  "w-12 rounded border border-surface-border bg-white px-1.5 py-1 text-center text-sm font-semibold text-navy focus:outline-none focus:ring-1 focus:ring-brand-500";
+
 export interface CasesPiecesInputProps {
   /** Whole cases; null/undefined reads as 0. */
   boxes: number | null | undefined;
@@ -30,6 +52,8 @@ export interface CasesPiecesInputProps {
   /** Raw parseInt of the typed value: may be NaN; the caller normalises (normalizeBoxesPieces). */
   onSetBoxes: (n: number) => void;
   onSetPieces: (n: number) => void;
+  /** Replaces the default field style (Edit Items gives its cases and plain quantity fields one look). */
+  inputClassName?: string;
 }
 
 /**
@@ -51,8 +75,20 @@ export function CasesPiecesInput({
   disabled = false,
   onSetBoxes,
   onSetPieces,
+  inputClassName = DEFAULT_INPUT,
 }: CasesPiecesInputProps) {
   const { showLooseUnits, openLooseUnits, closeLooseUnits } = useLooseUnitsToggle(pieces);
+  const boxesField = useTypedNumber(boxes, onSetBoxes);
+  const piecesField = useTypedNumber(pieces, onSetPieces);
+  // F10: the "+ pieces" button unmounts when it opens the field, so focus would fall to the page top; follow it.
+  const piecesRef = React.useRef<HTMLInputElement>(null);
+  const focusPiecesNext = React.useRef(false);
+  React.useEffect(() => {
+    if (showLooseUnits && focusPiecesNext.current) {
+      focusPiecesNext.current = false;
+      piecesRef.current?.focus();
+    }
+  }, [showLooseUnits]);
   return (
     <div data-testid="line-qty-cases-row" className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
       <span className="flex items-center gap-1.5 whitespace-nowrap">
@@ -60,10 +96,11 @@ export function CasesPiecesInput({
           disabled={disabled}
           type="number"
           min={0}
-          value={boxes ?? 0}
-          onChange={(e) => onSetBoxes(parseInt(e.target.value, 10))}
+          value={boxesField.value}
+          onChange={boxesField.onChange}
+          onBlur={boxesField.onBlur}
           onFocus={(e) => e.target.select()}
-          className="w-12 rounded border border-surface-border bg-white px-1.5 py-1 text-center text-sm font-semibold text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
+          className={inputClassName}
           title={`Number of whole ${w.pack.lowerOther}`}
         />
         <span
@@ -81,10 +118,12 @@ export function CasesPiecesInput({
             type="number"
             min={0}
             max={unitsPerBox - 1}
-            value={pieces ?? 0}
-            onChange={(e) => onSetPieces(parseInt(e.target.value, 10))}
+            ref={piecesRef}
+            value={piecesField.value}
+            onChange={piecesField.onChange}
+            onBlur={piecesField.onBlur}
             onFocus={(e) => e.target.select()}
-            className="w-12 rounded border border-surface-border bg-white px-1.5 py-1 text-center text-sm font-semibold text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
+            className={inputClassName}
             title={`Extra ${w.base.lowerOther} (less than a full ${w.pack.lower})`}
             aria-label={`Extra ${w.base.lowerOther}`}
           />
@@ -114,8 +153,13 @@ export function CasesPiecesInput({
         <button
           type="button"
           disabled={disabled}
-          onClick={openLooseUnits}
+          onClick={() => {
+            focusPiecesNext.current = true;
+            openLooseUnits();
+          }}
           aria-label={`+ ${w.base.lowerOther}: add extra ${w.base.lowerOther}`}
+          // F11: say which unit this adds and how it relates to the pack.
+          title={`Add extra ${w.base.lowerOther} (less than a full ${w.pack.lower} of ${unitsPerBox})`}
           // hitSlop 8 (mobile parity, #2706): the pseudo-element grows the tap target, not the layout.
           className="relative before:absolute before:-inset-2 before:content-[''] whitespace-nowrap rounded border border-dashed border-surface-border px-1.5 py-0.5 text-[10px] font-medium text-navy/60 hover:bg-surface-raised"
         >

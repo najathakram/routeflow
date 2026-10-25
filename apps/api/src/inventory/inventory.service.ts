@@ -37,9 +37,11 @@ import { poLineFromInput } from "./po-line-input";
 import { bareVariantLabel } from "../products/product-variant-name";
 import { effectiveCostingMethod } from "./costing-method-policy";
 import { costDecimal, nextAverageCost, planLotConsumption, reverseAverageCost } from "./costing";
+import { REPLAY_CORRECTION_PREFIX, foldLedger, isReplayCorrection } from "./fold-ledger";
 import { recordSaleMovement, resolveSaleCost } from "./sale-movement";
 import { poReversalNote, poReversalOf } from "./bill-revert";
-import { documentStockDate, type DocumentStockDate } from "./stock-write-date";
+import { poGoodsUsedConflict, productsUsedSinceReceipt } from "./po-use-since-receipt";
+import { documentStockDate, stockWriteDate, type DocumentStockDate } from "./stock-write-date";
 import { RecordPurchaseDto } from "./dto/record-purchase.dto";
 import { RecordAdjustmentDto } from "./dto/record-adjustment.dto";
 import { CommitStockCountDto } from "./dto/commit-stock-count.dto";
@@ -89,6 +91,7 @@ import {
 } from "./stock-count-commit";
 import { StockAlertService } from "../stock-alerts/stock-alert.service";
 import { AuditService } from "../audit/audit.service";
+import { writeFamilyAssigned } from "../products/product-parent";
 
 /**
  * Interactive-tx options of a count add / amend (SA-767 r-note 5 SA-3). The product-lock helper bounds its
@@ -97,36 +100,10 @@ import { AuditService } from "../audit/audit.service";
  */
 const COUNT_ADD_TX_OPTIONS = STOCK_TX_OPTIONS;
 
-/** B562 PR-3 (SA-136 §4): the reference prefix of a replay's own COST_BASIS correction. */
-export const REPLAY_CORRECTION_PREFIX = "RECOMPUTE:";
-/**
- * A replay correction is the fold's OUTPUT, never an input (see replayProduct). SA-372: all three
- * marks are required — a COST_BASIS row, quantity 0, and the `RECOMPUTE:` reference — so a manual
- * or `B562:REPAIR:` cost-basis row (or any other movement) can never be skipped as one.
- */
-export const isReplayCorrection = (m: {
-  type: string;
-  quantity: Prisma.Decimal | number | string;
-  reference: string | null | undefined;
-}) =>
-  m.type === MovementType.COST_BASIS &&
-  new Prisma.Decimal(m.quantity).isZero() &&
-  (m.reference?.startsWith(REPLAY_CORRECTION_PREFIX) ?? false);
-/** Clock-skew allowance for a client-sent "now" effective date. */
-const EFFECTIVE_DATE_SKEW_MS = 5 * 60 * 1000;
-/**
- * B562 PR-3: a stock write's accounting date — the given `effectiveDate` or now. A FUTURE date is
- * refused: it would sort after every real row still to come, so each later write would count it as
- * "newer" and replay against a movement that has not happened yet.
- */
-export function effectiveDateOf(raw: string | undefined, now = new Date()): Date {
-  if (!raw) return now;
-  const date = new Date(raw);
-  if (date.getTime() > now.getTime() + EFFECTIVE_DATE_SKEW_MS) {
-    throw new BadRequestException("The effective date can't be in the future.");
-  }
-  return date;
-}
+// B562 PR-3: the fold and its correction marks live in fold-ledger.ts (row 635, SA-902 MUST 3); re-exported for callers.
+export { REPLAY_CORRECTION_PREFIX, isReplayCorrection } from "./fold-ledger";
+// Row 563: the date gate lives in stock-write-date.ts; re-exported for this module's existing spec.
+export { effectiveDateOf } from "./stock-write-date";
 /** Averages closer than this are the same cost (costDecimal keeps 4dp). */
 const AVG_CORRECTION_EPSILON = new Prisma.Decimal("0.0001");
 
@@ -322,7 +299,12 @@ export class InventoryService {
       explicitBoxed && unitsPerBox > 1 ? costDecimal(rawUnitCost.div(unitsPerBox)) : rawUnitCost;
 
     const qty = new Prisma.Decimal(qtyPieces);
-    const effectiveDate = effectiveDateOf(dto.effectiveDate);
+    // Row 563: a person-chosen date before a filed period's close is refused (409), never clamped.
+    const effectiveDate = await stockWriteDate(this.prisma.forTenant(), {
+      tenantId: this.prisma.getTenantId(),
+      productIds: [dto.productId],
+      raw: dto.effectiveDate,
+    });
 
     // SA-767 L-2 (B286 / #2840): lock the product, THEN read the stock and average the blend comes
     // from, inside the tx. The read above only validates (existence, sellable, pack size): a purchase
@@ -417,7 +399,12 @@ export class InventoryService {
     assertSellableLines([product]); // WS8: a FAMILY is never stocked (no StockLot / StockMovement)
 
     const qty = new Prisma.Decimal(dto.quantity);
-    const effectiveDate = effectiveDateOf(dto.effectiveDate);
+    // Row 563: a person-chosen date before a filed period's close is refused (409), never clamped.
+    const effectiveDate = await stockWriteDate(this.prisma.forTenant(), {
+      tenantId: this.prisma.getTenantId(),
+      productIds: [dto.productId],
+      raw: dto.effectiveDate,
+    });
 
     // SA-767 L-2: lock the product, then read the average the movement and the new lot are stamped
     // with INSIDE the tx (a purchase committing since the read above has moved it). The whole tx
@@ -554,6 +541,7 @@ export class InventoryService {
     },
     variantName: string,
     familyMode: "on" | "off" = "off",
+    actorId: string | null = null,
   ) {
     // #2717 M2: mode on -> the family's five columns, re-read under its row lock (the `parent` this
     // tx read earlier may predate a family edit); off -> the parent row exactly as before.
@@ -593,6 +581,16 @@ export class InventoryService {
     });
     // The variant copied its parent's category text: add-only label sync, same tx.
     await syncCategoryLabel(tx, { tenantId, productId: created.id, text: created.category });
+    // SA-823 R11: a variant born under the parent is an assignment (fromParentId null), written in this same tx.
+    await writeFamilyAssigned(tx, {
+      tenantId,
+      actorId,
+      productId: created.id,
+      fromParentId: null,
+      toParentId: parent.id,
+      variantName: created.variantName ?? null,
+      via: "inventory",
+    });
     return created;
   }
 
@@ -885,7 +883,13 @@ export class InventoryService {
             const qtyDecimal = new Prisma.Decimal(target.qty);
             const variant = target.existing
               ? target.existing
-              : await this.createVariantRowInTx(tx, parent, target.newVariantName!, familyMode);
+              : await this.createVariantRowInTx(
+                  tx,
+                  parent,
+                  target.newVariantName!,
+                  familyMode,
+                  performedById,
+                );
 
             // Cost: unitCostOverride ?? the parent's EFFECTIVE cost. STANDARD-
             // costed variants are valued from their own operator-set cost, so a
@@ -1004,7 +1008,6 @@ export class InventoryService {
     }
     assertSellableLines(products); // WS8: a counted FAMILY would drain phantom stock into its variants
 
-    const effectiveDate = dto.effectiveDate ? new Date(dto.effectiveDate) : new Date();
     const reference = `STOCK_COUNT-${dto.sessionId}`;
     const restockedProductIds: string[] = [];
 
@@ -1037,6 +1040,13 @@ export class InventoryService {
             alreadyCommitted: true,
           };
         }
+        // Row 563: the date gate runs AFTER the idempotency read, so a lost-response replay of a count that already
+        // committed returns its result even if its month was filed since. A refusal writes nothing.
+        const effectiveDate = await stockWriteDate(tx, {
+          tenantId: this.prisma.getTenantId(),
+          productIds,
+          raw: dto.effectiveDate,
+        });
 
         const { movementIds, skipped } = await this.applyStockCountItemsInTx(tx, {
           items: dto.items,
@@ -1872,14 +1882,10 @@ export class InventoryService {
     });
     const consumedLots = lots.filter((l) => new Prisma.Decimal(l.remainingQty).lt(l.qty));
     if (consumedLots.length > 0) {
-      throw new ConflictException({
-        code: API_ERROR_CODES.PO_LOT_PARTIALLY_CONSUMED,
-        message:
-          `Part of what was received on ${po.poNumber} has already been used (a lot is partially ` +
-          "consumed), so its inventory can't be re-applied — that would invent stock. " +
-          "Save the edit as document-only (keep stock as is), or record a return.",
-        lotIds: consumedLots.map((l) => l.id),
-      });
+      throw poGoodsUsedConflict(
+        po.poNumber,
+        consumedLots.map((l) => l.id),
+      );
     }
 
     const movements = await tx.stockMovement.findMany({
@@ -1909,6 +1915,10 @@ export class InventoryService {
         poReversalOf(m) == null &&
         !reversedIds.has(m.id),
     );
+
+    // Row 645: the lot figure above no longer moves on a sale (#3487) — the ledger does.
+    const usedProducts = await productsUsedSinceReceipt(tx, live);
+    if (usedProducts.length > 0) throw poGoodsUsedConflict(po.poNumber, [], usedProducts);
 
     const posted = new Map<string, Prisma.Decimal>();
     for (const m of live) {
@@ -3113,7 +3123,6 @@ export class InventoryService {
       this.refuseUncountableProducts(await this.readCountProducts(session.lines));
     }
 
-    const effectiveDate = dto.effectiveDate ? new Date(dto.effectiveDate) : new Date();
     const reference = stockCountReference(id);
 
     let held;
@@ -3122,7 +3131,7 @@ export class InventoryService {
         this.commitStockCountBatches({
           id,
           reference,
-          effectiveDate,
+          rawEffectiveDate: dto.effectiveDate,
           notes: dto.notes,
           finishWithSkips: dto.finishWithSkips === true,
           user,
@@ -3206,12 +3215,13 @@ export class InventoryService {
   private async commitStockCountBatches(args: {
     id: string;
     reference: string;
-    effectiveDate: Date;
+    /** Row 563: the person-chosen date, gated under the lock by `stockWriteDate` (missing = now). */
+    rawEffectiveDate?: string;
     notes?: string;
     finishWithSkips: boolean;
     user: { sub: string };
   }): Promise<StockCountCommitOutcome> {
-    const { id, reference, effectiveDate, notes, finishWithSkips, user } = args;
+    const { id, reference, rawEffectiveDate, notes, finishWithSkips, user } = args;
 
     // Under the lock: no edit is in flight and none can start. Re-read the session AND its lines - a
     // committer that waited out an edit sees the finished edit; one that waited out another committer
@@ -3242,6 +3252,14 @@ export class InventoryService {
       id,
     );
     if (overlaps.length > 0) throw productInOpenCount(overlaps);
+
+    // Row 563: the date gate, under the lock and AFTER the COMMITTED re-read above (a committed count is never refused),
+    // over ALL line products, before the first batch: a refusal writes nothing.
+    const effectiveDate = await stockWriteDate(this.prisma.forTenant(), {
+      tenantId: this.prisma.getTenantId(),
+      productIds: [...new Set(lines.map((l) => l.productId))],
+      raw: rawEffectiveDate,
+    });
 
     const countProducts = await this.readCountProducts(lines);
     const { productMap } = countProducts;
@@ -3690,58 +3708,11 @@ export class InventoryService {
     // weighted average here would fabricate a bogus correction, so mirror that:
     // carry the existing average forward untouched and never correct it.
     const isStandard = product.costingMethod === CostingMethod.STANDARD;
-
-    let stock = new Prisma.Decimal(0);
-    let avg: Prisma.Decimal | null = isStandard
-      ? product.averageCost != null
-        ? costDecimal(product.averageCost)
-        : null
-      : null;
-    let hasCostfulHistory = isStandard && avg != null;
-
-    for (const m of movements) {
-      const qty = new Prisma.Decimal(m.quantity);
-      const unitCost = m.unitCost != null ? new Prisma.Decimal(m.unitCost) : null;
-
-      if (!isStandard) {
-        switch (m.type) {
-          case MovementType.COST_BASIS:
-            if (unitCost != null && !isReplayCorrection(m)) {
-              avg = costDecimal(unitCost);
-              hasCostfulHistory = true;
-            }
-            break;
-          case MovementType.PURCHASE:
-            if (unitCost != null) {
-              if (qty.lt(0)) {
-                // B846: a bill-revert row is the exact inverse of its receipt — reverse the average
-                // (kept when the reversal empties stock), never feed a negative qty to nextAverageCost
-                // (stock + qty = 0 divides by zero).
-                if (avg != null) {
-                  avg = reverseAverageCost(stock, avg, qty.neg(), unitCost) ?? avg;
-                  hasCostfulHistory = true;
-                }
-              } else {
-                avg = nextAverageCost(stock, avg, qty, unitCost);
-                hasCostfulHistory = true;
-              }
-            }
-            break;
-          case MovementType.ADJUSTMENT:
-            // Costed adjustments are bill-void compensations: reverse the average
-            if (unitCost != null && avg != null) {
-              if (qty.gt(0)) avg = nextAverageCost(stock, avg, qty, unitCost);
-              else if (qty.lt(0)) avg = reverseAverageCost(stock, avg, qty.neg(), unitCost) ?? avg;
-            }
-            break;
-          default:
-            // SALE / RETURN / WRITE_OFF: quantity only, average carries forward
-            break;
-        }
-      }
-
-      stock = stock.add(qty);
-    }
+    // Row 635 (SA-902 MUST 3): the ONE fold, shared with the B562 D2 repair.
+    const { stock, avg, hasCostfulHistory } = foldLedger(movements, {
+      isStandard,
+      averageCost: product.averageCost,
+    });
 
     const stockDrift = new Prisma.Decimal(product.currentStock).sub(stock);
     const gapDetected = !stockDrift.isZero();

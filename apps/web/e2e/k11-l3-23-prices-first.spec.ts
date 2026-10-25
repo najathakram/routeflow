@@ -17,6 +17,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import { setTenantCookie } from "./helpers/auth";
 import { TENANT_SLUG } from "./helpers/constants";
+import { UNITS_V2_IDS } from "./helpers/units-v2-ids";
 import { requireUnitsV2Flag } from "./helpers/units-v2-support";
 import {
   BASE,
@@ -50,8 +51,7 @@ async function expectTwoColumns(page: Page) {
   expect(Math.abs(i.y - d.y), "both columns start on one line").toBeLessThanOrEqual(1);
   // 20 px from Details to the next card in the right column (space-y-5, as on master)
   const next = (await page
-    .locator("div.grid.lg\\:grid-cols-3 > div")
-    .nth(2)
+    .getByTestId("product-lower-column")
     .locator(":scope > *")
     .first()
     .boundingBox())!;
@@ -60,12 +60,34 @@ async function expectTwoColumns(page: Page) {
 }
 
 async function expectPhoneOrder(page: Page, flagOff: boolean) {
-  // flag OFF: the old "Price per ..." row. flag ON (K11-20c): the read-only Details price line replaced it.
+  // flag OFF: the old "Price per ..." row. flag ON: the Details price line is gone (R3 say-no 2), so the prices grid is the price home.
+  if (!flagOff) await expect(page.getByTestId("details-price-line")).toHaveCount(0);
   const label = flagOff
     ? page.getByText(/^Price per /).first()
-    : page.getByTestId("details-price-line");
+    : page.getByTestId(UNITS_V2_IDS.grid);
   const top = (await label.boundingBox())!.y;
   expect(top, "the price label is on the first screen").toBeLessThan(viewportHeight(page));
+  if (!flagOff) {
+    // The grid's top alone is too loose (More details collapsed, it passed with the "Prices by unit" heading at
+    // y=874 and the first figure at y=1012 on a 844 px screen). Both the region heading AND the first money figure
+    // in the grid must start on the first screen.
+    const hTop = (await page.getByTestId("units-v2-h-units").boundingBox())!.y;
+    expect(hTop, "the Prices by unit heading is on the first screen").toBeLessThan(
+      viewportHeight(page),
+    );
+    // A RegExp, not a `:text-matches("...")` string: the selector parser unescapes `\d` and `\$` inside its quoted
+    // argument, so that probe never matched anything.
+    const figure = page
+      .getByTestId(UNITS_V2_IDS.grid)
+      .getByText(/^\$[\d,]+\.\d{2}$/)
+      .filter({ visible: true })
+      .first();
+    await expect(figure, "the grid shows a money figure").toBeVisible();
+    const fTop = (await figure.boundingBox())!.y;
+    expect(fTop, "the first money figure in the grid is on the first screen").toBeLessThan(
+      viewportHeight(page),
+    );
+  }
   const d = (await card(page, "Details").boundingBox())!;
   const i = (await card(page, "Image").boundingBox())!;
   expect(d.y, "Details comes before Image").toBeLessThan(i.y);
@@ -88,6 +110,15 @@ async function expectPhoneOrder(page: Page, flagOff: boolean) {
 
 async function expectMerchLast(page: Page) {
   const details = card(page, "Details");
+  // Below sm the secondary fields sit behind "More details" (hidden by CSS, still mounted); open it, then assert the
+  // same things. From sm up the trigger is not shown and the fields are already visible.
+  const more = page.getByTestId("details-more-toggle");
+  if (await more.isVisible()) {
+    await expect(page.getByTestId("details-more-panel"), "collapsed on a phone").toBeHidden();
+    expect((await more.boundingBox())!.height, "a 44 px target").toBeGreaterThanOrEqual(44);
+    await more.click();
+    await expect(more).toHaveAttribute("aria-expanded", "true");
+  }
   const merch = details.getByRole("heading", { name: "Buyer merchandising" });
   await expect(merch).toBeVisible();
   const m = (await merch.boundingBox())!;

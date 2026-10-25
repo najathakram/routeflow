@@ -1,0 +1,30 @@
+{
+  "run": "2026-10-24-bug-swarm-5",
+  "profile": "bug-swarm",
+  "mode": "bugfix",
+  "scale": "small",
+  "engine": "bug-swarm v1.2 workflow (wf_cd2705ee-096), idSpace row, maxClusters 3, base aceb7686b",
+  "started": "2026-10-24T02:58:00Z",
+  "ended": "2026-10-24T03:32:00Z",
+  "phaseReport": [
+    { "phase": "Workflow (Triage+Pack, Cluster, 3x Build/Gate/Review, 1 review fix round)", "ran": true, "agents": 14, "tokens": 7315339, "estUsd": 4.7870831, "model": "mixed", "effort": "per role", "note": "haiku-5-5 1.58M tokens unpriced (about $0.67 at the Haiku 4.5 card price, not added)" },
+    { "phase": "Orchestrator (delta)", "ran": true, "agents": 0, "tokens": 3672756, "estUsd": 2.2208, "model": "claude-opus-5-5", "effort": "session", "note": "row pick, base npm ci, push, PRs, board post, records" }
+  ],
+  "bugsFixed": 3,
+  "requestedIds": 6,
+  "builtIds": ["128", "220", "421"],
+  "excluded": { "303": "fixed-on-master", "70": "fixed-on-master" },
+  "unaccounted": { "184": "triage split it into two subs with paraphrased titles; 184a fixed-on-master, 184b unclear" },
+  "quality": {
+    "firstPassGate": { "c1": "GREEN", "c2": "GREEN", "c3": "GREEN" },
+    "reviewMusts": { "c1": 1, "c2": 0, "c3": 0 },
+    "reviewVerdicts": { "c1": "FAIL->PASS", "c2": "PASS", "c3": "PASS" },
+    "specEdits": 1,
+    "specEditsRejected": 0
+  },
+  "prs": { "c1": "#3703 @ a9797833f", "c2": "#3704 @ 4c8763509", "c3": "#3705 @ 5f563c2f9" },
+  "costUsd": 7.0079,
+  "costPerBugUsd": 2.34,
+  "orchestratorShare": 0.32,
+  "weeklyUsagePct": { "start": 56, "end": 56, "cap": 58 }
+}

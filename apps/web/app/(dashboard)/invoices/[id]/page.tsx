@@ -66,6 +66,8 @@ import { isPendingMirrorInvoice, pendingMirrorCopy } from "@/lib/invoice-pending
 import { useCounterSaleGate } from "@/lib/api/counter-sale";
 import { isStoreOnly } from "@/lib/counter-sale";
 import { canSendReminder } from "@/lib/invoice-reminder";
+import { canEmailAgain, invoiceSendStateLine, sendsAfterLabel } from "@/lib/invoice-send-state";
+import { EmailInvoiceAction } from "@/components/invoices/EmailInvoiceAction";
 import { useParams, useRouter } from "next/navigation";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { useUnapplyCreditNote } from "@/lib/api/credit-notes";
@@ -73,13 +75,14 @@ import { useCustomerAdvancePayments } from "@/lib/api/customers";
 import { fmt, fmtCalendarDate, fmtDate, isInternalEmail, todayIso } from "@/lib/formatting";
 import { getDaysForTerms, addDaysIso } from "@/lib/invoice-terms";
 import {
+  editPaymentCap,
   invoiceDisplayLines,
   invoiceDisplayCategoryTax,
-  remainingCapacity,
   resolveConfirmedAmounts,
 } from "@routeflow/pricing";
 import { useInvoiceTaxSplit } from "@/lib/use-invoice-tax-split";
 import { useDuplicateInvoiceAction } from "@/lib/use-duplicate-invoice-action";
+import { RestrictionOverrideNote } from "@/components/RestrictionOverrideNote";
 import { invoiceLineQtyText } from "@/lib/invoice-line-unit";
 import { ComponentSubLines } from "@/components/ComponentSubLines";
 import {
@@ -87,7 +90,8 @@ import {
   displayQtyText,
   formatUnitPrice4,
 } from "@/components/InvoiceDisplayRows";
-import { CHECK_TRANSITIONS } from "@routeflow/types";
+import { CHECK_TRANSITIONS, PAYMENT_NO_LONGER_FITS_COPY, withRecordAnyway } from "@routeflow/types";
+import { unvoidAmendedPeriodNote, type UnvoidInvoiceResult } from "@routeflow/types";
 import { InvoiceTotalsSummary } from "./InvoiceTotalsSummary";
 import { InvoiceLineAmount } from "./InvoiceLineAmount";
 import { InvoiceLinePrice } from "./InvoiceLinePrice";
@@ -116,10 +120,26 @@ import { useTenantTimeZone } from "@/lib/tenant-timezone";
 import { OrderPreviewModal } from "../../_components/LinkedDocPreviewModal";
 import { printPdfBlob } from "@/lib/print-pdf-blob";
 import { dayClosedCopy } from "@/lib/day-closed-copy";
+import { toastDuplicatePaymentRef } from "@/lib/duplicate-payment-ref";
 import { unvoidRefusalCopy } from "@/lib/unvoid-refusal-copy";
 import { voidFailureDescription } from "@/lib/invoice-void-copy";
 import { isOpenInvoiceStatus } from "@/lib/open-invoice-status";
 import { ReadOnlyHint, WriteButton, useReadOnlyGate } from "@/lib/read-only-gate";
+import {
+  PAYMENT_PHOTO_LATER_COPY,
+  finishFoundPayment,
+  forgetPaymentProof,
+  paymentKeyRefusalCopy,
+  rememberPaymentProof,
+  paymentKeyScope,
+  usePaymentSubmitKey,
+} from "@/lib/payment-submit-key";
+import {
+  usePaymentStatusCheck,
+  type PaymentStatusCheck as PaymentStatusCheckState,
+} from "@/lib/use-payment-status-check";
+import { PaymentStatusCheck } from "@/components/PaymentStatusCheck";
+import { PAYMENT_STATUS_COPY } from "@routeflow/types/payment-submit-key";
 
 // ─── Credit-note relation on a payment row ─────────────────────────────────────
 // WP2 (invoices.service.ts findOne) includes `creditNote: {id, creditNoteNumber,
@@ -218,7 +238,7 @@ function StatusRibbon({ status }: { status: InvoiceStatus }) {
     PAID: { bg: "bg-green-500", text: "text-white", label: "Paid" },
     VOID: { bg: "bg-red-500", text: "text-white", label: "Void" },
     OVERDUE: { bg: "bg-red-500", text: "text-white", label: "Overdue" },
-    WRITTEN_OFF: { bg: "bg-stone-500", text: "text-white", label: "Written Off" },
+    WRITTEN_OFF: { bg: "bg-stone-500", text: "text-white", label: "Written off" },
   };
 
   const r = ribbonStyle[status];
@@ -228,12 +248,12 @@ function StatusRibbon({ status }: { status: InvoiceStatus }) {
     <div className="pointer-events-none absolute right-0 top-0 h-24 w-24 overflow-hidden">
       <div
         className={cn(
-          "absolute right-[-28px] top-[18px] w-[120px] rotate-45 py-1 text-center text-xs font-bold tracking-wider shadow-sm",
+          "absolute right-[-28px] top-[18px] w-[120px] rotate-45 py-1 text-center text-xs font-bold tracking-wider shadow-sm uppercase",
           r.bg,
           r.text,
         )}
       >
-        {r.label.toUpperCase()}
+        {r.label}
       </div>
     </div>
   );
@@ -273,7 +293,7 @@ function WhatsNextBanner({
           onClick={onRecordPayment}
           leftIcon={<CreditCard className="h-4 w-4" />}
         >
-          Record Payment
+          Record payment
         </WriteButton>
       </div>
     );
@@ -293,7 +313,7 @@ function WhatsNextBanner({
           onClick={onRecordPayment}
           leftIcon={<CreditCard className="h-4 w-4" />}
         >
-          Record Payment
+          Record payment
         </WriteButton>
       </div>
     );
@@ -315,7 +335,7 @@ function WhatsNextBanner({
           leftIcon={<CreditCard className="h-4 w-4" />}
           className="border-orange-300 text-orange-700 hover:bg-orange-100"
         >
-          Record Payment
+          Record payment
         </WriteButton>
       </div>
     );
@@ -372,12 +392,15 @@ function RecordPaymentModal({
   onRecord,
   balanceDue,
   isPending,
+  statusCheck,
 }: {
   isOpen: boolean;
   onClose: () => void;
   onRecord: (data: PaymentFormState, file: File | null) => void;
   balanceDue: number;
   isPending: boolean;
+  /** SA-824: the unknown-outcome "Check payment status" state (Record is off while it is unknown). */
+  statusCheck: PaymentStatusCheckState;
 }) {
   const [form, setForm] = React.useState<PaymentFormState>({
     method: "ACH",
@@ -408,6 +431,7 @@ function RecordPaymentModal({
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (statusCheck.unknown) return; // SA-824: the status check comes before any new attempt
     const amt = parseFloat(form.amount);
     if (!form.amount || isNaN(amt) || amt <= 0) {
       setAmountError("Enter an amount greater than 0.");
@@ -421,22 +445,28 @@ function RecordPaymentModal({
     <Modal
       open={isOpen}
       onClose={onClose}
-      title="Record Payment"
+      title="Record payment"
       description="Log a payment received for this invoice."
       footer={
         <>
           <Button variant="secondary" onClick={onClose} disabled={isPending}>
             Cancel
           </Button>
-          <Button type="submit" form="invoice-payment-form" loading={isPending}>
-            Record Payment
+          <Button
+            type="submit"
+            form="invoice-payment-form"
+            loading={isPending}
+            disabled={statusCheck.unknown}
+          >
+            Record payment
           </Button>
         </>
       }
     >
       <form id="invoice-payment-form" onSubmit={handleSubmit} noValidate className="space-y-4">
+        <PaymentStatusCheck status={statusCheck} />
         <div>
-          <label className="mb-1.5 block text-sm font-medium text-navy/80">Payment Method</label>
+          <label className="mb-1.5 block text-sm font-medium text-navy/80">Payment method</label>
           <select
             value={form.method}
             onChange={(e) =>
@@ -748,7 +778,7 @@ function EditPaymentModal({
     <Modal
       open={isOpen}
       onClose={onClose}
-      title="Edit Payment"
+      title="Edit payment"
       footer={
         <>
           <Button variant="secondary" onClick={onClose} disabled={isPending}>
@@ -762,7 +792,7 @@ function EditPaymentModal({
     >
       <form id="edit-payment-form" onSubmit={handleSubmit} noValidate className="space-y-4">
         <div>
-          <label className="mb-1.5 block text-sm font-medium text-navy/80">Payment Method</label>
+          <label className="mb-1.5 block text-sm font-medium text-navy/80">Payment method</label>
           <select
             value={form.method}
             onChange={(e) =>
@@ -921,7 +951,7 @@ function VoidConfirmModal({
     <Modal
       open={isOpen}
       onClose={onClose}
-      title="Void Invoice?"
+      title="Void invoice?"
       description={`Invoice ${invoiceNumber} will be marked as void. This action cannot be undone.`}
       footer={
         <>
@@ -929,7 +959,7 @@ function VoidConfirmModal({
             Cancel
           </Button>
           <WriteButton variant="danger" onClick={onConfirm} loading={isPending}>
-            Void Invoice
+            Void invoice
           </WriteButton>
         </>
       }
@@ -980,7 +1010,7 @@ function WriteOffModal({
     <Modal
       open={isOpen}
       onClose={onClose}
-      title="Write Off Invoice"
+      title="Write off invoice"
       description={`Mark invoice ${invoiceNumber} as uncollectible (bad debt).`}
       footer={
         <>
@@ -988,7 +1018,7 @@ function WriteOffModal({
             Cancel
           </Button>
           <Button variant="danger" type="submit" form="write-off-form" loading={isPending}>
-            Write Off
+            Write off
           </Button>
         </>
       }
@@ -1090,7 +1120,7 @@ function EditTermsModal({
     <Modal
       open={isOpen}
       onClose={onClose}
-      title="Edit Terms"
+      title="Edit terms"
       description={`Correct the due date, payment terms, reference, or subject on invoice ${invoice.invoiceNumber}. Line items, discounts, and payments are untouched.`}
       footer={
         <>
@@ -1193,7 +1223,7 @@ function DeletePaymentModal({
     <Modal
       open={isOpen}
       onClose={onClose}
-      title="Delete Payment?"
+      title="Delete payment?"
       description={`Remove payment of ${fmt(amount)} from this invoice?`}
       footer={
         <>
@@ -1201,7 +1231,7 @@ function DeletePaymentModal({
             Cancel
           </Button>
           <Button variant="danger" onClick={onConfirm} loading={isPending}>
-            Delete Payment
+            Delete payment
           </Button>
         </>
       }
@@ -1425,7 +1455,7 @@ export default function InvoiceDetailPage() {
   const voidInvoice = useVoidInvoice();
   const reopenInvoice = useReopenInvoice();
   const recordPayment = useRecordInvoicePayment();
-  const { duplicate: duplicateInvoice } = useDuplicateInvoiceAction();
+  const { duplicate: duplicateInvoice, dialog: duplicateDialog } = useDuplicateInvoiceAction();
   const writeOffInvoice = useWriteOffInvoice();
   const updatePayment = useUpdateInvoicePayment();
   const deletePayment = useDeleteInvoicePayment();
@@ -1447,7 +1477,34 @@ export default function InvoiceDetailPage() {
   );
 
   const [isPaymentOpen, setIsPaymentOpen] = React.useState(false);
+  // SA-824: one Idempotency-Key per open, kept across a Cancel -> reopen while the outcome is unknown
+  const keyScope = paymentKeyScope.invoice(id);
+  const paymentKey = usePaymentSubmitKey(isPaymentOpen, keyScope);
   const [isAdvanceOpen, setIsAdvanceOpen] = React.useState(false);
+  // SA-824: an unknown outcome offers "Check payment status"; found closes like a 2xx, and attaches the
+  // selected proof photo to the found payment (the same upload the 2xx path runs).
+  const paymentStatus = usePaymentStatusCheck(
+    paymentKey,
+    async (payment) => {
+      const photo = await finishFoundPayment<File>(keyScope, payment, (paymentId, file) =>
+        uploadPaymentImage.mutateAsync({ paymentId, file }),
+      );
+      setIsPaymentOpen(false);
+      toast(
+        photo === "later"
+          ? { title: PAYMENT_PHOTO_LATER_COPY, variant: "info" }
+          : { title: PAYMENT_STATUS_COPY.recorded, variant: "success" },
+      );
+      if (photo === "failed") {
+        toast({
+          title: "Payment saved, image upload failed",
+          description: "You can attach it later from Payment History.",
+          variant: "error",
+        });
+      }
+    },
+    isPaymentOpen,
+  );
   // Payment row whose "Remove credit" was clicked — confirm before un-applying.
   const [removingCreditPayment, setRemovingCreditPayment] = React.useState<InvoicePayment | null>(
     null,
@@ -1588,6 +1645,7 @@ export default function InvoiceDetailPage() {
   // the order and can't be edited or sent until the order is delivered. Edit the
   // order, not the invoice.
   const isPendingMirror = isPendingMirrorInvoice({ ...invoice, status });
+  const sendStateLine = invoiceSendStateLine(invoice.sendState); // #2088: "Emailed Oct 2 to x. Modified since."
 
   const canRecordPayment = isOpenInvoiceStatus(status);
   const canWriteOff = isOpenInvoiceStatus(status);
@@ -1625,7 +1683,7 @@ export default function InvoiceDetailPage() {
           }
           toast({
             title: `${pdfVariant === "draft" ? "Draft" : "Final"} invoice emailed`,
-            description: `Sent to ${res.sentTo}`,
+            description: `Sent to ${res.sentTo}.`,
             variant: "success",
           });
         },
@@ -1725,7 +1783,7 @@ export default function InvoiceDetailPage() {
           }
           toast({
             title: "Reminder sent",
-            description: `Reminder emailed to ${res.sentTo}`,
+            description: `Reminder emailed to ${res.sentTo}.`,
             variant: "success",
           });
         },
@@ -1805,7 +1863,9 @@ export default function InvoiceDetailPage() {
     );
   };
 
-  const handleRecordPayment = (data: PaymentFormState, file: File | null) => {
+  const handleRecordPayment = (data: PaymentFormState, file: File | null, recordAnyway = false) => {
+    if (paymentKey.hasUnknown()) return; // SA-824: the status check comes before any new attempt
+    rememberPaymentProof(keyScope, file); // so a status check that finds the payment can attach it
     recordPayment.mutate(
       {
         id: invoice.id,
@@ -1815,9 +1875,12 @@ export default function InvoiceDetailPage() {
         settledAt: data.settledAt || undefined,
         reference: data.reference.trim() || undefined,
         notes: data.notes.trim() || undefined,
+        submitKey: paymentKey,
+        ...(recordAnyway ? { recordAnyway: true } : {}),
       },
       {
         onSuccess: (updated) => {
+          forgetPaymentProof(keyScope);
           setIsPaymentOpen(false);
           toast({
             title: "Payment recorded",
@@ -1842,9 +1905,20 @@ export default function InvoiceDetailPage() {
           }
         },
         onError: (err: any) => {
+          // Row 498: a duplicate reference names the existing payment; staff may "Record anyway".
+          if (
+            toastDuplicatePaymentRef(err, toast, user?.role, () =>
+              handleRecordPayment(data, file, true),
+            )
+          )
+            return;
           toast({
             title: "Failed to record payment",
-            description: dayClosedCopy(err) ?? err?.response?.data?.message ?? "Please try again.",
+            description:
+              paymentKeyRefusalCopy(err) ??
+              dayClosedCopy(err) ??
+              err?.response?.data?.message ??
+              "Please try again.",
             variant: "error",
           });
         },
@@ -1859,32 +1933,54 @@ export default function InvoiceDetailPage() {
     });
   };
 
-  const handleSavePayment = (data: PaymentFormState) => {
+  const handleSavePayment = (data: PaymentFormState, recordAnyway = false) => {
     if (!editingPayment) return;
+    const body = {
+      invoiceId: invoice.id,
+      paymentId: editingPayment.id,
+      method: data.method,
+      amount: parseFloat(data.amount),
+      paidAt: data.paidAt || undefined,
+      // Explicit null so emptying the field clears the stored bank date.
+      settledAt: data.settledAt || null,
+      // W-663: an emptied field is sent as null so the server clears it (as settledAt); undefined kept the old value
+      reference: data.reference.trim() || null,
+      notes: data.notes.trim() || null,
+    };
     updatePayment.mutate(
-      {
-        invoiceId: invoice.id,
-        paymentId: editingPayment.id,
-        method: data.method,
-        amount: parseFloat(data.amount),
-        paidAt: data.paidAt || undefined,
-        // Explicit null so emptying the field clears the stored bank date.
-        settledAt: data.settledAt || null,
-        reference: data.reference.trim() || undefined,
-        notes: data.notes.trim() || undefined,
-      },
+      recordAnyway ? withRecordAnyway(body) : body, // W-718: the resend is the SAME body plus the flag
       {
         onSuccess: () => {
           setEditingPayment(null);
           toast({ title: "Payment updated", variant: "success" });
         },
         onError: (err: any) => {
+          // W-718: an edit onto a used reference names the existing payment; staff may "Record anyway".
+          if (toastDuplicatePaymentRef(err, toast, user?.role, () => handleSavePayment(data, true)))
+            return;
           toast({
             title: "Failed to update payment",
             description: dayClosedCopy(err) ?? err?.response?.data?.message ?? "Please try again.",
             variant: "error",
           });
         },
+      },
+    );
+  };
+
+  // W-769: the flagged unconfirmed row's Void is the EXISTING payment PATCH with status VOID (amount and method kept: the DTO needs them)
+  const handleVoidPayment = (pmt: InvoicePayment) => {
+    updatePayment.mutate(
+      {
+        invoiceId: invoice.id,
+        paymentId: pmt.id,
+        method: pmt.method as SelectablePaymentMethod,
+        amount: Number(pmt.amount),
+        status: "VOID",
+      },
+      {
+        onSuccess: () => toast({ title: "Payment voided", variant: "info" }),
+        onError: () => toast({ title: "Couldn't void this payment. Try again.", variant: "error" }),
       },
     );
   };
@@ -2017,18 +2113,14 @@ export default function InvoiceDetailPage() {
     );
   };
 
-  // PR-2 (check-payments B1 hardening): mirrors the server guard's capacity
-  // check (invoices.service updatePayment), which moved from summing only
-  // CONFIRMED siblings to remainingCapacity() over every non-VOID sibling — a
-  // DRAFT sibling now reserves capacity on both sides, so the modal still
-  // refuses exactly what the API would refuse.
+  // PR-2 / W-769: mirrors the server guard (invoices.service updatePayment -> assertEditFits) through the ONE pricing
+  // helper: a PAID edit is real money, capped on CONFIRMED siblings only; an unconfirmed edit stays on capacity (a DRAFT
+  // sibling reserves it). So the modal refuses exactly what the API would refuse.
   const editPaymentMax = editingPayment
-    ? Math.max(
-        0,
-        remainingCapacity(
-          total,
-          payments.filter((p) => p.id !== editingPayment.id),
-        ),
+    ? editPaymentCap(
+        total,
+        payments.filter((p) => p.id !== editingPayment.id),
+        editingPayment.status,
       )
     : 0;
 
@@ -2094,17 +2186,20 @@ export default function InvoiceDetailPage() {
             </Button>
           )}
 
-          {/* Send (DRAFT) / Send Reminder (SENT/VIEWED/OVERDUE) */}
-          {status === "DRAFT" && !isPendingMirror && (
-            <Button
-              size="sm"
-              variant="primary"
-              leftIcon={<Send className="h-3.5 w-3.5" />}
-              onClick={handleSend}
+          {/* #2088: Send (DRAFT) / Email again (SENT/VIEWED/OVERDUE/PARTIAL/PAID), with the tracked state in the
+              confirmation; a locked draft says why instead of hiding the action. Send reminder stays separate. */}
+          {((status === "DRAFT" && !isPendingMirror) ||
+            canEmailAgain(status) ||
+            invoice.sendLocked) && (
+            <EmailInvoiceAction
+              sendState={invoice.sendState}
+              sendLocked={invoice.sendLocked}
+              lockedLabel={sendsAfterLabel(
+                fulfilmentCapability == null ? null : isStoreOnly(fulfilmentCapability),
+              )}
               loading={sendInvoiceEmail.isPending || sendInvoice.isPending}
-            >
-              Send
-            </Button>
+              onSend={handleSend}
+            />
           )}
           {canSendReminder({ status, balanceDue }) && (
             <Button
@@ -2114,7 +2209,7 @@ export default function InvoiceDetailPage() {
               onClick={handleReminder}
               loading={sendInvoiceReminder.isPending}
             >
-              Send Reminder
+              Send reminder
             </Button>
           )}
 
@@ -2164,7 +2259,7 @@ export default function InvoiceDetailPage() {
             PDF
           </Button>
 
-          {/* Revert to Draft — SENT/VIEWED/OVERDUE with no payment ROWS at all:
+          {/* Revert to draft — SENT/VIEWED/OVERDUE with no payment ROWS at all:
               revertInvoiceToDraft refuses on `invoicePayment.count > 0`, which
               counts DRAFT and VOID rows too. Gating on amountPaid (a CONFIRMED
               sum) would offer a button the server always rejects. */}
@@ -2177,7 +2272,7 @@ export default function InvoiceDetailPage() {
                 onClick={() => setIsRevertToDraftOpen(true)}
                 loading={revertToDraft.isPending}
               >
-                Revert to Draft
+                Revert to draft
               </Button>
             )}
 
@@ -2194,7 +2289,7 @@ export default function InvoiceDetailPage() {
             </Button>
           )}
 
-          {/* Record Payment dropdown */}
+          {/* Record payment dropdown */}
           {canRecordPayment && readOnlyGate.readOnly && (
             <div>
               <button
@@ -2205,7 +2300,7 @@ export default function InvoiceDetailPage() {
                 className="flex items-center gap-1.5 rounded-lg border border-surface-border bg-white px-3 py-1.5 text-sm font-medium text-navy shadow-card opacity-50"
               >
                 <CreditCard className="h-3.5 w-3.5" />
-                Record Payment
+                Record payment
               </button>
               <ReadOnlyHint />
             </div>
@@ -2218,30 +2313,30 @@ export default function InvoiceDetailPage() {
                   className="flex items-center gap-1.5 rounded-lg border border-surface-border bg-white px-3 py-1.5 text-sm font-medium text-navy shadow-card transition-colors hover:bg-surface-raised"
                 >
                   <CreditCard className="h-3.5 w-3.5" />
-                  Record Payment
+                  Record payment
                   <ChevronDown className="h-3.5 w-3.5" />
                 </button>
               }
               items={[
                 {
-                  label: "Record Payment",
+                  label: "Record payment",
                   onClick: () => setIsPaymentOpen(true),
                   disabled: readOnlyGate.readOnly,
                 },
                 // B13: web had no way to apply a customer's advance-payment wallet balance —
-                // only mobile could. Same gate as Record Payment; the server also refuses a
+                // only mobile could. Same gate as Record payment; the server also refuses a
                 // settled/dead/forgiven invoice (CREDIT_NOT_APPLICABLE) regardless.
                 ...(invoice.customerId
                   ? [
                       {
-                        label: "Apply Advance",
+                        label: "Apply advance",
                         onClick: () => setIsAdvanceOpen(true),
                         disabled: readOnlyGate.readOnly,
                       },
                     ]
                   : []),
                 {
-                  label: "Write Off",
+                  label: "Write off",
                   onClick: () => setIsWriteOffOpen(true),
                   danger: true,
                   disabled: readOnlyGate.readOnly,
@@ -2250,7 +2345,7 @@ export default function InvoiceDetailPage() {
             />
           )}
 
-          {/* Adjust Prices — operator-only. Match backend gate exactly:
+          {/* Adjust prices — operator-only. Match backend gate exactly:
               PAID/VOID/WRITTEN_OFF reject with "Cannot adjust prices on a
               ${status} invoice. Issue a credit note instead." Hiding the
               button avoids the dead-click + invisible-toast UX where the
@@ -2266,7 +2361,7 @@ export default function InvoiceDetailPage() {
                 leftIcon={<SlidersHorizontal className="h-3.5 w-3.5" />}
                 onClick={() => setShowAdjustPanel((v) => !v)}
               >
-                Adjust Prices
+                Adjust prices
               </Button>
             )}
 
@@ -2288,17 +2383,17 @@ export default function InvoiceDetailPage() {
               {
                 // WP3: narrow post-issue correction of dueDate/paymentTermsLabel/
                 // reference/subject only — blocked exactly where the API blocks it.
-                label: "Edit Terms",
+                label: "Edit terms",
                 onClick: () => setIsEditTermsOpen(true),
                 disabled: status === "VOID" || status === "WRITTEN_OFF",
               },
               {
-                label: "Reopen Invoice",
+                label: "Reopen invoice",
                 onClick: () => setIsReopenOpen(true),
                 disabled: status !== "PAID",
               },
               {
-                label: "Void Invoice",
+                label: "Void invoice",
                 onClick: () => setIsVoidOpen(true),
                 danger: true,
                 disabled: !canVoid || readOnlyGate.readOnly,
@@ -2307,6 +2402,12 @@ export default function InvoiceDetailPage() {
           />
         </div>
       </div>
+
+      {sendStateLine && (
+        <p data-testid="invoice-send-state-line" className="text-xs font-medium text-navy/60">
+          {sendStateLine}
+        </p>
+      )}
 
       {/* Write-off reason banner */}
       {status === "WRITTEN_OFF" && invoice.writeOffReason && (
@@ -2368,7 +2469,7 @@ export default function InvoiceDetailPage() {
                 />
                 {balanceDue > 0 && (
                   <div className="text-right">
-                    <p className="eyebrow-label">Balance Due</p>
+                    <p className="eyebrow-label">Balance due</p>
                     <p className="money text-2xl font-semibold text-danger">{fmt(balanceDue)}</p>
                   </div>
                 )}
@@ -2512,6 +2613,7 @@ export default function InvoiceDetailPage() {
                           {display.layout !== "components" && (
                             <ComponentSubLines components={item.components} />
                           )}
+                          <RestrictionOverrideNote line={item} />
                         </td>
                         <td className="px-4 py-3 text-right">
                           <span
@@ -2602,7 +2704,7 @@ export default function InvoiceDetailPage() {
             )}
           </div>
 
-          {/* Adjust Prices Panel */}
+          {/* Adjust prices Panel */}
           {showAdjustPanel && (
             <AdjustPricesPanel invoice={invoice} onClose={() => setShowAdjustPanel(false)} />
           )}
@@ -2715,6 +2817,18 @@ export default function InvoiceDetailPage() {
                                 </span>
                               )}
                             </span>
+                            {pmt.noLongerFits && !isVoided && (
+                              <button
+                                onClick={() => handleVoidPayment(pmt)}
+                                className={cn(
+                                  TAP_TARGET,
+                                  "rounded p-1 text-navy/30 transition-all hover:text-danger",
+                                )}
+                                title="Void payment"
+                              >
+                                <XCircle className="h-3.5 w-3.5" />
+                              </button>
+                            )}
                             {isEditable && (
                               <>
                                 <button
@@ -2756,6 +2870,11 @@ export default function InvoiceDetailPage() {
                             <span className="text-xs text-navy/70">· {pmt.reference}</span>
                           )}
                         </div>
+                        {pmt.noLongerFits && !isVoided && (
+                          <p className="mt-1 text-xs font-medium text-warning">
+                            {PAYMENT_NO_LONGER_FITS_COPY}
+                          </p>
+                        )}
                         {pmt.notes && <p className="mt-0.5 text-xs text-navy/70">{pmt.notes}</p>}
                         {pmt.imageKey && (
                           <button
@@ -2845,7 +2964,7 @@ export default function InvoiceDetailPage() {
                   leftIcon={<CreditCard className="h-4 w-4" />}
                   onClick={() => setIsPaymentOpen(true)}
                 >
-                  Record Payment
+                  Record payment
                 </WriteButton>
                 <ReadOnlyHint />
               </div>
@@ -2856,7 +2975,7 @@ export default function InvoiceDetailPage() {
           <Card>
             <dl className="space-y-2 text-sm">
               <div className="flex items-center justify-between">
-                <dt className="text-navy/70">Invoice Total</dt>
+                <dt className="text-navy/70">Invoice total</dt>
                 <dd className="money font-medium text-navy">{fmt(total)}</dd>
               </div>
               <div className="flex items-center justify-between">
@@ -2883,7 +3002,7 @@ export default function InvoiceDetailPage() {
                   balanceDue > 0 ? "text-danger" : "text-success",
                 )}
               >
-                <dt>Balance Due</dt>
+                <dt>Balance due</dt>
                 <dd className="money">{fmt(balanceDue)}</dd>
               </div>
             </dl>
@@ -2898,6 +3017,7 @@ export default function InvoiceDetailPage() {
         onRecord={handleRecordPayment}
         balanceDue={balanceDue}
         isPending={recordPayment.isPending}
+        statusCheck={paymentStatus}
       />
 
       {isAdvanceOpen && invoice.customerId && (
@@ -2959,7 +3079,7 @@ export default function InvoiceDetailPage() {
       <Modal
         open={isReopenOpen}
         onClose={() => setIsReopenOpen(false)}
-        title="Reopen Invoice?"
+        title="Reopen invoice?"
         description={`Invoice ${invoice.invoiceNumber} will be moved back to the appropriate open state.`}
         footer={
           <>
@@ -2972,7 +3092,7 @@ export default function InvoiceDetailPage() {
             </Button>
             <Button variant="primary" onClick={handleReopen} loading={reopenInvoice.isPending}>
               <RotateCcw className="mr-1.5 h-4 w-4" />
-              Reopen Invoice
+              Reopen invoice
             </Button>
           </>
         }
@@ -3002,7 +3122,7 @@ export default function InvoiceDetailPage() {
       <Modal
         open={isRevertToDraftOpen}
         onClose={() => setIsRevertToDraftOpen(false)}
-        title="Revert to Draft?"
+        title="Revert to draft?"
         description={`Invoice ${invoice.invoiceNumber} will be moved back to Draft status.`}
         footer={
           <>
@@ -3019,11 +3139,11 @@ export default function InvoiceDetailPage() {
                 revertToDraft.mutate(invoice.id, {
                   onSuccess: () => {
                     setIsRevertToDraftOpen(false);
-                    toast({ title: "Invoice reverted to Draft", variant: "success" });
+                    toast({ title: "Invoice reverted to draft", variant: "success" });
                   },
                   onError: (e: any) =>
                     toast({
-                      title: "Failed to revert",
+                      title: "Failed to revert the invoice to draft",
                       description: e?.response?.data?.message ?? "Please try again.",
                       variant: "error",
                     }),
@@ -3032,21 +3152,21 @@ export default function InvoiceDetailPage() {
               loading={revertToDraft.isPending}
             >
               <RotateCcw className="mr-1.5 h-4 w-4" />
-              Revert to Draft
+              Revert to draft
             </Button>
           </>
         }
       >
         <p className="text-sm text-navy/70">
-          This will undeliver the invoice from the customer. No payments have been recorded, so this
-          is safe to revert.
+          This returns the invoice to a draft. No payments have been recorded, so this is safe to
+          revert.
         </p>
       </Modal>
 
       <Modal
         open={isUnvoidOpen}
         onClose={() => setIsUnvoidOpen(false)}
-        title="Unvoid Invoice?"
+        title="Unvoid invoice?"
         description={`Invoice ${invoice.invoiceNumber} will be moved back to Draft status.`}
         footer={
           <>
@@ -3061,13 +3181,19 @@ export default function InvoiceDetailPage() {
               variant="primary"
               onClick={() => {
                 unvoid.mutate(invoice.id, {
-                  onSuccess: () => {
+                  onSuccess: (res: UnvoidInvoiceResult | undefined) => {
                     setIsUnvoidOpen(false);
-                    toast({ title: "Invoice unvoided — now in Draft", variant: "success" });
+                    // SA-839 §3: one more line when the void sat in an already-filed month.
+                    const note = unvoidAmendedPeriodNote(res?.amendedPeriod);
+                    toast({
+                      title: "Invoice unvoided — now a draft",
+                      variant: "success",
+                      ...(note ? { description: note } : {}),
+                    });
                   },
                   onError: (e: any) =>
                     toast({
-                      title: "Failed to unvoid",
+                      title: "Failed to unvoid the invoice",
                       description:
                         unvoidRefusalCopy(e) ?? e?.response?.data?.message ?? "Please try again.",
                       variant: "error",
@@ -3111,6 +3237,7 @@ export default function InvoiceDetailPage() {
           orderId={(invoice as any).orderId}
         />
       )}
+      {duplicateDialog}
     </div>
   );
 }

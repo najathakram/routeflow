@@ -45,10 +45,12 @@ describe("hand-over stamp stays off customer copies (row 342)", () => {
     expect(users).toEqual([
       "app/(dashboard)/invoices/[id]/page.tsx",
       "app/(dashboard)/orders/[id]/page.tsx",
+      "app/(dashboard)/orders/_components/CounterDayClose.tsx", // day close is staff-only; it reads the register key for the draft key
       "app/(dashboard)/orders/_components/HandOverRows.tsx", // Today's sales hand-over rows (staff)
       "components/HandOverStamp.tsx",
       "lib/api/invoices.ts", // the staff read's type
       "lib/api/orders.ts", // the staff read's type
+      "lib/counter-day-close-draft.ts", // the day-close draft key carries registerKey (staff-only surface, BUILD-BRIEF G2)
       "lib/handover-stamp.ts",
     ]);
   });

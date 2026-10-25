@@ -89,7 +89,13 @@ describeDb(
           },
           {
             provide: RegulatedLedgerService,
-            useValue: { writeSaleEntries: jest.fn(), reverseInvoiceEntries: jest.fn() },
+            useValue: {
+              writeSaleEntries: jest.fn(),
+              reverseInvoiceEntries: jest.fn(),
+              settleRegulatedLedger: jest
+                .fn()
+                .mockResolvedValue({ written: 0, amendedPeriod: null }),
+            },
           },
           {
             provide: AuthorizationGuardService,

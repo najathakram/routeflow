@@ -34,11 +34,13 @@ export const TYPES = [
   "audit",
   "incident",
 ];
+export const HARMS = ["live", "latent", "none"];
 export const PRIORITIES = ["P0", "P1", "P2", "P3"];
 export const PR_ACTIONS = ["create", "ready", "merge", "close", "edit"];
 
 // Numeric register rows (525), registry bugs (B1234), trains (R1), prefixed ids (K11-16, OQ-N1).
-export const ITEM_ID_RE = /^(?:\d{1,5}|B\d{1,5}|R\d{1,2}|[A-Z][A-Z0-9]{0,9}-[A-Za-z0-9.]{1,20})$/;
+export const ITEM_ID_RE =
+  /^(?:\d{1,5}|B\d{1,5}|[RT]\d{1,2}[a-z]?|[A-Z][A-Z0-9]{0,9}-[A-Za-z0-9.]{1,20})$/;
 export const BUG_ID_RE = /^B\d{1,5}$/;
 export const EVENT_ID_RE = /^[a-z0-9][a-z0-9-]{0,40}-\d{13}-[a-z0-9]{4}$/;
 export const MACHINE_RE = /^[a-z0-9][a-z0-9-]{0,40}$/;
@@ -53,8 +55,13 @@ const ITEM_FIELDS = {
   type: (v) => TYPES.includes(v),
   priority: (v) => PRIORITIES.includes(v),
   status: (v) => STATUSES.includes(v),
+  // The raw register status word the monitor does not know (the item reads "planned" meanwhile).
+  statusText: (v) => v === null || (typeof v === "string" && v.length <= 80),
+  // Live harm (accuracy round 2): "live" = hurting a customer now, "latent" = broken code with no
+  // customer harmed, "none" = not harmful, null = not judged (derived from census items).
+  harm: (v) => v === null || HARMS.includes(v),
   lane: (v) => v === null || (typeof v === "string" && LANE_RE.test(v)),
-  train: (v) => v === null || (typeof v === "string" && /^R\d{1,2}$/.test(v)),
+  train: (v) => v === null || (typeof v === "string" && /^[RT]\d{1,2}[a-z]?$/.test(v)),
   area: (v) => v === null || (typeof v === "string" && v.length <= 80),
   parent: (v) => v === null || (typeof v === "string" && ITEM_ID_RE.test(v)),
   eta: (v) => v === null || (typeof v === "string" && v.length <= 80),
@@ -63,6 +70,8 @@ const ITEM_FIELDS = {
   source: (v) => typeof v === "string" && v.length <= 40,
   tags: (v) =>
     Array.isArray(v) && v.length <= 20 && v.every((t) => typeof t === "string" && t.length <= 60),
+  // A plan family's rows (T5 = T5a + T5b): what lands when, one entry per plan row.
+  parts: (v) => Array.isArray(v) && v.length <= 10 && v.every(isPart),
   members: (v) =>
     Array.isArray(v) &&
     v.length <= 200 &&
@@ -87,6 +96,25 @@ export function needsBusinessStory(fields) {
   return (
     ["bug", "feature", "incident"].includes(fields.type) && ["P0", "P1"].includes(fields.priority)
   );
+}
+
+const PART_KEYS = {
+  id: (v) => typeof v === "string" && /^[RT]\d{1,2}[a-z]?$/.test(v),
+  goal: (v) => typeof v === "string" && v.length > 0 && v.length <= 200,
+  tag: (v) => typeof v === "string" && v.length <= 20,
+  lane: (v) => typeof v === "string" && v.length <= 60,
+  budget: (v) => typeof v === "string" && v.length <= 40,
+  tier: (v) => typeof v === "string" && v.length <= 40,
+  depends: (v) => typeof v === "string" && v.length <= 120,
+  members: (v) =>
+    Array.isArray(v) &&
+    v.length <= 200 &&
+    v.every((t) => typeof t === "string" && ITEM_ID_RE.test(t)),
+};
+function isPart(p) {
+  if (!p || typeof p !== "object" || Array.isArray(p)) return false;
+  if (!PART_KEYS.id(p.id) || !PART_KEYS.goal(p.goal) || !PART_KEYS.members(p.members)) return false;
+  return Object.entries(p).every(([k, v]) => PART_KEYS[k] && PART_KEYS[k](v));
 }
 
 function isLinks(v, requireOne) {
@@ -146,6 +174,20 @@ export const KINDS = {
     },
   },
   note: { needsItem: "optional", data: { text: [str(1000), true] } },
+  // Session heartbeat from a machine's status file (hooks -> `rf status-sync`). Never touches items.
+  heartbeat: {
+    needsItem: "none",
+    data: {
+      session: [str(80), true],
+      machine: [optStr(60), false],
+      title: [optStr(200), false],
+      branch: [optStr(200), false],
+      pr: [(v) => v === undefined || (Number.isInteger(v) && v > 0), false],
+      head: [(v) => v === undefined || (typeof v === "string" && SHA_RE.test(v)), false],
+      lastActiveAt: [(v) => typeof v === "string" && ISO_RE.test(v), true],
+      last: [optStr(300), false],
+    },
+  },
   // Moves an item to a free id (the monitor's own items yield plain numbers to the register).
   "item.rename": {
     needsItem: "required",

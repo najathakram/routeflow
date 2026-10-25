@@ -31,6 +31,26 @@ const line = {
   stray: "dropped",
 };
 
+describe("buildParkPayload keeps a check's typed date through the REAL sanitizer", () => {
+  const cart = (checkDate?: unknown) => ({
+    lines: [line],
+    customer: null,
+    method: "CHECK",
+    tendered: "",
+    reference: "1042",
+    ...(checkDate === undefined ? {} : { checkDate }),
+  });
+  it("a real day is carried; an impossible one is dropped", () => {
+    expect(buildParkPayload(cart("2026-10-23") as never)).toMatchObject({
+      ok: true,
+      value: { checkDate: "2026-10-23" },
+    });
+    const dropped = buildParkPayload(cart("2026-02-31") as never);
+    expect(dropped.ok).toBe(true);
+    expect(dropped.ok && dropped.value).not.toHaveProperty("checkDate");
+  });
+});
+
 describe("buildParkPayload (the whitelist the server also applies)", () => {
   it("keeps the five fields, reduces the customer to four, never carries an email or a stray key", () => {
     const r = buildParkPayload({

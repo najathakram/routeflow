@@ -388,13 +388,49 @@ describeDb(
       expect(after.invoices).toEqual(before.invoices);
     });
 
-    // deferred: row (P2) pre-tx preflight read-only; revert in-tx under the lock. The un-tx'd
-    // revertLinkedInvoicesForOrderEdit (orders.service.ts, before the transaction) runs when the pre-tx status is
-    // still CONFIRMED and commits on its own connection BEFORE the binding 409, so a linked SENT invoice can be
-    // left reverted to DRAFT by a refused edit. It predates B1234; the fix is that row, not this PR.
-    it.todo(
-      "stale status: the linked SENT invoice is unchanged (status + totals) after the locked-status refusal (deferred: row (P2) pre-tx preflight read-only; revert in-tx under the lock)",
-    );
+    // Row 586 (SA-814a item 4 / SA-833): the invoice revert runs in the edit transaction, after the binding refusals,
+    // so a refused edit leaves the linked SENT invoice SENT. UNRUN here (needs the DB lane): the revert stub below has
+    // the REAL effect (SENT -> DRAFT through the given client, or on its own connection when none is given), so a
+    // pre-tx commit would show up in the snapshot.
+    it("stale status: the linked SENT invoice is unchanged (status + totals) after the locked-status refusal", async () => {
+      const p = await product("flip-inv");
+      const o = await order([plain(p, 5, 0), plain(p, 4, 0)], "CONFIRMED");
+      const target = o.lineItems.find((l) => Number(l.qty) === 5)!;
+      await sentInvoice(o.id, "9.00");
+      await raw.orderItem.update({ where: { id: target.id }, data: { deliveredQty: "3" } });
+      await raw.order.update({ where: { id: o.id }, data: { status: "PARTIALLY_DELIVERED" } });
+      const before = await snapshot(o.id);
+      const realRevert = orders.invoicesService.revertLinkedInvoicesForOrderEdit;
+      orders.invoicesService.revertLinkedInvoicesForOrderEdit = async (
+        orderId: string,
+        tx?: any,
+        opts?: { preflightOnly?: boolean },
+      ) => {
+        if (opts?.preflightOnly) return [];
+        await (tx ?? raw).invoice.updateMany({
+          where: { orderId, status: "SENT" },
+          data: { status: "DRAFT", sentAt: null },
+        });
+        return [];
+      };
+      const seam = staleOnlyThePreTxRead(o.id, (real) => ({
+        ...real,
+        status: "CONFIRMED",
+        lineItems: real.lineItems.map((l: any) => ({ ...l, deliveredQty: 0 })),
+      }));
+      try {
+        await expect(
+          edit(o.id, { replaceAll: false, items: [{ id: target.id, qty: 2 }] }),
+        ).rejects.toMatchObject(REFUSED);
+      } finally {
+        seam.spy.mockRestore();
+        orders.invoicesService.revertLinkedInvoicesForOrderEdit = realRevert;
+      }
+      expect(seam.hits()).toBeGreaterThanOrEqual(1);
+      const after = await snapshot(o.id);
+      expect(after).toEqual(before);
+      expect(after.invoices.map((i: any) => i.status)).toEqual(["SENT"]);
+    });
 
     /**
      * The REAL race, reproduced at the one seam that matters. The delivery is already committed to the database

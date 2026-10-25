@@ -29,6 +29,7 @@ import { PlanFlagGuard } from "../billing/plan-flag.guard";
 import { RequirePlanFlag } from "../billing/require-plan-flag.decorator";
 import { ProductsService } from "./products.service";
 import { ProductsExportService } from "./products-export.service";
+import { ProductOpenOrdersService, clampOpenOrdersLimit } from "./product-open-orders.service";
 import { streamCsv } from "./products-export.stream";
 import { ExportProductsDto } from "./dto/export-products.dto";
 import { CreateProductDto } from "./dto/create-product.dto";
@@ -46,6 +47,7 @@ export class ProductsController {
   constructor(
     private readonly productsService: ProductsService,
     private readonly exporter: ProductsExportService,
+    private readonly openOrders: ProductOpenOrdersService,
   ) {}
 
   @Get()
@@ -95,6 +97,14 @@ export class ProductsController {
     return this.productsService.findByBarcode(barcode);
   }
 
+  /** Open orders still to be billed for this product (the product page's "Open orders" card).
+   *  Operational, not analytics: no flag.analytics. `limit` is clamped 1-500 (default 200). */
+  @Get(":id/open-orders")
+  @Roles(UserRole.OPERATOR)
+  getOpenOrders(@Param("id") id: string, @Query("limit") limit?: string) {
+    return this.openOrders.getOpenOrders(id, clampOpenOrdersLimit(limit));
+  }
+
   @Get(":id")
   @Roles(UserRole.OPERATOR, UserRole.DRIVER)
   findOne(@Param("id") id: string) {
@@ -105,6 +115,7 @@ export class ProductsController {
   @Roles(UserRole.OPERATOR)
   create(@Body() dto: CreateProductDto, @CurrentUser() user: JwtPayload) {
     return this.productsService.create(dto, {
+      reparentVia: "editor",
       actorId: user.sub ?? null,
       actorName: user.username ?? null,
     });
@@ -176,6 +187,7 @@ export class ProductsController {
     // SA-797a: the one "client" writer: a pack field without its expected twin is an echo or a 409.
     return this.productsService.update(id, dto, {
       packPrecondition: "client",
+      reparentVia: "editor",
       clientAgent: userAgent ?? null,
       actorId: user.sub ?? null,
       actorName: user.username ?? null,

@@ -221,7 +221,10 @@ describe("S19: a door ADD_ITEM change request prices the new line from the custo
         // B65: deleteOrder's per-invoice teardown reverses regulated-ledger entries.
         {
           provide: RegulatedLedgerService,
-          useValue: { reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined) },
+          useValue: {
+            reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined),
+            settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
+          },
         },
       ],
     }).compile();

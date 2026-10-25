@@ -246,7 +246,11 @@ describe("BookkeepingService", () => {
               .mockResolvedValue({ id: "inv-b812", total: 0.8, payments: existingPayments }),
             update,
           },
-          invoicePayment: { create },
+          invoicePayment: {
+            create: create.mockResolvedValue({ id: "pay-x" }),
+            findMany: jest.fn(async () => []),
+          },
+          auditLog: { create: jest.fn() },
         }),
       );
       return { update, create };
@@ -290,7 +294,11 @@ describe("BookkeepingService", () => {
           }),
           update: jest.fn().mockResolvedValue({ id: "inv-827", status: "PARTIAL", payments: [] }),
         },
-        invoicePayment: { create: jest.fn() },
+        // master's W-769 flag reads the created payment's id (as the sibling recordPayment specs mock it)
+        invoicePayment: {
+          create: jest.fn().mockResolvedValue({ id: "pay-827" }),
+          findMany: jest.fn(async () => []),
+        },
       };
       prisma.tenantTransaction.mockImplementation(async (fn: any) => fn(txClient));
       return txClient;
@@ -332,7 +340,11 @@ describe("BookkeepingService", () => {
             findUnique: jest.fn().mockResolvedValue({ id: "inv-sa121", total: 100, payments: [] }),
             update: jest.fn().mockResolvedValue({ id: "inv-sa121" }),
           },
-          invoicePayment: { create },
+          invoicePayment: {
+            create: create.mockResolvedValue({ id: "pay-x" }),
+            findMany: jest.fn(async () => []),
+          },
+          auditLog: { create: jest.fn() },
         }),
       );
 
@@ -451,7 +463,11 @@ describe("BookkeepingService", () => {
             })),
             update: jest.fn().mockResolvedValue({ id: "inv-c" }),
           },
-          invoicePayment: { create },
+          invoicePayment: {
+            create: create.mockResolvedValue({ id: "pay-x" }),
+            findMany: jest.fn(async () => []),
+          },
+          auditLog: { create: jest.fn() },
         }),
       );
       return { log, create };
@@ -1622,7 +1638,11 @@ describe("BookkeepingService", () => {
             })),
             update,
           },
-          invoicePayment: { create },
+          invoicePayment: {
+            create: create.mockResolvedValue({ id: "pay-x" }),
+            findMany: jest.fn(async () => []),
+          },
+          auditLog: { create: jest.fn() },
         }),
       );
 
@@ -2017,6 +2037,64 @@ describe("BookkeepingService", () => {
   });
 
   // ─── extractExpenseItems (AI receipt extraction) ──────────────────────────
+
+  describe("createExpense — references stay inside the tenant (R5-5)", () => {
+    it("rejects a reference from another business (no expense written)", async () => {
+      prisma.expenseCategory.findMany.mockResolvedValue([]); // not this tenant's, not global
+      await expect(
+        service.createExpense(
+          { date: new Date("2026-09-01T00:00:00Z"), amount: 5, categoryId: "other-biz-cat" },
+          "u1",
+        ),
+      ).rejects.toThrow(/not found/i);
+      expect(prisma.expense.create).not.toHaveBeenCalled();
+    });
+
+    it("rejects a supplier and a customer from another business", async () => {
+      prisma.supplier.findMany.mockResolvedValue([]);
+      prisma.customer.findMany.mockResolvedValue([]);
+      await expect(
+        service.createExpense(
+          { date: new Date("2026-09-01T00:00:00Z"), amount: 5, supplierId: "other-sup" },
+          "u1",
+        ),
+      ).rejects.toThrow(/not found/i);
+      await expect(
+        service.createExpense(
+          { date: new Date("2026-09-01T00:00:00Z"), amount: 5, customerId: "other-cust" },
+          "u1",
+        ),
+      ).rejects.toThrow(/not found/i);
+      expect(prisma.expense.create).not.toHaveBeenCalled();
+    });
+
+    it("accepts a global category (tenant-less) alongside the tenant's own", async () => {
+      prisma.expenseCategory.findMany.mockResolvedValue([{ id: "cat-global" }]);
+      prisma.expense.create.mockResolvedValue({ id: "exp-new", categoryId: "cat-global" });
+      await service.createExpense(
+        { date: new Date("2026-09-01T00:00:00Z"), amount: 5, categoryId: "cat-global" },
+        "u1",
+      );
+      const where = prisma.expenseCategory.findMany.mock.calls[0][0].where;
+      expect(where.OR).toEqual([{ tenantId: "test-tenant" }, { tenantId: null }]);
+      expect(prisma.expense.create).toHaveBeenCalledTimes(1);
+    });
+
+    it("updateExpense rejects a reference from another business", async () => {
+      prisma.expense.findFirst.mockResolvedValue({
+        id: "e1",
+        status: "DRAFT",
+        receivedAt: null,
+        paidAt: null,
+        vendorBillId: null,
+      });
+      prisma.expenseCategory.findMany.mockResolvedValue([]);
+      await expect(service.updateExpense("e1", { categoryId: "other-biz-cat" })).rejects.toThrow(
+        /not found/i,
+      );
+      expect(prisma.expense.update).not.toHaveBeenCalled();
+    });
+  });
 
   describe("createExpense — nested line items carry the tenant (T6)", () => {
     // Nested creates bypass the forTenant() extension, so an itemized expense's ExpenseLineItem rows

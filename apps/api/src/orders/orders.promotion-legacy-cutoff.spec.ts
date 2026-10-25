@@ -141,7 +141,10 @@ describe("changeStatus: DRAFT promotion and the legacy source (sourceRecorded)",
 
     await expect(promote()).resolves.toMatchObject({ status: "PENDING" });
     expect(h.restrictions.assertLinesSellable).toHaveBeenCalledWith(
-      expect.objectContaining({ channel: "STAFF", lines: [{ productId: "p-old" }] }),
+      expect.objectContaining({
+        channel: "STAFF",
+        lines: [expect.objectContaining({ productId: "p-old" })], // row 510: a staff line also has a lineKey
+      }),
     );
   });
 });

@@ -3,9 +3,13 @@ import type {
   InvoiceItemSystemKind,
   InvoiceStatus,
   LineComponentView,
+  OverrideStampView,
+  RestrictionAck,
 } from "@routeflow/types";
+import type { InvoiceSendLock, InvoiceSendState } from "@/lib/invoice-send-state";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import { isRecordPaymentLocalRefusal } from "@/lib/duplicate-payment-ref";
 import { isDayClosedRefusal } from "../day-closed-copy";
 import { fetchPdfBlob } from "../fetch-pdf-blob";
 import { priceAdjustmentFailure } from "../price-adjustment-failure";
@@ -26,7 +30,9 @@ import type {
 } from "@routeflow/types";
 import type { LocalErrorToastOption } from "@/lib/local-error-toast";
 import { keptDraftInvoiceId } from "@/lib/kept-draft-invoice";
+import { sendWithPaymentKey, type PaymentKeyHolder } from "@/lib/payment-submit-key";
 import type { HandOverSoldBy } from "@/lib/handover-stamp";
+import { splitIdAck, type IdWithAck } from "@/lib/api/restriction-warning";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -67,7 +73,9 @@ export type {
 /** P5-12: lifecycle of a CHECK InvoicePayment. Always null/absent on non-check payments. */
 export type CheckStatus = "RECORDED" | "DEPOSITED" | "CLEARED" | "BOUNCED";
 
-export interface InvoiceItem {
+/** Row 510: a STAFF read also carries the override stamp (and may carry the resolved name). */
+export interface InvoiceItem extends Partial<OverrideStampView> {
+  restrictionOverrideByName?: string | null;
   id: string;
   productId?: string;
   product?: { id: string; name: string; unit?: string; unitsPerBox?: number | null };
@@ -147,6 +155,8 @@ export interface InvoicePayment {
   imageKey?: string | null;
   imageOriginalName?: string | null;
   imageMimeType?: string | null;
+  /** W-769: an unconfirmed row that real money displaced (derived by the api, one predicate). */
+  noLongerFits?: boolean;
 }
 
 export interface Invoice {
@@ -156,6 +166,9 @@ export interface Invoice {
   revisedAt?: string | null;
   /** P-4: > 0 only when overpaid; absent = nothing shown. */
   overpaidBy?: number | null;
+  /** #2088: the tracked email state ("emailed, modified since" ...) and the pre-delivery lock; staff reads only. */
+  sendState?: InvoiceSendState;
+  sendLocked?: InvoiceSendLock | null;
   customerId: string;
   customer?: {
     id: string;
@@ -360,7 +373,7 @@ export function useInvoicePayments(params?: PaymentListParams) {
 
 // ─── Mutations ────────────────────────────────────────────────────────────────
 
-export interface CreateInvoiceDto {
+export interface CreateInvoiceDto extends RestrictionAck {
   customerId: string;
   dueDate?: string;
   issueDate?: string;
@@ -408,8 +421,15 @@ export function useCreateInvoice() {
  */
 export function useDuplicateInvoice() {
   const qc = useQueryClient();
-  return useMutation<Invoice, Error, string>({
-    mutationFn: (id) => apiClient.post(`/invoices/${id}/duplicate`).then((r) => r.data),
+  return useMutation<Invoice, Error, IdWithAck>({
+    mutationFn: (v) => {
+      const { id, ack } = splitIdAck(v); // row 510: a duplicate is re-judged, so it can carry an ack
+      return (
+        ack
+          ? apiClient.post(`/invoices/${id}/duplicate`, ack)
+          : apiClient.post(`/invoices/${id}/duplicate`)
+      ).then((r) => r.data);
+    },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["invoices"] }),
   });
 }
@@ -657,15 +677,22 @@ export interface RecordInvoicePaymentDto {
   status?: "DRAFT" | "PAID";
   reference?: string;
   notes?: string;
+  /** SA-824: the dialog's Idempotency-Key holder (never sent in the body). */
+  submitKey?: PaymentKeyHolder;
+  /** Row 498: the staff "Record anyway" resend of a payment refused 409 DUPLICATE_PAYMENT_REF. */
+  recordAnyway?: boolean;
 }
 
 export function useRecordInvoicePayment() {
   const qc = useQueryClient();
   return useMutation<Invoice & { createdPaymentId?: string }, Error, RecordInvoicePaymentDto>({
-    mutationFn: ({ id, ...data }) =>
-      apiClient.post(`/invoices/${id}/payments`, data).then((r) => r.data),
+    mutationFn: ({ id, submitKey, ...data }) =>
+      sendWithPaymentKey(submitKey, data, (config) =>
+        apiClient.post(`/invoices/${id}/payments`, data, ...config).then((r) => r.data),
+      ),
     // SA-750r3: the invoice page answers a closed-day refusal with its own fixed copy (dayClosedCopy): no second toast.
-    meta: { localErrorToast: isDayClosedRefusal },
+    // Row 498: and a duplicate-reference refusal with its own "Record anyway" toast.
+    meta: { localErrorToast: isRecordPaymentLocalRefusal },
     onSuccess: (_, { id }) => {
       qc.invalidateQueries({ queryKey: ["invoices"] });
       qc.invalidateQueries({ queryKey: ["invoices", id] });
@@ -683,8 +710,12 @@ export interface UpdateInvoicePaymentDto {
   settledAt?: string | null;
   bankCharges?: number;
   status?: "DRAFT" | "PAID" | "VOID";
-  reference?: string;
-  notes?: string;
+  /** W-663: null clears the stored reference (an emptied field); omit to keep it. */
+  reference?: string | null;
+  /** W-663: null clears the stored notes. */
+  notes?: string | null;
+  /** W-718: the staff "Record anyway" resend of an edit refused 409 DUPLICATE_PAYMENT_REF. */
+  recordAnyway?: boolean;
 }
 
 export function useUpdateInvoicePayment() {
@@ -692,7 +723,8 @@ export function useUpdateInvoicePayment() {
   return useMutation<Invoice, Error, UpdateInvoicePaymentDto>({
     mutationFn: ({ invoiceId, paymentId, ...data }) =>
       apiClient.patch(`/invoices/${invoiceId}/payments/${paymentId}`, data).then((r) => r.data),
-    meta: { localErrorToast: isDayClosedRefusal },
+    // W-718: the invoice page also answers a duplicate-reference refusal itself ("Record anyway").
+    meta: { localErrorToast: isRecordPaymentLocalRefusal },
     onSuccess: (updated) => {
       qc.invalidateQueries({ queryKey: ["invoices"] });
       qc.invalidateQueries({ queryKey: ["invoices", updated.id] });
@@ -764,12 +796,25 @@ export function useRecordPaymentStandalone() {
     // X1: bind TMethod to web's enterable subset at the use site (not via a
     // local re-declaration — see the comment above `StandalonePaymentDto`'s
     // re-export).
-    StandalonePaymentDto<SelectablePaymentMethod>
+    // SA-824: + the dialog's Idempotency-Key holder (never sent in the body).
+    StandalonePaymentDto<SelectablePaymentMethod> & { submitKey?: PaymentKeyHolder }
   >({
-    mutationFn: (dto) => apiClient.post("/invoices/payments/record", dto).then((r) => r.data),
+    mutationFn: ({ submitKey, ...dto }) =>
+      sendWithPaymentKey(
+        submitKey,
+        {
+          amount: dto.totalAmount,
+          method: dto.method,
+          allocations: dto.allocations,
+          status: dto.status,
+          bankCharges: dto.bankCharges,
+          settledAt: dto.settledAt,
+        },
+        (config) => apiClient.post("/invoices/payments/record", dto, ...config).then((r) => r.data),
+      ),
     // Row 348: every caller (finance Payments, the customer Record Payment modal) answers a closed-day refusal in its
-    // own toast; the global one stays quiet for it so the failure is shown ONCE.
-    meta: { localErrorToast: isDayClosedRefusal },
+    // own toast; the global one stays quiet for it so the failure is shown ONCE. Row 498: and for a duplicate reference.
+    meta: { localErrorToast: isRecordPaymentLocalRefusal },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["invoices"] });
       qc.invalidateQueries({ queryKey: ["invoices", "payments"] });
@@ -925,8 +970,15 @@ export function useActivateRecurringInvoice() {
  */
 export function useRunRecurringInvoice() {
   const qc = useQueryClient();
-  return useMutation<Invoice | null, Error, string>({
-    mutationFn: (id) => apiClient.post(`/recurring-invoices/${id}/run`).then((r) => r.data),
+  return useMutation<Invoice | null, Error, IdWithAck>({
+    mutationFn: (v) => {
+      const { id, ack } = splitIdAck(v); // row 510 Q2: a manual run is judged for the clicker, who may acknowledge
+      return (
+        ack
+          ? apiClient.post(`/recurring-invoices/${id}/run`, ack)
+          : apiClient.post(`/recurring-invoices/${id}/run`)
+      ).then((r) => r.data);
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["invoices"] });
       qc.invalidateQueries({ queryKey: ["recurring-invoices"] });

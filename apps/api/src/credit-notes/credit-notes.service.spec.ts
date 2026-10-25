@@ -13,7 +13,11 @@ import { createMockPrisma } from "../testing/prisma-mock";
 describe("CreditNotesService — W5c regulated reversal", () => {
   let service: CreditNotesService;
   let prisma: ReturnType<typeof createMockPrisma>;
-  let ledger: { reverseCreditNoteEntries: jest.Mock; unreverseCreditNoteEntries: jest.Mock };
+  let ledger: {
+    reverseCreditNoteEntries: jest.Mock;
+    unreverseCreditNoteEntries: jest.Mock;
+    settleRegulatedLedger: jest.Mock;
+  };
   let gateway: { emitCreditNoteCreated: jest.Mock; emitCreditNoteVoided: jest.Mock };
 
   beforeEach(async () => {
@@ -21,6 +25,7 @@ describe("CreditNotesService — W5c regulated reversal", () => {
     ledger = {
       reverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
       unreverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
+      settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
     };
     gateway = { emitCreditNoteCreated: jest.fn(), emitCreditNoteVoided: jest.fn() };
     const mod = await Test.createTestingModule({
@@ -415,6 +420,7 @@ describe("CreditNotesService — P5-13 apply-math + auto-apply", () => {
           useValue: {
             reverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
             unreverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
+            settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
           },
         },
         {
@@ -842,6 +848,7 @@ describe("CreditNotesService — order credit-note intents (unapply / settle / v
           useValue: {
             reverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
             unreverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
+            settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
           },
         },
         {
@@ -1953,6 +1960,7 @@ describe("CreditNotesService — REG-B267 pin: numbering reservation", () => {
           useValue: {
             reverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
             unreverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
+            settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
           },
         },
         {

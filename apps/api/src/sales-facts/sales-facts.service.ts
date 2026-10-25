@@ -6,7 +6,7 @@ import {
   calendarDateFromIso,
   isoFromCalendarDate,
   startOfCalendarDay,
-  startOfLocalDay,
+  localInstantWindow,
 } from "../common/calendar-date";
 import {
   ACCRUAL_CREDIT_NOTE_FILTER,
@@ -236,10 +236,7 @@ export class SalesFactsService {
    * belongs to the 31st.
    */
   instantWindow(fromDay: string, toDay: string, timeZone: string | null): InstantWindow {
-    return {
-      gte: startOfLocalDay(fromDay, timeZone),
-      lt: startOfLocalDay(addCalendarDays(toDay, 1), timeZone),
-    };
+    return localInstantWindow(fromDay, toDay, timeZone);
   }
 
   /** The product row insights label with; a deactivated product stays reachable by id. */

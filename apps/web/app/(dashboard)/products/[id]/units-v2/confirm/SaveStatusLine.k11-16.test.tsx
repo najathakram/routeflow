@@ -1,5 +1,5 @@
 import * as React from "react";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { PriceSaveStatusLine } from "./SaveStatusLine";
 import type { LastSave, UndoOutcome } from "./types";
 
@@ -167,11 +167,23 @@ describe("K11-16: the saved line takes the bar's slot for 5 s", () => {
     expect(isPinned()).toBe(false);
   });
 
-  it("does not move focus to the line when the save lands", () => {
+  // K13 F12 supersedes "never moves focus": a save that lands with focus nowhere puts it on the line (Undo is the next
+  // Tab); a user who already moved on keeps their focus.
+  it("focuses the line when focus has nowhere to be, and leaves another focus alone", () => {
     render(<Section />);
-    const before = document.activeElement;
     save("a1");
-    expect(document.activeElement).toBe(before);
+    expect(document.activeElement).toBe(line());
+    cleanup();
+    render(
+      <>
+        <button type="button">elsewhere</button>
+        <Section />
+      </>,
+    );
+    const other = screen.getByRole("button", { name: "elsewhere" });
+    other.focus();
+    save("a2");
+    expect(document.activeElement).toBe(other);
   });
 
   it("a new edit clears the line, pinned or not", () => {

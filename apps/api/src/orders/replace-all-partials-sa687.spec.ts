@@ -99,6 +99,11 @@ async function splitThenReplaceAll(orderStatus: string) {
     })),
   }));
 
+  // The lock-time read of the lines (row 510 re-judges the edit against it) is the same table the pre-lock read came from.
+  h.prisma.orderItem.findMany.mockImplementation(async () =>
+    db.orderItems.map((l) => ({ ...l, deliveredQty: 0, position: 0 })),
+  );
+
   // the SAME lines, replaced (what a create-merge / buyer cart merge / staff replaceAll writes)
   await h.service.updateOrderItems(
     "ord-1",

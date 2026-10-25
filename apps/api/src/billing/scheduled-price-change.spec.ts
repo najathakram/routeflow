@@ -141,7 +141,7 @@ describe("applyScheduledPriceChange (ScheduledPriceChangeService.apply)", () => 
           currency: "usd",
           unit_amount: 5900,
           recurring: { interval: "month" },
-          product: "prod_scale",
+          product: "rf_plan_starter",
         },
       },
     ]);

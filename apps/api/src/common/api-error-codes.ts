@@ -25,6 +25,7 @@ export const API_ERROR_CODES = {
   INVOICE_STALE: "INVOICE_STALE",
   ORDER_INVOICES_NEED_REVIEW: "ORDER_INVOICES_NEED_REVIEW",
   ORDER_INVOICE_SETTLE_FAILED: "ORDER_INVOICE_SETTLE_FAILED",
+  DELIVERY_DATE_IN_PAST: "DELIVERY_DATE_IN_PAST",
   NSF_LINE_UNTAXED: "NSF_LINE_UNTAXED",
   BARCODE_TAKEN: "BARCODE_TAKEN",
   CODE_TAKEN: "CODE_TAKEN",
@@ -46,6 +47,9 @@ export const API_ERROR_CODES = {
   FAMILY_NOT_PRICEABLE: "FAMILY_NOT_PRICEABLE",
   FAMILY_ROWS_CONFLICT: "FAMILY_ROWS_CONFLICT",
   FAMILY_NOT_FOUND: "FAMILY_NOT_FOUND",
+  IMPORT_FAMILY_PRICING_ON: "IMPORT_FAMILY_PRICING_ON",
+  IMPORT_FAMILY_TOO_MANY_ROWS: "IMPORT_FAMILY_TOO_MANY_ROWS",
+  IMPORT_JOB_FAILED: "IMPORT_JOB_FAILED",
   /** 409 from DELETE /products/bulk and /products/clear-all: a unique violation while deleting; nothing was deleted, reload and retry. */
   PRODUCT_DELETE_CONFLICT: "PRODUCT_DELETE_CONFLICT",
   /** 409 from PATCH/DELETE /products/:id: a family still has ACTIVE variants; body carries `variantCount`. Resend with `confirmCascade: true` to deactivate them with it. */
@@ -78,6 +82,7 @@ export const API_ERROR_CODES = {
   CREDIT_NOTE_CREDIT_CONSUMED: "CREDIT_NOTE_CREDIT_CONSUMED",
   CREDIT_NOTE_OVER_HEADROOM: "CREDIT_NOTE_OVER_HEADROOM",
   RETURN_REFUND_OVER_LINE_HEADROOM: "RETURN_REFUND_OVER_LINE_HEADROOM",
+  RETURN_REFUND_BASIS_CHANGED: "RETURN_REFUND_BASIS_CHANGED",
   RETURN_MIXED_UNIT_PRODUCT: "RETURN_MIXED_UNIT_PRODUCT",
   CREDIT_NOTE_SOURCE_GONE: "CREDIT_NOTE_SOURCE_GONE",
   CREDIT_NOTE_NO_SOURCE_CAP: "CREDIT_NOTE_NO_SOURCE_CAP",
@@ -135,6 +140,7 @@ export const API_ERROR_CODES = {
   /** B692: a delivered / partly-delivered order whose delivery quantities were never recorded is not cancelled blind. 409. */
   ORDER_DELIVERY_QUANTITIES_MISSING: "ORDER_DELIVERY_QUANTITIES_MISSING",
   ORDER_BILLING_CHANGED: "ORDER_BILLING_CHANGED",
+  UNVOID_ORDER_CANCELLED: "UNVOID_ORDER_CANCELLED",
   ORDER_EDIT_WOULD_OVERPAY: "ORDER_EDIT_WOULD_OVERPAY",
   FULFIL_METHOD_NOT_OFFERED: "FULFIL_METHOD_NOT_OFFERED",
   ORDER_WITH_CARRIER_NO_CANCEL: "ORDER_WITH_CARRIER_NO_CANCEL",
@@ -170,6 +176,8 @@ export const API_ERROR_CODES = {
   ORDER_BELOW_RETURN_CREDIT: "ORDER_BELOW_RETURN_CREDIT",
   CREDIT_LIMIT_EXCEEDED: "CREDIT_LIMIT_EXCEEDED",
   MERGE_CHOICE_REQUIRED: "MERGE_CHOICE_REQUIRED",
+  // W-762 / SA-918: a merge with any participant carrying an order discount (SA-780 decides the allocation).
+  ORDER_MERGE_DISCOUNTED: "ORDER_MERGE_DISCOUNTED",
   SOURCE_LINE_AMBIGUOUS: "SOURCE_LINE_AMBIGUOUS",
   SOURCE_LINE_INVALID: "SOURCE_LINE_INVALID",
   UNIT_AWARE_LINE_UNVERIFIABLE: "UNIT_AWARE_LINE_UNVERIFIABLE",
@@ -188,6 +196,9 @@ export const API_ERROR_CODES = {
   RULE_STALE: "RULE_STALE",
   RULE_IMPACT_CHANGED: "RULE_IMPACT_CHANGED",
   RULE_END_USE_LIFT: "RULE_END_USE_LIFT",
+  // Row 510: a staff write that needs an override reason (409), and a reason outside 3..200 after trim (400).
+  RESTRICTION_WARNING: "RESTRICTION_WARNING",
+  RESTRICTION_OVERRIDE_REASON_INVALID: "RESTRICTION_OVERRIDE_REASON_INVALID",
   PO_LINK_CONFLICT: "PO_LINK_CONFLICT",
   SCAN_ALREADY_POSTED: "SCAN_ALREADY_POSTED",
   PO_LINK_BROKEN: "PO_LINK_BROKEN",
@@ -206,10 +217,14 @@ export const API_ERROR_CODES = {
   PO_HAS_LINKED_BILL: "PO_HAS_LINKED_BILL",
   INVENTORY_LEDGER_GAP: "INVENTORY_LEDGER_GAP",
   STOCK_DATE_IN_FILED_PERIOD: "STOCK_DATE_IN_FILED_PERIOD",
+  // 683 (SA-896): DELETE /settings/financial-data refused while the tenant holds regulated records.
+  FINANCIAL_WIPE_BLOCKED_REGULATED: "FINANCIAL_WIPE_BLOCKED_REGULATED",
   ALLOCATIONS_EXCEED_PAYMENT: "ALLOCATIONS_EXCEED_PAYMENT",
   INVOICE_CHANGED_DURING_EDIT: "INVOICE_CHANGED_DURING_EDIT",
   EMAIL_NOT_CONFIGURED: "EMAIL_NOT_CONFIGURED",
   EMAIL_SEND_FAILED: "EMAIL_SEND_FAILED",
+  /** #2088: the same invoice was emailed too many times in a short window (429). */
+  EMAIL_SEND_THROTTLED: "EMAIL_SEND_THROTTLED",
   // Row 466: create-and-send committed the invoice, then the send step threw a non-HTTP error. The body carries `invoiceId`.
   INVOICE_SEND_AFTER_CREATE_FAILED: "INVOICE_SEND_AFTER_CREATE_FAILED",
   // Row 466: createSale committed the order, then its invoice step threw. The body carries `orderId`.
@@ -246,6 +261,7 @@ export const API_ERROR_CODES = {
   PLAN_CHANGE_STRIPE_AHEAD: "PLAN_CHANGE_STRIPE_AHEAD",
   CHECKOUT_ANNUAL_NOT_SUPPORTED: "CHECKOUT_ANNUAL_NOT_SUPPORTED",
   CHECKOUT_ANCHOR_WINDOW: "CHECKOUT_ANCHOR_WINDOW",
+  TENANT_ADMIN_LOCKED: "TENANT_ADMIN_LOCKED",
   TENANT_CANCEL_SUBSCRIPTION_FIRST: "TENANT_CANCEL_SUBSCRIPTION_FIRST",
   STRIPE_NOT_CONFIGURED: "STRIPE_NOT_CONFIGURED",
   STRIPE_ACCOUNT_MISMATCH: "STRIPE_ACCOUNT_MISMATCH",
@@ -327,6 +343,8 @@ export const API_ERROR_CODES = {
   WALK_IN_OPEN_CREDIT: "WALK_IN_OPEN_CREDIT",
   COUNTER_TENDER_SHORT: "COUNTER_TENDER_SHORT",
   COUNTER_CHECK_NUMBER_REQUIRED: "COUNTER_CHECK_NUMBER_REQUIRED",
+  /** 400 from POST /orders/counter-sale: a CHECK dated after the tenant's today cannot be tendered at the till; put the sale on account and record the check when it clears. Nothing is written. */
+  COUNTER_CHECK_POSTDATED: "COUNTER_CHECK_POSTDATED",
   COUNTER_PAYMENT_EXCEEDS_TOTAL: "COUNTER_PAYMENT_EXCEEDS_TOTAL",
   COUNTER_PAYMENT_NOT_RECORDED: "COUNTER_PAYMENT_NOT_RECORDED",
   /**
@@ -359,6 +377,11 @@ export const API_ERROR_CODES = {
    */
   ORDER_RUN_LINK_CHANGED: "ORDER_RUN_LINK_CHANGED",
   /**
+   * W-769 (SA-862 rule 4): PATCH /invoices/:id/payments/:paymentId, 409: confirming (DRAFT → PAID) or reopening (VOID → PAID) a
+   * payment when real money already covers the invoice. Nothing written; void it or move it to the customer's credit.
+   */
+  UNCONFIRMED_PAYMENT_SUPERSEDED: "UNCONFIRMED_PAYMENT_SUPERSEDED",
+  /**
    * 400 from `PATCH /orders/:id/fulfill-path` from PICKUP to ROUTE or SHIP: the customer has no address on file,
    * so there is nowhere to deliver to and no state to judge selling restrictions on. Nothing was written.
    */
@@ -368,6 +391,39 @@ export const API_ERROR_CODES = {
    * A definitive answer (unlike a timeout): the clerk may ring the sale again with a new key.
    */
   COUNTER_SALE_NOT_FOUND: "COUNTER_SALE_NOT_FOUND",
+  /**
+   * 404 from GET /invoices/payments/by-key/:key (SA-824): NO payment, advance or invoice payment is recorded
+   * under this Idempotency-Key in this tenant YET. NOT definitive: a payment may still be in flight, so the
+   * dialog never releases on it (SA-824 race ruling 5); only POST …/resolve (found | tombstoned) releases.
+   */
+  PAYMENT_KEY_NOT_FOUND: "PAYMENT_KEY_NOT_FOUND",
+  /**
+   * 409 from the customer money-in writers (POST /invoices/payments/record, POST /invoices/:id/payments,
+   * POST /customers/:id/advance-payments) on an Idempotency-Key that "Check payment status" already resolved
+   * to a TOMBSTONE (SA-824 race ruling 2): nothing was recorded under the key and NOTHING was written by this
+   * request. Definitive: the dialog releases the key and starts a new payment.
+   */
+  PAYMENT_KEY_RESOLVED: "PAYMENT_KEY_RESOLVED",
+  /**
+   * 409 from POST /invoices/payments/by-key/:key/resolve (SA-824 race ruling 3) when the resolve waited the
+   * full lock timeout behind an UNCOMMITTED payment under the same key (or meets a key that is claimed and not
+   * yet completed). NOT an answer: the payment may still commit. Retryable; the dialog keeps the key locked.
+   */
+  PAYMENT_KEY_IN_FLIGHT: "PAYMENT_KEY_IN_FLIGHT",
+  /**
+   * The `reason` of the 409 IDEMPOTENCY_KEY_CONFLICT the customer money-in writers send when an Idempotency-Key
+   * already recorded a DIFFERENT payment request (SA-824). It proves a payment may already exist under the key.
+   * Thrown by the server and matched by the clients (`isPaymentKeyConflict`) through this ONE constant.
+   */
+  PAYMENT_MISMATCH: "PAYMENT_MISMATCH",
+  /**
+   * 409 from every InvoicePayment writer that carries a typed reference (row 498, SA-837): a non-VOID payment of the
+   * same customer, method, NORMALISED reference (trim, uppercase, no spaces or dashes) and amount already exists, with
+   * no time window. The body names it (`existingPayment`: date, amount, invoice number). A staff caller may resend with
+   * `recordAnyway: true` (one audit row). Never raised for the shared walk-in customer or between the payments of one
+   * attempt. Nothing was written.
+   */
+  DUPLICATE_PAYMENT_REF: "DUPLICATE_PAYMENT_REF",
   /**
    * 409 from GET /orders/counter-sale/by-key/:key: the sale's PENDING or DELIVERED order exists but has NO invoice
    * rows at all (a half-written sale: the first attempt stopped before the invoice step). Re-POST with the same
@@ -459,6 +515,22 @@ export const API_ERROR_CODES = {
    * PENDING, PARTIALLY_DELIVERED, or CANCELLED). Nothing was written.
    */
   PICKUP_NOT_READY: "PICKUP_NOT_READY",
+  /** I-120 (SA-861 rule 2): POST /orders/:id/pickup-complete, 409: this business does not hand orders over at the store (no PICKUP method and the counter off). */
+  COUNTER_COMPLETE_UNAVAILABLE: "COUNTER_COMPLETE_UNAVAILABLE",
+  /**
+   * 400 from a path switch to SHIP / PICKUP (PATCH /orders/:id/fulfill-path, and Complete at counter's switch): the order is on
+   * an ACTIVE delivery run (SCHEDULED / IN_PROGRESS); remove it from the run first. Nothing was written.
+   */
+  ORDER_ON_ACTIVE_RUN: "ORDER_ON_ACTIVE_RUN",
+  /** I-120 R9 (owner 7a Q2 = A): POST /orders/:id/pickup-complete, 409: the order has shipped with the carrier. Nothing written. */
+  COUNTER_COMPLETE_SHIPPED: "COUNTER_COMPLETE_SHIPPED",
+  /**
+   * I-120 R8 (owner 7a Q1 = A): POST /orders/:id/pickup-complete, 409: the order is on a driver's run (SA-913); the body
+   * carries `driverName` and `runId` for the confirm, which re-sends with `takeOffRun: true`. Nothing written.
+   */
+  COUNTER_COMPLETE_ON_RUN: "COUNTER_COMPLETE_ON_RUN",
+  /** I-120 R8: POST /orders/:id/pickup-complete, 409: the driver has started that stop (with or without `takeOffRun`). Nothing written. */
+  COUNTER_COMPLETE_STOP_STARTED: "COUNTER_COMPLETE_STOP_STARTED",
   /**
    * `paymentErrorCode` of a 200 from POST /orders/:id/pickup-complete: the hand-over committed, no payment
    * was sent, and the invoices final after DELIVERED (a remainder or rebuild) leave money owing. Retry with a payment.
@@ -608,6 +680,12 @@ export const API_ERROR_CODES = {
    */
   CUSTOMER_PRICES_UNAVAILABLE: "CUSTOMER_PRICES_UNAVAILABLE",
   /**
+   * 409 from PATCH /drafts/:id (SA-817 A): the request's `expectedUpdatedAt` is not the draft's current `updatedAt`, so another device
+   * changed it after this client's last sync. Nothing was written. The body carries `current` (the server's version); the client keeps
+   * BOTH ("Keep this one or open the other?"), never overwrites.
+   */
+  DRAFT_CHANGED: "DRAFT_CHANGED",
+  /**
    * 409 from void / revert-to-draft / delete (and a per-bill `skipped` entry of the bulk delete) of a vendor bill that still carries CASH
    * payments (B288, SA-814 R5-3). Body carries `amount` (the rounded cash total). Nothing was written; move the payments to a supplier
    * credit first (POST /vendor-bills/:id/payments/:paymentId/move-to-credit).
@@ -619,6 +697,10 @@ export const API_ERROR_CODES = {
   BILL_PAYMENT_NO_SUPPLIER: "BILL_PAYMENT_NO_SUPPLIER",
   /** 400 from PUT /platform-admin/app-links: a link is not an https URL with a host; body carries `field`. */
   APP_LINK_URL_INVALID: "APP_LINK_URL_INVALID",
+  /** 400 from POST /customers/merge: the two customers are not both of the session's one business (W-763). Names no tenant. */
+  CUSTOMER_MERGE_TENANT_MISMATCH: "CUSTOMER_MERGE_TENANT_MISMATCH",
+  /** 409 from an inline return cancel: the credit note gained a payment on another invoice while the cancel locked its rows (SA-920). Retryable: the retry locks the full set. */
+  RETURN_CANCEL_RETRY: "RETURN_CANCEL_RETRY",
 } as const satisfies Record<string, ApiErrorCode>;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */

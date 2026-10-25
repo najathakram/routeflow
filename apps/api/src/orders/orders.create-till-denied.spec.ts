@@ -124,4 +124,29 @@ describe("OrdersService.create: an explicit PICKUP needs the till (BO-07)", () =
     await service.create(delivery as never, user("OPERATOR"), { skipAutoMerge: true });
     expect(prisma.order.create.mock.calls[0][0].data.fulfillPath).toBe("ROUTE");
   });
+
+  describe("S1: the credit gate receives only what stays owed after the tender", () => {
+    const sale = { customerId: "cust-1", items: [{ productId: "prod-1", qty: 10 }] };
+    const projected = async (options: Record<string, unknown>) => {
+      const spy = jest
+        .spyOn(service as never, "creditGate" as never)
+        .mockResolvedValue(undefined as never);
+      await service.create(sale as never, user("TENANT_ADMIN"), {
+        skipAutoMerge: true,
+        ...options,
+      });
+      const arg = spy.mock.calls[0][0] as { projectedTotal: number };
+      spy.mockRestore();
+      return arg.projectedTotal;
+    };
+
+    it("no creditPaidNow = the whole total; paid in full = 0; part paid = the remainder", async () => {
+      const total = await projected({});
+      expect(total).toBeGreaterThanOrEqual(50);
+      expect(await projected({ creditPaidNow: (t: number) => t })).toBe(0);
+      expect(await projected({ creditPaidNow: () => 20 })).toBe(
+        Math.round((total - 20) * 100) / 100,
+      );
+    });
+  });
 });

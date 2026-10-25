@@ -2,7 +2,7 @@
  * Units v2 (units-v2-k10e-piece-default): K10e, proven in a real browser at 1440 / 768 / 390.
  *  - F07: a product with no 1-piece unit gets one from the grid's "Add a Piece unit" pointer. The pointer opens
  *    Add a unit already set up as that Piece (Contains 1, name locked to the base name), and Add creates it.
- *  - F18: changing the Default order unit says so inline with an Undo; arrow keys only move focus; the message has
+ *  - F18: changing the Default order unit (the select beside the grid, R3) says so inline with an Undo; focusing it writes nothing; the message has
  *    no timer; Undo puts the old default back.
  *
  * LOCAL LANE ONLY (project `units-v2`). Role: OPERATOR on the approved test tenant. Fixture product E2E-FIX-CASEDEFAULT
@@ -23,7 +23,7 @@ const ID = {
   addName: "units-v2-add-name",
   addN: "units-v2-add-n",
   addSubmit: "units-v2-add-submit",
-  note: "units-default-note",
+  note: "units-v2-default-note",
 };
 
 async function openProduct(page: Page, context: Parameters<typeof setTenantCookie>[0]) {
@@ -96,36 +96,36 @@ for (const vp of VIEWPORTS) {
       }
     });
 
-    test("F18: the default order unit change shows an inline Undo with no timer; arrows move focus without saving", async ({
+    test("F18: the default order unit select beside the grid shows an inline Undo with no timer; focusing it saves nothing", async ({
       page,
       context,
     }, info) => {
       const ctx = await openProduct(page, context);
-      const radios = page.getByRole("radio", { name: "Default order unit" });
+      // R3: the live select sits beside the grid; the legacy Units & prices card only names the default (no radios).
+      const select = page.getByRole("combobox", { name: "Default order unit" });
+      const chosen = select.locator("option:checked");
       const note = page.getByTestId(ID.note);
       try {
-        await expect(radios).toHaveCount(2); // the Box (pack) row, then the Case
-        await expect(radios.nth(1)).toBeChecked();
-        await expect(note).toHaveAttribute("role", "status");
-        await expect(note).toHaveText("");
+        await expect(page.locator("[data-units-card]").getByRole("radio")).toHaveCount(0);
+        await expect(select).toHaveCount(1);
+        await expect(chosen).toHaveText("Case");
+        await expect(note).toHaveCount(0);
 
-        // an arrow key moves focus to the other radio and saves nothing
+        // focusing the select saves nothing
         const writes: string[] = [];
         page.on("request", (r) => {
           if (/\/products\/[^/]+\/units/.test(r.url()) && r.method() !== "GET")
             writes.push(r.method());
         });
-        await radios.nth(1).focus();
-        await page.keyboard.press("ArrowUp");
-        await expect(radios.nth(0)).toBeFocused();
-        await expect(radios.nth(1)).toBeChecked();
-        await expect(note).toHaveText("");
-        expect(writes, "an arrow key must not write").toEqual([]);
+        await select.focus();
+        await expect(chosen).toHaveText("Case");
+        await expect(note).toHaveCount(0);
+        expect(writes, "focusing the select must not write").toEqual([]);
 
-        // Space commits: the pack (Box) becomes the default, and the message says so with an Undo
-        await page.keyboard.press("Space");
+        // choosing the pack (Box) commits: it becomes the default, and the message says so with an Undo
+        await select.selectOption({ label: "Box" });
         await expect(note).toHaveText("Box is now the default order unit.");
-        await expect(radios.nth(0)).toBeChecked();
+        await expect(chosen).toHaveText("Box");
         const undo = page.getByRole("button", { name: "Undo", exact: true });
         await expect(undo).toBeVisible();
         await expect(page.getByRole("button", { name: /dismiss/i })).toBeVisible();
@@ -140,13 +140,13 @@ for (const vp of VIEWPORTS) {
         writes.length = 0;
         await undo.click();
         await expect(note).toHaveText("Case is the default order unit again.");
-        await expect(radios.nth(1)).toBeChecked();
+        await expect(chosen).toHaveText("Case");
         await expect(undo).toHaveCount(0);
         expect(writes, "Undo is one write").toEqual(["PATCH"]);
 
         // Dismiss clears the message
         await page.getByRole("button", { name: /dismiss/i }).click();
-        await expect(note).toHaveText("");
+        await expect(note).toHaveCount(0);
       } finally {
         try {
           const list = await page.request.get(`${ctx.api}/products/${ctx.productId}/units`, {

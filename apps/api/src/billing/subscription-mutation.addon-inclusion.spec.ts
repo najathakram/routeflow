@@ -20,6 +20,7 @@ jest.mock("../common/db-locks", () => ({
   LockUnavailableError: class extends Error {},
 }));
 
+import { fakeStripeProducts } from "../testing/fake-stripe-products";
 import { ConflictException } from "@nestjs/common";
 import { SubscriptionMutationService } from "./subscription-mutation.service";
 import { BILLING_EVENTS } from "./plan-catalog.constants";
@@ -82,7 +83,7 @@ function make(
       },
     })),
     client: {
-      products: { create: jest.fn(async () => ({ id: "prod_reg" })) },
+      products: fakeStripeProducts().products,
       subscriptionItems: {
         list: jest.fn(async () => ({ data: [] })),
         create: jest.fn(async (params: any) => {
