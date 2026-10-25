@@ -5,6 +5,8 @@
  * lands, is handed to the offline queue (which persists its own copy), is already completed, or is refused for good.
  * In memory only: a restarted app starts a fresh attempt, which the server's "stop already completed" check covers.
  */
+import { API_ERROR_CODES } from "@routeflow/types";
+
 const keys = new Map<string, string>();
 
 export function stopCompletionKey(stopId: string): string {
@@ -26,7 +28,7 @@ const responseOf = (err: unknown) =>
 /** The 503 the completion's lock answers before any write (apps/api/src/common/db-locks.ts). */
 export function isLockUnavailable(err: unknown): boolean {
   const res = responseOf(err);
-  return res?.status === 503 && res.data?.code === "LOCK_UNAVAILABLE";
+  return res?.status === 503 && res.data?.code === API_ERROR_CODES.LOCK_UNAVAILABLE;
 }
 
 /**
@@ -36,7 +38,7 @@ export function isLockUnavailable(err: unknown): boolean {
 export function keepsStopCompletionKey(err: unknown): boolean {
   const res = responseOf(err);
   if (!res || res.status === undefined || res.status >= 500) return true;
-  return res.status === 409 && res.data?.code === "MERGE_IN_PROGRESS";
+  return res.status === 409 && res.data?.code === API_ERROR_CODES.MERGE_IN_PROGRESS;
 }
 
 /** The automatic retries of a LOCK_UNAVAILABLE completion before the driver is told (same key every time). */
