@@ -273,6 +273,7 @@ import { CommissionEngineService } from "../sales-agents/commission-engine.servi
 import { EntitlementsService } from "../billing/entitlements.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { clearLoserDraftForDelete } from "./merge-loser-draft";
+import { deleteOrderInvoice } from "./order-invoice-delete";
 import { sumInlineReturnCredit } from "../returns/inline-return-credit.util";
 
 @Injectable()
@@ -1026,7 +1027,7 @@ export class OrdersService implements OnApplicationBootstrap {
               if (loserDraft) {
                 await clearLoserDraftForDelete(tx, this.ledger, loserDraft);
                 await tx.invoiceItem.deleteMany({ where: { invoiceId: loserDraft.id } });
-                await tx.invoice.delete({ where: { id: loserDraft.id } });
+                await deleteOrderInvoice(tx, loserDraft.id, this.prisma.getTenantId());
               }
               // B215: a loser's merge keys follow its cart onto the winner. The FK cascade would
               // otherwise delete them with the loser, and a retry of that merge would fold the
@@ -5261,7 +5262,7 @@ export class OrdersService implements OnApplicationBootstrap {
         // order-cascade delete would strand or silently destroy accruals.
         // Throws when claimedAmount > 0 (same guard deleteInvoice enforces).
         await this.commissionEngine.removeInvoiceCommission(inv.id, tx);
-        await tx.invoice.delete({ where: { id: inv.id } });
+        await deleteOrderInvoice(tx, inv.id, this.prisma.getTenantId());
       }
       if (order.transaction) {
         await tx.transactionItem.deleteMany({ where: { transactionId: order.transaction.id } });
