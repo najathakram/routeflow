@@ -12,10 +12,13 @@
  */
 import { roundMoney } from "@routeflow/pricing";
 
-/** A STANDARD return resolved as store credit that really minted its note (the split is frozen on the Return). */
+/**
+ * A return resolved as store credit that really minted its note (the split is frozen on the Return). Standard and inline
+ * returns both mint the note for the GROSS amount, so the filter never keys on the return's kind (SA-980): every writer
+ * that links a note to a Return stores `refundMethod` CREDIT_NOTE with it.
+ */
 export const CREDIT_NOTE_RETURN_FILTER = {
   refundMethod: "CREDIT_NOTE",
-  kind: "STANDARD",
   creditNoteId: { not: null },
 } as const;
 
