@@ -268,13 +268,13 @@ describe("PriceHistoryButton — states", () => {
     expect(mockGet.mock.calls.length).toBeGreaterThan(before);
   });
 
-  it("no past sales shows the empty copy", async () => {
+  it("no past sales says the product was not sold to this customer before", async () => {
     mockGet.mockResolvedValue({ data: response({ rows: [], summaries: [] }) });
     renderButton();
     await openPanel();
-    expect(
-      await screen.findByText("No past sales of this product to this customer"),
-    ).toBeInTheDocument();
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Not sold to this customer before.",
+    );
   });
 });
 

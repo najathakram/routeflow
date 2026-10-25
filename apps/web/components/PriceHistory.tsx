@@ -63,54 +63,142 @@ function fmtDate(iso: string): string {
   });
 }
 
-/** Inline-SVG sparkline of unit price over time (oldest -> newest); special / discount / override sales get a marker. */
-function Sparkline({ points }: { points: { price: number; type: string | null }[] }) {
-  if (points.length < 2) return null;
+type ChartPoint = { t: number; price: number; type?: string | null };
+
+/** "2026-09" -> mid-month (UTC), where that month's average sits on the time axis. */
+function monthMid(month: string): number {
+  const [y, m] = month.split("-").map(Number);
+  return Date.UTC(y!, (m ?? 1) - 1, 15);
+}
+
+/**
+ * Inline-SVG price chart on one time axis. This customer's prices are a solid line with round dots
+ * (special / discount / override sales get a ring marker); the other customers' monthly average is a
+ * dashed line with square dots, so the two read apart without colour. Both share one price scale.
+ */
+function PriceChart({ own, avg }: { own: ChartPoint[]; avg: ChartPoint[] }) {
+  if (own.length < 2 && avg.length === 0) return null;
   const w = 220;
-  const h = 36;
-  const prices = points.map((p) => p.price);
+  const h = 48;
+  const all = [...own, ...avg];
+  const ts = all.map((p) => p.t);
+  const t0 = Math.min(...ts);
+  const t1 = Math.max(...ts);
+  const prices = all.map((p) => p.price);
   const lo = Math.min(...prices);
-  const hi = Math.max(...prices);
-  const span = hi - lo || 1;
-  const xy = points.map((p, i) => ({
-    x: (i / (points.length - 1)) * (w - 8) + 4,
+  const span = Math.max(...prices) - lo || 1;
+  const place = (p: ChartPoint) => ({
+    x: t1 === t0 ? w / 2 : ((p.t - t0) / (t1 - t0)) * (w - 8) + 4,
     y: h - 4 - ((p.price - lo) / span) * (h - 8),
-    type: p.type,
-  }));
-  const last = xy[xy.length - 1]!;
+    type: p.type ?? null,
+  });
+  const o = own.map(place);
+  const a = avg.map(place);
+  const path = (pts: { x: number; y: number }[]) =>
+    pts.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+  // One average month has no line to draw: stretch it across the plot as a flat reference.
+  const aLine =
+    a.length === 1
+      ? [
+          { x: 4, y: a[0]!.y },
+          { x: w - 4, y: a[0]!.y },
+        ]
+      : a;
+  const label =
+    own.length >= 2
+      ? `Price trend, ${own.length} sales${avg.length ? ", with the average of other customers" : ""}`
+      : "Average price of other customers";
+  const lastOwn = o[o.length - 1];
   return (
-    <svg
-      role="img"
-      aria-label={`Price trend, ${points.length} sales`}
-      viewBox={`0 0 ${w} ${h}`}
-      className="h-9 w-full text-brand-500"
-    >
-      <polyline
-        points={xy.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ")}
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinejoin="round"
-        strokeLinecap="round"
-      />
-      {xy.map(
-        (p, i) =>
-          p.type &&
-          PRICE_TYPE_TAG[p.type] && (
-            <circle
-              key={i}
-              data-testid="price-marker"
-              cx={p.x}
-              cy={p.y}
-              r="3"
-              fill="white"
-              stroke={p.type === "SPECIAL" ? "#059669" : "#d97706"}
+    <div>
+      <svg role="img" aria-label={label} viewBox={`0 0 ${w} ${h}`} className="h-12 w-full">
+        {a.length > 0 && (
+          <g data-testid="avg-line" className="text-navy/50">
+            <polyline
+              points={path(aLine)}
+              fill="none"
+              stroke="currentColor"
               strokeWidth="1.5"
+              strokeDasharray="4 3"
+              strokeLinejoin="round"
             />
-          ),
-      )}
-      <circle cx={last.x} cy={last.y} r="2.5" fill="currentColor" />
-    </svg>
+            {a.map((p, i) => (
+              <rect
+                key={i}
+                x={p.x - 2.5}
+                y={p.y - 2.5}
+                width="5"
+                height="5"
+                fill="white"
+                stroke="currentColor"
+                strokeWidth="1.25"
+              />
+            ))}
+          </g>
+        )}
+        {o.length >= 2 && (
+          <g data-testid="own-line" className="text-brand-500">
+            <polyline
+              points={path(o)}
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinejoin="round"
+              strokeLinecap="round"
+            />
+            {o.map(
+              (p, i) =>
+                p.type &&
+                PRICE_TYPE_TAG[p.type] && (
+                  <circle
+                    key={i}
+                    data-testid="price-marker"
+                    cx={p.x}
+                    cy={p.y}
+                    r="3"
+                    fill="white"
+                    stroke={p.type === "SPECIAL" ? "#059669" : "#d97706"}
+                    strokeWidth="1.5"
+                  />
+                ),
+            )}
+            <circle cx={lastOwn!.x} cy={lastOwn!.y} r="2.5" fill="currentColor" />
+          </g>
+        )}
+      </svg>
+      <ul
+        aria-label="Chart key"
+        className="flex flex-wrap gap-x-3 text-[10px] text-navy/60"
+        data-testid="chart-legend"
+      >
+        {o.length >= 2 && (
+          <li className="flex items-center gap-1">
+            <svg aria-hidden viewBox="0 0 16 8" className="h-2 w-4 text-brand-500">
+              <line x1="0" y1="4" x2="16" y2="4" stroke="currentColor" strokeWidth="1.5" />
+              <circle cx="8" cy="4" r="2.2" fill="currentColor" />
+            </svg>
+            This customer
+          </li>
+        )}
+        {a.length > 0 && (
+          <li className="flex items-center gap-1">
+            <svg aria-hidden viewBox="0 0 16 8" className="h-2 w-4 text-navy/50">
+              <line
+                x1="0"
+                y1="4"
+                x2="16"
+                y2="4"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeDasharray="3 2"
+              />
+              <rect x="5.5" y="1.5" width="5" height="5" fill="white" stroke="currentColor" />
+            </svg>
+            Other customers&apos; average
+          </li>
+        )}
+      </ul>
+    </div>
   );
 }
 
@@ -175,6 +263,8 @@ function PanelBody({
       ...data.rows.map((r) => r.unitLabel),
     ])
       if (!seen.some((s) => sameUnit(s, u))) seen.push(u);
+    // Never sold to this customer: the average's own unit is the only one there is to chart.
+    if (seen.length === 0 && data.aggregate) seen.push(data.aggregate.unitLabel);
     return seen;
   }, [data]);
   const [picked, setPicked] = React.useState<string | null>(null);
@@ -191,7 +281,9 @@ function PanelBody({
   const summary: PriceHistorySummary | undefined = data.summaries.find((s) =>
     sameUnit(s.unitLabel, unit),
   );
-  const chronological = [...rows].reverse().map((r) => ({ price: r.unitPrice, type: r.priceType }));
+  const chronological: ChartPoint[] = [...rows]
+    .reverse()
+    .map((r) => ({ t: new Date(r.date).getTime(), price: r.unitPrice, type: r.priceType }));
   const money = (n: number | null | undefined) => (n == null ? "—" : fmt(n));
   const costCell = (n: number | null) => (showCost ? money(n) : MASK);
   const canUse = (r: PriceHistoryRow) => canUseHistoryPrice(r, unitHint, packHint, units.length);
@@ -203,6 +295,13 @@ function PanelBody({
         : `${Math.round(((r.unitPrice - r.avgCostAtSale) / r.unitPrice) * 100)}%`;
   const refs = data.references;
   const agg = data.aggregate && sameUnit(data.aggregate.unitLabel, unit) ? data.aggregate : null;
+  // The average is drawn only in the chart's unit AND pack: a 12-pack average never sits on a 24-pack line.
+  const avgLine: ChartPoint[] =
+    agg?.series?.length &&
+    (rows.length === 0 || (agg.seriesUnitsPerBox ?? 1) === (rows[0]!.unitsPerBox ?? 1))
+      ? agg.series.map((p) => ({ t: monthMid(p.month), price: p.average }))
+      : [];
+  const neverSold = rows.length === 0;
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (rows.length === 0) return;
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
@@ -273,7 +372,22 @@ function PanelBody({
         </div>
       )}
 
-      <Sparkline points={chronological} />
+      {neverSold && (
+        <p role="status" className="text-[11px] font-medium text-navy">
+          Not sold to this customer before.{" "}
+          <span className="font-normal text-navy/70">
+            {avgLine.length > 0
+              ? "The line shows the average price all customers paid."
+              : compareError
+                ? "Couldn't load the average price."
+                : comparing
+                  ? "Loading the average price…"
+                  : "There aren't enough sales to other customers to show an average yet."}
+          </span>
+        </p>
+      )}
+
+      <PriceChart own={chronological} avg={avgLine} />
 
       <div className="flex items-center gap-1" role="group" aria-label="Compare">
         {(["This customer", "All customers"] as const).map((label) => (
@@ -325,112 +439,118 @@ function PanelBody({
         </div>
       )}
 
-      <div className="flex flex-wrap items-end gap-x-4 gap-y-1 border-y border-surface-border py-1.5">
-        <Stat label="Last" value={money(summary?.last)} />
-        <Stat label="Low" value={money(summary?.low)} />
-        <Stat label="High" value={money(summary?.high)} />
-        <Stat label="Qty sold" value={String(summary?.qtySold ?? 0)} />
-        {data.costVisible && (
-          <Stat label="Avg cost now" value={costCell(summary?.currentAvgCost ?? null)} />
-        )}
-        {data.costVisible && (
-          <button
-            type="button"
-            onClick={() => setShowCost((v) => !v)}
-            aria-pressed={showCost}
-            className="ml-auto flex items-center gap-1 text-[11px] text-navy/60 hover:text-navy"
-          >
-            {showCost ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
-            {showCost ? "Hide cost" : "Show cost"}
-          </button>
-        )}
-      </div>
-
-      <table className="w-full text-left">
-        <thead className="hidden sm:table-header-group">
-          <tr className="text-[10px] uppercase tracking-wide text-navy/50">
-            <th className="whitespace-nowrap py-1 font-medium">Date</th>
-            <th className="whitespace-nowrap py-1 font-medium">Price</th>
-            {data.costVisible && (
-              <th className="hidden whitespace-nowrap py-1 font-medium sm:table-cell">Avg cost</th>
-            )}
-            {data.costVisible && (
-              <th className="hidden whitespace-nowrap py-1 font-medium sm:table-cell">Margin</th>
-            )}
-            <th className="whitespace-nowrap py-1 pl-2 font-medium">Qty</th>
-            <th className="py-1 font-medium">Invoice / Order</th>
-            <th className="py-1" />
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r, i) => (
-            <tr
-              key={`${r.orderId}-${r.invoiceId ?? "o"}-${i}`}
-              aria-selected={i === active}
-              onMouseEnter={() => setActive(i)}
-              className={cn(
-                "flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-surface-border py-1 sm:table-row sm:py-0",
-                i === active && "bg-brand-50/60",
-              )}
+      {!neverSold && (
+        <div className="flex flex-wrap items-end gap-x-4 gap-y-1 border-y border-surface-border py-1.5">
+          <Stat label="Last" value={money(summary?.last)} />
+          <Stat label="Low" value={money(summary?.low)} />
+          <Stat label="High" value={money(summary?.high)} />
+          <Stat label="Qty sold" value={String(summary?.qtySold ?? 0)} />
+          {data.costVisible && (
+            <Stat label="Avg cost now" value={costCell(summary?.currentAvgCost ?? null)} />
+          )}
+          {data.costVisible && (
+            <button
+              type="button"
+              onClick={() => setShowCost((v) => !v)}
+              aria-pressed={showCost}
+              className="ml-auto flex items-center gap-1 text-[11px] text-navy/60 hover:text-navy"
             >
-              <td className="whitespace-nowrap py-1 pr-2 text-navy/70">{fmtDate(r.date)}</td>
-              <td className="py-1 pr-2 font-mono text-navy">
-                {fmt(r.unitPrice)}
-                {r.priceType && PRICE_TYPE_TAG[r.priceType] && (
-                  <span className="ml-1 rounded bg-sunken px-1 text-[11px] uppercase text-navy/60">
-                    {PRICE_TYPE_TAG[r.priceType]}
-                  </span>
-                )}
-              </td>
+              {showCost ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+              {showCost ? "Hide cost" : "Show cost"}
+            </button>
+          )}
+        </div>
+      )}
+
+      {!neverSold && (
+        <table className="w-full text-left">
+          <thead className="hidden sm:table-header-group">
+            <tr className="text-[10px] uppercase tracking-wide text-navy/50">
+              <th className="whitespace-nowrap py-1 font-medium">Date</th>
+              <th className="whitespace-nowrap py-1 font-medium">Price</th>
               {data.costVisible && (
-                <td className="hidden py-1 pr-2 font-mono text-navy/70 sm:table-cell">
-                  {costCell(r.avgCostAtSale)}
-                </td>
+                <th className="hidden whitespace-nowrap py-1 font-medium sm:table-cell">
+                  Avg cost
+                </th>
               )}
               {data.costVisible && (
-                <td className="hidden py-1 pr-2 font-mono text-navy/70 sm:table-cell">
-                  {marginCell(r)}
-                </td>
+                <th className="hidden whitespace-nowrap py-1 font-medium sm:table-cell">Margin</th>
               )}
-              <td className="whitespace-nowrap py-1 pl-2 pr-2 text-navy/70">
-                {r.qty} {r.unitLabel}
-              </td>
-              <td
-                className="max-w-[7rem] truncate py-1 pr-2 text-navy/70"
-                title={
-                  r.source === "INVOICE"
-                    ? (r.invoiceNumber ?? r.orderNumber)
-                    : `${r.orderNumber} (not invoiced yet)`
-                }
-              >
-                {r.source === "INVOICE" ? (
-                  (r.invoiceNumber ?? r.orderNumber)
-                ) : (
-                  <>
-                    {r.orderNumber}
-                    <span className="ml-1 rounded bg-amber-50 px-1 text-[10px] text-amber-700 ring-1 ring-amber-200">
-                      not invoiced yet
-                    </span>
-                  </>
-                )}
-              </td>
-              <td className="w-full py-1 text-right sm:w-auto">
-                <button
-                  type="button"
-                  disabled={!canUse(r)}
-                  title={canUse(r) ? undefined : "A different unit than this line"}
-                  aria-label={`Use this price (${fmt(r.unitPrice)})`}
-                  onClick={() => onUse(r.unitPrice)}
-                  className="min-h-[44px] w-full whitespace-nowrap rounded px-1.5 py-0.5 text-[11px] font-medium text-brand-600 ring-1 ring-brand-200 hover:bg-brand-50 disabled:cursor-not-allowed disabled:opacity-40 sm:min-h-0 sm:w-auto"
-                >
-                  <span className="sm:hidden">Use</span>
-                  <span className="hidden sm:inline">Use this price</span>
-                </button>
-              </td>
+              <th className="whitespace-nowrap py-1 pl-2 font-medium">Qty</th>
+              <th className="py-1 font-medium">Invoice / Order</th>
+              <th className="py-1" />
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {rows.map((r, i) => (
+              <tr
+                key={`${r.orderId}-${r.invoiceId ?? "o"}-${i}`}
+                aria-selected={i === active}
+                onMouseEnter={() => setActive(i)}
+                className={cn(
+                  "flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-surface-border py-1 sm:table-row sm:py-0",
+                  i === active && "bg-brand-50/60",
+                )}
+              >
+                <td className="whitespace-nowrap py-1 pr-2 text-navy/70">{fmtDate(r.date)}</td>
+                <td className="py-1 pr-2 font-mono text-navy">
+                  {fmt(r.unitPrice)}
+                  {r.priceType && PRICE_TYPE_TAG[r.priceType] && (
+                    <span className="ml-1 rounded bg-sunken px-1 text-[11px] uppercase text-navy/60">
+                      {PRICE_TYPE_TAG[r.priceType]}
+                    </span>
+                  )}
+                </td>
+                {data.costVisible && (
+                  <td className="hidden py-1 pr-2 font-mono text-navy/70 sm:table-cell">
+                    {costCell(r.avgCostAtSale)}
+                  </td>
+                )}
+                {data.costVisible && (
+                  <td className="hidden py-1 pr-2 font-mono text-navy/70 sm:table-cell">
+                    {marginCell(r)}
+                  </td>
+                )}
+                <td className="whitespace-nowrap py-1 pl-2 pr-2 text-navy/70">
+                  {r.qty} {r.unitLabel}
+                </td>
+                <td
+                  className="max-w-[7rem] truncate py-1 pr-2 text-navy/70"
+                  title={
+                    r.source === "INVOICE"
+                      ? (r.invoiceNumber ?? r.orderNumber)
+                      : `${r.orderNumber} (not invoiced yet)`
+                  }
+                >
+                  {r.source === "INVOICE" ? (
+                    (r.invoiceNumber ?? r.orderNumber)
+                  ) : (
+                    <>
+                      {r.orderNumber}
+                      <span className="ml-1 rounded bg-amber-50 px-1 text-[10px] text-amber-700 ring-1 ring-amber-200">
+                        not invoiced yet
+                      </span>
+                    </>
+                  )}
+                </td>
+                <td className="w-full py-1 text-right sm:w-auto">
+                  <button
+                    type="button"
+                    disabled={!canUse(r)}
+                    title={canUse(r) ? undefined : "A different unit than this line"}
+                    aria-label={`Use this price (${fmt(r.unitPrice)})`}
+                    onClick={() => onUse(r.unitPrice)}
+                    className="min-h-[44px] w-full whitespace-nowrap rounded px-1.5 py-0.5 text-[11px] font-medium text-brand-600 ring-1 ring-brand-200 hover:bg-brand-50 disabled:cursor-not-allowed disabled:opacity-40 sm:min-h-0 sm:w-auto"
+                  >
+                    <span className="sm:hidden">Use</span>
+                    <span className="hidden sm:inline">Use this price</span>
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </div>
   );
 }
@@ -462,13 +582,12 @@ function Panel({
 }) {
   const [compare, setCompare] = React.useState(false);
   // Two requests, so a failed or slow comparison never takes the customer's own rows away: the base
-  // history is always shown; `?compare=all` is a separate query that only adds the aggregate. Both
-  // leave the order being edited out of the history (hunt2 F6).
+  // history is always shown; `?compare=all` is a separate query that only adds the aggregate (and its
+  // average line, which the chart always draws). Both leave the order being edited out of the history
+  // (hunt2 F6).
   const q = usePriceHistory(customerId, productId, true, 25, excludeOrderId);
-  const cmp = usePriceHistory(customerId, productId, compare, 25, excludeOrderId, true);
-  const shown = q.data
-    ? { ...q.data, aggregate: compare ? (cmp.data?.aggregate ?? null) : undefined }
-    : undefined;
+  const cmp = usePriceHistory(customerId, productId, true, 25, excludeOrderId, true);
+  const shown = q.data ? { ...q.data, aggregate: cmp.data?.aggregate ?? null } : undefined;
   return (
     <AnchoredPopover
       anchor={anchor}
@@ -490,13 +609,8 @@ function Panel({
             Retry
           </button>
         </div>
-      ) : shown.rows.length === 0 ? (
-        <div className="space-y-1 text-xs">
-          <p className="text-sm font-semibold text-navy">
-            Price history · {shown.productName || productName}
-          </p>
-          <p className="text-navy/60">No past sales of this product to this customer</p>
-        </div>
+      ) : shown.rows.length === 0 && cmp.isLoading ? (
+        <Skeleton />
       ) : (
         <PanelBody
           data={shown}

@@ -107,7 +107,9 @@ describe("prefetch", () => {
     const dialog = await screen.findByRole("dialog", { name: "Price history" });
     expect(within(dialog).queryByRole("status")).not.toBeInTheDocument();
     expect(within(dialog).getByText("Customer: Acme Foods")).toBeInTheDocument();
-    expect(mockGet).toHaveBeenCalledTimes(1);
+    // the prefetched history is reused; only the average-line request is new
+    await waitFor(() => expect(mockGet).toHaveBeenCalledTimes(2));
+    expect(mockGet.mock.calls.filter((c) => c[1]?.params?.compare === undefined)).toHaveLength(1);
   });
 
   it("does not fetch while the customer is missing", () => {
@@ -203,7 +205,7 @@ describe("references, compare, margin, markers", () => {
     expect(within(dialog).getByText("+3% since last order")).toBeInTheDocument();
   });
 
-  it("Compare: the base request has no compare; choosing All customers asks the server with ?compare=all and shows low / typical / high, never names", async () => {
+  it("Compare: the base request has no compare; the panel asks with ?compare=all on open and All customers shows low / typical / high, never names", async () => {
     const withAgg = base();
     const { aggregate: _a, ...noAgg } = withAgg;
     mockGet.mockImplementation((_url: string, cfg?: { params?: { compare?: string } }) =>
@@ -215,7 +217,6 @@ describe("references, compare, margin, markers", () => {
     // the toggle is offered although the base response carries no aggregate (it is the request that adds it)
     const toggle = await within(dialog).findByRole("button", { name: "All customers" });
     expect(within(dialog).queryByTestId("compare-panel")).not.toBeInTheDocument();
-    expect(mockGet.mock.calls.every((c) => c[1]?.params?.compare === undefined)).toBe(true);
     fireEvent.click(toggle);
     const panel = await within(dialog).findByTestId("compare-panel");
     await waitFor(() => expect(panel).toHaveTextContent("$11.50"));
@@ -261,6 +262,122 @@ describe("references, compare, margin, markers", () => {
     const dialog = await screen.findByRole("dialog", { name: "Price history" });
     await within(dialog).findByText("INV-D");
     expect(within(dialog).getAllByTestId("price-marker")).toHaveLength(2);
+  });
+});
+
+describe("average line beside this customer's line", () => {
+  const series = [
+    { month: "2026-08", average: 9.5 },
+    { month: "2026-09", average: 11.25 },
+  ];
+  const agg = (over: Record<string, unknown> = {}) => ({
+    low: 9,
+    median: 11.5,
+    high: 15,
+    customers: 7,
+    unitLabel: "case",
+    series,
+    seriesUnitsPerBox: 24,
+    ...over,
+  });
+  /** The base request carries no aggregate; `?compare=all` adds it (mirrors the real server). */
+  const serve = (
+    baseData: PriceHistoryResponse,
+    cmp: (() => Promise<unknown>) | PriceHistoryResponse["aggregate"],
+  ) =>
+    mockGet.mockImplementation((_url: string, cfg?: { params?: { compare?: string } }) => {
+      if (cfg?.params?.compare !== "all") {
+        const { aggregate: _a, ...noAgg } = baseData;
+        return Promise.resolve({ data: noAgg });
+      }
+      return typeof cmp === "function"
+        ? cmp()
+        : Promise.resolve({ data: { ...baseData, aggregate: cmp } });
+    });
+  const open = async () => {
+    renderBtn();
+    fireEvent.click(screen.getByRole("button", { name: "Price history" }));
+    return screen.findByRole("dialog", { name: "Price history" });
+  };
+
+  it("with history: draws this customer's line AND the average line, with a key that names both", async () => {
+    serve(base(), agg());
+    const dialog = await open();
+    await within(dialog).findByText("INV-D");
+    expect(await within(dialog).findByTestId("avg-line")).toBeInTheDocument();
+    expect(within(dialog).getByTestId("own-line")).toBeInTheDocument();
+    const key = within(dialog).getByTestId("chart-legend");
+    expect(key).toHaveTextContent("This customer");
+    expect(key).toHaveTextContent("Other customers' average");
+    // not colour alone: the average is dashed
+    expect(
+      within(dialog)
+        .getByTestId("avg-line")
+        .querySelector("polyline")
+        ?.getAttribute("stroke-dasharray"),
+    ).toBeTruthy();
+    expect(within(dialog).queryByText(/not sold to this customer before/i)).not.toBeInTheDocument();
+  });
+
+  it("never sold to this customer: still plots the average and says so, in one sentence", async () => {
+    serve(
+      base({
+        rows: [],
+        summaries: [],
+        references: { listPrice: null, tierPrice: null, changeSinceLast: null },
+      }),
+      agg(),
+    );
+    const dialog = await open();
+    expect(await within(dialog).findByTestId("avg-line")).toBeInTheDocument();
+    expect(within(dialog).queryByTestId("own-line")).not.toBeInTheDocument();
+    expect(within(dialog).getByRole("status")).toHaveTextContent(
+      "Not sold to this customer before. The line shows the average price all customers paid.",
+    );
+    expect(within(dialog).getByTestId("chart-legend")).toHaveTextContent(
+      "Other customers' average",
+    );
+    expect(within(dialog).queryByText("Use this price")).not.toBeInTheDocument();
+  });
+
+  it("never sold and too few other buyers: says so and draws no line", async () => {
+    serve(base({ rows: [], summaries: [] }), null);
+    const dialog = await open();
+    await within(dialog).findByText(/aren't enough sales to other customers/);
+    expect(within(dialog).getByText(/Not sold to this customer before./)).toBeInTheDocument();
+    expect(within(dialog).queryByTestId("avg-line")).not.toBeInTheDocument();
+  });
+
+  it("a FAILED comparison request still shows this customer's own line and rows", async () => {
+    serve(base(), () => Promise.reject(new Error("429")));
+    const dialog = await open();
+    await within(dialog).findByText("INV-D");
+    expect(await within(dialog).findByTestId("own-line")).toBeInTheDocument();
+    await waitFor(() => expect(mockGet).toHaveBeenCalledTimes(2));
+    expect(within(dialog).queryByTestId("avg-line")).not.toBeInTheDocument();
+    expect(within(dialog).queryByText(/couldn.t load price history/i)).not.toBeInTheDocument();
+  });
+
+  it("a never-sold product with a failed comparison says the average could not load", async () => {
+    serve(base({ rows: [], summaries: [] }), () => Promise.reject(new Error("429")));
+    const dialog = await open();
+    expect(await within(dialog).findByText(/couldn't load the average price/i)).toBeInTheDocument();
+  });
+
+  it("draws no average line from another pack size than this customer's", async () => {
+    serve(base(), agg({ seriesUnitsPerBox: 12 })); // the rows are 24-packs
+    const dialog = await open();
+    await within(dialog).findByText("INV-D");
+    await waitFor(() => expect(mockGet).toHaveBeenCalledTimes(2));
+    expect(within(dialog).queryByTestId("avg-line")).not.toBeInTheDocument();
+  });
+
+  it("draws no average line when the series is in another unit than the chart's", async () => {
+    serve(base(), agg({ unitLabel: "piece" }));
+    const dialog = await open();
+    await within(dialog).findByText("INV-D");
+    await waitFor(() => expect(mockGet).toHaveBeenCalledTimes(2));
+    expect(within(dialog).queryByTestId("avg-line")).not.toBeInTheDocument();
   });
 });
 
