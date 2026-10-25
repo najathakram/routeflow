@@ -251,6 +251,7 @@ import type { OrderCancelBlockedField, OrderFulfillPathLockField } from "@routef
 import { attachInvoiceStages } from "./order-invoice-stage";
 import { HANDOVER_SOLD_BY_SELECT, seesHandOverStamp, stampHandedOverBy } from "./handover-stamp";
 import { EDIT_REVISIONS, updateStatusWithShipMarker } from "./order-ship-state";
+import { assertStopDoneForOfficeDelivered } from "./office-delivered-route-stop";
 import {
   heldAtBookedFloor,
   markLinesRecreated,
@@ -2304,6 +2305,8 @@ export class OrdersService implements OnApplicationBootstrap {
         );
       }
     }
+
+    await assertStopDoneForOfficeDelivered(this.prisma, order, dto.status); // row 590 (SA-978a)
 
     const noteAppend = dto.reason
       ? `\n[${new Date().toLocaleDateString()} – status changed to ${dto.status}: ${dto.reason}]`

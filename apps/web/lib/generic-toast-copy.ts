@@ -1,6 +1,7 @@
 import {
   API_ERROR_CODES,
   CREDITS_PENDING_COPY,
+  ORDER_DELIVERED_ON_ROUTE_STOP_COPY,
   INVOICE_TAX_STATE_STALE_COPY,
   SHIPPED_ORDER_MESSAGE,
   productInOpenCountCopy,
@@ -76,6 +77,8 @@ const CODE_COPY: Record<string, string> = {
   QTY_SPLIT_MISMATCH: BUYER_QTY_SPLIT_MISMATCH_COPY,
   // B692: a partial delivery needs per-line quantities; a delivered order with none recorded is not cancelled blind.
   ORDER_PD_NEEDS_QUANTITIES: "Record what was delivered for each line first.",
+  // Row 590 (SA-978a): an office DELIVERED on an order whose run stop has not completed; nothing was written.
+  [API_ERROR_CODES.ORDER_DELIVERED_ON_ROUTE_STOP]: ORDER_DELIVERED_ON_ROUTE_STOP_COPY,
   ORDER_DELIVERY_QUANTITIES_MISSING: "Delivery quantities are missing; set them before cancelling.",
   ORDER_BILLING_CHANGED:
     "This order's billing changed while you were working on it. Refresh and try again.",
