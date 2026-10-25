@@ -1,0 +1,167 @@
+{
+  "run": "2026-10-25-bug-swarm-6",
+  "bugs": [
+    {
+      "row": "302",
+      "resolvedTitle": "BUG P2: Settings > Business profile > Business Name never saves: toast 'Profile saved'...",
+      "packWritten": true,
+      "risk": "LOW",
+      "riskReason": "UI-only; API deliberately ignores businessName (super-admin owned)",
+      "status": "live",
+      "files": [
+        "apps/web/app/(dashboard)/settings/page.tsx",
+        "apps/api/src/system-config/settings.controller.ts"
+      ],
+      "needsDb": false,
+      "ui": true,
+      "repro": "Settings > Business profile, edit Business name, save: toast 'Profile saved', value reverts on reload (PATCH allow-list only taxRate/logoUrl)."
+    },
+    {
+      "row": "674",
+      "resolvedTitle": "'View in Supplier Bills' link goes to a 404 (qa-azm M10)",
+      "packWritten": true,
+      "risk": "LOW",
+      "riskReason": "link route only",
+      "status": "fixed-on-master",
+      "files": [
+        "apps/web/app/(dashboard)/vendor-bills/page.tsx",
+        "apps/web/app/(dashboard)/vendor-bills/linked-bill-href-404.test.ts"
+      ],
+      "needsDb": false,
+      "ui": true,
+      "repro": "Link now targets /vendor-bills/[id], which exists; pinned by linked-bill-href-404.test.ts."
+    },
+    {
+      "row": "W-879",
+      "resolvedTitle": "Auto-generated product SKU drops the first letter of the name (e.g. 'Bottled Water' -> 'OTTLED504')",
+      "packWritten": true,
+      "risk": "LOW",
+      "riskReason": "SKU cosmetic, no money",
+      "status": "unclear",
+      "files": [
+        "apps/api/src/products/products.service.ts",
+        "apps/api/src/inventory/inventory.service.ts",
+        "apps/web/components/ProductCreateModal.tsx"
+      ],
+      "needsDb": true,
+      "ui": false,
+      "repro": "Create product 'Bottled Water' with blank SKU; master generators yield BOT-XXXX, reported format matches no master code path."
+    },
+    {
+      "row": "W-694",
+      "resolvedTitle": "SearchableProductPicker dropdown has no Tab/blur close (same class as row 446 / W-686)",
+      "packWritten": true,
+      "risk": "LOW",
+      "riskReason": "a11y focus behavior",
+      "status": "live",
+      "files": [
+        "apps/web/components/SearchableProductPicker.tsx",
+        "apps/web/lib/use-listbox-nav.ts"
+      ],
+      "needsDb": false,
+      "ui": true,
+      "repro": "Open picker, press Tab out: list stays open (only outside mousedown closes)."
+    },
+    {
+      "row": "535",
+      "resolvedTitle": "Variant modal flips to 'Add variant / Create Variant' with stale values during fade-out...",
+      "packWritten": true,
+      "risk": "LOW",
+      "riskReason": "UI transient",
+      "status": "live",
+      "files": [
+        "apps/web/app/(dashboard)/products/[id]/page.tsx",
+        "apps/web/app/(dashboard)/products/[id]/LegacyVariantsActions.tsx"
+      ],
+      "needsDb": false,
+      "ui": true,
+      "repro": "Edit a variant, click Cancel: closeVariantModal nulls editingVariant so title/button flip to Create during fade."
+    },
+    {
+      "row": "734",
+      "resolvedTitle": "CI flake: apps/web lib/handover-stamp.staff-only.static.test.ts walks the whole web dir with statSync and races Jest's own .jest-cache",
+      "packWritten": true,
+      "risk": "LOW",
+      "riskReason": "test-only",
+      "status": "live",
+      "files": [
+        "apps/web/lib/handover-stamp.staff-only.static.test.ts"
+      ],
+      "needsDb": false,
+      "ui": false,
+      "repro": "SKIP set lacks .jest-cache and statSync is unguarded; ENOENT when a worker removes a cache file mid-walk."
+    }
+  ],
+  "unresolved": [],
+  "clusters": [
+    {
+      "id": "c1",
+      "bugs": [
+        {
+          "row": "302"
+        }
+      ],
+      "files": [
+        "apps/api/src/system-config/settings.controller.ts",
+        "apps/web/app/(dashboard)/settings/page.tsx"
+      ],
+      "workspaces": [
+        "apps/api",
+        "apps/web"
+      ],
+      "needsDb": false,
+      "ui": true,
+      "extractionFirst": false
+    },
+    {
+      "id": "c2",
+      "bugs": [
+        {
+          "row": "734"
+        }
+      ],
+      "files": [
+        "apps/web/lib/handover-stamp.staff-only.static.test.ts"
+      ],
+      "workspaces": [
+        "apps/web"
+      ],
+      "needsDb": false,
+      "ui": false,
+      "extractionFirst": false
+    },
+    {
+      "id": "c3",
+      "bugs": [
+        {
+          "row": "W-694"
+        }
+      ],
+      "files": [
+        "apps/web/components/SearchableProductPicker.tsx",
+        "apps/web/lib/use-listbox-nav.ts"
+      ],
+      "workspaces": [
+        "apps/web"
+      ],
+      "needsDb": false,
+      "ui": true,
+      "extractionFirst": false
+    }
+  ],
+  "excluded": [
+    {
+      "row": "674",
+      "reason": "status fixed-on-master: only live bugs enter"
+    },
+    {
+      "row": "W-879",
+      "reason": "status unclear: only live bugs enter"
+    },
+    {
+      "row": "535",
+      "reason": "touches avoided file apps/web/app/(dashboard)/products/[id]/page.tsx"
+    }
+  ],
+  "unaccounted": []
+}
