@@ -14,6 +14,14 @@ import {
   type PriceSummaryEntry,
 } from "@/lib/api/price-history";
 import { fmt } from "@/lib/formatting";
+import { PriceHistoryChart } from "@/components/price-history/PriceHistoryChart";
+import {
+  buildChartModel,
+  NOTE_COPY,
+  NOTE_IDS,
+  type ComparisonState,
+  type LineId,
+} from "@/components/price-history/chart-model";
 
 const MASK = "••••";
 
@@ -63,145 +71,6 @@ function fmtDate(iso: string): string {
   });
 }
 
-type ChartPoint = { t: number; price: number; type?: string | null };
-
-/** "2026-09" -> mid-month (UTC), where that month's average sits on the time axis. */
-function monthMid(month: string): number {
-  const [y, m] = month.split("-").map(Number);
-  return Date.UTC(y!, (m ?? 1) - 1, 15);
-}
-
-/**
- * Inline-SVG price chart on one time axis. This customer's prices are a solid line with round dots
- * (special / discount / override sales get a ring marker); the other customers' monthly average is a
- * dashed line with square dots, so the two read apart without colour. Both share one price scale.
- */
-function PriceChart({ own, avg }: { own: ChartPoint[]; avg: ChartPoint[] }) {
-  if (own.length < 2 && avg.length === 0) return null;
-  const w = 220;
-  const h = 48;
-  const all = [...own, ...avg];
-  const ts = all.map((p) => p.t);
-  const t0 = Math.min(...ts);
-  const t1 = Math.max(...ts);
-  const prices = all.map((p) => p.price);
-  const lo = Math.min(...prices);
-  const span = Math.max(...prices) - lo || 1;
-  const place = (p: ChartPoint) => ({
-    x: t1 === t0 ? w / 2 : ((p.t - t0) / (t1 - t0)) * (w - 8) + 4,
-    y: h - 4 - ((p.price - lo) / span) * (h - 8),
-    type: p.type ?? null,
-  });
-  const o = own.map(place);
-  const a = avg.map(place);
-  const path = (pts: { x: number; y: number }[]) =>
-    pts.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
-  // One average month has no line to draw: stretch it across the plot as a flat reference.
-  const aLine =
-    a.length === 1
-      ? [
-          { x: 4, y: a[0]!.y },
-          { x: w - 4, y: a[0]!.y },
-        ]
-      : a;
-  const label =
-    own.length >= 2
-      ? `Price trend, ${own.length} sales${avg.length ? ", with the average of other customers" : ""}`
-      : "Average price of other customers";
-  const lastOwn = o[o.length - 1];
-  return (
-    <div>
-      <svg role="img" aria-label={label} viewBox={`0 0 ${w} ${h}`} className="h-12 w-full">
-        {a.length > 0 && (
-          <g data-testid="avg-line" className="text-navy/50">
-            <polyline
-              points={path(aLine)}
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeDasharray="4 3"
-              strokeLinejoin="round"
-            />
-            {a.map((p, i) => (
-              <rect
-                key={i}
-                x={p.x - 2.5}
-                y={p.y - 2.5}
-                width="5"
-                height="5"
-                fill="white"
-                stroke="currentColor"
-                strokeWidth="1.25"
-              />
-            ))}
-          </g>
-        )}
-        {o.length >= 2 && (
-          <g data-testid="own-line" className="text-brand-500">
-            <polyline
-              points={path(o)}
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinejoin="round"
-              strokeLinecap="round"
-            />
-            {o.map(
-              (p, i) =>
-                p.type &&
-                PRICE_TYPE_TAG[p.type] && (
-                  <circle
-                    key={i}
-                    data-testid="price-marker"
-                    cx={p.x}
-                    cy={p.y}
-                    r="3"
-                    fill="white"
-                    stroke={p.type === "SPECIAL" ? "#059669" : "#d97706"}
-                    strokeWidth="1.5"
-                  />
-                ),
-            )}
-            <circle cx={lastOwn!.x} cy={lastOwn!.y} r="2.5" fill="currentColor" />
-          </g>
-        )}
-      </svg>
-      <ul
-        aria-label="Chart key"
-        className="flex flex-wrap gap-x-3 text-[10px] text-navy/60"
-        data-testid="chart-legend"
-      >
-        {o.length >= 2 && (
-          <li className="flex items-center gap-1">
-            <svg aria-hidden viewBox="0 0 16 8" className="h-2 w-4 text-brand-500">
-              <line x1="0" y1="4" x2="16" y2="4" stroke="currentColor" strokeWidth="1.5" />
-              <circle cx="8" cy="4" r="2.2" fill="currentColor" />
-            </svg>
-            This customer
-          </li>
-        )}
-        {a.length > 0 && (
-          <li className="flex items-center gap-1">
-            <svg aria-hidden viewBox="0 0 16 8" className="h-2 w-4 text-navy/50">
-              <line
-                x1="0"
-                y1="4"
-                x2="16"
-                y2="4"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeDasharray="3 2"
-              />
-              <rect x="5.5" y="1.5" width="5" height="5" fill="white" stroke="currentColor" />
-            </svg>
-            Other customers&apos; average
-          </li>
-        )}
-      </ul>
-    </div>
-  );
-}
-
 function Skeleton() {
   return (
     <div role="status" aria-label="Loading price history" className="space-y-2 animate-pulse">
@@ -232,6 +101,7 @@ function PanelBody({
   compare,
   comparing,
   compareError,
+  comparisonState,
   onCompareChange,
   onCompareRetry,
   onUse,
@@ -247,6 +117,8 @@ function PanelBody({
   comparing: boolean;
   /** The comparison request failed: shown inline on the toggle, the rows stay. */
   compareError: boolean;
+  /** The chart's view of the same request: loading means no data yet (a background refetch never flickers the chips). */
+  comparisonState: ComparisonState;
   onCompareChange: (on: boolean) => void;
   onCompareRetry: () => void;
   onUse: (price: number) => void;
@@ -265,6 +137,7 @@ function PanelBody({
       if (!seen.some((s) => sameUnit(s, u))) seen.push(u);
     // Never sold to this customer: the average's own unit is the only one there is to chart.
     if (seen.length === 0 && data.aggregate) seen.push(data.aggregate.unitLabel);
+    else if (seen.length === 0 && data.comparison?.[0]) seen.push(data.comparison[0].unitLabel);
     return seen;
   }, [data]);
   const [picked, setPicked] = React.useState<string | null>(null);
@@ -281,9 +154,23 @@ function PanelBody({
   const summary: PriceHistorySummary | undefined = data.summaries.find((s) =>
     sameUnit(s.unitLabel, unit),
   );
-  const chronological: ChartPoint[] = [...rows]
-    .reverse()
-    .map((r) => ({ t: new Date(r.date).getTime(), price: r.unitPrice, type: r.priceType }));
+  // The legend toggles: all start on, live in the open popover, and survive a unit-tab change (SA-954 D6).
+  const [lines, setLines] = React.useState<Record<LineId, boolean>>({
+    own: true,
+    like: true,
+    conv: true,
+  });
+  const model = React.useMemo(
+    () =>
+      buildChartModel({
+        unit,
+        rows,
+        comparison: data.comparison,
+        comparisonState,
+        panelOpen: compare,
+      }),
+    [unit, rows, data.comparison, comparisonState, compare],
+  );
   const money = (n: number | null | undefined) => (n == null ? "—" : fmt(n));
   const costCell = (n: number | null) => (showCost ? money(n) : MASK);
   const canUse = (r: PriceHistoryRow) => canUseHistoryPrice(r, unitHint, packHint, units.length);
@@ -295,12 +182,6 @@ function PanelBody({
         : `${Math.round(((r.unitPrice - r.avgCostAtSale) / r.unitPrice) * 100)}%`;
   const refs = data.references;
   const agg = data.aggregate && sameUnit(data.aggregate.unitLabel, unit) ? data.aggregate : null;
-  // The average is drawn only in the chart's unit AND pack: a 12-pack average never sits on a 24-pack line.
-  const avgLine: ChartPoint[] =
-    agg?.series?.length &&
-    (rows.length === 0 || (agg.seriesUnitsPerBox ?? 1) === (rows[0]!.unitsPerBox ?? 1))
-      ? agg.series.map((p) => ({ t: monthMid(p.month), price: p.average }))
-      : [];
   const neverSold = rows.length === 0;
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (rows.length === 0) return;
@@ -373,21 +254,18 @@ function PanelBody({
       )}
 
       {neverSold && (
-        <p role="status" className="text-[11px] font-medium text-navy">
-          Not sold to this customer before.{" "}
-          <span className="font-normal text-navy/70">
-            {avgLine.length > 0
-              ? "The line shows the average price all customers paid."
-              : compareError
-                ? "Couldn't load the average price."
-                : comparing
-                  ? "Loading the average price…"
-                  : "There aren't enough sales to other customers to show an average yet."}
-          </span>
+        <p id={NOTE_IDS.neverSold} role="status" className="text-[11px] font-medium text-navy">
+          {NOTE_COPY.neverSold}
         </p>
       )}
 
-      <PriceChart own={chronological} avg={avgLine} />
+      <PriceHistoryChart
+        model={model}
+        on={lines}
+        onToggle={(id) => setLines((l) => ({ ...l, [id]: !l[id] }))}
+        onRetry={onCompareRetry}
+        neverSold={neverSold}
+      />
 
       <div className="flex items-center gap-1" role="group" aria-label="Compare">
         {(["This customer", "All customers"] as const).map((label) => (
@@ -421,7 +299,7 @@ function PanelBody({
               </p>
             </>
           ) : compareError ? (
-            <p role="alert" className="text-[11px] text-navy/70">
+            <p id={NOTE_IDS.compareMessage} role="alert" className="text-[11px] text-navy/70">
               Couldn&apos;t load the comparison.{" "}
               <button
                 type="button"
@@ -432,7 +310,9 @@ function PanelBody({
               </button>
             </p>
           ) : comparing ? (
-            <p className="text-[11px] text-navy/60">Loading comparison…</p>
+            <p id={NOTE_IDS.compareMessage} className="text-[11px] text-navy/60">
+              Loading comparison…
+            </p>
           ) : (
             <p className="text-[11px] text-navy/60">No comparison available for this unit.</p>
           )}
@@ -587,7 +467,14 @@ function Panel({
   // (hunt2 F6).
   const q = usePriceHistory(customerId, productId, true, 25, excludeOrderId);
   const cmp = usePriceHistory(customerId, productId, true, 25, excludeOrderId, true);
-  const shown = q.data ? { ...q.data, aggregate: cmp.data?.aggregate ?? null } : undefined;
+  const shown = q.data
+    ? { ...q.data, aggregate: cmp.data?.aggregate ?? null, comparison: cmp.data?.comparison }
+    : undefined;
+  const comparisonState: ComparisonState = cmp.isLoading
+    ? "loading"
+    : cmp.isError && !cmp.data
+      ? "error"
+      : "ready";
   return (
     <AnchoredPopover
       anchor={anchor}
@@ -621,6 +508,7 @@ function Panel({
           compare={compare}
           comparing={cmp.isFetching}
           compareError={cmp.isError}
+          comparisonState={comparisonState}
           onCompareChange={setCompare}
           onCompareRetry={() => void cmp.refetch()}
           onUse={(price) => {

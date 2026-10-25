@@ -196,7 +196,7 @@ describe("PriceHistoryButton — popover behaviour", () => {
     expect(within(dialog).getByText("not invoiced yet")).toBeInTheDocument();
     expect(within(dialog).getByText("INV-0002")).toBeInTheDocument();
     expect(within(dialog).getByText("Discount")).toBeInTheDocument();
-    expect(within(dialog).getByRole("img", { name: /Price trend/ })).toBeInTheDocument();
+    expect(within(dialog).getByRole("img", { name: /Price over time/ })).toBeInTheDocument();
   });
 });
 
@@ -272,9 +272,8 @@ describe("PriceHistoryButton — states", () => {
     mockGet.mockResolvedValue({ data: response({ rows: [], summaries: [] }) });
     renderButton();
     await openPanel();
-    expect(await screen.findByRole("status")).toHaveTextContent(
-      "Not sold to this customer before.",
-    );
+    const note = await screen.findByText("Not sold to this customer before.");
+    expect(note).toHaveAttribute("role", "status");
   });
 });
 

@@ -4,6 +4,8 @@ import { apiClient } from "../api-client";
 
 import type {
   PriceHistoryAggregate,
+  PriceHistoryAveragePoint,
+  PriceHistoryComparisonLine,
   PriceHistoryReferences,
   PriceHistoryResponse,
   PriceHistoryRow,
@@ -18,6 +20,8 @@ import { PRICE_SUMMARY_MAX_PRODUCTS } from "@routeflow/types";
 // (price-history.ts): re-exported here, never redeclared.
 export type {
   PriceHistoryAggregate,
+  PriceHistoryAveragePoint,
+  PriceHistoryComparisonLine,
   PriceHistoryReferences,
   PriceHistoryResponse,
   PriceHistoryRow,
