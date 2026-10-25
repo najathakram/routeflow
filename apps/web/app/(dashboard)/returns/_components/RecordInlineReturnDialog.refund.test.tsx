@@ -421,6 +421,29 @@ describe("refund flow", () => {
     );
   });
 
+  it("SA-959 stop rule: a walk-in whose refund failed gets Retry refund and NEVER Give store credit instead (found by the error-state retake)", async () => {
+    refundReturn.mockRejectedValueOnce(apiErr(500));
+    await toQuote(quote({ customerIsWalkIn: true, paidMethods: ["CASH"] }));
+    fireEvent.click(confirmBtn(/^take back items and refund/i));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+    captureOk();
+    await screen.findByText(REFUND_COPY.failed);
+    expect(screen.getByRole("button", { name: "Retry refund" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Give store credit instead" })).toBeNull();
+    expect(storeCreditInstead).not.toHaveBeenCalled();
+  });
+
+  it("SA-959: a walk-in over the sale's cash is told to refund the rest by card or check, with no store credit offered", async () => {
+    refundReturn.mockRejectedValueOnce(apiErr(409, "REFUND_EXCEEDS_CASH_PAID"));
+    await toQuote(quote({ customerIsWalkIn: true, paidMethods: ["CASH"] }));
+    fireEvent.click(confirmBtn(/^take back items and refund/i));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+    captureOk();
+    await screen.findByText(REFUND_COPY.exceedsCashWalkIn);
+    expect(REFUND_COPY.exceedsCashWalkIn).not.toMatch(/store credit/i);
+    expect(screen.queryByRole("button", { name: "Give store credit instead" })).toBeNull();
+  });
+
   it("SA-750r3: a walk-in (no store credit) on a closed day is told only the later date, with no store-credit button", async () => {
     refundReturn.mockRejectedValueOnce(apiErr(409, "COUNTER_SALE_DAY_CLOSED"));
     await toQuote(quote({ customerIsWalkIn: true, paidMethods: ["CASH"] })); // a walk-in has no radio: Refund is the only way
