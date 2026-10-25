@@ -49,12 +49,16 @@
 //   ... --tenant <id> --apply --live-tenant-override --backup-taken [--allow-protected <id>]
 //   ... --local --tenant <id> --expect-zero      (SA-984 §3: the read-only re-run check)
 //
-// --expect-zero: runs the normal dry run (same snapshot, same plan), then prints one line,
-//   "Expect-zero: OK (0/0/0)" or "Expect-zero: FAIL created=A linked=B parentFilled=C ...", and exits
-//   by the plan's tenantUnitsCreated / productUnitsLinked / productUnitsParentFilled counts.
+// --expect-zero: runs the normal dry run (same snapshot, same plan), then prints one line and exits by
+//   the plan's counts (SA-984 §3 as amended by SA-986), one ordered decision, first hit wins:
+//     pending (exit 3): tenantUnitsCreated / productUnitsLinked / productUnitsParentFilled above 0, or a
+//       gated count missing or malformed;
+//     residue (exit 4): tenantUnitsOverflow / skippedTooLong / skippedParent above 0;
+//     else all six are 0 (exit 0).
 //   It is read-only: combining it with --apply is refused as an argument error.
-// Exit codes: 0 = done (with --expect-zero: all three counts are 0); 1 = refused or failed (an
-//   argument, target, guard or database error); 3 = --expect-zero found a re-run still plans rows.
+// Exit codes: 0 = done (with --expect-zero: all six gated counts are 0); 1 = refused or failed (an
+//   argument, target, guard or database error); 3 = --expect-zero found a re-run still plans rows;
+//   4 = --expect-zero found residue no re-run clears (overflow, too-long names, skipped parent fills).
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { requireLocalPgConfig } from "./lib/local-pg-config.mjs";
@@ -225,24 +229,74 @@ const fmt = (c) =>
   `skipped tooLong=${c.skippedTooLong} synonyms=${c.skippedSynonyms} parent=${c.skippedParent}`;
 
 /**
- * The --expect-zero decision (SA-984 §3): a re-run must plan no TenantUnit, no link and no parent fill.
- * Pure: counts in, { ok, line, exitCode } out. A count that is not exactly 0 (including a missing one)
- * fails, so a malformed plan never reads as "zero". Exit 3 is distinct from a real error (1).
+ * The --expect-zero decision (SA-984 §3 as amended by SA-986): ONE ordered pure decision over the plan's
+ * counts, first hit wins.
+ *   1. pending, exit 3: tenantUnitsCreated, productUnitsLinked or productUnitsParentFilled above 0 (a
+ *      re-run still plans rows), OR any of the six gated counts missing or not a number >= 0 (fails
+ *      closed, never OK);
+ *   2. residue, exit 4: tenantUnitsOverflow, skippedTooLong or skippedParent above 0 (no re-run clears
+ *      these, so a re-apply is pointless: the counts go to the SA);
+ *   3. zero, exit 0: all six are exactly 0.
+ * Both holding: exit 3, and the line names both. The gate on the cap is the NAME count
+ * tenantUnitsOverflow (a pack word with no ladder level is still a unit missing from Settings > Units);
+ * productUnitsUnlinkedOverflow is printed, gated through it. Counts by design not gated are classed in
+ * BY_DESIGN_COUNTS; a spec pins every key of the plan's counts as one or the other. Exit 3 and 4 are
+ * distinct from a real error (1).
  */
+export const PENDING_COUNTS = Object.freeze([
+  "tenantUnitsCreated",
+  "productUnitsLinked",
+  "productUnitsParentFilled",
+]);
+export const RESIDUE_COUNTS = Object.freeze([
+  "tenantUnitsOverflow",
+  "skippedTooLong",
+  "skippedParent",
+]);
+export const BY_DESIGN_COUNTS = Object.freeze([
+  "tenantUnitsExisting", // done work
+  "productUnitsUnlinkedOverflow", // printed; gated through tenantUnitsOverflow
+  "skippedSynonyms", // piece words are never a TenantUnit
+  "explicitPieceParent", // left as it is (#3336), only listed
+]);
+
 export function expectZeroResult(counts) {
-  const created = counts?.tenantUnitsCreated;
-  const linked = counts?.productUnitsLinked;
-  const parentFilled = counts?.productUnitsParentFilled;
-  const ok = created === 0 && linked === 0 && parentFilled === 0;
-  return ok
-    ? { ok, line: "Expect-zero: OK (0/0/0)", exitCode: 0 }
-    : {
-        ok,
-        line:
-          `Expect-zero: FAIL created=${created} linked=${linked} parentFilled=${parentFilled} ` +
-          "(a re-run still plans rows)",
-        exitCode: 3,
-      };
+  const isCount = (v) => typeof v === "number" && Number.isFinite(v) && v >= 0;
+  const malformed = [...PENDING_COUNTS, ...RESIDUE_COUNTS].filter((k) => !isCount(counts?.[k]));
+  const pending = PENDING_COUNTS.some((k) => isCount(counts?.[k]) && counts[k] > 0);
+  const residue = RESIDUE_COUNTS.some((k) => isCount(counts?.[k]) && counts[k] > 0);
+  const c = counts ?? {};
+  const pendingPart = `created=${c.tenantUnitsCreated} linked=${c.productUnitsLinked} parentFilled=${c.productUnitsParentFilled}`;
+  const residuePart =
+    `overflow=${c.tenantUnitsOverflow} unlinkedOverflow=${c.productUnitsUnlinkedOverflow} ` +
+    `tooLong=${c.skippedTooLong} parentSkipped=${c.skippedParent}`;
+  if (pending || malformed.length > 0) {
+    const notes = [];
+    if (pending) notes.push("a re-run still plans rows");
+    if (malformed.length > 0)
+      notes.push(`a count is missing or malformed: ${malformed.join(", ")}`);
+    if (residue) notes.push("the residue stays after it; send the counts to the SA");
+    return {
+      ok: false,
+      line:
+        `Expect-zero: FAIL ${pendingPart}` +
+        (residue ? `; RESIDUE ${residuePart}` : "") +
+        ` (${notes.join("; ")})`,
+      exitCode: 3,
+    };
+  }
+  if (residue) {
+    return {
+      ok: false,
+      line: `Expect-zero: RESIDUE ${residuePart} (no re-run clears this; send the counts to the SA)`,
+      exitCode: 4,
+    };
+  }
+  return {
+    ok: true,
+    line: `Expect-zero: OK ${pendingPart} overflow=0 tooLong=0 parentSkipped=0`,
+    exitCode: 0,
+  };
 }
 
 /** The skipped parent fills, counted by reason (never an id). */

@@ -29,6 +29,9 @@ function helpers(): Record<string, unknown> {
     import * as m from ${JSON.stringify(pathToFileURL(SCRIPT).href)};
     const tryIt = (f) => { try { f(); return "ok"; } catch (e) { return e.message; } };
     const a = { liveOverride: false, backupTaken: false };
+    import { createRequire } from "node:module";
+    const { planTenantUnits } = createRequire(${JSON.stringify(pathToFileURL(SCRIPT).href)})("./lib/tenant-units-plan.cjs");
+    const Z = { tenantUnitsCreated: 0, tenantUnitsExisting: 0, tenantUnitsOverflow: 0, productUnitsUnlinkedOverflow: 0, productUnitsLinked: 0, productUnitsParentFilled: 0, skippedTooLong: 0, skippedSynonyms: 0, skippedParent: 0, explicitPieceParent: 0 };
     const ez = (c) => typeof m.expectZeroResult === "function" ? m.expectZeroResult(c) : "expectZeroResult is not exported";
     console.log(JSON.stringify({
       testTenant: tryIt(() => m.assertLiveApplyAllowed(a, true)),
@@ -47,11 +50,24 @@ function helpers(): Record<string, unknown> {
       expectZeroDefault: m.parseArgs(["--tenant", ${JSON.stringify(ID)}]).expectZero,
       expectZeroFlag: m.parseArgs(["--tenant", ${JSON.stringify(ID)}, "--local", "--expect-zero"]).expectZero,
       expectZeroApply: tryIt(() => m.parseArgs(["--tenant", ${JSON.stringify(ID)}, "--apply", "--expect-zero"])),
-      zeroAll: ez({ tenantUnitsCreated: 0, productUnitsLinked: 0, productUnitsParentFilled: 0 }),
-      zeroCreated: ez({ tenantUnitsCreated: 2, productUnitsLinked: 0, productUnitsParentFilled: 0 }),
-      zeroLinked: ez({ tenantUnitsCreated: 0, productUnitsLinked: 5, productUnitsParentFilled: 0 }),
-      zeroParent: ez({ tenantUnitsCreated: 0, productUnitsLinked: 0, productUnitsParentFilled: 7 }),
+      zeroAll: ez({ ...Z }),
+      zeroCreated: ez({ ...Z, tenantUnitsCreated: 2 }),
+      zeroLinked: ez({ ...Z, productUnitsLinked: 5 }),
+      zeroParent: ez({ ...Z, productUnitsParentFilled: 7 }),
       zeroMissing: ez({}),
+      residueCap: ez({ ...Z, tenantUnitsOverflow: 3, productUnitsUnlinkedOverflow: 7 }),
+      residueTooLong: ez({ ...Z, skippedTooLong: 1 }),
+      residueParent: ez({ ...Z, skippedParent: 4 }),
+      pendingAndResidue: ez({ ...Z, tenantUnitsCreated: 2, tenantUnitsOverflow: 3, productUnitsUnlinkedOverflow: 7 }),
+      synonymsOnly: ez({ ...Z, skippedSynonyms: 2, tenantUnitsExisting: 9, explicitPieceParent: 3 }),
+      unlinkedOnly: ez({ ...Z, productUnitsUnlinkedOverflow: 4 }),
+      missingParentSkip: ez((({ skippedParent, ...rest }) => rest)(Z)),
+      malformed: ez({ ...Z, skippedTooLong: -1 }),
+      nanCount: ez({ ...Z, tenantUnitsOverflow: Number.NaN }),
+      stringCount: ez({ ...Z, skippedParent: "0" }),
+      planKeys: Object.keys(planTenantUnits({ productUnits: [], products: [], existingUnits: [] }).counts).sort(),
+      gatedKeys: [...(m.PENDING_COUNTS ?? []), ...(m.RESIDUE_COUNTS ?? [])].sort(),
+      byDesignKeys: [...(m.BY_DESIGN_COUNTS ?? [])].sort(),
       accepted: m.ACCEPTED_FLAGS ?? "ACCEPTED_FLAGS is not exported",
       usage: m.USAGE ?? "USAGE is not exported",
       table: Object.fromEntries(
@@ -232,7 +248,7 @@ describe("backfill-tenant-units.mjs gates (U-6, SA M3)", () => {
     });
   });
 
-  describe("--expect-zero (SA-984 §3)", () => {
+  describe("--expect-zero (SA-984 §3, amended by SA-986)", () => {
     const h = helpers();
 
     it("parseArgs returns expectZero true only when the flag is given", () => {
@@ -246,8 +262,12 @@ describe("backfill-tenant-units.mjs gates (U-6, SA M3)", () => {
       );
     });
 
-    it("all three counts 0: ok, exit 0, the OK line", () => {
-      expect(h.zeroAll).toEqual({ ok: true, line: "Expect-zero: OK (0/0/0)", exitCode: 0 });
+    it("all six gated counts 0: ok, exit 0, the OK line names the six zeros", () => {
+      expect(h.zeroAll).toEqual({
+        ok: true,
+        line: "Expect-zero: OK created=0 linked=0 parentFilled=0 overflow=0 tooLong=0 parentSkipped=0",
+        exitCode: 0,
+      });
     });
 
     it("created > 0 alone: exit 3 with the counts", () => {
@@ -284,6 +304,80 @@ describe("backfill-tenant-units.mjs gates (U-6, SA M3)", () => {
       expect(set).toBeGreaterThan(src.indexOf('"Dry run only; pass --apply to write."'));
       expect(src.match(/process\.exitCode = 0/g)).toBeNull();
       expect(src).toContain("process.exitCode = 1;");
+    });
+  });
+
+  describe("--expect-zero residue, exit 4 (SA-986)", () => {
+    const h = helpers();
+    const noRerun = "(no re-run clears this; send the counts to the SA)";
+
+    it("a capped tenant (overflow 3, unlinkedOverflow 7) is residue, exit 4, naming overflow=3", () => {
+      expect(h.residueCap).toEqual({
+        ok: false,
+        line: `Expect-zero: RESIDUE overflow=3 unlinkedOverflow=7 tooLong=0 parentSkipped=0 ${noRerun}`,
+        exitCode: 4,
+      });
+    });
+
+    it("a too-long unit name is residue, exit 4", () => {
+      expect(h.residueTooLong).toMatchObject({ ok: false, exitCode: 4 });
+      expect((h.residueTooLong as { line: string }).line).toContain("tooLong=1");
+    });
+
+    it("a skipped parent fill is residue, exit 4", () => {
+      expect(h.residueParent).toMatchObject({ ok: false, exitCode: 4 });
+      expect((h.residueParent as { line: string }).line).toContain("parentSkipped=4");
+    });
+
+    it("unlinkedOverflow alone is not gated (it is gated through the overflow name count)", () => {
+      expect((h.unlinkedOnly as { exitCode: number }).exitCode).toBe(0);
+    });
+
+    it("pending plus residue: exit 3 (pending first) and the line names both", () => {
+      const r = h.pendingAndResidue as { ok: boolean; line: string; exitCode: number };
+      expect(r.exitCode).toBe(3);
+      expect(r.line).toContain("FAIL created=2 linked=0 parentFilled=0");
+      expect(r.line).toContain("RESIDUE overflow=3 unlinkedOverflow=7 tooLong=0 parentSkipped=0");
+    });
+
+    it("counts by design alone (synonyms, existing, explicit Piece parents) stay exit 0", () => {
+      expect((h.synonymsOnly as { exitCode: number }).exitCode).toBe(0);
+    });
+
+    it("a missing, negative, NaN or string count fails closed as pending, exit 3", () => {
+      expect(h.missingParentSkip).toMatchObject({ ok: false, exitCode: 3 });
+      expect((h.missingParentSkip as { line: string }).line).toContain("malformed: skippedParent");
+      for (const k of ["malformed", "nanCount", "stringCount"]) {
+        expect((h[k] as { exitCode: number }).exitCode).toBe(3);
+      }
+    });
+
+    it("PIN: every count the plan returns is classed gated or by design, exactly", () => {
+      expect(h.gatedKeys).toEqual([
+        "productUnitsLinked",
+        "productUnitsParentFilled",
+        "skippedParent",
+        "skippedTooLong",
+        "tenantUnitsCreated",
+        "tenantUnitsOverflow",
+      ]);
+      expect(h.byDesignKeys).toEqual([
+        "explicitPieceParent",
+        "productUnitsUnlinkedOverflow",
+        "skippedSynonyms",
+        "tenantUnitsExisting",
+      ]);
+      expect(h.planKeys).toEqual(
+        [...(h.gatedKeys as string[]), ...(h.byDesignKeys as string[])].sort(),
+      );
+    });
+
+    it("the header lists exit codes 0, 1, 3 and 4", () => {
+      const head = readFileSync(SCRIPT, "utf8").split("import {")[0];
+      expect(head).toContain(
+        "4 = --expect-zero found residue no re-run clears (overflow, too-long names, skipped parent fills)",
+      );
+      expect(head).toContain("3 = --expect-zero found a re-run still plans rows");
     });
   });
 

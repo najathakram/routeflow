@@ -82,7 +82,20 @@ describeDb("tenant unit backfill (U-6)", () => {
     url = requireLocalDatabaseUrl();
     pool = new Pool({ connectionString: url });
     prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
-    for (const k of ["a", "ctl", "p", "edit", "arch", "pk", "cap", "over", "key", "lock", "ez"]) {
+    for (const k of [
+      "a",
+      "ctl",
+      "p",
+      "edit",
+      "arch",
+      "pk",
+      "cap",
+      "over",
+      "key",
+      "lock",
+      "ez",
+      "ov2",
+    ]) {
       ids[k] = (await prisma.tenant.create({ data: { slug: slug(k), name: `u6 ${k}` } })).id;
     }
     // Tenant A: casing "Case" wins 2:1, a synonym level, a too-long level, legacy words.
@@ -269,7 +282,7 @@ describeDb("tenant unit backfill (U-6)", () => {
     expect(cli(t, "--apply").status).toBe(0);
     const ok = cli(t, "--expect-zero");
     expect(ok.status).toBe(0);
-    expect(ok.stdout).toContain("Expect-zero: OK (0/0/0)");
+    expect(ok.stdout).toContain("Expect-zero: OK created=0 linked=0 parentFilled=0 overflow=0");
   });
 
   it("a protected tenant is refused --apply without the override, and nothing is written (M3)", async () => {
@@ -414,6 +427,28 @@ describeDb("tenant unit backfill (U-6)", () => {
       expect(linked?.tenantUnitId).not.toBeNull();
       const zed = await prisma.productUnit.findFirst({ where: { tenantId: t, label: "Zed" } });
       expect(zed?.tenantUnitId).toBeNull();
+    });
+
+    // SA-986: an overflow must never read OK. A tenant at the cap with one new label: --apply fills the
+    // parent but cannot create the unit, so a re-run plans no row yet the level stays unlinked. Exit 4
+    // ("residue: no re-run clears this"), not 0 and not 3.
+    it("--expect-zero exits 4 for a tenant at the 200-unit cap whose new label stays unlinked after --apply", async () => {
+      const t = ids.ov2;
+      await seedUnits(t, 200);
+      await product(t, "ov2", "Ovword", [["Ovword", 6]]);
+      expect(cli(t, "--apply").status).toBe(0); // fills the parent; the unit cannot be created (cap)
+      const levels = await prisma.productUnit.findMany({ where: { tenantId: t } });
+      expect(levels.filter((l) => l.tenantUnitId === null)).toHaveLength(1);
+      const r = cli(t, "--expect-zero");
+      expect(r.stdout).toContain("Expect-zero: RESIDUE overflow=1 unlinkedOverflow=1");
+      expect(r.stdout).toContain("no re-run clears this");
+      expect(r.status).toBe(4);
+      expect(await prisma.tenantUnit.count({ where: { tenantId: t, archivedAt: null } })).toBe(200);
+      expect(
+        (await prisma.productUnit.findMany({ where: { tenantId: t } })).filter(
+          (l) => l.tenantUnitId === null,
+        ),
+      ).toHaveLength(1);
     });
   });
 
