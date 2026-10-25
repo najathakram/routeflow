@@ -79,7 +79,7 @@ export interface BulkRestrictionRequest {
   jurisdiction: RestrictionJurisdictionValue;
   /** 2-letter USPS codes; required (non-empty) when jurisdiction is STATE. */
   states: string[];
-  /** Server default "BUYER_PORTAL"; the web's "Legal ban" checkbox sends "ALL". */
+  /** Server default "BUYER_PORTAL"; the web's "Applies to staff too" checkbox sends "ALL". */
   surface?: RestrictionSurfaceValue;
   /** Server default "Portal limit". */
   reason?: string;

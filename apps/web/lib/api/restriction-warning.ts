@@ -27,7 +27,6 @@ export const RESTRICTION_COPY = {
   reasonPlaceholder: "Why is this sale OK?",
   sellAnyway: "Sell anyway",
   goBack: "Go back",
-  legalBadge: "Legal ban",
   unchecked: "This item couldn't be checked.",
   /** A repeat 409 (the server's list changed after "Sell anyway"): the reason is cleared, so say why. */
   listChanged: "The list changed; review it again",
@@ -190,11 +189,7 @@ export function splitIdAck(v: IdWithAck): { id: string; ack: RestrictionAck | un
   return { id, ack: Object.keys(ack).length > 0 ? (ack as RestrictionAck) : undefined };
 }
 
-/** One rule's sentence: the server's fixed copy, else the legal sentence built from the states. */
+/** One rule's sentence: the server's line, as it is (one copy source, SA-947). */
 export function ruleText(rule: RestrictionWarningRule): string {
-  if (rule.reasonText) return rule.reasonText;
-  if (rule.legal && rule.states.length > 0) {
-    return `This product is banned in ${rule.states.join(", ")} by law.`;
-  }
-  return RESTRICTION_COPY.unchecked;
+  return rule.reasonText || RESTRICTION_COPY.unchecked;
 }
