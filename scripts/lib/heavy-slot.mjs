@@ -425,8 +425,8 @@ export function staleReason(
   return null;
 }
 
-/** Labels of the jobs that hold a slot the longest and together exhaust memory: full `verify` runs and the pre-push gate. */
-const CAPPED_LABEL = /verify|pre-?push/i;
+/** Labels of the jobs that hold a slot the longest and together exhaust memory: full `verify` runs and the pre-push gate (the runbook's `push` label). */
+const CAPPED_LABEL = /verify|pre-?push|\bpush\b/i;
 export const DEFAULT_CAPPED_MAX = 2;
 
 export function isCappedLabel(label) {

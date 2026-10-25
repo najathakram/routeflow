@@ -1531,12 +1531,15 @@ check(
       "pre-push",
       "prepush-3801",
       "VERIFY",
+      "push",
+      "wt-push-3",
       "wt-db-3801",
       "jest",
+      "pushy",
       "",
       undefined,
     ].map(isCappedLabel),
-    [true, true, true, true, true, false, false, false, false],
+    [true, true, true, true, true, true, true, false, false, false, false, false],
   );
   check(
     "M2 parseCappedMax: a positive integer, else the default 2",
