@@ -172,7 +172,7 @@ function BuyerRegisterInner() {
         )}
 
         <Input
-          label="Full Name"
+          label="Full name"
           type="text"
           placeholder="Enter your full name"
           autoComplete="name"
@@ -217,7 +217,7 @@ function BuyerRegisterInner() {
 
         <div className="flex flex-col gap-1">
           <label htmlFor="buyer-confirm-password" className="text-sm font-medium text-navy">
-            Confirm Password
+            Confirm password
           </label>
           <div className="relative">
             <input
@@ -251,7 +251,7 @@ function BuyerRegisterInner() {
           {isLoading ? (
             <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
           ) : (
-            "Create Account"
+            "Create account"
           )}
         </button>
       </form>
@@ -280,7 +280,7 @@ function BuyerRegisterInner() {
           {googleLoading ? (
             <>
               <div className="h-4 w-4 animate-spin rounded-full border-2 border-navy/30 border-t-navy/70" />
-              <span>Redirecting to Google...</span>
+              <span>Redirecting to Google…</span>
             </>
           ) : (
             <>

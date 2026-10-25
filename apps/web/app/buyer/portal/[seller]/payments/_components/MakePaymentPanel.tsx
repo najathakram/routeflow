@@ -135,7 +135,7 @@ function CashForm({
           });
           onDone();
         },
-        onError: (err) => setError(errorMessage(err, "Could not submit — try again.")),
+        onError: (err) => setError(errorMessage(err, "Couldn't submit — try again.")),
       },
     );
   };
@@ -226,7 +226,7 @@ function PendingRequestStatus({
     if (
       isCard &&
       !window.confirm(
-        "Only cancel if you did NOT complete the card payment.\n\n" +
+        "Only cancel if you didn't complete the card payment.\n\n" +
           "If you already paid, close this and wait a moment — your balance updates on its own once your bank confirms.",
       )
     ) {
@@ -235,7 +235,7 @@ function PendingRequestStatus({
     setError(null);
     cancel.mutate(request.id, {
       onSuccess: () => toast({ title: "Payment request cancelled", variant: "info" }),
-      onError: (err) => setError(errorMessage(err, "Could not cancel — try again.")),
+      onError: (err) => setError(errorMessage(err, "Couldn't cancel — try again.")),
     });
   };
 
@@ -373,7 +373,7 @@ export function MakePaymentPanel({ defaultAmount }: MakePaymentPanelProps) {
         onSuccess: (data) => {
           window.location.href = data.url;
         },
-        onError: (err) => setCardError(errorMessage(err, "Could not start the card payment.")),
+        onError: (err) => setCardError(errorMessage(err, "Couldn't start the card payment.")),
       },
     );
   };

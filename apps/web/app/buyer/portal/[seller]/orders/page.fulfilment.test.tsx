@@ -57,7 +57,7 @@ const fulfilment = (portalDefault: string | null, fleet: boolean) => ({
   isError: false,
 });
 
-const TODAY_TABS = ["All", "Active", "Confirmed", "Out for Delivery", "Delivered", "Cancelled"];
+const TODAY_TABS = ["All", "Active", "Confirmed", "Out for delivery", "Delivered", "Cancelled"];
 const tabs = () =>
   screen
     .getAllByRole("button")
