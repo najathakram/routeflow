@@ -263,7 +263,9 @@ describe("ProductsService.update: a lossy reparent takes the label locks BEFORE 
         () => null,
         (e: unknown) => e,
       );
-    expect(err).not.toBeInstanceOf(LabelLockTimeoutError);
+    // The raw conflict passes through UNCHANGED (the global filter maps it to the 503 LOCK_UNAVAILABLE + Retry-After):
+    // not relabelled, not wrapped. Dropping the `reparenting &&` guard in update() turns this red.
+    expect(err).toBe(raw);
   });
 
   it("control: a reparent that loses nothing takes no label lock at all", async () => {
