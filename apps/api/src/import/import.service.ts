@@ -122,6 +122,8 @@ import {
   type ImportRestrictedLine,
 } from "./import-restriction-marker";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { costAbovePiecePrice } from "../products/pack-intro-cost-check";
+import { PACK_COST_ABOVE_PIECE_WARNING, withImportPackReading } from "./import-pack-reading";
 import { columnEntitlementDenied } from "./import-column-entitlement";
 
 /**
@@ -2893,6 +2895,9 @@ export class ImportService {
               const existingVal = existing.unitsPerBox;
               if (existingVal === null || existingVal === undefined) {
                 changes.unitsPerBox = newVal;
+                // SA-961 R1 (informational, nothing written): a cost above price / N was entered per box.
+                if (costAbovePiecePrice(existing, Number(newVal)))
+                  rowWarnings.push(PACK_COST_ABOVE_PIECE_WARNING);
               } else if (Number(existingVal) !== Number(newVal)) {
                 // SA-284 (d): a differing pack size skips the WHOLE row, never a partial update.
                 packSkipReason = "pack changes are made in the product editor";
@@ -3044,16 +3049,20 @@ export class ImportService {
                 via: "import",
                 actorId: userId,
                 suppressEmit: true,
-                extraChanges: changes,
+                extraChanges: withImportPackReading(changes),
               });
               this.familyImport!.markAssigned(famPlan!, fam.target);
               anyWrite = true;
             } else {
-              await this.productsService.update(existing.id, changes as any, {
-                packPrecondition: "internal",
-                reparentVia: "import",
-                suppressEmit: true,
-              });
+              await this.productsService.update(
+                existing.id,
+                withImportPackReading(changes) as any,
+                {
+                  packPrecondition: "internal",
+                  reparentVia: "import",
+                  suppressEmit: true,
+                },
+              );
               anyWrite = true;
             }
             updated++;

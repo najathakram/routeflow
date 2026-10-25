@@ -1295,6 +1295,7 @@ export class ProductsService {
     delete data.confirmCascade;
     // Nor the SA-797 pack precondition: compared inside the tx, never written.
     for (const k of EXPECTED_PACK_FIELDS) delete data[k];
+    delete data.packReading; // SA-946: the answer to the pack-reading question, never a column.
     // Force the (possibly auto-cleared) subcategory into the write when the section
     // was cleared but the client didn't also clear the subcategory.
     if (effectiveCategoryId == null && existing.trackedSubcategoryId != null) {

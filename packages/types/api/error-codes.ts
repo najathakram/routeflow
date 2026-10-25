@@ -966,6 +966,12 @@ export const API_ERROR_CODES = {
   /** 409 from POST /products/:productId/prices/undo: that audit row is not a price save of this product, or it was already undone. */
   PRICE_UNDO_UNAVAILABLE: "PRICE_UNDO_UNAVAILABLE",
   /**
+   * 409 from PATCH /products/:id (SA-946): the save introduces a pack size (blank or 1 to N > 1) on a product that holds
+   * stock or cost, and the request did not say what the price was for. Send `packReading`: "box" (the product was sold
+   * by the box of N; stock, reorder levels and cost become pieces) or "piece" (nothing converts). Nothing was written.
+   */
+  PACK_READING_REQUIRED: "PACK_READING_REQUIRED",
+  /**
    * 400 from POST /platform-admin/tenants/:id/business-capabilities (and its /preview) when no capability is ticked
    * (BO-04): at least one of Delivery, Shipping or Counter is needed. Fixed body; nothing was written.
    */

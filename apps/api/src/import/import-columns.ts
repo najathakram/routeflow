@@ -295,7 +295,8 @@ export const PRODUCT_COLUMNS: ColumnDef[] = [
     case "isTobacco":
       return { field, canonical, aliases, parse: boolParser, gate: "tobacco" };
     case "unitsPerBox":
-      return { field, canonical, aliases, parse: intParser(0, MAX_INT) };
+      // SA-946 MUST 6: floor 1, like the DTO's @Min(1); a 0 would unbox the product silently.
+      return { field, canonical, aliases, parse: intParser(1, MAX_INT) };
     case "reorderPoint":
     case "reorderQty":
       // Reorder settings are a flag.forecasting feature (their HTTP writer is gated on it).
