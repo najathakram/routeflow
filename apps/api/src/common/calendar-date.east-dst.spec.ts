@@ -25,22 +25,86 @@ describe("startOfLocalDay on the DST-change day (#3686)", () => {
     expect(startOfCalendarDay(start, zone).toISOString().slice(0, 10)).toBe(day);
   });
 
-  // Oracle (SA-985): independent of any hard-coded offset. The day starts at the earliest instant whose local date is
-  // the named day, found by scanning minutes around the day with the same host tzdata the code reads.
-  it.each(cases.map(([zone, day]) => [zone, day]))(
-    "%s %s is the earliest instant on that local day",
-    (zone, day) => {
-      const localDay = (ms: number) =>
-        startOfCalendarDay(new Date(ms), zone).toISOString().slice(0, 10);
-      const noon = Date.parse(day + "T12:00:00.000Z");
-      let earliest = noon;
-      for (let ms = noon - 40 * 3600_000; ms <= noon; ms += 60_000) {
-        if (localDay(ms) === day) {
-          earliest = ms;
-          break;
+  // Oracle (SA-985): no hard-coded transition day and no offset, and the local date is read with Intl directly (never
+  // the code under test). For each of SA-985's 10 zones the 2026 offset changes are found by scanning every UTC hour;
+  // the days around each change are then checked against the earliest instant whose Intl local date is that day,
+  // found by scanning minutes. Zero mismatches.
+  describe("oracle: SA-985's 10 zones over the 2026 transition days", () => {
+    const ZONES = [
+      "Australia/Sydney",
+      "Pacific/Auckland",
+      "Asia/Beirut",
+      "Africa/Cairo",
+      "America/Havana",
+      "America/Santiago",
+      "Atlantic/Azores",
+      "America/Chicago",
+      "America/New_York",
+      "America/Los_Angeles",
+    ];
+    const HOUR = 3600_000;
+    const MINUTE = 60_000;
+
+    const readers = (zone: string) => {
+      const day = new Intl.DateTimeFormat("en-CA", { timeZone: zone });
+      const wall = new Intl.DateTimeFormat("en-US", {
+        timeZone: zone,
+        hourCycle: "h23",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+      const offsetMin = (ms: number) => {
+        const p = Object.fromEntries(
+          wall.formatToParts(new Date(ms)).map((x) => [x.type, x.value]),
+        );
+        const shown = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute);
+        return (shown - Math.floor(ms / MINUTE) * MINUTE) / MINUTE;
+      };
+      return { localDay: (ms: number) => day.format(new Date(ms)), offsetMin };
+    };
+
+    const transitionDays = (zone: string): string[] => {
+      const { localDay, offsetMin } = readers(zone);
+      const days = new Set<string>();
+      const from = Date.UTC(2026, 0, 1);
+      const to = Date.UTC(2027, 0, 1);
+      let prev = offsetMin(from);
+      for (let ms = from + HOUR; ms < to; ms += HOUR) {
+        const cur = offsetMin(ms);
+        if (cur !== prev) for (const k of [-24, 0, 24]) days.add(localDay(ms + k * HOUR));
+        prev = cur;
+      }
+      return [...days].filter((d) => d.startsWith("2026-")).sort();
+    };
+
+    it("startOfLocalDay is the earliest instant on the named local day, on every transition day", () => {
+      const mismatches: string[] = [];
+      let checked = 0;
+      for (const zone of ZONES) {
+        const { localDay } = readers(zone);
+        for (const day of transitionDays(zone)) {
+          const noon = Date.parse(`${day}T12:00:00.000Z`);
+          let earliest = -1;
+          for (let ms = noon - 40 * HOUR; ms <= noon + 12 * HOUR; ms += MINUTE) {
+            if (localDay(ms) === day) {
+              earliest = ms;
+              break;
+            }
+          }
+          checked++;
+          const got = startOfLocalDay(day, zone).getTime();
+          if (got !== earliest) {
+            mismatches.push(
+              `${zone} ${day}: got ${new Date(got).toISOString()} want ${new Date(earliest).toISOString()}`,
+            );
+          }
         }
       }
-      expect(startOfLocalDay(day, zone).getTime()).toBe(earliest);
-    },
-  );
+      expect(checked).toBeGreaterThanOrEqual(ZONES.length * 4);
+      expect(mismatches).toEqual([]);
+    });
+  });
 });
