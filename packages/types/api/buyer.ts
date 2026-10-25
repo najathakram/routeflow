@@ -382,6 +382,8 @@ export interface BuyerOrder extends BuyerOrderListItem {
   invoices: Array<{ id: string; invoiceNumber: string; status: InvoiceStatus; total: DecimalWire }>;
   /** P5-09: post-dispatch change requests, newest first. */
   changeRequests: ChangeRequest[];
+  /** Row 380: the latest edit revision; a buyer edit sends it back as `expectedRevisionNumber`. */
+  revisionNumber?: number;
   editWindow: BuyerOrderEditWindow;
   /** Run state backing the edit window (null until the order is on a run). */
   routeRun: { status: RouteRunStatusValue; startedAt: string | null } | null;

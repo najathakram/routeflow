@@ -550,7 +550,7 @@ export default function BuyerOrderDetailPage() {
   const cart = useBuyerCart(buyer?.id, sellerSlug);
   const orderId = params.id as string;
 
-  const { data: order, isLoading, isError } = useBuyerOrder(orderId);
+  const { data: order, isLoading, isError, refetch: refetchOrder } = useBuyerOrder(orderId);
   const capabilities = useBuyerSellerCapabilities();
   // Business profiles 1B: unset seller or unreadable capability = today's route view.
   const travel = orderTravelView(order?.fulfillPath, capabilities.data, capabilities.isLoading);
@@ -559,6 +559,9 @@ export default function BuyerOrderDetailPage() {
   const updateItems = useBuyerUpdateOrderItems();
 
   const [editMode, setEditMode] = React.useState(false);
+  // Row 380: the revision the editor LOADED when edit mode opened; a background refetch never moves it.
+  const openedRevision = React.useRef<number | undefined>(undefined);
+  const [stale, setStale] = React.useState(false);
   const [editItems, setEditItems] = React.useState<
     Array<
       BuyerEditLine & {
@@ -630,6 +633,8 @@ export default function BuyerOrderDetailPage() {
       (li) => li.status !== "CANCELLED" && li.productId && li.product,
     );
     setActionError(null);
+    setStale(false);
+    openedRevision.current = order.revisionNumber;
     setEditItems(
       active.map((li) => ({
         orderItemId: li.id,
@@ -658,6 +663,7 @@ export default function BuyerOrderDetailPage() {
       await updateItems.mutateAsync({
         orderId: order.id,
         items: buyerEditPayloadItems(editItems),
+        expectedRevisionNumber: openedRevision.current,
       });
       setEditMode(false);
     } catch (err: any) {
@@ -669,6 +675,12 @@ export default function BuyerOrderDetailPage() {
         setActionError(
           `This order includes regulated items${names ? ` (${names})` : ""} that need a verified license. Submit or renew it on the Licenses page, then try again.`,
         );
+        return;
+      }
+      if (err?.response?.status === 409 && data?.code === API_ERROR_CODES.ORDER_REVISION_STALE) {
+        // Row 380: fixed copy, never the server's sentence; Reload re-reads the order.
+        setStale(true);
+        setActionError("This order was updated. Reload to see the latest version.");
         return;
       }
       if (
@@ -846,6 +858,20 @@ export default function BuyerOrderDetailPage() {
         <div className="mb-4 flex items-center gap-2 rounded-lg bg-danger-bg px-4 py-2.5 text-sm text-danger">
           <AlertTriangle className="h-4 w-4 flex-shrink-0" />
           {actionError}
+          {stale && (
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => {
+                setStale(false);
+                setActionError(null);
+                setEditMode(false);
+                void refetchOrder();
+              }}
+            >
+              Reload
+            </Button>
+          )}
         </div>
       )}
 

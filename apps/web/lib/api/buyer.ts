@@ -436,9 +436,22 @@ export function useBuyerCreateOrder() {
 export function useBuyerUpdateOrderItems() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ orderId, items }: { orderId: string; items: BuyerOrderItemEdit[] }) =>
+    mutationFn: ({
+      orderId,
+      items,
+      expectedRevisionNumber,
+    }: {
+      orderId: string;
+      items: BuyerOrderItemEdit[];
+      /** Row 380: the revision the editor loaded; behind the server's latest it is 409 ORDER_REVISION_STALE. */
+      expectedRevisionNumber?: number;
+    }) =>
       buyerApiClient
-        .patch(`/buyer/orders/${orderId}/items`, { items, namesLines: true })
+        .patch(`/buyer/orders/${orderId}/items`, {
+          items,
+          namesLines: true,
+          expectedRevisionNumber,
+        })
         .then((r) => r.data),
     onSuccess: (_d, vars) => {
       qc.invalidateQueries({ queryKey: ["buyer", "order", vars.orderId] });
