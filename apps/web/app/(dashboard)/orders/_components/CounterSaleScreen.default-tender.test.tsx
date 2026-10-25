@@ -1,5 +1,6 @@
 import * as React from "react";
 import { screen, waitFor, fireEvent } from "@/test-utils/render";
+import { within } from "@testing-library/react";
 import { renderTill } from "@/test-utils/render-till";
 import { renderWithProviders } from "@/test-utils/render";
 import { sanitizeParkedPayload } from "@routeflow/pricing";
@@ -82,6 +83,10 @@ beforeEach(() => {
       return customerRead
         ? customerRead(m[1])
         : Promise.resolve({ data: { id: m[1], defaultPaymentTerms: OWN_TERMS[m[1]] ?? "" } });
+    if (/^\/customers\/[^/]+\/statement$/.test(url))
+      return Promise.resolve({
+        data: { outstandingAmount: 0, overdueAmount: 0, availableCredit: 0 },
+      });
     if (url === "/settings/invoice")
       return Promise.resolve({ data: { defaultTerms: tenantDefault } });
     if (url === "/settings") return Promise.resolve({ data: { taxRate: 0, timezone: "UTC" } });
@@ -182,6 +187,28 @@ describe("the default tender follows the picked customer's terms", () => {
     pick("Net Cafe");
     await waitFor(() => expect(checked("On account")).toBe(true));
     fireEvent.click(screen.getByRole("button", { name: "Use Walk-in customer" }));
+    await waitFor(() => expect(checked("Cash")).toBe(true));
+  });
+});
+
+describe("the default tender is listed first (SA-933 order)", () => {
+  const firstTender = () =>
+    within(screen.getByRole("radiogroup", { name: "Payment method" })).getAllByRole("radio")[0];
+
+  it("a Net-terms customer lists On account first; Due on Receipt and a walk-in list Cash first", async () => {
+    renderTill(<CounterSaleScreen />);
+    expect(firstTender()).toHaveAccessibleName("Cash");
+    pick("Net Cafe");
+    await waitFor(() => expect(firstTender()).toHaveAccessibleName("On account"));
+    pick("Receipt Cafe");
+    await waitFor(() => expect(firstTender()).toHaveAccessibleName("Cash"));
+  });
+
+  it("the arrow keys walk the displayed order (On account first, then Cash)", async () => {
+    renderTill(<CounterSaleScreen />);
+    pick("Net Cafe");
+    await waitFor(() => expect(checked("On account")).toBe(true));
+    fireEvent.keyDown(radio("On account"), { key: "ArrowDown" });
     await waitFor(() => expect(checked("Cash")).toBe(true));
   });
 });

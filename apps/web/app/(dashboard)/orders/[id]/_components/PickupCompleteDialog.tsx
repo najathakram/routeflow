@@ -13,6 +13,7 @@ import {
 } from "@routeflow/types";
 import type { CounterSalePaymentMethod, PickupCompleteResponse } from "@routeflow/types";
 import { usePickupComplete, usePickupInvoiceBalances } from "@/lib/api/counter-sale";
+import { useCounterDefaultTender } from "@/lib/api/counter-customer-credit";
 import { useOptionalAuth } from "@/lib/auth-context";
 import { duplicatePaymentRefMessage } from "@/lib/duplicate-payment-ref";
 import {
@@ -65,6 +66,7 @@ export function PickupCompleteDialog({
   total,
   invoices,
   isWalkIn,
+  customerId = null,
   handOver = false,
   completeMode = false,
   heldKey,
@@ -78,6 +80,8 @@ export function PickupCompleteDialog({
   total: number;
   invoices: ReadonlyArray<{ id: string; status: string }>;
   isWalkIn: boolean;
+  /** SA-933: the order's customer; their terms set the default tender (Net N is On account). Null/walk-in: Cash. */
+  customerId?: string | null;
   /** POS-mode order (PICKUP, not a counter sale): the confirm button reads "Hand over". Counter / portal keep "Picked up". */
   handOver?: boolean;
   /** I-120: "Complete at counter" (any open order): its title, confirm and outcome copy; the payment step is the same. */
@@ -109,6 +113,11 @@ export function PickupCompleteDialog({
 
   const keyRef = React.useRef<string>("");
   const [method, setMethod] = React.useState<CounterSalePaymentMethod>("CASH");
+  // SA-933: the same default the till applies, until the cashier chooses (a late-loading read never overrides a choice).
+  const defaultTender = useCounterDefaultTender(open && !isWalkIn ? customerId : null);
+  const defaultRef = React.useRef(defaultTender);
+  defaultRef.current = defaultTender;
+  const decidedRef = React.useRef(false);
   const [tendered, setTendered] = React.useState("");
   /** Row 312(b): the value the dialog itself put in the cash field; a different value is the cashier's own. */
   const autoTendered = React.useRef("");
@@ -119,13 +128,18 @@ export function PickupCompleteDialog({
   const lastBody = React.useRef<Body>({});
 
   React.useEffect(() => {
+    if (open && !decidedRef.current && defaultTender !== null) setMethod(defaultTender);
+  }, [open, defaultTender]);
+
+  React.useEffect(() => {
     if (open) {
       if (held.current?.orderId !== orderId) {
         const stored = readHeldPickupKey(storeKey);
         held.current = stored ? { orderId, key: stored } : null;
       }
       keyRef.current = held.current?.orderId === orderId ? held.current.key : newIdempotencyKey();
-      setMethod("CASH");
+      decidedRef.current = false;
+      setMethod(defaultRef.current ?? "CASH");
       autoTendered.current = "";
       setTendered("");
       setReference("");
@@ -375,7 +389,7 @@ export function PickupCompleteDialog({
               Collect <strong>{money(due)}</strong>
             </p>
             <div className="flex flex-wrap gap-2">
-              {paymentMethodOptions(isWalkIn)
+              {paymentMethodOptions(isWalkIn, defaultTender)
                 .filter((m) => !m.disabled) // a walk-in has no account: On account is not offered at all
                 .map((m) => (
                   <button
@@ -388,6 +402,7 @@ export function PickupCompleteDialog({
                       method === m.method && "border-brand-600 bg-brand-50 font-semibold",
                     )}
                     onClick={() => {
+                      decidedRef.current = true;
                       setMethod(m.method);
                       setError(null);
                     }}

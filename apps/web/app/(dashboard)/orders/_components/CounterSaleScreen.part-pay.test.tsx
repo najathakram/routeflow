@@ -68,11 +68,15 @@ const SALE = {
   paymentRecorded: true,
 };
 
+let availableCredit = 0;
 beforeEach(() => {
   jest.clearAllMocks();
+  availableCredit = 0;
   window.localStorage.clear();
   window.sessionStorage.clear();
   get.mockImplementation((url: string) => {
+    if (/^\/customers\/[^/]+\/statement$/.test(url))
+      return Promise.resolve({ data: { outstandingAmount: 0, overdueAmount: 0, availableCredit } });
     if (url === "/settings") return Promise.resolve({ data: { taxRate: 0, timezone: "UTC" } });
     if (url === "/orders/counter-sale/parked")
       return Promise.resolve({ data: { data: [], total: 0, page: 1, pageSize: 20 } });
@@ -164,6 +168,20 @@ describe("part payment by an identified customer (S4)", () => {
 });
 
 describe("the split label", () => {
+  it("a customer holding credit note balance: the label states no remainder of ours (the server applies credit)", async () => {
+    availableCredit = 4;
+    renderTill(<CounterSaleScreen />);
+    pickPlain();
+    await scanCase();
+    fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "5" } });
+    await waitFor(() =>
+      expect(screen.getByTestId("counter-part-pay-split")).toHaveTextContent(
+        "Pay $5.00 now · the rest goes on account, less any credit applied",
+      ),
+    );
+    expect(screen.getByTestId("counter-part-pay-split")).not.toHaveTextContent("$7.50");
+  });
+
   it("reads 'Pay $X now · $Y goes on account' while a cash tender is short", async () => {
     renderTill(<CounterSaleScreen />);
     pickPlain();

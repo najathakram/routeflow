@@ -39,6 +39,8 @@ export interface CounterCustomerCreditView {
   openBalance: CreditField<number>;
   /** the statement's overdue amount (0 = nothing overdue) */
   overdue: CreditField<number>;
+  /** the statement's availableCredit: open credit notes the SERVER may apply to a sale (it owns the figure) */
+  availableCredit: CreditField<number>;
   /** open balance above the limit (rounded to cents first); 0 = not over, or not known */
   overLimitBy: number;
   /** a read that matters here failed: the screen says so instead of showing a partial picture as complete */
@@ -88,12 +90,19 @@ export function counterCustomerCreditView(
 
   let openBalance: CounterCustomerCreditView["openBalance"];
   let overdue: CounterCustomerCreditView["overdue"];
+  let availableCredit: CounterCustomerCreditView["availableCredit"];
   if (statement.state !== "ready") {
+    availableCredit = pending(statement);
     openBalance = pending(statement);
     overdue = pending(statement);
   } else {
     const open = num(field(statement.data, "outstandingAmount"));
     const over = num(field(statement.data, "overdueAmount"));
+    const credit = num(field(statement.data, "availableCredit"));
+    availableCredit =
+      credit === null
+        ? { state: "failed" }
+        : { state: "ready", value: Math.max(0, roundMoney(credit)) };
     openBalance = open === null ? { state: "failed" } : { state: "ready", value: open };
     overdue =
       over === null
@@ -119,7 +128,7 @@ export function counterCustomerCreditView(
     statement.state === "failed" ||
     (termsNeedSettings && settings.state === "failed");
 
-  return { terms, creditLimit, openBalance, overdue, overLimitBy, loadFailed };
+  return { terms, creditLimit, openBalance, availableCredit, overdue, overLimitBy, loadFailed };
 }
 
 export const COUNTER_CUSTOMER_OVERDUE_COPY = "Overdue";

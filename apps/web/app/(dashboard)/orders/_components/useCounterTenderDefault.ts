@@ -45,5 +45,6 @@ export function useCounterTenderDefault({
     decidedRef.current = false;
     appliedRef.current = false;
   }, []);
-  return { decide, reset };
+  // `defaultTender` is what the customer's terms resolved to (null while unknown): the till lists it first.
+  return { decide, reset, defaultTender: tender };
 }

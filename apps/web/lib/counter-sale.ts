@@ -226,14 +226,23 @@ export interface PaymentMethodOption {
   disabled: boolean;
 }
 
-/** Cash / Card / Check / On account; On account is disabled for a walk-in (no account to charge). */
-export function paymentMethodOptions(isWalkIn: boolean): PaymentMethodOption[] {
-  return [
+/**
+ * Cash / Card / Check / On account; On account is disabled for a walk-in (no account to charge). `first` is the customer's
+ * default tender (SA-933): it is listed first so the default is the first thing the clerk sees and tabs to; the rest keep
+ * their order, and a disabled method is never promoted.
+ */
+export function paymentMethodOptions(
+  isWalkIn: boolean,
+  first?: CounterSalePaymentMethod | null,
+): PaymentMethodOption[] {
+  const all: PaymentMethodOption[] = [
     { method: "CASH", label: "Cash", disabled: false },
     { method: "CARD", label: "Card", disabled: false },
     { method: "CHECK", label: "Check", disabled: false },
     { method: "ON_ACCOUNT", label: "On account", disabled: isWalkIn },
   ];
+  const at = first ? all.findIndex((m) => m.method === first && !m.disabled) : -1;
+  return at > 0 ? [all[at], ...all.slice(0, at), ...all.slice(at + 1)] : all;
 }
 
 export type PaymentProblem = "TENDER_SHORT" | "CHECK_NUMBER_REQUIRED" | "WALK_IN_ON_ACCOUNT";

@@ -48,10 +48,16 @@ export function CounterPartPayField({
 }
 
 /** "Pay $X now · $Y goes on account", shown in the checkout bar while an identified customer's tender is short. */
-export function CounterPartPaySplit({ split }: { split: { now: number; onAccount: number } }) {
+export function CounterPartPaySplit({
+  split,
+  creditMayApply = false,
+}: {
+  split: { now: number; onAccount: number };
+  creditMayApply?: boolean;
+}) {
   return (
     <p className="text-sm font-medium" role="status" data-testid="counter-part-pay-split">
-      {partPayCopy(split)}
+      {partPayCopy(split, creditMayApply)}
     </p>
   );
 }

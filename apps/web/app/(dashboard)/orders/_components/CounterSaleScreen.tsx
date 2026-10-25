@@ -138,12 +138,17 @@ import { ParkedSales } from "./ParkedSales";
 import { QuickKeysGrid } from "./QuickKeysGrid";
 import { CounterCheckDetails } from "./CounterCheckDetails";
 import { CounterPartPayField, CounterPartPaySplit } from "./CounterPartPay";
+import { useCounterCustomerCredit } from "@/lib/api/counter-customer-credit";
 import { useCounterTenderDefault } from "./useCounterTenderDefault";
 import {
   PART_PAY_AMOUNT_COPY,
+  PART_PAY_OVER_TOTAL_COPY,
   counterPaymentAmount,
   partPayAmountProblem,
   partPaySplit,
+  partPayEqualsTotal,
+  creditMayApply,
+  PART_PAY_FULL_COPY,
 } from "@/lib/counter-part-pay";
 import { ReadOnlyHint, WriteButton, useReadOnlyGate } from "@/lib/read-only-gate";
 
@@ -238,6 +243,7 @@ export function CounterSaleScreen() {
   });
   const decideTender = tenderDefault.decide;
   const resetTenderDefault = tenderDefault.reset;
+  const defaultTender = tenderDefault.defaultTender;
   const chooseMethod = (m: CounterSalePaymentMethod) => {
     decideTender(); // the clerk's own choice: the default never overrides it
     // The tender is shared across methods: a cash amount typed for another method must not arrive in the Amount paying now
@@ -509,6 +515,10 @@ export function CounterSaleScreen() {
   const licenseNeeded = lines.some(needsLicense);
   const discounts = discountsTotal(lines, settings?.hideOriginalPrice === true); // POS-5: the `Discounts` row (display only; the total already includes it)
   const tenderedNum = Number(tendered) || 0;
+  // the server owns what credit it applies: the same shared statement read the customer panel uses
+  const { view: creditView } = useCounterCustomerCredit(
+    customer && !customer.isWalkIn ? customer.id : null,
+  );
   const partSplit = partPaySplit({
     method,
     isWalkIn: walkInBuyer,
@@ -701,7 +711,7 @@ export function CounterSaleScreen() {
     );
   // R7b 1.2 (b): the tender methods are a WAI-ARIA radiogroup: Left/Right (and Up/Down) move to the next enabled method.
   // The radiogroup always has ONE tab stop: the checked method, or the first enabled one when the checked one is disabled.
-  const tenderOptions = paymentMethodOptions(isWalkIn);
+  const tenderOptions = paymentMethodOptions(isWalkIn, defaultTender);
   const tabStopMethod = (
     tenderOptions.find((m) => m.method === method && !m.disabled) ??
     tenderOptions.find((m) => !m.disabled)
@@ -714,7 +724,7 @@ export function CounterSaleScreen() {
           ? -1
           : 0;
     if (!dir || locked) return;
-    const options = paymentMethodOptions(isWalkIn).filter((m) => !m.disabled);
+    const options = tenderOptions.filter((m) => !m.disabled);
     // movement starts from the tab stop (the checked method, or the first enabled one when that is disabled), wrapping
     const at = Math.max(
       0,
@@ -972,7 +982,12 @@ export function CounterSaleScreen() {
       );
       return null;
     }
-    const partPayProblem = partPayAmountProblem({ method, isWalkIn: walkInBuyer, tendered });
+    const partPayProblem = partPayAmountProblem({
+      method,
+      isWalkIn: walkInBuyer,
+      tendered,
+      total: totals.total,
+    });
     if (partPayProblem) {
       setError(partPayProblem);
       setTenderFix((n) => n + 1); // focus the Amount paying now field
@@ -1580,7 +1595,7 @@ export function CounterSaleScreen() {
               data-testid="counter-tender-methods"
               onKeyDown={onTenderKeyDown}
             >
-              {paymentMethodOptions(isWalkIn).map((m) => (
+              {tenderOptions.map((m) => (
                 <button
                   key={m.method}
                   type="button"
@@ -1676,7 +1691,9 @@ export function CounterSaleScreen() {
                 onChange={(v) => {
                   setTendered(v);
                   clearUnderpaidError();
-                  setError((e) => (e === PART_PAY_AMOUNT_COPY ? "" : e));
+                  setError((e) =>
+                    e === PART_PAY_AMOUNT_COPY || e === PART_PAY_OVER_TOTAL_COPY ? "" : e,
+                  );
                 }}
                 disabled={locked}
                 inputRef={tenderRef}
@@ -1879,7 +1896,22 @@ export function CounterSaleScreen() {
               </p>
             ) : null}
 
-            {partSplit ? <CounterPartPaySplit split={partSplit} /> : null}
+            {partSplit ? (
+              <CounterPartPaySplit
+                split={partSplit}
+                creditMayApply={creditMayApply(creditView.availableCredit)}
+              />
+            ) : null}
+            {partPayEqualsTotal({
+              method,
+              isWalkIn: walkInBuyer,
+              total: totals.total,
+              tendered: tenderedNum,
+            }) ? (
+              <p className="text-sm text-muted-foreground" data-testid="counter-part-pay-full">
+                {PART_PAY_FULL_COPY}
+              </p>
+            ) : null}
 
             {/* The payment / sale error lives in the bar: below the fold it was out of sight at 390px (row 238). */}
             {error ? (

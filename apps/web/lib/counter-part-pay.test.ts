@@ -1,5 +1,9 @@
 import {
   PART_PAY_AMOUNT_COPY,
+  PART_PAY_FULL_COPY,
+  PART_PAY_OVER_TOTAL_COPY,
+  partPayEqualsTotal,
+  creditMayApply,
   counterPaymentAmount,
   partPayAmountProblem,
   partPayCopy,
@@ -56,6 +60,17 @@ describe("partPaySplit / partPayCopy: the S4 split label", () => {
     const split = partPaySplit({ method: "CASH", isWalkIn: false, total: 12.5, tendered: 5 });
     expect(split).toEqual({ now: 5, onAccount: 7.5 });
     expect(partPayCopy(split!)).toBe("Pay $5.00 now · $7.50 goes on account");
+  });
+
+  it("with credit that may apply it states no remainder; creditMayApply reads the server figure", () => {
+    const split = partPaySplit({ method: "CASH", isWalkIn: false, total: 12.5, tendered: 5 });
+    expect(partPayCopy(split!, true)).toBe(
+      "Pay $5.00 now · the rest goes on account, less any credit applied",
+    );
+    expect(creditMayApply({ state: "ready", value: 0 })).toBe(false);
+    expect(creditMayApply({ state: "ready", value: 4 })).toBe(true);
+    expect(creditMayApply({ state: "failed" })).toBe(true);
+    expect(creditMayApply({ state: "loading" })).toBe(true);
   });
 
   it("works for a check or a card part payment and rounds the pieces", () => {
@@ -172,10 +187,37 @@ describe("partPayAmountProblem: Amount paying now that is not a positive number"
     );
   });
 
-  it("positive amounts pass, including ones at or above the total (those mean a full payment)", () => {
+  it("positive amounts pass, and exactly the total is a full payment", () => {
     for (const ok of ["5", "5.5", "5.05", ".5", "12.50", "400"]) {
       expect(partPayAmountProblem(input(ok))).toBeNull();
     }
+    expect(partPayAmountProblem({ ...input("20"), total: 20 })).toBeNull();
+    expect(partPayAmountProblem({ ...input("19.99"), total: 20 })).toBeNull();
+  });
+
+  it("an amount strictly above the total is refused (the server's COUNTER_PAYMENT_EXCEEDS_TOTAL), not silently a full payment", () => {
+    for (const method of ["CARD", "CHECK"] as const) {
+      expect(partPayAmountProblem({ method, isWalkIn: false, tendered: "20.01", total: 20 })).toBe(
+        PART_PAY_OVER_TOTAL_COPY,
+      );
+      expect(partPayAmountProblem({ method, isWalkIn: false, tendered: "400", total: 20 })).toBe(
+        PART_PAY_OVER_TOTAL_COPY,
+      );
+    }
+    expect(PART_PAY_OVER_TOTAL_COPY).toBe(
+      "Amount paying now can't be more than the total. Lower it, or leave it empty to pay in full.",
+    );
+  });
+
+  it("cash, on account and a walk-in are not subject to the over-total refusal", () => {
+    for (const method of ["CASH", "ON_ACCOUNT"] as const) {
+      expect(
+        partPayAmountProblem({ method, isWalkIn: false, tendered: "400", total: 20 }),
+      ).toBeNull();
+    }
+    expect(
+      partPayAmountProblem({ method: "CARD", isWalkIn: true, tendered: "400", total: 20 }),
+    ).toBeNull();
   });
 
   it("only applies to an identified customer's CHECK or CARD", () => {
@@ -187,5 +229,18 @@ describe("partPayAmountProblem: Amount paying now that is not a positive number"
     expect(partPayAmountProblem({ method: "CHECK", isWalkIn: false, tendered: "abc" })).toBe(
       PART_PAY_AMOUNT_COPY,
     );
+  });
+});
+
+describe("partPayEqualsTotal: a typed amount equal to the total is said to be a full payment", () => {
+  const base = { method: "CARD" as const, isWalkIn: false, total: 20 };
+  it("true only for check/card of an identified customer at exactly the total", () => {
+    expect(partPayEqualsTotal({ ...base, tendered: 20 })).toBe(true);
+    expect(partPayEqualsTotal({ ...base, method: "CHECK", tendered: 20 })).toBe(true);
+    expect(partPayEqualsTotal({ ...base, tendered: 19.99 })).toBe(false);
+    expect(partPayEqualsTotal({ ...base, tendered: 0 })).toBe(false);
+    expect(partPayEqualsTotal({ ...base, method: "CASH", tendered: 20 })).toBe(false);
+    expect(partPayEqualsTotal({ ...base, isWalkIn: true, tendered: 20 })).toBe(false);
+    expect(PART_PAY_FULL_COPY).toBe("That is the full total, so it pays in full.");
   });
 });
