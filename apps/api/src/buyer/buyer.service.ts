@@ -14,11 +14,8 @@ import type { RequestSellerDto } from "./dto/request-seller.dto";
 import type { Prisma } from "@prisma/client";
 import { excludeWalkIn } from "../customers/walk-in-protected";
 import { escapeHtml } from "../common/html-escape";
-import {
-  sellerAcceptsBuyerWrite,
-  sellerDisplayName,
-  sellerUnavailableException,
-} from "./seller-status-gate";
+import { sellerAcceptsBuyerWrite, sellerUnavailableException } from "./seller-status-gate";
+import { sellerDisplayName } from "../common/seller-display-name";
 
 @Injectable()
 export class BuyerService {
@@ -67,7 +64,7 @@ export class BuyerService {
           tenant: {
             id: link.tenant.id,
             slug: link.tenant.slug,
-            name: config?.businessName ?? link.tenant.name,
+            name: sellerDisplayName(config, link.tenant),
             logoKey: config?.logoKey ?? null,
             primaryColor: config?.primaryColor ?? null,
           },
@@ -385,7 +382,7 @@ export class BuyerService {
       where: { tenantId: tenant.id },
       select: { businessName: true },
     });
-    const sellerName = tenantConfig?.businessName ?? tenant.name;
+    const sellerName = sellerDisplayName(tenantConfig, tenant);
 
     // Fire-and-forget both notification channels — email delivery must never fail
     // the request the buyer is waiting on.
@@ -526,7 +523,7 @@ export class BuyerService {
       where: { tenantId },
       select: { businessName: true },
     });
-    const sellerName = tenantConfig?.businessName ?? "Your business";
+    const sellerName = sellerDisplayName(tenantConfig, null, "Your business");
 
     for (const op of operators.filter((o) => o.email)) {
       await this.emailService

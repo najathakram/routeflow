@@ -111,7 +111,12 @@ describe("buyer account-level link writes follow the seller's workspace status",
         inviteToken: "tok",
         inviteExpiresAt: null,
         inviteMethod: "EMAIL",
-        tenant: { id: "tn-1", name: "Acme Foods", slug: "acme-foods", status: sellerStatus },
+        tenant: {
+          id: "tn-1",
+          name: "acme-legal-name-llc",
+          slug: "acme-foods",
+          status: sellerStatus,
+        },
       } as any);
     };
 
@@ -136,7 +141,10 @@ describe("buyer account-level link writes follow the seller's workspace status",
       });
       prisma.tenantConfig.findFirst.mockResolvedValue(null);
       err = await service.getInviteDetails("tok").catch((e) => e);
-      expect(err.getResponse().sellerName).toBe("Acme Foods"); // the tenant's name (the setup's tenant)
+      expect(err.getResponse().sellerName).toBe("acme-legal-name-llc"); // no business name: the tenant's own name
+      prisma.tenantConfig.findFirst.mockResolvedValue({ businessName: "   " });
+      err = await service.getInviteDetails("tok").catch((e) => e);
+      expect(err.getResponse().sellerName).toBe("acme-legal-name-llc"); // blank is not a name
       expect(JSON.stringify(err.getResponse())).not.toMatch(/suspend|cancel|billing|read.?only/i);
     });
 
@@ -176,7 +184,7 @@ describe("buyer account-level link writes follow the seller's workspace status",
       await expect(service.getInviteDetails("tok")).resolves.toMatchObject({
         sellerName: "Acme Foods",
         sellerSlug: "acme-foods",
-      });
+      }); // businessName "Acme Foods" (the file's config mock), not the tenant's "acme-legal-name-llc"
       expect(wouldDeny()).toHaveLength(0);
     });
   });
