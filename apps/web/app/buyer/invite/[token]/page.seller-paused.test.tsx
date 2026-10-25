@@ -46,6 +46,27 @@ describe("buyer invite page: a paused seller", () => {
     expect(screen.queryByText("Invalid invite")).toBeNull();
   });
 
+  it("names the seller from the 403 body, and says the neutral sentence when no name came", async () => {
+    mockGetInviteDetails.mockRejectedValue(
+      refusal(403, { code: "SELLER_UNAVAILABLE", message: "x", sellerName: "Acme Foods" }),
+    );
+    const named = render(<BuyerInvitePage />);
+    expect(
+      await screen.findByText(
+        "Acme Foods isn't taking online orders right now. Please check back soon or contact them.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Acme Foods is not available right now")).toBeInTheDocument();
+    named.unmount();
+    mockGetInviteDetails.mockRejectedValue(
+      refusal(403, { code: "SELLER_UNAVAILABLE", message: "x" }),
+    );
+    render(<BuyerInvitePage />);
+    expect(
+      await screen.findByText(/^This seller isn't taking online orders right now/),
+    ).toBeInTheDocument();
+  });
+
   it("says the invite still works, with a neutral pause icon (not the red alert)", async () => {
     mockGetInviteDetails.mockRejectedValue(
       refusal(403, { code: "SELLER_UNAVAILABLE", message: "x" }),

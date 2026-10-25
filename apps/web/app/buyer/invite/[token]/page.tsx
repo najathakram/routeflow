@@ -50,6 +50,7 @@ export default function BuyerInvitePage() {
   const [loadError, setLoadError] = React.useState<string | null>(null);
   // Row 397: the seller is paused (suspended / cancelled / read-only): not an "invalid" invite, a not-right-now one.
   const [sellerPaused, setSellerPaused] = React.useState(false);
+  const [pausedSellerName, setPausedSellerName] = React.useState<string | null>(null);
   const [isLoadingInvite, setIsLoadingInvite] = React.useState(true);
   const [isAccepting, setIsAccepting] = React.useState(false);
   const [accepted, setAccepted] = React.useState(false);
@@ -68,7 +69,10 @@ export default function BuyerInvitePage() {
       .catch((err) => {
         if (isSellerUnavailableRefusal(err)) {
           setSellerPaused(true);
-          setLoadError(sellerUnavailableCopy(null));
+          const named = (err as { response?: { data?: { sellerName?: unknown } } })?.response?.data
+            ?.sellerName;
+          setPausedSellerName(typeof named === "string" && named.trim() ? named : null);
+          setLoadError(sellerUnavailableCopy(typeof named === "string" ? named : null));
           return;
         }
         const msg =
@@ -155,7 +159,9 @@ export default function BuyerInvitePage() {
       ? "You're invited."
       : loadError
         ? sellerPaused
-          ? "Not available right now"
+          ? pausedSellerName
+            ? `${pausedSellerName} is not available right now`
+            : "Not available right now"
           : "Invalid invite"
         : accepted
           ? "Invite accepted"

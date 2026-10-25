@@ -25,11 +25,24 @@ export function sellerReadOnlyBuyerGate(
 export const SELLER_UNAVAILABLE_MESSAGE =
   "This seller isn't taking online orders right now. Please check back soon.";
 
-/** The ONE refusal body (403 SELLER_UNAVAILABLE) every seller-status refusal answers with. */
-export function sellerUnavailableException(): ForbiddenException {
+/** The seller's display name as a buyer sees it: the business name when set, else the tenant's name. ONE expression. */
+export function sellerDisplayName(
+  tenantConfig: { businessName?: string | null } | null | undefined,
+  tenant: { name: string },
+): string {
+  return tenantConfig?.businessName ?? tenant.name;
+}
+
+/**
+ * The ONE refusal body (403 SELLER_UNAVAILABLE) every seller-status refusal answers with. `sellerName` (SA-973 §397,
+ * the public invite preview only) lets the page say WHO: the same name a valid invite shows that token holder. Never a
+ * status, a reason or anything about billing; the guarded buyer routes pass none.
+ */
+export function sellerUnavailableException(sellerName?: string): ForbiddenException {
   return new ForbiddenException({
     code: API_ERROR_CODES.SELLER_UNAVAILABLE,
     message: SELLER_UNAVAILABLE_MESSAGE,
+    ...(sellerName ? { sellerName } : {}),
   });
 }
 
