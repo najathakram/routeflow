@@ -12,7 +12,7 @@ import { ProductCustomerPricesService } from "./product-customer-prices.service"
 import { ProductPriceGridService } from "./product-price-grid.service";
 import { ProductPriceWriteService } from "./product-price-write.service";
 
-import { RequirePermission } from "../auth/permissions/permission.decorators";
+import { PermissionBase, RequirePermission } from "../auth/permissions/permission.decorators";
 /**
  * Units and prices v2. The whole surface is plan-flag gated: a tenant without
  * `flag.units_prices_v2` gets the structured PLAN_GATE 403 (SA-796 R-5: enforced, not dark).
@@ -29,6 +29,7 @@ export class ProductPricingController {
     private readonly customers: ProductCustomerPricesService,
   ) {}
 
+  @PermissionBase("sell prices only, no cost; the product page price card reads it, SA-977")
   @Get("price-grid")
   @Roles(UserRole.OPERATOR)
   priceGrid(@Param("productId") productId: string) {
@@ -36,6 +37,7 @@ export class ProductPricingController {
   }
 
   /** The customers holding typed prices on this product, in the shape the planners take (capped at 500). */
+  @PermissionBase("sell prices only, no cost; the product page reads it, SA-977")
   @Get("customer-prices")
   @Roles(UserRole.OPERATOR)
   customerPrices(@Param("productId") productId: string) {

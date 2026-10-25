@@ -13,7 +13,7 @@ import { PermissionBase } from "../auth/permissions/permission.decorators";
  * admin edits them at PUT /platform-admin/app-links). The links are not tenant data, so nothing
  * here is tenant-scoped; an unset or invalid link reads as null.
  */
-@PermissionBase("cross-cutting lookup other areas need (spec-operator-permissions §4.3)")
+@PermissionBase("app download links; drivers and customers read them too, SA-977")
 @ApiTags("app-links")
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)

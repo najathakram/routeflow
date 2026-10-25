@@ -14,7 +14,7 @@ import { PermissionBase } from "../auth/permissions/permission.decorators";
  * Same guards and flag as K6's `/unit-prices` (class-level, so a flag-off tenant gets the PLAN_GATE 403); a separate
  * controller so K6's read-only route list is untouched. The tenant comes from the JWT only.
  */
-@PermissionBase("cross-cutting lookup other areas need (spec-operator-permissions §4.3)")
+@PermissionBase("order entry prices lines from it, SA-977")
 @Controller("customers/:customerId/price-layer")
 @UseGuards(JwtAuthGuard, RolesGuard, PlanFlagGuard)
 @RequirePlanFlag("flag.units_prices_v2")

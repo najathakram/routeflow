@@ -25,7 +25,7 @@ import { RequirePermission } from "../auth/permissions/permission.decorators";
 // satisfies OPERATOR in RolesGuard; owner 10-07: operators are near-admins). CUSTOMER, DRIVER and buyer
 // tokens get 403. The two bulk writes are staff-JWT writes, so the global TenantStatusGuard refuses them
 // in a read-only workspace (no read-only allow-list entry).
-@RequirePermission("REGULATED")
+@RequirePermission("CUSTOMERS", "REGULATED") // one flow, one any-of (SA-977 §2.1)
 @ApiTags("settings")
 @ApiBearerAuth()
 @Controller("settings/restrictions/unknown-state-customers")

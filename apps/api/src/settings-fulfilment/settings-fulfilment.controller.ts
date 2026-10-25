@@ -27,7 +27,7 @@ const EDIT_THROTTLE = { default: { ttl: 60_000, limit: 10 } };
 // Reads OPERATOR; preview and change are TENANT_ADMIN (SUPER_ADMIN satisfies it via the RolesGuard
 // hierarchy; OPERATOR gets 403) AND the `canEditFulfilment` predicate. Bodies are `unknown`: the
 // service parses them into coded 400s, which the global whitelist pipe would otherwise pre-empt.
-@PermissionBase("cross-cutting lookup other areas need (spec-operator-permissions §4.3)")
+@PermissionBase("settings read for every staff user, SA-977")
 @ApiTags("settings")
 @ApiBearerAuth()
 @Controller("settings/fulfilment")

@@ -19,7 +19,7 @@ import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { AddRuleTargetsDto, RemoveRuleTargetsDto, RulesHoldingDto } from "./dto/rule-targets.dto";
 import { RuleTargetsService } from "./rule-targets.service";
 
-import { RequirePermission } from "../auth/permissions/permission.decorators";
+import { PermissionBase, RequirePermission } from "../auth/permissions/permission.decorators";
 /**
  * Row 509: a rule's targets. Registered BEFORE `SellingRestrictionsAdminController` in the module so no route there
  * can shadow these (the literal `holding` is one segment like `bulk` / `lift-batch`; `:id` routes are GET and
@@ -47,6 +47,7 @@ export class RuleTargetsController {
     return this.targets.holding(dto);
   }
 
+  @PermissionBase("a rule's detail read follows selling-restrictions.list, SA-977")
   @Get(":id")
   @Roles(UserRole.OPERATOR)
   @ApiOperation({ summary: "One rule with its active targets (keyset-paged) and target history" })

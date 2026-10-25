@@ -13,7 +13,7 @@ import { RequirePermission } from "../auth/permissions/permission.decorators";
 // Fix a customer's state in place (Addendum D). OPERATOR and TENANT_ADMIN (TENANT_ADMIN satisfies
 // OPERATOR in RolesGuard); CUSTOMER, DRIVER and buyer tokens get 403. Staff-JWT writes, so the global
 // TenantStatusGuard refuses them in a read-only workspace (no read-only allow-list entry).
-@RequirePermission("CUSTOMERS")
+@RequirePermission("CUSTOMERS", "REGULATED") // one flow, one any-of (SA-977 §2.1)
 @ApiTags("customers")
 @ApiBearerAuth()
 @Controller("customers")

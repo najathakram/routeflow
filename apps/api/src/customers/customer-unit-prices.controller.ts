@@ -15,7 +15,7 @@ import { PermissionBase } from "../auth/permissions/permission.decorators";
  * the price-grid route (`flag.units_prices_v2`, enforced: PLAN_GATE 403). The tenant comes from the JWT only (the
  * service reads through `forTenant()`); TENANT_ADMIN satisfies OPERATOR in RolesGuard.
  */
-@PermissionBase("cross-cutting lookup other areas need (spec-operator-permissions §4.3)")
+@PermissionBase("order entry prices lines from it; no cost field, SA-977")
 @Controller("customers/:customerId/unit-prices")
 @UseGuards(JwtAuthGuard, RolesGuard, PlanFlagGuard)
 @RequirePlanFlag("flag.units_prices_v2")

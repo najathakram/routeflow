@@ -33,7 +33,7 @@ export class UnitsController {
    * `GET /units` is the ACTIVE units (an array, at most about 200). `GET /units?archived=1[&cursor=]`
    * is one page of the ARCHIVED units, `{ items, nextCursor }`, 100 per page (SA-810).
    */
-  @PermissionBase("cross-cutting lookup other areas need (spec-operator-permissions §4.3)")
+  @PermissionBase("unit list lookup, mirrors product-units list, SA-977")
   @Get()
   @Roles(UserRole.OPERATOR)
   list(@Query("archived") archived?: string, @Query("cursor") cursor?: string) {
