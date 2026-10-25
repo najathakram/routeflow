@@ -54,36 +54,46 @@ export async function resolveLiveDisplayUnits(
   }
 }
 
-async function resolveOrThrow(
+/** What the catalog says for ONE customer's products (loaded by one batched query per table). Opaque to callers. */
+export interface DisplayUnitCatalog {
+  customerTier: number | string | null | undefined;
+  cpBy: Map<string, any>;
+  productBy: Map<string, any>;
+  tierUnitBy: Map<string, any>;
+  tierOrderUnits: Map<string, Record<number, string>>;
+  unitsBy: Map<string, LadderViewUnit[]>;
+  businessUnit: string | null;
+}
+
+/** One catalog per customer, loaded BEFORE the delivery tx opens (see {@link loadDeliveryDisplayCatalogs}). */
+export type DisplayUnitCatalogs = ReadonlyMap<string, DisplayUnitCatalog>;
+
+/** The catalog reads behind a display unit (the flag, then one query per table); null when the ladder flag is off. */
+async function loadCatalog(
   db: any,
-  tenantId: string | null | undefined, // a row without a tenant (nullable column) resolves legacy
-  invoice: { customerId: string; items: Array<{ id: string; productId: string | null }> },
+  tenantId: string,
+  customerId: string,
+  productIds: string[],
   entitlements?: DisplayUnitEntitlements | null,
-): Promise<Map<string, InvoiceDisplayUnitView>> {
+): Promise<DisplayUnitCatalog | null> {
   {
-    const out = allLegacy(invoice.items);
-    if (!tenantId || !invoice.customerId) return out;
-    const productIds = [
-      ...new Set(invoice.items.map((i) => i.productId).filter((p): p is string => !!p)),
-    ];
-    if (productIds.length === 0) return out;
     let on = false;
     try {
       on = !!(await entitlements?.hasFlagStrict?.(tenantId, UNITS_V2_FLAG));
     } catch {
       on = false;
     }
-    if (!on) return out; // flag off: no ladder, and customerDefault is null in PR1, so everything is legacy
+    if (!on) return null; // flag off: no ladder, and customerDefault is null in PR1, so everything is legacy
 
     const [customer, cpRows, tierRows, products, unitRows, business] = await Promise.all([
       db.customer.findFirst({
-        where: { id: invoice.customerId, tenantId },
+        where: { id: customerId, tenantId },
         select: { pricingTier: true },
       }),
       db.customerPrice.findMany({
         // CustomerPrice.tenantId is nullable, so the tenant rides the non-null customer relation
         where: {
-          customerId: invoice.customerId,
+          customerId: customerId,
           customer: { tenantId },
           productId: { in: productIds },
         },
@@ -162,43 +172,79 @@ async function resolveOrThrow(
       ]);
     }
 
-    const byProduct = new Map<string, InvoiceDisplayUnitView>();
-    for (const pid of productIds) {
-      try {
-        const p = productBy.get(pid);
-        if (!p) {
-          byProduct.set(pid, legacy());
-          continue;
-        }
-        const cp = cpBy.get(pid);
-        const tier = customerTierFor(cp?.pricingTier, customer?.pricingTier); // the one tier resolver
-        const view = buildLadderView(
-          asLadderProduct(p),
-          unitsBy.get(pid) ?? [],
-          ladderOptionsOf(p, tierOrderUnits.get(pid) as any),
-        );
-        byProduct.set(
-          pid,
-          invoiceDisplayUnitFor({
-            customerDefault: null,
-            scopes: {
-              customer: cp?.invoiceUnitRef ?? null,
-              tier: tierUnitBy.get(`${pid}:${tier}`)?.invoiceUnitRef ?? null,
-              product: p.invoiceUnitRef ?? null,
-              business: businessUnit,
-            },
-            view,
-          }),
-        );
-      } catch {
-        byProduct.set(pid, legacy());
-      }
-    }
-    for (const it of invoice.items) {
-      if (it.productId) out.set(it.id, { ...(byProduct.get(it.productId) ?? legacy()) });
-    }
-    return out;
+    return {
+      customerTier: customer?.pricingTier,
+      cpBy,
+      productBy,
+      tierUnitBy,
+      tierOrderUnits,
+      unitsBy,
+      businessUnit,
+    };
   }
+}
+
+/** Pure: each product's view from a loaded catalog (a product the catalog lacks, or a failure, is legacy). */
+function viewsFromCatalog(
+  catalog: DisplayUnitCatalog,
+  productIds: Iterable<string>,
+): Map<string, InvoiceDisplayUnitView> {
+  const { customerTier, cpBy, productBy, tierUnitBy, tierOrderUnits, unitsBy, businessUnit } =
+    catalog;
+  const byProduct = new Map<string, InvoiceDisplayUnitView>();
+  for (const pid of productIds) {
+    try {
+      const p = productBy.get(pid);
+      if (!p) {
+        byProduct.set(pid, legacy());
+        continue;
+      }
+      const cp = cpBy.get(pid);
+      const tier = customerTierFor(cp?.pricingTier, customerTier); // the one tier resolver
+      const view = buildLadderView(
+        asLadderProduct(p),
+        unitsBy.get(pid) ?? [],
+        ladderOptionsOf(p, tierOrderUnits.get(pid) as any),
+      );
+      byProduct.set(
+        pid,
+        invoiceDisplayUnitFor({
+          customerDefault: null,
+          scopes: {
+            customer: cp?.invoiceUnitRef ?? null,
+            tier: tierUnitBy.get(`${pid}:${tier}`)?.invoiceUnitRef ?? null,
+            product: p.invoiceUnitRef ?? null,
+            business: businessUnit,
+          },
+          view,
+        }),
+      );
+    } catch {
+      byProduct.set(pid, legacy());
+    }
+  }
+  return byProduct;
+}
+
+async function resolveOrThrow(
+  db: any,
+  tenantId: string | null | undefined, // a row without a tenant (nullable column) resolves legacy
+  invoice: { customerId: string; items: Array<{ id: string; productId: string | null }> },
+  entitlements?: DisplayUnitEntitlements | null,
+): Promise<Map<string, InvoiceDisplayUnitView>> {
+  const out = allLegacy(invoice.items);
+  if (!tenantId || !invoice.customerId) return out;
+  const productIds = [
+    ...new Set(invoice.items.map((i) => i.productId).filter((p): p is string => !!p)),
+  ];
+  if (productIds.length === 0) return out;
+  const catalog = await loadCatalog(db, tenantId, invoice.customerId, productIds, entitlements);
+  if (!catalog) return out;
+  const byProduct = viewsFromCatalog(catalog, productIds);
+  for (const it of invoice.items) {
+    if (it.productId) out.set(it.id, { ...(byProduct.get(it.productId) ?? legacy()) });
+  }
+  return out;
 }
 
 /**
@@ -331,6 +377,78 @@ export async function freezeDraftIssueUnits(
 ): Promise<void> {
   if (!inv.tenantId) return;
   const units = await resolveIssueDisplayUnits(readDb, inv.tenantId, inv.id, entitlements, tx);
+  await writeIssueDisplayUnits(tx, inv.id, units);
+}
+
+/**
+ * The delivery path (PASS 2 SHOULD): the invoices and their lines are created INSIDE the caller's tx, so their units cannot be
+ * resolved before it, but the CATALOG they resolve against can. Loaded on a non-tx client BEFORE the tx opens: one catalog per
+ * customer on the stop (their products only), so the tx never takes a second pooled connection for a catalog read or the
+ * flag read. Never throws: the flag off, a failed read, no tenant or no orders give no catalogs, and a line then reads legacy.
+ */
+export async function loadDeliveryDisplayCatalogs(
+  prisma: { forTenant(): any; getTenantId(): string | null | undefined },
+  orderIds: readonly string[],
+  entitlements?: DisplayUnitEntitlements | null,
+): Promise<DisplayUnitCatalogs> {
+  const out = new Map<string, DisplayUnitCatalog>();
+  const tenantId = prisma.getTenantId();
+  if (!tenantId || orderIds.length === 0) return out;
+  try {
+    const readDb = prisma.forTenant();
+    const rows: Array<{ productId: string | null; order: { customerId: string | null } }> =
+      await readDb.orderItem.findMany({
+        where: { orderId: { in: [...orderIds] }, order: { tenantId } },
+        select: { productId: true, order: { select: { customerId: true } } },
+      });
+    const productsBy = new Map<string, Set<string>>();
+    for (const r of rows ?? []) {
+      const customerId = r.order?.customerId;
+      if (!customerId || !r.productId) continue;
+      productsBy.set(customerId, (productsBy.get(customerId) ?? new Set()).add(r.productId));
+    }
+    for (const [customerId, ids] of productsBy) {
+      const catalog = await loadCatalog(readDb, tenantId, customerId, [...ids], entitlements);
+      if (catalog) out.set(customerId, catalog);
+    }
+  } catch (err) {
+    log.warn(`delivery display catalog load skipped: ${(err as Error)?.message}`);
+    return new Map();
+  }
+  return out;
+}
+
+/**
+ * In the caller's tx, at the DRAFT -> issued transition on the delivery path: freeze the lines' display units from the
+ * catalogs {@link loadDeliveryDisplayCatalogs} loaded before the tx. Only the invoice's OWN rows are read (through `tx`, they
+ * may be uncommitted); NO catalog query and no flag read happens here. A customer with no loaded catalog writes nothing.
+ * A failed own-rows read is rethrown (it has aborted the tx; a 40001 must reach the retry).
+ */
+export async function freezeDraftFromCatalogs(
+  tx: any,
+  inv: { id: string; tenantId: string | null },
+  catalogs: DisplayUnitCatalogs | null | undefined,
+): Promise<void> {
+  if (!inv.tenantId || !catalogs || catalogs.size === 0) return;
+  const own = await tx.invoice.findFirst({
+    where: { id: inv.id, tenantId: inv.tenantId },
+    select: { customerId: true },
+  });
+  const catalog = own?.customerId ? catalogs.get(own.customerId) : undefined;
+  if (!catalog) return;
+  const items: Array<{ id: string; productId: string | null }> = await tx.invoiceItem.findMany({
+    where: { invoiceId: inv.id, invoiceUnitFactor: null, invoice: { tenantId: inv.tenantId } },
+    select: { id: true, productId: true },
+  });
+  if (!items.length) return;
+  const views = viewsFromCatalog(
+    catalog,
+    items.map((i) => i.productId).filter((p): p is string => !!p),
+  );
+  const units = new Map<string, InvoiceDisplayUnitView>();
+  for (const it of items) {
+    if (it.productId) units.set(it.id, { ...(views.get(it.productId) ?? legacy()) });
+  }
   await writeIssueDisplayUnits(tx, inv.id, units);
 }
 

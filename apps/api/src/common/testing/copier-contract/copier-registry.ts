@@ -56,8 +56,8 @@ export const INFRA: Record<Model, string> = {
  */
 const P0A_LABELS: Record<string, GapRef> = { baseLabel: "unfiled", packLabel: "unfiled" };
 /**
- * SA-827: the invoice-unit snapshot columns are written ONLY by the issue snapshot (snapshotDisplayUnitsAtIssue, on the
- * DRAFT -> issued transition), never by a copier. Any copy into a new DRAFT leaves them null (reset): the new invoice
+ * SA-827: the invoice-unit snapshot columns are written ONLY by the issue snapshot (writeIssueDisplayUnits in
+ * invoice-display-unit.ts, on the DRAFT -> issued transition), never by a copier. Any copy into a new DRAFT leaves them null (reset): the new invoice
  * snapshots its own display unit when it is first issued.
  */
 const INVOICE_UNIT_RESET = "invoiceUnitLabel invoiceUnitFactor";

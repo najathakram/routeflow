@@ -42,6 +42,45 @@ describe("invoiceDisplayLines", () => {
     expect(r.groupTotal).toEqual({ description: "Acme Mixed Box", amount: 60.02 });
     expect(r.categoryTax).toBeNull();
   });
+  describe("P1 drift: the rows never lose or add a cent (a per-row Math.round split would)", () => {
+    const equalParts = (n: number, subtotal: number) => ({
+      item: {
+        description: "Acme Mixed Box",
+        qty: n,
+        boxes: 1,
+        pieces: 0,
+        unitsPerBox: n,
+        unitPrice: subtotal,
+        subtotal,
+      },
+      comps: Array.from({ length: n }, (_, i) => ({
+        componentProductId: `c${i}`,
+        name: `Acme C${i}`,
+        qty: 1,
+        position: i,
+      })),
+    });
+    const amountsOf = (subtotal: number, n: number) => {
+      const { item: it, comps: cs } = equalParts(n, subtotal);
+      const r = invoiceDisplayLines(it, cs, PIECES);
+      expect(r.layout).toBe("components");
+      if (r.layout !== "components") throw new Error("not the components layout");
+      return r.rows.map((x) => x.amount);
+    };
+    const cents = (amounts: number[]) => Math.round(amounts.reduce((a, x) => a + x * 100, 0));
+
+    it("10.00 over 3 components of 1: exactly 3.34 + 3.33 + 3.33, summing to exactly 10.00 (per-row rounding gives 9.99)", () => {
+      const a = amountsOf(10, 3);
+      expect(a).toEqual([3.34, 3.33, 3.33]);
+      expect(cents(a)).toBe(1000);
+    });
+
+    it("0.05 over 1/1/1: exactly 0.02 + 0.02 + 0.01, summing to exactly 0.05 (per-row rounding gives 0.06)", () => {
+      const a = amountsOf(0.05, 3);
+      expect(a).toEqual([0.02, 0.02, 0.01]);
+      expect(cents(a)).toBe(5);
+    });
+  });
   it("category tax becomes one row", () => {
     const r = invoiceDisplayLines(
       { ...item, categoryTax: { name: "Tobacco", amount: 3.5 } },

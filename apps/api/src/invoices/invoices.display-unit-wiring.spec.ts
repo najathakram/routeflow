@@ -20,6 +20,8 @@ jest.mock("./invoice-display-unit", () => {
     resolveIssueDisplayUnits: jest.fn(),
     writeIssueDisplayUnits: jest.fn().mockResolvedValue(undefined),
     freezeDraftIssueUnits: jest.fn().mockResolvedValue(undefined),
+    freezeDraftFromCatalogs: jest.fn().mockResolvedValue(undefined),
+    loadDeliveryDisplayCatalogs: jest.fn().mockResolvedValue(new Map()),
     clearIssueDisplayUnits: jest.fn().mockResolvedValue(undefined),
   };
 });
@@ -47,8 +49,10 @@ import { SellingRestrictionsService } from "../selling-restrictions/selling-rest
 
 import {
   clearIssueDisplayUnits,
+  freezeDraftFromCatalogs,
   freezeDraftIssueUnits,
   itemsWithDisplayUnits,
+  loadDeliveryDisplayCatalogs,
   resolveDraftIssueUnits,
   resolveIssueDisplayUnits,
   writeIssueDisplayUnits,
@@ -236,21 +240,53 @@ describe("InvoicesService display-unit wiring (SA-827)", () => {
     const run = () =>
       (service as any).recordDeliveryPaymentInTx(prisma, new AfterCommit(), ["ord-1"], 100, "CASH");
 
-    it("a finalized DRAFT freezes: catalog on a separate (non-tx) client, own rows + write in the caller's tx", async () => {
+    const CATALOGS = new Map([[CUSTOMER_ID, {} as any]]);
+    const runWith = () =>
+      (service as any).recordDeliveryPaymentInTx(
+        prisma,
+        new AfterCommit(),
+        ["ord-1"],
+        100,
+        "CASH",
+        undefined,
+        CATALOGS,
+      );
+
+    it("a finalized DRAFT freezes from the catalogs loaded BEFORE the tx: nothing but the caller's tx is used (no second pooled connection)", async () => {
       arm(InvoiceStatus.DRAFT);
-      await run();
-      expect(freezeDraftIssueUnits).toHaveBeenCalledTimes(1);
-      const [readDb, tx, inv, entitlements] = (freezeDraftIssueUnits as jest.Mock).mock.calls[0];
-      expect(readDb).toBe(prisma.forTenant());
+      const forTenant = jest.spyOn(prisma, "forTenant");
+      await runWith();
+      expect(freezeDraftFromCatalogs).toHaveBeenCalledTimes(1);
+      const [tx, inv, catalogs] = (freezeDraftFromCatalogs as jest.Mock).mock.calls[0];
       expect(tx).toBe(prisma); // the caller's tx
       expect(inv).toMatchObject({ id: INVOICE_ID, tenantId: TENANT_ID });
+      expect(catalogs).toBe(CATALOGS);
+      expect(freezeDraftIssueUnits).not.toHaveBeenCalled(); // the old call took a readDb off the pool, inside the tx
+      expect(forTenant).not.toHaveBeenCalled();
+    });
+
+    it("loadUnitCatalogs (the pre-tx half the route calls) reads the catalog through the tenant client with the service's entitlements", async () => {
+      (loadDeliveryDisplayCatalogs as jest.Mock).mockClear();
+      const out = await service.loadUnitCatalogs(["ord-1", "ord-2"]);
+      expect(out).toBeInstanceOf(Map);
+      const [db, orderIds, entitlements] = (loadDeliveryDisplayCatalogs as jest.Mock).mock.calls[0];
+      expect(db).toBe(prisma); // forTenant() / getTenantId() are read inside, before any tx
+      expect(orderIds).toEqual(["ord-1", "ord-2"]);
       expect(entitlements).toBe((service as any).entitlements);
+    });
+
+    it("with no catalogs passed (an older caller) nothing is frozen and the payment still lands", async () => {
+      arm(InvoiceStatus.DRAFT);
+      await run();
+      expect(freezeDraftFromCatalogs).toHaveBeenCalledWith(prisma, expect.anything(), undefined);
+      expect(prisma.invoicePayment.create).toHaveBeenCalled();
     });
 
     it("an already issued invoice makes no freeze call", async () => {
       arm(InvoiceStatus.SENT);
-      await run();
+      await runWith();
       expect(freezeDraftIssueUnits).not.toHaveBeenCalled();
+      expect(freezeDraftFromCatalogs).not.toHaveBeenCalled();
     });
   });
 

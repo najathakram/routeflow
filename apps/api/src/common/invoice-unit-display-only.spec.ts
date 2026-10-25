@@ -20,7 +20,7 @@ const FORBIDDEN =
  * place that decides when a snapshot is written, so it must be added here on purpose.
  */
 const CALLER =
-  /\b(?:resolveLiveDisplayUnits|withItemDisplayUnits|resolveDraftIssueUnits|itemsWithDisplayUnits|resolveIssueDisplayUnits|writeIssueDisplayUnits|freezeDraftIssueUnits|clearIssueDisplayUnits|displayUnit)\b/;
+  /\b(?:resolveLiveDisplayUnits|withItemDisplayUnits|resolveDraftIssueUnits|itemsWithDisplayUnits|resolveIssueDisplayUnits|writeIssueDisplayUnits|freezeDraftIssueUnits|freezeDraftFromCatalogs|loadDeliveryDisplayCatalogs|clearIssueDisplayUnits|displayUnit)\b/;
 const CALLER_FILES = [
   "apps/api/src/invoices/invoices.service.ts",
   "apps/api/src/bookkeeping/bookkeeping.service.ts",
@@ -139,6 +139,8 @@ describe("G1: the invoice unit never reaches a money writer", () => {
       "resolveIssueDisplayUnits",
       "writeIssueDisplayUnits",
       "freezeDraftIssueUnits",
+      "freezeDraftFromCatalogs",
+      "loadDeliveryDisplayCatalogs",
       "clearIssueDisplayUnits",
       "displayUnit",
     ])
@@ -162,6 +164,8 @@ describe("G1: the invoice unit never reaches a money writer", () => {
       "resolveIssueDisplayUnits",
       "writeIssueDisplayUnits",
       "freezeDraftIssueUnits",
+      "freezeDraftFromCatalogs",
+      "loadDeliveryDisplayCatalogs",
       "clearIssueDisplayUnits",
     ]);
     const named = new Set<string>();
@@ -169,8 +173,11 @@ describe("G1: the invoice unit never reaches a money writer", () => {
     for (const f of CALLER_FILES) {
       const src = read(f);
       for (const m of src.matchAll(new RegExp(CALLER.source, "g"))) named.add(m[0]);
-      writeCalls += (src.match(/\b(?:writeIssueDisplayUnits|freezeDraftIssueUnits)\(/g) ?? [])
-        .length;
+      writeCalls += (
+        src.match(
+          /\b(?:writeIssueDisplayUnits|freezeDraftIssueUnits|freezeDraftFromCatalogs)\(/g,
+        ) ?? []
+      ).length;
     }
     expect([...named].filter((n) => !ALLOWED.has(n))).toEqual([]);
     // markSent, the inline flip in createInvoiceFromOrderWithTenant, recordDeliveryPaymentInTx, bookkeeping recordPayment

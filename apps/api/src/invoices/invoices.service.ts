@@ -52,13 +52,7 @@ import {
 } from "@routeflow/pricing";
 import { computeDepositFields } from "./deposit-fields";
 import { deriveInvoiceDetailFields, revisedAtByInvoice } from "./invoice-detail-read";
-import {
-  clearIssueDisplayUnits,
-  freezeDraftIssueUnits,
-  itemsWithDisplayUnits,
-  resolveDraftIssueUnits,
-  writeIssueDisplayUnits,
-} from "./invoice-display-unit";
+import * as du from "./invoice-display-unit"; // SA-827 display units
 import {
   HANDOVER_SOLD_BY_SELECT,
   seesHandOverStamp,
@@ -2605,7 +2599,7 @@ export class InvoicesService {
           },
         });
         // SA-827: no tx on the inline flip: resolve and write on one client (errors swallowed, line reads legacy).
-        await freezeDraftIssueUnits(this.prisma, this.prisma, issued, this.entitlements);
+        await du.freezeDraftIssueUnits(this.prisma, this.prisma, issued, this.entitlements);
         return [issued];
       }
     }
@@ -3063,7 +3057,7 @@ export class InvoicesService {
         (await this.resolveTenantInvoiceDefaults()).timezone,
       ),
       revisedAt: (await revisedAtByInvoice(this.prisma.forTenant(), [id])).get(id) ?? null,
-      items: await itemsWithDisplayUnits(this.prisma.forTenant(), inv, this.entitlements), // #2717 M3 + SA-827
+      items: await du.itemsWithDisplayUnits(this.prisma.forTenant(), inv, this.entitlements), // #2717 M3 + SA-827
       payments: withNoLongerFits(inv).payments, // W-769: each row's derived noLongerFits flag
       hideOriginalPrice,
       paidAtSale: isPaidAtSale(inv), // row 401: a counter sale paid at the till shows no due date / terms
@@ -3513,7 +3507,7 @@ export class InvoicesService {
    */
   private async markSent(id: string, orderId: string | null, emailSent = false) {
     const tz = await tenantTimeZone(this.prisma); // SA-495a: the tenant's due day, once per call
-    const units = await resolveDraftIssueUnits(this.prisma.forTenant(), id, this.entitlements); // SA-827: resolved off-tx (no catalog read in the snapshot); written below only at DRAFT -> issued
+    const units = await du.resolveDraftIssueUnits(this.prisma.forTenant(), id, this.entitlements); // SA-827: resolved off-tx (no catalog read in the snapshot); written below only at DRAFT -> issued
     return retryCreditTx(`invoice mark-sent id=${id}`, () =>
       this.prisma.tenantTransaction(
         async (tx) => {
@@ -3532,7 +3526,7 @@ export class InvoicesService {
             where: { id },
             data: { status: nextStatus, sentAt: locked.sentAt ?? new Date() }, // #2088: a re-send keeps the FIRST sentAt
           });
-          await writeIssueDisplayUnits(tx, id, locked.status === "DRAFT" ? units : null);
+          await du.writeIssueDisplayUnits(tx, id, locked.status === "DRAFT" ? units : null);
           const auto = await runSendCredits(this.creditNotes, tx, id, issuing, updated);
           // A credit pre-applied at order time can already cover this invoice. Auto-apply
           // returns {applied:0, invoiceStatus:null} on a zero balance, which used to leave
@@ -4037,7 +4031,7 @@ export class InvoicesService {
         where: { id },
         data: { status: InvoiceStatus.DRAFT, sentAt: null, pdfUrl: null },
       });
-      await clearIssueDisplayUnits(tx, id); // SA-827: a DRAFT renders live; a re-issue freezes afresh
+      await du.clearIssueDisplayUnits(tx, id); // SA-827: a DRAFT renders live; a re-issue freezes afresh
       await this.commissionEngine.syncInvoiceCommissionSafe(id, tx);
       return reverted;
     });
@@ -4515,6 +4509,11 @@ export class InvoicesService {
     );
   }
 
+  /** SA-827: the pre-tx half of the delivery freeze (the route calls it before its tx opens; see recordDeliveryPaymentInTx). */
+  loadUnitCatalogs(orderIds: string[]) {
+    return du.loadDeliveryDisplayCatalogs(this.prisma, orderIds, this.entitlements);
+  }
+
   /**
    * Record a driver-collected payment at stop completion, resolving the target
    * invoice(s) SERVER-side from the delivered orders. The mobile client cannot
@@ -4549,6 +4548,7 @@ export class InvoicesService {
     amount: number,
     method: string,
     context?: { runId?: string; stopId?: string },
+    unitCatalogs?: du.DisplayUnitCatalogs, // SA-827: loaded BEFORE the tx (loadUnitCatalogs); no catalog read inside it
   ): Promise<{
     applied: number;
     invoiceIds: string[];
@@ -4655,8 +4655,7 @@ export class InvoicesService {
           ...(wasDraft ? { sentAt: new Date() } : {}),
         },
       });
-      if (wasDraft)
-        await freezeDraftIssueUnits(this.prisma.forTenant(), tx, inv, this.entitlements); // SA-827
+      if (wasDraft) await du.freezeDraftFromCatalogs(tx, inv, unitCatalogs); // SA-827
       await this.commissionEngine.syncInvoiceCommissionSafe(inv.id, tx);
       after.defer(this.gateway).emitInvoiceUpdated(this.prisma.getTenantId(), {
         invoiceId: inv.id,
