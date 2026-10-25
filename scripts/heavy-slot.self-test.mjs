@@ -33,6 +33,10 @@ import {
   formatWaitLine,
   historyRecord,
   nextGrant,
+  cpuPctFromTimes,
+  loadOverReason,
+  parseLoadPct,
+  sampleMachineLoad,
   orderTickets,
   holderOverCap,
   parseMaxHoldMs,
@@ -43,7 +47,7 @@ import {
   staleReason,
   ticketName,
   trimHistoryText,
-  withHeavySlot,
+  withHeavySlot as realWithHeavySlot,
 } from "./lib/heavy-slot.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -60,6 +64,13 @@ const check = (name, got, want) => {
     `${ok ? "  ok  " : "  FAIL"} ${name}${ok ? "" : `\n        got  ${JSON.stringify(got)}\n        want ${JSON.stringify(want)}`}`,
   );
 };
+
+// The owner's load cap reads the real machine; the older cases are about queueing, so they run with the sampler
+// stubbed idle (and the child CLIs with the cap disabled). The K cases inject their own sampler.
+process.env.RF_HEAVY_SLOT_MAX_CPU_PCT = "100";
+process.env.RF_HEAVY_SLOT_MAX_MEM_PCT = "100";
+const IDLE = async () => ({ cpuPct: 0, memPct: 0 });
+const withHeavySlot = (opts, fn) => realWithHeavySlot({ sampleLoad: IDLE, ...opts }, fn);
 
 const HOST = os.hostname();
 const tmpDirs = [];
@@ -807,6 +818,7 @@ const t=setInterval(()=>{let n=[];try{n=fs.readdirSync(q)}catch{}if(n.length||Da
   delete process.env.RF_HEAVY_SLOT_TOKEN;
   Object.assign(process.env, {
     RF_HEAVY_SLOT_DIR: dir,
+    RF_HEAVY_SLOTS: "1", // the host may export 2; the ghost holds the only slot here
     RF_HEAVY_SLOT_POLL_MS: "10",
     RF_HEAVY_SLOT_MAX_WAIT_MIN: "0.0005",
   });
@@ -1062,6 +1074,213 @@ const t=setInterval(()=>{let n=[];try{n=fs.readdirSync(q)}catch{}if(n.length||Da
     "J4 a job that never returns is released at the hard deadline: capped history, lock gone",
     [hung, existsSync(lockFile(dir4)), history(dir4)[0]?.capped],
     [HOLD_CAP_EXIT_CODE, false, true],
+  );
+}
+
+// K: owner cap (10-25): the slot also waits while the machine's CPU or memory is above a threshold.
+// Every case injects the sampler (cfg.sampleLoad); none reads the real machine.
+check(
+  "K1 parseLoadPct: unset/invalid/out of range -> 80; a valid percent is kept",
+  [
+    parseLoadPct(undefined),
+    parseLoadPct(""),
+    parseLoadPct("abc"),
+    parseLoadPct("0"),
+    parseLoadPct("-5"),
+    parseLoadPct("101"),
+    parseLoadPct("70"),
+    parseLoadPct("92.5"),
+    parseLoadPct("100"),
+  ],
+  [80, 80, 80, 80, 80, 80, 70, 92.5, 100],
+);
+check(
+  "K2 loadOverReason: names the metric above its limit; at the limit is fine",
+  [
+    loadOverReason({ cpuPct: 80, memPct: 80 }, { maxCpuPct: 80, maxMemPct: 80 }),
+    loadOverReason({ cpuPct: 81, memPct: 10 }, { maxCpuPct: 80, maxMemPct: 80 }),
+    loadOverReason({ cpuPct: 10, memPct: 85.4 }, { maxCpuPct: 80, maxMemPct: 80 }),
+    loadOverReason({ cpuPct: 99, memPct: 99 }, { maxCpuPct: 100, maxMemPct: 100 }),
+  ],
+  [null, "cpu 81% > 80%", "memory 85% > 80%", null],
+);
+check(
+  "K3 cpuPctFromTimes: busy share of the total tick delta, across cores; no delta -> 0",
+  [
+    cpuPctFromTimes(
+      [
+        { idle: 100, total: 200 },
+        { idle: 100, total: 200 },
+      ],
+      [
+        { idle: 150, total: 300 },
+        { idle: 100, total: 300 },
+      ],
+    ),
+    cpuPctFromTimes([{ idle: 5, total: 10 }], [{ idle: 5, total: 10 }]),
+  ],
+  [75, 0],
+);
+{
+  const cpus = (idle, total) => [{ times: { idle, user: total - idle, nice: 0, sys: 0, irq: 0 } }];
+  const snaps = [cpus(0, 100), cpus(50, 200)]; // 50 idle of 100 ticks -> 50% busy
+  let i = 0;
+  const waited = [];
+  const r = await sampleMachineLoad({
+    cpus: () => snaps[i++],
+    freemem: () => 25,
+    totalmem: () => 100,
+    sleep: async (ms) => waited.push(ms),
+    sampleMs: 3000,
+  });
+  check(
+    "K4 sampleMachineLoad: CPU over the sample window, memory used share, injected clock",
+    [r, waited],
+    [{ cpuPct: 50, memPct: 75 }, [3000]],
+  );
+}
+{
+  // K5: over the cap -> no grant even with a free slot; under it -> runs; ONE wait line while it waits
+  const dir = mkTmp();
+  const readings = [
+    { cpuPct: 95, memPct: 40 },
+    { cpuPct: 90, memPct: 40 },
+    { cpuPct: 30, memPct: 40 },
+  ];
+  let n = 0;
+  const lines = [];
+  let ranAfter = -1;
+  const out = await withHeavySlot(
+    {
+      label: "capped",
+      branch: "b",
+      dir,
+      env: {},
+      ...FAST,
+      waitLogMs: 1e9,
+      log: (m) => lines.push(m),
+      sampleLoad: async () => readings[Math.min(n++, readings.length - 1)],
+    },
+    async () => {
+      ranAfter = n;
+      return 7;
+    },
+  );
+  check(
+    "K5 over the cap it waits (one wait line), under it runs and the result passes through",
+    [
+      out,
+      ranAfter,
+      lines.length,
+      /cpu 95% > 80%/.test(lines[0] ?? ""),
+      /load|machine/i.test(lines[0] ?? ""),
+    ],
+    [7, 3, 1, true, true],
+  );
+}
+{
+  // K6: sustained overload ends by the existing max wait: HeavySlotTimeout, nothing run, ticket gone
+  const dir = mkTmp();
+  let ran = false;
+  let err = null;
+  await withHeavySlot(
+    {
+      label: "hot",
+      branch: "b",
+      dir,
+      env: {},
+      ...FAST,
+      maxWaitMs: 150,
+      ...NO_LOG,
+      sampleLoad: async () => ({ cpuPct: 99, memPct: 99 }),
+    },
+    async () => {
+      ran = true;
+    },
+  ).catch((e) => {
+    err = e;
+  });
+  check(
+    "K6 sustained overload hits the max wait: HeavySlotTimeout, fn never ran, no ticket or lock left",
+    [err instanceof HeavySlotTimeout, ran, queued(dir).length, existsSync(lockFile(dir))],
+    [true, false, 0, false],
+  );
+}
+{
+  // K7: a sampler that throws must not wedge the slot (fail open: the owner cap is a guard, not a gate on correctness)
+  const dir = mkTmp();
+  let ran = false;
+  await withHeavySlot(
+    {
+      label: "blind",
+      branch: "b",
+      dir,
+      env: {},
+      ...FAST,
+      ...NO_LOG,
+      sampleLoad: async () => {
+        throw new Error("no counters");
+      },
+    },
+    async () => {
+      ran = true;
+    },
+  );
+  check("K7 a sampler that throws fails open: the job runs", ran, true);
+}
+{
+  // K8: env knobs reach the decision; a holder waiting behind another job is not sampled until it is first in line
+  const dir = mkTmp();
+  let calls = 0;
+  let ran = false;
+  await withHeavySlot(
+    {
+      label: "env",
+      branch: "b",
+      dir,
+      env: { RF_HEAVY_SLOT_MAX_CPU_PCT: "95", RF_HEAVY_SLOT_MAX_MEM_PCT: "90" },
+      ...FAST,
+      ...NO_LOG,
+      sampleLoad: async () => {
+        calls++;
+        return { cpuPct: 92, memPct: 89 };
+      },
+    },
+    async () => {
+      ran = true;
+    },
+  );
+  check(
+    "K8 RF_HEAVY_SLOT_MAX_CPU_PCT / _MEM_PCT raise the limits: 92% cpu / 89% mem passes at 95 / 90",
+    [ran, calls],
+    [true, 1],
+  );
+  const dirQ = mkTmp();
+  ghost(dirQ, { startedAt: Date.now() - 1000 });
+  let sampledWhileBlocked = 0;
+  const w = withHeavySlot(
+    {
+      label: "queued",
+      branch: "b",
+      dir: dirQ,
+      env: {},
+      ...FAST,
+      ...NO_LOG,
+      sampleLoad: async () => {
+        sampledWhileBlocked++;
+        return { cpuPct: 1, memPct: 1 };
+      },
+    },
+    async () => {},
+  );
+  await sleep(80);
+  const whileBlocked = sampledWhileBlocked;
+  rmSync(lockFile(dirQ), { force: true });
+  await w;
+  check(
+    "K9 no sample is taken while the slot is held by someone else (sampling costs ~3 s)",
+    [whileBlocked, sampledWhileBlocked >= 1],
+    [0, true],
   );
 }
 
