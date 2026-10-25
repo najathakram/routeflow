@@ -8,6 +8,8 @@
  * pinned or the published catalog version) and the row's override columns.
  */
 
+import { roundMoney } from "@routeflow/pricing";
+
 export type PlanPriceSource = "override" | "catalog";
 
 export type PlanPriceResolution =
@@ -28,8 +30,8 @@ export function resolvePlanPrice(
   if (override?.monthly != null || override?.annual != null) {
     const monthly = override.monthly != null ? Number(override.monthly) : catalogMonthly;
     if (monthly == null) return { ok: false, reason: "annual_override_without_monthly" };
-    // (annual = monthly x 10 is unrounded here; toCents rounds it to cents before any Stripe amount is built)
-    const annual = override.annual != null ? Number(override.annual) : monthly * 10;
+    // Row 280: annual = monthly x 10 is whole cents (33.33 x 10 is 333.29999999999995 unrounded).
+    const annual = override.annual != null ? Number(override.annual) : roundMoney(monthly * 10);
     return { ok: true, monthly, annual, source: "override" };
   }
 
@@ -37,7 +39,7 @@ export function resolvePlanPrice(
   return {
     ok: true,
     monthly: catalogMonthly,
-    annual: catalogAnnual != null ? catalogAnnual : catalogMonthly * 10,
+    annual: catalogAnnual != null ? catalogAnnual : roundMoney(catalogMonthly * 10), // row 280
     source: "catalog",
   };
 }

@@ -33,3 +33,38 @@ describe("resolvePlanPrice — the one price rule checkout and the plan-change p
     });
   });
 });
+
+describe("row 280: annual = monthly x 10 is whole cents, never float noise", () => {
+  // 33.33 * 10 is 333.29999999999995 and 19.99 * 10 is 199.89999999999998 in binary floating point.
+  it.each([
+    [33.33, 333.3],
+    [19.99, 199.9],
+    [0.07, 0.7],
+  ])("a catalog monthly of %s has an annual of exactly %s", (monthly, annual) => {
+    const r = resolvePlanPrice({ monthlyPrice: monthly }, null);
+    expect(r).toMatchObject({ ok: true, source: "catalog", monthly, annual });
+  });
+
+  it.each([
+    [33.33, 333.3],
+    [19.99, 199.9],
+  ])(
+    "a custom monthly fee of %s with no annual fee has an annual of exactly %s",
+    (monthly, annual) => {
+      const r = resolvePlanPrice({ monthlyPrice: 99 }, { monthly });
+      expect(r).toMatchObject({ ok: true, source: "override", monthly, annual });
+    },
+  );
+
+  it("an explicit annual price is used as given, and a deliberate 0 stays 0", () => {
+    expect(resolvePlanPrice({ monthlyPrice: 33.33, annualPrice: 300 }, null)).toMatchObject({
+      annual: 300,
+    });
+    expect(resolvePlanPrice({ monthlyPrice: 33.33, annualPrice: 0 }, null)).toMatchObject({
+      annual: 0,
+    });
+    expect(resolvePlanPrice({ monthlyPrice: 99 }, { monthly: 33.33, annual: 0 })).toMatchObject({
+      annual: 0,
+    });
+  });
+});
