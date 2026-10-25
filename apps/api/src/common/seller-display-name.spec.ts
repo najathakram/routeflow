@@ -48,7 +48,11 @@ describe("sellerDisplayName", () => {
  */
 describe("no hand-written seller display name (pin)", () => {
   const SRC = path.resolve(__dirname, "..");
-  const COPY = /businessName\s*(?:\?\?|\|\|)\s*(?:[\w.?]*\.)?tenant\??\.name\b/;
+  // A copy is either a fold onto the TENANT's name, or a fold on a tenant-config receiver's businessName onto ANY
+  // non-null fallback ("RouteFlow", a settings key ...): every seller name goes through the helper with its fallback as
+  // the third argument. `?? null` / `?? undefined` are pass-throughs, not folds. A customer's businessName is not a seller.
+  const COPY =
+    /businessName\s*(?:\?\?|\|\|)\s*(?:[\w.?]*\.)?tenant\??\.name\b|\b(?:config|cfg|tenantConfig|\w+\??\.config)\??\.businessName\s*(?:\?\?|\|\|)\s*(?!\s|null\b|undefined\b)/;
   const walk = (dir: string): string[] =>
     fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
       const p = path.join(dir, e.name);
@@ -78,6 +82,10 @@ describe("no hand-written seller display name (pin)", () => {
       "name: tenant.config?.businessName || tenant.name,",
       "const s = config?.businessName ?? tenant?.name ?? 'x';",
       "name: config?.businessName ?? link.tenant.name,",
+      'return cfg?.businessName ?? "RouteFlow";',
+      'const n = config?.businessName || "RouteFlow tenant";',
+      'businessName: config?.businessName || settings["settings.businessName"],',
+      "const n = t.config?.businessName ?? fallbackName;",
     ]) {
       expect(COPY.test(line)).toBe(true);
     }
@@ -87,5 +95,8 @@ describe("no hand-written seller display name (pin)", () => {
     expect(
       COPY.test("const name = primaryLink?.customer?.businessName ?? primaryCustomerId;"),
     ).toBe(false);
+    // pass-throughs stay legal
+    expect(COPY.test("businessName: t.config?.businessName ?? null,")).toBe(false);
+    expect(COPY.test("author={tenant?.businessName ?? undefined}")).toBe(false);
   });
 });
