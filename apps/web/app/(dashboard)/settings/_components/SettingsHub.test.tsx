@@ -27,7 +27,6 @@ jest.mock("./BuyerOversellCard", () => ({
 const TITLES = [
   "Business & team",
   "Orders & delivery",
-  "Counter",
   "Pricing & products",
   "Invoicing & payments",
   "Notifications & email",

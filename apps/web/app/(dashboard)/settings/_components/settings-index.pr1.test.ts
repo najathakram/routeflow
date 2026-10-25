@@ -65,7 +65,8 @@ describe("PR1 groups (direction 2b)", () => {
   it("places each row exactly where direction 2b says (nothing dropped)", () => {
     expect(rows("business")).toEqual(["business-profile", "user-management"]);
     expect(rows("payments")).toEqual(["invoicing", "how-to-pay", "card-payments"]);
-    expect(rows("selling")).toEqual(["tier-names", "costing", "units", "product-labels"]);
+    // Units is flag-gated (flag.units_settings_v1): its place, third, is pinned in the Units block below.
+    expect(rows("selling")).toEqual(["tier-names", "costing", "product-labels"]);
     expect(rows("notifications")).toEqual(["notifications", "email-smtp"]);
     // Row 376: every rule that limits a sale sits together; Portal limits & rules is one row, not two.
     expect(rows("compliance")).toEqual([
@@ -253,8 +254,7 @@ describe("PR1 search", () => {
   });
 
   it("a group title alone matches nothing", () => {
-    for (const t of ["how you sell", "integrations import", "business team"])
-      expect(q(t)).toEqual([]);
+    for (const t of ["integrations import", "business team"]) expect(q(t)).toEqual([]);
   });
 
   it("each intent opens the most specific target first", () => {

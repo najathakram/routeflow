@@ -465,7 +465,7 @@ describe("rail (xl and up)", () => {
     const nav = screen.getByRole("navigation", { name: "Settings" });
     expect(within(nav).getByLabelText("Search settings")).toBeInTheDocument();
     expect(within(nav).getByTestId("business-card-rail")).toBeInTheDocument();
-    expect(within(nav).getAllByTestId(/^settings-group-/)).toHaveLength(7);
+    expect(within(nav).getAllByTestId(/^settings-group-/)).toHaveLength(8);
   });
 
   it("the first focusable in the rail skips to the content, which is a focus target", () => {
