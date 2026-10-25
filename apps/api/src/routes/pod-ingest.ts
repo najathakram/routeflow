@@ -1,5 +1,5 @@
 import { BadRequestException, ForbiddenException } from "@nestjs/common";
-import { randomUUID } from "crypto";
+import { createHash, randomUUID } from "crypto";
 import { compressImage } from "../storage/compress.util";
 import {
   parseImageDataUrl,
@@ -62,12 +62,23 @@ export async function ingestPodDataUrl(
   }
 }
 
+/**
+ * Row 108 (#3723 review): the artifact id of one POD slot under an idempotency key. The completion ingests BEFORE it
+ * takes the stop's lock, so a 503 LOCK_UNAVAILABLE retry (same key, SA-706h) re-uploads; a name derived from the key
+ * makes that retry overwrite the same object instead of orphaning the first. Hex, so it is a SAFE_SEGMENT.
+ */
+const slotArtifactId = (idempotencyKey: string, slot: string): string =>
+  createHash("sha256").update(`${idempotencyKey}:${slot}`).digest("hex").slice(0, 32);
+
 /** Rewrite a completion payload's data-URL artifacts to storage keys in place. */
 export async function ingestPodCapture(
   deps: PodIngestDeps,
   dto: { signatureUrl?: string; podPhotoUrls?: string[] },
   stopId: string,
+  opts: { idempotencyKey?: string } = {},
 ): Promise<void> {
+  const idOf = (slot: string) =>
+    opts.idempotencyKey ? slotArtifactId(opts.idempotencyKey, slot) : undefined;
   // #2542/#2550: every schemeless value is a storage key and must be exactly this tenant's pod key
   // for THIS stop — refused (400) before anything is uploaded or written.
   // #2585 / SA-519: the 400 names the field (a blank entry is refused, never skipped).
@@ -85,13 +96,19 @@ export async function ingestPodCapture(
     }
   }
   if (dto.signatureUrl) {
-    const key = await ingestPodDataUrl(deps, dto.signatureUrl, stopId, "signature");
+    const key = await ingestPodDataUrl(
+      deps,
+      dto.signatureUrl,
+      stopId,
+      "signature",
+      idOf("signature"),
+    );
     if (key) dto.signatureUrl = key;
   }
   if (dto.podPhotoUrls?.length) {
     const rewritten: string[] = [];
-    for (const value of dto.podPhotoUrls) {
-      const key = await ingestPodDataUrl(deps, value, stopId, "photo");
+    for (const [i, value] of dto.podPhotoUrls.entries()) {
+      const key = await ingestPodDataUrl(deps, value, stopId, "photo", idOf(`photo-${i}`));
       rewritten.push(key ?? value);
     }
     dto.podPhotoUrls = rewritten;
