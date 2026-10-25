@@ -322,6 +322,45 @@ describe("row 672 / SA-844: a sale whose state can't be resolved names its remed
     expect(body).not.toHaveProperty("remedy");
   });
 
+  it("R4b: a mixed refusal (one BLOCK line, one INDETERMINATE no-state line) never tells the buyer to add a state", async () => {
+    // p1 waits on the buyer's state (state ban, no usable address); p2 is refused outright (federal ban): fixing the
+    // state would not unblock p2, so the buyer must get the ordinary copy and no remedy.
+    rules(
+      LEGAL_BAN,
+      rule({ id: "fed", categoryId: "cat-fed", jurisdiction: "FEDERAL", states: [] }),
+    );
+    prisma.productCategory.findMany.mockResolvedValue([
+      { id: "cat-thc", name: "THC" },
+      { id: "cat-fed", name: "Fed" },
+    ]);
+    prisma.product.findMany.mockResolvedValue([
+      {
+        id: "p1",
+        name: "Gummies",
+        parentProductId: null,
+        categoryLabels: [{ categoryId: "cat-thc", mode: "INCLUDE" }],
+      },
+      {
+        id: "p2",
+        name: "Tonic",
+        parentProductId: null,
+        categoryLabels: [{ categoryId: "cat-fed", mode: "INCLUDE" }],
+      },
+    ]);
+    customer([]);
+    const params = {
+      ...buyerCreate("ROUTE"),
+      lines: [{ productId: "p1" }, { productId: "p2" }],
+    };
+    const body = await reject(params);
+    expect(body.message).not.toBe(PORTAL_NEEDS_STATE_MESSAGE);
+    expect(body).not.toHaveProperty("remedy");
+    expect(body.blockedLines).toEqual([
+      { productId: "p1", productName: "Gummies" },
+      { productId: "p2", productName: "Tonic" },
+    ]);
+  });
+
   it("R5: no customer at all (an order-less staff judgement) is INDETERMINATE with no remedy to offer", async () => {
     const body = await reject(staff({ customerId: null }));
     expect(body.lines).toEqual([expect.objectContaining({ outcome: "INDETERMINATE" })]);

@@ -89,6 +89,7 @@ module.exports = {
     // SA-817 A: the one persisted-submit-key rule for a draft (pure, no imports), same subpath trick.
     "^@routeflow/types/draft-submit-key$": "<rootDir>/../../packages/types/draft-submit-key.ts",
     // Row 505: the fulfilment capability shape + UNSET fallback (pure, no imports), same subpath trick.
+    "^@routeflow/types/api/restrictions$": "<rootDir>/../../packages/types/api/restrictions.ts",
     "^@routeflow/types/api/fulfilment$": "<rootDir>/../../packages/types/api/fulfilment.ts",
     "^expo-secure-store$": "<rootDir>/__tests__/__mocks__/expo-secure-store.js",
     // #2653: the shell bridge is pure TS (zod only) — resolve it to SOURCE, ahead of the ui stub.
