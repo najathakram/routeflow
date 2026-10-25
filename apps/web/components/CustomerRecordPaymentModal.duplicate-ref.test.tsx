@@ -4,7 +4,7 @@ import { clearPaymentKeyRegistry } from "@routeflow/types/payment-submit-key";
 import { CustomerRecordPaymentModal } from "./CustomerRecordPaymentModal";
 
 /**
- * Row 498 (SA-837): 409 DUPLICATE_PAYMENT_REF on the customer Record Payment dialog. The toast names the existing
+ * Row 498 (SA-837): 409 DUPLICATE_PAYMENT_REF on the customer Record payment dialog. The toast names the existing
  * payment (date, amount, invoice) in the one shared sentence and, for a staff role, carries a "Record anyway"
  * action that resends the SAME form with `recordAnyway: true`. A non-staff role gets the sentence and no action.
  */
@@ -51,7 +51,7 @@ function open() {
   renderWithProviders(<CustomerRecordPaymentModal customerId="cust-1" onClose={jest.fn()} />);
   fireEvent.change(screen.getAllByPlaceholderText("0.00")[0], { target: { value: "150" } });
 }
-const save = () => fireEvent.click(screen.getByRole("button", { name: "Save as Paid" }));
+const save = () => fireEvent.click(screen.getByRole("button", { name: "Save as paid" }));
 const bodyOf = (i: number) => mockPost.mock.calls[i][1] as Record<string, unknown>;
 
 describe("CustomerRecordPaymentModal: duplicate payment reference (row 498)", () => {

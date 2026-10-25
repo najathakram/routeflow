@@ -256,8 +256,8 @@ export function CustomerRecordPaymentModal({
         <div className="flex items-center justify-between border-b border-surface-border px-6 py-4">
           <div className="flex items-center gap-2">
             <Wallet className="h-5 w-5 text-brand-500" />
-            <h2 className="text-lg font-semibold text-navy">
-              Record Payment{customerName ? ` — ${customerName}` : ""}
+            <h2 className="text-base font-semibold text-navy">
+              Record payment{customerName ? ` — ${customerName}` : ""}
             </h2>
           </div>
           <button onClick={onClose} className="text-navy/70 hover:text-navy text-xl">
@@ -312,7 +312,7 @@ export function CustomerRecordPaymentModal({
               <p className="mt-1 text-xs text-navy/50">{BANK_DATE_HELP}</p>
             </div>
             <div>
-              <label className="mb-1.5 block text-sm font-medium text-navy">Payment Mode *</label>
+              <label className="mb-1.5 block text-sm font-medium text-navy">Payment method *</label>
               <select
                 value={method}
                 onChange={(e) => setMethod(e.target.value as SelectablePaymentMethod)}
@@ -331,7 +331,7 @@ export function CustomerRecordPaymentModal({
                 type="text"
                 value={reference}
                 onChange={(e) => setReference(e.target.value)}
-                placeholder="Check #, transaction ID..."
+                placeholder="Check #, transaction ID…"
                 className={fieldCls}
               />
             </div>
@@ -342,7 +342,7 @@ export function CustomerRecordPaymentModal({
                 onChange={(e) => setNotes(e.target.value)}
                 rows={2}
                 className={`${fieldCls} resize-none`}
-                placeholder="Internal notes..."
+                placeholder="Internal notes…"
               />
             </div>
             <div className="col-span-2">
@@ -476,7 +476,7 @@ export function CustomerRecordPaymentModal({
             loading={record.isPending}
             disabled={totals.overAllocated || statusCheck.unknown}
           >
-            Save as Paid
+            Save as paid
           </Button>
         </div>
       </div>

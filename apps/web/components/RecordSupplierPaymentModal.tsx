@@ -162,7 +162,7 @@ export function RecordSupplierPaymentModal({
           <div className="flex items-center gap-2">
             <Receipt className="h-5 w-5 text-brand-500" />
             <h2 className="text-base font-semibold text-navy">
-              Record Payment{supplierName ? ` — ${supplierName}` : ""}
+              Record payment{supplierName ? ` — ${supplierName}` : ""}
             </h2>
           </div>
           <button
@@ -198,7 +198,7 @@ export function RecordSupplierPaymentModal({
               />
             </div>
             <div>
-              <label className="mb-1.5 block text-sm font-medium text-navy">Payment Mode *</label>
+              <label className="mb-1.5 block text-sm font-medium text-navy">Payment method *</label>
               <select
                 value={method}
                 onChange={(e) => setMethod(e.target.value as SupplierPaymentMethod)}
@@ -217,7 +217,7 @@ export function RecordSupplierPaymentModal({
                 type="text"
                 value={reference}
                 onChange={(e) => setReference(e.target.value)}
-                placeholder="Check #, transaction ID..."
+                placeholder="Check #, transaction ID…"
                 className={fieldCls}
               />
             </div>
@@ -228,7 +228,7 @@ export function RecordSupplierPaymentModal({
                 onChange={(e) => setNotes(e.target.value)}
                 rows={2}
                 className={`${fieldCls} resize-none`}
-                placeholder="Internal notes..."
+                placeholder="Internal notes…"
               />
             </div>
           </div>
@@ -326,7 +326,7 @@ export function RecordSupplierPaymentModal({
             loading={record.isPending}
             disabled={totals.overAllocated}
           >
-            Record Payment
+            Record payment
           </Button>
         </div>
       </div>

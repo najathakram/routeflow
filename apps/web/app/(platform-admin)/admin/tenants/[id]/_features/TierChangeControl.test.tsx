@@ -69,7 +69,7 @@ beforeEach(() => {
 describe("TierChangeControl — preview before apply (B539)", () => {
   it("cannot start a change to the plan the tenant is already on", () => {
     renderControl();
-    expect(screen.getByRole("button", { name: "Change Plan" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Change plan" })).toBeDisabled();
   });
 
   it("previews first: nothing is applied until Confirm", async () => {
@@ -77,7 +77,7 @@ describe("TierChangeControl — preview before apply (B539)", () => {
     const { onChangePlan } = renderControl();
 
     pickPlan("STARTER");
-    fireEvent.click(screen.getByRole("button", { name: "Change Plan" }));
+    fireEvent.click(screen.getByRole("button", { name: "Change plan" }));
 
     expect(await screen.findByText("Preview plan change", { selector: "h3" })).toBeInTheDocument();
     expect(mockPreview).toHaveBeenCalledWith(TENANT_ID, { planKey: "STARTER" });
@@ -89,7 +89,7 @@ describe("TierChangeControl — preview before apply (B539)", () => {
     renderControl();
 
     pickPlan("STARTER");
-    fireEvent.click(screen.getByRole("button", { name: "Change Plan" }));
+    fireEvent.click(screen.getByRole("button", { name: "Change plan" }));
     await screen.findByTestId("preview-diff");
 
     expect(screen.getByText("Professional → Starter")).toBeInTheDocument();
@@ -111,7 +111,7 @@ describe("TierChangeControl — preview before apply (B539)", () => {
     const { onChangePlan } = renderControl();
 
     pickPlan("STARTER");
-    fireEvent.click(screen.getByRole("button", { name: "Change Plan" }));
+    fireEvent.click(screen.getByRole("button", { name: "Change plan" }));
     await screen.findByTestId("preview-diff");
     fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
 
@@ -126,7 +126,7 @@ describe("TierChangeControl — preview before apply (B539)", () => {
     const { onChangePlan } = renderControl();
 
     pickPlan("STARTER");
-    fireEvent.click(screen.getByRole("button", { name: "Change Plan" }));
+    fireEvent.click(screen.getByRole("button", { name: "Change plan" }));
     await screen.findByTestId("preview-diff");
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
 
@@ -142,7 +142,7 @@ describe("TierChangeControl — preview before apply (B539)", () => {
     const { onChangePlan } = renderControl();
 
     pickPlan("ENTERPRISE");
-    fireEvent.click(screen.getByRole("button", { name: "Change Plan" }));
+    fireEvent.click(screen.getByRole("button", { name: "Change plan" }));
 
     expect(await screen.findByTestId("preview-empty")).toHaveTextContent("No feature differences");
     expect(screen.queryByTestId("preview-diff")).toBeNull();
@@ -155,7 +155,7 @@ describe("TierChangeControl — preview before apply (B539)", () => {
     const { onChangePlan } = renderControl();
 
     pickPlan("STARTER");
-    fireEvent.click(screen.getByRole("button", { name: "Change Plan" }));
+    fireEvent.click(screen.getByRole("button", { name: "Change plan" }));
     await screen.findByTestId("preview-diff");
     pickPlan("ENTERPRISE"); // the select is still in the DOM behind the drawer
     fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
@@ -176,11 +176,11 @@ describe("TierChangeControl — preview before apply (B539)", () => {
     renderControl({ onChangePlan });
 
     pickPlan("STARTER");
-    fireEvent.click(screen.getByRole("button", { name: "Change Plan" }));
+    fireEvent.click(screen.getByRole("button", { name: "Change plan" }));
     await screen.findByTestId("preview-diff");
     fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
 
-    expect(await screen.findByRole("button", { name: "Applying..." })).toBeDisabled();
+    expect(await screen.findByRole("button", { name: "Applying…" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
     fireEvent.keyDown(document, { key: "Escape" });
     expect(screen.getByText("Preview plan change", { selector: "h3" })).toBeInTheDocument();
@@ -198,7 +198,7 @@ describe("TierChangeControl — failure paths", () => {
     const { onChangePlan } = renderControl();
 
     pickPlan("STARTER");
-    fireEvent.click(screen.getByRole("button", { name: "Change Plan" }));
+    fireEvent.click(screen.getByRole("button", { name: "Change plan" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Could not preview that plan change. Try again.",
@@ -213,7 +213,7 @@ describe("TierChangeControl — failure paths", () => {
     renderControl({ onChangePlan });
 
     pickPlan("STARTER");
-    fireEvent.click(screen.getByRole("button", { name: "Change Plan" }));
+    fireEvent.click(screen.getByRole("button", { name: "Change plan" }));
     await screen.findByTestId("preview-diff");
     fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
 
@@ -230,7 +230,7 @@ describe("TierChangeControl — failure paths", () => {
     renderControl();
 
     pickPlan("STARTER");
-    fireEvent.click(screen.getByRole("button", { name: "Change Plan" }));
+    fireEvent.click(screen.getByRole("button", { name: "Change plan" }));
     await screen.findByTestId("preview-diff");
 
     expect(
@@ -251,6 +251,6 @@ describe("TierChangeControl — failure paths", () => {
       />,
     );
     expect(screen.getByLabelText("New plan")).toHaveValue("STARTER");
-    expect(screen.getByRole("button", { name: "Change Plan" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Change plan" })).toBeDisabled();
   });
 });

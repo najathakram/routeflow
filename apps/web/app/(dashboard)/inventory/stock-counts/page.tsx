@@ -27,7 +27,7 @@ const STATUS_CHIPS: { value: StockCountStatus | ""; label: string }[] = [
 export default function StockCountsHistoryPage() {
   const { setTitle } = usePageTitle();
   React.useEffect(() => {
-    setTitle("Stock Counts");
+    setTitle("Stock counts");
   }, [setTitle]);
 
   const [status, setStatus] = React.useState<StockCountStatus | "">("");
@@ -53,7 +53,7 @@ export default function StockCountsHistoryPage() {
       </Link>
 
       <PageHeader
-        title="Stock Counts"
+        title="Stock counts"
         subtitle="History of every stock-count session — who counted what, and what it changed."
       />
 

@@ -111,7 +111,7 @@ export function ReceivePOModal({
                 <tr>
                   <th className="px-3 py-2 text-left font-medium">Product</th>
                   <th className="px-3 py-2 text-center font-medium w-24">Ordered</th>
-                  <th className="px-3 py-2 text-center font-medium w-28">Received Qty</th>
+                  <th className="px-3 py-2 text-center font-medium w-28">Received qty</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-surface-border">
@@ -192,7 +192,7 @@ export function ReceivePOModal({
               Cancel
             </Button>
             <Button type="submit" loading={receivePO.isPending}>
-              Confirm Receipt
+              Confirm receipt
             </Button>
           </div>
         </form>

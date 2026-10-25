@@ -440,7 +440,7 @@ export function StandingOrderModal({
             <textarea
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
-              placeholder="Any recurring instructions..."
+              placeholder="Any recurring instructions…"
               rows={2}
               className="w-full resize-none rounded border border-surface-border bg-white px-3 py-2 text-sm text-navy placeholder:text-navy/70 focus:outline-none focus:ring-2 focus:ring-brand-500"
             />

@@ -90,7 +90,7 @@ for (const vp of VIEWPORTS) {
 
     test(`vendor-bills New Purchase modal (${vp.width}px)`, async ({ page }) => {
       await page.goto("/vendor-bills");
-      await page.getByRole("button", { name: "New Purchase" }).first().click();
+      await page.getByRole("button", { name: "New bill" }).first().click();
       await expect(page.getByRole("dialog")).toBeVisible({ timeout: 10_000 });
       await assertDateInputsFit(page, '[role="dialog"]', `vendor-bills modal @${vp.width}`);
     });

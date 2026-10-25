@@ -4,7 +4,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import BuyerTemplatesPage from "./page";
 
 /**
- * "Reorder Now" places a REAL order, so a tap must only open a review (lines + total); the
+ * "Reorder" places a REAL order, so a tap must only open a review (lines + total); the
  * order is placed from the sheet's "Place order" button and never before it.
  */
 const mutateAsync = jest.fn();
@@ -77,12 +77,12 @@ beforeEach(() => {
   ];
 });
 
-describe("buyer standing orders — Reorder Now review", () => {
-  it("tapping Reorder Now does NOT place the order; it opens a review with the lines and total", async () => {
+describe("buyer standing orders — Reorder review", () => {
+  it("tapping Reorder does NOT place the order; it opens a review with the lines and total", async () => {
     const user = userEvent.setup();
     render(<BuyerTemplatesPage />);
 
-    await user.click(await screen.findByRole("button", { name: /reorder now/i }));
+    await user.click(await screen.findByRole("button", { name: /^reorder$/i }));
 
     expect(mutateAsync).not.toHaveBeenCalled();
     const dialog = within(await screen.findByRole("dialog"));
@@ -99,7 +99,7 @@ describe("buyer standing orders — Reorder Now review", () => {
     const user = userEvent.setup();
     render(<BuyerTemplatesPage />);
 
-    await user.click(await screen.findByRole("button", { name: /reorder now/i }));
+    await user.click(await screen.findByRole("button", { name: /^reorder$/i }));
     const dialog = within(await screen.findByRole("dialog"));
     await user.click(dialog.getByRole("button", { name: "Place order" }));
 
@@ -111,7 +111,7 @@ describe("buyer standing orders — Reorder Now review", () => {
     const user = userEvent.setup();
     render(<BuyerTemplatesPage />);
 
-    await user.click(await screen.findByRole("button", { name: /reorder now/i }));
+    await user.click(await screen.findByRole("button", { name: /^reorder$/i }));
     const dialog = within(await screen.findByRole("dialog"));
     await user.click(dialog.getByRole("button", { name: "Cancel" }));
 
@@ -127,7 +127,7 @@ describe("buyer standing orders — Reorder Now review", () => {
     const user = userEvent.setup();
     render(<BuyerTemplatesPage />);
 
-    await user.click(await screen.findByRole("button", { name: /reorder now/i }));
+    await user.click(await screen.findByRole("button", { name: /^reorder$/i }));
     const dialog = within(await screen.findByRole("dialog"));
     await user.click(dialog.getByRole("button", { name: "Place order" }));
 
@@ -140,7 +140,7 @@ describe("buyer standing orders — Reorder Now review", () => {
     const user = userEvent.setup();
     render(<BuyerTemplatesPage />);
 
-    await user.click(await screen.findByRole("button", { name: /reorder now/i }));
+    await user.click(await screen.findByRole("button", { name: /^reorder$/i }));
     await user.click(
       within(await screen.findByRole("dialog")).getByRole("button", { name: "Place order" }),
     );
@@ -153,7 +153,7 @@ describe("buyer standing orders — Reorder Now review", () => {
     const user = userEvent.setup();
     render(<BuyerTemplatesPage />);
 
-    await user.click(await screen.findByRole("button", { name: /reorder now/i }));
+    await user.click(await screen.findByRole("button", { name: /^reorder$/i }));
     const dialog = within(await screen.findByRole("dialog"));
 
     expect(dialog.getByText("Almond Bar")).toBeInTheDocument();
@@ -170,7 +170,7 @@ describe("buyer standing orders — Reorder Now review", () => {
     const user = userEvent.setup();
     render(<BuyerTemplatesPage />);
 
-    await user.click(await screen.findByRole("button", { name: /reorder now/i }));
+    await user.click(await screen.findByRole("button", { name: /^reorder$/i }));
     const dialog = within(await screen.findByRole("dialog"));
 
     expect(dialog.getByRole("button", { name: "Place order" })).toBeDisabled();
@@ -182,7 +182,7 @@ describe("buyer standing orders — Reorder Now review", () => {
   it("the reorder mutation opts out of the global error toast, so a failure shows ONE message (the sheet's)", async () => {
     const user = userEvent.setup();
     render(<BuyerTemplatesPage />);
-    await screen.findAllByRole("button", { name: /reorder now/i });
+    await screen.findAllByRole("button", { name: /^reorder$/i });
     expect(mockUseBuyerReorder).toHaveBeenCalledWith({ localErrorToast: true });
   });
 });

@@ -264,7 +264,7 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
       <div className="w-full max-w-2xl rounded-2xl bg-white shadow-modal flex flex-col max-h-[90vh]">
         <div className="flex items-center justify-between border-b border-surface-border px-6 py-4">
-          <h2 className="text-lg font-semibold text-navy">Record Payment</h2>
+          <h2 className="text-lg font-semibold text-navy">Record payment</h2>
           <button onClick={onClose} className="text-navy/70 hover:text-navy text-xl">
             ×
           </button>
@@ -283,7 +283,7 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
                 disabled={customerLocked}
                 className={fieldCls}
               >
-                <option value="">Select customer...</option>
+                <option value="">Select customer…</option>
                 {customers.map((c: { id: string; businessName: string }) => (
                   <option key={c.id} value={c.id}>
                     {c.businessName}
@@ -296,7 +296,7 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
             </div>
             <div>
               <label className="mb-1.5 block text-sm font-medium text-navy">
-                Amount Received *
+                Amount received *
               </label>
               <input
                 type="number"
@@ -309,7 +309,7 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
               />
             </div>
             <div>
-              <label className="mb-1.5 block text-sm font-medium text-navy">Bank Charges</label>
+              <label className="mb-1.5 block text-sm font-medium text-navy">Bank charges</label>
               <input
                 type="number"
                 step="0.01"
@@ -321,7 +321,7 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
               />
             </div>
             <div>
-              <label className="mb-1.5 block text-sm font-medium text-navy">Payment Date *</label>
+              <label className="mb-1.5 block text-sm font-medium text-navy">Payment date *</label>
               <input
                 type="date"
                 value={paidAt}
@@ -340,7 +340,7 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
               <p className="mt-1 text-xs text-navy/50">{BANK_DATE_HELP}</p>
             </div>
             <div>
-              <label className="mb-1.5 block text-sm font-medium text-navy">Payment Mode *</label>
+              <label className="mb-1.5 block text-sm font-medium text-navy">Payment method *</label>
               <select
                 value={method}
                 onChange={(e) => setMethod(e.target.value as SelectablePaymentMethod)}
@@ -359,7 +359,7 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
                 type="text"
                 value={reference}
                 onChange={(e) => setReference(e.target.value)}
-                placeholder="Check #, transaction ID..."
+                placeholder="Check #, transaction ID…"
                 className={fieldCls}
               />
             </div>
@@ -370,7 +370,7 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
                 onChange={(e) => setNotes(e.target.value)}
                 rows={2}
                 className={`${fieldCls} resize-none`}
-                placeholder="Internal notes..."
+                placeholder="Internal notes…"
               />
             </div>
             <div className="col-span-2">
@@ -416,7 +416,7 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
           {customerId && (
             <div>
               <div className="mb-2 flex items-center justify-between">
-                <h3 className="text-sm font-semibold text-navy">Apply to Invoices</h3>
+                <h3 className="text-sm font-semibold text-navy">Apply to invoices</h3>
                 <button
                   type="button"
                   onClick={() => setAllocations((prev) => prev.map((a) => ({ ...a, amount: "" })))}
@@ -428,7 +428,7 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
               {customerInvoices.length === 0 ? (
                 <p className="text-sm text-navy/70 italic">No unpaid invoices for this customer.</p>
               ) : (
-                <div className="overflow-hidden rounded-lg border border-surface-border">
+                <div className="overflow-x-auto rounded-lg border border-surface-border">
                   <table className="w-full text-sm">
                     <thead className="bg-surface-raised text-xs font-medium text-navy/70">
                       <tr>
@@ -510,7 +510,7 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
             disabled={record.isPending || overAllocated || statusCheck.unknown}
             className="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-50"
           >
-            {record.isPending ? "Saving..." : "Save as Paid"}
+            {record.isPending ? "Saving…" : "Save as paid"}
           </button>
         </div>
       </div>
@@ -523,7 +523,7 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
 export default function FinancePaymentsPage() {
   const { setTitle } = usePageTitle();
   React.useEffect(() => {
-    setTitle("Payments Received");
+    setTitle("Payments received");
   }, [setTitle]);
   const router = useRouter();
   const { toast } = useToast();
@@ -633,7 +633,7 @@ export default function FinancePaymentsPage() {
       {voidConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-modal space-y-4">
-            <h3 className="text-lg font-semibold text-navy">Void Payment?</h3>
+            <h3 className="text-lg font-semibold text-navy">Void payment?</h3>
             <p className="text-sm text-navy/70">
               This will mark the payment as void and reverse its effect on the invoice. This cannot
               be undone.
@@ -650,7 +650,7 @@ export default function FinancePaymentsPage() {
                 disabled={voidPayment.isPending}
                 className="rounded-lg bg-danger px-4 py-2 text-sm font-medium text-white hover:bg-danger/90 disabled:opacity-50"
               >
-                {voidPayment.isPending ? "Voiding..." : "Void Payment"}
+                {voidPayment.isPending ? "Voiding…" : "Void payment"}
               </button>
             </div>
           </div>
@@ -660,11 +660,11 @@ export default function FinancePaymentsPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-semibold text-navy">Payments Received</h2>
+          <h2 className="text-2xl font-bold text-navy">Payments received</h2>
           <p className="text-sm text-navy/70">All payments recorded against invoices</p>
         </div>
         <div className="flex flex-col items-end">
-          <WriteButton onClick={() => setShowModal(true)}>+ Record Payment</WriteButton>
+          <WriteButton onClick={() => setShowModal(true)}>Record payment</WriteButton>
           <ReadOnlyHint />
         </div>
       </div>
@@ -674,10 +674,12 @@ export default function FinancePaymentsPage() {
         <div className="grid grid-cols-3 gap-4">
           <div className="rounded-xl border border-surface-border bg-white p-4">
             <p className="text-xs font-medium uppercase tracking-wide text-navy/70">
-              Total Received
+              Total received
             </p>
             <p className="mt-1 text-2xl font-bold text-success">{fmt(summary.totalReceived)}</p>
-            <p className="text-xs text-navy/70 mt-0.5">{summary.count} payments</p>
+            <p className="text-xs text-navy/70 mt-0.5">
+              {summary.count} {summary.count === 1 ? "payment" : "payments"}
+            </p>
           </div>
           <div className="rounded-xl border border-surface-border bg-white p-4">
             <p className="text-xs font-medium uppercase tracking-wide text-navy/70">
@@ -731,7 +733,7 @@ export default function FinancePaymentsPage() {
             onChange={(e) => setMethod(e.target.value)}
             className="rounded-lg border border-surface-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
           >
-            <option value="">All Methods</option>
+            <option value="">All methods</option>
             {ALL_PAYMENT_METHODS.map((m) => (
               <option key={m} value={m}>
                 {METHOD_LABELS[m]}
@@ -743,7 +745,7 @@ export default function FinancePaymentsPage() {
             onChange={(e) => setStatus(e.target.value)}
             className="rounded-lg border border-surface-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
           >
-            <option value="">All Statuses</option>
+            <option value="">All statuses</option>
             <option value="PAID">Paid</option>
             <option value="DRAFT">Draft</option>
             <option value="VOID">Void</option>
@@ -753,7 +755,7 @@ export default function FinancePaymentsPage() {
             onChange={(e) => setCustomerId(e.target.value)}
             className="rounded-lg border border-surface-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
           >
-            <option value="">All Customers</option>
+            <option value="">All customers</option>
             {customers.map((c: { id: string; businessName: string }) => (
               <option key={c.id} value={c.id}>
                 {c.businessName}
@@ -778,7 +780,7 @@ export default function FinancePaymentsPage() {
             disabled={exportPayments.isPending}
             className="ml-auto rounded-lg border border-surface-border px-3 py-2 text-sm text-navy/70 hover:bg-surface-raised transition-colors disabled:opacity-50"
           >
-            {exportPayments.isPending ? "Exporting..." : "⬇ Export CSV"}
+            {exportPayments.isPending ? "Exporting…" : "Export CSV"}
           </button>
         </div>
       </div>
@@ -821,7 +823,7 @@ export default function FinancePaymentsPage() {
                     onClick={() => toggleSort("method")}
                     className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy"
                   >
-                    Mode <SortIcon col="method" sortBy={sortBy} sortDir={sortDir} />
+                    Method <SortIcon col="method" sortBy={sortBy} sortDir={sortDir} />
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">
                     Reference
@@ -935,13 +937,13 @@ export default function FinancePaymentsPage() {
                             onClick={() => router.push(`/finance/payments/${p.id}`)}
                             className="block w-full px-3 py-1.5 text-left text-sm hover:bg-surface-raised"
                           >
-                            View Receipt
+                            View receipt
                           </button>
                           <Link
                             href={`/invoices/${p.invoice.id}`}
                             className="block px-3 py-1.5 text-sm hover:bg-surface-raised"
                           >
-                            View Invoice
+                            View invoice
                           </Link>
                           {p.status !== "VOID" && (
                             <button
@@ -968,7 +970,8 @@ export default function FinancePaymentsPage() {
       {meta && meta.totalPages > 1 && (
         <div className="flex items-center justify-between">
           <p className="text-sm text-navy/70">
-            Page {meta.page} of {meta.totalPages} · {meta.total} payments
+            Page {meta.page} of {meta.totalPages} · {meta.total}{" "}
+            {meta.total === 1 ? "payment" : "payments"}
           </p>
           <div className="flex gap-2">
             <button

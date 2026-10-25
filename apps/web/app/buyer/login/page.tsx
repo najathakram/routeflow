@@ -69,7 +69,7 @@ function BuyerLoginInner() {
       const msg =
         (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
         "Invalid email or password.";
-      setApiError(typeof msg === "string" ? msg : "Login failed.");
+      setApiError(typeof msg === "string" ? msg : "Sign-in failed.");
       setIsLoading(false);
     }
   };
@@ -99,7 +99,7 @@ function BuyerLoginInner() {
       audience="retailer"
       kicker="Retailer account"
       title="Welcome back."
-      lead="Sign in to order from your suppliers."
+      lead="Sign in to order from your sellers."
       footer={
         <p className="text-xs text-navy/70">
           Selling on RouteFlow?{" "}
@@ -191,7 +191,7 @@ function BuyerLoginInner() {
           {googleLoading ? (
             <>
               <div className="h-4 w-4 animate-spin rounded-full border-2 border-navy/30 border-t-navy/70" />
-              <span>Redirecting to Google...</span>
+              <span>Redirecting to Google…</span>
             </>
           ) : (
             <>

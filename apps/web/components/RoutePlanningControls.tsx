@@ -202,7 +202,7 @@ export function RoutePlanningControls({
         <div className="space-y-2">
           <OptionCard
             icon={<Building2 className="h-4 w-4" />}
-            title="Tenant depot"
+            title="Your depot"
             subtitle={originSummary.depotAddress || "Configured depot"}
             selected={originKind === "TENANT"}
             disabled={!originSummary.hasDepot || disabled}

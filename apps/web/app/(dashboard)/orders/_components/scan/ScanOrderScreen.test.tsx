@@ -758,7 +758,7 @@ describe("ScanOrderScreen", () => {
 
       // Asserted right away: the status pill only lives 2.5s.
       expect(
-        screen.getByText(/Still offline - will retry as soon as the connection returns/),
+        screen.getByText(/Still offline — will retry as soon as the connection returns/),
       ).toBeInTheDocument();
       await advance(3_000);
       expect(resolve).toHaveBeenCalledTimes(1);
@@ -771,7 +771,7 @@ describe("ScanOrderScreen", () => {
       fireEvent.click(screen.getByRole("button", { name: "Done" }));
       expect(props.onClose).not.toHaveBeenCalled();
       expect(
-        screen.getByText(/1 scan still waiting for signal - press Done again to discard/),
+        screen.getByText(/1 scan still waiting for signal — press Done again to discard/),
       ).toBeInTheDocument();
 
       fireEvent.click(screen.getByRole("button", { name: "Done" }));

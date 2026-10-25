@@ -430,7 +430,7 @@ describe("ReceivePOModal", () => {
       ],
     });
     render(<ReceivePOModal po={order} products={products} onClose={jest.fn()} />);
-    fireEvent.click(screen.getByRole("button", { name: "Confirm Receipt" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm receipt" }));
     // outstanding 24 pcs = 2 boxes of 12; unboxed line outstanding 10
     expect(receiveMutate).toHaveBeenCalledWith(
       {
@@ -464,7 +464,7 @@ describe("ReceivePOModal", () => {
     render(<ReceivePOModal po={order} products={repacked} onClose={jest.fn()} />);
     // 24 pcs at the stored pack 12 = 2 boxes + 0 (at the live pack 6 it would seed 4 boxes)
     expect((screen.getByTitle("Boxes") as HTMLInputElement).value).toBe("2");
-    fireEvent.click(screen.getByRole("button", { name: "Confirm Receipt" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm receipt" }));
     expect(receiveMutate).toHaveBeenCalledWith(
       { id: "c", items: [{ id: "i1", receivedQty: 24 }] },
       expect.any(Object),

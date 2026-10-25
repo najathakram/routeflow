@@ -1267,7 +1267,7 @@ export default function ProductsPage() {
               leftIcon={<Plus className="h-4 w-4" />}
               onClick={() => setShowCreate(true)}
             >
-              New Product
+              New product
             </WriteButton>
           </div>
         }
@@ -1279,7 +1279,7 @@ export default function ProductsPage() {
         <div className="rounded-lg bg-brand-50 border border-brand-200 px-4 py-2.5 text-sm text-brand-700 flex items-center gap-2">
           <Pencil className="h-4 w-4 shrink-0" />
           <span>
-            <strong>Quick Edit Mode</strong> — click any SKU/Barcode, Category, or Tier Price cell
+            <strong>Quick edit mode</strong> — click any SKU/Barcode, Category, or Tier Price cell
             to edit. Press{" "}
             <kbd className="rounded border border-brand-300 bg-white px-1 py-0.5 text-xs font-mono">
               Enter
@@ -1387,7 +1387,7 @@ export default function ProductsPage() {
         <div className="w-40">
           <Select
             options={[
-              { value: "", label: "All Categories" },
+              { value: "", label: "All categories" },
               ...categories.map((c) => ({ value: c, label: c })),
             ]}
             value={categoryFilter}
