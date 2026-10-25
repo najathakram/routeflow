@@ -5,7 +5,7 @@ import { OrderLineItemsTable } from "./OrderLineItemsTable";
 
 /**
  * Row 508: at 390px the 5-column table ran Line Total / Status past the screen. Below md every
- * <tr> is a stacked card (product full width, then Qty / Unit Price / Line Total / Status as
+ * <tr> is a stacked card (product full width, then Qty / Unit price / Line Total / Status as
  * labelled pairs); from md up the table is the one it always was. jsdom has no CSS, so these pin
  * the breakpoint wiring: the mobile-only classes, the label of every cell, the value of every
  * cell, and the untouched md+ class tokens. The pixel proof is the host-run capture.
@@ -92,14 +92,14 @@ describe("OrderLineItemsTable — stacked cards below md (row 508)", () => {
     });
   });
 
-  it("labels Qty, Unit Price, Line Total and Status on every line, on the cell itself", () => {
+  it("labels Qty, Unit price, Line Total and Status on every line, on the cell itself", () => {
     renderThree();
     document.querySelectorAll("tbody tr").forEach((tr) => {
       const cells = Array.from(tr.querySelectorAll("td"));
       expect(cells.map((c) => c.getAttribute("data-label"))).toEqual([
         null,
         "Qty",
-        "Unit Price",
+        "Unit price",
         "Line Total",
         "Status",
       ]);
@@ -113,7 +113,7 @@ describe("OrderLineItemsTable — stacked cards below md (row 508)", () => {
     expect(first.querySelector('td[data-label="Line Total"]')).toHaveTextContent("$520.00");
     expect(second.querySelector('td[data-label="Line Total"]')).toHaveTextContent("$15.98");
     expect(third.querySelector('td[data-label="Line Total"]')).toHaveTextContent("$5.00");
-    expect(second.querySelector('td[data-label="Unit Price"]')).toHaveTextContent("$7.99");
+    expect(second.querySelector('td[data-label="Unit price"]')).toHaveTextContent("$7.99");
     expect(second.querySelector('td[data-label="Qty"]')).toHaveTextContent("2");
     expect(first.querySelector('td[data-label="Status"]')).toHaveTextContent(/\w/);
     expect(screen.getByText(LONG)).toHaveClass("max-md:break-words");
@@ -139,7 +139,7 @@ describe("OrderLineItemsTable — stacked cards below md (row 508)", () => {
     expect(row).toHaveClass("hover:bg-surface-raised");
     const cells = Array.from(row.querySelectorAll("td"));
     expect(cells[0]).toHaveClass("px-6", "py-3");
-    ["Qty", "Unit Price", "Line Total"].forEach((l, i) =>
+    ["Qty", "Unit price", "Line Total"].forEach((l, i) =>
       expect(cells[i + 1]).toHaveClass("px-4", "py-3", "text-right"),
     );
     expect(cells[4]).toHaveClass("px-6", "py-3");
@@ -168,7 +168,7 @@ describe("OrderLineItemsTable — table semantics survive display:block below md
     expect(screen.getAllByRole("columnheader").map((h) => h.textContent)).toEqual([
       "Product",
       "Qty",
-      "Unit Price",
+      "Unit price",
       "Line Total",
       "Status",
     ]);

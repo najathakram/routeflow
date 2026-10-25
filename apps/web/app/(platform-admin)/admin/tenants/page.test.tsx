@@ -74,7 +74,7 @@ describe("REG-B857: tenants list bulk Change Plan", () => {
   it("REG-B857 T4: the bulk 'New plan' select offers the catalog plans and applies GROWTH", async () => {
     render(<AdminTenantsPage />);
     fireEvent.click(await screen.findByRole("checkbox", { name: "Select acme" }));
-    fireEvent.click(screen.getByRole("button", { name: "Change Plan" }));
+    fireEvent.click(screen.getByRole("button", { name: "Change plan" }));
 
     const select = (await screen.findByRole("combobox", { name: "New plan" })) as HTMLSelectElement;
     await waitFor(() =>
@@ -98,7 +98,7 @@ describe("REG-B857: tenants list bulk Change Plan", () => {
     mockFetchPlanCatalog.mockReturnValue(new Promise(() => {}));
     render(<AdminTenantsPage />);
     fireEvent.click(await screen.findByRole("checkbox", { name: "Select acme" }));
-    fireEvent.click(screen.getByRole("button", { name: "Change Plan" }));
+    fireEvent.click(screen.getByRole("button", { name: "Change plan" }));
 
     const select = (await screen.findByRole("combobox", { name: "New plan" })) as HTMLSelectElement;
     expect(Array.from(select.options).map((o) => o.value)).toEqual(["STARTER"]);

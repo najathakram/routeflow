@@ -211,7 +211,7 @@ describe("Tenant detail page — Setup tab groups the Feature Console and Overri
       within(tobaccoRow).getByRole("button", { name: /^Set override/, hidden: true }),
     );
     expect(document.getElementById("setup-advanced-body")).toBeVisible();
-    expect(((await screen.findByLabelText("Feature Key")) as HTMLSelectElement).value).toBe(
+    expect(((await screen.findByLabelText("Feature key")) as HTMLSelectElement).value).toBe(
       "tobacco_dealer",
     );
   });
@@ -231,7 +231,7 @@ describe("Tenant detail page — Feature Console 'Set override' action (brief D 
     fireEvent.click(within(tobaccoRow).getByRole("button", { name: /^Set override/ }));
 
     // Prefilled: the drawer opens with this feature key already selected.
-    const featureSelect = (await screen.findByLabelText("Feature Key")) as HTMLSelectElement;
+    const featureSelect = (await screen.findByLabelText("Feature key")) as HTMLSelectElement;
     expect(featureSelect.value).toBe("tobacco_dealer");
 
     fireEvent.change(screen.getByLabelText("Reason"), {
@@ -370,7 +370,7 @@ describe("REG-B857: tenant plan controls offer the published catalog, not a hard
       expect(optionValues(select)).toEqual(["STARTER", "GROWTH", "SCALE", "ENTERPRISE"]),
     );
     expect(select.value).toBe("GROWTH");
-    expect(screen.getByRole("button", { name: "Change Plan" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Change plan" })).toBeDisabled();
   });
 
   it("pin: a tenant on a plan the catalog does not offer (invite-only LITE) keeps it selected", async () => {
@@ -901,7 +901,7 @@ describe("SA-3: the Readiness card on Overview", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Create admin account" }));
     fireEvent.change(screen.getByLabelText("Username"), { target: { value: "new_admin" } });
     fireEvent.change(screen.getByLabelText("Email"), { target: { value: "a@b.co" } });
-    fireEvent.click(screen.getByRole("button", { name: "Create Admin" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create admin" }));
     await waitFor(async () => expect(within(await rowOf()).queryByText(/Not ready/)).toBeNull());
     expect(within(await rowOf()).getByText(/Ready/)).toBeInTheDocument();
     expect(adminGets()).toHaveLength(1);

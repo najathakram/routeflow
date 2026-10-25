@@ -367,7 +367,7 @@ export default function AdminTenantsPage() {
             onClick={() => setBulkAction("change-plan")}
             className="rounded px-3 py-1 text-xs font-medium text-blue-400 hover:bg-blue-900/30"
           >
-            Change Plan
+            Change plan
           </button>
           <button
             onClick={() => setSelected(new Set())}

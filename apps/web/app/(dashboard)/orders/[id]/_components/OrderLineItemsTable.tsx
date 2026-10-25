@@ -63,7 +63,7 @@ export function OrderLineItemsTable({
               role="columnheader"
               className="eyebrow-label whitespace-nowrap px-4 py-2.5 text-right"
             >
-              Unit Price
+              Unit price
             </th>
             <th
               role="columnheader"
@@ -155,7 +155,7 @@ export function OrderLineItemsTable({
               </td>
               <td
                 role="cell"
-                data-label="Unit Price"
+                data-label="Unit price"
                 className={cn("px-4 py-3 text-right", CARD_CELL)}
               >
                 <div className="flex flex-col items-end gap-0.5 max-md:items-start">
