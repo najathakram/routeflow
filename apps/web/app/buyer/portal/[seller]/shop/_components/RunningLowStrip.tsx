@@ -55,7 +55,7 @@ export function RunningLowStrip({
           href={`/buyer/portal/${sellerSlug}/shelf`}
           className="flex items-center gap-1 text-xs font-medium text-danger hover:underline"
         >
-          Your Shelf <ArrowRight className="h-3 w-3" />
+          Your shelf <ArrowRight className="h-3 w-3" />
         </Link>
       </div>
       <div className="flex gap-3 overflow-x-auto p-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">

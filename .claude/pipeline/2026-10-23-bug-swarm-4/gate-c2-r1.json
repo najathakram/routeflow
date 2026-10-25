@@ -1,0 +1,63 @@
+{
+  "ok": true,
+  "head": "97d35543e23cea57e4b2b0e096c8720da23b74b3",
+  "base": "1e162686ae8f2229119104cd4cfe1eb722537ba3",
+  "steps": [
+    {
+      "name": "clean-tree",
+      "ok": true,
+      "exit": 0,
+      "ms": 104,
+      "tail": ""
+    },
+    {
+      "name": "packages-build",
+      "ok": true,
+      "exit": 0,
+      "ms": 720,
+      "tail": "@routeflow/returns:build: cache hit, replaying logs f39fffcc30fe9f9d\n@routeflow/returns:build: \n@routeflow/returns:build: > @routeflow/returns@0.0.1 build\n@routeflow/returns:build: > tsc -p tsconfig.build.json\n@routeflow/returns:build: \n@routeflow/pricing:build: cache hit, replaying logs d4c37b9c87ca0ef6\n@routeflow/pricing:build: \n@routeflow/pricing:build: > @routeflow/pricing@0.0.1 build\n@routeflow/pricing:build: > tsc -p tsconfig.build.json\n@routeflow/pricing:build: \n@routeflow/scanning:build: cache hit, replaying logs 1ffdb171c8f6361d\n@routeflow/scanning:build: \n@routeflow/scanning:build: > @routeflow/scanning@0.0.1 build\n@routeflow/scanning:build: > tsc -p tsconfig.build.json\n@routeflow/scanning:build: \n\n Tasks:    3 successful, 3 total\nCached:    3 cached, 3 total\n  Time:    97ms >>> FULL TURBO\n"
+    },
+    {
+      "name": "signature-scan",
+      "ok": true,
+      "exit": 0,
+      "ms": 6110,
+      "tail": "  register: B03 | severity: medium | MEDIUM | 3 hit(s) | 1 suppressed\n    apps/mobile/app/(auth)/login.tsx:18  username: z.string().min(1, \"Username is required\"),  [client .min(1) vs server @MinLength(3) at apps/api/src/platform-admin/dto/create-tenant-admin.dto.ts:26]\n    apps/web/app/(auth)/login/page.tsx:34  username: z.string().min(1, \"Username is required\"),  [client .min(1) vs server @MinLength(3) at apps/api/src/platform-admin/dto/create-tenant-admin.dto.ts:26]\n    apps/web/app/buyer/register/page.tsx:19  name: z.string().min(2, \"Name must be at least 2 characters\"),  [client .min(2) vs server @MinLength(1) at apps/api/src/promotions/dto/create-promotion.dto.ts:26]\n\n■ dead-model-guard — Safety check reading a model nothing writes\n  The guard always passes/fails the same way — protection that protects nothing (B54).\n  register: B54 | severity: medium | MEDIUM | 9 hit(s) | 37 suppressed\n    apps/api/src/drafts/drafts.service.ts:150  const other = await this.prisma.forTenant().saleDraft.findFirst({  [model \"saleDraft\" is read here but never written anywhere in apps/api]\n    apps/api/src/import/batch-import.service.ts:260  const items = await this.prisma.forTenant().importQueueItem.findMany({  [model \"importQueueItem\" is read here but never written anywhere in apps/api]\n    apps/api/src/import/batch-import.service.ts:423  const clean = await this.prisma.forTenant().importQueueItem.findMany({  [model \"importQueueItem\" is read here but never written anywhere in apps/api]\n    apps/api/src/import/batch-import.service.ts:527  const counts = await this.prisma.forTenant().importQueueItem.groupBy({  [model \"importQueueItem\" is read here but never written anywhere in apps/api]\n    apps/api/src/inventory/low-stock-digest.service.ts:190  const optOuts = await this.prisma.userPreference.findMany({  [model \"userPreference\" is read here but never written anywhere in apps/api]\n    apps/api/src/invoices/payment-idempotency.ts:268  deps.forTenant().paymentIdempotencyKey.findFirst({  [model \"paymentIdempotencyKey\" is read here but never written anywhere in apps/api]\n    apps/api/src/invoices/payment-key-status.service.ts:72  return this.prisma.forTenant().paymentIdempotencyKey.findFirst({  [model \"paymentIdempotencyKey\" is read here but never written anywhere in apps/api]\n    apps/api/src/messaging/staff-order-email.ts:197  const prefs = await this.prisma.forTenant().userPreference.findMany({  [model \"userPreference\" is read here but never written anywhere in apps/api]\n    apps/api/src/notifications/notifications.service.ts:65  const pref = await this.prisma.forTenant().userPreference.findUnique({  [model \"userPreference\" is read here but never written anywhere in apps/api]\n\n24 hit(s) across 6 signature(s); scanned 7113 files.\nEXIT 0 — no high-signal hits."
+    },
+    {
+      "name": "commitlint",
+      "ok": true,
+      "exit": 0,
+      "ms": 421,
+      "tail": ""
+    },
+    {
+      "name": "avoid-files",
+      "ok": true,
+      "exit": 0,
+      "ms": 52,
+      "tail": ""
+    },
+    {
+      "name": "prettier",
+      "ok": true,
+      "exit": 0,
+      "ms": 400,
+      "tail": "Checking formatting...\nAll matched files use Prettier code style!"
+    },
+    {
+      "name": "self-test:scripts/heavy-slot",
+      "ok": true,
+      "exit": 0,
+      "ms": 1200,
+      "tail": "  ok   I6b nested for real: inner is re-entrant, only the outer is recorded\n  ok   I6c an env token with no live lock behind it still takes a real slot\n  ok   I7 RF_HEAVY_SLOT=off: runs without a slot, prints one loud WARNING, touches no files\n  ok   I8 CI: no slot, nothing printed (even next to RF_HEAVY_SLOT=off), no files\n  ok   I9 FIFO: waiters are granted in enqueue order, one at a time, and the records agree\n  ok   I10 status shows the holder, the queue positions and (after) the last runs\n  ok   I11 two slots: A and B overlap, C waits behind them and starts only after one of them ended\n  ok   I12 the holder's heartbeat advances while it works\n  ok   I12b a lease whose lock vanished logs the warning exactly once across many heartbeats\n  ok   I13 history is capped at 500 lines, newest kept\n  info serialization history line A: {\"label\":\"A\",\"branch\":\"t\",\"host\":\"Mac-mini.local\",\"pid\":15373,\"queuedAt\":\"2026-10-23T09:32:14.932Z\",\"startedAt\":\"2026-10-23T09:32:14.934Z\",\"endedAt\":\"2026-10-23T09:32:15.013Z\",\"waitSec\":0.002,\"heldSec\":0.079,\"exit\":0}\n  info serialization history line B: {\"label\":\"B\",\"branch\":\"t\",\"host\":\"Mac-mini.local\",\"pid\":15378,\"queuedAt\":\"2026-10-23T09:32:15.005Z\",\"startedAt\":\"2026-10-23T09:32:15.029Z\",\"endedAt\":\"2026-10-23T09:32:15.088Z\",\"waitSec\":0.024,\"heldSec\":0.059,\"exit\":7}\n  ok   C1 two concurrent `heavy-slot run` children serialize: B.startedAt >= A.endedAt and B.waitSec > 0\n  ok   C2 the CLI exits with the child's code, and history records it\n  ok   C3 process.exit() inside the job releases the lock and records the exit code\n  ok   C4 max wait (RF_HEAVY_SLOT_MAX_WAIT_MIN) fails closed: exit 75, holder named, command never ran\n  ok   W1 bare `npm ci` is refused: exit 2, npm never ran, message names --ignore-scripts\n  ok   W2 `npm ci --ignore-scripts` runs\n  ok   W3 other npm commands run\nheavy-slot self-test: 41 passed, 0 failed"
+    },
+    {
+      "name": "size-ratchet",
+      "ok": true,
+      "exit": 0,
+      "ms": 1361,
+      "tail": "    ✓ apps/api/src/invoices/invoices.service.ts stays within 5857 + HEADROOM lines (1 ms)\n    ✓ apps/api/src/orders/orders.service.spec.ts stays within 9439 + HEADROOM lines (1 ms)\n    ✓ apps/api/src/customers/customers.service.ts stays within 3276 + HEADROOM lines\n    ✓ apps/api/src/invoices/invoices.service.spec.ts stays within 9351 + HEADROOM lines (1 ms)\n    ✓ apps/web/app/(dashboard)/customers/[id]/page.tsx stays within 4378 + HEADROOM lines\n    ✓ apps/web/app/(dashboard)/orders/[id]/page.tsx stays within 3705 + HEADROOM lines (1 ms)\n    ✓ apps/api/src/customers/customers.service.spec.ts stays within 3138 + HEADROOM lines\n    ✓ apps/api/src/routes/routes.service.ts stays within 3119 + HEADROOM lines (1 ms)\n    ✓ apps/web/app/(dashboard)/products/[id]/page.tsx stays within 2942 + HEADROOM lines\n    ✓ apps/mobile/app/(operator)/(tabs)/orders/[id]/edit-items.tsx stays within 1405 + HEADROOM lines (1 ms)\n    ✓ apps/mobile/components/NewOrderScreen.tsx stays within 2560 + HEADROOM lines\n    ✓ apps/web/app/(dashboard)/inventory/page.tsx stays within 3303 + HEADROOM lines\n    ✓ apps/web/app/(marketing)/marketing.css stays within 9941 + HEADROOM lines (2 ms)\n    ✓ apps/web/components/ScanInvoiceModal.tsx stays within 3134 + HEADROOM lines\n\nTest Suites: 1 passed, 1 total\nTests:       16 passed, 16 total\nSnapshots:   0 total\nTime:        0.296 s\nRan all test suites matching size-ratchet."
+    }
+  ]
+}

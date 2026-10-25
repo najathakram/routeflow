@@ -149,7 +149,7 @@ describe("InvoicesService — every payment write rounds (#2293)", () => {
       seedSole(10);
       await expect(
         service.updatePayment("inv-1", "pay-1", { amount: 10.006, method: "CHECK" } as any),
-      ).rejects.toThrow("Payment amount exceeds remaining balance");
+      ).rejects.toThrow("Payment exceeds remaining balance");
       expect(prisma.invoicePayment.update).not.toHaveBeenCalled();
     });
 

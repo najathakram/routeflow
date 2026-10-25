@@ -75,7 +75,7 @@ export default function ShipmentsPage() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Truck className="h-5 w-5 text-navy/70" />
-          <h2 className="text-xl font-bold text-navy">Shipments</h2>
+          <h2 className="text-2xl font-bold text-navy">Shipments</h2>
         </div>
       </div>
 
@@ -94,7 +94,7 @@ export default function ShipmentsPage() {
       </div>
 
       {/* Table */}
-      <div className="overflow-hidden rounded-lg border border-surface-border bg-white">
+      <div className="overflow-x-auto rounded-lg border border-surface-border bg-white">
         <table className="w-full text-sm">
           <thead className="border-b border-surface-border bg-gray-50">
             <tr>

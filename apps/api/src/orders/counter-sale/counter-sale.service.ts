@@ -8,7 +8,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { FulfillPath } from "@prisma/client";
-import { roundMoney, remainingCapacity } from "@routeflow/pricing";
+import { roundMoney, confirmedRemaining } from "@routeflow/pricing";
 import type { CounterSaleResponse } from "@routeflow/types";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
 import { creditAfterTender } from "../credit-limit-guard";
@@ -439,7 +439,7 @@ export class CounterSaleService {
     // "recorded": a first call that paid sibling 1 and failed on sibling 2 is resumed, never repeated.
     const balances = invoices.map((i) => ({
       id: i.id,
-      balance: remainingCapacity(
+      balance: confirmedRemaining(
         Number(i.total),
         (i.payments ?? []).filter((p) => !isTender(p)),
       ),
@@ -463,7 +463,7 @@ export class CounterSaleService {
               .reduce((sum, p) => sum + Number(p.amount), 0),
           );
           const due = roundMoney(
-            Math.min(part.amount - stored, remainingCapacity(Number(row.total), row.payments)),
+            Math.min(part.amount - stored, confirmedRemaining(Number(row.total), row.payments)),
           );
           return { invoiceId: part.invoiceId, due };
         })

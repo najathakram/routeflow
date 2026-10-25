@@ -5,6 +5,8 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { BrandGlyph } from "@routeflow/ui/mobile/ios";
+import { SHELL_ON } from "../../lib/web-shell/shell-env";
+import { buyerEntryRoute } from "../../lib/web-shell/shell-routing";
 
 export default function SignInScreen() {
   const router = useRouter();
@@ -43,7 +45,10 @@ export default function SignInScreen() {
           </Pressable>
 
           {/* Customer Portal */}
-          <Pressable style={styles.card} onPress={() => router.push("/(auth)/customer-login")}>
+          <Pressable
+            style={styles.card}
+            onPress={() => router.push(buyerEntryRoute(SHELL_ON) as any)}
+          >
             <View style={[styles.cardIcon, { backgroundColor: ios.system.purpleWash }]}>
               <Ionicons name="storefront-outline" size={22} color={ios.system.purpleInk} />
             </View>

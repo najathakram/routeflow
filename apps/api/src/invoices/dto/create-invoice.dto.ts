@@ -135,6 +135,8 @@ export interface StandalonePaymentOpts extends KeyedWriterOpts<StandalonePayment
   assertAllocationsWithinBalance?: boolean;
   /** The operator's user id, for the deliberate-overpayment audit row. */
   actor?: string | null;
+  /** W-769: told, inside the tx, of the unconfirmed rows a PAID allocation displaced (the captured settle alerts after commit). */
+  onDisplaced?: (invoiceId: string, displaced: string[]) => void;
   /**
    * SA-818 (row 615): runs INSIDE this payment transaction, after the payment rows (and any
    * excess AdvancePayment) are written and before commit. A caller that must decide something

@@ -179,7 +179,7 @@ export function QuickRestockModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
       <div className="w-full max-w-md rounded-xl bg-white shadow-xl">
         <div className="border-b border-surface-border px-6 py-4">
-          <h2 className="text-base font-semibold text-navy">Quick Restock</h2>
+          <h2 className="text-base font-semibold text-navy">Quick restock</h2>
           <p className="mt-0.5 text-xs text-navy/70">
             For supplier invoices, use{" "}
             {/* Left as a plain <a>: `no-html-link-for-pages` only became app-router-aware in
@@ -189,7 +189,7 @@ export function QuickRestockModal({
                 upgrade. */}
             {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
             <a href="/vendor-bills" className="text-brand-500 hover:underline">
-              Supplier Bills
+              Supplier bills
             </a>
           </p>
         </div>
@@ -281,7 +281,7 @@ export function QuickRestockModal({
                 />
               </div>
               <div>
-                <label className="mb-1 block text-xs text-navy">Cost per Box ($) *</label>
+                <label className="mb-1 block text-xs text-navy">Cost per box ($) *</label>
                 <input
                   required
                   type="number"
@@ -332,7 +332,7 @@ export function QuickRestockModal({
                 />
               </div>
               <div>
-                <label className="mb-1 block text-xs text-navy">Unit Cost ($) *</label>
+                <label className="mb-1 block text-xs text-navy">Unit cost ($) *</label>
                 <input
                   required
                   type="number"
@@ -348,7 +348,7 @@ export function QuickRestockModal({
 
           {/* Reference combobox */}
           <div ref={refContainerRef} className="relative">
-            <label className="mb-1 block text-xs text-navy">PO / Invoice Reference</label>
+            <label className="mb-1 block text-xs text-navy">PO / invoice reference</label>
             <input
               type="text"
               value={form.reference}
@@ -420,7 +420,7 @@ export function QuickRestockModal({
               Cancel
             </Button>
             <Button type="submit" loading={restock.isPending}>
-              Record Restock
+              Record restock
             </Button>
           </div>
         </form>

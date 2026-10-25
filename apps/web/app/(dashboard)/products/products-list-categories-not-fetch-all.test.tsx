@@ -76,7 +76,7 @@ describe("/products category dropdown does not fetch the whole catalog", () => {
     renderWithProviders(<ProductsPage />);
     const options = screen.getAllByRole("option").map((o) => o.textContent);
     expect(options).toEqual(
-      expect.arrayContaining(["All Categories", "Beverages", "Snacks", "Tobacco"]),
+      expect.arrayContaining(["All categories", "Beverages", "Snacks", "Tobacco"]),
     );
   });
 
@@ -84,7 +84,7 @@ describe("/products category dropdown does not fetch the whole catalog", () => {
     mockUseProductCategories.mockReturnValue({ data: undefined });
     renderWithProviders(<ProductsPage />);
     const options = screen.getAllByRole("option").map((o) => o.textContent);
-    expect(options).toEqual(expect.arrayContaining(["All Categories", "Beverages"]));
+    expect(options).toEqual(expect.arrayContaining(["All categories", "Beverages"]));
     expect(options).not.toContain("Snacks");
   });
 });

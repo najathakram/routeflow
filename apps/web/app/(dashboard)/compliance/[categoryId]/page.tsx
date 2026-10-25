@@ -123,7 +123,7 @@ export default function RegulatedSectionPage() {
           href="/compliance"
           className="inline-flex items-center gap-1 text-sm font-medium text-brand-600 hover:underline"
         >
-          <ArrowLeft className="h-4 w-4" /> Regulated Items
+          <ArrowLeft className="h-4 w-4" /> Regulated items
         </Link>
         <div className="rounded-xl border border-dashed border-surface-border bg-surface-raised/40 py-16 text-center text-sm text-navy/70">
           This regulated type wasn&apos;t found. It may have been removed.
@@ -141,7 +141,7 @@ export default function RegulatedSectionPage() {
           href="/compliance"
           className="inline-flex items-center gap-1 text-xs font-medium text-brand-600 hover:underline"
         >
-          <ArrowLeft className="h-3.5 w-3.5" /> Regulated Items
+          <ArrowLeft className="h-3.5 w-3.5" /> Regulated items
         </Link>
         <div className="mt-1">
           <div className="flex items-center gap-2">

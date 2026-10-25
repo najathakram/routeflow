@@ -6,7 +6,7 @@ import { seedSession } from "@/test-utils/session";
 
 /**
  * SHIP fulfilment mode on the order detail: no Fulfillment picker, carrier wording ("Mark shipped",
- * "Shipped") instead of "Out for Delivery". Every other account sees exactly today's screen.
+ * "Shipped") instead of "Out for delivery". Every other account sees exactly today's screen.
  */
 let ship = false;
 // override of the order's own path (a ROUTE order created before the account switched to shipping)
@@ -89,14 +89,14 @@ describe("order detail — SHIP mode", () => {
     ship = true;
     await open("CONFIRMED");
     expect(await screen.findByRole("button", { name: /mark shipped/i })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Out for Delivery" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Out for delivery" })).not.toBeInTheDocument();
     expect(screen.queryByText("Fulfillment")).not.toBeInTheDocument();
   });
 
-  it("not ship mode, CONFIRMED (today's UI, unchanged): Out for Delivery button and the Fulfillment row", async () => {
+  it("not ship mode, CONFIRMED (today's UI, unchanged): Out for delivery button and the Fulfillment row", async () => {
     ship = false;
     await open("CONFIRMED");
-    expect(await screen.findByRole("button", { name: "Out for Delivery" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Out for delivery" })).toBeInTheDocument();
     expect(screen.getByText("Fulfillment")).toBeInTheDocument();
   });
 
@@ -104,7 +104,7 @@ describe("order detail — SHIP mode", () => {
     ship = true;
     await open("OUT_FOR_DELIVERY");
     expect(screen.getAllByText("Shipped").length).toBeGreaterThan(0);
-    expect(screen.queryByText("Out for Delivery")).not.toBeInTheDocument();
+    expect(screen.queryByText("Out for delivery")).not.toBeInTheDocument();
   });
 
   it("S3: a ROUTE order in a ship-only account is not stranded: the Fulfillment row is shown so it can be moved to SHIP", async () => {

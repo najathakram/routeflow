@@ -1,6 +1,6 @@
 {
-  "mappedSha": "b977de134b67fb5ea89307ed87a03f56a82551b6",
-  "generatedAt": "2026-10-21T23:56:36.218Z",
+  "mappedSha": "14e7072d933b265b6046785ea8ac556c05d3388c",
+  "generatedAt": "2026-10-25T08:17:16.153Z",
   "layout": "split-2026-09-13",
   "areas": [
     "api",
@@ -9,11 +9,11 @@
     "packages"
   ],
   "partCounts": {
-    "api": 28,
-    "web": 24,
-    "mobile": 15,
+    "api": 30,
+    "web": 25,
+    "mobile": 16,
     "packages": 0
   },
   "fileCount": 1146,
-  "notes": "**2026-10-21 — Bookkeeping for window 3 (#3560 `6196ac6e2`, #3561 `67b76cb7d`, #3564 `253fc687c`, #3566 `c0f4ea574`, #3565 `b977de134`; docs-only, Option B follow-up).** New `api/` and `web/landing-2026-10-21-w3.md` (TOC row in each area file) and a packages.md section: row 623 `PaidReturnNotice` outcome wording from the server billing state; R3 product page train (`ProductLowerColumns`, `DetailsMore`, `UnitsBesideGrid`, `useDefaultOrderUnit`, `usePricesV2Pending`, grid placeholder height, row 630 `storedPackBasis`/`ownPack`, `derivedPiece` in pricing); row 688 `SoldUnitQty` plus boxed-line split on save; R7b batch 2 (`foldItemNames`, `itemSummaryOf`, `counter-item-names.ts`, `counter-day-close-draft.ts`, collapsible Today summary); row 705 `CapabilitiesCard` notice derived in render. Lessons L-332 to L-334 added; L-320, L-321, L-325 archived. mappedSha advanced to b977de134. History: CHANGELOG.md."
+  "notes": "**2026-10-25 — Bookkeeping for window 6 (#3739 `9cd783913`, #3708 `c3d269f8d`, #3719 `b7b0a1a34`, #3718 `9c47dc317`, #3744 `a9a471888`, #3720 `d9e4477ba`, #3040 `78e7d266b`, #3746 `259f59be5`, W-785 text sweep #3733/#3734/#3735/#3740/#3751; docs-only, Option B follow-up that #3753 deferred).** New `api/landing-2026-10-25-w6.md`, `web/`, `mobile/` and `packages/landing-2026-10-25-w6.md` (TOC row in each area file; packages.md keeps a pointer). Covers 681 refs proved in tenant, W-769 confirmed-basis payments, W-810 owned Stripe products, DB-lane argv, the W-785 sentence-case sweep, bugs close verb, skip-verify pushed refs, ops-monitor NUL guard. Retires DRIFT-2026-10-25.md. mappedSha stamped to HEAD. History: CHANGELOG.md."
 }

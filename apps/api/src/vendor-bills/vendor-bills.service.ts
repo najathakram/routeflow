@@ -2405,6 +2405,8 @@ export class VendorBillsService {
     if (typeof supplierName !== "string" || typeof rawDescription !== "string") {
       throw new BadRequestException("supplierName and rawDescription are required");
     }
+    // 681 site 8: a non-null productId must be this tenant's own product (null clears the mapping).
+    if (productId) await assertRefsInTenant(this.prisma, { productIds: [productId] });
     const existing = await this.prisma.forTenant().productMapping.findFirst({
       where: { supplierName, rawDescription },
     });

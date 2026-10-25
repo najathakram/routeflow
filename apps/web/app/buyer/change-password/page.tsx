@@ -92,7 +92,7 @@ export default function BuyerChangePasswordPage() {
   const onSubmit = async (data: FormValues) => {
     setApiError(null);
     if (!accessToken) {
-      setApiError("You are not logged in. Please sign in again.");
+      setApiError("You're signed out. Sign in again.");
       return;
     }
     if (hasPassword && !data.currentPassword) {
@@ -126,7 +126,7 @@ export default function BuyerChangePasswordPage() {
     ? "You sign in with Google. Add a password to also sign in with your email."
     : buyer?.email
       ? `Updating password for ${buyer.email}`
-      : "Update your buyer portal password";
+      : "Update your password";
 
   return (
     <AuthShell

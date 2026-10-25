@@ -70,7 +70,7 @@ function CheckEmailInner() {
             href="/login"
             className="flex items-center justify-center gap-1.5 text-xs text-navy/70 hover:text-navy transition-colors"
           >
-            Back to Sign In
+            Back to sign in
           </a>
           <p className="text-xs text-navy/70">
             Wrong email?{" "}

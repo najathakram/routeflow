@@ -101,7 +101,7 @@ describe("FeatureConsole — loading / empty / error states (test 5)", () => {
         onCustomise={jest.fn()}
       />,
     );
-    expect(screen.getByText("Loading feature console...")).toBeInTheDocument();
+    expect(screen.getByText("Loading feature console…")).toBeInTheDocument();
   });
 
   it("shows the empty state when the registry has no rows, never a blank tab", async () => {
@@ -145,7 +145,7 @@ describe("FeatureConsole — loading / empty / error states (test 5)", () => {
     expect(
       await screen.findByText("Could not load the feature console. Try again."),
     ).toBeInTheDocument();
-    expect(screen.queryByText("Loading feature console...")).not.toBeInTheDocument();
+    expect(screen.queryByText("Loading feature console…")).not.toBeInTheDocument();
   });
 });
 

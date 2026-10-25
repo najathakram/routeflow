@@ -17,7 +17,7 @@ describe("#2211 — vendor-bill modal date row stacks at narrow widths", () => {
 
   it("the Bill Date / Terms / Due Date row is one column below sm, three from sm up", () => {
     expect(src).toMatch(
-      /className="grid grid-cols-1 gap-3 sm:grid-cols-3">\s*<div>\s*<label[^>]*>Bill Date</,
+      /className="grid grid-cols-1 gap-3 sm:grid-cols-3">\s*<div>\s*<label[^>]*>Bill date</,
     );
   });
 });

@@ -4,6 +4,7 @@ import * as React from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { superAdminClient } from "@/lib/admin-api";
+import { statusLabel } from "../../../../_components/AdminBadge";
 import { DisabledHint } from "../../../../_components/DisabledHint";
 import { useConfirmFocus } from "../../../../_components/useConfirmFocus";
 import {
@@ -74,7 +75,7 @@ function AccountCard({ account, label }: { account: BuyerInfo; label: string }) 
       </div>
       <p className="text-base font-semibold text-white">{account.name ?? account.email}</p>
       <p className="text-sm text-slate-400">{account.email}</p>
-      <p className="mt-1 text-xs text-slate-400">Status: {account.status}</p>
+      <p className="mt-1 text-xs text-slate-400">Status: {statusLabel(account.status)}</p>
       {account.googleId && <p className="mt-1 text-xs text-slate-400">Has Google account linked</p>}
       <div className="mt-3">
         <p className="mb-1 text-xs font-medium text-slate-400">
@@ -186,7 +187,7 @@ export default function MergeRequestDetailPage() {
           <ArrowLeft className="h-5 w-5" />
         </Link>
         <GitMerge className="h-5 w-5 text-indigo-400" />
-        <h1 className="text-xl font-bold text-white">Merge Request Review</h1>
+        <h1 className="text-2xl font-bold text-white">Merge request review</h1>
         <span
           className={`ml-2 rounded-full px-3 py-0.5 text-xs font-medium ring-1 ${STATUS_COLORS[req.status] ?? "bg-slate-700 text-slate-400 ring-slate-600"}`}
         >
@@ -345,7 +346,7 @@ export default function MergeRequestDetailPage() {
                 onClick={() => setConfirmExecute(true)}
                 className="rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-500"
               >
-                Execute Merge
+                Execute merge
               </button>
             ) : (
               <div className="flex items-center gap-2 rounded-lg bg-indigo-900/40 px-4 py-2 ring-1 ring-indigo-700">
