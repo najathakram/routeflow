@@ -1,5 +1,6 @@
 "use client";
 
+import { useOnTenantToday } from "@/lib/tenant-timezone";
 import React from "react";
 import { useRouter } from "next/navigation";
 import { Paperclip } from "lucide-react";
@@ -114,7 +115,9 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
   const customerLocked = paymentKey.hasUnknown();
   const [totalAmount, setTotalAmount] = React.useState("");
   const [bankCharges, setBankCharges] = React.useState("");
-  const [paidAt, setPaidAt] = React.useState(new Date().toISOString().split("T")[0]);
+  const [paidAt, setPaidAt] = React.useState("");
+  // SA-964 §4: the paid date is the TENANT's day, seeded when the zone resolves (empty until then, never the browser's).
+  useOnTenantToday((day) => setPaidAt((cur) => cur || day));
   const [settledAt, setSettledAt] = React.useState("");
   const [method, setMethod] = React.useState<SelectablePaymentMethod>("CASH");
   const [reference, setReference] = React.useState("");
@@ -197,6 +200,10 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
     }
     if (overAllocated) {
       toast({ title: "Allocated more than the amount received", variant: "error" });
+      return;
+    }
+    if (!paidAt) {
+      toast({ title: "Pick the date the payment was received", variant: "error" });
       return;
     }
     const validAllocs = allocations.filter((a) => a.amount && parseFloat(a.amount) > 0);

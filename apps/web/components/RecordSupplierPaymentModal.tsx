@@ -1,5 +1,6 @@
 "use client";
 
+import { useOnTenantToday } from "@/lib/tenant-timezone";
 import * as React from "react";
 import { Receipt, X } from "lucide-react";
 import { Button, useToast } from "@routeflow/ui/web";
@@ -51,7 +52,9 @@ export function RecordSupplierPaymentModal({
   const { toast } = useToast();
   const record = useRecordSupplierPayment();
   const [totalAmount, setTotalAmount] = React.useState("");
-  const [paidAt, setPaidAt] = React.useState(new Date().toISOString().split("T")[0]);
+  const [paidAt, setPaidAt] = React.useState("");
+  // SA-964 §4: the paid date is the TENANT's day, seeded when the zone resolves (empty until then, never the browser's).
+  useOnTenantToday((day) => setPaidAt((cur) => cur || day));
   const [method, setMethod] = React.useState<SupplierPaymentMethod>("CASH");
   const [reference, setReference] = React.useState("");
   const [notes, setNotes] = React.useState("");
@@ -119,6 +122,10 @@ export function RecordSupplierPaymentModal({
     }
     if (totals.overAllocated) {
       toast({ title: "Allocated more than the amount paid", variant: "error" });
+      return;
+    }
+    if (!paidAt) {
+      toast({ title: "Pick the date the payment was made", variant: "error" });
       return;
     }
     const validAllocs = allocations.filter((a) => a.amount && parseFloat(a.amount) > 0);

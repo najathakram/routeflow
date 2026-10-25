@@ -114,15 +114,23 @@ export function useTobaccoInventory() {
   });
 }
 
-export function useTobaccoPurchases(params?: { from?: string; to?: string }) {
+export function useTobaccoPurchases(
+  params?: { from?: string; to?: string },
+  options?: { enabled?: boolean },
+) {
   return useQuery<TobaccoPurchase[]>({
+    enabled: options?.enabled,
     queryKey: ["tobacco", "purchases", params],
     queryFn: () => apiClient.get("/tobacco/purchases", { params }).then((r) => r.data),
   });
 }
 
-export function useTobaccoSales(params?: { from?: string; to?: string }) {
+export function useTobaccoSales(
+  params?: { from?: string; to?: string },
+  options?: { enabled?: boolean },
+) {
   return useQuery<TobaccoSale[]>({
+    enabled: options?.enabled,
     queryKey: ["tobacco", "sales", params],
     queryFn: () => apiClient.get("/tobacco/sales", { params }).then((r) => r.data),
   });
