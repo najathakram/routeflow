@@ -69,7 +69,7 @@ export default function StockCountDetailPage() {
           className="flex items-center gap-1.5 text-sm text-navy/70 hover:text-navy transition-colors"
         >
           <ArrowLeft className="h-4 w-4" />
-          Stock Counts
+          Stock counts
         </Link>
         <div className="p-8 text-center text-navy/70">Loading…</div>
       </div>
@@ -85,7 +85,7 @@ export default function StockCountDetailPage() {
         className="flex items-center gap-1.5 text-sm text-navy/70 hover:text-navy transition-colors"
       >
         <ArrowLeft className="h-4 w-4" />
-        Stock Counts
+        Stock counts
       </Link>
 
       <PageHeader

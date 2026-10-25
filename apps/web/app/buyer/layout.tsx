@@ -13,7 +13,7 @@ export const viewport: Viewport = {
 export const metadata: Metadata = {
   title: { default: "RouteFlow Buyer Portal", template: "%s · RouteFlow" },
   description:
-    "Order directly from your suppliers. Track deliveries, view invoices, and manage standing orders.",
+    "Order directly from your sellers. Track deliveries, view invoices, and manage standing orders.",
   manifest: "/buyer-manifest.json",
   appleWebApp: {
     capable: true,
@@ -26,7 +26,7 @@ export const metadata: Metadata = {
   },
   openGraph: {
     title: "RouteFlow Buyer Portal",
-    description: "Order from your suppliers, track deliveries, manage invoices.",
+    description: "Order from your sellers, track deliveries, manage invoices.",
     type: "website",
   },
 };

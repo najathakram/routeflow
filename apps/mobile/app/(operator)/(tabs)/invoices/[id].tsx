@@ -37,7 +37,8 @@ import {
   useUnapplyCreditNote,
 } from "../../../../lib/api/credit-notes";
 import { useApplyAdvancePayment, useCustomerAdvancePayments } from "../../../../lib/api/customers";
-import { useGetPaymentImageUrl } from "../../../../lib/api/payments";
+import { useGetPaymentImageUrl, useUpdatePayment } from "../../../../lib/api/payments";
+import { noLongerFitsCopy, voidPaymentBody } from "../../../../lib/payment-no-longer-fits";
 import { deriveInvoiceVariant } from "../../../../lib/invoice-pdf-variant";
 import { invoiceShowsTerms } from "../../../../lib/invoice-sale-terms";
 import { fmtCalendarDate } from "../../../../lib/format-date";
@@ -164,6 +165,7 @@ export default function InvoiceDetailScreen() {
   const updateMut = useUpdateInvoice();
   const shipmentMut = useUpdateInvoiceShipment();
   const getImageUrlMut = useGetPaymentImageUrl();
+  const voidPaymentMut = useUpdatePayment();
   const reminderMut = useSendInvoiceReminder();
   const duplicateMut = useDuplicateInvoice();
   const rw = useRestrictionWarningRetry(); // row 510: staff warning + override dialog
@@ -1102,6 +1104,9 @@ export default function InvoiceDetailScreen() {
                           </Text>
                         </Pressable>
                       ) : null}
+                      {noLongerFitsCopy(p as never) ? (
+                        <Text style={styles.payMeta}>{noLongerFitsCopy(p as never)}</Text>
+                      ) : null}
                       {pay.imageKey ? (
                         <Pressable
                           style={styles.viewReceiptRow}
@@ -1115,6 +1120,22 @@ export default function InvoiceDetailScreen() {
                         </Pressable>
                       ) : null}
                     </View>
+                    {noLongerFitsCopy(p as never) ? (
+                      <Pressable
+                        hitSlop={8}
+                        style={styles.payEditBtn}
+                        onPress={() =>
+                          voidPaymentMut.mutate({
+                            invoiceId: String(id),
+                            paymentId: p.id,
+                            ...voidPaymentBody(p),
+                          } as never)
+                        }
+                        accessibilityLabel="Void payment"
+                      >
+                        <Ionicons name="close-circle-outline" size={16} color={ios.brand} />
+                      </Pressable>
+                    ) : null}
                     <Text style={styles.payAmount}>+{fmtCurrency(p.amount)}</Text>
                     {isPaymentEditable(p.method, p.status, invoice.status) ? (
                       <Pressable

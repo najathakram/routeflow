@@ -240,7 +240,11 @@ describe("BookkeepingService", () => {
               .mockResolvedValue({ id: "inv-b812", total: 0.8, payments: existingPayments }),
             update,
           },
-          invoicePayment: { create },
+          invoicePayment: {
+            create: create.mockResolvedValue({ id: "pay-x" }),
+            findMany: jest.fn(async () => []),
+          },
+          auditLog: { create: jest.fn() },
         }),
       );
       return { update, create };
@@ -276,7 +280,11 @@ describe("BookkeepingService", () => {
             findUnique: jest.fn().mockResolvedValue({ id: "inv-sa121", total: 100, payments: [] }),
             update: jest.fn().mockResolvedValue({ id: "inv-sa121" }),
           },
-          invoicePayment: { create },
+          invoicePayment: {
+            create: create.mockResolvedValue({ id: "pay-x" }),
+            findMany: jest.fn(async () => []),
+          },
+          auditLog: { create: jest.fn() },
         }),
       );
 
@@ -391,7 +399,11 @@ describe("BookkeepingService", () => {
             })),
             update: jest.fn().mockResolvedValue({ id: "inv-c" }),
           },
-          invoicePayment: { create },
+          invoicePayment: {
+            create: create.mockResolvedValue({ id: "pay-x" }),
+            findMany: jest.fn(async () => []),
+          },
+          auditLog: { create: jest.fn() },
         }),
       );
       return { log, create };
@@ -1562,7 +1574,11 @@ describe("BookkeepingService", () => {
             })),
             update,
           },
-          invoicePayment: { create },
+          invoicePayment: {
+            create: create.mockResolvedValue({ id: "pay-x" }),
+            findMany: jest.fn(async () => []),
+          },
+          auditLog: { create: jest.fn() },
         }),
       );
 

@@ -4,7 +4,7 @@ import DashboardPage from "./page";
 
 // Fleet-off clean UI: a tenant with neither recurring_routes nor order_delivery has no route / driver
 // surfaces on the dashboard. The "Shipped" wording is a SEPARATE switch (fulfilment_model = "ship"), so an
-// existing fleet-off tenant keeps "Out for Delivery". A fleet-ON tenant sees exactly the dashboard it
+// existing fleet-off tenant keeps "Out for delivery". A fleet-ON tenant sees exactly the dashboard it
 // always did (the invariant half of this file).
 
 jest.mock("next/navigation", () => ({
@@ -91,21 +91,21 @@ const tileLabels = () =>
     .map((el) => el.textContent);
 
 describe("Dashboard — fleet-off clean UI", () => {
-  it("fleet-OFF, mode unset (an existing tenant): no route / driver tiles or cards, but Out for Delivery is unchanged", () => {
+  it("fleet-OFF, mode unset (an existing tenant): no route / driver tiles or cards, but Out for delivery is unchanged", () => {
     fleet = false;
     ship = false;
     renderWithProviders(<DashboardPage />);
 
-    expect(tileLabels()).not.toContain("Scheduled Routes");
-    expect(tileLabels()).not.toContain("Active Drivers");
+    expect(tileLabels()).not.toContain("Scheduled routes");
+    expect(tileLabels()).not.toContain("Active drivers");
     expect(screen.queryByText(/scheduled route runs/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/driver status/i)).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /new route/i })).not.toBeInTheDocument();
-    expect(screen.getByText("Out for Delivery")).toBeInTheDocument();
+    expect(screen.getByText("Out for delivery")).toBeInTheDocument();
     expect(screen.queryByText("Shipped")).not.toBeInTheDocument();
     // everything else is still there
     expect(tileLabels()).toEqual(
-      expect.arrayContaining(["Active Orders", "Overdue Invoices", "Low Stock Items"]),
+      expect.arrayContaining(["Active orders", "Overdue invoices", "Low stock items"]),
     );
   });
 
@@ -202,25 +202,25 @@ describe("Dashboard — fleet-off clean UI", () => {
     expect(tileLabels()).not.toContain("Shipped this week");
   });
 
-  it("fleet-OFF with a ship-mode account: Out for Delivery reads Shipped", () => {
+  it("fleet-OFF with a ship-mode account: Out for delivery reads Shipped", () => {
     fleet = false;
     ship = true;
     renderWithProviders(<DashboardPage />);
 
-    expect(screen.queryByText("Out for Delivery")).not.toBeInTheDocument();
+    expect(screen.queryByText("Out for delivery")).not.toBeInTheDocument();
     expect(screen.getByText("Shipped")).toBeInTheDocument();
   });
 
-  it("fleet-ON (today's UI, unchanged): route / driver tiles, New Route and the Out for Delivery label", () => {
+  it("fleet-ON (today's UI, unchanged): route / driver tiles, New route and the Out for delivery label", () => {
     fleet = true;
     ship = false;
     renderWithProviders(<DashboardPage />);
 
     expect(tileLabels()).toEqual(
-      expect.arrayContaining(["Scheduled Routes", "Active Drivers", "Active Orders"]),
+      expect.arrayContaining(["Scheduled routes", "Active drivers", "Active orders"]),
     );
     expect(screen.getByRole("link", { name: /new route/i })).toBeInTheDocument();
-    expect(screen.getByText("Out for Delivery")).toBeInTheDocument();
+    expect(screen.getByText("Out for delivery")).toBeInTheDocument();
     expect(screen.queryByText("Shipped")).not.toBeInTheDocument();
   });
 });

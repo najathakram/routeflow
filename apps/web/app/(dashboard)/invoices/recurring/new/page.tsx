@@ -18,7 +18,7 @@ export default function NewRecurringInvoicePage() {
   const createRecurring = useCreateRecurringInvoice();
 
   React.useEffect(() => {
-    setTitle("New Recurring Template");
+    setTitle("New recurring template");
   }, [setTitle]);
 
   return (
@@ -31,12 +31,12 @@ export default function NewRecurringInvoicePage() {
         Recurring Invoices
       </Link>
 
-      <h2 className="text-2xl font-bold text-navy">New Recurring Template</h2>
+      <h2 className="text-2xl font-bold text-navy">New recurring template</h2>
 
       <RecurringInvoiceForm
         mode="create"
         isPending={createRecurring.isPending}
-        submitLabel="Create Template"
+        submitLabel="Create template"
         onSubmit={(dto) =>
           createRecurring.mutate(dto, {
             onSuccess: () => {

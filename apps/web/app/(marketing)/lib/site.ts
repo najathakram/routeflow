@@ -102,14 +102,14 @@ export interface PricingPlan {
 export const PLANS: PricingPlan[] = [
   {
     name: "Starter",
-    tag: "GET YOUR WORKFLOW ORGANIZED",
+    tag: "Get your workflow organized",
     text: "For a smaller team bringing customer orders into one place.",
     icon: Package,
     items: ["Customer and product records", "Order management", "Retailer ordering portal"],
   },
   {
     name: "Growth",
-    tag: "CONNECT YOUR DELIVERY OPERATION",
+    tag: "Connect your delivery operation",
     text: "For teams coordinating orders, drivers, and regular delivery runs.",
     icon: Route,
     items: [
@@ -120,7 +120,7 @@ export const PLANS: PricingPlan[] = [
   },
   {
     name: "Scale",
-    tag: "DISCUSS A BROADER ROLLOUT",
+    tag: "Discuss a broader rollout",
     text: "For more complex operations with specific rollout and access needs.",
     icon: Warehouse,
     items: [

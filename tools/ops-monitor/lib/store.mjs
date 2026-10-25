@@ -4,9 +4,11 @@ import { execFile } from "node:child_process";
 import { limitedGit } from "./git-exec.mjs";
 import { randomUUID } from "node:crypto";
 import {
-  appendFileSync,
+  closeSync,
   existsSync,
+  fsyncSync,
   mkdirSync,
+  openSync,
   readFileSync,
   readdirSync,
   renameSync,
@@ -14,6 +16,7 @@ import {
   statSync,
   utimesSync,
   writeFileSync,
+  writeSync,
 } from "node:fs";
 import { hostname } from "node:os";
 import { dirname, join } from "node:path";
@@ -435,7 +438,64 @@ export async function syncSpecs(dir, { bugIds = new Set(), afterCommit: given } 
   return { ok: error === null, pulled: pull.code === 0, pushed, error, reconciled };
 }
 
+/** W-880: NUL bytes in an events file mean a crash zeroed part of it (10-24: 97,256 of them in one file). */
+export function nulCount(text) {
+  let n = 0;
+  for (let i = text.indexOf("\0"); i !== -1; i = text.indexOf("\0", i + 1)) n++;
+  return n;
+}
+
+function refuseIfNul(dir, files, verb) {
+  const bad = [];
+  for (const f of files) {
+    const abs = join(dir, f);
+    if (!existsSync(abs)) continue;
+    const n = nulCount(readFileSync(abs, "utf8"));
+    if (n)
+      bad.push(
+        `${f}: holds ${n} NUL bytes (a crash zeroed part of it); repair it from git history before you ${verb}`,
+      );
+  }
+  if (bad.length) throw new RefusedError(bad);
+}
+
+/**
+ * Durable (not atomic) append: O_APPEND, a full-length write, then fsync before the commit reads it back (W-880).
+ * macOS fsync does not flush the disk cache, and a new file's directory is not synced.
+ */
+function appendDurable(abs, text) {
+  const fd = openSync(abs, "a");
+  try {
+    const buf = Buffer.from(text, "utf8");
+    const n = writeSync(fd, buf);
+    if (n !== buf.length)
+      throw new Error(`short write to ${abs}: ${n} of ${buf.length} bytes (disk full?)`);
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/** Durable rewrite: a synced temp file renamed over the target, never a half-written file (W-880). */
+function rewriteDurable(abs, text) {
+  const tmp = `${abs}.tmp-${process.pid}`;
+  const fd = openSync(tmp, "w");
+  try {
+    writeSync(fd, text);
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+  try {
+    renameSync(tmp, abs);
+  } catch (e) {
+    rmSync(tmp, { force: true }); // EPERM/EBUSY on Windows: never leave the temp file behind
+    throw e;
+  }
+}
+
 /** Every events/<machine>/*.jsonl line; unparseable lines come back as `{ __invalid: true, … }`. */
+/** A file holding NUL bytes also yields one `{ __invalid, __corrupt, nul }` marker; its other lines still load. */
 export function readAllEvents(dir) {
   const root = join(dir, "events");
   const out = [];
@@ -452,7 +512,20 @@ export function readAllEvents(dir) {
     }
     for (const f of files) {
       const rel = `events/${m}/${f}`;
-      const lines = readFileSync(join(mdir, f), "utf8").split(/\r?\n/);
+      let text = readFileSync(join(mdir, f), "utf8");
+      const nul = nulCount(text);
+      if (nul) {
+        out.push({
+          __invalid: true,
+          __corrupt: true,
+          nul,
+          raw: `${nul} NUL bytes`,
+          file: rel,
+          line: 1,
+        });
+        text = text.replaceAll("\0", "");
+      }
+      const lines = text.split(/\r?\n/);
       lines.forEach((raw, i) => {
         if (raw.trim() === "") return;
         try {
@@ -572,6 +645,7 @@ export async function runCommit(dir, message, files, { run } = {}) {
 }
 
 async function commitFiles(dir, events, files) {
+  refuseIfNul(dir, files, "commit");
   const add = await git(dir, ["add", "--", ...files]);
   if (add.code !== 0) throw new Error(`git add failed: ${add.stderr.trim()}`);
   await runCommit(dir, commitMessage(events), files);
@@ -679,6 +753,8 @@ export async function reconcileUnpushed(dir, { bugIds = new Set() } = {}) {
   }
   if (out.edited.size === 0 && out.dropped.length === 0) return out;
 
+  // W-880: refuse a NUL-bearing file BEFORE the rewind, so a refusal never leaves commits unstaged.
+  refuseIfNul(dir, [...new Set(ours.map((o) => o.file))], "repair");
   const reset = await git(dir, ["reset", "--soft", "@{u}"]);
   if (reset.code !== 0)
     throw new Error(`could not rewind to repair events: ${reset.stderr.trim()}`);
@@ -719,7 +795,9 @@ export async function reconcileUnpushed(dir, { bugIds = new Set() } = {}) {
     }
     const text = next.join("\n");
     if (text.trim() === "") rmSync(abs, { force: true });
-    else writeFileSync(abs, text);
+    else if (nulCount(text))
+      throw new RefusedError([`${f}: holds NUL bytes; repair it from git history`]);
+    else rewriteDurable(abs, text);
   }
   const add = await git(dir, ["add", "-A", "--", ...files]);
   if (add.code !== 0) throw new Error(`git add failed: ${add.stderr.trim()}`);
@@ -768,6 +846,7 @@ async function doAppend(events, { dir, push, retries, bugIds, _beforePush, after
     const f = fileFor(ev);
     files.set(f, (files.get(f) ?? "") + JSON.stringify(ev) + "\n");
   }
+  refuseIfNul(dir, [...files.keys()], "append");
   for (const [f, text] of files) {
     const abs = join(dir, f);
     mkdirSync(dirname(abs), { recursive: true });
@@ -776,7 +855,7 @@ async function doAppend(events, { dir, push, retries, bugIds, _beforePush, after
       const cur = readFileSync(abs, "utf8");
       if (cur.length > 0 && !cur.endsWith("\n")) prefix = "\n";
     }
-    appendFileSync(abs, prefix + text);
+    appendDurable(abs, prefix + text);
   }
   await commitFiles(dir, accepted, [...files.keys()]);
   // Generated register mode: the views go into a SECOND, views-only commit above the events.

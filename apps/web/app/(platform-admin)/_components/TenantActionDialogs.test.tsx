@@ -156,12 +156,12 @@ describe("ExtendTrialDialog", () => {
     },
   );
 
-  it("N1: an ACTIVE (paying) tenant is told it can't be put on a trial, and Extend Trial is blocked", () => {
+  it("N1: an ACTIVE (paying) tenant is told it can't be put on a trial, and Extend trial is blocked", () => {
     const { onConfirm } = setup("ACTIVE", 30);
     expect(screen.getByRole("alert")).toHaveTextContent(TENANT_ACTION_COPY.trialNotAllowed);
     expect(screen.queryByText(/changes its status to Trial/)).not.toBeInTheDocument();
     expect(screen.queryByText(/trial will end/)).not.toBeInTheDocument();
-    const confirm = screen.getByRole("button", { name: "Extend Trial" });
+    const confirm = screen.getByRole("button", { name: "Extend trial" });
     expect(confirm).toBeDisabled();
     fireEvent.click(confirm);
     expect(onConfirm).not.toHaveBeenCalled();
@@ -191,7 +191,7 @@ describe("ExtendTrialDialog", () => {
       expect(screen.getByText("Enter 1–365 days.")).toBeInTheDocument();
       expect(screen.queryByText(/Invalid Date/)).not.toBeInTheDocument();
       expect(screen.queryByText(/trial will end/)).not.toBeInTheDocument();
-      const confirm = screen.getByRole("button", { name: "Extend Trial" });
+      const confirm = screen.getByRole("button", { name: "Extend trial" });
       expect(confirm).toBeDisabled();
       fireEvent.click(confirm);
       expect(onConfirm).not.toHaveBeenCalled();
@@ -205,14 +205,14 @@ describe("ExtendTrialDialog", () => {
     }
   });
 
-  it("focuses Cancel first; Cancel and Escape never confirm; Extend Trial confirms once", () => {
+  it("focuses Cancel first; Cancel and Escape never confirm; Extend trial confirms once", () => {
     const { onClose, onConfirm } = setup("TRIAL");
     expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
     fireEvent.keyDown(window, { key: "Escape" });
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(onClose).toHaveBeenCalledTimes(2);
     expect(onConfirm).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Extend Trial" }));
+    fireEvent.click(screen.getByRole("button", { name: "Extend trial" }));
     expect(onConfirm).toHaveBeenCalledTimes(1);
   });
 });
@@ -279,9 +279,9 @@ describe("DeleteTenantDialog", () => {
     expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
   });
 
-  it("Delete Tenant stays disabled until the slug is typed EXACTLY", () => {
+  it("Delete tenant stays disabled until the slug is typed EXACTLY", () => {
     const { onConfirm } = setup();
-    const del = screen.getByRole("button", { name: "Delete Tenant" });
+    const del = screen.getByRole("button", { name: "Delete tenant" });
     expect(del).toBeDisabled();
     for (const wrong of ["acm", "ACME", "acme ", " acme", "acme-2", ""]) {
       fireEvent.change(slugBox(), { target: { value: wrong } });
@@ -303,7 +303,7 @@ describe("DeleteTenantDialog", () => {
 
   it("while deleting the button says so and is disabled; Cancel and Escape never confirm", () => {
     const { onClose, onConfirm } = setup({ busy: true });
-    expect(screen.getByRole("button", { name: "Deleting..." })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Deleting…" })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     fireEvent.keyDown(window, { key: "Escape" });
     expect(onClose).toHaveBeenCalledTimes(2);

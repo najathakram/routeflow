@@ -474,7 +474,7 @@ function PushStatusCard() {
       onSuccess: (result) =>
         toast({
           title: "Test notification sent",
-          description: `Sent to ${result.sent} of ${result.deviceCount} device(s).`,
+          description: `Sent to ${result.sent} of ${result.deviceCount} ${result.deviceCount === 1 ? "device" : "devices"}.`,
           variant: "success",
         }),
       onError: () => toast({ title: "Couldn't send the test notification", variant: "error" }),
@@ -490,10 +490,10 @@ function PushStatusCard() {
               <Bell className="h-5 w-5 text-brand-500" />
             </div>
             <div>
-              <p className="text-sm font-semibold text-navy">Driver App Notifications</p>
+              <p className="text-sm font-semibold text-navy">Driver app notifications</p>
               <p className="text-xs text-navy/70">
                 {notificationsStatus?.configured
-                  ? `${notificationsStatus.deviceCount} device(s) registered`
+                  ? `${notificationsStatus.deviceCount} ${notificationsStatus.deviceCount === 1 ? "device" : "devices"} registered`
                   : "Push notifications are not configured"}
               </p>
             </div>
@@ -522,7 +522,7 @@ function PushStatusCard() {
           disabled={!notificationsStatus?.configured}
           onClick={handleTestNotification}
         >
-          Send Test Notification
+          Send test notification
         </Button>
       </div>
     </Card>

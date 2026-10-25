@@ -10,7 +10,7 @@ Next.js web dashboard, and an Expo (React Native) multi-role mobile app, deploye
 
 - **Monorepo**: npm workspaces (`apps/*`, `packages/*`) orchestrated by **Turbo**. Package manager **npm 10.8** (Node ≥ 18, CI pins 20).
 - **API** (`apps/api`): NestJS 11, Prisma 7 + PostgreSQL, Redis (Socket.io), Passport JWT auth. Tests: **Jest** (`*.spec.ts`).
-- **Web** (`apps/web`): Next.js 14 App Router — the **golden reference** for flows/DTOs. Radix + Tailwind, TanStack Query, react-hook-form + zod. Tests: **Jest + RTL** (`*.test.tsx`, `npm test -w apps/web`) + **Playwright E2E** (`e2e/*.spec.ts`).
+- **Web** (`apps/web`): Next.js 15.5 / React 19 App Router — the **golden reference** for flows/DTOs. Radix + Tailwind, TanStack Query, react-hook-form + zod. Tests: **Jest + RTL** (`*.test.tsx`, `npm test -w apps/web`) + **Playwright E2E** (`e2e/*.spec.ts`).
 - **Mobile** (`apps/mobile`): Expo 55 / RN 0.83, expo-router, multi-role (`(auth)`,`(customer)`,`(driver)`,`(operator)`,`(tenant)`). Tests: **Jest** (`__tests__/*.test.ts`, pure-logic only).
 - **Shared** (`packages/*`): `types`, `ui`, `eslint-config`, `config`, `typescript-config`.
 - **Lint/format**: ESLint **flat config** (per-workspace) + **Prettier** (root `prettier.config.js`).

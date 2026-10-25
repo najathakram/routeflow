@@ -136,7 +136,7 @@ function VerifyEmailInner() {
                 Sign up again
               </a>
               <a href="/login" className="rf-btn secondary flex w-full items-center justify-center">
-                Back to Sign In
+                Back to sign in
               </a>
             </div>
           </>

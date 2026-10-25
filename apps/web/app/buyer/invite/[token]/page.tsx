@@ -146,9 +146,9 @@ export default function BuyerInvitePage() {
     isLoadingInvite || authLoading
       ? "You're invited."
       : loadError
-        ? "Invalid Invite"
+        ? "Invalid invite"
         : accepted
-          ? "Invite Accepted!"
+          ? "Invite accepted"
           : "You're invited.";
 
   let content: React.ReactNode;
@@ -169,7 +169,7 @@ export default function BuyerInvitePage() {
             @next/eslint-plugin-next 15, which is why this line is newly flagged. */}
         {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
         <a href="/buyer/portal" className="text-[#0B6E6B] hover:underline text-sm">
-          Go to Buyer Portal
+          Go to your portal
         </a>
       </div>
     );
@@ -178,7 +178,7 @@ export default function BuyerInvitePage() {
       <div className="rf-auth-success text-center">
         <CheckCircle className="mx-auto mb-4 h-12 w-12 text-success" />
         <p className="text-sm text-navy/70">
-          You are now connected to <strong>{invite?.name}</strong>. Redirecting to your portal...
+          You are now connected to <strong>{invite?.name}</strong>. Redirecting to your portal…
         </p>
       </div>
     );
@@ -220,7 +220,7 @@ export default function BuyerInvitePage() {
               Signed in as <strong>{buyer.email}</strong>
             </p>
             <Button onClick={handleAccept} loading={isAccepting} className="rf-btn w-full">
-              Accept Invite &amp; Connect
+              Accept invite and connect
             </Button>
             <button
               type="button"
