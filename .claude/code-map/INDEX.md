@@ -3,7 +3,6 @@
 > Signature-level index of this repo. **Read this first; open only the files it points to.**
 > Last reconciled: see [`_meta.json`](_meta.json) `mappedSha`. Maintained by the `code-map`
 > skill — update it surgically after changes; trust the code over the map when they disagree.
-> **Drift 2026-10-25:** 260 code files merged after the last map update are not mapped yet; see [DRIFT-2026-10-25.md](DRIFT-2026-10-25.md).
 
 ## Stack & shape
 
