@@ -565,6 +565,53 @@ describe("decideStaffWrite: sticky coverage", () => {
       expect(d.stamps).toEqual([]);
     });
 
+    describe("W-748 Q2 (SA-958): the import marker covers the imported quantity only", () => {
+      const imported = (productId: string): HeldLine => ({
+        ...stamp(productId, ["r1:CA"]),
+        restrictionOverrideReason: "Imported (historical)",
+      });
+      const j = judgement([breach("p1", ["r1"])]);
+      const edit = (qtyDelta: number, held: HeldLine[]) =>
+        base({ judgement: j, lines: [{ productId: "p1", lineKey: "l:li-p1", qtyDelta }], held });
+
+      it("a quantity INCREASE on an imported line is judged again: it warns (needs a fresh reason)", () => {
+        expect(thrown(() => decideStaffWrite(edit(5, [imported("p1")]))).getResponse().code).toBe(
+          "RESTRICTION_WARNING",
+        );
+      });
+
+      it("a decrease or an unchanged quantity keeps the import marker's cover", () => {
+        expect(decideStaffWrite(edit(-2, [imported("p1")])).stamps).toEqual([]);
+        expect(decideStaffWrite(edit(0, [imported("p1")])).stamps).toEqual([]);
+      });
+
+      it("control: the same increase on a line a STAFF member overrode stays covered (row 510 sticky coverage)", () => {
+        expect(decideStaffWrite(edit(5, [stamp("p1", ["r1:CA"])])).stamps).toEqual([]);
+      });
+
+      it("a product with BOTH an imported line and a staff-overridden line stays covered for an increase", () => {
+        expect(
+          decideStaffWrite(edit(5, [imported("p1"), stamp("p1", ["r1:CA"], "li-2")])).stamps,
+        ).toEqual([]);
+      });
+
+      it("the fresh override replaces the marker: the increase is stamped with the staff reason, the marker is not carried", () => {
+        const hash = thrown(() => decideStaffWrite(edit(5, [imported("p1")]))).getResponse()
+          .warningHash;
+        const d = decideStaffWrite({
+          ...edit(5, [imported("p1")]),
+          ack: {
+            restrictionOverrides: [{ lineKey: "l:li-p1", reason: "Customer reorder approved" }],
+            warningHash: hash,
+          },
+        });
+        expect(d.stamps).toEqual([
+          expect.objectContaining({ lineKey: "l:li-p1", reason: "Customer reorder approved" }),
+        ]);
+        expect(d.carried).toEqual([]);
+      });
+    });
+
     it("the warning hash binds the judged state: the same rule and outcome at TX is a different acknowledgement", () => {
       const caHash = thrown(() => decideStaffWrite(base({ judgement: at("CA") }))).getResponse()
         .warningHash;
