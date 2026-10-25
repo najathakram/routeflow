@@ -426,6 +426,7 @@ export function RecordInlineReturnDialog({
       title="Record a return"
       description={customerName ? `For ${customerName}` : undefined}
       className="max-w-2xl"
+      closeClassName="max-lg:min-h-11 max-lg:min-w-11 max-lg:inline-flex max-lg:items-center max-lg:justify-center"
       scroll
     >
       {/* The order picker is dialog-owned state (carryingOrderId) — safe to unmount/remount
@@ -435,6 +436,7 @@ export function RecordInlineReturnDialog({
       {phase === "capture" && !orderId && sectionState.step === "lines" && (
         <div className="mb-4">
           <Select
+            className="max-lg:h-11"
             label="Which order should this credit apply to?"
             value={carryingOrderId}
             onChange={(e) => setCarryingOrderId(e.target.value)}
@@ -486,7 +488,7 @@ export function RecordInlineReturnDialog({
           ) : null
         }
         renderLinesActions={() => (
-          <Button variant="ghost" onClick={onClose}>
+          <Button variant="ghost" className="max-lg:min-h-11" onClick={onClose}>
             Cancel
           </Button>
         )}
@@ -519,11 +521,15 @@ export function RecordInlineReturnDialog({
                     Retry refund
                   </Button>
                 ) : (
-                  <Button onClick={handleClose}>Close</Button>
+                  <Button className="max-lg:min-h-11" onClick={handleClose}>
+                    Close
+                  </Button>
                 )}
               </>
             ) : (
-              <Button onClick={handleClose}>Close</Button>
+              <Button className="max-lg:min-h-11" onClick={handleClose}>
+                Close
+              </Button>
             )
           ) : (
             <>
@@ -533,6 +539,7 @@ export function RecordInlineReturnDialog({
                 </p>
               ) : null}
               <Button
+                className="max-lg:min-h-11"
                 disabled={
                   refunding ||
                   requoting ||
@@ -631,7 +638,9 @@ export function RecordInlineReturnDialog({
             </div>
           )}
           <div className="flex justify-end">
-            <Button onClick={onClose}>Done</Button>
+            <Button className="max-lg:min-h-11" onClick={onClose}>
+              Done
+            </Button>
           </div>
         </div>
       )}
@@ -649,7 +658,7 @@ export function RecordInlineReturnDialog({
             </Link>
           )}
           <div className="flex justify-end gap-2">
-            <Button variant="ghost" onClick={onClose}>
+            <Button variant="ghost" className="max-lg:min-h-11" onClick={onClose}>
               Close
             </Button>
             <Button variant="secondary" onClick={() => setPhase("capture")}>
@@ -717,6 +726,7 @@ function RefundChoice({
       {refund && (
         <>
           <Select
+            className="max-lg:h-11"
             label="Refund by"
             value={tender}
             disabled={locked && !tenderEditable}

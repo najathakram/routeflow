@@ -919,3 +919,12 @@ describe("RecordInlineReturnDialog — a faded Return button says why (R7b 3.1)"
     expect(screen.getByLabelText(/^reason$/i)).not.toHaveAttribute("aria-describedby");
   });
 });
+
+describe("RecordInlineReturnDialog — phone tap targets (W-890)", () => {
+  it("the close button and the Cancel action are 44 px boxes through md, compact from lg", async () => {
+    await openToStep1();
+    expect(screen.getByRole("button", { name: "Close" })).toHaveClass("max-lg:min-h-11");
+    expect(screen.getByRole("button", { name: "Close" })).toHaveClass("max-lg:min-w-11");
+    expect(screen.getByRole("button", { name: "Cancel" })).toHaveClass("max-lg:min-h-11");
+  });
+});

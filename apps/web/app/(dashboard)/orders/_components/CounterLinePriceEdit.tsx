@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { isSpecialTier } from "@routeflow/pricing";
-import { Button, Input, Modal, cn } from "@routeflow/ui/web";
+import { Button, Input, Modal, TAP_TARGET, cn } from "@routeflow/ui/web";
 import { formatReceiptMoney as money } from "@routeflow/pricing";
 import {
   isBoxedLine,
@@ -180,6 +180,7 @@ export function CounterLinePriceEdit({
         onClose={close}
         title={`Change price for ${name}`}
         className="max-w-md"
+        closeClassName={TAP_TARGET}
         // Focus goes to the number field, not the first radio.
         onOpenAutoFocus={(e) => {
           e.preventDefault();

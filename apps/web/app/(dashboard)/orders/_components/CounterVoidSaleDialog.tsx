@@ -4,7 +4,7 @@
 // The reason is required (audit). Every figure shown comes from the SERVER's `handBack`; nothing is added up here. Every
 // refusal is fixed copy chosen by `body.code` (lib/counter-void-error.ts), never the server's text.
 import * as React from "react";
-import { Button, Modal } from "@routeflow/ui/web";
+import { Button, Modal, TAP_TARGET } from "@routeflow/ui/web";
 import { API_ERROR_CODES, staffMay, type CounterSaleVoidResponse } from "@routeflow/types";
 import { useOptionalAuth } from "@/lib/auth-context";
 import { useVoidCounterSale } from "@/lib/api/counter-sale";
@@ -92,6 +92,7 @@ export function CounterVoidSaleDialog({
       onClose={close}
       title={`Void sale ${orderNumber} · ${formatReceiptMoney(total)}`}
       className="max-w-md"
+      closeClassName={TAP_TARGET}
       footer={
         done ? (
           <Button className="min-h-11" onClick={close}>
