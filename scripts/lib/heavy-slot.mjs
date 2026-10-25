@@ -57,6 +57,21 @@ export function parseSlots(raw) {
     : DEFAULT_SLOTS;
 }
 
+/**
+ * The machine-wide slot count: an optional `<dir>/slots` file holding a positive integer. When present it
+ * overrides every waiter's own RF_HEAVY_SLOTS / opts.slots (strict FIFO means one waiter started with a
+ * smaller count at the head would otherwise block the whole queue while higher slots sit free). Junk,
+ * zero or a missing file -> null (the waiter keeps its own count).
+ */
+export function readSlotsFile(dir) {
+  try {
+    const n = Number(fs.readFileSync(path.join(dir, "slots"), "utf8").trim());
+    return Number.isInteger(n) && n > 0 ? n : null;
+  } catch {
+    return null;
+  }
+}
+
 function parseMinutesMs(raw, fallbackMin) {
   const m = Number(raw);
   const ok = typeof raw === "string" && raw.trim() !== "" && Number.isFinite(m) && m >= 0;
@@ -698,7 +713,8 @@ async function acquire(cfg, state) {
       if (!fs.existsSync(ticketFile)) writeJson(ticketFile, { ...base, heartbeatAt: now });
       const taken = new Set(snap.holders.map((h) => h.index));
       let free = -1;
-      for (let i = 0; i < cfg.slots; i++) {
+      const slotCount = readSlotsFile(cfg.dir) ?? cfg.slots;
+      for (let i = 0; i < slotCount; i++) {
         if (!taken.has(i)) {
           free = i;
           break;

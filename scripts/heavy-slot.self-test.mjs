@@ -33,6 +33,7 @@ import {
   formatWaitLine,
   historyRecord,
   nextGrant,
+  readSlotsFile,
   cpuPctFromTimes,
   loadOverReason,
   parseLoadPct,
@@ -1379,6 +1380,72 @@ check(
     "K13 max wait is judged on the clock after the sample: one sample, then HeavySlotTimeout",
     [err instanceof HeavySlotTimeout, calls],
     [true, 1],
+  );
+}
+
+{
+  // L1-L4: a machine-wide <dir>/slots file overrides every waiter's own RF_HEAVY_SLOTS, re-read each poll.
+  const dir = mkTmp();
+  const f = path.join(dir, "slots");
+  writeFileSync(f, "4");
+  const a = readSlotsFile(dir);
+  writeFileSync(f, "abc");
+  const b = readSlotsFile(dir);
+  writeFileSync(f, "0");
+  const c = readSlotsFile(dir);
+  rmSync(f);
+  check(
+    "L1 readSlotsFile: a positive integer is read, junk / zero / no file is null",
+    [a, b, c, readSlotsFile(dir)],
+    [4, null, null, null],
+  );
+}
+{
+  // A slots=2 waiter at the head, both slots held, file says 4 -> it takes slot 2 (no file: it blocks).
+  const dir = mkTmp();
+  const gates = [];
+  const gate = () => new Promise((r) => gates.push(r));
+  const opts = (label) => ({ label, branch: "b", dir, env: {}, slots: 2, ...FAST, ...NO_LOG });
+  const A = withHeavySlot(opts("A"), () => gate());
+  await until(() => existsSync(lockFile(dir, 0)));
+  const B = withHeavySlot(opts("B"), () => gate());
+  await until(() => existsSync(lockFile(dir, 1)));
+  let wStarted = false;
+  const W = withHeavySlot(opts("W"), async () => void (wStarted = true));
+  await until(() => queued(dir).length === 1);
+  await sleep(60);
+  const blockedWithoutFile = !wStarted;
+  writeFileSync(path.join(dir, "slots"), "4");
+  await W;
+  check(
+    "L2 a slots=2 waiter at the head blocks with both slots held, and takes slot 2 once the file says 4",
+    [blockedWithoutFile, wStarted, existsSync(lockFile(dir, 0)), existsSync(lockFile(dir, 1))],
+    [true, true, true, true],
+  );
+  gates[0]();
+  gates[1]();
+  await Promise.all([A, B]);
+}
+{
+  // A junk file changes nothing: the waiter keeps its env/opts slot count.
+  const dir = mkTmp();
+  writeFileSync(path.join(dir, "slots"), "lots");
+  const gates = [];
+  const gate = () => new Promise((r) => gates.push(r));
+  const opts = (label) => ({ label, branch: "b", dir, env: {}, slots: 1, ...FAST, ...NO_LOG });
+  const A = withHeavySlot(opts("A"), () => gate());
+  await until(() => existsSync(lockFile(dir, 0)));
+  let bStarted = false;
+  const B = withHeavySlot(opts("B"), async () => void (bStarted = true));
+  await until(() => queued(dir).length === 1);
+  await sleep(60);
+  const blocked = !bStarted;
+  gates[0]();
+  await Promise.all([A, B]);
+  check(
+    "L3 a junk slots file is ignored: slots=1 still serialises",
+    [blocked, bStarted],
+    [true, true],
   );
 }
 
