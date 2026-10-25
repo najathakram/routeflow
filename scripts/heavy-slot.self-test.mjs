@@ -1492,13 +1492,17 @@ check(
   check("L5 odd-length UTF-16 BE is invalid, not a throw", [threw, r?.state], [null, "invalid"]);
   let thrown = 0;
   let rng = 12345;
-  const rnd = () => (rng = (rng * 1103515245 + 12345) & 0x7fffffff);
-  const heads = [[], [0xff, 0xfe], [0xfe, 0xff], [0xef, 0xbb, 0xbf]];
+  const rnd = () => (rng = (rng * 1103515245 + 12345) & 0x7fffffff) >>> 8; // high bits: the low bits of this LCG cycle
+  const heads = [[], [0xef, 0xbb, 0xbf], [0xff, 0xfe], [0xfe, 0xff]];
+  const names = ["none", "utf8-bom", "utf16le-bom", "utf16be-bom"];
+  const seen = { none: 0, "utf8-bom": 0, "utf16le-bom": 0, "utf16be-bom": 0 };
+  const oddBody = { "utf16le-bom": 0, "utf16be-bom": 0 };
   for (let i = 0; i < 400; i++) {
-    const n = rnd() % 9;
-    const body = Array.from({ length: n }, () => rnd() & 0xff);
-    const b = i % 2 ? Buffer.from([...heads[rnd() % 4], ...body.slice(0, 8)]) : Buffer.from(body);
-    writeFileSync(f, b);
+    const cls = i % 4; // each BOM class by construction, never left to the generator
+    const body = Array.from({ length: rnd() % 9 }, () => rnd() & 0xff);
+    seen[names[cls]]++;
+    if (cls >= 2 && body.length % 2 === 1) oddBody[names[cls]]++;
+    writeFileSync(f, Buffer.from([...heads[cls], ...body]));
     try {
       inspectSlotsFile(dir);
       readSlotsFile(dir);
@@ -1507,7 +1511,12 @@ check(
       thrown++;
     }
   }
-  check("L5b fuzz: 400 files of 0-8 random bytes (with/without BOMs) never throw", thrown, 0);
+  check("L5b fuzz: 400 files of 0-8 random bytes under each BOM class never throw", thrown, 0);
+  check(
+    "L5c the fuzz exercised every BOM class, and odd-length UTF-16 bodies in both byte orders",
+    [Object.values(seen).every((n) => n > 0), Object.values(oddBody).every((n) => n > 0)],
+    [true, true],
+  );
 }
 
 for (const d of tmpDirs) rmSync(d, { recursive: true, force: true });
