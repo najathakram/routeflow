@@ -46,7 +46,7 @@ describe("CountAdjustModal", () => {
     fireEvent.click(save());
     expect(mockMutate.mock.calls[0][0]).toEqual({
       mode: "SET",
-      count: { unit: null, quantity: 3 },
+      parts: [{ unit: null, quantity: 3 }],
       reason: "COUNT_CORRECTION",
     });
   });
@@ -60,7 +60,8 @@ describe("CountAdjustModal", () => {
     fireEvent.click(save());
     expect(mockMutate.mock.calls[0][0]).toEqual({
       mode: "ADJUST",
-      delta: { unit: null, quantity: 1, sign: "-" },
+      parts: [{ unit: null, quantity: 1 }],
+      sign: "-",
       reason: "DAMAGED",
     });
   });

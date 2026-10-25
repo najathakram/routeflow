@@ -169,8 +169,8 @@ export function buildCountRequest(form: CountForm): ProductCountRequest {
   // The pack is `unit: null` (the server's own pack label); any other option sends its ladder label.
   const unit = form.unit === "" ? null : form.unit;
   return form.mode === "SET"
-    ? { mode: "SET", count: { unit, quantity }, ...extra }
-    : { mode: "ADJUST", delta: { unit, quantity, sign: form.sign }, ...extra };
+    ? { mode: "SET", parts: [{ unit, quantity }], ...extra }
+    : { mode: "ADJUST", parts: [{ unit, quantity }], sign: form.sign, ...extra };
 }
 
 /** Today as "YYYY-MM-DD" (local), the date picker's max. */

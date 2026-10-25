@@ -1,19 +1,22 @@
 import type { AdjustmentReason } from "./enums";
 
 /**
- * SA-828 (row 657): `POST /inventory/products/:id/count` — set the stock to a count, or adjust it
- * by a delta, entered in one of the product's units. The SERVER resolves the unit's factor from
- * the product's ladder (never a client factor) and refuses a fractional count of a packed unit.
+ * SA-828 (row 657) + SA-828a: `POST /inventory/products/:id/count` — set the stock to a count, or adjust it
+ * by a delta, entered as parts in the product's units ("3 cases + 4 boxes"). The SERVER resolves every
+ * part's factor from the product's ladder (never a client factor) and refuses a fractional count of a
+ * packed unit (400 COUNT_FRACTIONAL_PACK) and a unit named twice (400 COUNT_DUPLICATE_UNIT).
  * `unit`: a ladder label ("Case", "Piece"); null / "" = the product's own pack.
  */
 export interface ProductCountQuantity {
   unit?: string | null;
+  /** >= 0; whole for a packed unit. */
   quantity: number;
 }
 
 export type ProductCountRequest = (
-  | { mode: "SET"; count: ProductCountQuantity }
-  | { mode: "ADJUST"; delta: ProductCountQuantity & { sign: "+" | "-" } }
+  | { mode: "SET"; parts: ProductCountQuantity[] }
+  /** One sign for the whole delta; the parts stay non-negative. */
+  | { mode: "ADJUST"; parts: ProductCountQuantity[]; sign: "+" | "-" }
 ) & {
   reason: AdjustmentReason;
   /** Required (3-200 characters) when `reason` is OTHER. */

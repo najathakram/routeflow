@@ -1,6 +1,7 @@
 /**
  * SA-828 (row 657) - `countProduct` executed against real Postgres: the server's ladder factor,
- * the single ADJUSTMENT movement with its reason, the no-op SET, and the whole-pack refusal.
+ * the single ADJUSTMENT movement with its reason, the no-op SET, the whole-pack refusal, and SA-828a's
+ * parts ("3 cases + 4 boxes" = 120, the resolved factors in the note, a duplicate unit refused).
  * Throwaway `qa-sa802-*` tenants; collected only by `jest.db.config.js` (`npm run test:db`).
  */
 import { describeDb } from "../common/testing/db-spec";
@@ -28,7 +29,7 @@ describeDb("SA-828 countProduct (DB)", () => {
         id,
         {
           mode: "SET",
-          count: { unit: "Case", quantity: 3 },
+          parts: [{ unit: "Case", quantity: 3 }],
           reason: "DAMAGED",
           reasonNote: "water leak",
         } as any,
@@ -54,7 +55,8 @@ describeDb("SA-828 countProduct (DB)", () => {
         id2,
         {
           mode: "ADJUST",
-          delta: { unit: "Case", quantity: 1, sign: "-" },
+          parts: [{ unit: "Case", quantity: 1 }],
+          sign: "-",
           reason: "THEFT",
         } as any,
         w2.userId,
@@ -73,7 +75,7 @@ describeDb("SA-828 countProduct (DB)", () => {
     const res = await t.inTenant(w, () =>
       t.inventory.countProduct(
         id,
-        { mode: "SET", count: { unit: "Case", quantity: 3 }, reason: "COUNT_CORRECTION" } as any,
+        { mode: "SET", parts: [{ unit: "Case", quantity: 3 }], reason: "COUNT_CORRECTION" } as any,
         w.userId,
       ),
     );
@@ -92,13 +94,69 @@ describeDb("SA-828 countProduct (DB)", () => {
           id,
           {
             mode: "SET",
-            count: { unit: "Case", quantity: 2.5 },
+            parts: [{ unit: "Case", quantity: 2.5 }],
             reason: "COUNT_CORRECTION",
           } as any,
           w.userId,
         ),
       ),
     ).rejects.toMatchObject({ response: { code: "COUNT_FRACTIONAL_PACK" } });
+    expect(await t.movementsOf(id)).toHaveLength(0);
+    expect(await t.stockOf(id)).toBe(20);
+  });
+
+  it('SA-828a C1: SET "3 Case + 4 Box" on a 24 / 12 ladder = 120 pieces; the note records the factors', async () => {
+    const w = await t.newWorld("parts");
+    const id = await t.newProduct(w, "Acme Cola", { unit: "Piece", currentStock: 20 });
+    await t.prisma.productUnit.createMany({
+      data: [
+        { tenantId: w.tenantId, productId: id, label: "Box", factorToBase: 12, sortOrder: 1 },
+        { tenantId: w.tenantId, productId: id, label: "Case", factorToBase: 24, sortOrder: 2 },
+      ],
+    });
+    const res = await t.inTenant(w, () =>
+      t.inventory.countProduct(
+        id,
+        {
+          mode: "SET",
+          parts: [
+            { unit: "Case", quantity: 3 },
+            { unit: "Box", quantity: 4 },
+          ],
+          reason: "COUNT_CORRECTION",
+        } as any,
+        w.userId,
+      ),
+    );
+    expect(res.stockAfter).toBe(120);
+    expect(await t.stockOf(id)).toBe(120);
+    const moves = await t.movementsOf(id);
+    expect(moves).toHaveLength(1); // ONE ADJUSTMENT carries the pieces
+    expect(Number(moves[0].quantity)).toBe(100);
+    expect(moves[0].notes).toMatch(
+      /^Product count: set to 3 Case \(x24\) \+ 4 Box \(x12\) = 120 pieces/,
+    );
+  });
+
+  it("SA-828a: a unit named twice is 400 COUNT_DUPLICATE_UNIT and writes nothing", async () => {
+    const w = await t.newWorld("dup");
+    const id = await caseProduct(w, 12, 20);
+    await expect(
+      t.inTenant(w, () =>
+        t.inventory.countProduct(
+          id,
+          {
+            mode: "SET",
+            parts: [
+              { unit: "Case", quantity: 1 },
+              { unit: "case", quantity: 2 },
+            ],
+            reason: "COUNT_CORRECTION",
+          } as any,
+          w.userId,
+        ),
+      ),
+    ).rejects.toMatchObject({ response: { code: "COUNT_DUPLICATE_UNIT" } });
     expect(await t.movementsOf(id)).toHaveLength(0);
     expect(await t.stockOf(id)).toBe(20);
   });

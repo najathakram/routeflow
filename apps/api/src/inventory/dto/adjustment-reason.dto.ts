@@ -6,12 +6,14 @@ import {
   type ValidationOptions,
 } from "class-validator";
 import { Transform } from "class-transformer";
-import {
-  ADJUSTMENT_REASON_NOTE_MAX,
-  ADJUSTMENT_REASON_NOTE_MIN,
-  ADJUSTMENT_REASON_VALUES,
-  type AdjustmentReason,
-} from "@routeflow/types";
+import { AdjustmentReason } from "@prisma/client";
+
+// The API never value-imports @routeflow/types (no-runtime-workspace-imports.spec): the reasons come
+// from the Prisma enum, and the note bounds are pinned equal to the shared
+// ADJUSTMENT_REASON_NOTE_MIN / _MAX by product-count.dto.spec.ts.
+const ADJUSTMENT_REASON_VALUES = Object.values(AdjustmentReason);
+export const ADJUSTMENT_REASON_NOTE_MIN = 3;
+export const ADJUSTMENT_REASON_NOTE_MAX = 200;
 
 /**
  * SA-804(3): the reason fields of a manual stock write (an adjustment, a product count). `reason`

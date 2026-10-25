@@ -47,7 +47,7 @@ describe("countUnitOptions", () => {
       { label: "Case", factorToBase: 24 },
     ]);
     const send = (value: string) =>
-      (buildCountRequest({ ...base, unit: value }) as { count: { unit: string | null } }).count
+      (buildCountRequest({ ...base, unit: value }) as { parts: { unit: string | null }[] }).parts[0]
         .unit;
     expect(send(o[0].value)).toBeNull();
     expect(send(o[1].value)).toBe("Case");
@@ -132,7 +132,7 @@ describe("buildCountRequest", () => {
   it("builds a SET body", () => {
     expect(buildCountRequest(base)).toEqual({
       mode: "SET",
-      count: { unit: null, quantity: 3 },
+      parts: [{ unit: null, quantity: 3 }],
       reason: "COUNT_CORRECTION",
     });
   });
@@ -148,7 +148,8 @@ describe("buildCountRequest", () => {
       }),
     ).toEqual({
       mode: "ADJUST",
-      delta: { unit: null, quantity: 1, sign: "-" },
+      parts: [{ unit: null, quantity: 1 }],
+      sign: "-",
       reason: "OTHER",
       reasonNote: "lost",
       effectiveDate: "2026-10-01",

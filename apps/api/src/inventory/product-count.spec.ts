@@ -100,6 +100,45 @@ describe("piecesOf", () => {
     ).toThrow(BadRequestException);
   });
 
+  it('SA-828a C1: "3 cases + 4 boxes" on a 24 / 12 ladder is 72 + 48 = 120 pieces', () => {
+    const each = { unit: "Piece", unitsPerBox: null };
+    const ladder2412 = [level("Box", 12), level("Case", 24)];
+    const r = piecesOf(each, ladder2412, [
+      { unit: "Case", quantity: 3 },
+      { unit: "Box", quantity: 4 },
+    ]);
+    expect(r.pieces.toString()).toBe("120");
+    expect(r.parts.map((p) => [p.unit, p.quantity, p.factor, p.pieces.toString()])).toEqual([
+      ["Case", 3, 24, "72"],
+      ["Box", 4, 12, "48"],
+    ]);
+  });
+
+  it("two parts that resolve to the same unit are a 400 COUNT_DUPLICATE_UNIT (at most one per level)", () => {
+    for (const parts of [
+      [{ unit: "Case" }, { unit: "CASE" }],
+      [{ unit: null }, { unit: "Box" }], // the pack named two ways
+    ]) {
+      const e = rejection(() =>
+        piecesOf(
+          pack12,
+          ladder,
+          parts.map((p) => ({ ...p, quantity: 1 })),
+        ),
+      );
+      expect(e).toBeInstanceOf(BadRequestException);
+      expect(e.getResponse()).toMatchObject({ code: "COUNT_DUPLICATE_UNIT" });
+    }
+  });
+
+  it("describeParts names each part with its resolved factor and the total", () => {
+    const r = piecesOf(pack12, caseOf12, [
+      { unit: "Case", quantity: 3 },
+      { unit: "Piece", quantity: 4 },
+    ]);
+    expect(describeParts(r.parts, r.pieces)).toBe("3 Case (x12) + 4 Piece (x1) = 40 pieces");
+  });
+
   it("rounds to 3 decimal places", () => {
     expect(pieces({ unit: "Each", unitsPerBox: null }, [], [{ quantity: 1.0004 }])).toBe("1");
   });
@@ -111,13 +150,5 @@ describe("piecesOf", () => {
     expect(pieces(pack12, ladder, [{ unit: "Piece", quantity: 9_999_999.999 }])).toBe(
       "9999999.999",
     );
-  });
-
-  it("describeParts names what was counted", () => {
-    const r = piecesOf(pack12, caseOf12, [
-      { unit: "Case", quantity: 3 },
-      { unit: "Piece", quantity: 4 },
-    ]);
-    expect(describeParts(r.parts)).toBe("3 Case + 4 Piece");
   });
 });

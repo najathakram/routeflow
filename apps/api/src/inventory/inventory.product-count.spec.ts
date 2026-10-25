@@ -40,14 +40,16 @@ describe("InventoryService reasons and countProduct (SA-828 / SA-804(3))", () =>
   let service: InventoryService;
   let prisma: ReturnType<typeof createMockPrisma>;
   let stockAlerts: { fireForProducts: jest.Mock };
+  let exec: jest.Mock;
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    exec = jest.fn().mockResolvedValue(0);
     stockAlerts = { fireForProducts: jest.fn().mockResolvedValue({ notified: 0 }) };
     (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) =>
       fn({
         ...prisma,
-        $executeRaw: jest.fn().mockResolvedValue(0),
+        $executeRaw: exec,
         $queryRaw: jest.fn().mockResolvedValue([]),
       }),
     );
@@ -76,6 +78,12 @@ describe("InventoryService reasons and countProduct (SA-828 / SA-804(3))", () =>
     expect(prisma.tenantTransaction).not.toHaveBeenCalled();
   };
   const movement = () => prisma.stockMovement.create.mock.calls[0][0].data;
+  /** SA-828a: refused INSIDE the tx (the factor is resolved there): no row is written, the tx rolls back. */
+  const nothingWrittenInTx = () => {
+    expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+    expect(prisma.product.update).not.toHaveBeenCalled();
+    expect(prisma.stockLot.create).not.toHaveBeenCalled();
+  };
 
   describe("recordAdjustment carries the reason", () => {
     it("writes reason and reasonNote on the movement", async () => {
@@ -123,14 +131,15 @@ describe("InventoryService reasons and countProduct (SA-828 / SA-804(3))", () =>
     const set = (over: Record<string, unknown> = {}) =>
       ({
         mode: "SET",
-        count: { unit: "Case", quantity: 3 },
+        parts: [{ unit: "Case", quantity: 3 }],
         reason: "COUNT_CORRECTION",
         ...over,
       }) as any;
     const adjust = (over: Record<string, unknown> = {}) =>
       ({
         mode: "ADJUST",
-        delta: { unit: "Case", quantity: 1, sign: "-" },
+        parts: [{ unit: "Case", quantity: 1 }],
+        sign: "-",
         reason: "DAMAGED",
         ...over,
       }) as any;
@@ -189,7 +198,7 @@ describe("InventoryService reasons and countProduct (SA-828 / SA-804(3))", () =>
       prisma.product.update.mockResolvedValue({ currentStock: D(22.5) });
       await service.countProduct(
         "prod-1",
-        adjust({ delta: { unit: "Piece", quantity: 2.5, sign: "+" } }),
+        adjust({ parts: [{ unit: "Piece", quantity: 2.5 }], sign: "+" }),
         "u-1",
       );
       expect(movement().quantity.toString()).toBe("2.5");
@@ -197,19 +206,112 @@ describe("InventoryService reasons and countProduct (SA-828 / SA-804(3))", () =>
 
     it("a fractional Case is a 400 COUNT_FRACTIONAL_PACK and nothing is written", async () => {
       await expect(
-        service.countProduct("prod-1", set({ count: { unit: "Case", quantity: 1.5 } }), "u-1"),
+        service.countProduct("prod-1", set({ parts: [{ unit: "Case", quantity: 1.5 }] }), "u-1"),
       ).rejects.toMatchObject({
         constructor: BadRequestException,
         response: { code: "COUNT_FRACTIONAL_PACK", message: expect.stringContaining("Cases") },
       });
+      nothingWrittenInTx();
+    });
+
+    it('SA-828a C1: SET "3 Case + 4 Box" on a 24 / 12 ladder counts 120 pieces', async () => {
+      prisma.productUnit.findMany.mockResolvedValue([
+        { productId: "prod-1", label: "Box", factorToBase: 12, price: null },
+        { productId: "prod-1", label: "Case", factorToBase: 24, price: null },
+      ]);
+      const each = row({ unit: "Piece", unitsPerBox: null });
+      prisma.product.findUnique.mockResolvedValue(each);
+      prisma.product.findMany.mockResolvedValue([each]); // 20 on hand
+      prisma.product.update.mockResolvedValue({ currentStock: D(120) });
+
+      const result = await service.countProduct(
+        "prod-1",
+        set({
+          parts: [
+            { unit: "Case", quantity: 3 },
+            { unit: "Box", quantity: 4 },
+          ],
+        }),
+        "u-1",
+      );
+
+      expect(prisma.stockMovement.create).toHaveBeenCalledTimes(1); // ONE movement carries the pieces
+      expect(movement().quantity.toString()).toBe("100"); // 120 counted - 20 on hand
+      expect(result).toMatchObject({ deltaPieces: 100, stockBefore: 20, stockAfter: 120 });
+      // the audit note: the parts as entered plus the factors the server resolved
+      expect(movement().notes).toMatch(
+        /^Product count: set to 3 Case \(x24\) \+ 4 Box \(x12\) = 120 pieces/,
+      );
+    });
+
+    it("ADJUST takes one sign for the whole delta: -(1 Case + 2 Piece) = -14", async () => {
+      prisma.product.update.mockResolvedValue({ currentStock: D(6) });
+      await service.countProduct(
+        "prod-1",
+        adjust({
+          parts: [
+            { unit: "Case", quantity: 1 },
+            { unit: "Piece", quantity: 2 },
+          ],
+        }),
+        "u-1",
+      );
+      expect(movement().quantity.toString()).toBe("-14");
+      expect(movement().notes).toMatch(
+        /^Product count: removed 1 Case \(x12\) \+ 2 Piece \(x1\) = 14 pieces/,
+      );
+    });
+
+    it("a duplicate unit (after resolution) is a 400 COUNT_DUPLICATE_UNIT and nothing is written", async () => {
+      await expect(
+        service.countProduct(
+          "prod-1",
+          set({
+            parts: [
+              { unit: null, quantity: 1 },
+              { unit: "Box", quantity: 2 },
+            ],
+          }),
+          "u-1",
+        ),
+      ).rejects.toMatchObject({
+        constructor: BadRequestException,
+        response: { code: "COUNT_DUPLICATE_UNIT" },
+      });
+      nothingWrittenInTx();
+    });
+
+    it("a SET with a sign is a 400 (only an ADJUST has a direction)", async () => {
+      await expect(
+        service.countProduct("prod-1", set({ sign: "-" }), "u-1"),
+      ).rejects.toBeInstanceOf(BadRequestException);
       nothingWritten();
+    });
+
+    it("SA-828a / SA-826 order: the ladder is read on the tx, after the tenant-units SHARED lock, before the stock lock", async () => {
+      prisma.product.update.mockResolvedValue({ currentStock: D(36) });
+      await service.countProduct("prod-1", set(), "u-1");
+
+      const sql = exec.mock.calls.map((c) => (c[0] as string[]).join("?"));
+      const order = (i: number) => exec.mock.invocationCallOrder[i];
+      const shared = sql.findIndex((q) => q.includes("pg_advisory_xact_lock_shared"));
+      const stock = sql.findIndex((q) => q.includes("FOR UPDATE"));
+      expect(shared).toBeGreaterThanOrEqual(0);
+      expect(sql.some((q) => /pg_advisory_xact_lock\(/.test(q))).toBe(false); // never EXCLUSIVE
+      expect(stock).toBeGreaterThan(shared);
+      // the ladder read: once, inside the tx, between the two locks (never a pre-tx factor)
+      expect(prisma.productUnit.findMany).toHaveBeenCalledTimes(1);
+      const ladderAt = prisma.productUnit.findMany.mock.invocationCallOrder[0];
+      expect(ladderAt).toBeGreaterThan(order(shared));
+      expect(ladderAt).toBeLessThan(order(stock));
+      expect(prisma.tenantTransaction.mock.invocationCallOrder[0]).toBeLessThan(ladderAt);
     });
 
     it("a SET equal to the stock writes no movement and returns movementId null", async () => {
       // 20 pieces on hand = 20 Piece
       const result = await service.countProduct(
         "prod-1",
-        set({ count: { unit: "Piece", quantity: 20 } }),
+        set({ parts: [{ unit: "Piece", quantity: 20 }] }),
         "u-1",
       );
       expect(result).toEqual({
@@ -229,7 +331,7 @@ describe("InventoryService reasons and countProduct (SA-828 / SA-804(3))", () =>
       prisma.product.update.mockResolvedValue({ currentStock: D(12) });
       const result = await service.countProduct(
         "prod-1",
-        set({ count: { unit: "Case", quantity: 1 }, reason: "THEFT" }),
+        set({ parts: [{ unit: "Case", quantity: 1 }], reason: "THEFT" }),
         "u-1",
       );
       expect(movement().quantity.toString()).toBe("-8");
@@ -242,7 +344,7 @@ describe("InventoryService reasons and countProduct (SA-828 / SA-804(3))", () =>
       await expect(
         service.countProduct(
           "prod-1",
-          adjust({ delta: { unit: "Piece", quantity: 0, sign: "+" } }),
+          adjust({ parts: [{ unit: "Piece", quantity: 0 }], sign: "+" }),
           "u-1",
         ),
       ).rejects.toBeInstanceOf(BadRequestException);
@@ -251,16 +353,16 @@ describe("InventoryService reasons and countProduct (SA-828 / SA-804(3))", () =>
 
     it("an unknown unit is the ladder's 400 UNIT_NOT_OFFERED", async () => {
       await expect(
-        service.countProduct("prod-1", set({ count: { unit: "Drum", quantity: 1 } }), "u-1"),
+        service.countProduct("prod-1", set({ parts: [{ unit: "Drum", quantity: 1 }] }), "u-1"),
       ).rejects.toMatchObject({ response: { code: "UNIT_NOT_OFFERED" } });
-      nothingWritten();
+      nothingWrittenInTx();
     });
 
     it("a factor the client sends is never read", async () => {
       prisma.product.update.mockResolvedValue({ currentStock: D(36) });
       await service.countProduct(
         "prod-1",
-        set({ count: { unit: "Case", quantity: 3, unitsPerBox: 1000, factor: 1000 } }),
+        set({ parts: [{ unit: "Case", quantity: 3, unitsPerBox: 1000, factor: 1000 }] }),
         "u-1",
       );
       expect(movement().quantity.toString()).toBe("16"); // 3 x 12 - 20, not 3 x 1000

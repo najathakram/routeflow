@@ -210,6 +210,11 @@ const BLOCKS: Record<string, BlockPin> = {
     why: "test fixture: seeds a standalone product for the order-stock db specs (B284), never production",
     standalone: true,
   },
+  "src/inventory/testing/sa802-world.ts": {
+    blocks: { "afterAll:create": 1 },
+    why: "test fixture: seeds a standalone product for the SA-802 / SA-828 db specs (qa-sa802-*), never production",
+    standalone: true,
+  },
   "src/import/variant-resolution.service.ts": {
     blocks: { "completeSetup:update": 1 },
     why: "completes an import-created product's price / unit / unitsPerBox / category with conditional spreads (`...(dto.x !== undefined && { x })`, surfaced by the parenthesised-spread rule); the dto has no name field and the row's label is never touched",

@@ -91,7 +91,7 @@ describe("the skipped line / stock writers now refuse a FAMILY (400 FAMILY_NOT_S
     await refused(
       svc.countProduct(
         FAMILY.id,
-        { mode: "SET", count: { quantity: 1 }, reason: "COUNT_CORRECTION" } as never,
+        { mode: "SET", parts: [{ quantity: 1 }], reason: "COUNT_CORRECTION" } as never,
         "u1",
       ),
     );

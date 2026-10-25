@@ -74,7 +74,8 @@ const WRITERS: Writer[] = [
         "prod-1",
         {
           mode: "ADJUST",
-          delta: { unit: null, quantity: 5, sign: "+" },
+          parts: [{ unit: null, quantity: 5 }],
+          sign: "+",
           reason: "COUNT_CORRECTION",
         } as any,
         "user-1",

@@ -45,7 +45,7 @@ import { documentStockDate, stockWriteDate, type DocumentStockDate } from "./sto
 import { RecordPurchaseDto } from "./dto/record-purchase.dto";
 import { RecordAdjustmentDto } from "./dto/record-adjustment.dto";
 import { ProductCountDto } from "./dto/product-count.dto";
-import { describeParts, ladderOf, piecesOf } from "./product-count";
+import { describeParts, lockedLadderOf, piecesOf } from "./product-count";
 import { CommitStockCountDto } from "./dto/commit-stock-count.dto";
 import {
   CommitStockCountSessionDto,
@@ -481,11 +481,13 @@ export class InventoryService {
   }
 
   /**
-   * SA-828 (row 657): set one product's stock to a count, or adjust it by a delta, entered in one of
-   * the product's units. The factor is the SERVER's (the product's ladder, `piecesOf`), never the
-   * client's; a packed unit is counted whole. The write is the count commit's own body
-   * (`applyStockCountItemsInTx`: one ADJUSTMENT movement, a lot for a gain) carrying the person's
-   * reason. No negative-stock refusal: a count can leave stock below zero exactly as a sale can.
+   * SA-828 (row 657) + SA-828a: set one product's stock to a count, or adjust it by a delta, entered
+   * as parts in the product's units ("3 cases + 4 boxes"). Every factor is the SERVER's (the product's
+   * ladder, `piecesOf`), resolved INSIDE the tx after the tenant-units SHARED lock (the SA-826 order),
+   * never the client's and never before the tx; a packed unit is counted whole. The write is the count
+   * commit's own body (`applyStockCountItemsInTx`: one ADJUSTMENT movement, a lot for a gain) carrying
+   * the person's reason; the movement's note records the parts and the resolved factors. No
+   * negative-stock refusal: a count can leave stock below zero exactly as a sale can.
    */
   async countProduct(
     productId: string,
@@ -497,27 +499,24 @@ export class InventoryService {
     if (!product) throw new NotFoundException("Product not found");
     assertSellableLines([product]); // a FAMILY is never stocked
 
-    const entered = dto.mode === "SET" ? dto.count : dto.mode === "ADJUST" ? dto.delta : undefined;
-    if (!entered) {
-      throw new BadRequestException(
-        dto.mode === "ADJUST" ? "delta is required for an ADJUST" : "count is required for a SET",
-      );
+    if (!Array.isArray(dto.parts) || dto.parts.length === 0) {
+      throw new BadRequestException("parts is required: what was counted, in which units");
     }
-    // One-element today; `parts` ("3 cases + 4 boxes") is a DTO change away.
-    const { pieces, parts } = piecesOf(product, await ladderOf(db, productId), [
-      { unit: entered.unit, quantity: entered.quantity },
-    ]);
-    const signed = dto.mode === "ADJUST" && dto.delta?.sign === "-" ? pieces.neg() : pieces;
-    if (dto.mode === "ADJUST" && signed.eq(0)) {
+    if (dto.mode === "SET" && dto.sign !== undefined) {
+      throw new BadRequestException("A SET is the counted total; only an ADJUST has a sign");
+    }
+    if (dto.mode === "ADJUST" && dto.parts.every((p) => Number(p.quantity) === 0)) {
       throw new BadRequestException("An adjustment must move at least some stock");
     }
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId) throw new BadRequestException("Tenant context is required");
     // Row 563: a person-chosen date before a filed period's close is refused (409), never clamped.
     const effectiveDate = await stockWriteDate(this.prisma.forTenant(), {
-      tenantId: this.prisma.getTenantId(),
+      tenantId,
       productIds: [productId],
       raw: dto.effectiveDate,
     });
-    const note = `Product count: ${dto.mode === "SET" ? "set to" : dto.delta?.sign === "-" ? "removed" : "added"} ${describeParts(parts)}`;
+    const verb = dto.mode === "SET" ? "set to" : dto.sign === "-" ? "removed" : "added";
     const restockedProductIds: string[] = [];
 
     // SA-767 L-2: lock the product, then read the stock INSIDE the tx (a SET is `counted - the
@@ -525,12 +524,25 @@ export class InventoryService {
     const result = await retryStockTx("inventory.countProduct", () =>
       this.stockTx(async (tx) => {
         restockedProductIds.length = 0;
+        // SA-828a (the SA-826 order): the tenant-units SHARED lock FIRST, then the ladder on the tx,
+        // then the stock lock. The factors are resolved here, never before the tx.
+        const ladder = await lockedLadderOf(tx, tenantId, productId);
         await this.lockProducts(tx, [productId]);
         const locked = (await this.readLockedStockRows(tx, [productId])).get(productId);
         if (!locked) throw new NotFoundException("Product not found");
         // The pre-check read the product before the lock; a variant assign can have made it a FAMILY since.
         assertSellableLines([locked]); // SA-767 n2, as the count batch re-checks
         const stockBefore = locked.currentStock;
+        // The pack fields, read under the row lock (a pack edit's UPDATE waits on it): the pack's size
+        // is a factor too.
+        const pack = await tx.product.findUnique({ where: { id: productId } });
+        if (!pack) throw new NotFoundException("Product not found");
+        const { pieces, parts } = piecesOf(pack, ladder, dto.parts);
+        const signed = dto.mode === "ADJUST" && dto.sign === "-" ? pieces.neg() : pieces;
+        if (dto.mode === "ADJUST" && signed.eq(0)) {
+          throw new BadRequestException("An adjustment must move at least some stock");
+        }
+        const note = `Product count: ${verb} ${describeParts(parts, pieces)}`;
 
         const applied = await this.applyStockCountItemsInTx(tx, {
           items: [
