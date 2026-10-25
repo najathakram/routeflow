@@ -158,6 +158,9 @@ export const API_ERROR_CODES = {
   // SA-767 r-note 5 SA-3: one OPEN count per product. Adding a product to a count (or committing one) is refused
   // while another OPEN / REVIEW count already has a line for it. 409, nothing was changed.
   PRODUCT_IN_OPEN_COUNT: "PRODUCT_IN_OPEN_COUNT",
+  // B640 (row 562): a free-text stock reference may not start with a head the stock-count commits key their
+  // idempotency on (STOCK_COUNT-). 400, nothing was written.
+  STOCK_REFERENCE_RESERVED: "STOCK_REFERENCE_RESERVED",
   PO_ALREADY_BILLED: "PO_ALREADY_BILLED",
   BILL_EXCEEDS_PO: "BILL_EXCEEDS_PO",
   INVOICE_HAS_UNSPENT_CREDIT: "INVOICE_HAS_UNSPENT_CREDIT",

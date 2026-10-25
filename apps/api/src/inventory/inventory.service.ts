@@ -75,7 +75,6 @@ import {
   COUNT_LOCK_ATTEMPTS,
   COUNT_LOCK_RETRY_MS,
   computeCommitProgress,
-  OPEN_COUNT_STATUSES,
   productInOpenCount,
   roundCountQty,
   STOCK_COUNT_LOCK_FAMILY,
@@ -83,12 +82,18 @@ import {
   stockCountCommitting,
   stockCountReference,
   stockCountSkipNote,
-  type OpenCountConflict,
   type StockCountCommitOutcome,
   type StockCountCommitProgress,
   type StockCountSkippedProduct,
   type StockCountSkipReason,
 } from "./stock-count-commit";
+import {
+  discardUnfinishedSeed,
+  findOpenCountConflicts,
+  seedStockCountLines,
+} from "./stock-count-seed";
+import { readStockCountProgress } from "./stock-count-progress";
+import { assertNotDurableCountId, assertStockReferenceFree } from "./reserved-reference";
 import { StockAlertService } from "../stock-alerts/stock-alert.service";
 import { AuditService } from "../audit/audit.service";
 import { writeFamilyAssigned } from "../products/product-parent";
@@ -260,6 +265,7 @@ export class InventoryService {
   }
 
   async recordPurchase(dto: RecordPurchaseDto, performedById: string) {
+    assertStockReferenceFree(dto.reference); // B640
     const product = await this.prisma
       .forTenant()
       .product.findUnique({ where: { id: dto.productId } });
@@ -392,6 +398,7 @@ export class InventoryService {
   }
 
   async recordAdjustment(dto: RecordAdjustmentDto, performedById: string) {
+    assertStockReferenceFree(dto.reference); // B640
     const product = await this.prisma
       .forTenant()
       .product.findUnique({ where: { id: dto.productId } });
@@ -993,6 +1000,7 @@ export class InventoryService {
   // ─── Stock count / audit session ─────────────────────────────────────────────
 
   async commitStockCount(dto: CommitStockCountDto, performedById: string) {
+    await assertNotDurableCountId(this.prisma.forTenant(), dto.sessionId); // B640
     const productIds = Array.from(new Set(dto.items.map((i) => i.productId)));
     const products = await this.prisma
       .forTenant()
@@ -2715,56 +2723,31 @@ export class InventoryService {
       }));
     }
 
-    const session = await this.prisma.tenantTransaction(async (tx) => {
-      // An amendment seeds lines too: the same one-open-count-per-product rule as an add (SA-767 r-note 5
-      // SA-3). The seeded products are locked in SORTED order (two amenders cannot deadlock), then checked once.
-      const seedIds = [...new Set(seedLines.map((l) => l.productId))].sort();
-      for (const productId of seedIds) {
-        // eslint-disable-next-line no-await-in-loop
-        await advisoryXactLock(
-          tx,
-          STOCK_COUNT_PRODUCT_LOCK_FAMILY,
-          `${this.prisma.getTenantId() ?? ""}:${productId}`,
-        );
-      }
-      const taken = await this.findOpenCountConflicts(tx, seedIds);
-      if (taken.length > 0) throw productInOpenCount(taken);
-      const created = await tx.stockCountSession.create({
-        data: {
-          name: dto.name ?? null,
-          startedById: user.sub,
-          amendsSessionId: dto.amendsSessionId ?? null,
-        },
+    // An amendment seeds lines too: the same one-open-count-per-product rule as an add (SA-767 r-note 5 SA-3).
+    // Row 562 S1: a pre-check refuses before anything exists; then the session, then the lines in batches of
+    // COUNT_SEED_BATCH (stock-count-seed.ts: sorted locks, re-check, baseline, one createMany per transaction).
+    // A failure part-way discards the session, so no half-seeded OPEN count holds products.
+    const taken = await findOpenCountConflicts(this.prisma.forTenant(), [
+      ...new Set(seedLines.map((l) => l.productId)),
+    ]);
+    if (taken.length > 0) throw productInOpenCount(taken);
+    const session = await this.prisma.forTenant().stockCountSession.create({
+      data: {
+        name: dto.name ?? null,
+        startedById: user.sub,
+        amendsSessionId: dto.amendsSessionId ?? null,
+      },
+    });
+    try {
+      await seedStockCountLines(this.prisma, {
+        sessionId: session.id,
+        userId: user.sub,
+        lines: seedLines,
       });
-      if (seedLines.length > 0) {
-        // Re-snapshot `expectedQty` from CURRENT stock: an amendment corrects
-        // today's on-hand, so comparing against the original session's stale
-        // expectation would reproduce the old variance instead of the real one.
-        const products = await tx.product.findMany({
-          where: { id: { in: seedLines.map((l) => l.productId) } },
-          select: { id: true, currentStock: true },
-        });
-        const stockById = new Map(products.map((p) => [p.id, p.currentStock]));
-        for (const line of seedLines) {
-          // Written one-by-one, NOT nested under the session create: a nested
-          // write bypasses the tenant extension's tenantId injection and the
-          // row would land with tenantId = null, invisible to forTenant().
-          await tx.stockCountLine.create({
-            data: {
-              sessionId: created.id,
-              productId: line.productId,
-              mode: line.mode,
-              countedQty: line.countedQty,
-              boxes: line.boxes,
-              pieces: line.pieces,
-              expectedQty: stockById.get(line.productId) ?? new Prisma.Decimal(0),
-              countedById: user.sub,
-            },
-          });
-        }
-      }
-      return created;
-    }, COUNT_ADD_TX_OPTIONS); // N sorted product locks + N creates: the same budget as a single add
+    } catch (err) {
+      await discardUnfinishedSeed(this.prisma, session.id).catch(() => undefined);
+      throw err;
+    }
 
     return { ...session, otherOpenSessions: openSessions };
   }
@@ -2832,6 +2815,11 @@ export class InventoryService {
     });
     if (!session) throw new NotFoundException("Stock count session not found");
     return { ...session, commit: await this.commitProgressOf(session) };
+  }
+
+  /** Row 562 S1: the pure-read poll behind a long seed or commit (stock-count-progress.ts). */
+  getStockCountProgress(id: string) {
+    return readStockCountProgress(this.prisma, id);
   }
 
   /**
@@ -2977,7 +2965,7 @@ export class InventoryService {
         STOCK_COUNT_PRODUCT_LOCK_FAMILY,
         `${this.prisma.getTenantId() ?? ""}:${dto.productId}`,
       );
-      const taken = await this.findOpenCountConflicts(tx, [dto.productId], sessionId);
+      const taken = await findOpenCountConflicts(tx, [dto.productId], sessionId);
       if (taken.length > 0) throw productInOpenCount(taken);
       return tx.stockCountLine.create({
         data: {
@@ -2992,55 +2980,6 @@ export class InventoryService {
       // 15 s, not Prisma's 5 s default: the product-lock helper bounds its wait with a 5 s lock_timeout, and a
       // tx budget equal to it would expire first as an unmapped P2028 500 instead of 55P03 -> the 503.
     }, COUNT_ADD_TX_OPTIONS);
-  }
-
-  /**
-   * SA-767 r-note 5 SA-3: the products among `productIds` that already have a line on ANOTHER open
-   * (OPEN / REVIEW) count of the tenant, one row per (product, session). `excludeSessionId` is the count
-   * being added to / committed. Read it AFTER the product lock when deciding an add.
-   */
-  private async findOpenCountConflicts(
-    db: {
-      stockCountLine: { findMany(args: Prisma.StockCountLineFindManyArgs): Promise<unknown[]> };
-    },
-    productIds: string[],
-    excludeSessionId?: string,
-  ): Promise<OpenCountConflict[]> {
-    if (productIds.length === 0) return [];
-    const rows = (await db.stockCountLine.findMany({
-      where: {
-        productId: { in: productIds },
-        ...(excludeSessionId ? { sessionId: { not: excludeSessionId } } : {}),
-        session: { status: { in: [...OPEN_COUNT_STATUSES] } },
-      },
-      select: {
-        productId: true,
-        product: { select: { name: true } },
-        session: { select: { id: true, name: true } },
-      },
-      orderBy: [{ productId: "asc" }, { sessionId: "asc" }],
-    })) as Array<{
-      productId: string;
-      product?: { name?: string | null } | null;
-      session: { id: string; name: string | null };
-    }>;
-    const seen = new Set<string>();
-    const out: OpenCountConflict[] = [];
-    for (const r of rows ?? []) {
-      const key = `${r.productId}:${r.session.id}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      out.push({
-        productId: r.productId,
-        productName: r.product?.name ?? null,
-        sessionId: r.session.id,
-        sessionName: r.session.name ?? null,
-      });
-    }
-    // Deterministic whatever order the rows came in: by product, then by the other count.
-    return out.sort(
-      (x, y) => x.productId.localeCompare(y.productId) || x.sessionId.localeCompare(y.sessionId),
-    );
   }
 
   async removeStockCountLine(sessionId: string, productId: string) {
@@ -3246,7 +3185,7 @@ export class InventoryService {
     // One open count per product (SA-767 r-note 5 SA-3): an overlap left by legacy sessions refuses the
     // commit before anything is written, "finish with skips" included. The operator removes the
     // products from one of the counts.
-    const overlaps = await this.findOpenCountConflicts(
+    const overlaps = await findOpenCountConflicts(
       this.prisma.forTenant(),
       [...new Set(lines.map((l) => l.productId))],
       id,
