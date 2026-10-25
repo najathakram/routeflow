@@ -2253,6 +2253,12 @@ export class PlatformAdminService {
     if (isPricePushFailure(pushed)) {
       // Stripe may still have applied it (a lost response is re-read, but a cached idempotent failure
       // is not): check the subscription in Stripe before retrying.
+      if (pushed.reason === "stripe_update_rejected") {
+        // W-810: Stripe said no; the same request gets the same answer until its cause (key, subscription state) is fixed.
+        throw new ServiceUnavailableException(
+          `Stripe refused the change: ${pushed.detail ?? "no reason given"}. Sending the same request again will be refused again, so fix the cause first (for example the Stripe key or the subscription's state). The price override was NOT saved.`,
+        );
+      }
       throw new ServiceUnavailableException(
         `Stripe did not confirm the price change (${pushed.reason}) — the price override was NOT saved. ` +
           `Check the subscription in Stripe, then retry.`,
