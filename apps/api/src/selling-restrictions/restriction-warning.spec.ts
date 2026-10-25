@@ -190,6 +190,53 @@ describe("decideStaffWrite: the warning", () => {
       expect(textOf(pending, "STORE")).toMatch(/store's state can't be determined/);
     });
 
+    const withRule = (
+      over: Partial<StaffBreachDetail["rules"][number]>,
+      state: string | null = "CA",
+    ) =>
+      breach("p1", ["r1"], {
+        state,
+        rules: [
+          {
+            id: "r1",
+            kind: "STATE_HIT" as const,
+            states: ["CA"],
+            legal: true,
+            reason: "x",
+            ...over,
+          },
+        ],
+      });
+
+    it("a rule that is not a legal ban reads 'Limited for this sale', with the business's own reason (SA-947)", () => {
+      expect(textOf(withRule({ legal: false, reason: "Keep under 50 a week" }))).toBe(
+        "Limited for this sale: Keep under 50 a week.",
+      );
+      // the same lead whatever the rule's kind: a federal-shaped rule that is not legal is still a limit, never a ban
+      expect(textOf(withRule({ kind: "FEDERAL", states: [], legal: false, reason: "Cap" }))).toBe(
+        "Limited for this sale: Cap.",
+      );
+    });
+
+    it("an empty or blank reason leaves just the lead and one stop, never 'lead: .'", () => {
+      expect(textOf(withRule({ legal: false, reason: "   " }))).toBe("Limited for this sale.");
+      expect(textOf(withRule({ reason: "" }))).toBe("Restricted in CA.");
+      expect(textOf(withRule({ kind: "FEDERAL", states: [], reason: " " }))).toBe(
+        "Restricted everywhere.",
+      );
+    });
+
+    it("a reason that already ends a sentence gets no second stop, and one that does not gets exactly one", () => {
+      expect(textOf(withRule({ reason: "No gummies." }))).toBe("Restricted in CA: No gummies.");
+      expect(textOf(withRule({ reason: "Really!" }))).toBe("Restricted in CA: Really!");
+      expect(textOf(withRule({ reason: "Why?" }))).toBe("Restricted in CA: Why?");
+      expect(textOf(withRule({ reason: "  State ban  " }))).toBe("Restricted in CA: State ban.");
+    });
+
+    it("a state hit that somehow carries no state still reads as a restriction, never 'in null' (SA-961 guard)", () => {
+      expect(textOf(withRule({ reason: "State ban" }, null))).toBe("Restricted: State ban.");
+    });
+
     it("an unknown product uses the engine's own message and 'Unknown product'", () => {
       const ghost = breach("ghost", [], {
         outcome: "INDETERMINATE",

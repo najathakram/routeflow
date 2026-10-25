@@ -26,7 +26,7 @@ jest.mock("./_components/CustomersWithoutState", () => ({
 
 const api = (status: number, data: object) => ({ response: { status, data } });
 const render = () => renderWithProviders(<RestrictionsSettingsPage />);
-const SWITCH = /also block restricted products on staff orders and invoices/i;
+const SWITCH = /also warn about restricted products on staff orders and invoices/i;
 
 beforeEach(() => {
   jest.clearAllMocks();

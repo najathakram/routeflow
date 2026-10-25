@@ -1,6 +1,6 @@
 import { limitChipText } from "./portal-limits";
 
-/** The product-page chip names what the rule does: a legal ban (surface ALL) is "Banned…", a portal limit "Not offered…". */
+/** The product-page chip names what the rule does: a legal ban (surface ALL) is "Restricted…", a portal limit "Not offered…". */
 const CASES: Array<{
   surface: "ALL" | "BUYER_PORTAL";
   jurisdiction: "STATE" | "FEDERAL";

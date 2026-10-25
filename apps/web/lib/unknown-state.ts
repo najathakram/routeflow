@@ -37,7 +37,7 @@ export const TRUNCATED_LINE =
 
 /** The label of the tenant switch on the Selling restrictions page; the OFF copy quotes it. */
 export const STAFF_ORDERS_SWITCH_LABEL =
-  "Also block restricted products on staff orders and invoices";
+  "Also warn about restricted products on staff orders and invoices";
 
 /**
  * What a missing state does, by the staff-orders switch: the portal always hides state-restricted products; staff orders are checked

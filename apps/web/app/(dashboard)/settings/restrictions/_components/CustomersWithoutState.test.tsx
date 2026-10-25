@@ -76,7 +76,7 @@ describe("CustomersWithoutState (Addendum D)", () => {
     renderWithProviders(<CustomersWithoutState canFix staffOrdersChecked={false} />);
     expect(
       await screen.findByText(
-        "5 customers need a state. Until it's set, products with a state restriction stay hidden from them in your portal and can't be ordered there. Other state limits won't reach them. Staff orders and invoices aren't checked (turn on 'Also block restricted products on staff orders and invoices' to block them).",
+        "5 customers need a state. Until it's set, products with a state restriction stay hidden from them in your portal and can't be ordered there. Other state limits won't reach them. Staff orders and invoices aren't checked (turn on 'Also warn about restricted products on staff orders and invoices' to block them).",
       ),
     ).toBeInTheDocument();
     expect(screen.getByText("3 have no address")).toBeInTheDocument();

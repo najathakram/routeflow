@@ -360,6 +360,6 @@ export function ruleEditImpactCopy(count: number, capped: boolean, staffChecked:
   const them = one ? "it" : "them";
   const tail = staffChecked
     ? `Staff will be warned when they next edit or promote ${them}; buyers can't order ${them}.`
-    : `Buyers can't order ${them}. Staff orders and invoices aren't checked (turn on 'Also block restricted products on staff orders and invoices' to block them).`;
+    : `Buyers can't order ${them}. Staff orders and invoices aren't checked (turn on 'Also warn about restricted products on staff orders and invoices' to block them).`;
   return `${subject} products this change now restricts. ${tail}`;
 }
