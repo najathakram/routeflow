@@ -981,7 +981,7 @@ export function CounterSaleScreen() {
       payment: {
         method,
         ...(method === "CASH" ? { amount: tenderAmount } : {}),
-        ...(reference.trim() ? { reference: reference.trim() } : {}),
+        ...(method === "CHECK" && reference.trim() ? { reference: reference.trim() } : {}),
         ...(method === "CHECK" && submitCheckDate ? { checkDate: submitCheckDate } : {}),
       },
     } as CounterSaleRequest);

@@ -8,9 +8,10 @@ import {
   isBoxedLine,
   registerPriceLabel,
   registerQtyLabel,
+  typedQtyOverCap,
   type TypedQty,
 } from "./counter-sale-line-edit";
-import { qtyRefusalMessage, type QtyFieldKind } from "./counter-qty-refusal";
+import { qtyRefusalMessage, QTY_TOO_LARGE_COPY, type QtyFieldKind } from "./counter-qty-refusal";
 import { stepLine, type SaleLine, type StepUnit } from "./counter-sale-scan";
 import { CounterLinePriceEdit, type CounterPriceEdit } from "./CounterLinePriceEdit";
 import { cartStrikesList, editedLineFigures, priceEditLineOf } from "./counter-sale-price-edit";
@@ -75,6 +76,7 @@ function QtyField({
   value,
   locked,
   onCommit,
+  overCap,
   onEnter,
   tabOut = false,
 }: {
@@ -83,6 +85,8 @@ function QtyField({
   value: number;
   locked: boolean;
   onCommit: (text: string) => boolean;
+  /** A clean whole number the cap alone refuses (a boxed line's boxes and pieces together): the row words it. */
+  overCap?: (text: string) => boolean;
   onEnter?: () => void;
   /** The LAST quantity field of the line: Tab with a typed draft commits it and hands focus to the scan box. */
   tabOut?: boolean;
@@ -94,7 +98,11 @@ function QtyField({
     if (draft === null) return;
     const text = draft;
     setDraft(null); // accepted or refused, the field re-reads the line
-    setRefusal(onCommit(text) ? null : qtyRefusalMessage(text, kind));
+    setRefusal(
+      onCommit(text)
+        ? null
+        : (qtyRefusalMessage(text, kind) ?? (overCap?.(text) ? QTY_TOO_LARGE_COPY : null)),
+    );
   };
   return (
     <>
@@ -161,6 +169,7 @@ function LineQtyEditor({
         value={line.boxes ?? 0}
         locked={locked}
         onCommit={(t) => onQty(line.tempId, { boxes: t })}
+        overCap={(t) => typedQtyOverCap(line, { boxes: t })}
         onEnter={onEnter}
       />
       <QtyField
@@ -169,6 +178,7 @@ function LineQtyEditor({
         value={line.pieces ?? 0}
         locked={locked}
         onCommit={(t) => onQty(line.tempId, { pieces: t })}
+        overCap={(t) => typedQtyOverCap(line, { pieces: t })}
         onEnter={onEnter}
         tabOut
       />
@@ -180,6 +190,7 @@ function LineQtyEditor({
       value={line.qty}
       locked={locked}
       onCommit={(t) => onQty(line.tempId, { qty: t })}
+      overCap={(t) => typedQtyOverCap(line, { qty: t })}
       onEnter={onEnter}
       tabOut
     />

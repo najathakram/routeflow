@@ -3,6 +3,8 @@
  * changed; this only words the refusals so the field never snaps back silently. Fixed copy, one short sentence each.
  */
 
+import { COUNTER_MAX_LINE_QTY } from "./counter-sale-line-edit";
+
 /** Which field the text was typed into: a plain line's quantity, or a boxed line's boxes / pieces. */
 export type QtyFieldKind = "qty" | "boxes" | "pieces";
 
@@ -12,7 +14,7 @@ export const QTY_NOT_WHOLE_COPY = "Enter a whole number. Items can't be split he
 export const QTY_ZERO_COPY = "Quantity must be at least 1. To take the item off the sale, use ×.";
 export const QTY_ZERO_BOXED_COPY =
   "Enter at least one box or piece. To take the item off the sale, use ×.";
-export const QTY_TOO_LARGE_COPY = "That quantity is too large.";
+export const QTY_TOO_LARGE_COPY = "That is more than one line can hold. The most is 100,000.";
 /** A number the field's own parser refuses although it is finite and whole (1e3, 0x10, +5): not a plain count. */
 export const QTY_FORMAT_COPY = "Enter a whole number from 1.";
 
@@ -29,6 +31,7 @@ export function qtyRefusalMessage(text: string, kind: QtyFieldKind): string | nu
   if (!Number.isInteger(n)) return QTY_NOT_WHOLE_COPY;
   if (!Number.isSafeInteger(n)) return QTY_TOO_LARGE_COPY;
   if (!/^\d+$/.test(t)) return QTY_FORMAT_COPY; // 1e3, 0x10, +5: finite and whole, but not a plain count
+  if (n > COUNTER_MAX_LINE_QTY) return QTY_TOO_LARGE_COPY;
   if (n === 0) return kind === "qty" ? QTY_ZERO_COPY : QTY_ZERO_BOXED_COPY;
   return null;
 }

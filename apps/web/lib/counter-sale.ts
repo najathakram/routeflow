@@ -236,7 +236,16 @@ export function paymentMethodOptions(isWalkIn: boolean): PaymentMethodOption[] {
   ];
 }
 
-export type PaymentProblem = "TENDER_SHORT" | "CHECK_NUMBER_REQUIRED" | "WALK_IN_ON_ACCOUNT";
+/** Mirrors the API DTO: a payment amount is at most 1,000,000 and a reference at most 100 characters. */
+export const COUNTER_MAX_TENDER = 1_000_000;
+export const COUNTER_MAX_REFERENCE_LENGTH = 100;
+
+export type PaymentProblem =
+  | "TENDER_SHORT"
+  | "TENDER_TOO_LARGE"
+  | "CHECK_NUMBER_REQUIRED"
+  | "CHECK_NUMBER_TOO_LONG"
+  | "WALK_IN_ON_ACCOUNT";
 
 export function validatePayment(input: {
   method: CounterSalePaymentMethod;
@@ -248,7 +257,14 @@ export function validatePayment(input: {
   if (input.method === "ON_ACCOUNT" && input.isWalkIn) return "WALK_IN_ON_ACCOUNT";
   if (input.method === "CASH" && !(Number(input.tendered ?? 0) >= input.total))
     return "TENDER_SHORT";
+  if (input.method === "CASH" && Number(input.tendered) > COUNTER_MAX_TENDER)
+    return "TENDER_TOO_LARGE";
   if (input.method === "CHECK" && !(input.reference ?? "").trim()) return "CHECK_NUMBER_REQUIRED";
+  if (
+    input.method === "CHECK" &&
+    (input.reference ?? "").trim().length > COUNTER_MAX_REFERENCE_LENGTH
+  )
+    return "CHECK_NUMBER_TOO_LONG";
   return null;
 }
 
@@ -262,7 +278,9 @@ export const isTenderShortCopy = (text: string): boolean => text.startsWith(TEND
 export const PAYMENT_PROBLEM_COPY: Record<PaymentProblem, string> = {
   /** the amount-less fallback; callers that know the total use `paymentProblemCopy` */
   TENDER_SHORT: `${TENDER_SHORT_PREFIX} the full total.`,
+  TENDER_TOO_LARGE: "The most you can take in one payment is $1,000,000. Enter a smaller amount.",
   CHECK_NUMBER_REQUIRED: "Enter the check number.",
+  CHECK_NUMBER_TOO_LONG: "A check number can be at most 100 characters. Shorten it.",
   WALK_IN_ON_ACCOUNT:
     "A walk-in customer can't be charged on account. Pick a customer or another payment method.",
 };
