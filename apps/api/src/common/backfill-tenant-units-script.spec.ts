@@ -52,6 +52,21 @@ function helpers(): Record<string, unknown> {
       zeroLinked: ez({ tenantUnitsCreated: 0, productUnitsLinked: 5, productUnitsParentFilled: 0 }),
       zeroParent: ez({ tenantUnitsCreated: 0, productUnitsLinked: 0, productUnitsParentFilled: 7 }),
       zeroMissing: ez({}),
+      accepted: m.ACCEPTED_FLAGS ?? "ACCEPTED_FLAGS is not exported",
+      usage: m.USAGE ?? "USAGE is not exported",
+      table: Object.fromEntries(
+        ["--apply", "--local", "--live-tenant-override", "--backup-taken", "--expect-zero"].map((f) => [
+          f,
+          tryIt(() => m.parseArgs(["--tenant", ${JSON.stringify(ID)}, f])),
+        ]),
+      ),
+      allowProtected: tryIt(() => m.parseArgs(["--tenant", ${JSON.stringify(ID)}, "--allow-protected", ${JSON.stringify(ID)}, "--backup-taken", "--local"])),
+      allowProtectedFirst: tryIt(() => m.parseArgs(["--allow-protected", ${JSON.stringify(ID)}, "--tenant", ${JSON.stringify(ID)}, "--apply"])),
+      allowProtectedBare: tryIt(() => m.parseArgs(["--tenant", ${JSON.stringify(ID)}, "--allow-protected"])),
+      allowProtectedFlag: tryIt(() => m.parseArgs(["--tenant", ${JSON.stringify(ID)}, "--allow-protected", "--backup-taken"])),
+      unknownEquals: tryIt(() => m.parseArgs(["--tenant", ${JSON.stringify(ID)}, "--expectzero=acme-wholesale"])),
+      stray: tryIt(() => m.parseArgs(["--tenant", ${JSON.stringify(ID)}, "acme-wholesale"])),
+      retiredFirst: tryIt(() => m.parseArgs(["--tenant", ${JSON.stringify(ID)}, "--bogus", "--allow-paying-tenant"])),
     }));`;
   const r = spawnSync(process.execPath, ["--input-type=module", "-e", src], { encoding: "utf8" });
   if (r.status !== 0) throw new Error(r.stderr);
@@ -113,6 +128,108 @@ describe("backfill-tenant-units.mjs gates (U-6, SA M3)", () => {
     const r = run(["--tenant", ID, "--local", "--expect-zero"]);
     expect(r.status).toBe(1);
     expect(r.stderr).toContain("--local requires DATABASE_URL");
+  });
+
+  describe("unknown arguments are refused before any connection (exit 1, names the flag, one usage line)", () => {
+    const USAGE_LINE =
+      "Usage: backfill-tenant-units.mjs --tenant <tenantId> [--local] [--apply] [--expect-zero] " +
+      "[--live-tenant-override] [--backup-taken] [--allow-protected <tenantId>]";
+
+    it("`--expectzero` (a typo of --expect-zero) is refused, not run as an OK dry run", () => {
+      for (const args of [
+        ["--tenant", ID, "--local", "--expectzero"],
+        ["--tenant", ID, "--expectzero"],
+      ]) {
+        const r = run(args); // no DATABASE_URL and no Railway variables: any connection step would say so
+        expect(r.status).toBe(1);
+        expect(r.stderr).toContain("unknown flag: --expectzero");
+        expect(r.stderr).toContain(USAGE_LINE);
+        expect(r.stderr).not.toContain("DATABASE_URL");
+        expect(r.stderr).not.toContain("Railway");
+        expect(r.stdout).toBe("");
+      }
+    });
+
+    it("a typo next to valid flags is refused, and the valid flags do not excuse it", () => {
+      const r = run([
+        "--tenant",
+        ID,
+        "--local",
+        "--apply",
+        "--backup-taken",
+        "--live-tenant-overide",
+      ]);
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain("unknown flag: --live-tenant-overide");
+      expect(r.stderr).toContain(USAGE_LINE);
+      expect(r.stderr).not.toContain("DATABASE_URL");
+    });
+
+    it("a stray positional is refused without echoing it; `--flag=value` names only the flag", () => {
+      const stray = run(["--tenant", ID, "--local", "acme-wholesale"]);
+      expect(stray.status).toBe(1);
+      expect(stray.stderr).toContain("unexpected argument");
+      expect(stray.stderr).not.toContain("acme-wholesale");
+      const eq = run(["--tenant", ID, "--local", "--expectzero=acme-wholesale"]);
+      expect(eq.status).toBe(1);
+      expect(eq.stderr).toContain("unknown flag: --expectzero.");
+      expect(eq.stderr).not.toContain("acme-wholesale");
+    });
+
+    it("the retired-flag refusal keeps its wording and comes first", () => {
+      const r = run(["--tenant", ID, "--bogus", "--allow-paying-tenant"]);
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain("retired");
+      expect(r.stderr).not.toContain("unknown flag");
+    });
+
+    describe("the accepted set", () => {
+      const h = helpers();
+
+      it("is exactly the flags the script and its guards read", () => {
+        expect(h.accepted).toEqual({
+          boolean: [
+            "--apply",
+            "--local",
+            "--live-tenant-override",
+            "--backup-taken",
+            "--expect-zero",
+          ],
+          value: ["--tenant", "--allow-protected"],
+        });
+        expect(h.usage).toBe(USAGE_LINE);
+      });
+
+      it("each accepted flag still parses (table over the real flag set)", () => {
+        expect(h.table).toEqual({
+          "--apply": "ok",
+          "--local": "ok",
+          "--live-tenant-override": "ok",
+          "--backup-taken": "ok",
+          "--expect-zero": "ok",
+        });
+      });
+
+      it("--allow-protected <id> takes its value (never a stray positional), in any position", () => {
+        expect(h.allowProtected).toBe("ok");
+        expect(h.allowProtectedFirst).toBe("ok");
+      });
+
+      it("--allow-protected without a value is refused with the usage line", () => {
+        for (const m of [h.allowProtectedBare, h.allowProtectedFlag]) {
+          expect(m).toContain("--allow-protected requires a value");
+          expect(m).toContain(USAGE_LINE);
+        }
+      });
+
+      it("parseArgs itself names the flag, never the value after an equals sign or a stray word", () => {
+        expect(h.unknownEquals).toContain("unknown flag: --expectzero.");
+        expect(h.unknownEquals).not.toContain("acme-wholesale");
+        expect(h.stray).toContain("unexpected argument");
+        expect(h.stray).not.toContain("acme-wholesale");
+        expect(String(h.retiredFirst)).toContain("retired");
+      });
+    });
   });
 
   describe("--expect-zero (SA-984 §3)", () => {

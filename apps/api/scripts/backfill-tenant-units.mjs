@@ -80,6 +80,45 @@ const { applyTenantUnitsPlan, BACKFILL_BATCH_SIZE } = require("./lib/tenant-unit
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+// Every argv token this script (and the guards it forwards argv to) reads. live-target-guard.cjs reads
+// --allow-protected <tenantId> and --backup-taken (its older backup aliases are not passed here, so none
+// is accepted); the retired paying-tenant flags are refused earlier, by refuseRetiredFlags.
+export const ACCEPTED_FLAGS = Object.freeze({
+  boolean: Object.freeze([
+    "--apply",
+    "--local",
+    "--live-tenant-override",
+    "--backup-taken",
+    "--expect-zero",
+  ]),
+  value: Object.freeze(["--tenant", "--allow-protected"]),
+});
+export const USAGE =
+  "Usage: backfill-tenant-units.mjs --tenant <tenantId> [--local] [--apply] [--expect-zero] " +
+  "[--live-tenant-override] [--backup-taken] [--allow-protected <tenantId>]";
+
+/**
+ * Refuses any argv token the script does not read, so a typo (`--expectzero`) can never pass as an OK
+ * dry run. A flag's value is consumed with it; a stray positional is refused without echoing it (it
+ * could be a slug); an unknown flag is named up to any `=`.
+ */
+function refuseUnknownArgs(argv) {
+  for (let i = 0; i < argv.length; i++) {
+    const t = argv[i];
+    if (ACCEPTED_FLAGS.value.includes(t)) {
+      const v = argv[i + 1];
+      if (v === undefined || v.startsWith("--")) throw new Error(`${t} requires a value. ${USAGE}`);
+      i++;
+    } else if (!ACCEPTED_FLAGS.boolean.includes(t)) {
+      throw new Error(
+        t.startsWith("--")
+          ? `unknown flag: ${t.split("=")[0]}. ${USAGE}`
+          : `unexpected argument (a value without a flag). ${USAGE}`,
+      );
+    }
+  }
+}
+
 export function parseArgs(argv) {
   refuseRetiredFlags(argv);
   const idx = argv.indexOf("--tenant");
@@ -88,6 +127,7 @@ export function parseArgs(argv) {
   const tenantId = argv[idx + 1];
   if (!tenantId || tenantId.startsWith("--")) throw new Error("--tenant requires a tenant id");
   if (!UUID.test(tenantId)) throw new Error("--tenant takes the tenant id (a uuid), never a slug");
+  refuseUnknownArgs(argv);
   if (argv.includes("--expect-zero") && argv.includes("--apply")) {
     throw new Error("--expect-zero is a read-only check; do not combine it with --apply");
   }
