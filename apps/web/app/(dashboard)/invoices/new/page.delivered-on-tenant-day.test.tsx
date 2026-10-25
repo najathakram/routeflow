@@ -138,6 +138,10 @@ describe("row 750 — the delivery date follows the tenant's day", () => {
     await user.click(screen.getByRole("button", { name: /new sale/i }));
     return view;
   };
+  const allDates = () =>
+    Array.from(document.querySelectorAll('input[type="date"]')).map(
+      (i) => (i as HTMLInputElement).value,
+    );
   const dateInput = () => document.querySelector('input[type="date"]') as HTMLInputElement;
 
   it("a tenant already on the 26th (browser still on the 25th) defaults to the 26th and reads 'Delivered today'", async () => {
@@ -178,5 +182,20 @@ describe("row 750 — the delivery date follows the tenant's day", () => {
     mockTenantToday = "2026-10-26";
     rerender(<NewInvoicePage />);
     await waitFor(() => expect(dateInput().value).toBe("2026-10-26"));
+  });
+
+  it("the issue and due dates are the tenant's day too (class fold): 26th and +30 days, never the browser's 25th", async () => {
+    mockTenantToday = "2026-10-26";
+    await openSale();
+    await waitFor(() => expect(allDates()).toContain("2026-11-25"));
+    expect(allDates().filter((d) => d === "2026-10-26").length).toBeGreaterThanOrEqual(2); // delivery + issue
+    expect(allDates()).not.toContain("2026-10-25");
+    expect(allDates()).not.toContain("2026-11-24");
+  });
+
+  it("while the zone is unknown no date field shows a value (nothing on the browser's day)", async () => {
+    mockTenantToday = undefined;
+    await openSale();
+    expect(allDates().filter((d) => d !== "")).toEqual([]);
   });
 });
