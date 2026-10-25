@@ -329,7 +329,7 @@ export default function OrderDetailPage() {
       fresh,
       base,
     );
-    if (n > 0) toast({ title: "Someone else changed this order - re-check it", variant: "error" });
+    if (n > 0) toast({ title: "Someone else changed this order — re-check it", variant: "error" });
   });
   const updateItems = useUpdateOrderItems({
     localErrorToast: (e) => overpay.ownsToast(e) || stale.ownsToast(e),
@@ -893,7 +893,7 @@ export default function OrderDetailPage() {
             });
           }}
         >
-          Confirm Delete
+          Confirm delete
         </Button>
         <button
           onClick={() => setShowDeleteConfirm(false)}
@@ -1139,7 +1139,7 @@ export default function OrderDetailPage() {
                   }}
                   loading={updateStatus.isPending}
                 >
-                  Publish Order
+                  Publish order
                 </WriteButton>
               </ActionTier>
               <DeleteOrderTier
@@ -1148,7 +1148,7 @@ export default function OrderDetailPage() {
                 deleteOrder={deleteOrder}
                 open={showDeleteConfirm}
                 setOpen={setShowDeleteConfirm}
-                idleLabel="Delete Draft"
+                idleLabel="Delete draft"
                 successTitle="Draft deleted"
                 errorText={orderErrorText}
               />
@@ -1166,7 +1166,7 @@ export default function OrderDetailPage() {
                     onClick={handleConfirm}
                     loading={updateStatus.isPending}
                   >
-                    Confirm Order
+                    Confirm order
                   </Button>
                 </ActionTier>
               )}
@@ -1224,7 +1224,7 @@ export default function OrderDetailPage() {
                           });
                         }}
                       >
-                        Confirm Delete
+                        Confirm delete
                       </Button>
                       <button
                         onClick={() => setShowDeleteConfirm(false)}
@@ -1351,7 +1351,7 @@ export default function OrderDetailPage() {
                     leftIcon={<RotateCcw className="h-4 w-4" />}
                     onClick={() => setDemoteTarget("CONFIRMED")}
                   >
-                    Reopen Order
+                    Reopen order
                   </Button>
                   <p className="text-[11px] text-navy/50">
                     Reopening keeps the invoice in sync while you edit. Orders delivered on a route
@@ -1361,7 +1361,7 @@ export default function OrderDetailPage() {
               </ActionTier>
               <ActionTier tier="danger">
                 {renderDeleteOrderAction(
-                  "Delete this DELIVERED order? Its delivery record is removed permanently.",
+                  "Delete this delivered order? Its delivery record is removed permanently.",
                 )}
               </ActionTier>
             </>
@@ -1387,7 +1387,7 @@ export default function OrderDetailPage() {
                   }}
                   loading={reopenOrder.isPending}
                 >
-                  Reopen Order
+                  Reopen order
                 </Button>
               </ActionTier>
               <DeleteOrderTier
@@ -1423,7 +1423,7 @@ export default function OrderDetailPage() {
           <div className="rounded-lg bg-white p-6 shadow-card">
             <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
               <h3 className="flex items-center gap-2.5 text-base font-semibold text-navy">
-                Line Items
+                Line items
                 {isEditing && (
                   <Badge variant="info" label="Editing" className="normal-case tracking-normal" />
                 )}
@@ -1537,7 +1537,7 @@ export default function OrderDetailPage() {
                         disabled={layerBlocked}
                         loading={updateItems.isPending}
                       >
-                        Save Draft
+                        Save draft
                       </WriteButton>
                       {access.staff && (
                         <WriteButton
@@ -1631,7 +1631,7 @@ export default function OrderDetailPage() {
                           disabled={layerBlocked}
                           loading={updateItems.isPending || updateStatus.isPending}
                         >
-                          Publish Order
+                          Publish order
                         </WriteButton>
                       )}
                       <Button
@@ -1652,7 +1652,7 @@ export default function OrderDetailPage() {
                         disabled={layerBlocked}
                         loading={savingItems}
                       >
-                        Save Changes
+                        Save changes
                       </WriteButton>
                       <Button
                         size="sm"
@@ -1801,7 +1801,7 @@ export default function OrderDetailPage() {
 
           {/* Notes */}
           {order.notes && !isEditing && (
-            <Card title="Order Notes">
+            <Card title="Order notes">
               <div className="flex items-start gap-3">
                 <FileText className="mt-0.5 h-4 w-4 shrink-0 text-navy/70" />
                 <p className="text-sm text-navy/80 whitespace-pre-line">{order.notes}</p>

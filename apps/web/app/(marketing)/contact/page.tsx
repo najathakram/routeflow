@@ -11,7 +11,7 @@ import { Eyebrow } from "../components/marketing";
 // Layout ruling (owner, 2026-09-16, PR-3): retire the email-draft DemoForm —
 // the PR-2 booking page (real Google-Calendar availability) replaces it.
 // Two cards instead, matching the reference study's contact() exactly:
-// "Product demos & pricing" links to /book-a-demo, "General enquiries" is a
+// "Product demos & pricing" links to /book-a-demo, "General inquiries" is a
 // mailto. `direct-contact` (the old "Prefer to email?" link) is dropped as
 // now-duplicative of the General Enquiries card. `demo-agenda` is kept —
 // unique, useful content the reference page never had, no reason to drop it.
@@ -52,7 +52,7 @@ export default function ContactPage() {
     <div className="glass-page">
       <section className="contact-section wrap">
         <div className="contact-copy">
-          <Eyebrow>SEE ROUTEFLOW IN ACTION</Eyebrow>
+          <Eyebrow>See RouteFlow in action</Eyebrow>
           <h1>
             Let’s talk about <br />
             <em>your delivery day.</em>
@@ -92,9 +92,9 @@ export default function ContactPage() {
             <span className="g-tile">
               <Users size={22} />
             </span>
-            <h2>General enquiries</h2>
+            <h2>General inquiries</h2>
             <p>
-              For product questions, account help, or partnership enquiries, email the RouteFlow
+              For product questions, account help, or partnership inquiries, email the RouteFlow
               team. Include your company and a short description of what you need.
             </p>
             <a className="button button-outline" href={`mailto:${site.email}`}>

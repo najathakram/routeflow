@@ -50,7 +50,7 @@ export function CompliancePackPanel({ categoryId: _categoryId }: { categoryId: s
       <Tabs.Root defaultValue="reports">
         <Tabs.List className="flex gap-1 border-b border-surface-border">
           {[
-            { value: "reports", label: "Monthly Reports" },
+            { value: "reports", label: "Monthly reports" },
             { value: "inventory", label: "Inventory" },
             { value: "purchases", label: "Purchases" },
             { value: "sales", label: "Sales" },
@@ -164,7 +164,7 @@ function ReportsTab() {
                 <th className="px-4 py-3 text-right font-medium">Purchases</th>
                 <th className="px-4 py-3 text-right font-medium">Sales</th>
                 <th className="px-4 py-3 text-right font-medium">Tax</th>
-                <th className="px-4 py-3 text-right font-medium">Ending Stock Value</th>
+                <th className="px-4 py-3 text-right font-medium">Ending stock value</th>
                 <th className="px-4 py-3 text-left font-medium">Generated</th>
                 <th className="px-4 py-3" />
               </tr>
@@ -256,7 +256,7 @@ function InventoryTab() {
             <th className="px-4 py-3 text-left font-medium">Product</th>
             <th className="px-4 py-3 text-left font-medium">SKU</th>
             <th className="px-4 py-3 text-right font-medium">Stock</th>
-            <th className="px-4 py-3 text-right font-medium">Avg Cost</th>
+            <th className="px-4 py-3 text-right font-medium">Avg cost</th>
             <th className="px-4 py-3 text-right font-medium">Value</th>
           </tr>
         </thead>
@@ -344,7 +344,7 @@ function PurchasesTab() {
                 <th className="px-4 py-3 text-left font-medium">License #</th>
                 <th className="px-4 py-3 text-left font-medium">Reference</th>
                 <th className="px-4 py-3 text-right font-medium">Qty</th>
-                <th className="px-4 py-3 text-right font-medium">Unit Cost</th>
+                <th className="px-4 py-3 text-right font-medium">Unit cost</th>
                 <th className="px-4 py-3 text-right font-medium">Value</th>
               </tr>
             </thead>
@@ -461,7 +461,7 @@ function SettingsCard() {
   const update = useUpdateTobaccoSettings();
 
   return (
-    <Card title="Tobacco Settings">
+    <Card title="Tobacco settings">
       <label className="flex items-start gap-3">
         <input
           type="checkbox"

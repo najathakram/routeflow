@@ -124,7 +124,7 @@ const HANDOFF_REASON_TEXT: Record<string, string> = {
   "identity-conflict": "Email or username already used by a staff account",
   "customer-cap": "Customer limit reached",
   "contact-not-found": "Contact deleted in GoHighLevel",
-  "create-failed": "Could not create the customer",
+  "create-failed": "Couldn't create the customer",
 };
 
 const CONNECTION_BADGE: Record<string, { label: string; variant: BadgeVariant }> = {
@@ -823,8 +823,8 @@ export function GoHighLevelSettingsTab(props: GoHighLevelSettingsTabProps): Reac
           ) : (
             <div className="flex flex-col gap-2 border-t border-surface-border pt-3">
               <p className="text-sm text-navy/70">
-                {previewResult.count} leads are already at{" "}
-                {config?.stageName ?? "the configured stage"} and not in RouteFlow
+                {previewResult.count === 1 ? "1 lead is" : `${previewResult.count} leads are`}{" "}
+                already at {config?.stageName ?? "the configured stage"} and not in RouteFlow.
               </p>
               <ul className="flex flex-col gap-1 text-sm text-navy/60">
                 {previewResult.sample.slice(0, 20).map((s, i) => (

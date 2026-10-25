@@ -10,6 +10,7 @@ import {
   useMapsLibrary,
 } from "@vis.gl/react-google-maps";
 import { MapPin } from "lucide-react";
+import { badgeStatusLabel } from "@routeflow/ui/web";
 import type { RouteRunStop } from "@/lib/api/routes";
 import { useGoogleMapsKey } from "@/hooks/useGoogleMapsKey";
 import { MapErrorBoundary, MapsApiGate } from "@/components/GoogleMapsGate";
@@ -179,7 +180,7 @@ function StopInfoWindow({ stop, onClose }: { stop: RouteRunStop; onClose: () => 
                 }}
               >
                 <span style={{ color: "#0f172a" }}>#{o.orderNumber}</span>
-                <span style={{ color: "#94a3b8" }}>{o.status}</span>
+                <span style={{ color: "#94a3b8" }}>{badgeStatusLabel(o.status)}</span>
               </div>
             ))}
           </div>

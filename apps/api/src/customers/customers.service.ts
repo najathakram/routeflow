@@ -18,6 +18,7 @@ import { BuyerMergeRequestStatus, MergeInitiator, type PaymentMethod } from "@pr
 import type { PaymentRefOpts } from "../invoices/payment-ref-dedupe";
 import { ConfigService } from "@nestjs/config";
 import * as bcrypt from "bcrypt";
+import { assertRefsInTenant } from "../common/assert-refs-in-tenant";
 import { PrismaService } from "../prisma/prisma.service";
 import { isInternalEmail } from "../common/internal-email";
 import { assertCleanupImportedEnabled } from "./cleanup-imported-disabled";
@@ -1019,6 +1020,12 @@ export class CustomersService {
     if (dto.pricingTier === undefined && dto.msrp === undefined) {
       throw new BadRequestException("Provide a pricing tier, an MSRP override, or both");
     }
+    // 681 (R5-5): the route customer and the body product are stored, so both must be in this tenant (a 404, the
+    // same for foreign and missing) BEFORE the MSRP gate and the family policy below.
+    await assertRefsInTenant(this.prisma, {
+      customerIds: [customerId],
+      productIds: [dto.productId],
+    });
     if (dto.msrp !== undefined) {
       await this.assertMsrpAllowed();
     }

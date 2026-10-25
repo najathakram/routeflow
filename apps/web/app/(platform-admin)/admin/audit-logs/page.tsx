@@ -149,7 +149,7 @@ export default function AuditLogsPage() {
   return (
     <div className="p-6">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-white">Audit Logs</h1>
+        <h1 className="text-2xl font-bold text-white">Audit logs</h1>
         <p className="mt-1 text-sm text-slate-400">Platform-wide activity log</p>
       </div>
 
@@ -197,7 +197,7 @@ export default function AuditLogsPage() {
           <input
             aria-label="Entity type"
             type="text"
-            placeholder="Entity Type (e.g. User, Order)..."
+            placeholder="e.g. User, Order"
             value={entityTypeFilter}
             onChange={(e) => setEntityTypeFilter(e.target.value)}
             className="h-9 rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white placeholder:text-slate-500 focus:border-indigo-500 focus:outline-none"
@@ -205,7 +205,7 @@ export default function AuditLogsPage() {
           <input
             aria-label="User ID"
             type="text"
-            placeholder="User ID..."
+            placeholder="User ID"
             value={userIdFilter}
             onChange={(e) => setUserIdFilter(e.target.value)}
             className="h-9 rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white placeholder:text-slate-500 focus:border-indigo-500 focus:outline-none"
@@ -234,7 +234,7 @@ export default function AuditLogsPage() {
         {data && <p className="mt-2 text-xs text-slate-400">{data.meta.total} total entries</p>}
       </div>
 
-      {loading && <div className="py-12 text-center text-slate-400">Loading audit logs...</div>}
+      {loading && <div className="py-12 text-center text-slate-400">Loading audit logs…</div>}
 
       {error && (
         <div

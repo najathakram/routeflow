@@ -49,7 +49,7 @@ function open() {
   fireEvent.change(screen.getAllByPlaceholderText("0.00")[0], { target: { value: "50" } });
   return { onClose, onSuccess };
 }
-const save = () => fireEvent.click(screen.getByRole("button", { name: "Save as Paid" }));
+const save = () => fireEvent.click(screen.getByRole("button", { name: "Save as paid" }));
 const check = () => fireEvent.click(screen.getByRole("button", { name: "Check payment status" }));
 
 describe("CustomerRecordPaymentModal: Check payment status (SA-824)", () => {
@@ -70,7 +70,7 @@ describe("CustomerRecordPaymentModal: Check payment status (SA-824)", () => {
     open();
     save();
     await screen.findByRole("button", { name: "Check payment status" });
-    expect(screen.getByRole("button", { name: "Save as Paid" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save as paid" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Save as draft" })).toBeDisabled();
   });
 
@@ -101,7 +101,7 @@ describe("CustomerRecordPaymentModal: Check payment status (SA-824)", () => {
     mockResolve.mockResolvedValue({ data: { state: "tombstoned" } });
     check();
     expect(await screen.findByText(RESOLVED_COPY)).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Save as Paid" })).not.toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save as paid" })).not.toBeDisabled();
     mockPost.mockRejectedValueOnce(httpErr(400));
     save();
     await waitFor(() => expect(mockPost).toHaveBeenCalledTimes(2));
@@ -119,7 +119,7 @@ describe("CustomerRecordPaymentModal: Check payment status (SA-824)", () => {
       await screen.findByText("We couldn't check right now. Try again in a moment."),
     ).toBeTruthy();
     expect(screen.queryByText(/RAW SERVER TEXT/)).toBeNull();
-    expect(screen.getByRole("button", { name: "Save as Paid" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save as paid" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Check payment status" })).toBeTruthy();
   });
 
@@ -135,7 +135,7 @@ describe("CustomerRecordPaymentModal: Check payment status (SA-824)", () => {
     first.unmount(); // Cancel
     renderWithProviders(<CustomerRecordPaymentModal customerId="cust-1" onClose={jest.fn()} />);
     expect(screen.getByRole("button", { name: "Check payment status" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Save as Paid" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save as paid" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Save as draft" })).toBeDisabled();
     mockResolve.mockResolvedValue({
       data: { state: "found", paymentGroupId: "g1", payments: [{ id: "p1" }] },
@@ -167,7 +167,7 @@ describe("CustomerRecordPaymentModal: Check payment status (SA-824)", () => {
     expect(
       await screen.findByText("We couldn't check right now. Try again in a moment."),
     ).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Save as Paid" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save as paid" })).toBeDisabled();
   });
 
   it("409 PAYMENT_KEY_IN_FLIGHT: the fixed retry copy, still unknown, Save stays off", async () => {
@@ -185,7 +185,7 @@ describe("CustomerRecordPaymentModal: Check payment status (SA-824)", () => {
       ),
     ).toBeTruthy();
     expect(screen.queryByText(/RAW SERVER TEXT/)).toBeNull();
-    expect(screen.getByRole("button", { name: "Save as Paid" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save as paid" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Check payment status" })).toBeTruthy();
   });
 
@@ -201,7 +201,7 @@ describe("CustomerRecordPaymentModal: Check payment status (SA-824)", () => {
       ),
     );
     expect(screen.queryByRole("button", { name: "Check payment status" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Save as Paid" })).not.toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save as paid" })).not.toBeDisabled();
     const first = keyOf(mockPost.mock.calls[0]);
     mockPost.mockRejectedValueOnce(httpErr(400));
     save();
@@ -238,7 +238,7 @@ describe("CustomerRecordPaymentModal: Check payment status (SA-824)", () => {
       holder.keyFor({ amount: 50, method: "CASH" });
       holder.settle(holder.peek()!, { ok: false, error: httpErr(503) });
     });
-    expect(screen.getByRole("button", { name: "Save as Paid" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save as paid" })).toBeDisabled();
     save();
     await Promise.resolve();
     expect(mockPost).not.toHaveBeenCalled();

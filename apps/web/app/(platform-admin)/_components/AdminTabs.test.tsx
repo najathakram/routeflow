@@ -4,7 +4,7 @@ import { AdminTabs } from "./AdminTabs";
 
 const TABS = [
   { key: "overview", label: "Overview" },
-  { key: "billing", label: "Billing & Subscription" },
+  { key: "billing", label: "Billing & subscription" },
   { key: "setup", label: "Setup" },
   { key: "config", label: "Configuration" },
 ];

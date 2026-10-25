@@ -108,7 +108,7 @@ test.describe("Vendor bill: missing units per case is an explicit choice (B743)"
       });
 
       await page.goto(`/vendor-bills/${bill.id}`);
-      await page.getByRole("button", { name: "Mark Received" }).first().click();
+      await page.getByRole("button", { name: "Mark received" }).first().click();
       await page.getByTestId("receive-confirm").click();
 
       const dialog = page.getByRole("dialog", { name: "Units per case missing" });
