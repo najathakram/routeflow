@@ -318,15 +318,18 @@ describe("InventoryService.assignToVariants", () => {
   });
 
   it("GUARD (SA-975, row 646 / SA-814m P2): a transfer after sales costs the child at the parent's AVERAGE, never at the old lots' cost", async () => {
-    // Parent average 3 (lots bought at 2 and 4); sales since #3487 never lower remainingQty, so the oldest lot
-    // (cost 2) still reads as available. The child must be costed at 3: movement, lot and its own average.
+    // Parent average 3. Two lots were received (100 @ 2, then 50 @ 4 = 150 units) and 100 were sold since; sales since
+    // #3487 never lower remainingQty, so both lots still read as fully available while currentStock is 50. The lots
+    // are chosen so that NO lot-derived cost equals the average: the oldest lot costs 2 and the blend of the remaining
+    // lots is (100*2 + 50*4) / 150 = 2.667, so a child costed from either lot reads as a wrong value, not as 3.
+    // The child must be costed at the parent's average 3: movement, lot and its own average.
     prisma.product.findUnique.mockResolvedValue(parent({ currentStock: D(50), averageCost: D(3) }));
     prisma.product.findFirst.mockResolvedValueOnce(
       variant({ id: "variant-1", currentStock: D(0), averageCost: null }),
     );
     prisma.stockLot.findMany.mockResolvedValue([
       { id: "lot-old", remainingQty: D(100), unitCost: D(2) },
-      { id: "lot-new", remainingQty: D(100), unitCost: D(4) },
+      { id: "lot-new", remainingQty: D(50), unitCost: D(4) },
     ]);
     const result = await service.assignToVariants(
       { parentProductId: "parent-1", assignments: [{ productId: "variant-1", qty: 10 }] } as any,

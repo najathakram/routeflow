@@ -9,7 +9,11 @@
  * fails here, so its author meets the deferred row "lots are receipt history only" before relying on a lot figure.
  *
  * What is counted, per non-spec source file under apps/api/src (the `testing/` fixtures are excluded):
- *   - `stockLot.<read>` delegate reads (findMany / findFirst / findUnique / aggregate / groupBy / count);
+ *   - `stockLot.<read>` delegate reads (findMany / findFirst / findUnique / aggregate / groupBy / count), with any
+ *     whitespace or newline tolerated around the dot (`tx.stockLot\n  .findMany(`), PLUS relation reads
+ *     (`include: { stockLots: true }`, `stockLots: {` inside an include / select / where), folded into the same count
+ *     (first slot below). Re-observed on the current source when the relation shape was added: 0 relation reads exist,
+ *     so every pinned figure is unchanged (inventory.service 2, vendor-bills.service 3);
  *   - raw SQL reads `FROM|JOIN "StockLot"`;
  *   - `remainingQty` references, in files that mention StockLot (the name is also used by unrelated quantities elsewhere,
  *     e.g. credit-note headroom), plus costing.ts, which handles lots handed to it by its callers.
@@ -28,8 +32,9 @@ const PINNED: Record<string, [number, number, number]> = {
   "vendor-bills/vendor-bills.service.ts": [3, 0, 10], // bill reversal: max(lotSays, fromLedger) (row 645)
 };
 
-const READ =
-  /stockLot\.(?:findMany|findFirst|findUnique|findFirstOrThrow|findUniqueOrThrow|aggregate|groupBy|count)\b/g;
+const DELEGATE_READ =
+  /stockLot\s*\??\s*\.\s*(?:findMany|findFirst|findUnique|findFirstOrThrow|findUniqueOrThrow|aggregate|groupBy|count)\b/g;
+const RELATION_READ = /\bstockLots\s*:\s*(?:true\b|\{)/g;
 const RAW = /(?:FROM|JOIN)\s+"StockLot"/gi;
 const REMAINING = /\bremainingQty\b/g;
 const MENTIONS_LOT = /stockLot|StockLot/;
@@ -51,7 +56,8 @@ function census(): Record<string, [number, number, number]> {
     const rel = path.relative(SRC_ROOT, file).split(path.sep).join("/");
     const text = fs.readFileSync(file, "utf8");
     const lotFile = MENTIONS_LOT.test(text) || rel === "inventory/costing.ts";
-    const reads = (text.match(READ) ?? []).length;
+    const reads =
+      (text.match(DELEGATE_READ) ?? []).length + (text.match(RELATION_READ) ?? []).length;
     const raw = (text.match(RAW) ?? []).length;
     const remaining = lotFile ? (text.match(REMAINING) ?? []).length : 0;
     if (reads || raw || remaining) found[rel] = [reads, raw, remaining];
@@ -77,10 +83,16 @@ describe("SA-975: the StockLot reader census is count-pinned per file", () => {
   });
 
   it("the detector matches each shape it claims to and ignores an unrelated remainingQty", () => {
-    expect("tx.stockLot.findMany({})".match(READ)).toHaveLength(1);
-    expect("this.prisma.stockLot.aggregate({})".match(READ)).toHaveLength(1);
+    expect("tx.stockLot.findMany({})".match(DELEGATE_READ)).toHaveLength(1);
+    expect("this.prisma.stockLot.aggregate({})".match(DELEGATE_READ)).toHaveLength(1);
+    expect("tx.stockLot\n  .findMany({})".match(DELEGATE_READ)).toHaveLength(1); // split across lines
+    expect("tx.stockLot  .  count({})".match(DELEGATE_READ)).toHaveLength(1); // stray whitespace
+    expect("include: { stockLots: true }".match(RELATION_READ)).toHaveLength(1); // relation include
+    expect("select: { stockLots: { where: {} } }".match(RELATION_READ)).toHaveLength(1);
     expect('SELECT 1 FROM "StockLot" l'.match(RAW)).toHaveLength(1);
-    expect("stockLot.create({})".match(READ)).toBeNull(); // a write is not a read
+    expect("stockLot.create({})".match(DELEGATE_READ)).toBeNull(); // a write is not a read
+    expect("tx.stockLot\n  .create({})".match(DELEGATE_READ)).toBeNull();
+    expect("stockLots: undefined".match(RELATION_READ)).toBeNull();
     expect(MENTIONS_LOT.test("remainingQty: number // credit-note headroom")).toBe(false);
   });
 });
