@@ -89,58 +89,62 @@ function census(): Record<string, number> {
 // pack-axis NEW-write builder is one that does this with CLIENT boxes AND prices the result with `computeLineSubtotal(`
 // into a sale-line create: those are the class that converts to `buildLine` one domain at a time (each conversion lowers
 // its count in the same diff). The other call sites are out of the class and stay (a re-split of a known piece count, a
-// reader of a stored line, an edit path that resolves against a stored line, inventory); each says which.
+// reader of a stored line, inventory); each says which. A CLASS line is one that converts (its count drops in that diff);
+// an EDIT line (B717 / SA-077e: resolves against the line's own stored pack) is counted so a new edit-shaped builder cannot
+// land unseen, and never converts. SA-982 / SA-982a: the predicate is client `boxes:` + `computeLineSubtotal(` into a sale-line
+// create, OR an update that changes the line's productId (a substitute).
 // ---------------------------------------------------------------------------------------------------------------------
-type PinB = [count: number, kind: "CLASS" | "OUT", why: string];
+type Tags = { CLASS?: number; EDIT?: number; OUT?: number };
+type PinB = [count: number, tags: Tags, why: string];
 const PINNED_B: Record<string, PinB> = {
   "invoices/manual-invoice-lines.ts": [
     1,
-    "CLASS",
-    "buildManualInvoiceLines :110 splits the client's item.boxes/pieces, prices at :139 (the purest copy of buildLine's pack axis)",
+    { CLASS: 1 },
+    "buildManualInvoiceLines :110 splits the client's item.boxes/pieces, prices at :139 (the purest copy of buildLine's pack axis); warn site invoices.manual",
   ],
   "orders/replace-all-line-build.ts": [
     1,
-    "CLASS",
-    "buildReplaceAllLineData :180 splits item.boxes/pieces, prices at :366, the trailing tx.orderItem.create writes it",
+    { CLASS: 1 },
+    "buildReplaceAllLineData :180 splits item.boxes/pieces, prices at :366, the trailing tx.orderItem.create writes it; warn site orders.replace-all",
   ],
   "orders/orders.service.ts": [
     4,
-    "CLASS",
-    "create() lines :1696 (priced :1819) and the add-line payload :4958 (priced :4993, created :4980) are CLASS; the substitute line :3645 (priced :3690) is a new line inside an edit, flagged for the SA; the update of a stored line :3831 is an edit path (B717), out",
+    { CLASS: 3, EDIT: 1 },
+    "CLASS: create() lines :1696 (orders.create.lines / counter.sale, priced :1819), the SUBSTITUTE line :3645 (orders.update.substitute: a new sale of a new product on an old row id, priced :3690; SA-982a) and the change-request add :4958 (orders.cr.add, priced :4993, created :4980). EDIT: :3831 orders.update, the same-product line edit that resolves against the line's own pack (B717 / SA-077e); never converts",
   ],
   "orders/counter-sale/counter-sale-lines.ts": [
     1,
-    "OUT",
+    { OUT: 1 },
     "a DTO mapper that passes boxes/pieces through to create(): counted at the orders create site, which carries the counter `site` tag",
   ],
   "orders/merge-items.ts": [
     1,
-    "OUT",
+    { OUT: 1 },
     "foldInto :451 re-splits an accumulator of stored + incoming lines; no pricing here (the merge writer prices)",
   ],
   "orders/buyer-edit-lines.ts": [
     1,
-    "OUT",
+    { OUT: 1 },
     "a reader: the STAFF split is read to a quantity to compare against the stored line, nothing is priced or created",
   ],
   "orders/unit-line-build.ts": [
     1,
-    "OUT",
+    { OUT: 1 },
     "replayLineKey :255 reads a STORED line's boxes/pieces to build an idempotency key",
   ],
   "products/line-units.ts": [
     1,
-    "OUT",
+    { OUT: 1 },
     "norm :221 re-splits a known piece count (boxes: 0, pieces: count) of a line the product already resolved",
   ],
   "recurring-invoices/recurring-line-split.ts": [
     1,
-    "OUT",
+    { OUT: 1 },
     "recurringLineSplit :29 rolls a template quantity's whole boxes + loose pieces over; derived from stored qty, not client boxes (the recurring domain converts later, SA-982 order)",
   ],
   "inventory/inventory.service.ts": [
     4,
-    "OUT",
+    { OUT: 4 },
     "stock quantities (PO receipt, variant assign, create adjustment, stock count lines): not priced sale lines",
   ],
 };
@@ -210,25 +214,30 @@ describe("row 139 pin A: bare qty x price line math is count-pinned per file (sh
 });
 
 describe("row 139 pin B: hand-built pack-axis builders (normalizeBoxesPieces with boxes:) are count-pinned per file", () => {
-  it("every file calling normalizeBoxesPieces with a boxes: argument is pinned, with exactly its count; each pin says CLASS or OUT and why", () => {
+  it("every file calling normalizeBoxesPieces with a boxes: argument is pinned, with exactly its count; each pin tags its sites CLASS, EDIT or OUT and says why", () => {
     const expected = Object.fromEntries(Object.entries(PINNED_B).map(([f, [n]]) => [f, n]));
     expect(censusB()).toEqual(expected);
-    for (const [, kind, why] of Object.values(PINNED_B)) {
-      expect(["CLASS", "OUT"]).toContain(kind);
+    for (const [count, tags, why] of Object.values(PINNED_B)) {
+      expect(Object.values(tags).reduce((a, n) => a + (n ?? 0), 0)).toBe(count);
       expect(why.length).toBeGreaterThan(30);
     }
   });
 
-  it("a new hand builder cannot land: the class members are exactly the ones SA-982 names (shrinks as domains convert)", () => {
-    const classFiles = Object.entries(PINNED_B)
-      .filter(([, [, kind]]) => kind === "CLASS")
-      .map(([f]) => f)
-      .sort();
-    expect(classFiles).toEqual([
-      "invoices/manual-invoice-lines.ts",
-      "orders/orders.service.ts",
-      "orders/replace-all-line-build.ts",
-    ]);
+  it("a new hand builder cannot land: the CLASS sites are exactly the ones SA-982 / SA-982a name (shrinks as domains convert)", () => {
+    const classCounts = Object.fromEntries(
+      Object.entries(PINNED_B)
+        .filter(([, [, tags]]) => (tags.CLASS ?? 0) > 0)
+        .map(([f, [, tags]]) => [f, tags.CLASS]),
+    );
+    expect(classCounts).toEqual({
+      "invoices/manual-invoice-lines.ts": 1,
+      "orders/orders.service.ts": 3,
+      "orders/replace-all-line-build.ts": 1,
+    });
+    const editSites = Object.entries(PINNED_B)
+      .filter(([, [, tags]]) => (tags.EDIT ?? 0) > 0)
+      .map(([f]) => f);
+    expect(editSites).toEqual(["orders/orders.service.ts"]); // :3831 only; an edit never converts
   });
 
   it("the detector counts a boxes: argument (key, shorthand), and not a qty-only re-split, or a comment", () => {
