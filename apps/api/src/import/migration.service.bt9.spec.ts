@@ -1,5 +1,5 @@
 import { Test } from "@nestjs/testing";
-import { ConflictException } from "@nestjs/common";
+import { ConflictException, ServiceUnavailableException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { ProductsService } from "../products/products.service";
@@ -97,6 +97,19 @@ describe("MigrationService, BT-9", () => {
       expect(prisma.migrationJob.update).not.toHaveBeenCalled();
     });
 
+    it("a 5xx HttpException is an outage, not a row refusal: confirm throws and the job is not CONFIRMED", async () => {
+      prisma.migrationJob.findUnique.mockResolvedValue({
+        id: "j1",
+        source: "ZOHO",
+        status: "STAGED",
+      });
+      prisma.migrationStagingRecord.findMany.mockResolvedValue([rec("r1", { name: "Cola" })]);
+      products.create.mockRejectedValue(new ServiceUnavailableException("storage down"));
+      await expect(service.confirmJob("j1")).rejects.toThrow("storage down");
+      expect(prisma.migrationStagingRecord.update).not.toHaveBeenCalled();
+      expect(prisma.migrationJob.update).not.toHaveBeenCalled();
+    });
+
     it("a failing external-ref write after a live create still marks the row COMMITTED with its entity id", async () => {
       prisma.migrationJob.findUnique.mockResolvedValue({
         id: "j1",
@@ -163,15 +176,31 @@ describe("MigrationService, BT-9", () => {
       });
     });
 
-    it.each(["12,50", "1.234,56", "12abc", "12 USD", "1e3", "99999999999", "1,23"])(
-      "stage: price %p is SKIPPED bad-price, never a different number",
-      async (price) => {
-        expect(await stageOne({ name: "Cola", pricePerUnit: price })).toMatchObject({
-          status: "SKIPPED",
-          flags: ["bad-price"],
-        });
-      },
-    );
+    // "1.234" (a European thousands dot), "12.345" and "0.001" were rounded to 1.23, 12.35 and 0.00 on master
+    it.each([
+      "12,50",
+      "1.234,56",
+      "12abc",
+      "12 USD",
+      "1e3",
+      "99999999999",
+      "1,23",
+      "1.234",
+      "12.345",
+      "0.001",
+    ])("stage: price %p is SKIPPED bad-price, never a different number", async (price) => {
+      expect(await stageOne({ name: "Cola", pricePerUnit: price })).toMatchObject({
+        status: "SKIPPED",
+        flags: ["bad-price"],
+      });
+    });
+
+    it("stage: a numeric price with more than two decimals is SKIPPED bad-price, never rounded", async () => {
+      expect(await stageOne({ name: "Cola", pricePerUnit: 1.234 })).toMatchObject({
+        status: "SKIPPED",
+        flags: ["bad-price"],
+      });
+    });
 
     it("stage: an absent price stays PENDING (the product is created at 0 as before)", async () => {
       expect(await stageOne({ name: "Cola" })).toMatchObject({ status: "PENDING" });

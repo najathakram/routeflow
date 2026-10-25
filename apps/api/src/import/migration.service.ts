@@ -26,8 +26,11 @@ const BAD_PRICE_FLAG = "bad-price";
 /** The staging flag on a record whose commit threw at confirm (B334): skipped on its own, the job still confirms. */
 const COMMIT_FAILED_FLAG = "commit-failed";
 
-/** An optional "$", then plain digits or comma-grouped thousands (groups of three), then an optional ".dd..." tail. */
-const PRICE_SHAPE = /^\$?\s*(\d{1,3}(,\d{3})+|\d+)(\.\d+)?$/;
+/**
+ * An optional "$", then plain digits or comma-grouped thousands (groups of three), then an optional ".d" or ".dd"
+ * tail. More decimals is not a price: "1.234" (a European thousands dot) must not round to 1.23.
+ */
+const PRICE_SHAPE = /^\$?\s*(\d{1,3}(,\d{3})+|\d+)(\.\d{1,2})?$/;
 /** Largest value a Decimal(10,2) price column holds. */
 const MAX_PRICE = 99_999_999.99;
 
@@ -40,6 +43,8 @@ function normalizedPrice(payload: Record<string, unknown>): string | null {
   if (raw == null || (typeof raw === "string" && raw.trim() === "")) return "";
   // Strict shape: "12,50" (decimal comma), "12abc" and "1e3" must not parse to a different price.
   if (typeof raw === "string" && !PRICE_SHAPE.test(raw.trim())) return null;
+  // A numeric cell is held to the same two-decimal rule (1.234 would round to 1.23).
+  if (typeof raw === "number" && Math.round(raw * 100) / 100 !== raw) return null;
   const n = parseImportMoney(raw);
   return Number.isFinite(n) && n >= 0 && n <= MAX_PRICE ? n.toFixed(2) : null;
 }
@@ -238,9 +243,10 @@ export class MigrationService {
         createdId = await this.commit(rec.entityType, rec.rawPayload as Record<string, unknown>);
       } catch (e) {
         // Only a row-level refusal (an HTTP 4xx from the service, a Prisma constraint error) skips the row; an outage
-        // or timeout must surface, or every remaining row would be SKIPPED and the job could never be retried.
+        // or timeout (a 5xx included) must surface, or every remaining row would be SKIPPED and the job could never
+        // be retried.
         const rowLevel =
-          e instanceof HttpException ||
+          (e instanceof HttpException && e.getStatus() < 500) ||
           (e instanceof Prisma.PrismaClientKnownRequestError &&
             ["P2002", "P2003"].includes(e.code));
         if (!rowLevel) throw e;
