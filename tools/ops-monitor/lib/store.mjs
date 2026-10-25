@@ -459,18 +459,24 @@ function refuseIfNul(dir, files, verb) {
   if (bad.length) throw new RefusedError(bad);
 }
 
-/** Crash-safe append: write, then fsync before the commit reads it back (W-880). */
+/**
+ * Durable (not atomic) append: O_APPEND, a full-length write, then fsync before the commit reads it back (W-880).
+ * macOS fsync does not flush the disk cache, and a new file's directory is not synced.
+ */
 function appendDurable(abs, text) {
   const fd = openSync(abs, "a");
   try {
-    writeSync(fd, text);
+    const buf = Buffer.from(text, "utf8");
+    const n = writeSync(fd, buf);
+    if (n !== buf.length)
+      throw new Error(`short write to ${abs}: ${n} of ${buf.length} bytes (disk full?)`);
     fsyncSync(fd);
   } finally {
     closeSync(fd);
   }
 }
 
-/** Crash-safe rewrite: a synced temp file renamed over the target, never a half-written file (W-880). */
+/** Durable rewrite: a synced temp file renamed over the target, never a half-written file (W-880). */
 function rewriteDurable(abs, text) {
   const tmp = `${abs}.tmp-${process.pid}`;
   const fd = openSync(tmp, "w");
@@ -480,7 +486,12 @@ function rewriteDurable(abs, text) {
   } finally {
     closeSync(fd);
   }
-  renameSync(tmp, abs);
+  try {
+    renameSync(tmp, abs);
+  } catch (e) {
+    rmSync(tmp, { force: true }); // EPERM/EBUSY on Windows: never leave the temp file behind
+    throw e;
+  }
 }
 
 /** Every events/<machine>/*.jsonl line; unparseable lines come back as `{ __invalid: true, … }`. */
@@ -742,6 +753,8 @@ export async function reconcileUnpushed(dir, { bugIds = new Set() } = {}) {
   }
   if (out.edited.size === 0 && out.dropped.length === 0) return out;
 
+  // W-880: refuse a NUL-bearing file BEFORE the rewind, so a refusal never leaves commits unstaged.
+  refuseIfNul(dir, [...new Set(ours.map((o) => o.file))], "repair");
   const reset = await git(dir, ["reset", "--soft", "@{u}"]);
   if (reset.code !== 0)
     throw new Error(`could not rewind to repair events: ${reset.stderr.trim()}`);

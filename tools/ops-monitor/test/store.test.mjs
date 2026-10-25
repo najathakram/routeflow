@@ -1234,3 +1234,33 @@ test(
     assert.equal(git(C, "rev-parse", "HEAD").trim(), head, "nothing committed");
   },
 );
+
+test(
+  "W-880: a torn last line (crash mid-append) gets a newline prefix; the new event commits and nothing is lost",
+  { timeout: 240000 },
+  async () => {
+    const D = join(tmp, "clone-torn");
+    git(tmp, "clone", "--quiet", remote, D);
+    git(D, "config", "user.name", "Machine d");
+    git(D, "config", "user.email", "d@example.com");
+    const e = ev("m-d", "note", null, { text: "after the torn write" });
+    const f = join(D, "events", "m-d", `${e.ts.slice(0, 10)}.jsonl`);
+    mkdirSync(join(D, "events", "m-d"), { recursive: true });
+    const whole = JSON.stringify(ev("m-d", "note", null, { text: "whole" }));
+    const torn = '{"v":1,"id":"m-d-torn","kind":"no';
+    writeFileSync(f, `${whole}\n${torn}`);
+    const head = git(D, "rev-parse", "HEAD").trim();
+    await appendEvents([e], { dir: D, home: join(tmp, "home-d"), push: false });
+    const text = readFileSync(f, "utf8");
+    assert.equal(text, `${whole}\n${torn}\n${JSON.stringify(e)}\n`, "newline prefix, nothing lost");
+    assert.notEqual(git(D, "rev-parse", "HEAD").trim(), head, "the new event is committed");
+    assert.equal(git(D, "status", "--porcelain").trim(), "", "nothing left uncommitted");
+    const all = readAllEvents(D);
+    assert.ok(all.some((x) => x.id === e.id));
+    const st = fold(all);
+    assert.ok(
+      (st.anomalies ?? []).some((a) => a.kind === "invalid-event" && a.detail.includes("m-d-torn")),
+      "the torn line surfaces as an invalid-event anomaly",
+    );
+  },
+);
