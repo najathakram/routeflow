@@ -1,4 +1,4 @@
-import { ExecutionContext, Logger } from "@nestjs/common";
+import { ExecutionContext, HttpException, Logger } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
 import { OperatorPermissionGroup, UserRole } from "@prisma/client";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
@@ -43,7 +43,9 @@ const ctxFor = (method: keyof Ctl, user: Record<string, unknown>) =>
   ({
     getHandler: () => Ctl.prototype[method],
     getClass: () => Ctl,
-    switchToHttp: () => ({ getRequest: () => ({ user }) }),
+    switchToHttp: () => ({
+      getRequest: () => ({ user, method: "POST", originalUrl: "/api/v1/orders?customer=secret" }),
+    }),
   }) as unknown as ExecutionContext;
 
 const OPERATOR = { sub: "u1", tenantId: "t1", role: UserRole.OPERATOR };
@@ -89,14 +91,49 @@ describe("RolesGuard + operator permission groups", () => {
     expect(lines).toHaveLength(1);
     expect(lines[0]).toMatch(/groups=ORDERS\|FINANCE/);
     expect(lines[0]).toMatch(/handler=Ctl\.orders/);
+    // Like the add-on gate's would-deny line: which tenant and which route, without the query string.
+    expect(lines[0]).toMatch(/tenant=t1/);
+    expect(lines[0]).toMatch(/route=POST \/api\/v1\/orders$/);
+    expect(lines[0]).not.toMatch(/secret/);
+  });
+
+  it("SHADOW: a failed lookup is logged and the request is ALLOWED (never a 500 for the operator)", async () => {
+    effective.mockRejectedValue(new Error("db down"));
+    const error = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+    await expect(guard.canActivate(ctxFor("orders", OPERATOR))).resolves.toBe(true);
+    const lines = error.mock.calls.map((c) => String(c[0]));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/lookup failed \(shadow, allowed\)/);
+    expect(lines[0]).toMatch(/groups=ORDERS\|FINANCE/);
+    expect(lines[0]).toMatch(/tenant=t1/);
+    expect(lines[0]).toMatch(/db down/);
+  });
+
+  it("LIVE: a failed lookup FAILS CLOSED (the error propagates, the request is never allowed)", async () => {
+    mode = "live";
+    const boom = new Error("db down");
+    effective.mockRejectedValue(boom);
+    await expect(Promise.resolve(guard.canActivate(ctxFor("orders", OPERATOR)))).rejects.toBe(boom);
+  });
+
+  it("an operator impersonated by a super admin is checked as that operator (the denied groups apply)", async () => {
+    // Impersonation keeps the target's identity in the token (sub, tenantId, role) and adds impersonatedBy.
+    mode = "live";
+    held = ["CATALOG"];
+    const impersonated = { ...OPERATOR, impersonatedBy: "super1" };
+    const err = (await Promise.resolve(guard.canActivate(ctxFor("orders", impersonated))).catch(
+      (e) => e,
+    )) as HttpException;
+    expect(err.getStatus()).toBe(403);
+    expect(effective).toHaveBeenCalledWith(expect.objectContaining({ sub: "u1" }));
   });
 
   it("LIVE: an operator holding none is 403 PERMISSION_DENIED naming the groups that would open it", async () => {
     mode = "live";
     held = ["CATALOG"];
-    const err: any = await Promise.resolve(guard.canActivate(ctxFor("orders", OPERATOR))).catch(
+    const err = (await Promise.resolve(guard.canActivate(ctxFor("orders", OPERATOR))).catch(
       (e) => e,
-    );
+    )) as HttpException;
     expect(err.getStatus()).toBe(403);
     expect(err.getResponse()).toMatchObject({
       code: API_ERROR_CODES.PERMISSION_DENIED,
@@ -121,9 +158,9 @@ describe("RolesGuard + operator permission groups", () => {
   it("an operator who can act as a driver is STILL permission-checked on a shared handler (no driver exemption)", async () => {
     mode = "live";
     held = [];
-    const err: any = await Promise.resolve(
+    const err = (await Promise.resolve(
       guard.canActivate(ctxFor("shared", { ...OPERATOR, canActAsDriver: true })),
-    ).catch((e) => e);
+    ).catch((e) => e)) as HttpException;
     expect(err.getResponse()).toMatchObject({ code: API_ERROR_CODES.PERMISSION_DENIED });
   });
 

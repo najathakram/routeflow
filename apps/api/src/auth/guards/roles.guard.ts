@@ -31,7 +31,9 @@ const ROLE_SATISFIES: Record<UserRole, UserRole[]> = {
 export class RolesGuard implements CanActivate {
   private readonly logger = new Logger(RolesGuard.name);
 
-  // The permission service is optional so every spec that builds `new RolesGuard(reflector)` is unchanged.
+  // The permission service is optional so every spec that builds `new RolesGuard(reflector)` is unchanged. In the app it
+  // is always injected: `roles.guard.optional-di.spec.ts` pins that the global module provides it, because an
+  // @Optional() that silently resolves to undefined would turn the whole permission check off.
   constructor(
     private readonly reflector: Reflector,
     @Optional() private readonly permissions?: OperatorPermissionsService,
@@ -76,12 +78,37 @@ export class RolesGuard implements CanActivate {
     groups: OperatorPermissionGroup[],
   ): Promise<boolean> {
     const permissions = this.permissions!;
-    if (await permissions.hasAny(user, groups)) return true;
-    if (permissions.mode() === "live") throw permissionDeniedException(groups);
+    const mode = permissions.mode();
+    const where = `handler=${context.getClass().name}.${context.getHandler().name} tenant=${user.tenantId ?? "-"} route=${routeOf(context)}`;
+    let allowed: boolean;
+    try {
+      allowed = await permissions.hasAny(user, groups);
+    } catch (err) {
+      // SHADOW observes only: a failed lookup must never block an operator, so log it and allow.
+      if (mode !== "live") {
+        this.logger.error(
+          `permission lookup failed (shadow, allowed) groups=${groups.join("|")} ${where}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        return true;
+      }
+      // LIVE fails closed: no answer is never an allow, so the error propagates and the request is refused.
+      throw err;
+    }
+    if (allowed) return true;
+    if (mode === "live") throw permissionDeniedException(groups);
     // SHADOW: record what enforcement would do, allow the request.
-    this.logger.warn(
-      `would-deny groups=${groups.join("|")} handler=${context.getClass().name}.${context.getHandler().name}`,
-    );
+    this.logger.warn(`would-deny groups=${groups.join("|")} ${where}`);
     return true;
   }
+}
+
+/** "METHOD /path" without the query string (ids and search terms stay out of the log), as the add-on gate logs it. */
+function routeOf(context: ExecutionContext): string {
+  const req = context.switchToHttp().getRequest<{
+    method?: string;
+    originalUrl?: string;
+    url?: string;
+  }>();
+  const path = (req.originalUrl ?? req.url ?? "?").split("?")[0];
+  return `${req.method ?? "?"} ${path}`;
 }
