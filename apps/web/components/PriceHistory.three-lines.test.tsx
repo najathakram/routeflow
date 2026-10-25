@@ -232,6 +232,21 @@ describe("three lines, three toggles", () => {
   });
 });
 
+describe("the compare pills are labelled (mm-ux 93.8% follow-up 2)", () => {
+  it("a visible 'Compare:' precedes the pills, so two 'This customer' controls do not read as one", async () => {
+    serve(base());
+    const dialog = await open();
+    await settled(dialog);
+    const label = within(dialog).getByText("Compare:");
+    expect(label).toBeVisible();
+    const pills = within(dialog).getByRole("group", { name: "Compare" });
+    expect(pills.contains(label)).toBe(true);
+    // the pill stays "This customer" there; the chart chip has its own accessible name
+    expect(within(pills).getByRole("button", { name: "This customer" })).toBeInTheDocument();
+    expect(chip(dialog, "own")).toHaveAccessibleName("This customer's prices, Box of 12");
+  });
+});
+
 describe("the three lines look different by shape, not colour alone", () => {
   it("line 1 is solid and thick with a dot per sale; lines 2 and 3 are thin, dashed and dotted", async () => {
     serve(base());

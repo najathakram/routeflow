@@ -268,6 +268,9 @@ function PanelBody({
       />
 
       <div className="flex items-center gap-1" role="group" aria-label="Compare">
+        <span aria-hidden className="text-[11px] text-navy/60">
+          Compare:
+        </span>
         {(["This customer", "All customers"] as const).map((label) => (
           <button
             key={label}
