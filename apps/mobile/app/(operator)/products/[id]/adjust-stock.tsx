@@ -3,90 +3,59 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { Ionicons } from "@expo/vector-icons";
-import {
-  ADJUSTMENT_REASON_LABELS,
-  ADJUSTMENT_REASON_NOTE_MAX,
-  type AdjustmentReason,
-} from "@routeflow/types";
 import { FormField, FormSection, FormSheet, FormTextInput } from "../../../../components/FormSheet";
-import { useProduct, useProductCount } from "../../../../lib/api/products";
-import { useProductUnits, useUnitsEnabled } from "../../../../lib/api/product-units";
-import {
-  buildCountRequest,
-  countUnitOptions,
-  previewLine,
-  formatStockQty,
-  unitDisplayLabel,
-  validateCount,
-  type CountForm,
-} from "../../../../lib/product-count";
-import { countErrorText } from "../../../../lib/product-count-error";
+import { useProduct, useAdjustProductStock } from "../../../../lib/api/products";
 import { showToast } from "../../../../lib/toast";
 
-/** SA-828 (row 657): count the stock, or adjust it by an amount, in any of the product's units. */
+const REASONS = [
+  { id: "RECEIVED", label: "Received" },
+  { id: "DAMAGED", label: "Damaged" },
+  { id: "COUNT", label: "Count correction" },
+  { id: "WASTE", label: "Waste" },
+  { id: "OTHER", label: "Other" },
+];
+
 export default function AdjustStockScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { data: product } = useProduct(id ?? "");
-  const unitsEnabled = useUnitsEnabled();
-  const ladder = useProductUnits(id ?? "", unitsEnabled);
-  const mut = useProductCount(id ?? "");
-  const [form, setForm] = useState<CountForm>({
-    mode: "SET",
-    sign: "-",
-    quantity: "",
-    unit: "",
-    reason: "",
-    note: "",
-    date: "",
-  });
-  const [serverError, setServerError] = useState<string | null>(null);
-
-  const currentStock = Number(product?.currentStock ?? 0);
-  const options = countUnitOptions(
-    {
-      unit: product?.unit,
-      unitsPerBox: product?.unitsPerBox,
-      packLabel: product?.packLabel,
-      baseUnitLabel: product?.baseUnitLabel,
-    },
-    unitsEnabled ? ladder.data : null,
-  );
-  const unit = options.some((o) => o.value === form.unit) ? form.unit : (options[0]?.value ?? "");
-  const f: CountForm = { ...form, unit };
-  const patch = (p: Partial<CountForm>) => {
-    setServerError(null);
-    setForm((prev) => ({ ...prev, ...p }));
-  };
-
-  const problem = validateCount(f, options);
-  // About the quantity only (reason and note are marked required); quiet until typed.
-  const inlineError =
-    f.quantity.trim() === ""
-      ? null
-      : validateCount({ ...f, reason: "COUNT_CORRECTION", note: "" }, options);
-  const preview = previewLine(f, options, currentStock);
+  const mut = useAdjustProductStock();
+  const [delta, setDelta] = useState("");
+  const [reason, setReason] = useState<string>("COUNT");
+  const [notes, setNotes] = useState("");
 
   const submit = () => {
-    if (!id || problem) {
-      if (problem) showToast(problem);
+    if (!id) return;
+    const n = Number(delta);
+    if (!Number.isFinite(n) || n === 0) {
+      showToast("Use a positive number to add stock or a negative number to remove.");
       return;
     }
-    setServerError(null);
-    mut.mutate(buildCountRequest(f), {
-      onSuccess: (res) => {
-        showToast(`Stock updated to ${formatStockQty(Number(res.stockAfter))} pcs`);
-        router.back();
+    // RF-201: include the selected reason chip in notes so the audit trail is
+    // always populated — combine with any free-text the operator typed.
+    const combinedNotes = [reason, notes.trim()].filter(Boolean).join(" — ");
+    mut.mutate(
+      {
+        productId: id,
+        quantity: n,
+        reference: reason,
+        notes: combinedNotes || undefined,
       },
-      onError: (e: unknown) => setServerError(countErrorText(e)),
-    });
+      {
+        onSuccess: () => {
+          showToast(`Stock ${n > 0 ? "added" : "removed"}`);
+          router.back();
+        },
+        onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+      },
+    );
   };
 
   return (
     <FormSheet
-      title="Count / Adjust"
+      title="Adjust stock"
       subtitle={product?.name}
-      submitLabel={mut.isPending ? "Saving…" : "Save"}
+      submitLabel={mut.isPending ? "Saving…" : "Apply"}
       onSubmit={submit}
       submitting={mut.isPending}
     >
@@ -94,79 +63,58 @@ export default function AdjustStockScreen() {
         {product && (
           <View style={styles.currentRow}>
             <Text style={styles.currentLabel}>Current stock</Text>
-            <Text style={styles.currentValue}>{formatStockQty(currentStock)} pcs</Text>
+            <Text style={styles.currentValue}>{Number(product.currentStock ?? 0)} units</Text>
           </View>
         )}
-        <View style={styles.chips} accessibilityRole="radiogroup">
-          {(["SET", "ADJUST"] as const).map((m) => (
-            <Chip
-              key={m}
-              label={m === "SET" ? "Set count" : "Adjust"}
-              active={f.mode === m}
-              onPress={() => patch({ mode: m })}
-            />
-          ))}
-        </View>
-        <FormField label={f.mode === "SET" ? "Counted" : "Amount"}>
+        <FormField label="Change (+/−)" hint="Positive to add, negative to remove.">
           <View style={styles.row}>
-            {f.mode === "ADJUST" && (
-              <Pressable
-                style={styles.stepBtn}
-                accessibilityLabel={f.sign === "+" ? "Adding stock" : "Removing stock"}
-                onPress={() => patch({ sign: f.sign === "+" ? "-" : "+" })}
-              >
-                <Text style={styles.stepText}>{f.sign === "+" ? "+" : "−"}</Text>
-              </Pressable>
-            )}
+            <Pressable style={styles.stepBtn} onPress={() => setDelta((d) => shift(d, -1))}>
+              <Text style={styles.stepText}>−</Text>
+            </Pressable>
             <FormTextInput
-              value={f.quantity}
-              onChangeText={(quantity) => patch({ quantity })}
+              value={delta}
+              onChangeText={setDelta}
               placeholder="0"
-              keyboardType="decimal-pad"
+              keyboardType="numbers-and-punctuation"
               style={{ flex: 1, textAlign: "center" }}
             />
+            <Pressable style={styles.stepBtn} onPress={() => setDelta((d) => shift(d, 1))}>
+              <Text style={styles.stepText}>+</Text>
+            </Pressable>
           </View>
         </FormField>
-        {options.length > 1 && (
-          <View style={styles.chips} accessibilityRole="radiogroup">
-            {options.map((o) => (
-              <Chip
-                key={o.value}
-                label={unitDisplayLabel(o)}
-                active={unit === o.value}
-                onPress={() => patch({ unit: o.value })}
-              />
-            ))}
-          </View>
-        )}
-        {inlineError ? (
-          <Text style={styles.error} accessibilityLiveRegion="polite">
-            {inlineError}
-          </Text>
-        ) : null}
-        {preview && !inlineError ? <Text style={styles.preview}>{preview}</Text> : null}
       </FormSection>
 
       <FormSection title="Reason">
-        <View style={styles.chips} accessibilityRole="radiogroup">
-          {(Object.keys(ADJUSTMENT_REASON_LABELS) as AdjustmentReason[]).map((r) => (
-            <Chip
-              key={r}
-              label={ADJUSTMENT_REASON_LABELS[r]}
-              active={f.reason === r}
-              onPress={() => patch({ reason: r })}
-            />
-          ))}
+        <View style={styles.chips}>
+          {REASONS.map((r) => {
+            const active = reason === r.id;
+            return (
+              <Pressable
+                key={r.id}
+                style={[styles.chip, active ? styles.chipActive : styles.chipInactive]}
+                onPress={() => setReason(r.id)}
+              >
+                <Text
+                  style={[
+                    styles.chipText,
+                    active ? styles.chipTextActive : styles.chipTextInactive,
+                  ]}
+                >
+                  {r.label}
+                </Text>
+              </Pressable>
+            );
+          })}
         </View>
       </FormSection>
 
-      <FormSection title="Note">
-        <FormField label={f.reason === "OTHER" ? "Note (required)" : "Note"}>
+      <FormSection title="Notes">
+        <FormField label="Notes">
           <FormTextInput
-            value={f.note}
-            onChangeText={(note) => patch({ note })}
-            placeholder={f.reason === "OTHER" ? "What happened?" : "Optional"}
-            maxLength={ADJUSTMENT_REASON_NOTE_MAX}
+            value={notes}
+            onChangeText={setNotes}
+            placeholder="Optional"
             multiline
             numberOfLines={3}
             textAlignVertical="top"
@@ -175,33 +123,18 @@ export default function AdjustStockScreen() {
         </FormField>
       </FormSection>
 
-      {serverError ? (
-        <Text style={styles.error} accessibilityLiveRegion="polite">
-          {serverError}
-        </Text>
-      ) : null}
-
       <View style={styles.helpRow}>
         <Ionicons name="information-circle-outline" size={14} color={ios.label2} />
-        <Text style={styles.help}>Changes are logged as stock movements.</Text>
+        <Text style={styles.help}>Adjustments are logged as stock movements.</Text>
       </View>
     </FormSheet>
   );
 }
 
-function Chip({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
-  return (
-    <Pressable
-      style={[styles.chip, active ? styles.chipActive : styles.chipInactive]}
-      onPress={onPress}
-      accessibilityRole="radio"
-      accessibilityState={{ checked: active }}
-    >
-      <Text style={[styles.chipText, active ? styles.chipTextActive : styles.chipTextInactive]}>
-        {label}
-      </Text>
-    </Pressable>
-  );
+function shift(current: string, by: number): string {
+  const n = Number(current);
+  if (!Number.isFinite(n)) return String(by);
+  return String(n + by);
 }
 
 const styles = StyleSheet.create({
@@ -235,7 +168,5 @@ const styles = StyleSheet.create({
   chipTextActive: { color: "#fff" },
   chipTextInactive: { color: ios.label },
   helpRow: { flexDirection: "row", alignItems: "center", gap: 6 },
-  error: { fontSize: 13, fontFamily: "Inter_400Regular", color: ios.system.redInk },
-  preview: { fontSize: 13, fontFamily: "Inter_500Medium", color: ios.label },
   help: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2 },
 });

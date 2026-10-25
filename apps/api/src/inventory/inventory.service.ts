@@ -401,6 +401,13 @@ export class InventoryService {
     assertSellableLines([product]); // WS8: a FAMILY is never stocked (no StockLot / StockMovement)
 
     const qty = new Prisma.Decimal(dto.quantity);
+    // SA-804(3), legacy door: installed mobile builds post no reason. Accepted (stored null) until a
+    // later diff enforces it; this line is the would-refuse signal that diff will be sized from.
+    if (!dto.reason) {
+      this.logger.warn(
+        `recordAdjustment would refuse: no reason (product ${dto.productId}, reference ${dto.reference ?? "none"})`,
+      );
+    }
     // Row 563: a person-chosen date before a filed period's close is refused (409), never clamped.
     const effectiveDate = await stockWriteDate(this.prisma.forTenant(), {
       tenantId: this.prisma.getTenantId(),
@@ -437,8 +444,8 @@ export class InventoryService {
             stockAfter: updated.currentStock,
             reference: dto.reference,
             notes: dto.notes,
-            // SA-804(3): why the stock moved (a required enum + a note, required for OTHER).
-            reason: dto.reason,
+            // SA-804(3): why the stock moved (an enum + a note, required for OTHER); null from a legacy body.
+            reason: dto.reason ?? null,
             reasonNote: dto.reasonNote?.trim() || null,
             performedById,
             // B562: the effective date is the accounting date; createdAt stays write-once.

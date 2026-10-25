@@ -1,5 +1,6 @@
 import {
   IsIn,
+  IsOptional,
   IsString,
   ValidateIf,
   registerDecorator,
@@ -48,6 +49,23 @@ export abstract class AdjustmentReasonDto {
   reason: AdjustmentReason;
 
   @ValidateIf((o: AdjustmentReasonDto) => o.reasonNote != null || o.reason === "OTHER")
+  @Transform(({ value }) => (typeof value === "string" ? value.trim() : value))
+  @IsString()
+  @IsReasonNote()
+  reasonNote?: string;
+}
+
+/**
+ * The legacy manual-adjustment door (`POST /inventory/movements/adjustment`): the reason is OPTIONAL
+ * for now because installed mobile builds post no `reason`. An absent reason is stored null and logged
+ * (would-refuse); a reason that IS sent is validated as above. Enforcing it is a separate later diff.
+ */
+export abstract class OptionalAdjustmentReasonDto {
+  @IsOptional()
+  @IsIn(ADJUSTMENT_REASON_VALUES)
+  reason?: AdjustmentReason;
+
+  @ValidateIf((o: OptionalAdjustmentReasonDto) => o.reasonNote != null || o.reason === "OTHER")
   @Transform(({ value }) => (typeof value === "string" ? value.trim() : value))
   @IsString()
   @IsReasonNote()

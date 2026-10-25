@@ -1,8 +1,8 @@
 import { IsString, IsOptional, IsNumber, IsDateString, Max, Min, NotEquals } from "class-validator";
 import { Type } from "class-transformer";
-import { AdjustmentReasonDto } from "./adjustment-reason.dto";
+import { OptionalAdjustmentReasonDto } from "./adjustment-reason.dto";
 
-export class RecordAdjustmentDto extends AdjustmentReasonDto {
+export class RecordAdjustmentDto extends OptionalAdjustmentReasonDto {
   @IsString()
   productId: string;
 

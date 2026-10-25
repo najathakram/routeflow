@@ -15,8 +15,16 @@ const check = async (body: Record<string, unknown>) => {
 };
 
 describe("RecordAdjustmentDto reasons (SA-804(3))", () => {
-  it("an adjustment with no reason is refused", async () => {
-    expect((await check({})).props).toContain("reason");
+  it("an adjustment with no reason is accepted (installed mobile builds send none; enforcing it is a later diff)", async () => {
+    // master's apps/mobile/lib/api/products.ts posts exactly {productId, quantity, notes, reference}
+    const { dto, props } = await check({ notes: "Damaged in transit", reference: "MOBILE_ADJUST" });
+    expect(props).toEqual([]);
+    expect(dto.reason).toBeUndefined();
+  });
+
+  it("a note without a reason is accepted, but a reason that is sent must still be valid", async () => {
+    expect((await check({ reasonNote: "lost" })).props).toEqual([]);
+    expect((await check({ reason: null })).props).toEqual([]);
   });
 
   it("an unknown reason is refused", async () => {

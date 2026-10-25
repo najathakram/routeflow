@@ -101,6 +101,27 @@ describe("InventoryService reasons and countProduct (SA-828 / SA-804(3))", () =>
       expect(movement().reasonNote).toBe("Pallet fell off the truck");
     });
 
+    it("a legacy body with no reason (installed mobile builds) is written with reason null and logs one would-refuse line", async () => {
+      prisma.product.update.mockResolvedValue({ currentStock: D(17) });
+      const warn = jest.spyOn((service as any).logger, "warn").mockImplementation(() => undefined);
+      await service.recordAdjustment(
+        { productId: "prod-1", quantity: -3, notes: "Damaged", reference: "MOBILE_ADJUST" } as any,
+        "u-1",
+      );
+      expect(movement().reason).toBeNull();
+      expect(movement().reasonNote).toBeNull();
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0][0])).toMatch(/would refuse.*no reason/i);
+      // a body that carries a reason logs nothing
+      warn.mockClear();
+      prisma.stockMovement.create.mockClear();
+      await service.recordAdjustment(
+        { productId: "prod-1", quantity: -3, reason: "DAMAGED" } as any,
+        "u-1",
+      );
+      expect(warn).not.toHaveBeenCalled();
+    });
+
     it("a reason with no note stores a null note", async () => {
       prisma.product.update.mockResolvedValue({ currentStock: D(17) });
       await service.recordAdjustment(
