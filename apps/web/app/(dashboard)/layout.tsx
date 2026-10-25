@@ -992,7 +992,7 @@ function ImpersonationBanner() {
         onClick={exitImpersonation}
         className="rounded bg-white/20 px-3 py-1 text-xs font-semibold hover:bg-white/30 transition-colors"
       >
-        {imp.expired ? "Return to admin" : "Exit impersonation"}
+        {imp.expired ? "Return to admin" : "Exit support session"}
       </button>
     </div>
   );

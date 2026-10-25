@@ -366,7 +366,7 @@ export default function BillingPage() {
                       </span>
                       {pastDue && (
                         <span className="ml-2 rounded bg-amber-950/60 px-1.5 py-0.5 text-xs font-medium text-amber-400">
-                          Past due
+                          Period ended
                         </span>
                       )}
                     </td>

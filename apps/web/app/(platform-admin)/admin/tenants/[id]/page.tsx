@@ -248,7 +248,7 @@ function TenantAdminSection({
             {createResult.tempPassword}
           </code>
           <p className="mt-2 text-xs text-yellow-500">
-            Share this securely. The user will be forced to change it on next login.
+            It was also emailed to the admin. They must change it the first time they sign in.
           </p>
         </div>
       )}
@@ -338,7 +338,7 @@ function TenantAdminSection({
                 />
               </div>
               <p className="text-xs text-slate-400">
-                A temporary password will be auto-generated and emailed to the admin.
+                A temporary password will be generated, emailed to the admin, and shown here once.
               </p>
               <div className="flex gap-2">
                 <button
@@ -663,7 +663,7 @@ function OverviewTab({
               onClick={() => setConfirming("impersonate")}
               className="rounded-lg bg-indigo-700 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-indigo-600 disabled:opacity-50"
             >
-              Impersonate
+              Sign in as admin
             </button>
           )}
 

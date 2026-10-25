@@ -474,7 +474,7 @@ describe("Tenant detail page — Impersonate and Extend trial ask first (back of
     await screen.findByText("Quick actions");
     await waitFor(() => expect(screen.getAllByText("acme_admin").length).toBeGreaterThan(0));
 
-    fireEvent.click(screen.getByRole("button", { name: "Impersonate" }));
+    fireEvent.click(screen.getByRole("button", { name: "Sign in as admin" }));
     const dialog = await screen.findByRole("dialog", { name: "Impersonate Acme (acme)?" });
     expect(within(dialog).getByText("acme_admin")).toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveFocus();
@@ -486,9 +486,9 @@ describe("Tenant detail page — Impersonate and Extend trial ask first (back of
 
     // The confirmed request fails (no admin) so jsdom never navigates; only the request is asserted.
     post().mockRejectedValueOnce({ response: { data: { message: "No active TENANT_ADMIN" } } });
-    fireEvent.click(screen.getByRole("button", { name: "Impersonate" }));
+    fireEvent.click(screen.getByRole("button", { name: "Sign in as admin" }));
     const again = await screen.findByRole("dialog", { name: "Impersonate Acme (acme)?" });
-    fireEvent.click(within(again).getByRole("button", { name: "Impersonate" }));
+    fireEvent.click(within(again).getByRole("button", { name: "Sign in as admin" }));
     await waitFor(() => expect(calls(/impersonate$/)).toHaveLength(1));
     expect(calls(/impersonate$/)[0][0]).toBe("/platform-admin/tenants/tenant-1/impersonate");
     expect(
@@ -503,12 +503,12 @@ describe("Tenant detail page — Impersonate and Extend trial ask first (back of
     render(<TenantDetailPage />);
     await screen.findByText("Quick actions");
     await waitFor(() => expect(screen.getAllByText("acme_admin").length).toBeGreaterThan(0));
-    fireEvent.click(screen.getByRole("button", { name: "Impersonate" }));
+    fireEvent.click(screen.getByRole("button", { name: "Sign in as admin" }));
     const dialog = await screen.findByRole("dialog", { name: "Impersonate Acme (acme)?" });
     post().mockResolvedValueOnce({
       data: { accessToken: "tok.en.x", impersonatedUser: { username: "acme_admin" } },
     });
-    fireEvent.click(within(dialog).getByRole("button", { name: "Impersonate" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Sign in as admin" }));
     await waitFor(() => expect(mockSetImpersonation).toHaveBeenCalledTimes(1));
     expect(mockSetImpersonation).toHaveBeenCalledWith("tok.en.x", "acme", "acme_admin", TENANT_ID);
   });
