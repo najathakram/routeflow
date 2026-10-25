@@ -48,6 +48,10 @@ import { API_ERROR_CODES } from "../common/api-error-codes";
 import { isLockUnavailableError } from "../common/db-locks";
 import { AUDIT_ACTIONS } from "../audit/audit-actions.constant";
 import {
+  INLINE_REFUND_AUDIT_ACTION,
+  INLINE_STORE_CREDIT_AUDIT_ACTION,
+} from "./inline-return-refund";
+import {
   EXTERNAL_REFUND_METHOD,
   isRefundPending,
   loadInvoiceRefundState,
@@ -1665,7 +1669,45 @@ export class ReturnsService {
         throw new ForbiddenException("You can only view your own returns");
       }
     }
+    // The refunding staff member is staff-only information: a buyer's read never carries it.
+    if (user.role === "CUSTOMER") {
+      const { refundedBy: _staffName, ...forBuyer } = ret;
+      return forBuyer;
+    }
     return ret;
+  }
+
+  /**
+   * Row 257: who made the refund, by name, read from the STORED refund actor: the user on the awaited audit row every refund
+   * path writes in the refund's own transaction. Null while the return is not refunded, and for a refund with no such row, a
+   * system actor, or a user who has since been removed (the client prints nothing rather than a guess).
+   */
+  private async refundActorName(
+    db: any,
+    ret: { id: string; status?: string | null; refundedAt?: Date | null },
+  ): Promise<string | null> {
+    if (ret.status !== "REFUNDED" && !ret.refundedAt) return null;
+    const audit = await db.auditLog.findFirst({
+      where: {
+        entityType: "Return",
+        entityId: ret.id,
+        action: {
+          in: [
+            INLINE_REFUND_AUDIT_ACTION,
+            INLINE_STORE_CREDIT_AUDIT_ACTION,
+            AUDIT_ACTIONS.STANDARD_REFUND_RECORDED,
+          ],
+        },
+      },
+      orderBy: { createdAt: "desc" },
+      select: { userId: true },
+    });
+    if (!audit?.userId) return null;
+    const user = await db.user.findFirst({
+      where: { id: audit.userId },
+      select: { username: true, deletedAt: true },
+    });
+    return user && !user.deletedAt ? (user.username ?? null) : null;
   }
 
   async findOne(id: string) {
@@ -1777,6 +1819,7 @@ export class ReturnsService {
       creditNote,
       refundEstimate,
       refundEstimateReason: refusal ?? null,
+      refundedBy: await this.refundActorName(this.prisma.forTenant(), ret),
     };
   }
 }
