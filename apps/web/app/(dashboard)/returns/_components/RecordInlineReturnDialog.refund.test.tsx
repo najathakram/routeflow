@@ -1,6 +1,6 @@
 import * as React from "react";
 import { act } from "react";
-import { fireEvent, renderWithProviders, screen, waitFor } from "@/test-utils/render";
+import { fireEvent, renderWithProviders, screen, waitFor, within } from "@/test-utils/render";
 import { RecordInlineReturnDialog } from "./RecordInlineReturnDialog";
 import type { InlineReturnQuoteResponse, InlineReturnRefundEligibility } from "@routeflow/types";
 import { REFUND_COPY } from "./refund-copy";
@@ -126,7 +126,7 @@ beforeEach(() => {
 describe("choice block visibility", () => {
   it("named customer, fully paid: Store credit is the default; Refund shows the quoted amount", async () => {
     await toQuote(quote());
-    expect(screen.getByText("How do you want to give the money back?")).toBeInTheDocument();
+    expect(screen.getByText("How do you want to refund the money?")).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: "Store credit" })).toBeChecked();
     expect(screen.getByRole("radio", { name: "Refund $12.40" })).not.toBeChecked();
     expect(confirmBtn(/^take back items and add \$[\d.]+ store credit$/i)).toBeInTheDocument();
@@ -134,14 +134,14 @@ describe("choice block visibility", () => {
 
   it("not fully paid: no choice block, today's dialog exactly", async () => {
     await toQuote(quote({ canRefund: false, paidInFull: false }));
-    expect(screen.queryByText(/give the money back/i)).toBeNull();
+    expect(screen.queryByText(/refund the money/i)).toBeNull();
     expect(screen.queryByRole("radio", { name: /store credit/i })).toBeNull();
     expect(confirmBtn(/^take back items and add \$[\d.]+ store credit$/i)).toBeInTheDocument();
   });
 
   it("customer-detail entry (no allowRefund): no choice block even when canRefund", async () => {
     await toQuote(quote(), { allowRefund: false, orderId: "order-1" });
-    expect(screen.queryByText(/give the money back/i)).toBeNull();
+    expect(screen.queryByText(/refund the money/i)).toBeNull();
     expect(confirmBtn(/^take back items and add \$[\d.]+ store credit$/i)).toBeInTheDocument();
   });
 
@@ -150,7 +150,7 @@ describe("choice block visibility", () => {
     expect(screen.queryByRole("radio")).toBeNull();
     expect(screen.queryByRole("group", { name: REFUND_COPY.heading })).toBeNull();
     expect(
-      screen.getAllByText("Walk-in sales can't hold store credit, so give the money back."),
+      screen.getAllByText("Walk-in sales can't hold store credit, so refund the money."),
     ).toHaveLength(1);
     expect(screen.getByLabelText("Refund by")).toHaveValue("CASH");
     expect(confirmBtn(/^take back items and refund \$12\.40$/i)).toBeInTheDocument();
@@ -675,7 +675,7 @@ describe("refund flow", () => {
   it("the choice is a fieldset with a legend", async () => {
     await refundFlow();
     expect(
-      screen.getByRole("group", { name: "How do you want to give the money back?" }),
+      screen.getByRole("group", { name: "How do you want to refund the money?" }),
     ).toBeInTheDocument();
   });
 
@@ -1007,6 +1007,33 @@ describe("W-712 credit words per host (SA-929)", () => {
       await screen.findByText("This sale can't be refunded here. Ask office staff to refund it."),
     ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /take back items/i })).toBeNull();
+  });
+
+  it("SA-959 + mm-ux 93.8%: the refusal is the step's main message and the Reason select is gone", async () => {
+    await toQuote(quote({ customerIsWalkIn: true, canRefund: false, paidInFull: false }), {
+      customerName: "Walk-in",
+    });
+    const msg = await screen.findByText(
+      "This sale can't be refunded here. Ask office staff to refund it.",
+    );
+    expect(msg).toHaveAttribute("role", "status"); // a message, not a grey footnote under Total
+    expect(msg.className).not.toMatch(/text-xs/);
+    expect(screen.queryByLabelText(/^reason$/i)).toBeNull();
+    expect(screen.queryByRole("button", { name: /take back items/i })).toBeNull();
+    expect(screen.getByRole("button", { name: "Back" })).toBeInTheDocument();
+  });
+
+  it("mm-ux 93.8%: the named case's credit sentence sits with the radio, not under the Total", async () => {
+    await toQuote(quote());
+    const sentence = "$12.40 is added as store credit for Acme Foods.";
+    const choice = screen.getByRole("group", { name: REFUND_COPY.heading });
+    expect(within(choice).getByText(sentence)).toBeInTheDocument();
+    const total = screen.getByText("Total").closest("div.rounded-lg") as HTMLElement;
+    expect(within(total).queryByText(sentence)).toBeNull();
+    // it follows the radio: choosing Refund swaps it for the refund sentence, still inside the choice
+    fireEvent.click(screen.getByRole("radio", { name: "Refund $12.40" }));
+    expect(within(choice).queryByText(sentence)).toBeNull();
+    expect(within(choice).getByText("$12.40 goes back to the customer.")).toBeInTheDocument();
   });
 
   it("named customer: the Store credit / Refund choice is unchanged, with brand-coloured radios", async () => {
