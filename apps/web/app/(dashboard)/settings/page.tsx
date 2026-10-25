@@ -113,7 +113,6 @@ import { PasswordChecklist } from "@/components/auth";
 const RECEIPT_FOOTER_MAX_CHARS = 200;
 
 const profileShape = {
-  businessName: z.string().min(1, "Required"),
   email: z.string().email("Enter a valid email"),
   ownerName: z.string().min(1, "Required"),
   phone: z.string().min(7, "Enter a valid phone number"),
@@ -261,7 +260,6 @@ function BusinessProfileTab() {
     // onInvalidFocus (handleSubmit's second argument) is the single focus owner.
     shouldFocusError: false,
     defaultValues: {
-      businessName: "",
       email: "",
       ownerName: "",
       phone: "",
@@ -281,7 +279,6 @@ function BusinessProfileTab() {
   React.useEffect(() => {
     if (savedSettings) {
       reset({
-        businessName: savedSettings.businessName ?? "",
         email: savedSettings.email ?? "",
         ownerName: savedSettings.ownerName ?? "",
         phone: savedSettings.phone ?? "",
@@ -323,11 +320,18 @@ function BusinessProfileTab() {
     <form onSubmit={handleSubmit(onSubmit, onInvalid)} noValidate className="space-y-6">
       <Card title="Business information">
         <div className="grid grid-cols-2 gap-4">
-          <Input
-            label="Business name"
-            register={register("businessName")}
-            error={errors.businessName?.message}
-          />
+          {/* Row 302: the API never accepts a tenant-side businessName (super-admin-owned), so it is shown, not edited. */}
+          <div>
+            <Input
+              label="Business name"
+              readOnly
+              value={savedSettings?.businessName ?? ""}
+              aria-describedby="settings-business-name-help"
+            />
+            <p id="settings-business-name-help" className="mt-1 text-xs text-navy/70">
+              Contact support to change your business name.
+            </p>
+          </div>
           <Input
             label="Account email"
             type="email"

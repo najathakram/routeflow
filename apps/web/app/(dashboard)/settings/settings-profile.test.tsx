@@ -45,7 +45,7 @@ describe("SettingsPage — Business Profile tab", () => {
     const user = userEvent.setup();
     renderWithProviders(<SettingsPage />);
 
-    await user.type(await screen.findByLabelText("Business name"), "Acme Foods");
+    await screen.findByLabelText("Business name");
     await user.type(screen.getByLabelText("Account email"), "ops@acme.test");
     await user.type(screen.getByLabelText("Owner / manager name"), "Jane Doe");
     await user.type(screen.getByLabelText("Phone"), "5125550100");
@@ -59,7 +59,6 @@ describe("SettingsPage — Business Profile tab", () => {
       expect(apiClientMock.patch).toHaveBeenCalledWith(
         "/settings",
         expect.objectContaining({
-          businessName: "Acme Foods",
           email: "ops@acme.test",
           ownerName: "Jane Doe",
           street: "123 Main St",
@@ -68,5 +67,32 @@ describe("SettingsPage — Business Profile tab", () => {
         }),
       );
     });
+  });
+
+  it("row 302: Business name is read-only and never sent in the PATCH (the API drops it)", async () => {
+    const user = userEvent.setup();
+    (apiClientMock.get as jest.Mock).mockResolvedValue({
+      data: {
+        businessName: "Acme Foods",
+        email: "ops@acme.test",
+        ownerName: "Jane Doe",
+        phone: "5125550100",
+        street: "123 Main St",
+        city: "Austin",
+        zip: "78701",
+        taxRate: 0,
+        receiptFooter: "",
+      },
+    });
+    renderWithProviders(<SettingsPage />);
+
+    const field = (await screen.findByLabelText("Business name")) as HTMLInputElement;
+    await waitFor(() => expect(field.value).toBe("Acme Foods"));
+    expect(field.readOnly).toBe(true);
+
+    await user.click(screen.getByRole("button", { name: /save/i }));
+    await waitFor(() => expect(apiClientMock.patch).toHaveBeenCalled());
+    const body = (apiClientMock.patch as jest.Mock).mock.calls[0][1];
+    expect(body).not.toHaveProperty("businessName");
   });
 });
