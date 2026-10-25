@@ -1,7 +1,7 @@
 import { headerLine } from "./unknown-state";
 
 const OFF_TAIL =
-  "Until it's set, products with a state restriction stay hidden from them in your portal and can't be ordered there. Other state limits won't reach them. Staff orders and invoices aren't checked (turn on 'Also warn about restricted products on staff orders and invoices' to block them).";
+  "Until it's set, products with a state restriction stay hidden from them in your portal and can't be ordered there. Other state limits won't reach them. Staff orders and invoices aren't checked (turn on 'Also warn about restricted products on staff orders and invoices' to check them).";
 const ON_TAIL =
   "Until it's set, products with a state restriction stay hidden from them in your portal and can't be ordered there. Other state limits won't reach them. On staff orders and invoices, staff are warned and can choose Sell anyway with a reason; drivers can't.";
 
