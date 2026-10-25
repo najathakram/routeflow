@@ -236,6 +236,9 @@ const UNITS_PRODUCT = {
   unit: "Piece",
   pricePerUnit: cents(200),
 };
+// Row 601: what a reseed writes back over a price a spec moved. Product tiers are NOT NULL default 0; a unit's are nullable.
+const ZERO_TIERS = { priceTier2: 0, priceTier3: 0, priceTier4: 0, priceTier5: 0 };
+const NULL_UNIT_TIERS = { priceTier2: null, priceTier3: null, priceTier4: null, priceTier5: null };
 const UNITS_CASE = { label: "Case", factorToBase: 12, price: cents(2100) };
 // VU-4 (B1218): a boxed product whose Case is the DEFAULT selling unit, shared by the invoice-picker lane
 // (web) and the mobile Expo-web proof. Box of 24 @ 48.00; Case = 12 pcs @ 24.00; Piece is implicit.
@@ -505,22 +508,23 @@ async function ensureUnitsFixture(tenantId) {
   const product = await prisma.product.upsert({
     where: { tenantId_sku: { tenantId, sku: UNITS_PRODUCT.sku } },
     create: { tenantId, currentStock: 500, isActive: true, ...UNITS_PRODUCT },
-    update: { isActive: true },
+    // Row 601: a reseed puts the prices back, so an aborted price spec cannot leave drift for the next run.
+    update: { isActive: true, pricePerUnit: UNITS_PRODUCT.pricePerUnit, ...ZERO_TIERS },
   });
   await prisma.productUnit.upsert({
     where: { productId_label: { productId: product.id, label: UNITS_CASE.label } },
     create: { tenantId, productId: product.id, ...UNITS_CASE },
-    update: {},
+    update: { price: UNITS_CASE.price, ...NULL_UNIT_TIERS },
   });
   const caseDefault = await prisma.product.upsert({
     where: { tenantId_sku: { tenantId, sku: CASE_DEFAULT_PRODUCT.sku } },
     create: { tenantId, currentStock: 500, isActive: true, ...CASE_DEFAULT_PRODUCT },
-    update: { isActive: true },
+    update: { isActive: true, pricePerUnit: CASE_DEFAULT_PRODUCT.pricePerUnit, ...ZERO_TIERS },
   });
   await prisma.productUnit.upsert({
     where: { productId_label: { productId: caseDefault.id, label: CASE_DEFAULT_LEVEL.label } },
     create: { tenantId, productId: caseDefault.id, ...CASE_DEFAULT_LEVEL },
-    update: { isDefaultSelling: true },
+    update: { price: CASE_DEFAULT_LEVEL.price, ...NULL_UNIT_TIERS, isDefaultSelling: true },
   });
 }
 
