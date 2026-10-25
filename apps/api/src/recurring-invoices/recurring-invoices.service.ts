@@ -2,6 +2,7 @@ import { Injectable, Logger, NotFoundException } from "@nestjs/common";
 import type { RestrictionAck } from "@routeflow/types";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { LeaderCron } from "../common/cron-lock";
+import { assertRefsInTenant } from "../common/assert-refs-in-tenant";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { InvoicesService } from "../invoices/invoices.service";
@@ -61,6 +62,11 @@ export class RecurringInvoicesService {
 
   async create(dto: CreateRecurringInvoiceDto) {
     assertNsfLinesUntaxed(dto.items ?? []); // #2656: a template's NSF-described line is never taxed
+    // 681 (R5-5): the template stores its customer and each item's productId; prove both in this tenant first.
+    await assertRefsInTenant(this.prisma, {
+      customerIds: [dto.customerId],
+      productIds: (dto.items ?? []).map((i) => i.productId),
+    });
     // REG-B131: a removed (soft-deleted) customer is not a recurring-invoice target — the sweep
     // already skips their schedules, so creating one would only schedule a silent no-op. Refuse
     // through the existing not-found branch so no customer state leaks.
@@ -148,6 +154,8 @@ export class RecurringInvoicesService {
     // the re-create must never leave a template with no items.
     const tenantId = this.prisma.getTenantId();
     const items = dto.items;
+    // 681 (R5-5): update never writes customerId; the replacement items' productIds are proven before the tx.
+    await assertRefsInTenant(this.prisma, { productIds: items.map((i) => i.productId) });
     await this.assertNoFamilyLines(items);
     return this.prisma.tenantTransaction(async (tx) => {
       await tx.recurringInvoiceItem.deleteMany({ where: { recurringInvoiceId: id } });

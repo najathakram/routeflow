@@ -100,13 +100,13 @@ describe("DashboardPage — #2254 a DRIVER fires no operator-only reads", () => 
       });
   });
 
-  it("shows no Recent Orders card, and tells a driver with no add-on why", () => {
+  it("shows no Recent orders card, and tells a driver with no add-on why", () => {
     renderWithProviders(<DashboardPage />);
-    expect(screen.queryByText("Recent Orders")).not.toBeInTheDocument();
+    expect(screen.queryByText("Recent orders")).not.toBeInTheDocument();
     expect(screen.getByText(/plan doesn't include routes or deliveries/i)).toBeInTheDocument();
   });
 
-  it("an OPERATOR's reads stay enabled and the Recent Orders card still renders", () => {
+  it("an OPERATOR's reads stay enabled and the Recent orders card still renders", () => {
     authUser = { role: "OPERATOR" };
     renderWithProviders(<DashboardPage />);
     // Unset account: the ONLY disabled reads are the three SHIP-filtered shipping-tile reads.
@@ -114,7 +114,7 @@ describe("DashboardPage — #2254 a DRIVER fires no operator-only reads", () => 
     expect(disabled.length).toBe(3);
     expect(disabled.every(isShipTile)).toBe(true);
     expect(reads.filter(isShipTile).length).toBe(3);
-    expect(screen.getByText("Recent Orders")).toBeInTheDocument();
+    expect(screen.getByText("Recent orders")).toBeInTheDocument();
     expect(
       screen.queryByText(/plan doesn't include routes or deliveries/i),
     ).not.toBeInTheDocument();

@@ -50,7 +50,8 @@ function timeAgo(iso: string): string {
   if (mins < 60) return `${mins} min ago`;
   const hrs = Math.round(mins / 60);
   if (hrs < 24) return `${hrs} hr ago`;
-  return `${Math.round(hrs / 24)} d ago`;
+  const days = Math.round(hrs / 24);
+  return `${days} ${days === 1 ? "day" : "days"} ago`;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -196,7 +197,7 @@ export default function AdminSettingsPage() {
             <Bot className="h-5 w-5 text-indigo-400" />
           </div>
           <div>
-            <h1 className="text-xl font-bold text-white">AI Settings</h1>
+            <h1 className="text-2xl font-bold text-white">AI settings</h1>
             <p className="text-sm text-slate-400">
               Platform-wide Claude AI configuration — applies to all tenants by default
             </p>

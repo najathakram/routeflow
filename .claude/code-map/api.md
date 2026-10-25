@@ -57,6 +57,10 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
 | [api/landing-2026-10-21-w1.md](api/landing-2026-10-21-w1.md) | Landing 2026-10-21 window 1 (#3555): draft compare-and-set (`DRAFT_CHANGED`), submit key kept |
 | [api/landing-2026-10-21-w2-r5p2.md](api/landing-2026-10-21-w2-r5p2.md) | Landing 2026-10-21 window 2 + R5 part 2 (#3558): regulated resolver, restore verdict, PO use guard, office completion, tax precision |
 | [api/landing-2026-10-21-w3.md](api/landing-2026-10-21-w3.md) | Landing 2026-10-21 window 3 (#3566): counter Today's-sales and parked rows carry item names (`itemSummaryOf`, page query select) |
+| [api/landing-2026-10-24-w5a.md](api/landing-2026-10-24-w5a.md) | Landing 2026-10-24 window 5 part 1: SA-841 merge fold, payment-ref dedupe, counter-till credit, invoice email-again, accrual dashboard, billing admin lock |
+| [api/landing-2026-10-24-w5b.md](api/landing-2026-10-24-w5b.md) | Landing 2026-10-24 window 5 part 2: stock-date gate, one row-lock order, discount-safe re-totals, ledger guards, complete at counter, restriction override |
+| [api/landing-2026-10-25-w6.md](api/landing-2026-10-25-w6.md) | Landing 2026-10-25 window 6: refs proved in tenant (681 A), confirmed-basis payments (W-769), owned Stripe products (W-810), DB-lane argv |
+| [api/landing-2026-10-22-w4.md](api/landing-2026-10-22-w4.md) | Landing 2026-10-22 window 4: regulated ledger settle/undo locks (SA-839), stored-line merge, import Family columns, payment Idempotency-Key, counter return split |
 | [api/b1234-delivered-line-lock.md](api/b1234-delivered-line-lock.md) | B1234: delivered lines locked on a PARTIALLY_DELIVERED order (409 LINE_ALREADY_DELIVERED, binding check under the lock) |
 | [api/b299-unvoid-billing-claim.md](api/b299-unvoid-billing-claim.md) | B299: unvoid re-claims invoicedQty only if the qty is free (409 ORDER_BILLING_CHANGED, no clamp on +1; void keeps its clamp) |
 | [api/b692-office-pd-quantities.md](api/b692-office-pd-quantities.md) | B692 office PARTIALLY_DELIVERED needs per-line quantities (409 ORDER_PD_NEEDS_QUANTITIES); legacy delivered cancel fails closed |

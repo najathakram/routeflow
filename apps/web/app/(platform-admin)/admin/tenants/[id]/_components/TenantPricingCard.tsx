@@ -3,6 +3,7 @@
 import * as React from "react";
 import { AdminCard } from "../../../../_components/AdminCard";
 import { AdminModal } from "../../../../_components/AdminModal";
+import { planLabel } from "../../../../_components/AdminBadge";
 import {
   fetchTenantPricing,
   updateTenantPriceOverride,
@@ -142,9 +143,9 @@ export function TenantPricingCard({ tenantId }: { tenantId: string }) {
 
           {pricing && !pricing.resolvable && (
             <div className="rounded-lg bg-amber-900/20 px-4 py-3 text-sm text-amber-300 ring-1 ring-amber-700/40">
-              This plan{pricing.planKey ? ` (${pricing.planKey})` : ""} has no catalog price — it is
-              billed at a negotiated custom fee. Set one below before creating a checkout session
-              for this tenant.
+              This plan{pricing.planKey ? ` (${planLabel(pricing.planKey)})` : ""} has no catalog
+              price — it is billed at a negotiated custom fee. Set one below before creating a
+              checkout session for this tenant.
             </div>
           )}
 

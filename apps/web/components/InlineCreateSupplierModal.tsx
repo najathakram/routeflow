@@ -108,7 +108,7 @@ export function InlineCreateSupplierModal({
       <div className="w-full max-w-md rounded-xl bg-white shadow-xl">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-surface-border px-6 py-4">
-          <h2 className="text-base font-semibold text-navy">New Supplier</h2>
+          <h2 className="text-base font-semibold text-navy">New supplier</h2>
           <button
             type="button"
             onClick={onClose}
@@ -230,7 +230,7 @@ export function InlineCreateSupplierModal({
               Cancel
             </Button>
             <Button type="submit" loading={createSupplier.isPending}>
-              Create Supplier
+              Create supplier
             </Button>
           </div>
         </form>

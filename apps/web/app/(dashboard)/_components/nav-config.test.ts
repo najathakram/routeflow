@@ -14,8 +14,8 @@ const hrefs = (nav: typeof OPERATOR_NAV) =>
 describe("operator nav: Purchase Orders + Supplier Bills", () => {
   it("lists Purchase Orders directly under Inventory in Warehouse", () => {
     const labels = warehouse().children.map((c) => c.label);
-    expect(labels.indexOf("Purchase Orders")).toBe(labels.indexOf("Inventory") + 1);
-    const leaf = warehouse().children.find((c) => c.label === "Purchase Orders");
+    expect(labels.indexOf("Purchase orders")).toBe(labels.indexOf("Inventory") + 1);
+    const leaf = warehouse().children.find((c) => c.label === "Purchase orders");
     expect(leaf?.href).toBe("/purchase-orders");
   });
 
@@ -32,7 +32,7 @@ describe("operator nav: Purchase Orders + Supplier Bills", () => {
   it("renames Bills & Purchasing to Supplier Bills with the same href", () => {
     const labels = warehouse().children.map((c) => c.label);
     expect(labels).not.toContain("Bills & Purchasing");
-    const leaf = warehouse().children.find((c) => c.label === "Supplier Bills");
+    const leaf = warehouse().children.find((c) => c.label === "Supplier bills");
     expect(leaf?.href).toBe("/vendor-bills");
     expect(matchPlanGatedRoute("/vendor-bills")).toBe("flag.ap_bills");
   });

@@ -46,8 +46,15 @@ describe("NotificationsSettingsTab low-stock digest toggle", () => {
     expect(screen.getByText("low-stock-digest-toggle")).toBeInTheDocument();
   });
 
-  it("is hidden from an OPERATOR (the digest never reaches them)", () => {
+  // Owner 10-07 OK-6: operators get the digest too, so they get its opt-out.
+  it("is shown to an OPERATOR (OK-6: operators receive the digest too)", () => {
     role = "OPERATOR";
+    renderWithProviders(<NotificationsSettingsTab />);
+    expect(screen.getByText("low-stock-digest-toggle")).toBeInTheDocument();
+  });
+
+  it("is hidden from a DRIVER (the digest never reaches them)", () => {
+    role = "DRIVER";
     renderWithProviders(<NotificationsSettingsTab />);
     expect(screen.queryByText("low-stock-digest-toggle")).not.toBeInTheDocument();
   });
