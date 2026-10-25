@@ -5,7 +5,6 @@ import { usePathname } from "next/navigation";
 import { useToast } from "@routeflow/ui/web";
 import { registerPlanGateListener } from "@/lib/api-client";
 import { isRouteLocked } from "@/lib/plan-gate-lock";
-import { planMoney } from "@/lib/plan-money";
 import type { PlanGateBody } from "@/lib/plan-gate";
 
 /** Repeat gates for one navigation are swallowed for this long — a little
@@ -73,10 +72,10 @@ function upgradeHint(gate: PlanGateBody): string | null {
   const u = gate.upgrade;
   if (!u) return null;
   if (u.addonSku) {
-    return `Add ${u.addonSku}${u.addonMonthlyPrice ? ` · ${planMoney(Number(u.addonMonthlyPrice))}/mo` : ""}`;
+    return `Add ${u.addonSku}${u.addonMonthlyPrice ? ` · $${u.addonMonthlyPrice}/mo` : ""}`;
   }
   if (u.planKey) {
-    return `Upgrade to ${u.planKey}${u.planMonthlyPrice ? ` · ${planMoney(Number(u.planMonthlyPrice))}/mo` : ""}`;
+    return `Upgrade to ${u.planKey}${u.planMonthlyPrice ? ` · $${u.planMonthlyPrice}/mo` : ""}`;
   }
   return null;
 }

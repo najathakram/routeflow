@@ -54,7 +54,7 @@ const BASE = process.env.PLAYWRIGHT_BASE_URL ?? "https://routeflowweb-production
  */
 function awaitingConfirmationValue(page: Page) {
   return page
-    .getByText("Awaiting Confirmation", { exact: true })
+    .getByText("Awaiting confirmation", { exact: true })
     .locator("xpath=following-sibling::span[1]");
 }
 

@@ -113,7 +113,6 @@ import { printPdfBlob } from "@/lib/print-pdf-blob";
 import { dayClosedCopy } from "@/lib/day-closed-copy";
 import { toastDuplicatePaymentRef } from "@/lib/duplicate-payment-ref";
 import { unvoidRefusalCopy } from "@/lib/unvoid-refusal-copy";
-import { genericToastCopy } from "@/lib/generic-toast-copy";
 import { voidFailureDescription } from "@/lib/invoice-void-copy";
 import { isOpenInvoiceStatus } from "@/lib/open-invoice-status";
 import { ReadOnlyHint, WriteButton, useReadOnlyGate } from "@/lib/read-only-gate";
@@ -1724,12 +1723,7 @@ export default function InvoiceDetailPage() {
           variant: "success",
         });
       },
-      onError: (e) =>
-        toast({
-          title: "Failed to mark the invoice as sent",
-          description: genericToastCopy(e),
-          variant: "error",
-        }),
+      onError: (e) => toast({ title: "Failed", description: e.message, variant: "error" }),
     });
   };
 
