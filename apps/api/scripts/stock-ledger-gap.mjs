@@ -29,11 +29,9 @@
  * Tenants are addressed only by the runtime option — this file names none.
  */
 import pg from "pg";
-import { createRequire } from "node:module";
 import { resolveReportDbUrl } from "./lib/report-db-url.mjs";
-
-// W-781: Prisma timestamps are UTC wall-clock; read them as UTC on any host TZ.
-const { utcTimestampTypes } = createRequire(import.meta.url)("./lib/pg-utc-types.cjs");
+// W-781 / SA-952: Prisma timestamps are UTC wall-clock; read them as UTC on any host TZ (one shared parser).
+import { utcTimestampTypes } from "./lib/pause-report-keys.mjs";
 import { DRIFTED_PRODUCTS_SQL } from "./lib/stock-drift-sql.mjs";
 
 const argv = process.argv.slice(2);
@@ -51,7 +49,7 @@ const SQL = DRIFTED_PRODUCTS_SQL;
 async function main() {
   const url = resolveReportDbUrl("stock-ledger-gap");
   if (!url) return 1;
-  const pool = new pg.Pool({ connectionString: url, types: utcTimestampTypes });
+  const pool = new pg.Pool({ connectionString: url, types: utcTimestampTypes(pg.types) });
   try {
     const { rows } = await pool.query(SQL, [tenantSlug]);
     if (asJson) {
