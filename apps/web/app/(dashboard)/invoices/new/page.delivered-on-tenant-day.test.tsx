@@ -132,6 +132,12 @@ describe("row 750 — the delivery date follows the tenant's day", () => {
     await user.click(screen.getByRole("button", { name: /new sale/i }));
     return user;
   };
+  const openSaleWithRerender = async () => {
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+    const view = renderWithProviders(<NewInvoicePage />);
+    await user.click(screen.getByRole("button", { name: /new sale/i }));
+    return view;
+  };
   const dateInput = () => document.querySelector('input[type="date"]') as HTMLInputElement;
 
   it("a tenant already on the 26th (browser still on the 25th) defaults to the 26th and reads 'Delivered today'", async () => {
@@ -149,9 +155,28 @@ describe("row 750 — the delivery date follows the tenant's day", () => {
     expect(screen.getByText(/^Delivered — the order is marked delivered on/)).toBeInTheDocument();
   });
 
-  it("while the zone is unknown the form still works on the browser's day (the server stays the authority)", async () => {
+  it("while the zone is unknown no date is shown, no label is claimed, and nothing is sent (SA-964 §6)", async () => {
     mockTenantToday = undefined;
-    await openSale();
-    expect(dateInput().value).toBe("2026-10-25");
+    mockCustomers = [{ id: "cust-1", businessName: "Acme Co" }];
+    mockBarcodeProduct = { id: "prod-1", name: "Widget", pricePerUnit: "9.99" };
+    const user = await openSale();
+    expect(dateInput().value).toBe("");
+    expect(screen.queryByText(/Delivered today|Scheduled —|Delivered — the order/)).toBeNull();
+    await user.click(screen.getByPlaceholderText(/search customers/i));
+    await user.click(await screen.findByText("Acme Co"));
+    capturedOnScan!("012345678905");
+    await screen.findByDisplayValue("Widget");
+    await user.click(screen.getByRole("button", { name: /create sale & invoice/i }));
+    await waitFor(() => expect(mockCreateSale).toHaveBeenCalledTimes(1));
+    expect(mockCreateSale.mock.calls[0][0]).not.toHaveProperty("deliveredOn");
+  });
+
+  it("once the zone resolves the date is seeded with the tenant's day", async () => {
+    mockTenantToday = undefined;
+    const { rerender } = await openSaleWithRerender();
+    expect(dateInput().value).toBe("");
+    mockTenantToday = "2026-10-26";
+    rerender(<NewInvoicePage />);
+    await waitFor(() => expect(dateInput().value).toBe("2026-10-26"));
   });
 });
