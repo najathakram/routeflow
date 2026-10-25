@@ -172,8 +172,15 @@ describe("CustomersService.applyAdvancePaymentToInvoice — customer match (B808
       return prisma.invoice.update.mock.calls[0]?.[0]?.data?.status;
     };
 
-    it("a $30 advance on a $100 invoice due today (22:00 CDT) leaves it PARTIAL: money was paid", async () => {
+    it("GUARD (green on master, SA-968): a $30 advance on a $100 invoice due today (22:00 CDT) leaves it PARTIAL: money was paid", async () => {
       expect(await partialApply("2026-10-26T03:00:00Z")).toBe("PARTIAL");
+    });
+
+    it("the zone is read BEFORE the transaction opens, never after FOR UPDATE (SA-968)", async () => {
+      await partialApply("2026-10-26T03:00:00Z");
+      const zoneAt = (tenantTimeZone as jest.Mock).mock.invocationCallOrder[0];
+      const txAt = prisma.tenantTransaction.mock.invocationCallOrder[0];
+      expect(zoneAt).toBeLessThan(txAt);
     });
 
     it("the status comes from the ONE predicate with the tenant zone (statusFromPayments), not a hand-rolled ladder", () => {

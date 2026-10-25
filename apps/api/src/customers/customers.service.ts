@@ -1124,10 +1124,12 @@ export class CustomersService {
       throw new NotFoundException("Advance payment not found");
     }
 
+    // SA-968: the tenant's zone is read BEFORE the lock and the transaction (never after FOR UPDATE), once per apply.
+    const zone = await tenantTimeZone(this.prisma);
     try {
       const lock = await withAdvisoryLock(
         { family: "order-merge", key: apStub.customerId, mode: "wait", waitMs: 10_000 },
-        () => this.applyAdvancePaymentToInvoiceLocked(advancePaymentId, dto),
+        () => this.applyAdvancePaymentToInvoiceLocked(advancePaymentId, dto, zone),
       );
       // Unreachable in practice: `mode: "wait"` either resolves acquired (fn ran) or the
       // acquire itself rejects (LockTimeoutError/LockUnavailableError, caught below) — it
@@ -1160,6 +1162,7 @@ export class CustomersService {
   private async applyAdvancePaymentToInvoiceLocked(
     advancePaymentId: string,
     dto: { invoiceId: string; amount?: number },
+    zone: string | null,
   ) {
     return this.prisma.tenantTransaction(async (tx) => {
       const ap = await tx.advancePayment.findUnique({ where: { id: advancePaymentId } });
@@ -1238,7 +1241,7 @@ export class CustomersService {
         total,
         inv.dueDate,
         inv.status,
-        await tenantTimeZone(this.prisma),
+        zone,
         "NOT_PAID",
       );
 
