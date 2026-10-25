@@ -14,8 +14,13 @@ import * as path from "path";
 const SRC_ROOT = path.resolve(__dirname, "..");
 const rel = (f: string) => path.relative(SRC_ROOT, f).split(path.sep).join("/");
 
-/** `new Date(dto.paidAt)`, `new Date(dto.settledAt as string)`, `new Date(dto?.receivedAt)`. */
-const RAW_REQUEST_DATE = /\bnew Date\(\s*dto\s*\??\.\s*(?:paidAt|settledAt|receivedAt)\b/g;
+/**
+ * `new Date(dto.paidAt)`, `new Date(dto.settledAt as string)`, `new Date(dto?.receivedAt)`, and the same off any request-shaped
+ * holder (`body`, `input`, `params`, `args`, `payload`, `data`) or a nested path (`dto.payment.paidAt`), for the paid / settled /
+ * received date fields and their `…Date` spellings.
+ */
+const RAW_REQUEST_DATE =
+  /\bnew Date\(\s*(?:dto|body|input|params|args|payload|data)\s*\??\.\s*(?:\w+\s*\??\.\s*)*(?:paidAt|settledAt|receivedAt|paidDate|receivedDate)\b/g;
 
 /** The ONLY raw constructions left, each with how many and why. A new one is a red bar, never a silent addition. */
 const ALLOW_LIST: Record<string, { count: number; reason: string }> = {
@@ -27,7 +32,7 @@ const ALLOW_LIST: Record<string, { count: number; reason: string }> = {
   "bookkeeping/bookkeeping.service.ts": {
     count: 2,
     reason:
-      "Expense buildStatusPatch (receivedAt / paidAt): out of PR-A scope, a reviewer question on the PR",
+      "Expense buildStatusPatch (receivedAt / paidAt): moves onto keptPaidInstantOf in SA-985 / PR-A2 (allow-list 2 -> 0), ruled out of PR-A",
   },
   "sales-agents/commission-statements.service.ts": {
     count: 1,
@@ -80,5 +85,7 @@ describe("paid-instant writers inventory (SA-943)", () => {
   it("the pin bites: a raw request date in a fixture is counted", () => {
     const fixture = `const a = new Date(dto.paidAt);\nconst b = new Date(dto?.settledAt as string);\n// new Date(dto.receivedAt)`;
     expect((stripComments(fixture).match(RAW_REQUEST_DATE) ?? []).length).toBe(2);
+    const wider = `new Date(body.paidAt); new Date(dto.payment?.receivedAt); new Date(input.paidDate); new Date(row.paidAt)`;
+    expect((stripComments(wider).match(RAW_REQUEST_DATE) ?? []).length).toBe(3);
   });
 });
