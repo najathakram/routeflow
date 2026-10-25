@@ -26,7 +26,7 @@
 //
 // Node's spawnSync blocks the event loop, so the heartbeat could never fire: callers must run the
 // guarded work with `spawnAsync` below (or any awaited async spawn).
-import { spawn, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -110,11 +110,33 @@ const cpuTicks = (cpus) =>
     return { idle: t.idle, total: t.user + t.nice + t.sys + t.idle + t.irq };
   });
 
-/** One machine-wide reading: CPU busy share over `sampleMs`, and the used share of memory. Injectable. */
+/**
+ * Reclaimable bytes from `vm_stat` text: (free + inactive + speculative) pages x page size, or null when it
+ * does not parse. macOS keeps most RAM in inactive/cached pages, so os.freemem() alone reads "full" there.
+ */
+export function parseVmStat(text) {
+  const size = /page size of (\d+) bytes/.exec(text ?? "")?.[1];
+  const pages = (name) =>
+    Number(new RegExp(`^Pages ${name}:\\s+(\\d+)`, "m").exec(text ?? "")?.[1]);
+  const [free, inactive, speculative] = [pages("free"), pages("inactive"), pages("speculative")];
+  if (!size || [free, inactive, speculative].some(Number.isNaN)) return null;
+  return (free + inactive + speculative) * Number(size);
+}
+
+function vmStatText() {
+  return execFileSync("vm_stat", { encoding: "utf8", timeout: 5000 });
+}
+
+/**
+ * One machine-wide reading: CPU busy share over `sampleMs`, and the used share of memory (reclaimable pages count
+ * as free on darwin, falling back to os.freemem). Everything is injectable.
+ */
 export async function sampleMachineLoad({
   cpus = os.cpus,
   freemem = os.freemem,
   totalmem = os.totalmem,
+  platform = process.platform,
+  vmStat = vmStatText,
   sleep: wait = (ms) => new Promise((r) => setTimeout(r, ms)),
   sampleMs = LOAD_SAMPLE_MS,
 } = {}) {
@@ -122,7 +144,15 @@ export async function sampleMachineLoad({
   await wait(sampleMs);
   const cpuPct = cpuPctFromTimes(before, cpuTicks(cpus()));
   const total = totalmem();
-  return { cpuPct, memPct: total > 0 ? Math.round(((total - freemem()) / total) * 1000) / 10 : 0 };
+  let free = freemem();
+  if (platform === "darwin") {
+    try {
+      free = parseVmStat(vmStat()) ?? free;
+    } catch {
+      /* keep os.freemem() */
+    }
+  }
+  return { cpuPct, memPct: total > 0 ? Math.round(((total - free) / total) * 1000) / 10 : 0 };
 }
 
 /** A (live, heartbeating) holder that has held its slot longer than the hold cap. */
@@ -592,6 +622,7 @@ function resolveConfig(opts, env) {
     maxCpuPct: opts.maxCpuPct ?? parseLoadPct(env.RF_HEAVY_SLOT_MAX_CPU_PCT),
     maxMemPct: opts.maxMemPct ?? parseLoadPct(env.RF_HEAVY_SLOT_MAX_MEM_PCT),
     sampleLoad: opts.sampleLoad ?? sampleMachineLoad,
+    sampleTimeoutMs: opts.sampleTimeoutMs ?? 2 * LOAD_SAMPLE_MS,
     staleMs: opts.staleMs ?? STALE_MS,
     hostname: opts.hostname ?? os.hostname(),
     now: opts.now ?? Date.now,
@@ -599,6 +630,15 @@ function resolveConfig(opts, env) {
     label: opts.label || "job",
     branch: opts.branch ?? gitBranch(process.cwd()),
   };
+}
+
+/** Runs the sampler under a deadline; a sampler that never answers rejects, which the caller treats as fail-open. */
+function sampleWithin(sample, ms) {
+  let timer;
+  const deadline = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error("load sampler timed out")), ms);
+  });
+  return Promise.race([sample(), deadline]).finally(() => clearTimeout(timer));
 }
 
 /** A live lock carrying this token, if any (re-entrancy check). */
@@ -653,7 +693,7 @@ async function acquire(cfg, state) {
     for (;;) {
       if (state.aborted)
         throw new Error(`heavy-slot: interrupted by ${state.aborted} while waiting`);
-      const now = cfg.now();
+      let now = cfg.now();
       const snap = readState(cfg.dir, { now, hostname: cfg.hostname, staleMs: cfg.staleMs }, true);
       if (!fs.existsSync(ticketFile)) writeJson(ticketFile, { ...base, heartbeatAt: now });
       const taken = new Set(snap.holders.map((h) => h.index));
@@ -677,7 +717,8 @@ async function acquire(cfg, state) {
       let busy = null;
       if (g.grant && (cfg.maxCpuPct < 100 || cfg.maxMemPct < 100)) {
         try {
-          busy = loadOverReason(await cfg.sampleLoad(), cfg);
+          busy = loadOverReason(await sampleWithin(cfg.sampleLoad, cfg.sampleTimeoutMs), cfg);
+          now = cfg.now(); // the sample took ~3 s: judge the max wait and the wait line on the clock after it
         } catch {
           busy = null;
         }

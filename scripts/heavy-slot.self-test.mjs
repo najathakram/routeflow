@@ -36,6 +36,7 @@ import {
   cpuPctFromTimes,
   loadOverReason,
   parseLoadPct,
+  parseVmStat,
   sampleMachineLoad,
   orderTickets,
   holderOverCap,
@@ -1281,6 +1282,103 @@ check(
     "K9 no sample is taken while the slot is held by someone else (sampling costs ~3 s)",
     [whileBlocked, sampledWhileBlocked >= 1],
     [0, true],
+  );
+}
+
+// K10-K14: hardening after review A on the load wait (darwin memory, a hung sampler, the clock read order).
+const VM_STAT = [
+  "Mach Virtual Memory Statistics: (page size of 10 bytes)",
+  "Pages free:                               10.",
+  "Pages active:                            500.",
+  "Pages inactive:                           40.",
+  "Pages speculative:                        10.",
+  "Pages wired down:                        100.",
+].join("\n");
+check(
+  "K10 parseVmStat: (free + inactive + speculative) pages x page size; unparseable -> null",
+  [parseVmStat(VM_STAT), parseVmStat("nonsense"), parseVmStat(""), parseVmStat(undefined)],
+  [600, null, null, null],
+);
+{
+  const cpus = (idle, total) => [{ times: { idle, user: total - idle, nice: 0, sys: 0, irq: 0 } }];
+  const mk = (over) => {
+    let i = 0;
+    const snaps = [cpus(0, 100), cpus(100, 200)];
+    return { cpus: () => snaps[i++], totalmem: () => 1000, sleep: async () => {}, ...over };
+  };
+  const mac = await sampleMachineLoad(
+    mk({ platform: "darwin", freemem: () => 100, vmStat: () => VM_STAT }),
+  );
+  const linux = await sampleMachineLoad(
+    mk({ platform: "linux", freemem: () => 100, vmStat: () => VM_STAT }),
+  );
+  const macBroken = await sampleMachineLoad(
+    mk({
+      platform: "darwin",
+      freemem: () => 100,
+      vmStat: () => {
+        throw new Error("no vm_stat");
+      },
+    }),
+  );
+  check(
+    "K11 darwin counts reclaimable pages (60% free -> 40% used); other hosts keep os.freemem; a vm_stat failure falls back to it",
+    [mac.memPct, linux.memPct, macBroken.memPct],
+    [40, 90, 90],
+  );
+}
+{
+  // K12: a sampler that never answers must not wedge the slot: the race times out and the wait fails open
+  const dir = mkTmp();
+  let ran = false;
+  await withHeavySlot(
+    {
+      label: "hung-sampler",
+      branch: "b",
+      dir,
+      env: {},
+      ...FAST,
+      ...NO_LOG,
+      sampleTimeoutMs: 60,
+      sampleLoad: () => new Promise(() => {}),
+    },
+    async () => {
+      ran = true;
+    },
+  );
+  check("K12 a sampler that never resolves times out and fails open: the job runs", ran, true);
+}
+{
+  // K13: the clock is read AFTER the ~3 s sample, so the max-wait check sees the time the sample took
+  const dir = mkTmp();
+  let t = 1_000_000;
+  let calls = 0;
+  let err = null;
+  await withHeavySlot(
+    {
+      label: "late-clock",
+      branch: "b",
+      dir,
+      env: {},
+      ...FAST,
+      ...NO_LOG,
+      now: () => t,
+      staleMs: 1e12,
+      maxWaitMs: 300,
+      sampleLoad: async () => {
+        calls++;
+        t += 400;
+        return { cpuPct: 99, memPct: 99 };
+      },
+    },
+    async () => {},
+  ).catch((e) => {
+    err = e;
+  });
+  check(
+    "K13 max wait is judged on the clock after the sample: one sample, then HeavySlotTimeout",
+    [err instanceof HeavySlotTimeout, calls],
+    [true, 1],
   );
 }
 
