@@ -80,10 +80,29 @@ prod writes and flag flips; the SA gives options with a recommendation and never
 - **OP-15 A verdict is delivered when it is on the board, not when it is sent.** The coordinator
   gates on what is posted; after every verdict the SA reads the board for the sha and treats
   "not there" as undelivered. Posting stays with a lead who holds the owner's word for it — the
-  SA never publishes under the owner's account on a peer's request.
+  SA never publishes under the owner's account on a peer's request. The board is issue **#3686**
+  ("Verdict board 2") since 2026-10-23; #2554 and #938 hit GitHub's 2,500-comment cap and are
+  history only. Read it with `gh issue view 3686 --repo najathakram/routeflow --json comments`.
 - **OP-16 An artifact meant to outlive the session is verified tracked**
   (`git ls-files --error-unmatch <path>`), never assumed — a repo-wide `*.sql` ignore silently
   dropped an owner-run query from a plain `git add`.
+- **OP-17 A money ruling lists the pins it keeps or supersedes.** Before ruling a change to a money
+  writer, helper or status call, `git grep` its file AND its specs for existing pins (REG-/T-/L-/SA-
+  tags, `it("…")` names on the lines being changed, documented `[L-..]` roles such as the ONE caller
+  of a policy) and list each in the fact table as KEPT or SUPERSEDED with its quoted reason. A
+  superseded pin that changes what staff or customers see is an owner question, never a ruling.
+  Three misses in one session (E61-E63: F03/R1, [L-O2], REG-B11) all ruled over a pinned rule
+  nobody had listed.
+- **OP-18 A ruling is published when it is pushed, in the same turn it is written.** Every
+  `decisions/sa/*` file written or amended in rf-specs-handoff (rulings, pre-reads, amendment
+  banners, STATE.md) is committed and pushed before the verdict goes out: `git add <those paths>;
+  git commit; git pull --no-rebase; git push`. Then read the push output, and the message to the
+  lead says "pushed <sha>". Only the seat's own paths are staged, never `git add -A`. The commit
+  is GATED on the gate check: `if node …/check-gate.mjs <file> | grep -q "check-gate: PASS"; then
+  git add …; fi`. Never chain `check-gate | tail -1 && git commit`: the pipe returns tail's exit
+  code, so a FAIL still commits (SA-878 went out with a failing G8 that way, fixed in 339e02c). Lanes on
+  other machines read the repo, not the relay. SA-860..872 sat unpushed for a day, and the Mac
+  mini lane built row 699 from the lead's relay (fixed by the lead as 3dc082b, 2026-10-23).
 
 ## 2. The ruling
 
@@ -152,8 +171,8 @@ rows, filing gate, per-line-key deltas, returns credit what was paid, stock unit
 
 The seat gets better only if every ruling feeds back into these files. Three steps, none optional.
 
-**7.1 Before a ruling ships — the eleven checks** (each one is a rule an error produced; list the
-ones run in the ruling line as `checked: 1-11`, and say which were NOT run and why):
+**7.1 Before a ruling ships — the twelve checks** (each one is a rule an error produced; list the
+ones run in the ruling line as `checked: 1-12`, and say which were NOT run and why):
 
 1. **Origin, not tree** — facts re-derived from a freshly fetched sha, named in the line.
 2. **Wire, not internals** — every field a client displays or branches on is in the response
@@ -202,6 +221,11 @@ ones run in the ruling line as `checked: 1-11`, and say which were NOT run and w
     when a ruling CREATES a row, walk the model's every column, especially derived ones (E51 —
     a correction row without its periodBucket). Retro 7: all four errors of the window were
     assertions about a thing not yet run, read or produced.
+12. **Pins kept or superseded (OP-17)** — for every writer, helper or status call the ruling
+    changes, the fact table names each existing pin on it (`git grep -n "REG-\|T-B\|\[L-\|SA-" <file>
+    <its specs>` + the `it(…)` names on the changed lines) as KEPT or SUPERSEDED, with the pin's own
+    quoted reason; a superseded pin with a staff- or customer-visible effect becomes an owner
+    question (E61-E63 — three rulings in one session ran over F03/R1, [L-O2] and REG-B11).
 
 **7.2 After every ruling outcome, builder catch, or own error — record in the same commit as the
 register change:**
