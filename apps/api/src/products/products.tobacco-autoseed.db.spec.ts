@@ -25,9 +25,6 @@ import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
 
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
-
 const RUN_SUFFIX = randomUUID().slice(0, 8);
 let tenantSeq = 0;
 const freshTenantSlug = (label: string): string => {
