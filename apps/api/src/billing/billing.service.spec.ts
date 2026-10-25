@@ -2276,7 +2276,7 @@ describe("BillingService.syncStripeSubscriptionPrice", () => {
     });
     pricing.checkoutPriceData.mockResolvedValue({
       currency: "usd",
-      product_data: { name: "RouteFlow Growth" },
+      product: "rf_plan_growth",
       unit_amount: 15000,
       recurring: { interval: "month" },
     });
@@ -2341,7 +2341,7 @@ describe("BillingService.syncStripeSubscriptionPrice", () => {
       stripe.getSubscription.mockResolvedValue(liveSub(status));
       pricing.checkoutPriceData.mockResolvedValue({
         currency: "usd",
-        product_data: { name: "RouteFlow Growth" },
+        product: "rf_plan_growth",
         unit_amount: 15000,
         recurring: { interval: "month" },
       });
@@ -2744,7 +2744,7 @@ describe("BillingService.syncStripeSubscriptionPrice", () => {
     });
     pricing.checkoutPriceData.mockResolvedValue({
       currency: "usd",
-      product_data: { name: "RouteFlow Growth" },
+      product: "rf_plan_growth",
       unit_amount: 15000,
       recurring: { interval: "month" },
     });
@@ -2787,7 +2787,7 @@ describe("BillingService.syncStripeSubscriptionPrice", () => {
     });
     pricing.checkoutPriceData.mockResolvedValue({
       currency: "usd",
-      product_data: { name: "RouteFlow Scale" },
+      product: "rf_plan_scale",
       unit_amount: 59900,
       recurring: { interval: "month" },
     });
@@ -2838,7 +2838,7 @@ describe("BillingService.syncStripeSubscriptionPrice", () => {
     });
     pricing.checkoutPriceData.mockResolvedValue({
       currency: "usd",
-      product_data: { name: "RouteFlow Growth" },
+      product: "rf_plan_growth",
       unit_amount: 15000,
       recurring: { interval: "month" },
     });
@@ -2869,7 +2869,7 @@ describe("BillingService.syncStripeSubscriptionPrice", () => {
     });
     pricing.checkoutPriceData.mockResolvedValue({
       currency: "usd",
-      product_data: { name: "RouteFlow Growth" },
+      product: "rf_plan_growth",
       unit_amount: 15000,
       recurring: { interval: "month" },
     });
@@ -2898,7 +2898,7 @@ describe("BillingService.syncStripeSubscriptionPrice", () => {
     });
     pricing.checkoutPriceData.mockResolvedValue({
       currency: "usd",
-      product_data: { name: "RouteFlow Growth" },
+      product: "rf_plan_growth",
       unit_amount: 15000,
       recurring: { interval: "month" },
     });
@@ -2909,7 +2909,7 @@ describe("BillingService.syncStripeSubscriptionPrice", () => {
     const [, params] = stripe.updateSubscription.mock.calls[0];
     expect(params.items).toHaveLength(1);
     expect(params.items[0].id).toBe("si_base");
-    expect(params.items[0].price_data.product).toBe("prod_base");
+    expect(params.items[0].price_data.product).toBe("rf_plan_growth");
   });
 });
 

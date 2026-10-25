@@ -32,9 +32,9 @@ interface CreateRouteLeftPanelProps {
   planningDrivers: RoutePlanningDriverOption[];
   planningOpen: boolean;
   onTogglePlanning: () => void;
-  /** Gates the Create Route button — mirrors deliveries/new's originReady. */
+  /** Gates the Create route button — mirrors deliveries/new's originReady. */
   originReady: boolean;
-  /** avoidTolls/optimizeBy changed since the last "Optimize Stop Order" run. */
+  /** avoidTolls/optimizeBy changed since the last "Optimize stop order" run. */
   settingsChanged: boolean;
 }
 
@@ -111,13 +111,13 @@ export function CreateRouteLeftPanel({
       <div className="shrink-0 border-b border-surface-border bg-white p-4 space-y-3">
         <div className="grid grid-cols-2 gap-3">
           <Input
-            label="Route Name"
+            label="Route name"
             placeholder="North Austin Loop"
             register={register("name")}
             error={errors.name?.message}
           />
           <Select
-            label="Default Driver"
+            label="Default driver"
             placeholder="Select driver"
             options={driverOptions}
             register={register("defaultDriverId")}
@@ -144,7 +144,7 @@ export function CreateRouteLeftPanel({
             onClick={onOptimize}
             className="w-full"
           >
-            Optimize Stop Order
+            Optimize stop order
           </Button>
           {settingsChanged && (
             <p className="text-center text-[11px] italic text-navy/70">
@@ -319,7 +319,7 @@ export function CreateRouteLeftPanel({
                 Creating…
               </>
             ) : (
-              "Create Route"
+              "Create route"
             )}
           </Button>
         </div>

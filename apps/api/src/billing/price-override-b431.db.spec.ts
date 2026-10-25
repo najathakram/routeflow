@@ -16,6 +16,7 @@
  * The real PlatformAdminService / BillingService / BillingEventService / PlatformPricingService are
  * constructed directly (like override-activation-ledger.db.spec.ts). Throwaway `qa-*` tenants. DB lane.
  */
+import { fakeStripeProducts } from "../testing/fake-stripe-products";
 import { randomUUID } from "crypto";
 import { Client, Pool } from "pg";
 import { PrismaClient, TenantClass, TenantStatus } from "@prisma/client";
@@ -49,7 +50,7 @@ describeDb(
       isConfigured: true,
       getSubscription: jest.fn(),
       updateSubscription: jest.fn(),
-      client: { products: { create: jest.fn() } },
+      client: { products: fakeStripeProducts().products },
     };
     let createdVersionId: string | undefined;
     let starterPrice: number;
@@ -101,7 +102,7 @@ describeDb(
 
       const noop = {} as any;
       const catalog = new PlanCatalogService(prisma as any);
-      const pricing = new PlatformPricingService(prisma as any, catalog);
+      const pricing = new PlatformPricingService(prisma as any, catalog, stripe as any);
       events = new BillingEventService(prisma as any);
       const billing = new BillingService(
         prisma as any,

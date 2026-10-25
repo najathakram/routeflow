@@ -39,7 +39,7 @@ export const FULFILMENT_MODE_LABELS: Record<FulfilmentMode, string> = {
 };
 
 /** A stored mode this build does not know: say so rather than print the raw value. */
-export const UNKNOWN_MODE_LABEL = "A setting this screen does not recognise";
+export const UNKNOWN_MODE_LABEL = "A setting this screen does not recognize";
 
 export function fulfilmentModeLabel(value: string): string {
   return Object.prototype.hasOwnProperty.call(FULFILMENT_MODE_LABELS, value)

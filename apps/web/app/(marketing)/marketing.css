@@ -240,7 +240,11 @@
   padding-top: 82px;
   padding-bottom: 95px;
 }
+.rf-marketing .caps {
+  text-transform: uppercase;
+}
 .rf-marketing .eyebrow {
+  text-transform: uppercase;
   font-size: 0.74rem;
   font-weight: 650;
   letter-spacing: 0.11em;

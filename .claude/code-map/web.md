@@ -33,6 +33,8 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
 | [web/landing-2026-10-21-w1.md](web/landing-2026-10-21-w1.md) | Landing 2026-10-21 window 1 (#3555): order draft autosave + resume, submit key per draft, sign-out guard |
 | [web/landing-2026-10-21-w2-r5p2.md](web/landing-2026-10-21-w2-r5p2.md) | Landing 2026-10-21 R5 part 2 (#3558): held-override tab, scan Enter, buyer cache clear |
 | [web/landing-2026-10-21-w3.md](web/landing-2026-10-21-w3.md) | Landing 2026-10-21 window 3 (#3560, #3561, #3564, #3565, #3566): ACH return copy, R3 product page, sold-unit edit, day-close draft |
+| [web/landing-2026-10-24-w5.md](web/landing-2026-10-24-w5.md) | Landing 2026-10-24 window 5: restriction warn+override, till buyer/check/complete, pricing gate fails closed, record anyway, account strip, buyer cart |
+| [web/landing-2026-10-25-w6.md](web/landing-2026-10-25-w6.md) | Landing 2026-10-25 window 6: confirmed-basis payments, W-785 text sweep (sentence case, statusLabel) |
 | [web/landing-2026-10-22-w4.md](web/landing-2026-10-22-w4.md) | Landing 2026-10-22 window 4: orders apple-ux r3/r4 train, buyer cart, import Family UI, counter till/returns, payment key dialogs |
 | [web/landing-2026-10-17-units-v2-3.md](web/landing-2026-10-17-units-v2-3.md) | Landing 2026-10-17 units-v2-3: price layer, units settings, K-cards, product image actions |
 | [web/landing-2026-10-12-r52.md](web/landing-2026-10-12-r52.md) | Landing 2026-10-12 Release 5.2: edit rebase on 409, read-only gate and copy, billing card, counter QA polish, paid-at-sale |

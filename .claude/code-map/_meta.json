@@ -1,6 +1,6 @@
 {
-  "mappedSha": "37e7742ed6b0a00a1369fe19ab183a455bdac8b6",
-  "generatedAt": "2026-10-22T14:55:07.000Z",
+  "mappedSha": "14e7072d933b265b6046785ea8ac556c05d3388c",
+  "generatedAt": "2026-10-25T08:17:16.153Z",
   "layout": "split-2026-09-13",
   "areas": [
     "api",
@@ -9,11 +9,11 @@
     "packages"
   ],
   "partCounts": {
-    "api": 28,
-    "web": 24,
-    "mobile": 15,
+    "api": 30,
+    "web": 25,
+    "mobile": 16,
     "packages": 0
   },
   "fileCount": 1146,
-  "notes": "**2026-10-22 \u2014 Bookkeeping for window 4 (#3583 `37e7742ed`, #3592 `ae33b334f`, #3591 `9a3bb983f`, #3588 `37bd5e28f`, #3584 `79a70f84f`, #3582 `428f0cc12`, #3579 `3c1872b81`, #3581 `8066177b2`, #3580 `6a42dc570`, #3563 `714d6cbd8`, #3576 `d8e0c1ecb`, #3571 `69204f463`, #3577 `3f1589b6a`, #3575 `ee6a3d57d`, #3574 `3366016be`, #3562 `eb6777e14`, #3572 `42c2de28c`, #3570 `50375ccd4`, #3573 `4a9e03750`, #3567 `028a0962c`, #3568 `2176baa58`, #3585 `368e6ce12`, #3578 `624dfa8e8`, #3589 `63b3d9fbe`; docs-only, Option B follow-up).** New `api/`, `web/`, `mobile/` and `packages/landing-2026-10-22-w4.md` (TOC row in each area file; packages.md is at its size cap, so it holds a pointer section): SA-839 regulated ledger `settleRegulatedLedger` events, `ledger-locks.ts`, `assertUnvoidOrderNotCancelled` and the filed-month undo note; SA-841 `stored-line-merge.ts`; SA-823 import Family columns (`product-family-import.service.ts`, background job queue, `reparentVia` audit); SA-838/838a counter return split (`counterReturnSplit`, pricing `counter-tender-split`/`return-settlement`/`counter-own-return`); SA-824 payment Idempotency-Key (`payment-idempotency.ts`, by-key status/resolve, `payment-submit-key` on web and mobile); SA-837 token-less invoice edit warn; orders apple-ux r3/r4 train (phone More menu, leave guard, save chord, Filters panel, create-order toast), buyer cart/order-again, counter till and returns; two owner-run read-only reports. Lessons L-335 to L-337 added (stale merge ref, layout-stability browser proof, merge gate lists every check); L-330, L-331, L-333, L-334 archived. mappedSha advanced to 37e7742ed. History: CHANGELOG.md."
+  "notes": "**2026-10-25 — Bookkeeping for window 6 (#3739 `9cd783913`, #3708 `c3d269f8d`, #3719 `b7b0a1a34`, #3718 `9c47dc317`, #3744 `a9a471888`, #3720 `d9e4477ba`, #3040 `78e7d266b`, #3746 `259f59be5`, W-785 text sweep #3733/#3734/#3735/#3740/#3751; docs-only, Option B follow-up that #3753 deferred).** New `api/landing-2026-10-25-w6.md`, `web/`, `mobile/` and `packages/landing-2026-10-25-w6.md` (TOC row in each area file; packages.md keeps a pointer). Covers 681 refs proved in tenant, W-769 confirmed-basis payments, W-810 owned Stripe products, DB-lane argv, the W-785 sentence-case sweep, bugs close verb, skip-verify pushed refs, ops-monitor NUL guard. Retires DRIFT-2026-10-25.md. mappedSha stamped to HEAD. History: CHANGELOG.md."
 }

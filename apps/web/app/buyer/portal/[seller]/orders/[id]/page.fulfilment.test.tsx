@@ -249,7 +249,7 @@ describe("delivery + shipping seller with a fleet", () => {
 });
 
 describe("before == after: unset sellers and an unreadable capability see today's screen", () => {
-  const TODAY_STEPS = ["Pending", "Confirmed", "Out for Delivery", "Partial Delivery", "Delivered"];
+  const TODAY_STEPS = ["Pending", "Confirmed", "Out for delivery", "Partial delivery", "Delivered"];
 
   it.each([
     ["an unset seller", () => ready(UNSET)],
@@ -274,8 +274,8 @@ describe("before == after: unset sellers and an unreadable capability see today'
     expect(screen.getAllByTestId("timeline-step").map((st) => st.textContent)).toEqual([
       "Pending",
       "Confirmed",
-      "Out for Delivery",
-      "Partial Delivery",
+      "Out for delivery",
+      "Partial delivery",
       "Delivered",
     ]);
     expect(screen.queryByTestId("shipment-card")).toBeNull();

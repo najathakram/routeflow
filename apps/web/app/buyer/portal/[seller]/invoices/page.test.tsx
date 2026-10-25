@@ -280,11 +280,11 @@ describe("BuyerInvoicesPage — paid at sale shows no due date (row 401 follow-u
     invoiceListItem({ id: "acct", invoiceNumber: "INV-ACCT", paidAtSale: false }),
   ];
 
-  it("the table's Due Date cell is a dash for the till sale and the date for any other invoice", async () => {
+  it("the table's Due date cell is a dash for the till sale and the date for any other invoice", async () => {
     respondWith(rows());
     const body = await renderRows();
-    expect(cell(body[0], "Due Date")).toBe("\u2014");
-    expect(cell(body[1], "Due Date")).toBe("Oct 10, 2026");
+    expect(cell(body[0], "Due date")).toBe("\u2014");
+    expect(cell(body[1], "Due date")).toBe("Oct 10, 2026");
   });
 
   it("the phone card drops ` · Due …` for the till sale only", async () => {

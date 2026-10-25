@@ -97,7 +97,8 @@ describe("MovementsExportButton (CSV-3)", () => {
     fireEvent.click(btn()!);
     await waitFor(() =>
       expect(toast).toHaveBeenCalledWith({
-        title: "Export failed, please try again",
+        title: "Export failed",
+        description: "Try again.",
         variant: "error",
       }),
     );

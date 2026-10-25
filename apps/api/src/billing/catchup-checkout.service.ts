@@ -200,17 +200,22 @@ export class CatchupCheckoutService {
       monthly = resolved.monthly;
       resolvedPlanKey = resolved.planKey ?? null;
       source = resolved.source;
-      planPriceData = await this.pricing.checkoutPriceData(tenantId, "month");
+      planPriceData = await this.pricing.checkoutPriceData(tenantId, "month", undefined, {
+        readOnly: true,
+      });
     } catch (err) {
       ineligible.push("no_resolvable_price");
       this.logger.warn(`catch-up plan tenant ${tenantId}: no price (${(err as Error).message})`);
     }
 
-    const lines = await this.mutations.checkoutAddonLines(tenantId, "month", { quiet: true });
+    const lines = await this.mutations.checkoutAddonLines(tenantId, "month", {
+      quiet: true,
+      readOnly: true,
+    });
     // B1102: a held add-on whose catalog includedAtPlan names no plan is CATALOG_INVALID, not "not card billable".
     if (lines.invalid.length > 0) ineligible.push("addon_catalog_invalid");
-    const addons: CatchupAddon[] = lines.lineItems.map((li: any) => ({
-      sku: String(li.price_data?.product_data?.metadata?.addonSku ?? "ADDON"),
+    const addons: CatchupAddon[] = lines.lineItems.map((li: any, i: number) => ({
+      sku: String(lines.skus[i] ?? "ADDON"), // skus is built in lineItems' order
       unitPrice: fromCents(Number(li.price_data?.unit_amount ?? 0)),
       quantity: Number(li.quantity ?? 0),
     }));
@@ -411,6 +416,28 @@ export class CatchupCheckoutService {
       ) {
         throw new ChangedUnderClaim();
       }
+      // W-810: plan() names the products by id only (it is a read); the session is the one place that makes
+      // sure they exist and are active in Stripe.
+      const planPriceData = await this.pricing.checkoutPriceData(tenantId, "month");
+      const addonLines = await this.mutations.checkoutAddonLines(tenantId, "month", {
+        quiet: true,
+      });
+      // The lines are re-read (they make the products), so they must still be what plan() priced just above:
+      // a price or add-on edited in between would otherwise be charged without the amount ever being confirmed.
+      const sig = (pd: any, lines: any[], skus: string[]) =>
+        JSON.stringify([
+          pd?.unit_amount,
+          pd?.product,
+          lines.map((l) => [l?.price_data?.unit_amount, l?.price_data?.product]),
+          skus,
+        ]);
+      if (
+        fresh._inputs &&
+        sig(planPriceData, addonLines.lineItems, addonLines.skus) !==
+          sig(fresh._inputs.planPriceData, fresh._inputs.addonLines, fresh._inputs.addonSkus)
+      ) {
+        throw new ChangedUnderClaim();
+      }
       const customerId = await this.billing.ensureStripeCustomer(tenantId);
       const base = webBaseUrl();
       const params = buildCatchupSessionParams({
@@ -418,9 +445,9 @@ export class CatchupCheckoutService {
         slug: report.slug,
         planKey: fresh.planKey as string,
         customerId,
-        planPriceData: fresh._inputs!.planPriceData,
-        addonLines: fresh._inputs!.addonLines,
-        addonSkus: fresh._inputs!.addonSkus,
+        planPriceData,
+        addonLines: addonLines.lineItems,
+        addonSkus: addonLines.skus,
         plan: fresh.plan,
         now,
         // PATHS ("/settings/billing?..."), joined to the one web base (webBaseUrl) here

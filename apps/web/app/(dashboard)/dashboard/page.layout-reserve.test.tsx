@@ -62,12 +62,12 @@ jest.mock("@/lib/api-client", () => ({
 
 const KEY = lastKnownRoutesKey("acme", "u1");
 const ALL_LABELS = [
-  "Today's Revenue",
-  "Overdue Invoices",
-  "Active Orders",
-  "Scheduled Routes",
-  "Active Drivers",
-  "Low Stock Items",
+  "Today's revenue",
+  "Overdue invoices",
+  "Active orders",
+  "Scheduled routes",
+  "Active drivers",
+  "Low stock items",
 ];
 const labelsShown = () => ALL_LABELS.filter((l) => screen.queryAllByText(l).length > 0);
 const hrefs = (c: HTMLElement) =>
@@ -117,26 +117,26 @@ describe("D2 routes/drivers slot reservation (last-known access)", () => {
     renderWithProviders(<DashboardPage />);
     expect(screen.getAllByTestId("stat-skeleton")).toHaveLength(6);
   });
-  it("known-routes tenant: the Route Runs and Driver Status panels are reserved too", () => {
+  it("known-routes tenant: the Route Runs and Driver status panels are reserved too", () => {
     window.localStorage.setItem(KEY, "1");
     routes = { enabled: false, resolved: false, pending: true };
     renderWithProviders(<DashboardPage />);
-    expect(screen.getByText("Scheduled Route Runs")).toBeTruthy();
-    expect(screen.getByText("Driver Status")).toBeTruthy();
+    expect(screen.getByText("Scheduled route runs")).toBeTruthy();
+    expect(screen.getByText("Driver status")).toBeTruthy();
   });
-  it("known-no-routes / first visit: no Route Runs or Driver Status panel while unresolved", () => {
+  it("known-no-routes / first visit: no Route Runs or Driver status panel while unresolved", () => {
     routes = { enabled: false, resolved: false, pending: true };
     renderWithProviders(<DashboardPage />);
-    expect(screen.queryByText("Scheduled Route Runs")).toBeNull();
-    expect(screen.queryByText("Driver Status")).toBeNull();
+    expect(screen.queryByText("Scheduled route runs")).toBeNull();
+    expect(screen.queryByText("Driver status")).toBeNull();
   });
   it("stored ON but the addons read ERRORED: no routes/drivers skeletons and no Route Runs panel", () => {
     window.localStorage.setItem(KEY, "1");
     routes = { enabled: false, resolved: false, pending: false };
     renderWithProviders(<DashboardPage />);
     expect(screen.getAllByTestId("stat-skeleton")).toHaveLength(4);
-    expect(screen.queryByText("Scheduled Route Runs")).toBeNull();
-    expect(screen.queryByText("Driver Status")).toBeNull();
+    expect(screen.queryByText("Scheduled route runs")).toBeNull();
+    expect(screen.queryByText("Driver status")).toBeNull();
   });
   it("first visit (nothing stored): not reserved", () => {
     routes = { enabled: false, resolved: false, pending: true };
@@ -187,10 +187,10 @@ describe("skeleton and loaded twins share one min-h constant per region", () => 
     const up = (text: string, sel: string) =>
       screen.getByRole("heading", { name: text }).closest(sel);
     expect(ar).toBeDefined();
-    expect(minH(up("AR Aging", "div.overflow-hidden"))).toBe(ar);
-    expect(minH(up("Overdue Invoices", "div.overflow-hidden"))).toBe(overdue);
+    expect(minH(up("AR aging", "div.overflow-hidden"))).toBe(ar);
+    expect(minH(up("Overdue invoices", "div.overflow-hidden"))).toBe(overdue);
     expect(minH(screen.getByText("All clear").closest("div.flex.items-center"))).toBe(urgent);
-    expect(minH(up("Low Stock", "div.overflow-hidden"))).toBe(low);
+    expect(minH(up("Low stock", "div.overflow-hidden"))).toBe(low);
   });
   it("the pipeline skeleton is hidden from assistive tech and not focusable", () => {
     renderWithProviders(<DashboardPage />);
@@ -235,12 +235,12 @@ describe("D5 no feature lost: per-role cards, links and gates (loaded)", () => {
       "/orders?status=DELIVERED",
       "/orders?status=CANCELLED",
     ].forEach((href) => expect(h).toContain(href));
-    ["Scheduled Route Runs", "Driver Status", "Recent Orders", "Low Stock", "AR Aging"].forEach(
+    ["Scheduled route runs", "Driver status", "Recent orders", "Low stock", "AR aging"].forEach(
       (t) => expect(screen.getAllByText(t).length).toBeGreaterThan(0),
     );
     expect(screen.getByTestId("pipeline-strip")).toBeTruthy();
   });
-  // CQ-22: "AR Aging > Full report" pointed at /finance/reports/ar-aging, a route that does not exist (Next prefetches the
+  // CQ-22: "AR aging > Full report" pointed at /finance/reports/ar-aging, a route that does not exist (Next prefetches the
   // visible link on every dashboard load, so it also logged a 404 each time the clerk went on to the counter).
   it("every internal link on the dashboard points at a page that exists", () => {
     const { container } = renderWithProviders(<DashboardPage />);
@@ -251,7 +251,7 @@ describe("D5 no feature lost: per-role cards, links and gates (loaded)", () => {
       .filter((p) => p !== "/" && !fs.existsSync(path.join(dashboardDir, p, "page.tsx")));
     expect(missing).toEqual([]);
   });
-  it("AR Aging's Full report opens the finance reports page on the AR aging report", () => {
+  it("AR aging's Full report opens the finance reports page on the AR aging report", () => {
     const { container } = renderWithProviders(<DashboardPage />);
     const link = Array.from(container.querySelectorAll("a")).find((a) =>
       /Full report/.test(a.textContent ?? ""),
@@ -280,26 +280,26 @@ describe("D5 no feature lost: per-role cards, links and gates (loaded)", () => {
     routes = { enabled: false, resolved: true };
     const { container } = renderWithProviders(<DashboardPage />);
     expect(labelsShown()).toEqual([
-      "Today's Revenue",
-      "Overdue Invoices",
-      "Active Orders",
-      "Low Stock Items",
+      "Today's revenue",
+      "Overdue invoices",
+      "Active orders",
+      "Low stock items",
     ]);
     const h = hrefs(container);
     expect(h).not.toContain("/routes/create");
     expect(h).not.toContain("/drivers");
-    expect(screen.queryByText("Scheduled Route Runs")).toBeNull();
-    expect(screen.queryByText("Driver Status")).toBeNull();
+    expect(screen.queryByText("Scheduled route runs")).toBeNull();
+    expect(screen.queryByText("Driver status")).toBeNull();
   });
   it("customer: quick create, overdue + active orders, recent orders", () => {
     authUser = { id: "u1", role: "CUSTOMER", tenantSlug: "acme" };
     routes = { enabled: false, resolved: true };
     const { container } = renderWithProviders(<DashboardPage />);
-    expect(labelsShown()).toEqual(["Overdue Invoices", "Active Orders"]);
+    expect(labelsShown()).toEqual(["Overdue invoices", "Active orders"]);
     const h = hrefs(container);
     expect(h).toContain("/orders?action=new");
     expect(h).toContain("/orders");
-    expect(screen.getByText("Recent Orders")).toBeTruthy();
+    expect(screen.getByText("Recent orders")).toBeTruthy();
   });
   it("driver with routes: redirect (renders nothing)", () => {
     authUser = { id: "u1", role: "DRIVER", tenantSlug: "acme" };
@@ -311,7 +311,7 @@ describe("D5 no feature lost: per-role cards, links and gates (loaded)", () => {
     routes = { enabled: false, resolved: true };
     renderWithProviders(<DashboardPage />);
     expect(screen.getByText("No routes to show yet")).toBeTruthy();
-    expect(screen.queryByText("Recent Orders")).toBeNull();
+    expect(screen.queryByText("Recent orders")).toBeNull();
   });
   it("dual-role operator with routes: the Switch view mode control", () => {
     authUser = { id: "u1", role: "OPERATOR", tenantSlug: "acme", canActAsDriver: true };

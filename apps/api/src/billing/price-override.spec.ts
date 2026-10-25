@@ -36,6 +36,8 @@ describe("price-override helpers (SA-733 D8 / M7)", () => {
     expect(isPricePushFailure({ synced: false, reason: "stripe_product_create_failed" })).toBe(
       true,
     );
+    // a database failure under the price read also stops a Stripe-first write
+    expect(isPricePushFailure({ synced: false, reason: "pricing_lookup_failed" })).toBe(true);
     expect(isPricePushFailure({ synced: false, reason: "no_active_stripe_subscription" })).toBe(
       false,
     );
