@@ -1,6 +1,7 @@
 /** Password hash, signed session cookie, login page. Constant-time compares throughout. */
 import { createHmac, scryptSync, randomBytes, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage } from "node:http";
+import { esc } from "../render/esc";
 
 const b64 = (b: Buffer): string => b.toString("base64url");
 
@@ -77,7 +78,7 @@ export function sessionCookie(req: IncomingMessage): string | undefined {
 
 /** The login page: no inline script, no inline handlers; the stylesheet is the same-origin asset. */
 export function loginPage(error: string | null): string {
-  const msg = error ? `<p class="err" role="alert">${error}</p>` : "";
+  const msg = error ? `<p class="err" role="alert">${esc(error)}</p>` : "";
   return `<!doctype html>
 <html lang="en">
 <head>

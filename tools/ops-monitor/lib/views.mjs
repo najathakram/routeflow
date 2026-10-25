@@ -7,6 +7,7 @@ import { dirname, join } from "node:path";
 
 import { DONE_STATUSES, PRIORITIES } from "./schema.mjs";
 import { GITHUB_REPO } from "./config.mjs";
+import { loadClientNames, maskDeep } from "./mask.mjs";
 import { fold } from "./fold.mjs";
 import { VIEWS_COMMIT_PREFIX, exec as gitExec, readAllEvents, runCommit } from "./store.mjs";
 
@@ -143,8 +144,12 @@ export function stateToSnapshot(state) {
 }
 
 /** The register text for a state: render(fold(all events)). */
-export function renderGeneratedRegister(state, { itemFileExists = () => false } = {}) {
-  return renderRegister(stateToSnapshot(state), { itemFileExists });
+export function renderGeneratedRegister(
+  state,
+  { itemFileExists = () => false, clientNames = null } = {},
+) {
+  const snap = maskDeep(stateToSnapshot(state), clientNames ?? loadClientNames().names);
+  return renderRegister(snap, { itemFileExists });
 }
 
 /**
@@ -382,17 +387,28 @@ const BOARD_FILES = ["register", "trains", "lanes", "owner", "problems"];
  * a tree with no unpushed commits; a push that cannot land is rolled back to upstream
  * (`retryLater`), never left under events.
  * Board JSON goes to `<boardDir>/out/*.json` (no git). `dry` computes and writes nothing.
+ * Client names (`clientNames`, default: the machine-local list) are masked in everything written.
  * `registerMode: "generated"` leaves the register to the event-driven writer (`registerHook`).
  */
 export async function writeViews({
   specsDir,
   boardDir,
-  snapshot,
+  snapshot: rawSnapshot,
+  clientNames = null,
   push = true,
   dry = false,
   registerMode = "human",
   deps = {},
 }) {
+  // Live-client names never reach a git repo or a board file: mask before anything is rendered.
+  let names = clientNames;
+  if (names === null) {
+    const loaded = loadClientNames();
+    // A names file that exists but does not parse must not turn into "no names": nothing is written.
+    if (loaded.error) throw new Error(`views not written: ${loaded.error}`);
+    names = loaded.names;
+  }
+  const snapshot = maskDeep(rawSnapshot, names);
   const d = await resolveDeps(deps);
   const result = {
     registerWritten: false,

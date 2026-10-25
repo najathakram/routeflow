@@ -160,7 +160,7 @@ describe("OrdersService.updateOrderItems(): inline-return call order (#2094)", (
 
   it("the return is validated BEFORE the un-tx'd linked-invoice revert commits (B215 class); the CN number is reserved after the license guard and before the tx", () => {
     const pre = at("preflightInlineReturn(");
-    const revert = at("revertLinkedInvoicesForOrderEdit(orderId)");
+    const revert = at("revertLinkedInvoicesForOrderEdit(orderId, undefined, {");
     expect(pre).toBeLessThan(revert);
     const reserve = at("reserveEditReturnNumber(");
     expect(reserve).toBeGreaterThan(at("authGuard.assertAuthorizedOrThrow("));

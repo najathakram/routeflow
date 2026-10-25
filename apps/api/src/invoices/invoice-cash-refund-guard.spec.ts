@@ -110,7 +110,10 @@ function makeTx(returns: FakeReturn[]) {
 /** The real `voidInvoice` over a fake tx: the guard sits in the CALLER now, so the pins drive the caller. */
 function makeVoidHarness(returns: FakeReturn[], orderId: string | null = ORDER_ID) {
   const { tx, writes } = makeTx(returns);
-  const ledger = { reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined) };
+  const ledger = {
+    reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined),
+    settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
+  };
   const commissionEngine = { syncInvoiceCommissionSafe: jest.fn().mockResolvedValue(undefined) };
   const release = jest.fn().mockResolvedValue({ credits: [], advances: 0 });
   const prisma = {
@@ -146,7 +149,7 @@ function expectNothingChanged(h: ReturnType<typeof makeVoidHarness>) {
   expect(h.writes.invoiceUpdate).not.toHaveBeenCalled();
   expect(h.writes.creditNoteUpdate).not.toHaveBeenCalled();
   expect(h.writes.orderItemUpdate).not.toHaveBeenCalled();
-  expect(h.ledger.reverseInvoiceEntries).not.toHaveBeenCalled();
+  expect(h.ledger.settleRegulatedLedger).not.toHaveBeenCalled();
   expect(h.commissionEngine.syncInvoiceCommissionSafe).not.toHaveBeenCalled();
 }
 
@@ -235,7 +238,7 @@ describe("voidInvoice refuses 409 INVOICE_HAS_CASH_REFUND when part of the invoi
     await h.service.voidInvoice(INVOICE_ID);
 
     expect(h.writes.invoiceUpdateMany).toHaveBeenCalledTimes(1);
-    expect(h.ledger.reverseInvoiceEntries).toHaveBeenCalledTimes(1);
+    expect(h.ledger.settleRegulatedLedger).toHaveBeenCalledTimes(1);
   });
 
   it.each(["CANCELLED", "REJECTED"])(
@@ -294,7 +297,7 @@ describe("voidInvoice refuses 409 INVOICE_HAS_CASH_REFUND when part of the invoi
     await h.service.voidInvoice(INVOICE_ID);
 
     expect(h.writes.invoiceUpdateMany).toHaveBeenCalledTimes(1);
-    expect(h.ledger.reverseInvoiceEntries).toHaveBeenCalledTimes(1);
+    expect(h.ledger.settleRegulatedLedger).toHaveBeenCalledTimes(1);
     expect(h.commissionEngine.syncInvoiceCommissionSafe).toHaveBeenCalledTimes(1);
   });
 

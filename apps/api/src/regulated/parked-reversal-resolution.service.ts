@@ -94,8 +94,8 @@ export class ParkedReversalResolutionService {
       if (row.resolvedAt) return { alreadyResolved: true as const, row };
 
       // With the Return locked, a CANCELLED return is final: its goods were never kept, so a
-      // reversal against it would misstate the filing (and cancel() has already deleted its
-      // REVERSAL rows and unresolved parked rows — resolving now would resurrect both). Tenant-scoped
+      // reversal against it would misstate the filing (and cancel() has already countered its
+      // REVERSAL rows and deleted its unresolved parked rows — resolving now would resurrect both). Tenant-scoped
       // read, so another tenant's return is a 404 here too.
       const ret = await tx.return.findFirst({
         where: { id: row.returnId },

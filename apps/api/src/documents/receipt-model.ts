@@ -2,6 +2,7 @@ import { InvoiceStatus } from "@prisma/client";
 import {
   cashierNameOf,
   billedChargeLines,
+  counterMethodLine,
   explainedTaxRatePercent,
   formatReceiptMoney,
   receiptFigures,
@@ -14,7 +15,14 @@ import {
 import type { ReceiptLine, ReceiptModel } from "@routeflow/types";
 import { servedChange } from "../orders/counter-sale/counter-sale-readback";
 import { RECEIPT_FOOTER_MAX_CHARS } from "../system-config/receipt-footer";
-import { todaysMethodOf } from "../orders/counter-sale/counter-sale-today";
+import {
+  counterReturnSplit,
+  type CreditNoteFact,
+  type ReturnProvenance,
+  type TodayOrderRecord,
+  TODAYS_SALE_METHOD_ORDER,
+  todaysMethodOf,
+} from "../orders/counter-sale/counter-sale-today";
 
 /**
  * The pure half of the order receipt (SA-751r): stored rows in, the shared `ReceiptModel` out. It mirrors the web's
@@ -89,6 +97,16 @@ export interface ReceiptPaymentInput {
   method: string;
   amount: unknown;
   status: string;
+  /** SA-838: the credit note this payment applied, and the invoice that note was issued against (counter sales only) */
+  creditNoteId?: string | null;
+  creditNote?: { invoiceId: string | null } | null;
+}
+
+/** SA-838a: what a COUNTER sale's return split reads (the receipt service's reads; the Today's-sales page reads the same). */
+export interface ReceiptReturnData {
+  returns: TodayOrderRecord["returns"];
+  carriedReturns: readonly ReturnProvenance[];
+  creditNotes: ReadonlyMap<string, CreditNoteFact>;
 }
 
 /** The receipt header and footer: TenantConfig first, the legacy SystemConfig values behind it (as `GET /settings` reads them). */
@@ -113,20 +131,30 @@ const DEAD_INVOICE_STATUSES: readonly string[] = [InvoiceStatus.VOID, InvoiceSta
 export const isLiveInvoice = (i: Pick<ReceiptInvoiceInput, "status">): boolean =>
   !DEAD_INVOICE_STATUSES.includes(i.status);
 
-const METHOD_ORDER = ["CASH", "CARD", "CHECK", "OTHER", "STORE_CREDIT"] as const;
-const METHOD_LABEL: Record<(typeof METHOD_ORDER)[number], string> = {
+/** Sign first: a downward reprice reads "-$1.00", never "$-1.00". The ONE formatter (pricing), shared with the web. */
+export { formatReceiptMoney };
+
+const clean = (s: string | null | undefined): string => (s ?? "").trim();
+const num = (v: unknown): number => (v == null ? 0 : Number(v));
+
+/**
+ * A non-counter (delivery) order's Payment method line, exactly as master printed it: labels only, in master's order,
+ * an advance application read as Store credit (#3576 Opus MUST: R7b is counter-only, so delivery emails never change).
+ */
+const DELIVERY_METHOD_ORDER = ["CASH", "CARD", "CHECK", "OTHER", "STORE_CREDIT"] as const;
+const DELIVERY_METHOD_LABEL: Record<(typeof DELIVERY_METHOD_ORDER)[number], string> = {
   CASH: "Cash",
   CARD: "Card",
   CHECK: "Check",
   OTHER: "Other",
   STORE_CREDIT: "Store credit",
 };
-
-/** Sign first: a downward reprice reads "-$1.00", never "$-1.00". The ONE formatter (pricing), shared with the web. */
-export { formatReceiptMoney };
-
-const clean = (s: string | null | undefined): string => (s ?? "").trim();
-const num = (v: unknown): number => (v == null ? 0 : Number(v));
+function deliveryMethodLine(tenders: ReadonlyArray<{ method: string }>): string {
+  const used = new Set(tenders.map((t) => (t.method === "ADVANCE" ? "STORE_CREDIT" : t.method)));
+  return DELIVERY_METHOD_ORDER.filter((m) => used.has(m))
+    .map((m) => DELIVERY_METHOD_LABEL[m])
+    .join(" + ");
+}
 
 /** "Oct 7, 2026, 11:15 AM" in the given zone; a zone Intl does not know falls back to UTC (never a RangeError). */
 export function formatSaleTime(at: Date, timeZone?: string | null): string {
@@ -190,6 +218,7 @@ export function buildReceiptModel(
   payments: readonly ReceiptPaymentInput[],
   branding: ReceiptBranding,
   zone: string | null,
+  returnData?: ReceiptReturnData,
 ): ReceiptModel {
   const live = invoices.filter(isLiveInvoice);
   const shown = live[0] ?? invoices[0];
@@ -224,21 +253,42 @@ export function buildReceiptModel(
   const netSubtotal = roundMoney(lines.reduce((sum, l) => sum + l.total, 0));
   const discounts = roundMoney(lines.reduce((sum, l) => sum + l.discount, 0));
   const total = roundMoney(num(order.total));
-  const paid = roundMoney(
+  // everything paid on the live invoices, the own return credit included: the balance is what is left of the total after ALL of it
+  const paidInAll = roundMoney(
     sumConfirmed(livePayments.map((p) => ({ amount: p.amount, status: p.status }))),
   );
-  const balanceDue = Math.max(0, roundMoney(total - paid));
+  const balanceDue = Math.max(0, roundMoney(total - paidInAll));
 
-  const appliedBy = (method: (typeof METHOD_ORDER)[number]) =>
-    roundMoney(
-      sumConfirmed(
-        livePayments
-          .filter((p) => todaysMethodOf(p.method) === method)
-          .map((p) => ({ amount: p.amount, status: p.status })),
-      ),
-    );
-  const methods = METHOD_ORDER.filter((method) => appliedBy(method) > 0);
-  const hasTender = methods.length > 0;
+  // A COUNTER sale prints the reprint's lines (SA-838 + SA-838a): the SAME `counterReturnSplit` the Today's-sales row calls splits
+  // what was TENDERED from the sale's own return credit and settles each own return, so Paid, the Payment method and the
+  // Returned / Refunded / Credit kept / Credit used / Return in progress lines are the reprint's, never a second derivation.
+  // Any other order keeps every payment a tender and prints no return line (R7b is counter-only: no carried or credit-note
+  // reads are made for it either).
+  const split = order.counterSale
+    ? counterReturnSplit({
+        orderId: order.id,
+        invoiceIds: invoices.map((i) => i.id),
+        payments: livePayments,
+        returns: returnData?.returns ?? [],
+        carriedReturns: returnData?.carriedReturns,
+        creditNotes: returnData?.creditNotes,
+      })
+    : null;
+  // the till's ONE method order and labels (an ADVANCE application is a tender here exactly as on the print: SA-838)
+  const tenders = split
+    ? split.tenderMethods
+    : TODAYS_SALE_METHOD_ORDER.map((method) => ({
+        method,
+        amount: roundMoney(
+          sumConfirmed(
+            livePayments
+              .filter((p) => todaysMethodOf(p.method) === method)
+              .map((p) => ({ amount: p.amount, status: p.status })),
+          ),
+        ),
+      })).filter((t) => t.amount > 0);
+  const paid = split ? split.tenderPaid : paidInAll;
+  const hasTender = tenders.length > 0;
   const onAccount = !hasTender && balanceDue > 0;
   // CQ-03: the levy the live invoices billed is its own named charge; Tax is the regular tax only; Adjustments the rest
   const { tax, charges, adjustments } = receiptFigures({
@@ -291,10 +341,24 @@ export function buildReceiptModel(
     paymentNotRecorded: false,
     showPaid: hasTender,
     showBalance: onAccount || balanceDue > 0,
-    methodLabel: hasTender ? methods.map((m) => METHOD_LABEL[m]).join(" + ") : null,
+    // a counter sale: the reprint's very line (pricing's counterMethodLine), amounts and all; any other order: master's
+    methodLabel: !hasTender
+      ? null
+      : split
+        ? counterMethodLine(tenders)
+        : deliveryMethodLine(tenders),
     tendered,
     tenderedAsEntered: false,
     change: servedChange(order.counterCashTendered, livePayments, balanceDue),
     changeAsEntered: false,
+    ...(split
+      ? {
+          returned: split.returnLines.applied > 0 ? split.returnLines.applied : null,
+          refunded: split.returnLines.refunded > 0 ? split.returnLines.refunded : null,
+          creditKept: split.returnLines.kept > 0 ? split.returnLines.kept : null,
+          creditUsed: split.returnLines.used > 0 ? split.returnLines.used : null,
+          returnPending: split.returnLines.pending,
+        }
+      : {}),
   };
 }

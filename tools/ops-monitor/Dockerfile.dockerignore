@@ -1,8 +1,0 @@
-# BuildKit uses this file (not the repo-root .dockerignore, which is for the api/web images) when
-# building tools/ops-monitor/Dockerfile. Ignore everything except tools/ops-monitor/.
-*
-!tools
-tools/*
-!tools/ops-monitor
-tools/ops-monitor/test
-tools/ops-monitor/*.md

@@ -18,7 +18,9 @@ import {
 } from "class-validator";
 import { Transform, Type } from "class-transformer";
 import { CheckStatus, PaymentMethod } from "@prisma/client";
+import type { KeyedWriterOpts, PaymentKeyRefs } from "../payment-idempotency";
 import { StripHtml } from "../../common/transforms/strip-html.transform";
+import { RestrictionAckDto } from "../../selling-restrictions/dto/restriction-ack.dto";
 import { Trim } from "../../common/transforms/trim.transform";
 import { SafeTextCell } from "../../common/transforms/safe-text-cell.transform";
 import { MAX_SHIPPING_CARRIER, MAX_SHIPPING_TRACKING } from "../../orders/shipment-text";
@@ -33,7 +35,8 @@ export class CreateInvoiceItemDto {
   @IsNumber() @Min(0.001) qty: number;
   @IsNumber() @Min(0) unitPrice: number;
   @IsOptionalNotNull() @IsNumber() @Min(0) discount?: number;
-  @IsOptionalNotNull() @IsNumber() @Min(0) taxRate?: number;
+  /** A FRACTION (0.08875 = 8.875%). @Max(1): a percent sent by mistake is a 400, never 887.5% (R5-1, B296). */
+  @IsOptionalNotNull() @IsNumber() @Min(0) @Max(1) taxRate?: number;
   /**
    * units_v1: sell this line by a unit of the product's ladder (Case, Pallet, Piece …); `qty` then
    * counts the unit (a whole number) and boxes/pieces/promoFreeUnits must be omitted. Behind
@@ -63,7 +66,7 @@ export class CreateInvoiceItemDto {
   overrideReason?: string;
 }
 
-export class CreateInvoiceDto {
+export class CreateInvoiceDto extends RestrictionAckDto {
   @IsUUID() customerId: string;
   @IsArray()
   @ArrayMinSize(1)
@@ -110,10 +113,37 @@ export class CreateInvoiceDto {
   @IsOptional() @IsDateString() depositDueDate?: string;
 }
 
-/** Internal options of `recordPayment` (never part of a request body). */
-export interface RecordPaymentOpts {
+/** Internal options of `recordPayment` (never part of a request body). SA-824: + the key's hooks. */
+export interface RecordPaymentOpts extends KeyedWriterOpts<any> {
   /** The split counter tender's leg group (uuidv5 of orderId:legIndex), written IN the payment's create. */
   paymentGroupId?: string;
+}
+
+/** What `recordStandalonePayment` returns, and hands its `opts.inTx` hook (SA-818). */
+export type StandalonePaymentResult = { payments: any[]; paymentGroupId: string; excess: number };
+
+/** Internal options of `recordStandalonePayment` (never part of a request body). SA-824: + the key's hooks. */
+export interface StandalonePaymentOpts extends KeyedWriterOpts<StandalonePaymentResult> {
+  /**
+   * Reject any allocation exceeding the invoice's live balance, computed
+   * inside the transaction. Buyer-initiated payments compute their
+   * oldest-first allocation BEFORE this call, outside the row locks, so a
+   * concurrent operator payment can stale the preview — without this check
+   * the stale allocation would overpay an invoice. Operator flows keep the
+   * historical behavior (deliberate overpayment is allowed there).
+   */
+  assertAllocationsWithinBalance?: boolean;
+  /** The operator's user id, for the deliberate-overpayment audit row. */
+  actor?: string | null;
+  /** W-769: told, inside the tx, of the unconfirmed rows a PAID allocation displaced (the captured settle alerts after commit). */
+  onDisplaced?: (invoiceId: string, displaced: string[]) => void;
+  /**
+   * SA-818 (row 615): runs INSIDE this payment transaction, after the payment rows (and any
+   * excess AdvancePayment) are written and before commit. A caller that must decide something
+   * atomically with the money (the cash approval's PENDING -> APPROVED claim + link) does it
+   * here: a throw rolls the money back with it. Absent -> behaviour is unchanged.
+   */
+  inTx?: (tx: any, result: StandalonePaymentResult, refs?: PaymentKeyRefs) => Promise<void>;
 }
 
 export class RecordInvoicePaymentDto {
@@ -126,18 +156,24 @@ export class RecordInvoicePaymentDto {
   @IsOptional() @IsDateString() settledAt?: string | null;
   @IsOptionalNotNull() @IsNumber() @Min(0) bankCharges?: number;
   @IsOptional() @IsEnum(["DRAFT", "PAID"]) status?: string;
+  /** Row 498: a STAFF resend of a payment refused 409 DUPLICATE_PAYMENT_REF; recorded with one audit row. Ignored for any other role. */
+  @IsOptional() @IsBoolean() recordAnyway?: boolean;
 }
 
 export class UpdatePaymentDto {
   @IsNumber() @Min(0.01) amount: number;
   @IsEnum(PaymentMethod) method: PaymentMethod;
-  @IsOptional() @IsString() reference?: string;
-  @IsOptional() @IsString() notes?: string;
+  /** W-663: omit to keep the stored reference; send null to clear it (an emptied edit field). */
+  @IsOptional() @IsString() reference?: string | null;
+  /** W-663: omit to keep the stored notes; send null to clear them. */
+  @IsOptional() @IsString() notes?: string | null;
   @IsOptional() @IsDateString() paidAt?: string;
   /** Omit to preserve the stored bank date; send null to clear it. */
   @IsOptional() @IsDateString() settledAt?: string | null;
   @IsOptionalNotNull() @IsNumber() @Min(0) bankCharges?: number;
   @IsOptional() @IsEnum(["DRAFT", "PAID", "VOID"]) status?: string;
+  /** Row 752: a STAFF resend of an edit refused 409 DUPLICATE_PAYMENT_REF; saved with one audit row. Ignored for any other role. */
+  @IsOptional() @IsBoolean() recordAnyway?: boolean;
 }
 
 export class AllocationDto {
@@ -148,7 +184,7 @@ export class AllocationDto {
 export class StandalonePaymentDto {
   @IsString() @IsNotEmpty() customerId: string;
   @IsNumber() @Min(0.01) totalAmount: number;
-  @IsEnum(PaymentMethod) method: string;
+  @IsEnum(PaymentMethod) method: PaymentMethod;
   @IsOptional() @IsDateString() paidAt?: string;
   /** Date the money lands in the bank; applied to every row of the allocation group. */
   @IsOptional() @IsDateString() settledAt?: string | null;
@@ -156,6 +192,8 @@ export class StandalonePaymentDto {
   @IsOptional() @IsString() reference?: string;
   @IsOptional() @IsString() notes?: string;
   @IsOptional() @IsEnum(["DRAFT", "PAID"]) status?: string;
+  /** Row 498: a STAFF resend of a payment refused 409 DUPLICATE_PAYMENT_REF; recorded with one audit row. Ignored for any other role. */
+  @IsOptional() @IsBoolean() recordAnyway?: boolean;
   @IsArray()
   // Post-dated check payments PR-1 (additive-only, no behavior change for any real request —
   // every existing caller allocates to a handful of invoices): caps a standalone payment's

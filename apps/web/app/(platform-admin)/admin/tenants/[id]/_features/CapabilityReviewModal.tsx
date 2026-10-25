@@ -61,7 +61,7 @@ export function CapabilityReviewModal({
             disabled={confirming || empty}
             className="!min-h-[44px] rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
           >
-            {confirming ? "Applying..." : stopsBilling ? "Stop billing and apply" : "Apply"}
+            {confirming ? "Applying…" : stopsBilling ? "Stop billing and apply" : "Apply"}
           </button>
         </>
       }

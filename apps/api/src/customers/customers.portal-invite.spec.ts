@@ -71,7 +71,10 @@ describe("CustomersService.sendPortalInvite — sentinel emails", () => {
         { provide: EntitlementAuthority, useValue: { can: jest.fn().mockResolvedValue(false) } },
         {
           provide: RegulatedLedgerService,
-          useValue: { reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined) },
+          useValue: {
+            reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined),
+            settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
+          },
         },
         {
           provide: EmailService,

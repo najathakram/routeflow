@@ -423,6 +423,28 @@ describe("graph-refresh safety", () => {
     expect(JSON.parse(out)).toEqual([true, false, false, false]);
   });
 
+  it("row 611: graphify-mcp must be the executable token, not any substring (log tail, notes file)", () => {
+    const out = runModule(
+      `import { isOurServer } from ${JSON.stringify(refreshUrl)};
+       console.log(JSON.stringify([
+         isOurServer("/home/u/.local/bin/graphify-mcp --transport http g.json"),
+         isOurServer("graphify-mcp"),
+         isOurServer("tail -f /home/u/.claude/graphify-mcp.log"),
+         isOurServer("node graphify-mcp-notes.js"),
+       ]));`,
+    );
+    expect(JSON.parse(out)).toEqual([true, true, false, false]);
+  });
+
+  it("row 611: pidAlive treats EPERM as alive and ESRCH as gone", () => {
+    const out = runModule(
+      `import { pidAlive } from ${JSON.stringify(refreshUrl)};
+       const thrower = (code) => () => { throw Object.assign(new Error(code), { code }); };
+       console.log(JSON.stringify([pidAlive(1, thrower("EPERM")), pidAlive(1, thrower("ESRCH")), pidAlive(1, () => true)]));`,
+    );
+    expect(JSON.parse(out)).toEqual([true, false, true]);
+  });
+
   it("refuses to default the host to a checkout that has no BUILT_AT marker", () => {
     const out = runModule(
       `import { parseCli } from ${JSON.stringify(refreshUrl)};

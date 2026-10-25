@@ -260,6 +260,7 @@ describe("SA-815a P3 - the named sites read through the resolver", () => {
       [
         "billing/addon.service.ts#enableAddon",
         "billing/addon.service.ts#uncompAddon",
+        "billing/plan-transition-config.service.ts#planAllowsFor", // row 640: the restored-GRANT coverage price
         "billing/proration.service.ts#prorationPreview",
         "billing/subscription-mutation.service.ts#adoptCheckoutAddons",
         "billing/subscription-mutation.service.ts#billUnbilledRow",

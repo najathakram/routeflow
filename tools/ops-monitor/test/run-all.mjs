@@ -18,7 +18,10 @@ if (files.length === 0) {
   console.error(`run-all: no *.test.mjs files in ${dir}`);
   process.exit(1);
 }
+// The suite is git-heavy and serial: lift the production git concurrency cap (2) for the children.
+const env = { ...process.env, OPS_GIT_CONCURRENCY: process.env.OPS_GIT_CONCURRENCY ?? "8" };
 const r = spawnSync(process.execPath, ["--test", "--test-concurrency=1", ...files], {
   stdio: "inherit",
+  env,
 });
 process.exit(r.status ?? 1);

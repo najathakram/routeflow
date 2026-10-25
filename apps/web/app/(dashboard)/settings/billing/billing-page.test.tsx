@@ -133,7 +133,9 @@ describe("BillingSettingsPage — READ_ONLY / TRIAL visibility (RO-1)", () => {
     expect(screen.getByText(/free trial has ended/i)).toBeInTheDocument();
     const choosePlanLink = screen.getByRole("link", { name: /choose a plan/i });
     expect(choosePlanLink).toHaveAttribute("href", "/choose-plan");
-    expect(screen.queryByRole("button", { name: /^cancel$/i })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /^cancel subscription$/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("RO-1 a trial tenant sees an End trial action", async () => {
@@ -171,11 +173,13 @@ describe("BillingSettingsPage — READ_ONLY / TRIAL visibility (RO-1)", () => {
 
     renderWithProviders(<BillingSettingsPage />);
 
-    expect(await screen.findByRole("button", { name: /^cancel$/i })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: /^cancel subscription$/i }),
+    ).toBeInTheDocument();
   });
 
   // F2: a READ_ONLY tenant with a stale cancelAtPeriodEnd flag must never see the
-  // "Cancellation scheduled ... Keep my plan" block — that control calls resume(), which
+  // "Cancellation scheduled ... Keep current plan" block — that control calls resume(), which
   // clears the flag but never restores the tenant (a fake resume). The ReadOnlyBanner + its
   // Choose-a-plan CTA is the only control such a tenant should see there.
   it("RO-1 a read-only tenant with cancelAtPeriodEnd never sees the resume control or Cancel", async () => {
@@ -194,7 +198,9 @@ describe("BillingSettingsPage — READ_ONLY / TRIAL visibility (RO-1)", () => {
     ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /keep my plan/i })).not.toBeInTheDocument();
     expect(screen.queryByText(/cancellation scheduled/i)).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /^cancel$/i })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /^cancel subscription$/i }),
+    ).not.toBeInTheDocument();
   });
 
   // F8: "End trial" calls a TENANT_ADMIN-only endpoint; gate it on the same admin predicate
@@ -876,7 +882,7 @@ describe("BillingSettingsPage — add-on and cancel confirmations", () => {
     const user = userEvent.setup();
     renderWithProviders(<BillingSettingsPage />);
 
-    await user.click(await screen.findByRole("button", { name: /^cancel$/i }));
+    await user.click(await screen.findByRole("button", { name: /^cancel subscription$/i }));
     expect(mockCancelMutate).not.toHaveBeenCalled();
 
     const dialog = within(await screen.findByRole("dialog"));
@@ -888,7 +894,7 @@ describe("BillingSettingsPage — add-on and cancel confirmations", () => {
     const user = userEvent.setup();
     renderWithProviders(<BillingSettingsPage />);
 
-    await user.click(await screen.findByRole("button", { name: /^cancel$/i }));
+    await user.click(await screen.findByRole("button", { name: /^cancel subscription$/i }));
     const dialog = within(await screen.findByRole("dialog"));
     await user.click(dialog.getByRole("button", { name: "Keep my plan" }));
 
@@ -907,7 +913,7 @@ describe("BillingSettingsPage — add-on and cancel confirmations", () => {
     const user = userEvent.setup();
     renderWithProviders(<BillingSettingsPage />);
 
-    await user.click(await screen.findByRole("button", { name: /^cancel$/i }));
+    await user.click(await screen.findByRole("button", { name: /^cancel subscription$/i }));
     const dialog = within(await screen.findByRole("dialog"));
     await user.click(dialog.getByRole("button", { name: "Cancel subscription" }));
 
@@ -987,7 +993,7 @@ describe("BillingSettingsPage — add-on and cancel confirmations", () => {
     await screen.findByRole("button", { name: /change plan/i });
     expect(screen.queryByRole("button", { name: "Enable" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Disable" })).toBeNull();
-    expect(screen.queryByRole("button", { name: /^cancel$/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^cancel subscription$/i })).toBeNull();
     expect(screen.getByText("Only a workspace admin can turn add-ons on or off.")).toBeVisible();
     expect(screen.getByText("Only a workspace admin can cancel the subscription.")).toBeVisible();
   });
@@ -1002,7 +1008,7 @@ describe("BillingSettingsPage — add-on and cancel confirmations", () => {
 
     expect(await screen.findByRole("button", { name: "Enable" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Disable" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^cancel$/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^cancel subscription$/i })).toBeInTheDocument();
     expect(screen.queryByText(/Only a workspace admin/)).toBeNull();
   });
 });

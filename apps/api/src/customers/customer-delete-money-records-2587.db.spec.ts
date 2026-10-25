@@ -148,7 +148,10 @@ describeDb("customer bulk deletes keep every money record (#2587, SA-516)", () =
       stub,
       { can: async () => false } as never, // EntitlementAuthority (#2241)
       stub,
-      { reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined) } as never,
+      {
+        reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined),
+        settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
+      } as never,
       stub,
     );
   });
@@ -269,7 +272,10 @@ describeDb("cleanup imported refuses a customer with delivery history (#2591, SA
       stub,
       { can: async () => false } as never, // EntitlementAuthority (#2241)
       stub,
-      { reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined) } as never,
+      {
+        reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined),
+        settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
+      } as never,
       stub,
     );
   });

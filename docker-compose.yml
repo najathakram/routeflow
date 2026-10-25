@@ -173,6 +173,8 @@ services:
       # default (10 / 5min) exhausts fast. Prod defaults (10 / 300000) unchanged.
       AUTH_LOGIN_THROTTLE_LIMIT: "1000"
       AUTH_LOGIN_THROTTLE_TTL_MS: "60000"
+      # B599: same reason for the global 100 / 60 s default throttle (local-only value).
+      DEFAULT_THROTTLE_LIMIT: "5000"
       # Platform SMTP → mailpit (local catch-all, no real mailbox involved). Mirrors
       # the Google Workspace platform transport shape (SMTP_HOST/PORT/SECURE/USER/PASS)
       # so the code path under test locally is the same one prod uses.

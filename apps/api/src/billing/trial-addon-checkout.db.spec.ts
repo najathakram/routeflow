@@ -25,6 +25,7 @@ import { BillingCronService } from "./billing-cron.service";
 import { BillingEventService } from "./billing-event.service";
 import { BILLING_EVENTS } from "./plan-catalog.constants";
 import { dropPublishedCatalog, ensurePublishedCatalog } from "../testing/ensure-published-catalog";
+import { fakeStripeProducts } from "../testing/fake-stripe-products";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -224,7 +225,7 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
       Object.assign(new Error(`No such ${what}`), { code: "resource_missing" });
     let cancelFailures = 0;
     const stripeClient = {
-      products: { create: jest.fn().mockResolvedValue({ id: "prod_new" }) },
+      products: fakeStripeProducts().products, // W-810: the owned-product path retrieves first
       subscriptionItems: {
         list: jest.fn(async (args: any) => ({
           data: itemsOf(args?.subscription).map((i) => ({ ...i })),

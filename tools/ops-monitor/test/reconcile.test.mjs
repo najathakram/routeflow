@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { reconcile, linkItemFor } from "../lib/reconcile.mjs";
 import * as REC from "../lib/reconcile.mjs";
 import { fold } from "../lib/fold.mjs";
-import { DEFAULT_CONFIG } from "../lib/config.mjs";
+import { LEGACY_CONFIG as DEFAULT_CONFIG } from "./legacy-config.mjs";
 
 const NOW = Date.parse("2026-10-19T12:00:00Z");
 const MIN = 60000;
@@ -316,6 +316,15 @@ test("fixLinksFor: only text that names the item makes a fix link", () => {
   assert.deepEqual(f({ title: "Resolves row 7", body: "Fixes B9" }), ["7", "B9"]);
 });
 
+test('fixLinksFor: the house label "Register row N" in a body names the item with no closing verb', () => {
+  const f = (o) => fixLinksFor({ branch: null, title: "", body: "", ...o }, KNOWN);
+  assert.deepEqual(f({ body: "Register row 525" }), ["525"]);
+  assert.deepEqual(f({ body: "Register rows 555/556 (W-1)" }), ["555", "556"]);
+  assert.deepEqual(f({ body: "register row: 7" }), ["7"]);
+  assert.deepEqual(f({ body: "Register row 9999" }), []); // unknown row
+  assert.deepEqual(f({ body: "Supersedes parked row 525" }), []); // plain \"row N\" stays a background mention
+});
+
 test("fixLinksFor: real background sentences in a body are not fix links", () => {
   const f = (body) =>
     fixLinksFor({ branch: null, title: "", body }, new Set(["402", "527", "1232"]));
@@ -544,7 +553,7 @@ test("bug-no-registry: a B-id in an open PR or recent branch with no registry fi
   assert.equal(find(run({ prs, branches }), "bug-no-registry:B999"), undefined);
 });
 
-test("bug-unowned-backlog: one warn per severity x domain with the B-ids; claims and branches drop out", () => {
+test("bug-unowned-backlog: ONE summary alarm with every B-id; claims and branches drop out", () => {
   const old = NOW - 20 * 24 * HOUR;
   const bugs = [
     bug("B30", { severity: "high", domain: "orders", filedAt: old }),
@@ -555,41 +564,81 @@ test("bug-unowned-backlog: one warn per severity x domain with the B-ids; claims
     bug("B35", { severity: "high", domain: "orders", filedAt: NOW - 5 * 24 * HOUR }),
   ];
   const alarms = run({ bugs });
-  const a = find(alarms, "bug-unowned-backlog:high:orders");
+  const all = alarms.filter((a) => a.kind === "bug-unowned-backlog");
+  assert.equal(all.length, 1);
+  const a = find(alarms, "bug-unowned-backlog:all");
   assert.equal(a.severity, "warn");
-  assert.deepEqual(a.items, ["B30", "B31"]);
-  assert.match(
-    a.message,
-    /^2 high Orders & sales bugs have no owner, branch or PR for more than 7 days/,
-  );
-  assert.deepEqual(find(alarms, "bug-unowned-backlog:critical:orders").items, ["B32"]);
-  assert.deepEqual(find(alarms, "bug-unowned-backlog:high:other").items, ["B33"]);
+  assert.deepEqual(a.items, ["B30", "B31", "B32", "B33"]);
+  assert.match(a.message, /^4 unowned bugs \(1 critical, 3 high\) have no owner/);
   assert.equal(find(alarms, "bug-unowned:B30"), undefined);
   assert.ok(find(alarms, "bug-unowned:B35")); // within 7 days -> per-bug
   // drop-out: a claim and a branch remove bugs from the count
   const claimed = mkState([item("B30", { claimedBy: "pc-lane" })]);
   const br = [{ branch: "fix/b31-x", date: new Date(NOW - HOUR).toISOString() }];
-  assert.equal(
-    find(run({ bugs, state: claimed, branches: br }), "bug-unowned-backlog:high:orders"),
-    undefined,
+  assert.deepEqual(
+    find(run({ bugs, state: claimed, branches: br }), "bug-unowned-backlog:all").items,
+    ["B32", "B33"],
   );
-  assert.deepEqual(find(run({ bugs, state: claimed }), "bug-unowned-backlog:high:orders").items, [
-    "B31",
-  ]);
 });
 
-test("bug-unowned-backlog groups masked security bugs on their own, not under Other", () => {
+test("bug-unowned-backlog: masked security bugs join the same single summary", () => {
   const old = NOW - 30 * 24 * HOUR;
   const bugs = [
     bug("B901", { severity: "high", sensitive: true, area: null, domain: null, filedAt: old }),
-    bug("B902", { severity: "high", sensitive: true, area: null, domain: null, filedAt: old }),
     bug("B903", { severity: "high", area: null, domain: null, filedAt: old }),
   ];
   const alarms = run({ bugs });
-  const sec = find(alarms, "bug-unowned-backlog:high:security");
-  assert.deepEqual(sec.items, ["B901", "B902"]);
-  assert.match(sec.message, /security hardening \(details private\)/);
-  assert.deepEqual(find(alarms, "bug-unowned-backlog:high:other").items, ["B903"]);
+  assert.equal(alarms.filter((a) => a.kind === "bug-unowned-backlog").length, 1);
+  assert.deepEqual(find(alarms, "bug-unowned-backlog:all").items, ["B901", "B903"]);
+});
+
+// ---- D4: PR -> item linking + merged-PR-without-item alarm ----
+test("D4 linkItemFor: row NNN in title or body, branch rNNN / rowNNN / row-NNN, trailers", () => {
+  const state = mkState([item("688"), item("704"), item("1234")]);
+  const L = (o) => linkItemFor(o, state);
+  assert.equal(L({ title: "feat: unit picker (Row 688)" }), "688");
+  assert.equal(L({ title: "x", body: "Background.\nrow 704 was the driver" }), "704");
+  assert.equal(L({ title: "x", body: "Covers rows 688/704" }), "688");
+  assert.equal(L({ title: "x", body: "Summary\n\nRow: 704\n" }), "704");
+  assert.equal(L({ title: "x", body: "Item: 688" }), "688");
+  assert.equal(L({ branch: "fix/r704-picker" }), "704");
+  assert.equal(L({ branch: "fix/row-688-y" }), "688");
+  assert.equal(L({ branch: "feat/row688" }), "688");
+  // never inside other words / versions / unknown ids / bare numbers
+  assert.equal(L({ branch: "fix/arrow704-x" }), null);
+  assert.equal(L({ branch: "chore/bump-v1.r704.0" }), null);
+  assert.equal(L({ branch: "fix/r999-x" }), null);
+  assert.equal(L({ title: "x", body: "arrow 704 and Row: 999" }), null);
+  assert.equal(L({ title: "Closes #1234" }), null);
+});
+
+test("D4 untracked-merged-pr: warn for a recent merged PR with no item; linked/old are silent", () => {
+  const state = mkState([item("688")]);
+  const m = (number, ms, over = {}) => ({
+    number,
+    title: "chore: stuff",
+    branch: "chore/stuff",
+    mergedAt: ago(ms),
+    base: "master",
+    ...over,
+  });
+  const alarms = run({
+    state,
+    prs: {
+      open: [],
+      merged: [
+        m(1, 2 * HOUR),
+        m(2, 3 * HOUR, { branch: "fix/r688-x" }),
+        m(3, 3 * HOUR, { body: "Row: 688" }),
+        m(4, 9 * 24 * HOUR),
+      ],
+    },
+  });
+  const a = find(alarms, "untracked-merged-pr:1");
+  assert.equal(a.severity, "warn");
+  assert.match(a.message, /^merged PR #1 has no work item/);
+  assert.equal(a.pr, 1);
+  for (const n of [2, 3, 4]) assert.equal(find(alarms, `untracked-merged-pr:${n}`), undefined, n);
 });
 
 // ---- H3: merge-commit trains ----
@@ -702,4 +751,215 @@ test("register-id-collision: only for a non-legacy monitor item sharing a regist
   assert.equal(a.message, "Register row R2 and a monitor item share the number; nothing merged");
   assert.equal(a.item, "R2");
   assert.equal(alarms.filter((x) => x.kind === "register-id-collision").length, 1);
+});
+
+// =====================================================================================
+// Accuracy round 2 (X1): unknown status words and incident freshness
+// =====================================================================================
+test("X1 unknown-status: an item whose register word the monitor does not know raises an info alarm", () => {
+  const state = mkState([
+    item("530", { status: "planned", statusText: "triaged (needs info)" }),
+    item("531", { status: "planned" }),
+  ]);
+  const alarms = run({ state });
+  const a = find(alarms, "unknown-status:530");
+  assert.equal(a.severity, "info");
+  assert.equal(a.item, "530");
+  assert.equal(a.message, "Row 530 has status 'triaged (needs info)' the monitor does not know");
+  assert.equal(find(alarms, "unknown-status:531"), undefined);
+});
+
+const inc = (over = {}) => ({
+  id: "INC-1015a",
+  title: "Acme billing stuck",
+  status: "open",
+  date: "2026-10-15",
+  changedAt: ago(2 * 24 * HOUR),
+  ...over,
+});
+
+test("X1 incident-stale: unknown status, or open and unchanged for more than 7 days, warns", () => {
+  const stale = find(
+    run({ incidents: [inc({ changedAt: ago(9 * 24 * HOUR) })] }),
+    "incident-stale:INC-1015a",
+  );
+  assert.equal(stale.severity, "warn");
+  assert.equal(
+    stale.message,
+    "Incident 'Acme billing stuck' has no status update for 9 days; set its **Status:** line",
+  );
+  assert.ok(find(run({ incidents: [inc({ status: "unknown" })] }), "incident-stale:INC-1015a"));
+  // fresh open, mitigated, unverified, closed: no alarm
+  for (const status of ["open", "mitigated", "suspected", "closed", "resolved"]) {
+    const over = status === "open" ? {} : { status, changedAt: ago(30 * 24 * HOUR) };
+    assert.equal(
+      find(run({ incidents: [inc(over)] }), "incident-stale:INC-1015a"),
+      undefined,
+      status,
+    );
+  }
+  assert.equal(REC.INCIDENT_FRESH_DAYS, 7);
+});
+
+test("X1 unknown-status: no alarm once the item has moved past planned or is done", () => {
+  const state = mkState([
+    item("540", { status: "building", statusText: "triaged (needs info)" }),
+    item("541", { status: "verified", statusText: "triaged (needs info)" }),
+    item("542", { status: "planned", statusText: "triaged (needs info)" }),
+  ]);
+  const alarms = run({ state });
+  assert.equal(find(alarms, "unknown-status:540"), undefined, "building: settled");
+  assert.equal(find(alarms, "unknown-status:541"), undefined, "done: settled");
+  assert.ok(find(alarms, "unknown-status:542"), "still planned: alarm stays");
+});
+
+// ---- items-stale ----
+test("items-stale: only pending register changes older than 15 min raise it; other events never hide it", () => {
+  const stale = (over) =>
+    find(
+      run({ register: { changedAt: NOW - 16 * 60_000, pending: 1, ...over } }),
+      "items-stale:register",
+    );
+  // 1 pending change + 16 min: a warning naming the count and the age in words
+  const a = stale({});
+  assert.equal(a.severity, "warn");
+  assert.match(
+    a.message,
+    /^Work items are behind the register: 1 change from 16 minutes ago has not reached the board/,
+  );
+  // register changed, 0 pending changes (notes, formatting): no alarm, however old
+  assert.equal(stale({ pending: 0, changedAt: NOW - 72 * HOUR }), undefined);
+  // pending but within the 15-minute grace: nothing yet
+  assert.equal(stale({ changedAt: NOW - 14 * 60_000 }), undefined);
+  // a day behind: an error, plural wording
+  const b = stale({ pending: 3, changedAt: NOW - 48 * HOUR });
+  assert.equal(b.severity, "error");
+  assert.match(b.message, /3 changes from 2 days ago have not reached the board/);
+  // no register time or no dry-run count (generated mode, a read failure): nothing
+  assert.equal(stale({ changedAt: null }), undefined);
+  assert.equal(stale({ pending: null }), undefined);
+});
+
+test("agoWords: minutes, hours and days in words", () => {
+  assert.equal(REC.agoWords(60_000), "1 minute");
+  assert.equal(REC.agoWords(5 * 60_000), "5 minutes");
+  assert.equal(REC.agoWords(3 * HOUR), "3 hours");
+  assert.equal(REC.agoWords(72 * HOUR), "3 days");
+});
+
+test("untracked-merged-pr skips train, docs, dependabot and bookkeeping branches", () => {
+  const mk = (number, branch, title = "chore: x") => ({
+    number,
+    branch,
+    title,
+    mergedAt: new Date(NOW - HOUR).toISOString(),
+    base: "master",
+  });
+  const merged = [
+    mk(1, "train/r9"),
+    mk(2, "docs/notes"),
+    mk(3, "dependabot/npm/x"),
+    mk(4, "chore/bookkeeping-1"),
+    mk(5, "docs/bookkeeping-2"),
+    mk(6, "chore/other", "docs: bookkeeping for #12"),
+    mk(7, "chore/real"),
+  ];
+  const got = run({ prs: { open: [], merged } })
+    .filter((a) => a.kind === "untracked-merged-pr")
+    .map((a) => a.pr);
+  assert.deepEqual(got, [7]);
+});
+
+test("unknown-lane: one warn per lane id not in config, for open items and silent-session lanes", () => {
+  const config = { ...DEFAULT_CONFIG, lanes: [{ id: "lead" }, { id: "macmini" }] };
+  const state = mkState(
+    [
+      item("5", { lane: "pc-lane" }),
+      item("6", { claimedBy: "pc-lane" }),
+      item("7", { lane: "ghost", claimedBy: "lead" }),
+      item("8", { lane: "pc-lane", status: "verified" }),
+      item("9", { lane: "macmini" }),
+      item("10", { lane: "lead", claimedBy: "macmini" }),
+    ],
+    {
+      lanes: new Map([
+        [
+          "old-box",
+          { id: "old-box", lastEventAt: NOW - HOUR, lastEventKind: "heartbeat", claims: [] },
+        ],
+        ["lead", { id: "lead", lastEventAt: NOW - HOUR, lastEventKind: "heartbeat", claims: [] }],
+      ]),
+    },
+  );
+  const alarms = run({ state, config }).filter((a) => a.kind === "unknown-lane");
+  assert.deepEqual(alarms.map((a) => a.id).sort(), [
+    "unknown-lane:ghost",
+    "unknown-lane:old-box",
+    "unknown-lane:pc-lane",
+  ]);
+  const pc = find(alarms, "unknown-lane:pc-lane");
+  assert.equal(pc.severity, "warn");
+  assert.equal(pc.lane, "pc-lane");
+  assert.match(pc.message, /pc-lane/);
+  assert.match(pc.message, /2 open item/);
+  assert.match(pc.message, /5/);
+  assert.doesNotMatch(pc.message, /\b8\b/); // done item ignored
+  assert.match(pc.suggest, /rf item edit 5 --lane <known lane>/);
+  assert.match(pc.suggest, /ops\/config\.json/);
+  assert.match(find(alarms, "unknown-lane:old-box").message, /heartbeats\/events/);
+});
+
+test("unknown-lane: message names at most three item ids", () => {
+  const config = { ...DEFAULT_CONFIG, lanes: [{ id: "lead" }] };
+  const state = mkState(["1", "2", "3", "4", "5"].map((i) => item(i, { lane: "zz" })));
+  const a = find(run({ state, config }), "unknown-lane:zz");
+  assert.match(a.message, /5 open item/);
+  assert.match(a.message, /1, 2, 3/);
+  assert.doesNotMatch(a.message, /\b4\b/);
+});
+
+test("unknown-lane: items on known lanes and done items raise nothing", () => {
+  const config = { ...DEFAULT_CONFIG, lanes: [{ id: "lead" }, { id: "macmini" }] };
+  const state = mkState([
+    item("1", { lane: "lead" }),
+    item("2", { claimedBy: "macmini" }),
+    item("3", { lane: "gone", status: "verified" }),
+    item("4"),
+  ]);
+  const alarms = run({ state, config }).filter((a) => a.kind === "unknown-lane");
+  assert.deepEqual(alarms, []);
+});
+
+test("unknown-lane: the lanes arm is bounded to 7 days; open items are not", () => {
+  const config = { ...DEFAULT_CONFIG, lanes: [{ id: "lead" }] };
+  const L = (id, at, kind = "note") => [
+    id,
+    { id, lastEventAt: at, lastEventKind: kind, claims: [] },
+  ];
+  const state = mkState([item("5", { claimedBy: "ancient" })], {
+    lanes: new Map([
+      L("old-only", NOW - 8 * 24 * HOUR),
+      L("fresh", NOW - 24 * HOUR, "heartbeat"),
+      L("ancient", NOW - 90 * 24 * HOUR),
+    ]),
+  });
+  const ids = run({ state, config })
+    .filter((a) => a.kind === "unknown-lane")
+    .map((a) => a.id)
+    .sort();
+  assert.deepEqual(ids, ["unknown-lane:ancient", "unknown-lane:fresh"]);
+});
+
+test("unknown-lane: aliased lane ids resolve to their target and raise nothing", async () => {
+  const { DEFAULT_CONFIG: LIVE } = await import("../lib/config.mjs");
+  const state = mkState([
+    item("1", { lane: "pc-lane" }),
+    item("2", { claimedBy: "coordinator" }),
+    item("3", { lane: "ops-monitor" }),
+    item("4", { lane: "ghost" }),
+  ]);
+  const ids = run({ state, config: LIVE })
+    .filter((a) => a.kind === "unknown-lane")
+    .map((a) => a.id);
+  assert.deepEqual(ids, ["unknown-lane:ghost"]);
 });

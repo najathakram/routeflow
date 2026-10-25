@@ -251,7 +251,7 @@ function StockTable({
               onSort={requestSort}
               className="px-4 py-3 font-medium"
             >
-              Current Stock
+              Current stock
             </SortableTh>
             <SortableTh
               name="unitsPerBox"
@@ -270,8 +270,8 @@ function StockTable({
               className="px-4 py-3 font-medium"
             >
               <span className="inline-flex items-center gap-1">
-                Unit Cost
-                <span title="Shows standard cost for STANDARD-costing products, or weighted average cost for AVCO/FIFO/LIFO. Updates automatically when vendor bills are received.">
+                Unit cost
+                <span title="Shows standard cost for products on standard costing, or weighted average cost for AVCO, FIFO and LIFO. Updates automatically when supplier bills are received.">
                   <Info className="h-3 w-3 text-navy/30 cursor-help" />
                 </span>
               </span>
@@ -283,7 +283,7 @@ function StockTable({
               onSort={requestSort}
               className="px-4 py-3 font-medium"
             >
-              Total Value
+              Total value
             </SortableTh>
             <th className="px-4 py-3" />
           </tr>
@@ -520,7 +520,7 @@ function AdjustStockModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
       <div className="w-full max-w-md rounded-xl bg-white shadow-xl">
         <div className="border-b border-surface-border px-6 py-4">
-          <h2 className="text-base font-semibold text-navy">Adjust Stock</h2>
+          <h2 className="text-base font-semibold text-navy">Adjust stock</h2>
         </div>
         <form onSubmit={handleSubmit} className="space-y-4 px-6 py-4">
           <div>
@@ -692,7 +692,7 @@ function AdjustStockModal({
               disabled={!form.productId || !reasonOk}
               loading={recordAdjustment.isPending}
             >
-              Save Adjustment
+              Save adjustment
             </Button>
           </div>
         </form>
@@ -731,7 +731,7 @@ function CreateSupplierModal({ onClose }: { onClose: () => void }) {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
       <div className="w-full max-w-md rounded-xl bg-white shadow-xl">
         <div className="border-b border-surface-border px-6 py-4">
-          <h2 className="text-base font-semibold text-navy">Add Supplier</h2>
+          <h2 className="text-base font-semibold text-navy">Add supplier</h2>
         </div>
         <form onSubmit={handleSubmit} className="space-y-4 px-6 py-4">
           {[
@@ -765,7 +765,7 @@ function CreateSupplierModal({ onClose }: { onClose: () => void }) {
               Cancel
             </Button>
             <Button type="submit" loading={createSupplier.isPending}>
-              Add Supplier
+              Add supplier
             </Button>
           </div>
         </form>
@@ -792,10 +792,10 @@ function ReorderSettingsModal({ item, onClose }: { item: ForecastItem; onClose: 
       },
       {
         onSuccess: () => {
-          toast({ title: "Reorder settings saved.", variant: "success" });
+          toast({ title: "Reorder settings saved", variant: "success" });
           onClose();
         },
-        onError: () => toast({ title: "Failed to save settings.", variant: "error" }),
+        onError: () => toast({ title: "Failed to save settings", variant: "error" }),
       },
     );
   };
@@ -804,7 +804,7 @@ function ReorderSettingsModal({ item, onClose }: { item: ForecastItem; onClose: 
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
       <div className="w-full max-w-sm rounded-xl bg-white shadow-xl">
         <div className="flex items-center justify-between border-b border-surface-border px-6 py-4">
-          <h2 className="text-base font-semibold text-navy">Reorder Settings</h2>
+          <h2 className="text-base font-semibold text-navy">Reorder settings</h2>
           <button
             onClick={onClose}
             className="rounded p-1 text-navy/70 hover:bg-surface-raised hover:text-navy"
@@ -949,7 +949,7 @@ function ForecastingTab({
   return (
     <>
       <div className="mb-4 flex items-center justify-between">
-        <h2 className="text-base font-semibold text-navy">Demand Forecasting</h2>
+        <h2 className="text-base font-semibold text-navy">Demand forecasting</h2>
         {items.filter((i) => i.needsReorder).length > 0 && (
           <span className="rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-medium text-red-700">
             {items.filter((i) => i.needsReorder).length} items need reorder
@@ -970,7 +970,7 @@ function ForecastingTab({
               <tr>
                 {[
                   "Product",
-                  "Current Stock",
+                  "Current stock",
                   "Avg Daily Sales",
                   "Days Remaining",
                   "Reorder Point",
@@ -1014,7 +1014,7 @@ function ForecastingTab({
                   <td className="px-4 py-3">
                     {item.needsReorder ? (
                       <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-medium text-red-700">
-                        Reorder Now
+                        Reorder now
                       </span>
                     ) : (
                       <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-medium text-green-700">
@@ -1215,7 +1215,7 @@ function RecomputeModal({ onClose }: { onClose: () => void }) {
             Cancel
           </Button>
           <Button onClick={handleApply} loading={recompute.isPending} disabled={!preview}>
-            Apply Recompute
+            Apply recompute
           </Button>
         </>
       }
@@ -1540,7 +1540,7 @@ export default function InventoryPage() {
           <Info className="mt-0.5 h-4 w-4 shrink-0 text-brand-500" />
           <p className="text-sm text-brand-700">
             Many products show zero stock because stock quantities were not included in the initial
-            import. Use <strong>Quick Restock</strong> or record a purchase receipt to assign stock
+            import. Use <strong>Quick restock</strong> or record a purchase receipt to assign stock
             levels.
           </p>
         </div>
@@ -1787,7 +1787,7 @@ export default function InventoryPage() {
                   variant="secondary"
                   leftIcon={<DollarSign className="h-4 w-4" />}
                   onClick={() => setShowBulkCostModal(true)}
-                  title={`Set a cost basis for the ${missingCostCount} product(s) without one`}
+                  title={`Set a cost basis for ${missingCostCount} ${missingCostCount === 1 ? "product" : "products"} without one`}
                 >
                   {`Set Costs (${missingCostCount})`}
                 </Button>
@@ -1801,7 +1801,7 @@ export default function InventoryPage() {
                   setShowAdjustModal(true);
                 }}
               >
-                Adjust Stock
+                Adjust stock
               </Button>
               <Button
                 size="sm"
@@ -1809,7 +1809,7 @@ export default function InventoryPage() {
                 leftIcon={<Plus className="h-4 w-4" />}
                 onClick={() => setShowAddProductModal(true)}
               >
-                Add Product
+                Add product
               </Button>
               <Button
                 size="sm"
@@ -1817,14 +1817,14 @@ export default function InventoryPage() {
                 leftIcon={<Sparkles className="h-4 w-4" />}
                 onClick={() => setShowScanModal(true)}
               >
-                Scan Invoice
+                Scan invoice
               </Button>
               <Button
                 size="sm"
                 leftIcon={<Plus className="h-4 w-4" />}
                 onClick={() => setShowPurchaseModal(true)}
               >
-                Quick Restock
+                Quick restock
               </Button>
             </div>
           </div>
@@ -1869,7 +1869,7 @@ export default function InventoryPage() {
               leftIcon={<Plus className="h-4 w-4" />}
               onClick={() => setShowSupplierModal(true)}
             >
-              Add Supplier
+              Add supplier
             </Button>
           </div>
 

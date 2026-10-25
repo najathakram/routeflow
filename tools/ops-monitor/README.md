@@ -35,6 +35,14 @@ npm run ops:test               # node tools/ops-monitor/test/run-all.mjs
 Views are off by default (never in cloud). Exactly one machine, the PC monitor, runs with
 `--views` as the single writer; every other monitor stays read-only. `rf views` stays manual.
 
+The `--views` monitor also runs the register sync (register rows → events): first pass after 60 s,
+then every 5 min. It waits up to 45 s for the specs lock (the collector holds it for each 30-second
+pull), and logs every pass that appends nothing, with the reason (busy, pull failed, generated mode,
+0 changes), once per change (a busy streak logs at its first pass, then every 6th). When a dry
+register sync (read-only, so the cloud runs it too) still finds changes to append and the register's
+last commit is more than 15 min old, every monitor raises the `items-stale` alarm and shows a banner:
+"Work items are behind the register: N changes from … ago have not reached the board".
+
 The monitor is an always-on process on the PC (owner approved; no scheduled task). Start it in a
 terminal tab and leave it. It needs `git`, `gh` (authenticated) and, optionally, `railway`.
 
@@ -103,3 +111,36 @@ lib/turn-actions.mjs  hook bookkeeping                    server.mjs + public/  
 
 Zero dependencies (Node built-ins only). Security-sensitive registry bugs are masked to "Security
 hardening item (details machine-local)" everywhere. No client names belong in this directory.
+
+## Client names never leave the machine
+
+The names and slugs of live tenants must not appear in any git repo, the page, the brief, the
+generated views or `last-snapshot.json`. They are listed in `<opsHome>/client-names.json` (a JSON
+array of strings, or `{ "names": [...] }`; machine-local, outside both repos, filled in by the
+lead). Online the same array comes from the `CLIENT_NAMES_JSON` secret variable, and the cloud
+service refuses to start (exit 1) when the list is empty. `lib/mask.mjs` replaces each name
+(case-insensitive, whole word, longest first) with "a live business": the server masks every
+snapshot string before it is broadcast, served or saved (reloading the file when it changes,
+checked at most every 60 s), and `rf brief`, the session hook and the views writer use the same
+list. The specs `ops/config.json` no longer takes a `clientNames` list.
+
+A file that exists but does not parse (or holds no list) is an error, never an empty list: the cloud
+service, `--lan` and `--views` (which writes to git) refuse to start (exit 1, the message names
+`client-names.json`, never its contents); plain localhost starts and warns once; the brief hook and
+`rf brief` print only "ops brief disabled: client-names.json unreadable". A file that breaks after a
+good load keeps the last good list. Names are masked from the collector inputs _before_ the
+snapshot is built (and again after), and each text is masked before it is cut or clipped, so a
+name is never left as a fragment; incident ids are date + index only (`INC-1015a`), never a file
+slug.
+
+- `.claude/hooks/ops-status.mjs` (Stop + SessionStart): writes `<opsHome>/status/<session>.json`
+  (lane/title, worktree, branch, head, open PR, last assistant message first 300 chars; home dirs
+  become `~`, token/key-like strings and env values are redacted, client names masked; atomic, fail
+  open, 2 s budget, prunes files older than 7 days). On SessionStart it prints one line per other
+  status file on the machine (the lane brief only with `RF_STATUS_BRIEF=1`). `rf status-sync` (the
+  2-min timer in `--views` mode, waiting up to 45 s for the specs lock) pulls the clone, then turns
+  THIS machine's changed files (< 24 h old) into `heartbeat` events in its own `events/<machine>/`
+  file, in one lock hold; a failed pull appends nothing. A change of branch / PR / head / lane /
+  title emits at once; message-only activity emits one keep-alive per session per 10 min; at most
+  20 events per run. `rf brief --refresh` appends locally without pushing. Heartbeats feed lane activity (so `lane-silent` sees them) and never touch items; the
+  snapshot's `machines` list (3 days) drives the "Machines and lanes" panel.

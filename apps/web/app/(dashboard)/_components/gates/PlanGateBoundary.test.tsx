@@ -244,8 +244,8 @@ describe("PlanGateBoundary (B449)", () => {
           <GatedPage onMount={jest.fn()} />
         </PlanGateBoundary>,
       );
-      expect(mockSetTitle).toHaveBeenCalledWith("Supplier Bills");
-      expect(screen.getByText("Supplier Bills isn't on the Lite plan.")).toBeInTheDocument();
+      expect(mockSetTitle).toHaveBeenCalledWith("Supplier bills");
+      expect(screen.getByText("Supplier bills isn't on the Lite plan.")).toBeInTheDocument();
     });
 
     it("marks the pathname locked while rendering the lock, and releases it on unmount", () => {

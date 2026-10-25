@@ -88,7 +88,11 @@ describe("SA-740 §1: captureInTx source sale + locks", () => {
         { provide: RouteFlowGateway, useValue: { emitCreditNoteCreated: jest.fn() } },
         {
           provide: RegulatedLedgerService,
-          useValue: { reverseReturnEntries: jest.fn(), unreverseReturnEntries: jest.fn() },
+          useValue: {
+            reverseReturnEntries: jest.fn(),
+            unreverseReturnEntries: jest.fn(),
+            settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
+          },
         },
         { provide: CreditNotesService, useValue: {} },
         {

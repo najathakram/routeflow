@@ -786,8 +786,15 @@ export class PlatformAdminService {
                 ...(before.readOnlyReason === PAYMENT_OVERDUE_REASON
                   ? { readOnlyReason: null }
                   : {}),
-                // F4: an admin-set READ_ONLY says so (never null), so a renewal can tell it from a lapsed trial
-                ...(dto.status === READ_ONLY_STATUS ? { readOnlyReason: ADMIN_SET_REASON } : {}),
+                // F4: an admin-set READ_ONLY says so (never null), so a renewal can tell it from a lapsed trial.
+                // SA-832 / 453: and so does an admin SUSPENDED (billing's own suspensions carry no reason), so the
+                // shared payment predicate (paymentReinstatable) never lifts it. SA-832b: an admin CANCELLED too, so it
+                // is never mistaken for a Stripe churn (stripe_cancelled), which a payment / win-back link CAN lift.
+                ...(dto.status === READ_ONLY_STATUS ||
+                dto.status === "SUSPENDED" ||
+                dto.status === "CANCELLED"
+                  ? { readOnlyReason: ADMIN_SET_REASON }
+                  : {}),
               },
             });
       // Same exit, local side: a PAUSED tenant moved to SUSPENDED / CANCELLED / TRIAL / ... by an admin loses its
@@ -2246,6 +2253,12 @@ export class PlatformAdminService {
     if (isPricePushFailure(pushed)) {
       // Stripe may still have applied it (a lost response is re-read, but a cached idempotent failure
       // is not): check the subscription in Stripe before retrying.
+      if (pushed.reason === "stripe_update_rejected") {
+        // W-810: Stripe said no; the same request gets the same answer until its cause (key, subscription state) is fixed.
+        throw new ServiceUnavailableException(
+          `Stripe refused the change: ${pushed.detail ?? "no reason given"}. Sending the same request again will be refused again, so fix the cause first (for example the Stripe key or the subscription's state). The price override was NOT saved.`,
+        );
+      }
       throw new ServiceUnavailableException(
         `Stripe did not confirm the price change (${pushed.reason}) — the price override was NOT saved. ` +
           `Check the subscription in Stripe, then retry.`,

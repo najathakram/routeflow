@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import { unwrapListEnvelope } from "../order-templates-logic";
 import type { OrderTemplateItem } from "@routeflow/types";
+import { splitIdAck, type IdWithAck } from "../restriction-warning";
 export type { OrderTemplateItem } from "@routeflow/types";
 
 // ─── Types (mirror apps/web/lib/api/order-templates.ts) ─────────────────────────
@@ -62,8 +63,15 @@ function invalidateOrderTemplates(qc: ReturnType<typeof useQueryClient>, id: str
  */
 export function useGenerateTemplateOrder() {
   const qc = useQueryClient();
-  return useMutation<{ id: string }, Error, string>({
-    mutationFn: (id) => apiClient.post(`/order-templates/${id}/generate`).then((r) => r.data),
+  return useMutation<{ id: string }, Error, IdWithAck>({
+    mutationFn: (v) => {
+      const { id, ack } = splitIdAck(v); // row 510 Q2: a manual Generate is judged for the clicker
+      return (
+        ack
+          ? apiClient.post(`/order-templates/${id}/generate`, ack)
+          : apiClient.post(`/order-templates/${id}/generate`)
+      ).then((r) => r.data);
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["order-templates"] });
       qc.invalidateQueries({ queryKey: ["orders"] });

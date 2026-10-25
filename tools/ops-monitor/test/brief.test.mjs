@@ -8,7 +8,8 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { fold } from "../lib/fold.mjs";
-import { DEFAULT_CONFIG, loadConfig } from "../lib/config.mjs";
+import { loadConfig } from "../lib/config.mjs";
+import { LEGACY_CONFIG as DEFAULT_CONFIG } from "./legacy-config.mjs";
 import {
   ageWords,
   etaWords,
@@ -63,7 +64,7 @@ function baseEvents() {
     }),
     mk("700", {
       type: "incident",
-      priority: "P1",
+      priority: "P0",
       title: "Checkout page returns errors for some tenants",
       status: "planned",
     }),
@@ -126,7 +127,7 @@ test("brief: sections, plain words, ids only in brackets", () => {
   assert.match(text, /Customers are charged twice on boxed lines \[525\] · Urgent · Being built/);
   assert.match(
     text,
-    /Checkout page returns errors for some tenants \[700\] · High · Incident · Planned/,
+    /Checkout page returns errors for some tenants \[700\] · Urgent · Incident · Planned/,
   );
   assert.match(
     text,
@@ -193,7 +194,8 @@ test("brief: caps hold (5 hurting, <= 25 lines, trims the low-priority sections 
   const state = stateOf(events);
   const full = renderBrief(state, { lane: "pc-lane", now: NOW, config: DEFAULT_CONFIG });
   assert.ok(full.split("\n").length <= 25, `lines ${full.split("\n").length}`);
-  const hurt = full.split("\n").filter((l) => /\[(525|8\d\d)\] · Urgent/.test(l));
+  const hurtBlock = full.split("Hurting now")[1].split(/^\S.*:$/m)[0];
+  const hurt = hurtBlock.split("\n").filter((l) => /\[(525|700|8\d\d)\] · Urgent/.test(l));
   assert.equal(hurt.length, 5);
   assert.match(full, /Hurting now \(showing 5 of 14\)/);
   assert.match(full, /Waiting on the owner \(showing 5 of 10\)/);
@@ -480,6 +482,21 @@ test("lanes-local: Windows paths compare case-insensitively with either slash", 
   }
 });
 
+test("lanes-local: macOS paths compare case-insensitively (APFS default)", () => {
+  const home = tmp("rf-lanes-mac-");
+  try {
+    setLane(home, "/Volumes/X/Code/RouteFlow", "mm-landing", "darwin");
+    assert.equal(
+      laneForCwd("/volumes/x/code/routeflow/apps", {}, { home, platform: "darwin" }),
+      "mm-landing",
+    );
+    assert.equal(normalizeCwd("/A/B/", "darwin"), "/a/b");
+    assert.equal(normalizeCwd("/A/B/", "linux"), "/A/B");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test("lanes-local: a damaged lanes.json reads as empty", () => {
   const home = tmp("rf-lanes-bad-");
   try {
@@ -495,6 +512,8 @@ test("lanes-local: a damaged lanes.json reads as empty", () => {
 function cliEnv(root) {
   const specs = join(root, "specs");
   mkdirSync(join(specs, "events", "testbox"), { recursive: true });
+  mkdirSync(join(specs, "ops"), { recursive: true });
+  writeFileSync(join(specs, "ops", "config.json"), JSON.stringify(DEFAULT_CONFIG)); // legacy lanes
   const env = {
     ...process.env,
     RF_OPS_HOME: join(root, "home"),
@@ -585,6 +604,80 @@ test("cli: brief without a clone is an error; --quiet --refresh never prints and
   }
 });
 
+test("cli: rf brief masks the names in <opsHome>/client-names.json, in the brief and the since line", () => {
+  const root = tmp("rf-brief-mask-");
+  try {
+    const { env, specs } = cliEnv(root);
+    const checkout = join(root, "checkout");
+    mkdirSync(checkout);
+    const evs = [
+      mk("810", {
+        type: "feature",
+        priority: "P1",
+        status: "planned",
+        title: "Seed",
+        lane: "lead",
+      }),
+      mk("811", {
+        type: "bug",
+        priority: "P0",
+        status: "building",
+        title: "x",
+        problem: "acme-foods is charged twice",
+        lane: "lead",
+      }),
+    ];
+    writeFileSync(
+      join(specs, "events", "testbox", "2026-10-19.jsonl"),
+      `${evs.map((e) => JSON.stringify(e)).join("\n")}\n`,
+    );
+    mkdirSync(join(root, "home"), { recursive: true });
+    writeFileSync(join(root, "home", "client-names.json"), JSON.stringify(["acme-foods"]));
+    assert.equal(rf(env, checkout, "whoami", "--lane", "lead").status, 0);
+    const out = rf(env, checkout, "brief");
+    assert.equal(out.status, 0, out.stderr);
+    assert.doesNotMatch(out.stdout, /acme-foods/i);
+    assert.match(out.stdout, /a live business is charged twice/);
+    const since = rf(env, checkout, "brief", "--since", evs[0].id, "--json");
+    assert.equal(since.status, 0, since.stderr);
+    assert.doesNotMatch(since.stdout, /acme-foods/i);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("cli: rf brief with a client-names.json that does not parse prints one note and no item text", () => {
+  const root = tmp("rf-brief-badnames-");
+  try {
+    const { env, specs } = cliEnv(root);
+    const checkout = join(root, "checkout");
+    mkdirSync(checkout);
+    const evs = [
+      mk("812", {
+        type: "bug",
+        priority: "P0",
+        status: "building",
+        title: "x",
+        problem: "acme-foods is charged twice",
+        lane: "lead",
+      }),
+    ];
+    writeFileSync(
+      join(specs, "events", "testbox", "2026-10-19.jsonl"),
+      `${evs.map((e) => JSON.stringify(e)).join("\n")}\n`,
+    );
+    mkdirSync(join(root, "home"), { recursive: true });
+    writeFileSync(join(root, "home", "client-names.json"), '["acme-foods", nope');
+    assert.equal(rf(env, checkout, "whoami", "--lane", "lead").status, 0);
+    const out = rf(env, checkout, "brief");
+    assert.equal(out.status, 0, out.stderr);
+    assert.equal(out.stdout.trim(), "ops brief disabled: client-names.json unreadable");
+    assert.doesNotMatch(out.stdout + out.stderr, /charged twice|acme/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("cli: claim without --lane takes the lane recorded for the directory", () => {
   const root = tmp("rf-brief-claim-");
   try {
@@ -619,7 +712,7 @@ test("cli: claim without --lane takes the lane recorded for the directory", () =
 });
 
 // ── client-name masking ─────────────────────────────────────────────────────
-test("brief: clientNames (acme placeholders) are masked in every line, incident titles included", () => {
+test("brief: clientNames option (acme placeholders) is masked in every line, incident titles included", () => {
   const events = [
     mk("800", {
       type: "incident",
@@ -635,15 +728,15 @@ test("brief: clientNames (acme placeholders) are masked in every line, incident 
       lane: "pc-lane",
     }),
   ];
-  const config = { ...DEFAULT_CONFIG, clientNames: ["acme-foods", "Acme Foods"] };
-  const text = renderBrief(stateOf(events), { lane: "pc-lane", now: NOW, config });
+  const clientNames = ["acme-foods", "Acme Foods"];
+  const text = renderBrief(stateOf(events), { lane: "pc-lane", now: NOW, clientNames });
   assert.match(text, /- a live business: add-ons off \[800\]/);
   assert.match(text, /Reprice for a live business and ACME-FOODS2/); // whole word only
   assert.doesNotMatch(text, /acme-foods: /i);
   assert.doesNotMatch(text, /Acme Foods/);
   // no list / empty list / default config: nothing is masked
-  for (const c of [DEFAULT_CONFIG, { ...DEFAULT_CONFIG, clientNames: [] }, null, {}]) {
-    const plain = renderBrief(stateOf(events), { lane: "pc-lane", now: NOW, config: c });
+  for (const c of [undefined, [], null]) {
+    const plain = renderBrief(stateOf(events), { lane: "pc-lane", now: NOW, clientNames: c });
     assert.match(plain, /acme-foods: add-ons off \[800\]/);
     assert.doesNotMatch(plain, /a live business/);
   }
@@ -657,23 +750,161 @@ test("since: clientNames are masked in the since line too; regex characters in a
     ...before,
     E("item.edit", "R9", { fields: { eta: "10-26" } }, "2026-10-19T12:02:00Z"),
   ];
-  const config = { ...DEFAULT_CONFIG, clientNames: ["acme.co (pilot)"] };
-  const masked = renderSince(stateOf(before), stateOf(after), { nowMs: NOW, config });
+  const masked = renderSince(stateOf(before), stateOf(after), {
+    nowMs: NOW,
+    clientNames: ["acme.co (pilot)"],
+  });
   const plain = renderSince(stateOf(before), stateOf(after), { nowMs: NOW });
   assert.match(plain, /acme\.co \(pilot\)/);
   assert.match(masked, /a live business ETA moved/);
   assert.doesNotMatch(masked, /acme/);
 });
 
-test("config: DEFAULT_CONFIG.clientNames is an empty list and loadConfig reads the specs list", () => {
-  assert.deepEqual(DEFAULT_CONFIG.clientNames, []);
+test("config: the specs config never holds client names (lead ruling 10-19)", () => {
+  assert.equal("clientNames" in DEFAULT_CONFIG, false);
   const dir = mkdtempSync(join(tmpdir(), "rf-cn-"));
   try {
     mkdirSync(join(dir, "ops"), { recursive: true });
     writeFileSync(join(dir, "ops", "config.json"), JSON.stringify({ clientNames: ["acme-foods"] }));
-    assert.deepEqual(loadConfig(dir).clientNames, ["acme-foods"]);
-    assert.deepEqual(loadConfig(join(dir, "none")).clientNames, []);
+    assert.equal(
+      "clientNames" in loadConfig(dir),
+      false,
+      "a stray list in the specs file is dropped",
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("brief: hurting now follows snapshot.problems, else open P0 bugs that are not latent", () => {
+  const state = stateOf([
+    mk("901", { type: "bug", priority: "P0", status: "building", title: "live one" }),
+    mk("902", {
+      type: "bug",
+      priority: "P0",
+      status: "building",
+      title: "latent one",
+      harm: "latent",
+    }),
+  ]);
+  const fallback = renderBrief(state, { lane: "lead", now: NOW, config: DEFAULT_CONFIG });
+  assert.match(fallback, /\[901\]/);
+  assert.doesNotMatch(fallback, /\[902\]/);
+  const fromSnap = renderBrief(state, {
+    lane: "lead",
+    now: NOW,
+    config: DEFAULT_CONFIG,
+    snapshot: { generatedAt: iso(NOW), problems: ["902"] },
+  });
+  assert.match(fromSnap, /\[902\]/);
+  assert.doesNotMatch(fromSnap, /\[901\]/);
+});
+
+// ── accuracy round 2 follow-up: snapshot-only items, mask before cut, page-rule fallbacks ──
+test("brief: an id in snapshot.problems the fold does not know (an incident file) uses the snapshot's own item", () => {
+  const state = stateOf([
+    mk("901", { type: "bug", priority: "P0", status: "building", title: "live one" }),
+  ]);
+  const inc = {
+    id: "INC-1015a",
+    title: "Checkout outage",
+    type: "incident",
+    priority: "P0",
+    status: "planned",
+  };
+  const more = [2, 3, 4, 5, 6].map((n) => ({
+    id: `INC-101${n}a`,
+    title: `Incident ${n}`,
+    type: "incident",
+    priority: "P1",
+    status: "planned",
+  }));
+  const snapshot = {
+    generatedAt: iso(NOW),
+    problems: ["901", "INC-1015a", ...more.map((m) => m.id)],
+    items: [inc, ...more],
+  };
+  const text = renderBrief(state, { lane: "lead", now: NOW, config: DEFAULT_CONFIG, snapshot });
+  assert.match(text, /Checkout outage \[INC-1015a\] · Urgent · Incident/);
+  assert.match(text, /Hurting now \(showing 5 of 7\)/);
+  // one snapshot-only id: it still counts and shows
+  const one = renderBrief(state, {
+    lane: "lead",
+    now: NOW,
+    config: DEFAULT_CONFIG,
+    snapshot: { generatedAt: iso(NOW), problems: ["INC-1015a"], items: [inc] },
+  });
+  assert.match(one, /\[INC-1015a\]/);
+  assert.doesNotMatch(one, /showing/);
+});
+
+test("brief: names are masked before any line is cut (headline 110, train label 40, snapshot queue rows)", () => {
+  const pad = "x".repeat(96);
+  const name = "acme-foods-distribution";
+  const state = stateOf([
+    mk("910", {
+      type: "bug",
+      priority: "P0",
+      status: "building",
+      title: "t",
+      problem: `${pad} ${name} is down for everyone`,
+    }),
+  ]);
+  const text = renderBrief(state, {
+    lane: "lead",
+    now: NOW,
+    config: DEFAULT_CONFIG,
+    clientNames: [name],
+    snapshot: {
+      generatedAt: iso(NOW),
+      problems: ["910"],
+      ownerQueue: [{ id: "q1", title: `${"y".repeat(100)} ${name} wants a call`, state: "open" }],
+    },
+  });
+  assert.doesNotMatch(text, /acme/i, "no fragment of the name survives a clip");
+  assert.match(text, /\[910\]/);
+  const before = [mk("R7", { type: "release", status: "planned", title: "R", eta: "10-25" })];
+  const after = [
+    mk("R7", { type: "release", status: "planned", title: "R", eta: "10-25" }),
+    E(
+      "item.edit",
+      "R7",
+      { fields: { trainLabel: `${"z".repeat(32)} ${name}`, eta: "10-26" } },
+      "2026-10-19T12:02:00Z",
+    ),
+  ];
+  const since = renderSince(stateOf(before), stateOf(after), {
+    nowMs: NOW,
+    clientNames: [name],
+  });
+  assert.doesNotMatch(since, /acme/i);
+});
+
+test("brief fallback (no snapshot): owner section = open decisions only; hurting = open P0/P1 bugs whose harm is not latent/none", () => {
+  const state = stateOf([
+    mk("920", { type: "decision", priority: "P1", status: "planned", title: "pick the vendor" }),
+    mk("921", { type: "chore", lane: "owner", status: "planned", title: "Run the EAS build" }),
+    mk("922", {
+      type: "feature",
+      status: "planned",
+      title: "with an ask",
+      ownerAsk: "approve the copy?",
+    }),
+    mk("923", { type: "bug", priority: "P1", status: "building", title: "p1 live bug" }),
+    mk("924", {
+      type: "bug",
+      priority: "P1",
+      status: "building",
+      title: "p1 latent bug",
+      harm: "latent",
+    }),
+    mk("925", { type: "bug", priority: "P2", status: "building", title: "p2 bug" }),
+  ]);
+  const text = renderBrief(state, { lane: "lead", now: NOW, config: DEFAULT_CONFIG });
+  assert.match(text, /\[920\]/);
+  assert.doesNotMatch(text, /\[921\]/, "an owner task is not a decision");
+  assert.doesNotMatch(text, /\[922\]/);
+  assert.match(text, /p1 live bug \[923\]/);
+  assert.doesNotMatch(text, /\[924\]/);
+  assert.doesNotMatch(text, /\[925\]/);
 });

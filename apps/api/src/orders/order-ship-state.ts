@@ -30,6 +30,7 @@ import { appendOrderRevisionInTx } from "./order-revisions";
 import { type buildStatusUpdateData, writeStatusIfUnchanged } from "./order-status-claim";
 import { billsAtShipment } from "./order-status-invoicing";
 import { stampDeliveredInFull } from "./delivered-stamp";
+import { completeOfficeEvidencedLines } from "./office-evidence-completion";
 import {
   type OfficeDeliveryLine,
   leavePartialDeliveryInTx,
@@ -125,7 +126,13 @@ export async function updateStatusWithShipMarker(
     return prisma.tenantTransaction(async (tx) => {
       const row = await writeStatusIfUnchanged(tx, order.id, order.status, data);
       await stampDeliveredInFull(tx, order.id, "entry");
-      return row;
+      // Row 587 (SA-833): the lines the office recorded as partly delivered are completed, audited, and named in the response.
+      const officeCompletedLines = await completeOfficeEvidencedLines(tx, order.id, {
+        tenantId: order.tenantId ?? prisma.getTenantId(),
+        userId: user?.sub ?? null,
+        impersonatedBy: user?.impersonatedBy ?? null,
+      });
+      return officeCompletedLines.length ? { ...row, officeCompletedLines } : row;
     });
   }
   return prisma.tenantTransaction(async (tx) => {

@@ -29,7 +29,7 @@ test("compliance pack follows the tobacco_dealer addon; /tobacco redirects", asy
   // Scope to <main>: the dashboard shell's top bar renders the page title as an
   // <h1> too, so an unscoped heading locator matches twice (strict-mode violation).
   await expect(
-    page.getByRole("main").getByRole("heading", { name: "Regulated Items" }),
+    page.getByRole("main").getByRole("heading", { name: "Regulated items" }),
   ).toBeVisible();
   if (enabled) {
     await expect(page.getByText(/isn't enabled for this workspace/i)).toHaveCount(0);

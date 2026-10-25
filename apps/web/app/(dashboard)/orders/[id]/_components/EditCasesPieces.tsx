@@ -4,6 +4,7 @@ import * as React from "react";
 import { unitWords } from "@routeflow/pricing";
 import { CasesPiecesInput } from "@/components/CasesPiecesInput";
 import { applyCasesPieces, casesPiecesOf } from "../edit-cases-pieces";
+import { EDIT_QTY_INPUT } from "../edit-line-controls";
 
 /**
  * O1 (F06): Edit Items' quantity entry for a classic boxed line - the shared `CasesPiecesInput`
@@ -31,6 +32,7 @@ export function EditCasesPieces({
         pieces={current.pieces}
         unitsPerBox={Number(item.unitsPerBox)}
         words={unitWords()}
+        inputClassName={EDIT_QTY_INPUT}
         onSetBoxes={(n) => set({ boxes: n, pieces: current.pieces })}
         onSetPieces={(n) => set({ boxes: current.boxes, pieces: n })}
       />

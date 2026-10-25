@@ -47,9 +47,15 @@ describe("counter void copy (SA-762r)", () => {
     expect(cleanVoidReason(" a\u0000b\tc ")).toBe("abc");
   });
 
+  it("the card line names the amount", () => {
+    expect(handBackLines({ CARD: 11.98 })).toEqual([
+      "Void the $11.98 card payment on the card terminal",
+    ]);
+  });
+
   it("the hand-back reads the server's amounts: cash, then the card terminal line; absent methods print nothing", () => {
     expect(handBackLines({ CASH: 12.5, CARD: 10 }).join(" · ")).toBe(
-      "Give back $12.50 cash · Void the card payment on the card terminal",
+      "Give back $12.50 cash · Void the $10.00 card payment on the card terminal",
     );
     expect(handBackLines({ CASH: 0 })).toEqual([]);
     expect(handBackLines(null)).toEqual([]);

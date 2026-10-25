@@ -22,9 +22,13 @@ import path from "node:path";
 import { main as cliMain } from "./heavy-slot.mjs";
 import {
   DEFAULT_SLOTS,
+  bareNpmReason,
   HISTORY_MAX_LINES,
+  HOLD_CAP_EXIT_CODE,
   HeavySlotTimeout,
   STALE_MS,
+  activeChildCount,
+  spawnAsync,
   formatStatus,
   formatWaitLine,
   historyRecord,
@@ -144,9 +148,9 @@ check(
   [43_200_000, 1200, 300_000, 43_200_000, 43_200_000, 43_200_000],
 );
 check(
-  "P2b parseMaxHoldMs: default 180 min; fractions allowed; junk and negatives fall back",
+  "P2b parseMaxHoldMs: default 90 min; fractions allowed; junk and negatives fall back",
   [undefined, "0.02", "5", "-1", "abc", ""].map(parseMaxHoldMs),
-  [10_800_000, 1200, 300_000, 10_800_000, 10_800_000, 10_800_000],
+  [5_400_000, 1200, 300_000, 5_400_000, 5_400_000, 5_400_000],
 );
 check(
   "P2c holderOverCap: strictly longer than the cap; no holder is never over",
@@ -402,8 +406,8 @@ for (const [name, over] of [
   let ran = false;
   let err = null;
   const waiter = withHeavySlot(
-    // default caps from env {}: 720 min total wait, 180 min hold. staleMs huge: the ghost has no
-    // heartbeat timer, and a 130 min skew would otherwise make it look dead.
+    // default caps from env {}: 720 min total wait, 90 min hold (+5 min grace). staleMs huge: the
+    // ghost has no heartbeat timer, and the skew would otherwise make it look dead.
     { label: "patient", branch: "b", dir, env: {}, now: clock, staleMs: 1e12, ...FAST, ...NO_LOG },
     async () => {
       ran = true;
@@ -412,14 +416,14 @@ for (const [name, over] of [
     err = e;
   });
   await sleep(60);
-  skew = 130 * 60_000; // past the old 120 min cap; the holder is at ~131 min, under the 180 min hold cap
+  skew = 60 * 60_000; // the holder is at ~61 min, under the 90 min hold cap
   await sleep(100);
   const stillWaiting =
     !ran && err === null && existsSync(lockFile(dir)) && queued(dir).length === 1;
   rmSync(lockFile(dir), { force: true }); // the healthy holder finishes
   await waiter;
   check(
-    "I5b a healthy holder under the hold cap: the waiter is still queued 130 min in, then gets the slot",
+    "I5b a healthy holder under the hold cap: the waiter is still queued 60 min in, then gets the slot",
     [stillWaiting, ran, err],
     [true, true, null],
   );
@@ -442,13 +446,13 @@ for (const [name, over] of [
     err = e;
   }
   check(
-    "I5c a holder over the hold cap (200 min > 180) fails the waiter closed: names the holder and its " +
+    "I5c a holder over the hold cap and its grace (200 min > 95) fails the waiter closed: names the holder and its " +
       "hold age, never runs fn, keeps the holder's lock, withdraws the ticket",
     [
       ran,
       err instanceof HeavySlotTimeout,
       (err?.message ?? "").includes("held by ghost on feat/ghost"),
-      /for 200\.\d min, over the 180\.00 min hold cap/.test(err?.message ?? ""),
+      /for 200\.\d min, over the 90\.00 min hold cap/.test(err?.message ?? ""),
       existsSync(lockFile(dir)),
       queued(dir),
     ],
@@ -473,6 +477,7 @@ for (const [name, over] of [
         branch: "b",
         dir: dir2,
         env: { RF_HEAVY_SLOT_MAX_HOLD_MIN: "0.0005" },
+        holdGraceMs: 0, // no grace: the knob alone decides
         ...FAST,
         ...NO_LOG,
       },
@@ -833,6 +838,230 @@ const t=setInterval(()=>{let n=[];try{n=fs.readdirSync(q)}catch{}if(n.length||Da
       existsSync(lockFile(dir)),
     ],
     [75, true, false, true],
+  );
+}
+
+{
+  // W-679: a bare `npm ci` (or any alias of it) runs lifecycle scripts (husky `prepare`) that
+  // rewrite core.hooksPath; the guard refuses it and lets `--ignore-scripts` through.
+  // Pure-function cases first (injected argv/env), then the CLI against a stub that is a node script.
+  const refused = (cmd, args, env = {}) => bareNpmReason(cmd, args, env) !== null;
+  const verbs = [
+    ...[
+      "ci",
+      "clean-install",
+      "ic",
+      "install-clean",
+      "isntall-clean",
+      "cit",
+      "it",
+      "install-ci-test",
+    ],
+    ...["install", "i", "add", "in", "ins", "inst", "insta", "instal", "isnt", "isnta", "isntal"],
+    ...["isntall", "install-test", "clean-install-test", "sit"],
+  ];
+  check(
+    "W1 every npm install/ci alias is refused (npm 11 cmd-list.js + npm help install/ci)",
+    verbs.filter((v) => !refused("npm", [v])),
+    [],
+  );
+  check(
+    "W2 verb is found after npm global options (value-taking options consume the next arg)",
+    [
+      refused("npm", ["--prefix", "apps/api", "ci"]),
+      refused("npm", ["-w", "apps/web", "install"]),
+      refused("npm", ["--workspace", "web", "--loglevel", "error", "isntall"]),
+      refused("npm", ["-C", "x", "-s", "-d", "i"]),
+      refused("npm", ["--prefix=apps/api", "--silent", "ic"]),
+      refused("npm.cmd", ["--loglevel=warn", "ci"]),
+    ],
+    [true, true, true, true, true, true],
+  );
+  check(
+    "W3 non-install npm verbs and a value that merely looks like a verb are allowed",
+    [
+      refused("npm", ["run", "lint"]),
+      refused("npm", ["--prefix", "ci", "run", "build"]),
+      refused("npm", ["-w", "install", "test"]),
+      refused("npm", []),
+      refused("node", ["ci"]),
+    ],
+    [false, false, false, false, false],
+  );
+  check(
+    "W4 a single shell-string argument is parsed and refused",
+    [
+      refused("npm ci", []),
+      refused("npm --prefix x install", []),
+      refused("sh", ["-c", "npm ci"]),
+      refused("bash", ["-lc", "cd x && npm i"]),
+      refused("cmd", ["/c", "npm ci"]),
+      refused("sh", ["-c", "echo hi"]),
+      refused("sh", ["-c", "npm ci --ignore-scripts"]),
+    ],
+    [true, true, true, true, true, false, false],
+  );
+  check(
+    "W5 --ignore-scripts / =true / env true allow; =false, --no-ignore-scripts, env false do not",
+    [
+      refused("npm", ["ci", "--ignore-scripts"]),
+      refused("npm", ["ci", "--ignore-scripts=true"]),
+      refused("npm", ["ci"], { npm_config_ignore_scripts: "true" }),
+      refused("npm", ["ci"], { NPM_CONFIG_IGNORE_SCRIPTS: "true" }),
+      refused("npm", ["ci", "--ignore-scripts=false"]),
+      refused("npm", ["ci", "--no-ignore-scripts"]),
+      refused("npm", ["ci"], { npm_config_ignore_scripts: "false" }),
+      refused("npm", ["ci"], { NPM_CONFIG_IGNORE_SCRIPTS: "false" }),
+      refused("npm", ["ci", "--ignore-scripts", "--ignore-scripts=false"]),
+    ],
+    [false, false, false, false, true, true, true, true, true],
+  );
+
+  // CLI: the stub `npm` is a node script (stub.mjs) reached through a sh shim (unix) / .cmd twin
+  // (win32). PATH is ONLY the stub dir, so no real npm can be found, and the CLI runs in a temp cwd;
+  // the test also asserts no node_modules appeared there and that the marker came from the stub.
+  const bin = mkTmp();
+  const work = mkTmp();
+  const marker = path.join(bin, "npm-ran.txt");
+  const stubJs = path.join(bin, "stub.mjs");
+  writeFileSync(
+    stubJs,
+    `import { appendFileSync } from "node:fs";\nappendFileSync(${JSON.stringify(marker)}, process.argv.slice(2).join(" ") + "\\n");\n`,
+  );
+  writeFileSync(path.join(bin, "npm"), `#!/bin/sh\nexec "${process.execPath}" "${stubJs}" "$@"\n`, {
+    mode: 0o755,
+  });
+  writeFileSync(path.join(bin, "npm.cmd"), `@"${process.execPath}" "${stubJs}" %*\r\n`);
+  const runNpm = (...args) => {
+    const dir = mkTmp();
+    const r = spawnSync(
+      process.execPath,
+      [CLI, "run", "--label", "w679", "--branch", "t", "--", "npm", ...args],
+      {
+        cwd: work,
+        env: { ...cleanEnv(), RF_HEAVY_SLOT_DIR: dir, PATH: bin },
+        encoding: "utf8",
+      },
+    );
+    const ran = existsSync(marker) ? readFileSync(marker, "utf8").trim() : null;
+    rmSync(marker, { force: true });
+    return [r.status, ran, /--ignore-scripts/.test(r.stderr)];
+  };
+  check(
+    "W6 CLI: bare `npm ci` / aliased forms refused: exit 2, stub never ran, message names --ignore-scripts",
+    [runNpm("ci"), runNpm("--prefix", "x", "isntall")],
+    [
+      [2, null, true],
+      [2, null, true],
+    ],
+  );
+  check(
+    "W7 CLI: `npm ci --ignore-scripts` runs the stub (marker written by the stub)",
+    runNpm("ci", "--ignore-scripts"),
+    [0, "ci --ignore-scripts", false],
+  );
+  check("W8 CLI: other npm commands run the stub", runNpm("run", "lint"), [0, "run lint", false]);
+  check(
+    "W9 nothing reached a real npm: temp cwd has no node_modules / package-lock",
+    readdirSync(work),
+    [],
+  );
+}
+
+// ---- J: W-759 the holder enforces its own hold cap ----------------------------------------------
+{
+  // J1: a live, heartbeating holder whose job hangs is ended at the cap (its OWN child tree), the slot is released and the run
+  // is recorded as capped (exit 76, capped: true). Without the cap this child would sleep 60 s.
+  const dir = mkTmp();
+  let childResult = null;
+  let during = -1;
+  const out = await withHeavySlot(
+    { label: "hung", branch: "b", dir, env: {}, maxHoldMs: 400, ...FAST, ...NO_LOG },
+    async () => {
+      const p = spawnAsync(process.execPath, ["-e", "setTimeout(() => {}, 60000)"]);
+      during = activeChildCount();
+      childResult = await p;
+      return childResult.status;
+    },
+  );
+  const h = history(dir);
+  check(
+    "J1 a holder that hangs past the cap is ended: HOLD_CAP_EXIT_CODE, lock released, history exit 76 and capped",
+    [out, existsSync(lockFile(dir)), h.length, h[0]?.exit, h[0]?.capped],
+    [HOLD_CAP_EXIT_CODE, false, 1, HOLD_CAP_EXIT_CODE, true],
+  );
+  check(
+    "J1b the guarded child was tracked while it ran, was terminated (not a normal exit), and leaves no tracked child behind",
+    [during, childResult?.status === 0, activeChildCount()],
+    [1, false, 0],
+  );
+
+  // J2: a job that finishes inside the cap is untouched: its own exit code, no capped marker
+  const dir2 = mkTmp();
+  const ok = await withHeavySlot(
+    { label: "fine", branch: "b", dir: dir2, env: {}, maxHoldMs: 60_000, ...FAST, ...NO_LOG },
+    async () => (await spawnAsync(process.execPath, ["-e", "0"])).status,
+  );
+  check(
+    "J2 a job inside the cap keeps its own exit code and is not marked capped",
+    [ok, history(dir2)[0]?.exit, history(dir2)[0]?.capped],
+    [0, 0, undefined],
+  );
+
+  // J3 (a): a QUEUED waiter runs once the capped holder releases. Waiters give up only at cap + grace, so this one is not
+  // failed at the very moment the slot frees (the #3688 review's probe p3: both waiters threw and nobody got the slot).
+  const dir3 = mkTmp();
+  let waiterRan = false;
+  let waiterErr = null;
+  const holder = withHeavySlot(
+    {
+      label: "capped",
+      branch: "b",
+      dir: dir3,
+      env: {},
+      maxHoldMs: 400,
+      holdKillMs: 300,
+      ...FAST,
+      ...NO_LOG,
+    },
+    async () => (await spawnAsync(process.execPath, ["-e", "setTimeout(() => {}, 60000)"])).status,
+  );
+  await sleep(100); // the holder has the slot
+  const waiter = withHeavySlot(
+    { label: "queued", branch: "b", dir: dir3, env: {}, maxHoldMs: 400, ...FAST, ...NO_LOG },
+    async () => {
+      waiterRan = true;
+    },
+  ).catch((e) => {
+    waiterErr = e;
+  });
+  const holderOut = await holder;
+  await waiter;
+  check(
+    "J3 a queued waiter gets the slot after the holder is capped: it runs, never times out",
+    [holderOut, waiterRan, waiterErr],
+    [HOLD_CAP_EXIT_CODE, true, null],
+  );
+
+  // J4 (c): a job that never returns (it ignores the killed child) still loses the slot at the hard deadline
+  const dir4 = mkTmp();
+  const hung = await withHeavySlot(
+    {
+      label: "stuck",
+      branch: "b",
+      dir: dir4,
+      env: {},
+      maxHoldMs: 150,
+      holdKillMs: 150,
+      ...FAST,
+      ...NO_LOG,
+    },
+    () => new Promise(() => {}),
+  );
+  check(
+    "J4 a job that never returns is released at the hard deadline: capped history, lock gone",
+    [hung, existsSync(lockFile(dir4)), history(dir4)[0]?.capped],
+    [HOLD_CAP_EXIT_CODE, false, true],
   );
 }
 

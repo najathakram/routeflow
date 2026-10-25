@@ -123,7 +123,12 @@ describeDb(
           {
             provide: SellingRestrictionsService,
             useValue: {
-              checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
+              judgeStaffWrite: jest.fn().mockResolvedValue({
+                outcome: "ALLOW",
+                reasons: [],
+                breaches: [],
+                basis: "CUSTOMER",
+              }),
             },
           },
           // ProductsService peripherals — everything permitted, no side channel. Gate-refusal
@@ -144,7 +149,15 @@ describeDb(
           { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue(null) } },
           { provide: MeterService, useValue: { read: jest.fn().mockResolvedValue(0) } },
           { provide: CommissionEngineService, useValue: {} },
-          { provide: RegulatedLedgerService, useValue: { reverseInvoiceEntries: jest.fn() } },
+          {
+            provide: RegulatedLedgerService,
+            useValue: {
+              reverseInvoiceEntries: jest.fn(),
+              settleRegulatedLedger: jest
+                .fn()
+                .mockResolvedValue({ written: 0, amendedPeriod: null }),
+            },
+          },
           { provide: EmailService, useValue: { send: jest.fn().mockResolvedValue(undefined) } },
         ],
       }).compile();

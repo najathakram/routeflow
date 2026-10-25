@@ -1,12 +1,17 @@
 // Drift detection: compares human-typed state (events) with derived facts (PRs, branches,
 // source freshness) and returns alarms. Pure; never writes anywhere.
 import { DONE_STATUSES } from "./schema.mjs";
+import { resolveLaneId } from "./config.mjs";
 import { itemIdsFromBranch, parseEta } from "./ids.mjs";
 import { DOMAINS, areaDomain } from "./areas.mjs";
 import { isLegacyMonitorItem, isRegisterOwned } from "./sync.mjs";
 
 const SEV_ORDER = { error: 0, warn: 1, info: 2 };
 const HOUR = 3600_000;
+/** An unconfigured lane with no open work only counts while its activity is this recent. */
+export const UNKNOWN_LANE_RECENT_DAYS = 7;
+// Events older than the register's last change by more than this mean the register sync is behind.
+export const ITEMS_STALE_MS = 15 * 60_000;
 const BEHIND_STATUSES = ["idea", "planned", "spec", "building", "review"];
 
 const toMs = (v) => {
@@ -23,11 +28,24 @@ function ago(ms) {
   return h < 48 ? `${h}h` : `${Math.round(h / 24)}d`;
 }
 
+/** "5 minutes", "3 hours", "2 days": plain words for the stale-items banner. */
+export function agoWords(ms) {
+  const m = Math.max(0, Math.round(ms / 60000));
+  const unit = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
+  if (m < 60) return unit(m, "minute");
+  const h = Math.round(m / 60);
+  return h < 48 ? unit(h, "hour") : unit(Math.round(h / 24), "day");
+}
+
 const BUG_TEXT_RE = /(?<![A-Za-z0-9])b(\d{1,5})(?![A-Za-z0-9])/gi;
 const ROWS_RE = /\brows?\s+#?(\d{1,5}(?:\s*(?:,|\/|&|\band\b)\s*#?\d{1,5})*)/gi;
 // "Fixes B1234", "Closes row 525", "Resolves rows 555/556" (body only; see fixLinksFor).
 const CLOSING_RE =
   /\b(?:fix(?:es|ed)?|close[sd]?|resolve[sd]?)\s*:?\s+((?:b\d{1,5})|(?:rows?\s+#?\d{1,5}(?:\s*(?:,|\/|&|\band\b)\s*#?\d{1,5})*))/gi;
+
+// The house PR-body label "Register row 651" (also "Register rows 555/556"): the row the PR serves, no closing verb needed.
+const REGISTER_ROW_RE =
+  /\bregister\s+rows?\s*:?\s*#?(\d{1,5}(?:\s*(?:,|\/|&|\band\b)\s*#?\d{1,5})*)/gi;
 
 /**
  * Item ids a PR (or branch) NAMES, i.e. the items it fixes: the branch's item tokens
@@ -50,6 +68,8 @@ export function fixLinksFor({ branch = null, title = "", body = "" } = {}, known
   for (const m of title_.matchAll(BUG_TEXT_RE)) push(`B${m[1]}`);
   for (const m of title_.matchAll(ROWS_RE))
     for (const n of m[1].match(/\d+/g) ?? []) if (known.has(n)) push(n);
+  for (const m of String(body ?? "").matchAll(REGISTER_ROW_RE))
+    for (const n of m[1].match(/\d+/g) ?? []) if (known.has(n)) push(n);
   for (const m of String(body ?? "").matchAll(CLOSING_RE)) {
     const ref = m[1];
     if (/^b/i.test(ref)) push(`B${ref.slice(1)}`);
@@ -58,12 +78,53 @@ export function fixLinksFor({ branch = null, title = "", body = "" } = {}, known
   return out;
 }
 
+// Looser, link-only references (never a fix claim): "row 688" / "rows 688/689" anywhere in the
+// body, and a "Row: 688" / "Item: 688" commit-style trailer line (the PR body is the only text
+// fetched; no extra API calls).
+const TRAILER_RE = /^\s*(?:row|item)s?\s*:\s*#?(\d{1,5}(?:\s*(?:,|\/|&)\s*#?\d{1,5})*)\s*$/gim;
+export function bodyRefsFor(body, known, { mentions = true } = {}) {
+  const out = [];
+  const text = String(body ?? "");
+  for (const re of mentions ? [ROWS_RE, TRAILER_RE] : [TRAILER_RE]) {
+    for (const m of text.matchAll(re))
+      for (const n of m[1].match(/\d+/g) ?? []) if (known.has(n) && !out.includes(n)) out.push(n);
+  }
+  return out;
+}
+
+/** GitHub's revert PR: title `Revert "..."` or branch `revert-<N>-...`. */
+export const isRevertPr = (p) =>
+  /^Revert "/.test(String(p?.title ?? "")) || /^revert-/.test(String(p?.branch ?? ""));
+
+/** PR numbers a revert PR undoes: body "Reverts owner/repo#N", branch `revert-<N>-...`. */
+export function revertedNumbers(p) {
+  const out = new Set();
+  for (const m of String(p?.body ?? "").matchAll(/\breverts\s+(?:[\w.-]+\/[\w.-]+)?#(\d+)/gi))
+    out.add(Number(m[1]));
+  const b = /^revert-(\d+)-/.exec(String(p?.branch ?? ""));
+  if (b) out.add(Number(b[1]));
+  return out;
+}
+
+/** Merged PRs that need no work item: trains, docs, dependabot and bookkeeping follow-ups. */
+export const isNoiseMergedPr = (p) =>
+  /^(?:train|docs|dependabot)\//.test(String(p?.branch ?? "")) ||
+  /^(?:docs|chore)\/bookkeeping-/.test(String(p?.branch ?? "")) ||
+  /^docs: bookkeeping/i.test(String(p?.title ?? ""));
+
 /**
  * Item id a PR/branch belongs to: an item linking the PR number or the branch (register-cited
  * refPrs never count), a pr event for the number, or an id its branch, title or body names
- * (fixLinksFor; a known item wins, else a B-id even if unknown). Else null.
+ * (fixLinksFor; a known item wins, else a B-id even if unknown), else a known row the body merely
+ * mentions ("row 688", "Row: 688" trailer; link only, never a fix claim). With
+ * `bodyMentions: false` a bare body mention does not count (an explicit trailer still does).
+ * Else null.
  */
-export function linkItemFor({ number = null, branch = null, title = "", body = "" } = {}, state) {
+export function linkItemFor(
+  { number = null, branch = null, title = "", body = "" } = {},
+  state,
+  { bodyMentions = true } = {},
+) {
   const n = number === null || number === undefined ? null : String(number);
   for (const it of state.items.values()) {
     if (n !== null && (it.links?.prs ?? []).some((p) => String(p) === n)) return it.id;
@@ -74,8 +135,14 @@ export function linkItemFor({ number = null, branch = null, title = "", body = "
       if (String(e.number) === n && e.item && state.items.has(e.item)) return e.item;
     }
   }
-  const ids = fixLinksFor({ branch, title, body }, new Set(state.items.keys()));
-  return ids.find((id) => state.items.has(id)) ?? ids[0] ?? null;
+  const known = new Set(state.items.keys());
+  const ids = fixLinksFor({ branch, title, body }, known);
+  return (
+    ids.find((id) => state.items.has(id)) ??
+    ids[0] ??
+    bodyRefsFor(body, known, { mentions: bodyMentions })[0] ??
+    null
+  );
 }
 
 /**
@@ -97,6 +164,33 @@ export function landedAt(p, merged) {
     if (!hit || at < hit.at) hit = { at, via: t.number };
   }
   return hit ?? { at: null, via: null };
+}
+
+/** An open incident file counts as current only when it changed within this many days. */
+export const INCIDENT_FRESH_DAYS = 7;
+const DAY = 24 * HOUR;
+
+/** When an incident file last changed (git commit time), else its filename date; ms or null. */
+export function incidentChangedMs(inc) {
+  const c = toMs(inc?.changedAt);
+  if (c !== null) return c;
+  return inc?.date ? toMs(`${inc.date}T00:00:00Z`) : null;
+}
+
+/**
+ * Where an incident file belongs on the page (lead ruling 10-19): `hurting` = status open and
+ * the file changed within INCIDENT_FRESH_DAYS; `stale` = open but older, or no Status line at all
+ * (a drift alarm either way); `mitigated`; `unverified` (suspected / unverified); `hidden`
+ * (closed / resolved). Pure.
+ */
+export function incidentBucket(inc, now) {
+  const s = String(inc?.status ?? "unknown").toLowerCase();
+  if (s === "closed" || s === "resolved") return "hidden";
+  if (s === "mitigated") return "mitigated";
+  if (s === "suspected" || s === "unverified") return "unverified";
+  if (s !== "open") return "stale";
+  const at = incidentChangedMs(inc);
+  return at !== null && now - at <= INCIDENT_FRESH_DAYS * DAY ? "hurting" : "stale";
 }
 
 const CLOSED_BUG_STATES = new Set([
@@ -146,6 +240,7 @@ export function reconcile({
   bugIds,
   laneActivity,
   register,
+  incidents,
 }) {
   const alarms = [];
   const th = {
@@ -223,6 +318,22 @@ export function reconcile({
         branch: p.branch ?? null,
       });
     }
+  }
+
+  // untracked-merged-pr: a PR merged in the last 7 days that no item claims.
+  for (const p of merged) {
+    const at = toMs(p.mergedAt);
+    if (at === null || now - at > 7 * DAY || isNoiseMergedPr(p)) continue;
+    if (linkItemFor({ number: p.number, branch: p.branch, title: p.title, body: p.body }, state))
+      continue;
+    add({
+      kind: "untracked-merged-pr",
+      severity: "warn",
+      message: `merged PR #${p.number} has no work item (${p.branch ?? "no branch"}, merged ${ago(now - at)} ago)`,
+      suggest: `rf event link <id> --pr ${p.number}`,
+      pr: p.number,
+      branch: p.branch ?? null,
+    });
   }
 
   // untracked-branch
@@ -303,8 +414,8 @@ export function reconcile({
   }
 
   // bug-unowned: critical/high, open, no claim, no branch, no PR. Filed (or re-opened) in the
-  // last 7 days and over 4h old -> one warn per bug. Older (or undated) -> aggregated into one
-  // warn per severity x domain (bug-unowned-backlog:<sev>:<domain>) with the B-ids in `items`.
+  // last 7 days and over 4h old -> one warn per bug. Older (or undated) -> aggregated into ONE
+  // summary warn (bug-unowned-backlog:all) with every B-id in `items`.
   const backlog = new Map();
   for (const b of openBugs) {
     const sev = String(b.severity ?? "").toLowerCase();
@@ -349,18 +460,21 @@ export function reconcile({
     if (!backlog.has(key)) backlog.set(key, { sev, dom, ids: [] });
     backlog.get(key).ids.push(b.id);
   }
-  for (const [key, g] of backlog) {
-    const label =
-      g.dom === "security"
-        ? "security hardening (details private)"
-        : (DOMAINS.find((d) => d.id === g.dom)?.label ?? "Other");
+  if (backlog.size) {
+    const ids = [...backlog.values()].flatMap((g) => g.ids);
+    const bySev = {};
+    for (const g of backlog.values()) bySev[g.sev] = (bySev[g.sev] ?? 0) + g.ids.length;
+    const breakdown = ["critical", "high"]
+      .filter((s) => bySev[s])
+      .map((s) => `${bySev[s]} ${s}`)
+      .join(", ");
     add({
       kind: "bug-unowned-backlog",
       severity: "warn",
-      message: `${g.ids.length} ${g.sev} ${label} bugs have no owner, branch or PR for more than 7 days → triage`,
+      message: `${ids.length} unowned bugs (${breakdown}) have no owner, branch or PR for more than 7 days → triage`,
       suggest: "rf claim <B-id>",
-      items: g.ids,
-      _target: key,
+      items: ids,
+      _target: "all",
     });
   }
 
@@ -391,6 +505,34 @@ export function reconcile({
     }
   }
 
+  // unknown-status: the register said a status word the monitor does not know (item reads planned).
+  for (const it of state.items.values()) {
+    // Only while the item still reads "planned": a later status, or a done item, settles it.
+    if (!it.statusText || it.status !== "planned" || DONE_STATUSES.includes(it.status)) continue;
+    add({
+      kind: "unknown-status",
+      severity: "info",
+      message: `Row ${it.id} has status '${it.statusText}' the monitor does not know`,
+      item: it.id,
+    });
+  }
+
+  // incident-stale: incident files are snapshots, so an open one with no recent change (or no
+  // Status line) cannot be trusted as a live problem. The team sets the Status: line.
+  for (const inc of incidents ?? []) {
+    if (incidentBucket(inc, now) !== "stale") continue;
+    const at = incidentChangedMs(inc);
+    add({
+      kind: "incident-stale",
+      severity: "warn",
+      message:
+        at === null
+          ? `Incident '${inc.title}' has no status update; set its **Status:** line`
+          : `Incident '${inc.title}' has no status update for ${Math.max(0, Math.floor((now - at) / DAY))} days; set its **Status:** line`,
+      _target: inc.id,
+    });
+  }
+
   // claim-conflict
   for (const it of state.items.values()) {
     if (it.claimConflict && it.claimConflict.length) {
@@ -418,6 +560,43 @@ export function reconcile({
           Number.isFinite(silentMs) ? ago(silentMs) : "forever"
         }`,
         lane: lane.id,
+      });
+    }
+  }
+
+  // unknown-lane: work or events naming a lane that ops/config.json does not list (a retired or
+  // misspelt lane id). One alarm per lane id.
+  if (Array.isArray(config?.lanes) && config.lanes.length) {
+    const byLane = new Map(); // unknown lane id -> open item ids naming it
+    const note = (laneId, itemId) => {
+      if (!laneId || resolveLaneId(laneId, config)) return;
+      if (!byLane.has(laneId)) byLane.set(laneId, []);
+      if (itemId && !byLane.get(laneId).includes(itemId)) byLane.get(laneId).push(itemId);
+    };
+    for (const it of state.items.values()) {
+      if (DONE_STATUSES.includes(it.status)) continue;
+      note(it.lane, it.id);
+      note(it.claimedBy, it.id);
+    }
+    // Bounded: a retired lane id seen only in old events must not warn forever.
+    for (const [id, l] of state.lanes) {
+      const last = l.lastEventAt ?? null; // heartbeats advance lastEventAt too: the latest of both
+      if (last !== null && now - last <= UNKNOWN_LANE_RECENT_DAYS * 24 * HOUR) note(id, null);
+    }
+    for (const [laneId, ids] of byLane) {
+      const named = ids.slice(0, 3).join(", ");
+      add({
+        kind: "unknown-lane",
+        severity: "warn",
+        message: ids.length
+          ? `Lane ${laneId} is not in ops/config.json but ${ids.length} open item(s) name it (${named}${
+              ids.length > 3 ? ", ..." : ""
+            })`
+          : `Lane ${laneId} has sent heartbeats/events but is not in ops/config.json`,
+        suggest: ids.length
+          ? `rf item edit ${ids[0]} --lane <known lane>, or add ${laneId} to ops/config.json lanes`
+          : `add ${laneId} to ops/config.json lanes`,
+        lane: laneId,
       });
     }
   }
@@ -461,6 +640,25 @@ export function reconcile({
       kind: "register-duplicate-rows",
       severity: "error",
       message: `The register has duplicate row ids (${dupIds.join(", ")}); the monitor ignores register changes until it is repaired`,
+      source: "register",
+    });
+  }
+
+  // items-stale: a dry register sync would still append events (rows or edits the board lacks) and
+  // the register's last commit is older than ITEMS_STALE_MS, so the PC register sync has stalled.
+  // A register commit that syncs to nothing never fires it; other lanes' events never hide it.
+  const regAt = register?.changedAt;
+  const pending = register?.pending;
+  if (
+    Number.isFinite(regAt) &&
+    Number.isFinite(pending) &&
+    pending >= 1 &&
+    now - regAt > ITEMS_STALE_MS
+  ) {
+    add({
+      kind: "items-stale",
+      severity: now - regAt >= 24 * HOUR ? "error" : "warn",
+      message: `Work items are behind the register: ${pending} change${pending === 1 ? "" : "s"} from ${agoWords(now - regAt)} ago ${pending === 1 ? "has" : "have"} not reached the board (the register sync on the PC monitor is behind)`,
       source: "register",
     });
   }

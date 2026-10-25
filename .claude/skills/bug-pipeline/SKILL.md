@@ -5,6 +5,10 @@ description: The house pipeline for BUG FIXES — a known defect with an observa
 
 # Bug pipeline
 
+> **Routing (2026-10-22):** a batch of 3 or more **LOW** bugs goes to `/bug-swarm` (`.claude/skills/bug-swarm/`).
+> This pipeline remains the path for every HIGH-risk bug (money, ledger, units, locks, tenancy, migrations,
+> billing, auth), for single bugs, and for any swarm cluster that turns out to touch a HIGH path.
+
 A bug fix is not a small feature. It starts from a **known wrong behavior**, so the value is not in discovering
 what to build — it is in proving the **cause**, making the **minimal correct fix**, proving the fix **bites**
 (the repro test fails without it), and proving the defect's **twin does not ship elsewhere**. This skill owns
@@ -107,6 +111,8 @@ diverges from intent, or the reason the suspicion cannot be the cause." It must 
 have burned whole batches; a fix built on an unverified cause is the most expensive kind of green.
 
 ### S3 — Fix ruling (Fable @ high — a decision over the brief + refutation, no repo access)
+
+> **Design Gate (owner R19, mandatory):** before this ruling is approved, apply the `future-proof` skill's "Fixing: the area, not the symptom" section (big-picture fix, area sweep and chunked fixes, owner questions batched now) and put its Lite gate in `cause-ruling.md`; a P0 hotfix carries the Hotfix gate and files its area sweep as the follow-up. No build without it (`.claude/skills/future-proof/SKILL.md`).
 
 Fable receives S1 + S2 verbatim and rules once, into `cause-ruling.md` (template):
 

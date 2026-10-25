@@ -33,6 +33,22 @@ describe("LegacyVariantsActions (VU-2)", () => {
     expect(screen.getByRole("button", { name: "Link existing" })).toBeInTheDocument();
   });
 
+  it("r3: the button row wraps and right-aligns inside the card on a phone", () => {
+    setup();
+    const row = screen.getByRole("button", { name: "Link existing" }).parentElement as HTMLElement;
+    expect(row.className).toMatch(/\bflex-wrap\b/);
+    expect(row.className).toMatch(/\bjustify-end\b/);
+    const outer = row.parentElement as HTMLElement;
+    expect(outer.className).toMatch(/\bmax-w-full\b/);
+    // order kept; 44 px targets below sm
+    const names = screen.getAllByRole("button").map((b) => b.textContent?.trim());
+    expect(names).toEqual(["Assign to variants", "Link existing", "Add variant"]);
+    for (const b of screen.getAllByRole("button")) {
+      expect(b.className).toMatch(/\bmin-h-11\b/);
+      expect(b.className).toMatch(/\bsm:min-h-0\b/);
+    }
+  });
+
   it("other roles: no controls and no link", () => {
     setup({ isOperator: false });
     expect(screen.queryByRole("link", { name: "Create a family" })).toBeNull();

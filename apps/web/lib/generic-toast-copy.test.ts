@@ -117,6 +117,17 @@ describe("genericToastCopy: codes users rely on", () => {
     ).toBe("Another change is in progress. Try again in a moment.");
   });
 
+  it("SA-832 / 453: TENANT_ADMIN_LOCKED shows its fixed sentence, never the raw 409 text or the cause", () => {
+    const copy = genericToastCopy(
+      err(409, { code: API_ERROR_CODES.TENANT_ADMIN_LOCKED, message: "raw server text" }),
+    );
+    expect(copy).toBe(
+      "This workspace is locked and can't take a payment right now. Please contact support.",
+    );
+    expect(copy).not.toBe(NEUTRAL_409);
+    expect(copy).not.toMatch(/admin_set|administrator/i);
+  });
+
   it("SA-733r5: the catch-up refusals show fixed copy, never the server message", () => {
     for (const code of [
       API_ERROR_CODES.EXTERNAL_PAYMENT_USE_CATCHUP,
@@ -793,6 +804,31 @@ describe("a selling-restriction refusal (409 SELLING_RESTRICTED) in a dialog wit
 
   it("a body with no lines still gets the sentence", () => {
     expect(genericToastCopy(restricted(undefined))).toContain("selling restrictions");
+  });
+});
+
+describe("row 510: the staff restriction codes have fixed copy", () => {
+  it("RESTRICTION_WARNING and RESTRICTION_OVERRIDE_REASON_INVALID are never the neutral status sentence, never the raw text", () => {
+    for (const [status, code] of [
+      [409, API_ERROR_CODES.RESTRICTION_WARNING],
+      [400, API_ERROR_CODES.RESTRICTION_OVERRIDE_REASON_INVALID],
+    ] as const) {
+      const copy = genericToastCopy(err(status, { code }));
+      expect(copy).not.toBe(NEUTRAL_409);
+      expect(copy).not.toContain(RAW);
+      expect(codedToastCopy(err(status, { code }))).toBe(copy);
+    }
+    expect(
+      genericToastCopy(err(400, { code: API_ERROR_CODES.RESTRICTION_OVERRIDE_REASON_INVALID })),
+    ).toBe("Give a reason of 3 to 200 characters to sell a restricted item.");
+  });
+
+  it("RESTRICTION_WARNING is handled by the dialog: the global handler stays silent", () => {
+    const toast = jest.fn();
+    handleMutationError(err(409, { code: API_ERROR_CODES.RESTRICTION_WARNING }), undefined, toast, {
+      push: jest.fn(),
+    });
+    expect(toast).not.toHaveBeenCalled();
   });
 });
 

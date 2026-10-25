@@ -57,11 +57,11 @@ function setup() {
 }
 const applyBulk = () => {
   fireEvent.click(screen.getByLabelText(/All invoices for/));
-  fireEvent.click(screen.getByRole("button", { name: /Apply Price Changes/ }));
+  fireEvent.click(screen.getByRole("button", { name: /Apply price changes/ }));
 };
 /** SINGLE is the panel's default scope: no radio click, straight to Apply. */
 const applySingle = () =>
-  fireEvent.click(screen.getByRole("button", { name: /Apply Price Changes/ }));
+  fireEvent.click(screen.getByRole("button", { name: /Apply price changes/ }));
 const invalidatedInvoices = (spy: jest.SpyInstance) =>
   spy.mock.calls.some(
     ([f]) => JSON.stringify((f as any)?.queryKey) === JSON.stringify(["invoices"]),

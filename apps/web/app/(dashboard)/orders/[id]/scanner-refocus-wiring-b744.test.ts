@@ -14,7 +14,7 @@ import path from "path";
  * trigger (edit mode opening / pricing settling), and its stricter rule is deliberate — it will
  * not take focus from ANY element the operator clicked while waiting, a button included.
  */
-const src = fs.readFileSync(path.join(__dirname, "page.tsx"), "utf8");
+const src = fs.readFileSync(path.join(__dirname, "_components", "order-line-edit.tsx"), "utf8");
 
 const BARE_REARM = /setTimeout\(\s*\(\)\s*=>\s*\w+\.current\?\.(focus|select)\(\)/g;
 
@@ -45,7 +45,7 @@ describe("B744 — order-edit scanner re-arm wiring (REG-B744)", () => {
 
   it("pin: B62's one-time mount autofocus keeps its own stricter guard, unchanged", () => {
     expect(src).toMatch(
-      /if \(active && active !== document\.body && active !== el\) return;\s*\n\s*el\.focus\(\);/,
+      /if \(active && active !== document\.body && active !== el\) return;[\s\S]{0,700}\(firstQty \?\? el\)\.focus\(\{ preventScroll: true \}\);/,
     );
   });
 });

@@ -15,6 +15,7 @@ export function DeleteOrderTier({
   idleLabel,
   successTitle,
   errorText,
+  inMenu = false,
 }: {
   orderId: string;
   deleteOrder: {
@@ -26,9 +27,12 @@ export function DeleteOrderTier({
   idleLabel: string;
   successTitle: string;
   errorText: (e: unknown) => string;
+  /** Phone width: the idle Delete is an entry of the "More actions" menu (apple-ux r4 Q19); only the confirm shows here. */
+  inMenu?: boolean;
 }) {
   const { toast } = useToast();
   const router = useRouter();
+  if (inMenu && !open) return null;
   return (
     <ActionTier tier="danger">
       {open ? (
@@ -51,7 +55,7 @@ export function DeleteOrderTier({
               });
             }}
           >
-            Confirm Delete
+            Confirm delete
           </Button>
           <button
             onClick={() => setOpen(false)}

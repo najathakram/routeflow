@@ -38,7 +38,67 @@ export type GridDensity = "default" | "compact";
 // the grid frame, its cards and the save bar keep the surface line, and the row dividers --line-strong.
 export const FIELD_BORDER = "border-field";
 export const FRAME_BORDER = "border-surface-border";
-const GRID_DIVIDER = "border-line-strong";
+// K13 P04: the rule is drawn on every cell, so the pinned Unit cell (its own opaque layer) carries it too.
+export const ROW_RULE = "[&>*]:border-b [&>*]:border-line-strong";
+// K13 P01: Contains is its own column only from lg; below that it sits under the unit name so five tiers fit.
+export const CONTAINS_MIN_WIDTH = "(min-width: 1024px)";
+/** True when the Contains column fits (and always where matchMedia is absent, e.g. jsdom). */
+export function useContainsColumn(): boolean {
+  // Read the query in the initializer: starting wide and flipping after paint would shift the grid on load at 768.
+  // The grid renders only on the client after its data loads, so this never differs from a server render.
+  const [wide, setWide] = React.useState(() =>
+    typeof window !== "undefined" && typeof window.matchMedia === "function"
+      ? window.matchMedia(CONTAINS_MIN_WIDTH).matches
+      : true,
+  );
+  React.useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
+    const mq = window.matchMedia(CONTAINS_MIN_WIDTH);
+    const sync = () => setWide(mq.matches);
+    sync();
+    mq.addEventListener?.("change", sync);
+    return () => mq.removeEventListener?.("change", sync);
+  }, []);
+  return wide;
+}
+/**
+ * K14 FE1: the grid loads after the page, and "Loading prices…" was one line: when the rows arrived the card grew by
+ * ~870 px at 390 and pushed everything below it (CLS 0.11). While loading it holds roughly its final height instead:
+ * one placeholder per unit (the count the page already knows: the piece, plus the pack when the product has one; the
+ * count of the last load of this product when we have one), a phone card below md and a table row from md.
+ */
+const seenRowCount = new Map<string, number>();
+const estimateRowCount = (p: { unitsPerBox?: number | null }) =>
+  p.unitsPerBox != null && p.unitsPerBox > 1 ? 2 : 1;
+
+function GridSkeleton({ count }: { count: number }) {
+  const n = Array.from({ length: count }, (_, i) => i);
+  return (
+    <div role="status" aria-busy="true">
+      <span className="sr-only">Loading prices…</span>
+      <div className="space-y-3 md:hidden" aria-hidden="true">
+        {n.map((i) => (
+          <div
+            key={i}
+            data-testid="prices-skeleton-card"
+            className={`h-[17.5rem] rounded-lg border bg-surface-raised/60 ${FRAME_BORDER}`}
+          />
+        ))}
+      </div>
+      <div className={`hidden rounded-lg border md:block ${FRAME_BORDER}`} aria-hidden="true">
+        <div className="h-9 border-b border-surface-border" />
+        {n.map((i) => (
+          <div
+            key={i}
+            data-testid="prices-skeleton-table"
+            className="h-[4.75rem] border-b border-surface-border bg-surface-raised/40 last:border-b-0"
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // K11-10: the pinned Unit column. Bounded, so a long reason cannot widen it; a hairline shows while the table is scrolled.
 const UNIT_CELL =
   "sticky left-0 z-10 min-w-[7rem] max-w-[10rem] whitespace-normal bg-white px-2 text-left group-data-[scrolled=true]:shadow-[inset_-1px_0_0_rgba(15,23,42,0.15)]";
@@ -284,7 +344,7 @@ function CellInput({ t, tier, view }: { t: EditTarget; tier: number; view: CellV
           aria-invalid={problem ? true : undefined}
           aria-describedby={describedBy}
           data-escape-reverts={reverts ? "true" : undefined}
-          placeholder={view.display}
+          placeholder={view.display.replace(/^\$/, "")}
           value={inside ? text : canonicalPriceText(text)}
           onFocus={(e) => {
             atFocus.current = text;
@@ -455,6 +515,20 @@ function ScrollRegion({
   );
 }
 
+/** The region heading ("Prices by unit"): the grid card's own, or the section actions row's (K13). */
+export function PricesTitle({ id, className = "mb-3" }: { id: string; className?: string }) {
+  return (
+    <h2
+      id={id}
+      data-testid={T.hUnits}
+      tabIndex={-1}
+      className={`${className} text-sm font-semibold text-navy focus:outline-none`}
+    >
+      Prices by unit
+    </h2>
+  );
+}
+
 function PricesGridBody({
   product,
   edit,
@@ -462,6 +536,7 @@ function PricesGridBody({
   layout = "auto",
   density = "default",
   idSuffix = "",
+  hideTitle = false,
 }: {
   product: UnitsCardProduct & { msrp?: number | string | null };
   /** Edit mode (S12a, behind flag.units_prices_v2). Omitted = today's read-only grid, unchanged. */
@@ -473,21 +548,35 @@ function PricesGridBody({
   density?: GridDensity;
   /** K11-20: suffix for the ids this grid owns when a second grid is on the page (the floating window's). */
   idSuffix?: string;
+  /**
+   * K13: the region heading renders in the section's actions row instead (EditablePricesGrid), under the same id
+   * (`units-v2-grid-title` + suffix) so the table's region stays named by it.
+   */
+  hideTitle?: boolean;
 }) {
   const grid = usePriceGrid(product.id);
+  const containsCol = useContainsColumn();
   const labels = useTierLabels().data;
   const hasMsrp = useHasAddon(MSRP_ADDON);
   const showMsrp = product.msrp != null && product.msrp !== "" && hasMsrp;
 
   if (grid.isLoading) {
-    return (
-      <p role="status" className="text-sm text-navy/60">
-        Loading prices…
-      </p>
-    );
+    return <GridSkeleton count={seenRowCount.get(product.id) ?? estimateRowCount(product)} />;
   }
   if (grid.isError || !grid.data) {
-    return <p className="text-sm text-red-600">Prices could not be loaded.</p>;
+    // K14 S1: the old units card is gone under v2, so a failed load needs its own way forward.
+    return (
+      <div className="flex flex-wrap items-center gap-3">
+        <p className="text-sm text-red-600">Prices could not be loaded.</p>
+        <button
+          type="button"
+          onClick={() => void grid.refetch?.()}
+          className="min-h-11 rounded px-2 text-sm font-medium text-brand-600 underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-500"
+        >
+          Retry
+        </button>
+      </div>
+    );
   }
 
   if (grid.data.rows.length === 0) {
@@ -495,11 +584,13 @@ function PricesGridBody({
   }
 
   const served = grid.data.rows;
+  seenRowCount.set(product.id, served.length);
   const rows = [...(edit?.rows ?? served)].sort((a, b) => b.factor - a.factor);
   const ascending = [...rows].reverse();
   const baseLabel = grid.data.rows.find((x) => x.kind === "base")?.label;
   const names = TIERS.map((t) => productTierLabel(labels, t));
   const compact = density === "compact";
+  const showContains = !compact && containsCol;
   const titleId = `units-v2-grid-title${idSuffix}`;
   const targetFor = (
     row: ProductPriceGridRowDto,
@@ -523,16 +614,9 @@ function PricesGridBody({
   return (
     <div
       data-testid={T.grid}
-      className={`rounded-lg border bg-white p-4 ${FRAME_BORDER} ${edit?.editing ? "pb-6" : ""}`}
+      className={`rounded-lg border bg-white p-4 ${hideTitle ? "max-sm:pt-2" : ""} ${FRAME_BORDER} ${edit?.editing ? "pb-6" : ""}`}
     >
-      <h2
-        id={titleId}
-        data-testid={T.hUnits}
-        tabIndex={-1}
-        className="mb-3 text-sm font-semibold text-navy focus:outline-none"
-      >
-        Prices by unit
-      </h2>
+      {hideTitle ? null : <PricesTitle id={titleId} />}
 
       {layout !== "cards" && (
         <ScrollRegion
@@ -542,9 +626,7 @@ function PricesGridBody({
         >
           <table className="w-full border-collapse text-left text-sm">
             <thead>
-              <tr
-                className={`border-b text-[11px] uppercase tracking-wide text-navy/60 ${GRID_DIVIDER}`}
-              >
+              <tr className={`text-[11px] uppercase tracking-wide text-navy/60 ${ROW_RULE}`}>
                 <th scope="col" className={`${UNIT_CELL} py-2 font-medium`}>
                   Unit
                 </th>
@@ -553,7 +635,7 @@ function PricesGridBody({
                     <span className="sr-only">Unit actions</span>
                   </th>
                 )}
-                {!compact && (
+                {showContains && (
                   <th scope="col" className="min-w-[7rem] px-2 py-2 font-medium">
                     Contains
                   </th>
@@ -570,7 +652,7 @@ function PricesGridBody({
                 <tr
                   key={row.ref}
                   data-testid={T.row(row.ref)}
-                  className={`border-b align-top last:border-b-0 ${GRID_DIVIDER}`}
+                  className={`align-top ${ROW_RULE} [&:last-child>*]:border-b-0`}
                 >
                   <th scope="row" className={`${UNIT_CELL} py-3 font-medium text-navy`}>
                     {row.label}
@@ -592,10 +674,18 @@ function PricesGridBody({
                       </div>
                     )}
                     {/* N7: outside the row header (it would join the header's name); compact has no Contains cell, so there it stays */}
-                    <NotEditable row={row} pointer={compact} />
+                    {!compact && !showContains && (
+                      <div
+                        data-testid={`${T.row(row.ref)}-contains`}
+                        className="mt-0.5 text-xs font-normal text-navy/70"
+                      >
+                        {containsLines(row, ascending).join(" · ")}
+                      </div>
+                    )}
+                    <NotEditable row={row} pointer={!showContains} />
                   </th>
                   {rowAction && <td className="px-2 py-3">{rowAction(row, "table")}</td>}
-                  {!compact && (
+                  {showContains && (
                     <td className="min-w-[7rem] px-2 py-3 text-navy/80">
                       {containsLines(row, ascending).map((l, n) => (
                         <div
@@ -637,7 +727,7 @@ function PricesGridBody({
             <div
               key={row.ref}
               data-testid={T.card(row.ref)}
-              className={`rounded-md border p-3 ${FRAME_BORDER}`}
+              className={`rounded-md border p-3 max-sm:pt-2 ${FRAME_BORDER}`}
             >
               <div className="font-medium text-navy">{row.label}</div>
               <NotEditable row={row} />
@@ -647,7 +737,7 @@ function PricesGridBody({
                   <div key={l}>{l}</div>
                 ))}
               </div>
-              <div className="mb-2 text-xs text-navy/70">
+              <div className="mb-2 max-sm:mb-1 text-xs text-navy/70">
                 Barcode: <span data-testid={T.code(row.ref)}>{barcodeText(row)}</span>
               </div>
               <dl className="grid grid-cols-2 gap-2">

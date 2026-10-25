@@ -36,7 +36,7 @@ function makeCtx({ table, files = {}, strict = false }) {
     exec: makeExec(table),
     readText: (name) => (name in files ? files[name] : null),
     repo: "najathakram/routeflow",
-    boardIssue: 2554,
+    boardIssue: 3686,
     opts: { strict },
   };
 }
@@ -288,11 +288,11 @@ await test("board: last 5 comments", async () => {
       ["board"],
       makeCtx({
         table: {
-          "gh api repos/najathakram/routeflow/issues/2554": ok('{"comments":7}'),
-          "gh api repos/najathakram/routeflow/issues/2554/comments?per_page=5&page=2": ok(
+          "gh api repos/najathakram/routeflow/issues/3686": ok('{"comments":7}'),
+          "gh api repos/najathakram/routeflow/issues/3686/comments?per_page=5&page=2": ok(
             JSON.stringify([mk(6), mk(7)]),
           ),
-          "gh api repos/najathakram/routeflow/issues/2554/comments?per_page=5&page=1": ok(
+          "gh api repos/najathakram/routeflow/issues/3686/comments?per_page=5&page=1": ok(
             JSON.stringify([mk(1), mk(2), mk(3), mk(4), mk(5)]),
           ),
         },

@@ -72,7 +72,7 @@ describe("CounterSaleScreen: customer search empty state (CQ-11)", () => {
     customersResult = { data: { data: [{ id: "c1", businessName: "Acme Cafe" }] } };
     renderWithProviders(<CounterSaleScreen />);
     search("acme");
-    expect(screen.getByRole("button", { name: "Acme Cafe" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Acme Cafe" })).toBeInTheDocument();
     expect(screen.queryByTestId("counter-customer-none")).toBeNull();
   });
 });

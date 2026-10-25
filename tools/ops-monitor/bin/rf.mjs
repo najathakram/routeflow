@@ -29,8 +29,10 @@ import { fold } from "../lib/fold.mjs";
 import { laneNow, rankCandidates } from "../lib/next.mjs";
 import { registerModeOf, runSync } from "../lib/sync.mjs";
 import { checkoutRoot, laneForCwd, setLane } from "../lib/lanes-local.mjs";
+import { runStatusSync } from "../lib/status-sync.mjs";
 import { lastEventId, renderBrief, renderSince, splitAtMarker } from "../lib/brief.mjs";
 import { registerHook } from "../lib/views.mjs";
+import { BRIEF_DISABLED_NOTE, loadClientNames } from "../lib/mask.mjs";
 import {
   appendEvents,
   ensureClone,
@@ -95,12 +97,13 @@ const USAGE = `usage: rf <command> [args]
   item new --title T --type X [--priority P] [--status S] [--lane L] [--train R1] [--area A]
            [--parent ID] [--eta E] [--gate G] [--id ID]
            [--problem "what is wrong"] [--impact "who it hurts, what it costs"] [--solution "how we fix it"]
-           [--owner-ask "what we need from the owner"]   (P0/P1 bug/feature/incident: --problem + --impact required)
+           [--owner-ask "what we need from the owner"] [--harm live|latent|none|null]   (P0/P1 bug/feature/incident: --problem + --impact required)
   item edit <id> [--title ..] [--priority ..] ...   item show <id> [--json]
   ls [--lane L] [--train R] [--status S] [--type T] [--open] [--json]
   sync [--dry] [--no-push]                         turn changed register / owner-queue rows into events
   audit [--json] [--snapshot FILE]                 the accuracy counts (items, alarms, problems, queue, PRs, bugs)
   bug file <args...>                               files a bug via scripts/campaign/bugs.mjs (lead, coordinator only)
+  status-sync [--no-push]                                          lane status files -> heartbeat events
   brief [--lane L] [--since <eventId|iso>] [--refresh] [--json]   what the monitor says, in plain words
   whoami [--machine M] [--lane L]   backfill [--dry]   views [--dry] [--no-push]   doctor   hash-password
 global: --json  --no-push  --no-sync  --quiet (no stdout on success)`;
@@ -204,6 +207,9 @@ function itemFields(flags, c) {
   // Business view (owner 2026-10-19): the plain-language story of the item.
   for (const k of ["problem", "impact", "solution"]) if (flags[k] !== undefined) f[k] = flags[k];
   if (flags["owner-ask"] !== undefined) f.ownerAsk = flags["owner-ask"];
+  // Live harm: live | latent | none; "null" or "-" clears it ("none" is itself a harm value).
+  if (flags.harm !== undefined)
+    f.harm = ["null", "-", ""].includes(String(flags.harm)) ? null : String(flags.harm);
   if (flags["train-label"] !== undefined) f.trainLabel = flags["train-label"];
   if (flags.trainLabel !== undefined) f.trainLabel = flags.trainLabel;
   if (flags.lane !== undefined) {
@@ -621,7 +627,8 @@ async function cmdSync(flags, env) {
   const s = res.summary;
   const text =
     `sync${flags.dry ? " (dry)" : ""}: ${res.events.length} event(s): ${s.registerNew} new row(s), ` +
-    `${s.registerEdits} edited, ${s.answered} answered, ${s.dropped} board item(s) dropped` +
+    `${s.registerEdits} edited, ${s.answered} answered, ${s.dropped} board item(s) dropped, ` +
+    `${s.planNew} plan train(s) new, ${s.planEdits} edited, ${s.planDropped} dropped` +
     (flags.dry
       ? "\n" + res.events.map((e) => `  ${e.kind} ${e.item ?? "-"}`).join("\n")
       : `; appended ${res.appended}${res.pushed ? " and pushed" : ""}`) +
@@ -785,6 +792,13 @@ async function cmdBrief(flags, env) {
     } catch (e) {
       if (!flags.quiet) process.stderr.write(`warning: refresh failed: ${e?.message ?? e}\n`);
     }
+    // Lane status files -> this machine's heartbeat events, committed locally and NOT pushed
+    // (the monitor timer / `rf status-sync` push; a brief must stay read-mostly and fast).
+    try {
+      await runStatusSync({ dir: ctx.dir, home: ctx.home, env, push: false });
+    } catch {
+      // best effort
+    }
   }
   if (flags.quiet) return 0;
   if (!existsSync(join(ctx.dir, "events"))) {
@@ -803,7 +817,14 @@ async function cmdBrief(flags, env) {
   }
   const now = Date.now();
   const utcOffsetMin = -new Date(now).getTimezoneOffset();
-  const text = renderBrief(state, { lane, now, snapshot, config, utcOffsetMin });
+  const { names: clientNames, error: namesError } = loadClientNames({ env, home: ctx.home });
+  if (namesError) {
+    // A broken mask list never prints item text: one note, nothing else.
+    process.stdout.write(`${BRIEF_DISABLED_NOTE}
+`);
+    return 0;
+  }
+  const text = renderBrief(state, { lane, now, snapshot, config, clientNames, utcOffsetMin });
   let since = "";
   if (typeof flags.since === "string") {
     const marker = /^\d{4}-\d\d-\d\d/.test(flags.since)
@@ -812,7 +833,13 @@ async function cmdBrief(flags, env) {
     if (marker.ts !== undefined && !Number.isFinite(marker.ts))
       throw new UsageError(`--since needs an event id or an ISO time, got "${flags.since}"`);
     const { before, sorted } = splitAtMarker(events, marker);
-    since = renderSince(fold(before), fold(sorted), { lane, nowMs: now, utcOffsetMin, config });
+    since = renderSince(fold(before), fold(sorted), {
+      lane,
+      nowMs: now,
+      utcOffsetMin,
+      config,
+      clientNames,
+    });
     if (marker.lastEventId && !sorted.some((e) => e.id === marker.lastEventId))
       throw new UsageError(`--since: no event with id ${marker.lastEventId}`);
   }
@@ -960,6 +987,20 @@ export async function main(argv, env = process.env) {
       case "sync":
         code = await cmdSync(flags, env);
         break;
+      case "status-sync": {
+        const r = await runStatusSync({ env, push: !flags["no-push"], lockWaitMs: 5000 });
+        print(
+          flags,
+          r,
+          !r.ran
+            ? "status-sync skipped (busy)"
+            : r.pullError
+              ? `status-sync skipped: pull failed (${String(r.pullError).slice(0, 120)})`
+              : `status-sync: appended ${r.appended} heartbeat(s)${r.capped ? `, ${r.capped} left (capped)` : ""}`,
+        );
+        code = 0;
+        break;
+      }
       case "audit":
         code = await cmdAudit(flags, env);
         break;

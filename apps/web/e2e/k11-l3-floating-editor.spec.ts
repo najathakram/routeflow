@@ -1,6 +1,6 @@
 /**
- * K11-20c (lane L3): the floating price editor opened from the legacy "Units & prices" card and from Details, and the
- * inline editor's full-width grid.
+ * K11-20c (lane L3): the one price editor on the v2 product page (the inline grid's Edit), and its full-width grid.
+ * R3 retired the floating window's openers (the legacy card's Edit prices and figures, Details' tiers row): see below.
  *
  * NOT RUN by its author (no browser on the build machine); Jest proves the behaviour in `ProductUnitsCard.k11-20c.test.tsx`,
  * `PriceWindowHost.test.tsx` and `page.k11-20c.test.tsx`. This spec carries the pixel and network claims. Run it on the
@@ -20,7 +20,6 @@ import { BASE, VIEWPORTS, focusedPageTop, seedImages, shot, type Ctx } from "./k
 
 const { assertTestTenant } = require("../../../scripts/lib/test-tenants.cjs");
 
-const WIN = { name: "Edit prices" };
 const money = (n: number) =>
   n.toLocaleString("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2 });
 
@@ -79,24 +78,14 @@ async function withProduct(
 }
 
 const card = (page: Page) => page.locator("[data-units-card]");
-const trigger = (page: Page) => card(page).getByRole("button", { name: "Edit prices" });
-const win = (page: Page) => page.getByRole("dialog", WIN);
-const inDialog = (page: Page) =>
-  page.evaluate(
-    () => !!document.querySelector('[role="dialog"]')?.contains(document.activeElement),
-  );
+const editBtn = (page: Page) => page.getByTestId("units-v2-btn-edit");
+const dialogs = (page: Page) => page.locator('[role="dialog"]');
+const priceBox = (page: Page, ref: string) =>
+  page.locator(`[data-testid="units-v2-input-${ref}-1"]:visible`);
 
-/** How many price boxes (the editor's inputs and the legacy card's inputs) are outside the window. */
-const priceInputsOutside = (page: Page) =>
-  page.evaluate(() => {
-    const dlg = document.querySelector('[role="dialog"]');
-    const all = [
-      ...document.querySelectorAll<HTMLElement>(
-        '[data-testid^="units-v2-input-"], input[aria-label$=" price"]',
-      ),
-    ];
-    return all.filter((el) => !dlg?.contains(el)).length;
-  });
+/** How many price boxes the legacy Units & prices card carries (read-only under v2: none). */
+const legacyCardPriceInputs = (page: Page) =>
+  card(page).locator('input[aria-label$=" price"], [data-testid^="units-v2-input-"]').count();
 
 const noHorizontalScroll = (page: Page) =>
   page.evaluate(
@@ -104,7 +93,7 @@ const noHorizontalScroll = (page: Page) =>
   );
 
 async function typeRetail(page: Page, ref: string, value: number) {
-  const box = win(page).locator(`[data-testid="units-v2-input-${ref}-1"]:visible`);
+  const box = priceBox(page, ref);
   await box.fill(value.toFixed(2));
   return box;
 }
@@ -116,97 +105,51 @@ const savedPrices = (page: Page) =>
       /\/products\/[^/]+\/prices$/.test(new URL(r.url()).pathname),
   );
 
+/*
+ * R3 (say-no 1 and 2): the legacy card is read-only where the grid has unit controls and Details has no tiers row, so the
+ * floating price window (K11-20) has no opener left on the v2 product page: the inline grid's Edit is the one price editor.
+ * The window tests of this file (open, geometry, scrim and keyboard, reduced motion, no inputs outside) were retired with
+ * their opener; what they proved about the SAVE (one S9 write, no unit PATCH price, Details sends no price key, Undo,
+ * dirty Cancel asks) is re-pinned below against the inline editor.
+ */
+// T2 (geometry) and T7 (reduced motion): window unreachable on v2 product page; covered in PriceWindowHost.test.tsx
+// until the owner's two-price-editors decision.
 for (const vp of VIEWPORTS) {
-  test.describe(`K11-20c floating price editor @ ${vp.name}`, () => {
+  test.describe(`K11-20c one price editor, the inline grid @ ${vp.name}`, () => {
     test.use({ viewport: { width: vp.width, height: vp.height } });
 
-    test("1. Edit prices opens the window, visible and focused, with no horizontal page scroll", async ({
+    test("1. no price-window opener is left: no Edit prices button, no clickable card figures, no Details tiers row", async ({
+      page,
+      context,
+    }) => {
+      await withProduct(page, context, async () => {
+        await expect(card(page)).toBeVisible();
+        await expect(page.getByRole("button", { name: "Edit prices" })).toHaveCount(0);
+        await expect(page.locator('[data-testid^="price-figure-"]')).toHaveCount(0);
+        await expect(page.getByTestId("details-price-line")).toHaveCount(0);
+        expect(await legacyCardPriceInputs(page), "the legacy card has no price boxes").toBe(0);
+        await expect(editBtn(page)).toBeVisible();
+        await expect(dialogs(page)).toHaveCount(0);
+      });
+    });
+
+    test("2. Edit opens edit mode in the grid itself: no dialog, the price boxes are the grid's, no horizontal page scroll", async ({
       page,
       context,
     }, info) => {
-      await withProduct(page, context, async () => {
-        await expect(trigger(page)).toBeVisible();
-        const t0 = Date.now();
-        await trigger(page).click();
-        await expect(win(page)).toBeVisible();
-        await expect.poll(() => inDialog(page)).toBe(true);
-        // A generous bound that includes the test runner's own round trips; the feel is the feel prober's to judge.
-        expect(Date.now() - t0, "visible and focused promptly").toBeLessThan(1500);
+      await withProduct(page, context, async (prod) => {
+        const was = await packRetail(page, prod);
+        await editBtn(page).click();
+        await expect(page.getByTestId("units-v2-editbar")).toBeVisible();
+        await expect(priceBox(page, was.ref)).toBeVisible();
+        await expect(dialogs(page)).toHaveCount(0);
+        expect(await legacyCardPriceInputs(page)).toBe(0);
         expect(await noHorizontalScroll(page)).toBe(true);
-        await shot(page, info, "k11-20c-open");
+        await shot(page, info, "k11-20c-inline-open");
       });
     });
 
-    test("2. geometry: inside the viewport, hung off the card, all five tiers reachable", async ({
-      page,
-      context,
-    }, info) => {
-      await withProduct(page, context, async () => {
-        await trigger(page).click();
-        await expect(win(page)).toBeVisible();
-        await page.waitForTimeout(300); // the open animation
-        const p = (await win(page).boundingBox())!;
-        const c = (await card(page).boundingBox())!;
-        const v = page.viewportSize()!;
-        if (vp.width >= 1440) {
-          expect(p.x).toBeGreaterThanOrEqual(16);
-          expect(p.x + p.width).toBeLessThanOrEqual(v.width - 16);
-          expect(Math.abs(p.x + p.width - (c.x + c.width))).toBeLessThanOrEqual(1);
-          const m = await page.evaluate(() => {
-            const region = document.querySelector<HTMLElement>(
-              '[role="dialog"] [data-testid="units-v2-units-table"]',
-            )!;
-            const edge = region.getBoundingClientRect().right;
-            const clipped = [...region.querySelectorAll<HTMLElement>("th[data-tier-head]")].filter(
-              (th) => th.getBoundingClientRect().right > edge + 0.5,
-            ).length;
-            return { fits: region.scrollWidth <= region.clientWidth, clipped };
-          });
-          expect(m.fits, "the window's table does not scroll sideways at 1440").toBe(true);
-          expect(m.clipped, "no tier header is clipped").toBe(0);
-        } else if (!vp.cards) {
-          // 768: either the table fits, or the sideways cue is visible and the Unit column stays put while scrolled.
-          const fits = await page.evaluate(() => {
-            const region = document.querySelector<HTMLElement>(
-              '[role="dialog"] [data-testid="units-v2-units-table"]',
-            )!;
-            return region.scrollWidth <= region.clientWidth;
-          });
-          if (!fits) {
-            await expect(win(page).getByTestId("units-v2-scroll-cue")).toBeVisible();
-            const unitHead = win(page).locator("tbody th").first();
-            const before = (await unitHead.boundingBox())!.x;
-            await win(page)
-              .getByTestId("units-v2-units-table")
-              .evaluate((el) => el.scrollTo({ left: 400 }));
-            const after = (await unitHead.boundingBox())!.x;
-            expect(Math.abs(after - before)).toBeLessThanOrEqual(1);
-          }
-        } else {
-          // 390: a bottom sheet with the title and Save in view, and the LAST unit's Tier 5 reachable by scrolling.
-          expect(Math.abs(p.y + p.height - v.height)).toBeLessThanOrEqual(1);
-          expect(p.height).toBeLessThanOrEqual(v.height * 0.92 + 1);
-          await expect(win(page).getByText("Edit prices").first()).toBeInViewport();
-          const save = win(page).getByTestId("units-v2-eb-save");
-          await expect(save).toBeInViewport();
-          const lastTier5 = win(page)
-            .locator('[data-testid^="units-v2-card-"]')
-            .last()
-            .locator("dt")
-            .nth(4);
-          await lastTier5.scrollIntoViewIfNeeded();
-          await expect(lastTier5).toBeInViewport({ ratio: 1 });
-          const t5 = (await lastTier5.boundingBox())!;
-          const s = (await save.boundingBox())!;
-          expect(t5.y + t5.height, "Tier 5 sits above the pinned Save bar").toBeLessThanOrEqual(
-            s.y + 1,
-          );
-        }
-        await shot(page, info, "k11-20c-geometry");
-      });
-    });
-
-    test("3. a Save is one S9 write; no unit PATCH carries a price; the card, Details and the grid follow without a reload; Undo puts all three back", async ({
+    test("3. a Save is one S9 write; no unit PATCH carries a price; the card and grid follow without a reload; Details has no price line; Undo puts them back", async ({
       page,
       context,
     }, info) => {
@@ -223,55 +166,48 @@ for (const vp of VIEWPORTS) {
               unitPatchesWithPrice.push(path);
           }
         });
-        await trigger(page).click();
-        await expect(win(page)).toBeVisible();
+        await editBtn(page).click();
         await typeRetail(page, was.ref, next);
         const saved = savedPrices(page);
-        await win(page).getByTestId("units-v2-eb-save").click();
+        await page.getByTestId("units-v2-eb-save").click();
         expect((await saved).ok()).toBe(true);
 
-        await expect(win(page)).toBeHidden();
-        await expect(trigger(page)).toBeFocused();
-        // "Saved 1 price. Undo" is on screen under the trigger within 1 s.
-        const line = page.locator("#units-msg-window");
+        // "Saved 1 price. Undo" is on screen where the change happened within 1 s.
+        const line = page.locator("#units-msg");
         await expect(line).toContainText(/Saved 1 price/, { timeout: 1000 });
         await expect(line).toBeInViewport();
-        const tb = (await trigger(page).boundingBox())!;
-        const lb = (await line.boundingBox())!;
-        expect(lb.y).toBeGreaterThanOrEqual(tb.y + tb.height - 1);
 
         expect(posts, "exactly one S9 write").toHaveLength(1);
         expect(unitPatchesWithPrice, "no unit PATCH carries a price").toEqual([]);
 
-        // The three places a price shows follow, with no reload.
-        const cardFigure = card(page).getByTestId(`price-figure-${was.ref}-1`);
+        // The two places a price shows follow, with no reload. Under v2 the Details card has no price line.
         const grid = page.getByTestId("units-v2-grid");
         const details = page.getByTestId("details-price-line");
-        await expect(cardFigure).toContainText(money(next));
+        await expect(card(page)).toContainText(money(next));
         await expect(grid).toContainText(money(next));
-        await expect(details).toContainText(money(next));
+        await expect(details).toHaveCount(0);
         await shot(page, info, "k11-20c-saved");
 
         await line.getByRole("button", { name: /Undo/ }).click();
-        await expect(cardFigure).toContainText(money(was.retail));
+        await expect(card(page)).toContainText(money(was.retail));
         await expect(grid).toContainText(money(was.retail));
-        await expect(details).toContainText(money(was.retail));
+        await expect(details).toHaveCount(0);
       });
     });
 
-    test("4. a Details rename after a window save sends no price key and the new price survives a reload", async ({
+    test("4. a Details rename after a grid save sends no price key and the new price survives a reload", async ({
       page,
       context,
     }) => {
       await withProduct(page, context, async (prod) => {
         const was = await packRetail(page, prod);
         const next = Math.round((was.retail + 0.41) * 100) / 100;
-        await trigger(page).click();
+        await editBtn(page).click();
         await typeRetail(page, was.ref, next);
         const saved = savedPrices(page);
-        await win(page).getByTestId("units-v2-eb-save").click();
+        await page.getByTestId("units-v2-eb-save").click();
         expect((await saved).ok()).toBe(true);
-        await expect(win(page)).toBeHidden();
+        await expect(page.getByTestId("units-v2-editbar")).toBeHidden();
 
         await page.getByTitle("Edit product").click();
         await page.getByLabel("Product name").fill(`${prod.name} R`);
@@ -286,45 +222,37 @@ for (const vp of VIEWPORTS) {
         }
         await page.reload();
         const after = await packRetail(page, prod);
-        expect(after.retail, "the window's price survives the rename and a reload").toBe(next);
+        expect(after.retail, "the grid's price survives the rename and a reload").toBe(next);
       });
     });
 
-    test("5. dirty: Escape and a scrim click both ask and keep the draft; clean: a scrim click closes", async ({
+    test("5. dirty: Cancel asks and Keep editing keeps the draft; Discard drops it; clean: Cancel closes at once", async ({
       page,
       context,
     }) => {
       await withProduct(page, context, async (prod) => {
         const was = await packRetail(page, prod);
-        const scrim = () => page.mouse.click(5, 5);
-        await trigger(page).click();
-        await expect(win(page)).toBeVisible();
-        await page.waitForTimeout(250);
-        await scrim(); // clean: closes at once
-        await expect(win(page)).toBeHidden();
+        const asking = page.getByText("Discard your unsaved changes?");
+        await editBtn(page).click();
+        await page.getByTestId("units-v2-eb-cancel").click(); // clean: closes at once
+        await expect(page.getByTestId("units-v2-editbar")).toBeHidden();
 
         const dirty = Math.round((was.retail + 0.55) * 100) / 100;
-        await trigger(page).click();
+        await editBtn(page).click();
         await typeRetail(page, was.ref, dirty);
-        await win(page).getByTestId("units-v2-eb-save").focus();
-        await page.keyboard.press("Escape");
-        await expect(win(page).getByText("Discard your unsaved changes?")).toBeVisible();
-        await win(page).getByTestId("units-v2-eb-keep").click();
-        await expect(win(page).getByText("Discard your unsaved changes?")).toBeHidden();
-        await scrim();
-        await expect(win(page).getByText("Discard your unsaved changes?")).toBeVisible();
-        await expect(win(page)).toBeVisible();
-        await win(page).getByTestId("units-v2-eb-keep").click();
-        await expect(
-          win(page).locator(`[data-testid="units-v2-input-${was.ref}-1"]:visible`),
-        ).toHaveValue(dirty.toFixed(2));
-        await page.keyboard.press("Escape");
-        await win(page).getByTestId("units-v2-eb-discard").click();
-        await expect(win(page)).toBeHidden();
+        await page.getByTestId("units-v2-eb-cancel").click();
+        await expect(asking).toBeVisible();
+        await page.getByTestId("units-v2-eb-keep").click();
+        await expect(asking).toBeHidden();
+        await expect(priceBox(page, was.ref)).toHaveValue(dirty.toFixed(2));
+        await page.getByTestId("units-v2-eb-cancel").click();
+        await page.getByTestId("units-v2-eb-discard").click();
+        await expect(page.getByTestId("units-v2-editbar")).toBeHidden();
+        expect((await packRetail(page, prod)).retail, "a discard writes nothing").toBe(was.retail);
       });
     });
 
-    test("6. keyboard only: Enter on a figure, type, Tab stays in the window, Ctrl+S saves once, focus returns to the figure", async ({
+    test("6. keyboard only: Ctrl+S in the grid's price box saves once", async ({
       page,
       context,
     }) => {
@@ -336,61 +264,16 @@ for (const vp of VIEWPORTS) {
           if (r.method() === "POST" && /\/products\/[^/]+\/prices$/.test(new URL(r.url()).pathname))
             posts++;
         });
-        const figure = card(page).getByTestId(`price-figure-${was.ref}-1`);
-        await figure.focus();
+        await editBtn(page).focus();
         await page.keyboard.press("Enter");
-        await expect(win(page)).toBeVisible();
-        const box = win(page).locator(`[data-testid="units-v2-input-${was.ref}-1"]:visible`);
-        await expect(box).toBeFocused();
-        await page.keyboard.type(next.toFixed(2));
-        for (let i = 0; i < 12; i++) {
-          await page.keyboard.press("Tab");
-          expect(await inDialog(page), `Tab ${i + 1} stays inside the window`).toBe(true);
-        }
+        const box = priceBox(page, was.ref);
         await box.focus();
+        await page.keyboard.type(next.toFixed(2));
         const saved = savedPrices(page);
         await page.keyboard.press("Control+s");
         expect((await saved).ok()).toBe(true);
-        await expect(win(page)).toBeHidden();
+        await expect(page.getByTestId("units-v2-editbar")).toBeHidden();
         expect(posts).toBe(1);
-        await expect(figure).toBeFocused();
-      });
-    });
-
-    test("7. reduced motion: the panel's transform is none throughout opening", async ({
-      page,
-      context,
-    }) => {
-      await page.emulateMedia({ reducedMotion: "reduce" });
-      await withProduct(page, context, async () => {
-        await page.evaluate(() => {
-          const w = window as unknown as { __tf: string[] };
-          w.__tf = [];
-          const sample = () => {
-            const el = document.querySelector('[role="dialog"]');
-            if (el) w.__tf.push(getComputedStyle(el).transform);
-            requestAnimationFrame(sample);
-          };
-          requestAnimationFrame(sample);
-        });
-        await trigger(page).click();
-        await expect(win(page)).toBeVisible();
-        await page.waitForTimeout(500);
-        const seen = await page.evaluate(() => (window as unknown as { __tf: string[] }).__tf);
-        expect(seen.length).toBeGreaterThan(0);
-        // A panel at rest reports the identity matrix; "none" is also fine. Any other value means it moved or scaled.
-        for (const t of seen) expect(["none", "matrix(1, 0, 0, 1, 0, 0)"]).toContain(t);
-      });
-    });
-
-    test("8. while the window is open there are no price inputs outside it", async ({
-      page,
-      context,
-    }) => {
-      await withProduct(page, context, async () => {
-        await trigger(page).click();
-        await expect(win(page)).toBeVisible();
-        expect(await priceInputsOutside(page)).toBe(0);
       });
     });
   });

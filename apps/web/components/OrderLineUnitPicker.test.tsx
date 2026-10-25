@@ -314,3 +314,18 @@ describe("OrderLineUnitPicker: a NEW line starts on the default selling unit (#2
     expect(renderPicker(packLine, { startOnDefaultUnit: false })).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * #3670 review MUST-2 (W-745): after a failed customer read the order editor's picker re-priced an existing line from the tier-1
+ * ladder (LIST). `disabled` (the editor passes !pricingReady) closes the control and fires no change at all.
+ */
+describe("OrderLineUnitPicker disabled (W-745)", () => {
+  it("disabled: the control is disabled and a change re-prices nothing", () => {
+    const onChange = jest.fn();
+    render(<OrderLineUnitPicker line={packLine} tier={1} onChange={onChange} disabled />);
+    const select = screen.getByLabelText("Sell Widget by");
+    expect(select).toBeDisabled();
+    fireEvent.change(select, { target: { value: "Case" } });
+    expect(onChange).not.toHaveBeenCalled();
+  });
+});

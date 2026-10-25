@@ -58,7 +58,7 @@ describe("buyer verify-merge page: confirm only on click", () => {
 
     await user.click(await screen.findByRole("button", { name: /confirm account merge/i }));
 
-    expect(await screen.findByRole("heading", { name: "Account Verified!" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Account verified" })).toBeInTheDocument();
     expect(mockPost).toHaveBeenCalledTimes(1);
     const [url, body] = mockPost.mock.calls[0] as [string, unknown];
     expect(url).toMatch(/\/buyer\/auth\/verify-merge$/);
@@ -84,7 +84,7 @@ describe("buyer verify-merge page: confirm only on click", () => {
 
     await user.click(await screen.findByRole("button", { name: /confirm account merge/i }));
 
-    expect(await screen.findByRole("heading", { name: "Verification Failed" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Verification failed" })).toBeInTheDocument();
     expect(screen.getByText(/verification token has expired/i)).toBeInTheDocument();
     expect(screen.getByText(/submit a new merge request/i)).toBeInTheDocument();
   });
@@ -98,7 +98,7 @@ describe("buyer verify-merge page: confirm only on click", () => {
 
     await user.click(await screen.findByRole("button", { name: /confirm account merge/i }));
 
-    expect(await screen.findByRole("heading", { name: "Verification Failed" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Verification failed" })).toBeInTheDocument();
     expect(screen.getByText("Too many attempts. Try again in 15 minutes.")).toBeInTheDocument();
     expect(screen.queryByText(/ThrottlerException/)).not.toBeInTheDocument();
   });
@@ -110,7 +110,7 @@ describe("buyer verify-merge page: confirm only on click", () => {
 
     await user.click(await screen.findByRole("button", { name: /confirm account merge/i }));
 
-    expect(await screen.findByRole("heading", { name: "Verification Failed" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Verification failed" })).toBeInTheDocument();
     expect(screen.getByText("Verification failed.")).toBeInTheDocument();
   });
 
@@ -124,7 +124,7 @@ describe("buyer verify-merge page: confirm only on click", () => {
     await user.dblClick(btn);
     resolve({ data: { success: true } });
 
-    expect(await screen.findByRole("heading", { name: "Account Verified!" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Account verified" })).toBeInTheDocument();
     expect(mockPost).toHaveBeenCalledTimes(1);
   });
 
@@ -132,7 +132,7 @@ describe("buyer verify-merge page: confirm only on click", () => {
     mockSearchParams = new URLSearchParams();
     render(<VerifyMergePage />);
 
-    expect(await screen.findByRole("heading", { name: "Verification Failed" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Verification failed" })).toBeInTheDocument();
     expect(screen.getByText("No verification token provided.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /confirm/i })).not.toBeInTheDocument();
     await waitFor(() => expect(fetchSpy).not.toHaveBeenCalled());

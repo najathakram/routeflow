@@ -144,7 +144,11 @@ describeDb("B663 on-account short/refused completion — real Postgres", () => {
         { provide: SystemConfigService, useValue: mockSystemConfig },
         {
           provide: RegulatedLedgerService,
-          useValue: { writeSaleEntries: jest.fn(), reverseInvoiceEntries: jest.fn() },
+          useValue: {
+            writeSaleEntries: jest.fn(),
+            reverseInvoiceEntries: jest.fn(),
+            settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
+          },
         },
         {
           provide: AuthorizationGuardService,
@@ -183,6 +187,9 @@ describeDb("B663 on-account short/refused completion — real Postgres", () => {
   });
 
   async function cleanupTenant(tenantId: string): Promise<void> {
+    await prisma.auditLog.deleteMany({ where: { tenantId } }); // W-769: the over-reserved rows
+    await prisma.advancePayment.deleteMany({ where: { tenantId } });
+    await prisma.invoicePayment.deleteMany({ where: { invoice: { tenantId } } });
     await prisma.deliveryMutation.deleteMany({ where: { tenantId } });
     await prisma.invoiceItem.deleteMany({ where: { tenantId } });
     await prisma.invoice.deleteMany({ where: { tenantId } });
@@ -358,5 +365,50 @@ describeDb("B663 on-account short/refused completion — real Postgres", () => {
       line2Qty: Number(billedQty(s.line2.id) ?? 0),
       total: invoices.reduce((sum, i) => sum + Number(i.total), 0),
     }).toEqual({ invoiceCount: 1, line1Qty: 6, line2Qty: 0, total: 60 });
+  });
+
+  // W-769 W7 (owner 7b = A; W-707 folds in): delivery cash keeps its confirmed basis and spill, and ADDS the flag. Over an
+  // invoice a DRAFT reserves, the door cash is recorded and the DRAFT gets ONE over-reserved audit row (master: no row).
+  it("W7 delivery cash 120 on a full delivery whose invoice carries a DRAFT 120: PAID 120 recorded, the DRAFT flagged once", async () => {
+    const s = await seedOrderOnStop("w769-w7");
+    const [inv] = await prisma.invoice.findMany({
+      where: { orderId: s.order.id, status: { not: "VOID" } },
+    });
+    const d = await prisma.invoicePayment.create({
+      data: {
+        invoiceId: inv.id,
+        tenantId: s.tenantId,
+        amount: 120,
+        method: "CHECK",
+        status: "DRAFT",
+      } as any,
+    });
+    await tenantCtx.run(s.tenantId, () =>
+      routesService.completeWithPayment(
+        s.run.id,
+        s.runStop.id,
+        {
+          deliveries: [
+            { orderItemId: s.line1.id, type: "DELIVERED", quantityDelivered: 10 },
+            { orderItemId: s.line2.id, type: "DELIVERED", quantityDelivered: 4 },
+          ],
+          payment: { amount: 120, method: "CASH" },
+        } as never,
+        { sub: "w769-operator", role: "OPERATOR" } as never,
+      ),
+    );
+    const rows = await prisma.invoicePayment.findMany({
+      where: { invoice: { orderId: s.order.id } },
+      orderBy: { createdAt: "asc" },
+    });
+    expect(rows.map((r) => `${r.status} ${r.method} ${Number(r.amount)}`)).toEqual([
+      "DRAFT CHECK 120",
+      "PAID CASH 120",
+    ]);
+    const flagged = await prisma.auditLog.findMany({
+      where: { tenantId: s.tenantId, action: "payment.unconfirmed-over-reserved" },
+    });
+    expect(flagged).toHaveLength(1);
+    expect(flagged[0].meta).toMatchObject({ displaced: [d.id] });
   });
 });

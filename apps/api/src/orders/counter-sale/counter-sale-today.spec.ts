@@ -348,13 +348,53 @@ describe("CounterSaleTodayService: query budget (test 12)", () => {
     // the counter payments (classified in code, row 374 a) and the hand-over candidates: two reads, never a groupBy
     expect(prisma.invoicePayment.groupBy).not.toHaveBeenCalled();
     expect(prisma.invoicePayment.aggregate).toHaveBeenCalledTimes(1);
-    expect(prisma.return.findMany).toHaveBeenCalledTimes(1);
+    // the summary's read + the ONE batched read of the returns carried on other orders (a row never makes its own)
+    expect(prisma.return.findMany).toHaveBeenCalledTimes(2);
     expect(prisma.creditNote.findMany).toHaveBeenCalledTimes(1);
     // nothing else is read: no per-row call on any other model
     expect(prisma.invoice.findMany).not.toHaveBeenCalled();
     expect(prisma.return.groupBy).not.toHaveBeenCalled();
     expect(prisma.invoicePayment.findMany).toHaveBeenCalledTimes(2); // the sale payments + SA-763r R7 hand-over candidates
     expect(prisma.customer.findMany).not.toHaveBeenCalled();
+  });
+
+  it("B1262 / SA-838 (e): a page WITH credit-note payments makes exactly two return reads, the summary's and the one batched read", async () => {
+    const { prisma, call } = setup([row("2026-10-07T16:00:00.000Z")]);
+    // the page record carries a credit-note payment, so the batched read of the returns behind it runs
+    prisma.order.findMany.mockResolvedValue([
+      {
+        ...pageRecord(row("2026-10-07T16:00:00.000Z")),
+        invoices: [
+          {
+            id: "i-1",
+            invoiceNumber: "INV-1",
+            status: "PAID",
+            payments: [
+              {
+                method: "CREDIT_NOTE",
+                amount: "5.00",
+                status: "PAID",
+                creditNoteId: "cn-1",
+                creditNote: { invoiceId: "i-1" },
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+    await call({ page: 1, limit: 50 }, NOW);
+    expect(prisma.return.findMany).toHaveBeenCalledTimes(2);
+    // SA-838a I2: plus exactly ONE batched credit-note read (the summary's read is the other creditNote.findMany)
+    expect(prisma.creditNote.findMany).toHaveBeenCalledTimes(2);
+    expect(
+      (prisma.creditNote.findMany.mock.calls as any[]).filter((c) => c[0]?.select?.invoicePayments),
+    ).toHaveLength(1);
+    const batched = (prisma.return.findMany.mock.calls as any[]).filter((c) => c[0]?.select?.items);
+    expect(batched).toHaveLength(1);
+    // one where for both surfaces: behind the page's notes, OR with an item sold on a page order
+    expect(batched[0][0].where.tenantId).toBe(T);
+    expect(batched[0][0].where.OR[0]).toEqual({ creditNoteId: { in: ["cn-1"] } });
+    expect(batched[0][0].where.OR[1].items.some.sourceOrderId.in).toHaveLength(1);
   });
 
   it("page 2 runs NO summary query", async () => {
@@ -364,12 +404,13 @@ describe("CounterSaleTodayService: query budget (test 12)", () => {
     expect(prisma.invoicePayment.groupBy).not.toHaveBeenCalled();
     expect(prisma.invoicePayment.findMany).not.toHaveBeenCalled();
     expect(prisma.invoicePayment.aggregate).not.toHaveBeenCalled();
+    // this page 2 is empty: no summary and no batched carried read
     expect(prisma.return.findMany).not.toHaveBeenCalled();
     expect(prisma.creditNote.findMany).not.toHaveBeenCalled();
     expect(prisma.order.findMany).toHaveBeenCalledTimes(1);
   });
 
-  it("the page query selects (never includes) and carries no line items or cost fields", async () => {
+  it("the page query selects (never includes) and carries no cost fields (item names only)", async () => {
     const { prisma, call } = setup([]);
     await call({}, NOW);
     const args = prisma.order.findMany.mock.calls[0][0];

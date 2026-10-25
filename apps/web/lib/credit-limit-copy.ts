@@ -14,13 +14,14 @@ export function creditLimitSentence(limit: unknown, exposure: unknown): string {
 }
 
 /**
- * The same refusal at the COUNTER: the sale was refused before anything was written, so the next step is to collect a
- * payment on the account or ring it to another customer (never "cancel the change", which is an order-edit idea).
+ * The same refusal at the COUNTER (owner 10-22 #11): the sale was refused before anything was written, and the way
+ * out is to take payment on the spot (the gate counts only what stays owed after the tender) or ring it to another
+ * customer (never "cancel the change", which is an order-edit idea).
  */
 export function creditLimitCounterSentence(limit: unknown, exposure: unknown): string {
   const l = usd(limit);
   const e = usd(exposure);
   return l && e
-    ? `This sale would put the customer's balance at ${e}, over their ${l} credit limit. Collect a payment on their account, or choose another customer, then try again.`
-    : "This sale would exceed the customer's credit limit. Collect a payment on their account, or choose another customer, then try again.";
+    ? `Over the credit limit (${e} owed after this sale, limit ${l}): take cash or card now or choose another customer.`
+    : "Over the credit limit: take cash or card now or choose another customer.";
 }

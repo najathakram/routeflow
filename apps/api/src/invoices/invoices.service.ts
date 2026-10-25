@@ -11,6 +11,13 @@ import { syncOrderLineCompositions } from "../orders/order-composition";
 import { sendAfterCommit } from "./send-after-commit";
 import { invoiceCompositionFields } from "./invoice-line-composition";
 import { applyComposedLineEdits } from "./invoice-composed-edit";
+import {
+  assertEditFits,
+  assertPaymentFits,
+  assertUnconfirmedAllocationFits,
+  flagUnconfirmedOverReserved,
+  withNoLongerFits,
+} from "./confirmed-basis";
 import { FeatureConfigService } from "../billing/feature-config.service";
 import * as unitAware from "../orders/unit-aware-guard";
 import {
@@ -22,6 +29,7 @@ import {
   sumInvoiceTotalsStrict,
 } from "../common/money-invariants.util";
 import { randomUUID } from "crypto";
+import { assertRefsInTenant } from "../common/assert-refs-in-tenant";
 import { PrismaService } from "../prisma/prisma.service";
 import { overpaidByOf, statusFromPayments } from "./invoice-status";
 import { voidPaymentInTx } from "./payment-void-tx";
@@ -39,7 +47,6 @@ import {
   copyCategoryTaxSnapshot,
   roundMoney,
   normalizeBoxesPieces,
-  remainingCapacity,
   OVERPAID_EPSILON,
   isPaidAtSale,
 } from "@routeflow/pricing";
@@ -66,23 +73,17 @@ import {
 } from "./invoice-edit-plan";
 import { redactUpsellForCustomer } from "../common/upsell-redaction";
 import { customerInvoiceList, invoiceDetailFor } from "../common/staff-only-fields";
-import {
-  CONFIRMED_PAYMENT,
-  CREDIT_NOTE_METHOD,
-  RECEIVED_METHOD_FILTER,
-  splitConfirmed,
-  sumConfirmed,
-} from "./payment-predicates";
+import { CONFIRMED_PAYMENT, splitConfirmed, sumConfirmed } from "./payment-predicates";
 import { PAYABLE } from "./invoice-status-sets";
 import { assertReminderIssued, assertReminderOwes } from "./invoice-balance-sql";
-import { classifyInvoiceBalance, confirmedBalance } from "./invoice-balance-classify";
+import { classifyInvoiceBalance } from "./invoice-balance-classify";
 import { reconcileDeliveredOrdersInTx as reconcileDeliveredOrdersInTxImpl } from "./delivered-reconcile";
 import { packAtSaleByProduct, priorUnitsPerBoxMap, toSaleLedgerLines } from "./pack-at-sale";
+import { regulatedContentChanged } from "./regulated-content-change";
 import { assertIntegerPieces, billPackOf } from "./unit-line-bill-guard";
-import { clampLimit } from "../common/pagination";
 import { isInternalEmail } from "../common/internal-email";
 import { stampMsrpSnapshots } from "./msrp-snapshots";
-import { effectiveTaxRateFromTotals } from "../common/tax-rate";
+import { configuredTaxRateFraction, effectiveTaxRateFromTotals } from "../common/tax-rate";
 import {
   checkOrderCoverage,
   bumpRevisionIfSaleMoved,
@@ -97,28 +98,43 @@ import {
 import { assertOrderItemIdsBelongToOrder, logSkippedMatches } from "./order-item-provenance";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { EntitlementAuthority } from "../billing/entitlement-authority.service";
-import { buildPaymentsCsv } from "./payments-csv";
+import { exportPayments, findPaymentById, listAllPayments } from "./payment-list-query";
 import { settledAtShipment } from "../orders/order-status-invoicing";
 import { assertCarrierLinesUnchanged, invoiceOrderWithCarrier } from "./invoice-carrier-lock";
 import { resolvePendingMirror } from "./pending-mirror";
+import {
+  guardedEmail,
+  invoiceFingerprintOf,
+  recordInvoiceEmailed,
+  assertOrderInvoiceUnlockedFor,
+  sendFieldsFor,
+  type SendEmailArgs,
+} from "./invoice-send-state";
 import { resolveInvoiceVariant } from "./invoice-stage";
+import { fingerprintOfSnapshot, readSendSnapshot, runSendCredits } from "./invoice-send-snapshot";
 import { orderShipmentFields } from "./order-shipment-fields";
 import {
   CheckStatus,
   CreditNoteStatus,
   InvoiceStatus,
   NotificationEvent,
+  OrderStatus,
   Prisma,
   UserRole,
 } from "@prisma/client";
 import type { InvoiceKpiSummary } from "@routeflow/types";
 import { computeInvoiceKpiSummary } from "./invoice-kpi-summary";
 import { CHECK_TRANSITIONS } from "../common/check-transitions";
+import { invoicePaymentKey, keyedPayment, standalonePaymentKey } from "./payment-idempotency";
+import { completionEmailParts } from "./invoice-completion-email";
+import { withPaymentEditRef, type RefOpts } from "./payment-edit-ref";
 import {
   RecordInvoicePaymentDto,
   type RecordPaymentOpts,
   SetCheckStatusDto,
   StandalonePaymentDto,
+  type StandalonePaymentOpts,
+  type StandalonePaymentResult,
   UpdatePaymentDto,
   WriteOffDto,
 } from "./dto/create-invoice.dto";
@@ -141,7 +157,10 @@ import { InvoicePdfService } from "./invoice-pdf.service";
 import { invoiceItemQtyFields } from "./invoice-pdf-item";
 import { buildInvoiceEmailAttachment, InvoiceEmailAttachment } from "./invoice-attachment";
 import { SystemConfigService } from "../system-config/system-config.service";
-import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
+import {
+  RegulatedLedgerService,
+  type RegulatedSettleResult,
+} from "../regulated/regulated-ledger.service";
 import {
   applyBulkPriceAdjustment,
   assertAdjustedTotalsSane,
@@ -152,7 +171,13 @@ import {
   preflightBulkPriceAdjustment,
   priceAdjustmentTaxState,
 } from "./price-adjustment-ledger";
-import { countOrdersInvoices, guardItemsEditTaxState } from "./stored-tax-state";
+import {
+  countOrdersInvoices,
+  guardItemsEditTaxState,
+  tenantPreferredRate,
+} from "./stored-tax-state";
+import { buildInvoiceEmailPayload, buildReminderEmailPayload } from "./invoice-email-payload";
+import { retakeDuplicateTaxRates } from "./duplicate-tax-rates";
 import { assertNsfLinesUntaxed } from "./nsf-line-tax-guard";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
@@ -199,17 +224,13 @@ import { lockRowsNoWait } from "../common/db-locks";
 import { counterPay, type CounterPayOpts } from "./counter-payment-guard";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { planInvoicedQtyAdjustment } from "./unvoid-billing-claim";
-import { UNVOID_REFUSAL_COPY } from "./unvoid-billing-refusal";
+import { UNVOID_REFUSAL_COPY, assertUnvoidOrderNotCancelled } from "./unvoid-billing-refusal";
 import { NumberingService } from "../import/numbering.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
-import { requireRestrictionTenantId } from "../selling-restrictions/restriction-tenant";
+import * as iGate from "./invoice-restriction-gate";
 import { flagSplitRestrictedLines } from "../selling-restrictions/restricted-lines-flag";
-import { orderFulfilmentKind } from "../selling-restrictions/sale-fulfilment";
-import {
-  addedRestrictionLines,
-  assertEditStillJudged,
-  assertOrderlessSellable,
-} from "./invoice-restriction-lines";
+import { defaultSaleFulfilmentKind } from "../orders/default-sale-fulfilment";
+import { assertEditStillJudged } from "./invoice-restriction-lines";
 import { buildManualInvoiceLines } from "./manual-invoice-lines";
 import { loadOverride, type ManualInvoiceDto } from "./invoice-line-override";
 import {
@@ -229,11 +250,11 @@ import {
   updateHeaderOnly,
   planHeaderOnlyTotals,
 } from "./locked-invoice-edit";
+import type { InvoiceEditHeaders } from "./locked-invoice-edit";
 import { resolveLineUnits } from "../products/line-units";
 import { assertUnitLineSplit } from "../orders/unit-line-split";
 import { prepareUnitLadders, requestsUnit } from "../orders/unit-line-build";
 import { standaloneAllocationTotals } from "./standalone-payment-totals";
-import { tenantCalendarDayEnd, tenantCalendarDayStart } from "./paid-window-bounds";
 import { retryCreditTx, retryOnTxConflict } from "../common/tx-retry";
 import { AfterCommit, gatewayFor, withAfterCommit } from "../common/after-commit";
 import {
@@ -260,7 +281,6 @@ const TERM_DAYS: Record<string, number> = {
 
 /** #2293: round a nullable money field; `null` (clear) and `undefined` (leave as is) pass through. */
 const roundMoneyOrNull = (v: number | null | undefined) => (v == null ? v : roundMoney(v));
-
 export { addCalendarDays } from "../common/calendar-date";
 
 // P5-12 / post-dated check payments PR-1: `CHECK_TRANSITIONS` (legal FORWARD transitions for
@@ -272,8 +292,8 @@ export { addCalendarDays } from "../common/calendar-date";
 // to the canonical export by `check-transitions-parity.spec.ts`. See that file's own doc for the
 // V1-only rule (no `CHECK_TRANSITIONS_V2` here — a later PR owns that).
 
-/** What `recordStandalonePayment` returns, and hands its `opts.inTx` hook (SA-818). */
-export type StandalonePaymentResult = { payments: any[]; paymentGroupId: string; excess: number };
+/** What `recordStandalonePayment` returns (SA-818); the type lives beside its opts (SA-824). */
+export type { StandalonePaymentResult } from "./dto/create-invoice.dto";
 
 @Injectable()
 export class InvoicesService {
@@ -406,8 +426,11 @@ export class InvoicesService {
   // ─── CRUD ─────────────────────────────────────────────────────────────────
 
   /** RF-026: concurrent creates racing on the invoice number (Prisma P2002) get a 409, not a 500. */
-  /** SA-135: an internal caller's line may carry `packSnapshot` (ManualLineItem); the HTTP DTO never can. `actorId` (HTTP only): H3b. */
-  async create(dto: ManualInvoiceDto, actorId?: string) {
+  /**
+   * SA-135: an internal caller's line may carry `packSnapshot` (ManualLineItem); the HTTP DTO never can. `actor` (HTTP
+   * only): the H3b price-override author (`actor.sub`) and the row-510 restriction-override principal.
+   */
+  async create(dto: ManualInvoiceDto, actor?: JwtPayload) {
     const issueDateInput = dto.issueDate ? issueDateStamp(dto.issueDate) : null; // #2197: 400 first
     const due = dueDateStamps(dto); // #2256: the due dates too, refused before any read or write
     assertFiniteInvoiceInput(dto); // N4: NaN is a 400, not a silent $0
@@ -418,8 +441,18 @@ export class InvoicesService {
     // REG-B131: a removed (soft-deleted) customer cannot be invoiced; same 404 as a missing one. Checked
     // on the row just read (L-081), so restoreCustomer() re-enables it with no other write.
     if (!customer || customer.deletedAt) throw new NotFoundException("Customer not found");
+    // 681 (R5-5): every manual line's product must be in THIS tenant (same 404 as a missing one), proven before
+    // the selling-restrictions policy below and before anything is numbered or written.
+    await assertRefsInTenant(this.prisma, { productIds: dto.items.map((it) => it.productId) });
     // F-05 (#2093): a manual invoice SELLS its lines — a banned product refuses (409) before anything is read.
-    await assertOrderlessSellable(this.prisma, this.sellingRestrictions, dto.customerId, dto.items);
+    // L8: an order-less invoice is judged as the customer's NEXT order would be (`defaultSaleFulfilmentKind`).
+    const tenant = iGate.tenantId(this.prisma);
+    const restriction = await this.sellingRestrictions.assertLinesSellable({
+      ...iGate.create(tenant, dto.customerId, dto.items, actor, dto, {
+        fulfilmentKind: await defaultSaleFulfilmentKind(this.prisma, tenant, dto.customerId),
+      }),
+      channel: "STAFF",
+    });
 
     // Products (box size + regulated snapshot), unit ladders and regulated tax config of every line: manual-invoice-context.ts (B659, shared with estimates); derivedBaseCustomer = units P0b (old-client Piece -> pack pieces at the customer's tier per product)
     const { productMap, categoryMap, unitsByProduct } = await loadManualLineContext(dto.items, {
@@ -442,7 +475,7 @@ export class InvoicesService {
       tenantId: this.prisma.getTenantId(),
       clampFreeUnits: (free, boxes, qty) => this.clampLineFreeUnits(free, boxes, qty),
       resolved,
-      override: await loadOverride(this.prisma, dto, unitsByProduct, actorId, this.entitlements),
+      override: await loadOverride(this.prisma, dto, unitsByProduct, actor?.sub, this.entitlements),
     });
     // A regulated line makes this a filable sale — the SALE ledger rows are written below.
     const hasRegulated = itemsData.some((it: any) => it.trackedCategoryId != null);
@@ -520,6 +553,7 @@ export class InvoicesService {
             payments: true,
           },
         });
+        await restriction?.stamp(tx, created.id); // row 510: the staff override of a restricted line
         if (hasRegulated) await this.writeCreatedInvoiceLedger(tx, created);
         return created;
       });
@@ -992,6 +1026,10 @@ export class InvoicesService {
       categoryTaxType: li.categoryTaxType ?? null, // B297: COPY verbatim, never a live fallback.
       categoryTaxRate: li.categoryTaxRate != null ? Number(li.categoryTaxRate) : null,
       categoryPriceIncludesTax: li.categoryPriceIncludesTax ?? null,
+      restrictionOverrideReason: li.restrictionOverrideReason ?? null, // row 510: the staff override travels
+      restrictionOverrideBy: li.restrictionOverrideBy ?? null,
+      restrictionOverrideAt: li.restrictionOverrideAt ?? null,
+      restrictionOverrideRuleIds: li.restrictionOverrideRuleIds ?? [],
       ...(tenantId ? { tenantId } : {}),
       // #2717 M3: FIXED provenance + frozen component rows for THIS bill; {} on a plain line.
       ...invoiceCompositionFields(li, billQty, prior, subtotal, tenantId),
@@ -1544,7 +1582,17 @@ export class InvoicesService {
     }
     const priorItems = await db.invoiceItem.findMany({
       where: { invoiceId: draft.id },
-      select: { orderItemId: true, unitsPerBox: true, qty: true, subtotal: true },
+      // 683 (SA-789 F2): the regulated content too, compared after the re-create below
+      select: {
+        orderItemId: true,
+        unitsPerBox: true,
+        qty: true,
+        subtotal: true,
+        trackedCategoryId: true,
+        trackedSubcategoryId: true,
+        unitLabel: true,
+        categoryTaxAmount: true,
+      },
     });
     const priorPackByLine = priorUnitsPerBoxMap(priorItems);
     const order = await db.order.findUnique({
@@ -1685,10 +1733,13 @@ export class InvoicesService {
       });
     }
 
-    // NOTE: the ledger is re-synced ONLY on the sibling-aware paths (rebuildSiblingDrafts).
-    // This legacy single-draft rebuild is group-UNAWARE — for a bailed split it folds the
-    // regulated line onto the base while the -R# sibling's SALE row stays live, so writing
-    // a SALE here would double-count. Leave the ledger untouched (pre-existing behavior).
+    // 683 (SA-789 F2, SA-896): this rebuild re-created every item. The draft is the order's SOLE non-void invoice here (the
+    // SA-681 fence above: a split or a sibling never reaches this point), so a resync cannot double-count. Regulated content
+    // unchanged → no ledger write (the rotated ids resolve through the order line, F1). Changed → the same reverse-and-rewrite
+    // the sibling-aware path uses (append-only; B297's period rule).
+    if (regulatedContentChanged(priorItems, updated.items ?? [])) {
+      await this.resyncInvoiceLedger(draft.id, orderId, updated.items ?? [], db);
+    }
 
     // Reset invoicedQty on every order line to exactly what this draft bills.
     const billMap = new Map<string, number>(
@@ -1917,34 +1968,32 @@ export class InvoicesService {
    * full-order qty createSplitInvoices first wrote. A no-op for a non-regulated invoice
    * (the ledger service early-returns when there are no SALE rows / no regulated lines).
    *
-   * Called ONLY from rebuildSiblingDrafts (the sibling-aware clean-partition paths), where
-   * each draft owns a disjoint set of lines — never from the group-unaware legacy rebuild,
-   * which would double-count a folded regulated line against its live sibling SALE.
+   * Callers (each under its own locks, pinned by regulated/sa839-ledger-pins.spec.ts):
+   * rebuildSiblingDrafts, the legacy single-draft rebuild when its regulated content changed (683: it
+   * runs only for the order's SOLE non-void invoice, so no sibling SALE can be double-counted), the
+   * DRAFT update, the price re-sync and unvoidInvoice (SA-839 / B706, `restoresVoid`).
    *
-   * Uses `reverseInvoiceEntries({preserveReturns: true})` — it cancels only the
-   * sale-record and LEAVES any prior RETURN / credit-note reversal standing, so a
-   * re-reconcile after a received return nets to (delivered − returned), not delivered.
+   * SA-839 INVOICE_BILLED: it cancels only the sale-record and LEAVES every LIVE return /
+   * credit-note reversal standing (a dead one's rows are countered by the settle's sweep first),
+   * so a re-reconcile after a received return nets to (delivered − returned), not delivered.
    * Idempotent across repeat re-syncs (a prior re-sync reversal has no returnId, so it's
-   * counted; the old line finds 0 remaining and is skipped). The delivered-payment path
-   * runs at delivery before any return exists, so it's unaffected either way.
+   * counted; the old line finds 0 remaining and is skipped).
    */
   private async resyncInvoiceLedger(
     invoiceId: string,
     orderId: string | null,
     items: any[],
     db: any,
-  ): Promise<void> {
-    // preserveReturns: cancel only the sale-record, leave any return/credit-note reversal
-    // standing, so a re-reconcile after a return nets to (delivered − returned).
-    await this.ledger.reverseInvoiceEntries({ invoiceId, db, preserveReturns: true });
+    opts: { restoresVoid?: boolean } = {},
+  ): Promise<RegulatedSettleResult> {
     const packMap = await packAtSaleByProduct(db, items ?? []);
-    await this.ledger.writeSaleEntries({
-      tenantId: this.prisma.getTenantId(),
-      orderId,
+    return this.ledger.settleRegulatedLedger(db, {
+      kind: "INVOICE_BILLED",
       invoiceId,
-      soldAt: new Date(),
+      orderId,
+      tenantId: this.prisma.getTenantId(),
       lines: toSaleLedgerLines(items ?? [], packMap),
-      db,
+      restoresVoid: opts.restoresVoid,
     });
   }
 
@@ -2334,6 +2383,10 @@ export class InvoicesService {
             authorChannel: "STAFF",
             invoicedQty: shape.qty,
             status: "PENDING",
+            restrictionOverrideReason: agg.sample?.restrictionOverrideReason ?? null, // row 510: carried back
+            restrictionOverrideBy: agg.sample?.restrictionOverrideBy ?? null,
+            restrictionOverrideAt: agg.sample?.restrictionOverrideAt ?? null,
+            restrictionOverrideRuleIds: agg.sample?.restrictionOverrideRuleIds ?? [],
             ...(tenantId ? { tenantId } : {}),
           },
         });
@@ -3028,6 +3081,7 @@ export class InvoicesService {
     // hide-original-price preference too.
     const hideOriginalPrice = (await this.systemConfig.get("invoice.hideOriginalPrice")) === "true";
     stampHandedOverBy(inv.order, user); // row 342: staff only (`invoiceDetailFor` drops `order` for a buyer)
+    await iGate.stampOverrideNames(this.prisma.forTenant(), inv.items, user); // row 510: staff only
     return invoiceDetailFor(user, {
       ...inv,
       ...deriveInvoiceDetailFields(
@@ -3037,17 +3091,22 @@ export class InvoicesService {
       ),
       revisedAt: (await revisedAtByInvoice(this.prisma.forTenant(), [id])).get(id) ?? null,
       items: withComponentViews(inv.items) as typeof inv.items, // #2717 M3: displayUnitPrice4 as a number
+      payments: withNoLongerFits(inv).payments, // W-769: each row's derived noLongerFits flag
       hideOriginalPrice,
       paidAtSale: isPaidAtSale(inv), // row 401: a counter sale paid at the till shows no due date / terms
       pendingMirror: await resolvePendingMirror(this.featureConfig, inv.tenantId, inv, inv.order),
       // F3: the server's default PDF stage (a shipment invoice is FINAL); clients read it, never re-derive.
       pdfVariant: await resolveInvoiceVariant(this.featureConfig, inv.tenantId, inv, inv.order),
+      // #2088: the tracked send state ("emailed, modified since") and the pre-delivery lock, staff only.
+      ...(user?.role === UserRole.CUSTOMER
+        ? {}
+        : await sendFieldsFor(this.prisma, this.featureConfig, inv, inv.order)),
     });
   }
 
-  async update(id: string, dto: UpdateInvoiceDto, actorId?: string) {
+  async update(id: string, dto: UpdateInvoiceDto, actor?: JwtPayload, hdrs?: InvoiceEditHeaders) {
     assertFiniteInvoiceInput(dto); // N4: NaN is a 400, not a silent $0
-    const warnNoToken = noTokenWarner(id); // H4: one release of grace for token-less clients
+    const warnNoToken = noTokenWarner(id, this.prisma.getTenantId(), hdrs); // H4 + SA-837 row 500 step 1
     assertNoDuplicateLineIds(dto.items, { keys: ["id"] }); // F3: the invoice line id only (orderItemId = source line)
     const inv = await this.findOneOrThrow(id); // a missing invoice is a 404 whatever else is wrong
     // units_v1 (VU-4a, D3): a unit line is accepted only on an order-LESS DRAFT (resolveLineUnits below);
@@ -3073,14 +3132,14 @@ export class InvoicesService {
 
     const items = dto.items;
     if (items) {
+      // 681 (R5-5): the edited lines' products are proven in-tenant on the outer client, before the policy reads
+      // and before the edit tx opens. Existence only: an archived product's round-tripped line still passes.
+      await assertRefsInTenant(this.prisma, { productIds: items.map((it) => it.productId) });
       // F-05: netted per product (qtyDelta = requested - held); re-checked under the row lock in the tx below.
-      const restrictionLines = await addedRestrictionLines(this.prisma.forTenant(), id, items);
-      await this.sellingRestrictions.assertLinesSellable({
-        tenantId: requireRestrictionTenantId(this.prisma.getTenantId()),
-        customerId: inv.customerId,
-        lines: restrictionLines,
+      const gate = await iGate.editParams(this.prisma, inv, items, actor, dto);
+      const restriction = await this.sellingRestrictions.assertLinesSellable({
+        ...gate.params, // L8: the order's kind (`orderFulfilmentKind`), or DELIVERY with no order
         channel: "STAFF",
-        fulfilmentKind: await orderFulfilmentKind(this.prisma.forTenant(), inv.orderId),
       });
       await assertOrderItemIdsBelongToOrder(this.prisma.forTenant(), inv.orderId, items); // SA-093a rd6
       // Products (pack + regulated snapshot) and section tax config for the edited lines (mirrors create()).
@@ -3093,7 +3152,7 @@ export class InvoicesService {
         this.prisma,
         { ...inv, items },
         unitsByProduct,
-        actorId,
+        actor?.sub,
         this.entitlements,
       );
 
@@ -3112,7 +3171,8 @@ export class InvoicesService {
           { featureConfig: this.featureConfig, prisma: { forTenant: () => tx } },
           inv.orderId,
         );
-        await assertEditStillJudged(tx, id, items, restrictionLines); // F-05: under the Invoice row lock
+        await assertEditStillJudged(tx, id, items, gate.lines); // F-05: under the Invoice row lock
+        const overridden = restriction?.recheck(locked.storedRows); // row 510: the override re-judged under it
         // SA-184/186: match the payload to THIS invoice's stored rows (by id, tenant-scoped; never by
         // productId), keep untouched rows verbatim and in place, re-price only changed lines. Rules
         // and reasoning: invoice-edit-plan.ts.
@@ -3148,7 +3208,8 @@ export class InvoicesService {
           warn: (m) => this.logger.warn(`update(): invoiceId ${id} ${m}`),
           override,
         });
-        guardItemsEditTaxState({ locked, items, matches, editLines }); // SA-814 R5-2
+        const preferredRate = await tenantPreferredRate(tx); // the tenant rate wins the inference when it reproduces the tax
+        guardItemsEditTaxState({ locked: { ...locked, preferredRate }, items, matches, editLines }); // SA-814 R5-2
         const itemsData = editLines.map((l) => l.data);
         // B1026: the SAME discount-exceeds-line guard create() runs, over the lines THIS edit writes
         // (changed or new), before any write; a stored line the edit leaves verbatim is not re-judged.
@@ -3230,6 +3291,7 @@ export class InvoicesService {
             payments: true,
           },
         });
+        await overridden?.stamp(tx, id);
         const syncLines = orderSyncLines(editLines, storedRows, cur, invDiscount, shipping);
         // A save that changed no line leaves the ledger alone too (no reverse-and-rewrite churn).
         if (syncLines?.length)
@@ -3424,28 +3486,12 @@ export class InvoicesService {
    * van-sale flow, reminders), so a plain pending mirror keeps refusing to be sent
    * pre-delivery exactly as before.
    */
-  private async assertOrderInvoiceUnlocked(
-    inv: {
-      orderId: string | null;
-      status: InvoiceStatus;
-      deliveryBatchId: string | null;
-    },
+  private assertOrderInvoiceUnlocked(
+    inv: Parameters<typeof assertOrderInvoiceUnlockedFor>[2],
     opts?: { allowPreDelivery?: boolean },
   ): Promise<void> {
-    if (!inv.orderId || inv.status !== InvoiceStatus.DRAFT || inv.deliveryBatchId != null) return;
-    if (opts?.allowPreDelivery) return;
-    const order = await this.prisma.forTenant().order.findFirst({
-      where: { id: inv.orderId },
-      select: { status: true, orderNumber: true, fulfillPath: true },
-    });
-    if (
-      order &&
-      (await resolvePendingMirror(this.featureConfig, this.prisma.getTenantId(), inv, order))
-    ) {
-      throw new BadRequestException(
-        `This invoice mirrors order #${order.orderNumber ?? ""} and can't be sent or edited until the order is delivered. Edit the order instead — the invoice updates automatically.`,
-      );
-    }
+    // #2088: the body moved to invoice-send-state.ts, beside `sendLocked` - ONE predicate for both.
+    return assertOrderInvoiceUnlockedFor(this.prisma, this.featureConfig, inv, opts);
   }
 
   async send(id: string, opts?: { allowPreDelivery?: boolean; suppressNotify?: boolean }) {
@@ -3504,40 +3550,15 @@ export class InvoicesService {
           const refusal = sendRefusal(locked.status, emailSent);
           if (refusal) throw new BadRequestException(refusal);
           const nextStatus = nextSentStatus(locked.status);
+          // SA-857: the ONE gate for money on a send. Only the DRAFT -> SENT issue settles order credits and runs the
+          // oldest-first sweep; a re-send (Email again) of an issued invoice is a copy and moves no money.
+          const issuing = locked.status === InvoiceStatus.DRAFT;
           await lockCreditsForSend(tx, this.prisma.getTenantId(), locked);
           const updated = await tx.invoice.update({
             where: { id },
-            data: { status: nextStatus, sentAt: new Date() },
+            data: { status: nextStatus, sentAt: locked.sentAt ?? new Date() }, // #2088: a re-send keeps the FIRST sentAt
           });
-          // B108: make the "send() catches up" comment above actually true. An
-          // operator's explicit-amount OrderCreditNote intents are settled HERE,
-          // at their recorded amount, before the oldest-first sweep runs.
-          // settleOrderCreditsInTx clamps to the remaining balance, so money can
-          // never move twice even if it already ran (e.g. at order-create time).
-          // The explicitIds exclusion just below is deliberately KEPT — settling
-          // an explicit intent doesn't change that the sweep must still never
-          // override it.
-          if (updated.orderId) {
-            await this.creditNotes.settleOrderCreditsInTx(tx, updated.orderId);
-          }
-          // An operator's EXPLICIT-amount order selection must not be overridden by the
-          // oldest-first sweep; null-amount intents are already settled and clamp to 0.
-          const explicitIds = updated.orderId
-            ? (
-                await tx.orderCreditNote.findMany({
-                  where: { orderId: updated.orderId, amount: { not: null } },
-                  select: { creditNoteId: true },
-                })
-              ).map((r: any) => r.creditNoteId)
-            : [];
-          const auto = await this.creditNotes.autoApplyOldestCreditsInTx(
-            tx,
-            id,
-            updated.customerId,
-            {
-              excludeCreditNoteIds: explicitIds,
-            },
-          );
+          const auto = await runSendCredits(this.creditNotes, tx, id, issuing, updated);
           // A credit pre-applied at order time can already cover this invoice. Auto-apply
           // returns {applied:0, invoiceStatus:null} on a zero balance, which used to leave
           // a fully-credited invoice stuck SENT — recompute from the payments it has.
@@ -3576,41 +3597,33 @@ export class InvoicesService {
     );
   }
 
-  /**
-   * SA-404a: sendEmail's pre-send check — a short Serializable tx that locks (Order →) Invoice and
-   * runs the send guard, so a VOID committed before the email means NO email and a 400. R5 keeps
-   * the SENT flip after delivery; the residual is only the email I/O window (markSent then refuses
-   * with VOIDED_DURING_EMAIL).
-   */
-  private assertSendableUnderLock(id: string, orderId: string | null) {
-    return retryOnTxConflict(`invoice send pre-check id=${id}`, () =>
-      this.prisma.tenantTransaction(
-        async (tx) => {
-          const locked = await lockInvoiceRow(tx, id, orderId);
-          if (!locked) throw new NotFoundException("Invoice not found");
-          const refusal = sendRefusal(locked.status);
-          if (refusal) throw new BadRequestException(refusal);
-        },
-        { isolationLevel: "Serializable" },
-      ),
-    );
+  /** Send the invoice as an actual email and mark as SENT. */
+  /** #2088: the per-invoice throttle (429) around the delivery; `actorId` is the sender, for the send record. */
+  sendEmail(...args: SendEmailArgs) {
+    return guardedEmail(this.prisma, args[0], () => this.deliverEmail(...args));
   }
 
-  /** Send the invoice as an actual email and mark as SENT. */
-  async sendEmail(id: string, overrideEmail?: string, variant?: "draft" | "final") {
+  /** I-120 (SA-861 rule 8): the ONE completion email (every invoice of the order attached), the "Email again" path. */
+  async sendCompletionEmail(orderId: string, invoiceIds: string[], actorId: string | null) {
+    const [first, ...withInvoiceIds] = invoiceIds;
+    const opts = { kind: "COUNTER_COMPLETE" as const, orderId, withInvoiceIds };
+    const sent = await this.sendEmail(first, undefined, "final", actorId, opts);
+    return { delivered: sent?.success === true };
+  }
+
+  private async deliverEmail(...args: SendEmailArgs) {
+    const [id, overrideEmail, variant, actorId = null, opts] = args;
+    // The cheap pre-read: only what the fast guards and the recipient check need. The document itself is built from the
+    // snapshot below (SA-860), never from this row.
     const inv = await this.prisma.forTenant().invoice.findUnique({
       where: { id },
-      include: {
-        customer: { select: { id: true, businessName: true, contactName: true, email: true } },
-        items: true,
-        // F03/R8: CONFIRMED (PAID) payments only — feeds totalPaid/balanceDue below.
-        // B421: creditNote relation needed for the customer-facing "Credit
-        // issued — CN-…" line's number.
-        payments: {
-          where: CONFIRMED_PAYMENT,
-          include: { creditNote: { select: { creditNoteNumber: true } } },
-        },
-        order: { select: { counterSale: true } }, // row 401: paid-at-sale hides the terms
+      select: {
+        id: true,
+        status: true,
+        orderId: true,
+        deliveryBatchId: true,
+        invoiceNumber: true,
+        customer: { select: { businessName: true, email: true } },
       },
     });
     if (!inv) throw new NotFoundException("Invoice not found");
@@ -3642,10 +3655,20 @@ export class InvoicesService {
       });
     }
 
+    // SA-860: ONE snapshot (taken after the real send-time credits, in a rolled-back dry run on the issuing path) feeds the
+    // PDF, the payload and the fingerprint. It replaces the SA-404a pre-check (VOID => 400, no email) and SA-857's A/B bracket.
+    const { snapshot } = await readSendSnapshot(this.prisma, this.creditNotes, id, inv.orderId);
+    const { stage, fingerprint } = await fingerprintOfSnapshot(
+      this.featureConfig,
+      this.prisma.getTenantId(),
+      snapshot,
+      variant,
+    ); // #2088: what this email shows
+
     // Get PDF URL (non-blocking) + its attachment; `variant` picks DRAFT vs FINAL.
     let pdfUrl: string | undefined, attachment: InvoiceEmailAttachment | undefined;
     try {
-      pdfUrl = await this.pdfService.getOrGenerate(id, { variant });
+      pdfUrl = await this.pdfService.getOrGenerate(id, { variant, model: snapshot });
       if (pdfUrl) {
         const dl = this.storage.download.bind(this.storage);
         attachment = await buildInvoiceEmailAttachment(dl, this.logger, id, inv.invoiceNumber);
@@ -3656,75 +3679,18 @@ export class InvoicesService {
       );
     }
 
-    // F03/R8/T-B102: CONFIRMED (PAID) basis — mirrors the PDF and the invoice
-    // detail's own paidAmount/balanceDue math. A DRAFT (unconfirmed) payment must
-    // not inflate what the email tells the customer they've already paid.
-    // B421: totalPaid is cash-only — a CREDIT_NOTE or ADVANCE application must
-    // never render as "Amount Paid" in an email sent to the customer. balanceDue
-    // stays on the full confirmed total (sumConfirmed) — a credit note or
-    // advance genuinely reduces what's still owed.
-    const { cash: totalPaid, creditApplied, advanceApplied } = splitConfirmed(inv.payments);
-    const balanceDue = confirmedBalance(inv.total, inv.payments);
-    const creditNoteNumbers = Array.from(
-      new Set(
-        (inv.payments ?? [])
-          .filter((p) => p.method === CREDIT_NOTE_METHOD)
-          .map((p) => (p as any).creditNote?.creditNoteNumber)
-          .filter((n): n is string => !!n),
-      ),
-    );
-
-    // F03/R9: the SAME tenant setting findOneOrThrow and the PDF read. The email
-    // body renders the same item table as the PDF attached to this very message,
-    // so it has to honour the hide-original-price preference too — otherwise
-    // forwarding the promo scalars below would newly leak the struck pre-promo
-    // price a tenant deliberately configured away.
+    // F03/R9: the SAME tenant setting findOneOrThrow and the PDF read: the email renders the same item table as the
+    // PDF attached to it, so it honours the hide-original-price preference too. The payload (the F03/R8/B421 paid
+    // basis, the item table, the deposit schedule) is built in invoice-email-payload.ts (the service is on the ratchet).
     const hideOriginalPrice = (await this.systemConfig.get("invoice.hideOriginalPrice")) === "true";
-
-    // Built as a variable (not an inline literal) so the extra totalPaid/
-    // balanceDue fields don't trip TS's excess-property check ahead of the F03
-    // batch's matching email.service.ts `sendInvoice` param-type update (a
-    // different file/package in this same campaign batch) — the runtime call
-    // carries them either way, which is what email.service.spec.ts and the
-    // T-B102 caller-leg assertion here both need.
-    const emailPayload = {
-      to: recipientEmail,
-      customerName: inv.customer?.businessName ?? "Customer",
-      invoiceNumber: inv.invoiceNumber,
-      invoiceId: inv.id,
-      issueDate: formatDate(inv.issueDate),
-      dueDate: formatDate(inv.dueDate),
-      paymentTermsLabel: inv.paymentTermsLabel ?? undefined,
-      total: Number(inv.total),
-      totalPaid,
-      creditApplied,
-      advanceApplied,
-      creditNoteNumbers,
-      balanceDue,
-      items: inv.items.map((it: any) => ({
-        description: it.description,
-        qty: Number(it.qty),
-        unitPrice: Number(it.unitPrice),
-        subtotal: Number(it.subtotal),
-        msrp: it.msrp != null ? Number(it.msrp) : null,
-        // F03/R9: without these, buildInvoiceEmail's strike/"N free" note and a BOGO line's reduced subtotal read as a pricing error.
-        originalPrice: it.originalPrice != null ? Number(it.originalPrice) : null,
-        priceType: it.priceType ?? null,
-        promoFreeUnits: it.promoFreeUnits != null ? Number(it.promoFreeUnits) : null,
-        ...invoiceItemQtyFields(it),
-      })),
+    const emailPayload = buildInvoiceEmailPayload(snapshot, {
+      recipientEmail,
       pdfUrl,
       attachment,
-      isReminder: false,
-      hideTerms: isPaidAtSale(inv),
       hideOriginalPrice,
-      // Deposit schedule (display-only): derive with the same read-time math the
-      // detail endpoint uses; null when the invoice carries no deposit.
-      depositAmount: computeDepositFields(inv as any, 0, new Date().toISOString().slice(0, 10))
-        .depositAmount,
-      depositDueDate: inv.depositDueDate ? formatDate(inv.depositDueDate) : null,
-    };
-    await this.assertSendableUnderLock(id, inv.orderId); // SA-404a: VOID now ⇒ 400, no email
+    });
+    const parts = [this.prisma, this.pdfService, this.storage, this.logger, opts] as const;
+    Object.assign(emailPayload, await completionEmailParts(...parts)); // I-120: COUNTER_COMPLETE only
     const sendResult = await this.emailService.sendInvoice(emailPayload);
 
     // R5: the email server was configured but the actual send did NOT succeed
@@ -3738,9 +3704,41 @@ export class InvoicesService {
       });
     }
 
+    // #2088: the send record (best-effort: the email went, a failed audit write is logged, never thrown).
+    await recordInvoiceEmailed(this.prisma, {
+      id,
+      actorId,
+      to: recipientEmail,
+      fingerprint,
+      variant,
+      kind: opts?.kind,
+    });
     // Mark as SENT. P5-13: SENT flip + oldest-first credit auto-apply are ONE atomic
     // operation. PDF/email I/O above stays OUTSIDE the tx (a retry never re-sends the email).
     const { updated, auto } = await this.markSent(id, inv.orderId, true);
+    // SA-860: verify after the commit. The money truth is the real tx; if the live invoice no longer hashes to what was
+    // emailed (a concurrent credit or edit between the dry run and the commit), append ONE correction record with fp null
+    // (the newest row decides: "emailed, changes can't be checked"). Never refuse and never roll back: the email has gone.
+    // Best-effort: the email went and the money committed, so a failed re-read must not turn this into a 500 or skip the
+    // emit and the notification below; the record then simply stays the snapshot's.
+    try {
+      const live = await invoiceFingerprintOf(this.prisma, this.featureConfig, id, stage);
+      if (live !== fingerprint) {
+        await recordInvoiceEmailed(this.prisma, {
+          id,
+          actorId,
+          to: recipientEmail,
+          fingerprint: null,
+          variant,
+          kind: opts?.kind, // I-120: a completion email's correction keeps its kind
+          note: "the copy emailed may not match the credits applied",
+        });
+      }
+    } catch (err) {
+      this.logger.warn(
+        `invoice ${id}: the post-send fingerprint check failed (${err instanceof Error ? err.message : String(err)})`,
+      );
+    }
     this.gateway.emitInvoiceUpdated(this.prisma.getTenantId(), {
       invoiceId: updated.id,
       invoiceNumber: updated.invoiceNumber,
@@ -3830,59 +3828,16 @@ export class InvoicesService {
       /* non-critical */
     }
 
-    // F03/R8/T-B102: CONFIRMED (PAID) basis, same as sendEmail — a reminder must
-    // demand the true outstanding balance, never the DRAFT-inflated figure a
-    // non-VOID sum would give. B421: totalPaid is cash-only, same as sendEmail.
-    const { cash: totalPaid, creditApplied, advanceApplied } = splitConfirmed(inv.payments);
-    const balanceDue = confirmedBalance(inv.total, inv.payments);
-    const creditNoteNumbers = Array.from(
-      new Set(
-        (inv.payments ?? [])
-          .filter((p) => p.method === CREDIT_NOTE_METHOD)
-          .map((p) => (p as any).creditNote?.creditNoteNumber)
-          .filter((n): n is string => !!n),
-      ),
-    );
-
     // F03/R9: see sendEmail's matching comment — the reminder renders the same item
     // table, so it honours the same hide-original-price setting.
     const hideOriginalPrice = (await this.systemConfig.get("invoice.hideOriginalPrice")) === "true";
 
-    // See sendEmail's matching comment: a variable, not an inline literal, so the
-    // extra fields don't trip TS's excess-property check ahead of email.service.ts's
-    // param-type update landing in this same campaign batch.
-    const reminderPayload = {
-      to: recipientEmail,
-      customerName: inv.customer?.businessName ?? "Customer",
-      invoiceNumber: inv.invoiceNumber,
-      invoiceId: inv.id,
-      issueDate: formatDate(inv.issueDate),
-      dueDate: formatDate(inv.dueDate),
-      paymentTermsLabel: inv.paymentTermsLabel ?? undefined,
-      total: Number(inv.total),
-      totalPaid,
-      creditApplied,
-      advanceApplied,
-      creditNoteNumbers,
-      balanceDue,
-      items: inv.items.map((it: any) => ({
-        description: it.description,
-        qty: Number(it.qty),
-        unitPrice: Number(it.unitPrice),
-        subtotal: Number(it.subtotal),
-        msrp: it.msrp != null ? Number(it.msrp) : null,
-        // F03/R9: see sendEmail's matching comment — a reminder renders the same
-        // item table, so it needs the same promo scalars.
-        originalPrice: it.originalPrice != null ? Number(it.originalPrice) : null,
-        priceType: it.priceType ?? null,
-        promoFreeUnits: it.promoFreeUnits != null ? Number(it.promoFreeUnits) : null,
-        ...invoiceItemQtyFields(it),
-      })),
+    const reminderPayload = buildReminderEmailPayload(inv, {
+      recipientEmail,
       pdfUrl,
       attachment,
-      isReminder: true,
       hideOriginalPrice,
-    };
+    });
     const sendResult = await this.emailService.sendInvoice(reminderPayload);
 
     if (!sendResult.delivered) {
@@ -3955,7 +3910,6 @@ export class InvoicesService {
       throw new ConflictException("Invoice was already voided.");
     }
     await this.adjustInvoicedQtyForInvoice(tx, id, orderId, -1);
-    await this.ledger.reverseInvoiceEntries({ invoiceId: id, db: tx });
     // Sales agents & commissions: a voided invoice targets zero — this
     // emits the compensating CLAWBACK adjustment when commission was claimed.
     await this.commissionEngine.syncInvoiceCommissionSafe(id, tx);
@@ -3984,6 +3938,10 @@ export class InvoicesService {
               { amount: roundMoney(used), status: CreditNoteStatus.APPLIED },
       });
     }
+    // SA-839 F2 (MUST): the regulated ledger settles AFTER every document flip above. An unused
+    // note is VOID by now, so the settle's sweep counters its reversal before the line is netted to
+    // 0 (settling first left its -2 standing on the VOID invoice, and an unvoid then booked 3 of 5).
+    await this.ledger.settleRegulatedLedger(tx, { kind: "INVOICE_ZEROED", invoiceId: id });
     // Status already flipped to VOID by the claim above; return the fresh record.
     return tx.invoice.findUnique({ where: { id } });
   }
@@ -4137,11 +4095,13 @@ export class InvoicesService {
    * opt-in because only a caller already inside a transaction can hold it usefully, and because
    * the row is then held for the rest of that tx — the caller owns keeping Invoice last in the
    * lock order (`lockRowsNoWait`). Contention surfaces as a retryable 409 (NOWAIT), not a wait.
+   * `opts.preflightOnly` (row 586, SA-814a item 4): only the payment-block throw, nothing written, so a caller outside
+   * a transaction can refuse a paid mirror early without committing a revert a later binding 409 cannot undo.
    */
   async revertLinkedInvoicesForOrderEdit(
     orderId: string,
     tx?: any,
-    opts?: { lockRows?: boolean },
+    opts?: { lockRows?: boolean; preflightOnly?: boolean },
   ): Promise<string[]> {
     const db = tx ?? this.prisma.forTenant();
     // #2178: the ONE selection (incl. the exempt deposit mirror, which stays SENT) — shared with the
@@ -4166,6 +4126,7 @@ export class InvoicesService {
             `Void the invoice or remove its payments first.`,
         );
       }
+      if (opts?.preflightOnly) continue; // row 586: the read-only pre-tx check; the revert runs in the edit tx
       const auditLine = `[${new Date().toLocaleDateString()} — reverted to Draft: source order edited]`;
       await db.invoice.update({
         where: { id: inv.id },
@@ -4190,8 +4151,7 @@ export class InvoicesService {
     }
     // Voiding RELEASED this invoice's invoicedQty back to the order; bringing it
     // back to DRAFT re-claims that qty so a later invoice can't double-bill the
-    // same lines. Atomic with the status flip. (Ledger reversal is not un-done here
-    // — regulated-ledger un-reversal on unvoid is a separate follow-up.)
+    // same lines, and re-books the regulated ledger (SA-839 / B706). Atomic with the status flip.
     return this.prisma.tenantTransaction(async (tx) => {
       // SA-760 R-1: Order -> Invoice before the invoicedQty write; the VOID check is re-read under them.
       const locked = await lockInvoiceRow(tx, id, inv.orderId);
@@ -4200,13 +4160,21 @@ export class InvoicesService {
           code: API_ERROR_CODES.ORDER_BILLING_CHANGED,
           message: "The invoice changed while it was being restored. Refresh and try again.",
         });
+      await assertUnvoidOrderNotCancelled(tx, inv.orderId); // B693: 409 before any write
       // B299 / SA-814 R4-5: the re-claim runs FIRST and is not clamped - if another invoice now bills these
       // goods (or the line is CANCELLED) it throws 409 ORDER_BILLING_CHANGED before the status flip writes.
       await this.adjustInvoicedQtyForInvoice(tx, id, inv.orderId, 1);
-      return tx.invoice.update({
+      const restored = await tx.invoice.update({
         where: { id },
         data: { status: InvoiceStatus.DRAFT },
       });
+      // SA-839 F2 (B706): re-book from the items read in this tx, in the UNVOID's period (§3); the void's
+      // rows stay. `amendedPeriod` (never a refusal): the void sat in a FILED month (SA-182 shape).
+      const items = await tx.invoiceItem.findMany({ where: { invoiceId: id } });
+      const { amendedPeriod } = await this.resyncInvoiceLedger(id, inv.orderId, items, tx, {
+        restoresVoid: true,
+      });
+      return { ...restored, amendedPeriod };
     });
   }
 
@@ -4234,7 +4202,7 @@ export class InvoicesService {
     });
   }
 
-  async duplicate(id: string) {
+  async duplicate(id: string, actor?: JwtPayload, ack?: iGate.Ack) {
     const inv = await this.prisma
       .forTenant()
       .invoice.findUnique({ where: { id }, include: { items: true } });
@@ -4248,7 +4216,13 @@ export class InvoicesService {
     }
     unitAware.assertNoUnitAwareLines(inv.items, "duplicated"); // the copy drops the unit
     // F-05: a copy is a new sale of every catalog line it carries.
-    await assertOrderlessSellable(this.prisma, this.sellingRestrictions, inv.customerId, inv.items);
+    const tenant = iGate.tenantId(this.prisma);
+    const restriction = await this.sellingRestrictions.assertLinesSellable({
+      ...iGate.copy(tenant, inv.customerId, inv.items, actor, ack, {
+        fulfilmentKind: await defaultSaleFulfilmentKind(this.prisma, tenant, inv.customerId),
+      }),
+      channel: "STAFF",
+    });
 
     const customer = await this.prisma
       .forTenant()
@@ -4295,7 +4269,12 @@ export class InvoicesService {
       systemKind: i.systemKind ?? null,
       tenantId: this.prisma.getTenantId(),
     }));
-    const isTaxExempt = !!(customer as any)?.isTaxExempt;
+    const isTaxExempt = !!(customer as any)?.isTaxExempt; // the CURRENT customer: a duplicate is a new invoice
+    // Row 588: a legacy 0 / 4-dp-rounded rate is re-taken (verified inference, else the tenant rate), never copied.
+    const src = { subtotal: inv.subtotal, taxAmount: inv.taxAmount, isTaxExempt };
+    await retakeDuplicateTaxRates(src, inv.items, itemsData, () =>
+      configuredTaxRateFraction(this.prisma),
+    );
     // RF-4: exempt → $0 of BOTH taxes (zeroed snapshots); the totals come from the ONE builder (B1043).
     zeroExemptCategoryTax(itemsData, isTaxExempt);
     const invDiscount = Number(inv.discount ?? 0);
@@ -4358,6 +4337,7 @@ export class InvoicesService {
             payments: true,
           },
         });
+        await restriction?.stamp(tx, copy.id); // row 510: a copy is a new sale, judged afresh
         // B680: the copy's regulated lines get their own SALE rows, same path as create().
         if (itemsData.some((it) => it.trackedCategoryId != null))
           await this.writeCreatedInvoiceLedger(tx, copy);
@@ -4375,142 +4355,19 @@ export class InvoicesService {
 
   // ─── List all payments (across all invoices) ─────────────────────────────
 
-  async listAllPayments(query: {
-    page?: number;
-    limit?: number;
-    customerId?: string;
-    method?: string;
-    status?: string;
-    dateFrom?: string;
-    dateTo?: string;
-    search?: string;
-    sortBy?: string;
-    sortDir?: string;
-  }) {
-    const {
-      page = 1,
-      customerId,
-      method,
-      status,
-      dateFrom,
-      dateTo,
-      search,
-      sortBy,
-      sortDir,
-    } = query;
-    // Raw query-string limit (no DTO on this route) — clamp so a single request
-    // can't force an unbounded scan (security F9-002).
-    const limit = clampLimit(query.limit, 25);
-    const skip = (page - 1) * limit;
-
-    const where: any = {};
-    if (customerId) where.invoice = { customerId };
-    if (method) where.method = method;
-    if (status) where.status = status;
-    if (dateFrom || dateTo) {
-      // B89/L-047: paidAt is a REAL instant (not a UTC-midnight calendar
-      // stamp), so its day-window bounds are evaluated in the TENANT's own
-      // timezone — never the host clock's `setHours`.
-      const tenantDefaults = await this.resolveTenantInvoiceDefaults();
-      where.paidAt = {};
-      if (dateFrom) where.paidAt.gte = tenantCalendarDayStart(dateFrom, tenantDefaults.timezone);
-      if (dateTo) where.paidAt.lte = tenantCalendarDayEnd(dateTo, tenantDefaults.timezone);
-    }
-    if (search) {
-      where.OR = [
-        { paymentNumber: { contains: search, mode: "insensitive" } },
-        { reference: { contains: search, mode: "insensitive" } },
-        { invoice: { customer: { businessName: { contains: search, mode: "insensitive" } } } },
-      ];
-    }
-
-    // B169: `id` tiebreaker — paidAt/settledAt ties are common (bulk imports,
-    // same-day batches), so a single-key orderBy leaves page order unstable.
-    const sortDirection = sortDir === "asc" ? "asc" : "desc";
-    const validSortFields: Record<string, any> = {
-      paidAt: [{ paidAt: sortDirection }, { id: sortDirection }],
-      settledAt: [{ settledAt: sortDirection }, { id: sortDirection }],
-      amount: [{ amount: sortDirection }, { id: sortDirection }],
-      createdAt: [{ createdAt: sortDirection }, { id: sortDirection }],
-      paymentNumber: [{ paymentNumber: sortDirection }, { id: sortDirection }],
-    };
-    // m9: Object.hasOwn (not a bare index) so prototype keys — `constructor`,
-    // `__proto__`, `toString`, `valueOf`… — can't resolve to an INHERITED value
-    // and reach Prisma as a malformed orderBy (→ 500). Unknown OR inherited
-    // falls back to the safe paidAt-desc default.
-    const orderBy =
-      sortBy && Object.hasOwn(validSortFields, sortBy)
-        ? validSortFields[sortBy]
-        : [{ paidAt: "desc" }, { id: "desc" }];
-
-    const include = {
-      invoice: {
-        select: {
-          id: true,
-          invoiceNumber: true,
-          customerId: true,
-          customer: { select: { id: true, businessName: true } },
-        },
-      },
-    };
-
-    const [data, total] = await Promise.all([
-      this.prisma
-        .forTenant()
-        .invoicePayment.findMany({ where, skip, take: limit, orderBy, include }),
-      this.prisma.forTenant().invoicePayment.count({ where }),
-    ]);
-
-    // Summary: total received (PAID only) and advance balance. B421:
-    // "received" is cash-only — a CREDIT_NOTE application never counts,
-    // regardless of the caller's own `method` filter (if set, it narrows
-    // further via AND; it can never widen this back to include CREDIT_NOTE —
-    // filtering the LIST to credit-note rows must still show $0 received).
-    const { method: whereMethod, ...summaryWhereRest } = where;
-    const summaryWhere: any = {
-      ...summaryWhereRest,
-      status: "PAID",
-      AND: [
-        { method: RECEIVED_METHOD_FILTER },
-        ...(whereMethod != null ? [{ method: whereMethod }] : []),
-      ],
-    };
-    const paidPayments = await this.prisma.forTenant().invoicePayment.findMany({
-      where: summaryWhere,
-      select: { amount: true },
-    });
-    const totalReceived = paidPayments.reduce((s, p) => s + Number(p.amount), 0);
-
-    const advanceWhere: any = customerId ? { customerId } : {};
-    const advances = await this.prisma.forTenant().advancePayment.findMany({
-      where: advanceWhere,
-      select: { balance: true },
-    });
-    const advanceBalance = advances.reduce((s, a) => s + Number(a.balance), 0);
-
-    return {
-      data,
-      meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
-      summary: { totalReceived, count: paidPayments.length, advanceBalance },
-    };
+  listAllPayments(query: Parameters<typeof listAllPayments>[1]) {
+    return listAllPayments(this.paymentListDeps(), query);
   }
 
-  async findPaymentById(paymentId: string) {
-    const payment = await this.prisma.forTenant().invoicePayment.findUnique({
-      where: { id: paymentId },
-      include: {
-        invoice: {
-          select: {
-            id: true,
-            invoiceNumber: true,
-            customerId: true,
-            customer: { select: { id: true, businessName: true } },
-          },
-        },
-      },
-    });
-    if (!payment) throw new NotFoundException("Payment not found");
-    return payment;
+  findPaymentById(paymentId: string) {
+    return findPaymentById(this.prisma, paymentId);
+  }
+
+  private paymentListDeps() {
+    return {
+      prisma: this.prisma,
+      resolveTenantInvoiceDefaults: () => this.resolveTenantInvoiceDefaults(),
+    };
   }
 
   // Receipt/slip/check photos on a payment EVENT live in payment-image.ts (size ratchet).
@@ -4532,7 +4389,18 @@ export class InvoicesService {
 
   // ─── Payment recording ────────────────────────────────────────────────────
 
-  async recordPayment(
+  recordPayment(
+    id: string,
+    dto: RecordInvoicePaymentDto,
+    opts?: RecordPaymentOpts & CounterPayOpts,
+  ) {
+    // SA-824: a keyed call claims in the money tx below (its first statement) or replays the stored result.
+    return keyedPayment(this.prisma, invoicePaymentKey(id, dto), opts, (o) =>
+      this.writeInvoicePayment(id, dto, o),
+    );
+  }
+
+  private async writeInvoicePayment(
     id: string,
     dto: RecordInvoicePaymentDto,
     opts?: RecordPaymentOpts & CounterPayOpts,
@@ -4547,6 +4415,7 @@ export class InvoicesService {
     const { tenantId, tenantShort } = this.requirePaymentTenant();
     const till = await counterPay.scope(this.prisma, id); // SA-750r3: always (the closed-date check runs even when the lock is held)
     return withAfterCommit(this.prisma, async (tx, after) => {
+      await opts?.claim?.(tx); // SA-824: the key claim is the FIRST statement (throws, unwritten, when held)
       // SA-750r3: a counter sale's shared close lock first (the tender/pickup hold it already), then the invoice row
       await counterPay.lock(tx, till, opts?.tillLockHeld);
       await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${id} FOR UPDATE`;
@@ -4565,27 +4434,12 @@ export class InvoicesService {
 
       const total = Number(inv.total);
       const alreadyPaid = sumConfirmed(inv.payments);
-      const remaining = remainingCapacity(total, inv.payments);
       const paymentStatus = dto.status ?? "PAID";
       const amount = roundMoney(dto.amount); // #2293: ONE rounded value — guard, write, status
-
-      if (paymentStatus === "PAID") {
-        if (remaining <= 0) {
-          // PR-2 review (routeflow-Lead, 2026-09-16): `remaining` is capacity
-          // (DRAFT+PAID+PENDING), so it can hit 0 while `alreadyPaid` (CONFIRMED
-          // only) is still below the total — the invoice isn't actually fully
-          // paid, its remaining capacity is reserved by unconfirmed payments.
-          throw new BadRequestException(
-            alreadyPaid >= total - 0.001
-              ? "Invoice is already fully paid"
-              : "Invoice's remaining balance is already reserved by unconfirmed payments",
-          );
-        }
-        if (amount > remaining + 0.001)
-          throw new BadRequestException(
-            `Payment exceeds remaining balance of ${remaining.toFixed(2)}`,
-          );
-      }
+      // Row 2299 (SA-858): EVERY capacity-consuming write is checked, a DRAFT on capacity; W-769: PAID on CONFIRMED money.
+      const existing = inv.payments;
+      const status = paymentStatus;
+      assertPaymentFits({ total, existing, amount, status, realMoney: "CONFIRMED_BASIS" });
 
       const paidAt = await counterPay.assertDatedOk(
         tx,
@@ -4626,6 +4480,9 @@ export class InvoicesService {
         },
       });
 
+      // W-769: the unconfirmed rows this real money displaced are flagged (one audit row)
+      if (paymentStatus === "PAID")
+        await flagUnconfirmedOverReserved(tx, { id, tenantId, total }, createdPayment.id);
       const newPaid = paymentStatus === "PAID" ? alreadyPaid + amount : alreadyPaid;
       const newStatus =
         paymentStatus === "PAID"
@@ -4649,7 +4506,9 @@ export class InvoicesService {
         total: Number(paid.total),
       });
       await this.commissionEngine.syncInvoiceCommissionSafe(id, tx);
-      return { ...paid, createdPaymentId: createdPayment.id };
+      const recorded = { ...paid, createdPaymentId: createdPayment.id };
+      await opts?.inTx?.(tx, recorded); // SA-824: the key's settle, in this transaction
+      return recorded;
     });
   }
 
@@ -4799,6 +4658,9 @@ export class InvoicesService {
           checkStatus: method === "CHECK" ? CheckStatus.RECORDED : null,
         },
       });
+      // W-769 (W-707 folded): the confirmed basis and the spill stay; the displaced unconfirmed rows are flagged
+      const at = { id: inv.id, tenantId: this.prisma.getTenantId(), total };
+      await flagUnconfirmedOverReserved(tx, at, pay.id);
 
       const newStatus = statusFromPayments(
         alreadyPaid + applyHere,
@@ -4951,7 +4813,7 @@ export class InvoicesService {
     return { tenantShort, start: counter.next - count };
   }
 
-  async updatePayment(invoiceId: string, paymentId: string, dto: UpdatePaymentDto) {
+  async updatePayment(invoiceId: string, paymentId: string, dto: UpdatePaymentDto, opts?: RefOpts) {
     const tz = await tenantTimeZone(this.prisma); // SA-495a: the tenant's due day, once per call
     if ((dto.method as any) === "CREDIT_NOTE" || (dto.method as any) === "ADVANCE") {
       throw new BadRequestException(
@@ -4959,7 +4821,8 @@ export class InvoicesService {
       );
     }
     const till = await counterPay.scope(this.prisma, invoiceId); // SA-750r3: counter sales only
-    return withAfterCommit(this.prisma, async (tx, after) => {
+    const ids = { invoiceId, paymentId }; // row 752 (SA-843): the payment-ref lock on the NEW key, then the tx
+    return withPaymentEditRef(this.prisma, ids, dto, opts, async (tx, after, edit) => {
       // PR-2 (B1, m3): row-lock the invoice before reading its payments, like recordPayment, so two
       // concurrent edits cannot jointly overshoot the total. SA-750r3: a counter sale's shared close lock comes first.
       await counterPay.lock(tx, till);
@@ -5013,16 +4876,19 @@ export class InvoicesService {
       const otherPayments = inv.payments.filter((p) => p.id !== paymentId);
       const othersTotal = sumConfirmed(otherPayments);
       const total = Number(inv.total);
-      // PR-2 (B1 hardening, review-opus-v2 condition #6): the remaining-balance
-      // *guard* moves to remainingCapacity() (DRAFT+PAID+PENDING) — a DRAFT "other"
-      // payment now also reserves capacity here, closing the same double-book gap
-      // recordPayment's conversion closes, so this edit can no longer be parked
-      // above what the invoice can actually hold once that DRAFT confirms.
-      const capacity = remainingCapacity(total, otherPayments);
-      if (newPaymentStatus !== "VOID" && amount > capacity + 0.001) {
-        throw new BadRequestException(`Payment amount exceeds remaining balance`);
-      }
+      // PR-2 (B1): an unconfirmed edit stays on CAPACITY (a DRAFT "other" reserves it, #3645). W-769 (SA-922 answer 2): a PAID
+      // edit, a confirm (DRAFT → PAID) and a reopen (VOID → PAID) are real money on CONFIRMED money, through the ONE policy
+      // (SA-862 rule 4: a confirm / reopen that confirmed money already covers is 409 UNCONFIRMED_PAYMENT_SUPERSEDED).
+      const confirming = payment.status !== "PAID";
+      assertEditFits({
+        total,
+        others: otherPayments,
+        amount,
+        status: newPaymentStatus,
+        confirming,
+      });
 
+      const guard = await edit.check(tx, payment, inv.customerId); // a NEW dedupe identity only
       await tx.invoicePayment.update({
         where: { id: paymentId },
         data: {
@@ -5039,12 +4905,21 @@ export class InvoicesService {
           status: newPaymentStatus,
         },
       });
+      await guard?.recorded(tx, [paymentId], invoiceId);
+      if (newPaymentStatus === "PAID") await flagUnconfirmedOverReserved(tx, inv, paymentId); // W-769: what this confirm displaced
 
       const newPaid = othersTotal + effectiveAmount;
       const newStatus = statusFromPayments(newPaid, total, inv.dueDate, inv.status, tz, "NOT_PAID");
       const updated = await tx.invoice.update({
         where: { id: invoiceId },
-        data: { status: newStatus, paidAt: newStatus === InvoiceStatus.PAID ? new Date() : null },
+        data: {
+          status: newStatus,
+          // W-769: an invoice that stays PAID keeps the stamp it earned (voiding a displaced DRAFT must not re-date it).
+          paidAt:
+            newStatus === InvoiceStatus.PAID
+              ? (inv.status === InvoiceStatus.PAID && inv.paidAt) || new Date()
+              : null,
+        },
         include: {
           customer: { select: { id: true, businessName: true } },
           items: true,
@@ -5235,7 +5110,7 @@ export class InvoicesService {
 
       // W5: reverse this invoice's regulated ledger rows before the invoice + its
       // items are deleted (the ledger keeps its own snapshot; append-only, no FK).
-      await this.ledger.reverseInvoiceEntries({ invoiceId: id, db: tx });
+      await this.ledger.settleRegulatedLedger(tx, { kind: "INVOICE_ZEROED", invoiceId: id });
 
       // Unlink the remaining (closed) credit notes this invoice sourced, marking each (#2848).
       await unlinkSourcedCredits(
@@ -5276,29 +5151,14 @@ export class InvoicesService {
 
   // ─── Standalone (bulk-allocation) payment ────────────────────────────────
 
-  async recordStandalonePayment(
-    dto: StandalonePaymentDto,
-    opts?: {
-      /**
-       * Reject any allocation exceeding the invoice's live balance, computed
-       * inside the transaction. Buyer-initiated payments compute their
-       * oldest-first allocation BEFORE this call, outside the row locks, so a
-       * concurrent operator payment can stale the preview — without this check
-       * the stale allocation would overpay an invoice. Operator flows keep the
-       * historical behavior (deliberate overpayment is allowed there).
-       */
-      assertAllocationsWithinBalance?: boolean;
-      /** The operator's user id, for the deliberate-overpayment audit row. */
-      actor?: string | null;
-      /**
-       * SA-818 (row 615): runs INSIDE this payment transaction, after the payment rows (and any
-       * excess AdvancePayment) are written and before commit. A caller that must decide something
-       * atomically with the money (the cash approval's PENDING -> APPROVED claim + link) does it
-       * here: a throw rolls the money back with it. Absent -> behaviour is unchanged.
-       */
-      inTx?: (tx: any, result: StandalonePaymentResult) => Promise<void>;
-    },
-  ) {
+  async recordStandalonePayment(dto: StandalonePaymentDto, opts?: StandalonePaymentOpts) {
+    // SA-824: a keyed call claims in the money tx below (its first statement) or replays the stored result.
+    return keyedPayment(this.prisma, standalonePaymentKey(dto), opts, (o) =>
+      this.writeStandalonePayment(dto, o),
+    );
+  }
+
+  private async writeStandalonePayment(dto: StandalonePaymentDto, opts?: StandalonePaymentOpts) {
     const tz = await tenantTimeZone(this.prisma); // SA-495a: the tenant's due day, once per call
     const paymentGroupId = randomUUID();
     const paidAt = dto.paidAt ? new Date(dto.paidAt) : new Date();
@@ -5307,6 +5167,10 @@ export class InvoicesService {
     const status = dto.status ?? "PAID";
     // B769 / SA-112: rounded totals, and Σ allocations ≤ payment — refused before any write.
     const { excess } = standaloneAllocationTotals(dto);
+    // 681 (R5-5): the AdvancePayment below stores dto.customerId, and `allocations: []` (an advance-only receipt)
+    // skips the per-allocation customer match, so the customer is proven here at the writer, before the payment
+    // number is reserved and before the tx opens. Covers the payment-request callers too. No ArrayMinSize.
+    await assertRefsInTenant(this.prisma, { customerIds: [dto.customerId] });
 
     // Standalone reservation, committed BEFORE the payment tx opens (B269): a
     // rolled-back booking burns the reserved block instead of re-minting the
@@ -5316,8 +5180,12 @@ export class InvoicesService {
     const { tenantShort, start } = await this.nextPaymentNumber(dto.allocations.length);
 
     // #2472 (1): a multi-invoice payment can deadlock (40P01) with completeWithPayment — re-run it.
-    return retryOnTxConflict(`standalone payment group=${paymentGroupId}`, () =>
+    // W-769: displaced rows are collected per attempt (a retried tx starts empty) and handed out once, after commit
+    let displacedRun: Array<[string, string[]]> = [];
+    const committed = await retryOnTxConflict(`standalone payment group=${paymentGroupId}`, () =>
       this.prisma.tenantTransaction(async (tx) => {
+        displacedRun = [];
+        await opts?.claim?.(tx); // SA-824: the key claim is the FIRST statement (throws, unwritten, when held)
         // B311: the buyer/online path's anti-overpay guard reads the invoice's balance and
         // THEN checks it — with no row lock between the two, a concurrent office payment on the
         // same invoice could commit in between, and this check would still pass against the
@@ -5364,6 +5232,14 @@ export class InvoicesService {
             }
           }
 
+          // W-769 (SA-922 answer 1): an unconfirmed (DRAFT) allocation must fit CAPACITY (#3645); a PAID one is [L-O2]'s
+          // CONFIRMED_BASIS_ALLOW_OVERPAY (never refused by an unconfirmed row; the rows it displaces are flagged below)
+          await assertUnconfirmedAllocationFits(
+            tx,
+            { id: alloc.invoiceId, total: invoice.total },
+            roundMoney(alloc.amount),
+            status,
+          );
           const payment = await tx.invoicePayment.create({
             data: {
               invoiceId: alloc.invoiceId,
@@ -5387,6 +5263,9 @@ export class InvoicesService {
           // concurrent void conflicts (40001) and its retry re-reads it (the #2258 writer invariant).
           let invoiceData: Prisma.InvoiceUpdateInput = { updatedAt: new Date() };
           if (status === "PAID") {
+            const at = { id: alloc.invoiceId, tenantId: invoice.tenantId, total: invoice.total };
+            const displaced = await flagUnconfirmedOverReserved(tx, at, payment.id);
+            if (displaced.length > 0) displacedRun.push([alloc.invoiceId, displaced]);
             // F03/R1: CONFIRMED (PAID) rows only feed recomputeStatus.
             const allPayments = await tx.invoicePayment.findMany({
               where: { invoiceId: alloc.invoiceId, ...CONFIRMED_PAYMENT },
@@ -5425,8 +5304,9 @@ export class InvoicesService {
         }
 
         // Handle excess amount → create AdvancePayment (rounded up front, SA-112)
-        if (excess > 0.001) {
-          await tx.advancePayment.create({
+        const advance =
+          excess > 0.001 &&
+          (await tx.advancePayment.create({
             data: {
               customerId: dto.customerId,
               amount: excess,
@@ -5435,19 +5315,22 @@ export class InvoicesService {
               reference: dto.reference,
               notes: dto.notes,
               receivedAt: paidAt,
+              sourcePaymentId: payments[0]?.id ?? null, // SA-879: the group's own excess, linked to its first row
             },
-          });
-        }
+          }));
 
         const result: StandalonePaymentResult = {
           payments,
           paymentGroupId,
           excess: Math.max(0, excess),
         };
-        await opts?.inTx?.(tx, result);
+        // SA-824: the excess advance's id rides beside the result (the response shape is unchanged).
+        await opts?.inTx?.(tx, result, { advancePaymentId: advance ? advance.id : null });
         return result;
       }),
     );
+    for (const [invoiceId, ids] of displacedRun) opts?.onDisplaced?.(invoiceId, ids);
+    return committed;
   }
 
   // ─── Void a single payment ────────────────────────────────────────────────
@@ -5657,71 +5540,8 @@ export class InvoicesService {
 
   // ─── Export payments as CSV ───────────────────────────────────────────────
 
-  async exportPayments(params: {
-    customerId?: string;
-    method?: string;
-    status?: string;
-    dateFrom?: string;
-    dateTo?: string;
-    search?: string;
-    sortBy?: string;
-    sortDir?: string;
-  }): Promise<string> {
-    const { customerId, method, status, dateFrom, dateTo, search, sortBy, sortDir } = params;
-
-    const where: any = {};
-    if (customerId) where.invoice = { customerId };
-    if (method) where.method = method;
-    if (status) where.status = status;
-    if (dateFrom || dateTo) {
-      // B89/L-047: paidAt is a REAL instant, so its day-window bounds are
-      // evaluated in the TENANT's own timezone — same convention as
-      // listAllPayments above.
-      const tenantDefaults = await this.resolveTenantInvoiceDefaults();
-      where.paidAt = {};
-      if (dateFrom) where.paidAt.gte = tenantCalendarDayStart(dateFrom, tenantDefaults.timezone);
-      if (dateTo) where.paidAt.lte = tenantCalendarDayEnd(dateTo, tenantDefaults.timezone);
-    }
-    if (search) {
-      where.OR = [
-        { paymentNumber: { contains: search, mode: "insensitive" } },
-        { reference: { contains: search, mode: "insensitive" } },
-        { invoice: { customer: { businessName: { contains: search, mode: "insensitive" } } } },
-      ];
-    }
-
-    // B169: `id` tiebreaker — same convention as listAllPayments above.
-    const sortDirection = sortDir === "asc" ? "asc" : "desc";
-    const validSortFields: Record<string, any> = {
-      paidAt: [{ paidAt: sortDirection }, { id: sortDirection }],
-      settledAt: [{ settledAt: sortDirection }, { id: sortDirection }],
-      amount: [{ amount: sortDirection }, { id: sortDirection }],
-      createdAt: [{ createdAt: sortDirection }, { id: sortDirection }],
-      paymentNumber: [{ paymentNumber: sortDirection }, { id: sortDirection }],
-    };
-    // m9: Object.hasOwn (not a bare index) so prototype keys — `constructor`,
-    // `__proto__`, `toString`, `valueOf`… — can't resolve to an INHERITED value
-    // and reach Prisma as a malformed orderBy (→ 500). Unknown OR inherited
-    // falls back to the safe paidAt-desc default.
-    const orderBy =
-      sortBy && Object.hasOwn(validSortFields, sortBy)
-        ? validSortFields[sortBy]
-        : [{ paidAt: "desc" }, { id: "desc" }];
-
-    const rows = await this.prisma.forTenant().invoicePayment.findMany({
-      where,
-      orderBy,
-      include: {
-        invoice: {
-          select: {
-            invoiceNumber: true,
-            customer: { select: { businessName: true } },
-          },
-        },
-      },
-    });
-
-    return buildPaymentsCsv(rows);
+  exportPayments(params: Parameters<typeof exportPayments>[1]): Promise<string> {
+    return exportPayments(this.paymentListDeps(), params);
   }
 
   // ─── Cron ─────────────────────────────────────────────────────────────────
@@ -5795,7 +5615,8 @@ export class InvoicesService {
       // B662: item writes, invoice totals and the regulated-ledger sync commit or fail TOGETHER.
       await this.prisma.tenantTransaction(async (tx: any) => {
         const live = await lockInvoiceForPriceAdjustment(tx, inv); // Invoice FIRST, then its rows
-        const { restampRate } = priceAdjustmentTaxState(live, isTaxExempt); // SA-814 R5-2 (409 if unverifiable)
+        const tenantRate = await tenantPreferredRate(tx); // the tenant rate wins the inference when it reproduces the tax
+        const { restampRate } = priceAdjustmentTaxState(live, isTaxExempt, tenantRate); // SA-814 R5-2 (409 if unverifiable)
         const { categoriesById, unitsPerBoxByProduct } = await loadPriceAdjustmentReference(
           tx,
           live.items,
@@ -5827,7 +5648,9 @@ export class InvoicesService {
           isTaxExempt,
           recomputeStatus: (p, t, d, st) => statusFromPayments(p, t, d, st, tz, "NOT_PAID"),
           ledger: this.ledger,
-          resync: (...a) => this.resyncInvoiceLedger(...a),
+          resync: async (...a) => {
+            await this.resyncInvoiceLedger(...a);
+          },
         });
       });
       onCommitted?.();

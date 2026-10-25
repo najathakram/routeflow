@@ -8,7 +8,7 @@ import * as React from "react";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { renderWithProviders, screen, within } from "@/test-utils/render";
-import { EditableLineItems, type EditItemState } from "./page";
+import { EditableLineItems, type EditItemState } from "./_components/order-line-edit";
 
 jest.mock("@/lib/api/product-units", () => ({
   useUnitsEnabled: () => false,
@@ -83,7 +83,7 @@ describe("order edit builder: delivered lines are locked (B1234)", () => {
     expect(c.queryByRole("spinbutton")).toBeNull(); // the Qty input
     expect(c.queryByText(/^substitute$/i)).toBeNull();
     expect(c.queryByText(/not available/i)).toBeNull();
-    expect(c.queryByTitle("Delete item")).toBeNull();
+    expect(c.queryByTitle(/^Remove /)).toBeNull();
     expect(c.queryByText(/unit price/i)).toBeNull(); // PriceEditRow
     expect(c.getByText(/delivered\. this line can't be changed or removed/i)).toBeTruthy();
   });
@@ -131,7 +131,7 @@ describe("order edit builder: delivered lines are locked (B1234)", () => {
     expect(c.getByRole("spinbutton")).toBeTruthy();
     expect(c.getByText(/^substitute$/i)).toBeTruthy();
     expect(c.getByText(/not available/i)).toBeTruthy();
-    expect(c.getByTitle("Delete item")).toBeTruthy();
+    expect(c.getByTitle(/^Remove /)).toBeTruthy();
     expect(c.queryByText(/delivered\. this line can't/i)).toBeNull();
   });
 
@@ -140,7 +140,7 @@ describe("order edit builder: delivered lines are locked (B1234)", () => {
     for (const name of ["Delivered Widget", "Open Widget"]) {
       const c = within(card(name));
       expect(c.getByRole("spinbutton")).toBeTruthy();
-      expect(c.getByTitle("Delete item")).toBeTruthy();
+      expect(c.getByTitle(/^Remove /)).toBeTruthy();
     }
   });
 });

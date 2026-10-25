@@ -1,4 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException, OnModuleInit } from "@nestjs/common";
+import { assertRefsInTenant } from "../common/assert-refs-in-tenant";
+import { flagUnconfirmedOverReserved } from "../invoices/confirmed-basis";
 import { lockBillRows } from "../vendor-bills/bill-locks";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -44,6 +46,11 @@ import {
 import { settledDateFilter } from "../invoices/settled-date-filter";
 import { lockInvoicesForPayment } from "../invoices/invoice-send-guard";
 import { counterPay } from "../invoices/counter-payment-guard";
+import {
+  createPaymentRefGuard,
+  withPaymentRefLock,
+  type PaymentRefOpts,
+} from "../invoices/payment-ref-dedupe";
 import { overdueInvoiceCount } from "../invoices/invoice-balance-sql";
 import { confirmedBalance, signedBalance } from "../invoices/invoice-balance-classify";
 
@@ -196,12 +203,25 @@ export class BookkeepingService implements OnModuleInit {
     };
   }
 
-  async recordPayment(id: string, dto: RecordPaymentDto) {
+  /**
+   * Row 498: the same reference predicate and `payment-ref` lock as the invoice writers (payment-ref-dedupe.ts); this
+   * ledger writer has no SA-824 key, so its single payment row is its own attempt.
+   */
+  recordPayment(id: string, dto: RecordPaymentDto, opts?: PaymentRefOpts) {
+    return withPaymentRefLock(this.prisma, dto, () => this.writeLedgerPayment(id, dto, opts));
+  }
+
+  private async writeLedgerPayment(id: string, dto: RecordPaymentDto, opts?: PaymentRefOpts) {
     // G4: the same end-of-day-close door the office recordPayment uses. The counter scope is read BEFORE the transaction so the
     // shared close lock is its FIRST statement; a non-counter invoice gets null here and every counterPay helper is a no-op.
     const till = await counterPay.scope(this.prisma, id);
+    const refGuard = createPaymentRefGuard({ ...dto, invoiceId: id, opts });
     return this.prisma.tenantTransaction(async (tx) => {
       await counterPay.lock(tx, till);
+      // Review M5: the reference check comes AFTER the G4 close lock, so the shared close lock stays this transaction's
+      // first statement; it is a read, and the `payment-ref` session lock around this transaction serialises same-reference
+      // recordings, so a duplicate is still a 409 with nothing written.
+      await refGuard.check(tx);
       // SA-404f F1: FIRST lock (Order →) Invoice, so the status read below sees a committed VOID
       // and refuses, instead of writing PAID/PARTIAL back over it.
       await lockInvoicesForPayment(tx, [id]);
@@ -252,7 +272,7 @@ export class BookkeepingService implements OnModuleInit {
         { method: dto.method },
         PaymentStatus.PAID,
       );
-      await tx.invoicePayment.create({
+      const recorded = await tx.invoicePayment.create({
         data: {
           invoiceId: id,
           amount: paymentAmount,
@@ -264,6 +284,13 @@ export class BookkeepingService implements OnModuleInit {
           checkStatus: dto.method === "CHECK" ? CheckStatus.RECORDED : null,
         },
       });
+      await refGuard.recorded(tx, [recorded?.id], id);
+      // W-769: the confirmed basis stays (REG-B11); the unconfirmed rows this real money displaced are flagged
+      await flagUnconfirmedOverReserved(
+        tx,
+        { id, tenantId: inv.tenantId, total: totalOwed },
+        recorded.id,
+      );
 
       const totalPaid = roundMoney(alreadyPaid + paymentAmount);
       const newInvStatus =
@@ -518,6 +545,12 @@ export class BookkeepingService implements OnModuleInit {
     // sub-cent rate still lands off-cent in float either way).
     computedAmount = roundMoney(Number(computedAmount));
 
+    await assertRefsInTenant(this.prisma, {
+      expenseCategoryIds: [rest.categoryId],
+      supplierIds: [rest.supplierId],
+      customerIds: [rest.customerId],
+    });
+
     const expense = await this.prisma.forTenant().expense.create({
       data: {
         categoryId: rest.categoryId ?? null,
@@ -573,6 +606,7 @@ export class BookkeepingService implements OnModuleInit {
     if (!existing) throw new NotFoundException("Expense not found");
 
     const statusPatch = this.buildStatusPatch(existing, dto);
+    await assertRefsInTenant(this.prisma, { expenseCategoryIds: [dto.categoryId] });
 
     const updated = await this.prisma.forTenant().expense.update({
       where: { id },

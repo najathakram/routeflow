@@ -60,3 +60,26 @@ describe("admin checkout refused with CHECKOUT_ANCHOR_WINDOW", () => {
     expect(await screen.findByText(/Checkout reopens in a few minutes/)).toBeInTheDocument();
   });
 });
+
+// SA-832b: the back-office "Create checkout session" (POST /platform-admin/tenants/:id/billing/checkout) is used by a
+// super admin. A tenant a payment may not reinstate is refused with TENANT_ADMIN_LOCKED; the admin gets ADMIN-facing
+// copy (what to do), never the tenant's "contact support" sentence and never the server's raw text.
+describe("admin checkout refused with TENANT_ADMIN_LOCKED", () => {
+  it("shows the admin wording, not the tenant copy or the server's message", async () => {
+    mockCheckout.mockRejectedValue({
+      response: {
+        status: 409,
+        data: {
+          code: API_ERROR_CODES.TENANT_ADMIN_LOCKED,
+          message: "raw server text that must never be shown",
+        },
+      },
+    });
+    await openAndSubmit();
+    expect(
+      await screen.findByText("This tenant is locked by an admin; change its status first."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/raw server text/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/contact support/i)).not.toBeInTheDocument();
+  });
+});

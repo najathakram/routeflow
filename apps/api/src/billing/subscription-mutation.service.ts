@@ -24,6 +24,7 @@ import {
   checkoutAddonLineItem,
   isOwnedAddonItem,
 } from "./stripe-addon-items";
+import { ensureAddonProduct, stripeProductId } from "./stripe-product";
 import { emitAddonDelta, lockTenantForLedger, bookAddonsOnCrossing } from "./addon-ledger";
 import {
   addonCodeOf,
@@ -67,7 +68,8 @@ import { DunningService } from "./dunning.service";
 import { AutoLockSwitchService } from "./auto-lock-switch.service";
 import { autoLockAllowed, recordAutoLockSkip } from "./auto-lock-gate";
 import { assertTenantNotPaymentOverdue, type OverdueEntryPoint } from "./payment-overdue";
-import { billingPauseMode } from "./dunning-config";
+import { billingPauseMode, paymentReinstatable } from "./dunning-config";
+import { adminLockedRefusal } from "./admin-lock-refusal";
 import { transitionToActiveTx, type PauseExit } from "./transition-to-active";
 import { CUSTOM_FEE_UNCHANGED, priceOverrideOf, prorationAllowedFor } from "./price-override";
 import type { AddonBillingMode } from "@routeflow/types";
@@ -465,6 +467,14 @@ export class SubscriptionMutationService {
     ]);
     // #2583 / SA-513: a deleted tenant is refused before the transaction.
     if (!tenant || tenant.deletedAt) throw new NotFoundException("Tenant not found");
+    // SA-832 / 453: a lock an admin set (or a CANCELLED tenant) is never lifted by a subscription pick - refused here,
+    // BEFORE any Stripe side effect below (the add-on item removal), and again under the lock. See paymentReinstatable.
+    if (!paymentReinstatable(tenant.status, tenant.readOnlyReason)) {
+      this.logger.warn(
+        `subscribe refused tenant=${tenantId}: status ${tenant.status}${tenant.readOnlyReason ? ` (${tenant.readOnlyReason})` : ""} is not payment-reinstatable`,
+      );
+      throw adminLockedRefusal();
+    }
 
     // The plan we are changing FROM — resolved through the legacy enum, so a subscription
     // predating plans-as-data (planKey NULL) is ranked instead of read as "no plan".
@@ -580,6 +590,11 @@ export class SubscriptionMutationService {
         tx.tenantAddon.findMany({ where: { tenantId, active: true } }),
       ]);
       if (!lockedTenant) throw new NotFoundException("Tenant not found");
+      // SA-832 / 453: the same predicate on the row re-read UNDER the tenant lock - an admin who locked the tenant
+      // between the pre-tx read and here is honoured; nothing has been written yet.
+      if (!paymentReinstatable(lockedTenant.status, lockedTenant.readOnlyReason)) {
+        throw adminLockedRefusal();
+      }
       const lockedFromKey = this.resolveFromPlanKey(lockedSub?.planKey, lockedTenant.plan);
       // #2189 / SA-389 (2): prepare(transition) ran pre-tx (pool reasons) on `fromKey`; if the
       // plan moved before this lock, the prepared transition is stale — refuse, retryable, with
@@ -1861,7 +1876,7 @@ export class SubscriptionMutationService {
     if (sub.stripeSubId && sub.cancelAtPeriodEnd === true) {
       const tenant = await this.prisma.tenant.findUnique({
         where: { id: tenantId },
-        select: { status: true },
+        select: { status: true, readOnlyReason: true },
       });
       if (tenant?.status === "ACTIVE") {
         try {
@@ -1890,6 +1905,13 @@ export class SubscriptionMutationService {
         // the tenant ACTIVE (and booking a +1 MRR delta) the next time Stripe happens to fire
         // an invoice.payment_succeeded webhook for a subscription it was never told to stop.
         // Refuse instead, mirroring cancel()'s own handling of a state it cannot honour.
+        // SA-832b: "subscribe again" is a dead end for a workspace a payment may not reinstate (subscribe() refuses it
+        // with the coded 409), so say so - fixed copy that names no cause.
+        if (tenant && !paymentReinstatable(tenant.status, tenant.readOnlyReason)) {
+          throw new ConflictException(
+            "The subscription cannot be resumed while the workspace is locked. Please contact support.",
+          );
+        }
         throw new ConflictException(
           "The subscription cannot be resumed while the workspace is read-only; subscribe again to restore service.",
         );
@@ -2209,7 +2231,7 @@ export class SubscriptionMutationService {
     tenantId: string,
     interval: "month" | "year",
     // SA-733 D7: the catch-up DRY-RUN reads the same lines but writes nothing (no platform notice).
-    opts: { quiet?: boolean } = {},
+    opts: { quiet?: boolean; readOnly?: boolean } = {},
   ): Promise<{
     lineItems: ReturnType<typeof checkoutAddonLineItem>[];
     skus: string[];
@@ -2285,13 +2307,18 @@ export class SubscriptionMutationService {
       });
     }
     return {
-      lineItems: billable.map((b) =>
-        checkoutAddonLineItem({
-          sku: b.def.sku,
-          name: b.def.name,
-          monthlyPrice: b.def.monthlyPrice,
-          quantity: b.quantity,
-        }),
+      lineItems: await Promise.all(
+        billable.map(async (b) =>
+          checkoutAddonLineItem({
+            sku: b.def.sku,
+            // a readOnly call (plan, census, payment-due) never touches Stripe: the id is deterministic
+            productId: opts.readOnly
+              ? stripeProductId("addon", b.def.sku)
+              : await ensureAddonProduct(this.stripe.client, b.def.sku, b.def.name),
+            monthlyPrice: b.def.monthlyPrice,
+            quantity: b.quantity,
+          }),
+        ),
       ),
       skus: billable.map((b) => b.def.sku),
       invalid,
@@ -3637,10 +3664,7 @@ export class SubscriptionMutationService {
     const adopted = await this.adoptOrphanItem(tenantId, sku, subId, qty);
     if (adopted) return { itemId: adopted, createdItemId: null };
     try {
-      const product = await this.stripe.client.products.create({
-        name: `RouteFlow add-on — ${skuDef.name}`,
-        metadata: { tenantId, sku },
-      });
+      const productId = await ensureAddonProduct(this.stripe.client, sku, skuDef.name);
       const item = await this.stripe.client.subscriptionItems.create(
         {
           subscription: subId,
@@ -3653,7 +3677,7 @@ export class SubscriptionMutationService {
             currency: "usd",
             unit_amount: toCents(Number(skuDef.monthlyPrice)),
             recurring: { interval: "month" },
-            product: product.id,
+            product: productId,
           },
           metadata: { tenantId, sku },
         },

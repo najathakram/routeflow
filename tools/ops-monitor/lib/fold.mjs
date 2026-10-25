@@ -55,6 +55,8 @@ function newItem(id, fields, ts) {
     type: fields.type ?? "chore",
     priority: fields.priority ?? "P2",
     status: fields.status ?? "planned",
+    statusText: fields.statusText ?? null,
+    harm: fields.harm ?? null,
     lane: fields.lane ?? null,
     train: fields.train ?? null,
     area: fields.area ?? null,
@@ -65,6 +67,7 @@ function newItem(id, fields, ts) {
     source: fields.source ?? null,
     tags: [...(fields.tags ?? [])],
     members: [...(fields.members ?? [])],
+    parts: structuredClone(fields.parts ?? []),
     related: [...(fields.related ?? [])],
     links,
     refPrs: uniq([...split.refPrs, ...(fields.refPrs ?? [])]),
@@ -100,6 +103,7 @@ export function fold(events, { bugs = new Map() } = {}) {
     eventCount: 0,
     lastEventAt: null,
     machines: {},
+    sessions: new Map(), // session id -> latest heartbeat { ...data, lane, ts }
   };
   const anomaly = (kind, eventId, item, detail, ts = null) =>
     state.anomalies.push({
@@ -112,6 +116,17 @@ export function fold(events, { bugs = new Map() } = {}) {
 
   const valid = [];
   for (const ev of events) {
+    if (ev && ev.__corrupt) {
+      // W-880: a crash zeroed part of this file; its other lines still load, so this is the alarm.
+      anomaly(
+        "corrupt-events-file",
+        null,
+        null,
+        `${ev.file} holds ${ev.nul} NUL bytes (a crash zeroed part of it): restore the lost lines from git history`,
+        fileNoonUtc(ev.file),
+      );
+      continue;
+    }
     if (ev && ev.__invalid) {
       anomaly(
         "invalid-event",
@@ -137,7 +152,7 @@ export function fold(events, { bugs = new Map() } = {}) {
   });
 
   const touchLane = (ev, ts) => {
-    if (!ev.lane) return;
+    if (!ev.lane || ev.kind === "heartbeat") return; // heartbeats set lane activity themselves
     let l = state.lanes.get(ev.lane);
     if (!l) {
       l = { id: ev.lane, lastEventAt: null, lastEventKind: null, claims: [] };
@@ -172,6 +187,7 @@ export function fold(events, { bugs = new Map() } = {}) {
     return null;
   };
 
+  const MERGE_ADVANCES = new Set(["idea", "planned", "spec", "building", "review", "ready"]);
   const setStatus = (it, status) => {
     it.status = status;
     if (DONE_STATUSES.includes(status)) {
@@ -369,6 +385,31 @@ export function fold(events, { bugs = new Map() } = {}) {
         touched = !!it;
         break;
       }
+      case "heartbeat": {
+        // Lane activity = when the session was last active (not when the sync wrote the event).
+        const active = Date.parse(d.lastActiveAt);
+        if (ev.lane) {
+          let l = state.lanes.get(ev.lane);
+          if (!l) {
+            l = { id: ev.lane, lastEventAt: null, lastEventKind: null, claims: [] };
+            state.lanes.set(ev.lane, l);
+          }
+          // Kept apart from lastEventAt (which any event on the lane moves): "is a session alive?"
+          if (Number.isFinite(active) && (l.lastHeartbeatAt == null || active > l.lastHeartbeatAt))
+            l.lastHeartbeatAt = active;
+          if (l.lastEventAt === null || active > l.lastEventAt) {
+            l.lastEventAt = active;
+            l.lastEventKind = ev.kind;
+          }
+        }
+        state.sessions.set(d.session, {
+          ...d,
+          machine: d.machine ?? ev.machine,
+          lane: ev.lane,
+          ts,
+        });
+        break;
+      }
       case "note": {
         it = ev.item ? resolve(ev.item, ev) : null;
         if (ev.item && !it) break;
@@ -417,6 +458,15 @@ export function fold(events, { bugs = new Map() } = {}) {
         }
         if (it) mergeLinks(it.links, { prs: [d.number] });
         if (it?.claimedBy) touchLane({ lane: it.claimedBy, kind: ev.kind }, ts);
+        // A merge moves in-flight work to shipping once EVERY PR linked to the item has merged (the same event an
+        // `rf status <id> shipping` would write). Done items stay done; a later explicit status event still wins.
+        if (it && d.action === "merge" && MERGE_ADVANCES.has(it.status)) {
+          const merged = new Set(
+            state.prEvents.filter((e) => e.action === "merge").map((e) => e.number),
+          );
+          merged.add(d.number);
+          if (it.links.prs.every((n) => merged.has(n))) setStatus(it, "shipping");
+        }
         state.prEvents.push({
           ts,
           number: d.number,
@@ -437,6 +487,8 @@ export function fold(events, { bugs = new Map() } = {}) {
       it.updatedAt = ts;
       const h = { ts, kind: ev.kind, actor: ev.actor };
       if (ev.kind === "status") h.status = d.status;
+      else if (ev.kind === "item.edit" && d.fields?.status !== undefined)
+        h.status = d.fields.status;
       if (ev.lane) h.lane = ev.lane;
       it.history.push(h);
       if (it.history.length > HISTORY_CAP) it.history.splice(0, it.history.length - HISTORY_CAP);

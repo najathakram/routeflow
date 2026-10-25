@@ -27,7 +27,8 @@ export class RecurringInvoiceItemDto {
   @IsNumber() @Min(0.001) qty: number;
   @IsNumber() @Min(0) unitPrice: number;
   @IsOptionalNotNull() @IsNumber() @Min(0) discount?: number;
-  @IsOptionalNotNull() @IsNumber() @Min(0) taxRate?: number;
+  /** A FRACTION (0.08875 = 8.875%). @Max(1): a percent sent by mistake is a 400 (R5-1, B296). */
+  @IsOptionalNotNull() @IsNumber() @Min(0) @Max(1) taxRate?: number;
 }
 
 export class CreateRecurringInvoiceDto {

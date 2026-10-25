@@ -1,4 +1,6 @@
+import { rememberCounterSale } from "@/lib/counter-last-sale";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { markOrderCreatedHere } from "@/lib/order-created-echo";
 import type {
   CounterSalePaymentMethod,
   CounterSaleRequest,
@@ -11,7 +13,7 @@ import type {
 } from "@routeflow/types";
 import { apiClient } from "../api-client";
 import { useOptionalAuth } from "../auth-context";
-import { counterSaleGate, isPickupHandledError } from "../counter-sale";
+import { counterSaleGate, isCounterSaleHandledError, isPickupHandledError } from "../counter-sale";
 import { useTenantFeatures } from "../tenant-features";
 import { keptSaleHref } from "../kept-draft-invoice";
 import { deniedGroupsOf, useMyPermissions } from "./my-permissions";
@@ -85,15 +87,22 @@ export function useCreateCounterSale() {
     // and the till sits "sending" until the connection comes back (and then sends by itself). The till must try the request
     // and see the network failure, so it can say so and unfreeze; the sale's Idempotency-Key makes any retry safe.
     networkMode: "always",
+    // The till shows these refusals in its own checkout bar; the app-wide toast would say it twice.
+    meta: { localErrorToast: isCounterSaleHandledError },
     mutationFn: ({ dto, idempotencyKey }: { dto: CounterSaleRequest; idempotencyKey: string }) =>
       apiClient
         .post<CounterSaleResponse>("/orders/counter-sale", dto, {
           headers: { "Idempotency-Key": idempotencyKey },
         })
         .then((r) => r.data),
-    onSuccess: () => {
+    onSuccess: (res, vars) => {
+      // W-708: this tab rang the sale; its realtime `order.created` echo is not "New order placed" (it covered the receipt).
+      markOrderCreatedHere(res.orderNumber);
       void qc.invalidateQueries({ queryKey: ["orders"] });
       void qc.invalidateQueries({ queryKey: ["invoices"] });
+      // SA-837b item 3: an unrecorded payment may be re-sent with "Record anyway" (the same sale, the same key).
+      if (res.paymentRecorded === false)
+        rememberCounterSale(res.orderId, vars.idempotencyKey, vars.dto);
     },
     // Row 466: a failure after the sale committed still wrote an order (and maybe an invoice).
     onError: (err) => {
@@ -127,8 +136,11 @@ export function useCounterSaleByKey() {
           { params: { method } },
         )
         .then((r) => r.data),
-    // a recovered sale is a sale: today's list (under ["orders"]) refreshes like a normal one
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ["orders"] }),
+    // a recovered sale is a sale: today's list (under ["orders"]) refreshes like a normal one, and it is this tab's own (W-708)
+    onSuccess: (res) => {
+      markOrderCreatedHere(res.orderNumber);
+      void qc.invalidateQueries({ queryKey: ["orders"] });
+    },
   });
 }
 

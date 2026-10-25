@@ -121,7 +121,8 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
                           <RadixToast.Action key={a.label} altText={a.label} asChild>
                             <button
                               onClick={a.onClick}
-                              className="text-[12.5px] font-semibold text-accent-deep hover:underline"
+                              // W-674: a 44 px tall target (the label keeps its size); it was a 19 px bare link.
+                              className="inline-flex min-h-11 items-center text-[12.5px] font-semibold text-accent-deep hover:underline"
                             >
                               {a.label}
                             </button>
@@ -140,7 +141,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
             </RadixToast.Root>
           );
         })}
-        <RadixToast.Viewport className="fixed bottom-4 right-4 z-[100] flex w-96 max-w-[calc(100vw-2rem)] flex-col gap-2 outline-none" />
+        <RadixToast.Viewport className="fixed bottom-[max(1rem,var(--toast-bottom-inset,1rem))] right-4 z-[100] flex w-96 max-w-[calc(100vw-2rem)] flex-col gap-2 outline-none" />
       </RadixToast.Provider>
     </ToastContext.Provider>
   );

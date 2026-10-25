@@ -52,7 +52,7 @@ const STATUS_OPTIONS = [
  */
 export default function SalesAgentsPage() {
   const { setTitle } = usePageTitle();
-  React.useEffect(() => setTitle("Sales Agents"), [setTitle]);
+  React.useEffect(() => setTitle("Sales agents"), [setTitle]);
 
   const router = useRouter();
 
@@ -155,7 +155,7 @@ export default function SalesAgentsPage() {
   return (
     <div className="space-y-5 p-6">
       <PageHeader
-        title="Sales Agents"
+        title="Sales agents"
         subtitle="Manage agents, commission rates, and customer attribution."
         action={<Button onClick={() => setIsAddOpen(true)}>Add agent</Button>}
       />

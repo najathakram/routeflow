@@ -1,233 +1,231 @@
 import { BadRequestException, ConflictException } from "@nestjs/common";
-import { stockWriteDate, effectiveDateOf, documentStockDate } from "./stock-write-date";
+import { API_ERROR_CODES } from "../common/api-error-codes";
+import { stockWriteDate } from "./stock-write-date";
 
 /**
- * SA-802 / SA-802a — `stockWriteDate`: the one date gate for a client-dated stock write. A date a
- * person chose is refused (409 STOCK_DATE_IN_FILED_PERIOD) when it falls before the close of the
- * latest filed period covering any product in the write; documents move forward instead (SA-808).
+ * Row 563 (SA-794 → SA-802 → SA-802a / SA-808a): the ONE date gate for every stock write whose date a person chose. A date
+ * before the latest filed period's close (`filedThrough`: a non-FAILED tobacco report for a tobacco product, a GENERATED or
+ * LOCKED filing for its tracked category) would change a filed figure, so it is REFUSED (409 STOCK_DATE_IN_FILED_PERIOD,
+ * naming the period). Never clamped: the person chose the date. Future dates keep the existing 400; no date means now.
  */
-const NOW = new Date("2026-10-19T12:00:00.000Z");
-const T = "tenant-1";
-
-interface Fx {
-  products?: Array<{ id: string; isTobacco: boolean; trackedCategoryId: string | null }>;
-  tobacco?: { periodStart: string; periodEnd: string } | null;
-  /** Latest GENERATED|LOCKED filing per tracked category id. */
-  filings?: Record<
-    string,
-    { periodStart: string; periodEnd: string; periodKey?: string; cadence?: string } | null
-  >;
-  categories?: Record<string, string>;
-}
-
-const makeDb = (fx: Fx) => {
-  const db = {
-    product: { findMany: jest.fn().mockResolvedValue(fx.products ?? []) },
-    tobaccoReport: {
-      findFirst: jest.fn().mockResolvedValue(
-        fx.tobacco
-          ? {
-              periodStart: new Date(fx.tobacco.periodStart),
-              periodEnd: new Date(fx.tobacco.periodEnd),
-            }
-          : null,
-      ),
-    },
-    regulatedFiling: {
-      findFirst: jest.fn().mockImplementation(async (args: any) => {
-        const f = fx.filings?.[args.where.trackedCategoryId];
-        return f
-          ? {
-              periodStart: new Date(f.periodStart),
-              periodEnd: new Date(f.periodEnd),
-              periodKey: f.periodKey ?? "2026-09",
-              cadence: f.cadence ?? "MONTHLY",
-            }
-          : null;
-      }),
-    },
-    trackedCategory: {
-      findFirst: jest.fn().mockImplementation(async (args: any) => {
-        const name = fx.categories?.[args.where.id];
-        return name ? { name } : null;
-      }),
-    },
-  };
-  return db;
+const NOW = new Date("2026-10-23T12:00:00.000Z");
+const SEPT = {
+  periodStart: new Date("2026-09-01T00:00:00.000Z"),
+  periodEnd: new Date("2026-09-30T23:59:59.999Z"), // tobacco reports store an INCLUSIVE end
+};
+const SEPT_FILING = {
+  periodStart: new Date("2026-09-01T00:00:00.000Z"),
+  periodEnd: new Date("2026-10-01T00:00:00.000Z"), // filings store an EXCLUSIVE end
+  periodKey: "2026-09",
+  cadence: "MONTHLY",
 };
 
-const SEPT = { periodStart: "2026-09-01T00:00:00.000Z", periodEnd: "2026-10-01T00:00:00.000Z" };
+function db(opts: {
+  products?: Array<{
+    id: string;
+    isTobacco?: boolean;
+    trackedCategoryId?: string | null;
+    categoryName?: string;
+  }>;
+  report?: unknown;
+  filing?: unknown;
+}) {
+  return {
+    product: {
+      findMany: jest.fn().mockResolvedValue(
+        (opts.products ?? []).map((p) => ({
+          id: p.id,
+          isTobacco: !!p.isTobacco,
+          trackedCategoryId: p.trackedCategoryId ?? null,
+          trackedCategory: p.trackedCategoryId ? { name: p.categoryName ?? "Vapes" } : null,
+        })),
+      ),
+    },
+    tobaccoReport: { findFirst: jest.fn().mockResolvedValue(opts.report ?? null) },
+    regulatedFiling: { findFirst: jest.fn().mockResolvedValue(opts.filing ?? null) },
+  };
+}
+const call = (d: ReturnType<typeof db>, raw: string | undefined, productIds = ["p1"]) =>
+  stockWriteDate(d, { tenantId: "t1", productIds, raw, now: NOW });
+const conflict = async (p: Promise<unknown>) => {
+  try {
+    await p;
+  } catch (e) {
+    expect(e).toBeInstanceOf(ConflictException);
+    return (e as ConflictException).getResponse() as Record<string, unknown>;
+  }
+  throw new Error("expected a 409");
+};
 
-const run = (db: ReturnType<typeof makeDb>, raw: string | undefined, productIds = ["p1"]) =>
-  stockWriteDate(db, { tenantId: T, productIds, raw, now: NOW });
+describe("stockWriteDate (row 563)", () => {
+  it("no date: now, and nothing is read", async () => {
+    const d = db({ products: [{ id: "p1", isTobacco: true }], report: SEPT });
+    await expect(call(d, undefined)).resolves.toEqual(NOW);
+    expect(d.product.findMany).not.toHaveBeenCalled();
+  });
 
-describe("stockWriteDate (SA-802)", () => {
-  it("G2b: a date inside a GENERATED tobacco month is a 409 naming the last day and tobacco", async () => {
-    const db = makeDb({
-      products: [{ id: "p1", isTobacco: true, trackedCategoryId: null }],
-      // TobaccoReport.periodEnd is the INCLUSIVE last instant of the month.
-      tobacco: { periodStart: SEPT.periodStart, periodEnd: "2026-09-30T23:59:59.999Z" },
-    });
-    const err = await run(db, "2026-09-15T00:00:00.000Z").catch((e) => e);
-    expect(err).toBeInstanceOf(ConflictException);
-    expect(err.getResponse()).toMatchObject({
-      code: "STOCK_DATE_IN_FILED_PERIOD",
-      message:
-        "This date is on or before September 30, 2026, which is already filed (for tobacco). " +
-        "Use a date after September 30, 2026.",
+  it("a future date (beyond the 5-minute skew) is refused with the existing 400, before any read", async () => {
+    const d = db({ products: [{ id: "p1", isTobacco: true }] });
+    await expect(call(d, "2026-10-24T00:00:00.000Z")).rejects.toBeInstanceOf(BadRequestException);
+    expect(d.product.findMany).not.toHaveBeenCalled();
+  });
+
+  it("a tobacco product backdated into a reported (GENERATED) month: 409 naming the month", async () => {
+    const d = db({ products: [{ id: "p1", isTobacco: true }], report: SEPT });
+    const body = await conflict(call(d, "2026-09-15T10:00:00.000Z"));
+    expect(body).toMatchObject({
+      code: API_ERROR_CODES.STOCK_DATE_IN_FILED_PERIOD,
+      productId: "p1",
       period: "September 2026",
     });
+    expect(String(body.message)).toMatch(/September 2026/);
   });
 
-  it("G2b: the first instant after the filed month is accepted", async () => {
-    const db = makeDb({
-      products: [{ id: "p1", isTobacco: true, trackedCategoryId: null }],
-      tobacco: { periodStart: SEPT.periodStart, periodEnd: "2026-09-30T23:59:59.999Z" },
+  it("a date in an unfiled month BEFORE a filed one is refused too (SA-802a: date < filedThrough)", async () => {
+    const d = db({ products: [{ id: "p1", trackedCategoryId: "cat-1" }], filing: SEPT_FILING });
+    const body = await conflict(call(d, "2026-08-20T10:00:00.000Z"));
+    expect(body).toMatchObject({ period: "September 2026" });
+  });
+
+  it("the boundary: the filed period's close is accepted; 1 ms before it is refused", async () => {
+    const d = db({ products: [{ id: "p1", trackedCategoryId: "cat-1" }], filing: SEPT_FILING });
+    await expect(call(d, "2026-10-01T00:00:00.000Z")).resolves.toEqual(
+      new Date("2026-10-01T00:00:00.000Z"),
+    );
+    await conflict(call(d, "2026-09-30T23:59:59.999Z"));
+  });
+
+  it("a non-regulated product is never refused (backdating stays allowed)", async () => {
+    const d = db({ products: [{ id: "p1" }], report: SEPT, filing: SEPT_FILING });
+    await expect(call(d, "2026-09-15T10:00:00.000Z")).resolves.toEqual(
+      new Date("2026-09-15T10:00:00.000Z"),
+    );
+  });
+
+  it("a FAILED tobacco month with no later filed month is open (the lookup skips FAILED)", async () => {
+    const d = db({ products: [{ id: "p1", isTobacco: true }], report: null });
+    await expect(call(d, "2026-09-15T10:00:00.000Z")).resolves.toBeInstanceOf(Date);
+    expect(d.tobaccoReport.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ status: { not: "FAILED" } }),
+      }),
+    );
+  });
+
+  it("a mixed write (one regulated product, one plain) is refused as a whole", async () => {
+    const d = db({
+      products: [{ id: "plain" }, { id: "tob", isTobacco: true }],
+      report: SEPT,
     });
-    const d = await run(db, "2026-10-01T00:00:00.000Z");
-    expect(d.toISOString()).toBe("2026-10-01T00:00:00.000Z");
+    const body = await conflict(call(d, "2026-09-15T10:00:00.000Z", ["plain", "tob"]));
+    expect(body).toMatchObject({ productId: "tob" });
   });
 
-  it("G2a: a date inside a LOCKED tracked-category filing is a 409 naming the category", async () => {
-    const db = makeDb({
-      products: [{ id: "p1", isTobacco: false, trackedCategoryId: "cat-1" }],
-      filings: { "cat-1": SEPT },
-      categories: { "cat-1": "Vape products" },
-    });
-    const err = await run(db, "2026-09-10T00:00:00.000Z").catch((e) => e);
-    expect(err).toBeInstanceOf(ConflictException);
-    expect(err.getResponse()).toMatchObject({
-      code: "STOCK_DATE_IN_FILED_PERIOD",
-      message:
-        "This date is on or before September 30, 2026, which is already filed (for Vape products). " +
-        "Use a date after September 30, 2026.",
-      filedThrough: "2026-10-01T00:00:00.000Z",
-    });
-  });
-
-  it("G2e: an unfiled August is still closed when that category's September is LOCKED", async () => {
-    const db = makeDb({
-      products: [{ id: "p1", isTobacco: false, trackedCategoryId: "cat-1" }],
-      filings: { "cat-1": SEPT },
-      categories: { "cat-1": "Vape products" },
-    });
-    const err = await run(db, "2026-08-10T00:00:00.000Z").catch((e) => e);
-    expect(err).toBeInstanceOf(ConflictException);
-    expect(err.getResponse().message).toContain("September 30, 2026");
-  });
-
-  it("G2c: a non-regulated product backdates freely", async () => {
-    const db = makeDb({ products: [{ id: "p1", isTobacco: false, trackedCategoryId: null }] });
-    const d = await run(db, "2020-01-01T00:00:00.000Z");
-    expect(d.toISOString()).toBe("2020-01-01T00:00:00.000Z");
-    expect(db.tobaccoReport.findFirst).not.toHaveBeenCalled();
-    expect(db.regulatedFiling.findFirst).not.toHaveBeenCalled();
-  });
-
-  it("G2d: a FAILED tobacco month with no later filed month leaves the date open", async () => {
-    // The query excludes FAILED rows, so a lone FAILED month comes back as no report at all.
-    const db = makeDb({
-      products: [{ id: "p1", isTobacco: true, trackedCategoryId: null }],
-      tobacco: null,
-    });
-    const d = await run(db, "2026-09-15T00:00:00.000Z");
-    expect(d.toISOString()).toBe("2026-09-15T00:00:00.000Z");
-    expect(db.tobaccoReport.findFirst.mock.calls[0][0].where).toMatchObject({
-      tenantId: T,
-      status: { not: "FAILED" },
-    });
-  });
-
-  it("G2d: a FAILED month BEFORE a later filed month is closed", async () => {
-    // August FAILED, September GENERATED: the latest non-FAILED report is September.
-    const db = makeDb({
-      products: [{ id: "p1", isTobacco: true, trackedCategoryId: null }],
-      tobacco: { periodStart: SEPT.periodStart, periodEnd: "2026-09-30T23:59:59.999Z" },
-    });
-    await expect(run(db, "2026-08-15T00:00:00.000Z")).rejects.toBeInstanceOf(ConflictException);
-  });
-
-  it("when tobacco and a category are both filed, the later close is the one named", async () => {
-    const db = makeDb({
-      products: [
-        { id: "p1", isTobacco: true, trackedCategoryId: null },
-        { id: "p2", isTobacco: false, trackedCategoryId: "cat-1" },
-      ],
-      tobacco: { periodStart: "2026-08-01T00:00:00.000Z", periodEnd: "2026-08-31T23:59:59.999Z" },
-      filings: { "cat-1": SEPT },
-      categories: { "cat-1": "Vape products" },
-    });
-    const err = await run(db, "2026-08-20T00:00:00.000Z", ["p1", "p2"]).catch((e) => e);
-    expect(err.getResponse().message).toContain("(for Vape products)");
-    expect(err.getResponse().message).toContain("September 30, 2026");
-  });
-
-  it("falls back to a generic name when the category cannot be read", async () => {
-    const db = makeDb({
-      products: [{ id: "p1", isTobacco: false, trackedCategoryId: "cat-1" }],
-      filings: { "cat-1": SEPT },
-    });
-    const err = await run(db, "2026-09-10T00:00:00.000Z").catch((e) => e);
-    expect(err.getResponse().message).toContain("(for a regulated category)");
-  });
-
-  it("a future date is a 400 before any read; a missing date is now", async () => {
-    const db = makeDb({ products: [{ id: "p1", isTobacco: false, trackedCategoryId: null }] });
-    await expect(run(db, "2026-10-20T12:00:00.000Z")).rejects.toBeInstanceOf(BadRequestException);
-    expect(db.product.findMany).not.toHaveBeenCalled();
-    expect((await run(db, undefined)).toISOString()).toBe(NOW.toISOString());
-  });
-
-  it("fails closed with no tenant, and with no product ids returns the date unread", async () => {
-    const db = makeDb({});
+  it("refuses to run without a tenant (a filing lookup with no tenant would call every period open)", async () => {
+    const d = db({ products: [{ id: "p1", isTobacco: true }], report: SEPT });
     await expect(
-      stockWriteDate(db, { tenantId: null, productIds: ["p1"], raw: undefined, now: NOW }),
+      stockWriteDate(d, {
+        tenantId: null,
+        productIds: ["p1"],
+        raw: "2026-09-15T10:00:00.000Z",
+        now: NOW,
+      }),
     ).rejects.toThrow(/tenant/);
-    const d = await run(db, "2020-01-01T00:00:00.000Z", []);
-    expect(d.toISOString()).toBe("2020-01-01T00:00:00.000Z");
-    expect(db.product.findMany).not.toHaveBeenCalled();
   });
 
-  it("every read is scoped by tenantId, so a raw (unscoped) client can't see another tenant's rows", async () => {
-    const db = makeDb({
-      products: [{ id: "p1", isTobacco: false, trackedCategoryId: "cat-1" }],
-      filings: { "cat-1": SEPT },
-      categories: { "cat-1": "Vape products" },
+  describe("W-755 (SA-894 LOW-1, SA-802a): the boundary, latest wins, the message names WHAT is filed, one read per key", () => {
+    it("tobacco's INCLUSIVE periodEnd + 1 ms is the close: the next month's first instant is accepted, the last ms refused", async () => {
+      const d = db({ products: [{ id: "p1", isTobacco: true }], report: SEPT });
+      await expect(call(d, "2026-10-01T00:00:00.000Z")).resolves.toEqual(
+        new Date("2026-10-01T00:00:00.000Z"),
+      );
+      await conflict(call(d, "2026-09-30T23:59:59.999Z"));
     });
-    await run(db, "2026-09-10T00:00:00.000Z").catch(() => undefined);
-    expect(db.product.findMany.mock.calls[0][0].where).toMatchObject({ tenantId: T });
-    expect(db.trackedCategory.findFirst.mock.calls[0][0].where).toMatchObject({
-      id: "cat-1",
-      tenantId: T,
-    });
-    const doc = makeDb({ products: [{ id: "p1", isTobacco: false, trackedCategoryId: null }] });
-    await documentStockDate(doc, {
-      tenantId: T,
-      productIds: ["p1"],
-      documentDate: new Date("2026-09-10T00:00:00.000Z"),
-      now: NOW,
-    });
-    expect(doc.product.findMany.mock.calls[0][0].where).toMatchObject({ tenantId: T });
-  });
 
-  it("two lines sharing a category cost ONE filing read (and one product read)", async () => {
-    const db = makeDb({
-      products: [
-        { id: "p1", isTobacco: false, trackedCategoryId: "cat-1" },
-        { id: "p2", isTobacco: false, trackedCategoryId: "cat-1" },
-        { id: "p3", isTobacco: true, trackedCategoryId: "cat-1" },
-        { id: "p4", isTobacco: true, trackedCategoryId: null },
-      ],
-      filings: { "cat-1": SEPT },
-    });
-    await run(db, "2026-10-05T00:00:00.000Z", ["p1", "p2", "p3", "p4", "p1"]);
-    expect(db.product.findMany).toHaveBeenCalledTimes(1);
-    expect(db.regulatedFiling.findFirst).toHaveBeenCalledTimes(1);
-    expect(db.tobaccoReport.findFirst).toHaveBeenCalledTimes(1);
-  });
+    it("tobacco AND a tracked category both filed: the LATER close wins, with its own label and name", async () => {
+      const OCT_FILING = {
+        periodStart: new Date("2026-10-01T00:00:00.000Z"),
+        periodEnd: new Date("2026-11-01T00:00:00.000Z"),
+        periodKey: "2026-10",
+        cadence: "MONTHLY",
+      };
+      const later = db({
+        products: [
+          { id: "p1", isTobacco: true, trackedCategoryId: "cat-1", categoryName: "Vapes" },
+        ],
+        report: SEPT,
+        filing: OCT_FILING,
+      });
+      const body = await conflict(call(later, "2026-10-15T10:00:00.000Z"));
+      expect(body).toMatchObject({ period: "October 2026", filedFor: "Vapes" });
 
-  it("effectiveDateOf is re-exported from the same module (skew bound unchanged)", () => {
-    expect(() => effectiveDateOf("2026-10-19T12:06:00.000Z", NOW)).toThrow(BadRequestException);
-    expect(effectiveDateOf(undefined, NOW)).toBe(NOW);
+      const earlier = db({
+        products: [
+          { id: "p1", isTobacco: true, trackedCategoryId: "cat-1", categoryName: "Vapes" },
+        ],
+        report: {
+          periodStart: OCT_FILING.periodStart,
+          periodEnd: new Date("2026-10-31T23:59:59.999Z"),
+        },
+        filing: SEPT_FILING,
+      });
+      const body2 = await conflict(call(earlier, "2026-10-15T10:00:00.000Z"));
+      expect(body2).toMatchObject({ period: "October 2026", filedFor: "Tobacco" });
+    });
+
+    it("a TIE keeps tobacco (the common case: tobacco products carry the Tobacco tracked category too)", async () => {
+      // The tobacco report's inclusive end + 1 ms and the September filing's exclusive end are the same instant.
+      const d = db({
+        products: [
+          { id: "p1", isTobacco: true, trackedCategoryId: "cat-1", categoryName: "Vapes" },
+        ],
+        report: SEPT, // periodEnd 2026-09-30T23:59:59.999Z → through 2026-10-01T00:00:00.000Z
+        filing: SEPT_FILING, // periodEnd 2026-10-01T00:00:00.000Z
+      });
+      const body = await conflict(call(d, "2026-09-15T10:00:00.000Z"));
+      expect(body).toMatchObject({ period: "September 2026", filedFor: "Tobacco" });
+    });
+
+    it("the 409 names what is filed: Tobacco", async () => {
+      const d = db({ products: [{ id: "p1", isTobacco: true }], report: SEPT });
+      const body = await conflict(call(d, "2026-09-15T10:00:00.000Z"));
+      expect(body).toMatchObject({ filedFor: "Tobacco" });
+      expect(String(body.message)).toContain("already filed for Tobacco (September 2026)");
+    });
+
+    it("the 409 names what is filed: the tracked category's name", async () => {
+      const d = db({
+        products: [{ id: "p1", trackedCategoryId: "cat-1", categoryName: "Vapes" }],
+        filing: SEPT_FILING,
+      });
+      const body = await conflict(call(d, "2026-09-15T10:00:00.000Z"));
+      expect(body).toMatchObject({ filedFor: "Vapes" });
+      expect(String(body.message)).toContain("already filed for Vapes (September 2026)");
+    });
+
+    it("the product read selects the category name (the message's source)", async () => {
+      const d = db({ products: [{ id: "p1", trackedCategoryId: "cat-1" }] });
+      await call(d, "2026-09-15T10:00:00.000Z");
+      expect(d.product.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          select: expect.objectContaining({ trackedCategory: { select: { name: true } } }),
+        }),
+      );
+    });
+
+    it("many products sharing tobacco and one category read each filing ONCE per call", async () => {
+      const d = db({
+        products: [
+          { id: "a", isTobacco: true, trackedCategoryId: "cat-1" },
+          { id: "b", isTobacco: true, trackedCategoryId: "cat-1" },
+          { id: "c", isTobacco: true, trackedCategoryId: "cat-1" },
+          { id: "d", trackedCategoryId: "cat-2" },
+          { id: "e", trackedCategoryId: "cat-2" },
+        ],
+      });
+      await call(d, "2026-09-15T10:00:00.000Z", ["a", "b", "c", "d", "e"]);
+      expect(d.tobaccoReport.findFirst).toHaveBeenCalledTimes(1);
+      expect(d.regulatedFiling.findFirst).toHaveBeenCalledTimes(2);
+    });
   });
 });

@@ -14,9 +14,11 @@ import {
   Optional,
 } from "@nestjs/common";
 import * as crypto from "crypto";
-import { BuyerMergeRequestStatus, MergeInitiator } from "@prisma/client";
+import { BuyerMergeRequestStatus, MergeInitiator, type PaymentMethod } from "@prisma/client";
+import type { PaymentRefOpts } from "../invoices/payment-ref-dedupe";
 import { ConfigService } from "@nestjs/config";
 import * as bcrypt from "bcrypt";
+import { assertRefsInTenant } from "../common/assert-refs-in-tenant";
 import { PrismaService } from "../prisma/prisma.service";
 import { isInternalEmail } from "../common/internal-email";
 import { assertCleanupImportedEnabled } from "./cleanup-imported-disabled";
@@ -38,6 +40,11 @@ import { assertOrdersUnchanged, releaseLiveOrderStockInTx } from "./customer-del
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { roundMoney, remainingCapacity } from "@routeflow/pricing";
+import {
+  advancePaymentKey,
+  keyedPayment,
+  type KeyedWriterOpts,
+} from "../invoices/payment-idempotency";
 import {
   collectedDateOf,
   CONFIRMED_PAYMENT,
@@ -90,6 +97,7 @@ import { API_ERROR_CODES, PLAN_GATE_FLAG_KEYS } from "../common/api-error-codes"
 import { assertProductIdNotFamily } from "../products/sellable-lines";
 import { AuditService } from "../audit/audit.service";
 import { recordCreditLimitChange, type CreditLimitActor } from "./credit-limit-audit";
+import { lockInvoiceRowsInOrder } from "../regulated/ledger-locks";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -925,25 +933,35 @@ export class CustomersService {
     customerId: string,
     dto: {
       amount: number;
-      method: string;
+      method: PaymentMethod;
       reference?: string;
       notes?: string;
       receivedAt?: string;
     },
+    opts?: KeyedWriterOpts<any> & PaymentRefOpts,
   ) {
     await this.findCustomerOrThrow(customerId);
     if (roundMoney(dto.amount) <= 0) throw new BadRequestException("Amount must be greater than 0");
-    return this.prisma.forTenant().advancePayment.create({
-      data: {
-        customerId,
-        amount: roundMoney(dto.amount),
-        balance: roundMoney(dto.amount), // initial balance equals amount
-        method: dto.method as any,
-        reference: dto.reference,
-        notes: dto.notes,
-        receivedAt: dto.receivedAt ? new Date(dto.receivedAt) : new Date(),
-      },
-    });
+    const data = {
+      customerId,
+      amount: roundMoney(dto.amount),
+      balance: roundMoney(dto.amount), // initial balance equals amount
+      method: dto.method,
+      reference: dto.reference,
+      notes: dto.notes,
+      receivedAt: dto.receivedAt ? new Date(dto.receivedAt) : new Date(),
+    };
+    // SA-824: a key claims as the FIRST statement of one transaction with the create and its settle, or replays the
+    // stored advance. SA-837b item 2 / G4: with or without a key the create runs behind the ONE payment-reference
+    // predicate and lock (keyedPayment), so an advance repeats neither an advance nor an invoice payment.
+    return keyedPayment(this.prisma, advancePaymentKey(customerId, dto), opts, (o) =>
+      this.prisma.tenantTransaction(async (tx) => {
+        await o?.claim?.(tx);
+        const created = await tx.advancePayment.create({ data });
+        await o?.inTx?.(tx, created);
+        return created;
+      }),
+    );
   }
 
   async getAdvancePayments(customerId: string) {
@@ -1002,6 +1020,12 @@ export class CustomersService {
     if (dto.pricingTier === undefined && dto.msrp === undefined) {
       throw new BadRequestException("Provide a pricing tier, an MSRP override, or both");
     }
+    // 681 (R5-5): the route customer and the body product are stored, so both must be in this tenant (a 404, the
+    // same for foreign and missing) BEFORE the MSRP gate and the family policy below.
+    await assertRefsInTenant(this.prisma, {
+      customerIds: [customerId],
+      productIds: [dto.productId],
+    });
     if (dto.msrp !== undefined) {
       await this.assertMsrpAllowed();
     }
@@ -1574,10 +1598,30 @@ export class CustomersService {
     if (primary.deletedAt || secondary.deletedAt) {
       throw new ConflictException("Restore the customer first");
     }
+    // W-763 (SA-903): ONE business only, checked before the transaction reads or moves anything. A SUPER_ADMIN merge runs with
+    // no tenant, so `forTenant()` above is unscoped and the two rows can belong to different businesses. Refuse a
+    // pair of different (or missing) tenants, and a pair the session's own tenant does not own. The message names no tenant.
+    const sessionTenant = this.prisma.getTenantId() ?? null;
+    if (
+      !primary.tenantId ||
+      primary.tenantId !== secondary.tenantId ||
+      (sessionTenant !== null && primary.tenantId !== sessionTenant)
+    ) {
+      throw new BadRequestException({
+        code: API_ERROR_CODES.CUSTOMER_MERGE_TENANT_MISMATCH,
+        message: "These customers can't be merged: they don't belong to the same business.",
+      });
+    }
 
     try {
       return await this.prisma.tenantTransaction(
         async (tx) => {
+          // SA-893 (ROW_LOCK_ORDER, common/db-locks.ts): both customers' Returns are locked FIRST, id-sorted, before the
+          // first Order row lock below. Moving orders and invoices first and the returns last was Order -> Invoice ->
+          // Return, the inverse of every return path (Return -> Order): 40P01 against an inline approve on the same order.
+          // NULL-safe tenant filter (SA-900): a SUPER_ADMIN merge runs with no tenant and must still lock the Returns.
+          const tenantId = this.prisma.getTenantId() ?? null;
+          await tx.$queryRaw`SELECT id FROM "Return" WHERE "customerId" IN (${primaryId}, ${secondaryId}) AND (${tenantId}::text IS NULL OR "tenantId" = ${tenantId}) ORDER BY id FOR UPDATE`;
           // Move orders FIRST, then invoices (SA-218, house lock order: Order before Invoice).
           // Invoices first was an Invoice → Order edge: 40P01 against any Order → Invoice writer.
           await tx.order.updateMany({
@@ -2218,8 +2262,11 @@ export class CustomersService {
           // carry ledger rows — createSplitInvoices writes them at creation,
           // before the DRAFT is ever sent — so filtering by status here would
           // reintroduce the leak.
+          // SA-839 F3: the Invoice rows (id order) before their ledger settles, so a concurrent
+          // return cancel / credit-note void of one of them serialises with this purge.
+          await lockInvoiceRowsInOrder(tx, this.prisma.getTenantId(), invoiceIds);
           for (const invoiceId of invoiceIds) {
-            await this.ledger.reverseInvoiceEntries({ invoiceId, db: tx });
+            await this.ledger.settleRegulatedLedger(tx, { kind: "INVOICE_ZEROED", invoiceId });
           }
           await deleteMoneyRecordCas(tx.invoicePayment, { invoiceId: { in: invoiceIds } });
           await tx.invoiceItem.deleteMany({ where: { invoiceId: { in: invoiceIds } } });
@@ -2415,8 +2462,11 @@ export class CustomersService {
           // carry ledger rows — createSplitInvoices writes them at creation,
           // before the DRAFT is ever sent — so filtering by status here would
           // reintroduce the leak.
+          // SA-839 F3: the Invoice rows (id order) before their ledger settles, so a concurrent
+          // return cancel / credit-note void of one of them serialises with this purge.
+          await lockInvoiceRowsInOrder(tx, this.prisma.getTenantId(), invoiceIds);
           for (const invoiceId of invoiceIds) {
-            await this.ledger.reverseInvoiceEntries({ invoiceId, db: tx });
+            await this.ledger.settleRegulatedLedger(tx, { kind: "INVOICE_ZEROED", invoiceId });
           }
           await deleteMoneyRecordCas(tx.invoicePayment, { invoiceId: { in: invoiceIds } });
           await tx.invoiceItem.deleteMany({ where: { invoiceId: { in: invoiceIds } } });

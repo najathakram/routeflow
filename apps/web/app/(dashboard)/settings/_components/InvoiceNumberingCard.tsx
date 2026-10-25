@@ -151,7 +151,7 @@ export function InvoiceNumberingCard({
     "h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500";
 
   return (
-    <Card title="Invoice Numbering">
+    <Card title="Invoice numbering">
       <div className="grid grid-cols-2 gap-4">
         {isAdmin && (
           <div>
@@ -159,7 +159,7 @@ export function InvoiceNumberingCard({
               htmlFor="invoice-number-prefix"
               className="mb-1.5 block text-sm font-medium text-navy"
             >
-              Invoice Number Prefix
+              Invoice number prefix
             </label>
             <input
               id="invoice-number-prefix"
@@ -192,7 +192,7 @@ export function InvoiceNumberingCard({
         )}
         <div>
           <label htmlFor="invoice-due-days" className="mb-1.5 block text-sm font-medium text-navy">
-            Payment Due Days
+            Payment due days
           </label>
           <select
             id="invoice-due-days"
@@ -215,7 +215,7 @@ export function InvoiceNumberingCard({
       {isAdmin && (
         <div className="mt-4 flex justify-end">
           <Button onClick={handleSave} loading={saving && !pending} size="sm">
-            Save Numbering
+            Save numbering
           </Button>
         </div>
       )}

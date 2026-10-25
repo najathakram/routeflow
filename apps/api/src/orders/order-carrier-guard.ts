@@ -128,8 +128,9 @@ export async function blockCreditsUnderLock(
 }
 
 /**
- * #3219 S2: the edit's `blockCredits`, read under the lock, plus (ship-billing, not post-delivery) the
- * invoice revert in the SAME transaction. Shipped since the pre-read: a coded 409, nothing reverted.
+ * #3219 S2: the edit's `blockCredits`, read under the lock, plus (not post-delivery) the invoice revert in the SAME
+ * transaction. Shipped since the pre-read: a coded 409, nothing reverted. Row 586: this is now every non-post-delivery
+ * edit's revert (the pre-tx call is a read-only preflight), so a later binding refusal rolls it back.
  */
 export async function carrierRevertUnderLock(
   tx: Parameters<typeof blockCreditsUnderLock>[0],
@@ -139,7 +140,7 @@ export async function carrierRevertUnderLock(
   revert: () => Promise<unknown>,
 ): Promise<boolean> {
   const blocked = await blockCreditsUnderLock(tx, orderId, guard);
-  if (!guard.billsShip || postDeliveryEdit) return blocked;
+  if (postDeliveryEdit) return blocked;
   if (blocked) {
     throw new ConflictException({
       code: API_ERROR_CODES.ORDER_CHANGED_DURING_EDIT,

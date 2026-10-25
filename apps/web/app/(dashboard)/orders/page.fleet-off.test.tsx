@@ -1,8 +1,9 @@
 import * as React from "react";
+import userEvent from "@testing-library/user-event";
 import { renderWithProviders, screen } from "@/test-utils/render";
 import OrdersPage from "./page";
 
-// SHIP fulfilment mode: "Out for Delivery" reads "Shipped" on the orders list (saved-view chip, status
+// SHIP fulfilment mode: "Out for delivery" reads "Shipped" on the orders list (saved-view chip, status
 // filter, row chip). Every other account, including one with no fleet modules, sees today's labels.
 // Display only: the filter VALUE stays OUT_FOR_DELIVERY.
 let ship = false;
@@ -67,7 +68,7 @@ describe("Orders list — SHIP mode wording", () => {
     ship = true;
     renderWithProviders(<OrdersPage />);
 
-    expect(screen.queryAllByText("Out for Delivery")).toHaveLength(0);
+    expect(screen.queryAllByText("Out for delivery")).toHaveLength(0);
     // saved-view pill + row badge (table and card list). O4: the status dropdown is gone, so the
     // pill is the one status filter and carries the SHIP-mode word.
     expect(screen.getAllByText("Shipped").length).toBeGreaterThanOrEqual(3);
@@ -75,14 +76,14 @@ describe("Orders list — SHIP mode wording", () => {
     expect(screen.queryByRole("option", { name: "Shipped" })).toBeNull();
   });
 
-  it("not ship mode (today's UI, unchanged): Out for Delivery everywhere", () => {
+  it("not ship mode (today's UI, unchanged): Out for delivery everywhere", () => {
     ship = false;
     renderWithProviders(<OrdersPage />);
 
     expect(screen.queryAllByText("Shipped")).toHaveLength(0);
-    expect(screen.getAllByText("Out for Delivery").length).toBeGreaterThanOrEqual(3);
-    expect(screen.getByRole("button", { name: "Out for Delivery" })).toBeInTheDocument();
-    expect(screen.queryByRole("option", { name: "Out for Delivery" })).toBeNull();
+    expect(screen.getAllByText("Out for delivery").length).toBeGreaterThanOrEqual(3);
+    expect(screen.getByRole("button", { name: "Out for delivery" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "Out for delivery" })).toBeNull();
   });
 });
 
@@ -90,19 +91,40 @@ describe("Orders list — SHIP mode wording", () => {
 // column are noise (Mac-mini pixel pass on #3198). Every other account keeps them; a date filter already in
 // the URL keeps them too, so it can still be cleared.
 describe("Orders list — delivery-date UI is fleet-only", () => {
+  const realMatchMedia = window.matchMedia;
+  // below md (768px): jsdom has no matchMedia, which reads as the desktop layout
+  const narrowViewport = () => {
+    window.matchMedia = ((q: string) => ({
+      matches: false,
+      media: q,
+      addEventListener: jest.fn(),
+      removeEventListener: jest.fn(),
+    })) as unknown as typeof window.matchMedia;
+  };
   beforeEach(() => {
     query = "";
   });
+  afterEach(() => {
+    window.matchMedia = realMatchMedia;
+  });
 
-  it("ship-only: no Delivery filter, no Delivery Date column, no Delivery Date sort option", () => {
+  it("ship-only: no Delivery filter, no Delivery date column, no Delivery date sort option", () => {
     ship = true;
     renderWithProviders(<OrdersPage />);
 
     expect(screen.queryByText("Delivery:")).not.toBeInTheDocument();
     expect(screen.queryByTitle("Delivery date from")).not.toBeInTheDocument();
-    expect(screen.queryByRole("columnheader", { name: /Delivery Date/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole("option", { name: "Delivery Date" })).not.toBeInTheDocument();
-    // the rest of the sort options and the Created column are untouched
+    expect(screen.queryByRole("columnheader", { name: /Delivery date/ })).not.toBeInTheDocument();
+  });
+
+  // The sort select lives in the phone Filters panel (r4 Q01), so its options are read there.
+  it("ship-only, phone width: the Filters panel's sort has no Delivery date option, the rest are untouched", async () => {
+    ship = true;
+    narrowViewport();
+    renderWithProviders(<OrdersPage />);
+    await userEvent.setup().click(screen.getByRole("button", { name: "Filters" }));
+
+    expect(screen.queryByRole("option", { name: "Delivery date" })).not.toBeInTheDocument();
     expect(screen.getByRole("option", { name: "Created" })).toBeInTheDocument();
   });
 
@@ -111,8 +133,16 @@ describe("Orders list — delivery-date UI is fleet-only", () => {
     renderWithProviders(<OrdersPage />);
 
     expect(screen.getAllByText("Delivery:").length).toBeGreaterThanOrEqual(1); // filter label + card line
-    expect(screen.getByRole("columnheader", { name: /Delivery Date/ })).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "Delivery Date" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: /Delivery date/ })).toBeInTheDocument();
+  });
+
+  it("not ship-only, phone width: the Filters panel's sort offers Delivery date", async () => {
+    ship = false;
+    narrowViewport();
+    renderWithProviders(<OrdersPage />);
+    await userEvent.setup().click(screen.getByRole("button", { name: "Filters" }));
+
+    expect(screen.getByRole("option", { name: "Delivery date" })).toBeInTheDocument();
   });
 
   it("ship-only with a delivery date filter already in the URL: the filter stays so it can be cleared", () => {

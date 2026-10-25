@@ -6,6 +6,7 @@ import type { CustomerLayerUnit, LadderProduct } from "@routeflow/pricing";
 import type { ProductUnitLevel } from "@routeflow/types";
 import {
   buildUnitOptions,
+  type OwnPackBasis,
   unitOptionText,
   withLayerPrices,
   type UnitOption,
@@ -25,6 +26,8 @@ export interface UnitPickerProps {
   packPrice?: number;
   /** S19b: the customer's layer rows for this product (flag on): options with a row show the layer price. */
   layer?: readonly CustomerLayerUnit[] | null;
+  /** Row 630: an EXISTING line's own pack price and size, so its derived Piece is not priced off the live layer. */
+  ownPack?: OwnPackBasis | null;
   /** Accessible name; give each row's picker a distinct one (e.g. include the product name). */
   ariaLabel?: string;
   /** The `unitLabel` being sold; `""` = the pack. A stale label falls back to the pack. */
@@ -46,6 +49,7 @@ export function UnitPicker({
   tier = 1,
   packPrice,
   layer,
+  ownPack,
   ariaLabel = "Sell by",
   value,
   onChange,
@@ -63,6 +67,7 @@ export function UnitPicker({
           product,
           tier,
           layer,
+          ownPack,
         ),
         ok: true,
       };
@@ -70,7 +75,7 @@ export function UnitPicker({
       // display-only: a bad tier must never unmount the order form (the server 400s it on save)
       return { options: [], ok: false };
     }
-  }, [product, units, tier, packPrice, layer]);
+  }, [product, units, tier, packPrice, layer, ownPack]);
   const known = options.some((o) => o.value === value);
   // A held label the ladder does not offer (product swapped, level deleted) would otherwise show the
   // pack — or nothing — while the parent still SENDS the stale label and the server 400s the save.

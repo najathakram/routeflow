@@ -34,10 +34,15 @@ export type ConfigSnapshotSkipReason =
   /** BO-13: the delivery method is held — orders are with the carrier, so changing the billing moment now would bill them twice or never. */
   | "CARRIER_IN_TRANSIT"
   /** BO-13: the delivery method is held — own delivery (`delivery`/`both`) needs Routes or Order delivery, and the account has neither. */
-  | typeof API_ERROR_CODES.FULFILMENT_MODE_NEEDS_FLEET;
+  | typeof API_ERROR_CODES.FULFILMENT_MODE_NEEDS_FLEET
+  /** Row 640: a restored non-COMP GRANT on a billable add-on that nothing covers (no billed row, not in the plan). */
+  | "ADDON_NOT_PAID"
+  /** Row 640: a restored GRANT whose registry `requires` is not satisfied. */
+  | "REQUIRES_UNMET";
 
 /** A `fulfilment_model` row the restore HELD back (it is also in `skipped`): the snapshot stays restorable. */
-export interface ConfigSnapshotHeld {
+export interface ConfigSnapshotHeldFulfilment {
+  kind: "fulfilment";
   featureKey: string;
   /** The mode the tenant has now (the registry fallback when it has no row). */
   from: string;
@@ -50,6 +55,18 @@ export interface ConfigSnapshotHeld {
   /** Orders with the carrier (CARRIER_IN_TRANSIT only). */
   count?: number;
 }
+
+/** Row 640 (SA-834): a GRANT override the restore HELD back (it is also in `skipped`): the snapshot stays restorable. */
+export interface ConfigSnapshotHeldOverride {
+  kind: "override";
+  featureKey: string;
+  /** The override's own kind (COMP / PILOT / SUPPORT / TRIAL / GRANDFATHER). */
+  overrideKind: string;
+  reason: Extract<ConfigSnapshotSkipReason, "ADDON_NOT_PAID" | "REQUIRES_UNMET">;
+}
+
+/** What a restore held back: ONE list for preview, apply and the admin copy (discriminated on `kind`). */
+export type ConfigSnapshotHeld = ConfigSnapshotHeldFulfilment | ConfigSnapshotHeldOverride;
 
 /** `GET …/config-snapshots/:snapshotId/preview` — what "Restore now" would do right now. */
 export interface ConfigSnapshotPreview {

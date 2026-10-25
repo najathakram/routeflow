@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import {
   HeavySlotTimeout,
+  bareNpmReason,
   TIMEOUT_EXIT_CODE,
   formatStatus,
   resolveDir,
@@ -59,6 +60,11 @@ export async function main(argv = process.argv.slice(2)) {
   if (cli.status) {
     console.log(formatStatus(resolveDir()));
     return 0;
+  }
+  const refusal = bareNpmReason(cli.cmd, cli.args);
+  if (refusal) {
+    console.error(refusal);
+    return 2;
   }
   try {
     return await withHeavySlot({ label: cli.label, branch: cli.branch }, async () => {

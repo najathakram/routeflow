@@ -29,6 +29,7 @@ import { levelsForScan } from "../../../../../lib/wedge-scan";
 import type { ScanOutcome } from "../../../../../lib/scan-loop";
 import { canRemoveLooseUnits, looseUnitsVisible } from "../../../../../lib/loose-units";
 import { useUpdateInvoice } from "../../../../../lib/api/invoices";
+import { useRestrictionWarningRetry } from "../../../../../lib/use-restriction-warning-retry";
 import { alertInfo, confirm } from "../../../../../lib/confirm";
 import {
   INVOICE_STALE_COPY,
@@ -125,9 +126,10 @@ export default function EditInvoiceScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { data: invoice, isLoading } = useAdminInvoice(id ?? "");
-  const { data: settings } = useBusinessSettings();
+  const { data: settings, isLoading: settingsLoading } = useBusinessSettings();
   const { data: customer } = useAdminCustomer(invoice?.customer?.id ?? "");
   const updateMut = useUpdateInvoice();
+  const rw = useRestrictionWarningRetry(); // row 510: staff warning + override dialog
 
   const isTaxExempt = !!customer?.isTaxExempt;
   const tenantTaxRate = (Number(settings?.taxRate) || 0) / 100;
@@ -155,11 +157,18 @@ export default function EditInvoiceScreen() {
   // effect below has run once for this invoice.
   const originalRef = useRef<InvoiceEditSnapshot | null>(null);
   useEffect(() => {
-    if (!invoice || invoice.status !== "DRAFT" || hydratedFor.current === invoice.id) return;
+    // Hydrate once the tenant settings have resolved: the tenant rate is the inference's preferred rate (review SHOULD).
+    if (
+      !invoice ||
+      invoice.status !== "DRAFT" ||
+      hydratedFor.current === invoice.id ||
+      settingsLoading
+    )
+      return;
     hydratedFor.current = invoice.id;
     openedUpdatedAt.current = invoice.updatedAt;
     // B294 (SA-141): a legacy invoice's 0-rate lines load at its verified inferred rate.
-    const lineTax = hydratedLineTax(invoice);
+    const lineTax = hydratedLineTax(invoice, tenantTaxRate); // the tenant rate wins when it reproduces the tax
     const hydratedLines = (invoice.items ?? []).map((it, i) => ({
       key: newKey(),
       id: it.id,
@@ -228,7 +237,7 @@ export default function EditInvoiceScreen() {
       notes: hydratedNotes,
       terms: hydratedTerms,
     };
-  }, [invoice]);
+  }, [invoice, settingsLoading]);
 
   const patch = (key: string, up: Partial<EditLine>) =>
     setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...up } : l)));
@@ -424,7 +433,7 @@ export default function EditInvoiceScreen() {
       return;
     }
     updateMut.mutate(
-      {
+      rw.attach({
         id,
         expectedUpdatedAt: openedUpdatedAt.current,
         ...(issueDate.trim() ? { issueDate: issueDate.trim() } : {}),
@@ -460,7 +469,7 @@ export default function EditInvoiceScreen() {
           ),
           ...(l.locked ? { boxes: l.storedBoxes ?? 0, pieces: l.storedPieces ?? 0 } : {}),
         })),
-      },
+      }),
       {
         onSuccess: () => {
           showToast("Invoice updated");
@@ -469,6 +478,7 @@ export default function EditInvoiceScreen() {
         // Server messages here are actionable (mirror guard, number conflict…) —
         // surface them verbatim instead of a fixed string.
         onError: (e: any) => {
+          if (rw.handle(e, submit)) return; // row 510
           if (isInvoiceStale(e)) {
             // H4: Reload refetches and re-hydrates the form (and its token) for the user to re-apply.
             confirm(
@@ -675,6 +685,7 @@ export default function EditInvoiceScreen() {
       </FormSheet>
       <BarcodeFab onScanned={onScanned} continuous hidden={pickerOpen} paused={scanPromptOpen} />
       <ScanMatchPickerSheet {...matchPicker.props} />
+      {rw.modal}
     </>
   );
 }

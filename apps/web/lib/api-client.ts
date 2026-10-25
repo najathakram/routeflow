@@ -94,6 +94,11 @@ function isOperatorSurface(): boolean {
 // ─── Request interceptor: attach access token + tenant slug ──────────────────
 
 apiClient.interceptors.request.use((config) => {
+  // Row 500 (SA-837): name this client and build on every request, so the API's missing-token warn can
+  // prove "0 hits from current web builds". The release sha is baked at build time; the package version
+  // is the fallback when the Railway variable is unset.
+  config.headers["x-client"] = "web";
+  config.headers["x-app-version"] = process.env.NEXT_PUBLIC_RELEASE_SHA || "0.1.0";
   if (typeof window !== "undefined") {
     const imp = getImpersonation();
     // An EXPIRED impersonation token must never fall through to the operator

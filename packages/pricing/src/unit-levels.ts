@@ -1,5 +1,6 @@
 import { computeLineSubtotal, normalizeBoxesPieces, roundMoney } from "./pricing";
 import { getTierPrice } from "./tier-pricing";
+import type { LadderOption } from "./unit-options";
 
 // Multi-level units (2026-09-19). See
 // local-assets/handoff/2026-09-18/PLAN-units-po-MINIMAL.md §2. A `ProductUnit`
@@ -397,6 +398,18 @@ export function describeBaseOption(
   const exactCents = (packPrice * 100) / n;
   const exact = Math.abs(exactCents - Math.round(exactCents)) < 1e-9;
   return { price, source: "derived", exact, fractionOf: { n, packPrice } };
+}
+
+/**
+ * A derived Piece off a pack of `n` at `pack`: the per-piece price (rounded to cents) and the marker, exact when the
+ * split has no remainder. The one definition: the unit picker (web) imports it from here.
+ */
+export function derivedPiece(pack: number, n: number): Pick<LadderOption, "price" | "derived"> {
+  const cents = (pack * 100) / n;
+  return {
+    price: roundMoney(pack / n),
+    derived: { n, packPrice: pack, exact: Math.abs(cents - Math.round(cents)) < 1e-9 },
+  };
 }
 
 export type BaseBilling =

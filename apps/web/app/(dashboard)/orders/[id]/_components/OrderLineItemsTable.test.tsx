@@ -35,10 +35,10 @@ const rowFor = (name: string) => screen.getByText(name).closest("tr") as HTMLEle
 describe("OrderLineItemsTable — columns and a plain line", () => {
   it("renders the five column headers and the order-total footer", () => {
     renderTable([line({})], "CONFIRMED", 1234.5);
-    for (const h of ["Product", "Qty", "Unit Price", "Line Total", "Status"]) {
+    for (const h of ["Product", "Qty", "Unit price", "Line total", "Status"]) {
       expect(screen.getByRole("columnheader", { name: h })).toBeInTheDocument();
     }
-    expect(screen.getByText("Order Total")).toBeInTheDocument();
+    expect(screen.getByText("Order total")).toBeInTheDocument();
     expect(screen.getByText("$1,234.50")).toBeInTheDocument();
   });
 
@@ -213,7 +213,7 @@ describe("OrderLineItemsTable — line total and status", () => {
 
   it("an order with no lines renders the header and footer only", () => {
     renderTable([], "CONFIRMED", 0);
-    expect(screen.getByText("Order Total")).toBeInTheDocument();
+    expect(screen.getByText("Order total")).toBeInTheDocument();
     expect(screen.queryByText("Custom item")).toBeNull();
   });
 
@@ -234,5 +234,33 @@ describe("OrderLineItemsTable — line total and status", () => {
   it("a line on a DELIVERED order with no per-line data reads Delivered", () => {
     renderTable([line({ status: "PENDING", deliveredQty: 0 })], "DELIVERED");
     expect(within(rowFor("Sample Cola 12oz")).getByText("Delivered")).toBeInTheDocument();
+  });
+});
+
+describe("OrderLineItemsTable — the unit price says its unit (B1261)", () => {
+  it("a boxed line sold in pieces shows '/ box' and the price each", () => {
+    renderTable(
+      [line({ unitPrice: 18, unitsPerBox: 24, boxes: 0, pieces: 2, qty: 2, subtotal: 1.5 })],
+      "CONFIRMED",
+      1.5,
+    );
+    const cell = within(rowFor("Sample Cola 12oz"))
+      .getByText("$18.00")
+      .closest("td") as HTMLElement;
+    expect(cell).toHaveTextContent("/ box");
+    expect(cell).toHaveTextContent("$0.75 each");
+  });
+
+  it("a boxed line sold in whole boxes shows '/ box' and no price each", () => {
+    renderTable(
+      [line({ unitPrice: 18, unitsPerBox: 24, boxes: 2, pieces: 0, qty: 48, subtotal: 36 })],
+      "CONFIRMED",
+      36,
+    );
+    const cell = within(rowFor("Sample Cola 12oz"))
+      .getByText("$18.00")
+      .closest("td") as HTMLElement;
+    expect(cell).toHaveTextContent("/ box");
+    expect(cell).not.toHaveTextContent("each");
   });
 });

@@ -26,13 +26,18 @@ export function heldAuditMeta(
 ): Record<string, Prisma.InputJsonValue> {
   if (held.length === 0) return {};
   return {
-    held: held.map((h) => ({
-      featureKey: h.featureKey,
-      from: h.from,
-      to: h.to,
-      reason: h.reason,
-      ...(h.count === undefined ? {} : { count: h.count }),
-    })),
+    held: held.map((h) =>
+      h.kind === "override"
+        ? { kind: h.kind, featureKey: h.featureKey, overrideKind: h.overrideKind, reason: h.reason }
+        : {
+            kind: h.kind,
+            featureKey: h.featureKey,
+            from: h.from,
+            to: h.to,
+            reason: h.reason,
+            ...(h.count === undefined ? {} : { count: h.count }),
+          },
+    ),
   };
 }
 

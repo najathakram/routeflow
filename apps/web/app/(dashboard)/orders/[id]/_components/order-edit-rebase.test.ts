@@ -3,7 +3,7 @@
  * qty (it silently reverted them). The edit is judged against the lines captured at edit-open; Reload rebases.
  * Uses the page's own buildItemUpdates / buildEditItemFromLine, so the pin is on the real diff, not a copy.
  */
-import { buildEditItemFromLine, buildItemUpdates, type EditItemState } from "../page";
+import { buildEditItemFromLine, buildItemUpdates, type EditItemState } from "./order-line-edit";
 import { rebaseEditItems, rebaseOnReload, rebasePendingDeletes } from "./order-edit-rebase";
 import type { OrderItem } from "@/lib/api/orders";
 

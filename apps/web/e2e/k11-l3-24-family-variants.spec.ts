@@ -46,8 +46,25 @@ for (const vp of VIEWPORTS) {
           await expect(table.first().getByRole("columnheader", { name: h })).toBeHidden();
         }
       } else {
-        for (const h of ["Name", "SKU", "Barcode", "Unit code", "Price", "Cost"]) {
+        // Name, Price and Cost always show. A code column (SKU, Barcode, Unit code) shows only when at least one
+        // variant has a value in it (K12 a5 p24: a read-only family drops all-dash code columns).
+        for (const h of ["Name", "Price", "Cost"]) {
           await expect(table.first().getByRole("columnheader", { name: h })).toBeVisible();
+        }
+        const heads = await table.first().locator("thead th").allTextContents();
+        const rows = await table.first().locator("tbody tr").all();
+        for (const h of ["SKU", "Barcode", "Unit code"]) {
+          const col = heads.findIndex((t) => t.trim() === h);
+          const header = table.first().getByRole("columnheader", { name: h });
+          let hasValue = false;
+          if (col >= 0) {
+            for (const r of rows) {
+              const t = ((await r.locator("td").nth(col).textContent()) ?? "").trim();
+              if (t !== "" && t !== "\u2014") hasValue = true;
+            }
+          }
+          if (hasValue) await expect(header, `${h} has values, so it shows`).toBeVisible();
+          else await expect(header, `${h} is empty on every row, so it is dropped`).toHaveCount(0);
         }
       }
       await shot(page, info, "k11-24-family-variants");

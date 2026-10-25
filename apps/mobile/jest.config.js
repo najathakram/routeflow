@@ -26,6 +26,8 @@ module.exports = {
       {
         tsconfig: {
           strict: false,
+          // W-830: the render tests of app/_layout.tsx and the redirect screens compile real .tsx.
+          jsx: "react-jsx",
           esModuleInterop: true,
           allowSyntheticDefaultImports: true,
           moduleResolution: "node",
@@ -66,8 +68,24 @@ module.exports = {
     "^@routeflow/types/estimate-tax-basis$": "<rootDir>/../../packages/types/estimate-tax-basis.ts",
     // Row 485: the pure sale-retry rule (definitive refusal, per-attempt key), same subpath trick.
     "^@routeflow/types/sale-attempt$": "<rootDir>/../../packages/types/sale-attempt.ts",
+    // #2088: the shared invoice re-email copy + states (pure), same subpath trick.
+    "^@routeflow/types/invoice-send-state$": "<rootDir>/../../packages/types/invoice-send-state.ts",
+    // SA-824: the shared payment submit-key rule (builds on sale-attempt), same subpath trick.
+    "^@routeflow/types/payment-submit-key$": "<rootDir>/../../packages/types/payment-submit-key.ts",
+    // Row 498: the shared duplicate-payment-reference copy and 409 reader (pure), same subpath trick.
+    "^@routeflow/types/payment-ref-copy$": "<rootDir>/../../packages/types/payment-ref-copy.ts",
+    // I-120: the shared credit-over-limit sentence (pure, no imports), same subpath trick.
+    "^@routeflow/types/credit-over-limit-copy$":
+      "<rootDir>/../../packages/types/credit-over-limit-copy.ts",
+    // I-120: the shared Counter sale / Store pickup / Complete at counter words (pure, no imports), same subpath trick.
+    "^@routeflow/types/counter-copy$": "<rootDir>/../../packages/types/counter-copy.ts",
+    // W-769: the shared no-longer-fits sentence (pure, no imports), same subpath trick.
+    "^@routeflow/types/no-longer-fits-copy$":
+      "<rootDir>/../../packages/types/no-longer-fits-copy.ts",
     // M8: the shared shipment save rule + not-shipped line (pure, no imports), same subpath trick.
     "^@routeflow/types/shipment-save$": "<rootDir>/../../packages/types/shipment-save.ts",
+    // SA-817 A: the one persisted-submit-key rule for a draft (pure, no imports), same subpath trick.
+    "^@routeflow/types/draft-submit-key$": "<rootDir>/../../packages/types/draft-submit-key.ts",
     // Row 505: the fulfilment capability shape + UNSET fallback (pure, no imports), same subpath trick.
     "^@routeflow/types/api/fulfilment$": "<rootDir>/../../packages/types/api/fulfilment.ts",
     "^expo-secure-store$": "<rootDir>/__tests__/__mocks__/expo-secure-store.js",

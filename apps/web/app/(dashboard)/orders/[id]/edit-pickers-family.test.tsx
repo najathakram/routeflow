@@ -4,7 +4,7 @@
  */
 import * as React from "react";
 import { fireEvent, renderWithProviders, screen, waitFor } from "@/test-utils/render";
-import { EditableLineItems, type EditItemState } from "./page";
+import { EditableLineItems, type EditItemState } from "./_components/order-line-edit";
 
 jest.mock("@/lib/api/product-units", () => ({
   useUnitsEnabled: () => false,
@@ -112,7 +112,7 @@ describe("order edit Substitute picker (B1215 C7)", () => {
   it("offers the variant under the parent name and substitutes with it, never the family", async () => {
     renderEditor();
     fireEvent.click(screen.getByRole("button", { name: "Substitute" }));
-    fireEvent.change(screen.getByPlaceholderText("Search products..."), {
+    fireEvent.change(screen.getByPlaceholderText("Search products…"), {
       target: { value: "pod" },
     });
     const option = await screen.findByRole("button", { name: /Sample Pod - Mint/ });

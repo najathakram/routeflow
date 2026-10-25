@@ -263,7 +263,10 @@ describeDb("B1241: customer delete / purge returns the stock its live orders boo
       stub,
       { can: async () => false } as never, // EntitlementAuthority
       stub,
-      { reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined) } as never,
+      {
+        reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined),
+        settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
+      } as never,
       stub,
     );
   }, 120_000);

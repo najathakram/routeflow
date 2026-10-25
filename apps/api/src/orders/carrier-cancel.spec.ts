@@ -309,7 +309,7 @@ describe("B1: unmark vs reopen (ship-state markers)", () => {
       "utf8",
     );
     expect(src).toMatch(/updateStatusWithShipMarker\(this, order, dto, user, statusUpdateData\)/);
-    // S2: the locked re-read (and, ship-billing, the revert) runs inside the edit transaction
+    // S2 / row 586: the locked re-read (and the invoice revert) runs inside the edit transaction
     expect(src).toMatch(/const carrierLocked = await carrierGuard\.carrierRevertUnderLock\(/);
     expect(src).toMatch(/blockCredits: carrierLocked,/);
     expect(src).toMatch(/revisions: EDIT_REVISIONS/);
@@ -325,6 +325,8 @@ describe("B1: unmark vs reopen (ship-state markers)", () => {
     const editAt = src.indexOf("async updateOrderItems(");
     const guardAt = src.indexOf("carrierGuard.carrierEditGuard(this, order)", editAt);
     expect(guardAt).toBeGreaterThan(editAt);
-    expect(guardAt).toBeLessThan(src.indexOf("revertLinkedInvoicesForOrderEdit(orderId)", editAt));
+    expect(guardAt).toBeLessThan(
+      src.indexOf("revertLinkedInvoicesForOrderEdit(orderId, undefined, {", editAt),
+    );
   });
 });

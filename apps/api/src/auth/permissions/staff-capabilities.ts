@@ -9,6 +9,7 @@ export const STAFF_CAPABILITY_VALUES = [
   "VOID_SALE",
   "USE_POS_MODE",
   "EDIT_AFTER_FINAL",
+  "OVERRIDE_SELLING_RESTRICTION",
 ] as const;
 export type StaffCapability = (typeof STAFF_CAPABILITY_VALUES)[number];
 
@@ -31,6 +32,9 @@ export const STAFF_CAPABILITY_RULES: Record<StaffCapability, StaffCapabilityRule
   USE_POS_MODE: { roles: ["OPERATOR", "TENANT_ADMIN"], group: "ORDERS" },
   // Edits to an order whose invoice is already final (SA-763r P-3 reads this row).
   EDIT_AFTER_FINAL: { roles: ["OPERATOR", "TENANT_ADMIN"], group: "FINANCE" },
+  // Row 510: sell a restricted product with a reason after a RESTRICTION_WARNING. Not DRIVER (the office approves) and
+  // not SUPER_ADMIN (not in the ruling; driver-style hard block).
+  OVERRIDE_SELLING_RESTRICTION: { roles: ["OPERATOR", "TENANT_ADMIN"], group: "ORDERS" },
 };
 
 /**

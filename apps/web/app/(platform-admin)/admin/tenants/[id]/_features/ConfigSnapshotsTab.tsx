@@ -8,6 +8,7 @@ import type {
   ConfigSnapshotRestoreResult,
   ConfigSnapshotSkipReason,
 } from "@routeflow/types";
+import { fetchFeatureRegistry } from "@/lib/platform-admin/features";
 import {
   fetchConfigSnapshots,
   previewConfigSnapshotRestore,
@@ -15,6 +16,7 @@ import {
 } from "@/lib/platform-admin/config-snapshots";
 import { AdminCard } from "../../../../_components/AdminCard";
 import { AdminModal } from "../../../../_components/AdminModal";
+import { planLabel } from "../../../../_components/AdminBadge";
 
 const SKIP_REASON_LABELS: Record<ConfigSnapshotSkipReason, string> = {
   UNKNOWN_FEATURE: "Feature no longer exists",
@@ -24,6 +26,10 @@ const SKIP_REASON_LABELS: Record<ConfigSnapshotSkipReason, string> = {
   // BO-13 compile-only labels (P-WEB owns the final wording): the row is held, the snapshot stays restorable.
   CARRIER_IN_TRANSIT: "Orders are with the carrier",
   FULFILMENT_MODE_NEEDS_FLEET: "Own delivery needs a fleet module",
+  // Row 640: a restored grant that nothing pays for, or whose prerequisite is missing.
+  ADDON_NOT_PAID:
+    "Add-on isn't paid for or included in the plan. Restore again once the add-on is billed.",
+  REQUIRES_UNMET: "A required feature is missing",
 };
 
 /** The display name of a held row's setting (BO-13 holds `fulfilment_model` only today). */
@@ -33,6 +39,9 @@ const HELD_FEATURE_LABELS: Record<string, string> = { fulfilment_model: "Deliver
 const HELD_REASON_TEXT: Record<ConfigSnapshotHeld["reason"], string> = {
   CARRIER_IN_TRANSIT: "orders are with the carrier",
   FULFILMENT_MODE_NEEDS_FLEET: "own delivery needs a fleet module",
+  ADDON_NOT_PAID:
+    "the add-on isn't paid for or included in the plan; restore again once it is billed",
+  REQUIRES_UNMET: "a required feature is missing",
 };
 
 const KIND_LABELS = { config: "Setting", override: "Grant/deny" } as const;
@@ -78,6 +87,13 @@ export function ConfigSnapshotsTab({ tenantId }: { tenantId: string }) {
   const [preview, setPreview] = React.useState<ConfigSnapshotPreview | null>(null);
   const [previewError, setPreviewError] = React.useState<string | null>(null);
   const [restoring, setRestoring] = React.useState(false);
+  // Registry labels for held keys (best effort: a failed read falls back to the raw key).
+  const [labels, setLabels] = React.useState<Record<string, string>>({});
+  React.useEffect(() => {
+    fetchFeatureRegistry()
+      .then((rows) => setLabels(Object.fromEntries(rows.map((r) => [r.key, r.label]))))
+      .catch(() => undefined);
+  }, []);
 
   const load = React.useCallback(() => {
     setLoading(true);
@@ -121,7 +137,7 @@ export function ConfigSnapshotsTab({ tenantId }: { tenantId: string }) {
           : `Restored, except ${held
               .map(
                 (h) =>
-                  `${HELD_FEATURE_LABELS[h.featureKey] ?? h.featureKey}: held while ${HELD_REASON_TEXT[h.reason]}`,
+                  `${HELD_FEATURE_LABELS[h.featureKey] ?? labels[h.featureKey] ?? h.featureKey}: held while ${HELD_REASON_TEXT[h.reason]}`,
               )
               .join("; ")}. The ${fmt(res.takenAt)} snapshot: ${report}`,
       );
@@ -142,7 +158,7 @@ export function ConfigSnapshotsTab({ tenantId }: { tenantId: string }) {
       <p className="border-b border-slate-700 px-5 py-3 text-xs text-slate-400">
         Archived when a plan change downgrades this tenant, once automatic archiving is switched on
         for the platform. Nothing is deleted on a downgrade — settings and grants stay but stop
-        being honoured. Restore puts a snapshot back as it was, on the plan the tenant is on today.
+        being honored. Restore puts a snapshot back as it was, on the plan the tenant is on today.
       </p>
       {notice && (
         <p
@@ -187,7 +203,7 @@ export function ConfigSnapshotsTab({ tenantId }: { tenantId: string }) {
                       {fmt(r.takenAt)}
                       <span className="text-slate-400"> · {r.ageDays}d ago</span>
                     </td>
-                    <td className="px-4 py-2 text-slate-300">{r.planKey}</td>
+                    <td className="px-4 py-2 text-slate-300">{planLabel(r.planKey)}</td>
                     <td className="px-4 py-2 text-slate-400">
                       {r.reason === "DOWNGRADE" ? "Downgrade" : "Manual"}
                       {r.createdByName ? ` · ${r.createdByName}` : ""}
@@ -202,7 +218,7 @@ export function ConfigSnapshotsTab({ tenantId }: { tenantId: string }) {
                       {!r.restoredAt && r.entries && (
                         <button
                           onClick={() => openRestore(r)}
-                          aria-label={`Restore now — snapshot of ${fmt(r.takenAt)} (${r.planKey})`}
+                          aria-label={`Restore now — snapshot of ${fmt(r.takenAt)} (${planLabel(r.planKey)})`}
                           className="min-h-[36px] rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500"
                         >
                           Restore now
@@ -257,9 +273,9 @@ export function ConfigSnapshotsTab({ tenantId }: { tenantId: string }) {
           <div className="flex flex-col gap-4 text-xs">
             <p className="text-slate-300">
               Snapshot of {fmt(preview.takenAt)} ({preview.ageDays}{" "}
-              {preview.ageDays === 1 ? "day" : "days"} old, taken leaving {preview.planKey}),
-              restored as it was onto the tenant&apos;s current plan,{" "}
-              <b>{preview.currentPlanKey}</b>.
+              {preview.ageDays === 1 ? "day" : "days"} old, taken leaving{" "}
+              {planLabel(preview.planKey)}), restored as it was onto the tenant&apos;s current plan,{" "}
+              <b>{planLabel(preview.currentPlanKey)}</b>.
             </p>
             {preview.beyondAutoRestoreHorizon && (
               <p role="status" className="rounded-lg bg-amber-900/30 px-3 py-2 text-amber-200">

@@ -3,7 +3,13 @@ import { TAP_TARGET, cn } from "@routeflow/ui/web";
 import { formatReceiptMoney as money, unitWords } from "@routeflow/pricing";
 import { priceUnitWord } from "@/lib/product-unit-label";
 import { cartTotals } from "@/lib/counter-sale";
-import { NOTE_MAX, isBoxedLine, lineQtyLabel, type TypedQty } from "./counter-sale-line-edit";
+import {
+  NOTE_MAX,
+  isBoxedLine,
+  registerPriceLabel,
+  registerQtyLabel,
+  type TypedQty,
+} from "./counter-sale-line-edit";
 import { qtyRefusalMessage, type QtyFieldKind } from "./counter-qty-refusal";
 import { stepLine, type SaleLine, type StepUnit } from "./counter-sale-scan";
 import { CounterLinePriceEdit, type CounterPriceEdit } from "./CounterLinePriceEdit";
@@ -184,12 +190,16 @@ function LineQtyEditor({
  * One cart line. Top row: name + quantity label, subtotal, remove. Below: the stepper and the note. `locked` disables EVERY
  * control on the line (an unknown outcome, or the sale POST in flight).
  */
+/** R7b 1.4: the one sentence (a line and the Payment area both say it; the server refusal at Complete stays authoritative). */
+export const COUNTER_LICENSE_NOTE = "Needs a licensed customer: choose one before paying";
+
 export function CounterLineRow({
   line: l,
   locked,
   onStep,
   onRemove,
   onNote,
+  needsLicense,
   onQty,
   canEditPrices = false,
   priceTier = 1,
@@ -206,6 +216,8 @@ export function CounterLineRow({
   onStep: (tempId: string, unit: StepUnit, dir: 1 | -1) => void;
   onRemove: (tempId: string) => void;
   onNote: (tempId: string, note: string) => void;
+  /** R7b 1.4: a walk-in sale holds a line that needs a licensed customer: show the one amber note on the line. */
+  needsLicense?: boolean;
   onQty: (tempId: string, typed: TypedQty) => boolean;
   /** POS-5: the ONE gate (`staffMay(role, "EDIT_LINE_PRICE")`). False = the price control does not exist (hidden, never disabled). */
   canEditPrices?: boolean;
@@ -234,7 +246,7 @@ export function CounterLineRow({
     <li className="flex flex-col gap-2 p-3 text-sm">
       <div className="flex items-start justify-between gap-2">
         <span className="min-w-0 break-words">
-          {l.name} · {lineQtyLabel(l)}
+          {l.name} · {registerQtyLabel(l, UW)}
           <span className="block text-xs text-navy/70">
             {cartStrikesList(l, hideOriginalPrice) ? (
               <s className="mr-1 tabular-nums text-navy/50" data-testid="line-unit-price-was">
@@ -242,10 +254,7 @@ export function CounterLineRow({
               </s>
             ) : null}
             <span className="tabular-nums" data-testid="line-unit-price">
-              {money(l.unitPrice)}{" "}
-              {isBoxedLine(l)
-                ? `/ ${UW.pack.lower}`
-                : `/ ${l.unit ? priceUnitWord(l.unit) : UW.base.lower}`}
+              {registerPriceLabel(l, UW, money, priceUnitWord)}
             </span>
           </span>
         </span>
@@ -325,7 +334,7 @@ export function CounterLineRow({
           type="text"
           maxLength={NOTE_MAX}
           aria-label={`Note for ${l.name}`}
-          className="min-h-[44px] w-full rounded border px-2 py-1 text-sm"
+          className="min-h-[44px] w-full text-ellipsis rounded border px-2 py-1 text-sm"
           placeholder="Flavor or note for this item (prints on invoice)"
           disabled={locked}
           value={l.note ?? ""}
@@ -351,6 +360,11 @@ export function CounterLineRow({
       ) : hasNote ? (
         <p className="break-words text-xs text-navy/70" data-testid="line-note">
           {l.note}
+        </p>
+      ) : null}
+      {needsLicense ? (
+        <p className="text-xs text-amber-800" data-testid="line-license-note">
+          {COUNTER_LICENSE_NOTE}
         </p>
       ) : null}
     </li>

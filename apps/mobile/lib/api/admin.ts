@@ -1,3 +1,4 @@
+import type { RevenuePeriod } from "@routeflow/types";
 import {
   keepPreviousData,
   useInfiniteQuery,
@@ -15,6 +16,7 @@ import type {
   TripEligibilityRow,
   TripOrigin,
 } from "@routeflow/types";
+import type { InvoiceSendLock, InvoiceSendState } from "../invoice-send-state";
 export type { TripEligibilityRow, TripIneligibleReason, TripOrigin } from "@routeflow/types";
 
 export interface PaginationMeta {
@@ -146,6 +148,8 @@ export interface AdminOrder {
   counterSale?: boolean | null;
   /** `GET /orders/:id` only: why the server will not cancel the order (the parcel is with the carrier). */
   cancelBlockedReason?: OrderCancelBlockedReason | null;
+  /** Row 673: `GET /orders/:id`'s fulfil-path lock (the PATCH's own predicate); read, never derived from the status. */
+  fulfillPathLocked?: boolean | null;
   createdAt: string;
   customer?: {
     id: string;
@@ -400,6 +404,9 @@ export interface AdminInvoice {
   /** The server's one answer to "is this a pending order mirror" (invoice detail only). Wins over
    *  the client derivation: only the server knows a shipped carrier order's invoice is unlocked. */
   pendingMirror?: boolean;
+  /** #2088: the tracked email state ("emailed, modified since" ...) and the pre-delivery lock (staff detail reads). */
+  sendState?: InvoiceSendState;
+  sendLocked?: InvoiceSendLock | null;
   /** The server's default PDF stage (invoice detail only): a shipment invoice is "final" before delivery. */
   pdfVariant?: "draft" | "final";
   /** Invoice-level fields the mobile builders can now WRITE — all raw scalars
@@ -519,22 +526,6 @@ export function useVoidAdminInvoice() {
   return useMutation<AdminInvoice, Error, string>({
     mutationFn: (id) => apiClient.post(`/invoices/${id}/void`).then((r) => r.data),
     onSuccess: (_, id) => {
-      qc.invalidateQueries({ queryKey: ["admin", "invoices"] });
-      qc.invalidateQueries({ queryKey: ["admin", "invoices", id] });
-    },
-  });
-}
-
-export function useRecordAdminPayment() {
-  const qc = useQueryClient();
-  return useMutation<
-    AdminInvoice,
-    Error,
-    { id: string; amount: number; method: string; reference?: string }
-  >({
-    mutationFn: ({ id, ...dto }) =>
-      apiClient.post(`/invoices/${id}/payments`, dto).then((r) => r.data),
-    onSuccess: (_, { id }) => {
       qc.invalidateQueries({ queryKey: ["admin", "invoices"] });
       qc.invalidateQueries({ queryKey: ["admin", "invoices", id] });
     },
@@ -881,10 +872,6 @@ export function useAdminFinanceDashboard() {
 
 // ─── Analytics ────────────────────────────────────────────────────────────────
 
-export interface RevenuePeriod {
-  period: string;
-  revenue: number;
-}
 export interface TopProduct {
   id: string;
   name: string;

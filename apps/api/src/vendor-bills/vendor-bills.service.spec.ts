@@ -1016,12 +1016,22 @@ describe("VendorBillsService", () => {
 
   describe("create", () => {
     beforeEach(() => {
+      prisma.supplier.findMany.mockResolvedValue([{ id: "sup-1" }]); // the supplier is this tenant's
       prisma.vendorBill.findFirst.mockResolvedValue(null); // nextBillNumber
       prisma.vendorBill.create.mockResolvedValue(bill());
     });
 
+    it("rejects a reference from another business (no bill written)", async () => {
+      prisma.supplier.findMany.mockResolvedValue([]); // not this tenant's supplier
+      await expect(
+        service.create({ supplierId: "other-biz-supplier", items: [], totalOwed: 5 }),
+      ).rejects.toThrow(/not found/i);
+      expect(prisma.vendorBill.create).not.toHaveBeenCalled();
+    });
+
     it("B1236: refuses with missingProductIds when the catalog read returns fewer ids than the lines name, and writes nothing", async () => {
-      prisma.product.findMany.mockResolvedValue([{ id: "prod-1" }]);
+      // mockImplementation, not mockResolvedValue: the mock default echoes id-only reads (681); this test needs the read itself short
+      prisma.product.findMany.mockImplementation(async () => [{ id: "prod-1" }]);
       const items = [
         { productId: "prod-1", description: "ok", qty: 1, unitCost: 1 },
         { productId: "prod-2", description: "missing", qty: 1, unitCost: 1 },
@@ -1318,6 +1328,7 @@ describe("VendorBillsService", () => {
 
   describe("create — duplicate guard", () => {
     beforeEach(() => {
+      prisma.supplier.findMany.mockResolvedValue([{ id: "sup-1" }]); // the supplier is this tenant's
       prisma.vendorBill.findFirst.mockResolvedValue(null); // nextBillNumber
       prisma.vendorBill.create.mockResolvedValue(bill());
       prisma.supplier.findFirst.mockResolvedValue({ name: "Acme Foods" });

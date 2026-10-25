@@ -24,7 +24,7 @@ export default function SignInPage() {
   return (
     <div className="glass-page">
       <section className="g-wrap glass page-intro">
-        <span className="g-eyebrow">SIGN IN TO ROUTEFLOW</span>
+        <span className="g-eyebrow caps">Sign in to RouteFlow</span>
         <h1>Choose your account.</h1>
         <p>
           Wholesalers and retailers use separate sign-in pages. Select the account you use for your
@@ -42,10 +42,10 @@ export default function SignInPage() {
             For your operations team managing products, orders, deliveries, and customer accounts.
           </p>
           <a className="g-btn g-btn-primary g-btn-block" href={authLinks.distributorSignIn}>
-            Wholesaler sign in <ArrowRight aria-hidden="true" />
+            Distributor sign in <ArrowRight aria-hidden="true" />
           </a>
           <a className="g-link" href={authLinks.distributorSignUp}>
-            Create a wholesaler account <ArrowRight aria-hidden="true" />
+            Create a distributor account <ArrowRight aria-hidden="true" />
           </a>
         </article>
 

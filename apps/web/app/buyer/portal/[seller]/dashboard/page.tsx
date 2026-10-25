@@ -142,7 +142,7 @@ function StandingOrdersPanel({
       <div className="flex items-center justify-between border-b border-buyer-200 px-4 py-3">
         <div className="flex items-center gap-2">
           <Repeat className="h-4 w-4 text-buyer-600" />
-          <h2 className="text-sm font-semibold text-navy">Standing Orders</h2>
+          <h2 className="text-sm font-semibold text-navy">Standing orders</h2>
           <span className="rounded-full bg-buyer-500 px-2 py-0.5 text-[10px] font-bold text-white">
             {active.length}
           </span>
@@ -258,7 +258,7 @@ export default function BuyerDashboardPage() {
     return (
       <div className="p-6">
         <div className="rounded-lg bg-danger-bg px-4 py-3 text-sm text-danger">
-          Failed to load dashboard data. Please try again later.
+          Couldn&apos;t load your dashboard. Try again.
         </div>
       </div>
     );
@@ -310,25 +310,25 @@ export default function BuyerDashboardPage() {
         {[
           {
             icon: ShoppingCart,
-            label: "Active Orders",
+            label: "Active orders",
             value: dashboard.stats.activeOrders,
             color: "text-buyer-600 bg-buyer-50",
           },
           {
             icon: DollarSign,
-            label: "This Month",
+            label: "This month",
             value: fmt(dashboard.stats.spend30d),
             color: "text-success bg-success-bg",
           },
           {
             icon: Truck,
-            label: "Pending Deliveries",
+            label: "Pending deliveries",
             value: dashboard.stats.pendingDeliveries,
             color: "text-warning bg-warning-bg",
           },
           {
             icon: Repeat,
-            label: "Standing Orders",
+            label: "Standing orders",
             value: dashboard.stats.templateCount,
             color: "text-navy/70 bg-surface-raised",
           },
@@ -358,12 +358,12 @@ export default function BuyerDashboardPage() {
         <div className="rounded-xl border border-surface-border bg-white overflow-hidden">
           <div className="flex items-center justify-between border-b border-surface-border px-4 py-3">
             <div className="flex items-center gap-3">
-              <h2 className="text-sm font-semibold text-navy">Frequently Ordered</h2>
+              <h2 className="text-sm font-semibold text-navy">Frequently ordered</h2>
               <div className="flex items-center rounded-lg border border-surface-border bg-surface-raised p-0.5">
                 {[
-                  { value: "30d" as const, label: "30 Days" },
-                  { value: "90d" as const, label: "90 Days" },
-                  { value: "all" as const, label: "All Time" },
+                  { value: "30d" as const, label: "30 days" },
+                  { value: "90d" as const, label: "90 days" },
+                  { value: "all" as const, label: "All time" },
                 ].map((opt) => (
                   <button
                     key={opt.value}
@@ -430,7 +430,7 @@ export default function BuyerDashboardPage() {
       {dashboard.recentOrders.length > 0 && (
         <div className="rounded-xl border border-surface-border bg-white overflow-hidden">
           <div className="flex items-center justify-between border-b border-surface-border px-4 py-3">
-            <h2 className="text-sm font-semibold text-navy">Recent Orders</h2>
+            <h2 className="text-sm font-semibold text-navy">Recent orders</h2>
             <button
               onClick={() => router.push(`/buyer/portal/${sellerSlug}/orders`)}
               className="text-xs text-buyer-500 hover:text-buyer-600 font-medium flex items-center gap-1"
@@ -585,7 +585,7 @@ export default function BuyerDashboardPage() {
         <div className="rounded-xl border border-surface-border bg-white overflow-hidden">
           <div className="flex items-center justify-between border-b border-surface-border px-4 py-3">
             <div>
-              <h2 className="text-sm font-semibold text-navy">Suggested for You</h2>
+              <h2 className="text-sm font-semibold text-navy">Suggested for you</h2>
               <p className="text-[11px] text-navy/70 mt-0.5">
                 Products from categories you order from but haven&apos;t tried yet
               </p>
@@ -644,12 +644,12 @@ export default function BuyerDashboardPage() {
 
       {/* Spend summary */}
       <div className="rounded-xl border border-surface-border bg-white p-4">
-        <h2 className="text-sm font-semibold text-navy mb-3">Spending Summary</h2>
+        <h2 className="text-sm font-semibold text-navy mb-3">Spending summary</h2>
         <div className="grid grid-cols-3 gap-4">
           {[
-            { label: "Last 30 Days", value: dashboard.stats.spend30d },
-            { label: "Last 90 Days", value: dashboard.stats.spend90d },
-            { label: "All Time", value: dashboard.stats.spendAllTime },
+            { label: "Last 30 days", value: dashboard.stats.spend30d },
+            { label: "Last 90 days", value: dashboard.stats.spend90d },
+            { label: "All time", value: dashboard.stats.spendAllTime },
           ].map((s) => (
             <div key={s.label} className="text-center">
               <p className="text-xs text-navy/70 mb-1">{s.label}</p>
@@ -665,7 +665,7 @@ export default function BuyerDashboardPage() {
       {/* Quick action */}
       <div className="flex items-center justify-center gap-4">
         <Button variant="secondary" onClick={() => router.push(`/buyer/portal/${sellerSlug}/shop`)}>
-          <Store className="mr-1.5 h-4 w-4" /> Browse Products
+          <Store className="mr-1.5 h-4 w-4" /> Browse products
         </Button>
         {cart.itemCount > 0 && (
           <Button

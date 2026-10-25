@@ -8,8 +8,13 @@ import {
   type RecurringInvoice,
   type RecurringInvoiceItem,
 } from "@/lib/api/invoices";
-import { useCustomers, type Customer } from "@/lib/api/customers";
-import { useProducts } from "@/lib/api/products";
+import { useCustomer, useCustomerPrices, useCustomers, type Customer } from "@/lib/api/customers";
+import { useDismissOnLeave } from "@/lib/use-dismiss-on-leave";
+import { useProduct, useProducts } from "@/lib/api/products";
+import { customerTierFor } from "@routeflow/pricing";
+import { useCustomerLinePricing } from "@/lib/useCustomerLinePricing";
+import { PRICE_LAYER_FAILED_COPY, PriceLayerNotice } from "@/components/PriceLayerNotice";
+import { customerPricingGate } from "@/lib/customer-pricing-gate";
 import { displayProductName } from "@/lib/product-display";
 import { sellableFlat } from "@/lib/product-search-groups";
 import { DecimalInput, MoneyInput } from "@/components/MoneyInput";
@@ -123,17 +128,28 @@ function CustomerSearch({
 
 // ─── Product search input ─────────────────────────────────────────────────────
 
+type PickedProduct = Record<string, unknown> & { id: string };
+
 function ProductSearchInput({
   value,
-  onChange,
+  onTextChange,
+  onPick,
+  disabled,
+  placeholder = "Description / product…",
 }: {
   value: string;
-  onChange: (description: string, productId?: string, unitPrice?: number) => void;
+  /** Free text typed into the field: the line is no longer a catalog product. */
+  onTextChange: (description: string) => void;
+  /** A catalog product was picked; the FORM prices it (SA-856: the customer's own price, never this list). */
+  onPick: (description: string, product: PickedProduct) => void;
+  disabled?: boolean;
+  placeholder?: string;
 }) {
   const [query, setQuery] = React.useState(value);
   const [debouncedQuery, setDebouncedQuery] = React.useState("");
   const [open, setOpen] = React.useState(false);
   const ref = React.useRef<HTMLDivElement>(null);
+  const leave = useDismissOnLeave(setOpen);
 
   React.useEffect(() => {
     const t = setTimeout(() => setDebouncedQuery(query), 300);
@@ -160,18 +176,23 @@ function ProductSearchInput({
     <div ref={ref} className="relative">
       <input
         type="text"
-        placeholder="Description / product…"
+        placeholder={placeholder}
+        disabled={disabled}
         value={query}
         onChange={(e) => {
           setQuery(e.target.value);
-          onChange(e.target.value, undefined, undefined);
+          onTextChange(e.target.value);
           setOpen(true);
         }}
         onFocus={() => setOpen(true)}
+        {...leave.inputProps}
         className="h-9 w-full rounded border border-surface-border bg-white px-2.5 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
       />
       {open && debouncedQuery.length > 0 && products.length > 0 && (
-        <div className="absolute z-10 mt-1 w-full rounded-lg border border-surface-border bg-white shadow-lg">
+        <div
+          {...leave.listProps}
+          className="absolute z-10 mt-1 w-full rounded-lg border border-surface-border bg-white shadow-lg"
+        >
           <ul className="max-h-36 overflow-y-auto">
             {products.map((p: any) => (
               <li key={p.id}>
@@ -180,7 +201,7 @@ function ProductSearchInput({
                   onClick={() => {
                     const label = displayProductName(p);
                     setQuery(label);
-                    onChange(label, p.id, p.pricePerUnit);
+                    onPick(label, p);
                     setOpen(false);
                   }}
                 >
@@ -201,14 +222,48 @@ function ProductSearchInput({
   );
 }
 
+// ─── This customer's price now (display-only) ─────────────────────────────────
+
+/**
+ * SA-856 rule 3: when a line's stored price differs from what the resolver answers for this customer today, say so under
+ * the line. Display-only: nothing changes the stored (agreed) price except the operator.
+ */
+function CustomerPriceNow({
+  productId,
+  picked,
+  stored,
+  priceFor,
+}: {
+  productId: string;
+  picked?: PickedProduct;
+  stored: number;
+  priceFor: (product: PickedProduct) => number;
+}) {
+  // A line from a stored template has no picked product: read it (one product per line).
+  const { data } = useProduct(picked ? "" : productId);
+  const product = picked ?? (data as PickedProduct | undefined);
+  if (!product) return null;
+  const now = priceFor(product);
+  if (!Number.isFinite(now) || Math.abs(now - Number(stored)) < 0.005) return null;
+  return (
+    <p className="col-span-4 -mt-1 px-1 text-xs text-amber-700">
+      This customer&apos;s price now: {fmt.format(now)}
+    </p>
+  );
+}
+
 // ─── Line item state ──────────────────────────────────────────────────────────
 
 interface LineItemState {
   key: string;
   productId?: string;
+  /** SA-856: the product picked on THIS form (its tier columns), so a customer change can re-suggest the price. */
+  product?: PickedProduct;
   description: string;
   qty: number;
   unitPrice: number;
+  /** SA-856: the operator typed this price; it is never replaced by a suggestion. Stored template lines count as typed. */
+  priceEdited: boolean;
   taxRate: number;
   discount: number;
 }
@@ -219,6 +274,7 @@ function createEmptyItem(): LineItemState {
     description: "",
     qty: 1,
     unitPrice: 0,
+    priceEdited: false,
     taxRate: 0,
     discount: 0,
   };
@@ -232,6 +288,8 @@ function itemsFromInitial(initial?: RecurringInvoice): LineItemState[] {
     description: it.description,
     qty: Number(it.qty),
     unitPrice: Number(it.unitPrice),
+    // An existing template's price is an agreed price: nothing re-prices it automatically (SA-856 rule 3).
+    priceEdited: true,
     taxRate: Number(it.taxRate ?? 0),
     discount: Number(it.discount ?? 0),
   }));
@@ -277,6 +335,63 @@ export function RecurringInvoiceForm({
   const [items, setItems] = React.useState<LineItemState[]>(() => itemsFromInitial(initial));
   const [errors, setErrors] = React.useState<Record<string, string>>({});
 
+  // SA-856: a line is priced at set-up from the ONE resolver, the customer's own price for the pack:
+  // customerLinePrice({ product, tier: customerTierFor(customer-product tier, customer tier), layer }).
+  const customerId = mode === "edit" ? initial?.customerId : customer?.id;
+  const customerQuery = useCustomer(customerId ?? "");
+  const customerPricesQuery = useCustomerPrices(customerId);
+  const customerTier = (customerQuery.data as { pricingTier?: number } | undefined)?.pricingTier;
+  // The tier handed to the resolver: the customer-product row's tier, else the customer's own (customerTierFor validates
+  // both; an msrp-only row's null tier falls through). No per-product tier map of our own (the S19b A-pin).
+  const tierForProductId = React.useCallback(
+    (productId: string) => {
+      const row = (
+        (customerPricesQuery.data ?? []) as Array<{ productId: string; pricingTier: unknown }>
+      ).find((cp) => cp.productId === productId);
+      return customerTierFor(row?.pricingTier, customerTier);
+    },
+    [customerPricesQuery.data, customerTier],
+  );
+  const { priceLayer, tierPriceFor } = useCustomerLinePricing(customerId, tierForProductId);
+  // SA-868: money fails CLOSED. Until the customer and their prices are read (or after a read failed) a pick would price at
+  // LIST, so picking waits; Save waits only while pending / on an unconfirmed layer (see customerPricingGate).
+  const gate = customerPricingGate({
+    customerQuery: customerId ? customerQuery : {},
+    customerPricesQuery: customerId ? customerPricesQuery : {},
+    priceLayer,
+    productIds: items.map((it) => it.productId),
+    openSuggestions: items.some((it) => !!it.product && !it.priceEdited),
+  });
+  const pricingPending = gate.pending;
+  const pricingFailed = gate.failed;
+  const priceBlocked = gate.blockSave;
+  const retryCustomerPrices = () => {
+    void customerQuery.refetch?.();
+    void customerPricesQuery.refetch?.();
+    if (priceLayer.failed) priceLayer.refetch();
+  };
+  const suggestedPrice = React.useCallback(
+    (product: PickedProduct) => Number(tierPriceFor(product)),
+    [tierPriceFor],
+  );
+
+  // A customer change re-suggests ONLY the lines picked here whose price the operator has not typed (SA-856 rule 2).
+  React.useEffect(() => {
+    // No customer (cleared): keep every price as it is; a re-suggest waits for the next customer's confirmed prices.
+    if (!customerId || gate.blockPick) return;
+    setItems((prev) => {
+      let changed = false;
+      const next = prev.map((it) => {
+        if (!it.product || it.priceEdited) return it;
+        const price = suggestedPrice(it.product);
+        if (!Number.isFinite(price) || price === it.unitPrice) return it;
+        changed = true;
+        return { ...it, unitPrice: price };
+      });
+      return changed ? next : prev;
+    });
+  }, [customerId, gate.blockPick, suggestedPrice]);
+
   function updateItem(key: string, patch: Partial<LineItemState>) {
     setItems((prev) => prev.map((it) => (it.key === key ? { ...it, ...patch } : it)));
   }
@@ -301,6 +416,7 @@ export function RecurringInvoiceForm({
   }
 
   function handleSubmit() {
+    if (priceBlocked) return;
     if (!validate()) return;
 
     // In edit mode an emptied field is an instruction to CLEAR the value, so it must be
@@ -393,7 +509,7 @@ export function RecurringInvoiceForm({
             ) : (
               <div>
                 <label className="mb-1.5 block text-sm font-medium text-navy/80">
-                  Day of Month
+                  Day of month
                 </label>
                 <input
                   type="number"
@@ -409,7 +525,7 @@ export function RecurringInvoiceForm({
 
             <div>
               <label className="mb-1.5 block text-sm font-medium text-navy/80">
-                {mode === "edit" ? "Next Run Date" : "First Run Date"}
+                {mode === "edit" ? "Next run date" : "First run date"}
               </label>
               <input
                 type="date"
@@ -436,18 +552,18 @@ export function RecurringInvoiceForm({
         </Card>
 
         {/* Line items */}
-        <Card title="Line Items">
+        <Card title="Line items">
           <div className="space-y-2">
             {errors.items && <p className="text-xs text-danger">{errors.items}</p>}
             <div className="grid grid-cols-[1fr_70px_90px_32px] gap-2 px-1">
               <span className="text-xs font-medium text-navy/70">Description</span>
               <span className="text-xs font-medium text-navy/70 text-right">Qty</span>
-              <span className="text-xs font-medium text-navy/70 text-right">Unit Price</span>
+              <span className="text-xs font-medium text-navy/70 text-right">Unit price</span>
               <span />
             </div>
             {/* B646 / SA-135: a boxed product's template line is a BOX count at the per-box price. */}
             <p className="px-1 text-xs text-navy/60" data-testid="recurring-qty-boxes-hint">
-              For a product sold in boxes, Qty counts boxes and Unit Price is per box (2.5 = 2 boxes
+              For a product sold in boxes, Qty counts boxes and Unit price is per box (2.5 = 2 boxes
               + half a box).
             </p>
             {items.map((item) => (
@@ -457,13 +573,26 @@ export function RecurringInvoiceForm({
               >
                 <ProductSearchInput
                   value={item.description}
-                  onChange={(description, productId, unitPrice) => {
+                  disabled={gate.blockPick}
+                  placeholder={
+                    pricingFailed
+                      ? PRICE_LAYER_FAILED_COPY
+                      : pricingPending
+                        ? "Loading customer pricing…"
+                        : "Description / product…"
+                  }
+                  onTextChange={(description) =>
+                    updateItem(item.key, { description, productId: undefined, product: undefined })
+                  }
+                  onPick={(description, product) =>
                     updateItem(item.key, {
                       description,
-                      productId,
-                      unitPrice: unitPrice !== undefined ? unitPrice : item.unitPrice,
-                    });
-                  }}
+                      productId: product.id,
+                      product,
+                      unitPrice: suggestedPrice(product),
+                      priceEdited: false,
+                    })
+                  }
                 />
                 <DecimalInput
                   decimals={3}
@@ -475,7 +604,7 @@ export function RecurringInvoiceForm({
                 <MoneyInput
                   min={0}
                   value={item.unitPrice}
-                  onChange={(v) => updateItem(item.key, { unitPrice: v ?? 0 })}
+                  onChange={(v) => updateItem(item.key, { unitPrice: v ?? 0, priceEdited: true })}
                   className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
                 />
                 <button
@@ -485,6 +614,14 @@ export function RecurringInvoiceForm({
                 >
                   <Trash2 className="h-4 w-4" />
                 </button>
+                {item.productId && !gate.blockPick && priceLayer.lineReady(item.productId) && (
+                  <CustomerPriceNow
+                    productId={item.productId}
+                    picked={item.product}
+                    stored={item.unitPrice}
+                    priceFor={suggestedPrice}
+                  />
+                )}
               </div>
             ))}
             <button
@@ -492,13 +629,13 @@ export function RecurringInvoiceForm({
               className="mt-2 flex items-center gap-1.5 text-sm font-medium text-brand-500 hover:text-brand-600 transition-colors"
             >
               <Plus className="h-4 w-4" />
-              Add Line Item
+              Add line item
             </button>
           </div>
         </Card>
 
         {/* Notes */}
-        <Card title="Notes & Terms">
+        <Card title="Notes and terms">
           <div className="space-y-3">
             <div>
               <label className="mb-1.5 block text-sm font-medium text-navy/80">Notes</label>
@@ -510,7 +647,7 @@ export function RecurringInvoiceForm({
               />
             </div>
             <div>
-              <label className="mb-1.5 block text-sm font-medium text-navy/80">Payment Terms</label>
+              <label className="mb-1.5 block text-sm font-medium text-navy/80">Payment terms</label>
               <textarea
                 rows={2}
                 value={terms}
@@ -528,7 +665,7 @@ export function RecurringInvoiceForm({
           <div className="space-y-3">
             <div>
               <label className="mb-1.5 block text-sm font-medium text-navy/80">
-                Invoice Discount ($)
+                Invoice discount ($)
               </label>
               <input
                 type="number"
@@ -541,7 +678,7 @@ export function RecurringInvoiceForm({
             </div>
             <div>
               <label className="mb-1.5 block text-sm font-medium text-navy/80">
-                Shipping Fee ($)
+                Shipping fee ($)
               </label>
               <input
                 type="number"
@@ -556,7 +693,26 @@ export function RecurringInvoiceForm({
         </Card>
 
         <Card>
-          <Button className="w-full" onClick={handleSubmit} loading={isPending}>
+          {gate.readFailed ? (
+            <span role="alert" className="mb-2 block text-xs text-amber-700">
+              {PRICE_LAYER_FAILED_COPY}{" "}
+              <button type="button" className="font-medium underline" onClick={retryCustomerPrices}>
+                Retry
+              </button>
+            </span>
+          ) : (
+            <PriceLayerNotice
+              layer={priceLayer}
+              unconfirmed={priceBlocked}
+              className="mb-2 block text-xs text-amber-700"
+            />
+          )}
+          <Button
+            className="w-full"
+            onClick={handleSubmit}
+            loading={isPending}
+            disabled={isPending || priceBlocked}
+          >
             {submitLabel}
           </Button>
           <Button

@@ -15,6 +15,7 @@ import {
 import { useRouter } from "next/navigation";
 import { fmtCalendarDate, fmtDate } from "@/lib/formatting";
 import { describeRunFailure } from "@/lib/reason-copy";
+import { useRestrictionWarningRetry } from "@/lib/use-restriction-warning-retry";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -41,13 +42,14 @@ export default function RecurringInvoicesPage() {
   const router = useRouter();
 
   React.useEffect(() => {
-    setTitle("Recurring Invoices");
+    setTitle("Recurring invoices");
   }, [setTitle]);
 
   const { data: recurringList, isLoading } = useRecurringInvoices();
   const deactivate = useDeactivateRecurringInvoice();
   const activate = useActivateRecurringInvoice();
   const runNow = useRunRecurringInvoice();
+  const rw = useRestrictionWarningRetry(); // row 510 Q2: a manual run is judged for the clicker
 
   const items: RecurringInvoice[] = recurringList ?? [];
 
@@ -66,7 +68,7 @@ export default function RecurringInvoicesPage() {
   };
 
   const handleRunNow = (ri: RecurringInvoice) => {
-    runNow.mutate(ri.id, {
+    runNow.mutate(rw.attach(ri.id), {
       onSuccess: (inv) => {
         // The server claims the cycle atomically, so a losing racer (a second
         // tap, or the cron) gets an empty body back — never announce/navigate
@@ -82,7 +84,9 @@ export default function RecurringInvoicesPage() {
         });
         router.push(`/invoices/${(inv as any).id}`);
       },
-      onError: () => toast({ title: "Failed to generate invoice", variant: "error" }),
+      onError: (err) =>
+        rw.handle(err, () => handleRunNow(ri)) ||
+        toast({ title: "Failed to generate invoice", variant: "error" }),
     });
   };
 
@@ -91,17 +95,17 @@ export default function RecurringInvoicesPage() {
       {/* Header */}
       <div className="flex items-center justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-bold text-navy">Recurring Invoices</h2>
+          <h2 className="text-2xl font-bold text-navy">Recurring invoices</h2>
           <p className="mt-1 text-sm text-navy/70">
             Automatically generate invoices on a schedule.
           </p>
         </div>
         <div className="flex items-center gap-2">
           <Button variant="secondary" href="/invoices">
-            All Invoices
+            All invoices
           </Button>
           <Button leftIcon={<Plus className="h-4 w-4" />} href="/invoices/recurring/new">
-            New Template
+            New template
           </Button>
         </div>
       </div>
@@ -119,7 +123,7 @@ export default function RecurringInvoicesPage() {
               Create a template to automatically generate invoices on a schedule.
             </p>
             <Button leftIcon={<Plus className="h-4 w-4" />} href="/invoices/recurring/new">
-              Create First Template
+              Create first template
             </Button>
           </div>
         </Card>
@@ -200,7 +204,7 @@ export default function RecurringInvoicesPage() {
                   loading={runNow.isPending}
                   className="flex-1"
                 >
-                  Run Now
+                  Run now
                 </Button>
                 <Button
                   size="sm"
@@ -222,6 +226,7 @@ export default function RecurringInvoicesPage() {
           ))}
         </div>
       )}
+      {rw.dialog}
     </div>
   );
 }

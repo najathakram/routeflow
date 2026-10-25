@@ -1,3 +1,4 @@
+import { Logger } from "@nestjs/common";
 import { configuration } from "./configuration";
 
 describe("storage URL signing secret (F5-001 fail-closed)", () => {
@@ -66,5 +67,48 @@ describe("web base URL (fail-closed in production)", () => {
     process.env.STORAGE_URL_SIGNING_SECRET = "an-independent-storage-secret";
     process.env.WEB_URL = "https://www.routeflow.info/";
     expect(configuration().urls.web).toBe("https://www.routeflow.info");
+  });
+});
+
+describe("DEFAULT_THROTTLE_LIMIT parsing (bounded 1..10000, else 100)", () => {
+  const ORIGINAL_ENV = process.env;
+  let warn: jest.SpyInstance;
+
+  beforeEach(() => {
+    process.env = { ...ORIGINAL_ENV, NODE_ENV: "development", JWT_SECRET: "dev-jwt-secret" };
+    warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    warn.mockRestore();
+  });
+
+  afterAll(() => {
+    process.env = ORIGINAL_ENV;
+  });
+
+  it("unset -> 100 with no warning", () => {
+    delete process.env.DEFAULT_THROTTLE_LIMIT;
+    expect(configuration().throttle.defaultLimit).toBe(100);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it.each(["0", "-5", "abc", "1.5", "99999999", "10001"])(
+    "%s -> 100 with exactly one warning",
+    (raw) => {
+      process.env.DEFAULT_THROTTLE_LIMIT = raw;
+      expect(configuration().throttle.defaultLimit).toBe(100);
+      expect(warn).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each([
+    ["250", 250],
+    ["10000", 10000],
+    ["1", 1],
+  ])("%s -> %i with no warning", (raw, expected) => {
+    process.env.DEFAULT_THROTTLE_LIMIT = raw;
+    expect(configuration().throttle.defaultLimit).toBe(expected);
+    expect(warn).not.toHaveBeenCalled();
   });
 });

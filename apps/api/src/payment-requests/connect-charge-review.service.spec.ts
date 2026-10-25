@@ -220,4 +220,43 @@ describe("ConnectChargeReviewService", () => {
     expect(started).toEqual(["op-1", "op-2"]);
     void done;
   });
+
+  describe("flagDuplicateSuspect (SA-837b, review m6)", () => {
+    const suspect = {
+      tenantId: "tenant-1",
+      paymentIntentId: "pi_2",
+      invoiceId: "inv-1",
+      duplicateOfPaymentId: "pay-1",
+      duplicateOfInvoiceNumber: "INV-099",
+    };
+    beforeEach(() => {
+      (prisma as any).invoice.findFirst = jest
+        .fn()
+        .mockResolvedValue({ id: "inv-1", invoiceNumber: "INV-100", internalNotes: null });
+    });
+
+    it("tells staff to look for a manual entry of the same charge and void it BEFORE refunding in Stripe", async () => {
+      await service.flagDuplicateSuspect(suspect);
+      const note = (prisma as any).invoice.updateMany.mock.calls[0][0].data.internalNotes as string;
+      expect(note).toContain("[REVIEW]");
+      expect(note).toContain("pi_2");
+      expect(note).toMatch(/manual entry of the same charge/i);
+      expect(note).toMatch(/void/i);
+      expect(note.search(/void/i)).toBeLessThan(note.search(/refund/i)); // void first, then refund
+      const body = notifications.sendToUser.mock.calls[0][1].body as string;
+      expect(body).toMatch(/manual entry of the same charge/i);
+      expect(body.search(/void/i)).toBeLessThan(body.search(/refund/i));
+    });
+
+    it("is idempotent per payment intent: a breadcrumb that already names it adds nothing and alerts nobody", async () => {
+      (prisma as any).invoice.findFirst = jest.fn().mockResolvedValue({
+        id: "inv-1",
+        invoiceNumber: "INV-100",
+        internalNotes: "[REVIEW] pi_2 seen",
+      });
+      await service.flagDuplicateSuspect(suspect);
+      expect((prisma as any).invoice.updateMany).not.toHaveBeenCalled();
+      expect(notifications.sendToUser).not.toHaveBeenCalled();
+    });
+  });
 });

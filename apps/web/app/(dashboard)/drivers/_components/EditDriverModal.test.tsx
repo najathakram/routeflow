@@ -34,7 +34,7 @@ describe("EditDriverModal", () => {
       <EditDriverModal driver={driver} isOpen onClose={jest.fn()} onSave={onSave} />,
     );
 
-    const name = screen.getByLabelText("Full Name");
+    const name = screen.getByLabelText("Full name");
     await user.clear(name);
     await user.click(screen.getByRole("button", { name: /save changes/i }));
 

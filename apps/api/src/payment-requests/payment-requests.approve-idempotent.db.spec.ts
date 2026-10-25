@@ -34,6 +34,7 @@ import { randomUUID } from "crypto";
 import { InvoicesService } from "../invoices/invoices.service";
 import { InvoicePdfService } from "../invoices/invoice-pdf.service";
 import { PaymentRequestsService } from "./payment-requests.service";
+import { ConnectChargeReviewService } from "./connect-charge-review.service";
 import { PAYMENT_PROVIDER } from "./provider/payment-provider.interface";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
@@ -75,6 +76,11 @@ describeDb(
     const createdTenantIds: string[] = [];
     /** When true, the next in-transaction `buyerPaymentRequest.updateMany` (the claim) throws. */
     let failNextClaim = false;
+    /** W-769 W6: the captured settle's after-commit operator alert (SA-862), a spy. */
+    const chargeReview = {
+      flagDuplicateSuspect: jest.fn(),
+      flagUnconfirmedOverReserved: jest.fn(async () => undefined),
+    };
 
     beforeAll(async () => {
       requireLocalDatabaseUrl();
@@ -127,6 +133,8 @@ describeDb(
         providers: [
           InvoicesService,
           PaymentRequestsService,
+          // SA-837b: the Stripe settle path alerts operators of a duplicate-suspect capture; not exercised here.
+          { provide: ConnectChargeReviewService, useValue: chargeReview },
           NumberingService,
           {
             provide: SellingRestrictionsService,
@@ -149,7 +157,13 @@ describeDb(
           },
           {
             provide: RegulatedLedgerService,
-            useValue: { writeSaleEntries: jest.fn(), reverseInvoiceEntries: jest.fn() },
+            useValue: {
+              writeSaleEntries: jest.fn(),
+              reverseInvoiceEntries: jest.fn(),
+              settleRegulatedLedger: jest
+                .fn()
+                .mockResolvedValue({ written: 0, amendedPeriod: null }),
+            },
           },
           {
             provide: AuthorizationGuardService,
@@ -195,7 +209,8 @@ describeDb(
               removeInvoiceCommission: jest.fn().mockResolvedValue(undefined),
             },
           },
-          { provide: StripeConnectService, useValue: {} },
+          // W-769 W6: the settle's anti-spoof account check passes for the fixture
+          { provide: StripeConnectService, useValue: { assertEventAccount: async () => true } },
           { provide: PAYMENT_PROVIDER, useValue: {} },
         ],
       }).compile();
@@ -213,6 +228,7 @@ describeDb(
 
     async function cleanupTenant(tenantId: string): Promise<void> {
       await prisma.buyerPaymentRequest.deleteMany({ where: { tenantId } });
+      await prisma.auditLog.deleteMany({ where: { tenantId } }); // W-769: the over-reserved rows
       await prisma.advancePayment.deleteMany({ where: { tenantId } });
       await prisma.invoicePayment.deleteMany({ where: { invoice: { tenantId } } });
       await prisma.invoice.deleteMany({ where: { tenantId } });
@@ -286,7 +302,7 @@ describeDb(
             advances.reduce((sum, a) => sum + Number(a.amount), 0),
         };
       };
-      return { approve, state };
+      return { approve, state, tenant, invoice, requestId: request.id };
     }
 
     it("T1 a throw from the claim/link rolls the money back and leaves the request PENDING; the retry credits once (300, not 600) with the buyer's reference unchanged", async () => {
@@ -357,6 +373,74 @@ describeDb(
       }).toEqual({ status: "APPROVED", advances: 1, credited: 300 });
       expect(afterRetry.paymentGroupId).not.toBeNull();
       expect(afterRetry.advances[0].reference).toBe("receipt 7");
+    }, 60_000);
+
+    // W-769 W8 (owner 7b = A, SA-910 Part 2): the buyer's cash approval is real money. Over an invoice a DRAFT reserves, it
+    // records and flags the DRAFT with ONE over-reserved audit row (master: records, no audit row).
+    it("W8 a $300 cash approval over a DRAFT 300 on a $300 invoice: PAID 300 recorded, the DRAFT kept and flagged once", async () => {
+      const s = await seed("w769-w8", { invoiceTotal: 300 });
+      const d = await prisma.invoicePayment.create({
+        data: {
+          invoiceId: s.invoice!.id,
+          tenantId: s.tenant.id,
+          amount: 300,
+          method: "CASH",
+          status: "DRAFT",
+        } as any,
+      });
+      await s.approve();
+      const rows = await prisma.invoicePayment.findMany({
+        where: { invoiceId: s.invoice!.id },
+        orderBy: { createdAt: "asc" },
+      });
+      expect(rows.map((r) => `${r.status} ${Number(r.amount)}`)).toEqual(["DRAFT 300", "PAID 300"]);
+      const flagged = await prisma.auditLog.findMany({
+        where: { tenantId: s.tenant.id, action: "payment.unconfirmed-over-reserved" },
+      });
+      expect(flagged).toHaveLength(1);
+      expect(flagged[0].meta).toMatchObject({ displaced: [d.id] });
+    }, 60_000);
+
+    // W-769 W6 (SA-862 rule 1): a Stripe-captured settle is never refused. Over an invoice a DRAFT reserves, the card money
+    // lands on the invoice, the DRAFT is flagged with ONE over-reserved audit row, and the operator alert fires after commit.
+    // Master: the confirmed-basis allocation records with no audit row and no alert.
+    it("W6 a $300 card settle over a DRAFT 300 on a $300 invoice: PAID 300 on the invoice, the DRAFT flagged once, the alert raised", async () => {
+      const s = await seed("w769-w6", { invoiceTotal: 300 });
+      const d = await prisma.invoicePayment.create({
+        data: {
+          invoiceId: s.invoice!.id,
+          tenantId: s.tenant.id,
+          amount: 300,
+          method: "CASH",
+          status: "DRAFT",
+        } as any,
+      });
+      const pi = `pi_w769_${randomUUID().slice(0, 8)}`;
+      chargeReview.flagUnconfirmedOverReserved.mockClear();
+      await expect(
+        service.settleByPaymentIntent({
+          type: "payment_intent.succeeded",
+          eventId: `evt_${pi}`,
+          accountRef: "acct_w769",
+          created: new Date(),
+          paymentIntentId: pi,
+          amountDollars: 300,
+          currency: "usd",
+          methodKind: "card",
+          metadata: { tenantId: s.tenant.id, buyerPaymentRequestId: s.requestId },
+        }),
+      ).resolves.toEqual({ handled: true });
+      const rows = await prisma.invoicePayment.findMany({
+        where: { invoiceId: s.invoice!.id },
+        orderBy: { createdAt: "asc" },
+      });
+      expect(rows.map((r) => `${r.status} ${Number(r.amount)}`)).toEqual(["DRAFT 300", "PAID 300"]);
+      const flagged = await prisma.auditLog.findMany({
+        where: { tenantId: s.tenant.id, action: "payment.unconfirmed-over-reserved" },
+      });
+      expect(flagged).toHaveLength(1);
+      expect(flagged[0].meta).toMatchObject({ displaced: [d.id] });
+      expect(chargeReview.flagUnconfirmedOverReserved).toHaveBeenCalledTimes(1);
     }, 60_000);
   },
 );

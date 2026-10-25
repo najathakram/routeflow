@@ -2,6 +2,7 @@ import * as React from "react";
 import { renderWithProviders, screen, waitFor, fireEvent } from "@/test-utils/render";
 import { API_ERROR_CODES } from "@routeflow/types";
 import { COUNTER_SALE_VOIDED_COPY } from "@/lib/counter-sale";
+import { renderTill } from "@/test-utils/render-till";
 import { CounterSaleScreen } from "./CounterSaleScreen";
 
 /**
@@ -76,21 +77,21 @@ const refused = async () => {
 
 describe("CounterSaleScreen: a refusal goes when the cart changes (CQ-18)", () => {
   it("scanning another item clears it", async () => {
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await refused();
     await scan("WATER", "Water");
     await waitFor(() => expect(screen.queryByText(CHANGED)).toBeNull());
   });
 
   it("stepping a quantity clears it", async () => {
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await refused();
     fireEvent.click(screen.getByRole("button", { name: "Add one Cola" }));
     await waitFor(() => expect(screen.queryByText(CHANGED)).toBeNull());
   });
 
   it("removing the line clears it", async () => {
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await refused();
     fireEvent.click(screen.getByRole("button", { name: "Remove Cola" }));
     await waitFor(() => expect(screen.queryByText(CHANGED)).toBeNull());
@@ -100,7 +101,7 @@ describe("CounterSaleScreen: a refusal goes when the cart changes (CQ-18)", () =
     mutateAsync.mockRejectedValue({
       response: { status: 409, data: { code: API_ERROR_CODES.COUNTER_SALE_VOIDED } },
     });
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("COLA");
     fireEvent.click(screen.getByRole("button", { name: "$20" }));
     fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
@@ -110,9 +111,9 @@ describe("CounterSaleScreen: a refusal goes when the cart changes (CQ-18)", () =
   });
 
   it("without an edit the refusal stays put", async () => {
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await refused();
-    fireEvent.click(screen.getByRole("button", { name: "Cash" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Cash" }));
     expect(screen.getByRole("alert")).toHaveTextContent(CHANGED);
   });
 });
