@@ -83,7 +83,13 @@ import {
   type RefundTender,
 } from "./inline-return-refund";
 import { assertCashRefundWithinCap, refundAmountsBySale } from "./cash-refund-cap";
-import { dbClockNow, lockCounterClose, tillRegisterOfSale } from "./counter-close-lock";
+import {
+  dbClockNow,
+  lockCounterClose,
+  tillRegisterOfSale,
+  tillRegisterStampedUnderLock,
+} from "./counter-close-lock";
+import { refundBusy } from "./standard-refund-claim";
 import { assertCounterWindowOpen } from "./counter-close-window";
 import {
   refundTenderColumn,
@@ -1423,6 +1429,8 @@ export class InlineReturnsService {
         fresh.orderId,
         ...items.map((i) => i.sourceOrderId).filter((o): o is string => !!o),
       ]);
+      // W-829: a pickup stamped by a hand-over while this waited for the Order lock needs the close lock first: retry
+      if (await tillRegisterStampedUnderLock(tx, fresh.orderId, registerKey)) throw refundBusy();
 
       // M2: the SERVER's figure (exactly what the credit mint would issue); the client only confirms it
       const amount = inlineReturnAmount(fresh);

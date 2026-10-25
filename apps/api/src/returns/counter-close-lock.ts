@@ -1,3 +1,4 @@
+import { FulfillPath } from "@prisma/client";
 import { COUNTER_DEFAULT_REGISTER } from "@routeflow/pricing";
 
 /**
@@ -43,7 +44,35 @@ export function tillRegisterOfSale(
 ): string | null {
   const counter = registerKeyOfOrder(order);
   if (counter) return counter;
-  return order?.fulfillPath === "PICKUP" && order.registerKey ? order.registerKey : null;
+  return order?.fulfillPath === FulfillPath.PICKUP && order.registerKey ? order.registerKey : null;
+}
+
+/**
+ * W-829: a refund that took NO close lock because the sale read as unstamped (an unlocked read) re-reads the stamp here, on its
+ * own transaction, after the Order row lock. A hand-over stamps the register on that same row, so once this transaction holds the
+ * lock the answer cannot change until it ends. True means the sale was stamped while the refund waited: the caller must stop
+ * (retryable 409, nothing written) and retry, which then takes the close lock as its first statement. A counter order or an
+ * already stamped pickup is write-once, so a refund that locked already has the right key (false).
+ */
+export async function tillRegisterStampedUnderLock(
+  tx: {
+    order: {
+      findFirst: (args: any) => Promise<{
+        counterSale?: boolean | null;
+        registerKey?: string | null;
+        fulfillPath?: string | null;
+      } | null>;
+    };
+  },
+  orderId: string,
+  lockedRegister: string | null,
+): Promise<boolean> {
+  if (lockedRegister) return false;
+  const now = await tx.order.findFirst({
+    where: { id: orderId },
+    select: { counterSale: true, registerKey: true, fulfillPath: true },
+  });
+  return tillRegisterOfSale(now) !== null;
 }
 
 /**

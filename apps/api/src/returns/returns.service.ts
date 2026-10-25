@@ -70,7 +70,12 @@ import {
   refundBusy,
   refundClaimWhere,
 } from "./standard-refund-claim";
-import { dbClockNow, lockCounterClose, tillRegisterOfSale } from "./counter-close-lock";
+import {
+  dbClockNow,
+  lockCounterClose,
+  tillRegisterOfSale,
+  tillRegisterStampedUnderLock,
+} from "./counter-close-lock";
 import { assertCounterWindowOpen } from "./counter-close-window";
 import { refundTenderData, refundTenderOfColumn } from "./refund-tender";
 import { roundMoney } from "@routeflow/pricing";
@@ -1411,6 +1416,9 @@ export class ReturnsService {
           if (fresh.status !== "RECEIVED") throw refundAlreadyResolved();
           const orderId = ret.order?.id ?? ret.orderId;
           if (orderId) await lockRefundOrders(tx, tenantId, [orderId]);
+          // W-829: a pickup stamped by a hand-over while this waited for the Order lock needs the close lock first: retry
+          if (external && orderId && (await tillRegisterStampedUnderLock(tx, orderId, registerKey)))
+            throw refundBusy();
           const resolved = await resolveRefundInvoiceIds(tx, {
             kind: "ORDER",
             orderId: orderId ?? "",

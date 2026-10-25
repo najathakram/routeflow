@@ -237,6 +237,15 @@ function setup() {
       refundAmount: "30.00",
       refundedAt: at("2026-10-08T16:30:00.000Z"),
     }),
+    // a store-credit return on a stamped Store pickup is STORE CREDIT issued: it never reaches the refund (cash/drawer) lines
+    stored({
+      id: "r-pickup-credit",
+      order: { tenantId: T, counterSale: false, fulfillPath: "PICKUP", registerKey: "main" },
+      creditNoteId: "cn-pickup",
+      refundMethod: "CREDIT_NOTE",
+      creditSubtotal: "3.00",
+      creditTax: "0.00",
+    }),
     stored({
       id: "r-route-stamped",
       order: { tenantId: T, counterSale: false, fulfillPath: "ROUTE", registerKey: "main" },
@@ -250,6 +259,7 @@ function setup() {
     { id: "cn-late", tenantId: T, status: "ISSUED", createdAt: at("2026-10-08T15:00:00.000Z") },
     { id: "cn-day1", tenantId: T, status: "ISSUED", createdAt: at("2026-10-07T16:30:00.000Z") },
     { id: "cn-void", tenantId: T, status: "VOID", createdAt: at("2026-10-08T16:00:00.000Z") },
+    { id: "cn-pickup", tenantId: T, status: "ISSUED", createdAt: at("2026-10-08T16:15:00.000Z") },
   ];
   prisma.return.findMany.mockImplementation(async (args: any) =>
     returns.filter((r) => m(r, args.where)),
@@ -272,7 +282,8 @@ describe("(b) the summary over two days", () => {
 
   it("day 2: the credit minted on day 2 counts on day 2 even though the return was captured on day 1; a voided note does not", async () => {
     const s = await setup()("2026-10-08");
-    expect(s.storeCreditIssued).toEqual({ count: 1, amount: 5.5 });
+    // 5.50 on a counter sale + 3.00 store credit on a stamped Store pickup (W-829): credit, never a cash or drawer refund
+    expect(s.storeCreditIssued).toEqual({ count: 2, amount: 8.5 });
     // 4.00 on a counter sale + 6.00 on a stamped Store pickup (W-829); the unstamped pickup and the route order are not the till's
     expect(s.refunds.count).toBe(2);
     expect(s.refunds.total).toBe(10);

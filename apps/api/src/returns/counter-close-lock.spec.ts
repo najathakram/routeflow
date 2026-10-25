@@ -11,7 +11,44 @@ import {
   lockCounterClose,
   registerKeyOfOrder,
   tillRegisterOfSale,
+  tillRegisterStampedUnderLock,
 } from "./counter-close-lock";
+
+describe("tillRegisterStampedUnderLock: the stamp is re-read after the Order lock (W-829)", () => {
+  const txOf = (row: object | null) => ({ order: { findFirst: jest.fn().mockResolvedValue(row) } });
+
+  it("a refund that took no close lock and finds the pickup now stamped must retry", async () => {
+    const tx = txOf({ counterSale: false, fulfillPath: "PICKUP", registerKey: "till-2" });
+    expect(await tillRegisterStampedUnderLock(tx, "o1", null)).toBe(true);
+    expect(tx.order.findFirst).toHaveBeenCalledWith({
+      where: { id: "o1" },
+      select: { counterSale: true, registerKey: true, fulfillPath: true },
+    });
+  });
+
+  it("a pickup still unstamped, or a route order, is not a till sale: the refund goes on without the lock", async () => {
+    expect(
+      await tillRegisterStampedUnderLock(
+        txOf({ counterSale: false, fulfillPath: "PICKUP", registerKey: null }),
+        "o1",
+        null,
+      ),
+    ).toBe(false);
+    expect(
+      await tillRegisterStampedUnderLock(
+        txOf({ counterSale: false, fulfillPath: "ROUTE", registerKey: "till-2" }),
+        "o1",
+        null,
+      ),
+    ).toBe(false);
+  });
+
+  it("a refund that already locked a register reads nothing: the stamp is write-once", async () => {
+    const tx = txOf({ counterSale: false, fulfillPath: "PICKUP", registerKey: "till-2" });
+    expect(await tillRegisterStampedUnderLock(tx, "o1", "till-2")).toBe(false);
+    expect(tx.order.findFirst).not.toHaveBeenCalled();
+  });
+});
 
 describe("dbClockNow: refundedAt comes from the database clock", () => {
   it("reads clock_timestamp() on the caller's transaction and returns that instant", async () => {
