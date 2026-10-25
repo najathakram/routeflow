@@ -54,6 +54,9 @@ export const REFUND_COPY = {
   /** SA-749r2 #9: the cash refund is more than the cash taken for the sale (less cash already refunded). Not terminal: switch the tender. */
   exceedsCash:
     "Return saved. That's more cash than was taken for this sale. Refund the rest by card or check, or give store credit.",
+  /** SA-959: the same over-cash refusal for a walk-in, who can't hold store credit: only another tender is left. */
+  exceedsCashWalkIn:
+    "Return saved. That's more cash than was taken for this sale. Refund the rest by card or check.",
   /** SA-750r3: the refund is dated inside a closed day (409 COUNTER_SALE_DAY_CLOSED). The return is saved; nothing was paid out. */
   dayClosed:
     "Return saved. This day is closed, so the refund can't be paid out now. Give store credit instead, or record the refund on a later date.",

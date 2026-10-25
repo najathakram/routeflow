@@ -552,14 +552,17 @@ export function RecordInlineReturnDialog({
                 // a walk-in can't hold store credit: a closed day leaves only the later date
                 !(refundError === "dayClosed" && walkIn))) ? (
               <>
-                <Button
-                  variant="secondary"
-                  disabled={refunding}
-                  loading={crediting}
-                  onClick={() => saved && doStoreCredit(saved)}
-                >
-                  Give store credit instead
-                </Button>
+                {/* SA-959: a walk-in cannot hold store credit, so it is never offered here */}
+                {!walkIn && (
+                  <Button
+                    variant="secondary"
+                    disabled={refunding}
+                    loading={crediting}
+                    onClick={() => saved && doStoreCredit(saved)}
+                  >
+                    Give store credit instead
+                  </Button>
+                )}
                 {refundError === "failed" || refundError === "exceedsCash" ? (
                   <Button
                     loading={refunding}
@@ -747,7 +750,11 @@ function RefundChoice({
   const refund = resolution === "REFUND";
   const errorLine = error ? (
     <p role="alert" className="text-sm font-medium text-danger">
-      {error === "dayClosed" && walkIn ? REFUND_COPY.dayClosedWalkIn : REFUND_COPY[error]}
+      {walkIn && error === "dayClosed"
+        ? REFUND_COPY.dayClosedWalkIn
+        : walkIn && error === "exceedsCash"
+          ? REFUND_COPY.exceedsCashWalkIn
+          : REFUND_COPY[error]}
     </p>
   ) : null;
   const tenderSelect = (
