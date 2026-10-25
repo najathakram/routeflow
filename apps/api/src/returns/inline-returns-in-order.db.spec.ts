@@ -129,17 +129,14 @@ describeDb("#2094 — inline return inside the order transaction, real Postgres"
       new EncryptionService({ get: () => undefined } as any),
     );
     const quoteService = new InlineReturnsQuoteService(prisma, systemConfig);
-    const creditNotes = (creditNotesSvc = Object.assign(
-      Object.create(CreditNotesService.prototype),
-      {
-        prisma,
-        gateway: { emitCreditNoteCreated: jest.fn() },
-        ledger,
-        commissionEngine: { syncInvoiceCommissionSafe: async () => undefined }, // settle applies the credit to the invoice
-        numbering,
-        logger: new Logger(CreditNotesService.name),
-      },
-    ));
+    const creditNotes = Object.assign(Object.create(CreditNotesService.prototype), {
+      prisma,
+      gateway: { emitCreditNoteCreated: jest.fn() },
+      ledger,
+      commissionEngine: { syncInvoiceCommissionSafe: async () => undefined }, // settle applies the credit to the invoice
+      numbering,
+      logger: new Logger(CreditNotesService.name),
+    });
     svc = Object.assign(Object.create(InlineReturnsService.prototype), {
       prisma,
       gateway: { emitCreditNoteCreated: jest.fn() },
