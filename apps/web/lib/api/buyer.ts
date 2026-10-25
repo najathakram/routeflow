@@ -453,6 +453,12 @@ export function useBuyerUpdateOrderItems() {
           expectedRevisionNumber,
         })
         .then((r) => r.data),
+    // Row 380: the order page shows a stale save itself (notice + Reload); no generic toast on top of it.
+    meta: {
+      localErrorToast: (e: unknown) =>
+        (e as { response?: { data?: { code?: string } } })?.response?.data?.code ===
+        "ORDER_REVISION_STALE",
+    },
     onSuccess: (_d, vars) => {
       qc.invalidateQueries({ queryKey: ["buyer", "order", vars.orderId] });
       qc.invalidateQueries({ queryKey: ["buyer", "orders"] });
