@@ -18,8 +18,10 @@ import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { CommitEditRuleDto, EditRuleDto } from "./dto/edit-rule.dto";
 import { RuleEditService } from "./rule-edit.service";
 
+import { RequirePermission } from "../auth/permissions/permission.decorators";
 // Row 509 PR3. OPERATOR (TENANT_ADMIN satisfies it in RolesGuard; CUSTOMER, DRIVER and buyer tokens are 403).
 // An all-customer rule, or an edit INTO one, is TENANT_ADMIN-only: the service refuses an operator with 403.
+@RequirePermission("REGULATED")
 @ApiTags("selling-restrictions")
 @ApiBearerAuth()
 @Controller("selling-restrictions")

@@ -7,10 +7,12 @@ import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { RecipesService } from "./recipes.service";
 import { CreateRecipeDto, UpdateRecipeDto } from "./dto/recipe.dto";
 
+import { RequirePermission } from "../auth/permissions/permission.decorators";
 /**
  * #2717 M2: recipe routes. Staff-only like the product write routes; every method is additionally
  * gated inside RecipesService on the tenant's `mixed_packs` mode being on (403 otherwise).
  */
+@RequirePermission("CATALOG")
 @Controller("recipes")
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class RecipesController {

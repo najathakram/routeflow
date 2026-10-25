@@ -8,11 +8,13 @@ import { PlanFlagGuard } from "../billing/plan-flag.guard";
 import { RequirePlanFlag } from "../billing/require-plan-flag.decorator";
 import { CustomerUnitPricesService } from "./customer-unit-prices.service";
 
+import { PermissionBase } from "../auth/permissions/permission.decorators";
 /**
  * Units v2 (S19b A1): one customer's price LAYER, billing's own resolved rows, for the order, invoice and estimate screens.
  * Same guards and flag as K6's `/unit-prices` (class-level, so a flag-off tenant gets the PLAN_GATE 403); a separate
  * controller so K6's read-only route list is untouched. The tenant comes from the JWT only.
  */
+@PermissionBase("cross-cutting lookup other areas need (spec-operator-permissions §4.3)")
 @Controller("customers/:customerId/price-layer")
 @UseGuards(JwtAuthGuard, RolesGuard, PlanFlagGuard)
 @RequirePlanFlag("flag.units_prices_v2")

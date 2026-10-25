@@ -2,7 +2,7 @@ import { Injectable, CanActivate, ExecutionContext, Logger, Optional } from "@ne
 import { Reflector } from "@nestjs/core";
 import { UserRole } from "@prisma/client";
 import { ROLES_KEY } from "../decorators/roles.decorator";
-import { PERMISSION_KEY } from "../permissions/permission.decorators";
+import { PERMISSION_BASE_KEY, PERMISSION_KEY } from "../permissions/permission.decorators";
 import { OperatorPermissionsService } from "../permissions/operator-permissions.service";
 import { permissionDeniedException } from "../permissions/permission-errors";
 import type { OperatorPermissionGroup } from "@prisma/client";
@@ -62,12 +62,23 @@ export class RolesGuard implements CanActivate {
     // Operator feature groups (spec-operator-permissions §4.1): only an OPERATOR on a handler that names groups.
     // Still synchronous for everyone else, so no existing caller or spec changes.
     if (user.role !== UserRole.OPERATOR || !this.permissions) return true;
-    const groups = this.reflector.getAllAndOverride<OperatorPermissionGroup[]>(PERMISSION_KEY, [
-      context.getHandler(),
-      context.getClass(),
-    ]);
+    // Method metadata overrides class metadata, and a method may state EITHER a group list OR "base" (any operator).
+    const groups = this.permissionGroupsOf(context);
     if (!groups || groups.length === 0) return true;
     return this.checkGroups(context, user, groups);
+  }
+
+  /** The groups the handler names, or null when it is PermissionBase / unmarked (any operator). Nearest metadata wins. */
+  private permissionGroupsOf(context: ExecutionContext): OperatorPermissionGroup[] | null {
+    for (const target of [context.getHandler(), context.getClass()]) {
+      if (this.reflector.get(PERMISSION_BASE_KEY, target) !== undefined) return null;
+      const groups = this.reflector.get<OperatorPermissionGroup[] | undefined>(
+        PERMISSION_KEY,
+        target,
+      );
+      if (groups !== undefined) return groups;
+    }
+    return null;
   }
 
   private async checkGroups(

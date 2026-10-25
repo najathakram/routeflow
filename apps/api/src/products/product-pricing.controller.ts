@@ -12,11 +12,13 @@ import { ProductCustomerPricesService } from "./product-customer-prices.service"
 import { ProductPriceGridService } from "./product-price-grid.service";
 import { ProductPriceWriteService } from "./product-price-write.service";
 
+import { RequirePermission } from "../auth/permissions/permission.decorators";
 /**
  * Units and prices v2. The whole surface is plan-flag gated: a tenant without
  * `flag.units_prices_v2` gets the structured PLAN_GATE 403 (SA-796 R-5: enforced, not dark).
  * TENANT_ADMIN satisfies OPERATOR in RolesGuard.
  */
+@RequirePermission("PRICING")
 @Controller("products/:productId")
 @UseGuards(JwtAuthGuard, RolesGuard, PlanFlagGuard)
 @RequirePlanFlag("flag.units_prices_v2")

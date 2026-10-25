@@ -18,7 +18,7 @@
  * hand the admin UI a JSON-schema of it (`z.toJSONSchema`).
  */
 import { z, type ZodType } from "zod/v4";
-import type { PolicyScopeType } from "@prisma/client";
+import type { OperatorPermissionGroup, PolicyScopeType } from "@prisma/client";
 
 export type { PolicyScopeType };
 
@@ -36,6 +36,11 @@ export interface PolicyEntry<T = unknown> {
   default: T;
   /** Which scope layers may hold a value for this key. */
   scopes: readonly PolicyScopeType[];
+  /**
+   * Operator access (SA-976 §8, spec-operator-permissions §4.3): the permission group an OPERATOR needs to read the key's
+   * history or change it (PR6), or "ADMIN" when only the account admin may. REQUIRED on every key.
+   */
+  group: OperatorPermissionGroup | "ADMIN";
   /** Rendered by the admin UI. */
   description: string;
   /** YYYY-MM-DD the entry was added. */
@@ -73,6 +78,7 @@ export type BuyerBackorderVisibility = (typeof BUYER_BACKORDER_VISIBILITY_MODES)
 export const POLICY_REGISTRY = [
   entry<AtDoorEditMode>({
     key: "orders.driverAtDoorEdit",
+    group: "DISPATCH",
     area: "orders",
     kind: "enum",
     schema: z.enum(AT_DOOR_EDIT_MODES),
@@ -87,6 +93,8 @@ export const POLICY_REGISTRY = [
   }),
   entry<number | null>({
     key: "credit.approvalThreshold",
+    // SA-976 §8 (SA-726 M4): the credit-risk band stays account-admin only; supersedes spec Q5.
+    group: "ADMIN",
     area: "credit",
     kind: "money",
     // Cents-precision, non-negative, finite. `null` = no approval band (today's hard block).
@@ -111,6 +119,7 @@ export const POLICY_REGISTRY = [
   }),
   entry<PriceDisclosureFact[]>({
     key: "invoicing.priceDisclosure",
+    group: "FINANCE",
     area: "invoicing",
     kind: "set",
     schema: z
@@ -126,6 +135,7 @@ export const POLICY_REGISTRY = [
   }),
   entry<BuyerOversellMode>({
     key: "orders.buyerOversell",
+    group: "ORDERS",
     area: "orders",
     kind: "enum",
     schema: z.enum(BUYER_OVERSELL_MODES),
@@ -141,6 +151,7 @@ export const POLICY_REGISTRY = [
   }),
   entry<BuyerBackorderVisibility>({
     key: "orders.buyerBackorderVisibility",
+    group: "ORDERS",
     area: "orders",
     kind: "enum",
     schema: z.enum(BUYER_BACKORDER_VISIBILITY_MODES),

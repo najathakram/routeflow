@@ -1,3 +1,4 @@
+import { OperatorPermissionGroup } from "@prisma/client";
 /**
  * SA-138 §3.1 — POLICY_REGISTRY pins.
  *
@@ -149,6 +150,20 @@ describe("POLICY_REGISTRY pins (SA-138 §3.1)", () => {
     expect(flagged.filter((k) => !POLICY_PILOT_PENDING_ALLOWLIST.includes(k))).toEqual([]);
     expect(POLICY_PILOT_PENDING_ALLOWLIST.filter((k) => !PHASE1_PILOTS.includes(k))).toEqual([]);
     expect(POLICY_PILOT_PENDING_ALLOWLIST.filter((k) => !flagged.includes(k))).toEqual([]);
+  });
+});
+
+describe("operator access group (SA-976 §8, spec T3.6)", () => {
+  it("every key names a permission group or ADMIN, and the five keys map as ruled", () => {
+    const valid = new Set<string>([...Object.values(OperatorPermissionGroup), "ADMIN"]);
+    for (const e of POLICY_REGISTRY) expect([e.key, valid.has(e.group)]).toEqual([e.key, true]);
+    expect(Object.fromEntries(POLICY_REGISTRY.map((e) => [e.key, e.group]))).toEqual({
+      "orders.driverAtDoorEdit": "DISPATCH",
+      "credit.approvalThreshold": "ADMIN",
+      "invoicing.priceDisclosure": "FINANCE",
+      "orders.buyerOversell": "ORDERS",
+      "orders.buyerBackorderVisibility": "ORDERS",
+    });
   });
 });
 

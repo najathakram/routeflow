@@ -14,6 +14,8 @@ import { TripEligibilityQueryDto } from "./dto/trip-eligibility.dto";
 import { EligibleOrdersQueryDto } from "./dto/eligible-orders.dto";
 import { RoutePlanningDto } from "./dto/route-planning.dto";
 
+import { RequirePermission } from "../auth/permissions/permission.decorators";
+@RequirePermission("DISPATCH")
 @ApiTags("trips")
 @ApiBearerAuth()
 // Owner decision 2026-08-28: /trips is the ad-hoc delivery builder — order_delivery-only

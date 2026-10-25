@@ -9,11 +9,13 @@ import { RequirePlanFlag } from "../billing/require-plan-flag.decorator";
 import { CustomerUnitPricesService } from "./customer-unit-prices.service";
 import { CustomerUnitPricesQueryDto } from "./dto/customer-unit-prices-query.dto";
 
+import { PermissionBase } from "../auth/permissions/permission.decorators";
 /**
  * Units v2 (K6, S20-read): what one customer pays per unit, product by product. Read-only; the same plan flag gate as
  * the price-grid route (`flag.units_prices_v2`, enforced: PLAN_GATE 403). The tenant comes from the JWT only (the
  * service reads through `forTenant()`); TENANT_ADMIN satisfies OPERATOR in RolesGuard.
  */
+@PermissionBase("cross-cutting lookup other areas need (spec-operator-permissions §4.3)")
 @Controller("customers/:customerId/unit-prices")
 @UseGuards(JwtAuthGuard, RolesGuard, PlanFlagGuard)
 @RequirePlanFlag("flag.units_prices_v2")

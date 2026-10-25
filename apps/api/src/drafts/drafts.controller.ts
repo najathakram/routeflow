@@ -9,6 +9,8 @@ import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { DraftsService } from "./drafts.service";
 import { SaveDraftDto } from "./dto/save-draft.dto";
 
+import { RequirePermission } from "../auth/permissions/permission.decorators";
+@RequirePermission("ORDERS")
 @ApiTags("drafts")
 @ApiBearerAuth()
 @Controller("drafts")

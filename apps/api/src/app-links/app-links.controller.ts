@@ -7,11 +7,13 @@ import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
 import { PlatformConfigService } from "../platform-admin/platform-config.service";
 
+import { PermissionBase } from "../auth/permissions/permission.decorators";
 /**
  * The global "Get the app" install links, readable by every signed-in dashboard role (the super
  * admin edits them at PUT /platform-admin/app-links). The links are not tenant data, so nothing
  * here is tenant-scoped; an unset or invalid link reads as null.
  */
+@PermissionBase("cross-cutting lookup other areas need (spec-operator-permissions §4.3)")
 @ApiTags("app-links")
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)

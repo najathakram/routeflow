@@ -12,8 +12,10 @@ import { RejectAuthorizationDto } from "./dto/reject-authorization.dto";
 import { RenewAuthorizationDto } from "./dto/renew-authorization.dto";
 import { CreateOverrideDto } from "./dto/create-override.dto";
 
+import { RequirePermission } from "../auth/permissions/permission.decorators";
 // Operator/seller-side. Nested under the customer so it sits alongside customer
 // detail. Generic feature — no addon gate. TENANT_ADMIN satisfies OPERATOR.
+@RequirePermission("REGULATED")
 @Controller("customers/:customerId")
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.OPERATOR)
@@ -23,6 +25,7 @@ export class AuthorizationsController {
     private readonly overrides: AuthorizationOverridesService,
   ) {}
 
+  @RequirePermission("REGULATED", "CUSTOMERS")
   @Get("authorizations")
   list(@Param("customerId") customerId: string) {
     return this.authorizations.findForCustomer(customerId);
@@ -78,6 +81,7 @@ export class AuthorizationsController {
 
 // Tenant-wide expiring/expired licenses for the operator expiry bell (W7b).
 // Top-level (not customer-scoped) so it can power the header bell.
+@RequirePermission("REGULATED")
 @Controller("authorizations")
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.OPERATOR)

@@ -39,6 +39,24 @@ class Ctl {
   }
 }
 
+@RequirePermission("FINANCE")
+class GroupedCtl {
+  @Roles(UserRole.OPERATOR)
+  inherits() {
+    return 1;
+  }
+  @Roles(UserRole.OPERATOR)
+  @PermissionBase("a lookup")
+  baseOverride() {
+    return 1;
+  }
+  @Roles(UserRole.OPERATOR)
+  @RequirePermission("ORDERS")
+  groupOverride() {
+    return 1;
+  }
+}
+
 const ctxFor = (method: keyof Ctl, user: Record<string, unknown>) =>
   ({
     getHandler: () => Ctl.prototype[method],
@@ -144,5 +162,32 @@ describe("RolesGuard + operator permission groups", () => {
   it("constructed without the service (every older spec) the guard behaves exactly as before", () => {
     const bare = new RolesGuard(new Reflector());
     expect(bare.canActivate(ctxFor("orders", OPERATOR))).toBe(true);
+  });
+
+  describe("class-level metadata with method overrides", () => {
+    const ctx = (m: keyof GroupedCtl) =>
+      ({
+        getHandler: () => GroupedCtl.prototype[m],
+        getClass: () => GroupedCtl,
+        switchToHttp: () => ({ getRequest: () => ({ user: OPERATOR }) }),
+      }) as unknown as ExecutionContext;
+
+    beforeEach(() => {
+      mode = "live";
+      held = ["ORDERS"];
+    });
+
+    it("a handler inherits the class group (FINANCE denied here)", async () => {
+      const err: any = await Promise.resolve(guard.canActivate(ctx("inherits"))).catch((e) => e);
+      expect(err.getResponse().groups).toEqual(["FINANCE"]);
+    });
+
+    it("PermissionBase on the method overrides the class group: any operator", () => {
+      expect(guard.canActivate(ctx("baseOverride"))).toBe(true);
+    });
+
+    it("a method group overrides the class group", async () => {
+      await expect(guard.canActivate(ctx("groupOverride"))).resolves.toBe(true);
+    });
   });
 });

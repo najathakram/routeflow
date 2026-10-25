@@ -9,9 +9,11 @@ import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { CustomerAddressStateService } from "./customer-address-state.service";
 import { AddressStateDto, MinimalAddressDto } from "./dto/address-state.dto";
 
+import { RequirePermission } from "../auth/permissions/permission.decorators";
 // Fix a customer's state in place (Addendum D). OPERATOR and TENANT_ADMIN (TENANT_ADMIN satisfies
 // OPERATOR in RolesGuard); CUSTOMER, DRIVER and buyer tokens get 403. Staff-JWT writes, so the global
 // TenantStatusGuard refuses them in a read-only workspace (no read-only allow-list entry).
+@RequirePermission("CUSTOMERS")
 @ApiTags("customers")
 @ApiBearerAuth()
 @Controller("customers")
