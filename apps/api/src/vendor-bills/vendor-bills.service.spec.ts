@@ -1030,7 +1030,8 @@ describe("VendorBillsService", () => {
     });
 
     it("B1236: refuses with missingProductIds when the catalog read returns fewer ids than the lines name, and writes nothing", async () => {
-      prisma.product.findMany.mockResolvedValue([{ id: "prod-1" }]);
+      // mockImplementation, not mockResolvedValue: the mock default echoes id-only reads (681); this test needs the read itself short
+      prisma.product.findMany.mockImplementation(async () => [{ id: "prod-1" }]);
       const items = [
         { productId: "prod-1", description: "ok", qty: 1, unitCost: 1 },
         { productId: "prod-2", description: "missing", qty: 1, unitCost: 1 },

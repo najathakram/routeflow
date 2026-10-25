@@ -35,9 +35,9 @@ describe("GoogleCallbackPage — google_account_mismatch (#2495)", () => {
     expect(screen.queryByText(/an unexpected error occurred/i)).not.toBeInTheDocument();
   });
 
-  it("does NOT auto-redirect (it is not a transient error) and offers a way back to login", () => {
+  it("does NOT auto-redirect (it is not a transient error) and offers a way back to sign in", () => {
     renderWithProviders(<GoogleCallbackPage />);
 
-    expect(screen.getByRole("link", { name: /back to login/i })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /back to sign in/i })).toBeInTheDocument();
   });
 });

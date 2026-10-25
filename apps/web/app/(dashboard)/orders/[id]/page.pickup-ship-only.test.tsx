@@ -91,7 +91,7 @@ describe("PICKUP order on a ship-only account", () => {
     expect(Array.from(select.options).map((o) => o.value)).toEqual(["SHIP", "PICKUP"]);
 
     fireEvent.change(select, { target: { value: "SHIP" } });
-    expect(await screen.findByText(/Move this order off in-store pickup\?/)).toBeInTheDocument();
+    expect(await screen.findByText(/Move this order off store pickup\?/)).toBeInTheDocument();
     expect(patch).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Move order" }));
 

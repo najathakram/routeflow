@@ -9,7 +9,7 @@ import {
 import CustomerDetailPage from "./page";
 
 /**
- * SA-824 (SA conditions a/b + race ruling 5): the customer page's Record Advance Payment dialog. After an
+ * SA-824 (SA conditions a/b + race ruling 5): the customer page's Record advance payment dialog. After an
  * unknown outcome it offers "Check payment status" (POST .../by-key/:key/resolve) before any new attempt,
  * Record is off meanwhile, and a Cancel -> reopen keeps the same key. Found closes like a 2xx; a tombstone
  * releases the key; a 404, PAYMENT_KEY_IN_FLIGHT or any other error stays locked. A Save refused 409
@@ -78,7 +78,7 @@ const route = (url: string) => {
 
 const openDialog = async () => {
   renderWithProviders(<CustomerDetailPage />);
-  fireEvent.click(await screen.findByRole("button", { name: "Record Advance Payment" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Record advance payment" }));
   await screen.findByRole("dialog");
 };
 const dialog = () => screen.getByRole("dialog");
@@ -93,7 +93,7 @@ const goUnknown = async () => {
   await within(dialog()).findByRole("button", { name: "Check payment status" });
 };
 
-describe("customers/[id] Record Advance Payment: Check payment status (SA-824)", () => {
+describe("customers/[id] Record advance payment: Check payment status (SA-824)", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     clearPaymentKeyRegistry();
@@ -193,7 +193,7 @@ describe("customers/[id] Record Advance Payment: Check payment status (SA-824)",
     const sent = keyOf(mockPost.mock.calls[0]);
     fireEvent.click(within(dialog()).getByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    fireEvent.click(screen.getByRole("button", { name: "Record Advance Payment" }));
+    fireEvent.click(screen.getByRole("button", { name: "Record advance payment" }));
     await screen.findByRole("dialog");
     expect(checkBtn()).toBeTruthy();
     expect(record()).toBeDisabled();
@@ -217,7 +217,7 @@ describe("customers/[id] Record Advance Payment: Check payment status (SA-824)",
 
   it("a stay-mounted dialog reopened during a flight shows the check at once, Record visibly off with its reason", async () => {
     renderWithProviders(<CustomerDetailPage />); // mounted, dialog closed
-    const opener = await screen.findByRole("button", { name: "Record Advance Payment" });
+    const opener = await screen.findByRole("button", { name: "Record advance payment" });
     const holder = acquirePaymentKeyHolder("advance:c1");
     let key = "";
     act(() => {

@@ -26,7 +26,7 @@ describe("Badge content", () => {
 
   it("still resolves the label from `status` when there are no children", () => {
     render(<Badge status="OUT_FOR_DELIVERY" />);
-    expect(screen.getByText("Out for Delivery")).toBeInTheDocument();
+    expect(screen.getByText("Out for delivery")).toBeInTheDocument();
   });
 
   it("renders an empty pill when given nothing", () => {

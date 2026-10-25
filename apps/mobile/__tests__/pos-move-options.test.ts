@@ -66,7 +66,7 @@ describe("posMoveOptions (web posMoveOptions, verbatim rule)", () => {
 describe.each(["PENDING", "CONFIRMED"])(
   "posOrderActions with move options, a %s order",
   (status) => {
-    const order = { invoices: [] };
+    const order = { invoices: [], fulfillPathLocked: false }; // row 673: the server allows the move
     const moves = (o: Parameters<typeof posOrderActions>[2]) =>
       posOrderActions(order, status, o).filter(
         (a) => a.key === "switchToDelivery" || a.key === "shipByCarrier",
@@ -104,18 +104,21 @@ describe.each(["PENDING", "CONFIRMED"])(
 describe("posOrderActions: the carrier move is not offered once the server refuses it", () => {
   const both = { delivery: "ROUTE", ship: true } as const;
   it.each(["OUT_FOR_DELIVERY", "DELIVERED", "CANCELLED"])("%s offers neither move", (status) => {
-    const k = keys(posOrderActions({ invoices: [{ id: "i", status: "SENT" }] }, status, both));
+    // row 673: the server's answer for these statuses (fulfillPathLocked, pinned api-side to the PATCH)
+    const k = keys(
+      posOrderActions(
+        { invoices: [{ id: "i", status: "SENT" }], fulfillPathLocked: true },
+        status,
+        both,
+      ),
+    );
     expect(k).not.toContain("shipByCarrier");
     expect(k).not.toContain("switchToDelivery");
   });
   it("CONFIRMED keeps its other buttons ahead of the moves", () => {
-    expect(keys(posOrderActions({ invoices: [] }, "CONFIRMED", both))).toEqual([
-      "createInvoice",
-      "handOver",
-      "readyForPickup",
-      "switchToDelivery",
-      "shipByCarrier",
-    ]);
+    expect(
+      keys(posOrderActions({ invoices: [], fulfillPathLocked: false }, "CONFIRMED", both)),
+    ).toEqual(["createInvoice", "handOver", "readyForPickup", "switchToDelivery", "shipByCarrier"]);
   });
 });
 

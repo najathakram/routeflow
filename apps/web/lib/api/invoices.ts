@@ -149,6 +149,8 @@ export interface InvoicePayment {
   imageKey?: string | null;
   imageOriginalName?: string | null;
   imageMimeType?: string | null;
+  /** W-769: an unconfirmed row that real money displaced (derived by the api, one predicate). */
+  noLongerFits?: boolean;
 }
 
 export interface Invoice {

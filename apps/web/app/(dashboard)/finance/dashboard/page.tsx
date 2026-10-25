@@ -166,19 +166,19 @@ function DonutChart({ data }: { data: Array<{ name: string; amount: number }> })
 
 export default function FinanceDashboardPage() {
   const { setTitle } = usePageTitle();
-  // Keep the header title in sync with the visible <h1> ("Finance Overview").
+  // Keep the header title in sync with the visible <h1> ("Finance overview").
   React.useEffect(() => {
-    setTitle("Finance Overview");
+    setTitle("Finance overview");
   }, [setTitle]);
   const router = useRouter();
   const { data, isLoading, refetch } = useFinanceDashboard();
 
   const summaryRows = [
     { label: "Today", key: "today" as const },
-    { label: "This Week", key: "thisWeek" as const },
-    { label: "This Month", key: "thisMonth" as const },
-    { label: "This Quarter", key: "thisQuarter" as const },
-    { label: "This Year", key: "thisYear" as const },
+    { label: "This week", key: "thisWeek" as const },
+    { label: "This month", key: "thisMonth" as const },
+    { label: "This quarter", key: "thisQuarter" as const },
+    { label: "This year", key: "thisYear" as const },
   ];
 
   if (isLoading) {
@@ -216,7 +216,7 @@ export default function FinanceDashboardPage() {
       {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
         <div className="shrink">
-          <h2 className="text-2xl font-bold text-navy">Finance Overview</h2>
+          <h2 className="text-2xl font-bold text-navy">Finance overview</h2>
           <p className="mt-1 text-sm text-navy/70">
             One finance home, AR position, aging and collections.
           </p>
@@ -251,7 +251,7 @@ export default function FinanceDashboardPage() {
         </div>
         <div className="rounded-card border border-success/40 bg-paper p-4 shadow-card ring-2 ring-success/10">
           <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-500">
-            Collected, This Week
+            Collected this week
           </p>
           <p className="mt-1.5 font-mono tabular-nums text-2xl font-semibold tracking-[-0.02em] text-navy">
             {fmt(collectedThisWeek)}
@@ -260,7 +260,7 @@ export default function FinanceDashboardPage() {
         </div>
         <div className="rounded-card border border-line bg-paper p-4 shadow-card">
           <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-500">
-            Collected, This Month
+            Collected this month
           </p>
           <p className="mt-1.5 font-mono tabular-nums text-2xl font-semibold tracking-[-0.02em] text-navy">
             {fmt(table?.thisMonth?.receipts ?? 0)}
@@ -392,12 +392,12 @@ export default function FinanceDashboardPage() {
           <div className="flex items-start justify-between border-b border-surface-border px-5 py-3.5">
             <div>
               <h3 className="text-base font-semibold text-navy">Sales and Expenses</h3>
-              <p className="text-xs text-navy/70">This Fiscal Year</p>
+              <p className="text-xs text-navy/70">This fiscal year</p>
             </div>
             <div className="flex gap-4 text-xs">
               <div className="flex items-center gap-1.5">
                 <span className="h-2.5 w-2.5 rounded-sm bg-navy/80" />
-                <span className="text-navy/70">Total Sales</span>
+                <span className="text-navy/70">Total sales</span>
                 <span className="font-mono tabular-nums font-semibold text-navy">
                   {fmt(sales?.totalSales ?? 0)}
                 </span>
@@ -428,7 +428,7 @@ export default function FinanceDashboardPage() {
           <div className="flex items-center justify-between border-b border-surface-border px-5 py-3.5">
             <div>
               <h3 className="text-base font-semibold text-navy">Top Expenses</h3>
-              <p className="text-xs text-navy/70">This Year</p>
+              <p className="text-xs text-navy/70">This year</p>
             </div>
             <Link
               href="/vendor-bills"

@@ -62,12 +62,16 @@ describe("SettingsHub regroup", () => {
     expect(screen.getAllByText("Invoicing").length).toBeGreaterThan(0);
   });
 
-  it("lists Selling restrictions under both Selling & pricing and Compliance", () => {
+  // Owner 10-07 OK-2: the duplicate Selling restrictions link is gone; it lives under Selling & pricing only.
+  it("lists Selling restrictions once, under Selling & pricing (OK-2)", () => {
     renderWithProviders(<SettingsHub isAdmin />);
-    for (const t of ["Selling & pricing", "Compliance"]) {
-      const link = within(section(t)).getByRole("link", { name: /selling restrictions/i });
-      expect(link).toHaveAttribute("href", "/settings/restrictions");
-    }
+    const link = within(section("Selling & pricing")).getByRole("link", {
+      name: /selling restrictions/i,
+    });
+    expect(link).toHaveAttribute("href", "/settings/restrictions");
+    expect(
+      within(section("Compliance")).queryByRole("link", { name: /selling restrictions/i }),
+    ).toBeNull();
   });
 
   it("(C h) links the rules page as Portal limits & rules from both groups", () => {
@@ -78,14 +82,12 @@ describe("SettingsHub regroup", () => {
     }
   });
 
-  it("operators see Selling restrictions in both groups (read-only page)", () => {
+  it("operators see Selling restrictions under Selling & pricing (read-only page)", () => {
     renderWithProviders(<SettingsHub isAdmin={false} />);
-    for (const t of ["Selling & pricing", "Compliance"]) {
-      const hrefs = within(section(t))
-        .getAllByRole("link")
-        .map((l) => l.getAttribute("href"));
-      expect(hrefs).toContain("/settings/restrictions");
-    }
+    const hrefs = within(section("Selling & pricing"))
+      .getAllByRole("link")
+      .map((l) => l.getAttribute("href"));
+    expect(hrefs).toContain("/settings/restrictions");
   });
 
   it("operators find it by search", () => {
@@ -309,13 +311,13 @@ describe("SettingsHub search speaks the user's words", () => {
     ).toBe(false);
   });
 
-  it("9: a miss says so, and Clear Search restores the hub and focuses the input", () => {
+  it("9: a miss says so, and Clear search restores the hub and focuses the input", () => {
     renderWithProviders(<SettingsHub isAdmin />);
     search("zzzzqq");
     expect(screen.getByText("No settings match “zzzzqq”.")).toBeInTheDocument();
     expect(screen.getByText("Try another word, or browse all settings.")).toBeInTheDocument();
     expect(screen.queryByText("route-defaults-card")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Clear Search" }));
+    fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
     const input = screen.getByLabelText("Search settings") as HTMLInputElement;
     expect(input.value).toBe("");
     expect(input).toHaveFocus();

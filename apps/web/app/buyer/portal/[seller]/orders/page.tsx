@@ -149,7 +149,7 @@ export default function BuyerOrdersPage() {
           { label: "All", value: "" },
           { label: "Active", value: "PENDING" },
           { label: "Confirmed", value: "CONFIRMED" },
-          { label: "Out for Delivery", value: "OUT_FOR_DELIVERY" },
+          { label: "Out for delivery", value: "OUT_FOR_DELIVERY" },
           { label: "Delivered", value: "DELIVERED" },
           { label: "Cancelled", value: "CANCELLED" },
         ]

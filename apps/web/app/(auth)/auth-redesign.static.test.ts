@@ -297,14 +297,14 @@ describe("success/done blocks carry rf-auth-success — T2i (R13)", () => {
 // ---------------------------------------------------------------------------
 
 const D1_PAGES_WITH_STATES: Array<{ path: string; states: string[] }> = [
-  { path: "app/buyer/invite/[token]/page.tsx", states: ["Invalid Invite", "Invite Accepted!"] },
+  { path: "app/buyer/invite/[token]/page.tsx", states: ["Invalid invite", "Invite accepted"] },
   {
     path: "app/verify-email/page.tsx",
     states: ["Verifying your email…", "Email verified!", "Verification failed"],
   },
   {
     path: "app/buyer/verify-merge/page.tsx",
-    states: ["Verifying...", "Account Verified!", "Verification Failed"],
+    states: ["Verifying…", "Account verified", "Verification failed"],
   },
   // Both reset-password pages' only state string the ruling pins exactly is
   // the fenced valid-state heading (D2); the invalid-token heading was never

@@ -69,7 +69,7 @@ export function SetCostModal({ item, onClose }: { item: CostBasisTarget; onClose
       open
       onClose={onClose}
       title={`Set cost basis — ${item.name}`}
-      description="Manually sets the average cost. Recorded as an audited COST_BASIS movement; future purchases keep updating the average from here."
+      description="Manually sets the average cost. This is recorded as an audited cost-basis adjustment; future purchases keep updating the average from here."
     >
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
@@ -113,7 +113,7 @@ export function SetCostModal({ item, onClose }: { item: CostBasisTarget; onClose
             Cancel
           </Button>
           <Button type="submit" loading={setCostBasis.isPending}>
-            Set Cost
+            Set cost
           </Button>
         </div>
       </form>

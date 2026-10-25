@@ -583,7 +583,8 @@ export function StatementReviewGrid({ result, onApplied }: Props) {
           <CheckCircle2 className="h-4 w-4 text-success" />
           <h3 className="text-sm font-semibold text-navy">Matched</h3>
           <span className="text-xs text-navy/50">
-            {preCheckedMatches.length} line(s) — exact reference and amount
+            {preCheckedMatches.length} {preCheckedMatches.length === 1 ? "line" : "lines"} — exact
+            reference and amount
           </span>
         </div>
         {preCheckedMatches.length === 0 ? (
@@ -662,7 +663,9 @@ export function StatementReviewGrid({ result, onApplied }: Props) {
         <div className="mb-3 flex items-center gap-2">
           <HelpCircle className="h-4 w-4 text-amber-600" />
           <h3 className="text-sm font-semibold text-navy">Needs a look</h3>
-          <span className="text-xs text-navy/50">{needsLookMatches.length} line(s)</span>
+          <span className="text-xs text-navy/50">
+            {needsLookMatches.length} {needsLookMatches.length === 1 ? "line" : "lines"}
+          </span>
         </div>
         {needsLookMatches.length === 0 ? (
           <p className="text-sm italic text-navy/50">Nothing flagged.</p>
@@ -769,7 +772,8 @@ export function StatementReviewGrid({ result, onApplied }: Props) {
           <FileQuestion className="h-4 w-4 text-navy/50" />
           <h3 className="text-sm font-semibold text-navy">Unmatched statement lines</h3>
           <span className="text-xs text-navy/50">
-            {unmatchedLines.length} line(s) — we have no matching bill
+            {unmatchedLines.length} {unmatchedLines.length === 1 ? "line" : "lines"} — we have no
+            matching bill
           </span>
         </div>
         {unmatchedLines.length === 0 ? (
@@ -822,7 +826,8 @@ export function StatementReviewGrid({ result, onApplied }: Props) {
           <FileStack className="h-4 w-4 text-navy/50" />
           <h3 className="text-sm font-semibold text-navy">Unmatched local bills</h3>
           <span className="text-xs text-navy/50">
-            {unmatchedLocalBills.length} bill(s) the statement never mentions
+            {unmatchedLocalBills.length} {unmatchedLocalBills.length === 1 ? "bill" : "bills"} the
+            statement never mentions
           </span>
         </div>
         {unmatchedLocalBills.length === 0 ? (
@@ -892,7 +897,8 @@ export function StatementReviewGrid({ result, onApplied }: Props) {
           </label>
           {impliedPaidArmed && (
             <p className="mt-1 text-xs font-medium text-success">
-              Included — will mark {impliedPaidBills.length} bill(s) paid when you Apply below.
+              Included — will mark {impliedPaidBills.length}{" "}
+              {impliedPaidBills.length === 1 ? "bill" : "bills"} paid when you Apply below.
             </p>
           )}
         </Card>
@@ -915,11 +921,14 @@ export function StatementReviewGrid({ result, onApplied }: Props) {
           </div>
           <div className="shrink-0 text-right">
             <p className="text-sm text-navy/70">
-              {includedEntries.length} bill(s) — {fmt(confirmedTotal)}
+              {includedEntries.length} {includedEntries.length === 1 ? "bill" : "bills"} —{" "}
+              {fmt(confirmedTotal)}
               {impliedPaidArmed && impliedPaidBills.length > 0 && (
                 <>
                   {" "}
-                  + {impliedPaidBills.length} older bill(s) marked paid ({fmt(impliedPaidTotal)})
+                  + {impliedPaidBills.length} older{" "}
+                  {impliedPaidBills.length === 1 ? "bill" : "bills"} marked paid (
+                  {fmt(impliedPaidTotal)})
                 </>
               )}
             </p>
@@ -972,7 +981,9 @@ function ImpliedPaidConfirmOverlay({
       <div className="flex max-h-[85vh] w-full max-w-lg flex-col overflow-hidden rounded-xl bg-white shadow-2xl">
         <div className="flex items-center gap-2 border-b border-surface-border px-6 py-4">
           <ShieldAlert className="h-5 w-5 text-danger" />
-          <h2 className="text-base font-semibold text-navy">Mark {bills.length} bill(s) paid?</h2>
+          <h2 className="text-base font-semibold text-navy">
+            Mark {bills.length} {bills.length === 1 ? "bill" : "bills"} paid?
+          </h2>
         </div>
         <div className="flex-1 overflow-y-auto px-6 py-4">
           <p className="text-sm text-navy/80">
@@ -1007,7 +1018,7 @@ function ImpliedPaidConfirmOverlay({
             Cancel
           </Button>
           <Button variant="danger" onClick={onConfirm}>
-            Confirm — mark {bills.length} bill(s) paid
+            Confirm — mark {bills.length} {bills.length === 1 ? "bill" : "bills"} paid
           </Button>
         </div>
       </div>

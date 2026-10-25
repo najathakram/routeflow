@@ -51,7 +51,7 @@ export default function ProductPage() {
   return (
     <div className="glass-page">
       <section className="page-hero centered wrap">
-        <Eyebrow>CONNECTED OPERATIONS. AI INVOICE SCANNING.</Eyebrow>
+        <Eyebrow>Connected operations. AI invoice scanning.</Eyebrow>
         <h1>
           Orders. Deliveries. Accounts. <br />
           <em>Finally, connected.</em>
@@ -73,7 +73,7 @@ export default function ProductPage() {
       <section className="section surface">
         <div className="wrap">
           <div className="section-heading">
-            <Eyebrow>THE FEATURES BEHIND THE FLOW</Eyebrow>
+            <Eyebrow>The features behind the flow</Eyebrow>
             <h2>
               Every part of the operation.
               <br />
@@ -85,7 +85,7 @@ export default function ProductPage() {
       </section>
       <section className="section wrap connected-section">
         <div>
-          <Eyebrow>KEEP YOUR TEAM CONNECTED</Eyebrow>
+          <Eyebrow>Keep your team connected</Eyebrow>
           <h2>
             Shared context.
             <br />
@@ -124,7 +124,7 @@ export default function ProductPage() {
       <section className="section wrap">
         <div className="split-panel">
           <div>
-            <Eyebrow>WHOLESALE DETAILS</Eyebrow>
+            <Eyebrow>Wholesale details</Eyebrow>
             <h2>
               Handle repeat orders
               <br />

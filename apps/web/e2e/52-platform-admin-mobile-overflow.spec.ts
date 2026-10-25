@@ -195,7 +195,7 @@ for (const vp of VIEWPORTS) {
       // never clicks into these. Click each and re-assert, proving the fix
       // holds under the exact interaction that exposed the bug.
       const tabs = [
-        { name: "Billing & Subscription", shot: "tenant-detail-billing" },
+        { name: "Billing & subscription", shot: "tenant-detail-billing" },
         { name: "Setup", shot: "tenant-detail-addons" },
         { name: "Configuration", shot: "tenant-detail-config" },
         { name: "Audit Log", shot: "tenant-detail-audit" },

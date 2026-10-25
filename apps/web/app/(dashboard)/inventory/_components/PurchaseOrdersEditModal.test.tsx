@@ -104,7 +104,7 @@ describe("prefill", () => {
     renderModal(draft());
     expect(screen.getByText("Edit PO-2026-0001")).toBeInTheDocument();
     expect(screen.getByLabelText("Supplier")).toHaveValue("s1");
-    expect(screen.getByLabelText("Expected Date")).toHaveValue("2026-10-01");
+    expect(screen.getByLabelText("Expected date")).toHaveValue("2026-10-01");
     expect(screen.getByLabelText("Notes")).toHaveValue("Dock 3");
     expect(screen.getByLabelText("Quantity")).toHaveValue(10);
     expect(screen.getByLabelText(COST_PER_PIECE)).toHaveValue(3);

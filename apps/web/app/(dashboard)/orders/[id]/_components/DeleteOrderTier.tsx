@@ -55,7 +55,7 @@ export function DeleteOrderTier({
               });
             }}
           >
-            Confirm Delete
+            Confirm delete
           </Button>
           <button
             onClick={() => setOpen(false)}
