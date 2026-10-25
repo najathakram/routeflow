@@ -78,6 +78,7 @@ import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { bumpInvoiceLine, scanLevelForHit, seedLineQty } from "../invoice-scan-level";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { fmt, fmtCalendarDate } from "@/lib/formatting";
+import { useTenantToday } from "@/lib/tenant-timezone";
 import { getDaysForTerms, addDaysIso } from "@/lib/invoice-terms";
 import {
   computeInvoiceLineTotal,
@@ -839,7 +840,15 @@ export default function NewInvoicePage() {
   // delivered semantics (deliveredAt = that date, backdated when before today);
   // future ⇒ scheduled deliver-later with that requested date. Defaults to today,
   // same as the "Yes, delivered today" starting state.
+  // Row 750: "today" for this picker is the TENANT's day (the server judges it there); the browser's day only stands in
+  // while the zone loads, and the default is re-seeded once it arrives if nobody has picked a date yet.
+  const tenantToday = useTenantToday();
+  const saleToday = tenantToday ?? todayIso();
   const [deliveredOn, setDeliveredOn] = React.useState(todayIso());
+  const deliveredOnPicked = React.useRef(false);
+  React.useEffect(() => {
+    if (tenantToday && !deliveredOnPicked.current) setDeliveredOn(tenantToday);
+  }, [tenantToday]);
 
   // Track the draft id we've previewed so subsequent "Preview" clicks update
   // the same draft instead of creating a new one each time.
@@ -1292,7 +1301,8 @@ export default function NewInvoicePage() {
       setTermsText(s.termsText);
       setNotes(s.notes);
       setDeliveredNow(s.deliveredNow);
-      setDeliveredOn(s.deliveredOn || todayIso());
+      deliveredOnPicked.current = true; // a restored draft keeps its own date
+      setDeliveredOn(s.deliveredOn || saleToday);
       setDepositOpen(s.depositOpen);
       setDepositPercent(s.depositPercent);
       setDepositDueDate(s.depositDueDate);
@@ -2163,9 +2173,9 @@ export default function NewInvoicePage() {
             <div>
               <p className="text-sm font-semibold text-navy">Going out today?</p>
               <p className="text-sm text-navy/70">
-                {deliveredOn > todayIso()
+                {deliveredOn > saleToday
                   ? `Scheduled — the order is created and delivers on ${fmtCalendarDate(deliveredOn)}.`
-                  : deliveredOn === todayIso()
+                  : deliveredOn === saleToday
                     ? "Delivered today — the order is marked delivered and the invoice is issued now."
                     : `Delivered — the order is marked delivered on ${fmtCalendarDate(deliveredOn)} and the invoice is issued now.`}
               </p>
@@ -2175,7 +2185,8 @@ export default function NewInvoicePage() {
                 type="button"
                 onClick={() => {
                   setDeliveredNow(true);
-                  setDeliveredOn(todayIso());
+                  deliveredOnPicked.current = true;
+                  setDeliveredOn(saleToday);
                 }}
                 className={cn(
                   "flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-medium transition-colors",
@@ -2192,7 +2203,8 @@ export default function NewInvoicePage() {
                   setDeliveredNow(false);
                   // Deliver-later defaults to tomorrow, but only if the field isn't
                   // already scheduled in the future — don't clobber a chosen date.
-                  setDeliveredOn((prev) => (prev > todayIso() ? prev : addDaysIso(todayIso(), 1)));
+                  setDeliveredOn((prev) => (prev > saleToday ? prev : addDaysIso(saleToday, 1)));
+                  deliveredOnPicked.current = true;
                 }}
                 className={cn(
                   "flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-medium transition-colors",
@@ -2217,8 +2229,9 @@ export default function NewInvoicePage() {
                     // deliver-later, and stepping it back to today/the past switches
                     // back to delivered (possibly backdated) — the two buttons above
                     // just reflect this, they don't independently gate it.
+                    deliveredOnPicked.current = true;
                     setDeliveredOn(value);
-                    setDeliveredNow(value <= todayIso());
+                    setDeliveredNow(value <= saleToday);
                   }}
                   className="h-9 w-32 rounded-lg border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
                 />
