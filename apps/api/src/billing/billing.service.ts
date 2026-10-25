@@ -26,6 +26,7 @@ import {
   dunningEmailsFor,
   paymentReinstatable,
   paymentReinstatableWhere,
+  OVERDUE_SUSPENDED_REASON,
   STRIPE_CANCELLED_REASON,
 } from "./dunning-config";
 import { adminLockedRefusal } from "./admin-lock-refusal";
@@ -3454,6 +3455,7 @@ ${updateLine}
             -1,
             BILLING_EVENTS.SUBSCRIPTION_SUSPENDED,
             { source: "stripe", reason: "overdue_payment", stripeStatus: stripeSub.status },
+            { data: { readOnlyReason: OVERDUE_SUSPENDED_REASON } }, // W-664: a billing lock names itself
           );
           if (suspended) {
             this.tenantStatusGuard.invalidate(sub.tenantId);
