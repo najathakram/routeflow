@@ -79,7 +79,6 @@ import {
 import {
   labelIdForText,
   labelNameKey,
-  LabelLockTimeoutError,
   lockLabelCategories,
   syncCategoryLabel,
 } from "../product-categories/label-writer";
@@ -1705,9 +1704,16 @@ export class ProductsService {
       return row;
     });
     // H2: a reparent's deadlock / write conflict (40P01, 40001, P2034 in any shape: the shared L-221 predicate) is the
-    // retryable coded 409, never a raw 500. Nothing was saved (the transaction rolled back).
+    // retryable coded 409, never a raw 500. Nothing was saved (the transaction rolled back). A label-lock conflict has
+    // already surfaced as LabelLockTimeoutError (an HttpException, so not matched here); what reaches this branch lost a
+    // product row race, and says so (Row 519), not "label change in progress".
     const updated = await txDone.catch((e: unknown): never => {
-      if (reparenting && txConflictState(e)) throw new LabelLockTimeoutError();
+      if (reparenting && txConflictState(e)) {
+        throw new ConflictException({
+          code: API_ERROR_CODES.PRODUCT_CHANGED_CONCURRENTLY,
+          message: "This product changed while you were saving it. Reload it and try again.",
+        });
+      }
       throw e;
     });
     // suppressEmit lets a caller that loops this method (bulkAssignParent) emit
