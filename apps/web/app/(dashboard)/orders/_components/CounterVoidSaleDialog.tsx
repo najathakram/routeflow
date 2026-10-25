@@ -193,7 +193,7 @@ export function CounterVoidSaleAction({
 }) {
   const role = useOptionalAuth()?.user?.role;
   const gate = useReadOnlyGate();
-  if (!staffMay(role, "VOID_SALE")) return null;
+  if (!staffMay(role, "VOID_SALE", [])) return null;
   // CQ-34: a void is refused by a READ_ONLY workspace, so the control is off up front (visible, never hidden) and points at
   // the sheet's one read-only line; the dialog never opens and no reason is asked for first.
   return (
@@ -218,7 +218,7 @@ export function CounterVoidSaleAction({
 export function TodaysSalesReadOnlyLine({ className }: { className?: string }) {
   const role = useOptionalAuth()?.user?.role;
   const gate = useReadOnlyGate();
-  if (!gate.readOnly || !gate.line || !staffMay(role, "VOID_SALE")) return null;
+  if (!gate.readOnly || !gate.line || !staffMay(role, "VOID_SALE", [])) return null;
   return (
     <p
       id={`${gate.hintId}-today`}

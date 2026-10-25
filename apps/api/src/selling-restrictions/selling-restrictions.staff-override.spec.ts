@@ -187,6 +187,15 @@ describe("SellingRestrictionsService: a STAFF write of a restricted product (row
       }
     });
 
+    it("an OPERATOR token with no sub fails closed: all groups denied, hard-blocked, never looked up", async () => {
+      const noSub = { role: "OPERATOR" } as SellableLinesParams["principal"];
+      const ack = await ackFor(OPERATOR);
+      mock.user.findFirst.mockClear();
+      const e = await reject(args({ principal: noSub, ack }));
+      expect((e.getResponse() as any).code).toBe("SELLING_RESTRICTED");
+      expect(mock.user.findFirst).not.toHaveBeenCalled();
+    });
+
     it("a TENANT_ADMIN ignores denials and is never looked up", async () => {
       const admin = { role: "TENANT_ADMIN", sub: "ad-1" };
       deny(["ORDERS"]);

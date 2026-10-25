@@ -7,11 +7,7 @@ import { LockTimeoutError, LockUnavailableError, withAdvisoryLock } from "../../
 import { retryStockTx, txConflictState } from "../../common/tx-retry";
 import { tenantTimeZone } from "../../common/tenant-time-zone";
 import type { JwtPayload } from "../../auth/jwt-payload.interface";
-import {
-  COUNTER_VOID_WINDOW,
-  staffMay,
-  voidWindowAllows,
-} from "../../auth/permissions/staff-capabilities";
+import { COUNTER_VOID_WINDOW, voidWindowAllows } from "../../auth/permissions/staff-capabilities";
 import { AUDIT_ACTIONS } from "../../audit/audit-actions.constant";
 import { RouteFlowGateway } from "../../gateways/routeflow.gateway";
 import { counterPay } from "../../invoices/counter-payment-guard";
@@ -20,7 +16,7 @@ import { InvoicesService } from "../../invoices/invoices.service";
 import { PrismaService } from "../../prisma/prisma.service";
 import { clearUnevidencedDelivered, unevidencedDeliveredFloor } from "../delivered-stamp";
 import { lockOrderAndInvoicesInTx } from "../order-cancel-impact";
-import { operatorDeniedGroups } from "./till-permission.guard";
+import { assertStaffMay } from "./till-permission.guard";
 import { OrdersService } from "../orders.service";
 import { saleVoidedConflict, storedSaleState } from "../sale-replay-guard";
 import type { CounterSaleVoidDto } from "./counter-sale-void.dto";
@@ -81,9 +77,7 @@ export class CounterSaleVoidService {
       throw new ForbiddenException("Voiding a counter sale requires a tenant-scoped session");
     }
     // W-870: an OPERATOR's denied groups are read live, like the till guard (an admin who switched ORDERS off).
-    if (!staffMay(user.role, "VOID_SALE", await operatorDeniedGroups(this.prisma, user))) {
-      throw new ForbiddenException("You are not allowed to void a sale");
-    }
+    await assertStaffMay(this.prisma, user, "VOID_SALE");
     // A tenant-scoped read BEFORE any lock: another tenant's id (or an ordinary order) is a plain 404 and never
     // takes a lock. The same checks run again under the lock below.
     const known = await this.prisma.forTenant().order.findFirst({

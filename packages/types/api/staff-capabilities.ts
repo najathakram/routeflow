@@ -42,13 +42,13 @@ export const STAFF_CAPABILITY_RULES: Record<StaffCapability, StaffCapabilityRule
 
 /**
  * May `role` do `action`? Pure. TENANT_ADMIN and SUPER_ADMIN ignore `deniedGroups`; an OPERATOR is refused
- * when the action's group is denied. Every call site passes no `deniedGroups` today (shadow: no visible
- * change); perms PR7 passes the caller's effective denials, one argument per call site.
+ * when the action's group is denied. `deniedGroups` is required (no default), as in the API: a display-only
+ * caller (the server enforces) passes `[]` explicitly, so the choice is visible at the call site.
  */
 export function staffMay(
   role: string | null | undefined,
   action: StaffCapability,
-  deniedGroups: readonly string[] = [],
+  deniedGroups: readonly string[],
 ): boolean {
   const rule = STAFF_CAPABILITY_RULES[action];
   if (!role || !(rule.roles as readonly string[]).includes(role)) return false;
