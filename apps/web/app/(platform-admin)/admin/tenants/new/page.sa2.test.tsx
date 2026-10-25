@@ -4,7 +4,7 @@ import AdminCreateTenantPage from "./page";
 import { superAdminClient } from "@/lib/admin-api";
 import { CAPABILITY_PRESETS_FIXTURE } from "../[id]/_features/__fixtures__/capabilities.fixtures";
 
-// SA-2: the Create Tenant page — Plan and start, capability choices (BO-05), Free add-ons, the review sheet,
+// SA-2: the Create tenant page — Plan and start, capability choices (BO-05), Free add-ons, the review sheet,
 // the create chain (tenant -> activate -> capabilities -> add-ons) and the result banner that scrolls and takes focus.
 
 jest.mock("@/lib/admin-api", () => ({
@@ -113,7 +113,7 @@ async function openSheet() {
 }
 async function createThroughSheet() {
   const dialog = await openSheet();
-  fireEvent.click(within(dialog).getByRole("button", { name: "Create Tenant" }));
+  fireEvent.click(within(dialog).getByRole("button", { name: "Create tenant" }));
 }
 const fmt = (d: Date) =>
   d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
@@ -218,7 +218,7 @@ describe("SA-2 capability choices", () => {
     expect(screen.getByRole("group", { name: "What this business does" })).toBeInTheDocument();
     fillForm();
     await createThroughSheet();
-    await screen.findByText("Tenant created successfully!");
+    await screen.findByText("Tenant created");
     expect(urls()).toEqual(["/platform-admin/tenants"]);
     expect(mockPreviewProfile).not.toHaveBeenCalled();
     expect(mockApplyProfile).not.toHaveBeenCalled();
@@ -283,7 +283,7 @@ describe("SA-2 Free add-ons", () => {
     fillForm();
     const dialog = await openSheet();
     expect(within(dialog).getByTestId("sheet-addons")).toHaveTextContent("Receipt scanning");
-    fireEvent.click(within(dialog).getByRole("button", { name: "Create Tenant" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create tenant" }));
     await waitFor(() => expect(urls()).toContain("/platform-admin/tenants/t1/addons/enable"));
     expect(bodyOf("/platform-admin/tenants/t1/addons/enable")).toEqual({
       addonKey: "ocr",
@@ -297,7 +297,7 @@ describe("SA-2 Free add-ons", () => {
     expect(await screen.findByText(/Free add-ons could not be loaded/)).toBeInTheDocument();
     fillForm();
     await createThroughSheet();
-    await screen.findByText("Tenant created successfully!");
+    await screen.findByText("Tenant created");
   });
 });
 
@@ -324,7 +324,7 @@ describe("SA-2 review sheet", () => {
     expect(post).not.toHaveBeenCalled();
     // and the sheet's Create sends exactly one create
     await createThroughSheet();
-    await screen.findByText("Tenant created successfully!");
+    await screen.findByText("Tenant created");
     expect(urls().filter((u) => u === "/platform-admin/tenants")).toHaveLength(1);
   });
 
@@ -333,7 +333,7 @@ describe("SA-2 review sheet", () => {
     fillForm();
     const dialog = await openSheet();
     await waitFor(() =>
-      expect(within(dialog).getByRole("button", { name: "Create Tenant" })).toHaveFocus(),
+      expect(within(dialog).getByRole("button", { name: "Create tenant" })).toHaveFocus(),
     );
   });
 
@@ -530,7 +530,7 @@ describe("SA-2 chain and partial failure", () => {
     expect(btn).toBeDisabled();
     expect(screen.getByLabelText(/slug/i)).toBeDisabled();
     release({ data: { id: "t1", slug: "acme" } });
-    await screen.findByText("Tenant created successfully!");
+    await screen.findByText("Tenant created");
   });
 });
 

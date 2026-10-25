@@ -31,7 +31,7 @@ export default function WholesalersPage() {
       <section className="distributor-hero">
         <div className="wrap split-hero">
           <div>
-            <Eyebrow>FOR WHOLESALERS & DISTRIBUTORS</Eyebrow>
+            <Eyebrow>For wholesalers & distributors</Eyebrow>
             <h1>
               One order, priced right, <br />
               on the right <em>truck, invoiced automatically.</em>
@@ -54,7 +54,7 @@ export default function WholesalersPage() {
       <section className="section wrap">
         <div className="section-heading split-heading">
           <div>
-            <Eyebrow>THE PART SPREADSHEETS GET WRONG</Eyebrow>
+            <Eyebrow>The part spreadsheets get wrong</Eyebrow>
             <h2>
               Pricing and payment,
               <br />
@@ -71,7 +71,7 @@ export default function WholesalersPage() {
       <section className="section surface">
         <div className="wrap">
           <div className="section-heading">
-            <Eyebrow>SEE YOUR WORKFLOW IN ROUTEFLOW</Eyebrow>
+            <Eyebrow>See your workflow in RouteFlow</Eyebrow>
             <h2>
               Follow an order
               <br />

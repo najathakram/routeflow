@@ -30,7 +30,7 @@ function getPresets(): DatePreset[] {
     { label: "This Month", from: fmt(new Date(y, m, 1)), to: fmt(new Date(y, m + 1, 0)) },
     { label: "Last Month", from: fmt(new Date(y, m - 1, 1)), to: fmt(new Date(y, m, 0)) },
     {
-      label: "This Quarter",
+      label: "This quarter",
       from: fmt(new Date(y, Math.floor(m / 3) * 3, 1)),
       to: fmt(new Date(y, Math.floor(m / 3) * 3 + 3, 0)),
     },

@@ -35,7 +35,7 @@ describe("inventory ?tab= deep links", () => {
   });
 
   it("lists Purchase Orders as a link tab to the route, not a panel", () => {
-    const po = INVENTORY_TABS.find((t) => t.label === "Purchase Orders");
+    const po = INVENTORY_TABS.find((t) => t.label === "Purchase orders");
     expect(po?.href).toBe("/purchase-orders");
   });
 });

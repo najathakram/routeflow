@@ -19,12 +19,12 @@ test("sales-agents surfaces follow the addon flag", async ({ page }) => {
 
   const nav = page.getByRole("navigation");
   if (!enabled) {
-    await expect(nav.getByText("Sales Agents")).toHaveCount(0);
+    await expect(nav.getByText("Sales agents")).toHaveCount(0);
     // Deep-link renders the locked card, not a crash or a toast storm.
     await page.goto("/sales-agents");
     await expect(page.getByText(/isn't enabled for this workspace/i)).toBeVisible();
   } else {
-    await expect(nav.getByText("Sales Agents")).toBeVisible();
+    await expect(nav.getByText("Sales agents")).toBeVisible();
     await page.goto("/sales-agents");
     await expect(page.getByRole("button", { name: /add agent/i })).toBeVisible();
     await page.goto("/finance/commissions");

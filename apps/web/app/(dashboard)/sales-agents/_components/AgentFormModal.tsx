@@ -81,7 +81,7 @@ export function AgentFormModal({ isOpen, onClose, onCreated }: AgentFormModalPro
     <Modal
       open={isOpen}
       onClose={onClose}
-      title="Add Sales Agent"
+      title="Add sales agent"
       description="Create an agent to attribute customers and commissions to."
       footer={
         <>

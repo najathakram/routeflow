@@ -79,7 +79,7 @@ jest.mock("@routeflow/ui/web", () => ({
  *  Balance Due, e.g. both "$0.00" or both the invoice total) never produces a
  *  false pass OR a spurious multi-match failure. */
 function balanceDueText(): string | null {
-  const label = screen.getByText("Balance Due");
+  const label = screen.getByText("Balance due");
   const card = label.closest(".rounded-xl");
   return card?.querySelector("p")?.textContent ?? null;
 }

@@ -105,7 +105,7 @@ export function OrderLineItemCards({
       )}
 
       <div className="flex items-center justify-between border-t-2 border-surface-border px-6 py-3">
-        <span className="text-sm font-semibold text-navy">Order Total</span>
+        <span className="text-sm font-semibold text-navy">Order total</span>
         <span className="money text-[15px] font-semibold text-navy">{formatMoney(total)}</span>
       </div>
     </div>

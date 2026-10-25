@@ -42,7 +42,7 @@ export default function RecurringInvoicesPage() {
   const router = useRouter();
 
   React.useEffect(() => {
-    setTitle("Recurring Invoices");
+    setTitle("Recurring invoices");
   }, [setTitle]);
 
   const { data: recurringList, isLoading } = useRecurringInvoices();
@@ -95,17 +95,17 @@ export default function RecurringInvoicesPage() {
       {/* Header */}
       <div className="flex items-center justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-bold text-navy">Recurring Invoices</h2>
+          <h2 className="text-2xl font-bold text-navy">Recurring invoices</h2>
           <p className="mt-1 text-sm text-navy/70">
             Automatically generate invoices on a schedule.
           </p>
         </div>
         <div className="flex items-center gap-2">
           <Button variant="secondary" href="/invoices">
-            All Invoices
+            All invoices
           </Button>
           <Button leftIcon={<Plus className="h-4 w-4" />} href="/invoices/recurring/new">
-            New Template
+            New template
           </Button>
         </div>
       </div>
@@ -123,7 +123,7 @@ export default function RecurringInvoicesPage() {
               Create a template to automatically generate invoices on a schedule.
             </p>
             <Button leftIcon={<Plus className="h-4 w-4" />} href="/invoices/recurring/new">
-              Create First Template
+              Create first template
             </Button>
           </div>
         </Card>
@@ -204,7 +204,7 @@ export default function RecurringInvoicesPage() {
                   loading={runNow.isPending}
                   className="flex-1"
                 >
-                  Run Now
+                  Run now
                 </Button>
                 <Button
                   size="sm"

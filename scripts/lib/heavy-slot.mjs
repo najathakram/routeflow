@@ -73,6 +73,58 @@ export function parseMaxHoldMs(raw) {
   return parseMinutesMs(raw, DEFAULT_MAX_HOLD_MIN);
 }
 
+// Owner cap (2026-10-25: "keep the CPU usage less than 80% and memory less than 80% too"): a job that
+// is first in line and has a free slot still waits while the MACHINE is above either threshold.
+export const DEFAULT_MAX_LOAD_PCT = 80;
+export const LOAD_SAMPLE_MS = 3_000;
+
+/** RF_HEAVY_SLOT_MAX_CPU_PCT / _MEM_PCT -> a percent in (0, 100], else 80. 100 never blocks (both at 100 skips the ~3 s sample). */
+export function parseLoadPct(raw) {
+  const n = Number(raw);
+  return raw !== undefined && raw !== "" && Number.isFinite(n) && n > 0 && n <= 100
+    ? n
+    : DEFAULT_MAX_LOAD_PCT;
+}
+
+/** Why the machine is too busy to start a heavy job, or null. `load` is { cpuPct, memPct }. */
+export function loadOverReason({ cpuPct, memPct }, { maxCpuPct, maxMemPct }) {
+  if (cpuPct > maxCpuPct) return `cpu ${Math.round(cpuPct)}% > ${maxCpuPct}%`;
+  if (memPct > maxMemPct) return `memory ${Math.round(memPct)}% > ${maxMemPct}%`;
+  return null;
+}
+
+/** Busy share (0-100) between two per-core `{ idle, total }` tick snapshots; no elapsed ticks -> 0. */
+export function cpuPctFromTimes(before, after) {
+  let idle = 0;
+  let total = 0;
+  after.forEach((a, i) => {
+    idle += a.idle - (before[i]?.idle ?? 0);
+    total += a.total - (before[i]?.total ?? 0);
+  });
+  return total > 0 ? Math.round(((total - idle) / total) * 1000) / 10 : 0;
+}
+
+const cpuTicks = (cpus) =>
+  cpus.map((c) => {
+    const t = c.times;
+    return { idle: t.idle, total: t.user + t.nice + t.sys + t.idle + t.irq };
+  });
+
+/** One machine-wide reading: CPU busy share over `sampleMs`, and the used share of memory. Injectable. */
+export async function sampleMachineLoad({
+  cpus = os.cpus,
+  freemem = os.freemem,
+  totalmem = os.totalmem,
+  sleep: wait = (ms) => new Promise((r) => setTimeout(r, ms)),
+  sampleMs = LOAD_SAMPLE_MS,
+} = {}) {
+  const before = cpuTicks(cpus());
+  await wait(sampleMs);
+  const cpuPct = cpuPctFromTimes(before, cpuTicks(cpus()));
+  const total = totalmem();
+  return { cpuPct, memPct: total > 0 ? Math.round(((total - freemem()) / total) * 1000) / 10 : 0 };
+}
+
 /** A (live, heartbeating) holder that has held its slot longer than the hold cap. */
 export function holderOverCap(holder, now, maxHoldMs) {
   return Boolean(holder) && now - holder.startedAt > maxHoldMs;
@@ -537,6 +589,9 @@ function resolveConfig(opts, env) {
     pollMs: opts.pollMs ?? parseMs(env.RF_HEAVY_SLOT_POLL_MS, POLL_MS),
     heartbeatMs: opts.heartbeatMs ?? parseMs(env.RF_HEAVY_SLOT_HEARTBEAT_MS, HEARTBEAT_MS),
     waitLogMs: opts.waitLogMs ?? WAIT_LOG_MS,
+    maxCpuPct: opts.maxCpuPct ?? parseLoadPct(env.RF_HEAVY_SLOT_MAX_CPU_PCT),
+    maxMemPct: opts.maxMemPct ?? parseLoadPct(env.RF_HEAVY_SLOT_MAX_MEM_PCT),
+    sampleLoad: opts.sampleLoad ?? sampleMachineLoad,
     staleMs: opts.staleMs ?? STALE_MS,
     hostname: opts.hostname ?? os.hostname(),
     now: opts.now ?? Date.now,
@@ -616,7 +671,18 @@ async function acquire(cfg, state) {
         myName: name,
         freeSlots: free < 0 ? 0 : 1,
       });
-      if (g.grant) {
+      // Owner cap: first in line with a free slot, but the machine is too busy -> keep waiting. Sampled only
+      // here (sampling takes ~3 s), so a job queued behind another holder costs nothing. A sampler that
+      // throws fails open: the cap is a load guard, never a reason to wedge the queue.
+      let busy = null;
+      if (g.grant && (cfg.maxCpuPct < 100 || cfg.maxMemPct < 100)) {
+        try {
+          busy = loadOverReason(await cfg.sampleLoad(), cfg);
+        } catch {
+          busy = null;
+        }
+      }
+      if (g.grant && !busy) {
         let fd = null;
         try {
           fd = fs.openSync(lockPath(cfg.dir, free), "wx");
@@ -661,7 +727,10 @@ async function acquire(cfg, state) {
           holder,
         );
       }
-      if (now - lastLog >= cfg.waitLogMs) {
+      if (now - lastLog >= cfg.waitLogMs && busy) {
+        cfg.log(`heavy-slot: waiting for the machine to cool (${busy}; first in line, slot free)`);
+        lastLog = now;
+      } else if (now - lastLog >= cfg.waitLogMs) {
         cfg.log(
           formatWaitLine({
             position: g.position,

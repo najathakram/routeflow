@@ -47,6 +47,7 @@ import {
   type RoutePlanningDriverOption,
 } from "@/components/RoutePlanningControls";
 import { RouteVariantsPanel } from "@/components/RouteVariantsPanel";
+import { fmtCalendarDate } from "@/lib/formatting";
 import { TripStopList } from "../_components/TripStopList";
 import { TripSkippedPanel, type TripSkippedRow } from "../_components/TripSkippedPanel";
 import { OrderPickerPanel } from "../_components/OrderPickerPanel";
@@ -62,7 +63,7 @@ function summaryLabel(stopCount: number, orderCount: number): string {
 }
 
 function originKindLabel(kind: RoutePlanningOriginKind): string {
-  if (kind === "TENANT") return "Tenant depot";
+  if (kind === "TENANT") return "Your depot";
   if (kind === "DRIVER") return "Driver's home base";
   return "Custom address";
 }
@@ -655,7 +656,7 @@ export default function NewTripPage() {
         <span className="font-medium">Driver:</span> {selectedDriver?.contactName ?? "Unassigned"}
       </p>
       <p className="text-navy">
-        <span className="font-medium">Date:</span> {new Date(date).toLocaleDateString()}
+        <span className="font-medium">Date:</span> {fmtCalendarDate(date)}
       </p>
     </div>
   );
@@ -899,7 +900,7 @@ export default function NewTripPage() {
           onAddOrder={handleAddOrder}
           orderPickerHint={
             orderIds.length === 0
-              ? 'You can also select orders on the Orders list and choose "Plan delivery trip".'
+              ? 'You can also select orders on the Orders list and choose "Plan delivery".'
               : undefined
           }
           variants={variants}
@@ -961,7 +962,7 @@ export default function NewTripPage() {
                   {selectedDriver?.contactName ?? "Unassigned"}
                 </p>
                 <p className="text-navy">
-                  <span className="font-medium">Date:</span> {new Date(date).toLocaleDateString()}
+                  <span className="font-medium">Date:</span> {fmtCalendarDate(date)}
                 </p>
               </div>
             )}
@@ -973,7 +974,7 @@ export default function NewTripPage() {
                 defaultOpen={orderIds.length === 0}
                 hint={
                   orderIds.length === 0
-                    ? 'You can also select orders on the Orders list and choose "Plan delivery trip".'
+                    ? 'You can also select orders on the Orders list and choose "Plan delivery".'
                     : undefined
                 }
               />

@@ -36,7 +36,7 @@ jest.mock("@/lib/api/platform-pricing", () => ({
 async function submitViaSheet() {
   fireEvent.click(screen.getByRole("button", { name: /^create tenant$/i }));
   const dialog = await screen.findByRole("dialog");
-  fireEvent.click(within(dialog).getByRole("button", { name: "Create Tenant" }));
+  fireEvent.click(within(dialog).getByRole("button", { name: "Create tenant" }));
 }
 
 function planEntry(planKey: string, sortOrder: number) {
@@ -414,7 +414,7 @@ describe("create-tenant capabilities", () => {
     ).toBeVisible();
     fillForm();
     await submit();
-    expect(await screen.findByText("Tenant created successfully!")).toBeInTheDocument();
+    expect(await screen.findByText("Tenant created")).toBeInTheDocument();
     // exactly the create, nothing else: no preview, no apply, no profile result line
     expect(superAdminClient.post as jest.Mock).toHaveBeenCalledTimes(1);
     expect(mockPreviewProfile).not.toHaveBeenCalled();
@@ -431,7 +431,7 @@ describe("create-tenant capabilities", () => {
     await screen.findByRole("button", { name: "Start from…" });
     fillForm();
     await submit();
-    expect(await screen.findByText("Tenant created successfully!")).toBeInTheDocument();
+    expect(await screen.findByText("Tenant created")).toBeInTheDocument();
     const [, payload] = (superAdminClient.post as jest.Mock).mock.calls[0];
     expect(payload).not.toHaveProperty("profile");
     expect(mockPreviewProfile).not.toHaveBeenCalled();
@@ -524,7 +524,7 @@ describe("create-tenant capabilities", () => {
     expect(screen.queryByRole("button", { name: "Start from…" })).not.toBeInTheDocument();
     fillForm();
     await submit();
-    expect(await screen.findByText("Tenant created successfully!")).toBeInTheDocument();
+    expect(await screen.findByText("Tenant created")).toBeInTheDocument();
     expect(mockApplyProfile).not.toHaveBeenCalled();
   });
 
@@ -607,7 +607,7 @@ describe("AdminCreateTenantPage — test-tenant slug notice (row 195)", () => {
     fireEvent.change(slug, { target: { value: "acme-foods" } });
     expect(screen.queryByTestId("test-tenant-notice")).toBeNull();
     fireEvent.change(slug, { target: { value: "qa-smoke-1" } });
-    expect(screen.getByTestId("test-tenant-notice").textContent).toMatch(/TEST tenant/);
+    expect(screen.getByTestId("test-tenant-notice").textContent).toMatch(/test tenant/);
     fireEvent.change(slug, { target: { value: "e2e-routeflow" } });
     expect(screen.getByTestId("test-tenant-notice")).toBeTruthy();
   });

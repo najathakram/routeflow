@@ -2143,7 +2143,7 @@ describe("PlatformAdminService — audit provenance", () => {
       expect(params.proration_behavior).toBe("create_prorations");
       expect(params.items[0]).toMatchObject({
         id: "si_base",
-        price_data: { unit_amount: 49900, product: "prod_scale" },
+        price_data: { unit_amount: 49900, product: "rf_plan_scale" },
       });
       expect(opts.idempotencyKey).toMatch(/^tenant-1:plan-change:v-9:/);
     });

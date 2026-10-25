@@ -16,6 +16,7 @@ import {
 } from "@/lib/platform-admin/config-snapshots";
 import { AdminCard } from "../../../../_components/AdminCard";
 import { AdminModal } from "../../../../_components/AdminModal";
+import { planLabel } from "../../../../_components/AdminBadge";
 
 const SKIP_REASON_LABELS: Record<ConfigSnapshotSkipReason, string> = {
   UNKNOWN_FEATURE: "Feature no longer exists",
@@ -157,7 +158,7 @@ export function ConfigSnapshotsTab({ tenantId }: { tenantId: string }) {
       <p className="border-b border-slate-700 px-5 py-3 text-xs text-slate-400">
         Archived when a plan change downgrades this tenant, once automatic archiving is switched on
         for the platform. Nothing is deleted on a downgrade — settings and grants stay but stop
-        being honoured. Restore puts a snapshot back as it was, on the plan the tenant is on today.
+        being honored. Restore puts a snapshot back as it was, on the plan the tenant is on today.
       </p>
       {notice && (
         <p
@@ -202,7 +203,7 @@ export function ConfigSnapshotsTab({ tenantId }: { tenantId: string }) {
                       {fmt(r.takenAt)}
                       <span className="text-slate-400"> · {r.ageDays}d ago</span>
                     </td>
-                    <td className="px-4 py-2 text-slate-300">{r.planKey}</td>
+                    <td className="px-4 py-2 text-slate-300">{planLabel(r.planKey)}</td>
                     <td className="px-4 py-2 text-slate-400">
                       {r.reason === "DOWNGRADE" ? "Downgrade" : "Manual"}
                       {r.createdByName ? ` · ${r.createdByName}` : ""}
@@ -217,7 +218,7 @@ export function ConfigSnapshotsTab({ tenantId }: { tenantId: string }) {
                       {!r.restoredAt && r.entries && (
                         <button
                           onClick={() => openRestore(r)}
-                          aria-label={`Restore now — snapshot of ${fmt(r.takenAt)} (${r.planKey})`}
+                          aria-label={`Restore now — snapshot of ${fmt(r.takenAt)} (${planLabel(r.planKey)})`}
                           className="min-h-[36px] rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500"
                         >
                           Restore now
@@ -272,9 +273,9 @@ export function ConfigSnapshotsTab({ tenantId }: { tenantId: string }) {
           <div className="flex flex-col gap-4 text-xs">
             <p className="text-slate-300">
               Snapshot of {fmt(preview.takenAt)} ({preview.ageDays}{" "}
-              {preview.ageDays === 1 ? "day" : "days"} old, taken leaving {preview.planKey}),
-              restored as it was onto the tenant&apos;s current plan,{" "}
-              <b>{preview.currentPlanKey}</b>.
+              {preview.ageDays === 1 ? "day" : "days"} old, taken leaving{" "}
+              {planLabel(preview.planKey)}), restored as it was onto the tenant&apos;s current plan,{" "}
+              <b>{planLabel(preview.currentPlanKey)}</b>.
             </p>
             {preview.beyondAutoRestoreHorizon && (
               <p role="status" className="rounded-lg bg-amber-900/30 px-3 py-2 text-amber-200">

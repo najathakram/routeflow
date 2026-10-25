@@ -1,5 +1,5 @@
 /**
- * B1188: Settings > Invoicing > Invoice Numbering. The prefix saves to the numbering sequence behind
+ * B1188: Settings > Invoicing > Invoice numbering. The prefix saves to the numbering sequence behind
  * a server PREVIEW + CONFIRM; the confirm reads "Next invoice: X (currently Y). Existing invoices
  * keep their numbers." Cancel sends nothing.
  *
@@ -30,14 +30,14 @@ for (const width of [1440, 768, 390]) {
       });
 
       await page.goto("/settings?tab=invoicing");
-      await expect(page.getByText("Invoice Numbering")).toBeVisible({ timeout: 20_000 });
+      await expect(page.getByText("Invoice numbering")).toBeVisible({ timeout: 20_000 });
 
       // Inventory: every control of the card and its terms neighbour.
-      const prefix = page.getByLabel("Invoice Number Prefix");
+      const prefix = page.getByLabel("Invoice number prefix");
       await expect(prefix).toBeVisible();
-      await expect(page.getByLabel("Payment Due Days")).toBeVisible();
-      await expect(page.getByLabel("Payment Terms")).toBeVisible();
-      const save = page.getByRole("button", { name: "Save Numbering" });
+      await expect(page.getByLabel("Payment due days")).toBeVisible();
+      await expect(page.getByLabel("Payment terms")).toBeVisible();
+      const save = page.getByRole("button", { name: "Save numbering" });
       await expect(save).toBeVisible();
 
       const proofDir = process.env.PROOF_DIR;

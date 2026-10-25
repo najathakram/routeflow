@@ -57,6 +57,7 @@ jest.mock("../common/db-locks", () => ({
   LockUnavailableError: MockLockUnavailableError,
 }));
 
+import { fakeStripeProducts } from "../testing/fake-stripe-products";
 import { PLAN_CHANGE_ADDONS_CHANGED } from "./plan-change-stripe";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import {
@@ -215,7 +216,7 @@ const BILLED_SUB = {
 /** Stripe module-boundary mock for the add-on item calls (no live Stripe). */
 function addonStripeClient() {
   return {
-    products: { create: jest.fn().mockResolvedValue({ id: "prod_1" }) },
+    products: fakeStripeProducts().products,
     subscriptionItems: {
       create: jest.fn().mockResolvedValue({ id: "si_1" }),
       list: jest.fn().mockResolvedValue({ data: [] }),

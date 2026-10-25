@@ -56,7 +56,14 @@ export function ProductStatusBadge({
 }) {
   if (status === "INACTIVE") return <Badge variant="neutral" label="Inactive" />;
   if (status === "OUT_OF_STOCK")
-    return <Badge variant="warning" label={stockCountLabel(currentStock)} />;
+    return (
+      <Badge
+        variant="warning"
+        label={stockCountLabel(currentStock)}
+        title={stockCountLabel(currentStock)}
+        className="h-auto min-h-[21px] max-w-full whitespace-normal py-0.5 leading-tight"
+      />
+    );
   if (status === "LOW") return <Badge variant="warning" label="Low Stock" />;
   return <Badge variant="success" label="In Stock" />;
 }

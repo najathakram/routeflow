@@ -295,12 +295,17 @@ export function consumesCapacity(status: string | null | undefined): boolean {
 export const CAPACITY_EPSILON = 0.001;
 
 /**
- * SA-863: what a writer does with an amount above the remaining capacity. REQUIRED at every call (no default), like
- * statusFromPayments' `onOverpaid`, so the compiler lists every caller. "ALLOW_IF_NO_UNCONFIRMED" is the office
- * standalone payment's [L-O2] deliberate overpayment: allowed while no DRAFT/PENDING row reserves the invoice (capacity
- * then equals the confirmed balance), else refused RESERVED_BY_UNCONFIRMED. Every other writer passes "REFUSE".
+ * What a writer does with an amount above what is left. REQUIRED at every call (no default), like statusFromPayments'
+ * `onOverpaid`, so the compiler lists every caller (a closed union).
+ *  - "REFUSE" (SA-863 / #3645): on CAPACITY (every non-VOID row). Every UNCONFIRMED write (DRAFT / PENDING) takes it whatever
+ *    policy its writer passes, and stored value (credit-note and advance applications) passes it.
+ *  - "CONFIRMED_BASIS" (W-769, owner 7b = A, SA-910 Part 2): a REAL-MONEY (PAID) write is judged on CONFIRMED money only:
+ *    FULLY_PAID when confirmed money already covers the total, EXCEEDS above total − confirmed, never RESERVED_BY_UNCONFIRMED.
+ *    The unconfirmed rows it displaces are flagged (`unconfirmedNoLongerFitting`).
+ *  - "CONFIRMED_BASIS_ALLOW_OVERPAY": [L-O2], the office standalone's deliberate overpay (the excess books an advance), with
+ *    or without unconfirmed rows.
  */
-export type CapacityOverpayPolicy = "REFUSE" | "ALLOW_IF_NO_UNCONFIRMED";
+export type CapacityOverpayPolicy = "REFUSE" | "CONFIRMED_BASIS" | "CONFIRMED_BASIS_ALLOW_OVERPAY";
 
 const RESERVED_BY_UNCONFIRMED_COPY =
   "Invoice's remaining balance is already reserved by unconfirmed payments";
@@ -326,27 +331,85 @@ export function capacityRefusal(p: {
 }): CapacityRefusal | null {
   if (!consumesCapacity(p.status)) return null;
   const total = Number(p.total);
-  const remaining = remainingCapacity(total, p.existing);
-  if (p.overpay === "ALLOW_IF_NO_UNCONFIRMED") {
-    // SA-863: only the breach unconfirmed rows cause is refused; with none, [L-O2] deliberate overpayment stands.
-    const unconfirmed = (p.existing ?? []).some(
-      (r) => consumesCapacity(r.status) && r.status !== CONFIRMED_STATUS,
-    );
-    if (!unconfirmed || p.amount <= remaining + CAPACITY_EPSILON) return null;
-    return { kind: "RESERVED_BY_UNCONFIRMED", remaining, message: RESERVED_BY_UNCONFIRMED_COPY };
+  if (p.status === CONFIRMED_STATUS && p.overpay !== "REFUSE") {
+    // W-769: real money is judged on CONFIRMED money; an unconfirmed row never turns it away
+    if (p.overpay === "CONFIRMED_BASIS_ALLOW_OVERPAY") return null;
+    const left = confirmedRemaining(total, p.existing);
+    if (left <= CAPACITY_EPSILON)
+      return { kind: "FULLY_PAID", remaining: left, message: "Invoice is already fully paid" };
+    return p.amount > left + CAPACITY_EPSILON ? exceeds(left) : null;
   }
+  const remaining = remainingCapacity(total, p.existing);
   if (remaining <= 0) {
     return sumConfirmed(p.existing) >= total - CAPACITY_EPSILON
       ? { kind: "FULLY_PAID", remaining, message: "Invoice is already fully paid" }
       : { kind: "RESERVED_BY_UNCONFIRMED", remaining, message: RESERVED_BY_UNCONFIRMED_COPY };
   }
-  if (p.amount > remaining + CAPACITY_EPSILON)
-    return {
-      kind: "EXCEEDS",
-      remaining,
-      message: `Payment exceeds remaining balance of ${remaining.toFixed(2)}`,
-    };
-  return null;
+  return p.amount > remaining + CAPACITY_EPSILON ? exceeds(remaining) : null;
+}
+
+function exceeds(remaining: number): CapacityRefusal {
+  return {
+    kind: "EXCEEDS",
+    remaining,
+    message: `Payment exceeds remaining balance of ${remaining.toFixed(2)}`,
+  };
+}
+
+/** W-769: what real money may still fill: the total less CONFIRMED (PAID) money, never below 0. The till plans size on it. */
+export function confirmedRemaining(
+  total: number,
+  rows: ReadonlyArray<Pick<ConfirmablePaymentRow, "amount" | "status">> | null | undefined,
+): number {
+  return Math.max(0, roundMoney(Number(total) - sumConfirmed(rows)));
+}
+
+/**
+ * W-769: the most an EDIT of one payment may be set to, given the invoice's OTHER rows. The same split as `capacityRefusal` /
+ * `assertEditFits` (a PAID row is real money, judged on CONFIRMED money; an unconfirmed row stays on CAPACITY), so web and
+ * mobile cap an edit exactly where the API refuses it. `status` is the status the row is edited TO.
+ */
+export function editPaymentCap(
+  total: number,
+  others: ReadonlyArray<Pick<ConfirmablePaymentRow, "amount" | "status">> | null | undefined,
+  status: string | null | undefined,
+): number {
+  if (status === CONFIRMED_STATUS) return confirmedRemaining(total, others);
+  return Math.max(0, remainingCapacity(total, others));
+}
+
+/** An unconfirmed (DRAFT / PENDING) row: consumes capacity but is not confirmed money. */
+function isUnconfirmed(status: string | null | undefined): boolean {
+  return consumesCapacity(status) && status !== CONFIRMED_STATUS;
+}
+
+/**
+ * W-769 (SA-910 Part 2 step 2): the ONE no-longer-fits predicate. The ids of the unconfirmed rows that no longer fit what
+ * confirmed money leaves of the total: the unconfirmed rows fill the room oldest first, and every row from the first one
+ * that does not fit onward is returned, newest first. Writers raise the over-reserved signal with it; readers show the flag.
+ */
+export function unconfirmedNoLongerFitting(
+  total: number,
+  rows: ReadonlyArray<{
+    id: string;
+    amount: unknown;
+    status?: string;
+    createdAt?: Date | string | null;
+  }>,
+): string[] {
+  let room = confirmedRemaining(total, rows);
+  const time = (r: { createdAt?: Date | string | null }) =>
+    r.createdAt == null ? 0 : new Date(r.createdAt).getTime();
+  const unconfirmed = rows
+    .filter((r) => isUnconfirmed(r.status))
+    .sort((a, b) => time(a) - time(b) || a.id.localeCompare(b.id));
+  const out: string[] = [];
+  for (const r of unconfirmed) {
+    const amount = Number(r.amount);
+    if (out.length === 0 && amount <= room + CAPACITY_EPSILON) room = roundMoney(room - amount);
+    else out.push(r.id);
+  }
+  return out.reverse();
 }
 
 /**

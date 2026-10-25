@@ -48,7 +48,8 @@ describe("Settings page: a READ_ONLY refusal is never answered with a generic sa
     let m: RegExpExecArray | null;
     while ((m = re.exec(src))) {
       const body = src.slice(m.index, m.index + 260);
-      if (!/toast\(\{\s*title:\s*"Failed(?! to (load|revoke))/.test(body)) continue;
+      if (!/toast\(\{\s*title:\s*"(?:Failed(?! to (load|revoke))|Couldn't save)/.test(body))
+        continue;
       count += 1;
       if (!/(showReadOnlyRefusal|isReadOnlyRefusal)\(/.test(body))
         offenders.push(src.slice(0, m.index).split("\n").length);

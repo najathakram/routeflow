@@ -583,6 +583,7 @@ describe("PaymentRequestsService", () => {
         expect.objectContaining({ totalAmount: 45 }),
         {
           assertAllocationsWithinBalance: true,
+          onDisplaced: expect.any(Function),
           capturedExternally: expect.objectContaining({ source: "STRIPE" }),
         },
       );
@@ -609,6 +610,7 @@ describe("PaymentRequestsService", () => {
         expect.objectContaining({ method: "ACH", settledAt: "2026-08-21T12:00:00.000Z" }),
         {
           assertAllocationsWithinBalance: true,
+          onDisplaced: expect.any(Function),
           capturedExternally: expect.objectContaining({ source: "STRIPE" }),
         },
       );
@@ -634,6 +636,7 @@ describe("PaymentRequestsService", () => {
         expect.objectContaining({ method: "CREDIT_CARD", settledAt: null }),
         {
           assertAllocationsWithinBalance: true,
+          onDisplaced: expect.any(Function),
           capturedExternally: expect.objectContaining({ source: "STRIPE" }),
         },
       );
