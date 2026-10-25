@@ -20,6 +20,7 @@ import { readAutoPrint } from "@/lib/counter-sale";
 import { isReadOnlyRefusal } from "@/lib/read-only-refusal";
 import * as React from "react";
 import Link from "next/link";
+import { DIALOG_FOOTER_BUTTON as FOOT } from "@/components/dialog-mobile-fit";
 import { Button, Modal, Select, useToast } from "@routeflow/ui/web";
 import { useOrders } from "@/lib/api/orders";
 import {
@@ -50,6 +51,7 @@ import {
 } from "@routeflow/returns";
 import {
   REFUND_COPY,
+  WALK_IN_REFUND_LINE,
   TENDER_OPTIONS,
   creditOutcomeLine,
   handBackLine,
@@ -293,6 +295,7 @@ export function RecordInlineReturnDialog({
 
   // SA-727b: a saved REFUND-intent return whose refund is pending is credited instead (never re-captured).
   function doStoreCredit(ret: InlineReturnRecord) {
+    if (walkIn) return; // SA-972: a walk-in cannot hold store credit; the button is never rendered, and this never sends it
     if (busyRef.current) return;
     busyRef.current = true;
     retriedRef.current = true;
@@ -513,9 +516,10 @@ export function RecordInlineReturnDialog({
               amount={money(shownAmount)}
               note={
                 effResolution === "REFUND"
-                  ? refundOutcomeLine(money(shownAmount))
+                  ? null // the hand-back line under Refund by already says it
                   : creditOutcomeLine(money(shownAmount), creditContext, customerName)
               }
+              returnHref={saved ? `/returns/${saved.id}` : undefined}
               walkIn={walkIn}
               refundUnavailable={paidWithCredit}
               resolution={effResolution}
@@ -536,7 +540,7 @@ export function RecordInlineReturnDialog({
           ) : null
         }
         renderLinesActions={() => (
-          <Button variant="ghost" onClick={onClose}>
+          <Button className={FOOT} variant="ghost" onClick={onClose}>
             Cancel
           </Button>
         )}
@@ -555,6 +559,7 @@ export function RecordInlineReturnDialog({
                 {/* SA-959: a walk-in cannot hold store credit, so it is never offered here */}
                 {!walkIn && (
                   <Button
+                    className={FOOT}
                     variant="secondary"
                     disabled={refunding}
                     loading={crediting}
@@ -565,6 +570,7 @@ export function RecordInlineReturnDialog({
                 )}
                 {refundError === "failed" || refundError === "exceedsCash" ? (
                   <Button
+                    className={FOOT}
                     loading={refunding}
                     disabled={crediting}
                     onClick={() => saved && doRetry(saved)}
@@ -572,11 +578,15 @@ export function RecordInlineReturnDialog({
                     Retry refund
                   </Button>
                 ) : (
-                  <Button onClick={handleClose}>Close</Button>
+                  <Button className={FOOT} onClick={handleClose}>
+                    Close
+                  </Button>
                 )}
               </>
             ) : (
-              <Button onClick={handleClose}>Close</Button>
+              <Button className={FOOT} onClick={handleClose}>
+                Close
+              </Button>
             )
           ) : (
             <>
@@ -586,6 +596,7 @@ export function RecordInlineReturnDialog({
                 </p>
               ) : null}
               <Button
+                className={FOOT}
                 disabled={
                   refunding ||
                   requoting ||
@@ -707,10 +718,7 @@ export function RecordInlineReturnDialog({
             </Link>
           )}
           <div className="flex justify-end gap-2">
-            <Button variant="ghost" onClick={onClose}>
-              Close
-            </Button>
-            <Button variant="secondary" onClick={() => setPhase("capture")}>
+            <Button className={FOOT} variant="secondary" onClick={() => setPhase("capture")}>
               Back
             </Button>
           </div>
@@ -723,6 +731,7 @@ export function RecordInlineReturnDialog({
 function RefundChoice({
   amount,
   note,
+  returnHref,
   walkIn,
   refundUnavailable = false,
   resolution,
@@ -735,7 +744,9 @@ function RefundChoice({
 }: {
   amount: string;
   /** What this choice does with the money (store credit: where it lands; refund: that it goes back). */
-  note: string;
+  note: string | null;
+  /** The saved return's page: where a refund refused for a closed day is recorded on a later date. */
+  returnHref?: string;
   walkIn: boolean;
   refundUnavailable?: boolean;
   resolution: InlineReturnResolution;
@@ -748,13 +759,24 @@ function RefundChoice({
   error: RefundErrorKind | null;
 }) {
   const refund = resolution === "REFUND";
+  const errorText = error ? (walkIn ? WALK_IN_REFUND_LINE : REFUND_COPY)[error] : "";
+  // "Return saved." is good news (the return exists), so only what went wrong is red.
+  const SAVED = "Return saved.";
+  const startsSaved = errorText.startsWith(SAVED);
   const errorLine = error ? (
-    <p role="alert" className="text-sm font-medium text-danger">
-      {walkIn && error === "dayClosed"
-        ? REFUND_COPY.dayClosedWalkIn
-        : walkIn && error === "exceedsCash"
-          ? REFUND_COPY.exceedsCashWalkIn
-          : REFUND_COPY[error]}
+    <p role="alert" className="text-sm font-medium">
+      {startsSaved && <span className="text-navy">{SAVED} </span>}
+      <span className="text-danger">
+        {startsSaved ? errorText.slice(SAVED.length).trim() : errorText}
+      </span>
+      {error === "dayClosed" && returnHref && (
+        <>
+          {" "}
+          <Link href={returnHref} className="font-medium text-brand-600 underline">
+            Open the return
+          </Link>
+        </>
+      )}
     </p>
   ) : null;
   const tenderSelect = (
@@ -804,7 +826,7 @@ function RefundChoice({
           />
           Refund {amount}
         </label>
-        <p className="text-xs text-navy/70">{note}</p>
+        {note && <p className="text-xs text-navy/70">{note}</p>}
         {refundUnavailable && <p className="text-xs text-navy/70">{REFUND_COPY.paidWithCredit}</p>}
         {refund && (
           <>

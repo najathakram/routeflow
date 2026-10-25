@@ -60,8 +60,13 @@ export function CounterReturnAction({
   onDone?: () => void;
 }) {
   const [open, setOpen] = React.useState(false);
+  // the line lands at the foot of a scrolling sheet: bring it into view so the confirmation is never below the fold
+  const statusRef = React.useRef<HTMLParagraphElement>(null);
   const buttonRef = React.useRef<HTMLButtonElement>(null);
   const [recorded, setRecorded] = React.useState<RecordedInfo | null>(null);
+  React.useEffect(() => {
+    if (recorded) statusRef.current?.scrollIntoView?.({ block: "nearest" });
+  }, [recorded]);
   const hasInlineReturns = useHasAddon(ORDERS_INLINE_RETURNS_ADDON);
   const role = useOptionalAuth()?.user?.role;
   const staff = orderActionAccess(role, "", false).staff;
@@ -114,7 +119,11 @@ export function CounterReturnAction({
         }}
       />
       {recorded ? (
-        <p role="status" className="order-last basis-full text-sm font-medium text-navy">
+        <p
+          ref={statusRef}
+          role="status"
+          className="order-last basis-full text-sm font-medium text-navy"
+        >
           {recordedLine(recorded, order.customer?.businessName)}
         </p>
       ) : null}

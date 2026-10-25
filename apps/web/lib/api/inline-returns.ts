@@ -48,6 +48,8 @@ export type {
 export function useInlineReturnQuote() {
   return useMutation<InlineReturnQuoteResponse, Error, QuoteInlineReturnRequest>({
     mutationFn: (dto) => apiClient.post("/returns/inline/quote", dto).then((r) => r.data),
+    // the dialog shows the one message for a failed quote; the global error toast would stack a second on top of it
+    meta: { localErrorToast: true },
   });
 }
 

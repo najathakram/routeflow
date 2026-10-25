@@ -754,7 +754,7 @@ describe("RecordInlineReturnDialog — the excess option resets on every re-quot
 
     fireEvent.click(screen.getByRole("radio", { name: /return only what was bought/i }));
     await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(2));
-    rejectNextQuote({ response: { status: 500, data: { message: "Quote failed" } } });
+    rejectNextQuote({ response: { status: 409, data: { message: "Quote failed" } } });
     await screen.findByText("Quote failed");
 
     fireEvent.click(screen.getByRole("button", { name: /^back$/i }));
@@ -774,7 +774,7 @@ describe("RecordInlineReturnDialog — the excess option resets on every re-quot
     fireEvent.change(screen.getByLabelText(/^pieces$/i), { target: { value: "12" } });
     fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
     await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(2));
-    rejectNextQuote({ response: { status: 500, data: { message: "Quote failed" } } });
+    rejectNextQuote({ response: { status: 409, data: { message: "Quote failed" } } });
     await screen.findByText("Quote failed");
 
     fireEvent.click(screen.getByRole("button", { name: /^back$/i }));

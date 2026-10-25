@@ -56,7 +56,7 @@ it("order create/edit: the credit note says the credit goes toward this order, n
   act(() => quoteMutate.mock.calls[0][1].onSuccess(QUOTE));
   expect(
     await screen.findByText(
-      "$12.40 is added as store credit for the customer and goes toward this order.",
+      "$12.40 is added as store credit for the customer and goes toward this order when you save.",
     ),
   ).toBeInTheDocument();
   expect(screen.queryByText(/next order/i)).toBeNull();

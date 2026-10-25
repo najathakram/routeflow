@@ -165,7 +165,7 @@ describe("InlineReturnSection — quote refusal (#2406)", () => {
   it("without onQuoteRefused, still shows the inline error (host reads it via its own UI if it wants to)", async () => {
     renderSection();
     await addProductAndQuote("10");
-    rejectNextQuote({ response: { status: 500, data: { message: "Server error" } } });
+    rejectNextQuote({ response: { status: 409, data: { message: "Server error" } } });
     await screen.findByText("Server error");
   });
 });

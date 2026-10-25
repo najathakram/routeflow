@@ -3,7 +3,7 @@ import { act } from "react";
 import { fireEvent, renderWithProviders, screen, waitFor, within } from "@/test-utils/render";
 import { RecordInlineReturnDialog } from "./RecordInlineReturnDialog";
 import type { InlineReturnQuoteResponse, InlineReturnRefundEligibility } from "@routeflow/types";
-import { REFUND_COPY } from "./refund-copy";
+import { REFUND_COPY, WALK_IN_REFUND_LINE, type RefundErrorKind } from "./refund-copy";
 
 /** The quote as the POS-4b API will answer it (refund eligibility alongside the breakdown). */
 type RefundQuote = InlineReturnQuoteResponse & Partial<InlineReturnRefundEligibility>;
@@ -89,6 +89,10 @@ const RECORD = {
 const apiErr = (status: number, code?: string) => ({
   response: { status, data: { code, message: "SERVER RAW TEXT" } },
 });
+/** The refund error line is "Return saved." (calm) plus what went wrong (red): two spans in one alert, so match the alert. */
+const findLine = (copy: string) =>
+  waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(copy));
+
 const lastCall = (m: jest.Mock) => m.mock.calls[m.mock.calls.length - 1];
 
 async function toQuote(q: RefundQuote, props: Record<string, unknown> = {}) {
@@ -186,10 +190,12 @@ describe("choice block visibility", () => {
     expect(screen.getByText(/is added as store credit for/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("radio", { name: "Refund $12.40" }));
     expect(screen.queryByText(/store credit for/i)).toBeNull();
-    expect(screen.getByText(/goes back to the customer\./i)).toBeInTheDocument();
+    // Refund: the hand-back line says it once (no second "goes back" sentence)
+    expect(screen.getByText("Hand $12.40 back to the customer.")).toBeInTheDocument();
+    expect(screen.queryByText(/goes back to the customer/i)).toBeNull();
     fireEvent.click(screen.getByRole("radio", { name: "Store credit" }));
     expect(screen.getByText(/is added as store credit for/i)).toBeInTheDocument();
-    expect(screen.queryByText(/goes back to the customer/i)).toBeNull();
+    expect(screen.queryByText(/hand \$12\.40 back/i)).toBeNull();
   });
 
   it("W-712: the note and button name the real amount and where it goes (credit vs refund)", async () => {
@@ -197,7 +203,7 @@ describe("choice block visibility", () => {
     expect(screen.getByText("$12.40 is added as store credit for Acme Foods.")).toBeInTheDocument();
     expect(confirmBtn(/^take back items and add \$12\.40 store credit$/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("radio", { name: "Refund $12.40" }));
-    expect(screen.getByText("$12.40 goes back to the customer.")).toBeInTheDocument();
+    expect(screen.getByText("Hand $12.40 back to the customer.")).toBeInTheDocument();
     expect(confirmBtn(/^take back items and refund \$12\.40$/i)).toBeInTheDocument();
     expect(screen.queryByText(/credit note/i)).toBeNull();
   });
@@ -364,7 +370,7 @@ describe("refund flow", () => {
     fireEvent.click(confirmBtn(/^take back items and refund/i));
     await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
     captureOk();
-    await screen.findByText("Return saved. Refund didn't go through. Try again.");
+    await findLine("Return saved. Refund didn't go through. Try again.");
     expect(screen.queryByText("SERVER RAW TEXT")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Retry refund" }));
     await waitFor(() => expect(refundReturn).toHaveBeenCalledTimes(2));
@@ -382,7 +388,7 @@ describe("refund flow", () => {
     fireEvent.click(confirmBtn(/^take back items and refund/i));
     await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
     captureOk();
-    await screen.findByText(REFUND_COPY.exceedsCash);
+    await findLine(REFUND_COPY.exceedsCash);
     expect(screen.queryByText("SERVER RAW TEXT")).toBeNull();
     expect(screen.getByRole("button", { name: "Give store credit instead" })).toBeInTheDocument();
     // the tender can be changed on this refusal (it is the way out), then only the refund is re-POSTed
@@ -401,12 +407,12 @@ describe("refund flow", () => {
     fireEvent.click(confirmBtn(/^take back items and refund/i));
     await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
     captureOk();
-    await screen.findByText(REFUND_COPY.dayClosed);
+    await findLine(REFUND_COPY.dayClosed);
     expect(REFUND_COPY.dayClosed).toBe(
-      "Return saved. This day is closed, so the refund can't be paid out now. Give store credit instead, or record the refund on a later date.",
+      "Return saved. This day is closed, so the refund can't be paid out now. Give store credit instead, or open the return and record the refund on a later date.",
     );
     expect(document.body.textContent).not.toContain("SERVER RAW TEXT");
-    expect(screen.queryByText(REFUND_COPY.failed)).toBeNull();
+    expect(document.body.textContent).not.toContain("Refund didn't go through");
     // a retry would be refused again: only store credit (or closing) is the way out
     expect(screen.queryByRole("button", { name: "Retry refund" })).toBeNull();
     expect(screen.getByRole("button", { name: "Give store credit instead" })).toBeInTheDocument();
@@ -427,7 +433,7 @@ describe("refund flow", () => {
     fireEvent.click(confirmBtn(/^take back items and refund/i));
     await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
     captureOk();
-    await screen.findByText(REFUND_COPY.failed);
+    await findLine(REFUND_COPY.failed);
     expect(screen.getByRole("button", { name: "Retry refund" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Give store credit instead" })).toBeNull();
     expect(storeCreditInstead).not.toHaveBeenCalled();
@@ -439,7 +445,7 @@ describe("refund flow", () => {
     fireEvent.click(confirmBtn(/^take back items and refund/i));
     await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
     captureOk();
-    await screen.findByText(REFUND_COPY.exceedsCashWalkIn);
+    await findLine(REFUND_COPY.exceedsCashWalkIn);
     expect(REFUND_COPY.exceedsCashWalkIn).not.toMatch(/store credit/i);
     expect(screen.queryByRole("button", { name: "Give store credit instead" })).toBeNull();
   });
@@ -450,7 +456,7 @@ describe("refund flow", () => {
     fireEvent.click(confirmBtn(/^take back items and refund/i));
     await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
     captureOk();
-    await screen.findByText(REFUND_COPY.dayClosedWalkIn);
+    await findLine(REFUND_COPY.dayClosedWalkIn);
     expect(REFUND_COPY.dayClosedWalkIn).not.toMatch(/store credit/i);
     expect(screen.queryByRole("button", { name: "Give store credit instead" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Retry refund" })).toBeNull();
@@ -616,7 +622,7 @@ describe("refund flow", () => {
     fireEvent.click(confirmBtn(/^take back items and refund/i));
     await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
     captureOk();
-    await screen.findByText(copy);
+    await findLine(copy);
     expect(screen.queryByRole("button", { name: "Retry refund" })).toBeNull();
     // the footer Close (the modal X also carries aria-label "Close")
     expect(
@@ -662,7 +668,7 @@ describe("refund flow", () => {
     fireEvent.click(confirmBtn(/^take back items and refund/i));
     await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
     captureOk();
-    await screen.findByText("Return saved. Refund didn't go through. Try again.");
+    await findLine("Return saved. Refund didn't go through. Try again.");
     // the modal's X (aria-label "Close", no text)
     const x = screen.getAllByRole("button", { name: "Close" }).find((b) => b.textContent === "");
     fireEvent.click(x as HTMLElement);
@@ -682,7 +688,7 @@ describe("refund flow", () => {
     fireEvent.click(confirmBtn(/^take back items and refund/i));
     await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
     captureOk();
-    await screen.findByText("Return saved. Refund didn't go through. Try again.");
+    await findLine("Return saved. Refund didn't go through. Try again.");
     expect(screen.queryByRole("button", { name: "Back" })).toBeNull();
   });
 
@@ -897,7 +903,7 @@ describe("refund flow", () => {
     // while the re-quote is in flight the confirm stays disabled
     expect(confirmBtn(/^take back items and refund/i)).toBeDisabled();
     act(() => lastCall(quoteMutate)[1].onError?.(new Error("network")));
-    await screen.findByText("Return saved. Refund didn't go through. Try again.");
+    await findLine("Return saved. Refund didn't go through. Try again.");
     const confirm = screen.queryByRole("button", { name: /^take back items and refund/i });
     expect(confirm === null || (confirm as HTMLButtonElement).disabled).toBe(true);
     expect(refundReturn).toHaveBeenCalledTimes(1);
@@ -1072,10 +1078,10 @@ describe("W-712 credit words per host (SA-929)", () => {
     expect(within(choice).getByText(sentence)).toBeInTheDocument();
     const total = screen.getByText("Total").closest("div.rounded-lg") as HTMLElement;
     expect(within(total).queryByText(sentence)).toBeNull();
-    // it follows the radio: choosing Refund swaps it for the refund sentence, still inside the choice
+    // it follows the radio: choosing Refund replaces it with the hand-back line (one sentence, not two)
     fireEvent.click(screen.getByRole("radio", { name: "Refund $12.40" }));
     expect(within(choice).queryByText(sentence)).toBeNull();
-    expect(within(choice).getByText("$12.40 goes back to the customer.")).toBeInTheDocument();
+    expect(within(choice).getByText("Hand $12.40 back to the customer.")).toBeInTheDocument();
   });
 
   it("named customer: the Store credit / Refund choice is unchanged, with brand-coloured radios", async () => {
@@ -1134,17 +1140,163 @@ describe("SA-929: the words after submit come from the server's answer", () => {
     );
   });
 
-  it("409 REFUND_AMOUNT_CHANGED: the NOTE under the Total (not only the button) shows the server's figure", async () => {
+  it("409 REFUND_AMOUNT_CHANGED: the hand-back line (not only the button) shows the server's figure", async () => {
     refundReturn.mockRejectedValueOnce({
       response: { status: 409, data: { code: "REFUND_AMOUNT_CHANGED", amount: 10 } },
     });
     await refundFlow();
-    expect(screen.getByText("$12.40 goes back to the customer.")).toBeInTheDocument();
+    expect(screen.getByText(/Give \$12\.40 back on the customer's card/)).toBeInTheDocument();
     fireEvent.click(confirmBtn(/^take back items and refund/i));
     await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
     captureOk();
     await screen.findByRole("button", { name: /^take back items and refund \$10\.00$/i });
-    expect(screen.getByText("$10.00 goes back to the customer.")).toBeInTheDocument();
-    expect(screen.queryByText("$12.40 goes back to the customer.")).toBeNull();
+    expect(screen.getByText(/Give \$10\.00 back on the customer's card/)).toBeInTheDocument();
+    expect(screen.queryByText(/Give \$12\.40 back/)).toBeNull();
+  });
+});
+
+describe("mm-ux retake: error states say one thing, once", () => {
+  const refusal = (message: string) => ({
+    response: { status: 409, data: { code: "RETURN_EXCEEDS_SOLD", message } },
+  });
+  const openToLines = async (props: Record<string, unknown> = {}) => {
+    renderWithProviders(
+      <RecordInlineReturnDialog
+        open
+        onClose={jest.fn()}
+        customerId="cust-1"
+        orderId="order-1"
+        customerName="Walk-in"
+        allowRefund
+        {...props}
+      />,
+    );
+    await screen.findByText(/what came back/i);
+    fireEvent.change(screen.getByLabelText(/^pieces$/i), { target: { value: "5" } });
+    fireEvent.change(screen.getByLabelText(/^reason$/i), { target: { value: "DAMAGED" } });
+    fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
+    await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(1));
+  };
+  const footerButtons = (name: string) =>
+    screen.queryAllByRole("button", { name }).filter((b) => b.textContent === name);
+
+  it("a refused quote (a 409 with its own sentence) shows that sentence and Back, with no Close", async () => {
+    await openToLines();
+    act(() =>
+      lastCall(quoteMutate)[1].onError(refusal("Cola 12oz Can: only 2 were sold on this order.")),
+    );
+    expect(
+      await screen.findByText("Cola 12oz Can: only 2 were sold on this order."),
+    ).toBeInTheDocument();
+    expect(footerButtons("Back")).toHaveLength(1);
+    expect(footerButtons("Close")).toHaveLength(0);
+  });
+
+  it.each([
+    ["a 500", { response: { status: 500, data: { message: "Internal server error" } } }],
+    ["no answer at all", new Error("Network Error")],
+  ])("%s on the quote: one fixed sentence and a Try again that asks again", async (_n, err) => {
+    await openToLines();
+    act(() => lastCall(quoteMutate)[1].onError(err));
+    expect(await screen.findByText("Couldn't get the quote. Try again.")).toBeInTheDocument();
+    expect(screen.queryByText(/internal server error/i)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(2));
+  });
+
+  it("'Return saved.' is not red; only what went wrong is", async () => {
+    refundReturn.mockRejectedValueOnce(apiErr(500));
+    await toQuote(quote({ customerIsWalkIn: true, paidMethods: ["CASH"] }));
+    fireEvent.click(confirmBtn(/^take back items and refund/i));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+    captureOk();
+    const saved = await screen.findByText("Return saved.");
+    expect(saved.className).not.toMatch(/danger/);
+    expect(screen.getByText("Refund didn't go through. Try again.").className).toMatch(/danger/);
+  });
+
+  it("a closed day says WHERE to record the refund on a later date: a link to the saved return", async () => {
+    refundReturn.mockRejectedValueOnce(apiErr(409, "COUNTER_SALE_DAY_CLOSED"));
+    await toQuote(quote({ customerIsWalkIn: true, paidMethods: ["CASH"] }));
+    fireEvent.click(confirmBtn(/^take back items and refund/i));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+    captureOk();
+    await screen.findByText("Return saved.");
+    expect(document.body.textContent).toMatch(
+      /open the return and record the refund on a later date/i,
+    );
+    expect(screen.getByRole("link", { name: "Open the return" })).toHaveAttribute(
+      "href",
+      "/returns/ret-1",
+    );
+  });
+
+  it("named, Refund selected: the hand-back line stays and the duplicate 'goes back' sentence is gone", async () => {
+    await toQuote(quote());
+    fireEvent.click(screen.getByRole("radio", { name: "Refund $12.40" }));
+    expect(screen.getByText("Hand $12.40 back to the customer.")).toBeInTheDocument();
+    expect(screen.queryByText(/goes back to the customer/i)).toBeNull();
+  });
+
+  it("at 390 the confirm, Retry, Close and Back are 44 px (min-h-11 below sm)", async () => {
+    refundReturn.mockRejectedValueOnce(apiErr(500));
+    await toQuote(quote({ customerIsWalkIn: true, paidMethods: ["CASH"] }));
+    expect(confirmBtn(/^take back items and refund/i).className).toMatch(/min-h-11/);
+    expect(screen.getByRole("button", { name: "Back" }).className).toMatch(/min-h-11/);
+    fireEvent.click(confirmBtn(/^take back items and refund/i));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+    captureOk();
+    expect((await screen.findByRole("button", { name: "Retry refund" })).className).toMatch(
+      /min-h-11/,
+    );
+  });
+});
+
+describe("SA-972: a walk-in's refund refusals never name store credit", () => {
+  const NO_REFUND =
+    "Return saved. This sale can't be refunded here. Ask office staff to refund it.";
+  it.each(["REFUND_NEEDS_PAID_INVOICE", "REFUND_PAID_WITH_STORE_CREDIT"])(
+    "a 409 %s reads the no-refund sentence, and no store credit is offered or sent",
+    async (code) => {
+      refundReturn.mockRejectedValueOnce(apiErr(409, code));
+      await toQuote(quote({ customerIsWalkIn: true, paidMethods: ["CASH"] }));
+      fireEvent.click(confirmBtn(/^take back items and refund/i));
+      await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+      captureOk();
+      expect(await screen.findByRole("alert")).toHaveTextContent(NO_REFUND);
+      expect(screen.getByRole("alert").textContent).not.toMatch(/store credit/i); // the explanatory line may say walk-ins cannot hold it
+      expect(screen.queryByRole("button", { name: "Give store credit instead" })).toBeNull();
+      expect(storeCreditInstead).not.toHaveBeenCalled();
+    },
+  );
+
+  it("needsPaid still reads as before for a named customer", async () => {
+    refundReturn.mockRejectedValueOnce(apiErr(409, "REFUND_NEEDS_PAID_INVOICE"));
+    await refundFlow();
+    fireEvent.click(confirmBtn(/^take back items and refund/i));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+    captureOk();
+    expect(
+      await screen.findByText(/issue store credit from the order instead/i),
+    ).toBeInTheDocument();
+  });
+
+  it("the walk-in line table is exhaustive and no line in it matches /store credit/i", () => {
+    const kinds: RefundErrorKind[] = [
+      "changed",
+      "resolved",
+      "resolvedAfterRetry",
+      "forbidden",
+      "readOnly",
+      "needsPaid",
+      "refundedCash",
+      "notRefundable",
+      "paidWithCredit",
+      "exceedsCash",
+      "dayClosed",
+      "failed",
+    ];
+    expect(Object.keys(WALK_IN_REFUND_LINE).sort()).toEqual([...kinds].sort());
+    for (const k of kinds) expect(WALK_IN_REFUND_LINE[k]).not.toMatch(/store credit/i);
   });
 });

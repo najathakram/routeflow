@@ -171,6 +171,14 @@ describe("CounterReturnAction", () => {
     React.act(() => recorded?.({}, { resolution: "REFUND", amount: 9.5 }));
     expect(screen.getByRole("status").textContent).toBe("Return recorded. Refunded $9.50.");
   });
+  it("mm-ux retake: the recorded line is scrolled into view (it sat below the fold of the Today's sales sheet)", () => {
+    const scroll = jest.fn();
+    Element.prototype.scrollIntoView = scroll;
+    render(<CounterReturnAction orderId="o1" />);
+    fireEvent.click(screen.getByRole("button", { name: "Return items" }));
+    React.act(() => recorded?.({}, { resolution: "REFUND", tender: "CASH", amount: 9.5 }));
+    expect(scroll).toHaveBeenCalledWith({ block: "nearest" });
+  });
   it("W21b: Done returns focus to the Return items button, not body", () => {
     render(<CounterReturnAction orderId="o1" />);
     const btn = screen.getByRole("button", { name: "Return items" });

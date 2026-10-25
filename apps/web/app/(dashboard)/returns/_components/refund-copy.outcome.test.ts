@@ -17,7 +17,9 @@ describe("creditOutcomeLine contexts", () => {
   });
   it("order create/edit (carrying order): goes toward this order, never 'next order'", () => {
     const line = creditOutcomeLine("$12.40", "thisOrder", "Acme Foods");
-    expect(line).toBe("$12.40 is added as store credit for Acme Foods and goes toward this order.");
+    expect(line).toBe(
+      "$12.40 is added as store credit for Acme Foods and goes toward this order when you save.",
+    );
     expect(line).not.toMatch(/next order/i);
   });
   it("Returns page with the apply-to choice: neutral", () => {

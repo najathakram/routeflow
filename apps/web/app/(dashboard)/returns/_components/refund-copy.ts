@@ -59,13 +59,34 @@ export const REFUND_COPY = {
     "Return saved. That's more cash than was taken for this sale. Refund the rest by card or check.",
   /** SA-750r3: the refund is dated inside a closed day (409 COUNTER_SALE_DAY_CLOSED). The return is saved; nothing was paid out. */
   dayClosed:
-    "Return saved. This day is closed, so the refund can't be paid out now. Give store credit instead, or record the refund on a later date.",
+    "Return saved. This day is closed, so the refund can't be paid out now. Give store credit instead, or open the return and record the refund on a later date.",
   /** The same refusal for a walk-in, who can't hold store credit: only the later date is left. */
   dayClosedWalkIn:
-    "Return saved. This day is closed, so the refund can't be paid out now. Record the refund on a later date.",
+    "Return saved. This day is closed, so the refund can't be paid out now. Open the return and record the refund on a later date.",
   /** SA-727b: a saved REFUND-intent return with no refund yet (shown on the receipt; no amount paid). */
   pendingReceipt: "Return — refund pending, nothing paid out",
 } as const;
+
+/**
+ * SA-972: what a WALK-IN reads for each refund refusal. Exhaustive (the compiler names a new kind), and no line names store
+ * credit: a walk-in cannot hold it (SA-959), so the two kinds whose copy points there (a sale not fully paid, a sale paid with
+ * store credit) read the one no-refund sentence, and the over-cash and closed-day lines have their own walk-in wording.
+ */
+const WALK_IN_NO_REFUND_LINE = `Return saved. ${REFUND_COPY.walkInNoRefund}`;
+export const WALK_IN_REFUND_LINE: Record<RefundErrorKind, string> = {
+  changed: REFUND_COPY.changed,
+  resolved: REFUND_COPY.resolved,
+  resolvedAfterRetry: REFUND_COPY.resolvedAfterRetry,
+  forbidden: REFUND_COPY.forbidden,
+  readOnly: REFUND_COPY.readOnly,
+  needsPaid: WALK_IN_NO_REFUND_LINE,
+  refundedCash: REFUND_COPY.refundedCash,
+  notRefundable: REFUND_COPY.notRefundable,
+  paidWithCredit: WALK_IN_NO_REFUND_LINE,
+  exceedsCash: REFUND_COPY.exceedsCashWalkIn,
+  dayClosed: REFUND_COPY.dayClosedWalkIn,
+  failed: REFUND_COPY.failed,
+};
 
 export function refundErrorKind(err: unknown): RefundErrorKind {
   const res = (err as { response?: { status?: number; data?: { code?: string } } } | undefined)
@@ -123,7 +144,7 @@ export function creditOutcomeLine(
   const who = customerName?.trim() || "the customer";
   const base = `${amount} is added as store credit for ${who}`;
   if (context === "nextOrder") return `${base}, to use on the next order.`;
-  if (context === "thisOrder") return `${base} and goes toward this order.`;
+  if (context === "thisOrder") return `${base} and goes toward this order when you save.`;
   return `${base}.`;
 }
 export function refundOutcomeLine(amount: string): string {

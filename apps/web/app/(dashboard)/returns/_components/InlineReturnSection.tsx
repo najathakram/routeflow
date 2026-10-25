@@ -20,6 +20,8 @@ import { returnReasonOptions } from "@/lib/reason-copy";
 import { LINE_UNDO_MS } from "@/app/(dashboard)/orders/_components/useCounterLineUndo";
 import { useProducts } from "@/lib/api/products";
 import { useInlineReturnQuote } from "@/lib/api/inline-returns";
+import { DIALOG_FOOTER_BUTTON } from "@/components/dialog-mobile-fit";
+import { QUOTE_FAILED_COPY, isQuoteFailure } from "./quote-failure";
 import { useOptionalAuth } from "@/lib/auth-context";
 import type {
   InlineReturnQuoteChunk,
@@ -163,6 +165,7 @@ export function InlineReturnSection({
   const [quote, setQuote] = React.useState<InlineReturnQuoteResponse | null>(null);
   const [excessOption, setExcessOption] = React.useState<ExcessOption>(DEFAULT_EXCESS_OPTION);
   const [quoteError, setQuoteError] = React.useState("");
+  const [quoteFailed, setQuoteFailed] = React.useState(false); // the last quote did not come back: Get quote reads Try again
   const [productSearch, setProductSearch] = React.useState("");
 
   const quoteMutation = useInlineReturnQuote();
@@ -320,6 +323,7 @@ export function InlineReturnSection({
 
   function handleGetQuote() {
     setQuoteError("");
+    setQuoteFailed(false);
     quoteMutation.mutate(buildQuoteRequest(customerId, lines, undefined, sourceOrderId), {
       onSuccess: (data) => {
         setQuote(data);
@@ -332,6 +336,12 @@ export function InlineReturnSection({
       onError: (err) => {
         // A failed lines-step quote must not leave the OLD quote behind.
         setQuote(null);
+        if (isQuoteFailure(err)) {
+          // nothing was refused: stay on the lines, say it once, and let Get quote ask again
+          setQuoteError(QUOTE_FAILED_COPY);
+          setQuoteFailed(true);
+          return;
+        }
         const message = extractRefusalMessage(err);
         setQuoteError(message);
         onQuoteRefused?.(message);
@@ -606,16 +616,21 @@ export function InlineReturnSection({
           />
 
           {overrideProblem && <p className="text-sm text-danger">{overrideProblem}</p>}
-          {quoteError && <p className="text-sm text-danger">{quoteError}</p>}
+          {quoteError && (
+            <p role={quoteFailed ? "alert" : undefined} className="text-sm text-danger">
+              {quoteError}
+            </p>
+          )}
 
           <div className="flex justify-end gap-2">
             {renderLinesActions?.()}
             <Button
+              className={DIALOG_FOOTER_BUTTON}
               disabled={!canGetQuote}
               loading={quoteMutation.isPending}
               onClick={handleGetQuote}
             >
-              Get quote
+              {quoteFailed ? "Try again" : "Get quote"}
             </Button>
           </div>
         </div>
@@ -791,7 +806,11 @@ export function InlineReturnSection({
           {!refusal && renderQuoteFooter?.(quote)}
           <div className="flex flex-wrap justify-end gap-2">
             {!hideBack && (
-              <Button variant="ghost" onClick={() => setStep("lines")}>
+              <Button
+                className={DIALOG_FOOTER_BUTTON}
+                variant="ghost"
+                onClick={() => setStep("lines")}
+              >
                 Back
               </Button>
             )}
