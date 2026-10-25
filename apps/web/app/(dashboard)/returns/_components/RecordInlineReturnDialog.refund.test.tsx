@@ -145,14 +145,19 @@ describe("choice block visibility", () => {
     expect(confirmBtn(/^take back items and add \$[\d.]+ store credit$/i)).toBeInTheDocument();
   });
 
-  it("walk-in: only Refund, preselected, with the explanatory line", async () => {
+  it("walk-in: no one-option radio; one sentence, Refund by, and the button (mm-ux #3748 fix 1)", async () => {
     await toQuote(quote({ customerIsWalkIn: true }));
-    expect(screen.queryByRole("radio", { name: "Store credit" })).toBeNull();
-    expect(screen.getByRole("radio", { name: "Refund $12.40" })).toBeChecked();
+    expect(screen.queryByRole("radio")).toBeNull();
+    expect(screen.queryByRole("group", { name: REFUND_COPY.heading })).toBeNull();
     expect(
-      screen.getByText("Walk-in sales can't hold store credit, so you'll give the money back."),
-    ).toBeInTheDocument();
+      screen.getAllByText("Walk-in sales can't hold store credit, so give the money back."),
+    ).toHaveLength(1);
+    expect(screen.getByLabelText("Refund by")).toHaveValue("CASH");
     expect(confirmBtn(/^take back items and refund \$12\.40$/i)).toBeInTheDocument();
+    // said once: not again as the outcome note, the radio label or the hand-back line
+    expect(screen.queryByText(/goes back to the customer/i)).toBeNull();
+    expect(screen.queryByText(/hand \$12\.40 back/i)).toBeNull();
+    expect(screen.queryByText(/^Refund \$12\.40$/)).toBeNull();
   });
 
   it("W21b: the quote note follows the choice (credit note vs refund; no choice block = unchanged)", async () => {
@@ -181,10 +186,10 @@ describe("choice block visibility", () => {
     expect(screen.getByText(/is added as store credit for/i)).toBeInTheDocument();
   });
 
-  it("W21b: walk-in (Refund preselected) never shows the credit-note line", async () => {
+  it("W21b: walk-in (Refund preselected) never shows a credit line", async () => {
     await toQuote(quote({ customerIsWalkIn: true }));
     expect(screen.queryByText(/store credit for/i)).toBeNull();
-    expect(screen.getByText("$12.40 goes back to the customer.")).toBeInTheDocument();
+    expect(screen.queryByText(/credit note/i)).toBeNull();
   });
 
   it("W21b: closing hands focus to onCloseAutoFocus (the opener restores it)", async () => {
@@ -952,18 +957,63 @@ describe("W-712 credit words per host (SA-929)", () => {
     ).toBeInTheDocument();
   });
 
-  it("walk-in that cannot be refunded (store credit by default): walk-in wording, never 'account' or a possessive", async () => {
-    await toQuote(quote({ customerIsWalkIn: true, canRefund: false, paidInFull: false }), {
-      customerName: "Walk-in",
-    });
-    expect(
-      screen.getByText(
-        "Walk-in sales can't hold store credit. $12.40 is recorded as a credit note on this sale.",
+  it("SA-959: a walk-in that cannot be refunded is refused with the way forward: no credit note, no take-back button", async () => {
+    renderWithProviders(
+      <RecordInlineReturnDialog
+        open
+        onClose={jest.fn()}
+        customerId="cust-1"
+        orderId="order-1"
+        customerName="Walk-in"
+        allowRefund
+      />,
+    );
+    await screen.findByText(/what came back/i);
+    fireEvent.change(screen.getByLabelText(/^pieces$/i), { target: { value: "5" } });
+    fireEvent.change(screen.getByLabelText(/^reason$/i), { target: { value: "DAMAGED" } });
+    fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
+    await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(1));
+    act(() =>
+      lastCall(quoteMutate)[1].onSuccess(
+        quote({ customerIsWalkIn: true, canRefund: false, paidInFull: false }),
       ),
+    );
+    expect(
+      await screen.findByText("This sale can't be refunded here. Ask office staff to refund it."),
     ).toBeInTheDocument();
-    expect(screen.queryByText(/account/i)).toBeNull();
-    expect(screen.queryByText(/walk-in's/i)).toBeNull();
-    expect(confirmBtn(/^take back items and record \$12\.40 credit note$/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /take back items/i })).toBeNull();
+    expect(screen.queryByText(/credit note|store credit/i)).toBeNull();
+    expect(screen.queryByRole("radio")).toBeNull();
+    expect(captureMutate).not.toHaveBeenCalled();
+  });
+
+  it("SA-959: a walk-in on a host that offers no refund (allowRefund off) is refused the same way, never sent as store credit", async () => {
+    renderWithProviders(
+      <RecordInlineReturnDialog
+        open
+        onClose={jest.fn()}
+        customerId="cust-1"
+        orderId="order-1"
+        customerName="Walk-in"
+      />,
+    );
+    await screen.findByText(/what came back/i);
+    fireEvent.change(screen.getByLabelText(/^pieces$/i), { target: { value: "5" } });
+    fireEvent.change(screen.getByLabelText(/^reason$/i), { target: { value: "DAMAGED" } });
+    fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
+    await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(1));
+    act(() => lastCall(quoteMutate)[1].onSuccess(quote({ customerIsWalkIn: true })));
+    expect(
+      await screen.findByText("This sale can't be refunded here. Ask office staff to refund it."),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /take back items/i })).toBeNull();
+  });
+
+  it("named customer: the Store credit / Refund choice is unchanged, with brand-coloured radios", async () => {
+    await toQuote(quote());
+    const radios = screen.getAllByRole("radio");
+    expect(radios).toHaveLength(2);
+    for (const r of radios) expect(r.className).toMatch(/accent-brand/);
   });
 });
 

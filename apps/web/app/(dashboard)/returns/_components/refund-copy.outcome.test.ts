@@ -1,4 +1,5 @@
 import {
+  REFUND_COPY,
   creditOutcomeLine,
   refundOutcomeLine,
   refundedLine,
@@ -30,13 +31,6 @@ describe("creditOutcomeLine contexts", () => {
     );
     expect(creditOutcomeLine("$1.00", "account", "Jones")).not.toMatch(/'s|s'/);
   });
-  it("walk-in: never an account or possessive; says what happens", () => {
-    const line = creditOutcomeLine("$12.40", "walkIn", "Walk-in");
-    expect(line).toBe(
-      "Walk-in sales can't hold store credit. $12.40 is recorded as a credit note on this sale.",
-    );
-    expect(line).not.toMatch(/account|'s/i);
-  });
   it("one word for credit: store credit; refund line drops 'not onto their account'", () => {
     expect(refundOutcomeLine("$12.40")).toBe("$12.40 goes back to the customer.");
     expect(takeBackCreditLabel("$12.40")).toBe("Take back items and add $12.40 store credit");
@@ -51,5 +45,19 @@ describe("server-answer lines", () => {
   });
   it("storeCreditAddedLine", () => {
     expect(storeCreditAddedLine("$9.00")).toBe("$9.00 added as store credit.");
+  });
+});
+
+describe("SA-959: a walk-in return is never a credit note", () => {
+  it("the one refusal sentence names the way forward", () => {
+    expect(REFUND_COPY.walkInNoRefund).toBe(
+      "This sale can't be refunded here. Ask office staff to refund it.",
+    );
+  });
+  it("no walk-in credit-note wording is left in the copy module", async () => {
+    const mod = (await import("./refund-copy")) as Record<string, unknown>;
+    expect(mod.takeBackWalkInLabel).toBeUndefined();
+    expect(mod.creditNoteRecordedLine).toBeUndefined();
+    expect((REFUND_COPY as Record<string, unknown>).walkInCreditNote).toBeUndefined();
   });
 });

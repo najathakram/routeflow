@@ -171,15 +171,6 @@ describe("CounterReturnAction", () => {
     React.act(() => recorded?.({}, { resolution: "REFUND", amount: 9.5 }));
     expect(screen.getByRole("status").textContent).toBe("Return recorded. Refunded $9.50.");
   });
-  it("walk-in store credit: a credit note on the sale, never an account or a possessive", () => {
-    orderState = { data: { id: "o1", customerId: "c1", customer: { businessName: "Walk-in" } } };
-    render(<CounterReturnAction orderId="o1" />);
-    fireEvent.click(screen.getByRole("button", { name: "Return items" }));
-    React.act(() => recorded?.({}, { resolution: "STORE_CREDIT", amount: 12.4, walkIn: true }));
-    expect(screen.getByRole("status").textContent).toBe(
-      "Return recorded. $12.40 recorded as a credit note on this sale.",
-    );
-  });
   it("W21b: Done returns focus to the Return items button, not body", () => {
     render(<CounterReturnAction orderId="o1" />);
     const btn = screen.getByRole("button", { name: "Return items" });
