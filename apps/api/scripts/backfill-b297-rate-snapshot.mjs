@@ -917,12 +917,13 @@ async function dryRun() {
 }
 
 /**
- * Row 360: the oldest build this backfill may run from. B297 PR3's last writer commit (a merge fold carries each
- * line's own category and trio): from here on no code path writes a NULL trio, so the dry run's census of NULL lines
- * stops growing. A `--guard-sha` older than this, or a checkout whose HEAD lacks it, is refused: the backfill would
+ * Row 360: the oldest build this backfill may run from. The first master merge (#3392) that contains the last B297
+ * PR3 writer commit (429976433, "paired lines carry through every builder", row 373; the fold, buyer and invoice
+ * copier writers landed before it): from here on no code path writes a NULL trio, so the dry run's census of NULL
+ * lines stops growing. A `--guard-sha` older than this, or a checkout whose HEAD lacks it, is refused: the backfill would
  * "complete" while the old writers keep minting the lines it just repaired.
  */
-export const MIN_GUARD_SHA = "625ec76a18171c9f8fa04ba03b42231af1927a5c";
+export const MIN_GUARD_SHA = "0dab5867977782287a22fbfe7791022cdf79581d";
 
 const gitIsAncestor = (ancestor, descendant) => {
   try {
