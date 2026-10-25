@@ -39,10 +39,10 @@ export class ProductCountPartDto {
 }
 
 /** A unit's identity within one request: trimmed, case-folded; null / blank = the pack. */
-const partKey = (p: unknown) =>
-  String((p as { unit?: unknown } | null)?.unit ?? "")
-    .trim()
-    .toLowerCase();
+const partKey = (p: unknown) => {
+  const unit = (p as { unit?: unknown } | null)?.unit;
+  return typeof unit === "string" ? unit.trim().toLowerCase() : "";
+};
 
 /**
  * SA-828 (row 657) + SA-828a: `POST /inventory/products/:id/count`. Mirrors `ProductCountRequest`
