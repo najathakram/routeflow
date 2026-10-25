@@ -1,8 +1,11 @@
 import {
   buildLadderOptions,
   defaultLadderOptionValue,
+  derivedPackSplit,
+  ladderOptionDetail,
   ladderOptionLineTotal,
   ladderOptionPriceText,
+  ladderOptionText,
   type LadderProduct,
   type LadderUnit,
 } from "./index";
@@ -130,5 +133,48 @@ describe("S19b nit 8: a derived base option uses the customer-layer pack price (
     const piece = buildLadderOptions(box24, [caseRow], 1).find((o) => o.kind === "piece")!;
     expect(piece.derived).toMatchObject({ n: 24, packPrice: 48 });
     expect(piece.price).toBe(2);
+  });
+});
+
+describe("ladderOptionText / ladderOptionDetail: the ONE option text web and mobile both render (row 513)", () => {
+  // The formatters each app passes (web lib/format, mobile's local Intl): both whole numbers bare, fractions up to 2 dp.
+  const qty = (n: number) => (Number.isInteger(n) ? String(n) : String(Number(n.toFixed(2))));
+  const text = (o: Parameters<typeof ladderOptionText>[0]) => ladderOptionText(o, money, qty);
+  const detail = (o: Parameters<typeof ladderOptionDetail>[0]) => ladderOptionDetail(o, money, qty);
+  const options = buildLadderOptions(box24, [row("Case", 288, "480.00"), row("Pallet", 5760)], 1);
+
+  it("a level or the pack reads label, pieces, price: 'Case · 288 pcs · $480.00'", () => {
+    expect(text(options.find((o) => o.value === "Case")!)).toBe("Case · 288 pcs · $480.00");
+    expect(detail(options.find((o) => o.value === "Case")!)).toBe("288 pcs · $480.00");
+    expect(text(options.find((o) => o.kind === "pack")!)).toBe("Box · 24 pcs · $48.00");
+  });
+
+  it("a factor-1 unit omits the piece count: 'Piece · $2.00'", () => {
+    const piece = options.find((o) => o.factorToBase === 1)!;
+    expect(text(piece)).toBe("Piece · $2.00");
+    expect(detail(piece)).toBe("$2.00");
+  });
+
+  it("a derived Piece that is not exact to the cent reads '≈$3.33 (1/3 of $10.00)'", () => {
+    const piece = buildLadderOptions(pack3, [CASE72], 1).find((o) => o.factorToBase === 1)!;
+    expect(text(piece)).toBe("Piece · ≈$3.33 (1/3 of $10.00)");
+  });
+
+  it("a fractional factor keeps up to 2 dp", () => {
+    const o = { ...options[0], factorToBase: 2.5 };
+    expect(detail(o)).toBe(`2.5 pcs · ${money(o.price)}`);
+  });
+});
+
+describe("derivedPackSplit: the pack-pieces shape of N pieces of a DERIVED base option (row 513)", () => {
+  const derived = buildLadderOptions(pack3, [CASE72], 1).find((o) => o.factorToBase === 1)!;
+  it("splits on the pack size and rolls over at a full pack", () => {
+    expect(derivedPackSplit(derived, 2)).toEqual({ qty: 2, boxes: 0, pieces: 2, unitsPerBox: 3 });
+    expect(derivedPackSplit(derived, 3)).toEqual({ qty: 3, boxes: 1, pieces: 0, unitsPerBox: 3 });
+    expect(derivedPackSplit(derived, 7)).toEqual({ qty: 7, boxes: 2, pieces: 1, unitsPerBox: 3 });
+  });
+  it("is null for an option that is not a derived base (the pack, a level, an own-priced Piece)", () => {
+    const own = buildLadderOptions(box24, [CASE72, row("Piece", 1, "2.50")], 1);
+    for (const o of own) expect(derivedPackSplit(o, 2)).toBeNull();
   });
 });
