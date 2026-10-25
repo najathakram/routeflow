@@ -6,7 +6,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { superAdminClient } from "@/lib/admin-api";
 import { BUYER_KEYS } from "@/lib/auth-keys";
-import { AdminBadge } from "../../../_components/AdminBadge";
+import { AdminBadge, statusLabel } from "../../../_components/AdminBadge";
 import { AdminModal } from "../../../_components/AdminModal";
 import {
   ArrowLeft,
@@ -197,7 +197,7 @@ export default function BuyerDetailPage() {
     if (
       !buyer ||
       !window.confirm(
-        `Impersonate ${buyer.name}? A short-lived JWT will be issued. The buyer will not be notified.`,
+        `Impersonate ${buyer.name}? You'll act as this buyer for a short time. The buyer won't be notified.`,
       )
     )
       return;
@@ -298,7 +298,7 @@ export default function BuyerDetailPage() {
   if (loading) {
     return (
       <div className="flex h-64 items-center justify-center text-slate-400">
-        Loading buyer account...
+        Loading buyer account…
       </div>
     );
   }
@@ -316,7 +316,7 @@ export default function BuyerDetailPage() {
           href="/admin/buyers"
           className="admin-tap-text mt-4 inline-flex items-center gap-2 text-sm text-slate-400 hover:text-white"
         >
-          <ArrowLeft className="h-4 w-4" /> Back to Buyers
+          <ArrowLeft className="h-4 w-4" /> Back to buyers
         </Link>
       </div>
     );
@@ -339,7 +339,7 @@ export default function BuyerDetailPage() {
           href="/admin/buyers"
           className="admin-tap-text mb-3 inline-flex items-center gap-1.5 text-sm text-slate-400 hover:text-white"
         >
-          <ArrowLeft className="h-4 w-4" /> Back to Buyers
+          <ArrowLeft className="h-4 w-4" /> Back to buyers
         </Link>
 
         <div className="flex items-start justify-between gap-4">
@@ -368,7 +368,7 @@ export default function BuyerDetailPage() {
                 className="flex items-center gap-1.5 rounded-lg border border-slate-600 px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-700 disabled:opacity-50"
               >
                 <ExternalLink className="h-3.5 w-3.5" />
-                {impersonating ? "Opening..." : "Impersonate"}
+                {impersonating ? "Opening…" : "Impersonate"}
               </button>
             )}
             {buyer.status === "ACTIVE" && (
@@ -420,7 +420,7 @@ export default function BuyerDetailPage() {
             }`}
           >
             {t === "profile" ? <User className="h-4 w-4" /> : <Link2 className="h-4 w-4" />}
-            {t === "profile" ? "Profile" : `Seller Links (${buyer.customerLinks.length})`}
+            {t === "profile" ? "Profile" : `Seller links (${buyer.customerLinks.length})`}
           </button>
         ))}
       </div>
@@ -428,7 +428,7 @@ export default function BuyerDetailPage() {
       {/* ── Profile Tab ──────────────────────────────────────────────────────── */}
       {tab === "profile" && (
         <div className="rounded-xl bg-slate-800 p-6 ring-1 ring-white/5">
-          <h2 className="mb-4 text-sm font-semibold text-slate-300">Edit Profile</h2>
+          <h2 className="mb-4 text-sm font-semibold text-slate-300">Edit profile</h2>
 
           {saveError && (
             <div
@@ -510,7 +510,7 @@ export default function BuyerDetailPage() {
               className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Save className="h-4 w-4" />
-              {saving ? "Saving..." : "Save Changes"}
+              {saving ? "Saving…" : "Save changes"}
             </button>
           </div>
 
@@ -522,11 +522,11 @@ export default function BuyerDetailPage() {
             <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
               {[
                 { label: "Account ID", value: buyer.id, mono: true },
-                { label: "Status", value: buyer.status },
-                { label: "Email Verified", value: buyer.emailVerified ? "Yes" : "No" },
+                { label: "Status", value: statusLabel(buyer.status) },
+                { label: "Email verified", value: buyer.emailVerified ? "Yes" : "No" },
                 { label: "Joined", value: new Date(buyer.createdAt).toLocaleString() },
-                { label: "Last Updated", value: new Date(buyer.updatedAt).toLocaleString() },
-                { label: "Google Account", value: "Check DB" },
+                { label: "Last updated", value: new Date(buyer.updatedAt).toLocaleString() },
+                { label: "Google account", value: "Check DB" },
               ].map((item) => (
                 <div key={item.label}>
                   <dt className="text-xs text-slate-400">{item.label}</dt>
@@ -610,7 +610,7 @@ export default function BuyerDetailPage() {
                             className="flex items-center gap-1 rounded px-2 py-1 text-xs font-medium text-red-400 hover:bg-red-900/30 disabled:opacity-50"
                           >
                             <Unlink className="h-3.5 w-3.5" />
-                            {removingLink === link.id ? "Removing..." : "Disconnect"}
+                            {removingLink === link.id ? "Removing…" : "Disconnect"}
                           </button>
                         )}
                         {link.status !== "ACTIVE" && (
@@ -656,7 +656,7 @@ export default function BuyerDetailPage() {
       <AdminModal
         open={addLinkOpen}
         onClose={() => setAddLinkOpen(false)}
-        title="Link Buyer to a Seller"
+        title="Link buyer to a seller"
         footer={
           <>
             <button
@@ -670,7 +670,7 @@ export default function BuyerDetailPage() {
               onClick={handleAddLink}
               className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
             >
-              {addLinkLoading ? "Linking..." : "Confirm Link"}
+              {addLinkLoading ? "Linking…" : "Confirm link"}
             </button>
           </>
         }
@@ -688,18 +688,18 @@ export default function BuyerDetailPage() {
           {/* Tenant picker */}
           <div>
             <label className="mb-1 block text-sm font-medium text-slate-300">
-              Select Seller (Tenant)
+              Select seller (tenant)
             </label>
             {tenantsLoading ? (
-              <div className="text-sm text-slate-400">Loading tenants...</div>
+              <div className="text-sm text-slate-400">Loading tenants…</div>
             ) : (
               <select
-                aria-label="Select Seller (Tenant)"
+                aria-label="Select seller (tenant)"
                 value={selectedTenantId}
                 onChange={(e) => handleTenantSelect(e.target.value)}
                 className="h-9 w-full rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none"
               >
-                <option value="">-- Choose a seller --</option>
+                <option value="">Choose a seller</option>
                 {tenants.map((t) => (
                   <option key={t.id} value={t.id}>
                     {t.name} ({t.slug})
@@ -713,10 +713,10 @@ export default function BuyerDetailPage() {
           {selectedTenantId && (
             <div>
               <label className="mb-1 block text-sm font-medium text-slate-300">
-                Select Customer Record in this Seller
+                Select customer record in this seller
               </label>
               {customersLoading ? (
-                <div className="text-sm text-slate-400">Loading customers...</div>
+                <div className="text-sm text-slate-400">Loading customers…</div>
               ) : tenantCustomers.length === 0 ? (
                 <div className="text-sm text-slate-400">
                   No customers found in this tenant. Ask the seller to create a customer record
@@ -724,12 +724,12 @@ export default function BuyerDetailPage() {
                 </div>
               ) : (
                 <select
-                  aria-label="Select Customer Record in this Seller"
+                  aria-label="Select customer record in this seller"
                   value={selectedCustomerId}
                   onChange={(e) => setSelectedCustomerId(e.target.value)}
                   className="h-9 w-full rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none"
                 >
-                  <option value="">-- Choose a customer --</option>
+                  <option value="">Choose a customer</option>
                   {tenantCustomers.map((c) => {
                     const hasOtherBuyer =
                       c.customerLink?.buyerAccountId &&

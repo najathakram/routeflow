@@ -243,7 +243,7 @@ export function ExtendTrialDialog({
             onClick={onConfirm}
             className={PRIMARY_CLASS}
           >
-            Extend Trial
+            Extend trial
           </button>
         </>
       }
@@ -355,7 +355,7 @@ export function DeleteTenantDialog({
             }}
             className={DELETE_CLASS}
           >
-            {busy ? "Deleting..." : "Delete Tenant"}
+            {busy ? "Deleting…" : "Delete tenant"}
           </button>
         </>
       }

@@ -203,7 +203,7 @@ async function gotoOverridesSection(page: Page) {
   // Feature Overrides Tenant") contains that substring too, via the page's <h1>, so an
   // unqualified substring match on "Overrides" is satisfied by that H1 alone and never
   // actually proves this section rendered. "+ New Override" is unique to this section.
-  await expect(page.getByRole("button", { name: "+ New Override" })).toBeVisible({
+  await expect(page.getByRole("button", { name: "+ New override" })).toBeVisible({
     timeout: 15_000,
   });
 }
@@ -228,10 +228,10 @@ const STATES: Array<{
       // Not getByText("tobacco_dealer") — the addon card's own description also mentions
       // it ("legacy key: tobacco_dealer"), a strict-mode-ambiguous match. The table cell is unique.
       await expect(page.getByRole("cell", { name: "tobacco_dealer" })).toBeVisible();
-      await expect(page.getByText("GRANT")).toBeVisible();
-      // exact: true — getByText is case-insensitive by default, and the tenant header's own
-      // "ACTIVE" status badge would otherwise strict-mode-collide with this row's "Active".
-      await expect(page.getByText("Active", { exact: true })).toBeVisible();
+      await expect(page.getByText("Grant", { exact: true })).toBeVisible();
+      // Scoped to the table cell — the tenant header's own "Active" status badge would
+      // otherwise strict-mode-collide with this row's "Active".
+      await expect(page.getByRole("cell", { name: "Active", exact: true })).toBeVisible();
     },
   },
   {
@@ -239,7 +239,7 @@ const STATES: Array<{
     body: [overrideRow({ id: "ov-e2e-2", featureKey: "recurring_routes", effect: "DENY" })],
     assert: async (page) => {
       await expect(page.getByText("recurring_routes")).toBeVisible();
-      await expect(page.getByText("DENY")).toBeVisible();
+      await expect(page.getByText("Deny", { exact: true })).toBeVisible();
     },
   },
   {
@@ -279,7 +279,7 @@ for (const vp of VIEWPORTS) {
         // page.screenshot({fullPage: true}) has nothing extra to capture — the addon-card grid
         // above pushes this section below the fold at 768px without this. Scroll it into view
         // so every screenshot actually shows what it's meant to prove, at every viewport.
-        await page.getByRole("button", { name: "+ New Override" }).scrollIntoViewIfNeeded();
+        await page.getByRole("button", { name: "+ New override" }).scrollIntoViewIfNeeded();
         await page.screenshot({
           path: `../../local-assets/feature-overrides-2026-09-16/${vp.label}-${state.name}.png`,
         });
@@ -293,15 +293,15 @@ for (const vp of VIEWPORTS) {
 // the responsive layout at all three). ────────────────────────────────────────────────────
 
 async function openCreateForm(page: Page) {
-  await page.getByRole("button", { name: "+ New Override" }).click();
-  await expect(page.getByRole("heading", { name: "New Feature Override" })).toBeVisible();
+  await page.getByRole("button", { name: "+ New override" }).click();
+  await expect(page.getByRole("heading", { name: "New feature override" })).toBeVisible();
 }
 
 /** Preview → confirm, the ONE path every override write takes now (owner rule, 2026-09-17):
  * clicks "Preview Override" (opens the drawer, calling `POST .../features/preview` first), then
  * "Confirm" (the actual `POST .../feature-overrides`, mocked separately by the caller). */
 async function previewAndConfirm(page: Page) {
-  await page.getByRole("button", { name: "Preview Override" }).click();
+  await page.getByRole("button", { name: "Preview override" }).click();
   await expect(page.getByRole("heading", { name: "Preview override" })).toBeVisible();
   await page.getByRole("button", { name: "Confirm" }).click();
 }
@@ -342,7 +342,7 @@ test.describe("Feature overrides — interactive flows (1440px)", () => {
     await previewAndConfirm(page);
 
     await expect(page.getByRole("heading", { name: "Preview override" })).not.toBeVisible();
-    await expect(page.getByRole("heading", { name: "New Feature Override" })).not.toBeVisible();
+    await expect(page.getByRole("heading", { name: "New feature override" })).not.toBeVisible();
     await expect(page.getByRole("cell", { name: "tobacco_dealer" })).toBeVisible();
     // Back-office P2: the default (Complimentary) comp is time-boxed: 30 days, never null.
     expect(postedExpiresAt).toEqual(expect.any(String));
@@ -451,7 +451,7 @@ test.describe("Feature overrides — interactive flows (1440px)", () => {
     await page.getByRole("button", { name: "Revoke" }).click();
 
     await expect(page.getByText("No active overrides.")).toBeVisible();
-    await page.getByRole("button", { name: "+ New Override" }).scrollIntoViewIfNeeded();
+    await page.getByRole("button", { name: "+ New override" }).scrollIntoViewIfNeeded();
     await page.screenshot({
       path: "../../local-assets/feature-overrides-2026-09-16/1440-revoke.png",
     });

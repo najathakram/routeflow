@@ -16,7 +16,7 @@ import { activationErrorText } from "@/lib/activation-error-copy";
 import { setTenantCookie } from "@/lib/tenant-cookie";
 import { setImpersonation } from "@/lib/impersonation";
 import { AdminTabs } from "../../../_components/AdminTabs";
-import { AdminBadge, planLabel } from "../../../_components/AdminBadge";
+import { AdminBadge, planLabel, statusLabel } from "../../../_components/AdminBadge";
 import { usePlanOptions, withCurrentPlan } from "../../../_components/usePlanOptions";
 import { AdminCard } from "../../../_components/AdminCard";
 import { AdminModal } from "../../../_components/AdminModal";
@@ -123,11 +123,11 @@ interface AuditLogEntry {
 
 const TABS = [
   { key: "overview", label: "Overview", icon: <LayoutDashboard className="h-4 w-4" /> },
-  { key: "billing", label: "Billing & Subscription", icon: <CreditCard className="h-4 w-4" /> },
+  { key: "billing", label: "Billing & subscription", icon: <CreditCard className="h-4 w-4" /> },
   { key: "setup", label: "Setup", icon: <Puzzle className="h-4 w-4" /> },
   { key: "config", label: "Configuration", icon: <Settings className="h-4 w-4" /> },
-  { key: "snapshots", label: "Config Snapshots", icon: <Archive className="h-4 w-4" /> },
-  { key: "audit", label: "Audit Log", icon: <ScrollText className="h-4 w-4" /> },
+  { key: "snapshots", label: "Configuration snapshots", icon: <Archive className="h-4 w-4" /> },
+  { key: "audit", label: "Audit log", icon: <ScrollText className="h-4 w-4" /> },
 ];
 
 /** The tab named by `?tab=`; the legacy `addons` is the Setup tab, and anything else (or nothing) is Overview. */
@@ -274,11 +274,11 @@ function TenantAdminSection({
                 key="s"
                 className={admin.status === "ACTIVE" ? "text-green-400" : "text-yellow-400"}
               >
-                {admin.status}
+                {statusLabel(admin.status)}
               </span>,
             ],
             [
-              "Force Password Change",
+              "Force password change",
               <span
                 key="fp"
                 className={admin.forcePasswordChange ? "text-yellow-400" : "text-slate-400"}
@@ -310,7 +310,7 @@ function TenantAdminSection({
               onClick={() => setShowCreateForm(true)}
               className="mt-3 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-indigo-500"
             >
-              Create Admin Account
+              Create admin account
             </button>
           ) : (
             <form onSubmit={handleCreateAdmin} className="mt-4 text-left space-y-3">
@@ -346,7 +346,7 @@ function TenantAdminSection({
                   disabled={creating}
                   className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
                 >
-                  {creating ? "Creating..." : "Create Admin"}
+                  {creating ? "Creating…" : "Create Admin"}
                 </button>
                 <button
                   type="button"
@@ -457,7 +457,7 @@ function OverviewTab({
       </div>
 
       {/* Tenant Info */}
-      <AdminCard title="Tenant Info" className="min-w-0">
+      <AdminCard title="Tenant info" className="min-w-0">
         <dl className="flex flex-col gap-2.5 text-sm">
           {[
             [
@@ -540,7 +540,7 @@ function OverviewTab({
 
       {/* Usage Stats */}
       {tenant.counts && (
-        <AdminCard title="Usage Stats">
+        <AdminCard title="Usage stats">
           <div className="grid grid-cols-3 gap-3">
             {(
               [
@@ -625,7 +625,7 @@ function OverviewTab({
       />
 
       {/* Quick Actions */}
-      <AdminCard title="Quick Actions" className="min-w-0 lg:col-span-2">
+      <AdminCard title="Quick actions" className="min-w-0 lg:col-span-2">
         {statusMsg && (
           <div className="mb-4 rounded-lg bg-indigo-900/40 px-4 py-2 text-sm text-indigo-300 ring-1 ring-indigo-700">
             {statusMsg}
@@ -677,7 +677,7 @@ function OverviewTab({
               }}
               className="rounded-lg bg-red-900/40 px-4 py-2 text-sm font-semibold text-red-400 ring-1 ring-red-700 transition-colors hover:bg-red-900/70 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-red-900/40"
             >
-              Delete Tenant
+              Delete tenant
             </button>
             <DisabledHint id="delete-tenant-hint" show={!canDelete}>
               {TENANT_ACTION_COPY.deleteRefused}
@@ -712,7 +712,7 @@ function OverviewTab({
               onClick={() => setConfirming("extend-trial")}
               className="rounded-lg bg-slate-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-slate-500 disabled:opacity-50"
             >
-              {actionLoading === "extend-trial" ? "Extending..." : "Extend Trial"}
+              {actionLoading === "extend-trial" ? "Extending…" : "Extend trial"}
             </button>
           </div>
           <DisabledHint
@@ -735,7 +735,7 @@ function OverviewTab({
               onClick={() => setShowResetConfirm(true)}
               className="rounded-lg bg-orange-700/60 px-4 py-2 text-sm font-semibold text-orange-300 ring-1 ring-orange-600/40 transition-colors hover:bg-orange-700 disabled:opacity-50"
             >
-              Reset Admin Password
+              Reset admin password
             </button>
           ) : (
             <div className="flex items-center gap-2 rounded-lg bg-orange-900/40 px-4 py-2 ring-1 ring-orange-700">
@@ -796,7 +796,7 @@ function OverviewTab({
 
       {/* Recent Audit Logs */}
       <AdminCard
-        title="Recent Audit Logs"
+        title="Recent audit logs"
         className="min-w-0 lg:col-span-2"
         actions={
           <Link
@@ -934,7 +934,7 @@ function BillingTab({
       );
       setMsg({
         type: "success",
-        text: `Subscription activated — ${res.data.plan} plan, paid via ${manualForm.paymentMethod}. Next renewal: ${new Date(res.data.periodEnd).toLocaleDateString()}`,
+        text: `Subscription activated — ${planLabel(res.data.plan)} plan, paid by ${EXTERNAL_PAYMENT_METHODS.find((m) => m.value === manualForm.paymentMethod)?.label ?? manualForm.paymentMethod}. Next renewal ${longDate(new Date(res.data.periodEnd))}.`,
       });
       setActivationAddons((res.data as ManualActivationResult).addons ?? null);
       onRefreshTenant();
@@ -948,7 +948,7 @@ function BillingTab({
   return (
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
       {/* Current Plan */}
-      <AdminCard title="Current Plan" className="min-w-0">
+      <AdminCard title="Current plan" className="min-w-0">
         <div className="flex items-center gap-4 mb-4">
           <AdminBadge variant="plan">{tenant.planKey ?? tenant.plan}</AdminBadge>
           <AdminBadge>{tenant.status}</AdminBadge>
@@ -957,7 +957,9 @@ function BillingTab({
           <p
             className={`text-sm ${daysLeft > 7 ? "text-green-400" : daysLeft > 0 ? "text-yellow-400" : "text-red-400"}`}
           >
-            {daysLeft > 0 ? `${daysLeft} days remaining on trial` : "Trial expired"}
+            {daysLeft > 0
+              ? `${daysLeft} ${daysLeft === 1 ? "day" : "days"} remaining on trial`
+              : "Trial expired"}
           </p>
         )}
       </AdminCard>
@@ -1028,7 +1030,7 @@ function BillingTab({
       </AdminCard>
 
       {/* Manual Activation */}
-      <AdminCard title="Manual Activation" className="min-w-0 lg:col-span-2">
+      <AdminCard title="Manual activation" className="min-w-0 lg:col-span-2">
         <p className="mb-4 text-sm text-slate-400">
           Activate this tenant&apos;s subscription when payment was received outside Stripe — via
           Zelle, bank transfer, check, or any other platform.
@@ -1149,7 +1151,7 @@ function BillingTab({
               disabled={activating}
               className="rounded-lg bg-emerald-700 px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-emerald-600 disabled:opacity-50"
             >
-              {activating ? "Activating..." : "Activate Subscription"}
+              {activating ? "Activating…" : "Activate subscription"}
             </button>
             <p className="text-xs text-slate-400">
               This will set the tenant status to <strong className="text-slate-300">ACTIVE</strong>{" "}
@@ -1160,14 +1162,14 @@ function BillingTab({
       </AdminCard>
 
       {/* Stripe Actions — checkout now lives on the Pricing card below (interval-aware) */}
-      <AdminCard title="Stripe Actions" className="min-w-0 lg:col-span-2">
+      <AdminCard title="Stripe actions" className="min-w-0 lg:col-span-2">
         <div className="flex flex-wrap gap-3">
           <button
             disabled={portalLoading}
             onClick={openBillingPortal}
             className="rounded-lg bg-indigo-700 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-indigo-600 disabled:opacity-50"
           >
-            {portalLoading ? "Opening..." : "Open Billing Portal"}
+            {portalLoading ? "Opening…" : "Open billing portal"}
           </button>
         </div>
       </AdminCard>
@@ -1505,7 +1507,7 @@ export const FeatureOverridesSection = React.forwardRef<
           onClick={openForm}
           className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500"
         >
-          + New Override
+          + New override
         </button>
       </div>
 
@@ -1516,7 +1518,7 @@ export const FeatureOverridesSection = React.forwardRef<
       )}
 
       {loading ? (
-        <div className="py-8 text-center text-slate-400">Loading overrides...</div>
+        <div className="py-8 text-center text-slate-400">Loading overrides…</div>
       ) : (
         <div className="rounded-xl bg-slate-800 ring-1 ring-white/5 overflow-hidden">
           <div
@@ -1552,7 +1554,7 @@ export const FeatureOverridesSection = React.forwardRef<
                               : "bg-red-500/20 text-red-300"
                           }`}
                         >
-                          {o.effect}
+                          {o.effect === "GRANT" ? "Grant" : "Deny"}
                         </span>
                       </td>
                       <td className="px-4 py-2 text-slate-400" title={o.reason}>
@@ -1574,7 +1576,7 @@ export const FeatureOverridesSection = React.forwardRef<
                           onClick={() => handleRevoke(o.id)}
                           className="rounded px-2 py-1 text-slate-400 hover:bg-slate-700 hover:text-white disabled:opacity-50"
                         >
-                          {revokingId === o.id ? "Revoking..." : "Revoke"}
+                          {revokingId === o.id ? "Revoking…" : "Revoke"}
                         </button>
                       </td>
                     </tr>
@@ -1598,7 +1600,7 @@ export const FeatureOverridesSection = React.forwardRef<
       <AdminModal
         open={showForm && !previewResponse}
         onClose={closeForm}
-        title="New Feature Override"
+        title="New feature override"
         footer={
           <>
             <button
@@ -1616,7 +1618,7 @@ export const FeatureOverridesSection = React.forwardRef<
               }
               className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
             >
-              {previewing ? "Loading preview..." : "Preview Override"}
+              {previewing ? "Loading preview…" : "Preview override"}
             </button>
           </>
         }
@@ -1739,7 +1741,7 @@ export const FeatureOverridesSection = React.forwardRef<
             <p className="text-xs text-red-400">{previewError}</p>
           )}
           <DisabledHint id="feature-override-hint" show={!form.featureKey || !form.reason}>
-            Choose a feature and enter a reason to enable Preview Override.
+            Choose a feature and enter a reason to enable Preview override.
           </DisabledHint>
         </form>
       </AdminModal>
@@ -1854,7 +1856,7 @@ function ConfigTab({ tenant }: { tenant: TenantDetail }) {
           disabled={saving}
           className="self-end rounded bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
         >
-          {saving ? "Saving…" : saved ? "Saved ✓" : "Save Changes"}
+          {saving ? "Saving…" : saved ? "Saved" : "Save changes"}
         </button>
       </form>
     </AdminCard>
@@ -1881,7 +1883,7 @@ function AuditLogTab({ tenantId }: { tenantId: string }) {
       .finally(() => setLoading(false));
   }, [tenantId, page]);
 
-  if (loading) return <div className="py-8 text-center text-slate-400">Loading audit logs...</div>;
+  if (loading) return <div className="py-8 text-center text-slate-400">Loading audit logs…</div>;
 
   return (
     <div>
@@ -2010,13 +2012,13 @@ export default function AdminTenantDetailPage() {
           await superAdminClient.patch(`/platform-admin/tenants/${id}/status`, {
             status: newStatus,
           });
-          setStatusMsg(`Status changed to ${newStatus}`);
+          setStatusMsg(`Status changed to ${statusLabel(newStatus)}.`);
           break;
         }
         case "change-plan": {
           const { plan } = payload as { plan: string };
           await superAdminClient.patch(`/platform-admin/tenants/${id}/plan`, { plan });
-          setStatusMsg(`Plan changed to ${plan}`);
+          setStatusMsg(`Plan changed to ${planLabel(plan)}.`);
           break;
         }
         case "impersonate": {
@@ -2086,7 +2088,7 @@ export default function AdminTenantDetailPage() {
     }
   };
 
-  if (loading) return <div className="p-6 text-center text-slate-400">Loading tenant...</div>;
+  if (loading) return <div className="p-6 text-center text-slate-400">Loading tenant…</div>;
 
   if (error || !tenant) {
     return (
@@ -2101,7 +2103,7 @@ export default function AdminTenantDetailPage() {
           href="/admin/tenants"
           className="admin-tap-text mt-4 inline-block text-sm text-indigo-400 hover:underline"
         >
-          Back to Tenants
+          Back to tenants
         </Link>
       </div>
     );
@@ -2125,7 +2127,9 @@ export default function AdminTenantDetailPage() {
       <p className="mb-4 text-sm text-slate-400">
         <span className="font-mono">{tenant.slug}</span>.routeflow.info · created{" "}
         {new Date(tenant.createdAt).toLocaleDateString()}
-        {tenant.counts ? ` · ${tenant.counts.users} users` : ""}
+        {tenant.counts
+          ? ` · ${tenant.counts.users} ${tenant.counts.users === 1 ? "user" : "users"}`
+          : ""}
       </p>
 
       {/* Tabs */}
