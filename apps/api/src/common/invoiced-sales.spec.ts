@@ -1,3 +1,5 @@
+import { readFileSync } from "fs";
+import { join } from "path";
 import { CreditNoteStatus, InvoiceStatus, Prisma } from "@prisma/client";
 import { CONFIRMED_PAYMENT } from "../invoices/payment-predicates";
 import {
@@ -349,6 +351,75 @@ describe("accrual net sales (B440/B455/B456)", () => {
       });
       const result = await fetchAccrualNetSalesByCustomer(db, "tenant-1", window);
       expect(result.get("c1")).toEqual({ gross: 50, creditNotes: 0, externalRefunds: 50, net: 0 });
+    });
+
+    describe("SA-980: the store-credit term is keyed on how the return was settled, never on its kind", () => {
+      // 10.00 + 8% = 10.80. The invoice's pre-tax sales are 10.00 and the credit note is the GROSS 10.80.
+      const invoice10 = { _sum: { total: D(10.8), taxAmount: D(0.8) } };
+      const returnRows = (rows: Array<Record<string, unknown>>) => async (args: any) => {
+        const w = args.where;
+        const hit = rows.filter(
+          (r) =>
+            (w.kind === undefined || r.kind === w.kind) &&
+            (w.refundMethod === undefined || r.refundMethod === w.refundMethod) &&
+            (w.creditNoteId === undefined || r.creditNoteId != null) &&
+            (w.creditSubtotal === undefined || r.creditSubtotal != null),
+        );
+        const sum = (k: string) => hit.reduce((t, r) => t + Number(r[k] ?? 0), 0);
+        return {
+          _sum: {
+            refundAmount: D(sum("refundAmount")),
+            creditTax: D(sum("creditTax")),
+            creditCategoryTax: D(sum("creditCategoryTax")),
+          },
+        };
+      };
+      const noteReturn = (kind: "STANDARD" | "INLINE") => ({
+        kind,
+        refundMethod: "CREDIT_NOTE",
+        creditNoteId: "cn-1",
+        refundAmount: 10.8,
+        creditTax: 0.8,
+        creditCategoryTax: 0,
+      });
+
+      it("REG-B704 SA-980: an INLINE store-credit return of 10.00 + 8% takes 10.00 off net sales, not 10.80", async () => {
+        // wrong at 9e50ad230: the INLINE return's tax is not read back (kind STANDARD filter), so creditNotes is 10.80 and net -0.80
+        const db = stubDb({ invoiceAgg: invoice10, creditNoteAgg: { _sum: { amount: D(10.8) } } });
+        db.return.aggregate.mockImplementation(returnRows([noteReturn("INLINE")]));
+        const result = await fetchAccrualNetSales(db, "tenant-1", window);
+        expect(result).toEqual({ gross: 10, creditNotes: 10, externalRefunds: 0, net: 0 });
+      });
+
+      it("SA-980 guard: the STANDARD store-credit case is unchanged (10.00 off)", async () => {
+        const db = stubDb({ invoiceAgg: invoice10, creditNoteAgg: { _sum: { amount: D(10.8) } } });
+        db.return.aggregate.mockImplementation(returnRows([noteReturn("STANDARD")]));
+        const result = await fetchAccrualNetSales(db, "tenant-1", window);
+        expect(result).toEqual({ gross: 10, creditNotes: 10, externalRefunds: 0, net: 0 });
+      });
+
+      it("SA-980 guard: an INLINE external refund of 10.80 with a frozen split takes 10.00 off", async () => {
+        const db = stubDb({ invoiceAgg: invoice10, creditNoteAgg: { _sum: { amount: D(0) } } });
+        db.return.aggregate.mockImplementation(
+          returnRows([
+            {
+              kind: "INLINE",
+              refundMethod: "EXTERNAL_REFUND",
+              refundAmount: 10.8,
+              creditSubtotal: 10,
+              creditTax: 0.8,
+              creditCategoryTax: 0,
+            },
+          ]),
+        );
+        const result = await fetchAccrualNetSales(db, "tenant-1", window);
+        expect(result).toEqual({ gross: 10, creditNotes: 0, externalRefunds: 10, net: 0 });
+      });
+
+      it("REG-B704 SA-980 pin: refund-net-terms.ts has no `kind:` literal (a return's kind never decides its tax term)", () => {
+        const src = readFileSync(join(__dirname, "refund-net-terms.ts"), "utf8");
+        expect(src).not.toMatch(/\bkind\s*:/);
+      });
     });
   });
 });
