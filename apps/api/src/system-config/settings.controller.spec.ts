@@ -7,6 +7,9 @@ import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
 import { quickKeysSettingsStubProvider } from "../testing/quick-keys-settings-stub";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { plainToInstance } from "class-transformer";
+import { validateSync } from "class-validator";
+import { UpdateInvoiceSettingsDto } from "./dto/update-invoice-settings.dto";
 
 // WP2: settings.taxRate is stored as a PERCENT (0-100, string) — see
 // apps/api/src/common/tax-rate.ts. A direct PATCH call can otherwise store an
@@ -219,18 +222,30 @@ describe("SettingsController — GET/PATCH /settings/invoice deposit policy", ()
     expect(svc.set).toHaveBeenCalledWith("invoice.depositDefaultPercent", "30");
   });
 
-  it('PATCH {depositDefaultPercent:null} stores the empty-string sentinel (not the string "null"), and GET then returns null', async () => {
-    await controller.updateInvoiceSettings({
-      depositDefaultPercent: null,
-    } as unknown as { depositDefaultPercent?: number });
-    expect(svc.set).toHaveBeenCalledWith("invoice.depositDefaultPercent", "");
-    expect(svc.set).not.toHaveBeenCalledWith("invoice.depositDefaultPercent", "null");
+  it('PATCH {depositDefaultPercent:0} stores "0" (the clear; Row 652), and GET then returns 0', async () => {
+    await controller.updateInvoiceSettings({ depositDefaultPercent: 0 });
+    expect(svc.set).toHaveBeenCalledWith("invoice.depositDefaultPercent", "0");
 
+    svc.get.mockImplementation((key: string) =>
+      key === "invoice.depositDefaultPercent" ? Promise.resolve("0") : Promise.resolve(null),
+    );
+    expect((await controller.getInvoiceSettings()).depositDefaultPercent).toBe(0);
+  });
+
+  it("a row cleared before Row 652 (stored empty string) still reads as null", async () => {
     svc.get.mockImplementation((key: string) =>
       key === "invoice.depositDefaultPercent" ? Promise.resolve("") : Promise.resolve(null),
     );
-    const result = await controller.getInvoiceSettings();
-    expect(result.depositDefaultPercent).toBeNull();
+    expect((await controller.getInvoiceSettings()).depositDefaultPercent).toBeNull();
+  });
+
+  it("Row 652: the DTO refuses depositDefaultPercent: null (omit or send 0) and still takes 0 and 30", () => {
+    const bad = (plain: object) =>
+      validateSync(plainToInstance(UpdateInvoiceSettingsDto, plain)).map((e) => e.property);
+    expect(bad({ depositDefaultPercent: null })).toEqual(["depositDefaultPercent"]);
+    expect(bad({ depositDefaultPercent: 0 })).toEqual([]);
+    expect(bad({ depositDefaultPercent: 30 })).toEqual([]);
+    expect(bad({})).toEqual([]);
   });
 
   it('PATCH {depositCollectAtOrder:true} calls svc.set(invoice.depositCollectAtOrder, "true")', async () => {

@@ -646,10 +646,7 @@ export class SettingsController {
       await this.svc.set("invoice.hideOriginalPrice", String(dto.hideOriginalPrice));
     }
     if (dto.depositDefaultPercent !== undefined) {
-      await this.svc.set(
-        "invoice.depositDefaultPercent",
-        dto.depositDefaultPercent == null ? "" : String(dto.depositDefaultPercent),
-      );
+      await this.svc.set("invoice.depositDefaultPercent", String(dto.depositDefaultPercent));
     }
     if (dto.depositCollectAtOrder !== undefined) {
       await this.svc.set("invoice.depositCollectAtOrder", String(dto.depositCollectAtOrder));
