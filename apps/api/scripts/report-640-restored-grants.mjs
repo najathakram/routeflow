@@ -6,8 +6,11 @@
  * design, so it is reported but is not the harm.
  *
  * A restored override carries no marker, so it is matched to a restored snapshot by tenant + a
- * 10 s window: a GRANT row created at or after `restoredAt` and within 10 s of it. The match is
- * approximate (a coincident admin grant would count) and says so in the output.
+ * 10 s window: a GRANT row created at or after `restoredAt` and within 10 s of it. A PARTIAL restore
+ * (BO-13 held row) is never stamped, so its grants are reported SEPARATELY as `unstampedPossible`,
+ * matched via the CONFIG_SNAPSHOT_RESTORE_HELD audit row written in the same transaction. "Billable"
+ * also requires the published catalog AddonSku to carry a price. Every limit is printed in `limits`
+ * (text and --json): the counts are approximate and say so.
  *
  * NEVER RUN FROM AN IMPLEMENTATION SESSION. The fleet lead runs it under its standing read-only yes:
  *
@@ -33,20 +36,54 @@ export const BILLABLE_KEYS = {
   tobacco_dealer: "REGULATED_ITEMS",
 };
 export const WINDOW_SECONDS = 10;
+export const HELD_ACTION = "CONFIG_SNAPSHOT_RESTORE_HELD";
 
-/** Pure: fold census rows into counts only. */
+/** Plain-words limits, printed in text and `--json` so nobody reads the counts as exact. */
+export const LIMITS = [
+  `stamped restores are matched by a ${WINDOW_SECONDS}s window after restoredAt; a coincident admin grant would count`,
+  `unstamped-possible = a GRANT created within ${WINDOW_SECONDS}s before a ${HELD_ACTION} audit row (a partial restore leaves the snapshot unstamped); the audit row is the only signal, so an admin grant in the same window would count, and a partial restore with no audit row is invisible`,
+  "billable = the published catalog AddonSku has monthlyPrice > 0; a plan that bundles the SKU (includedAtPlan) is NOT evaluated, so a grant on a bundling plan may be reported as harm",
+];
+
+const bump = (m, k, n) => {
+  m[k] = (m[k] ?? 0) + n;
+};
+
+/**
+ * Pure: fold census rows into counts only. A row is `{ kind, n, hasPricedRow, signal?, catalogPriced? }`
+ * where `signal` is "stamped" (default) or "unstamped", and `catalogPriced === false` means the catalog
+ * does not price the SKU, so a free grant there is not the harm.
+ */
 export function summarize(rows) {
   const byKind = {};
-  let uncoveredNonComp = 0;
+  const unByKind = {};
+  let uncovered = 0;
+  let unUncovered = 0;
+  let stamped = 0;
+  let unstamped = 0;
   for (const r of rows) {
-    byKind[r.kind] = (byKind[r.kind] ?? 0) + r.n;
-    if (r.kind !== "COMP" && !r.hasPricedRow) uncoveredNonComp += r.n;
+    const harm = r.kind !== "COMP" && !r.hasPricedRow && r.catalogPriced !== false;
+    if (r.signal === "unstamped") {
+      unstamped += r.n;
+      bump(unByKind, r.kind, r.n);
+      if (harm) unUncovered += r.n;
+    } else {
+      stamped += r.n;
+      bump(byKind, r.kind, r.n);
+      if (harm) uncovered += r.n;
+    }
   }
   return {
-    restoredGrants: rows.reduce((t, r) => t + r.n, 0),
+    restoredGrants: stamped,
     byKind,
-    nonCompWithoutPricedRow: uncoveredNonComp,
-    note: `matched by a ${WINDOW_SECONDS}s window after restoredAt; approximate`,
+    nonCompWithoutPricedRow: uncovered,
+    unstampedPossible: {
+      grants: unstamped,
+      byKind: unByKind,
+      nonCompWithoutPricedRow: unUncovered,
+    },
+    limits: LIMITS,
+    note: LIMITS[0],
   };
 }
 
@@ -55,8 +92,16 @@ export function selfTest() {
     { kind: "COMP", n: 2, hasPricedRow: false },
     { kind: "PILOT", n: 1, hasPricedRow: false },
     { kind: "TRIAL", n: 3, hasPricedRow: true },
+    { kind: "TRIAL", n: 4, hasPricedRow: false, catalogPriced: false },
+    { kind: "PILOT", n: 3, hasPricedRow: false, signal: "unstamped", catalogPriced: true },
   ]);
-  if (s.restoredGrants !== 6 || s.nonCompWithoutPricedRow !== 1 || s.byKind.COMP !== 2)
+  if (
+    s.restoredGrants !== 10 ||
+    s.nonCompWithoutPricedRow !== 1 ||
+    s.byKind.COMP !== 2 ||
+    s.unstampedPossible.grants !== 3 ||
+    s.unstampedPossible.nonCompWithoutPricedRow !== 3
+  )
     throw new Error(`summarize: ${JSON.stringify(s)}`);
   return "self-test ok";
 }
@@ -85,10 +130,20 @@ async function main() {
               COUNT(*) FILTER (WHERE "restoredAt" IS NOT NULL AND "restoredToPlanKey" <> 'SUPERSEDED')::int AS restored
          FROM "TenantFeatureConfigSnapshot"`,
     );
-    const { rows } = await client.query(
-      `WITH map AS (SELECT * FROM unnest($1::text[], $2::text[]) AS m(key, sku))
+    // Catalog price: the highest PUBLISHED version's AddonSku with monthlyPrice > 0.
+    const priced = await client.query(
+      `SELECT k.sku FROM "AddonSku" k
+         JOIN (SELECT id FROM "PlanVersion" WHERE status = 'PUBLISHED' ORDER BY version DESC LIMIT 1) v
+           ON v.id = k."planVersionId"
+        WHERE k.sku = ANY($1::text[]) AND k."monthlyPrice" > 0`,
+      [skus],
+    );
+    const pricedSkus = new Set(priced.rows.map((r) => r.sku));
+
+    const head = `WITH map AS (SELECT * FROM unnest($1::text[], $2::text[]) AS m(key, sku))
        SELECT o.kind::text AS kind,
               COUNT(*)::int AS n,
+              m.sku AS sku,
               EXISTS (
                 SELECT 1 FROM "TenantAddon" a
                  WHERE a."tenantId" = o."tenantId" AND a.active = true AND a."isComp" = false
@@ -97,23 +152,52 @@ async function main() {
                    AND a."addonKey" IN (m.key, m.sku)
               ) AS "hasPricedRow"
          FROM "TenantFeatureOverride" o
-         JOIN map m ON m.key = o."featureKey"
-         JOIN "TenantFeatureConfigSnapshot" s
-           ON s."tenantId" = o."tenantId"
+         JOIN map m ON m.key = o."featureKey"`;
+    const stampedWindow = `s."tenantId" = o."tenantId"
           AND s."restoredAt" IS NOT NULL
           AND s."restoredToPlanKey" <> 'SUPERSEDED'
           AND o."createdAt" >= s."restoredAt"
-          AND o."createdAt" < s."restoredAt" + make_interval(secs => $3)
+          AND o."createdAt" < s."restoredAt" + make_interval(secs => $3)`;
+    const stampedRows = await client.query(
+      `${head}
+         JOIN "TenantFeatureConfigSnapshot" s ON ${stampedWindow}
         WHERE o.effect = 'GRANT'
         GROUP BY o.kind, o."tenantId", m.key, m.sku`,
       [keys, skus, WINDOW_SECONDS],
     );
+    // Unstamped partial restores: a HELD audit row (written in the same transaction, just after the
+    // override rows) for the tenant; any override the stamped match already counted is excluded.
+    const unstampedRows = await client.query(
+      `${head}
+        WHERE o.effect = 'GRANT'
+          AND EXISTS (
+            SELECT 1 FROM "AuditLog" l
+             WHERE l."tenantId" = o."tenantId" AND l.action = $4
+               AND o."createdAt" <= l."createdAt"
+               AND o."createdAt" > l."createdAt" - make_interval(secs => $3))
+          AND NOT EXISTS (
+            SELECT 1 FROM "TenantFeatureConfigSnapshot" s WHERE ${stampedWindow})
+        GROUP BY o.kind, o."tenantId", m.key, m.sku`,
+      [keys, skus, WINDOW_SECONDS, HELD_ACTION],
+    );
+    const toRow = (signal) => (r) => ({
+      kind: r.kind,
+      n: r.n,
+      hasPricedRow: r.hasPricedRow,
+      signal,
+      catalogPriced: pricedSkus.has(r.sku),
+    });
     const out = {
       snapshots: snapshots.rows[0],
-      ...summarize(rows.map((r) => ({ kind: r.kind, n: r.n, hasPricedRow: r.hasPricedRow }))),
+      ...summarize([
+        ...stampedRows.rows.map(toRow("stamped")),
+        ...unstampedRows.rows.map(toRow("unstamped")),
+      ]),
     };
     console.log(
-      json ? JSON.stringify(out) : `row 640 census (counts only):\n${JSON.stringify(out, null, 2)}`,
+      json
+        ? JSON.stringify(out)
+        : `row 640 census (counts only):\n${JSON.stringify(out, null, 2)}\nLimits:\n- ${LIMITS.join("\n- ")}`,
     );
   } finally {
     await client.end().catch(() => {});

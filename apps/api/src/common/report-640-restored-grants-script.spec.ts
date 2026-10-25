@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { ADDON_KEY_TO_REGISTRY_KEY, featureDefByKey } from "../billing/feature-registry";
 
 // Row 640 (SA-834) — apps/api/scripts/report-640-restored-grants.mjs contract: read-only, counts
@@ -35,6 +36,52 @@ describe("report-640-restored-grants.mjs", () => {
     const r = node([SCRIPT, "--self-test"], process.env);
     expect(r.status).toBe(0);
     expect(r.stdout.trim()).toBe("self-test ok");
+  });
+
+  // Row 686: the pure fold pinned by value, run through real node (the script is ESM).
+  const fold = (rows: unknown[]) => {
+    const code =
+      `import(${JSON.stringify(pathToFileURL(SCRIPT).href)}).then(m=>` +
+      `console.log(JSON.stringify(m.summarize(${JSON.stringify(rows)}))))`;
+    const r = node(["--input-type=module", "-e", code], process.env);
+    expect(r.status).toBe(0);
+    return JSON.parse(r.stdout.trim());
+  };
+
+  it("counts an unstamped partial restore separately (old script counted it as 0)", () => {
+    const s = fold([
+      { kind: "TRIAL", n: 2, hasPricedRow: false, signal: "stamped", catalogPriced: true },
+      { kind: "PILOT", n: 3, hasPricedRow: false, signal: "unstamped", catalogPriced: true },
+      { kind: "COMP", n: 1, hasPricedRow: false, signal: "unstamped", catalogPriced: true },
+    ]);
+    expect(s.restoredGrants).toBe(2);
+    expect(s.nonCompWithoutPricedRow).toBe(2);
+    expect(s.unstampedPossible).toEqual({
+      grants: 4,
+      byKind: { PILOT: 3, COMP: 1 },
+      nonCompWithoutPricedRow: 3,
+    });
+  });
+
+  it("does not call a grant harmful when the catalog does not price the SKU", () => {
+    const s = fold([
+      { kind: "TRIAL", n: 5, hasPricedRow: false, signal: "stamped", catalogPriced: false },
+      { kind: "TRIAL", n: 1, hasPricedRow: false, signal: "stamped", catalogPriced: true },
+    ]);
+    expect(s.restoredGrants).toBe(6);
+    expect(s.nonCompWithoutPricedRow).toBe(1);
+  });
+
+  it("states its limits in plain words as a limits array", () => {
+    const s = fold([]);
+    expect(Array.isArray(s.limits)).toBe(true);
+    expect(s.limits.join(" ")).toMatch(/unstamped/i);
+    expect(s.limits.join(" ")).toMatch(/includedAtPlan/);
+  });
+
+  it("matches unstamped restores via the HELD audit row and prices via AddonSku", () => {
+    expect(source).toContain("CONFIG_SNAPSHOT_RESTORE_HELD");
+    expect(source).toContain('"AddonSku"');
   });
 
   it("its billable keys are registry add-on keys carrying exactly those catalog SKUs (parity pin)", () => {
