@@ -83,6 +83,7 @@ import {
   lockLabelCategories,
   syncCategoryLabel,
 } from "../product-categories/label-writer";
+import { auditTrackedCategoryWrite } from "../tracked-categories/tracked-category-audit";
 import { txConflictState } from "../common/tx-retry";
 import {
   keepLabelsOnReparent,
@@ -372,18 +373,30 @@ export class ProductsService {
       throw new BadRequestException("Subcategory does not belong to the chosen section.");
     }
     this.assertRegConfigMatchesTemplate({ name: TOBACCO_CATEGORY_NAME, reportTemplate }, pending);
-    return this.prisma.forTenant().trackedCategory.create({
-      data: {
+    // Row 430: the seed is a regulated-category write like any other: audited in its own transaction. No signed-in user
+    // is threaded to this helper, so the row says it was the auto-seed.
+    return this.prisma.tenantTransaction(async (tx: Prisma.TransactionClient) => {
+      const seeded = await tx.trackedCategory.create({
+        data: {
+          tenantId,
+          name: TOBACCO_CATEGORY_NAME,
+          taxType: "NONE",
+          requiresLicense: false,
+          reportTemplate,
+          reportCadence: "MONTHLY",
+          invoiceTreatment: "SEPARATE_INVOICE",
+          active: true,
+        },
+      });
+      await auditTrackedCategoryWrite(tx, {
         tenantId,
-        name: TOBACCO_CATEGORY_NAME,
-        taxType: "NONE",
-        requiresLicense: false,
-        reportTemplate,
-        reportCadence: "MONTHLY",
-        invoiceTreatment: "SEPARATE_INVOICE",
-        active: true,
-      },
-      select: { id: true },
+        actor: null,
+        created: true,
+        before: null,
+        after: seeded,
+        via: "tobacco-autoseed",
+      });
+      return { id: seeded.id };
     });
   }
 

@@ -6,6 +6,10 @@
  * word as an API error code: api-error-codes-parity.spec.ts fails on a bare error-code literal anywhere else.
  */
 export const AUDIT_ACTIONS = {
+  /** Row 430 (SA-958): a tracked (regulated) category created; meta {before: null, after: {name, taxType, rate, unitBasis, priceIncludesTax, invoiceTreatment, requiresLicense, active}, via?}. */
+  TRACKED_CATEGORY_CREATED: "tracked-category.created",
+  /** Row 430 (SA-958): a tracked category edited or toggled; meta {before, after} as TRACKED_CATEGORY_CREATED. */
+  TRACKED_CATEGORY_UPDATED: "tracked-category.updated",
   /** SA-849 (S1 S-1): a netted counter tender failed and the customer is over the limit without it (ENFORCED; once per order). */
   CREDIT_LIMIT_OVER_AFTER_TENDER: "credit-limit.over-after-tender",
   /** SA-762r: a counter sale voided in one transaction; meta {orderId, reason, handBack, actor} feeds the replay. */

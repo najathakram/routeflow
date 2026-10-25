@@ -1470,7 +1470,16 @@ describe("ProductsService", () => {
           invoiceTreatment: "SEPARATE_INVOICE",
           active: true,
         },
-        select: { id: true },
+      });
+      // Row 430: the seed is audited (no signed-in user is threaded here, so the row says it was the auto-seed).
+      expect(prisma.auditLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          action: "tracked-category.created",
+          entityType: "TrackedCategory",
+          entityId: "new-tobacco-cat",
+          userId: null,
+          meta: expect.objectContaining({ before: null, via: "tobacco-autoseed" }),
+        }),
       });
       const data = prisma.product.update.mock.calls[0][0].data;
       expect(data.trackedCategoryId).toBe("new-tobacco-cat");
