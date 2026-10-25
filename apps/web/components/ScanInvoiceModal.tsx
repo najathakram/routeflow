@@ -34,6 +34,7 @@ import {
   type BillLineDenomination,
 } from "@/lib/scan-line-units";
 import { useSuppliers } from "@/lib/api/inventory";
+import { useTenantToday } from "@/lib/tenant-timezone";
 import {
   useCheckVendorBillDuplicate,
   useCreateVendorBill,
@@ -234,13 +235,13 @@ const makeInvoice = (kind: "pdf" | "images", files: File[], raisePo = false): In
   invoiceNumber: "",
   supplierId: "",
   supplierMatchAmbiguous: false,
-  billDate: new Date().toISOString().slice(0, 10),
+  billDate: "", // SA-964 §4: filled with the TENANT's day once the zone is known (see the effect in the modal)
   dueDate: "",
   createMode: "bill",
   raisePo,
   expenseCategoryId: "",
   expenseDescription: "",
-  expenseDate: new Date().toISOString().slice(0, 10),
+  expenseDate: "", // SA-964 §4: same
   expensePaymentMethod: "CASH",
   expenseNotes: "",
   createdBillId: null,
@@ -405,6 +406,9 @@ export function ScanInvoiceModal({
   // can never capture a stale activeIndex.
   const [invoices, setInvoicesRaw] = React.useState<InvoiceGroup[]>([]);
   const [activeIndex, setActiveIndex] = React.useState(0);
+  // SA-964 §4: bill and expense dates default to the TENANT's day (never the browser's): they start empty and any empty
+  // one is filled as soon as the zone is known, for invoices scanned before or after it resolves.
+  const tenantToday = useTenantToday();
   // Bumped on reset / re-upload / scan-again; async scan callbacks compare it
   // so a stale response can never clobber a fresh session's state.
   const runIdRef = React.useRef(0);
@@ -422,6 +426,23 @@ export function ScanInvoiceModal({
       invoicesRef.current = next;
       return next;
     });
+  React.useEffect(() => {
+    if (!tenantToday) return;
+    if (!invoicesRef.current.some((inv) => !inv.billDate || !inv.expenseDate)) return;
+    setInvoices((prev) =>
+      prev.map((inv) =>
+        inv.billDate && inv.expenseDate
+          ? inv
+          : {
+              ...inv,
+              billDate: inv.billDate || tenantToday,
+              expenseDate: inv.expenseDate || tenantToday,
+            },
+      ),
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantToday, invoices]);
+
   const patchInvoiceById = (id: string, patch: Partial<InvoiceGroup>) =>
     setInvoices((prev) => prev.map((inv) => (inv.id === id ? { ...inv, ...patch } : inv)));
 
@@ -470,7 +491,7 @@ export function ScanInvoiceModal({
     });
     if (active) scheduleDuplicateCheck(active.id);
   };
-  const billDate = active?.billDate ?? new Date().toISOString().slice(0, 10);
+  const billDate = active?.billDate ?? "";
   const setBillDate = (v: string) => updateActive({ billDate: v });
   const dueDate = active?.dueDate ?? "";
   const setDueDate = (v: string) => updateActive({ dueDate: v });
@@ -489,7 +510,7 @@ export function ScanInvoiceModal({
   const setExpenseCategoryId = (v: string) => updateActive({ expenseCategoryId: v });
   const expenseDescription = active?.expenseDescription ?? "";
   const setExpenseDescription = (v: string) => updateActive({ expenseDescription: v });
-  const expenseDate = active?.expenseDate ?? new Date().toISOString().slice(0, 10);
+  const expenseDate = active?.expenseDate ?? "";
   const setExpenseDate = (v: string) => updateActive({ expenseDate: v });
   const expensePaymentMethod = active?.expensePaymentMethod ?? "CASH";
   const setExpensePaymentMethod = (v: string) => updateActive({ expensePaymentMethod: v });
@@ -1407,6 +1428,7 @@ export function ScanInvoiceModal({
         const expenseTotal = wantsBill
           ? roundMoney(invoiceTotalOf(inv) + (inv.scanResult?.tax ?? 0))
           : roundMoney(inv.scanResult?.total ?? invoiceTotalOf(inv));
+        if (!inv.expenseDate) throw new Error("Pick the expense date."); // empty only while the tenant's day is unknown
         await createExpense.mutateAsync({
           categoryId: inv.expenseCategoryId,
           supplierId: inv.supplierId || undefined,
