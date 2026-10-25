@@ -5,7 +5,7 @@
 > approach. **After every bug fix, append an entry** — Symptom / Root cause / **Lesson** / Guard —
 > and bump [`_meta.json`](_meta.json); Gate 3 of [`../hooks/stop.mjs`](../hooks/stop.mjs) blocks
 > fix-shaped turns that don't (a lesson-free fix bumps `_meta.json.updatedAt` to acknowledge).
-> Caps: ≤ 52 active entries / 64 KB (set in [`_meta.json`](_meta.json), enforced by
+> Caps: ≤ 52 active entries / 80 KB (set in [`_meta.json`](_meta.json), enforced by
 > `scripts/validate-lessons.mjs`) — compact to [`ARCHIVE.md`](ARCHIVE.md). Maintained by the
 > `lessons-learned` skill. Blameless; **never client names/slugs/document numbers** — the repo
 > goes public briefly for CI.
@@ -19,6 +19,12 @@
 - **Lesson:** **A text sweep PR edits string literals and CSS casing only. Anything a branch, a test oracle or a formatter reads, and every file another open lane owns, stays out. Review diffs the sweep for non-string hunks first, and splits the sweep by area so each PR is small enough to read.**
 - **Guard:** none yet; propose a check that lists non-literal hunks in a PR titled as a text sweep.
 
+### L-350 · 2026-10-25 · process · a train merge checks the SA merge preconditions of every PR it carries, not only the green checks
+
+- **Symptom:** a money PR in the B297 chain went live in a train on 10-12 without the owner sizing run its SA ruling required before merge, and a later member's same-window condition was skipped too. The after-the-fact sizing run was clean, so no data was wrong, but the gate had not been checked by anyone.
+- **Root cause:** the train checklist covered CI, review passes and the migration order. The conditions an SA ruling attaches to a PR (an owner count first, a same-window partner, a deploy order) lived in the ruling, and nobody read the ruling at assembly time.
+- **Lesson:** **When a train is assembled, read each carried PR's SA ruling for merge preconditions (owner-run counts, same-window partners, deploy order, owner sittings) and write them next to the PR in the train list. A condition not met at the merge sha ejects the PR, however green its checks are.**
+- **Guard:** none automatic; the train list names each PR's SA preconditions and the Lead checks them at the cut (row 428). Cf. [[L-337]].
 ### L-337 · 2026-10-22 · process · merge only through a gate that lists EVERY check run at the exact head sha, required or not
 
 - **Symptom:** a merge window merged #3563 and #3585 while the "Replay migrations on a fresh database" check was FAILURE at the merged sha. #3563 carried three red DB specs (two variant-name specs hit the SA-823 R11 `reparentVia` guard in `ProductsService.update`; products-export gained a new last column) plus one from #3574 (a warning became an object). All spec-only; #3589 fixed them.
@@ -100,13 +106,6 @@
 - **Root cause:** the runner built one command string and let a shell parse it.
 - **Lesson:** **Spawn with an args array and `shell: false`, and treat a jest path argument as a regex. A script that forwards user patterns has a spec that feeds it a pattern with a space and a bracket and reads back the argv it produced.**
 - **Guard:** `run-db-tests.mjs` `serialDbArgs` and the forwarding specs in `apps/api/src/common/`.
-
-### L-338 · 2026-10-24 · tooling · jest ignores an unknown config key, so a config pin must read the config jest resolved (#3638, #3643)
-
-- **Symptom:** a DB-lane hook wired as `setupFilesAfterEach` (the real key is `setupFilesAfterEnv`) never ran, yet the pin that guarded it stayed green.
-- **Root cause:** jest treats an unknown option as a "Validation Warning" and carries on, and the pin asserted on the object the test itself handed to jest, not on what jest loaded.
-- **Lesson:** **Pin a jest (or any tool) config through the tool itself: run `jest -c <config> --showConfig`, assert the resolved value, and fail on "Unknown option" in stderr. A pin that reads back its own input proves nothing.**
-- **Guard:** `apps/api/src/common/db-lane-serial.spec.ts` and the db-lane config pins (`--showConfig`).
 
 ### L-329 · 2026-10-21 · tooling · an Expo web export can reuse a shared Metro cache and bake another build's EXPO_PUBLIC_* values; export with --clear and assert the bundle
 
