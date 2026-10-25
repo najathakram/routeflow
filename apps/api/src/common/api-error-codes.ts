@@ -139,6 +139,8 @@ export const API_ERROR_CODES = {
   ORDER_PD_NEEDS_QUANTITIES: "ORDER_PD_NEEDS_QUANTITIES",
   /** B692: a delivered / partly-delivered order whose delivery quantities were never recorded is not cancelled blind. 409. */
   ORDER_DELIVERY_QUANTITIES_MISSING: "ORDER_DELIVERY_QUANTITIES_MISSING",
+  /** Row 585 (SA-814): a hard delete of an order with any delivered unit is refused (it would destroy the invoices and delivery evidence of goods the customer holds). 409. */
+  ORDER_DELETE_HAS_DELIVERED: "ORDER_DELETE_HAS_DELIVERED",
   ORDER_BILLING_CHANGED: "ORDER_BILLING_CHANGED",
   UNVOID_ORDER_CANCELLED: "UNVOID_ORDER_CANCELLED",
   ORDER_EDIT_WOULD_OVERPAY: "ORDER_EDIT_WOULD_OVERPAY",
