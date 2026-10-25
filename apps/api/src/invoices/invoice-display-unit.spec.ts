@@ -1,11 +1,14 @@
+import { Logger } from "@nestjs/common";
 import type { InvoiceDisplayUnitView } from "@routeflow/types";
 import {
   clearIssueDisplayUnits,
-  freezeDraftFromCatalogs,
   freezeDraftIssueUnits,
+  freezeIssueUnitsFromCatalog,
   itemsWithDisplayUnits,
-  loadDeliveryDisplayCatalogs,
+  loadDisplayUnitCatalog,
+  loadStopDisplayUnitCatalog,
   resolveDraftIssueUnits,
+  resolveFromCatalog,
   resolveIssueDisplayUnits,
   resolveLiveDisplayUnits,
   withItemDisplayUnits,
@@ -634,56 +637,97 @@ describe("freezeDraftIssueUnits (resolve + write at the DRAFT -> issued transiti
   });
 });
 
-describe("delivery path: the catalog is loaded BEFORE the tx, the freeze reads none (PASS 2 SHOULD)", () => {
-  const stopItems = [
-    { productId: "p1", order: { customerId: CUSTOMER } },
-    { productId: "p2", order: { customerId: CUSTOMER } },
-    { productId: "p1", order: { customerId: "cust-other" } },
-    { productId: null, order: { customerId: CUSTOMER } },
+describe("SA-967: one resolver, split into loadDisplayUnitCatalog (all the I/O) and a pure resolveFromCatalog", () => {
+  const items = [
+    { id: "it-0", productId: "p1" },
+    { id: "it-1", productId: "p2" },
+    { id: "it-2", productId: null },
+    { id: "it-3", productId: "p-missing" },
   ];
+
+  it("loadDisplayUnitCatalog: the flag first (off or a failed read is null, no catalog query), then one query per table", async () => {
+    const off = makeDb({ products: [productRow("p1")], business: "smallest" });
+    expect(await loadDisplayUnitCatalog(off, TENANT, CUSTOMER, ["p1"], flag(false))).toBeNull();
+    expect(await loadDisplayUnitCatalog(off, TENANT, CUSTOMER, ["p1"], flag("throw"))).toBeNull();
+    expect(off.product.findMany).not.toHaveBeenCalled();
+    const on = makeDb({ products: [productRow("p1")], business: "smallest" });
+    const catalog = await loadDisplayUnitCatalog(on, TENANT, CUSTOMER, ["p1"], flag(true));
+    expect(catalog?.customerId).toBe(CUSTOMER);
+    for (const m of [on.product, on.customerPrice, on.productTierUnit, on.productUnit])
+      expect(m.findMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("resolveFromCatalog is PURE (no client) and gives the same units as resolveLiveDisplayUnits (parity)", async () => {
+    const db = makeDb({
+      products: [productRow("p1"), productRow("p2", { unitsPerBox: 1, packLabel: "Each" })],
+      business: "smallest",
+    });
+    const catalog = (await loadDisplayUnitCatalog(db, TENANT, CUSTOMER, ["p1", "p2"], flag(true)))!;
+    const queriesAfterLoad = db.product.findMany.mock.calls.length;
+    const pure = resolveFromCatalog(catalog, items);
+    expect(db.product.findMany.mock.calls.length).toBe(queriesAfterLoad); // it read nothing
+    const live = await resolveLiveDisplayUnits(
+      db as any,
+      TENANT,
+      { customerId: CUSTOMER, items },
+      flag(true),
+    );
+    expect([...pure.entries()]).toEqual(
+      [...live.entries()].filter(([id]) => id !== "it-2"), // the null-product item is only in live's allLegacy
+    );
+    expect(pure.get("it-3")).toEqual({ kind: "legacy", label: null }); // a product the catalog lacks
+  });
+
+  const stop = { customerId: CUSTOMER, orders: [{ id: "ord-1" }, { id: "ord-2" }] };
   const prismaOf = (db: any, tenantId: string | null = TENANT) => ({
     forTenant: () => db,
     getTenantId: () => tenantId,
   });
-  const withOrderItems = (fx: Fx, rows: unknown[] = stopItems) =>
+  const withOrderItems = (fx: Fx, rows: unknown[] = [{ productId: "p1" }, { productId: null }]) =>
     Object.assign(makeDb(fx), { orderItem: { findMany: jest.fn().mockResolvedValue(rows) } });
 
-  it("loads one catalog per customer on the stop, with one batched query per table (not per invoice)", async () => {
-    const db = withOrderItems({
-      products: [productRow("p1"), productRow("p2")],
-      business: "smallest",
-    });
-    const catalogs = await loadDeliveryDisplayCatalogs(
-      prismaOf(db),
-      ["ord-1", "ord-2"],
-      flag(true),
-    );
-    expect([...catalogs.keys()].sort()).toEqual(["cust-acme", "cust-other"]);
+  it("loadStopDisplayUnitCatalog: the stop's customer, the stop's orders' products, one load before any tx", async () => {
+    const db = withOrderItems({ products: [productRow("p1")], business: "smallest" });
+    const catalog = await loadStopDisplayUnitCatalog(prismaOf(db), stop, flag(true));
+    expect(catalog?.customerId).toBe(CUSTOMER);
     expect(db.orderItem.findMany).toHaveBeenCalledTimes(1);
-    expect(db.product.findMany).toHaveBeenCalledTimes(2); // one per customer
+    expect(db.product.findMany).toHaveBeenCalledTimes(1);
+    expect(db.orderItem.findMany.mock.calls[0][0].where.orderId).toEqual({
+      in: ["ord-1", "ord-2"],
+    });
   });
 
-  it("flag off, a failed flag read, no tenant, no orders, or a failing read: loads nothing and never throws", async () => {
-    const off = withOrderItems({ products: [productRow("p1")] });
-    expect((await loadDeliveryDisplayCatalogs(prismaOf(off), ["o"], flag(false))).size).toBe(0);
-    expect(off.product.findMany).not.toHaveBeenCalled();
-    expect((await loadDeliveryDisplayCatalogs(prismaOf(off), ["o"], flag("throw"))).size).toBe(0);
-    expect((await loadDeliveryDisplayCatalogs(prismaOf(off, null), ["o"], flag(true))).size).toBe(
-      0,
-    );
-    expect((await loadDeliveryDisplayCatalogs(prismaOf(off), [], flag(true))).size).toBe(0);
+  it("no customer, no tenant, no orders, no products, the flag off, or a failing read: null, never a throw", async () => {
+    const db = withOrderItems({ products: [productRow("p1")] });
+    expect(await loadStopDisplayUnitCatalog(prismaOf(db), stop, flag(false))).toBeNull();
+    expect(
+      await loadStopDisplayUnitCatalog(prismaOf(db), { ...stop, customerId: null }, flag(true)),
+    ).toBeNull();
+    expect(await loadStopDisplayUnitCatalog(prismaOf(db, null), stop, flag(true))).toBeNull();
+    expect(
+      await loadStopDisplayUnitCatalog(prismaOf(db), { ...stop, orders: [] }, flag(true)),
+    ).toBeNull();
+    expect(
+      await loadStopDisplayUnitCatalog(prismaOf(withOrderItems({}, [])), stop, flag(true)),
+    ).toBeNull();
     const broken: any = withOrderItems({});
     broken.orderItem.findMany = jest.fn().mockRejectedValue(new Error("db down"));
-    expect((await loadDeliveryDisplayCatalogs(prismaOf(broken), ["o"], flag(true))).size).toBe(0);
+    expect(await loadStopDisplayUnitCatalog(prismaOf(broken), stop, flag(true))).toBeNull();
   });
 
-  it("freezes from the loaded catalog: own rows through tx, ZERO catalog queries on it, pieces written", async () => {
-    const pre = withOrderItems({ products: [productRow("p1")], business: "smallest" });
-    const catalogs = await loadDeliveryDisplayCatalogs(prismaOf(pre), ["o"], flag(true));
-    const tx: any = makeDb({ items: [{ id: "it-a", productId: "p1" }] });
+  const loaded = async (fx: Fx = { products: [productRow("p1")], business: "smallest" }) =>
+    loadDisplayUnitCatalog(makeDb(fx), TENANT, CUSTOMER, ["p1"], flag(true));
+  const txOf = (rows: unknown[] = [{ id: "it-a", productId: "p1" }]) => {
+    const tx: any = makeDb({ items: rows });
     tx.$executeRaw = jest.fn(async () => 0);
     tx.invoiceItem.updateMany = jest.fn(async () => ({ count: 1 }));
-    await freezeDraftFromCatalogs(tx, { id: "inv-1", tenantId: TENANT }, catalogs);
+    return tx;
+  };
+
+  it("freezeIssueUnitsFromCatalog takes the CATALOG, never a client: own rows through tx, ZERO catalog or flag queries on it, pieces written", async () => {
+    const catalog = await loaded();
+    const tx = txOf();
+    await freezeIssueUnitsFromCatalog(tx, { id: "inv-1", tenantId: TENANT }, catalog);
     for (const m of [tx.product, tx.customer, tx.customerPrice, tx.productTierUnit, tx.productUnit])
       expect(Object.values(m).every((fn: any) => fn.mock.calls.length === 0)).toBe(true);
     expect(tx.systemConfig.findFirst).not.toHaveBeenCalled();
@@ -694,24 +738,38 @@ describe("delivery path: the catalog is loaded BEFORE the tx, the freeze reads n
     });
   });
 
-  it("a customer with no loaded catalog, or no catalogs at all, writes nothing (the line reads legacy)", async () => {
-    const tx: any = makeDb({ items: [{ id: "it-a", productId: "p1" }] });
-    tx.$executeRaw = jest.fn(async () => 0);
-    tx.invoiceItem.updateMany = jest.fn(async () => ({ count: 1 }));
-    await freezeDraftFromCatalogs(tx, { id: "inv-1", tenantId: TENANT }, new Map());
-    await freezeDraftFromCatalogs(tx, { id: "inv-1", tenantId: TENANT }, undefined);
-    await freezeDraftFromCatalogs(tx, { id: "inv-1", tenantId: null }, new Map());
+  it("a null catalog, no tenant, or an invoice of another customer writes nothing (the line reads legacy)", async () => {
+    const catalog = await loaded();
+    const tx = txOf();
+    await freezeIssueUnitsFromCatalog(tx, { id: "inv-1", tenantId: TENANT }, null);
+    await freezeIssueUnitsFromCatalog(tx, { id: "inv-1", tenantId: null }, catalog);
+    tx.invoice.findFirst.mockResolvedValue({ customerId: "cust-other" });
+    await freezeIssueUnitsFromCatalog(tx, { id: "inv-1", tenantId: TENANT }, catalog);
     expect(tx.invoiceItem.updateMany).not.toHaveBeenCalled();
   });
 
+  it("a product the catalog lacks is written nothing and warned about; the others still freeze", async () => {
+    const catalog = await loaded();
+    const tx = txOf([
+      { id: "it-a", productId: "p1" },
+      { id: "it-b", productId: "p-edited-since" },
+    ]);
+    const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+    await freezeIssueUnitsFromCatalog(tx, { id: "inv-1", tenantId: TENANT }, catalog);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("lacks 1 product(s) of invoice inv-1"),
+    );
+    warn.mockRestore();
+    expect(tx.invoiceItem.updateMany).toHaveBeenCalledTimes(1);
+    expect(tx.invoiceItem.updateMany.mock.calls[0][0].where.id).toEqual({ in: ["it-a"] });
+  });
+
   it("an own-rows read failure inside the caller's tx is rethrown (a 40001 must reach the retry, not a 25P02)", async () => {
-    const pre = withOrderItems({ products: [productRow("p1")], business: "smallest" });
-    const catalogs = await loadDeliveryDisplayCatalogs(prismaOf(pre), ["o"], flag(true));
-    const tx: any = makeDb({});
-    tx.$executeRaw = jest.fn(async () => 0);
+    const catalog = await loaded();
+    const tx = txOf();
     tx.invoiceItem.findMany = jest.fn().mockRejectedValue(new Error("serialization"));
     await expect(
-      freezeDraftFromCatalogs(tx, { id: "inv-1", tenantId: TENANT }, catalogs),
+      freezeIssueUnitsFromCatalog(tx, { id: "inv-1", tenantId: TENANT }, catalog),
     ).rejects.toThrow("serialization");
   });
 });

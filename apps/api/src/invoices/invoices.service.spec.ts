@@ -4342,7 +4342,14 @@ describe("InvoicesService", () => {
       prisma.invoice.findFirst.mockResolvedValue({ id: "inv-1" }); // ensure-step: invoice exists
       prisma.invoice.findMany.mockResolvedValue([inv()]);
 
-      const res = await service.recordDeliveryPaymentInTx(prisma as any, q, ["ord-1"], 100, "CASH");
+      const res = await service.recordDeliveryPaymentInTx(
+        prisma as any,
+        q,
+        ["ord-1"],
+        100,
+        "CASH",
+        null,
+      );
 
       expect(res.applied).toBe(100);
       expect(prisma.invoicePayment.create).toHaveBeenCalledWith(
@@ -4385,7 +4392,14 @@ describe("InvoicesService", () => {
         { id: "pay-draft", amount: 50, status: "DRAFT" },
       ]);
 
-      const res = await service.recordDeliveryPaymentInTx(prisma as any, q, ["ord-1"], 50, "CASH");
+      const res = await service.recordDeliveryPaymentInTx(
+        prisma as any,
+        q,
+        ["ord-1"],
+        50,
+        "CASH",
+        null,
+      );
 
       expect(res.applied).toBe(50);
       expect(prisma.invoicePayment.create).toHaveBeenCalledWith(
@@ -4406,7 +4420,7 @@ describe("InvoicesService", () => {
       prisma.invoice.findFirst.mockResolvedValue({ id: "inv-1" });
       prisma.invoice.findMany.mockResolvedValue([inv({ status: InvoiceStatus.DRAFT })]);
 
-      await service.recordDeliveryPaymentInTx(prisma as any, q, ["ord-1"], 40, "CASH");
+      await service.recordDeliveryPaymentInTx(prisma as any, q, ["ord-1"], 40, "CASH", null);
 
       const upd = prisma.invoice.update.mock.calls[0][0];
       // recomputeStatus(40, 100, …, SENT) → PARTIAL (would be DRAFT if not finalized)
@@ -4422,7 +4436,7 @@ describe("InvoicesService", () => {
     it("pays an order's existing DRAFT invoice without touching findOpenOrderDraft/createInvoiceFromOrder/reconcile at all", async () => {
       prisma.invoice.findMany.mockResolvedValue([inv({ status: InvoiceStatus.DRAFT })]);
 
-      await service.recordDeliveryPaymentInTx(prisma as any, q, ["ord-1"], 100, "CASH");
+      await service.recordDeliveryPaymentInTx(prisma as any, q, ["ord-1"], 100, "CASH", null);
 
       expect(prisma.invoicePayment.create).toHaveBeenCalledTimes(1);
       expect(service.findOpenOrderDraft).not.toHaveBeenCalled();
@@ -4437,7 +4451,14 @@ describe("InvoicesService", () => {
         inv({ id: "inv-r1", invoiceNumber: "INV-9-R1", total: 40 }),
       ]);
 
-      const res = await service.recordDeliveryPaymentInTx(prisma as any, q, ["ord-1"], 100, "CASH");
+      const res = await service.recordDeliveryPaymentInTx(
+        prisma as any,
+        q,
+        ["ord-1"],
+        100,
+        "CASH",
+        null,
+      );
 
       expect(res.applied).toBe(100);
       const amounts = prisma.invoicePayment.create.mock.calls.map((c: any) => ({
@@ -4461,6 +4482,7 @@ describe("InvoicesService", () => {
         ["ord-1"],
         100,
         "CASH",
+        null,
         {
           runId: "run-1",
           stopId: "stop-1",
@@ -4506,6 +4528,7 @@ describe("InvoicesService", () => {
         ["ord-1"],
         100,
         "CASH",
+        null,
         {
           runId: "run-1",
           stopId: "stop-1",
@@ -4541,6 +4564,7 @@ describe("InvoicesService", () => {
         ["ord-1", "ord-2"],
         150,
         "CASH",
+        null,
         { runId: "run-1", stopId: "stop-1" },
       );
 
@@ -4560,6 +4584,7 @@ describe("InvoicesService", () => {
         ["ord-1"],
         100,
         "CASH",
+        null,
         {
           runId: "run-1",
           stopId: "stop-1",
@@ -4577,7 +4602,14 @@ describe("InvoicesService", () => {
       prisma.invoice.findMany.mockResolvedValue([inv()]);
       prisma.invoicePayment.findMany.mockResolvedValue([]);
 
-      const res = await service.recordDeliveryPaymentInTx(prisma as any, q, ["ord-1"], 100, "CASH");
+      const res = await service.recordDeliveryPaymentInTx(
+        prisma as any,
+        q,
+        ["ord-1"],
+        100,
+        "CASH",
+        null,
+      );
 
       expect(res.applied).toBe(100);
       // FOR UPDATE lock taken (serializes a concurrent back-office payment).
@@ -4592,7 +4624,7 @@ describe("InvoicesService", () => {
       prisma.invoice.findFirst.mockResolvedValue({ id: "inv-1" });
       prisma.invoice.findMany.mockResolvedValue([inv()]);
 
-      await service.recordDeliveryPaymentInTx(prisma as any, q, ["ord-1"], 100, "CASH");
+      await service.recordDeliveryPaymentInTx(prisma as any, q, ["ord-1"], 100, "CASH", null);
 
       expect(prisma.invoice.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -4617,14 +4649,22 @@ describe("InvoicesService", () => {
         ["ord-1"],
         50,
         "ADVANCE",
+        null,
       );
       expect(res.applied).toBe(0);
       expect(prisma.invoicePayment.create).not.toHaveBeenCalled();
     });
 
     it("is a no-op for a zero amount or no orders", async () => {
-      const a = await service.recordDeliveryPaymentInTx(prisma as any, q, ["ord-1"], 0, "CASH");
-      const b = await service.recordDeliveryPaymentInTx(prisma as any, q, [], 50, "CASH");
+      const a = await service.recordDeliveryPaymentInTx(
+        prisma as any,
+        q,
+        ["ord-1"],
+        0,
+        "CASH",
+        null,
+      );
+      const b = await service.recordDeliveryPaymentInTx(prisma as any, q, [], 50, "CASH", null);
       expect(a.applied).toBe(0);
       expect(b.applied).toBe(0);
       expect(prisma.invoicePayment.create).not.toHaveBeenCalled();

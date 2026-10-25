@@ -89,7 +89,7 @@ describe("RoutesService → RouteRealtime wiring (#2095)", () => {
         .mockResolvedValue({ applied: 0, invoiceIds: [], paymentIds: [] }),
       reconcileDeliveredOrdersInTx: jest.fn().mockResolvedValue(undefined),
       reverseRunAdvancesInTx: jest.fn().mockResolvedValue(0),
-      loadUnitCatalogs: jest.fn().mockResolvedValue(new Map()), // SA-827
+      loadUnitCatalog: jest.fn().mockResolvedValue(null), // SA-967
     };
     const moduleRef = await Test.createTestingModule({
       providers: [

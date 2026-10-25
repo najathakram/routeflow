@@ -2389,7 +2389,7 @@ export class RoutesService {
     // Durable POD: rewrite data-URL artifacts to storage keys before the tx
     // (after the idempotency check so a cached replay never re-uploads).
     await ingestPodCapture(this.podDeps, dto, stopId, { idempotencyKey: dto.idempotencyKey }); // #3723: retries overwrite
-    const catalogs = await this.invoicesService.loadUnitCatalogs(stop.orders.map((o) => o.id)); // SA-827, pre-tx
+    const catalog = await this.invoicesService.loadUnitCatalog(stop); // SA-967: once, before the tx
 
     let autoCompleted = false;
     let paymentIds: string[] = [];
@@ -2495,11 +2495,12 @@ export class RoutesService {
           user.sub,
         );
 
-        // 5. Record payment (atomic with stop completion — RF-005). The invoice is resolved
-        // SERVER-side from the delivered orders — the mobile client cannot supply an invoiceId
-        // (Order has no invoiceId scalar), so the old client-invoiceId path silently recorded
-        // nothing. This records the payment the canonical way (InvoicePayment + recomputeStatus
-        // over non-VOID sums) against the invoice(s) step 4 just reconciled.
+        // 5. Record payment (atomic with stop completion — RF-005). The invoice is
+        // resolved SERVER-side from the delivered orders — the mobile client cannot
+        // supply an invoiceId (Order has no invoiceId scalar), so the old
+        // client-invoiceId path silently recorded nothing. This records the payment
+        // the canonical way (InvoicePayment + recomputeStatus over non-VOID sums)
+        // against the invoice(s) step 4 just reconciled.
         if (dto.payment && dto.payment.amount > 0) {
           const recorded = await this.invoicesService.recordDeliveryPaymentInTx(
             tx,
@@ -2507,8 +2508,8 @@ export class RoutesService {
             deliveredOrderIds,
             dto.payment.amount,
             dto.payment.method,
+            catalog,
             { runId, stopId },
-            catalogs,
           );
           paymentIds = recorded.paymentIds;
           excess = recorded.excess;
