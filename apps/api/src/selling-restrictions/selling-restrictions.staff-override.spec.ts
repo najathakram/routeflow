@@ -80,6 +80,7 @@ describe("SellingRestrictionsService: a STAFF write of a restricted product (row
   beforeEach(async () => {
     mock = createMockPrisma();
     mock.getTenantId.mockReturnValue(null);
+    mock.user.findFirst.mockResolvedValue({ deniedPermissionGroups: [], permissionsVersion: 1 }); // W-870: the operator's live row
     prisma = mock.forTenant();
     prisma.sellingRestriction = { findMany: jest.fn().mockResolvedValue([dbRule()]) };
     prisma.productCategory = {
@@ -157,6 +158,44 @@ describe("SellingRestrictionsService: a STAFF write of a restricted product (row
       }),
     );
     expect((e.getResponse() as any).code).toBe("RESTRICTION_WARNING");
+  });
+
+  describe("W-870: the override reads the operator's live denied groups", () => {
+    const deny = (groups: string[]) =>
+      mock.user.findFirst.mockResolvedValue({
+        deniedPermissionGroups: groups,
+        permissionsVersion: 2,
+      });
+    const ackFor = async (principal: SellableLinesParams["principal"] = OPERATOR) => ({
+      warningHash: ((await reject(args({ principal }))).getResponse() as any).warningHash,
+      restrictionOverrides: [{ lineKey: "n:0", reason: "Licensed buyer" }],
+    });
+
+    it("an OPERATOR with ORDERS denied is hard-blocked (SELLING_RESTRICTED), even with a valid acknowledgement", async () => {
+      deny([]);
+      const ack = await ackFor();
+      deny(["ORDERS"]);
+      const e = await reject(args({ ack }));
+      expect((e.getResponse() as any).code).toBe("SELLING_RESTRICTED");
+    });
+
+    it("an OPERATOR with another group denied, or none, still overrides", async () => {
+      for (const groups of [[], ["PRICING"]]) {
+        deny(groups);
+        const decision = await service.assertLinesSellable(args({ ack: await ackFor() }));
+        expect(decision.stamps).toHaveLength(1);
+      }
+    });
+
+    it("a TENANT_ADMIN ignores denials and is never looked up", async () => {
+      const admin = { role: "TENANT_ADMIN", sub: "ad-1" };
+      deny(["ORDERS"]);
+      const decision = await service.assertLinesSellable(
+        args({ principal: admin, ack: await ackFor(admin) }),
+      );
+      expect(decision.stamps).toHaveLength(1);
+      expect(mock.user.findFirst).not.toHaveBeenCalled();
+    });
   });
 
   it("a DRIVER is hard-blocked: 409 SELLING_RESTRICTED with exactly the shared 'ask the office' message", async () => {

@@ -65,16 +65,17 @@ export interface FulfilPathInput {
   /**
    * W-870: the caller's denied permission groups, for POS mode (`staffMay(role, "USE_POS_MODE", deniedGroups)`). A
    * request caller passes the OPERATOR's live denials (`operatorDeniedGroups`) through `fulfilCaller`, whose argument
-   * is required; absent = none denied (a system caller or a buyer, neither of which gets POS mode).
+   * is required; a system caller or a buyer passes `[]` explicitly (neither gets POS mode). REQUIRED, so a caller that
+   * forgets the operator's denials fails to compile instead of failing open.
    */
-  deniedGroups?: readonly string[];
+  deniedGroups: readonly string[];
 }
 
 /** Who is asking, for the resolver and the merge search: the audience, the role (SA-763r M1) and its denials (W-870). */
 export interface FulfilCaller {
   audience: "staff" | "buyer";
   role: UserRole | null;
-  deniedGroups?: readonly string[];
+  deniedGroups: readonly string[];
 }
 
 /**
@@ -100,7 +101,7 @@ const staffPosMode = (
 ): boolean =>
   input.audience === "staff" &&
   input.role !== null &&
-  staffMay(input.role, "USE_POS_MODE", input.deniedGroups ?? []);
+  staffMay(input.role, "USE_POS_MODE", input.deniedGroups);
 
 const asFulfillPaths = (methods: readonly string[]): FulfillPath[] =>
   methods.filter((m): m is FulfillPath => m === ROUTE || m === SHIP || m === PICKUP);

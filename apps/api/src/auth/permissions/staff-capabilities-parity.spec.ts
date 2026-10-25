@@ -56,7 +56,7 @@ describe("staff-capabilities: the API literal is pinned to packages/types", () =
         for (const denied of denials) {
           expect(api.staffMay(role, action, denied)).toBe(shared.staffMay(role, action, denied));
         }
-        expect(api.staffMay(role, action)).toBe(shared.staffMay(role, action));
+        expect(api.staffMay(role, action, [])).toBe(shared.staffMay(role, action));
       }
     }
   });

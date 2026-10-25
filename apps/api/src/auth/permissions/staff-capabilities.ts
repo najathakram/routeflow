@@ -47,7 +47,7 @@ export const STAFF_CAPABILITY_RULES: Record<StaffCapability, StaffCapabilityRule
 export function staffMay(
   role: string | null | undefined,
   action: StaffCapability,
-  deniedGroups: readonly string[] = [],
+  deniedGroups: readonly string[],
 ): boolean {
   const rule = STAFF_CAPABILITY_RULES[action];
   if (!role || !(rule.roles as readonly string[]).includes(role)) return false;

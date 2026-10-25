@@ -309,8 +309,9 @@ export class InvoicesController {
     @Param("id") id: string,
     @Param("paymentId") paymentId: string,
     @Body() dto: SetCheckStatusDto,
+    @CurrentUser() user: JwtPayload,
   ) {
-    return this.invoicesService.setCheckStatus(id, paymentId, dto);
+    return this.invoicesService.setCheckStatus(id, paymentId, dto, user);
   }
 
   @Patch(":id/payments/:paymentId")
@@ -321,6 +322,7 @@ export class InvoicesController {
     @CurrentUser() user: JwtPayload,
   ) {
     return this.invoicesService.updatePayment(id, paymentId, dto, {
+      user,
       refDedupe: refDedupeFromRequest(user, dto), // row 752: the staff "record anyway" flag on an edit
     });
   }
@@ -337,7 +339,11 @@ export class InvoicesController {
   }
 
   @Delete(":id/payments/:paymentId")
-  deletePayment(@Param("id") id: string, @Param("paymentId") paymentId: string) {
-    return this.invoicesService.deletePayment(id, paymentId);
+  deletePayment(
+    @Param("id") id: string,
+    @Param("paymentId") paymentId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.invoicesService.deletePayment(id, paymentId, user);
   }
 }

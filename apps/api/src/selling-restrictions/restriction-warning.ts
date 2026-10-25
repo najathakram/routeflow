@@ -430,7 +430,8 @@ export interface DecideParams {
   lines: readonly GateLine[];
   /** The document's lines already on it (empty for a create). */
   held?: readonly HeldLine[];
-  principal?: ChannelPrincipal | null;
+  /** W-870: `deniedGroups` is REQUIRED, so a caller that forgets the operator's live denials fails to compile. */
+  principal?: (ChannelPrincipal & { deniedGroups: readonly string[] }) | null;
   ack?: RestrictionAck | null;
   customerId: string | null;
   blocked: StaffBlock;

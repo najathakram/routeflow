@@ -73,18 +73,20 @@ async function scope(
 }
 
 /**
- * W-870: `scope` for the office payment void. Unwinding a TILL payment is the same act as the counter-sale void, so it asks
- * the same VOID_SALE predicate over the operator's live denied groups (ORDERS switched off = 403, nothing read further).
- * `user` absent = a system caller, not judged; an ordinary invoice (null scope) is never judged.
+ * W-870: `scope` for every office payment path that unwinds or rewrites a TILL payment (void, delete, update, a check
+ * bounce). Each is the same act as the counter-sale void, so each asks the same VOID_SALE predicate over the operator's live
+ * denied groups (ORDERS switched off = 403, nothing read further). The principal is REQUIRED: a path that forgets it does
+ * not compile. An ordinary invoice (null scope) is never judged; `applies` false reads nothing.
  */
-export type VoidPrincipal = PermissionPrincipal;
+export type TillUser = PermissionPrincipal;
 async function voidScope(
   prisma: PrismaService,
   invoiceId: string,
-  user?: VoidPrincipal,
+  user: TillUser,
+  applies = true,
 ): Promise<CounterPaymentScope | null> {
-  const till = await scope(prisma, invoiceId);
-  if (till && user) await assertStaffMay(prisma, user, "VOID_SALE");
+  const till = await scope(prisma, invoiceId, applies);
+  if (till) await assertStaffMay(prisma, user, "VOID_SALE");
   return till;
 }
 

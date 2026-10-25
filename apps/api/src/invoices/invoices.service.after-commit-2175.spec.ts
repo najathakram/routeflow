@@ -51,6 +51,7 @@ import { SellingRestrictionsService } from "../selling-restrictions/selling-rest
 import { InvoiceStatus } from "@prisma/client";
 import { AfterCommit } from "../common/after-commit";
 import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-authority-provider";
+import { TILL_ADMIN } from "../testing/till-user";
 
 describe("InvoicesService — #2175 realtime emits leave the transaction only after it commits", () => {
   let service: InvoicesService;
@@ -217,7 +218,10 @@ describe("InvoicesService — #2175 realtime emits leave the transaction only af
         prisma.invoicePayment.update.mockResolvedValue({});
         prisma.invoice.update.mockResolvedValue(invoiceRow({ status: InvoiceStatus.PARTIAL }));
       },
-      act: () => service.updatePayment("inv-1", "pay-1", { amount: 40, method: "CASH" } as any),
+      act: () =>
+        service.updatePayment("inv-1", "pay-1", { amount: 40, method: "CASH" } as any, {
+          user: TILL_ADMIN,
+        }),
       lastWrite: () => prisma.invoice.update,
       invoiceId: "inv-1",
     },
@@ -228,7 +232,7 @@ describe("InvoicesService — #2175 realtime emits leave the transaction only af
         prisma.invoicePayment.delete.mockResolvedValue({});
         prisma.invoice.update.mockResolvedValue(invoiceRow());
       },
-      act: () => service.deletePayment("inv-1", "pay-1"),
+      act: () => service.deletePayment("inv-1", "pay-1", TILL_ADMIN),
       lastWrite: () => prisma.invoice.update,
       invoiceId: "inv-1",
     },
@@ -257,7 +261,7 @@ describe("InvoicesService — #2175 realtime emits leave the transaction only af
         );
         prisma.invoice.update.mockResolvedValue({});
       },
-      act: () => service.voidPayment("inv-1", "pay-1"),
+      act: () => service.voidPayment("inv-1", "pay-1", TILL_ADMIN),
       lastWrite: () => prisma.invoice.update,
       invoiceId: "inv-1",
     },
@@ -270,7 +274,8 @@ describe("InvoicesService — #2175 realtime emits leave the transaction only af
         prisma.invoicePayment.update.mockResolvedValue({});
         prisma.invoice.findFirst.mockResolvedValue(invoiceRow({ status: InvoiceStatus.PARTIAL }));
       },
-      act: () => service.setCheckStatus("inv-1", "pay-1", { status: "DEPOSITED" } as any),
+      act: () =>
+        service.setCheckStatus("inv-1", "pay-1", { status: "DEPOSITED" } as any, TILL_ADMIN),
       lastWrite: () => prisma.invoicePayment.update,
       invoiceId: "inv-1",
     },
@@ -288,7 +293,12 @@ describe("InvoicesService — #2175 realtime emits leave the transaction only af
         prisma.invoice.update.mockResolvedValue({});
       },
       act: () =>
-        service.setCheckStatus("inv-1", "pay-1", { status: "BOUNCED", nsfFeeAmount: 25 } as any),
+        service.setCheckStatus(
+          "inv-1",
+          "pay-1",
+          { status: "BOUNCED", nsfFeeAmount: 25 } as any,
+          TILL_ADMIN,
+        ),
       lastWrite: () => prisma.invoice.update,
       invoiceId: "inv-1",
     },

@@ -11,6 +11,8 @@ import type {
   RestrictionsPolicy,
   SellingRestrictedError,
 } from "@routeflow/types";
+import { UserRole } from "@prisma/client";
+import { operatorDeniedGroups } from "../orders/counter-sale/till-permission.guard";
 import { assertAmbientTenant } from "../common/ambient-tenant";
 import { normalizeUsState } from "../common/us-states";
 import { excludeWalkIn } from "../customers/walk-in-protected";
@@ -803,6 +805,19 @@ export class SellingRestrictionsService {
    * override (DRIVER, SUPER_ADMIN) or a system caller with none (`principal` omitted) is still hard-blocked here.
    * Every other channel (a buyer) keeps the hard 409 and resolves to a no-op decision.
    */
+  /**
+   * W-870: the principal `decideStaffWrite` judges the override with. An OPERATOR's denied groups are read live, once, and
+   * only when a breach makes the override matter; every other role (and no principal) judges as `[]`.
+   */
+  private async withDeniedGroups(params: SellableLinesParams, breached: boolean) {
+    const principal = params.principal;
+    if (!principal) return null;
+    if (!breached || principal.role !== "OPERATOR" || !principal.sub)
+      return { ...principal, deniedGroups: [] };
+    const user = { sub: principal.sub, role: UserRole.OPERATOR, tenantId: params.tenantId };
+    return { ...principal, deniedGroups: await operatorDeniedGroups(this.prisma, user) };
+  }
+
   async assertLinesSellable(params: SellableLinesParams): Promise<StaffWriteDecision> {
     if (params.channel === "STAFF") {
       const judgement = await this.judgeStaffWrite(params);
@@ -813,7 +828,7 @@ export class SellingRestrictionsService {
           { productId: l.productId, qtyDelta: l.qtyDelta, lineKey: l.lineKey ?? `n:${i}` },
         ]),
         held: params.held,
-        principal: params.principal,
+        principal: await this.withDeniedGroups(params, judgement.breaches.length > 0),
         ack: params.ack,
         customerId: params.customerId,
         blocked: staffRestrictedError,
