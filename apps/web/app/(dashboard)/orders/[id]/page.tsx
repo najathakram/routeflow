@@ -1050,7 +1050,7 @@ export default function OrderDetailPage() {
           className="flex flex-wrap items-center gap-2 max-sm:w-full max-sm:[&>:not([data-tier])]:order-5"
         >
           {/* Edit Items button */}
-          {canEdit && access.editItems && !isEditing && (
+          {canEdit && !order?.editItemsLocked && access.editItems && !isEditing && (
             <ActionTier tier="secondary">
               <WriteButton
                 size="sm"
@@ -1099,6 +1099,17 @@ export default function OrderDetailPage() {
               {order.editWindow.closedReason === "DISPATCHED"
                 ? `${statusLabel("OUT_FOR_DELIVERY", "Out for delivery", order.fulfillPath)} — editing closed`
                 : "Order cancelled — editing closed"}
+            </span>
+          )}
+
+          {/* W-861: a paid walk-in sale is not edited; the server's own verdict says so, with what to do. */}
+          {order?.editItemsLocked && access.editItems && !isEditing && (
+            <span
+              data-testid="edit-items-locked"
+              className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-1 text-xs font-medium text-amber-700 ring-1 ring-amber-200"
+            >
+              This sale is paid. Ring up added items as a new sale, or use Return to take items
+              back.
             </span>
           )}
 

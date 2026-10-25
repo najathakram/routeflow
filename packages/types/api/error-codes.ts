@@ -401,6 +401,16 @@ export const API_ERROR_CODES = {
   INVALID_RESOLUTION_FOR_TYPE: "INVALID_RESOLUTION_FOR_TYPE",
   LINE_PACK_UNDERIVABLE: "LINE_PACK_UNDERIVABLE",
   LINE_ALREADY_DELIVERED: "LINE_ALREADY_DELIVERED",
+  /**
+   * W-871 (SA-948): a replace (staff replace-all, a driver's full-list save) on a post-delivery order is refused
+   * before any write; re-created lines would lose the invoice's provenance. Change the lines one at a time. 409.
+   */
+  LINES_REPLACE_AFTER_DELIVERY: "LINES_REPLACE_AFTER_DELIVERY",
+  /**
+   * W-861 (SA-944): a walk-in sale with a live payment on its invoice cannot be edited (the shared Walk-in customer
+   * cannot owe). Ring up added items as a new sale, or take items back with a Return. 409, nothing written.
+   */
+  WALK_IN_SALE_PAID: "WALK_IN_SALE_PAID",
   ORDER_BELOW_RETURN_CREDIT: "ORDER_BELOW_RETURN_CREDIT",
   CREDIT_LIMIT_EXCEEDED: "CREDIT_LIMIT_EXCEEDED",
   MERGE_CHOICE_REQUIRED: "MERGE_CHOICE_REQUIRED",

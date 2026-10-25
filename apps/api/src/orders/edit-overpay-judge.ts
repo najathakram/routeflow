@@ -1,5 +1,5 @@
 import { ConflictException } from "@nestjs/common";
-import { UserRole } from "@prisma/client";
+import { InvoiceStatus, UserRole } from "@prisma/client";
 import {
   BLOCKING_PAYMENT,
   CASH_METHOD_FILTER,
@@ -60,6 +60,7 @@ export async function assertEditCannotOverpay(
     );
   await withOrderBillingLock(tx, deps.tenantId, orderId);
   const projected = await deps.invoices.projectEditedInvoiceTotals(tx, orderId, scope);
+  if (scope.resync) await assertOrderTotalCoversUnprojected(tx, orderId, projected);
   if (projected.length === 0) return;
   const payments: Array<{ invoiceId: string; amount: unknown }> = await tx.invoicePayment.findMany({
     where: {
@@ -86,6 +87,54 @@ export async function assertEditCannotOverpay(
         projectedTotal,
         excess: roundMoney(paid - projectedTotal),
       });
+  }
+}
+
+/**
+ * W-871 (SA-948 §2 MUST 2): fail closed. A re-sync that restates the invoices projects EVERY live invoice
+ * (`loadResyncInputs` pairs them all) or none (an unclean partition: a manual line, a line whose provenance was lost);
+ * "none" never means "nothing to judge". When a live invoice carrying external money is missing from the projection,
+ * the projection is the new in-tx ORDER total (the edit already wrote it): the external money across the order's
+ * live invoices may not exceed it by more than half a cent. Increases pass. Reads rows the billing lock holds.
+ */
+async function assertOrderTotalCoversUnprojected(
+  tx: any,
+  orderId: string,
+  projected: ReadonlyArray<{ invoiceId: string }>,
+): Promise<void> {
+  const live: Array<{ id: string }> = await tx.invoice.findMany({
+    where: { orderId, status: { not: InvoiceStatus.VOID } },
+    select: { id: true },
+    orderBy: { id: "asc" },
+  });
+  const covered = new Set(projected.map((p) => p.invoiceId));
+  if (live.every((i) => covered.has(i.id))) return;
+  const payments: Array<{ invoiceId: string; amount: unknown }> = await tx.invoicePayment.findMany({
+    where: {
+      invoiceId: { in: live.map((i) => i.id) },
+      ...BLOCKING_PAYMENT,
+      method: CASH_METHOD_FILTER,
+    },
+    select: { invoiceId: true, amount: true },
+  });
+  const paid = roundMoney(payments.reduce((sum, p) => sum + Number(p.amount), 0));
+  if (paid === 0) return;
+  const order = await tx.order.findUnique({ where: { id: orderId }, select: { total: true } });
+  const projectedTotal = roundMoney(Number(order?.total ?? 0));
+  if (paid > projectedTotal + OVERPAID_EPSILON) {
+    const uncovered = live.find(
+      (i) => !covered.has(i.id) && payments.some((p) => p.invoiceId === i.id),
+    );
+    throw new ConflictException({
+      code: API_ERROR_CODES.ORDER_EDIT_WOULD_OVERPAY,
+      message:
+        "This change would leave an invoice paid beyond its new total. If the goods came back, " +
+        "record a return instead of cutting the order.",
+      invoiceId: (uncovered ?? live[0]).id,
+      paid,
+      projectedTotal,
+      excess: roundMoney(paid - projectedTotal),
+    });
   }
 }
 

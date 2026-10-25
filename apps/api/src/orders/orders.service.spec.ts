@@ -6717,20 +6717,24 @@ describe("OrdersService", () => {
       );
     });
 
-    it("a driver legacy full id-less list (old clients) still replaces", async () => {
+    it("a driver legacy full id-less list (old clients) on an OUT_FOR_DELIVERY order is refused (W-871)", async () => {
+      // Was: still replaces (deleteMany on the order's lines). SA-948 §2 MUST 1: a replace on a post-delivery
+      // order is 409 LINES_REPLACE_AFTER_DELIVERY before any write.
       prisma.order.findUnique.mockResolvedValue(twoLineOrder);
       prisma.product.findMany.mockResolvedValue([
         { id: "prod-A", pricePerUnit: 5, unitsPerBox: null },
       ]);
       prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 20, status: "PENDING" }]);
 
-      await service.updateOrderItems(
-        "ord-1",
-        { items: [{ productId: "prod-A", qty: 4 }] },
-        driverPayload,
-      );
+      await expect(
+        service.updateOrderItems(
+          "ord-1",
+          { items: [{ productId: "prod-A", qty: 4 }] },
+          driverPayload,
+        ),
+      ).rejects.toMatchObject({ status: 409, response: { code: "LINES_REPLACE_AFTER_DELIVERY" } });
 
-      expect(prisma.orderItem.deleteMany).toHaveBeenCalledWith({ where: { orderId: "ord-1" } });
+      expect(prisma.orderItem.deleteMany).not.toHaveBeenCalled();
     });
 
     it("a buyer (CUSTOMER) diff-shaped payload is rejected with 400 before any mutation", async () => {

@@ -18,3 +18,12 @@ export interface OrderCancelBlockedField {
 export interface OrderFulfillPathLockField {
   fulfillPathLocked: boolean;
 }
+
+/**
+ * W-861 (SA-944 §3): the field `GET /orders/:id` adds for the paid walk-in sale lock. true = the order is a walk-in
+ * sale with a live payment on its invoice, so `PATCH /orders/:id/items` refuses with 409 WALK_IN_SALE_PAID and the
+ * web does not offer Edit items. A client reads this; it never re-derives it.
+ */
+export interface OrderEditItemsLockField {
+  editItemsLocked: boolean;
+}

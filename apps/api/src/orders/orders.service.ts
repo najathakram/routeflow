@@ -114,6 +114,8 @@ import * as cancelledLines from "./order-edit-cancelled";
 import * as driverAccess from "./driver-edit-access";
 import { assertRemovalsNameALine, writeLineRemoval, writeLineUpdate } from "./order-line-removal";
 import { assertDeliveredLinesUntouched, reduceDeliveredLineEntries } from "./delivered-line-lock";
+import { assertNoReplaceAfterDelivery } from "./replace-after-delivery";
+import { assertWalkInSaleEditable, walkInSaleLocked } from "./counter-sale/walk-in-sale-lock";
 import { CANCELLABLE_FROM, assertOrderStatusTransition } from "./order-status-transitions";
 import { buildStatusUpdateData } from "./order-status-claim";
 import { AppliedCreditNoteDto, CreateOrderDto } from "./dto/create-order.dto";
@@ -247,7 +249,11 @@ import { collectUnlistedLoserItems } from "./merge-unlisted-lines";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { PromotionsService } from "../promotions/promotions.service";
 import { MessagingService } from "../messaging/messaging.service";
-import type { OrderCancelBlockedField, OrderFulfillPathLockField } from "@routeflow/types";
+import type {
+  OrderCancelBlockedField,
+  OrderEditItemsLockField,
+  OrderFulfillPathLockField,
+} from "@routeflow/types";
 import { attachInvoiceStages } from "./order-invoice-stage";
 import { HANDOVER_SOLD_BY_SELECT, seesHandOverStamp, stampHandedOverBy } from "./handover-stamp";
 import { EDIT_REVISIONS, updateStatusWithShipMarker } from "./order-ship-state";
@@ -506,7 +512,8 @@ export class OrdersService implements OnApplicationBootstrap {
     Object.assign(order, {
       cancelBlockedReason: await carrierGuard.carrierBlocked(this, order),
       fulfillPathLocked: fulfillPathLocked(order), // row 673: the PATCH's own predicate
-    } satisfies OrderCancelBlockedField & OrderFulfillPathLockField);
+      editItemsLocked: await walkInSaleLocked(this.prisma.forTenant(), order), // W-861: the edit's own predicate
+    } satisfies OrderCancelBlockedField & OrderFulfillPathLockField & OrderEditItemsLockField);
     await attachInvoiceStages(this.featureConfig, order); // fold 4: each invoice's pdfVariant
     attachRevisionNumber(order); // row 372
     order.lineItems = withComponentViews(order.lineItems) as typeof order.lineItems; // #2717 M3
@@ -2703,6 +2710,7 @@ export class OrdersService implements OnApplicationBootstrap {
       include: {
         lineItems: true,
         routeRun: { select: { status: true, startedAt: true } },
+        customer: { select: { isWalkIn: true } }, // W-861: the paid walk-in sale lock
       },
     });
     if (!order) throw new NotFoundException("Order not found");
@@ -2727,6 +2735,7 @@ export class OrdersService implements OnApplicationBootstrap {
     if (order.status === "CANCELLED") {
       throw new BadRequestException("Items can't be edited on a cancelled order");
     }
+    await assertWalkInSaleEditable(this.prisma.forTenant(), order); // W-861: before any write, ahead of W-871
     // Row 372 (MF4 nit e): an editor on an outdated order meets the 409 BEFORE any refusal can mask it and any
     // un-tx'd side effect (the invoice revert, the return number). Advisory; the in-tx check below is the lock.
     await assertRevisionCurrent(this.prisma.forTenant(), orderId, dto.expectedRevisionNumber);
@@ -2786,6 +2795,10 @@ export class OrdersService implements OnApplicationBootstrap {
     }
 
     assertDeliveredLinesUntouched(order, order.lineItems ?? [], dto, user, isDiffPayload); // B1234: before any side effect
+    // B1083 (D2): with the carrier, the shipment invoice is the bill: re-synced in place, never reverted
+    const carrier = await carrierGuard.carrierEditGuard(this, order);
+    const postDeliveryEdit = carrierGuard.resyncsInPlace(order.status, carrier); // B215 + D2
+    assertNoReplaceAfterDelivery(postDeliveryEdit, user, dto, isDiffPayload); // W-871: re-created lines lose provenance
     // Lane R: a banned product added by this edit warns / refuses BEFORE the invoice revert and any write; a draft is
     // judged at its promotion UNLESS it has a live (non-VOID) linked invoice: the reconcile after this edit copies the
     // order's lines onto that sent mirror. Re-judged under the row lock (order-edit-restrictions.ts).
@@ -2816,9 +2829,6 @@ export class OrdersService implements OnApplicationBootstrap {
     // a SENT pending-mirror flips to DRAFT so the reconcile below re-syncs into it, and
     // a paid one throws cleanly before any mutation so money never detaches from a sent
     // document. No-op when there's no such invoice.
-    // B1083 (D2): with the carrier, the shipment invoice is the bill: re-synced in place, never reverted
-    const carrier = await carrierGuard.carrierEditGuard(this, order);
-    const postDeliveryEdit = carrierGuard.resyncsInPlace(order.status, carrier); // B215 + D2
     await inlineReturn.preflightInlineReturn(inlineRet, order, user, !postDeliveryEdit); // #2178
     if (!postDeliveryEdit && !carrier.billsShip) {
       // Row 586: read-only here (a paid mirror still refuses cleanly before any mutation); the revert itself runs in the
