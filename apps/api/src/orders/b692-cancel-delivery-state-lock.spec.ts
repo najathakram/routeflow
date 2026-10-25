@@ -140,13 +140,31 @@ describe("(g) a hard delete refuses a legacy delivered row under the lock", () =
     },
   );
 
-  it("any delivery signal, or an order that has not shipped, deletes as before", async () => {
-    const stamped = makeTx({
-      status: "PARTIALLY_DELIVERED",
-      lines: [{ qty: 10, deliveredQty: 3 }],
+  it.each(["DELIVERED", "PARTIALLY_DELIVERED", "CONFIRMED", "CANCELLED"])(
+    "%s with a line that has deliveredQty > 0: 409 ORDER_DELETE_HAS_DELIVERED (row 585), before any restock line",
+    async (status) => {
+      const tx = makeTx({ status, lines: [{ qty: 10, deliveredQty: 3 }] });
+      await expect(lockDeleteLines(tx, "o1")).rejects.toMatchObject({
+        status: 409,
+        response: { code: "ORDER_DELETE_HAS_DELIVERED" },
+      });
+    },
+  );
+
+  it("a delivered unit on a CANCELLED line still refuses (any line, not just active ones)", async () => {
+    const tx = makeTx({
+      status: "CONFIRMED",
+      lines: [
+        { qty: 10, deliveredQty: 0 },
+        { qty: 4, deliveredQty: 2, status: "CANCELLED" },
+      ],
     });
-    const held = await lockDeleteLines(stamped, "o1");
-    expect(held?.order).toEqual({ id: "o1", status: "PARTIALLY_DELIVERED" });
+    await expect(lockDeleteLines(tx, "o1")).rejects.toMatchObject({
+      response: { code: "ORDER_DELETE_HAS_DELIVERED" },
+    });
+  });
+
+  it("an order with no delivered unit deletes as before", async () => {
     const confirmed = makeTx({ status: "CONFIRMED", lines: [{ qty: 10, deliveredQty: 0 }] });
     expect(await lockDeleteLines(confirmed, "o1")).not.toBeNull();
     expect(confirmed.deliveryMutation.findMany).not.toHaveBeenCalled(); // no extra evidence query
