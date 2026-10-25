@@ -101,6 +101,8 @@ describe("ReturnsService.processRefund: the locked claim with a basis recomputed
               invoiceNumber: `N-${i.id}`,
               status: i.status,
               total: i.total,
+              taxAmount: 0,
+              discount: 0,
               items: [{ productId: "p1", qty: 10, subtotal: i.lineSubtotal ?? 100 }],
             })),
             lineItems: [{ productId: "p1", qty: 10, unitPrice: 10, subtotal: 100 }],
