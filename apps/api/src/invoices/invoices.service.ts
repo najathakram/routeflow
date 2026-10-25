@@ -5334,6 +5334,7 @@ export class InvoicesService {
   }
 
   // ─── Void a single payment ────────────────────────────────────────────────
+
   async voidPayment(invoiceId: string, paymentId: string, user?: VoidPrincipal) {
     const tz = await tenantTimeZone(this.prisma); // SA-495a: the tenant's due day, once per call
     const till = await counterPay.voidScope(this.prisma, invoiceId, user); // SA-750r3 + W-870 (VOID_SALE)
