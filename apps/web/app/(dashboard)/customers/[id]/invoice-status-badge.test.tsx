@@ -5,13 +5,14 @@ import { renderInvoiceStatus } from "./invoice-status-badge";
 /**
  * Row 325 (BT-5): the badge counts days on the TENANT's calendar day and takes "overdue" from the server's flag, never
  * from the browser's clock. The fake clock is the browser's day (the 24th, local time) while the tenant is already on
- * the 26th.
+ * the 26th. The clock is an explicit UTC instant and every day is passed in as a string, so the result does not depend on
+ * the machine's TZ: green under TZ=UTC and TZ=America/Chicago (both runs in the PR body).
  */
 const text = (node: React.ReactNode) => render(<>{node}</>).container.textContent;
 const DUE_25 = "2026-10-25T00:00:00.000Z";
 
 describe("renderInvoiceStatus: the tenant's day, not the browser's (row 325)", () => {
-  beforeEach(() => jest.useFakeTimers({ now: new Date("2026-10-24T12:00:00") }));
+  beforeEach(() => jest.useFakeTimers({ now: new Date("2026-10-24T12:00:00Z") }));
   afterEach(() => jest.useRealTimers());
 
   it("counts days past due on the tenant's calendar day (due the 25th, tenant on the 26th: 1d)", () => {
