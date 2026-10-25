@@ -27,6 +27,8 @@ const invoice = (id: string, items = [LINE_A, LINE_B]) => ({
   invoiceNumber: id.toUpperCase(),
   status: "SENT",
   total: 200,
+  taxAmount: 0,
+  discount: 0,
   createdAt: new Date("2026-01-01"),
   items,
 });
@@ -270,16 +272,16 @@ describe("ReturnsService.processRefund: itemised refund under the shared per-lin
     );
   });
 
-  it("SA-628a: a PRICED line next to a free line of the same product is itemised paid-first at the pooled price (SA-628b)", async () => {
+  it("SA-628a: a PRICED line next to a free line of the same product is itemised paid-first, each line at its own charged price (SA-840 supersedes the SA-628b pooled average)", async () => {
     const free = { id: "line-f", productId: "pa", qty: 2, subtotal: 0 };
     const paid = { id: "line-a", productId: "pa", qty: 10, subtotal: 100 };
     withReturn(order([invoice("inv-1", [paid, free])]), [{ productId: "pa", qty: 11 }]);
     await service.processRefund("ret-1");
     expect(creditNotesCreate).toHaveBeenCalledWith(
       expect.objectContaining({
-        amount: 91.67,
+        amount: 100,
         items: [
-          { invoiceItemId: "line-a", amount: 91.67, qty: 10 },
+          { invoiceItemId: "line-a", amount: 100, qty: 10 },
           { invoiceItemId: "line-f", amount: 0, qty: 1 },
         ],
       }),
@@ -287,7 +289,7 @@ describe("ReturnsService.processRefund: itemised refund under the shared per-lin
     );
   });
 
-  it("SA-628a: the preview prices the same pooled price the mint itemises (a product split across lines of different prices)", async () => {
+  it("SA-628a: the preview prices the same per-line figure the mint itemises (a product split across lines of different prices)", async () => {
     const cheap = { id: "line-c", productId: "pa", qty: 1, subtotal: 50 };
     const dear = { id: "line-d", productId: "pa", qty: 1, subtotal: 100 };
     const ret = {
@@ -297,14 +299,14 @@ describe("ReturnsService.processRefund: itemised refund under the shared per-lin
       items: [{ productId: "pa", qty: 1 }],
       order: order([invoice("inv-1", [dear, cheap])]),
     };
-    // SA-628b: master's pooled price ($75), the same number the mint itemises
+    // SA-840: the first-filled line's own charge ($100, the pooled $75 average is gone), the same number the mint itemises
     withReturn(ret.order);
     await service.processRefund("ret-1");
     expect(creditNotesCreate).toHaveBeenCalledWith(
-      expect.objectContaining({ amount: 75 }),
+      expect.objectContaining({ amount: 100 }),
       expect.anything(),
     );
-    expect((service as any).priceReturn(ret.items, ret.order, new Map()).amount).toBe(75);
+    expect((service as any).priceReturn(ret.items, ret.order, new Map()).amount).toBe(100);
   });
 
   describe("SA-840 (B704 / #1477): a standard-return refund is what the invoice CHARGED", () => {

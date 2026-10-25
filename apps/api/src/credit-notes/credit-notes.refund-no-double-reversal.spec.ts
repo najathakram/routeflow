@@ -125,7 +125,7 @@ describe("a refund credit note books NO second regulated reversal (ledgerReverse
 
     it("REG-B704 the reconciliation is sum(amount + categoryTax) + refundTax == dto.amount: a wrong total is refused", async () => {
       // wrong today: any total that is not the plain item sum is refused, including the right one
-      await expect(service.create({ ...refund, amount: 47.21 }, opts)).rejects.toMatchObject({
+      await expect(service.create({ ...refund, amount: 47.25 }, opts)).rejects.toMatchObject({
         response: { code: "CREDIT_NOTE_LINE_INVALID" },
       });
     });

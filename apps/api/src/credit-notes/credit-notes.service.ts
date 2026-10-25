@@ -104,6 +104,10 @@ export class CreditNotesService {
       // B947: a return refund on an order with 2+ creditable invoices is a lump sum (no items); these are the
       // returned products it must fit, in the ORDER POOL, re-checked here under the locks (the pre-claim check is stale).
       pooledRefund?: Array<{ productId: string; qty: number }>;
+      // SA-840: a return refund's rows carry NET (the shared headroom invariant); these are the tax the invoice charged on them.
+      // The regular tax is a note-level figure, the category tax (levy) is written on each row.
+      refundTax?: number;
+      refundCategoryTax?: Array<{ invoiceItemId: string; categoryTax: number }>;
     } = {},
   ): Promise<
     Array<{
@@ -255,7 +259,14 @@ export class CreditNotesService {
       creditedQtyByLine.set(k, v.qty);
     }
 
+    const refundLevy = new Map<string, number>();
+    for (const r of opts.refundCategoryTax ?? [])
+      refundLevy.set(
+        r.invoiceItemId,
+        roundMoney((refundLevy.get(r.invoiceItemId) ?? 0) + r.categoryTax),
+      );
     let sum = 0;
+    let sumLevy = 0;
     const cnItemsData = [...mergedByLine.values()].map((li) => {
       const line: any = lineById.get(li.invoiceItemId);
       if (!line)
@@ -308,6 +319,15 @@ export class CreditNotesService {
             ? `Credit line qty (${qty}) plus prior credited qty (${this.round3(priorQtyForLine)}) would exceed invoice line qty (${lineQty})`
             : `Credit line qty (${qty}) exceeds invoice line qty (${lineQty})`,
         );
+      // SA-840: a return refund row writes the levy slice the invoice charged (trackedCategoryId stays null, so
+      // reverseCreditNoteEntries never sees it); an operator row keeps its fraction of the line
+      const rowLevy = opts.ledgerReversedByReturn
+        ? (refundLevy.get(li.invoiceItemId) ?? 0)
+        : roundMoney(
+            // SA-816: a stored non-finite levy is refused (400), never refunded as $0.
+            finiteStoredLevy(line, `Invoice line ${line.id} category tax`) * frac,
+          );
+      sumLevy += rowLevy;
       return {
         invoiceItemId: line.id,
         // Snapshot the category as it was AT SALE (the invoice line), NEVER the
@@ -318,12 +338,7 @@ export class CreditNotesService {
         trackedCategoryId: opts.ledgerReversedByReturn ? null : (line.trackedCategoryId ?? null),
         amount: roundMoney(amt),
         qty,
-        categoryTax: opts.ledgerReversedByReturn
-          ? 0
-          : roundMoney(
-              // SA-816: a stored non-finite levy is refused (400), never refunded as $0.
-              finiteStoredLevy(line, `Invoice line ${line.id} category tax`) * frac,
-            ),
+        categoryTax: rowLevy,
       };
     });
     if (pool) {
@@ -349,10 +364,12 @@ export class CreditNotesService {
           );
       }
     }
-    if (Math.abs(sum - dto.amount) > 0.01)
+    // SA-840: a return refund reconciles as sum(amount + categoryTax) + refundTax == dto.amount; an operator note is unchanged
+    const itemsTotal = opts.ledgerReversedByReturn ? sum + sumLevy + (opts.refundTax ?? 0) : sum;
+    if (Math.abs(itemsTotal - dto.amount) > 0.01)
       throw cnBad(
         API_ERROR_CODES.CREDIT_NOTE_LINE_INVALID,
-        `Credit line amounts (${roundMoney(sum)}) must sum to the credit note amount (${dto.amount})`,
+        `Credit line amounts (${roundMoney(itemsTotal)}) must sum to the credit note amount (${dto.amount})`,
       );
     return cnItemsData;
   }
@@ -536,6 +553,9 @@ export class CreditNotesService {
       pooledRefund?: Array<{ productId: string; qty: number }>;
       /** B947: the Return this lump-sum refund belongs to; linked to the note inside the mint transaction. */
       returnId?: string;
+      /** SA-840: the tax a return refund's NET rows leave out (see validateAndBuildCnItems). */
+      refundTax?: number;
+      refundCategoryTax?: Array<{ invoiceItemId: string; categoryTax: number }>;
     } = {},
   ) {
     if (!dto.amount || dto.amount <= 0)

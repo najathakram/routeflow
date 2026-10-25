@@ -100,6 +100,8 @@ describe("ReturnsService.processRefund EXTERNAL_REFUND: paid-in-full, locked, te
                 invoiceNumber: "INV-1",
                 status: over.invoiceStatus ?? "SENT",
                 total: 100,
+                taxAmount: 0,
+                discount: 0,
                 items: [{ productId: "p1", qty: 10, subtotal: 100 }],
               },
             ],
@@ -130,6 +132,9 @@ describe("ReturnsService.processRefund EXTERNAL_REFUND: paid-in-full, locked, te
         refundMethod: "EXTERNAL_REFUND",
         refundAmount: 20,
         refundedAt: expect.any(Date),
+        creditSubtotal: 20,
+        creditTax: 0,
+        creditCategoryTax: 0,
         refundTender: null, // no tender sent: unknown (tenderKnown false)
       },
     });

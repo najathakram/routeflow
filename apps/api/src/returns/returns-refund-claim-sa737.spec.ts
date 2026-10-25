@@ -202,7 +202,15 @@ describe("ReturnsService.processRefund: the locked claim with a basis recomputed
       expect(prisma.return.updateMany).toHaveBeenCalledTimes(2);
       expect(prisma.return.updateMany.mock.calls[1][0]).toEqual({
         where: { id: "ret-1", status: "REFUNDED", creditNoteId: null },
-        data: { status: "RECEIVED", refundMethod: null, refundAmount: null, refundedAt: null },
+        data: {
+          status: "RECEIVED",
+          refundMethod: null,
+          refundAmount: null,
+          refundedAt: null,
+          creditSubtotal: null,
+          creditTax: null,
+          creditCategoryTax: null,
+        },
       });
     });
   });
@@ -371,6 +379,8 @@ describe("ReturnsService.processRefund: the locked claim with a basis recomputed
                     invoiceNumber: "N-1",
                     status: "SENT",
                     total: 100,
+                    taxAmount: 0,
+                    discount: 0,
                     items: [{ productId: "p1", qty: 10, subtotal: 100 }],
                   },
                 ],
