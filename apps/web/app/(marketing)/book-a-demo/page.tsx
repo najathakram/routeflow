@@ -38,7 +38,7 @@ export default function BookADemoPage() {
     <section className="glass-page g-section">
       <div className="g-wrap booking-layout">
         <div className="glass booking-copy">
-          <span className="g-eyebrow">BOOK A ROUTEFLOW DEMO</span>
+          <span className="g-eyebrow caps">Book a RouteFlow demo</span>
           <h1>
             See how RouteFlow fits
             <br />

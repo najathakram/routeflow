@@ -365,18 +365,21 @@ export async function creditAfterTender(
     actor?: string | null;
     impersonatedBy?: string | null;
     readOnly?: boolean;
+    /** The gate this tender was netted at: the SAME switch and label (SA-849 rule 1). "order" = the counter sale (create,
+     *  enforce_new_orders); "delivery" = the pickup hand-over / Complete at counter (DELIVERED, enforce_delivery). */
+    action: "order" | "delivery";
   },
 ): Promise<{ limit: number; exposure: number } | null> {
   if (!(p.netted > 0) || !p.tenantId || !p.customerId) return null;
   try {
-    const mode = await creditEnforcementMode(deps.prisma, p.tenantId, "order");
+    const mode = await creditEnforcementMode(deps.prisma, p.tenantId, p.action);
     if (mode === "OFF") return null;
     const enabled = await isCreditLimitCheckEnabled(deps);
     const db = deps.prisma.forTenant();
     try {
       await assertWithinCreditLimit(db, p.customerId, p.orderId, p.total, enabled, {
         invoicesSurviveEdit: true,
-        action: "order",
+        action: p.action,
       });
       return null;
     } catch (e) {
@@ -384,7 +387,7 @@ export async function creditAfterTender(
       const { limit, exposure } = e.getResponse() as { limit: number; exposure: number };
       if (p.readOnly) return mode === "ENFORCED" ? { limit, exposure } : null;
       deps.logger.warn(
-        `credit limit would DENY an order (after-tender, ${mode === "ENFORCED" ? "enforced" : "dark"}): ` +
+        `credit limit would DENY a ${ACTION_LABEL[p.action]} (after-tender, ${mode === "ENFORCED" ? "enforced" : "dark"}): ` +
           `tenant=${p.tenantId} customer=${p.customerId} order=${p.orderId} exposure=${exposure} limit=${limit} ` +
           `netted=${p.netted} planError=${p.planError}`,
       );

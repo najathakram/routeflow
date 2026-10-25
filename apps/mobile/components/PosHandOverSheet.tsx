@@ -11,6 +11,7 @@ import {
 } from "react-native";
 import { ios } from "@routeflow/ui/tokens";
 import type { PickupCompleteRequest } from "@routeflow/types";
+import { HAND_OVER_SHEET_COPY, handOverPrimaryLabel } from "../lib/pos-handover-sheet-copy";
 import {
   POS_COPY,
   POS_TENDER_METHODS,
@@ -34,6 +35,7 @@ export function PosHandOverSheet({
   onRetry,
   onCancel,
   onSubmit,
+  copy = { title: POS_COPY.handOver, action: POS_COPY.handOver },
 }: {
   visible: boolean;
   /** Unknown / loading counts as not known-named: a tender is required. */
@@ -47,6 +49,8 @@ export function PosHandOverSheet({
   error?: string | null;
   onCancel: () => void;
   onSubmit: (body: PickupCompleteRequest) => void;
+  /** I-120: the words when opened from "Complete at counter" (completeAtCounterSheetCopy); the tender step is the same. */
+  copy?: { title: string; action: string };
 }) {
   const [method, setMethod] = React.useState<PosTenderMethod>("CASH");
   const [amount, setAmount] = React.useState("");
@@ -96,7 +100,7 @@ export function PosHandOverSheet({
         style={styles.sheetWrap}
       >
         <View style={styles.sheet}>
-          <Text style={styles.title}>{POS_COPY.handOver}</Text>
+          <Text style={styles.title}>{copy.title}</Text>
           <Text style={styles.hint}>
             {posMayHandOverUnpaid(isWalkIn)
               ? "Take payment now, or hand over and leave the invoice open."
@@ -134,10 +138,10 @@ export function PosHandOverSheet({
               </View>
               {method === "CASH" ? (
                 <>
-                  <Text style={styles.label}>Amount ($)</Text>
+                  <Text style={styles.label}>{HAND_OVER_SHEET_COPY.cashReceived}</Text>
                   <TextInput
                     value={amount}
-                    accessibilityLabel="Amount"
+                    accessibilityLabel={HAND_OVER_SHEET_COPY.cashReceived}
                     onChangeText={setAmount}
                     keyboardType="decimal-pad"
                     placeholder={balanceDue.toFixed(2)}
@@ -164,19 +168,19 @@ export function PosHandOverSheet({
           )}
           {problem || error ? <Text style={styles.error}>{problem ?? error}</Text> : null}
           <Pressable
-            style={[styles.primary, submitting && { opacity: 0.5 }]}
+            style={[styles.primary, (submitting || !ready) && { opacity: 0.5 }]}
             disabled={submitting || !ready}
             onPress={() => submit(false)}
             accessibilityRole="button"
+            accessibilityState={{ disabled: submitting || !ready }}
           >
             <Text style={styles.primaryText}>
-              {submitting
-                ? "Saving…"
-                : !ready
-                  ? "Balance unavailable"
-                  : nothingOwed
-                    ? POS_COPY.handOver
-                    : `${POS_COPY.handOver} and take payment`}
+              {handOverPrimaryLabel({
+                action: copy.action,
+                submitting: submitting === true,
+                ready,
+                nothingOwed,
+              })}
             </Text>
           </Pressable>
           {posMayHandOverUnpaid(isWalkIn) && ready && !nothingOwed ? (
@@ -186,7 +190,7 @@ export function PosHandOverSheet({
               onPress={() => submit(true)}
               accessibilityRole="button"
             >
-              <Text style={styles.secondaryText}>{POS_COPY.handOver}, no payment</Text>
+              <Text style={styles.secondaryText}>{copy.action}, no payment</Text>
             </Pressable>
           ) : null}
           <Pressable

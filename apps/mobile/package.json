@@ -13,7 +13,10 @@
     "build": "tsc --noEmit && expo export --platform android --platform ios",
     "lint": "eslint . --ext .ts,.tsx",
     "check-types": "tsc --noEmit",
-    "test": "jest --config jest.config.js"
+    "test": "jest --config jest.config.js",
+    "check:shell-env": "node scripts/assert-shell-env.cjs",
+    "ota:publish": "node scripts/assert-shell-env.cjs --ota && eas update",
+    "eas-build-post-install": "node scripts/assert-shell-env.cjs --eas"
   },
   "dependencies": {
     "@expo-google-fonts/instrument-serif": "^0.4.1",

@@ -42,7 +42,11 @@ import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { RegulatedLedgerService, type FiledPeriod } from "../regulated/regulated-ledger.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
-import { lockOrderRow } from "../credit-notes/credit-note-locks";
+import {
+  creditPaymentTargets,
+  lockCreditNotes,
+  lockOrderRow,
+} from "../credit-notes/credit-note-locks";
 import { NumberingService } from "../import/numbering.service";
 import {
   countCreditableInvoices,
@@ -1797,10 +1801,39 @@ export class InlineReturnsService {
         fresh.status === "REFUNDED" && fresh.creditNoteId
           ? await ledgerDocumentTargets(tx, { creditNoteId: fresh.creditNoteId })
           : { orderIds: [], invoiceIds: [] };
+      // W-757: and the Orders / Invoices the note's credit PAYMENTS sit on, which cancelStandaloneInTx below restores
+      // (each restore writes its Invoice). Without them in THIS one sorted pass the restore took CreditNote -> Invoice
+      // on another order's invoice: 40P01 against markSent, a 500 with no retry.
+      const paid =
+        fresh.status === "REFUNDED" && fresh.creditNoteId
+          ? await creditPaymentTargets(tx, fresh.creditNoteId)
+          : { orderIds: [], invoiceIds: [] };
+      const lockedOrders = [fresh.orderId, ...ret.orderIds, ...note.orderIds, ...paid.orderIds];
+      const lockedInvoices = [...ret.invoiceIds, ...note.invoiceIds, ...paid.invoiceIds];
       await lockLedgerDocumentRows(tx, tenantId, {
-        orderIds: [fresh.orderId, ...ret.orderIds, ...note.orderIds],
-        invoiceIds: [...ret.invoiceIds, ...note.invoiceIds],
+        orderIds: lockedOrders,
+        invoiceIds: lockedInvoices,
       });
+      if (fresh.status === "REFUNDED" && fresh.creditNoteId) {
+        // SA-920: `paid` was read BEFORE the pass, so a send-time sweep could have applied this note to another order's
+        // invoice in between. Take the note LAST (ROW_LOCK_ORDER; FOR NO KEY UPDATE, SA-706a, which every writer that
+        // adds a payment of this note also holds), then re-read under it. A target outside the locked set aborts the
+        // whole cancel with a retryable 409; a late lock on it would be CreditNote -> Invoice again. The retry re-reads
+        // and locks the full set.
+        await lockCreditNotes(tx, tenantId, [fresh.creditNoteId]);
+        const now = await creditPaymentTargets(tx, fresh.creditNoteId);
+        const orders = new Set(lockedOrders);
+        const invoices = new Set(lockedInvoices);
+        if (
+          now.orderIds.some((o) => !orders.has(o)) ||
+          now.invoiceIds.some((i) => !invoices.has(i))
+        ) {
+          throw new ConflictException({
+            code: API_ERROR_CODES.RETURN_CANCEL_RETRY,
+            message: "This return changed while it was being cancelled. Try again.",
+          });
+        }
+      }
 
       // HIGH-4: "applied" (restocked + regulated-ledger reversed) is no longer just
       // `status IN (RECEIVED, REFUNDED)` — a RECEIVED row still carrying `DRIVER_CAP` in

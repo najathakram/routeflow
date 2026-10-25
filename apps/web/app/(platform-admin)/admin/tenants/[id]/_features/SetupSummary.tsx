@@ -87,7 +87,7 @@ export function SetupSummary({ tenantId }: { tenantId: string }) {
           </button>
         </div>
       ) : !setup ? (
-        <p className="text-sm text-slate-400">Loading this tenant&apos;s setup...</p>
+        <p className="text-sm text-slate-400">Loading this tenant&apos;s setup…</p>
       ) : (
         <SetupBody setup={setup} />
       )}

@@ -2127,6 +2127,10 @@
           ),
         );
       }
+      // Phone cards label each value from its column header (CSS reads data-label).
+      const PR_COLS = ["PR", "Title", "Checks", "Item", "Areas", "Updated"];
+      for (const tr of tb.children)
+        [...tr.children].forEach((td, i) => td.setAttribute("data-label", PR_COLS[i]));
       body.append(
         el(
           "div",

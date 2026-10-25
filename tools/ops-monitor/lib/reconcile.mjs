@@ -43,6 +43,10 @@ const ROWS_RE = /\brows?\s+#?(\d{1,5}(?:\s*(?:,|\/|&|\band\b)\s*#?\d{1,5})*)/gi;
 const CLOSING_RE =
   /\b(?:fix(?:es|ed)?|close[sd]?|resolve[sd]?)\s*:?\s+((?:b\d{1,5})|(?:rows?\s+#?\d{1,5}(?:\s*(?:,|\/|&|\band\b)\s*#?\d{1,5})*))/gi;
 
+// The house PR-body label "Register row 651" (also "Register rows 555/556"): the row the PR serves, no closing verb needed.
+const REGISTER_ROW_RE =
+  /\bregister\s+rows?\s*:?\s*#?(\d{1,5}(?:\s*(?:,|\/|&|\band\b)\s*#?\d{1,5})*)/gi;
+
 /**
  * Item ids a PR (or branch) NAMES, i.e. the items it fixes: the branch's item tokens
  * (itemIdsFromBranch), any B-id in the title or body ("B1234", "fix(b230):"), and register rows
@@ -63,6 +67,8 @@ export function fixLinksFor({ branch = null, title = "", body = "" } = {}, known
   const title_ = String(title ?? "");
   for (const m of title_.matchAll(BUG_TEXT_RE)) push(`B${m[1]}`);
   for (const m of title_.matchAll(ROWS_RE))
+    for (const n of m[1].match(/\d+/g) ?? []) if (known.has(n)) push(n);
+  for (const m of String(body ?? "").matchAll(REGISTER_ROW_RE))
     for (const n of m[1].match(/\d+/g) ?? []) if (known.has(n)) push(n);
   for (const m of String(body ?? "").matchAll(CLOSING_RE)) {
     const ref = m[1];

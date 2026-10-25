@@ -99,7 +99,7 @@ async function openWithLine() {
   await screen.findByText("Widget p1");
   return { onViewOrder };
 }
-const posSwitch = () => screen.findByRole("switch", { name: /pos mode/i });
+const posSwitch = () => screen.findByRole("switch", { name: /store pickup/i });
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -121,7 +121,7 @@ describe("CreateOrderModal: POS mode switch", () => {
     mockRole = "SUPER_ADMIN";
     mockPrefs = { "orders.posMode": "true" };
     await openWithLine();
-    expect(screen.queryByRole("switch", { name: /pos mode/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("switch", { name: /store pickup/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Confirm and invoice" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /^create order$/i }));
     await waitFor(() => expect(orderPosts().length).toBe(1));
@@ -166,7 +166,7 @@ describe("CreateOrderModal: POS mode switch", () => {
     await waitFor(() => expect(sw).toBeEnabled());
     fireEvent.click(sw);
     await waitFor(() => expect(sw).not.toBeChecked());
-    expect(await screen.findByText(/couldn't save your pos mode setting/i)).toBeInTheDocument();
+    expect(await screen.findByText(/couldn't save your store pickup setting/i)).toBeInTheDocument();
   });
 
   it("steps the delivery-only fields aside and restores them when switched off", async () => {
@@ -186,7 +186,9 @@ describe("CreateOrderModal: POS mode switch", () => {
   it("Confirm and invoice: creates a PICKUP order, then PATCH status CONFIRMED, then POST from-order", async () => {
     mockPrefs = { "orders.posMode": "true" };
     await openWithLine();
-    await waitFor(() => expect(screen.getByRole("switch", { name: /pos mode/i })).toBeChecked());
+    await waitFor(() =>
+      expect(screen.getByRole("switch", { name: /store pickup/i })).toBeChecked(),
+    );
     fireEvent.click(screen.getByRole("button", { name: "Confirm and invoice" }));
     await waitFor(() =>
       expect(patch).toHaveBeenCalledWith("/orders/o1/status", { status: "CONFIRMED" }),
@@ -206,7 +208,9 @@ describe("CreateOrderModal: POS mode switch", () => {
   it("Confirm only: confirms but never invoices", async () => {
     mockPrefs = { "orders.posMode": "true" };
     await openWithLine();
-    await waitFor(() => expect(screen.getByRole("switch", { name: /pos mode/i })).toBeChecked());
+    await waitFor(() =>
+      expect(screen.getByRole("switch", { name: /store pickup/i })).toBeChecked(),
+    );
     fireEvent.click(screen.getByRole("button", { name: "Confirm only" }));
     await waitFor(() =>
       expect(patch).toHaveBeenCalledWith("/orders/o1/status", { status: "CONFIRMED" }),
@@ -227,7 +231,9 @@ describe("CreateOrderModal: POS mode switch", () => {
         : Promise.reject(new Error("nope")),
     );
     const { onViewOrder } = await openWithLine();
-    await waitFor(() => expect(screen.getByRole("switch", { name: /pos mode/i })).toBeChecked());
+    await waitFor(() =>
+      expect(screen.getByRole("switch", { name: /store pickup/i })).toBeChecked(),
+    );
     fireEvent.click(screen.getByRole("button", { name: "Confirm and invoice" }));
     await waitFor(() =>
       expect(mockToast).toHaveBeenCalledWith(
@@ -249,7 +255,9 @@ describe("CreateOrderModal: POS mode switch", () => {
       target: { value: "Acm" },
     });
     fireEvent.click(await screen.findByText("Acme Foods"));
-    await waitFor(() => expect(screen.getByRole("switch", { name: /pos mode/i })).toBeChecked());
+    await waitFor(() =>
+      expect(screen.getByRole("switch", { name: /store pickup/i })).toBeChecked(),
+    );
     fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
     await waitFor(() => expect(orderPosts()).toHaveLength(1));
     expect(orderPosts()[0][1]).toEqual(
@@ -262,7 +270,9 @@ describe("CreateOrderModal: POS mode switch", () => {
     mockPrefs = { "orders.posMode": "true" };
     mockActive = { id: "a1", orderNumber: "SO-9", status: "PENDING", itemCount: 2, total: 20 };
     await openWithLine();
-    await waitFor(() => expect(screen.getByRole("switch", { name: /pos mode/i })).toBeChecked());
+    await waitFor(() =>
+      expect(screen.getByRole("switch", { name: /store pickup/i })).toBeChecked(),
+    );
     expect(mockActiveHook).toHaveBeenLastCalledWith("c1", "PICKUP");
     fireEvent.click(screen.getByRole("button", { name: "Confirm and invoice" }));
     expect(
@@ -283,7 +293,9 @@ describe("CreateOrderModal: POS mode merge into an open DRAFT (row 311)", () => 
       }),
     );
     const view = await openWithLine();
-    await waitFor(() => expect(screen.getByRole("switch", { name: /pos mode/i })).toBeChecked());
+    await waitFor(() =>
+      expect(screen.getByRole("switch", { name: /store pickup/i })).toBeChecked(),
+    );
     fireEvent.click(screen.getByRole("button", { name: "Confirm and invoice" }));
     fireEvent.click(await screen.findByRole("button", { name: "Add to it" }));
     return view;
@@ -329,7 +341,9 @@ describe("CreateOrderModal: POS mode landing and Enter", () => {
   it("lands on the new order's page after Confirm and invoice (not the list)", async () => {
     mockPrefs = { "orders.posMode": "true" };
     const { onViewOrder } = await openWithLine();
-    await waitFor(() => expect(screen.getByRole("switch", { name: /pos mode/i })).toBeChecked());
+    await waitFor(() =>
+      expect(screen.getByRole("switch", { name: /store pickup/i })).toBeChecked(),
+    );
     fireEvent.click(screen.getByRole("button", { name: "Confirm and invoice" }));
     await waitFor(() => expect(onViewOrder).toHaveBeenCalledWith("o1"));
     expect(post).toHaveBeenCalledWith("/invoices/from-order/o1");
@@ -341,7 +355,9 @@ describe("CreateOrderModal: POS mode landing and Enter", () => {
       url === "/orders" ? Promise.resolve({ data: { id: "o1" } }) : Promise.reject(new Error("x")),
     );
     const { onViewOrder } = await openWithLine();
-    await waitFor(() => expect(screen.getByRole("switch", { name: /pos mode/i })).toBeChecked());
+    await waitFor(() =>
+      expect(screen.getByRole("switch", { name: /store pickup/i })).toBeChecked(),
+    );
     fireEvent.click(screen.getByRole("button", { name: "Confirm and invoice" }));
     await waitFor(() => expect(onViewOrder).toHaveBeenCalledWith("o1"));
   });
@@ -349,7 +365,9 @@ describe("CreateOrderModal: POS mode landing and Enter", () => {
   it("an implicit (Enter) submit follows the primary, even right after a Confirm only choice", async () => {
     mockPrefs = { "orders.posMode": "true" };
     await openWithLine();
-    await waitFor(() => expect(screen.getByRole("switch", { name: /pos mode/i })).toBeChecked());
+    await waitFor(() =>
+      expect(screen.getByRole("switch", { name: /store pickup/i })).toBeChecked(),
+    );
     fireEvent.submit(document.getElementById("create-order-form")!);
     await waitFor(() => expect(post).toHaveBeenCalledWith("/invoices/from-order/o1"));
   });
@@ -387,7 +405,7 @@ describe("CreateOrderModal: a store-only tenant (row 331)", () => {
     asStoreOnly();
     await openWithLine();
     expect(await screen.findByRole("button", { name: "Confirm and invoice" })).toBeInTheDocument();
-    expect(screen.queryByRole("switch", { name: /pos mode/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("switch", { name: /store pickup/i })).not.toBeInTheDocument();
     expect(screen.queryByText(/Requested Delivery Date/i)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^create order$/i })).not.toBeInTheDocument();
   });
@@ -457,7 +475,9 @@ describe("CreateOrderModal: the View Order action stays long enough to use (F17)
         : Promise.reject(new Error("nope")),
     );
     const { onViewOrder } = await openWithLine();
-    await waitFor(() => expect(screen.getByRole("switch", { name: /pos mode/i })).toBeChecked());
+    await waitFor(() =>
+      expect(screen.getByRole("switch", { name: /store pickup/i })).toBeChecked(),
+    );
     fireEvent.click(screen.getByRole("button", { name: "Confirm and invoice" }));
     await waitFor(() => expect(mockToast).toHaveBeenCalled());
     const withAction = mockToast.mock.calls.map((c) => c[0]).filter((t) => t.action);

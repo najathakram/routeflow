@@ -65,7 +65,7 @@ export default function UnitsPage() {
   if (!enabled && isError) {
     return (
       <div className="text-sm text-navy/70">
-        <p>Couldn&apos;t check your plan. Try again</p>
+        <p>Couldn&apos;t check your plan.</p>
         <Button variant="secondary" className="mt-3" onClick={() => refetch()}>
           Retry
         </Button>
@@ -389,7 +389,7 @@ function UnitsScreen() {
         </ul>
       ) : isError ? (
         <div className="rounded-xl border border-danger/30 bg-danger/5 px-4 py-6 text-center text-sm text-danger">
-          <p>Couldn&apos;t load your units. Try again</p>
+          <p>Couldn&apos;t load your units.</p>
           <Button variant="secondary" className="mt-3" onClick={() => refetch()}>
             Retry
           </Button>

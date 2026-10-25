@@ -731,7 +731,9 @@ export function StockCountTab() {
           ? "Already committed"
           : `Committed ${applied} change${applied === 1 ? "" : "s"}`,
         description:
-          result.skipped > 0 ? `${result.skipped} no-op row(s) were skipped.` : undefined,
+          result.skipped > 0
+            ? `${result.skipped} unchanged ${result.skipped === 1 ? "row was" : "rows were"} skipped.`
+            : undefined,
         variant: "success",
       });
     } catch (err: any) {
@@ -745,7 +747,7 @@ export function StockCountTab() {
       } else if (Array.isArray(missing) && missing.length) {
         toast({
           title: "Some products no longer exist",
-          description: `${missing.length} row(s) reference deleted products — remove them and retry.`,
+          description: `${missing.length} ${missing.length === 1 ? "row references a deleted product" : "rows reference deleted products"}. Remove ${missing.length === 1 ? "it" : "them"} and try again.`,
           variant: "error",
         });
       } else {

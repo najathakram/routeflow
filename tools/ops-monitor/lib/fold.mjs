@@ -116,6 +116,17 @@ export function fold(events, { bugs = new Map() } = {}) {
 
   const valid = [];
   for (const ev of events) {
+    if (ev && ev.__corrupt) {
+      // W-880: a crash zeroed part of this file; its other lines still load, so this is the alarm.
+      anomaly(
+        "corrupt-events-file",
+        null,
+        null,
+        `${ev.file} holds ${ev.nul} NUL bytes (a crash zeroed part of it): restore the lost lines from git history`,
+        fileNoonUtc(ev.file),
+      );
+      continue;
+    }
     if (ev && ev.__invalid) {
       anomaly(
         "invalid-event",
@@ -176,6 +187,7 @@ export function fold(events, { bugs = new Map() } = {}) {
     return null;
   };
 
+  const MERGE_ADVANCES = new Set(["idea", "planned", "spec", "building", "review", "ready"]);
   const setStatus = (it, status) => {
     it.status = status;
     if (DONE_STATUSES.includes(status)) {
@@ -446,6 +458,15 @@ export function fold(events, { bugs = new Map() } = {}) {
         }
         if (it) mergeLinks(it.links, { prs: [d.number] });
         if (it?.claimedBy) touchLane({ lane: it.claimedBy, kind: ev.kind }, ts);
+        // A merge moves in-flight work to shipping once EVERY PR linked to the item has merged (the same event an
+        // `rf status <id> shipping` would write). Done items stay done; a later explicit status event still wins.
+        if (it && d.action === "merge" && MERGE_ADVANCES.has(it.status)) {
+          const merged = new Set(
+            state.prEvents.filter((e) => e.action === "merge").map((e) => e.number),
+          );
+          merged.add(d.number);
+          if (it.links.prs.every((n) => merged.has(n))) setStatus(it, "shipping");
+        }
         state.prEvents.push({
           ts,
           number: d.number,

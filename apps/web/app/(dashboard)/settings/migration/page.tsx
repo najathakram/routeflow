@@ -145,7 +145,7 @@ function MigrationHubBody() {
       {
         onSuccess: () =>
           toast({
-            title: `Staged ${rows.length} products`,
+            title: `Staged ${rows.length} ${rows.length === 1 ? "product" : "products"}`,
             description: "Review, then confirm",
             variant: "success",
           }),
@@ -208,7 +208,7 @@ function MigrationHubBody() {
         onSuccess: (r) =>
           toast({
             title: "Migration undone",
-            description: `${r.reversed} records removed`,
+            description: `${r.reversed} ${r.reversed === 1 ? "record" : "records"} removed`,
             variant: "success",
           }),
         onError: (e: any) =>
@@ -226,7 +226,7 @@ function MigrationHubBody() {
   return (
     <div className="space-y-6 p-6">
       <div>
-        <h2 className="text-xl font-semibold text-navy">Move to RouteFlow</h2>
+        <h2 className="text-2xl font-bold text-navy">Move to RouteFlow</h2>
         <p className="mt-1 text-sm text-navy/70">
           Bring your history over. Nothing goes live until you review and confirm, and every
           migration can be undone for 24 hours.
@@ -411,7 +411,7 @@ export default function MigrationHubPage() {
   if (!allowed) {
     return (
       <div className="space-y-2 p-6">
-        <h2 className="text-xl font-semibold text-navy">Migration</h2>
+        <h2 className="text-2xl font-bold text-navy">Migration</h2>
         <p className="text-sm text-navy/50">Only an admin can import data.</p>
       </div>
     );

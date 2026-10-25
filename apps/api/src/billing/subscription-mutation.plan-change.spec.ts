@@ -297,7 +297,7 @@ describe("upgrade(): the plan change reaches Stripe, Stripe-first (B1104)", () =
         currency: "usd",
         unit_amount: 49900,
         recurring: { interval: "month" },
-        product: "prod_scale",
+        product: "rf_plan_scale",
       },
     });
     // The idempotency key names (tenant, plan-change, target version); a fresh nonce per attempt.

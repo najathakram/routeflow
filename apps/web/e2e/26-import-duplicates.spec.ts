@@ -5,7 +5,7 @@
  * imported/skipped — the server half is proven in
  * apps/api/src/import/import-robustness.spec.ts. This spec proves the other
  * half: that /settings/import actually SURFACES the count, in the success
- * toast summary and in the Customer Payments card's result badge. Without it
+ * toast summary and in the Customer payments card's result badge. Without it
  * the badge could render nothing (or throw) with every other F17 gate green.
  *
  * FULLY MOCKED — NO WRITES: POST /import/payments is intercepted with
@@ -33,7 +33,7 @@ import { test, expect, type Page } from "@playwright/test";
 import { apiBase, operatorAccessToken } from "./helpers/api";
 
 /**
- * The Customer Payments import card. Each card labels its own button
+ * The Customer payments import card. Each card labels its own button
  * ("Import <section>"), which identifies the card uniquely; the card root is
  * the `rounded-xl` wrapper around it — the one element that holds BOTH the
  * card's hidden file input and its result badge.
@@ -41,7 +41,7 @@ import { apiBase, operatorAccessToken } from "./helpers/api";
 function paymentsCard(page: Page) {
   return page
     .locator("div.rounded-xl")
-    .filter({ has: page.getByRole("button", { name: "Import Customer Payments" }) })
+    .filter({ has: page.getByRole("button", { name: "Import Customer payments" }) })
     .first();
 }
 
@@ -81,7 +81,7 @@ test("REG-B99 (web leg): the payments import result reports duplicates in the to
     mimeType: "text/csv",
     buffer: Buffer.from("Invoice Number,Amount\n"),
   });
-  await card.getByRole("button", { name: "Import Customer Payments" }).click();
+  await card.getByRole("button", { name: "Import Customer payments" }).click();
 
   // The toast is the ephemeral half (4 s), so assert it first. The toast
   // viewport is Radix's role="region" labelled "Notifications (F8)" and each
@@ -104,6 +104,6 @@ test("REG-B99 (web leg): the payments import result reports duplicates in the to
 
   // …and a single duplicate reads in the singular.
   duplicates = 1;
-  await card.getByRole("button", { name: "Import Customer Payments" }).click();
+  await card.getByRole("button", { name: "Import Customer payments" }).click();
   await expect(card.getByText("1 duplicate skipped", { exact: true })).toBeVisible();
 });

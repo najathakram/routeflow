@@ -32,6 +32,7 @@ import { judgeFulfilSwitch } from "./fulfil-path-restrictions";
 import * as rGate from "./order-restriction-gate";
 import { resolveShipmentText } from "./shipment-text";
 import { assertFulfilPathOffered } from "./fulfil-path-resolver";
+import { fulfillPathLocked } from "./fulfil-path-lock";
 import { mayUseTill } from "./counter-sale/till-permission.guard";
 
 const switchLogger = new Logger("OrderFulfilPathSwitch");
@@ -112,12 +113,28 @@ export async function updateShipmentImpl(
  * class method that the coverage ratchet scans). A breach warns / refuses; an acknowledged one is stamped in the SAME
  * transaction as the path change (fulfil-path-restrictions.ts).
  */
+/**
+ * SA-913 (c): the ONE caller-pinned switch option. Only "Complete at counter" pins `fromOutForDelivery` (a grep spec holds
+ * it there): it accepts an OUT_FOR_DELIVERY order ONLY once its run link is null (just taken off the run in that flow), and
+ * the DELIVERED step then runs with alreadyOut. PATCH /orders/:id/fulfill-path never passes it, so it keeps refusing
+ * OUT_FOR_DELIVERY, and ORDER_ON_ACTIVE_RUN holds for every caller.
+ */
+export type FulfillPathSwitchOptions = { fromOutForDelivery?: true };
+/** OrdersService.updateFulfillPath's arguments (the delegator stays a one-liner under the size ratchet). */
+export type UpdateFulfillPathArgs = [
+  orderId: string,
+  dto: UpdateFulfillPathDto,
+  user?: JwtPayload,
+  opts?: FulfillPathSwitchOptions,
+];
+
 export async function updateFulfillPathImpl(
   self: OrdersService,
   orderId: string,
   dto: UpdateFulfillPathDto,
   user?: JwtPayload,
   assertSellable?: Parameters<typeof judgeFulfilSwitch>[4],
+  opts?: FulfillPathSwitchOptions,
 ) {
   // POS mode (SA-763r R3): switching an order to PICKUP is a hand-over at the till, a staff capability.
   // BO-07: the ONE till predicate (an OPERATOR's denied ORDERS group is read live; only for the PICKUP switch).
@@ -166,11 +183,9 @@ export async function updateFulfillPathImpl(
     },
   });
   if (!order) throw new NotFoundException("Order not found");
-  if (
-    order.status === OrderStatus.OUT_FOR_DELIVERY ||
-    order.status === OrderStatus.DELIVERED ||
-    order.status === OrderStatus.CANCELLED
-  ) {
+  const linked = order.routeRunId != null || order.routeRunStopId != null;
+  // Row 673: the same predicate the order read sends as `fulfillPathLocked`.
+  if (fulfillPathLocked(order, { fromOutForDelivery: opts?.fromOutForDelivery, linked })) {
     throw new BadRequestException("Fulfillment path can only be changed while the order is open");
   }
   // Status alone isn't enough: the dispatch sweep attaches orders to a run
@@ -191,21 +206,21 @@ export async function updateFulfillPathImpl(
     (dto.fulfillPath === FulfillPath.SHIP || dto.fulfillPath === FulfillPath.PICKUP) &&
     onActiveRun
   ) {
-    throw new BadRequestException(
-      `This order is out on an active delivery run${
+    throw new BadRequestException({
+      code: API_ERROR_CODES.ORDER_ON_ACTIVE_RUN,
+      message: `This order is out on an active delivery run${
         run?.driver?.contactName ? ` with ${run.driver.contactName}` : ""
       }. Remove it from the run before switching it to ${
         dto.fulfillPath === FulfillPath.PICKUP ? "pickup" : "shipping"
       }.`,
-    );
+    });
   }
   // L8: PICKUP -> ROUTE / SHIP for a customer with no address is a coded 400, before anything is judged or written.
   if (assertSellable && order.status !== OrderStatus.DRAFT && order.fulfillPath !== dto.fulfillPath)
     assertFulfilPathAddress(order, dto.fulfillPath);
-  const hasLink = order.routeRunId != null || order.routeRunStopId != null;
   // The path write itself (unchanged), on `db`: the tenant client, or the transaction below.
   const write = async (db: any) => {
-    if (dto.fulfillPath !== FulfillPath.PICKUP || !hasLink) {
+    if (dto.fulfillPath !== FulfillPath.PICKUP || !linked) {
       return db.order.update({
         where: { id: orderId },
         data: { fulfillPath: dto.fulfillPath },

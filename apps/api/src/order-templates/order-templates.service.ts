@@ -1160,6 +1160,7 @@ export class OrderTemplatesService {
     } = orderTotalsOf(lineItemsData, {
       taxRate,
       isTaxExempt,
+      discount: 0, // W-762: a standing order carries no order-level discount
     });
 
     // #1208 review LOW: guard the generated total the same way create() does

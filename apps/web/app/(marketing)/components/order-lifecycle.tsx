@@ -47,7 +47,7 @@ export function OrderLifecycle() {
   return (
     <section className="section wrap getting-started order-lifecycle">
       <div>
-        <Eyebrow>ONE ORDER, START TO FINISH</Eyebrow>
+        <Eyebrow>One order, start to finish</Eyebrow>
         <h2>
           Follow an order
           <br />
@@ -90,49 +90,49 @@ const CAPABILITIES = [
     icon: Boxes,
     name: "Boxed pricing, real units",
     text: "Sell by the box or the piece — RouteFlow tracks and converts both, so a partial-box order doesn't get charged a full-box rate by accident.",
-    tag: "PRICE IT RIGHT",
+    tag: "Price it right",
   },
   {
     icon: Tags,
     name: "Customer-tier pricing",
     text: "Set a pricing tier per customer and override individual product prices for individual accounts — your agreed rate applies automatically, every time.",
-    tag: "HONOR THE DEAL YOU MADE",
+    tag: "Honor the deal you made",
   },
   {
     icon: Repeat2,
     name: "Standing orders that re-price",
     text: "A weekly standing order runs through the same tiered pricing as an order your staff types by hand, so a price change actually reaches your repeat customers.",
-    tag: "REPEAT BUSINESS, CURRENT PRICES",
+    tag: "Repeat business, current prices",
   },
   {
     icon: Route,
     name: "Window-aware routing",
     text: "Routes are optimized for time or distance and checked against each stop's delivery window — not just a straight line on a map.",
-    tag: "GET THERE ON TIME",
+    tag: "Get there on time",
   },
   {
     icon: Camera,
     name: "Proof of delivery",
     text: "A signature, photos, and a record of what was actually delivered versus what was ordered — for every stop.",
-    tag: "SETTLE DISPUTES WITH EVIDENCE",
+    tag: "Settle disputes with evidence",
   },
   {
     icon: RotateCcw,
     name: "Returns at the stop",
     text: "Your driver can log a return right at the delivery — what came back, why, whether it restocks — without a follow-up call to the office.",
-    tag: "NO PHONE TAG ON RETURNS",
+    tag: "No phone tag on returns",
   },
   {
     icon: ReceiptText,
     name: "Bills what was delivered",
     text: "A short-pick, a refusal, or a partial delivery adjusts the invoice automatically — you never manually re-key a smaller total.",
-    tag: "INVOICE MATCHES REALITY",
+    tag: "Invoice matches reality",
   },
   {
     icon: HandCoins,
     name: "Driver settlement",
     text: "Cash and check collected at the door are recorded against the invoice on the spot, and checked against what the system expected the driver to collect at end of run.",
-    tag: "AN ACTUAL AUDIT TRAIL",
+    tag: "An actual audit trail",
   },
 ];
 
@@ -143,7 +143,7 @@ export function WholesalerCapabilities() {
         {CAPABILITIES.map((f) => (
           <article key={f.name} className="capability-card">
             <f.icon size={27} />
-            <span>{f.tag}</span>
+            <span className="caps">{f.tag}</span>
             <h3>{f.name}</h3>
             <p>{f.text}</p>
           </article>

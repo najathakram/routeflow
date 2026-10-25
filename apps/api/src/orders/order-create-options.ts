@@ -44,6 +44,8 @@ export interface ReplayedOrder {
  */
 export interface CreateOrderOptions {
   skipAutoMerge?: boolean;
+  /** W-762 / SA-923: created apart from a discounted merge target this once; `skipAutoMerge` is NOT persisted. */
+  separateOnce?: boolean;
   internalCustomerDraft?: boolean;
   allowArchived?: boolean;
   sourceLines?: SourceLines;

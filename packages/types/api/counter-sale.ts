@@ -180,6 +180,8 @@ export interface PickupCompleteRequest {
   payment?: CounterSalePayment;
   /** SA-750r3: the till register this hand-over's cash counts on when the order has none stamped yet; default 'main' */
   registerKey?: string;
+  /** I-120 R8 (owner 7a Q1 = A): the operator confirmed taking an order on a driver's run off the run (after a 409 COUNTER_COMPLETE_ON_RUN). */
+  takeOffRun?: boolean;
 }
 
 export interface PickupCompleteResponse {
@@ -201,6 +203,13 @@ export interface PickupCompleteResponse {
   existingPayment?: DuplicatePaymentRefExisting;
   /** true when the order was already picked up: no status write; only a planned shortfall of this hand-over's tender is recorded. */
   alreadyPickedUp?: boolean;
+  /** I-120 (SA-861 rule 8): true when THIS call sent the ONE completion email (a named customer, the tender final). */
+  emailed?: boolean;
+  /**
+   * I-120 (SA-872 cond. 2, SA-849 on the hand-over): the delivery credit gate counted this hand-over's till tender, the
+   * tender did not record, and without it the customer is over their limit (ENFORCED). Omitted otherwise.
+   */
+  creditOverLimit?: { limit: number; exposure: number };
 }
 
 // ─── Today's sales (register panel) — GET /orders/counter-sale/today ──────────────────────────

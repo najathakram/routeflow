@@ -222,7 +222,7 @@ export default function BuyerPortalLayout({ children }: { children: React.ReactN
         {
           href: `/buyer/portal/${sellerSlug}/shelf`,
           icon: Boxes,
-          label: "Your Shelf",
+          label: "Your shelf",
         },
         {
           href: `/buyer/portal/${sellerSlug}/favorites`,
@@ -252,7 +252,7 @@ export default function BuyerPortalLayout({ children }: { children: React.ReactN
         {
           href: `/buyer/portal/${sellerSlug}/templates`,
           icon: Repeat,
-          label: "Standing Orders",
+          label: "Standing orders",
         },
         {
           href: `/buyer/portal/${sellerSlug}/licenses`,
@@ -393,7 +393,7 @@ export default function BuyerPortalLayout({ children }: { children: React.ReactN
             <NavLink
               href="/buyer/portal"
               icon={Building2}
-              label="Your Sellers"
+              label="Your sellers"
               isActive={pathname === "/buyer/portal"}
               collapsed
               onNavigate={onNavigate}
@@ -405,7 +405,7 @@ export default function BuyerPortalLayout({ children }: { children: React.ReactN
                 onClick={() => setSellersOpen(!sellersOpen)}
                 className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-xs font-semibold uppercase tracking-wider text-buyer-300/60 hover:bg-white/10 transition-colors"
               >
-                <span>Your Sellers</span>
+                <span>Your sellers</span>
                 <ChevronDown
                   className={`h-3.5 w-3.5 transition-transform ${sellersOpen ? "rotate-180" : ""}`}
                 />
@@ -444,7 +444,7 @@ export default function BuyerPortalLayout({ children }: { children: React.ReactN
                   <NavLink
                     href="/buyer/portal"
                     icon={LayoutGrid}
-                    label="Manage Sellers"
+                    label="Manage sellers"
                     isActive={pathname === "/buyer/portal"}
                     onNavigate={onNavigate}
                   />
@@ -509,14 +509,14 @@ export default function BuyerPortalLayout({ children }: { children: React.ReactN
         <button
           type="button"
           onClick={logout}
-          title={collapsed ? "Sign Out" : undefined}
+          title={collapsed ? "Sign out" : undefined}
           className={cn(
             "flex w-full items-center rounded-lg py-2 text-sm text-buyer-300/70 hover:bg-red-900/30 hover:text-red-400 transition-colors",
             collapsed ? "justify-center px-2" : "gap-2 px-3",
           )}
         >
           <LogOut className="h-4 w-4" />
-          {!collapsed && "Sign Out"}
+          {!collapsed && "Sign out"}
         </button>
       </div>
     </>

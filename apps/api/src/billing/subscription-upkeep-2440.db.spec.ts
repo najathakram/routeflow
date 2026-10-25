@@ -22,6 +22,7 @@ import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 import { BillingService } from "./billing.service";
 import { BillingEventService } from "./billing-event.service";
 import { BILLING_EVENTS } from "./plan-catalog.constants";
+import { fakeStripeProducts } from "../testing/fake-stripe-products";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -44,7 +45,7 @@ describeDb("BillingService — #2440 subscription upkeep, real Postgres (SA-450/
     previewNextInvoice: jest.fn().mockResolvedValue(null),
     updateSubscription: jest.fn().mockResolvedValue({}),
     createBillingPortalSession: jest.fn(),
-    client: { products: { create: jest.fn() } },
+    client: { products: fakeStripeProducts().products },
   };
   const email = { send: jest.fn().mockResolvedValue({}) };
   const pricing = {

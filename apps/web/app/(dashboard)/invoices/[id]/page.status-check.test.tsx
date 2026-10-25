@@ -10,7 +10,7 @@ import {
 import InvoiceDetailPage from "./page";
 
 /**
- * SA-824 (SA conditions a/b + race ruling 5): the invoice page's Record Payment dialog. After an unknown
+ * SA-824 (SA conditions a/b + race ruling 5): the invoice page's Record payment dialog. After an unknown
  * outcome it offers "Check payment status" (POST .../by-key/:key/resolve) before any new attempt, Record is off
  * meanwhile, and a Cancel -> reopen keeps the same key. Found closes like a 2xx (and attaches the proof photo);
  * a tombstone releases the key; a 404, PAYMENT_KEY_IN_FLIGHT or any other error stays locked. A Save refused
@@ -105,7 +105,7 @@ const RESOLVED_COPY =
 const openDialog = () =>
   fireEvent.click(
     screen
-      .getAllByRole("button", { name: "Record Payment" })
+      .getAllByRole("button", { name: "Record payment" })
       .find((b) => b.hasAttribute("aria-busy"))!,
   );
 const form = () => document.getElementById("invoice-payment-form") as HTMLFormElement | null;
@@ -120,7 +120,7 @@ const goUnknown = async () => {
   await screen.findByRole("button", { name: "Check payment status" });
 };
 
-describe("invoices/[id] Record Payment: Check payment status (SA-824)", () => {
+describe("invoices/[id] Record payment: Check payment status (SA-824)", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     clearPaymentKeyRegistry();
