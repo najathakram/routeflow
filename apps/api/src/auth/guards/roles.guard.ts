@@ -1,7 +1,11 @@
-import { Injectable, CanActivate, ExecutionContext } from "@nestjs/common";
+import { Injectable, CanActivate, ExecutionContext, Logger, Optional } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
 import { UserRole } from "@prisma/client";
 import { ROLES_KEY } from "../decorators/roles.decorator";
+import { PERMISSION_KEY } from "../permissions/permission.decorators";
+import { OperatorPermissionsService } from "../permissions/operator-permissions.service";
+import { permissionDeniedException } from "../permissions/permission-errors";
+import type { OperatorPermissionGroup } from "@prisma/client";
 
 /**
  * Role hierarchy for access checks:
@@ -25,9 +29,15 @@ const ROLE_SATISFIES: Record<UserRole, UserRole[]> = {
 
 @Injectable()
 export class RolesGuard implements CanActivate {
-  constructor(private readonly reflector: Reflector) {}
+  private readonly logger = new Logger(RolesGuard.name);
 
-  canActivate(context: ExecutionContext): boolean {
+  // The permission service is optional so every spec that builds `new RolesGuard(reflector)` is unchanged.
+  constructor(
+    private readonly reflector: Reflector,
+    @Optional() private readonly permissions?: OperatorPermissionsService,
+  ) {}
+
+  canActivate(context: ExecutionContext): boolean | Promise<boolean> {
     const requiredRoles = this.reflector.getAllAndOverride<UserRole[]>(ROLES_KEY, [
       context.getHandler(),
       context.getClass(),
@@ -47,6 +57,31 @@ export class RolesGuard implements CanActivate {
       satisfied.push(UserRole.DRIVER);
     }
 
-    return requiredRoles.some((r) => satisfied.includes(r));
+    if (!requiredRoles.some((r) => satisfied.includes(r))) return false;
+
+    // Operator feature groups (spec-operator-permissions §4.1): only an OPERATOR on a handler that names groups.
+    // Still synchronous for everyone else, so no existing caller or spec changes.
+    if (user.role !== UserRole.OPERATOR || !this.permissions) return true;
+    const groups = this.reflector.getAllAndOverride<OperatorPermissionGroup[]>(PERMISSION_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+    if (!groups || groups.length === 0) return true;
+    return this.checkGroups(context, user, groups);
+  }
+
+  private async checkGroups(
+    context: ExecutionContext,
+    user: { sub: string; tenantId: string | null; role: UserRole },
+    groups: OperatorPermissionGroup[],
+  ): Promise<boolean> {
+    const permissions = this.permissions!;
+    if (await permissions.hasAny(user, groups)) return true;
+    if (permissions.mode() === "live") throw permissionDeniedException(groups);
+    // SHADOW: record what enforcement would do, allow the request.
+    this.logger.warn(
+      `would-deny groups=${groups.join("|")} handler=${context.getClass().name}.${context.getHandler().name}`,
+    );
+    return true;
   }
 }
