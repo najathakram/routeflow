@@ -10,6 +10,7 @@ import {
   dbClockNow,
   lockCounterClose,
   registerKeyOfOrder,
+  tillRegisterOfSale,
 } from "./counter-close-lock";
 
 describe("dbClockNow: refundedAt comes from the database clock", () => {
@@ -41,6 +42,34 @@ describe("counter-close lock helpers", () => {
     expect(registerKeyOfOrder({ counterSale: false, registerKey: "b" })).toBeNull();
     expect(registerKeyOfOrder({})).toBeNull();
     expect(registerKeyOfOrder(null)).toBeNull();
+  });
+
+  it("W-829 / SA-932 F: tillRegisterOfSale also covers a Store pickup hand-over with a stamped register", () => {
+    // a counter order: the same answer as registerKeyOfOrder
+    expect(tillRegisterOfSale({ counterSale: true, registerKey: null })).toBe("main");
+    expect(tillRegisterOfSale({ counterSale: true, registerKey: "b", fulfillPath: "ROUTE" })).toBe(
+      "b",
+    );
+    // a non-counter PICKUP order whose hand-over stamped a register is a till sale on that register
+    expect(
+      tillRegisterOfSale({ counterSale: false, fulfillPath: "PICKUP", registerKey: "till-2" }),
+    ).toBe("till-2");
+    // a pickup that was never handed over at a till (no stamp) is not a till event
+    expect(
+      tillRegisterOfSale({ counterSale: false, fulfillPath: "PICKUP", registerKey: null }),
+    ).toBeNull();
+    // only PICKUP counts: a stamped key on a route or carrier order is not the till's
+    expect(
+      tillRegisterOfSale({ counterSale: false, fulfillPath: "ROUTE", registerKey: "b" }),
+    ).toBeNull();
+    expect(
+      tillRegisterOfSale({ counterSale: false, fulfillPath: "SHIP", registerKey: "b" }),
+    ).toBeNull();
+    expect(tillRegisterOfSale({ counterSale: false, registerKey: "b" })).toBeNull();
+    expect(tillRegisterOfSale({})).toBeNull();
+    expect(tillRegisterOfSale(null)).toBeNull();
+    // registerKeyOfOrder keeps its counter-only meaning (the void and the tender window read it)
+    expect(registerKeyOfOrder({ counterSale: false, registerKey: "till-2" })).toBeNull();
   });
 
   it("lockCounterClose runs the SHARED transaction-scoped advisory lock on the (counter-close, tenant:register) key", async () => {

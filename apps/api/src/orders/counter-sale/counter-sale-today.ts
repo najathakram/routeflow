@@ -347,6 +347,10 @@ export function creditNotesInWindowWhere(tenantId: string, w: DayWindow) {
  * credit note was created (`creditNoteIds` = `creditNotesInWindowWhere`'s ids; `Return.creditNoteId` has no Prisma
  * relation, so the service reads the ids first). A legacy store-credit return with no credit note id keeps the day it
  * was captured (`createdAt`), the only date it has. A return that was rejected or cancelled counts nowhere.
+ *
+ * W-829 / SA-932 F: the orders are counter sales AND Store pickup sales handed over at a till (`registerKey` stamped, a
+ * non-counter PICKUP order): their tender is already in the drawer (`handOverCandidatesWhere`), so their refund must leave it.
+ * The refund paths use the same definition (`tillRegisterOfSale`).
  */
 export function windowReturnsWhere(
   tenantId: string,
@@ -356,7 +360,13 @@ export function windowReturnsWhere(
   return {
     tenantId,
     status: { notIn: DEAD_RETURN_STATUSES },
-    order: { tenantId, counterSale: true },
+    order: {
+      tenantId,
+      OR: [
+        { counterSale: true },
+        { counterSale: false, fulfillPath: FulfillPath.PICKUP, registerKey: { not: null } },
+      ],
+    },
     OR: [
       { refundMethod: REFUND_METHOD_EXTERNAL, refundedAt: { gte: w.start, lt: w.end } },
       {

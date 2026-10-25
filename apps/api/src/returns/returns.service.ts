@@ -70,7 +70,7 @@ import {
   refundBusy,
   refundClaimWhere,
 } from "./standard-refund-claim";
-import { dbClockNow, lockCounterClose, registerKeyOfOrder } from "./counter-close-lock";
+import { dbClockNow, lockCounterClose, tillRegisterOfSale } from "./counter-close-lock";
 import { assertCounterWindowOpen } from "./counter-close-window";
 import { refundTenderData, refundTenderOfColumn } from "./refund-tender";
 import { roundMoney } from "@routeflow/pricing";
@@ -107,6 +107,8 @@ const REFUND_RETURN_INCLUDE = {
       // SA-740r2 item 6: a counter order's refund takes the counter-close lock on its register
       counterSale: true,
       registerKey: true,
+      // W-829: a Store pickup sale handed over at a till (stamped register) is a till sale too
+      fulfillPath: true,
       // F08 B53: the creditable/VOID decision must be made IN CODE
       // (billedBasisFor), never as a DB-level status filter here — excluding
       // VOID/WRITTEN_OFF at the query makes a VOID-only order indistinguishable
@@ -1371,7 +1373,12 @@ export class ReturnsService {
     ret: {
       id: string;
       orderId?: string | null;
-      order?: { id?: string; counterSale?: boolean | null; registerKey?: string | null } | null;
+      order?: {
+        id?: string;
+        counterSale?: boolean | null;
+        registerKey?: string | null;
+        fulfillPath?: string | null;
+      } | null;
     },
     method: string,
     tender: RefundTender | undefined,
@@ -1382,7 +1389,7 @@ export class ReturnsService {
     const tenantId = this.prisma.getTenantId();
     const external = method === EXTERNAL_REFUND_METHOD;
     // SA-740r2 item 6: the shared counter-close lock is the FIRST statement (a counter order's refund counts in the drawer)
-    const registerKey = external ? registerKeyOfOrder(ret.order) : null;
+    const registerKey = external ? tillRegisterOfSale(ret.order) : null;
     try {
       return await this.prisma.tenantTransaction(
         async (tx: any) => {

@@ -429,6 +429,50 @@ describe("InlineReturnsService.refund (SA-727)", () => {
       expect(rawCalls).toHaveLength(3);
       expect(rawCalls.some((c) => c.includes("counter-close"))).toBe(false);
     });
+
+    it("W-829 / SA-932 F: a walk-in Store pickup sale with a stamped register takes the close lock first", async () => {
+      prisma.order.findFirst.mockResolvedValue({
+        counterSale: false,
+        fulfillPath: "PICKUP",
+        registerKey: "till-2",
+      });
+      await service.refund("ret-1", REFUND, OPERATOR);
+      expect(rawCalls).toHaveLength(4);
+      expect(rawCalls[0]).toBe(
+        "SELECT pg_advisory_xact_lock_shared(hashtext('counter-close'), hashtext(?))",
+      );
+      expect(rawValues[0]).toEqual(["test-tenant:till-2"]);
+      expect(prisma.order.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          select: expect.objectContaining({ fulfillPath: true, registerKey: true }),
+        }),
+      );
+    });
+
+    it("W-829: that refund dated inside a closed window of the register is 409 COUNTER_SALE_DAY_CLOSED, nothing written", async () => {
+      prisma.order.findFirst.mockResolvedValue({
+        counterSale: false,
+        fulfillPath: "PICKUP",
+        registerKey: "till-2",
+      });
+      prisma.counterDayClose.findFirst.mockResolvedValue({ id: "close-1" });
+      const err: any = await service.refund("ret-1", REFUND, OPERATOR).catch((e) => e);
+      expect(err.getStatus()).toBe(409);
+      expect(err.getResponse()).toMatchObject({ code: "COUNTER_SALE_DAY_CLOSED" });
+      expect(prisma.return.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("W-829: a pickup never handed over at a till, and a stamped route order, take no close lock", async () => {
+      for (const o of [
+        { counterSale: false, fulfillPath: "PICKUP", registerKey: null },
+        { counterSale: false, fulfillPath: "ROUTE", registerKey: "till-2" },
+      ]) {
+        rawCalls.length = 0;
+        prisma.order.findFirst.mockResolvedValue(o);
+        await service.refund("ret-1", REFUND, OPERATOR);
+        expect(rawCalls.some((c) => c.includes("counter-close"))).toBe(false);
+      }
+    });
   });
 
   it("F7: the Return FOR UPDATE carries an explicit, BOUND tenant predicate (never string-built SQL)", async () => {
