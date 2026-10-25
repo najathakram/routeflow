@@ -26,7 +26,7 @@ export function splitCsv(text: string): string[][] {
           i++;
         } else quoted = false;
       } else cell += ch;
-    } else if (ch === '"') quoted = true;
+    } else if (ch === '"' && cell === "") quoted = true;
     else if (ch === ",") {
       row.push(cell);
       cell = "";

@@ -12,6 +12,14 @@ describe("splitCsv", () => {
     ]);
   });
 
+  it("treats a quote inside an unquoted cell (an inch mark) as a literal, keeping later rows", () => {
+    expect(splitCsv('name,sku,price\n12" Pizza,P1,5\nChips,C2,3')).toEqual([
+      ["name", "sku", "price"],
+      ['12" Pizza', "P1", "5"],
+      ["Chips", "C2", "3"],
+    ]);
+  });
+
   it("reads doubled quotes, CRLF, a quoted newline and a trailing blank line", () => {
     expect(splitCsv('a,b\r\n"say ""hi""","x\ny"\r\n\r\n')).toEqual([
       ["a", "b"],
@@ -37,7 +45,11 @@ describe("parseProductsCsv", () => {
       unit: "case",
       category: "Drinks",
     });
-    expect(rows[1].payload).toMatchObject({ name: "Chips, large", unit: "each", category: "Snacks" });
+    expect(rows[1].payload).toMatchObject({
+      name: "Chips, large",
+      unit: "each",
+      category: "Snacks",
+    });
     expect(rows[0].externalId).toBe("C1");
   });
 

@@ -82,10 +82,46 @@ describe("MigrationService, BT-9", () => {
       );
     });
 
-    it("the skipped row's flag carries a code, never the server's error text", async () => {
-      prisma.migrationJob.findUnique.mockResolvedValue({ id: "j1", source: "ZOHO", status: "STAGED" });
+    it("a non-row error (an outage) is not swallowed: confirm throws and the job is not CONFIRMED", async () => {
+      prisma.migrationJob.findUnique.mockResolvedValue({
+        id: "j1",
+        source: "ZOHO",
+        status: "STAGED",
+      });
+      prisma.migrationStagingRecord.findMany.mockResolvedValue([
+        rec("r1", { name: "Cola" }),
+        rec("r2", { name: "Chips" }),
+      ]);
+      products.create.mockRejectedValue(new Error("connection pool timeout"));
+      await expect(service.confirmJob("j1")).rejects.toThrow("connection pool timeout");
+      expect(prisma.migrationJob.update).not.toHaveBeenCalled();
+    });
+
+    it("a failing external-ref write after a live create still marks the row COMMITTED with its entity id", async () => {
+      prisma.migrationJob.findUnique.mockResolvedValue({
+        id: "j1",
+        source: "ZOHO",
+        status: "STAGED",
+      });
       prisma.migrationStagingRecord.findMany.mockResolvedValue([rec("r1", { name: "Cola" })]);
-      products.create.mockRejectedValueOnce(new Error('duplicate key value "secret-detail"'));
+      products.create.mockResolvedValue({ id: "p1" });
+      externalRefs.record.mockRejectedValue(new Error("ref write failed"));
+      const res = await service.confirmJob("j1");
+      expect(res.committed).toBe(1);
+      const data = prisma.migrationStagingRecord.update.mock.calls[0][0].data;
+      expect(data).toMatchObject({ status: "COMMITTED", createdEntityId: "p1" });
+    });
+
+    it("the skipped row's flag carries a code, never the server's error text", async () => {
+      prisma.migrationJob.findUnique.mockResolvedValue({
+        id: "j1",
+        source: "ZOHO",
+        status: "STAGED",
+      });
+      prisma.migrationStagingRecord.findMany.mockResolvedValue([rec("r1", { name: "Cola" })]);
+      products.create.mockRejectedValueOnce(
+        new ConflictException('duplicate key value "secret-detail"'),
+      );
       await service.confirmJob("j1");
       const data = prisma.migrationStagingRecord.update.mock.calls[0][0].data;
       expect(JSON.stringify(data)).not.toContain("secret-detail");
@@ -95,7 +131,11 @@ describe("MigrationService, BT-9", () => {
 
   describe("B205: thousands-comma prices", () => {
     const stageOne = async (payload: Record<string, unknown>) => {
-      prisma.migrationJob.findUnique.mockResolvedValue({ id: "j1", source: "ZOHO", status: "FETCHING" });
+      prisma.migrationJob.findUnique.mockResolvedValue({
+        id: "j1",
+        source: "ZOHO",
+        status: "FETCHING",
+      });
       await service.stageRecords("j1", [{ entityType: "PRODUCT", externalId: "e1", payload }]);
       return prisma.migrationStagingRecord.create.mock.calls[0][0].data;
     };
@@ -123,12 +163,26 @@ describe("MigrationService, BT-9", () => {
       });
     });
 
+    it.each(["12,50", "1.234,56", "12abc", "12 USD", "1e3", "99999999999", "1,23"])(
+      "stage: price %p is SKIPPED bad-price, never a different number",
+      async (price) => {
+        expect(await stageOne({ name: "Cola", pricePerUnit: price })).toMatchObject({
+          status: "SKIPPED",
+          flags: ["bad-price"],
+        });
+      },
+    );
+
     it("stage: an absent price stays PENDING (the product is created at 0 as before)", async () => {
       expect(await stageOne({ name: "Cola" })).toMatchObject({ status: "PENDING" });
     });
 
     it("confirm: a record staged before this fix with price '1,234.56' reaches products.create as '1234.56'", async () => {
-      prisma.migrationJob.findUnique.mockResolvedValue({ id: "j1", source: "ZOHO", status: "STAGED" });
+      prisma.migrationJob.findUnique.mockResolvedValue({
+        id: "j1",
+        source: "ZOHO",
+        status: "STAGED",
+      });
       prisma.migrationStagingRecord.findMany.mockResolvedValue([
         rec("r1", { name: "Cola", price: "1,234.56", unitsPerBox: "1,000" }),
       ]);

@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  HttpException,
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
@@ -25,6 +26,11 @@ const BAD_PRICE_FLAG = "bad-price";
 /** The staging flag on a record whose commit threw at confirm (B334): skipped on its own, the job still confirms. */
 const COMMIT_FAILED_FLAG = "commit-failed";
 
+/** An optional "$", then plain digits or comma-grouped thousands (groups of three), then an optional ".dd..." tail. */
+const PRICE_SHAPE = /^\$?\s*(\d{1,3}(,\d{3})+|\d+)(\.\d+)?$/;
+/** Largest value a Decimal(10,2) price column holds. */
+const MAX_PRICE = 99_999_999.99;
+
 /**
  * A staged product's price as the canonical money string ("1,234.56" -> "1234.56"), "" when absent, or null when
  * present but not a non-negative number (B205). The Migration Hub's CSV path hands the cell text through verbatim.
@@ -32,8 +38,10 @@ const COMMIT_FAILED_FLAG = "commit-failed";
 function normalizedPrice(payload: Record<string, unknown>): string | null {
   const raw = payload.pricePerUnit ?? payload.price;
   if (raw == null || (typeof raw === "string" && raw.trim() === "")) return "";
+  // Strict shape: "12,50" (decimal comma), "12abc" and "1e3" must not parse to a different price.
+  if (typeof raw === "string" && !PRICE_SHAPE.test(raw.trim())) return null;
   const n = parseImportMoney(raw);
-  return Number.isFinite(n) && n >= 0 ? n.toFixed(2) : null;
+  return Number.isFinite(n) && n >= 0 && n <= MAX_PRICE ? n.toFixed(2) : null;
 }
 
 /** The flag a staged PRODUCT payload earns (name first, then category), or null when it is safe to commit. */
@@ -228,7 +236,14 @@ export class MigrationService {
       let createdId: string | null;
       try {
         createdId = await this.commit(rec.entityType, rec.rawPayload as Record<string, unknown>);
-      } catch {
+      } catch (e) {
+        // Only a row-level refusal (an HTTP 4xx from the service, a Prisma constraint error) skips the row; an outage
+        // or timeout must surface, or every remaining row would be SKIPPED and the job could never be retried.
+        const rowLevel =
+          e instanceof HttpException ||
+          (e instanceof Prisma.PrismaClientKnownRequestError &&
+            ["P2002", "P2003"].includes(e.code));
+        if (!rowLevel) throw e;
         const prior = Array.isArray(rec.flags) ? (rec.flags as string[]) : [];
         await this.prisma.forTenant().migrationStagingRecord.update({
           where: { id: rec.id },
@@ -238,13 +253,19 @@ export class MigrationService {
         continue;
       }
       if (createdId) {
-        if (rec.externalId) {
-          await this.externalRefs.record(rec.entityType, createdId, sourceKey, rec.externalId);
-        }
+        // The entity is live: COMMITTED + createdEntityId must land even if the external-ref write fails, so undo can
+        // remove it and a second confirm cannot create it again.
         await this.prisma.forTenant().migrationStagingRecord.update({
           where: { id: rec.id },
           data: { status: "COMMITTED", createdEntityId: createdId },
         });
+        if (rec.externalId) {
+          try {
+            await this.externalRefs.record(rec.entityType, createdId, sourceKey, rec.externalId);
+          } catch {
+            // best effort: the ref only helps later re-imports match this row
+          }
+        }
         committed++;
       } else {
         const flags = Array.isArray(rec.flags) ? (rec.flags as string[]) : [];
