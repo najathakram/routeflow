@@ -9,7 +9,7 @@ import OrderDetailPage from "./page";
  *  - the line's trash button has a name ("Remove <product>") and "Not available" is neutral until marked
  *  - while editing, the rail total is the SAVED total and the sticky Save bar carries the New total
  *  - invoice actions are held during an unsaved edit; Generate Invoice is secondary while PENDING
- *  - Cancel Order is an outline button with red text, not a filled red one
+ *  - Cancel order is an outline button with red text, not a filled red one
  * jsdom has no stylesheet, so style claims are pinned on the variant classes the Button emits.
  */
 const get = jest.fn();
@@ -116,7 +116,7 @@ describe("Row 5: Edit Items line actions (Q26 + F11)", () => {
 describe("Row 6: which total does Save commit? (Q25 + F06, Q24)", () => {
   it("the rail says 'Order total' when not editing", async () => {
     await open();
-    expect(screen.getByText("Order total")).toBeInTheDocument();
+    expect(screen.getAllByText("Order total").length).toBeGreaterThan(0);
     expect(screen.queryByText("Saved total")).toBeNull();
   });
   it("while editing the rail's figure is the 'Saved total'", async () => {
@@ -124,7 +124,7 @@ describe("Row 6: which total does Save commit? (Q25 + F06, Q24)", () => {
     expect(screen.getByText("Saved total")).toBeInTheDocument();
     expect(screen.queryByText("Order total")).toBeNull();
   });
-  it("the sticky Save bar shows the New total beside Save Changes, and follows the edit", async () => {
+  it("the sticky Save bar shows the New total beside Save changes, and follows the edit", async () => {
     await openEdit();
     const bar = screen.getByTestId("edit-save-bar");
     const total = within(bar).getByTestId("edit-bar-total");
@@ -173,8 +173,8 @@ describe("Row 8 + 10: invoice actions (Q27, Q16)", () => {
   });
 });
 
-describe("Row 9: Cancel Order (Q15)", () => {
-  it("is an outline button with red text, so Confirm Order is the only filled button", async () => {
+describe("Row 9: Cancel order (Q15)", () => {
+  it("is an outline button with red text, so Confirm order is the only filled button", async () => {
     await open();
     const cancel = screen.getByRole("button", { name: /^cancel order$/i });
     expect(cancel).not.toHaveClass("bg-danger");

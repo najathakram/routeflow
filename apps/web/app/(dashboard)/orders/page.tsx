@@ -36,7 +36,7 @@ import { useAuth } from "@/lib/auth-context";
 import { staffMay } from "@routeflow/types";
 import { OrdersMoreMenu } from "./_components/OrdersMoreMenu";
 import { usePageTitle } from "@/lib/page-title-context";
-import { humanizeEnum } from "@/lib/format";
+import { formatMoney, humanizeEnum } from "@/lib/format";
 import { useOrders, useUpdateOrderStatus, useBulkDeleteOrders, type Order } from "@/lib/api/orders";
 import { useProduct } from "@/lib/api/products";
 import { useShippedWeek } from "@/lib/tenant-timezone";
@@ -68,7 +68,7 @@ const SAVED_VIEWS = [
   { id: "draft", label: "Draft", filters: { status: "DRAFT" } },
   { id: "pending", label: "Pending", filters: { status: "PENDING" } },
   { id: "confirmed", label: "Confirmed", filters: { status: "CONFIRMED" } },
-  { id: "delivery", label: "Out for Delivery", filters: { status: "OUT_FOR_DELIVERY" } },
+  { id: "delivery", label: "Out for delivery", filters: { status: "OUT_FOR_DELIVERY" } },
   { id: "partial", label: "Partly delivered", filters: { status: "PARTIALLY_DELIVERED" } },
   { id: "urgent", label: "Urgent", filters: { urgent: true } },
   { id: "delivered", label: "Delivered", filters: { status: "DELIVERED" } },
@@ -78,11 +78,11 @@ const SAVED_VIEWS = [
 // ─── Status filter options ────────────────────────────────────────────────────
 
 const STATUS_OPTIONS: { value: string; label: string }[] = [
-  { value: "", label: "All Statuses" },
+  { value: "", label: "All statuses" },
   { value: "DRAFT", label: "Draft" },
   { value: "PENDING", label: "Pending" },
   { value: "CONFIRMED", label: "Confirmed" },
-  { value: "OUT_FOR_DELIVERY", label: "Out for Delivery" },
+  { value: "OUT_FOR_DELIVERY", label: "Out for delivery" },
   { value: "PARTIALLY_DELIVERED", label: "Partly delivered" },
   { value: "DELIVERED", label: "Delivered" },
   { value: "CANCELLED", label: "Cancelled" },
@@ -726,7 +726,7 @@ export default function OrdersPage() {
           "Total",
           "Status",
           "Fulfillment",
-          "Delivery Date",
+          "Delivery date",
           "Created",
         ],
         rows.map((o) => [
@@ -798,7 +798,7 @@ export default function OrdersPage() {
           aria-label="Sort orders by"
           options={[
             { value: "createdAt", label: "Created" },
-            ...(showDelivery ? [{ value: "deliveryDate", label: "Delivery Date" }] : []),
+            ...(showDelivery ? [{ value: "deliveryDate", label: "Delivery date" }] : []),
             { value: "orderNumber", label: "Order #" },
             { value: "customer", label: "Customer" },
             { value: "total", label: "Total" },
@@ -829,7 +829,7 @@ export default function OrdersPage() {
       <Select
         aria-label="Fulfillment"
         options={[
-          { value: "", label: "All Fulfillment" },
+          { value: "", label: "All fulfillment" },
           ...Array.from(new Set([...fulfilMethods, fulfillPathFilter].filter(Boolean))).map(
             (m) => ({
               value: m,
@@ -983,7 +983,7 @@ export default function OrdersPage() {
                     : setIsCreateOpen(true)
                 }
               >
-                New Order
+                New order
               </WriteButton>
             )}
             <ReadOnlyHint className="basis-full text-right text-xs text-slate-600" />
@@ -1031,7 +1031,7 @@ export default function OrdersPage() {
                 className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-white/75 hover:text-white transition-colors"
               >
                 <RouteIcon className="h-3.5 w-3.5" />
-                Plan delivery trip
+                Plan delivery
               </button>
             </>
           )}
@@ -1366,18 +1366,21 @@ export default function OrdersPage() {
                         />
                       )}
                       {order.urgent && <AlertTriangle className="h-4 w-4 shrink-0 text-danger" />}
-                      <span className="truncate font-mono text-xs font-semibold text-ink-900">
+                      <span
+                        className="truncate font-mono text-xs font-semibold text-ink-900"
+                        title={order.orderNumber}
+                      >
                         {order.orderNumber}
                       </span>
                     </div>
                     <span className="shrink-0 font-mono text-sm font-semibold text-ink-900">
-                      $
-                      {Number(order.total).toLocaleString("en-US", {
-                        minimumFractionDigits: 2,
-                      })}
+                      {formatMoney(order.total)}
                     </span>
                   </div>
-                  <p className="truncate text-sm font-medium text-navy">
+                  <p
+                    className="truncate text-sm font-medium text-navy"
+                    title={order.customer?.businessName ?? undefined}
+                  >
                     {order.customer?.businessName ?? "—"}
                   </p>
                   <div className="flex flex-wrap items-center gap-1.5">
@@ -1470,7 +1473,7 @@ export default function OrdersPage() {
                         className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
                         onClick={() => toggleSort("deliveryDate")}
                       >
-                        Delivery Date <SortIcon col="deliveryDate" />
+                        Delivery date <SortIcon col="deliveryDate" />
                       </th>
                     )}
                     <th
@@ -1538,10 +1541,7 @@ export default function OrdersPage() {
                         {order.lineItems.length}
                       </td>
                       <td className="px-4 py-3 text-right font-mono tabular-nums font-medium text-ink-900">
-                        $
-                        {Number(order.total).toLocaleString("en-US", {
-                          minimumFractionDigits: 2,
-                        })}
+                        {formatMoney(order.total)}
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-1.5">

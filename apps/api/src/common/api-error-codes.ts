@@ -377,6 +377,11 @@ export const API_ERROR_CODES = {
    */
   ORDER_RUN_LINK_CHANGED: "ORDER_RUN_LINK_CHANGED",
   /**
+   * W-769 (SA-862 rule 4): PATCH /invoices/:id/payments/:paymentId, 409: confirming (DRAFT → PAID) or reopening (VOID → PAID) a
+   * payment when real money already covers the invoice. Nothing written; void it or move it to the customer's credit.
+   */
+  UNCONFIRMED_PAYMENT_SUPERSEDED: "UNCONFIRMED_PAYMENT_SUPERSEDED",
+  /**
    * 400 from `PATCH /orders/:id/fulfill-path` from PICKUP to ROUTE or SHIP: the customer has no address on file,
    * so there is nowhere to deliver to and no state to judge selling restrictions on. Nothing was written.
    */

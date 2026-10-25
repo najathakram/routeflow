@@ -250,7 +250,7 @@ describe("BillingSettingsPage: the global error toast only yields to codes the p
     mockPost.mockImplementation(() => reject(500, { message: "stripe internal sk_live_detail" }));
     const { globalToast } = setup();
     const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: /^cancel$/i }));
+    await user.click(await screen.findByRole("button", { name: /^cancel subscription$/i }));
     const dialog = within(await screen.findByRole("dialog"));
     await user.click(dialog.getByRole("button", { name: "Cancel subscription" }));
     expect(

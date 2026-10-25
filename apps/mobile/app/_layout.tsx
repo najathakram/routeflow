@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { ActivityIndicator, Platform, StyleSheet, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
-import { Slot, useRouter, useSegments } from "expo-router";
+import { Slot, useGlobalSearchParams, useRouter, useSegments } from "expo-router";
 import {
   Inter_400Regular,
   Inter_500Medium,
@@ -33,8 +33,13 @@ import { useAuthStore } from "../lib/auth-store";
 import { useTenantStore } from "../lib/tenant-store";
 import { useBuyerSessionStore } from "../lib/buyer-session-store";
 import { rootBuyerGate } from "../lib/buyer-route-guard";
-import { SHELL_ON } from "../lib/web-shell/shell-env";
-import { shellGate } from "../lib/web-shell/shell-routing";
+import { SHELL_MODE, SHELL_ON } from "../lib/web-shell/shell-env";
+import {
+  shellBlocksRoute,
+  shellGate,
+  shouldClearNativeBuyer,
+} from "../lib/web-shell/shell-routing";
+import { ShellUnavailable } from "../components/ShellUnavailable";
 import { useDeveloperMode } from "../lib/api/addons";
 import { ConfirmModal } from "../components/ConfirmModal";
 import { initSentry } from "../lib/sentry";
@@ -61,14 +66,18 @@ function RootLayoutNav() {
   const {
     buyer,
     activeSeller,
+    hasStoredSession,
     isLoading: buyerLoading,
     initialize: initBuyer,
+    clearForShell: clearBuyerForShell,
   } = useBuyerSessionStore();
   // Self-disables pre-auth (see lib/api/addons.ts); safe to call unconditionally
   // here since this component is inside QueryClientProvider.
   const { enabled: devMode, isLoading: devLoading, resolved: devResolved } = useDeveloperMode();
   const router = useRouter();
   const segments: string[] = useSegments();
+  // The role the shell was opened with (`/(shell)/web?role=...`); undefined outside the shell.
+  const { role: shellRole } = useGlobalSearchParams<{ role?: string }>();
   const notificationListener = useRef<ReturnType<
     typeof Notifications.addNotificationReceivedListener
   > | null>(null);
@@ -91,8 +100,40 @@ function RootLayoutNav() {
   useEffect(() => {
     if (isLoading || tenantLoading || buyerLoading) return;
 
+    // W-830: with the hybrid shell ON the old native buyer screens are never shown. A buyer with a
+    // native session, or a signed-out user on a (customer) / customer-login route, goes to the
+    // shell as a buyer (the web's own login and portal; the shell takes no path, so a deep link
+    // lands on its home). The native buyer session is then cleared locally so no token lingers for
+    // a later shell-off build. This runs BEFORE rootBuyerGate, which would send the buyer to the
+    // old native (customer) home.
+    // Any stored buyer key counts: an expired access token decodes to no buyer yet leaves a valid
+    // refresh token on the phone.
+    const clearNativeBuyer = shouldClearNativeBuyer({
+      shellOn: SHELL_ON,
+      hasBuyer: !!buyer,
+      hasStoredSession,
+    });
+    if (!user) {
+      const shellBuyer = shellGate({
+        shellOn: SHELL_ON,
+        segments,
+        hasStaffUser: false,
+        hasBuyerSession: !!buyer || hasStoredSession,
+        shellRole,
+      });
+      if (shellBuyer.handled) {
+        if (shellBuyer.to) router.replace(shellBuyer.to as any);
+        if (clearNativeBuyer) void clearBuyerForShell();
+        return;
+      }
+    } else if (clearNativeBuyer) {
+      // Staff with a stale native buyer session: drop it; the staff routing below carries on.
+      void clearBuyerForShell();
+    }
+
     // Buyer portal (buyer signed in, no staff session): with a seller → customer section
-    // (RF-218: home tab); with 0 sellers → sellers/connect only (#2341).
+    // (RF-218: home tab); with 0 sellers → sellers/connect only (#2341). Shell OFF only: with the
+    // shell on, the block above has already handled every buyer.
     const buyerGate = rootBuyerGate({
       hasBuyer: !!buyer,
       hasSeller: !!activeSeller,
@@ -108,10 +149,6 @@ function RootLayoutNav() {
     // BUG-B2-5: when the requested route is buyer-protected (e.g. a deep-linked
     // /invoices/<uuid>), send the user to /customer-login with returnTo so post-
     // login they land back on the intended page instead of the marketing home.
-    // #2653: a signed-out buyer may stay in the shell (the web's own buyer login, until the
-    // sign-in handoff lands). Every other signed-out route falls through unchanged.
-    if (!user && shellGate({ shellOn: SHELL_ON, segments, hasStaffUser: false }).handled) return;
-
     if (!user) {
       if (segments.length > 0 && segments[0] !== "(auth)") {
         const isBuyerRoute = segments[0] === "(customer)";
@@ -171,7 +208,10 @@ function RootLayoutNav() {
     // "driver"   → driver tabs
     //
     // RF-087: staff users must be able to access /(auth)/customer-login to sign
-    // in to the buyer portal. Do NOT redirect them away from that screen.
+    // in to the buyer portal. Do NOT redirect them away from that screen. W-830: that portal is
+    // the web now, so with the shell ON this exemption does not exist: an operator on
+    // customer-login is sent to the operator shell (shellGate), and a driver is moved back to
+    // the driver app (the shell is not a driver surface). The exemption is the shell-OFF path.
     const onCustomerLogin = segments[0] === "(auth)" && segments[1] === "customer-login";
 
     // BUG-OPS1-3: shared resource paths like /invoices/[id] live under both
@@ -194,13 +234,17 @@ function RootLayoutNav() {
 
     if (activeRole === "operator") {
       // #2653: with the shell ON, operators and tenant admins get the NEW web in the WebShell
-      // (RF-087's customer-login exemption still wins). Shell OFF → the native screens below.
-      if (!onCustomerLogin) {
-        const shell = shellGate({ shellOn: SHELL_ON, segments, hasStaffUser: true, activeRole });
-        if (shell.handled) {
-          if (shell.to) router.replace(shell.to as any);
-          return;
-        }
+      // Shell OFF → the native screens below (with RF-087's customer-login exemption).
+      const shell = shellGate({
+        shellOn: SHELL_ON,
+        segments,
+        hasStaffUser: true,
+        activeRole,
+        shellRole,
+      });
+      if (shell.handled) {
+        if (shell.to) router.replace(shell.to as any);
+        return;
       }
       if (segments[0] !== "(operator)" && !onCustomerLogin) {
         const mapped = mapSharedCustomerPathToOperator();
@@ -229,7 +273,7 @@ function RootLayoutNav() {
         setActiveRole("operator");
         return;
       }
-      if (segments[0] !== "(driver)" && !onCustomerLogin) {
+      if (segments[0] !== "(driver)" && !(onCustomerLogin && !SHELL_ON)) {
         router.replace("/(driver)/route");
       }
       return;
@@ -243,7 +287,10 @@ function RootLayoutNav() {
     buyer,
     activeSeller,
     buyerLoading,
+    hasStoredSession,
+    clearBuyerForShell,
     segments,
+    shellRole,
     devMode,
     devLoading,
     devResolved,
@@ -259,6 +306,10 @@ function RootLayoutNav() {
   const bootstrapping =
     isLoading || tenantLoading || buyerLoading || (!!user && activeRole === "driver" && devLoading);
 
+  // W-830 runtime fail-closed: a store build with no usable web URL never shows the old native
+  // buyer / staff screens; it shows "update required" instead.
+  const content = shellBlocksRoute(SHELL_MODE, segments) ? <ShellUnavailable /> : <Slot />;
+
   // On web viewed from a desktop browser the phone-sized layout stretches
   // uncomfortably wide. Clamp the app to a phone-ish width and center it
   // on a neutral backdrop. Native builds ignore this entirely.
@@ -271,7 +322,7 @@ function RootLayoutNav() {
               <ActivityIndicator color={ios.brand} />
             </View>
           ) : (
-            <Slot />
+            content
           )}
         </View>
       </View>
@@ -285,7 +336,7 @@ function RootLayoutNav() {
       </View>
     );
   }
-  return <Slot />;
+  return content;
 }
 
 const webStyles = StyleSheet.create({

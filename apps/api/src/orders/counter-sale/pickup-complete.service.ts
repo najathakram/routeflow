@@ -10,7 +10,7 @@ import {
   Optional,
 } from "@nestjs/common";
 import { createHash } from "crypto";
-import { mayCompleteAtCounter, roundMoney, remainingCapacity } from "@routeflow/pricing";
+import { mayCompleteAtCounter, roundMoney, confirmedRemaining } from "@routeflow/pricing";
 import type { PickupCompleteResponse } from "@routeflow/types";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
 import { LockTimeoutError, LockUnavailableError, withAdvisoryLock } from "../../common/db-locks";
@@ -558,7 +558,7 @@ export class PickupCompleteService {
         if (meta.idempotencyKey !== key || (meta.bodyHash && meta.bodyHash !== bodyHash)) {
           // Unified claim rule (SA-710a + lead): a different key or body REPLACES the claim while no tender for
           // this hand-over is stored (a refused hand-over, or a walk-in short / planner refusal found after
-          // it, must never lock the order out); recordings stay capped by remainingCapacity. Only a STORED
+          // it, must never lock the order out); recordings stay capped by confirmedRemaining. Only a STORED
           // hand-over tender makes a different request a conflict.
           const now = await db.order.findFirst({
             where: { id: orderId },
@@ -690,7 +690,7 @@ export class PickupCompleteService {
     const mine = isHandOverTender(orderId, handedOverAt);
     const balances = invoices.map((i) => ({
       id: i.id,
-      balance: remainingCapacity(
+      balance: confirmedRemaining(
         Number(i.total),
         (i.payments ?? []).filter((p) => !mine(p)),
       ),
@@ -720,7 +720,7 @@ export class PickupCompleteService {
             (row.payments ?? []).filter(mine).reduce((sum, p) => sum + Number(p.amount), 0),
           );
           const due = roundMoney(
-            Math.min(part.amount - stored, remainingCapacity(Number(row.total), row.payments)),
+            Math.min(part.amount - stored, confirmedRemaining(Number(row.total), row.payments)),
           );
           return { invoiceId: part.invoiceId, due };
         })
@@ -799,7 +799,7 @@ export class PickupCompleteService {
       rows.reduce(
         (sum, i) =>
           sum +
-          remainingCapacity(
+          confirmedRemaining(
             Number(i.total),
             (i.payments ?? []).filter((p) => !mine(p)),
           ),

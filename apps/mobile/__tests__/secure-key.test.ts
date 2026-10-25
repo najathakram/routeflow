@@ -92,6 +92,7 @@ describe("buyer-session-store boot gate (REG-B204)", () => {
       setActiveSeller: jest.fn(),
       buyerLogout: jest.fn(),
       registerBuyerSessionExpiredHandler: jest.fn(),
+      hasStoredBuyerSession: jest.fn().mockResolvedValue(false),
     }));
     // eslint-disable-next-line @typescript-eslint/no-require-imports -- fresh module under the mock, see header
     const { useBuyerSessionStore } = require("../lib/buyer-session-store");
@@ -115,6 +116,7 @@ describe("buyer-session-store boot gate (REG-B204)", () => {
       setActiveSeller: jest.fn(),
       buyerLogout: jest.fn(),
       registerBuyerSessionExpiredHandler: jest.fn(),
+      hasStoredBuyerSession: jest.fn().mockResolvedValue(false),
     }));
     // eslint-disable-next-line @typescript-eslint/no-require-imports -- fresh module under the mock, see header
     const { useBuyerSessionStore } = require("../lib/buyer-session-store");

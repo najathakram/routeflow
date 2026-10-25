@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { Lock, Sparkles } from "lucide-react";
 import { Button, Modal, useToast } from "@routeflow/ui/web";
@@ -17,6 +18,7 @@ export function ScanPoButton({ onDrafted }: { onDrafted: (poId: string) => void 
   const [lockOpen, setLockOpen] = React.useState(false);
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const router = useRouter();
 
   const onClick = () => (access === "locked" ? setLockOpen(true) : setScanOpen(true));
 
@@ -42,12 +44,11 @@ export function ScanPoButton({ onDrafted }: { onDrafted: (poId: string) => void 
           onPurchaseOrderCreated={(po) => {
             void queryClient.invalidateQueries({ queryKey: ["inventory", "purchase-orders"] });
             toast({
-              title: po.poNumber
-                ? `PO ${po.poNumber} drafted — open it below`
-                : "Purchase order drafted — open it below",
+              title: po.poNumber ? `PO ${po.poNumber} drafted` : "Purchase order drafted",
               variant: "success",
             });
             onDrafted(po.id);
+            router.push(`/purchase-orders/${po.id}`);
           }}
         />
       )}

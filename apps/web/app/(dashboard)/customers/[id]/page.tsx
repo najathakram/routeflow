@@ -215,9 +215,7 @@ const orderColumns: ColumnDef<ApiOrder, unknown>[] = [
     accessorKey: "createdAt",
     header: "Date",
     enableSorting: false,
-    cell: ({ row }) => (
-      <span className="text-navy/70">{new Date(row.original.createdAt).toLocaleDateString()}</span>
-    ),
+    cell: ({ row }) => <span className="text-navy/70">{fmtDate(row.original.createdAt)}</span>,
   },
 ];
 
@@ -247,7 +245,7 @@ function renderInvoiceStatus(status: string, dueDate?: string | null): React.Rea
   if (status === "PAID") return <span className="text-xs font-semibold text-green-600">Paid</span>;
   if (status === "VOID") return <span className="text-xs font-semibold text-gray-400">Void</span>;
   if (status === "WRITTEN_OFF")
-    return <span className="text-xs font-semibold text-stone-500">Written Off</span>;
+    return <span className="text-xs font-semibold text-stone-500">Written off</span>;
   if (status === "DRAFT") return <span className="text-xs font-semibold text-gray-500">Draft</span>;
 
   if (dueDate) {
@@ -271,8 +269,8 @@ function renderInvoiceStatus(status: string, dueDate?: string | null): React.Rea
     }
     if (diffDays === 0) {
       if (status === "PARTIAL")
-        return <span className="text-xs font-semibold text-yellow-600">Partial · Due Today</span>;
-      return <span className="text-xs font-semibold text-orange-500">Due Today</span>;
+        return <span className="text-xs font-semibold text-yellow-600">Partial · Due today</span>;
+      return <span className="text-xs font-semibold text-orange-500">Due today</span>;
     }
     if (status === "PARTIAL")
       return (
@@ -716,7 +714,7 @@ function AssignAgentModal({
     <Modal
       open={isOpen}
       onClose={onClose}
-      title="Assign Sales Agent"
+      title="Assign sales agent"
       description="Choose the agent to attribute for this customer going forward."
       footer={
         <>
@@ -1098,7 +1096,7 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
       <Card className="mb-5">
         <div className="flex items-center justify-between gap-4">
           <div>
-            <h3 className="text-base font-semibold text-navy">Default Pricing Tier</h3>
+            <h3 className="text-base font-semibold text-navy">Default pricing tier</h3>
             <p className="mt-0.5 text-xs text-navy/70">
               Applies to every product for this customer. Tier overrides below take precedence.
             </p>
@@ -1135,7 +1133,7 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
       <Card className="mb-5">
         <div className="flex items-center justify-between gap-4">
           <div>
-            <h3 className="text-base font-semibold text-navy">Default Payment Terms</h3>
+            <h3 className="text-base font-semibold text-navy">Default payment terms</h3>
             <p className="mt-0.5 text-xs text-navy/70">
               Seeds the terms and due date on this customer&apos;s new invoices. Wins over the
               tenant default in Settings &rarr; Invoicing.
@@ -1549,7 +1547,7 @@ function CommentsTab({ customerId }: { customerId: string }) {
               disabled={!newComment.trim()}
               leftIcon={<MessageSquare className="h-4 w-4" />}
             >
-              Add Comment
+              Add comment
             </Button>
           </div>
         </form>
@@ -1818,7 +1816,7 @@ function DocumentsTab({ customerId }: { customerId: string }) {
             leftIcon={<Upload className="h-4 w-4" />}
             onClick={() => setUploadOpen(true)}
           >
-            Upload Document
+            Upload document
           </Button>
         </div>
 
@@ -1873,7 +1871,7 @@ function DocumentsTab({ customerId }: { customerId: string }) {
           setUploadOpen(false);
           setFiles([]);
         }}
-        title="Upload Document"
+        title="Upload document"
         footer={
           <>
             <Button
@@ -2220,7 +2218,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
   };
 
   if (isLoading) {
-    return <div className="p-12 text-center text-navy/70">Loading...</div>;
+    return <div className="p-12 text-center text-navy/70">Loading…</div>;
   }
 
   if (!customer) {
@@ -2434,7 +2432,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
           <TabTrigger value="orders">Orders{orderCount > 0 ? ` (${orderCount})` : ""}</TabTrigger>
           <TabTrigger value="addresses">Addresses ({addresses.length})</TabTrigger>
           <TabTrigger value="standing-orders">
-            Standing Orders
+            Standing orders
             {templates.length > 0 ? ` (${templates.length})` : ""}
           </TabTrigger>
           <TabTrigger value="invoices">
@@ -2442,7 +2440,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
             {customerInvoices.length > 0 ? ` (${customerInvoices.length})` : ""}
           </TabTrigger>
           <TabTrigger value="billing">Billing</TabTrigger>
-          <TabTrigger value="special-prices">Special Prices</TabTrigger>
+          <TabTrigger value="special-prices">Special prices</TabTrigger>
           <UnitPricesTabTrigger />
           <TabTrigger value="comments">
             <span className="flex items-center gap-1.5">
@@ -2490,7 +2488,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
             {/* New fields & tags row */}
             <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
               <div className="lg:col-span-2">
-                <Card title="Customer Details">
+                <Card title="Customer details">
                   <div className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3">
                     {customer.displayName && (
                       <InfoRow icon={User} label="Display Name" value={customer.displayName} />
@@ -2782,7 +2780,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
             <Card>
               <div className="mb-4 flex items-center justify-between">
                 <div>
-                  <h3 className="text-base font-semibold text-navy">Contact Persons</h3>
+                  <h3 className="text-base font-semibold text-navy">Contact persons</h3>
                   <p className="mt-0.5 text-xs text-navy/70">
                     People associated with this customer account.
                   </p>
@@ -3106,7 +3104,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                       {/* Invited: show expiry */}
                       {portalStatus?.status === "INVITED" && portalStatus.inviteExpiresAt && (
                         <p className="text-xs text-navy/70">
-                          Expires {new Date(portalStatus.inviteExpiresAt).toLocaleDateString()}
+                          Expires {fmtDate(portalStatus.inviteExpiresAt)}
                         </p>
                       )}
 
@@ -3159,13 +3157,13 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                                 },
                                 {
                                   onSuccess: (d: { message?: string }) =>
-                                    setPortalMsg(d?.message ?? "Invite sent!"),
+                                    setPortalMsg(d?.message ?? "Invite sent."),
                                   onError: () => setPortalMsg(null),
                                 },
                               );
                             }}
                           >
-                            Send Portal Invite
+                            Send portal invite
                           </Button>
                         )}
 
@@ -3178,7 +3176,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                               setPortalMsg(null);
                               resendInvite.mutate(id, {
                                 onSuccess: (d: { message?: string }) =>
-                                  setPortalMsg(d?.message ?? "Invite resent!"),
+                                  setPortalMsg(d?.message ?? "Invite resent."),
                                 onError: () => setPortalMsg(null),
                               });
                             }}
@@ -3195,7 +3193,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                               onClick={() => {
                                 setPortalMsg(null);
                                 approvePortal.mutate(id, {
-                                  onSuccess: () => setPortalMsg("Buyer connection approved!"),
+                                  onSuccess: () => setPortalMsg("Buyer connection approved."),
                                   onError: () => setPortalMsg(null),
                                 });
                               }}
@@ -3246,7 +3244,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
         <Tabs.Content value="orders" className="mt-5 focus:outline-none">
           <Card>
             <div className="mb-4 flex items-center justify-between gap-3">
-              <h3 className="text-base font-semibold text-navy">Order History</h3>
+              <h3 className="text-base font-semibold text-navy">Order history</h3>
               <div className="w-48">
                 <Select
                   options={[
@@ -3255,7 +3253,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                     { value: "CONFIRMED", label: "Confirmed" },
                     {
                       value: "OUT_FOR_DELIVERY",
-                      label: statusLabel("OUT_FOR_DELIVERY", "Out for Delivery"),
+                      label: statusLabel("OUT_FOR_DELIVERY", "Out for delivery"),
                     },
                     { value: "COMPLETED", label: "Completed" },
                     { value: "CANCELLED", label: "Cancelled" },
@@ -3449,7 +3447,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
           <Card>
             <div className="mb-4 flex items-center justify-between">
               <div>
-                <h3 className="text-base font-semibold text-navy">Standing Orders</h3>
+                <h3 className="text-base font-semibold text-navy">Standing orders</h3>
                 <p className="mt-0.5 text-xs text-navy/70">
                   Auto-generated orders based on recurring schedules.
                 </p>
@@ -3769,7 +3767,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                     leftIcon={<Wallet className="h-4 w-4" />}
                     onClick={() => setIsRecordPaymentOpen(true)}
                   >
-                    Record Payment
+                    Record payment
                   </WriteButton>
                   <ReadOnlyHint />
                 </div>
@@ -3801,13 +3799,13 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                       setIsAdvanceOpen(true);
                     }}
                   >
-                    Record Advance Payment
+                    Record advance payment
                   </Button>
                 </div>
               </Card>
 
               {(advancePayments ?? []).length > 0 && (
-                <Card title="Advance Payments">
+                <Card title="Advance payments">
                   <ul className="-mx-6 -mb-6 divide-y divide-surface-border">
                     {(advancePayments ?? []).map((ap: AdvancePayment) => (
                       <li key={ap.id} className="px-6 py-3">
@@ -3824,7 +3822,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                         <p className="mt-0.5 text-xs text-navy/70">
                           {paymentMethodLabel(ap.method)}
                           {ap.reference ? ` \u00b7 ${ap.reference}` : ""} \u00b7{" "}
-                          {new Date(ap.createdAt).toLocaleDateString()}
+                          {fmtDate(ap.createdAt)}
                         </p>
                         <ReviewFlagNotice notes={ap.notes} role={user?.role} compact />
                       </li>
@@ -3858,7 +3856,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
           <Modal
             open={isAdvanceOpen}
             onClose={() => setIsAdvanceOpen(false)}
-            title="Record Advance Payment"
+            title="Record advance payment"
             description="Record a pre-payment that can be applied to future invoices."
             footer={
               <>

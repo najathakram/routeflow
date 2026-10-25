@@ -103,7 +103,7 @@ describe("Units page: load states", () => {
   it("a load error says so, never 'No units yet', and Retry refetches", () => {
     state = { isLoading: false, isError: true };
     render();
-    expect(screen.getByText("Couldn't load your units. Try again")).toBeInTheDocument();
+    expect(screen.getByText("Couldn't load your units.")).toBeInTheDocument();
     expect(screen.queryByText("No units yet")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(refetch).toHaveBeenCalled();

@@ -149,6 +149,7 @@ describe("updateOrderItems: revision guard, vanished line, B720 (row 372)", () =
       (e: any) => e,
     );
     expect(err?.response?.code).not.toBe("CONCURRENT_UPDATE");
+    expect(err?.getStatus?.()).toBe(404); // row 421: the status itself, not only "not 409"
     expect(writes()).toBe(0);
   });
 

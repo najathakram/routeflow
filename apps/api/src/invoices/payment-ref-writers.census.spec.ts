@@ -36,8 +36,8 @@ type Kind = "GUARDED" | "NO_REFERENCE" | "SYSTEM_METHOD" | "IMPORT";
  * CAPACITY: checked with capacityRefusal / remainingCapacity (@routeflow/pricing) on the non-VOID basis. CAPTURED: money
  * already taken outside RouteFlow, never refused (SA-837b). SPILL: caps on the CONFIRMED balance and books the excess as
  * an advance. IMPORT: reproduces the source system's ledger, no check by design. CONFIRMED: sizes on the CONFIRMED
- * balance by a standing decision; whether it moves to CAPACITY is the SA-864 owner question (real money vs an
- * unconfirmed row), so it is held, not missed.
+ * balance, decided (owner 7b = A, SA-910 Part 2, W-769): real money is judged on confirmed money, and the unconfirmed
+ * rows it displaces are flagged (flagUnconfirmedOverReserved), never used to turn the money away.
  */
 type CapacityKind = "CAPACITY" | "CAPTURED" | "SPILL" | "IMPORT" | "CONFIRMED";
 const WRITERS: Record<
@@ -55,7 +55,7 @@ const WRITERS: Record<
       },
       {
         kind: "CONFIRMED",
-        why: "writeStandalonePayment: the office path keeps [L-O2] (no capacity refusal; Σ allocations <= payment) and the captured path (capturedExternally) is CAPTURED, confirmed-basis and never refused (SA-858 amended). held: SA-864, owner question 7b.",
+        why: "writeStandalonePayment: the office path keeps [L-O2] (no capacity refusal; Σ allocations <= payment) and the captured path (capturedExternally) is CAPTURED, confirmed-basis and never refused (SA-858 amended). Confirmed-basis by owner 7b = A (W-769).",
       },
       {
         kind: "SPILL",
@@ -70,7 +70,7 @@ const WRITERS: Record<
     capacity: [
       {
         kind: "CONFIRMED",
-        why: "writeLedgerPayment sizes on CONFIRMED money (REG-B11, T-B11s); held: SA-864, owner question 7b.",
+        why: "writeLedgerPayment sizes on CONFIRMED money (REG-B11, T-B11s); confirmed-basis by owner 7b = A (W-769).",
       },
     ],
   },
@@ -139,20 +139,21 @@ describe("row 498: the InvoicePayment writer census", () => {
       const n = (fs.readFileSync(file, "utf8").match(/capacityRefusal\(/g) ?? []).length;
       if (n) callers[rel(file)] = n;
     }
-    // recordPayment only today; the SA-864 owner answer lowers or raises this in the same diff
-    expect(callers).toEqual({ "invoices/invoices.service.ts": 1 });
+    // W-769: the ONE api call site is invoices/confirmed-basis.ts; every writer reaches it through assertPaymentFits
+    expect(callers).toEqual({ "invoices/confirmed-basis.ts": 1 });
   });
 
-  it("row 2299: every CONFIRMED site names its hold (SA-867 condition 1)", () => {
+  it("row 2299: every CONFIRMED site names its ruling (W-769, owner 7b = A)", () => {
     for (const w of Object.values(WRITERS))
       for (const c of w.capacity)
-        if (c.kind === "CONFIRMED") expect(c.why).toContain("held: SA-864, owner question 7b");
+        if (c.kind === "CONFIRMED") expect(c.why).toContain("owner 7b = A (W-769)");
   });
 
-  it("row 2299: recordPayment reaches the ONE capacity helper with an explicit policy; the CONFIRMED sites do not (SA-864)", () => {
+  it("row 2299 (W-769): recordPayment takes CONFIRMED_BASIS through the ONE helper; bookkeeping only flags", () => {
     const inv = read("invoices/invoices.service.ts");
-    expect(inv.match(/capacityRefusal\(/g)?.length).toBe(1); // recordPayment only, until the owner answers
-    expect(inv).toMatch(/capacityRefusal\(\{[^}]*overpay: "REFUSE"/);
+    expect(inv).not.toMatch(/capacityRefusal\(/);
+    expect(inv).toMatch(/assertPaymentFits\(\{[^}]*realMoney: "CONFIRMED_BASIS/);
+    expect(read("invoices/confirmed-basis.ts")).toMatch(/overpay: p\.status === "PAID"/);
     expect(read("bookkeeping/bookkeeping.service.ts")).not.toMatch(/capacityRefusal\(/);
   });
 
@@ -305,5 +306,44 @@ describe("SA-837b: the AdvancePayment writer census", () => {
     expect(read("customers/customers.service.ts")).toMatch(
       /keyedPayment\(this\.prisma, advancePaymentKey/,
     );
+  });
+});
+
+/**
+ * W-769 (owner 7b = A, SA-910 Part 2 as SA-922 corrects it): the confirmed-basis axis. Every real-money (PAID) writer —
+ * recordPayment (invoice page, till, hand-over), the office standalone (and the buyer approval / captured settle through it),
+ * delivery cash, bookkeeping, and updatePayment's confirm — reaches ONE per-writer helper, invoices/confirmed-basis.ts, which
+ * applies the CONFIRMED_BASIS policy and writes the over-reserved audit row from the ONE pricing predicate. Stored value
+ * (credit notes, advances) stays on capacity (SA-922 answer 3). Master: the helper does not exist (the RED).
+ */
+describe("W-769: the confirmed-basis axis (S1/S2)", () => {
+  const exists = (f: string) => fs.existsSync(path.join(SRC, f));
+
+  it("S1 the ONE per-writer helper exists, uses the pricing predicate, and writes the over-reserved audit row", () => {
+    expect(exists("invoices/confirmed-basis.ts")).toBe(true);
+    const helper = read("invoices/confirmed-basis.ts");
+    expect(helper).toMatch(/unconfirmedNoLongerFitting\(/);
+    expect(helper).toContain("PAYMENT_UNCONFIRMED_OVER_RESERVED");
+  });
+
+  it("S1 every real-money writer file reaches it; the stored-value appliers do not (they stay on capacity)", () => {
+    for (const f of ["invoices/invoices.service.ts", "bookkeeping/bookkeeping.service.ts"])
+      expect({
+        f,
+        reaches:
+          read(f).includes("./confirmed-basis") || read(f).includes("../invoices/confirmed-basis"),
+      }).toEqual({
+        f,
+        reaches: true,
+      });
+    for (const f of ["credit-notes/credit-notes.service.ts", "customers/customers.service.ts"])
+      expect({ f, confirmed: /CONFIRMED_BASIS/.test(read(f)) }).toEqual({ f, confirmed: false });
+  });
+
+  it("S2 nothing outside the helper computes 'no longer fits' (one predicate, one caller file)", () => {
+    const callers = walk(SRC)
+      .filter((f) => /unconfirmedNoLongerFitting\(/.test(fs.readFileSync(f, "utf8")))
+      .map((f) => rel(f));
+    expect(callers).toEqual(["invoices/confirmed-basis.ts"]);
   });
 });

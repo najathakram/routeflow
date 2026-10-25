@@ -4,8 +4,8 @@ import { renderWithProviders, screen, waitFor } from "@/test-utils/render";
 import SettingsPage from "./page";
 
 // B1188 owner UI rule: never lose or hide a feature. Pins EVERY control of the Settings >
-// Invoicing tab around "Invoice Numbering" (the card and the controls sharing its save handler),
-// and proves "Save Defaults" no longer sends the dropped invoicePrefix / paymentDueDays fields.
+// Invoicing tab around "Invoice numbering" (the card and the controls sharing its save handler),
+// and proves "Save defaults" no longer sends the dropped invoicePrefix / paymentDueDays fields.
 
 jest.mock("@/lib/auth-context", () => ({
   ...jest.requireActual("@/lib/auth-context"),
@@ -63,20 +63,20 @@ describe("Settings > Invoicing: control inventory (B1188)", () => {
   it("keeps every control of the numbering section and its neighbours", async () => {
     renderWithProviders(<SettingsPage />);
     // The numbering card
-    expect(await screen.findByText("Invoice Numbering")).toBeInTheDocument();
-    expect(screen.getByText("Invoice Number Prefix")).toBeInTheDocument();
+    expect(await screen.findByText("Invoice numbering")).toBeInTheDocument();
+    expect(screen.getByText("Invoice number prefix")).toBeInTheDocument();
     expect(screen.getByPlaceholderText("INV-")).toBeInTheDocument();
-    expect(screen.getByText("Payment Due Days")).toBeInTheDocument();
+    expect(screen.getByText("Payment due days")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /save numbering/i })).toBeInTheDocument();
     // Neighbours that share the page's save handler / the same terms store
-    expect(screen.getByText("Payment Terms")).toBeInTheDocument();
+    expect(screen.getByText("Payment terms")).toBeInTheDocument();
     expect(screen.getByLabelText(/show original price on discounted lines/i)).toBeInTheDocument();
-    expect(screen.getByText("Customer Notes")).toBeInTheDocument();
+    expect(screen.getByText("Customer notes")).toBeInTheDocument();
     expect(screen.getByText("Terms & Conditions")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /save defaults/i })).toBeInTheDocument();
   });
 
-  it("Save Defaults sends only notes + terms to /settings (no dropped fields)", async () => {
+  it("Save defaults sends only notes + terms to /settings (no dropped fields)", async () => {
     renderWithProviders(<SettingsPage />);
     await userEvent.click(await screen.findByRole("button", { name: /save defaults/i }));
     await waitFor(() => expect(mockPatch).toHaveBeenCalledWith("/settings", expect.anything()));
@@ -86,10 +86,10 @@ describe("Settings > Invoicing: control inventory (B1188)", () => {
     expect(body).not.toHaveProperty("paymentDueDays");
   });
 
-  it("Payment Terms and Payment Due Days are ONE value: either change shows in both at once", async () => {
+  it("Payment terms and Payment due days are ONE value: either change shows in both at once", async () => {
     renderWithProviders(<SettingsPage />);
     const days = (await screen.findByLabelText(/payment due days/i)) as HTMLSelectElement;
-    const terms = (await screen.findByLabelText("Payment Terms")) as HTMLSelectElement;
+    const terms = (await screen.findByLabelText("Payment terms")) as HTMLSelectElement;
     await waitFor(() => expect(days.value).toBe("Net 30"));
 
     await userEvent.selectOptions(days, "Net 45");

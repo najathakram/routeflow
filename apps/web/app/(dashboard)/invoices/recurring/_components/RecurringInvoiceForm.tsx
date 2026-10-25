@@ -509,7 +509,7 @@ export function RecurringInvoiceForm({
             ) : (
               <div>
                 <label className="mb-1.5 block text-sm font-medium text-navy/80">
-                  Day of Month
+                  Day of month
                 </label>
                 <input
                   type="number"
@@ -525,7 +525,7 @@ export function RecurringInvoiceForm({
 
             <div>
               <label className="mb-1.5 block text-sm font-medium text-navy/80">
-                {mode === "edit" ? "Next Run Date" : "First Run Date"}
+                {mode === "edit" ? "Next run date" : "First run date"}
               </label>
               <input
                 type="date"
@@ -552,18 +552,18 @@ export function RecurringInvoiceForm({
         </Card>
 
         {/* Line items */}
-        <Card title="Line Items">
+        <Card title="Line items">
           <div className="space-y-2">
             {errors.items && <p className="text-xs text-danger">{errors.items}</p>}
             <div className="grid grid-cols-[1fr_70px_90px_32px] gap-2 px-1">
               <span className="text-xs font-medium text-navy/70">Description</span>
               <span className="text-xs font-medium text-navy/70 text-right">Qty</span>
-              <span className="text-xs font-medium text-navy/70 text-right">Unit Price</span>
+              <span className="text-xs font-medium text-navy/70 text-right">Unit price</span>
               <span />
             </div>
             {/* B646 / SA-135: a boxed product's template line is a BOX count at the per-box price. */}
             <p className="px-1 text-xs text-navy/60" data-testid="recurring-qty-boxes-hint">
-              For a product sold in boxes, Qty counts boxes and Unit Price is per box (2.5 = 2 boxes
+              For a product sold in boxes, Qty counts boxes and Unit price is per box (2.5 = 2 boxes
               + half a box).
             </p>
             {items.map((item) => (
@@ -629,13 +629,13 @@ export function RecurringInvoiceForm({
               className="mt-2 flex items-center gap-1.5 text-sm font-medium text-brand-500 hover:text-brand-600 transition-colors"
             >
               <Plus className="h-4 w-4" />
-              Add Line Item
+              Add line item
             </button>
           </div>
         </Card>
 
         {/* Notes */}
-        <Card title="Notes & Terms">
+        <Card title="Notes and terms">
           <div className="space-y-3">
             <div>
               <label className="mb-1.5 block text-sm font-medium text-navy/80">Notes</label>
@@ -647,7 +647,7 @@ export function RecurringInvoiceForm({
               />
             </div>
             <div>
-              <label className="mb-1.5 block text-sm font-medium text-navy/80">Payment Terms</label>
+              <label className="mb-1.5 block text-sm font-medium text-navy/80">Payment terms</label>
               <textarea
                 rows={2}
                 value={terms}
@@ -665,7 +665,7 @@ export function RecurringInvoiceForm({
           <div className="space-y-3">
             <div>
               <label className="mb-1.5 block text-sm font-medium text-navy/80">
-                Invoice Discount ($)
+                Invoice discount ($)
               </label>
               <input
                 type="number"
@@ -678,7 +678,7 @@ export function RecurringInvoiceForm({
             </div>
             <div>
               <label className="mb-1.5 block text-sm font-medium text-navy/80">
-                Shipping Fee ($)
+                Shipping fee ($)
               </label>
               <input
                 type="number"

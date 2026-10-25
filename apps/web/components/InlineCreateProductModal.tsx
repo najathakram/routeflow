@@ -189,7 +189,7 @@ export function InlineCreateProductModal({
       <div className="w-full max-w-md rounded-xl bg-white shadow-xl">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-surface-border px-6 py-4">
-          <h2 className="text-base font-semibold text-navy">New Product</h2>
+          <h2 className="text-base font-semibold text-navy">New product</h2>
           <button
             type="button"
             onClick={onClose}
@@ -350,7 +350,7 @@ export function InlineCreateProductModal({
               Cancel
             </Button>
             <Button type="submit" loading={createProduct.isPending}>
-              Create Product
+              Create product
             </Button>
           </div>
         </form>

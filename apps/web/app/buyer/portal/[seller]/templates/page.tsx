@@ -101,7 +101,7 @@ function TemplateRow({
           disabled={isReordering}
         >
           <ShoppingCart className="mr-1.5 h-3.5 w-3.5" />
-          Reorder Now
+          Reorder
         </Button>
       </div>
 
@@ -207,7 +207,7 @@ export default function BuyerTemplatesPage() {
     <div className="p-6">
       {/* Page header */}
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-navy">Standing Orders</h1>
+        <h1 className="text-2xl font-bold text-navy">Standing orders</h1>
         <p className="text-sm text-navy/70 mt-1">
           Recurring order templates set up by {activeSeller?.tenant.name}. Quickly reorder with one
           click.
@@ -241,9 +241,7 @@ export default function BuyerTemplatesPage() {
       {/* Templates list */}
       {isError ? (
         <div className="rounded-xl border border-danger/30 bg-danger-bg p-8 text-center">
-          <p className="text-sm text-danger">
-            Failed to load standing orders. Please try again later.
-          </p>
+          <p className="text-sm text-danger">Couldn&apos;t load standing orders. Try again.</p>
         </div>
       ) : templates.length === 0 ? (
         <div className="rounded-xl border border-dashed border-surface-border bg-white p-12 text-center">

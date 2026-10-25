@@ -109,7 +109,7 @@ describe("order detail: RESTRICTION_WARNING", () => {
   it("Publish (promote DRAFT to PENDING) warns, then re-sends the same status change with the ack", async () => {
     reject(patch, 409, warning);
     renderPage(baseOrder);
-    fireEvent.click(await screen.findByRole("button", { name: /Publish Order/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Publish order/ }));
     await sellAnyway();
     await waitFor(() => expect(patch).toHaveBeenCalledTimes(2));
     expect(patch.mock.calls[0]).toEqual(["/orders/o1/status", { status: "PENDING" }]);
@@ -121,7 +121,7 @@ describe("order detail: RESTRICTION_WARNING", () => {
     reject(post, 409, warning);
     jest.spyOn(window, "confirm").mockReturnValue(true);
     renderPage({ ...baseOrder, status: "CANCELLED" });
-    fireEvent.click(await screen.findByRole("button", { name: /Reopen Order/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Reopen order/ }));
     await sellAnyway();
     await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
     expect(post.mock.calls[0]).toEqual(["/orders/o1/reopen"]);
@@ -182,7 +182,7 @@ describe("order detail: RESTRICTION_WARNING", () => {
       lines: [...warning.lines, { ...warning.lines[0], lineKey: "n:1", displayName: "Acme Vape" }],
     });
     renderPage(baseOrder);
-    fireEvent.click(await screen.findByRole("button", { name: /Publish Order/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Publish order/ }));
     await sellAnyway();
     expect(await screen.findByText("Acme Vape")).toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent("The list changed; review it again");
@@ -201,7 +201,7 @@ describe("order detail: RESTRICTION_WARNING", () => {
   it("Go back leaves the order untouched: one request, no second send", async () => {
     reject(patch, 409, warning);
     renderPage(baseOrder);
-    fireEvent.click(await screen.findByRole("button", { name: /Publish Order/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Publish order/ }));
     expect(await screen.findByText("Acme Gummies")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Go back" }));
     await waitFor(() => expect(screen.queryByText("Acme Gummies")).toBeNull());

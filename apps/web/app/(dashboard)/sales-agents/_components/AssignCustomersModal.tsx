@@ -68,7 +68,7 @@ export function AssignCustomersModal({ agentId, isOpen, onClose }: AssignCustome
       toast({
         title: ids.length === 1 ? "Customer assigned" : `${ids.length} customers assigned`,
         description: result.recompute
-          ? `Recomputed ${result.recompute.invoicesSynced} invoice(s)`
+          ? `Recomputed ${result.recompute.invoicesSynced} ${result.recompute.invoicesSynced === 1 ? "invoice" : "invoices"}`
           : undefined,
         variant: "success",
       });
@@ -85,7 +85,7 @@ export function AssignCustomersModal({ agentId, isOpen, onClose }: AssignCustome
     <Modal
       open={isOpen}
       onClose={onClose}
-      title="Assign Customers"
+      title="Assign customers"
       description="Backdating recomputes commission from that date."
       footer={
         <>
