@@ -132,15 +132,16 @@ const hrefs = () =>
     .filter((h): h is string => !!h);
 
 describe("hub list (below xl)", () => {
-  it("shows the 7 groups in order, with the old testids kept and no Billing group", async () => {
+  it("shows the 8 groups in order, with the old testids kept and no Billing group", async () => {
     renderWithProviders(<SettingsHub isAdmin />);
     const ids = screen.getAllByTestId(/^settings-group-/).map((g) => g.dataset.testid);
     expect(ids).toEqual(
       [
-        "fulfilment",
         "business",
-        "payments",
+        "fulfilment",
+        "counter",
         "selling",
+        "payments",
         "notifications",
         "compliance",
         "integrations",
@@ -149,12 +150,13 @@ describe("hub list (below xl)", () => {
     expect(screen.queryByTestId("settings-group-billing")).not.toBeInTheDocument();
     const titles = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent);
     expect(titles).toEqual([
-      "How you sell",
       "Business & team",
+      "Orders & delivery",
+      "Counter",
+      "Pricing & products",
       "Invoicing & payments",
-      "Selling & pricing",
-      "Notifications",
-      "Compliance",
+      "Notifications & email",
+      "Compliance & restrictions",
       "Integrations & import",
     ]);
   });
@@ -321,9 +323,7 @@ describe("hub list (below xl)", () => {
     expect(
       within(list).getAllByText("Counter", { selector: "strong, b, mark" }).length,
     ).toBeGreaterThan(0);
-    expect(within(list).getAllByText("How you sell › Counter quick keys").length).toBeGreaterThan(
-      0,
-    );
+    expect(within(list).getAllByText("Counter › Counter quick keys").length).toBeGreaterThan(0);
   });
 
   it("the empty state keeps its copy and suggests words", () => {

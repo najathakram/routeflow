@@ -73,7 +73,7 @@ describe("Settings finder and the operator's till permission", () => {
     await waitFor(() => expect(get).toHaveBeenCalledWith("/users/me/permissions"));
     await act(async () => {});
     await user.type(screen.getByLabelText("Search settings"), "quick keys");
-    expect(await screen.findByText("How you sell › Counter quick keys")).toBeInTheDocument();
+    expect(await screen.findByText("Counter › Counter quick keys")).toBeInTheDocument();
   });
 
   it("a tenant admin never asks for permissions", async () => {

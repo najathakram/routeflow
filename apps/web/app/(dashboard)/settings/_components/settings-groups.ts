@@ -22,16 +22,17 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-/** The 7 hub groups (direction 2b), in order. Rows come from the settings index; this is the chrome. */
+/** The 8 hub groups (row 376 regroup of direction 2b), in order. Rows come from the settings index; this is the chrome. */
 export type GroupMeta = { key: string; title: string; icon: LucideIcon };
 
 export const GROUP_META: GroupMeta[] = [
-  { key: "fulfilment", title: "How you sell", icon: Store },
   { key: "business", title: "Business & team", icon: Building2 },
+  { key: "fulfilment", title: "Orders & delivery", icon: Truck },
+  { key: "counter", title: "Counter", icon: Store },
+  { key: "selling", title: "Pricing & products", icon: ShoppingBag },
   { key: "payments", title: "Invoicing & payments", icon: Landmark },
-  { key: "selling", title: "Selling & pricing", icon: ShoppingBag },
-  { key: "notifications", title: "Notifications", icon: Bell },
-  { key: "compliance", title: "Compliance", icon: ShieldCheck },
+  { key: "notifications", title: "Notifications & email", icon: Bell },
+  { key: "compliance", title: "Compliance & restrictions", icon: ShieldCheck },
   { key: "integrations", title: "Integrations & import", icon: Sparkles },
 ];
 
