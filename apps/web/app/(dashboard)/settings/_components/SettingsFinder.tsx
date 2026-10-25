@@ -164,7 +164,17 @@ function ResultRow({
           <ChevronRight aria-hidden="true" className="h-4 w-4 flex-none text-[var(--ink-400)]" />
         </Link>
       ) : (
-        <div className={cls}>{body}</div>
+        <div className={cls}>
+          {body}
+          {entry.go ? (
+            <Link
+              href={entry.go.href}
+              className="flex min-h-11 flex-none items-center rounded-md px-2 text-[13px] font-medium text-[var(--accent-strong)] underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            >
+              {entry.go.label}
+            </Link>
+          ) : null}
+        </div>
       )}
     </li>
   );

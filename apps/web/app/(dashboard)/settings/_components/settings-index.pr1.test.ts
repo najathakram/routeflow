@@ -407,4 +407,16 @@ describe("row 376 apple-ux fixes: the mockup's labels, placement and copy", () =
       "Counter › Quick keys",
     );
   });
+
+  it("no entry's crumb still says the old SMTP label", () => {
+    expect(full.filter((e) => e.page === "Email (SMTP)")).toEqual([]);
+    expect(full.filter((e) => e.page === "Email sending (SMTP)").length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("an answer-only row can point somewhere: Store pickup goes to Orders", () => {
+    expect(full.find((e) => e.id === "info-pos-mode")?.go).toEqual({
+      label: "Go to Orders",
+      href: "/orders",
+    });
+  });
 });

@@ -17,6 +17,8 @@ export type IndexEntry = {
   href?: string;
   /** Info rows only: the sentence shown instead of desc. */
   answer?: string;
+  /** Info rows only: where the answer's action lives, so a result is never a dead end (row 376). */
+  go?: { label: string; href: string };
   /** business | fulfilment | counter | selling | payments | notifications | compliance | integrations | footer */
   groupKey: string;
   /** Breadcrumb tail, e.g. "Invoicing" (defaults to the label). */
@@ -151,6 +153,7 @@ const ENTRIES: IndexEntry[] = [
     answer:
       "Turn on Store pickup in the New order window on the Orders screen. It books a named customer and invoices right away.",
     groupKey: "fulfilment",
+    go: { label: "Go to Orders", href: "/orders" },
     // "pos" / "pos mode" stay: the switch was called POS mode until I-120 (SA-861 rule 10)
     keywords: ["store pickup", "pos", "pos mode", "point of sale", "invoice now", "named customer"],
   },
@@ -653,7 +656,7 @@ const ENTRIES: IndexEntry[] = [
     "Send email through your own mail server",
     "email",
     "notifications",
-    "Email (SMTP)",
+    "Email sending (SMTP)",
     ["smtp", "server", "host"],
     { show: "admin" },
   ),
@@ -663,7 +666,7 @@ const ENTRIES: IndexEntry[] = [
     "Verify the domain invoices are sent from",
     "email",
     "notifications",
-    "Email (SMTP)",
+    "Email sending (SMTP)",
     ["domain", "from address", "dns", "deliverability"],
     { show: "admin" },
   ),
@@ -673,7 +676,7 @@ const ENTRIES: IndexEntry[] = [
     "Connect Gmail or Outlook to send as you",
     "email",
     "notifications",
-    "Email (SMTP)",
+    "Email sending (SMTP)",
     ["gmail", "outlook", "mailbox", "sender"],
     { show: "admin" },
   ),

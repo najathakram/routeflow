@@ -326,6 +326,27 @@ describe("hub list (below xl)", () => {
     expect(within(list).getAllByText("Counter › Quick keys").length).toBeGreaterThan(0);
   });
 
+  it("a Store pickup result is not a dead end: it carries a 'Go to Orders' link", () => {
+    renderWithProviders(<SettingsHub isAdmin />);
+    fireEvent.change(screen.getByLabelText("Search settings"), {
+      target: { value: "store pickup" },
+    });
+    const list = screen.getByRole("list", { name: "Search results" });
+    expect(within(list).getByText("Orders & delivery › Store pickup")).toBeInTheDocument();
+    expect(within(list).getByRole("link", { name: "Go to Orders" })).toHaveAttribute(
+      "href",
+      "/orders",
+    );
+  });
+
+  it("the SMTP sub-results read 'Email sending (SMTP)' in their crumb, never the old label", () => {
+    renderWithProviders(<SettingsHub isAdmin />);
+    fireEvent.change(screen.getByLabelText("Search settings"), { target: { value: "smtp" } });
+    const list = screen.getByRole("list", { name: "Search results" });
+    expect(within(list).getAllByText(/Email sending \(SMTP\)/).length).toBeGreaterThan(1);
+    expect(within(list).queryByText(/Notifications & email › Email \(SMTP\)/)).toBeNull();
+  });
+
   it("the empty state keeps its copy and suggests words", () => {
     renderWithProviders(<SettingsHub isAdmin />);
     fireEvent.change(screen.getByLabelText("Search settings"), { target: { value: "zzzzqq" } });
