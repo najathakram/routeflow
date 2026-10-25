@@ -182,7 +182,7 @@ type InvoiceMoney =
       balanceDue: number;
       lines: Map<
         Record<string, string>,
-        { unitPrice: number; discount: number; itemTotal: number }
+        { unitPrice: number; discount: number; itemTotal: number | null }
       >;
     }
   | { ok: false; reason: string };
@@ -214,13 +214,15 @@ function readInvoiceMoney(invoiceRows: Record<string, string>[]): InvoiceMoney {
   const balanceDue = read(first, ["Balance Due", "Balance", "Outstanding Amount"], NaN);
   const lines: Map<
     Record<string, string>,
-    { unitPrice: number; discount: number; itemTotal: number }
+    { unitPrice: number; discount: number; itemTotal: number | null }
   > = new Map();
   for (const row of invoiceRows) {
+    // W-924: an absent Item Total (null) is not a stated 0.00; only the absent cell falls back to qty x price.
+    const itemTotal = read(row, ["Item Total"], NaN);
     lines.set(row, {
       unitPrice: read(row, ["Item Price"], 0),
       discount: read(row, ["Discount Amount"], 0),
-      itemTotal: read(row, ["Item Total"], 0),
+      itemTotal: Number.isNaN(itemTotal) ? null : itemTotal,
     });
   }
   if (reason) return { ok: false, reason };
@@ -1470,8 +1472,8 @@ export class ImportService {
         const line = money.lines.get(row)!;
         const unitPrice = line.unitPrice;
         const itemDiscount = line.discount;
-        // scan-ok: money-rederive — an imported CSV line has no case pack: the file's Item Total wins; the plain qty x price fallback is what the row states (unchanged by #2190).
-        const sub = roundMoney(line.itemTotal || qty * unitPrice - itemDiscount);
+        // scan-ok: money-rederive — an imported CSV line has no case pack: the file's Item Total wins; the plain qty x price fallback is what the row states (unchanged by #2190); W-924: it applies only when the Item Total cell is absent, a stated 0.00 stays 0.00.
+        const sub = roundMoney(line.itemTotal ?? qty * unitPrice - itemDiscount);
         const sku = (row["SKU"] || "").trim();
 
         let productId: string | undefined;
