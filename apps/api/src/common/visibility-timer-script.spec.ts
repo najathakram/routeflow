@@ -31,7 +31,13 @@ beforeAll(() => {
       "const stateFile = process.env.FAKE_STATE_FILE;",
       "const readState = () => { try { return JSON.parse(fs.readFileSync(stateFile, 'utf8')); } catch { return { visibility: process.env.FAKE_VIS || 'PUBLIC', edits: 0 }; } };",
       "const writeState = (s) => fs.writeFileSync(stateFile, JSON.stringify(s));",
-      "if (args[0] === 'api') {",
+      "if (args[0] === 'api' && /^repos\\/[^/]+\\/[^/]+$/.test(args[1])) {",
+      "  const r = process.env.FAKE_REPO_MODE || 'ok';",
+      "  if (r === '404') { process.stderr.write('gh: Not Found (HTTP 404)\\nsecond line\\n'); process.exit(1); }",
+      "  if (r === 'error') { process.stderr.write('HTTP 502: Bad Gateway\\n'); process.exit(1); }",
+      "  process.stdout.write(args[1].slice('repos/'.length) + '\\n');",
+      "  process.exit(0);",
+      "} else if (args[0] === 'api') {",
       "  const m = process.env.FAKE_MARKER_MODE || 'ok';",
       "  if (m === '404') { process.stderr.write('gh: Not Found (HTTP 404)\\n'); process.exit(1); }",
       "  if (m === 'error') { process.stderr.write('HTTP 502: Bad Gateway\\n'); process.exit(1); }",
@@ -234,6 +240,45 @@ describe("visibility-timer.mjs contract", () => {
     expect(lines[0]).toContain("no-marker");
   });
 
+  it("specs repo unreadable (404) behind a contents 404: marker-unreadable, exit 1, no flip", () => {
+    const c = ctx();
+    const res = run(c, ARGS, {
+      ...NOW(deadlineMs + 5 * 60_000),
+      FAKE_MARKER_MODE: "404",
+      FAKE_REPO_MODE: "404",
+    });
+    expect(res.status).toBe(1);
+    const api = verbs(c, "api");
+    expect(api).toHaveLength(2);
+    expect(api[1]).toEqual(["api", "repos/najathakram/routeflow-specs", "--jq", ".full_name"]);
+    expect(verbs(c, "repo")).toHaveLength(0);
+    const lines = logLines(c);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain(" marker-unreadable ");
+    expect(lines[0]).toContain("Not Found (HTTP 404)");
+    expect(lines[0]).not.toContain("second line");
+    expect(lines[0]).not.toContain(" none ");
+    expect(res.stdout).toContain("marker-unreadable");
+  });
+
+  it("specs repo readable + contents 404: no-marker, exit 0, repo probed once", () => {
+    const c = ctx();
+    const res = run(c, ARGS, {
+      ...NOW(deadlineMs + 5 * 60_000),
+      FAKE_MARKER_MODE: "404",
+      FAKE_REPO_MODE: "ok",
+    });
+    expect(res.status).toBe(0);
+    const api = verbs(c, "api");
+    expect(api).toHaveLength(2);
+    expect(api[1]).toEqual(["api", "repos/najathakram/routeflow-specs", "--jq", ".full_name"]);
+    expect(verbs(c, "repo")).toHaveLength(0);
+    const lines = logLines(c);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain("no-marker");
+    expect(lines[0]).not.toContain("marker-unreadable");
+  });
+
   it("marker unreadable (non-404 failure): logs marker-unreadable, exit 1, no flip", () => {
     const c = ctx();
     const res = run(c, ARGS, { ...NOW(deadlineMs + 5 * 60_000), FAKE_MARKER_MODE: "error" });
@@ -302,6 +347,9 @@ describe("visibility-timer.mjs contract", () => {
     const c = ctx();
     const env = { ...process.env } as Record<string, string | undefined>;
     delete env.JEST_WORKER_ID;
+    // the operator's REAL log must stay untouched (os.homedir() reads HOME on POSIX, USERPROFILE on Windows)
+    const realLog = path.join(os.homedir(), ".routeflow", "ops", "visibility-timer.log");
+    const realBefore = fs.existsSync(realLog) ? fs.statSync(realLog).size : null;
     const res = spawnSync(process.execPath, [SCRIPT, "--repo", REPO, "--marker-repo", "acme/ops"], {
       encoding: "utf8",
       timeout: 60_000,
@@ -311,6 +359,7 @@ describe("visibility-timer.mjs contract", () => {
         ...env,
         PATH: dir,
         HOME: dir,
+        USERPROFILE: dir,
         VISIBILITY_TIMER_GH_CMD: JSON.stringify([process.execPath, fakeGh]),
         VISIBILITY_TIMER_LOG_FILE: c.log,
         FAKE_CALLS_FILE: c.calls,
@@ -323,5 +372,8 @@ describe("visibility-timer.mjs contract", () => {
     // the log override was ignored too: the real path lives under HOME (the scratch dir)
     expect(fs.existsSync(c.log)).toBe(false);
     expect(fs.existsSync(path.join(dir, ".routeflow", "ops", "visibility-timer.log"))).toBe(true);
+    // ...and nothing was appended to the operator's real home log
+    const realAfter = fs.existsSync(realLog) ? fs.statSync(realLog).size : null;
+    expect(realAfter).toBe(realBefore);
   });
 });

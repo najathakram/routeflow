@@ -63,6 +63,9 @@ function run(extraArgs: string[], env: Record<string, string> = {}) {
       timeout: 60_000,
       env: {
         ...process.env,
+        // scratch home: os.homedir() reads HOME (POSIX) / USERPROFILE (Windows); never the operator's
+        HOME: dir,
+        USERPROFILE: dir,
         VISIBILITY_WATCHDOG_GH_CMD: JSON.stringify([process.execPath, fakeGh]),
         VISIBILITY_WATCHDOG_LOG_FILE: log,
         VISIBILITY_WATCHDOG_MARKER_FILE: log.replace(/\.log$/, ".FAILED"),

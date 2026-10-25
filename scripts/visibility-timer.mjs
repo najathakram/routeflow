@@ -10,8 +10,10 @@
 // plus a 2 minute grace has passed and the repo is still PUBLIC.
 //
 // ONE-SHOT: each run reads the marker, decides, acts at most once, and exits.
-//   marker missing (404) / malformed / for another repo / stale (> 6 h past deadline)  -> no action
+//   marker missing (404 while the marker repo is readable) / malformed / for another repo / stale
+//   (> 6 h past deadline)                                                             -> no action
 //   deadline + 2 min not reached                                                      -> no action
+//   marker repo itself unreadable (a 404 from a token that cannot see it)    -> marker-unreadable, exit 1
 //   past deadline + grace: read visibility; PRIVATE -> no action; PUBLIC -> flip (up to 3 attempts
 //   of `gh repo edit` + read-back, sleeping 10 s then 30 s between) and verify.
 // A late flip is always safer than no flip; a flip while CI still runs just fails that run on billing.
@@ -25,7 +27,8 @@
 // `gh` call and no log line (the same rule as the watchdog, #2076).
 //
 // EXIT CODE  0 = no action needed, or the repo is verified PRIVATE.
-//            1 = marker or visibility unreadable, or the flip was not confirmed. Nothing was flipped
+//            1 = marker (incl. a 404 while the marker repo is itself unreadable, e.g. a bad token)
+//                or visibility unreadable, or the flip was not confirmed. Nothing was flipped
 //                blindly; the next launchd run tries again.
 //
 // LOG  ~/.routeflow/ops/visibility-timer.log (mkdir -p), also printed to stdout. Exactly ONE line per
@@ -168,7 +171,10 @@ function firstErrorLine(result) {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-/** {text} | {missing:true} | {error}. Only a clean 404 counts as "no marker". */
+/**
+ * {text} | {missing:true} | {error}. A 404 counts as "no marker" only when the marker repo itself
+ * is readable (one extra bounded `gh api repos/<marker-repo>` call, made only after a 404).
+ */
 function readMarker(markerRepo) {
   const res = runGh([
     "api",
@@ -178,7 +184,18 @@ function readMarker(markerRepo) {
   ]);
   if (!res.error && res.status === 0) return { text: res.stdout };
   const out = `${res.stderr || ""}\n${res.stdout || ""}`;
-  if (!res.error && /404|Not Found/i.test(out)) return { missing: true };
+  if (!res.error && /404|Not Found/i.test(out)) {
+    // GitHub answers 404 for a private repo the token cannot see, so a broken or missing token
+    // looks exactly like "no marker". Prove the marker repo itself is readable first; if it is
+    // not, the 404 means nothing and the timer is blind, which must be loud.
+    const probe = runGh(["api", `repos/${markerRepo}`, "--jq", ".full_name"]);
+    if (probe.error || probe.status !== 0) {
+      return {
+        error: `marker repo ${markerRepo} unreadable (${firstErrorLine(probe) || `exit ${probe.status}`})`,
+      };
+    }
+    return { missing: true };
+  }
   return { error: firstErrorLine(res) || `exit ${res.status}` };
 }
 

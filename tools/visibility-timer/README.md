@@ -33,4 +33,10 @@ The job needs `gh` logged in with `repo` scope (the plist PATH includes `/opt/ho
 `~/.routeflow/ops/visibility-timer.log`: one line per decision, `<ISO> <event> <detail>`. Events:
 `none` / `wait` (no action, with the reason), `already-private`, `flipped`, `attempt` / `error`
 (a failed flip), `marker-unreadable`, `visibility-unreadable`. `tail -n 20` it after a window.
+
 launchd's own stdout/stderr land in `visibility-timer.stdout.log` / `.stderr.log` beside it.
+
+In the first window after arming, check `~/.routeflow/ops/visibility-timer.log` for a `wait` line:
+it is the proof the timer can read the marker. `marker-unreadable` means the Mac's `gh` token cannot
+read `najathakram/routeflow-specs` (GitHub answers 404 for a private repo the token cannot see, so
+the timer probes the repo itself before it trusts a 404 as "no marker"); fix `gh auth` on the Mac.
