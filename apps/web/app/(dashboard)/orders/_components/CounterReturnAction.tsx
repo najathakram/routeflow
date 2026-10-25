@@ -67,6 +67,15 @@ export function CounterReturnAction({
   React.useEffect(() => {
     if (recorded) statusRef.current?.scrollIntoView?.({ block: "nearest" });
   }, [recorded]);
+  // the sheet re-lays out when the return dialog closes (its list refetches), which can push the line's second row
+  // below the fold again: scroll once more, after that layout, to the foot of the sheet
+  React.useEffect(() => {
+    if (!recorded || open) return;
+    const frame = requestAnimationFrame(() =>
+      statusRef.current?.scrollIntoView?.({ block: "end" }),
+    );
+    return () => cancelAnimationFrame(frame);
+  }, [recorded, open]);
   const hasInlineReturns = useHasAddon(ORDERS_INLINE_RETURNS_ADDON);
   const role = useOptionalAuth()?.user?.role;
   const staff = orderActionAccess(role, "", false).staff;

@@ -1,5 +1,5 @@
 import * as React from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { CounterReturnAction } from "./CounterReturnAction";
 
 /**
@@ -178,6 +178,17 @@ describe("CounterReturnAction", () => {
     fireEvent.click(screen.getByRole("button", { name: "Return items" }));
     React.act(() => recorded?.({}, { resolution: "REFUND", tender: "CASH", amount: 9.5 }));
     expect(scroll).toHaveBeenCalledWith({ block: "nearest" });
+  });
+  it("mm-ux 390: the line is scrolled into view again once the return dialog has closed (the sheet re-lays out then)", async () => {
+    const scroll = jest.fn();
+    Element.prototype.scrollIntoView = scroll;
+    render(<CounterReturnAction orderId="o1" />);
+    fireEvent.click(screen.getByRole("button", { name: "Return items" }));
+    React.act(() => recorded?.({}, { resolution: "REFUND", tender: "CASH", amount: 9.5 }));
+    scroll.mockClear();
+    const onClose = dialogProps.mock.calls.at(-1)?.[0].onClose as () => void;
+    React.act(() => onClose());
+    await waitFor(() => expect(scroll).toHaveBeenCalledWith({ block: "end" }));
   });
   it("W21b: Done returns focus to the Return items button, not body", () => {
     render(<CounterReturnAction orderId="o1" />);
