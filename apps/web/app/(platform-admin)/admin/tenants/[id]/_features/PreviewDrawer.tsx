@@ -107,7 +107,7 @@ export function PreviewDrawer({
             }
             className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
           >
-            {confirming ? "Applying..." : "Confirm"}
+            {confirming ? "Applying…" : "Confirm"}
           </button>
         </>
       }

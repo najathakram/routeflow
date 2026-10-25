@@ -1,4 +1,5 @@
 import { describeStub, describeStubPeriod } from "./catchup-plan";
+import { fakeStripeProducts } from "../testing/fake-stripe-products";
 import { PlatformPricingService } from "./platform-pricing.service";
 
 /**
@@ -35,6 +36,7 @@ describe("customer-facing catch-up and plan strings", () => {
   it("the plan product name is 'RouteFlow {plan}' for both intervals", async () => {
     const pricing = {
       resolveTenantPricing: jest.fn().mockResolvedValue({
+        planKey: "ENTERPRISE",
         planName: "Enterprise",
         currency: "usd",
         monthly: 100,
@@ -42,11 +44,15 @@ describe("customer-facing catch-up and plan strings", () => {
       }),
     };
     const svc = Object.create(PlatformPricingService.prototype) as PlatformPricingService;
+    const stripe = fakeStripeProducts();
+    (svc as any).stripe = { client: { products: stripe.products } };
     (svc as any).resolveTenantPricing = pricing.resolveTenantPricing;
     const month = await svc.checkoutPriceData("t1", "month");
     const year = await svc.checkoutPriceData("t1", "year");
-    expect(month.product_data.name).toBe("RouteFlow Enterprise");
-    expect(year.product_data.name).toBe("RouteFlow Enterprise");
+    // W-810: one shared, named plan product - the name lives on it, not on the line.
+    expect(month.product).toBe("rf_plan_enterprise");
+    expect(year.product).toBe(month.product);
+    expect(stripe.table.get(month.product)?.name).toBe("RouteFlow Enterprise");
     expect(month.recurring).toEqual({ interval: "month" });
     expect(year.recurring).toEqual({ interval: "year" });
   });

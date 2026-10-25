@@ -29,7 +29,7 @@ export default function TermsPage() {
   return (
     <div className="glass-page">
       <section className="legal-page wrap">
-        <Eyebrow>ROUTEFLOW</Eyebrow>
+        <Eyebrow>RouteFlow</Eyebrow>
         <h1>Terms of Service</h1>
         <p>
           <strong>Effective date:</strong> {LAST_UPDATED}

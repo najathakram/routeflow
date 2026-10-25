@@ -3,6 +3,7 @@
 import * as React from "react";
 import { superAdminClient } from "@/lib/admin-api";
 import { AdminCard } from "../../_components/AdminCard";
+import { planLabel } from "../../_components/AdminBadge";
 import {
   fetchPlanCatalog,
   updatePlanPrices,
@@ -97,7 +98,7 @@ export default function PlansPage() {
   return (
     <div className="p-6 space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-white">Plans & Pricing</h1>
+        <h1 className="text-2xl font-bold text-white">Plans & pricing</h1>
         <p className="mt-1 text-sm text-slate-400">
           Catalog prices for the latest plan version. Editing a row updates every tenant on that
           plan without a custom fee and pinned to the latest version — their live Stripe
@@ -146,7 +147,7 @@ export default function PlansPage() {
                       <td className="px-5 py-3">
                         <div className="text-white">{plan.name}</div>
                         <div className="text-xs text-slate-400">
-                          {plan.planKey}
+                          {planLabel(plan.planKey)}
                           {plan.isCustom ? " · custom-quoted" : ""}
                         </div>
                       </td>

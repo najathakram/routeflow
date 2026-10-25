@@ -1,6 +1,6 @@
 import * as React from "react";
 import { render, screen } from "@testing-library/react";
-import { AdminBadge } from "./AdminBadge";
+import { AdminBadge, statusLabel } from "./AdminBadge";
 
 // T14-1 / R23: AdminBadge gains GROWTH -> "Growth" (teal ring) and SCALE -> "Scale" (indigo
 // ring) plan entries; the existing PROFESSIONAL -> "Business" mapping stays unchanged.
@@ -24,5 +24,23 @@ describe("AdminBadge — plan variant (T14-1, R23)", () => {
   it("keeps the existing PROFESSIONAL -> 'Business' mapping unchanged", () => {
     render(<AdminBadge variant="plan">PROFESSIONAL</AdminBadge>);
     expect(screen.getByText("Business")).toBeInTheDocument();
+  });
+});
+
+describe("AdminBadge — status variant (W-785)", () => {
+  it("renders PENDING_SELLER_APPROVAL as 'Pending seller approval'", () => {
+    render(<AdminBadge>PENDING_SELLER_APPROVAL</AdminBadge>);
+    expect(screen.getByText("Pending seller approval")).toBeInTheDocument();
+  });
+
+  it("labels READ_ONLY, INACTIVE, INVITED and DISCONNECTED", () => {
+    expect(statusLabel("READ_ONLY")).toBe("Read-only");
+    expect(statusLabel("INACTIVE")).toBe("Inactive");
+    expect(statusLabel("INVITED")).toBe("Invited");
+    expect(statusLabel("DISCONNECTED")).toBe("Disconnected");
+  });
+
+  it("falls back to sentence case for an unknown status", () => {
+    expect(statusLabel("SOME_NEW_STATE")).toBe("Some new state");
   });
 });

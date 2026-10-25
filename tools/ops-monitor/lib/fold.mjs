@@ -116,6 +116,17 @@ export function fold(events, { bugs = new Map() } = {}) {
 
   const valid = [];
   for (const ev of events) {
+    if (ev && ev.__corrupt) {
+      // W-880: a crash zeroed part of this file; its other lines still load, so this is the alarm.
+      anomaly(
+        "corrupt-events-file",
+        null,
+        null,
+        `${ev.file} holds ${ev.nul} NUL bytes (a crash zeroed part of it): restore the lost lines from git history`,
+        fileNoonUtc(ev.file),
+      );
+      continue;
+    }
     if (ev && ev.__invalid) {
       anomaly(
         "invalid-event",

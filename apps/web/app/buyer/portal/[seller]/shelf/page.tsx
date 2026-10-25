@@ -253,7 +253,7 @@ export default function BuyerShelfPage() {
     return (
       <div className="p-6">
         <div className="rounded-lg bg-danger-bg px-4 py-3 text-sm text-danger">
-          Failed to load your shelf. Please try again later.
+          Couldn&apos;t load your shelf. Try again.
         </div>
       </div>
     );
@@ -264,7 +264,7 @@ export default function BuyerShelfPage() {
       {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-navy">Your Shelf</h1>
+          <h1 className="text-2xl font-bold text-navy">Your shelf</h1>
           <p className="mt-1 text-sm text-navy/70">
             What you usually reorder from {activeSeller?.tenant.name} — and when it&apos;s likely to
             run out
