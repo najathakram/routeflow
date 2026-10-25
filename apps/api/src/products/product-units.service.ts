@@ -22,6 +22,7 @@ import { unitRoom } from "../units/unit-room";
 import { lockProductPack } from "../units/tenant-units-lock";
 import { MAX_UNIT_NAME_LENGTH } from "../units/units.service";
 import { CreateProductUnitDto, UpdateProductUnitDto } from "./dto/product-unit.dto";
+import { assertUnitPriceWritable } from "./product-units-price-guard";
 
 interface PackInfo {
   label: string;
@@ -31,6 +32,8 @@ interface PackInfo {
   baseLabel: string;
   factor: number;
   regulated: boolean;
+  /** What the price guard reads (row 749): variant / family / recipe prices are not set here. */
+  governed: { id: string; parentProductId: string | null; kind: string | null };
 }
 
 interface LevelKey {
@@ -103,6 +106,7 @@ export class ProductUnitsService {
   create(productId: string, dto: CreateProductUnitDto, actorId: string | null = null) {
     return this.locked(productId, async (tx) => {
       const pack = await this.loadPack(tx, productId);
+      assertUnitPriceWritable(pack.governed, dto);
       const label = this.cleanLabel(dto.label, dto.factorToBase, pack);
       const siblings = await this.siblings(tx, productId);
       this.assertLevelValid(pack, siblings, { label, factorToBase: dto.factorToBase });
@@ -147,6 +151,7 @@ export class ProductUnitsService {
   ) {
     return this.locked(productId, async (tx) => {
       const pack = await this.loadPack(tx, productId);
+      assertUnitPriceWritable(pack.governed, dto);
       const row = await tx.productUnit.findFirst({ where: { id: unitId, productId } });
       if (!row) throw new NotFoundException("Unit not found");
       const factorToBase = dto.factorToBase ?? row.factorToBase;
@@ -325,6 +330,8 @@ export class ProductUnitsService {
         packLabel: true,
         unitsPerBox: true,
         trackedCategoryId: true,
+        parentProductId: true,
+        kind: true,
       },
     });
     if (!p) throw new NotFoundException("Product not found");
@@ -335,6 +342,7 @@ export class ProductUnitsService {
       baseLabel: baseLabelOf(p),
       factor: upb > 1 ? upb : 1,
       regulated: p.trackedCategoryId != null,
+      governed: { id: productId, parentProductId: p.parentProductId ?? null, kind: p.kind ?? null },
     };
   }
 
