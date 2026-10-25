@@ -5123,7 +5123,6 @@ export class OrdersService implements OnApplicationBootstrap {
     return updateShipmentImpl(this, orderId, dto, _user);
   }
 
-  /** Row 510: the STAFF choke point the fulfil-path switch judges through; W-774: the counter's read-only pre-judge too. */
   async staffSellable(p: rGate.Args) {
     return await this.sellingRestrictions.assertLinesSellable({ ...p, channel: "STAFF" });
   }
