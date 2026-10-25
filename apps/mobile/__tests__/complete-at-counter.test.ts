@@ -123,10 +123,10 @@ describe("pickupCompleteErrorCopy: Complete at counter refusals (I-120, mobile)"
     expect(
       pickupCompleteErrorCopy(refusal({ code: "CREDIT_LIMIT_EXCEEDED", limit: 50, exposure: 120 })),
     ).toBe(
-      "Nothing changed. This customer is over their credit limit ($120.00 of $50.00). Take payment now, or record a payment first.",
+      "This customer is over their credit limit ($120.00 of $50.00). Take payment now, or record a payment first.",
     );
     expect(pickupCompleteErrorCopy(refusal({ code: "SELLING_RESTRICTED" }))).toBe(
-      "Nothing changed. An item on this order can't be sold at the store. Edit the order, or deliver it.",
+      "An item on this order can't be sold at the store. Edit the order, or deliver it.",
     );
     expect(pickupCompleteErrorCopy(refusal({ code: "ORDER_ON_ACTIVE_RUN" }))).toBe(
       "Nothing changed. This order is on an active delivery run. Remove it from the run first.",
