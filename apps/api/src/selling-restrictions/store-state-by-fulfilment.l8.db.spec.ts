@@ -1,6 +1,7 @@
 /**
  * L8 — real-Postgres proof that WHICH state judges a state ban follows how the goods change hands, end to end through
- * the real engine (`SellingRestrictionsService`) and the real fulfil-path switch guard (`assertFulfilPathSwitchAllowed`):
+ * the real engine (`SellingRestrictionsService`) and the live switch callees (`assertFulfilPathAddress` + `assertLinesSellable`,
+ * the two calls `updateFulfillPathImpl` makes around its override protocol):
  *
  *   (a) a COUNTER sale and a PICKUP are judged at the STORE state for a named customer whose own address is elsewhere;
  *   (b) an unset store state refuses both with 409 SELLING_RESTRICTED (INDETERMINATE, fail closed);
@@ -17,11 +18,11 @@ import { BadRequestException, ConflictException } from "@nestjs/common";
 import { FulfillPath } from "@prisma/client";
 import { randomUUID } from "crypto";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
-import { assertFulfilPathSwitchAllowed } from "../orders/fulfil-path-restrictions";
+import { assertFulfilPathAddress } from "../orders/fulfil-path-restrictions";
 import { PrismaService } from "../prisma/prisma.service";
 import { ProductLabelsService } from "../product-labels/product-labels.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
-import type { SaleFulfilmentKind } from "./sale-fulfilment";
+import { saleFulfilmentKind, type SaleFulfilmentKind } from "./sale-fulfilment";
 import { SellingRestrictionsService } from "./selling-restrictions.service";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -64,23 +65,21 @@ describeDb("L8 store state by fulfilment kind — real Postgres", () => {
       () => "ALLOW",
       (e) => (e instanceof ConflictException ? e.getResponse() : e),
     );
+  /** A PENDING order's path switch to `target`: the live address check, then the live judgement at the target's kind. */
   const switchTo = (customerKey: string, from: FulfillPath, target: FulfillPath) =>
-    as(() =>
-      assertFulfilPathSwitchAllowed(service, {
-        order: {
-          tenantId,
-          customerId: ids[customerKey],
-          status: "PENDING",
-          fulfillPath: from,
-          counterSale: false,
-          customer: { addresses: customerKey === "noaddr" ? [] : [{}] },
-          lineItems: [{ productId }],
-        },
+    as(async () => {
+      assertFulfilPathAddress(
+        { fulfillPath: from, customer: { addresses: customerKey === "noaddr" ? [] : [{}] } },
         target,
-        principal: { role: "OPERATOR", tenantId } as never,
-        ambientTenantId: tenantId,
-      }),
-    );
+      );
+      await service.assertLinesSellable({
+        tenantId,
+        customerId: ids[customerKey],
+        lines: [{ productId }],
+        channel: "STAFF",
+        fulfilmentKind: saleFulfilmentKind({ counterSale: false, fulfillPath: target }),
+      });
+    });
 
   async function mkCustomer(key: string, state?: string) {
     const handle = `l8-${RUN}-${key}`;
