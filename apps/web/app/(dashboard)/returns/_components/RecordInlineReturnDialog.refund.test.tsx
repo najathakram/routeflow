@@ -402,7 +402,7 @@ describe("refund flow", () => {
 
   it("SA-750r3: a walk-in (no store credit) on a closed day is told only the later date, with no store-credit button", async () => {
     refundReturn.mockRejectedValueOnce(apiErr(409, "COUNTER_SALE_DAY_CLOSED"));
-    await refundFlow(quote({ customerIsWalkIn: true, paidMethods: ["CASH"] }));
+    await toQuote(quote({ customerIsWalkIn: true, paidMethods: ["CASH"] })); // a walk-in has no radio: Refund is the only way
     fireEvent.click(confirmBtn(/^take back items and refund/i));
     await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
     captureOk();

@@ -415,7 +415,8 @@ export function InlineReturnSection({
                           <p className="text-sm font-medium text-navy">{line.productName}</p>
                           {typeof line.qtySold === "number" && (
                             <p className="text-xs text-navy/70">
-                              Sold {line.qtySold} {line.unit ?? "unit"}
+                              {line.qtySold}
+                              {line.unit && line.unit !== "each" ? ` ${line.unit}` : ""} sold
                               {line.qtyAlreadyReturned
                                 ? ` · Returned ${line.qtyAlreadyReturned}`
                                 : ""}
@@ -490,11 +491,7 @@ export function InlineReturnSection({
                         {canOverrideCredit && (
                           <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-[10rem_1fr]">
                             <Input
-                              label={
-                                boxed
-                                  ? `Credit price per ${UW.pack.lower} (optional)`
-                                  : "Credit price (optional)"
-                              }
+                              label={boxed ? `Credit price per ${UW.pack.lower}` : "Credit price"}
                               type="text"
                               inputMode="decimal"
                               placeholder="Quoted price"
@@ -503,14 +500,16 @@ export function InlineReturnSection({
                                 updateLine(line.lineKey, { creditUnitPrice: e.target.value })
                               }
                             />
-                            <Input
-                              label="Why the lower price"
-                              maxLength={CREDIT_OVERRIDE_REASON_MAX}
-                              value={line.overrideReason ?? ""}
-                              onChange={(e) =>
-                                updateLine(line.lineKey, { overrideReason: e.target.value })
-                              }
-                            />
+                            {(line.creditUnitPrice ?? "").trim() !== "" && (
+                              <Input
+                                label="Why the lower price?"
+                                maxLength={CREDIT_OVERRIDE_REASON_MAX}
+                                value={line.overrideReason ?? ""}
+                                onChange={(e) =>
+                                  updateLine(line.lineKey, { overrideReason: e.target.value })
+                                }
+                              />
+                            )}
                           </div>
                         )}
                       </LineExtras>
@@ -528,7 +527,7 @@ export function InlineReturnSection({
                 <Input
                   ref={productSearchRef}
                   label="Add another product"
-                  placeholder="Search or scan products…"
+                  placeholder="Search or scan a product"
                   value={productSearch}
                   onChange={(e) => setProductSearch(e.target.value)}
                   onKeyDown={(e) => {
@@ -598,7 +597,7 @@ export function InlineReturnSection({
             label="Reason"
             value={captureReason}
             onChange={(e) => setCaptureReason(e.target.value as ReturnReason | "")}
-            options={[{ value: "", label: "Select a reason…" }, ...REASON_OPTIONS]}
+            options={[{ value: "", label: "Choose a reason" }, ...REASON_OPTIONS]}
           />
 
           {overrideProblem && <p className="text-sm text-danger">{overrideProblem}</p>}
@@ -620,11 +619,13 @@ export function InlineReturnSection({
       {step === "quote" && quote && (
         <div className="space-y-4">
           <div>
-            <h4 className="mb-2 text-sm font-semibold text-navy">Quote</h4>
-            <p className="mb-2 text-xs text-navy/70">
-              Goods can come from more than one earlier order — each line below shows exactly where
-              it was matched.
-            </p>
+            <h4 className="mb-2 text-sm font-semibold text-navy">Check the return</h4>
+            {new Set(covered.map((c) => c.sourceOrderId)).size > 1 && (
+              <p className="mb-2 text-xs text-navy/70">
+                Goods can come from more than one earlier order — each line below shows exactly
+                where it was matched.
+              </p>
+            )}
             <div className="space-y-2">
               {covered.map((chunk, i) => (
                 <CoveredChunkRow
@@ -766,7 +767,7 @@ export function InlineReturnSection({
             label="Reason"
             value={captureReason}
             onChange={(e) => setCaptureReason(e.target.value as ReturnReason | "")}
-            options={[{ value: "", label: "Select a reason…" }, ...REASON_OPTIONS]}
+            options={[{ value: "", label: "Choose a reason" }, ...REASON_OPTIONS]}
             aria-describedby={!captureReason && reasonHintId ? reasonHintId : undefined}
           />
 
@@ -843,7 +844,7 @@ function CoveredChunkRow({
           </p>
         </div>
         <span className="shrink-0 text-navy/70">
-          {chunk.pieces} {UW.base.short.one}
+          {chunk.pieces} {UW.baseShortFor(chunk.pieces)}
         </span>
       </div>
       <div className="mt-1 flex justify-between text-navy/70">

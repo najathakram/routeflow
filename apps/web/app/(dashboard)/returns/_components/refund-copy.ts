@@ -33,9 +33,10 @@ export const TERMINAL_REFUND_ERRORS: ReadonlySet<RefundErrorKind> = new Set([
 
 export const REFUND_COPY = {
   heading: "How do you want to give the money back?",
-  walkIn: "Walk-in sales can't hold store credit, so you'll give the money back.",
-  /** A walk-in return that cannot be refunded (unpaid sale): the credit note stays on the sale. */
-  walkInCreditNote: "Walk-in sales can't hold store credit.",
+  walkIn: "Walk-in sales can't hold store credit, so give the money back.",
+  /** SA-959: a walk-in return never becomes a credit note (the shared walk-in row cannot hold it). When it cannot be
+   *  refunded here the dialog says so and offers no take-back; the server's cause replaces this once it sends one. */
+  walkInNoRefund: "This sale can't be refunded here. Ask office staff to refund it.",
   failed: "Return saved. Refund didn't go through. Try again.",
   changed: "The refund amount changed. Check it and confirm again.",
   resolved: "This return is already done. Nothing more was refunded.",
@@ -107,9 +108,8 @@ export function handBackLine(tender: InlineRefundTender, amount: string): string
 /** Where a store-credit return's money lands, which decides how far the sentence can go:
  *  - "nextOrder": the settled counter sale (no order of its own waits on the credit).
  *  - "thisOrder": order create/edit, where the credit is held for the carrying order first.
- *  - "account": the Returns page, which also asks which order the credit applies to.
- *  - "walkIn": a walk-in sale, which has no account to hold it. */
-export type CreditContext = "nextOrder" | "thisOrder" | "account" | "walkIn";
+ *  - "account": the Returns page, which also asks which order the credit applies to. */
+export type CreditContext = "nextOrder" | "thisOrder" | "account";
 
 /** W-712: what the money does, in the cashier's words (the quote-step note under the Total). */
 export function creditOutcomeLine(
@@ -117,9 +117,6 @@ export function creditOutcomeLine(
   context: CreditContext,
   customerName?: string,
 ): string {
-  if (context === "walkIn") {
-    return `${REFUND_COPY.walkInCreditNote} ${amount} is recorded as a credit note on this sale.`;
-  }
   const who = customerName?.trim() || "the customer";
   const base = `${amount} is added as store credit for ${who}`;
   if (context === "nextOrder") return `${base}, to use on the next order.`;
@@ -133,9 +130,6 @@ export function refundOutcomeLine(amount: string): string {
 export function takeBackCreditLabel(amount: string): string {
   return `Take back items and add ${amount} store credit`;
 }
-export function takeBackWalkInLabel(amount: string): string {
-  return `Take back items and record ${amount} credit note`;
-}
 export function takeBackRefundLabel(amount: string): string {
   return `Take back items and refund ${amount}`;
 }
@@ -145,10 +139,6 @@ export function refundedLine(tender: InlineRefundTender | undefined, amount: str
   if (!tender) return `Refunded ${amount}.`;
   const how = tender === "CARD" ? "to the card" : tender === "CHECK" ? "by check" : "in cash";
   return `Refunded ${amount} ${how}.`;
-}
-/** A walk-in has no account: the credit note stays on the sale. */
-export function creditNoteRecordedLine(amount: string): string {
-  return `${amount} recorded as a credit note on this sale.`;
 }
 export function storeCreditAddedLine(amount: string): string {
   return `${amount} added as store credit.`;

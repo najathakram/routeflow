@@ -16,7 +16,6 @@ import {
   type RecordedInfo,
 } from "@/app/(dashboard)/returns/_components/RecordInlineReturnDialog";
 import {
-  creditNoteRecordedLine,
   handOverLine,
   REFUND_COPY,
   refundedLine,
@@ -29,16 +28,9 @@ function money(n: number): string {
 }
 
 /** Store credit stays on the account: this line must never tell the clerk to hand money back
- *  (that would give the value twice). Only the refund path says to hand it back. A walk-in has no
- *  account, so its credit note stays on the sale. */
-function storeCreditLine(
-  amount: number | undefined,
-  customer: string | null | undefined,
-  walkIn: boolean | undefined,
-): string {
-  if (walkIn && amount !== undefined) {
-    return `Return recorded. ${creditNoteRecordedLine(money(amount))}`;
-  }
+ *  (that would give the value twice). Only the refund path says to hand it back. (A walk-in return is never
+ *  store credit: the dialog refuses it, SA-959.) */
+function storeCreditLine(amount: number | undefined, customer: string | null | undefined): string {
   const who = customer?.trim() || "the customer";
   return amount !== undefined
     ? `Return recorded. ${storeCreditAddedLine(money(amount)).replace(/\.$/, "")} for ${who}.`
@@ -52,7 +44,7 @@ function recordedLine(recorded: RecordedInfo, customer: string | null | undefine
     const hand = recorded.tender ? ` ${handOverLine(recorded.tender)}` : "";
     return `Return recorded. ${refundedLine(recorded.tender, money(recorded.amount))}${hand}`;
   }
-  return storeCreditLine(recorded.amount, customer, recorded.walkIn);
+  return storeCreditLine(recorded.amount, customer);
 }
 
 export function CounterReturnAction({
