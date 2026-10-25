@@ -272,16 +272,16 @@ describe("ReturnsService.processRefund: itemised refund under the shared per-lin
     );
   });
 
-  it("SA-628a: a PRICED line next to a free line of the same product is itemised paid-first, each line at its own charged price (SA-840 supersedes the SA-628b pooled average)", async () => {
+  it("SA-628a: a PRICED line next to a free line of the same product is itemised paid-first at the pooled price (SA-628b)", async () => {
     const free = { id: "line-f", productId: "pa", qty: 2, subtotal: 0 };
     const paid = { id: "line-a", productId: "pa", qty: 10, subtotal: 100 };
     withReturn(order([invoice("inv-1", [paid, free])]), [{ productId: "pa", qty: 11 }]);
     await service.processRefund("ret-1");
     expect(creditNotesCreate).toHaveBeenCalledWith(
       expect.objectContaining({
-        amount: 100,
+        amount: 91.67,
         items: [
-          { invoiceItemId: "line-a", amount: 100, qty: 10 },
+          { invoiceItemId: "line-a", amount: 91.67, qty: 10 },
           { invoiceItemId: "line-f", amount: 0, qty: 1 },
         ],
       }),
@@ -289,7 +289,7 @@ describe("ReturnsService.processRefund: itemised refund under the shared per-lin
     );
   });
 
-  it("SA-628a: the preview prices the same per-line figure the mint itemises (a product split across lines of different prices)", async () => {
+  it("SA-628a: the preview prices the same pooled price the mint itemises (a product split across lines of different prices)", async () => {
     const cheap = { id: "line-c", productId: "pa", qty: 1, subtotal: 50 };
     const dear = { id: "line-d", productId: "pa", qty: 1, subtotal: 100 };
     const ret = {
@@ -299,14 +299,83 @@ describe("ReturnsService.processRefund: itemised refund under the shared per-lin
       items: [{ productId: "pa", qty: 1 }],
       order: order([invoice("inv-1", [dear, cheap])]),
     };
-    // SA-840: the first-filled line's own charge ($100, the pooled $75 average is gone), the same number the mint itemises
+    // SA-628b: master's pooled price ($75), the same number the mint itemises
     withReturn(ret.order);
     await service.processRefund("ret-1");
     expect(creditNotesCreate).toHaveBeenCalledWith(
-      expect.objectContaining({ amount: 100 }),
+      expect.objectContaining({ amount: 75 }),
       expect.anything(),
     );
-    expect((service as any).priceReturn(ret.items, ret.order, new Map()).amount).toBe(100);
+    expect((service as any).priceReturn(ret.items, ret.order, new Map()).amount).toBe(75);
+  });
+
+  describe("SA-970: the gross twins of the SA-628b cases, priced over the product pool on the invoice", () => {
+    const stored = (over: Record<string, unknown>) => ({
+      systemKind: null,
+      description: "Widget",
+      categoryTaxAmount: 0,
+      ...over,
+    });
+    const taxed = (items: any[], taxAmount: number) => ({
+      ...invoice("inv-1", items),
+      total: items.reduce((t, i) => t + i.subtotal, 0) + taxAmount,
+      taxAmount,
+      discount: 0,
+    });
+
+    it("REG-B704 SA-970 (a) gross: paid 100.00 (10 pcs, 8%, 6.00 levy) + a free line of 2, 11 returned: 91.67 + 7.33 + 5.50 = 104.50", async () => {
+      // wrong today (net-only pricer): 91.67 with no tax and no levy
+      const paid = stored({
+        id: "line-a",
+        productId: "pa",
+        qty: 10,
+        subtotal: 100,
+        taxRate: 0.08,
+        categoryTaxAmount: 6,
+      });
+      const free = stored({ id: "line-f", productId: "pa", qty: 2, subtotal: 0, taxRate: 0.08 });
+      withReturn(order([taxed([paid, free], 14)]), [{ productId: "pa", qty: 11 }]);
+      await service.processRefund("ret-1");
+      expect(creditNotesCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          amount: 104.5,
+          items: [
+            { invoiceItemId: "line-a", amount: 91.67, qty: 10 },
+            { invoiceItemId: "line-f", amount: 0, qty: 1 },
+          ],
+        }),
+        {
+          ledgerReversedByReturn: true,
+          refundTax: 7.33,
+          refundCategoryTax: [{ invoiceItemId: "line-a", categoryTax: 5.5 }],
+        },
+      );
+    });
+
+    it("REG-B704 SA-970 (b) gross: cheap 50.00 + dear 100.00 at 8%, 1 of 2 returned: 75.00 + 6.00 = 81.00 on the dear line, preview == mint", async () => {
+      // wrong today (net-only pricer): 75.00
+      const dear = stored({ id: "line-d", productId: "pa", qty: 1, subtotal: 100, taxRate: 0.08 });
+      const cheap = stored({ id: "line-c", productId: "pa", qty: 1, subtotal: 50, taxRate: 0.08 });
+      const ord = order([taxed([dear, cheap], 12)]);
+      withReturn(ord);
+      await service.processRefund("ret-1");
+      expect(creditNotesCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          amount: 81,
+          items: [{ invoiceItemId: "line-d", amount: 75, qty: 1 }],
+        }),
+        { ledgerReversedByReturn: true, refundTax: 6, refundCategoryTax: [] },
+      );
+      expect(
+        (service as any).priceReturn([{ productId: "pa", qty: 1 }], ord, new Map()).amount,
+      ).toBe(81);
+    });
+
+    // STANDARD return items carry no line id today (ReturnItem.sourceInvoiceItemId / sourceOrderItemId are INLINE-only), so
+    // the named-line case is proven at the helper level (refundable-line-share.spec.ts) until a STANDARD item can name a line
+    it.todo(
+      "SA-970 SEAM (b) with the cheap line NAMED on the return item refunds 50.00 (needs a line id on a STANDARD item)",
+    );
   });
 
   describe("SA-840 (B704 / #1477): a standard-return refund is what the invoice CHARGED", () => {

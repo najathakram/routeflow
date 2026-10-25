@@ -1,6 +1,7 @@
 import { MoneyInvariantError } from "./money-invariants";
 import {
   refundableLineShare,
+  refundableProductPoolShare,
   taxRateMicros,
   type RefundableInvoice,
   type RefundableInvoiceLine,
@@ -169,3 +170,126 @@ describe("refundableLineShare (SA-840)", () => {
     expect(() => taxRateMicros(Number.NaN)).toThrow(MoneyInvariantError);
   });
 });
+
+/**
+ * SA-970 (amends SA-840 section 2): a return item that names only the PRODUCT is sliced over the product's pool on the
+ * invoice, one virtual line per invoice and product; an item that names its line keeps SA-840's per-line slice.
+ */
+describe("refundableProductPoolShare (SA-970)", () => {
+  // paid line 10 pcs at 100.00 + free line 2 pcs, 8%: the pool is 12 pieces, net 100.00, tax 8.00
+  const promo = (): RefundableInvoice => ({
+    taxAmount: 8,
+    discount: 0,
+    lines: [line("paid", 100, 10, 0.08), line("free", 0, 2, 0.08)],
+  });
+  // two lines of one product at different prices, 8%: pool net 150.00, tax 12.00 over 2 pieces
+  const split = (): RefundableInvoice => ({
+    taxAmount: 12,
+    discount: 0,
+    lines: [line("dear", 100, 1, 0.08), line("cheap", 50, 1, 0.08)],
+  });
+  const at = (id: string, pieces: number, prior = NONE) => ({ id, pieces, prior });
+
+  it("REG-B704 SA-970 pool slice: 11 of 12 pieces is 91.67 net + 7.33 tax, spread on the paid line, the free line gets 0", () => {
+    // wrong today: there is no pool function; a per-line slice of the paid line alone refunds the whole 100.00 + 8.00
+    const out = refundableProductPoolShare({
+      invoice: promo(),
+      lines: [at("paid", 10), at("free", 2)],
+      returnedPieces: 11,
+    });
+    expect([out.net, out.tax, out.categoryTax, out.total]).toEqual([91.67, 7.33, 0, 99]);
+    expect(out.spread).toEqual([
+      { id: "paid", net: 91.67, tax: 7.33, categoryTax: 0, total: 99 },
+      { id: "free", net: 0, tax: 0, categoryTax: 0, total: 0 },
+    ]);
+  });
+
+  it("REG-B704 SA-970 the pool telescopes: 11 of 12 and then the last 1 sum to the pool exactly (100.00 / 8.00)", () => {
+    // wrong today: no pool function
+    const second = refundableProductPoolShare({
+      invoice: promo(),
+      lines: [
+        at("paid", 10, { qty: 10, net: 91.67, tax: 7.33, categoryTax: 0 }),
+        at("free", 2, { qty: 1, net: 0, tax: 0, categoryTax: 0 }),
+      ],
+      returnedPieces: 1,
+    });
+    expect([second.net, second.tax]).toEqual([8.33, 0.67]);
+    expect(roundCents(91.67 + second.net)).toBe(100);
+    expect(roundCents(7.33 + second.tax)).toBe(8);
+  });
+
+  it("REG-B704 SA-970 two lines of one product: 1 of 2 pieces is 75.00 + 6.00, itemised on the dear line first", () => {
+    // wrong today: a per-line slice of the first line refunds 100.00 + 8.00
+    const out = refundableProductPoolShare({
+      invoice: split(),
+      lines: [at("dear", 1), at("cheap", 1)],
+      returnedPieces: 1,
+    });
+    expect([out.net, out.tax]).toEqual([75, 6]);
+    expect(out.spread.map((l) => [l.id, l.net, l.tax])).toEqual([
+      ["dear", 75, 6],
+      ["cheap", 0, 0],
+    ]);
+  });
+
+  it("REG-B704 SA-970 an item that NAMES its line is sliced on that line (SA-840): the cheap line is 50.00 + 4.00", () => {
+    // wrong today: the cheap line priced at the pooled 75.00
+    const out = refundableLineShare({
+      invoice: split(),
+      lineId: "cheap",
+      returnedQty: 1,
+      prior: NONE,
+    });
+    expect([out.net, out.tax, out.total]).toEqual([50, 4, 54]);
+  });
+
+  it("REG-B704 SA-970 a pool of one line is exactly refundableLineShare (R1: 5 of 10 is 25 / 2 / 5)", () => {
+    // wrong today: no pool function
+    const pooled = refundableProductPoolShare({
+      invoice: r1Invoice(),
+      lines: [at("l1", 10)],
+      returnedPieces: 5,
+    });
+    expect([pooled.net, pooled.tax, pooled.categoryTax, pooled.total]).toEqual([25, 2, 5, 32]);
+  });
+
+  it("REG-B704 SA-970 each line takes no more than its room: a credited dear line pushes the slice onto the cheap one", () => {
+    // wrong today: no pool function. dear is fully credited (100.00 / 8.00), 1 of 2 pieces left in the pool: min(75, 50) = 50
+    const out = refundableProductPoolShare({
+      invoice: split(),
+      lines: [at("dear", 1, { qty: 1, net: 100, tax: 8, categoryTax: 0 }), at("cheap", 1)],
+      returnedPieces: 1,
+    });
+    expect(out.spread.map((l) => [l.id, l.net, l.tax])).toEqual([
+      ["dear", 0, 0],
+      ["cheap", 50, 4],
+    ]);
+    expect(out.net).toBe(50);
+  });
+
+  it("REG-B704 SA-970 a qty past the pool is refused, never clipped; a line off the invoice is refused", () => {
+    // wrong today: no pool function
+    expect(
+      refundableProductPoolShare({
+        invoice: promo(),
+        lines: [at("paid", 10), at("free", 2)],
+        returnedPieces: 13,
+      }).refusal,
+    ).toBe("QTY_OVER_LINE");
+    expect(
+      refundableProductPoolShare({ invoice: promo(), lines: [at("nope", 1)], returnedPieces: 1 })
+        .refusal,
+    ).toBe("LINE_NOT_ON_INVOICE");
+  });
+
+  it("REG-B704 SA-970 a missing pool throws MoneyInvariantError", () => {
+    // wrong today: no pool function
+    const bad = { ...promo(), taxAmount: undefined } as unknown as RefundableInvoice;
+    expect(() =>
+      refundableProductPoolShare({ invoice: bad, lines: [at("paid", 10)], returnedPieces: 1 }),
+    ).toThrow(MoneyInvariantError);
+  });
+});
+
+const roundCents = (n: number): number => Math.round(n * 100) / 100;
