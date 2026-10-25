@@ -189,7 +189,7 @@ import {
 } from "./order-billing-lock";
 import { reconcileSplitOrderDrafts, type SplitReconcileDeps } from "./split-draft-reconcile";
 import { auditDeliberateOverpayment, auditRestatement, countLinesChanged } from "./invoice-audit";
-import { splitKeptItems } from "./kept-invoice-lines";
+import { rebuildKeptItems } from "./kept-invoice-lines";
 import { assertSalesNotLockedForEdit } from "../regulated/filing-lock";
 import {
   applyPartialPriceFollow,
@@ -1975,8 +1975,7 @@ export class InvoicesService {
    * DRAFT update, the price re-sync and unvoidInvoice (SA-839 / B706, `restoresVoid`).
    *
    * B297 PR4 (SA-819): the settle's INVOICE_BILLED writes ONLY what changed (`syncInvoiceEntries`: an
-   * unchanged line, still the same InvoiceItem row, writes nothing; a changed line gets one REVERSAL + SALE
-   * pair; a removed line is reversed).
+   * unchanged, still-same InvoiceItem row writes nothing; a changed line gets a REVERSAL + SALE pair).
    * SA-839 INVOICE_BILLED: it cancels only the sale-record and LEAVES every LIVE return /
    * credit-note reversal standing (a dead one's rows are countered by the settle's sweep first),
    * so a re-reconcile after a received return nets to (delivered − returned), not delivered.
@@ -2129,21 +2128,8 @@ export class InvoicesService {
           "NOT_PAID",
         );
       }
-      // B297 PR4: a line whose rebuilt data equals the stored row is KEPT as the same row (its ledger rows
-      // stay valid and re-sync to a no-op); every other order-derived line is re-created as before.
-      const {
-        keepIds: keptLineIds,
-        updates: keptLineUpdates,
-        create: createLines,
-      } = splitKeptItems(
-        await db.invoiceItem.findMany({ where: { invoiceId: pd.draft.id } }), // the FULL stored rows
-        pd.itemsData,
-      );
-      await db.invoiceItem.deleteMany({
-        where: { invoiceId: pd.draft.id, id: { notIn: [...pd.nsf.keepIds, ...keptLineIds] } },
-      });
-      for (const u of keptLineUpdates)
-        await db.invoiceItem.update({ where: { id: u.id }, data: u.data });
+      // B297 PR4: a line whose rebuilt data equals the stored row is KEPT as the same row (kept-invoice-lines.ts).
+      const createLines = await rebuildKeptItems(db, pd.draft.id, pd.nsf.keepIds, pd.itemsData);
       const inv = await db.invoice.update({
         where: { id: pd.draft.id },
         data: {

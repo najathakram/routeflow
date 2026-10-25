@@ -117,3 +117,31 @@ function same(x: unknown, y: unknown): boolean {
 function sameLine(row: Record<string, any>, data: Record<string, any>): boolean {
   return Object.entries(data).every(([k, v]) => k in row && same(row[k], v));
 }
+
+/** The slice of the Prisma client `rebuildKeptItems` writes through (the caller's transaction). */
+interface KeptItemsDb {
+  invoiceItem: {
+    findMany: (args: { where: { invoiceId: string } }) => Promise<Array<Record<string, any>>>;
+    deleteMany: (args: { where: Record<string, any> }) => Promise<unknown>;
+    update: (args: { where: { id: string }; data: Record<string, any> }) => Promise<unknown>;
+  };
+}
+
+/**
+ * The draft rebuild's item step, in the caller's transaction: read the FULL stored rows, delete every line that is
+ * neither an NSF fee (`nsfKeepIds`) nor KEPT (`splitKeptItems`), write the kept lines' other columns in place, and
+ * return the lines to create under the draft update.
+ */
+export async function rebuildKeptItems(
+  db: KeptItemsDb,
+  invoiceId: string,
+  nsfKeepIds: readonly string[],
+  itemsData: Array<Record<string, any>>,
+): Promise<Array<Record<string, any>>> {
+  const kept = splitKeptItems(await db.invoiceItem.findMany({ where: { invoiceId } }), itemsData);
+  await db.invoiceItem.deleteMany({
+    where: { invoiceId, id: { notIn: [...nsfKeepIds, ...kept.keepIds] } },
+  });
+  for (const u of kept.updates) await db.invoiceItem.update({ where: { id: u.id }, data: u.data });
+  return kept.create;
+}
