@@ -73,7 +73,7 @@ test.describe("Impersonation sign-out (F14 / B138)", () => {
       if (await impersonateBtn.count()) {
         await impersonateBtn.click();
         // The button only opens a confirmation (cancel is focused first); the session starts here.
-        const confirm = page.getByRole("dialog", { name: /^Impersonate / });
+        const confirm = page.getByRole("dialog", { name: /^Sign in as admin for / });
         await confirm.getByRole("button", { name: "Sign in as admin" }).click();
       } else {
         const imp = await (
@@ -99,7 +99,7 @@ test.describe("Impersonation sign-out (F14 / B138)", () => {
         await page.goto("/dashboard");
       }
       await page.waitForURL("**/dashboard", { timeout: 30_000 });
-      await expect(page.getByText(/Impersonating/)).toBeVisible();
+      await expect(page.getByText(/Support session on/)).toBeVisible();
       const impToken = await page.evaluate(() => localStorage.getItem("impersonationToken") ?? "");
       expect(impToken).not.toBe("");
       // platform-admin's impersonate() picks the tenant's TENANT_ADMIN with an
@@ -167,7 +167,7 @@ test.describe("Impersonation sign-out (F14 / B138)", () => {
       test.skip((await impersonateBtn.count()) === 0, "e2e tenant page has no Impersonate action");
 
       await impersonateBtn.click();
-      const dialog = page.getByRole("dialog", { name: /^Impersonate / });
+      const dialog = page.getByRole("dialog", { name: /^Sign in as admin for / });
       await expect(dialog).toBeVisible();
       await expect(dialog.getByRole("button", { name: "Cancel" })).toBeFocused();
 

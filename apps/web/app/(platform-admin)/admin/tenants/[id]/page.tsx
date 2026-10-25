@@ -44,6 +44,7 @@ import { ConfigSnapshotsTab } from "./_features/ConfigSnapshotsTab";
 import { TierChangeControl } from "./_features/TierChangeControl";
 import { PreviewDrawer } from "./_features/PreviewDrawer";
 import { previewTenantFeatures } from "@/lib/platform-admin/features";
+import { adminCreatedNote } from "@/lib/platform-admin/admin-created-note";
 import type { FeaturePreviewResponse } from "./_features/types";
 
 const usd = (n: number) =>
@@ -179,6 +180,7 @@ function TenantAdminSection({
   const [createResult, setCreateResult] = React.useState<{
     tempPassword?: string;
     username?: string;
+    emailSent?: boolean;
   } | null>(null);
   const [msg, setMsg] = React.useState<{ type: "success" | "error"; text: string } | null>(null);
 
@@ -247,9 +249,7 @@ function TenantAdminSection({
           <code className="block rounded bg-slate-900 px-3 py-2 font-mono text-sm text-green-400">
             {createResult.tempPassword}
           </code>
-          <p className="mt-2 text-xs text-yellow-500">
-            It was also emailed to the admin. They must change it the first time they sign in.
-          </p>
+          <p className="mt-2 text-xs text-yellow-500">{adminCreatedNote(createResult.emailSent)}</p>
         </div>
       )}
 
@@ -338,7 +338,8 @@ function TenantAdminSection({
                 />
               </div>
               <p className="text-xs text-slate-400">
-                A temporary password will be generated, emailed to the admin, and shown here once.
+                A temporary password will be generated and shown here once. We also try to email it
+                to the admin.
               </p>
               <div className="flex gap-2">
                 <button

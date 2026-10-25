@@ -979,11 +979,11 @@ function ImpersonationBanner() {
       <span>
         {imp.expired ? (
           <>
-            ⚠️ Impersonation of <strong>{imp.slug}</strong> has expired
+            ⚠️ Support session on <strong>{imp.slug}</strong> has expired
           </>
         ) : (
           <>
-            ⚠️ Impersonating <strong>{imp.slug}</strong> — acting as{" "}
+            ⚠️ Support session on <strong>{imp.slug}</strong> — signed in as{" "}
             {imp.username ?? "Tenant Admin"}
           </>
         )}

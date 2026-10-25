@@ -318,7 +318,7 @@ export default function BillingPage() {
             {pastDueCount > 0 && (
               <span className="inline-flex items-center gap-1 rounded-full bg-amber-950/60 px-2 py-0.5 font-medium text-amber-400">
                 <AlertTriangle className="h-3 w-3" />
-                {pastDueCount} past due
+                {pastDueCount} period ended
               </span>
             )}
           </div>

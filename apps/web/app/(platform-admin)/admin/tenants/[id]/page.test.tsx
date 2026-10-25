@@ -475,7 +475,7 @@ describe("Tenant detail page — Impersonate and Extend trial ask first (back of
     await waitFor(() => expect(screen.getAllByText("acme_admin").length).toBeGreaterThan(0));
 
     fireEvent.click(screen.getByRole("button", { name: "Sign in as admin" }));
-    const dialog = await screen.findByRole("dialog", { name: "Impersonate Acme (acme)?" });
+    const dialog = await screen.findByRole("dialog", { name: "Sign in as admin for Acme (acme)?" });
     expect(within(dialog).getByText("acme_admin")).toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveFocus();
     expect(calls(/impersonate$/)).toHaveLength(0);
@@ -487,7 +487,7 @@ describe("Tenant detail page — Impersonate and Extend trial ask first (back of
     // The confirmed request fails (no admin) so jsdom never navigates; only the request is asserted.
     post().mockRejectedValueOnce({ response: { data: { message: "No active TENANT_ADMIN" } } });
     fireEvent.click(screen.getByRole("button", { name: "Sign in as admin" }));
-    const again = await screen.findByRole("dialog", { name: "Impersonate Acme (acme)?" });
+    const again = await screen.findByRole("dialog", { name: "Sign in as admin for Acme (acme)?" });
     fireEvent.click(within(again).getByRole("button", { name: "Sign in as admin" }));
     await waitFor(() => expect(calls(/impersonate$/)).toHaveLength(1));
     expect(calls(/impersonate$/)[0][0]).toBe("/platform-admin/tenants/tenant-1/impersonate");
@@ -504,7 +504,7 @@ describe("Tenant detail page — Impersonate and Extend trial ask first (back of
     await screen.findByText("Quick actions");
     await waitFor(() => expect(screen.getAllByText("acme_admin").length).toBeGreaterThan(0));
     fireEvent.click(screen.getByRole("button", { name: "Sign in as admin" }));
-    const dialog = await screen.findByRole("dialog", { name: "Impersonate Acme (acme)?" });
+    const dialog = await screen.findByRole("dialog", { name: "Sign in as admin for Acme (acme)?" });
     post().mockResolvedValueOnce({
       data: { accessToken: "tok.en.x", impersonatedUser: { username: "acme_admin" } },
     });
