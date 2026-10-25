@@ -8,7 +8,7 @@ import {
   searchSettings,
   splitHighlight,
 } from "./settings-index";
-import { GROUP_META } from "./settings-groups";
+import { GROUP_META, entryCrumb } from "./settings-groups";
 
 /** Settings PR1 (hub + search + rail): groups, new entries, gates, resolving hrefs, search, active row. */
 
@@ -375,4 +375,36 @@ describe("U-1 Units entry (specs/u1-hub-index-entry-note.md; SA: gated on flag.u
       expect(searchSettings(q, buildIndex(on)).some((e) => e.id === "units")).toBe(true);
     },
   );
+});
+
+describe("row 376 apple-ux fixes: the mockup's labels, placement and copy", () => {
+  const label = (id: string) => full.find((e) => e.id === id)?.label;
+
+  it("the rows carry the mockup's labels; the old labels still find them", () => {
+    expect(label("counter-quick-keys")).toBe("Quick keys");
+    expect(label("email-smtp")).toBe("Email sending (SMTP)");
+    expect(searchSettings("counter quick keys", full)[0]?.id).toBe("counter-quick-keys");
+    expect(searchSettings("email (smtp)", full)[0]?.id).toBe("email-smtp");
+  });
+
+  it("Store pickup is an Orders & delivery answer, not a Counter one", () => {
+    const e = full.find((x) => x.id === "info-pos-mode");
+    expect(e?.groupKey).toBe("fulfilment");
+    expect(entryCrumb(e!)).toBe("Orders & delivery › Store pickup");
+  });
+
+  it("the Counter sales answer follows the counter state; the support line shows only when it is off", () => {
+    const answer = (counter: boolean) =>
+      buildIndex({ ...ALL, counter }).find((e) => e.id === "info-counter-sales")?.answer;
+    expect(answer(true)).toMatch(/Counter sales are on/);
+    expect(answer(true)).not.toMatch(/support/i);
+    expect(answer(false)).toMatch(/Ask RouteFlow support/);
+  });
+
+  it("a crumb never repeats its group: Open the Counter reads just Counter", () => {
+    expect(entryCrumb(full.find((e) => e.id === "open-counter")!)).toBe("Counter");
+    expect(entryCrumb(full.find((e) => e.id === "counter-quick-keys")!)).toBe(
+      "Counter › Quick keys",
+    );
+  });
 });

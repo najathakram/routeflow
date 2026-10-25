@@ -63,6 +63,13 @@ export const ROW_ICONS: Record<string, LucideIcon> = {
   gohighlevel: Plug,
 };
 
+/** The breadcrumb a search result shows: "Group › Page", or just the group when the page is the group (no stutter). */
+export function entryCrumb(e: { groupKey: string; page?: string; label: string }): string {
+  const group = GROUP_TITLES[e.groupKey];
+  const tail = e.page ?? e.label;
+  return tail === group ? group : `${group} › ${tail}`;
+}
+
 export const CHIPS: { label: string; href: string }[] = [
   { label: "Invoicing", href: "/settings?tab=invoicing" },
   { label: "User management", href: "/settings?tab=users" },

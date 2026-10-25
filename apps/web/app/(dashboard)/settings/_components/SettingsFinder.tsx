@@ -5,7 +5,7 @@ import Link from "next/link";
 import { ChevronRight, Search as SearchIcon } from "lucide-react";
 import { Button, Card, Input, cn } from "@routeflow/ui/web";
 import { BusinessCard } from "./BusinessCard";
-import { CHIPS, GROUP_META, GROUP_TITLES, ROW_ICONS, type GroupMeta } from "./settings-groups";
+import { CHIPS, GROUP_META, ROW_ICONS, entryCrumb, type GroupMeta } from "./settings-groups";
 import {
   listGroup,
   normalize,
@@ -147,7 +147,7 @@ function ResultRow({
         </span>
       )}
       <span className="block text-[13px] leading-[18px] text-[var(--ink-500)]">
-        {`${GROUP_TITLES[entry.groupKey]} › ${entry.page ?? entry.label}`}
+        {entryCrumb(entry)}
       </span>
     </span>
   );

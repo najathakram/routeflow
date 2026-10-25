@@ -83,12 +83,13 @@ const ENTRIES: IndexEntry[] = [
   {
     id: "counter-quick-keys",
     kind: "item",
-    label: "Counter quick keys",
+    label: "Quick keys",
     desc: "Pin the products you ring up most",
     href: "/orders/counter-sale",
     groupKey: "counter",
     needs: "counter",
-    keywords: ["quick keys", "pins", "shortcuts", "buttons"],
+    // "counter quick keys" was the label before the row-376 regroup (the group now says Counter)
+    keywords: ["quick keys", "counter quick keys", "pins", "shortcuts", "buttons"],
   },
   {
     id: "day-close",
@@ -128,7 +129,7 @@ const ENTRIES: IndexEntry[] = [
     desc: "Ring up a walk-in sale",
     href: "/orders/counter-sale",
     groupKey: "counter",
-    page: "Counter sales",
+    page: "Counter",
     needs: "counter",
     keywords: ["register", "till", "walk-in", "sale"],
   },
@@ -149,7 +150,7 @@ const ENTRIES: IndexEntry[] = [
     desc: "Sell to a named customer and invoice now",
     answer:
       "Turn on Store pickup in the New order window on the Orders screen. It books a named customer and invoices right away.",
-    groupKey: "counter",
+    groupKey: "fulfilment",
     // "pos" / "pos mode" stay: the switch was called POS mode until I-120 (SA-861 rule 10)
     keywords: ["store pickup", "pos", "pos mode", "point of sale", "invoice now", "named customer"],
   },
@@ -307,12 +308,13 @@ const ENTRIES: IndexEntry[] = [
   {
     id: "email-smtp",
     kind: "item",
-    label: "Email (SMTP)",
+    label: "Email sending (SMTP)",
     desc: "Sender identity & delivery settings",
     href: "/settings?tab=email",
     groupKey: "notifications",
     show: "admin",
     keywords: [
+      "email smtp",
       "smtp",
       "sender",
       "from address",
@@ -798,6 +800,9 @@ function card(
   return [{ id, kind: "card", label, desc, href, groupKey, page, keywords, ...extra }];
 }
 
+/** The Counter sales answer when counter sales are on: the support line ("Not there? Ask ...") is only true while they are off. */
+const COUNTER_SALES_ON_ANSWER = "Counter sales are on. Open the Counter from the Orders screen.";
+
 /** Carrier-only (fleet-off) accounts have no drivers: user management must not promise them. */
 const USERS_DESC_NO_FLEET = "Team members, roles, passwords";
 
@@ -864,15 +869,17 @@ export function buildIndex(o: {
     .filter((e) => (e.show === "admin" ? o.isAdmin : e.show === "staff" ? staff : true))
     .filter((e) => (e.needs ? open[e.needs] : true))
     .map((e) =>
-      e.id === "user-management" && !o.fleet
-        ? { ...e, desc: USERS_DESC_NO_FLEET, keywords: e.keywords.filter((k) => k !== "driver") }
-        : e.id === "invoicing" && !o.isAdmin
-          ? {
-              ...e,
-              desc: INVOICING_DESC_NO_NUMBERING,
-              keywords: e.keywords.filter((k) => !NUMBERING_WORDS.has(k)),
-            }
-          : e,
+      e.id === "info-counter-sales" && o.counter
+        ? { ...e, answer: COUNTER_SALES_ON_ANSWER }
+        : e.id === "user-management" && !o.fleet
+          ? { ...e, desc: USERS_DESC_NO_FLEET, keywords: e.keywords.filter((k) => k !== "driver") }
+          : e.id === "invoicing" && !o.isAdmin
+            ? {
+                ...e,
+                desc: INVOICING_DESC_NO_NUMBERING,
+                keywords: e.keywords.filter((k) => !NUMBERING_WORDS.has(k)),
+              }
+            : e,
     );
 }
 

@@ -323,7 +323,7 @@ describe("hub list (below xl)", () => {
     expect(
       within(list).getAllByText("Counter", { selector: "strong, b, mark" }).length,
     ).toBeGreaterThan(0);
-    expect(within(list).getAllByText("Counter › Counter quick keys").length).toBeGreaterThan(0);
+    expect(within(list).getAllByText("Counter › Quick keys").length).toBeGreaterThan(0);
   });
 
   it("the empty state keeps its copy and suggests words", () => {
