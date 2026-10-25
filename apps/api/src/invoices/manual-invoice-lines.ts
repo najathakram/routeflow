@@ -1,3 +1,7 @@
+import { warnLineAmbiguity } from "../common/line-ambiguity-warn";
+
+/** SA-982 PR-2: the census context (tenant + the actor's role) callers of this builder spread into its ctx. */
+export { lineGuardCtx } from "../common/line-ambiguity-warn";
 import { BadRequestException } from "@nestjs/common";
 import { unpackableSplit } from "./update-pack-resolution";
 import type { CreateInvoiceDto } from "./dto/create-invoice.dto";
@@ -46,6 +50,8 @@ export function buildManualInvoiceLines(
     productMap: ReadonlyMap<string, any>;
     categoryMap: ReadonlyMap<string, any>;
     tenantId: string | null | undefined;
+    /** SA-982 PR-2: the actor's role, for the warn census only (absent = logged as unknown). */
+    role?: string | null;
     clampFreeUnits: (free: number | undefined, boxes: number | null, qty: number) => number;
     /** units_v1: `resolveLineUnits` per item, index-aligned with `items` (the caller resolves). */
     resolved?: ReadonlyArray<ResolvedLineUnits>;
@@ -53,7 +59,7 @@ export function buildManualInvoiceLines(
     override?: LineOverrideCtx;
   },
 ) {
-  const { productMap, categoryMap, tenantId, clampFreeUnits, resolved, override } = ctx;
+  const { productMap, categoryMap, tenantId, role, clampFreeUnits, resolved, override } = ctx;
   let subtotal = 0;
   const itemsData = items.map((sent, index) => {
     const product = sent.productId ? productMap.get(sent.productId) : undefined;
@@ -97,6 +103,15 @@ export function buildManualInvoiceLines(
       pieces = Number(item.pieces ?? 0);
       lineSub = roundMoney(Number(item.subtotalSnapshot) - (item.discount ?? 0));
     } else {
+      // SA-982 PR-2 (warn only, the write is unchanged): a NEW line's RAW input is dry-run through buildLine; the census of
+      // what a later flip would refuse is that log. Estimate conversions (a pack snapshot) are not a client's new line.
+      if (item.productId && product && item.packSnapshot == null) {
+        warnLineAmbiguity(
+          "invoices.manual",
+          { ...item, unitsPerBox: product.unitsPerBox },
+          { tenantId, role },
+        );
+      }
       if (item.productId && (item.boxes != null || item.pieces != null)) {
         const pack = item.packSnapshot ?? product?.unitsPerBox;
         // B659 (review finding 7): truthy, not `> 1`, let a pack of 1 through — `normalizeBoxesPieces`

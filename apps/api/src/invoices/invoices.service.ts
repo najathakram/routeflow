@@ -231,7 +231,7 @@ import * as iGate from "./invoice-restriction-gate";
 import { flagSplitRestrictedLines } from "../selling-restrictions/restricted-lines-flag";
 import { defaultSaleFulfilmentKind } from "../orders/default-sale-fulfilment";
 import { assertEditStillJudged } from "./invoice-restriction-lines";
-import { buildManualInvoiceLines } from "./manual-invoice-lines";
+import { buildManualInvoiceLines, lineGuardCtx } from "./manual-invoice-lines";
 import { loadOverride, type ManualInvoiceDto } from "./invoice-line-override";
 import {
   allocateOrderRegularTax,
@@ -472,7 +472,7 @@ export class InvoicesService {
     const { itemsData } = buildManualInvoiceLines(dto.items, {
       productMap,
       categoryMap,
-      tenantId: this.prisma.getTenantId(),
+      ...lineGuardCtx(this.prisma, actor), // tenantId + the actor's role (SA-982 PR-2 census)
       clampFreeUnits: (free, boxes, qty) => this.clampLineFreeUnits(free, boxes, qty),
       resolved,
       override: await loadOverride(this.prisma, dto, unitsByProduct, actor?.sub, this.entitlements),
