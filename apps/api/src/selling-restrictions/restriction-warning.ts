@@ -213,7 +213,9 @@ const isSuperset = (have: readonly string[], need: readonly string[]) =>
 /**
  * W-748 Q2 (SA-958): the historical-import marker is provenance for the IMPORTED quantity only. It never stands in for
  * an override of MORE units: while an edit adds quantity of its product, the marker covers and carries nothing, so the
- * increase is judged like any staff edit (a fresh reason, row 510). A decrease or an unchanged quantity keeps the cover.
+ * increase is judged like any staff edit (a fresh reason, row 510). A decrease or an unchanged quantity keeps the cover
+ * and the marker rides onto a recreated line. An ACKNOWLEDGED raise overwrites the line's stamp columns (reason, by, at,
+ * rule ids) with the staff override, so the "Imported (historical)" reason does not survive it.
  */
 const isImportMarker = (h: HeldLine) =>
   h.restrictionOverrideReason === RESTRICTION_OVERRIDE_IMPORTED_REASON;

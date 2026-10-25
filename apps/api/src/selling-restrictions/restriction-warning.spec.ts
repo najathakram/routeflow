@@ -580,9 +580,21 @@ describe("decideStaffWrite: sticky coverage", () => {
         );
       });
 
-      it("a decrease or an unchanged quantity keeps the import marker's cover", () => {
-        expect(decideStaffWrite(edit(-2, [imported("p1")])).stamps).toEqual([]);
-        expect(decideStaffWrite(edit(0, [imported("p1")])).stamps).toEqual([]);
+      it("a decrease or an unchanged quantity keeps the import marker's cover AND carries the marker onto recreated lines", () => {
+        for (const delta of [-2, 0]) {
+          const d = decideStaffWrite(edit(delta, [imported("p1")]));
+          expect(d.stamps).toEqual([]);
+          // Carried: a decreased-and-recreated imported line keeps its "Imported (historical)" stamp (M3 mutant guard).
+          expect(d.carried).toEqual([
+            {
+              productId: "p1",
+              stamp: expect.objectContaining({
+                restrictionOverrideReason: "Imported (historical)",
+                restrictionOverrideRuleIds: ["r1:CA"],
+              }),
+            },
+          ]);
+        }
       });
 
       it("control: the same increase on a line a STAFF member overrode stays covered (row 510 sticky coverage)", () => {
