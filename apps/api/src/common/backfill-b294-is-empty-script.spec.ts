@@ -19,12 +19,13 @@ describe("backfill-b294 selects by emptiness, never by date", () => {
     const code = `
       import { classifyInvoice } from "${HREF}";
       const lines = ${JSON.stringify(zero)};
-      const at = (createdAt, taxAmount = 7.5) => classifyInvoice({ subtotal: 100, taxAmount, createdAt }, lines);
+      const at = (createdAt, taxAmount = 7.5, subtotal = 100) => classifyInvoice({ subtotal, taxAmount, createdAt }, lines);
       console.log(JSON.stringify({
         old: at("2026-09-01T00:00:00Z"),
         afterFix: at("2026-10-01T00:00:00Z"),
         future: at("2030-01-01T00:00:00Z"),
-        unverified: at("2026-10-01T00:00:00Z", 7.33),
+        unverified: at("2026-09-01T00:00:00Z", 7.33, 100000), // pre-fix, and 7.33 on 100000 has no rate that reproduces it
+        unverifiedAfterFix: at("2026-10-01T00:00:00Z", 7.33, 100000),
       }));
     `;
     const res = spawnSync(process.execPath, ["--input-type=module", "-e", code], {
@@ -45,7 +46,25 @@ describe("backfill-b294 selects by emptiness, never by date", () => {
   });
 
   it("an unverifiable rate is REVIEW whatever the date (the proof, not the date, is the classifier)", () => {
-    expect(out.unverified).toMatchObject({ kind: "REVIEW" });
+    expect(out.unverified).toMatchObject({
+      kind: "REVIEW",
+      reason: "rate does not reproduce the tax to the cent",
+    });
+  });
+
+  it("an unverifiable rate after the fix is REVIEW for the proof, not counted as post-fix", () => {
+    expect(out.unverifiedAfterFix).toMatchObject({
+      kind: "REVIEW",
+      reason: "rate does not reproduce the tax to the cent",
+    });
+  });
+
+  it("the creation source labels an estimate conversion, a missing Order and an order's own source apart", () => {
+    const src = readFileSync(SCRIPT, "utf8");
+    const frag = /export const CREATION_SOURCE_SQL = `([\s\S]*?)`;/.exec(src)?.[1] ?? "";
+    expect(frag).toContain("ESTIMATE_CONVERSION");
+    expect(frag).toContain("ORDER_MISSING");
+    expect(frag).not.toContain("COALESCE");
   });
 
   it("the dry run counts post-fix lines per tenant id and per creation source", () => {

@@ -49,7 +49,13 @@ describeDb("backfill-b294-order-line-taxrate.mjs, real Postgres", () => {
 
   const makeInvoice = async (
     key: string,
-    over: { createdAt?: Date; status?: string; taxRate?: number; taxAmount?: number } = {},
+    over: {
+      createdAt?: Date;
+      status?: string;
+      taxRate?: number;
+      taxAmount?: number;
+      subtotal?: number;
+    } = {},
   ) => {
     const taxAmount = over.taxAmount ?? 7.5;
     const invoice = await prisma.invoice.create({
@@ -59,9 +65,9 @@ describeDb("backfill-b294-order-line-taxrate.mjs, real Postgres", () => {
         orderId,
         invoiceNumber: `INV-B294-${RUN}-${key}`,
         status: (over.status ?? "SENT") as any,
-        subtotal: 100,
+        subtotal: over.subtotal ?? 100,
         taxAmount,
-        total: 100 + taxAmount,
+        total: (over.subtotal ?? 100) + taxAmount,
         ...(over.createdAt ? { createdAt: over.createdAt } : {}),
       } as any,
     });
@@ -135,7 +141,11 @@ describeDb("backfill-b294-order-line-taxrate.mjs, real Postgres", () => {
     await makeInvoice("postfix"); // created now: after the stamping fix, lines still all 0
     await makeInvoice("rated", { taxRate: 0.075 }); // not empty
     await makeInvoice("void", { status: "VOID" }); // never touched
-    await makeInvoice("unverified", { taxAmount: 7.33 }); // 7.33 on 100 reproduces at 7.33%, created now -> held as post-fix like "postfix"
+    await makeInvoice("unverified", {
+      subtotal: 100000,
+      taxAmount: 7.33,
+      createdAt: new Date("2026-09-01T00:00:00Z"),
+    }); // pre-fix, and no rate reproduces 7.33 on 100000 -> REVIEW (not post-fix)
   }, 120_000);
 
   afterAll(async () => {
@@ -159,8 +169,11 @@ describeDb("backfill-b294-order-line-taxrate.mjs, real Postgres", () => {
     expect(mine.map((a) => a.invoiceId)).toEqual([inv.old]);
     expect(review.find((r) => r.invoiceId === inv.postfix)?.reason).toBe("post-fix");
     expect(out).toMatch(/REVIEW post-fix: \d+ verified all-zero/);
-    expect(out).toContain(`by tenant id ${tenantId}: 2`); // "postfix" and "unverified" (7.33 on 100 is a provable rate, created now)
+    expect(out).toContain(`by tenant id ${tenantId}: 1`); // only "postfix": "unverified" is REVIEW for the proof, not post-fix
     expect(out).toMatch(/by creation source APP: \d+/);
+    expect(review.find((r) => r.invoiceId === inv.unverified)?.reason).toBe(
+      "rate does not reproduce the tax to the cent",
+    );
     expect(mine.every((a) => a.rate === 0.075)).toBe(true);
     expect(await Promise.all(Object.keys(inv).map(snapshot))).toEqual(before);
     for (const k of Object.keys(inv)) expect(await rateOf(k)).toBe(k === "rated" ? 0.075 : 0);
@@ -199,4 +212,22 @@ describeDb("backfill-b294-order-line-taxrate.mjs, real Postgres", () => {
     expect(mine).toEqual([]);
     expect(await rateOf("old")).toBe(0.075);
   }, 90_000);
+
+  it("the creation-source label tells an estimate conversion, a missing Order and an order's own source apart", async () => {
+    const frag =
+      /export const CREATION_SOURCE_SQL = `([\s\S]*?)`;/.exec(readFileSync(CLI, "utf8"))?.[1] ?? "";
+    const { rows } = await pool.query(
+      `SELECT i.k, ${frag} AS label
+         FROM (VALUES ('estimate', NULL::text), ('gone', 'no-such-order'), ('app', 'ord-app')) AS i(k, "orderId")
+         LEFT JOIN (VALUES ('ord-app', 'APP'::text)) AS o(id, source) ON o.id = i."orderId"
+        ORDER BY i.k`,
+    );
+    expect(
+      Object.fromEntries(rows.map((r: { k: string; label: string }) => [r.k, r.label])),
+    ).toEqual({
+      app: "APP",
+      estimate: "ESTIMATE_CONVERSION",
+      gone: "ORDER_MISSING",
+    });
+  });
 });

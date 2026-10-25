@@ -244,9 +244,16 @@ export function verifyPlanFile(saved, confirmPlan) {
   return sha256(plan) === confirmPlan && saved.planHash === confirmPlan ? plan : null;
 }
 
+/**
+ * Where an invoice came from, for the post-fix count (SA-960): no orderId = an estimate conversion (the selection needs an
+ * order or an estimate); an orderId whose Order row is gone = ORDER_MISSING (counted under its own label, never folded
+ * into the estimate bucket); otherwise the order's own source. Aliases: `i` = Invoice, `o` = the LEFT JOINed Order.
+ */
+export const CREATION_SOURCE_SQL = `CASE WHEN i."orderId" IS NULL THEN 'ESTIMATE_CONVERSION' WHEN o.id IS NULL THEN 'ORDER_MISSING' ELSE o.source::text END`;
+
 const DERIVED_INVOICES_SQL = `
   SELECT i.id, i."tenantId", i.subtotal, i."taxAmount", i."createdAt", i."updatedAt",
-         COALESCE(o.source::text, 'ESTIMATE_CONVERSION') AS "creationSource"
+         ${CREATION_SOURCE_SQL} AS "creationSource"
   FROM "Invoice" i
   LEFT JOIN "Order" o ON o.id = i."orderId"
   WHERE i.status <> 'VOID'
