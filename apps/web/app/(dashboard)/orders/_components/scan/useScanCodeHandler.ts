@@ -45,11 +45,8 @@ export { SCAN_LOOKUP_TIMEOUT_MS };
 
 /** An axios request that hit its own deadline (`timeout`), not a dropped connection. */
 const isLookupTimeout = (err: unknown): boolean => {
-  const e = err as { response?: unknown; code?: string; message?: string } | null | undefined;
-  return (
-    !e?.response &&
-    (e?.code === "ECONNABORTED" || /timeout of \d+ms exceeded/i.test(e?.message ?? ""))
-  );
+  const e = err as { response?: unknown; code?: string } | null | undefined;
+  return !e?.response && (e?.code === "ECONNABORTED" || e?.code === "ETIMEDOUT");
 };
 
 export function isConnectivityError(err: unknown): boolean {
