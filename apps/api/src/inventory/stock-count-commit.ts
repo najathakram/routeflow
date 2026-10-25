@@ -114,8 +114,25 @@ export interface StockCountCommitOutcome {
   skippedProducts?: StockCountSkippedProduct[];
 }
 
+/**
+ * The reserved head of every count movement reference. Both commit paths read "a movement with this
+ * reference exists" as "already committed" (B640), so no free-text input may ever start with it.
+ */
+export const STOCK_COUNT_REFERENCE_PREFIX = "STOCK_COUNT-" as const;
+
 /** The `StockMovement.reference` of every movement a count session writes (also its movementReference). */
-export const stockCountReference = (sessionId: string): string => `STOCK_COUNT-${sessionId}`;
+export const stockCountReference = (sessionId: string): string =>
+  `${STOCK_COUNT_REFERENCE_PREFIX}${sessionId}`;
+
+/**
+ * `GET stock-counts/:id/progress`: a few hundred bytes the page polls while a long seed or commit runs
+ * (the full detail is about 1 MB at 3.4k lines). `commit` is null until a movement of the count exists.
+ */
+export interface StockCountProgress {
+  status: "OPEN" | "REVIEW" | "COMMITTED" | "DISCARDED";
+  lineCount: number;
+  commit: StockCountCommitProgress | null;
+}
 
 /**
  * One product that is already on another OPEN / REVIEW count (SA-767 r-note 5 SA-3). `sessionName` is

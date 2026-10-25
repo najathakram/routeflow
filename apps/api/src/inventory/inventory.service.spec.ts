@@ -1523,7 +1523,7 @@ describe("InventoryService", () => {
 
       await service.startStockCountSession({ amendsSessionId: "old" }, { sub: "user-1" });
 
-      const seeded = prisma.stockCountLine.create.mock.calls[0][0].data;
+      const seeded = prisma.stockCountLine.createMany.mock.calls[0][0].data[0];
       expect(Number(seeded.expectedQty)).toBe(6); // today's on-hand, not the stale 10
       expect(Number(seeded.countedQty)).toBe(7); // the prior count is pre-filled
     });
