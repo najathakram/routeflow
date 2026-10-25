@@ -152,8 +152,29 @@ describe("buyer order edit revision guard (row 380)", () => {
     expect(screen.queryByRole("button", { name: /^cancel$/i })).toBeNull();
     expect(reload).toHaveClass("w-full", "min-h-[44px]");
     const notice = screen.getByRole("alert");
-    expect(notice).toHaveClass("bg-warning-bg", "text-warning");
+    expect(notice).toHaveClass("bg-warning-bg", "text-amber-900"); // 8.15:1 on #fef3c7 (text-warning is 2.86:1)
     expect(notice).not.toHaveClass("bg-danger-bg");
+  });
+
+  it("while the order is stale the steppers, delete and product search are inert", async () => {
+    mockUpdateItems.mockRejectedValueOnce({
+      response: { status: 409, data: { code: "ORDER_REVISION_STALE" } },
+    });
+    mockOrder = order(4);
+    renderWithProviders(<BuyerOrderDetailPage />);
+    fireEvent.click(screen.getByRole("button", { name: /edit items/i }));
+    expect(screen.getByTitle("Remove item")).toBeEnabled();
+    expect(screen.getByRole("spinbutton")).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: /save changes/i }));
+    await screen.findByRole("button", { name: "Reload order" });
+    expect(screen.getByTitle("Remove item")).toBeDisabled();
+    expect(screen.getByRole("spinbutton")).toBeDisabled();
+    expect(screen.getByPlaceholderText(/search products to add/i)).toBeDisabled();
+    const stepButtons = screen
+      .getAllByRole("button")
+      .filter((b) => b.querySelector("svg.lucide-minus, svg.lucide-plus"));
+    expect(stepButtons).toHaveLength(2);
+    stepButtons.forEach((b) => expect(b).toBeDisabled());
   });
 
   it("an order that sent no revision sends none", async () => {

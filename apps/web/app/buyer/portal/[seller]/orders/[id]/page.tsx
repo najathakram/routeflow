@@ -861,7 +861,7 @@ export default function BuyerOrderDetailPage() {
           role="alert"
           className={
             stale
-              ? "mb-4 flex flex-wrap items-center gap-2 rounded-lg bg-warning-bg px-4 py-2.5 text-sm text-warning"
+              ? "mb-4 flex flex-wrap items-center gap-2 rounded-lg bg-warning-bg px-4 py-2.5 text-sm text-amber-900"
               : "mb-4 flex items-center gap-2 rounded-lg bg-danger-bg px-4 py-2.5 text-sm text-danger"
           }
         >
@@ -970,6 +970,7 @@ export default function BuyerOrderDetailPage() {
                             }
                             className="rounded p-1 text-danger/40 hover:bg-danger-bg hover:text-danger transition-colors"
                             title="Remove item"
+                            disabled={stale}
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
@@ -994,7 +995,8 @@ export default function BuyerOrderDetailPage() {
                                 ),
                               )
                             }
-                            className="rounded p-1 text-navy/70 hover:bg-surface-raised hover:text-navy"
+                            disabled={stale}
+                            className="rounded p-1 text-navy/70 hover:bg-surface-raised hover:text-navy disabled:opacity-40"
                           >
                             <Minus className="h-3.5 w-3.5" />
                           </button>
@@ -1010,7 +1012,8 @@ export default function BuyerOrderDetailPage() {
                                 ),
                               );
                             }}
-                            className="w-14 rounded border border-surface-border bg-white px-2 py-1 text-center text-sm text-navy"
+                            disabled={stale}
+                            className="w-14 rounded border border-surface-border bg-white px-2 py-1 text-center text-sm text-navy disabled:opacity-40"
                           />
                           <button
                             onClick={() =>
@@ -1020,7 +1023,8 @@ export default function BuyerOrderDetailPage() {
                                 ),
                               )
                             }
-                            className="rounded p-1 text-navy/70 hover:bg-surface-raised hover:text-navy"
+                            disabled={stale}
+                            className="rounded p-1 text-navy/70 hover:bg-surface-raised hover:text-navy disabled:opacity-40"
                           >
                             <Plus className="h-3.5 w-3.5" />
                           </button>
@@ -1126,8 +1130,9 @@ export default function BuyerOrderDetailPage() {
                 type="text"
                 value={addSearch}
                 onChange={(e) => setAddSearch(e.target.value)}
+                disabled={stale}
                 placeholder="Search products to add by name, SKU or barcode…"
-                className="w-full rounded-lg border border-surface-border bg-white py-2 pl-10 pr-4 text-sm text-navy placeholder:text-navy/70 focus:border-buyer-300 focus:outline-none focus:ring-1 focus:ring-buyer-200"
+                className="w-full disabled:opacity-40 rounded-lg border border-surface-border bg-white py-2 pl-10 pr-4 text-sm text-navy placeholder:text-navy/70 focus:border-buyer-300 focus:outline-none focus:ring-1 focus:ring-buyer-200"
               />
             </div>
             {showProductSearch && searchResults?.data && searchResults.data.length > 0 && (
