@@ -228,6 +228,7 @@ import { UNVOID_REFUSAL_COPY, assertUnvoidOrderNotCancelled } from "./unvoid-bil
 import { NumberingService } from "../import/numbering.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import * as iGate from "./invoice-restriction-gate";
+import * as uGate from "./invoice-unvoid-gate";
 import { flagSplitRestrictedLines } from "../selling-restrictions/restricted-lines-flag";
 import { defaultSaleFulfilmentKind } from "../orders/default-sale-fulfilment";
 import { assertEditStillJudged } from "./invoice-restriction-lines";
@@ -4142,13 +4143,19 @@ export class InvoicesService {
     return reverted;
   }
 
-  async unvoidInvoice(id: string) {
+  async unvoidInvoice(id: string, actor?: JwtPayload, ack?: iGate.Ack) {
     const inv = await this.findOneOrThrow(id);
     if (inv.status !== InvoiceStatus.VOID) {
       throw new BadRequestException(
         `Only VOID invoices can be unvoided. Current status: ${inv.status}`,
       );
     }
+    // Row 460 (SA-272): unvoid is a new sale of the whole invoice: every line judged (STAFF) before any write.
+    const gate = await uGate.unvoidParams(this.prisma, inv, actor, ack);
+    const restriction = await this.sellingRestrictions.assertLinesSellable({
+      ...gate.params,
+      channel: "STAFF",
+    });
     // Voiding RELEASED this invoice's invoicedQty back to the order; bringing it
     // back to DRAFT re-claims that qty so a later invoice can't double-bill the
     // same lines, and re-books the regulated ledger (SA-839 / B706). Atomic with the status flip.
@@ -4161,6 +4168,8 @@ export class InvoicesService {
           message: "The invoice changed while it was being restored. Refresh and try again.",
         });
       await assertUnvoidOrderNotCancelled(tx, inv.orderId); // B693: 409 before any write
+      const held = await uGate.lockedUnvoidHeld(tx, id, gate.judged); // row 460: the judged lines, under the lock
+      const overridden = restriction?.recheck(held);
       // B299 / SA-814 R4-5: the re-claim runs FIRST and is not clamped - if another invoice now bills these
       // goods (or the line is CANCELLED) it throws 409 ORDER_BILLING_CHANGED before the status flip writes.
       await this.adjustInvoicedQtyForInvoice(tx, id, inv.orderId, 1);
@@ -4168,6 +4177,7 @@ export class InvoicesService {
         where: { id },
         data: { status: InvoiceStatus.DRAFT },
       });
+      await overridden?.stamp(tx, id); // row 460: the staff override of a restricted line
       // SA-839 F2 (B706): re-book from the items read in this tx, in the UNVOID's period (§3); the void's
       // rows stay. `amendedPeriod` (never a refusal): the void sat in a FILED month (SA-182 shape).
       const items = await tx.invoiceItem.findMany({ where: { invoiceId: id } });
