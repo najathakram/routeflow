@@ -87,7 +87,7 @@ export class BuyerService {
       // reconnected into a portal the seller-context guard refuses. Stateless: restore re-enables it.
       where: { inviteToken: token, customer: { deletedAt: null } },
       include: {
-        tenant: { select: { id: true, name: true, slug: true } },
+        tenant: { select: { id: true, name: true, slug: true, status: true } },
       },
     });
     if (!link) throw new NotFoundException("Invite not found or already used");
@@ -101,6 +101,16 @@ export class BuyerService {
     if (link.status !== "INVITED" && link.status !== "PENDING_SELLER_APPROVAL") {
       throw new ConflictException("This invite has already been used");
     }
+    // Row 397: the preview follows the seller's workspace status through the SAME rule the accept uses (SA-776 GAP-2,
+    // seller-status-gate.ts), so a suspended / cancelled / read-only seller's invite is not shown as valid and then refused
+    // on accept: the buyer is told up front the business can't take new buyers right now.
+    const verdict = sellerAcceptsBuyerWrite({
+      sellerStatus: link.tenant.status,
+      sellerId: link.tenantId,
+      logger: this.logger,
+      context: "GET /api/v1/buyer/invites/:token/details",
+    });
+    if (!verdict.allowed) throw sellerUnavailableException();
 
     const tenantConfig = await this.prisma.tenantConfig.findFirst({
       where: { tenantId: link.tenantId },

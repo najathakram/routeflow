@@ -8,6 +8,7 @@ import { AuthShell } from "@/components/auth";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import { getInviteDetails, acceptInvite, getBuyerAccessToken } from "@/lib/buyer-auth";
 import { isInShell } from "@/lib/in-shell";
+import { isSellerUnavailableRefusal, sellerUnavailableCopy } from "@/lib/seller-unavailable";
 
 // ─── Inline Google icon (no external requests) ────────────────────────────────
 function GoogleIcon({ className }: { className?: string }) {
@@ -47,6 +48,8 @@ export default function BuyerInvitePage() {
 
   const [invite, setInvite] = React.useState<InviteDetails | null>(null);
   const [loadError, setLoadError] = React.useState<string | null>(null);
+  // Row 397: the seller is paused (suspended / cancelled / read-only): not an "invalid" invite, a not-right-now one.
+  const [sellerPaused, setSellerPaused] = React.useState(false);
   const [isLoadingInvite, setIsLoadingInvite] = React.useState(true);
   const [isAccepting, setIsAccepting] = React.useState(false);
   const [accepted, setAccepted] = React.useState(false);
@@ -63,6 +66,11 @@ export default function BuyerInvitePage() {
         setInvite(data);
       })
       .catch((err) => {
+        if (isSellerUnavailableRefusal(err)) {
+          setSellerPaused(true);
+          setLoadError(sellerUnavailableCopy(null));
+          return;
+        }
         const msg =
           (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
           "This invite link is invalid or has expired.";
@@ -146,7 +154,9 @@ export default function BuyerInvitePage() {
     isLoadingInvite || authLoading
       ? "You're invited."
       : loadError
-        ? "Invalid invite"
+        ? sellerPaused
+          ? "Not available right now"
+          : "Invalid invite"
         : accepted
           ? "Invite accepted"
           : "You're invited.";

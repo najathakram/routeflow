@@ -101,6 +101,58 @@ describe("buyer account-level link writes follow the seller's workspace status",
     });
   });
 
+  describe("GET invites/:token/details (getInviteDetails, row 397)", () => {
+    // The preview says it UP FRONT: the same rule, the same 403 SELLER_UNAVAILABLE, as the accept it leads to.
+    const setup = (sellerStatus: string) => {
+      prisma.customerLink.findUnique.mockResolvedValue({
+        id: "link-1",
+        tenantId: "tn-1",
+        status: "INVITED",
+        inviteToken: "tok",
+        inviteExpiresAt: null,
+        inviteMethod: "EMAIL",
+        tenant: { id: "tn-1", name: "Acme Foods", slug: "acme-foods", status: sellerStatus },
+      } as any);
+    };
+
+    it.each(["SUSPENDED", "CANCELLED"])(
+      "%s seller: the preview is 403 SELLER_UNAVAILABLE, not a valid-looking invite",
+      async (status) => {
+        setup(status);
+        const err: any = await service.getInviteDetails("tok").catch((e) => e);
+        expect(err).toBeInstanceOf(ForbiddenException);
+        expect(err.getResponse()).toMatchObject({ code: "SELLER_UNAVAILABLE" });
+      },
+    );
+
+    it("READ_ONLY seller + gate enforced: 403 SELLER_UNAVAILABLE", async () => {
+      process.env.SELLER_READ_ONLY_BUYER_GATE = "enforced";
+      setup("READ_ONLY");
+      const err: any = await service.getInviteDetails("tok").catch((e) => e);
+      expect(err).toBeInstanceOf(ForbiddenException);
+      expect(err.getResponse()).toMatchObject({ code: "SELLER_UNAVAILABLE" });
+    });
+
+    it("READ_ONLY seller + gate dark (the explicit rollback): the preview is shown, one would-deny line is logged", async () => {
+      process.env.SELLER_READ_ONLY_BUYER_GATE = "dark";
+      setup("READ_ONLY");
+      await expect(service.getInviteDetails("tok")).resolves.toMatchObject({
+        sellerSlug: "acme-foods",
+      });
+      expect(wouldDeny()).toHaveLength(1);
+    });
+
+    it.each(["ACTIVE", "TRIAL"])("%s seller: the preview is shown as before", async (status) => {
+      process.env.SELLER_READ_ONLY_BUYER_GATE = "enforced";
+      setup(status);
+      await expect(service.getInviteDetails("tok")).resolves.toMatchObject({
+        sellerName: "Acme Foods",
+        sellerSlug: "acme-foods",
+      });
+      expect(wouldDeny()).toHaveLength(0);
+    });
+  });
+
   describe("POST sellers/request (requestSeller)", () => {
     const setup = (sellerStatus: string) => {
       prisma.buyerAccount.findUnique.mockResolvedValue({
