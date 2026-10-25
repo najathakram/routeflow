@@ -1476,6 +1476,39 @@ check(
     [true, true, true, 1],
   );
 }
+{
+  // L5: a malformed slots file never throws out of the reader (it would reject every waiter and status).
+  const dir = mkTmp();
+  const f = path.join(dir, "slots");
+  const bytes = Buffer.from([0xfe, 0xff, 0x00, 0x34, 0x0a]); // UTF-16 BE BOM + odd-length body
+  writeFileSync(f, bytes);
+  let threw = null;
+  let r = null;
+  try {
+    r = inspectSlotsFile(dir);
+  } catch (e) {
+    threw = e.message;
+  }
+  check("L5 odd-length UTF-16 BE is invalid, not a throw", [threw, r?.state], [null, "invalid"]);
+  let thrown = 0;
+  let rng = 12345;
+  const rnd = () => (rng = (rng * 1103515245 + 12345) & 0x7fffffff);
+  const heads = [[], [0xff, 0xfe], [0xfe, 0xff], [0xef, 0xbb, 0xbf]];
+  for (let i = 0; i < 400; i++) {
+    const n = rnd() % 9;
+    const body = Array.from({ length: n }, () => rnd() & 0xff);
+    const b = i % 2 ? Buffer.from([...heads[rnd() % 4], ...body.slice(0, 8)]) : Buffer.from(body);
+    writeFileSync(f, b);
+    try {
+      inspectSlotsFile(dir);
+      readSlotsFile(dir);
+      formatStatus(dir);
+    } catch {
+      thrown++;
+    }
+  }
+  check("L5b fuzz: 400 files of 0-8 random bytes (with/without BOMs) never throw", thrown, 0);
+}
 
 for (const d of tmpDirs) rmSync(d, { recursive: true, force: true });
 console.log(`heavy-slot self-test: ${passed} passed, ${failures} failed`);

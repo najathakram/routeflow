@@ -60,12 +60,18 @@ export function parseSlots(raw) {
 /** Largest slot count the machine-wide slots file may set; a bigger number is a typo, not a plan. */
 export const MAX_SLOTS_FILE = 16;
 
-/** Decode a slots file's bytes: UTF-8 (BOM allowed) or UTF-16 LE/BE with a BOM (PowerShell 5.1 `echo 4 > slots`). */
+/**
+ * Decode a slots file's bytes: UTF-8 (BOM allowed) or UTF-16 LE/BE with a BOM (PowerShell 5.1 `echo 4 > slots`).
+ * Returns null for a UTF-16 body with an odd byte count (a torn or foreign file), never throws on its own.
+ */
 function decodeSlotsBytes(buf) {
-  if (buf.length >= 2 && buf[0] === 0xff && buf[1] === 0xfe)
-    return buf.subarray(2).toString("utf16le");
-  if (buf.length >= 2 && buf[0] === 0xfe && buf[1] === 0xff)
-    return Buffer.from(buf.subarray(2)).swap16().toString("utf16le");
+  const le = buf.length >= 2 && buf[0] === 0xff && buf[1] === 0xfe;
+  const be = buf.length >= 2 && buf[0] === 0xfe && buf[1] === 0xff;
+  if (le || be) {
+    const body = buf.subarray(2);
+    if (body.length % 2 !== 0) return null;
+    return le ? body.toString("utf16le") : Buffer.from(body).swap16().toString("utf16le");
+  }
   if (buf.length >= 3 && buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf)
     return buf.subarray(3).toString("utf8");
   return buf.toString("utf8");
@@ -83,7 +89,17 @@ export function inspectSlotsFile(dir) {
   } catch {
     return { state: "absent" };
   }
-  const raw = decodeSlotsBytes(buf).trim();
+  let raw;
+  try {
+    const text = decodeSlotsBytes(buf);
+    if (text === null) return { state: "invalid", reason: "UTF-16 body has an odd byte count" };
+    raw = text.trim();
+  } catch (e) {
+    return {
+      state: "invalid",
+      reason: `unreadable: ${e instanceof Error ? e.message : "decode error"}`,
+    };
+  }
   if (!/^[0-9]+$/.test(raw)) {
     return {
       state: "invalid",
