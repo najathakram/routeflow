@@ -82,7 +82,7 @@ describeDb("tenant unit backfill (U-6)", () => {
     url = requireLocalDatabaseUrl();
     pool = new Pool({ connectionString: url });
     prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
-    for (const k of ["a", "ctl", "p", "edit", "arch", "pk", "cap", "over", "key", "lock"]) {
+    for (const k of ["a", "ctl", "p", "edit", "arch", "pk", "cap", "over", "key", "lock", "ez"]) {
       ids[k] = (await prisma.tenant.create({ data: { slug: slug(k), name: `u6 ${k}` } })).id;
     }
     // Tenant A: casing "Case" wins 2:1, a synonym level, a too-long level, legacy words.
@@ -244,6 +244,32 @@ describeDb("tenant unit backfill (U-6)", () => {
     expect(r.stdout).toContain("tenantUnits created=0 existing=8");
     expect(r.stdout).toContain("productUnits linked=0 parentFilled=0");
     expect(await snapshot(ids.a)).toBe(before);
+  });
+
+  it("--expect-zero: exit 3 while a re-run still plans rows, exit 0 after --apply; read-only (SA-984 §3)", async () => {
+    const t = ids.ez;
+    await product(t, "z1", "Case", [
+      ["Piece", 1],
+      ["Case", 12],
+    ]);
+    const before = await snapshot(t);
+    const fail = cli(t, "--expect-zero");
+    expect(fail.status).toBe(3);
+    expect(fail.stdout).toContain("MODE: dry-run");
+    expect(fail.stdout).toMatch(/Expect-zero: FAIL created=1 linked=1 parentFilled=1 /);
+    expect(fail.stdout).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}/);
+    expect(await snapshot(t)).toBe(before); // the check wrote nothing
+
+    // read-only: the flag is refused together with --apply, and nothing is written
+    const both = cli(t, "--apply", "--expect-zero");
+    expect(both.status).toBe(1);
+    expect(both.stderr).toContain("read-only check");
+    expect(await snapshot(t)).toBe(before);
+
+    expect(cli(t, "--apply").status).toBe(0);
+    const ok = cli(t, "--expect-zero");
+    expect(ok.status).toBe(0);
+    expect(ok.stdout).toContain("Expect-zero: OK (0/0/0)");
   });
 
   it("a protected tenant is refused --apply without the override, and nothing is written (M3)", async () => {

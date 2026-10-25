@@ -29,6 +29,7 @@ function helpers(): Record<string, unknown> {
     import * as m from ${JSON.stringify(pathToFileURL(SCRIPT).href)};
     const tryIt = (f) => { try { f(); return "ok"; } catch (e) { return e.message; } };
     const a = { liveOverride: false, backupTaken: false };
+    const ez = (c) => typeof m.expectZeroResult === "function" ? m.expectZeroResult(c) : "expectZeroResult is not exported";
     console.log(JSON.stringify({
       testTenant: tryIt(() => m.assertLiveApplyAllowed(a, true)),
       liveBare: tryIt(() => m.assertLiveApplyAllowed(a, false)),
@@ -43,6 +44,14 @@ function helpers(): Record<string, unknown> {
       skips: m.parentSkipLines([{ reason: "b" }, { reason: "a" }, { reason: "b" }]),
       pieceRows: m.explicitPieceLines([{ label: "Case" }, { label: " Box " }, { label: "Case" }]),
       pieceNone: m.explicitPieceLines([]),
+      expectZeroDefault: m.parseArgs(["--tenant", ${JSON.stringify(ID)}]).expectZero,
+      expectZeroFlag: m.parseArgs(["--tenant", ${JSON.stringify(ID)}, "--local", "--expect-zero"]).expectZero,
+      expectZeroApply: tryIt(() => m.parseArgs(["--tenant", ${JSON.stringify(ID)}, "--apply", "--expect-zero"])),
+      zeroAll: ez({ tenantUnitsCreated: 0, productUnitsLinked: 0, productUnitsParentFilled: 0 }),
+      zeroCreated: ez({ tenantUnitsCreated: 2, productUnitsLinked: 0, productUnitsParentFilled: 0 }),
+      zeroLinked: ez({ tenantUnitsCreated: 0, productUnitsLinked: 5, productUnitsParentFilled: 0 }),
+      zeroParent: ez({ tenantUnitsCreated: 0, productUnitsLinked: 0, productUnitsParentFilled: 7 }),
+      zeroMissing: ez({}),
     }));`;
   const r = spawnSync(process.execPath, ["--input-type=module", "-e", src], { encoding: "utf8" });
   if (r.status !== 0) throw new Error(r.stderr);
@@ -85,6 +94,80 @@ describe("backfill-tenant-units.mjs gates (U-6, SA M3)", () => {
     const r = run(["--tenant", ID], { DATABASE_URL: "postgresql://u:p@localhost:5432/db" });
     expect(r.status).toBe(1);
     expect(r.stderr).toContain("Missing Railway proxy variables");
+  });
+
+  it("--expect-zero with --apply is refused before any connection (exit 1)", () => {
+    for (const args of [
+      ["--tenant", ID, "--local", "--apply", "--expect-zero"],
+      ["--tenant", ID, "--expect-zero", "--apply"],
+    ]) {
+      const r = run(args);
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain(
+        "--expect-zero is a read-only check; do not combine it with --apply",
+      );
+    }
+  });
+
+  it("--expect-zero alone passes the argument gate (it stops later, at the target decision)", () => {
+    const r = run(["--tenant", ID, "--local", "--expect-zero"]);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("--local requires DATABASE_URL");
+  });
+
+  describe("--expect-zero (SA-984 §3)", () => {
+    const h = helpers();
+
+    it("parseArgs returns expectZero true only when the flag is given", () => {
+      expect(h.expectZeroDefault).toBe(false);
+      expect(h.expectZeroFlag).toBe(true);
+    });
+
+    it("parseArgs refuses --expect-zero together with --apply", () => {
+      expect(h.expectZeroApply).toBe(
+        "--expect-zero is a read-only check; do not combine it with --apply",
+      );
+    });
+
+    it("all three counts 0: ok, exit 0, the OK line", () => {
+      expect(h.zeroAll).toEqual({ ok: true, line: "Expect-zero: OK (0/0/0)", exitCode: 0 });
+    });
+
+    it("created > 0 alone: exit 3 with the counts", () => {
+      expect(h.zeroCreated).toEqual({
+        ok: false,
+        line: "Expect-zero: FAIL created=2 linked=0 parentFilled=0 (a re-run still plans rows)",
+        exitCode: 3,
+      });
+    });
+
+    it("linked > 0 alone: exit 3 with the counts", () => {
+      expect(h.zeroLinked).toEqual({
+        ok: false,
+        line: "Expect-zero: FAIL created=0 linked=5 parentFilled=0 (a re-run still plans rows)",
+        exitCode: 3,
+      });
+    });
+
+    it("parentFilled > 0 alone: exit 3 with the counts", () => {
+      expect(h.zeroParent).toEqual({
+        ok: false,
+        line: "Expect-zero: FAIL created=0 linked=0 parentFilled=7 (a re-run still plans rows)",
+        exitCode: 3,
+      });
+    });
+
+    it("a missing count never reads as zero (fails closed)", () => {
+      expect((h.zeroMissing as { exitCode: number }).exitCode).toBe(3);
+    });
+
+    it("exit 3 is set after the dry-run output and is never overwritten to 0; a real error stays 1", () => {
+      const src = readFileSync(SCRIPT, "utf8");
+      const set = src.indexOf("process.exitCode = check.exitCode");
+      expect(set).toBeGreaterThan(src.indexOf('"Dry run only; pass --apply to write."'));
+      expect(src.match(/process\.exitCode = 0/g)).toBeNull();
+      expect(src).toContain("process.exitCode = 1;");
+    });
   });
 
   describe("dry run is the default (SA-810 c)", () => {

@@ -47,6 +47,14 @@
 //   ... --local --tenant <id> --apply
 //   railway run --service postgres node apps/api/scripts/backfill-tenant-units.mjs --tenant <id>
 //   ... --tenant <id> --apply --live-tenant-override --backup-taken [--allow-protected <id>]
+//   ... --local --tenant <id> --expect-zero      (SA-984 §3: the read-only re-run check)
+//
+// --expect-zero: runs the normal dry run (same snapshot, same plan), then prints one line,
+//   "Expect-zero: OK (0/0/0)" or "Expect-zero: FAIL created=A linked=B parentFilled=C ...", and exits
+//   by the plan's tenantUnitsCreated / productUnitsLinked / productUnitsParentFilled counts.
+//   It is read-only: combining it with --apply is refused as an argument error.
+// Exit codes: 0 = done (with --expect-zero: all three counts are 0); 1 = refused or failed (an
+//   argument, target, guard or database error); 3 = --expect-zero found a re-run still plans rows.
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { requireLocalPgConfig } from "./lib/local-pg-config.mjs";
@@ -80,8 +88,12 @@ export function parseArgs(argv) {
   const tenantId = argv[idx + 1];
   if (!tenantId || tenantId.startsWith("--")) throw new Error("--tenant requires a tenant id");
   if (!UUID.test(tenantId)) throw new Error("--tenant takes the tenant id (a uuid), never a slug");
+  if (argv.includes("--expect-zero") && argv.includes("--apply")) {
+    throw new Error("--expect-zero is a read-only check; do not combine it with --apply");
+  }
   return {
     apply: argv.includes("--apply"),
+    expectZero: argv.includes("--expect-zero"),
     local: argv.includes("--local"),
     liveOverride: argv.includes("--live-tenant-override"),
     backupTaken: hasBackupAttestation(argv),
@@ -171,6 +183,27 @@ const fmt = (c) =>
   `productUnits linked=${c.productUnitsLinked} parentFilled=${c.productUnitsParentFilled} ` +
   `unlinkedOverflow=${c.productUnitsUnlinkedOverflow}; ` +
   `skipped tooLong=${c.skippedTooLong} synonyms=${c.skippedSynonyms} parent=${c.skippedParent}`;
+
+/**
+ * The --expect-zero decision (SA-984 §3): a re-run must plan no TenantUnit, no link and no parent fill.
+ * Pure: counts in, { ok, line, exitCode } out. A count that is not exactly 0 (including a missing one)
+ * fails, so a malformed plan never reads as "zero". Exit 3 is distinct from a real error (1).
+ */
+export function expectZeroResult(counts) {
+  const created = counts?.tenantUnitsCreated;
+  const linked = counts?.productUnitsLinked;
+  const parentFilled = counts?.productUnitsParentFilled;
+  const ok = created === 0 && linked === 0 && parentFilled === 0;
+  return ok
+    ? { ok, line: "Expect-zero: OK (0/0/0)", exitCode: 0 }
+    : {
+        ok,
+        line:
+          `Expect-zero: FAIL created=${created} linked=${linked} parentFilled=${parentFilled} ` +
+          "(a re-run still plans rows)",
+        exitCode: 3,
+      };
+}
 
 /** The skipped parent fills, counted by reason (never an id). */
 export function parentSkipLines(parentSkips) {
@@ -295,6 +328,11 @@ async function main(argv = process.argv.slice(2), env = process.env) {
     for (const line of parentSkipLines(plan.parentSkips)) console.log(line);
     for (const line of explicitPieceLines(plan.explicitPieceParents)) console.log(line);
     if (!args.apply) console.log("Dry run only; pass --apply to write.");
+    if (args.expectZero) {
+      const check = expectZeroResult(plan.counts);
+      console.log(check.line);
+      process.exitCode = check.exitCode;
+    }
   } catch (err) {
     console.error(`Refusing: ${err.message}`);
     process.exitCode = 1;
