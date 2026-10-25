@@ -425,13 +425,40 @@ export function staleReason(
   return null;
 }
 
-/** The grant decision for the ticket `myName` given the live, ordered ticket names and free slots. */
-export function nextGrant({ order, myName, freeSlots }) {
+/** Labels of the jobs that hold a slot the longest and together exhaust memory: full `verify` runs and the pre-push gate. */
+const CAPPED_LABEL = /verify|pre-?push/i;
+export const DEFAULT_CAPPED_MAX = 2;
+
+export function isCappedLabel(label) {
+  return CAPPED_LABEL.test(label ?? "");
+}
+
+/** RF_HEAVY_SLOT_CAPPED_MAX: a positive integer, else the default. */
+export function parseCappedMax(raw) {
+  const n = Number(String(raw ?? "").trim());
+  return Number.isInteger(n) && n > 0 ? n : DEFAULT_CAPPED_MAX;
+}
+
+/**
+ * The grant decision for the ticket `myName` given the live, ordered ticket names and free slots. Strict FIFO,
+ * except that a ticket in `capped` is skipped while `cappedHeld` slots are already held by capped jobs
+ * (`cappedMax`): the oldest ELIGIBLE ticket is first in line, so a capped head never blocks an uncapped job behind it.
+ */
+export function nextGrant({
+  order,
+  myName,
+  freeSlots,
+  capped,
+  cappedHeld = 0,
+  cappedMax = Infinity,
+}) {
   const idx = order.indexOf(myName);
+  const atCap = cappedHeld >= cappedMax;
+  const head = order.find((n) => !(atCap && capped?.has(n)));
   return {
     position: idx + 1, // 0 = my ticket is not in the list
     total: order.length,
-    grant: idx === 0 && freeSlots > 0,
+    grant: idx !== -1 && order[idx] === head && freeSlots > 0,
   };
 }
 
@@ -686,6 +713,7 @@ function resolveConfig(opts, env) {
     heartbeatMs: opts.heartbeatMs ?? parseMs(env.RF_HEAVY_SLOT_HEARTBEAT_MS, HEARTBEAT_MS),
     waitLogMs: opts.waitLogMs ?? WAIT_LOG_MS,
     maxCpuPct: opts.maxCpuPct ?? parseLoadPct(env.RF_HEAVY_SLOT_MAX_CPU_PCT),
+    cappedMax: opts.cappedMax ?? parseCappedMax(env.RF_HEAVY_SLOT_CAPPED_MAX),
     maxMemPct: opts.maxMemPct ?? parseLoadPct(env.RF_HEAVY_SLOT_MAX_MEM_PCT),
     sampleLoad: opts.sampleLoad ?? sampleMachineLoad,
     sampleTimeoutMs: opts.sampleTimeoutMs ?? 2 * LOAD_SAMPLE_MS,
@@ -778,11 +806,18 @@ async function acquire(cfg, state) {
         }
       }
       const entries = snap.tickets.map((t) => ({ name: t.name }));
+      const capped = new Set(
+        snap.tickets.filter((t) => isCappedLabel(t.entry.label)).map((t) => t.name),
+      );
+      if (isCappedLabel(cfg.label)) capped.add(name);
       if (!entries.some((t) => t.name === name)) entries.push({ name }); // just (re)written
       const g = nextGrant({
         order: orderTickets(entries).map((t) => t.name),
         myName: name,
         freeSlots: free < 0 ? 0 : 1,
+        capped,
+        cappedHeld: snap.holders.filter((h) => isCappedLabel(h.entry.label)).length,
+        cappedMax: cfg.cappedMax,
       });
       // Owner cap: first in line with a free slot, but the machine is too busy -> keep waiting. Sampled only
       // here (sampling takes ~3 s), so a job queued behind another holder costs nothing. A sampler that

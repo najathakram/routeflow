@@ -33,6 +33,8 @@ import {
   formatWaitLine,
   historyRecord,
   nextGrant,
+  isCappedLabel,
+  parseCappedMax,
   inspectSlotsFile,
   readSlotsFile,
   cpuPctFromTimes,
@@ -1517,6 +1519,114 @@ check(
     [Object.values(seen).every((n) => n > 0), Object.values(oddBody).every((n) => n > 0)],
     [true, true],
   );
+}
+
+{
+  // M1-M3: a verify / pre-push job takes at most RF_HEAVY_SLOT_CAPPED_MAX (default 2) of the slots.
+  check(
+    "M1 isCappedLabel: verify and pre-push labels are capped, everything else is not",
+    [
+      "verify",
+      "wt-verify-3",
+      "pre-push",
+      "prepush-3801",
+      "VERIFY",
+      "wt-db-3801",
+      "jest",
+      "",
+      undefined,
+    ].map(isCappedLabel),
+    [true, true, true, true, true, false, false, false, false],
+  );
+  check(
+    "M2 parseCappedMax: a positive integer, else the default 2",
+    [
+      parseCappedMax("3"),
+      parseCappedMax(undefined),
+      parseCappedMax("0"),
+      parseCappedMax("x"),
+      parseCappedMax("-1"),
+    ],
+    [3, 2, 2, 2, 2],
+  );
+  const capped = new Set(["a"]);
+  check(
+    "M3 nextGrant: a capped head at its cap is skipped, the next uncapped ticket is granted; under the cap it is first again",
+    [
+      nextGrant({
+        order: ["a", "b"],
+        myName: "b",
+        freeSlots: 1,
+        capped,
+        cappedHeld: 2,
+        cappedMax: 2,
+      }),
+      nextGrant({
+        order: ["a", "b"],
+        myName: "a",
+        freeSlots: 1,
+        capped,
+        cappedHeld: 2,
+        cappedMax: 2,
+      }),
+      nextGrant({
+        order: ["a", "b"],
+        myName: "a",
+        freeSlots: 1,
+        capped,
+        cappedHeld: 1,
+        cappedMax: 2,
+      }),
+      nextGrant({
+        order: ["a", "b"],
+        myName: "b",
+        freeSlots: 1,
+        capped,
+        cappedHeld: 1,
+        cappedMax: 2,
+      }),
+      nextGrant({
+        order: ["a", "c", "b"],
+        myName: "c",
+        freeSlots: 1,
+        capped: new Set(["a", "c"]),
+        cappedHeld: 2,
+        cappedMax: 2,
+      }),
+    ].map((g) => g.grant),
+    [true, false, true, false, false],
+  );
+}
+{
+  // M4: 3 slots, two verify holders; a third verify queues FIRST, a db job behind it. The db job must not wait on
+  // the capped verify (no head-of-line block); the verify takes the free slot only after a verify releases.
+  const dir = mkTmp();
+  const gates = [];
+  const gate = () => new Promise((r) => gates.push(r));
+  const opts = (label) => ({ label, branch: "b", dir, env: {}, slots: 3, ...FAST, ...NO_LOG });
+  const V1 = withHeavySlot(opts("wt-verify-1"), () => gate());
+  await until(() => existsSync(lockFile(dir, 0)));
+  const V2 = withHeavySlot(opts("wt-verify-2"), () => gate());
+  await until(() => existsSync(lockFile(dir, 1)));
+  let v3Started = false;
+  let dbStarted = false;
+  const V3 = withHeavySlot(opts("wt-verify-3"), async () => void (v3Started = true));
+  await until(() => queued(dir).length === 1);
+  const DB = withHeavySlot(opts("wt-db-1"), async () => void (dbStarted = true));
+  const dbRan = await until(() => dbStarted, 5000);
+  await sleep(60);
+  const v3WaitedWhileDbRan = dbRan && !v3Started;
+  gates[0]();
+  const v3Ran = await until(() => v3Started, 5000);
+  if (!v3Ran) gates[1]();
+  await Promise.race([V3.catch(() => {}), sleep(5000)]);
+  check(
+    "M4 a capped head at its cap does not block an uncapped job behind it, and runs once a capped holder releases",
+    [dbRan, v3WaitedWhileDbRan, v3Ran],
+    [true, true, true],
+  );
+  gates[1]();
+  await Promise.all([V1, V2, DB, V3]);
 }
 
 for (const d of tmpDirs) rmSync(d, { recursive: true, force: true });
