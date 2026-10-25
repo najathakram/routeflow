@@ -76,13 +76,12 @@ import { redactUpsellForCustomer } from "../common/upsell-redaction";
 import { customerInvoiceList, invoiceDetailFor } from "../common/staff-only-fields";
 import { CONFIRMED_PAYMENT, splitConfirmed, sumConfirmed } from "./payment-predicates";
 import { PAYABLE } from "./invoice-status-sets";
-import { assertReminderIssued, assertReminderOwes } from "./invoice-balance-sql";
 import { classifyInvoiceBalance } from "./invoice-balance-classify";
 import { reconcileDeliveredOrdersInTx as reconcileDeliveredOrdersInTxImpl } from "./delivered-reconcile";
 import { packAtSaleByProduct, priorUnitsPerBoxMap, toSaleLedgerLines } from "./pack-at-sale";
 import { regulatedContentChanged } from "./regulated-content-change";
 import { assertIntegerPieces, billPackOf } from "./unit-line-bill-guard";
-import { isInternalEmail } from "../common/internal-email";
+import { resolveRecipientEmail, sendReminder as sendReminderEmail } from "./invoice-reminder-email";
 import { stampMsrpSnapshots } from "./msrp-snapshots";
 import { configuredTaxRateFraction, effectiveTaxRateFromTotals } from "../common/tax-rate";
 import {
@@ -177,7 +176,7 @@ import {
   guardItemsEditTaxState,
   tenantPreferredRate,
 } from "./stored-tax-state";
-import { buildInvoiceEmailPayload, buildReminderEmailPayload } from "./invoice-email-payload";
+import { buildInvoiceEmailPayload } from "./invoice-email-payload";
 import { retakeDuplicateTaxRates } from "./duplicate-tax-rates";
 import { assertNsfLinesUntaxed } from "./nsf-line-tax-guard";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
@@ -3632,17 +3631,7 @@ export class InvoicesService {
     if (refusal) throw new BadRequestException(refusal);
     await this.assertOrderInvoiceUnlocked(inv);
 
-    // Import sentinels (`@imported.local` / `@placeholder.local`) are non-routable —
-    // filter them from BOTH the override (older clients echo the on-file address into
-    // the request body) and the customer record, so a sentinel behaves exactly like
-    // "no email on file" instead of a doomed send.
-    const requestedEmail = isInternalEmail(overrideEmail) ? null : overrideEmail;
-    const onFileEmail = isInternalEmail(inv.customer?.email) ? null : inv.customer?.email;
-    const recipientEmail = requestedEmail || onFileEmail;
-    if (!recipientEmail)
-      throw new BadRequestException(
-        "No email address on file for this customer. Provide an email address.",
-      );
+    const recipientEmail = resolveRecipientEmail(overrideEmail, inv.customer?.email);
 
     // R5: fail FAST when no email transport is configured — don't generate a PDF, don't
     // mark the invoice SENT, and (critically) don't tell the operator it was emailed when
@@ -3776,86 +3765,11 @@ export class InvoicesService {
     };
   }
 
-  /** Send a payment reminder email without changing the invoice status. */
-  async sendReminder(id: string, overrideEmail?: string) {
-    const inv = await this.prisma.forTenant().invoice.findUnique({
-      where: { id },
-      include: {
-        customer: { select: { id: true, businessName: true, contactName: true, email: true } },
-        items: true,
-        // F03/R8: CONFIRMED (PAID) payments only — feeds totalPaid/balanceDue below.
-        // B421: creditNote relation needed for the customer-facing "Credit
-        // issued — CN-…" line's number.
-        payments: {
-          where: CONFIRMED_PAYMENT,
-          include: { creditNote: { select: { creditNoteNumber: true } } },
-        },
-      },
-    });
-    if (!inv) throw new NotFoundException("Invoice not found");
-    assertReminderIssued(inv.status); // row 318a: only SENT / VIEWED / PARTIAL / OVERDUE
-    assertReminderOwes(inv.total, inv.payments); // SA-770: an exactly-paid or overpaid SENT invoice owes nothing
-
-    // Import sentinels (`@imported.local` / `@placeholder.local`) are non-routable —
-    // filter them from BOTH the override (older clients echo the on-file address into
-    // the request body) and the customer record, so a sentinel behaves exactly like
-    // "no email on file" instead of a doomed send.
-    const requestedEmail = isInternalEmail(overrideEmail) ? null : overrideEmail;
-    const onFileEmail = isInternalEmail(inv.customer?.email) ? null : inv.customer?.email;
-    const recipientEmail = requestedEmail || onFileEmail;
-    if (!recipientEmail)
-      throw new BadRequestException(
-        "No email address on file for this customer. Provide an email address.",
-      );
-
-    // R5: don't claim a reminder was sent when email isn't set up.
-    if (!(await this.emailService.isEmailConfigured())) {
-      throw new BadRequestException({
-        code: API_ERROR_CODES.EMAIL_NOT_CONFIGURED,
-        message:
-          "Email isn't set up yet, so the reminder wasn't sent. Configure your email/SMTP settings under Settings → Email, then try again.",
-      });
-    }
-
-    let pdfUrl: string | undefined;
-    let attachment: InvoiceEmailAttachment | undefined;
-    try {
-      pdfUrl = await this.pdfService.getOrGenerate(id);
-      if (pdfUrl) {
-        const dl = this.storage.download.bind(this.storage);
-        attachment = await buildInvoiceEmailAttachment(dl, this.logger, id, inv.invoiceNumber);
-      }
-    } catch {
-      /* non-critical */
-    }
-
-    // F03/R9: see sendEmail's matching comment — the reminder renders the same item
-    // table, so it honours the same hide-original-price setting.
-    const hideOriginalPrice = (await this.systemConfig.get("invoice.hideOriginalPrice")) === "true";
-
-    const reminderPayload = buildReminderEmailPayload(inv, {
-      recipientEmail,
-      pdfUrl,
-      attachment,
-      hideOriginalPrice,
-    });
-    const sendResult = await this.emailService.sendInvoice(reminderPayload);
-
-    if (!sendResult.delivered) {
-      throw new BadRequestException({
-        code: API_ERROR_CODES.EMAIL_SEND_FAILED,
-        message: `The reminder couldn't be emailed${sendResult.error ? ` (${sendResult.error})` : ""}. Check your email settings under Settings → Email and try again.`,
-      });
-    }
-
-    // Non-blocking: see the matching comment in sendEmail() above — Resend rescued a
-    // failing tenant SMTP attempt, so tell the operator without blocking the reminder.
-    return {
-      success: true,
-      sentTo: recipientEmail,
-      ...(sendResult.smtpFallbackReason ? { warning: sendResult.smtpFallbackReason } : {}),
-      ...(sendResult.fromAddress ? { fromAddress: sendResult.fromAddress } : {}),
-    };
+  /** Send a payment reminder email without changing the invoice status (invoice-reminder-email.ts). */
+  sendReminder(id: string, overrideEmail?: string) {
+    const { prisma, emailService, pdfService, storage, systemConfig, logger } = this;
+    const deps = { prisma, emailService, pdfService, storage, systemConfig, logger };
+    return sendReminderEmail(deps, id, overrideEmail);
   }
 
   /**
