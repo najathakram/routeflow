@@ -18,6 +18,12 @@ import {
   lockRunStopsForTerminalStatus,
   lockStopsOrdersForRelease,
 } from "./delivery-lines.util";
+import {
+  deliveryEvidenceRefusal,
+  lockRunsForDelete,
+  routeHasDeliveryEvidence,
+  runHasCompletedStop,
+} from "./delivery-evidence";
 import { retryOnTxConflict, retryRouteTx } from "../common/tx-retry";
 import { PrismaService } from "../prisma/prisma.service";
 import { reorderRunStopsInTx } from "./run-stop-reorder";
@@ -538,28 +544,17 @@ export class RoutesService {
   async deleteRoute(id: string) {
     await this.findRouteOrThrow(id);
 
-    // Collect all run IDs and run-stop IDs for this route before deleting
-    const runs = await this.prisma.forTenant().routeRun.findMany({
-      where: { routeId: id },
-      include: { stops: { select: { id: true } } },
-    });
-    const runIds = runs.map((r) => r.id);
-    const runStopIds = runs.flatMap((r) => r.stops.map((s) => s.id));
-
-    // R3: any route — ADHOC or SCHEDULED — whose run has started or finished
-    // carries run stops with POD photos, signatures and arrival/completion
-    // timestamps. Deleting it would destroy that history with no way to
-    // rebuild it, so refuse regardless of route.kind. Drafts (and
-    // scheduled/cancelled runs, which recorded nothing) stay deletable.
-    if (runs.some((r) => r.status === "IN_PROGRESS" || r.status === "COMPLETED")) {
-      throw new BadRequestException(
-        "This trip has already been delivered on and cannot be deleted — its proof of delivery would be lost.",
-      );
-    }
-
+    // SA-842 (B209 / #1402): lock, then check, then write, all in ONE tx. Delivery EVIDENCE (POD,
+    // signatures, payments), not run status, decides; the runs are re-read under the locks, never from a
+    // read before the tx. A refusal throws before the first write, so nothing is written.
     // #2631 / SA-550: Order-first (SA-214) vs the stop-first run transition — a deadlock retries, never a 500.
     await retryOnTxConflict("routes.deleteRoute", () =>
       this.prisma.tenantTransaction(async (tx) => {
+        const { runIds, runStopIds } = await lockRunsForDelete(tx, {
+          routeId: id,
+          tenantId: this.prisma.getTenantId(),
+        });
+        if (await routeHasDeliveryEvidence(tx, id)) throw deliveryEvidenceRefusal();
         // 1. Unlink orders from runs/stops
         if (runIds.length > 0) {
           await tx.order.updateMany({
@@ -1359,47 +1354,46 @@ export class RoutesService {
   async deleteRun(id: string) {
     const run = await this.prisma.forTenant().routeRun.findUnique({
       where: { id },
-      include: { stops: { select: { id: true } } },
+      select: { id: true, routeId: true },
     });
     if (!run) throw new NotFoundException("Route run not found");
 
-    const stopIds = run.stops.map((s) => s.id);
-
-    if (stopIds.length > 0) {
-      const existingMutation = await this.prisma.forTenant().deliveryMutation.findFirst({
-        where: { routeRunStopId: { in: stopIds } },
-        select: { id: true },
-      });
-      if (existingMutation) {
-        throw new BadRequestException(
-          "This run has recorded deliveries; cancel it instead of deleting.",
-        );
-      }
-    }
-
-    await this.prisma.tenantTransaction(async (tx) => {
-      // 1. Unlink orders from run and stops
-      await tx.order.updateMany({
-        where: { routeRunId: id },
-        data: { routeRunId: null, routeRunStopId: null },
-      });
-
-      if (stopIds.length > 0) {
-        // 2. Unlink delivery mutations referencing these stops
-        await tx.deliveryMutation.updateMany({
-          where: { routeRunStopId: { in: stopIds } },
-          data: { routeRunStopId: null },
+    // SA-842 / #2723 item 3: the same lock-check-write tx as deleteRoute, scoped to this run (Orders →
+    // stop rows → run, no Route lock), replacing the mutation-only guard that deleted a signed stop.
+    await retryOnTxConflict("routes.deleteRun", () =>
+      this.prisma.tenantTransaction(async (tx) => {
+        const { runIds, runStopIds } = await lockRunsForDelete(tx, {
+          routeId: run.routeId,
+          runId: id,
+          tenantId: this.prisma.getTenantId(),
         });
-
-        // 3. Delete the run stops
-        await tx.routeRunStop.deleteMany({
+        if (runIds.length === 0) throw new NotFoundException("Route run not found");
+        if (await routeHasDeliveryEvidence(tx, run.routeId, { runId: id })) {
+          throw deliveryEvidenceRefusal();
+        }
+        // 1. Unlink orders from run and stops
+        await tx.order.updateMany({
           where: { routeRunId: id },
+          data: { routeRunId: null, routeRunStopId: null },
         });
-      }
 
-      // 4. Delete the run itself
-      await tx.routeRun.delete({ where: { id } });
-    });
+        if (runStopIds.length > 0) {
+          // 2. Unlink delivery mutations referencing these stops
+          await tx.deliveryMutation.updateMany({
+            where: { routeRunStopId: { in: runStopIds } },
+            data: { routeRunStopId: null },
+          });
+
+          // 3. Delete the run stops
+          await tx.routeRunStop.deleteMany({
+            where: { routeRunId: id },
+          });
+        }
+
+        // 4. Delete the run itself
+        await tx.routeRun.delete({ where: { id } });
+      }),
+    );
 
     return { success: true };
   }
@@ -1440,7 +1434,9 @@ export class RoutesService {
     }
 
     // B72: from-state guard — see forbiddenRunTransition's doc for the matrix.
-    const denied = forbiddenRunTransition(run.status, dto.status);
+    const denied = forbiddenRunTransition(run.status, dto.status, {
+      hasCompletedStop: await runHasCompletedStop(this.prisma.forTenant(), run, dto.status),
+    });
     if (denied) throw new ConflictException(denied);
 
     // B72 (composite path): the matrix is edge-wise, so it cannot see

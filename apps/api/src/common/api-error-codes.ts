@@ -701,6 +701,8 @@ export const API_ERROR_CODES = {
   CUSTOMER_MERGE_TENANT_MISMATCH: "CUSTOMER_MERGE_TENANT_MISMATCH",
   /** 409 from an inline return cancel: the credit note gained a payment on another invoice while the cancel locked its rows (SA-920). Retryable: the retry locks the full set. */
   RETURN_CANCEL_RETRY: "RETURN_CANCEL_RETRY",
+  /** 409 from DELETE /routes/:id and DELETE /route-runs/:id: the route or run holds delivery records (POD, signatures, payments); deactivate it instead (SA-842). Nothing was written. */
+  ROUTE_HAS_DELIVERY_EVIDENCE: "ROUTE_HAS_DELIVERY_EVIDENCE",
 } as const satisfies Record<string, ApiErrorCode>;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */
