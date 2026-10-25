@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { Prisma } from "@prisma/client";
 import { sqlKeyOf } from "./unit-name-sql";
 
@@ -11,7 +12,7 @@ const loaded = JSON.parse(
     [
       "--input-type=module",
       "-e",
-      `import(${JSON.stringify(script)}).then(m => console.log(JSON.stringify({ k: m.keyOf("X"), c: m.COUNTS_SQL, p: m.PRODUCTS_SQL })))`,
+      `import(${JSON.stringify(pathToFileURL(script).href)}).then(m => console.log(JSON.stringify({ k: m.keyOf("X"), c: m.COUNTS_SQL, p: m.PRODUCTS_SQL })))`,
     ],
     { encoding: "utf8" },
   ),
