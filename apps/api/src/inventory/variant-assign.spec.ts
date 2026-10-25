@@ -317,7 +317,7 @@ describe("InventoryService.assignToVariants", () => {
     expect(variantMovement.unitCost.toString()).toBe("4");
   });
 
-  it("row 646 / SA-814m P2: a transfer after sales costs the child at the parent's AVERAGE, never at the old lots' cost", async () => {
+  it("GUARD (SA-975, row 646 / SA-814m P2): a transfer after sales costs the child at the parent's AVERAGE, never at the old lots' cost", async () => {
     // Parent average 3 (lots bought at 2 and 4); sales since #3487 never lower remainingQty, so the oldest lot
     // (cost 2) still reads as available. The child must be costed at 3: movement, lot and its own average.
     prisma.product.findUnique.mockResolvedValue(parent({ currentStock: D(50), averageCost: D(3) }));
