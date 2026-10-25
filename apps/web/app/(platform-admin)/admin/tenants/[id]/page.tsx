@@ -346,7 +346,7 @@ function TenantAdminSection({
                   disabled={creating}
                   className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
                 >
-                  {creating ? "Creating…" : "Create Admin"}
+                  {creating ? "Creating…" : "Create admin"}
                 </button>
                 <button
                   type="button"
@@ -1530,7 +1530,7 @@ export const FeatureOverridesSection = React.forwardRef<
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b border-slate-700 text-xs uppercase tracking-wider text-slate-400">
-                  <th className="px-4 py-3 text-left">Feature Key</th>
+                  <th className="px-4 py-3 text-left">Feature key</th>
                   <th className="px-4 py-3 text-left">Effect</th>
                   <th className="px-4 py-3 text-left">Reason</th>
                   <th className="px-4 py-3 text-left">Expires</th>
@@ -1625,10 +1625,10 @@ export const FeatureOverridesSection = React.forwardRef<
       >
         <form id="feature-override-form" onSubmit={handlePreview} className="flex flex-col gap-4">
           <div>
-            <label className="mb-1 block text-xs font-medium text-slate-400">Feature Key</label>
+            <label className="mb-1 block text-xs font-medium text-slate-400">Feature key</label>
             <select
               ref={featureKeySelectRef}
-              aria-label="Feature Key"
+              aria-label="Feature key"
               value={form.featureKey}
               onChange={(e) => setForm((f) => ({ ...f, featureKey: e.target.value }))}
               className="h-9 w-full rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none"
