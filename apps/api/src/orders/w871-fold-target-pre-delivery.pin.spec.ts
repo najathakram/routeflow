@@ -34,7 +34,7 @@ describe("W-871 pin: the merge folds only target pre-delivery orders", () => {
     const senders = walk(SRC).flatMap((f) =>
       codeLines(f)
         .filter(({ l }) => /replaceAll:\s*true/.test(l))
-        .map(() => path.relative(SRC, f)),
+        .map(() => path.relative(SRC, f).split(path.sep).join("/")),
     );
     expect(senders.sort()).toEqual(["buyer/buyer.controller.ts", "orders/orders.controller.ts"]);
   });

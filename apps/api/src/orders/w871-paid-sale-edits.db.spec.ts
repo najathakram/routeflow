@@ -286,6 +286,53 @@ describeDb("W-861 + W-871 — paid walk-in edits and post-delivery replaces, rea
     await expect(load(named.inv.id)).resolves.toMatchObject({ id: named.inv.id });
   });
 
+  it("SA-956 (a): a qty increase on a paid named sale whose invoice holds a manual line is 200, not 409 (head: 409)", async () => {
+    const { o, inv, pay, productId: pid } = await paidSale(await customer(false));
+    // an invoice-only 3.00 manual line, paid in full: invoice 5.00, CASH 5.00, while the order total is 2.00
+    await raw.invoiceItem.create({
+      data: {
+        tenantId,
+        invoiceId: inv.id,
+        description: "manual charge",
+        qty: 1,
+        unitPrice: "3.00",
+        subtotal: "3.00",
+      } as never,
+    });
+    await raw.invoice.update({ where: { id: inv.id }, data: { subtotal: "5.00", total: "5.00" } });
+    await raw.invoicePayment.update({ where: { id: pay.id }, data: { amount: "5.00" } });
+    await edit(o.id, {
+      items: [{ id: o.lineItems[0].id, productId: pid, qty: 3 }],
+      replaceAll: false,
+    });
+    const after = await raw.order.findUniqueOrThrow({
+      where: { id: o.id },
+      select: { total: true },
+    });
+    expect(Number(after.total)).toBe(3);
+  });
+
+  it("SA-956 (c): a cut on that same order is still 409, with nothing written", async () => {
+    const { o, inv, pay, productId: pid } = await paidSale(await customer(false));
+    await raw.invoiceItem.create({
+      data: {
+        tenantId,
+        invoiceId: inv.id,
+        description: "manual charge",
+        qty: 1,
+        unitPrice: "3.00",
+        subtotal: "3.00",
+      } as never,
+    });
+    await raw.invoice.update({ where: { id: inv.id }, data: { subtotal: "5.00", total: "5.00" } });
+    await raw.invoicePayment.update({ where: { id: pay.id }, data: { amount: "5.00" } });
+    const before = await snapshot(o.id);
+    await expect(
+      edit(o.id, { items: [{ id: o.lineItems[0].id, productId: pid, qty: 1 }], replaceAll: false }),
+    ).rejects.toMatchObject({ status: 409, response: { code: "ORDER_EDIT_WOULD_OVERPAY" } });
+    expect(await snapshot(o.id)).toEqual(before);
+  });
+
   it("the judge fails closed on a real tx: 2.00 paid over a 1.50 order total the re-sync cannot project is 409", async () => {
     const { o, inv } = await paidSale(await customer(false));
     await raw.order.update({ where: { id: o.id }, data: { subtotal: "1.50", total: "1.50" } });
@@ -296,7 +343,7 @@ describeDb("W-861 + W-871 — paid walk-in edits and post-delivery replaces, rea
             { invoices: { projectEditedInvoiceTotals: async () => [] }, tenantId },
             tx,
             o.id,
-            { resync: true, partials: false },
+            { resync: true, partials: false, priorOrderTotal: 2 }, // a cut: the seeded order total was 2.00
           ),
         ),
       ),

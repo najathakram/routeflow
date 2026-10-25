@@ -35,6 +35,8 @@ export interface OverpayJudgeScope {
   resync: boolean;
   /** A staff edit whose DRAFT partials the price-follow will re-price. */
   partials: boolean;
+  /** SA-956: the Order row's total before this edit wrote, read in-tx under the Order lock (the fallback judges a CUT only). */
+  priorOrderTotal?: number;
 }
 
 export async function assertEditCannotOverpay(
@@ -60,7 +62,8 @@ export async function assertEditCannotOverpay(
     );
   await withOrderBillingLock(tx, deps.tenantId, orderId);
   const projected = await deps.invoices.projectEditedInvoiceTotals(tx, orderId, scope);
-  if (scope.resync) await assertOrderTotalCoversUnprojected(tx, orderId, projected);
+  if (scope.resync)
+    await assertOrderTotalCoversUnprojected(tx, orderId, projected, scope.priorOrderTotal);
   if (projected.length === 0) return;
   const payments: Array<{ invoiceId: string; amount: unknown }> = await tx.invoicePayment.findMany({
     where: {
@@ -91,16 +94,30 @@ export async function assertEditCannotOverpay(
 }
 
 /**
- * W-871 (SA-948 §2 MUST 2): fail closed. A re-sync that restates the invoices projects EVERY live invoice
- * (`loadResyncInputs` pairs them all) or none (an unclean partition: a manual line, a line whose provenance was lost);
- * "none" never means "nothing to judge". When a live invoice carrying external money is missing from the projection,
- * the projection is the new in-tx ORDER total (the edit already wrote it): the external money across the order's
- * live invoices may not exceed it by more than half a cent. Increases pass. Reads rows the billing lock holds.
+ * The Order row's total BEFORE this edit writes, read in the edit tx under the Order lock (SA-956 Fix 1). Not the pre-lock
+ * snapshot. NaN when the row cannot be read: the fallback then fails closed.
+ */
+export async function readPriorOrderTotal(tx: any, orderId: string): Promise<number> {
+  const row = await tx.order.findUnique({ where: { id: orderId }, select: { total: true } });
+  const n = Number(row?.total);
+  return Number.isFinite(n) ? roundMoney(n) : Number.NaN;
+}
+
+/**
+ * W-871 (SA-948 §2 MUST 2, amended by SA-956 Fix 1): fail closed, but only on a CUT. A re-sync that restates the invoices
+ * projects EVERY live invoice (`loadResyncInputs` pairs them all) or none (an unclean partition: a manual line, a line
+ * whose provenance was lost); "none" never means "nothing to judge". When a live invoice carrying external money is
+ * missing from the projection, the new in-tx ORDER total stands in, and the edit is refused only when it LOWERED the
+ * order total (new < prior - half a cent) AND the external money across the order's live invoices exceeds the new
+ * total by more than half a cent. An increase, or an edit that leaves the total, always passes: the invoice holds
+ * invoice-only lines (a manual charge, an NSF fee) that `order.total` never does, so "paid > order total" alone
+ * would refuse them. Reads rows the billing lock holds.
  */
 async function assertOrderTotalCoversUnprojected(
   tx: any,
   orderId: string,
   projected: ReadonlyArray<{ invoiceId: string }>,
+  priorOrderTotal: number | undefined,
 ): Promise<void> {
   const live: Array<{ id: string }> = await tx.invoice.findMany({
     where: { orderId, status: { not: InvoiceStatus.VOID } },
@@ -121,7 +138,11 @@ async function assertOrderTotalCoversUnprojected(
   if (paid === 0) return;
   const order = await tx.order.findUnique({ where: { id: orderId }, select: { total: true } });
   const projectedTotal = roundMoney(Number(order?.total ?? 0));
-  if (paid > projectedTotal + OVERPAID_EPSILON) {
+  // Only a CUT is judged. An unreadable prior total (not finite) is treated as a cut: fail closed.
+  const prior = priorOrderTotal;
+  const isCut =
+    prior == null || !Number.isFinite(prior) || projectedTotal < prior - OVERPAID_EPSILON;
+  if (isCut && paid > projectedTotal + OVERPAID_EPSILON) {
     const uncovered = live.find(
       (i) => !covered.has(i.id) && payments.some((p) => p.invoiceId === i.id),
     );
@@ -152,6 +173,8 @@ export async function judgeEditTail(
     heldItems: ReadonlyArray<{ qty?: unknown; invoicedQty?: unknown }>;
     postDeliveryEdit: boolean;
     role: string | undefined;
+    /** SA-956: the Order's total before the edit wrote (see `readPriorOrderTotal`). */
+    priorOrderTotal?: number;
   },
 ): Promise<boolean> {
   const skip = edit.postDeliveryEdit && shouldSkipInPlaceResync(edit.heldItems);
@@ -162,6 +185,7 @@ export async function judgeEditTail(
     // re-sync bails on an unclean partition). Whether it does is decided by projectEditedInvoiceTotals with
     // the SAME predicate the writer uses (reconcileOrderAfterEdit's `rebuilt`), so the scope is a superset.
     partials: staffEdit,
+    priorOrderTotal: edit.priorOrderTotal,
   });
   return skip;
 }

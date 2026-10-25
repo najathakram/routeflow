@@ -57,7 +57,7 @@ import { lockRowsNoWait, withAdvisoryLock, type LockMode } from "../common/db-lo
 import { retryCreditTx } from "../common/tx-retry";
 import { stockTxBounded } from "../common/stock-tx";
 import { lockOrderRow } from "../credit-notes/credit-note-locks";
-import { judgeEditTail } from "./edit-overpay-judge";
+import { judgeEditTail, readPriorOrderTotal } from "./edit-overpay-judge";
 import { RECONCILE_PARTIALS } from "../invoices/invoice-partition";
 import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
 import { assertNoDuplicateLineIds } from "../common/duplicate-line-ids";
@@ -2789,8 +2789,7 @@ export class OrdersService implements OnApplicationBootstrap {
     }
 
     assertDeliveredLinesUntouched(order, order.lineItems ?? [], dto, user, isDiffPayload); // B1234: before any side effect
-    // B1083 (D2): with the carrier, the shipment invoice is the bill: re-synced in place, never reverted
-    const carrier = await carrierGuard.carrierEditGuard(this, order);
+    const carrier = await carrierGuard.carrierEditGuard(this, order); // B1083 (D2): with a carrier the shipment invoice is the bill
     const postDeliveryEdit = carrierGuard.resyncsInPlace(order.status, carrier); // B215 + D2
     await paidSaleEditGuard(this, order, postDeliveryEdit, user, dto, isDiffPayload); // W-861 + W-871
     // Lane R: a banned product added by this edit warns / refuses BEFORE the invoice revert and any write; a draft is
@@ -2920,6 +2919,7 @@ export class OrdersService implements OnApplicationBootstrap {
         // orderItem write below, so it is the true pre-edit state.
         await inlineReturn.lockInlineReturnCustomer(tx, inlineRet, order.customerId); // advisory FIRST
         await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${orderId} FOR UPDATE`;
+        const priorOrderTotal = await readPriorOrderTotal(tx, orderId); // SA-956: the total BEFORE this edit, under the lock
         await assertRevisionCurrent(tx, orderId, dto.expectedRevisionNumber); // row 372: stale -> 409, nothing written
         let lineIdentity: "stable" | "recreated" = "stable"; // B1050: deleteMany + re-create flips it
         let markerCarry: Map<string, number> | undefined; // SA-716 M2: the create-merge fold only
@@ -4136,7 +4136,7 @@ export class OrdersService implements OnApplicationBootstrap {
           { invoices: this.invoicesService, tenantId: this.prisma.getTenantId() },
           tx,
           orderId,
-          { heldItems, postDeliveryEdit, role: user?.role },
+          { heldItems, postDeliveryEdit, role: user?.role, priorOrderTotal },
         );
         // B215: the merge's replay key commits in THIS transaction, atomically with the fold —
         // never a second, later commit that a crash or a post-commit throw can split off.

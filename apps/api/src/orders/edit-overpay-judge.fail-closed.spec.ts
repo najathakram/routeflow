@@ -6,7 +6,7 @@
  * refuses with the existing 409 ORDER_EDIT_WOULD_OVERPAY when the external money across the order's live invoices
  * exceeds it by more than half a cent. Increases still pass.
  */
-import { assertEditCannotOverpay } from "./edit-overpay-judge";
+import { assertEditCannotOverpay, readPriorOrderTotal } from "./edit-overpay-judge";
 
 type Inv = { id: string; status: string };
 type Pay = { invoiceId: string; amount: number; method: string; status: string };
@@ -38,7 +38,11 @@ function fakeTx(invoices: Inv[], payments: Pay[], orderTotal: number) {
 const judge = (
   tx: any,
   projected: Array<{ invoiceId: string; projectedTotal: number }>,
-  scope = { resync: true, partials: false },
+  scope: { resync: boolean; partials: boolean; priorOrderTotal?: number } = {
+    resync: true,
+    partials: false,
+    priorOrderTotal: 10,
+  },
 ) =>
   assertEditCannotOverpay(
     {
@@ -123,5 +127,52 @@ describe("W-871: the overpay judge fails closed when the re-sync cannot project"
     const tx = fakeTx(LIVE, PAID_10, 7);
     await expect(judge(tx, [], { resync: false, partials: true })).resolves.toBeUndefined();
     expect(tx.invoice.findMany).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * SA-956 Fix 1 (amends SA-948 MUST 2.2, SA-E111): the fallback judges a CUT, not a level. The fixture: order total 10.00,
+ * one live invoice holding a 3.00 invoice-only line (a manual charge; `order.total` never holds it), CASH 13.00 paid, the
+ * projection empty (an unclean partition). The prior total is read in the edit tx under the Order lock and passed in.
+ */
+describe("SA-956: only a cut is refused", () => {
+  const PAID_13 = [{ invoiceId: "inv-1", amount: 13, method: "CASH", status: "PAID" }];
+  const run = (newTotal: number, prior: number | undefined = 10) =>
+    judge(fakeTx(LIVE, PAID_13, newTotal), [], {
+      resync: true,
+      partials: false,
+      priorOrderTotal: prior,
+    });
+
+  it("(a) a qty increase to 11.00 passes (head: 409, the level 13.00 > 11.00)", async () => {
+    await expect(run(11)).resolves.toBeUndefined();
+  });
+  it("(b) an edit that keeps 10.00 passes (head: 409)", async () => {
+    await expect(run(10)).resolves.toBeUndefined();
+  });
+  it("(c) a cut to 9.00 is 409 ORDER_EDIT_WOULD_OVERPAY before and after", async () => {
+    await expect(run(9)).rejects.toMatchObject({
+      status: 409,
+      response: { code: "ORDER_EDIT_WOULD_OVERPAY", paid: 13, projectedTotal: 9, excess: 4 },
+    });
+  });
+  it("half a cent of rounding on a cut is not a cut", async () => {
+    await expect(run(9.996, 10)).resolves.toBeUndefined(); // half a cent of rounding is not a cut
+  });
+  it("an unreadable prior total fails closed (treated as a cut)", async () => {
+    await expect(run(11, Number.NaN)).rejects.toMatchObject({ status: 409 });
+    await expect(
+      judge(fakeTx(LIVE, PAID_13, 11), [], { resync: true, partials: false }),
+    ).rejects.toMatchObject({ status: 409 });
+  });
+  it("readPriorOrderTotal reads the Order row's total in the tx; a missing row is NaN", async () => {
+    const tx = { order: { findUnique: jest.fn().mockResolvedValue({ total: "10.004" }) } };
+    await expect(readPriorOrderTotal(tx, "ord-1")).resolves.toBe(10);
+    expect(tx.order.findUnique).toHaveBeenCalledWith({
+      where: { id: "ord-1" },
+      select: { total: true },
+    });
+    const none = { order: { findUnique: jest.fn().mockResolvedValue(null) } };
+    expect(Number.isNaN(await readPriorOrderTotal(none, "ord-1"))).toBe(true);
   });
 });
