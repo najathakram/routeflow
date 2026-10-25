@@ -91,7 +91,7 @@ describe("EstimatesPage — F1 create-modal issue-date default is the LOCAL cale
     const user = userEvent.setup();
     renderWithProviders(<EstimatesPage />);
 
-    await user.click(screen.getByRole("button", { name: "New Estimate" }));
+    await user.click(screen.getAllByRole("button", { name: "New estimate" })[0]);
     const dialog = await screen.findByRole("dialog");
 
     const dateInputs = dialog.querySelectorAll('input[type="date"]');

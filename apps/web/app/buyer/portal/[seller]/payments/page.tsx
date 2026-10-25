@@ -28,6 +28,7 @@ import {
 import { buyerApiClient } from "@/lib/buyer-api-client";
 import { fetchPdfBlob } from "@/lib/fetch-pdf-blob";
 import { checkBadgeFor } from "@/lib/check-badge";
+import { paymentMethodLabel } from "@/lib/payment-methods";
 import { MakePaymentPanel } from "./_components/MakePaymentPanel";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -42,13 +43,6 @@ function fmtDate(dateStr: string): string {
     month: "short",
     year: "numeric",
   });
-}
-
-function formatPaymentMethod(method: string): string {
-  return method
-    .replace(/_/g, " ")
-    .toLowerCase()
-    .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 /** "YYYY-MM" → "July 2026", UTC-safe (never shifts across a local-timezone day boundary). */
@@ -251,7 +245,7 @@ function BuyerPaymentsPageInner() {
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
         <StatCard
           icon={Wallet}
-          label="Store Credit"
+          label="Store credit"
           value={fmt(statement?.availableCredit ?? 0)}
           sub={hasActiveCredit ? "Available" : "None available"}
           color="bg-buyer-50 text-buyer-600"
@@ -306,7 +300,7 @@ function BuyerPaymentsPageInner() {
 
       {/* Payments table */}
       <div>
-        <h2 className="mb-3 text-sm font-semibold text-navy">Payment History</h2>
+        <h2 className="mb-3 text-sm font-semibold text-navy">Payment history</h2>
         {isError ? (
           <div className="flex items-center gap-2 rounded-lg bg-danger-bg px-4 py-3 text-sm text-danger">
             <AlertCircle className="h-4 w-4 flex-shrink-0" />
@@ -364,7 +358,7 @@ function BuyerPaymentsPageInner() {
                             </Link>
                           </td>
                           <td className="px-4 py-3 text-sm text-navy/70">
-                            {formatPaymentMethod(p.method)}
+                            {paymentMethodLabel(p.method)}
                           </td>
                           <td className="px-4 py-3 text-sm">
                             {badge && (

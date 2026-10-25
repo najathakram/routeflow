@@ -638,11 +638,12 @@ export class BillingService {
     // pilot's) is billed on THIS checkout as one extra line. The live-subscription guard above runs
     // first (a tenant that cannot check out never has its add-on rows read); an annual checkout with
     // such an add-on is refused (409, ADDON_ANNUAL_NOT_SUPPORTED) before the customer or the session
-    // is created.
+    // is created. (The add-on lines are built first, which ensures their owned Stripe products; that is the one
+    // Stripe write ahead of the refusal.)
     const addons = await this.mutations.checkoutAddonLines(tenantId, interval);
 
     // SA-733 D6: a new subscription is MONTHLY only - an anchored annual checkout would bill a prorated slice of
-    // the YEAR now (10-03 ruling: annual Stripe subscriptions are not offered). Refused before any Stripe call.
+    // the YEAR now (10-03 ruling: annual Stripe subscriptions are not offered). Refused before the customer or the session is created.
     if (interval === "year") {
       throw new BadRequestException({
         code: API_ERROR_CODES.CHECKOUT_ANNUAL_NOT_SUPPORTED,
@@ -805,9 +806,27 @@ export class BillingService {
           ? "year"
           : "month";
 
-    const priceData = opts?.proposed
-      ? await this.pricing.checkoutPriceData(tenantId, interval, opts.proposed)
-      : await this.pricing.checkoutPriceData(tenantId, interval);
+    let priceData: Awaited<ReturnType<PlatformPricingService["checkoutPriceData"]>>;
+    try {
+      priceData = opts?.proposed
+        ? await this.pricing.checkoutPriceData(tenantId, interval, opts.proposed)
+        : await this.pricing.checkoutPriceData(tenantId, interval);
+    } catch (err) {
+      // A pricing refusal (no resolvable price) is an HttpException the caller already handles; anything else is
+      // Stripe failing to hand back the plan product the line points at.
+      if (err instanceof HttpException) throw err;
+      this.logger.error(
+        `Failed to ensure the Stripe plan product for tenant ${tenantId}'s price sync`,
+        err as Error,
+      );
+      // A database error (the catalog or Prisma read under checkoutPriceData) is not Stripe failing: label it
+      // as the lookup failure it is. Both are transient and both stop a Stripe-first write.
+      const e = err as { name?: string; code?: string };
+      if (e?.name?.startsWith("Prisma") || /^P\d{4}$/.test(e?.code ?? "")) {
+        return { synced: false, reason: "pricing_lookup_failed" };
+      }
+      return { synced: false, reason: "stripe_product_create_failed" };
+    }
     const effective = opts?.effective ?? "next_cycle";
     // A mid-period proration on a delinquent subscription would pile onto an invoice nobody pays: past_due /
     // unpaid always take the change at the next invoice, whatever was asked.
@@ -831,32 +850,13 @@ export class BillingService {
       return { synced: true, unchanged: true, oldAmount, newAmount, proration: "none" };
     }
 
-    // Stripe requires a `product` ID on inline price_data for a subscription-item
-    // update — `product_data` is a Checkout-session-only shape and is REJECTED here
-    // ("unknown parameter"), which would surface as a silent wrong-price. Reuse the
-    // item's existing product when present, otherwise create one to point at.
-    let productId: string | undefined =
-      typeof item.price?.product === "string" ? item.price.product : item.price?.product?.id;
-    if (!productId) {
-      try {
-        const product = await this.stripe.client.products.create(
-          { name: priceData.product_data.name },
-          { idempotencyKey: `${key}:product` },
-        );
-        productId = product.id;
-      } catch (err) {
-        this.logger.error(
-          `Failed to create a Stripe product for tenant ${tenantId}'s price sync`,
-          err as Error,
-        );
-        return { synced: false, reason: "stripe_product_create_failed" };
-      }
-    }
+    // W-810: the line points at the shared active `rf_plan_<code>` product (checkoutPriceData ensured it above),
+    // never at the item's current product: a Checkout-born one is inactive and cannot take a new price.
     const updatePriceData: any = {
       currency: priceData.currency,
       unit_amount: priceData.unit_amount,
       recurring: priceData.recurring,
-      product: productId,
+      product: priceData.product,
     };
 
     // SA-733r3 N4: `needsReconcile` (+ the key/nonce audit row) is COMMITTED before Stripe is touched; the flow
@@ -905,6 +905,22 @@ export class BillingService {
       if (itemUnitAmount(reread, item.id) !== priceData.unit_amount) {
         // Stripe was READ and did not take it: nothing is ahead, this attempt's flag comes down.
         await clearNeedsReconcile(reconcileDeps, tenantId, reconcile);
+        // W-810: a Stripe 4xx other than 409 (conflict) / 429 (rate limit) is a REFUSAL, not a hiccup: the same
+        // request will be refused again, so it is permanent and the redelivery must not loop on it.
+        const status = (err as { statusCode?: number })?.statusCode;
+        if (
+          typeof status === "number" &&
+          status >= 400 &&
+          status < 500 &&
+          status !== 409 &&
+          status !== 429
+        ) {
+          return {
+            synced: false,
+            reason: "stripe_update_rejected",
+            detail: (err as Error)?.message,
+          };
+        }
         return { synced: false, reason: "stripe_update_failed" };
       }
       this.logger.warn(

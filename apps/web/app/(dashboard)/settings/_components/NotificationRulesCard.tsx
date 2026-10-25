@@ -66,7 +66,7 @@ const EVENT_DESCRIPTION: Record<string, string> = {
   DELIVERED: "Sent when the order is delivered.",
   CANCELLED: "Sent when an order is cancelled.",
   ORDER_CHANGED_AT_DOOR: "Sent when a driver changes the order at the door.",
-  LICENSE_EXPIRING: "Sent before a customer's licence expires.",
+  LICENSE_EXPIRING: "Sent before a customer's license expires.",
 };
 
 const WA_STATUS_BADGE: Record<

@@ -261,7 +261,7 @@ for (const vp of VIEWPORTS) {
 
     test("delivery without a counter hides the card", async ({ page }) => {
       await gotoOverview(page, { caps: CAPS_DELIVERY_ONLY, hasAdmin: true });
-      await expect(page.getByRole("heading", { name: "Tenant Info" })).toBeVisible();
+      await expect(page.getByRole("heading", { name: "Tenant info" })).toBeVisible();
       await expect(page.getByRole("heading", { name: "Ready to take a sale?" })).toHaveCount(0);
     });
   });

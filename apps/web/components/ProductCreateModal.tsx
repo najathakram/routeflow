@@ -1077,15 +1077,15 @@ export function ProductCreateModal({
                 onChange={(e) => set("costingMethod", e.target.value)}
                 className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
               >
-                <option value="AVCO">AVCO — Weighted Average Cost</option>
-                <option value="LAST_COST">Last Cost — most recent purchase price</option>
-                <option value="STANDARD">Standard Cost</option>
+                <option value="AVCO">AVCO — weighted average cost</option>
+                <option value="LAST_COST">Last cost — most recent purchase price</option>
+                <option value="STANDARD">Standard cost</option>
               </select>
             </div>
 
             {form.costingMethod === "STANDARD" && (
               <div>
-                <label className="mb-1 block text-sm font-medium text-navy">Standard Cost *</label>
+                <label className="mb-1 block text-sm font-medium text-navy">Standard cost *</label>
                 <input
                   required={form.costingMethod === "STANDARD"}
                   type="number"

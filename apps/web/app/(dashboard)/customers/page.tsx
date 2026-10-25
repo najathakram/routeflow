@@ -118,7 +118,7 @@ function ImportCustomersModal({
       <div className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-xl bg-white shadow-xl">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-surface-border px-6 py-4">
-          <h2 className="text-base font-semibold text-navy">Import Customers</h2>
+          <h2 className="text-base font-semibold text-navy">Import customers</h2>
           <button
             onClick={onClose}
             className="rounded p-1 text-navy/70 hover:text-navy transition-colors"
@@ -522,7 +522,7 @@ export default function CustomersPage() {
       {
         accessorKey: "businessName",
         meta: TIGHT_SMALL_BELOW_SM,
-        header: () => <SortHeader col="businessName">Business Name</SortHeader>,
+        header: () => <SortHeader col="businessName">Business name</SortHeader>,
         cell: ({ row }) => {
           const name = row.original.businessName ?? "";
           const initials =
@@ -788,7 +788,7 @@ export default function CustomersPage() {
                 {selectMode ? "Cancel" : "Select"}
               </Button>
             )}
-            <WriteButton onClick={() => setIsAddOpen(true)}>New Customer</WriteButton>
+            <WriteButton onClick={() => setIsAddOpen(true)}>New customer</WriteButton>
           </div>
         }
       />
@@ -958,7 +958,7 @@ export default function CustomersPage() {
           <div className="w-32">
             <Select
               options={[
-                { value: "", label: "All Types" },
+                { value: "", label: "All types" },
                 { value: "BUSINESS", label: "Business" },
                 { value: "INDIVIDUAL", label: "Individual" },
               ]}
@@ -972,7 +972,7 @@ export default function CustomersPage() {
             <div className="w-32">
               <Select
                 options={[
-                  { value: "", label: "All Tags" },
+                  { value: "", label: "All tags" },
                   ...tags.map((t) => ({ value: t.id, label: t.name })),
                 ]}
                 value={tagFilter}
@@ -1216,7 +1216,7 @@ export default function CustomersPage() {
               ? names.slice(0, 5).join(", ") +
                 (names.length > 5 ? `, and ${names.length - 5} more` : "")
               : `${selected.size} customer${selected.size !== 1 ? "s" : ""}`;
-          return `${preview} will be deleted. Customers with orders, invoices, or returns are deactivated instead of hard-deleted; customers with PAID or SENT invoices cannot be deleted here.`;
+          return `${preview} will be deleted. Customers with orders, invoices, or returns are deactivated instead of hard-deleted; customers with paid or sent invoices cannot be deleted here.`;
         })()}
         confirmLabel="Delete"
         variant="danger"
@@ -1227,7 +1227,7 @@ export default function CustomersPage() {
       <Modal
         open={deactivatingCustomer !== null}
         onClose={() => setDeactivatingCustomer(null)}
-        title="Deactivate Customer?"
+        title="Deactivate customer?"
         description={`Deactivate ${deactivatingCustomer?.name ?? "this customer"}?`}
         footer={
           <>

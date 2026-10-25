@@ -187,7 +187,7 @@ export default function AdminBuyersPage() {
         <input
           aria-label="Search buyers"
           type="text"
-          placeholder="Buyer email or name..."
+          placeholder="Buyer email or name…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           className="h-9 w-72 rounded-lg border border-slate-600 bg-slate-800 px-3 text-sm text-white placeholder:text-slate-500 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
@@ -210,7 +210,7 @@ export default function AdminBuyersPage() {
         ))}
       </div>
 
-      {loading && <div className="py-12 text-center text-slate-400">Loading buyers...</div>}
+      {loading && <div className="py-12 text-center text-slate-400">Loading buyers…</div>}
       {error && (
         <div
           role="alert"

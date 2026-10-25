@@ -155,7 +155,7 @@ test.describe("Recurring template edit + standing-order item edit (F13)", () => 
 
     try {
       await page.goto(`/customers/${customer.id}`);
-      await page.getByRole("tab", { name: /Standing Orders/ }).click();
+      await page.getByRole("tab", { name: /Standing orders/i }).click();
 
       const row = page.locator("li").filter({ hasText: templateName });
       await expect(row).toBeVisible({ timeout: 15_000 });

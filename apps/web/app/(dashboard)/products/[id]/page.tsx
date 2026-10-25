@@ -451,7 +451,7 @@ export default function ProductDetailPage() {
   }, [setTitle, product?.name]);
 
   if (isLoading || v2Pending) {
-    return <div className="flex items-center justify-center p-12 text-navy/70">Loading...</div>;
+    return <div className="flex items-center justify-center p-12 text-navy/70">Loading…</div>;
   }
 
   if (!product) {
@@ -1518,7 +1518,7 @@ export default function ProductDetailPage() {
                       }
                       className="text-xs font-medium text-amber-800 underline"
                     >
-                      Regulated Items →
+                      Regulated items →
                     </Link>
                   </div>
                 )}
@@ -2179,7 +2179,7 @@ export default function ProductDetailPage() {
                           href={`/compliance/${product.trackedCategory.id}`}
                           className="ml-auto text-xs font-medium text-brand-600 hover:underline"
                         >
-                          Regulated Items →
+                          Regulated items →
                         </Link>
                       )}
                     </div>

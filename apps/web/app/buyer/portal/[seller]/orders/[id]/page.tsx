@@ -169,8 +169,8 @@ function formatStatus(s: string) {
 const ROUTE_TIMELINE = [
   { icon: Clock, label: "Pending" },
   { icon: CheckCircle2, label: "Confirmed" },
-  { icon: Truck, label: "Out for Delivery" },
-  { icon: Package, label: "Partial Delivery" },
+  { icon: Truck, label: "Out for delivery" },
+  { icon: Package, label: "Partial delivery" },
   { icon: CheckCircle2, label: "Delivered" },
 ];
 // Business profiles 1B: a SHIP order of a configured seller, and any order of a configured seller
@@ -338,7 +338,7 @@ function RequestChangeModal({
       const code = err?.response?.data?.code;
       if (code === "EDIT_WINDOW_OPEN") {
         setFormError(
-          "This order can still be edited directly — close this and use “Edit Items” instead.",
+          "This order can still be edited directly — close this and use “Edit items” instead.",
         );
       } else if (code === "CHANGE_WINDOW_CLOSED") {
         setFormError(
@@ -369,7 +369,7 @@ function RequestChangeModal({
             disabled={!isValid}
             loading={createCr.isPending}
           >
-            Send Request
+            Send request
           </Button>
         </>
       }
@@ -421,7 +421,7 @@ function RequestChangeModal({
                   type="text"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Search products (name, SKU, barcode)..."
+                  placeholder="Search products by name, SKU or barcode…"
                   className="w-full rounded-lg border border-surface-border bg-white py-2 pl-10 pr-4 text-sm text-navy placeholder:text-navy/70 focus:border-buyer-300 focus:outline-none focus:ring-1 focus:ring-buyer-200"
                 />
               </div>
@@ -836,7 +836,7 @@ export default function BuyerOrderDetailPage() {
 
       {order.notes && (
         <div className="mb-4 rounded-xl border border-surface-border bg-white p-4">
-          <p className="text-xs text-navy/70 mb-1">Order Notes</p>
+          <p className="text-xs text-navy/70 mb-1">Order notes</p>
           <p className="text-sm text-navy">{order.notes}</p>
         </div>
       )}
@@ -867,7 +867,7 @@ export default function BuyerOrderDetailPage() {
           )}
           {canEdit && !editMode && (
             <Button variant="secondary" size="sm" onClick={enterEditMode}>
-              <Edit3 className="mr-1.5 h-3.5 w-3.5" /> Edit Items
+              <Edit3 className="mr-1.5 h-3.5 w-3.5" /> Edit items
             </Button>
           )}
           {!canEdit && canRequestChange && !editMode && (
@@ -886,7 +886,7 @@ export default function BuyerOrderDetailPage() {
                 onClick={handleSaveEdit}
                 loading={updateItems.isPending}
               >
-                Save Changes
+                Save changes
               </Button>
             </div>
           )}
@@ -1090,7 +1090,7 @@ export default function BuyerOrderDetailPage() {
                 type="text"
                 value={addSearch}
                 onChange={(e) => setAddSearch(e.target.value)}
-                placeholder="Search products to add (name, SKU, barcode)..."
+                placeholder="Search products to add by name, SKU or barcode…"
                 className="w-full rounded-lg border border-surface-border bg-white py-2 pl-10 pr-4 text-sm text-navy placeholder:text-navy/70 focus:border-buyer-300 focus:outline-none focus:ring-1 focus:ring-buyer-200"
               />
             </div>
@@ -1153,7 +1153,7 @@ export default function BuyerOrderDetailPage() {
             className="min-h-[44px]"
             onClick={() => setCancelOpen(true)}
           >
-            Cancel Order
+            Cancel order
           </Button>
         </div>
       )}
@@ -1162,15 +1162,15 @@ export default function BuyerOrderDetailPage() {
       <Modal
         open={cancelOpen}
         onClose={() => setCancelOpen(false)}
-        title="Cancel Order?"
+        title="Cancel order?"
         description={`Cancel order ${order.orderNumber ?? ""}?`}
         footer={
           <>
             <Button variant="secondary" onClick={() => setCancelOpen(false)}>
-              Keep Order
+              Keep order
             </Button>
             <Button variant="danger" onClick={handleCancel} loading={cancelOrder.isPending}>
-              Cancel Order
+              Cancel order
             </Button>
           </>
         }

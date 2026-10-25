@@ -90,7 +90,7 @@ export function CreatePOModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
       <div className="w-full max-w-2xl rounded-xl bg-white shadow-xl">
         <div className="flex items-center justify-between border-b border-surface-border px-6 py-4">
-          <h2 className="text-base font-semibold text-navy">Create Purchase Order</h2>
+          <h2 className="text-base font-semibold text-navy">Create purchase order</h2>
           <button
             onClick={onClose}
             className="rounded p-1 text-navy/70 hover:bg-surface-raised hover:text-navy"
@@ -122,7 +122,7 @@ export function CreatePOModal({
               </select>
             </div>
             <div>
-              <label className="mb-1 block text-xs text-navy">Expected Date</label>
+              <label className="mb-1 block text-xs text-navy">Expected date</label>
               <input
                 type="date"
                 value={expectedDate}
@@ -135,7 +135,7 @@ export function CreatePOModal({
           {/* Line items */}
           <div>
             <div className="mb-2 flex items-center justify-between">
-              <label className="text-sm font-semibold text-navy">Line Items</label>
+              <label className="text-sm font-semibold text-navy">Line items</label>
               <button
                 type="button"
                 onClick={addLine}
