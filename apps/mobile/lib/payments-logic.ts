@@ -2,7 +2,7 @@ import type { Ionicons } from "@expo/vector-icons";
 import type { PaymentMethod } from "./api/invoices";
 import type { PaymentStatus, UpdatePaymentDto } from "./api/payments";
 import { withRecordAnyway } from "@routeflow/types/payment-ref-copy";
-import { remainingCapacity, roundMoney } from "@routeflow/pricing";
+import { editPaymentCap, roundMoney } from "@routeflow/pricing";
 import { CHECK_TRANSITIONS, type CheckStatus } from "@routeflow/types";
 import { PAYMENT_STATUS_COPY } from "@routeflow/types/payment-submit-key";
 
@@ -83,18 +83,19 @@ export function paymentActionFlags(
 /**
  * Amount cap when editing an existing payment: how much more capacity the
  * invoice has once every OTHER payment (not this one) is reserved. PR-2
- * (check-payments B1 hardening): routes through the shared remainingCapacity()
- * predicate (DRAFT+PAID+PENDING) — the same "not VOID" semantics this screen
- * already had, now the one copy web/api also use — mirroring the server's
+ * (check-payments B1 hardening) / W-769: routes through the shared editPaymentCap() —
+ * a PAID edit is real money, capped on CONFIRMED siblings only; an unconfirmed
+ * edit stays on capacity (DRAFT+PAID+PENDING) — mirroring the server's
  * updatePayment guard and web's editPaymentMax. `otherPayments` must already
  * exclude the payment being edited; the caller does that filtering since this
- * module carries no payment id.
+ * module carries no payment id. `status` is the edited payment's status.
  */
 export function editPaymentMaxAmount(
   total: number,
   otherPayments: ReadonlyArray<{ amount: unknown; status?: string }>,
+  status: string | null | undefined = "PAID",
 ): number {
-  return Math.max(0, remainingCapacity(total, otherPayments));
+  return editPaymentCap(total, otherPayments as never, status);
 }
 
 // ─── Check lifecycle (P5-12; Wave 3 operator controls) ───────────────────────

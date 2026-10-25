@@ -121,7 +121,8 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
                           <RadixToast.Action key={a.label} altText={a.label} asChild>
                             <button
                               onClick={a.onClick}
-                              className="text-[12.5px] font-semibold text-accent-deep hover:underline"
+                              // W-674: a 44 px tall target (the label keeps its size); it was a 19 px bare link.
+                              className="inline-flex min-h-11 items-center text-[12.5px] font-semibold text-accent-deep hover:underline"
                             >
                               {a.label}
                             </button>

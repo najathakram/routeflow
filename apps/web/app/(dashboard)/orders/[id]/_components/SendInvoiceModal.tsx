@@ -239,7 +239,7 @@ export function SendInvoiceModal({
                   )}
                 </div>
                 <div>
-                  <p className="text-sm font-medium text-navy">Send via Email</p>
+                  <p className="text-sm font-medium text-navy">Send via email</p>
                   <p className="text-xs text-navy/70">{data.customerEmail}</p>
                 </div>
               </button>

@@ -119,7 +119,7 @@ export function BatchItemReviewModal({ batchId, item, onClose }: Props) {
         <div className="flex items-center justify-between border-b border-surface-border px-6 py-4">
           <div className="flex items-center gap-2">
             <Sparkles className="h-5 w-5 text-brand-500" />
-            <h2 className="text-lg font-semibold text-navy">
+            <h2 className="text-base font-semibold text-navy">
               Review — {item.supplierName ?? item.filename ?? "Invoice"}
               {item.invoiceNumber ? ` · ${item.invoiceNumber}` : ""}
             </h2>

@@ -12,7 +12,7 @@ export default function NotFound() {
         <Brand size={40} className="not-found-brand" />
         <p className="eyebrow">
           <span />
-          404 · PAGE NOT FOUND
+          404 · Page not found
         </p>
         <h1>
           Let’s get you <br />

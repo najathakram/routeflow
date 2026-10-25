@@ -18,6 +18,7 @@ const REPORTS = [
   "report-sitting4-sizing", // SA-772 §4 step 5 + SA-814 §3 C1-C4 (sitting 4)
   "report-exempt-orders-taxed",
   "report-order-discounts",
+  "report-cross-tenant-refs", // row 681 (SA-936) cross-tenant ref census
 ].map((n) => ({ name: n, file: path.resolve(API_DIR, "scripts", `${n}.mjs`) }));
 
 const read = (f: string) => fs.readFileSync(f, "utf8");

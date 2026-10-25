@@ -5,10 +5,10 @@ export const PURCHASE_ORDERS_HREF = "/purchase-orders";
 
 export const INVENTORY_TABS: InventoryTab[] = [
   { value: "stock", label: "Stock" },
-  { value: "count", label: "Stock Count" },
+  { value: "count", label: "Stock count" },
   { value: "suppliers", label: "Suppliers" },
   // Purchase orders live on their own route now; the tab stays as a link so it is still findable here.
-  { value: "purchase-orders", label: "Purchase Orders", href: PURCHASE_ORDERS_HREF },
+  { value: "purchase-orders", label: "Purchase orders", href: PURCHASE_ORDERS_HREF },
   { value: "forecasting", label: "Forecasting" },
 ];
 

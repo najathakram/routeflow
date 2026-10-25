@@ -103,11 +103,11 @@ describe("POS order page: progress", () => {
 });
 
 describe("POS order page: one primary per state", () => {
-  it("CONFIRMED, no invoice: Create invoice is the primary; no Out for Delivery, no Mark as Delivered", async () => {
+  it("CONFIRMED, no invoice: Create invoice is the primary; no Out for delivery, no Mark delivered", async () => {
     await open("CONFIRMED");
     expect(has(/^Create invoice$/)).toBe(true);
-    expect(has(/^Out for Delivery$/)).toBe(false);
-    expect(has(/^Mark as Delivered$/)).toBe(false);
+    expect(has(/^Out for delivery$/)).toBe(false);
+    expect(has(/^Mark delivered$/)).toBe(false);
     expect(has(/^Mark delivered$/)).toBe(false);
   });
 
@@ -128,7 +128,7 @@ describe("POS order page: one primary per state", () => {
   it("DELIVERED, unpaid invoice: Record payment is the primary and links to the invoice", async () => {
     await open("DELIVERED", { invoices: INV("SENT") });
     expect(has(/^Hand over$/)).toBe(false);
-    expect(has(/^Mark as Delivered$/)).toBe(false);
+    expect(has(/^Mark delivered$/)).toBe(false);
     expect(screen.getByRole("link", { name: /^Record payment$/ })).toHaveAttribute(
       "href",
       "/invoices/i1",
@@ -153,7 +153,7 @@ describe("POS order page: edit and switch", () => {
     patch.mockResolvedValue({ data: {} });
     await open("CONFIRMED", { invoices: INV("DRAFT") });
     fireEvent.click(screen.getByRole("button", { name: /^Switch to delivery$/ }));
-    await screen.findByText(/Move this order off in-store pickup\?/);
+    await screen.findByText(/Move this order off store pickup\?/);
     expect(patch).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Move order" }));
     await waitFor(() =>

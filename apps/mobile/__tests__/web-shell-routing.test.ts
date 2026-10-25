@@ -57,7 +57,9 @@ describe("shellGate", () => {
   });
 
   it("leaves every other signed-out route to the native gate", () => {
-    for (const segments of [[], ["(auth)", "login"], ["(customer)", "(tabs)", "home"]]) {
+    // W-830: a signed-out (customer) route is no longer left to the native gate with the shell on
+    // (web-shell-no-old-native.test.ts).
+    for (const segments of [[], ["(auth)", "login"], ["(auth)", "sign-in"]]) {
       expect(shellGate({ ...base, segments })).toEqual({ handled: false, to: null });
     }
   });

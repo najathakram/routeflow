@@ -215,7 +215,8 @@ describe("SellingRestrictionsAdminService.create", () => {
       categoryId: null,
       states: [],
     });
-    s.models.product.findMany.mockResolvedValue([]);
+    // 681: Once, so the shared mock's id-only echo (prisma-mock idEcho) cannot answer this lookup for "nope".
+    s.models.product.findMany.mockResolvedValueOnce([]);
     // Row 509: an unknown id is the coded 409 RULE_TARGETS_NOT_FOUND (was a plain 404).
     const err = await s.service
       .create({ productId: "nope", jurisdiction: "FEDERAL", reason: "x" }, tenantAdmin)

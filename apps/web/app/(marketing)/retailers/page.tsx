@@ -69,7 +69,7 @@ export default function RetailersPage() {
       <section className="retailer-hero">
         <div className="wrap split-hero">
           <div>
-            <Eyebrow>FOR RETAILERS</Eyebrow>
+            <Eyebrow>For retailers</Eyebrow>
             <h1>
               Restock your shelves. <br />
               <em>
@@ -98,7 +98,7 @@ export default function RetailersPage() {
       </section>
       <section className="section wrap">
         <div className="section-heading">
-          <Eyebrow>YOUR SUPPLIERS, WITHIN REACH</Eyebrow>
+          <Eyebrow>Your suppliers, within reach</Eyebrow>
           <h2>
             Order with the details
             <br />
@@ -129,7 +129,7 @@ export default function RetailersPage() {
       </section>
       <section className="retailer-start wrap">
         <div>
-          <Eyebrow>BEFORE YOUR FIRST ORDER</Eyebrow>
+          <Eyebrow>Before your first order</Eyebrow>
           <h2>
             Connect with
             <br />

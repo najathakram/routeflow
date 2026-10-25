@@ -90,7 +90,7 @@ const sw = () => screen.queryByRole("button", { name: /^Switch to delivery$/ });
 const ship = () => screen.queryByRole("button", { name: /^Ship by carrier…$/ });
 const moveTo = async (button: HTMLElement, path: string) => {
   fireEvent.click(button);
-  await screen.findByText(/Move this order off in-store pickup\?/);
+  await screen.findByText(/Move this order off store pickup\?/);
   fireEvent.click(screen.getByRole("button", { name: "Move order" }));
   await waitFor(() =>
     expect(patch).toHaveBeenCalledWith("/orders/o1/fulfill-path", { fulfillPath: path }),

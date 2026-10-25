@@ -4,8 +4,8 @@ import type { OrderItem } from "@/lib/api/orders";
 import { OrderLineItemsTable } from "./OrderLineItemsTable";
 
 /**
- * Row 508: at 390px the 5-column table ran Line Total / Status past the screen. Below md every
- * <tr> is a stacked card (product full width, then Qty / Unit Price / Line Total / Status as
+ * Row 508: at 390px the 5-column table ran Line total / Status past the screen. Below md every
+ * <tr> is a stacked card (product full width, then Qty / Unit price / Line total / Status as
  * labelled pairs); from md up the table is the one it always was. jsdom has no CSS, so these pin
  * the breakpoint wiring: the mobile-only classes, the label of every cell, the value of every
  * cell, and the untouched md+ class tokens. The pixel proof is the host-run capture.
@@ -67,7 +67,7 @@ describe("OrderLineItemsTable — stacked cards below md (row 508)", () => {
     renderThree();
     expect(screen.getByRole("table")).toHaveClass("max-md:block");
     expect(screen.getAllByRole("columnheader")[0].closest("thead")).toHaveClass("max-md:sr-only");
-    // r4 Q21: the lines are divided rows inside the one Line Items card, not cards nested in it.
+    // r4 Q21: the lines are divided rows inside the one Line items card, not cards nested in it.
     const tbody = document.querySelector("tbody") as HTMLElement;
     expect(tbody).toHaveClass("max-md:block", "divide-y", "max-md:px-6");
     expect(tbody).not.toHaveClass("max-md:divide-y-0");
@@ -92,40 +92,40 @@ describe("OrderLineItemsTable — stacked cards below md (row 508)", () => {
     });
   });
 
-  it("labels Qty, Unit Price, Line Total and Status on every line, on the cell itself", () => {
+  it("labels Qty, Unit price, Line total and Status on every line, on the cell itself", () => {
     renderThree();
     document.querySelectorAll("tbody tr").forEach((tr) => {
       const cells = Array.from(tr.querySelectorAll("td"));
       expect(cells.map((c) => c.getAttribute("data-label"))).toEqual([
         null,
         "Qty",
-        "Unit Price",
-        "Line Total",
+        "Unit price",
+        "Line total",
         "Status",
       ]);
       cells.slice(1).forEach((c) => expect(c).toHaveClass(...MOBILE_CELL_TOKENS));
     });
   });
 
-  it("keeps the value of every cell on every line (Line Total included)", () => {
+  it("keeps the value of every cell on every line (Line total included)", () => {
     renderThree();
     const [first, second, third] = Array.from(document.querySelectorAll("tbody tr"));
-    expect(first.querySelector('td[data-label="Line Total"]')).toHaveTextContent("$520.00");
-    expect(second.querySelector('td[data-label="Line Total"]')).toHaveTextContent("$15.98");
-    expect(third.querySelector('td[data-label="Line Total"]')).toHaveTextContent("$5.00");
-    expect(second.querySelector('td[data-label="Unit Price"]')).toHaveTextContent("$7.99");
+    expect(first.querySelector('td[data-label="Line total"]')).toHaveTextContent("$520.00");
+    expect(second.querySelector('td[data-label="Line total"]')).toHaveTextContent("$15.98");
+    expect(third.querySelector('td[data-label="Line total"]')).toHaveTextContent("$5.00");
+    expect(second.querySelector('td[data-label="Unit price"]')).toHaveTextContent("$7.99");
     expect(second.querySelector('td[data-label="Qty"]')).toHaveTextContent("2");
     expect(first.querySelector('td[data-label="Status"]')).toHaveTextContent(/\w/);
     expect(screen.getByText(LONG)).toHaveClass("max-md:break-words");
     expect(screen.getAllByText("Custom")).toHaveLength(1);
   });
 
-  it("keeps the Order Total on one flex line below md and hides the empty status cell", () => {
+  it("keeps the Order total on one flex line below md and hides the empty status cell", () => {
     renderThree();
     const tfoot = document.querySelector("tfoot") as HTMLElement;
     expect(tfoot).toHaveClass("max-md:block");
     expect(tfoot.querySelector("tr")).toHaveClass("max-md:flex", "max-md:justify-between");
-    expect(screen.getByText("Order Total")).toBeInTheDocument();
+    expect(screen.getByText("Order total")).toBeInTheDocument();
     expect(screen.getByText("$540.98")).toBeInTheDocument();
     expect(tfoot.querySelector("td:last-child")).toHaveClass("max-md:hidden");
   });
@@ -139,7 +139,7 @@ describe("OrderLineItemsTable — stacked cards below md (row 508)", () => {
     expect(row).toHaveClass("hover:bg-surface-raised");
     const cells = Array.from(row.querySelectorAll("td"));
     expect(cells[0]).toHaveClass("px-6", "py-3");
-    ["Qty", "Unit Price", "Line Total"].forEach((l, i) =>
+    ["Qty", "Unit price", "Line total"].forEach((l, i) =>
       expect(cells[i + 1]).toHaveClass("px-4", "py-3", "text-right"),
     );
     expect(cells[4]).toHaveClass("px-6", "py-3");
@@ -163,25 +163,25 @@ describe("OrderLineItemsTable — table semantics survive display:block below md
 
   it("exposes the header row plus one row per line, and the five column headers", () => {
     renderThree();
-    // header row + 3 lines + the Order Total footer row
+    // header row + 3 lines + the Order total footer row
     expect(screen.getAllByRole("row")).toHaveLength(5);
     expect(screen.getAllByRole("columnheader").map((h) => h.textContent)).toEqual([
       "Product",
       "Qty",
-      "Unit Price",
-      "Line Total",
+      "Unit price",
+      "Line total",
       "Status",
     ]);
   });
 
-  it("exposes a Line Total cell per line", () => {
+  it("exposes a Line total cell per line", () => {
     renderThree();
     const cells = screen.getAllByRole("cell");
     // 3 lines x 5 cells + footer's 3 (total label, total, empty)
     expect(cells).toHaveLength(18);
     ["$520.00", "$15.98", "$5.00"].forEach((t) =>
       expect(
-        cells.some((c) => c.getAttribute("data-label") === "Line Total" && c.textContent === t),
+        cells.some((c) => c.getAttribute("data-label") === "Line total" && c.textContent === t),
       ).toBe(true),
     );
   });

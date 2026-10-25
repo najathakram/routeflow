@@ -9,7 +9,7 @@ type CreateMode = "bill" | "expense" | "both";
 const OPTIONS = [
   {
     value: "bill",
-    label: "Vendor Bill",
+    label: "Supplier bill",
     sub: "Adds to inventory and updates costs",
     icon: ShoppingCart,
   },

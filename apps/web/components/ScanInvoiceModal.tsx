@@ -814,7 +814,7 @@ export function ScanInvoiceModal({
     if (tooBig) {
       toast({
         title: "File too large",
-        description: `"${tooBig.name}" is over 25MB. Compress or re-export it and try again.`,
+        description: `"${tooBig.name}" is over 25 MB. Compress or re-export it and try again.`,
         variant: "error",
       });
       return;
@@ -1753,7 +1753,7 @@ export function ScanInvoiceModal({
                 <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
               </div>
               <div className="text-center">
-                <p className="font-semibold text-navy">Analyzing invoice...</p>
+                <p className="font-semibold text-navy">Analyzing invoice…</p>
                 <p className="mt-1 text-sm text-navy/70">
                   Claude AI is extracting items and matching products
                 </p>
@@ -1779,14 +1779,14 @@ export function ScanInvoiceModal({
                 />
               )}
               <div className="flex min-h-0 flex-1">
-                {/* Left: Invoice Preview */}
+                {/* Left: Invoice preview */}
                 {previewUrl && showPreview && (
                   <div className="flex w-1/3 shrink-0 flex-col border-r border-surface-border bg-surface-raised">
                     <div className="flex items-center justify-between border-b border-surface-border px-4 py-2.5">
                       <div className="flex items-center gap-2">
                         <FileText className="h-4 w-4 text-brand-500" />
                         <span className="text-xs font-semibold uppercase tracking-wide text-navy/70">
-                          Invoice Preview
+                          Invoice preview
                           {pagePreviews.length > 1 && (
                             <span className="ml-1.5 rounded-full bg-brand-100 px-1.5 py-0.5 text-[10px] font-medium normal-case tracking-normal text-brand-700">
                               Page {previewIndex + 1} of {pagePreviews.length}
@@ -1884,7 +1884,7 @@ export function ScanInvoiceModal({
                         <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
                       </div>
                       <div className="text-center">
-                        <p className="font-semibold text-navy">Analyzing invoice...</p>
+                        <p className="font-semibold text-navy">Analyzing invoice…</p>
                         <p className="mt-1 text-sm text-navy/70">
                           Claude AI is extracting items and matching products
                         </p>
@@ -2016,7 +2016,7 @@ export function ScanInvoiceModal({
                           <div className="grid grid-cols-2 gap-2">
                             <div>
                               <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-navy">
-                                Bill Date
+                                Bill date
                               </label>
                               <input
                                 type="date"
@@ -2027,7 +2027,7 @@ export function ScanInvoiceModal({
                             </div>
                             <div>
                               <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-navy">
-                                Due Date
+                                Due date
                               </label>
                               <input
                                 type="date"
@@ -2048,7 +2048,7 @@ export function ScanInvoiceModal({
                         ) : (
                           <div>
                             <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-navy">
-                              Expense Date
+                              Expense date
                             </label>
                             <input
                               type="date"
@@ -2087,7 +2087,7 @@ export function ScanInvoiceModal({
                           </div>
                           <div>
                             <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-navy">
-                              Payment Method
+                              Payment method
                             </label>
                             <select
                               value={expensePaymentMethod}
@@ -2191,10 +2191,10 @@ export function ScanInvoiceModal({
                                     Qty
                                   </th>
                                   <th className="px-3 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-navy/70">
-                                    Unit Price
+                                    Unit price
                                   </th>
                                   <th className="px-3 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-navy/70">
-                                    Line Total
+                                    Line total
                                   </th>
                                   <th className="px-2 py-2.5" />
                                 </tr>
