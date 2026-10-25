@@ -360,9 +360,9 @@ export function MailboxCard() {
     clearConnectSecret();
     if (adminConsentRequired) {
       toast({
-        title: "Your organisation requires admin approval",
+        title: "Your organization requires admin approval",
         description:
-          "An admin needs to approve RouteFlow for your Microsoft organisation before you can " +
+          "An admin needs to approve RouteFlow for your Microsoft organization before you can " +
           "connect Outlook — ask a Microsoft 365 admin to grant consent, then try again.",
         variant: "error",
       });

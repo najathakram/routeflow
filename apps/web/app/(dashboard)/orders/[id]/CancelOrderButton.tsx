@@ -41,7 +41,7 @@ export function CancelOrderButton({
       leftIcon={<XCircle className="h-4 w-4" />}
       onClick={onClick}
     >
-      Cancel Order
+      Cancel order
     </Button>
   );
 }

@@ -150,7 +150,7 @@ test.describe("Operator — Stock count UI (WP3-15)", () => {
     // level: 2 — the dashboard shell's <h1> page title ALSO reads "Stock
     // Counts" (via setTitle), so an unleveled heading match resolves 2
     // elements and violates strict mode.
-    await expect(page.getByRole("heading", { level: 2, name: "Stock Counts" })).toBeVisible({
+    await expect(page.getByRole("heading", { level: 2, name: "Stock counts" })).toBeVisible({
       timeout: 15_000,
     });
     await expect(page.getByText("Status", { exact: true })).toBeVisible();

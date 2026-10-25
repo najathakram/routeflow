@@ -98,7 +98,7 @@ export function TierChangeControl({
           onClick={startPreview}
           className="rounded-lg bg-slate-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-slate-500 disabled:opacity-50"
         >
-          {previewLoading ? "Loading preview..." : "Change Plan"}
+          {previewLoading ? "Loading preview…" : "Change plan"}
         </button>
       </div>
       {/* A failed preview never opens the drawer, so its error has to show here. */}

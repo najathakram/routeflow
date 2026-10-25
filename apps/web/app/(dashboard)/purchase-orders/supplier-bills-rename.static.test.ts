@@ -15,7 +15,7 @@ describe("Supplier Bills rename + Purchase Orders palette entry (PR-A2)", () => 
 
   it("the command palette navigates to /purchase-orders", () => {
     const src = read("components/CommandPalette.tsx");
-    expect(src).toMatch(/label: "Purchase Orders"/);
+    expect(src).toMatch(/label: "Purchase orders"/);
     expect(src).toMatch(/router\.push\("\/purchase-orders"\)/);
   });
 });

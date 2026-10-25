@@ -110,7 +110,7 @@ export default function MergeRequestsPage() {
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="text-xl font-bold text-white">Merge Requests</h1>
+              <h1 className="text-2xl font-bold text-white">Merge requests</h1>
               {pendingCount != null && pendingCount > 0 && (
                 <span className="rounded-full bg-yellow-900/40 px-2.5 py-0.5 text-xs font-medium text-yellow-400 ring-1 ring-yellow-600/30">
                   {pendingCount} pending
@@ -235,14 +235,14 @@ export default function MergeRequestsPage() {
               onClick={() => setPage((p) => p - 1)}
               className="rounded px-3 py-1 hover:bg-slate-700 disabled:opacity-40"
             >
-              ← Prev
+              Prev
             </button>
             <button
               disabled={page >= Math.ceil(total / 20)}
               onClick={() => setPage((p) => p + 1)}
               className="rounded px-3 py-1 hover:bg-slate-700 disabled:opacity-40"
             >
-              Next →
+              Next
             </button>
           </div>
         </div>

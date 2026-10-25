@@ -118,7 +118,7 @@ export default function AdminDashboardPage() {
   }, []);
 
   if (loading)
-    return <div className="p-6 text-center text-slate-400 py-12">Loading dashboard...</div>;
+    return <div className="p-6 text-center text-slate-400 py-12">Loading dashboard…</div>;
 
   if (error) {
     return (
@@ -151,7 +151,7 @@ export default function AdminDashboardPage() {
           href="/admin/tenants/new"
           className="admin-tap rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-indigo-500"
         >
-          + Create Tenant
+          + Create tenant
         </Link>
       </div>
 
@@ -188,7 +188,7 @@ export default function AdminDashboardPage() {
       {/* Charts Row */}
       <div className="grid gap-6 lg:grid-cols-3">
         {/* Tenant Growth Chart */}
-        <AdminCard title="Tenant Growth (12 months)" className="lg:col-span-2">
+        <AdminCard title="Tenant growth (12 months)" className="lg:col-span-2">
           {growth.length > 0 ? (
             <ResponsiveContainer width="100%" height={260}>
               <BarChart data={growth}>
@@ -231,7 +231,7 @@ export default function AdminDashboardPage() {
         </AdminCard>
 
         {/* Plan Distribution */}
-        <AdminCard title="Plan Distribution">
+        <AdminCard title="Plan distribution">
           {planData.length > 0 ? (
             <ResponsiveContainer width="100%" height={260}>
               <PieChart>
@@ -276,7 +276,7 @@ export default function AdminDashboardPage() {
       <div className="grid gap-6 lg:grid-cols-2">
         {/* Trials Expiring Soon */}
         <AdminCard
-          title="Trials Expiring Soon"
+          title="Trials expiring soon"
           actions={
             <span className="flex items-center gap-1 text-xs text-yellow-400">
               <Clock className="h-3 w-3" /> {stats.trialsExpiringSoon.length} within 7 days
@@ -348,7 +348,7 @@ export default function AdminDashboardPage() {
 
         {/* At-Risk Tenants */}
         <AdminCard
-          title="At-Risk Tenants"
+          title="At-risk tenants"
           actions={
             <span className="flex items-center gap-1 text-xs text-red-400">
               <AlertTriangle className="h-3 w-3" /> {stats.atRiskTenants.length} at risk
@@ -406,7 +406,7 @@ export default function AdminDashboardPage() {
 
       {/* Recent Tenants */}
       <AdminCard
-        title="Recent Tenants"
+        title="Recent tenants"
         actions={
           <Link
             href="/admin/tenants"

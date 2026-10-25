@@ -11,7 +11,7 @@ import InvoiceDetailPage from "./page";
 
 /**
  * SA-814 / SA-814d: an unvoid the server refuses (409 ORDER_BILLING_CHANGED) raises ONE toast, the page's own
- * "Failed to unvoid", and its copy is picked from the body's `reason`, never from the message. `useUnvoidInvoice`'s
+ * "Failed to unvoid the invoice", and its copy is picked from the body's `reason`, never from the message. `useUnvoidInvoice`'s
  * `meta.localErrorToast` keeps the app-wide "...Refresh and try again." toast quiet.
  */
 const mockToast = jest.fn(); // the page-local toast (useToast)
@@ -111,7 +111,7 @@ describe("invoices/[id]: a refused unvoid raises exactly one toast (SA-814)", ()
     const buttons = screen.getAllByRole("button", { name: "Unvoid" });
     fireEvent.click(buttons[buttons.length - 1]);
     await expectOnlyThePageToasted(mockToast, mockGlobalToast, {
-      title: "Failed to unvoid",
+      title: "Failed to unvoid the invoice",
       description: copy,
     });
   });
@@ -127,7 +127,7 @@ describe("invoices/[id]: a refused unvoid raises exactly one toast (SA-814)", ()
     const buttons = screen.getAllByRole("button", { name: "Unvoid" });
     fireEvent.click(buttons[buttons.length - 1]);
     await expectOnlyThePageToasted(mockToast, mockGlobalToast, {
-      title: "Failed to unvoid",
+      title: "Failed to unvoid the invoice",
       description: "SERVER_MSG",
     });
   });

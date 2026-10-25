@@ -616,7 +616,7 @@ export function VariantSplitModal({ parent, pool, onClose, onSuccess }: VariantS
 
           <p className="mt-3 text-xs text-navy/70">
             {isStandardParent
-              ? `"${parent.name}" is STANDARD-costed — its cost is operator-set and stays fixed; variants keep their own STANDARD cost unaffected by this transfer.`
+              ? `"${parent.name}" uses standard cost, so its cost is set by you and stays fixed. Variants keep their own standard cost during this transfer.`
               : "Leave a variant's cost blank to inherit the generic's average cost."}
           </p>
         </div>

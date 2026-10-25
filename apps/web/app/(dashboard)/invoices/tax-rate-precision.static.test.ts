@@ -20,7 +20,7 @@ describe("tax rate precision on the web inputs", () => {
   });
 
   it("the settings default tax rate accepts 4 decimals of percent and refuses a 5th", () => {
-    const field = settings.slice(settings.indexOf('label="Default Tax Rate"'));
+    const field = settings.slice(settings.indexOf('label="Default tax rate"'));
     const input = field.slice(0, field.indexOf("error={errors.taxRate"));
     expect(input).toMatch(/step="0\.0001"/);
     expect(input).not.toMatch(/step="0\.01"/);

@@ -59,7 +59,7 @@ export function phoneActionItems(c: PhoneActionContext): OrdersMoreMenuItem[] {
       (c.status === "CONFIRMED" && open && c.staff) ||
       (c.status === "OUT_FOR_DELIVERY" && c.staff));
   if (cancel)
-    items.push({ label: "Cancel Order", onSelect: afterMenuCloses(c.onCancel), danger: true });
+    items.push({ label: "Cancel order", onSelect: afterMenuCloses(c.onCancel), danger: true });
 
   const del =
     (c.status === "DRAFT" && open && c.staff) ||
@@ -69,7 +69,7 @@ export function phoneActionItems(c: PhoneActionContext): OrdersMoreMenuItem[] {
     (c.status === "CANCELLED" && c.staff);
   if (del) {
     items.push({
-      label: c.status === "DRAFT" ? "Delete Draft" : "Delete order",
+      label: c.status === "DRAFT" ? "Delete draft" : "Delete order",
       onSelect: afterMenuCloses(c.onDelete),
       danger: true,
     });

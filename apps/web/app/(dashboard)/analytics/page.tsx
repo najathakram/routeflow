@@ -391,22 +391,22 @@ function RevenueTab({ from, to }: { from: string; to: string }) {
         ) : (
           <>
             <StatCard
-              label="Total Revenue"
+              label="Total revenue"
               value={usd(totalRevenue)}
               icon={<DollarSign className="h-5 w-5" />}
             />
             <StatCard
-              label="Avg Order Value"
+              label="Avg order value"
               value={aovLoading ? "—" : aov !== null ? usd(aov) : "—"}
               icon={<TrendingUp className="h-5 w-5" />}
             />
             <StatCard
-              label="DSO (Days)"
+              label="DSO (days)"
               value={dsoLoading ? "—" : dso !== null ? dso.dso.toFixed(1) : "—"}
               icon={<Clock className="h-5 w-5" />}
             />
             <StatCard
-              label="Gross Margin"
+              label="Gross margin"
               value={
                 grossMarginLoading
                   ? "—"
@@ -426,7 +426,7 @@ function RevenueTab({ from, to }: { from: string; to: string }) {
       </div>
 
       {/* Revenue trend chart */}
-      <Card title="Revenue Trend">
+      <Card title="Revenue trend">
         <Csv
           slug="revenue-trend"
           data={revenueTrend}
@@ -473,7 +473,7 @@ function RevenueTab({ from, to }: { from: string; to: string }) {
 
       {/* Gross Margin detail + Sales by Category */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <Card title="Gross Margin Breakdown">
+        <Card title="Gross margin breakdown">
           <Csv
             slug="gross-margin"
             data={grossMargin}
@@ -502,7 +502,7 @@ function RevenueTab({ from, to }: { from: string; to: string }) {
                 <dd className="font-semibold text-success">{usd(grossMargin.grossProfit)}</dd>
               </div>
               <div className="flex items-center justify-between rounded-lg bg-brand-50 px-4 py-3">
-                <dt className="font-semibold text-navy">Gross Margin %</dt>
+                <dt className="font-semibold text-navy">Gross margin %</dt>
                 <dd className="text-lg font-bold text-brand-600">
                   {pct(grossMargin.grossMarginPct)}
                 </dd>
@@ -516,7 +516,7 @@ function RevenueTab({ from, to }: { from: string; to: string }) {
           )}
         </Card>
 
-        <Card title="Sales by Category">
+        <Card title="Sales by category">
           <Csv
             slug="sales-by-category"
             data={salesByCategory}
@@ -643,7 +643,7 @@ function ProductsInventoryTab({ from, to }: { from: string; to: string }) {
       align: "right",
     },
     {
-      header: "Units Sold",
+      header: "Units sold",
       accessor: (row) => <span className="text-navy/80">{row.unitsSold.toLocaleString()}</span>,
       align: "right",
     },
@@ -655,12 +655,12 @@ function ProductsInventoryTab({ from, to }: { from: string; to: string }) {
       accessor: (row) => <span className="font-medium text-navy">{row.name}</span>,
     },
     {
-      header: "Units Sold",
+      header: "Units sold",
       accessor: (row) => <span className="text-navy/80">{row.unitsSold.toLocaleString()}</span>,
       align: "right",
     },
     {
-      header: "Current Stock",
+      header: "Current stock",
       accessor: (row) => <span className="text-navy/80">{row.currentStock.toLocaleString()}</span>,
       align: "right",
     },
@@ -779,12 +779,12 @@ function ProductsInventoryTab({ from, to }: { from: string; to: string }) {
           to={to}
         />
         <div className="mb-4 flex items-center justify-between gap-4">
-          <SectionTitle>Top Products</SectionTitle>
+          <SectionTitle>Top products</SectionTitle>
           <div className="w-40">
             <Select
               options={[
-                { value: "revenue", label: "By Revenue" },
-                { value: "units", label: "By Units Sold" },
+                { value: "revenue", label: "By revenue" },
+                { value: "units", label: "By units sold" },
               ]}
               value={topMetric}
               onChange={(e) => setTopMetric(e.target.value as "revenue" | "units")}
@@ -800,7 +800,7 @@ function ProductsInventoryTab({ from, to }: { from: string; to: string }) {
       </Card>
 
       {/* Inventory Turnover */}
-      <Card title="Inventory Turnover">
+      <Card title="Inventory turnover">
         <Csv
           slug="inventory-turnover"
           data={turnover}
@@ -817,7 +817,7 @@ function ProductsInventoryTab({ from, to }: { from: string; to: string }) {
       </Card>
 
       {/* Dead Stock */}
-      <Card title="Dead Stock">
+      <Card title="Dead stock">
         <Csv slug="dead-stock" data={deadStock} loading={deadStockLoading} from={from} to={to} />
         <p className="mb-4 text-xs text-navy/60">
           Products with stock on hand but no sales or stock movements in the selected date range.
@@ -831,7 +831,7 @@ function ProductsInventoryTab({ from, to }: { from: string; to: string }) {
       </Card>
 
       {/* Margin Alerts */}
-      <Card title="Margin Alerts">
+      <Card title="Margin alerts">
         <Csv
           slug="margin-alerts"
           data={marginAlerts}
@@ -884,7 +884,7 @@ function CustomersTab({ from, to }: { from: string; to: string }) {
       accessor: (row) => <span className="font-medium text-navy">{row.name}</span>,
     },
     {
-      header: "Total Revenue",
+      header: "Total revenue",
       accessor: (row) => <span className="text-navy/80">{usd(row.totalRevenue)}</span>,
       align: "right",
     },
@@ -912,12 +912,12 @@ function CustomersTab({ from, to }: { from: string; to: string }) {
       <Card>
         <Csv slug="top-customers" data={customers} loading={loading} from={from} to={to} />
         <div className="mb-4 flex items-center justify-between gap-4">
-          <SectionTitle>Top Customers</SectionTitle>
+          <SectionTitle>Top customers</SectionTitle>
           <div className="w-44">
             <Select
               options={[
-                { value: "revenue", label: "By Revenue" },
-                { value: "orders", label: "By Order Count" },
+                { value: "revenue", label: "By revenue" },
+                { value: "orders", label: "By order count" },
               ]}
               value={metric}
               onChange={(e) => setMetric(e.target.value as "revenue" | "orders")}
@@ -1117,7 +1117,7 @@ function OperationsTab({ from, to }: { from: string; to: string }) {
 
   return (
     <div className="space-y-6">
-      <Card title="Route Performance">
+      <Card title="Route performance">
         <Csv slug="route-performance" data={routes} loading={routesLoading} from={from} to={to} />
         <AnalyticsTable
           columns={routeColumns}
@@ -1127,7 +1127,7 @@ function OperationsTab({ from, to }: { from: string; to: string }) {
         />
       </Card>
 
-      <Card title="Driver Performance">
+      <Card title="Driver performance">
         <Csv
           slug="driver-performance"
           data={drivers}
@@ -1152,7 +1152,7 @@ type TabId = "revenue" | "products" | "customers" | "operations";
 
 const TABS: { id: TabId; label: string; icon: React.ReactNode }[] = [
   { id: "revenue", label: "Revenue", icon: <DollarSign className="h-4 w-4" /> },
-  { id: "products", label: "Products & Inventory", icon: <Package className="h-4 w-4" /> },
+  { id: "products", label: "Products & inventory", icon: <Package className="h-4 w-4" /> },
   { id: "customers", label: "Customers", icon: <Users className="h-4 w-4" /> },
   { id: "operations", label: "Operations", icon: <Truck className="h-4 w-4" /> },
 ];
@@ -1170,14 +1170,14 @@ function fmt(d: Date) {
 
 const DATE_PRESETS = [
   {
-    label: "This Month",
+    label: "This month",
     range: () => {
       const now = new Date();
       return { from: fmt(new Date(now.getFullYear(), now.getMonth(), 1)), to: fmt(now) };
     },
   },
   {
-    label: "Last Month",
+    label: "Last month",
     range: () => {
       const now = new Date();
       const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
@@ -1186,7 +1186,7 @@ const DATE_PRESETS = [
     },
   },
   {
-    label: "This Quarter",
+    label: "This quarter",
     range: () => {
       const now = new Date();
       const q = Math.floor(now.getMonth() / 3);

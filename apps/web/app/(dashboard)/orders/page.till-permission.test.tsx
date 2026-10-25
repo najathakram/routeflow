@@ -5,7 +5,7 @@ import OrdersPage from "./page";
 /**
  * BO-07: the Orders header follows the till permission. The REAL useCounterSaleGate runs over the mocked API
  * (the capability and GET /users/me/permissions); an operator whose admin turned ORDERS off gets neither the
- * Counter sale button nor a "New Order" that opens as the counter.
+ * Counter sale button nor a "New order" that opens as the counter.
  */
 const push = jest.fn();
 jest.mock("next/navigation", () => ({
@@ -93,13 +93,13 @@ describe("Orders header and the operator's till permission", () => {
     expect(push).toHaveBeenCalledWith("/orders/counter-sale");
   });
 
-  it("an operator without ORDERS on a counter-first tenant: New Order opens the builder, not the counter", async () => {
+  it("an operator without ORDERS on a counter-first tenant: New order opens the builder, not the counter", async () => {
     mockCounter = "always";
     mockGroups = ["PRICING", "FINANCE"];
     renderWithProviders(<OrdersPage />);
     await waitFor(() => expect(mockGet).toHaveBeenCalledWith("/users/me/permissions"));
     await act(async () => {});
-    fireEvent.click(screen.getByRole("button", { name: "New Order" }));
+    fireEvent.click(screen.getByRole("button", { name: "New order" }));
     expect(screen.getByTestId("order-builder-open")).toBeInTheDocument();
     expect(push).not.toHaveBeenCalled();
   });

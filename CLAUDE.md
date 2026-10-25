@@ -10,7 +10,7 @@ Next.js web dashboard, and an Expo (React Native) multi-role mobile app, deploye
 
 - **Monorepo**: npm workspaces (`apps/*`, `packages/*`) orchestrated by **Turbo**. Package manager **npm 10.8** (Node ≥ 18, CI pins 20).
 - **API** (`apps/api`): NestJS 11, Prisma 7 + PostgreSQL, Redis (Socket.io), Passport JWT auth. Tests: **Jest** (`*.spec.ts`).
-- **Web** (`apps/web`): Next.js 14 App Router — the **golden reference** for flows/DTOs. Radix + Tailwind, TanStack Query, react-hook-form + zod. Tests: **Jest + RTL** (`*.test.tsx`, `npm test -w apps/web`) + **Playwright E2E** (`e2e/*.spec.ts`).
+- **Web** (`apps/web`): Next.js 15.5 / React 19 App Router — the **golden reference** for flows/DTOs. Radix + Tailwind, TanStack Query, react-hook-form + zod. Tests: **Jest + RTL** (`*.test.tsx`, `npm test -w apps/web`) + **Playwright E2E** (`e2e/*.spec.ts`).
 - **Mobile** (`apps/mobile`): Expo 55 / RN 0.83, expo-router, multi-role (`(auth)`,`(customer)`,`(driver)`,`(operator)`,`(tenant)`). Tests: **Jest** (`__tests__/*.test.ts`, pure-logic only).
 - **Shared** (`packages/*`): `types`, `ui`, `eslint-config`, `config`, `typescript-config`.
 - **Lint/format**: ESLint **flat config** (per-workspace) + **Prettier** (root `prettier.config.js`).
@@ -145,7 +145,7 @@ The rules this project has already paid for live at
   register last changed, unless the code PR's HEAD commit carries a `Bookkeeping-Follow-Up:
 pending` trailer, which Gate 3 accepts in place of an updated entry. A fix with no transferable
   lesson bumps `_meta.json.updatedAt` alone — never invent a junk entry.
-- Caps: ≤ 52 active entries / 65,536 bytes (the values `.claude/lessons/_meta.json` sets and
+- Caps: ≤ 52 active entries / 81,920 bytes (the values `.claude/lessons/_meta.json` sets and
   `scripts/validate-lessons.mjs` actually enforces — it reads `maxEntries`/`maxBytes` from
   `_meta.json` when present, falling back to its own 40/25,600 defaults only if that file is
   missing the fields), overflow to `ARCHIVE.md`. Entries are generalizable rules, not incident

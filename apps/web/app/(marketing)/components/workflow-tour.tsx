@@ -17,7 +17,7 @@ const steps = [
     title: "Know what needs to go, and who it’s for.",
     text: "Keep the customer, items, and order status together. Give the office and warehouse the same starting point.",
     points: ["Customer-specific product pricing", "An order history your team can find"],
-    caption: "ORDER DETAILS",
+    caption: "Order details",
     sampleTitle: "Parkside Market",
     status: "Ready to dispatch",
     rows: [
@@ -34,13 +34,13 @@ const steps = [
     title: "Send drivers out with a clear next stop.",
     text: "Group orders into a delivery run, assign a driver, and keep the stop details connected to each customer.",
     points: ["Orders and stops in one route view", "Driver assignments and delivery notes"],
-    caption: "DELIVERY RUN",
+    caption: "Delivery run",
     sampleTitle: "North route",
     status: "On the road",
     rows: [
       ["01 · Warehouse", "Departed"],
       ["02 · Parkside Market", "Complete"],
-      ["03 · Corner Wholesale", "Next stop"],
+      ["03 · Corner Store", "Next stop"],
     ],
     foot: ["Driver", "Alex · 6 stops on this run"],
   },
@@ -51,8 +51,8 @@ const steps = [
     title: "Keep a record of the handoff.",
     text: "Follow delivery status and refer back to proof of delivery when your customer or team needs an answer.",
     points: ["Delivery status tied to the order", "Proof of delivery for the customer record"],
-    caption: "DELIVERY RECORD",
-    sampleTitle: "Order #RF-1024",
+    caption: "Delivery record",
+    sampleTitle: "Order #RF-1042",
     status: "Delivered",
     rows: [
       ["Customer", "Parkside Market"],
@@ -68,12 +68,12 @@ const steps = [
     title: "Pick up the conversation with context.",
     text: "Look up invoices, recorded payments, and order history from the customer account without starting from scratch.",
     points: ["Invoices and recorded payments", "Customer-level order history"],
-    caption: "CUSTOMER ACCOUNT",
+    caption: "Customer account",
     sampleTitle: "Parkside Market",
     status: "Account overview",
     rows: [
-      ["Order #RF-1024", "Delivered"],
-      ["Invoice #INV-024", "$168.00"],
+      ["Order #RF-1042", "Delivered"],
+      ["Invoice #INV-1042", "$168.00"],
       ["Payment record", "Recorded"],
     ],
     foot: ["Your next conversation", "Keep the supporting records close at hand."],
@@ -110,9 +110,9 @@ export function WorkflowTour() {
             </Link>
           </div>
           <div className="tour-preview">
-            <p className="tour-example-label">ILLUSTRATIVE PRODUCT VIEW</p>
+            <p className="tour-example-label caps">Illustrative product view</p>
             <div className="record-card">
-              <div className="record-caption">
+              <div className="record-caption caps">
                 {step.caption}
                 <step.icon size={20} />
               </div>

@@ -1,0 +1,357 @@
+{
+  "v": 1,
+  "sessionId": "87835f0f-d3b7-4fb2-9115-a4562e751a15",
+  "project": "/Users/maznahamanullah/code/routeflow",
+  "pricesAsOf": "2026-06-24",
+  "session": {
+    "byModel": {
+      "claude-opus-5-5": {
+        "input": 846,
+        "cacheWrite5m": 0,
+        "cacheWrite1h": 517882,
+        "cacheRead": 127917481,
+        "output": 206823,
+        "messages": 361,
+        "tokens": 128643032,
+        "costUsd": 74.3123655
+      }
+    },
+    "total": {
+      "input": 846,
+      "cacheWrite5m": 0,
+      "cacheWrite1h": 517882,
+      "cacheRead": 127917481,
+      "output": 206823,
+      "messages": 361,
+      "tokens": 128643032,
+      "costUsd": 74.3123655
+    },
+    "messages": 361,
+    "firstAt": "2026-10-23T03:33:28.834Z",
+    "lastAt": "2026-10-23T08:17:30.729Z",
+    "activeMs": 11172622,
+    "cacheHitRatio": 0.9959612012528336
+  },
+  "workflows": {},
+  "agents": {
+    "byType": {
+      "general-purpose": {
+        "total": {
+          "input": 1334,
+          "cacheWrite5m": 4968891,
+          "cacheWrite1h": 0,
+          "cacheRead": 79213705,
+          "output": 465854,
+          "messages": 0,
+          "tokens": 84649784,
+          "costUsd": 39.26836055
+        },
+        "byModel": {
+          "claude-sonnet-5-5": {
+            "input": 1112,
+            "cacheWrite5m": 3751666,
+            "cacheWrite1h": 0,
+            "cacheRead": 67705164,
+            "output": 380159,
+            "messages": 0,
+            "tokens": 71838101,
+            "costUsd": 26.7240118
+          },
+          "claude-haiku-5-5": {
+            "input": 34,
+            "cacheWrite5m": 255332,
+            "cacheWrite1h": 0,
+            "cacheRead": 1735436,
+            "output": 19894,
+            "messages": 0,
+            "tokens": 2010696,
+            "costUsd": null
+          },
+          "claude-opus-5-5": {
+            "input": 188,
+            "cacheWrite5m": 961893,
+            "cacheWrite1h": 0,
+            "cacheRead": 9773105,
+            "output": 65801,
+            "messages": 0,
+            "tokens": 10800987,
+            "costUsd": 12.54434875
+          }
+        },
+        "agents": 28,
+        "durationMs": 22075024
+      }
+    },
+    "list": [
+      {
+        "id": "a0aae00d5c3dafe16",
+        "agentType": "general-purpose",
+        "description": "Run 2 builder c1 (counter web)",
+        "tokens": 2506575,
+        "costUsd": 0.8277991000000001,
+        "cacheHitRatio": 0.961202891844302,
+        "durationMs": 472005
+      },
+      {
+        "id": "a11e36f76fd93524c",
+        "agentType": "general-purpose",
+        "description": "bug-swarm builder c4 tooling",
+        "tokens": 6469945,
+        "costUsd": 2.4000367999999996,
+        "cacheHitRatio": 0.9429614988021725,
+        "durationMs": 4635530
+      },
+      {
+        "id": "a2cf64d3770726e39",
+        "agentType": "general-purpose",
+        "description": "D verification batch 3",
+        "tokens": 3599146,
+        "costUsd": 1.112416,
+        "cacheHitRatio": 0.966446382312431,
+        "durationMs": 144241
+      },
+      {
+        "id": "a3dd46f4fc900dd85",
+        "agentType": "general-purpose",
+        "description": "bug-swarm triage (Haiku)",
+        "tokens": 1076921,
+        "costUsd": null,
+        "cacheHitRatio": 0.8772133284252596,
+        "durationMs": 63874
+      },
+      {
+        "id": "a4420bb0b9af89df3",
+        "agentType": "general-purpose",
+        "description": "D verification batch 5 (final)",
+        "tokens": 1639107,
+        "costUsd": 0.7645066000000001,
+        "cacheHitRatio": 0.9118659890371417,
+        "durationMs": 115160
+      },
+      {
+        "id": "a4966af6fabeead27",
+        "agentType": "general-purpose",
+        "description": "v1 builder B: workflow.js + dry-run",
+        "tokens": 7531888,
+        "costUsd": 3.359228,
+        "cacheHitRatio": 0.9284467767534239,
+        "durationMs": 3054858
+      },
+      {
+        "id": "a50cd8170de7c7527",
+        "agentType": "general-purpose",
+        "description": "Run 2 context pack (Sonnet)",
+        "tokens": 898894,
+        "costUsd": 0.4359304,
+        "cacheHitRatio": 0.9046588502023566,
+        "durationMs": 50621
+      },
+      {
+        "id": "a545aed7d5d0ae0fb",
+        "agentType": "general-purpose",
+        "description": "Review W-700 + W-676 (Opus)",
+        "tokens": 1458270,
+        "costUsd": 1.72019175,
+        "cacheHitRatio": 0.9089905726406408,
+        "durationMs": 308501
+      },
+      {
+        "id": "a5bb58373f4e52512",
+        "agentType": "general-purpose",
+        "description": "bug-swarm context packs (Sonnet)",
+        "tokens": 3358592,
+        "costUsd": 1.1790368,
+        "cacheHitRatio": 0.9554237962189646,
+        "durationMs": 144694
+      },
+      {
+        "id": "a6f9961a83523b261",
+        "agentType": "general-purpose",
+        "description": "D verification batch 2",
+        "tokens": 1564984,
+        "costUsd": 0.608768,
+        "cacheHitRatio": 0.9365975924030078,
+        "durationMs": 94226
+      },
+      {
+        "id": "a7d54293083b412ba",
+        "agentType": "general-purpose",
+        "description": "bug-swarm review c3 (Opus)",
+        "tokens": 1009131,
+        "costUsd": 1.100461,
+        "cacheHitRatio": 0.9164991692326377,
+        "durationMs": 36361
+      },
+      {
+        "id": "a8b7e2e0a07c7182d",
+        "agentType": "general-purpose",
+        "description": "Run 2 UI captures 390/768/1440",
+        "tokens": 6537516,
+        "costUsd": 1.8076683,
+        "cacheHitRatio": 0.9802746567940973,
+        "durationMs": 1522944
+      },
+      {
+        "id": "a9646c308f04c5310",
+        "agentType": "general-purpose",
+        "description": "Card 3b reconciliation report",
+        "tokens": 4059233,
+        "costUsd": 1.5231318,
+        "cacheHitRatio": 0.956264593178492,
+        "durationMs": 269148
+      },
+      {
+        "id": "a98ecf1155a42914c",
+        "agentType": "general-purpose",
+        "description": "v1 builder A: cluster/worktree/gate",
+        "tokens": 5338411,
+        "costUsd": 2.4658609,
+        "cacheHitRatio": 0.923671427456224,
+        "durationMs": 2124538
+      },
+      {
+        "id": "a9d333ac2307e1b04",
+        "agentType": "general-purpose",
+        "description": "Card 2 NIT fold (Sonnet)",
+        "tokens": 2183438,
+        "costUsd": 0.8120624000000001,
+        "cacheHitRatio": 0.955318271516782,
+        "durationMs": 603919
+      },
+      {
+        "id": "a9e0bb20a476c572f",
+        "agentType": "general-purpose",
+        "description": "D verification batch 1",
+        "tokens": 2955650,
+        "costUsd": 0.9585698,
+        "cacheHitRatio": 0.9618080472140537,
+        "durationMs": 129081
+      },
+      {
+        "id": "aa383184f5eb3f9f9",
+        "agentType": "general-purpose",
+        "description": "Card 3a builder: ops-monitor lanes",
+        "tokens": 7631065,
+        "costUsd": 2.8524053,
+        "cacheHitRatio": 0.9413930262768193,
+        "durationMs": 2596576
+      },
+      {
+        "id": "aa9d7fe1b8a34a19f",
+        "agentType": "general-purpose",
+        "description": "Find fixing shas for close-outs",
+        "tokens": 1340274,
+        "costUsd": 0.5277785,
+        "cacheHitRatio": 0.9369399162808416,
+        "durationMs": 47579
+      },
+      {
+        "id": "aabb0531072d997d1",
+        "agentType": "general-purpose",
+        "description": "Build A/B/C board-edit script",
+        "tokens": 2230721,
+        "costUsd": 0.8779835,
+        "cacheHitRatio": 0.9477848551551801,
+        "durationMs": 158877
+      },
+      {
+        "id": "ab70c3ca8db2a0fcf",
+        "agentType": "general-purpose",
+        "description": "bug-swarm review c4 (Opus)",
+        "tokens": 1909629,
+        "costUsd": 1.734525,
+        "cacheHitRatio": 0.949212162350595,
+        "durationMs": 332071
+      },
+      {
+        "id": "abfa9cfadbaa24e10",
+        "agentType": "general-purpose",
+        "description": "Review bug-swarm v1 (Opus)",
+        "tokens": 2642542,
+        "costUsd": 2.80298975,
+        "cacheHitRatio": 0.9386442251389999,
+        "durationMs": 632836
+      },
+      {
+        "id": "ac733777c30743231",
+        "agentType": "general-purpose",
+        "description": "Review Card 3a (Opus)",
+        "tokens": 1658910,
+        "costUsd": 2.4608545,
+        "cacheHitRatio": 0.8474045771481684,
+        "durationMs": 738811
+      },
+      {
+        "id": "ad59195d6dc09821a",
+        "agentType": "general-purpose",
+        "description": "Run 2 review c1 (Opus)",
+        "tokens": 1333505,
+        "costUsd": 1.4778355,
+        "cacheHitRatio": 0.9119589406816359,
+        "durationMs": 50129
+      },
+      {
+        "id": "add7d937e62969e51",
+        "agentType": "general-purpose",
+        "description": "Run 2 triage (Haiku)",
+        "tokens": 933775,
+        "costUsd": null,
+        "cacheHitRatio": 0.8654170581818574,
+        "durationMs": 48928
+      },
+      {
+        "id": "ae13b43c6cef595c4",
+        "agentType": "general-purpose",
+        "description": "Builder: W-700 + W-676 ops-monitor",
+        "tokens": 4351324,
+        "costUsd": 1.6944896,
+        "cacheHitRatio": 0.9336991439938265,
+        "durationMs": 1370394
+      },
+      {
+        "id": "ae846a37689985f13",
+        "agentType": "general-purpose",
+        "description": "Review Card 2 sync-in-collector (Opus)",
+        "tokens": 789000,
+        "costUsd": 1.24749125,
+        "cacheHitRatio": 0.8463873515765794,
+        "durationMs": 58853
+      },
+      {
+        "id": "aebdae72126c2c50b",
+        "agentType": "general-purpose",
+        "description": "bug-swarm builder c3 mobile",
+        "tokens": 4127153,
+        "costUsd": 1.4080133000000001,
+        "cacheHitRatio": 0.9548313969963163,
+        "durationMs": 2130819
+      },
+      {
+        "id": "af10d05f0b35c4bec",
+        "agentType": "general-purpose",
+        "description": "D verification batch 4",
+        "tokens": 3514185,
+        "costUsd": 1.1083267,
+        "cacheHitRatio": 0.9653653849778908,
+        "durationMs": 139450
+      }
+    ],
+    "total": {
+      "input": 1334,
+      "cacheWrite5m": 4968891,
+      "cacheWrite1h": 0,
+      "cacheRead": 79213705,
+      "output": 465854,
+      "messages": 645,
+      "tokens": 84649784,
+      "costUsd": 39.26836055
+    },
+    "cacheHitRatio": 0.9409599314263423
+  },
+  "warnings": [
+    "project: resolved via --project -> /Users/maznahamanullah/code/routeflow",
+    "unknown model id 'claude-haiku-5-5' -- cost set to null for its usage",
+    "unknown model id 'claude-haiku-5-5' -- cost set to null for its usage",
+    "unknown model id 'claude-haiku-5-5' -- cost set to null for its usage"
+  ]
+}
