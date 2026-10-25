@@ -11,6 +11,7 @@ import { productCategoryViolation, productNameViolation } from "../common/text-c
 import { ExternalRefService } from "./external-ref.service";
 import { DuplicateMatchService } from "./duplicate-match.service";
 import { StagedRow } from "./connectors/source-connectors";
+import { parseImportMoney, parseImportNumber } from "./parse-import-number";
 
 const UNDO_WINDOW_MS = 24 * 60 * 60 * 1000;
 
@@ -19,11 +20,27 @@ const UNDO_WINDOW_MS = 24 * 60 * 60 * 1000;
 const UNSAFE_NAME_FLAG = "unsafe-name";
 /** The staging flag on a record whose free-text product category starts with a spreadsheet formula character (B990). */
 const UNSAFE_CATEGORY_FLAG = "unsafe-category";
+/** The staging flag on a PRODUCT whose price is present but not a non-negative number (B205): skipped, never priced 0. */
+const BAD_PRICE_FLAG = "bad-price";
+/** The staging flag on a record whose commit threw at confirm (B334): skipped on its own, the job still confirms. */
+const COMMIT_FAILED_FLAG = "commit-failed";
+
+/**
+ * A staged product's price as the canonical money string ("1,234.56" -> "1234.56"), "" when absent, or null when
+ * present but not a non-negative number (B205). The Migration Hub's CSV path hands the cell text through verbatim.
+ */
+function normalizedPrice(payload: Record<string, unknown>): string | null {
+  const raw = payload.pricePerUnit ?? payload.price;
+  if (raw == null || (typeof raw === "string" && raw.trim() === "")) return "";
+  const n = parseImportMoney(raw);
+  return Number.isFinite(n) && n >= 0 ? n.toFixed(2) : null;
+}
 
 /** The flag a staged PRODUCT payload earns (name first, then category), or null when it is safe to commit. */
 function unsafeProductFlag(payload: Record<string, unknown>): string | null {
   if (productNameViolation({ name: str(payload.name) })) return UNSAFE_NAME_FLAG;
   if (productCategoryViolation(optStr(payload.category))) return UNSAFE_CATEGORY_FLAG;
+  if (normalizedPrice(payload) === null) return BAD_PRICE_FLAG;
   return null;
 }
 
@@ -40,7 +57,7 @@ function optStr(v: unknown): string | undefined {
 /** Coerce to a finite number, or undefined. */
 function optNum(v: unknown): number | undefined {
   if (v == null) return undefined;
-  const n = Number(v);
+  const n = parseImportNumber(v); // "1,000" -> 1000 (a bare Number() gave NaN and dropped it)
   return Number.isFinite(n) ? n : undefined;
 }
 
@@ -125,13 +142,20 @@ export class MigrationService {
         flags.push(unsafe);
       }
 
+      // B205: a thousands-comma price is stored canonical ("1,234.56" -> "1234.56"), so preview and commit agree.
+      let payload = row.payload as Record<string, unknown>;
+      if (entityType === "PRODUCT" && status === "PENDING") {
+        const price = normalizedPrice(payload);
+        if (price) payload = { ...payload, pricePerUnit: price };
+      }
+
       await this.prisma.forTenant().migrationStagingRecord.create({
         data: {
           tenantId,
           jobId,
           entityType,
           externalId: row.externalId ?? null,
-          rawPayload: row.payload as object,
+          rawPayload: payload as object,
           status,
           flags,
           matchedEntityId,
@@ -183,9 +207,8 @@ export class MigrationService {
     let committed = 0;
     let skipped = 0;
     for (const rec of pending) {
-      // B964-2: a record staged before the stage-time check (or edited since) must not reach products.create, which has
-      // no per-record catch here: one formula-led name would throw midway and leave the job STAGED forever (undo needs
-      // CONFIRMED). It is skipped like any other uncommittable record.
+      // B964-2: a record staged before the stage-time check (or edited since) is skipped here without calling
+      // products.create (it would refuse a formula-led name or a bad price), like any other uncommittable record.
       const unsafe =
         rec.entityType === "PRODUCT"
           ? unsafeProductFlag(rec.rawPayload as Record<string, unknown>)
@@ -199,10 +222,21 @@ export class MigrationService {
         skipped++;
         continue;
       }
-      const createdId = await this.commit(
-        rec.entityType,
-        rec.rawPayload as Record<string, unknown>,
-      );
+      // B334: one row that cannot be created (a duplicate name, a vanished category) is skipped on its own, with a
+      // code and never the server's text. Earlier rows stay live, the job still reaches CONFIRMED, and the undo
+      // window covers them; a throw here used to leave the job STAGED for good (undo needs CONFIRMED).
+      let createdId: string | null;
+      try {
+        createdId = await this.commit(rec.entityType, rec.rawPayload as Record<string, unknown>);
+      } catch {
+        const prior = Array.isArray(rec.flags) ? (rec.flags as string[]) : [];
+        await this.prisma.forTenant().migrationStagingRecord.update({
+          where: { id: rec.id },
+          data: { status: "SKIPPED", flags: [...prior, COMMIT_FAILED_FLAG] },
+        });
+        skipped++;
+        continue;
+      }
       if (createdId) {
         if (rec.externalId) {
           await this.externalRefs.record(rec.entityType, createdId, sourceKey, rec.externalId);
@@ -294,7 +328,7 @@ export class MigrationService {
           name: str(payload.name),
           sku: optStr(payload.sku),
           unit: str(payload.unit) || "each",
-          pricePerUnit: str(payload.pricePerUnit ?? payload.price) || "0",
+          pricePerUnit: normalizedPrice(payload) || "0",
           barcode: optStr(payload.barcode),
           category: optStr(payload.category),
           unitsPerBox: optNum(payload.unitsPerBox),
