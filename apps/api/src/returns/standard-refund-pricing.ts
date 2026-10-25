@@ -1,13 +1,13 @@
 /**
  * SA-840 (B704 / #1477): the money of a STANDARD return's refund, priced from the invoice AS CHARGED. `planProductRefund`
  * keeps the qty FILL (which invoice lines absorb the returned qty, in what order) and its refusals; every figure that is
- * paid out comes from `refundableLineShare` (@routeflow/pricing), per filled line, on that line's own invoice. The preview
+ * paid out comes from `refundableProductPoolShare` (@routeflow/pricing, SA-970), per invoice and product pool. The preview
  * (`priceReturn`, pure, DB-free) and the mint (`itemiseRefund`, under the shared per-line headroom) both call
  * `priceProductSlice`, so they can never disagree.
  */
 import {
   isNsfLine,
-  refundableLineShare,
+  refundableProductPoolShare,
   roundMoney,
   type RefundableInvoice,
 } from "@routeflow/pricing";
@@ -89,10 +89,12 @@ export function billedLinesOf(creditable: any[], productId: string) {
 }
 
 /**
- * ONE product's returned qty, filled over its billed `lines` and priced per filled line. `axis.returned` is in pieces when
+ * ONE product's returned qty, filled over its billed `lines` by `planProductRefund` (paid lines first, $0 lines last; it also
+ * REFUSES, never clips, a qty the lines cannot absorb) and priced per invoice POOL (SA-970): a return item names only the
+ * product, so on each invoice the filled qty is sliced over the product's lines there as one virtual line
+ * (`refundableProductPoolShare`), then spread over the paid lines in fill order. `axis.returned` is in pieces when
  * `axis.pieces` (each line's `piecesPerQty` converts), else in the line's own unit; the rows come back on each line's own
- * axis, `amount` NET with `tax` / `categoryTax` beside it. `credited` is what the lines already carry (empty for the
- * preview). "refund" mode REFUSES (never clips) a qty the lines cannot absorb; so does the helper, past a line's qty.
+ * axis, `amount` NET with `tax` / `categoryTax` beside it. `credited` is what the lines already carry (empty for the preview).
  */
 export function priceProductSlice(args: {
   lines: readonly HeadroomLine[];
@@ -125,21 +127,36 @@ export function priceProductSlice(args: {
   );
   if (plan.refusal) return { items: [], refusal: plan.refusal };
 
-  const lineById = new Map(lines.map((l) => [l.id, l]));
+  const takenPieces = new Map(plan.items.map((it) => [it.invoiceItemId, it.qty]));
+  // the spread order is planProductRefund's own fill order: paid lines first, $0 lines last, each in line order
+  const ordered = lines
+    .filter((l) => l.qty > 0 && l.productId === productId)
+    .sort((x, y) => Number(y.subtotal > 0.001) - Number(x.subtotal > 0.001));
+  const byInvoice = new Map<RefundableInvoice, HeadroomLine[]>();
+  for (const l of ordered) {
+    const inv = invoiceOf(l.id);
+    byInvoice.set(inv, [...(byInvoice.get(inv) ?? []), l]);
+  }
+
   const items: RefundItem[] = [];
-  for (const planned of plan.items) {
-    const line = lineById.get(planned.invoiceItemId) as HeadroomLine;
-    const prior = credited.get(line.id) ?? { amount: 0, qty: 0 };
-    const room = Math.max(0, Math.round((line.qty - prior.qty) * 1000) / 1000);
-    let qty = Math.round((planned.qty / factorOf(line)) * 1000) / 1000;
-    if (qty > room && qty - room <= 0.002) qty = room; // the 3-dp round trip of a pieces conversion, never a clip
-    const share = refundableLineShare({
-      invoice: invoiceOf(line.id),
-      lineId: line.id,
-      returnedQty: qty,
-      // regular tax is not stored on a CreditNoteItem: the slice telescopes on the credited QTY, so the net is the cap
-      prior: { qty: prior.qty, net: prior.amount, tax: 0, categoryTax: 0 },
+  for (const [invoice, group] of byInvoice) {
+    const poolLines = group.map((l) => {
+      const c = credited.get(l.id) ?? { amount: 0, qty: 0 };
+      return {
+        id: l.id,
+        pieces: l.qty * factorOf(l),
+        // regular tax is not stored on a CreditNoteItem: the slice telescopes on the credited QTY, so the net is the cap
+        prior: { qty: c.qty * factorOf(l), net: c.amount, tax: 0, categoryTax: 0 },
+      };
     });
+    const takes = group.map((l) => takenPieces.get(l.id) ?? 0);
+    const pool = poolLines.reduce((t, l) => t + l.pieces, 0);
+    const priorPieces = poolLines.reduce((t, l) => t + l.prior.qty, 0);
+    let returnedPieces = Math.round(takes.reduce((t, n) => t + n, 0) * 1000) / 1000;
+    // the 3-dp round trip of a pieces conversion, never a clip
+    const room = Math.max(0, Math.round((pool - priorPieces) * 1000) / 1000);
+    if (returnedPieces > room && returnedPieces - room <= 0.002) returnedPieces = room;
+    const share = refundableProductPoolShare({ invoice, lines: poolLines, returnedPieces });
     if (share.refusal) {
       return {
         items: [],
@@ -147,19 +164,23 @@ export function priceProductSlice(args: {
           productId,
           requestedAmount: 0,
           remainingAmount: 0,
-          requestedQty: qty,
+          requestedQty: returnedPieces,
           remainingQty: room,
           qtyUnit: "line",
         },
       };
     }
-    if (qty <= 0 && share.total <= 0) continue;
-    items.push({
-      invoiceItemId: line.id,
-      qty,
-      amount: share.net,
-      tax: share.tax,
-      categoryTax: share.categoryTax,
+    group.forEach((line, i) => {
+      const part = share.spread[i];
+      const qty = Math.round((takes[i] / factorOf(line)) * 1000) / 1000;
+      if (qty <= 0 && part.total <= 0) return;
+      items.push({
+        invoiceItemId: line.id,
+        qty,
+        amount: part.net,
+        tax: part.tax,
+        categoryTax: part.categoryTax,
+      });
     });
   }
   return { items };

@@ -95,16 +95,21 @@ function split(total: number, weights: number[]): number[] {
   return allocateCentsLargestRemainder(total, g > 1 ? weights.map((w) => w / g) : weights);
 }
 
-export function refundableLineShare(input: RefundableLineShareInput): RefundableLineShare {
-  const { invoice, lineId, returnedQty, prior } = input;
+/** What the invoice charged on each goods line in full: net after the line's discount share, tax, category tax. */
+interface LineCharge {
+  net: number;
+  tax: number;
+  categoryTax: number;
+}
+
+/** The invoice pools allocated onto its goods lines (largest remainder, Σ == the pool exactly). Throws on a bad pool. */
+function chargesOf(invoice: RefundableInvoice): {
+  goods: RefundableInvoiceLine[];
+  charges: LineCharge[];
+} {
   const invoiceTax = roundMoney(finite("invoice tax", invoice.taxAmount));
   const discount = roundMoney(finite("invoice discount", invoice.discount));
-  if (!invoice.lines.some((l) => l.id === lineId)) {
-    return { ...ZERO, refusal: "LINE_NOT_ON_INVOICE" };
-  }
   const goods = invoice.lines.filter((l) => !l.isNsf);
-  const at = goods.findIndex((l) => l.id === lineId);
-  if (at < 0) return { ...ZERO }; // the NSF fee line: never credited
 
   // 1. Invoice pools: what was charged (an exempt invoice stores tax 0, so both pools are 0 whatever rate a line kept)
   const subtotals = goods.map((l) => Math.max(0, finite("line subtotal", l.subtotal)));
@@ -123,26 +128,122 @@ export function refundableLineShare(input: RefundableLineShareInput): Refundable
     levies.map((c) => toCents(c)),
   );
   const discountShares = split(discount, cents);
+  return {
+    goods,
+    charges: goods.map((_, i) => ({
+      net: Math.max(0, roundMoney(subtotals[i] - discountShares[i])),
+      tax: taxShares[i],
+      categoryTax: levyShares[i],
+    })),
+  };
+}
+
+/** One component of a slice: telescoped over the prior credited qty, capped at what the component has left. */
+function sliceOf(
+  component: number,
+  priorQty: number,
+  qty: number,
+  totalQty: number,
+  credited: number,
+): number {
+  return Math.min(
+    roundMoney(
+      creditedThrough(component, priorQty + qty, totalQty) -
+        creditedThrough(component, priorQty, totalQty),
+    ),
+    Math.max(0, roundMoney(component - credited)),
+  );
+}
+
+export function refundableLineShare(input: RefundableLineShareInput): RefundableLineShare {
+  const { invoice, lineId, returnedQty, prior } = input;
+  const { goods, charges } = chargesOf(invoice);
+  if (!invoice.lines.some((l) => l.id === lineId)) {
+    return { ...ZERO, refusal: "LINE_NOT_ON_INVOICE" };
+  }
+  const at = goods.findIndex((l) => l.id === lineId);
+  if (at < 0) return { ...ZERO }; // the NSF fee line: never credited
 
   // 3. Slice, telescoped: any chunking of a line sums to the component exactly
-  const line = goods[at];
-  const lineQty = finite("line qty", line.qty);
+  const lineQty = finite("line qty", goods[at].qty);
   const priorQty = Math.max(0, Number(prior.qty) || 0);
   const qty = Math.max(0, Number(returnedQty) || 0);
   if (qty > 0 && round3(priorQty + qty) > round3(lineQty))
     return { ...ZERO, refusal: "QTY_OVER_LINE" };
 
   // 4. Cap: each component is clamped to its own room (never a clip of the qty)
-  const slice = (component: number, credited: number): number =>
-    Math.min(
-      roundMoney(
-        creditedThrough(component, priorQty + qty, lineQty) -
-          creditedThrough(component, priorQty, lineQty),
-      ),
-      Math.max(0, roundMoney(component - credited)),
-    );
-  const net = slice(Math.max(0, roundMoney(subtotals[at] - discountShares[at])), prior.net);
-  const tax = slice(taxShares[at], prior.tax);
-  const categoryTax = slice(levyShares[at], prior.categoryTax);
+  const c = charges[at];
+  const net = sliceOf(c.net, priorQty, qty, lineQty, prior.net);
+  const tax = sliceOf(c.tax, priorQty, qty, lineQty, prior.tax);
+  const categoryTax = sliceOf(c.categoryTax, priorQty, qty, lineQty, prior.categoryTax);
   return { net, tax, categoryTax, total: roundMoney(net + tax + categoryTax) };
+}
+
+/** One of a product's lines on the invoice, in SPREAD order (paid lines first, $0 lines last). */
+export interface ProductPoolLine {
+  id: string;
+  /** the line's qty in PIECES (qty x piecesPerQty) */
+  pieces: number;
+  /** already credited on this line: pieces, and the net / tax / category tax amounts */
+  prior: RefundPrior;
+}
+
+export interface ProductPoolShareInput {
+  invoice: RefundableInvoice;
+  lines: readonly ProductPoolLine[];
+  /** pieces returned from the pool, an item that names only the product */
+  returnedPieces: number;
+}
+
+export interface ProductPoolShare extends RefundableLineShare {
+  /** the slice spread over `lines` (same order): each no more than its line's room, Σ == the slice exactly */
+  spread: Array<RefundBreakdown & { id: string }>;
+}
+
+/**
+ * SA-970 (amends SA-840 §2): a return item that names only the PRODUCT is sliced over the product's POOL on that invoice,
+ * one virtual line: each component X (net, tax, category tax) pools as Σ of SA-840's per-line charges, over Σ pieces,
+ * telescoped on the pooled prior credit. The slice is then spread over `lines` in order (paid first), each line taking no
+ * more than its own room for that component, so Σ spread == slice. One line in the pool is exactly `refundableLineShare`.
+ * A qty past the pool's pieces is a refusal, never a clip.
+ */
+export function refundableProductPoolShare(input: ProductPoolShareInput): ProductPoolShare {
+  const { invoice, lines, returnedPieces } = input;
+  const { goods, charges } = chargesOf(invoice);
+  const empty = lines.map((l) => ({ id: l.id, ...ZERO }));
+  const idx = lines.map((l) => invoice.lines.findIndex((x) => x.id === l.id));
+  if (idx.some((i) => i < 0)) return { ...ZERO, refusal: "LINE_NOT_ON_INVOICE", spread: empty };
+
+  const charge = lines.map((l) => {
+    const g = goods.findIndex((x) => x.id === l.id);
+    return g < 0 ? { net: 0, tax: 0, categoryTax: 0 } : charges[g]; // an NSF fee line carries no goods charge
+  });
+  const sum = (f: (i: number) => number) => lines.reduce((t, _, i) => t + f(i), 0);
+  const pool = {
+    pieces: sum((i) => Math.max(0, finite("line pieces", lines[i].pieces))),
+    priorPieces: sum((i) => Math.max(0, Number(lines[i].prior.qty) || 0)),
+  };
+  const qty = Math.max(0, Number(returnedPieces) || 0);
+  if (qty > 0 && round3(pool.priorPieces + qty) > round3(pool.pieces))
+    return { ...ZERO, refusal: "QTY_OVER_LINE", spread: empty };
+
+  const spread = lines.map((l) => ({ id: l.id, ...ZERO }));
+  const total = { net: 0, tax: 0, categoryTax: 0 };
+  for (const k of ["net", "tax", "categoryTax"] as const) {
+    const poolCharge = roundMoney(sum((i) => charge[i][k]));
+    const priorAmt = roundMoney(sum((i) => Number(lines[i].prior[k]) || 0));
+    const room = lines.map((l, i) => Math.max(0, roundMoney(charge[i][k] - (l.prior[k] || 0))));
+    let rest = Math.min(
+      sliceOf(poolCharge, pool.priorPieces, qty, pool.pieces, priorAmt),
+      roundMoney(room.reduce((t, r) => t + r, 0)),
+    );
+    total[k] = rest;
+    room.forEach((r, i) => {
+      const take = Math.min(rest, r);
+      spread[i][k] = take;
+      rest = roundMoney(rest - take);
+    });
+  }
+  spread.forEach((s) => (s.total = roundMoney(s.net + s.tax + s.categoryTax)));
+  return { ...total, total: roundMoney(total.net + total.tax + total.categoryTax), spread };
 }

@@ -777,6 +777,8 @@ export class ReturnsService {
     items?: RefundItem[];
     pooledRefund?: Array<{ productId: string; qty: number }>;
     unbilledItems?: UnbilledReturnItem[];
+    /** SA-840: net / tax / category tax of `amount`, frozen on the Return by the claim. */
+    split: RefundSplit;
   }> {
     // B969: the pack basis is loaded FIRST: the price below and the itemiser count in PIECES with it, the same converters the
     // preview (`findOne`/`findAll`) uses, so preview == mint.

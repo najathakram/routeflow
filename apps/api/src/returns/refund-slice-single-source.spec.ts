@@ -88,7 +88,7 @@ describe("SA-840: a return/credit slice of an invoice line has ONE price source"
   it("REG-B704 the standard-return pricer is wired to the shared helper", () => {
     // wrong today: standard-refund-pricing.ts does not exist and returns.service.ts prices the slice itself
     const read = (file: string) => codeOnly(fs.readFileSync(path.join(SRC, file), "utf8"));
-    expect(read("returns/standard-refund-pricing.ts")).toMatch(/\brefundableLineShare\(/);
+    expect(read("returns/standard-refund-pricing.ts")).toMatch(/\brefundableProductPoolShare\(/);
     expect(read("returns/returns.service.ts")).toMatch(/from "\.\/standard-refund-pricing"/);
   });
 });
