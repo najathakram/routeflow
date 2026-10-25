@@ -157,7 +157,9 @@ describe("TrackedCategory writer inventory (Row 430)", () => {
           "delegate:trackedCategory", // update
           "delegate:trackedCategory", // toggle
           // Subcategory writes: a name and an active flag, no tax rate (schema TrackedSubcategory), so outside the rate
-          // audit. Listed so a NEW subcategory writer still needs a decision here.
+          // audit (SA-988): the flag is read only by the tagging pickers; tracking and filings come from
+          // TrackedCategory.active. Stop rule: an API read of the flag that decides tracking or a filing, a filing grouped
+          // by subcategory, or a rate column brings them in. Listed so a NEW subcategory writer still needs a decision.
           "delegate:trackedSubcategory",
           "delegate:trackedSubcategory",
           "delegate:trackedSubcategory",
