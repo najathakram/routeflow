@@ -1,3 +1,4 @@
+import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "./api-client";
 import { calendarDayInZone } from "./calendar-date";
@@ -35,6 +36,26 @@ export function useTenantTimeZone(enabled = true): string | undefined {
 export function useTenantToday(enabled = true): string | undefined {
   const zone = useTenantTimeZone(enabled);
   return zone ? calendarDayInZone(zone) : undefined;
+}
+
+/**
+ * Seed a date field with the tenant's day, ONCE, when it first resolves (SA-964 §4). `apply(day)` should write only into a
+ * field nobody has filled (`setDate((cur) => cur || day)`): the field starts empty, so nothing is shown or saved on the
+ * browser's day while the zone loads, and a value the user typed meanwhile is never overwritten. Returns the tenant's day
+ * (or `undefined` while unknown) for display comparisons.
+ */
+export function useOnTenantToday(apply: (day: string) => void, enabled = true): string | undefined {
+  const today = useTenantToday(enabled);
+  const applied = React.useRef(false);
+  const latest = React.useRef(apply);
+  latest.current = apply;
+  React.useEffect(() => {
+    if (today && !applied.current) {
+      applied.current = true;
+      latest.current(today);
+    }
+  }, [today]);
+  return today;
 }
 
 /** `shippedFrom` for the "Shipped this week" card and the orders week view: Sunday 00:00 in the

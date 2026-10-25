@@ -26,7 +26,7 @@
 //
 // Node's spawnSync blocks the event loop, so the heartbeat could never fire: callers must run the
 // guarded work with `spawnAsync` below (or any awaited async spawn).
-import { spawn, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -55,6 +55,72 @@ export function parseSlots(raw) {
   return typeof raw === "string" && raw.trim() !== "" && Number.isInteger(n) && n > 0
     ? n
     : DEFAULT_SLOTS;
+}
+
+/** Largest slot count the machine-wide slots file may set; a bigger number is a typo, not a plan. */
+export const MAX_SLOTS_FILE = 16;
+
+/**
+ * Decode a slots file's bytes: UTF-8 (BOM allowed) or UTF-16 LE/BE with a BOM (PowerShell 5.1 `echo 4 > slots`).
+ * Returns null for a UTF-16 body with an odd byte count (a torn or foreign file), never throws on its own.
+ */
+function decodeSlotsBytes(buf) {
+  const le = buf.length >= 2 && buf[0] === 0xff && buf[1] === 0xfe;
+  const be = buf.length >= 2 && buf[0] === 0xfe && buf[1] === 0xff;
+  if (le || be) {
+    const body = buf.subarray(2);
+    if (body.length % 2 !== 0) return null;
+    return le ? body.toString("utf16le") : Buffer.from(body).swap16().toString("utf16le");
+  }
+  if (buf.length >= 3 && buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf)
+    return buf.subarray(3).toString("utf8");
+  return buf.toString("utf8");
+}
+
+/**
+ * The machine-wide slot count file `<dir>/slots`: { state: "absent" } | { state: "ok", value } |
+ * { state: "invalid", reason }. A plain decimal integer 1..MAX_SLOTS_FILE, in UTF-8 or BOM'd UTF-16;
+ * anything else (0, 17, 0x10, 4.5, words, a BOM-less UTF-16 file) is invalid and the waiter keeps its own count.
+ */
+export function inspectSlotsFile(dir) {
+  let buf;
+  try {
+    buf = fs.readFileSync(path.join(dir, "slots"));
+  } catch {
+    return { state: "absent" };
+  }
+  let raw;
+  try {
+    const text = decodeSlotsBytes(buf);
+    if (text === null) return { state: "invalid", reason: "UTF-16 body has an odd byte count" };
+    raw = text.trim();
+  } catch (e) {
+    return {
+      state: "invalid",
+      reason: `unreadable: ${e instanceof Error ? e.message : "decode error"}`,
+    };
+  }
+  if (!/^[0-9]+$/.test(raw)) {
+    return {
+      state: "invalid",
+      reason: `not a plain decimal integer: ${JSON.stringify(raw.slice(0, 20))}`,
+    };
+  }
+  const n = Number(raw);
+  if (n < 1 || n > MAX_SLOTS_FILE) {
+    return { state: "invalid", reason: `${n} is outside 1..${MAX_SLOTS_FILE}` };
+  }
+  return { state: "ok", value: n };
+}
+
+/**
+ * The machine-wide slot count: an optional `<dir>/slots` file. When valid it overrides every waiter's own
+ * RF_HEAVY_SLOTS / opts.slots (strict FIFO means one waiter started with a smaller count at the head would
+ * otherwise block the whole queue while higher slots sit free). Absent or invalid -> null.
+ */
+export function readSlotsFile(dir) {
+  const f = inspectSlotsFile(dir);
+  return f.state === "ok" ? f.value : null;
 }
 
 function parseMinutesMs(raw, fallbackMin) {
@@ -110,11 +176,33 @@ const cpuTicks = (cpus) =>
     return { idle: t.idle, total: t.user + t.nice + t.sys + t.idle + t.irq };
   });
 
-/** One machine-wide reading: CPU busy share over `sampleMs`, and the used share of memory. Injectable. */
+/**
+ * Reclaimable bytes from `vm_stat` text: (free + inactive + speculative) pages x page size, or null when it
+ * does not parse. macOS keeps most RAM in inactive/cached pages, so os.freemem() alone reads "full" there.
+ */
+export function parseVmStat(text) {
+  const size = /page size of (\d+) bytes/.exec(text ?? "")?.[1];
+  const pages = (name) =>
+    Number(new RegExp(`^Pages ${name}:\\s+(\\d+)`, "m").exec(text ?? "")?.[1]);
+  const [free, inactive, speculative] = [pages("free"), pages("inactive"), pages("speculative")];
+  if (!size || [free, inactive, speculative].some(Number.isNaN)) return null;
+  return (free + inactive + speculative) * Number(size);
+}
+
+function vmStatText() {
+  return execFileSync("vm_stat", { encoding: "utf8", timeout: 5000 });
+}
+
+/**
+ * One machine-wide reading: CPU busy share over `sampleMs`, and the used share of memory (reclaimable pages count
+ * as free on darwin, falling back to os.freemem). Everything is injectable.
+ */
 export async function sampleMachineLoad({
   cpus = os.cpus,
   freemem = os.freemem,
   totalmem = os.totalmem,
+  platform = process.platform,
+  vmStat = vmStatText,
   sleep: wait = (ms) => new Promise((r) => setTimeout(r, ms)),
   sampleMs = LOAD_SAMPLE_MS,
 } = {}) {
@@ -122,7 +210,15 @@ export async function sampleMachineLoad({
   await wait(sampleMs);
   const cpuPct = cpuPctFromTimes(before, cpuTicks(cpus()));
   const total = totalmem();
-  return { cpuPct, memPct: total > 0 ? Math.round(((total - freemem()) / total) * 1000) / 10 : 0 };
+  let free = freemem();
+  if (platform === "darwin") {
+    try {
+      free = parseVmStat(vmStat()) ?? free;
+    } catch {
+      /* keep os.freemem() */
+    }
+  }
+  return { cpuPct, memPct: total > 0 ? Math.round(((total - free) / total) * 1000) / 10 : 0 };
 }
 
 /** A (live, heartbeating) holder that has held its slot longer than the hold cap. */
@@ -592,6 +688,7 @@ function resolveConfig(opts, env) {
     maxCpuPct: opts.maxCpuPct ?? parseLoadPct(env.RF_HEAVY_SLOT_MAX_CPU_PCT),
     maxMemPct: opts.maxMemPct ?? parseLoadPct(env.RF_HEAVY_SLOT_MAX_MEM_PCT),
     sampleLoad: opts.sampleLoad ?? sampleMachineLoad,
+    sampleTimeoutMs: opts.sampleTimeoutMs ?? 2 * LOAD_SAMPLE_MS,
     staleMs: opts.staleMs ?? STALE_MS,
     hostname: opts.hostname ?? os.hostname(),
     now: opts.now ?? Date.now,
@@ -599,6 +696,15 @@ function resolveConfig(opts, env) {
     label: opts.label || "job",
     branch: opts.branch ?? gitBranch(process.cwd()),
   };
+}
+
+/** Runs the sampler under a deadline; a sampler that never answers rejects, which the caller treats as fail-open. */
+function sampleWithin(sample, ms) {
+  let timer;
+  const deadline = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error("load sampler timed out")), ms);
+  });
+  return Promise.race([sample(), deadline]).finally(() => clearTimeout(timer));
 }
 
 /** A live lock carrying this token, if any (re-entrancy check). */
@@ -649,16 +755,23 @@ async function acquire(cfg, state) {
   };
 
   let lastLog = -Infinity;
+  let warnedSlots = null;
   try {
     for (;;) {
       if (state.aborted)
         throw new Error(`heavy-slot: interrupted by ${state.aborted} while waiting`);
-      const now = cfg.now();
+      let now = cfg.now();
       const snap = readState(cfg.dir, { now, hostname: cfg.hostname, staleMs: cfg.staleMs }, true);
       if (!fs.existsSync(ticketFile)) writeJson(ticketFile, { ...base, heartbeatAt: now });
       const taken = new Set(snap.holders.map((h) => h.index));
       let free = -1;
-      for (let i = 0; i < cfg.slots; i++) {
+      const sf = inspectSlotsFile(cfg.dir);
+      if (sf.state === "invalid" && sf.reason !== warnedSlots) {
+        warnedSlots = sf.reason;
+        cfg.log(`heavy-slot: ignoring ${cfg.dir}/slots (${sf.reason}); using ${cfg.slots} slot(s)`);
+      }
+      const slotCount = sf.state === "ok" ? sf.value : cfg.slots;
+      for (let i = 0; i < slotCount; i++) {
         if (!taken.has(i)) {
           free = i;
           break;
@@ -677,7 +790,8 @@ async function acquire(cfg, state) {
       let busy = null;
       if (g.grant && (cfg.maxCpuPct < 100 || cfg.maxMemPct < 100)) {
         try {
-          busy = loadOverReason(await cfg.sampleLoad(), cfg);
+          busy = loadOverReason(await sampleWithin(cfg.sampleLoad, cfg.sampleTimeoutMs), cfg);
+          now = cfg.now(); // the sample took ~3 s: judge the max wait and the wait line on the clock after it
         } catch {
           busy = null;
         }
@@ -917,6 +1031,14 @@ export function formatStatus(
 ) {
   const st = readState(dir, { now, hostname }, false);
   const out = [`heavy-slot dir: ${dir}`];
+  const sf = inspectSlotsFile(dir);
+  out.push(
+    sf.state === "ok"
+      ? `slots file: ${path.join(dir, "slots")} = ${sf.value} (overrides every waiter's RF_HEAVY_SLOTS)`
+      : sf.state === "invalid"
+        ? `slots file: ${path.join(dir, "slots")} is INVALID (${sf.reason}) — ignored`
+        : "slots file: none (each waiter uses its own RF_HEAVY_SLOTS)",
+  );
   if (!st.holders.length) out.push("holder: none (slot free)");
   for (const h of st.holders) {
     const e = h.entry;
