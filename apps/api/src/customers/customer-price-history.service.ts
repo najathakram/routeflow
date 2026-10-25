@@ -1,10 +1,18 @@
 import { BadRequestException, Injectable, NotFoundException, Optional } from "@nestjs/common";
 import { UserRole } from "@prisma/client";
-import { baseLabelOf, getTierPrice, namesPack, roundMoney, unitNameKey } from "@routeflow/pricing";
+import {
+  baseLabelOf,
+  getTierPrice,
+  namesPack,
+  priceInUnit,
+  pricePerBaseUnit,
+  roundMoney,
+  unitNameKey,
+} from "@routeflow/pricing";
 import { asLadderProduct } from "../products/line-units";
 import type {
   PriceHistoryAggregate,
-  PriceHistoryAveragePoint,
+  PriceHistoryComparisonLine,
   PriceHistoryReferences,
   PriceHistoryResponse,
   PriceHistoryRow,
@@ -25,6 +33,13 @@ import { EntitlementsService } from "../billing/entitlements.service";
 import { customerPricing } from "../orders/units-prices-v2";
 import { openOrderLinesForProduct } from "../orders/open-order-lines";
 import { salePackOf } from "../sales-facts/sales-facts.rules";
+import {
+  comparisonLines,
+  mostCommonPack,
+  plotUnitsOf,
+  type ComparisonSale,
+  type PlotUnit,
+} from "./price-history-comparison";
 
 /** Invoices that were actually issued: DRAFT/VOID are not sales, a WRITTEN_OFF invoice was billed. */
 const ISSUED_STATUSES = { notIn: [...ACCRUAL_REVENUE_STATUSES.notIn] };
@@ -69,40 +84,6 @@ const round4 = (n: number): number => Math.round((n + Number.EPSILON) * 10000) /
 function medianOf(sorted: number[]): number {
   const mid = Math.floor(sorted.length / 2);
   return sorted.length % 2 ? sorted[mid] : roundMoney((sorted[mid - 1] + sorted[mid]) / 2);
-}
-
-/**
- * The all-customers average line: sales already in ONE unit, narrowed to its most common pack size (a
- * "Box" of 12 and a "Box" of 24 are never averaged together), averaged per UTC month. A month with
- * fewer than COMPARE_MIN_CUSTOMERS distinct buyers is dropped, so no single customer's price shows.
- */
-function averageSeries(
-  sales: { price: number; buyer: string; month: string; pack: number | null }[],
-): { series: PriceHistoryAveragePoint[]; seriesUnitsPerBox: number | null } {
-  const packCount = new Map<number | null, number>();
-  for (const s of sales) packCount.set(s.pack, (packCount.get(s.pack) ?? 0) + 1);
-  let pack: number | null = null;
-  let top = 0;
-  for (const [p, n] of packCount) {
-    if (n > top || (n === top && (p ?? 0) > (pack ?? 0))) {
-      pack = p;
-      top = n;
-    }
-  }
-  const months = new Map<string, { sum: number; n: number; buyers: Set<string> }>();
-  for (const s of sales) {
-    if (s.pack !== pack) continue;
-    const m = months.get(s.month) ?? { sum: 0, n: 0, buyers: new Set<string>() };
-    m.sum += s.price;
-    m.n += 1;
-    m.buyers.add(s.buyer);
-    months.set(s.month, m);
-  }
-  const series = [...months.entries()]
-    .filter(([, m]) => m.buyers.size >= COMPARE_MIN_CUSTOMERS)
-    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-    .map(([month, m]) => ({ month, average: roundMoney(m.sum / m.n) }));
-  return { series, seriesUnitsPerBox: pack };
 }
 
 /** `?limit=` -> 1..100, default 25; anything non-numeric falls back to the default. */
@@ -379,7 +360,7 @@ export class CustomerPriceHistoryService {
       return cost != null && cost > 0 ? cost : null;
     };
     const perUnit = (pieceCost: number | null, pack: number | null): number | null =>
-      pieceCost == null || pack == null ? null : roundMoney(pieceCost * (pack > 1 ? pack : 1));
+      pieceCost == null || pack == null ? null : priceInUnit(pieceCost, pack > 1 ? pack : 1);
 
     const rows: PriceHistoryRow[] = kept.map((c) => ({
       ...c.row,
@@ -459,7 +440,10 @@ export class CustomerPriceHistoryService {
         const p = newest.pack;
         if (productPackNow != null && productPackNow > 1) {
           if (p === productPackNow) return roundMoney(price);
-          if (p === 1) return roundMoney(price / productPackNow);
+          if (p === 1) {
+            const perBase = pricePerBaseUnit(price, productPackNow);
+            return perBase == null ? null : priceInUnit(perBase, 1);
+          }
           return null;
         }
         return p === 1 || p == null ? roundMoney(price) : null;
@@ -485,31 +469,42 @@ export class CustomerPriceHistoryService {
       references,
     };
     if (opts.compare === "all") {
-      response.aggregate = await this.compareAggregate(db, tenantId, customerId, productId, {
-        productPackNow,
-        unitName,
-      });
+      Object.assign(
+        response,
+        await this.compare(
+          db,
+          tenantId,
+          customerId,
+          productId,
+          { productPackNow, unitName },
+          plotUnitsOf(kept.map((c) => ({ unitLabel: c.row.unitLabel, pack: c.pack }))),
+        ),
+      );
     }
     return response;
   }
 
   /**
-   * OTHER customers' invoiced sales of the product, last 180 days, in the most common unit.
-   * Reads through Invoice with the tenant. customerId is selected only to count DISTINCT buyers
-   * and is never returned; null when fewer than 3 distinct buyers (too few to anonymise).
+   * `?compare=all`: ONE read of every customer's invoiced sales of the product (180 days, newest 2000), split in
+   * memory (SA-954 D7). OTHER customers feed `aggregate` (the most-sold unit's low / median / high) and line 2;
+   * everyone feeds line 3. Reads through Invoice with the tenant. The buyer is selected only to count DISTINCT
+   * buyers and is never returned; the aggregate is null under 3 distinct other buyers (too few to anonymise).
    */
-  private async compareAggregate(
+  private async compare(
     db: any,
     tenantId: string,
     customerId: string,
     productId: string,
     ctx: { productPackNow: number | null; unitName: string },
-  ): Promise<PriceHistoryAggregate | null> {
+    ownPlots: PlotUnit[],
+  ): Promise<{
+    aggregate: PriceHistoryAggregate | null;
+    comparison: PriceHistoryComparisonLine[];
+  }> {
     const since = new Date(Date.now() - COMPARE_WINDOW_DAYS * 86_400_000);
     const invoices = (await db.invoice.findMany({
       where: {
         tenantId,
-        customerId: { not: customerId },
         status: ISSUED_STATUSES,
         issueDate: { gte: since },
         items: { some: { productId } },
@@ -534,10 +529,11 @@ export class CustomerPriceHistoryService {
       },
     })) as any[];
 
-    type Sale = { price: number; buyer: string; month: string; pack: number | null };
-    type UnitGroup = { prices: number[]; buyers: Set<string>; sales: Sale[] };
+    const sales: ComparisonSale[] = [];
+    type UnitGroup = { prices: number[]; buyers: Set<string>; packs: Array<number | null> };
     const byUnit = new Map<string, UnitGroup>();
     for (const inv of invoices) {
+      const own = inv.customerId === customerId;
       for (const it of inv.items ?? []) {
         const c = buildCandidate(ctx, it, Number(it.qty), true, {
           at: new Date(inv.issueDate),
@@ -548,34 +544,48 @@ export class CustomerPriceHistoryService {
           orderId: "",
           orderNumber: "",
         });
+        sales.push({
+          price: c.row.unitPrice,
+          buyer: inv.customerId,
+          own,
+          month: c.row.date.slice(0, 7),
+          unitLabel: c.row.unitLabel,
+          pack: c.pack,
+        });
+        if (own) continue;
         const g: UnitGroup = byUnit.get(c.row.unitLabel) ?? {
           prices: [],
           buyers: new Set<string>(),
-          sales: [],
+          packs: [],
         };
         g.prices.push(c.row.unitPrice);
         g.buyers.add(inv.customerId);
-        g.sales.push({
-          price: c.row.unitPrice,
-          buyer: inv.customerId,
-          month: c.row.date.slice(0, 7),
-          pack: c.row.unitsPerBox,
-        });
+        g.packs.push(c.pack);
         byUnit.set(c.row.unitLabel, g);
       }
     }
     let best: [string, UnitGroup] | null = null;
     for (const e of byUnit) if (!best || e[1].prices.length > best[1].prices.length) best = e;
-    if (!best || best[1].buyers.size < COMPARE_MIN_CUSTOMERS) return null;
-    const sorted = [...best[1].prices].sort((a, b) => a - b);
-    return {
-      low: sorted[0],
-      median: medianOf(sorted),
-      high: sorted[sorted.length - 1],
-      customers: best[1].buyers.size,
-      unitLabel: best[0],
-      ...averageSeries(best[1].sales),
-    };
+
+    let aggregate: PriceHistoryAggregate | null = null;
+    if (best && best[1].buyers.size >= COMPARE_MIN_CUSTOMERS) {
+      const sorted = [...best[1].prices].sort((a, b) => a - b);
+      aggregate = {
+        low: sorted[0],
+        median: medianOf(sorted),
+        high: sorted[sorted.length - 1],
+        customers: best[1].buyers.size,
+        unitLabel: best[0],
+      };
+    }
+
+    // D2: this customer's own units; with none, the summary's unit (the most bought by others) at its most common pack.
+    let plots = ownPlots;
+    if (plots.length === 0 && best) {
+      const pack = mostCommonPack(best[1].packs);
+      if (pack != null) plots = [{ unitLabel: best[0], pack }];
+    }
+    return { aggregate, comparison: comparisonLines(sales, plots, COMPARE_MIN_CUSTOMERS) };
   }
 
   /**

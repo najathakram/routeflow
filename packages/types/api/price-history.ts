@@ -89,14 +89,6 @@ export interface PriceHistoryAggregate {
   /** Count of distinct other customers behind the figures (always >= 3). */
   customers: number;
   unitLabel: string;
-  /**
-   * The average price per month in `unitLabel` and `seriesUnitsPerBox`, oldest to newest, so the chart can
-   * draw it beside this customer's line. A month backed by fewer than 3 distinct other customers is left
-   * out. Absent from an older server; empty when no month clears the floor.
-   */
-  series?: PriceHistoryAveragePoint[];
-  /** The pack size every `series` price is quoted in (null = sold by the piece / unknown). */
-  seriesUnitsPerBox?: number | null;
 }
 
 /** `GET /customers/:customerId/price-summary` refuses more than this many distinct product ids. */

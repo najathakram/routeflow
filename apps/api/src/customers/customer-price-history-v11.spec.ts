@@ -166,14 +166,15 @@ describe("CustomerPriceHistoryService v1.1", () => {
   });
 
   describe("?compare=all aggregate", () => {
+    // SA-954 D7: the compare read is ONE read of every customer (this one included); the "other customers" split is in memory.
     const withOthers = (rows: unknown[]) =>
       prisma.invoice.findMany.mockImplementation(async (args: any) =>
-        args.where.customerId?.not ? rows : [inv("a", "2026-06-10T00:00:00Z", 10)],
+        args.where.issueDate ? rows : [inv("a", "2026-06-10T00:00:00Z", 10)],
       );
     const othersCall = () =>
       prisma.invoice.findMany.mock.calls
         .map((c: any[]) => c[0])
-        .find((a: any) => a.where.customerId?.not);
+        .find((a: any) => a.where.issueDate);
 
     it("is absent without ?compare and issues no extra invoice query", async () => {
       const r = await run();
@@ -192,7 +193,7 @@ describe("CustomerPriceHistoryService v1.1", () => {
         unitLabel: "pc",
       });
       const call = othersCall();
-      expect(call.where.customerId).toEqual({ not: "c1" });
+      expect(call.where.customerId).toBeUndefined();
       expect(call.where.tenantId).toBe("test-tenant");
       expect(call.where.status).toBeDefined();
       const days = (Date.now() - call.where.issueDate.gte.getTime()) / 86_400_000;
@@ -205,7 +206,7 @@ describe("CustomerPriceHistoryService v1.1", () => {
       const r = await run({ compare: "all" });
       expect(JSON.stringify(r.aggregate)).not.toMatch(/secret|customerId|businessName|name/i);
       expect(Object.keys(r.aggregate!).sort()).toEqual(
-        ["customers", "high", "low", "median", "series", "seriesUnitsPerBox", "unitLabel"].sort(),
+        ["customers", "high", "low", "median", "unitLabel"].sort(),
       );
       expect(JSON.stringify(othersCall().select)).not.toMatch(/businessName|customer:/);
     });
@@ -235,86 +236,10 @@ describe("CustomerPriceHistoryService v1.1", () => {
       expect("aggregate" in (await run({ compare: "yes" }))).toBe(false);
     });
 
-    describe("average series (one point per month)", () => {
-      it("is the mean price per month, oldest to newest, rounded to cents", async () => {
-        withOthers([
-          other("c2", 10, "2026-09-05T00:00:00Z"),
-          other("c3", 11, "2026-09-10T00:00:00Z"),
-          other("c4", 12.34, "2026-09-20T00:00:00Z"),
-          other("c2", 9, "2026-08-05T00:00:00Z"),
-          other("c3", 9.5, "2026-08-06T00:00:00Z"),
-          other("c5", 10.01, "2026-08-07T00:00:00Z"),
-        ]);
-        const a = (await run({ compare: "all" })).aggregate!;
-        expect(a.series).toEqual([
-          { month: "2026-08", average: 9.5 },
-          { month: "2026-09", average: 11.11 },
-        ]);
-        expect(a.seriesUnitsPerBox).toBeNull();
-      });
-
-      it("drops a month with fewer than 3 distinct customers (no single buyer's price shows)", async () => {
-        withOthers([
-          other("c2", 10, "2026-09-05T00:00:00Z"),
-          other("c3", 11, "2026-09-10T00:00:00Z"),
-          other("c4", 12, "2026-09-20T00:00:00Z"),
-          // August: 3 sales but only 2 customers
-          other("c2", 90, "2026-08-05T00:00:00Z"),
-          other("c2", 91, "2026-08-06T00:00:00Z"),
-          other("c3", 92, "2026-08-07T00:00:00Z"),
-        ]);
-        const a = (await run({ compare: "all" })).aggregate!;
-        expect(a.series).toEqual([{ month: "2026-09", average: 11 }]);
-      });
-
-      it("is hidden together with the aggregate below the customer floor", async () => {
-        withOthers([
-          other("c2", 8, "2026-09-05T00:00:00Z"),
-          other("c3", 9, "2026-09-06T00:00:00Z"),
-        ]);
-        expect((await run({ compare: "all" })).aggregate).toBeNull();
-      });
-
-      it("uses the aggregate's unit and one pack size only (units and packs never mixed)", async () => {
-        const cs = (cid: string, price: number, pack: number) =>
-          other(cid, price, "2026-09-05T00:00:00Z", {
-            unitLabel: "Case",
-            unitsPerBox: pack,
-            boxes: 1,
-            pieces: 0,
-            qty: pack,
-          });
-        withOthers([
-          cs("c2", 100, 12),
-          cs("c3", 110, 12),
-          cs("c4", 120, 12),
-          cs("c5", 999, 24), // same label, other pack: left out
-          other("c6", 1, "2026-09-05T00:00:00Z"), // another unit: left out
-        ]);
-        const a = (await run({ compare: "all" })).aggregate!;
-        expect(a.unitLabel).toBe("Case");
-        expect(a.seriesUnitsPerBox).toBe(12);
-        expect(a.series).toEqual([{ month: "2026-09", average: 110 }]);
-      });
-
-      it("carries no customer id or name", async () => {
-        withOthers([
-          other("secret-c2", 8, "2026-09-05T00:00:00Z"),
-          other("secret-c3", 9, "2026-09-06T00:00:00Z"),
-          other("secret-c4", 10, "2026-09-07T00:00:00Z"),
-        ]);
-        const a = (await run({ compare: "all" })).aggregate!;
-        expect(JSON.stringify(a.series)).not.toMatch(/secret|customerId|name/i);
-        expect(Object.keys(a.series![0]).sort()).toEqual(["average", "month"]);
-      });
-
-      it("reads only this tenant's other customers (tenant isolation)", async () => {
-        withOthers([]);
-        await run({ compare: "all" });
-        const call = othersCall();
-        expect(call.where.tenantId).toBe("test-tenant");
-        expect(call.where.customerId).toEqual({ not: "c1" });
-      });
+    it("reads only this tenant's invoices (tenant isolation) and never the customer's id or name into the aggregate", async () => {
+      withOthers([]);
+      await run({ compare: "all" });
+      expect(othersCall().where.tenantId).toBe("test-tenant");
     });
   });
 
