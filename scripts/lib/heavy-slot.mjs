@@ -57,19 +57,54 @@ export function parseSlots(raw) {
     : DEFAULT_SLOTS;
 }
 
+/** Largest slot count the machine-wide slots file may set; a bigger number is a typo, not a plan. */
+export const MAX_SLOTS_FILE = 16;
+
+/** Decode a slots file's bytes: UTF-8 (BOM allowed) or UTF-16 LE/BE with a BOM (PowerShell 5.1 `echo 4 > slots`). */
+function decodeSlotsBytes(buf) {
+  if (buf.length >= 2 && buf[0] === 0xff && buf[1] === 0xfe)
+    return buf.subarray(2).toString("utf16le");
+  if (buf.length >= 2 && buf[0] === 0xfe && buf[1] === 0xff)
+    return Buffer.from(buf.subarray(2)).swap16().toString("utf16le");
+  if (buf.length >= 3 && buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf)
+    return buf.subarray(3).toString("utf8");
+  return buf.toString("utf8");
+}
+
 /**
- * The machine-wide slot count: an optional `<dir>/slots` file holding a positive integer. When present it
- * overrides every waiter's own RF_HEAVY_SLOTS / opts.slots (strict FIFO means one waiter started with a
- * smaller count at the head would otherwise block the whole queue while higher slots sit free). Junk,
- * zero or a missing file -> null (the waiter keeps its own count).
+ * The machine-wide slot count file `<dir>/slots`: { state: "absent" } | { state: "ok", value } |
+ * { state: "invalid", reason }. A plain decimal integer 1..MAX_SLOTS_FILE, in UTF-8 or BOM'd UTF-16;
+ * anything else (0, 17, 0x10, 4.5, words, a BOM-less UTF-16 file) is invalid and the waiter keeps its own count.
+ */
+export function inspectSlotsFile(dir) {
+  let buf;
+  try {
+    buf = fs.readFileSync(path.join(dir, "slots"));
+  } catch {
+    return { state: "absent" };
+  }
+  const raw = decodeSlotsBytes(buf).trim();
+  if (!/^[0-9]+$/.test(raw)) {
+    return {
+      state: "invalid",
+      reason: `not a plain decimal integer: ${JSON.stringify(raw.slice(0, 20))}`,
+    };
+  }
+  const n = Number(raw);
+  if (n < 1 || n > MAX_SLOTS_FILE) {
+    return { state: "invalid", reason: `${n} is outside 1..${MAX_SLOTS_FILE}` };
+  }
+  return { state: "ok", value: n };
+}
+
+/**
+ * The machine-wide slot count: an optional `<dir>/slots` file. When valid it overrides every waiter's own
+ * RF_HEAVY_SLOTS / opts.slots (strict FIFO means one waiter started with a smaller count at the head would
+ * otherwise block the whole queue while higher slots sit free). Absent or invalid -> null.
  */
 export function readSlotsFile(dir) {
-  try {
-    const n = Number(fs.readFileSync(path.join(dir, "slots"), "utf8").trim());
-    return Number.isInteger(n) && n > 0 ? n : null;
-  } catch {
-    return null;
-  }
+  const f = inspectSlotsFile(dir);
+  return f.state === "ok" ? f.value : null;
 }
 
 function parseMinutesMs(raw, fallbackMin) {
@@ -704,6 +739,7 @@ async function acquire(cfg, state) {
   };
 
   let lastLog = -Infinity;
+  let warnedSlots = null;
   try {
     for (;;) {
       if (state.aborted)
@@ -713,7 +749,12 @@ async function acquire(cfg, state) {
       if (!fs.existsSync(ticketFile)) writeJson(ticketFile, { ...base, heartbeatAt: now });
       const taken = new Set(snap.holders.map((h) => h.index));
       let free = -1;
-      const slotCount = readSlotsFile(cfg.dir) ?? cfg.slots;
+      const sf = inspectSlotsFile(cfg.dir);
+      if (sf.state === "invalid" && sf.reason !== warnedSlots) {
+        warnedSlots = sf.reason;
+        cfg.log(`heavy-slot: ignoring ${cfg.dir}/slots (${sf.reason}); using ${cfg.slots} slot(s)`);
+      }
+      const slotCount = sf.state === "ok" ? sf.value : cfg.slots;
       for (let i = 0; i < slotCount; i++) {
         if (!taken.has(i)) {
           free = i;
@@ -974,6 +1015,14 @@ export function formatStatus(
 ) {
   const st = readState(dir, { now, hostname }, false);
   const out = [`heavy-slot dir: ${dir}`];
+  const sf = inspectSlotsFile(dir);
+  out.push(
+    sf.state === "ok"
+      ? `slots file: ${path.join(dir, "slots")} = ${sf.value} (overrides every waiter's RF_HEAVY_SLOTS)`
+      : sf.state === "invalid"
+        ? `slots file: ${path.join(dir, "slots")} is INVALID (${sf.reason}) — ignored`
+        : "slots file: none (each waiter uses its own RF_HEAVY_SLOTS)",
+  );
   if (!st.holders.length) out.push("holder: none (slot free)");
   for (const h of st.holders) {
     const e = h.entry;

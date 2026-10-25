@@ -33,6 +33,7 @@ import {
   formatWaitLine,
   historyRecord,
   nextGrant,
+  inspectSlotsFile,
   readSlotsFile,
   cpuPctFromTimes,
   loadOverReason,
@@ -1134,6 +1135,7 @@ check(
     totalmem: () => 100,
     sleep: async (ms) => waited.push(ms),
     sampleMs: 3000,
+    platform: "linux", // the host's own platform would pick the macOS vm_stat path on a Mac
   });
   check(
     "K4 sampleMachineLoad: CPU over the sample window, memory used share, injected clock",
@@ -1416,7 +1418,9 @@ check(
   await sleep(60);
   const blockedWithoutFile = !wStarted;
   writeFileSync(path.join(dir, "slots"), "4");
-  await W;
+  const wRan = await until(() => wStarted, 5000); // fail, never hang, if the file is not honoured
+  if (!wRan) gates.forEach((g) => g());
+  await Promise.race([W.catch(() => {}), sleep(5000)]);
   check(
     "L2 a slots=2 waiter at the head blocks with both slots held, and takes slot 2 once the file says 4",
     [blockedWithoutFile, wStarted, existsSync(lockFile(dir, 0)), existsSync(lockFile(dir, 1))],
@@ -1446,6 +1450,30 @@ check(
     "L3 a junk slots file is ignored: slots=1 still serialises",
     [blocked, bStarted],
     [true, true],
+  );
+}
+{
+  // L4: status prints the slots file (value, invalid, none); a waiter logs an invalid file once and keeps its own count.
+  const dir = mkTmp();
+  const none = formatStatus(dir);
+  writeFileSync(path.join(dir, "slots"), "3");
+  const ok = formatStatus(dir);
+  writeFileSync(path.join(dir, "slots"), "99");
+  const bad = formatStatus(dir);
+  const lines = [];
+  await withHeavySlot(
+    { label: "w", branch: "b", dir, env: {}, slots: 1, ...FAST, log: (l) => lines.push(l) },
+    async () => {},
+  );
+  check(
+    "L4 status shows the slots file, and an invalid one is ignored with ONE warning",
+    [
+      /slots file: none/.test(none),
+      ok.includes(" = 3 (overrides"),
+      bad.includes("INVALID (99 is outside 1..16)"),
+      lines.filter((l) => /ignoring .*slots/.test(l)).length,
+    ],
+    [true, true, true, 1],
   );
 }
 
