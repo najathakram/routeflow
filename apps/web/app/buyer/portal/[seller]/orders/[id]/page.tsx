@@ -968,8 +968,9 @@ export default function BuyerOrderDetailPage() {
                                 prev.filter((i) => editRowKey(i) !== editRowKey(item)),
                               )
                             }
-                            className="rounded p-1 text-danger/40 hover:bg-danger-bg hover:text-danger transition-colors"
+                            className="rounded p-1 text-danger/40 hover:bg-danger-bg hover:text-danger transition-colors disabled:opacity-40"
                             title="Remove item"
+                            aria-label={`Remove ${item.name}`}
                             disabled={stale}
                           >
                             <Trash2 className="h-3.5 w-3.5" />

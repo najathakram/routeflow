@@ -168,6 +168,10 @@ describe("buyer order edit revision guard (row 380)", () => {
     fireEvent.click(screen.getByRole("button", { name: /save changes/i }));
     await screen.findByRole("button", { name: "Reload order" });
     expect(screen.getByTitle("Remove item")).toBeDisabled();
+    // the × is named for its line and dims like its siblings
+    const remove = screen.getByRole("button", { name: "Remove Sample Cola 12oz" });
+    expect(remove).toBeDisabled();
+    expect(remove).toHaveClass("disabled:opacity-40");
     expect(screen.getByRole("spinbutton")).toBeDisabled();
     expect(screen.getByPlaceholderText(/search products to add/i)).toBeDisabled();
     const stepButtons = screen
