@@ -33,6 +33,8 @@ import {
   formatWaitLine,
   historyRecord,
   nextGrant,
+  inspectSlotsFile,
+  readSlotsFile,
   cpuPctFromTimes,
   loadOverReason,
   parseLoadPct,
@@ -1133,6 +1135,7 @@ check(
     totalmem: () => 100,
     sleep: async (ms) => waited.push(ms),
     sampleMs: 3000,
+    platform: "linux", // the host's own platform would pick the macOS vm_stat path on a Mac
   });
   check(
     "K4 sampleMachineLoad: CPU over the sample window, memory used share, injected clock",
@@ -1379,6 +1382,140 @@ check(
     "K13 max wait is judged on the clock after the sample: one sample, then HeavySlotTimeout",
     [err instanceof HeavySlotTimeout, calls],
     [true, 1],
+  );
+}
+
+{
+  // L1-L4: a machine-wide <dir>/slots file overrides every waiter's own RF_HEAVY_SLOTS, re-read each poll.
+  const dir = mkTmp();
+  const f = path.join(dir, "slots");
+  writeFileSync(f, "4");
+  const a = readSlotsFile(dir);
+  writeFileSync(f, "abc");
+  const b = readSlotsFile(dir);
+  writeFileSync(f, "0");
+  const c = readSlotsFile(dir);
+  rmSync(f);
+  check(
+    "L1 readSlotsFile: a positive integer is read, junk / zero / no file is null",
+    [a, b, c, readSlotsFile(dir)],
+    [4, null, null, null],
+  );
+}
+{
+  // A slots=2 waiter at the head, both slots held, file says 4 -> it takes slot 2 (no file: it blocks).
+  const dir = mkTmp();
+  const gates = [];
+  const gate = () => new Promise((r) => gates.push(r));
+  const opts = (label) => ({ label, branch: "b", dir, env: {}, slots: 2, ...FAST, ...NO_LOG });
+  const A = withHeavySlot(opts("A"), () => gate());
+  await until(() => existsSync(lockFile(dir, 0)));
+  const B = withHeavySlot(opts("B"), () => gate());
+  await until(() => existsSync(lockFile(dir, 1)));
+  let wStarted = false;
+  const W = withHeavySlot(opts("W"), async () => void (wStarted = true));
+  await until(() => queued(dir).length === 1);
+  await sleep(60);
+  const blockedWithoutFile = !wStarted;
+  writeFileSync(path.join(dir, "slots"), "4");
+  const wRan = await until(() => wStarted, 5000); // fail, never hang, if the file is not honoured
+  if (!wRan) gates.forEach((g) => g());
+  await Promise.race([W.catch(() => {}), sleep(5000)]);
+  check(
+    "L2 a slots=2 waiter at the head blocks with both slots held, and takes slot 2 once the file says 4",
+    [blockedWithoutFile, wStarted, existsSync(lockFile(dir, 0)), existsSync(lockFile(dir, 1))],
+    [true, true, true, true],
+  );
+  gates[0]();
+  gates[1]();
+  await Promise.all([A, B]);
+}
+{
+  // A junk file changes nothing: the waiter keeps its env/opts slot count.
+  const dir = mkTmp();
+  writeFileSync(path.join(dir, "slots"), "lots");
+  const gates = [];
+  const gate = () => new Promise((r) => gates.push(r));
+  const opts = (label) => ({ label, branch: "b", dir, env: {}, slots: 1, ...FAST, ...NO_LOG });
+  const A = withHeavySlot(opts("A"), () => gate());
+  await until(() => existsSync(lockFile(dir, 0)));
+  let bStarted = false;
+  const B = withHeavySlot(opts("B"), async () => void (bStarted = true));
+  await until(() => queued(dir).length === 1);
+  await sleep(60);
+  const blocked = !bStarted;
+  gates[0]();
+  await Promise.all([A, B]);
+  check(
+    "L3 a junk slots file is ignored: slots=1 still serialises",
+    [blocked, bStarted],
+    [true, true],
+  );
+}
+{
+  // L4: status prints the slots file (value, invalid, none); a waiter logs an invalid file once and keeps its own count.
+  const dir = mkTmp();
+  const none = formatStatus(dir);
+  writeFileSync(path.join(dir, "slots"), "3");
+  const ok = formatStatus(dir);
+  writeFileSync(path.join(dir, "slots"), "99");
+  const bad = formatStatus(dir);
+  const lines = [];
+  await withHeavySlot(
+    { label: "w", branch: "b", dir, env: {}, slots: 1, ...FAST, log: (l) => lines.push(l) },
+    async () => {},
+  );
+  check(
+    "L4 status shows the slots file, and an invalid one is ignored with ONE warning",
+    [
+      /slots file: none/.test(none),
+      ok.includes(" = 3 (overrides"),
+      bad.includes("INVALID (99 is outside 1..16)"),
+      lines.filter((l) => /ignoring .*slots/.test(l)).length,
+    ],
+    [true, true, true, 1],
+  );
+}
+{
+  // L5: a malformed slots file never throws out of the reader (it would reject every waiter and status).
+  const dir = mkTmp();
+  const f = path.join(dir, "slots");
+  const bytes = Buffer.from([0xfe, 0xff, 0x00, 0x34, 0x0a]); // UTF-16 BE BOM + odd-length body
+  writeFileSync(f, bytes);
+  let threw = null;
+  let r = null;
+  try {
+    r = inspectSlotsFile(dir);
+  } catch (e) {
+    threw = e.message;
+  }
+  check("L5 odd-length UTF-16 BE is invalid, not a throw", [threw, r?.state], [null, "invalid"]);
+  let thrown = 0;
+  let rng = 12345;
+  const rnd = () => (rng = (rng * 1103515245 + 12345) & 0x7fffffff) >>> 8; // high bits: the low bits of this LCG cycle
+  const heads = [[], [0xef, 0xbb, 0xbf], [0xff, 0xfe], [0xfe, 0xff]];
+  const names = ["none", "utf8-bom", "utf16le-bom", "utf16be-bom"];
+  const seen = { none: 0, "utf8-bom": 0, "utf16le-bom": 0, "utf16be-bom": 0 };
+  const oddBody = { "utf16le-bom": 0, "utf16be-bom": 0 };
+  for (let i = 0; i < 400; i++) {
+    const cls = i % 4; // each BOM class by construction, never left to the generator
+    const body = Array.from({ length: rnd() % 9 }, () => rnd() & 0xff);
+    seen[names[cls]]++;
+    if (cls >= 2 && body.length % 2 === 1) oddBody[names[cls]]++;
+    writeFileSync(f, Buffer.from([...heads[cls], ...body]));
+    try {
+      inspectSlotsFile(dir);
+      readSlotsFile(dir);
+      formatStatus(dir);
+    } catch {
+      thrown++;
+    }
+  }
+  check("L5b fuzz: 400 files of 0-8 random bytes under each BOM class never throw", thrown, 0);
+  check(
+    "L5c the fuzz exercised every BOM class, and odd-length UTF-16 bodies in both byte orders",
+    [Object.values(seen).every((n) => n > 0), Object.values(oddBody).every((n) => n > 0)],
+    [true, true],
   );
 }
 
