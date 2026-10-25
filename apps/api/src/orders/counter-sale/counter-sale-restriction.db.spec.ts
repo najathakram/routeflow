@@ -269,7 +269,7 @@ describeDb(
         await setStoreState(raw, w.tenantId, "CA");
         const e = await errOf(ring(w.txCustomerId, `k-ca-${RUN}`));
         expect(bodyOf(e).code).toBe("RESTRICTION_WARNING");
-        expect(bodyOf(e).lines[0].rules[0].reasonText).toBe("This product is banned in CA by law.");
+        expect(bodyOf(e).lines[0].rules[0].reasonText).toBe("Restricted in CA: R510 state ban.");
         const order: any = await ring(w.txCustomerId, `k-ca-${RUN}`, ackFrom(e));
         expect((await audits(order.id))[0].meta).toMatchObject({ basis: "STORE" });
       });

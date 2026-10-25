@@ -76,7 +76,7 @@ describe("CustomersWithoutState (Addendum D)", () => {
     renderWithProviders(<CustomersWithoutState canFix staffOrdersChecked={false} />);
     expect(
       await screen.findByText(
-        "5 customers need a state. Until it's set, products with a legal state ban stay hidden from them in your portal and can't be ordered there. Other state limits won't reach them. Staff orders and invoices aren't checked (turn on 'Also block restricted products on staff orders and invoices' to block them).",
+        "5 customers need a state. Until it's set, products with a state restriction stay hidden from them in your portal and can't be ordered there. Other state limits won't reach them. Staff orders and invoices aren't checked (turn on 'Also block restricted products on staff orders and invoices' to block them).",
       ),
     ).toBeInTheDocument();
     expect(screen.getByText("3 have no address")).toBeInTheDocument();
@@ -96,7 +96,7 @@ describe("CustomersWithoutState (Addendum D)", () => {
     renderWithProviders(<CustomersWithoutState canFix staffOrdersChecked />);
     expect(
       await screen.findByText(
-        "5 customers need a state. Until it's set, products with a legal state ban stay hidden from them in your portal and can't be ordered there. Other state limits won't reach them. On staff orders and invoices, staff are warned and can choose Sell anyway with a reason; drivers can't.",
+        "5 customers need a state. Until it's set, products with a state restriction stay hidden from them in your portal and can't be ordered there. Other state limits won't reach them. On staff orders and invoices, staff are warned and can choose Sell anyway with a reason; drivers can't.",
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText(/Staff orders and invoices aren't checked/)).toBeNull();
@@ -373,7 +373,7 @@ describe("CustomersWithoutState: needsDefault (row 414)", () => {
     await openBucket(user, /more than one address and no default/);
     expect(
       screen.getByText(
-        "We can't tell which state applies. Legal bans still keep those products hidden, but other state limits won't reach them until you choose.",
+        "We can't tell which state applies. State restrictions still keep those products hidden, but other state limits won't reach them until you choose.",
       ),
     ).toBeInTheDocument();
     expect(screen.getByText("Choose the address that sets their state.")).toBeInTheDocument();

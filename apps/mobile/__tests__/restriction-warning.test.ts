@@ -34,7 +34,7 @@ const warning: RestrictionWarningError = {
           id: "r1",
           states: ["CA"],
           legal: true,
-          reasonText: "This product is banned in CA by law.",
+          reasonText: "Restricted in CA: State ban.",
         },
       ],
     },
@@ -110,7 +110,7 @@ describe("parseRestrictionHardBlock", () => {
           id: "r1",
           states: ["CA"],
           legal: true,
-          reasonText: "This product is banned in CA by law.",
+          reasonText: "Restricted in CA: State ban.",
         },
       ],
     },
@@ -131,7 +131,7 @@ describe("parseRestrictionHardBlock", () => {
       {
         key: "n:0",
         name: "Acme Gummies",
-        items: [{ text: "This product is banned in CA by law.", legal: true }],
+        items: [{ text: "Restricted in CA: State ban.", legal: true }],
       },
     ]);
     expect(driverBlockRows([{ ...ruleLines[0], rules: [] }])[0].items).toEqual([
@@ -212,11 +212,11 @@ describe("buildAck / mergeAck", () => {
 
 describe("ruleText", () => {
   it("uses the server's fixed copy", () => {
-    expect(ruleText(warning.lines[0].rules[0])).toBe("This product is banned in CA by law.");
+    expect(ruleText(warning.lines[0].rules[0])).toBe("Restricted in CA: State ban.");
   });
-  it("falls back to the legal copy with the state filled in when the text is missing", () => {
+  it("there is no second copy of the sentence: missing server text reads as unchecked (SA-947)", () => {
     expect(ruleText({ id: "r", states: ["CA"], legal: true, reasonText: "" })).toBe(
-      "This product is banned in CA by law.",
+      "This item couldn't be checked.",
     );
   });
 });
@@ -237,15 +237,15 @@ describe("lineRuleRows: the displayed rule lines of one product (display-only de
     id,
     states: ["CA"],
     legal: true,
-    reasonText: "This product is banned in CA by law.",
+    reasonText: "Restricted in CA: State ban.",
     ...over,
   });
 
   it("two rules with the same state and wording show ONE line", () => {
     expect(lineRuleRows([rule("r1"), rule("r2")])).toEqual([
       {
-        key: "This product is banned in CA by law.",
-        text: "This product is banned in CA by law.",
+        key: "Restricted in CA: State ban.",
+        text: "Restricted in CA: State ban.",
         legal: true,
       },
     ]);
@@ -254,7 +254,7 @@ describe("lineRuleRows: the displayed rule lines of one product (display-only de
   it("the merge is keyed on what is DISPLAYED: [CA] and [CA, NV] both read 'banned in CA', so they show ONE line", () => {
     const rows = lineRuleRows([rule("r1"), rule("r2", { states: ["CA", "NV"] })]);
     expect(rows).toHaveLength(1);
-    expect(rows[0].text).toBe("This product is banned in CA by law.");
+    expect(rows[0].text).toBe("Restricted in CA: State ban.");
     expect(rows[0].legal).toBe(true);
   });
 
@@ -269,23 +269,20 @@ describe("lineRuleRows: the displayed rule lines of one product (display-only de
       rule("r1"),
       rule("r2", { states: ["CA", "NV"], legal: false, reasonText: "Limited in CA." }),
     ]);
-    expect(rows.map((r) => r.text)).toEqual([
-      "This product is banned in CA by law.",
-      "Limited in CA.",
-    ]);
+    expect(rows.map((r) => r.text)).toEqual(["Restricted in CA: State ban.", "Limited in CA."]);
     expect(rows.map((r) => r.legal)).toEqual([true, false]);
   });
 
   it("a different state, or different wording, is its own line; order is kept", () => {
     const rows = lineRuleRows([
       rule("r1"),
-      rule("r2", { states: ["TX"], reasonText: "This product is banned in TX by law." }),
+      rule("r2", { states: ["TX"], reasonText: "Restricted in TX: State ban." }),
       rule("r3", { reasonText: "Limited in CA.", legal: false }),
       rule("r4"),
     ]);
     expect(rows.map((r) => r.text)).toEqual([
-      "This product is banned in CA by law.",
-      "This product is banned in TX by law.",
+      "Restricted in CA: State ban.",
+      "Restricted in TX: State ban.",
       "Limited in CA.",
     ]);
     expect(rows.map((r) => r.legal)).toEqual([true, true, false]);
@@ -346,6 +343,6 @@ describe("lineRuleRows: the displayed rule lines of one product (display-only de
         rules: [rule("r1"), rule("r2")],
       },
     ]);
-    expect(rows[0].items).toEqual([{ text: "This product is banned in CA by law.", legal: true }]);
+    expect(rows[0].items).toEqual([{ text: "Restricted in CA: State ban.", legal: true }]);
   });
 });

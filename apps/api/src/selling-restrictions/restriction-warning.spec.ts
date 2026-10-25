@@ -112,7 +112,7 @@ describe("decideStaffWrite: the warning", () => {
             id: "r1",
             states: ["CA"],
             legal: true,
-            reasonText: "This product is banned in CA by law.",
+            reasonText: "Restricted in CA: State ban.",
           },
         ],
       },
@@ -158,15 +158,15 @@ describe("decideStaffWrite: the warning", () => {
       thrown(() => decideStaffWrite(base({ judgement: judgement([b], basis) }))).getResponse()
         .lines[0].rules[0].reasonText;
 
-    it("a state ban names the state; a federal ban says federally", () => {
-      expect(textOf(breach("p1", ["r1"]))).toBe("This product is banned in CA by law.");
+    it("a state rule names the state; a federal rule says everywhere", () => {
+      expect(textOf(breach("p1", ["r1"]))).toBe("Restricted in CA: State ban.");
       expect(
         textOf(
           breach("p1", ["f"], {
             rules: [{ id: "f", kind: "FEDERAL", states: [], legal: true, reason: "x" }],
           }),
         ),
-      ).toBe("This product is banned federally by law.");
+      ).toBe("Restricted everywhere: x.");
     });
 
     it("a malformed rule quotes the admin's reason; an unresolved state asks for the address (the store's on a store basis)", () => {
@@ -178,7 +178,7 @@ describe("decideStaffWrite: the warning", () => {
             ],
           }),
         ),
-      ).toBe("This product is banned by law (No gummies).");
+      ).toBe("Restricted: No gummies.");
       const pending = breach("p1", ["s"], {
         outcome: "INDETERMINATE",
         state: null,
@@ -354,7 +354,7 @@ describe("decideStaffWrite: who may override", () => {
             id: "r1",
             states: ["CA"],
             legal: true,
-            reasonText: "This product is banned in CA by law.",
+            reasonText: "Restricted in CA: State ban.",
           },
         ],
       },
