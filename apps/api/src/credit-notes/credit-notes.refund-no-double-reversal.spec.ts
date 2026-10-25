@@ -96,6 +96,55 @@ describe("a refund credit note books NO second regulated reversal (ledgerReverse
     expect(ledger.reverseCreditNoteEntries).not.toHaveBeenCalled();
   });
 
+  describe("SA-840 (B704 / #1477): a refund credit note carries the tax it refunds", () => {
+    // ii-1 is a 100.00 / 10-piece line with a 10.00 levy; the refund is 4 pieces: 40.00 net + 3.20 tax + 4.00 levy
+    const refund = {
+      customerId: "c1",
+      invoiceId: "inv-1",
+      amount: 47.2,
+      items: [{ invoiceItemId: "ii-1", amount: 40, qty: 4 }],
+    };
+    const opts = {
+      ledgerReversedByReturn: true,
+      refundTax: 3.2,
+      refundCategoryTax: [{ invoiceItemId: "ii-1", categoryTax: 4 }],
+    };
+
+    it("REG-B704 a refund row writes the levy slice (categoryTax 4.00) while amount stays NET and trackedCategoryId stays null", async () => {
+      // wrong today: the create is refused (items sum 40.00 != 47.20) and a refund row's categoryTax is forced to 0
+      await service.create(refund, opts);
+      expect(writtenItems()[0]).toMatchObject({
+        invoiceItemId: "ii-1",
+        amount: 40,
+        categoryTax: 4,
+        trackedCategoryId: null,
+      });
+      expect(prisma.creditNote.create.mock.calls[0][0].data.amount).toBe(47.2);
+      expect(ledger.reverseCreditNoteEntries).not.toHaveBeenCalled(); // no second reversal
+    });
+
+    it("REG-B704 the reconciliation is sum(amount + categoryTax) + refundTax == dto.amount: a wrong total is refused", async () => {
+      // wrong today: any total that is not the plain item sum is refused, including the right one
+      await expect(service.create({ ...refund, amount: 47.21 }, opts)).rejects.toMatchObject({
+        response: { code: "CREDIT_NOTE_LINE_INVALID" },
+      });
+    });
+
+    it("REG-B704 an operator credit note on a taxed line is unchanged: the line cap stays NET and the levy stays a fraction of the line", async () => {
+      // guard: master's behavior, which must not move. 80.00 already credited on the 100.00 line: 40.00 more is refused
+      prisma.creditNoteItem.findMany.mockResolvedValue([
+        { invoiceItemId: "ii-1", amount: 80, qty: 8 },
+      ]);
+      await expect(service.create(dto)).rejects.toMatchObject({
+        response: { code: "CREDIT_NOTE_OVER_HEADROOM" },
+      });
+      prisma.creditNoteItem.findMany.mockResolvedValue([]);
+      await service.create(dto);
+      expect(writtenItems()[0]).toMatchObject({ amount: 40, categoryTax: 4 }); // 10.00 x 40/100
+      expect(prisma.creditNote.create.mock.calls[0][0].data.amount).toBe(40);
+    });
+  });
+
   it("SA-628b: a refund row may carry its qty at amount 0 (a paid line whose share of the pooled price is 0); a manual note may not", async () => {
     const zero = {
       ...dto,

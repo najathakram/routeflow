@@ -295,6 +295,62 @@ describe("accrual net sales (B440/B455/B456)", () => {
     });
     expect(result.get("c2")).toEqual({ gross: 0, creditNotes: 200, externalRefunds: 0, net: -200 });
   });
+
+  describe("SA-840 R6 (B704 / #1477, B1226): a refund that includes tax takes only its NET off net sales", () => {
+    // The R1 invoice: 50.00 net + 4.00 tax + 10.00 levy = 64.00; gross (pre-tax) sales = 64 - 14 = 50.
+    const invoiceAgg = { _sum: { total: D(64), taxAmount: D(14) } };
+    const SPLIT = { _sum: { creditTax: D(4), creditCategoryTax: D(10) } };
+
+    it("REG-B704 R6: a cash EXTERNAL_REFUND of 64.00 (split 50 / 4 / 10) nets -50.00 of sales, never -64.00", async () => {
+      // wrong today: externalRefunds 64 and net -14 (the tax is subtracted from a pre-tax figure)
+      const db = stubDb({ invoiceAgg, creditNoteAgg: { _sum: { amount: D(0) } } });
+      db.return.aggregate.mockImplementation(async (args: any) => {
+        if (args.where.refundMethod === "CREDIT_NOTE") return { _sum: {} };
+        if (args.where.creditSubtotal) return SPLIT; // the rows that carry a frozen split
+        return { _sum: { refundAmount: D(64) } };
+      });
+      const result = await fetchAccrualNetSales(db, "tenant-1", window);
+      expect(result).toEqual({ gross: 50, creditNotes: 0, externalRefunds: 50, net: 0 });
+    });
+
+    it("REG-B704 R6: a legacy EXTERNAL_REFUND row (no split) still nets its refundAmount (it was NET-only)", async () => {
+      // guard: rows written before this fix have no creditSubtotal; they keep subtracting refundAmount
+      const db = stubDb({ invoiceAgg, creditNoteAgg: { _sum: { amount: D(0) } } });
+      db.return.aggregate.mockImplementation(async (args: any) =>
+        args.where.creditSubtotal || args.where.refundMethod === "CREDIT_NOTE"
+          ? { _sum: {} }
+          : { _sum: { refundAmount: D(50) } },
+      );
+      expect((await fetchAccrualNetSales(db, "tenant-1", window)).externalRefunds).toBe(50);
+    });
+
+    it("REG-B704 R6: the store-credit note of 64.00 nets -50.00, the tax of its CREDIT_NOTE return read by refundedAt", async () => {
+      // wrong today: creditNotes 64 and net -14
+      const db = stubDb({ invoiceAgg, creditNoteAgg: { _sum: { amount: D(64) } } });
+      db.return.aggregate.mockImplementation(async (args: any) =>
+        args.where.refundMethod === "CREDIT_NOTE" ? SPLIT : { _sum: {} },
+      );
+      const result = await fetchAccrualNetSales(db, "tenant-1", window);
+      expect(result).toEqual({ gross: 50, creditNotes: 50, externalRefunds: 0, net: 0 });
+      const cnReturnArgs = db.return.aggregate.mock.calls
+        .map((c: any) => c[0])
+        .find((a: any) => a.where.refundMethod === "CREDIT_NOTE");
+      expect(cnReturnArgs.where).toMatchObject({ tenantId: "tenant-1", refundedAt: window });
+    });
+
+    it("REG-B704 R6: the per-customer reader agrees with the aggregate reader", async () => {
+      const db = stubDb({
+        invoiceGroupBy: [{ customerId: "c1", _sum: { total: D(64), taxAmount: D(14) } }],
+      });
+      db.return.groupBy.mockImplementation(async (args: any) => {
+        if (args.where.refundMethod === "CREDIT_NOTE") return [];
+        if (args.where.creditSubtotal) return [{ customerId: "c1", ...SPLIT }];
+        return [{ customerId: "c1", _sum: { refundAmount: D(64) } }];
+      });
+      const result = await fetchAccrualNetSalesByCustomer(db, "tenant-1", window);
+      expect(result.get("c1")).toEqual({ gross: 50, creditNotes: 0, externalRefunds: 50, net: 0 });
+    });
+  });
 });
 
 // #2118: the B440 arithmetic lives in ONE pure function the sales-facts layer shares with

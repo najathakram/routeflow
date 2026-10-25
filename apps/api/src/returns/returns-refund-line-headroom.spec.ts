@@ -306,4 +306,129 @@ describe("ReturnsService.processRefund: itemised refund under the shared per-lin
     );
     expect((service as any).priceReturn(ret.items, ret.order, new Map()).amount).toBe(75);
   });
+
+  describe("SA-840 (B704 / #1477): a standard-return refund is what the invoice CHARGED", () => {
+    // R1 fixture: 10 pcs, line 50.00 net, 8% = 4.00, levy 10.00, invoice 64.00
+    const TAXED = {
+      id: "line-a",
+      productId: "pa",
+      qty: 10,
+      subtotal: 50,
+      taxRate: 0.08,
+      categoryTaxAmount: 10,
+      systemKind: null,
+      description: "Widget",
+    };
+    const taxedInvoice = (items: any[] = [TAXED], over: Record<string, unknown> = {}) => ({
+      ...invoice("inv-1", items),
+      total: 64,
+      taxAmount: 14,
+      discount: 0,
+      ...over,
+    });
+    const claimData = () => prisma.return.updateMany.mock.calls[0][0].data;
+
+    it("REG-B704 R1: a full return mints 64.00 (50 net / 4 tax / 10 levy) and freezes the split on the Return", async () => {
+      // wrong today: amount 50, items [{ line-a, 50, 10 }], opts { ledgerReversedByReturn: true }, no split columns
+      withReturn(order([taxedInvoice()]), [{ productId: "pa", qty: 10 }]);
+      await service.processRefund("ret-1");
+      expect(creditNotesCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          amount: 64,
+          items: [{ invoiceItemId: "line-a", amount: 50, qty: 10 }],
+        }),
+        {
+          ledgerReversedByReturn: true,
+          refundTax: 4,
+          refundCategoryTax: [{ invoiceItemId: "line-a", categoryTax: 10 }],
+        },
+      );
+      expect(claimData()).toMatchObject({
+        refundAmount: 64,
+        creditSubtotal: 50,
+        creditTax: 4,
+        creditCategoryTax: 10,
+      });
+    });
+
+    it("REG-B704 preview == mint: findOne and findAll estimate the same 64.00 processRefund mints", async () => {
+      // wrong today: all three say 50.00
+      const ord = order([taxedInvoice()]);
+      withReturn(ord, [{ productId: "pa", qty: 10 }]);
+      await service.processRefund("ret-1");
+      const minted = creditNotesCreate.mock.calls[0][0].amount;
+      expect(minted).toBe(64);
+      expect((await service.findOne("ret-1")).refundEstimate).toBe(64);
+      prisma.return.findMany.mockResolvedValue([
+        {
+          id: "ret-1",
+          kind: "STANDARD",
+          status: "RECEIVED",
+          items: [{ productId: "pa", qty: 10 }],
+          order: ord,
+          customer: { id: "cust-1", businessName: "Acme Co" },
+        },
+      ]);
+      prisma.return.count.mockResolvedValue(1);
+      expect((await service.findAll()).data[0].refundEstimate).toBe(minted);
+    });
+
+    it("REG-B704 R2: 5 of 10 refunds 32.00 (25 / 2 / 5), the other 5 another 32.00, never 64.01", async () => {
+      // wrong today: 25.00 then 25.00
+      withReturn(order([taxedInvoice()]), [{ productId: "pa", qty: 5 }]);
+      await service.processRefund("ret-1");
+      expect(creditNotesCreate.mock.calls[0][0].amount).toBe(32);
+      // the second half, with the first chunk's CreditNoteItem already on the line
+      creditNotesCreate.mockClear();
+      prisma.return.updateMany.mockClear();
+      prisma.creditNoteItem.findMany.mockResolvedValue([
+        { invoiceItemId: "line-a", amount: 25, qty: 5 },
+      ]);
+      withReturn(order([taxedInvoice()]), [{ productId: "pa", qty: 5 }]);
+      await service.processRefund("ret-1");
+      expect(creditNotesCreate.mock.calls[0][0].amount).toBe(32);
+    });
+
+    it("REG-B704 R3: one box of a two-box line (24 pieces, 48.00, 8%) refunds 25.92, never 12 x 24 = 288", async () => {
+      // wrong today: 24.00
+      const boxed = {
+        id: "line-a",
+        productId: "pa",
+        qty: 24,
+        boxes: 2,
+        pieces: 0,
+        unitsPerBox: 12,
+        subtotal: 48,
+        taxRate: 0.08,
+        categoryTaxAmount: 0,
+        systemKind: null,
+        description: "Case",
+      };
+      withReturn(order([taxedInvoice([boxed], { total: 51.84, taxAmount: 3.84 })]), [
+        { productId: "pa", qty: 12 },
+      ]);
+      await service.processRefund("ret-1");
+      expect(creditNotesCreate.mock.calls[0][0].amount).toBe(25.92);
+    });
+
+    it("REG-B704 R5: the invoice discount share comes off and the NSF fee line is never credited (49.00)", async () => {
+      // wrong today: 50.00. goods 50.00 @ 8% = 4.00, discount 5.00, NSF fee 25.00: invoice 74.00
+      const fee = {
+        id: "line-fee",
+        productId: null,
+        qty: 1,
+        subtotal: 25,
+        taxRate: 0,
+        categoryTaxAmount: 0,
+        systemKind: "NSF_FEE",
+        description: "NSF fee — returned check",
+      };
+      const goods = { ...TAXED, categoryTaxAmount: 0 };
+      withReturn(order([taxedInvoice([goods, fee], { total: 74, taxAmount: 4, discount: 5 })]), [
+        { productId: "pa", qty: 10 },
+      ]);
+      await service.processRefund("ret-1");
+      expect(creditNotesCreate.mock.calls[0][0].amount).toBe(49);
+    });
+  });
 });
