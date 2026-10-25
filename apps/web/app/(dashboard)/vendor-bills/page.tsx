@@ -2136,7 +2136,7 @@ function ExpenseDetailModal({
           <Field label="Category" value={expense.category?.name} />
           <Field label="Supplier" value={expense.supplier?.name} />
           <Field label="Customer" value={expense.customer?.businessName} />
-          <Field label="Payment method" value={expense.paymentMethod} />
+          <Field label="Payment Method" value={expense.paymentMethod} />
           <Field label="Reference #" value={expense.referenceNumber} />
           <Field label="Employee" value={expense.employeeName} />
           {expense.isMileage && (

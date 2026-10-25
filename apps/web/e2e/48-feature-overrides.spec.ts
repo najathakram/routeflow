@@ -307,7 +307,7 @@ async function previewAndConfirm(page: Page) {
 }
 
 async function fillCreateForm(page: Page, opts: { featureKey: string; reason: string }) {
-  await page.getByLabel("Feature Key").selectOption(opts.featureKey);
+  await page.getByLabel("Feature key").selectOption(opts.featureKey);
   await page.getByLabel("Reason").fill(opts.reason);
 }
 
@@ -464,7 +464,7 @@ test.describe("Feature overrides — interactive flows (1440px)", () => {
     await gotoOverridesSection(page);
 
     await openCreateForm(page);
-    await page.getByLabel("Feature Key").selectOption("flag.credit_limits");
+    await page.getByLabel("Feature key").selectOption("flag.credit_limits");
 
     await expect(page.getByText(/Polarity trap/)).toBeVisible();
     await page.screenshot({

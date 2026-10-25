@@ -35,7 +35,7 @@ const rowFor = (name: string) => screen.getByText(name).closest("tr") as HTMLEle
 describe("OrderLineItemsTable — columns and a plain line", () => {
   it("renders the five column headers and the order-total footer", () => {
     renderTable([line({})], "CONFIRMED", 1234.5);
-    for (const h of ["Product", "Qty", "Unit price", "Line Total", "Status"]) {
+    for (const h of ["Product", "Qty", "Unit Price", "Line Total", "Status"]) {
       expect(screen.getByRole("columnheader", { name: h })).toBeInTheDocument();
     }
     expect(screen.getByText("Order Total")).toBeInTheDocument();
