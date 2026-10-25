@@ -1486,6 +1486,31 @@ describe("ProductsService", () => {
       expect(data.isTobacco).toBe(true);
     });
 
+    it("the auto-seed audit row names the acting user and the support session behind them (row 430)", async () => {
+      addonService.hasAddon.mockResolvedValue(true);
+      prisma.product.findUnique.mockResolvedValue({ ...MOCK_PRODUCT, trackedCategoryId: null });
+      prisma.product.findFirst.mockResolvedValue(null);
+      prisma.trackedCategory.findFirst.mockImplementation((args: any) =>
+        Promise.resolve(args?.where?.id ? { name: "Tobacco" } : null),
+      );
+      prisma.trackedCategory.create.mockResolvedValue({ id: "new-tobacco-cat" });
+      prisma.product.update.mockResolvedValue(MOCK_PRODUCT);
+
+      await service.update("prod-1", { isTobacco: true } as any, {
+        packPrecondition: "internal",
+        actorId: "u-op",
+        impersonatedBy: "sa-1",
+      });
+
+      expect(prisma.auditLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          userId: "u-op",
+          impersonatedBy: "sa-1",
+          meta: expect.objectContaining({ via: "tobacco-autoseed" }),
+        }),
+      });
+    });
+
     it("PATCH {isTobacco:false} on a Tobacco-type member clears the category and the flag", async () => {
       prisma.product.findUnique.mockResolvedValue({
         ...MOCK_PRODUCT,

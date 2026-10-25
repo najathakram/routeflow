@@ -353,12 +353,15 @@ export class ProductsService {
    * from a non-CA_CDTFA section — would 400 and still leave an orphan "Tobacco"
    * type in the Regulated Items nav for a tenant that never had one.
    */
-  private async resolveOrCreateTobaccoCategory(pending: {
-    trackedSubcategoryId: string | null;
-    regItemType: string | null;
-    regUomCase: string | null;
-    regUomUnit: string | null;
-  }): Promise<{ id: string }> {
+  private async resolveOrCreateTobaccoCategory(
+    pending: {
+      trackedSubcategoryId: string | null;
+      regItemType: string | null;
+      regUomCase: string | null;
+      regUomUnit: string | null;
+    },
+    actor: { id?: string | null; impersonatedBy?: string | null } | null = null,
+  ): Promise<{ id: string }> {
     const existing = await this.findTobaccoCategory();
     if (existing) return existing;
     const tenantId = this.prisma.getTenantId();
@@ -373,8 +376,8 @@ export class ProductsService {
       throw new BadRequestException("Subcategory does not belong to the chosen section.");
     }
     this.assertRegConfigMatchesTemplate({ name: TOBACCO_CATEGORY_NAME, reportTemplate }, pending);
-    // Row 430: the seed is a regulated-category write like any other: audited in its own transaction. No signed-in user
-    // is threaded to this helper, so the row says it was the auto-seed.
+    // Row 430: the seed is a regulated-category write like any other: audited in its own transaction, naming the user
+    // whose product write triggered it (and the support session behind them), and saying it was the auto-seed.
     return this.prisma.tenantTransaction(async (tx: Prisma.TransactionClient) => {
       const seeded = await tx.trackedCategory.create({
         data: {
@@ -390,7 +393,7 @@ export class ProductsService {
       });
       await auditTrackedCategoryWrite(tx, {
         tenantId,
-        actor: null,
+        actor: actor?.id ? { sub: actor.id, impersonatedBy: actor.impersonatedBy ?? null } : null,
         created: true,
         before: null,
         after: seeded,
@@ -822,6 +825,8 @@ export class ProductsService {
       suppressEmit?: boolean;
       actorId?: string | null;
       actorName?: string | null;
+      /** The support session behind the actor, named on the audit row of a first-tobacco auto-seed (row 430). */
+      impersonatedBy?: string | null;
       /** SA-823 R11: which door created this product under a parent; the row is written in the create transaction. */
       reparentVia?: FamilyAssignVia;
     },
@@ -938,12 +943,15 @@ export class ProductsService {
     if (regulated.trackedCategoryId == null && dto.isTobacco === true) {
       // The end state is handed to the resolver so it can validate BEFORE
       // seeding a first Tobacco type — the assertions below run after it.
-      const tobacco = await this.resolveOrCreateTobaccoCategory({
-        trackedSubcategoryId: regulated.trackedSubcategoryId,
-        regItemType: regulated.regItemType,
-        regUomCase: regulated.regUomCase,
-        regUomUnit: regulated.regUomUnit,
-      });
+      const tobacco = await this.resolveOrCreateTobaccoCategory(
+        {
+          trackedSubcategoryId: regulated.trackedSubcategoryId,
+          regItemType: regulated.regItemType,
+          regUomCase: regulated.regUomCase,
+          regUomUnit: regulated.regUomUnit,
+        },
+        { id: options?.actorId, impersonatedBy: options?.impersonatedBy },
+      );
       regulated.trackedCategoryId = tobacco.id;
       isTobacco = true;
     } else if (regulated.trackedCategoryId != null) {
@@ -1124,6 +1132,8 @@ export class ProductsService {
       suppressEmit?: boolean;
       actorId?: string | null;
       actorName?: string | null;
+      /** The support session behind the actor, named on the audit row of a first-tobacco auto-seed (row 430). */
+      impersonatedBy?: string | null;
       /**
        * SA-823 R11: REQUIRED (a plain Error otherwise) when this write changes `parentProductId`, so the audit row
        * names its door. Reparent callers use assignToParent / unlinkFromParent, which require it; only the PATCH
@@ -1188,14 +1198,17 @@ export class ProductsService {
     let unflagClear = false;
     if (dto.isTobacco !== undefined && dto.trackedCategoryId === undefined) {
       if (dto.isTobacco === true) {
-        const tobacco = await this.resolveOrCreateTobaccoCategory({
-          // A move into the Tobacco type clears the old section's subcategory,
-          // so only an EXPLICIT subcategory survives into the end state.
-          trackedSubcategoryId: dto.trackedSubcategoryId ?? null,
-          regItemType: dto.regItemType !== undefined ? dto.regItemType : existing.regItemType,
-          regUomCase: dto.regUomCase !== undefined ? dto.regUomCase : existing.regUomCase,
-          regUomUnit: dto.regUomUnit !== undefined ? dto.regUomUnit : existing.regUomUnit,
-        });
+        const tobacco = await this.resolveOrCreateTobaccoCategory(
+          {
+            // A move into the Tobacco type clears the old section's subcategory,
+            // so only an EXPLICIT subcategory survives into the end state.
+            trackedSubcategoryId: dto.trackedSubcategoryId ?? null,
+            regItemType: dto.regItemType !== undefined ? dto.regItemType : existing.regItemType,
+            regUomCase: dto.regUomCase !== undefined ? dto.regUomCase : existing.regUomCase,
+            regUomUnit: dto.regUomUnit !== undefined ? dto.regUomUnit : existing.regUomUnit,
+          },
+          { id: options?.actorId, impersonatedBy: options?.impersonatedBy },
+        );
         if (existing.trackedCategoryId !== tobacco.id) {
           dto.trackedCategoryId = tobacco.id;
           // A section move always clears the old section's subcategory (the
