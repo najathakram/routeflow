@@ -8,7 +8,21 @@ jest.mock("../common/db-locks", () => ({
 }));
 
 import { FulfillPath, UserRole } from "@prisma/client";
-import { activeFulfilPath, fulfilCaller, resolveFulfilPath } from "./fulfil-path-resolver";
+import {
+  activeFulfilPath as activeFulfilPathOf,
+  fulfilCaller,
+  resolveFulfilPath as resolveFulfilPathOf,
+  type FulfilPathInput,
+} from "./fulfil-path-resolver";
+
+/** Inputs that name no denials hold every group (W-870 made `deniedGroups` required on the resolver input). */
+type Deps = Parameters<typeof resolveFulfilPathOf>[0];
+type CallerInput = Omit<FulfilPathInput, "deniedGroups"> &
+  Partial<Pick<FulfilPathInput, "deniedGroups">>;
+const resolveFulfilPath = (d: Deps, i: CallerInput) =>
+  resolveFulfilPathOf(d, { deniedGroups: [], ...i });
+const activeFulfilPath = (d: Deps, i: CallerInput) =>
+  activeFulfilPathOf(d, { deniedGroups: [], ...i });
 import {
   buildOrdersService,
   customerPayload,
@@ -229,7 +243,7 @@ describe("OrdersService: POS-mode PICKUP through create and the merge-candidate 
     h.prisma.order.findFirst.mockResolvedValue(null);
     await h.service.findActiveOrder("cust-1", {
       forMerge: true,
-      mergeAs: { explicit: "PICKUP", audience: "staff", role: "OPERATOR" },
+      mergeAs: { explicit: "PICKUP", audience: "staff", role: "OPERATOR", deniedGroups: [] },
     });
     expect(h.prisma.order.findFirst.mock.calls[0][0].where).toMatchObject({
       fulfillPath: "PICKUP",
@@ -240,9 +254,9 @@ describe("OrdersService: POS-mode PICKUP through create and the merge-candidate 
     mode("ship");
     h.prisma.order.findFirst.mockResolvedValue(null);
     for (const mergeAs of [
-      { explicit: "PICKUP", audience: "buyer", role: "CUSTOMER" },
-      { explicit: "PICKUP", audience: "staff", role: "DRIVER" },
-      { explicit: "PICKUP", audience: "staff", role: null },
+      { explicit: "PICKUP", audience: "buyer", role: "CUSTOMER", deniedGroups: [] },
+      { explicit: "PICKUP", audience: "staff", role: "DRIVER", deniedGroups: [] },
+      { explicit: "PICKUP", audience: "staff", role: null, deniedGroups: [] },
     ] as const) {
       await expect(
         h.service.findActiveOrder("cust-1", { forMerge: true, mergeAs }),

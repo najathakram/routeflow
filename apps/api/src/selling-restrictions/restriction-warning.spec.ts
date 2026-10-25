@@ -23,7 +23,7 @@ import {
  * body and its hash, the resubmit, the stale hash, the reason bounds and the formula guard, an override on a line that
  * is not breached, who may override, sticky coverage, and the re-judge under the lock.
  */
-const OPERATOR = { role: "OPERATOR", sub: "user-op" };
+const OPERATOR = { role: "OPERATOR", sub: "user-op", deniedGroups: [] as string[] };
 const breach = (productId: string, ruleIds: string[], over: Partial<StaffBreachDetail> = {}) =>
   ({
     productId,
