@@ -680,7 +680,9 @@ export default function BuyerOrderDetailPage() {
       if (err?.response?.status === 409 && data?.code === API_ERROR_CODES.ORDER_REVISION_STALE) {
         // Row 380: fixed copy, never the server's sentence; Reload re-reads the order.
         setStale(true);
-        setActionError("This order was updated. Reload to see the latest version.");
+        setActionError(
+          "Someone changed this order while you were editing, so your changes weren't saved. Reload to see the latest version, then make your changes again.",
+        );
         return;
       }
       if (
@@ -855,13 +857,21 @@ export default function BuyerOrderDetailPage() {
 
       {/* Action error */}
       {actionError && (
-        <div className="mb-4 flex items-center gap-2 rounded-lg bg-danger-bg px-4 py-2.5 text-sm text-danger">
+        <div
+          role="alert"
+          className={
+            stale
+              ? "mb-4 flex flex-wrap items-center gap-2 rounded-lg bg-warning-bg px-4 py-2.5 text-sm text-warning"
+              : "mb-4 flex items-center gap-2 rounded-lg bg-danger-bg px-4 py-2.5 text-sm text-danger"
+          }
+        >
           <AlertTriangle className="h-4 w-4 flex-shrink-0" />
           {actionError}
           {stale && (
             <Button
               size="sm"
               variant="secondary"
+              className="min-h-[44px] w-full sm:w-auto"
               onClick={() => {
                 setStale(false);
                 setActionError(null);
@@ -869,7 +879,7 @@ export default function BuyerOrderDetailPage() {
                 void refetchOrder();
               }}
             >
-              Reload
+              Reload order
             </Button>
           )}
         </div>
@@ -901,7 +911,7 @@ export default function BuyerOrderDetailPage() {
               <MessageSquarePlus className="mr-1.5 h-3.5 w-3.5" /> Request a change
             </Button>
           )}
-          {editMode && (
+          {editMode && !stale && (
             <div className="flex items-center gap-2">
               <Button variant="secondary" size="sm" onClick={() => setEditMode(false)}>
                 Cancel

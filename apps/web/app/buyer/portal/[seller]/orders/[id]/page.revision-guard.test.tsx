@@ -131,10 +131,29 @@ describe("buyer order edit revision guard (row 380)", () => {
     renderWithProviders(<BuyerOrderDetailPage />);
     fireEvent.click(screen.getByRole("button", { name: /edit items/i }));
     fireEvent.click(screen.getByRole("button", { name: /save changes/i }));
-    expect(await screen.findByText(/this order was updated/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/Someone changed this order while you were editing/),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/server words/)).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: /reload/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Reload order" }));
     expect(mockRefetch).toHaveBeenCalled();
+  });
+
+  it("while the order is stale Save and Cancel are not offered, and the notice is a full-width 44px amber warning", async () => {
+    mockUpdateItems.mockRejectedValueOnce({
+      response: { status: 409, data: { code: "ORDER_REVISION_STALE" } },
+    });
+    mockOrder = order(4);
+    renderWithProviders(<BuyerOrderDetailPage />);
+    fireEvent.click(screen.getByRole("button", { name: /edit items/i }));
+    fireEvent.click(screen.getByRole("button", { name: /save changes/i }));
+    const reload = await screen.findByRole("button", { name: "Reload order" });
+    expect(screen.queryByRole("button", { name: /save changes/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^cancel$/i })).toBeNull();
+    expect(reload).toHaveClass("w-full", "min-h-[44px]");
+    const notice = screen.getByRole("alert");
+    expect(notice).toHaveClass("bg-warning-bg", "text-warning");
+    expect(notice).not.toHaveClass("bg-danger-bg");
   });
 
   it("an order that sent no revision sends none", async () => {
