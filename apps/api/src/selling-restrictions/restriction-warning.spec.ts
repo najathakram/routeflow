@@ -597,6 +597,23 @@ describe("decideStaffWrite: sticky coverage", () => {
         }
       });
 
+      it("a NEW second line of the imported product (a new lineKey) is judged: it warns on that line only", () => {
+        const e = thrown(() =>
+          decideStaffWrite(
+            base({
+              judgement: j,
+              lines: [
+                { productId: "p1", lineKey: "l:li-p1", qtyDelta: 0 },
+                { productId: "p1", lineKey: "n:1", qtyDelta: 3 },
+              ],
+              held: [imported("p1")],
+            }),
+          ),
+        );
+        expect(e.getResponse().code).toBe("RESTRICTION_WARNING");
+        expect(e.getResponse().lines.map((l: { lineKey: string }) => l.lineKey)).toEqual(["n:1"]);
+      });
+
       it("control: the same increase on a line a STAFF member overrode stays covered (row 510 sticky coverage)", () => {
         expect(decideStaffWrite(edit(5, [stamp("p1", ["r1:CA"])])).stamps).toEqual([]);
       });

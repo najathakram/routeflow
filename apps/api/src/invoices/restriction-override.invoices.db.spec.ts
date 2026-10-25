@@ -350,7 +350,26 @@ describeDb(
           ]);
           const e = await errOf(edit(invoiceId, [row(items[0].id, w.banned, 9)]));
           expect(bodyOf(e).code).toBe("RESTRICTION_WARNING");
-          expect(Number((await itemRows(invoiceId))[0].qty)).toBe(2); // the warning wrote nothing
+          const [r] = await itemRows(invoiceId);
+          expect(Number(r.qty)).toBe(2); // the warning wrote nothing
+          expect(r.restrictionOverrideReason).toBe("Imported (historical)"); // the marker is intact
+          expect(await audits(invoiceId)).toHaveLength(0);
+        });
+
+        it("a SECOND line of the imported product (added in the edit) warns on that new line", async () => {
+          const { invoiceId, items } = await seedInvoice([
+            { productId: w.banned, qty: 2, imported: true },
+          ]);
+          const e = await errOf(
+            edit(invoiceId, [
+              row(items[0].id, w.banned, 2),
+              { description: "x", productId: w.banned, qty: 1, unitPrice: 10 },
+            ]),
+          );
+          expect(bodyOf(e).code).toBe("RESTRICTION_WARNING");
+          expect(bodyOf(e).lines.map((l: { lineKey: string }) => l.lineKey)).toEqual(["n:1"]);
+          expect(await itemRows(invoiceId)).toHaveLength(1); // nothing written
+          expect(await audits(invoiceId)).toHaveLength(0);
         });
 
         it("the acknowledged raise REPLACES the marker's stamp columns with the staff reason", async () => {
