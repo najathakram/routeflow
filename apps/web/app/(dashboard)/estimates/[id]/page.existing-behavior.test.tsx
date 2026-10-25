@@ -107,7 +107,7 @@ describe("EstimateDetailPage — REG-B17 send toast/label no longer claim delive
     expect(toastMock).toHaveBeenCalledWith(
       expect.objectContaining({
         title: "Estimate marked as sent",
-        description: "EST-0001 is marked Sent. No email was sent.",
+        description: "EST-0001 is marked as sent. No email was sent.",
       }),
     );
 

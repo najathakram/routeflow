@@ -2,7 +2,7 @@ import * as React from "react";
 import { renderWithProviders, screen } from "@/test-utils/render";
 import SettingsPage from "./page";
 
-// REG-B1013: the Settings hub (business profile, user management + Add User, email, invoicing,
+// REG-B1013: the Settings hub (business profile, user management + Add user, email, invoicing,
 // costing, integrations ...) rendered for CUSTOMER and DRIVER sessions — reachable by the nav link,
 // the user menu, a bare /settings and any ?tab= deep link. A buyer or a driver may only manage their
 // own account (password, sessions, Google sign-in).
@@ -50,20 +50,20 @@ describe("SettingsPage — role gate (REG-B1013)", () => {
       mockRole = role;
       renderWithProviders(<SettingsPage />);
 
-      expect(await screen.findByText("Google Sign-In")).toBeInTheDocument();
+      expect(await screen.findByText("Google sign-in")).toBeInTheDocument();
       expect(screen.queryByText("Business & team")).not.toBeInTheDocument();
       expect(screen.queryByText("User management")).not.toBeInTheDocument();
     },
   );
 
   it.each(["CUSTOMER", "DRIVER"])(
-    "%s deep-linking ?tab=users never gets user management or Add User",
+    "%s deep-linking ?tab=users never gets user management or Add user",
     async (role) => {
       mockRole = role;
       mockTab = "users";
       renderWithProviders(<SettingsPage />);
 
-      expect(await screen.findByText("Google Sign-In")).toBeInTheDocument();
+      expect(await screen.findByText("Google sign-in")).toBeInTheDocument();
       expect(screen.queryByRole("button", { name: /^add user$/i })).not.toBeInTheDocument();
     },
   );
@@ -75,7 +75,7 @@ describe("SettingsPage — role gate (REG-B1013)", () => {
       mockTab = tab;
       renderWithProviders(<SettingsPage />);
 
-      expect(await screen.findByText("Google Sign-In")).toBeInTheDocument();
+      expect(await screen.findByText("Google sign-in")).toBeInTheDocument();
       expect(screen.queryByText("All settings")).not.toBeInTheDocument();
     },
   );

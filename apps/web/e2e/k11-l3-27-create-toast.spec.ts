@@ -110,7 +110,7 @@ for (const vp of VIEWPORTS) {
 
         // 2. New product, double-clicked: one product, one toast.
         await page.goto("/products");
-        await page.getByRole("button", { name: "New Product", exact: true }).click();
+        await page.getByRole("button", { name: "New product", exact: true }).click();
         const dlg2 = page.getByRole("dialog", { name: "New product" });
         await dlg2.getByLabel("Name *", { exact: true }).fill(standalone);
         await dlg2.getByLabel(/^Unit \*/).fill("each");

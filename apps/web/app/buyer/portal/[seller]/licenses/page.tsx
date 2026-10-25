@@ -111,7 +111,7 @@ function LicenseForm({
           onDone();
         },
         onError: (err: unknown) => {
-          setError(safeTextErrorCopy(err) ?? "Could not submit your license. Please try again.");
+          setError(safeTextErrorCopy(err) ?? "Couldn't submit your license. Try again.");
         },
       },
     );
@@ -257,7 +257,7 @@ export default function BuyerLicensesPage() {
       <div className="mb-6">
         <div className="flex items-center gap-2">
           <ShieldCheck className="h-6 w-6 text-buyer-600" />
-          <h1 className="text-2xl font-bold text-navy">Licenses &amp; Authorizations</h1>
+          <h1 className="text-2xl font-bold text-navy">Licenses and authorizations</h1>
         </div>
         {activeSeller && (
           <p className="mt-1 text-sm text-navy/70">

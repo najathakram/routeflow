@@ -120,7 +120,7 @@ beforeEach(() => {
 it("opens the new product after Create from the list header", async () => {
   const user = userEvent.setup();
   renderWithProviders(<ProductsPage />);
-  await user.click(screen.getByRole("button", { name: "New Product" }));
+  await user.click(screen.getByRole("button", { name: "New product" }));
   await user.click(screen.getByRole("button", { name: "stand-in create" }));
   expect(mockPush).toHaveBeenCalledWith("/products/new-1");
 });
@@ -128,7 +128,7 @@ it("opens the new product after Create from the list header", async () => {
 it("opens the FAMILY page with the new variant in view when the product was created with a parent", async () => {
   const user = userEvent.setup();
   renderWithProviders(<ProductsPage />);
-  await user.click(screen.getByRole("button", { name: "New Product" }));
+  await user.click(screen.getByRole("button", { name: "New product" }));
   mockCreated = { id: "var-1", name: "Mint", parentProductId: "fam-1" };
   await user.click(screen.getByRole("button", { name: "stand-in create" }));
   expect(mockPush).toHaveBeenCalledWith("/products/fam-1?variant=var-1");

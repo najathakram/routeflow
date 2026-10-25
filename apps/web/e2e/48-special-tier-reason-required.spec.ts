@@ -170,9 +170,9 @@ test.describe("Order-edit SPECIAL-tier reason required (B465 fix round 2)", () =
 
       // ── Save is refused client-side with no reason typed — never a 400
       // round-trip the operator has to decode. This order is DRAFT, so the
-      // editor's own save control reads "Save Draft" (page.tsx's DRAFT
-      // branch); a non-DRAFT order's equivalent is "Save Changes".
-      const saveButton = page.getByRole("button", { name: "Save Draft", exact: true });
+      // editor's own save control reads "Save draft" (page.tsx's DRAFT
+      // branch); a non-DRAFT order's equivalent is "Save changes".
+      const saveButton = page.getByRole("button", { name: "Save draft", exact: true });
       await saveButton.click();
       // First real run of this spec (#815 proof) surfaced a strict-mode violation: a
       // bare page-wide getByText matched BOTH the visible toast and its Radix aria-live
@@ -280,7 +280,7 @@ test.describe("Order-edit SPECIAL-tier reason required (B465 fix round 2)", () =
     await lineRow.getByRole("button", { name: "Substitute", exact: true }).click();
     // SubstitutePicker fetches by search term (no default full listing) — type
     // the product's own name before selecting it, same as the add-input flow.
-    await page.getByPlaceholder("Search products...").fill(specialProduct.name);
+    await page.getByPlaceholder("Search products…").fill(specialProduct.name);
     await page.getByRole("button", { name: specialProduct.name }).click();
 
     // ── Substituted line now resolves to the SPECIAL tier price with no
@@ -293,7 +293,7 @@ test.describe("Order-edit SPECIAL-tier reason required (B465 fix round 2)", () =
       page.waitForResponse(
         (r) => r.url().includes(`/orders/${order.id}/items`) && r.request().method() === "PATCH",
       ),
-      page.getByRole("button", { name: "Save Draft", exact: true }).click(),
+      page.getByRole("button", { name: "Save draft", exact: true }).click(),
     ]);
     expect(
       saveResponse.status(),
@@ -311,7 +311,7 @@ test.describe("Order-edit SPECIAL-tier reason required (B465 fix round 2)", () =
       .locator('xpath=ancestor::div[.//*[normalize-space(text())="Unit price"]][1]');
     await expect(specialLineRow).toBeVisible({ timeout: 15_000 });
     await specialLineRow.getByRole("button", { name: "Substitute", exact: true }).click();
-    await page.getByPlaceholder("Search products...").fill(plainProduct.name);
+    await page.getByPlaceholder("Search products…").fill(plainProduct.name);
     await page.getByRole("button", { name: plainProduct.name }).click();
     await specialLineRow.getByRole("button", { name: "Undo", exact: true }).click();
 
@@ -321,7 +321,7 @@ test.describe("Order-edit SPECIAL-tier reason required (B465 fix round 2)", () =
         itemsPatchFired = true;
       }
     });
-    await page.getByRole("button", { name: "Save Draft", exact: true }).click();
+    await page.getByRole("button", { name: "Save draft", exact: true }).click();
     // Give any (unwanted) request a moment to fire before asserting its absence.
     await page.waitForTimeout(1_500);
     expect(itemsPatchFired).toBe(false);

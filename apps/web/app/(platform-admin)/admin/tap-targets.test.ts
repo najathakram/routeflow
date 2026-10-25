@@ -1,6 +1,6 @@
 /**
  * Lane B A3 F7 — the platform-admin console's phone/tablet tap-target floor (audit 2026-09-20: nav
- * menu button, "+ Create Tenant", "View all", row actions all under 40 px at <= 768 px). A static net
+ * menu button, "+ Create tenant", "View all", row actions all under 40 px at <= 768 px). A static net
  * that asserts the REQUIREMENT, not the CSS text or a count of matching elements:
  *   1. the floor is enforced by rules scoped to `.surface-admin` inside a `max-width: 768px` media
  *      query (768, not 767: iPad portrait), giving every <button> and each link class a min-height of

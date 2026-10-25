@@ -359,7 +359,7 @@ export function CustomerPriceView({ customerId, productId }: CustomerPriceViewPr
 
       {activeId ? (
         q.isLoading ? (
-          <p className="text-sm text-navy/60">Loading prices...</p>
+          <p className="text-sm text-navy/60">Loading prices…</p>
         ) : q.isError || !res ? (
           <p role="alert" className="text-sm text-red-600">
             Could not load this customer&apos;s prices.

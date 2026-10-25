@@ -36,7 +36,7 @@ describe("Reports — fleet-off clean UI", () => {
     fleet = false;
     search = "report=sales-by-driver&from=2026-01-01";
     renderWithProviders(<FinanceReportsPage />);
-    expect((await screen.findAllByText("Sales by Customer")).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText("Sales by customer")).length).toBeGreaterThan(0);
     expect(screen.queryByText("Sales by Driver")).not.toBeInTheDocument();
     expect(replace).toHaveBeenCalledWith(expect.stringContaining("report=sales-by-customer"));
     expect(replace.mock.calls[0][0]).toContain("from=2026-01-01");
@@ -53,7 +53,7 @@ describe("Reports — fleet-off clean UI", () => {
   it("fleet-OFF: no Sales by Driver, the other sales reports stay", async () => {
     fleet = false;
     renderWithProviders(<FinanceReportsPage />);
-    expect((await screen.findAllByText("Sales by Customer")).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText("Sales by customer")).length).toBeGreaterThan(0);
     expect(screen.getAllByText("Sales by Item").length).toBeGreaterThan(0);
     expect(screen.queryByText("Sales by Driver")).not.toBeInTheDocument();
   });

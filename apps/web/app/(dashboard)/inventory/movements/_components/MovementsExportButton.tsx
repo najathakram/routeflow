@@ -63,7 +63,7 @@ export function MovementsExportButton({
         });
       }
     } catch {
-      toast({ title: "Export failed, please try again", variant: "error" });
+      toast({ title: "Export failed", description: "Try again.", variant: "error" });
     } finally {
       setBusy(false);
     }

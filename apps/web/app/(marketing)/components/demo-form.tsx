@@ -63,7 +63,7 @@ export function DemoForm() {
 
   return (
     <div className="demo-form-card">
-      <span className="form-kicker">YOUR WORKFLOW, YOUR WALKTHROUGH</span>
+      <span className="form-kicker caps">Your workflow, your walkthrough</span>
       <h2>Let’s start with your business.</h2>
       <p>Tell us a little about your team.</p>
       <form onSubmit={prepare}>
