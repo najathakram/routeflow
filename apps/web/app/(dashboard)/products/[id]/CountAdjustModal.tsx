@@ -108,6 +108,11 @@ export function CountAdjustModal({
   });
   const [showDate, setShowDate] = React.useState(false);
   const [serverError, setServerError] = React.useState<string | null>(null);
+  const errorRef = React.useRef<HTMLParagraphElement>(null);
+  // The body scrolls under the pinned footer on a short screen: bring a refusal into view.
+  React.useEffect(() => {
+    if (serverError) errorRef.current?.scrollIntoView?.({ block: "nearest" });
+  }, [serverError]);
 
   const patch = (p: Partial<CountForm>) => {
     setServerError(null);
@@ -145,8 +150,31 @@ export function CountAdjustModal({
   ];
 
   return (
-    <Modal open onClose={onClose} anchor="top" title={`Count / Adjust — ${product.name}`}>
-      <form onSubmit={handleSubmit} className="space-y-4">
+    <Modal
+      open
+      onClose={onClose}
+      anchor="top"
+      scroll
+      closeClassName="min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0"
+      title={`Count / Adjust — ${product.name}`}
+      footer={
+        <>
+          <Button variant="secondary" type="button" onClick={onClose} className={TALL}>
+            Cancel
+          </Button>
+          <Button
+            type="submit"
+            form="count-form"
+            disabled={problem !== null}
+            loading={count.isPending}
+            className={TALL}
+          >
+            Save
+          </Button>
+        </>
+      }
+    >
+      <form id="count-form" onSubmit={handleSubmit} className="space-y-4">
         <Segmented
           label="What to do"
           value={form.mode}
@@ -312,24 +340,14 @@ export function CountAdjustModal({
         )}
 
         {serverError && (
-          <p role="alert" className="rounded bg-red-50 px-3 py-2 text-sm text-red-700">
+          <p
+            ref={errorRef}
+            role="alert"
+            className="rounded bg-red-50 px-3 py-2 text-sm text-red-700"
+          >
             {serverError}
           </p>
         )}
-
-        <div className="flex justify-end gap-2 pt-2">
-          <Button variant="secondary" type="button" onClick={onClose} className={TALL}>
-            Cancel
-          </Button>
-          <Button
-            type="submit"
-            disabled={problem !== null}
-            loading={count.isPending}
-            className={TALL}
-          >
-            Save
-          </Button>
-        </div>
       </form>
     </Modal>
   );

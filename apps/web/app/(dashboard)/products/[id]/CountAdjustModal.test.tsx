@@ -188,6 +188,22 @@ describe("CountAdjustModal (SA-957 M1 / SA-958: one quantity row per unit)", () 
     );
   });
 
+  it("scrolls inside the dialog, so Save stays reachable on a short screen (3 rows + note + date at 390 px)", () => {
+    expect(readFileSync(resolve(__dirname, "CountAdjustModal.tsx"), "utf8")).toMatch(
+      /<Modal[^>]*\bscroll\b/,
+    );
+  });
+
+  it("Save and Cancel sit in the dialog's pinned footer, outside the scrolling form, and still submit it", () => {
+    setup();
+    expect(save().closest("form")).toBeNull();
+    expect(save()).toHaveAttribute("form", "count-form");
+    type("Case", "2");
+    reason("DAMAGED");
+    fireEvent.click(save());
+    expect(mockMutate).toHaveBeenCalledTimes(1);
+  });
+
   it("every control is at least 44 px tall below sm", () => {
     setup();
     fireEvent.click(screen.getByRole("radio", { name: "Adjust" }));
@@ -198,6 +214,7 @@ describe("CountAdjustModal (SA-957 M1 / SA-958: one quantity row per unit)", () 
     tall(screen.getByRole("radio", { name: "Adjust" }));
     tall(screen.getByRole("radio", { name: "Remove" }));
     tall(save());
+    tall(screen.getByRole("button", { name: /^close$/i }));
     tall(screen.getByRole("button", { name: /^cancel$/i }));
   });
 
@@ -208,6 +225,21 @@ describe("CountAdjustModal (SA-957 M1 / SA-958: one quantity row per unit)", () 
     expect(save()).toBeDisabled();
     fireEvent.change(screen.getByLabelText(/note/i), { target: { value: "dropped" } });
     expect(save()).toBeEnabled();
+  });
+
+  it("scrolls a server refusal into view (the body scrolls under a pinned footer on a short screen)", () => {
+    const scrollIntoView = jest.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    mockMutate.mockImplementation((_b, opts) =>
+      opts.onError({ response: { status: 409, data: { code: "STOCK_DATE_IN_FILED_PERIOD" } } }),
+    );
+    setup();
+    type("Case", "2");
+    reason("DAMAGED");
+    fireEvent.click(save());
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: "nearest" });
+    mockMutate.mockReset();
   });
 
   it("says what is filed, through the code's own message, for a filed-period 409", () => {
