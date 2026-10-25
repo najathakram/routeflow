@@ -6,9 +6,9 @@ import {
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import {
-  PIECE_LABEL,
   baseLabelOf,
   deriveChainFactors,
+  namesBase,
   packLabelOf,
   validateUnitChain,
   type ChainLevel,
@@ -395,7 +395,7 @@ export class ProductUnitsService {
   private cleanLabel(raw: string, factorToBase: number, pack: PackInfo): string {
     const label = (raw ?? "").trim();
     if (!label) throw new BadRequestException("A unit needs a name");
-    const isBase = norm(label) === norm(pack.baseLabel) || norm(label) === norm(PIECE_LABEL);
+    const isBase = namesBase({ baseUnitLabel: pack.baseLabel }, label);
     if (factorToBase === 1 && !isBase) {
       throw new BadRequestException(`A 1-piece unit is always named "${pack.baseLabel}".`);
     }
