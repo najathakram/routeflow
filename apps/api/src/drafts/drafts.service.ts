@@ -9,6 +9,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { SaveDraftDto } from "./dto/save-draft.dto";
+import { assertRefsInTenant } from "../common/assert-refs-in-tenant";
 
 /**
  * SA-817 (A) 4: the order builder keeps ONE Idempotency-Key per draft in `payload._submitKey`, so a reload followed by a resubmit
@@ -45,6 +46,8 @@ export class DraftsService {
   }
 
   async create(user: JwtPayload, dto: SaveDraftDto) {
+    // 681 site 11: SaleDraft.customerId has no FK, so the column is proven here (the payload JSON is not).
+    await assertRefsInTenant(this.prisma, { customerIds: [dto.customerId] });
     await this.assertKeyNotOnOtherDraft(user, null, dto.payload);
     return this.prisma.forTenant().saleDraft.create({
       data: {
@@ -69,6 +72,7 @@ export class DraftsService {
    */
   async update(user: JwtPayload, id: string, dto: SaveDraftDto) {
     const draft = await this.assertOwned(user, id);
+    await assertRefsInTenant(this.prisma, { customerIds: [dto.customerId] }); // 681 site 11
     const data: Prisma.SaleDraftUpdateInput = {};
     if (dto.kind !== undefined) data.kind = dto.kind;
     if (dto.customerId !== undefined) data.customerId = dto.customerId;

@@ -64,7 +64,8 @@ function closingAngleIndex(src: string, fromIndex: number): number {
  * (`cn(TAP_TARGET, ...)`) — it only cares what ends up in the rendered tag.
  */
 function extractButtonOpenTag(src: string, marker: string): string {
-  const markerIndex = src.indexOf(marker);
+  // lastIndexOf: a Modal `title="…"` prop with the same text can precede the icon button.
+  const markerIndex = src.lastIndexOf(marker);
   if (markerIndex === -1) throw new Error(`marker not found: ${marker}`);
   const tagStart = src.lastIndexOf("<button", markerIndex);
   if (tagStart === -1) throw new Error(`no <button before marker: ${marker}`);

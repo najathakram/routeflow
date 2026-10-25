@@ -597,6 +597,19 @@ describeDb("I-120 Complete at counter — real Postgres", () => {
     60_000,
   );
 
+  // W-769 (owner 7b = A, SA-922 answer 5): the hand-over plans on the CONFIRMED figure, so an unconfirmed DRAFT check that
+  // reserves the whole invoice never turns the counter's real cash away. Master planned on the DRAFT-inclusive figure: balance 0, refused.
+  it("W3 a $100 invoice reserved whole by a DRAFT check, $100 CASH at the counter: the tender IS planned and recorded", async () => {
+    const { orderId, invoiceId } = await seed("CONFIRMED", "PICKUP", { total: 100 });
+    await raw.invoicePayment.create({
+      data: { invoiceId, amount: 100, method: "CHECK", status: "DRAFT", tenantId },
+    });
+    recordForReal();
+    const r: any = await completeWith(orderId, 100, `key-${run}-w3`);
+    expect(await amountsOf(invoiceId, true)).toEqual([100]);
+    expect(r).toMatchObject({ paymentRecorded: true });
+  }, 60_000);
+
   it("P13.reopen a backdated order: $50 cash, reopened, +$20, re-completed with $20: the 2nd tender IS recorded and a 2nd email goes", async () => {
     const { orderId, invoiceId } = await seed("CONFIRMED", "ROUTE", { total: 50 });
     await raw.order.update({ where: { id: orderId }, data: { orderDate: daysAgo(3) } });

@@ -57,7 +57,7 @@ beforeEach(() => {
 describe("/purchase-orders page", () => {
   it("sets the page title and offers New purchase order", () => {
     render(<PurchaseOrdersPage />);
-    expect(setTitle).toHaveBeenCalledWith("Purchase Orders");
+    expect(setTitle).toHaveBeenCalledWith("Purchase orders");
     fireEvent.click(screen.getAllByRole("button", { name: "New purchase order" })[0]);
     expect(screen.getByRole("button", { name: "Create PO" })).toBeInTheDocument();
   });
@@ -93,7 +93,7 @@ describe("/purchase-orders page", () => {
 
   it("has a page header", () => {
     render(<PurchaseOrdersPage />);
-    expect(screen.getByRole("heading", { level: 2, name: "Purchase Orders" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2, name: "Purchase orders" })).toBeInTheDocument();
   });
 
   it("pages a long list: shows the range, total and a working Next", () => {

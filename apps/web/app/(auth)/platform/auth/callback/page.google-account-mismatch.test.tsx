@@ -31,9 +31,9 @@ describe("PlatformAuthCallbackPage — google_account_mismatch (#2495)", () => {
     expect(screen.queryByText(/an unexpected error occurred/i)).not.toBeInTheDocument();
   });
 
-  it("does NOT auto-redirect (it is not a transient error) and offers a way back to admin login", () => {
+  it("does NOT auto-redirect (it is not a transient error) and offers a way back to admin sign-in", () => {
     renderWithProviders(<PlatformAuthCallbackPage />);
 
-    expect(screen.getByRole("link", { name: /back to admin login/i })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /back to admin sign-in/i })).toBeInTheDocument();
   });
 });

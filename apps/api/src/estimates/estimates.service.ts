@@ -7,6 +7,7 @@ import {
 } from "@nestjs/common";
 import { assertSellableLines } from "../products/sellable-lines";
 import { EstimateStatus, PriceType } from "@prisma/client";
+import { assertRefsInTenant } from "../common/assert-refs-in-tenant";
 import { PrismaService } from "../prisma/prisma.service";
 import {
   computeLineSubtotal,
@@ -143,6 +144,12 @@ export class EstimatesService {
       }
     }
 
+    // 681 (R5-5): the estimate stores its customer and each item's productId; prove both in this tenant (one 404 for
+    // foreign or missing) before any policy read and before the write.
+    await assertRefsInTenant(this.prisma, {
+      customerIds: [dto.customerId],
+      productIds: (dto.items ?? []).map((i: any) => i.productId),
+    });
     const customer = await this.prisma
       .forTenant()
       .customer.findUnique({ where: { id: dto.customerId } });

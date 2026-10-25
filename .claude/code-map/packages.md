@@ -663,3 +663,7 @@ TS config presets (JSON inheritance): `base.json` (es2022, strict, nodeNext), `n
 ## Window 4 (2026-10-22, #3583, #3563, #3571, #3576, #3575, #3562, #3588)
 
 Moved to [packages/landing-2026-10-22-w4.md](packages/landing-2026-10-22-w4.md) (this file is at its size cap): filed-month undo note, payment key types and rule, import Family types, counter return settlement in pricing, Modal `headerActions`, Toast inset.
+
+## Window 5 (2026-10-24, 28 PRs, #3455 to #3713)
+
+Moved to [packages/landing-2026-10-24-w5.md](packages/landing-2026-10-24-w5.md) (this file is at its size cap): error codes, one payment capacity predicate, cleared tender, pricing gate, counter copy, send state, Toast 44px.

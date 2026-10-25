@@ -311,13 +311,13 @@ describe("SettingsHub search speaks the user's words", () => {
     ).toBe(false);
   });
 
-  it("9: a miss says so, and Clear Search restores the hub and focuses the input", () => {
+  it("9: a miss says so, and Clear search restores the hub and focuses the input", () => {
     renderWithProviders(<SettingsHub isAdmin />);
     search("zzzzqq");
     expect(screen.getByText("No settings match “zzzzqq”.")).toBeInTheDocument();
     expect(screen.getByText("Try another word, or browse all settings.")).toBeInTheDocument();
     expect(screen.queryByText("route-defaults-card")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Clear Search" }));
+    fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
     const input = screen.getByLabelText("Search settings") as HTMLInputElement;
     expect(input.value).toBe("");
     expect(input).toHaveFocus();

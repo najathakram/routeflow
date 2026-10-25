@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException, OnModuleInit } from "@nestjs/common";
 import { assertRefsInTenant } from "../common/assert-refs-in-tenant";
+import { flagUnconfirmedOverReserved } from "../invoices/confirmed-basis";
 import { lockBillRows } from "../vendor-bills/bill-locks";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -283,6 +284,12 @@ export class BookkeepingService implements OnModuleInit {
         },
       });
       await refGuard.recorded(tx, [recorded?.id], id);
+      // W-769: the confirmed basis stays (REG-B11); the unconfirmed rows this real money displaced are flagged
+      await flagUnconfirmedOverReserved(
+        tx,
+        { id, tenantId: inv.tenantId, total: totalOwed },
+        recorded.id,
+      );
 
       const totalPaid = roundMoney(alreadyPaid + paymentAmount);
       const newInvStatus =

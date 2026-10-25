@@ -92,7 +92,7 @@ function buildRows(
     },
     {
       key: "payment",
-      label: "Payment at the till: cash, card, check and on account all work.",
+      label: "Payment at the counter: cash, card, check and on account all work.",
       verdict: "info",
       detail: "Nothing to set up.",
     },
