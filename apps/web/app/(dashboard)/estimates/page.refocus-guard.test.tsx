@@ -67,7 +67,7 @@ const pastReArm = () => act(() => new Promise<void>((r) => setTimeout(r, 90)));
 
 async function openDialog() {
   renderWithProviders(<EstimatesPage />);
-  fireEvent.click(screen.getByRole("button", { name: "New Estimate" }));
+  fireEvent.click(screen.getAllByRole("button", { name: "New estimate" })[0]);
   const dialog = await screen.findByRole("dialog");
   // The product search only renders once a customer is chosen.
   fireEvent.change(within(dialog).getByPlaceholderText(/search customers/i), {

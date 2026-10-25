@@ -20,7 +20,7 @@ export interface FulfilmentMethodDef {
 export const FULFILMENT_METHODS: Readonly<Record<FulfilmentMethod, FulfilmentMethodDef>> = {
   ROUTE: {
     steps: ["PENDING", "CONFIRMED", "OUT_FOR_DELIVERY", "DELIVERED"],
-    labels: { OUT_FOR_DELIVERY: "Out for Delivery", DELIVERED: "Delivered" },
+    labels: { OUT_FOR_DELIVERY: "Out for delivery", DELIVERED: "Delivered" },
   },
   SHIP: {
     steps: ["PENDING", "CONFIRMED", "OUT_FOR_DELIVERY", "DELIVERED"],

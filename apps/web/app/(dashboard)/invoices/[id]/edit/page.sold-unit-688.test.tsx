@@ -84,7 +84,7 @@ describe("row 688: invoice edit form edits a boxed line in its sold unit", () =>
     expect(screen.getByLabelText("Boxes")).toHaveValue("2");
     expect(screen.getByLabelText("Pieces")).toHaveValue("0");
     expect(screen.queryByLabelText("Qty")).toBeNull();
-    expect(screen.getByLabelText("Unit Price")).toHaveValue("21.60");
+    expect(screen.getByLabelText("Unit price")).toHaveValue("21.60");
     expect(subtotal()).toHaveTextContent("$43.20");
   });
 

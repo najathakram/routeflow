@@ -242,7 +242,7 @@ function TodayRunHero({
     <section className="rounded-lg border border-surface-border bg-white shadow-card">
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-surface-border px-5 py-4">
         <div className="min-w-0">
-          <h2 className="text-lg font-semibold text-navy">{run.route?.name ?? "Today's Run"}</h2>
+          <h2 className="text-lg font-semibold text-navy">{run.route?.name ?? "Today's run"}</h2>
           <p className="mt-0.5 text-xs text-navy/70">
             {run.startedAt
               ? `Started ${new Date(run.startedAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`
@@ -258,9 +258,9 @@ function TodayRunHero({
           value={total > 0 ? `${doneCount} / ${total}` : "—"}
           trendLabel={total > 0 ? "stops" : undefined}
         />
-        <StatCard label="Next Stop" value={nextStop?.customer?.businessName ?? "—"} />
+        <StatCard label="Next stop" value={nextStop?.customer?.businessName ?? "—"} />
         <StatCard
-          label="Delivered Today"
+          label="Delivered today"
           value={String(doneCount)}
           trendLabel={deliveredOrders > 0 ? `${deliveredOrders} orders` : undefined}
         />

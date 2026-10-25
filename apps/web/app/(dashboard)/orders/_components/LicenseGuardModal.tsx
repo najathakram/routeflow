@@ -156,7 +156,7 @@ export function LicenseGuardModal({
           Back
         </Button>
         <Button type="button" variant="danger" onClick={submitOverride} loading={busy}>
-          Accept responsibility &amp; continue
+          Accept responsibility and continue
         </Button>
       </>
     );

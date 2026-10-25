@@ -4,8 +4,8 @@ import OrdersPage from "./page";
 
 /**
  * The counter-sale gate on the Orders page (capabilities.fulfilment.counter, via useCounterSaleGate only):
- *  - always   -> "New Order" OPENS AS the counter sale; ?action=new redirects there unless the operator chose ?ship=1
- *  - optional -> a "Counter sale" button beside the unchanged "New Order"
+ *  - always   -> "New order" OPENS AS the counter sale; ?action=new redirects there unless the operator chose ?ship=1
+ *  - optional -> a "Counter sale" button beside the unchanged "New order"
  *  - off      -> neither (nothing changes)
  */
 const push = jest.fn();
@@ -59,27 +59,27 @@ beforeEach(() => {
 });
 
 describe("Orders page — counter sale gate", () => {
-  it("off: no Counter sale button; New Order opens the normal builder", () => {
+  it("off: no Counter sale button; New order opens the normal builder", () => {
     renderWithProviders(<OrdersPage />);
     expect(screen.queryByRole("button", { name: "Counter sale" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "New Order" }));
+    fireEvent.click(screen.getByRole("button", { name: "New order" }));
     expect(screen.getByTestId("order-builder-open")).toBeInTheDocument();
     expect(push).not.toHaveBeenCalled();
   });
 
-  it("optional: a Counter sale button; New Order is unchanged", () => {
+  it("optional: a Counter sale button; New order is unchanged", () => {
     gate = { showButton: true, opensAsCounter: false, offerShipInstead: false };
     renderWithProviders(<OrdersPage />);
     fireEvent.click(screen.getByRole("button", { name: "Counter sale" }));
     expect(push).toHaveBeenCalledWith("/orders/counter-sale");
-    fireEvent.click(screen.getByRole("button", { name: "New Order" }));
+    fireEvent.click(screen.getByRole("button", { name: "New order" }));
     expect(screen.getByTestId("order-builder-open")).toBeInTheDocument();
   });
 
-  it("always: New Order OPENS AS the counter sale (no builder)", () => {
+  it("always: New order OPENS AS the counter sale (no builder)", () => {
     gate = { showButton: true, opensAsCounter: true, offerShipInstead: true };
     renderWithProviders(<OrdersPage />);
-    fireEvent.click(screen.getByRole("button", { name: "New Order" }));
+    fireEvent.click(screen.getByRole("button", { name: "New order" }));
     expect(push).toHaveBeenCalledWith("/orders/counter-sale");
     expect(screen.queryByTestId("order-builder-open")).toBeNull();
   });

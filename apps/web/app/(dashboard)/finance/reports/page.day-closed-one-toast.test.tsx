@@ -86,8 +86,8 @@ describe("finance/reports Ledger: a closed-day refusal raises exactly one toast 
     renderWithProviders(<FinanceReportsPage />, {
       queryClient: queryClientWithGlobalErrorToast(mockGlobalToast),
     });
-    fireEvent.click(await screen.findByRole("button", { name: "Record Payment" }));
-    const modal = screen.getByRole("heading", { name: "Record Payment" }).closest("div")!
+    fireEvent.click(await screen.findByRole("button", { name: "Record payment" }));
+    const modal = screen.getByRole("heading", { name: "Record payment" }).closest("div")!
       .parentElement as HTMLElement;
     fireEvent.click(within(modal).getByRole("button", { name: "Record" }));
 
@@ -99,8 +99,8 @@ describe("finance/reports Ledger: a closed-day refusal raises exactly one toast 
     renderWithProviders(<FinanceReportsPage />, {
       queryClient: queryClientWithGlobalErrorToast(mockGlobalToast),
     });
-    fireEvent.click(await screen.findByRole("button", { name: "Record Payment" }));
-    const modal = screen.getByRole("heading", { name: "Record Payment" }).closest("div")!
+    fireEvent.click(await screen.findByRole("button", { name: "Record payment" }));
+    const modal = screen.getByRole("heading", { name: "Record payment" }).closest("div")!
       .parentElement as HTMLElement;
     fireEvent.click(within(modal).getByRole("button", { name: "Record" }));
 

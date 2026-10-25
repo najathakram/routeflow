@@ -252,7 +252,7 @@ export function SettingsFinder({
               inputRef.current?.focus();
             }}
           >
-            Clear Search
+            Clear search
           </Button>
         </Card>
       )}
