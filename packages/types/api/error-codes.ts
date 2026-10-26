@@ -574,6 +574,8 @@ export const API_ERROR_CODES = {
   WALK_IN_NO_ACCOUNT: "WALK_IN_NO_ACCOUNT",
   WALK_IN_WITH_CUSTOMER: "WALK_IN_WITH_CUSTOMER",
   WALK_IN_OPEN_CREDIT: "WALK_IN_OPEN_CREDIT",
+  /** 409 from a credit-note writer, the inline return capture and the return refund: a walk-in return is refunded at the till, never kept as store credit on the shared walk-in account (body carries `cause`: STORE_CREDIT, ROLE, NOT_PAID_IN_FULL, PAID_WITH_STORE_CREDIT or ZERO_TOTAL). Nothing is written. */
+  WALK_IN_STORE_CREDIT_REFUSED: "WALK_IN_STORE_CREDIT_REFUSED",
   COUNTER_TENDER_SHORT: "COUNTER_TENDER_SHORT",
   COUNTER_CHECK_NUMBER_REQUIRED: "COUNTER_CHECK_NUMBER_REQUIRED",
   COUNTER_CHECK_POSTDATED: "COUNTER_CHECK_POSTDATED",
