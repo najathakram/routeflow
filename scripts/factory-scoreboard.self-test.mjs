@@ -5,7 +5,7 @@
 // scripts/fixtures/factory-scoreboard/ (fixed "now" 2026-10-25T12:00:00Z, so ages are exact), so no
 // `gh`, `git` or network is touched. Cases that write copy the fixture into the OS temp dir first.
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -84,23 +84,61 @@ check(
   [ww.verified, ww.failed, ww.total],
   [2, 3, 12],
 );
-check("C2 usage-pct divides by verified merges (30 / 2)", wide.allowance.perVerifiedMerge, 15);
 check(
-  "C3 usage-pct with zero verified merges is n/a, not a division",
-  [base.allowance.supplied, json("base", ["--usage-pct", "30"]).allowance.perVerifiedMerge],
-  [false, null],
+  "C2 usage-pct divides by the 14-day-old cohort's verified count (30 / 2)",
+  wide.allowance.perVerifiedMerge,
+  15,
 );
-const md = run(["--fixture", path.join(FIX, "base"), "--usage-pct", "30"]).stdout;
+const withPct = json("base", ["--usage-pct", "30"]);
+check(
+  "C3 the default 7-day window has 0 verified, yet the allowance divides by the older cohort (2), not n/a",
+  [w.verified, withPct.allowance.verified, withPct.allowance.perVerifiedMerge],
+  [0, 2, 15],
+);
 check(
   "C4 without --usage-pct the table says not supplied",
-  /not supplied/.test(run(["--fixture", path.join(FIX, "base")]).stdout),
+  [base.allowance.supplied, /not supplied/.test(run(["--fixture", path.join(FIX, "base")]).stdout)],
+  [false, true],
+);
+const empty = json("base", ["--since", "2026-10-23", "--usage-pct", "30"]);
+check(
+  "C5 an empty cohort (no PR in the 14-day-old window) is n/a, not a division",
+  [empty.allowance.verified, empty.allowance.perVerifiedMerge],
+  [0, null],
+);
+const mdPct = run(["--fixture", path.join(FIX, "base"), "--usage-pct", "30"]).stdout;
+check(
+  "C6 the table labels the cohort the allowance was divided by",
+  /\| 3 \| Allowance per verified merge \(usage % over the 14-day-old cohort\) \| 15% per verified merge \(30% used \/ 2 verified in the 14-day-old cohort, 2026-10-04 to 2026-10-11\)/.test(
+    mdPct,
+  ),
   true,
+);
+
+// 3b. train/* PRs are reported apart; "revert" inside a sentence is not a revert
+check(
+  "H1 train/* PRs (301, 302) are excluded from the counts and reported separately",
+  [w.trains, p.trains, w.total, p.total],
+  [1, 1, 8, 3],
 );
 check(
-  "C5 with zero verified merges the table shows n/a",
-  /\| 3 \| Allowance per verified merge \| n\/a/.test(md),
-  true,
+  "H2 a later subject with 'revert' mid-sentence naming #102 does not fail it",
+  w.failedNumbers.includes(102),
+  false,
 );
+for (const [limit, status] of [
+  ["14", 1],
+  ["15", 0],
+]) {
+  const ldir = copyFixture("base");
+  writeFileSync(path.join(ldir, "limit.txt"), `${limit}\n`);
+  const res = run(["--fixture", ldir]);
+  check(
+    `H3 a query returning exactly the limit (${limit} of 14 rows) ${status ? "fails loudly" : "does not fail when under it"}`,
+    [res.status, status ? /truncated/.test(res.stderr) : /Factory scoreboard/.test(res.stdout)],
+    [status, true],
+  );
+}
 
 // 4. escapes
 check("D1 no causedByPr field anywhere: not instrumented", base.escapes, {
@@ -126,10 +164,11 @@ check(
   },
 );
 const cls = json("classified");
-check("D4 with risk-paths.mjs, escapes group by classifyPath", cls.escapes.groups, {
-  money: ["B901"],
-  standard: ["B902", "B903"],
-});
+check(
+  "D4 with risk-paths.mjs ({ cls }), escapes take the max class over the causing PR's files, not the location; no diff = unclassified",
+  cls.escapes.groups,
+  { amber: ["B902"], red: ["B901"], unclassified: ["B903"] },
+);
 const out = [
   run(["--fixture", path.join(FIX, "instrumented")]).stdout,
   run(["--fixture", path.join(FIX, "instrumented"), "--json"]).stdout,
@@ -144,11 +183,30 @@ check(
 );
 
 // 6. exposure
-check("F1 watchdog windows in the window, longest, unclosed", base.exposure.watchdog, {
-  windows: 3,
-  longestMinutes: 45,
-  unclosed: 1,
-});
+check(
+  "F1 watchdog windows, dated unclosed window, and longest as at least (window end - armed time)",
+  base.exposure.watchdog,
+  {
+    windows: 3,
+    longestMinutes: 3060,
+    longestIsLowerBound: true,
+    unclosed: 1,
+    unclosedArmedAt: ["2026-10-23T09:00Z"],
+  },
+);
+const late = json("base", ["--since", "2026-10-24T00:00:00Z"]).exposure.watchdog;
+check(
+  "F5 an unclosed window armed before the report window is not counted; longest is then the closed one",
+  [late.windows, late.longestMinutes, late.longestIsLowerBound, late.unclosed],
+  [1, 30, false, 0],
+);
+check(
+  "F6 the exposure row shows the unclosed window and 'at least'",
+  /longest at least 3060 min, 1 unclosed \(armed 2026-10-23T09:00Z\)/.test(
+    run(["--fixture", path.join(FIX, "base")]).stdout,
+  ),
+  true,
+);
 check("F2 dead-man incidents (JSON and text lines) in the window", base.exposure.deadman, {
   incidents: 2,
   undated: 0,

@@ -70,5 +70,17 @@
     "title": "feat: between the windows",
     "mergedAt": "2026-10-14T09:00:00Z",
     "headRefName": "branch/204"
+  },
+  {
+    "number": 301,
+    "title": "feat: weekly train bundle",
+    "mergedAt": "2026-10-24T13:00:00Z",
+    "headRefName": "train/2026-10-25"
+  },
+  {
+    "number": 302,
+    "title": "feat: older train bundle",
+    "mergedAt": "2026-10-06T10:00:00Z",
+    "headRefName": "train/2026-10-26"
   }
 ]

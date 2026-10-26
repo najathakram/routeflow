@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Factory scoreboard: six outcome numbers for the weekly fleet review (read-only; never writes to GitHub, git refs or the bug register).
-// 1 Verified merges: PRs merged in the window split feat/fix/other; failed = reverted or named by a revert/hotfix title, verified = 14+ days old and not failed.
-// 2 Escapes by risk class: bug-register rows carrying `causedByPr`, filed in the window (not instrumented until the field exists).
-// 3 Allowance per verified merge: --usage-pct divided by the verified count (not supplied without the flag).
+// 1 Verified merges: PRs merged in the window split feat/fix/other (train/* bundles counted apart); failed = reverted or named by a revert/hotfix title, verified = 14+ days old and not failed.
+// 2 Escapes by risk class: bug-register rows carrying `causedByPr`, filed in the window, classed by the causing PR's touched paths (not instrumented until the field exists).
+// 3 Allowance per verified merge: --usage-pct divided by the verified count of the cohort old enough to verify (the window that ended 14 days ago).
 // 4 Owner-blocked hours and 5 Release ETA hit rate: not instrumented yet, printed as such rather than invented.
 // 6 Exposure: public windows, the longest one and dead-man incidents, parsed from local-assets/visibility-{watchdog,deadman}.log.
 //
@@ -24,6 +24,7 @@
 // - The watchdog logs when it was armed (`start`) and when it confirmed PRIVATE (`verified`), not when
 //   the repo went public, so a window is an UPPER bound (armed -> confirmed private).
 // - A revert whose subject names neither the PR number nor its exact title is not detected.
+// - PRs are queried in 7-day date slices; a slice that returns exactly the limit fails the run loudly.
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -164,12 +165,12 @@ function findFailures(prs, commits) {
     ...commits.map((c) => ({ text: c.subject, at: c.at, self: null })),
   ];
   for (const e of evidence) {
-    const named = /revert|hotfix/i.test(e.text);
-    if (named) {
+    // A title that STARTS with Revert, or has the word hotfix: not any "revert" inside a sentence.
+    if (/^revert|\bhotfix\b/i.test(e.text.trim())) {
       for (const n of otherRefs(e.text)) {
         const target = prs.find((p) => p.number === n);
         if (target && n !== e.self && e.at > Date.parse(target.mergedAt)) {
-          failed.set(n, /revert/i.test(e.text) ? "reverted" : "hotfix");
+          failed.set(n, /^revert/i.test(e.text.trim()) ? "reverted" : "hotfix");
         }
       }
     }
@@ -185,10 +186,14 @@ function findFailures(prs, commits) {
   return failed;
 }
 
+// A train/* PR bundles member PRs that are already counted on their own, so it is reported apart.
+const isTrain = (p) => String(p.headRefName ?? "").startsWith("train/");
+
 function summarize(prs, failed, nowMs) {
   const out = { total: 0, feat: 0, fix: 0, other: 0, verified: 0, pending: 0, failed: 0 };
   const failedNumbers = [];
-  for (const p of prs) {
+  out.trains = prs.filter(isTrain).length;
+  for (const p of prs.filter((x) => !isTrain(x))) {
     out.total++;
     out[kindOf(p.title)]++;
     if (failed.has(p.number)) {
@@ -211,25 +216,48 @@ function parseCommits(text) {
     .filter((c) => Number.isFinite(c.at));
 }
 
+/**
+ * Every PR merged from `floor` to now, fetched in 7-day date slices. A slice that returns exactly the
+ * limit may have been cut off, so it fails the run instead of silently under-counting.
+ * (A fixture may carry `limit.txt` to exercise that failure without 500 rows.)
+ */
+function fetchMergedPrs(fixture, floorMs, nowMs) {
+  const limitText = fixture ? readOptional(fixture, "limit.txt", "") : null;
+  const limit = limitText && Number(limitText.trim()) > 0 ? Number(limitText.trim()) : PR_LIMIT;
+  const day = (ms) => new Date(ms).toISOString().slice(0, 10);
+  const lastDay = Math.floor(nowMs / DAY_MS) * DAY_MS;
+  const byNumber = new Map();
+  for (let from = Math.floor(floorMs / DAY_MS) * DAY_MS; from <= lastDay; from += 7 * DAY_MS) {
+    const range = `${day(from)}..${day(Math.min(from + 6 * DAY_MS, lastDay))}`;
+    const rows = JSON.parse(
+      run(fixture, "gh-prs.json", "gh", [
+        "pr",
+        "list",
+        "--repo",
+        GH_REPO,
+        "--state",
+        "merged",
+        "--search",
+        `merged:${range}`,
+        "--json",
+        "number,title,mergedAt,headRefName",
+        "--limit",
+        String(limit),
+      ]),
+    );
+    if (rows.length >= limit) {
+      throw new Error(`gh returned ${rows.length} PRs for merged:${range} (the limit): truncated`);
+    }
+    for (const p of rows) {
+      if (p.mergedAt && Number.isFinite(Date.parse(p.mergedAt))) byNumber.set(p.number, p);
+    }
+  }
+  return [...byNumber.values()];
+}
+
 function verifiedMerges({ fixture, sinceMs, nowMs }) {
   const floor = new Date(sinceMs - VERIFY_AFTER_DAYS * DAY_MS);
-  const prJson = run(fixture, "gh-prs.json", "gh", [
-    "pr",
-    "list",
-    "--repo",
-    GH_REPO,
-    "--state",
-    "merged",
-    "--search",
-    `merged:>=${floor.toISOString().slice(0, 10)}`,
-    "--json",
-    "number,title,mergedAt,headRefName",
-    "--limit",
-    String(PR_LIMIT),
-  ]);
-  const all = JSON.parse(prJson).filter(
-    (p) => p.mergedAt && Number.isFinite(Date.parse(p.mergedAt)),
-  );
+  const all = fetchMergedPrs(fixture, floor.getTime(), nowMs);
   const commits = parseCommits(
     run(fixture, "git-log.txt", "git", [
       "log",
@@ -250,7 +278,6 @@ function verifiedMerges({ fixture, sinceMs, nowMs }) {
       to: new Date(priorTo).toISOString(),
       ...summarize(inRange(priorFrom, priorTo), failed, nowMs),
     },
-    truncated: all.length >= PR_LIMIT,
   };
 }
 
@@ -261,7 +288,37 @@ async function loadClassifier(fixture) {
     : path.join(REPO_ROOT, RISK_PATHS_MODULE);
   if (!fs.existsSync(file)) return null;
   const mod = await import(pathToFileURL(file).href);
-  return typeof mod.classifyPath === "function" ? mod.classifyPath : null;
+  if (typeof mod.classifyPath !== "function") return null;
+  // classifyPath(path) returns { cls }; CLASSES lists the classes low to high.
+  return { classify: mod.classifyPath, order: mod.CLASSES ?? ["green", "amber", "red", "black"] };
+}
+
+/**
+ * The risk class of the PR that caused an escape: the HIGHEST class among the files that PR touched
+ * (`gh pr diff <n> --name-only`). The register's `location` is display text, not a path. "unclassified"
+ * when the diff cannot be read, so a missing diff never reads as a low class.
+ */
+function classOfPr(fixture, n, { classify, order }) {
+  let files;
+  try {
+    files = run(fixture, `pr-diff-${n}.txt`, "gh", [
+      "pr",
+      "diff",
+      String(n),
+      "--repo",
+      GH_REPO,
+      "--name-only",
+    ])
+      .split("\n")
+      .map((f) => f.trim())
+      .filter(Boolean);
+  } catch {
+    return "unclassified";
+  }
+  if (files.length === 0) return "unclassified";
+  let top = -1;
+  for (const f of files) top = Math.max(top, order.indexOf(classify(f)?.cls));
+  return top < 0 ? "unclassified" : order[top];
 }
 
 async function escapes({ fixture, sinceMs, nowMs }) {
@@ -284,20 +341,21 @@ async function escapes({ fixture, sinceMs, nowMs }) {
     const at = Date.parse(r.filedAt ?? "");
     return Number.isFinite(at) && at >= sinceMs && at <= nowMs;
   });
-  const classify = await loadClassifier(fixture);
+  const classifier = await loadClassifier(fixture);
   const groups = {};
+  const prClass = new Map(); // one diff read per causing PR
   for (const r of inWindow) {
     let key = String(r.severity ?? "unknown");
-    if (classify) {
-      const c = classify(String(r.location ?? ""));
-      key =
-        typeof c === "string" ? c : String(c?.class ?? c?.riskClass ?? c?.risk ?? "unclassified");
+    if (classifier) {
+      const n = Number(r.causedByPr);
+      if (!prClass.has(n)) prClass.set(n, classOfPr(fixture, n, classifier));
+      key = prClass.get(n);
     }
     (groups[key] ??= []).push(r.id);
   }
   return {
     instrumented: true,
-    groupedBy: classify ? "risk class" : "severity",
+    groupedBy: classifier ? "risk class of the causing PR's paths" : "severity",
     total: inWindow.length,
     groups: Object.fromEntries(Object.entries(groups).sort(([a], [b]) => a.localeCompare(b))),
   };
@@ -307,7 +365,7 @@ async function escapes({ fixture, sinceMs, nowMs }) {
 /** Watchdog lines are `<ISO> start|attempt|verified|error|refused <detail>`; see visibility-watchdog.mjs. */
 function parseWatchdog(text, sinceMs, nowMs) {
   const closed = [];
-  let unclosed = 0;
+  const unclosedStarts = [];
   let open = null;
   for (const line of text.split("\n")) {
     const m = /^(\S+)\s+(\w+)/.exec(line);
@@ -315,23 +373,30 @@ function parseWatchdog(text, sinceMs, nowMs) {
     if (!m || !Number.isFinite(at)) continue;
     const event = m[2];
     if (event === "start") {
-      if (open !== null) unclosed++; // the previous watchdog never confirmed PRIVATE
+      if (open !== null) unclosedStarts.push(open); // the previous watchdog never confirmed PRIVATE
       open = at;
     } else if (event === "verified" && open !== null) {
       closed.push({ start: open, minutes: (at - open) / 60_000 });
       open = null;
     } else if (event === "error" && open !== null) {
-      unclosed++;
+      unclosedStarts.push(open);
       open = null;
     }
   }
-  if (open !== null) unclosed++; // still armed (or killed) at the end of the log
-  // Only windows that began inside the reporting window count; unclosed ones are not dated here.
-  const mine = closed.filter((w) => w.start >= sinceMs && w.start <= nowMs);
+  if (open !== null) unclosedStarts.push(open); // still armed (or killed) at the end of the log
+  // Only windows armed inside the reporting window count, closed or not.
+  const inWin = (t) => t >= sinceMs && t <= nowMs;
+  const mine = closed.filter((w) => inWin(w.start));
+  const unclosed = unclosedStarts.filter(inWin);
+  // An unclosed window was public for at least (window end - armed time), so it counts toward "longest".
+  const closedMax = mine.length ? Math.max(...mine.map((w) => w.minutes)) : 0;
+  const unclosedMax = unclosed.length ? (nowMs - Math.min(...unclosed)) / 60_000 : 0;
   return {
     windows: mine.length,
-    longestMinutes: mine.length ? Math.round(Math.max(...mine.map((w) => w.minutes)) * 10) / 10 : 0,
-    unclosed,
+    longestMinutes: Math.round(Math.max(closedMax, unclosedMax) * 10) / 10,
+    longestIsLowerBound: unclosedMax > closedMax,
+    unclosed: unclosed.length,
+    unclosedArmedAt: unclosed.map((t) => new Date(t).toISOString().slice(0, 16) + "Z"),
   };
 }
 
@@ -378,14 +443,17 @@ const failedNote = (s) =>
   s.failedNumbers.length ? `, failed ${s.failedNumbers.map((n) => `#${n}`).join(" ")}` : "";
 const round1 = (n) => Math.round(n * 10) / 10;
 
-function allowance(usagePct, verified, total) {
+// The usage % is this week's spend, so it is divided by the cohort old enough to be verified (merged
+// in the window that ended 14 days ago); the current window's merges are all still pending.
+function allowance(usagePct, cohort) {
   if (usagePct === null) return { supplied: false };
   return {
     supplied: true,
     usagePct,
-    verified,
-    perVerifiedMerge: verified > 0 ? round1(usagePct / verified) : null,
-    perMergedPr: total > 0 ? round1(usagePct / total) : null,
+    cohortFrom: cohort.from,
+    cohortTo: cohort.to,
+    verified: cohort.verified,
+    perVerifiedMerge: cohort.verified > 0 ? round1(usagePct / cohort.verified) : null,
   };
 }
 
@@ -393,9 +461,9 @@ function buildReport({ sinceMs, nowMs, usagePct, merges, esc, expo }) {
   const w = merges.window;
   return {
     window: { since: new Date(sinceMs).toISOString(), until: new Date(nowMs).toISOString() },
-    verifiedMerges: { window: w, priorWindow: merges.priorWindow, truncated: merges.truncated },
+    verifiedMerges: { window: w, priorWindow: merges.priorWindow },
     escapes: esc,
-    allowance: allowance(usagePct, w.verified, w.total),
+    allowance: allowance(usagePct, merges.priorWindow),
     ownerBlockedHours: "not instrumented",
     releaseEtaHitRate: "not instrumented",
     exposure: expo,
@@ -409,12 +477,12 @@ function toMarkdown(r) {
   rows.push([
     "1",
     "Verified merges (window)",
-    `${w.verified} verified, ${w.pending} pending, ${w.failed} failed of ${w.total}; ${split(w)}${failedNote(w)}`,
+    `${w.verified} verified, ${w.pending} pending, ${w.failed} failed of ${w.total}; ${split(w)}${failedNote(w)}; ${w.trains} train merges not counted`,
   ]);
   rows.push([
     "1b",
     `Verified merges (window ended 14 days ago, ${p.from.slice(0, 10)} to ${p.to.slice(0, 10)})`,
-    `${p.verified} verified, ${p.failed} failed of ${p.total}; ${split(p)}${failedNote(p)}`,
+    `${p.verified} verified, ${p.failed} failed of ${p.total}; ${split(p)}${failedNote(p)}; ${p.trains} train merges not counted`,
   ]);
   const e = r.escapes;
   let escText;
@@ -427,12 +495,13 @@ function toMarkdown(r) {
   const a = r.allowance;
   let allowText = "not supplied";
   if (a.supplied) {
+    const cohort = `${a.verified} verified in the 14-day-old cohort, ${a.cohortFrom.slice(0, 10)} to ${a.cohortTo.slice(0, 10)}`;
     allowText =
       a.perVerifiedMerge === null
-        ? `n/a (${a.usagePct}% used, 0 verified merges in window; ${a.perMergedPr === null ? "no merges" : `${a.perMergedPr}% per merged PR`})`
-        : `${a.perVerifiedMerge}% per verified merge (${a.usagePct}% / ${a.verified})`;
+        ? `n/a (${a.usagePct}% used, ${cohort})`
+        : `${a.perVerifiedMerge}% per verified merge (${a.usagePct}% used / ${cohort})`;
   }
-  rows.push(["3", "Allowance per verified merge", allowText]);
+  rows.push(["3", "Allowance per verified merge (usage % over the 14-day-old cohort)", allowText]);
   rows.push(["4", "Owner-blocked hours", r.ownerBlockedHours]);
   rows.push(["5", "Release ETA hit rate", r.releaseEtaHitRate]);
   const x = r.exposure;
@@ -440,7 +509,7 @@ function toMarkdown(r) {
   parts.push(
     x.watchdog === null
       ? `watchdog log missing (${WATCHDOG_LOG})`
-      : `${x.watchdog.windows} public windows (armed to confirmed private), longest ${x.watchdog.longestMinutes} min, ${x.watchdog.unclosed} unclosed`,
+      : `${x.watchdog.windows} public windows (armed to confirmed private), longest ${x.watchdog.longestIsLowerBound ? "at least " : ""}${x.watchdog.longestMinutes} min, ${x.watchdog.unclosed} unclosed${x.watchdog.unclosed ? ` (armed ${x.watchdog.unclosedArmedAt.join(", ")})` : ""}`,
   );
   parts.push(
     x.deadman === null
@@ -455,9 +524,6 @@ function toMarkdown(r) {
     "|---|---|---|",
     ...rows.map((c) => `| ${c.join(" | ")} |`),
   ];
-  if (r.verifiedMerges.truncated) {
-    lines.push("", `Warning: gh returned the ${PR_LIMIT} PR limit; counts may be truncated.`);
-  }
   return lines.join("\n") + "\n";
 }
 
