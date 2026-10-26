@@ -874,4 +874,76 @@ describeDb("SA-727 counter refund: a return resolution, real Postgres", () => {
     expect(codeOf(await fail(storeCredit(f, rf.id)))).toBe("RETURN_ALREADY_RESOLVED");
     expect(await creditNoteCount(f)).toBe(0);
   }, 60_000);
+
+  it("23. W-829: a hand-over stamps the register on a Store pickup while its INLINE cash refund waits for the Order lock: retryable 409 CONCURRENT_UPDATE, nothing written; the retry takes the close lock first and is recorded", async () => {
+    const s = await seed("pickup-stamp");
+    const r = await capture(s, 4, "REFUND");
+    // the sale is a Store pickup that no hand-over has stamped yet (a pickup's refund reads null and takes no close lock)
+    await prisma.order.update({
+      where: { id: s.orderId },
+      data: { counterSale: false, fulfillPath: "PICKUP", registerKey: null } as any,
+    });
+    const url = requireLocalDatabaseUrl();
+    const holder = new Client({ connectionString: url });
+    const poller = new Client({ connectionString: url });
+    await holder.connect();
+    await poller.connect();
+    /** True once `n` backends are queued behind the holder (a recursive walk of pg_blocking_pids). */
+    const waitForBlocked = async (pid: number, n: number) => {
+      for (let i = 0; i < 200; i++) {
+        const q = await poller.query(
+          `WITH RECURSIVE w(pid) AS (
+             SELECT pid FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))
+             UNION
+             SELECT a.pid FROM pg_stat_activity a JOIN w ON w.pid = ANY(pg_blocking_pids(a.pid))
+           ) SELECT count(*)::int AS n FROM w`,
+          [pid],
+        );
+        if (Number(q.rows[0].n) >= n) return true;
+        await new Promise((res) => setTimeout(res, 50));
+      }
+      return false;
+    };
+    try {
+      // the hand-over: holds the Order row lock and stamps the register
+      await holder.query("BEGIN");
+      await holder.query(`SELECT id FROM "Order" WHERE id = $1 FOR UPDATE`, [s.orderId]);
+      await holder.query(`UPDATE "Order" SET "registerKey" = 'w829r' WHERE id = $1`, [s.orderId]);
+      const holderPid = Number((await holder.query("SELECT pg_backend_pid() AS pid")).rows[0].pid);
+      const pending = fail(refund(s, r.id, "CASH", 40));
+      const blocked = await waitForBlocked(holderPid, 1);
+      await holder.query("COMMIT");
+      const err = await pending;
+
+      expect(blocked).toBe(true); // the refund WAITED on the hand-over's Order lock
+      // red before: the refund read the stamp as null, took no close lock and committed a cash refund the Z report can miss
+      expect(status(err)).toBe(409);
+      expect(codeOf(err)).toBe("CONCURRENT_UPDATE");
+      expect(await auditRows(s)).toHaveLength(0);
+      const after = await row(r.id);
+      expect([after.status, after.refundedAt, after.refundMethod]).toEqual([
+        "RECEIVED",
+        null,
+        "EXTERNAL_REFUND",
+      ]);
+
+      // the retry reads the stamp before its first lock, so it queues behind a close in progress on that register
+      await holder.query("BEGIN");
+      await holder.query(`SELECT pg_advisory_xact_lock(hashtext('counter-close'), hashtext($1))`, [
+        `${s.tenantId}:w829r`,
+      ]);
+      const closePid = Number((await holder.query("SELECT pg_backend_pid() AS pid")).rows[0].pid);
+      const retry = fail(refund(s, r.id, "CASH", 40));
+      const queued = await waitForBlocked(closePid, 1);
+      await holder.query("COMMIT");
+      expect(await retry).toBeUndefined();
+      expect(queued).toBe(true);
+      expect((await row(r.id)).status).toBe("REFUNDED");
+      expect(await auditRows(s)).toHaveLength(1);
+    } finally {
+      await holder.query("ROLLBACK").catch(() => undefined);
+      await holder.end().catch(() => undefined);
+      await poller.end().catch(() => undefined);
+    }
+  }, 60_000);
 });

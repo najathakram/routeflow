@@ -791,5 +791,39 @@ describeDb("SA-737 the STANDARD refund claim under the Order lock — real Postg
       expect(codeOf(out)).not.toBe("COUNTER_SALE_DAY_CLOSED");
       expect(out.ok).toBe(true);
     });
+
+    it("a no-tender refund of a STAMPED pickup is capped as cash: 409 REFUND_EXCEEDS_CASH_PAID over the cash taken; the same refund on an unstamped pickup is not capped", async () => {
+      const capped = async (label: string, registerKey: string | null) => {
+        const s = await seedUnstampedPickup(label);
+        await prisma.order.update({ where: { id: s.orderId }, data: { registerKey } as any });
+        // a split sale: $15.00 cash + $85.00 card (the invoice stays paid in full); the return is worth $20.00 (2 x $10.00)
+        await prisma.invoicePayment.updateMany({
+          where: { tenantId: s.tenantId },
+          data: { amount: 15 },
+        });
+        const inv = await prisma.invoice.findFirstOrThrow({ where: { tenantId: s.tenantId } });
+        await prisma.invoicePayment.create({
+          data: {
+            tenantId: s.tenantId,
+            invoiceId: inv.id,
+            amount: 85,
+            method: "CREDIT_CARD",
+            status: "PAID",
+          },
+        });
+        return { s, out: await refund(s, "EXTERNAL_REFUND") };
+      };
+
+      const stamped = await capped("t11-stamped", "w829r");
+      // red before: the pickup's refund was not "a counter order's", so no tender meant no cap and $20.00 left a $15.00 drawer
+      expect(statusOf(stamped.out)).toBe(409);
+      expect(codeOf(stamped.out)).toBe("REFUND_EXCEEDS_CASH_PAID");
+      expect((stamped.out as any).e.getResponse().maxCashRefund).toBe(15);
+      const row = await returnRow(stamped.s);
+      expect([row.status, row.refundedAt]).toEqual(["RECEIVED", null]);
+
+      const unstamped = await capped("t11-unstamped", null);
+      expect(unstamped.out.ok).toBe(true); // not a till sale: a no-tender refund is not assumed to be cash
+    });
   });
 });

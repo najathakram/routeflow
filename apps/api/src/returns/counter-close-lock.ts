@@ -57,7 +57,10 @@ export function tillRegisterOfSale(
 export async function tillRegisterStampedUnderLock(
   tx: {
     order: {
-      findFirst: (args: any) => Promise<{
+      findFirst: (args: {
+        where: { id: string };
+        select: { counterSale: true; registerKey: true; fulfillPath: true };
+      }) => Promise<{
         counterSale?: boolean | null;
         registerKey?: string | null;
         fulfillPath?: string | null;
