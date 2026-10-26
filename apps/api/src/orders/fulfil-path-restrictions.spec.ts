@@ -80,7 +80,7 @@ describe("judgeFulfilSwitch needsTx", () => {
 
 describe("W-748: the module exports only live callees", () => {
   it("assertFulfilPathSwitchAllowed (production never called it; only a DB spec did) is gone", () => {
-    expect(Object.keys(fulfilPathRestrictions).sort()).toEqual(
+    expect(Object.keys(fulfilPathRestrictions)).toEqual(
       expect.not.arrayContaining(["assertFulfilPathSwitchAllowed"]),
     );
     expect(typeof fulfilPathRestrictions.assertFulfilPathAddress).toBe("function");

@@ -1,7 +1,8 @@
 /**
  * L8 — real-Postgres proof that WHICH state judges a state ban follows how the goods change hands, end to end through
  * the real engine (`SellingRestrictionsService`) and the live switch callees (`assertFulfilPathAddress` + `assertLinesSellable`,
- * the two calls `updateFulfillPathImpl` makes around its override protocol):
+ * the two calls `updateFulfillPathImpl` makes around its override protocol). `judgeFulfilSwitch` itself (the glue) is NOT
+ * driven here: the unit specs `orders/fulfil-path-restrictions.spec.ts` and `orders/orders.fulfil-path-restrictions.spec.ts` pin it:
  *
  *   (a) a COUNTER sale and a PICKUP are judged at the STORE state for a named customer whose own address is elsewhere;
  *   (b) an unset store state refuses both with 409 SELLING_RESTRICTED (INDETERMINATE, fail closed);

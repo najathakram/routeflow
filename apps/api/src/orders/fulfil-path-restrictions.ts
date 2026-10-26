@@ -14,7 +14,9 @@ import * as rGate from "./order-restriction-gate";
  *
  * Row 510: the staff switch (`updateFulfillPathImpl`) runs `assertFulfilPathAddress` and then `judgeFulfilSwitch`
  * below (the warning / override protocol, stamped in the path write's own transaction). The engine-level contract
- * `store-state-by-fulfilment.l8.db.spec.ts` pins those two live callees against the real engine.
+ * `store-state-by-fulfilment.l8.db.spec.ts` pins `assertFulfilPathAddress` and the live line check against the real engine;
+ * `judgeFulfilSwitch` itself (the glue around them) is pinned by the unit specs `fulfil-path-restrictions.spec.ts` and
+ * `orders.fulfil-path-restrictions.spec.ts`, not by a DB spec.
  *
  *  - a DRAFT is judged at its promotion (with whatever path it then has), never on a switch;
  *  - the SAME path again is no change: nothing is judged;
@@ -23,13 +25,8 @@ import * as rGate from "./order-restriction-gate";
  *  - a counter sale (`counterSale`) is a counter sale whatever its path column says, so it stays COUNTER.
  */
 export interface FulfilPathSwitchOrder {
-  tenantId?: string | null;
-  customerId?: string | null;
-  status?: string | null;
   fulfillPath?: string | null;
-  counterSale?: boolean | null;
   customer?: { addresses?: ReadonlyArray<unknown> } | null;
-  lineItems?: ReadonlyArray<{ productId?: string | null }> | null;
 }
 
 /**
