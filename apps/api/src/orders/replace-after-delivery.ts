@@ -1,7 +1,9 @@
 import { ConflictException } from "@nestjs/common";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { orderEditMode } from "./order-edit-restrictions";
+import { roundMoney } from "@routeflow/pricing";
 import { assertWalkInSaleEditable } from "./counter-sale/walk-in-sale-lock";
+import * as carrierGuard from "./order-carrier-guard";
 
 export { walkInSaleLocked } from "./counter-sale/walk-in-sale-lock";
 
@@ -30,18 +32,44 @@ export function assertNoReplaceAfterDelivery(
   });
 }
 
+/** The walk-in flag, read alone: the order row the caller holds does not select its customer. */
+const WALK_IN_FLAG = { customer: { select: { isWalkIn: true } } } as const;
+
 /**
- * updateOrderItems' one call, before any write: W-861's paid walk-in lock first (SA-948 §2 MUST 3: a walk-in gets
- * WALK_IN_SALE_PAID), then the W-871 replace refusal (a named customer's paid sale).
+ * updateOrderItems' one call, before any write: the carrier routing (B1083 D2, B215), W-861's paid walk-in lock first
+ * (SA-948 §2 MUST 3: a walk-in gets WALK_IN_SALE_PAID), then the W-871 replace refusal (a named customer's paid sale).
+ * Returns the routing the edit goes on to use.
  */
-export async function paidSaleEditGuard(
-  deps: { prisma: { forTenant(): any } },
-  order: { id: string; customer?: { isWalkIn?: boolean | null } | null },
-  postDeliveryEdit: boolean,
+type CarrierArgs = Parameters<typeof carrierGuard.carrierEditGuard>;
+
+export async function editGuards(
+  deps: CarrierArgs[0] & { prisma: { forTenant(): any } },
+  order: CarrierArgs[1] & { id: string; status: string },
   user: { role?: string } | undefined,
   dto: { replaceAll?: boolean },
   isDiffPayload: boolean,
-): Promise<void> {
-  await assertWalkInSaleEditable(deps.prisma.forTenant(), order);
+) {
+  const carrier = await carrierGuard.carrierEditGuard(deps, order);
+  const postDeliveryEdit = carrierGuard.resyncsInPlace(order.status, carrier);
+  const db = deps.prisma.forTenant();
+  const flag = await db.order.findUnique({ where: { id: order.id }, select: WALK_IN_FLAG });
+  await assertWalkInSaleEditable(db, { id: order.id, customer: flag?.customer });
   assertNoReplaceAfterDelivery(postDeliveryEdit, user, dto, isDiffPayload);
+  return { carrier, postDeliveryEdit };
+}
+
+/**
+ * The edit tx's first move (SA-944 §3, SA-956 Fix 1): lock the Order row, then re-check the paid walk-in refusal under
+ * it (a payment can commit between `editGuards` and the lock; this read sees every one), and return the order's
+ * total BEFORE this edit writes (NaN when the row cannot be read: the overpay fallback then fails closed).
+ */
+export async function lockEditedOrder(tx: any, orderId: string): Promise<number> {
+  await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${orderId} FOR UPDATE`;
+  const row = await tx.order.findUnique({
+    where: { id: orderId },
+    select: { total: true, ...WALK_IN_FLAG },
+  });
+  await assertWalkInSaleEditable(tx, { id: orderId, customer: row?.customer });
+  const n = Number(row?.total);
+  return Number.isFinite(n) ? roundMoney(n) : Number.NaN;
 }

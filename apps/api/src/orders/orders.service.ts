@@ -57,7 +57,7 @@ import { lockRowsNoWait, withAdvisoryLock, type LockMode } from "../common/db-lo
 import { retryCreditTx } from "../common/tx-retry";
 import { stockTxBounded } from "../common/stock-tx";
 import { lockOrderRow } from "../credit-notes/credit-note-locks";
-import { judgeEditTail, readPriorOrderTotal } from "./edit-overpay-judge";
+import { judgeEditTail } from "./edit-overpay-judge";
 import { RECONCILE_PARTIALS } from "../invoices/invoice-partition";
 import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
 import { assertNoDuplicateLineIds } from "../common/duplicate-line-ids";
@@ -114,7 +114,7 @@ import * as cancelledLines from "./order-edit-cancelled";
 import * as driverAccess from "./driver-edit-access";
 import { assertRemovalsNameALine, writeLineRemoval, writeLineUpdate } from "./order-line-removal";
 import { assertDeliveredLinesUntouched, reduceDeliveredLineEntries } from "./delivered-line-lock";
-import { paidSaleEditGuard, walkInSaleLocked } from "./replace-after-delivery";
+import { lockEditedOrder, editGuards, walkInSaleLocked } from "./replace-after-delivery";
 import { CANCELLABLE_FROM, assertOrderStatusTransition } from "./order-status-transitions";
 import { buildStatusUpdateData } from "./order-status-claim";
 import { AppliedCreditNoteDto, CreateOrderDto } from "./dto/create-order.dto";
@@ -2705,7 +2705,6 @@ export class OrdersService implements OnApplicationBootstrap {
       include: {
         lineItems: true,
         routeRun: { select: { status: true, startedAt: true } },
-        customer: { select: { isWalkIn: true } }, // W-861: the paid walk-in sale lock
       },
     });
     if (!order) throw new NotFoundException("Order not found");
@@ -2789,9 +2788,7 @@ export class OrdersService implements OnApplicationBootstrap {
     }
 
     assertDeliveredLinesUntouched(order, order.lineItems ?? [], dto, user, isDiffPayload); // B1234: before any side effect
-    const carrier = await carrierGuard.carrierEditGuard(this, order); // B1083 (D2): with a carrier the shipment invoice is the bill
-    const postDeliveryEdit = carrierGuard.resyncsInPlace(order.status, carrier); // B215 + D2
-    await paidSaleEditGuard(this, order, postDeliveryEdit, user, dto, isDiffPayload); // W-861 + W-871
+    const { carrier, postDeliveryEdit } = await editGuards(this, order, user, dto, isDiffPayload); // B1083 D2, B215, W-861, W-871
     // Lane R: a banned product added by this edit warns / refuses BEFORE the invoice revert and any write; a draft is
     // judged at its promotion UNLESS it has a live (non-VOID) linked invoice: the reconcile after this edit copies the
     // order's lines onto that sent mirror. Re-judged under the row lock (order-edit-restrictions.ts).
@@ -2918,8 +2915,7 @@ export class OrdersService implements OnApplicationBootstrap {
         // second writer wait; heldItems is then read post-lock and BEFORE any
         // orderItem write below, so it is the true pre-edit state.
         await inlineReturn.lockInlineReturnCustomer(tx, inlineRet, order.customerId); // advisory FIRST
-        await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${orderId} FOR UPDATE`;
-        const priorOrderTotal = await readPriorOrderTotal(tx, orderId); // SA-956: the total BEFORE this edit, under the lock
+        const priorOrderTotal = await lockEditedOrder(tx, orderId); // FOR UPDATE; SA-944 recheck; SA-956 prior total
         await assertRevisionCurrent(tx, orderId, dto.expectedRevisionNumber); // row 372: stale -> 409, nothing written
         let lineIdentity: "stable" | "recreated" = "stable"; // B1050: deleteMany + re-create flips it
         let markerCarry: Map<string, number> | undefined; // SA-716 M2: the create-merge fold only
