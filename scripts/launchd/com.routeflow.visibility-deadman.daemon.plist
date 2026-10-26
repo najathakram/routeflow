@@ -35,6 +35,11 @@
       <string>__NODE_BIN__</string>
       <key>VISIBILITY_DEADMAN_TOKEN_FILE</key>
       <string>__TOKEN_FILE__</string>
+      <!-- a daemon has no login environment: give root's gh an explicit home and config dir -->
+      <key>HOME</key>
+      <string>/var/root</string>
+      <key>GH_CONFIG_DIR</key>
+      <string>/var/root/.config/gh</string>
       <key>PATH</key>
       <string>__GH_DIR__:/usr/bin:/bin:/usr/sbin:/sbin</string>
     </dict>

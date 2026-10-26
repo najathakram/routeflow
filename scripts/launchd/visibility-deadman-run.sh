@@ -10,9 +10,10 @@
 #   VISIBILITY_DEADMAN_NODE_BIN    absolute path of node
 #   VISIBILITY_DEADMAN_TOKEN_FILE  file holding the token (one line), owned by root, mode 600
 #
-# The token must belong to the repo OWNER (or an admin) with admin rights on the repo: a classic
-# PAT with `repo` scope, or a fine-grained PAT with "Administration: Read and write". The script
-# itself checks `viewerPermission` and logs a not-admin incident (exit 5) if it falls short.
+# The token must belong to the repo OWNER (or an admin): use a classic PAT with `repo` scope.
+# The script checks `viewerPermission`, which is the ACCOUNT's role and says nothing about the
+# token's scope, so it logs a not-admin incident (exit 5) for the wrong account only. Prove the
+# token can really flip with the one-time scratch-repo test in the runbook.
 #
 # Exit 78 (EX_CONFIG) when misconfigured; otherwise the dead-man switch's own exit code.
 set -eu

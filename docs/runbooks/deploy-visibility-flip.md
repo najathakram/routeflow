@@ -97,13 +97,21 @@ admin** of the repo.
 
 Two guards against a switch that looks alive but is dead:
 
-- **Admin check.** Every poll reads `viewerPermission`. Anything but `ADMIN` (wrong account, expired
-  or under-scoped token) logs an `incident` with `"reason":"not-admin"`, never tries to flip, and
-  exits 5 on every poll, even while the repo is PRIVATE.
+- **Admin check.** Every poll reads `viewerPermission`. Anything but `ADMIN` (the wrong GitHub
+  account) logs an `incident` with `"reason":"not-admin"` and exits 5 on every poll, even while the
+  repo is PRIVATE; a flip that is due is still attempted. `viewerPermission` is the account's
+  **role** on the repo, not the scope of its token, so it cannot prove a token is able to flip: that
+  is what the install test flip below is for.
 - **No free window after a gap.** If the first PUBLIC sighting follows missed polls (`gh` errors, a
   sleeping Mac; the previous answered poll is older than 2x the interval), the timer is backdated to
-  that previous poll instead of starting at "now". A corrupt state file is logged and never resets the
-  timer: it starts at the last readable `lastCheckAt`, or, if none, a PUBLIC repo is flipped at once.
+  that previous poll instead of starting at "now". A corrupt state file (unreadable, truncated, or a
+  timer that is unparseable or in the future) is logged and never grants a fresh window: the timer
+  restarts at the last readable `lastCheckAt` only if the repo was last seen PRIVATE; otherwise the
+  window is treated as spent and a PUBLIC repo is flipped at once.
+- **Bookkeeping can't block a flip.** The flip happens before the state and log are written, and a
+  failing write (full disk, root-owned `local-assets/`, a state path that is not a file) only prints a
+  `WARNING` on stderr. A first PUBLIC sighting whose timer cannot be stored is flipped at once, since
+  a timer that cannot be stored would never fire.
 
 **Install on the Mac mini: LaunchDaemon (recommended)**
 
@@ -111,9 +119,9 @@ A LaunchAgent dies with logout and does not start after a reboot unless the Mac 
 is exactly the failure this switch exists to cover. A LaunchDaemon starts at boot with nobody logged
 in.
 
-1. Create a GitHub token for the **repo owner** with admin rights on `najathakram/routeflow` (classic
-   PAT with `repo` scope, or fine-grained with "Administration: Read and write"). Store it in a
-   root-only file; the wrapper refuses any other mode, and the token never goes in the plist:
+1. Create a **classic PAT with `repo` scope** for the **repo owner** (an admin of
+   `najathakram/routeflow`). Store it in a root-only file; the wrapper refuses any other mode, and
+   the token never goes in the plist:
 
    ```bash
    sudo mkdir -p /etc/routeflow
@@ -137,7 +145,19 @@ in.
    sudo launchctl load -w /Library/LaunchDaemons/com.routeflow.visibility-deadman.plist
    ```
 
-4. Check it is alive: `node scripts/visibility-deadman.mjs --status` prints the state and the age
+4. **One-time install test flip on a scratch repo** (never on `routeflow`). The admin check cannot
+   prove the token can flip, so prove it once with the token the daemon will use. Create a throwaway
+   PUBLIC repo under the owner's account (`gh repo create <owner>/deadman-scratch --public`), then run
+   the switch twice against it with a near-zero limit and a scratch state dir; the second poll must
+   flip it and print `"action":"flipped-private","confirmed":true`. Delete the scratch repo afterwards.
+
+   ```bash
+   sudo sh -c 'export GH_TOKEN="$(cat /etc/routeflow/visibility-deadman.token)"; \
+     for i in 1 2; do node scripts/visibility-deadman.mjs --once --repo <owner>/deadman-scratch \
+       --max-public-minutes 0.01 --state-dir /tmp/deadman-test; sleep 2; done'
+   ```
+
+5. Check it is alive: `node scripts/visibility-deadman.mjs --status` prints the state and the age
    of the last heartbeat (no `gh` call, writes nothing). It prints `WARNING` lines and **exits 3**
    when the last answered poll is older than 600 s, the last flip was not confirmed, the last poll
    failed (including not-admin), or there is no state yet. Check it after every install and every

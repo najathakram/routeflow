@@ -315,7 +315,7 @@ test("--status prints state and heartbeat age, exits 0, makes no gh call and wri
 
 // ─── review round 1 ───────────────────────────────────────────────────────────────────────────
 // 1. wrong/non-admin gh account must be LOUD, never a silent no-op.
-test("non-admin gh: PUBLIC past the limit logs a not-admin incident, exits 5, never flips", () => {
+test("non-admin gh: PUBLIC past the limit logs a not-admin incident, exits 5, still ATTEMPTS the flip", () => {
   const sb = sandbox();
   sb.visibility("PUBLIC");
   sb.permission("WRITE");
@@ -330,7 +330,10 @@ test("non-admin gh: PUBLIC past the limit logs a not-admin incident, exits 5, ne
     sb.calls().some((c) => c.includes("--json visibility,viewerPermission")),
     "repo view did not ask for viewerPermission",
   );
-  check(!sb.calls().some((c) => c.startsWith("repo edit")), "tried to flip without admin");
+  check(
+    sb.calls().some((c) => c.startsWith("repo edit")),
+    "did not attempt the flip (it costs nothing)",
+  );
   const inc = sb.logLines().find((l) => l.event === "incident" && l.reason === "not-admin");
   check(inc && inc.viewerPermission === "WRITE", "no not-admin incident line");
   check(sb.state().lastPollOk === false, "state does not record the failed poll");
@@ -451,10 +454,11 @@ test("corrupt state, salvageable lastCheckAt: timer starts at lastCheckAt and is
   const sb = sandbox();
   sb.visibility("PUBLIC");
   const last = minutesAgo(10);
-  sb.writeRawState(`{"lastCheckAt":"${last}","firstSeenPu`);
+  sb.writeRawState(`{"lastCheckAt":"${last}","lastVisibility":"PRIVATE","firstSeenPu`);
   const r = sb.run(base(sb, ["--max-public-minutes", "60"]));
   check(r.status === 0, `want exit 0, got ${r.status}`);
   check(sb.state().firstSeenPublicAt === last, "timer not started at the salvaged lastCheckAt");
+  check(!sb.calls().some((c) => c.startsWith("repo edit")), "flipped though last seen PRIVATE");
   check(
     sb.logLines().some((l) => l.event === "error" && /corrupt/i.test(l.detail)),
     "corruption not logged",
@@ -489,11 +493,59 @@ test("corrupt state, salvaged lastCheckAt older than the limit: flips", () => {
   );
 });
 
+test("corrupt state, salvaged lastCheckAt but last visibility UNKNOWN: window is spent, flips", () => {
+  const sb = sandbox();
+  sb.visibility("PUBLIC");
+  sb.writeRawState(`{"lastCheckAt":"${minutesAgo(10)}","firstSeenPu`);
+  const r = sb.run(base(sb, ["--max-public-minutes", "60"]));
+  check(r.status === 0, `want exit 0, got ${r.status}`);
+  check(
+    sb.calls().some((c) => c.startsWith("repo edit")),
+    "restarted the timer instead of flipping",
+  );
+});
+
+test("corrupt firstSeenPublicAt and the repo was last seen PUBLIC: window is spent, flips", () => {
+  const sb = sandbox();
+  sb.visibility("PUBLIC");
+  sb.writeState({
+    firstSeenPublicAt: "banana",
+    lastCheckAt: minutesAgo(1),
+    lastVisibility: "PUBLIC",
+  });
+  const r = sb.run(base(sb));
+  check(r.status === 0, `want exit 0, got ${r.status}`);
+  check(
+    sb.calls().some((c) => c.startsWith("repo edit")),
+    "restarted the timer instead of flipping",
+  );
+});
+
+test("firstSeenPublicAt in the future is corruption: logged, and flips when last seen PUBLIC", () => {
+  const sb = sandbox();
+  sb.visibility("PUBLIC");
+  sb.writeState({
+    firstSeenPublicAt: new Date(Date.now() + 3 * 3_600_000).toISOString(),
+    lastCheckAt: minutesAgo(1),
+    lastVisibility: "PUBLIC",
+  });
+  const r = sb.run(base(sb));
+  check(r.status === 0, `want exit 0, got ${r.status}`);
+  check(
+    sb.calls().some((c) => c.startsWith("repo edit")),
+    "a future timer kept a public repo public",
+  );
+  check(
+    sb.logLines().some((l) => l.event === "error" && /corrupt/i.test(l.detail)),
+    "corruption not logged",
+  );
+});
+
 test("an unparseable firstSeenPublicAt is corruption, not a silent reset to now", () => {
   const sb = sandbox();
   sb.visibility("PUBLIC");
   const last = minutesAgo(1);
-  sb.writeState({ firstSeenPublicAt: "banana", lastCheckAt: last, lastVisibility: "PUBLIC" });
+  sb.writeState({ firstSeenPublicAt: "banana", lastCheckAt: last, lastVisibility: "PRIVATE" });
   const r = sb.run(base(sb));
   check(r.status === 0, `want exit 0, got ${r.status}`);
   check(sb.state().firstSeenPublicAt === last, "timer not taken from lastCheckAt");
@@ -553,6 +605,98 @@ test("wrapper parses under sh and refuses a missing token file with exit 78", ()
   });
   check(r.status === 78, `want exit 78, got ${r.status}: ${r.stderr}`);
   check(/token file not found/.test(r.stderr), "no clear message");
+});
+
+// ─── review round 2 ───────────────────────────────────────────────────────────────────────────
+// The flip decision and `gh repo edit` must never depend on bookkeeping I/O (log + state files).
+const PAST_LIMIT = () => ({
+  firstSeenPublicAt: minutesAgo(90),
+  lastCheckAt: minutesAgo(2),
+  lastVisibility: "PUBLIC",
+});
+const flipped = (sb) => sb.calls().some((c) => c.startsWith("repo edit"));
+
+test("log file unwritable (path is a directory): PUBLIC past the limit still flips", () => {
+  const sb = sandbox();
+  sb.visibility("PUBLIC");
+  sb.writeState(PAST_LIMIT());
+  fs.mkdirSync(sb.logFile);
+  const r = sb.run(base(sb, ["--max-public-minutes", "60"]));
+  check(flipped(sb), `no flip; exit ${r.status}: ${r.stderr}`);
+  check(r.status === 0, `want exit 0, got ${r.status}: ${r.stderr}`);
+  check(/cannot write log/.test(r.stderr), "log failure not reported on stderr");
+  check(!/unhandled/.test(r.stdout + r.stderr), "poll crashed");
+});
+
+test("state path is a directory (unreadable AND unwritable): PUBLIC still flips", () => {
+  const sb = sandbox();
+  sb.visibility("PUBLIC");
+  fs.mkdirSync(sb.stateFile, { recursive: true });
+  const r = sb.run(base(sb, ["--max-public-minutes", "60"]));
+  check(flipped(sb), `no flip; exit ${r.status}: ${r.stderr}`);
+  check(r.status === 0, `want exit 0, got ${r.status}: ${r.stderr}`);
+  check(!/unhandled/.test(r.stdout + r.stderr), "poll crashed");
+});
+
+test("state dir is a regular file (nothing can be written): PUBLIC still flips", () => {
+  const sb = sandbox();
+  sb.visibility("PUBLIC");
+  fs.writeFileSync(sb.stateDir, "i am a file, not a directory");
+  const r = sb.run(base(sb, ["--max-public-minutes", "60"]));
+  check(flipped(sb), `no flip; exit ${r.status}: ${r.stderr}`);
+  check(r.status === 0, `want exit 0, got ${r.status}: ${r.stderr}`);
+  check(!/unhandled/.test(r.stdout + r.stderr), "poll crashed");
+});
+
+test("state file read-only at the first PUBLIC sighting: untrackable, so it flips now", () => {
+  const sb = sandbox();
+  sb.visibility("PUBLIC");
+  sb.writeState({ firstSeenPublicAt: null, lastCheckAt: minutesAgo(1), lastVisibility: "PRIVATE" });
+  // Windows: a read-only file refuses rename-over. POSIX: a read-only directory refuses the temp file.
+  let undo;
+  if (process.platform === "win32") {
+    fs.chmodSync(sb.stateFile, 0o444);
+    undo = () => fs.chmodSync(sb.stateFile, 0o666);
+  } else if (process.getuid && process.getuid() === 0) {
+    return console.log("     (root ignores permissions: case skipped)");
+  } else {
+    fs.chmodSync(sb.stateDir, 0o555);
+    undo = () => fs.chmodSync(sb.stateDir, 0o755);
+  }
+  try {
+    const r = sb.run(base(sb, ["--max-public-minutes", "60"]));
+    check(flipped(sb), `a timer that cannot be stored never fires; exit ${r.status}: ${r.stderr}`);
+    check(!/unhandled/.test(r.stdout + r.stderr), "poll crashed");
+  } finally {
+    undo();
+  }
+});
+
+// Nits.
+test("usage text documents --status exit 3 (not 0)", () => {
+  const r = spawnSync(process.execPath, [SCRIPT, "--help"], { encoding: "utf8" });
+  check(/--status[^\n]*exit 3/.test(r.stdout), "usage still says --status exits 0");
+});
+
+test("daemon plist sets HOME and GH_CONFIG_DIR for root's gh", () => {
+  const plist = fs.readFileSync(
+    path.join(__dirname, "launchd", "com.routeflow.visibility-deadman.daemon.plist"),
+    "utf8",
+  );
+  check(/<key>HOME<\/key>\s*<string>\/var\/root<\/string>/.test(plist), "HOME not set");
+  check(/<key>GH_CONFIG_DIR<\/key>\s*<string>[^<]+<\/string>/.test(plist), "GH_CONFIG_DIR not set");
+});
+
+test("runbook no longer claims viewerPermission reflects a token's scope", () => {
+  const md = fs.readFileSync(
+    path.join(__dirname, "..", "docs", "runbooks", "deploy-visibility-flip.md"),
+    "utf8",
+  );
+  check(!/under-scoped/i.test(md), "still says under-scoped token");
+  check(
+    /classic PAT/i.test(md) && /scratch repo/i.test(md),
+    "no classic-PAT / scratch-repo advice",
+  );
 });
 
 // ─── cleanup + verdict ────────────────────────────────────────────────────────────────────────

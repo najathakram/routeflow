@@ -39,10 +39,12 @@
 // state file, no log line, no `gh` call. `--help` exits 0 the same way.
 //
 // EACH POLL (`gh repo view <repo> --json visibility,viewerPermission`)
-//   viewerPermission != ADMIN            -> log an `incident` (reason "not-admin"), never try to flip,
-//                                           exit 5, EVERY poll (even while PRIVATE): a wrong account
-//                                           or a token without admin rights would otherwise be a dead
-//                                           switch that looks alive
+//   viewerPermission != ADMIN            -> log an `incident` (reason "not-admin") and exit 5, EVERY
+//                                           poll (even while PRIVATE): the wrong account would
+//                                           otherwise be a dead switch that looks alive. The flip is
+//                                           still ATTEMPTED when due: it costs nothing. NB it is the
+//                                           account's ROLE, not a token's scope: a token can pass
+//                                           this check and still be refused by `gh repo edit`.
 //   PRIVATE                              -> clear firstSeenPublicAt
 //   PUBLIC, no firstSeenPublicAt         -> set it to now, BUT backdate it to the previous answered
 //                                           poll (lastCheckAt) when that is older than 2x the
@@ -117,11 +119,13 @@ const EXIT_GH_FAILED = 4;
 const EXIT_NOT_ADMIN = 5;
 // `--status` calls a poll stale after this long (launchd polls every ~120 s).
 const STATUS_STALE_SECONDS = 600;
+// A stored timer further in the future than this is clock trouble or corruption, not a timer.
+const FUTURE_SKEW_MS = 5 * 60_000;
 
 const USAGE = `usage: node scripts/visibility-deadman.mjs [--once] [--status] [--repo <owner/name>]
          [--max-public-minutes <n>] [--interval-seconds <n>] [--state-dir <dir>] [--help]
   --once                     one poll, then exit (the launchd mode)
-  --status                   print state + last heartbeat age and exit 0 (no gh call)
+  --status                   print state + last heartbeat age, no gh call; exit 3 if unhealthy
   --repo <owner/name>        repository to watch and flip (default ${DEFAULT_REPO})
   --max-public-minutes <n>   flip private after this long continuously PUBLIC (default ${DEFAULT_MAX_PUBLIC_MINUTES})
   --interval-seconds <n>     loop mode: seconds between polls (default ${DEFAULT_INTERVAL_SECONDS})
@@ -255,11 +259,33 @@ function paths(stateDir) {
 }
 
 // ─── logging + state ──────────────────────────────────────────────────────────────────────────
+// Bookkeeping (log + state files) must NEVER stop a flip: a full disk, a root-owned local-assets or
+// a state path that is not a regular file would otherwise throw out of pollOnce BEFORE `gh repo
+// edit` and leave the repo public forever. So log() and writeState() cannot throw: stdout first
+// (launchd captures it), then the file, and a file failure goes to stderr instead.
+function warn(what, err) {
+  try {
+    console.error(
+      `visibility-deadman: WARNING: ${what}: ${err && err.message ? err.message : err}`,
+    );
+  } catch {
+    // nothing left to try
+  }
+}
+
 function log(p, event, fields = {}) {
   const line = JSON.stringify({ time: new Date().toISOString(), event, ...fields });
-  fs.mkdirSync(p.dir, { recursive: true });
-  fs.appendFileSync(p.log, line + "\n");
-  console.log(line);
+  try {
+    console.log(line);
+  } catch {
+    // a closed stdout must not stop the poll
+  }
+  try {
+    fs.mkdirSync(p.dir, { recursive: true });
+    fs.appendFileSync(p.log, line + "\n");
+  } catch (err) {
+    warn(`cannot write log ${p.log}`, err);
+  }
 }
 
 const EMPTY_STATE = { firstSeenPublicAt: null, lastCheckAt: null, lastVisibility: null };
@@ -271,9 +297,10 @@ const isoOrNull = (s) => {
 
 /**
  * {state, corrupt}. `corrupt` is null for a healthy or simply absent state; otherwise
- * {lastCheckAt} holds the last poll time that could still be read (ISO) or null. A corrupt state
- * must NEVER silently hand a possibly-public repo a fresh timer, so pollOnce starts the timer at
- * that lastCheckAt, or flips immediately when there is none. The corruption is always logged.
+ * {lastCheckAt, lastVisibility} hold what could still be read (ISO / string, or null). A corrupt
+ * state must NEVER silently hand a possibly-public repo a fresh timer: pollOnce restarts the timer
+ * at that lastCheckAt only when the repo was last seen PRIVATE; if it was PUBLIC, or that is unknown,
+ * the window is treated as spent and a PUBLIC repo is flipped on that very poll. Always logged.
  */
 function readState(p) {
   let raw;
@@ -282,7 +309,7 @@ function readState(p) {
   } catch (err) {
     if (err.code === "ENOENT") return { state: { ...EMPTY_STATE }, corrupt: null };
     log(p, "error", { detail: `state corrupt (unreadable: ${err.message})` });
-    return { state: { ...EMPTY_STATE }, corrupt: { lastCheckAt: null } };
+    return { state: { ...EMPTY_STATE }, corrupt: { lastCheckAt: null, lastVisibility: null } };
   }
   let parsed = null;
   try {
@@ -292,32 +319,56 @@ function readState(p) {
   }
   if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
     const state = { ...EMPTY_STATE, ...parsed };
-    // A timer that is present but unreadable is corruption too, not "no timer".
-    if (state.firstSeenPublicAt && isoOrNull(state.firstSeenPublicAt) === null) {
-      const salvaged = isoOrNull(state.lastCheckAt);
+    // A timer that is present but unreadable, or in the future (clock jump, hand edit), is
+    // corruption too, not "no timer": a future timer would keep a public repo public.
+    const t = Date.parse(state.firstSeenPublicAt ?? "");
+    const unparseable = state.firstSeenPublicAt && !Number.isFinite(t);
+    const future = Number.isFinite(t) && t > Date.now() + FUTURE_SKEW_MS;
+    if (unparseable || future) {
+      const salvaged = {
+        lastCheckAt: isoOrNull(state.lastCheckAt),
+        lastVisibility: state.lastVisibility,
+      };
       log(p, "error", {
-        detail: `state corrupt (firstSeenPublicAt unparseable: ${JSON.stringify(state.firstSeenPublicAt)}); lastCheckAt=${salvaged}`,
+        detail: `state corrupt (firstSeenPublicAt ${future ? "is in the future" : "unparseable"}: ${JSON.stringify(state.firstSeenPublicAt)}); lastCheckAt=${salvaged.lastCheckAt} lastVisibility=${salvaged.lastVisibility}`,
       });
       state.firstSeenPublicAt = null;
-      return { state, corrupt: { lastCheckAt: salvaged } };
+      return { state, corrupt: salvaged };
     }
     return { state, corrupt: null };
   }
-  // Truncated / garbage file: pull lastCheckAt out of the raw text if it is still there.
-  const m = /"lastCheckAt"\s*:\s*"([^"]+)"/.exec(raw);
-  const salvaged = m ? isoOrNull(m[1]) : null;
+  // Truncated / garbage file: pull what is still legible out of the raw text.
+  const grab = (key) => new RegExp(`"${key}"\\s*:\\s*"([^"]+)"`).exec(raw)?.[1] ?? null;
+  const salvaged = {
+    lastCheckAt: isoOrNull(grab("lastCheckAt")),
+    lastVisibility: grab("lastVisibility"),
+  };
   log(p, "error", {
-    detail: `state corrupt (not valid JSON); salvaged lastCheckAt=${salvaged}`,
+    detail: `state corrupt (not valid JSON); salvaged lastCheckAt=${salvaged.lastCheckAt} lastVisibility=${salvaged.lastVisibility}`,
   });
-  return { state: { ...EMPTY_STATE, lastCheckAt: salvaged }, corrupt: { lastCheckAt: salvaged } };
+  return {
+    state: { ...EMPTY_STATE, lastCheckAt: salvaged.lastCheckAt },
+    corrupt: salvaged,
+  };
 }
 
 /** Atomic write (temp + rename) so a kill mid-write can never leave a half-written state. */
 function writeState(p, state) {
-  fs.mkdirSync(p.dir, { recursive: true });
   const tmp = `${p.state}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(state, null, 2) + "\n");
-  fs.renameSync(tmp, p.state);
+  try {
+    fs.mkdirSync(p.dir, { recursive: true });
+    fs.writeFileSync(tmp, JSON.stringify(state, null, 2) + "\n");
+    fs.renameSync(tmp, p.state);
+    return true;
+  } catch (err) {
+    warn(`cannot write state ${p.state}`, err);
+    try {
+      fs.rmSync(tmp, { force: true });
+    } catch {
+      // best effort
+    }
+    return false;
+  }
 }
 
 // ─── gh ───────────────────────────────────────────────────────────────────────────────────────
@@ -398,6 +449,9 @@ async function flipPrivate(p, repo) {
 }
 
 // ─── one poll ─────────────────────────────────────────────────────────────────────────────────
+// ORDER MATTERS: decide, FLIP, and only then record. The decision uses nothing but the answer from
+// gh and the state already read; log() and writeState() cannot throw (see above), so no bookkeeping
+// failure can stand between a PUBLIC repo past its limit and `gh repo edit`.
 async function pollOnce({ repo, maxPublicMinutes, intervalSeconds, stateDir }) {
   const p = paths(stateDir);
   const { state, corrupt } = readState(p);
@@ -421,6 +475,9 @@ async function pollOnce({ repo, maxPublicMinutes, intervalSeconds, stateDir }) {
   }
 
   const visibility = read.visibility;
+  // `viewerPermission` is the account's ROLE on the repo, not the scope of its token. Anything but
+  // ADMIN means the wrong account: loud on every poll, but the flip is still ATTEMPTED (it costs
+  // nothing, and a role we misread must not be what keeps a repo public).
   const notAdmin = read.viewerPermission !== "ADMIN";
   state.lastCheckAt = nowIso;
   state.lastVisibility = visibility;
@@ -429,103 +486,101 @@ async function pollOnce({ repo, maxPublicMinutes, intervalSeconds, stateDir }) {
     ? `not-admin: viewerPermission=${read.viewerPermission ?? "missing"}`
     : null;
 
-  // A non-admin `gh` (wrong account, expired token, fine-grained token without admin) can read the
-  // repo but can never flip it: that is a dead switch that looks alive. Say so, every poll, loudly.
-  const reportNotAdmin = (publicMinutes) => {
-    writeState(p, state);
-    log(p, "heartbeat", { ok: false, repo, visibility, error: state.lastPollError });
-    log(p, "incident", {
-      repo,
-      reason: "not-admin",
-      viewerPermission: read.viewerPermission,
-      visibility,
-      publicMinutes,
-      detail: "the gh account has no admin rights on the repo; it CANNOT flip it private",
-    });
-    return EXIT_NOT_ADMIN;
-  };
-
+  let sinceMs = NaN;
+  let due = false;
+  let dueReason = "limit-exceeded";
   if (visibility !== "PUBLIC") {
     if (state.firstSeenPublicAt)
       log(p, "state", { change: "cleared firstSeenPublicAt", visibility });
     state.firstSeenPublicAt = null;
-    if (notAdmin) return reportNotAdmin(0);
-    writeState(p, state);
-    log(p, "heartbeat", { ok: true, repo, visibility, publicMinutes: 0 });
-    return 0;
+  } else {
+    sinceMs = Date.parse(state.firstSeenPublicAt ?? "");
+    if (!Number.isFinite(sinceMs)) {
+      // First PUBLIC sighting. "Now" is the OPTIMISTIC guess and the wrong one whenever polls were
+      // missed (gh errors, a sleeping machine) or the state was lost: the repo may have been
+      // public since before. Never hand a public repo a fresh full window.
+      let reason = "first-sighting";
+      sinceMs = nowMs;
+      if (corrupt) {
+        const salvaged = Date.parse(corrupt.lastCheckAt ?? "");
+        if (Number.isFinite(salvaged) && corrupt.lastVisibility === "PRIVATE") {
+          // Provably private at lastCheckAt: it cannot have been public longer than since then.
+          reason = "corrupt-state-lastCheckAt";
+          sinceMs = salvaged;
+        } else {
+          // Last seen PUBLIC, or no idea: the window is spent, flip on this very poll.
+          reason = "corrupt-state-flip-now";
+          sinceMs = nowMs - maxPublicMinutes * 60_000 - 1;
+        }
+      } else if (Number.isFinite(prevCheckMs) && nowMs - prevCheckMs > 2 * intervalSeconds * 1000) {
+        reason = "gap-backdate";
+        sinceMs = prevCheckMs;
+      }
+      state.firstSeenPublicAt = new Date(sinceMs).toISOString();
+      log(p, "state", {
+        change: "set firstSeenPublicAt",
+        reason,
+        firstSeenPublicAt: state.firstSeenPublicAt,
+      });
+      // A timer that cannot be stored never fires (the next poll would start over): flip now.
+      if (!writeState(p, state)) {
+        due = true;
+        dueReason = "state-unwritable";
+      }
+    }
+    due = due || (nowMs - sinceMs) / 60_000 > maxPublicMinutes;
+  }
+  const publicMinutes = Number.isFinite(sinceMs) ? Math.max(0, (nowMs - sinceMs) / 60_000) : 0;
+  const rounded = Math.round(publicMinutes * 10) / 10;
+
+  let flip = null;
+  if (due) {
+    flip = await flipPrivate(p, repo);
+    state.lastFlipAt = new Date().toISOString();
+    state.lastFlipConfirmed = flip.confirmed;
+    if (flip.confirmed) {
+      state.firstSeenPublicAt = null;
+      state.lastVisibility = "PRIVATE";
+    }
+    // Unconfirmed: firstSeenPublicAt stays untouched so the next poll flips again.
   }
 
-  let sinceMs = Date.parse(state.firstSeenPublicAt ?? "");
-  if (!Number.isFinite(sinceMs)) {
-    // First PUBLIC sighting. "Now" is the OPTIMISTIC guess and the wrong one whenever polls were
-    // missed (gh errors, a sleeping machine, a corrupt state file): the repo may have been public
-    // since the last poll that DID answer. Never hand a public repo a fresh full window.
-    let reason = "first-sighting";
-    sinceMs = nowMs;
-    const corruptLast = corrupt ? Date.parse(corrupt.lastCheckAt ?? "") : NaN;
-    if (corrupt) {
-      reason = Number.isFinite(corruptLast)
-        ? "corrupt-state-lastCheckAt"
-        : "corrupt-state-flip-now";
-      // Unknown history: treat the window as already spent so this very poll flips.
-      sinceMs = Number.isFinite(corruptLast) ? corruptLast : nowMs - maxPublicMinutes * 60_000 - 1;
-    } else if (Number.isFinite(prevCheckMs) && nowMs - prevCheckMs > 2 * intervalSeconds * 1000) {
-      reason = "gap-backdate";
-      sinceMs = prevCheckMs;
-    }
-    state.firstSeenPublicAt = new Date(sinceMs).toISOString();
-    log(p, "state", {
-      change: "set firstSeenPublicAt",
-      reason,
-      firstSeenPublicAt: state.firstSeenPublicAt,
-    });
-  }
-  const publicMinutes = Math.max(0, (nowMs - sinceMs) / 60_000);
-  const rounded = Math.round(publicMinutes * 10) / 10;
-  if (notAdmin) return reportNotAdmin(rounded);
+  // Everything below is record-keeping.
   writeState(p, state);
   log(p, "heartbeat", {
-    ok: true,
+    ok: !notAdmin,
     repo,
     visibility,
     publicMinutes: rounded,
     maxPublicMinutes,
     firstSeenPublicAt: state.firstSeenPublicAt,
+    ...(notAdmin ? { error: state.lastPollError } : {}),
   });
-
-  if (publicMinutes <= maxPublicMinutes) return 0;
-
-  const result = await flipPrivate(p, repo);
-  state.lastFlipAt = new Date().toISOString();
-  state.lastFlipConfirmed = result.confirmed;
-  if (result.confirmed) {
-    state.firstSeenPublicAt = null;
-    state.lastVisibility = "PRIVATE";
-    writeState(p, state);
+  if (flip) {
     log(p, "incident", {
       repo,
-      action: "flipped-private",
-      confirmed: true,
+      action: flip.confirmed ? "flipped-private" : "flip-unconfirmed",
+      confirmed: flip.confirmed,
+      reason: dueReason,
       publicMinutes: rounded,
       maxPublicMinutes,
       firstSeenPublicAt: new Date(sinceMs).toISOString(),
-      attempts: result.attempts,
+      attempts: flip.attempts,
+      ...(flip.confirmed ? {} : { last: flip.last }),
     });
-    return 0;
   }
-  // firstSeenPublicAt stays untouched so the next poll flips again.
-  writeState(p, state);
-  log(p, "incident", {
-    repo,
-    action: "flip-unconfirmed",
-    confirmed: false,
-    publicMinutes: rounded,
-    maxPublicMinutes,
-    firstSeenPublicAt: new Date(sinceMs).toISOString(),
-    attempts: result.attempts,
-    last: result.last,
-  });
-  return EXIT_FLIP_UNCONFIRMED;
+  if (notAdmin) {
+    log(p, "incident", {
+      repo,
+      reason: "not-admin",
+      viewerPermission: read.viewerPermission,
+      visibility,
+      publicMinutes: rounded,
+      detail: "the gh account has no admin role on the repo; it probably CANNOT flip it private",
+    });
+    return EXIT_NOT_ADMIN;
+  }
+  return flip && !flip.confirmed ? EXIT_FLIP_UNCONFIRMED : 0;
 }
 
 // ─── --status ─────────────────────────────────────────────────────────────────────────────────
