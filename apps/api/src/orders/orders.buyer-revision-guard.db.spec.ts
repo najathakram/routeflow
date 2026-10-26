@@ -117,6 +117,32 @@ describeDb("row 380: the buyer order edit revision guard, real Postgres", () => 
   const latest = () => (orderId: string) =>
     tenantCtx.run(tenantId, () => latestEditRevisionNumber(prisma.forTenant() as any, orderId));
 
+  /** Hold the Order row lock on a raw connection until `release()`; the edits started meanwhile wait on it. */
+  async function holdOrderLock(orderId: string) {
+    const c = await pool.connect();
+    await c.query("BEGIN");
+    await c.query(`SELECT id FROM "Order" WHERE id = $1 FOR UPDATE`, [orderId]);
+    return {
+      async release(commit = true) {
+        await c.query(commit ? "COMMIT" : "ROLLBACK");
+        c.release();
+      },
+    };
+  }
+  /** Wait until `n` backends are blocked on a lock (every edit reached the Order FOR UPDATE), never just one. */
+  async function waitUntilBlocked(n = 1, timeoutMs = 8000) {
+    const t0 = Date.now();
+    for (;;) {
+      const { rows: r } = await pool.query(
+        `SELECT count(*)::int AS n FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND datname = current_database()`,
+      );
+      if (r[0].n >= n) return;
+      if (Date.now() - t0 > timeoutMs)
+        throw new Error(`only ${r[0].n}/${n} edits blocked on the Order lock`);
+      await new Promise((res) => setTimeout(res, 50));
+    }
+  }
+
   beforeAll(async () => {
     pool = new Pool({ connectionString: requireLocalDatabaseUrl() });
     raw = new PrismaClient({ adapter: new PrismaPg(pool) });
@@ -207,5 +233,33 @@ describeDb("row 380: the buyer order edit revision guard, real Postgres", () => 
       expectedRevisionNumber: r1,
     });
     expect(Number((await rows(o.id))[0].qty)).toBe(4);
+  });
+
+  it("two concurrent BUYER edits both carrying revision N: exactly one wins, the other is 409 ORDER_REVISION_STALE (the in-transaction compare)", async () => {
+    const cola = await product("race");
+    const o = await order(cola);
+    const lineId = o.lineItems[0].id;
+    const r0 = await latest()(o.id);
+    const lock = await holdOrderLock(o.id);
+    const settle = (qty: number) =>
+      edit(o.id, {
+        items: [{ orderItemId: lineId, productId: cola, qty }],
+        expectedRevisionNumber: r0,
+      }).then(
+        () => ({ ok: true as const, qty }),
+        (e: any) => ({ ok: false as const, qty, e }),
+      );
+    const a = settle(3);
+    const b = settle(7);
+    await waitUntilBlocked(2); // BOTH edits passed the pre-lock check and queued on the held lock, both holding r0
+    await lock.release(true);
+    const results = await Promise.all([a, b]);
+    const won = results.filter((r) => r.ok);
+    const lost = results.filter((r) => !r.ok);
+    expect(won).toHaveLength(1);
+    expect(lost).toHaveLength(1);
+    expect((lost[0] as any).e?.response?.code).toBe("ORDER_REVISION_STALE");
+    expect(Number((await rows(o.id))[0].qty)).toBe(won[0].qty); // the loser overwrote nothing
+    expect(await latest()(o.id)).toBe(r0 + 1); // one edit, one revision
   });
 });
