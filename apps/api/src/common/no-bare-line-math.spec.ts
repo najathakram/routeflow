@@ -19,10 +19,6 @@ const SRC_ROOT = path.resolve(__dirname, "..");
 
 /** file (relative to apps/api/src) -> [hits, why none of them is a boxed line's amount] */
 const PINNED: Record<string, [number, string]> = {
-  "orders/orders.service.ts": [
-    2,
-    "merge appends of CUSTOM lines (productId: null): never boxed, per-piece price x qty, roundMoney on write (scan-ok: money-rederive)",
-  ],
   "import/import.service.ts": [
     1,
     "imported CSV line fallback: no case pack, the file's Item Total wins, plain qty x price only when absent (scan-ok: money-rederive)",

@@ -69,6 +69,7 @@ import {
 import { sourceLineFor } from "./source-line";
 import { assertCustomerMayNotDraft, type CreateOrderOptions } from "./order-create-options";
 import { checkQtySplitConsistency, warnQtySplit, type QtySplitLine } from "./qty-split-consistency";
+import { warnOrderLine } from "./order-line-ambiguity";
 import { mergeIntoStoredLine, pickHeldMergeTarget } from "./stored-line-merge";
 import { loadLiveUnitsPerBoxByProduct } from "./live-pack-map";
 import {
@@ -279,8 +280,9 @@ import { sumInlineReturnCredit } from "../returns/inline-return-credit.util";
 export class OrdersService implements OnApplicationBootstrap {
   private readonly logger = new Logger(OrdersService.name);
   /** Row 531 F2 (WARN only, behaviour unchanged): log a line whose qty and box split disagree. */
-  private warnSplit(path: string, l: QtySplitLine, upb?: number | null) {
+  private warnSplit(path: string, l: QtySplitLine, upb?: number | null, fallbackQty?: number) {
     warnQtySplit(this.logger, this.prisma?.getTenantId?.(), path, l, upb);
+    warnOrderLine(path, l, upb, this.prisma, fallbackQty); // SA-982 PR-2b: the buildLine census, same path ids
   }
 
   constructor(
@@ -1674,8 +1676,7 @@ export class OrdersService implements OnApplicationBootstrap {
         return unitLine;
       }
 
-      // Recompute qty from boxes/pieces when provided (backend is authoritative).
-      // Normalize to integers and roll loose pieces >= unitsPerBox into boxes.
+      // Recompute qty from boxes/pieces (backend is authoritative): integers, rolled up at a full box.
       const source = sourceLineFor(item.productId, options.sourceLines, items);
       const upb = source?.unitsPerBox ?? Number(product.unitsPerBox ?? 0);
       let qty = item.qty;
@@ -1689,8 +1690,8 @@ export class OrdersService implements OnApplicationBootstrap {
       // 0/1 — the web still sends boxes:1 for unitsPerBox:1) keeps the operator's
       // qty instead of falling into normalizeBoxesPieces' non-boxed branch with no
       // qty at all, which derives 0 and trips the invariant below.
+      this.warnSplit(options.counterSale ? "counter.sale" : "orders.create.lines", item, upb);
       if ((item.boxes ?? 0) > 0 || (item.pieces ?? 0) > 0) {
-        this.warnSplit(options.counterSale ? "counter.sale" : "orders.create.lines", item, upb);
         const split = normalizeBoxesPieces({
           boxes: item.boxes,
           pieces: item.pieces,
@@ -3309,6 +3310,7 @@ export class OrdersService implements OnApplicationBootstrap {
             );
 
             const itemCtx: ReplaceAllLineBuildCtx = {
+              warnLine: (i, upb) => warnOrderLine("orders.replace-all", i, upb, this.prisma), // PR-2b
               bogoCounterparts,
               bogoPromos,
               existingLineByProduct,
@@ -3374,7 +3376,6 @@ export class OrdersService implements OnApplicationBootstrap {
                 await unitEdit.createUnitLine(uctx, orderId, product, unitRow, item, pos++, true);
                 continue;
               }
-
               const built = buildReplaceAllLineData(itemCtx, item, product);
               if (!built) continue;
               const made = await tx.orderItem.create({
@@ -3637,7 +3638,12 @@ export class OrdersService implements OnApplicationBootstrap {
                 // qty there, and normalize otherwise so a split sized to a different
                 // case can't persist with pieces >= the substitute's unitsPerBox.
                 const upb = Number(product.unitsPerBox ?? 0);
-                this.warnSplit("orders.update.substitute", { ...item, productId: product.id }, upb);
+                this.warnSplit(
+                  "orders.update.substitute",
+                  { ...item, productId: product.id },
+                  upb,
+                  Number(existingQty),
+                );
                 const split =
                   (item.boxes != null || item.pieces != null) && upb > 1
                     ? normalizeBoxesPieces({
