@@ -326,7 +326,7 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
     kind: "boolean",
     area: "platform",
     label: "Developer mode",
-    description: "Shows screens that are still in development. For our team only.",
+    description: "Shows screens that are still in development. RouteFlow staff only.",
     internal: true,
     gate: {
       via: "RequireAddon",
@@ -526,7 +526,7 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
     kind: "boolean",
     area: "catalog",
     label: "Multi-level units",
-    description: "Sell a product by case, pallet or piece, each with its own price.",
+    description: "Sell a product by case, pallet, or piece, each with its own price.",
     gate: {
       via: "RequirePlanFlag",
       // Brand-new key nobody uses, so it ships ENFORCED-BUT-UNGRANTED (invisible until an
@@ -556,7 +556,8 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
     kind: "boolean",
     area: "catalog",
     label: "Unit names",
-    description: "Rename or archive the unit names you sell by; a rename updates every product.",
+    description:
+      "Rename or archive the unit names you sell by; a rename updates every product that uses that name.",
     gate: {
       via: "RequirePlanFlag",
       // ENFORCED, never dark: a dark flag is courtesy-allowed to every tenant, and a rename
@@ -672,7 +673,7 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
     kind: "boolean",
     area: "finance",
     label: "Vendor bills",
-    description: "Capture, approve and track the bills you owe vendors.",
+    description: "Capture, approve, and track the bills you owe vendors.",
     gate: {
       via: "RequirePlanFlag",
       state: "dark",
@@ -958,7 +959,7 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
     kind: "boolean",
     area: "routes",
     label: "Live dispatch",
-    description: "A live board of every route and driver on the road.",
+    description: "A live board of every route and driver on the road. Not available yet.",
     gate: {
       via: "none",
       state: "none",
@@ -978,7 +979,8 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
     kind: "boolean",
     area: "finance",
     label: "Driver run settlement",
-    description: "Reconcile each driver's cash and payments at the end of a run.",
+    description:
+      "Reconcile each driver's cash and payments at the end of a run. Not available yet.",
     gate: {
       via: "none",
       state: "none",
@@ -998,7 +1000,7 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
     kind: "boolean",
     area: "integrations",
     label: "API / SSO access",
-    description: "Single sign-on and API-key access for the business.",
+    description: "Single sign-on and API-key access for the business. Not available yet.",
     gate: {
       via: "none",
       state: "none",
