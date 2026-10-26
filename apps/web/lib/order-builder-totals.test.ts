@@ -56,4 +56,10 @@ describe("orderBuilderTotals", () => {
     const t = orderBuilderTotals([plain(100)], { discount: 5, shipping: 7.5 });
     expect(t.total).toBe(102.5);
   });
+
+  it("an order discount is taken to the cent like the server: 1.005 -> 1.01, total 8.99 (unrounded gave 9.00)", () => {
+    const t = orderBuilderTotals([plain(10)], { discount: 1.005 });
+    expect(t.discount).toBe(1.01);
+    expect(t.total).toBe(8.99);
+  });
 });

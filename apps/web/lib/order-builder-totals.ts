@@ -1,4 +1,4 @@
-import { saleTotals, type CategoryTaxType, type ChargeLine } from "@routeflow/pricing";
+import { roundMoney, saleTotals, type CategoryTaxType, type ChargeLine } from "@routeflow/pricing";
 import type { CartCategory } from "./counter-sale";
 
 /**
@@ -42,6 +42,8 @@ export function orderBuilderTotals(
   lines: readonly OrderBuilderLine[],
   ctx: OrderBuilderTotalsContext = {},
 ): OrderBuilderTotals {
+  // the server writes the order discount to the cent (roundMoney); a typed 1.005 must take off the same cents here
+  const discount = roundMoney(Number(ctx.discount ?? 0) || 0);
   const t = saleTotals(
     lines.map((l) => {
       const c = l.trackedCategoryId ? ctx.categoryById?.get(l.trackedCategoryId) : undefined;
@@ -65,7 +67,7 @@ export function orderBuilderTotals(
     {
       taxRate: (Number(ctx.taxRatePct ?? 0) || 0) / 100,
       isTaxExempt: ctx.isTaxExempt === true,
-      discount: ctx.discount,
+      discount,
       shipping: ctx.shipping,
     },
   );
@@ -73,7 +75,7 @@ export function orderBuilderTotals(
     subtotal: t.subtotal,
     tax: t.regularTax,
     charges: t.categoryTax,
-    discount: Number(ctx.discount ?? 0) || 0,
+    discount,
     shipping: Number(ctx.shipping ?? 0) || 0,
     total: t.total,
     chargeLines: t.chargeLines,

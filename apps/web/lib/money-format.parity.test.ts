@@ -11,6 +11,9 @@ const CASES: Array<[unknown, string]> = [
   [12345.67, "$12,345.67"],
   [-1, "-$1.00"],
   [10.825, "$10.83"],
+  // roundMoney first, then Intl: Intl alone reads these "$1.00" and "$10.82" (red if the roundMoney step is removed)
+  [1.00499999, "$1.01"],
+  [10.82499999, "$10.83"],
   [NaN, "$0.00"],
   [Infinity, "$0.00"],
   ["1234.5", "$1,234.50"],

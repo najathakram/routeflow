@@ -19,6 +19,17 @@ describe("TotalsSummary (W-882)", () => {
     expect(screen.queryByText(/order total|estimated total|amount due/i)).toBeNull();
   });
 
+  it("taxPending: the tax, the levy and the total read — until the customer's exemption is known", () => {
+    const totals = orderBuilderTotals([{ unitPrice: 10, qty: 1 }], { taxRatePct: 8.25 });
+    const { rerender } = render(<TotalsSummary totals={totals} taxRatePct={8.25} taxPending />);
+    expect(screen.getByTestId("totals-summary-tax")).toHaveTextContent("—");
+    expect(screen.getByTestId("totals-summary-total")).toHaveTextContent("—");
+    expect(screen.queryByText("$10.83")).toBeNull();
+    rerender(<TotalsSummary totals={totals} taxRatePct={8.25} />);
+    expect(screen.getByTestId("totals-summary-tax")).toHaveTextContent("$0.83");
+    expect(screen.getByTestId("totals-summary-total")).toHaveTextContent("$10.83");
+  });
+
   it("names the discount and shipping inputs by their labels (e2e 56 uses getByLabel)", () => {
     const totals = orderBuilderTotals([{ unitPrice: 10, qty: 1 }]);
     render(

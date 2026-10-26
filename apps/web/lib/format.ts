@@ -1,8 +1,8 @@
 /**
- * Display formatting — the ONE place money, quantities, dates, and enum labels
- * are turned into strings for the UI. Never re-derive with toFixed/
- * toLocaleDateString inline; import from here. Display only — money MATH stays
- * in lib/pricing.ts.
+ * Display formatting — the place money, quantities, dates, and enum labels are turned into
+ * strings for the UI. `formatMoney` is `formatReceiptMoney` (@routeflow/pricing); `fmt` in
+ * lib/formatting.ts prints the same text. Import from here rather than re-deriving with
+ * toFixed/toLocaleDateString inline. Display only — money MATH stays in @routeflow/pricing.
  */
 import { formatReceiptMoney } from "@routeflow/pricing";
 

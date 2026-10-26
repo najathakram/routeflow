@@ -14,11 +14,19 @@ export interface TotalsSummaryProps {
   >;
   /** The tenant's tax rate in percent; the label reads "Tax (8.25%)" only when a rate is set, else "Tax". */
   taxRatePct?: number | null;
+  /**
+   * The customer's tax exemption is not known yet (their record is still loading), so the tax, the levy and the total
+   * are not known either: those rows read "—" until it is. A figure that may be wrong is never shown.
+   */
+  taxPending?: boolean;
   /** An input rendered in the Discount / Shipping row (the order builder edits them in place). */
   discountInput?: React.ReactNode;
   shippingInput?: React.ReactNode;
   className?: string;
 }
+
+/** What a figure reads while it cannot be known yet. */
+export const PENDING = "—";
 
 export const taxLabel = (taxRatePct?: number | null): string =>
   taxRatePct && taxRatePct > 0 ? `Tax (${Number(taxRatePct)}%)` : "Tax";
@@ -26,6 +34,7 @@ export const taxLabel = (taxRatePct?: number | null): string =>
 export function TotalsSummary({
   totals,
   taxRatePct,
+  taxPending = false,
   discountInput,
   shippingInput,
   className,
@@ -56,12 +65,14 @@ export function TotalsSummary({
       )}
       <div className={row}>
         <span>{taxLabel(taxRatePct)}</span>
-        <span>{formatMoney(totals.tax)}</span>
+        <span data-testid="totals-summary-tax">
+          {taxPending ? PENDING : formatMoney(totals.tax)}
+        </span>
       </div>
       {totals.chargeLines.map((c) => (
         <div key={c.key} className={row} data-testid="totals-charge-row">
           <span>{c.label}</span>
-          <span>{formatMoney(c.amount)}</span>
+          <span>{taxPending ? PENDING : formatMoney(c.amount)}</span>
         </div>
       ))}
       {(shippingInput || totals.shipping > 0) && (
@@ -77,7 +88,9 @@ export function TotalsSummary({
       )}
       <div className="flex justify-between border-t border-surface-border pt-1.5 font-semibold tabular-nums text-navy">
         <span>Total</span>
-        <span data-testid="totals-summary-total">{formatMoney(totals.total)}</span>
+        <span data-testid="totals-summary-total">
+          {taxPending ? PENDING : formatMoney(totals.total)}
+        </span>
       </div>
     </div>
   );

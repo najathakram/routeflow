@@ -12,7 +12,7 @@ import { useCustomers, useCustomerPrices, useCustomer } from "@/lib/api/customer
 import { countNoun } from "@/lib/plural";
 import { formatMoney } from "@/lib/format";
 import { orderBuilderTotals } from "@/lib/order-builder-totals";
-import { TotalsSummary } from "@/components/money/TotalsSummary";
+import { PENDING, TotalsSummary } from "@/components/money/TotalsSummary";
 import { useProducts } from "@/lib/api/products";
 import {
   attachParent,
@@ -822,6 +822,9 @@ export function CreateOrderModal({
   const discountAmt = parseFloat(orderDiscount) || 0;
   const shippingAmt = Math.max(0, parseFloat(shippingFeeInput) || 0);
   const { data: customerRecord } = useCustomer(selectedCustomer?.id ?? "");
+  // A chosen customer whose record has not loaded may be tax exempt: until it has, the tax, the levy and the total read
+  // "—" (never a figure that may be wrong). No customer chosen, or a loaded record, is a known answer.
+  const taxPending = !!selectedCustomer?.id && customerRecord === undefined;
   const isTaxExempt =
     (customerRecord as { isTaxExempt?: boolean } | undefined)?.isTaxExempt === true;
   const totals = orderBuilderTotals(lineItems, {
@@ -2381,7 +2384,7 @@ export function CreateOrderModal({
             >
               <span className="text-sm text-navy/70">Total</span>
               <span className="min-w-0 break-all text-base font-semibold">
-                {formatMoney(total)}
+                {taxPending ? PENDING : formatMoney(total)}
               </span>
             </div>
           )}
@@ -3039,6 +3042,7 @@ export function CreateOrderModal({
             <TotalsSummary
               totals={totals}
               taxRatePct={settings?.taxRate}
+              taxPending={taxPending}
               discountInput={
                 <MoneyInput
                   min={0}
@@ -3066,7 +3070,7 @@ export function CreateOrderModal({
               customerId={selectedCustomer.id}
               value={appliedCredits}
               onChange={setAppliedCredits}
-              estimatedOrderTotal={total}
+              estimatedOrderTotal={taxPending ? undefined : total}
             />
           )}
 
