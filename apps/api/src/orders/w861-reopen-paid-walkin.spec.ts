@@ -27,9 +27,12 @@ const delivered = (isWalkIn: boolean) => ({
 
 async function reopen(opts: { isWalkIn: boolean; paid: boolean; to?: string }) {
   const h = await buildOrdersService();
-  const row = delivered(opts.isWalkIn);
+  const { customer, ...row } = delivered(opts.isWalkIn); // changeStatus reads the BARE order row: no customer on it
   jest.spyOn(h.service, "findOneOrThrow").mockResolvedValue(row as never);
-  h.prisma.order.findUnique.mockResolvedValue(row);
+  h.prisma.order.findUnique.mockResolvedValue({
+    ...row,
+    customer: { isWalkIn: customer.isWalkIn },
+  });
   h.prisma.order.findFirst.mockResolvedValue({ routeRunStopId: null });
   h.prisma.order.update.mockResolvedValue({ ...row, status: opts.to ?? "CONFIRMED" });
   h.prisma.invoicePayment.findFirst.mockResolvedValue(opts.paid ? { id: "pay1" } : null);

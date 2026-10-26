@@ -44,3 +44,24 @@ export async function assertWalkInSaleEditable(
       message: WALK_IN_SALE_PAID_MESSAGE,
     });
 }
+
+/**
+ * Reopening a delivered order (DELIVERED -> CONFIRMED / PARTIALLY_DELIVERED) re-opens a sale the till closed. The status
+ * path reads the bare order row (no customer), so the walk-in flag is read here, on the demotion only.
+ */
+export async function assertWalkInSaleNotReopened(
+  db: PaymentReader & {
+    order: {
+      findUnique(
+        args: unknown,
+      ): Promise<{ customer?: { isWalkIn?: boolean | null } | null } | null>;
+    };
+  },
+  orderId: string,
+): Promise<void> {
+  const flag = await db.order.findUnique({
+    where: { id: orderId },
+    select: { customer: { select: { isWalkIn: true } } },
+  });
+  await assertWalkInSaleEditable(db, { id: orderId, customer: flag?.customer });
+}

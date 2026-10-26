@@ -1335,22 +1335,24 @@ export default function OrderDetailPage() {
               special-cased UI needed here. */}
           {access.staff && localStatus === "DELIVERED" && (
             <>
-              <ActionTier tier="secondary">
-                <div className="flex flex-col items-start gap-1">
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    leftIcon={<RotateCcw className="h-4 w-4" />}
-                    onClick={() => setDemoteTarget("CONFIRMED")}
-                  >
-                    Reopen order
-                  </Button>
-                  <p className="text-[11px] text-navy/50">
-                    Reopening keeps the invoice in sync while you edit. Orders delivered on a route
-                    reopen at their original stop.
-                  </p>
-                </div>
-              </ActionTier>
+              {!order.editItemsLocked && ( // a paid walk-in sale stays closed (the server refuses it too)
+                <ActionTier tier="secondary">
+                  <div className="flex flex-col items-start gap-1">
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      leftIcon={<RotateCcw className="h-4 w-4" />}
+                      onClick={() => setDemoteTarget("CONFIRMED")}
+                    >
+                      Reopen order
+                    </Button>
+                    <p className="text-[11px] text-navy/50">
+                      Reopening keeps the invoice in sync while you edit. Orders delivered on a
+                      route reopen at their original stop.
+                    </p>
+                  </div>
+                </ActionTier>
+              )}
               <ActionTier tier="danger">
                 {renderDeleteOrderAction(
                   "Delete this delivered order? Its delivery record is removed permanently.",

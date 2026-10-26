@@ -103,6 +103,7 @@ import { nextOrderNumberFor } from "./order-number";
 import * as unitAware from "./unit-aware-guard";
 import { fulfilCaller, resolveFulfilPath } from "./fulfil-path-resolver";
 import { assertMayUseTill } from "./counter-sale/till-permission.guard";
+import { assertWalkInSaleNotReopened } from "./counter-sale/walk-in-sale-lock";
 import {
   assertNoBackdatedMerge,
   findActiveOrderImpl,
@@ -2290,6 +2291,8 @@ export class OrdersService implements OnApplicationBootstrap {
       dto.status,
       dto.reason,
     );
+    // A paid walk-in sale stays closed: the walk-in holds no receivable, so a reopened order could never be collected.
+    if (isDeliveredDemotion) await assertWalkInSaleNotReopened(this.prisma.forTenant(), id);
 
     // Reopening a route-delivered order from here would leave the run stop
     // COMPLETED while the order says otherwise — the stop owns the stock and
