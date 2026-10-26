@@ -776,24 +776,38 @@ export function CreateOrderModal({
   // BEFORE the customer was chosen (the classic modal never re-priced them). Only lines whose price
   // is still the auto-derived tier price move; an operator's one-time price, an upsell, or a
   // history-prefilled override stands, as do unlisted lines and lines added before this snapshot
-  // existed (no `tierPrices`). Behind the gate so the classic modal's behaviour is untouched.
+  // existed (no `tierPrices`). Behind the gate so the classic modal's behaviour is untouched,
+  // except B755: a price pre-filled from ANOTHER customer's history is dropped in both modes.
   // S19b: the layer's content for the cart's products, so new layer data (not just "ready") re-runs the effect.
   const layerSig = priceLayer.enabled
     ? `${priceLayer.ready}|` +
       lineItems.map((li) => JSON.stringify(priceLayer.layerOf(li.productId) ?? null)).join("|")
     : "";
   React.useEffect(() => {
-    if (!scanV2) return;
     setLineItems((prev) => {
       let changed = false;
       const next = prev.map((line) => {
         let li = line;
         // a unit line is re-priced by its own picker from the product's ladder, not the pack's tiers
         if (li.isUnlisted || !li.tierPrices || li.unitLabel) return li;
+        // classic modal (scan_v2 off): only a price pre-filled from another customer moves (B755 below)
+        if (
+          !scanV2 &&
+          !(
+            li.prefillCustomerId != null &&
+            selectedCustomer != null &&
+            li.prefillCustomerId !== selectedCustomer.id
+          )
+        ) {
+          return li;
+        }
         // B755: a price pre-filled from ANOTHER customer's history is not this customer's one-time price: it drops to
         // a plain line and re-prices below. (A price the operator typed cleared prefillCustomerId when it was typed.)
+        // (no customer chosen yet, e.g. mid-switch, is not "another customer": the line waits for the next one)
         const fromOtherCustomer =
-          li.prefillCustomerId != null && li.prefillCustomerId !== selectedCustomer?.id;
+          li.prefillCustomerId != null &&
+          selectedCustomer != null &&
+          li.prefillCustomerId !== selectedCustomer.id;
         if (fromOtherCustomer) {
           li = {
             ...li,
