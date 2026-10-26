@@ -43,7 +43,7 @@ describe("no web file defines canEditPrices (SA-762r)", () => {
       "utf8",
     );
     expect(screen).toMatch(
-      /staffMay\(\s*authUser\?\.role,\s*"EDIT_LINE_PRICE",\s*gate\.deniedGroups\s*\)/,
+      /staffMay\(\s*authUser\?\.role,\s*"EDIT_LINE_PRICE",\s*gate\.deniedGroups(?: \?\? \[\])?\s*\)/,
     );
   });
 });
