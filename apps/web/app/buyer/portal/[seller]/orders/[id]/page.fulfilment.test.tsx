@@ -261,6 +261,9 @@ describe("a PICKUP order (counter / till): the buyer collects it, nothing is del
     expect(screen.getAllByTestId("timeline-step").map((s) => s.getAttribute("data-state"))).toEqual(
       ["complete", "complete", "current", "upcoming"],
     );
+    // the items table counts what was collected, not delivered
+    expect(screen.getByRole("columnheader", { name: "Picked up" })).toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: "Delivered" })).toBeNull();
   });
 
   it("collected: the badge reads Picked Up and the timeline is complete", () => {

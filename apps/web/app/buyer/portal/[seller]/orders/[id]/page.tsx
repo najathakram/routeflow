@@ -920,7 +920,9 @@ export default function BuyerOrderDetailPage() {
                 </th>
                 {showDeliveryProgress && (
                   <>
-                    <th className="px-4 py-2.5 text-right w-20">Delivered</th>
+                    <th className="px-4 py-2.5 text-right w-20">
+                      {travel === "pickup" ? "Picked up" : "Delivered"}
+                    </th>
                     <th className="px-4 py-2.5 text-right w-20">Remaining</th>
                   </>
                 )}
