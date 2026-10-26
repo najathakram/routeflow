@@ -50,13 +50,7 @@ export async function assertWalkInSaleEditable(
  * path reads the bare order row (no customer), so the walk-in flag is read here, on the demotion only.
  */
 export async function assertWalkInSaleNotReopened(
-  db: PaymentReader & {
-    order: {
-      findUnique(
-        args: unknown,
-      ): Promise<{ customer?: { isWalkIn?: boolean | null } | null } | null>;
-    };
-  },
+  db: PaymentReader & { order: { findUnique(args: any): Promise<any> } },
   orderId: string,
 ): Promise<void> {
   const flag = await db.order.findUnique({
