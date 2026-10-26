@@ -1,6 +1,13 @@
 import { BadRequestException, Injectable, NotFoundException, Optional } from "@nestjs/common";
 import { UserRole } from "@prisma/client";
-import { baseLabelOf, getTierPrice, namesPack, roundMoney, unitNameKey } from "@routeflow/pricing";
+import {
+  baseLabelOf,
+  getTierPrice,
+  namesPack,
+  packFromOwnSplit,
+  roundMoney,
+  unitNameKey,
+} from "@routeflow/pricing";
 import { asLadderProduct } from "../products/line-units";
 import type {
   PriceHistoryAggregate,
@@ -606,9 +613,14 @@ export class CustomerPriceHistoryService {
         const e = out[it.productId];
         if (!e) continue;
         const packNow = it.product?.unitsPerBox == null ? null : Number(it.product.unitsPerBox);
+        // Row 607: a pre-snapshot split line carries no `unitsPerBox` but its own boxes/qty give the pack back.
+        const recovered =
+          it.unitsPerBox == null && (it.boxes != null || it.pieces != null)
+            ? packFromOwnSplit({ qty: Number(it.qty), boxes: it.boxes, pieces: it.pieces })
+            : null;
         const c = buildCandidate(
           { productPackNow: packNow, unitName: (it.product?.unit ?? "").trim() },
-          it,
+          recovered != null ? { ...it, unitsPerBox: recovered } : it,
           Number(it.qty),
           true,
           {

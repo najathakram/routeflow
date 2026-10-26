@@ -95,4 +95,71 @@ describe("CustomerPriceHistoryService.getPriceSummary (row 607)", () => {
     expect(out.p1.high).toBe(24);
     expect(out.p1.unitsPerBox).toBe(24);
   });
+
+  it("UNKNOWN NEWEST, KNOWN AFTER: an unknown newest line is skipped and the known older sale defines the chip (red without the skip)", async () => {
+    prisma.invoice.findMany.mockResolvedValue([
+      {
+        id: "i2",
+        issueDate: new Date("2026-09-02"),
+        items: [item({ id: "legacy", unitPrice: 24 })],
+      },
+      {
+        id: "i1",
+        issueDate: new Date("2026-09-01"),
+        items: [
+          item({
+            id: "boxed",
+            unitPrice: 10,
+            boxes: 1,
+            pieces: 0,
+            unitsPerBox: 24,
+            unitLabel: "Box",
+          }),
+        ],
+      },
+    ]);
+    const out = await sum();
+    expect(out.p1.low).toBe(10);
+    expect(out.p1.high).toBe(10);
+    expect(out.p1.unitsPerBox).toBe(24);
+    expect(out.p1.last3).toHaveLength(1);
+  });
+
+  it("a pre-snapshot SPLIT line is not hidden: its pack is recovered from its own boxes/qty (packFromOwnSplit)", async () => {
+    prisma.invoice.findMany.mockResolvedValue([
+      {
+        id: "i1",
+        issueDate: new Date("2026-09-01"),
+        items: [
+          item({ id: "presnap", qty: 48, boxes: 2, pieces: 0, unitsPerBox: null, unitPrice: 24 }),
+        ],
+      },
+    ]);
+    const out = await sum();
+    expect(out.p1.unitsPerBox).toBe(24);
+    expect(out.p1.low).toBe(24);
+    expect(out.p1.last3).toHaveLength(1);
+    expect(out.p1.last3[0].unitsPerBox).toBe(24);
+  });
+
+  it("GUARD: a split line whose boxes do not recover a pack (a quotient of 1 or a fraction) stays hidden", async () => {
+    prisma.invoice.findMany.mockResolvedValue([
+      {
+        id: "i1",
+        issueDate: new Date("2026-09-01"),
+        items: [item({ id: "odd", qty: 7, boxes: 2, pieces: 0, unitsPerBox: null, unitPrice: 24 })],
+      },
+    ]);
+    const out = await sum();
+    expect(out.p1.low).toBeNull();
+    expect(out.p1.last3).toEqual([]);
+  });
+
+  it("GUARD (same-day pair): invoices order by issueDate, then createdAt, id last; lines by createdAt, id last", async () => {
+    prisma.invoice.findMany.mockResolvedValue([]);
+    await sum();
+    const args = prisma.invoice.findMany.mock.calls[0][0];
+    expect(args.orderBy).toEqual([{ issueDate: "desc" }, { createdAt: "desc" }, { id: "desc" }]);
+    expect(args.select.items.orderBy).toEqual([{ createdAt: "desc" }, { id: "desc" }]);
+  });
 });
