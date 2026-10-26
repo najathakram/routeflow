@@ -16,7 +16,7 @@
  * SAFETY: the 839 report's pattern. Prints the DB host and refuses BEFORE connecting unless --target-host equals it
  * (exit 64 missing, 65 mismatch); the first statement is the read-only session setting, then BEGIN TRANSACTION READ ONLY,
  * aborts unless transaction_read_only is on, ends in ROLLBACK; refuses --apply/--fix/--repair (exit 2); output is tenant
- * ids, protected/test flags, counts and the stored tax total: no slug, name, customer or invoice number.
+ * ids, the PROTECTED flag, counts and the stored tax total: no slug, name, customer or invoice number.
  */
 import { createRequire } from "module";
 import { realpathSync } from "node:fs";
@@ -34,19 +34,21 @@ const { loadProtectedSlugs } = require("./lib/protected-slugs.cjs");
 const NAME = "report-b403-zero-rate-lines";
 
 /** Per (tenant, issue month): taxed derived invoices, and those whose every non-NSF line is at rate 0. */
-export function periodRowsSql() {
+export function periodRowsSql(onlyTenant = null) {
   const nsf = notNsfSql(1);
+  const tenantParam = `$${nsf.params.length + 1}`;
   return {
     sql: `
   WITH inv AS (
     SELECT i.id, i."tenantId", i."taxAmount",
-           to_char(i."issueDate" AT TIME ZONE 'UTC', 'YYYY-MM') AS period
+           to_char(i."issueDate", 'YYYY-MM') AS period
       FROM "Invoice" i
      WHERE i.status <> 'VOID' AND i."taxAmount" > 0
        AND (i."orderId" IS NOT NULL OR EXISTS (SELECT 1 FROM "Estimate" e WHERE e."invoiceId" = i.id))
+       AND (${tenantParam}::text IS NULL OR i."tenantId" = ${tenantParam})
   ), lines AS (
     SELECT "invoiceId", count(*) AS n, count(*) FILTER (WHERE "taxRate" = 0) AS zero
-      FROM "InvoiceItem" WHERE ${nsf.sql} GROUP BY "invoiceId"
+      FROM "InvoiceItem" WHERE "invoiceId" IN (SELECT id FROM inv) AND ${nsf.sql} GROUP BY "invoiceId"
   )
   SELECT inv."tenantId", inv.period,
          count(*)::int AS taxed_invoices,
@@ -56,7 +58,7 @@ export function periodRowsSql() {
     FROM inv JOIN lines l ON l."invoiceId" = inv.id
    GROUP BY inv."tenantId", inv.period
    ORDER BY inv."tenantId", inv.period`,
-    params: nsf.params,
+    params: [...nsf.params, onlyTenant],
   };
 }
 
@@ -139,7 +141,7 @@ export function formatReport(rep, meta) {
 }
 
 export async function buildReport(client, { protectedIds, onlyTenant } = {}) {
-  const q = periodRowsSql();
+  const q = periodRowsSql(onlyTenant ?? null);
   const rows = (await client.query(q.sql, q.params)).rows.filter(
     (r) => !onlyTenant || r.tenantId === onlyTenant,
   );

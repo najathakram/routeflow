@@ -20,12 +20,34 @@ describe("report-b403-zero-rate-lines (read-only)", () => {
     expect(res.stderr).toMatch(/read-only/);
   });
 
-  it("the source has no INSERT / UPDATE / DELETE statement and always ends the transaction read-only", () => {
+  it("the source has no INSERT / UPDATE / DELETE statement", () => {
     const src = readFileSync(SCRIPT, "utf8");
     expect(src).not.toMatch(
       /\b(INSERT\s+INTO|UPDATE\s+"|DELETE\s+FROM|ALTER\s+TABLE|DROP\s+TABLE|TRUNCATE)\b/i,
     );
-    expect(src).toContain("withReadOnlyTx");
-    expect(src).toContain("guardTarget");
+  });
+
+  it("main() itself runs the report inside the read-only wrapper and the target guard (not just selfTest)", () => {
+    const src = readFileSync(SCRIPT, "utf8");
+    const main = src.slice(src.indexOf("async function main()"));
+    expect(main).toMatch(/const guard = g\.guardTarget\(/);
+    expect(main).toMatch(
+      /const report = await g\.withReadOnlyTx\(client, async \(\) => \{[\s\S]*buildReport\(/,
+    );
+  });
+
+  it("without --target-host it exits 64 BEFORE connecting (a dead local URL is never dialled), and 65 on a mismatch", () => {
+    const env = { ...process.env, DATABASE_URL: "postgresql://u:p@127.0.0.1:1/db" };
+    for (const k of Object.keys(env))
+      if (k.startsWith("RAILWAY_")) delete (env as Record<string, unknown>)[k];
+    const no = spawnSync(process.execPath, [SCRIPT], { encoding: "utf8", timeout: 60_000, env });
+    expect(no.status).toBe(64);
+    expect(no.stderr).toMatch(/--target-host/);
+    const bad = spawnSync(process.execPath, [SCRIPT, "--target-host=elsewhere"], {
+      encoding: "utf8",
+      timeout: 60_000,
+      env,
+    });
+    expect(bad.status).toBe(65);
   });
 });

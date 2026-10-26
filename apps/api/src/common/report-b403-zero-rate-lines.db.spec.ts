@@ -28,6 +28,7 @@ describeDb("report-b403-zero-rate-lines.mjs, real Postgres", () => {
   let tenantId = "";
   let customerId = "";
   let orderId = "";
+  const invoiceIds: Record<string, string> = {};
 
   const makeInvoice = async (
     key: string,
@@ -52,6 +53,7 @@ describeDb("report-b403-zero-rate-lines.mjs, real Postgres", () => {
         issueDate: over.issueDate ?? new Date("2026-08-15T12:00:00Z"),
       } as any,
     });
+    invoiceIds[key] = invoice.id;
     for (const [i, l] of over.lines.entries()) {
       await prisma.invoiceItem.create({
         data: {
@@ -107,10 +109,36 @@ describeDb("report-b403-zero-rate-lines.mjs, real Postgres", () => {
     await makeInvoice("nsf-only-zero", {
       lines: [{ taxRate: 0.075 }, { taxRate: 0, systemKind: "NSF_FEE" }],
     });
+    // Counted ONLY because the NSF fee line is left out: goods at 0 plus a taxed NSF line (dropping the exclusion makes it mixed).
+    await makeInvoice("nsf-taxed", {
+      lines: [{ taxRate: 0 }, { taxRate: 0.075, systemKind: "NSF_FEE" }],
+    });
+    // Month edges: the last and first half-hours of August / September (UTC); issueDate is a timestamp without a zone.
+    await makeInvoice("edge-aug", {
+      lines: [{ taxRate: 0 }],
+      issueDate: new Date("2026-08-31T23:30:00Z"),
+    });
+    await makeInvoice("edge-sep", {
+      lines: [{ taxRate: 0 }],
+      issueDate: new Date("2026-09-01T00:30:00Z"),
+    });
+    // Estimate-derived (no orderId, linked from an Estimate): counted.
+    await makeInvoice("estimate", { lines: [{ taxRate: 0 }], withOrder: false });
+    await prisma.estimate.create({
+      data: {
+        tenantId,
+        customerId,
+        estimateNumber: `EST-B403-${RUN}`,
+        subtotal: 100,
+        total: 107.5,
+        invoiceId: invoiceIds.estimate,
+      } as any,
+    });
   }, 120_000);
 
   afterAll(async () => {
     const swallow = () => undefined;
+    await prisma.estimate.deleteMany({ where: { tenantId } }).catch(swallow);
     await prisma.invoiceItem.deleteMany({ where: { tenantId } }).catch(swallow);
     await prisma.invoice.deleteMany({ where: { tenantId } }).catch(swallow);
     await prisma.order.deleteMany({ where: { tenantId } }).catch(swallow);
@@ -121,15 +149,64 @@ describeDb("report-b403-zero-rate-lines.mjs, real Postgres", () => {
     await pool.end();
   });
 
-  it("counts only the all-zero taxed order-derived invoices, per month, and writes nothing", async () => {
+  const cli = (...args: string[]) => {
+    const dbUrl = requireLocalDatabaseUrl();
+    const env: NodeJS.ProcessEnv = { ...process.env, DATABASE_URL: dbUrl };
+    for (const k of Object.keys(env)) if (k.startsWith("RAILWAY_")) delete env[k];
+    delete env.PROTECTED_TENANT_SLUGS;
+    return spawnSync(process.execPath, [SCRIPT, ...args], {
+      encoding: "utf8",
+      env,
+      timeout: 90_000,
+    });
+  };
+
+  it("the CLI (main, with the host named) counts only the all-zero taxed order-derived invoices, per month, and writes nothing", async () => {
     const before = await prisma.invoiceItem.count({ where: { tenantId } });
+    const host = new URL(requireLocalDatabaseUrl()).hostname;
+    const res = cli(`--target-host=${host}`, "--json", "--tenant", tenantId);
+    expect(res.status).toBe(0);
+    const rep = JSON.parse(res.stdout.trim());
+    expect(rep.tenants).toHaveLength(1);
+    const periods = Object.fromEntries(
+      rep.tenants[0].periods.map((p: { period: string }) => [p.period, p]),
+    );
+    // August: zero-aug-1 (2 lines), zero-aug-2 (1), nsf-taxed (1 goods line), edge-aug (1), estimate (1)
+    expect(periods["2026-08"]).toMatchObject({
+      allZeroInvoices: 5,
+      allZeroLines: 6,
+      storedTaxAllZero: "33.25",
+    });
+    // + rated, mixed, nsf-only-zero; excluded: void, no-tax, manual (no order, no estimate)
+    expect(periods["2026-08"].taxedInvoices).toBe(8);
+    // September: zero-sep (2 lines) and edge-sep (1), the 00:30Z edge lands in September
+    expect(periods["2026-09"]).toMatchObject({
+      allZeroInvoices: 2,
+      allZeroLines: 3,
+      storedTaxAllZero: "15.00",
+    });
+    expect(rep.totals).toMatchObject({ allZeroInvoices: 7, allZeroLines: 9 });
+    expect(await prisma.invoiceItem.count({ where: { tenantId } })).toBe(before);
+  }, 90_000);
+
+  it("a run without --target-host exits 64, and a wrong one 65, before any query", () => {
+    expect(cli("--json").status).toBe(64);
+    expect(cli("--target-host=not-this-host", "--json").status).toBe(65);
+  });
+
+  it("inside the report's read-only wrapper a write is refused by the database (SQLSTATE 25006)", () => {
     const code = `
-      import { buildReport } from ${JSON.stringify(pathToFileURL(SCRIPT).href)};
+      import { createRequire } from "node:module";
       import pg from "pg";
+      const require = createRequire(${JSON.stringify(pathToFileURL(SCRIPT).href)});
+      const g = require("./lib/report-839-regulated-void-residue.cjs");
       const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
       await client.connect();
       try {
-        console.log(JSON.stringify(await buildReport(client, { protectedIds: new Set(), onlyTenant: ${JSON.stringify(tenantId)} })));
+        await g.withReadOnlyTx(client, () => client.query('UPDATE "InvoiceItem" SET "taxRate" = 0.5 WHERE false'));
+        console.log("NOT-REFUSED");
+      } catch (e) {
+        console.log(e.code);
       } finally { await client.end(); }
     `;
     const res = spawnSync(process.execPath, ["--input-type=module", "-e", code], {
@@ -138,20 +215,6 @@ describeDb("report-b403-zero-rate-lines.mjs, real Postgres", () => {
       env: { ...process.env, DATABASE_URL: requireLocalDatabaseUrl() },
       timeout: 60_000,
     });
-    expect(res.stderr).toBe("");
-    const rep = JSON.parse(res.stdout.trim());
-    expect(rep.tenants).toHaveLength(1);
-    const periods = Object.fromEntries(
-      rep.tenants[0].periods.map((p: { period: string }) => [p.period, p]),
-    );
-    expect(periods["2026-08"]).toMatchObject({
-      allZeroInvoices: 2,
-      allZeroLines: 3,
-      storedTaxAllZero: "10.75",
-    });
-    expect(periods["2026-08"].taxedInvoices).toBe(5); // zero x2, rated, mixed, nsf-only-zero (void, no-tax, manual excluded)
-    expect(periods["2026-09"]).toMatchObject({ allZeroInvoices: 1, allZeroLines: 2 });
-    expect(rep.totals).toMatchObject({ allZeroInvoices: 3, allZeroLines: 5 });
-    expect(await prisma.invoiceItem.count({ where: { tenantId } })).toBe(before);
+    expect(res.stdout.trim()).toBe("25006");
   }, 60_000);
 });
