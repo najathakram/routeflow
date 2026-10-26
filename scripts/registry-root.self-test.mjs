@@ -12,6 +12,9 @@
  *       BUGS_ROOT override; a missing register throws and names the fix).
  *   P3  pins the two cloud-image copies of registry-source.json to each other and
  *       to the module's constants.
+ *   P4  runs the real bugs.mjs against missing / relocated registers: exit 2 plus
+ *       the fix command instead of "0 rows"; the sync anchor never lands in a
+ *       register; running from a subdirectory still finds the register (B278).
  *
  * Run directly: `node scripts/registry-root.self-test.mjs` (wired into `npm run verify`).
  */
@@ -58,6 +61,7 @@ const FIXTURES = [
   "scripts/campaign/plane-intake.self-test.mjs",
   "scripts/campaign/plane-sync.self-test.mjs",
   "scripts/campaign/plane-triage.self-test.mjs",
+  "scripts/registry-root.self-test.mjs",
   "scripts/verify-turbo.self-test.mjs",
   "tools/ops-monitor/test/collector.test.mjs",
   "tools/ops-monitor/test/fixtures/a2-gitlog-bugs.txt",
@@ -75,7 +79,6 @@ const PENDING = [
   ".claude/skills/fleet-lead/scripts/fleet-status.mjs",
   "apps/control/src/sources/registers.ts",
   "scripts/campaign-check.mjs",
-  "scripts/campaign/bugs.mjs",
   "scripts/campaign/plane-doctor.mjs",
   "scripts/campaign/plane-intake.mjs",
   "scripts/campaign/plane-retro.mjs",
@@ -211,6 +214,71 @@ if (existsSync(rootJson) && existsSync(monJson)) {
         mod.REGISTRY_PREFIX === a.prefix,
     );
   }
+}
+
+// ── P4: the real bugs.mjs ─────────────────────────────────────────────────
+console.log("P4 behaviour: bugs.mjs fails closed and anchors on the repo root");
+function bugs(args, { cwd = REPO_ROOT, env = {} } = {}) {
+  const e = { ...process.env, ...env };
+  for (const k of ["BUGS_ROOT", "BUGS_SYNC_STATE"]) if (!(k in env)) delete e[k];
+  const r = spawnSync(process.execPath, [BUGS, ...args], {
+    cwd,
+    encoding: "utf8",
+    env: e,
+    timeout: 120000,
+  });
+  return { code: r.status, out: r.stdout ?? "", err: r.stderr ?? "" };
+}
+
+const tmp = mkdtempSync(join(tmpdir(), "registry-pin-"));
+try {
+  const gone = join(tmp, "no-register-here");
+  const list = bugs(["list", "--open"], { env: { BUGS_ROOT: gone } });
+  check("list --open with no register exits 2", list.code === 2, `exit ${list.code}`);
+  check(
+    "list --open names the fix command",
+    list.err.includes(FIX),
+    `stdout=${list.out.trim().slice(-80)} stderr=${list.err.trim().slice(0, 120)}`,
+  );
+  check("list --open prints no row count", !/\d+ row\(s\)/.test(list.out), list.out.trim());
+
+  const chk = bugs(["sync", "--check"], { env: { BUGS_ROOT: gone } });
+  check("sync --check with no register exits 2", chk.code === 2, `exit ${chk.code}`);
+  check("sync --check names the fix command", chk.err.includes(FIX), chk.out.trim());
+  check("sync --check does not claim records mirror", !/mirror the ledger/.test(chk.out));
+
+  // The anchor must never be written into a register directory.
+  const regDir = join(tmp, "register");
+  mkdirSync(regDir, { recursive: true });
+  const realAnchor = join(REPO_ROOT, ".campaign", "bugs-sync-state.json");
+  const hadAnchor = existsSync(realAnchor);
+  const savedAnchor = hadAnchor ? readFileSync(realAnchor) : null;
+  try {
+    bugs(["sync", "--quiet"], { env: { BUGS_ROOT: regDir } });
+    check(
+      "BUGS_ROOT does not hold the sync anchor",
+      !existsSync(join(regDir, "sync-state.json")),
+      "anchor landed in the register dir",
+    );
+    check(
+      "the anchor defaults to REPO_ROOT/.campaign/bugs-sync-state.json",
+      existsSync(realAnchor),
+    );
+  } finally {
+    if (hadAnchor) writeFileSync(realAnchor, savedAnchor);
+    else rmSync(realAnchor, { force: true });
+  }
+
+  // B278: from a subdirectory the real register is still found.
+  const sub = bugs(["list", "--open"], { cwd: join(REPO_ROOT, "apps", "api") });
+  const m = /(\d+) row\(s\)/.exec(sub.out);
+  check(
+    "list --open from apps/api reads the real register (B278)",
+    sub.code === 0 && m !== null && Number(m[1]) > 0,
+    `exit ${sub.code} ${m ? m[0] : sub.out.trim().slice(-60)}`,
+  );
+} finally {
+  rmSync(tmp, { recursive: true, force: true });
 }
 
 console.log(`\nregistry-root self-test: ${passes} passed, ${failures} failed`);
