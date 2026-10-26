@@ -5,7 +5,7 @@ import { pathToFileURL } from "node:url";
 // scripts/lib/visibility-window.mjs — the pure marker contract shared by the watchdog (writer)
 // and the Mac visibility timer (reader). The module is plain ESM, which a CommonJS Jest worker
 // cannot import directly, so each call runs in a short `node` child and returns JSON.
-const LIB = pathToFileURL(
+const LIB_URL = pathToFileURL(
   path.resolve(__dirname, "../../../../scripts/lib/visibility-window.mjs"),
 ).href;
 
@@ -15,7 +15,7 @@ function call(fn: string, ...args: unknown[]): any {
     [
       "--input-type=module",
       "-e",
-      `import * as l from ${JSON.stringify(LIB)};
+      `import * as l from ${JSON.stringify(LIB_URL)};
        const [fn, args] = JSON.parse(process.argv[1]);
        const v = typeof l[fn] === "function" ? l[fn](...args) : l[fn];
        process.stdout.write(JSON.stringify(v));`,

@@ -10,7 +10,7 @@ import { pathToFileURL } from "node:url";
 // makes no `api` call at all. Fake gh records every argv to a calls file.
 
 const SCRIPT = path.resolve(__dirname, "../../../../scripts/visibility-watchdog.mjs");
-const LIB = pathToFileURL(
+const LIB_URL = pathToFileURL(
   path.resolve(__dirname, "../../../../scripts/lib/visibility-window.mjs"),
 ).href;
 
@@ -94,7 +94,7 @@ function parseWithLib(text: string): any {
     [
       "--input-type=module",
       "-e",
-      `import { parseMarker } from ${JSON.stringify(LIB)};
+      `import { parseMarker } from ${JSON.stringify(LIB_URL)};
        process.stdout.write(JSON.stringify(parseMarker(process.argv[1])));`,
       text,
     ],
