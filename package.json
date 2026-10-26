@@ -91,7 +91,7 @@
     "lint-staged": "^15.2.10",
     "prettier": "^3.9.10",
     "squawk-cli": "2.70.0",
-    "turbo": "^2.11.9",
+    "turbo": "^2.11.10",
     "typescript": "^5.9.3",
     "v8-to-istanbul": "^9.0.1"
   },
