@@ -886,14 +886,17 @@ export function buildIndex(o: {
     );
 }
 
-/** Lowercase, punctuation -> space, one trailing "s" dropped from words longer than 3. */
+/**
+ * Lowercase, punctuation -> space, one trailing "s" dropped from words longer than 3. "&" is punctuation and "and" is
+ * dropped, so "selling and pricing" and "selling & pricing" are the same words on both sides of a match.
+ */
 export function normalize(s: string): string {
   return s
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, " ")
     .trim()
     .split(" ")
-    .filter(Boolean)
+    .filter((w) => w !== "" && w !== "and")
     .map((w) => (w.length > 3 && w.endsWith("s") ? w.slice(0, -1) : w))
     .join(" ");
 }

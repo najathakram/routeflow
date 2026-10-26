@@ -419,4 +419,18 @@ describe("row 376 apple-ux fixes: the mockup's labels, placement and copy", () =
       href: "/orders",
     });
   });
+
+  it("'&' and 'and' are one word: 'selling and pricing' finds what 'selling & pricing' does", () => {
+    const ids = (q: string) => searchSettings(q, full).map((e) => e.id);
+    expect(ids("selling and pricing")).toEqual(ids("selling & pricing"));
+    expect(ids("selling and pricing").length).toBeGreaterThan(0);
+    expect(ids("portal limits and rules")).toEqual(ids("portal limits & rules"));
+    expect(ids("portal limits and rules")).toContain("restriction-rules");
+    expect(ids("invoicing and payments")).toEqual(ids("invoicing & payments"));
+  });
+
+  it("a query that is only 'and' / '&' finds nothing", () => {
+    expect(searchSettings("and", full)).toEqual([]);
+    expect(searchSettings("&", full)).toEqual([]);
+  });
 });

@@ -2993,7 +2993,7 @@ function SettingsPageInner() {
     users: { title: "User management", node: <UserManagementTab /> },
     // Perms PR1: every email (SMTP) and Claude AI endpoint is admin-only, so a deep link shows the notice instead
     email: {
-      title: "Email (SMTP)",
+      title: "Email sending (SMTP)",
       node: isAdmin ? <EmailSettingsTab /> : <AdminOnlyNotice />,
       width: "max-w-3xl",
     },
