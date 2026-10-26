@@ -88,7 +88,7 @@ export const NOTE_COPY = {
   failed: "Couldn't load the averages.",
   filtered: (unit: string) => `The chart shows ${unit} sales only. The table lists them all.`,
   packUnknown:
-    "The latest sale has no pack size on record, so there is no line to draw. The table lists it.",
+    "These sales have no pack size on record, so they aren't on the chart. The table lists them.",
   turnOn: "Turn on a line to see it.",
 } as const;
 

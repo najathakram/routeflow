@@ -127,6 +127,25 @@ describe("the matching entry and the plot pack", () => {
       expect(packNote(m)).toBeUndefined();
     });
 
+    it("N1: the pack note's FULL copy (SA-1004), true in every state it appears in (R2 and R4)", () => {
+      const COPY =
+        "These sales have no pack size on record, so they aren't on the chart. The table lists them.";
+      expect(NOTE_COPY.packUnknown).toBe(COPY);
+      const r2 = model({
+        unit: "Each",
+        rows: [row({ unitLabel: "Each", unitsPerBox: null, salePack: null })],
+        comparison: [entry({ unitLabel: "Each", unitsPerBox: null })],
+      });
+      const r4 = model({
+        unit: "Case",
+        rows: [row({ unitLabel: "Case", unitsPerBox: null, salePack: null })],
+        comparison: [entry({ unitLabel: "Case", unitsPerBox: 24 })],
+      });
+      for (const m of [r2, r4])
+        expect(m.notes.find((n) => n.id === "ph-note-pack-unknown")?.text).toBe(COPY);
+      expect(r4.canDraw).toMatchObject({ like: true, conv: true }); // lines 2 and 3 DO draw here: the note must not say "no line"
+    });
+
     it("R2: an Each line with an unknown pack (salePack null) is not drawn, and the pack note says why", () => {
       const m = model({
         unit: "Each",
