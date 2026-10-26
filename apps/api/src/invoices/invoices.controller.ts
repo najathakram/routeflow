@@ -236,8 +236,8 @@ export class InvoicesController {
   sendReminder(@Param("id") id: string, @Body() body: { email?: string }) {
     return this.invoicesService.sendReminder(id, body?.email);
   }
-  @Post(":id/void") void(@Param("id") id: string) {
-    return this.invoicesService.voidInvoice(id);
+  @Post(":id/void") void(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
+    return this.invoicesService.voidInvoice(id, user);
   }
   @Post(":id/revert-to-draft")
   @Roles(UserRole.OPERATOR)

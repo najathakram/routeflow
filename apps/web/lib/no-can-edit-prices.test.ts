@@ -42,6 +42,8 @@ describe("no web file defines canEditPrices (SA-762r)", () => {
       path.join(WEB_ROOT, "app/(dashboard)/orders/_components/CounterSaleScreen.tsx"),
       "utf8",
     );
-    expect(screen).toMatch(/staffMay\(\s*authUser\?\.role,\s*"EDIT_LINE_PRICE"\s*\)/);
+    expect(screen).toMatch(
+      /staffMay\(\s*authUser\?\.role,\s*"EDIT_LINE_PRICE",\s*gate\.deniedGroups\s*\)/,
+    );
   });
 });

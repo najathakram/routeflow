@@ -3946,7 +3946,8 @@ export class InvoicesService {
     return tx.invoice.findUnique({ where: { id } });
   }
 
-  async voidInvoice(id: string) {
+  async voidInvoice(id: string, user?: TillUser) {
+    if (user) await counterPay.voidScope(this.prisma, id, user); // W-870: VOID_SALE on a till invoice
     const inv = await this.prisma.forTenant().invoice.findUnique({
       where: { id },
       include: { payments: true },
@@ -3955,7 +3956,6 @@ export class InvoicesService {
     // #2255 / SA-404: fast pre-tx refusal; the tx re-checks it on the locked row.
     const refusal = voidRefusal(externalPaidOn(inv.payments ?? []));
     if (refusal) throw new BadRequestException(refusal);
-
     // Wrap in a transaction so the void + invoicedQty decrements are atomic.
     // We need to free up the qty on the source order so the operator can
     // re-split into multiple invoices after void — the user's "after delivering

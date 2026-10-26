@@ -8,6 +8,7 @@ import { Button, Modal } from "@routeflow/ui/web";
 import { API_ERROR_CODES, staffMay, type CounterSaleVoidResponse } from "@routeflow/types";
 import { useOptionalAuth } from "@/lib/auth-context";
 import { useVoidCounterSale } from "@/lib/api/counter-sale";
+import { useDeniedGroups } from "@/lib/api/my-permissions";
 import {
   COUNTER_VOID_ERROR_COPY,
   VOID_REASON_MAX,
@@ -192,8 +193,9 @@ export function CounterVoidSaleAction({
   onOpen: () => void;
 }) {
   const role = useOptionalAuth()?.user?.role;
+  const denied = useDeniedGroups();
   const gate = useReadOnlyGate();
-  if (!staffMay(role, "VOID_SALE", [])) return null;
+  if (!staffMay(role, "VOID_SALE", denied)) return null;
   // CQ-34: a void is refused by a READ_ONLY workspace, so the control is off up front (visible, never hidden) and points at
   // the sheet's one read-only line; the dialog never opens and no reason is asked for first.
   return (
@@ -217,8 +219,9 @@ export function CounterVoidSaleAction({
  */
 export function TodaysSalesReadOnlyLine({ className }: { className?: string }) {
   const role = useOptionalAuth()?.user?.role;
+  const denied = useDeniedGroups();
   const gate = useReadOnlyGate();
-  if (!gate.readOnly || !gate.line || !staffMay(role, "VOID_SALE", [])) return null;
+  if (!gate.readOnly || !gate.line || !staffMay(role, "VOID_SALE", denied)) return null;
   return (
     <p
       id={`${gate.hintId}-today`}

@@ -138,30 +138,36 @@ describe("staffMay call inventory: every call passes deniedGroups (W-870)", () =
     );
   });
 
-  it("the call-site inventory is exact: a new caller of a permission helper is a reviewed change", () => {
+  it("the call-site inventory is exact PER CALL: a second call in a listed file is a reviewed change", () => {
     const files = sources();
-    const callersOf = (name: string) =>
-      Object.keys(files)
-        .filter((f) => callArgs(files[f], name).length > 0)
-        .sort();
+    const callsOf = (name: string) =>
+      Object.fromEntries(
+        Object.keys(files)
+          .map((f) => [f, callArgs(files[f], name).length] as const)
+          .filter(([, n]) => n > 0)
+          .sort(([x], [y]) => x.localeCompare(y)),
+      );
     expect({
-      staffMay: callersOf("staffMay"),
-      mayUseTill: callersOf("mayUseTill"),
-      assertStaffMay: callersOf("assertStaffMay"),
-      decideStaffWrite: callersOf("decideStaffWrite"),
+      staffMay: callsOf("staffMay"),
+      mayUseTill: callsOf("mayUseTill"),
+      assertStaffMay: callsOf("assertStaffMay"),
+      decideStaffWrite: callsOf("decideStaffWrite"),
     }).toEqual({
-      staffMay: [
-        "orders/counter-sale/counter-sale.service.ts",
-        "orders/counter-sale/till-permission.guard.ts",
-        "orders/fulfil-path-resolver.ts",
-        "selling-restrictions/restriction-warning.ts",
-      ],
-      mayUseTill: ["orders/counter-sale/till-permission.guard.ts", "orders/order-lifecycle.ts"],
-      assertStaffMay: [
-        "invoices/counter-payment-guard.ts",
-        "orders/counter-sale/counter-sale-void.service.ts",
-      ],
-      decideStaffWrite: ["selling-restrictions/selling-restrictions.service.ts"],
+      staffMay: {
+        "orders/counter-sale/counter-sale.service.ts": 1,
+        "orders/counter-sale/till-permission.guard.ts": 2,
+        "orders/fulfil-path-resolver.ts": 1,
+        "selling-restrictions/restriction-warning.ts": 1,
+      },
+      mayUseTill: {
+        "orders/counter-sale/till-permission.guard.ts": 1,
+        "orders/order-lifecycle.ts": 1,
+      },
+      assertStaffMay: {
+        "invoices/counter-payment-guard.ts": 1,
+        "orders/counter-sale/counter-sale-void.service.ts": 1,
+      },
+      decideStaffWrite: { "selling-restrictions/selling-restrictions.service.ts": 1 },
     });
   });
 });
