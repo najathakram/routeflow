@@ -154,6 +154,8 @@ describeDb("report-b403-zero-rate-lines.mjs, real Postgres", () => {
     const env: NodeJS.ProcessEnv = { ...process.env, DATABASE_URL: dbUrl };
     for (const k of Object.keys(env)) if (k.startsWith("RAILWAY_")) delete env[k];
     delete env.PROTECTED_TENANT_SLUGS;
+    // db-spec.ts exports PGOPTIONS=-c timezone=UTC to every spec; the CLI must see the DATABASE's own TimeZone (the timezone test).
+    delete env.PGOPTIONS;
     return spawnSync(process.execPath, [SCRIPT, ...args], {
       encoding: "utf8",
       env,
@@ -217,4 +219,34 @@ describeDb("report-b403-zero-rate-lines.mjs, real Postgres", () => {
     });
     expect(res.stdout.trim()).toBe("25006");
   }, 60_000);
+
+  it("the month is the UTC clock month whatever the database TimeZone is (issueDate is a timestamp without a zone)", async () => {
+    const host = new URL(requireLocalDatabaseUrl()).hostname;
+    const dbName = decodeURIComponent(new URL(requireLocalDatabaseUrl()).pathname.slice(1));
+    const augCount = () => {
+      const res = cli(`--target-host=${host}`, "--json", "--tenant", tenantId);
+      expect(res.status).toBe(0);
+      const rep = JSON.parse(res.stdout.trim());
+      return {
+        aug: rep.tenants[0].periods.find((p: { period: string }) => p.period === "2026-08")
+          .allZeroInvoices as number,
+        sep: rep.tenants[0].periods.find((p: { period: string }) => p.period === "2026-09")
+          .allZeroInvoices as number,
+      };
+    };
+    const before = augCount();
+    // 2026-08-31 18:00 on the UTC clock is already Sept 1 in Auckland (+13): a zone cast would move it to September.
+    await makeInvoice("tz-edge", {
+      lines: [{ taxRate: 0 }],
+      issueDate: new Date("2026-08-31T18:00:00Z"),
+    });
+    await pool.query(`ALTER DATABASE "${dbName}" SET TimeZone = 'Pacific/Auckland'`);
+    try {
+      const after = augCount();
+      expect(after.aug).toBe(before.aug + 1);
+      expect(after.sep).toBe(before.sep);
+    } finally {
+      await pool.query(`ALTER DATABASE "${dbName}" RESET TimeZone`);
+    }
+  }, 120_000);
 });
