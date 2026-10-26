@@ -78,6 +78,8 @@ export interface PlanChangeDeps {
   logger: Pick<Logger, "log" | "warn" | "error">;
   /** Present in production: the needsReconcile flag is armed before Stripe and raised on a stuck outcome. */
   prisma?: ReconcilePrisma | null;
+  /** W-832: the catalog display name for a revert that must re-create an owned product; absent = fail closed. */
+  resolveName?: (kind: StripeProductKind, key: string) => Promise<string | null>;
 }
 
 /** An add-on's Stripe item that the new plan makes redundant, with the local row that owns it. */
@@ -473,10 +475,17 @@ async function healPriorProducts(
         // Nothing says which owned product this item belongs on: refuse rather than invent one.
         throw new Error(`revert: prior product ${p.id} is unusable and its ${p.kind} is unknown`);
       }
+      // The product name shows on invoices forever: the catalog display name, never the code (fail closed).
+      const displayName = deps.resolveName ? await deps.resolveName(p.kind, p.key) : null;
+      if (!displayName) {
+        throw new Error(
+          `revert: no catalog display name for ${p.kind} ${p.key}; not creating its product`,
+        );
+      }
       const owned =
         p.kind === "plan"
-          ? await ensurePlanProduct(client, p.key, p.key)
-          : await ensureAddonProduct(client, p.key, p.key);
+          ? await ensurePlanProduct(client, p.key, displayName)
+          : await ensureAddonProduct(client, p.key, displayName);
       if (owned !== p.id) swap.set(p.id, owned);
     }
   }

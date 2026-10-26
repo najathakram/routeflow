@@ -26,6 +26,14 @@ import { planChangeArgs, runStripeFirstPlanChange } from "./plan-change-flow";
 
 const logger = { log: jest.fn(), warn: jest.fn(), error: jest.fn() };
 
+/** The catalog display names a healed product is created with (the production resolver reads the catalog). */
+const CATALOG_NAMES: Record<string, Record<string, string>> = {
+  plan: { GROWTH: "Growth", STARTER: "Starter" },
+  addon: { SMS_PACK: "SMS Pack" },
+};
+const names = async (kind: "plan" | "addon", key: string) =>
+  CATALOG_NAMES[kind][key.toUpperCase()] ?? null;
+
 const BASE = {
   id: "si_base",
   price: {
@@ -159,7 +167,7 @@ describe("pushPlanChange", () => {
   it("revert replays the prior base price with the SAME proration and the :revert key", async () => {
     const stripe = stripeWith();
     const push = await pushPlanChange({ stripe, logger }, args({ proration: "create_prorations" }));
-    await revertPlanChange({ stripe, logger }, push);
+    await revertPlanChange({ stripe, logger, resolveName: names }, push);
 
     const [, params, opts] = stripe.updateSubscription.mock.calls[1];
     expect(params.proration_behavior).toBe("create_prorations");
@@ -187,7 +195,9 @@ describe("revertPlanChange - W-832 a prior product that went inactive cannot str
     const { fake, stripe } = harness("rf_plan_growth", [{ id: "rf_plan_growth", active: true }]);
     const push = await pushPlanChange({ stripe, logger }, args({ fromPlanKey: "GROWTH" }));
     fake.table.get("rf_plan_growth")!.active = false; // inactive between push and revert
-    await expect(revertPlanChange({ stripe, logger }, push)).resolves.toEqual([]);
+    await expect(revertPlanChange({ stripe, logger, resolveName: names }, push)).resolves.toEqual(
+      [],
+    );
     expect(fake.table.get("rf_plan_growth")!.active).toBe(true);
   });
 
@@ -197,18 +207,45 @@ describe("revertPlanChange - W-832 a prior product that went inactive cannot str
     ]);
     const push = await pushPlanChange({ stripe, logger }, args({ fromPlanKey: "GROWTH" }));
     fake.table.get("prod_checkout_born")!.active = false;
-    await expect(revertPlanChange({ stripe, logger }, push)).resolves.toEqual([]);
+    await expect(revertPlanChange({ stripe, logger, resolveName: names }, push)).resolves.toEqual(
+      [],
+    );
     const sent = stripe.updateSubscription.mock.calls[1][1].items[0].price_data;
     expect(sent.product).toBe("rf_plan_growth");
     expect(fake.table.get("rf_plan_growth")!.active).toBe(true);
     expect(sent.unit_amount).toBe(34900);
   });
 
+  it("the replacement product carries the catalog DISPLAY name, never the plan code (invoices show it forever)", async () => {
+    const { fake, stripe } = harness("prod_checkout_born", [
+      { id: "prod_checkout_born", active: true },
+    ]);
+    const push = await pushPlanChange({ stripe, logger }, args({ fromPlanKey: "STARTER" }));
+    fake.table.get("prod_checkout_born")!.active = false;
+    await revertPlanChange({ stripe, logger, resolveName: names }, push);
+    expect(fake.table.get("rf_plan_starter")!.name).toBe("RouteFlow Starter");
+  });
+
+  it("no display name for the plan: fail closed, create nothing, send nothing (no code-as-name fallback)", async () => {
+    const { fake, stripe } = harness("prod_checkout_born", [
+      { id: "prod_checkout_born", active: true },
+    ]);
+    const push = await pushPlanChange({ stripe, logger }, args({ fromPlanKey: "STARTER" }));
+    fake.table.get("prod_checkout_born")!.active = false;
+    const sizeBefore = fake.table.size;
+    await expect(
+      revertPlanChange({ stripe, logger, resolveName: async () => null }, push),
+    ).rejects.toThrow(/display name/);
+    await expect(revertPlanChange({ stripe, logger }, push)).rejects.toThrow(/display name/);
+    expect(fake.table.size).toBe(sizeBefore);
+    expect(stripe.updateSubscription).toHaveBeenCalledTimes(1); // only the push
+  });
+
   it("a MISSING prior product (404) is re-made under its own deterministic id, not a random one", async () => {
     const { fake, stripe } = harness("prod_gone", [{ id: "prod_gone", active: true }]);
     const push = await pushPlanChange({ stripe, logger }, args({ fromPlanKey: "GROWTH" }));
     fake.table.delete("prod_gone");
-    await revertPlanChange({ stripe, logger }, push);
+    await revertPlanChange({ stripe, logger, resolveName: names }, push);
     expect(stripe.updateSubscription.mock.calls[1][1].items[0].price_data.product).toBe(
       "rf_plan_growth",
     );
@@ -220,9 +257,9 @@ describe("revertPlanChange - W-832 a prior product that went inactive cannot str
     ]);
     const push = await pushPlanChange({ stripe, logger }, args({ fromPlanKey: "GROWTH" }));
     fake.table.get("prod_checkout_born")!.active = false;
-    await revertPlanChange({ stripe, logger }, push);
+    await revertPlanChange({ stripe, logger, resolveName: names }, push);
     const afterFirst = fake.table.size;
-    await revertPlanChange({ stripe, logger }, push);
+    await revertPlanChange({ stripe, logger, resolveName: names }, push);
     expect(fake.table.size).toBe(afterFirst);
     const [first, second] = [1, 2].map(
       (n) => stripe.updateSubscription.mock.calls[n][1].items[0].price_data.product,
@@ -236,7 +273,9 @@ describe("revertPlanChange - W-832 a prior product that went inactive cannot str
     ]);
     const push = await pushPlanChange({ stripe, logger }, args());
     fake.table.get("prod_checkout_born")!.active = false;
-    await expect(revertPlanChange({ stripe, logger }, push)).rejects.toThrow(/plan is unknown/);
+    await expect(revertPlanChange({ stripe, logger, resolveName: names }, push)).rejects.toThrow(
+      /plan is unknown/,
+    );
     expect(stripe.updateSubscription).toHaveBeenCalledTimes(1); // only the push
   });
 
@@ -278,7 +317,7 @@ describe("revertPlanChange - W-832 a prior product that went inactive cannot str
         { id: "prod_addon_born", active: true },
       ]);
       fake.table.get("prod_addon_born")!.active = false;
-      await revertPlanChange({ stripe, logger }, push);
+      await revertPlanChange({ stripe, logger, resolveName: names }, push);
       const item = stripe.updateSubscription.mock.calls[1][1].items.find(
         (i: any) => i.metadata?.restoredFromItem === "si_addon",
       );
@@ -287,6 +326,7 @@ describe("revertPlanChange - W-832 a prior product that went inactive cannot str
         active: true,
         metadata: { addonSku: "SMS_PACK" },
       });
+      expect(fake.table.get("rf_addon_sms_pack")!.name).toBe("RouteFlow add-on — SMS Pack");
       expect(item.quantity).toBe(2);
     });
 
@@ -296,7 +336,7 @@ describe("revertPlanChange - W-832 a prior product that went inactive cannot str
         { id: "rf_addon_sms_pack", active: true, metadata: { addonSku: "SMS_PACK" } },
       ]);
       fake.table.get("rf_addon_sms_pack")!.active = false;
-      await revertPlanChange({ stripe, logger }, push);
+      await revertPlanChange({ stripe, logger, resolveName: names }, push);
       const item = stripe.updateSubscription.mock.calls[1][1].items.find(
         (i: any) => i.metadata?.restoredFromItem === "si_addon",
       );
@@ -309,7 +349,7 @@ describe("revertPlanChange - W-832 a prior product that went inactive cannot str
     const { fake, stripe } = harness("prod_growth", [{ id: "prod_growth", active: true }]);
     const push = await pushPlanChange({ stripe, logger }, args());
     fake.products.create.mockClear();
-    await revertPlanChange({ stripe, logger }, push);
+    await revertPlanChange({ stripe, logger, resolveName: names }, push);
     expect(fake.products.create).not.toHaveBeenCalled();
     expect(fake.products.update).not.toHaveBeenCalled();
     expect(stripe.updateSubscription.mock.calls[1][1].items[0].price_data.product).toBe(
