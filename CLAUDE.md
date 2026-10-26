@@ -8,9 +8,9 @@ Multi-tenant delivery / route-management SaaS. **npm + Turbo monorepo**: NestJS 
 ## Tech Stack
 
 - npm workspaces (`apps/*`, `packages/*`) + **Turbo**; npm 10.8, Node >= 18 (CI 20).
-- **API** `apps/api`: NestJS 11, Prisma 7 + Postgres, Redis (Socket.io), Passport JWT. Jest `*.spec.ts`.
-- **Web** `apps/web`: Next.js 14 App Router, golden reference for flows/DTOs. Radix + Tailwind, TanStack Query, RHF + zod. Jest+RTL `*.test.tsx`, Playwright `e2e/*.spec.ts`.
-- **Mobile** `apps/mobile`: Expo 55 / RN 0.83, expo-router, multi-role. Jest pure-logic `__tests__/*.test.ts`.
+- **API** (`apps/api`): NestJS 11, Prisma 7 + Postgres, Redis (Socket.io), Passport JWT. Jest `*.spec.ts`.
+- **Web** (`apps/web`): Next.js 14 App Router, golden reference for flows/DTOs. Radix + Tailwind, TanStack Query, RHF + zod. Jest+RTL `*.test.tsx`, Playwright `e2e/*.spec.ts`.
+- **Mobile** (`apps/mobile`): Expo 55 / RN 0.83, expo-router, multi-role. Jest pure-logic `__tests__/*.test.ts`.
 - **Shared** `packages/*`: `types`, `ui`, `pricing`, configs.
 - ESLint flat config per workspace (lint via `npm run lint`) + Prettier. Deploy: Railway Docker.
 
@@ -45,7 +45,7 @@ Modules: tenancy/identity, domain (customers, orders, routes, products, inventor
 ## Routines
 
 - **Code map** `.claude/code-map/`: read `INDEX.md` -> area file -> only the pointed file. Map updates land in the docs-only follow-up PR; code PR HEAD carries `Bookkeeping-Follow-Up: pending` (Gate 2, `.claude/hooks/stop.mjs`). Trust code over map.
-- **Lessons** `.claude/lessons/LESSONS.md`: read before major tasks/fixes, cite ids (`L-016`). After every bug fix write an entry (Symptom / Root cause / Lesson / Guard) + `_meta.json` bump in the follow-up PR; Gate 3 blocks `fix/*` unless the pending trailer is present. No lesson: bump `updatedAt` only. Caps 52 entries / 65,536 bytes; no client identifiers.
+- **Lessons** `.claude/lessons/LESSONS.md`: read before major tasks/fixes, cite ids (`L-016`). After every bug fix write an entry (Symptom / Root cause / Lesson / Guard) + `_meta.json` bump in the follow-up PR; Gate 3 blocks `fix/*` unless the pending trailer is present. No lesson: bump `updatedAt` only. Caps 52 entries / 81,920 bytes (`_meta.json`); no client identifiers.
 
 ## Money discipline
 
