@@ -22,7 +22,7 @@ import { Pool } from "pg";
 import { Logger } from "@nestjs/common";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 import { _resetLockPoolForTests } from "../common/db-locks";
-import { RegulatedLedgerService } from "./regulated-ledger.service";
+import { RegulatedService } from "./regulated.service";
 import { RegulatedFilingService } from "./regulated-filing.service";
 import { RegulatedFilingCronService } from "./regulated-filing-cron.service";
 import { assertLedgerRowsNotLocked } from "./filing-lock";
@@ -83,7 +83,7 @@ describeDb("SA-995 — the filing lock decides by figures, rows and the tenant's
       prisma,
       storage,
       audit,
-      new (RegulatedLedgerService as any)(prisma),
+      new (RegulatedService as any)(prisma),
       {},
     );
   const prepare = (year: number, index: number) =>
