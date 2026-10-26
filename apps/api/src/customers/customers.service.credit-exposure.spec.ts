@@ -470,13 +470,14 @@ describe("CustomersService — credit exposure (D6 / B462, option B)", () => {
         expect(prisma.order.findMany).toHaveBeenCalledTimes(2);
       });
 
-      it("includeExposure adds ONLY the two keys — every existing statement field is identical", async () => {
+      it("includeExposure adds ONLY the exposure keys (+ operator-only autoApplyCredit) — every existing statement field is identical", async () => {
         const plain: any = await service.getStatementForOperator("cust-1");
         const withExposure: any = await service.getStatementForOperator("cust-1", {
           includeExposure: true,
         });
 
-        const { creditExposure, pendingExposure, ...rest } = withExposure;
+        const { creditExposure, pendingExposure, autoApplyCredit, ...rest } = withExposure;
+        expect(typeof autoApplyCredit).toBe("number");
         expect(typeof creditExposure).toBe("number");
         expect(typeof pendingExposure).toBe("number");
         expect(rest).toEqual(plain);
