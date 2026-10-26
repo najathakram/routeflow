@@ -120,7 +120,7 @@ describe("backfill-b294 selects by emptiness, never by date", () => {
     const src = readFileSync(SCRIPT, "utf8");
     const at = src.indexOf('`UPDATE "InvoiceItem" SET "taxRate"');
     expect(at).toBeGreaterThan(-1);
-    const stmt = src.slice(at, src.indexOf("assertStampedCount(res.rowCount", at));
+    const stmt = src.slice(at, src.indexOf("\n}\n", at));
     // the parent-row filter is in the WHERE, not only in the earlier re-read
     expect(stmt).toMatch(
       /"invoiceId" IN \(SELECT id FROM "Invoice" WHERE id = \$2 AND "tenantId" = \$\{tenantParam\}\)/,

@@ -72,6 +72,29 @@ import { redactUrl, resolveDatabaseUrl } from "./lib/railway-db-url.mjs";
 
 const TAG = "backfill-b294";
 /** Not a selector of invoices: a verified all-zero invoice created on/after this is held as REVIEW `post-fix` (SA-960). */
+/**
+ * The apply's one write: stamps a planned invoice's zero-rate lines, never the NSF fee line (#2392).
+ * SA-960 MUST2: the tenant is re-checked in the WHERE through the parent invoice (an undefined bind would widen a many-write).
+ */
+export function stampZeroRateLines(client, a) {
+  if (typeof a.tenantId !== "string" || a.tenantId === "") {
+    throw refuse(`invoice ${a.invoiceId} has no tenant in the plan`);
+  }
+  const notNsf = notNsfSql(3);
+  const tenantParam = `$${3 + notNsf.params.length}`;
+  return client.query(
+    `UPDATE "InvoiceItem" SET "taxRate" = $1 WHERE "invoiceId" = $2 AND "taxRate" = 0 AND ${notNsf.sql}
+       AND "invoiceId" IN (SELECT id FROM "Invoice" WHERE id = $2 AND "tenantId" = ${tenantParam})`,
+    // SA-816: a non-finite rate must never reach the bind (node-pg sends NaN as 'NaN'; NUMERIC accepts it).
+    [
+      assertFiniteMoney(a.rate, `invoice ${a.invoiceId} taxRate`),
+      a.invoiceId,
+      ...notNsf.params,
+      a.tenantId,
+    ],
+  );
+}
+
 /** Pure: the UPDATE must stamp exactly the planned lines; anything else aborts the apply (exit 1, nothing committed). */
 export function assertStampedCount(rowCount, planned, invoiceId) {
   if (rowCount !== planned) {
@@ -561,24 +584,7 @@ async function apply() {
         JSON.stringify(lines.map((l) => l.id)) !== JSON.stringify(a.expected.lineIds) ||
         lines.some((l) => Number(l.taxRate) !== 0);
       if (changed) throw refuse(`invoice ${a.invoiceId} has changed since the dry run`);
-      // #2392: never stamp a rate onto the NSF fee line.
-      // SA-960 MUST2: the tenant is re-checked in the WHERE (an undefined bind would widen a many-write).
-      if (typeof a.tenantId !== "string" || a.tenantId === "") {
-        throw refuse(`invoice ${a.invoiceId} has no tenant in the plan`);
-      }
-      const notNsf = notNsfSql(3);
-      const tenantParam = `$${3 + notNsf.params.length}`;
-      const res = await client.query(
-        `UPDATE "InvoiceItem" SET "taxRate" = $1 WHERE "invoiceId" = $2 AND "taxRate" = 0 AND ${notNsf.sql}
-           AND "invoiceId" IN (SELECT id FROM "Invoice" WHERE id = $2 AND "tenantId" = ${tenantParam})`,
-        // SA-816: a non-finite rate must never reach the bind (node-pg sends NaN as 'NaN'; NUMERIC accepts it).
-        [
-          assertFiniteMoney(a.rate, `invoice ${a.invoiceId} taxRate`),
-          a.invoiceId,
-          ...notNsf.params,
-          a.tenantId,
-        ],
-      );
+      const res = await stampZeroRateLines(client, a);
       // Fail closed: every planned (non-NSF, zero-rate) line must be stamped, or the whole apply rolls back.
       const planned = lines.filter((l) => !isNsfLine(l)).length;
       assertStampedCount(res.rowCount, planned, a.invoiceId);

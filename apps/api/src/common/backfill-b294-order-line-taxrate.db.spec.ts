@@ -15,6 +15,7 @@ import { execFileSync, execSync, spawnSync } from "child_process";
 import { randomUUID } from "crypto";
 import { readFileSync } from "fs";
 import path from "path";
+import { pathToFileURL } from "url";
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
@@ -330,6 +331,41 @@ describeDb("backfill-b294-order-line-taxrate.mjs, real Postgres", () => {
         .deleteMany({ where: { invoiceId: inv.nulltenant } })
         .catch(() => undefined);
       await restore();
+    }
+  }, 90_000);
+
+  it("the apply's UPDATE never touches another tenant's identical empty-rate row (parent-scoped WHERE)", async () => {
+    // the script is ESM: drive its exported UPDATE in a child node, over the same database
+    const stamp = (a: Record<string, unknown>): number =>
+      JSON.parse(
+        execFileSync(
+          process.execPath,
+          [
+            "--input-type=module",
+            "-e",
+            `import pg from "pg"; import { stampZeroRateLines } from ${JSON.stringify(pathToFileURL(CLI).href)};
+             const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+             const r = await stampZeroRateLines(pool, JSON.parse(process.argv[1]));
+             await pool.end(); console.log(JSON.stringify(r.rowCount));`,
+            JSON.stringify(a),
+          ],
+          { cwd: API_DIR, encoding: "utf8", env: cliEnv(dbUrl) },
+        ),
+      );
+    await makeInvoice("xtenant", { createdAt: new Date("2026-09-01T00:00:00Z") });
+    const otherTenant = await prisma.tenant.create({
+      data: { slug: `qa-b294-x-${RUN}`, name: `qa b294 x ${RUN}` } as any,
+    });
+    try {
+      const planned = { invoiceId: inv.xtenant, rate: 0.075 };
+      // the same invoice id presented under the OTHER tenant: nothing may be stamped
+      expect(stamp({ ...planned, tenantId: otherTenant.id })).toBe(0);
+      expect(await rateOf("xtenant")).toBe(0);
+      // under its own tenant it stamps exactly its one line
+      expect(stamp({ ...planned, tenantId })).toBe(1);
+      expect(await rateOf("xtenant")).toBe(0.075);
+    } finally {
+      await prisma.tenant.delete({ where: { id: otherTenant.id } }).catch(() => undefined);
     }
   }, 90_000);
 
