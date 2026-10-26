@@ -79,6 +79,7 @@ function sandbox() {
       fs.writeFileSync(path.join(stateDir, "visibility-deadman.state.json"), text);
     },
     viewFails: () => set("view-fail", "1"),
+    viewWorks: () => fs.rmSync(path.join(stubDir, "view-fail"), { force: true }),
     calls: () => {
       try {
         return fs.readFileSync(path.join(stubDir, "calls.log"), "utf8").split("\n").filter(Boolean);
@@ -134,6 +135,8 @@ function test(name, fn) {
 
 const base = (sb, extra = []) => ["--once", "--repo", REPO, "--state-dir", sb.stateDir, ...extra];
 const minutesAgo = (m) => new Date(Date.now() - m * 60_000).toISOString();
+const statusOf = (sb) => sb.run(["--status", "--state-dir", sb.stateDir]);
+const flipped = (sb) => sb.calls().some((c) => c.startsWith("repo edit"));
 
 // ─── cases ────────────────────────────────────────────────────────────────────────────────────
 test("unknown flag exits 2 with usage and creates no files and makes no gh call", () => {
@@ -262,12 +265,12 @@ test("flip whose read-back stays PUBLIC retries, exits 1, logs an unconfirmed in
   check(sb.state().firstSeenPublicAt === since, "timer was cleared despite unconfirmed flip");
 });
 
-test("gh failure exits non-zero, never flips, and keeps state", () => {
+test("gh view failure, timer NOT yet due: no flip, exit 4, state kept", () => {
   const sb = sandbox();
   sb.visibility("PUBLIC");
   sb.viewFails();
   const s0 = {
-    firstSeenPublicAt: minutesAgo(90),
+    firstSeenPublicAt: minutesAgo(30),
     lastCheckAt: minutesAgo(2),
     lastVisibility: "PUBLIC",
   };
@@ -285,6 +288,72 @@ test("gh failure exits non-zero, never flips, and keeps state", () => {
     sb.logLines().some((l) => l.event === "heartbeat" && l.ok === false),
     "no failed heartbeat",
   );
+});
+
+// Round 3: a degraded `repo view` (GraphQL) must not keep a due repo public while `repo edit` (REST) works.
+test("gh view failure with the timer PAST the deadline still attempts the flip", () => {
+  const sb = sandbox();
+  sb.visibility("PUBLIC");
+  sb.viewFails();
+  sb.writeState({
+    firstSeenPublicAt: minutesAgo(90),
+    lastCheckAt: minutesAgo(2),
+    lastVisibility: "PUBLIC",
+  });
+  const r = sb.run(base(sb, ["--max-public-minutes", "60"]));
+  check(flipped(sb), `no flip on an unreadable poll past the deadline; exit ${r.status}`);
+  // The read-back goes through the same broken view, so it cannot be confirmed: loud exit 1.
+  check(r.status === 1, `want exit 1 (unconfirmed), got ${r.status}`);
+  const inc = sb.logLines().find((l) => l.event === "incident");
+  check(inc && inc.action === "flip-unconfirmed", "no unconfirmed incident line");
+  check(sb.state().firstSeenPublicAt, "timer dropped though the flip was never confirmed");
+  check(sb.state().lastFlipConfirmed === false, "lastFlipConfirmed not recorded");
+});
+
+test("gh view failure, last seen PUBLIC but the timer is lost: flips (timer cannot be trusted)", () => {
+  const sb = sandbox();
+  sb.visibility("PUBLIC");
+  sb.viewFails();
+  sb.writeState({ firstSeenPublicAt: null, lastCheckAt: minutesAgo(2), lastVisibility: "PUBLIC" });
+  const r = sb.run(base(sb, ["--max-public-minutes", "60"]));
+  check(flipped(sb), `no flip; exit ${r.status}`);
+});
+
+test("gh view failure while last seen PRIVATE: never flips", () => {
+  const sb = sandbox();
+  sb.viewFails();
+  sb.writeState({ firstSeenPublicAt: null, lastCheckAt: minutesAgo(2), lastVisibility: "PRIVATE" });
+  const r = sb.run(base(sb));
+  check(r.status === 4 && !flipped(sb), `want exit 4 and no flip, got ${r.status}`);
+});
+
+test("consecutiveFailures counts failed polls, resets on a good poll, and DEGRADED fires at 3", () => {
+  const sb = sandbox();
+  sb.viewFails();
+  sb.writeState({ firstSeenPublicAt: null, lastCheckAt: minutesAgo(2), lastVisibility: "PRIVATE" });
+  const r1 = sb.run(base(sb));
+  const r2 = sb.run(base(sb));
+  check(sb.state().consecutiveFailures === 2, `want 2, got ${sb.state().consecutiveFailures}`);
+  check(!/DEADMAN DEGRADED/.test(r1.stdout + r1.stderr + r2.stdout + r2.stderr), "fired early");
+  const r3 = sb.run(base(sb));
+  check(sb.state().consecutiveFailures === 3, "not 3");
+  check(/DEADMAN DEGRADED/.test(r3.stderr), "no DEADMAN DEGRADED on stderr at 3");
+  check(
+    sb.logLines().some((l) => /DEADMAN DEGRADED/.test(l.detail ?? "")),
+    "no DEADMAN DEGRADED in the log",
+  );
+  const st = statusOf(sb);
+  check(st.status === 3, `--status want exit 3, got ${st.status}`);
+  check(/consecutive/i.test(st.stdout) && /DEADMAN DEGRADED/.test(st.stdout), "status silent");
+  check(
+    JSON.parse(st.stdout.slice(0, st.stdout.indexOf("\n}") + 2)).consecutiveFailures === 3,
+    "status JSON lacks the count",
+  );
+  sb.viewWorks();
+  sb.visibility("PRIVATE");
+  const ok = sb.run(base(sb));
+  check(ok.status === 0, `want exit 0 after recovery, got ${ok.status}`);
+  check(sb.state().consecutiveFailures === 0, "count not reset by a good poll");
 });
 
 test("gh failure with no prior state does not start the timer", () => {
@@ -352,7 +421,6 @@ test("non-admin gh is loud even while PRIVATE (the flip would fail later)", () =
 });
 
 // 1b. --status must say so, with a non-zero exit, in each unhealthy shape.
-const statusOf = (sb) => sb.run(["--status", "--state-dir", sb.stateDir]);
 const OK_STATE = () => ({
   firstSeenPublicAt: null,
   lastCheckAt: minutesAgo(1),
@@ -614,7 +682,6 @@ const PAST_LIMIT = () => ({
   lastCheckAt: minutesAgo(2),
   lastVisibility: "PUBLIC",
 });
-const flipped = (sb) => sb.calls().some((c) => c.startsWith("repo edit"));
 
 test("log file unwritable (path is a directory): PUBLIC past the limit still flips", () => {
   const sb = sandbox();

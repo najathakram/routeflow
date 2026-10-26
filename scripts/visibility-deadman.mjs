@@ -58,7 +58,12 @@
 //                                           and log an `incident` JSON line.
 //   gh fails (network/auth/timeout/junk) -> log it, KEEP state, exit 4. The visibility is never
 //                                           guessed: an unreadable poll neither starts nor clears
-//                                           the timer.
+//                                           the timer. BUT if the stored timer is already past the
+//                                           deadline (or the repo was last seen PUBLIC and the timer
+//                                           is lost/corrupt) the flip is attempted anyway: `repo
+//                                           view` can be degraded while `repo edit` still works.
+//                                           3 failed polls in a row (consecutiveFailures) log and
+//                                           print "DEADMAN DEGRADED" and make --status exit 3.
 //
 // STATE (<state-dir>/visibility-deadman.state.json)
 //   { firstSeenPublicAt, lastCheckAt, lastVisibility, lastAttemptAt, lastPollOk, lastPollError,
@@ -119,6 +124,8 @@ const EXIT_GH_FAILED = 4;
 const EXIT_NOT_ADMIN = 5;
 // `--status` calls a poll stale after this long (launchd polls every ~120 s).
 const STATUS_STALE_SECONDS = 600;
+// This many failed polls in a row (~6 min at the 2-minute cadence) is "DEADMAN DEGRADED".
+const DEGRADED_AFTER_FAILURES = 3;
 // A stored timer further in the future than this is clock trouble or corruption, not a timer.
 const FUTURE_SKEW_MS = 5 * 60_000;
 
@@ -468,11 +475,52 @@ async function pollOnce({ repo, maxPublicMinutes, intervalSeconds, stateDir }) {
     // from "script is not running at all".
     state.lastPollOk = false;
     state.lastPollError = read.error;
+    state.consecutiveFailures = (Number(state.consecutiveFailures) || 0) + 1;
+
+    // ...but an unreadable poll must not keep a DUE repo public. `repo view` (GraphQL) can be
+    // degraded or rate-limited while `repo edit` (REST) still works, so if the stored timer is
+    // already past the deadline, or the repo was last seen PUBLIC and the timer cannot be trusted
+    // (lost or corrupt), flip anyway: it is idempotent on an already-private repo. Flip FIRST.
+    const storedMs = Date.parse(state.firstSeenPublicAt ?? "");
+    const timerPast = Number.isFinite(storedMs) && (nowMs - storedMs) / 60_000 > maxPublicMinutes;
+    const timerUntrusted =
+      !Number.isFinite(storedMs) &&
+      (state.lastVisibility === "PUBLIC" || (corrupt && corrupt.lastVisibility !== "PRIVATE"));
+    let flip = null;
+    if (timerPast || timerUntrusted) {
+      flip = await flipPrivate(p, repo);
+      state.lastFlipAt = new Date().toISOString();
+      state.lastFlipConfirmed = flip.confirmed;
+      if (flip.confirmed) {
+        state.firstSeenPublicAt = null;
+        state.lastVisibility = "PRIVATE";
+      }
+    }
+
     writeState(p, state);
     log(p, "heartbeat", { ok: false, repo, error: read.error });
     log(p, "error", { detail: `visibility unreadable; state kept: ${read.error}` });
+    if (flip) {
+      log(p, "incident", {
+        repo,
+        action: flip.confirmed ? "flipped-private" : "flip-unconfirmed",
+        confirmed: flip.confirmed,
+        reason: timerPast ? "unreadable-poll-timer-past" : "unreadable-poll-timer-untrusted",
+        maxPublicMinutes,
+        firstSeenPublicAt: Number.isFinite(storedMs) ? new Date(storedMs).toISOString() : null,
+        attempts: flip.attempts,
+        ...(flip.confirmed ? {} : { last: flip.last }),
+      });
+    }
+    if (state.consecutiveFailures >= DEGRADED_AFTER_FAILURES) {
+      const detail = `DEADMAN DEGRADED: ${state.consecutiveFailures} consecutive polls could not read the repo visibility (${read.error}); the switch is blind`;
+      warn("ALERT", detail);
+      log(p, "error", { detail });
+    }
+    if (flip && !flip.confirmed) return EXIT_FLIP_UNCONFIRMED;
     return EXIT_GH_FAILED;
   }
+  state.consecutiveFailures = 0;
 
   const visibility = read.visibility;
   // `viewerPermission` is the account's ROLE on the repo, not the scope of its token. Anything but
@@ -602,6 +650,7 @@ function printStatus({ stateDir, maxPublicMinutes }) {
     logFile: p.log,
     stateFound: state !== null,
     state,
+    consecutiveFailures: Number(state?.consecutiveFailures) || 0,
     lastCheckAgeSeconds: ageOf(state?.lastCheckAt),
     lastHeartbeatAgeSeconds: ageOf(state?.lastAttemptAt ?? state?.lastCheckAt),
     publicMinutes:
@@ -632,6 +681,11 @@ function printStatus({ stateDir, maxPublicMinutes }) {
     if (state.lastFlipConfirmed === false) {
       warnings.push(
         "the last flip was NOT confirmed PRIVATE: the repo may still be public, flip it by hand",
+      );
+    }
+    if ((Number(state.consecutiveFailures) || 0) >= DEGRADED_AFTER_FAILURES) {
+      warnings.push(
+        `DEADMAN DEGRADED: ${state.consecutiveFailures} consecutive failed polls (limit ${DEGRADED_AFTER_FAILURES}): the switch cannot see the repo`,
       );
     }
     if (state.lastPollOk === false) {
