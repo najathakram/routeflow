@@ -187,4 +187,27 @@ describe("packPiecesSplit: the one pieces-to-pack shape derivedPackSplit and the
     expect(packPiecesSplit(12, 12)).toEqual({ qty: 12, boxes: 1, pieces: 0, unitsPerBox: 12 });
     expect(packPiecesSplit(12, 5)).toEqual({ qty: 5, boxes: 0, pieces: 5, unitsPerBox: 12 });
   });
+  it("keeps several whole packs as boxes with no remainder, and one piece short of a pack as pieces", () => {
+    expect(packPiecesSplit(12, 24)).toEqual({ qty: 24, boxes: 2, pieces: 0, unitsPerBox: 12 });
+    expect(packPiecesSplit(12, 25)).toEqual({ qty: 25, boxes: 2, pieces: 1, unitsPerBox: 12 });
+    expect(packPiecesSplit(12, 11)).toEqual({ qty: 11, boxes: 0, pieces: 11, unitsPerBox: 12 });
+  });
+  it("is an all-zero split for a zero or negative count, never a negative line", () => {
+    const zero = { qty: 0, boxes: 0, pieces: 0, unitsPerBox: 12 };
+    expect(packPiecesSplit(12, 0)).toEqual(zero);
+    expect(packPiecesSplit(12, -3)).toEqual(zero);
+  });
+  it("truncates a fractional count to whole pieces", () => {
+    expect(packPiecesSplit(12, 2.7)).toEqual({ qty: 2, boxes: 0, pieces: 2, unitsPerBox: 12 });
+  });
+  it("is an all-zero split when the pack is not a real pack (1 or less)", () => {
+    expect(packPiecesSplit(1, 5)).toEqual({ qty: 0, boxes: 0, pieces: 0, unitsPerBox: 1 });
+    expect(packPiecesSplit(0, 5)).toEqual({ qty: 0, boxes: 0, pieces: 0, unitsPerBox: 0 });
+  });
+  it("derivedPackSplit and packPiecesSplit agree for every count of a derived base", () => {
+    const base = buildLadderOptions(pack3, [CASE72], 1).find((o) => o.factorToBase === 1)!;
+    for (const c of [1, 2, 3, 4, 6, 7, 30]) {
+      expect(derivedPackSplit(base, c)).toEqual(packPiecesSplit(base.derived!.n, c));
+    }
+  });
 });
