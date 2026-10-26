@@ -17,7 +17,7 @@ describe("assertUnitPriceWritable (row 749, keep structure / drop prices)", () =
     ["family", family],
     ["recipe", recipe],
   ])("refuses a %s price write with the coded 409", (_n, p) => {
-    for (const body of [{ price: 5 }, { priceTier3: 2 }, { price: null }]) {
+    for (const body of [{ price: 5 }, { priceTier3: 2 }]) {
       try {
         assertUnitPriceWritable(p, body);
         throw new Error("did not throw");
@@ -28,6 +28,15 @@ describe("assertUnitPriceWritable (row 749, keep structure / drop prices)", () =
         });
       }
     }
+  });
+
+  it.each([variant, family, recipe])("create ignores a null price (legacy add form)", (p) => {
+    expect(() => assertUnitPriceWritable(p, { label: "Case", price: null }, "create")).not.toThrow();
+    expect(() => assertUnitPriceWritable(p, { price: 5 }, "create")).toThrow(ConflictException);
+  });
+
+  it.each([variant, family, recipe])("update still refuses a null price (clearing one)", (p) => {
+    expect(() => assertUnitPriceWritable(p, { price: null })).toThrow(ConflictException);
   });
 
   it("names the family for a variant", () => {

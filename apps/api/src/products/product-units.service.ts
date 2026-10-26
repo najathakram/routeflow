@@ -106,7 +106,7 @@ export class ProductUnitsService {
   create(productId: string, dto: CreateProductUnitDto, actorId: string | null = null) {
     return this.locked(productId, async (tx) => {
       const pack = await this.loadPack(tx, productId);
-      assertUnitPriceWritable(pack.governed, dto);
+      assertUnitPriceWritable(pack.governed, dto, "create");
       const label = this.cleanLabel(dto.label, dto.factorToBase, pack);
       const siblings = await this.siblings(tx, productId);
       this.assertLevelValid(pack, siblings, { label, factorToBase: dto.factorToBase });

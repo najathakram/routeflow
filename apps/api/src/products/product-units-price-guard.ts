@@ -8,14 +8,16 @@ const PRICE_KEYS = ["price", "priceTier2", "priceTier3", "priceTier4", "priceTie
 /**
  * Row 749 (owner ruling 10-22, "keep structure, drop prices"): the unit ladder of a variant, family or
  * recipe may still be edited, but its PRICES belong to the family / recipe. Any price key in the body
- * (even null, which would clear one) is refused with the same coded 409 the price writer uses.
+ * is refused (on update even null, which would clear one; on create null means "no price" and the legacy add form sends it) with the same coded 409 the price writer uses.
  * The rule itself is `governedReason`, the one source the price grid and the price write share.
  */
 export function assertUnitPriceWritable(
   product: { id: string; parentProductId?: string | null; kind?: string | null },
   dto: object,
+  mode: "create" | "update" = "update",
 ): void {
-  if (!PRICE_KEYS.some((k) => (dto as Record<string, unknown>)[k] !== undefined)) return;
+  const body = dto as Record<string, unknown>;
+  if (!PRICE_KEYS.some((k) => (mode === "create" ? body[k] != null : body[k] !== undefined))) return;
   const reason = governedReason(product);
   if (!reason) return;
   if (product.parentProductId) throw familyPriceAuthorityError(product.parentProductId);
