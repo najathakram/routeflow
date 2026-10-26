@@ -1132,7 +1132,10 @@ export function EditableLineItems({
             <div className="flex items-center gap-1.5 max-sm:-ml-2">
               {item.cancelled ? (
                 <button
-                  className={cn("flex items-center gap-1 rounded px-2 py-1 text-xs text-brand-600 hover:bg-brand-50", EDIT_TAP_BELOW_LG)}
+                  className={cn(
+                    "flex items-center gap-1 rounded px-2 py-1 text-xs text-brand-600 hover:bg-brand-50",
+                    EDIT_TAP_BELOW_LG,
+                  )}
                   onClick={() =>
                     update(item.id, {
                       cancelled: false,
@@ -1161,7 +1164,10 @@ export function EditableLineItems({
                 <>
                   {!item.substituteProductId && !item.isUnlisted && !item.countLocked && (
                     <button
-                      className={cn("rounded px-2 py-1 text-xs text-navy/70 hover:bg-surface-raised hover:text-navy disabled:opacity-50", EDIT_TAP_BELOW_LG)}
+                      className={cn(
+                        "rounded px-2 py-1 text-xs text-navy/70 hover:bg-surface-raised hover:text-navy disabled:opacity-50",
+                        EDIT_TAP_BELOW_LG,
+                      )}
                       disabled={!pricingReady}
                       onClick={() => setSubstituteOpenId((p) => (p === item.id ? null : item.id))}
                     >
@@ -1170,7 +1176,10 @@ export function EditableLineItems({
                   )}
                   {item.substituteProductId && (
                     <button
-                      className={cn("flex items-center gap-1 rounded px-2 py-1 text-xs text-brand-600 hover:bg-brand-50", EDIT_TAP_BELOW_LG)}
+                      className={cn(
+                        "flex items-center gap-1 rounded px-2 py-1 text-xs text-brand-600 hover:bg-brand-50",
+                        EDIT_TAP_BELOW_LG,
+                      )}
                       onClick={() =>
                         update(item.id, {
                           productId: item.originalProductId,
@@ -1191,7 +1200,10 @@ export function EditableLineItems({
                     </button>
                   )}
                   <button
-                    className={cn("rounded px-2 py-1 text-xs text-navy/70 hover:bg-surface-raised hover:text-navy", EDIT_TAP_BELOW_LG)}
+                    className={cn(
+                      "rounded px-2 py-1 text-xs text-navy/70 hover:bg-surface-raised hover:text-navy",
+                      EDIT_TAP_BELOW_LG,
+                    )}
                     onClick={() => update(item.id, { cancelled: true })}
                   >
                     Not available

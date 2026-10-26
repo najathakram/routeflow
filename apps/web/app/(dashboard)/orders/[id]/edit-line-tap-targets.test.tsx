@@ -51,7 +51,12 @@ const line = (over: Partial<EditItemState> = {}): EditItemState => ({
 });
 
 const OPEN = line({ id: "li-open", productName: "Open Widget" });
-const CANCELLED = line({ id: "li-x", productId: "p-2", productName: "Cancelled Widget", cancelled: true });
+const CANCELLED = line({
+  id: "li-x",
+  productId: "p-2",
+  productName: "Cancelled Widget",
+  cancelled: true,
+});
 const CUSTOM = line({
   id: "li-c",
   productId: "p-3",
@@ -66,7 +71,9 @@ const tapOk = (el: Element) =>
   TARGET.test(el.parentElement?.getAttribute("class") ?? "");
 
 function card(name: string): HTMLElement {
-  const el = screen.queryByDisplayValue(name)?.closest("div.rounded-lg") ?? screen.getByText(name).closest("div.rounded-lg");
+  const el =
+    screen.queryByDisplayValue(name)?.closest("div.rounded-lg") ??
+    screen.getByText(name).closest("div.rounded-lg");
   if (!el) throw new Error(`no card for ${name}`);
   return el as HTMLElement;
 }
@@ -96,7 +103,10 @@ describe("order edit builder: line controls are 44px tap targets below lg (W-961
     expect(controls.length).toBeGreaterThan(0);
     const small = controls.map((el) => ({ el, ok: tapOk(el) })).filter((c) => !c.ok);
     expect(
-      small.map((c) => `${c.el.tagName.toLowerCase()} ${(c.el.textContent || c.el.getAttribute("aria-label") || c.el.getAttribute("placeholder") || "").trim().slice(0, 30)}`),
+      small.map(
+        (c) =>
+          `${c.el.tagName.toLowerCase()} ${(c.el.textContent || c.el.getAttribute("aria-label") || c.el.getAttribute("placeholder") || "").trim().slice(0, 30)}`,
+      ),
     ).toEqual([]);
   });
 });
