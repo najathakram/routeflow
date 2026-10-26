@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  RECOMMENDED install: a LaunchDaemon. It starts at BOOT, with no one logged in, and survives
+  logout and reboot. (The LaunchAgent variant, com.routeflow.visibility-deadman.plist, dies with
+  the login session unless the Mac auto-logs-in: fallback only.)
+  Runbook: docs/runbooks/deploy-visibility-flip.md, section "Dead-man switch (second machine)".
+
+  Do NOT load this file as-is. Copy it to /Library/LaunchDaemons/ (root:wheel, mode 644) and replace:
+    __NODE_BIN__    absolute path of node                   (`command -v node`)
+    __REPO_DIR__    absolute path of the routeflow checkout (the wrapper script lives in it)
+    __GH_DIR__      directory holding `gh`                  (`dirname "$(command -v gh)"`)
+    __TOKEN_FILE__  root-only file holding the repo owner's GitHub token, e.g.
+                    /etc/routeflow/visibility-deadman.token   (chown root:wheel, chmod 600;
+                    the wrapper refuses any other mode). The token itself is NEVER put in this file.
+  Create __REPO_DIR__/local-assets first (gitignored); launchd will not create the log directory.
+  The job runs as root (the default for a LaunchDaemon), so its state and log files are root-owned.
+-->
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>com.routeflow.visibility-deadman</string>
+
+    <key>ProgramArguments</key>
+    <array>
+      <string>/bin/sh</string>
+      <string>__REPO_DIR__/scripts/launchd/visibility-deadman-run.sh</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+      <key>VISIBILITY_DEADMAN_REPO_DIR</key>
+      <string>__REPO_DIR__</string>
+      <key>VISIBILITY_DEADMAN_NODE_BIN</key>
+      <string>__NODE_BIN__</string>
+      <key>VISIBILITY_DEADMAN_TOKEN_FILE</key>
+      <string>__TOKEN_FILE__</string>
+      <key>PATH</key>
+      <string>__GH_DIR__:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <!-- one poll every 2 minutes; also runs once at boot -->
+    <key>StartInterval</key>
+    <integer>120</integer>
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>__REPO_DIR__/local-assets/visibility-deadman.launchd.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>__REPO_DIR__/local-assets/visibility-deadman.launchd.err.log</string>
+  </dict>
+</plist>

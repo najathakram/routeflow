@@ -1,7 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  Template: launchd job for the visibility dead-man switch (scripts/visibility-deadman.mjs).
+  FALLBACK template: LaunchAgent for the visibility dead-man switch (scripts/visibility-deadman.mjs).
+  Prefer com.routeflow.visibility-deadman.daemon.plist (a LaunchDaemon). A LaunchAgent only exists
+  while its user is logged in: it dies at logout and does not start after a reboot unless the Mac
+  has auto-login on (System Settings > Users & Groups > Automatic login), which is REQUIRED here.
+  It uses the `gh` login of that user (`gh auth login` as the repo owner), not a token file.
   Runbook: docs/runbooks/deploy-visibility-flip.md, section "Dead-man switch (second machine)".
 
   Do NOT load this file as-is. Copy it to ~/Library/LaunchAgents/ and replace every placeholder:

@@ -21,6 +21,7 @@ const REPO = "acme/example";
 // Behaviour comes from files in $STUB_DIR so each case just rewrites them:
 //   visibility.txt   what `repo view` reports (PUBLIC | PRIVATE)
 //   view-fail        if it exists, `repo view` exits 1 (network/auth failure)
+//   permission.txt   viewerPermission `repo view` reports (default ADMIN)
 //   edit-mode.txt    "flip" (edit really makes it PRIVATE) | "noop" (edit "succeeds", nothing changes)
 //   calls.log        one line per invocation, so a case can assert "never flipped"
 const STUB_MJS = `
@@ -32,7 +33,7 @@ fs.appendFileSync(path.join(dir, "calls.log"), args.join(" ") + "\\n");
 const read = (f, d) => { try { return fs.readFileSync(path.join(dir, f), "utf8").trim(); } catch { return d; } };
 if (args[0] === "repo" && args[1] === "view") {
   if (fs.existsSync(path.join(dir, "view-fail"))) { console.error("HTTP 502: bad gateway"); process.exit(1); }
-  console.log(JSON.stringify({ visibility: read("visibility.txt", "PRIVATE") }));
+  console.log(JSON.stringify({ visibility: read("visibility.txt", "PRIVATE"), viewerPermission: read("permission.txt", "ADMIN") }));
 } else if (args[0] === "repo" && args[1] === "edit") {
   if (read("edit-mode.txt", "flip") === "flip") fs.writeFileSync(path.join(dir, "visibility.txt"), "PRIVATE");
 } else {
@@ -71,7 +72,12 @@ function sandbox() {
     stateFile: path.join(stateDir, "visibility-deadman.state.json"),
     logFile: path.join(stateDir, "visibility-deadman.log"),
     visibility: (v) => set("visibility.txt", v),
+    permission: (v) => set("permission.txt", v),
     editMode: (m) => set("edit-mode.txt", m),
+    writeRawState: (text) => {
+      fs.mkdirSync(stateDir, { recursive: true });
+      fs.writeFileSync(path.join(stateDir, "visibility-deadman.state.json"), text);
+    },
     viewFails: () => set("view-fail", "1"),
     calls: () => {
       try {
@@ -305,6 +311,248 @@ test("--status prints state and heartbeat age, exits 0, makes no gh call and wri
   check(sb.calls().length === 0, "--status called gh");
   check(fs.readFileSync(sb.stateFile, "utf8") === before, "--status modified the state");
   check(!fs.existsSync(sb.logFile), "--status wrote a log");
+});
+
+// ─── review round 1 ───────────────────────────────────────────────────────────────────────────
+// 1. wrong/non-admin gh account must be LOUD, never a silent no-op.
+test("non-admin gh: PUBLIC past the limit logs a not-admin incident, exits 5, never flips", () => {
+  const sb = sandbox();
+  sb.visibility("PUBLIC");
+  sb.permission("WRITE");
+  sb.writeState({
+    firstSeenPublicAt: minutesAgo(90),
+    lastCheckAt: minutesAgo(2),
+    lastVisibility: "PUBLIC",
+  });
+  const r = sb.run(base(sb, ["--max-public-minutes", "60"]));
+  check(r.status === 5, `want exit 5, got ${r.status}`);
+  check(
+    sb.calls().some((c) => c.includes("--json visibility,viewerPermission")),
+    "repo view did not ask for viewerPermission",
+  );
+  check(!sb.calls().some((c) => c.startsWith("repo edit")), "tried to flip without admin");
+  const inc = sb.logLines().find((l) => l.event === "incident" && l.reason === "not-admin");
+  check(inc && inc.viewerPermission === "WRITE", "no not-admin incident line");
+  check(sb.state().lastPollOk === false, "state does not record the failed poll");
+});
+
+test("non-admin gh is loud even while PRIVATE (the flip would fail later)", () => {
+  const sb = sandbox();
+  sb.visibility("PRIVATE");
+  sb.permission("READ");
+  const r = sb.run(base(sb));
+  check(r.status === 5, `want exit 5, got ${r.status}`);
+  check(
+    sb.logLines().some((l) => l.event === "incident" && l.reason === "not-admin"),
+    "no not-admin incident line",
+  );
+});
+
+// 1b. --status must say so, with a non-zero exit, in each unhealthy shape.
+const statusOf = (sb) => sb.run(["--status", "--state-dir", sb.stateDir]);
+const OK_STATE = () => ({
+  firstSeenPublicAt: null,
+  lastCheckAt: minutesAgo(1),
+  lastAttemptAt: minutesAgo(1),
+  lastVisibility: "PRIVATE",
+  lastPollOk: true,
+});
+
+test("--status WARNs and exits 3 when lastCheckAt is older than 600 s", () => {
+  const sb = sandbox();
+  sb.writeState({ ...OK_STATE(), lastCheckAt: minutesAgo(11), lastAttemptAt: minutesAgo(1) });
+  const r = statusOf(sb);
+  check(r.status === 3, `want exit 3, got ${r.status}`);
+  check(/WARNING/.test(r.stdout), "no WARNING line");
+});
+
+test("--status WARNs and exits 3 when the last flip is unconfirmed", () => {
+  const sb = sandbox();
+  sb.writeState({ ...OK_STATE(), lastFlipConfirmed: false });
+  const r = statusOf(sb);
+  check(r.status === 3 && /WARNING/.test(r.stdout), `want WARN+3, got ${r.status}`);
+});
+
+test("--status WARNs and exits 3 when the last poll failed", () => {
+  const sb = sandbox();
+  sb.writeState({ ...OK_STATE(), lastPollOk: false, lastPollError: "gh repo view exit=1" });
+  const r = statusOf(sb);
+  check(r.status === 3 && /WARNING/.test(r.stdout), `want WARN+3, got ${r.status}`);
+});
+
+test("--status WARNs and exits 3 when there is no state at all", () => {
+  const sb = sandbox();
+  const r = statusOf(sb);
+  check(r.status === 3 && /WARNING/.test(r.stdout), `want WARN+3, got ${r.status}`);
+});
+
+test("--status exits 3 after a real unconfirmed flip, and after a real not-admin poll", () => {
+  const a = sandbox();
+  a.visibility("PUBLIC");
+  a.editMode("noop");
+  a.writeState({ ...OK_STATE(), firstSeenPublicAt: minutesAgo(90), lastVisibility: "PUBLIC" });
+  check(a.run(base(a, ["--max-public-minutes", "60"])).status === 1, "flip should be unconfirmed");
+  check(statusOf(a).status === 3, "status healthy after an unconfirmed flip");
+  const b = sandbox();
+  b.permission("READ");
+  b.run(base(b));
+  check(statusOf(b).status === 3, "status healthy after a not-admin poll");
+});
+
+test("--status exits 0 for a healthy state", () => {
+  const sb = sandbox();
+  sb.writeState(OK_STATE());
+  const r = statusOf(sb);
+  check(r.status === 0 && !/WARNING/.test(r.stdout), `want clean 0, got ${r.status}`);
+});
+
+// 2. a gap (gh errors, sleep) must not hand a public repo a fresh 60 minutes.
+test("first PUBLIC sighting after a gap backdates firstSeenPublicAt to lastCheckAt", () => {
+  const sb = sandbox();
+  sb.visibility("PUBLIC");
+  const last = minutesAgo(30);
+  sb.writeState({ firstSeenPublicAt: null, lastCheckAt: last, lastVisibility: "PRIVATE" });
+  const r = sb.run(base(sb));
+  check(r.status === 0, `want exit 0, got ${r.status}`);
+  check(sb.state().firstSeenPublicAt === last, "not backdated to lastCheckAt");
+});
+
+test("a gap past the limit flips immediately on the first PUBLIC sighting", () => {
+  const sb = sandbox();
+  sb.visibility("PUBLIC");
+  sb.writeState({
+    firstSeenPublicAt: null,
+    lastCheckAt: minutesAgo(90),
+    lastVisibility: "PRIVATE",
+  });
+  const r = sb.run(base(sb, ["--max-public-minutes", "60"]));
+  check(r.status === 0, `want exit 0, got ${r.status}`);
+  check(
+    sb.calls().some((c) => c.startsWith("repo edit")),
+    "did not flip after a long gap",
+  );
+});
+
+test("no backdating inside 2x the interval (a normal poll cadence starts at now)", () => {
+  const sb = sandbox();
+  sb.visibility("PUBLIC");
+  sb.writeState({
+    firstSeenPublicAt: null,
+    lastCheckAt: minutesAgo(2),
+    lastVisibility: "PRIVATE",
+  });
+  const r = sb.run(base(sb));
+  check(r.status === 0, `want exit 0, got ${r.status}`);
+  check(Date.now() - Date.parse(sb.state().firstSeenPublicAt) < 60_000, "backdated needlessly");
+});
+
+// 4. a corrupt state file must never silently hand out a fresh timer.
+test("corrupt state, salvageable lastCheckAt: timer starts at lastCheckAt and is logged", () => {
+  const sb = sandbox();
+  sb.visibility("PUBLIC");
+  const last = minutesAgo(10);
+  sb.writeRawState(`{"lastCheckAt":"${last}","firstSeenPu`);
+  const r = sb.run(base(sb, ["--max-public-minutes", "60"]));
+  check(r.status === 0, `want exit 0, got ${r.status}`);
+  check(sb.state().firstSeenPublicAt === last, "timer not started at the salvaged lastCheckAt");
+  check(
+    sb.logLines().some((l) => l.event === "error" && /corrupt/i.test(l.detail)),
+    "corruption not logged",
+  );
+});
+
+test("corrupt state, nothing salvageable, PUBLIC: flips now", () => {
+  const sb = sandbox();
+  sb.visibility("PUBLIC");
+  sb.writeRawState("garbage");
+  const r = sb.run(base(sb, ["--max-public-minutes", "60"]));
+  check(r.status === 0, `want exit 0, got ${r.status}`);
+  check(
+    sb.calls().some((c) => c.startsWith("repo edit")),
+    "did not flip on unrecoverable state",
+  );
+  check(
+    sb.logLines().some((l) => l.event === "error" && /corrupt/i.test(l.detail)),
+    "corruption not logged",
+  );
+});
+
+test("corrupt state, salvaged lastCheckAt older than the limit: flips", () => {
+  const sb = sandbox();
+  sb.visibility("PUBLIC");
+  sb.writeRawState(`{"lastCheckAt":"${minutesAgo(120)}", oops`);
+  const r = sb.run(base(sb, ["--max-public-minutes", "60"]));
+  check(r.status === 0, `want exit 0, got ${r.status}`);
+  check(
+    sb.calls().some((c) => c.startsWith("repo edit")),
+    "did not flip",
+  );
+});
+
+test("an unparseable firstSeenPublicAt is corruption, not a silent reset to now", () => {
+  const sb = sandbox();
+  sb.visibility("PUBLIC");
+  const last = minutesAgo(1);
+  sb.writeState({ firstSeenPublicAt: "banana", lastCheckAt: last, lastVisibility: "PUBLIC" });
+  const r = sb.run(base(sb));
+  check(r.status === 0, `want exit 0, got ${r.status}`);
+  check(sb.state().firstSeenPublicAt === last, "timer not taken from lastCheckAt");
+  check(
+    sb.logLines().some((l) => l.event === "error" && /corrupt/i.test(l.detail)),
+    "corruption not logged",
+  );
+});
+
+test("corrupt state while PRIVATE is logged and recovers to a clean state", () => {
+  const sb = sandbox();
+  sb.visibility("PRIVATE");
+  sb.writeRawState("garbage");
+  const r = sb.run(base(sb));
+  check(r.status === 0, `want exit 0, got ${r.status}`);
+  check(sb.state().firstSeenPublicAt === null, "state not recovered");
+  check(
+    sb.logLines().some((l) => l.event === "error" && /corrupt/i.test(l.detail)),
+    "corruption not logged",
+  );
+});
+
+// 3. the install artefacts: LaunchDaemon (recommended) + wrapper that reads GH_TOKEN from a file.
+test("LaunchDaemon plist + wrapper exist, run at boot, and never embed a token", () => {
+  const dir = path.join(__dirname, "launchd");
+  const daemon = path.join(dir, "com.routeflow.visibility-deadman.daemon.plist");
+  const wrapper = path.join(dir, "visibility-deadman-run.sh");
+  check(fs.existsSync(daemon), "daemon plist missing");
+  check(fs.existsSync(wrapper), "wrapper script missing");
+  const plist = fs.readFileSync(daemon, "utf8");
+  check(/<key>StartInterval<\/key>\s*<integer>120<\/integer>/.test(plist), "no StartInterval 120");
+  check(/<key>RunAtLoad<\/key>\s*<true\/>/.test(plist), "no RunAtLoad");
+  check(plist.includes("visibility-deadman-run.sh"), "plist does not run the wrapper");
+  check(plist.includes("__TOKEN_FILE__"), "token file placeholder missing");
+  check(!/ghp_|github_pat_|<key>GH_TOKEN<\/key>/.test(plist), "plist embeds a token");
+  const sh = fs.readFileSync(wrapper, "utf8");
+  check(/GH_TOKEN/.test(sh) && /--once/.test(sh), "wrapper must export GH_TOKEN and run --once");
+  const agent = fs.readFileSync(path.join(dir, "com.routeflow.visibility-deadman.plist"), "utf8");
+  check(/FALLBACK/.test(agent) && /auto-login/i.test(agent), "agent plist not marked as fallback");
+});
+
+test("wrapper parses under sh and refuses a missing token file with exit 78", () => {
+  const wrapper = path.join(__dirname, "launchd", "visibility-deadman-run.sh");
+  const syntax = spawnSync("sh", ["-n", wrapper], { encoding: "utf8" });
+  if (syntax.error) return console.log("     (no sh on this machine: wrapper run skipped)");
+  check(syntax.status === 0, `sh -n failed: ${syntax.stderr}`);
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "vis-deadman-sh-"));
+  sandboxes.push(root);
+  const r = spawnSync("sh", [wrapper], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      VISIBILITY_DEADMAN_REPO_DIR: root,
+      VISIBILITY_DEADMAN_NODE_BIN: process.execPath,
+      VISIBILITY_DEADMAN_TOKEN_FILE: path.join(root, "missing.token"),
+    },
+  });
+  check(r.status === 78, `want exit 78, got ${r.status}: ${r.stderr}`);
+  check(/token file not found/.test(r.stderr), "no clear message");
 });
 
 // ─── cleanup + verdict ────────────────────────────────────────────────────────────────────────
