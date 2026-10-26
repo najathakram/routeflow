@@ -236,8 +236,8 @@ const UNITS_PRODUCT = {
   unit: "Piece",
   pricePerUnit: cents(200),
 };
-// Row 601: what a reseed writes back over a price a spec moved. Product tiers are NOT NULL default 0; a unit's are nullable.
-const ZERO_TIERS = { priceTier2: 0, priceTier3: 0, priceTier4: 0, priceTier5: 0 };
+// Row 601: what a reseed writes back over a price a spec moved. Product tiers are NOT NULL default 0, msrp is unset (null); a unit's tiers are nullable.
+const ZERO_TIERS = { msrp: null, priceTier2: 0, priceTier3: 0, priceTier4: 0, priceTier5: 0 };
 const NULL_UNIT_TIERS = { priceTier2: null, priceTier3: null, priceTier4: null, priceTier5: null };
 const UNITS_CASE = { label: "Case", factorToBase: 12, price: cents(2100) };
 // VU-4 (B1218): a boxed product whose Case is the DEFAULT selling unit, shared by the invoice-picker lane
