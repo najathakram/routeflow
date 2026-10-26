@@ -362,6 +362,8 @@ const PICKUP_COPY = {
   walkInOnAccount:
     "A walk-in customer can't be charged on account. Pick a customer or another payment method.",
   checkNumber: "Enter the check number.",
+  /** Mirrors web PICKUP_DAY_CLOSED_COPY (W-813): the hand-over stands, only the payment was refused. */
+  dayClosed: "Handed over. Payment is still due.",
   /** Mirrors web COUNTER_CHECK_POSTDATED_COPY. No mobile path sends a checkDate yet (the server judges one only when sent); mapped so the day one does, the refusal reads right. */
   checkPostdated: "Post-dated check: put this sale on account and record the check when it clears.",
 } as const;
@@ -371,12 +373,23 @@ export function posErrorCode(err: unknown): string | undefined {
   return typeof code === "string" ? code : undefined;
 }
 
+/**
+ * W-813: 409 COUNTER_SALE_DAY_CLOSED from pickup-complete means the order IS handed over and only the payment was refused
+ * (the tender's day is closed). It is an outcome to refresh and report, never a failure to retry.
+ */
+export function pickupHandedOverDayClosed(err: unknown): boolean {
+  const res = (err as { response?: { status?: number; data?: { code?: unknown } } } | null)
+    ?.response;
+  return res?.status === 409 && res.data?.code === API_ERROR_CODES.COUNTER_SALE_DAY_CLOSED;
+}
+
 /** Hand over (pickup-complete): fixed copy by error code, mirroring web `pickupCompleteErrorCopy`. */
 export function pickupCompleteErrorCopy(err: unknown, complete = false): string {
   // I-120: the refusals before any write (the shared copy), then complete mode's own words for the shared lines
   const data = (err as { response?: { data?: Record<string, unknown> } } | null)?.response?.data;
   const refused = counterCompleteRefusalCopy(data, fmtCurrency);
   if (refused) return refused;
+  if (pickupHandedOverDayClosed(err)) return PICKUP_COPY.dayClosed;
   const code = posErrorCode(err);
   if (complete && code === API_ERROR_CODES.PICKUP_NOT_READY)
     return COMPLETE_MODE_ERROR_COPY.notReady;

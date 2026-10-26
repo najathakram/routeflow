@@ -6,6 +6,7 @@ import {
   POS_COPY,
   POS_MODE_PREF_KEY,
   pickupCompleteErrorCopy,
+  pickupHandedOverDayClosed,
   decidePickupResponse,
   withPickupRecordAnyway,
   pendingRefusalIsDone,
@@ -228,6 +229,26 @@ describe("hand-over tender and fixed error copy", () => {
     expect(generic).toMatch(/Couldn't complete the pickup/);
     expect(generic).not.toMatch(/SERVER TEXT/);
     expect(pickupCompleteErrorCopy(new Error("boom"))).toBe(generic);
+  });
+  it("W-813: a 409 COUNTER_SALE_DAY_CLOSED means the hand-over stands (payment refused): fixed copy, not 'Couldn't complete'", () => {
+    const closed = {
+      response: { status: 409, data: { code: "COUNTER_SALE_DAY_CLOSED", message: "SERVER TEXT" } },
+    };
+    expect(pickupHandedOverDayClosed(closed)).toBe(true);
+    expect(pickupCompleteErrorCopy(closed)).toBe("Handed over. Payment is still due.");
+    expect(pickupCompleteErrorCopy(closed, true)).toBe("Handed over. Payment is still due.");
+    // only that refusal: a different 409, or the same code without a 409, is not a settled hand-over
+    expect(
+      pickupHandedOverDayClosed({
+        response: { status: 409, data: { code: "PICKUP_KEY_CONFLICT" } },
+      }),
+    ).toBe(false);
+    expect(
+      pickupHandedOverDayClosed({
+        response: { status: 500, data: { code: "COUNTER_SALE_DAY_CLOSED" } },
+      }),
+    ).toBe(false);
+    expect(pickupHandedOverDayClosed(new Error("boom"))).toBe(false);
   });
   it("the cart sheet primary says Confirm & invoice in POS mode", () => {
     expect(posCartSaveLabel(true, false)).toBe("Confirm & invoice");

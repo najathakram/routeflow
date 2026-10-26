@@ -86,6 +86,7 @@ import {
   POS_COPY,
   POS_READY_FAILED,
   pickupCompleteErrorCopy,
+  pickupHandedOverDayClosed,
   pickupRunConfirm,
   decidePickupResponse,
   withPickupRecordAnyway,
@@ -1386,6 +1387,17 @@ export default function OrderDetailScreen() {
                     onPress: () => submitHandOver({ ...body, takeOffRun: true }),
                   },
                 ]);
+              // W-813: a closed till day refuses only the payment; the order IS handed over. Report that and refresh the
+              // page instead of leaving "Couldn't complete" over a stale order.
+              if (pickupHandedOverDayClosed(e)) {
+                releasePickupKey(order.id);
+                setHandOverOwed(null);
+                setHandOverOpen(false);
+                setCompleteMode(false);
+                showToast(pickupCompleteErrorCopy(e, completeMode));
+                refetch();
+                return;
+              }
               setHandOverError(pickupCompleteErrorCopy(e, completeMode));
             },
           });
