@@ -118,10 +118,12 @@ function makeVoidHarness(returns: FakeReturn[], orderId: string | null = ORDER_I
   const release = jest.fn().mockResolvedValue({ credits: [], advances: 0 });
   const prisma = {
     forTenant: () => ({
+      order: { findFirst: jest.fn().mockResolvedValue(null) },
       invoice: {
         findUnique: jest.fn().mockResolvedValue({ id: INVOICE_ID, orderId, payments: [] }),
       },
     }),
+    getTenantId: () => "t-1",
     tenantTransaction: jest.fn(async (fn: (t: unknown) => Promise<unknown>) => fn(tx)),
   };
   const service = Object.create(InvoicesService.prototype) as InvoicesService;
