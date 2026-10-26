@@ -8,19 +8,30 @@
  * writer, nothing writes `ProductBarcode.productUnitId`. The day a second writer lands (a level barcode, SA-826 item 9,
  * slices 7 and 9) the replace would delete its rows. This pin turns that latent loss into a red build:
  *
- *   1. `productBarcode.create / createMany / upsert` appear ONLY in product-catalog-sync.ts, once.
- *   2. `INSERT INTO "ProductBarcode"` appears nowhere in apps/api/src or apps/api/scripts.
- *   3. every ProductBarcode DELETE is on the list below (today 4). In the MUST 8 PR (the first level-code writer) each one
- *      either gains `productUnitId: null` or is ruled for levels on its own line; a released LEVEL row is deleted by the
- *      sync's `code: null` delete today, the same class as the live replace.
+ *   1. a CREATE-class call (`create / createMany / createManyAndReturn / upsert`) on the `productBarcode` delegate exists
+ *      ONLY in product-catalog-sync.ts, once.
+ *   2. an UPDATE-class call (`update / updateMany / updateManyAndReturn`) exists only on the pinned list (today 2), and NO
+ *      write call anywhere names `productUnitId` (the write the sync's replace would then delete).
+ *   3. the delegate is never aliased (`const d = tx.productBarcode`, a destructure, `tx["productBarcode"]`), so a call
+ *      through the alias cannot slip past 1 and 2.
+ *   4. no NESTED write reaches it through a relation (`barcodes: { create | update | delete | set ... }` on a Product or
+ *      ProductUnit write).
+ *   5. no RAW `INSERT INTO` / `UPDATE` of ProductBarcode (quoted or not, schema-qualified or not) exists in apps/api/src or
+ *      apps/api/scripts.
+ *   6. every ProductBarcode DELETE (delegate or raw `DELETE FROM`) is on the list below (today 4). In the MUST 8 PR (the
+ *      first level-code writer) each one either gains `productUnitId: null` or is ruled for levels on its own line; a
+ *      released LEVEL row is deleted by the sync's `code: null` delete today, the same class as the live replace.
  *
- * The first level-code writer then fails the build until the narrowing lands with it.
+ * The first level-code writer then fails the build until the narrowing lands with it. The call-block scanners are the
+ * shared ones the family-price tripwires use (`tripwire-scan.ts`), not a second hand regex.
  */
 import * as fs from "fs";
 import * as path from "path";
+import { WRITE_METHODS, balancedGeneric, callBlocks } from "./tripwire-scan";
 
 const SRC_ROOT = path.resolve(__dirname, "..");
 const SCRIPTS_ROOT = path.resolve(__dirname, "..", "..", "scripts");
+const API_ROOT = path.resolve(SRC_ROOT, "..");
 
 /** Non-spec source files under `dir` (any .ts / .js / .mjs / .cjs), skipping node_modules and the testing fixtures. */
 function files(dir: string, out: string[] = []): string[] {
@@ -44,22 +55,71 @@ function codeOf(text: string): string {
     .join("\n");
 }
 
-const CREATE = /productBarcode\.(?:create|createMany|upsert)\s*\(/g;
-const RAW_INSERT = /INSERT\s+INTO\s+"ProductBarcode"/gi;
-const DELETE = /productBarcode\.(?:delete|deleteMany)\s*\(|DELETE\s+FROM\s+"ProductBarcode"/gi;
+const CREATE_METHODS = ["create", "createMany", "createManyAndReturn", "upsert"];
+const UPDATE_METHODS = ["update", "updateMany", "updateManyAndReturn"];
+const DELETE_METHODS = ["delete", "deleteMany"];
+/** The delegate named any way but a call: `x = tx.productBarcode;`, `{ productBarcode } = tx`, `tx["productBarcode"]`. */
+const ALIASES = [
+  // `state.productBarcode` is scripts/qa-run.js's plain scanned-code string, not the delegate.
+  /(?<!\bstate)\.productBarcode\b(?!\s*\.\s*\w+\s*\()/g,
+  /\{[^{}]*\bproductBarcode\b[^{}]*\}\s*=/g,
+  /\[\s*["'`]productBarcode["'`]\s*\]/g,
+];
+const NESTED_KEY = /\bbarcodes\s*:\s*\{/g;
+const NESTED_WRITE =
+  /\b(create|createMany|connectOrCreate|upsert|update|updateMany|delete|deleteMany|set|connect|disconnect)\s*:/;
+const RAW = (verb: string) =>
+  new RegExp(`\\b${verb}\\s+(?:\\w+\\s*\\.\\s*)?"?ProductBarcode"?(?![\\w"])`, "gi");
+const RAW_INSERT = RAW("INSERT\\s+INTO");
+const RAW_UPDATE = RAW("UPDATE");
+const RAW_DELETE = RAW("DELETE\\s+FROM");
 
-const rel = (f: string) => path.relative(path.resolve(SRC_ROOT, ".."), f).split(path.sep).join("/");
-const count = (re: RegExp, text: string) =>
-  (text.match(new RegExp(re.source, re.flags.includes("i") ? "gi" : "g")) ?? []).length;
+const matches = (re: RegExp, text: string) =>
+  (text.match(new RegExp(re.source, re.flags)) ?? []).length;
+const calls = (code: string, methods: string[]) => callBlocks(code, "productBarcode", methods);
 
-function census(re: RegExp): Record<string, number> {
-  const found: Record<string, number> = {};
-  for (const f of [...files(SRC_ROOT), ...files(SCRIPTS_ROOT)]) {
-    const n = count(re, codeOf(fs.readFileSync(f, "utf8")));
-    if (n > 0) found[rel(f)] = n;
-  }
-  return found;
+interface Tally {
+  creates: number;
+  updates: number;
+  unitWrites: number;
+  deletes: number;
+  aliases: number;
+  nested: number;
+  rawInsert: number;
+  rawUpdate: number;
 }
+
+/** Everything this pin counts, in one text. */
+export function tally(text: string): Tally {
+  const code = codeOf(text);
+  const writes = calls(code, WRITE_METHODS);
+  let nested = 0;
+  for (const m of code.matchAll(NESTED_KEY)) {
+    const body = balancedGeneric(code, (m.index ?? 0) + m[0].length - 1, "{", "}");
+    if (NESTED_WRITE.test(body)) nested++;
+  }
+  return {
+    creates: calls(code, CREATE_METHODS).length,
+    updates: calls(code, UPDATE_METHODS).length,
+    unitWrites: writes.filter((b) => /\bproductUnitId\b/.test(b)).length,
+    deletes: calls(code, DELETE_METHODS).length + matches(RAW_DELETE, code),
+    aliases: ALIASES.reduce((n, re) => n + matches(re, code), 0),
+    nested,
+    rawInsert: matches(RAW_INSERT, code),
+    rawUpdate: matches(RAW_UPDATE, code),
+  };
+}
+
+/** the ONE create-class writer: the mirror sync's createMany */
+const PINNED_CREATES: Record<string, number> = { "src/products/product-catalog-sync.ts": 1 };
+
+/** every update-class write, per file (they set code / retiredCode only; none names productUnitId) */
+const PINNED_UPDATES: Record<string, [number, string]> = {
+  "src/products/product-code-release.ts": [
+    2,
+    "retire / restore a product's own code on deactivate and reactivate: sets code and retiredCode, never productUnitId",
+  ],
+};
 
 /** every ProductBarcode DELETE, per file, with what it removes */
 const PINNED_DELETES: Record<string, [number, string]> = {
@@ -77,35 +137,178 @@ const PINNED_DELETES: Record<string, [number, string]> = {
   ],
 };
 
-describe("SA-983: the ProductBarcode writers are count-pinned", () => {
-  it("create / createMany / upsert exist only in product-catalog-sync.ts, once (the one mirror writer)", () => {
-    expect(census(CREATE)).toEqual({ "src/products/product-catalog-sync.ts": 1 });
-  });
+const pinnedCount = (m: Record<string, [number, string]>) =>
+  Object.fromEntries(Object.entries(m).map(([f, [n]]) => [f, n]));
 
-  it('no raw INSERT INTO "ProductBarcode" exists in apps/api/src or apps/api/scripts', () => {
-    expect(census(RAW_INSERT)).toEqual({});
-  });
-
-  it("every ProductBarcode delete is on the pinned list, with exactly its count, and each carries a reason", () => {
-    expect(census(DELETE)).toEqual(
-      Object.fromEntries(Object.entries(PINNED_DELETES).map(([f, [n]]) => [f, n])),
+/** Every way the pin can be broken, given `{ repo-relative path: source }`. Empty = green. */
+export function violations(sources: Record<string, string>): string[] {
+  const out: string[] = [];
+  const perFile = (pick: (t: Tally) => number) =>
+    Object.fromEntries(
+      Object.entries(sources)
+        .map(([f, text]) => [f, pick(tally(text))] as const)
+        .filter(([, n]) => n > 0),
     );
-    for (const [, why] of Object.values(PINNED_DELETES)) expect(why.length).toBeGreaterThan(30);
-    const total = Object.values(PINNED_DELETES).reduce((a, [n]) => a + n, 0);
-    expect(total).toBe(4);
+  const same = (label: string, got: Record<string, number>, want: Record<string, number>) => {
+    if (JSON.stringify(Object.entries(got).sort()) !== JSON.stringify(Object.entries(want).sort()))
+      out.push(`${label}: found ${JSON.stringify(got)}, pinned ${JSON.stringify(want)}`);
+  };
+  same(
+    "create-class writers",
+    perFile((t) => t.creates),
+    PINNED_CREATES,
+  );
+  same(
+    "update-class writers",
+    perFile((t) => t.updates),
+    pinnedCount(PINNED_UPDATES),
+  );
+  same(
+    "writes naming productUnitId",
+    perFile((t) => t.unitWrites),
+    {},
+  );
+  same(
+    "delegate aliases",
+    perFile((t) => t.aliases),
+    {},
+  );
+  same(
+    "nested barcodes writes",
+    perFile((t) => t.nested),
+    {},
+  );
+  same(
+    "raw INSERT INTO",
+    perFile((t) => t.rawInsert),
+    {},
+  );
+  same(
+    "raw UPDATE",
+    perFile((t) => t.rawUpdate),
+    {},
+  );
+  same(
+    "deletes",
+    perFile((t) => t.deletes),
+    pinnedCount(PINNED_DELETES),
+  );
+  return out;
+}
+
+const rel = (f: string) => path.relative(API_ROOT, f).split(path.sep).join("/");
+const realSources = () =>
+  Object.fromEntries(
+    [...files(SRC_ROOT), ...files(SCRIPTS_ROOT)].map((f) => [rel(f), fs.readFileSync(f, "utf8")]),
+  );
+
+describe("SA-983: the ProductBarcode writers are count-pinned", () => {
+  it("the repo is green: one create-class writer, the pinned updates and deletes, nothing else", () => {
+    expect(violations(realSources())).toEqual([]);
   });
 
-  it("the detectors match the shapes they claim to, and ignore comments", () => {
-    for (const code of [
-      "await tx.productBarcode.createMany({ data })",
-      "await prisma.productBarcode.create({ data })",
-      "this.db.productBarcode.upsert({ where })",
-    ])
-      expect(count(CREATE, codeOf(code))).toBe(1);
-    expect(count(RAW_INSERT, codeOf('INSERT INTO "ProductBarcode" (id) VALUES ($1)'))).toBe(1);
-    expect(count(DELETE, codeOf("await tx.productBarcode.deleteMany({ where })"))).toBe(1);
-    expect(count(DELETE, codeOf('`DELETE FROM "ProductBarcode" WHERE "productId" = $1`'))).toBe(1);
-    expect(count(CREATE, codeOf("// tx.productBarcode.createMany({})"))).toBe(0);
-    expect(count(CREATE, codeOf("await tx.productBarcode.findMany({})"))).toBe(0);
+  it("each pinned update and delete carries a reason, and the totals are the ruled 2 and 4", () => {
+    for (const [, why] of [...Object.values(PINNED_UPDATES), ...Object.values(PINNED_DELETES)])
+      expect(why.length).toBeGreaterThan(30);
+    expect(Object.values(PINNED_UPDATES).reduce((a, [n]) => a + n, 0)).toBe(2);
+    expect(Object.values(PINNED_DELETES).reduce((a, [n]) => a + n, 0)).toBe(4);
+  });
+
+  it("the scan covered the sync and the code-release module (guards a path typo turning it vacuous)", () => {
+    const sources = realSources();
+    expect(Object.keys(sources)).toEqual(
+      expect.arrayContaining([
+        "src/products/product-catalog-sync.ts",
+        "src/products/product-code-release.ts",
+        "scripts/propose-pack-sizes.mjs",
+      ]),
+    );
+    expect(tally(sources["src/products/product-catalog-sync.ts"]).creates).toBe(1);
+  });
+});
+
+/**
+ * Review (MacBook P2, MUST): a pin that stays GREEN against a bypass is no pin. Each shape below is planted into an
+ * otherwise-green source set as a NEW file and must turn `violations` red; the same shape is also planted into the
+ * pinned sync file where that matters (a second writer there would still be a second writer).
+ */
+describe("SA-983: each bypass shape turns the pin red", () => {
+  const green = realSources();
+  const plant = (src: string, into = "src/products/zz-planted.ts") => ({ ...green, [into]: src });
+
+  it("starts green, so a red below is the planted shape's doing", () => {
+    expect(violations(green)).toEqual([]);
+  });
+
+  it.each([
+    ["createManyAndReturn", "await tx.productBarcode.createManyAndReturn({ data });"],
+    ["a plain create", "await tx.productBarcode.create({ data });"],
+    ["an upsert", "await prisma.productBarcode.upsert({ where, create, update });"],
+    [
+      "an update that sets productUnitId",
+      "await tx.productBarcode.update({ where, data: { productUnitId: u } });",
+    ],
+    ["an updateMany", "await tx.productBarcode.updateMany({ where, data: { code: null } });"],
+    [
+      "a nested barcodes create",
+      "await tx.product.update({ where, data: { barcodes: { create: [{ code }] } } });",
+    ],
+    [
+      "a nested barcodes deleteMany",
+      "await tx.productUnit.update({ where, data: { barcodes: { deleteMany: {} } } });",
+    ],
+    ["an alias", "const d = tx.productBarcode;\nawait d.create({ data });"],
+    [
+      "a destructured alias",
+      "const { productBarcode } = tx;\nawait productBarcode.create({ data });",
+    ],
+    ["a string-keyed alias", 'await tx["productBarcode"].create({ data });'],
+    [
+      "a raw UPDATE",
+      'await tx.$executeRaw`UPDATE "ProductBarcode" SET "productUnitId" = ${u} WHERE id = ${id}`;',
+    ],
+    ["an unquoted raw UPDATE", "await db.query('UPDATE ProductBarcode SET code = $1');"],
+    [
+      "a quoted raw INSERT",
+      'await tx.$executeRaw`INSERT INTO "ProductBarcode" (id) VALUES (${id})`;',
+    ],
+    ["an UNQUOTED raw INSERT", "await db.query('INSERT INTO ProductBarcode (id) VALUES ($1)');"],
+    [
+      "a schema-qualified raw INSERT",
+      "await db.query('INSERT INTO public.\"ProductBarcode\" (id) VALUES ($1)');",
+    ],
+    ["a new delete", "await tx.productBarcode.deleteMany({ where: { productId } });"],
+    ["a raw DELETE", "await db.query('DELETE FROM ProductBarcode WHERE id = $1');"],
+  ])("%s", (_name, src) => {
+    expect(violations(plant(src)).length).toBeGreaterThan(0);
+  });
+
+  it("a second writer inside the pinned sync file is still red", () => {
+    const sync = green["src/products/product-catalog-sync.ts"];
+    expect(
+      violations(
+        plant(
+          `${sync}\nawait tx.productBarcode.createMany({ data: other });`,
+          "src/products/product-catalog-sync.ts",
+        ),
+      ).length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("reads, comments and unrelated relations stay green", () => {
+    expect(
+      violations(
+        plant(
+          [
+            "await tx.productBarcode.findMany({ where });",
+            "await tx.productBarcode.count({ where });",
+            "// await tx.productBarcode.create({ data });",
+            '/* INSERT INTO "ProductBarcode" */',
+            "const rows = await tx.product.findMany({ include: { barcodes: { orderBy: { level: 'asc' } } } });",
+            "const sel = { barcodes: { select: { code: true } } };",
+          ].join("\n"),
+        ),
+      ),
+    ).toEqual([]);
   });
 });
