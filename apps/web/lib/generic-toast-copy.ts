@@ -3,6 +3,7 @@ import {
   CREDITS_PENDING_COPY,
   INVOICE_TAX_STATE_STALE_COPY,
   SHIPPED_ORDER_MESSAGE,
+  STOCK_COUNT_SEEDING_COPY,
   productInOpenCountCopy,
 } from "@routeflow/types";
 import { BUYER_QTY_SPLIT_MISMATCH_COPY } from "./buyer-cart-line";
@@ -103,6 +104,7 @@ const CODE_COPY: Record<string, string> = {
   MERGE_IN_PROGRESS: "Another change for this customer is in progress. Try again in a moment.",
   LOCK_UNAVAILABLE: "This is busy right now. Try again in a moment.",
   [API_ERROR_CODES.STOCK_COUNT_COMMITTING]: "This count is being saved. Try again in a moment.",
+  [API_ERROR_CODES.STOCK_COUNT_SEEDING]: STOCK_COUNT_SEEDING_COPY,
   // SA-767 r-note 5 SA-3: the count screens name the other count themselves; this is the fallback.
   [API_ERROR_CODES.PRODUCT_IN_OPEN_COUNT]: productInOpenCountCopy(),
   [API_ERROR_CODES.ORDER_SAVED_CREDITS_PENDING]: CREDITS_PENDING_COPY,

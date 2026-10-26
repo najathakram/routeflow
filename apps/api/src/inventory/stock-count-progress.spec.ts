@@ -21,6 +21,8 @@ describe("stock count progress (row 562 S1)", () => {
     id: "sess-1",
     status: "OPEN",
     startedAt: started,
+    seedPlannedLines: null,
+    seedCompletedAt: null,
     _count: { lines: 3 },
     ...over,
   });
@@ -47,7 +49,14 @@ describe("stock count progress (row 562 S1)", () => {
   it("an open session with no movement yet: its status and line count, commit null, no line rows loaded", async () => {
     const res = await read();
 
-    expect(res).toEqual({ status: "OPEN", lineCount: 3, commit: null });
+    expect(res).toEqual({
+      status: "OPEN",
+      lineCount: 3,
+      commit: null,
+      seedState: "legacy",
+      seeded: 3,
+      planned: null,
+    });
     expect(w.prisma.stockCountLine.findMany).not.toHaveBeenCalled();
   });
 
@@ -68,6 +77,9 @@ describe("stock count progress (row 562 S1)", () => {
       status: "OPEN",
       lineCount: 3,
       commit: { committedLines: 1, totalLines: 2 },
+      seedState: "legacy",
+      seeded: 3,
+      planned: null,
     });
   });
 
@@ -78,9 +90,61 @@ describe("stock count progress (row 562 S1)", () => {
 
       const res = await read();
 
-      expect(res).toEqual({ status, lineCount: 3, commit: null });
+      expect(res).toMatchObject({ status, lineCount: 3, commit: null });
       expect(w.prisma.stockMovement.findMany).not.toHaveBeenCalled();
     }
+  });
+
+  describe("the seed-state (SA-999)", () => {
+    it("a seed that has not stamped its completion: 'seeding', the lines written of the lines planned", async () => {
+      w.prisma.stockCountSession.findUnique.mockResolvedValue(
+        session({ seedPlannedLines: 450, _count: { lines: 200 } }),
+      );
+
+      const res = await read();
+
+      expect(res).toMatchObject({
+        seedState: "seeding",
+        seeded: 200,
+        planned: 450,
+        lineCount: 200,
+      });
+    });
+
+    it("a seed that stamped its completion: 'complete'", async () => {
+      w.prisma.stockCountSession.findUnique.mockResolvedValue(
+        session({
+          seedPlannedLines: 3,
+          seedCompletedAt: new Date("2026-10-01T00:01:00Z"),
+          _count: { lines: 3 },
+        }),
+      );
+
+      expect(await read()).toMatchObject({ seedState: "complete", seeded: 3, planned: 3 });
+    });
+
+    it("a seed of 0 lines is 'complete' with planned 0 (stamped in the create)", async () => {
+      w.prisma.stockCountSession.findUnique.mockResolvedValue(
+        session({ seedPlannedLines: 0, seedCompletedAt: started, _count: { lines: 0 } }),
+      );
+
+      expect(await read()).toMatchObject({ seedState: "complete", seeded: 0, planned: 0 });
+    });
+
+    it("a row the CHECKs forbid (completed without a planned number) is an error, never a guessed state", async () => {
+      w.prisma.stockCountSession.findUnique.mockResolvedValue(
+        session({ seedCompletedAt: started }),
+      );
+      await expect(read()).rejects.toThrow(/seedCompletedAt is set without seedPlannedLines/);
+    });
+
+    it("the read selects the two columns it reports", async () => {
+      await read();
+      expect(w.prisma.stockCountSession.findUnique.mock.calls[0][0].select).toMatchObject({
+        seedPlannedLines: true,
+        seedCompletedAt: true,
+      });
+    });
   });
 
   it("the movement lookup is bounded to this session's reference and lifetime", async () => {

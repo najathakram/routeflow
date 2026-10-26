@@ -3,9 +3,12 @@
  * "Partly saved". A PURE read (no write, no lock, no transaction): one session row with its line count, and,
  * only while the count is OPEN / REVIEW, the movements of its reference. The lines are loaded only when such
  * a movement exists, to say how many of the lines that write one are done (`computeCommitProgress`).
+ * SA-999: it also answers the seed-state (`seedState`, `seeded` lines of `planned`), so the page can say
+ * "Preparing count… 200 of 450" and keep Commit disabled while the seed runs.
  */
 import { NotFoundException } from "@nestjs/common";
 import type { PrismaService } from "../prisma/prisma.service";
+import { stockCountSeedState } from "../common/stock-count-seed-state";
 import {
   computeCommitProgress,
   OPEN_COUNT_STATUSES,
@@ -20,12 +23,25 @@ export async function readStockCountProgress(
   const db = prisma.forTenant();
   const session = await db.stockCountSession.findUnique({
     where: { id },
-    select: { id: true, status: true, startedAt: true, _count: { select: { lines: true } } },
+    select: {
+      id: true,
+      status: true,
+      startedAt: true,
+      seedPlannedLines: true,
+      seedCompletedAt: true,
+      _count: { select: { lines: true } },
+    },
   });
   if (!session) throw new NotFoundException("Stock count session not found");
   const base = {
     status: session.status as StockCountProgress["status"],
     lineCount: session._count.lines,
+    seedState: stockCountSeedState({
+      seedPlannedLines: session.seedPlannedLines ?? null,
+      seedCompletedAt: session.seedCompletedAt ?? null,
+    }),
+    seeded: session._count.lines,
+    planned: session.seedPlannedLines ?? null,
   };
   if (!(OPEN_COUNT_STATUSES as readonly string[]).includes(session.status)) {
     return { ...base, commit: null };

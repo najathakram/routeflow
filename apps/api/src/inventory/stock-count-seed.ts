@@ -23,6 +23,14 @@
  * A conflict found in a later batch means other counts took products after the caller's pre-check: the
  * seeder throws the 409 and the caller discards its session (`discardUnfinishedSeed`), so a half-seeded
  * OPEN count never blocks products. The caller owns that, because it created the session.
+ *
+ * SA-999 - THE SEED-STATE. The caller sets `StockCountSession.seedPlannedLines` in the same create that makes the
+ * session OPEN; the FINAL batch stamps `seedCompletedAt` inside its own transaction, under the shared lock and
+ * after the OPEN check, so the last lines and the stamp commit together. A count with a planned number and no stamp
+ * is "seeding" (`stockCountSeedState`): the commit refuses it with 409 STOCK_COUNT_SEEDING, whether the seed is
+ * between two batches or its process died (a column survives a crash; a lock dies with its holder). The stamp
+ * is written in ONE place, `seedCompletionStamp`, which the final batch and the create of a 0-line seed both
+ * use (`stock-count-seed-state.spec.ts` pins the count of writers at 1).
  */
 import { NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
@@ -42,6 +50,15 @@ import {
 /** Lines per seeding transaction: bounds how long one batch holds its product locks. */
 export const COUNT_SEED_BATCH = 200;
 
+/**
+ * SA-999: the ONE place `StockCountSession.seedCompletedAt` is written. The final seed batch spreads it into its
+ * session update; the create of a 0-line seed spreads it into the create. A second writer is a second way a count
+ * can read "complete" while lines are missing, so the census pins this module's single site.
+ */
+export function seedCompletionStamp(at: Date = new Date()): { seedCompletedAt: Date } {
+  return { seedCompletedAt: at };
+}
+
 /** A line to pre-fill: the count as the caller wants it. `expectedQty` is stamped here, never passed in. */
 export interface SeedLine {
   productId: string;
@@ -49,6 +66,19 @@ export interface SeedLine {
   countedQty: Prisma.Decimal;
   boxes: number | null;
   pieces: number | null;
+}
+
+/**
+ * The lines a seed writes: a product given twice is one line (the first wins: the table is unique per session and
+ * product), in the order of the sorted product ids. `seedPlannedLines` is this array's length, so the number the
+ * session is created with is the number the seed will write.
+ */
+export function planSeedLines(lines: SeedLine[]): SeedLine[] {
+  const byProduct = new Map<string, SeedLine>();
+  for (const l of lines) if (!byProduct.has(l.productId)) byProduct.set(l.productId, l);
+  return [...byProduct.values()].sort((a, b) =>
+    a.productId < b.productId ? -1 : a.productId > b.productId ? 1 : 0,
+  );
 }
 
 /**
@@ -132,11 +162,8 @@ export async function seedStockCountLines(
 ): Promise<{ seeded: number; batches: number }> {
   const { sessionId, userId } = args;
   const size = Math.max(1, Math.floor(args.batchSize ?? COUNT_SEED_BATCH));
-  const byProduct = new Map<string, SeedLine>();
-  for (const l of args.lines) if (!byProduct.has(l.productId)) byProduct.set(l.productId, l);
-  const lines = [...byProduct.values()].sort((a, b) =>
-    a.productId < b.productId ? -1 : a.productId > b.productId ? 1 : 0,
-  );
+  const lines = planSeedLines(args.lines);
+  // A seed of 0 lines has no batch: the caller stamped the completion in the create (seedCompletionStamp).
   if (lines.length === 0) return { seeded: 0, batches: 0 };
 
   const tenantId = prisma.getTenantId() ?? "";
@@ -144,6 +171,7 @@ export async function seedStockCountLines(
   for (let i = 0; i < lines.length; i += size) {
     const batch = lines.slice(i, i + size);
     const ids = batch.map((l) => l.productId);
+    const isFinalBatch = i + size >= lines.length;
     // eslint-disable-next-line no-await-in-loop
     await retryStockTx("inventory.seedStockCountLines", () =>
       prisma.tenantTransaction(async (tx) => {
@@ -175,6 +203,20 @@ export async function seedStockCountLines(
           })),
           skipDuplicates: true,
         });
+        // SA-999: the final batch stamps the completion in THIS transaction, so the last lines and the stamp commit
+        // together (a crash before the commit leaves neither). Only a session created with this seed's planned
+        // number is stamped: a direct seeder call on a session without one stays "legacy", never "complete".
+        if (isFinalBatch) {
+          await tx.stockCountSession.updateMany({
+            where: {
+              id: sessionId,
+              status: "OPEN",
+              seedPlannedLines: lines.length,
+              seedCompletedAt: null,
+            },
+            data: seedCompletionStamp(),
+          });
+        }
       }, STOCK_TX_OPTIONS),
     );
     batches += 1;

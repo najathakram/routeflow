@@ -76,6 +76,8 @@ import {
   COUNT_LOCK_RETRY_MS,
   computeCommitProgress,
   productInOpenCount,
+  refuseIfSeeding,
+  refuseWhileSeeding,
   roundCountQty,
   STOCK_COUNT_LOCK_FAMILY,
   STOCK_COUNT_PRODUCT_LOCK_FAMILY,
@@ -90,6 +92,8 @@ import {
 import {
   discardUnfinishedSeed,
   findOpenCountConflicts,
+  planSeedLines,
+  seedCompletionStamp,
   seedStockCountLines,
 } from "./stock-count-seed";
 import { readStockCountProgress } from "./stock-count-progress";
@@ -2731,18 +2735,24 @@ export class InventoryService {
       ...new Set(seedLines.map((l) => l.productId)),
     ]);
     if (taken.length > 0) throw productInOpenCount(taken);
+    // SA-999: the seed-state. The create that makes the session OPEN also says how many lines the seed will write
+    // (the count AFTER the one-line-per-product dedupe); a 0-line seed has no batch to stamp it, so it is complete
+    // in the create. Until the final batch stamps seedCompletedAt the commit answers 409 STOCK_COUNT_SEEDING.
+    const planned = planSeedLines(seedLines);
     const session = await this.prisma.forTenant().stockCountSession.create({
       data: {
         name: dto.name ?? null,
         startedById: user.sub,
         amendsSessionId: dto.amendsSessionId ?? null,
+        seedPlannedLines: planned.length,
+        ...(planned.length === 0 ? seedCompletionStamp() : {}),
       },
     });
     try {
       await seedStockCountLines(this.prisma, {
         sessionId: session.id,
         userId: user.sub,
-        lines: seedLines,
+        lines: planned,
       });
     } catch (err) {
       await discardUnfinishedSeed(this.prisma, session.id).catch((discardErr: unknown) => {
@@ -3060,6 +3070,9 @@ export class InventoryService {
     if (session.lines.length === 0) {
       throw new BadRequestException("Nothing counted yet");
     }
+    // SA-999: the early answer. The read under the lock below is the authority (the seed may finish or start
+    // between these two reads); this one only spares a lock connection.
+    refuseIfSeeding(session);
     // A product that can never be counted (gone, or a FAMILY: WS8) is refused HERE, before a lock
     // connection is spent. The same check runs again on the lines re-read under the lock. "Finish with skips" decides this
     // under the lock instead.
@@ -3071,16 +3084,19 @@ export class InventoryService {
 
     let held;
     try {
-      held = await this.runUnderCountLock(id, () =>
-        this.commitStockCountBatches({
+      held = await this.runUnderCountLock(id, async () => {
+        // SA-999: the FIRST read under the exclusive lock. The seed's batches hold the shared form of it, so
+        // none is mid-flight here; "seeding" (running, or its process died) is the coded 409, nothing written.
+        await refuseWhileSeeding(this.prisma.forTenant(), id);
+        return this.commitStockCountBatches({
           id,
           reference,
           rawEffectiveDate: dto.effectiveDate,
           notes: dto.notes,
           finishWithSkips: dto.finishWithSkips === true,
           user,
-        }),
-      );
+        });
+      });
     } catch (e) {
       // Every "busy" answer the committer can raise - no lock connection, retries exhausted in a batch
       // (retryStockTx's 503), a raw lock timeout / deadlock outside a batch - becomes ONE 503 that also

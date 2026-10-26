@@ -5,6 +5,8 @@ import {
   COUNT_SEED_BATCH,
   discardUnfinishedSeed,
   findOpenCountConflicts,
+  planSeedLines,
+  seedCompletionStamp,
   seedStockCountLines,
   type SeedLine,
 } from "./stock-count-seed";
@@ -58,7 +60,10 @@ function fake() {
       deleteMany: jest.fn(async () => ({ count: 0 })),
     },
     stockCountSession: {
-      updateMany: jest.fn(async () => ({ count: 1 })),
+      updateMany: jest.fn(async (a: any) => {
+        if (a?.data?.seedCompletedAt) events.push("stamp");
+        return { count: 1 };
+      }),
       findFirst: jest.fn(async () => {
         events.push("session-status");
         const status = session.statuses.length > 1 ? session.statuses.shift() : session.statuses[0];
@@ -129,7 +134,108 @@ describe("seedStockCountLines (row 562 S1)", () => {
       "overlap",
       "stock",
       "write",
+      "stamp", // SA-999: the final batch stamps the completion in the same transaction, after the lines
     ]);
+  });
+
+  describe("the completion stamp (SA-999)", () => {
+    const stamps = (f: ReturnType<typeof fake>) =>
+      f.tx.stockCountSession.updateMany.mock.calls.filter((c: any[]) => c[0].data.seedCompletedAt);
+
+    it("only the FINAL batch stamps seedCompletedAt: 450 lines are 3 batches and ONE stamp, after the last lines", async () => {
+      const f = fake();
+      await seedStockCountLines(f.prisma, {
+        sessionId: "s1",
+        userId: "u1",
+        lines: Array.from({ length: 450 }, (_, i) => line(i + 1)),
+      });
+
+      expect(stamps(f)).toHaveLength(1);
+      expect(f.events.filter((e) => e === "stamp" || e === "write")).toEqual([
+        "write",
+        "write",
+        "write",
+        "stamp",
+      ]);
+    });
+
+    it("the stamp is guarded: this session, still OPEN, the planned number this seed will write, not yet stamped", async () => {
+      const f = fake();
+      await seedStockCountLines(f.prisma, {
+        sessionId: "s1",
+        userId: "u1",
+        lines: Array.from({ length: 450 }, (_, i) => line(i + 1)),
+      });
+
+      const [call] = stamps(f);
+      expect(call[0].where).toEqual({
+        id: "s1",
+        status: "OPEN",
+        seedPlannedLines: 450,
+        seedCompletedAt: null,
+      });
+      expect(call[0].data.seedCompletedAt).toBeInstanceOf(Date);
+    });
+
+    it("the planned number is counted after the de-dupe (a product given twice is one planned line)", async () => {
+      const f = fake();
+      await seedStockCountLines(f.prisma, {
+        sessionId: "s1",
+        userId: "u1",
+        lines: [line(1), line(1), line(2)],
+      });
+
+      expect(stamps(f)[0][0].where.seedPlannedLines).toBe(2);
+    });
+
+    it("a batch that is refused (conflict in batch 2) never stamps: the count stays 'seeding'", async () => {
+      const f = fake();
+      f.conflicts.push(
+        [],
+        [{ productId: pid(250), product: { name: "W" }, session: { id: "o1", name: null } }],
+      );
+
+      await seedStockCountLines(f.prisma, {
+        sessionId: "s1",
+        userId: "u1",
+        lines: Array.from({ length: 450 }, (_, i) => line(i + 1)),
+      }).catch(() => undefined);
+
+      expect(stamps(f)).toHaveLength(0);
+    });
+
+    it("a COMMITTED / DISCARDED session (refused at the OPEN check) never stamps", async () => {
+      const f = fake();
+      f.session.statuses = ["DISCARDED"];
+
+      await seedStockCountLines(f.prisma, {
+        sessionId: "s1",
+        userId: "u1",
+        lines: [line(1)],
+      }).catch(() => undefined);
+
+      expect(stamps(f)).toHaveLength(0);
+    });
+  });
+
+  describe("planSeedLines (SA-999)", () => {
+    it("de-duplicates (the first wins) and sorts by product id: its length is seedPlannedLines", () => {
+      const out = planSeedLines([line(3), line(1, { countedQty: D(1) }), line(1), line(2)]);
+      expect(out.map((l) => l.productId)).toEqual([pid(1), pid(2), pid(3)]);
+      expect(out[0].countedQty).toEqual(D(1));
+    });
+
+    it("no lines is an empty plan", () => {
+      expect(planSeedLines([])).toEqual([]);
+    });
+  });
+
+  describe("seedCompletionStamp (SA-999)", () => {
+    it("is the one { seedCompletedAt } value both writers spread", () => {
+      const at = new Date("2026-10-26T00:00:00Z");
+      expect(seedCompletionStamp(at)).toEqual({ seedCompletedAt: at });
+      expect(seedCompletionStamp().seedCompletedAt).toBeInstanceOf(Date);
+    });
   });
 
   it("writes plain rows (no tenantId: the tenant extension injects it), skipDuplicates, the baseline from the in-tx read", async () => {
