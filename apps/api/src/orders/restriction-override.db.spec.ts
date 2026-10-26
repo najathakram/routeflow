@@ -328,7 +328,7 @@ describeDb(
                   id: w.ruleId,
                   states: ["CA"],
                   legal: true,
-                  reasonText: "This product is banned in CA by law.",
+                  reasonText: "Restricted in CA: R510 state ban.",
                 },
               ],
             },
@@ -472,7 +472,7 @@ describeDb(
           );
           expect(bodyOf(pickup).code).toBe("RESTRICTION_WARNING");
           expect(bodyOf(pickup).lines[0].rules[0].reasonText).toBe(
-            "This product is banned in CA by law.",
+            "Restricted in CA: R510 state ban.",
           );
           const delivery: any = await create({ customerId: w.txCustomerId, items });
           expect((await lineRows(delivery.id))[0].restrictionOverrideAt).toBeNull(); // TX is allowed: no stamp

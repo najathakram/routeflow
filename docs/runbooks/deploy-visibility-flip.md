@@ -42,11 +42,11 @@ only in that session's own control flow (nothing else was ever going to run it).
 
 ```bash
 # Windows PowerShell. -PassThru keeps the pid, which the verification below checks.
-$wd = Start-Process -PassThru -WindowStyle Hidden -FilePath node -ArgumentList "scripts/visibility-watchdog.mjs","--minutes","45"
+$wd = Start-Process -PassThru -WindowStyle Hidden -FilePath node -ArgumentList "scripts/visibility-watchdog.mjs","--minutes","45","--window-marker"
 $wd.Id
 
 # POSIX
-nohup node scripts/visibility-watchdog.mjs --minutes 45 >/dev/null 2>&1 &
+nohup node scripts/visibility-watchdog.mjs --minutes 45 --window-marker >/dev/null 2>&1 &
 ```
 
 Verify it started before proceeding to step 1: the log (`local-assets/visibility-watchdog.log`,
@@ -57,6 +57,15 @@ is the only place a refusal shows. Do not proceed to step 1 without your own pid
 deploy is still running is the CORRECT outcome, not a failure — a GitHub Actions run on a private
 repo just fails on billing (see below); rerun it once the window reopens. The watchdog's later
 flip is harmless if the routine's own step 4 already flipped private first.
+
+**Mac timer (off-machine backstop).** `--window-marker` makes the watchdog publish a window marker
+(`ops/visibility-window.json` in `najathakram/routeflow-specs`: repo, openedAt, deadline, opener) as
+a best-effort step after its `start` line; a failed write logs `marker-failed` and never delays the
+flip. A launchd job on the Mac (`scripts/visibility-timer.mjs`, every 5 min, template and install
+steps in `tools/visibility-timer/`) reads it and flips the repo private if it is still PUBLIC 2 min
+past the deadline, so a dead launch machine no longer leaves the window open. A marker more than 6 h
+past its deadline, a missing or malformed one, or one for another repo is ignored. The timer writes
+exactly one line per decision to `~/.routeflow/ops/visibility-timer.log`; check it after a window.
 
 One watchdog at a time (#2076). A second start finds the lock (`local-assets/visibility-watchdog.lock`),
 prints the running pid and its deadline, logs a `refused` line and exits 3; pass `--replace` to stop
