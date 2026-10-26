@@ -227,11 +227,11 @@ export function selfTest() {
       },
       {
         tenant_no: 2,
-        orders: 1,
+        orders: 2,
         tenant_default: 0,
         customer_exempt: 0,
         legacy_inferred: 0,
-        stamped_no_source: 0,
+        stamped_no_source: 1,
         unstamped: 1,
         lines: 1,
         lines_unstamped: 1,
@@ -243,7 +243,8 @@ export function selfTest() {
       { tenant_no: 2, subtotal: "0.00", tax: "1.00", discount: "0", tenant_rate_pct: T },
     ],
   );
-  eq([s.total.orders, s.total.unstamped.total, s.total.unstamped.noTax], [6, 5, 2], "totals");
+  eq([s.total.orders, s.total.unstamped.total, s.total.unstamped.noTax], [7, 5, 2], "totals");
+  eq(s.total.stamped.stampedNoSource, 1, "a rate with no source is carried, not dropped");
   eq(
     [s.total.unstamped.verified, s.total.unstamped.unverified, s.total.unstamped.subtotalZero],
     [1, 1, 1],
@@ -253,7 +254,7 @@ export function selfTest() {
     s.tenants.map((t) => [t.label, t.orders]),
     [
       ["tenant-1", 5],
-      ["tenant-2", 1],
+      ["tenant-2", 2],
     ],
     "anonymous, largest first",
   );
@@ -261,6 +262,11 @@ export function selfTest() {
   for (const sql of [COUNTS_SQL, UNSTAMPED_SQL, COLUMNS_SQL]) {
     if (/\b(INSERT|UPDATE|DELETE|TRUNCATE|ALTER|DROP|CREATE|GRANT|COPY)\b/i.test(sql))
       throw new Error("the report SQL must be read-only");
+  }
+  // both queries rank only live production tenants (a demo, test or soft-deleted tenant is never counted)
+  for (const sql of [COUNTS_SQL, UNSTAMPED_SQL]) {
+    if (!sql.includes("t.class::text = 'PRODUCTION'") || !sql.includes('t."deletedAt" IS NULL'))
+      throw new Error("the report SQL must keep to live PRODUCTION tenants");
   }
   // the SELECT lists carry no identifier, slug, name or email
   for (const sql of [COUNTS_SQL, UNSTAMPED_SQL]) {

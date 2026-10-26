@@ -39,13 +39,21 @@ describeDb("report-order-taxrate-census.mjs, real Postgres", () => {
   let customerId = "";
   let baseline: Block;
 
-  const census = (): { total: Block } => {
+  // the Railway proxy variables would make resolveReportDbUrl pick the proxy URL over the spec's database
+  const cliEnv = (): NodeJS.ProcessEnv => {
     const env: NodeJS.ProcessEnv = { ...process.env };
     for (const key of Object.keys(env)) {
       if (key.startsWith("RAILWAY_") || key.startsWith("POSTGRES_")) delete env[key];
     }
     env.DATABASE_URL = dbUrl;
-    const out = execFileSync("node", [CLI, "--json"], { cwd: API_DIR, encoding: "utf8", env });
+    return env;
+  };
+  const census = (): { total: Block } => {
+    const out = execFileSync("node", [CLI, "--json"], {
+      cwd: API_DIR,
+      encoding: "utf8",
+      env: cliEnv(),
+    });
     return JSON.parse(out);
   };
   const tableCounts = async () => ({
@@ -54,13 +62,36 @@ describeDb("report-order-taxrate-census.mjs, real Postgres", () => {
     stamped: await prisma.order.count({ where: { tenantId, taxRate: { not: null } } }),
   });
 
+  // a demo-class tenant and a soft-deleted one, each with an order the census must not count
+  const outOfScopeTenantIds: string[] = [];
+  const outOfScopeTenant = async (label: string, over: Record<string, unknown>) => {
+    const slug = assertTestTenant(
+      `qa-taxcensus-${label}-${RUN}`,
+      "report-order-taxrate-census.db.spec.ts",
+    );
+    const id = (
+      await prisma.tenant.create({ data: { slug, name: `taxcensus ${slug}`, ...over } as never })
+    ).id;
+    outOfScopeTenantIds.push(id);
+    const user = await prisma.user.create({
+      data: { email: `${slug}@example.invalid`, username: slug, role: "CUSTOMER", tenantId: id },
+    });
+    const customer = await prisma.customer.create({
+      data: { userId: user.id, businessName: "taxc", contactName: "taxc", tenantId: id } as never,
+    });
+    return { tenantId: id, customerId: customer.id };
+  };
+
   let n = 0;
-  const order = async (over: Record<string, unknown>) => {
+  const order = async (
+    over: Record<string, unknown>,
+    scope: { tenantId: string; customerId: string } = { tenantId, customerId },
+  ) => {
     n += 1;
     return prisma.order.create({
       data: {
-        tenantId,
-        customerId,
+        tenantId: scope.tenantId,
+        customerId: scope.customerId,
         orderNumber: `ORD-TAXC-${RUN}-${n}`,
         subtotal: 100,
         tax: 0,
@@ -106,9 +137,21 @@ describeDb("report-order-taxrate-census.mjs, real Postgres", () => {
     await order({ subtotal: 100000, total: 100007.33, tax: 7.33 }); // nothing reproduces it
     await order({ subtotal: 0, total: 1, tax: 1 }); // tax on a zero subtotal
     await order({}); // no tax
+    // a rate with no source (what a hand edit or a half-run backfill leaves behind)
+    await order({ taxRate: "0.05", tax: 5 });
     // out of scope
     await order({ status: "DRAFT", tax: 8.25 });
     await order({ status: "CANCELLED", tax: 8.25 });
+    // out of scope: only live PRODUCTION tenants are counted, so these add nothing to any column
+    for (const [label, over] of [
+      ["demo", { class: "DEMO" }],
+      ["gone", { deletedAt: new Date() }],
+    ] as const) {
+      const scope = await outOfScopeTenant(label, over);
+      await order({ taxRate: "0.0825", taxRateSource: "TENANT_DEFAULT", tax: 8.25 }, scope);
+      await order({ tax: 8.25 }, scope);
+      await order({ taxRate: "0.05", tax: 5 }, scope);
+    }
 
     await prisma.orderItem.create({
       data: {
@@ -137,12 +180,14 @@ describeDb("report-order-taxrate-census.mjs, real Postgres", () => {
 
   afterAll(async () => {
     const swallow = () => undefined;
-    await prisma.orderItem.deleteMany({ where: { tenantId } }).catch(swallow);
-    await prisma.order.deleteMany({ where: { tenantId } }).catch(swallow);
-    await prisma.customer.deleteMany({ where: { tenantId } }).catch(swallow);
-    await prisma.user.deleteMany({ where: { tenantId } }).catch(swallow);
-    await prisma.systemConfig.deleteMany({ where: { tenantId } }).catch(swallow);
-    await prisma.tenant.delete({ where: { id: tenantId } }).catch(swallow);
+    for (const id of [tenantId, ...outOfScopeTenantIds]) {
+      await prisma.orderItem.deleteMany({ where: { tenantId: id } }).catch(swallow);
+      await prisma.order.deleteMany({ where: { tenantId: id } }).catch(swallow);
+      await prisma.customer.deleteMany({ where: { tenantId: id } }).catch(swallow);
+      await prisma.user.deleteMany({ where: { tenantId: id } }).catch(swallow);
+      await prisma.systemConfig.deleteMany({ where: { tenantId: id } }).catch(swallow);
+      await prisma.tenant.delete({ where: { id } }).catch(swallow);
+    }
     await prisma.$disconnect();
     await pool.end();
   });
@@ -150,11 +195,12 @@ describeDb("report-order-taxrate-census.mjs, real Postgres", () => {
   it("counts exactly the fixture (draft and cancelled orders and cancelled lines are out of scope)", () => {
     const after = census().total;
     const d = (get: (b: Block) => number) => get(after) - get(baseline);
-    expect(d((b) => b.orders)).toBe(9);
+    // the demo-class and soft-deleted tenants each hold 3 in-scope-looking orders: none of them may show
+    expect(d((b) => b.orders)).toBe(10);
     expect(d((b) => b.stamped.tenantDefault)).toBe(1);
     expect(d((b) => b.stamped.customerExempt)).toBe(1);
     expect(d((b) => b.stamped.legacyInferred)).toBe(1);
-    expect(d((b) => b.stamped.stampedNoSource)).toBe(0);
+    expect(d((b) => b.stamped.stampedNoSource)).toBe(1);
     expect(d((b) => b.unstamped.total)).toBe(6);
     expect(d((b) => b.unstamped.verified)).toBe(1);
     expect(d((b) => b.unstamped.verifiedNetOfDiscount)).toBe(1);
@@ -173,8 +219,11 @@ describeDb("report-order-taxrate-census.mjs, real Postgres", () => {
   }, 120_000);
 
   it("the JSON carries counts only: no id, slug or name of the fixture", () => {
-    const env: NodeJS.ProcessEnv = { ...process.env, DATABASE_URL: dbUrl };
-    const out = execFileSync("node", [CLI, "--json"], { cwd: API_DIR, encoding: "utf8", env });
+    const out = execFileSync("node", [CLI, "--json"], {
+      cwd: API_DIR,
+      encoding: "utf8",
+      env: cliEnv(),
+    });
     expect(out).not.toContain(tenantId);
     expect(out).not.toContain(customerId);
     expect(out).not.toMatch(/qa-taxcensus/);
