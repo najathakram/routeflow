@@ -1,15 +1,17 @@
 /**
  * DB-lane spec for `../../scripts/report-640-restored-grants.mjs` (row 686 / row 640 census): the two queries (the
- * stamped-restore window and the unstamped partial restore matched by the HELD audit row) against a REAL Postgres.
+ * stamped-restore window and the unstamped partial restore matched by the HELD audit row), the price test at the
+ * tenant's PINNED catalog version, the inactive column, and the fail-closed empty catalog, against a REAL Postgres.
  * The pure summary is locked without a database in `report-640-restored-grants-script.spec.ts`.
  *
  * The lane DB may hold other specs' tenants, so the assertions are DELTAS: the census is run once before this file
- * seeds anything and once after, and the difference must be exactly the fixture. Collected only by
- * `jest.db.config.js`, run via `npm run local:test:db`. SAFETY (L-129): the spec's own qa- tenants
+ * seeds its tenants (after it seeds its catalog) and once after, and the difference must be exactly the fixture.
+ * Collected only by `jest.db.config.js`, run via `npm run local:test:db`. SAFETY (L-129): the spec's own qa- tenants
  * (assertTestTenant), the database must be provably local (requireLocalDatabaseUrl), afterAll deletes what this file
- * created. The catalog is global reference data and is not seeded, so nothing here asserts a harm count.
+ * created. The catalog is global reference data: this file seeds two plan versions with version numbers near the Int
+ * ceiling so its PUBLISHED one is the latest, and removes them.
  */
-import { execFileSync } from "child_process";
+import { execFileSync, spawnSync } from "child_process";
 import { randomUUID } from "crypto";
 import path from "path";
 import { PrismaClient } from "@prisma/client";
@@ -24,12 +26,20 @@ const API_DIR = path.resolve(__dirname, "../..");
 const CLI = path.resolve(API_DIR, "scripts/report-640-restored-grants.mjs");
 const RUN = randomUUID().slice(0, 8);
 const HELD = "CONFIG_SNAPSHOT_RESTORE_HELD";
+const VERSION_BASE = 2_000_000_000 + Math.floor(Math.random() * 100_000_000);
 
 type Census = {
   snapshots: { total: number; restored: number };
   restoredGrants: number;
   byKind: Record<string, number>;
-  unstampedPossible: { grants: number; byKind: Record<string, number> };
+  nonCompWithoutPricedRow: number;
+  inactiveGrants: number;
+  unstampedPossible: {
+    grants: number;
+    byKind: Record<string, number>;
+    nonCompWithoutPricedRow: number;
+    inactiveGrants: number;
+  };
 };
 
 describeDb("report-640-restored-grants.mjs, real Postgres", () => {
@@ -37,24 +47,31 @@ describeDb("report-640-restored-grants.mjs, real Postgres", () => {
   let pool: Pool;
   let dbUrl: string;
   const tenantIds: string[] = [];
+  const versionIds: string[] = [];
   let baseline: Census;
 
-  const census = (): Census => {
+  const cliEnv = (): NodeJS.ProcessEnv => {
     const env: NodeJS.ProcessEnv = { ...process.env };
     for (const key of Object.keys(env)) {
       if (key.startsWith("RAILWAY_") || key.startsWith("POSTGRES_")) delete env[key];
     }
     env.DATABASE_URL = dbUrl;
-    return JSON.parse(
-      execFileSync("node", [CLI, "--json"], { cwd: API_DIR, encoding: "utf8", env }),
-    );
+    return env;
   };
-  const newTenant = async (suffix: string) => {
+  const census = (): Census =>
+    JSON.parse(
+      execFileSync("node", [CLI, "--json"], { cwd: API_DIR, encoding: "utf8", env: cliEnv() }),
+    );
+  const newTenant = async (suffix: string, planVersionId?: string) => {
     const slug = assertTestTenant(
       `qa-r640-${suffix}-${RUN}`,
       "report-640-restored-grants.db.spec.ts",
     );
-    const id = (await prisma.tenant.create({ data: { slug, name: `r640 ${slug}` } })).id;
+    const id = (
+      await prisma.tenant.create({
+        data: { slug, name: `r640 ${slug}`, ...(planVersionId ? { planVersionId } : {}) },
+      })
+    ).id;
     tenantIds.push(id);
     return id;
   };
@@ -64,8 +81,7 @@ describeDb("report-640-restored-grants.mjs, real Postgres", () => {
     featureKey: string,
     kind: "PILOT" | "COMP",
     createdAt: Date,
-    effect: "GRANT" | "DENY" = "GRANT",
-    revoked = false,
+    opts: { effect?: "GRANT" | "DENY"; revoked?: boolean; expired?: boolean } = {},
   ) =>
     // a partial unique index allows one non-revoked row per (tenant, key); the census does not filter on revokedAt
     prisma.tenantFeatureOverride.create({
@@ -73,54 +89,92 @@ describeDb("report-640-restored-grants.mjs, real Postgres", () => {
         tenantId,
         featureKey,
         kind,
-        effect,
+        effect: opts.effect ?? "GRANT",
         reason: "spec",
         createdAt,
-        revokedAt: revoked ? new Date() : null,
+        revokedAt: opts.revoked ? new Date() : null,
+        expiresAt: opts.expired ? new Date(Date.now() - 3_600_000) : null,
       },
+    });
+  const restoredSnapshot = (tenantId: string, restoredAt: Date) =>
+    prisma.tenantFeatureConfigSnapshot.create({
+      data: {
+        tenantId,
+        planKey: "PRO",
+        reason: "MANUAL",
+        payload: {},
+        restoredAt,
+        restoredToPlanKey: "PRO",
+      },
+    });
+  const sku = (planVersionId: string, code: string, monthlyPrice: number) =>
+    prisma.addonSku.create({
+      data: { planVersionId, sku: code, name: code, monthlyPrice, grantsFlags: [] },
     });
 
   beforeAll(async () => {
     dbUrl = requireLocalDatabaseUrl();
     pool = new Pool({ connectionString: dbUrl });
     prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
+
+    // Latest PUBLISHED catalog (A): OCR_PACK_250 is priced, REGULATED_ITEMS is free. An older, superseded version (B):
+    // the reverse. A tenant pinned to B must be judged on B, not on the latest.
+    const a = await prisma.planVersion.create({
+      data: { version: VERSION_BASE, status: "PUBLISHED", publishedAt: new Date() },
+    });
+    const b = await prisma.planVersion.create({
+      data: { version: VERSION_BASE - 1, status: "SUPERSEDED" },
+    });
+    versionIds.push(a.id, b.id);
+    await sku(a.id, "OCR_PACK_250", 10);
+    await sku(a.id, "REGULATED_ITEMS", 0);
+    await sku(b.id, "OCR_PACK_250", 0);
+    await sku(b.id, "REGULATED_ITEMS", 10);
+
     baseline = census();
 
-    // A stamped restore: grants inside the 10 s window count, a late one, a DENY and a non-billable key do not.
-    const stamped = await newTenant("s");
     const t0 = new Date(Date.now() - 3_600_000);
-    await prisma.tenantFeatureConfigSnapshot.create({
-      data: {
-        tenantId: stamped,
-        planKey: "PRO",
-        reason: "MANUAL",
-        payload: {},
-        restoredAt: t0,
-        restoredToPlanKey: "PRO",
-      },
-    });
-    await override(stamped, "ocr", "PILOT", at(t0, 2));
-    await override(stamped, "ocr", "PILOT", at(t0, 3), "GRANT", true);
-    await override(stamped, "tobacco_dealer", "COMP", at(t0, 4));
-    await override(stamped, "ocr", "PILOT", at(t0, 60), "GRANT", true); // outside the window
-    await override(stamped, "ocr", "PILOT", at(t0, 2), "DENY", true); // not a GRANT
-    await override(stamped, "forecasting", "PILOT", at(t0, 2)); // not a billable key
+
+    // s: stamped restore, pinned to B. In-window grants count; a late one, a DENY and a non-billable key do not.
+    // Its live ocr grant is NOT harm (B does not price OCR_PACK_250); the revoked one is inactive.
+    const s = await newTenant("s", b.id);
+    await restoredSnapshot(s, t0);
+    await override(s, "ocr", "PILOT", at(t0, 2));
+    await override(s, "ocr", "PILOT", at(t0, 3), { revoked: true });
+    await override(s, "tobacco_dealer", "COMP", at(t0, 4));
+    await override(s, "ocr", "PILOT", at(t0, 60), { revoked: true }); // outside the window
+    await override(s, "ocr", "PILOT", at(t0, 2), { effect: "DENY", revoked: true }); // not a GRANT
+    await override(s, "forecasting", "PILOT", at(t0, 2)); // not a billable key
+
+    // s2: unpinned, so judged on the latest PUBLISHED (A): the live ocr grant is harm, the tobacco one is not (free).
+    const s2 = await newTenant("s2");
+    await restoredSnapshot(s2, t0);
+    await override(s2, "ocr", "PILOT", at(t0, 2));
+    await override(s2, "tobacco_dealer", "PILOT", at(t0, 2));
+
+    // s3 / s4: a revoked and an expired grant on a priced SKU are inactive, never harm.
+    const s3 = await newTenant("s3");
+    await restoredSnapshot(s3, t0);
+    await override(s3, "ocr", "PILOT", at(t0, 2), { revoked: true });
+    const s4 = await newTenant("s4");
+    await restoredSnapshot(s4, t0);
+    await override(s4, "ocr", "PILOT", at(t0, 2), { expired: true });
 
     // A partial restore: the snapshot stays unstamped, the HELD audit row is written just after the overrides.
     // Two HELD rows inside the window must not double count the overrides.
     const partial = await newTenant("u");
     const u0 = new Date(Date.now() - 1_800_000);
-    await override(partial, "ocr", "PILOT", at(u0, -3), "GRANT", true);
+    await override(partial, "ocr", "PILOT", at(u0, -3), { revoked: true });
     await override(partial, "ocr", "PILOT", at(u0, -2));
     await override(partial, "tobacco_dealer", "PILOT", at(u0, -1));
-    await override(partial, "ocr", "PILOT", at(u0, -60), "GRANT", true); // long before the audit row
-    for (const s of [0, 1]) {
+    await override(partial, "ocr", "PILOT", at(u0, -60), { revoked: true }); // long before the audit row
+    for (const sec of [0, 1]) {
       await prisma.auditLog.create({
         data: {
           tenantId: partial,
           action: HELD,
           entityType: "TenantFeatureConfigSnapshot",
-          createdAt: at(u0, s),
+          createdAt: at(u0, sec),
         },
       });
     }
@@ -138,6 +192,10 @@ describeDb("report-640-restored-grants.mjs, real Postgres", () => {
       await prisma.tenantFeatureConfigSnapshot.deleteMany({ where: { tenantId } }).catch(swallow);
       await prisma.tenant.delete({ where: { id: tenantId } }).catch(swallow);
     }
+    for (const id of versionIds) {
+      await prisma.addonSku.deleteMany({ where: { planVersionId: id } }).catch(swallow);
+      await prisma.planVersion.delete({ where: { id } }).catch(swallow);
+    }
     await prisma.$disconnect();
     await pool.end();
   });
@@ -147,10 +205,23 @@ describeDb("report-640-restored-grants.mjs, real Postgres", () => {
 
   it("counts the stamped restore's grants in the window only", () => {
     const after = census();
-    expect(delta(after.snapshots.restored, baseline.snapshots.restored)).toBe(1);
-    expect(delta(after.restoredGrants, baseline.restoredGrants)).toBe(3);
-    expect(delta(after.byKind.PILOT, baseline.byKind.PILOT)).toBe(2);
+    expect(delta(after.snapshots.restored, baseline.snapshots.restored)).toBe(4);
+    expect(delta(after.restoredGrants, baseline.restoredGrants)).toBe(7);
+    expect(delta(after.byKind.PILOT, baseline.byKind.PILOT)).toBe(6);
     expect(delta(after.byKind.COMP, baseline.byKind.COMP)).toBe(1);
+  }, 120_000);
+
+  it("prices each grant at the catalog version the tenant is pinned to, and only where monthlyPrice > 0", () => {
+    const after = census();
+    // s (pinned to B, OCR free there) is not harm; s2's ocr (A prices it) is; s2's tobacco (A: free) is not.
+    // Judged on the latest published for everyone, s's live ocr grant would be a second harm.
+    expect(delta(after.nonCompWithoutPricedRow, baseline.nonCompWithoutPricedRow)).toBe(1);
+  }, 120_000);
+
+  it("keeps revoked and expired grants out of the harm count, in their own column", () => {
+    const after = census();
+    // s: 1 revoked in the window; s3: revoked; s4: expired. (s3 and s4 would each be harm if they were live.)
+    expect(delta(after.inactiveGrants, baseline.inactiveGrants)).toBe(3);
   }, 120_000);
 
   it("reports an unstamped partial restore separately, once per override, never as a restored grant", () => {
@@ -159,14 +230,52 @@ describeDb("report-640-restored-grants.mjs, real Postgres", () => {
     expect(
       delta(after.unstampedPossible.byKind.PILOT, baseline.unstampedPossible.byKind.PILOT),
     ).toBe(3);
+    expect(
+      delta(
+        after.unstampedPossible.nonCompWithoutPricedRow,
+        baseline.unstampedPossible.nonCompWithoutPricedRow,
+      ),
+    ).toBe(1);
+    expect(
+      delta(after.unstampedPossible.inactiveGrants, baseline.unstampedPossible.inactiveGrants),
+    ).toBe(1);
+  }, 120_000);
+
+  it("fails closed with exit 3 when no plan version is PUBLISHED, never a harm count of 0", async () => {
+    const published = await prisma.planVersion.findMany({
+      where: { status: "PUBLISHED" },
+      select: { id: true },
+    });
+    await prisma.planVersion.updateMany({
+      where: { id: { in: published.map((p) => p.id) } },
+      data: { status: "DRAFT" },
+    });
+    try {
+      const r = spawnSync("node", [CLI, "--json"], {
+        cwd: API_DIR,
+        encoding: "utf8",
+        env: cliEnv(),
+      });
+      expect(r.status).toBe(3);
+      expect(r.stderr).toMatch(/no PUBLISHED plan version/);
+      expect(r.stdout.trim()).toBe("");
+    } finally {
+      await prisma.planVersion.updateMany({
+        where: { id: { in: published.map((p) => p.id) } },
+        data: { status: "PUBLISHED" },
+      });
+    }
   }, 120_000);
 
   it("writes nothing and prints no tenant id or slug", async () => {
     const before = await prisma.tenantFeatureOverride.count({
       where: { tenantId: { in: tenantIds } },
     });
-    const env: NodeJS.ProcessEnv = { ...process.env, DATABASE_URL: dbUrl };
-    const out = execFileSync("node", [CLI, "--json"], { cwd: API_DIR, encoding: "utf8", env });
+    const out = execFileSync("node", [CLI, "--json"], {
+      cwd: API_DIR,
+      encoding: "utf8",
+      env: cliEnv(),
+    });
     for (const id of tenantIds) expect(out).not.toContain(id);
     expect(out).not.toMatch(/qa-r640/);
     expect(

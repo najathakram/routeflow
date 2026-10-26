@@ -60,7 +60,67 @@ describe("report-640-restored-grants.mjs", () => {
       grants: 4,
       byKind: { PILOT: 3, COMP: 1 },
       nonCompWithoutPricedRow: 3,
+      inactiveGrants: 0,
     });
+  });
+
+  it("a revoked or expired grant is never harm; it has its own column", () => {
+    const s = fold([
+      {
+        kind: "PILOT",
+        n: 2,
+        hasPricedRow: false,
+        signal: "stamped",
+        catalogPriced: true,
+        active: false,
+      },
+      {
+        kind: "PILOT",
+        n: 1,
+        hasPricedRow: false,
+        signal: "stamped",
+        catalogPriced: true,
+        active: true,
+      },
+      {
+        kind: "PILOT",
+        n: 4,
+        hasPricedRow: false,
+        signal: "unstamped",
+        catalogPriced: true,
+        active: false,
+      },
+    ]);
+    expect(s.restoredGrants).toBe(3);
+    expect(s.nonCompWithoutPricedRow).toBe(1);
+    expect(s.inactiveGrants).toBe(2);
+    expect(s.unstampedPossible).toMatchObject({
+      grants: 4,
+      nonCompWithoutPricedRow: 0,
+      inactiveGrants: 4,
+    });
+  });
+
+  it("an empty or SKU-less PUBLISHED catalog fails closed instead of reading as a harm count of 0", () => {
+    const code =
+      `import(${JSON.stringify(pathToFileURL(SCRIPT).href)}).then(m=>console.log(JSON.stringify(` +
+      `[m.catalogProblem({published:0,skuRows:0}),m.catalogProblem({published:2,skuRows:0}),` +
+      `m.catalogProblem({published:1,skuRows:2}),m.CATALOG_EXIT_CODE])))`;
+    const r = node(["--input-type=module", "-e", code], process.env);
+    expect(r.status).toBe(0);
+    const [none, unlisted, ok, exit] = JSON.parse(r.stdout.trim());
+    expect(none).toMatch(/no PUBLISHED plan version/);
+    expect(unlisted).toMatch(/lists none of/);
+    expect(ok).toBeNull();
+    expect(exit).toBe(3);
+    // the main path returns that code before any census query runs
+    expect(source).toContain("process.exitCode = CATALOG_EXIT_CODE");
+  });
+
+  it("prices at the version the tenant is pinned to (subscription, then tenant, then latest PUBLISHED)", () => {
+    expect(source).toContain(
+      'COALESCE(ts."planVersionId", t."planVersionId", (SELECT id FROM pub))',
+    );
   });
 
   it("does not call a grant harmful when the catalog does not price the SKU", () => {
