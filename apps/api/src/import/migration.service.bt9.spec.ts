@@ -112,27 +112,120 @@ describe("MigrationService, BT-9", () => {
     });
 
     // A value the column cannot hold is the row's own fault: skipped, so one row cannot leave the job STAGED for good.
-    it.each([
-      [
-        "PrismaClientValidationError",
-        () => new Prisma.PrismaClientValidationError("bad", { clientVersion: "7" }),
-      ],
-      [
-        "P2000",
-        () =>
-          new Prisma.PrismaClientKnownRequestError("long", { code: "P2000", clientVersion: "7" }),
-      ],
-      [
-        "P2020",
-        () =>
-          new Prisma.PrismaClientKnownRequestError("range", { code: "P2020", clientVersion: "7" }),
-      ],
-      [
-        "P2033",
-        () =>
-          new Prisma.PrismaClientKnownRequestError("big", { code: "P2033", clientVersion: "7" }),
-      ],
-    ])("%s on one row skips that row and the job still reaches CONFIRMED", async (_name, make) => {
+    const prismaErr = (code: string) => () =>
+      new Prisma.PrismaClientKnownRequestError("x", { code, clientVersion: "7" });
+    it.each(["P2000", "P2002", "P2003", "P2020", "P2033"])(
+      "%s on one row skips that row and the job still reaches CONFIRMED",
+      async (code) => {
+        prisma.migrationJob.findUnique.mockResolvedValue({
+          id: "j1",
+          source: "ZOHO",
+          status: "STAGED",
+        });
+        prisma.migrationStagingRecord.findMany.mockResolvedValue([
+          rec("r1", { name: "Cola" }),
+          rec("r2", { name: "Chips" }),
+        ]);
+        products.create
+          .mockRejectedValueOnce(prismaErr(code)())
+          .mockResolvedValueOnce({ id: "p2" });
+        const res = await service.confirmJob("j1");
+        expect(res.skipped).toBe(1);
+        expect(res.committed).toBe(1);
+        const updates = prisma.migrationStagingRecord.update.mock.calls.map((c) => c[0]);
+        expect(updates.find((u) => u.where.id === "r1")?.data).toMatchObject({
+          status: "SKIPPED",
+          flags: ["commit-failed"],
+        });
+      },
+    );
+
+    // A validation error is a code/schema mismatch: it would hit every row, so it is never row-level.
+    it("a PrismaClientValidationError rethrows on the first row: nothing is written and the job is not CONFIRMED", async () => {
+      prisma.migrationJob.findUnique.mockResolvedValue({
+        id: "j1",
+        source: "ZOHO",
+        status: "STAGED",
+      });
+      prisma.migrationStagingRecord.findMany.mockResolvedValue([
+        rec("r1", { name: "Cola" }),
+        rec("r2", { name: "Chips" }),
+        rec("r3", { name: "Crisps" }),
+      ]);
+      products.create.mockRejectedValue(
+        new Prisma.PrismaClientValidationError("bad", { clientVersion: "7" }),
+      );
+      await expect(service.confirmJob("j1")).rejects.toBeInstanceOf(
+        Prisma.PrismaClientValidationError,
+      );
+      expect(prisma.migrationStagingRecord.update).not.toHaveBeenCalled();
+      expect(prisma.migrationJob.update).not.toHaveBeenCalled();
+    });
+
+    // Every row failing with a database code and none committed is systemic: throw, write nothing, stay retryable.
+    it.each(["P2020", "P2000", "P2033", "P2003"])(
+      "every row failing with %s and none committed throws; no row is marked SKIPPED and the job is not CONFIRMED",
+      async (code) => {
+        prisma.migrationJob.findUnique.mockResolvedValue({
+          id: "j1",
+          source: "ZOHO",
+          status: "STAGED",
+        });
+        prisma.migrationStagingRecord.findMany.mockResolvedValue([
+          rec("r1", { name: "Cola" }),
+          rec("r2", { name: "Chips" }),
+          rec("r3", { name: "Crisps" }),
+        ]);
+        products.create.mockRejectedValue(prismaErr(code)());
+        await expect(service.confirmJob("j1")).rejects.toThrow(
+          /Every row failed with a database error/,
+        );
+        expect(prisma.migrationStagingRecord.update).not.toHaveBeenCalled();
+        expect(prisma.migrationJob.update).not.toHaveBeenCalled();
+      },
+    );
+
+    // Re-running a file already imported is idempotent: every row is a duplicate, nothing commits, the job confirms.
+    it("every row a P2002 duplicate and none committed still CONFIRMS with the duplicates skipped", async () => {
+      prisma.migrationJob.findUnique.mockResolvedValue({
+        id: "j1",
+        source: "ZOHO",
+        status: "STAGED",
+      });
+      prisma.migrationStagingRecord.findMany.mockResolvedValue([
+        rec("r1", { name: "Cola" }),
+        rec("r2", { name: "Chips" }),
+        rec("r3", { name: "Crisps" }),
+      ]);
+      products.create.mockRejectedValue(prismaErr("P2002")());
+      const res = await service.confirmJob("j1");
+      expect(res).toMatchObject({ committed: 0, skipped: 3 });
+      expect(prisma.migrationJob.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ status: "CONFIRMED" }) }),
+      );
+    });
+
+    it("duplicates beside rows that all fail P2020 and none committed throws; nothing is written", async () => {
+      prisma.migrationJob.findUnique.mockResolvedValue({
+        id: "j1",
+        source: "ZOHO",
+        status: "STAGED",
+      });
+      prisma.migrationStagingRecord.findMany.mockResolvedValue([
+        rec("r1", { name: "Cola" }),
+        rec("r2", { name: "Chips" }),
+        rec("r3", { name: "Crisps" }),
+      ]);
+      products.create
+        .mockRejectedValueOnce(prismaErr("P2002")())
+        .mockRejectedValueOnce(prismaErr("P2020")())
+        .mockRejectedValueOnce(prismaErr("P2020")());
+      await expect(service.confirmJob("j1")).rejects.toThrow(/Every row failed.*P2020/);
+      expect(prisma.migrationStagingRecord.update).not.toHaveBeenCalled();
+      expect(prisma.migrationJob.update).not.toHaveBeenCalled();
+    });
+
+    it("a duplicate beside a 4xx-refused row (not a database code) still CONFIRMS", async () => {
       prisma.migrationJob.findUnique.mockResolvedValue({
         id: "j1",
         source: "ZOHO",
@@ -142,15 +235,46 @@ describe("MigrationService, BT-9", () => {
         rec("r1", { name: "Cola" }),
         rec("r2", { name: "Chips" }),
       ]);
-      products.create.mockRejectedValueOnce(make()).mockResolvedValueOnce({ id: "p2" });
+      products.create
+        .mockRejectedValueOnce(prismaErr("P2002")())
+        .mockRejectedValueOnce(new ConflictException("name exists"));
       const res = await service.confirmJob("j1");
-      expect(res.skipped).toBe(1);
-      expect(res.committed).toBe(1);
-      const updates = prisma.migrationStagingRecord.update.mock.calls.map((c) => c[0]);
-      expect(updates.find((u) => u.where.id === "r1")?.data).toMatchObject({
-        status: "SKIPPED",
-        flags: ["commit-failed"],
+      expect(res).toMatchObject({ committed: 0, skipped: 2 });
+    });
+
+    it("a stage-time unsafe row beside all-Prisma-failing rows still counts as systemic (the unsafe row is skipped before the DB)", async () => {
+      prisma.migrationJob.findUnique.mockResolvedValue({
+        id: "j1",
+        source: "ZOHO",
+        status: "STAGED",
       });
+      prisma.migrationStagingRecord.findMany.mockResolvedValue([
+        rec("r1", { name: "=cmd" }),
+        rec("r2", { name: "Chips" }),
+      ]);
+      products.create.mockRejectedValue(prismaErr("P2020")());
+      await expect(service.confirmJob("j1")).rejects.toThrow(/Every row failed/);
+      expect(prisma.migrationJob.update).not.toHaveBeenCalled();
+    });
+
+    it("one committed row among Prisma failures still CONFIRMS and skips the failures", async () => {
+      prisma.migrationJob.findUnique.mockResolvedValue({
+        id: "j1",
+        source: "ZOHO",
+        status: "STAGED",
+      });
+      prisma.migrationStagingRecord.findMany.mockResolvedValue([
+        rec("r1", { name: "Cola" }),
+        rec("r2", { name: "Chips" }),
+        rec("r3", { name: "Crisps" }),
+      ]);
+      products.create
+        .mockRejectedValueOnce(prismaErr("P2020")())
+        .mockResolvedValueOnce({ id: "p2" })
+        .mockRejectedValueOnce(prismaErr("P2020")());
+      const res = await service.confirmJob("j1");
+      expect(res).toMatchObject({ committed: 1, skipped: 2 });
+      expect(prisma.migrationJob.update).toHaveBeenCalled();
     });
 
     it("a failing external-ref write after a live create still marks the row COMMITTED with its entity id", async () => {

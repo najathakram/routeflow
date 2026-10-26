@@ -113,4 +113,63 @@ describeDb("MigrationService BT-9, real Postgres", () => {
       );
     });
   }, 30_000);
+
+  // Re-running a file already imported is idempotent. Stage recognises the first run's external refs, so the second
+  // job has nothing to commit and still confirms; nothing is created twice and the job is never left STAGED.
+  it("a re-import of an already-imported file CONFIRMS and creates nothing twice", async () => {
+    await tenantCtx.run(tenantId, async () => {
+      const rows = [
+        {
+          entityType: "PRODUCT" as const,
+          externalId: "re1",
+          payload: { name: "Reimp A", sku: "RE-1" },
+        },
+        {
+          entityType: "PRODUCT" as const,
+          externalId: "re2",
+          payload: { name: "Reimp B", sku: "RE-2" },
+        },
+      ];
+      const first = await service.createJob({ source: "ZOHO" });
+      await service.stageRecords(first.id, rows);
+      expect((await service.confirmJob(first.id)).committed).toBe(2);
+
+      const second = await service.createJob({ source: "ZOHO" });
+      await service.stageRecords(second.id, rows);
+      const res = await service.confirmJob(second.id);
+      expect(res.committed).toBe(0);
+      const after = await prisma.migrationJob.findUnique({ where: { id: second.id } });
+      expect(after?.status).toBe("CONFIRMED");
+      expect(
+        await prisma.product.count({ where: { tenantId, sku: { in: ["RE-1", "RE-2"] } } }),
+      ).toBe(2);
+
+      await service.undoJob(first.id);
+    });
+  }, 30_000);
+
+  // The same products re-sent under new external ids (a fresh export) reach the database and hit the sku unique key:
+  // every row is a P2002 duplicate, nothing commits, and the job must still CONFIRM with the duplicates skipped.
+  it("an all-duplicate job (same skus, new external ids) CONFIRMS with 0 committed and every row skipped", async () => {
+    await tenantCtx.run(tenantId, async () => {
+      const first = await service.createJob({ source: "ZOHO" });
+      await service.stageRecords(first.id, [
+        { entityType: "PRODUCT", externalId: "dup-a1", payload: { name: "Dup A", sku: "DUP-1" } },
+        { entityType: "PRODUCT", externalId: "dup-a2", payload: { name: "Dup B", sku: "DUP-2" } },
+      ]);
+      expect((await service.confirmJob(first.id)).committed).toBe(2);
+
+      const second = await service.createJob({ source: "ZOHO" });
+      await service.stageRecords(second.id, [
+        { entityType: "PRODUCT", externalId: "dup-b1", payload: { name: "Dup A2", sku: "DUP-1" } },
+        { entityType: "PRODUCT", externalId: "dup-b2", payload: { name: "Dup B2", sku: "DUP-2" } },
+      ]);
+      const res = await service.confirmJob(second.id);
+      expect(res).toMatchObject({ committed: 0, skipped: 2 });
+      const after = await prisma.migrationJob.findUnique({ where: { id: second.id } });
+      expect(after?.status).toBe("CONFIRMED");
+
+      await service.undoJob(first.id);
+    });
+  }, 30_000);
 });
