@@ -77,6 +77,50 @@ line — so there is exactly one path to check no matter where it was launched.
 private by hand, read visibility back, then delete the marker.** The watchdog writes it only
 after every attempt failed, and clears it itself on the next confirmed flip.
 
+## Dead-man switch (second machine)
+
+The watchdog above lives on the machine that opens the window, so it dies with it: on 2026-10-25 a
+PC reboot killed it and the repo stayed public ~8 hours. `scripts/visibility-deadman.mjs` is the
+backstop that runs on a **different** machine (the Mac mini, under launchd) and knows nothing about
+windows. Every ~2 minutes it polls `gh repo view <repo> --json visibility`; once the repo has been
+continuously PUBLIC for more than `--max-public-minutes` (default 60: the watchdog's 45 minutes plus
+a deploy) it flips the repo private (`gh repo edit ... --visibility private
+--accept-visibility-change-consequences`), reads back until PRIVATE is confirmed, and logs an
+`incident` JSON line. Like the watchdog, a flip while a window is still legitimately open is the
+correct outcome; rerun the job once the window reopens. An unreadable poll (network/auth) is logged,
+keeps the state and exits 4: it never guesses the visibility.
+
+State and log are in `local-assets/` (`visibility-deadman.state.json`, `visibility-deadman.log`, one
+JSON line per event, a `heartbeat` for every poll). Exit codes: 0 ok, 1 flip not confirmed (flip by
+hand), 2 usage error, 4 `gh` could not answer.
+
+**Install on the Mac mini**
+
+1. `gh auth status` must show the **repo owner's** account with **admin rights** on
+   `najathakram/routeflow` (only an admin can change visibility). Log in as that user, in the same
+   macOS account that will run launchd.
+2. Check out the repo and `mkdir -p <repo>/local-assets` (gitignored; launchd will not create it).
+3. Copy the template and fill the three placeholders (`__NODE_BIN__` = `command -v node`,
+   `__REPO_DIR__` = the checkout, `__GH_DIR__` = `dirname "$(command -v gh)"`; launchd's PATH is
+   minimal, so without `__GH_DIR__` it cannot find `gh`):
+
+   ```bash
+   cp scripts/launchd/com.routeflow.visibility-deadman.plist ~/Library/LaunchAgents/
+   $EDITOR ~/Library/LaunchAgents/com.routeflow.visibility-deadman.plist
+   plutil -lint ~/Library/LaunchAgents/com.routeflow.visibility-deadman.plist
+   launchctl load ~/Library/LaunchAgents/com.routeflow.visibility-deadman.plist
+   ```
+
+4. Check it is alive: `node scripts/visibility-deadman.mjs --status` prints the state and the age
+   of the last heartbeat (no `gh` call, writes nothing). A heartbeat older than a few minutes means
+   launchd is not running it; read `local-assets/visibility-deadman.launchd.err.log`. Stop it with
+   `launchctl unload ~/Library/LaunchAgents/com.routeflow.visibility-deadman.plist`.
+
+Never probe it with a bare `--once` while the repo is public mid-window: it is a real poll. `node
+scripts/visibility-deadman.self-test.mjs` exercises every branch against a stub `gh` and never
+touches the real repo or `local-assets/`. `VISIBILITY_DEADMAN_GH_BIN` replaces the `gh` path and is
+**test-only**: it prints a WARNING and must never appear in the plist.
+
 ## The routine
 
 1. **Make the repo public:**

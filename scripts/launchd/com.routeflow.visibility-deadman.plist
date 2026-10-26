@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Template: launchd job for the visibility dead-man switch (scripts/visibility-deadman.mjs).
+  Runbook: docs/runbooks/deploy-visibility-flip.md, section "Dead-man switch (second machine)".
+
+  Do NOT load this file as-is. Copy it to ~/Library/LaunchAgents/ and replace every placeholder:
+    __NODE_BIN__  absolute path of node on that Mac        (`command -v node`, e.g. /opt/homebrew/bin/node)
+    __REPO_DIR__  absolute path of the routeflow checkout  (e.g. /Users/you/routeflow)
+    __GH_DIR__    directory holding `gh`                   (`dirname "$(command -v gh)"`, e.g. /opt/homebrew/bin)
+  launchd runs with a minimal PATH, so the script cannot find `gh` unless __GH_DIR__ is set below.
+  Create __REPO_DIR__/local-assets first (it is gitignored): launchd will not create the log
+  directory for StandardOutPath, and a missing one makes the job fail to start.
+-->
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>com.routeflow.visibility-deadman</string>
+
+    <key>ProgramArguments</key>
+    <array>
+      <string>__NODE_BIN__</string>
+      <string>__REPO_DIR__/scripts/visibility-deadman.mjs</string>
+      <string>--once</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__REPO_DIR__</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+      <key>PATH</key>
+      <string>__GH_DIR__:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <!-- one poll every 2 minutes; also runs once when loaded -->
+    <key>StartInterval</key>
+    <integer>120</integer>
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>__REPO_DIR__/local-assets/visibility-deadman.launchd.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>__REPO_DIR__/local-assets/visibility-deadman.launchd.err.log</string>
+  </dict>
+</plist>
