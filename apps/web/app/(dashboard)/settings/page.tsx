@@ -100,6 +100,11 @@ import { describeSaveError } from "@/lib/reason-copy";
 import { TAX_PERCENT_PRECISION_MESSAGE, taxPercentPrecisionError } from "@routeflow/pricing";
 import { isInShell } from "@/lib/in-shell";
 import { TimeZoneDatalist } from "@/components/TimeZoneInput";
+import {
+  BusinessIdentityFields,
+  splitProfileIdentity,
+  useSaveBusinessName,
+} from "./_components/BusinessIdentityFields";
 import { TIME_ZONE_REQUIRED_COPY, canonicalTimeZone, isValidTimeZone } from "@/lib/timezones";
 import { useInvalidFocus } from "@/lib/form-errors";
 import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
@@ -114,7 +119,7 @@ const RECEIPT_FOOTER_MAX_CHARS = 200;
 
 const profileShape = {
   businessName: z.string().min(1, "Required"),
-  email: z.string().email("Enter a valid email"),
+  email: z.string(), // read-only here (B1231): shown, never sent
   ownerName: z.string().min(1, "Required"),
   phone: z.string().min(7, "Enter a valid phone number"),
   customerEmail: z.string().email("Enter a valid email").or(z.literal("")),
@@ -129,9 +134,11 @@ const profileShape = {
   }),
 };
 /** The zone is validated only when the viewer can edit it, so a hidden field can never block a save. */
-const profileSchemaFor = (canEditTimeZone: boolean, savedTaxRate?: unknown) =>
+const profileSchemaFor = (canEditTimeZone: boolean, savedTaxRate?: unknown, canEditName = false) =>
   z.object({
     ...profileShape,
+    // B1231: only an admin edits the name, so a read-only (possibly empty) name never blocks a save.
+    businessName: canEditName ? profileShape.businessName : z.string(),
     // Review Q5: the 4-decimal cap holds a CHANGED rate only; the tenant's stored rate passes as it is.
     taxRate: profileShape.taxRate.refine(
       (v) => taxPercentPrecisionError(v, savedTaxRate) === null,
@@ -152,6 +159,7 @@ function BusinessProfileTab() {
   const { branding, refresh: refreshBranding } = useTenant();
   // Only a tenant admin may change the time zone; everyone else sees it read-only.
   const canEditTimeZone = useAuth().user?.role === "TENANT_ADMIN";
+  const saveBusinessName = useSaveBusinessName(); // B1231: the name saves via branding, not PATCH /settings
   const [logoPreview, setLogoPreview] = React.useState<string | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
@@ -162,8 +170,9 @@ function BusinessProfileTab() {
 
   const saveSettings = useMutation({
     // `timezone` rides along only when an admin actually changed it.
-    mutationFn: (data: Omit<ProfileFormValues, "timezone"> & { timezone?: string }) =>
-      apiClient.patch("/settings", data).then((r) => r.data),
+    mutationFn: (
+      data: Omit<ProfileFormValues, "timezone" | "businessName" | "email"> & { timezone?: string },
+    ) => apiClient.patch("/settings", data).then((r) => r.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["settings"] });
       toast({
@@ -234,7 +243,7 @@ function BusinessProfileTab() {
   // tax rate; a field the user edits, or clears, is still checked. With nothing edited, the whole form is checked.
   const dirtyRef = React.useRef<Record<string, unknown>>({});
   const profileResolver = React.useMemo<Resolver<ProfileFormValues>>(() => {
-    const schema = profileSchemaFor(canEditTimeZone, savedSettings?.taxRate);
+    const schema = profileSchemaFor(canEditTimeZone, savedSettings?.taxRate, canEditTimeZone);
     return async (values, context, options) => {
       const mask: Record<string, true> = {};
       for (const key of Object.keys(schema.shape)) if (dirtyRef.current[key]) mask[key] = true;
@@ -309,7 +318,11 @@ function BusinessProfileTab() {
     e.target.value = "";
   };
 
-  const onSubmit = async ({ timezone, ...rest }: ProfileFormValues) => {
+  const onSubmit = async ({ timezone, ...values }: ProfileFormValues) => {
+    const { businessName, fields: rest } = splitProfileIdentity(values);
+    // B1231: a changed name saves first; if it was not stored, stop here (no "Profile saved").
+    if (canEditTimeZone && dirtyFields.businessName && !(await saveBusinessName(businessName)))
+      return;
     const zone =
       canEditTimeZone && dirtyFields.timezone && timezone ? canonicalTimeZone(timezone) : null;
     // onError already told the user (fixed copy); the rejection must not also escape as an unhandled one.
@@ -323,16 +336,12 @@ function BusinessProfileTab() {
     <form onSubmit={handleSubmit(onSubmit, onInvalid)} noValidate className="space-y-6">
       <Card title="Business information">
         <div className="grid grid-cols-2 gap-4">
-          <Input
-            label="Business name"
-            register={register("businessName")}
-            error={errors.businessName?.message}
-          />
-          <Input
-            label="Account email"
-            type="email"
-            register={register("email")}
-            error={errors.email?.message}
+          <BusinessIdentityFields
+            canEditName={canEditTimeZone}
+            nameRegister={register("businessName")}
+            nameError={errors.businessName?.message}
+            savedName={savedSettings?.businessName ?? ""}
+            savedEmail={savedSettings?.email ?? ""}
           />
           <Input
             label="Owner / manager name"
