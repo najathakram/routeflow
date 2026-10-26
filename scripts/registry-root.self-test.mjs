@@ -152,6 +152,14 @@ if (mod) {
   const fx = mkdtempSync(join(tmpdir(), "registry-root-"));
   try {
     process.env.BUGS_ROOT = fx;
+    let emptyMsg = null;
+    try {
+      mod.registryRoot();
+    } catch (e) {
+      emptyMsg = String(e.message);
+    }
+    check("an existing EMPTY dir (no bugs.jsonl) is not a register", emptyMsg !== null, "no throw");
+    writeFileSync(join(fx, "bugs.jsonl"), "");
     check("BUGS_ROOT overrides the root", resolve(mod.registryRoot()) === resolve(fx));
     const missing = join(fx, "does-not-exist");
     process.env.BUGS_ROOT = missing;
@@ -232,6 +240,13 @@ try {
     list.err.includes(FIX),
     `stdout=${list.out.trim().slice(-80)} stderr=${list.err.trim().slice(0, 120)}`,
   );
+  const empty = join(tmp, "empty-dir");
+  mkdirSync(empty, { recursive: true });
+  const listEmpty = bugs(["list", "--open"], { env: { BUGS_ROOT: empty } });
+  check("list --open on an empty dir exits 2", listEmpty.code === 2, `exit ${listEmpty.code}`);
+  check("list --open on an empty dir prints no row count", !/\d+ row\(s\)/.test(listEmpty.out));
+  const chkEmpty = bugs(["sync", "--check"], { env: { BUGS_ROOT: empty } });
+  check("sync --check on an empty dir exits 2", chkEmpty.code === 2, `exit ${chkEmpty.code}`);
   check("list --open prints no row count", !/\d+ row\(s\)/.test(list.out), list.out.trim());
 
   const chk = bugs(["sync", "--check"], { env: { BUGS_ROOT: gone } });
@@ -242,6 +257,7 @@ try {
   // The anchor must never be written into a register directory.
   const regDir = join(tmp, "register");
   mkdirSync(regDir, { recursive: true });
+  writeFileSync(join(regDir, "bugs.jsonl"), "");
   const realAnchor = join(REPO_ROOT, ".campaign", "bugs-sync-state.json");
   const hadAnchor = existsSync(realAnchor);
   const savedAnchor = hadAnchor ? readFileSync(realAnchor) : null;
