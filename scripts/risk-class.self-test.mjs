@@ -181,7 +181,37 @@ ok(
     "turbo.json",
   ]),
 );
-ok("amber: a workspace package.json is not the root one", cls("apps/web/package.json") === "amber");
+// review round 3: scripts/lib, settings, package.json files, next.config, case-insensitive matching
+ok(
+  "red: apps/api/scripts/lib/** (guards and backfill write logic)",
+  allAre("red", [
+    "apps/api/scripts/lib/live-target-guard.cjs",
+    "apps/api/scripts/lib/local-db-target.cjs",
+    "apps/api/scripts/lib/legacy-tenant-backfill.mjs",
+  ]),
+);
+ok(
+  "red: .claude/settings*.json",
+  allAre("red", [".claude/settings.json", ".claude/settings.local.json"]),
+);
+ok(
+  "red: root and per-app package.json, next.config.*",
+  allAre("red", [
+    "package.json",
+    "apps/api/package.json",
+    "apps/web/package.json",
+    "apps/mobile/package.json",
+    "apps/web/next.config.mjs",
+    "apps/web/next.config.js",
+  ]),
+);
+ok("amber: packages/ui/package.json is not covered", cls("packages/ui/package.json") === "amber");
+ok(
+  "matching is case-insensitive (Windows paths)",
+  allAre("red", ["Apps/Api/Src/Invoices/a.ts", "PACKAGES/pricing/a.ts"]) &&
+    cls("Apps/Api/.ENV") === "black" &&
+    cls("apps/api/.ENV.EXAMPLE") !== "black",
+);
 ok(
   "red: the judge itself (rules, CLI, self-test, swarm skill, hooks)",
   allAre("red", [
@@ -472,6 +502,37 @@ try {
   ok("cli: a --repo that is not a repo exits 2", r.status === 2, r.stderr);
   r = run(["--repo"], tmpdir());
   ok("cli: --repo needs a value", r.status === 2);
+
+  // rules tightened on base AFTER the fork: the base TIP rules apply too (max of tip and merge-base)
+  git("checkout", "-q", "master");
+  git("checkout", "-q", "-b", "feat/old-fork");
+  git("checkout", "-q", "master");
+  const tight = readFileSync(RULES_FILE, "utf8").replace(
+    "export const RULES = [",
+    'export const RULES = [\n  { glob: "tools/newly-sensitive/**", cls: "black", why: "tightened after the fork" },',
+  );
+  writeFileSync(path.join(dir, "scripts/lib/risk-paths.mjs"), tight);
+  git("add", "-A");
+  git("commit", "-q", "-m", "tighten rules on master");
+  git("checkout", "-q", "feat/old-fork");
+  put("tools/newly-sensitive/x.mjs");
+  git("add", "-A");
+  git("commit", "-q", "-m", "touch a path master tightened after the fork");
+  r = run(["--repo", dir, "--base", "master", "--max", "amber", "--json"], tmpdir());
+  const tj = JSON.parse(r.stdout || "{}");
+  ok(
+    "git: rules tightened on the base tip after the fork still apply (black, exit 1)",
+    r.status === 1 &&
+      tj.cls === "black" &&
+      tj.files.some((f) => f.path === "tools/newly-sensitive/x.mjs" && f.cls === "black"),
+    r.stdout + r.stderr,
+  );
+  r = run(["--repo", dir, "--base", "master~1", "--json"], tmpdir());
+  ok(
+    "git: control, the pre-tightening base ref rates that path amber",
+    r.status === 0 && JSON.parse(r.stdout).cls === "amber",
+    r.stdout + r.stderr,
+  );
 } finally {
   rmSync(dir, { recursive: true, force: true });
 }

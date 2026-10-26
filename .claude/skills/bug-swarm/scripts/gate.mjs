@@ -34,6 +34,14 @@ const JEST_EXT = new Set([".ts", ".tsx", ".js", ".jsx"]);
 // Repo root of the checkout this gate.mjs lives in (.claude/skills/bug-swarm/scripts -> four levels up).
 const JUDGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../..");
 
+/** Error text when the gate would judge its own checkout (someone ran the branch copy), else null. */
+export function judgeRootError(root, judgeRoot = JUDGE_ROOT) {
+  const norm = (p) => path.resolve(p).toLowerCase();
+  return norm(root) === norm(judgeRoot)
+    ? `gate: judge root ${judgeRoot} is the worktree being judged; run gate.mjs from the lead's checkout, not the branch copy`
+    : null;
+}
+
 export const STEP_TIMEOUT_MS = 15 * 60_000;
 export const DB_LANE_TIMEOUT_MS = 30 * 60_000;
 
@@ -477,6 +485,11 @@ export async function main(argv = process.argv.slice(2)) {
   });
   const root = git(["rev-parse", "--show-toplevel"]).trim();
   const head = git(["rev-parse", "HEAD"]).trim();
+  const selfJudged = dryRun ? null : judgeRootError(root);
+  if (selfJudged) {
+    console.error(selfJudged);
+    return 2;
+  }
   if (jsonOut && !dryRun && process.env.RF_HEAVY_SLOT_HELD !== "1") beginJson(jsonOut, head);
   const { base, files } = changedSince(git);
   const touchedFiles = touchedSince(git, base);

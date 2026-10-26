@@ -164,6 +164,14 @@ export const RULES = [
   },
   { glob: ".claude/skills/bug-swarm/**", cls: "red", why: "swarm gate and workflow" },
   { glob: ".claude/hooks/**", cls: "red", why: "session hooks" },
+  { glob: ".claude/settings*.json", cls: "red", why: "registers hooks and permissions" },
+  {
+    glob: "apps/api/scripts/lib/**",
+    cls: "red",
+    why: "target guards and write logic shared by the destructive scripts",
+  },
+  { glob: "apps/*/package.json", cls: "red", why: "runs build and postinstall scripts on Railway" },
+  { glob: "apps/web/next.config.*", cls: "red", why: "web build config" },
   { glob: "scripts/lib/test-tenants.*", cls: "red", why: "test-tenant write guard" },
 
   // green: no runtime effect.
@@ -180,7 +188,7 @@ export const RULES = [
   { glob: "scripts/**", cls: "amber", why: "repo script", fallback: true },
 ];
 
-/** Translate a glob (`**`, `*`, `?`, `{a,b}`) over posix paths into an anchored RegExp. */
+/** Translate a glob (`**`, `*`, `?`, `{a,b}`) over posix paths into an anchored, case-insensitive RegExp. */
 export function globToRegExp(glob) {
   let re = "";
   let depth = 0;
@@ -204,7 +212,7 @@ export function globToRegExp(glob) {
     } else if (c === "," && depth > 0) re += "|";
     else re += c.replace(/[.+^$()|[\]\\]/g, "\\$&");
   }
-  return new RegExp(`^${re}$`);
+  return new RegExp(`^${re}$`, "i"); // Windows paths are case-insensitive
 }
 
 const cache = new Map();

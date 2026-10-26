@@ -11,8 +11,9 @@
 //
 // Trust: the judge must not run code the diff can edit. The gate therefore runs THIS file from its own
 // (lead's) checkout and points --repo at the builder worktree; nothing is imported from the target repo.
-// With git, the RULES also come from the base ref (git show <merge-base>:scripts/lib/risk-paths.mjs), so a
-// diff cannot weaken the rules either. Only when the base has no rules file at all (first introduction)
+// With git, the RULES also come from the base ref, never the branch: scripts/lib/risk-paths.mjs at BOTH the
+// merge-base and the tip of --base, each file taking the higher class (a branch forked before a tightening
+// is still held to it), so a diff cannot weaken the rules either. Only when the base has no rules file at all (first introduction)
 // do this checkout's own rules apply; any git, tmpdir or import failure exits 2 instead. --files uses this
 // checkout's rules.
 // Exit: 0 ok, 1 above --max, 2 bad usage or failure. Rules: scripts/lib/risk-paths.mjs.
@@ -85,6 +86,16 @@ export async function loadBaseLib(git, base) {
   }
 }
 
+/** classifyDiff over several rule sets: each file takes the highest class any set gives it. */
+export function classifyMax(libs, files) {
+  const results = libs.map((l) => l.classifyDiff(files));
+  const merged = results[0].files.map((f, i) =>
+    results.reduce((best, r) => (ownLib.exceeds(r.files[i].cls, best.cls) ? r.files[i] : best), f),
+  );
+  const cls = merged.reduce((m, f) => (ownLib.exceeds(f.cls, m) ? f.cls : m), "green");
+  return { cls, files: merged };
+}
+
 const gitIn = (repo) => (args) =>
   execFileSync("git", repo ? ["-C", repo, ...args] : args, {
     encoding: "utf8",
@@ -102,24 +113,29 @@ export async function main(argv = process.argv.slice(2), { git, log = console } 
   }
   git ??= gitIn(o.repo ? path.resolve(o.repo) : null);
   let files = o.files;
-  let lib = ownLib;
+  let libs = [ownLib];
   let rulesFrom = "judge checkout";
   try {
     if (!files) {
-      const d = diffSince(git, o.base ?? "origin/master");
+      const ref = o.base ?? "origin/master";
+      const d = diffSince(git, ref);
       files = d.files;
-      const baseLib = await loadBaseLib(git, d.base);
-      if (baseLib) {
-        lib = baseLib;
-        rulesFrom = `base ${d.base.slice(0, 9)}`;
+      // A branch forked before a rules tightening keeps the old rules at its merge-base, so judge with
+      // the rules at BOTH the merge-base and the base ref's tip; each file takes the higher class.
+      const baseLibs = [await loadBaseLib(git, d.base), await loadBaseLib(git, ref)].filter(
+        Boolean,
+      );
+      if (baseLibs.length) {
+        libs = baseLibs;
+        rulesFrom = `base ${d.base.slice(0, 9)} + tip of ${ref}`;
       } else rulesFrom = "judge checkout (base has no rules file)";
     }
   } catch (e) {
     log.error(`risk-class: cannot judge the diff: ${String(e.stderr || e.message).trim()}`);
     return 2;
   }
-  const { exceeds } = lib;
-  const r = lib.classifyDiff(files);
+  const { exceeds } = ownLib;
+  const r = classifyMax(libs, files);
   const over = o.max && exceeds(r.cls, o.max);
   if (o.json)
     log.log(

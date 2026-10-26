@@ -18,6 +18,7 @@ import {
   execStep,
   finishJson,
   planGate,
+  judgeRootError,
   runGate,
   STEP_TIMEOUT_MS,
   DB_LANE_TIMEOUT_MS,
@@ -286,6 +287,23 @@ test("risk-class step: argv is fixed, and a red or black path in the merge-base 
   const sab = run();
   assert.equal(sab.status, 1);
   assert.match(sab.stderr, /red scripts\/risk-class\.mjs/);
+});
+
+test("judgeRootError refuses a gate whose own checkout is the judged worktree", () => {
+  const judgeRoot = path.resolve(here, "../../../..");
+  assert.match(judgeRootError(judgeRoot), /judge/i);
+  assert.match(judgeRootError(judgeRoot + path.sep), /judge/i);
+  assert.equal(judgeRootError(path.join(tmpdir(), "some-other-worktree")), null);
+});
+
+test("CLI refuses (exit 2) when run from the checkout it would judge", () => {
+  const r = spawnSync(process.execPath, [path.join(here, "gate.mjs"), "--needs-db"], {
+    encoding: "utf8",
+    cwd: here,
+    env: scrubbedGitEnv(),
+  });
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /judge/i);
 });
 
 test("beginJson deletes a stale file and writes a running marker; finishJson writes head and base", () => {
