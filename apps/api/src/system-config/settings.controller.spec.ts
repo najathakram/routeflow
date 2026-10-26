@@ -335,3 +335,51 @@ describe("SettingsController — PATCH /settings refuses invoicePrefix / payment
     expect(prisma.tenantConfig.upsert).toHaveBeenCalled();
   });
 });
+
+// B1231: the Business Profile form used to PATCH businessName / email here, where neither is stored —
+// "Profile saved" with nothing changed. They now 400 with a pointer to the real store
+// (PUT /tenants/me/config/branding for the name) and NOTHING in the same body is written.
+describe("SettingsController — PATCH /settings refuses businessName / email (B1231)", () => {
+  let controller: SettingsController;
+  let svc: { get: jest.Mock; set: jest.Mock; getAll: jest.Mock };
+  let prisma: ReturnType<typeof createMockPrisma>;
+
+  beforeEach(async () => {
+    prisma = createMockPrisma();
+    prisma.tenantConfig.upsert = jest.fn().mockResolvedValue({});
+    svc = {
+      get: jest.fn().mockResolvedValue(null),
+      set: jest.fn().mockResolvedValue(undefined),
+      getAll: jest.fn().mockResolvedValue({}),
+    };
+    const module: TestingModule = await Test.createTestingModule({
+      controllers: [SettingsController],
+      providers: [
+        { provide: SystemConfigService, useValue: svc },
+        { provide: ConfigService, useValue: { get: jest.fn() } },
+        { provide: PrismaService, useValue: prisma },
+        { provide: EmailService, useValue: { send: jest.fn().mockResolvedValue(undefined) } },
+        quickKeysSettingsStubProvider,
+      ],
+    }).compile();
+    controller = module.get<SettingsController>(SettingsController);
+  });
+
+  it.each([
+    ["businessName", "Acme Wholesale", /branding/i],
+    ["email", "ops@acme.test", /account email|not editable|sign-in/i],
+  ])("400s %s with a message naming where it lives", async (key, value, message) => {
+    await expect(controller.updateSettings({ [key]: value })).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    await expect(controller.updateSettings({ [key]: value })).rejects.toThrow(message);
+  });
+
+  it("writes nothing from the same body when a refused key is present", async () => {
+    await expect(
+      controller.updateSettings({ taxRate: 8, invoiceNotes: "hi", businessName: "Acme Wholesale" }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(svc.set).not.toHaveBeenCalled();
+    expect(prisma.tenantConfig.upsert).not.toHaveBeenCalled();
+  });
+});
