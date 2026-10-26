@@ -176,8 +176,8 @@ describe("staffMay call inventory: every call passes deniedGroups (W-870)", () =
 describe("InvoicesService.voidInvoice takes its principal as a required parameter (W-870)", () => {
   it("the declaration has no optional user: an omitted principal cannot skip the VOID_SALE door", () => {
     const src = fs.readFileSync(path.join(SRC, "invoices/invoices.service.ts"), "utf8");
-    expect(src).toMatch(/async voidInvoice(id: string, user: TillUser)/);
-    expect(src).not.toMatch(/async voidInvoice([^)]*user?/);
+    expect(src).toMatch(/async voidInvoice\(id: string, user: TillUser\)/);
+    expect(src).not.toMatch(/async voidInvoice\([^)]*user\?/);
   });
 });
 
