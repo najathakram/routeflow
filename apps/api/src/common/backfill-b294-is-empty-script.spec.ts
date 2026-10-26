@@ -17,10 +17,13 @@ describe("backfill-b294 selects by emptiness, never by date", () => {
   let out: any;
   beforeAll(() => {
     const code = `
-      import { classifyInvoice } from "${HREF}";
+      import { classifyInvoice, assertStampedCount } from "${HREF}";
       const lines = ${JSON.stringify(zero)};
       const at = (createdAt, taxAmount = 7.5, subtotal = 100) => classifyInvoice({ subtotal, taxAmount, createdAt }, lines);
+      const stampedCheck = (n, m) => { try { assertStampedCount(n, m, "inv-1"); return "ok"; } catch (e) { return e.refuse ? e.message : "crash"; } };
       console.log(JSON.stringify({
+        stampedEqual: stampedCheck(2, 2),
+        stampedShort: stampedCheck(0, 1),
         old: at("2026-09-01T00:00:00Z"),
         afterFix: at("2026-10-01T00:00:00Z"),
         future: at("2030-01-01T00:00:00Z"),
@@ -71,6 +74,11 @@ describe("backfill-b294 selects by emptiness, never by date", () => {
     expect(lines).toMatch(/"lineCreatedAt"/);
     const update = /`UPDATE "InvoiceItem"[\s\S]*?`/.exec(src)?.[0] ?? "";
     expect(update).toMatch(/"tenantId" = \$/);
+  });
+
+  it("the apply aborts (a refusal, exit 1) when the UPDATE stamps a different number of lines than planned", () => {
+    expect(out.stampedEqual).toBe("ok");
+    expect(out.stampedShort).toBe("invoice inv-1: updated 0 line(s) but planned 1");
   });
 
   it("an unverifiable rate after the fix is REVIEW for the proof, not counted as post-fix", () => {

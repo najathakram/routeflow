@@ -18,7 +18,7 @@ import path from "path";
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
-import { describeDb, requireLocalDatabaseUrl } from "./testing/db-spec";
+import { describeDb, relaxTenantIdGuards, requireLocalDatabaseUrl } from "./testing/db-spec";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -56,6 +56,8 @@ describeDb("backfill-b294-order-line-taxrate.mjs, real Postgres", () => {
       taxAmount?: number;
       subtotal?: number;
       lineCreatedAt?: Date;
+      orderItemCreatedAt?: Date;
+      nullLineTenant?: boolean;
     } = {},
   ) => {
     const taxAmount = over.taxAmount ?? 7.5;
@@ -72,10 +74,22 @@ describeDb("backfill-b294-order-line-taxrate.mjs, real Postgres", () => {
         ...(over.createdAt ? { createdAt: over.createdAt } : {}),
       } as any,
     });
+    const orderItem = over.orderItemCreatedAt
+      ? await prisma.orderItem.create({
+          data: {
+            orderId,
+            tenantId,
+            qty: 1,
+            unitPrice: 100,
+            createdAt: over.orderItemCreatedAt,
+          } as any,
+        })
+      : null;
     const line = await prisma.invoiceItem.create({
       data: {
         invoiceId: invoice.id,
-        tenantId,
+        tenantId: over.nullLineTenant ? null : tenantId,
+        ...(orderItem ? { orderItemId: orderItem.id } : {}),
         description: "Cola",
         qty: 1,
         unitPrice: 100,
@@ -159,6 +173,7 @@ describeDb("backfill-b294-order-line-taxrate.mjs, real Postgres", () => {
       .deleteMany({ where: { invoiceId: { in: Object.values(inv) } } })
       .catch(swallow);
     await prisma.invoice.deleteMany({ where: { tenantId } }).catch(swallow);
+    await prisma.orderItem.deleteMany({ where: { orderId } }).catch(swallow);
     await prisma.order.deleteMany({ where: { tenantId } }).catch(swallow);
     await prisma.customer.deleteMany({ where: { tenantId } }).catch(swallow);
     await prisma.user.deleteMany({ where: { tenantId } }).catch(swallow);
@@ -265,6 +280,80 @@ describeDb("backfill-b294-order-line-taxrate.mjs, real Postgres", () => {
     expect(res.status).toBe(1);
     expect(res.stderr).toMatch(/changed since the dry run/);
     expect(await rateOf("changing")).toBe(0);
+  }, 90_000);
+
+  it("SA-960 review: an OLD order item with a NEW invoice line is held post-fix (the LATER of the two dates), never planned", async () => {
+    await makeInvoice("oldorderitem", {
+      createdAt: new Date("2026-09-01T00:00:00Z"),
+      orderItemCreatedAt: new Date("2026-09-01T00:00:00Z"),
+      lineCreatedAt: new Date("2026-10-01T00:00:00Z"),
+    });
+    const { mine, review } = dryRun();
+    expect(mine.map((a) => a.invoiceId)).not.toContain(inv.oldorderitem);
+    expect(review.find((r) => r.invoiceId === inv.oldorderitem)?.reason).toBe("post-fix");
+  }, 90_000);
+
+  const applyPlan = (file: string, hash: string) => {
+    const head = execSync("git rev-parse HEAD", { cwd: REPO_ROOT, encoding: "utf8" }).trim();
+    return spawnSync(
+      "node",
+      [
+        CLI,
+        "--apply",
+        "--plan",
+        file,
+        "--confirm-plan",
+        hash,
+        "--guard-sha",
+        head,
+        "--i-have-a-fresh-backup",
+        "--local",
+      ],
+      { cwd: API_DIR, encoding: "utf8", env: cliEnv(dbUrl) },
+    );
+  };
+
+  it("a legacy line with a NULL tenantId IS stamped (the tenant is scoped through the parent invoice)", async () => {
+    const restore = await relaxTenantIdGuards(pool, ["InvoiceItem"]);
+    try {
+      await makeInvoice("nulltenant", {
+        createdAt: new Date("2026-09-01T00:00:00Z"),
+        nullLineTenant: true,
+      });
+      const { file, hash, mine } = dryRun();
+      expect(mine.map((a) => a.invoiceId)).toContain(inv.nulltenant);
+      const res = applyPlan(file, hash);
+      expect(res.status).toBe(0);
+      expect(await rateOf("nulltenant")).toBe(0.075);
+    } finally {
+      await prisma.invoiceItem
+        .deleteMany({ where: { invoiceId: inv.nulltenant } })
+        .catch(() => undefined);
+      await restore();
+    }
+  }, 90_000);
+
+  it("a rowCount that differs from the planned lines aborts the whole apply and writes nothing", async () => {
+    await makeInvoice("tripwire", { createdAt: new Date("2026-09-01T00:00:00Z") });
+    await makeInvoice("tripmate", { createdAt: new Date("2026-09-01T00:00:00Z") });
+    const { file, hash, mine } = dryRun();
+    expect(mine.map((a) => a.invoiceId).sort()).toEqual([inv.tripmate, inv.tripwire].sort());
+    // a trigger that silently skips the tripwire line's UPDATE, so the UPDATE reports fewer rows than were planned
+    await pool.query(`CREATE OR REPLACE FUNCTION b294_trip() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN IF OLD.id = '${item.tripwire}' THEN RETURN NULL; END IF; RETURN NEW; END $$`);
+    await pool.query(
+      `CREATE TRIGGER b294_trip BEFORE UPDATE ON "InvoiceItem" FOR EACH ROW EXECUTE FUNCTION b294_trip()`,
+    );
+    try {
+      const res = applyPlan(file, hash);
+      expect(res.status).toBe(1);
+      expect(res.stderr).toMatch(/updated 0 line\(s\) but planned 1/);
+      expect(await rateOf("tripwire")).toBe(0);
+      expect(await rateOf("tripmate")).toBe(0); // rolled back with it
+    } finally {
+      await pool.query(`DROP TRIGGER IF EXISTS b294_trip ON "InvoiceItem"`);
+      await pool.query(`DROP FUNCTION IF EXISTS b294_trip()`);
+    }
   }, 90_000);
 
   it("the creation-source label tells an estimate conversion, a missing Order and an order's own source apart", async () => {

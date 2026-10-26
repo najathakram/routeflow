@@ -72,6 +72,13 @@ import { redactUrl, resolveDatabaseUrl } from "./lib/railway-db-url.mjs";
 
 const TAG = "backfill-b294";
 /** Not a selector of invoices: a verified all-zero invoice created on/after this is held as REVIEW `post-fix` (SA-960). */
+/** Pure: the UPDATE must stamp exactly the planned lines; anything else aborts the apply (exit 1, nothing committed). */
+export function assertStampedCount(rowCount, planned, invoiceId) {
+  if (rowCount !== planned) {
+    throw refuse(`invoice ${invoiceId}: updated ${rowCount} line(s) but planned ${planned}`);
+  }
+}
+
 const FIX_DATE = new Date("2026-09-13T00:00:00Z");
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const SELF = resolve(
@@ -273,7 +280,7 @@ const DERIVED_INVOICES_SQL = `
   ORDER BY i.id`;
 const LINES_SQL = `
   SELECT ii.id, ii."invoiceId", ii."taxRate", ii."categoryTaxAmount", ii.subtotal, ii."systemKind", ii.description,
-         COALESCE(oi."createdAt", ii."createdAt") AS "lineCreatedAt"
+         GREATEST(oi."createdAt", ii."createdAt") AS "lineCreatedAt"
   FROM "InvoiceItem" ii
   LEFT JOIN "OrderItem" oi ON oi.id = ii."orderItemId"
   WHERE ii."invoiceId" = ANY($1::text[]) ORDER BY ii.id`;
@@ -539,8 +546,11 @@ async function apply() {
       ).rows[0];
       const lines = (
         await client.query(
-          'SELECT id, "taxRate" FROM "InvoiceItem" WHERE "invoiceId" = $1 ORDER BY id',
-          [a.invoiceId],
+          // The tenant is scoped through the PARENT invoice, never the nullable InvoiceItem.tenantId (legacy lines).
+          `SELECT ii.id, ii."taxRate", ii."systemKind", ii.description FROM "InvoiceItem" ii
+             JOIN "Invoice" i ON i.id = ii."invoiceId"
+            WHERE ii."invoiceId" = $1 AND i."tenantId" = $2 ORDER BY ii.id`,
+          [a.invoiceId, a.tenantId],
         )
       ).rows;
       const changed =
@@ -559,7 +569,8 @@ async function apply() {
       const notNsf = notNsfSql(3);
       const tenantParam = `$${3 + notNsf.params.length}`;
       const res = await client.query(
-        `UPDATE "InvoiceItem" SET "taxRate" = $1 WHERE "invoiceId" = $2 AND "taxRate" = 0 AND ${notNsf.sql} AND "tenantId" = ${tenantParam}`,
+        `UPDATE "InvoiceItem" SET "taxRate" = $1 WHERE "invoiceId" = $2 AND "taxRate" = 0 AND ${notNsf.sql}
+           AND "invoiceId" IN (SELECT id FROM "Invoice" WHERE id = $2 AND "tenantId" = ${tenantParam})`,
         // SA-816: a non-finite rate must never reach the bind (node-pg sends NaN as 'NaN'; NUMERIC accepts it).
         [
           assertFiniteMoney(a.rate, `invoice ${a.invoiceId} taxRate`),
@@ -568,6 +579,9 @@ async function apply() {
           a.tenantId,
         ],
       );
+      // Fail closed: every planned (non-NSF, zero-rate) line must be stamped, or the whole apply rolls back.
+      const planned = lines.filter((l) => !isNsfLine(l)).length;
+      assertStampedCount(res.rowCount, planned, a.invoiceId);
       stamped += res.rowCount;
     }
     await client.query("COMMIT");
