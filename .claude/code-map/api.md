@@ -60,6 +60,7 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
 | [api/landing-2026-10-24-w5a.md](api/landing-2026-10-24-w5a.md) | Landing 2026-10-24 window 5 part 1: SA-841 merge fold, payment-ref dedupe, counter-till credit, invoice email-again, accrual dashboard, billing admin lock |
 | [api/landing-2026-10-24-w5b.md](api/landing-2026-10-24-w5b.md) | Landing 2026-10-24 window 5 part 2: stock-date gate, one row-lock order, discount-safe re-totals, ledger guards, complete at counter, restriction override |
 | [api/landing-2026-10-25-w6.md](api/landing-2026-10-25-w6.md) | Landing 2026-10-25 window 6: refs proved in tenant (681 A), confirmed-basis payments (W-769), owned Stripe products (W-810), DB-lane argv |
+| [api/landing-2026-10-25-train2.md](api/landing-2026-10-25-train2.md) | Landing 2026-10-25 train 2: neutral coded 409 `PRODUCT_CHANGED_CONCURRENTLY` for product write races (row 519) |
 | [api/landing-2026-10-22-w4.md](api/landing-2026-10-22-w4.md) | Landing 2026-10-22 window 4: regulated ledger settle/undo locks (SA-839), stored-line merge, import Family columns, payment Idempotency-Key, counter return split |
 | [api/b1234-delivered-line-lock.md](api/b1234-delivered-line-lock.md) | B1234: delivered lines locked on a PARTIALLY_DELIVERED order (409 LINE_ALREADY_DELIVERED, binding check under the lock) |
 | [api/b299-unvoid-billing-claim.md](api/b299-unvoid-billing-claim.md) | B299: unvoid re-claims invoicedQty only if the qty is free (409 ORDER_BILLING_CHANGED, no clamp on +1; void keeps its clamp) |

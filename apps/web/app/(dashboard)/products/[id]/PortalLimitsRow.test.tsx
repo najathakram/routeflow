@@ -63,7 +63,7 @@ describe("PortalLimitsRow (C f)", () => {
     expect(mockGet).toHaveBeenCalledWith("/selling-restrictions", { params: { productId: "p1" } });
   });
 
-  it("a legal ban (surface ALL) reads `Banned in TX` / `Banned everywhere`, never portal-only wording", async () => {
+  it("a rule that reaches staff (surface ALL) reads `Restricted in TX` / `Restricted everywhere`, never portal-only wording", async () => {
     mockGet.mockResolvedValue({
       data: {
         items: [
@@ -74,8 +74,8 @@ describe("PortalLimitsRow (C f)", () => {
       },
     });
     renderWithProviders(<PortalLimitsRow productId="p1" />);
-    expect(await screen.findByText("Banned in TX")).toBeInTheDocument();
-    expect(screen.getByText("Banned everywhere")).toBeInTheDocument();
+    expect(await screen.findByText("Restricted in TX")).toBeInTheDocument();
+    expect(screen.getByText("Restricted everywhere")).toBeInTheDocument();
     expect(screen.queryByText(/Not offered|Hidden from all portal/)).toBeNull();
   });
 
