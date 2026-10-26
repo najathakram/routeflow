@@ -1,41 +1,47 @@
 #!/usr/bin/env node
 // Prints the risk class (green < amber < red < black) of a diff, from the paths it touches.
 //
-//   node scripts/risk-class.mjs [--base <ref>] [--files <a> <b> ...] [--json] [--max <class>]
+//   node scripts/risk-class.mjs [--repo <dir>] [--base <ref>] [--files <a> <b> ...] [--json] [--max <class>]
 //
+// --repo   the repository to diff (default: the current directory). Every git call is `git -C <repo>`.
 // --base   diff the merge-base of <ref> and HEAD to HEAD (default <ref> = origin/master); both paths
-//          of a rename or copy, and deleted files, count.
+//          of a rename or copy, deleted files and type changes count.
 // --files  classify these paths instead of reading git.
 // --max    exit 1 when the class is above <class> (offending paths and rules go to stderr).
-// With git (--base or the default) the RULES come from the base ref (git show <merge-base>:
-// scripts/lib/risk-paths.mjs), never the branch, so a diff cannot weaken its own judge; only when the base
-// has no rules file yet (first introduction) does the working-tree copy apply. --files uses the working tree.
-// Exit: 0 ok, 1 above --max, 2 bad usage or git failure. Rules: scripts/lib/risk-paths.mjs.
+//
+// Trust: the judge must not run code the diff can edit. The gate therefore runs THIS file from its own
+// (lead's) checkout and points --repo at the builder worktree; nothing is imported from the target repo.
+// With git, the RULES also come from the base ref (git show <merge-base>:scripts/lib/risk-paths.mjs), so a
+// diff cannot weaken the rules either. Only when the base has no rules file at all (first introduction)
+// do this checkout's own rules apply; any git, tmpdir or import failure exits 2 instead. --files uses this
+// checkout's rules.
+// Exit: 0 ok, 1 above --max, 2 bad usage or failure. Rules: scripts/lib/risk-paths.mjs.
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
-import * as workingLib from "./lib/risk-paths.mjs";
+import * as ownLib from "./lib/risk-paths.mjs";
 import { scrubbedGitEnv } from "./lib/check-git-hooks.mjs";
 
-const { CLASSES } = workingLib;
+const { CLASSES } = ownLib;
 const RULES_AT = "scripts/lib/risk-paths.mjs";
 const GIT_TIMEOUT_MS = 15000; // pre-push runs this: it must never hang
 
 const USAGE =
-  "usage: risk-class.mjs [--base <ref> | --files <path>...] [--json] [--max green|amber|red|black]";
+  "usage: risk-class.mjs [--repo <dir>] [--base <ref> | --files <path>...] [--json] [--max green|amber|red|black]";
 
 /** Strict parse; returns { error } for any unknown flag or missing value. */
 export function parseArgs(argv) {
-  const o = { base: null, files: null, json: false, max: null };
+  const o = { repo: null, base: null, files: null, json: false, max: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--json") o.json = true;
-    else if (a === "--base" || a === "--max") {
+    else if (a === "--base" || a === "--max" || a === "--repo") {
       const v = argv[++i];
       if (!v || v.startsWith("--")) return { error: `${a} needs a value` };
       if (a === "--base") o.base = v;
+      else if (a === "--repo") o.repo = v;
       else if (!CLASSES.includes(v)) return { error: `--max must be one of ${CLASSES.join(", ")}` };
       else o.max = v;
     } else if (a === "--files") {
@@ -45,13 +51,14 @@ export function parseArgs(argv) {
     } else return { error: `unknown argument ${a}` };
   }
   if (o.base && o.files) return { error: "--base and --files are mutually exclusive" };
+  if (o.repo && o.files) return { error: "--repo and --files are mutually exclusive" };
   return o;
 }
 
-/** { base, files }: every path touched in <merge-base>..HEAD (add, copy, modify, delete, BOTH paths of a rename). */
+/** { base, files }: every path touched in <merge-base>..HEAD (add, copy, modify, delete, type change, BOTH paths of a rename). */
 export function diffSince(git, ref = "origin/master") {
   const base = git(["merge-base", ref, "HEAD"]).trim();
-  const out = git(["diff", "--name-status", "-z", "--diff-filter=ACMRD", "-M", `${base}..HEAD`]);
+  const out = git(["diff", "--name-status", "-z", "--diff-filter=ACMRDT", "-M", `${base}..HEAD`]);
   const parts = out.split("\0").filter(Boolean);
   const files = [];
   for (let i = 0; i < parts.length;) {
@@ -61,24 +68,25 @@ export function diffSince(git, ref = "origin/master") {
   return { base, files: [...new Set(files)] };
 }
 
-/** The classifier module as it stands at `base`, or null when the base has none (or it will not load). */
+/**
+ * The classifier module as it stands at `base`, or null ONLY when the base has no rules file. A git
+ * failure, a tmpdir failure or a base file that will not import throws (the caller exits 2).
+ */
 export async function loadBaseLib(git, base) {
-  let dir;
+  if (!git(["ls-tree", "--name-only", base, "--", RULES_AT]).trim()) return null;
+  const src = git(["show", `${base}:${RULES_AT}`]);
+  const dir = mkdtempSync(path.join(tmpdir(), "risk-rules-"));
   try {
-    const src = git(["show", `${base}:${RULES_AT}`]);
-    dir = mkdtempSync(path.join(tmpdir(), "risk-rules-"));
     const file = path.join(dir, "risk-paths.mjs");
     writeFileSync(file, src);
     return await import(pathToFileURL(file).href);
-  } catch {
-    return null;
   } finally {
-    if (dir) rmSync(dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
   }
 }
 
-const gitDefault = (args) =>
-  execFileSync("git", args, {
+const gitIn = (repo) => (args) =>
+  execFileSync("git", repo ? ["-C", repo, ...args] : args, {
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,
     env: scrubbedGitEnv(),
@@ -86,15 +94,16 @@ const gitDefault = (args) =>
     timeout: GIT_TIMEOUT_MS,
   });
 
-export async function main(argv = process.argv.slice(2), { git = gitDefault, log = console } = {}) {
+export async function main(argv = process.argv.slice(2), { git, log = console } = {}) {
   const o = parseArgs(argv);
   if (o.error) {
     log.error(`risk-class: ${o.error}\n${USAGE}`);
     return 2;
   }
+  git ??= gitIn(o.repo ? path.resolve(o.repo) : null);
   let files = o.files;
-  let lib = workingLib;
-  let rulesFrom = "working tree";
+  let lib = ownLib;
+  let rulesFrom = "judge checkout";
   try {
     if (!files) {
       const d = diffSince(git, o.base ?? "origin/master");
@@ -103,10 +112,10 @@ export async function main(argv = process.argv.slice(2), { git = gitDefault, log
       if (baseLib) {
         lib = baseLib;
         rulesFrom = `base ${d.base.slice(0, 9)}`;
-      } else rulesFrom = "working tree (base has no rules file)";
+      } else rulesFrom = "judge checkout (base has no rules file)";
     }
   } catch (e) {
-    log.error(`risk-class: cannot read the diff: ${String(e.stderr || e.message).trim()}`);
+    log.error(`risk-class: cannot judge the diff: ${String(e.stderr || e.message).trim()}`);
     return 2;
   }
   const { exceeds } = lib;

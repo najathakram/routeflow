@@ -227,14 +227,20 @@ test("avoid-files step fails when the merge-base diff touches an avoided file", 
 
 test("risk-class step: argv is fixed, and a red or black path in the merge-base diff fails it, naming path and rule", () => {
   const steps = planGate({ changedFiles: ["a.ts"], ...opts });
-  assert.deepEqual(step(steps, "risk-class").cmd, [
+  // The judge runs from the gate's own checkout (never the judged worktree): absolute script, --repo root.
+  const judgeRoot = path.resolve(here, "../../../..");
+  const rc = step(steps, "risk-class");
+  assert.deepEqual(rc.cmd, [
     "node",
-    "scripts/risk-class.mjs",
+    path.join(judgeRoot, "scripts/risk-class.mjs"),
+    "--repo",
+    "/r",
     "--base",
     "abc123",
     "--max",
     "amber",
   ]);
+  assert.equal(norm(rc.cwd), norm(judgeRoot));
   const dir = mkdtempSync(path.join(tmpdir(), "gate-risk-"));
   const sh = (...a) => spawnSync("git", a, { cwd: dir, encoding: "utf8", env: scrubbedGitEnv() });
   sh("init", "-q");
@@ -250,11 +256,9 @@ test("risk-class step: argv is fixed, and a red or black path in the merge-base 
     sh("add", ".");
     sh("commit", "-qm", rel);
   };
-  // The temp repo has no scripts/, so point the step at the real CLI by absolute path.
-  const cli = path.resolve(here, "../../../../scripts/risk-class.mjs");
   const run = () => {
     const st = step(planGate({ changedFiles: ["x"], ...opts, base, root: dir }), "risk-class");
-    return spawnSync(st.cmd[0], [cli, ...st.cmd.slice(2)], {
+    return spawnSync(st.cmd[0], st.cmd.slice(1), {
       cwd: st.cwd,
       encoding: "utf8",
       env: scrubbedGitEnv(),
@@ -273,6 +277,15 @@ test("risk-class step: argv is fixed, and a red or black path in the merge-base 
   const black = run();
   assert.equal(black.status, 1);
   assert.match(black.stderr, /black apps\/api\/railway\.toml/);
+  // A branch that plants its own exit(0) judge and rules is still judged by the gate's checkout.
+  mkdirSync(path.join(dir, "scripts/lib"), { recursive: true });
+  writeFileSync(path.join(dir, "scripts/risk-class.mjs"), "process.exit(0);\n");
+  writeFileSync(path.join(dir, "scripts/lib/risk-paths.mjs"), "process.exit(0);\n");
+  sh("add", ".");
+  sh("commit", "-qm", "sabotage the judge");
+  const sab = run();
+  assert.equal(sab.status, 1);
+  assert.match(sab.stderr, /red scripts\/risk-class\.mjs/);
 });
 
 test("beginJson deletes a stale file and writes a running marker; finishJson writes head and base", () => {

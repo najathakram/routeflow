@@ -31,6 +31,9 @@ const PRETTIER_EXT = new Set([
 ]);
 const JEST_EXT = new Set([".ts", ".tsx", ".js", ".jsx"]);
 
+// Repo root of the checkout this gate.mjs lives in (.claude/skills/bug-swarm/scripts -> four levels up).
+const JUDGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../..");
+
 export const STEP_TIMEOUT_MS = 15 * 60_000;
 export const DB_LANE_TIMEOUT_MS = 30 * 60_000;
 
@@ -121,8 +124,19 @@ export function planGate({
   add("signature-scan", root, ["node", ".claude/skills/bug-hunt/scripts/scan-signatures.mjs"]);
   add("commitlint", root, ["npx", "commitlint", "--from", base, "--to", "HEAD"]);
   // The HIGH guard is the paths the diff touches (scripts/lib/risk-paths.mjs), not a triage label: any red
-  // or black path fails the gate, naming each path and its rule. Both paths of a rename count.
-  add("risk-class", root, ["node", "scripts/risk-class.mjs", "--base", base, "--max", "amber"]);
+  // or black path fails the gate, naming each path and its rule. Both paths of a rename count. The judge is
+  // run from THIS gate's own checkout (the lead's), never from the worktree it judges: a diff must not be
+  // able to edit the code that classifies it. `--repo root` points it at the builder worktree.
+  add("risk-class", JUDGE_ROOT, [
+    "node",
+    path.join(JUDGE_ROOT, "scripts/risk-class.mjs"),
+    "--repo",
+    root,
+    "--base",
+    base,
+    "--max",
+    "amber",
+  ]);
 
   if (ids.length && idSpace)
     add("id-labels", root, ["node", "-e", ID_LABELS_SCRIPT, base, ids.join(",")]);

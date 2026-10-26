@@ -22,13 +22,21 @@ export const RULES = [
   { glob: "**/railway.toml", cls: "black", why: "Railway deploy config" },
   { glob: "**/Dockerfile*", cls: "black", why: "production image build" },
   { glob: "apps/api/scripts/prod-migrate.mjs", cls: "black", why: "applies migrations to prod" },
-  { glob: "apps/api/scripts/*live*", cls: "black", why: "live-tenant script" },
-  { glob: "scripts/*live*", cls: "black", why: "live-tenant script" },
+  { glob: "apps/api/docker-entrypoint.sh", cls: "black", why: "container entrypoint" },
+  // "live" as a word (bogo-live-check, live-fix), not inside "delivery"
   {
-    glob: "scripts/{visibility-watchdog,visibility-deadman}.mjs",
+    glob: "{apps/api/scripts,scripts}/{live-*,*-live-*,*-live.*}",
     cls: "black",
-    why: "repo visibility flip (deploy flow)",
+    why: "live-tenant script",
   },
+  {
+    // CLAUDE_SESSION_PREAMBLE.md "do not call" list (nuke/reset/clear/cleanup/wipe/purge/merge/import) + prod backup/backfills
+    glob: "apps/api/scripts/{DANGER-*,nuke-*,reset-seed*,reset-and-seed*,clear-financial-data*,cleanup-qa-data*,wipe-tenant-*,purge-*,ux-audit-cleanup*,qa-deep-audit-cleanup*,merge-duplicate-*,merge-pending-orders*,import-zoho*,backup-production*,backfill-*}",
+    cls: "black",
+    why: "destructive or prod-data script",
+  },
+  { glob: "scripts/visibility-*", cls: "black", why: "repo visibility flip (deploy flow)" },
+  { glob: "scripts/launchd/**", cls: "black", why: "host launchd jobs (visibility deadman)" },
   { glob: `${API}/assert-secrets.ts`, cls: "black", why: "boot-time secret assertions" },
 
   // red: money, ledger, units, locks, tenancy, auth, migrations, CI.
@@ -135,6 +143,20 @@ export const RULES = [
     why: "root deps and task graph",
   },
   { glob: "scripts/{ci-*,post-deploy-check.mjs}", cls: "red", why: "CI and post-deploy gates" },
+  { glob: "scripts/{push-guard,size-ratchet-gate}*", cls: "red", why: "pre-push guards" },
+  { glob: "apps/api/prisma.config.ts", cls: "red", why: "Prisma schema/migrations wiring" },
+  { glob: `${API}/main.ts`, cls: "red", why: "API boot (global pipes, guards, CORS)" },
+  { glob: "apps/web/middleware.ts", cls: "red", why: "web auth and tenant middleware" },
+  {
+    glob: `{${API}/common,apps/api/scripts/lib}/{production-guard,protected-slugs}*`,
+    cls: "red",
+    why: "production and protected-tenant guards",
+  },
+  {
+    glob: "scripts/{heavy-slot*,lib/heavy-slot*,lib/check-git-hooks*,lib/scrubbed-git-env*}",
+    cls: "red",
+    why: "code the gate or the judge imports or wraps",
+  },
   {
     glob: "scripts/{lib/risk-paths.mjs,risk-class*}",
     cls: "red",

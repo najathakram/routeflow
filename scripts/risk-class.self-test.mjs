@@ -3,12 +3,21 @@
 // Plain node; exit 0 when every check passes, 1 otherwise. The git cases build a throwaway repo in the
 // OS temp dir and run the real CLI against it, so rename handling and the --max exit code are the real ones.
 import { spawnSync } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { classifyDiff, classifyPath, globToRegExp } from "./lib/risk-paths.mjs";
 import { scrubbedGitEnv } from "./lib/check-git-hooks.mjs";
+import { diffSince, loadBaseLib } from "./risk-class.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const CLI = path.resolve(HERE, "risk-class.mjs");
@@ -204,9 +213,111 @@ ok(
 );
 ok("diff: empty is green", classifyDiff([]).cls === "green");
 
+// review round 2: destructive/prod scripts, entrypoint, boot files, everything the judge imports
+ok(
+  "black: every script CLAUDE_SESSION_PREAMBLE.md forbids, plus backup/backfill/purge",
+  allAre(
+    "black",
+    [
+      "DANGER-fresh-data-WIPES-ALL-DATA.js",
+      "nuke-db.js",
+      "nuke-tenant-data.js",
+      "reset-seed.js",
+      "reset-and-seed.ts",
+      "clear-financial-data.js",
+      "cleanup-qa-data.js",
+      "wipe-tenant-fresh-start.js",
+      "purge-xss-customer-names.js",
+      "purge-live-svg-xss.js",
+      "ux-audit-cleanup.js",
+      "qa-deep-audit-cleanup.js",
+      "merge-duplicate-products.js",
+      "merge-pending-orders.js",
+      "import-zoho.js",
+      "backup-production.mjs",
+      "backfill-refund-tender.mjs",
+      "purge-test-stripe-ids.mjs",
+    ].map((n) => `apps/api/scripts/${n}`),
+  ),
+);
+ok(
+  "black: docker-entrypoint.sh, scripts/launchd/**, any visibility script",
+  allAre("black", [
+    "apps/api/docker-entrypoint.sh",
+    "scripts/launchd/visibility-deadman-run.sh",
+    "scripts/visibility-deadman.mjs",
+  ]),
+);
+ok(
+  "red: prisma.config.ts, main.ts, web middleware, guards, push/size gates",
+  allAre("red", [
+    "apps/api/prisma.config.ts",
+    `${A}/main.ts`,
+    "apps/web/middleware.ts",
+    `${A}/common/production-guard.spec.ts`,
+    `${A}/common/protected-slugs.ts`,
+    "apps/api/scripts/lib/production-guard.js",
+    "apps/api/scripts/lib/protected-slugs.cjs",
+    "scripts/push-guard.mjs",
+    "scripts/size-ratchet-gate.mjs",
+  ]),
+);
+ok(
+  "red: every file the judge imports (git env helpers, heavy-slot wrapper)",
+  allAre("red", [
+    "scripts/lib/check-git-hooks.mjs",
+    "scripts/lib/scrubbed-git-env.cjs",
+    "scripts/lib/scrubbed-git-env.d.cts",
+    "scripts/heavy-slot.mjs",
+    "scripts/lib/heavy-slot.mjs",
+  ]),
+);
+ok(
+  "amber: an ordinary apps/api script is still amber",
+  cls("apps/api/scripts/report-b673-next-delivery-overcharge.mjs") === "amber",
+);
+
+// diffSince asks for type changes too; loadBaseLib falls back ONLY when the base lacks the file
+{
+  const calls = [];
+  const fake = (args) => {
+    calls.push(args);
+    return args[0] === "merge-base" ? "abc\n" : "T\0scripts/lib/risk-paths.mjs\0";
+  };
+  const d = diffSince(fake, "master");
+  const filter = calls.find((c) => c[0] === "diff")?.find((a) => a.startsWith("--diff-filter="));
+  ok(
+    "diffSince: --diff-filter includes T and a type change is listed",
+    /^--diff-filter=.*T/.test(filter ?? "") && d.files[0] === "scripts/lib/risk-paths.mjs",
+    String(filter),
+  );
+  ok(
+    "loadBaseLib: null only when ls-tree says the path is absent at base",
+    (await loadBaseLib(() => "", "abc")) === null,
+  );
+  const timedOut = () => {
+    throw Object.assign(new Error("spawnSync git ETIMEDOUT"), { code: "ETIMEDOUT" });
+  };
+  ok(
+    "loadBaseLib: a git failure is NOT a fallback (it rejects)",
+    await loadBaseLib(timedOut, "abc").then(
+      () => false,
+      () => true,
+    ),
+  );
+  const garbage = (args) => (args[0] === "ls-tree" ? "scripts/lib/risk-paths.mjs\n" : "export {;");
+  ok(
+    "loadBaseLib: a base file that will not import is NOT a fallback (it rejects)",
+    await loadBaseLib(garbage, "abc").then(
+      () => false,
+      () => true,
+    ),
+  );
+}
+
 // CLI: --files
-const run = (args, cwd) =>
-  spawnSync(process.execPath, [CLI, ...args], { encoding: "utf8", cwd, env: scrubbedGitEnv() });
+const run = (args, cwd, cli = CLI) =>
+  spawnSync(process.execPath, [cli, ...args], { encoding: "utf8", cwd, env: scrubbedGitEnv() });
 let r = run(["--files", "docs/a.md", "apps/web/a.ts", "--json"]);
 ok(
   "cli: --files --json",
@@ -326,6 +437,41 @@ try {
       w.files.some((f) => f.path === "scripts/lib/risk-paths.mjs" && f.cls === "red"),
     r.stdout + r.stderr,
   );
+
+  // the judge must not run branch code: a branch that makes its own risk-paths.mjs exit(0) is still
+  // judged red when the classifier is run from a trusted copy (the gate's own checkout) with --repo
+  git("checkout", "-q", "master");
+  git("checkout", "-q", "-b", "feat/sabotage");
+  mkdirSync(path.join(dir, "scripts/lib"), { recursive: true });
+  for (const f of ["risk-class.mjs", "lib/check-git-hooks.mjs", "lib/scrubbed-git-env.cjs"])
+    copyFileSync(path.join(HERE, f), path.join(dir, "scripts", f));
+  writeFileSync(
+    path.join(dir, "scripts/lib/risk-paths.mjs"),
+    `process.exit(0);\n${readFileSync(RULES_FILE, "utf8")}`,
+  );
+  put("packages/pricing/src/x.ts");
+  git("add", "-A");
+  git("commit", "-q", "-m", "sabotage the judge and touch money");
+  r = run(["--base", "master", "--max", "amber"], dir, path.join(dir, "scripts/risk-class.mjs"));
+  ok("control: the BRANCH copy of the judge is fooled (exit 0)", r.status === 0, r.stderr);
+  r = run(["--repo", dir, "--base", "master", "--max", "amber", "--json"], tmpdir());
+  const sab = JSON.parse(r.stdout || "{}");
+  ok(
+    "trusted copy + --repo: sabotaged branch is still red, exit 1, judge files red",
+    r.status === 1 &&
+      sab.cls === "red" &&
+      /^base /.test(sab.rules) &&
+      [
+        "scripts/lib/risk-paths.mjs",
+        "scripts/lib/check-git-hooks.mjs",
+        "scripts/risk-class.mjs",
+      ].every((p) => sab.files.some((f) => f.path === p && f.cls === "red")),
+    r.stdout + r.stderr,
+  );
+  r = run(["--repo", path.join(dir, "no-such-dir"), "--base", "master"], tmpdir());
+  ok("cli: a --repo that is not a repo exits 2", r.status === 2, r.stderr);
+  r = run(["--repo"], tmpdir());
+  ok("cli: --repo needs a value", r.status === 2);
 } finally {
   rmSync(dir, { recursive: true, force: true });
 }
