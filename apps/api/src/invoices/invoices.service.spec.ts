@@ -45,7 +45,7 @@ import { CheckStatus, InvoiceStatus, NotificationEvent, UserRole } from "@prisma
 import { computeLineSubtotal, roundMoney } from "@routeflow/pricing";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { fillSparseCasBasis } from "./testing/sparse-line-fixtures";
-import { tillCalls } from "../testing/till-user";
+import { tillCalls, TILL_ADMIN } from "../testing/till-user";
 
 const mockCompressDocument = compressDocument as jest.Mock;
 
@@ -206,7 +206,6 @@ describe("InvoicesService", () => {
   });
 
   const { setStatus, delPay, voidPay, editPay, editOf } = tillCalls(() => service);
-
   // ─── MSRP snapshots — applyMsrpSnapshots stamps lines at creation time ─────
 
   describe("MSRP snapshots (applyMsrpSnapshots)", () => {
@@ -3183,13 +3182,9 @@ describe("InvoicesService", () => {
         payments: [{ method: "CASH", amount: 25, status: "DRAFT" }],
       });
 
-      await expect(
-        service.voidInvoice("inv-draft-void", {
-          sub: "u-1",
-          role: "TENANT_ADMIN",
-          tenantId: "t-1",
-        } as never),
-      ).rejects.toBeInstanceOf(BadRequestException);
+      await expect(service.voidInvoice("inv-draft-void", TILL_ADMIN)).rejects.toThrow(
+        BadRequestException,
+      );
     });
   });
 
@@ -3311,16 +3306,8 @@ describe("InvoicesService", () => {
       });
 
       const results = await Promise.allSettled([
-        service.voidInvoice("inv-race", {
-          sub: "u-1",
-          role: "TENANT_ADMIN",
-          tenantId: "t-1",
-        } as never),
-        service.voidInvoice("inv-race", {
-          sub: "u-1",
-          role: "TENANT_ADMIN",
-          tenantId: "t-1",
-        } as never),
+        service.voidInvoice("inv-race", TILL_ADMIN),
+        service.voidInvoice("inv-race", TILL_ADMIN),
       ]);
 
       const fulfilled = results.filter((r) => r.status === "fulfilled");
