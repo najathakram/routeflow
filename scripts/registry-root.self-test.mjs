@@ -75,14 +75,13 @@ const CONFIG = [".gitignore", ".prettierignore"];
 // Left alone on purpose: plane-client.mjs reads legacy state, and verify-scope.mjs
 // classifies changed paths (it must keep recognising the tracked tree until B1-c).
 const LEGACY = ["scripts/campaign/plane-client.mjs", "scripts/lib/verify-scope.mjs"];
+// Isolated services that cannot import scripts/lib: each reads the shared registry-source.json and
+// keeps ONE tracked-mode prefix constant, deleted in B1-c. The rest of their code goes through them.
+const ISOLATED = ["apps/control/src/sources/registers.ts", "tools/ops-monitor/lib/registry.mjs"];
 // Production readers not yet routed through the module. This list may only shrink.
-const PENDING = [
-  "apps/control/src/sources/registers.ts",
-  "tools/ops-monitor/lib/collector.mjs",
-  "tools/ops-monitor/lib/store.mjs",
-];
+const PENDING = [];
 
-const ALLOWED = new Set([...CONTRACT, ...FIXTURES, ...CONFIG, ...LEGACY]);
+const ALLOWED = new Set([...CONTRACT, ...ISOLATED, ...FIXTURES, ...CONFIG, ...LEGACY]);
 
 function gitGrepFiles(pattern) {
   const r = spawnSync("git", ["grep", "-l", "-E", pattern, "--", ".", ...EXCLUDES], {
