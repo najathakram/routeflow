@@ -1,4 +1,4 @@
-import { ConflictException } from "@nestjs/common";
+import { ConflictException, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { STOCK_TX_OPTIONS } from "../common/product-locks";
 import {
@@ -30,7 +30,17 @@ function fake() {
   const stock = new Map<string, Prisma.Decimal>();
   const created: any[][] = [];
   const conflicts: Array<unknown[]> = [];
+  // The session the seeder writes into: its status as the in-tx read sees it (one entry per read; the last
+  // sticks), and whether the shared `stock-count` try-lock is granted (a committer holding it = false).
+  const session = { statuses: ["OPEN"] as Array<string | null>, lockGranted: true };
   const tx: any = {
+    $queryRaw: jest.fn((s: TemplateStringsArray, ...v: unknown[]) => {
+      if (s.join("?").includes("pg_try_advisory_xact_lock_shared")) {
+        events.push(`session-lock:${JSON.stringify(v)}`);
+        return Promise.resolve([{ ok: session.lockGranted }]);
+      }
+      return Promise.resolve([]);
+    }),
     $executeRaw: jest.fn((s: TemplateStringsArray, ...v: unknown[]) => {
       if (s.join("?").includes("pg_advisory_xact_lock")) events.push(`lock:${JSON.stringify(v)}`);
       return Promise.resolve(0);
@@ -47,7 +57,14 @@ function fake() {
       }),
       deleteMany: jest.fn(async () => ({ count: 0 })),
     },
-    stockCountSession: { updateMany: jest.fn(async () => ({ count: 1 })) },
+    stockCountSession: {
+      updateMany: jest.fn(async () => ({ count: 1 })),
+      findFirst: jest.fn(async () => {
+        events.push("session-status");
+        const status = session.statuses.length > 1 ? session.statuses.shift() : session.statuses[0];
+        return status === null ? null : { id: "s1", status };
+      }),
+    },
     product: {
       findMany: jest.fn(async (a: any) => {
         events.push("stock");
@@ -64,7 +81,7 @@ function fake() {
       return fn(tx, opts);
     }),
   };
-  return { prisma, tx, events, stock, created, conflicts };
+  return { prisma, tx, events, stock, created, conflicts, session };
 }
 
 describe("seedStockCountLines (row 562 S1)", () => {
@@ -96,7 +113,7 @@ describe("seedStockCountLines (row 562 S1)", () => {
     ).toBe(true);
   });
 
-  it("each batch: ONE lock statement with its sorted tenant:product keys, THEN the overlap read, THEN the stock read, THEN the write", async () => {
+  it("each batch: the shared count lock, THEN the session status, THEN ONE product-lock statement with its sorted keys, THEN the overlap read, THEN the stock read, THEN the write", async () => {
     const f = fake();
     await seedStockCountLines(f.prisma, {
       sessionId: "s1",
@@ -106,6 +123,8 @@ describe("seedStockCountLines (row 562 S1)", () => {
 
     expect(f.events).toEqual([
       "tx",
+      `session-lock:${JSON.stringify(["stock-count", "s1"])}`,
+      "session-status",
       `lock:${JSON.stringify(["stock-count-product", ["t1:p0001", "t1:p0002", "t1:p0003"]])}`,
       "overlap",
       "stock",
@@ -200,6 +219,61 @@ describe("seedStockCountLines (row 562 S1)", () => {
       session: { status: { in: ["OPEN", "REVIEW"] } },
     });
   });
+
+  describe("the session lock and the OPEN check (562 S1 review fold)", () => {
+    const code = (e: any) => ({ status: e?.getStatus?.(), code: e?.getResponse?.()?.code });
+    const seed = (f: ReturnType<typeof fake>, n = 1, batchSize?: number) =>
+      seedStockCountLines(f.prisma, {
+        sessionId: "s1",
+        userId: "u1",
+        lines: Array.from({ length: n }, (_, i) => line(i + 1)),
+        batchSize,
+      });
+
+    it("a committer holding the count lock: 409 STOCK_COUNT_COMMITTING before any product lock, read or write", async () => {
+      const f = fake();
+      f.session.lockGranted = false;
+
+      const err: any = await seed(f).catch((e) => e);
+
+      expect(err).toBeInstanceOf(ConflictException);
+      expect(code(err)).toEqual({ status: 409, code: "STOCK_COUNT_COMMITTING" });
+      expect(f.events.filter((e) => e.startsWith("lock:") || e === "overlap")).toEqual([]);
+      expect(f.tx.stockCountLine.createMany).not.toHaveBeenCalled();
+    });
+
+    it.each(["COMMITTED", "DISCARDED", "REVIEW"])(
+      "a %s session: the same 409, nothing written",
+      async (status) => {
+        const f = fake();
+        f.session.statuses = [status];
+
+        const err: any = await seed(f).catch((e) => e);
+
+        expect(code(err)).toEqual({ status: 409, code: "STOCK_COUNT_COMMITTING" });
+        expect(f.tx.stockCountLine.createMany).not.toHaveBeenCalled();
+      },
+    );
+
+    it("a session that is gone is a 404, nothing written", async () => {
+      const f = fake();
+      f.session.statuses = [null];
+
+      await expect(seed(f)).rejects.toBeInstanceOf(NotFoundException);
+      expect(f.tx.stockCountLine.createMany).not.toHaveBeenCalled();
+    });
+
+    it("the status is read in EVERY batch: a commit between batch 1 and 2 stops the seed at once", async () => {
+      const f = fake();
+      f.session.statuses = ["OPEN", "COMMITTED"];
+
+      const err: any = await seed(f, 3, 1).catch((e) => e);
+
+      expect(code(err)).toEqual({ status: 409, code: "STOCK_COUNT_COMMITTING" });
+      expect(f.created).toHaveLength(1); // batch 1 only, written while the count was OPEN
+      expect(f.prisma.tenantTransaction).toHaveBeenCalledTimes(2);
+    });
+  });
 });
 
 describe("discardUnfinishedSeed", () => {
@@ -214,6 +288,17 @@ describe("discardUnfinishedSeed", () => {
       where: { id: "s1", status: { in: ["OPEN", "REVIEW"] } },
       data: { status: "DISCARDED", discardedAt: expect.any(Date) },
     });
+  });
+
+  it("takes the shared count lock first; a committer holding it keeps the session: nothing flipped, no line deleted", async () => {
+    const f = fake();
+    f.session.lockGranted = false;
+
+    await discardUnfinishedSeed(f.prisma, "s1");
+
+    expect(f.events).toEqual(["tx", `session-lock:${JSON.stringify(["stock-count", "s1"])}`]);
+    expect(f.tx.stockCountSession.updateMany).not.toHaveBeenCalled();
+    expect(f.tx.stockCountLine.deleteMany).not.toHaveBeenCalled();
   });
 });
 

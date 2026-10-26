@@ -1518,6 +1518,8 @@ describe("InventoryService", () => {
         lines: [line({ countedQty: D(7), expectedQty: D(10) })],
       });
       prisma.stockCountSession.create.mockResolvedValue({ id: "new-sess" });
+      // The seeder re-reads the new session's status under the count lock: it is OPEN.
+      prisma.stockCountSession.findFirst.mockResolvedValue({ id: "new-sess", status: "OPEN" });
       // Stock has since moved to 6.
       prisma.product.findMany.mockResolvedValue([{ id: "prod-1", currentStock: D(6) }]);
 

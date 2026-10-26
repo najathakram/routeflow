@@ -6,6 +6,11 @@
  * WHY BATCHED. An amendment used to take one advisory lock per product and create one line per product in a
  * SINGLE 15 s transaction: a 3.4k-line count cannot finish in it. Now every batch of COUNT_SEED_BATCH lines
  * is its own short transaction, in the order of the sorted product ids:
+ *   0. the session's SHARED `stock-count:<sessionId>` try-lock (the one `upsertStockCountLine` takes) and a
+ *      read of the session's status, both in this transaction: a committer holding the count, or a session that is
+ *      no longer OPEN, refuses the batch with the 409 STOCK_COUNT_COMMITTING before a line is written. A commit or
+ *      discard that lands between two batches stops the seed at the next one, so nothing is written to a
+ *      COMMITTED / DISCARDED count after it;
  *   1. the batch's `stock-count-product:<tenantId>:<productId>` locks, in ONE sorted statement
  *      (`advisoryXactLocks`), so two seeders can never deadlock and an add of the same product waits;
  *   2. the one-open-count-per-product re-check (SA-767 r-note 5 SA-3), read AFTER the locks;
@@ -19,15 +24,18 @@
  * seeder throws the 409 and the caller discards its session (`discardUnfinishedSeed`), so a half-seeded
  * OPEN count never blocks products. The caller owns that, because it created the session.
  */
+import { NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
-import { advisoryXactLocks } from "../common/db-locks";
+import { advisoryXactLocks, tryAdvisoryXactLockShared } from "../common/db-locks";
 import { STOCK_TX_OPTIONS } from "../common/product-locks";
 import type { PrismaService } from "../prisma/prisma.service";
 import { retryStockTx } from "../common/tx-retry";
 import {
   OPEN_COUNT_STATUSES,
   productInOpenCount,
+  STOCK_COUNT_LOCK_FAMILY,
   STOCK_COUNT_PRODUCT_LOCK_FAMILY,
+  stockCountCommitting,
   type OpenCountConflict,
 } from "./stock-count-commit";
 
@@ -93,10 +101,30 @@ export async function findOpenCountConflicts(
 }
 
 /**
+ * The first thing each seeding batch does, inside its own transaction: the session's SHARED `stock-count`
+ * try-lock (the key pair a line edit and a discard take, and the committer holds exclusively across its
+ * batches), then the session's status read under it. A busy lock or any status but OPEN is the existing 409
+ * STOCK_COUNT_COMMITTING, so a seed can never write a line into a count a commit or discard has taken.
+ */
+async function enterSeedBatch(tx: Prisma.TransactionClient, sessionId: string): Promise<void> {
+  if (!(await tryAdvisoryXactLockShared(tx, STOCK_COUNT_LOCK_FAMILY, sessionId))) {
+    throw stockCountCommitting();
+  }
+  const session = await tx.stockCountSession.findFirst({
+    where: { id: sessionId },
+    select: { id: true, status: true },
+  });
+  if (!session) throw new NotFoundException("Stock count session not found");
+  if (session.status !== "OPEN") throw stockCountCommitting();
+}
+
+/**
  * Seed `lines` into the (already created) session `sessionId`, COUNT_SEED_BATCH per transaction. A product
  * given twice is one line (the first wins: the table is unique per session and product). Throws the coded
  * 409 PRODUCT_IN_OPEN_COUNT on the first batch that finds a conflict (earlier batches stay written: the
- * caller discards the session), or the coded 503 LOCK_UNAVAILABLE when a batch's locks stay busy.
+ * caller discards the session), the coded 409 STOCK_COUNT_COMMITTING when a committer holds the count or the
+ * session is no longer OPEN (a commit or discard raced the seed), or the coded 503 LOCK_UNAVAILABLE when a
+ * batch's locks stay busy.
  */
 export async function seedStockCountLines(
   prisma: PrismaService,
@@ -119,6 +147,7 @@ export async function seedStockCountLines(
     // eslint-disable-next-line no-await-in-loop
     await retryStockTx("inventory.seedStockCountLines", () =>
       prisma.tenantTransaction(async (tx) => {
+        await enterSeedBatch(tx, sessionId);
         await advisoryXactLocks(
           tx,
           STOCK_COUNT_PRODUCT_LOCK_FAMILY,
@@ -156,13 +185,16 @@ export async function seedStockCountLines(
 /**
  * A seed that failed part-way leaves a session with some of its lines. Flip the session to DISCARDED by CAS on
  * OPEN / REVIEW, then remove its lines, in one transaction: the session then holds no product, and the
- * caller can start again. A session a person already committed or discarded is left alone, lines included.
+ * caller can start again. A session a person already committed or discarded is left alone, lines included, and
+ * so is one a committer holds: the shared `stock-count` try-lock is taken first, and a busy lock means the
+ * committer owns the session now (flipping it here would put a DISCARDED status under a running commit).
  */
 export async function discardUnfinishedSeed(
   prisma: PrismaService,
   sessionId: string,
 ): Promise<void> {
   await prisma.tenantTransaction(async (tx) => {
+    if (!(await tryAdvisoryXactLockShared(tx, STOCK_COUNT_LOCK_FAMILY, sessionId))) return;
     const flipped = await tx.stockCountSession.updateMany({
       where: { id: sessionId, status: { in: [...OPEN_COUNT_STATUSES] } },
       data: { status: "DISCARDED", discardedAt: new Date() },

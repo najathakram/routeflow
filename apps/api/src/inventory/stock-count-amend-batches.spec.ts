@@ -1,4 +1,4 @@
-import { ConflictException } from "@nestjs/common";
+import { ConflictException, Logger } from "@nestjs/common";
 import { buildCountUnitWorld, CountUnitWorld, D, pid } from "./testing/count-unit-harness";
 
 /**
@@ -39,6 +39,7 @@ describe("amend seeds in batches (row 562 S1, T14)", () => {
       })),
     });
     w.prisma.stockCountSession.create.mockResolvedValue({ id: "new-sess" });
+    w.prisma.stockCountSession.findFirst.mockResolvedValue({ id: "new-sess", status: "OPEN" }); // the seeder's OPEN check
     w.prisma.stockCountLine.findMany.mockResolvedValue([]);
     w.prisma.stockCountLine.createMany.mockImplementation(async (a: any) => ({
       count: a.data.length,
@@ -115,5 +116,25 @@ describe("amend seeds in batches (row 562 S1, T14)", () => {
     expect(err).toBeInstanceOf(ConflictException);
     expect(w.prisma.stockCountSession.create).not.toHaveBeenCalled();
     expect(lockStatements()).toHaveLength(0);
+  });
+
+  it("a discard that fails after a failed seed logs a warning with the session id, and the seed's own error still wins", async () => {
+    const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+    w.prisma.stockCountLine.findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([
+      {
+        productId: pid(2),
+        product: { name: "Widget" },
+        session: { id: "other-sess", name: null },
+      },
+    ]);
+    w.prisma.stockCountSession.updateMany.mockRejectedValue(new Error("discard boom"));
+
+    const err: any = await amend().catch((e) => e);
+
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(err.getResponse()).toMatchObject({ code: "PRODUCT_IN_OPEN_COUNT" });
+    const lines = warn.mock.calls.map((c) => String(c[0]));
+    expect(lines.some((m) => m.includes("new-sess") && m.includes("discard boom"))).toBe(true);
+    warn.mockRestore();
   });
 });

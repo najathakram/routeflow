@@ -7,6 +7,7 @@ import { API_ERROR_CODES } from "../common/api-error-codes";
 import {
   assertStockReferenceFree,
   isReservedStockReference,
+  RESERVED_REFERENCE_CONSTRAINT,
   RESERVED_STOCK_REFERENCE_PREFIXES,
 } from "./reserved-reference";
 import { stockCountReference } from "./stock-count-commit";
@@ -94,7 +95,8 @@ describe("B640 reserved stock references", () => {
       async (_n, make) => {
         const bad = await validate(make(stockCountReference(SID)) as object);
         expect(bad.map((e) => e.property)).toEqual(["reference"]);
-        expect(Object.keys(bad[0].constraints ?? {})).toEqual(["isNotReservedStockReference"]);
+        expect(Object.keys(bad[0].constraints ?? {})).toEqual([RESERVED_REFERENCE_CONSTRAINT]);
+        expect(RESERVED_REFERENCE_CONSTRAINT).toBe("isNotReservedStockReference");
 
         expect(await validate(make("RECOUNT-1") as object)).toHaveLength(0);
         expect(await validate(make(undefined) as object)).toHaveLength(0);

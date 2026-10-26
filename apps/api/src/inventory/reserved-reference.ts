@@ -15,6 +15,9 @@ import { STOCK_COUNT_REFERENCE_PREFIX } from "./stock-count-commit";
 /** Upper-case heads: a reference is compared trimmed and case-insensitively. */
 export const RESERVED_STOCK_REFERENCE_PREFIXES: readonly string[] = [STOCK_COUNT_REFERENCE_PREFIX];
 
+/** The class-validator constraint name of {@link IsNotReservedStockReference} (the global pipe codes it). */
+export const RESERVED_REFERENCE_CONSTRAINT = "isNotReservedStockReference";
+
 /** True when `ref` is a string that starts (after trimming, any letter case) with a reserved head. */
 export function isReservedStockReference(ref: unknown): boolean {
   if (typeof ref !== "string") return false;
@@ -40,13 +43,14 @@ export function assertStockReferenceFree(ref: string | null | undefined): void {
 
 /**
  * DTO decorator for a free-text `reference` field: refuses a reserved head with a 400 before the service
- * runs. Pair it with `@IsOptional() @IsString()`; `stock-count` pin `reserved-reference.spec.ts` fails for
+ * runs. Over HTTP the global pipe (`common/global-validation-pipe.ts`) turns this constraint into the coded
+ * 400 STOCK_REFERENCE_RESERVED, the same body the service guard throws. Pair it with `@IsOptional() @IsString()`; `stock-count` pin `reserved-reference.spec.ts` fails for
  * any inventory DTO `reference: string` without it.
  */
 export function IsNotReservedStockReference(options?: ValidationOptions): PropertyDecorator {
   return (object: object, propertyName: string | symbol) => {
     registerDecorator({
-      name: "isNotReservedStockReference",
+      name: RESERVED_REFERENCE_CONSTRAINT,
       target: object.constructor,
       propertyName: propertyName as string,
       options: {

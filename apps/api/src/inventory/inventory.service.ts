@@ -2745,7 +2745,12 @@ export class InventoryService {
         lines: seedLines,
       });
     } catch (err) {
-      await discardUnfinishedSeed(this.prisma, session.id).catch(() => undefined);
+      await discardUnfinishedSeed(this.prisma, session.id).catch((discardErr: unknown) => {
+        // The seed's own error is what the caller gets; a failed cleanup must not hide behind it unseen.
+        this.logger.warn(
+          `could not discard the unfinished seeded stock count ${session.id}: ${(discardErr as Error)?.message}`,
+        );
+      });
       throw err;
     }
 
