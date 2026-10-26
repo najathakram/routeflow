@@ -109,7 +109,7 @@ describe("REG-B209 deleteRoute / deleteRun key on delivery evidence, not run sta
   function wire(db: EvidenceDb) {
     const { tx, log } = createEvidenceTx(db);
     (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) => fn(tx));
-    const snapshot = () =>
+    const snapshot = (): Row[] =>
       db.routeRun.map((r) => ({
         ...r,
         stops: db.routeRunStop.filter((s) => s.routeRunId === r.id).map((s) => ({ id: s.id })),
