@@ -35,7 +35,7 @@ import {
 import { useAuth } from "@/lib/auth-context";
 import { useHasAddon } from "@/lib/api/tobacco";
 import { ORDERS_INLINE_RETURNS_ADDON, SALES_AGENTS_ADDON, useOrderUiV2 } from "@/lib/api/addons";
-import { OrderStatusBadge, useOrderStatusLabel } from "@/components/OrderStatusBadge";
+import { OrderStatusBadge } from "@/components/OrderStatusBadge";
 import { HandOverStamp } from "@/components/HandOverStamp";
 import { seesHandOverStamp } from "@/lib/handover-stamp";
 import { useTenantTimeZone } from "@/lib/tenant-timezone";
@@ -95,6 +95,7 @@ import { DeleteOrderTier } from "./_components/DeleteOrderTier";
 import { isPosOrder } from "@/lib/api/pos-orders";
 import { FulfillPathMoveConfirm } from "./_components/FulfillPathMoveConfirm";
 import { InvoicesNeedReviewBadge } from "./_components/InvoicesNeedReviewBadge";
+import { EditClosedChip } from "./_components/EditClosedChip";
 import { EditItemsLockedNote, InvoicedEditNotice } from "./_components/InvoicedEditNotice";
 import { StickyEditBar } from "./_components/StickyEditBar";
 import { DemoteReasonModal } from "./_components/DemoteReasonModal";
@@ -169,7 +170,6 @@ export default function OrderDetailPage() {
   const { data: order, isLoading, isError } = useOrder(id);
   // `order_ui_v2` (dark): card-list lines instead of the table.
   const orderUiV2 = useOrderUiV2();
-  const statusLabel = useOrderStatusLabel();
   const staffFulfilment = useStaffFulfilment();
   // Keep the Fulfillment row rendered once it has been shown for this order: a PICKUP -> SHIP move on a
   // ship-only account would otherwise hide the select the moment the order's path becomes an offered one.
@@ -1091,16 +1091,7 @@ export default function OrderDetailPage() {
               </ActionTier>
             ))}
 
-          {/* P5-08 / R1: staff editing closes only once the order is CANCELLED
-              ("STATUS"); the buyer-facing window instead closes once dispatched
-              ("DISPATCHED") — see the canEdit comment above. Either reason shows here. */}
-          {!canEdit && order?.editWindow?.closedReason && !isEditing && (
-            <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-1 text-xs font-medium text-amber-700 ring-1 ring-amber-200">
-              {order.editWindow.closedReason === "DISPATCHED"
-                ? `${statusLabel("OUT_FOR_DELIVERY", "Out for delivery", order.fulfillPath)} — editing closed`
-                : "Order cancelled — editing closed"}
-            </span>
-          )}
+          <EditClosedChip show={!canEdit && !isEditing} order={order} />
 
           <EditItemsLockedNote show={!!order?.editItemsLocked && access.editItems && !isEditing} />
           {/* P5-08: revision count + log (append-only edit history), one tap (row 330d). */}

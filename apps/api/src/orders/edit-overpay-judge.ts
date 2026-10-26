@@ -94,16 +94,6 @@ export async function assertEditCannotOverpay(
 }
 
 /**
- * The Order row's total BEFORE this edit writes, read in the edit tx under the Order lock (SA-956 Fix 1). Not the pre-lock
- * snapshot. NaN when the row cannot be read: the fallback then fails closed.
- */
-export async function readPriorOrderTotal(tx: any, orderId: string): Promise<number> {
-  const row = await tx.order.findUnique({ where: { id: orderId }, select: { total: true } });
-  const n = Number(row?.total);
-  return Number.isFinite(n) ? roundMoney(n) : Number.NaN;
-}
-
-/**
  * W-871 (SA-948 §2 MUST 2, amended by SA-956 Fix 1): fail closed, but only on a CUT. A re-sync that restates the invoices
  * projects EVERY live invoice (`loadResyncInputs` pairs them all) or none (an unclean partition: a manual line, a line
  * whose provenance was lost); "none" never means "nothing to judge". When a live invoice carrying external money is
@@ -173,7 +163,7 @@ export async function judgeEditTail(
     heldItems: ReadonlyArray<{ qty?: unknown; invoicedQty?: unknown }>;
     postDeliveryEdit: boolean;
     role: string | undefined;
-    /** SA-956: the Order's total before the edit wrote (see `readPriorOrderTotal`). */
+    /** SA-956: the Order's total before the edit wrote (read by `lockEditedOrder`). */
     priorOrderTotal?: number;
   },
 ): Promise<boolean> {

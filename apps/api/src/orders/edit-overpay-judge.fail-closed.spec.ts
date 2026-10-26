@@ -6,7 +6,7 @@
  * refuses with the existing 409 ORDER_EDIT_WOULD_OVERPAY when the external money across the order's live invoices
  * exceeds it by more than half a cent. Increases still pass.
  */
-import { assertEditCannotOverpay, readPriorOrderTotal } from "./edit-overpay-judge";
+import { assertEditCannotOverpay } from "./edit-overpay-judge";
 
 type Inv = { id: string; status: string };
 type Pay = { invoiceId: string; amount: number; method: string; status: string };
@@ -164,15 +164,5 @@ describe("SA-956: only a cut is refused", () => {
     await expect(
       judge(fakeTx(LIVE, PAID_13, 11), [], { resync: true, partials: false }),
     ).rejects.toMatchObject({ status: 409 });
-  });
-  it("readPriorOrderTotal reads the Order row's total in the tx; a missing row is NaN", async () => {
-    const tx = { order: { findUnique: jest.fn().mockResolvedValue({ total: "10.004" }) } };
-    await expect(readPriorOrderTotal(tx, "ord-1")).resolves.toBe(10);
-    expect(tx.order.findUnique).toHaveBeenCalledWith({
-      where: { id: "ord-1" },
-      select: { total: true },
-    });
-    const none = { order: { findUnique: jest.fn().mockResolvedValue(null) } };
-    expect(Number.isNaN(await readPriorOrderTotal(none, "ord-1"))).toBe(true);
   });
 });
