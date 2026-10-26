@@ -14,7 +14,7 @@ import { useTenant } from "@/components/tenant-provider";
  */
 export const NAME_ADMIN_ONLY_COPY = "Only an account admin can change the business name.";
 export const NAME_SAVE_FAILED_COPY = "Couldn't save the business name";
-export const EMAIL_READ_ONLY_COPY = "Your sign-in email. It can't be changed here.";
+export const EMAIL_READ_ONLY_COPY = "The account admin's sign-in email. It can't be changed here.";
 
 /** The two identity fields leave the PATCH /settings body: the API refuses both. */
 export function splitProfileIdentity<T extends { businessName: string; email?: string }>(
