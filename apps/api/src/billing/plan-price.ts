@@ -14,7 +14,10 @@ export type PlanPriceSource = "override" | "catalog";
 
 export type PlanPriceResolution =
   | { ok: true; monthly: number; annual: number; source: PlanPriceSource }
-  | { ok: false; reason: "annual_override_without_monthly" | "no_catalog_price" };
+  | {
+      ok: false;
+      reason: "annual_override_without_monthly" | "no_catalog_price" | "non_finite_price";
+    };
 
 export function resolvePlanPrice(
   definition: { monthlyPrice?: unknown; annualPrice?: unknown } | null | undefined,
@@ -24,6 +27,17 @@ export function resolvePlanPrice(
   // truthiness, or a 0 silently becomes "10x monthly".
   const catalogMonthly = definition?.monthlyPrice != null ? Number(definition.monthlyPrice) : null;
   const catalogAnnual = definition?.annualPrice != null ? Number(definition.annualPrice) : null;
+
+  // roundMoney(NaN) is 0: an unparseable price must fail closed here, never become a $0 annual one.
+  const unusable = (v: unknown) => v != null && !Number.isFinite(Number(v));
+  if (
+    unusable(definition?.monthlyPrice) ||
+    unusable(definition?.annualPrice) ||
+    unusable(override?.monthly) ||
+    unusable(override?.annual)
+  ) {
+    return { ok: false, reason: "non_finite_price" };
+  }
 
   // Either override column on its own counts as a custom fee: an annual-only fee is a real
   // negotiated case, and ignoring it would bill the catalog price to a tenant already re-priced.

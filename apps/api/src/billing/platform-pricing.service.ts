@@ -131,7 +131,9 @@ export class PlatformPricingService {
           ? `No monthly price is resolvable for tenant ${tenantId} on plan ${planKey}. ` +
               `This plan has no catalog price (custom/Enterprise) and only an annual custom ` +
               `fee is set — set a custom MONTHLY fee too.`
-          : `No price is resolvable for tenant ${tenantId} on plan ${planKey}. ` +
+          : resolved.reason === "non_finite_price"
+            ? `A price for tenant ${tenantId} on plan ${planKey} is not a finite number.`
+            : `No price is resolvable for tenant ${tenantId} on plan ${planKey}. ` +
               `This plan has no catalog price (custom/Enterprise) — set a custom fee first.`,
       );
     }

@@ -68,3 +68,16 @@ describe("row 280: annual = monthly x 10 is whole cents, never float noise", () 
     });
   });
 });
+
+describe("a non-finite price fails closed, never to 0 (review-d on row 280)", () => {
+  // roundMoney(NaN) is 0, so an unparseable monthly price would become a $0 annual price.
+  it.each([
+    ["catalog monthly", () => resolvePlanPrice({ monthlyPrice: "abc" }, null)],
+    ["catalog annual", () => resolvePlanPrice({ monthlyPrice: 99, annualPrice: "abc" }, null)],
+    ["custom monthly", () => resolvePlanPrice({ monthlyPrice: 99 }, { monthly: "abc" })],
+    ["custom annual", () => resolvePlanPrice({ monthlyPrice: 99 }, { annual: "abc" })],
+    ["infinite monthly", () => resolvePlanPrice({ monthlyPrice: Infinity }, null)],
+  ])("%s that is not a finite number is unresolvable", (_name, resolve) => {
+    expect(resolve()).toEqual({ ok: false, reason: "non_finite_price" });
+  });
+});
