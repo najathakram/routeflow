@@ -66,4 +66,26 @@ describe("REG-ROW259: orders.service.ts has no bare invoice delete", () => {
     const end = src.indexOf("\n  }\n", start);
     expect(src.slice(start, end)).toContain("deleteOrderInvoice(tx, loserDraft.id,");
   });
+
+  it("REG-ROW259: deleteOrderInvoice has exactly two non-spec call sites (a new door must be seen and classified)", () => {
+    const SRC = path.join(__dirname, "..");
+    const sites: string[] = [];
+    const walk = (dir: string) => {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const p = path.join(dir, e.name);
+        if (e.isDirectory()) walk(p);
+        else if (/\.ts$/.test(e.name) && !/\.spec\.ts$/.test(e.name)) {
+          if (e.name === "order-invoice-delete.ts") continue; // the definition
+          const code = fs
+            .readFileSync(p, "utf8")
+            .replace(/\/\*[\s\S]*?\*\//g, "")
+            .replace(/\/\/.*$/gm, "");
+          const n = (code.match(/\bdeleteOrderInvoice\(/g) ?? []).length;
+          for (let i = 0; i < n; i++) sites.push(path.relative(SRC, p).split(path.sep).join("/"));
+        }
+      }
+    };
+    walk(SRC);
+    expect(sites).toEqual(["orders/orders.service.ts", "orders/orders.service.ts"]);
+  });
 });

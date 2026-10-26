@@ -1,3 +1,5 @@
+import * as fs from "fs";
+import * as path from "path";
 import { SOURCE_DELETED_ACTION } from "../credit-notes/sourced-credit-guard";
 import { deleteOrderInvoice } from "./order-invoice-delete";
 
@@ -85,5 +87,40 @@ describe("REG-ROW259: deleteOrderInvoice", () => {
     await expect(deleteOrderInvoice(tx, "inv-1", "t-1")).rejects.toThrow("boom");
 
     expect(tx.invoice.delete).not.toHaveBeenCalled();
+  });
+
+  // SA-1000 §1: the unspent-credit refusal lives IN the helper, so no door can reach the delete without it.
+  it("REG-ROW259: an invoice whose sourced credit note is still unspent is refused and nothing is written", async () => {
+    const { tx } = makeTx([
+      { id: "cn-1", invoiceId: "inv-1", amount: 50, amountUsed: 0, status: "ISSUED" } as never,
+    ]);
+
+    await expect(deleteOrderInvoice(tx, "inv-1", "t-1")).rejects.toMatchObject({
+      response: { code: "INVOICE_HAS_UNSPENT_CREDIT" },
+    });
+
+    expect(tx.auditLog.createMany).not.toHaveBeenCalled();
+    expect(tx.creditNote.updateMany).not.toHaveBeenCalled();
+    expect(tx.invoice.delete).not.toHaveBeenCalled();
+  });
+
+  it("REG-ROW259: a fully spent sourced credit note does not block the delete", async () => {
+    const { tx } = makeTx([
+      { id: "cn-1", invoiceId: "inv-1", amount: 50, amountUsed: 50, status: "APPLIED" } as never,
+    ]);
+
+    await deleteOrderInvoice(tx, "inv-1", "t-1");
+
+    expect(tx.invoice.delete).toHaveBeenCalledTimes(1);
+  });
+
+  it("REG-ROW259: assertNoUnspentSourcedCredits is the FIRST awaited call of deleteOrderInvoice, before any read or write", () => {
+    const src = fs.readFileSync(path.join(__dirname, "order-invoice-delete.ts"), "utf8");
+    const body = src
+      .slice(src.indexOf("export async function deleteOrderInvoice("))
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/\/\/.*$/gm, "");
+    const awaits = [...body.matchAll(/await\s+(\w+)/g)].map((m) => m[1]);
+    expect(awaits[0]).toBe("assertNoUnspentSourcedCredits");
   });
 });
