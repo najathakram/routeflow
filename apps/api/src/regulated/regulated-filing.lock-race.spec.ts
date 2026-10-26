@@ -1,6 +1,10 @@
 import { RegulatedFilingService } from "./regulated-filing.service";
 
 jest.mock("../common/tenant-time-zone", () => ({ tenantTimeZone: async () => null }));
+jest.mock("./filing-lock-ready", () => ({
+  ...jest.requireActual("./filing-lock-ready"),
+  assertFilingLockReady: () => undefined, // SA-997: this spec exercises the lock itself
+}));
 
 /**
  * B297 PR5 review H2: a regeneration that races a lock must never flip a LOCKED filing back to GENERATED or

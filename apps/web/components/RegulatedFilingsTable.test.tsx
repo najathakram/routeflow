@@ -41,6 +41,14 @@ jest.mock("@routeflow/ui/web", () => {
   };
 });
 
+let mockLockReady = true;
+jest.mock("@routeflow/types", () => ({
+  ...jest.requireActual("@routeflow/types"),
+  get FILING_LOCK_READY() {
+    return mockLockReady;
+  },
+}));
+
 import { RegulatedFilingsTable } from "./RegulatedFilingsTable";
 
 const filing = (over: Record<string, unknown> = {}) =>
@@ -67,6 +75,7 @@ beforeEach(() => {
   mutate.mockClear();
   toast.mockClear();
   role = "TENANT_ADMIN";
+  mockLockReady = true;
 });
 
 describe("RegulatedFilingsTable status", () => {
@@ -119,5 +128,21 @@ describe("the lock action", () => {
     expect(screen.queryByRole("button", { name: /^Lock$/ })).toBeNull();
     rerender(<RegulatedFilingsTable filings={[filing({ status: "FAILED" })]} />);
     expect(screen.queryByRole("button", { name: /^Lock$/ })).toBeNull();
+  });
+});
+
+describe("the lock action while locking is switched off (SA-997)", () => {
+  it("shows Lock disabled with the exact copy and never opens the dialog", () => {
+    mockLockReady = false;
+    render(<RegulatedFilingsTable filings={[filing()]} />);
+    const copy =
+      "Locking a filing isn't available yet. You can still generate, check and download it.";
+    const btn = screen.getByRole("button", { name: /^Lock$/ });
+    expect(btn).toBeDisabled();
+    expect(btn).toHaveAttribute("title", copy);
+    expect(screen.getByText(copy)).toBeInTheDocument();
+    fireEvent.click(btn);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(mutate).not.toHaveBeenCalled();
   });
 });

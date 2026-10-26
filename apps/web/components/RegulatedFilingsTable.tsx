@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { Download, Lock } from "lucide-react";
+import { FILING_LOCK_NOT_READY_COPY, FILING_LOCK_READY } from "@routeflow/types";
 import { Badge, Button, Modal, Textarea, useToast } from "@routeflow/ui/web";
 import { fmt } from "@/lib/formatting";
 import { useAuth } from "@/lib/auth-context";
@@ -81,6 +82,9 @@ export function RegulatedFilingsTable({
 
   return (
     <div className="overflow-x-auto">
+      {canLock && !FILING_LOCK_READY && (
+        <p className="mb-2 text-xs text-navy/60">{FILING_LOCK_NOT_READY_COPY}</p>
+      )}
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-surface-border text-left text-xs text-navy/60">
@@ -128,7 +132,9 @@ export function RegulatedFilingsTable({
                   <button
                     type="button"
                     onClick={() => setLockTarget(f)}
-                    className="mr-1 inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-navy hover:bg-surface-raised"
+                    disabled={!FILING_LOCK_READY} // SA-997: switched off until sale routing lands (W-965)
+                    title={FILING_LOCK_READY ? undefined : FILING_LOCK_NOT_READY_COPY}
+                    className="mr-1 inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-navy hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     <Lock className="h-3.5 w-3.5" /> Lock
                   </button>

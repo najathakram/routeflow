@@ -453,6 +453,7 @@ export const API_ERROR_CODES = {
   FILING_PERIOD_RUNNING: "FILING_PERIOD_RUNNING",
   /** SA-995: the lock found the filing's figures differ from what the ledger gives now; regenerate, check, lock. */
   FILING_STALE: "FILING_STALE",
+  FILING_LOCK_NOT_READY: "FILING_LOCK_NOT_READY",
   // 409 body: productId, period (the filed period's label) and filedFor ("Tobacco" or the tracked category's name, W-755).
   STOCK_DATE_IN_FILED_PERIOD: "STOCK_DATE_IN_FILED_PERIOD",
   // 683 (SA-896): DELETE /settings/financial-data refused while the tenant holds regulated records.
@@ -1023,3 +1024,13 @@ export const UNVOID_BILLING_COPY: Record<OrderBillingChangedReason, string> = {
   LINE_REDUCED:
     "The order line now holds less than this invoice bills. Raise the order line, or create a new invoice from the order.",
 };
+
+/**
+ * SA-997: locking a filing is OFF until a sale that books into a locked period is routed to the current one (W-965).
+ * The API refuses with 409 FILING_LOCK_NOT_READY before any read; web disables the control with this sentence. The API
+ * keeps a literal copy (apps/api/src/regulated/filing-lock-ready.ts), pinned byte-equal and false-equal by
+ * apps/api/src/regulated/filing-lock-ready.spec.ts.
+ */
+export const FILING_LOCK_READY = false;
+export const FILING_LOCK_NOT_READY_COPY =
+  "Locking a filing isn't available yet. You can still generate, check and download it.";

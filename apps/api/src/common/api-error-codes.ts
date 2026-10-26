@@ -226,6 +226,8 @@ export const API_ERROR_CODES = {
   FILING_PERIOD_RUNNING: "FILING_PERIOD_RUNNING",
   /** SA-995: the lock found the filing's figures differ from what the ledger gives now; regenerate, check, lock. */
   FILING_STALE: "FILING_STALE",
+  /** SA-997: locking a filing is switched off (FILING_LOCK_READY) until the sale-routing work lands. */
+  FILING_LOCK_NOT_READY: "FILING_LOCK_NOT_READY",
   STOCK_DATE_IN_FILED_PERIOD: "STOCK_DATE_IN_FILED_PERIOD",
   // 683 (SA-896): DELETE /settings/financial-data refused while the tenant holds regulated records.
   FINANCIAL_WIPE_BLOCKED_REGULATED: "FINANCIAL_WIPE_BLOCKED_REGULATED",

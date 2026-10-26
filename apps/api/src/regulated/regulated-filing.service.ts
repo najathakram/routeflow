@@ -16,6 +16,7 @@ import { roundMoney } from "@routeflow/pricing";
 import { filingPeriod, FilingCadence, periodEndedForTenant } from "./period";
 import { tenantTimeZone } from "../common/tenant-time-zone";
 import { isDeepStrictEqual } from "util";
+import { assertFilingLockReady } from "./filing-lock-ready";
 import { claimFilingLock, findLockedFiling, updateFilingUnlessLocked } from "./filed-periods";
 import { buildFilingCsv } from "./filing-csv";
 import { serializeReportCsv } from "./report-csv";
@@ -127,6 +128,7 @@ export class RegulatedFilingService {
     id: string,
     params: { userId: string; reason: string; impersonatedBy?: string | null },
   ) {
+    assertFilingLockReady(); // SA-997: switched off, before any read
     const tenantId = this.prisma.getTenantId();
     if (!tenantId) throw new BadRequestException("Filings are tenant-scoped");
     const reason = (params.reason ?? "").trim();
