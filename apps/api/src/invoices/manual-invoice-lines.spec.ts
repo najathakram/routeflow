@@ -259,12 +259,13 @@ describe("SA-077(2): a split no pack can price is refused, never silently droppe
 });
 
 describe("SA-982 PR-2: the warn phase at the manual-invoice site (invoices.manual)", () => {
-  const run = (items: unknown[]) =>
+  const run = (items: unknown[], warnSite: "invoices.manual" | null = "invoices.manual") =>
     buildManualInvoiceLines(items as never, {
       productMap,
       categoryMap,
       tenantId: "t-1",
       role: "OPERATOR",
+      warnSite: warnSite ?? undefined,
       clampFreeUnits: clamp,
     });
   let warn: jest.SpyInstance;
@@ -319,8 +320,7 @@ describe("SA-982 PR-2: the warn phase at the manual-invoice site (invoices.manua
     logs.mockRestore();
   });
 
-  it("an estimate-conversion line (a pack snapshot), a snapshotted legacy line, and a line with no product are not dry-run", () => {
-    run([{ ...b644, packSnapshot: 12 }]);
+  it("a snapshotted legacy line and a line with no product are not dry-run, even from the named site", () => {
     run([
       {
         description: "Legacy",
@@ -334,5 +334,23 @@ describe("SA-982 PR-2: the warn phase at the manual-invoice site (invoices.manua
     ]);
     run([{ description: "Fee", qty: 1, unitPrice: 5 }]);
     expect(warn).not.toHaveBeenCalled();
+  });
+
+  // SA-982 PR-2, MacBook MUST 2: the census is of a CLIENT's raw new write, so it is gated on the caller naming the
+  // site (POST /invoices), never on a null pack snapshot. Estimate conversions and recurring runs both reach this
+  // builder with `packSnapshot: null` lines (B646 recurring, estimate lines with no derivable pack).
+  it("no named site, no dry-run: a null-snapshot estimate-conversion line and a recurring-run line are not counted", () => {
+    run([{ ...b644, packSnapshot: null }], null); // estimate conversion, no derivable pack
+    run([b644], null); // recurring run: stored template line, boxed, no split
+    run([{ ...b644, packSnapshot: 12 }], null);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("never mutates the caller's items (the dry-run gets a copy)", () => {
+    for (const line of [b644, valid]) {
+      const before = structuredClone(line);
+      run([line]);
+      expect(line).toEqual(before);
+    }
   });
 });

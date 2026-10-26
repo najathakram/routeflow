@@ -1,6 +1,11 @@
 import { Logger } from "@nestjs/common";
 import { AMBIGUOUS_LINE_REASONS } from "@routeflow/pricing";
-import { LINE_GUARD_SITES, warnLineAmbiguity, type LineGuardSite } from "./line-ambiguity-warn";
+import {
+  LINE_GUARD_SITES,
+  lineGuardCtx,
+  warnLineAmbiguity,
+  type LineGuardSite,
+} from "./line-ambiguity-warn";
 
 /**
  * SA-982 PR-2: the warn phase. `warnLineAmbiguity` dry-runs `buildLine` on a class site's RAW input and logs ONE line on
@@ -82,10 +87,17 @@ describe("warnLineAmbiguity", () => {
   });
 
   it("never changes its input (the write is the caller's, untouched)", () => {
-    const raw = Object.freeze({ unitPrice: 24, unitsPerBox: 12, boxes: 1.5, pieces: 0, qty: 18 });
-    const copy = { ...raw };
-    warnLineAmbiguity("orders.create.lines", raw, ctx);
-    expect(raw).toEqual(copy);
+    // A clone taken BEFORE the call, deep-compared after: a frozen input only throws in strict mode, so a mutant that
+    // wrote to it could pass silently. Both an ambiguous shape (the catch path) and a valid one (no log) are checked.
+    for (const raw of [
+      { unitPrice: 24, unitsPerBox: 12, boxes: 1.5, pieces: 0, qty: 18 },
+      { unitPrice: 24, unitsPerBox: 12, boxes: 1, pieces: 6, qty: 18 },
+      { unitPrice: 24, unitsPerBox: 12, qty: 6 },
+    ]) {
+      const before = structuredClone(raw);
+      warnLineAmbiguity("orders.create.lines", raw, ctx);
+      expect(raw).toEqual(before);
+    }
   });
 
   it("the log line carries no names or amounts", () => {
@@ -108,5 +120,19 @@ describe("LINE_GUARD_SITES", () => {
     );
     const site: LineGuardSite = "orders.create.lines";
     expect(LINE_GUARD_SITES).toContain(site);
+  });
+});
+
+describe("lineGuardCtx", () => {
+  const prisma = { getTenantId: () => "t-9" };
+  it("carries the tenant, the actor's role and the named census site", () => {
+    expect(lineGuardCtx(prisma, { role: "OPERATOR" }, "invoices.manual")).toEqual({
+      tenantId: "t-9",
+      role: "OPERATOR",
+      warnSite: "invoices.manual",
+    });
+  });
+  it("an internal caller names no site", () => {
+    expect(lineGuardCtx(prisma, null).warnSite).toBeUndefined();
   });
 });

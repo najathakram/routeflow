@@ -67,10 +67,19 @@ export function warnLineAmbiguity(
   }
 }
 
-/** The census context of a request: the tenant and the actor's role, read once at a site (`prisma.getTenantId()`, `user.role`). */
+/**
+ * The census context of a request: the tenant and the actor's role, read once at a site (`prisma.getTenantId()`,
+ * `user.role`), plus the `site` when the caller is a client's raw new write (absent for an internal caller, which
+ * a builder that takes a `warnSite` then does not dry-run).
+ */
 export function lineGuardCtx(
   prisma: { getTenantId(): string | null | undefined },
   user?: { role?: string | null } | null,
-): { tenantId: string | null | undefined; role: string | null | undefined } {
-  return { tenantId: prisma.getTenantId(), role: user?.role };
+  site?: LineGuardSite,
+): {
+  tenantId: string | null | undefined;
+  role: string | null | undefined;
+  warnSite: LineGuardSite | undefined;
+} {
+  return { tenantId: prisma.getTenantId(), role: user?.role, warnSite: site };
 }

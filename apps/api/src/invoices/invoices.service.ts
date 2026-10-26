@@ -231,7 +231,7 @@ import * as iGate from "./invoice-restriction-gate";
 import { flagSplitRestrictedLines } from "../selling-restrictions/restricted-lines-flag";
 import { defaultSaleFulfilmentKind } from "../orders/default-sale-fulfilment";
 import { assertEditStillJudged } from "./invoice-restriction-lines";
-import { buildManualInvoiceLines, lineGuardCtx } from "./manual-invoice-lines";
+import { buildManualInvoiceLines, lineGuardCtx, type LineGuardSite } from "./manual-invoice-lines";
 import { loadOverride, type ManualInvoiceDto } from "./invoice-line-override";
 import {
   allocateOrderRegularTax,
@@ -430,7 +430,7 @@ export class InvoicesService {
    * SA-135: an internal caller's line may carry `packSnapshot` (ManualLineItem); the HTTP DTO never can. `actor` (HTTP
    * only): the H3b price-override author (`actor.sub`) and the row-510 restriction-override principal.
    */
-  async create(dto: ManualInvoiceDto, actor?: JwtPayload) {
+  async create(dto: ManualInvoiceDto, actor?: JwtPayload, opts?: { warnSite?: LineGuardSite }) {
     const issueDateInput = dto.issueDate ? issueDateStamp(dto.issueDate) : null; // #2197: 400 first
     const due = dueDateStamps(dto); // #2256: the due dates too, refused before any read or write
     assertFiniteInvoiceInput(dto); // N4: NaN is a 400, not a silent $0
@@ -472,7 +472,7 @@ export class InvoicesService {
     const { itemsData } = buildManualInvoiceLines(dto.items, {
       productMap,
       categoryMap,
-      ...lineGuardCtx(this.prisma, actor), // tenantId + the actor's role (SA-982 PR-2 census)
+      ...lineGuardCtx(this.prisma, actor, opts?.warnSite), // tenant, role, and POST /invoices' census site (SA-982 PR-2)
       clampFreeUnits: (free, boxes, qty) => this.clampLineFreeUnits(free, boxes, qty),
       resolved,
       override: await loadOverride(this.prisma, dto, unitsByProduct, actor?.sub, this.entitlements),
