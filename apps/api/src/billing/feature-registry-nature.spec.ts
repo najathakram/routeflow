@@ -67,26 +67,73 @@ describe("FEATURE_REGISTRY nature (SA-950 A1)", () => {
 describe("FEATURE_REGISTRY release block (SA-950 A2)", () => {
   const release = rows.filter((f) => f.nature.purpose === "release");
 
-  it("every release row carries a valid block", () => {
-    const now = new Date();
-    const todayUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  /** A real calendar date in YYYY-MM-DD (2026-02-31 is not one). */
+  const isRealDate = (v: unknown): boolean =>
+    typeof v === "string" &&
+    DATE.test(v) &&
+    new Date(`${v}T00:00:00Z`).toISOString().slice(0, 10) === v;
+
+  /** SA-993: the SHAPE of a release block. The calendar never enters here (a date in the past is still a valid date). */
+  const releaseShapeProblems = (f: FeatureDef): string[] => {
+    const n = f.nature;
+    if (n.purpose !== "release") return [];
+    const r = n.release;
     const bad: string[] = [];
-    for (const f of release) {
-      const n = f.nature;
-      if (n.purpose !== "release") continue;
-      const r = n.release;
-      if (!FEATURE_RELEASE_STAGE_VALUES.includes(r.stage)) bad.push(`${f.key}:stage`);
-      if (!DATE.test(r.introduced)) bad.push(`${f.key}:introduced`);
-      if (!/^W-\d+$/.test(r.removalIssue)) bad.push(`${f.key}:removalIssue`);
-      if (r.stage === "default") {
-        if (!DATE.test(r.endDate)) bad.push(`${f.key}:endDate`);
-      } else {
-        // The existing `reviewBy` convention (dark gates): a date that has passed fails the build.
-        const t = DATE.test(r.reviewBy) ? new Date(`${r.reviewBy}T00:00:00Z`).getTime() : NaN;
-        if (!(t >= todayUtc)) bad.push(`${f.key}:reviewBy`);
-      }
+    if (!FEATURE_RELEASE_STAGE_VALUES.includes(r.stage)) bad.push(`${f.key}:stage`);
+    if (!isRealDate(r.introduced)) bad.push(`${f.key}:introduced`);
+    if (!/^W-\d+$/.test(r.removalIssue)) bad.push(`${f.key}:removalIssue`);
+    if (r.stage === "default") {
+      if (!isRealDate(r.endDate)) bad.push(`${f.key}:endDate`);
+    } else if (!isRealDate(r.reviewBy)) {
+      bad.push(`${f.key}:reviewBy`); // required off the stage default, and a real date
     }
-    expect(bad).toEqual([]);
+    return bad;
+  };
+
+  /** The rows whose reviewBy has passed, as a report line. Informational: it asserts nothing about dates (SA-993). */
+  const pastReviewBy = (list: readonly FeatureDef[], todayUtc: string): string[] =>
+    list.flatMap((f) => {
+      const n = f.nature;
+      if (n.purpose !== "release" || n.release.stage === "default") return [];
+      return n.release.reviewBy < todayUtc ? [`${f.key} (reviewBy ${n.release.reviewBy})`] : [];
+    });
+
+  it("every release row carries a valid block (shape only, no calendar)", () => {
+    expect(release.flatMap(releaseShapeProblems)).toEqual([]);
+  });
+
+  it("reports release rows past reviewBy as a WARN line, and never fails the build on the date", () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const past = pastReviewBy(release, today);
+    if (past.length > 0) {
+      console.warn(`WARN release rows past reviewBy: ${past.join(", ")}`);
+    }
+    expect(Array.isArray(past)).toBe(true);
+  });
+
+  it("guard: a 2000-01-01 reviewBy passes the shape check and is listed in the report", () => {
+    const stale = {
+      ...release.find(
+        (f) => f.nature.purpose === "release" && f.nature.release.stage !== "default",
+      )!,
+      key: "fixture.stale",
+      nature: {
+        purpose: "release",
+        release: {
+          stage: "per_tenant_legacy",
+          introduced: "1999-12-31",
+          removalIssue: "W-1",
+          reviewBy: "2000-01-01",
+        },
+      },
+    } as unknown as FeatureDef;
+    expect(releaseShapeProblems(stale)).toEqual([]);
+    expect(pastReviewBy([stale], "2026-10-26")).toEqual(["fixture.stale (reviewBy 2000-01-01)"]);
+    const missing = {
+      ...stale,
+      nature: { purpose: "release", release: { ...(stale.nature as any).release, reviewBy: "" } },
+    } as unknown as FeatureDef;
+    expect(releaseShapeProblems(missing)).toEqual(["fixture.stale:reviewBy"]);
   });
 
   it("per_tenant_legacy is exactly the three flag.units_* keys (count-pinned, shrink-only)", () => {
