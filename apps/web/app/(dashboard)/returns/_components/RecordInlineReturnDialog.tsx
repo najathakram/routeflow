@@ -505,6 +505,7 @@ export function RecordInlineReturnDialog({
                 !(refundError === "dayClosed" && walkIn))) ? (
               <>
                 <Button
+                  className="max-lg:min-h-11"
                   variant="secondary"
                   disabled={refunding}
                   loading={crediting}
@@ -514,6 +515,7 @@ export function RecordInlineReturnDialog({
                 </Button>
                 {refundError === "failed" || refundError === "exceedsCash" ? (
                   <Button
+                    className="max-lg:min-h-11"
                     loading={refunding}
                     disabled={crediting}
                     onClick={() => saved && doRetry(saved)}
@@ -652,7 +654,7 @@ export function RecordInlineReturnDialog({
             <Link
               data-testid="inline-return-recorded-link"
               href={`/returns/${recordedReturn.returnId}`}
-              className="text-sm font-medium text-plum underline"
+              className="inline-flex items-center text-sm font-medium text-plum underline max-lg:min-h-11"
             >
               Open {recordedReturn.returnNumber ?? "the recorded return"}
             </Link>
@@ -661,7 +663,11 @@ export function RecordInlineReturnDialog({
             <Button variant="ghost" className="max-lg:min-h-11" onClick={onClose}>
               Close
             </Button>
-            <Button variant="secondary" onClick={() => setPhase("capture")}>
+            <Button
+              className="max-lg:min-h-11"
+              variant="secondary"
+              onClick={() => setPhase("capture")}
+            >
               Back
             </Button>
           </div>
@@ -700,7 +706,7 @@ function RefundChoice({
     <fieldset className="mt-4 space-y-2 rounded-lg border border-surface-border p-3">
       <legend className="px-1 text-sm font-medium text-navy">{REFUND_COPY.heading}</legend>
       {!walkIn && (
-        <label className="flex items-center gap-2 text-sm text-navy">
+        <label className="flex items-center gap-2 text-sm text-navy max-lg:min-h-11">
           <input
             type="radio"
             name="return-resolution"
@@ -711,7 +717,7 @@ function RefundChoice({
           Store credit
         </label>
       )}
-      <label className="flex items-center gap-2 text-sm text-navy">
+      <label className="flex items-center gap-2 text-sm text-navy max-lg:min-h-11">
         <input
           type="radio"
           name="return-resolution"

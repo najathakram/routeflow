@@ -6,7 +6,7 @@ import { CounterVoidSaleDialog } from "./CounterVoidSaleDialog";
 jest.mock("@/lib/api-client", () => ({ apiClient: { post: jest.fn() } }));
 
 describe("CounterVoidSaleDialog: phone tap targets (W-890)", () => {
-  it("the close button is a 44 px box", () => {
+  it("the close button is a 44 px box below lg and keeps its desktop size", () => {
     renderWithProviders(
       <CounterVoidSaleDialog
         open
@@ -17,7 +17,9 @@ describe("CounterVoidSaleDialog: phone tap targets (W-890)", () => {
         onVoided={jest.fn()}
       />,
     );
-    expect(screen.getByRole("button", { name: "Close" })).toHaveClass("min-h-[44px]");
-    expect(screen.getByRole("button", { name: "Close" })).toHaveClass("min-w-[44px]");
+    const close = screen.getByRole("button", { name: "Close" });
+    expect(close).toHaveClass("max-lg:min-h-11");
+    expect(close).toHaveClass("max-lg:min-w-11");
+    expect(close).not.toHaveClass("min-h-[44px]"); // desktop density is unchanged
   });
 });

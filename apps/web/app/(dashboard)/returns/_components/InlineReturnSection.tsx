@@ -416,7 +416,7 @@ export function InlineReturnSection({
                         </div>
                         <button
                           type="button"
-                          className="text-xs text-navy/50 hover:text-danger"
+                          className="text-xs text-navy/50 hover:text-danger max-lg:min-h-11 max-lg:min-w-11"
                           onClick={() => removeLine(line.lineKey)}
                         >
                           Remove
@@ -426,6 +426,7 @@ export function InlineReturnSection({
                         {boxed ? (
                           <>
                             <Input
+                              className="max-lg:h-11"
                               label={UW.pack.other}
                               type="number"
                               min={0}
@@ -434,6 +435,7 @@ export function InlineReturnSection({
                               onChange={(e) => updateLine(line.lineKey, { boxes: e.target.value })}
                             />
                             <Input
+                              className="max-lg:h-11"
                               label={UW.base.other}
                               type="number"
                               min={0}
@@ -444,6 +446,7 @@ export function InlineReturnSection({
                           </>
                         ) : (
                           <Input
+                            className="max-lg:h-11"
                             label={UW.base.other}
                             type="number"
                             min={0}
@@ -453,6 +456,7 @@ export function InlineReturnSection({
                           />
                         )}
                         <Select
+                          className="max-lg:h-11"
                           label="Reason (optional)"
                           value={line.reason}
                           onChange={(e) =>
@@ -463,6 +467,7 @@ export function InlineReturnSection({
                           options={[{ value: "", label: "Use default" }, ...REASON_OPTIONS]}
                         />
                         <Input
+                          className="max-lg:h-11"
                           label="Note (optional)"
                           value={line.note}
                           onChange={(e) => updateLine(line.lineKey, { note: e.target.value })}
@@ -471,6 +476,7 @@ export function InlineReturnSection({
                       {canOverrideCredit && (
                         <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-[10rem_1fr]">
                           <Input
+                            className="max-lg:h-11"
                             label={
                               boxed
                                 ? `Credit price per ${UW.pack.lower} (optional)`
@@ -485,6 +491,7 @@ export function InlineReturnSection({
                             }
                           />
                           <Input
+                            className="max-lg:h-11"
                             label="Why the lower price"
                             maxLength={CREDIT_OVERRIDE_REASON_MAX}
                             value={line.overrideReason ?? ""}
@@ -506,6 +513,7 @@ export function InlineReturnSection({
             <div className="flex items-end gap-2">
               <div className="min-w-0 flex-1">
                 <Input
+                  className="max-lg:h-11"
                   ref={productSearchRef}
                   label="Add another product"
                   placeholder="Search or scan products…"
@@ -575,6 +583,7 @@ export function InlineReturnSection({
           </div>
 
           <Select
+            className="max-lg:h-11"
             label="Reason"
             value={captureReason}
             onChange={(e) => setCaptureReason(e.target.value as ReturnReason | "")}
@@ -587,6 +596,7 @@ export function InlineReturnSection({
           <div className="flex justify-end gap-2">
             {renderLinesActions?.()}
             <Button
+              className="max-lg:min-h-11"
               disabled={!canGetQuote}
               loading={quoteMutation.isPending}
               onClick={handleGetQuote}
@@ -636,6 +646,7 @@ export function InlineReturnSection({
                   if (!line) return null;
                   return (
                     <Input
+                      className="max-lg:h-11"
                       key={`already-returned-reason-${productId}`}
                       label={`Why credit ${line.productName} again (required)`}
                       maxLength={CREDIT_OVERRIDE_REASON_MAX}
@@ -675,7 +686,7 @@ export function InlineReturnSection({
               </div>
 
               <div className="mt-3 space-y-2">
-                <label className="flex items-center gap-2 text-sm text-navy">
+                <label className="flex items-center gap-2 text-sm text-navy max-lg:min-h-11">
                   <input
                     type="radio"
                     name="excess-option"
@@ -685,7 +696,7 @@ export function InlineReturnSection({
                   Credit at current price
                 </label>
                 <label
-                  className={`flex items-center gap-2 text-sm ${onlyBoughtPossible ? "text-navy" : "text-navy/50"}`}
+                  className={`flex items-center gap-2 text-sm max-lg:min-h-11 ${onlyBoughtPossible ? "text-navy" : "text-navy/50"}`}
                 >
                   <input
                     type="radio"
@@ -740,6 +751,7 @@ export function InlineReturnSection({
           </div>
 
           <Select
+            className="max-lg:h-11"
             label="Reason"
             value={captureReason}
             onChange={(e) => setCaptureReason(e.target.value as ReturnReason | "")}
@@ -750,7 +762,7 @@ export function InlineReturnSection({
           {renderQuoteFooter?.(quote)}
           <div className="flex flex-wrap justify-end gap-2">
             {!hideBack && (
-              <Button variant="ghost" onClick={() => setStep("lines")}>
+              <Button className="max-lg:min-h-11" variant="ghost" onClick={() => setStep("lines")}>
                 Back
               </Button>
             )}

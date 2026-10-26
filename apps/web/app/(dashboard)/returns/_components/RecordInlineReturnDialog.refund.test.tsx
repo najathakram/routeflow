@@ -908,3 +908,33 @@ describe("refund flow", () => {
     );
   });
 });
+
+describe("RecordInlineReturnDialog — phone tap targets on the money path (W-890)", () => {
+  it("after a failed refund, 'Give store credit instead' and 'Retry refund' are 44 px boxes below lg", async () => {
+    refundReturn.mockRejectedValue(apiErr(500));
+    await refundFlow();
+    fireEvent.click(confirmBtn(/^return & refund/i));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+    captureOk();
+    await screen.findByText("Return saved. Refund didn't go through. Try again.");
+    expect(screen.getByRole("button", { name: "Give store credit instead" })).toHaveClass(
+      "max-lg:min-h-11",
+    );
+    expect(screen.getByRole("button", { name: "Retry refund" })).toHaveClass("max-lg:min-h-11");
+  });
+
+  it("on the refusal screen, 'Back' is a 44 px box below lg", async () => {
+    await refundFlow();
+    fireEvent.click(confirmBtn(/^return & refund/i));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+    act(() => lastCall(captureMutate)[1].onError(apiErr(500)));
+    expect(await screen.findByRole("button", { name: /^back$/i })).toHaveClass("max-lg:min-h-11");
+  });
+
+  it("the Store credit and Refund choices are 44 px rows below lg", async () => {
+    await refundFlow();
+    for (const name of ["Store credit", /^Refund /]) {
+      expect(screen.getByRole("radio", { name }).closest("label")).toHaveClass("max-lg:min-h-11");
+    }
+  });
+});

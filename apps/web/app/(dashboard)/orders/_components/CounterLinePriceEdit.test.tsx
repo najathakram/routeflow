@@ -98,8 +98,9 @@ describe("CounterLinePriceEdit: the dialog", () => {
     mount();
     open();
     const close = await screen.findByRole("button", { name: "Close" });
-    expect(close).toHaveClass("min-h-[44px]");
-    expect(close).toHaveClass("min-w-[44px]");
+    expect(close).toHaveClass("max-lg:min-h-11");
+    expect(close).toHaveClass("max-lg:min-w-11");
+    expect(close).not.toHaveClass("min-h-[44px]"); // desktop density is unchanged
   });
 
   it("percent off 10 on a 10.00 item: preview, then Apply hands back net 9", async () => {
