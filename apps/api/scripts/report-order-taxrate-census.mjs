@@ -16,7 +16,7 @@
  *                         totals prove (regular tax = Order.tax, base = Order.subtotal):
  *       noTax               tax = 0 (nothing to infer);
  *       verified            the tenant's own rate (settings.taxRate) reproduces the stored tax to the cent on the subtotal
- *                           (@routeflow/pricing's inferredFlatRate, the rule the B294 backfill uses);
+ *                           (@routeflow/pricing's inferredGoodsFlatRate, the rule the B294 backfill uses);
  *       verifiedNetOfDiscount  the tenant's rate does not on the subtotal but does on subtotal - discountAmount (the
  *                           discount-reduces-the-base question, rows 406-408, answered per order, never guessed);
  *       otherRate           some OTHER flat rate reproduces the tax (the tenant's rate changed, or the order was taxed
@@ -37,7 +37,7 @@ import { createRequire } from "module";
 import { realpathSync } from "node:fs";
 import { basename } from "node:path";
 import { fileURLToPath } from "node:url";
-import { inferredFlatRate } from "@routeflow/pricing";
+import { inferredGoodsFlatRate } from "@routeflow/pricing";
 import { resolveReportDbUrl } from "./lib/report-db-url.mjs";
 const require = createRequire(import.meta.url);
 
@@ -109,7 +109,7 @@ export function classifyUnstamped({ subtotal, tax, discount, tenantRatePct }) {
   if (cents(subtotal) <= 0) return "subtotalZero";
   const preferred = tenantRateFraction(tenantRatePct);
   const prove = (base) =>
-    inferredFlatRate(
+    inferredGoodsFlatRate(
       { subtotal: base, taxAmount: tax, lines: [{ taxRate: 0, categoryTaxAmount: 0 }] },
       { preferredRate: preferred },
     );
