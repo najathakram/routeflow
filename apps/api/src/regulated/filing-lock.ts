@@ -2,7 +2,9 @@ import { ConflictException } from "@nestjs/common";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import {
   anyLockedFiling,
+  isLockedFiling,
   lockedFilingsCovering,
+  lockFilingRowsCovering,
   type BucketRef,
   type FilingsDb,
 } from "./filed-periods";
@@ -33,7 +35,9 @@ export async function assertLedgerRowsNotLocked(db: LockDb, rows: BucketRef[]): 
   const unique = [
     ...new Map(rows.map((r) => [`${r.trackedCategoryId}|${r.periodBucket}`, r])).values(),
   ];
-  const hit = (await lockedFilingsCovering(db, unique))[0];
+  // SA-995 §2: a ROW lock (FOR SHARE) on the covering filing rows, on the writer's own transaction `db`, then LOCKED
+  // filtered here: a lock cannot slip in between this check and the writer's insert.
+  const hit = (await lockFilingRowsCovering(db, unique)).find((h) => isLockedFiling(h.filing));
   if (!hit) return;
   throw new ConflictException({
     code: API_ERROR_CODES.LEDGER_PERIOD_LOCKED,

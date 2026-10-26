@@ -1,4 +1,5 @@
 import { ForbiddenException } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 import { monthRange } from "./period";
 
 /**
@@ -73,10 +74,18 @@ export async function lockedFilingsCovering(
       status: "LOCKED",
     },
   })) as LockedFilingRow[];
-  if (filings.length === 0) return [];
-  const out: Array<{ filing: LockedFilingRow; trackedCategoryId: string; periodBucket: string }> =
-    [];
-  for (const ref of withCategory) {
+  return coveringMatches(filings, withCategory);
+}
+
+type CoverMatch = { filing: LockedFilingRow; trackedCategoryId: string; periodBucket: string };
+
+/** Per (category, bucket): the filings whose [periodStart, periodEnd) holds the bucket's month start. */
+function coveringMatches(
+  filings: LockedFilingRow[],
+  refs: Array<BucketRef & { trackedCategoryId: string }>,
+): CoverMatch[] {
+  const out: CoverMatch[] = [];
+  for (const ref of refs) {
     const from = monthRange(ref.periodBucket).from.getTime();
     for (const f of filings) {
       if (
@@ -92,6 +101,62 @@ export async function lockedFilingsCovering(
     }
   }
   return out;
+}
+
+/** A filing row that is LOCKED (the status literal stays in this module). */
+export const isLockedFiling = (f: { status: string }): boolean => f.status === "LOCKED";
+
+/**
+ * SA-995 §2: the ledger guard's read, as a ROW LOCK. Selects the covering `RegulatedFiling` rows (the tenant's
+ * filings of the refs' categories whose period holds a ref's month) `ORDER BY id FOR SHARE`, with NO status
+ * predicate: a GENERATED row is locked too, so a lock's conditional UPDATE (the exclusive side) waits for every
+ * writer that is mid-transaction, and a writer that meets a row the lock has just updated waits for it, then sees
+ * LOCKED (or, on a Serializable / Repeatable Read snapshot, gets a serialization failure and retries). The caller
+ * filters LOCKED in code (`isLockedFiling`). MUST run on the writer's own transaction client: an autocommit
+ * would release the share lock at once. A client without `$queryRaw` (a unit-test stub) falls back to the plain
+ * read of LOCKED rows, which locks nothing.
+ */
+export async function lockFilingRowsCovering(
+  db: FilingsDb & { $queryRaw?: (...args: any[]) => Promise<any> },
+  refs: BucketRef[],
+  tenantId?: string,
+): Promise<CoverMatch[]> {
+  const withCategory = refs.filter((r): r is BucketRef & { trackedCategoryId: string } =>
+    Boolean(r.trackedCategoryId),
+  );
+  if (withCategory.length === 0) return [];
+  if (typeof db.$queryRaw !== "function") return lockedFilingsCovering(db, refs, tenantId);
+  const categoryIds = [...new Set(withCategory.map((r) => r.trackedCategoryId))];
+  const monthStarts = [
+    ...new Set(withCategory.map((r) => monthRange(r.periodBucket).from.toISOString())),
+  ];
+  const rows: Array<{
+    id: string;
+    trackedCategoryId: string;
+    periodKey: string;
+    periodStart: Date;
+    periodEnd: Date;
+    status: string;
+  }> = await db.$queryRaw(
+    Prisma.sql`SELECT f."id", f."trackedCategoryId", f."periodKey", f."periodStart", f."periodEnd", f."status"
+      FROM "RegulatedFiling" f
+      WHERE f."trackedCategoryId" = ANY(${categoryIds}::text[])
+        AND (${tenantId ?? null}::text IS NULL OR f."tenantId" = ${tenantId ?? null}::text)
+        AND EXISTS (
+          SELECT 1 FROM unnest(${monthStarts}::timestamp[]) AS m(month_start)
+          WHERE f."periodStart" <= m.month_start AND m.month_start < f."periodEnd"
+        )
+      ORDER BY f."id"
+      FOR SHARE`,
+  );
+  return coveringMatches(
+    rows.map((r) => ({
+      ...r,
+      periodStart: new Date(r.periodStart),
+      periodEnd: new Date(r.periodEnd),
+    })) as any,
+    withCategory,
+  );
 }
 
 /** Cheap exit probe for the edit guard: does ANY filing hold the LOCKED status? (LOCKED tier.) */
