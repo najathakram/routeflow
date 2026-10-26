@@ -89,14 +89,17 @@ export class RolesGuard implements CanActivate {
     groups: OperatorPermissionGroup[],
   ): Promise<boolean> {
     const permissions = this.permissions!;
-    const mode = permissions.mode();
-    const where = `handler=${context.getClass().name}.${context.getHandler().name} tenant=${user.tenantId ?? "-"} route=${routeOf(context)}`;
+    // Everything that can throw sits inside the try: in SHADOW nothing here may ever block an operator.
+    let mode: ReturnType<OperatorPermissionsService["mode"]> | undefined;
+    let where = `handler=${context.getClass().name}.${context.getHandler().name} tenant=${user.tenantId ?? "-"}`;
     let allowed: boolean;
     try {
+      mode = permissions.mode();
+      where += ` route=${routeOf(context)}`;
       allowed = await permissions.hasAny(user, groups);
     } catch (err) {
       // SHADOW observes only: a failed lookup must never block an operator, so log it and allow.
-      if (mode !== "live") {
+      if (mode === "shadow") {
         this.logger.error(
           `permission lookup failed (shadow, allowed) groups=${groups.join("|")} ${where}: ${describeLookupError(err)}`,
         );

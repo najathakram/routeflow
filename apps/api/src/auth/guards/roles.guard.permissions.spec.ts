@@ -145,6 +145,24 @@ describe("RolesGuard + operator permission groups", () => {
     expect(line).not.toMatch(/u-secret|db-host/);
   });
 
+  it("SHADOW: even a throw while building the log context (the request read) still ALLOWS", async () => {
+    let reads = 0;
+    const ctx = {
+      getHandler: () => Ctl.prototype.orders,
+      getClass: () => Ctl,
+      switchToHttp: () => ({
+        getRequest: () => {
+          reads += 1;
+          if (reads > 1) throw new Error("request unreadable"); // the first read is the user; the second is routeOf
+          return { user: OPERATOR };
+        },
+      }),
+    } as unknown as ExecutionContext;
+    held = ["CATALOG"];
+    jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+    await expect(guard.canActivate(ctx)).resolves.toBe(true);
+  });
+
   it("LIVE: a failed lookup FAILS CLOSED (the error propagates, the request is never allowed)", async () => {
     mode = "live";
     const boom = new Error("db down");
