@@ -1,6 +1,6 @@
 {
-  "mappedSha": "14e7072d933b265b6046785ea8ac556c05d3388c",
-  "generatedAt": "2026-10-25T08:17:16.153Z",
+  "mappedSha": "be47146b372671db0cc18b9e042dba90c3ecb436",
+  "generatedAt": "2026-10-25T23:57:38.831Z",
   "layout": "split-2026-09-13",
   "areas": [
     "api",
@@ -15,5 +15,5 @@
     "packages": 0
   },
   "fileCount": 1146,
-  "notes": "**2026-10-25 — Bookkeeping for window 6 (#3739 `9cd783913`, #3708 `c3d269f8d`, #3719 `b7b0a1a34`, #3718 `9c47dc317`, #3744 `a9a471888`, #3720 `d9e4477ba`, #3040 `78e7d266b`, #3746 `259f59be5`, W-785 text sweep #3733/#3734/#3735/#3740/#3751; docs-only, Option B follow-up that #3753 deferred).** New `api/landing-2026-10-25-w6.md`, `web/`, `mobile/` and `packages/landing-2026-10-25-w6.md` (TOC row in each area file; packages.md keeps a pointer). Covers 681 refs proved in tenant, W-769 confirmed-basis payments, W-810 owned Stripe products, DB-lane argv, the W-785 sentence-case sweep, bugs close verb, skip-verify pushed refs, ops-monitor NUL guard. Retires DRIFT-2026-10-25.md. mappedSha stamped to HEAD. History: CHANGELOG.md."
+  "notes": "**2026-10-25 — Bookkeeping for train 2 (#3764 `6970f9d73`, #3783 `d25cf5e64`, #3793 `f382e28c7`, #3796 `c30eb4a0f`; merge `be47146b3`, PR #3822; docs-only, Option B follow-up).** New `api/`, `web/` and `packages/landing-2026-10-25-train2.md` (TOC row in api.md and web.md; packages.md keeps a pointer). Covers the neutral coded 409 `PRODUCT_CHANGED_CONCURRENTLY` for product write races (row 519), `useOnTenantToday` and the browser-clock pin (SA-964 §4). No mobile area change (the only mobile file is the jest types mock). #3793 and #3796 are `scripts/lib/heavy-slot.mjs` and its runbook (macOS reclaimable memory, machine-wide slots file), outside the four mapped areas. mappedSha stamped to `be47146b3`. History: CHANGELOG.md."
 }
