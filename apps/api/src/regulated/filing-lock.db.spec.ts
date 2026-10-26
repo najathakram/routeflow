@@ -16,6 +16,11 @@ jest.mock("../notifications/notifications.service", () => ({
   NotificationsService: jest.fn().mockImplementation(() => ({})),
 }));
 
+jest.mock("./filing-lock-ready", () => ({
+  ...jest.requireActual("./filing-lock-ready"),
+  assertFilingLockReady: () => undefined, // SA-997: this spec exercises the lock itself
+}));
+
 import { randomUUID } from "crypto";
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
@@ -278,7 +283,7 @@ describeDb("B297 PR5 — a LOCKED filing closes its period, real Postgres", () =
   const audit = { log: jest.fn().mockResolvedValue(undefined) };
   const storage = { upload: jest.fn().mockResolvedValue(undefined), presignedUrl: jest.fn() };
   const filingService = () =>
-    new (RegulatedFilingService as any)(prisma, storage, audit, { getLedger: jest.fn() }, {});
+    new (RegulatedFilingService as any)(prisma, storage, audit, asLedger(), {});
   const lockAs = (id: string, reason = "September filed with the state") =>
     inTenant(() => filingService().lockFiling(id, { userId: operatorUserId, reason }));
   const makeFiling = (over: Record<string, unknown> = {}) =>
@@ -295,7 +300,7 @@ describeDb("B297 PR5 — a LOCKED filing closes its period, real Postgres", () =
         generatedAt: new Date("2026-10-02T00:00:00Z"),
         rows: [],
         csvKey: "k.csv",
-        totalCategoryTax: 1.23,
+        totalCategoryTax: 0, // equals the empty ledger's figures, so the SA-995 stale check passes
         ...over,
       } as any,
     });
