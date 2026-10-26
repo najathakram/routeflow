@@ -115,4 +115,18 @@ describe("backfill-b294 selects by emptiness, never by date", () => {
     expect(res.status).toBe(1);
     expect(res.stderr).toMatch(/--before is retired/);
   });
+
+  it("the apply UPDATE is scoped to the planned invoice's own parent row", () => {
+    const src = readFileSync(SCRIPT, "utf8");
+    const at = src.indexOf('`UPDATE "InvoiceItem" SET "taxRate"');
+    expect(at).toBeGreaterThan(-1);
+    const stmt = src.slice(at, src.indexOf("assertStampedCount(res.rowCount", at));
+    // the parent-row filter is in the WHERE, not only in the earlier re-read
+    expect(stmt).toMatch(
+      /"invoiceId" IN \(SELECT id FROM "Invoice" WHERE id = \$2 AND "tenantId" = \$\{tenantParam\}\)/,
+    );
+    // and the bound parameter list ends with the planned tenant, in the slot tenantParam names
+    expect(stmt).toMatch(/\.\.\.notNsf\.params,\s*a\.tenantId,\s*\],/);
+    expect(src).toContain("const tenantParam = `$${3 + notNsf.params.length}`;");
+  });
 });
