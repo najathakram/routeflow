@@ -55,7 +55,7 @@ const warning409 = {
               id: "r1",
               states: ["CA"],
               legal: true,
-              reasonText: "This product is banned in CA by law.",
+              reasonText: "Restricted in CA: State ban.",
             },
           ],
         },

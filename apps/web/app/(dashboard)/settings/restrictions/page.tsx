@@ -110,7 +110,8 @@ export default function RestrictionsSettingsPage() {
           />
         </label>
         <p className="mt-1 text-xs text-navy/60">
-          Portal limits always apply. Turn this on for legal bans your staff must not sell.
+          Portal limits always apply. Turn this on to warn staff about restricted products on orders
+          and invoices.
         </p>
       </section>
 

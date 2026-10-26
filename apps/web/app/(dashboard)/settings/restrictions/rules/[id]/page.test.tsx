@@ -154,7 +154,7 @@ beforeEach(() => {
 describe("rule detail: what it shows", () => {
   it("says what the rule does, its status, who can lift it, and counts its products", async () => {
     await open();
-    expect(screen.getByText("Banned in Texas and California · All orders")).toBeInTheDocument();
+    expect(screen.getByText("Restricted in Texas and California · All orders")).toBeInTheDocument();
     expect(screen.getByText("Active")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Products & labels (3)" })).toBeInTheDocument();
     for (const n of [1, 2, 3])
