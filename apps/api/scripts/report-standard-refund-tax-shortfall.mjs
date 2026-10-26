@@ -1,10 +1,12 @@
 /**
  * READ-ONLY report (SA-840 section 5, B704 / #1477): what REFUNDED STANDARD returns paid out net-only, against what
- * `refundableLineShare` (@routeflow/pricing, the compiled package) says the invoice charged on the returned slice.
+ * `refundableProductPoolShare` (@routeflow/pricing, the compiled package, SA-970) says the invoice charged on the returned
+ * slice.
  *
  * Per return it fills the returned qty over the order's creditable invoice lines (oldest invoice first, paid lines
- * first, each in row order, like `planProductRefund`), prices each filled slice with `refundableLineShare` using the
- * credits on the line EARLIER than `refundedAt` as `prior`, and compares with the stored `Return.refundAmount`
+ * first, each in row order, like `planProductRefund`), prices each invoice's filled qty as ONE slice of the product's
+ * pool on that invoice with `refundableProductPoolShare` (exactly like the mint's `priceProductSlice`), using the
+ * credits on the lines EARLIER than `refundedAt` as `prior`, and compares with the stored `Return.refundAmount`
  * (and the linked `CreditNote.amount`; a frozen `creditSubtotal` wins where the claim wrote one).
  *
  * Output: ONE row per (tenantId, YYYY-MM of refundedAt, method) with the columns in COLUMNS below, as CSV to stdout and
@@ -33,7 +35,12 @@ import { createRequire } from "module";
 import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { isNsfLine, refundableLineShare, roundMoney, sumInvoiceTotals } from "@routeflow/pricing";
+import {
+  isNsfLine,
+  refundableProductPoolShare,
+  roundMoney,
+  sumInvoiceTotals,
+} from "@routeflow/pricing";
 import { resolveReportDbUrl } from "./lib/report-db-url.mjs";
 
 const require = createRequire(import.meta.url);
@@ -84,8 +91,15 @@ const num = (v) => Number(v ?? 0);
 /** The `YYYY-MM` bucket of an instant (UTC, like the database stores it). */
 export const monthOf = (d) => new Date(d).toISOString().slice(0, 7);
 
+const round3 = (n) => Math.round(n * 1000) / 1000;
+const EPS = 0.001; // the headroom planner's qty tolerance
+
 /**
- * Price ONE return. `ctx` is { invoices: [{id, taxAmount, discount, lines:[{id, productId, qty, subtotal, taxRate,
+ * Price ONE return, the way the mint does (`priceProductSlice` + `planProductRefund`, SA-970). A return item names only the
+ * PRODUCT, so its qty is filled over the product's invoice lines (oldest invoice first, paid lines first, each in row order),
+ * then each invoice's filled qty is priced as ONE slice of that invoice's product POOL with `refundableProductPoolShare`, using
+ * the credits on each line EARLIER than `refundedAt` as `prior`. Quantities are on the line's own axis (factor 1).
+ * `ctx` is { invoices: [{id, taxAmount, discount, lines:[{id, productId, qty, subtotal, taxRate,
  * categoryTaxAmount, isNsf}]}] oldest first, credits: Map(lineId -> [{qty, amount, categoryTax, at, creditNoteId}]) }.
  * Returns { net, tax, categoryTax, discounted } for the slices the returned items fill, or null when nothing is billed.
  */
@@ -95,37 +109,56 @@ export function priceReturn(ret, items, ctx) {
   let categoryTax = 0;
   let filled = false;
   for (const { productId, qty } of items) {
-    const lines = [];
+    const mine = [];
     for (const inv of ctx.invoices) {
-      for (const l of inv.lines)
-        if (l.productId === productId && num(l.qty) > 0) lines.push({ inv, l });
-    }
-    lines.sort((a, b) => Number(num(b.l.subtotal) > 0) - Number(num(a.l.subtotal) > 0)); // stable: paid first
-    let left = num(qty);
-    for (const { inv, l } of lines) {
-      if (left <= 0.0005) break;
-      const prior = { qty: 0, net: 0, tax: 0, categoryTax: 0 };
-      for (const c of ctx.credits.get(l.id) ?? []) {
-        if (c.creditNoteId === ret.creditNoteId || !(new Date(c.at) < new Date(ret.refundedAt)))
-          continue;
-        prior.qty += num(c.qty);
-        prior.net += num(c.amount);
-        prior.categoryTax += num(c.categoryTax);
+      for (const l of inv.lines) {
+        if (l.productId !== productId || !(num(l.qty) > 0)) continue;
+        const prior = { qty: 0, net: 0, tax: 0, categoryTax: 0 };
+        for (const c of ctx.credits.get(l.id) ?? []) {
+          if (c.creditNoteId === ret.creditNoteId || !(new Date(c.at) < new Date(ret.refundedAt)))
+            continue;
+          prior.qty += num(c.qty);
+          prior.net += num(c.amount);
+          prior.categoryTax += num(c.categoryTax);
+        }
+        mine.push({ inv, l, prior, take: 0 });
       }
-      const take = Math.min(left, Math.max(0, Math.round((num(l.qty) - prior.qty) * 1000) / 1000));
-      if (take <= 0) continue;
-      const share = refundableLineShare({
+    }
+    // the fill order of `planProductRefund`: paid lines first, $0 lines last (stable), each up to its remaining qty
+    mine.sort((a, b) => Number(num(b.l.subtotal) > EPS) - Number(num(a.l.subtotal) > EPS));
+    let left = round3(
+      Math.min(
+        num(qty),
+        mine.reduce((t, m) => t + num(m.l.qty), 0),
+      ),
+    );
+    for (const m of mine) {
+      if (left <= EPS) break;
+      const take = Math.min(left, Math.max(0, round3(num(m.l.qty) - m.prior.qty)));
+      if (take <= EPS) continue;
+      m.take = round3(take);
+      left = round3(left - take);
+    }
+    const pools = new Map();
+    for (const m of mine) pools.set(m.inv, [...(pools.get(m.inv) ?? []), m]);
+    for (const [inv, group] of pools) {
+      const pool = group.reduce((t, m) => t + num(m.l.qty), 0);
+      const priorPieces = group.reduce((t, m) => t + m.prior.qty, 0);
+      let returnedPieces = round3(group.reduce((t, m) => t + m.take, 0));
+      if (returnedPieces <= 0) continue;
+      // the 3-dp round trip of a pieces conversion, never a clip
+      const room = Math.max(0, round3(pool - priorPieces));
+      if (returnedPieces > room && returnedPieces - room <= 0.002) returnedPieces = room;
+      const share = refundableProductPoolShare({
         invoice: { taxAmount: inv.taxAmount, discount: inv.discount, lines: inv.lines },
-        lineId: l.id,
-        returnedQty: take,
-        prior,
+        lines: group.map((m) => ({ id: m.l.id, pieces: num(m.l.qty), prior: m.prior })),
+        returnedPieces,
       });
       if (share.refusal) continue;
       filled = true;
       net += share.net;
       tax += share.tax;
       categoryTax += share.categoryTax;
-      left -= take;
     }
   }
   if (!filled) return null;
@@ -368,6 +401,23 @@ export async function selfTest() {
     });
   eq(price("0"), { net: 50, tax: 4, categoryTax: 5, discounted: false }, "undiscounted slice");
   eq(price("10").net, 45, "discounted net");
+  // SA-970: a cheap and a dear line of one product, 1 of 2 pieces, is priced over the POOL (75 + 6), not the dear line
+  const lv = { ...line, categoryTaxAmount: "0", qty: "1" };
+  const pooled = priceReturn(ret, [{ productId: "p", qty: "1" }], {
+    invoices: [
+      {
+        id: "i2",
+        taxAmount: "12",
+        discount: "0",
+        lines: [
+          { ...lv, id: "dear", subtotal: "100" },
+          { ...lv, id: "cheap", subtotal: "50" },
+        ],
+      },
+    ],
+    credits: new Map(),
+  });
+  eq([pooled.net, pooled.tax], [75, 6], "pooled slice");
   const row = (discount, paidNet) => ({
     tenantId: "t1",
     month: "2026-09",
