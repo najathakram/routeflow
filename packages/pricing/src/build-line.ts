@@ -20,12 +20,11 @@
  *     — a plain per-piece line that still snapshots its factor. `count` must be a whole number
  *     (G2) — 1.5 Cases is not a real quantity.
  *
- * NO CALLERS YET (PR-1 of the proposal). The three existing builders
- * (`orders/unit-line-build.ts`, `invoices/invoice-unit-line.ts`, `invoices.service.ts`'s
- * `buildInvoiceItemData`) keep calling `computeLineSubtotal`/`normalizeBoxesPieces` directly and
- * get re-pointed at this one at a time, checked against the copier-contract registry
- * (`apps/api/src/common/testing/copier-contract/`, #1163) per site. Existing ROWS are never
- * rewritten — this only shapes a new write.
+ * CALLERS (SA-982): `orders/unit-line-build.ts` and `invoices/invoice-unit-line.ts` build through this (SA-145(1), #1341).
+ * `buildInvoiceItemData` is deliberately NOT one: it prorates the STORED subtotal and must never recompute from
+ * `unitPrice` (SA-145(1)). The hand-built pack-axis NEW-write builders (`normalizeBoxesPieces` with client `boxes:`, priced by
+ * `computeLineSubtotal`) are a CLASS pinned in `apps/api/src/common/no-bare-line-math.spec.ts`; each converts here, one
+ * domain at a time, behind a warn phase. Existing ROWS are never rewritten: this only shapes a new write.
  */
 import { AmbiguousLineError, computeLineSubtotalStrict, normalizeBoxesPieces } from "./pricing";
 
