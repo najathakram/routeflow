@@ -1,4 +1,4 @@
-import { ConflictException } from "@nestjs/common";
+import { ConflictException, ForbiddenException } from "@nestjs/common";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import {
   COUNTER_DEFAULT_REGISTER,
@@ -82,11 +82,13 @@ export type TillUser = PermissionPrincipal;
 async function voidScope(
   prisma: PrismaService,
   invoiceId: string,
-  user: TillUser,
+  user: TillUser | undefined,
   applies = true,
 ): Promise<CounterPaymentScope | null> {
   const till = await scope(prisma, invoiceId, applies);
-  if (till) await assertStaffMay(prisma, user, "VOID_SALE");
+  // Fail closed: a till invoice voided with no principal is refused, never waved through.
+  if (till && !user) throw new ForbiddenException("Voiding a counter sale needs a signed-in user");
+  if (till && user) await assertStaffMay(prisma, user, "VOID_SALE");
   return till;
 }
 

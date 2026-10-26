@@ -90,6 +90,11 @@ describe("InvoicesService.voidInvoice: a till invoice needs VOID_SALE (W-870)", 
     expect(await statusOf(admin)).toBe(404);
   });
 
+  it("a till invoice voided with NO principal fails closed 403 (was: past the door, 404)", async () => {
+    tillInvoice();
+    expect(await statusOf(undefined as never)).toBe(403);
+  });
+
   it("an ordinary (non-till) invoice is unchanged: the denied operator gets past the door", async () => {
     prisma.order.findFirst.mockResolvedValue({
       id: "ord-2",
