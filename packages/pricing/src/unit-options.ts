@@ -181,7 +181,18 @@ export function derivedPackSplit(
   count: number,
 ): { qty: number; boxes: number; pieces: number; unitsPerBox: number } | null {
   if (!option.derived) return null;
-  const unitsPerBox = option.derived.n;
+  return packPiecesSplit(option.derived.n, count);
+}
+
+/**
+ * `count` loose pieces of a `unitsPerBox` pack as `{ qty, boxes, pieces }`, rolled over at a full pack: the ONE
+ * place that shape is built (a hand-rolled `normalizeBoxesPieces({ boxes: 0, pieces })` elsewhere is how web, mobile
+ * and the server drifted; `no-inline-pack-split.pin.spec.ts` keeps it that way).
+ */
+export function packPiecesSplit(
+  unitsPerBox: number,
+  count: number,
+): { qty: number; boxes: number; pieces: number; unitsPerBox: number } {
   const n = normalizeBoxesPieces({ boxes: 0, pieces: count, unitsPerBox });
   return { qty: n.qty, boxes: n.boxes ?? 0, pieces: n.pieces ?? 0, unitsPerBox };
 }

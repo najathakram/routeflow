@@ -6,6 +6,7 @@ import {
   ladderOptionLineTotal,
   ladderOptionPriceText,
   ladderOptionText,
+  packPiecesSplit,
   type LadderProduct,
   type LadderUnit,
 } from "./index";
@@ -137,7 +138,8 @@ describe("S19b nit 8: a derived base option uses the customer-layer pack price (
 });
 
 describe("ladderOptionText / ladderOptionDetail: the ONE option text web and mobile both render (row 513)", () => {
-  // The formatters each app passes (web lib/format, mobile's local Intl): both whole numbers bare, fractions up to 2 dp.
+  // Stand-in formatters (the package cannot import an app). The strings each app really renders, through its own
+  // formatters, are pinned in apps/web/lib/unit-options.test.ts and apps/mobile/__tests__/unit-options.test.ts.
   const qty = (n: number) => (Number.isInteger(n) ? String(n) : String(Number(n.toFixed(2))));
   const text = (o: Parameters<typeof ladderOptionText>[0]) => ladderOptionText(o, money, qty);
   const detail = (o: Parameters<typeof ladderOptionDetail>[0]) => ladderOptionDetail(o, money, qty);
@@ -176,5 +178,13 @@ describe("derivedPackSplit: the pack-pieces shape of N pieces of a DERIVED base 
   it("is null for an option that is not a derived base (the pack, a level, an own-priced Piece)", () => {
     const own = buildLadderOptions(box24, [CASE72, row("Piece", 1, "2.50")], 1);
     for (const o of own) expect(derivedPackSplit(o, 2)).toBeNull();
+  });
+});
+
+describe("packPiecesSplit: the one pieces-to-pack shape derivedPackSplit and the server share (row 513)", () => {
+  it("rolls whole packs into boxes and keeps the remainder as pieces", () => {
+    expect(packPiecesSplit(3, 7)).toEqual({ qty: 7, boxes: 2, pieces: 1, unitsPerBox: 3 });
+    expect(packPiecesSplit(12, 12)).toEqual({ qty: 12, boxes: 1, pieces: 0, unitsPerBox: 12 });
+    expect(packPiecesSplit(12, 5)).toEqual({ qty: 5, boxes: 0, pieces: 5, unitsPerBox: 12 });
   });
 });
