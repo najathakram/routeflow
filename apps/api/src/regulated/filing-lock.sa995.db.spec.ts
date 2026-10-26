@@ -130,7 +130,7 @@ describeDb("SA-995 — the filing lock decides by figures, rows and the tenant's
     const periodStart = new Date(Date.UTC(year, month - 1, 1));
     const periodEnd = new Date(Date.UTC(year, month, 1));
     const category = await raw.trackedCategory.findUniqueOrThrow({ where: { id: categoryId } });
-    const figures = await inTenant(() =>
+    const figures: any = await inTenant<any>(() =>
       filingService().buildFilingFigures(category, {
         trackedCategoryId: categoryId,
         cadence: "MONTHLY",
