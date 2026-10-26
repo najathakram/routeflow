@@ -1,6 +1,8 @@
 import { ConflictException } from "@nestjs/common";
 import { RegulatedFilingService } from "./regulated-filing.service";
 
+jest.mock("../common/tenant-time-zone", () => ({ tenantTimeZone: async () => null }));
+
 /**
  * B297 PR5, Opus review of #3726 (MUST 4): `lockFiling` claims the GENERATED -> LOCKED transition and writes its
  * audit row in ONE tenant transaction, so a lock can never commit without its audit row, nor the reverse. The
@@ -16,11 +18,17 @@ describe("lockFiling: the claim and the audit row are one transaction", () => {
     periodKey: "2020-01",
     periodStart: new Date("2020-01-01T00:00:00Z"),
     periodEnd: new Date("2020-02-01T00:00:00Z"),
-    totalCategoryTax: 1.5,
+    totalCategoryTax: 0,
+    totalQty: 0,
+    totalUnitBasisQty: 0,
+    totalNetSales: 0,
+    rows: [],
     generationCount: 2,
   };
 
-  function build(opts: { claimCount?: number; auditFails?: boolean } = {}) {
+  function build(
+    opts: { claimCount?: number; auditFails?: boolean; stored?: Record<string, unknown> } = {},
+  ) {
     // a tiny transactional store: writes inside the tx are buffered and only "committed" when the callback resolves
     const committed: string[] = [];
     const outerUpdateMany = jest.fn();
@@ -43,7 +51,9 @@ describe("lockFiling: the claim and the audit row are one transaction", () => {
             pending.push(`claim:${a.where.id}`);
             return { count: opts.claimCount ?? 1 };
           }),
-          findUnique: jest.fn().mockResolvedValue({ ...generated, status: "LOCKED" }),
+          findUnique: jest
+            .fn()
+            .mockResolvedValue({ ...generated, ...opts.stored, status: "LOCKED" }),
         },
         auditLog: {
           create: jest.fn(async (a: any) => {
@@ -60,7 +70,13 @@ describe("lockFiling: the claim and the audit row are one transaction", () => {
     });
     const prisma = { getTenantId: () => "t1", forTenant: () => forTenant, tenantTransaction };
     const audit = { log: jest.fn().mockResolvedValue(undefined) };
-    const svc = new (RegulatedFilingService as any)(prisma, {}, audit, {}, {});
+    const svc = new (RegulatedFilingService as any)(
+      prisma,
+      {},
+      audit,
+      { getLedger: jest.fn().mockResolvedValue({ rows: [] }) }, // no ledger change since the filing: not stale
+      {},
+    );
     return { svc, committed, txClients, outerUpdateMany, audit, tenantTransaction };
   }
 
@@ -99,5 +115,23 @@ describe("lockFiling: the claim and the audit row are one transaction", () => {
     ).rejects.toBeInstanceOf(ConflictException);
     expect(txClients[0].auditLog.create).not.toHaveBeenCalled();
     expect(committed).toEqual([]); // the lost claim throws inside the tx: nothing is committed
+  });
+
+  it("SA-995: figures that no longer match the ledger roll the claim back with 409 FILING_STALE", async () => {
+    const { svc, committed } = build({ stored: { totalNetSales: 10 } });
+    await expect(
+      svc.lockFiling("f-1", { userId: "u1", reason: "Filed with the state" }),
+    ).rejects.toMatchObject({ response: { code: "FILING_STALE" } });
+    expect(committed).toEqual([]); // no claim, no audit row
+  });
+
+  it("SA-995: the audit row carries the impersonator", async () => {
+    const { svc, txClients } = build();
+    await svc.lockFiling("f-1", {
+      userId: "u1",
+      reason: "Filed with the state",
+      impersonatedBy: "sa-1",
+    });
+    expect(txClients[0].auditLog.create.mock.calls[0][0].data.impersonatedBy).toBe("sa-1");
   });
 });

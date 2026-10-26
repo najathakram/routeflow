@@ -13,7 +13,9 @@ import { AuditService } from "../audit/audit.service";
 import { RegulatedService } from "./regulated.service";
 import { RegulatedReportService } from "./regulated-report.service";
 import { roundMoney } from "@routeflow/pricing";
-import { filingPeriod, FilingCadence } from "./period";
+import { filingPeriod, FilingCadence, periodEndedForTenant } from "./period";
+import { tenantTimeZone } from "../common/tenant-time-zone";
+import { isDeepStrictEqual } from "util";
 import { claimFilingLock, findLockedFiling, updateFilingUnlessLocked } from "./filed-periods";
 import { buildFilingCsv } from "./filing-csv";
 import { serializeReportCsv } from "./report-csv";
@@ -40,6 +42,40 @@ interface FilingTotals {
   unitBasisQty: number;
   netSales: number;
   categoryTax: number;
+}
+
+/**
+ * SA-995: the 409 FILING_STALE sentence. A literal copy of `FILING_STALE_COPY` in @routeflow/types (the API never
+ * value-imports that package at runtime), pinned byte-equal by filing-stale-message-parity.spec.ts.
+ */
+export const FILING_STALE_MESSAGE =
+  "Sales were added to this period after the filing was generated. Regenerate the filing, check it, then lock it.";
+
+/** JSON-normalised, so a Json column read back and a freshly built value compare by content, key order aside. */
+const jsonOf = (v: unknown) => JSON.parse(JSON.stringify(v ?? null));
+
+/**
+ * SA-995 §1: would locking freeze what a regeneration gives now? The stored per-bucket rows (or TX report) and the
+ * four totals against the figures just rebuilt from the ledger. The content, never timestamps: a transaction can
+ * stamp before it commits, and a pair that nets to zero leaves an aggregate filing unchanged (not stale).
+ */
+function sameFilingFigures(
+  stored: {
+    rows: unknown;
+    totalQty: unknown;
+    totalUnitBasisQty: unknown;
+    totalNetSales: unknown;
+    totalCategoryTax: unknown;
+  },
+  fresh: { rowsJson: unknown; totals: FilingTotals },
+): boolean {
+  return (
+    isDeepStrictEqual(jsonOf(stored.rows), jsonOf(fresh.rowsJson)) &&
+    roundQty(Number(stored.totalQty)) === fresh.totals.qty &&
+    roundQty(Number(stored.totalUnitBasisQty)) === fresh.totals.unitBasisQty &&
+    roundMoney(Number(stored.totalNetSales)) === fresh.totals.netSales &&
+    roundMoney(Number(stored.totalCategoryTax)) === fresh.totals.categoryTax
+  );
 }
 
 /**
@@ -87,7 +123,10 @@ export class RegulatedFilingService {
    * locks), for a FAILED filing, for an already LOCKED one, and while return reversals for the period are
    * parked (the figures the lock would freeze are incomplete).
    */
-  async lockFiling(id: string, params: { userId: string; reason: string }) {
+  async lockFiling(
+    id: string,
+    params: { userId: string; reason: string; impersonatedBy?: string | null },
+  ) {
     const tenantId = this.prisma.getTenantId();
     if (!tenantId) throw new BadRequestException("Filings are tenant-scoped");
     const reason = (params.reason ?? "").trim();
@@ -108,7 +147,7 @@ export class RegulatedFilingService {
         code: API_ERROR_CODES.FILING_NOT_LOCKABLE,
         message: "Only a successfully generated filing can be locked.",
       });
-    if (filing.periodEnd > new Date())
+    if (!periodEndedForTenant(filing.periodEnd, await tenantTimeZone(this.prisma)))
       throw new ConflictException({
         code: API_ERROR_CODES.FILING_PERIOD_RUNNING,
         message: "A running period cannot be locked: lock a filing once its period has ended.",
@@ -117,24 +156,26 @@ export class RegulatedFilingService {
     const category = await this.prisma
       .forTenant()
       .trackedCategory.findUnique({ where: { id: filing.trackedCategoryId } });
-    const { buckets } = filingPeriod(
+    const period = filingPeriod(
       filing.cadence as FilingCadence,
       Number(filing.periodStart.getUTCFullYear()),
       this.indexOf(filing.cadence as FilingCadence, filing.periodStart),
     );
-    assertNoParkedReversals(
-      await listParkedReversals(this.prisma.forTenant(), {
-        trackedCategoryId: filing.trackedCategoryId,
-        buckets,
-      }),
-      { categoryName: category?.name ?? filing.trackedCategoryId, periodKey: filing.periodKey },
-    );
+    if (!category) throw new NotFoundException("Tracked category not found");
 
     // ONE transaction (Opus review of #3726, MUST 4): the conditional claim and its audit row commit together or
     // not at all, so a filing can never be LOCKED without the row that says who locked it and why, nor the
     // reverse. The audit row is written on the tx (`AuditService.log` swallows errors and uses its own client, so
     // it could not roll back with the claim). Claimed conditionally: a concurrent lock (or a regeneration that
     // flipped it) cannot double-lock.
+    //
+    // SA-995 §1: the order inside is the design. (1) The claim's UPDATE takes the row's exclusive lock and waits for
+    // every ledger writer holding the share lock on it (`lockFilingRowsCovering`); later writers wait for this
+    // transaction. (2) The parked reversals are re-read, and (3) the figures are rebuilt from the ledger, both after
+    // the claim, so they see every writer that committed before it. (4) Any difference from the stored figures is a
+    // 409 FILING_STALE and the whole transaction rolls back: the filing stays GENERATED. (5) The audit row.
+    // READ COMMITTED on purpose (no isolation option): each statement after the claim must see the writers that
+    // committed while it waited; a Serializable snapshot would have been taken before the claim.
     return this.prisma.tenantTransaction(async (tx: any) => {
       const claimed = await claimFilingLock(tx, { id, lockedById: params.userId, reason });
       if (claimed.count !== 1)
@@ -142,10 +183,32 @@ export class RegulatedFilingService {
           code: API_ERROR_CODES.FILING_ALREADY_LOCKED,
           message: "This filing changed while it was being locked; reload and retry.",
         });
+      assertNoParkedReversals(
+        await listParkedReversals(this.prisma.forTenant(), {
+          trackedCategoryId: filing.trackedCategoryId,
+          buckets: period.buckets,
+        }),
+        { categoryName: category.name, periodKey: filing.periodKey },
+      );
+      const stored = await tx.regulatedFiling.findUnique({ where: { id } });
+      const fresh = await this.buildFilingFigures(category, {
+        trackedCategoryId: filing.trackedCategoryId,
+        cadence: filing.cadence as FilingCadence,
+        periodKey: filing.periodKey,
+        buckets: period.buckets,
+        from: period.from,
+        to: period.to,
+      });
+      if (!sameFilingFigures(stored, fresh))
+        throw new ConflictException({
+          code: API_ERROR_CODES.FILING_STALE,
+          message: FILING_STALE_MESSAGE,
+        });
       await tx.auditLog.create({
         data: {
           tenantId,
           userId: params.userId,
+          impersonatedBy: params.impersonatedBy ?? null,
           action: "regulated_filing.locked",
           entityType: "RegulatedFiling",
           entityId: id,
@@ -340,7 +403,8 @@ export class RegulatedFilingService {
     const { periodKey, buckets, from, to } = filingPeriod(cadence, params.year, index);
 
     // `to` is the exclusive end; the period is complete once now >= to.
-    if (to > new Date()) {
+    // SA-995 §3: complete on the TENANT's day, not UTC's (no grace window).
+    if (!periodEndedForTenant(to, await tenantTimeZone(this.prisma))) {
       throw new BadRequestException(
         "Filings can only be prepared for completed periods — the period must be in the past.",
       );

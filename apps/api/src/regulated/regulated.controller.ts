@@ -93,7 +93,11 @@ export class RegulatedController {
   @Roles(UserRole.TENANT_ADMIN)
   @RequireAddon("tobacco_dealer")
   lockFiling(@Param("id") id: string, @Body() dto: LockFilingDto, @CurrentUser() user: JwtPayload) {
-    return this.filings.lockFiling(id, { userId: user.sub, reason: dto.reason });
+    return this.filings.lockFiling(id, {
+      userId: user.sub,
+      reason: dto.reason,
+      impersonatedBy: user.impersonatedBy ?? null,
+    });
   }
 
   @Get("filings/:id/csv")

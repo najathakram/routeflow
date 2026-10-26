@@ -1,6 +1,7 @@
 import {
   API_ERROR_CODES,
   CREDITS_PENDING_COPY,
+  FILING_STALE_COPY,
   INVOICE_TAX_STATE_STALE_COPY,
   SHIPPED_ORDER_MESSAGE,
   productInOpenCountCopy,
@@ -73,6 +74,7 @@ const CODE_COPY: Record<string, string> = {
   // B297 PR5: the filing lock and the locked-period guards (fixed copy, never the server's text).
   [API_ERROR_CODES.FILING_PERIOD_RUNNING]:
     "This period hasn't ended yet. Lock the filing after the period ends.",
+  [API_ERROR_CODES.FILING_STALE]: FILING_STALE_COPY,
   [API_ERROR_CODES.FILING_ALREADY_LOCKED]: "This filing is already locked.",
   [API_ERROR_CODES.FILING_NOT_LOCKABLE]:
     "Only a filing that was generated can be locked. Generate it again, then lock it.",

@@ -1,5 +1,7 @@
 import { RegulatedFilingService } from "./regulated-filing.service";
 
+jest.mock("../common/tenant-time-zone", () => ({ tenantTimeZone: async () => null }));
+
 /**
  * B297 PR5 review H2: a regeneration that races a lock must never flip a LOCKED filing back to GENERATED or
  * overwrite its artifact. The row write is conditional on status != LOCKED and the stored row is returned.
