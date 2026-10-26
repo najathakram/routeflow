@@ -14,6 +14,9 @@ import { unitStructureGoverned } from "./units-v2/structure/unit-structure";
  *               variant or recipe, and goes away on a standard product and a family.
  *   stock       ruling OR10 (SA-984 §0): with the grid on, the product page shows no stock numbers; counts live on Inventory.
  *
+ * Sources: OR10 and D-1022 are not repo documents. They live in rf-specs-handoff: decisions/sa/SA-983.md, decisions/sa/SA-984.md
+ * and handoff/findings/GAP-561-product-units-2026-10-25.md.
+ *
  * NOTE (corrects the SA-984 §4 wording "the tiers row and the legacy card are gone"): that holds on a STANDARD product only.
  * What the code does, and what is pinned here (page.tsx:475, :1780-1789, :2383-2385; unit-structure.ts:5-8):
  *

@@ -18,13 +18,16 @@ import {
   normalizeDerivedBaseLine,
   asLadderProduct,
 } from "../products/line-units";
+import { computeLineSubtotal, regulatedUnitBasis, roundMoney } from "@routeflow/pricing";
 import { assertMayUseUnits } from "./unit-line-build";
+import { orderTotalsOf } from "./order-totals";
 import { customerPricing } from "./units-prices-v2";
 import { resolveTierPrices } from "./counter-sale/counter-sale-tier-price";
 import {
   FLAG_V1,
   FLAG_PRICES_V2,
   SHAPES,
+  TAX_RATE,
   NO_PACK_SHAPES,
   bothStates,
   customerOf,
@@ -38,6 +41,7 @@ import {
   type CustomerRow,
   type Fig,
   type LineReq,
+  type LineRun,
   type Shape,
 } from "./testing/units-fold-battery";
 
@@ -526,13 +530,7 @@ describe("E1 new-line money parity: 5 loose pieces of a 12-pack at $11.00, today
     expectSame("E1-b LADC tier1 +displayed price", old.fig, next.fig);
   });
 
-  // E1-c: the ONLY row that reaches buildUnitLine's factor-1 branch (SA-987 §1.6). P = the price the picker DISPLAYS.
-  it("E1-c tier 1, own-priced Piece row at 0.92 (LADP): today's prorated split vs 5 x P", async () => {
-    await parity("E1-c LADP tier1", shapeOf("LADP"), customerOf("c1", 1));
-  });
-  it("E1-c tier 3, own tier-3 Piece price 0.83 (LADP)", async () => {
-    await parity("E1-c LADP tier3", shapeOf("LADP"), tier3(shapeOf("LADP")));
-  });
+  // E1-c (an own-priced Piece row) is an INTENDED DIFFERENCE (SA-996): see its own describe below.
   it("E1-c reaches the factor-1 unit branch: the stored line is a Piece unit line snapshotting factor 1", async () => {
     const next = await priceLine({
       state: "on",
@@ -559,6 +557,117 @@ describe("E1 new-line money parity: 5 loose pieces of a 12-pack at $11.00, today
     });
     expect(next.fig.unitLabel).toBe("Piece");
     expect(next.fig.promoFreeUnits).toBeNull();
+  });
+});
+
+// ─── E1-c: an own-priced Piece row is count x P (INTENDED DIFFERENCE, SA-996) ───────────────────────────────────────
+describe("E1-c intended difference (SA-996): an own-priced Piece is charged per piece, count x P", () => {
+  // Ruling SA-996 E1-c: someone who types $0.92 a piece charges $0.92 a piece. The gap to today's prorated split is only
+  // P rounded to cents (pack / 12 is not a whole cent, except at tier 5). Flag-on changes no existing line: a non-holder
+  // holds no ProductUnit row, and the fold invents no Piece. Everything that is NOT the subtotal stays expectSame: the
+  // stock the line moves, the tax-basis pieces, and the flag-consulted counts (units_v1 asked once on, never off).
+  const oldLine = { pieces: 5 } as const;
+  const newLine = { qty: 5, unitLabel: "Piece" } as const;
+  const header = (subtotal: number, categoryTaxAmount: number) =>
+    orderTotalsOf([{ subtotal, categoryTaxAmount }], {
+      taxRate: TAX_RATE,
+      isTaxExempt: false,
+      discount: 0,
+    });
+  const taxBasis = (fig: Fig, upb: number) =>
+    regulatedUnitBasis(
+      {
+        qty: fig.qty as number,
+        boxes: fig.boxes as number | null,
+        pieces: fig.pieces as number | null,
+        unitLabel: fig.unitLabel as string | null,
+      },
+      upb,
+    ).unitBasisQty;
+
+  const cell = async (
+    name: string,
+    cust: CustomerRow,
+    want: {
+      packPrice: number;
+      oldSubtotal: number;
+      newSubtotal: number;
+      oldTotal: number;
+      newTotal: number;
+      pieceP: number;
+    },
+  ) => {
+    const shape = shapeOf("LADP");
+    const old = await priceLine({ state: "off", shape, cust, req: oldLine });
+    const next = await priceLine({ state: "on", shape, cust, req: newLine });
+    expect(old.fig.error).toBeUndefined();
+    expect(next.fig.error).toBeUndefined();
+    // still expectSame (any difference here stays a STOP): stock, tax-basis pieces, the tax amount
+    expectSame(
+      name + " (stock, tax basis)",
+      {
+        stockPieces: old.fig.stockPieces,
+        taxBasisPieces: taxBasis(old.fig, 12),
+        tax: old.fig.categoryTaxAmount,
+      },
+      {
+        stockPieces: next.fig.stockPieces,
+        taxBasisPieces: taxBasis(next.fig, 12),
+        tax: next.fig.categoryTaxAmount,
+      },
+    );
+    expect(old.fig.stockPieces).toBe(5);
+    expect([old.consulted.units_v1, next.consulted.units_v1]).toEqual([0, 1]);
+    // PINNED, each beside its formula. OLD: today's prorated split of the pack price. NEW: count x the typed Piece price.
+    expect(old.fig.subtotal).toBe(
+      computeLineSubtotal({
+        unitPrice: want.packPrice,
+        qty: 5,
+        boxes: 0,
+        pieces: 5,
+        unitsPerBox: 12,
+      }),
+    );
+    expect(next.fig.subtotal).toBe(roundMoney(5 * want.pieceP));
+    expect([old.fig.subtotal, next.fig.subtotal]).toEqual([want.oldSubtotal, want.newSubtotal]); // OBSERVED
+    // header figures: the house helper on each side's own subtotal (no hand-typed tax), plus the observed totals
+    expect(old.fig).toMatchObject({
+      headerSubtotal: want.oldSubtotal,
+      headerTax: header(want.oldSubtotal, old.fig.categoryTaxAmount as number).tax,
+      headerTotal: want.oldTotal,
+    });
+    expect(next.fig).toMatchObject({
+      headerSubtotal: want.newSubtotal,
+      headerTax: header(want.newSubtotal, next.fig.categoryTaxAmount as number).tax,
+      headerTotal: want.newTotal,
+    });
+    // printed: a unit line prints the unit's own word as typed (SA-996: nothing pluralises a tenant's word)
+    expect([old.fig.printedQty, next.fig.printedQty]).toEqual(["5 pcs", "5 Piece"]);
+  };
+
+  it("E1-c intended difference (SA-996), tier 1, Piece at 0.92: subtotal 4.58 split vs 4.60 count x P; totals 4.96 vs 4.98", async () => {
+    await cell("E1-c LADP tier1", customerOf("c1", 1), {
+      packPrice: 11,
+      pieceP: 0.92,
+      oldSubtotal: 4.58,
+      newSubtotal: 4.6,
+      oldTotal: 4.96,
+      newTotal: 4.98,
+    });
+  });
+  it("E1-c intended difference (SA-996), tier 3, Piece at 0.83: subtotal 4.17 split vs 4.15 count x P; totals 4.51 vs 4.49", async () => {
+    await cell(
+      "E1-c LADP tier3",
+      customerOf("c3", 1, { cp: [{ productId: "p-ladp", pricingTier: 3 }] }),
+      {
+        packPrice: 10,
+        pieceP: 0.83,
+        oldSubtotal: 4.17,
+        newSubtotal: 4.15,
+        oldTotal: 4.51,
+        newTotal: 4.49,
+      },
+    );
   });
 });
 
@@ -631,29 +740,95 @@ describe("Q3 holder-only data: compared from the key set the holder has, vs all 
   });
 });
 
-// ─── E2: an odd tier (observe and report; census C-4) ───────────────────────────────────────────────────────────────
-describe("E2 odd tier: OBSERVED DIFFERENCE where the flag normalises a tier the old chain used raw (STOP RULE)", () => {
-  const cell = async (name: string, cust: CustomerRow) => {
+// ─── E2: an odd tier (PF-14 pinned; the repair rows prove D5's census-bounded repair keeps today's bill) ─────────────
+describe("E2 odd tier (PF-14, SA-996): flag-on normalises a tier outside 1-5 through customerTierFor; master used it raw", () => {
+  // SA-996 E2: flag-on's value is the house rule (PF-14, customer-unit-price.spec.ts:38-52), but D5 still never changes an
+  // existing customer's bill (census C-4 stays a D5 stop). So the DIFFERENCE is pinned here at the observed OLD and NEW,
+  // and one repair row per cell proves that replacing the junk tier by 1 (never null) makes flag-off equal flag-on and
+  // keeps today's bill.
+  const header = (subtotal: number) =>
+    orderTotalsOf([{ subtotal, categoryTaxAmount: 0 }], {
+      taxRate: TAX_RATE,
+      isTaxExempt: false,
+      discount: 0,
+    });
+  type Side = { unitPrice: number; priceType: string; originalPrice: number | null };
+  const pinned = async (cust: CustomerRow, want: { off: Side; on: Side }) => {
     const { off, on } = await bothStates({ shape: shapeOf("B12"), cust, req: { qty: 3 } });
-    expectSameRuns(name, off, on, { consulted: { units_prices_v2: "some" } });
+    expect(off.fig.error).toBeUndefined();
+    expect(on.fig.error).toBeUndefined();
+    // the dead-stub probe still covers these cells: the odd tier takes the computed branch, so the key is asked
+    expect(off.consulted.units_prices_v2).toBeGreaterThan(0);
+    expect(on.consulted.units_prices_v2).toBeGreaterThan(0);
+    for (const [side, run, w] of [
+      ["OLD", off, want.off],
+      ["NEW", on, want.on],
+    ] as const) {
+      const subtotal = roundMoney(3 * w.unitPrice);
+      expect({ side, ...run.fig }).toMatchObject({
+        side,
+        ...w,
+        subtotal,
+        categoryTaxAmount: 0,
+        headerSubtotal: subtotal,
+        headerTax: header(subtotal).tax,
+        headerTotal: header(subtotal).total,
+      });
+    }
+    return off;
   };
-  it("E2-1 customer tier 7, no CustomerPrice", async () => {
-    await cell("E2-1 customer tier 7", customerOf("e1", 7));
+  /** The repair: the junk tier replaced by 1 (never null: null falls through to the customer's own tier = the reprice). */
+  const repaired = async (cust: CustomerRow, junkOff: LineRun) => {
+    const { off, on } = await bothStates({ shape: shapeOf("B12"), cust, req: { qty: 3 } });
+    expectSameRuns("E2 repair " + cust.id, off, on); // flag-off equals flag-on; a difference stays a STOP
+    // the bill is exactly today's: the junk cell's OFF figures
+    const money = (f: Fig): Fig => ({
+      unitPrice: f.unitPrice,
+      subtotal: f.subtotal,
+      headerTax: f.headerTax,
+      headerTotal: f.headerTotal,
+    });
+    expectSame(
+      "E2 repair " + cust.id + " vs the junk cell's flag-off bill",
+      money(junkOff.fig),
+      money(on.fig),
+    );
+    expect(off.fig.priceType).toBe("STANDARD");
+    expect(on.fig.priceType).toBe("STANDARD");
+    expect(on.fig.originalPrice).toBeNull();
+  };
+  const LIST: Side = { unitPrice: 11, priceType: "STANDARD", originalPrice: null };
+  const SPECIAL_AT_LIST: Side = { unitPrice: 11, priceType: "SPECIAL", originalPrice: 11 };
+
+  it("E2-1 (PF-14, SA-996) customer tier 7, no CustomerPrice: OLD SPECIAL at list 11 (originalPrice 11), NEW STANDARD null; same 11 x 3 = 33 bill", async () => {
+    const junk = await pinned(customerOf("e1", 7), { off: SPECIAL_AT_LIST, on: LIST });
+    await repaired(customerOf("e1r", 1), junk);
   });
-  it("E2-2 customer tier 0, no CustomerPrice", async () => {
-    await cell("E2-2 customer tier 0", customerOf("e2", 0));
+  it("E2-2 (PF-14, SA-996) customer tier 0, no CustomerPrice: OLD SPECIAL at list 11, NEW STANDARD null; same bill", async () => {
+    const junk = await pinned(customerOf("e2", 0), { off: SPECIAL_AT_LIST, on: LIST });
+    await repaired(customerOf("e2r", 1), junk);
   });
-  it("E2-3 CustomerPrice.pricingTier 7, customer tier 3", async () => {
-    await cell(
-      "E2-3 cp tier 7 customer tier 3",
+  it("E2-3 (PF-14, SA-996) CustomerPrice.pricingTier 7, customer tier 3: OLD 11 (33, total 35.72), NEW 10 (30, total 32.48)", async () => {
+    const junk = await pinned(
       customerOf("e3", 3, { cp: [{ productId: "p-b12", pricingTier: 7 }] }),
+      {
+        off: SPECIAL_AT_LIST,
+        on: { unitPrice: 10, priceType: "SPECIAL", originalPrice: 11 },
+      },
     );
+    expect([junk.fig.subtotal, junk.fig.headerTotal]).toEqual([33, 35.72]);
+    await repaired(customerOf("e3r", 3, { cp: [{ productId: "p-b12", pricingTier: 1 }] }), junk);
   });
-  it("E2-4 CustomerPrice.pricingTier 0, customer tier 2", async () => {
-    await cell(
-      "E2-4 cp tier 0 customer tier 2",
+  it("E2-4 (PF-14, SA-996) CustomerPrice.pricingTier 0, customer tier 2: OLD 11 (33, total 35.72), NEW 10.5 (31.5, total 34.1)", async () => {
+    const junk = await pinned(
       customerOf("e4", 2, { cp: [{ productId: "p-b12", pricingTier: 0 }] }),
+      {
+        off: SPECIAL_AT_LIST,
+        on: { unitPrice: 10.5, priceType: "SPECIAL", originalPrice: 11 },
+      },
     );
+    expect([junk.fig.subtotal, junk.fig.headerTotal]).toEqual([33, 35.72]);
+    await repaired(customerOf("e4r", 2, { cp: [{ productId: "p-b12", pricingTier: 1 }] }), junk);
   });
 });
 
