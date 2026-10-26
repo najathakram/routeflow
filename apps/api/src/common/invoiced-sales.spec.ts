@@ -363,6 +363,7 @@ describe("accrual net sales (B440/B455/B456)", () => {
             (w.kind === undefined || r.kind === w.kind) &&
             (w.refundMethod === undefined || r.refundMethod === w.refundMethod) &&
             (w.creditNoteId === undefined || r.creditNoteId != null) &&
+            (w.status === undefined || r.status === w.status) &&
             (w.creditSubtotal === undefined || r.creditSubtotal != null),
         );
         const sum = (k: string) => hit.reduce((t, r) => t + Number(r[k] ?? 0), 0);
@@ -374,8 +375,9 @@ describe("accrual net sales (B440/B455/B456)", () => {
           },
         };
       };
-      const noteReturn = (kind: "STANDARD" | "INLINE") => ({
+      const noteReturn = (kind: "STANDARD" | "INLINE", status = "REFUNDED") => ({
         kind,
+        status,
         refundMethod: "CREDIT_NOTE",
         creditNoteId: "cn-1",
         refundAmount: 10.8,
@@ -396,6 +398,14 @@ describe("accrual net sales (B440/B455/B456)", () => {
         db.return.aggregate.mockImplementation(returnRows([noteReturn("STANDARD")]));
         const result = await fetchAccrualNetSales(db, "tenant-1", window);
         expect(result).toEqual({ gross: 10, creditNotes: 10, externalRefunds: 0, net: 0 });
+      });
+
+      it("REG-B704 SA-980: a CANCELLED inline store-credit return takes nothing off net sales (the cancel voids the note, the frozen tax stays on the row)", async () => {
+        // wrong at 0072e9ef2: the filter still matches the CANCELLED row, so its 0.80 is read as a credit-note tax and net is 10.80
+        const db = stubDb({ invoiceAgg: invoice10, creditNoteAgg: { _sum: { amount: D(0) } } });
+        db.return.aggregate.mockImplementation(returnRows([noteReturn("INLINE", "CANCELLED")]));
+        const result = await fetchAccrualNetSales(db, "tenant-1", window);
+        expect(result).toEqual({ gross: 10, creditNotes: 0, externalRefunds: 0, net: 10 });
       });
 
       it("SA-980 guard: an INLINE external refund of 10.80 with a frozen split takes 10.00 off", async () => {
