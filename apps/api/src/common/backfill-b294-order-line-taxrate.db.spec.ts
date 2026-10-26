@@ -11,7 +11,7 @@
  * Collected only by `jest.db.config.js`, run via `npm run local:test:db`. SAFETY (L-129): the spec's own qa- tenant is a
  * test tenant (assertTestTenant), the CLI runs `--local` (refuses a non-local host), and afterAll deletes what it made.
  */
-import { execFileSync, execSync } from "child_process";
+import { execFileSync, execSync, spawnSync } from "child_process";
 import { randomUUID } from "crypto";
 import { readFileSync } from "fs";
 import path from "path";
@@ -55,6 +55,7 @@ describeDb("backfill-b294-order-line-taxrate.mjs, real Postgres", () => {
       taxRate?: number;
       taxAmount?: number;
       subtotal?: number;
+      lineCreatedAt?: Date;
     } = {},
   ) => {
     const taxAmount = over.taxAmount ?? 7.5;
@@ -80,6 +81,7 @@ describeDb("backfill-b294-order-line-taxrate.mjs, real Postgres", () => {
         unitPrice: 100,
         subtotal: 100,
         taxRate: over.taxRate ?? 0,
+        ...(over.lineCreatedAt ? { createdAt: over.lineCreatedAt } : {}),
       } as any,
     });
     inv[key] = invoice.id;
@@ -211,6 +213,55 @@ describeDb("backfill-b294-order-line-taxrate.mjs, real Postgres", () => {
     const { mine } = dryRun();
     expect(mine).toEqual([]);
     expect(await rateOf("old")).toBe(0.075);
+  }, 90_000);
+
+  it("SA-960 MUST1: an OLD invoice that gained a 0-rate line AFTER the fix is held post-fix (per line), never stamped", async () => {
+    await makeInvoice("latelines", {
+      createdAt: new Date("2026-09-01T00:00:00Z"),
+      lineCreatedAt: new Date("2026-10-01T00:00:00Z"),
+    });
+    const { mine, review } = dryRun();
+    expect(mine.map((a) => a.invoiceId)).not.toContain(inv.latelines);
+    expect(review.find((r) => r.invoiceId === inv.latelines)?.reason).toBe("post-fix");
+    expect(await rateOf("latelines")).toBe(0);
+  }, 90_000);
+
+  it("a genuine 0% line (no tax on the invoice) is neither planned nor stamped (SA-960)", async () => {
+    await makeInvoice("realzero", { taxAmount: 0, createdAt: new Date("2026-09-01T00:00:00Z") });
+    const { mine, review } = dryRun();
+    expect(mine.map((a) => a.invoiceId)).not.toContain(inv.realzero);
+    expect(review.map((r) => r.invoiceId)).not.toContain(inv.realzero);
+    expect(await rateOf("realzero")).toBe(0);
+  }, 90_000);
+
+  it("an invoice that changes between the dry run and --apply makes the apply refuse and write nothing (SA-960 red row)", async () => {
+    await makeInvoice("changing", { createdAt: new Date("2026-09-01T00:00:00Z") });
+    const { file, hash, mine } = dryRun();
+    expect(mine.map((a) => a.invoiceId)).toContain(inv.changing);
+    await prisma.invoice.update({
+      where: { id: inv.changing },
+      data: { taxAmount: 7.6, total: 107.6 },
+    });
+    const head = execSync("git rev-parse HEAD", { cwd: REPO_ROOT, encoding: "utf8" }).trim();
+    const res = spawnSync(
+      "node",
+      [
+        CLI,
+        "--apply",
+        "--plan",
+        file,
+        "--confirm-plan",
+        hash,
+        "--guard-sha",
+        head,
+        "--i-have-a-fresh-backup",
+        "--local",
+      ],
+      { cwd: API_DIR, encoding: "utf8", env: cliEnv(dbUrl) },
+    );
+    expect(res.status).toBe(1);
+    expect(res.stderr).toMatch(/changed since the dry run/);
+    expect(await rateOf("changing")).toBe(0);
   }, 90_000);
 
   it("the creation-source label tells an estimate conversion, a missing Order and an order's own source apart", async () => {

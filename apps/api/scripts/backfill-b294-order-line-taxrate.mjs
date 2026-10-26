@@ -17,6 +17,10 @@
 //            live writer still writes 0; stamping it would hide the writer — SA-960). A human
 //            looks, nothing is written. The dry run counts post-fix lines per tenant id and per
 //            creation source so the writer can be found and fixed first.
+//            Post-fix is judged per LINE (the order line's own createdAt, else the invoice line's).
+//            FIX_DATE (2026-09-13T00:00Z) is earlier than the fix's deploy, which is the safe side
+//            (it holds more, never applies more): the post-fix census therefore shows false
+//            positives for lines created 09-13 to 09-14 02:10Z.
 //   (skipped) — the rule does not apply (a rated line, no tax, zero subtotal).
 //
 //   railway run --service postgres node apps/api/scripts/backfill-b294-order-line-taxrate.mjs
@@ -136,7 +140,14 @@ export function classifyInvoice(invoice, lines, fixDate = FIX_DATE, tenantRate =
       reason: "rate does not reproduce the tax to the cent",
     };
   }
-  if (new Date(invoice.createdAt) >= fixDate) {
+  // SA-960 MUST1: post-fix is judged per LINE (the order line's own createdAt, else the invoice line's), so a 0-rate
+  // line added after the fix to an OLDER invoice is held, never stamped over a live writer. A line with no date
+  // (a caller that does not pass one) falls back to the invoice's own.
+  const afterFix = (d) => new Date(d) >= fixDate;
+  if (
+    afterFix(invoice.createdAt) ||
+    lines.some((l) => l.lineCreatedAt != null && afterFix(l.lineCreatedAt))
+  ) {
     return {
       kind: "REVIEW",
       rate: inferred.rate,
@@ -261,8 +272,11 @@ const DERIVED_INVOICES_SQL = `
          OR EXISTS (SELECT 1 FROM "Estimate" e WHERE e."invoiceId" = i.id))
   ORDER BY i.id`;
 const LINES_SQL = `
-  SELECT id, "invoiceId", "taxRate", "categoryTaxAmount", subtotal, "systemKind", description
-  FROM "InvoiceItem" WHERE "invoiceId" = ANY($1::text[]) ORDER BY id`;
+  SELECT ii.id, ii."invoiceId", ii."taxRate", ii."categoryTaxAmount", ii.subtotal, ii."systemKind", ii.description,
+         COALESCE(oi."createdAt", ii."createdAt") AS "lineCreatedAt"
+  FROM "InvoiceItem" ii
+  LEFT JOIN "OrderItem" oi ON oi.id = ii."orderItemId"
+  WHERE ii."invoiceId" = ANY($1::text[]) ORDER BY ii.id`;
 
 async function resolveTarget() {
   const local = process.argv.includes("--local");
@@ -519,8 +533,8 @@ async function apply() {
     for (const a of plan.apply) {
       const inv = (
         await client.query(
-          'SELECT subtotal, "taxAmount", "updatedAt" FROM "Invoice" WHERE id = $1',
-          [a.invoiceId],
+          'SELECT subtotal, "taxAmount", "updatedAt" FROM "Invoice" WHERE id = $1 AND "tenantId" = $2',
+          [a.invoiceId, a.tenantId],
         )
       ).rows[0];
       const lines = (
@@ -538,14 +552,20 @@ async function apply() {
         lines.some((l) => Number(l.taxRate) !== 0);
       if (changed) throw refuse(`invoice ${a.invoiceId} has changed since the dry run`);
       // #2392: never stamp a rate onto the NSF fee line.
+      // SA-960 MUST2: the tenant is re-checked in the WHERE (an undefined bind would widen a many-write).
+      if (typeof a.tenantId !== "string" || a.tenantId === "") {
+        throw refuse(`invoice ${a.invoiceId} has no tenant in the plan`);
+      }
       const notNsf = notNsfSql(3);
+      const tenantParam = `$${3 + notNsf.params.length}`;
       const res = await client.query(
-        `UPDATE "InvoiceItem" SET "taxRate" = $1 WHERE "invoiceId" = $2 AND "taxRate" = 0 AND ${notNsf.sql}`,
+        `UPDATE "InvoiceItem" SET "taxRate" = $1 WHERE "invoiceId" = $2 AND "taxRate" = 0 AND ${notNsf.sql} AND "tenantId" = ${tenantParam}`,
         // SA-816: a non-finite rate must never reach the bind (node-pg sends NaN as 'NaN'; NUMERIC accepts it).
         [
           assertFiniteMoney(a.rate, `invoice ${a.invoiceId} taxRate`),
           a.invoiceId,
           ...notNsf.params,
+          a.tenantId,
         ],
       );
       stamped += res.rowCount;

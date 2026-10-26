@@ -25,6 +25,13 @@ describe("backfill-b294 selects by emptiness, never by date", () => {
         afterFix: at("2026-10-01T00:00:00Z"),
         future: at("2030-01-01T00:00:00Z"),
         unverified: at("2026-09-01T00:00:00Z", 7.33, 100000), // pre-fix, and 7.33 on 100000 has no rate that reproduces it
+        lateLine: classifyInvoice({ subtotal: 100, taxAmount: 7.5, createdAt: "2026-09-01T00:00:00Z" }, [
+          { taxRate: 0, categoryTaxAmount: 0, lineCreatedAt: "2026-09-01T00:00:00Z" },
+          { taxRate: 0, categoryTaxAmount: 0, lineCreatedAt: "2026-10-01T00:00:00Z" },
+        ]),
+        oldLines: classifyInvoice({ subtotal: 100, taxAmount: 7.5, createdAt: "2026-09-01T00:00:00Z" }, [
+          { taxRate: 0, categoryTaxAmount: 0, lineCreatedAt: "2026-09-01T00:00:00Z" },
+        ]),
         unverifiedAfterFix: at("2026-10-01T00:00:00Z", 7.33, 100000),
       }));
     `;
@@ -50,6 +57,20 @@ describe("backfill-b294 selects by emptiness, never by date", () => {
       kind: "REVIEW",
       reason: "rate does not reproduce the tax to the cent",
     });
+  });
+
+  it("post-fix is judged per LINE: an old invoice with one line created after the fix is held (SA-960 MUST1)", () => {
+    expect(out.lateLine).toMatchObject({ kind: "REVIEW", reason: "post-fix" });
+    expect(out.oldLines).toMatchObject({ kind: "APPLY", rate: 0.075 });
+  });
+
+  it("the lines query carries the order line's own createdAt, and the UPDATE re-checks the tenant (SA-960 MUSTs 1 and 2)", () => {
+    const src = readFileSync(SCRIPT, "utf8");
+    const lines = /const LINES_SQL = `([\s\S]*?)`;/.exec(src)?.[1] ?? "";
+    expect(lines).toMatch(/"OrderItem"/);
+    expect(lines).toMatch(/"lineCreatedAt"/);
+    const update = /`UPDATE "InvoiceItem"[\s\S]*?`/.exec(src)?.[0] ?? "";
+    expect(update).toMatch(/"tenantId" = \$/);
   });
 
   it("an unverifiable rate after the fix is REVIEW for the proof, not counted as post-fix", () => {
