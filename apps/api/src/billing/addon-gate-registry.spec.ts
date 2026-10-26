@@ -31,6 +31,26 @@ function reviewByExpired(reviewBy: string | undefined, todayUtc: number): boolea
   return !(t >= todayUtc);
 }
 
+/**
+ * The clock P1c judges "expired" against. PINNED on purpose: a spec must not depend on the
+ * calendar, or it turns red by itself on a future date with no code change (W-958). The
+ * "this review date is coming up / has passed" nag belongs to the ops monitor, not to CI.
+ * Bumping this when a row's reviewBy is actually reviewed is a deliberate edit.
+ */
+const REVIEW_AS_OF = "2026-10-26";
+const REVIEW_AS_OF_UTC = new Date(`${REVIEW_AS_OF}T00:00:00Z`).getTime();
+
+/** Dark rows (as "key:reviewBy") whose reviewBy is missing, malformed, or before `todayUtc`. */
+function expiredDarkRows(
+  registry: Record<string, { state: string; reviewBy?: string }>,
+  todayUtc: number,
+): string[] {
+  return Object.entries(registry)
+    .filter(([, row]) => row.state === "dark")
+    .filter(([, row]) => reviewByExpired(row.reviewBy, todayUtc))
+    .map(([key, row]) => `${key}:${row.reviewBy ?? "missing"}`);
+}
+
 describe("ADDON_GATE_REGISTRY pins (P1)", () => {
   const sites = requireAddonSites();
   const registryKeys = Object.keys(ADDON_GATE_REGISTRY);
@@ -51,16 +71,9 @@ describe("ADDON_GATE_REGISTRY pins (P1)", () => {
     expect(stale).toEqual([]);
   });
 
-  it("P1c: every dark row's reviewBy date is not in the past (UTC)", () => {
-    const now = new Date();
-    const todayUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
-    const darkRows = Object.entries(ADDON_GATE_REGISTRY).filter(([, row]) => row.state === "dark");
-
+  it("P1c: every dark row's reviewBy date is not in the past (as of the pinned REVIEW_AS_OF)", () => {
     // Collected so a failure names the offending key and date (Jest expect() takes ONE argument).
-    const expired = darkRows
-      .filter(([, row]) => reviewByExpired(row.reviewBy, todayUtc))
-      .map(([key, row]) => `${key}:${row.reviewBy ?? "missing"}`);
-    expect(expired).toEqual([]);
+    expect(expiredDarkRows(ADDON_GATE_REGISTRY, REVIEW_AS_OF_UTC)).toEqual([]);
   });
 
   describe("REG-W958: P1c must not depend on the calendar", () => {
@@ -68,15 +81,54 @@ describe("ADDON_GATE_REGISTRY pins (P1)", () => {
       jest.useRealTimers();
     });
 
-    it("the unpinned P1c logic stays green when the system clock is past every reviewBy", () => {
-      jest.useFakeTimers({ now: new Date("2027-06-01T12:00:00Z") });
-      const now = new Date();
-      const todayUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
-      const expired = Object.entries(ADDON_GATE_REGISTRY)
-        .filter(([, row]) => row.state === "dark")
-        .filter(([, row]) => reviewByExpired(row.reviewBy, todayUtc))
-        .map(([key, row]) => `${key}:${row.reviewBy ?? "missing"}`);
-      expect(expired).toEqual([]);
+    it.each(["2027-06-01T12:00:00Z", "2099-01-01T00:00:00Z"])(
+      "the real-registry check is unaffected by a system clock of %s",
+      (systemNow) => {
+        jest.useFakeTimers({ now: new Date(systemNow) });
+        expect(expiredDarkRows(ADDON_GATE_REGISTRY, REVIEW_AS_OF_UTC)).toEqual([]);
+      },
+    );
+
+    it("the helper reports the dark rows once the injected clock passes its reviewBy", () => {
+      const farFuture = Date.UTC(2027, 5, 1);
+      const offenders = expiredDarkRows(ADDON_GATE_REGISTRY, farFuture);
+      expect(offenders).toEqual(
+        expect.arrayContaining([
+          "ocr:2027-03-31",
+          "crm_gohighlevel:2027-03-11",
+          "email.connected_mailbox:2027-03-17",
+        ]),
+      );
+    });
+  });
+
+  describe("expiredDarkRows (injected clock, fixture registry)", () => {
+    const today = Date.UTC(2026, 9, 26);
+    const row = (state: "dark" | "enforced", reviewBy?: string) => ({ state, reviewBy });
+
+    it("reports a dark row whose reviewBy is before today", () => {
+      expect(expiredDarkRows({ a: row("dark", "2026-10-25") }, today)).toEqual(["a:2026-10-25"]);
+    });
+
+    it("does not report a dark row whose reviewBy is today or later", () => {
+      expect(
+        expiredDarkRows({ a: row("dark", "2026-10-26"), b: row("dark", "2026-10-27") }, today),
+      ).toEqual([]);
+    });
+
+    it("reports a dark row with a missing or malformed reviewBy", () => {
+      expect(
+        expiredDarkRows(
+          { a: row("dark"), b: row("dark", "tomorrow"), c: row("dark", "2026-13-45") },
+          today,
+        ),
+      ).toEqual(["a:missing", "b:tomorrow", "c:2026-13-45"]);
+    });
+
+    it("ignores a non-dark row even when its reviewBy is expired or missing", () => {
+      expect(
+        expiredDarkRows({ a: row("enforced", "2020-01-01"), b: row("enforced") }, today),
+      ).toEqual([]);
     });
   });
 
