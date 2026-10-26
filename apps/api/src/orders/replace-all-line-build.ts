@@ -153,6 +153,8 @@ export interface ReplaceAllLineBuildCtx {
   buyerPromos: PromotionRule[];
   userId?: string | null;
   operatorReplaceCategoryMap: Map<string, TrackedCategoryRow>;
+  /** SA-982 PR-2b (warn only): the buildLine census of this line's RAW input, with the live pack (orders.replace-all). */
+  warnLine?: (item: UpdateOrderItemsDto["items"][number], upb: number | null | undefined) => void;
 }
 
 /**
@@ -176,12 +178,14 @@ export function buildReplaceAllLineData(
   let qty = item.qty ?? 0;
   let boxes: number | null = null;
   let pieces: number | null = null;
+  const livePack = product.unitsPerBox; // the ONE read here of the live pack for the split below (and the census)
+  ctx.warnLine?.(item, livePack);
   if ((item.boxes ?? 0) > 0 || (item.pieces ?? 0) > 0) {
     const split = normalizeBoxesPieces({
       boxes: item.boxes,
       pieces: item.pieces,
       qty,
-      unitsPerBox: product.unitsPerBox,
+      unitsPerBox: livePack,
     });
     qty = split.qty;
     boxes = split.boxes;
