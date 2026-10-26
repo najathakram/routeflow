@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { partPayCopy } from "@/lib/counter-part-pay";
+import { PART_PAY_CREDIT_FAILED_COPY, partPayCopy } from "@/lib/counter-part-pay";
 
 /**
  * SA-933 / W-822(a) S4: an identified customer's CHECK or CARD can pay part now; the rest goes on account. The field is the
@@ -59,5 +59,21 @@ export function CounterPartPaySplit({
     <p className="text-sm font-medium" role="status" data-testid="counter-part-pay-split">
       {partPayCopy(split, creditMayApply)}
     </p>
+  );
+}
+
+/** The customer's credit could not be read: say so, and let the clerk try again. Part pay stays refused until it loads. */
+export function CounterPartPayCreditError({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div
+      role="alert"
+      className="flex flex-wrap items-center gap-2 text-sm text-red-700"
+      data-testid="counter-part-pay-credit-error"
+    >
+      <span>{PART_PAY_CREDIT_FAILED_COPY}</span>
+      <button type="button" className="min-h-[44px] rounded border px-3" onClick={onRetry}>
+        Try again
+      </button>
+    </div>
   );
 }

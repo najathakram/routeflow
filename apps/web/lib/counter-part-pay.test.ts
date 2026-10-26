@@ -2,6 +2,9 @@ import {
   PART_PAY_AMOUNT_COPY,
   PART_PAY_FULL_COPY,
   PART_PAY_CREDIT_PENDING_COPY,
+  PART_PAY_CREDIT_FAILED_COPY,
+  PART_PAY_CREDIT_COVERS_COPY,
+  isPartPayProblemCopy,
   PART_PAY_OVER_TOTAL_COPY,
   partPayOverCreditCopy,
   partPayEqualsTotal,
@@ -250,7 +253,7 @@ describe("partPayEqualsTotal: a typed amount equal to the total is said to be a 
 describe("partPayAmountProblem with the customer's open credit (server parity)", () => {
   const at = (
     tendered: string,
-    availableCredit: number | null,
+    availableCredit: number | null | "failed",
     method: "CARD" | "CHECK" | "CASH" = "CARD",
   ) => partPayAmountProblem({ method, isWalkIn: false, tendered, total: 100, availableCredit });
 
@@ -269,6 +272,46 @@ describe("partPayAmountProblem with the customer's open credit (server parity)",
 
   it("with no credit the cap is the total, as before", () => {
     expect(at("95", 0)).toBeNull();
+  });
+
+  it("exactly the total is a full payment in EVERY credit state, unknown included", () => {
+    for (const method of ["CARD", "CHECK"] as const) {
+      expect(at("100", null, method)).toBeNull();
+      expect(at("100.00", null, method)).toBeNull();
+    }
+  });
+
+  it("a FAILED credit read is its own refusal (visible, with a way out), never the waiting copy", () => {
+    expect(at("50", "failed")).toBe(PART_PAY_CREDIT_FAILED_COPY);
+    expect(PART_PAY_CREDIT_FAILED_COPY).not.toBe(PART_PAY_CREDIT_PENDING_COPY);
+    expect(at("100", "failed")).toBeNull(); // exactly the total is full in every credit state
+    expect(at("", "failed")).toBeNull();
+    expect(at("50", "failed", "CASH")).toBeNull();
+  });
+
+  it("credit that covers the whole sale says so instead of 'most you can pay is $0.00'", () => {
+    for (const credit of [100, 140]) {
+      const p = at("40", credit);
+      expect(p).toBe(PART_PAY_CREDIT_COVERS_COPY);
+      expect(p).not.toContain("$0.00");
+    }
+    expect(PART_PAY_CREDIT_COVERS_COPY).toBe(
+      "Credit on the account covers this sale, so nothing is due now. Leave Amount paying now empty.",
+    );
+  });
+
+  it("isPartPayProblemCopy recognises every Amount paying now refusal (so editing the field clears it)", () => {
+    for (const c of [
+      PART_PAY_AMOUNT_COPY,
+      PART_PAY_OVER_TOTAL_COPY,
+      PART_PAY_CREDIT_PENDING_COPY,
+      PART_PAY_CREDIT_FAILED_COPY,
+      PART_PAY_CREDIT_COVERS_COPY,
+      partPayOverCreditCopy(90),
+    ]) {
+      expect(isPartPayProblemCopy(c)).toBe(true);
+    }
+    expect(isPartPayProblemCopy("Enter the check number.")).toBe(false);
   });
 
   it("an unknown credit blocks a typed check/card part, but not a blank (full) or cash", () => {

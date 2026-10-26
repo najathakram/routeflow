@@ -51,7 +51,8 @@ export function useCounterCustomerCredit(customerId: string | null) {
     statement: sourceOf(statement),
     settings: sourceOf(settings),
   });
-  return { view };
+  // a failed statement read is retried, never a permanent block (the till draws a Retry beside the error)
+  return { view, retryCredit: () => void statement.refetch() };
 }
 
 /**

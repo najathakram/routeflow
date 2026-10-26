@@ -137,13 +137,15 @@ import { CounterTodaysSales } from "./CounterTodaysSales";
 import { ParkedSales } from "./ParkedSales";
 import { QuickKeysGrid } from "./QuickKeysGrid";
 import { CounterCheckDetails } from "./CounterCheckDetails";
-import { CounterPartPayField, CounterPartPaySplit } from "./CounterPartPay";
+import {
+  CounterPartPayCreditError,
+  CounterPartPayField,
+  CounterPartPaySplit,
+} from "./CounterPartPay";
 import { useCounterCustomerCredit } from "@/lib/api/counter-customer-credit";
 import { useCounterTenderDefault } from "./useCounterTenderDefault";
 import {
-  PART_PAY_AMOUNT_COPY,
-  PART_PAY_OVER_TOTAL_COPY,
-  PART_PAY_CREDIT_PENDING_COPY,
+  isPartPayProblemCopy,
   counterPaymentAmount,
   partPayAmountProblem,
   partPaySplit,
@@ -517,7 +519,7 @@ export function CounterSaleScreen() {
   const discounts = discountsTotal(lines, settings?.hideOriginalPrice === true); // POS-5: the `Discounts` row (display only; the total already includes it)
   const tenderedNum = Number(tendered) || 0;
   // the server owns what credit it applies: the same shared statement read the customer panel uses
-  const { view: creditView } = useCounterCustomerCredit(
+  const { view: creditView, retryCredit } = useCounterCustomerCredit(
     customer && !customer.isWalkIn ? customer.id : null,
   );
   const partSplit = partPaySplit({
@@ -989,7 +991,11 @@ export function CounterSaleScreen() {
       tendered,
       total: totals.total,
       availableCredit:
-        creditView.availableCredit.state === "ready" ? creditView.availableCredit.value : null,
+        creditView.availableCredit.state === "ready"
+          ? creditView.availableCredit.value
+          : creditView.availableCredit.state === "failed"
+            ? "failed"
+            : null,
     });
     if (partPayProblem) {
       setError(partPayProblem);
@@ -1689,24 +1695,22 @@ export function CounterSaleScreen() {
             ) : null}
 
             {(method === "CHECK" || method === "CARD") && !walkInBuyer ? (
-              <CounterPartPayField
-                value={tendered}
-                onChange={(v) => {
-                  setTendered(v);
-                  clearUnderpaidError();
-                  setError((e) =>
-                    e === PART_PAY_AMOUNT_COPY ||
-                    e === PART_PAY_OVER_TOTAL_COPY ||
-                    e === PART_PAY_CREDIT_PENDING_COPY ||
-                    e.startsWith("The most you can pay now")
-                      ? ""
-                      : e,
-                  );
-                }}
-                disabled={locked}
-                inputRef={tenderRef}
-                onEnter={() => void completeSale(false)}
-              />
+              <>
+                <CounterPartPayField
+                  value={tendered}
+                  onChange={(v) => {
+                    setTendered(v);
+                    clearUnderpaidError();
+                    setError((e) => (isPartPayProblemCopy(e) ? "" : e));
+                  }}
+                  disabled={locked}
+                  inputRef={tenderRef}
+                  onEnter={() => void completeSale(false)}
+                />
+                {creditView.availableCredit.state === "failed" ? (
+                  <CounterPartPayCreditError onRetry={retryCredit} />
+                ) : null}
+              </>
             ) : null}
           </section>
 

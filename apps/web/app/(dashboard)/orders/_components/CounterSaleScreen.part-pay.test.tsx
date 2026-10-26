@@ -1,9 +1,14 @@
 import * as React from "react";
 import { screen, waitFor, fireEvent } from "@/test-utils/render";
+import { within } from "@testing-library/react";
 import { renderTill } from "@/test-utils/render-till";
 import { apiClient } from "@/lib/api-client";
 import { calendarDayInZone } from "@/lib/calendar-date";
-import { PART_PAY_CREDIT_PENDING_COPY } from "@/lib/counter-part-pay";
+import {
+  PART_PAY_CREDIT_COVERS_COPY,
+  PART_PAY_CREDIT_FAILED_COPY,
+  PART_PAY_CREDIT_PENDING_COPY,
+} from "@/lib/counter-part-pay";
 import { CounterSaleScreen } from "./CounterSaleScreen";
 
 /**
@@ -69,7 +74,7 @@ const SALE = {
   paymentRecorded: true,
 };
 
-let availableCredit: number | "pending" = 0;
+let availableCredit: number | "pending" | "failed" = 0;
 beforeEach(() => {
   jest.clearAllMocks();
   availableCredit = 0;
@@ -206,6 +211,55 @@ describe("open credit caps a check/card part (server parity)", () => {
     complete();
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
     expect(sentPayment()).toEqual({ method: "CARD", amount: 8.5 });
+  });
+
+  it("credit that covers the whole sale says so, not 'most you can pay is $0.00'", async () => {
+    availableCredit = 20;
+    renderTill(<CounterSaleScreen />);
+    pickPlain();
+    await scanCase();
+    card();
+    payNow("5");
+    await waitFor(() => {
+      complete();
+      expect(screen.getByText(PART_PAY_CREDIT_COVERS_COPY)).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/$0.00/)).toBeNull();
+    expect(mutateAsync).not.toHaveBeenCalled();
+  });
+
+  it("a failed credit read is a visible error with a retry, never a permanent block", async () => {
+    availableCredit = "failed";
+    renderTill(<CounterSaleScreen />);
+    pickPlain();
+    await scanCase();
+    card();
+    const alert = await screen.findByTestId("counter-part-pay-credit-error");
+    expect(alert).toHaveTextContent(PART_PAY_CREDIT_FAILED_COPY);
+    payNow("5");
+    complete();
+    expect(mutateAsync).not.toHaveBeenCalled();
+    // the read comes back: Try again clears the error, and the cap then applies as usual
+    availableCredit = 4;
+    fireEvent.click(within(alert).getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(screen.queryByTestId("counter-part-pay-credit-error")).toBeNull());
+    payNow("8.5");
+    await screen.findByTestId("counter-part-pay-split");
+    complete();
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    expect(sentPayment()).toEqual({ method: "CARD", amount: 8.5 });
+  });
+
+  it("a failed credit read still lets the clerk pay in full (empty field)", async () => {
+    availableCredit = "failed";
+    renderTill(<CounterSaleScreen />);
+    pickPlain();
+    await scanCase();
+    card();
+    await screen.findByTestId("counter-part-pay-credit-error");
+    complete();
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    expect(sentPayment()).toEqual({ method: "CARD" });
   });
 
   it("credit not read yet: a typed card part waits for the statement and submits nothing", async () => {

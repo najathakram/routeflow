@@ -73,7 +73,26 @@ export const PART_PAY_OVER_TOTAL_COPY =
 
 /** The most a CHECK or CARD can pay now when the customer holds open credit: the server applies credit first (SA-933 parity). */
 export const partPayOverCreditCopy = (max: number): string =>
-  `The most you can pay now is ${formatReceiptMoney(max)}, because credit on the account is applied first. Lower it, or leave it empty to pay in full.`;
+  max > 0
+    ? `The most you can pay now is ${formatReceiptMoney(max)}, because credit on the account is applied first. Lower it, or leave it empty to pay in full.`
+    : PART_PAY_CREDIT_COVERS_COPY;
+
+/** Open credit covers the whole sale: there is no amount to pay now, so no cap figure is shown. */
+export const PART_PAY_CREDIT_COVERS_COPY =
+  "Credit on the account covers this sale, so nothing is due now. Leave Amount paying now empty.";
+
+/** The credit read failed: say so and offer the way out (the screen draws a Retry beside it); never a permanent block. */
+export const PART_PAY_CREDIT_FAILED_COPY =
+  "Couldn't load the customer's credit. Try again, or leave Amount paying now empty to pay in full.";
+
+/** True for any "Amount paying now" refusal above, so editing the field can clear a stale one. */
+export const isPartPayProblemCopy = (message: string): boolean =>
+  message === PART_PAY_AMOUNT_COPY ||
+  message === PART_PAY_OVER_TOTAL_COPY ||
+  message === PART_PAY_CREDIT_PENDING_COPY ||
+  message === PART_PAY_CREDIT_FAILED_COPY ||
+  message === PART_PAY_CREDIT_COVERS_COPY ||
+  message.startsWith("The most you can pay now");
 
 /** A typed CHECK/CARD part waits for the customer's credit (the server's figure): never submit an amount it may refuse. */
 export const PART_PAY_CREDIT_PENDING_COPY =
@@ -89,8 +108,8 @@ export function partPayAmountProblem(input: {
   isWalkIn: boolean;
   tendered: string;
   total?: number;
-  /** the server's availableCredit for the customer: a number, or null while unknown; omit to skip the credit rule */
-  availableCredit?: number | null;
+  /** the server's availableCredit for the customer: a number, null while still loading, "failed" when the read failed; omit to skip the credit rule */
+  availableCredit?: number | null | "failed";
 }): string | null {
   if (input.isWalkIn || (input.method !== "CHECK" && input.method !== "CARD")) return null;
   const raw = input.tendered.trim();
@@ -103,9 +122,11 @@ export function partPayAmountProblem(input: {
   if (input.total !== undefined && input.availableCredit !== undefined) {
     // exactly the total states no amount (a full payment: the server charges its own balance); below it the server caps the
     // part at total minus the credit it applies first, so a figure in between is refused here, before submit
-    if (input.availableCredit === null) return PART_PAY_CREDIT_PENDING_COPY;
     const paid = roundMoney(Number(raw));
     const total = roundMoney(input.total);
+    if (paid === total) return null; // exactly the total is a full payment in every credit state
+    if (input.availableCredit === "failed") return PART_PAY_CREDIT_FAILED_COPY;
+    if (input.availableCredit === null) return PART_PAY_CREDIT_PENDING_COPY;
     const cap = roundMoney(Math.max(0, total - Math.max(0, input.availableCredit)));
     if (paid < total && paid > cap) return partPayOverCreditCopy(cap);
   }
