@@ -93,7 +93,10 @@ keeps the state and exits 4: it never guesses the visibility.
 State and log are in `local-assets/` (`visibility-deadman.state.json`, `visibility-deadman.log`, one
 JSON line per event, a `heartbeat` for every poll). Exit codes: 0 ok, 1 flip not confirmed (flip by
 hand), 2 usage error, 3 `--status` unhealthy, 4 `gh` could not answer, 5 the `gh` account is **not an
-admin** of the repo.
+admin** of the repo. If `gh repo view` fails while the stored timer is past the deadline (or lost after the repo was
+last seen public), the switch still runs the flip and exits 1 when it cannot read it back. After 3
+failed polls in a row (`DEGRADED_AFTER_FAILURES`) every poll logs `DEADMAN DEGRADED` and `--status`
+exits 3: fix `gh` or the token before the next public window.
 
 Two guards against a switch that looks alive but is dead:
 
