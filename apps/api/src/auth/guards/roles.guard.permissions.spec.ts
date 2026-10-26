@@ -124,7 +124,25 @@ describe("RolesGuard + operator permission groups", () => {
     expect(lines[0]).toMatch(/lookup failed \(shadow, allowed\)/);
     expect(lines[0]).toMatch(/groups=ORDERS\|FINANCE/);
     expect(lines[0]).toMatch(/tenant=t1/);
-    expect(lines[0]).toMatch(/db down/);
+    // Never the raw message (it can carry ids, the host and a code frame): the error's name only.
+    expect(lines[0]).toMatch(/: Error$/);
+    expect(lines[0]).not.toMatch(/db down/);
+  });
+
+  it("SHADOW: a Prisma error is logged by name and code, not by its message", async () => {
+    const prismaErr = Object.assign(
+      new Error("Invalid `findFirst()` where: { id: 'u-secret' } at db-host:5432"),
+      {
+        name: "PrismaClientKnownRequestError",
+        code: "P2024",
+      },
+    );
+    effective.mockRejectedValue(prismaErr);
+    const error = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+    await expect(guard.canActivate(ctxFor("orders", OPERATOR))).resolves.toBe(true);
+    const line = String(error.mock.calls[0][0]);
+    expect(line).toMatch(/PrismaClientKnownRequestError code=P2024$/);
+    expect(line).not.toMatch(/u-secret|db-host/);
   });
 
   it("LIVE: a failed lookup FAILS CLOSED (the error propagates, the request is never allowed)", async () => {

@@ -98,7 +98,7 @@ export class RolesGuard implements CanActivate {
       // SHADOW observes only: a failed lookup must never block an operator, so log it and allow.
       if (mode !== "live") {
         this.logger.error(
-          `permission lookup failed (shadow, allowed) groups=${groups.join("|")} ${where}: ${err instanceof Error ? err.message : String(err)}`,
+          `permission lookup failed (shadow, allowed) groups=${groups.join("|")} ${where}: ${describeLookupError(err)}`,
         );
         return true;
       }
@@ -122,4 +122,14 @@ function routeOf(context: ExecutionContext): string {
   }>();
   const path = (req.originalUrl ?? req.url ?? "?").split("?")[0];
   return `${req.method ?? "?"} ${path}`;
+}
+
+/**
+ * The name and Prisma code of a failed lookup, never its message: a database error message can carry the query's
+ * where-arguments (user and tenant ids), the host and port, and a code frame.
+ */
+function describeLookupError(err: unknown): string {
+  if (!(err instanceof Error)) return "non-error";
+  const code = (err as { code?: unknown }).code;
+  return typeof code === "string" ? `${err.name} code=${code}` : err.name;
 }
