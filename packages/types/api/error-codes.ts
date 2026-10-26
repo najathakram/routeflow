@@ -389,6 +389,9 @@ export const API_ERROR_CODES = {
   // B640 (row 562): a free-text stock reference may not start with a head the stock-count commits key their
   // idempotency on (STOCK_COUNT-). 400, nothing was written.
   STOCK_REFERENCE_RESERVED: "STOCK_REFERENCE_RESERVED",
+  // SA-990 (row 562): the legacy one-shot count was sent a sessionId that already names a saved stock count.
+  // 409, nothing was written.
+  STOCK_COUNT_ID_TAKEN: "STOCK_COUNT_ID_TAKEN",
   PO_ALREADY_BILLED: "PO_ALREADY_BILLED",
   BILL_EXCEEDS_PO: "BILL_EXCEEDS_PO",
   INVOICE_HAS_UNSPENT_CREDIT: "INVOICE_HAS_UNSPENT_CREDIT",

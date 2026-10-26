@@ -6,7 +6,8 @@
  *       the count then applies EVERY line. Master: the adjustment is recorded, and the commit skips that
  *       product silently ("already committed"), leaving its stock one unit off the count.
  *  (R2) the same for a purchase.
- *  (R3) the legacy one-shot commit refuses a sessionId that names a durable session: nothing is written
+ *  (R3) the legacy one-shot commit refuses a sessionId that names a durable session (409 STOCK_COUNT_ID_TAKEN,
+ *       SA-990): nothing is written
  *       under the durable session's reference.
  *  (R4) an ordinary reference still works, and the legacy commit with its own fresh id still applies.
  */
@@ -83,8 +84,8 @@ describeDb("B640 - a planted count reference cannot suppress a count", () => {
       .catch((e) => e);
 
     console.log(`B640(R3) observed: status=${err?.getStatus?.() ?? "accepted"} code=${code(err)}`);
-    expect(err?.getStatus?.()).toBe(400);
-    expect(code(err)).toBe("STOCK_REFERENCE_RESERVED");
+    expect(err?.getStatus?.()).toBe(409);
+    expect(code(err)).toBe("STOCK_COUNT_ID_TAKEN");
     expect(await h.countMovements(w)).toHaveLength(0);
     expect(await h.stockOfId(w.idOf(1))).toBe(100);
     // and the durable count still commits normally afterwards

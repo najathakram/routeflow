@@ -170,7 +170,7 @@ describe("B640 reserved stock references", () => {
           { sessionId: SID, items: [{ productId: pid(1), quantity: 5, mode: "REPLACE" }] } as any,
           "u-1",
         ),
-      ).rejects.toMatchObject({ response: { code: "STOCK_REFERENCE_RESERVED" }, status: 400 });
+      ).rejects.toMatchObject({ response: { code: "STOCK_COUNT_ID_TAKEN" }, status: 409 });
       expect(w.prisma.stockCountSession.findUnique).toHaveBeenCalledWith(
         expect.objectContaining({ where: { id: SID } }),
       );

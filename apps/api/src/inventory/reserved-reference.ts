@@ -7,7 +7,7 @@
  * reference planted ahead of a commit made that commit a silent no-op for the product. One predicate decides
  * what is reserved; the DTO decorator and the service guard both call it.
  */
-import { BadRequestException } from "@nestjs/common";
+import { BadRequestException, ConflictException } from "@nestjs/common";
 import { registerDecorator, type ValidationOptions } from "class-validator";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { STOCK_COUNT_REFERENCE_PREFIX } from "./stock-count-commit";
@@ -61,15 +61,17 @@ export function IsNotReservedStockReference(options?: ValidationOptions): Proper
 /**
  * The legacy one-shot count (`POST stock-count/commit`) takes a CLIENT-chosen `sessionId` and writes
  * `STOCK_COUNT-<sessionId>`. A sessionId that names a DURABLE session would write movements under that
- * session's own reference, which its commit then reads as "already committed". Refuse it with the same coded 400.
+ * session's own reference, which its commit then reads as "already committed". Refuse it with the coded 409 STOCK_COUNT_ID_TAKEN (SA-990).
  */
 export async function assertNotDurableCountId(
   db: { stockCountSession: { findUnique(args: { where: { id: string } }): Promise<unknown> } },
   sessionId: string,
 ): Promise<void> {
   if (await db.stockCountSession.findUnique({ where: { id: sessionId } })) {
-    throw stockReferenceReserved(
-      "That count id belongs to a saved stock count. Start a new count.",
-    );
+    throw new ConflictException({
+      statusCode: 409,
+      code: API_ERROR_CODES.STOCK_COUNT_ID_TAKEN,
+      message: "That count id belongs to a saved stock count. Start a new count.",
+    });
   }
 }
