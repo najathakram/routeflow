@@ -1116,7 +1116,7 @@ export class InventoryService {
         // prior result instead of re-applying. Read AFTER the lock, so a duplicate that
         // waited behind the first commit sees its movements.
         const already = await tx.stockMovement.findMany({
-          where: { reference },
+          where: { reference, productId: { in: productIds } }, // row 354: bounded by the counted products (no reference index)
           select: { id: true },
         });
         if (already.length > 0) {
