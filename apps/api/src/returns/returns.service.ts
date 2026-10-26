@@ -186,6 +186,14 @@ export interface FindAllReturnsOptions {
   limit?: number;
 }
 
+/** The two reads `refundActorName` makes, typed by what it uses. */
+interface RefundActorDb {
+  auditLog: { findFirst(args: unknown): Promise<{ userId: string | null } | null> };
+  user: {
+    findFirst(args: unknown): Promise<{ username: string | null; deletedAt: Date | null } | null>;
+  };
+}
+
 @Injectable()
 export class ReturnsService {
   constructor(
@@ -1660,7 +1668,8 @@ export class ReturnsService {
 
   /** RF-081: Fetches a return by ID with ownership enforcement for CUSTOMER role. */
   async findOneForUser(id: string, user: JwtPayload) {
-    const ret = await this.findOne(id);
+    // A buyer's read never carries the refunding staff member (and asks nothing to resolve them).
+    const ret = await this.findOne(id, user);
     if (user.role === "CUSTOMER") {
       const customer = await this.prisma
         .forTenant()
@@ -1668,11 +1677,6 @@ export class ReturnsService {
       if (!customer || ret.customerId !== customer.id) {
         throw new ForbiddenException("You can only view your own returns");
       }
-    }
-    // The refunding staff member is staff-only information: a buyer's read never carries it.
-    if (user.role === "CUSTOMER") {
-      const { refundedBy: _staffName, ...forBuyer } = ret;
-      return forBuyer;
     }
     return ret;
   }
@@ -1683,12 +1687,16 @@ export class ReturnsService {
    * system actor, or a user who has since been removed (the client prints nothing rather than a guess).
    */
   private async refundActorName(
-    db: any,
+    db: RefundActorDb,
     ret: { id: string; status?: string | null; refundedAt?: Date | null },
+    tenantId: string | null | undefined,
   ): Promise<string | null> {
     if (ret.status !== "REFUNDED" && !ret.refundedAt) return null;
+    // Both reads name the tenant themselves (an audit row or a user of another tenant never names the refunder).
+    if (!tenantId) return null;
     const audit = await db.auditLog.findFirst({
       where: {
+        tenantId,
         entityType: "Return",
         entityId: ret.id,
         action: {
@@ -1704,13 +1712,13 @@ export class ReturnsService {
     });
     if (!audit?.userId) return null;
     const user = await db.user.findFirst({
-      where: { id: audit.userId },
+      where: { id: audit.userId, tenantId },
       select: { username: true, deletedAt: true },
     });
     return user && !user.deletedAt ? (user.username ?? null) : null;
   }
 
-  async findOne(id: string) {
+  async findOne(id: string, viewer?: { role?: string | null }) {
     const ret = await this.prisma.forTenant().return.findUnique({
       where: { id },
       include: {
@@ -1819,7 +1827,15 @@ export class ReturnsService {
       creditNote,
       refundEstimate,
       refundEstimateReason: refusal ?? null,
-      refundedBy: await this.refundActorName(this.prisma.forTenant(), ret),
+      ...(viewer?.role === "CUSTOMER"
+        ? {}
+        : {
+            refundedBy: await this.refundActorName(
+              this.prisma.forTenant(),
+              ret,
+              ret.tenantId ?? this.prisma.getTenantId(),
+            ),
+          }),
     };
   }
 }

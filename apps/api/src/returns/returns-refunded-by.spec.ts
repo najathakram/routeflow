@@ -58,8 +58,14 @@ describe("ReturnsService.findOne: refundedBy (row 257)", () => {
     prisma.user.findFirst.mockResolvedValue({ username: "casey", deletedAt: null });
     const out = await service.findOne("ret-1");
     expect(out.refundedBy).toBe("casey");
+    // the user read names the tenant too
+    expect(prisma.user.findFirst).toHaveBeenCalledWith({
+      where: { id: "u-casey", tenantId: "test-tenant" },
+      select: { username: true, deletedAt: true },
+    });
     expect(prisma.auditLog.findFirst).toHaveBeenCalledWith({
       where: {
+        tenantId: "test-tenant",
         entityType: "Return",
         entityId: "ret-1",
         action: {
@@ -106,11 +112,34 @@ describe("ReturnsService.findOne: refundedBy (row 257)", () => {
       role: "CUSTOMER",
     } as never);
     expect(out).not.toHaveProperty("refundedBy");
+    // and a buyer's read resolves nobody: zero queries for the refunder
+    expect(prisma.auditLog.findFirst).not.toHaveBeenCalled();
+    expect(prisma.user.findFirst).not.toHaveBeenCalled();
     // staff still get it
     expect(
       (await service.findOneForUser("ret-1", { sub: "op-1", role: "OPERATOR" } as never))
         .refundedBy,
     ).toBe("casey");
+  });
+
+  it("the return's own tenant scopes both reads, ahead of the request's tenant", async () => {
+    prisma.return.findUnique.mockResolvedValue(refunded({ tenantId: "t-own" }));
+    prisma.auditLog.findFirst.mockResolvedValue({ userId: "u-casey" });
+    prisma.user.findFirst.mockResolvedValue({ username: "casey", deletedAt: null });
+    await service.findOne("ret-1");
+    expect(prisma.auditLog.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ tenantId: "t-own" }) }),
+    );
+    expect(prisma.user.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "u-casey", tenantId: "t-own" } }),
+    );
+  });
+
+  it("with no tenant to scope by, nobody is named and nothing is read", async () => {
+    prisma.return.findUnique.mockResolvedValue(refunded({ tenantId: null }));
+    (prisma.getTenantId as jest.Mock).mockReturnValue(null);
+    expect((await service.findOne("ret-1")).refundedBy).toBeNull();
+    expect(prisma.auditLog.findFirst).not.toHaveBeenCalled();
   });
 
   it("a buyer asking for someone else's return is still refused", async () => {
