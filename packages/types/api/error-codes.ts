@@ -560,6 +560,8 @@ export const API_ERROR_CODES = {
   SUPPLIER_ALLOCATION_BILL_VOID: "SUPPLIER_ALLOCATION_BILL_VOID",
   SUPPLIER_ALLOCATION_OVER_BALANCE: "SUPPLIER_ALLOCATION_OVER_BALANCE",
   COUNTER_SALES_DISABLED: "COUNTER_SALES_DISABLED",
+  /** 422 from the products list / ids / CSV when the Low or In-stock filter would match more than LOW_STOCK_ID_CAP products: narrow the filter (SA-1002). */
+  LOW_STOCK_TOO_MANY: "LOW_STOCK_TOO_MANY",
   /** 409 from a counter-sale tender, a payment edit or a refund dated inside a window that has been closed (the closed day's totals never move). Record it with today's date instead. */
   COUNTER_SALE_DAY_CLOSED: "COUNTER_SALE_DAY_CLOSED",
   /** 409 from POST /invoices/:id/payments: a CASH payment on a counter sale dated before the latest standing day close would change that closed Z report (body carries `closedThrough`, ISO). Record it with today's date. */
