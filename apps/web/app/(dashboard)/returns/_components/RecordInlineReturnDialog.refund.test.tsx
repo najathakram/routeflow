@@ -291,6 +291,17 @@ describe("refund flow", () => {
     });
   });
 
+  it("the Return recorded screen's links are 44 px rows below lg (return number, credit note, View order)", async () => {
+    await toQuote(quote());
+    fireEvent.click(confirmBtn(/^return & issue store credit$/i));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+    captureOk({ ...RECORD, creditNoteId: "cn-1" });
+    await screen.findByText(/return recorded/i);
+    for (const name of [/^#R-1$/, "View credit note", "View order"]) {
+      expect(screen.getByRole("link", { name })).toHaveClass("max-lg:min-h-11");
+    }
+  });
+
   it("hidden block: capture request carries no resolution field (today's payload)", async () => {
     const { onRecorded } = await toQuote(quote({ canRefund: false }));
     fireEvent.click(confirmBtn(/^issue credit note and receive goods$/i));

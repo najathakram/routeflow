@@ -581,7 +581,10 @@ export function RecordInlineReturnDialog({
               <div className="flex justify-between">
                 <dt className="text-navy/70">Return</dt>
                 <dd>
-                  <a className="text-brand-600 underline" href={`/returns/${result.id}`}>
+                  <a
+                    className="inline-flex items-center text-brand-600 underline max-lg:min-h-11"
+                    href={`/returns/${result.id}`}
+                  >
                     #{result.returnNumber}
                   </a>
                 </dd>
@@ -592,7 +595,7 @@ export function RecordInlineReturnDialog({
                 <dt className="text-navy/70">Credit note</dt>
                 <dd>
                   <a
-                    className="text-brand-600 underline"
+                    className="inline-flex items-center text-brand-600 underline max-lg:min-h-11"
                     href={`/credit-notes/${result.creditNoteId}`}
                   >
                     View credit note
@@ -609,7 +612,10 @@ export function RecordInlineReturnDialog({
             <div className="flex justify-between">
               <dt className="text-navy/70">Order</dt>
               <dd>
-                <a className="text-brand-600 underline" href={`/orders/${result.orderId}`}>
+                <a
+                  className="inline-flex items-center text-brand-600 underline max-lg:min-h-11"
+                  href={`/orders/${result.orderId}`}
+                >
                   View order
                 </a>
               </dd>
