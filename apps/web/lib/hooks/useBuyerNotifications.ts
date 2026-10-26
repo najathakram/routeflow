@@ -11,6 +11,18 @@ import {
   getStoredBuyerId,
 } from "../buyer-auth";
 
+// B546: every buyer view that shows credit refreshes on a credit-note created or voided event, from
+// this ONE list (useBuyerNotifications.credit-views.static.test.ts pins it against the buyer queries).
+export const BUYER_CREDIT_VIEW_KEYS = [
+  ["buyer", "statement"],
+  ["buyer", "statement-months"],
+  ["buyer", "dashboard"],
+  ["buyer", "invoice"],
+  ["buyer", "payments"],
+  ["buyer", "payment-preview"],
+  ["buyer", "remittance"],
+] as const;
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export type BuyerNotificationType = "order" | "invoice" | "delivery";
@@ -182,11 +194,8 @@ export function useBuyerNotifications(sellerTenantId?: string | null) {
     // dashboard and any invoice it was applied to — refresh them for every linked seller (caches
     // are keyed by ids), and only the seller on screen gets a bell entry.
     const refreshCreditViews = () => {
-      qc.invalidateQueries({ queryKey: ["buyer", "statement"] });
-      qc.invalidateQueries({ queryKey: ["buyer", "statement-months"] });
-      qc.invalidateQueries({ queryKey: ["buyer", "dashboard"] });
-      qc.invalidateQueries({ queryKey: ["buyer", "invoice"] });
-      qc.invalidateQueries({ queryKey: ["buyer", "payments"] });
+      for (const queryKey of BUYER_CREDIT_VIEW_KEYS)
+        qc.invalidateQueries({ queryKey: [...queryKey] });
     };
 
     const onCreditNoteCreated = (data: { creditNoteNumber?: string; customerId?: string }) => {

@@ -157,6 +157,8 @@ describe("useBuyerNotifications — credit notes (B546)", () => {
     ["buyer", "dashboard"],
     ["buyer", "invoice"],
     ["buyer", "payments"],
+    ["buyer", "payment-preview"],
+    ["buyer", "remittance"],
   ];
 
   it("a voided credit note refreshes the statement, store credit, invoice and payments views", async () => {

@@ -25,6 +25,8 @@ describe("B546: useBuyerSocket refreshes the credit views on issue AND void", ()
       "buyer-statement",
       "buyer-invoices",
       "buyer-payments",
+      "buyer-statement-months",
+      "buyer-remittance",
     ]) {
       expect(body).toContain(`"${key}"`);
     }
