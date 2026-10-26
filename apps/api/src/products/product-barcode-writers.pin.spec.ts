@@ -30,17 +30,30 @@ import * as path from "path";
 import { WRITE_METHODS, balancedGeneric, callBlocks } from "./tripwire-scan";
 
 const SRC_ROOT = path.resolve(__dirname, "..");
-const SCRIPTS_ROOT = path.resolve(__dirname, "..", "..", "scripts");
 const API_ROOT = path.resolve(SRC_ROOT, "..");
 
-/** Non-spec source files under `dir` (any .ts / .js / .mjs / .cjs), skipping node_modules and the testing fixtures. */
+/** Directories that hold no live writer: build output, deps, docs, test trees and fixtures, and SQL-only migrations. */
+const SKIP_DIRS = new Set([
+  "node_modules",
+  "dist",
+  "coverage",
+  "docs",
+  "test",
+  "testing",
+  "migrations",
+  ".turbo",
+]);
+
+/**
+ * Non-spec source files (any .ts / .js / .mjs / .cjs) under the whole API package, so a writer in `prisma/` (the catalog
+ * backfill), `scripts/`, `src/` or a root file is in the walk (review-d MUST 2), not just the two directories first listed.
+ */
 function files(dir: string, out: string[] = []): string[] {
   if (!fs.existsSync(dir)) return out;
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, e.name);
     if (e.isDirectory()) {
-      if (e.name === "node_modules" || e.name === "testing") continue;
-      files(full, out);
+      if (!SKIP_DIRS.has(e.name)) files(full, out);
     } else if (/\.(ts|js|mjs|cjs)$/.test(e.name) && !/\.spec\.ts$/.test(e.name)) out.push(full);
   }
   return out;
@@ -68,11 +81,15 @@ const ALIASES = [
 const NESTED_KEY = /\bbarcodes\s*:\s*\{/g;
 const NESTED_WRITE =
   /\b(create|createMany|connectOrCreate|upsert|update|updateMany|delete|deleteMany|set|connect|disconnect)\s*:/;
+// A table name, optionally schema-qualified, each part quoted or not (`"public"."ProductBarcode"`, `ProductBarcode`).
 const RAW = (verb: string) =>
-  new RegExp(`\\b${verb}\\s+(?:\\w+\\s*\\.\\s*)?"?ProductBarcode"?(?![\\w"])`, "gi");
+  new RegExp(
+    `\\b${verb}\\s+(?:ONLY\\s+)?(?:"?\\w+"?\\s*\\.\\s*)?"?ProductBarcode"?(?![\\w"])`,
+    "gi",
+  );
 const RAW_INSERT = RAW("INSERT\\s+INTO");
 const RAW_UPDATE = RAW("UPDATE");
-const RAW_DELETE = RAW("DELETE\\s+FROM");
+const RAW_DELETE = RAW("(?:DELETE\\s+FROM|TRUNCATE(?:\\s+TABLE)?)");
 
 const matches = (re: RegExp, text: string) =>
   (text.match(new RegExp(re.source, re.flags)) ?? []).length;
@@ -110,8 +127,17 @@ export function tally(text: string): Tally {
   };
 }
 
-/** the ONE create-class writer: the mirror sync's createMany */
-const PINNED_CREATES: Record<string, number> = { "src/products/product-catalog-sync.ts": 1 };
+/** every create-class writer, per file */
+const PINNED_CREATES: Record<string, [number, string]> = {
+  "src/products/product-catalog-sync.ts": [
+    1,
+    "the mirror sync's createMany: the one runtime writer",
+  ],
+  "prisma/backfill-product-catalog-rows.ts": [
+    1,
+    "a one-off, insert-only backfill of legacy level rows for a product with none (skipDuplicates); writes no productUnitId",
+  ],
+};
 
 /** every update-class write, per file (they set code / retiredCode only; none names productUnitId) */
 const PINNED_UPDATES: Record<string, [number, string]> = {
@@ -156,7 +182,7 @@ export function violations(sources: Record<string, string>): string[] {
   same(
     "create-class writers",
     perFile((t) => t.creates),
-    PINNED_CREATES,
+    pinnedCount(PINNED_CREATES),
   );
   same(
     "update-class writers",
@@ -198,9 +224,7 @@ export function violations(sources: Record<string, string>): string[] {
 
 const rel = (f: string) => path.relative(API_ROOT, f).split(path.sep).join("/");
 const realSources = () =>
-  Object.fromEntries(
-    [...files(SRC_ROOT), ...files(SCRIPTS_ROOT)].map((f) => [rel(f), fs.readFileSync(f, "utf8")]),
-  );
+  Object.fromEntries(files(API_ROOT).map((f) => [rel(f), fs.readFileSync(f, "utf8")]));
 
 describe("SA-983: the ProductBarcode writers are count-pinned", () => {
   it("the repo is green: one create-class writer, the pinned updates and deletes, nothing else", () => {
@@ -221,6 +245,7 @@ describe("SA-983: the ProductBarcode writers are count-pinned", () => {
         "src/products/product-catalog-sync.ts",
         "src/products/product-code-release.ts",
         "scripts/propose-pack-sizes.mjs",
+        "prisma/backfill-product-catalog-rows.ts",
       ]),
     );
     expect(tally(sources["src/products/product-catalog-sync.ts"]).creates).toBe(1);
@@ -279,8 +304,36 @@ describe("SA-983: each bypass shape turns the pin red", () => {
     ],
     ["a new delete", "await tx.productBarcode.deleteMany({ where: { productId } });"],
     ["a raw DELETE", "await db.query('DELETE FROM ProductBarcode WHERE id = $1');"],
+    // review-d P1 (MUST 1): the call split across lines, or spaced, or optional-chained, is the same call
+    ["a call split across lines", "await tx.productBarcode\n  .create({ data });"],
+    ["a receiver split from its dot", "await tx\n  .productBarcode\n  .createMany({ data });"],
+    ["a spaced call", "await tx.productBarcode . createMany ( { data } );"],
+    ["an optional-chained call", "await tx?.productBarcode?.create?.({ data });"],
+    ["a non-null receiver", "await tx.productBarcode!.upsert({ where, create, update });"],
+    ["a bracket-named method", 'await tx.productBarcode["createMany"]({ data });'],
+    [
+      "a multi-line updateMany",
+      "await tx.productBarcode\n  .updateMany({ where, data: { productUnitId: u } });",
+    ],
+    ["a multi-line delete", "await tx.productBarcode\n  .deleteMany({ where });"],
+    [
+      "a quoted schema in a raw INSERT",
+      'await db.query(\'INSERT INTO "public"."ProductBarcode" (id) VALUES ($1)\');',
+    ],
+    [
+      "a raw INSERT split over lines",
+      'await db.query(`INSERT INTO\n  "ProductBarcode" (id) VALUES ($1)`);',
+    ],
+    ["a raw TRUNCATE", "await db.query('TRUNCATE TABLE \"ProductBarcode\"');"],
   ])("%s", (_name, src) => {
     expect(violations(plant(src)).length).toBeGreaterThan(0);
+  });
+
+  it("a live writer under prisma/ is inside the walk and red until pinned (review-d MUST 2)", () => {
+    expect(
+      violations(plant("await tx.productBarcode.createMany({ data });", "prisma/zz-planted.ts"))
+        .length,
+    ).toBeGreaterThan(0);
   });
 
   it("a second writer inside the pinned sync file is still red", () => {
