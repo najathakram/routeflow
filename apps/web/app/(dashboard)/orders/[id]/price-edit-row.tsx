@@ -187,8 +187,8 @@ export function PriceEditRow({
             aria-describedby={reasonMissing ? reasonMessageId : undefined}
             className={
               reasonRequired && !overrideReason?.trim()
-                ? "min-w-0 flex-1 rounded border border-danger bg-danger-bg/30 px-2 py-1 text-navy outline-none ring-1 ring-danger placeholder:text-danger/70"
-                : "min-w-0 flex-1 rounded border border-surface-border bg-white px-2 py-1 text-navy outline-none placeholder:text-navy/40"
+                ? "min-w-0 flex-1 rounded border border-danger bg-danger-bg/30 px-2 py-1 max-lg:h-11 text-navy outline-none ring-1 ring-danger placeholder:text-danger/70"
+                : "min-w-0 flex-1 rounded border border-surface-border bg-white px-2 py-1 max-lg:h-11 text-navy outline-none placeholder:text-navy/40"
             }
           />
           {reasonMissing ? (

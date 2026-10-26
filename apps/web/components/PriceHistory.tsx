@@ -618,7 +618,7 @@ export function PriceHistoryButton({
           if (e.key === " ") e.preventDefault();
         }}
         className={cn(
-          "inline-flex h-6 min-h-11 w-6 min-w-11 shrink-0 items-center justify-center rounded text-navy/60 hover:bg-sunken hover:text-navy disabled:cursor-not-allowed disabled:opacity-40 sm:min-h-0 sm:min-w-0",
+          "inline-flex h-6 min-h-11 w-6 min-w-11 shrink-0 items-center justify-center rounded text-navy/60 hover:bg-sunken hover:text-navy disabled:cursor-not-allowed disabled:opacity-40 lg:min-h-0 lg:min-w-0",
           className,
         )}
       >
