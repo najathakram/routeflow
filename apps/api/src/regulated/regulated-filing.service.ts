@@ -34,6 +34,14 @@ interface FilingRow {
   categoryTax: number;
 }
 
+/** The four rounded totals of a filing (always the ledger aggregate, whatever the template). */
+interface FilingTotals {
+  qty: number;
+  unitBasisQty: number;
+  netSales: number;
+  categoryTax: number;
+}
+
 /**
  * Phase 4 (W5b): prepares regulatory filings — the generic superset of
  * TobaccoReportService. A filing is computed from the pre-signed
@@ -187,62 +195,34 @@ export class RegulatedFilingService {
   }
 
   /**
-   * (Re)generate the filing for a PAST period. Upserts the (tenant, category,
-   * period) row — regeneration overwrites the CSV at a deterministic key, bumps
-   * generationCount, and is audit-logged. Totals are the ledger's pre-signed nets,
-   * so a reversal-heavy period legitimately nets down (never re-signed/clamped).
+   * The figures one filing freezes, built from the ledger NOW: the per-bucket rows (or the TX per-invoice report),
+   * the four rounded totals, and the CSV. `prepareFiling` stores them; `lockFiling` rebuilds them after its claim
+   * and refuses (FILING_STALE) when they differ from what was stored (SA-995). Reads only; nothing is uploaded.
    */
-  async prepareFiling(params: {
-    trackedCategoryId: string;
-    cadence?: FilingCadence;
-    year: number;
-    index?: number;
-    userId?: string | null;
-  }) {
-    const tenantId = this.prisma.getTenantId();
-    if (!tenantId) throw new BadRequestException("Filings are tenant-scoped");
-
-    const category = await this.prisma
-      .forTenant()
-      .trackedCategory.findUnique({ where: { id: params.trackedCategoryId } });
-    if (!category) throw new NotFoundException("Tracked category not found");
-
-    const cadence = (params.cadence ?? category.reportCadence) as FilingCadence;
-    const index = params.index ?? 1; // ANNUAL ignores it
-    // Cadence-specific range → a clean 400 rather than filingPeriod's RangeError.
-    if (cadence === "QUARTERLY" && (index < 1 || index > 4))
-      throw new BadRequestException("index (quarter) must be 1-4 for a QUARTERLY filing");
-    if (cadence === "MONTHLY" && (index < 1 || index > 12))
-      throw new BadRequestException("index (month) must be 1-12 for a MONTHLY filing");
-
-    const { periodKey, buckets, from, to } = filingPeriod(cadence, params.year, index);
-
-    // `to` is the exclusive end; the period is complete once now >= to.
-    if (to > new Date()) {
-      throw new BadRequestException(
-        "Filings can only be prepared for completed periods — the period must be in the past.",
-      );
-    }
-
-    // B297 PR5: a LOCKED filing is closed. It is never regenerated: the stored artifact and totals ARE the
-    // filing (re-running the ledger read could only differ by what the lock exists to keep out).
-    const locked = await findLockedFiling(this.prisma.forTenant(), {
-      trackedCategoryId: params.trackedCategoryId,
-      periodKey,
-    });
-    if (locked?.status === "LOCKED") return locked;
-
-    // FILING GATE: a return reversal the ledger could not book (pack unknown) is parked and NOT in these
-    // figures. Refuse BEFORE anything is uploaded or upserted (a regeneration too), so a period with an
-    // unresolved parked row can never be filed around; the nightly cron retries and logs.
-    assertNoParkedReversals(
-      await listParkedReversals(this.prisma.forTenant(), {
-        trackedCategoryId: params.trackedCategoryId,
-        buckets,
-      }),
-      { categoryName: category.name, periodKey },
-    );
-
+  async buildFilingFigures(
+    category: {
+      id: string;
+      name: string;
+      reportTemplate: any;
+      unitBasis: any;
+      wholesalerLicenseNo: string | null;
+    },
+    period: {
+      trackedCategoryId: string;
+      cadence: FilingCadence;
+      periodKey: string;
+      buckets: string[];
+      from: Date;
+      to: Date;
+    },
+  ): Promise<{
+    rows: FilingRow[];
+    totals: FilingTotals;
+    csv: string;
+    rowsJson: Prisma.InputJsonValue;
+  }> {
+    const { periodKey, buckets, from, to } = period;
+    const params = { trackedCategoryId: period.trackedCategoryId };
     // Reuse the netting-correct read model, then defensively keep only rows whose
     // periodBucket is in this filing's bucket set. getLedger's from/to is a soldAt
     // window, so a cross-period reversal (booked in a later period) could otherwise
@@ -325,6 +305,74 @@ export class RegulatedFilingService {
       });
       rowsJson = rows as unknown as Prisma.InputJsonValue;
     }
+    return { rows, totals, csv, rowsJson };
+  }
+
+  /**
+   * (Re)generate the filing for a PAST period. Upserts the (tenant, category,
+   * period) row — regeneration overwrites the CSV at a deterministic key, bumps
+   * generationCount, and is audit-logged. Totals are the ledger's pre-signed nets,
+   * so a reversal-heavy period legitimately nets down (never re-signed/clamped).
+   */
+  async prepareFiling(params: {
+    trackedCategoryId: string;
+    cadence?: FilingCadence;
+    year: number;
+    index?: number;
+    userId?: string | null;
+  }) {
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId) throw new BadRequestException("Filings are tenant-scoped");
+
+    const category = await this.prisma
+      .forTenant()
+      .trackedCategory.findUnique({ where: { id: params.trackedCategoryId } });
+    if (!category) throw new NotFoundException("Tracked category not found");
+
+    const cadence = (params.cadence ?? category.reportCadence) as FilingCadence;
+    const index = params.index ?? 1; // ANNUAL ignores it
+    // Cadence-specific range → a clean 400 rather than filingPeriod's RangeError.
+    if (cadence === "QUARTERLY" && (index < 1 || index > 4))
+      throw new BadRequestException("index (quarter) must be 1-4 for a QUARTERLY filing");
+    if (cadence === "MONTHLY" && (index < 1 || index > 12))
+      throw new BadRequestException("index (month) must be 1-12 for a MONTHLY filing");
+
+    const { periodKey, buckets, from, to } = filingPeriod(cadence, params.year, index);
+
+    // `to` is the exclusive end; the period is complete once now >= to.
+    if (to > new Date()) {
+      throw new BadRequestException(
+        "Filings can only be prepared for completed periods — the period must be in the past.",
+      );
+    }
+
+    // B297 PR5: a LOCKED filing is closed. It is never regenerated: the stored artifact and totals ARE the
+    // filing (re-running the ledger read could only differ by what the lock exists to keep out).
+    const locked = await findLockedFiling(this.prisma.forTenant(), {
+      trackedCategoryId: params.trackedCategoryId,
+      periodKey,
+    });
+    if (locked?.status === "LOCKED") return locked;
+
+    // FILING GATE: a return reversal the ledger could not book (pack unknown) is parked and NOT in these
+    // figures. Refuse BEFORE anything is uploaded or upserted (a regeneration too), so a period with an
+    // unresolved parked row can never be filed around; the nightly cron retries and logs.
+    assertNoParkedReversals(
+      await listParkedReversals(this.prisma.forTenant(), {
+        trackedCategoryId: params.trackedCategoryId,
+        buckets,
+      }),
+      { categoryName: category.name, periodKey },
+    );
+
+    const { totals, csv, rowsJson } = await this.buildFilingFigures(category, {
+      trackedCategoryId: params.trackedCategoryId,
+      cadence,
+      periodKey,
+      buckets,
+      from,
+      to,
+    });
     // Tenant-scoped, UNIQUE-per-generation key. B297 PR5 (Opus review of #3726, MUST 3): the CSV is staged at a
     // fresh key and the row is pointed at it only when the conditional write below wins, so a lock that commits
     // anywhere between the re-read and the write can never have its stored CSV overwritten. The re-read is
