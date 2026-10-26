@@ -288,6 +288,8 @@ module.exports = {
     FILING_NOT_LOCKABLE: "FILING_NOT_LOCKABLE",
     FILING_ALREADY_LOCKED: "FILING_ALREADY_LOCKED",
     FILING_PERIOD_RUNNING: "FILING_PERIOD_RUNNING",
+    FILING_STALE: "FILING_STALE",
+    FILING_LOCK_NOT_READY: "FILING_LOCK_NOT_READY",
     STOCK_DATE_IN_FILED_PERIOD: "STOCK_DATE_IN_FILED_PERIOD",
     FINANCIAL_WIPE_BLOCKED_REGULATED: "FINANCIAL_WIPE_BLOCKED_REGULATED",
     ALLOCATIONS_EXCEED_PAYMENT: "ALLOCATIONS_EXCEED_PAYMENT",
@@ -508,6 +510,11 @@ module.exports = {
     RETURN_CANCEL_RETRY: "RETURN_CANCEL_RETRY",
   },
   // SA-814e: hand copy of packages/types/api/error-codes.ts (pinned to the API's literal by the API parity spec).
+  FILING_STALE_COPY:
+    "Sales were added to this period after the filing was generated. Regenerate the filing, check it, then lock it.",
+  FILING_LOCK_READY: false,
+  FILING_LOCK_NOT_READY_COPY:
+    "Locking a filing isn't available yet. You can still generate, check and download it.",
   INVOICE_TAX_STATE_STALE_COPY: {
     DRAFT_ORDER:
       "This draft's tax was saved by an older version and can't be recalculated safely. Create it again from the order, or contact support.",
