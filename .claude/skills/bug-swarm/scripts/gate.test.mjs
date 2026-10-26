@@ -225,6 +225,56 @@ test("avoid-files step fails when the merge-base diff touches an avoided file", 
   assert.equal(step(planGate({ changedFiles: [], ...opts }), "avoid-files"), undefined);
 });
 
+test("risk-class step: argv is fixed, and a red or black path in the merge-base diff fails it, naming path and rule", () => {
+  const steps = planGate({ changedFiles: ["a.ts"], ...opts });
+  assert.deepEqual(step(steps, "risk-class").cmd, [
+    "node",
+    "scripts/risk-class.mjs",
+    "--base",
+    "abc123",
+    "--max",
+    "amber",
+  ]);
+  const dir = mkdtempSync(path.join(tmpdir(), "gate-risk-"));
+  const sh = (...a) => spawnSync("git", a, { cwd: dir, encoding: "utf8", env: scrubbedGitEnv() });
+  sh("init", "-q");
+  sh("config", "user.email", "t@t");
+  sh("config", "user.name", "t");
+  writeFileSync(path.join(dir, "a.txt"), "1");
+  sh("add", ".");
+  sh("commit", "-qm", "base");
+  const base = sh("rev-parse", "HEAD").stdout.trim();
+  const commit = (rel) => {
+    mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+    writeFileSync(path.join(dir, rel), "1");
+    sh("add", ".");
+    sh("commit", "-qm", rel);
+  };
+  // The temp repo has no scripts/, so point the step at the real CLI by absolute path.
+  const cli = path.resolve(here, "../../../../scripts/risk-class.mjs");
+  const run = () => {
+    const st = step(planGate({ changedFiles: ["x"], ...opts, base, root: dir }), "risk-class");
+    return spawnSync(st.cmd[0], [cli, ...st.cmd.slice(2)], {
+      cwd: st.cwd,
+      encoding: "utf8",
+      env: scrubbedGitEnv(),
+    });
+  };
+  commit("apps/web/app/page.tsx");
+  commit("docs/note.md");
+  assert.equal(run().status, 0);
+  commit("apps/api/src/invoices/inv.service.spec.ts");
+  const red = run();
+  assert.equal(red.status, 1);
+  assert.match(red.stderr, /apps\/api\/src\/invoices\/inv\.service\.spec\.ts/);
+  assert.match(red.stderr, /invoices/);
+  assert.doesNotMatch(red.stderr, /page\.tsx/);
+  commit("apps/api/railway.toml");
+  const black = run();
+  assert.equal(black.status, 1);
+  assert.match(black.stderr, /black apps\/api\/railway\.toml/);
+});
+
 test("beginJson deletes a stale file and writes a running marker; finishJson writes head and base", () => {
   const f = path.join(mkdtempSync(path.join(tmpdir(), "gate-json-")), "g.json");
   writeFileSync(f, JSON.stringify({ ok: true, steps: [] }));

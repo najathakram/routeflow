@@ -120,6 +120,9 @@ export function planGate({
   add("packages-build", root, ["npx", "turbo", "run", "build", "--filter=./packages/*"]);
   add("signature-scan", root, ["node", ".claude/skills/bug-hunt/scripts/scan-signatures.mjs"]);
   add("commitlint", root, ["npx", "commitlint", "--from", base, "--to", "HEAD"]);
+  // The HIGH guard is the paths the diff touches (scripts/lib/risk-paths.mjs), not a triage label: any red
+  // or black path fails the gate, naming each path and its rule. Both paths of a rename count.
+  add("risk-class", root, ["node", "scripts/risk-class.mjs", "--base", base, "--max", "amber"]);
 
   if (ids.length && idSpace)
     add("id-labels", root, ["node", "-e", ID_LABELS_SCRIPT, base, ids.join(",")]);
