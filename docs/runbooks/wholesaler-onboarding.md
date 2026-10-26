@@ -173,12 +173,17 @@ badges and older docs use different names for some tiers.
      ⚠️ This form can't select **Growth** (B857). For a Growth customer paying by bank, ask the
      owner before promising bank payment, or offer card. An **Annual (365 days)** period is
      stored as a monthly cycle (B863), so keep the §7 renewal reminder even for annual payers.
-4. [ ] **Setup fee:**
+4. [ ] **Check the add-ons after activation:** **Back office → tenant → Addons & Features**
+       (and **Settings → Plan & billing**). The add-on list must equal the plan plus the agreed
+       add-ons, including the routes add-on if they deliver on routes. Any extra or missing add-on:
+       stop and tell the lead. A daily check (07:00 UTC) also flags an add-on that changed with
+       nobody acting on it, so a flag the next morning means this step missed something.
+5. [ ] **Setup fee:**
    - Card payers: send a separate Stripe payment link or invoice for the fee (owner, in
      Stripe). Record the Stripe receipt number in the checklist.
    - Bank payers: include the fee in the same transfer, recorded in Manual Activation's notes.
    - RouteFlow has no setup-fee field, so the checklist is the record. The fee never enters MRR.
-5. [ ] Check **Overview** shows status **ACTIVE**.
+6. [ ] Check **Overview** shows status **ACTIVE**.
 
 **Gate:** ACTIVE + setup fee recorded, **before the 14-day trial ends.** Otherwise the workspace
 turns read-only. Sign-in, exports and paying still work, and recording the payment restores it.
@@ -224,8 +229,8 @@ is another reason to create the workspace only when they're ready to pay.
      default), Customer Notes, Terms & Conditions, deposit defaults. **Leave "Invoice Number
      Prefix" and "Payment Due Days" alone**; they don't save (B852).
    - **Settings → Costing** (admin only): costing method, margin floor.
-3. [ ] **Add-ons and features** match the accepted order: **Back office → tenant → Addons &
-       Features**. That includes the routes add-on if they deliver on routes.
+3. [ ] **Add-ons and features** were checked at activation (Stage 3, step 4). Re-check only if
+       the order changed since.
 4. [ ] **Regulated goods** (if any):
    - **Settings → Regulated sections** (`/settings?tab=regulated`): tracked categories, tax type
      and rate, licence and age checks, reporting.
