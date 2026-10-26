@@ -267,6 +267,29 @@ describeDb("report-640-restored-grants.mjs, real Postgres", () => {
     }
   }, 120_000);
 
+  it("fails closed with exit 3 when a PUBLISHED version lists only one of the billable SKUs", async () => {
+    // a newer PUBLISHED version that omits REGULATED_ITEMS: the old check (any SKU row on the latest version) passed it
+    const c = await prisma.planVersion.create({
+      data: { version: VERSION_BASE + 1, status: "PUBLISHED", publishedAt: new Date() },
+    });
+    versionIds.push(c.id);
+    await sku(c.id, "OCR_PACK_250", 10);
+    try {
+      const r = spawnSync("node", [CLI, "--json"], {
+        cwd: API_DIR,
+        encoding: "utf8",
+        env: cliEnv(),
+      });
+      expect(r.status).toBe(3);
+      expect(r.stderr).toMatch(/does not list REGULATED_ITEMS/);
+      expect(r.stdout.trim()).toBe("");
+    } finally {
+      await prisma.addonSku.deleteMany({ where: { planVersionId: c.id } });
+      await prisma.planVersion.delete({ where: { id: c.id } });
+      versionIds.splice(versionIds.indexOf(c.id), 1);
+    }
+  }, 120_000);
+
   it("writes nothing and prints no tenant id or slug", async () => {
     const before = await prisma.tenantFeatureOverride.count({
       where: { tenantId: { in: tenantIds } },

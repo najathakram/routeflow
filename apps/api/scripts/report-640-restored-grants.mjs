@@ -50,14 +50,15 @@ export const LIMITS = [
 export const CATALOG_EXIT_CODE = 3;
 
 /**
- * Pure: why the price test cannot run, or null. `published` = PUBLISHED PlanVersion rows; `skuRows` = AddonSku rows on
- * the latest PUBLISHED version for the billable SKUs. An empty catalog must fail closed, never read as "no harm".
+ * Pure: why the price test cannot run, or null. `published` = PUBLISHED PlanVersion rows; `missing` = billable SKUs
+ * that at least one PUBLISHED version does not list (a SKU a version omits reads as "not priced", so the grant would
+ * silently never count as harm). An empty or partial catalog must fail closed, never read as "no harm".
  */
-export function catalogProblem({ published, skuRows }) {
+export function catalogProblem({ published, missing }) {
   if (!published)
     return "no PUBLISHED plan version: the price test cannot run, so a harm count would be meaningless (run the catalog publisher first)";
-  if (!skuRows)
-    return `the latest PUBLISHED plan version lists none of ${Object.values(BILLABLE_KEYS).join(", ")}: the price test cannot run`;
+  if (missing?.length)
+    return `a PUBLISHED plan version does not list ${[...missing].sort().join(", ")} (of ${Object.values(BILLABLE_KEYS).join(", ")}): its grants would read as not priced, so the harm count would be meaningless`;
   return null;
 }
 
@@ -131,9 +132,14 @@ export function selfTest() {
     s.unstampedPossible.inactiveGrants !== 1
   )
     throw new Error(`summarize: ${JSON.stringify(s)}`);
-  if (catalogProblem({ published: 0, skuRows: 0 }) == null) throw new Error("empty catalog passed");
-  if (catalogProblem({ published: 1, skuRows: 0 }) == null) throw new Error("unlisted SKUs passed");
-  if (catalogProblem({ published: 1, skuRows: 2 }) != null) throw new Error("good catalog refused");
+  if (catalogProblem({ published: 0, missing: [] }) == null)
+    throw new Error("empty catalog passed");
+  if (catalogProblem({ published: 1, missing: ["OCR_PACK_250", "REGULATED_ITEMS"] }) == null)
+    throw new Error("unlisted SKUs passed");
+  if (catalogProblem({ published: 1, missing: ["REGULATED_ITEMS"] }) == null)
+    throw new Error("a one-SKU catalog passed");
+  if (catalogProblem({ published: 1, missing: [] }) != null)
+    throw new Error("good catalog refused");
   return "self-test ok";
 }
 
@@ -165,10 +171,13 @@ async function main() {
     // "not priced" and the census would report a harm count of 0 that means nothing.
     const catalog = await client.query(
       `SELECT (SELECT COUNT(*) FROM "PlanVersion" WHERE status = 'PUBLISHED')::int AS published,
-              (SELECT COUNT(*) FROM "AddonSku" k
-                 JOIN (SELECT id FROM "PlanVersion" WHERE status = 'PUBLISHED' ORDER BY version DESC LIMIT 1) v
-                   ON v.id = k."planVersionId"
-                WHERE k.sku = ANY($1::text[]))::int AS "skuRows"`,
+              COALESCE((SELECT array_agg(DISTINCT w.sku)
+                          FROM unnest($1::text[]) w(sku)
+                          CROSS JOIN "PlanVersion" pv
+                         WHERE pv.status = 'PUBLISHED'
+                           AND NOT EXISTS (SELECT 1 FROM "AddonSku" k
+                                            WHERE k."planVersionId" = pv.id AND k.sku = w.sku)),
+                       '{}'::text[]) AS missing`,
       [skus],
     );
     const problem = catalogProblem(catalog.rows[0]);

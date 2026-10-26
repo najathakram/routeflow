@@ -101,16 +101,18 @@ describe("report-640-restored-grants.mjs", () => {
     });
   });
 
-  it("an empty or SKU-less PUBLISHED catalog fails closed instead of reading as a harm count of 0", () => {
+  it("an empty, SKU-less or one-SKU PUBLISHED catalog fails closed instead of reading as a harm count of 0", () => {
     const code =
       `import(${JSON.stringify(pathToFileURL(SCRIPT).href)}).then(m=>console.log(JSON.stringify(` +
-      `[m.catalogProblem({published:0,skuRows:0}),m.catalogProblem({published:2,skuRows:0}),` +
-      `m.catalogProblem({published:1,skuRows:2}),m.CATALOG_EXIT_CODE])))`;
+      `[m.catalogProblem({published:0,missing:[]}),m.catalogProblem({published:2,missing:["OCR_PACK_250","REGULATED_ITEMS"]}),` +
+      `m.catalogProblem({published:1,missing:["REGULATED_ITEMS"]}),m.catalogProblem({published:1,missing:[]}),` +
+      `m.CATALOG_EXIT_CODE])))`;
     const r = node(["--input-type=module", "-e", code], process.env);
     expect(r.status).toBe(0);
-    const [none, unlisted, ok, exit] = JSON.parse(r.stdout.trim());
+    const [none, unlisted, oneSku, ok, exit] = JSON.parse(r.stdout.trim());
     expect(none).toMatch(/no PUBLISHED plan version/);
-    expect(unlisted).toMatch(/lists none of/);
+    expect(unlisted).toMatch(/does not list OCR_PACK_250, REGULATED_ITEMS/);
+    expect(oneSku).toMatch(/does not list REGULATED_ITEMS/);
     expect(ok).toBeNull();
     expect(exit).toBe(3);
     // the main path returns that code before any census query runs
