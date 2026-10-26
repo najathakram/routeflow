@@ -1,5 +1,16 @@
 import { unlinkSourcedCredits } from "../credit-notes/sourced-credit-guard";
 
+/** The slice of the transaction client this helper reads and writes (the rest rides through to unlinkSourcedCredits). */
+export interface InvoiceDeleteTx {
+  invoice: {
+    findUnique(args: {
+      where: { id: string };
+      select: { invoiceNumber: true };
+    }): Promise<{ invoiceNumber: string } | null>;
+    delete(args: { where: { id: string } }): Promise<unknown>;
+  };
+}
+
 /**
  * Row 259 (#2848): the ONE place the order service deletes an Invoice row - deleteOrder's invoice loop
  * and the merge-loser draft delete both call it (L-072, never re-inline). The credit notes the invoice
@@ -8,7 +19,7 @@ import { unlinkSourcedCredits } from "../credit-notes/sourced-credit-guard";
  * transaction, after `assertNoUnspentSourcedCredits`.
  */
 export async function deleteOrderInvoice(
-  tx: any,
+  tx: InvoiceDeleteTx,
   invoiceId: string,
   tenantId: string | null,
 ): Promise<void> {
