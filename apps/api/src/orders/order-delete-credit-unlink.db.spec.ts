@@ -55,7 +55,9 @@ describeDb("Row 259: deleteOrder unlinks the credit notes its invoice sourced (r
     prisma = new PrismaService(tenantCtx);
     await prisma.$connect();
     orders = buildDbOrdersService(prisma, tenantCtx);
-    // deleteOrder also calls the commission engine (stubbed: no agents in this tenant).
+    // deleteOrder also previews the credit release and calls the commission engine (stubbed: this tenant has no
+    // wallet credit applied to the order and no sales agents).
+    orders.creditNotes = { ...orders.creditNotes, previewOrderCreditRelease: async () => [] };
     orders.commissionEngine = { removeInvoiceCommission: async () => undefined };
     const tenant = await prisma.tenant.create({ data: { slug, name: `r259d ${slug}` } });
     tenantId = tenant.id;
@@ -116,7 +118,7 @@ describeDb("Row 259: deleteOrder unlinks the credit notes its invoice sourced (r
         creditNoteNumber: `CN-R259D-${RUN}-${seq}-${label}`,
         amount: 40,
         amountUsed: used,
-        status: used >= 40 ? "APPLIED" : "ACTIVE",
+        status: used >= 40 ? "APPLIED" : "ISSUED",
         invoiceId: invoice.id,
       } as any,
     });
