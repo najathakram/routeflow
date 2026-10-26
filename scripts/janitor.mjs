@@ -65,9 +65,11 @@ import { execFileSync } from "node:child_process";
 import {
   existsSync,
   lstatSync,
+  mkdirSync,
   readdirSync,
   readFileSync,
   realpathSync,
+  renameSync,
   rmdirSync,
   statSync,
   unlinkSync,
@@ -1371,7 +1373,7 @@ function describeAction(a) {
       return `[1] clear node_modules — ${a.target} (worktree ${a.worktree}, merged)`;
     case "worktree":
       return a.allowListed
-        ? `[2] remove whole worktree — ${a.target} (allow-listed: clean, on origin, idle 24h+)`
+        ? `[2] remove whole worktree — ${a.target} (allow-listed: clean, on origin, idle 24h+${a.salvage?.length ? `; would first move ${a.salvage.length} local-assets path(s) to ${a.salvageRoot}` : ""})`
         : `[2] remove whole worktree — ${a.target} (merged, clean, idle, pushed)`;
     case "orphan-dir":
       return `[3] remove orphan worktree dir — ${a.target} (not listed by git worktree)`;
@@ -1397,6 +1399,11 @@ const EXECUTE_DEPS = {
   refuseJestCacheDelete: (target, root) =>
     jestCacheDeleteRefusal(realOr(target), [realOr(root)], { caseInsensitive: isWindows() }),
   isDirty: (worktreePath) => isDirty(worktreePath),
+  isDirtyAllowList: (worktreePath) => {
+    const s = allowListIgnoredState(worktreePath);
+    return s.dirty || s.blockers.length > 0 || s.salvage.length > 0;
+  },
+  salvage: (a) => salvageIgnored(a.worktreePath, a.worktree, a.salvage, a.salvageRoot),
   removeTree: (t) => safeRemoveTree(t),
   removeWorktree: (t) => {
     const { repoRoot } = resolveRepoContext();
@@ -1429,7 +1436,16 @@ export function execute(a, deps = EXECUTE_DEPS) {
     // caller. Re-verify RIGHT BEFORE deleting anything under a worktree — a worktree going dirty
     // between plan and execute must never lose uncommitted work to a clear/remove that was
     // decided when it still looked clean.
-    if (a.worktreePath && deps.isDirty(a.worktreePath)) {
+    if (a.allowListed && a.salvage?.length > 0) {
+      // Allow-list mode: move local-assets aside first (never delete); failure skips the worktree.
+      const moved = deps.salvage(a);
+      if (!moved.ok) {
+        deps.log(`   SKIPPED: ${a.target} (${moved.reason})`);
+        return "skipped";
+      }
+    }
+    const dirtyNow = a.allowListed ? deps.isDirtyAllowList : deps.isDirty;
+    if (a.worktreePath && dirtyNow(a.worktreePath)) {
       deps.log(`   REFUSED, skipped: ${a.target} (worktree went dirty since the plan was built)`);
       return "refused";
     }
@@ -1532,13 +1548,101 @@ export function parseAllowList(text) {
  * info: { name, isMainCheckout, isLocked, isDirty, onOrigin, headMs, indexMs, nowMs, linkedFrom }
  * Returns { ok, reason }.
  */
+// Allow-list mode only: ignored dirs that are regenerable caches, at any depth.
+const ALLOW_LIST_CACHE_DIRS = [
+  ".jest-cache",
+  ".turbo",
+  ".next",
+  "dist",
+  "build",
+  "coverage",
+  "test-results",
+  "playwright-report",
+  ".expo",
+  "node_modules",
+];
+const SALVAGE_PREFIX = "local-assets/";
+
+/**
+ * Sort a worktree's `git status` output for allow-list mode. Tracked/untracked changes (or an
+ * unreadable status) are `dirty`; ignored paths are cache (removable), salvage (local-assets/,
+ * moved aside first, never deleted) or blockers (anything else, named in the report).
+ */
+export function classifyIgnoredForAllowList(statusOut, ignoredOut) {
+  if (statusOut == null || ignoredOut == null) return { dirty: true, salvage: [], blockers: [] };
+  const dirty = statusOut.trim().length > 0;
+  const salvage = [];
+  const blockers = [];
+  for (const raw of ignoredOut.split("\n")) {
+    if (!raw.startsWith("!! ")) continue;
+    const path = raw.slice(3).trim();
+    const bare = path.replace(/\/$/, "");
+    if (
+      REGENERABLE_IGNORED.some((re) => re.test(path)) ||
+      bare.split("/").some((seg) => ALLOW_LIST_CACHE_DIRS.includes(seg))
+    ) {
+      continue;
+    }
+    if ((path + (path.endsWith("/") ? "" : "/")).startsWith(SALVAGE_PREFIX)) salvage.push(path);
+    else blockers.push(path);
+  }
+  return { dirty, salvage, blockers };
+}
+
+function allowListIgnoredState(worktreePath) {
+  const out = trySh("git", ["-C", worktreePath, "status", "--porcelain"]);
+  const ignored = trySh("git", ["-C", worktreePath, "status", "--porcelain", "--ignored=matching"]);
+  return classifyIgnoredForAllowList(out, ignored);
+}
+
+/**
+ * Move each salvage path to <salvageRoot>/<worktree>/<same relative path>. A rename (no link is
+ * followed, nothing copied or deleted); an existing destination or any failure aborts, returning
+ * { ok:false, reason } so the caller skips the worktree. Nothing in local-assets is ever removed.
+ */
+export function salvageIgnored(worktreePath, name, paths, salvageRoot, fs = SALVAGE_FS) {
+  const base = join(salvageRoot, name);
+  try {
+    for (const rel of paths) {
+      const from = join(worktreePath, rel);
+      const to = join(base, rel.replace(/\/$/, ""));
+      if (!fs.exists(from)) continue;
+      if (fs.exists(to)) return { ok: false, reason: `salvage target exists: ${to}` };
+      fs.mkdirp(dirname(to));
+      fs.rename(from, to);
+    }
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, reason: `salvage move failed: ${err.message}` };
+  }
+}
+const SALVAGE_FS = {
+  exists: (p) => {
+    try {
+      lstatSync(p);
+      return true;
+    } catch {
+      return false;
+    }
+  },
+  mkdirp: (p) => mkdirSync(p, { recursive: true }),
+  rename: (a, b) => renameSync(a, b),
+};
+
 export function allowListVerdict(info) {
   const { name, isMainCheckout, isLocked, isDirty, onOrigin, headMs, indexMs, nowMs } = info;
   const no = (reason) => ({ ok: false, reason });
   if (isMainCheckout) return no("main checkout");
   if (isProtectedWorktreeName(name)) return no("protected worktree");
   if (isLocked) return no("locked worktree");
-  if (isDirty) return no("uncommitted or non-build ignored files");
+  if (isDirty) {
+    const b = info.blockers ?? [];
+    return no(
+      b.length > 0
+        ? `non-regenerable ignored path(s): ${b.slice(0, 5).join(", ")}${b.length > 5 ? ` (+${b.length - 5})` : ""}`
+        : "uncommitted or non-build ignored files",
+    );
+  }
   if (!onOrigin) return no("HEAD is not reachable from any origin/* ref");
   if (isRecentlyActive(headMs, nowMs) || isRecentlyActive(indexMs, nowMs)) {
     return no(`HEAD or index touched in the last ${RECENT_ACTIVITY_HOURS}h (or unknown)`);
@@ -1591,11 +1695,15 @@ export function buildAllowListActions(repoRoot, mainCheckoutPath, listPaths) {
         "refs/remotes/origin",
       ])?.trim();
     const isMainCheckout = resolve(wt.path) === resolve(mainCheckoutPath);
+    const ign = isMainCheckout
+      ? { dirty: false, salvage: [], blockers: [] }
+      : allowListIgnoredState(wt.path);
     const v = allowListVerdict({
       name,
       isMainCheckout,
       isLocked: !!wt.locked,
-      isDirty: isMainCheckout ? false : isDirty(wt.path),
+      isDirty: ign.dirty || ign.blockers.length > 0,
+      blockers: ign.blockers,
       onOrigin,
       headMs: lastActivityMs(wt.path),
       indexMs: indexMtimeMs(wt.path),
@@ -1614,6 +1722,8 @@ export function buildAllowListActions(repoRoot, mainCheckoutPath, listPaths) {
         worktree: name,
         worktreePath: wt.path,
         allowListed: true,
+        salvage: ign.salvage,
+        salvageRoot: join(mainCheckoutPath, "local-assets", "worktree-salvage"),
       });
     } else {
       skipped.push({ worktree: name, branch: wt.branch, reason: `allow-list: ${v.reason}` });
