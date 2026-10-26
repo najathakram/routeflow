@@ -143,7 +143,7 @@ export type UpdateFulfillPathArgs = [
 export async function releaseFinishedRunLink(
   db: any,
   order: { id: string; routeRunId: string | null; routeRunStopId: string | null },
-  runs: { stopRun: unknown | null; idRun: unknown | null },
+  runs: { stopRun: unknown; idRun: unknown },
   data: Record<string, unknown> = {},
 ): Promise<void> {
   if (
