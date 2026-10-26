@@ -313,7 +313,7 @@ describe("I4: an unowned business change (row 556 / SA-970 §2.2)", () => {
     payload: {
       rowId: "ta1",
       actor: { kind: "SYSTEM", id: null },
-      source: "plan.reprice",
+      source: "tenant.enable",
       changes: { priceSnapshot: [0, 25] },
       ...over,
     },
@@ -323,10 +323,16 @@ describe("I4: an unowned business change (row 556 / SA-970 §2.2)", () => {
     return (await m.job.run(NOW)).filter((f) => f.invariant === "I4");
   };
 
-  it("a SYSTEM plan.reprice price change (an `alert` source) is one finding", async () => {
-    const found = await run([ev()]);
+  it("R1 (SA-1006): a SYSTEM plan.reprice price change is expected_system, so no finding", async () => {
+    expect(
+      await run([ev({ source: "plan.reprice", changes: { priceSnapshot: [0, 25] } })]),
+    ).toHaveLength(0);
+  });
+
+  it("R2 (SA-1006): a SYSTEM actor on tenant.enable (an owner source with no person) is a finding", async () => {
+    const found = await run([ev({ source: "tenant.enable", changes: { active: [false, true] } })]);
     expect(found).toHaveLength(1);
-    expect(found[0].sentence).toContain("plan.reprice");
+    expect(found[0].sentence).toContain("tenant.enable");
   });
 
   it("a SYSTEM change from an `expected_system` source is not a finding", async () => {

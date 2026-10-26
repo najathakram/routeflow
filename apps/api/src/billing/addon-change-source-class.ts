@@ -28,7 +28,7 @@ export const ADDON_SOURCE_CLASS: Record<AddonChangeSource, AddonSourceClass> = {
   "plan.stop_billing": "expected_system",
   "plan_change.revert": "expected_system",
   "lock.cancel_clear_item": "expected_system",
-  "plan.reprice": "alert",
+  "plan.reprice": "expected_system",
 };
 
 export const ADDON_SOURCE_REASON: Record<AddonChangeSource, string> = {
@@ -52,7 +52,7 @@ export const ADDON_SOURCE_REASON: Record<AddonChangeSource, string> = {
   "lock.cancel_clear_item":
     "the cancellation the tenant asked for clears Stripe items that no longer exist",
   "plan.reprice":
-    "a scheduled downgrade raises a price with nobody present; stays loud until a week of findings shows it is routine",
+    "the cron applies a downgrade a person scheduled; the re-price is owed (I2's converse) and the DUE notice reports it; SYSTEM callers count-pinned at 1",
 };
 
 /** The class of a source string off the wire; one the map does not know is `alert`. */
