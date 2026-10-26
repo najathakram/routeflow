@@ -21,6 +21,7 @@ import { escapeHtml, safeLinkHref } from "../common/html-escape";
 // shared with the email too — one formatter, never a second copy of the same
 // boxes/pieces/unitLabel display logic.
 import { showOriginalPrice, qtyCellText } from "../invoices/invoice-pdf-item";
+import { sellerDisplayName } from "../common/seller-display-name";
 
 // F6-001: SSRF guard — block private/loopback/metadata IPs as SMTP hosts.
 // Tenants control smtpHost; without this guard they could point it at
@@ -682,7 +683,7 @@ export class EmailService {
     const tenantId = this.prisma.getTenantId();
     if (!tenantId) return "RouteFlow";
     const cfg = await this.prisma.tenantConfig.findFirst({ where: { tenantId } });
-    return cfg?.businessName ?? "RouteFlow";
+    return sellerDisplayName(cfg, null, "RouteFlow");
   }
 
   // ─── Transactional From-identity (Resend) ──────────────────────────────────

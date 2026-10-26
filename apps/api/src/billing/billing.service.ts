@@ -1,4 +1,5 @@
 import { TX_CONFLICT_MAX_ATTEMPTS } from "../common/tx-retry";
+import { sellerDisplayName } from "../common/seller-display-name";
 import {
   HttpException,
   Injectable,
@@ -495,7 +496,7 @@ export class BillingService {
 
           const customer = await this.stripe.createCustomer({
             email: adminUser?.email ?? `tenant-${tenantId}@routeflow.app`,
-            name: tenant.config?.businessName ?? tenant.name ?? tenant.slug,
+            name: sellerDisplayName(tenant.config, tenant, tenant.slug),
             metadata: { tenantId, slug: tenant.slug },
           });
 
