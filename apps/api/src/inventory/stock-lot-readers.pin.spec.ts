@@ -14,7 +14,11 @@
  *     (`include: { stockLots: true }`, `stockLots: {` inside an include / select / where), folded into the same count
  *     (first slot below). Re-observed on the current source when the relation shape was added: 0 relation reads exist,
  *     so every pinned figure is unchanged (inventory.service 2, vendor-bills.service 3);
- *   - raw SQL reads `FROM|JOIN "StockLot"`;
+ *   - raw SQL reads `FROM|JOIN "StockLot"`, also schema-qualified (`public."StockLot"`, `"public"."StockLot"`);
+ *   - ALIAS reads (fourth slot): the delegate reached without a method call, i.e. handed on as a value
+ *     (`const models = [db.stockLot, ...]`, `const { stockLot } = tx`), so a reader through a variable is counted too.
+ *     Observed on the current source: exactly one, products/product-delete-classify.ts, which runs
+ *     `groupBy({ by: ["productId"] })` on a list of dependent models as an existence check and reads no quantity;
  *   - `remainingQty` references, in files that mention StockLot (the name is also used by unrelated quantities elsewhere,
  *     e.g. credit-note headroom), plus costing.ts, which handles lots handed to it by its callers.
  * Lowering a count is allowed (and required to keep the pin exact); raising one needs a reason on the line below.
@@ -24,18 +28,27 @@ import * as path from "path";
 
 const SRC_ROOT = path.resolve(__dirname, "..");
 
-/** file (relative to apps/api/src) -> [delegate reads, raw reads, remainingQty references] */
-const PINNED: Record<string, [number, number, number]> = {
-  "inventory/costing.ts": [0, 0, 2], // planLotConsumption's input type + its draw-down (the transfer's one caller)
-  "inventory/inventory.service.ts": [2, 0, 9], // transfer draw-down, PO guard lot check, applyToLots, receipts
-  "inventory/po-use-since-receipt.ts": [0, 0, 1], // names the field in its doc (the ledger helper reads no lots)
-  "vendor-bills/vendor-bills.service.ts": [3, 0, 10], // bill reversal: max(lotSays, fromLedger) (row 645)
+/** [delegate + relation reads, raw reads, remainingQty references, alias reads] */
+type Counts = [number, number, number, number];
+
+/** file (relative to apps/api/src) -> its counts */
+const PINNED: Record<string, Counts> = {
+  "inventory/costing.ts": [0, 0, 2, 0], // planLotConsumption's input type + its draw-down (the transfer's one caller)
+  "inventory/inventory.service.ts": [2, 0, 9, 0], // transfer draw-down, PO guard lot check, applyToLots, receipts
+  "inventory/po-use-since-receipt.ts": [0, 0, 1, 0], // names the field in its doc (the ledger helper reads no lots)
+  "vendor-bills/vendor-bills.service.ts": [3, 0, 10, 0], // bill reversal: max(lotSays, fromLedger) (row 645)
+  // NEW kind (alias reads, uncounted before this slot existed): `db.stockLot` is handed into the dependent-models list
+  // whose members only get groupBy(productId) for an "is this product referenced" check; no quantity, no cost.
+  "products/product-delete-classify.ts": [0, 0, 0, 1],
 };
 
 const DELEGATE_READ =
   /stockLot\s*\??\s*\.\s*(?:findMany|findFirst|findUnique|findFirstOrThrow|findUniqueOrThrow|aggregate|groupBy|count)\b/g;
 const RELATION_READ = /\bstockLots\s*:\s*(?:true\b|\{)/g;
-const RAW = /(?:FROM|JOIN)\s+"StockLot"/gi;
+const RAW = /(?:FROM|JOIN)\s+(?:"?public"?\s*\.\s*)?"StockLot"/gi;
+/** The delegate used as a value (not followed by a call/member access or a key colon), or destructured out of a client. */
+const ALIAS =
+  /[\w$)\]]\s*\.\s*stockLot\b(?!\s*\??\s*\.)(?!\s*:)|\{[^{}]*\bstockLot\b[^{}]*\}\s*=[^=>]/g;
 const REMAINING = /\bremainingQty\b/g;
 const MENTIONS_LOT = /stockLot|StockLot/;
 
@@ -50,8 +63,8 @@ function sourceFiles(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-function census(): Record<string, [number, number, number]> {
-  const found: Record<string, [number, number, number]> = {};
+function census(): Record<string, Counts> {
+  const found: Record<string, Counts> = {};
   for (const file of sourceFiles(SRC_ROOT)) {
     const rel = path.relative(SRC_ROOT, file).split(path.sep).join("/");
     const text = fs.readFileSync(file, "utf8");
@@ -60,7 +73,8 @@ function census(): Record<string, [number, number, number]> {
       (text.match(DELEGATE_READ) ?? []).length + (text.match(RELATION_READ) ?? []).length;
     const raw = (text.match(RAW) ?? []).length;
     const remaining = lotFile ? (text.match(REMAINING) ?? []).length : 0;
-    if (reads || raw || remaining) found[rel] = [reads, raw, remaining];
+    const alias = (text.match(ALIAS) ?? []).length;
+    if (reads || raw || remaining || alias) found[rel] = [reads, raw, remaining, alias];
   }
   return found;
 }
@@ -90,6 +104,18 @@ describe("SA-975: the StockLot reader census is count-pinned per file", () => {
     expect("include: { stockLots: true }".match(RELATION_READ)).toHaveLength(1); // relation include
     expect("select: { stockLots: { where: {} } }".match(RELATION_READ)).toHaveLength(1);
     expect('SELECT 1 FROM "StockLot" l'.match(RAW)).toHaveLength(1);
+    expect('SELECT 1 FROM public."StockLot" l'.match(RAW)).toHaveLength(1); // schema-qualified
+    expect('SELECT 1 FROM x JOIN public."StockLot" l ON 1=1'.match(RAW)).toHaveLength(1);
+    expect('SELECT 1 FROM "public"."StockLot" l'.match(RAW)).toHaveLength(1);
+    expect('SELECT 1 FROM public."Product" p'.match(RAW)).toBeNull(); // a different table
+    expect('SELECT 1 FROM "StockMovement" m'.match(RAW)).toBeNull();
+    expect(
+      "const models = [db.orderItem, db.stockLot, db.estimateItem];".match(ALIAS),
+    ).toHaveLength(1); // alias handed on as a value
+    expect("const { stockLot } = tx;".match(ALIAS)).toHaveLength(1); // destructured
+    expect("tx.stockLot.findMany({})".match(ALIAS)).toBeNull(); // a method call is a read/write, not an alias
+    expect("tx.stockLot\n  .create({})".match(ALIAS)).toBeNull();
+    expect("{ stockLot: { findMany: jest.fn() } }".match(ALIAS)).toBeNull(); // a mock key
     expect("stockLot.create({})".match(DELEGATE_READ)).toBeNull(); // a write is not a read
     expect("tx.stockLot\n  .create({})".match(DELEGATE_READ)).toBeNull();
     expect("stockLots: undefined".match(RELATION_READ)).toBeNull();
