@@ -136,7 +136,10 @@ const CASES: Case[] = [
   },
 ];
 
-describe.each(CASES)("REG-LICENCE-DAY $name", (c) => {
+const REG_B330 =
+  "REG-B330 a licence expiring today stays VERIFIED through the end of that calendar day in the tenant's timezone";
+
+describe.each(CASES)(`${REG_B330}: $name`, (c) => {
   let prisma: ReturnType<typeof createMockPrisma>;
   const stored = () => new Date(`${c.printed}T00:00:00.000Z`);
 
@@ -254,5 +257,65 @@ describe.each(CASES)("REG-LICENCE-DAY $name", (c) => {
     prisma.customerAuthorization.count.mockResolvedValue(0);
     const r = await sweep.processTenant("t1", new Date(c.now));
     expect(r.expired).toBe(c.expired ? 1 : 0);
+  });
+
+  it("the buyer resubmission guard (assertNotLiveVerified) refuses a live VERIFIED row and lets an expired one back into review", async () => {
+    const mod = await Test.createTestingModule({
+      providers: [
+        AuthorizationsService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: AuditService, useValue: { log: jest.fn().mockResolvedValue(undefined) } },
+        {
+          provide: NotificationsService,
+          useValue: { sendToUser: jest.fn(), sendToCustomer: jest.fn() },
+        },
+        { provide: EmailService, useValue: { send: jest.fn() } },
+      ],
+    }).compile();
+    const svc = mod.get(AuthorizationsService);
+    prisma.customer.findFirst.mockResolvedValue({ id: "c1" });
+    prisma.trackedCategory.findFirst.mockResolvedValue({
+      id: "cat",
+      name: "Alcohol",
+      requiresLicense: true,
+    });
+    prisma.user.findMany.mockResolvedValue([]);
+    prisma.customerAuthorization.findUnique.mockResolvedValue({
+      id: "a1",
+      status: "VERIFIED",
+      expiresAt: stored(),
+    });
+    prisma.customerAuthorization.update.mockImplementation((a: any) =>
+      Promise.resolve({ id: a.where.id, ...a.data }),
+    );
+    // submit() reads its own clock; fake only Date so the awaits still run
+    jest.useFakeTimers({
+      now: new Date(c.now),
+      doNotFake: [
+        "nextTick",
+        "setImmediate",
+        "clearImmediate",
+        "setTimeout",
+        "clearTimeout",
+        "setInterval",
+        "clearInterval",
+        "queueMicrotask",
+        "performance",
+        "hrtime",
+      ],
+    });
+    const dto = {
+      trackedCategoryId: "cat",
+      licenseNumber: "LIC-1",
+      expiresAt: "2030-01-01T00:00:00Z",
+      shareConsent: true,
+    };
+    if (c.expired) {
+      await expect(svc.submit("c1", dto)).resolves.toMatchObject({ status: "PENDING_REVIEW" });
+      expect(prisma.customerAuthorization.update).toHaveBeenCalledTimes(1);
+    } else {
+      await expect(svc.submit("c1", dto)).rejects.toThrow(/already verified/);
+      expect(prisma.customerAuthorization.update).not.toHaveBeenCalled();
+    }
   });
 });
