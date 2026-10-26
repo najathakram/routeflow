@@ -150,6 +150,81 @@ describe("useBuyerNotifications — order.statusChanged (B104, #2095)", () => {
   });
 });
 
+describe("useBuyerNotifications — credit notes (B546)", () => {
+  const WALLET_KEYS = [
+    ["buyer", "statement"],
+    ["buyer", "statement-months"],
+    ["buyer", "dashboard"],
+    ["buyer", "invoice"],
+    ["buyer", "payments"],
+  ];
+
+  it("a voided credit note refreshes the statement, store credit, invoice and payments views", async () => {
+    const invalidate = jest.spyOn(client, "invalidateQueries");
+    await mounted();
+    act(() => {
+      fakeSocket.emit("creditNote.voided", {
+        creditNoteId: "cn-1",
+        creditNoteNumber: "CN-1",
+        customerId: "c-mine",
+        amount: 25,
+      });
+    });
+    for (const queryKey of WALLET_KEYS) expect(invalidate).toHaveBeenCalledWith({ queryKey });
+  });
+
+  it("a voided credit note lands in the bell for the seller on screen", async () => {
+    const { result } = await mounted();
+    act(() => {
+      fakeSocket.emit("creditNote.voided", {
+        creditNoteId: "cn-1",
+        creditNoteNumber: "CN-1",
+        customerId: "c-mine",
+        amount: 25,
+      });
+    });
+    expect(result.current.notifications[0]).toEqual(
+      expect.objectContaining({
+        type: "invoice",
+        title: "Credit note voided",
+        description: "Credit note CN-1 has been voided",
+      }),
+    );
+  });
+
+  it("another seller's void refreshes the views but stays out of this portal's bell", async () => {
+    const invalidate = jest.spyOn(client, "invalidateQueries");
+    const { result } = await mounted();
+    act(() => {
+      fakeSocket.emit("creditNote.voided", {
+        creditNoteId: "cn-9",
+        creditNoteNumber: "CN-9",
+        customerId: "c-at-another-seller",
+        amount: 5,
+      });
+    });
+    expect(result.current.notifications).toEqual([]);
+    for (const queryKey of WALLET_KEYS) expect(invalidate).toHaveBeenCalledWith({ queryKey });
+  });
+
+  it("an issued credit note refreshes the same views, not just the bell", async () => {
+    const invalidate = jest.spyOn(client, "invalidateQueries");
+    await mounted();
+    act(() => {
+      fakeSocket.emit("creditNote.created", { creditNoteNumber: "CN-2", customerId: "c-mine" });
+    });
+    for (const queryKey of WALLET_KEYS) expect(invalidate).toHaveBeenCalledWith({ queryKey });
+  });
+
+  it("stops listening for credit notes when the portal is left", async () => {
+    const { unmount } = await mounted();
+    expect(fakeSocket.hasListener("creditNote.voided")).toBe(true);
+    unmount();
+    expect(fakeSocket.hasListener("creditNote.voided")).toBe(false);
+    expect(fakeSocket.hasListener("creditNote.created")).toBe(false);
+  });
+});
+
 describe("useBuyerNotifications — route.progress (#2095 follow-up)", () => {
   it("refreshes every order detail and its tracking card, silently", async () => {
     const invalidate = jest.spyOn(client, "invalidateQueries");

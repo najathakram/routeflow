@@ -178,12 +178,34 @@ export function useBuyerNotifications(sellerTenantId?: string | null) {
       qc.invalidateQueries({ queryKey: ["buyer", "statement"] });
     };
 
+    // B546: an issued or voided credit note moves the statement, the store-credit balance, the
+    // dashboard and any invoice it was applied to — refresh them for every linked seller (caches
+    // are keyed by ids), and only the seller on screen gets a bell entry.
+    const refreshCreditViews = () => {
+      qc.invalidateQueries({ queryKey: ["buyer", "statement"] });
+      qc.invalidateQueries({ queryKey: ["buyer", "statement-months"] });
+      qc.invalidateQueries({ queryKey: ["buyer", "dashboard"] });
+      qc.invalidateQueries({ queryKey: ["buyer", "invoice"] });
+      qc.invalidateQueries({ queryKey: ["buyer", "payments"] });
+    };
+
     const onCreditNoteCreated = (data: { creditNoteNumber?: string; customerId?: string }) => {
+      refreshCreditViews();
       if (!forActiveSeller(data.customerId)) return;
       push({
         type: "invoice",
         title: "Credit note issued",
         description: `Credit note ${data.creditNoteNumber ?? ""} has been created`,
+      });
+    };
+
+    const onCreditNoteVoided = (data: { creditNoteNumber?: string; customerId?: string }) => {
+      refreshCreditViews();
+      if (!forActiveSeller(data.customerId)) return;
+      push({
+        type: "invoice",
+        title: "Credit note voided",
+        description: `Credit note ${data.creditNoteNumber ?? ""} has been voided`,
       });
     };
 
@@ -196,12 +218,14 @@ export function useBuyerNotifications(sellerTenantId?: string | null) {
     socket.on("order.statusChanged", onOrderStatusChanged);
     socket.on("invoice.updated", onInvoiceUpdated);
     socket.on("creditNote.created", onCreditNoteCreated);
+    socket.on("creditNote.voided", onCreditNoteVoided);
     socket.on("route.progress", onRouteProgress);
 
     return () => {
       socket.off("order.statusChanged", onOrderStatusChanged);
       socket.off("invoice.updated", onInvoiceUpdated);
       socket.off("creditNote.created", onCreditNoteCreated);
+      socket.off("creditNote.voided", onCreditNoteVoided);
       socket.off("route.progress", onRouteProgress);
       // The socket is this portal's: leaving it (or logging out) closes it, so a later staff
       // session in the same tab never inherits a buyer-authenticated connection (the shared
