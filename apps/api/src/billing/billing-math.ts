@@ -1,4 +1,5 @@
 import { roundMoney } from "@routeflow/pricing";
+import { annualFromMonthly } from "./plan-price";
 
 /**
  * Subscription money math (Plans & Billing). This is a BILLING-only concern —
@@ -19,7 +20,7 @@ export type Cycle = "MONTHLY" | "ANNUAL";
 
 /** Annual price = 10 months (2 months free). ×10 is exact for a 2-dp monthly price. */
 export function annualPrice(monthly: number): number {
-  return roundMoney(monthly * 10);
+  return annualFromMonthly(monthly);
 }
 
 /**
@@ -28,7 +29,7 @@ export function annualPrice(monthly: number): number {
  * display only; the amount actually charged is {@link annualPrice}, never this.
  */
 export function annualEffectivePerMo(monthly: number): number {
-  const perMo = (monthly * 10) / 12;
+  const perMo = annualFromMonthly(monthly) / 12;
   const sign = perMo < 0 ? -1 : 1;
   return sign * Math.round(Math.abs(perMo));
 }

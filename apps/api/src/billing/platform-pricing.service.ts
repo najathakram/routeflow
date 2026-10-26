@@ -6,7 +6,8 @@ import { PlanCatalogService } from "./plan-catalog.service";
 import { findPlanDefinition, normalizePlanKey } from "./plan-catalog.constants";
 import { toCents } from "@routeflow/pricing";
 import type { ProposedOverride } from "./price-override";
-import { resolvePlanPrice } from "./plan-price";
+import { PLAN_PRICE_INVALID_MESSAGE, resolvePlanPrice } from "./plan-price";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { resolvePlanVersionId } from "./plan-version-pin";
 
 export type PricingSource = "override" | "catalog";
@@ -125,15 +126,19 @@ export class PlatformPricingService {
               annual: tenant.subscription?.priceOverrideAnnual,
             },
     );
+    if (!resolved.ok && resolved.reason === "non_finite_price") {
+      throw new BadRequestException({
+        code: API_ERROR_CODES.PLAN_PRICE_INVALID,
+        message: PLAN_PRICE_INVALID_MESSAGE,
+      });
+    }
     if (!resolved.ok) {
       throw new BadRequestException(
         resolved.reason === "annual_override_without_monthly"
           ? `No monthly price is resolvable for tenant ${tenantId} on plan ${planKey}. ` +
               `This plan has no catalog price (custom/Enterprise) and only an annual custom ` +
               `fee is set — set a custom MONTHLY fee too.`
-          : resolved.reason === "non_finite_price"
-            ? `A price for tenant ${tenantId} on plan ${planKey} is not a finite number.`
-            : `No price is resolvable for tenant ${tenantId} on plan ${planKey}. ` +
+          : `No price is resolvable for tenant ${tenantId} on plan ${planKey}. ` +
               `This plan has no catalog price (custom/Enterprise) — set a custom fee first.`,
       );
     }

@@ -10,6 +10,7 @@ import { toCents } from "@routeflow/pricing";
 import type { StripeService } from "./stripe.service";
 import { CHECKOUT_ADDON_EXPAND, checkoutAddonItems } from "./stripe-addon-items";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { PLAN_PRICE_INVALID_MESSAGE } from "./plan-price";
 import { prorationAllowedFor } from "./price-override";
 import { ensurePlanProduct } from "./stripe-product";
 import {
@@ -94,6 +95,8 @@ export interface PlanChangePushArgs {
   planName: string;
   /** The RESOLVED price (a tenant override already beat the plan price); null = nothing resolvable. */
   price: { monthly: number; annual: number } | null;
+  /** `price` is null because a price is not a finite number: refused with its own code, not 'set a custom fee'. */
+  priceInvalid?: boolean;
   proration: PlanChangeProration;
   /** Every Stripe item id a TenantAddon row owns — how the base-plan item is told from an add-on item. */
   knownAddonItemIds: ReadonlySet<string>;
@@ -213,6 +216,12 @@ export async function pushPlanChange(
   // credit/charge onto an invoice that will not be settled, so a delinquent subscription gets `none`.
   const proration: PlanChangeProration =
     a.proration === "create_prorations" && !prorationAllowedFor(sub.status) ? "none" : a.proration;
+  if (!a.price && a.priceInvalid) {
+    throw new BadRequestException({
+      code: API_ERROR_CODES.PLAN_PRICE_INVALID,
+      message: PLAN_PRICE_INVALID_MESSAGE,
+    });
+  }
   if (!a.price) {
     throw new BadRequestException(
       "No price is resolvable for this plan — set the tenant's custom monthly fee first.",

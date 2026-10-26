@@ -10,6 +10,15 @@
 
 import { roundMoney } from "@routeflow/pricing";
 
+/** Tenant-facing copy for the `PLAN_PRICE_INVALID` refusal: what happened, what to do. */
+export const PLAN_PRICE_INVALID_MESSAGE =
+  "This plan's price is not a valid number, so nothing was changed. Correct the monthly or annual fee, then try again.";
+
+/** The ONE annual-from-monthly rule: whole cents (33.33 x 10 is 333.29999999999995 unrounded). */
+export function annualFromMonthly(monthly: number): number {
+  return roundMoney(monthly * 10);
+}
+
 export type PlanPriceSource = "override" | "catalog";
 
 export type PlanPriceResolution =
@@ -45,7 +54,7 @@ export function resolvePlanPrice(
     const monthly = override.monthly != null ? Number(override.monthly) : catalogMonthly;
     if (monthly == null) return { ok: false, reason: "annual_override_without_monthly" };
     // Row 280: annual = monthly x 10 is whole cents (33.33 x 10 is 333.29999999999995 unrounded).
-    const annual = override.annual != null ? Number(override.annual) : roundMoney(monthly * 10);
+    const annual = override.annual != null ? Number(override.annual) : annualFromMonthly(monthly);
     return { ok: true, monthly, annual, source: "override" };
   }
 
@@ -53,7 +62,7 @@ export function resolvePlanPrice(
   return {
     ok: true,
     monthly: catalogMonthly,
-    annual: catalogAnnual != null ? catalogAnnual : roundMoney(catalogMonthly * 10), // row 280
+    annual: catalogAnnual != null ? catalogAnnual : annualFromMonthly(catalogMonthly), // row 280
     source: "catalog",
   };
 }

@@ -22,12 +22,8 @@ const MONTHLY_TIMES_10 = /monthly\w*\)?\s*\*\s*10\b/i;
 /** repo-relative path -> allowed line count, each with the reason it may multiply. */
 const ALLOWED: Record<string, { count: number; why: string }> = {
   "apps/api/src/billing/plan-price.ts": {
-    count: 2,
-    why: "the one rule: annual = roundMoney(monthly * 10) for an override and for the catalog",
-  },
-  "apps/api/src/billing/billing-math.ts": {
-    count: 2,
-    why: "annualPrice() rounds on write; annualEffectivePerMo() is a whole-dollar marketing display",
+    count: 1,
+    why: "the one rule: annualFromMonthly() = roundMoney(monthly * 10); resolvePlanPrice and billing-math both call it",
   },
   "apps/web/app/(platform-admin)/admin/plans/page.tsx": {
     count: 1,
