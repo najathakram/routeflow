@@ -9,7 +9,7 @@ Multi-tenant delivery / route-management SaaS. **npm + Turbo monorepo**: NestJS 
 
 - npm workspaces (`apps/*`, `packages/*`) + **Turbo**; npm 10.8, Node >= 18 (CI 20).
 - **API** (`apps/api`): NestJS 11, Prisma 7 + Postgres, Redis (Socket.io), Passport JWT. Jest `*.spec.ts`.
-- **Web** (`apps/web`): Next.js 14 App Router, golden reference for flows/DTOs. Radix + Tailwind, TanStack Query, RHF + zod. Jest+RTL `*.test.tsx`, Playwright `e2e/*.spec.ts`.
+- **Web** (`apps/web`): Next.js 15.5 / React 19 App Router, golden reference for flows/DTOs. Radix + Tailwind, TanStack Query, RHF + zod. Jest+RTL `*.test.tsx`, Playwright `e2e/*.spec.ts`.
 - **Mobile** (`apps/mobile`): Expo 55 / RN 0.83, expo-router, multi-role. Jest pure-logic `__tests__/*.test.ts`.
 - **Shared** `packages/*`: `types`, `ui`, `pricing`, configs.
 - ESLint flat config per workspace (lint via `npm run lint`) + Prettier. Deploy: Railway Docker.
@@ -49,7 +49,8 @@ Modules: tenancy/identity, domain (customers, orders, routes, products, inventor
 
 ## Money discipline
 
-- All line/tax/total math lives in `packages/pricing` (`@routeflow/pricing`); api, web, mobile and root scripts import it, no mirrors. Helpers: `computeLineSubtotal` (boxed proration), `normalizeBoxesPieces`, `roundMoney`. **Round every monetary write**; never re-derive `qty * unitPrice` for a boxed line.- **Entitlement gates**: every `@RequireAddon` key is declared in `apps/api/src/billing/addon-gate-registry.ts`; a new gate ships `dark` and flips to `enforced` only in a separate diff after the owner runs `apps/api/scripts/report-addon-gate-blast-radius.mjs` against prod. A new `@RequirePlanFlag` flag ships inside `DARK_PLAN_FLAGS` (`apps/api/src/billing/plan-flag.guard.ts`) until the same evidence exists; remove `DARK_PLAN_FLAGS` / `PLAN_FLAG_ENFORCEMENT` only after a plan-flag registry lands.
+- All line/tax/total math lives in `packages/pricing` (`@routeflow/pricing`); api, web, mobile and root scripts import it, no mirrors. Helpers: `computeLineSubtotal` (boxed proration), `normalizeBoxesPieces`, `roundMoney`. **Round every monetary write**; never re-derive `qty * unitPrice` for a boxed line.
+- **Entitlement gates**: every `@RequireAddon` key is declared in `apps/api/src/billing/addon-gate-registry.ts`; a new gate ships `dark` and flips to `enforced` only in a separate diff after the owner runs `apps/api/scripts/report-addon-gate-blast-radius.mjs` against prod. A new `@RequirePlanFlag` flag ships inside `DARK_PLAN_FLAGS` (`apps/api/src/billing/plan-flag.guard.ts`) until the same evidence exists; remove `DARK_PLAN_FLAGS` / `PLAN_FLAG_ENFORCEMENT` only after a plan-flag registry lands.
 - Customer-level order merges serialize through `withAdvisoryLock` (`apps/api/src/common/db-locks.ts`, cross-replica). **Never add a second in-process lock**, never thread a transaction into `updateOrderItems`.
 - Scheduled jobs use **`@LeaderCron(expr, "<area>.<method>")`** (`apps/api/src/common/cron-lock.ts`). **Never write a bare `@Cron(`** (`no-bare-cron.spec.ts` fails the build).
 
