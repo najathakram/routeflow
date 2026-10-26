@@ -1,5 +1,5 @@
 import * as React from "react";
-import { fireEvent, renderWithProviders, screen, waitFor } from "@/test-utils/render";
+import { fireEvent, renderWithProviders, screen, waitFor, within } from "@/test-utils/render";
 import { CreateOrderModal } from "./CreateOrderModal";
 
 // S19b slice B (SA-811a R1/R3, SA-813 M1/M3): the create modal prices a line through the customer's price layer.
@@ -230,6 +230,88 @@ describe("CreateOrderModal - the customer's price layer (S19b slice B)", () => {
       expect(sentItem().overrideReason).toBeUndefined();
     },
   );
+
+  // #3840 review MUSTs: only a price the history pre-filled for A is dropped on a switch; anything the
+  // operator did to the line (typed price, typed reason, revert) is theirs and follows the order.
+  const switchToBeta = async () => {
+    history = undefined; // B has no history
+    fireEvent.click(screen.getByRole("button", { name: "Change customer" }));
+    fireEvent.change(screen.getByPlaceholderText("Search by business name…"), {
+      target: { value: "Bet" },
+    });
+    fireEvent.click(await screen.findByText("Beta Bakery"));
+  };
+  const openEditor = (shown: string) => fireEvent.click(screen.getByText(shown));
+  const closeEditor = () => fireEvent.click(
+      within(screen.getByRole("dialog", { name: /^Edit / })).getByRole("button", { name: "Close" }),
+    );
+  const saved = async () => {
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /save as draft/i })).toBeEnabled(),
+    );
+    saveDraft();
+    return sentItem();
+  };
+
+  it("B755 MUST 1a: a price typed over A's pre-fill survives the switch to B", async () => {
+    cust.pricingTier = 1;
+    await addWidgetForCustomer();
+    openEditor(await screen.findByText("$36.00 / each").then((e) => e.textContent!));
+    fireEvent.change(screen.getByLabelText("Price"), { target: { value: "30" } });
+    closeEditor();
+    expect(await screen.findByText("$30.00 / each")).toBeInTheDocument();
+    await switchToBeta();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.getByText("$30.00 / each")).toBeInTheDocument();
+    const item = await saved();
+    expect(item.unitPrice).toBe(30);
+  });
+
+  it("B755 MUST 1b: a reason typed on A's pre-filled price keeps the price and reason through the switch", async () => {
+    cust.pricingTier = 1;
+    await addWidgetForCustomer();
+    openEditor("$36.00 / each");
+    fireEvent.change(screen.getByLabelText(/Reason/), { target: { value: "dented cans" } });
+    closeEditor();
+    await switchToBeta();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.getByText("$36.00 / each")).toBeInTheDocument();
+    const item = await saved();
+    expect(item.unitPrice).toBe(36);
+    expect(item.overrideReason).toBe("dented cans");
+  });
+
+  it("B755 MUST 1c: a price reverted to the tier price re-prices to B's tier price, nothing sent as an override", async () => {
+    cust.pricingTier = 1;
+    await addWidgetForCustomer();
+    openEditor("$36.00 / each");
+    fireEvent.change(screen.getByLabelText("Price"), { target: { value: "" } });
+    closeEditor();
+    expect(await screen.findByText("$42.00 / each")).toBeInTheDocument();
+    await switchToBeta();
+    expect(await screen.findByText("$38.00 / each")).toBeInTheDocument();
+    const item = await saved();
+    expect(item.unitPrice).toBeUndefined();
+    expect(item.overrideReason).toBeUndefined();
+  });
+
+  it("B755 MUST 2: A's last price equal to B's tier price leaves a plain line (no stale stamp or override)", async () => {
+    cust.pricingTier = 1;
+    history = { "prod-1": { lastPrice: 38 } }; // A's last-given $38 == B's tier-3 price
+    await addWidgetForCustomer();
+    expect(await screen.findByText("$38.00 / each")).toBeInTheDocument();
+    await switchToBeta();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.getByText("$38.00 / each")).toBeInTheDocument();
+    // plain line: no one-time price left on it (the editor shows no typed price and no Reason field)
+    openEditor("$38.00 / each");
+    expect(screen.getByLabelText("Price")).toHaveValue("");
+    expect(screen.queryByLabelText(/Reason/)).not.toBeInTheDocument();
+    closeEditor();
+    const item = await saved();
+    expect(item.unitPrice).toBeUndefined();
+    expect(item.overrideReason).toBeUndefined();
+  });
 
   it("B-1: a typed $33 pre-fills $33 SPECIAL, not last-given $36, and saves with no price or reason", async () => {
     cust.pricingTier = 1; // Retail customer, typed $33: last-given $36 would pre-fill if R3 did not skip it
