@@ -14,7 +14,7 @@ import {
   EXTERNAL_REFUND_FILTER,
   roundQty,
 } from "../common/invoiced-sales";
-import { noteReturnWhere, refundNet, splitTax } from "../common/refund-net-terms";
+import { noteReturnWhere, refundNet, splitTax, type SplitTax } from "../common/refund-net-terms";
 import { addCalendarDays } from "../analytics/demand-range";
 import { standardRestockResolver } from "../returns/returns-restock-pieces";
 import {
@@ -807,7 +807,7 @@ export class SalesFactsService {
       unattributed += split.unattributed;
     }
     // SA-840: those notes' tax is unattributed (their items are NET), so it leaves the credit term and the unattributed rest together
-    const noteTax = (noteReturns as any[]).reduce((t, r) => t + splitTax(r), 0);
+    const noteTax = (noteReturns as SplitTax[]).reduce((t, r) => t + splitTax(r), 0);
     creditNotes -= noteTax;
     unattributed -= noteTax;
     for (const r of refunds as any[]) {

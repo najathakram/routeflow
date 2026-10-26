@@ -1,6 +1,7 @@
 import { toCents } from "./cents";
 import { allocateCentsLargestRemainder } from "./largest-remainder";
 import { MoneyInvariantError } from "./money-invariants";
+import { isNsfLine } from "./nsf-line";
 import { creditedThrough, roundMoney } from "./pricing";
 
 /**
@@ -246,4 +247,45 @@ export function refundableProductPoolShare(input: ProductPoolShareInput): Produc
   }
   spread.forEach((s) => (s.total = roundMoney(s.net + s.tax + s.categoryTax)));
   return { ...total, total: roundMoney(total.net + total.tax + total.categoryTax), spread };
+}
+
+/** One stored invoice item as the refund helper reads it (a Prisma row, a Decimal column or a spec fixture). */
+export interface StoredInvoiceItem {
+  id?: string | null;
+  subtotal: StoredMoney;
+  qty: StoredMoney;
+  taxRate?: StoredMoney | null;
+  categoryTaxAmount?: StoredMoney | null;
+  systemKind?: string | null;
+  description?: string | null;
+}
+
+/** A stored invoice with its items. */
+export interface StoredInvoice {
+  taxAmount: StoredMoney;
+  discount: StoredMoney;
+  items?: readonly StoredInvoiceItem[] | null;
+}
+
+/**
+ * The invoice as `refundableLineShare` reads it: stored rows only, the NSF fee line flagged by the shared `isNsfLine`
+ * predicate. `lineIds` overrides the item ids (a fixture / legacy item with no id gets a positional one). The mapping lives
+ * here, next to the helper that consumes it, so no API site restates a line's stored tax columns.
+ */
+export function refundableInvoiceOf(
+  invoice: StoredInvoice,
+  lineIds?: readonly string[],
+): RefundableInvoice {
+  return {
+    taxAmount: invoice.taxAmount,
+    discount: invoice.discount,
+    lines: (invoice.items ?? []).map((it, i) => ({
+      id: lineIds?.[i] ?? it.id ?? "",
+      subtotal: it.subtotal,
+      qty: it.qty,
+      taxRate: it.taxRate,
+      categoryTaxAmount: it.categoryTaxAmount,
+      isNsf: isNsfLine(it),
+    })),
+  };
 }

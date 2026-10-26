@@ -6,10 +6,12 @@
  * `priceProductSlice`, so they can never disagree.
  */
 import {
-  isNsfLine,
+  refundableInvoiceOf,
   refundableProductPoolShare,
   roundMoney,
   type RefundableInvoice,
+  type StoredInvoice,
+  type StoredInvoiceItem,
 } from "@routeflow/pricing";
 import {
   planProductRefund,
@@ -47,27 +49,25 @@ export const splitOfItems = (items: readonly RefundItem[]): RefundSplit =>
     NO_SPLIT,
   );
 
-/** The invoice as the helper reads it: stored rows only, the NSF fee line flagged by the shared predicate. */
-export function toRefundableInvoice(invoice: any, lineIds?: string[]): RefundableInvoice {
-  return {
-    taxAmount: invoice.taxAmount,
-    discount: invoice.discount,
-    lines: (invoice.items ?? []).map((it: any, i: number) => ({
-      id: lineIds?.[i] ?? it.id,
-      subtotal: it.subtotal,
-      qty: it.qty,
-      taxRate: it.taxRate,
-      categoryTaxAmount: it.categoryTaxAmount,
-      isNsf: isNsfLine(it),
-    })),
-  };
-}
+/** The invoice as the helper reads it (the mapping lives in @routeflow/pricing, beside the helper that consumes it). */
+export const toRefundableInvoice = (
+  invoice: StoredInvoice,
+  lineIds?: readonly string[],
+): RefundableInvoice => refundableInvoiceOf(invoice, lineIds);
+
+/** A creditable invoice as stored: its items carry the productId and the unit columns the headroom line reads. */
+type CreditableItem = StoredInvoiceItem & { productId?: string | null; [column: string]: unknown };
+export type CreditableInvoice = Omit<StoredInvoice, "items"> & {
+  id?: string | null;
+  createdAt?: Date | string | null;
+  items?: readonly CreditableItem[] | null;
+};
 
 /**
  * Every billed line of `productId` across the creditable invoices, oldest invoice first (the fill order), with the invoice
  * each sits on. A fixture / legacy item with no id gets a positional one: the preview never writes it anywhere.
  */
-export function billedLinesOf(creditable: any[], productId: string) {
+export function billedLinesOf(creditable: readonly CreditableInvoice[], productId: string) {
   const lines: HeadroomLine[] = [];
   const invoiceOfLine = new Map<string, RefundableInvoice>();
   const ordered = [...creditable].sort(
@@ -76,7 +76,7 @@ export function billedLinesOf(creditable: any[], productId: string) {
       String(a.id).localeCompare(String(b.id)),
   );
   ordered.forEach((inv, n) => {
-    const items: any[] = inv.items ?? [];
+    const items = inv.items ?? [];
     const ids = items.map((it, i) => it.id ?? `${n}:${i}`);
     const refundable = toRefundableInvoice(inv, ids);
     items.forEach((it, i) => {

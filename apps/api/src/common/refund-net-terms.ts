@@ -25,7 +25,7 @@ export const CREDIT_NOTE_RETURN_FILTER = {
 /** The two frozen tax columns of a Return. */
 export const SPLIT_TAX_SUM = { creditTax: true, creditCategoryTax: true } as const;
 
-interface SplitTax {
+export interface SplitTax {
   creditTax?: unknown;
   creditCategoryTax?: unknown;
 }
@@ -50,20 +50,39 @@ export const noteReturnWhere = (base: Record<string, unknown>) => ({
   ...CREDIT_NOTE_RETURN_FILTER,
 });
 
+/** The `where` of a Return read: the filters above spread onto a tenant/window base. */
+type ReturnWhere = Record<string, unknown>;
+
+/** The slice of the db client the two readers use (structural, like AccrualSalesDb: the real client is richer). */
+export interface SplitTaxAggregateDb {
+  return: {
+    aggregate(args: {
+      where: ReturnWhere;
+      _sum: typeof SPLIT_TAX_SUM;
+    }): Promise<{ _sum?: SplitTax | null } | null>;
+  };
+}
+export interface SplitTaxGroupByDb {
+  return: {
+    groupBy(args: {
+      by: ["customerId"];
+      where: ReturnWhere;
+      _sum: typeof SPLIT_TAX_SUM;
+    }): Promise<Array<{ customerId: string; _sum?: SplitTax | null }>>;
+  };
+}
+
 /** Sum of the frozen tax over the returns `where` matches. */
-export async function sumSplitTax(
-  db: { return: { aggregate(args: any): Promise<any> } },
-  where: Record<string, unknown>,
-): Promise<number> {
+export async function sumSplitTax(db: SplitTaxAggregateDb, where: ReturnWhere): Promise<number> {
   const agg = await db.return.aggregate({ where, _sum: SPLIT_TAX_SUM });
   return splitTax(agg?._sum);
 }
 
 /** The same, per customer. */
 export async function groupSplitTax(
-  db: { return: { groupBy(args: any): Promise<any[]> } },
-  where: Record<string, unknown>,
+  db: SplitTaxGroupByDb,
+  where: ReturnWhere,
 ): Promise<Map<string, number>> {
   const rows = await db.return.groupBy({ by: ["customerId"], where, _sum: SPLIT_TAX_SUM });
-  return new Map(rows.map((r: any) => [r.customerId as string, splitTax(r._sum)]));
+  return new Map(rows.map((r) => [r.customerId, splitTax(r._sum)]));
 }
