@@ -17,6 +17,8 @@ export const QTY_ZERO_BOXED_COPY =
 export const QTY_TOO_LARGE_COPY =
   "That is more than one line can hold. The most is 100,000 pieces.";
 /** A number the field's own parser refuses although it is finite and whole (1e3, 0x10, +5): not a plain count. */
+/** Shown beside a "+" that is disabled because its line is full. */
+export const QTY_AT_CAP_HINT = "This line is full. The most is 100,000 pieces.";
 export const QTY_FORMAT_COPY = "Enter a whole number from 1.";
 
 /**

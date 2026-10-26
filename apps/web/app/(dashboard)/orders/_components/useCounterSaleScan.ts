@@ -32,7 +32,8 @@ interface Deps {
   /** Locked (outcome unknown): a late result must not change the cart. */
   locked: boolean;
   /** Puts one resolved product on the cart. */
-  add: (product: any, level: SellLevel, n: number) => void;
+  /** Returns false when the cart refused the add (a line at its cap): nothing is confirmed then. */
+  add: (product: any, level: SellLevel, n: number) => boolean | void;
   refocus: () => void;
 }
 
@@ -155,12 +156,14 @@ export function useCounterSaleScan(deps: Deps) {
           setPicker({ code: item.code, qty: carryRef.current, matches: result.matches });
           return; // the item stays at the head until one is chosen
         } else {
-          depsRef.current.add(
+          const applied = depsRef.current.add(
             result.product,
             scanLevelForHit(item.code, result.product),
             carryRef.current,
           );
-          confirmAdded(result.product);
+          // A refused add (the line is at its cap) must not say "Added": the item was never rung up.
+          if (applied === false) clearAdded();
+          else confirmAdded(result.product);
           setMessage("");
           setCarry(1);
         }
@@ -196,8 +199,9 @@ export function useCounterSaleScan(deps: Deps) {
   const choose = (product: any) => {
     const qty = picker?.qty ?? 1;
     setPicker(null);
-    depsRef.current.add(product, "BOX", qty); // a picker click is a whole selling unit, as in Create Order
-    confirmAdded(product);
+    const applied = depsRef.current.add(product, "BOX", qty); // a picker click is a whole selling unit, as in Create Order
+    if (applied === false) clearAdded();
+    else confirmAdded(product);
     setCarry(1);
     setMessage("");
     shift();
