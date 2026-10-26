@@ -15,9 +15,12 @@ import { roundMoney } from "@routeflow/pricing";
 /**
  * A return resolved as store credit that really minted its note (the split is frozen on the Return). Standard and inline
  * returns both mint the note for the GROSS amount, so the filter never keys on the return's kind (SA-980): every writer
- * that links a note to a Return stores `refundMethod` CREDIT_NOTE with it.
+ * that links a note to a Return stores `refundMethod` CREDIT_NOTE with it. It keys on `status` REFUNDED too: an inline
+ * cancel voids the note but leaves `refundMethod`, `creditNoteId` and the frozen tax on the row, and a voided note is
+ * no longer in the credit-note term, so a CANCELLED row must not give its tax back.
  */
 export const CREDIT_NOTE_RETURN_FILTER = {
+  status: "REFUNDED",
   refundMethod: "CREDIT_NOTE",
   creditNoteId: { not: null },
 } as const;
