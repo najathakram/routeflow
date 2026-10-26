@@ -1,7 +1,7 @@
 import { BadRequestException, ConflictException } from "@nestjs/common";
 import {
   PIECE_LABEL,
-  baseLabelOf,
+  namesBase,
   describeBaseOption,
   normalizeBoxesPieces,
   planBaseBilling,
@@ -204,8 +204,7 @@ export function normalizeDerivedBaseLine<
 ): T {
   const label = (item.unitLabel ?? "").trim();
   if (!label || !product) return item;
-  const isBase = (l: string) =>
-    norm(l) === norm(baseLabelOf(product)) || norm(l) === norm(PIECE_LABEL);
+  const isBase = (l: string) => namesBase(product, l);
   if (!isBase(label) || ((opts?.held ?? "").trim() !== "" && isBase(opts!.held!))) return item;
   if (Math.trunc(Number(product.unitsPerBox ?? 0)) <= 1) return item;
   if ((item.boxes ?? 0) > 0 || (item.pieces ?? 0) > 0) return item;
