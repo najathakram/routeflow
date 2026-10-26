@@ -23,10 +23,12 @@ const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs")
 describeDb("SA-954 price history comparison — real Postgres", () => {
   const run = randomUUID().slice(0, 8);
   const slug = assertTestTenant(`qa-ph-${run}`, "customer-price-history-comparison.db.spec.ts");
+  const slugB = assertTestTenant(`qa-ph-${run}b`, "customer-price-history-comparison.db.spec.ts");
   let tenantCtx: TenantContextService;
   let prisma: PrismaService;
   let service: CustomerPriceHistoryService;
   let tenantId = "";
+  let tenantIdB = "";
   let productId = "";
   const customerIds: Record<string, string> = {};
   const userIds: string[] = [];
@@ -37,26 +39,26 @@ describeDb("SA-954 price history comparison — real Postgres", () => {
   })();
   const month = issued.toISOString().slice(0, 7);
 
-  async function customer(key: string) {
+  async function customer(key: string, tid = tenantId) {
     const user = await prisma.user.create({
       data: {
         email: `${key}-${run}@example.invalid`,
         username: `${key}-${run}`,
         role: "CUSTOMER",
-        tenantId,
+        tenantId: tid,
       },
     });
     userIds.push(user.id);
     const c = await prisma.customer.create({
-      data: { userId: user.id, businessName: `secret-${key}`, contactName: key, tenantId },
+      data: { userId: user.id, businessName: `secret-${key}`, contactName: key, tenantId: tid },
     });
     customerIds[key] = c.id;
   }
 
-  async function sale(key: string, item: Record<string, unknown>, n: number) {
+  async function sale(key: string, item: Record<string, unknown>, n: number, tid = tenantId) {
     await prisma.invoice.create({
       data: {
-        tenantId,
+        tenantId: tid,
         customerId: customerIds[key]!,
         invoiceNumber: `PH-${run}-${n}`,
         status: "SENT",
@@ -66,7 +68,7 @@ describeDb("SA-954 price history comparison — real Postgres", () => {
         items: {
           create: [
             {
-              tenantId,
+              tenantId: tid,
               productId,
               description: "Cola",
               subtotal: item.unitPrice as number,
@@ -107,15 +109,28 @@ describeDb("SA-954 price history comparison — real Postgres", () => {
       4,
     );
     await sale("c5", { unitPrice: 9.99, qty: 1, boxes: 1, pieces: 0, unitLabel: "Box" }, 5); // pack unknown
+    // A SECOND tenant whose invoices point at the SAME product id (a poisoned cross-tenant row): three buyers of a Box of
+    // 12 at 100.00 would give line 2 a point and move line 3, if the read ever counted another tenant's invoices.
+    tenantIdB = (await prisma.tenant.create({ data: { slug: slugB, name: `PH ${slugB}` } })).id;
+    for (const [i, k] of ["b1", "b2", "b3"].entries()) {
+      await customer(k, tenantIdB);
+      await sale(
+        k,
+        { unitPrice: 100, qty: 12, boxes: 1, pieces: 0, unitsPerBox: 12, unitLabel: "Box" },
+        101 + i,
+        tenantIdB,
+      );
+    }
   }, 120_000);
 
   afterAll(async () => {
-    await prisma?.invoiceItem.deleteMany({ where: { tenantId } });
-    await prisma?.invoice.deleteMany({ where: { tenantId } });
-    await prisma?.customer.deleteMany({ where: { tenantId } });
+    const both = { in: [tenantId, tenantIdB].filter(Boolean) };
+    await prisma?.invoiceItem.deleteMany({ where: { tenantId: both } });
+    await prisma?.invoice.deleteMany({ where: { tenantId: both } });
+    await prisma?.customer.deleteMany({ where: { tenantId: both } });
     await prisma?.user.deleteMany({ where: { id: { in: userIds } } });
     await prisma?.product.deleteMany({ where: { tenantId } });
-    await prisma?.tenant.deleteMany({ where: { id: tenantId } });
+    await prisma?.tenant.deleteMany({ where: { id: both } });
     await prisma?.$disconnect();
   }, 120_000);
 
@@ -136,6 +151,17 @@ describeDb("SA-954 price history comparison — real Postgres", () => {
     const r = await history();
     expect(r.aggregate).toBeNull();
     expect(r.comparison!.find((x) => x.unitsPerBox === 12)!.converted).toHaveLength(1);
+  });
+
+  it("another tenant's invoices for the same product id are never counted (SA-954: tenant isolation)", async () => {
+    const r = await history();
+    const e = r.comparison!.find((x) => x.unitLabel === "Box" && x.unitsPerBox === 12)!;
+    // had the 100.00 sales leaked: line 2 would hold a point (3 other buyers of a Box of 12) and line 3 would read ~49
+    expect(e.likeForLike).toEqual([]);
+    expect(e.converted).toEqual([{ month, average: 25.11 }]);
+    expect(r.aggregate).toBeNull();
+    const json = JSON.stringify(r);
+    for (const k of ["b1", "b2", "b3"]) expect(json).not.toContain(customerIds[k]!);
   });
 
   it("no customer id or name anywhere in the comparison", async () => {

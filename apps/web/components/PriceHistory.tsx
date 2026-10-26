@@ -210,10 +210,10 @@ function PanelBody({
         <p className="text-sm font-semibold text-navy">
           Price history · {data.productName || productName}
         </p>
-        <p className="text-[11px] text-navy/60">Customer: {data.customerName || customerName}</p>
+        <p className="text-[11px] text-navy/70">Customer: {data.customerName || customerName}</p>
         {refs &&
           (refs.listPrice != null || refs.tierPrice != null || refs.changeSinceLast != null) && (
-            <p className="mt-0.5 text-[11px] text-navy/60">
+            <p className="mt-0.5 text-[11px] text-navy/70">
               {refs.listPrice != null && <>List {fmt(refs.listPrice)}</>}
               {refs.tierPrice != null && <> · Their tier price {fmt(refs.tierPrice)}</>}
               {refs.changeSinceLast != null && (
@@ -244,7 +244,7 @@ function PanelBody({
                 "rounded-full px-2 py-0.5 text-[11px] ring-1",
                 sameUnit(u, unit)
                   ? "bg-brand-50 text-brand-700 ring-brand-200"
-                  : "text-navy/60 ring-surface-border hover:text-navy",
+                  : "text-navy/70 ring-surface-border hover:text-navy",
               )}
             >
               {u}
@@ -268,7 +268,7 @@ function PanelBody({
       />
 
       <div className="flex items-center gap-1" role="group" aria-label="Compare">
-        <span aria-hidden className="text-[11px] text-navy/60">
+        <span aria-hidden className="text-[11px] text-navy/70">
           Compare:
         </span>
         {(["This customer", "All customers"] as const).map((label) => (
@@ -281,7 +281,7 @@ function PanelBody({
               "rounded-full px-2 py-0.5 text-[11px] ring-1",
               (label === "All customers") === compare
                 ? "bg-brand-50 text-brand-700 ring-brand-200"
-                : "text-navy/60 ring-surface-border hover:text-navy",
+                : "text-navy/70 ring-surface-border hover:text-navy",
             )}
           >
             {label}
@@ -313,11 +313,11 @@ function PanelBody({
               </button>
             </p>
           ) : comparing ? (
-            <p id={NOTE_IDS.compareMessage} className="text-[11px] text-navy/60">
+            <p id={NOTE_IDS.compareMessage} className="text-[11px] text-navy/70">
               Loading comparison…
             </p>
           ) : (
-            <p className="text-[11px] text-navy/60">No comparison available for this unit.</p>
+            <p className="text-[11px] text-navy/70">No comparison available for this unit.</p>
           )}
         </div>
       )}
@@ -336,7 +336,7 @@ function PanelBody({
               type="button"
               onClick={() => setShowCost((v) => !v)}
               aria-pressed={showCost}
-              className="ml-auto flex items-center gap-1 text-[11px] text-navy/60 hover:text-navy"
+              className="ml-auto flex items-center gap-1 text-[11px] text-navy/70 hover:text-navy"
             >
               {showCost ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
               {showCost ? "Hide cost" : "Show cost"}
@@ -379,7 +379,7 @@ function PanelBody({
                 <td className="py-1 pr-2 font-mono text-navy">
                   {fmt(r.unitPrice)}
                   {r.priceType && PRICE_TYPE_TAG[r.priceType] && (
-                    <span className="ml-1 rounded bg-sunken px-1 text-[11px] uppercase text-navy/60">
+                    <span className="ml-1 rounded bg-sunken px-1 text-[11px] uppercase text-navy/70">
                       {PRICE_TYPE_TAG[r.priceType]}
                     </span>
                   )}

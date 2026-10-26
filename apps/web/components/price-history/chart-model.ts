@@ -20,8 +20,16 @@ const normUnit = (u: string | null | undefined): string => {
 const sameUnit = (a: string | null | undefined, b: string | null | undefined) =>
   normUnit(a) === normUnit(b);
 
-/** A null pack and a pack of 1 both mean "by the piece". */
+/** A null pack and a pack of 1 both mean "by the piece"... */
 const packOf = (p: number | null | undefined): number => p ?? 1;
+
+/**
+ * ...unless the row's unit is a pack (Box / Case) with no pack size: the wire sends `unitsPerBox` null for both "by the
+ * piece" and "pack unknown" (a line from before the pack was snapshotted), so the unit label tells them apart. Plotting
+ * an unknown pack as pieces would draw a case price as a piece price.
+ */
+const packUnknown = (r: Pick<PriceHistoryRow, "unitLabel" | "unitsPerBox"> | undefined): boolean =>
+  r != null && r.unitsPerBox == null && normUnit(r.unitLabel) === "case";
 
 export type ComparisonState = "loading" | "error" | "ready";
 
@@ -79,6 +87,8 @@ export const NOTE_COPY = {
   loading: "Loading averages…",
   failed: "Couldn't load the averages.",
   filtered: (unit: string) => `The chart shows ${unit} sales only. The table lists them all.`,
+  packUnknown:
+    "The latest sale has no pack size on record, so there is no line to draw. The table lists it.",
   turnOn: "Turn on a line to see it.",
 } as const;
 
@@ -123,6 +133,27 @@ export function buildChartModel(input: {
     (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
   )[0];
   const neverSold = rows.length === 0;
+  if (!neverSold && packUnknown(newest)) {
+    // an unknown pack is not "by the piece": no plot, no comparison, one honest reason
+    return {
+      unitPhrase: unit ?? "",
+      plotPack: null,
+      own: [],
+      like: [],
+      conv: [],
+      canDraw: { own: false, like: false, conv: false },
+      ownFiltered: false,
+      notes: [
+        {
+          id: "ph-note-pack-unknown",
+          text: NOTE_COPY.packUnknown,
+          role: "status",
+          lines: ["own", "like", "conv"],
+        },
+      ],
+      coveredByPanel: false,
+    };
+  }
 
   // The matching entry: with history, the tab's unit and the newest row's pack; never sold, the one entry the server
   // returns for the unit. A lookup, no math.

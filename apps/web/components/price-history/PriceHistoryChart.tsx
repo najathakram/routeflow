@@ -263,7 +263,7 @@ function Plot({
         )}
       </svg>
       {!anyOn && (
-        <p className="absolute inset-0 flex items-center justify-center text-[11px] text-navy/60">
+        <p className="absolute inset-0 flex items-center justify-center text-[11px] text-navy/70">
           {NOTE_COPY.turnOn}
         </p>
       )}
@@ -328,7 +328,7 @@ export function PriceHistoryChart({
   const noteFor = (id: LineId) => model.notes.find((n) => n.lines.includes(id))?.id;
   const describedBy = (id: LineId): string | undefined => {
     if (model.canDraw[id]) return undefined;
-    if (id === "own") return neverSold ? NOTE_IDS.neverSold : undefined;
+    if (id === "own") return neverSold ? NOTE_IDS.neverSold : noteFor("own");
     return model.coveredByPanel ? NOTE_IDS.compareMessage : noteFor(id);
   };
 
@@ -376,7 +376,7 @@ export function PriceHistoryChart({
           key={n.id}
           id={n.id}
           role={n.role}
-          className="text-[11px] text-navy/60"
+          className="text-[11px] text-navy/70"
           data-testid="line-note"
         >
           {n.text}

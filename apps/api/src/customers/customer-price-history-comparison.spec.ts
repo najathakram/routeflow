@@ -2,7 +2,7 @@ import { Test } from "@nestjs/testing";
 import { UserRole } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { createMockPrisma } from "../testing/prisma-mock";
-import { CustomerPriceHistoryService } from "./customer-price-history.service";
+import { COMPARE_INVOICE_CAP, CustomerPriceHistoryService } from "./customer-price-history.service";
 
 /**
  * SA-954 (owner 16:15Z): `?compare=all` carries, per plot unit, two reference lines next to this customer's own:
@@ -216,6 +216,55 @@ describe("customer price history: comparison (SA-954)", () => {
       world([mine], [mine, ...mk("2026-09-"), ...mk("2026-08-")]);
       const e = entry(await run(), "pc", null);
       expect(e.likeForLike.map((p: any) => p.month)).toEqual(["2026-08", "2026-09"]);
+    });
+  });
+
+  describe("the invoice cap is shared with this customer's own invoices (SA-954 D7, ruling A)", () => {
+    it("when the cap bites, the other buyers inside it still count and own rows never enter the buyers or the aggregate", async () => {
+      // CAP - 3 of this customer's own newest invoices fill the window; only 3 other buyers fit, the 4th is cut
+      const mine = sale("c1", piece(2), "28");
+      const crowd = Array.from({ length: COMPARE_INVOICE_CAP - 3 }, () =>
+        sale("c1", piece(2), "28"),
+      );
+      const others = [
+        sale("c2", piece(2.1)),
+        sale("c3", piece(2.2)),
+        sale("c4", piece(2.3)),
+        sale("c5", piece(9)), // older than the cap: never read
+      ];
+      let taken = -1;
+      prisma.invoice.findMany.mockImplementation(async (args: any) => {
+        if (!args.where.issueDate) return [mine];
+        taken = args.take;
+        return [...crowd, ...others].slice(0, args.take); // the db's newest-first take
+      });
+      const r = await run();
+      expect(taken).toBe(COMPARE_INVOICE_CAP);
+      // the 3 other buyers inside the window meet the floor; own rows are not among them
+      expect(r.aggregate).toEqual({
+        low: 2.1,
+        median: 2.2,
+        high: 2.3,
+        customers: 3,
+        unitLabel: "pc",
+      });
+      const e = entry(r, "pc", null);
+      expect(e.likeForLike).toEqual([{ month: "2026-09", average: 2.2 }]);
+      // line 3 averages everyone it read, own included (1997 own at 2.00 plus 2.1, 2.2, 2.3)
+      expect(e.converted).toEqual([{ month: "2026-09", average: 2 }]);
+    });
+
+    it("own invoices alone never lift a floor, however many fill the window", async () => {
+      const mine = sale("c1", piece(2), "28");
+      const crowd = Array.from({ length: COMPARE_INVOICE_CAP }, () => sale("c1", piece(2), "28"));
+      prisma.invoice.findMany.mockImplementation(async (args: any) =>
+        args.where.issueDate ? crowd.slice(0, args.take) : [mine],
+      );
+      const r = await run();
+      expect(r.aggregate).toBeNull();
+      const e = entry(r, "pc", null);
+      expect(e.likeForLike).toEqual([]);
+      expect(e.converted).toEqual([]);
     });
   });
 

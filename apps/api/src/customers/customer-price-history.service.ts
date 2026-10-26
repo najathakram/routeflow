@@ -52,11 +52,17 @@ export const PRICE_HISTORY_MAX_LIMIT = 100;
  * the parity spec pins the values equal.
  */
 export const PRICE_SUMMARY_MAX_PRODUCTS: typeof SHARED_PRICE_SUMMARY_MAX_PRODUCTS = 50;
-/** `?compare=all` looks back this far over OTHER customers' invoiced sales. */
+/** `?compare=all` looks back this far over every customer's invoiced sales (this customer's own included, see the cap). */
 export const COMPARE_WINDOW_DAYS = 180;
 /** Fewer distinct other customers than this and the aggregate is withheld (cannot be anonymised). */
 export const COMPARE_MIN_CUSTOMERS = 3;
-const COMPARE_INVOICE_CAP = 2000;
+/**
+ * The one compare read takes the newest this-many invoices of the product across ALL customers, this one's own too (SA-954
+ * D7: one read, split in memory). Own invoices therefore share the cap with everyone else's. Own rows feed line 3's mean and
+ * nothing else: they never enter `others`, a buyer count or the aggregate, so a heavy buyer can crowd the window but never
+ * trip or lift a floor.
+ */
+export const COMPARE_INVOICE_CAP = 2000;
 /**
  * The price-summary scan reads the customer's newest 500 issued invoices that contain at least one
  * requested product (honouring `excludeOrderId`), NOT 500 per product, so a rarely-sold product can be

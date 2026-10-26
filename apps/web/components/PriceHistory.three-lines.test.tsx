@@ -245,6 +245,17 @@ describe("the compare pills are labelled (mm-ux 93.8% follow-up 2)", () => {
     expect(within(pills).getByRole("button", { name: "This customer" })).toBeInTheDocument();
     expect(chip(dialog, "own")).toHaveAccessibleName("This customer's prices, Box of 12");
   });
+
+  it("W-785 type lens: the small label and the small notes are navy/70 (6.4 on white, 6.3 on canvas, 6.0 on sunken), not navy/60 (4.4 on sunken)", async () => {
+    serve(base());
+    const dialog = await open();
+    await settled(dialog);
+    const small = [within(dialog).getByText("Compare:"), within(dialog).getByText(/^Customer: /)];
+    for (const el of small) {
+      expect(el.className).toContain("text-navy/70");
+      expect(el.className).not.toContain("text-navy/60");
+    }
+  });
 });
 
 describe("the three lines look different by shape, not colour alone", () => {

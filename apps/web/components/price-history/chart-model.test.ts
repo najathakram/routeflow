@@ -85,6 +85,46 @@ describe("the matching entry and the plot pack", () => {
     expect(m.canDraw.like).toBe(true);
   });
 
+  it("an unknown pack is its own honest state, never piece prices (review-b: packOf(null) was 1)", () => {
+    // a pre-snapshot Box line: the wire sends unitsPerBox null for BOTH "by the piece" and "pack unknown", and the
+    // unit label ("Box") is what tells them apart
+    const m = model({
+      unit: "Box",
+      rows: [row({ unitLabel: "Box", unitsPerBox: null, unitPrice: 25 })],
+      comparison: [entry({ unitLabel: "Box", unitsPerBox: null })],
+    });
+    expect(m.plotPack).toBeNull();
+    expect(m.own).toEqual([]);
+    expect(m.canDraw).toEqual({ own: false, like: false, conv: false });
+    expect(m.notes).toHaveLength(1);
+    expect(m.notes[0]!.text).toMatch(/pack size/i);
+    expect(m.notes[0]!.lines).toEqual(["own", "like", "conv"]);
+  });
+
+  it("an unknown-pack newest row says so even when older rows have a pack (the newest decides the plot)", () => {
+    const m = model({
+      rows: [
+        row({ date: "2026-08-01T00:00:00.000Z", unitsPerBox: 12 }),
+        row({ unitsPerBox: null, unitLabel: "Box" }),
+      ],
+    });
+    expect(m.plotPack).toBeNull();
+    expect(m.own).toEqual([]);
+    expect(m.notes[0]!.text).toMatch(/pack size/i);
+  });
+
+  it("a piece unit with no pack is still by the piece (only a pack-type label with no pack is unknown)", () => {
+    for (const unitLabel of ["Each", "Piece", "pc", "bottle"]) {
+      const m = model({
+        unit: unitLabel,
+        rows: [row({ unitLabel, unitsPerBox: null })],
+        comparison: [entry({ unitLabel, unitsPerBox: null })],
+      });
+      expect(m.plotPack).toBe(1);
+      expect(m.canDraw.own).toBe(true);
+    }
+  });
+
   it("no matching entry: lines 2 and 3 cannot draw", () => {
     const m = model({ comparison: [entry({ unitsPerBox: 24 })] });
     expect(m.canDraw).toMatchObject({ own: true, like: false, conv: false });
