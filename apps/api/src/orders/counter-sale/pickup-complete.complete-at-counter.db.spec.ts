@@ -950,4 +950,46 @@ describeDb("I-120 Complete at counter — real Postgres", () => {
     });
     expect(await claimCount(orderId)).toBe(0);
   }, 60_000);
+
+  // ── Row 590 (SA-1000 §2): the office-DELIVERED refusal must not strand a counter completion ──
+  it("R10a a PICKUP order still linked to a FINISHED run's PENDING stop: DELIVERED on the first try, the link released, ONE claim", async () => {
+    const { orderId } = await seed("CONFIRMED", "PICKUP");
+    const { runId } = await onDriverRun([orderId], "PENDING");
+    await raw.routeRun.update({ where: { id: runId }, data: { status: "COMPLETED" } });
+    const key = `key-${run}-r10a`;
+    const first: any = await withFlag(orderId, key).catch((e) => e);
+    // red before: 409 ORDER_DELIVERED_ON_ROUTE_STOP on every try, the hand-over claim already written
+    expect(first?.getStatus?.()).toBeUndefined();
+    expect(await linkOf(orderId)).toEqual(delivered);
+    expect(await claimCount(orderId)).toBe(1);
+    const again: any = await withFlag(orderId, key).catch((e) => e);
+    expect(again?.getStatus?.()).toBeUndefined(); // the replay is not a refusal either
+    expect(await claimCount(orderId)).toBe(1);
+  }, 60_000);
+
+  it("R10b a CANCELLED run (finished too): its stale link on a PENDING stop is released the same way", async () => {
+    const { orderId } = await seed("CONFIRMED", "PICKUP");
+    const { runId } = await onDriverRun([orderId], "PENDING");
+    await raw.routeRun.update({ where: { id: runId }, data: { status: "CANCELLED" } });
+    await withFlag(orderId, `key-${run}-r10b`);
+    expect(await linkOf(orderId)).toEqual(delivered);
+    expect(await claimCount(orderId)).toBe(1);
+  }, 60_000);
+
+  it("R10c a link only by the stop id to an ACTIVE run (no routeRunId): refused ORDER_DELIVERED_ON_ROUTE_STOP BEFORE the claim, nothing written", async () => {
+    const { orderId, invoiceId } = await seed("CONFIRMED", "PICKUP");
+    const { stopId } = await onDriverRun([orderId], "PENDING");
+    await raw.order.update({ where: { id: orderId }, data: { routeRunId: null } });
+    const err: any = await withFlag(orderId, `key-${run}-r10c`, true).catch((e) => e);
+    expect(err?.getStatus?.()).toBe(409);
+    expect(err.getResponse()).toMatchObject({ code: "ORDER_DELIVERED_ON_ROUTE_STOP" });
+    // red before: the claim was written first (count 1) and the order stayed linked
+    expect(await claimCount(orderId)).toBe(0);
+    await expectUntouched(orderId, invoiceId, {
+      path: "PICKUP",
+      status: "CONFIRMED",
+      routeRunId: null,
+      routeRunStopId: stopId,
+    });
+  }, 60_000);
 });

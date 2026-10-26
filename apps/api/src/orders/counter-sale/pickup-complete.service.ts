@@ -12,6 +12,7 @@ import {
 import { createHash } from "crypto";
 import { mayCompleteAtCounter, roundMoney, confirmedRemaining } from "@routeflow/pricing";
 import type { PickupCompleteResponse } from "@routeflow/types";
+import { OrderStatus } from "@prisma/client";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
 import { LockTimeoutError, LockUnavailableError, withAdvisoryLock } from "../../common/db-locks";
 import { PrismaService } from "../../prisma/prisma.service";
@@ -20,6 +21,8 @@ import { TILL_LOCK_HELD } from "../../invoices/counter-payment-guard";
 import type { JwtPayload } from "../../auth/jwt-payload.interface";
 import { OrdersService } from "../orders.service";
 import { settleOrderInvoice } from "../order-status-invoicing";
+import { releaseStaleRunLink } from "../order-lifecycle";
+import { assertStopDoneForOfficeDelivered } from "../office-delivered-route-stop";
 import {
   autoApplyCandidateWhere,
   creditAutoApplyOnSend,
@@ -213,6 +216,19 @@ export class PickupCompleteService {
         order,
         pickupRegisterOf(order, dto.registerKey),
       );
+    }
+    // Row 590 (SA-1000 §2): a PICKUP order still linked to a FINISHED run (activeRunLink is null for it, and updateFulfillPath
+    // skips an order already on PICKUP) is released here, then the office-DELIVERED stop check runs read-only, BOTH before the
+    // claim, so a refusal leaves no claim behind and a stale link no longer dead-ends every retry.
+    if (!alreadyPickedUp && order.fulfillPath === "PICKUP") {
+      if (await releaseStaleRunLink(this.prisma, id)) order = (await this.readOrder(id)) ?? order;
+      if (!activeRunLink(order as RunOrder)) {
+        await assertStopDoneForOfficeDelivered(
+          this.prisma,
+          order as RunOrder,
+          OrderStatus.DELIVERED,
+        );
+      }
     }
     // SA-919: THIS completion's `completionAt`, the claim's stamp (never `deliveredAt`): its tender and its email key
     let handedOverAt: Date | null;
