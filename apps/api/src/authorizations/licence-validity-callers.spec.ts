@@ -10,20 +10,21 @@ jest.mock("../common/db-locks", () => ({
 
 import * as fs from "fs";
 import * as path from "path";
+import * as shared from "@routeflow/types";
+import { overdueCutoff } from "../common/calendar-date";
 import {
   displayLicenceStatus,
   isLicenceExpired,
   isLicenceLive,
   licenceExpiryCutoff,
-} from "@routeflow/types";
-import { overdueCutoff } from "../common/calendar-date";
+} from "./licence-validity";
 import { RegulatedVisibilityService } from "../buyer/regulated-visibility.service";
 import { CustomersService } from "../customers/customers.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 /**
- * B330 (class fix, #3842 review): ONE licence-validity rule (`packages/types/licence-validity.ts`),
- * used by every caller. A licence is good through the END of its printed day in the tenant's zone.
+ * B330 (class fix, #3842 review): ONE licence-validity rule (`./licence-validity` for the api, `packages/types/licence-validity.ts` for
+ * web and mobile, pinned equal below), used by every caller. A licence is good through the END of its printed day in the tenant's zone.
  * Chicago, CDT (UTC-5): the printed day 2026-03-09 ends at 2026-03-10T05:00Z, so 03:00Z on the 10th is
  * still the evening of the printed day - the instant a by-instant compare calls the licence expired.
  */
@@ -96,6 +97,40 @@ describe("REG-B330 the shared licence rule", () => {
   });
 });
 
+describe("REG-B330 the api rule and the web/mobile shared rule are the same function", () => {
+  it("REG-B330 identical verdicts over zones x instants x expiries (incl. bad zones and bad expiries)", () => {
+    const zones = [
+      CHI,
+      "UTC",
+      "Asia/Kolkata",
+      "Pacific/Kiritimati",
+      "Not/AZone",
+      "",
+      null,
+      undefined,
+    ];
+    const instants = [
+      "2026-03-09T23:59:59.999Z",
+      "2026-03-10T03:00:00.000Z",
+      "2026-03-10T05:00:00.000Z",
+    ];
+    const expiries = [PRINTED, "2026-03-09", "not-a-date", new Date(NaN), null, undefined, ""];
+    for (const z of zones)
+      for (const i of instants) {
+        const now = new Date(i);
+        expect(licenceExpiryCutoff(now, z).getTime()).toBe(
+          shared.licenceExpiryCutoff(now, z).getTime(),
+        );
+        for (const e of expiries) {
+          expect(isLicenceExpired(e, now, z)).toBe(shared.isLicenceExpired(e, now, z));
+          const row = { status: "VERIFIED", expiresAt: e };
+          expect(isLicenceLive(row, now, z)).toBe(shared.isLicenceLive(row, now, z));
+          expect(displayLicenceStatus(row, now, z)).toBe(shared.displayLicenceStatus(row, now, z));
+        }
+      }
+  });
+});
+
 describe("REG-B330 M1: the buyer regulated-visibility gate agrees with the sale guard", () => {
   it("REG-B330 a licence valid through today is not hidden; the next local day hides it", async () => {
     const run = async (now: Date) => {
@@ -145,6 +180,8 @@ describe("REG-B330 caller census", () => {
     ["apps/api/src/authorizations/authorizations.service.ts", 3], // buyer list, bells, assertNotLiveVerified
     ["apps/api/src/buyer/regulated-visibility.service.ts", 1], // buyer catalog/dashboard gate
     ["apps/api/src/customers/customers.service.ts", 1], // merge rank
+    ["apps/api/src/onboarding/onboarding-auto-checks.ts", 1], // onboarding "licences valid" check (cutoff)
+    ["apps/web/app/(dashboard)/compliance/[categoryId]/_components/CompliancePackPanel.tsx", 1], // sales-tab badge
     ["apps/mobile/lib/customer-authorizations-logic.ts", 1], // operator Licenses badge
     ["apps/web/lib/api/authorizations.ts", 1], // customer-file Licenses badge
   ];
@@ -172,10 +209,13 @@ describe("REG-B330 caller census", () => {
     // A licence row's expiry is read off a record (`a.expiresAt`); a bare `expiresAt` is a form field the
     // user is typing, and its "not in the past" check is input validation, not a validity decision.
     const CLOCK = String.raw`(?:\bnow\b|new Date\(\)|Date\.now\(\))`;
+    const FIELD = String.raw`(?:expiresAt|tobaccoLicenseExpiry)`;
     const INLINE = [
-      new RegExp(String.raw`\.expiresAt\b[^\n;]*?(?:<=?|>=?)\s*${CLOCK}`),
-      new RegExp(String.raw`${CLOCK}\s*(?:<=?|>=?)[^\n;]*\.expiresAt\b`),
-      new RegExp(String.raw`new Date\([^)\n]*\.expiresAt[^)\n]*\)(?:\.getTime\(\))?\s*(?:<=?|>=?)`),
+      new RegExp(String.raw`\.${FIELD}\b[^\n;]*?(?:<=?|>=?)\s*${CLOCK}`),
+      new RegExp(String.raw`${CLOCK}\s*(?:<=?|>=?)[^\n;]*\.${FIELD}\b`),
+      new RegExp(String.raw`new Date\([^)\n]*\.${FIELD}[^)\n]*\)(?:\.getTime\(\))?\s*(?:<=?|>=?)`),
+      // A Prisma where-clause `tobaccoLicenseExpiry: { lt: now }` is the SQL twin of the same by-instant compare.
+      new RegExp(String.raw`\b${FIELD}\s*:\s*\{\s*lte?\s*:\s*${CLOCK}`),
     ];
     const LICENCE_FILE = /CustomerAuthorization|licen[cs]e/i;
     // Not a licence-validity decision: form-input validation ("the date you typed is not in the past") and
