@@ -84,7 +84,7 @@ describe("CounterReturnAction", () => {
     fireEvent.click(screen.getByRole("button", { name: "Return items" }));
     React.act(() => recorded?.({}, { resolution: "STORE_CREDIT", amount: 12.4 }));
     expect(screen.getByRole("status")).toHaveTextContent(
-      "Return recorded. $12.40 added as store credit for Acme Deli.",
+      "Return recorded. $12.40 given as store credit for Acme Deli.",
     );
     expect(screen.getByRole("status").textContent).not.toMatch(
       /hand|cash|back to the customer|card/i,
@@ -97,7 +97,7 @@ describe("CounterReturnAction", () => {
     fireEvent.click(screen.getByRole("button", { name: "Return items" }));
     React.act(() => recorded?.({}, undefined));
     expect(screen.getByRole("status")).toHaveTextContent(
-      "Return recorded. Store credit added for the customer.",
+      "Return recorded. Store credit given for the customer.",
     );
     expect(screen.getByRole("status").textContent).not.toMatch(/hand|cash|back to the customer/i);
   });

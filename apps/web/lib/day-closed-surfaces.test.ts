@@ -97,7 +97,7 @@ const SURFACES: ReadonlyArray<readonly [string, (e: unknown) => string, unknown,
     "Inline return dialog refund",
     (e) => REFUND_COPY[refundErrorKind(e)],
     COUNTER,
-    "Return saved. This day is closed, so the refund can't be paid out now. Give store credit instead, or open the return and record the refund on a later date.",
+    "Return recorded. This day is closed, so the refund can't be paid out now. Give store credit instead, or open the return and record the refund on a later date.",
   ],
   // The global fallback (any dialog without copy of its own: void payment, bookkeeping payment, finance reports).
   ["Global toast fallback (till write)", genericToastCopy, COUNTER, COUNTER_SALE_DAY_CLOSED_COPY],

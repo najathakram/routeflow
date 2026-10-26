@@ -1,7 +1,6 @@
 import {
   REFUND_COPY,
   creditOutcomeLine,
-  refundOutcomeLine,
   refundedLine,
   storeCreditAddedLine,
   takeBackCreditLabel,
@@ -12,30 +11,29 @@ import {
 describe("creditOutcomeLine contexts", () => {
   it("counter (settled sale): store credit for the next order", () => {
     expect(creditOutcomeLine("$12.40", "nextOrder", "Acme Foods")).toBe(
-      "$12.40 is added as store credit for Acme Foods, to use on the next order.",
+      "$12.40 is given as store credit for Acme Foods, to use on the next order.",
     );
   });
   it("order create/edit (carrying order): goes toward this order, never 'next order'", () => {
     const line = creditOutcomeLine("$12.40", "thisOrder", "Acme Foods");
     expect(line).toBe(
-      "$12.40 is added as store credit for Acme Foods and goes toward this order when you save.",
+      "$12.40 is given as store credit for Acme Foods and goes toward this order when you save.",
     );
     expect(line).not.toMatch(/next order/i);
   });
   it("Returns page with the apply-to choice: neutral", () => {
     const line = creditOutcomeLine("$12.40", "account", "Acme Foods");
-    expect(line).toBe("$12.40 is added as store credit for Acme Foods.");
+    expect(line).toBe("$12.40 is given as store credit for Acme Foods.");
     expect(line).not.toMatch(/next order|this order/i);
   });
   it("no name falls back to 'the customer'; a name ending in s needs no possessive", () => {
     expect(creditOutcomeLine("$1.00", "account")).toBe(
-      "$1.00 is added as store credit for the customer.",
+      "$1.00 is given as store credit for the customer.",
     );
-    expect(creditOutcomeLine("$1.00", "account", "Jones")).not.toMatch(/'s|s'/);
+    expect(creditOutcomeLine("$1.00", "account", "Acme Goods")).not.toMatch(/'s|s'/);
   });
-  it("one word for credit: store credit; refund line drops 'not onto their account'", () => {
-    expect(refundOutcomeLine("$12.40")).toBe("$12.40 goes back to the customer.");
-    expect(takeBackCreditLabel("$12.40")).toBe("Take back items and add $12.40 store credit");
+  it("one word for credit: store credit, and one verb: give", () => {
+    expect(takeBackCreditLabel("$12.40")).toBe("Take back items and give $12.40 store credit");
   });
 });
 
@@ -46,7 +44,7 @@ describe("server-answer lines", () => {
     expect(refundedLine("CHECK", "$9.00")).toBe("Refunded $9.00 by check.");
   });
   it("storeCreditAddedLine", () => {
-    expect(storeCreditAddedLine("$9.00")).toBe("$9.00 added as store credit.");
+    expect(storeCreditAddedLine("$9.00")).toBe("$9.00 given as store credit.");
   });
 });
 

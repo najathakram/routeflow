@@ -58,7 +58,6 @@ import {
   handOverLine,
   refundedLine,
   refundErrorKind,
-  refundOutcomeLine,
   storeCreditAddedLine,
   takeBackCreditLabel,
   takeBackRefundLabel,
@@ -67,6 +66,7 @@ import {
   type CreditContext,
   type RefundErrorKind,
 } from "./refund-copy";
+import { confirmRefusal, walkInStoreCreditRefused } from "./quote-guards";
 import { InlineReturnSection, type InlineReturnSectionState } from "./InlineReturnSection";
 
 const REASON_HINT_ID = "return-reason-hint";
@@ -295,7 +295,7 @@ export function RecordInlineReturnDialog({
 
   // SA-727b: a saved REFUND-intent return whose refund is pending is credited instead (never re-captured).
   function doStoreCredit(ret: InlineReturnRecord) {
-    if (walkIn) return; // SA-972: a walk-in cannot hold store credit; the button is never rendered, and this never sends it
+    if (walkInStoreCreditRefused(quoted)) return; // SA-972 §2.2: a walk-in cannot hold store credit, whatever canRefund says
     if (busyRef.current) return;
     busyRef.current = true;
     retriedRef.current = true;
@@ -392,10 +392,12 @@ export function RecordInlineReturnDialog({
   }
 
   function handleConfirm() {
-    if (!sectionState.captureReason) {
-      toast({ title: "Choose a reason before confirming", variant: "error" });
+    const refusal = confirmRefusal({ walkInNoRefund, hasReason: !!sectionState.captureReason });
+    if (refusal) {
+      toast({ title: refusal, variant: "error" });
       return;
     }
+    if (!sectionState.captureReason) return; // narrows the type; confirmRefusal has already said why
     if (showChoice) {
       if (busyRef.current) return;
       busyRef.current = true;
@@ -642,13 +644,13 @@ export function RecordInlineReturnDialog({
             )}
             {result.creditNoteId && (
               <div className="flex justify-between">
-                <dt className="text-navy/70">Credit note</dt>
+                <dt className="text-navy/70">Store credit</dt>
                 <dd>
                   <a
                     className="text-brand-600 underline"
                     href={`/credit-notes/${result.creditNoteId}`}
                   >
-                    View credit note
+                    View store credit
                   </a>
                 </dd>
               </div>
@@ -690,7 +692,7 @@ export function RecordInlineReturnDialog({
             >
               <p className="text-sm font-medium text-navy">Ledger reversal parked</p>
               <p className="text-xs text-navy/70">
-                The credit note and refund are recorded, but {result.parkedReversals.pieces}{" "}
+                The store credit and refund are recorded, but {result.parkedReversals.pieces}{" "}
                 piece(s) across {result.parkedReversals.count} line(s) were not taken off the
                 regulated sales ledger. The original sale&apos;s pack size is unknown, so the system
                 could not work out the reversal safely. The period cannot be filed until this is
@@ -760,8 +762,8 @@ function RefundChoice({
 }) {
   const refund = resolution === "REFUND";
   const errorText = error ? (walkIn ? WALK_IN_REFUND_LINE : REFUND_COPY)[error] : "";
-  // "Return saved." is good news (the return exists), so only what went wrong is red.
-  const SAVED = "Return saved.";
+  // "Return recorded." is good news (the return exists), so only what went wrong is red.
+  const SAVED = "Return recorded.";
   const startsSaved = errorText.startsWith(SAVED);
   const errorLine = error ? (
     <p role="alert" className="text-sm font-medium">

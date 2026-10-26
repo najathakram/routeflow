@@ -34,7 +34,7 @@ function storeCreditLine(amount: number | undefined, customer: string | null | u
   const who = customer?.trim() || "the customer";
   return amount !== undefined
     ? `Return recorded. ${storeCreditAddedLine(money(amount)).replace(/\.$/, "")} for ${who}.`
-    : `Return recorded. Store credit added for ${who}.`;
+    : `Return recorded. Store credit given for ${who}.`;
 }
 
 /** SA-929: the words come from what the server recorded (RecordedInfo is read off its answer). */

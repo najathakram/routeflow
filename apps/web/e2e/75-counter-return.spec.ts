@@ -184,8 +184,10 @@ test("W-711 F22 + W-712 F25: the quote names the product and says where the mone
   const rowText = await quoteRow.innerText();
   expect(rowText.indexOf("Cola 12oz Can")).toBeGreaterThanOrEqual(0);
   expect(rowText.indexOf("Cola 12oz Can")).toBeLessThan(rowText.indexOf("From order #ORD-00001"));
-  // walk-in sales refund: the note and the button say so, with the real amount
-  await expect(dialog).toContainText("$1.50 goes back to the customer.");
+  // walk-in sales refund: ONE sentence says why (mm-ux judge, notes/apple-ux/2026-10-25-w783-judge-3748.md: no second
+  // "goes back" line) and the button carries the real amount
+  await expect(dialog).toContainText("Walk-in sales can't hold store credit, so refund the money.");
+  await expect(dialog).not.toContainText(/goes back to the customer/i);
   await expect(
     dialog.getByRole("button", { name: "Take back items and refund $1.50" }),
   ).toBeVisible();

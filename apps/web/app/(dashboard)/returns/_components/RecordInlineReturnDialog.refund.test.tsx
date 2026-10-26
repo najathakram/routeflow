@@ -89,7 +89,7 @@ const RECORD = {
 const apiErr = (status: number, code?: string) => ({
   response: { status, data: { code, message: "SERVER RAW TEXT" } },
 });
-/** The refund error line is "Return saved." (calm) plus what went wrong (red): two spans in one alert, so match the alert. */
+/** The refund error line is "Return recorded." (calm) plus what went wrong (red): two spans in one alert, so match the alert. */
 const findLine = (copy: string) =>
   waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(copy));
 
@@ -151,23 +151,23 @@ beforeEach(() => {
 describe("choice block visibility", () => {
   it("named customer, fully paid: Store credit is the default; Refund shows the quoted amount", async () => {
     await toQuote(quote());
-    expect(screen.getByText("How do you want to refund the money?")).toBeInTheDocument();
+    expect(screen.getByText("How should the money go back to the customer?")).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: "Store credit" })).toBeChecked();
     expect(screen.getByRole("radio", { name: "Refund $12.40" })).not.toBeChecked();
-    expect(confirmBtn(/^take back items and add \$[\d.]+ store credit$/i)).toBeInTheDocument();
+    expect(confirmBtn(/^take back items and give \$[\d.]+ store credit$/i)).toBeInTheDocument();
   });
 
   it("not fully paid: no choice block, today's dialog exactly", async () => {
     await toQuote(quote({ canRefund: false, paidInFull: false }));
     expect(screen.queryByText(/refund the money/i)).toBeNull();
     expect(screen.queryByRole("radio", { name: /store credit/i })).toBeNull();
-    expect(confirmBtn(/^take back items and add \$[\d.]+ store credit$/i)).toBeInTheDocument();
+    expect(confirmBtn(/^take back items and give \$[\d.]+ store credit$/i)).toBeInTheDocument();
   });
 
   it("customer-detail entry (no allowRefund): no choice block even when canRefund", async () => {
     await toQuote(quote(), { allowRefund: false, orderId: "order-1" });
     expect(screen.queryByText(/refund the money/i)).toBeNull();
-    expect(confirmBtn(/^take back items and add \$[\d.]+ store credit$/i)).toBeInTheDocument();
+    expect(confirmBtn(/^take back items and give \$[\d.]+ store credit$/i)).toBeInTheDocument();
   });
 
   it("walk-in: no one-option radio; one sentence, Refund by, and the button (mm-ux #3748 fix 1)", async () => {
@@ -187,21 +187,21 @@ describe("choice block visibility", () => {
 
   it("W21b: the quote note follows the choice (credit note vs refund; no choice block = unchanged)", async () => {
     await toQuote(quote());
-    expect(screen.getByText(/is added as store credit for/i)).toBeInTheDocument();
+    expect(screen.getByText(/is given as store credit for/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("radio", { name: "Refund $12.40" }));
     expect(screen.queryByText(/store credit for/i)).toBeNull();
     // Refund: the hand-back line says it once (no second "goes back" sentence)
     expect(screen.getByText("Hand $12.40 back to the customer.")).toBeInTheDocument();
     expect(screen.queryByText(/goes back to the customer/i)).toBeNull();
     fireEvent.click(screen.getByRole("radio", { name: "Store credit" }));
-    expect(screen.getByText(/is added as store credit for/i)).toBeInTheDocument();
+    expect(screen.getByText(/is given as store credit for/i)).toBeInTheDocument();
     expect(screen.queryByText(/hand \$12\.40 back/i)).toBeNull();
   });
 
   it("W-712: the note and button name the real amount and where it goes (credit vs refund)", async () => {
     await toQuote(quote());
-    expect(screen.getByText("$12.40 is added as store credit for Acme Foods.")).toBeInTheDocument();
-    expect(confirmBtn(/^take back items and add \$12\.40 store credit$/i)).toBeInTheDocument();
+    expect(screen.getByText("$12.40 is given as store credit for Acme Foods.")).toBeInTheDocument();
+    expect(confirmBtn(/^take back items and give \$12\.40 store credit$/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("radio", { name: "Refund $12.40" }));
     expect(screen.getByText("Hand $12.40 back to the customer.")).toBeInTheDocument();
     expect(confirmBtn(/^take back items and refund \$12\.40$/i)).toBeInTheDocument();
@@ -210,7 +210,7 @@ describe("choice block visibility", () => {
 
   it("W21b: with no choice block the credit line is today's", async () => {
     await toQuote(quote({ canRefund: false, paidInFull: false }));
-    expect(screen.getByText(/is added as store credit for/i)).toBeInTheDocument();
+    expect(screen.getByText(/is given as store credit for/i)).toBeInTheDocument();
   });
 
   it("W21b: walk-in (Refund preselected) never shows a credit line", async () => {
@@ -321,7 +321,7 @@ describe("refund flow", () => {
 
   it("store credit with the block sends resolution STORE_CREDIT and never refunds", async () => {
     const { onRecorded } = await toQuote(quote());
-    fireEvent.click(confirmBtn(/^take back items and add \$[\d.]+ store credit$/i));
+    fireEvent.click(confirmBtn(/^take back items and give \$[\d.]+ store credit$/i));
     await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
     expect(captureMutate.mock.calls[0][0].resolution).toBe("STORE_CREDIT");
     captureOk({ ...RECORD, creditNoteId: "cn-1" });
@@ -335,7 +335,7 @@ describe("refund flow", () => {
 
   it("hidden block: capture request carries no resolution field (today's payload)", async () => {
     const { onRecorded } = await toQuote(quote({ canRefund: false }));
-    fireEvent.click(confirmBtn(/^take back items and add \$[\d.]+ store credit$/i));
+    fireEvent.click(confirmBtn(/^take back items and give \$[\d.]+ store credit$/i));
     await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
     expect("resolution" in captureMutate.mock.calls[0][0]).toBe(false);
     // a not-fully-paid sale is credited too: the caller still learns it was store credit, and how much
@@ -370,7 +370,7 @@ describe("refund flow", () => {
     fireEvent.click(confirmBtn(/^take back items and refund/i));
     await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
     captureOk();
-    await findLine("Return saved. Refund didn't go through. Try again.");
+    await findLine("Return recorded. Refund didn't go through. Try again.");
     expect(screen.queryByText("SERVER RAW TEXT")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Retry refund" }));
     await waitFor(() => expect(refundReturn).toHaveBeenCalledTimes(2));
@@ -409,7 +409,7 @@ describe("refund flow", () => {
     captureOk();
     await findLine(REFUND_COPY.dayClosed);
     expect(REFUND_COPY.dayClosed).toBe(
-      "Return saved. This day is closed, so the refund can't be paid out now. Give store credit instead, or open the return and record the refund on a later date.",
+      "Return recorded. This day is closed, so the refund can't be paid out now. Give store credit instead, or open the return and record the refund on a later date.",
     );
     expect(document.body.textContent).not.toContain("SERVER RAW TEXT");
     expect(document.body.textContent).not.toContain("Refund didn't go through");
@@ -612,7 +612,7 @@ describe("refund flow", () => {
   it.each([
     [
       "REFUND_NEEDS_PAID_INVOICE",
-      "Return saved. This sale isn't fully paid, so it can't be refunded. Issue store credit from the order instead.",
+      "Return recorded. This sale isn't fully paid, so it can't be refunded. Give store credit from the order instead.",
     ],
     ["RETURN_REFUNDED_CASH", "This return was already refunded. Nothing more was refunded."],
     ["RETURN_NOT_REFUNDABLE", "There's nothing to refund on this return."],
@@ -650,7 +650,7 @@ describe("refund flow", () => {
 
   it("store credit: the receipt credit uses the server's refundAmount when present", async () => {
     const { onRecorded } = await toQuote(quote());
-    fireEvent.click(confirmBtn(/^take back items and add \$[\d.]+ store credit$/i));
+    fireEvent.click(confirmBtn(/^take back items and give \$[\d.]+ store credit$/i));
     await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
     captureOk({ ...RECORD, creditNoteId: "cn-1", refundAmount: "11.9000" });
     await waitFor(() => expect(onRecorded).toHaveBeenCalled());
@@ -668,7 +668,7 @@ describe("refund flow", () => {
     fireEvent.click(confirmBtn(/^take back items and refund/i));
     await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
     captureOk();
-    await findLine("Return saved. Refund didn't go through. Try again.");
+    await findLine("Return recorded. Refund didn't go through. Try again.");
     // the modal's X (aria-label "Close", no text)
     const x = screen.getAllByRole("button", { name: "Close" }).find((b) => b.textContent === "");
     fireEvent.click(x as HTMLElement);
@@ -688,7 +688,7 @@ describe("refund flow", () => {
     fireEvent.click(confirmBtn(/^take back items and refund/i));
     await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
     captureOk();
-    await findLine("Return saved. Refund didn't go through. Try again.");
+    await findLine("Return recorded. Refund didn't go through. Try again.");
     expect(screen.queryByRole("button", { name: "Back" })).toBeNull();
   });
 
@@ -704,7 +704,7 @@ describe("refund flow", () => {
     await refundFlow();
     quotePending = true;
     fireEvent.click(screen.getByRole("radio", { name: "Store credit" }));
-    expect(confirmBtn(/^take back items and add \$[\d.]+ store credit$/i)).toBeDisabled();
+    expect(confirmBtn(/^take back items and give \$[\d.]+ store credit$/i)).toBeDisabled();
   });
 
   it("RETURN_ALREADY_RESOLVED after a retry says to check before handing anything over", async () => {
@@ -725,7 +725,7 @@ describe("refund flow", () => {
   it("the choice is a fieldset with a legend", async () => {
     await refundFlow();
     expect(
-      screen.getByRole("group", { name: "How do you want to refund the money?" }),
+      screen.getByRole("group", { name: "How should the money go back to the customer?" }),
     ).toBeInTheDocument();
   });
 
@@ -903,7 +903,7 @@ describe("refund flow", () => {
     // while the re-quote is in flight the confirm stays disabled
     expect(confirmBtn(/^take back items and refund/i)).toBeDisabled();
     act(() => lastCall(quoteMutate)[1].onError?.(new Error("network")));
-    await findLine("Return saved. Refund didn't go through. Try again.");
+    await findLine("Return recorded. Refund didn't go through. Try again.");
     const confirm = screen.queryByRole("button", { name: /^take back items and refund/i });
     expect(confirm === null || (confirm as HTMLButtonElement).disabled).toBe(true);
     expect(refundReturn).toHaveBeenCalledTimes(1);
@@ -932,7 +932,7 @@ describe("refund flow", () => {
     ).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: "Store credit" })).toBeChecked();
     expect(screen.getByRole("radio", { name: /^refund/i })).toBeDisabled();
-    fireEvent.click(confirmBtn(/^take back items and add \$[\d.]+ store credit$/i));
+    fireEvent.click(confirmBtn(/^take back items and give \$[\d.]+ store credit$/i));
     await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
     expect(captureMutate.mock.calls[0][0].resolution).toBe("STORE_CREDIT");
   });
@@ -989,21 +989,21 @@ describe("refund flow", () => {
 describe("W-712 credit words per host (SA-929)", () => {
   it("Returns page / order detail: neutral store-credit line, no 'next order' next to the apply-to choice", async () => {
     await toQuote(quote());
-    expect(screen.getByText("$12.40 is added as store credit for Acme Foods.")).toBeInTheDocument();
+    expect(screen.getByText("$12.40 is given as store credit for Acme Foods.")).toBeInTheDocument();
     expect(screen.queryByText(/next order/i)).toBeNull();
   });
 
   it("counter (settled sale): the credit is for the next order", async () => {
     await toQuote(quote(), { sourceOrderId: "order-1" });
     expect(
-      screen.getByText("$12.40 is added as store credit for Acme Foods, to use on the next order."),
+      screen.getByText("$12.40 is given as store credit for Acme Foods, to use on the next order."),
     ).toBeInTheDocument();
   });
 
   it("names ending in s need no possessive", async () => {
-    await toQuote(quote(), { customerName: "Jones Foods Inc" });
+    await toQuote(quote(), { customerName: "Acme Foods Inc" });
     expect(
-      screen.getByText("$12.40 is added as store credit for Jones Foods Inc."),
+      screen.getByText("$12.40 is given as store credit for Acme Foods Inc."),
     ).toBeInTheDocument();
   });
 
@@ -1073,7 +1073,7 @@ describe("W-712 credit words per host (SA-929)", () => {
 
   it("mm-ux 93.8%: the named case's credit sentence sits with the radio, not under the Total", async () => {
     await toQuote(quote());
-    const sentence = "$12.40 is added as store credit for Acme Foods.";
+    const sentence = "$12.40 is given as store credit for Acme Foods.";
     const choice = screen.getByRole("group", { name: REFUND_COPY.heading });
     expect(within(choice).getByText(sentence)).toBeInTheDocument();
     const total = screen.getByText("Total").closest("div.rounded-lg") as HTMLElement;
@@ -1112,12 +1112,12 @@ describe("SA-929: the words after submit come from the server's answer", () => {
     );
   });
 
-  it("a store-credit answer reads 'added as store credit' with the server's figure", async () => {
+  it("a store-credit answer reads 'given as store credit' with the server's figure", async () => {
     const { onRecorded } = await toQuote(quote());
-    fireEvent.click(confirmBtn(/^take back items and add \$12\.40 store credit$/i));
+    fireEvent.click(confirmBtn(/^take back items and give \$12\.40 store credit$/i));
     await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
     captureOk({ ...RECORD, creditNoteId: "cn-1", refundAmount: "10.0000" });
-    await screen.findByText("$10.00 added as store credit.");
+    await screen.findByText("$10.00 given as store credit.");
     expect(onRecorded).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ resolution: "STORE_CREDIT", amount: 10 }),
@@ -1126,7 +1126,7 @@ describe("SA-929: the words after submit come from the server's answer", () => {
 
   it("a capture the server already refunded is worded as a refund, not as the client's store-credit choice", async () => {
     const { onRecorded } = await toQuote(quote());
-    fireEvent.click(confirmBtn(/^take back items and add \$12\.40 store credit$/i));
+    fireEvent.click(confirmBtn(/^take back items and give \$12\.40 store credit$/i));
     await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
     captureOk({
       ...RECORD,
@@ -1204,13 +1204,13 @@ describe("mm-ux retake: error states say one thing, once", () => {
     await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(2));
   });
 
-  it("'Return saved.' is not red; only what went wrong is", async () => {
+  it("'Return recorded.' is not red; only what went wrong is", async () => {
     refundReturn.mockRejectedValueOnce(apiErr(500));
     await toQuote(quote({ customerIsWalkIn: true, paidMethods: ["CASH"] }));
     fireEvent.click(confirmBtn(/^take back items and refund/i));
     await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
     captureOk();
-    const saved = await screen.findByText("Return saved.");
+    const saved = await screen.findByText("Return recorded.");
     expect(saved.className).not.toMatch(/danger/);
     expect(screen.getByText("Refund didn't go through. Try again.").className).toMatch(/danger/);
   });
@@ -1221,7 +1221,7 @@ describe("mm-ux retake: error states say one thing, once", () => {
     fireEvent.click(confirmBtn(/^take back items and refund/i));
     await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
     captureOk();
-    await screen.findByText("Return saved.");
+    await screen.findByText("Return recorded.");
     expect(document.body.textContent).toMatch(
       /open the return and record the refund on a later date/i,
     );
@@ -1254,7 +1254,7 @@ describe("mm-ux retake: error states say one thing, once", () => {
 
 describe("SA-972: a walk-in's refund refusals never name store credit", () => {
   const NO_REFUND =
-    "Return saved. This sale can't be refunded here. Ask office staff to refund it.";
+    "Return recorded. This sale can't be refunded here. Ask office staff to refund it.";
   it.each(["REFUND_NEEDS_PAID_INVOICE", "REFUND_PAID_WITH_STORE_CREDIT"])(
     "a 409 %s reads the no-refund sentence, and no store credit is offered or sent",
     async (code) => {
@@ -1277,7 +1277,7 @@ describe("SA-972: a walk-in's refund refusals never name store credit", () => {
     await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
     captureOk();
     expect(
-      await screen.findByText(/issue store credit from the order instead/i),
+      await screen.findByText(/give store credit from the order instead/i),
     ).toBeInTheDocument();
   });
 
