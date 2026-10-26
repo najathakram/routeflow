@@ -20,16 +20,16 @@ const normUnit = (u: string | null | undefined): string => {
 const sameUnit = (a: string | null | undefined, b: string | null | undefined) =>
   normUnit(a) === normUnit(b);
 
-/** A null pack and a pack of 1 both mean "by the piece"... */
+/** A comparison entry's pack: the server sends null for "by the piece" there (a plot unit is always a known pack). */
 const packOf = (p: number | null | undefined): number => p ?? 1;
 
 /**
- * ...unless the row's unit is a pack (Box / Case) with no pack size: the wire sends `unitsPerBox` null for both "by the
- * piece" and "pack unknown" (a line from before the pack was snapshotted), so the unit label tells them apart. Plotting
- * an unknown pack as pieces would draw a case price as a piece price.
+ * A history row's pack, from the server's own `salePack` (SA-1004): 1 = by the piece, > 1 = a pack, null = unknown.
+ * The unit label is never consulted. An older server sends no `salePack` (a deploy skew): read `unitsPerBox` as before,
+ * null meaning one piece.
  */
-const packUnknown = (r: Pick<PriceHistoryRow, "unitLabel" | "unitsPerBox"> | undefined): boolean =>
-  r != null && r.unitsPerBox == null && normUnit(r.unitLabel) === "case";
+const rowPack = (r: Pick<PriceHistoryRow, "unitsPerBox" | "salePack">): number | null =>
+  r.salePack === undefined ? (r.unitsPerBox ?? 1) : r.salePack;
 
 export type ComparisonState = "loading" | "error" | "ready";
 
@@ -129,54 +129,31 @@ export function buildChartModel(input: {
   panelOpen: boolean;
 }): ChartModel {
   const { unit, rows, comparison, comparisonState, panelOpen } = input;
-  const newest = [...rows].sort(
+  const neverSold = rows.length === 0;
+  // The plot (SA-1004): the newest KNOWN-pack row's pack, with the unit's entry at that pack. A tab with no known-pack row
+  // (never sold, or only unknown-pack lines) takes the one entry the server sends for the unit, at any pack (D2).
+  const known = rows.filter((r) => rowPack(r) !== null);
+  const newestKnown = [...known].sort(
     (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
   )[0];
-  const neverSold = rows.length === 0;
-  if (!neverSold && packUnknown(newest)) {
-    // an unknown pack is not "by the piece": no plot, no comparison, one honest reason
-    return {
-      unitPhrase: unit ?? "",
-      plotPack: null,
-      own: [],
-      like: [],
-      conv: [],
-      canDraw: { own: false, like: false, conv: false },
-      ownFiltered: false,
-      notes: [
-        {
-          id: "ph-note-pack-unknown",
-          text: NOTE_COPY.packUnknown,
-          role: "status",
-          lines: ["own", "like", "conv"],
-        },
-      ],
-      coveredByPanel: false,
-    };
-  }
-
-  // The matching entry: with history, the tab's unit and the newest row's pack; never sold, the one entry the server
-  // returns for the unit. A lookup, no math.
+  const knownPack = newestKnown ? rowPack(newestKnown) : null;
   const entry =
     unit == null || !comparison
       ? undefined
       : comparison.find(
           (e) =>
             sameUnit(e.unitLabel, unit) &&
-            (neverSold || packOf(e.unitsPerBox) === packOf(newest?.unitsPerBox)),
+            (knownPack === null || packOf(e.unitsPerBox) === knownPack),
         );
-  const plotPack = neverSold
-    ? entry
-      ? packOf(entry.unitsPerBox)
-      : null
-    : packOf(newest?.unitsPerBox);
+  const plotPack = knownPack ?? (entry ? packOf(entry.unitsPerBox) : null);
   const phrase = unitPhrase(unit ?? entry?.unitLabel ?? "", plotPack);
 
-  const inPack = plotPack == null ? [] : rows.filter((r) => packOf(r.unitsPerBox) === plotPack);
+  const inPack = knownPack === null ? [] : known.filter((r) => rowPack(r) === knownPack);
   const own: ChartPoint[] = [...inPack]
     .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
     .map((r) => ({ t: new Date(r.date).getTime(), price: r.unitPrice, type: r.priceType }));
   const ownFiltered = rows.length > inPack.length;
+  const onlyUnknownPack = !neverSold && known.length === 0;
 
   const ready = comparisonState === "ready";
   const like = ready ? refPoints(entry?.likeForLike) : [];
@@ -189,6 +166,13 @@ export function buildChartModel(input: {
 
   const coveredByPanel = panelOpen && comparisonState !== "ready";
   const notes: ChartNote[] = [];
+  if (onlyUnknownPack)
+    notes.push({
+      id: "ph-note-pack-unknown",
+      text: NOTE_COPY.packUnknown,
+      role: "status",
+      lines: ["own"],
+    });
   if (comparisonState === "loading" && !panelOpen) {
     notes.push({
       id: "ph-note-loading",

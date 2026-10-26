@@ -165,6 +165,40 @@ describe("CustomerPriceHistoryService v1.1", () => {
     });
   });
 
+  describe("SA-1004 (S1): the row carries salePackOf's answer, not only its > 1 projection", () => {
+    it("a factor-1 Case line is salePack 1 and a split line with no snapshot is salePack null; unitsPerBox is null for BOTH", async () => {
+      prisma.invoice.findMany.mockResolvedValue([
+        inv("a", "2026-06-10T00:00:00Z", 1, {
+          items: [line({ unitPrice: 1, unitLabel: "Case", unitsPerBox: 1 })],
+        }),
+        inv("b", "2026-05-10T00:00:00Z", 9.99, {
+          items: [line({ unitPrice: 9.99, unitLabel: "Box", boxes: 1, pieces: 0, qty: 1 })],
+        }),
+        inv("c", "2026-04-10T00:00:00Z", 100, {
+          items: [
+            line({
+              unitPrice: 100,
+              unitLabel: "Case",
+              unitsPerBox: 12,
+              boxes: 1,
+              pieces: 0,
+              qty: 12,
+            }),
+          ],
+        }),
+      ]);
+      const rows = (await run()).rows as Array<{
+        unitLabel: string;
+        salePack: unknown;
+        unitsPerBox: unknown;
+      }>;
+      const byLabel = (l: string, i = 0) => rows.filter((r) => r.unitLabel === l)[i]!;
+      expect(byLabel("Case", 0)).toMatchObject({ salePack: 1, unitsPerBox: null }); // factor 1: a known pack of 1
+      expect(byLabel("Box")).toMatchObject({ salePack: null, unitsPerBox: null }); // pre-snapshot: unknown
+      expect(byLabel("Case", 1)).toMatchObject({ salePack: 12, unitsPerBox: 12 }); // a real pack, both agree
+    });
+  });
+
   describe("?compare=all aggregate", () => {
     // SA-954 D7: the compare read is ONE read of every customer (this one included); the "other customers" split is in memory.
     const withOthers = (rows: unknown[]) =>

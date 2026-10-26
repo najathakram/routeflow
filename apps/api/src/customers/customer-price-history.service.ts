@@ -168,6 +168,7 @@ function buildCandidate(
       unitPrice: roundMoney(Number(line.unitPrice)),
       unitLabel,
       unitsPerBox: pack != null && pack > 1 ? pack : null,
+      salePack: pack, // SA-1004: salePackOf's own answer (1 = piece, > 1 = pack, null = unknown)
       qty,
       boxes: split ? (line.boxes ?? null) : null,
       pieces: split ? (line.pieces ?? null) : null,

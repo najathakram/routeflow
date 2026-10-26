@@ -21,6 +21,7 @@ const row = (over: Partial<PriceHistoryRow> = {}): PriceHistoryRow => ({
   unitPrice: 12.9,
   unitLabel: "case",
   unitsPerBox: 24,
+  salePack: over.unitsPerBox !== undefined ? (over.unitsPerBox ?? 1) : 24, // the server's pairing unless a case sets it
   qty: 2,
   boxes: 2,
   pieces: 0,

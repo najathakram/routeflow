@@ -20,6 +20,12 @@ export interface PriceHistoryRow {
   unitLabel: string;
   /** Pieces per unit when the unit is a pack (> 1), else null. */
   unitsPerBox: number | null;
+  /**
+   * `salePackOf`'s answer for this line, sent verbatim: 1 = by the piece, > 1 = pieces per pack, null = cannot be
+   * known (a pre-snapshot line). `unitsPerBox` is its > 1 projection and is null for BOTH 1 and unknown, so a reader
+   * that must tell them apart reads this (SA-1004).
+   */
+  salePack: number | null;
   /** Quantity in `unitLabel` units (e.g. 5 cases), not raw pieces. */
   qty: number;
   boxes: number | null;

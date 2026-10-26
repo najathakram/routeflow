@@ -1,23 +1,29 @@
 import type { PriceHistoryComparisonLine, PriceHistoryRow } from "@/lib/api/price-history";
 import { buildChartModel, monthLabel, monthMid, NOTE_COPY, unitPhrase } from "./chart-model";
 
-const row = (o: Partial<PriceHistoryRow> = {}): PriceHistoryRow => ({
-  date: "2026-09-10T00:00:00.000Z",
-  source: "INVOICE",
-  unitPrice: 25,
-  unitLabel: "Box",
-  unitsPerBox: 12,
-  qty: 1,
-  boxes: null,
-  pieces: null,
-  avgCostAtSale: null,
-  invoiceId: "i1",
-  invoiceNumber: "INV-1",
-  orderId: "o1",
-  orderNumber: "ORD-1",
-  priceType: null,
-  ...o,
-});
+const row = (o: Partial<PriceHistoryRow> = {}): PriceHistoryRow => {
+  const r: PriceHistoryRow = {
+    date: "2026-09-10T00:00:00.000Z",
+    source: "INVOICE",
+    unitPrice: 25,
+    unitLabel: "Box",
+    unitsPerBox: 12,
+    salePack: 12,
+    qty: 1,
+    boxes: null,
+    pieces: null,
+    avgCostAtSale: null,
+    invoiceId: "i1",
+    invoiceNumber: "INV-1",
+    orderId: "o1",
+    orderNumber: "ORD-1",
+    priceType: null,
+    ...o,
+  };
+  // the server's own pairing unless a case sets it: salePack is salePackOf's answer, unitsPerBox its > 1 projection
+  if (!("salePack" in o)) r.salePack = r.unitsPerBox ?? 1;
+  return r;
+};
 const entry = (o: Partial<PriceHistoryComparisonLine> = {}): PriceHistoryComparisonLine => ({
   unitLabel: "Box",
   unitsPerBox: 12,
@@ -85,44 +91,116 @@ describe("the matching entry and the plot pack", () => {
     expect(m.canDraw.like).toBe(true);
   });
 
-  it("an unknown pack is its own honest state, never piece prices (review-b: packOf(null) was 1)", () => {
-    // a pre-snapshot Box line: the wire sends unitsPerBox null for BOTH "by the piece" and "pack unknown", and the
-    // unit label ("Box") is what tells them apart
-    const m = model({
-      unit: "Box",
-      rows: [row({ unitLabel: "Box", unitsPerBox: null, unitPrice: 25 })],
-      comparison: [entry({ unitLabel: "Box", unitsPerBox: null })],
-    });
-    expect(m.plotPack).toBeNull();
-    expect(m.own).toEqual([]);
-    expect(m.canDraw).toEqual({ own: false, like: false, conv: false });
-    expect(m.notes).toHaveLength(1);
-    expect(m.notes[0]!.text).toMatch(/pack size/i);
-    expect(m.notes[0]!.lines).toEqual(["own", "like", "conv"]);
-  });
+  describe("SA-1004: the plot reads the server's salePack, never the unit label", () => {
+    const packNote = (m: ReturnType<typeof model>) =>
+      m.notes.find((n) => /no pack size on record/.test(n.text));
 
-  it("an unknown-pack newest row says so even when older rows have a pack (the newest decides the plot)", () => {
-    const m = model({
-      rows: [
-        row({ date: "2026-08-01T00:00:00.000Z", unitsPerBox: 12 }),
-        row({ unitsPerBox: null, unitLabel: "Box" }),
-      ],
-    });
-    expect(m.plotPack).toBeNull();
-    expect(m.own).toEqual([]);
-    expect(m.notes[0]!.text).toMatch(/pack size/i);
-  });
-
-  it("a piece unit with no pack is still by the piece (only a pack-type label with no pack is unknown)", () => {
-    for (const unitLabel of ["Each", "Piece", "pc", "bottle"]) {
+    it("R1: a whole-Case product (Case, salePack 1) plots, at pack 1, with no pack note", () => {
+      const rows = [
+        row({
+          unitLabel: "Case",
+          unitsPerBox: null,
+          salePack: 1,
+          date: "2026-09-10T00:00:00.000Z",
+        }),
+        row({
+          unitLabel: "Case",
+          unitsPerBox: null,
+          salePack: 1,
+          date: "2026-08-10T00:00:00.000Z",
+        }),
+        row({
+          unitLabel: "Case",
+          unitsPerBox: null,
+          salePack: 1,
+          date: "2026-07-10T00:00:00.000Z",
+        }),
+      ];
       const m = model({
-        unit: unitLabel,
-        rows: [row({ unitLabel, unitsPerBox: null })],
-        comparison: [entry({ unitLabel, unitsPerBox: null })],
+        unit: "Case",
+        rows,
+        comparison: [entry({ unitLabel: "Case", unitsPerBox: null })],
       });
       expect(m.plotPack).toBe(1);
+      expect(m.own).toHaveLength(3);
       expect(m.canDraw.own).toBe(true);
-    }
+      expect(packNote(m)).toBeUndefined();
+    });
+
+    it("R2: an Each line with an unknown pack (salePack null) is not drawn, and the pack note says why", () => {
+      const m = model({
+        unit: "Each",
+        rows: [row({ unitLabel: "Each", unitsPerBox: null, salePack: null })],
+        comparison: [entry({ unitLabel: "Each", unitsPerBox: null })],
+      });
+      expect(m.own).toEqual([]);
+      expect(m.canDraw.own).toBe(false);
+      expect(packNote(m)?.lines).toEqual(["own"]);
+    });
+
+    it("R3: an unknown newest row plots the older known pack (12) and says the rest were left out", () => {
+      const m = model({
+        unit: "Case",
+        rows: [
+          row({
+            unitLabel: "Case",
+            unitsPerBox: null,
+            salePack: null,
+            date: "2026-09-10T00:00:00.000Z",
+          }),
+          row({
+            unitLabel: "Case",
+            unitsPerBox: 12,
+            salePack: 12,
+            date: "2026-08-10T00:00:00.000Z",
+          }),
+          row({
+            unitLabel: "Case",
+            unitsPerBox: 12,
+            salePack: 12,
+            date: "2026-07-10T00:00:00.000Z",
+          }),
+        ],
+        comparison: [entry({ unitLabel: "Case", unitsPerBox: 12 })],
+      });
+      expect(m.plotPack).toBe(12);
+      expect(m.own).toHaveLength(2);
+      expect(m.ownFiltered).toBe(true);
+      expect(m.notes.some((n) => n.id === "ph-note-filtered")).toBe(true);
+    });
+
+    it("R4: only unknown-pack rows: the unit's D2 entry (any pack) draws lines 2 and 3; line 1 is empty with the pack note", () => {
+      const m = model({
+        unit: "Case",
+        rows: [row({ unitLabel: "Case", unitsPerBox: null, salePack: null })],
+        comparison: [entry({ unitLabel: "Case", unitsPerBox: 24 })],
+      });
+      expect(m.plotPack).toBe(24);
+      expect(m.own).toEqual([]);
+      expect(m.canDraw).toMatchObject({ own: false, like: true, conv: true });
+      expect(packNote(m)?.lines).toEqual(["own"]);
+    });
+
+    it("R5: an older server (no salePack on the row) reads as before: unitsPerBox null is pack 1, and it plots", () => {
+      const m = model({
+        unit: "Case",
+        rows: [row({ unitLabel: "Case", unitsPerBox: null, salePack: undefined })],
+        comparison: [entry({ unitLabel: "Case", unitsPerBox: null })],
+      });
+      expect(m.plotPack).toBe(1);
+      expect(m.own).toHaveLength(1);
+      expect(packNote(m)).toBeUndefined();
+    });
+
+    it("pin: chart-model.ts never tells a pack from its unit label (no Case test outside sameUnit)", () => {
+      const src = require("fs").readFileSync(
+        require("path").join(__dirname, "chart-model.ts"),
+        "utf8",
+      );
+      expect(src).not.toMatch(/normUnit\([^)]*\)\s*===\s*"case"\s*\)?\s*;?\s*$/m);
+      expect(src.match(/===\s*"case"/g) ?? []).toHaveLength(0); // normUnit maps TO "case"; nothing compares a label against it
+      expect(src).not.toMatch(/packUnknown\s*=/);
+    });
   });
 
   it("no matching entry: lines 2 and 3 cannot draw", () => {
