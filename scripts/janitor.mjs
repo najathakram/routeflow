@@ -1553,14 +1553,13 @@ const ALLOW_LIST_CACHE_DIRS = [
   ".jest-cache",
   ".turbo",
   ".next",
-  "dist",
-  "build",
-  "coverage",
   "test-results",
   "playwright-report",
   ".expo",
   "node_modules",
 ];
+// dist/build/coverage are NOT here: they stay anchored to the top level / a package root via
+// REGENERABLE_IGNORED (#1326), so a source folder like apps/api/src/build/ still blocks.
 const SALVAGE_PREFIX = "local-assets/";
 
 /**
@@ -1660,6 +1659,12 @@ function indexMtimeMs(worktreePath) {
   return f && existsSync(f) ? statSync(f).mtimeMs : null;
 }
 
+/** Path equality; case-insensitive on Windows, so C:/X and c:/x are the same checkout. */
+export function samePath(a, b, caseInsensitive) {
+  const k = (p) => (caseInsensitive ? resolve(p).toLowerCase() : resolve(p));
+  return k(a) === k(b);
+}
+
 /** Plan removals for the allow-listed paths. Returns { actions, skipped }; deletes nothing. */
 export function buildAllowListActions(repoRoot, mainCheckoutPath, listPaths) {
   trySh("git", ["-C", repoRoot, "fetch", "origin"]);
@@ -1694,7 +1699,7 @@ export function buildAllowListActions(repoRoot, mainCheckoutPath, listPaths) {
         "--format=%(refname)",
         "refs/remotes/origin",
       ])?.trim();
-    const isMainCheckout = resolve(wt.path) === resolve(mainCheckoutPath);
+    const isMainCheckout = samePath(wt.path, mainCheckoutPath, isWindows());
     const ign = isMainCheckout
       ? { dirty: false, salvage: [], blockers: [] }
       : allowListIgnoredState(wt.path);

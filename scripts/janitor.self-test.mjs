@@ -57,6 +57,7 @@ import {
   buildPlan,
   parseAllowList,
   classifyIgnoredForAllowList,
+  samePath,
   salvageIgnored,
   allowListVerdict,
   CMD_UNSAFE,
@@ -2106,6 +2107,20 @@ t("allow-list: regenerable cache dirs are not blockers", () => {
     ),
   );
   assert.deepEqual(r, { dirty: false, salvage: [], blockers: [] });
+});
+t(
+  "allow-list: a nested src/build/ (source folder) is refused, anchored build output passes",
+  () => {
+    const r = classifyIgnoredForAllowList(
+      "",
+      ign("apps/api/src/build/", "apps/api/dist/", "build/", "apps/web/src/coverage/"),
+    );
+    assert.deepEqual(r.blockers, ["apps/api/src/build/", "apps/web/src/coverage/"]);
+  },
+);
+t("allow-list: samePath is case-insensitive only when asked (Windows main checkout)", () => {
+  assert.equal(samePath("C:/ClaudeCode/Routeflow", "c:/claudecode/routeflow", true), true);
+  assert.equal(samePath("/a/Routeflow", "/a/routeflow", false), false);
 });
 t("allow-list: local-assets is salvage, not a blocker", () => {
   const r = classifyIgnoredForAllowList("", ign("local-assets/", "local-assets/proofs/x.png"));
