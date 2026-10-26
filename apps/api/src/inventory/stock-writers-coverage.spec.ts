@@ -40,7 +40,10 @@ const SRC_ROOT = path.resolve(__dirname, "..");
  * DB-spec seed fixtures that set up counters directly (a historic booked state), never production writers.
  * Named files, not a directory: a new writer under a `testing/` folder still fails this census.
  */
-const SEED_FIXTURES = new Set(["inventory/testing/order-stock-world.ts"]);
+const SEED_FIXTURES = new Set([
+  "inventory/testing/order-stock-world.ts",
+  "orders/testing/units-fold-db-harness.ts",
+]);
 
 function collectSourceFiles(dir: string, out: string[] = []): string[] {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
