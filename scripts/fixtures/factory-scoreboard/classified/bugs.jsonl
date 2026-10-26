@@ -1,4 +1,4 @@
-{"id":"B901","title":"SECRET TITLE ONE","location":"apps/api/src/billing/plan.service.ts","severity":"high","filedAt":"2026-10-21T10:00:00Z","causedByPr":105}
+{"id":"B901","title":"SECRET TITLE ONE","location":"apps/api/src/billing/plan.service.ts","severity":"high","filedAt":"2026-10-21T10:00:00Z","causedByPr":"#105"}
 {"id":"B902","title":"SECRET TITLE TWO","location":"apps/api/src/billing/decoy.ts","severity":"low","filedAt":"2026-10-22T10:00:00Z","causedByPr":101}
 {"id":"B903","title":"SECRET TITLE THREE","location":"apps/api/src/orders/x.ts","severity":"high","filedAt":"2026-10-23T10:00:00Z","causedByPr":102}
 {"id":"B904","title":"SECRET TITLE FOUR","location":"apps/api/src/old.ts","severity":"high","filedAt":"2026-09-01T10:00:00Z","causedByPr":50}

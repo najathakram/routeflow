@@ -51,19 +51,19 @@ check(
   "2026-10-18T12:00:00.000Z",
 );
 check("A2 feat/fix/other split by title prefix", pick(w, ["total", "feat", "fix", "other"]), {
-  total: 8,
+  total: 9,
   feat: 2,
-  fix: 3,
+  fix: 4,
   other: 3,
 });
 check(
-  "A3 a revert by number (104) and a hotfix title naming #105 count as failed; the rest is pending",
+  "A3 a revert by number (104), a 'hotfix:' title naming #105 and a 'fix(hotfix):' title naming #101 count as failed; the rest is pending",
   [w.failed, w.failedNumbers, w.pending, w.verified],
-  [2, [104, 105], 6, 0],
+  [3, [101, 104, 105], 6, 0],
 );
 check(
-  "A4 a PR whose own title says hotfix (107) and a hotfix PR (108) are not failed by themselves",
-  w.failedNumbers.includes(107) || w.failedNumbers.includes(108),
+  "A4 a hotfix PR (108, 109) is not failed by itself",
+  w.failedNumbers.includes(108) || w.failedNumbers.includes(109),
   false,
 );
 
@@ -74,7 +74,7 @@ check(
   [p.from.slice(0, 10), p.to.slice(0, 10), p.verified, p.failed, p.failedNumbers],
   ["2026-10-04", "2026-10-11", 2, 1, [203]],
 );
-check("B2 a PR between the two windows (204) is in neither", [w.total, p.total], [8, 3]);
+check("B2 a PR between the two windows (204) is in neither", [w.total, p.total], [9, 3]);
 
 // 3. pending vs verified by age: a 30-day window reaches PRs older than 14 days
 const wide = json("base", ["--since", "2026-09-25T12:00:00Z", "--usage-pct", "30"]);
@@ -82,7 +82,7 @@ const ww = wide.verifiedMerges.window;
 check(
   "C1 30-day window: 201/202 verified by age, 203 failed, 204 (11 days) pending",
   [ww.verified, ww.failed, ww.total],
-  [2, 3, 12],
+  [2, 4, 13],
 );
 check(
   "C2 usage-pct divides by the 14-day-old cohort's verified count (30 / 2)",
@@ -119,22 +119,22 @@ check(
 check(
   "H1 train/* PRs (301, 302) are excluded from the counts and reported separately",
   [w.trains, p.trains, w.total, p.total],
-  [1, 1, 8, 3],
+  [1, 1, 9, 3],
 );
 check(
-  "H2 a later subject with 'revert' mid-sentence naming #102 does not fail it",
+  "H2 'revert' mid-sentence (a commit) and 'hotfix' mid-sentence (PR 107) both naming #102 do not fail it",
   w.failedNumbers.includes(102),
   false,
 );
 for (const [limit, status] of [
-  ["14", 1],
-  ["15", 0],
+  ["15", 1],
+  ["16", 0],
 ]) {
   const ldir = copyFixture("base");
   writeFileSync(path.join(ldir, "limit.txt"), `${limit}\n`);
   const res = run(["--fixture", ldir]);
   check(
-    `H3 a query returning exactly the limit (${limit} of 14 rows) ${status ? "fails loudly" : "does not fail when under it"}`,
+    `H3 a query returning exactly the limit (${limit} of 15 rows) ${status ? "fails loudly" : "does not fail when under it"}`,
     [res.status, status ? /truncated/.test(res.stderr) : /Factory scoreboard/.test(res.stdout)],
     [status, true],
   );
@@ -184,33 +184,45 @@ check(
 
 // 6. exposure
 check(
-  "F1 watchdog windows, dated unclosed window, and longest as at least (window end - armed time)",
+  "F1 unclosed windows: bounded by a dead-man flip (50 min) or by the next start (1440 min), else duration unknown and kept out of longest",
   base.exposure.watchdog,
   {
     windows: 3,
-    longestMinutes: 3060,
-    longestIsLowerBound: true,
-    unclosed: 1,
-    unclosedArmedAt: ["2026-10-23T09:00Z"],
+    longestMinutes: 1440,
+    unclosed: [
+      { armedAt: "2026-10-21T06:00Z", boundMinutes: 50, boundedBy: "dead-man flip" },
+      { armedAt: "2026-10-23T09:00Z", boundMinutes: 1440, boundedBy: "next watchdog start" },
+      { armedAt: "2026-10-25T08:00Z", boundMinutes: null, boundedBy: null },
+    ],
   },
 );
 const late = json("base", ["--since", "2026-10-24T00:00:00Z"]).exposure.watchdog;
 check(
-  "F5 an unclosed window armed before the report window is not counted; longest is then the closed one",
-  [late.windows, late.longestMinutes, late.longestIsLowerBound, late.unclosed],
-  [1, 30, false, 0],
+  "F5 only windows armed inside the report window count; an unbounded one never enters longest",
+  [late.windows, late.longestMinutes, late.unclosed.map((u) => [u.armedAt, u.boundMinutes])],
+  [1, 30, [["2026-10-25T08:00Z", null]]],
+);
+const rowF = run(["--fixture", path.join(FIX, "base")]).stdout;
+check(
+  "F6 the exposure row says 'duration unknown (armed ...)' for the unbounded window and gives bounds for the others",
+  [
+    /duration unknown \(armed 2026-10-25T08:00Z\)/.test(rowF),
+    /armed 2026-10-21T06:00Z, up to 50 min \(dead-man flip\)/.test(rowF),
+    /armed 2026-10-23T09:00Z, up to 1440 min \(next watchdog start\)/.test(rowF),
+    /at least/.test(rowF),
+  ],
+  [true, true, true, false],
 );
 check(
-  "F6 the exposure row shows the unclosed window and 'at least'",
-  /longest at least 3060 min, 1 unclosed \(armed 2026-10-23T09:00Z\)/.test(
-    run(["--fixture", path.join(FIX, "base")]).stdout,
-  ),
-  true,
+  "F2 dead-man: flipped-private and flip-unconfirmed counted apart; not-admin is a health warning, not an incident",
+  base.exposure.deadman,
+  { flippedPrivate: 1, flipUnconfirmed: 1, otherIncidents: 1, notAdminPolls: 3, undated: 0 },
 );
-check("F2 dead-man incidents (JSON and text lines) in the window", base.exposure.deadman, {
-  incidents: 2,
-  undated: 0,
-});
+check(
+  "F7 the row shows not-admin as a warning rather than adding it to incidents",
+  [/1 flipped private, 1 flip unconfirmed/.test(rowF), /WARNING: 3 not-admin polls/.test(rowF)],
+  [true, true],
+);
 const nolog = json("nologs");
 check(
   "F3 missing logs are reported as missing, not zero",

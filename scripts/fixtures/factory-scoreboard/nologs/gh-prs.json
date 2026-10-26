@@ -37,7 +37,7 @@
   },
   {
     "number": 107,
-    "title": "fix: hotfix pipeline wording (#107)",
+    "title": "fix: note #102 hotfix wording (#107)",
     "mergedAt": "2026-10-24T11:00:00Z",
     "headRefName": "branch/107"
   },
@@ -46,6 +46,12 @@
     "title": "hotfix: patch #105 regression (#108)",
     "mergedAt": "2026-10-24T12:00:00Z",
     "headRefName": "branch/108"
+  },
+  {
+    "number": 109,
+    "title": "fix(hotfix): patch #101 crash (#109)",
+    "mergedAt": "2026-10-24T15:00:00Z",
+    "headRefName": "branch/109"
   },
   {
     "number": 201,

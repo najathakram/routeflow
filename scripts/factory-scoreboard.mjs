@@ -23,6 +23,8 @@
 // - `local-assets/` resolves against the MAIN checkout (like the watchdog), so a worktree finds the logs.
 // - The watchdog logs when it was armed (`start`) and when it confirmed PRIVATE (`verified`), not when
 //   the repo went public, so a window is an UPPER bound (armed -> confirmed private).
+// - A watchdog window with no `verified` line has an unknown length: it is bounded only by the next
+//   watchdog start or a dead-man `flipped-private` incident, and unbounded ones stay out of "longest".
 // - A revert whose subject names neither the PR number nor its exact title is not detected.
 // - PRs are queried in 7-day date slices; a slice that returns exactly the limit fails the run loudly.
 
@@ -165,8 +167,8 @@ function findFailures(prs, commits) {
     ...commits.map((c) => ({ text: c.subject, at: c.at, self: null })),
   ];
   for (const e of evidence) {
-    // A title that STARTS with Revert, or has the word hotfix: not any "revert" inside a sentence.
-    if (/^revert|\bhotfix\b/i.test(e.text.trim())) {
+    // Only a title that STARTS with Revert / hotfix (or `fix(hotfix)`): a mid-sentence mention is not one.
+    if (/^(revert|hotfix\b|fix\(hotfix\))/i.test(e.text.trim())) {
       for (const n of otherRefs(e.text)) {
         const target = prs.find((p) => p.number === n);
         if (target && n !== e.self && e.at > Date.parse(target.mergedAt)) {
@@ -347,8 +349,11 @@ async function escapes({ fixture, sinceMs, nowMs }) {
   for (const r of inWindow) {
     let key = String(r.severity ?? "unknown");
     if (classifier) {
-      const n = Number(r.causedByPr);
-      if (!prClass.has(n)) prClass.set(n, classOfPr(fixture, n, classifier));
+      // causedByPr may be 123, "123" or "#123": keep the digits.
+      const n = Number(String(r.causedByPr).replace(/\D/g, ""));
+      if (!prClass.has(n)) {
+        prClass.set(n, n > 0 ? classOfPr(fixture, n, classifier) : "unclassified");
+      }
       key = prClass.get(n);
     }
     (groups[key] ??= []).push(r.id);
@@ -363,9 +368,10 @@ async function escapes({ fixture, sinceMs, nowMs }) {
 
 // ─── 6. exposure ──────────────────────────────────────────────────────────────────────────────
 /** Watchdog lines are `<ISO> start|attempt|verified|error|refused <detail>`; see visibility-watchdog.mjs. */
-function parseWatchdog(text, sinceMs, nowMs) {
+function parseWatchdog(text, sinceMs, nowMs, flipTimes) {
   const closed = [];
   const unclosedStarts = [];
+  const allStarts = [];
   let open = null;
   for (const line of text.split("\n")) {
     const m = /^(\S+)\s+(\w+)/.exec(line);
@@ -373,6 +379,7 @@ function parseWatchdog(text, sinceMs, nowMs) {
     if (!m || !Number.isFinite(at)) continue;
     const event = m[2];
     if (event === "start") {
+      allStarts.push(at);
       if (open !== null) unclosedStarts.push(open); // the previous watchdog never confirmed PRIVATE
       open = at;
     } else if (event === "verified" && open !== null) {
@@ -384,37 +391,63 @@ function parseWatchdog(text, sinceMs, nowMs) {
     }
   }
   if (open !== null) unclosedStarts.push(open); // still armed (or killed) at the end of the log
+  allStarts.sort((a, b) => a - b);
   // Only windows armed inside the reporting window count, closed or not.
   const inWin = (t) => t >= sinceMs && t <= nowMs;
   const mine = closed.filter((w) => inWin(w.start));
-  const unclosed = unclosedStarts.filter(inWin);
-  // An unclosed window was public for at least (window end - armed time), so it counts toward "longest".
-  const closedMax = mine.length ? Math.max(...mine.map((w) => w.minutes)) : 0;
-  const unclosedMax = unclosed.length ? (nowMs - Math.min(...unclosed)) / 60_000 : 0;
+  // An unclosed window has NO known length: a manual flip or the dead-man may have closed it within
+  // the hour. It is bounded only by the next watchdog start (the lock allows one watchdog at a time) or
+  // a dead-man flipped-private incident, whichever came first; with neither, the duration is unknown
+  // and it stays out of "longest".
+  const unclosed = unclosedStarts.filter(inWin).map((start) => {
+    const ends = [
+      { at: allStarts.find((t) => t > start), by: "next watchdog start" },
+      { at: flipTimes.find((t) => t > start), by: "dead-man flip" },
+    ].filter((e) => e.at !== undefined);
+    const first = ends.sort((a, b) => a.at - b.at)[0];
+    return {
+      armedAt: new Date(start).toISOString().slice(0, 16) + "Z",
+      boundMinutes: first ? Math.round(((first.at - start) / 60_000) * 10) / 10 : null,
+      boundedBy: first ? first.by : null,
+    };
+  });
+  const lengths = [
+    ...mine.map((w) => w.minutes),
+    ...unclosed.map((u) => u.boundMinutes).filter((n) => n !== null),
+  ];
   return {
     windows: mine.length,
-    longestMinutes: Math.round(Math.max(closedMax, unclosedMax) * 10) / 10,
-    longestIsLowerBound: unclosedMax > closedMax,
-    unclosed: unclosed.length,
-    unclosedArmedAt: unclosed.map((t) => new Date(t).toISOString().slice(0, 16) + "Z"),
+    longestMinutes: lengths.length ? Math.round(Math.max(...lengths) * 10) / 10 : 0,
+    unclosed,
   };
 }
 
-/** Dead-man lines are JSON objects or plain text; an `incident` marker is all this needs. */
+/**
+ * Dead-man lines are JSON objects (`{"time","event","action"|"reason",...}`, see visibility-deadman.mjs)
+ * or plain text. An `incident` with action `flipped-private` or `flip-unconfirmed` is a real exposure
+ * event, counted apart. `reason: "not-admin"` is logged on EVERY poll the token cannot flip (about 720 a
+ * day), so it is a health warning, not an incident. Also returns every flipped-private time (any date),
+ * which bounds an unclosed watchdog window.
+ */
 function parseDeadman(text, sinceMs, nowMs) {
-  let incidents = 0;
+  const out = { flippedPrivate: 0, flipUnconfirmed: 0, otherIncidents: 0, notAdminPolls: 0 };
   let undated = 0;
+  const flipTimes = [];
   for (const line of text.split("\n")) {
     if (!line.trim()) continue;
     let at = NaN;
     let isIncident = false;
+    let action = "";
+    let reason = "";
     try {
       const o = JSON.parse(line);
       if (o && typeof o === "object") {
-        at = Date.parse(o.ts ?? o.time ?? o.timestamp ?? o.at ?? "");
+        at = Date.parse(o.time ?? o.ts ?? o.timestamp ?? o.at ?? "");
         isIncident = ["event", "type", "kind", "level", "status"].some(
           (k) => String(o[k] ?? "").toLowerCase() === "incident",
         );
+        action = String(o.action ?? "");
+        reason = String(o.reason ?? "");
       }
     } catch {
       const m = /^(\S+)\s+(.*)$/.exec(line);
@@ -422,18 +455,26 @@ function parseDeadman(text, sinceMs, nowMs) {
       isIncident = /\bincident\b/i.test(line);
     }
     if (!isIncident) continue;
+    if (action === "flipped-private" && Number.isFinite(at)) flipTimes.push(at);
     if (!Number.isFinite(at)) undated++;
-    else if (at >= sinceMs && at <= nowMs) incidents++;
+    else if (at >= sinceMs && at <= nowMs) {
+      if (action === "flipped-private") out.flippedPrivate++;
+      else if (action === "flip-unconfirmed") out.flipUnconfirmed++;
+      else if (reason === "not-admin") out.notAdminPolls++;
+      else out.otherIncidents++;
+    }
   }
-  return { incidents, undated };
+  return { summary: { ...out, undated }, flipTimes: flipTimes.sort((a, b) => a - b) };
 }
 
 function exposure({ fixture, sinceMs, nowMs, root }) {
   const wd = readOptional(fixture, "visibility-watchdog.log", path.join(root, WATCHDOG_LOG));
   const dm = readOptional(fixture, "visibility-deadman.log", path.join(root, DEADMAN_LOG));
+  const deadman = dm === null ? null : parseDeadman(dm, sinceMs, nowMs);
   return {
-    watchdog: wd === null ? null : parseWatchdog(wd, sinceMs, nowMs),
-    deadman: dm === null ? null : parseDeadman(dm, sinceMs, nowMs),
+    watchdog:
+      wd === null ? null : parseWatchdog(wd, sinceMs, nowMs, deadman ? deadman.flipTimes : []),
+    deadman: deadman ? deadman.summary : null,
   };
 }
 
@@ -509,12 +550,23 @@ function toMarkdown(r) {
   parts.push(
     x.watchdog === null
       ? `watchdog log missing (${WATCHDOG_LOG})`
-      : `${x.watchdog.windows} public windows (armed to confirmed private), longest ${x.watchdog.longestIsLowerBound ? "at least " : ""}${x.watchdog.longestMinutes} min, ${x.watchdog.unclosed} unclosed${x.watchdog.unclosed ? ` (armed ${x.watchdog.unclosedArmedAt.join(", ")})` : ""}`,
+      : `${x.watchdog.windows} public windows (armed to confirmed private), longest ${x.watchdog.longestMinutes} min (upper bound), ${x.watchdog.unclosed.length} unclosed${
+          x.watchdog.unclosed.length
+            ? ` (${x.watchdog.unclosed
+                .map((u) =>
+                  u.boundMinutes === null
+                    ? `duration unknown (armed ${u.armedAt})`
+                    : `armed ${u.armedAt}, up to ${u.boundMinutes} min (${u.boundedBy})`,
+                )
+                .join("; ")})`
+            : ""
+        }`,
   );
+  const d = x.deadman;
   parts.push(
-    x.deadman === null
+    d === null
       ? `dead-man log missing (${DEADMAN_LOG})`
-      : `${x.deadman.incidents} dead-man incidents${x.deadman.undated ? ` (+${x.deadman.undated} undated)` : ""}`,
+      : `dead-man: ${d.flippedPrivate} flipped private, ${d.flipUnconfirmed} flip unconfirmed${d.otherIncidents ? `, ${d.otherIncidents} other incidents` : ""}${d.undated ? ` (+${d.undated} undated)` : ""}${d.notAdminPolls ? `; WARNING: ${d.notAdminPolls} not-admin polls (the dead-man token cannot flip)` : ""}`,
   );
   rows.push(["6", "Exposure", parts.join("; ")]);
   const lines = [
