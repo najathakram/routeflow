@@ -3183,9 +3183,13 @@ describe("InvoicesService", () => {
         payments: [{ method: "CASH", amount: 25, status: "DRAFT" }],
       });
 
-      await expect(service.voidInvoice("inv-draft-void")).rejects.toBeInstanceOf(
-        BadRequestException,
-      );
+      await expect(
+        service.voidInvoice("inv-draft-void", {
+          sub: "u-1",
+          role: "TENANT_ADMIN",
+          tenantId: "t-1",
+        } as never),
+      ).rejects.toBeInstanceOf(BadRequestException);
     });
   });
 
@@ -3307,8 +3311,16 @@ describe("InvoicesService", () => {
       });
 
       const results = await Promise.allSettled([
-        service.voidInvoice("inv-race"),
-        service.voidInvoice("inv-race"),
+        service.voidInvoice("inv-race", {
+          sub: "u-1",
+          role: "TENANT_ADMIN",
+          tenantId: "t-1",
+        } as never),
+        service.voidInvoice("inv-race", {
+          sub: "u-1",
+          role: "TENANT_ADMIN",
+          tenantId: "t-1",
+        } as never),
       ]);
 
       const fulfilled = results.filter((r) => r.status === "fulfilled");

@@ -3946,7 +3946,7 @@ export class InvoicesService {
     return tx.invoice.findUnique({ where: { id } });
   }
 
-  async voidInvoice(id: string, user?: TillUser) {
+  async voidInvoice(id: string, user: TillUser) {
     await counterPay.voidScope(this.prisma, id, user); // W-870: VOID_SALE on a till invoice
     const inv = await this.prisma.forTenant().invoice.findUnique({
       where: { id },

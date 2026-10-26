@@ -170,7 +170,13 @@ describe("voidInvoice refuses 409 INVOICE_HAS_CASH_REFUND when part of the invoi
   it("an INLINE return sourced from this invoice's lines, cash-refunded: 409 and NOTHING is written", async () => {
     const h = makeVoidHarness([cashRefunded({})]);
 
-    await expectRefused(h.service.voidInvoice(INVOICE_ID));
+    await expectRefused(
+      h.service.voidInvoice(INVOICE_ID, {
+        sub: "u-1",
+        role: "TENANT_ADMIN",
+        tenantId: "t-1",
+      } as never),
+    );
 
     expectNothingChanged(h);
     // only lockInvoiceRow's re-read happened, not the void's own
@@ -179,10 +185,12 @@ describe("voidInvoice refuses 409 INVOICE_HAS_CASH_REFUND when part of the invoi
 
   it("the void refuses with INVOICE_HAS_CASH_REFUND and never the order code (red if the two are swapped)", async () => {
     const h = makeVoidHarness([cashRefunded({})]);
-    const err: any = await h.service.voidInvoice(INVOICE_ID).then(
-      () => null,
-      (e: unknown) => e,
-    );
+    const err: any = await h.service
+      .voidInvoice(INVOICE_ID, { sub: "u-1", role: "TENANT_ADMIN", tenantId: "t-1" } as never)
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
     expect(err.getResponse().code).toBe("INVOICE_HAS_CASH_REFUND");
     expect(err.getResponse().code).not.toBe("ORDER_HAS_CASH_REFUND");
     expect(err.getResponse().message).toBe(INVOICE_HAS_CASH_REFUND_MESSAGE);
@@ -191,7 +199,13 @@ describe("voidInvoice refuses 409 INVOICE_HAS_CASH_REFUND when part of the invoi
   it("the same refusal holds for a standalone invoice (no order)", async () => {
     const h = makeVoidHarness([cashRefunded({})], null);
 
-    await expectRefused(h.service.voidInvoice(INVOICE_ID));
+    await expectRefused(
+      h.service.voidInvoice(INVOICE_ID, {
+        sub: "u-1",
+        role: "TENANT_ADMIN",
+        tenantId: "t-1",
+      } as never),
+    );
 
     expectNothingChanged(h);
   });
@@ -206,7 +220,13 @@ describe("voidInvoice refuses 409 INVOICE_HAS_CASH_REFUND when part of the invoi
     });
     const h = makeVoidHarness([standard]);
 
-    await expectRefused(h.service.voidInvoice(INVOICE_ID));
+    await expectRefused(
+      h.service.voidInvoice(INVOICE_ID, {
+        sub: "u-1",
+        role: "TENANT_ADMIN",
+        tenantId: "t-1",
+      } as never),
+    );
 
     expectNothingChanged(h);
   });
@@ -214,7 +234,11 @@ describe("voidInvoice refuses 409 INVOICE_HAS_CASH_REFUND when part of the invoi
   it("the guard runs ONCE per void, after the row locks and BEFORE the wallet release and every other write", async () => {
     const h = makeVoidHarness([]);
 
-    await h.service.voidInvoice(INVOICE_ID);
+    await h.service.voidInvoice(INVOICE_ID, {
+      sub: "u-1",
+      role: "TENANT_ADMIN",
+      tenantId: "t-1",
+    } as never);
 
     const guardRead = h.tx.return.findFirst.mock.invocationCallOrder;
     expect(guardRead).toHaveLength(1); // not repeated inside voidInvoiceInTx
@@ -237,7 +261,11 @@ describe("voidInvoice refuses 409 INVOICE_HAS_CASH_REFUND when part of the invoi
     });
     const h = makeVoidHarness([pending, standardPending]);
 
-    await h.service.voidInvoice(INVOICE_ID);
+    await h.service.voidInvoice(INVOICE_ID, {
+      sub: "u-1",
+      role: "TENANT_ADMIN",
+      tenantId: "t-1",
+    } as never);
 
     expect(h.writes.invoiceUpdateMany).toHaveBeenCalledTimes(1);
     expect(h.ledger.settleRegulatedLedger).toHaveBeenCalledTimes(1);
@@ -256,7 +284,11 @@ describe("voidInvoice refuses 409 INVOICE_HAS_CASH_REFUND when part of the invoi
       });
       const h = makeVoidHarness([inline, standard]);
 
-      await h.service.voidInvoice(INVOICE_ID);
+      await h.service.voidInvoice(INVOICE_ID, {
+        sub: "u-1",
+        role: "TENANT_ADMIN",
+        tenantId: "t-1",
+      } as never);
 
       expect(h.writes.invoiceUpdateMany).toHaveBeenCalledTimes(1);
     },
@@ -288,7 +320,11 @@ describe("voidInvoice refuses 409 INVOICE_HAS_CASH_REFUND when part of the invoi
     });
     const h = makeVoidHarness([storeCredit, otherInvoice, otherOrder, carriedHere]);
 
-    await h.service.voidInvoice(INVOICE_ID);
+    await h.service.voidInvoice(INVOICE_ID, {
+      sub: "u-1",
+      role: "TENANT_ADMIN",
+      tenantId: "t-1",
+    } as never);
 
     expect(h.writes.invoiceUpdateMany).toHaveBeenCalledTimes(1);
   });
@@ -296,7 +332,11 @@ describe("voidInvoice refuses 409 INVOICE_HAS_CASH_REFUND when part of the invoi
   it("an invoice with no returns voids as before", async () => {
     const h = makeVoidHarness([]);
 
-    await h.service.voidInvoice(INVOICE_ID);
+    await h.service.voidInvoice(INVOICE_ID, {
+      sub: "u-1",
+      role: "TENANT_ADMIN",
+      tenantId: "t-1",
+    } as never);
 
     expect(h.writes.invoiceUpdateMany).toHaveBeenCalledTimes(1);
     expect(h.ledger.settleRegulatedLedger).toHaveBeenCalledTimes(1);

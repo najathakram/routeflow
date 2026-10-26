@@ -3,9 +3,10 @@ import * as path from "path";
 
 /**
  * W-870 (L-305 inventory): every `staffMay(...)` call in the API passes the caller's denied permission groups as its
- * third argument. With two arguments `deniedGroups` defaults to `[]`, so an OPERATOR whose admin switched a group off is
- * judged on the role alone and gets through. A request-path caller reads them with `operatorDeniedGroups` (till
- * guard); a caller with no principal passes `[]` explicitly, so the choice is visible. A new two-argument call fails here.
+ * third argument. `deniedGroups` is a required parameter, so a two-argument call fails to compile; this pin also catches
+ * one that slips through a cast, because an OPERATOR whose admin switched a group off would be judged on the role alone.
+ * A request-path caller reads them with `operatorDeniedGroups` (till guard); a caller with no principal passes `[]`
+ * explicitly, so the choice is visible.
  */
 const SRC = path.resolve(__dirname, "../..");
 
@@ -169,6 +170,14 @@ describe("staffMay call inventory: every call passes deniedGroups (W-870)", () =
       },
       decideStaffWrite: { "selling-restrictions/selling-restrictions.service.ts": 1 },
     });
+  });
+});
+
+describe("InvoicesService.voidInvoice takes its principal as a required parameter (W-870)", () => {
+  it("the declaration has no optional user: an omitted principal cannot skip the VOID_SALE door", () => {
+    const src = fs.readFileSync(path.join(SRC, "invoices/invoices.service.ts"), "utf8");
+    expect(src).toMatch(/async voidInvoice(id: string, user: TillUser)/);
+    expect(src).not.toMatch(/async voidInvoice([^)]*user?/);
   });
 });
 
