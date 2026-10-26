@@ -927,7 +927,7 @@ export default function DashboardPage() {
             {/* BO-07: the builder's PICKUP path is the till, so a denied operator does not see it (the server refuses it too). */}
             {quickCreate.storeOnly &&
             counterGate.permsKnown &&
-            staffMay(user?.role, "USE_POS_MODE", counterGate.deniedGroups) ? (
+            staffMay(user?.role, "USE_POS_MODE", counterGate.deniedGroups ?? []) ? (
               <WriteButton
                 href="/orders?action=new&builder=1"
                 size="sm"
