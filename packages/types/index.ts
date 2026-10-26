@@ -266,3 +266,12 @@ export const ORDER_DELIVERY_ADDON = "order_delivery";
  * Route insights are NOT covered by this key.
  */
 export const OCR_ADDON = "ocr";
+
+// ─── Licence validity (B330: the ONE "is this licence still good" rule) ───────
+
+export {
+  displayLicenceStatus,
+  isLicenceExpired,
+  isLicenceLive,
+  licenceExpiryCutoff,
+} from "./licence-validity";

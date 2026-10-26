@@ -10,6 +10,7 @@ import { RejectAuthorizationDto } from "./dto/reject-authorization.dto";
 import { RenewAuthorizationDto } from "./dto/renew-authorization.dto";
 import { SubmitAuthorizationDto } from "./dto/submit-authorization.dto";
 import { escapeHtml } from "../common/html-escape";
+import { calendarFieldStamp } from "../common/calendar-date";
 import { isLicenceExpired, licenceZone } from "./licence-validity";
 
 export interface BuyerAuthorizationRow {
@@ -210,7 +211,7 @@ export class AuthorizationsService {
       status: "PENDING_REVIEW" as const,
       source: "RETAILER_SUBMITTED" as const,
       licenseNumber: dto.licenseNumber,
-      expiresAt: new Date(dto.expiresAt),
+      expiresAt: calendarFieldStamp(dto.expiresAt, "expiresAt"),
       documentKey: dto.documentKey ?? null,
       // Clear any stale verifier snapshot from a prior (now expired/rejected) cycle —
       // a PENDING row is unverified by definition.
@@ -276,7 +277,7 @@ export class AuthorizationsService {
       status: "VERIFIED" as const,
       source: "WHOLESALER_ADDED" as const,
       licenseNumber: dto.licenseNumber ?? null,
-      expiresAt: dto.expiresAt ? new Date(dto.expiresAt) : null,
+      expiresAt: dto.expiresAt ? calendarFieldStamp(dto.expiresAt, "expiresAt") : null,
       documentKey: dto.documentKey ?? null,
       verifiedById: user.sub,
       verifiedByName: user.username,
@@ -368,7 +369,7 @@ export class AuthorizationsService {
         // 30/7/1 bucket on the next sweep.
         ...(dto.expiresAt !== undefined
           ? {
-              expiresAt: new Date(dto.expiresAt),
+              expiresAt: calendarFieldStamp(dto.expiresAt, "expiresAt"),
               expiryNotifiedAt: null,
               expiringSoonNotifiedBucket: null,
             }
