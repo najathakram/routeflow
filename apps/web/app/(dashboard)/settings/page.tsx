@@ -2693,24 +2693,24 @@ function InvoicingTab() {
   // would persist 5 first and the server value would fight the field
   // mid-typing. Hold it locally, re-seed from the server, and commit once on
   // blur/Enter (clamped to the DTO's 0–100).
-  const serverDepositPercent =
-    invoiceSettings?.depositDefaultPercent != null
-      ? Number(invoiceSettings.depositDefaultPercent)
-      : null;
+  // Row 652: "no tenant default" is 0 (the API refuses null on this money field), so an unset or 0 server value reads as
+  // a blank field and a cleared field saves 0.
+  const serverDepositPercent = Number(invoiceSettings?.depositDefaultPercent ?? 0);
+  const depositInputOf = (n: number) => (n === 0 ? "" : String(n));
   const [depositPercentInput, setDepositPercentInput] = React.useState("");
   React.useEffect(() => {
-    setDepositPercentInput(serverDepositPercent != null ? String(serverDepositPercent) : "");
+    setDepositPercentInput(depositInputOf(serverDepositPercent));
   }, [serverDepositPercent]);
 
   const commitDepositPercent = () => {
     const raw = depositPercentInput.trim();
-    const parsed = raw === "" ? null : Number(raw);
-    if (parsed != null && !Number.isFinite(parsed)) {
-      setDepositPercentInput(serverDepositPercent != null ? String(serverDepositPercent) : "");
+    const parsed = raw === "" ? 0 : Number(raw);
+    if (!Number.isFinite(parsed)) {
+      setDepositPercentInput(depositInputOf(serverDepositPercent));
       return;
     }
-    const next = parsed == null ? null : Math.min(100, Math.max(0, parsed));
-    setDepositPercentInput(next != null ? String(next) : "");
+    const next = Math.min(100, Math.max(0, parsed));
+    setDepositPercentInput(depositInputOf(next));
     if (next === serverDepositPercent) return;
     updateSettings.mutate(
       { depositDefaultPercent: next },
@@ -2723,7 +2723,7 @@ function InvoicingTab() {
           }),
         onError: (err: any) => {
           // restore the saved value (also when read-only: the typed figure was never saved)
-          setDepositPercentInput(serverDepositPercent != null ? String(serverDepositPercent) : "");
+          setDepositPercentInput(depositInputOf(serverDepositPercent));
           if (isReadOnlyRefusal(err)) return; // F5: the app-wide handler already showed the shared line
           toast({
             title: "Failed to save",

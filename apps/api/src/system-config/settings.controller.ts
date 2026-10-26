@@ -636,8 +636,8 @@ export class SettingsController {
     return {
       defaultTerms: defaultTerms ?? "Net 30",
       hideOriginalPrice: hideOriginalPriceRaw === "true",
-      // WP-D1: absent/unset -> null (no tenant deposit default) rather than 0, so the
-      // web settings form can tell "never configured" apart from "explicitly 0".
+      // WP-D1: absent/unset -> null (no tenant deposit default). Row 652: the web clears the field by sending 0, so a
+      // stored "0" is also "no tenant default" (every reader treats it as no deposit; the form shows both as blank).
       depositDefaultPercent:
         depositDefaultPercentRaw != null && depositDefaultPercentRaw !== ""
           ? Number(depositDefaultPercentRaw)
@@ -657,10 +657,7 @@ export class SettingsController {
       await this.svc.set("invoice.hideOriginalPrice", String(dto.hideOriginalPrice));
     }
     if (dto.depositDefaultPercent !== undefined) {
-      await this.svc.set(
-        "invoice.depositDefaultPercent",
-        dto.depositDefaultPercent == null ? "" : String(dto.depositDefaultPercent),
-      );
+      await this.svc.set("invoice.depositDefaultPercent", String(dto.depositDefaultPercent));
     }
     if (dto.depositCollectAtOrder !== undefined) {
       await this.svc.set("invoice.depositCollectAtOrder", String(dto.depositCollectAtOrder));
