@@ -81,7 +81,10 @@ describeDb("backfill-b294-order-line-taxrate.mjs, real Postgres", () => {
         unitPrice: 100,
         subtotal: 100,
         taxRate: over.taxRate ?? 0,
-        ...(over.lineCreatedAt ? { createdAt: over.lineCreatedAt } : {}),
+        // a line is created with its invoice unless the case says it was added later
+        ...((over.lineCreatedAt ?? over.createdAt)
+          ? { createdAt: over.lineCreatedAt ?? over.createdAt }
+          : {}),
       } as any,
     });
     inv[key] = invoice.id;
