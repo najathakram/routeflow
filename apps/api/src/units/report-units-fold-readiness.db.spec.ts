@@ -46,6 +46,7 @@ describeDb("units fold-in readiness census (SA-984 D4), real Postgres, through t
       env: { ...process.env, DATABASE_URL: url, PROTECTED_TENANT_SLUGS: "" },
       encoding: "utf8",
     });
+  const HOLDER_C1 = { total: 1, onNoPack: 1, factorOne: 0 };
   const one = (key: Key) => {
     const res = census("--json", "--tenant", ids[key]);
     expect(res.stderr).not.toMatch(/Error|refus/i);
@@ -473,6 +474,23 @@ describeDb("units fold-in readiness census (SA-984 D4), real Postgres, through t
     expect(res.stdout).toContain(`STOP ${ids.nh} SA983-C1`);
     expect(res.stdout).not.toContain(`qa-ufr-${RUN}`);
     expect(res.stdout).not.toMatch(/Acme|ufr Cola|12CT/);
+  });
+
+  it("without --tenant each tenant keeps its own exact counts (no cross-tenant fold)", () => {
+    const res = census("--json");
+    expect(res.status).toBe(0);
+    const all = JSON.parse(res.stdout).tenants as Array<{
+      tenantId: string;
+      c1: unknown;
+      c5: unknown;
+      c6: unknown;
+    }>;
+    const of = (k: Key) => all.find((x) => x.tenantId === ids[k])!;
+    expect(of("nh").c1).toEqual({ total: 2, onNoPack: 2, factorOne: 1 });
+    expect(of("nh").c6).toEqual({ orders: 1, invoices: 1, estimates: 1 });
+    expect(of("holder").c1).toEqual(HOLDER_C1);
+    expect(of("holder").c5).toEqual({ rows: 1 });
+    expect(of("holder").c6).toEqual({ orders: 1, invoices: 1, estimates: 1 });
   });
 
   it("without --tenant it covers every tenant, ours included", () => {

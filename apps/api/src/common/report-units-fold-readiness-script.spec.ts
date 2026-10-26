@@ -1,6 +1,7 @@
 import { spawnSync } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
+import { pathToFileURL } from "url";
 
 /**
  * SA-984 section 2 (D4) + SA-983 C1: the owner-run units fold-in readiness census. Script lane, no database.
@@ -142,7 +143,7 @@ describe("pack-size-classifier (extracted from propose-pack-sizes.mjs)", () => {
       [
         "--input-type=module",
         "-e",
-        `import * as m from ${JSON.stringify(CLASSIFIER)}; console.log(JSON.stringify(${expr}));`,
+        `import * as m from ${JSON.stringify(pathToFileURL(CLASSIFIER).href)}; console.log(JSON.stringify(${expr}));`,
       ],
       { encoding: "utf8", cwd: API_DIR },
     );
