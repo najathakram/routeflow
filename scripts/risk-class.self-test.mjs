@@ -3,14 +3,16 @@
 // Plain node; exit 0 when every check passes, 1 otherwise. The git cases build a throwaway repo in the
 // OS temp dir and run the real CLI against it, so rename handling and the --max exit code are the real ones.
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { classifyDiff, classifyPath, globToRegExp } from "./lib/risk-paths.mjs";
 import { scrubbedGitEnv } from "./lib/check-git-hooks.mjs";
 
-const CLI = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "risk-class.mjs");
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const CLI = path.resolve(HERE, "risk-class.mjs");
+const RULES_FILE = path.resolve(HERE, "lib/risk-paths.mjs");
 let failed = 0;
 const ok = (name, cond, detail = "") => {
   console.log(`${cond ? "  ok  " : "  FAIL"} ${name}${cond ? "" : ` ${detail}`}`);
@@ -89,7 +91,7 @@ ok(
     "scripts/janitor.mjs",
   ].every((p) => cls(p) === "amber"),
 );
-ok("amber: unmatched path defaults to amber", cls("turbo.json") === "amber");
+ok("amber: unmatched path defaults to amber", cls(".prettierignore") === "amber");
 ok(
   "green: docs, md, code-map, lessons, e2e",
   [
@@ -102,6 +104,86 @@ ok(
 );
 ok("green: apps/web/README.md beats the apps/** fallback", cls("apps/web/README.md") === "green");
 ok("normalises backslashes and ./", cls(".\\apps\\api\\src\\invoices\\a.ts") === "red");
+
+// review round 1: orders, common money/lock/crypto files, pricing, buyer guards, config, the judge itself
+const allAre = (c, ps) => ps.every((p) => cls(p) === c);
+const A = "apps/api/src";
+ok(
+  "red: whole orders module incl. specs",
+  allAre("red", [`${A}/orders/orders.service.ts`, `${A}/orders/merge/x.spec.ts`]),
+);
+ok(
+  "red: common money/lock/crypto files and their specs",
+  allAre(
+    "red",
+    [
+      "money-invariants.util",
+      "tax-rate",
+      "invoiced-sales",
+      "stock-tx",
+      "product-locks",
+      "tx-retry",
+      "idempotency.service",
+      "webhook-ledger-claim",
+      "encryption.service",
+      "signed-token",
+      "is-whole-cents.validator",
+      "line-pack-factors",
+      "staff-only-fields",
+    ].flatMap((n) => [`${A}/common/${n}.ts`, `${A}/common/${n}.spec.ts`]),
+  ),
+);
+ok(
+  "red: product/customer pricing, credit limit, buyer guards and tenant, config, app.module",
+  allAre("red", [
+    `${A}/products/product-price-write.service.ts`,
+    `${A}/products/product-pricing.controller.ts`,
+    `${A}/customers/customer-price-layer.ts`,
+    `${A}/customers/credit-limit-audit.ts`,
+    `${A}/buyer/guards/buyer-jwt-auth.guard.ts`,
+    `${A}/buyer/buyer-tenant.interceptor.ts`,
+    `${A}/config/configuration.ts`,
+    `${A}/app.module.ts`,
+  ]),
+);
+ok(
+  "amber: a plain products/customers file stays amber",
+  allAre("amber", [`${A}/products/product-display-name.ts`, `${A}/customers/csv-x.ts`]),
+);
+ok("black: assert-secrets.ts", cls(`${A}/assert-secrets.ts`) === "black");
+ok(
+  "black: scripts/*live*, visibility watchdog and deadman",
+  allAre("black", [
+    "scripts/bogo-live-check.mjs",
+    "scripts/visibility-watchdog.mjs",
+    "scripts/visibility-deadman.mjs",
+  ]),
+);
+ok(
+  "red: ci scripts, post-deploy-check, all of .github, root package/lock/turbo",
+  allAre("red", [
+    "scripts/ci-audit-critical.mjs",
+    "scripts/post-deploy-check.mjs",
+    ".github/dependabot.yml",
+    ".github/actions/x/action.yml",
+    ".github/PULL_REQUEST_TEMPLATE.md",
+    "package.json",
+    "package-lock.json",
+    "turbo.json",
+  ]),
+);
+ok("amber: a workspace package.json is not the root one", cls("apps/web/package.json") === "amber");
+ok(
+  "red: the judge itself (rules, CLI, self-test, swarm skill, hooks)",
+  allAre("red", [
+    "scripts/lib/risk-paths.mjs",
+    "scripts/risk-class.mjs",
+    "scripts/risk-class.self-test.mjs",
+    ".claude/skills/bug-swarm/scripts/gate.mjs",
+    ".claude/skills/bug-swarm/SKILL.md",
+    ".claude/hooks/stop.mjs",
+  ]),
+);
 
 // diff = max over files
 const d = classifyDiff([
@@ -219,6 +301,31 @@ try {
   ok("git: same diff passes --max red", r.status === 0, r.stderr);
   r = run(["--base", "no-such-ref"], dir);
   ok("git: unknown base ref exits 2", r.status === 2, r.stderr);
+
+  // a diff must not weaken its own judge: rules come from the BASE ref, not the branch
+  git("checkout", "-q", "master");
+  mkdirSync(path.join(dir, "scripts/lib"), { recursive: true });
+  copyFileSync(RULES_FILE, path.join(dir, "scripts/lib/risk-paths.mjs"));
+  git("add", "-A");
+  git("commit", "-q", "-m", "rules on master");
+  git("checkout", "-q", "-b", "feat/weaken");
+  writeFileSync(
+    path.join(dir, "scripts/lib/risk-paths.mjs"),
+    'export const CLASSES = ["green"];\nexport const exceeds = () => false;\nexport const classifyDiff = (f) => ({ cls: "green", files: f.map((path) => ({ path, cls: "green", rule: null })) });\n',
+  );
+  put("packages/pricing/src/round.ts");
+  git("add", "-A");
+  git("commit", "-q", "-m", "weaken the judge and touch money");
+  r = run(["--base", "master", "--max", "amber", "--json"], dir);
+  const w = JSON.parse(r.stdout);
+  ok(
+    "git: a branch that guts risk-paths.mjs is still judged by the base rules (red, exit 1)",
+    r.status === 1 &&
+      w.cls === "red" &&
+      /^base /.test(w.rules) &&
+      w.files.some((f) => f.path === "scripts/lib/risk-paths.mjs" && f.cls === "red"),
+    r.stdout + r.stderr,
+  );
 } finally {
   rmSync(dir, { recursive: true, force: true });
 }

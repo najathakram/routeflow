@@ -23,6 +23,13 @@ export const RULES = [
   { glob: "**/Dockerfile*", cls: "black", why: "production image build" },
   { glob: "apps/api/scripts/prod-migrate.mjs", cls: "black", why: "applies migrations to prod" },
   { glob: "apps/api/scripts/*live*", cls: "black", why: "live-tenant script" },
+  { glob: "scripts/*live*", cls: "black", why: "live-tenant script" },
+  {
+    glob: "scripts/{visibility-watchdog,visibility-deadman}.mjs",
+    cls: "black",
+    why: "repo visibility flip (deploy flow)",
+  },
+  { glob: `${API}/assert-secrets.ts`, cls: "black", why: "boot-time secret assertions" },
 
   // red: money, ledger, units, locks, tenancy, auth, migrations, CI.
   { glob: "packages/pricing/**", cls: "red", why: "money math (@routeflow/pricing)" },
@@ -49,17 +56,92 @@ export const RULES = [
     cls: "red",
     why: "auth or tenancy",
   },
-  { glob: `${API}/buyer/buyer-auth*`, cls: "red", why: "buyer authentication" },
-  { glob: `${API}/common/{db-locks,cron-lock}*`, cls: "red", why: "advisory locks" },
   {
-    glob: `${API}/common/{ambient-tenant,assert-refs-in-tenant,derived-jwt-key}*`,
+    glob: `${API}/{orders,sales-agents,system-config}/**`,
     cls: "red",
-    why: "tenant isolation or JWT key",
+    why: "order totals/merges/stock, commissions, financial-wipe guard",
+  },
+  {
+    glob: `${API}/buyer/{buyer-auth*,guards/**,buyer-tenant*,buyer-link-scope*}`,
+    cls: "red",
+    why: "buyer authentication and tenant scoping",
+  },
+  {
+    glob: `${API}/buyer/{buyer-order-idempotency,buyer-qty-split}*`,
+    cls: "red",
+    why: "buyer order dedupe and unit split",
+  },
+  {
+    glob: `${API}/products/{*pric*,line-units*,product-units*,pack-precondition*}`,
+    cls: "red",
+    why: "product pricing and unit lines",
+  },
+  {
+    glob: `${API}/customers/{*pric*,credit-limit*,*payment*}`,
+    cls: "red",
+    why: "customer pricing, credit limit, payments",
+  },
+  {
+    glob: `${API}/routes/{complete-payment-reconcile,driver-payments,run-credit-observation,run-invoice-balance,dto/complete-with-payment}*`,
+    cls: "red",
+    why: "route payments and invoice balance",
+  },
+  { glob: `${API}/import/import-payment-status*`, cls: "red", why: "imported payment status" },
+  {
+    glob: `${API}/{messaging,settings-inventory}/require-tenant-context*`,
+    cls: "red",
+    why: "tenant context guard",
+  },
+  {
+    glob: `${API}/onboarding/{onboarding-tenant,onboarding-token-secret}*`,
+    cls: "red",
+    why: "tenant creation and token secret",
+  },
+  {
+    glob: `${API}/selling-restrictions/{restriction-tenant,tenant-*}*`,
+    cls: "red",
+    why: "tenant selling-restriction state",
+  },
+  { glob: `${API}/uploads/uploads-access*`, cls: "red", why: "tenant file access guard" },
+  { glob: `${API}/config/configuration.ts`, cls: "red", why: "env and secret wiring" },
+  { glob: `${API}/app.module.ts`, cls: "red", why: "global guards and module wiring" },
+  {
+    glob: `${API}/common/{db-locks,cron-lock,product-locks,tx-retry,stock-tx}*`,
+    cls: "red",
+    why: "locks, retry and stock transactions",
+  },
+  {
+    glob: `${API}/common/{ambient-tenant,assert-refs-in-tenant,derived-jwt-key,tenant-class.util,test-tenant-slug,local-db-bypass-urls}*`,
+    cls: "red",
+    why: "tenant isolation, JWT key or DB-target guard",
+  },
+  {
+    glob: `${API}/common/{money-invariants.util,tax-rate,invoiced-sales,is-whole-cents.validator,line-pack-factors,pricing-rules-ready,msrp,shipping,document-prefix,check-transitions,decimal-bounds}*`,
+    cls: "red",
+    why: "money, units and document-number invariants",
+  },
+  {
+    glob: `${API}/common/{idempotency.service,webhook-ledger-claim,encryption.service,signed-token,staff-only-fields,pg-session,sentry-redact,throttlers}*`,
+    cls: "red",
+    why: "idempotency, webhook ledger, crypto, redaction, session or rate-limit",
   },
   { glob: "apps/api/prisma/**", cls: "red", why: "schema and migrations" },
   { glob: `${API}/prisma/**`, cls: "red", why: "Prisma service (tenant scoping)" },
-  { glob: ".github/workflows/**", cls: "red", why: "CI pipeline" },
+  { glob: ".github/**", cls: "red", why: "CI, actions and dependabot" },
   { glob: ".husky/**", cls: "red", why: "git hooks (the push gate)" },
+  {
+    glob: "{package.json,package-lock.json,turbo.json}",
+    cls: "red",
+    why: "root deps and task graph",
+  },
+  { glob: "scripts/{ci-*,post-deploy-check.mjs}", cls: "red", why: "CI and post-deploy gates" },
+  {
+    glob: "scripts/{lib/risk-paths.mjs,risk-class*}",
+    cls: "red",
+    why: "the risk judge itself (a diff must not weaken it)",
+  },
+  { glob: ".claude/skills/bug-swarm/**", cls: "red", why: "swarm gate and workflow" },
+  { glob: ".claude/hooks/**", cls: "red", why: "session hooks" },
   { glob: "scripts/lib/test-tenants.*", cls: "red", why: "test-tenant write guard" },
 
   // green: no runtime effect.
