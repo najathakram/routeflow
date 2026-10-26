@@ -11,7 +11,7 @@ import { spawnSync } from "child_process";
 import { randomUUID } from "crypto";
 import path from "path";
 import { pathToFileURL } from "url";
-import { PrismaClient } from "@prisma/client";
+import { InvoiceItemSystemKind, PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import { describeDb, requireLocalDatabaseUrl } from "./testing/db-spec";
@@ -37,7 +37,7 @@ describeDb("report-b403-zero-rate-lines.mjs, real Postgres", () => {
       taxAmount?: number;
       withOrder?: boolean;
       issueDate?: Date;
-      lines: Array<{ taxRate: number; systemKind?: string }>;
+      lines: Array<{ taxRate: number; systemKind?: InvoiceItemSystemKind }>;
     },
   ) => {
     const invoice = await prisma.invoice.create({
@@ -107,11 +107,11 @@ describeDb("report-b403-zero-rate-lines.mjs, real Postgres", () => {
     await makeInvoice("notax", { lines: zero2, taxAmount: 0 });
     await makeInvoice("manual", { lines: zero2, withOrder: false });
     await makeInvoice("nsf-only-zero", {
-      lines: [{ taxRate: 0.075 }, { taxRate: 0, systemKind: "NSF_FEE" }],
+      lines: [{ taxRate: 0.075 }, { taxRate: 0, systemKind: InvoiceItemSystemKind.NSF_FEE }],
     });
     // Counted ONLY because the NSF fee line is left out: goods at 0 plus a taxed NSF line (dropping the exclusion makes it mixed).
     await makeInvoice("nsf-taxed", {
-      lines: [{ taxRate: 0 }, { taxRate: 0.075, systemKind: "NSF_FEE" }],
+      lines: [{ taxRate: 0 }, { taxRate: 0.075, systemKind: InvoiceItemSystemKind.NSF_FEE }],
     });
     // Month edges: the last and first half-hours of August / September (UTC); issueDate is a timestamp without a zone.
     await makeInvoice("edge-aug", {
