@@ -77,10 +77,7 @@ const CONFIG = [".gitignore", ".prettierignore"];
 const LEGACY = ["scripts/campaign/plane-client.mjs", "scripts/lib/verify-scope.mjs"];
 // Production readers not yet routed through the module. This list may only shrink.
 const PENDING = [
-  ".claude/hooks/stop.mjs",
   "apps/control/src/sources/registers.ts",
-  "scripts/campaign/plane-doctor.mjs",
-  "scripts/campaign/plane-retro.mjs",
   "tools/ops-monitor/lib/collector.mjs",
   "tools/ops-monitor/lib/store.mjs",
 ];
