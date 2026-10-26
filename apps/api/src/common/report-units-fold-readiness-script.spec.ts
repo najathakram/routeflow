@@ -104,6 +104,12 @@ describe("report-units-fold-readiness (script lane)", () => {
       expect(c).toContain("loadProtectedSlugs");
     });
 
+    it("main() itself calls the target guard and runs buildReport inside the read-only wrapper (not just selfTest)", () => {
+      const main = c.slice(c.indexOf("async function main()"));
+      expect(main).toMatch(/const guard = g\.guardTarget\(/);
+      expect(main).toMatch(/await g\.withReadOnlyTx\(client, async \(\) => \{[\s\S]*buildReport\(/);
+    });
+
     it("contains no write statement", () => {
       expect(c).not.toMatch(/\b(INSERT|UPDATE|DELETE|ALTER|CREATE|DROP|TRUNCATE)\b/);
       expect(c).not.toMatch(/\.(create|createMany|update|updateMany|delete|deleteMany|upsert)\(/);

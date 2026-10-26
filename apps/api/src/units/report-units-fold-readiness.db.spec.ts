@@ -18,6 +18,7 @@
 import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
@@ -498,4 +499,28 @@ describeDb("units fold-in readiness census (SA-984 D4), real Postgres, through t
       65,
     );
   });
+
+  it("inside the report's read-only wrapper a write is refused by the database (SQLSTATE 25006)", () => {
+    const code = `
+      import { createRequire } from "node:module";
+      import pg from "pg";
+      const require = createRequire(${JSON.stringify(pathToFileURL(SCRIPT).href)});
+      const g = require("./lib/report-839-regulated-void-residue.cjs");
+      const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
+      await client.connect();
+      try {
+        await g.withReadOnlyTx(client, () => client.query('UPDATE "Product" SET name = name WHERE false'));
+        console.log("NOT-REFUSED");
+      } catch (e) {
+        console.log(e.code);
+      } finally { await client.end(); }
+    `;
+    const res = spawnSync(process.execPath, ["--input-type=module", "-e", code], {
+      cwd: path.resolve(__dirname, "../.."),
+      encoding: "utf8",
+      env: { ...process.env, DATABASE_URL: requireLocalDatabaseUrl() },
+      timeout: 60_000,
+    });
+    expect(res.stdout.trim()).toBe("25006");
+  }, 60_000);
 });
