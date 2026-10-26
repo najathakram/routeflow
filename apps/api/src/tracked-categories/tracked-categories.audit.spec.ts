@@ -279,15 +279,49 @@ describe("TrackedCategory writer inventory (Row 430)", () => {
       expect(trackedCategoryWriterSites(reads)).toEqual([]);
     });
 
+    const TX = (body: string) => `await db.tenantTransaction(async (tx) => {\n${body}\n});`;
+    const siteOf = (src: string) =>
+      trackedCategoryWriterSites(src).find((s) => s.delegate === "trackedCategory")!;
+
     it("the same-tx check fails when the audit uses a different handle", () => {
-      const ok =
+      const ok = TX(
+        "await tx.trackedCategory.create({ data });\nawait auditTrackedCategoryWrite(tx, {});",
+      );
+      const bad = TX(
+        "await tx.trackedCategory.create({ data });\nawait auditTrackedCategoryWrite(this.prisma, {});",
+      );
+      expect(auditFollowsOnSameTx(ok, siteOf(ok))).toBe(true);
+      expect(auditFollowsOnSameTx(bad, siteOf(bad))).toBe(false);
+    });
+
+    it("a write with no enclosing transaction callback is never audited-on-the-same-tx", () => {
+      const bare =
         "await tx.trackedCategory.create({ data });\nawait auditTrackedCategoryWrite(tx, {});";
-      const bad =
-        "await tx.trackedCategory.create({ data });\nawait auditTrackedCategoryWrite(this.prisma, {});";
-      const [okSite] = trackedCategoryWriterSites(ok);
-      const [badSite] = trackedCategoryWriterSites(bad);
-      expect(auditFollowsOnSameTx(ok, okSite)).toBe(true);
-      expect(auditFollowsOnSameTx(bad, badSite)).toBe(false);
+      expect(auditFollowsOnSameTx(bare, siteOf(bare))).toBe(false);
+    });
+
+    it("deleting one write's audit fails even when a NEIGHBOURING function's audit is close by", () => {
+      const fnA = TX("const a = await tx.trackedCategory.update({ where });\nreturn a;"); // audit deleted
+      const fnB = TX(
+        "const b = await tx.trackedCategory.update({ where });\nawait auditTrackedCategoryWrite(tx, {});\nreturn b;",
+      );
+      const src = `async function update() {\n${fnA}\n}\nasync function toggle() {\n${fnB}\n}`;
+      const [first, second] = trackedCategoryWriterSites(src).filter(
+        (s) => s.delegate === "trackedCategory",
+      );
+      expect(auditFollowsOnSameTx(src, first)).toBe(false);
+      expect(auditFollowsOnSameTx(src, second)).toBe(true);
+    });
+
+    it("two writes in one callback need two audits", () => {
+      const one = TX(
+        "await tx.trackedCategory.create({ data });\nawait tx.trackedCategory.update({ where });\nawait auditTrackedCategoryWrite(tx, {});",
+      );
+      const two = TX(
+        "await tx.trackedCategory.create({ data });\nawait auditTrackedCategoryWrite(tx, {});\nawait tx.trackedCategory.update({ where });\nawait auditTrackedCategoryWrite(tx, {});",
+      );
+      expect(auditFollowsOnSameTx(one, siteOf(one))).toBe(false);
+      expect(auditFollowsOnSameTx(two, siteOf(two))).toBe(true);
     });
   });
 });

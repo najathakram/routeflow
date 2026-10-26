@@ -1,4 +1,4 @@
-import { WRITE_METHODS, trackedDelegateWrites } from "../products/tripwire-scan";
+import { WRITE_METHODS, balancedGeneric, trackedDelegateWrites } from "../products/tripwire-scan";
 
 /**
  * Row 430 (SA-958 §3.2) writer scanner, shared by the audit pin. Pure text functions. A tracked category is written by
@@ -103,14 +103,44 @@ export function trackedCategoryWriterSites(source: string): WriterSite[] {
   return sites;
 }
 
-/** Does the audit helper get called with the SAME transaction handle, after the write at `at`? */
+/** The body of the nearest callback before `at` whose parameter is `receiver` (`async (tx) => { ... }`), or null. */
+function callbackBodyOf(text: string, at: number, receiver: string): string | null {
+  const head = text.slice(0, at);
+  const re = new RegExp(
+    `\\(\\s*${receiver.replace(/\$/g, "\\$")}\\b[^)]*\\)\\s*(?::[^=]+)?=>\\s*\\{`,
+    "g",
+  );
+  const opens = [...head.matchAll(re)].map((m) => (m.index ?? 0) + m[0].length - 1);
+  for (const open of opens.reverse()) {
+    const body = balancedGeneric(text, open, "{", "}");
+    if (open + body.length > at) return body; // this callback encloses the write
+  }
+  return null;
+}
+
+/**
+ * Is the write at `site` audited ON THE SAME transaction handle, inside the SAME callback? The callback's body must hold
+ * at least as many audit calls on that handle as TrackedCategory writes on it, so deleting one write's audit fails even
+ * when a neighbouring function's audit sits close by.
+ */
 export function auditFollowsOnSameTx(source: string, site: WriterSite): boolean {
   if (site.at == null || !site.receiver) return false;
   const text = stripComments(normaliseBrackets(source));
-  const rest = text.slice(site.at, site.at + 2500);
-  return new RegExp(
-    `auditTrackedCategoryWrite\\(\\s*${site.receiver.replace(/\$/g, "\\$")}\\s*,`,
-  ).test(rest);
+  const body = callbackBodyOf(text, site.at, site.receiver);
+  if (body == null) return false;
+  const audits = (
+    body.match(
+      new RegExp(
+        `auditTrackedCategoryWrite\\(\\s*${site.receiver.replace(/\$/g, "\\$")}\\s*,`,
+        "g",
+      ),
+    ) ?? []
+  ).length;
+  const writes = trackedCategoryWriterSites(body).filter(
+    (s) =>
+      s.shape === "delegate" && s.delegate === "trackedCategory" && s.receiver === site.receiver,
+  ).length;
+  return audits > 0 && audits >= writes;
 }
 
 /** Exposed so the pin's self-test can show the old matcher missed these shapes. */

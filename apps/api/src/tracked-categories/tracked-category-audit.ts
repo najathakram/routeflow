@@ -1,4 +1,4 @@
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { AUDIT_ACTIONS } from "../audit/audit-actions.constant";
 
 /**
@@ -25,7 +25,11 @@ const AUDITED_FIELDS = [
 type Snapshot = Record<(typeof AUDITED_FIELDS)[number], unknown>;
 
 /** A Decimal rate reads as its plain number string ("0.05", not "0.0500"), so before and after compare and print alike. */
-const plainRate = (v: unknown): string => String(Number(String(v ?? 0)));
+const plainRate = (v: unknown): string => {
+  if (typeof v === "string" || typeof v === "number") return String(Number(v));
+  if (v instanceof Prisma.Decimal) return String(v.toNumber());
+  return "0";
+};
 
 export function trackedCategorySnapshot(row: Record<string, unknown> | null | undefined) {
   if (!row) return null;
