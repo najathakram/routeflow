@@ -55,6 +55,8 @@ import {
   branchTip,
   execute,
   buildPlan,
+  parseAllowList,
+  allowListVerdict,
   CMD_UNSAFE,
   unlinkLinksWithin,
   cmdRmdirArgs,
@@ -2015,6 +2017,69 @@ t("row 719: a precomputed scan map is reused across candidates", () => {
     const scan = scanLinkTargets([a, b]);
     assert.equal(linkedIntoBy(a, [a, b], scan).length, 1);
     assert.deepEqual(linkedIntoBy(b, [a, b], scan), []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// --- --allow-list: per-worktree qualifier (red-first cases) ---
+const AL_NOW = Date.parse("2026-10-26T16:00:00Z");
+const AL_OLD = AL_NOW - 48 * 3600 * 1000;
+const alOk = {
+  name: "wt-x",
+  isMainCheckout: false,
+  isLocked: false,
+  isDirty: false,
+  onOrigin: true,
+  headMs: AL_OLD,
+  indexMs: AL_OLD,
+  nowMs: AL_NOW,
+  linkedFrom: [],
+};
+t("allow-list: a clean, on-origin, idle, detached worktree qualifies", () => {
+  assert.equal(allowListVerdict(alOk).ok, true);
+});
+t("allow-list: dirty is refused", () => {
+  assert.equal(allowListVerdict({ ...alOk, isDirty: true }).ok, false);
+});
+t("allow-list: HEAD not on any origin ref is refused", () => {
+  assert.equal(allowListVerdict({ ...alOk, onOrigin: false }).ok, false);
+});
+t("allow-list: HEAD or index idle under 24h (or unknown) is refused", () => {
+  assert.equal(allowListVerdict({ ...alOk, headMs: AL_NOW - 3600e3 }).ok, false);
+  assert.equal(allowListVerdict({ ...alOk, indexMs: AL_NOW - 3600e3 }).ok, false);
+  assert.equal(allowListVerdict({ ...alOk, indexMs: null }).ok, false);
+});
+t("allow-list: main checkout, protected name and locked are refused", () => {
+  assert.equal(allowListVerdict({ ...alOk, isMainCheckout: true }).ok, false);
+  assert.equal(allowListVerdict({ ...alOk, name: "rf-migrate" }).ok, false);
+  assert.equal(allowListVerdict({ ...alOk, isLocked: true }).ok, false);
+});
+t("allow-list: a sibling tree linking into it (or an unreadable scan) is refused", () => {
+  assert.equal(allowListVerdict({ ...alOk, linkedFrom: ["/w/sib"] }).ok, false);
+  assert.equal(allowListVerdict({ ...alOk, linkedFrom: null }).ok, false);
+});
+t("allow-list: file parsing takes column 1, skips comments and blanks", () => {
+  const text = ["# c", "", "C:/a|b|1|origin", "C:/b\tx", "  C:/c  ", ""].join("\n");
+  assert.deepEqual(parseAllowList(text), ["C:/a", "C:/b", "C:/c"]);
+});
+t("allow-list: removal never follows a junction inside the worktree into a sibling", () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "janitor-al-")));
+  try {
+    const wt = join(root, "wt");
+    const sib = join(root, "sib");
+    mkdirSync(join(wt, "node_modules"), { recursive: true });
+    mkdirSync(sib);
+    writeFileSync(join(sib, "keep.txt"), "x");
+    dirLink(sib, join(wt, "node_modules", "pkg"));
+    removeWorktreeSafely(wt, {
+      git: () => {},
+      unlinkLinksWithin,
+      exists: (p) => existsSync(p),
+      removeTree: (p) => safeRemoveTree(p),
+    });
+    assert.equal(existsSync(wt), false);
+    assert.equal(readFileSync(join(sib, "keep.txt"), "utf8"), "x");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
