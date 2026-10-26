@@ -105,7 +105,7 @@ import { parseRegulatedAuthError, type BlockedCategory } from "@/lib/api/authori
 import { parseSellingRestricted } from "@/lib/api/selling-restricted";
 import { BlockedLinesDialog } from "@/components/BlockedLinesDialog";
 import { useRestrictionWarningRetry } from "@/lib/use-restriction-warning-retry";
-import { postDeliveryInvoicePrompt, type BlockedLine } from "@routeflow/types";
+import { postDeliveryInvoicePrompt, routeHeldNotice, type BlockedLine } from "@routeflow/types";
 import { CreditLimitGuardDialog } from "@/components/CreditLimitGuardDialog";
 import { parseCreditLimitError, type CreditLimitInfo } from "@/lib/api/credit-limit";
 import { customerTierFor, roundMoney } from "@routeflow/pricing";
@@ -766,8 +766,9 @@ export default function OrderDetailPage() {
       {
         // Delivery can be refused for credit (B585 gate): open the guard, not a bare toast.
         onError: guardError(() => handleDeliver()),
-        onSuccess: () => {
+        onSuccess: (done: unknown) => {
           setLocalStatus("DELIVERED");
+          routeHeldNotice(done, order.lineItems, toast); // row 590: lines the driver's figure holds
           // #2089 (owner ruling): "automatically open the invoice, then ask if you
           // want to send it" — offline is checked FIRST and unconditionally
           // (postDeliveryInvoicePrompt's own contract), before ever attempting the

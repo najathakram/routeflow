@@ -256,13 +256,16 @@ describeDb("Row 590 — office DELIVERED on a run-stop order, real Postgres", ()
     expect((await read(orderId)).status).toBe("DELIVERED");
     expect(await dq(lineId)).toBe(6);
     expect(row.status).toBe("DELIVERED");
+    // SA-978 §1: the response names the line that keeps the driver's figure (read only: the column was not raised)
+    expect(row.routeHeldLines).toEqual([{ lineId, delivered: 6, qty: 10 }]);
   }, 60_000);
 
   it("GUARD D: no run link: the entry stamp books the line in full, unchanged", async () => {
     const { orderId, lineId } = await seed("OUT_FOR_DELIVERY", null);
-    await deliver(orderId);
+    const row: any = await deliver(orderId);
     expect((await read(orderId)).status).toBe("DELIVERED");
     expect(await dq(lineId)).toBe(10);
+    expect(row.routeHeldLines).toBeUndefined();
   }, 60_000);
 
   it("GUARD E: an IN_PROGRESS stop is refused too; a SKIPPED stop on a live run is refused (not COMPLETED)", async () => {
