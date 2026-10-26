@@ -102,6 +102,7 @@ import { useCounterLineUndo } from "./useCounterLineUndo";
 import { COUNTER_SCAN_FAILED_COPY } from "./useCounterSaleScan";
 import { useCounterReprice } from "./useCounterReprice";
 import { repriceLines } from "./counter-sale-reprice";
+import { QTY_TOO_LARGE_COPY } from "./counter-qty-refusal";
 import { PRICE_LAYER_TOO_MANY_COPY } from "@/components/PriceLayerNotice";
 import { isTextEntryActive } from "@/lib/refocus-scanner";
 import { scrollPageToTop } from "@/lib/scroll-top";
@@ -516,18 +517,23 @@ export function CounterSaleScreen() {
   const repriceBlockedRef = React.useRef(false);
   repriceBlockedRef.current = reprice.blocked;
 
+  // An add past the per-line cap leaves the cart as it was (addScannedProduct returns the same array) and says why.
+  const addCapped = (prev: SaleLine[], product: any, level: SellLevel, n: number) => {
+    const next = addScannedProduct(
+      prev,
+      product,
+      level,
+      n,
+      reprice.tierFor(product.id),
+      reprice.layerOf(product.id),
+    );
+    if (next === prev) queueMicrotask(() => setError(QTY_TOO_LARGE_COPY));
+    return next;
+  };
+
   // The ONE add path: a scan, a picker click and a quick-key tap all land a product through here.
   const addProduct = (product: any, level: SellLevel, n: number) =>
-    setLines((prev) =>
-      addScannedProduct(
-        prev,
-        product,
-        level,
-        n,
-        reprice.tierFor(product.id),
-        reprice.layerOf(product.id),
-      ),
-    );
+    setLines((prev) => addCapped(prev, product, level, n));
 
   // B1206-B1208: every scan joins one FIFO queue resolved through the shared exact-code ladder (see useCounterSaleScan).
   const scan = useCounterSaleScan({
@@ -535,16 +541,7 @@ export function CounterSaleScreen() {
     refocus,
     add: (product, level, n) => {
       scanCueArmedRef.current = true;
-      setLines((prev) =>
-        addScannedProduct(
-          prev,
-          product,
-          level,
-          n,
-          reprice.tierFor(product.id),
-          reprice.layerOf(product.id),
-        ),
-      );
+      setLines((prev) => addCapped(prev, product, level, n));
     },
   });
 

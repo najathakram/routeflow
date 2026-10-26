@@ -14,7 +14,8 @@ export const QTY_NOT_WHOLE_COPY = "Enter a whole number. Items can't be split he
 export const QTY_ZERO_COPY = "Quantity must be at least 1. To take the item off the sale, use ×.";
 export const QTY_ZERO_BOXED_COPY =
   "Enter at least one box or piece. To take the item off the sale, use ×.";
-export const QTY_TOO_LARGE_COPY = "That is more than one line can hold. The most is 100,000.";
+export const QTY_TOO_LARGE_COPY =
+  "That is more than one line can hold. The most is 100,000 pieces.";
 /** A number the field's own parser refuses although it is finite and whole (1e3, 0x10, +5): not a plain count. */
 export const QTY_FORMAT_COPY = "Enter a whole number from 1.";
 
