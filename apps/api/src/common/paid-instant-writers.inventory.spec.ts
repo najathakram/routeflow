@@ -46,7 +46,7 @@ const WRITERS = [
   "invoices/invoices.service.ts",
   "vendor-bills/vendor-bills.service.ts",
   "bookkeeping/bookkeeping.service.ts",
-  "customers/customers.service.ts",
+  "customers/advance-payment-data.ts", // moved out of customers.service.ts for the size ratchet
   "sales-agents/commission-statements.service.ts",
 ];
 const IMPORTS_HELPER = /from\s+["']\.\.\/common\/paid-instant["']/;

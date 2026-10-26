@@ -82,3 +82,12 @@ export function keptGivenPaidInstant(
   if (stored && isDateOnly(input) && input.trim() === tenantTodayDay(zone, stored)) return stored;
   return givenPaidInstant(input, zone, now, field);
 }
+
+/** A bank (settled) date: blank = no date (null), otherwise `paidInstantOf`. */
+export function settledInstantOf(
+  input: PaidInput,
+  zone: string | null | undefined,
+  now: Date = new Date(),
+): Date | null {
+  return input ? paidInstantOf(input, zone, now, "settledAt") : null;
+}

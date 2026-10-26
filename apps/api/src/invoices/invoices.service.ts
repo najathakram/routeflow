@@ -34,7 +34,8 @@ import { PrismaService } from "../prisma/prisma.service";
 import { overpaidByOf, statusFromPayments } from "./invoice-status";
 import { voidPaymentInTx } from "./payment-void-tx";
 import { TENANT_ZONE_SELECT, configuredZone, tenantTimeZone } from "../common/tenant-time-zone";
-import { givenPaidInstant, keptGivenPaidInstant, paidInstantOf } from "../common/paid-instant";
+import { givenPaidInstant, paidInstantOf, settledInstantOf } from "../common/paid-instant";
+import { resolveEditedPaymentDates } from "./payment-edit-dates";
 import { assertNoDuplicateLineIds } from "../common/duplicate-line-ids";
 import { StorageService } from "../storage/storage.service";
 import {
@@ -4356,7 +4357,6 @@ export class InvoicesService {
       const status = paymentStatus;
       assertPaymentFits({ total, existing, amount, status, realMoney: "CONFIRMED_BASIS" });
 
-      // SA-943: a date-only paidAt is the tenant-local day (today = now, the guard's DB clock), never 00:00Z.
       const paidAt = await counterPay.assertDatedOk(
         tx,
         till,
@@ -4387,9 +4387,7 @@ export class InvoicesService {
           notes: dto.notes,
           paidAt,
           // Never clamped: a post-dated check settles in the future.
-          settledAt: dto.settledAt
-            ? paidInstantOf(dto.settledAt, tz, new Date(), "settledAt")
-            : null,
+          settledAt: settledInstantOf(dto.settledAt, tz),
           bankCharges: roundMoneyOrNull(dto.bankCharges),
           status: paymentStatus as any,
           paymentNumber,
@@ -4755,25 +4753,8 @@ export class InvoicesService {
 
       const payment = inv.payments.find((p) => p.id === paymentId);
       if (!payment) throw new NotFoundException("Payment not found");
-      // SA-943 MUST 2: the edit form resends the date it shows; that date keeps the stored instant (no re-stamp to 00:00Z).
-      const keptGiven = dto.paidAt ? keptGivenPaidInstant(dto.paidAt, payment.paidAt, tz) : null;
-      // An edit to TODAY is "now" on the DATABASE clock, the clock a new payment's default and the close cutoff use.
-      let dbNowAt: Date | undefined;
-      const dbNow = async () =>
-        (dbNowAt ??= (await tx.$queryRaw<{ now: Date }[]>`SELECT CURRENT_TIMESTAMP AS now`)[0].now);
-      const keptPaidAt = dto.paidAt && keptGiven === null ? await dbNow() : keptGiven;
-      // Key present = set or (null) clear; key absent = keep what is stored. Same DB-clock rule as paidAt.
-      const keptSettledAt =
-        dto.settledAt === undefined
-          ? undefined
-          : dto.settledAt
-            ? (keptGivenPaidInstant(dto.settledAt, payment.settledAt, tz, undefined, "settledAt") ??
-              (await dbNow()))
-            : null;
-      const movedPaidAt =
-        keptPaidAt && keptPaidAt.getTime() !== payment.paidAt.getTime() ? keptPaidAt : undefined;
-      const datedDto = { ...dto, paidAt: keptPaidAt ?? undefined };
-      await counterPay.assertEditDated(tx, till, inv.orderId, payment, datedDto); // per-row closed window, then till-CASH before the close
+      const dated = await resolveEditedPaymentDates(tx, dto, payment, tz);
+      await counterPay.assertEditDated(tx, till, inv.orderId, payment, dated.datedDto); // per-row closed window, then till-CASH before the close
 
       // F03/R5/T-B81: read the STORED method, not just the incoming dto — the same
       // guard deletePayment (:4653) and voidPayment (:4941) already have. Neither
@@ -4832,8 +4813,8 @@ export class InvoicesService {
           method: dto.method,
           reference: dto.reference,
           notes: dto.notes,
-          ...(movedPaidAt && { paidAt: movedPaidAt }),
-          ...(keptSettledAt !== undefined && { settledAt: keptSettledAt }),
+          ...(dated.movedPaidAt && { paidAt: dated.movedPaidAt }),
+          ...(dated.keptSettledAt !== undefined && { settledAt: dated.keptSettledAt }),
           ...(dto.bankCharges !== undefined && { bankCharges: roundMoneyOrNull(dto.bankCharges) }),
           status: newPaymentStatus,
         },
@@ -5096,9 +5077,7 @@ export class InvoicesService {
     const paymentGroupId = randomUUID();
     const paidAt = paidInstantOf(dto.paidAt, tz); // SA-943: tenant-local day, today = now
     // One bank date for the whole allocation group — the money landed once.
-    const settledAt = dto.settledAt
-      ? paidInstantOf(dto.settledAt, tz, new Date(), "settledAt")
-      : null;
+    const settledAt = settledInstantOf(dto.settledAt, tz);
     const status = dto.status ?? "PAID";
     // B769 / SA-112: rounded totals, and Σ allocations ≤ payment — refused before any write.
     const { excess } = standaloneAllocationTotals(dto);
@@ -5350,9 +5329,7 @@ export class InvoicesService {
       // historical payment into the current period and restate a closed one. Absent
       // an explicit date the column stays as it is (NULL rows keep falling back to
       // paidAt); an explicit date is authoritative and drives both fields.
-      const explicitSettledAt = dto.settledAt
-        ? paidInstantOf(dto.settledAt, tz, new Date(), "settledAt") // SA-943: tenant-local day
-        : null;
+      const explicitSettledAt = settledInstantOf(dto.settledAt, tz); // SA-943: tenant-local day
 
       // SA ruling C: RECORDED -> DEPOSITED / CLEARED takes no close lock (accepted): it changes the CHECK grouping of a fresh
       // fold, never cash and never a stored close.
