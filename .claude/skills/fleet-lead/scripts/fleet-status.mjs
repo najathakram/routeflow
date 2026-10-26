@@ -17,6 +17,7 @@ import { readFileSync, writeFileSync, readdirSync, statSync, existsSync } from "
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { makeProc } from "../../../../scripts/lib/proc.mjs";
+import { registryRoot } from "../../../../scripts/lib/registry-root.mjs";
 
 const args = process.argv.slice(2);
 const wantJson = args.includes("--json");
@@ -295,10 +296,19 @@ h(``);
 // ---------------------------------------------------------------------------
 h(`## Bug registry counts`);
 {
-  const registryPath = join(REPO_ROOT, ".claude", "campaign", "bugs.jsonl");
-  if (!existsSync(registryPath)) {
-    h(`- registry file absent`);
-  } else {
+  // Fail closed: a missing register is a stop, never "registry file absent" in a healthy report.
+  let registryPath;
+  try {
+    registryPath = join(registryRoot(), "bugs.jsonl");
+    if (!existsSync(registryPath))
+      throw new Error(
+        `bug register file not found at ${registryPath} — run \`npm run registry:clone\``,
+      );
+  } catch (err) {
+    process.stderr.write(`fleet-status: ${err.message}\n`);
+    process.exit(2);
+  }
+  {
     try {
       const raw = readFileSync(registryPath, "utf8");
       const recs = raw

@@ -15,6 +15,8 @@
  *   P4  runs the real bugs.mjs against missing / relocated registers: exit 2 plus
  *       the fix command instead of "0 rows"; the sync anchor never lands in a
  *       register; running from a subdirectory still finds the register (B278).
+ *   P5  runs the other six filesystem readers against a missing register: exit 2 plus the
+ *       fix command, never "skipped" / "absent" / a clean exit.
  *
  * Run directly: `node scripts/registry-root.self-test.mjs` (wired into `npm run verify`).
  */
@@ -76,15 +78,9 @@ const LEGACY = ["scripts/campaign/plane-client.mjs", "scripts/lib/verify-scope.m
 // Production readers not yet routed through the module. This list may only shrink.
 const PENDING = [
   ".claude/hooks/stop.mjs",
-  ".claude/skills/fleet-lead/scripts/fleet-status.mjs",
   "apps/control/src/sources/registers.ts",
-  "scripts/campaign-check.mjs",
   "scripts/campaign/plane-doctor.mjs",
-  "scripts/campaign/plane-intake.mjs",
   "scripts/campaign/plane-retro.mjs",
-  "scripts/campaign/plane-sync.mjs",
-  "scripts/campaign/plane-triage.mjs",
-  "scripts/roadmap/render.mjs",
   "tools/ops-monitor/lib/collector.mjs",
   "tools/ops-monitor/lib/store.mjs",
 ];
@@ -277,6 +273,45 @@ try {
     sub.code === 0 && m !== null && Number(m[1]) > 0,
     `exit ${sub.code} ${m ? m[0] : sub.out.trim().slice(-60)}`,
   );
+
+  // ── P5: every other filesystem reader fails closed on a missing register ──
+  console.log("P5 readers: a missing register exits 2 and names the fix, never 'skipped' or 0");
+  const planeEnv = {
+    PLANE_SYNC_SELF_TEST: "1",
+    PLANE_RUNS_PATH: join(tmp, "plane-runs.jsonl"),
+  };
+  const readers = [
+    { name: "campaign-check", args: ["scripts/campaign-check.mjs"] },
+    { name: "plane-sync", args: ["scripts/campaign/plane-sync.mjs", "--dry-run"], env: planeEnv },
+    { name: "plane-triage", args: ["scripts/campaign/plane-triage.mjs"], env: planeEnv },
+    { name: "plane-intake", args: ["scripts/campaign/plane-intake.mjs"], env: planeEnv },
+    {
+      name: "fleet-status",
+      args: [".claude/skills/fleet-lead/scripts/fleet-status.mjs", "--json"],
+    },
+    { name: "roadmap render", args: ["scripts/roadmap/render.mjs", "--out", join(tmp, "roadmap")] },
+  ];
+  for (const rd of readers) {
+    const e = { ...process.env, ...(rd.env ?? {}), BUGS_ROOT: join(tmp, "no-register-here") };
+    for (const k of ["PLANE_API_KEY", "PLANE_SYNC_REGISTRY_DIR", "CAMPAIGN_CHECK_STATUS_DIR"])
+      delete e[k];
+    const r = spawnSync(process.execPath, rd.args, {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+      env: e,
+      timeout: 30000,
+    });
+    check(
+      `${rd.name}: a missing register exits 2`,
+      r.status === 2,
+      `exit ${r.status} out=${(r.stdout ?? "").trim().slice(0, 80)}`,
+    );
+    check(
+      `${rd.name}: the failure names the fix command`,
+      `${r.stdout}${r.stderr}`.includes(FIX),
+      `stderr=${(r.stderr ?? "").trim().slice(0, 120)}`,
+    );
+  }
 } finally {
   rmSync(tmp, { recursive: true, force: true });
 }
