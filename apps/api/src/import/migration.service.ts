@@ -12,7 +12,7 @@ import { productCategoryViolation, productNameViolation } from "../common/text-c
 import { ExternalRefService } from "./external-ref.service";
 import { DuplicateMatchService } from "./duplicate-match.service";
 import { StagedRow } from "./connectors/source-connectors";
-import { parseImportMoney, parseImportNumber } from "./parse-import-number";
+import { parseImportMoney } from "./parse-import-number";
 
 const UNDO_WINDOW_MS = 24 * 60 * 60 * 1000;
 
@@ -23,6 +23,8 @@ const UNSAFE_NAME_FLAG = "unsafe-name";
 const UNSAFE_CATEGORY_FLAG = "unsafe-category";
 /** The staging flag on a PRODUCT whose price is present but not a non-negative number (B205): skipped, never priced 0. */
 const BAD_PRICE_FLAG = "bad-price";
+/** The staging flag on a PRODUCT whose units per box is present but not a whole number of 1 or more: skipped. */
+const BAD_UNITS_FLAG = "bad-units-per-box";
 /** The staging flag on a record whose commit threw at confirm (B334): skipped on its own, the job still confirms. */
 const COMMIT_FAILED_FLAG = "commit-failed";
 
@@ -54,6 +56,7 @@ function unsafeProductFlag(payload: Record<string, unknown>): string | null {
   if (productNameViolation({ name: str(payload.name) })) return UNSAFE_NAME_FLAG;
   if (productCategoryViolation(optStr(payload.category))) return UNSAFE_CATEGORY_FLAG;
   if (normalizedPrice(payload) === null) return BAD_PRICE_FLAG;
+  if (unitsPerBoxOf(payload) === null) return BAD_UNITS_FLAG;
   return null;
 }
 
@@ -67,11 +70,24 @@ function optStr(v: unknown): string | undefined {
   const s = str(v);
   return s.length > 0 ? s : undefined;
 }
-/** Coerce to a finite number, or undefined. */
-function optNum(v: unknown): number | undefined {
-  if (v == null) return undefined;
-  const n = parseImportNumber(v); // "1,000" -> 1000 (a bare Number() gave NaN and dropped it)
-  return Number.isFinite(n) ? n : undefined;
+/** Plain digits, or comma-grouped thousands (groups of three): "1,000" is a box count, "1,5" and "12,50" are not. */
+const UNITS_PER_BOX_SHAPE = /^(\d{1,3}(,\d{3})+|\d+)$/;
+/** Largest value of the Int column. */
+const MAX_INT = 2_147_483_647;
+
+/**
+ * A staged product's units per box: undefined when absent, null when present but not a whole number of 1 or more
+ * (the comma is never guessed at: "1,5" must not become 15). The Int column and the product DTO both want >= 1.
+ */
+function unitsPerBoxOf(payload: Record<string, unknown>): number | undefined | null {
+  const raw = payload.unitsPerBox;
+  if (raw == null || (typeof raw === "string" && raw.trim() === "")) return undefined;
+  let n: number;
+  if (typeof raw === "number") n = raw;
+  else if (typeof raw === "string" && UNITS_PER_BOX_SHAPE.test(raw.trim()))
+    n = Number(raw.trim().replace(/,/g, ""));
+  else return null;
+  return Number.isInteger(n) && n >= 1 && n <= MAX_INT ? n : null;
 }
 
 /**
@@ -245,10 +261,13 @@ export class MigrationService {
         // Only a row-level refusal (an HTTP 4xx from the service, a Prisma constraint error) skips the row; an outage
         // or timeout (a 5xx included) must surface, or every remaining row would be SKIPPED and the job could never
         // be retried.
+        // A value the column cannot hold (a validation error, P2000 too long, P2020 out of range, P2033 too big) is
+        // the row's own fault, not an outage.
         const rowLevel =
           (e instanceof HttpException && e.getStatus() < 500) ||
+          e instanceof Prisma.PrismaClientValidationError ||
           (e instanceof Prisma.PrismaClientKnownRequestError &&
-            ["P2002", "P2003"].includes(e.code));
+            ["P2002", "P2003", "P2000", "P2020", "P2033"].includes(e.code));
         if (!rowLevel) throw e;
         const prior = Array.isArray(rec.flags) ? (rec.flags as string[]) : [];
         await this.prisma.forTenant().migrationStagingRecord.update({
@@ -358,7 +377,7 @@ export class MigrationService {
           pricePerUnit: normalizedPrice(payload) || "0",
           barcode: optStr(payload.barcode),
           category: optStr(payload.category),
-          unitsPerBox: optNum(payload.unitsPerBox),
+          unitsPerBox: unitsPerBoxOf(payload) ?? undefined,
         });
         return created.id;
       }

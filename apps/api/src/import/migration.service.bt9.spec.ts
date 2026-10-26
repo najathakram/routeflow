@@ -1,5 +1,6 @@
 import { Test } from "@nestjs/testing";
 import { ConflictException, ServiceUnavailableException } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { ProductsService } from "../products/products.service";
@@ -110,6 +111,48 @@ describe("MigrationService, BT-9", () => {
       expect(prisma.migrationJob.update).not.toHaveBeenCalled();
     });
 
+    // A value the column cannot hold is the row's own fault: skipped, so one row cannot leave the job STAGED for good.
+    it.each([
+      [
+        "PrismaClientValidationError",
+        () => new Prisma.PrismaClientValidationError("bad", { clientVersion: "7" }),
+      ],
+      [
+        "P2000",
+        () =>
+          new Prisma.PrismaClientKnownRequestError("long", { code: "P2000", clientVersion: "7" }),
+      ],
+      [
+        "P2020",
+        () =>
+          new Prisma.PrismaClientKnownRequestError("range", { code: "P2020", clientVersion: "7" }),
+      ],
+      [
+        "P2033",
+        () =>
+          new Prisma.PrismaClientKnownRequestError("big", { code: "P2033", clientVersion: "7" }),
+      ],
+    ])("%s on one row skips that row and the job still reaches CONFIRMED", async (_name, make) => {
+      prisma.migrationJob.findUnique.mockResolvedValue({
+        id: "j1",
+        source: "ZOHO",
+        status: "STAGED",
+      });
+      prisma.migrationStagingRecord.findMany.mockResolvedValue([
+        rec("r1", { name: "Cola" }),
+        rec("r2", { name: "Chips" }),
+      ]);
+      products.create.mockRejectedValueOnce(make()).mockResolvedValueOnce({ id: "p2" });
+      const res = await service.confirmJob("j1");
+      expect(res.skipped).toBe(1);
+      expect(res.committed).toBe(1);
+      const updates = prisma.migrationStagingRecord.update.mock.calls.map((c) => c[0]);
+      expect(updates.find((u) => u.where.id === "r1")?.data).toMatchObject({
+        status: "SKIPPED",
+        flags: ["commit-failed"],
+      });
+    });
+
     it("a failing external-ref write after a live create still marks the row COMMITTED with its entity id", async () => {
       prisma.migrationJob.findUnique.mockResolvedValue({
         id: "j1",
@@ -204,6 +247,44 @@ describe("MigrationService, BT-9", () => {
 
     it("stage: an absent price stays PENDING (the product is created at 0 as before)", async () => {
       expect(await stageOne({ name: "Cola" })).toMatchObject({ status: "PENDING" });
+    });
+
+    // master read "1,5" as 15 and "12,50" as 1250 (the comma stripped), and let "2.5" through to the Int column
+    it.each(["1,5", "12,50", "2.5", "0", "-3", "abc", "1e3", "1,23", 2.5, 0, 3_000_000_000])(
+      "stage: unitsPerBox %p is SKIPPED bad-units-per-box, never a guessed whole number",
+      async (units) => {
+        expect(await stageOne({ name: "Cola", unitsPerBox: units })).toMatchObject({
+          status: "SKIPPED",
+          flags: ["bad-units-per-box"],
+        });
+      },
+    );
+
+    it.each(["12", " 12 ", "1,000", 24, ""])(
+      "stage: unitsPerBox %p stays PENDING",
+      async (units) => {
+        expect(await stageOne({ name: "Cola", unitsPerBox: units })).toMatchObject({
+          status: "PENDING",
+        });
+      },
+    );
+
+    it("confirm: a record staged before this fix with unitsPerBox '1,5' is SKIPPED and never reaches products.create", async () => {
+      prisma.migrationJob.findUnique.mockResolvedValue({
+        id: "j1",
+        source: "ZOHO",
+        status: "STAGED",
+      });
+      prisma.migrationStagingRecord.findMany.mockResolvedValue([
+        rec("r1", { name: "Cola", unitsPerBox: "1,5" }),
+      ]);
+      const res = await service.confirmJob("j1");
+      expect(res.skipped).toBe(1);
+      expect(products.create).not.toHaveBeenCalled();
+      expect(prisma.migrationStagingRecord.update.mock.calls[0][0].data).toMatchObject({
+        status: "SKIPPED",
+        flags: ["bad-units-per-box"],
+      });
     });
 
     it("confirm: a record staged before this fix with price '1,234.56' reaches products.create as '1234.56'", async () => {
