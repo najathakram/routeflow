@@ -128,11 +128,6 @@ const PINNED_B: Record<string, PinB> = {
     { OUT: 1 },
     "replayLineKey :255 reads a STORED line's boxes/pieces to build an idempotency key",
   ],
-  "products/line-units.ts": [
-    1,
-    { OUT: 1 },
-    "norm :221 re-splits a known piece count (boxes: 0, pieces: count) of a line the product already resolved",
-  ],
   "recurring-invoices/recurring-line-split.ts": [
     1,
     { OUT: 1 },
