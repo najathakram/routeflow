@@ -29,6 +29,7 @@
 // second copy of that comparison.
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { registryRoot } from "../lib/registry-root.mjs";
 import { appendRun, createClient, loadKnobs, repoRoot, writesToday } from "./plane-client.mjs";
 import { currentBranch, deriveDesired, planDiff } from "./plane-sync.mjs";
 
@@ -352,6 +353,16 @@ async function main() {
     // this never re-throws the way a bare `knob()` call could.
     const getBudget = knobs.knobs.triageGetBudget.value;
 
+    // Fail closed first: a missing register is a stop, never "skipped" or an empty brief.
+    let registryDir;
+    try {
+      registryDir = process.env.PLANE_SYNC_REGISTRY_DIR || registryRoot();
+    } catch (err) {
+      process.stderr.write(`Plane triage: ${err.message}\n`);
+      process.exitCode = 2;
+      rec.error = `${err?.name ?? "Error"}: ${String(err.message).slice(0, 200)}`;
+      return;
+    }
     const apiKey = process.env.PLANE_API_KEY;
     if (!apiKey) {
       process.stdout.write("Plane triage: skipped (no PLANE_API_KEY)\n");
@@ -360,8 +371,6 @@ async function main() {
       return;
     }
 
-    const registryDir =
-      process.env.PLANE_SYNC_REGISTRY_DIR || join(repoRoot(), ".claude", "campaign");
     const payload = await gatherTriage({ apiKey, registryDir, days, getBudget });
 
     if (asJson) {
