@@ -253,9 +253,9 @@ describe("partPayEqualsTotal: a typed amount equal to the total is said to be a 
 describe("partPayAmountProblem with the customer's open credit (server parity)", () => {
   const at = (
     tendered: string,
-    availableCredit: number | null | "failed",
+    autoApplyCredit: number | null | "failed",
     method: "CARD" | "CHECK" | "CASH" = "CARD",
-  ) => partPayAmountProblem({ method, isWalkIn: false, tendered, total: 100, availableCredit });
+  ) => partPayAmountProblem({ method, isWalkIn: false, tendered, total: 100, autoApplyCredit });
 
   it("$95 against $100 with $10 credit is refused before submit; the cap is total minus credit", () => {
     expect(at("95", 10)).toBe(partPayOverCreditCopy(90));

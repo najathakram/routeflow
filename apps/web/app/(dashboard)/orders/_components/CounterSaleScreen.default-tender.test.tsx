@@ -85,7 +85,7 @@ beforeEach(() => {
         : Promise.resolve({ data: { id: m[1], defaultPaymentTerms: OWN_TERMS[m[1]] ?? "" } });
     if (/^\/customers\/[^/]+\/statement$/.test(url))
       return Promise.resolve({
-        data: { outstandingAmount: 0, overdueAmount: 0, availableCredit: 0 },
+        data: { outstandingAmount: 0, overdueAmount: 0, autoApplyCredit: 0 },
       });
     if (url === "/settings/invoice")
       return Promise.resolve({ data: { defaultTerms: tenantDefault } });

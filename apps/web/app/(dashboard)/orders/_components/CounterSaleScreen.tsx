@@ -151,6 +151,7 @@ import {
   partPaySplit,
   partPayEqualsTotal,
   creditMayApply,
+  isPartPayExceedsTotal,
   PART_PAY_FULL_COPY,
 } from "@/lib/counter-part-pay";
 import { ReadOnlyHint, WriteButton, useReadOnlyGate } from "@/lib/read-only-gate";
@@ -898,6 +899,8 @@ export function CounterSaleScreen() {
       const sent = await createSale.mutateAsync({ dto: attempt.dto, idempotencyKey: attempt.key });
       // The method the cashier chose, if the server's answer does not echo it (captured before the screen resets).
       const res = { ...sent, method: sent.method ?? attempt.dto.payment.method };
+      // SA-998: the server's own sweep left less due than the screen's read said (a note changed in between): re-read the credit.
+      if (isPartPayExceedsTotal(res)) void retryCredit();
       attemptRef.current = null;
       offlineKeyRef.current = null;
       clearHeldAttempt(heldKey);
@@ -990,10 +993,10 @@ export function CounterSaleScreen() {
       isWalkIn: walkInBuyer,
       tendered,
       total: totals.total,
-      availableCredit:
-        creditView.availableCredit.state === "ready"
-          ? creditView.availableCredit.value
-          : creditView.availableCredit.state === "failed"
+      autoApplyCredit:
+        creditView.autoApplyCredit.state === "ready"
+          ? creditView.autoApplyCredit.value
+          : creditView.autoApplyCredit.state === "failed"
             ? "failed"
             : null,
     });
@@ -1707,7 +1710,7 @@ export function CounterSaleScreen() {
                   inputRef={tenderRef}
                   onEnter={() => void completeSale(false)}
                 />
-                {creditView.availableCredit.state === "failed" ? (
+                {creditView.autoApplyCredit.state === "failed" ? (
                   <CounterPartPayCreditError onRetry={retryCredit} />
                 ) : null}
               </>
@@ -1911,7 +1914,7 @@ export function CounterSaleScreen() {
             {partSplit ? (
               <CounterPartPaySplit
                 split={partSplit}
-                creditMayApply={creditMayApply(creditView.availableCredit)}
+                creditMayApply={creditMayApply(creditView.autoApplyCredit)}
               />
             ) : null}
             {partPayEqualsTotal({

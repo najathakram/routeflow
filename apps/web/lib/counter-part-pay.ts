@@ -1,5 +1,5 @@
 import { formatReceiptMoney, roundMoney } from "@routeflow/pricing";
-import type { CounterSalePaymentMethod } from "@routeflow/types";
+import { API_ERROR_CODES, type CounterSalePaymentMethod } from "@routeflow/types";
 
 /**
  * SA-933 / W-822(a) S4: an IDENTIFIED customer can pay part now (cash, check or card) and the rest goes on account. The
@@ -83,7 +83,15 @@ export const PART_PAY_CREDIT_COVERS_COPY =
 
 /** The credit read failed: say so and offer the way out (the screen draws a Retry beside it); never a permanent block. */
 export const PART_PAY_CREDIT_FAILED_COPY =
-  "Couldn't load the customer's credit. Try again, or leave Amount paying now empty to pay in full.";
+  "Couldn't check the customer's credit. Retry, or leave Amount paying now empty to pay in full.";
+
+/** True when a counter-sale answer is the server's COUNTER_PAYMENT_EXCEEDS_TOTAL refusal (the screen then re-reads the credit). */
+export const isPartPayExceedsTotal = (res: {
+  paymentRecorded?: boolean;
+  paymentErrorCode?: string;
+}): boolean =>
+  res.paymentRecorded === false &&
+  res.paymentErrorCode === API_ERROR_CODES.COUNTER_PAYMENT_EXCEEDS_TOTAL;
 
 /** True for any "Amount paying now" refusal above, so editing the field can clear a stale one. */
 export const isPartPayProblemCopy = (message: string): boolean =>
@@ -108,8 +116,8 @@ export function partPayAmountProblem(input: {
   isWalkIn: boolean;
   tendered: string;
   total?: number;
-  /** the server's availableCredit for the customer: a number, null while still loading, "failed" when the read failed; omit to skip the credit rule */
-  availableCredit?: number | null | "failed";
+  /** the statement's autoApplyCredit for the customer (the server's sweep figure): a number, null while still loading, "failed" when the read failed; omit to skip the credit rule */
+  autoApplyCredit?: number | null | "failed";
 }): string | null {
   if (input.isWalkIn || (input.method !== "CHECK" && input.method !== "CARD")) return null;
   const raw = input.tendered.trim();
@@ -119,15 +127,15 @@ export function partPayAmountProblem(input: {
   if (input.total !== undefined && roundMoney(Number(raw)) > roundMoney(input.total)) {
     return PART_PAY_OVER_TOTAL_COPY;
   }
-  if (input.total !== undefined && input.availableCredit !== undefined) {
+  if (input.total !== undefined && input.autoApplyCredit !== undefined) {
     // exactly the total states no amount (a full payment: the server charges its own balance); below it the server caps the
     // part at total minus the credit it applies first, so a figure in between is refused here, before submit
     const paid = roundMoney(Number(raw));
     const total = roundMoney(input.total);
     if (paid === total) return null; // exactly the total is a full payment in every credit state
-    if (input.availableCredit === "failed") return PART_PAY_CREDIT_FAILED_COPY;
-    if (input.availableCredit === null) return PART_PAY_CREDIT_PENDING_COPY;
-    const cap = roundMoney(Math.max(0, total - Math.max(0, input.availableCredit)));
+    if (input.autoApplyCredit === "failed") return PART_PAY_CREDIT_FAILED_COPY;
+    if (input.autoApplyCredit === null) return PART_PAY_CREDIT_PENDING_COPY;
+    const cap = roundMoney(Math.max(0, total - Math.max(0, input.autoApplyCredit)));
     if (paid < total && paid > cap) return partPayOverCreditCopy(cap);
   }
   return null;

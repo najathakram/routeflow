@@ -72,7 +72,7 @@ export function CounterPartPayCreditError({ onRetry }: { onRetry: () => void }) 
     >
       <span>{PART_PAY_CREDIT_FAILED_COPY}</span>
       <button type="button" className="min-h-[44px] rounded border px-3" onClick={onRetry}>
-        Try again
+        Retry
       </button>
     </div>
   );

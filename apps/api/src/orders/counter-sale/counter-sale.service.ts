@@ -50,11 +50,7 @@ import {
   planCounterPayment,
   toPrismaMethod,
 } from "./counter-sale-payment";
-import {
-  autoApplyCandidateWhere,
-  creditAutoApplyOnSend,
-  hasOpenCreditBalance,
-} from "../../credit-notes/auto-apply-candidates";
+import { sweepableCredits } from "../../credit-notes/auto-apply-candidates";
 import { LockTimeoutError, LockUnavailableError, withAdvisoryLock } from "../../common/db-locks";
 import type { DuplicatePaymentRefExisting } from "@routeflow/types";
 import { duplicateOf, tenderRefDedupe } from "./counter-duplicate-ref";
@@ -619,13 +615,13 @@ export class CounterSaleService {
 
   private async assertNoOpenCredit(customerId: string): Promise<void> {
     // When the tenant's send-time sweep is OFF (the default) send() applies nothing, so nothing can leak.
-    if (!(await creditAutoApplyOnSend(this.prisma.forTenant(), this.prisma.getTenantId()))) return;
-    // The SAME selection markSent's auto-apply uses (credit-notes/auto-apply-candidates), not just ISSUED.
-    const notes = await this.prisma.forTenant().creditNote.findMany({
-      where: autoApplyCandidateWhere({ customerId, now: new Date() }),
-      select: { amount: true, amountUsed: true },
+    // SA-998: the SAME selection the sweep takes (sweepableCredits: flag off reads as none, so nothing can leak).
+    const notes = await sweepableCredits(this.prisma.forTenant(), {
+      tenantId: this.prisma.getTenantId(),
+      customerId,
+      now: new Date(),
     });
-    if (notes.some((n: any) => hasOpenCreditBalance(n))) {
+    if (notes.length > 0) {
       throw new ConflictException({
         code: API_ERROR_CODES.WALK_IN_OPEN_CREDIT,
         message:

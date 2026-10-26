@@ -20,11 +20,7 @@ import { TILL_LOCK_HELD } from "../../invoices/counter-payment-guard";
 import type { JwtPayload } from "../../auth/jwt-payload.interface";
 import { OrdersService } from "../orders.service";
 import { settleOrderInvoice } from "../order-status-invoicing";
-import {
-  autoApplyCandidateWhere,
-  creditAutoApplyOnSend,
-  hasOpenCreditBalance,
-} from "../../credit-notes/auto-apply-candidates";
+import { sweepableCredits } from "../../credit-notes/auto-apply-candidates";
 import {
   allocateOldestFirst,
   assertCheckNotPostdatedForTenant,
@@ -626,12 +622,13 @@ export class PickupCompleteService {
   /** The counter sale's guard: a walk-in must not receive an open credit that send() would auto-apply. */
   private async assertNoOpenCredit(customerId: string | null): Promise<void> {
     if (!customerId) return;
-    if (!(await creditAutoApplyOnSend(this.prisma.forTenant(), this.prisma.getTenantId()))) return;
-    const notes = await this.prisma.forTenant().creditNote.findMany({
-      where: autoApplyCandidateWhere({ customerId, now: new Date() }),
-      select: { amount: true, amountUsed: true },
+    // SA-998: the SAME selection the sweep takes (sweepableCredits: flag off reads as none, so nothing can leak).
+    const notes = await sweepableCredits(this.prisma.forTenant(), {
+      tenantId: this.prisma.getTenantId(),
+      customerId,
+      now: new Date(),
     });
-    if (notes.some((n: any) => hasOpenCreditBalance(n))) {
+    if (notes.length > 0) {
       throw new ConflictException({
         code: API_ERROR_CODES.WALK_IN_OPEN_CREDIT,
         message:

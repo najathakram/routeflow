@@ -252,6 +252,8 @@ export interface CustomerStatement {
   outstandingAmount: number;
   overdueAmount: number;
   availableCredit: number;
+  /** Operator statement only: the credit the send-time sweep would apply (SA-998); 0 when auto-apply is off */
+  autoApplyCredit?: number;
   advanceBalance: number;
   pendingOrdersAmount?: number;
   /** Operator statement only (absent on the buyer portal): the exposure the hard

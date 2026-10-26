@@ -74,21 +74,23 @@ const SALE = {
   paymentRecorded: true,
 };
 
-let availableCredit: number | "pending" | "failed" = 0;
+let autoApplyCredit: number | "pending" | "failed" = 0;
 beforeEach(() => {
   jest.clearAllMocks();
-  availableCredit = 0;
+  autoApplyCredit = 0;
   window.localStorage.clear();
   window.sessionStorage.clear();
   get.mockImplementation((url: string) => {
-    if (/^\/customers\/[^/]+\/statement$/.test(url) && availableCredit === "pending")
+    if (/^\/customers\/[^/]+\/statement$/.test(url) && autoApplyCredit === "pending")
       return new Promise(() => undefined);
     if (/^\/customers\/[^/]+\/statement$/.test(url))
       return Promise.resolve({
         data: {
           outstandingAmount: 0,
           overdueAmount: 0,
-          availableCredit: availableCredit as number,
+          // the display wallet is NOT what the sweep applies: the cap must ignore it (SA-998 R1)
+          availableCredit: 30,
+          autoApplyCredit: autoApplyCredit as number,
         },
       });
     if (url === "/settings") return Promise.resolve({ data: { taxRate: 0, timezone: "UTC" } });
@@ -187,7 +189,7 @@ describe("open credit caps a check/card part (server parity)", () => {
   const card = () => fireEvent.click(screen.getByRole("radio", { name: "Card" }));
 
   it("$9 against a $12.50 sale with $4 credit is refused before submit (cap is $8.50)", async () => {
-    availableCredit = 4;
+    autoApplyCredit = 4;
     renderTill(<CounterSaleScreen />);
     pickPlain();
     await scanCase();
@@ -200,7 +202,7 @@ describe("open credit caps a check/card part (server parity)", () => {
   });
 
   it("$8.50 goes through as a card part payment", async () => {
-    availableCredit = 4;
+    autoApplyCredit = 4;
     renderTill(<CounterSaleScreen />);
     pickPlain();
     await scanCase();
@@ -214,7 +216,7 @@ describe("open credit caps a check/card part (server parity)", () => {
   });
 
   it("credit that covers the whole sale says so, not 'most you can pay is $0.00'", async () => {
-    availableCredit = 20;
+    autoApplyCredit = 20;
     renderTill(<CounterSaleScreen />);
     pickPlain();
     await scanCase();
@@ -229,7 +231,7 @@ describe("open credit caps a check/card part (server parity)", () => {
   });
 
   it("a failed credit read is a visible error with a retry, never a permanent block", async () => {
-    availableCredit = "failed";
+    autoApplyCredit = "failed";
     renderTill(<CounterSaleScreen />);
     pickPlain();
     await scanCase();
@@ -239,9 +241,9 @@ describe("open credit caps a check/card part (server parity)", () => {
     payNow("5");
     complete();
     expect(mutateAsync).not.toHaveBeenCalled();
-    // the read comes back: Try again clears the error, and the cap then applies as usual
-    availableCredit = 4;
-    fireEvent.click(within(alert).getByRole("button", { name: "Try again" }));
+    // the read comes back: Retry clears the error, and the cap then applies as usual
+    autoApplyCredit = 4;
+    fireEvent.click(within(alert).getByRole("button", { name: "Retry" }));
     await waitFor(() => expect(screen.queryByTestId("counter-part-pay-credit-error")).toBeNull());
     payNow("8.5");
     await screen.findByTestId("counter-part-pay-split");
@@ -250,8 +252,45 @@ describe("open credit caps a check/card part (server parity)", () => {
     expect(sentPayment()).toEqual({ method: "CARD", amount: 8.5 });
   });
 
+  it("R1 flag OFF: the wallet holds $30 but autoApplyCredit is 0, so a $9 card part of $12.50 is not capped", async () => {
+    autoApplyCredit = 0;
+    renderTill(<CounterSaleScreen />);
+    pickPlain();
+    await scanCase();
+    card();
+    await waitFor(() => expect(screen.getByLabelText("Amount paying now")).toBeInTheDocument());
+    payNow("9");
+    await screen.findByTestId("counter-part-pay-split");
+    complete();
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    expect(sentPayment()).toEqual({ method: "CARD", amount: 9 });
+  });
+
+  it("R6 the server refuses the part (a note appeared): the credit is re-read and the cap follows", async () => {
+    autoApplyCredit = 0;
+    mutateAsync.mockResolvedValue({
+      ...SALE,
+      paymentRecorded: false,
+      paymentErrorCode: "COUNTER_PAYMENT_EXCEEDS_TOTAL",
+    });
+    renderTill(<CounterSaleScreen />);
+    pickPlain();
+    await scanCase();
+    card();
+    await waitFor(() => expect(screen.getByLabelText("Amount paying now")).toBeInTheDocument());
+    payNow("9");
+    await screen.findByTestId("counter-part-pay-split");
+    const reads = () =>
+      get.mock.calls.filter(([u]: [string]) => /^\/customers\/[^/]+\/statement$/.test(u)).length;
+    const before = reads();
+    autoApplyCredit = 4;
+    complete();
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(reads()).toBeGreaterThan(before));
+  });
+
   it("a failed credit read still lets the clerk pay in full (empty field)", async () => {
-    availableCredit = "failed";
+    autoApplyCredit = "failed";
     renderTill(<CounterSaleScreen />);
     pickPlain();
     await scanCase();
@@ -263,7 +302,7 @@ describe("open credit caps a check/card part (server parity)", () => {
   });
 
   it("credit not read yet: a typed card part waits for the statement and submits nothing", async () => {
-    availableCredit = "pending";
+    autoApplyCredit = "pending";
     renderTill(<CounterSaleScreen />);
     pickPlain();
     await scanCase();
@@ -277,7 +316,7 @@ describe("open credit caps a check/card part (server parity)", () => {
 
 describe("the split label", () => {
   it("a customer holding credit note balance: the label states no remainder of ours (the server applies credit)", async () => {
-    availableCredit = 4;
+    autoApplyCredit = 4;
     renderTill(<CounterSaleScreen />);
     pickPlain();
     await scanCase();

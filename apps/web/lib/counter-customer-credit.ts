@@ -39,8 +39,8 @@ export interface CounterCustomerCreditView {
   openBalance: CreditField<number>;
   /** the statement's overdue amount (0 = nothing overdue) */
   overdue: CreditField<number>;
-  /** the statement's availableCredit: open credit notes the SERVER may apply to a sale (it owns the figure) */
-  availableCredit: CreditField<number>;
+  /** the operator statement's autoApplyCredit: the credit the SERVER's send-time sweep would apply to a sale (it owns the figure) */
+  autoApplyCredit: CreditField<number>;
   /** open balance above the limit (rounded to cents first); 0 = not over, or not known */
   overLimitBy: number;
   /** a read that matters here failed: the screen says so instead of showing a partial picture as complete */
@@ -90,16 +90,16 @@ export function counterCustomerCreditView(
 
   let openBalance: CounterCustomerCreditView["openBalance"];
   let overdue: CounterCustomerCreditView["overdue"];
-  let availableCredit: CounterCustomerCreditView["availableCredit"];
+  let autoApplyCredit: CounterCustomerCreditView["autoApplyCredit"];
   if (statement.state !== "ready") {
-    availableCredit = pending(statement);
+    autoApplyCredit = pending(statement);
     openBalance = pending(statement);
     overdue = pending(statement);
   } else {
     const open = num(field(statement.data, "outstandingAmount"));
     const over = num(field(statement.data, "overdueAmount"));
-    const credit = num(field(statement.data, "availableCredit"));
-    availableCredit =
+    const credit = num(field(statement.data, "autoApplyCredit"));
+    autoApplyCredit =
       credit === null
         ? { state: "failed" }
         : { state: "ready", value: Math.max(0, roundMoney(credit)) };
@@ -128,7 +128,7 @@ export function counterCustomerCreditView(
     statement.state === "failed" ||
     (termsNeedSettings && settings.state === "failed");
 
-  return { terms, creditLimit, openBalance, availableCredit, overdue, overLimitBy, loadFailed };
+  return { terms, creditLimit, openBalance, autoApplyCredit, overdue, overLimitBy, loadFailed };
 }
 
 export const COUNTER_CUSTOMER_OVERDUE_COPY = "Overdue";
