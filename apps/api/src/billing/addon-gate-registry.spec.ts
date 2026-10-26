@@ -63,6 +63,23 @@ describe("ADDON_GATE_REGISTRY pins (P1)", () => {
     expect(expired).toEqual([]);
   });
 
+  describe("REG-W958: P1c must not depend on the calendar", () => {
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    it("the unpinned P1c logic stays green when the system clock is past every reviewBy", () => {
+      jest.useFakeTimers({ now: new Date("2027-06-01T12:00:00Z") });
+      const now = new Date();
+      const todayUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+      const expired = Object.entries(ADDON_GATE_REGISTRY)
+        .filter(([, row]) => row.state === "dark")
+        .filter(([, row]) => reviewByExpired(row.reviewBy, todayUtc))
+        .map(([key, row]) => `${key}:${row.reviewBy ?? "missing"}`);
+      expect(expired).toEqual([]);
+    });
+  });
+
   it("P1d: every row's added date is YYYY-MM-DD, and ocr is dark", () => {
     const badAdded = Object.entries(ADDON_GATE_REGISTRY)
       .filter(([, row]) => !/^\d{4}-\d{2}-\d{2}$/.test(row.added))
