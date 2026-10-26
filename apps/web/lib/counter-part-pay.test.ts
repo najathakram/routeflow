@@ -1,7 +1,9 @@
 import {
   PART_PAY_AMOUNT_COPY,
   PART_PAY_FULL_COPY,
+  PART_PAY_CREDIT_PENDING_COPY,
   PART_PAY_OVER_TOTAL_COPY,
+  partPayOverCreditCopy,
   partPayEqualsTotal,
   creditMayApply,
   counterPaymentAmount,
@@ -242,5 +244,36 @@ describe("partPayEqualsTotal: a typed amount equal to the total is said to be a 
     expect(partPayEqualsTotal({ ...base, method: "CASH", tendered: 20 })).toBe(false);
     expect(partPayEqualsTotal({ ...base, isWalkIn: true, tendered: 20 })).toBe(false);
     expect(PART_PAY_FULL_COPY).toBe("That is the full total, so it pays in full.");
+  });
+});
+
+describe("partPayAmountProblem with the customer's open credit (server parity)", () => {
+  const at = (
+    tendered: string,
+    availableCredit: number | null,
+    method: "CARD" | "CHECK" | "CASH" = "CARD",
+  ) => partPayAmountProblem({ method, isWalkIn: false, tendered, total: 100, availableCredit });
+
+  it("$95 against $100 with $10 credit is refused before submit; the cap is total minus credit", () => {
+    expect(at("95", 10)).toBe(partPayOverCreditCopy(90));
+    expect(at("90.01", 10, "CHECK")).toBe(partPayOverCreditCopy(90));
+    expect(at("90", 10)).toBeNull();
+    expect(at("50", 10)).toBeNull();
+    expect(partPayOverCreditCopy(90)).toContain("$90.00");
+  });
+
+  it("exactly the total is still a full payment (it states no amount), and above it is over the total", () => {
+    expect(at("100", 10)).toBeNull();
+    expect(at("100.01", 10)).toBe(PART_PAY_OVER_TOTAL_COPY);
+  });
+
+  it("with no credit the cap is the total, as before", () => {
+    expect(at("95", 0)).toBeNull();
+  });
+
+  it("an unknown credit blocks a typed check/card part, but not a blank (full) or cash", () => {
+    expect(at("50", null)).toBe(PART_PAY_CREDIT_PENDING_COPY);
+    expect(at("", null)).toBeNull();
+    expect(at("95", null, "CASH")).toBeNull();
   });
 });

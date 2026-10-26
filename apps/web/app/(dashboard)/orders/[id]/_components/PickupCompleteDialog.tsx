@@ -420,7 +420,10 @@ export function PickupCompleteDialog({
                       type="button"
                       disabled={q.disabled}
                       className="rounded border px-3 py-2 text-sm disabled:opacity-40"
-                      onClick={() => setTendered(String(q.amount))}
+                      onClick={() => {
+                        decidedRef.current = true;
+                        setTendered(String(q.amount));
+                      }}
                     >
                       {q.label}
                     </button>
@@ -433,7 +436,10 @@ export function PickupCompleteDialog({
                     inputMode="decimal"
                     className="mt-1 w-full rounded border px-3 py-2"
                     value={tendered}
-                    onChange={(e) => setTendered(e.target.value)}
+                    onChange={(e) => {
+                      decidedRef.current = true; // typed money is a decision: a late default never flips the tender
+                      setTendered(e.target.value);
+                    }}
                   />
                 </label>
                 <p className="text-2xl font-bold" data-testid="pickup-change-due">
@@ -448,7 +454,10 @@ export function PickupCompleteDialog({
                   aria-label="Check number"
                   className="mt-1 w-full rounded border px-3 py-2"
                   value={reference}
-                  onChange={(e) => setReference(e.target.value)}
+                  onChange={(e) => {
+                    decidedRef.current = true;
+                    setReference(e.target.value);
+                  }}
                 />
               </label>
             )}

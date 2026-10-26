@@ -3,6 +3,7 @@ import { screen, waitFor, fireEvent } from "@/test-utils/render";
 import { renderTill } from "@/test-utils/render-till";
 import { apiClient } from "@/lib/api-client";
 import { calendarDayInZone } from "@/lib/calendar-date";
+import { PART_PAY_CREDIT_PENDING_COPY } from "@/lib/counter-part-pay";
 import { CounterSaleScreen } from "./CounterSaleScreen";
 
 /**
@@ -68,15 +69,23 @@ const SALE = {
   paymentRecorded: true,
 };
 
-let availableCredit = 0;
+let availableCredit: number | "pending" = 0;
 beforeEach(() => {
   jest.clearAllMocks();
   availableCredit = 0;
   window.localStorage.clear();
   window.sessionStorage.clear();
   get.mockImplementation((url: string) => {
+    if (/^\/customers\/[^/]+\/statement$/.test(url) && availableCredit === "pending")
+      return new Promise(() => undefined);
     if (/^\/customers\/[^/]+\/statement$/.test(url))
-      return Promise.resolve({ data: { outstandingAmount: 0, overdueAmount: 0, availableCredit } });
+      return Promise.resolve({
+        data: {
+          outstandingAmount: 0,
+          overdueAmount: 0,
+          availableCredit: availableCredit as number,
+        },
+      });
     if (url === "/settings") return Promise.resolve({ data: { taxRate: 0, timezone: "UTC" } });
     if (url === "/orders/counter-sale/parked")
       return Promise.resolve({ data: { data: [], total: 0, page: 1, pageSize: 20 } });
@@ -164,6 +173,51 @@ describe("part payment by an identified customer (S4)", () => {
     complete();
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
     expect(sentPayment()).toEqual({ method: "CARD" });
+  });
+});
+
+describe("open credit caps a check/card part (server parity)", () => {
+  const payNow = (v: string) =>
+    fireEvent.change(screen.getByLabelText("Amount paying now"), { target: { value: v } });
+  const card = () => fireEvent.click(screen.getByRole("radio", { name: "Card" }));
+
+  it("$9 against a $12.50 sale with $4 credit is refused before submit (cap is $8.50)", async () => {
+    availableCredit = 4;
+    renderTill(<CounterSaleScreen />);
+    pickPlain();
+    await scanCase();
+    card();
+    await screen.findByText(/less any credit applied/i).catch(() => undefined);
+    payNow("9");
+    complete();
+    expect(await screen.findByText(/\$8\.50/)).toBeInTheDocument();
+    expect(mutateAsync).not.toHaveBeenCalled();
+  });
+
+  it("$8.50 goes through as a card part payment", async () => {
+    availableCredit = 4;
+    renderTill(<CounterSaleScreen />);
+    pickPlain();
+    await scanCase();
+    card();
+    await waitFor(() => expect(screen.getByLabelText("Amount paying now")).toBeInTheDocument());
+    payNow("8.5");
+    await screen.findByTestId("counter-part-pay-split");
+    complete();
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    expect(sentPayment()).toEqual({ method: "CARD", amount: 8.5 });
+  });
+
+  it("credit not read yet: a typed card part waits for the statement and submits nothing", async () => {
+    availableCredit = "pending";
+    renderTill(<CounterSaleScreen />);
+    pickPlain();
+    await scanCase();
+    card();
+    payNow("5");
+    complete();
+    expect(await screen.findByText(PART_PAY_CREDIT_PENDING_COPY)).toBeInTheDocument();
+    expect(mutateAsync).not.toHaveBeenCalled();
   });
 });
 

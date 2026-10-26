@@ -71,6 +71,14 @@ export const PART_PAY_AMOUNT_COPY = "Enter an amount above zero, or leave it emp
 export const PART_PAY_OVER_TOTAL_COPY =
   "Amount paying now can't be more than the total. Lower it, or leave it empty to pay in full.";
 
+/** The most a CHECK or CARD can pay now when the customer holds open credit: the server applies credit first (SA-933 parity). */
+export const partPayOverCreditCopy = (max: number): string =>
+  `The most you can pay now is ${formatReceiptMoney(max)}, because credit on the account is applied first. Lower it, or leave it empty to pay in full.`;
+
+/** A typed CHECK/CARD part waits for the customer's credit (the server's figure): never submit an amount it may refuse. */
+export const PART_PAY_CREDIT_PENDING_COPY =
+  "Checking the customer's credit. Try again in a moment, or leave Amount paying now empty to pay in full.";
+
 /**
  * An identified customer's CHECK or CARD "Amount paying now" that is typed but is not a positive plain number ("0", "-5",
  * "5,00", "abc") is refused: read as zero it would silently become a FULL payment. Blank (or spaces) is the one way to say
@@ -81,6 +89,8 @@ export function partPayAmountProblem(input: {
   isWalkIn: boolean;
   tendered: string;
   total?: number;
+  /** the server's availableCredit for the customer: a number, or null while unknown; omit to skip the credit rule */
+  availableCredit?: number | null;
 }): string | null {
   if (input.isWalkIn || (input.method !== "CHECK" && input.method !== "CARD")) return null;
   const raw = input.tendered.trim();
@@ -89,6 +99,15 @@ export function partPayAmountProblem(input: {
   if (!plain || !(Number(raw) > 0)) return PART_PAY_AMOUNT_COPY;
   if (input.total !== undefined && roundMoney(Number(raw)) > roundMoney(input.total)) {
     return PART_PAY_OVER_TOTAL_COPY;
+  }
+  if (input.total !== undefined && input.availableCredit !== undefined) {
+    // exactly the total states no amount (a full payment: the server charges its own balance); below it the server caps the
+    // part at total minus the credit it applies first, so a figure in between is refused here, before submit
+    if (input.availableCredit === null) return PART_PAY_CREDIT_PENDING_COPY;
+    const paid = roundMoney(Number(raw));
+    const total = roundMoney(input.total);
+    const cap = roundMoney(Math.max(0, total - Math.max(0, input.availableCredit)));
+    if (paid < total && paid > cap) return partPayOverCreditCopy(cap);
   }
   return null;
 }

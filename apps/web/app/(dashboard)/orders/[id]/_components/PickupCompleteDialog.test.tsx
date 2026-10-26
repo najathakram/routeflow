@@ -159,6 +159,24 @@ describe("PickupCompleteDialog — default tender (SA-933 / W-822a)", () => {
     b.unmount();
   });
 
+  it("a cash amount the cashier typed before the terms arrive keeps the tender on Cash", async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((r) => (release = r));
+    get.mockImplementation((url: string) => {
+      if (/^\/customers\/[^/]+$/.test(url))
+        return gate.then(() => ({ data: { id: "c1", defaultPaymentTerms: "Net 30" } }));
+      if (url === "/settings/invoice") return Promise.resolve({ data: { defaultTerms: "Net 30" } });
+      return Promise.resolve({ data: { id: "i1", status: "SENT", total: 25, balanceDue: 25 } });
+    });
+    mount({ customerId: "c1" });
+    const amount = await screen.findByLabelText("Amount tendered");
+    fireEvent.change(amount, { target: { value: "40" } });
+    release();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(checkedMethod()).toBe("Cash");
+    expect(screen.getByLabelText("Amount tendered")).toHaveValue("40");
+  });
+
   it("a tender the cashier chose before the terms arrive is kept", async () => {
     let release: () => void = () => undefined;
     const gate = new Promise<void>((r) => (release = r));

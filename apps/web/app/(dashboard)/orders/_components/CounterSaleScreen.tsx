@@ -143,6 +143,7 @@ import { useCounterTenderDefault } from "./useCounterTenderDefault";
 import {
   PART_PAY_AMOUNT_COPY,
   PART_PAY_OVER_TOTAL_COPY,
+  PART_PAY_CREDIT_PENDING_COPY,
   counterPaymentAmount,
   partPayAmountProblem,
   partPaySplit,
@@ -987,6 +988,8 @@ export function CounterSaleScreen() {
       isWalkIn: walkInBuyer,
       tendered,
       total: totals.total,
+      availableCredit:
+        creditView.availableCredit.state === "ready" ? creditView.availableCredit.value : null,
     });
     if (partPayProblem) {
       setError(partPayProblem);
@@ -1692,7 +1695,12 @@ export function CounterSaleScreen() {
                   setTendered(v);
                   clearUnderpaidError();
                   setError((e) =>
-                    e === PART_PAY_AMOUNT_COPY || e === PART_PAY_OVER_TOTAL_COPY ? "" : e,
+                    e === PART_PAY_AMOUNT_COPY ||
+                    e === PART_PAY_OVER_TOTAL_COPY ||
+                    e === PART_PAY_CREDIT_PENDING_COPY ||
+                    e.startsWith("The most you can pay now")
+                      ? ""
+                      : e,
                   );
                 }}
                 disabled={locked}
