@@ -19,6 +19,7 @@ let activeOrder: Record<string, unknown> | undefined;
 let layer: LayerState;
 let history: Record<string, { lastPrice: number }> | undefined;
 const cust = { id: "c1", businessName: "Acme Foods", pricingTier: 3 };
+const custB = { id: "c2", businessName: "Beta Bakery", pricingTier: 3 };
 const rerenderModal = (view: { rerender: (ui: React.ReactElement) => void }) =>
   view.rerender(<CreateOrderModal isOpen onClose={jest.fn()} />);
 
@@ -58,7 +59,7 @@ jest.mock("@/lib/tenant-features", () => ({
   }),
 }));
 jest.mock("@/lib/api/customers", () => ({
-  useCustomers: () => ({ data: { data: [cust] } }),
+  useCustomers: () => ({ data: { data: [cust, custB] } }),
   useCustomerPrices: () => ({ data: [] }),
   useCustomer: () => ({ data: undefined }),
 }));
@@ -202,6 +203,28 @@ describe("CreateOrderModal - the customer's price layer (S19b slice B)", () => {
     expect(createOrderMutate).toHaveBeenCalledTimes(1);
     expect(sentItem().overrideReason).toBeUndefined();
     expect(screen.queryByText("Checking this customer's prices…")).not.toBeInTheDocument();
+  });
+
+  it("B755: a price pre-filled from customer A's history does not follow the order to customer B", async () => {
+    cust.pricingTier = 1; // Retail: A's last-given $36 < list $42 pre-fills (a SPECIAL tier skips history)
+    await addWidgetForCustomer();
+    // A's last-given $36 pre-filled the line
+    expect(await screen.findByText("$36.00 / each")).toBeInTheDocument();
+    history = undefined; // B has no history
+    fireEvent.click(screen.getByRole("button", { name: "Change customer" }));
+    fireEvent.change(screen.getByPlaceholderText("Search by business name…"), {
+      target: { value: "Bet" },
+    });
+    fireEvent.click(await screen.findByText("Beta Bakery"));
+    // B is tier 3 ($38): A's negotiated $36 must be gone, and nothing is sent as an override
+    expect(await screen.findByText("$38.00 / each")).toBeInTheDocument();
+    expect(screen.queryByText("$36.00 / each")).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /save as draft/i })).toBeEnabled(),
+    );
+    saveDraft();
+    expect(sentItem().unitPrice).toBeUndefined();
+    expect(sentItem().overrideReason).toBeUndefined();
   });
 
   it("B-1: a typed $33 pre-fills $33 SPECIAL, not last-given $36, and saves with no price or reason", async () => {
