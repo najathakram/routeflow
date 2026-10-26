@@ -282,8 +282,9 @@ describeDb("B297 PR5 — a LOCKED filing closes its period, real Postgres", () =
   const periodEnd = new Date("2026-10-01T00:00:00Z");
   const audit = { log: jest.fn().mockResolvedValue(undefined) };
   const storage = { upload: jest.fn().mockResolvedValue(undefined), presignedUrl: jest.fn() };
+  const emptyLedger = { getLedger: jest.fn().mockResolvedValue({ rows: [] }) };
   const filingService = () =>
-    new (RegulatedFilingService as any)(prisma, storage, audit, asLedger(), {});
+    new (RegulatedFilingService as any)(prisma, storage, audit, emptyLedger, {});
   const lockAs = (id: string, reason = "September filed with the state") =>
     inTenant(() => filingService().lockFiling(id, { userId: operatorUserId, reason }));
   const makeFiling = (over: Record<string, unknown> = {}) =>
