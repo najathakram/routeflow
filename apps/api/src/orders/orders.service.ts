@@ -3608,10 +3608,18 @@ export class OrdersService implements OnApplicationBootstrap {
                 // downstream references it — a billed or delivered line is struck
                 // off instead so invoice/delivery history stays intact.
                 const li = heldById.get(item.id);
-                const hasDeliveries = await tx.deliveryMutation.count({
+                const mutationCount = await tx.deliveryMutation.count({
                   where: { orderItemId: item.id },
                 });
-                const keep = (li && Number(li.invoicedQty ?? 0) > 0) || hasDeliveries > 0;
+                // Row 307 (SA-961 R10): delivered goods are gone, so a delivered line is struck off, never
+                // deleted. Judge it on the line's OWN deliveredQty (the floor order-stock books at), not on
+                // DeliveryMutation rows alone: a manual DELIVERED / counter sale / pickup stamps deliveredQty
+                // with no mutation row. A struck-off line stays booked at what left (no restock, no refusal);
+                // goods that come back are a return, never an edit.
+                const keep =
+                  Number(li?.invoicedQty ?? 0) > 0 ||
+                  Number(li?.deliveredQty ?? 0) > 0 ||
+                  mutationCount > 0;
                 // #2563: scoped to THIS order ({ id, orderId }); a foreign line id is a 404.
                 await writeLineRemoval(tx, orderId, item.id, keep ? "strike-off" : "delete");
               } else if (item.action === "CANCEL") {
