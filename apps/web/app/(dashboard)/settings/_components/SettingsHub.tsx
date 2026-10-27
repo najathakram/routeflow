@@ -24,6 +24,20 @@ import { useSettingsNav } from "./use-settings-nav";
 /** The hub's query lives on its own history entry, so Back/Forward brings it back and a fresh visit starts empty. */
 const HISTORY_KEY = "rfSettingsQuery";
 
+/**
+ * The router rewrites an entry's history state when it restores it, which can drop HISTORY_KEY. So the last
+ * query also lives in module scope (it survives the hub unmounting on a client navigation), and a popstate
+ * (Back/Forward) marks the next hub mount as a return rather than a fresh visit.
+ */
+let lastQuery = "";
+let returning = false;
+let handoff: string | null = null;
+if (typeof window !== "undefined") {
+  window.addEventListener("popstate", () => {
+    returning = true;
+  });
+}
+
 /** A card the page renders under the hub (Stripe Connect, tier names): shown at `#id`, hidden by a search it doesn't match. */
 export type LooseCard = { id: string; node: React.ReactNode };
 
@@ -39,10 +53,22 @@ export function SettingsHub({
   const [query, setQueryState] = React.useState("");
   React.useEffect(() => {
     const kept = (window.history.state as Record<string, unknown> | null)?.[HISTORY_KEY];
-    if (typeof kept === "string" && kept) setQueryState(kept);
+    let restored = typeof kept === "string" && kept ? kept : "";
+    if (!restored && returning) {
+      // read once per return; a dev-mode double mount runs both effects before the microtask below
+      returning = false;
+      restored = lastQuery;
+      handoff = restored;
+      queueMicrotask(() => {
+        handoff = null;
+      });
+    } else if (!restored && handoff !== null) restored = handoff;
+    if (restored) setQueryState(restored);
+    else lastQuery = "";
   }, []);
   const setQuery = React.useCallback((q: string) => {
     setQueryState(q);
+    lastQuery = q;
     // keep the router's own state on the entry; only our key changes
     window.history.replaceState({ ...(window.history.state ?? {}), [HISTORY_KEY]: q }, "");
   }, []);
