@@ -6,7 +6,6 @@ import { useRouter } from "expo-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar } from "@routeflow/ui/mobile/ios";
-import { buyerNeedsStateCopy } from "@routeflow/types";
 import { useCartStore } from "../../../store/cartStore";
 import { BUYER_QTY_SPLIT_MISMATCH_COPY, isQtySplitMismatch } from "../../../lib/buyer-qty-split";
 import { useBuyerCreateOrder, useBuyerPromotions } from "../../../lib/api/buyer";
@@ -109,12 +108,6 @@ export default function CartScreen() {
           if (unavailable) {
             showToast(unavailable);
             qc.invalidateQueries({ queryKey: BUYER_CAPABILITIES_KEY });
-            return;
-          }
-          // Row 672 (SA-924): a refusal that only waits on the buyer's own state asks for it.
-          const needsState = buyerNeedsStateCopy(e);
-          if (needsState) {
-            showToast(needsState);
             return;
           }
           // Row 531: the quantity and the box split disagreed; the server saved nothing.

@@ -20,7 +20,6 @@ import {
 } from "@routeflow/types";
 import { FormField, FormTextInput } from "./FormSheet";
 import { restrictionReasonText } from "../lib/selling-restricted";
-import { RestrictionRemedyActions } from "./RestrictionRemedyActions";
 import {
   RESTRICTION_COPY as COPY,
   buildAck,
@@ -50,8 +49,6 @@ interface Props {
   onConfirm: (ack: RestrictionAck, reason: string) => void;
   /** "Go back": nothing is sent, and the form and cart stay as they were. */
   onCancel: () => void;
-  /** Row 672: after a missing state was added in place, re-run the save with no ack (the server judges it afresh). */
-  onRecheck?: () => void;
 }
 
 /**
@@ -66,7 +63,6 @@ export function RestrictionWarningModal({
   listChanged = false,
   onConfirm,
   onCancel,
-  onRecheck,
 }: Props) {
   const [reason, setReason] = React.useState(initialReason);
   if (!view) return null;
@@ -128,9 +124,6 @@ export function RestrictionWarningModal({
                       )}
                     </View>
                   ))}
-            {view.kind === "warning" ? (
-              <RestrictionRemedyActions lines={view.warning.lines} onRecheck={onRecheck} />
-            ) : null}
           </ScrollView>
           {view.kind === "warning" ? (
             <FormField

@@ -455,35 +455,6 @@ export function useAddCustomerAddress() {
   });
 }
 
-/**
- * Row 672 (SA-844): the in-place "add a state" fix behind a restriction warning, the same two writes as web's
- * "Customers without a state" fixer: a customer with no address gets the minimal default billing address with the state;
- * one with a default address has its state set (a state awaiting review is confirmed by the same write).
- */
-export function useAddCustomerState() {
-  const qc = useQueryClient();
-  return useMutation<
-    unknown,
-    Error,
-    { customerId: string; addressId: string | null; state: string }
-  >({
-    mutationFn: ({ customerId, addressId, state }) =>
-      addressId
-        ? apiClient
-            .patch(`/customers/${customerId}/addresses/${addressId}/state`, {
-              state,
-              confirmReview: true,
-            })
-            .then((r) => r.data)
-        : apiClient
-            .post(`/customers/${customerId}/addresses/minimal`, { state })
-            .then((r) => r.data),
-    onSuccess: (_, { customerId }) => {
-      qc.invalidateQueries({ queryKey: ["customers", customerId] });
-    },
-  });
-}
-
 export function useUpdateCustomerAddress() {
   const qc = useQueryClient();
   return useMutation<
