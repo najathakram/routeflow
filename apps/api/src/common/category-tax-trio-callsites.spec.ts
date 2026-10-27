@@ -118,8 +118,13 @@ const ALLOWLIST: { file: string; count: number; note: string }[] = [
   },
   {
     file: "invoices/invoices.service.ts",
-    count: 4,
-    note: "buildInvoiceItemData + duplicateInvoice stamp (update()'s moved to invoice-edit-plan.ts); recomputeOrderFromInvoices's 2 occurrences are the documented gap above",
+    count: 3,
+    note: "duplicateInvoice stamp (update()'s moved to invoice-edit-plan.ts); recomputeOrderFromInvoices's 2 occurrences are the documented gap above",
+  },
+  {
+    file: "invoices/invoice-item-data.ts",
+    count: 1,
+    note: "buildInvoiceItemData — stamps (extracted from invoices.service.ts)",
   },
   { file: "invoices/manual-invoice-lines.ts", count: 1, note: "buildManualInvoiceLines — stamps" },
   {

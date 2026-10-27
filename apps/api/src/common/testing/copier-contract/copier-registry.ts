@@ -128,7 +128,7 @@ const MERGE = {
 export const COPIERS: Copier[] = [
   {
     id: "C1",
-    file: "invoices/invoices.service.ts",
+    file: "invoices/invoice-item-data.ts",
     fn: "buildInvoiceItemData",
     target: "InvoiceItem",
     anchor: { via: "return" },

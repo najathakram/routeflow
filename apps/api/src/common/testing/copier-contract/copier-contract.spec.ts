@@ -428,7 +428,7 @@ describe("copier contract mutation proofs (each must turn the spec red)", () => 
 describe("order -> invoice copiers read the source line, never the live product (row 373a)", () => {
   const PRODUCT_CATEGORY_READ = /\bproduct\??\.tracked(?:Sub)?categoryId\b/i;
   const ORDER_TO_INVOICE: Array<{ file: string; fn: string }> = [
-    { file: "invoices/invoices.service.ts", fn: "buildInvoiceItemData" },
+    { file: "invoices/invoice-item-data.ts", fn: "buildInvoiceItemData" },
     { file: "invoices/invoices.service.ts", fn: "groupOrderLinesForInvoicing" },
   ];
 
