@@ -87,7 +87,7 @@ describeDb("row 585: deleteOrder refuses an order with delivered units, real Pos
     });
     const clean = await w.bookOrder({ status: "CONFIRMED", lines: [{ productId: p, qty: 3 }] });
 
-    const res = await w.inTenant(() =>
+    const res = await w.inTenant<{ deleted: number; errors: string[] }>(() =>
       w.orders.bulkDeleteOrders([delivered.order.id, clean.order.id], w.jwt),
     );
 
