@@ -14,7 +14,7 @@ describe("ruleEditImpactCopy", () => {
 
   it("switch OFF (review MUST-1): buyers blocked, staff orders not checked, never 'warned'", () => {
     expect(ruleEditImpactCopy(1, false, false)).toBe(
-      `1 open order has products this change now restricts. Buyers can't order it. Staff orders and invoices aren't checked (turn on '${STAFF_ORDERS_SWITCH_LABEL}' to block them).`,
+      `1 open order has products this change now restricts. Buyers can't order it. Staff orders and invoices aren't checked (turn on '${STAFF_ORDERS_SWITCH_LABEL}' to check them).`,
     );
     for (const capped of [false, true]) {
       expect(ruleEditImpactCopy(12, capped, false)).not.toMatch(/warned/);

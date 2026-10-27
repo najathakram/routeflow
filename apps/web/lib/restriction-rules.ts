@@ -43,8 +43,8 @@ export function ruleTarget(
 export function jurisdictionText(
   r: Pick<SellingRestrictionListItemDto, "jurisdiction" | "states">,
 ) {
-  if (r.jurisdiction === "FEDERAL") return "Banned everywhere (federal)";
-  return r.states.length ? "Banned in" : "Banned everywhere (no states listed)";
+  if (r.jurisdiction === "FEDERAL") return "Restricted everywhere (federal)";
+  return r.states.length ? "Restricted in" : "Restricted everywhere (no states listed)";
 }
 
 /**
@@ -120,7 +120,7 @@ export function emptyText(filter: RestrictionStatus | "ALL"): {
   return { title: `No ${label} rules`, description: "Try another filter to see the rest." };
 }
 
-/** One line for a rule's header: who it bans and where it applies ("Banned in Texas and California · All sales"). */
+/** One line for a rule's header: who it restricts and where it applies ("Restricted in Texas and California · All sales"). */
 export function ruleSentence(
   r: Pick<SellingRestrictionListItemDto, "jurisdiction" | "states" | "surface">,
 ): string {
@@ -129,10 +129,10 @@ export function ruleSentence(
     const names = r.states.map(stateName);
     where =
       names.length > 4
-        ? `Banned in ${names.length} states`
+        ? `Restricted in ${names.length} states`
         : names.length === 1
-          ? `Banned in ${names[0]}`
-          : `Banned in ${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+          ? `Restricted in ${names[0]}`
+          : `Restricted in ${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
   } else {
     where = jurisdictionText(r);
   }
