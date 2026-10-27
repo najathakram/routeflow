@@ -21,6 +21,8 @@ import {
 } from "lucide-react";
 import { Button, Card, Modal, cn, TAP_TARGET, useToast, Badge } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
+import { useTenantToday } from "@/lib/tenant-timezone";
+import { calendarDateFromIso } from "@/lib/calendar-date";
 import { codedToastCopy, genericToastCopy } from "@/lib/generic-toast-copy";
 import { editItemsField } from "@/lib/vendor-bill-edit-items";
 import {
@@ -775,6 +777,7 @@ export default function VendorBillDetailPage() {
   const { setTitle } = usePageTitle();
   const { toast } = useToast();
 
+  const tenantToday = useTenantToday(); // SA-964 §4
   const { data: bill, isLoading, isError } = useVendorBill(id);
   const receiveBill = useReceiveVendorBill();
   const voidBill = useVoidVendorBill();
@@ -875,7 +878,8 @@ export default function VendorBillDetailPage() {
     !!bill.dueDate &&
     status !== "PAID" &&
     status !== "VOID" &&
-    new Date(bill.dueDate) < new Date(new Date().toDateString());
+    !!tenantToday &&
+    calendarDateFromIso(bill.dueDate) < tenantToday; // SA-964 §4: the tenant's day; unknown zone claims nothing
 
   // Lines not linked to a product don't update stock or average costs when received.
   const billItems = bill.items ?? [];

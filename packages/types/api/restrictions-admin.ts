@@ -79,7 +79,7 @@ export interface BulkRestrictionRequest {
   jurisdiction: RestrictionJurisdictionValue;
   /** 2-letter USPS codes; required (non-empty) when jurisdiction is STATE. */
   states: string[];
-  /** Server default "BUYER_PORTAL"; the web's "Legal ban" checkbox sends "ALL". */
+  /** Server default "BUYER_PORTAL"; the web's "Applies to staff too" checkbox sends "ALL". */
   surface?: RestrictionSurfaceValue;
   /** Server default "Portal limit". */
   reason?: string;
@@ -348,7 +348,7 @@ export const IMPACT_SCAN_MAX_DOCUMENTS = 2000;
 
 /** The label of the tenant's owner-only staff-orders switch (`selling_restrictions.enabled`); the OFF copy quotes it. */
 export const STAFF_ORDERS_SWITCH_LABEL =
-  "Also block restricted products on staff orders and invoices";
+  "Also warn about restricted products on staff orders and invoices";
 
 /**
  * The ONE copy for the edit impact line, by the tenant's owner-only staff-orders switch (`selling_restrictions.enabled`).

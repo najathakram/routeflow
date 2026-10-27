@@ -27,7 +27,6 @@ export const RESTRICTION_COPY = {
   reasonPlaceholder: "Why is this sale OK?",
   sellAnyway: "Sell anyway",
   goBack: "Go back",
-  legalBadge: "Legal ban",
   unchecked: "This item couldn't be checked.",
   /** A repeat 409 (the server's list changed after "Sell anyway"): the reason is cleared, so say why. */
   listChanged: "The list changed; review it again",
@@ -91,9 +90,10 @@ export interface RuleRow {
 }
 
 /**
- * The rule lines to DISPLAY for one product. The merge is keyed on exactly what is DISPLAYED, the rendered sentence: the
- * sentence names only the state the sale was judged at, so rules for [CA] and [CA, NV] both read "banned in CA" and show
- * ONE line. A merged line is legal if any merged rule is. Display only: the ack and the server's `warningHash` still cover
+ * The rule lines to DISPLAY for one product. The merge is keyed on exactly what is DISPLAYED, the rendered sentence:
+ * the sentence is the business's own reason (SA-947), so rules with the same sentence show ONE line and rules with
+ * different reasons show one line each. That is intended (SA-947 MUST 1, SA-961). A merged line is legal if any merged
+ * rule is. Display only: the ack and the server's `warningHash` still cover
  * every rule, because they are built from the lines and the hash, never from these rows.
  */
 export function lineRuleRows(rules: readonly RestrictionWarningRule[]): RuleRow[] {
@@ -190,13 +190,9 @@ export function splitIdAck(v: IdWithAck): { id: string; ack: RestrictionAck | un
   return { id, ack: Object.keys(ack).length > 0 ? (ack as RestrictionAck) : undefined };
 }
 
-/** One rule's sentence: the server's fixed copy, else the legal sentence built from the states. */
+/** One rule's sentence: the server's line, as it is (one copy source, SA-947). */
 export function ruleText(rule: RestrictionWarningRule): string {
-  if (rule.reasonText) return rule.reasonText;
-  if (rule.legal && rule.states.length > 0) {
-    return `This product is banned in ${rule.states.join(", ")} by law.`;
-  }
-  return RESTRICTION_COPY.unchecked;
+  return rule.reasonText || RESTRICTION_COPY.unchecked;
 }
 
 // Row 672: the remedy logic lives once in the shared types package (re-exported so callers keep this import path).

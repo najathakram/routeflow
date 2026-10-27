@@ -154,34 +154,78 @@ export class ProductFamilyImportService {
     }>,
   ): Promise<Set<number>> {
     const db = this.prisma.forTenant().product;
-    const select = { parentProductId: true } as const;
-    const parentNames = new Map<string, string | null>();
     const out = new Set<number>();
-    for (const r of rows) {
-      // A Variant Name cell states a label (a regroup file, not an export round trip): that row stays a Family row.
-      if (r.variantCell) continue;
-      let hit: { parentProductId: string | null } | null = null;
-      if (r.id) hit = await db.findFirst({ where: { id: r.id }, select });
-      else {
-        if (r.sku) hit = await db.findFirst({ where: { sku: r.sku }, select });
-        if (!hit && r.barcode) hit = await db.findFirst({ where: { barcode: r.barcode }, select });
-        if (!hit && r.nameCell) {
-          // an export writes a variant's Item Name bare, but a hand-edited file may carry "{Family} - "
-          const bare = stripParentPrefix(r.nameCell, r.family);
-          const byName = await db.findMany({
-            where: { name: { equals: bare, mode: "insensitive" } },
+    // A Variant Name cell states a label (a regroup file, not an export round trip): that row stays a Family row.
+    const live = rows.filter((r) => !r.variantCell);
+    if (live.length === 0) return out;
+
+    // One read per key kind instead of one per row. Precedence is unchanged: id, else SKU, then barcode, then name.
+    const select = {
+      id: true,
+      sku: true,
+      barcode: true,
+      name: true,
+      parentProductId: true,
+    } as const;
+    const ids = [...new Set(live.flatMap((r) => (r.id ? [r.id] : [])))];
+    const skus = [...new Set(live.flatMap((r) => (!r.id && r.sku ? [r.sku] : [])))];
+    const barcodes = [...new Set(live.flatMap((r) => (!r.id && r.barcode ? [r.barcode] : [])))];
+    const bareOf = (r: (typeof live)[number]) =>
+      !r.id && r.nameCell ? stripParentPrefix(r.nameCell, r.family) : null;
+    const bares = [...new Set(live.flatMap((r) => bareOf(r) ?? []))];
+    const [byId, bySku, byBarcode, byBare] = await Promise.all([
+      ids.length ? db.findMany({ where: { id: { in: ids } }, select }) : [],
+      skus.length ? db.findMany({ where: { sku: { in: skus } }, select }) : [],
+      barcodes.length ? db.findMany({ where: { barcode: { in: barcodes } }, select }) : [],
+      bares.length
+        ? db.findMany({
+            where: {
+              OR: bares.map((name) => ({ name: { equals: name, mode: "insensitive" as const } })),
+            },
             select,
-            take: 2,
-          });
-          if (byName.length === 1) hit = byName[0];
-        }
+          })
+        : [],
+    ]);
+    type Hit = (typeof byId)[number];
+    const first = (list: Hit[], key: "id" | "sku" | "barcode") => {
+      const m = new Map<string, Hit>();
+      for (const h of list) {
+        const k = h[key];
+        if (k != null && !m.has(k)) m.set(k, h);
       }
-      const parentId = hit?.parentProductId;
+      return m;
+    };
+    const idMap = first(byId, "id");
+    const skuMap = first(bySku, "sku");
+    const barcodeMap = first(byBarcode, "barcode");
+    const nameMap = new Map<string, Hit[]>();
+    for (const h of byBare) {
+      const k = h.name.toLowerCase();
+      nameMap.set(k, [...(nameMap.get(k) ?? []), h]);
+    }
+
+    const hitOf = (r: (typeof live)[number]): Hit | null => {
+      if (r.id) return idMap.get(r.id) ?? null;
+      let hit: Hit | null = null;
+      if (r.sku) hit = skuMap.get(r.sku) ?? null;
+      if (!hit && r.barcode) hit = barcodeMap.get(r.barcode) ?? null;
+      const bare = bareOf(r);
+      if (!hit && bare != null) {
+        // a name matches only when it is unique
+        const same = nameMap.get(bare.toLowerCase()) ?? [];
+        if (same.length === 1) hit = same[0];
+      }
+      return hit;
+    };
+
+    const hits = live.map((r) => ({ r, parentId: hitOf(r)?.parentProductId ?? null }));
+    const parentIds = [...new Set(hits.flatMap((h) => h.parentId ?? []))];
+    const parents = parentIds.length
+      ? await db.findMany({ where: { id: { in: parentIds } }, select: { id: true, name: true } })
+      : [];
+    const parentNames = new Map(parents.map((p) => [p.id, p.name]));
+    for (const { r, parentId } of hits) {
       if (!parentId) continue;
-      if (!parentNames.has(parentId)) {
-        const p = await db.findFirst({ where: { id: parentId }, select: { name: true } });
-        parentNames.set(parentId, p?.name ?? null);
-      }
       const parentName = parentNames.get(parentId);
       if (parentName && parentName.trim().toLowerCase() === r.family.trim().toLowerCase()) {
         out.add(r.index);

@@ -123,11 +123,6 @@ export function RestrictionWarningDialog({
                       className="mt-1 flex flex-wrap items-center gap-2 text-sm text-danger"
                     >
                       <span>{it.text}</span>
-                      {it.legal && (
-                        <span className="rounded bg-danger-bg px-1.5 py-0.5 text-xs font-medium">
-                          {COPY.legalBadge}
-                        </span>
-                      )}
                     </p>
                   ))}
                 </li>
@@ -189,11 +184,6 @@ export function RestrictionWarningDialog({
                   className="mt-1 flex flex-wrap items-center gap-2 text-sm text-danger"
                 >
                   <span>{row.text}</span>
-                  {row.legal && (
-                    <span className="rounded bg-danger-bg px-1.5 py-0.5 text-xs font-medium">
-                      {COPY.legalBadge}
-                    </span>
-                  )}
                 </p>
               ))
             )}

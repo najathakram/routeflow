@@ -28,6 +28,8 @@ function fixtureRegistry(overrides: Partial<FeatureDef> = {}): readonly FeatureD
       backfill: "x",
     },
     billing: { skus: [], selfService: false },
+    nature: { purpose: "commercial", category: "office_tools" },
+    keywords: [],
     defaultGranted: true,
     config: {
       fallbackMode: "unset",

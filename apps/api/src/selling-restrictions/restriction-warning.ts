@@ -251,6 +251,13 @@ function carriedFrom(held: readonly HeldLine[]): CarriedStamp[] {
 
 // ─── the copy (built only here) ───────────────────────────────────────────────────────────────────────────────────
 
+/** "<lead>: <reason>." — the business's own reason is the text; never a legal claim (SA-947). No double stop. */
+function reasonLine(lead: string, reason: string): string {
+  const r = reason.trim();
+  if (!r) return `${lead}.`;
+  return /[.!?]$/.test(r) ? `${lead}: ${r}` : `${lead}: ${r}.`;
+}
+
 function ruleReasonText(
   rule: StaffBreachRule,
   breach: StaffBreachDetail,
@@ -258,12 +265,14 @@ function ruleReasonText(
 ): string {
   switch (rule.kind) {
     case "FEDERAL":
-      return "This product is banned federally by law.";
+      return reasonLine("Restricted everywhere", rule.reason);
     case "STATE_HIT":
-      return `This product is banned in ${breach.state ?? "this sale's state"} by law.`;
+      // A STATE_HIT always carries its state (staff-breaches.ts builds it only from a resolved one); the bare
+      // "Restricted: <reason>." is a guard for a breach that somehow has none, never a reachable case (SA-961).
+      return reasonLine(breach.state ? `Restricted in ${breach.state}` : "Restricted", rule.reason);
     case "MALFORMED_STATE":
     case "UNRECOGNISED":
-      return `This product is banned by law (${rule.reason}).`;
+      return reasonLine("Restricted", rule.reason);
     case "STATE_UNRESOLVED":
       return basis === "STORE"
         ? "This store's state can't be determined — add it under Settings > Business."
@@ -290,7 +299,7 @@ function warningLine(row: WarningRow, judgement: StaffJudgement): RestrictionWar
         legal: rule.legal,
         reasonText: rule.legal
           ? ruleReasonText(rule, breach, judgement.basis)
-          : `This product is limited for this sale (${rule.reason}).`,
+          : reasonLine("Limited for this sale", rule.reason),
       }));
   return {
     lineKey: row.lineKey,
