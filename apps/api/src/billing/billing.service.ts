@@ -27,7 +27,6 @@ import {
   dunningEmailsFor,
   paymentReinstatable,
   paymentReinstatableWhere,
-  OVERDUE_SUSPENDED_REASON,
   STRIPE_CANCELLED_REASON,
 } from "./dunning-config";
 import { adminLockedRefusal } from "./admin-lock-refusal";
@@ -270,7 +269,7 @@ export class BillingService {
     @Optional() private readonly catchup?: CatchupClaimService,
     // SA-733r7 PR-B3: dunning (the clock stamp, the hourly pause sweep, the invoice.paid resume).
     @Optional() private readonly dunning?: DunningService,
-    // SA-775: the rollout pause on AUTOMATIC locks (suspendOverdueTenants, the Stripe-cancel webhook).
+    // SA-775: the rollout pause on AUTOMATIC locks (reconcileCanceledSubscriptions, the Stripe-cancel webhook).
     @Optional() private readonly autoLocks?: AutoLockSwitchService,
   ) {
     // MRR has ONE writer: dunning's pause and resume book their delta through this class's transitionAndEmit.
@@ -2772,7 +2771,7 @@ export class BillingService {
   /**
    * #2436/#2440: a Stripe subscription's current period, read from its base-plan item (never one
    * of the tenant's known add-on items — N2). A null period writes nothing, but is logged (N1): a
-   * null periodEnd silently hides the tenant from suspendOverdueTenants.
+   * null periodEnd silently hides the tenant from reconcileCanceledSubscriptions.
    */
   private async subscriptionPeriod(
     stripeSub: any,
@@ -3389,7 +3388,7 @@ ${updateLine}
     );
 
     // #2440 (SA-450): only `canceled` maps to a status (as deleted). past_due / unpaid write none —
-    // grace stays with suspendOverdueTenants, reinstatement with invoice.payment_succeeded.
+    // grace stays with reconcileCanceledSubscriptions, reinstatement with invoice.payment_succeeded.
     if (subscription.status === "canceled") {
       await this.cancelFromStripe(sub, "subscription_canceled");
       return; // SA-736r M1: a canceled status skips the coupon sync - cancelFromStripe resets the columns
@@ -3398,15 +3397,16 @@ ${updateLine}
     await this.syncCoupon(sub.tenantId, sub.stripeSubId as string, "subscription_updated");
   }
 
-  // ─── Cron: suspend tenants with expired trials / overdue payments ─────────
+  // ─── Cron: reconcile Stripe-canceled subscriptions the webhook missed ─────
 
   /**
-   * Runs every hour. Suspends tenants whose Stripe subscription was canceled (A2: never for past_due / unpaid):
-   *  1. Are in TRIAL status with trialEndsAt in the past, OR
-   *  2. Have a subscription whose periodEnd is past + grace period and still ACTIVE
+   * Runs every hour: the backstop for a missed `customer.subscription.deleted` webhook. An ACTIVE tenant whose
+   * subscription period + grace is past is checked against Stripe; only `canceled` acts (A2: never for past_due /
+   * unpaid, dunning owns non-payment), and it goes through cancelFromStripe, the webhook's own writer. Trial expiry
+   * belongs to BillingCronService.expireTrials.
    */
-  @LeaderCron(CronExpression.EVERY_HOUR, "billing.suspendOverdueTenants")
-  async suspendOverdueTenants(): Promise<void> {
+  @LeaderCron(CronExpression.EVERY_HOUR, "billing.reconcileCanceledSubscriptions")
+  async reconcileCanceledSubscriptions(): Promise<void> {
     if (!this.stripe.isConfigured) return; // No billing = no suspension logic
 
     const now = new Date();
@@ -3430,52 +3430,25 @@ ${updateLine}
         // states and never suspend, in any BILLING_PAUSE_MODE: dunning owns non-payment (the 7-day grace, then
         // READ_ONLY + pay).
         if (stripeSub.status === "canceled") {
-          // SA-775 (row 381): the rollout pause. A PRODUCTION tenant is NOT suspended while the switch is paused
-          // (no status write, no notice); ONE durable skip record per Stripe subscription, and the pass after an
-          // unpause finds it again.
-          if (!(await autoLockAllowed(this.autoLocks, sub.tenant, "overdue_suspended"))) {
-            await recordAutoLockSkip(
+          // SA-934 §3: a missed customer.subscription.deleted webhook ends the same way a delivered one does - through
+          // cancelFromStripe, the ONE writer of a Stripe-ended subscription (CANCELLED + stamp, one -MRR delta, the
+          // disarmed downgrade, the coupon reset, one notice). SA-775 (row 381): while the rollout pause holds, a
+          // PRODUCTION tenant is not cancelled; the skip record is claimed here first so a repeat hourly pass is quiet
+          // (the hold path in cancelFromStripe rewrites cancelAtPeriodEnd, the downgrade and the coupon reset each call).
+          if (!(await autoLockAllowed(this.autoLocks, sub.tenant, "stripe_cancelled"))) {
+            const first = await recordAutoLockSkip(
               this.prisma,
               {
                 tenantId: sub.tenantId,
-                kind: "overdue_suspended",
+                kind: "stripe_cancelled",
                 key: sub.stripeSubId as string,
-                wouldHaveSet: { status: "SUSPENDED" },
+                wouldHaveSet: { status: "CANCELLED", from: "ACTIVE" },
               },
               this.logger,
             );
-            continue;
+            if (!first) continue;
           }
-          // Atomic ACTIVE→SUSPENDED: emits the −MRR delta exactly once even if a concurrent
-          // subscription.deleted webhook already churned this tenant (count 0 → no double). The
-          // suspension is reversible — onPaymentSucceeded re-adds a matching +delta on reinstatement.
-          const suspended = await this.transitionAndEmit(
-            sub.tenantId,
-            { status: "ACTIVE", class: sub.tenant.class }, // the judged class is part of the CAS (SA-775 S3)
-            "SUSPENDED",
-            -1,
-            BILLING_EVENTS.SUBSCRIPTION_SUSPENDED,
-            { source: "stripe", reason: "overdue_payment", stripeStatus: stripeSub.status },
-            { data: { readOnlyReason: OVERDUE_SUSPENDED_REASON } }, // W-664: a billing lock names itself
-          );
-          if (suspended) {
-            this.tenantStatusGuard.invalidate(sub.tenantId);
-            this.logger.log(
-              `Overdue payment — suspended tenant ${sub.tenant.slug} (Stripe status: ${stripeSub.status})`,
-            );
-            // N3: best-effort admin notification, never blocks the suspension above.
-            try {
-              await this.billingNotification.notifySuspended(
-                sub.tenantId,
-                SUSPENDED_REASON_SUBSCRIPTION_CANCELED,
-              );
-            } catch (e) {
-              this.logger.error(
-                `N3 notifySuspended threw unexpectedly for tenant ${sub.tenantId}`,
-                e as Error,
-              );
-            }
-          }
+          await this.cancelFromStripe(sub, "subscription_canceled_backstop");
         }
       } catch (err) {
         this.logger.error(`Failed to check Stripe subscription for tenant ${sub.tenantId}`, err);
