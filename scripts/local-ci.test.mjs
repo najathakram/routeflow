@@ -24,6 +24,8 @@ import {
   resultDirName,
   worktreeDirName,
   assertMergeTestsHead,
+  isOwnWorktreeDir,
+  main,
 } from "./local-ci.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -464,4 +466,112 @@ test("local-ci does not set its own RF_HEAVY_SLOTS default; heavy-slot's applies
   assert.doesNotMatch(src, /process\.env\.RF_HEAVY_SLOTS\s*(\?\?|\|\||=)/);
   const { parseSlots, DEFAULT_SLOTS } = await import("./lib/heavy-slot.mjs");
   assert.equal(parseSlots(undefined), DEFAULT_SLOTS);
+});
+
+// ---------------------------------------------------------------------------------------------
+// main()-level wiring (deps stubbed): each test goes red if the wiring it pins is reverted
+// ---------------------------------------------------------------------------------------------
+
+const HEAD = "a".repeat(40);
+const MASTER = "b".repeat(40);
+const MERGE = "c".repeat(40);
+const DB_WORKFLOW = "on:\n  pull_request:\n    paths:\n      - apps/api/prisma/**\n";
+
+/** Runs main() against a throwaway repo dir with every side effect stubbed; returns what it did. */
+async function runMain({
+  stale = false,
+  leftover = false,
+  args = ["--pr", "9999", "--no-status"],
+} = {}) {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "lci-main-"));
+  const repo = path.join(tmp, "repo");
+  fs.mkdirSync(repo);
+  const dir = worktreeDirName(repo, 9999, HEAD, process.pid);
+  const seen = { stepsRan: 0, removed: [], messages: [] };
+  let ran = false;
+  const realError = console.error;
+  console.error = (m) => seen.messages.push(String(m));
+  try {
+    seen.code = await main(args, {
+      git: (cwd, a) => {
+        if (a[0] === "rev-parse" && a[1] === "--show-toplevel") return repo;
+        if (a[0] === "rev-parse" && a[1] === "origin/master") return MASTER;
+        if (a[0] === "rev-parse" && a[1] === "refs/local-ci/9999/head") return HEAD;
+        if (a[0] === "rev-parse" && a[1] === "refs/local-ci/9999/merge") return MERGE;
+        if (a[0] === "show") return DB_WORKFLOW;
+        return "";
+      },
+      gitOrNull: (cwd, a) => (a[1] === `${MERGE}^2` ? HEAD : null),
+      spawnSync: (cmd, a) => {
+        if (cmd === "git" && a[0] === "merge-base") return { status: stale ? 1 : 0 };
+        return { status: 0, stderr: "" };
+      },
+      installEntries: () => [],
+      existsSync: (p) => (p === dir ? leftover || ran : fs.existsSync(p)),
+      runSteps: async () => {
+        seen.stepsRan++;
+        ran = true;
+        return { ok: true, failedStep: null, infra: false, durationMs: 1, steps: [] };
+      },
+      makeExec: () => async () => ({ status: 0 }),
+      removeWorktree: (r, d) => {
+        seen.removed.push(d);
+        return true;
+      },
+    });
+  } finally {
+    console.error = realError;
+    await new Promise((r) => setTimeout(r, 100)); // let the log stream finish opening/closing
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+  seen.dir = dir;
+  return seen;
+}
+
+test("main refuses a stale GitHub merge ref: exit 2, no step runs, no status (MUST 1)", async () => {
+  const r = await runMain({ stale: true });
+  assert.equal(r.code, 2);
+  assert.equal(r.stepsRan, 0);
+  assert.deepEqual(r.removed, []);
+  assert.match(r.messages.join("\n"), /stale/);
+  assert.match(r.messages.join("\n"), /--fresh/);
+});
+
+test("main on a fresh merge ref runs the steps and removes only the worktree it made (MUST 2)", async () => {
+  const r = await runMain({ stale: false });
+  assert.equal(r.code, 0);
+  assert.equal(r.stepsRan, 1);
+  assert.deepEqual(r.removed, [r.dir]);
+});
+
+test("main aborts on a leftover worktree dir and never removes it (MUST 2)", async () => {
+  const r = await runMain({ leftover: true });
+  assert.equal(r.code, 2);
+  assert.equal(r.stepsRan, 0, "no step may run on top of another run's directory");
+  assert.deepEqual(r.removed, [], "a directory this run did not create is never removed");
+  assert.match(r.messages.join("\n"), /already exists/);
+});
+
+test("main --keep leaves the worktree it made (MUST 2)", async () => {
+  const r = await runMain({ args: ["--pr", "9999", "--no-status", "--keep"] });
+  assert.equal(r.code, 0);
+  assert.deepEqual(r.removed, []);
+});
+
+test("the recursive-delete fallback is gated on THIS run's own directory only (MUST 3)", () => {
+  const repo = path.join(path.sep, "w", "repo");
+  const own = worktreeDirName(repo, 3709, HEAD, process.pid);
+  assert.equal(isOwnWorktreeDir(repo, own), true);
+  // another run's pid, the old rf-lci-<pid> shape, a different parent and a prefix trick are all refused
+  assert.equal(isOwnWorktreeDir(repo, worktreeDirName(repo, 3709, HEAD, process.pid + 1)), false);
+  assert.equal(isOwnWorktreeDir(repo, path.join(repo, "..", `rf-lci-${process.pid}`)), false);
+  assert.equal(isOwnWorktreeDir(repo, path.join(repo, "..", "x", path.basename(own))), false);
+  assert.equal(isOwnWorktreeDir(repo, path.join(repo, "..", `${path.basename(own)}0`)), false);
+});
+
+test("removeWorktree source: removeAllLinks runs before any recursive delete (MUST 3)", () => {
+  const src = fs.readFileSync(path.join(HERE, "local-ci.mjs"), "utf8");
+  const body = src.slice(src.indexOf("export function removeWorktree"));
+  assert.ok(body.indexOf("removeAllLinks(dir)") < body.indexOf("fs.rmSync(dir"));
+  assert.match(body, /isOwnWorktreeDir\(repo, dir\)/);
 });

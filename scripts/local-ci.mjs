@@ -309,6 +309,18 @@ export function worktreeDirName(repo, pr, headSha, pid) {
 }
 
 /**
+ * True only for the directory THIS run creates: a sibling of the repo named
+ * rf-lci-<pr>-<12 hex>-<this pid>. The recursive delete after `git worktree remove` is gated on
+ * it, so another run's (or a stale) rf-lci-* directory is never wiped.
+ */
+export function isOwnWorktreeDir(repo, dir, pid = process.pid) {
+  return (
+    path.dirname(path.resolve(dir)) === path.resolve(repo, "..") &&
+    new RegExp(`^rf-lci-[0-9]+-[0-9a-f]{12}-${pid}$`).test(path.basename(dir))
+  );
+}
+
+/**
  * The status lands on the PR head sha, so the tree under test must really be that head merged into
  * master: the merge commit's second parent (`secondParent`, null when it has none) must equal
  * headSha. GitHub's merge ref can lag a push; a green on the older head would be stamped on the new
@@ -626,7 +638,7 @@ function makeExec({ logStream, ctx, state }) {
 }
 
 /** Removes the worktree; returns false (and leaves it) if any link survives or git refuses. */
-function removeWorktree(repo, dir, log) {
+export function removeWorktree(repo, dir, log) {
   const left = removeAllLinks(dir);
   if (left.length) {
     log(
@@ -639,7 +651,7 @@ function removeWorktree(repo, dir, log) {
     log(`local-ci: worktree left in place (${r.stderr.trim()}); remove ${dir} by hand`);
     return false;
   }
-  if (fs.existsSync(dir) && /^rf-lci-[0-9]+$/.test(path.basename(dir))) {
+  if (fs.existsSync(dir) && isOwnWorktreeDir(repo, dir)) {
     // git leaves ignored files (the cloned node_modules) behind; every link is already gone.
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -662,7 +674,19 @@ function installEntries(repo, from, mergeSha) {
   });
 }
 
-export async function main(argv = process.argv.slice(2)) {
+export async function main(argv = process.argv.slice(2), deps = {}) {
+  // Seams for the main-level tests; production passes none.
+  const d = {
+    git,
+    gitOrNull,
+    spawnSync,
+    existsSync: fs.existsSync,
+    runSteps,
+    makeExec,
+    removeWorktree,
+    installEntries,
+    ...deps,
+  };
   let o;
   try {
     o = parseArgs(argv);
@@ -679,7 +703,7 @@ export async function main(argv = process.argv.slice(2)) {
       }).status ?? 1
     );
   }
-  const repo = git(process.cwd(), ["rev-parse", "--show-toplevel"]);
+  const repo = d.git(process.cwd(), ["rev-parse", "--show-toplevel"]);
   const from = path.resolve(o.from ?? repo);
   let dir = worktreeDirName(repo, o.pr, "<head sha>", process.pid);
   const log = (m) => console.error(m);
@@ -722,18 +746,18 @@ export async function main(argv = process.argv.slice(2)) {
   let mergeSha, headSha, plan, outDir, dbLane, installStale, treeInfo;
   try {
     // Fetch the exact tree GitHub CI tests, plus the base.
-    git(repo, [
+    d.git(repo, [
       "fetch",
       "origin",
       "master",
       `+refs/pull/${o.pr}/merge:refs/local-ci/${o.pr}/merge`,
       `+refs/pull/${o.pr}/head:refs/local-ci/${o.pr}/head`,
     ]);
-    headSha = git(repo, ["rev-parse", `refs/local-ci/${o.pr}/head`]);
-    const masterSha = git(repo, ["rev-parse", "origin/master"]);
+    headSha = d.git(repo, ["rev-parse", `refs/local-ci/${o.pr}/head`]);
+    const masterSha = d.git(repo, ["rev-parse", "origin/master"]);
     let githubMerge = null;
     try {
-      githubMerge = git(repo, ["rev-parse", `refs/local-ci/${o.pr}/merge`]);
+      githubMerge = d.git(repo, ["rev-parse", `refs/local-ci/${o.pr}/merge`]);
     } catch {
       /* no merge ref: conflicting PR */
     }
@@ -742,17 +766,17 @@ export async function main(argv = process.argv.slice(2)) {
     }
     const masterInMerge =
       githubMerge !== null &&
-      spawnSync("git", ["merge-base", "--is-ancestor", masterSha, githubMerge], { cwd: repo })
+      d.spawnSync("git", ["merge-base", "--is-ancestor", masterSha, githubMerge], { cwd: repo })
         .status === 0;
     const tree = describeTree({ mode: o.tree, mergeSha: githubMerge, headSha, masterInMerge });
     if (o.tree === "fresh") {
-      const t = spawnSync("git", ["merge-tree", "--write-tree", masterSha, headSha], {
+      const t = d.spawnSync("git", ["merge-tree", "--write-tree", masterSha, headSha], {
         cwd: repo,
         encoding: "utf8",
       });
       if (t.status !== 0)
         throw new Error(`head does not merge cleanly into origin/master: ${t.stdout}`);
-      tree.sha = git(repo, [
+      tree.sha = d.git(repo, [
         "commit-tree",
         t.stdout.split("\n")[0].trim(),
         "-p",
@@ -768,20 +792,24 @@ export async function main(argv = process.argv.slice(2)) {
       mode: o.tree,
       mergeSha,
       headSha,
-      secondParent: o.tree === "head" ? null : gitOrNull(repo, ["rev-parse", `${mergeSha}^2`]),
+      secondParent: o.tree === "head" ? null : d.gitOrNull(repo, ["rev-parse", `${mergeSha}^2`]),
     });
     dir = worktreeDirName(repo, o.pr, headSha, process.pid);
     treeInfo = { ...tree, headSha, masterSha, githubMerge };
+    if (tree.stale) {
+      // A green on a tree without the master tip would be stamped on a head that may not merge with it.
+      throw new Error(
+        `GitHub's merge ref ${mergeSha.slice(0, 9)} does NOT contain origin/master ${masterSha.slice(0, 9)} (stale); rerun with --fresh to test the head merged into current master`,
+      );
+    }
     log(
-      `local-ci: testing ${tree.label} ${mergeSha.slice(0, 9)} (head ${headSha.slice(0, 9)}, origin/master ${masterSha.slice(0, 9)})` +
-        (tree.stale
-          ? "; WARNING GitHub's merge ref does NOT contain origin/master (stale), rerun with --fresh to test head merged into current master"
-          : ""),
+      `local-ci: testing ${tree.label} ${mergeSha.slice(0, 9)} (head ${headSha.slice(0, 9)}, origin/master ${masterSha.slice(0, 9)})`,
     );
-    const files = git(repo, ["diff", "--name-only", "origin/master", mergeSha])
+    const files = d
+      .git(repo, ["diff", "--name-only", "origin/master", mergeSha])
       .split("\n")
       .filter(Boolean);
-    const wf = git(repo, ["show", `${mergeSha}:.github/workflows/db-migrations.yml`]);
+    const wf = d.git(repo, ["show", `${mergeSha}:.github/workflows/db-migrations.yml`]);
     const dbGlobs = parseWorkflowPaths(wf);
     if (dbGlobs.length === 0) {
       throw new Error(
@@ -789,7 +817,7 @@ export async function main(argv = process.argv.slice(2)) {
       );
     }
     dbLane = touchesDbLane(files, dbGlobs);
-    installStale = installIsStale(installEntries(repo, from, mergeSha));
+    installStale = installIsStale(d.installEntries(repo, from, mergeSha));
     outDir = path.join(
       repo,
       "local-assets",
@@ -821,10 +849,17 @@ export async function main(argv = process.argv.slice(2)) {
   process.on("SIGTERM", onSignal);
   let result;
   let postFailed = false;
+  // Only a directory this run created may be removed: a leftover from a reused pid is never ours.
+  let created = false;
   try {
-    result = await runSteps({
+    if (d.existsSync(dir)) {
+      log(`local-ci: ${dir} already exists (leftover from an earlier run?); remove it by hand`);
+      return 2;
+    }
+    created = true;
+    result = await d.runSteps({
       steps: plan,
-      exec: makeExec({ logStream, ctx: { dir, from, pr: o.pr }, state }),
+      exec: d.makeExec({ logStream, ctx: { dir, from, pr: o.pr }, state }),
       log,
     });
     if (state.aborted) {
@@ -853,7 +888,7 @@ export async function main(argv = process.argv.slice(2)) {
       ),
     );
     if (!o.noStatus) {
-      const r = spawnSync(
+      const r = d.spawnSync(
         "gh",
         [
           "api",
@@ -881,7 +916,7 @@ export async function main(argv = process.argv.slice(2)) {
     process.off("SIGTERM", onSignal);
     killTree(state.child?.pid);
     logStream.end();
-    if (!o.keep && fs.existsSync(dir)) removeWorktree(repo, dir, log);
+    if (created && !o.keep && d.existsSync(dir)) d.removeWorktree(repo, dir, log);
   }
 }
 
