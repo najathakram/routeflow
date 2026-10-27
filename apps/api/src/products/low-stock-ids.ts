@@ -1,6 +1,5 @@
 import { UnprocessableEntityException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
-import { API_ERROR_CODES, LOW_STOCK_DEFAULT } from "@routeflow/types";
 import type { PrismaService } from "../prisma/prisma.service";
 
 /**
@@ -11,6 +10,13 @@ import type { PrismaService } from "../prisma/prisma.service";
  * The rule is `packages/types/api/stock-level.ts`: `isActive AND stock <= COALESCE(reorderPoint, LOW_STOCK_DEFAULT)`,
  * inclusive; the default is the constant itself, bound as a parameter, never a second literal.
  */
+
+/**
+ * `@routeflow/types` ships raw TS (`main: ./index.ts`), so a value import from it crashes `node dist/main.js` at boot; the api
+ * keeps these two values local and `low-stock.spec.ts` pins both to the package's.
+ */
+export const LOW_STOCK_DEFAULT = 5;
+export const LOW_STOCK_TOO_MANY_CODE = "LOW_STOCK_TOO_MANY";
 
 /** Below Postgres's bind-parameter limit with room for the other clauses. Above it the filter fails loudly, never truncates. */
 export const LOW_STOCK_ID_CAP = 20_000;
@@ -35,7 +41,7 @@ export async function lowStockProductIds(prisma: PrismaService): Promise<string[
   });
   if (rows.length > LOW_STOCK_ID_CAP) {
     throw new UnprocessableEntityException({
-      code: API_ERROR_CODES.LOW_STOCK_TOO_MANY,
+      code: LOW_STOCK_TOO_MANY_CODE,
       message: `More than ${LOW_STOCK_ID_CAP} products match the Low stock filter. Narrow it with a search or a category.`,
     });
   }

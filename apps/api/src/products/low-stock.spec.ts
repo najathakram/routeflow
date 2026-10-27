@@ -8,7 +8,13 @@ import {
   lowStockThreshold,
   stockLevel,
 } from "@routeflow/types";
-import { LOW_STOCK_ID_CAP, lowStockIdsQuery, lowStockProductIds } from "./low-stock-ids";
+import {
+  LOW_STOCK_DEFAULT as API_LOW_STOCK_DEFAULT,
+  LOW_STOCK_ID_CAP,
+  LOW_STOCK_TOO_MANY_CODE,
+  lowStockIdsQuery,
+  lowStockProductIds,
+} from "./low-stock-ids";
 import { buildProductListWhere, needsLowStockIds } from "./product-list-where";
 
 /** SA-1002 (W-925): the one low-stock rule, its SQL twin pinned to the constant, and the cap that fails loudly. */
@@ -53,7 +59,9 @@ describe("the SQL prefetch is the same rule, pinned to the constant", () => {
   it("has no second literal 5 and never uses the Unsafe raw API", () => {
     const src = fs.readFileSync(path.join(__dirname, "low-stock-ids.ts"), "utf8");
     expect(src).not.toMatch(/queryRawUnsafe|executeRawUnsafe/);
-    expect(src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "")).not.toMatch(/\b5\b/);
+    const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+    // the one local declaration (pinned equal to the package below) is the only literal
+    expect(code.replace(/export const LOW_STOCK_DEFAULT = 5;/, "")).not.toMatch(/\b5\b/);
   });
 });
 
@@ -109,5 +117,14 @@ describe("buildProductListWhere with the prefetch", () => {
     }
     const svc = fs.readFileSync(path.join(__dirname, "products.service.ts"), "utf8");
     expect(svc.match(/lowStockProductIds\(this\.prisma\)/g)).toHaveLength(2);
+  });
+});
+
+describe("low-stock-ids.ts stays boot-safe", () => {
+  it("has no value import from @routeflow/types and its local values equal the package's", () => {
+    const src = fs.readFileSync(path.join(__dirname, "low-stock-ids.ts"), "utf8");
+    expect(src).not.toMatch(/^import\s+(?!type\b)[^;]*from\s+"@routeflow\/types"/m);
+    expect(API_LOW_STOCK_DEFAULT).toBe(LOW_STOCK_DEFAULT);
+    expect(LOW_STOCK_TOO_MANY_CODE).toBe(API_ERROR_CODES.LOW_STOCK_TOO_MANY);
   });
 });
