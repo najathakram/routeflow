@@ -1,4 +1,5 @@
 import { assertNotWalkIn, assertWalkInLoginUntouched, excludeWalkIn } from "./walk-in-protected";
+import { sellerDisplayName } from "../common/seller-display-name";
 import { restoredUsernameFor } from "./restore-username";
 import { resumeSchedulesOnRestore } from "../recurring-invoices/recurring-schedule";
 import { buildMyStatement, buildOperatorStatement } from "./customer-statement";
@@ -2662,7 +2663,7 @@ export class CustomersService {
       where: { tenantId },
       select: { businessName: true },
     });
-    const sellerName = tenantCfg?.businessName ?? "Your supplier";
+    const sellerName = sellerDisplayName(tenantCfg, null, "Your supplier");
     const webUrl = this.config.get<string>("WEB_URL") ?? "http://localhost:3001";
     const inviteUrl = `${webUrl}/buyer/invite/${token}`;
 

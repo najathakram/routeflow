@@ -5,6 +5,7 @@ import { LeaderCron } from "../common/cron-lock";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
 import { TENANT_ZONE_SELECT, zoneFromConfig } from "../common/tenant-time-zone";
+import { sellerDisplayName } from "../common/seller-display-name";
 
 /** The `UserPreference.key` a tenant admin's opt-out is stored under (N4). Missing row =
  * enabled, same convention as `notifications.service.ts`'s `pushEnabled` (B04). */
@@ -122,7 +123,7 @@ export class LowStockDigestService {
     const items = await this.getLowStockItems(tenantId);
     if (items.length > 0) {
       const recipients = await this.getDigestRecipients(tenantId);
-      const businessName = config?.businessName || "RouteFlow";
+      const businessName = sellerDisplayName(config, null, "RouteFlow");
       for (const r of recipients) {
         // Fail closed per recipient too — EmailService.send() already never throws, but a
         // template-build error must not stop the remaining recipients or the day-mark below.

@@ -1,7 +1,6 @@
 import { ConflictException, ForbiddenException } from "@nestjs/common";
 import {
-  PIECE_LABEL,
-  baseLabelOf,
+  namesBase,
   type CustomerLayerPrice,
   type LadderUnit,
   type TrackedCategoryRow,
@@ -209,7 +208,7 @@ export async function normalizeDerivedBaseItems(
   const named = (i: any) => {
     const p = productOf(i);
     const l = norm(i.unitLabel ?? "");
-    return !!p && l !== "" && (l === norm(baseLabelOf(p)) || l === norm(PIECE_LABEL));
+    return !!p && l !== "" && namesBase(p, l);
   };
   const candidates = (dto.items ?? []).filter(named);
   if (candidates.length === 0) return;

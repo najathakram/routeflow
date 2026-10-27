@@ -277,7 +277,7 @@ export function LimitInPortalDialog({
               checked={legalBan}
               onChange={(e) => setLegalBan(e.target.checked)}
             />
-            <span>Legal ban — staff are warned and must give a reason</span>
+            <span>Applies to staff too — they&apos;re warned and must give a reason</span>
           </label>
           {legalBan && enforcementOff && (
             <p className="mt-1 pl-6 text-xs text-navy/70">

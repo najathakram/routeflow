@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// plane-sync.mjs — mirrors the in-repo bug registry (`.claude/campaign/`) into
+// plane-sync.mjs — mirrors the bug registry (located by registry-root.mjs) into
 // Plane's BUGS project. See .claude/pipeline/2026-09-10-plane-sync/build-plan.md
 // (DECIDE-27, owner ruling 2026-09-10) and .claude/pipeline/
 // 2026-09-11-plane-harness/build-plan.md (WP2) for the full rationale.
@@ -49,6 +49,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
+import { registryRoot } from "../lib/registry-root.mjs";
 import {
   appendRun,
   createClient,
@@ -337,7 +338,7 @@ export function deriveDesired(registryDir, { wavePlacement: injectedWaves } = {}
 // sha256(bugs.jsonl + every status/*.jsonl, sorted, + board.json) — the
 // digest Gate 5 short-circuits on. Deliberately does NOT include anything
 // Plane-side (a real sha256 over exactly the files an ordinary `git diff` on
-// `.claude/campaign` would touch), so an unrelated Plane-side edit can never
+// register directory would touch), so an unrelated Plane-side edit can never
 // mask a real registry change.
 export function registryDigest(registryDir) {
   const parts = [];
@@ -1174,8 +1175,15 @@ async function main() {
           `Plane mirror warn: ignoring --max-writes "${argv[mwIdx + 1] ?? ""}" (not a non-negative number)\n`,
         );
     }
-    const registryDir =
-      process.env.PLANE_SYNC_REGISTRY_DIR || join(REPO_ROOT, ".claude", "campaign");
+    let registryDir;
+    try {
+      registryDir = process.env.PLANE_SYNC_REGISTRY_DIR || registryRoot();
+    } catch (err) {
+      process.stderr.write(`Plane mirror: ${err.message}\n`);
+      process.exitCode = 2;
+      rec.error = `${err?.name ?? "Error"}: ${String(err.message).slice(0, 200)}`;
+      return;
+    }
 
     const apiKey = process.env.PLANE_API_KEY;
     if (!apiKey) {
