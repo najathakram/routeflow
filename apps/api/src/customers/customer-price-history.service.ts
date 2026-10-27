@@ -707,6 +707,7 @@ export class CustomerPriceHistoryService {
             unitPrice: c.row.unitPrice,
             unitLabel: c.row.unitLabel,
             unitsPerBox: c.row.unitsPerBox,
+            salePack: c.pack, // W-986: the row's own sale pack, so a chip judges it as the popover does
           });
         }
       }

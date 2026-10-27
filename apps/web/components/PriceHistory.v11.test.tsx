@@ -413,6 +413,32 @@ describe("inline last-3 chips (real onTapPrice configuration)", () => {
     expect(screen.queryByRole("button", { name: /Use last price \$12\.00/ })).toBeNull();
   });
 
+  it("W-986: a row whose sale pack is unknown (salePack null) never offers its price", async () => {
+    renderChips(
+      sum({
+        last3: [
+          {
+            date: "2026-09-25T00:00:00.000Z",
+            unitPrice: 9,
+            unitLabel: "case",
+            unitsPerBox: null,
+            salePack: null,
+          },
+          {
+            date: "2026-09-20T00:00:00.000Z",
+            unitPrice: 24,
+            unitLabel: "case",
+            unitsPerBox: 24,
+            salePack: 24,
+          },
+        ],
+      }),
+    );
+    const chips = await screen.findAllByRole("button", { name: /^Use last price/ });
+    expect(chips.map((c) => c.textContent)).toEqual([expect.stringContaining("$24.00")]);
+    expect(screen.queryByRole("button", { name: /Use last price \$9\.00/ })).toBeNull();
+  });
+
   it("chips themselves make no request (rendered without the popover button)", async () => {
     renderWithProviders(
       <PriceChips entry={sum()} unitHint="case" packHint={24} onUsePrice={jest.fn()} />,
