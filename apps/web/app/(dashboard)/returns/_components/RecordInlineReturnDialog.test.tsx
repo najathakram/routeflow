@@ -923,12 +923,12 @@ describe("RecordInlineReturnDialog — a faded Return button says why (R7b 3.1)"
 describe("RecordInlineReturnDialog — phone tap targets (W-890)", () => {
   const small = (el: HTMLElement) => expect(el.className).toMatch(/max-lg:(min-)?h-11/);
 
-  it("every control on the lines step is 44 px on a phone: close, Remove, fields, Reason, Get quote, Cancel", async () => {
+  it("every control on the lines step is 44 px below lg: close, Remove, fields, Reason, Get quote, Cancel", async () => {
     await openToStep1();
     expect(screen.getByRole("button", { name: "Close" })).toHaveClass("max-lg:min-h-11");
     expect(screen.getByRole("button", { name: "Close" })).toHaveClass("max-lg:min-w-11");
-    expect(screen.getByRole("button", { name: "Cancel" })).toHaveClass("min-h-11");
-    expect(screen.getByRole("button", { name: "Get quote" })).toHaveClass("min-h-11");
+    expect(screen.getByRole("button", { name: "Cancel" })).toHaveClass("max-lg:min-h-11");
+    expect(screen.getByRole("button", { name: "Get quote" })).toHaveClass("max-lg:min-h-11");
     const remove = screen.getByRole("button", { name: "Remove" });
     small(remove);
     expect(remove).toHaveClass("max-lg:min-w-11");
@@ -937,10 +937,10 @@ describe("RecordInlineReturnDialog — phone tap targets (W-890)", () => {
     small(screen.getByLabelText("Reason"));
   });
 
-  it("the quote step's Back is 44 px on a phone", async () => {
+  it("the quote step's Back is 44 px below lg", async () => {
     await openToStep1();
     await enterQtyAndGetQuote("1");
     resolveNextQuote(quoteResponse([chunk({ sourceOrderId: "order-newest", pieces: 1 })]));
-    expect(await screen.findByRole("button", { name: "Back" })).toHaveClass("min-h-11");
+    expect(await screen.findByRole("button", { name: "Back" })).toHaveClass("max-lg:min-h-11");
   });
 });

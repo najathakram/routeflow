@@ -20,7 +20,6 @@ import { readAutoPrint } from "@/lib/counter-sale";
 import { isReadOnlyRefusal } from "@/lib/read-only-refusal";
 import * as React from "react";
 import Link from "next/link";
-import { DIALOG_FOOTER_BUTTON as FOOT } from "@/components/dialog-mobile-fit";
 import { Button, Modal, Select, useToast } from "@routeflow/ui/web";
 import { useOrders } from "@/lib/api/orders";
 import {
@@ -544,7 +543,7 @@ export function RecordInlineReturnDialog({
           ) : null
         }
         renderLinesActions={() => (
-          <Button className={FOOT} variant="ghost" onClick={onClose}>
+          <Button className="max-lg:min-h-11" variant="ghost" onClick={onClose}>
             Cancel
           </Button>
         )}
@@ -563,7 +562,7 @@ export function RecordInlineReturnDialog({
                 {/* SA-959: a walk-in cannot hold store credit, so it is never offered here */}
                 {!walkIn && (
                   <Button
-                    className={FOOT}
+                    className="max-lg:min-h-11"
                     variant="secondary"
                     disabled={refunding}
                     loading={crediting}
@@ -574,7 +573,7 @@ export function RecordInlineReturnDialog({
                 )}
                 {refundError === "failed" || refundError === "exceedsCash" ? (
                   <Button
-                    className={FOOT}
+                    className="max-lg:min-h-11"
                     loading={refunding}
                     disabled={crediting}
                     onClick={() => saved && doRetry(saved)}
@@ -582,13 +581,13 @@ export function RecordInlineReturnDialog({
                     Retry refund
                   </Button>
                 ) : (
-                  <Button className={FOOT} onClick={handleClose}>
+                  <Button className="max-lg:min-h-11" onClick={handleClose}>
                     Close
                   </Button>
                 )}
               </>
             ) : (
-              <Button className={FOOT} onClick={handleClose}>
+              <Button className="max-lg:min-h-11" onClick={handleClose}>
                 Close
               </Button>
             )
@@ -600,7 +599,7 @@ export function RecordInlineReturnDialog({
                 </p>
               ) : null}
               <Button
-                className={FOOT}
+                className="max-lg:min-h-11"
                 disabled={
                   refunding ||
                   requoting ||
@@ -730,7 +729,11 @@ export function RecordInlineReturnDialog({
             </Link>
           )}
           <div className="flex justify-end gap-2">
-            <Button className={FOOT} variant="secondary" onClick={() => setPhase("capture")}>
+            <Button
+              className="max-lg:min-h-11"
+              variant="secondary"
+              onClick={() => setPhase("capture")}
+            >
               Back
             </Button>
           </div>

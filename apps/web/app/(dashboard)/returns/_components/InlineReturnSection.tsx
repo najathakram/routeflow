@@ -20,7 +20,6 @@ import { returnReasonOptions } from "@/lib/reason-copy";
 import { LINE_UNDO_MS } from "@/app/(dashboard)/orders/_components/useCounterLineUndo";
 import { useProducts } from "@/lib/api/products";
 import { useInlineReturnQuote } from "@/lib/api/inline-returns";
-import { DIALOG_FOOTER_BUTTON } from "@/components/dialog-mobile-fit";
 import { QUOTE_FAILED_COPY, isQuoteFailure } from "./quote-failure";
 import { useOptionalAuth } from "@/lib/auth-context";
 import type {
@@ -634,7 +633,7 @@ export function InlineReturnSection({
           <div className="flex justify-end gap-2">
             {renderLinesActions?.()}
             <Button
-              className={DIALOG_FOOTER_BUTTON}
+              className="max-lg:min-h-11"
               disabled={!canGetQuote}
               loading={quoteMutation.isPending}
               onClick={handleGetQuote}
@@ -817,11 +816,7 @@ export function InlineReturnSection({
           {!refusal && renderQuoteFooter?.(quote)}
           <div className="flex flex-wrap justify-end gap-2">
             {!hideBack && (
-              <Button
-                className={DIALOG_FOOTER_BUTTON}
-                variant="ghost"
-                onClick={() => setStep("lines")}
-              >
+              <Button className="max-lg:min-h-11" variant="ghost" onClick={() => setStep("lines")}>
                 Back
               </Button>
             )}
