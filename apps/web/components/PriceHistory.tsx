@@ -37,24 +37,26 @@ export const sameUnit = (a: string | null | undefined, b: string | null | undefi
  * May this history row's price be written onto a line? Fails CLOSED: the unit must match AND, when
  * both sides know a pack size, so must the pack (a 12-pack "case" price is wrong by 2x on a line
  * that is a 24-pack case after a repack). A line with no unit hint can only use a price when the
- * history spans a single unit.
+ * history spans a single unit. W-986: a row whose sale pack is UNKNOWN (`salePack` null) is never
+ * usable, on either path; an older server that sends no `salePack` is read as `unitsPerBox ?? 1`,
+ * as the chart reads it.
  */
 export function canUseHistoryPrice(
-  row: Pick<PriceHistoryRow, "unitLabel" | "unitsPerBox">,
+  row: Pick<PriceHistoryRow, "unitLabel" | "unitsPerBox"> & { salePack?: number | null },
   unitHint: string | null | undefined,
   packHint: number | null | undefined,
   unitCount: number,
 ): boolean {
+  const rowPack = row.salePack === undefined ? (row.unitsPerBox ?? 1) : row.salePack;
+  if (rowPack == null) return false;
   if (!unitHint) {
     // No unit hint: a single-unit history is the only usable one, and it must ALSO be the same
-    // pack. Unknown (null) and 1 both mean "one piece"; a pack > 1 on only one side fails closed.
+    // pack (a line with no pack is one piece); a pack > 1 on only one side fails closed.
     if (unitCount > 1) return false;
-    return (row.unitsPerBox ?? 1) === (packHint ?? 1);
+    return rowPack === (packHint ?? 1);
   }
   if (!sameUnit(row.unitLabel, unitHint)) return false;
-  const rowPack = row.unitsPerBox ?? null;
-  const lineUnitsPerBox = packHint ?? null;
-  return rowPack == null || lineUnitsPerBox == null || rowPack === lineUnitsPerBox;
+  return packHint == null || rowPack === packHint;
 }
 
 const PRICE_TYPE_TAG: Record<string, string> = {
@@ -664,7 +666,7 @@ export function PriceChips({
   packHint?: number | null;
   onUsePrice: (price: number) => void;
 }) {
-  // Each row carries its OWN pack size (null = unknown / sold by the piece), so `canUseHistoryPrice`
+  // Each row carries its OWN sale pack (`salePack`: 1 piece, > 1 pack, null unknown), so `canUseHistoryPrice`
   // judges a chip exactly as it judges the same sale in the popover. Never borrow the entry's pack:
   // the server groups by label and pack, and two pack sizes can share a label ("Box").
   const all = entry?.last3 ?? [];
