@@ -41,6 +41,7 @@ import { fileURLToPath } from "node:url";
 import {
   discoverNodeModules,
   planWorktree,
+  runHuskyKeepingSharedConfig,
 } from "../.claude/skills/bug-swarm/scripts/worktree.mjs";
 import { withHeavySlot } from "./lib/heavy-slot.mjs";
 
@@ -419,7 +420,15 @@ export function planLocalCi({ mergeSha, dir, from, lockdeps, installStale, dbLan
   }
   plan.push(
     // `npm ci --ignore-scripts` skips `prepare` (husky); verify's check-git-hooks needs .husky/_.
-    { name: "husky", cwd: dir, cmd: ["npx", "husky"], timeoutMs: 5 * MIN },
+    // keepSharedHooksPath: `npx husky` runs a plain `git config core.hooksPath` that rewrites the SHARED
+    // repo config (B642); runSteps puts the shared value back, as worktree.mjs does for its own husky step.
+    {
+      name: "husky",
+      cwd: dir,
+      cmd: ["npx", "husky"],
+      timeoutMs: 5 * MIN,
+      keepSharedHooksPath: true,
+    },
     {
       name: "prisma-generate",
       cwd: path.join(dir, "apps/api"),
@@ -499,7 +508,9 @@ export async function runSteps({ steps, exec, now = Date.now, log = () => {} }) 
     const s0 = now();
     let r;
     try {
-      r = await exec(step);
+      r = await (step.keepSharedHooksPath
+        ? runHuskyKeepingSharedConfig(step.cwd, () => exec(step))
+        : exec(step));
     } catch (e) {
       r = { status: 1, error: e };
     }

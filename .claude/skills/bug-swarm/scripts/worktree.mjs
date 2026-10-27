@@ -133,7 +133,7 @@ export function readSharedHooksPath(cwd, env = process.env) {
 }
 
 /**
- * Runs `run()` (husky's install) without leaving the shared core.hooksPath changed. When the repo already has
+ * Runs `run()` (husky's install; sync, or async returning a promise) without leaving the shared core.hooksPath changed. When the repo already has
  * extensions.worktreeConfig, this tree first gets its OWN core.hooksPath (--worktree), so it stays hooked even
  * if the shared value is different; afterwards the shared value is put back exactly as it was (unset if it was).
  * Without worktreeConfig the shared config is restored regardless and check-git-hooks then reports honestly.
@@ -144,11 +144,30 @@ export function runHuskyKeepingSharedConfig(cwd, run, env = process.env) {
   if (wt.status === 0 && wt.stdout.trim() === "true") {
     gitConfig(cwd, ["--worktree", "core.hooksPath", ".husky/_"], env);
   }
-  const status = run();
-  if (readSharedHooksPath(cwd, env) !== before) {
-    if (before === null) gitConfig(cwd, ["--local", "--unset-all", "core.hooksPath"], env);
-    else gitConfig(cwd, ["--local", "core.hooksPath", before], env);
+  const restore = () => {
+    if (readSharedHooksPath(cwd, env) !== before) {
+      if (before === null) gitConfig(cwd, ["--local", "--unset-all", "core.hooksPath"], env);
+      else gitConfig(cwd, ["--local", "core.hooksPath", before], env);
+    }
+  };
+  let status;
+  try {
+    status = run();
+  } catch (e) {
+    restore();
+    throw e;
   }
+  // An async `run` (local-ci's spawn-based exec) is restored when it settles, pass or fail.
+  if (status && typeof status.then === "function") {
+    return status.then(
+      (v) => (restore(), v),
+      (e) => {
+        restore();
+        throw e;
+      },
+    );
+  }
+  restore();
   return status;
 }
 
