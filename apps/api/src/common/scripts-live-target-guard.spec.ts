@@ -75,6 +75,7 @@ const EXEMPT: Record<string, Reason> = {
   "apps/api/scripts/check-customer-tenants.js": "read-only",
   "apps/api/scripts/check-discrepancies.js": "read-only",
   "apps/api/scripts/check-tenant-logo.js": "read-only",
+  "apps/api/scripts/census-base-label-row621.mjs": "read-only",
   "apps/api/scripts/data-questions-report.mjs": "read-only",
   "apps/api/scripts/demo-bookings.mjs": "global-catalog",
   "apps/api/scripts/demo-seed.js": "test-slug-only",
