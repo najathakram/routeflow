@@ -502,6 +502,7 @@ module.exports = {
     APP_LINK_URL_INVALID: "APP_LINK_URL_INVALID",
     CUSTOMER_MERGE_TENANT_MISMATCH: "CUSTOMER_MERGE_TENANT_MISMATCH",
     RETURN_CANCEL_RETRY: "RETURN_CANCEL_RETRY",
+    LOW_STOCK_TOO_MANY: "LOW_STOCK_TOO_MANY",
   },
   // SA-814e: hand copy of packages/types/api/error-codes.ts (pinned to the API's literal by the API parity spec).
   INVOICE_TAX_STATE_STALE_COPY: {

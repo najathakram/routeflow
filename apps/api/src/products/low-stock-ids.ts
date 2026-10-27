@@ -1,5 +1,6 @@
 import { UnprocessableEntityException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import type { PrismaService } from "../prisma/prisma.service";
 
 /**
@@ -16,7 +17,7 @@ import type { PrismaService } from "../prisma/prisma.service";
  * keeps these two values local and `low-stock.spec.ts` pins both to the package's.
  */
 export const LOW_STOCK_DEFAULT = 5;
-export const LOW_STOCK_TOO_MANY_CODE = "LOW_STOCK_TOO_MANY";
+export const LOW_STOCK_TOO_MANY_CODE = API_ERROR_CODES.LOW_STOCK_TOO_MANY;
 
 /** Below Postgres's bind-parameter limit with room for the other clauses. Above it the filter fails loudly, never truncates. */
 export const LOW_STOCK_ID_CAP = 20_000;
@@ -41,7 +42,7 @@ export async function lowStockProductIds(prisma: PrismaService): Promise<string[
   });
   if (rows.length > LOW_STOCK_ID_CAP) {
     throw new UnprocessableEntityException({
-      code: LOW_STOCK_TOO_MANY_CODE,
+      code: API_ERROR_CODES.LOW_STOCK_TOO_MANY,
       message: `More than ${LOW_STOCK_ID_CAP} products match the Low stock filter. Narrow it with a search or a category.`,
     });
   }
