@@ -46,6 +46,7 @@ import { PreviewDrawer } from "./_features/PreviewDrawer";
 import { previewTenantFeatures } from "@/lib/platform-admin/features";
 import { adminCreatedNote } from "@/lib/platform-admin/admin-created-note";
 import type { FeaturePreviewResponse } from "./_features/types";
+import { tenantDisplayName } from "@/lib/tenant-display-name";
 
 const usd = (n: number) =>
   new Intl.NumberFormat("en-US", {
@@ -2121,7 +2122,7 @@ export default function AdminTenantDetailPage() {
           Tenants
         </Link>
         <span className="text-slate-400">/</span>
-        <h1 className="text-xl font-bold text-white">{tenant.businessName ?? tenant.name}</h1>
+        <h1 className="text-xl font-bold text-white">{tenantDisplayName(tenant)}</h1>
         <AdminBadge>{tenant.status}</AdminBadge>
         <AdminBadge variant="plan">{tenant.planKey ?? tenant.plan}</AdminBadge>
       </div>

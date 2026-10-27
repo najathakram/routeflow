@@ -247,6 +247,10 @@ export function SearchableProductPicker({
     // must not also treat it as a manual Enter (opening the dropdown / picking the highlighted
     // row), or a real scan double-fires.
     if (e.defaultPrevented) return;
+    if (open && e.key === "Tab") {
+      setOpen(false); // W-694: keyboard focus leaves the field, so the list must not stay open
+      return;
+    }
     if (!open && (e.key === "ArrowDown" || e.key === "Enter")) {
       e.preventDefault();
       setOpen(true);
@@ -266,6 +270,13 @@ export function SearchableProductPicker({
         if (!open) setOpen(true);
       }}
       onFocus={() => setOpen(true)}
+      onBlur={(e) => {
+        const next = e.relatedTarget as Node | null;
+        // W-694: focus moved to another control (not our own list) — close.
+        if (next && !containerRef.current?.contains(next) && !isInsideAnchoredList(next)) {
+          setOpen(false);
+        }
+      }}
       onKeyDown={handleKeyDown}
       aria-controls={open ? listId : undefined}
       aria-activedescendant={

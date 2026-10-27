@@ -13,13 +13,16 @@ import {
  * could not be read. Only a configured seller changes anything:
  * - a SHIP order is a shipment (carrier + tracking number, Confirmed → Shipped → Delivered);
  * - any other order shows route / driver / ETA wording only when the seller has a fleet.
+ * A PICKUP (counter / till) order is collected at the store for EVERY seller, unset included: its
+ * own timeline and no tracking card, since no driver or route exists to show.
  */
 
 /**
  * `route` = today's timeline + tracking card; `shipment` = the SHIP timeline + shipment card;
- * `none` = a timeline with no route steps and no tracking card; `loading` = decide nothing yet.
+ * `none` = a timeline with no route steps and no tracking card; `pickup` = the pickup timeline and
+ * no card; `loading` = decide nothing yet.
  */
-export type BuyerOrderTravelView = "loading" | "route" | "shipment" | "none";
+export type BuyerOrderTravelView = "loading" | "route" | "shipment" | "none" | "pickup";
 
 export type ShipmentState = "not_shipped" | "shipped" | "delivered" | "cancelled";
 
@@ -40,6 +43,13 @@ export const SHIP_STEP_LABELS = [
   SHIPMENT_STATE_LABEL.delivered,
 ] as const;
 export const NO_FLEET_STEP_LABELS = ["Pending", "Confirmed", "Delivered"] as const;
+/** A PICKUP order's OUT_FOR_DELIVERY is its till handover (the API's READY_FOR_PICKUP, SA-655). */
+export const PICKUP_STEP_LABELS = [
+  "Pending",
+  "Confirmed",
+  "Ready for pickup",
+  "Picked up",
+] as const;
 
 export function isConfiguredSeller(
   cap: BuyerSellerCapability | null | undefined,
@@ -57,6 +67,7 @@ export function orderTravelView(
   cap: BuyerSellerCapability | null | undefined,
   capLoading: boolean,
 ): BuyerOrderTravelView {
+  if (fulfillPath === "PICKUP") return "pickup";
   if (capLoading) return "loading";
   if (!isConfiguredSeller(cap)) return "route";
   if (fulfillPath === "SHIP") return "shipment";
@@ -86,6 +97,20 @@ export function noFleetStepIndex(status: string): number {
   return status === "DELIVERED" ? 2 : -1;
 }
 
+/** Index into PICKUP_STEP_LABELS (-1 = draft, or cancelled). */
+export function pickupStepIndex(status: string): number {
+  if (status === "PENDING") return 0;
+  if (status === "CONFIRMED") return 1;
+  if (DISPATCHED.includes(status)) return 2;
+  return status === "DELIVERED" ? 3 : -1;
+}
+
+const PICKUP_STATUS_LABEL: Record<string, string> = {
+  OUT_FOR_DELIVERY: "Ready For Pickup",
+  PARTIALLY_DELIVERED: "Partly Picked Up",
+  DELIVERED: "Picked Up",
+};
+
 export function shipmentState(o: ShipFields): ShipmentState {
   if (o.status === "CANCELLED") return "cancelled";
   if (o.status === "DELIVERED") return "delivered";
@@ -99,6 +124,7 @@ export function buyerStatusLabel(o: ShipFields, view: BuyerOrderTravelView): str
     return shipmentState(o) === "shipped" ? SHIPMENT_STATE_LABEL.shipped : null;
   }
   if (view === "none") return o.status === "OUT_FOR_DELIVERY" ? "On Its Way" : null;
+  if (view === "pickup") return PICKUP_STATUS_LABEL[o.status] ?? null;
   return null;
 }
 
@@ -107,7 +133,8 @@ export function buyerStatusLabel(o: ShipFields, view: BuyerOrderTravelView): str
  * dashboard all call this, so one order reads the same everywhere. It is exactly
  * `buyerStatusLabel(order, orderTravelView(order.fulfillPath, cap, capLoading))` — a SHIP order of
  * a configured seller reads "Shipped" once shipped, a configured no-fleet seller's other orders
- * never say "Out For Delivery", and an unset / unread / loading capability is today's label
+ * never say "Out For Delivery", a PICKUP order reads Ready For Pickup / Picked Up for every
+ * seller, and an unset / unread / loading capability is today's label
  * (null = today's formatted status).
  */
 export function buyerOrderStatusLabel(
