@@ -1,4 +1,5 @@
 import { assertNotWalkIn, assertWalkInLoginUntouched, excludeWalkIn } from "./walk-in-protected";
+import { sellerDisplayName } from "../common/seller-display-name";
 import { restoredUsernameFor } from "./restore-username";
 import { resumeSchedulesOnRestore } from "../recurring-invoices/recurring-schedule";
 import { buildMyStatement, buildOperatorStatement } from "./customer-statement";
@@ -18,6 +19,7 @@ import { BuyerMergeRequestStatus, MergeInitiator, type PaymentMethod } from "@pr
 import type { PaymentRefOpts } from "../invoices/payment-ref-dedupe";
 import { ConfigService } from "@nestjs/config";
 import * as bcrypt from "bcrypt";
+import { assertRefsInTenant } from "../common/assert-refs-in-tenant";
 import { PrismaService } from "../prisma/prisma.service";
 import { isInternalEmail } from "../common/internal-email";
 import { assertCleanupImportedEnabled } from "./cleanup-imported-disabled";
@@ -1019,6 +1021,12 @@ export class CustomersService {
     if (dto.pricingTier === undefined && dto.msrp === undefined) {
       throw new BadRequestException("Provide a pricing tier, an MSRP override, or both");
     }
+    // 681 (R5-5): the route customer and the body product are stored, so both must be in this tenant (a 404, the
+    // same for foreign and missing) BEFORE the MSRP gate and the family policy below.
+    await assertRefsInTenant(this.prisma, {
+      customerIds: [customerId],
+      productIds: [dto.productId],
+    });
     if (dto.msrp !== undefined) {
       await this.assertMsrpAllowed();
     }
@@ -2655,7 +2663,7 @@ export class CustomersService {
       where: { tenantId },
       select: { businessName: true },
     });
-    const sellerName = tenantCfg?.businessName ?? "Your supplier";
+    const sellerName = sellerDisplayName(tenantCfg, null, "Your supplier");
     const webUrl = this.config.get<string>("WEB_URL") ?? "http://localhost:3001";
     const inviteUrl = `${webUrl}/buyer/invite/${token}`;
 

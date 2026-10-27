@@ -47,6 +47,26 @@ export function readShellConfig(env: {
   return { webBaseUrl: allowed[0]!, allowed };
 }
 
+export type ShellMode = "on" | "off" | "unavailable";
+
+/**
+ * W-830 runtime fail-closed. "on": the shell has a usable URL. "off": a DELIBERATE off (the flag
+ * is off/0/false, the web export where react-native-webview has no implementation, or a
+ * development build with no URL, so the local loop keeps the native screens). "unavailable": a
+ * store build whose URL is missing or unusable. That must never fall back to the old native
+ * buyer and staff screens: the root layout shows an "update required" screen instead.
+ */
+export function shellMode(
+  env: { EXPO_PUBLIC_WEB_URL?: string; EXPO_PUBLIC_WEB_SHELL?: string },
+  ctx: { isDev: boolean; isWeb: boolean },
+): ShellMode {
+  if (ctx.isWeb) return "off";
+  const flag = (env.EXPO_PUBLIC_WEB_SHELL ?? "").trim().toLowerCase();
+  if (flag === "off" || flag === "0" || flag === "false") return "off";
+  if (readShellConfig(env)) return "on";
+  return ctx.isDev ? "off" : "unavailable";
+}
+
 /** Whether a signed-in role is served by the shell. Drivers are never shelled (native app). */
 export function usesShell(config: ShellConfig | null, role: ShellRole): boolean {
   return config !== null && role !== "driver";

@@ -46,6 +46,7 @@ import { SetEntitlementsModeDto } from "./dto/set-entitlements-mode.dto";
 import { SetConfigSnapshotFlagDto } from "./dto/set-config-snapshot-flag.dto";
 import { ExplainFeatureDiffDto } from "./dto/explain-feature-diff.dto";
 import { FEATURE_REGISTRY } from "../billing/feature-registry";
+import { toFeatureRegistryRow } from "../billing/feature-registry-row";
 import { EntitlementsModeService } from "../billing/entitlements-mode.service";
 import { ConfigSnapshotFlagService } from "../billing/config-snapshot-flag.service";
 import { FeatureDiffService } from "../billing/feature-diff.service";
@@ -481,43 +482,7 @@ export class PlatformAdminController {
   @Get("features/registry")
   @ApiOperation({ summary: "The full feature registry — FeatureRegistryRow[] (design contract)" })
   listFeatureRegistry() {
-    return FEATURE_REGISTRY.map((f) => ({
-      key: f.key,
-      kind: f.kind,
-      area: f.area,
-      label: f.label,
-      description: f.description,
-      lifecycle: f.gate.state === "dark" ? "beta" : "ga",
-      internal: f.internal ?? false,
-      // Opus review of 8130b204, item 2: `via` lets the web warn before creating an override
-      // that has no wired consultation point. "none" is a verified-no-gate key by definition
-      // (catalog metadata only) -- an override there can never have any effect.
-      gate: { via: f.gate.via, state: f.gate.state },
-      billing: { skus: [...f.billing.skus] },
-      // B519: the console needs this to warn before enabling a key whose prerequisites
-      // aren't met — verbatim from the registry, never a client-side mirror.
-      ...(f.requires
-        ? {
-            requires: {
-              ...(f.requires.allOf ? { allOf: [...f.requires.allOf] } : {}),
-              ...(f.requires.anyOf ? { anyOf: [...f.requires.anyOf] } : {}),
-            },
-          }
-        : {}),
-      ...(f.config
-        ? {
-            config: {
-              fallbackMode: f.config.fallbackMode,
-              modes: Object.entries(f.config.modes).map(([key, m]) => ({
-                key,
-                label: m.label,
-                lifecycle: "ga" as const,
-                ...(m.requires?.allOf ? { requires: [...m.requires.allOf] } : {}),
-              })),
-            },
-          }
-        : {}),
-    }));
+    return FEATURE_REGISTRY.map(toFeatureRegistryRow);
   }
 
   // ─── Feature grants v2 brief A (design 2026-09-17 §2): shadow/live switch + diff log ───────

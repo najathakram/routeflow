@@ -183,34 +183,47 @@ describe("overdueInvoiceCount", () => {
   });
 });
 
-describe("markInvoicesOverdue — the sweep's write", () => {
-  it("is ONE atomic UPDATE carrying the balance predicate, bound and tenant-scoped", async () => {
+describe("markInvoicesOverdue — the sweep's write (CM2a lock-first)", () => {
+  it("locks the candidates (id order, FOR UPDATE) FIRST, then UPDATEs by id with the balance test re-read", async () => {
     const db = fakeDb();
-    db.$executeRaw.mockResolvedValue(4);
+    db.$queryRaw.mockResolvedValue([{ id: "a" }, { id: "b" }]);
+    db.$executeRaw.mockResolvedValue(2);
     const n = await markInvoicesOverdue(db as any, TENANT, CUTOFF, [
       InvoiceStatus.SENT,
       InvoiceStatus.VIEWED,
     ]);
-    expect(n).toBe(4);
+    expect(n).toBe(2);
+    expect(db.$queryRaw).toHaveBeenCalledTimes(1);
     expect(db.$executeRaw).toHaveBeenCalledTimes(1);
+    expect(db.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      db.$executeRaw.mock.invocationCallOrder[0],
+    );
+    const lock = sqlOf(db.$queryRaw);
+    expect(lock.sql).toMatch(/ORDER BY "i"\."id"\s+FOR UPDATE OF "i"/);
+    expect(lock.sql).toMatch(/"i"\."total"\s*-\s*COALESCE\(/);
+    expect(lock.values).toEqual(
+      expect.arrayContaining([TENANT, "SENT", "VIEWED", CUTOFF.toISOString(), CONFIRMED_STATUS]),
+    );
     const { sql, values } = sqlOf(db.$executeRaw);
     expect(sql).toMatch(/^\s*UPDATE "Invoice"/);
     expect(sql).toMatch(/SET "status"\s*=\s*\?::"InvoiceStatus"/);
     expect(sql).toMatch(/"updatedAt"\s*=\s*NOW\(\)/i);
+    expect(sql).toMatch(/"i"\."id"\s*=\s*ANY\(/);
     expect(sql).toMatch(/"tenantId"\s*=\s*\?/);
+    // the balance predicate is re-evaluated in the UPDATE (after the locks), not only in the lock query
     expect(sql).toMatch(/"i"\."total"\s*-\s*COALESCE\(/);
     expect(values).toEqual(
-      expect.arrayContaining([
-        TENANT,
-        "OVERDUE",
-        "SENT",
-        "VIEWED",
-        CUTOFF.toISOString(),
-        CONFIRMED_STATUS,
-      ]),
+      expect.arrayContaining([TENANT, "OVERDUE", "SENT", "VIEWED", ["a", "b"], CONFIRMED_STATUS]),
     );
     expect(sql).not.toContain(TENANT);
     expect(sql).not.toContain("OVERDUE'");
+  });
+
+  it("writes nothing when the lock query finds no candidates", async () => {
+    const db = fakeDb();
+    db.$queryRaw.mockResolvedValue([]);
+    await expect(markInvoicesOverdue(db as any, TENANT, CUTOFF, ["SENT"])).resolves.toBe(0);
+    expect(db.$executeRaw).not.toHaveBeenCalled();
   });
 
   it("fails closed without a tenant; an empty status list writes nothing", async () => {
@@ -219,6 +232,7 @@ describe("markInvoicesOverdue — the sweep's write", () => {
       /tenant/i,
     );
     await expect(markInvoicesOverdue(db as any, TENANT, CUTOFF, [])).resolves.toBe(0);
+    expect(db.$queryRaw).not.toHaveBeenCalled();
     expect(db.$executeRaw).not.toHaveBeenCalled();
   });
 });

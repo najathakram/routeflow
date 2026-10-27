@@ -19,13 +19,13 @@ const SITES: Record<string, { class: RotationClass; why: string }> = {
     class: "LEDGER_SYNCED",
     why: "F2: regulatedContentChanged → resyncInvoiceLedger (the sole-draft legacy rebuild)",
   },
-  "invoices/invoices.service.ts#rebuildSiblingDrafts": {
-    class: "LEDGER_SYNCED",
-    why: "always reverses and rewrites through resyncInvoiceLedger",
-  },
   "invoices/invoices.service.ts#update": {
     class: "LEDGER_SYNCED",
     why: "order lines resync via syncLines; F4 gates a freeform regulated change through the same helper",
+  },
+  "invoices/kept-invoice-lines.ts#rebuildKeptItems": {
+    class: "LEDGER_SYNCED",
+    why: "the sibling-draft rebuild step (extracted from rebuildSiblingDrafts): that caller always reverses and rewrites through resyncInvoiceLedger",
   },
   "invoices/invoices.service.ts#deleteInvoice": {
     class: "WHOLE_INVOICE_DELETE_REVERSED",

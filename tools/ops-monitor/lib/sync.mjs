@@ -309,8 +309,15 @@ export function planSync({
     }
     const fields = { ...draft.fields };
     // A train the fold does not know cannot be set (it would refuse the whole batch); the label
-    // still carries it. The same filter runs on every pass, so the diff stays stable.
-    if (fields.train && !releases.has(fields.train)) delete fields.train;
+    // still carries it. A cell that names several ("R1b+R2 train") takes the first one the fold
+    // knows, so every machine and the cloud's dry count agree (W-831). Same filter on every pass.
+    if (fields.train && !releases.has(fields.train)) {
+      const known = [...String(fields.trainLabel ?? "").matchAll(/\b([RT]\d{1,2}[a-z]?)\b/g)]
+        .map((m) => m[1])
+        .find((t) => releases.has(t));
+      if (known) fields.train = known;
+      else delete fields.train;
+    }
     const it = state.items.get(id);
     if (it && !isRegisterOwned(it)) {
       if (!isLegacyMonitorItem(it)) {

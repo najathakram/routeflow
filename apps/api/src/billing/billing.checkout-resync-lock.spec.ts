@@ -13,6 +13,7 @@ jest.mock("../common/db-locks", () => ({
 import { ConflictException, Logger } from "@nestjs/common";
 import { BillingService } from "./billing.service";
 import { PlatformPricingService } from "./platform-pricing.service";
+import { fakeStripeProducts } from "../testing/fake-stripe-products";
 
 const { LockTimeoutError } = jest.requireMock("../common/db-locks");
 
@@ -108,6 +109,7 @@ describe("resyncPriceAfterCheckout holds the tenant price lock (M1)", () => {
     };
     const stripe: any = {
       isConfigured: true,
+      client: { products: fakeStripeProducts().products },
       getSubscription: jest.fn(async () => ({
         id: "sub_1",
         status: "active",
@@ -142,7 +144,7 @@ describe("resyncPriceAfterCheckout holds the tenant price lock (M1)", () => {
       { send: jest.fn() } as any,
       { invalidate: jest.fn() } as any,
       events,
-      new PlatformPricingService(prisma, planCatalog),
+      new PlatformPricingService(prisma, planCatalog, stripe),
       {} as any,
       {} as any,
       {} as any,

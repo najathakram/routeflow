@@ -209,7 +209,7 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
 
   if (isLoading) {
     return (
-      <div className="flex h-screen w-full items-center justify-center bg-background">
+      <div className="flex h-screen supports-[height:100dvh]:h-dvh w-full items-center justify-center bg-background">
         <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
       </div>
     );
@@ -1093,7 +1093,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
     } else if (sections.length > 0) {
       inject.push({
         kind: "group",
-        label: "Regulated Items",
+        label: "Regulated items",
         icon: ShieldCheck,
         children: sections.map((s) => ({
           kind: "leaf" as const,
@@ -1122,7 +1122,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
         if (entry.kind === "leaf" && entry.href === "/customers") {
           return [
             entry,
-            { kind: "leaf", label: "Sales Agents", href: "/sales-agents", icon: Handshake },
+            { kind: "leaf", label: "Sales agents", href: "/sales-agents", icon: Handshake },
           ];
         }
         if (entry.kind === "group" && entry.label === "Finance") {
@@ -1261,8 +1261,8 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
         { keys: ["g", "f"], label: "Go to Finance" },
         { keys: ["g", "s"], label: "Go to Settings" },
         { keys: ["g", "t"], label: "Go to Counter sale" },
-        { keys: ["⌘", "K"], label: "Open Command Palette" },
-        { keys: ["?"], label: "Show Keyboard Shortcuts" },
+        { keys: ["⌘", "K"], label: "Open command palette" },
+        { keys: ["?"], label: "Show keyboard shortcuts" },
       ].filter(
         (s) =>
           (routesAccess || (s.label !== "Go to Routes" && s.label !== "Go to Drivers")) &&
@@ -1272,7 +1272,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
   );
 
   return (
-    <div className="surface-operator flex h-screen overflow-hidden">
+    <div className="surface-operator flex h-screen supports-[height:100dvh]:h-dvh overflow-hidden">
       <SkipToContentLink />
       {/* Sidebar — static rail on lg+, replaced by a drawer below lg */}
       <aside
@@ -1459,7 +1459,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between border-b border-surface-border px-5 py-3.5">
-              <p className="text-sm font-semibold text-navy">Keyboard Shortcuts</p>
+              <p className="text-sm font-semibold text-navy">Keyboard shortcuts</p>
               <button
                 onClick={() => setShortcutHelpOpen(false)}
                 className="rounded p-1 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"

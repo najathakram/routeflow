@@ -120,14 +120,14 @@ describeDb("SA-727 counter refund: a return resolution, real Postgres", () => {
   });
 
   /**
-   * A walk-in customer, one DELIVERED sale of 10 pieces at $10.00 = $100.00 and (when `paid`) a payment of $100.00 by
+   * A customer (not a walk-in unless `walkIn`: W-913 refuses store credit to a walk-in, and these cases exercise it), one DELIVERED sale of 10 pieces at $10.00 = $100.00 and (when `paid`) a payment of $100.00 by
    * `method` (CASH unless a case needs another tender, e.g. CREDIT_NOTE for the store-credit rule).
    */
   async function seed(
     label: string,
     opts: { paid?: boolean; walkIn?: boolean; method?: string } = {},
   ) {
-    const { paid = true, walkIn = true, method = "CASH" } = opts;
+    const { paid = true, walkIn = false, method = "CASH" } = opts;
     seq += 1;
     const slug = assertTestTenant(
       `qa-refund-${RUN}-${seq}-${label}`,
@@ -675,7 +675,7 @@ describeDb("SA-727 counter refund: a return resolution, real Postgres", () => {
   }, 60_000);
 
   it("15. the quote carries the additive refund fields for a paid walk-in sale (canRefund true, paidMethods [CASH]) and canRefund false for an unpaid one", async () => {
-    const s = await seed("quote");
+    const s = await seed("quote", { walkIn: true });
     const q = await inTenant(s, () =>
       inline.quoteService.quote(
         {

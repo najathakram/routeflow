@@ -10,7 +10,7 @@ import {
   Optional,
 } from "@nestjs/common";
 import { createHash } from "crypto";
-import { mayCompleteAtCounter, roundMoney, remainingCapacity } from "@routeflow/pricing";
+import { mayCompleteAtCounter, roundMoney, confirmedRemaining } from "@routeflow/pricing";
 import type { PickupCompleteResponse } from "@routeflow/types";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
 import { LockTimeoutError, LockUnavailableError, withAdvisoryLock } from "../../common/db-locks";
@@ -20,11 +20,6 @@ import { TILL_LOCK_HELD } from "../../invoices/counter-payment-guard";
 import type { JwtPayload } from "../../auth/jwt-payload.interface";
 import { OrdersService } from "../orders.service";
 import { settleOrderInvoice } from "../order-status-invoicing";
-import {
-  autoApplyCandidateWhere,
-  creditAutoApplyOnSend,
-  hasOpenCreditBalance,
-} from "../../credit-notes/auto-apply-candidates";
 import {
   allocateOldestFirst,
   assertCheckNotPostdatedForTenant,
@@ -175,7 +170,7 @@ export class PickupCompleteService {
       await assertCheckNotPostdatedForTenant(this.prisma, sent);
     } else if (!excused) assertPaymentShape({ method: "ON_ACCOUNT" }, walkIn);
     if (walkIn) {
-      // A walk-in leaves no partial on account and takes no credit: the counter sale's two guards.
+      // A walk-in leaves no partial on account (W-913: the sweep never takes credit off the walk-in account).
       if (
         sent &&
         sent.method !== "ON_ACCOUNT" &&
@@ -188,7 +183,6 @@ export class PickupCompleteService {
           message: "A walk-in customer must pay the full balance",
         });
       }
-      await this.assertNoOpenCredit(order.customerId);
     }
     // SA-905 MUST 1: the delivery credit gate the DELIVERED step runs (B585, netted), judged NOW through the same ONE entry,
     // read-only, so a refusal writes nothing (no claim, no switch, no silent CONFIRMED). The DELIVERED step's own gate stays
@@ -534,7 +528,7 @@ export class PickupCompleteService {
         if (meta.idempotencyKey !== key || (meta.bodyHash && meta.bodyHash !== bodyHash)) {
           // Unified claim rule (SA-710a + lead): a different key or body REPLACES the claim while no tender for
           // this hand-over is stored (a refused hand-over, or a walk-in short / planner refusal found after
-          // it, must never lock the order out); recordings stay capped by remainingCapacity. Only a STORED
+          // it, must never lock the order out); recordings stay capped by confirmedRemaining. Only a STORED
           // hand-over tender makes a different request a conflict.
           const now = await db.order.findFirst({
             where: { id: orderId },
@@ -623,23 +617,6 @@ export class PickupCompleteService {
     });
   }
 
-  /** The counter sale's guard: a walk-in must not receive an open credit that send() would auto-apply. */
-  private async assertNoOpenCredit(customerId: string | null): Promise<void> {
-    if (!customerId) return;
-    if (!(await creditAutoApplyOnSend(this.prisma.forTenant(), this.prisma.getTenantId()))) return;
-    const notes = await this.prisma.forTenant().creditNote.findMany({
-      where: autoApplyCandidateWhere({ customerId, now: new Date() }),
-      select: { amount: true, amountUsed: true },
-    });
-    if (notes.some((n: any) => hasOpenCreditBalance(n))) {
-      throw new ConflictException({
-        code: API_ERROR_CODES.WALK_IN_OPEN_CREDIT,
-        message:
-          "The walk-in customer holds open credit, which would be applied to this sale. Resolve it first.",
-      });
-    }
-  }
-
   /**
    * The locked half of the tender. The plan is made against each invoice's balance BEFORE this hand-over's
    * tender (its total less every payment that is not this hand-over's), so a replay computes the SAME
@@ -666,7 +643,7 @@ export class PickupCompleteService {
     const mine = isHandOverTender(orderId, handedOverAt);
     const balances = invoices.map((i) => ({
       id: i.id,
-      balance: remainingCapacity(
+      balance: confirmedRemaining(
         Number(i.total),
         (i.payments ?? []).filter((p) => !mine(p)),
       ),
@@ -696,7 +673,7 @@ export class PickupCompleteService {
             (row.payments ?? []).filter(mine).reduce((sum, p) => sum + Number(p.amount), 0),
           );
           const due = roundMoney(
-            Math.min(part.amount - stored, remainingCapacity(Number(row.total), row.payments)),
+            Math.min(part.amount - stored, confirmedRemaining(Number(row.total), row.payments)),
           );
           return { invoiceId: part.invoiceId, due };
         })
@@ -775,7 +752,7 @@ export class PickupCompleteService {
       rows.reduce(
         (sum, i) =>
           sum +
-          remainingCapacity(
+          confirmedRemaining(
             Number(i.total),
             (i.payments ?? []).filter((p) => !mine(p)),
           ),

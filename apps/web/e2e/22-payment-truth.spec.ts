@@ -54,7 +54,7 @@ const BASE = process.env.PLAYWRIGHT_BASE_URL ?? "https://routeflowweb-production
  */
 function awaitingConfirmationValue(page: Page) {
   return page
-    .getByText("Awaiting Confirmation", { exact: true })
+    .getByText("Awaiting confirmation", { exact: true })
     .locator("xpath=following-sibling::span[1]");
 }
 
@@ -260,10 +260,10 @@ test.describe("Payment-status truth (F03 / P4)", () => {
       ).toBe(true);
       return amount;
     };
-    await expect(summaryValue("Balance Due")).toBeVisible({ timeout: 10_000 });
-    const invoiceTotal = await readMoney("Invoice Total");
+    await expect(summaryValue("Balance due")).toBeVisible({ timeout: 10_000 });
+    const invoiceTotal = await readMoney("Invoice total");
     expect(await readMoney("Payments received")).toBeCloseTo(100, 2);
-    expect(await readMoney("Balance Due")).toBeCloseTo(invoiceTotal - 100, 2);
+    expect(await readMoney("Balance due")).toBeCloseTo(invoiceTotal - 100, 2);
 
     // ── The proof (R2's other half): the invoices list's PaymentSummaryBar
     // carries an "Awaiting Confirmation" stat tile counting DRAFT payments

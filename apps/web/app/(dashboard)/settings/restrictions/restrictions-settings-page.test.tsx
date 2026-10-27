@@ -26,7 +26,7 @@ jest.mock("./_components/CustomersWithoutState", () => ({
 
 const api = (status: number, data: object) => ({ response: { status, data } });
 const render = () => renderWithProviders(<RestrictionsSettingsPage />);
-const SWITCH = /also block restricted products on staff orders and invoices/i;
+const SWITCH = /also warn about restricted products on staff orders and invoices/i;
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -50,7 +50,7 @@ describe("Selling restrictions settings page", () => {
     render();
     expect(
       screen.getByText(
-        "Portal limits always apply. Turn this on for legal bans your staff must not sell.",
+        "Portal limits always apply. Turn this on to warn staff about restricted products on orders and invoices.",
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText(/enforce selling restrictions/i)).toBeNull();

@@ -320,7 +320,7 @@ export function FeatureConsole({
   }
 
   if (loading) {
-    return <div className="py-8 text-center text-slate-400">Loading feature console...</div>;
+    return <div className="py-8 text-center text-slate-400">Loading feature console…</div>;
   }
 
   if (loadError) {
@@ -370,9 +370,9 @@ export function FeatureConsole({
             className="rounded-lg bg-slate-600 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-500 disabled:opacity-50"
           >
             {changePlanLoading
-              ? "Applying..."
+              ? "Applying…"
               : previewLoading
-                ? "Loading preview..."
+                ? "Loading preview…"
                 : "Preview plan change"}
           </button>
         </div>
@@ -530,7 +530,7 @@ export function FeatureConsole({
                         {feature && !appliedMode && feature.resolver !== feature.serving && (
                           <p className="mt-2 text-amber-300">
                             Note: the new resolver disagrees — it would say this is{" "}
-                            {feature.resolver ? "ON" : "OFF"}. Still in preview mode, so nothing
+                            {feature.resolver ? "on" : "off"}. Still in preview mode, so nothing
                             changes for customers yet.
                           </p>
                         )}
@@ -696,23 +696,23 @@ function explainSentence(feature: EffectiveFeature): string {
   const { source, detail, billing } = feature;
   switch (source) {
     case "OVERRIDE_DENY":
-      return `This is OFF because an admin override removed it${detail.reason ? ` — "${detail.reason}"` : ""}.${
+      return `This is off because an admin override removed it${detail.reason ? ` — "${detail.reason}"` : ""}.${
         detail.expiresAt ? ` Expires ${new Date(detail.expiresAt).toLocaleDateString()}.` : ""
       }`;
     case "OVERRIDE_GRANT":
-      return `This is ON because an admin override added it (${detail.kind ?? "override"})${
+      return `This is on because an admin override added it (${detail.kind ?? "override"})${
         detail.reason ? ` — "${detail.reason}"` : ""
       }.${detail.expiresAt ? ` Expires ${new Date(detail.expiresAt).toLocaleDateString()}.` : ""}`;
     case "ADDON_SKU":
-      return `This is ON because the tenant purchased it (${detail.sku ?? "add-on"})${
+      return `This is on because the tenant purchased it (${detail.sku ?? "add-on"})${
         billing.charged ? " — billed." : "."
       }`;
     case "PRESET":
-      return `This is ON because it is included in the ${detail.planKey} plan${
+      return `This is on because it is included in the ${planLabel(detail.planKey)} plan${
         detail.term ? ` (${detail.term})` : ""
       }.`;
     case "NONE":
-      return "This is OFF — not included in the current plan and no override grants it.";
+      return "This is off — not included in the current plan and no override grants it.";
     default:
       return "The server could not determine this feature's state (resolver error). Treating it as unchanged.";
   }

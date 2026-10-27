@@ -26,6 +26,7 @@ import {
   EmptyState,
 } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
+import { useOnTenantToday, useTenantToday } from "@/lib/tenant-timezone";
 import {
   useRoutes,
   useRouteRuns,
@@ -102,8 +103,10 @@ function DispatchModal({
   const { data: routeSettings } = useRouteSettings();
   const analyzeRoute = useAnalyzeRoute();
 
-  const today = new Date().toISOString().split("T")[0];
-  const [date, setDate] = React.useState(today);
+  // SA-964 §4: the run date is the TENANT's day. It starts empty and is seeded when the zone resolves (the browser's day
+  // is never a stand-in); Dispatch waits for a date.
+  const [date, setDate] = React.useState("");
+  const today = useOnTenantToday((day) => setDate((cur) => cur || day));
   const [driverId, setDriverId] = React.useState("");
   const [startTime, setStartTime] = React.useState("");
   const [lateStops, setLateStops] = React.useState<LateStop[]>([]);
@@ -124,7 +127,7 @@ function DispatchModal({
   // Reset form when modal opens
   React.useEffect(() => {
     if (open) {
-      setDate(today);
+      setDate(today ?? "");
       setDriverId("");
       setStartTime("");
       // Keep the ref in lockstep so the seed effect below (same commit,
@@ -191,7 +194,7 @@ function DispatchModal({
   const needsAcknowledge = lateStops.length > 0 && !acknowledged;
 
   const handleDispatch = () => {
-    if (!routeId) return;
+    if (!routeId || !date) return;
     createRun.mutate(
       {
         routeId,
@@ -215,7 +218,7 @@ function DispatchModal({
     <Modal
       open={open}
       onClose={onClose}
-      title="Dispatch Route Run"
+      title="Dispatch route run"
       footer={
         <>
           <Button variant="secondary" onClick={onClose} disabled={createRun.isPending}>
@@ -224,7 +227,7 @@ function DispatchModal({
           <Button
             onClick={handleDispatch}
             loading={createRun.isPending}
-            disabled={needsAcknowledge || windowCheck === "checking"}
+            disabled={needsAcknowledge || windowCheck === "checking" || !date}
             title={
               needsAcknowledge
                 ? "Acknowledge the late-stop warning to dispatch"
@@ -289,7 +292,7 @@ function DispatchModal({
           />
         </div>
         <div>
-          <label className="mb-1 block text-sm font-medium text-navy">Departure Time</label>
+          <label className="mb-1 block text-sm font-medium text-navy">Departure time</label>
           <input
             type="time"
             value={startTime}
@@ -350,7 +353,7 @@ function useTemplateColumns(
         : []),
       {
         accessorKey: "name",
-        header: "Route Name",
+        header: "Route name",
         cell: ({ row }) => <span className="font-medium text-navy">{row.original.name}</span>,
       },
       {
@@ -491,6 +494,7 @@ export default function RoutesPage() {
   } = useRoutes({ kind: "SCHEDULED" });
 
   const activeRuns = runsData?.data ?? [];
+  const tenantToday = useTenantToday();
   // RF-206: deduplicate by route ID — routes with multiple historical runs could
   // appear more than once if the API JOIN returns one row per run.
   const routeTemplates = React.useMemo(() => {
@@ -524,7 +528,7 @@ export default function RoutesPage() {
         title="Cancel this run?"
         description={
           cancellingRun
-            ? `Cancel the run for ${cancellingRun.route?.name ?? "this route"}? The run will be marked CANCELLED and the route can be dispatched again.`
+            ? `Cancel the run for ${cancellingRun.route?.name ?? "this route"}? The run will be marked cancelled and the route can be dispatched again.`
             : ""
         }
         footer={
@@ -564,14 +568,14 @@ export default function RoutesPage() {
             >
               {selectMode ? "Cancel" : "Select"}
             </Button>
-            <Button onClick={() => router.push("/routes/create")}>New Route</Button>
+            <Button onClick={() => router.push("/routes/create")}>New route</Button>
           </div>
         }
       />
 
       {/* ── Active route runs (SCHEDULED + IN_PROGRESS, any date) ── */}
       <section className="space-y-3">
-        <h2 className="text-sm font-semibold text-navy">Active Runs</h2>
+        <h2 className="text-sm font-semibold text-navy">Active runs</h2>
         {runsLoading ? (
           <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-4">
             {[1, 2, 3].map((i) => (
@@ -601,9 +605,9 @@ export default function RoutesPage() {
               const scheduledLabel = (() => {
                 if (!run.scheduledDate) return null;
                 const d = new Date(run.scheduledDate);
-                const todayStr = new Date().toISOString().slice(0, 10);
                 const runStr = d.toISOString().slice(0, 10);
-                if (runStr === todayStr) return "Today";
+                // The tenant's day (SA-964 §4): until the zone is known no row claims "Today".
+                if (tenantToday && runStr === tenantToday) return "Today";
                 // `scheduledDate` is a calendar date at UTC midnight, and the
                 // Today check above compares UTC days — so the fallback must
                 // render UTC too, or a negative-offset viewer sees the day
@@ -612,13 +616,13 @@ export default function RoutesPage() {
               })();
               const startTime = run.startedAt
                 ? new Date(run.startedAt).toLocaleTimeString([], {
-                    hour: "2-digit",
+                    hour: "numeric",
                     minute: "2-digit",
                   })
                 : null;
               const endTime = run.completedAt
                 ? new Date(run.completedAt).toLocaleTimeString([], {
-                    hour: "2-digit",
+                    hour: "numeric",
                     minute: "2-digit",
                   })
                 : null;
@@ -680,7 +684,7 @@ export default function RoutesPage() {
       {/* ── Route templates ── */}
       <section className="space-y-3">
         <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-navy">Route Templates</h2>
+          <h2 className="text-sm font-semibold text-navy">Route templates</h2>
           {selectMode && routeTemplates.length > 0 && (
             <label className="flex items-center gap-2 cursor-pointer select-none">
               <input

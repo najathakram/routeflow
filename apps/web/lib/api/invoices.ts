@@ -149,6 +149,8 @@ export interface InvoicePayment {
   imageKey?: string | null;
   imageOriginalName?: string | null;
   imageMimeType?: string | null;
+  /** W-769: an unconfirmed row that real money displaced (derived by the api, one predicate). */
+  noLongerFits?: boolean;
 }
 
 export interface Invoice {
@@ -1066,7 +1068,7 @@ export interface InvoiceSettings {
   hideOriginalPrice?: boolean;
   /** Tenant-wide deposit default (0–100). null/absent = no tenant deposit policy;
    *  a customer's own `defaultDepositPercent` still wins when set. */
-  depositDefaultPercent?: number | null;
+  depositDefaultPercent?: number | null; // GET: null when never set; PATCH: a number (0 clears), never null
   /** When true, an order's mirror invoice is ISSUED (SENT, no email) at
    *  placement so the deposit can be paid immediately; the order stays
    *  editable until delivery. */

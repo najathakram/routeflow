@@ -39,7 +39,7 @@ export function ProblemSection() {
     <section className="problem-section section wrap">
       <div className="section-heading split-heading">
         <div>
-          <Eyebrow>THE EVERYDAY COST OF DISCONNECTED TOOLS</Eyebrow>
+          <Eyebrow>The everyday cost of disconnected tools</Eyebrow>
           <h2>
             Scattered orders create work.
             <br />
@@ -97,7 +97,7 @@ export function DifferenceSection() {
       <div className="section wrap">
         <div className="section-heading split-heading">
           <div>
-            <Eyebrow>THE REASON TO SWITCH</Eyebrow>
+            <Eyebrow>The reason to switch</Eyebrow>
             <h2>
               One workflow your
               <br />
@@ -181,7 +181,7 @@ export function BuyingConfidence() {
   return (
     <section className="buying-confidence section wrap">
       <div>
-        <Eyebrow>MAKE THE NEXT STEP USEFUL</Eyebrow>
+        <Eyebrow>Make the next step useful</Eyebrow>
         <h2>
           See it handle the work
           <br />

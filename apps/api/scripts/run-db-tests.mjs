@@ -33,6 +33,17 @@ export function serialDbArgs(args) {
 }
 
 /**
+ * Item 726: `--passWithNoTests` is dropped, so a pattern that matches no spec fails the lane (jest
+ * exits 1 on "No tests found") instead of reading as a green DB run.
+ */
+export function dropPassWithNoTests(args) {
+  const kept = [];
+  const dropped = [];
+  for (const a of args) (/^--passWithNoTests(=|$)/.test(a) ? dropped : kept).push(a);
+  return { kept, dropped };
+}
+
+/**
  * W-699: the hard ceiling on one DB-lane run. A run that never exits (an open handle after
  * "Tests:") holds the machine's heavy slot for every other lane, so the runner kills it. 60 min by
  * default; RF_DB_LANE_TIMEOUT_MIN (a positive integer up to MAX_DB_LANE_TIMEOUT_MIN) overrides
@@ -133,7 +144,15 @@ export function runWithHardTimeout(command, args, opts = {}) {
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const { kept, dropped } = serialDbArgs(process.argv.slice(2));
+  const serial = serialDbArgs(process.argv.slice(2));
+  const dropped = serial.dropped;
+  const noPass = dropPassWithNoTests(serial.kept);
+  const kept = noPass.kept;
+  if (noPass.dropped.length) {
+    console.warn(
+      `run-db-tests: ignoring ${noPass.dropped.join(", ")}: a DB run that matches no spec must fail.`,
+    );
+  }
   let timeoutMs;
   try {
     timeoutMs = dbLaneTimeoutMs(process.env);

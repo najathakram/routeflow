@@ -86,7 +86,7 @@ describe("POS order page: a ship-only account moves a pickup order to SHIP", () 
     // M8: a ship-only account has no delivery route to switch to: the one move is "Ship by carrier…".
     expect(screen.queryByRole("button", { name: /^Switch to delivery$/ })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /^Ship by carrier…$/ }));
-    await screen.findByText(/Move this order off in-store pickup\?/);
+    await screen.findByText(/Move this order off store pickup\?/);
     fireEvent.click(screen.getByRole("button", { name: "Move order" }));
     await waitFor(() =>
       expect(patch).toHaveBeenCalledWith("/orders/o1/fulfill-path", { fulfillPath: "SHIP" }),

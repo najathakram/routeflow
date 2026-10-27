@@ -79,9 +79,9 @@ function collect(): Found[] {
         ) {
           buttons.push(...labelsOf(c));
         }
-        // <CancelOrderButton> IS the "Cancel Order" button (or, when the server blocks the cancel, its note)
+        // <CancelOrderButton> IS the "Cancel order" button (or, when the server blocks the cancel, its note)
         if (ts.isJsxSelfClosingElement(c) && c.tagName.getText() === "CancelOrderButton") {
-          buttons.push("Cancel Order");
+          buttons.push("Cancel order");
         }
         if (ts.isCallExpression(c) && c.expression.getText() === "renderDeleteOrderAction") {
           deleteCalls += 1;
@@ -120,10 +120,10 @@ describe("order-detail action bar tiers (page wiring)", () => {
   it("PRIMARY holds only the actions that advance the order", () => {
     expect(labels("primary")).toEqual(
       new Set([
-        "Publish Order",
-        "Confirm Order",
+        "Publish order",
+        "Confirm order",
         "Mark shipped",
-        "Out for Delivery",
+        "Out for delivery",
         "Ready for pickup",
         "Mark delivered",
         "Mark as Delivered",
@@ -139,18 +139,18 @@ describe("order-detail action bar tiers (page wiring)", () => {
         "Unconfirm",
         "Unmark shipped",
         "Return to Confirmed",
-        "Reopen Order",
+        "Reopen order",
       ]),
     );
   });
 
   it("DANGER holds only Cancel / Delete — and every Cancel and Delete is in it", () => {
     expect(labels("danger")).toEqual(
-      new Set(["Cancel Order", "Delete Draft", "Delete", "Confirm Delete"]),
+      new Set(["Cancel order", "Delete draft", "Delete", "Confirm delete"]),
     );
     // no destructive label leaks into another tier
     for (const tier of ["primary", "secondary"]) {
-      for (const l of labels(tier)) expect(l).not.toMatch(/^(Cancel|Delete|Confirm Delete)/);
+      for (const l of labels(tier)) expect(l).not.toMatch(/^(Cancel|Delete|Confirm delete)/);
     }
     // the shared Delete-order action (renderDeleteOrderAction) only ever appears in a danger tier
     for (const tier of ["primary", "secondary"]) {
@@ -161,13 +161,13 @@ describe("order-detail action bar tiers (page wiring)", () => {
 
   it("no advance or reversible action sits in the danger tier", () => {
     for (const l of [
-      "Publish Order",
-      "Confirm Order",
-      "Out for Delivery",
+      "Publish order",
+      "Confirm order",
+      "Out for delivery",
       "Mark as Delivered",
       "Unconfirm",
       "Return to Confirmed",
-      "Reopen Order",
+      "Reopen order",
       "Edit Items",
     ]) {
       expect(labels("danger").has(l)).toBe(false);

@@ -21,6 +21,8 @@ import {
 } from "lucide-react";
 import { Button, Card, Modal, cn, TAP_TARGET, useToast, Badge } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
+import { useTenantToday } from "@/lib/tenant-timezone";
+import { calendarDateFromIso } from "@/lib/calendar-date";
 import { codedToastCopy, genericToastCopy } from "@/lib/generic-toast-copy";
 import { editItemsField } from "@/lib/vendor-bill-edit-items";
 import {
@@ -136,7 +138,7 @@ function RecordPaymentModal({
     <Modal
       open={isOpen}
       onClose={onClose}
-      title="Record Payment"
+      title="Record payment"
       description="Log a payment made against this supplier bill."
       footer={
         <>
@@ -144,14 +146,14 @@ function RecordPaymentModal({
             Cancel
           </Button>
           <Button type="submit" form="bill-payment-form" loading={isPending}>
-            Record Payment
+            Record payment
           </Button>
         </>
       }
     >
       <form id="bill-payment-form" onSubmit={handleSubmit} noValidate className="space-y-4">
         <div>
-          <label className="mb-1.5 block text-sm font-medium text-navy/80">Payment Method</label>
+          <label className="mb-1.5 block text-sm font-medium text-navy/80">Payment method</label>
           <select
             value={form.method}
             onChange={(e) =>
@@ -233,7 +235,7 @@ function VoidConfirmModal({
     <Modal
       open={isOpen}
       onClose={onClose}
-      title="Void Bill?"
+      title="Void bill?"
       description={`Bill ${billNumber} will be marked as void. This action cannot be undone.`}
       footer={
         <>
@@ -241,7 +243,7 @@ function VoidConfirmModal({
             Cancel
           </Button>
           <Button variant="danger" onClick={onConfirm} loading={isPending}>
-            Void Bill
+            Void bill
           </Button>
         </>
       }
@@ -445,7 +447,7 @@ function ReceiveBillModal({
             disabled={anyInvalid || (linked.length > 0 && totalEntered <= 0)}
             data-testid="receive-confirm"
           >
-            {isTopUp ? "Receive" : "Mark Received"}
+            {isTopUp ? "Receive" : "Mark received"}
           </Button>
         </>
       }
@@ -521,7 +523,7 @@ function RevertToDraftModal({
     <Modal
       open={isOpen}
       onClose={onClose}
-      title="Revert to Draft?"
+      title="Revert to draft?"
       description={`Bill ${billNumber} will be reverted to Draft status.`}
       footer={
         <>
@@ -529,7 +531,7 @@ function RevertToDraftModal({
             Cancel
           </Button>
           <Button variant="primary" onClick={onConfirm} loading={isPending}>
-            Revert to Draft
+            Revert to draft
           </Button>
         </>
       }
@@ -775,6 +777,7 @@ export default function VendorBillDetailPage() {
   const { setTitle } = usePageTitle();
   const { toast } = useToast();
 
+  const tenantToday = useTenantToday(); // SA-964 §4
   const { data: bill, isLoading, isError } = useVendorBill(id);
   const receiveBill = useReceiveVendorBill();
   const voidBill = useVoidVendorBill();
@@ -859,7 +862,7 @@ export default function VendorBillDetailPage() {
       <div className="flex flex-col items-center gap-4 p-12 text-center">
         <p className="text-base font-medium text-navy">Supplier bill not found.</p>
         <Button variant="secondary" href="/vendor-bills">
-          Back to Supplier Bills
+          Back to supplier bills
         </Button>
       </div>
     );
@@ -875,7 +878,8 @@ export default function VendorBillDetailPage() {
     !!bill.dueDate &&
     status !== "PAID" &&
     status !== "VOID" &&
-    new Date(bill.dueDate) < new Date(new Date().toDateString());
+    !!tenantToday &&
+    calendarDateFromIso(bill.dueDate) < tenantToday; // SA-964 §4: the tenant's day; unknown zone claims nothing
 
   // Lines not linked to a product don't update stock or average costs when received.
   const billItems = bill.items ?? [];
@@ -890,7 +894,7 @@ export default function VendorBillDetailPage() {
     .reduce((sum, i) => sum + lineRemaining(bill, i), 0);
   const canReceive =
     status !== "VOID" && (bill.receivedDate == null ? status !== "RECEIVED" : outstandingQty > 0);
-  const receiveLabel = bill.receivedDate ? "Receive remaining" : "Mark Received";
+  const receiveLabel = bill.receivedDate ? "Receive remaining" : "Mark received";
 
   // ── Action handlers ──────────────────────────────────────────────────────────
 
@@ -1115,7 +1119,7 @@ export default function VendorBillDetailPage() {
         className="flex items-center gap-1.5 text-sm text-navy/70 hover:text-navy transition-colors"
       >
         <ArrowLeft className="h-4 w-4" />
-        Supplier Bills
+        Supplier bills
       </Link>
 
       {/* Header */}
@@ -1159,7 +1163,7 @@ export default function VendorBillDetailPage() {
                 onClick={() => setIsReceiveOpen(true)}
                 loading={receiveBill.isPending}
               >
-                Mark Received
+                Mark received
               </Button>
               <Button
                 size="sm"
@@ -1189,7 +1193,7 @@ export default function VendorBillDetailPage() {
                 onClick={handleSaveEdit}
                 loading={updateBill.isPending}
               >
-                Save Changes
+                Save changes
               </Button>
             </>
           )}
@@ -1213,14 +1217,14 @@ export default function VendorBillDetailPage() {
                 onClick={() => setIsRevertOpen(true)}
                 disabled={revertToDraft.isPending}
               >
-                Revert to Draft
+                Revert to draft
               </Button>
               <WriteButton
                 size="sm"
                 leftIcon={<CreditCard className="h-4 w-4" />}
                 onClick={() => setIsPaymentOpen(true)}
               >
-                Record Payment
+                Record payment
               </WriteButton>
               <ReadOnlyHint />
             </>
@@ -1284,7 +1288,7 @@ export default function VendorBillDetailPage() {
                   <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                     <div>
                       <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-navy/70">
-                        Bill Date
+                        Bill date
                       </label>
                       <input
                         type="date"
@@ -1295,7 +1299,7 @@ export default function VendorBillDetailPage() {
                     </div>
                     <div>
                       <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-navy/70">
-                        Due Date
+                        Due date
                       </label>
                       <input
                         type="date"
@@ -1349,7 +1353,7 @@ export default function VendorBillDetailPage() {
                     </p>
                   )}
                   <p className="text-sm text-navy/70">
-                    <span className="font-medium text-navy">Bill Date:</span>{" "}
+                    <span className="font-medium text-navy">Bill date:</span>{" "}
                     {fmtCalendarDate(bill.billDate ?? bill.createdAt)}
                   </p>
                   <p
@@ -1358,7 +1362,7 @@ export default function VendorBillDetailPage() {
                       isOverdue ? "text-red-600 font-semibold" : "text-navy/70",
                     )}
                   >
-                    <span className="font-medium text-navy">Due Date:</span>{" "}
+                    <span className="font-medium text-navy">Due date:</span>{" "}
                     {fmtCalendarDate(bill.dueDate)}
                     {isOverdue && " (Overdue)"}
                   </p>
@@ -1370,7 +1374,7 @@ export default function VendorBillDetailPage() {
             {isEditing ? (
               <div className="border-t border-surface-border pt-4">
                 <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-navy/70">
-                  Line Items
+                  Line items
                 </p>
                 <EditLineItems
                   items={editItems}
@@ -1384,7 +1388,7 @@ export default function VendorBillDetailPage() {
             ) : (
               <div className="border-t border-surface-border pt-4">
                 <div className="mb-3 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-                  <p className="eyebrow-label">Line Items</p>
+                  <p className="eyebrow-label">Line items</p>
                   <span className="text-xs text-navy/70">
                     unlinked lines don&apos;t update stock or costs until mapped
                   </span>
@@ -1519,7 +1523,7 @@ export default function VendorBillDetailPage() {
                   </div>
                   {amountPaid > 0 && (
                     <div className="flex justify-between text-success">
-                      <span className="font-medium">Amount Paid</span>
+                      <span className="font-medium">Amount paid</span>
                       <span className="font-bold">-{fmt(amountPaid)}</span>
                     </div>
                   )}
@@ -1529,7 +1533,7 @@ export default function VendorBillDetailPage() {
                       balance > 0 ? "text-danger" : "text-success",
                     )}
                   >
-                    <span>Balance Due</span>
+                    <span>Balance due</span>
                     <span>{fmt(balance)}</span>
                   </div>
                 </div>
@@ -1551,7 +1555,7 @@ export default function VendorBillDetailPage() {
         {/* ── Sidebar (1/3) ── */}
         <div className="space-y-4">
           {/* Payment history */}
-          <Card title="Payment History">
+          <Card title="Payment history">
             {payments.length === 0 ? (
               <p className="text-sm text-navy/70">No payments recorded.</p>
             ) : (
@@ -1597,7 +1601,7 @@ export default function VendorBillDetailPage() {
                   leftIcon={<CreditCard className="h-4 w-4" />}
                   onClick={() => setIsPaymentOpen(true)}
                 >
-                  Record Payment
+                  Record payment
                 </WriteButton>
               </div>
             )}

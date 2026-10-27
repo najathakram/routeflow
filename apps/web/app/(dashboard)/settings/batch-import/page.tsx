@@ -165,7 +165,7 @@ export default function BatchImportPage() {
     <div className="space-y-6 p-6">
       <div className="flex items-start justify-between">
         <div>
-          <h2 className="text-xl font-semibold text-navy">Batch invoice import</h2>
+          <h2 className="text-2xl font-bold text-navy">Batch invoice import</h2>
           <p className="mt-1 text-sm text-navy/70">
             Drop many invoices (PDF/photos). We scan and match them, then you post the clean ones in
             one click. Duplicates are skipped and linked.
@@ -323,7 +323,7 @@ function QueueRow({
         <p className="text-xs text-navy/50">
           {item.total ? `$${item.total}` : "—"}
           {item.status === "NEEDS_REVIEW" && item.unreviewedLines > 0
-            ? ` · ${item.unreviewedLines} line(s) need review`
+            ? ` · ${item.unreviewedLines} ${item.unreviewedLines === 1 ? "line needs" : "lines need"} review`
             : ""}
           {item.status === "NEEDS_REVIEW" && item.supplierUnresolved
             ? " · supplier not linked"
