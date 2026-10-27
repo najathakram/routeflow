@@ -795,8 +795,9 @@ describe("CounterTodaysSales", () => {
     act(() => closeDialog?.());
     await waitFor(() => expect(todayCalls().length).toBeGreaterThan(1));
     const after = await screen.findByTestId("today-row-o1");
+    // W-712 / SA-929: the line is worded from the server's recorded refund
     expect(within(after).getByRole("status")).toHaveTextContent(
-      "Hand $22.50 back to the customer.",
+      "Refunded $22.50 in cash. Hand it back to the customer.",
     );
   });
 

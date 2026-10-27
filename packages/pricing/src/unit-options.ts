@@ -1,4 +1,4 @@
-import { computeLineSubtotal, roundMoney } from "./pricing";
+import { computeLineSubtotal, normalizeBoxesPieces, roundMoney } from "./pricing";
 import {
   baseLabelOf,
   defaultSellingLabel,
@@ -146,6 +146,55 @@ export function ladderOptionPriceText(o: LadderOption, fmt: (n: number) => strin
     return `≈${fmt(o.price)} (1/${o.derived.n} of ${fmt(o.derived.packPrice)})`;
   }
   return fmt(o.price);
+}
+
+/**
+ * The detail part of an option's picker text, shared by web and mobile (row 513): "288 pcs · $480.00". A factor-1 unit
+ * (Piece) omits the piece count: "$2.00". The apps pass their own formatters; both render whole numbers bare.
+ */
+export function ladderOptionDetail(
+  o: LadderOption,
+  fmtMoney: (n: number) => string,
+  fmtQty: (n: number) => string,
+): string {
+  const pcs = o.factorToBase === 1 ? "" : `${fmtQty(o.factorToBase)} pcs · `;
+  return `${pcs}${ladderOptionPriceText(o, fmtMoney)}`;
+}
+
+/** The full picker text: "Case · 288 pcs · $480.00". The one string both apps render (web's dropdown, mobile's row). */
+export function ladderOptionText(
+  o: LadderOption,
+  fmtMoney: (n: number) => string,
+  fmtQty: (n: number) => string,
+): string {
+  return `${o.label} · ${ladderOptionDetail(o, fmtMoney, fmtQty)}`;
+}
+
+/**
+ * The pack-pieces shape of `count` pieces of a DERIVED base option (units P0b / SA-728): `boxes`/`pieces` split on the pack
+ * size (the option's own `derived.n`, rolled over at a full pack), `qty` the total pieces, NO unit label. The line then
+ * bills through `computeLineSubtotal` at the PACK price, the server's own proration, never `count` x a rounded per-piece
+ * price. Null for any option that is not a derived base (a level, an own-priced Piece, the pack).
+ */
+export function derivedPackSplit(
+  option: Pick<LadderOption, "derived">,
+  count: number,
+): { qty: number; boxes: number; pieces: number; unitsPerBox: number } | null {
+  if (!option.derived) return null;
+  return packPiecesSplit(option.derived.n, count);
+}
+
+/**
+ * `count` loose pieces of a `unitsPerBox` pack as `{ qty, boxes, pieces }`, rolled over at a full pack: the ONE
+ * place that shape is built (a hand-rolled `normalizeBoxesPieces({ boxes: 0, pieces })` elsewhere is how web, mobile
+ * and the server drifted; `no-inline-pack-split.pin.spec.ts` keeps it that way).
+ */
+export function packPiecesSplit(
+  unitsPerBox: number,
+  count: number,
+): { qty: number; boxes: number; pieces: number; unitsPerBox: number } {
+  const n = normalizeBoxesPieces({ boxes: 0, pieces: count, unitsPerBox });
+  return { qty: n.qty, boxes: n.boxes ?? 0, pieces: n.pieces ?? 0, unitsPerBox };
 }
 
 /**

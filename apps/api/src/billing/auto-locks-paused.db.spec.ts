@@ -38,6 +38,7 @@ import { DunningService } from "./dunning.service";
 import { SubscriptionMutationService } from "./subscription-mutation.service";
 import { AutoLockSwitchService } from "./auto-lock-switch.service";
 import { AUTO_LOCKS_PAUSED_KEY, AUTO_LOCK_SKIP_AUDIT_ACTION } from "./auto-lock-gate";
+import { paymentReinstatable } from "./dunning-config";
 import { BILLING_EVENTS } from "./plan-catalog.constants";
 import { MrrService } from "./mrr.service";
 import { PlatformAdminService } from "../platform-admin/platform-admin.service";
@@ -471,7 +472,11 @@ describeDb("SA-775 automatic locks pause (real Postgres)", () => {
       await setSwitch("unpaused");
       const prod = await overdue("od-prod2", TenantClass.PRODUCTION);
       await billing.suspendOverdueTenants();
-      expect((await tenantRow(prod.t)).status).toBe("SUSPENDED");
+      const suspended = await tenantRow(prod.t);
+      expect(suspended.status).toBe("SUSPENDED");
+      // W-664: the cron's SUSPENDED carries the billing reason, and a payment's predicate still lifts it.
+      expect(suspended.readOnlyReason).toBe("overdue_suspended");
+      expect(paymentReinstatable(suspended.status, suspended.readOnlyReason)).toBe(true);
     });
   });
 

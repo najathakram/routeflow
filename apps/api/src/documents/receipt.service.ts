@@ -45,6 +45,7 @@ import {
 } from "./receipt-model";
 import { renderOrderReceipt } from "./render-order-receipt";
 import type { SendReceiptDto } from "./send-receipt.dto";
+import { sellerDisplayName } from "../common/seller-display-name";
 
 /** The EmailDelivery `kind` and `entityType` every receipt send is logged (and counted) under. */
 const RECEIPT_KIND = "RECEIPT" as const;
@@ -281,7 +282,7 @@ export class ReceiptService {
       ? await this.readReturnData(tenantId, db, order.id, payments)
       : null;
     const branding: ReceiptBranding = {
-      businessName: config?.businessName || settings["settings.businessName"],
+      businessName: sellerDisplayName(config, null, settings["settings.businessName"]),
       street: config?.addressLine1 ?? settings["settings.street"],
       city: config?.city ?? settings["settings.city"],
       state: config?.state ?? settings["settings.state"],
