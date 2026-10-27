@@ -1,7 +1,11 @@
-import { Injectable, CanActivate, ExecutionContext } from "@nestjs/common";
+import { Injectable, CanActivate, ExecutionContext, Logger, Optional } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
 import { UserRole } from "@prisma/client";
 import { ROLES_KEY } from "../decorators/roles.decorator";
+import { PERMISSION_KEY } from "../permissions/permission.decorators";
+import { OperatorPermissionsService } from "../permissions/operator-permissions.service";
+import { permissionDeniedException } from "../permissions/permission-errors";
+import type { OperatorPermissionGroup } from "@prisma/client";
 
 /**
  * Role hierarchy for access checks:
@@ -25,9 +29,17 @@ const ROLE_SATISFIES: Record<UserRole, UserRole[]> = {
 
 @Injectable()
 export class RolesGuard implements CanActivate {
-  constructor(private readonly reflector: Reflector) {}
+  private readonly logger = new Logger(RolesGuard.name);
 
-  canActivate(context: ExecutionContext): boolean {
+  // The permission service is optional so every spec that builds `new RolesGuard(reflector)` is unchanged. In the app it
+  // is always injected: `roles.guard.optional-di.spec.ts` pins that the global module provides it, because an
+  // @Optional() that silently resolves to undefined would turn the whole permission check off.
+  constructor(
+    private readonly reflector: Reflector,
+    @Optional() private readonly permissions?: OperatorPermissionsService,
+  ) {}
+
+  canActivate(context: ExecutionContext): boolean | Promise<boolean> {
     const requiredRoles = this.reflector.getAllAndOverride<UserRole[]>(ROLES_KEY, [
       context.getHandler(),
       context.getClass(),
@@ -47,6 +59,66 @@ export class RolesGuard implements CanActivate {
       satisfied.push(UserRole.DRIVER);
     }
 
-    return requiredRoles.some((r) => satisfied.includes(r));
+    if (!requiredRoles.some((r) => satisfied.includes(r))) return false;
+
+    // Operator feature groups (spec-operator-permissions §4.1): only an OPERATOR on a handler that names groups.
+    // Still synchronous for everyone else, so no existing caller or spec changes.
+    if (user.role !== UserRole.OPERATOR || !this.permissions) return true;
+    const groups = this.reflector.getAllAndOverride<OperatorPermissionGroup[]>(PERMISSION_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+    if (!groups || groups.length === 0) return true;
+    return this.checkGroups(context, user, groups);
   }
+
+  private async checkGroups(
+    context: ExecutionContext,
+    user: { sub: string; tenantId: string | null; role: UserRole },
+    groups: OperatorPermissionGroup[],
+  ): Promise<boolean> {
+    const permissions = this.permissions!;
+    const mode = permissions.mode();
+    const where = `handler=${context.getClass().name}.${context.getHandler().name} tenant=${user.tenantId ?? "-"} route=${routeOf(context)}`;
+    let allowed: boolean;
+    try {
+      allowed = await permissions.hasAny(user, groups);
+    } catch (err) {
+      // SHADOW observes only: a failed lookup must never block an operator, so log it and allow.
+      if (mode !== "live") {
+        this.logger.error(
+          `permission lookup failed (shadow, allowed) groups=${groups.join("|")} ${where}: ${describeLookupError(err)}`,
+        );
+        return true;
+      }
+      // LIVE fails closed: no answer is never an allow, so the error propagates and the request is refused.
+      throw err;
+    }
+    if (allowed) return true;
+    if (mode === "live") throw permissionDeniedException(groups);
+    // SHADOW: record what enforcement would do, allow the request.
+    this.logger.warn(`would-deny groups=${groups.join("|")} ${where}`);
+    return true;
+  }
+}
+
+/** "METHOD /path" without the query string (ids and search terms stay out of the log), as the add-on gate logs it. */
+function routeOf(context: ExecutionContext): string {
+  const req = context.switchToHttp().getRequest<{
+    method?: string;
+    originalUrl?: string;
+    url?: string;
+  }>();
+  const path = (req.originalUrl ?? req.url ?? "?").split("?")[0];
+  return `${req.method ?? "?"} ${path}`;
+}
+
+/**
+ * The name and Prisma code of a failed lookup, never its message: a database error message can carry the query's
+ * where-arguments (user and tenant ids), the host and port, and a code frame.
+ */
+function describeLookupError(err: unknown): string {
+  if (!(err instanceof Error)) return "non-error";
+  const code = (err as { code?: unknown }).code;
+  return typeof code === "string" ? `${err.name} code=${code}` : err.name;
 }
