@@ -3,6 +3,7 @@ import {
   ConflictException,
   ForbiddenException,
   NotFoundException,
+  ServiceUnavailableException,
 } from "@nestjs/common";
 import type { DenominationCount } from "@routeflow/types";
 import type { JwtPayload } from "../../../auth/jwt-payload.interface";
@@ -62,17 +63,39 @@ function setup(tenant = A, counter: "optional" | "off" = "optional") {
   const audits: any[] = [];
   const log: string[] = [];
   let seq = 0;
+  // a till that commits between our pre-check and our insert (set by a test); publishes to the live rows AND the open snapshot
+  const hooks: { race: (() => void) | null; lockFails: boolean } = { race: null, lockFails: false };
+  let snap: any[] = [];
   const matches = (r: any, w: any) =>
     Object.entries(w).every(([k, v]) =>
       v instanceof Date ? r[k] instanceof Date && r[k].getTime() === v.getTime() : r[k] === v,
     );
   const makeDb = (target: any[], auditTarget: any[], tag: string) => ({
+    // the close lock: SET LOCAL lock_timeout first, then the shared advisory lock (SA-1019)
+    $executeRaw: jest.fn(async (strings: TemplateStringsArray) => {
+      const sql = strings.join("?");
+      if (sql.includes("lock_timeout")) log.push(`${tag}:timeout`);
+      else {
+        if (hooks.lockFails) {
+          throw Object.assign(new Error("canceling statement due to lock timeout"), {
+            code: "55P03",
+          });
+        }
+        log.push(`${tag}:lock`);
+      }
+      return 0;
+    }),
     counterDrawerEvent: {
       findFirst: jest.fn(async ({ where }: any) => {
         const r = rows.find((x) => matches(x, where));
         return r ? { ...r } : null;
       }),
       create: jest.fn(async ({ data }: any) => {
+        if (hooks.race) {
+          const race = hooks.race;
+          hooks.race = null;
+          race();
+        }
         if (
           rows.some(
             (x) =>
@@ -130,6 +153,7 @@ function setup(tenant = A, counter: "optional" | "off" = "optional") {
     // The fake transaction applies writes to a staging copy and publishes both stores only if the callback resolves.
     tenantTransaction: jest.fn(async (fn: any) => {
       const snapshot = rows.map((r) => ({ ...r }));
+      snap = snapshot;
       const auditSnapshot = [...audits];
       const tx = makeDb(rows, audits, "tx");
       try {
@@ -143,7 +167,7 @@ function setup(tenant = A, counter: "optional" | "off" = "optional") {
   };
   const capability = { get: jest.fn(async () => ({ counter })) };
   const service = new CounterDrawerService(prisma as never, capability as never);
-  return { service, rows, closes, audits, log, db };
+  return { service, rows, closes, audits, log, db, hooks, snapshot: () => snap };
 }
 
 describe("CounterDrawerService.record", () => {
@@ -191,28 +215,74 @@ describe("CounterDrawerService.record", () => {
   });
 
   it("a second till losing the insert race (P2002) reads the winner: same amount replays, different is 409", async () => {
-    const { service, rows, db } = setup();
-    const winner = {
+    const winner = (amount: number) => ({
       id: "w-1",
       tenantId: A,
       registerKey: "main",
       windowStart: new Date(WS),
       kind: "OPENING_FLOAT",
-      amount: 150,
+      amount,
       denominations: null,
       at: new Date(),
       byId: "u-other",
       reason: null,
-    };
-    // the pre-check sees nothing; the create then collides; the re-read finds the winner
-    db.counterDrawerEvent.findFirst.mockResolvedValueOnce(null);
-    db.counterDrawerEvent.create.mockImplementationOnce(async () => {
-      rows.push(winner);
-      throw Object.assign(new Error("unique"), { code: "P2002" });
     });
-    const res = await service.record({ windowStart: WS, amount: 150 }, op());
-    expect(res.created).toBe(false);
-    expect(res.event.id).toBe("w-1");
+    for (const [mine, replayed] of [
+      [150, true],
+      [100, false],
+    ] as const) {
+      const { service, rows, hooks, snapshot, log } = setup();
+      // the pre-check sees nothing; the winner commits; our insert collides (its transaction is aborted, 25P02); the re-read
+      // happens OUTSIDE it and finds the winner
+      hooks.race = () => {
+        rows.push(winner(150));
+        snapshot().push(winner(150));
+      };
+      const res = await service.record({ windowStart: WS, amount: mine }, op()).catch((e) => e);
+      if (replayed) {
+        expect(res.created).toBe(false);
+        expect(res.event.id).toBe("w-1");
+      } else {
+        expect(res).toBeInstanceOf(ConflictException);
+        expect(res.getResponse().code).toBe(API_ERROR_CODES.COUNTER_FLOAT_ALREADY_COUNTED);
+      }
+      expect(rows).toHaveLength(1);
+      expect(log).not.toContain("tx:create"); // the colliding insert wrote nothing
+    }
+  });
+
+  it("takes a bounded wait, then the shared close lock, as the FIRST statements of its transaction (SA-1019)", async () => {
+    const { service, log } = setup();
+    await service.record({ windowStart: WS, amount: 150 }, op());
+    expect(log.slice(0, 3)).toEqual(["tx:timeout", "tx:lock", "tx:create"]);
+  });
+
+  it("a close holding the lock past the wait is 503 (try again), writing nothing", async () => {
+    const { service, rows, hooks } = setup();
+    hooks.lockFails = true;
+    await expect(service.record({ windowStart: WS, amount: 150 }, op())).rejects.toBeInstanceOf(
+      ServiceUnavailableException,
+    );
+    expect(rows).toHaveLength(0);
+  });
+
+  it("a record that lost the lock to a close is refused with the window the close just sealed (409 COUNTER_FLOAT_WINDOW_NOT_OPEN)", async () => {
+    const { service, rows, closes, log } = setup();
+    // the close committed while this record waited for the lock: its row is visible once the lock is granted
+    closes.push(close("main", WS, "2026-10-24T10:00:00.000Z"));
+    const err: any = await service.record({ windowStart: WS, amount: 40 }, op()).catch((e) => e);
+    expect(err.getResponse().code).toBe(API_ERROR_CODES.COUNTER_FLOAT_WINDOW_NOT_OPEN);
+    expect(rows).toHaveLength(0);
+    expect(log).toEqual(["tx:timeout", "tx:lock"]);
+  });
+
+  it("a replay of a counted window stays a read after the close (same amount returns the row, no new write)", async () => {
+    const { service, rows, closes } = setup();
+    const first = await service.record({ windowStart: WS, amount: 150 }, op());
+    closes.push(close("main", WS, "2026-10-24T10:00:00.000Z"));
+    const again = await service.record({ windowStart: WS, amount: 150 }, op());
+    expect(again).toMatchObject({ created: false, event: { id: first.event.id } });
+    expect(rows).toHaveLength(1);
   });
 
   it("another window, another register and another kind-of-day are separate rows", async () => {
@@ -344,7 +414,8 @@ describe("CounterDrawerService.correct", () => {
         reason: "Miscounted the rolls",
       },
     });
-    expect(log).toEqual(["tx:update", "tx:audit"]); // both inside the transaction, update first
+    // the close lock first, then both writes inside the transaction, update first
+    expect(log).toEqual(["tx:timeout", "tx:lock", "tx:update", "tx:audit"]);
   });
 
   it("a failing audit write rolls the correction back (no figure moves without its audit row)", async () => {
@@ -452,5 +523,40 @@ describe("CounterDrawerService.correct", () => {
     expect(rows[0].amount).toBe(150);
     expect(audits).toHaveLength(1);
     expect(audits[0].meta).toMatchObject({ from: 150, to: 150 });
+  });
+
+  it("a float of a closed window cannot be corrected (409 COUNTER_FLOAT_WINDOW_NOT_OPEN); row and audit stay as they were (SA-1019)", async () => {
+    const { service, rows, audits, closes } = setup();
+    await service.record({ windowStart: WS, amount: 150 }, op());
+    closes.push(close("main", WS, "2026-10-24T10:00:00.000Z"));
+    const err: any = await service.correct(fix() as never, admin()).catch((e) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(err.getResponse().code).toBe(API_ERROR_CODES.COUNTER_FLOAT_WINDOW_NOT_OPEN);
+    expect(rows[0]).toMatchObject({ amount: 150, reason: null });
+    expect(audits).toHaveLength(0);
+  });
+
+  it("guard: close, reopen, correct works (a reopened window is correctable again)", async () => {
+    const { service, rows, audits, closes } = setup();
+    await service.record({ windowStart: WS, amount: 150 }, op());
+    closes.push(close("main", WS, "2026-10-24T10:00:00.000Z"));
+    await expect(service.correct(fix() as never, admin())).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+    closes[0].reopenedAt = new Date();
+    await expect(service.correct(fix() as never, admin())).resolves.toMatchObject({ amount: 120 });
+    expect(rows[0].amount).toBe(120);
+    expect(audits).toHaveLength(1);
+  });
+
+  it("a close holding the lock past the wait is 503 (try again), nothing written", async () => {
+    const { service, rows, audits, hooks } = setup();
+    await service.record({ windowStart: WS, amount: 150 }, op());
+    hooks.lockFails = true;
+    await expect(service.correct(fix() as never, admin())).rejects.toBeInstanceOf(
+      ServiceUnavailableException,
+    );
+    expect(rows[0].amount).toBe(150);
+    expect(audits).toHaveLength(0);
   });
 });

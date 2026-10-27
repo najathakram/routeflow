@@ -5,6 +5,7 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  ServiceUnavailableException,
 } from "@nestjs/common";
 import type { Prisma } from "@prisma/client";
 import {
@@ -31,7 +32,8 @@ import {
   FULFILMENT_CAPABILITY_READER,
   type FulfilmentCapabilityReader,
 } from "../fulfilment-capability-reader";
-import { isUniqueViolation } from "../day-close/day-close-lock";
+import { lockCounterClose } from "../../../returns/counter-close-lock";
+import { isLockTimeout, isUniqueViolation } from "../day-close/day-close-lock";
 import { parseRegisterKey } from "../day-close/day-close-register";
 import type { CorrectOpeningFloatDto, RecordOpeningFloatDto } from "./counter-drawer.dto";
 
@@ -44,6 +46,7 @@ const REASON_MAX = 500;
 
 /** The slice of the tenant-scoped client this service uses (the day-close service types it the same loose way). */
 interface DrawerDb {
+  $executeRaw(strings: TemplateStringsArray, ...values: any[]): Promise<unknown>;
   counterDrawerEvent: {
     findFirst(args: unknown): Promise<EventRow | null>;
     create(args: unknown): Promise<EventRow>;
@@ -75,6 +78,9 @@ interface EventRow {
  * Counter DRAWER events (W-819 part 1). One OPENING_FLOAT per (tenant, register, window); the count is locked once written.
  * Record: any till staff; an identical amount replays the existing row, a different one is 409 COUNTER_FLOAT_ALREADY_COUNTED.
  * Correct: admin only (the controller), a reason, and the audit row is written in the SAME transaction as the update (L-301).
+ * A write (record or correction) runs in a transaction that takes the SHARED day-close lock first (SA-1019, the same key the
+ * tender and the refunds take), so a close in flight is waited for and the window is re-read after it: a float is never written
+ * into, or corrected in, a window a close already sealed. After a close the day must be reopened before a correction.
  * Tenant and user always come from the session / JWT, never the body. Nothing here moves money; the fold reads it in part 2.
  */
 @Injectable()
@@ -107,6 +113,41 @@ export class CounterDrawerService {
     if (last) return last.reopenedAt != null ? last.windowStart : last.windowEnd;
     const zone = effectiveZone(await tenantTimeZone(this.prisma));
     return calendarDayBounds(zone, now).start;
+  }
+
+  /**
+   * The window the write targets must still be the register's open one (re-read on the caller's transaction, after the close
+   * lock). One predicate for record and correct (L-167); a window a close covers is final until the day is reopened.
+   */
+  private async assertFloatWindowOpen(
+    tx: DrawerDb,
+    tenantId: string,
+    registerKey: string,
+    windowStart: Date,
+  ): Promise<void> {
+    const open = await this.openWindowStart(tx, tenantId, registerKey, new Date());
+    if (open.getTime() !== windowStart.getTime()) {
+      throw new ConflictException({
+        code: API_ERROR_CODES.COUNTER_FLOAT_WINDOW_NOT_OPEN,
+        message:
+          "That drawer window is not the open one. Reload the day-close screen and try again.",
+      });
+    }
+  }
+
+  /**
+   * The first statement of a drawer write: a bounded wait (the close holds the lock exclusively while it runs), then the SHARED
+   * close lock, so writes never serialize with each other, only with a close.
+   */
+  private async lockClose(tx: DrawerDb, tenantId: string, registerKey: string): Promise<void> {
+    await tx.$executeRaw`SET LOCAL lock_timeout = '5s'`;
+    await lockCounterClose(tx, tenantId, registerKey);
+  }
+
+  private busy(): ServiceUnavailableException {
+    return new ServiceUnavailableException(
+      "The day is being closed at this till. Try again in a moment.",
+    );
   }
 
   private async assertCounterOn(tenantId: string): Promise<void> {
@@ -210,40 +251,39 @@ export class CounterDrawerService {
     const { amount, rows } = this.checkAmount(dto.amount, dto.denominations);
     const db = this.prisma.forTenant();
 
-    const existing = await this.find(db, tenantId, registerKey, windowStart);
-    if (existing) return this.replay(db, tenantId, existing, amount);
-
-    // A NEW row only for the register's open window: window+1ms would dodge the unique key, and a window a close covers is final.
-    const open = await this.openWindowStart(db, tenantId, registerKey, new Date());
-    if (open.getTime() !== windowStart.getTime()) {
-      throw new ConflictException({
-        code: API_ERROR_CODES.COUNTER_FLOAT_WINDOW_NOT_OPEN,
-        message:
-          "That drawer window is not the open one. Reload the day-close screen and try again.",
-      });
-    }
-
-    let created: EventRow;
     try {
-      created = await db.counterDrawerEvent.create({
-        data: {
-          tenantId,
-          registerKey,
-          windowStart,
-          kind: OPENING_FLOAT,
-          amount,
-          denominations: (rows ?? undefined) as unknown as Prisma.InputJsonValue | undefined,
-          byId: user.sub,
+      return await this.prisma.tenantTransaction(
+        async (tx: DrawerDb) => {
+          await this.lockClose(tx, tenantId, registerKey);
+          // A replay is a read: it stays allowed after a close. Only a NEW row needs the window to be the open one (window+1ms
+          // would dodge the unique key, and a window a close covers is final).
+          const existing = await this.find(tx, tenantId, registerKey, windowStart);
+          if (existing) return this.replay(tx, tenantId, existing, amount);
+          await this.assertFloatWindowOpen(tx, tenantId, registerKey, windowStart);
+          const created = await tx.counterDrawerEvent.create({
+            data: {
+              tenantId,
+              registerKey,
+              windowStart,
+              kind: OPENING_FLOAT,
+              amount,
+              denominations: (rows ?? undefined) as unknown as Prisma.InputJsonValue | undefined,
+              byId: user.sub,
+            },
+          });
+          return { event: await this.view(tx, tenantId, created), created: true };
         },
-      });
+        { timeout: 20_000, maxWait: 10_000 },
+      );
     } catch (e) {
+      if (isLockTimeout(e)) throw this.busy();
       if (!isUniqueViolation(e)) throw e;
-      // Lost the race with another till: the winner's row decides (same amount replays, a different one is refused).
+      // Lost the race with another till (a failed insert aborts its transaction, so this read is outside it): the winner's row
+      // decides (same amount replays, a different one is refused).
       const winner = await this.find(db, tenantId, registerKey, windowStart);
       if (!winner) throw e;
       return this.replay(db, tenantId, winner, amount);
     }
-    return { event: await this.view(db, tenantId, created), created: true };
   }
 
   private async replay(
@@ -286,58 +326,66 @@ export class CounterDrawerService {
       throw new BadRequestException("reason is required: 5 to 500 characters");
     }
 
-    return this.prisma.tenantTransaction(
-      async (tx: DrawerDb) => {
-        const cur = await this.find(tx, tenantId, registerKey, windowStart);
-        if (!cur) {
-          throw new NotFoundException({
-            code: API_ERROR_CODES.COUNTER_FLOAT_NOT_COUNTED,
-            message: "No opening float was counted for this window.",
-          });
-        }
-        const from = roundMoney(Number(cur.amount));
-        // The screen's figure must still be the stored one: a stale screen never overwrites a correction that already committed.
-        if (from !== expectedAmount) throw this.changed();
-        if (from === amount && rows === null) {
-          throw new BadRequestException(
-            "The corrected amount is the same as the counted one. Send a new breakdown to change only that.",
-          );
-        }
-        // The same compare again as a CAS in the UPDATE (amount = expectedAmount): two admins racing between our read and our write
-        // cannot both win, whichever read first.
-        const res = await tx.counterDrawerEvent.updateMany({
-          where: { id: cur.id, tenantId, amount: expectedAmount },
-          data: {
-            amount,
-            denominations: rows === null ? null : (rows as unknown as Prisma.InputJsonValue),
-            reason,
-          },
-        });
-        if (res.count !== 1) throw this.changed();
-        // AWAITED in this transaction (not AuditService, which swallows a write error): the correction exists exactly when
-        // its audit row does.
-        await tx.auditLog.create({
-          data: {
-            tenantId,
-            userId: user.sub,
-            action: AdminAuditAction.COUNTER_FLOAT_CORRECTED,
-            entityType: DRAWER_EVENT_ENTITY,
-            entityId: cur.id,
-            meta: {
-              registerKey,
-              windowStart: windowStart.toISOString(),
-              kind: OPENING_FLOAT,
-              from,
-              to: amount,
+    try {
+      return await this.prisma.tenantTransaction(
+        async (tx: DrawerDb) => {
+          await this.lockClose(tx, tenantId, registerKey);
+          const cur = await this.find(tx, tenantId, registerKey, windowStart);
+          if (!cur) {
+            throw new NotFoundException({
+              code: API_ERROR_CODES.COUNTER_FLOAT_NOT_COUNTED,
+              message: "No opening float was counted for this window.",
+            });
+          }
+          // After the lock, so a close that just committed is seen: its window is final until the day is reopened.
+          await this.assertFloatWindowOpen(tx, tenantId, registerKey, cur.windowStart);
+          const from = roundMoney(Number(cur.amount));
+          // The screen's figure must still be the stored one: a stale screen never overwrites a correction that already committed.
+          if (from !== expectedAmount) throw this.changed();
+          if (from === amount && rows === null) {
+            throw new BadRequestException(
+              "The corrected amount is the same as the counted one. Send a new breakdown to change only that.",
+            );
+          }
+          // The same compare again as a CAS in the UPDATE (amount = expectedAmount): two admins racing between our read and our write
+          // cannot both win, whichever read first.
+          const res = await tx.counterDrawerEvent.updateMany({
+            where: { id: cur.id, tenantId, amount: expectedAmount },
+            data: {
+              amount,
+              denominations: rows === null ? null : (rows as unknown as Prisma.InputJsonValue),
               reason,
-            } as unknown as Prisma.InputJsonValue,
-          },
-        });
-        const fresh = await this.find(tx, tenantId, registerKey, windowStart);
-        if (!fresh) throw new NotFoundException("Opening float not found");
-        return this.view(tx, tenantId, fresh);
-      },
-      { timeout: 20_000, maxWait: 10_000 },
-    );
+            },
+          });
+          if (res.count !== 1) throw this.changed();
+          // AWAITED in this transaction (not AuditService, which swallows a write error): the correction exists exactly when
+          // its audit row does.
+          await tx.auditLog.create({
+            data: {
+              tenantId,
+              userId: user.sub,
+              action: AdminAuditAction.COUNTER_FLOAT_CORRECTED,
+              entityType: DRAWER_EVENT_ENTITY,
+              entityId: cur.id,
+              meta: {
+                registerKey,
+                windowStart: windowStart.toISOString(),
+                kind: OPENING_FLOAT,
+                from,
+                to: amount,
+                reason,
+              } as unknown as Prisma.InputJsonValue,
+            },
+          });
+          const fresh = await this.find(tx, tenantId, registerKey, windowStart);
+          if (!fresh) throw new NotFoundException("Opening float not found");
+          return this.view(tx, tenantId, fresh);
+        },
+        { timeout: 20_000, maxWait: 10_000 },
+      );
+    } catch (e) {
+      if (isLockTimeout(e)) throw this.busy();
+      throw e;
+    }
   }
 }

@@ -28,6 +28,7 @@ import { calendarDayBounds } from "../../../common/calendar-date";
 import { describeDb, requireLocalDatabaseUrl } from "../../../common/testing/db-spec";
 import { PrismaService } from "../../../prisma/prisma.service";
 import { TenantContextService } from "../../../tenant/tenant-context.service";
+import { lockCounterCloseExclusive } from "../day-close/day-close-lock";
 import { CounterDrawerService } from "./counter-drawer.service";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -160,33 +161,41 @@ describeDb("counter drawer event on real Postgres", () => {
 
   it("the duplicate-insert path is forced for real: the pre-read misses, the INSERT hits the unique key, the winner decides", async () => {
     await record(100, { registerKey: "p" });
-    // The service's first read of the event is blinded, so it goes to create() and Postgres itself raises the unique violation.
-    const orig = prisma.forTenant.bind(prisma);
+    // The service's first read of the event, taken inside its transaction under the close lock, is blinded, so it goes to
+    // create() and Postgres itself raises the unique violation (the lock makes this branch a safety net, not the normal path).
+    const orig = prisma.tenantTransaction.bind(prisma);
     let blinded = false;
-    const spy = jest.spyOn(prisma, "forTenant").mockImplementation((...a: unknown[]) => {
-      const db: any = (orig as any)(...a);
-      return new Proxy(db, {
-        get(t, k) {
-          const v = t[k];
-          if (k !== "counterDrawerEvent") return typeof v === "function" ? v.bind(t) : v;
-          return new Proxy(v, {
-            get(t2, k2) {
-              if (k2 === "findFirst") {
-                return async (args: unknown) => {
-                  if (!blinded) {
-                    blinded = true;
-                    return null;
+    const spy = jest.spyOn(prisma, "tenantTransaction").mockImplementation(((
+      fn: (tx: unknown) => Promise<unknown>,
+      ...rest: unknown[]
+    ) =>
+      (orig as any)(
+        (tx: any) => {
+          const wrapped = new Proxy(tx, {
+            get(t, k) {
+              const v = t[k];
+              if (k !== "counterDrawerEvent") return typeof v === "function" ? v.bind(t) : v;
+              return new Proxy(v, {
+                get(t2, k2) {
+                  if (k2 === "findFirst") {
+                    return async (args: unknown) => {
+                      if (!blinded) {
+                        blinded = true;
+                        return null;
+                      }
+                      return t2.findFirst(args);
+                    };
                   }
-                  return t2.findFirst(args);
-                };
-              }
-              const f = t2[k2];
-              return typeof f === "function" ? f.bind(t2) : f;
+                  const f = t2[k2];
+                  return typeof f === "function" ? f.bind(t2) : f;
+                },
+              });
             },
           });
+          return fn(wrapped);
         },
-      }) as never;
-    });
+        ...rest,
+      )) as never);
     try {
       const same = await record(100, { registerKey: "p" });
       expect(blinded).toBe(true);
@@ -359,5 +368,126 @@ describeDb("counter drawer event on real Postgres", () => {
         ),
       ),
     ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  // ─── SA-1019: the float and the close serialise on one lock, and a closed window is final until reopened ─────────
+
+  const closeRow = (registerKey: string) => {
+    const end = new Date(new Date(WS).getTime() + 1000);
+    return {
+      tenantId: tenants.A,
+      registerKey,
+      day: new Date(WS),
+      zone: "UTC",
+      windowStart: new Date(WS),
+      windowEnd: end,
+      closedAt: end,
+      expectedCash: 0,
+      countedCash: 0,
+      variance: 0,
+      denominations: [],
+      totals: {},
+    };
+  };
+  const fixFloat = (registerKey: string, amount: number, expectedAmount: number) =>
+    as("A", () =>
+      service.correct(
+        {
+          windowStart: WS,
+          registerKey,
+          amount,
+          expectedAmount,
+          reason: "Recounted the rolls",
+        } as never,
+        admin,
+      ),
+    );
+
+  it("a float of a closed window cannot be corrected (409 COUNTER_FLOAT_WINDOW_NOT_OPEN); row and audit stay as they were", async () => {
+    const REG = `cc-${run}`;
+    await record(200, { registerKey: REG });
+    await raw.counterDayClose.create({ data: closeRow(REG) });
+    await expect(fixFloat(REG, 150, 200)).rejects.toMatchObject({
+      response: { code: "COUNTER_FLOAT_WINDOW_NOT_OPEN" },
+    });
+    const row = await raw.counterDrawerEvent.findFirstOrThrow({
+      where: { tenantId: tenants.A, registerKey: REG },
+    });
+    expect(Number(row.amount)).toBe(200);
+    expect(row.reason).toBeNull();
+    expect(
+      await raw.auditLog.count({
+        where: { tenantId: tenants.A, action: "COUNTER_FLOAT_CORRECTED", entityId: row.id },
+      }),
+    ).toBe(0);
+  });
+
+  it("guard: close, reopen, correct works (a reopened window is correctable again)", async () => {
+    const REG = `cr-${run}`;
+    await record(200, { registerKey: REG });
+    const closed = await raw.counterDayClose.create({ data: closeRow(REG) });
+    await expect(fixFloat(REG, 150, 200)).rejects.toMatchObject({
+      response: { code: "COUNTER_FLOAT_WINDOW_NOT_OPEN" },
+    });
+    await raw.counterDayClose.update({
+      where: { id: closed.id },
+      data: { reopenedAt: new Date(), reopenedById: admin.sub },
+    });
+    await expect(fixFloat(REG, 150, 200)).resolves.toMatchObject({ amount: 150 });
+    const row = await raw.counterDrawerEvent.findFirstOrThrow({
+      where: { tenantId: tenants.A, registerKey: REG },
+    });
+    expect(Number(row.amount)).toBe(150);
+    expect(
+      await raw.auditLog.count({
+        where: { tenantId: tenants.A, action: "COUNTER_FLOAT_CORRECTED", entityId: row.id },
+      }),
+    ).toBe(1);
+  });
+
+  it("a record racing the close waits for it, then is refused: no float lands in a window the close just sealed", async () => {
+    const REG = `rc-${run}`;
+    // A: the close as the day close runs it - the EXCLUSIVE lock first, then the close row - held open until released.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let acquired!: (pid: number) => void;
+    const hasLock = new Promise<number>((r) => (acquired = r));
+    const closing = raw.$transaction(
+      async (tx) => {
+        await lockCounterCloseExclusive(tx as never, tenants.A, REG);
+        const rows = (await tx.$queryRaw`SELECT pg_backend_pid() AS pid`) as Array<{ pid: number }>;
+        await tx.counterDayClose.create({ data: closeRow(REG) });
+        acquired(Number(rows[0].pid));
+        await gate;
+      },
+      { timeout: 30_000 },
+    );
+    const closerPid = await hasLock;
+
+    // B: the till records the float of the window A is closing, while A holds the lock.
+    let settled = false;
+    const recording = record(40, { registerKey: REG }).then(
+      (value) => ({ value, err: undefined as any }),
+      (err) => ({ value: undefined, err }),
+    );
+    void recording.then(() => (settled = true));
+    await new Promise((r) => setTimeout(r, 750));
+    expect(settled).toBe(false); // B is queued behind the close, not already written into its window
+    for (let i = 0; i < 100; i++) {
+      const r = await pool.query(
+        `SELECT count(*)::int AS n FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))`,
+        [closerPid],
+      );
+      if (Number(r.rows[0].n) > 0) break;
+      await new Promise((res) => setTimeout(res, 50));
+    }
+    release();
+    await closing;
+
+    const out = await recording;
+    expect(out.err?.response?.code).toBe("COUNTER_FLOAT_WINDOW_NOT_OPEN");
+    expect(
+      await raw.counterDrawerEvent.count({ where: { tenantId: tenants.A, registerKey: REG } }),
+    ).toBe(0);
   });
 });

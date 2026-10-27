@@ -583,7 +583,7 @@ export const API_ERROR_CODES = {
   COUNTER_FLOAT_NOT_COUNTED: "COUNTER_FLOAT_NOT_COUNTED",
   /** 409 from PATCH /orders/counter-sale/drawer/opening-float: the float is no longer the amount the admin's screen showed (expectedAmount), so another correction landed first. Reload and retry. */
   COUNTER_FLOAT_CHANGED: "COUNTER_FLOAT_CHANGED",
-  /** 409 from POST /orders/counter-sale/drawer/opening-float: windowStart is not the register's open window (a close already covers it, or it is not the window DayCloseState.preview.windowStart names). Reload the day-close state. */
+  /** 409 from POST or PATCH /orders/counter-sale/drawer/opening-float: windowStart is not the register's open window (a close already covers it, or it is not the window DayCloseState.preview.windowStart names). Reload the day-close state. */
   COUNTER_FLOAT_WINDOW_NOT_OPEN: "COUNTER_FLOAT_WINDOW_NOT_OPEN",
   /** 409 from POST /orders/counter-sale/parked: this register already holds the maximum open parked carts (COUNTER_PARK_MAX_PER_REGISTER); resume or discard one first. */
   PARK_LIMIT: "PARK_LIMIT",

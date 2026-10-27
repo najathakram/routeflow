@@ -51,6 +51,7 @@ export interface RecordOpeningFloatResult {
 }
 
 export interface CorrectOpeningFloatRequest {
+  /** the window the float was counted for; it must still be the register's open window, so after a close the day must be reopened first (else 409 COUNTER_FLOAT_WINDOW_NOT_OPEN) */
   windowStart: string;
   /** the corrected amount; must differ from the current one unless a new breakdown is sent */
   amount: number;
