@@ -20,6 +20,12 @@ export interface PriceHistoryRow {
   unitLabel: string;
   /** Pieces per unit when the unit is a pack (> 1), else null. */
   unitsPerBox: number | null;
+  /**
+   * `salePackOf`'s answer for this line, sent verbatim: 1 = by the piece, > 1 = pieces per pack, null = cannot be
+   * known (a pre-snapshot line). `unitsPerBox` is its > 1 projection and is null for BOTH 1 and unknown, so a reader
+   * that must tell them apart reads this (SA-1004).
+   */
+  salePack: number | null;
   /** Quantity in `unitLabel` units (e.g. 5 cases), not raw pieces. */
   qty: number;
   boxes: number | null;
@@ -55,6 +61,26 @@ export interface PriceHistoryReferences {
   tierPrice: number | null;
   /** (last - previous) / previous for the same unit, 4 decimal places; null with < 2 rows or a 0 previous. */
   changeSinceLast: number | null;
+}
+
+/** One month of a reference line: `month` is "YYYY-MM" (UTC), `average` is the monthly mean in the line's unit. */
+export interface PriceHistoryAveragePoint {
+  month: string;
+  average: number;
+}
+
+/**
+ * One plot unit's two reference lines (SA-954 D4), next to this customer's own line. `unitsPerBox` follows
+ * `PriceHistoryRow`'s rule: pieces per unit, null = by the piece. A month backed by fewer than 3 distinct OTHER buyers
+ * is left out of both lines (never bridged), and a line whose pack cannot be read is left out of `converted`.
+ */
+export interface PriceHistoryComparisonLine {
+  unitLabel: string;
+  unitsPerBox: number | null;
+  /** Line 2: OTHER customers' lines in this unit name and pack, the monthly mean of the line price. Oldest first. */
+  likeForLike: PriceHistoryAveragePoint[];
+  /** Line 3: ALL customers' known-pack lines in any unit, converted to this unit (one rounding). Oldest first. */
+  converted: PriceHistoryAveragePoint[];
 }
 
 /**
@@ -104,4 +130,9 @@ export interface PriceHistoryResponse {
   references: PriceHistoryReferences;
   /** v1.1: present only with `?compare=all` (null = too few other customers). */
   aggregate?: PriceHistoryAggregate | null;
+  /**
+   * SA-954: present only with `?compare=all`, one entry per plot unit (this customer's units; with no history, the
+   * summary's unit). Absent from an older server, which the web reads as empty.
+   */
+  comparison?: PriceHistoryComparisonLine[];
 }

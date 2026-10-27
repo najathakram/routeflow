@@ -667,3 +667,7 @@ Moved to [packages/landing-2026-10-22-w4.md](packages/landing-2026-10-22-w4.md) 
 ## Window 5 (2026-10-24, 28 PRs, #3455 to #3713)
 
 Moved to [packages/landing-2026-10-24-w5.md](packages/landing-2026-10-24-w5.md) (this file is at its size cap): error codes, one payment capacity predicate, cleared tender, pricing gate, counter copy, send state, Toast 44px.
+
+Window 6 (2026-10-25): moved to [packages/landing-2026-10-25-w6.md](packages/landing-2026-10-25-w6.md) (this file is at its size cap): capacity policy helpers, no-longer-fits copy and error code, bugs close verb, skip-verify pushed refs, ops-monitor NUL guard.
+
+Train 2 (2026-10-25): moved to [packages/landing-2026-10-25-train2.md](packages/landing-2026-10-25-train2.md) (this file is at its size cap): `PRODUCT_CHANGED_CONCURRENTLY` in `API_ERROR_CODES`.

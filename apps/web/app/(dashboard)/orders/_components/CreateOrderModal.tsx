@@ -223,6 +223,9 @@ interface LineItem extends DerivedBaseMarker {
   unitLabel?: string;
   /** S19b: a price the SYSTEM pre-filled from last-given history; the customer layer replaces it once ready. */
   systemPrefill?: boolean;
+  /** B755: the customer whose last-given history pre-filled this line's price. A different customer chosen later
+   *  re-prices the line like a plain one; a price the operator typed (or confirmed with a reason) clears it. */
+  prefillCustomerId?: string;
   /** SA-817 A5: the price this line carried when the order was parked, set when a resume found today's price different. */
   priceChangedFrom?: number;
   /** S19b: set while the customer layer prices this line; the pre-layer values to restore if its row goes away. */
@@ -773,23 +776,51 @@ export function CreateOrderModal({
   // BEFORE the customer was chosen (the classic modal never re-priced them). Only lines whose price
   // is still the auto-derived tier price move; an operator's one-time price, an upsell, or a
   // history-prefilled override stands, as do unlisted lines and lines added before this snapshot
-  // existed (no `tierPrices`). Behind the gate so the classic modal's behaviour is untouched.
+  // existed (no `tierPrices`). Behind the gate so the classic modal's behaviour is untouched,
+  // except B755: a price pre-filled from ANOTHER customer's history is dropped in both modes.
   // S19b: the layer's content for the cart's products, so new layer data (not just "ready") re-runs the effect.
   const layerSig = priceLayer.enabled
     ? `${priceLayer.ready}|` +
       lineItems.map((li) => JSON.stringify(priceLayer.layerOf(li.productId) ?? null)).join("|")
     : "";
   React.useEffect(() => {
-    if (!scanV2) return;
     setLineItems((prev) => {
       let changed = false;
-      const next = prev.map((li) => {
+      const next = prev.map((line) => {
+        let li = line;
         // a unit line is re-priced by its own picker from the product's ladder, not the pack's tiers
         if (li.isUnlisted || !li.tierPrices || li.unitLabel) return li;
+        // classic modal (scan_v2 off): only a price pre-filled from another customer moves (B755 below)
+        if (
+          !scanV2 &&
+          !(
+            li.prefillCustomerId != null &&
+            selectedCustomer != null &&
+            li.prefillCustomerId !== selectedCustomer.id
+          )
+        ) {
+          return li;
+        }
+        // B755: a price pre-filled from ANOTHER customer's history is not this customer's one-time price: it drops to
+        // a plain line and re-prices below. (A price the operator typed cleared prefillCustomerId when it was typed.)
+        // (no customer chosen yet, e.g. mid-switch, is not "another customer": the line waits for the next one)
+        const fromOtherCustomer =
+          li.prefillCustomerId != null &&
+          selectedCustomer != null &&
+          li.prefillCustomerId !== selectedCustomer.id;
+        if (fromOtherCustomer) {
+          li = {
+            ...li,
+            discountedPrice: undefined,
+            systemPrefill: undefined,
+            prefillCustomerId: undefined,
+            overrideReason: undefined,
+          };
+        }
         // an operator's MANUAL / DISCOUNTED price always carries a one-time price; a MANUAL line without one is the layer's
         // above-list price (the system's), so it re-prices with the customer
-        if (li.priceType === "DISCOUNTED") return li;
-        if (li.discountedPrice != null) return li;
+        if (!fromOtherCustomer && li.priceType === "DISCOUNTED") return li;
+        if (!fromOtherCustomer && li.discountedPrice != null) return li;
         const tier = cpMap.get(li.productId) ?? selectedCustomer?.pricingTier ?? 1;
         const lp = customerLinePrice({
           product: li.tierPrices as unknown as Record<string, unknown>,
@@ -800,6 +831,7 @@ export function CreateOrderModal({
         const priceType = lp.priceType;
         const specialPrice = customerLineSpecial(lp);
         if (
+          !fromOtherCustomer &&
           li.unitPrice === tierPrice &&
           li.priceType === priceType &&
           li.specialPrice === specialPrice
@@ -811,7 +843,7 @@ export function CreateOrderModal({
       });
       return changed ? next : prev;
     });
-  }, [scanV2, selectedCustomer?.pricingTier, cpMap, layerSig]);
+  }, [scanV2, selectedCustomer?.id, selectedCustomer?.pricingTier, cpMap, layerSig]);
 
   // ── Derived totals ────────────────────────────────────────────────────────
 
@@ -973,6 +1005,7 @@ export function CreateOrderModal({
       discountedPrice: hasHistOverride ? histEntry!.lastPrice : undefined,
       // a price the system pre-filled from history: the layer replaces it if one turns out to price this line (review 1)
       systemPrefill: hasHistOverride && priceLayer.enabled ? true : undefined,
+      prefillCustomerId: hasHistOverride ? selectedCustomer?.id : undefined,
       // the pre-layer (master) values, restored if the layer's row goes away
       layerFrom: linePrice.layered
         ? masterLayerFrom(
@@ -1380,6 +1413,7 @@ export function CreateOrderModal({
             ...li,
             discountedPrice: undefined,
             systemPrefill: undefined,
+            prefillCustomerId: undefined,
             overrideReason: undefined,
             unitPrice: revertPrice,
             priceType: li.specialPrice != null ? "SPECIAL" : "STANDARD",
@@ -1390,7 +1424,12 @@ export function CreateOrderModal({
         // of the special / list price is no override; below list DISCOUNTED, at/above MANUAL (an
         // upsell: the base is hidden from the customer server-side, shown green to the operator).
         const next = applyTypedPrice(li, value);
-        const consumed = { ...next, startOnDefaultUnit: false, systemPrefill: undefined };
+        const consumed = {
+          ...next,
+          startOnDefaultUnit: false,
+          systemPrefill: undefined,
+          prefillCustomerId: undefined,
+        };
         return consumed.discountedPrice == null
           ? { ...consumed, overrideReason: undefined }
           : consumed;
@@ -1401,7 +1440,14 @@ export function CreateOrderModal({
   const setOverrideReason = (tempId: string, reason: string) =>
     setLineItems((prev) =>
       prev.map((li) =>
-        li.tempId === tempId ? { ...li, overrideReason: reason, systemPrefill: undefined } : li,
+        li.tempId === tempId
+          ? {
+              ...li,
+              overrideReason: reason,
+              systemPrefill: undefined,
+              prefillCustomerId: undefined,
+            }
+          : li,
       ),
     );
 

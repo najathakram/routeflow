@@ -24,6 +24,12 @@ import {
   useRouteRun,
   type RouteRunOrder,
 } from "../../../../../lib/api/routes";
+import {
+  keepsStopCompletionKey,
+  releaseStopCompletionKey,
+  retryOnLockUnavailable,
+  stopCompletionKey,
+} from "../../../../../lib/stop-completion-key";
 import { podPhotoArtifactId } from "../../../../../lib/pod-artifacts";
 import {
   artifactIdsFromPodPhotoUrls,
@@ -755,29 +761,33 @@ export default function PaymentScreen() {
       }
     }
 
-    // BUG-DRV1-3: stable per-attempt idempotency-key. The header is captured
-    // by the offline-queue persister so a retry after a network blip cannot
-    // double-charge — the server (RF-019) returns the original response.
-    const idempotencyKey = `stop-${stopId}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    // BUG-DRV1-3: the idempotency-key is captured by the offline-queue persister so a retry after a network blip
+    // cannot double-charge — the server (RF-019) returns the original response. Row 108 (SA-706h): ONE key per stop,
+    // kept across retries (stop-completion-key.ts), and a 503 LOCK_UNAVAILABLE (refused before any write) is retried
+    // with that same key on LOCK_RETRY_DELAYS_MS before the driver is told.
+    const idempotencyKey = stopCompletionKey(stopId);
     let paymentIds: string[] | undefined;
     try {
-      const result = await completeWithPaymentMut.mutateAsync({
-        runId,
-        stopId,
-        deliveries,
-        // The signature stays inline (an SVG data URL is a few KB): the server
-        // ingests it into storage during completion, and the regulated
-        // signature gate needs it present on THIS request.
-        signatureUrl: pod?.signatureUri,
-        driverNote: pod?.note,
-        ageVerified: pod?.ageVerified,
-        identityVerified: pod?.identityVerified,
-        identityType: pod?.identityType,
-        // The server resolves the invoice from the delivered orders — we only
-        // send amount + method (a client invoiceId was always undefined here).
-        payment: collected > 0 ? { amount: collected, method: apiMethod } : undefined,
-        idempotencyKey,
-      });
+      const complete = () =>
+        completeWithPaymentMut.mutateAsync({
+          runId,
+          stopId,
+          deliveries,
+          // The signature stays inline (an SVG data URL is a few KB): the server
+          // ingests it into storage during completion, and the regulated
+          // signature gate needs it present on THIS request.
+          signatureUrl: pod?.signatureUri,
+          driverNote: pod?.note,
+          ageVerified: pod?.ageVerified,
+          identityVerified: pod?.identityVerified,
+          identityType: pod?.identityType,
+          // The server resolves the invoice from the delivered orders — we only
+          // send amount + method (a client invoiceId was always undefined here).
+          payment: collected > 0 ? { amount: collected, method: apiMethod } : undefined,
+          idempotencyKey,
+        });
+      const result = await retryOnLockUnavailable(complete);
+      releaseStopCompletionKey(stopId);
       // paymentIds rides on the response but isn't in RouteRunStop's type yet
       // (routes.ts is out of scope for this change — already-returned/just-
       // untyped, same pattern as admin.ts's orderId/invoiceGroupId).
@@ -785,6 +795,7 @@ export default function PaymentScreen() {
     } catch (e: any) {
       const outcome = classifyMutationError(e);
       if (outcome.kind === "queued") {
+        releaseStopCompletionKey(stopId); // the offline queue persisted the request with its own copy of the key
         // REG-B308: a queued offline completion is a pending success, not a
         // failure — mirror the success path's cleanup below. `setClosing(false)`
         // below releases the latch right before the Alert/navigate, exactly
@@ -841,6 +852,7 @@ export default function PaymentScreen() {
       // FIRST attempt already landed; treat it as success (refresh + navigate)
       // instead of surfacing the raw server message and re-arming the button.
       if (isStopAlreadyCompletedError(e)) {
+        releaseStopCompletionKey(stopId);
         await qc.invalidateQueries({ queryKey: ["route-runs", runId] });
         await qc.invalidateQueries({ queryKey: ["route-runs", "active"] });
         setClosing(false);
@@ -848,6 +860,9 @@ export default function PaymentScreen() {
         router.replace("/(driver)/route");
         return;
       }
+      // Row 108: an unknown outcome (no response, a 5xx) or a lock refusal keeps the key, so the driver's next tap is the
+      // SAME request; any other refusal releases it, and the next tap is a new attempt.
+      if (!keepsStopCompletionKey(e)) releaseStopCompletionKey(stopId);
       setClosing(false);
       showToast(outcome.message);
       return;
