@@ -15,6 +15,7 @@ import type { Prisma } from "@prisma/client";
 import { excludeWalkIn } from "../customers/walk-in-protected";
 import { escapeHtml } from "../common/html-escape";
 import { sellerAcceptsBuyerWrite, sellerUnavailableException } from "./seller-status-gate";
+import { sellerDisplayName } from "../common/seller-display-name";
 
 @Injectable()
 export class BuyerService {
@@ -63,7 +64,7 @@ export class BuyerService {
           tenant: {
             id: link.tenant.id,
             slug: link.tenant.slug,
-            name: config?.businessName ?? link.tenant.name,
+            name: sellerDisplayName(config, link.tenant),
             logoKey: config?.logoKey ?? null,
             primaryColor: config?.primaryColor ?? null,
           },
@@ -87,7 +88,7 @@ export class BuyerService {
       // reconnected into a portal the seller-context guard refuses. Stateless: restore re-enables it.
       where: { inviteToken: token, customer: { deletedAt: null } },
       include: {
-        tenant: { select: { id: true, name: true, slug: true } },
+        tenant: { select: { id: true, name: true, slug: true, status: true } },
       },
     });
     if (!link) throw new NotFoundException("Invite not found or already used");
@@ -101,14 +102,25 @@ export class BuyerService {
     if (link.status !== "INVITED" && link.status !== "PENDING_SELLER_APPROVAL") {
       throw new ConflictException("This invite has already been used");
     }
-
     const tenantConfig = await this.prisma.tenantConfig.findFirst({
       where: { tenantId: link.tenantId },
       select: { businessName: true, logoKey: true, primaryColor: true },
     });
+    // Row 397: the preview follows the seller's workspace status through the SAME rule the accept uses (SA-776 GAP-2,
+    // seller-status-gate.ts), so a suspended / cancelled / read-only seller's invite is not shown as valid and then refused
+    // on accept. The refusal carries the seller's display name (the very name a valid invite shows this token holder).
+    const verdict = sellerAcceptsBuyerWrite({
+      sellerStatus: link.tenant.status,
+      sellerId: link.tenantId,
+      logger: this.logger,
+      context: "GET /api/v1/buyer/invites/:token/details",
+    });
+    if (!verdict.allowed) {
+      throw sellerUnavailableException(sellerDisplayName(tenantConfig, link.tenant));
+    }
 
     return {
-      sellerName: tenantConfig?.businessName ?? link.tenant.name,
+      sellerName: sellerDisplayName(tenantConfig, link.tenant),
       sellerSlug: link.tenant.slug,
       logoKey: tenantConfig?.logoKey ?? null,
       primaryColor: tenantConfig?.primaryColor ?? null,
@@ -370,7 +382,7 @@ export class BuyerService {
       where: { tenantId: tenant.id },
       select: { businessName: true },
     });
-    const sellerName = tenantConfig?.businessName ?? tenant.name;
+    const sellerName = sellerDisplayName(tenantConfig, tenant);
 
     // Fire-and-forget both notification channels — email delivery must never fail
     // the request the buyer is waiting on.
@@ -511,7 +523,7 @@ export class BuyerService {
       where: { tenantId },
       select: { businessName: true },
     });
-    const sellerName = tenantConfig?.businessName ?? "Your business";
+    const sellerName = sellerDisplayName(tenantConfig, null, "Your business");
 
     for (const op of operators.filter((o) => o.email)) {
       await this.emailService

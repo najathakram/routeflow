@@ -102,6 +102,7 @@ export const API_ERROR_CODES = {
   LABEL_NAME_TAKEN: "LABEL_NAME_TAKEN",
   LABEL_CHANGE_IN_PROGRESS: "LABEL_CHANGE_IN_PROGRESS",
   PRODUCT_CHAIN_UNREADABLE: "PRODUCT_CHAIN_UNREADABLE",
+  PRODUCT_CHANGED_CONCURRENTLY: "PRODUCT_CHANGED_CONCURRENTLY",
   INVOICE_TAX_STATE_STALE: "INVOICE_TAX_STATE_STALE",
   INVOICE_TOTAL_BELOW_PAID: "INVOICE_TOTAL_BELOW_PAID",
   PRICE_ADJUSTMENT_PARTIAL: "PRICE_ADJUSTMENT_PARTIAL",
@@ -225,6 +226,18 @@ export const API_ERROR_CODES = {
   PO_LOT_PARTIALLY_CONSUMED: "PO_LOT_PARTIALLY_CONSUMED",
   PO_HAS_LINKED_BILL: "PO_HAS_LINKED_BILL",
   INVENTORY_LEDGER_GAP: "INVENTORY_LEDGER_GAP",
+  /** B297 PR5: a money-bearing edit to a line whose regulated SALE rows sit in a LOCKED filing period. */
+  FILED_PERIOD_LOCKED: "FILED_PERIOD_LOCKED",
+  /** B297 PR5: the last-line ledger guard: a row would be booked into a LOCKED filing's period. */
+  LEDGER_PERIOD_LOCKED: "LEDGER_PERIOD_LOCKED",
+  /** B297 PR5: the lock endpoint's refusals. */
+  FILING_NOT_LOCKABLE: "FILING_NOT_LOCKABLE",
+  FILING_ALREADY_LOCKED: "FILING_ALREADY_LOCKED",
+  FILING_PERIOD_RUNNING: "FILING_PERIOD_RUNNING",
+  /** SA-995: the lock found the filing's figures differ from what the ledger gives now; regenerate, check, lock. */
+  FILING_STALE: "FILING_STALE",
+  /** SA-997: locking a filing is switched off (FILING_LOCK_READY) until the sale-routing work lands. */
+  FILING_LOCK_NOT_READY: "FILING_LOCK_NOT_READY",
   STOCK_DATE_IN_FILED_PERIOD: "STOCK_DATE_IN_FILED_PERIOD",
   // 683 (SA-896): DELETE /settings/financial-data refused while the tenant holds regulated records.
   FINANCIAL_WIPE_BLOCKED_REGULATED: "FINANCIAL_WIPE_BLOCKED_REGULATED",
@@ -350,6 +363,7 @@ export const API_ERROR_CODES = {
   WALK_IN_NO_ACCOUNT: "WALK_IN_NO_ACCOUNT",
   WALK_IN_WITH_CUSTOMER: "WALK_IN_WITH_CUSTOMER",
   WALK_IN_OPEN_CREDIT: "WALK_IN_OPEN_CREDIT",
+  WALK_IN_STORE_CREDIT_REFUSED: "WALK_IN_STORE_CREDIT_REFUSED",
   COUNTER_TENDER_SHORT: "COUNTER_TENDER_SHORT",
   COUNTER_CHECK_NUMBER_REQUIRED: "COUNTER_CHECK_NUMBER_REQUIRED",
   /** 400 from POST /orders/counter-sale: a CHECK dated after the tenant's today cannot be tendered at the till; put the sale on account and record the check when it clears. Nothing is written. */

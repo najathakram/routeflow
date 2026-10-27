@@ -181,6 +181,11 @@ describe("genericToastCopy: codes users rely on", () => {
     expect(copy).not.toMatch(/[–—]/);
   });
 
+  it("PRODUCT_CHANGED_CONCURRENTLY (Row 519) is fixed copy that does not blame a label change", () => {
+    const copy = genericToastCopy(err(409, { code: API_ERROR_CODES.PRODUCT_CHANGED_CONCURRENTLY }));
+    expect(copy).toBe("This product changed while you were saving it. Reload it and try again.");
+  });
+
   it("PRODUCT_CHAIN_UNREADABLE (H2: a reparent refused on an unreadable family chain) is fixed copy", () => {
     const copy = genericToastCopy(err(409, { code: API_ERROR_CODES.PRODUCT_CHAIN_UNREADABLE }));
     expect(copy).toBe("This product's family chain can't be read.");
