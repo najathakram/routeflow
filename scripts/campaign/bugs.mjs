@@ -3,7 +3,7 @@
 //
 // WHY THIS EXISTS
 // The campaign already had two of the three things a bug tracker needs. The
-// *state machine* lives in `.claude/campaign/status/F##.jsonl` (one row per bug
+// *state machine* lives in the register's `status/F##.jsonl` (one row per bug
 // ID, guarded by campaign-check). The *board* lives in GitHub Issues, one card
 // per batch, with lanes derived from live PR/CI state. What was missing was the
 // *catalogue* — the description of what each bug actually IS. That lived only in
@@ -97,6 +97,7 @@ import { execFileSync, execSync, spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { scrubbedGitEnv } from "../lib/check-git-hooks.mjs";
+import { registryMissingMessage, registryRoot, registrySource } from "../lib/registry-root.mjs";
 import { normalizeEvidence } from "./normalize-evidence.mjs";
 import {
   hasRegToken,
@@ -111,11 +112,22 @@ import {
 // direct `node scripts/campaign/bugs.mjs` from some other directory.
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
-// Overridable via BUGS_ROOT so the self-test can point the REAL commands at a
-// throwaway directory instead of re-implementing their logic against a fixture
-// (see cmds["self-test"]). Read lazily (never cached in a top-level const) so a
-// self-test that sets process.env.BUGS_ROOT mid-run is honoured immediately.
-const rootDir = () => process.env.BUGS_ROOT || ".claude/campaign";
+// The register's location comes from scripts/lib/registry-root.mjs and nowhere else (B1-a): it is
+// anchored on the repo root, not the cwd (B278), and BUGS_ROOT still points the REAL commands at a
+// throwaway directory instead of re-implementing their logic against a fixture (see
+// cmds["self-test"]). Read lazily (never cached in a top-level const) so a self-test that sets
+// process.env.BUGS_ROOT mid-run is honoured immediately.
+//
+// `allowMissing` is deliberate and narrow: the writers (import, file) create the register on an
+// empty fixture. Every command except self-test is stopped at dispatch (bottom of this file) when
+// the register is missing, with exit 2 and the fix command, so a read never sees "0 rows".
+const rootDir = () => registryRoot({ allowMissing: true });
+// The register path as a person should read it in a message: repo-relative while it sits inside
+// the repo, absolute otherwise. Never a hardcoded string.
+const shownRoot = () => {
+  const rel = relative(REPO_ROOT, rootDir()).split(sep).join("/");
+  return rel && !rel.startsWith("..") && !isAbsolute(rel) ? rel : rootDir();
+};
 const CATALOGUE = () => join(rootDir(), "bugs.jsonl");
 const STATUS_DIR = () => join(rootDir(), "status");
 // Overridable via BUGS_REGISTER for the same reason as rootDir(): the self-test
@@ -941,7 +953,7 @@ function selectBatches(args) {
         b.claimCheck = b.issue
           ? `claim check unavailable (${c.why}) — relying on in-flight rows only`
           : `no board card for ${b.batch} — no lease could be checked; add its issue number to ` +
-            `.claude/campaign/board.json once one exists, or rely on in-flight rows only`;
+            `${shownRoot()}/board.json once one exists, or rely on in-flight rows only`;
         keep(b);
       } else if (c?.informal) {
         b.claimCheck = `issue #${b.issue} carries an informal claim (no team.mjs lease) — VERIFY before taking it: "${c.why}"`;
@@ -1185,7 +1197,7 @@ cmds.stats = () => {
 };
 
 // ── the per-bug record ────────────────────────────────────────────────────
-// One markdown file per bug, at `.claude/campaign/bugs/B###.md`. This is the
+// One markdown file per bug, at `<register>/bugs/B###.md`. This is the
 // Jira-card equivalent and it is deliberately a FILE, not a row:
 //   * an agent tackling B129 reads ~1 KB, not a 200-row catalogue or a 614 KB
 //     HTML — the single biggest token lever in the whole loop;
@@ -1520,9 +1532,12 @@ cmds.expand = () => {
 //
 // Branch scope is intentional: `git log` walks this worktree's HEAD, which is
 // the branch whose records are being written.
+//
+// It is anchored on REPO_ROOT, never on the register or the cwd: the register may live outside
+// this tree (B1-c) and BUGS_ROOT is only a fixture seam, so neither may decide where machine-local
+// state is written. A fixture that runs `sync` sets BUGS_SYNC_STATE itself.
 const SYNC_STATE = () =>
-  process.env.BUGS_SYNC_STATE ||
-  (process.env.BUGS_ROOT ? join(rootDir(), "sync-state.json") : ".campaign/bugs-sync-state.json");
+  process.env.BUGS_SYNC_STATE || join(REPO_ROOT, ".campaign", "bugs-sync-state.json");
 const FIRST_RUN_WINDOW = 400;
 
 const git = (cmd) =>
@@ -2468,7 +2483,7 @@ cmds.brief = (args) => {
       const m = new RegExp(`## ${s}\\n\\n([\\s\\S]*?)(?=\\n## |$)`).exec(rec.body);
       if (m) out.push(`\n**${s}**\n\n${m[1].trim()}`);
     }
-    out.push(`\nFull record: \`.claude/campaign/bugs/${id}.md\``);
+    out.push(`\nFull record: \`${shownRoot()}/bugs/${id}.md\``);
   }
 
   out.push(`\n## When you finish`);
@@ -3290,11 +3305,10 @@ const runCli = (argv, root, cwd, extraEnv) => {
         env: { ...process.env, BUGS_ROOT: root, BUGS_SELF_TEST: "1", ...extraEnv },
         stdio: ["ignore", "pipe", "pipe"],
         // A real-tree run (`root` undefined — T13b, the pre-push guard) must
-        // not depend on the INVOKER's cwd: `rootDir()` resolves `.claude/campaign`
-        // relative to `process.cwd()`, so a caller running from any other
-        // directory (`apps/api`, say) silently sees an empty catalogue and
-        // `--check` reports clean having examined zero real records. A fixture
-        // run (`root` given) keeps the inherited cwd — irrelevant there since
+        // depend on the INVOKER's cwd. (`registryRoot()` is anchored on the repo
+        // root now, so the cwd no longer decides which register is read; it is
+        // pinned here anyway for the other cwd-relative paths.) A fixture run
+        // (`root` given) keeps the inherited cwd — irrelevant there since
         // BUGS_ROOT already points every path helper at the tmp fixture.
         ...(root === undefined ? { cwd: REPO_ROOT } : cwd ? { cwd } : {}),
       }),
@@ -3393,6 +3407,13 @@ cmds["self-test"] = () => {
   // Deliberately not restored: `self-test` is a terminal command.
   const cleanGit = scrubbedGitEnv();
   for (const k of Object.keys(process.env)) if (!(k in cleanGit)) delete process.env[k];
+  // The sync anchor now lives under the repo root (`.campaign/`), not in BUGS_ROOT, so a fixture
+  // that syncs with only BUGS_ROOT set would write the REAL anchor. Point it at a throwaway.
+  if (!process.env.BUGS_SYNC_STATE)
+    process.env.BUGS_SYNC_STATE = join(
+      mkdtempSync(join(tmpdir(), "bugs-selftest-sync-")),
+      "sync-state.json",
+    );
 
   let failures = 0;
   const check = (name, got, want) => {
@@ -4874,7 +4895,11 @@ cmds["self-test"] = () => {
   {
     const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
     const prevRoot = process.env.BUGS_ROOT;
+    const prevAnchor = process.env.BUGS_SYNC_STATE;
     process.env.BUGS_ROOT = tmp;
+    writeFileSync(join(tmp, "bugs.jsonl"), ""); // a register exists once it has a ledger file
+    // The anchor is no longer inside BUGS_ROOT; keep it beside the fixture register.
+    process.env.BUGS_SYNC_STATE = join(tmp, "sync-state.json");
     try {
       // First run: no anchor exists yet — the "not re-derived" note.
       const first = runCli(["sync", "--quiet"], tmp);
@@ -4900,6 +4925,8 @@ cmds["self-test"] = () => {
     } finally {
       if (prevRoot === undefined) delete process.env.BUGS_ROOT;
       else process.env.BUGS_ROOT = prevRoot;
+      if (prevAnchor === undefined) delete process.env.BUGS_SYNC_STATE;
+      else process.env.BUGS_SYNC_STATE = prevAnchor;
       rmSync(tmp, { recursive: true, force: true });
     }
   }
@@ -5605,8 +5632,10 @@ cmds["self-test"] = () => {
     const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
     const prevRoot = process.env.BUGS_ROOT;
     process.env.BUGS_ROOT = tmp;
-    const relPlanPath = ".claude/campaign/self-test-buildplan/plan.md";
-    const planDir = join(REPO_ROOT, ".claude", "campaign", "self-test-buildplan");
+    // `.campaign/` is the gitignored, machine-local scratch dir: a fixture never writes into the
+    // register tree (B428), which a crash would otherwise leave dirty in a tracked directory.
+    const relPlanPath = ".campaign/self-test-buildplan/plan.md";
+    const planDir = join(REPO_ROOT, ".campaign", "self-test-buildplan");
     const planPath = join(REPO_ROOT, ...relPlanPath.split("/"));
     mkdirSync(planDir, { recursive: true });
     try {
@@ -5726,10 +5755,10 @@ cmds["self-test"] = () => {
     const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
     const prevRoot = process.env.BUGS_ROOT;
     process.env.BUGS_ROOT = tmp;
-    const junctionDir = join(REPO_ROOT, ".claude", "campaign", "self-test-junction");
+    const junctionDir = join(REPO_ROOT, ".campaign", "self-test-junction");
     const outsideDir = mkdtempSync(join(tmpdir(), "bugs-self-test-outside-"));
     const junctionPath = join(junctionDir, "link");
-    const relJunctionPlan = ".claude/campaign/self-test-junction/link/plan.md";
+    const relJunctionPlan = ".campaign/self-test-junction/link/plan.md";
     try {
       mkdirSync(junctionDir, { recursive: true });
       writeFileSync(
@@ -6718,7 +6747,7 @@ cmds["self-test"] = () => {
   }
 
   // Lock directories are NOT gitignored by accident — the shards and the
-  // catalogue they guard live in the TRACKED .claude/campaign/ tree, so
+  // catalogue they guard live in the TRACKED register tree (registrySource().prefix), so
   // without an explicit rule a lockdir left behind by a crash (or committed
   // by an agent that ran `git add -A`) lands in a commit. Checked against the
   // REAL repo root, not a throwaway BUGS_ROOT — .gitignore rules are read
@@ -6739,12 +6768,12 @@ cmds["self-test"] = () => {
     };
     check(
       "gitignore: a shard lockdir is ignored",
-      checkIgnore(".claude/campaign/status/F01.jsonl.lock/owner.json"),
+      checkIgnore(`${registrySource().prefix}/status/F01.jsonl.lock/owner.json`),
       true,
     );
     check(
       "gitignore: the catalogue lockdir is ignored",
-      checkIgnore(".claude/campaign/bugs.jsonl.lock/owner.json"),
+      checkIgnore(`${registrySource().prefix}/bugs.jsonl.lock/owner.json`),
       true,
     );
   }
@@ -9299,7 +9328,7 @@ code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;ba
 .hide{display:none!important}
 </style></head><body><div class="wrap">
 <h1>RouteFlow bug registry</h1>
-<p class="sub">Generated from <code>.claude/campaign/bugs/</code> — a derived view. Edit the records, not this file.</p>
+<p class="sub">Generated from <code>${esc(shownRoot())}/bugs/</code> — a derived view. Edit the records, not this file.</p>
 <div class="stats">
 <div class="stat"><b>${rows.length}</b><span>bugs</span></div>
 <div class="stat"><b>${open}</b><span>open</span></div>
@@ -9346,6 +9375,20 @@ function apply(){
 const [, , cmd, ...rest] = process.argv;
 if (!cmd || !cmds[cmd])
   fail(`unknown command '${cmd ?? ""}' — try: ${Object.keys(cmds).join(", ")}`);
+// Fail closed: a missing register is never "0 rows". `self-test` builds its own fixtures.
+if (cmd !== "self-test") {
+  try {
+    // The creators (file, import) may start from an EMPTY existing directory (a fixture); every
+    // other command needs the register itself (bugs.jsonl), so an empty dir is never "0 rows".
+    if (cmd === "file" || cmd === "import") {
+      const dir = registryRoot({ allowMissing: true });
+      if (!existsSync(dir)) throw new Error(registryMissingMessage(dir));
+    } else registryRoot();
+  } catch (e) {
+    console.error(`bugs: ${e.message}`);
+    process.exit(2);
+  }
+}
 // An exception `fail()` did not anticipate (an IO error, a malformed shard a
 // command forgot to guard) used to surface as a raw Node stack trace — this
 // is a CLI a hook shells out to, and that reads as a crash rather than the

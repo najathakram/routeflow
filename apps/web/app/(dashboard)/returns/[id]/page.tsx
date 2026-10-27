@@ -112,8 +112,11 @@ function ResolveReturnModal({
   refundEstimate,
   refundEstimateReason,
   tenderRequired = false,
+  walkIn = false,
 }: {
   isOpen: boolean;
+  /** W-913: a walk-in return is refunded at the till; store credit is not offered (the server refuses it). */
+  walkIn?: boolean;
   /** SA-740r2: a COUNTER order's recorded refund must say how it was paid (the cash cap treats none as cash). */
   tenderRequired?: boolean;
   onClose: () => void;
@@ -122,16 +125,17 @@ function ResolveReturnModal({
   refundEstimate?: number | null;
   refundEstimateReason?: string | null;
 }) {
-  const [method, setMethod] = React.useState<RefundMethod>("CREDIT_NOTE");
+  const defaultMethod: RefundMethod = walkIn ? "EXTERNAL_REFUND" : "CREDIT_NOTE";
+  const [method, setMethod] = React.useState<RefundMethod>(defaultMethod);
   // SA-740r2: optional ("" = not recorded). Only meaningful for the refund option; reset whenever the modal opens.
   const [tender, setTender] = React.useState<InlineRefundTender | "">("");
 
   React.useEffect(() => {
     if (isOpen) {
-      setMethod("CREDIT_NOTE");
+      setMethod(defaultMethod);
       setTender("");
     }
-  }, [isOpen]);
+  }, [isOpen, defaultMethod]);
 
   const amountLabel = fmtMoney(refundEstimate);
   // The server reports 0 WITH a reason when the basis is not creditable (nothing
@@ -165,23 +169,25 @@ function ResolveReturnModal({
     >
       <div className="space-y-3">
         {estimateReasonLabel && <p className="text-xs text-navy/70">{estimateReasonLabel}</p>}
-        <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-surface-border p-3 hover:bg-surface-raised">
-          <input
-            type="radio"
-            name="resolve-method"
-            checked={method === "CREDIT_NOTE"}
-            onChange={() => setMethod("CREDIT_NOTE")}
-            className="mt-0.5 accent-brand-500"
-          />
-          <span>
-            <span className="block text-sm font-medium text-navy">
-              Issue store credit (credit note)
+        {!walkIn && (
+          <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-surface-border p-3 hover:bg-surface-raised">
+            <input
+              type="radio"
+              name="resolve-method"
+              checked={method === "CREDIT_NOTE"}
+              onChange={() => setMethod("CREDIT_NOTE")}
+              className="mt-0.5 accent-brand-500"
+            />
+            <span>
+              <span className="block text-sm font-medium text-navy">
+                Issue store credit (credit note)
+              </span>
+              <span className="block text-xs text-navy/70">
+                Mints a {amountLabel} credit note for the customer, linked to this return.
+              </span>
             </span>
-            <span className="block text-xs text-navy/70">
-              Mints a {amountLabel} credit note for the customer, linked to this return.
-            </span>
-          </span>
-        </label>
+          </label>
+        )}
         <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-surface-border p-3 hover:bg-surface-raised">
           <input
             type="radio"
@@ -841,6 +847,7 @@ export default function ReturnDetailPage() {
         refundEstimate={ret.refundEstimate}
         refundEstimateReason={ret.refundEstimateReason}
         tenderRequired={ret.order?.counterSale === true}
+        walkIn={ret.customer?.isWalkIn === true}
       />
 
       <ConfirmActionModal

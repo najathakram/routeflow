@@ -28,6 +28,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
+import { registrySource } from "../lib/registry-root.mjs";
 import { appendRun, gitEnv, loadKnobs, repoRoot, runsPath } from "./plane-client.mjs";
 import { currentBranch } from "./plane-sync.mjs";
 
@@ -246,7 +247,7 @@ function commitsTouchingStatus(days, now, root) {
   const ref = refExists(root, "origin/master") ? "origin/master" : "HEAD";
   const res = spawnSync(
     "git",
-    ["log", ref, `--since=${since}`, "--format=%H|%cI", "--", ".claude/campaign/status"],
+    ["log", ref, `--since=${since}`, "--format=%H|%cI", "--", `${registrySource().prefix}/status`],
     { cwd: root, env: gitEnv(), encoding: "utf8" },
   );
   if (!res || res.status !== 0 || !res.stdout) return [];

@@ -338,3 +338,24 @@ describe("BuyerOrderDetailPage — composed line sub-lines (#2717 M3)", () => {
     expect(src).not.toMatch(/componentSubLineText/);
   });
 });
+
+describe("BuyerOrderDetailPage — edit mode controls are 44px tap targets below lg (W-961)", () => {
+  const BELOW_LG = /max-lg:(h|min-h)-(11|\[44px\])/;
+
+  it("qty -/+, the qty input, Cancel and Save carry a 44px height and width below lg", () => {
+    mockOrder = order([LISTED]);
+    renderWithProviders(<BuyerOrderDetailPage />);
+    fireEvent.click(screen.getByRole("button", { name: /edit items/i }));
+    const qty = screen.getByRole("spinbutton");
+    const stepper = qty.parentElement as HTMLElement;
+    const [minus, plus] = Array.from(stepper.querySelectorAll("button"));
+    const cls = (el: Element) => el.getAttribute("class") ?? "";
+    for (const el of [minus, plus]) {
+      expect(cls(el)).toMatch(BELOW_LG);
+      expect(cls(el)).toMatch(/max-lg:(min-w|w)-(11|\[44px\])/);
+    }
+    expect(cls(qty)).toMatch(BELOW_LG);
+    expect(cls(screen.getByRole("button", { name: /^cancel$/i }))).toMatch(BELOW_LG);
+    expect(cls(screen.getByRole("button", { name: /save changes/i }))).toMatch(BELOW_LG);
+  });
+});
