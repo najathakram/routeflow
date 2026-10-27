@@ -356,6 +356,10 @@ export function planLocalCi({ mergeSha, dir, from, lockdeps, installStale, dbLan
   for (const s of wt) {
     if (s.cmd[0] === "git" && s.cmd[1] === "fetch") continue; // main() fetches the PR refs itself
     if (s.cmd[0] === "npx" && s.cmd[1] === "prisma") continue; // re-added below in ci.yml order
+    // B642 (#3880): planWorktree now installs hooks itself; local-ci re-adds the `husky` step below, and
+    // verify runs check-git-hooks, so neither may be mistaken for the packages build (retarget + heavy).
+    if (s.cmd[0] === "npx" && s.cmd[1] === "husky") continue;
+    if (s.cmd[0] === "node" && String(s.cmd[1]).endsWith("check-git-hooks.mjs")) continue;
     if (s.cmd[0] === "npx") {
       // the packages build comes after the clone has been retargeted into the worktree
       plan.push({
