@@ -32,13 +32,12 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { registryRoot } from "./lib/registry-root.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, "..");
 
 const GH_REPO = "najathakram/routeflow";
-// The bug register moves later; keep its path in this one constant (relative to the repo root).
-const BUG_REGISTER_PATH = ".claude/campaign/bugs.jsonl";
 const RISK_PATHS_MODULE = path.join("scripts", "lib", "risk-paths.mjs");
 const WATCHDOG_LOG = path.join("local-assets", "visibility-watchdog.log");
 const DEADMAN_LOG = path.join("local-assets", "visibility-deadman.log");
@@ -324,7 +323,11 @@ function classOfPr(fixture, n, { classify, order }) {
 }
 
 async function escapes({ fixture, sinceMs, nowMs }) {
-  const text = readOptional(fixture, "bugs.jsonl", path.join(REPO_ROOT, BUG_REGISTER_PATH));
+  const text = readOptional(
+    fixture,
+    "bugs.jsonl",
+    path.join(registryRoot({ allowMissing: true }), "bugs.jsonl"),
+  );
   if (text === null) return { instrumented: false, reason: "bug register not found" };
   const rows = [];
   for (const line of text.split("\n")) {
