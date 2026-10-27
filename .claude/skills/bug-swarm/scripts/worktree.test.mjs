@@ -138,7 +138,9 @@ function tmpTree({ hooks }) {
   cpSync(path.join(repoRoot, "scripts/lib"), path.join(dir, "scripts/lib"), { recursive: true });
   if (hooks) {
     mkdirSync(path.join(dir, ".husky/_"), { recursive: true });
-    writeFileSync(path.join(dir, ".husky/_/pre-push"), "#!/bin/sh\n");
+    const hook = path.join(dir, ".husky/_/pre-push");
+    writeFileSync(hook, "#!/bin/sh\n");
+    chmodSync(hook, 0o755); // git skips a non-executable hook on POSIX
   }
   return dir;
 }
