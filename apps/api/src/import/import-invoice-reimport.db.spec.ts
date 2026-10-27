@@ -25,6 +25,7 @@ import { CustomersService } from "../customers/customers.service";
 import { NumberingService } from "./numbering.service";
 import { ExternalRefService } from "./external-ref.service";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
+import { waitUntilBlockedBy } from "../common/testing/blocked-wait";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -242,14 +243,7 @@ describeDb(
           await t2.query(`SELECT id FROM "Invoice" WHERE id = $1 FOR UPDATE`, [inv.id]);
           const pid = (await t2.query("SELECT pg_backend_pid() AS pid")).rows[0].pid;
           const t1 = importInvoices(tenantId, numberedCsv(number));
-          for (let i = 0; i < 800 && !sawBlocked; i++) {
-            const q = await t2.query(
-              `SELECT count(*)::int n FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))`,
-              [pid],
-            );
-            sawBlocked = q.rows[0].n > 0;
-            if (!sawBlocked) await new Promise((x) => setTimeout(x, 25));
-          }
+          sawBlocked = await waitUntilBlockedBy(t2, pid, { timeoutMs: 20_000 });
           await t2.query(
             `UPDATE "Invoice" SET status = 'VOID', "updatedAt" = now() WHERE id = $1`,
             [inv.id],
@@ -337,14 +331,7 @@ describeDb(
           const pid = (await t2.query("SELECT pg_backend_pid() AS pid")).rows[0].pid;
           // The re-import pre-reads the prior (SENT) through its ref, then blocks on the row lock.
           const t1 = importInvoices(tenantId, numberlessCsv(ref, "0", "Paid"));
-          for (let i = 0; i < 800 && !sawBlocked; i++) {
-            const q = await t2.query(
-              `SELECT count(*)::int n FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))`,
-              [pid],
-            );
-            sawBlocked = q.rows[0].n > 0;
-            if (!sawBlocked) await new Promise((x) => setTimeout(x, 25));
-          }
+          sawBlocked = await waitUntilBlockedBy(t2, pid, { timeoutMs: 20_000 });
           await t2.query(
             `UPDATE "Invoice" SET status = 'VOID', "updatedAt" = now() WHERE id = $1`,
             [inv.id],
