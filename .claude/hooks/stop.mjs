@@ -46,6 +46,11 @@ import { execSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { registrySource } from "../../scripts/lib/registry-root.mjs";
+
+// The register location comes from the one contract module (path reads only; the Gate 4/5
+// rework that follows the register out of the tree is a separate change).
+const REGISTER = registrySource().prefix;
 
 // Invoke prettier directly via node — this repo's root has no node_modules/.bin
 // shim, so `npx prettier` fails on Windows. Fall back to npx where the shim exists.
@@ -238,7 +243,7 @@ if (hasLessons && !changed.some(isLesson) && !bookkeepingDeferred) {
 }
 
 // ── Gate 4: bug-registry sync (reports, never blocks) ─────────────────────
-// The registry at `.claude/campaign/bugs/B###.md` must not depend on anyone
+// The register's `bugs/B###.md` records must not depend on anyone
 // REMEMBERING to update it — that is exactly how the board drifted three stale
 // cards and the ledger kept thirteen `proven` rows past their deploy. So this
 // does not gate the turn; it runs the derivation. `sync` reads the two sources
@@ -256,7 +261,7 @@ if (hasLessons && !changed.some(isLesson) && !bookkeepingDeferred) {
 // tree every other session's commits are already visible in.
 if (
   isMainCheckoutOnMaster() &&
-  existsSync(".claude/campaign/bugs") &&
+  existsSync(`${REGISTER}/bugs`) &&
   existsSync("scripts/campaign/bugs.mjs")
 ) {
   // spawnSync, not sh()/execSync: execSync's return value on a SUCCESSFUL
@@ -273,7 +278,7 @@ if (
   const recorded = /recorded (\d+) new event/.exec(out);
   if (code === 0 && recorded && Number(recorded[1]) > 0) {
     process.stderr.write(
-      `Bug registry: recorded ${recorded[1]} new event(s) into .claude/campaign/bugs/ — ` +
+      `Bug registry: recorded ${recorded[1]} new event(s) into ${REGISTER}/bugs/ — ` +
         `commit them alongside your change.\n`,
     );
   } else if (code !== 0) {
@@ -296,14 +301,14 @@ if (
 // Never gates the turn: any outcome (skip / success / failure / crash) below
 // still falls through to the unconditional `process.exit(0)` at the end of
 // this file.
-if (existsSync("scripts/campaign/plane-sync.mjs") && existsSync(".claude/campaign/bugs.jsonl")) {
+if (existsSync("scripts/campaign/plane-sync.mjs") && existsSync(`${REGISTER}/bugs.jsonl`)) {
   // `|| ""` (Gate 4's precedent, :212): spawnSync returns stdout === null when
   // the child never starts (git missing from PATH, EACCES, EINVAL), and
   // `null.trim()` would throw a raw stack out of a gate whose whole contract is
   // that it never fails a turn.
   const dirty =
     (
-      spawnSync("git", ["status", "--porcelain", "--", ".claude/campaign"], {
+      spawnSync("git", ["status", "--porcelain", "--", REGISTER], {
         encoding: "utf8",
       }).stdout || ""
     ).trim() !== "";
@@ -356,7 +361,7 @@ if (existsSync("scripts/campaign/plane-sync.mjs") && existsSync(".claude/campaig
 // ── Gate 5 continued — usage guard (R6, 2026-09-12-plane-learning). Report-only,
 // master/main only: prints the age of the newest `plane-sync` run recorded in
 // `runs.jsonl`, and warns when a landing (a commit touching
-// `.claude/campaign/status`) is newer than that sync — or no sync run exists at
+// the register's `status/`) is newer than that sync — or no sync run exists at
 // all. Never blocks: wrapped end-to-end in try/catch, and still falls through
 // to the unconditional `process.exit(0)` below on any outcome.
 try {
@@ -385,7 +390,7 @@ try {
       }
       const statusLog = spawnSync(
         "git",
-        ["log", "-1", "--format=%H %cI", "--", ".claude/campaign/status"],
+        ["log", "-1", "--format=%H %cI", "--", `${REGISTER}/status`],
         { encoding: "utf8", env: gitEnv() },
       );
       const statusLine = (statusLog.stdout || "").trim();
