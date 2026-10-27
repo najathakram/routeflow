@@ -24,7 +24,7 @@ const warning: RestrictionWarningError = {
           id: "r1",
           states: ["CA"],
           legal: true,
-          reasonText: "This product is banned in CA by law.",
+          reasonText: "Restricted in CA: State ban.",
         },
       ],
     },
@@ -66,13 +66,13 @@ describe("RestrictionWarningDialog (warning)", () => {
     expect(screen.getByText("Acme Gummies")).toBeInTheDocument();
     expect(screen.getByText("Acme Vape")).toBeInTheDocument();
     expect(screen.getByText("Acme Tonic")).toBeInTheDocument();
-    expect(screen.getByText("This product is banned in CA by law.")).toBeInTheDocument();
+    expect(screen.getByText("Restricted in CA: State ban.")).toBeInTheDocument();
     expect(screen.getByText("Limited in CA.")).toBeInTheDocument();
   });
 
-  it("marks only a legal rule with the Legal ban badge", () => {
+  it("has no Legal ban badge: every line is already a restriction", () => {
     setup();
-    expect(screen.getAllByText("Legal ban")).toHaveLength(1);
+    expect(screen.queryByText("Legal ban")).toBeNull();
   });
 
   it("explains an indeterminate line without a raw code", () => {
@@ -154,12 +154,12 @@ describe("RestrictionWarningDialog (warning)", () => {
     expect(x.querySelector("svg")?.getAttribute("class")).toContain("h-4");
   });
 
-  it("two rules with identical wording show ONE line (and one Legal ban badge); the ack still covers the line", async () => {
+  it("two rules with identical wording show ONE line (and no badge); the ack still covers the line", async () => {
     const twin = (id: string) => ({
       id,
       states: ["CA"],
       legal: true,
-      reasonText: "This product is banned in CA by law.",
+      reasonText: "Restricted in CA: State ban.",
     });
     const user = userEvent.setup();
     const { onConfirm } = setup({
@@ -171,8 +171,8 @@ describe("RestrictionWarningDialog (warning)", () => {
         },
       },
     });
-    expect(screen.getAllByText("This product is banned in CA by law.")).toHaveLength(1);
-    expect(screen.getAllByText("Legal ban")).toHaveLength(1);
+    expect(screen.getAllByText("Restricted in CA: State ban.")).toHaveLength(1);
+    expect(screen.queryByText("Legal ban")).toBeNull();
     await user.type(screen.getByLabelText(/reason/i), "Owner approved it");
     await user.click(screen.getByRole("button", { name: "Sell anyway" }));
     expect(onConfirm).toHaveBeenCalledWith(
@@ -186,19 +186,19 @@ describe("RestrictionWarningDialog (warning)", () => {
 
   it("rules for [CA] and [CA, NV] both read 'banned in CA': ONE line and one badge, in the dialog and in the driver block", () => {
     const rules = [
-      { id: "r1", states: ["CA"], legal: true, reasonText: "This product is banned in CA by law." },
+      { id: "r1", states: ["CA"], legal: true, reasonText: "Restricted in CA: State ban." },
       {
         id: "r2",
         states: ["CA", "NV"],
         legal: true,
-        reasonText: "This product is banned in CA by law.",
+        reasonText: "Restricted in CA: State ban.",
       },
     ];
     const { unmount } = setup({
       view: { kind: "warning", warning: { ...warning, lines: [{ ...warning.lines[0], rules }] } },
     });
-    expect(screen.getAllByText("This product is banned in CA by law.")).toHaveLength(1);
-    expect(screen.getAllByText("Legal ban")).toHaveLength(1);
+    expect(screen.getAllByText("Restricted in CA: State ban.")).toHaveLength(1);
+    expect(screen.queryByText("Legal ban")).toBeNull();
     unmount();
     setup({
       view: {
@@ -208,8 +208,8 @@ describe("RestrictionWarningDialog (warning)", () => {
         ruleLines: [{ ...warning.lines[0], rules }],
       },
     });
-    expect(screen.getAllByText("This product is banned in CA by law.")).toHaveLength(1);
-    expect(screen.getAllByText("Legal ban")).toHaveLength(1);
+    expect(screen.getAllByText("Restricted in CA: State ban.")).toHaveLength(1);
+    expect(screen.queryByText("Legal ban")).toBeNull();
   });
 
   it("the driver block dedupes identically worded rules too", () => {
@@ -217,7 +217,7 @@ describe("RestrictionWarningDialog (warning)", () => {
       id,
       states: ["CA"],
       legal: true,
-      reasonText: "This product is banned in CA by law.",
+      reasonText: "Restricted in CA: State ban.",
     });
     setup({
       view: {
@@ -227,8 +227,8 @@ describe("RestrictionWarningDialog (warning)", () => {
         ruleLines: [{ ...warning.lines[0], rules: [twin("r1"), twin("r2")] }],
       },
     });
-    expect(screen.getAllByText("This product is banned in CA by law.")).toHaveLength(1);
-    expect(screen.getAllByText("Legal ban")).toHaveLength(1);
+    expect(screen.getAllByText("Restricted in CA: State ban.")).toHaveLength(1);
+    expect(screen.queryByText("Legal ban")).toBeNull();
   });
 
   it("Go back and Sell anyway are 44px tall below md (max-md:min-h-11), the owner's touch-target rule", () => {
@@ -308,15 +308,15 @@ describe("RestrictionWarningDialog (driver hard block)", () => {
                 id: "r1",
                 states: ["CA"],
                 legal: true,
-                reasonText: "This product is banned in CA by law.",
+                reasonText: "Restricted in CA: State ban.",
               },
             ],
           },
         ],
       },
     });
-    expect(screen.getByText("This product is banned in CA by law.")).toBeInTheDocument();
-    expect(screen.getByText("Legal ban")).toBeInTheDocument();
+    expect(screen.getByText("Restricted in CA: State ban.")).toBeInTheDocument();
+    expect(screen.queryByText("Legal ban")).toBeNull();
     expect(screen.queryByText("Restricted in CA")).toBeNull();
   });
 });

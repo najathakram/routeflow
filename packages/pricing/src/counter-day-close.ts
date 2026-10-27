@@ -242,8 +242,8 @@ export function dayCloseZSections(s: ZReportInput): ZSections {
           { label: "Expected cash", amount: s.expectedCash, bold: true },
           { label: "Counted", amount: s.countedCash },
           { label: "Variance", amount: variance, signed: true },
-          // money on a counter sale that the till did not take (an office payment, a pickup still unpaid): part of the drawer's story
-          { label: "Unpaid pickups", amount: t.notAtTill },
+          // money on a counter sale that the till did not take (an office or driver payment, an ACH, a deposited check): part of the drawer's story
+          { label: "Paid outside the till", amount: t.notAtTill },
         ],
       },
       {

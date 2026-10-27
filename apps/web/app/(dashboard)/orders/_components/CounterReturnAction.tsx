@@ -15,7 +15,12 @@ import {
   RecordInlineReturnDialog,
   type RecordedInfo,
 } from "@/app/(dashboard)/returns/_components/RecordInlineReturnDialog";
-import { handBackLine, REFUND_COPY } from "@/app/(dashboard)/returns/_components/refund-copy";
+import {
+  handOverLine,
+  REFUND_COPY,
+  refundedLine,
+  storeCreditAddedLine,
+} from "@/app/(dashboard)/returns/_components/refund-copy";
 import { orderActionAccess } from "../[id]/order-action-access";
 
 function money(n: number): string {
@@ -23,12 +28,23 @@ function money(n: number): string {
 }
 
 /** Store credit stays on the account: this line must never tell the clerk to hand money back
- *  (that would give the value twice). Only the refund path says "Hand $X back". */
+ *  (that would give the value twice). Only the refund path says to hand it back. (A walk-in return is never
+ *  store credit: the dialog refuses it, SA-959.) */
 function storeCreditLine(amount: number | undefined, customer: string | null | undefined): string {
-  const who = customer?.trim() || "the customer's account";
+  const who = customer?.trim() || "the customer";
   return amount !== undefined
-    ? `Return recorded. Store credit of ${money(amount)} added to ${who}.`
-    : `Return recorded. Store credit added to ${who}.`;
+    ? `Return recorded. ${storeCreditAddedLine(money(amount)).replace(/\.$/, "")} for ${who}.`
+    : `Return recorded. Store credit given for ${who}.`;
+}
+
+/** SA-929: the words come from what the server recorded (RecordedInfo is read off its answer). */
+function recordedLine(recorded: RecordedInfo, customer: string | null | undefined): string {
+  if (recorded.pending) return REFUND_COPY.pendingReceipt;
+  if (recorded.resolution === "REFUND" && recorded.amount !== undefined) {
+    const hand = recorded.tender ? ` ${handOverLine(recorded.tender)}` : "";
+    return `Return recorded. ${refundedLine(recorded.tender, money(recorded.amount))}${hand}`;
+  }
+  return storeCreditLine(recorded.amount, customer);
 }
 
 export function CounterReturnAction({
@@ -44,8 +60,22 @@ export function CounterReturnAction({
   onDone?: () => void;
 }) {
   const [open, setOpen] = React.useState(false);
+  // the line lands at the foot of a scrolling sheet: bring it into view so the confirmation is never below the fold
+  const statusRef = React.useRef<HTMLParagraphElement>(null);
   const buttonRef = React.useRef<HTMLButtonElement>(null);
   const [recorded, setRecorded] = React.useState<RecordedInfo | null>(null);
+  React.useEffect(() => {
+    if (recorded) statusRef.current?.scrollIntoView?.({ block: "nearest" });
+  }, [recorded]);
+  // the sheet re-lays out when the return dialog closes (its list refetches), which can push the line's second row
+  // below the fold again: scroll once more, after that layout, to the foot of the sheet
+  React.useEffect(() => {
+    if (!recorded || open) return;
+    const frame = requestAnimationFrame(() =>
+      statusRef.current?.scrollIntoView?.({ block: "end" }),
+    );
+    return () => cancelAnimationFrame(frame);
+  }, [recorded, open]);
   const hasInlineReturns = useHasAddon(ORDERS_INLINE_RETURNS_ADDON);
   const role = useOptionalAuth()?.user?.role;
   const staff = orderActionAccess(role, "", false).staff;
@@ -98,12 +128,12 @@ export function CounterReturnAction({
         }}
       />
       {recorded ? (
-        <p role="status" className="order-last basis-full text-sm font-medium text-navy">
-          {recorded.pending
-            ? REFUND_COPY.pendingReceipt
-            : recorded.resolution === "REFUND" && recorded.tender && recorded.amount !== undefined
-              ? `Return recorded. ${handBackLine(recorded.tender, money(recorded.amount))}`
-              : storeCreditLine(recorded.amount, order.customer?.businessName)}
+        <p
+          ref={statusRef}
+          role="status"
+          className="order-last basis-full text-sm font-medium text-navy"
+        >
+          {recordedLine(recorded, order.customer?.businessName)}
         </p>
       ) : null}
     </>

@@ -1,4 +1,5 @@
 import { BadRequestException, Inject, Injectable, Logger, NotFoundException } from "@nestjs/common";
+import { sellerDisplayName } from "../common/seller-display-name";
 import { BuyerPaymentRequestStatus, InvoiceStatus, Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { InvoicesService } from "../invoices/invoices.service";
@@ -312,7 +313,7 @@ export class PaymentRequestsService {
 
     const webUrl = (process.env.WEB_URL ?? "https://www.routeflow.info").replace(/\/$/, "");
     const backTo = `${webUrl}/buyer/portal/${params.tenantSlug}/payments`;
-    const sellerName = config?.businessName ?? tenant?.name ?? "your seller";
+    const sellerName = sellerDisplayName(config, tenant, "your seller");
 
     let checkout: HostedCheckoutSession;
     try {

@@ -27,7 +27,7 @@ const EXPECTED_NAMES = [
   "billing-cron.warnTrialsEnding",
   "billing-invoice.issueDue",
   "billing-invoice.remind",
-  "billing.suspendOverdueTenants",
+  "billing.reconcileCanceledSubscriptions",
   "billing.reconcileParkedCheckouts",
   "billing.catchupSweep",
   "billing.dunningSweep",
