@@ -5,7 +5,7 @@ import Link from "next/link";
 import { ChevronRight, Search as SearchIcon } from "lucide-react";
 import { Button, Card, Input, cn } from "@routeflow/ui/web";
 import { BusinessCard } from "./BusinessCard";
-import { CHIPS, GROUP_META, GROUP_TITLES, ROW_ICONS, type GroupMeta } from "./settings-groups";
+import { CHIPS, GROUP_META, ROW_ICONS, entryCrumb, type GroupMeta } from "./settings-groups";
 import {
   listGroup,
   normalize,
@@ -147,7 +147,7 @@ function ResultRow({
         </span>
       )}
       <span className="block text-[13px] leading-[18px] text-[var(--ink-500)]">
-        {`${GROUP_TITLES[entry.groupKey]} › ${entry.page ?? entry.label}`}
+        {entryCrumb(entry)}
       </span>
     </span>
   );
@@ -164,7 +164,17 @@ function ResultRow({
           <ChevronRight aria-hidden="true" className="h-4 w-4 flex-none text-[var(--ink-400)]" />
         </Link>
       ) : (
-        <div className={cls}>{body}</div>
+        <div className={cls}>
+          {body}
+          {entry.go ? (
+            <Link
+              href={entry.go.href}
+              className="flex min-h-11 flex-none items-center rounded-md px-2 text-[13px] font-medium text-[var(--accent-strong)] underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            >
+              {entry.go.label}
+            </Link>
+          ) : null}
+        </div>
       )}
     </li>
   );

@@ -4,6 +4,7 @@ import {
   baseLabelOf,
   getTierPrice,
   namesPack,
+  packFromOwnSplit,
   priceInUnit,
   pricePerBaseUnit,
   roundMoney,
@@ -637,6 +638,8 @@ export class CustomerPriceHistoryService {
         issueDate: true,
         items: {
           where: { productId: { in: ids } },
+          // Row 607: a fixed order (newest line first), so the chip's "newest sale" never depends on row order.
+          orderBy: [{ createdAt: "desc" }, { id: "desc" }],
           select: {
             id: true,
             productId: true,
@@ -669,9 +672,14 @@ export class CustomerPriceHistoryService {
         const e = out[it.productId];
         if (!e) continue;
         const packNow = it.product?.unitsPerBox == null ? null : Number(it.product.unitsPerBox);
+        // Row 607: a pre-snapshot split line carries no `unitsPerBox` but its own boxes/qty give the pack back.
+        const recovered =
+          it.unitsPerBox == null && (it.boxes != null || it.pieces != null)
+            ? packFromOwnSplit({ qty: Number(it.qty), boxes: it.boxes, pieces: it.pieces })
+            : null;
         const c = buildCandidate(
           { productPackNow: packNow, unitName: (it.product?.unit ?? "").trim() },
-          it,
+          recovered != null ? { ...it, unitsPerBox: recovered } : it,
           Number(it.qty),
           true,
           {
@@ -684,6 +692,9 @@ export class CustomerPriceHistoryService {
             orderNumber: "",
           },
         );
+        // Row 607: a line whose unit cannot be known (an unsplit legacy box line) is no chip price: its total would
+        // read as a per-piece price.
+        if (c.pack == null) continue;
         sold.get(it.productId)!.push({
           key: `${unitNameKey(c.row.unitLabel)}|${c.row.unitsPerBox ?? ""}`,
           price: c.row.unitPrice,

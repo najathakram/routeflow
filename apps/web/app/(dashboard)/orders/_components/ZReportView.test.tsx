@@ -120,7 +120,7 @@ describe("ZReportView", () => {
     expect(row("Expected cash")).toHaveTextContent("$285.00");
     expect(row("Counted")).toHaveTextContent("$282.50");
     expect(row("Variance")).toHaveTextContent("−$2.50");
-    // the unpaid pickups are a Drawer row, never an orphan line under the report
+    // paid outside the till is a Drawer row, never an orphan line under the report
     expect(row("Paid outside the till")).toHaveTextContent("$40.00");
     expect(
       within(screen.getByTestId("z-group-Drawer")).getByTestId("z-row-Paid outside the till"),
