@@ -198,6 +198,8 @@ export interface ApiProduct {
   msrp?: string | null;
   isActive: boolean;
   currentStock: number;
+  /** Low-stock threshold; null/absent = the default (SA-1002). */
+  reorderPoint?: number | null;
   averageCost?: string;
   description?: string;
   thumbnailUrl?: string | null;

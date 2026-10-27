@@ -69,6 +69,7 @@ import {
   STOCK_FILTER_CHIPS,
   ProductStatusBadge,
   getProductStatus,
+  initialStockFilter,
   stockFilterParams,
   type ProductStockFilter,
 } from "./_components/product-status";
@@ -758,7 +759,9 @@ export default function ProductsPage() {
 
   const [search, setSearch, debouncedSearch] = useUrlSearch();
   const [categoryFilter, setCategoryFilter] = React.useState("");
-  const [stockFilter, setStockFilter] = React.useState<ProductStockFilter>("");
+  const [stockFilter, setStockFilter] = React.useState<ProductStockFilter>(() =>
+    initialStockFilter(searchParams.get("lowStock")),
+  );
   // Regulated-section filter is the one deep-linkable filter (?section=) — the
   // Compliance hub's per-section KPI links here.
   const [urlFilters, setUrlFilter] = useUrlFilters({ section: "" });
