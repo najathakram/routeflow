@@ -235,7 +235,7 @@ describeDb("SA-740 walk-in source sale + capture locks, real Postgres", () => {
           items: [{ productId: s.productId, qty: pieces, boxes: 0, pieces }],
           returnKey: `sa740-${RUN}-${++keySeq}`,
           ...(over.sourceOrderId ? { sourceOrderId: over.sourceOrderId } : {}),
-          ...(over.resolution ? { resolution: over.resolution } : {}),
+          resolution: over.resolution ?? "REFUND", // W-913: a walk-in return is a refund at the till; these cases test the source sale, not the resolution
         },
         staff(s),
       ),

@@ -267,6 +267,9 @@ export interface RegulatedFiling {
   csvKey: string | null;
   generationCount: number;
   generatedAt: string;
+  /** B297 PR5: set together when a tenant admin locks the filing (no unlock). */
+  lockedAt?: string | null;
+  lockReason?: string | null;
 }
 
 export interface PrepareFilingInput {
@@ -293,6 +296,16 @@ export function usePrepareFiling() {
   const qc = useQueryClient();
   return useMutation<RegulatedFiling, Error, PrepareFilingInput>({
     mutationFn: (dto) => apiClient.post("/regulated/filings/prepare", dto).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: FILINGS_KEY }),
+  });
+}
+
+/** B297 PR5: lock a generated filing for a period that has ended (tenant admin; the reason is audited). */
+export function useLockRegulatedFiling() {
+  const qc = useQueryClient();
+  return useMutation<RegulatedFiling, Error, { id: string; reason: string }>({
+    mutationFn: ({ id, reason }) =>
+      apiClient.post(`/regulated/filings/${id}/lock`, { reason }).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: FILINGS_KEY }),
   });
 }

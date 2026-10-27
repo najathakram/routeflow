@@ -22,7 +22,11 @@ describe("control railway isolation (T56)", () => {
     const m = toml.match(/watchPatterns\s*=\s*\[([^\]]*)\]/);
     expect(m).not.toBeNull();
     const patterns = [...(m as RegExpMatchArray)[1].matchAll(/"([^"]*)"/g)].map((x) => x[1]);
-    expect(patterns).toEqual(["apps/control/**", "scripts/campaign/plane-denylist.json"]);
+    expect(patterns).toEqual([
+      "apps/control/**",
+      "scripts/campaign/plane-denylist.json",
+      "scripts/lib/registry-source.json",
+    ]);
   });
 
   it("railway.toml health check is the public unauthenticated probe", () => {
@@ -61,7 +65,7 @@ describe("control railway isolation (T56)", () => {
       const sources = operands.slice(0, -1);
       for (const src of sources) {
         expect(src).toMatch(
-          /^(apps\/control\/|package\.json$|package-lock\.json$|scripts\/campaign\/plane-denylist\.json$)/,
+          /^(apps\/control\/|package\.json$|package-lock\.json$|scripts\/campaign\/plane-denylist\.json$|scripts\/lib\/registry-source\.json$)/,
         );
       }
     }

@@ -176,8 +176,21 @@ describe("loadLineCredits (item-bearing notes + the legacy itemless-refund term)
     const out = await loadLineCredits(db, "inv", [A, B]);
     expect(out.get("a")).toMatchObject({ amount: 100, qty: 1 });
     const where = db.return.findMany.mock.calls[0][0].where;
-    expect(where).toEqual({ creditNoteId: { in: ["cn-old"] } });
+    expect(where).toEqual({ creditNoteId: { in: ["cn-old"] }, kind: { not: "INLINE" } }); // 747: the :423 query's filter
     expect(where).not.toHaveProperty("status");
+  });
+  it("747: the legacy term never counts an INLINE return (the inline term above already counted it), even when a future stamp links one to a note", async () => {
+    const inline = { kind: "INLINE", items: [{ productId: "pa", qty: 1 }] };
+    const db = {
+      creditNoteItem: { findMany: jest.fn().mockResolvedValue([]) },
+      creditNote: { findMany: jest.fn().mockResolvedValue([{ id: "cn-x" }]) },
+      return: {
+        // a real database would honour `kind: { not: "INLINE" }`
+        findMany: jest.fn(async (args: any) => (args.where.kind?.not === "INLINE" ? [] : [inline])),
+      },
+    };
+    const out = await loadLineCredits(db, "inv", [A, B]);
+    expect(out.get("a")).toBeUndefined(); // counted once by the inline term, never twice
   });
   it("no itemless notes: no return lookup at all", async () => {
     const db = {

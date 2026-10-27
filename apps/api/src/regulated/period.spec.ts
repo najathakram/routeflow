@@ -1,4 +1,4 @@
-import { periodBucketOf, monthRange, filingPeriod } from "./period";
+import { periodBucketOf, monthRange, filingPeriod, periodEndedForTenant } from "./period";
 
 describe("period helpers", () => {
   describe("periodBucketOf", () => {
@@ -55,6 +55,29 @@ describe("period helpers", () => {
       expect(() => filingPeriod("MONTHLY", 2026, 0)).toThrow(RangeError);
       expect(() => filingPeriod("MONTHLY", 2026, 13)).toThrow(RangeError);
       expect(() => filingPeriod("QUARTERLY", 2026, 5)).toThrow(RangeError);
+    });
+  });
+
+  describe("periodEndedForTenant (SA-995: the tenant's own day, no grace)", () => {
+    const end = new Date("2026-11-01T00:00:00.000Z"); // the filing period 2026-10 ends here
+    it("a Chicago tenant is still on 10-31 at 2026-11-01T03:00Z: not ended", () => {
+      expect(periodEndedForTenant(end, "America/Chicago", new Date("2026-11-01T03:00:00Z"))).toBe(
+        false,
+      );
+    });
+    it("the same tenant at 2026-11-01T06:00Z is on 11-01: ended", () => {
+      expect(periodEndedForTenant(end, "America/Chicago", new Date("2026-11-01T06:00:00Z"))).toBe(
+        true,
+      );
+    });
+    it("a Sydney tenant has already reached 11-01 at 2026-10-31T13:00Z", () => {
+      expect(periodEndedForTenant(end, "Australia/Sydney", new Date("2026-10-31T13:00:00Z"))).toBe(
+        true,
+      );
+    });
+    it("no zone reads as UTC", () => {
+      expect(periodEndedForTenant(end, null, new Date("2026-10-31T23:59:59Z"))).toBe(false);
+      expect(periodEndedForTenant(end, null, new Date("2026-11-01T00:00:00Z"))).toBe(true);
     });
   });
 });

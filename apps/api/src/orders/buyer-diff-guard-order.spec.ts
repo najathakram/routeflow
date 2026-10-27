@@ -21,7 +21,7 @@ describe("updateOrderItems — buyer refusal order (SA-507a)", () => {
       customer: { findFirst: jest.fn().mockResolvedValue({ id: "cust-1" }) },
     };
     const svc: any = Object.assign(Object.create(OrdersService.prototype), {
-      prisma: { forTenant: () => db },
+      prisma: { forTenant: () => db, getTenantId: () => "t1" },
     });
     const planned = jest
       .spyOn(cancelledLines, "planCancelledLines")
