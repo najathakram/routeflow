@@ -1,4 +1,5 @@
 import { IsOptional, IsString, IsIn, IsBoolean, IsNumber, Min, Max } from "class-validator";
+import { IsOptionalNotNull } from "../../common/validators/optional-not-null";
 
 // Canonical payment-terms allow-list. Imported by the customer/supplier
 // default-terms DTOs (which append "" for "clear the override"), so adding a
@@ -18,8 +19,8 @@ export class UpdateInvoiceSettingsDto {
 
   // WP-D1: tenant-wide deposit policy. Absent/0 = no tenant deposit default (a
   // customer's own defaultDepositPercent, or no deposit at all, still applies via
-  // InvoicesService.resolveDefaultTerms's effectiveDepositPercent resolution).
-  @IsOptional()
+  // InvoicesService.resolveDefaultTerms's effectiveDepositPercent resolution). Send 0 to clear: null is refused (652).
+  @IsOptionalNotNull()
   @IsNumber()
   @Min(0)
   @Max(100)

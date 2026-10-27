@@ -1,4 +1,5 @@
 import { clearTenantInvoicePdfPointers } from "../invoices/invoice-pdf-pointer";
+import { sellerDisplayName } from "../common/seller-display-name";
 import {
   BadRequestException,
   ConflictException,
@@ -343,7 +344,7 @@ export class TenantsService {
 
     return {
       slug: tenant.slug,
-      businessName: tenant.config?.businessName ?? tenant.name,
+      businessName: sellerDisplayName(tenant.config, tenant),
       primaryColor: tenant.config?.primaryColor ?? null,
       logoKey: tenant.config?.logoKey ?? null,
     };

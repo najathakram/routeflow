@@ -624,13 +624,13 @@ export default function InvoicesPage() {
       />
 
       {/* Status filter tabs */}
-      <div className="flex items-center gap-1 overflow-x-auto scrollbar-hide border-b border-surface-border">
+      <div className="flex flex-wrap items-center gap-1 border-b border-surface-border sm:flex-nowrap sm:overflow-x-auto sm:scrollbar-hide">
         {STATUS_TABS.map((tab) => (
           <button
             key={tab.value}
             onClick={() => handleFilterChange(tab.value)}
             className={cn(
-              "-mb-px whitespace-nowrap border-b-2 px-3 py-2 text-sm font-medium transition-colors",
+              "-mb-px inline-flex min-h-[44px] items-center whitespace-nowrap border-b-2 px-3 py-2 text-sm font-medium transition-colors",
               statusFilter === tab.value
                 ? "border-brand-500 text-brand-500"
                 : "border-transparent text-navy/70 hover:text-navy",

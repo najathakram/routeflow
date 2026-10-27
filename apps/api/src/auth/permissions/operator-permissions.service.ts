@@ -69,6 +69,23 @@ export class OperatorPermissionsService {
     };
   }
 
+  /** The enforcement mode the guard applies: `shadow` (log would-deny, allow) in this release. */
+  mode(): PermissionsMode {
+    return PERMISSIONS_MODE;
+  }
+
+  /**
+   * Does the principal hold at least one of `groups` (the guard's any-of)? An admin always does; an operator whose
+   * row is missing, deleted or in another tenant holds none (a stale session is denied).
+   */
+  async hasAny(
+    user: PermissionPrincipal,
+    groups: readonly OperatorPermissionGroup[],
+  ): Promise<boolean> {
+    const { groups: held } = await this.effective(user);
+    return groups.some((g) => held.includes(g));
+  }
+
   /** The `GET /users/me/permissions` payload for the caller. */
   async mine(user: PermissionPrincipal): Promise<MyPermissions> {
     const { groups, version } = await this.effective(user);

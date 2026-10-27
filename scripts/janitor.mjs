@@ -53,6 +53,8 @@
 //   node scripts/janitor.mjs --apply [--target <gb>]   reclaim, default target 10
 //   node scripts/janitor.mjs --preflight <gb>   exit 1 if free space < <gb>
 //   node scripts/janitor.mjs --stale-branches   report merged branches still on origin
+//   node scripts/janitor.mjs --allow-list <file>   also plan removal of LISTED detached/unproven
+//                                               worktrees that are clean, on origin/*, idle 24h+
 //
 // Preflight threshold guidance (document, not enforced by this tool):
 //   > 10 GB  normal — proceed with anything
@@ -63,8 +65,11 @@ import { execFileSync } from "node:child_process";
 import {
   existsSync,
   lstatSync,
+  mkdirSync,
   readdirSync,
+  readFileSync,
   realpathSync,
+  renameSync,
   rmdirSync,
   statSync,
   unlinkSync,
@@ -1367,7 +1372,9 @@ function describeAction(a) {
     case "node_modules":
       return `[1] clear node_modules — ${a.target} (worktree ${a.worktree}, merged)`;
     case "worktree":
-      return `[2] remove whole worktree — ${a.target} (merged, clean, idle, pushed)`;
+      return a.allowListed
+        ? `[2] remove whole worktree — ${a.target} (allow-listed: clean, on origin, idle 24h+${a.salvage?.length ? `; would first move ${a.salvage.length} local-assets path(s) to ${a.salvageRoot}` : ""})`
+        : `[2] remove whole worktree — ${a.target} (merged, clean, idle, pushed)`;
     case "orphan-dir":
       return `[3] remove orphan worktree dir — ${a.target} (not listed by git worktree)`;
     case "stray-file":
@@ -1392,6 +1399,11 @@ const EXECUTE_DEPS = {
   refuseJestCacheDelete: (target, root) =>
     jestCacheDeleteRefusal(realOr(target), [realOr(root)], { caseInsensitive: isWindows() }),
   isDirty: (worktreePath) => isDirty(worktreePath),
+  isDirtyAllowList: (worktreePath) => {
+    const s = allowListIgnoredState(worktreePath);
+    return s.dirty || s.blockers.length > 0 || s.salvage.length > 0;
+  },
+  salvage: (a) => salvageIgnored(a.worktreePath, a.worktree, a.salvage, a.salvageRoot),
   removeTree: (t) => safeRemoveTree(t),
   removeWorktree: (t) => {
     const { repoRoot } = resolveRepoContext();
@@ -1424,7 +1436,16 @@ export function execute(a, deps = EXECUTE_DEPS) {
     // caller. Re-verify RIGHT BEFORE deleting anything under a worktree — a worktree going dirty
     // between plan and execute must never lose uncommitted work to a clear/remove that was
     // decided when it still looked clean.
-    if (a.worktreePath && deps.isDirty(a.worktreePath)) {
+    if (a.allowListed && a.salvage?.length > 0) {
+      // Allow-list mode: move local-assets aside first (never delete); failure skips the worktree.
+      const moved = deps.salvage(a);
+      if (!moved.ok) {
+        deps.log(`   SKIPPED: ${a.target} (${moved.reason})`);
+        return "skipped";
+      }
+    }
+    const dirtyNow = a.allowListed ? deps.isDirtyAllowList : deps.isDirty;
+    if (a.worktreePath && dirtyNow(a.worktreePath)) {
       deps.log(`   REFUSED, skipped: ${a.target} (worktree went dirty since the plan was built)`);
       return "refused";
     }
@@ -1503,6 +1524,217 @@ export function applyActions(actions, target, deps = {}) {
     log(`\n${failed.length} of ${ran} action(s) failed.`);
   }
   return { ran, failed };
+}
+
+// ---------------------------------------------------------------------------
+// --allow-list <file>: report-first removal of LISTED worktrees that classifyWorktree refuses
+// only because the branch is detached / unproven. Qualification is per-worktree and fail-closed;
+// removal reuses the existing "worktree" action (execute -> refuseDelete -> removeWorktreeSafely:
+// unlink every junction first, remove, prune). There is no second delete loop.
+// ---------------------------------------------------------------------------
+
+/** Paths from an allow-list file: column 1 of each line (`|` or tab separated); # and blanks skipped. */
+export function parseAllowList(text) {
+  return text
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l && !l.startsWith("#"))
+    .map((l) => l.split(/[|\t]/)[0].trim())
+    .filter(Boolean);
+}
+
+/**
+ * Does a LISTED worktree qualify for removal? Every condition must hold; unknown is a refusal.
+ * info: { name, isMainCheckout, isLocked, isDirty, onOrigin, headMs, indexMs, nowMs, linkedFrom }
+ * Returns { ok, reason }.
+ */
+// Allow-list mode only: ignored dirs that are regenerable caches, at any depth.
+const ALLOW_LIST_CACHE_DIRS = [
+  ".jest-cache",
+  ".turbo",
+  ".next",
+  "test-results",
+  "playwright-report",
+  ".expo",
+  "node_modules",
+];
+// dist/build/coverage are NOT here: they stay anchored to the top level / a package root via
+// REGENERABLE_IGNORED (#1326), so a source folder like apps/api/src/build/ still blocks.
+const SALVAGE_PREFIX = "local-assets/";
+
+/**
+ * Sort a worktree's `git status` output for allow-list mode. Tracked/untracked changes (or an
+ * unreadable status) are `dirty`; ignored paths are cache (removable), salvage (local-assets/,
+ * moved aside first, never deleted) or blockers (anything else, named in the report).
+ */
+export function classifyIgnoredForAllowList(statusOut, ignoredOut) {
+  if (statusOut == null || ignoredOut == null) return { dirty: true, salvage: [], blockers: [] };
+  const dirty = statusOut.trim().length > 0;
+  const salvage = [];
+  const blockers = [];
+  for (const raw of ignoredOut.split("\n")) {
+    if (!raw.startsWith("!! ")) continue;
+    const path = raw.slice(3).trim();
+    const bare = path.replace(/\/$/, "");
+    if (
+      REGENERABLE_IGNORED.some((re) => re.test(path)) ||
+      bare.split("/").some((seg) => ALLOW_LIST_CACHE_DIRS.includes(seg))
+    ) {
+      continue;
+    }
+    if ((path + (path.endsWith("/") ? "" : "/")).startsWith(SALVAGE_PREFIX)) salvage.push(path);
+    else blockers.push(path);
+  }
+  return { dirty, salvage, blockers };
+}
+
+function allowListIgnoredState(worktreePath) {
+  const out = trySh("git", ["-C", worktreePath, "status", "--porcelain"]);
+  const ignored = trySh("git", ["-C", worktreePath, "status", "--porcelain", "--ignored=matching"]);
+  return classifyIgnoredForAllowList(out, ignored);
+}
+
+/**
+ * Move each salvage path to <salvageRoot>/<worktree>/<same relative path>. A rename (no link is
+ * followed, nothing copied or deleted); an existing destination or any failure aborts, returning
+ * { ok:false, reason } so the caller skips the worktree. Nothing in local-assets is ever removed.
+ */
+export function salvageIgnored(worktreePath, name, paths, salvageRoot, fs = SALVAGE_FS) {
+  const base = join(salvageRoot, name);
+  try {
+    for (const rel of paths) {
+      const from = join(worktreePath, rel);
+      const to = join(base, rel.replace(/\/$/, ""));
+      if (!fs.exists(from)) continue;
+      if (fs.exists(to)) return { ok: false, reason: `salvage target exists: ${to}` };
+      fs.mkdirp(dirname(to));
+      fs.rename(from, to);
+    }
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, reason: `salvage move failed: ${err.message}` };
+  }
+}
+const SALVAGE_FS = {
+  exists: (p) => {
+    try {
+      lstatSync(p);
+      return true;
+    } catch {
+      return false;
+    }
+  },
+  mkdirp: (p) => mkdirSync(p, { recursive: true }),
+  rename: (a, b) => renameSync(a, b),
+};
+
+export function allowListVerdict(info) {
+  const { name, isMainCheckout, isLocked, isDirty, onOrigin, headMs, indexMs, nowMs } = info;
+  const no = (reason) => ({ ok: false, reason });
+  if (isMainCheckout) return no("main checkout");
+  if (isProtectedWorktreeName(name)) return no("protected worktree");
+  if (isLocked) return no("locked worktree");
+  if (isDirty) {
+    const b = info.blockers ?? [];
+    return no(
+      b.length > 0
+        ? `non-regenerable ignored path(s): ${b.slice(0, 5).join(", ")}${b.length > 5 ? ` (+${b.length - 5})` : ""}`
+        : "uncommitted or non-build ignored files",
+    );
+  }
+  if (!onOrigin) return no("HEAD is not reachable from any origin/* ref");
+  if (isRecentlyActive(headMs, nowMs) || isRecentlyActive(indexMs, nowMs)) {
+    return no(`HEAD or index touched in the last ${RECENT_ACTIVITY_HOURS}h (or unknown)`);
+  }
+  if (info.linkedFrom === null || (info.linkedFrom ?? []).length > 0) {
+    return no("another tree links into it (or the link scan failed)");
+  }
+  return { ok: true, reason: "listed, clean, on origin, idle" };
+}
+
+/** mtime of the worktree's index file; null when unreadable (counts as recent). */
+function indexMtimeMs(worktreePath) {
+  const gitDir = trySh("git", ["-C", worktreePath, "rev-parse", "--absolute-git-dir"]);
+  const f = gitDir && join(gitDir, "index");
+  return f && existsSync(f) ? statSync(f).mtimeMs : null;
+}
+
+/** Path equality; case-insensitive on Windows, so C:/X and c:/x are the same checkout. */
+export function samePath(a, b, caseInsensitive) {
+  const k = (p) => (caseInsensitive ? resolve(p).toLowerCase() : resolve(p));
+  return k(a) === k(b);
+}
+
+/** Plan removals for the allow-listed paths. Returns { actions, skipped }; deletes nothing. */
+export function buildAllowListActions(repoRoot, mainCheckoutPath, listPaths) {
+  trySh("git", ["-C", repoRoot, "fetch", "origin"]);
+  const worktrees = listWorktrees(repoRoot);
+  const key = (p) => (isWindows() ? resolve(p).toLowerCase() : resolve(p));
+  const byPath = new Map(worktrees.map((w) => [key(w.path), w]));
+  const linkScan = scanLinkTargets(worktrees.map((w) => w.path));
+  const nowMs = Date.now();
+  const actions = [];
+  const skipped = [];
+  for (const listed of new Set(listPaths.map(key))) {
+    const wt = byPath.get(listed);
+    if (!wt) {
+      skipped.push({
+        worktree: listed,
+        branch: null,
+        reason: "allow-list: not a registered worktree",
+      });
+      continue;
+    }
+    const name = wt.path.split(/[\/]/).pop();
+    const head = trySh("git", ["-C", wt.path, "rev-parse", "HEAD"])?.trim();
+    const onOrigin =
+      !!head &&
+      !!trySh("git", [
+        "-C",
+        repoRoot,
+        "for-each-ref",
+        "--contains",
+        head,
+        "--count=1",
+        "--format=%(refname)",
+        "refs/remotes/origin",
+      ])?.trim();
+    const isMainCheckout = samePath(wt.path, mainCheckoutPath, isWindows());
+    const ign = isMainCheckout
+      ? { dirty: false, salvage: [], blockers: [] }
+      : allowListIgnoredState(wt.path);
+    const v = allowListVerdict({
+      name,
+      isMainCheckout,
+      isLocked: !!wt.locked,
+      isDirty: ign.dirty || ign.blockers.length > 0,
+      blockers: ign.blockers,
+      onOrigin,
+      headMs: lastActivityMs(wt.path),
+      indexMs: indexMtimeMs(wt.path),
+      nowMs,
+      linkedFrom: linkedIntoBy(
+        wt.path,
+        worktrees.map((w) => w.path),
+        linkScan,
+      ),
+    });
+    if (v.ok) {
+      actions.push({
+        step: 2,
+        kind: "worktree",
+        target: wt.path,
+        worktree: name,
+        worktreePath: wt.path,
+        allowListed: true,
+        salvage: ign.salvage,
+        salvageRoot: join(mainCheckoutPath, "local-assets", "worktree-salvage"),
+      });
+    } else {
+      skipped.push({ worktree: name, branch: wt.branch, reason: `allow-list: ${v.reason}` });
+    }
+  }
+  return { actions, skipped };
 }
 
 /** Remove a whole worktree, with its OS/git calls injected (testable anywhere). */
@@ -1596,6 +1828,17 @@ function main() {
   console.log(`free space before: ${before.toFixed(1)} GB (target ${target} GB)`);
 
   const { actions, skipped } = buildPlan(repoRoot, mainCheckoutPath, worktreesRoot);
+  const allowFile = flagValue(argv, "--allow-list", null);
+  if (allowFile) {
+    const al = buildAllowListActions(
+      repoRoot,
+      mainCheckoutPath,
+      parseAllowList(readFileSync(allowFile, "utf8")),
+    );
+    const planned = new Set(actions.map((a) => a.target));
+    for (const a of al.actions) if (!planned.has(a.target)) actions.push(a);
+    skipped.push(...al.skipped);
+  }
 
   console.log(`\nPlan (${actions.length} action(s)):`);
   for (const a of actions) console.log(`  ${describeAction(a)}`);

@@ -13,6 +13,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { Badge, Button, Select, useToast } from "@routeflow/ui/web";
+import { useOnTenantToday } from "@/lib/tenant-timezone";
 import { usePageTitle } from "@/lib/page-title-context";
 import {
   useCreateTrip,
@@ -139,8 +140,9 @@ export default function NewTripPage() {
   const [end, setEnd] = React.useState<TripEndDraft>(EMPTY_END_DRAFT);
   const [avoidTolls, setAvoidTolls] = React.useState(false);
   const [optimizeBy, setOptimizeBy] = React.useState<RouteOptimizeMetric>("TIME");
-  const today = new Date().toISOString().split("T")[0];
-  const [date, setDate] = React.useState(today);
+  // SA-964 §4: the run date is the TENANT's day, seeded when the zone resolves; never the browser's.
+  const [date, setDate] = React.useState("");
+  useOnTenantToday((day) => setDate((cur) => cur || day));
 
   // ── BUILT-phase chrome ──
   const [confirmDiscard, setConfirmDiscard] = React.useState(false);
@@ -534,7 +536,7 @@ export default function NewTripPage() {
   }
 
   function handleSend() {
-    if (!routeId || createRun.isPending) return;
+    if (!routeId || createRun.isPending || !date) return;
     createRun.mutate(
       { routeId, scheduledDate: date, driverId: driverId || undefined, orderIds: frozenOrderIds },
       {
@@ -855,7 +857,7 @@ export default function NewTripPage() {
                   )
                 }
                 onClick={handleSend}
-                disabled={createRun.isPending}
+                disabled={createRun.isPending || !date}
               >
                 {createRun.isPending
                   ? "Sending…"
