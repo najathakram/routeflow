@@ -119,7 +119,7 @@ describe("deriveReadout: one readout, first rule wins", () => {
     expect(deriveReadout(enforced, eff({ source: "NONE", serving: true })).kind).toBe("on");
   });
 
-  it("folds the four source badges into one chip, and drops Inherited and Off", () => {
+  it("folds the source into one chip in the owner's words, and drops Off", () => {
     const chip = (source: EffectiveFeature["source"], serving: boolean, kind?: string) =>
       deriveReadout(
         enforced,
@@ -127,27 +127,90 @@ describe("deriveReadout: one readout, first rule wins", () => {
       );
     expect(chip("OVERRIDE_GRANT", true, "PILOT")).toEqual({
       kind: "chip",
-      text: "On, added by override",
+      text: "Set for this business",
       badge: "added",
     });
     expect(chip("OVERRIDE_DENY", false)).toEqual({
       kind: "chip",
-      text: "Off, removed by override",
+      text: "Off for this business",
       badge: "removed",
     });
     expect(chip("ADDON_SKU", true)).toEqual({
       kind: "chip",
-      text: "On, paid add-on",
+      text: "Add-on",
       badge: "purchased",
+      linkTab: "billing",
     });
     expect(chip("OVERRIDE_GRANT", true, "GRANDFATHER")).toEqual({
       kind: "chip",
       text: "On, kept from an earlier plan",
       badge: "grandfathered",
     });
-    expect(chip("PRESET", true)).toEqual({ kind: "on", text: "On" });
+    expect(chip("PRESET", true)).toEqual({ kind: "chip", text: "In plan", badge: "inherited" });
     expect(chip("PRESET", false)).toEqual({ kind: "off", text: "Off" });
     expect(chip("NONE", false)).toEqual({ kind: "off", text: "Off" });
+  });
+
+  // SA-963 / W-901: the source words are the owner's, in ONE map. No price in a chip.
+  describe("source words (SA-963)", () => {
+    const serving = (
+      source: EffectiveFeature["source"],
+      detail: Partial<EffectiveFeature["detail"]> = {},
+    ) => eff({ source, serving: true, detail: { ...eff({}).detail, ...detail } });
+
+    it("a plan grant says In plan", () => {
+      expect(deriveReadout(enforced, serving("PRESET"))).toEqual({
+        kind: "chip",
+        text: "In plan",
+        badge: "inherited",
+      });
+    });
+
+    it("a charged add-on says Add-on and points at the billing tab, with no price", () => {
+      expect(deriveReadout(enforced, serving("ADDON_SKU", { sku: "recurring_routes" }))).toEqual({
+        kind: "chip",
+        text: "Add-on",
+        badge: "purchased",
+        linkTab: "billing",
+      });
+    });
+
+    it("a grant with an end date says Free until the date, in UTC", () => {
+      expect(
+        deriveReadout(
+          enforced,
+          serving("OVERRIDE_GRANT", { kind: "COMP", expiresAt: "2026-11-30T23:30:00.000Z" }),
+        ),
+      ).toEqual({ kind: "chip", text: "Free until Nov 30, 2026", badge: "added" });
+    });
+
+    it("a grant with no end date, or an unparseable one, says Set for this business", () => {
+      for (const expiresAt of [null, undefined, "soon"]) {
+        expect(
+          deriveReadout(enforced, serving("OVERRIDE_GRANT", { kind: "SUPPORT", expiresAt })).text,
+        ).toBe("Set for this business");
+      }
+    });
+
+    it("a removal says Off for this business", () => {
+      expect(deriveReadout(enforced, eff({ source: "OVERRIDE_DENY", serving: false }))).toEqual({
+        kind: "chip",
+        text: "Off for this business",
+        badge: "removed",
+      });
+    });
+
+    it("a grandfathered grant keeps its words", () => {
+      expect(deriveReadout(enforced, serving("OVERRIDE_GRANT", { kind: "GRANDFATHER" })).text).toBe(
+        "On, kept from an earlier plan",
+      );
+    });
+
+    it("no chip carries a price or a dollar sign", () => {
+      for (const source of ["PRESET", "ADDON_SKU", "OVERRIDE_GRANT"] as const) {
+        expect(deriveReadout(enforced, serving(source, { sku: "x" })).text).not.toMatch(/\$|\/mo/);
+      }
+    });
   });
 
   it("a chip that contradicts what the row is serving is not shown", () => {

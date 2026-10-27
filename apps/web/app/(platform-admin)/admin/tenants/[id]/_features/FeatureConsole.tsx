@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { API_ERROR_CODES, PLAN_KEYS } from "@routeflow/types";
 import { planLabel } from "../../../../_components/AdminBadge";
 import {
@@ -444,7 +445,10 @@ export function FeatureConsole({
                             </span>
                           </span>
                         ) : (
-                          <StateReadoutText readout={deriveReadout(row.gate, feature)} />
+                          <StateReadoutText
+                            readout={deriveReadout(row.gate, feature)}
+                            tenantId={tenant.id}
+                          />
                         )}
                         {lifecycleWord && (
                           <span className="text-xs text-slate-400">· {lifecycleWord}</span>
@@ -581,7 +585,7 @@ export function FeatureConsole({
 
 /** The one state readout on a row: plain visible text, no tooltip, no aria-label, no hidden copy,
  *  so the state is read once. Only a readout that carries a source colour is a 10 px chip. */
-function StateReadoutText({ readout }: { readout: StateReadout }) {
+function StateReadoutText({ readout, tenantId }: { readout: StateReadout; tenantId: string }) {
   const style =
     readout.kind === "chip" && readout.badge
       ? `rounded px-1.5 py-0.5 text-[10px] font-medium ring-1 ${BADGE_COLORS[readout.badge]}`
@@ -590,10 +594,21 @@ function StateReadoutText({ readout }: { readout: StateReadout }) {
         : readout.kind === "on"
           ? "text-xs text-emerald-400"
           : "text-xs text-slate-400";
-  return (
+  const chip = (
     <span data-testid="readout" className={style}>
       {readout.text}
     </span>
+  );
+  // The Add-on chip names the source only; what it costs lives on the billing tab (SA-963, no price copied here).
+  return readout.linkTab ? (
+    <Link
+      href={`/admin/tenants/${tenantId}?tab=${readout.linkTab}`}
+      className="underline-offset-2 hover:underline"
+    >
+      {chip}
+    </Link>
+  ) : (
+    chip
   );
 }
 
