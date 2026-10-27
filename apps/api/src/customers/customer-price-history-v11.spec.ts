@@ -366,11 +366,18 @@ describe("CustomerPriceHistoryService v1.1", () => {
         unitPrice: 12,
         unitLabel: "pc",
         unitsPerBox: null,
+        salePack: 1,
       });
       expect([r.p1.low, r.p1.high]).toEqual([9, 12]);
       expect(r.p2).toEqual({
         last3: [
-          { date: "2026-06-03T00:00:00.000Z", unitPrice: 5, unitLabel: "pc", unitsPerBox: null },
+          {
+            date: "2026-06-03T00:00:00.000Z",
+            unitPrice: 5,
+            unitLabel: "pc",
+            unitsPerBox: null,
+            salePack: 1,
+          },
         ],
         low: 5,
         high: 5,
@@ -525,10 +532,10 @@ describe("CustomerPriceHistoryService v1.1", () => {
         },
       ]);
       const r = await sum("p1");
-      expect(r.p1.last3.map((x) => [x.unitPrice, x.unitLabel, x.unitsPerBox])).toEqual([
-        [24, "Box", 24],
-        [12, "Box", 12],
-        [2, "Each", null],
+      expect(r.p1.last3.map((x) => [x.unitPrice, x.unitLabel, x.unitsPerBox, x.salePack])).toEqual([
+        [24, "Box", 24, 24],
+        [12, "Box", 12, 12],
+        [2, "Each", null, 1],
       ]);
     });
 
@@ -553,6 +560,7 @@ describe("CustomerPriceHistoryService v1.1", () => {
             unitPrice: x.unitPrice,
             unitLabel: x.unitLabel,
             unitsPerBox: x.unitsPerBox,
+            salePack: x.salePack,
           })),
       );
     });
