@@ -42,11 +42,11 @@ only in that session's own control flow (nothing else was ever going to run it).
 
 ```bash
 # Windows PowerShell. -PassThru keeps the pid, which the verification below checks.
-$wd = Start-Process -PassThru -WindowStyle Hidden -FilePath node -ArgumentList "scripts/visibility-watchdog.mjs","--minutes","45"
+$wd = Start-Process -PassThru -WindowStyle Hidden -FilePath node -ArgumentList "scripts/visibility-watchdog.mjs","--minutes","45","--window-marker"
 $wd.Id
 
 # POSIX
-nohup node scripts/visibility-watchdog.mjs --minutes 45 >/dev/null 2>&1 &
+nohup node scripts/visibility-watchdog.mjs --minutes 45 --window-marker >/dev/null 2>&1 &
 ```
 
 Verify it started before proceeding to step 1: the log (`local-assets/visibility-watchdog.log`,
@@ -57,6 +57,15 @@ is the only place a refusal shows. Do not proceed to step 1 without your own pid
 deploy is still running is the CORRECT outcome, not a failure — a GitHub Actions run on a private
 repo just fails on billing (see below); rerun it once the window reopens. The watchdog's later
 flip is harmless if the routine's own step 4 already flipped private first.
+
+**Mac timer (off-machine backstop).** `--window-marker` makes the watchdog publish a window marker
+(`ops/visibility-window.json` in `najathakram/routeflow-specs`: repo, openedAt, deadline, opener) as
+a best-effort step after its `start` line; a failed write logs `marker-failed` and never delays the
+flip. A launchd job on the Mac (`scripts/visibility-timer.mjs`, every 5 min, template and install
+steps in `tools/visibility-timer/`) reads it and flips the repo private if it is still PUBLIC 2 min
+past the deadline, so a dead launch machine no longer leaves the window open. A marker more than 6 h
+past its deadline, a missing or malformed one, or one for another repo is ignored. The timer writes
+exactly one line per decision to `~/.routeflow/ops/visibility-timer.log`; check it after a window.
 
 One watchdog at a time (#2076). A second start finds the lock (`local-assets/visibility-watchdog.lock`),
 prints the running pid and its deadline, logs a `refused` line and exits 3; pass `--replace` to stop
@@ -76,6 +85,107 @@ line — so there is exactly one path to check no matter where it was launched.
 `local-assets/visibility-watchdog.FAILED` does not exist in the main checkout; if it does, flip
 private by hand, read visibility back, then delete the marker.** The watchdog writes it only
 after every attempt failed, and clears it itself on the next confirmed flip.
+
+## Dead-man switch (second machine)
+
+The watchdog above lives on the machine that opens the window, so it dies with it: on 2026-10-25 a
+PC reboot killed it and the repo stayed public ~8 hours. `scripts/visibility-deadman.mjs` is the
+backstop that runs on a **different** machine (the Mac mini, under launchd) and knows nothing about
+windows. Every ~2 minutes it polls `gh repo view <repo> --json visibility,viewerPermission`; once the repo has been
+continuously PUBLIC for more than `--max-public-minutes` (default 60: the watchdog's 45 minutes plus
+a deploy) it flips the repo private (`gh repo edit ... --visibility private
+--accept-visibility-change-consequences`), reads back until PRIVATE is confirmed, and logs an
+`incident` JSON line. Like the watchdog, a flip while a window is still legitimately open is the
+correct outcome; rerun the job once the window reopens. An unreadable poll (network/auth) is logged,
+keeps the state and exits 4: it never guesses the visibility.
+
+State and log are in `local-assets/` (`visibility-deadman.state.json`, `visibility-deadman.log`, one
+JSON line per event, a `heartbeat` for every poll). Exit codes: 0 ok, 1 flip not confirmed (flip by
+hand), 2 usage error, 3 `--status` unhealthy, 4 `gh` could not answer, 5 the `gh` account is **not an
+admin** of the repo. If `gh repo view` fails while the stored timer is past the deadline (or lost after the repo was
+last seen public), the switch still runs the flip and exits 1 when it cannot read it back. After 3
+failed polls in a row (`DEGRADED_AFTER_FAILURES`) every poll logs `DEADMAN DEGRADED` and `--status`
+exits 3: fix `gh` or the token before the next public window.
+
+Two guards against a switch that looks alive but is dead:
+
+- **Admin check.** Every poll reads `viewerPermission`. Anything but `ADMIN` (the wrong GitHub
+  account) logs an `incident` with `"reason":"not-admin"` and exits 5 on every poll, even while the
+  repo is PRIVATE; a flip that is due is still attempted. `viewerPermission` is the account's
+  **role** on the repo, not the scope of its token, so it cannot prove a token is able to flip: that
+  is what the install test flip below is for.
+- **No free window after a gap.** If the first PUBLIC sighting follows missed polls (`gh` errors, a
+  sleeping Mac; the previous answered poll is older than 2x the interval), the timer is backdated to
+  that previous poll instead of starting at "now". A corrupt state file (unreadable, truncated, or a
+  timer that is unparseable or in the future) is logged and never grants a fresh window: the timer
+  restarts at the last readable `lastCheckAt` only if the repo was last seen PRIVATE; otherwise the
+  window is treated as spent and a PUBLIC repo is flipped at once.
+- **Bookkeeping can't block a flip.** The flip happens before the state and log are written, and a
+  failing write (full disk, root-owned `local-assets/`, a state path that is not a file) only prints a
+  `WARNING` on stderr. A first PUBLIC sighting whose timer cannot be stored is flipped at once, since
+  a timer that cannot be stored would never fire.
+
+**Install on the Mac mini: LaunchDaemon (recommended)**
+
+A LaunchAgent dies with logout and does not start after a reboot unless the Mac auto-logs-in, which
+is exactly the failure this switch exists to cover. A LaunchDaemon starts at boot with nobody logged
+in.
+
+1. Create a **classic PAT with `repo` scope** for the **repo owner** (an admin of
+   `najathakram/routeflow`). Store it in a root-only file; the wrapper refuses any other mode, and
+   the token never goes in the plist:
+
+   ```bash
+   sudo mkdir -p /etc/routeflow
+   sudo sh -c 'umask 077; cat > /etc/routeflow/visibility-deadman.token'   # paste token, Ctrl-D
+   sudo chown root:wheel /etc/routeflow/visibility-deadman.token
+   sudo chmod 600 /etc/routeflow/visibility-deadman.token
+   ```
+
+2. Check out the repo and `mkdir -p <repo>/local-assets` (gitignored; launchd will not create it).
+3. Copy the template and fill the four placeholders (`__NODE_BIN__` = `command -v node`,
+   `__REPO_DIR__` = the checkout, `__GH_DIR__` = `dirname "$(command -v gh)"`, `__TOKEN_FILE__` = the
+   file above; launchd's PATH is minimal, so without `__GH_DIR__` it cannot find `gh`):
+
+   ```bash
+   sudo cp scripts/launchd/com.routeflow.visibility-deadman.daemon.plist \
+     /Library/LaunchDaemons/com.routeflow.visibility-deadman.plist
+   sudo $EDITOR /Library/LaunchDaemons/com.routeflow.visibility-deadman.plist
+   sudo chown root:wheel /Library/LaunchDaemons/com.routeflow.visibility-deadman.plist
+   sudo chmod 644 /Library/LaunchDaemons/com.routeflow.visibility-deadman.plist
+   plutil -lint /Library/LaunchDaemons/com.routeflow.visibility-deadman.plist
+   sudo launchctl load -w /Library/LaunchDaemons/com.routeflow.visibility-deadman.plist
+   ```
+
+4. **One-time install test flip on a scratch repo** (never on `routeflow`). The admin check cannot
+   prove the token can flip, so prove it once with the token the daemon will use. Create a throwaway
+   PUBLIC repo under the owner's account (`gh repo create <owner>/deadman-scratch --public`), then run
+   the switch twice against it with a near-zero limit and a scratch state dir; the second poll must
+   flip it and print `"action":"flipped-private","confirmed":true`. Delete the scratch repo afterwards.
+
+   ```bash
+   sudo sh -c 'export GH_TOKEN="$(cat /etc/routeflow/visibility-deadman.token)"; \
+     for i in 1 2; do node scripts/visibility-deadman.mjs --once --repo <owner>/deadman-scratch \
+       --max-public-minutes 0.01 --state-dir /tmp/deadman-test; sleep 2; done'
+   ```
+
+5. Check it is alive: `node scripts/visibility-deadman.mjs --status` prints the state and the age
+   of the last heartbeat (no `gh` call, writes nothing). It prints `WARNING` lines and **exits 3**
+   when the last answered poll is older than 600 s, the last flip was not confirmed, the last poll
+   failed (including not-admin), or there is no state yet. Check it after every install and every
+   token rotation. Read `local-assets/visibility-deadman.launchd.err.log` if it is unhealthy. Stop it
+   with `sudo launchctl unload /Library/LaunchDaemons/com.routeflow.visibility-deadman.plist`.
+
+**Fallback: LaunchAgent.** `scripts/launchd/com.routeflow.visibility-deadman.plist` goes in
+`~/Library/LaunchAgents/` and loads with `launchctl load`. It uses the `gh` login of that macOS user
+(`gh auth login` as the repo owner, admin rights). It only runs while that user is logged in, so the
+Mac **must have automatic login enabled** (System Settings > Users & Groups); without it the switch
+is off after any reboot.
+
+Never probe it with a bare `--once` while the repo is public mid-window: it is a real poll. `node
+scripts/visibility-deadman.self-test.mjs` exercises every branch against a stub `gh` and never
+touches the real repo or `local-assets/`. `VISIBILITY_DEADMAN_GH_BIN` replaces the `gh` path and is
+**test-only**: it prints a WARNING and must never appear in the plist.
 
 ## The routine
 

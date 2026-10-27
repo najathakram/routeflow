@@ -185,3 +185,17 @@ export async function cancelImpact(deps: CancelImpactDeps, id: string) {
 export function assertQuantitiesKnown(impact: { deliveryQuantitiesMissing: boolean }): void {
   if (impact.deliveryQuantitiesMissing) throwDeliveryQuantitiesMissing();
 }
+
+/**
+ * The pre-lock cancel judgment on a `cancelImpact` result. The payments refusal is checked FIRST and its message
+ * stays byte-identical: a cancel blocked by both must still name the money, the more urgent problem for an
+ * operator. B56 (REG-B56): delivered goods can't be un-delivered by cancelling the order out from under them
+ * (that would erase the revenue for goods the customer already has); record a return, or edit the order down.
+ */
+export function assertCancelImpactAllows(impact: Awaited<ReturnType<typeof cancelImpact>>): void {
+  if (impact.canCancel) return;
+  if (impact.blockingPayments.length > 0)
+    throw new BadRequestException(cancelBlockedMessage(impact.blockingPayments));
+  assertQuantitiesKnown(impact); // B692: legacy delivered row, no quantity recorded
+  throw new BadRequestException(deliveredUnitsBlockedMessage(impact.deliveredUnits));
+}

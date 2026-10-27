@@ -1,0 +1,178 @@
+import { ConflictException } from "@nestjs/common";
+import { API_ERROR_CODES } from "../common/api-error-codes";
+import {
+  anyLockedFiling,
+  isLockedFiling,
+  lockedFilingsCovering,
+  lockFilingRowsCovering,
+  type BucketRef,
+  type FilingsDb,
+} from "./filed-periods";
+import { editReplacesLines } from "../orders/order-edit-payload";
+
+/**
+ * B297 PR5 (SA-088 D4, SA-734r2 B6): what a LOCKED `RegulatedFiling` means for writes.
+ *
+ * A LOCKED filing closes the (tenant, category, period) triple. Two guards, defence in depth:
+ *  (a) EDIT GUARD (user-facing, `assertSalesNotLockedForEdit`): before a money-bearing change to a regulated
+ *      line whose SALE rows are booked into a locked period, refuse with 409 FILED_PERIOD_LOCKED naming the
+ *      filing and the period;
+ *  (b) LEDGER GUARD (the last line, `assertLedgerRowsNotLocked`): the ledger writers refuse any row whose
+ *      `periodBucket` is covered by a LOCKED filing for the row's category (409 LEDGER_PERIOD_LOCKED, no rows).
+ *      A sale row books into its invoice's issueDate bucket (`writeSaleEntries`), and an issueDate can be in the
+ *      past: a manual past `issueDate` on an invoice, or an invoice made from a backdated order. When that date
+ *      is in a locked month this guard refuses it on EVERY retry (a permanent cause, not only a race across a
+ *      bucket boundary), so the user-facing copy asks for a date in the current period.
+ * Returns and credit notes against a locked-period sale are NOT blocked at the edit guard: a return is a new
+ * event booked today, and the locked period's SUM is untouched.
+ */
+type LockDb = FilingsDb & {
+  regulatedSalesLedger?: { findMany(args: unknown): Promise<any[]> };
+};
+
+/** (b) the ledger guard: throws LEDGER_PERIOD_LOCKED when any row would book into a locked period. */
+export async function assertLedgerRowsNotLocked(db: LockDb, rows: BucketRef[]): Promise<void> {
+  const unique = [
+    ...new Map(rows.map((r) => [`${r.trackedCategoryId}|${r.periodBucket}`, r])).values(),
+  ];
+  // SA-995 §2: a ROW lock (FOR SHARE) on the covering filing rows, on the writer's own transaction `db`, then LOCKED
+  // filtered here: a lock cannot slip in between this check and the writer's insert.
+  const hit = (await lockFilingRowsCovering(db, unique)).find((h) => isLockedFiling(h.filing));
+  if (!hit) return;
+  throw new ConflictException({
+    code: API_ERROR_CODES.LEDGER_PERIOD_LOCKED,
+    message: `The ${hit.filing.periodKey} filing for this category is locked: the regulated ledger cannot take a row for ${hit.periodBucket}.`,
+    filingId: hit.filing.id,
+    periodKey: hit.filing.periodKey,
+  });
+}
+
+/**
+ * (a) the edit guard: refuse when a SALE the edit would move sits in a locked period. `lineIds` narrows it to
+ * the lines the edit actually changes (the order lines or invoice lines named): a change to one regulated line
+ * must not freeze the order's other lines. A booked line that is already square (fully reversed or superseded)
+ * does not count. The caller decides WHICH edits are money-bearing (a note or a delivery date never calls this).
+ */
+export async function assertSalesNotLockedForEdit(
+  db: LockDb,
+  where: {
+    /** Explicit, never taken from the client: the bulk preflight passes a client that is not tenant-scoped. */
+    tenantId: string;
+    orderId?: string;
+    invoiceId?: string;
+    lineIds?: { orderItemIds?: string[]; invoiceItemIds?: string[] };
+  },
+): Promise<void> {
+  // Cheap exit for the overwhelmingly common tenant: nothing is locked, so no ledger read at all.
+  if (!db.regulatedFiling?.findMany || !db.regulatedSalesLedger?.findMany) return;
+  if (!(await anyLockedFiling(db, where.tenantId))) return;
+  const { lineIds, ...scope } = where;
+  const rows = await db.regulatedSalesLedger.findMany({
+    where: {
+      ...scope,
+      entryType: { in: ["SALE", "REVERSAL"] },
+      ...(lineIds?.orderItemIds ? { orderItemId: { in: lineIds.orderItemIds } } : {}),
+      ...(lineIds?.invoiceItemIds ? { invoiceItemId: { in: lineIds.invoiceItemIds } } : {}),
+    },
+    select: {
+      trackedCategoryId: true,
+      periodBucket: true,
+      orderItemId: true,
+      invoiceItemId: true,
+      qty: true,
+      netSales: true,
+      categoryTax: true,
+    },
+  });
+  // Net per booked line and bucket: a sale that has since been fully reversed in that bucket is not at stake.
+  const net = new Map<string, { ref: BucketRef; qty: number; money: number }>();
+  for (const r of rows) {
+    const key = `${r.orderItemId ?? r.invoiceItemId ?? ""}|${r.trackedCategoryId}|${r.periodBucket}`;
+    const cur = net.get(key) ?? {
+      ref: { trackedCategoryId: r.trackedCategoryId, periodBucket: r.periodBucket },
+      qty: 0,
+      money: 0,
+    };
+    cur.qty += Number(r.qty);
+    cur.money += Number(r.netSales) + Number(r.categoryTax);
+    net.set(key, cur);
+  }
+  const live = [...net.values()]
+    .filter((n) => Math.abs(n.qty) >= 0.0005 || Math.abs(n.money) >= 0.005)
+    .map((n) => n.ref);
+  const hit = (await lockedFilingsCovering(db, live, where.tenantId))[0];
+  if (!hit) return;
+  throw new ConflictException({
+    code: API_ERROR_CODES.FILED_PERIOD_LOCKED,
+    message:
+      `This change would move money in the ${hit.filing.periodKey} period, which is filed and locked. ` +
+      `Record a return or a credit note instead (it books into the current period).`,
+    filingId: hit.filing.id,
+    periodKey: hit.filing.periodKey,
+  });
+}
+
+/**
+ * Is this order-edit payload MONEY-bearing for the edit guard? A replace-all, a new line, a substitute, a
+ * strike-off, or any change to a quantity / split / unit / price is. A note, an override reason or a
+ * substitution note alone is not: it proceeds (and, with the changed-only ledger re-sync, writes no ledger rows).
+ */
+export function isMoneyBearingEdit(
+  dto: {
+    replaceAll?: boolean | null;
+    items?: Array<Record<string, unknown>> | null;
+  },
+  role?: string,
+): boolean {
+  if (dto.replaceAll === true) return true;
+  // Any edit that will delete and re-create the lines is money-bearing, whatever it carries: judged by the
+  // SAME predicate `updateOrderItems` branches on (a buyer / driver `items: []` still runs deleteMany).
+  if (role !== undefined && editReplacesLines(dto, role)) return true;
+  const moneyKeys = [
+    "qty",
+    "boxes",
+    "pieces",
+    "unitLabel",
+    "unitPrice",
+    "discount",
+    "substituteProductId",
+  ];
+  return (dto.items ?? []).some(
+    (i) =>
+      !i.id || // a new line
+      i.action === "CANCEL" ||
+      i.action === "DELETE" ||
+      moneyKeys.some((k) => i[k] !== undefined && i[k] !== null),
+  );
+}
+
+/**
+ * The order-edit guard in one call: refuse (409 FILED_PERIOD_LOCKED) a MONEY-bearing edit to an order whose
+ * regulated SALE rows are booked into a LOCKED filing period. A note, an override reason or a delivery date
+ * proceeds; a return or a credit note is not an edit and books today.
+ *
+ * B297 PR5 (D4a), SA-819 MUST 4: `updateOrderItems` calls it after the revision check, so an editor on an
+ * outdated order meets the 409 for the stale revision first. It asks the service's own replace predicate
+ * (role + diff shape), so an `items: []` buyer / driver replace, which still runs deleteMany, is judged as
+ * the money-bearing edit it is.
+ */
+export async function assertOrderEditNotLocked(
+  db: LockDb,
+  orderId: string,
+  dto: Parameters<typeof isMoneyBearingEdit>[0],
+  ctx: { tenantId: string; role?: string },
+): Promise<void> {
+  if (!isMoneyBearingEdit(dto, ctx.role)) return;
+  // A diff payload that names only existing lines (no replace-all, no new line) can only move THOSE lines.
+  const items = dto.items ?? [];
+  const named =
+    !editReplacesLines(dto, ctx.role) &&
+    dto.replaceAll !== true &&
+    items.length > 0 &&
+    items.every((i) => typeof i.id === "string" && i.id);
+  await assertSalesNotLockedForEdit(db, {
+    tenantId: ctx.tenantId,
+    orderId,
+    ...(named ? { lineIds: { orderItemIds: items.map((i) => String(i.id)) } } : {}),
+  });
+}

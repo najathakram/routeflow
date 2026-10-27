@@ -173,6 +173,14 @@ describe("unitOptionText", () => {
     );
     expect(unitOptionText(piece)).toBe("Piece · $1.75");
   });
+
+  it("a derived Piece that is not exact to the cent reads the proration, via the real formatters (row 513)", () => {
+    const pack3 = { unit: "Pack", unitsPerBox: 3, pricePerUnit: "10.00" };
+    const piece = buildUnitOptions(pack3, [level({ label: "Case", factorToBase: 72 })]).find(
+      (o) => o.factorToBase === 1,
+    )!;
+    expect(unitOptionText(piece)).toBe("Piece · ≈$3.33 (1/3 of $10.00)");
+  });
 });
 
 describe("unitLineSubtotal", () => {
