@@ -22,6 +22,8 @@ import {
   runSteps,
   statusPayload,
   resultDirName,
+  worktreeDirName,
+  assertMergeTestsHead,
 } from "./local-ci.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -391,4 +393,75 @@ test("describeTree flags a merge ref that lacks the master tip as stale", () => 
   assert.equal(describeTree({ ...a, mode: "merge", masterInMerge: false }).stale, true);
   assert.equal(describeTree({ ...a, mode: "head" }).sha, "h");
   assert.equal(describeTree({ ...a, mode: "fresh" }).label, "fresh-merge");
+});
+
+test("assertMergeTestsHead: the tested merge commit's second parent must be the PR head (MUST 1)", () => {
+  const head = "h".repeat(40);
+  // GitHub's merge ref lagging a push: ^2 is an older head, so a green here would be stamped on the wrong sha
+  assert.throws(
+    () =>
+      assertMergeTestsHead({
+        mode: "merge",
+        mergeSha: "m".repeat(40),
+        headSha: head,
+        secondParent: "o".repeat(40),
+      }),
+    /second parent/,
+  );
+  assert.throws(
+    () =>
+      assertMergeTestsHead({
+        mode: "merge",
+        mergeSha: "m".repeat(40),
+        headSha: head,
+        secondParent: null,
+      }),
+    /second parent/,
+  );
+  assert.doesNotThrow(() =>
+    assertMergeTestsHead({
+      mode: "merge",
+      mergeSha: "m".repeat(40),
+      headSha: head,
+      secondParent: head,
+    }),
+  );
+  assert.doesNotThrow(() =>
+    assertMergeTestsHead({
+      mode: "fresh",
+      mergeSha: "m".repeat(40),
+      headSha: head,
+      secondParent: head,
+    }),
+  );
+  assert.throws(
+    () =>
+      assertMergeTestsHead({
+        mode: "fresh",
+        mergeSha: "m".repeat(40),
+        headSha: head,
+        secondParent: "o".repeat(40),
+      }),
+    /second parent/,
+  );
+  // --head tests the head commit itself: no merge commit, nothing to compare
+  assert.doesNotThrow(() =>
+    assertMergeTestsHead({ mode: "head", mergeSha: head, headSha: head, secondParent: null }),
+  );
+});
+
+test("worktreeDirName is unique per pr + head sha + pid (MUST 3)", () => {
+  const a = worktreeDirName("/r", 3709, "abcdef1234567890abcdef", 111);
+  assert.equal(path.basename(a), "rf-lci-3709-abcdef123456-111");
+  assert.notEqual(a, worktreeDirName("/r", 3709, "abcdef1234567890abcdef", 222));
+  assert.notEqual(a, worktreeDirName("/r", 3709, "fedcba1234567890abcdef", 111));
+  assert.notEqual(a, worktreeDirName("/r", 3710, "abcdef1234567890abcdef", 111));
+  assert.equal(path.dirname(a), path.resolve("/r", ".."));
+});
+
+test("local-ci does not set its own RF_HEAVY_SLOTS default; heavy-slot's applies (MUST 2)", async () => {
+  const src = fs.readFileSync(path.join(HERE, "local-ci.mjs"), "utf8");
+  assert.doesNotMatch(src, /process\.env\.RF_HEAVY_SLOTS\s*(\?\?|\|\||=)/);
+  const { parseSlots, DEFAULT_SLOTS } = await import("./lib/heavy-slot.mjs");
+  assert.equal(parseSlots(undefined), DEFAULT_SLOTS);
 });

@@ -31,7 +31,7 @@
 //   * Node: CI pins NODE_VERSION 24; this runs the host Node (logged, and in result.json).
 //   * node_modules is a clone of the main checkout, not a cold `npm ci` (npm ci runs when stale).
 //   * OS: win32 vs ubuntu-latest (path separators, symlinks, line endings) can matter.
-//   * Heavy steps take the machine-wide heavy slot (RF_HEAVY_SLOTS, default 3 here) and jest runs
+//   * Heavy steps take the machine-wide heavy slot (RF_HEAVY_SLOTS, heavy-slot's own default) and jest runs
 //     with JEST_MAX_WORKERS=2, so wall time differs from CI's budget.
 //   * The DB lane uses the compose Postgres (local-db-specs), not postgres:16-alpine in the job.
 import { execFileSync, spawn, spawnSync } from "node:child_process";
@@ -303,6 +303,26 @@ export function resultDirName(pr, headSha) {
   return `${pr}-${headSha.slice(0, 12)}`;
 }
 
+/** Sibling of the repo, unique per pr + head sha + pid so two runs of one PR never share a worktree. */
+export function worktreeDirName(repo, pr, headSha, pid) {
+  return path.resolve(repo, "..", `rf-lci-${pr}-${headSha.slice(0, 12)}-${pid}`);
+}
+
+/**
+ * The status lands on the PR head sha, so the tree under test must really be that head merged into
+ * master: the merge commit's second parent (`secondParent`, null when it has none) must equal
+ * headSha. GitHub's merge ref can lag a push; a green on the older head would be stamped on the new
+ * one. `--head` tests the head commit itself, so there is no merge commit to compare.
+ */
+export function assertMergeTestsHead({ mode, mergeSha, headSha, secondParent }) {
+  if (mode === "head") return;
+  if (secondParent !== headSha) {
+    throw new Error(
+      `tested merge ${mergeSha.slice(0, 9)} has second parent ${secondParent ? secondParent.slice(0, 9) : "none"}, not PR head ${headSha.slice(0, 9)} (GitHub's merge ref is stale); refusing to post local-ci/verify`,
+    );
+  }
+}
+
 /**
  * The ordered plan (pure). Each step: { name, cwd, cmd | action, env?, heavy?, advisory?, gate?,
  * timeoutMs?, when? }. `gate` marks a step whose failure is a real CI-gate failure (state
@@ -517,6 +537,14 @@ function git(cwd, args) {
   return execFileSync("git", args, { cwd, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 }).trim();
 }
 
+function gitOrNull(cwd, args) {
+  try {
+    return git(cwd, args);
+  } catch {
+    return null;
+  }
+}
+
 /** Kills one process tree: the child we started, nothing else. */
 function killTree(pid) {
   if (!pid) return;
@@ -653,7 +681,7 @@ export async function main(argv = process.argv.slice(2)) {
   }
   const repo = git(process.cwd(), ["rev-parse", "--show-toplevel"]);
   const from = path.resolve(o.from ?? repo);
-  const dir = path.resolve(repo, "..", `rf-lci-${o.pr}`);
+  let dir = worktreeDirName(repo, o.pr, "<head sha>", process.pid);
   const log = (m) => console.error(m);
   const nodeMajor = Number(process.versions.node.split(".")[0]);
   log(
@@ -736,6 +764,13 @@ export async function main(argv = process.argv.slice(2)) {
       ]);
     }
     mergeSha = tree.sha;
+    assertMergeTestsHead({
+      mode: o.tree,
+      mergeSha,
+      headSha,
+      secondParent: o.tree === "head" ? null : gitOrNull(repo, ["rev-parse", `${mergeSha}^2`]),
+    });
+    dir = worktreeDirName(repo, o.pr, headSha, process.pid);
     treeInfo = { ...tree, headSha, masterSha, githubMerge };
     log(
       `local-ci: testing ${tree.label} ${mergeSha.slice(0, 9)} (head ${headSha.slice(0, 9)}, origin/master ${masterSha.slice(0, 9)})` +
@@ -784,7 +819,6 @@ export async function main(argv = process.argv.slice(2)) {
   };
   process.on("SIGINT", onSignal);
   process.on("SIGTERM", onSignal);
-  process.env.RF_HEAVY_SLOTS ??= "3";
   let result;
   let postFailed = false;
   try {
