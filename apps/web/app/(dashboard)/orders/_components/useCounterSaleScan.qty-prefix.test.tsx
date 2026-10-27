@@ -1,5 +1,5 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { resolveProductByCode } from "@/lib/barcode-resolve";
+import { resolveProductByCode, SCAN_LOOKUP_TIMEOUT_MS } from "@/lib/barcode-resolve";
 import { useCounterSaleScan } from "./useCounterSaleScan";
 
 /** F01: "2*code" / "2x code" is quantity 2 of that code; a plain number still sets the quantity for the NEXT scan. */
@@ -30,7 +30,7 @@ describe("the scan box quantity prefix (F01)", () => {
     const { add, hook } = setup();
     act(() => hook.result.current.submit(typed));
     await waitFor(() => expect(add).toHaveBeenCalledTimes(1));
-    expect(resolve).toHaveBeenCalledWith("COLA");
+    expect(resolve).toHaveBeenCalledWith("COLA", { timeoutMs: SCAN_LOOKUP_TIMEOUT_MS });
     expect(add.mock.calls[0][2]).toBe(2);
   });
 
@@ -80,7 +80,9 @@ describe("the scan box quantity prefix (F01)", () => {
   it("a code that merely contains an x is looked up whole", async () => {
     const { add, hook } = setup();
     act(() => hook.result.current.submit("BOX12"));
-    await waitFor(() => expect(resolve).toHaveBeenCalledWith("BOX12"));
+    await waitFor(() =>
+      expect(resolve).toHaveBeenCalledWith("BOX12", { timeoutMs: SCAN_LOOKUP_TIMEOUT_MS }),
+    );
     expect(add).not.toHaveBeenCalled();
   });
 });
