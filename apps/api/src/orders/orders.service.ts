@@ -133,16 +133,15 @@ import {
 } from "./merge-idempotency";
 import { BUYER_EDIT_CLOSED_STATUSES, computeEditWindow } from "./edit-window";
 import { fulfillPathLocked } from "./fulfil-path-lock";
-import {
-  assertQuantitiesKnown,
-  cancelBlockedMessage,
-  cancelImpact,
-  deliveredUnitsBlockedMessage,
-} from "./order-cancel-impact";
+import { assertCancelImpactAllows, cancelImpact } from "./order-cancel-impact";
 import { cancelOrderInTx, lockDeleteLines, type CancelOrderTxOptions } from "./order-cancel-tx";
 import { claimReopenInTx } from "./order-reopen-claim";
 import { assertNoCashRefundOnOrder } from "../invoices/invoice-cash-refund-guard";
-import { assertBuyerDiffShape, classifyEditPayload } from "./order-edit-payload";
+import {
+  assertBuyerDiffShape,
+  classifyEditPayload,
+  takesBuyerDriverReplace,
+} from "./order-edit-payload";
 import {
   applyBuyerMergeHeaderImpl,
   bulkDeleteOrdersImpl,
@@ -273,6 +272,7 @@ import { tenantSafeParentView } from "../products/product-parent";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
+import { assertOrderEditNotLocked } from "../regulated/filing-lock";
 import { clearLoserDraftForDelete } from "./merge-loser-draft";
 import { sumInlineReturnCredit } from "../returns/inline-return-credit.util";
 
@@ -2490,15 +2490,7 @@ export class OrdersService implements OnApplicationBootstrap {
    * money, since that's the more urgent problem for an operator to act on.
    */
   private async assertCancellableOrThrow(id: string) {
-    const impact = await this.cancelImpact(id);
-    if (impact.canCancel) return;
-    if (impact.blockingPayments.length > 0)
-      throw new BadRequestException(cancelBlockedMessage(impact.blockingPayments));
-    assertQuantitiesKnown(impact); // B692: legacy delivered row, no quantity recorded
-    // B56 (REG-B56): delivered goods can't be un-delivered by cancelling the
-    // order out from under them — that would erase the revenue for goods the
-    // customer already has. Record a return, or edit the order down instead.
-    throw new BadRequestException(deliveredUnitsBlockedMessage(impact.deliveredUnits));
+    assertCancelImpactAllows(await this.cancelImpact(id)); // see that judgment in order-cancel-impact.ts
   }
 
   async reopenOrder(id: string, user?: JwtPayload, ack?: rGate.Ack) {
@@ -2627,6 +2619,10 @@ export class OrdersService implements OnApplicationBootstrap {
     // Row 372 (MF4 nit e): an editor on an outdated order meets the 409 BEFORE any refusal can mask it and any
     // un-tx'd side effect (the invoice revert, the return number). Advisory; the in-tx check below is the lock.
     await assertRevisionCurrent(this.prisma.forTenant(), orderId, dto.expectedRevisionNumber);
+    await assertOrderEditNotLocked(this.prisma.forTenant(), orderId, dto as any, {
+      tenantId: (user?.tenantId ?? this.prisma.getTenantId()) as string, // B297 PR5 (D4a): see that guard
+      role: user?.role,
+    });
     const isDiffPayload = classifyEditPayload(order, dto, user); // A4/B13: see order-edit-payload.ts
     // SA-422: never revive a seller-CANCELLED line (409 before any write; a strike-off of one is a
     // no-op). SA-422b: BEFORE every unit check, so a cancelled line's id gets this answer first.
@@ -2884,10 +2880,7 @@ export class OrdersService implements OnApplicationBootstrap {
         // SA-407: a buyer's per-line diff (a unit line's count / a removal) merges like staff's too.
         // SA-696a (decided, fail closed): this path recreates every line (new ids), so a carrier order with an
         // unlisted line reads as a removal and is refused NO_REDUCE even when nothing changed; nothing written.
-        if (
-          (user?.role === UserRole.CUSTOMER || user?.role === UserRole.DRIVER) &&
-          !isDiffPayload
-        ) {
+        if (takesBuyerDriverReplace(user?.role, isDiffPayload) && user) {
           if (user.role === UserRole.CUSTOMER) {
             // REG-B131: `deletedAt: null` — the buyer replace-all path is the last door a
             // removed customer's still-valid session could mutate an order through.
