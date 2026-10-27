@@ -22,6 +22,7 @@ import { asReadableConflict, cnBad, cnConflict, type CreditNoteCode } from "./cr
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { finiteStoredLevy, finiteStoredMoney } from "../common/money-invariants.util";
 import { autoApplyCandidateWhere, creditAutoApplyOnSend } from "./auto-apply-candidates";
+import { assertCreditCustomerNotWalkIn } from "./walk-in-credit-guard";
 import { blockedPairs, clearApplyBlocks, pairKey, writeApplyBlocks } from "./apply-block";
 import {
   lockCreditNotes,
@@ -401,6 +402,7 @@ export class CreditNotesService {
     creditNoteNumber: string,
     tenantId: string | null,
   ): Promise<any> {
+    await assertCreditCustomerNotWalkIn(tx, dto.customerId); // W-913: never credit on the walk-in account
     // REG-B267 / cause-ruling.md §2 D2 parity: refused before any write, same as create().
     if (!tenantId) throw new BadRequestException("A tenant context is required.");
     if (!dto.amount || dto.amount <= 0)
@@ -502,6 +504,7 @@ export class CreditNotesService {
     tenantId: string | null,
     customer: unknown,
   ) {
+    await assertCreditCustomerNotWalkIn(tx, data.customerId); // W-913: create() and the reissue both land here
     const row = await tx.creditNote.create({
       data: {
         creditNoteNumber: data.creditNoteNumber,
@@ -595,6 +598,7 @@ export class CreditNotesService {
       select: { id: true, businessName: true },
     });
     if (!customer) throw new NotFoundException("Customer not found");
+    await assertCreditCustomerNotWalkIn(this.prisma.forTenant(), dto.customerId); // W-913: burn no number
 
     // REG-B267 / cause-ruling.md §2 D2: validate BEFORE reserving a number — a
     // standalone (non-tx) read of everything this create can be rejected for, so

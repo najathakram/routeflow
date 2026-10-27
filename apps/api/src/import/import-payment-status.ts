@@ -1,4 +1,5 @@
 import { InvoiceStatus } from "@prisma/client";
+import { isOverdue } from "../common/calendar-date";
 import { sumConfirmed } from "../invoices/payment-predicates";
 
 /**
@@ -21,6 +22,8 @@ export function importPaymentStatus(
   inv: { status: InvoiceStatus; total: unknown; dueDate: Date | null },
   payments: Array<{ amount: unknown; status?: string }>,
   now: Date,
+  // SA-964 §3 / SA-495a: REQUIRED (null = the tenant has no zone, i.e. UTC): OVERDUE once the due day has ENDED there.
+  timeZone: string | null,
 ): { status: InvoiceStatus; paidAt: Date | null } | null {
   if (TERMINAL.includes(inv.status)) return null;
   const totalPaid = sumConfirmed(payments as any);
@@ -28,7 +31,7 @@ export function importPaymentStatus(
   let next: InvoiceStatus;
   if (totalPaid >= total - 0.001) next = InvoiceStatus.PAID;
   else if (totalPaid > 0) next = InvoiceStatus.PARTIAL;
-  else if (inv.dueDate && inv.dueDate < now) next = InvoiceStatus.OVERDUE;
+  else if (isOverdue(inv.dueDate, now, timeZone)) next = InvoiceStatus.OVERDUE;
   else next = inv.status;
   if (next === inv.status) return null;
   return { status: next, paidAt: next === InvoiceStatus.PAID ? now : null };

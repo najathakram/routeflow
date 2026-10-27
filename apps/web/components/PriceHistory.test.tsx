@@ -21,6 +21,7 @@ const row = (over: Partial<PriceHistoryRow> = {}): PriceHistoryRow => ({
   unitPrice: 12.9,
   unitLabel: "case",
   unitsPerBox: 24,
+  salePack: over.unitsPerBox !== undefined ? (over.unitsPerBox ?? 1) : 24, // the server's pairing unless a case sets it
   qty: 2,
   boxes: 2,
   pieces: 0,
@@ -196,7 +197,7 @@ describe("PriceHistoryButton — popover behaviour", () => {
     expect(within(dialog).getByText("not invoiced yet")).toBeInTheDocument();
     expect(within(dialog).getByText("INV-0002")).toBeInTheDocument();
     expect(within(dialog).getByText("Discount")).toBeInTheDocument();
-    expect(within(dialog).getByRole("img", { name: /Price trend/ })).toBeInTheDocument();
+    expect(within(dialog).getByRole("img", { name: /Price over time/ })).toBeInTheDocument();
   });
 });
 
@@ -268,13 +269,12 @@ describe("PriceHistoryButton — states", () => {
     expect(mockGet.mock.calls.length).toBeGreaterThan(before);
   });
 
-  it("no past sales shows the empty copy", async () => {
+  it("no past sales says the product was not sold to this customer before", async () => {
     mockGet.mockResolvedValue({ data: response({ rows: [], summaries: [] }) });
     renderButton();
     await openPanel();
-    expect(
-      await screen.findByText("No past sales of this product to this customer"),
-    ).toBeInTheDocument();
+    const note = await screen.findByText("Not sold to this customer before.");
+    expect(note).toHaveAttribute("role", "status");
   });
 });
 

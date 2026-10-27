@@ -1,0 +1,404 @@
+import { ForbiddenException } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
+import { monthRange } from "./period";
+
+/**
+ * SA-819 MUST 1: the ONE module that reads "what is filed". Every `regulatedFiling` / `tobaccoReport`
+ * status filter lives here; `filed-periods.pin.spec.ts` fails on one anywhere else in `src`.
+ *
+ * Three tiers, DELIBERATELY different. Do not merge them; pick the one that matches the question:
+ *
+ *  | export                  | statuses            | shape                  | question it answers                         |
+ *  | ----------------------- | ------------------- | ---------------------- | ------------------------------------------- |
+ *  | `lockedFilingsCovering` | LOCKED              | per (category, bucket) | may a sales EDIT / undo touch this bucket?  |
+ *  | `filedThroughOf`        | GENERATED, LOCKED   | cumulative "through"   | is this STOCK date inside a filed period?   |
+ *  | `findFiledPeriod`       | GENERATED, LOCKED   | per (category, bucket) | which filed period does this label name?    |
+ *
+ * Helpers below (`anyLockedFiling`, `findLockedFiling`, `findGeneratedTobaccoReport`) are the same tiers read
+ * for one other purpose each; they sit here so no status literal leaks out.
+ */
+
+/** The minimal filings client surface (a tenant transaction, `forTenant()`, or a unit-test stub). */
+export type FilingsDb = {
+  regulatedFiling?: {
+    findMany?(args: unknown): Promise<any[]>;
+    findFirst?(args: any): Promise<any>;
+  };
+};
+
+/** Fail closed: an empty tenant id would match no row (`tenantId: null`) and so read as "nothing is locked". */
+function requireTenant(tenantId: string): void {
+  if (!tenantId) throw new ForbiddenException("A filed-period read needs an explicit tenantId");
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// Tier 1 - LOCKED only, per bucket (sales edits, the ledger guard, the undo guard)
+// ---------------------------------------------------------------------------------------------------------
+
+export interface LockedFilingRow {
+  id: string;
+  trackedCategoryId: string;
+  periodKey: string;
+  periodStart: Date;
+  periodEnd: Date;
+  status: string;
+}
+
+export interface BucketRef {
+  /** A row with no tracked category belongs to no filing (nothing can lock it). */
+  trackedCategoryId: string | null;
+  periodBucket: string;
+}
+
+/**
+ * LOCKED only (owner 2026-09-14: LOCKED is the explicit close). A GENERATED filing is a draft the owner can
+ * still regenerate, so a sales edit or ledger row into its period is allowed; only a lock freezes a period.
+ * Per bucket, because a sale lives in one month: a filing covers a bucket when the bucket's month starts
+ * inside its [periodStart, periodEnd). A client without a filings model (a unit-test stub) covers nothing.
+ */
+export async function lockedFilingsCovering(
+  db: FilingsDb,
+  refs: BucketRef[],
+  /** When given it is applied to the where, whatever client `db` is (the ledger writers run on a tenant tx). */
+  tenantId?: string,
+): Promise<Array<{ filing: LockedFilingRow; trackedCategoryId: string; periodBucket: string }>> {
+  const withCategory = refs.filter((r): r is BucketRef & { trackedCategoryId: string } =>
+    Boolean(r.trackedCategoryId),
+  );
+  if (withCategory.length === 0 || !db.regulatedFiling?.findMany) return [];
+  const categoryIds = [...new Set(withCategory.map((r) => r.trackedCategoryId))];
+  const filings = (await db.regulatedFiling.findMany({
+    where: {
+      ...(tenantId ? { tenantId } : {}),
+      trackedCategoryId: { in: categoryIds },
+      status: "LOCKED",
+    },
+  })) as LockedFilingRow[];
+  return coveringMatches(filings, withCategory);
+}
+
+type CoverMatch = { filing: LockedFilingRow; trackedCategoryId: string; periodBucket: string };
+
+/** Per (category, bucket): the filings whose [periodStart, periodEnd) holds the bucket's month start. */
+function coveringMatches(
+  filings: LockedFilingRow[],
+  refs: Array<BucketRef & { trackedCategoryId: string }>,
+): CoverMatch[] {
+  const out: CoverMatch[] = [];
+  for (const ref of refs) {
+    const from = monthRange(ref.periodBucket).from.getTime();
+    for (const f of filings) {
+      if (
+        f.trackedCategoryId === ref.trackedCategoryId &&
+        f.periodStart.getTime() <= from &&
+        from < f.periodEnd.getTime()
+      )
+        out.push({
+          filing: f,
+          trackedCategoryId: ref.trackedCategoryId,
+          periodBucket: ref.periodBucket,
+        });
+    }
+  }
+  return out;
+}
+
+/** A filing row that is LOCKED (the status literal stays in this module). */
+export const isLockedFiling = (f: { status: string }): boolean => f.status === "LOCKED";
+
+/**
+ * SA-995 §2: the ledger guard's read, as a ROW LOCK. Selects the covering `RegulatedFiling` rows (the tenant's
+ * filings of the refs' categories whose period holds a ref's month) `ORDER BY id FOR SHARE`, with NO status
+ * predicate: a GENERATED row is locked too, so a lock's conditional UPDATE (the exclusive side) waits for every
+ * writer that is mid-transaction, and a writer that meets a row the lock has just updated waits for it, then sees
+ * LOCKED (or, on a Serializable / Repeatable Read snapshot, gets a serialization failure and retries). The caller
+ * filters LOCKED in code (`isLockedFiling`). MUST run on the writer's own transaction client: an autocommit
+ * would release the share lock at once. A client without `$queryRaw` (a unit-test stub) falls back to the plain
+ * read of LOCKED rows, which locks nothing.
+ */
+export async function lockFilingRowsCovering(
+  db: FilingsDb & { $queryRaw?: (...args: any[]) => Promise<any> },
+  refs: BucketRef[],
+  tenantId?: string,
+): Promise<CoverMatch[]> {
+  const withCategory = refs.filter((r): r is BucketRef & { trackedCategoryId: string } =>
+    Boolean(r.trackedCategoryId),
+  );
+  if (withCategory.length === 0) return [];
+  if (typeof db.$queryRaw !== "function") return lockedFilingsCovering(db, refs, tenantId);
+  const categoryIds = [...new Set(withCategory.map((r) => r.trackedCategoryId))];
+  const monthStarts = [
+    ...new Set(withCategory.map((r) => monthRange(r.periodBucket).from.toISOString())),
+  ];
+  const rows: Array<{
+    id: string;
+    trackedCategoryId: string;
+    periodKey: string;
+    periodStart: Date;
+    periodEnd: Date;
+    status: string;
+  }> = await db.$queryRaw(
+    Prisma.sql`SELECT f."id", f."trackedCategoryId", f."periodKey", f."periodStart", f."periodEnd", f."status"
+      FROM "RegulatedFiling" f
+      WHERE f."trackedCategoryId" = ANY(${categoryIds}::text[])
+        AND (${tenantId ?? null}::text IS NULL OR f."tenantId" = ${tenantId ?? null}::text)
+        AND EXISTS (
+          SELECT 1 FROM unnest(${monthStarts}::timestamp[]) AS m(month_start)
+          WHERE f."periodStart" <= m.month_start AND m.month_start < f."periodEnd"
+        )
+      ORDER BY f."id"
+      FOR SHARE`,
+  );
+  return coveringMatches(
+    rows.map((r) => ({
+      ...r,
+      periodStart: new Date(r.periodStart),
+      periodEnd: new Date(r.periodEnd),
+    })) as any,
+    withCategory,
+  );
+}
+
+/** Cheap exit probe for the edit guard: does ANY filing hold the LOCKED status? (LOCKED tier.) */
+export async function anyLockedFiling(db: FilingsDb, tenantId: string): Promise<boolean> {
+  requireTenant(tenantId);
+  if (!db.regulatedFiling?.findMany) return false;
+  const rows = await db.regulatedFiling.findMany({
+    where: { tenantId, status: "LOCKED" },
+    take: 1,
+  });
+  return rows.length > 0;
+}
+
+/** The LOCKED filing for one (category, periodKey), or null (`prepareFiling` never regenerates it). */
+export async function findLockedFiling(
+  db: { regulatedFiling: { findFirst(args: any): Promise<any> } },
+  where: { trackedCategoryId: string; periodKey: string },
+): Promise<any> {
+  return (await db.regulatedFiling.findFirst({ where: { ...where, status: "LOCKED" } })) ?? null;
+}
+
+/**
+ * The lock transition: GENERATED -> LOCKED on one row, conditional on it still being GENERATED so a concurrent
+ * lock (or a regeneration that flipped it) cannot double-lock. Returns the rows claimed (1, or 0 when lost).
+ */
+export async function claimFilingLock(
+  db: { regulatedFiling: { updateMany(args: any): Promise<{ count: number }> } },
+  params: { id: string; lockedById: string | null; reason: string },
+): Promise<{ count: number }> {
+  return db.regulatedFiling.updateMany({
+    where: { id: params.id, status: "GENERATED" },
+    data: {
+      status: "LOCKED",
+      lockedAt: new Date(),
+      lockedById: params.lockedById,
+      lockReason: params.reason,
+    },
+  });
+}
+
+/**
+ * A regeneration's row write that can never UNLOCK a filing: conditional on the row not being LOCKED. Throws
+ * Prisma P2025 when a lock committed first (the caller returns the stored, locked row instead).
+ */
+export async function updateFilingUnlessLocked(
+  db: { regulatedFiling: { update(args: any): Promise<any> } },
+  id: string,
+  data: Record<string, unknown>,
+): Promise<any> {
+  return db.regulatedFiling.update({ where: { id, status: { not: "LOCKED" } }, data });
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// Tier 2 - GENERATED | LOCKED (and a non-FAILED tobacco report), cumulative "through" (stock dates)
+// ---------------------------------------------------------------------------------------------------------
+
+export interface FiledProduct {
+  id: string;
+  isTobacco: boolean;
+  trackedCategoryId: string | null;
+  /** The tracked category's name, which the 409 names (W-755). */
+  trackedCategory?: { name: string } | null;
+}
+
+/** The minimal client surface `filedThroughOf` reads; a tenant transaction satisfies it. */
+export interface FiledThroughDb {
+  tobaccoReport: { findFirst(args: any): Promise<any> };
+  regulatedFiling: { findFirst(args: any): Promise<any> };
+}
+
+const monthLabel = (d: Date): string =>
+  `${d.toLocaleString("en-US", { month: "long", timeZone: "UTC" })} ${d.getUTCFullYear()}`;
+
+export interface FiledThrough {
+  /** EXCLUSIVE close of the latest filed period: an instant `t` is closed when `t < through`. */
+  through: Date;
+  /** That period's label ("September 2026"), for the note and the 409 message. */
+  label: string;
+  /** WHAT is filed: "Tobacco" or the tracked category's name (SA-894 LOW-1). */
+  filedFor: string;
+}
+
+/**
+ * One filing read per key per call (W-755): the tobacco report is tenant-wide and a filing is per
+ * category, so a count of many products reads each once. Lives only for one stock-date call, on whatever
+ * client the caller passes.
+ */
+export type FiledCache = Map<string, Promise<FiledThrough | null>>;
+
+const tobaccoFiled = (db: FiledThroughDb, tenantId: string, cache: FiledCache) => {
+  const key = "tobacco";
+  if (!cache.has(key)) {
+    cache.set(
+      key,
+      db.tobaccoReport
+        .findFirst({
+          where: { tenantId, status: { not: "FAILED" } },
+          orderBy: { periodEnd: "desc" },
+          select: { periodStart: true, periodEnd: true },
+        })
+        .then((report: any) =>
+          report
+            ? {
+                // A tobacco report stores an INCLUSIVE end: the close is the next millisecond.
+                through: new Date(new Date(report.periodEnd).getTime() + 1),
+                label: monthLabel(report.periodStart),
+                filedFor: "Tobacco",
+              }
+            : null,
+        ),
+    );
+  }
+  return cache.get(key)!;
+};
+
+const categoryFiled = (
+  db: FiledThroughDb,
+  tenantId: string,
+  product: FiledProduct,
+  cache: FiledCache,
+) => {
+  const key = `category:${product.trackedCategoryId}`;
+  if (!cache.has(key)) {
+    cache.set(
+      key,
+      db.regulatedFiling
+        .findFirst({
+          where: {
+            tenantId,
+            trackedCategoryId: product.trackedCategoryId,
+            status: { in: ["GENERATED", "LOCKED"] },
+          },
+          orderBy: { periodEnd: "desc" },
+          select: { periodStart: true, periodEnd: true, periodKey: true, cadence: true },
+        })
+        .then((filing: any) =>
+          filing
+            ? {
+                through: new Date(filing.periodEnd), // already exclusive
+                label:
+                  filing.cadence === "MONTHLY" || filing.cadence == null
+                    ? monthLabel(filing.periodStart)
+                    : String(filing.periodKey),
+                filedFor: product.trackedCategory?.name ?? "this product's category",
+              }
+            : null,
+        ),
+    );
+  }
+  return cache.get(key)!;
+};
+
+/**
+ * SA-808a: "filed" means filed THROUGH, not filed AT. A month's ending stock is `currentStock -
+ * sum(movements after periodEnd)`, so a movement dated `t` changes the ending stock of every month
+ * ending at or after `t`: a row backdated into an unfiled August still moves a filed September. That is why
+ * this tier is cumulative while the sales tiers are per bucket (a sale lives in one month, a stock level
+ * accumulates). GENERATED counts as filed here (the figures were produced and may have been submitted), the
+ * stricter reading, because a stock row cannot be re-dated afterwards.
+ * Returns the close of the LATEST filed period covering the product (tobacco or its category: the later close
+ * wins, a tie keeps tobacco), or null. A FAILED month after the latest filed one stays open; a FAILED month
+ * before it is closed.
+ */
+export async function filedThroughOf(
+  db: FiledThroughDb,
+  tenantId: string,
+  product: FiledProduct,
+  cache: FiledCache,
+): Promise<FiledThrough | null> {
+  let best: FiledThrough | null = null;
+  if (product.isTobacco) best = await tobaccoFiled(db, tenantId, cache);
+  if (product.trackedCategoryId) {
+    const filing = await categoryFiled(db, tenantId, product, cache);
+    if (filing && (!best || filing.through > best.through)) best = filing;
+  }
+  return best;
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// Tier 3 - GENERATED | LOCKED, per bucket (labels on parked-reversal resolutions and undos)
+// ---------------------------------------------------------------------------------------------------------
+
+/** #2108: a filed (GENERATED or LOCKED) filing period a parked reversal would otherwise book into, and
+ *  the category whose filing matched. */
+export interface FiledPeriod {
+  periodKey: string;
+  status: string;
+  trackedCategoryId: string;
+}
+
+/**
+ * The filed period (any of `categoryIds`) that contains `bucket`, or null. GENERATED counts as well as LOCKED
+ * because this only LABELS the period ("this books against a month that has a filing"), it never refuses a
+ * write: the stricter, refusing reading is tier 1. Deterministic: with two filed categories the lowest
+ * category id, then period key, wins (SA-213), and the matched category is returned so the response names the
+ * right one.
+ */
+export async function findFiledPeriod(
+  db: any,
+  categoryIds: string[],
+  bucket: string,
+): Promise<FiledPeriod | null> {
+  if (categoryIds.length === 0) return null;
+  const bucketStart = new Date(`${bucket}-01T00:00:00.000Z`);
+  const filing = await db.regulatedFiling.findFirst({
+    where: {
+      trackedCategoryId: { in: categoryIds },
+      periodStart: { lte: bucketStart },
+      periodEnd: { gt: bucketStart },
+      status: { in: ["GENERATED", "LOCKED"] },
+    },
+    orderBy: [{ trackedCategoryId: "asc" }, { periodKey: "asc" }],
+    select: { periodKey: true, status: true, trackedCategoryId: true },
+  });
+  return filing
+    ? {
+        periodKey: filing.periodKey,
+        status: filing.status,
+        trackedCategoryId: filing.trackedCategoryId,
+      }
+    : null;
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// The legacy monthly tobacco report cron (GENERATED = already produced for the month)
+// ---------------------------------------------------------------------------------------------------------
+
+/** The tenant's already-GENERATED tobacco report for a month, or null (the cron's idempotency probe). */
+export async function findGeneratedTobaccoReport(
+  db: { tobaccoReport: { findFirst(args: any): Promise<any> } },
+  tenantId: string,
+  period: { year: number; month: number },
+): Promise<any> {
+  requireTenant(tenantId);
+  return (
+    (await db.tobaccoReport.findFirst({
+      where: {
+        tenantId,
+        periodYear: period.year,
+        periodMonth: period.month,
+        status: "GENERATED",
+      },
+    })) ?? null
+  );
+}

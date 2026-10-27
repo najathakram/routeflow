@@ -3,7 +3,7 @@ builder = "DOCKERFILE"
 dockerfilePath = "apps/control/Dockerfile"
 # Railway builds from the repo root. The control service deploys in isolation:
 # only apps/control/** (plus the one denylist file the image copies) rebuilds it.
-watchPatterns = ["apps/control/**", "scripts/campaign/plane-denylist.json"]
+watchPatterns = ["apps/control/**", "scripts/campaign/plane-denylist.json", "scripts/lib/registry-source.json"]
 
 [deploy]
 # Unauthenticated liveness probe: 200 {"ok":true} only, no data.

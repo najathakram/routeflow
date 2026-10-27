@@ -329,8 +329,10 @@ export async function loadLineCredits(
   if (itemless.length > 0) {
     const returns: Array<{ items: Array<{ productId: string; qty: unknown }> }> =
       await db.return.findMany({
-        // keyed on the CN LINK, not the return status: legacy PROCESSED rows exist (SA-628a)
-        where: { creditNoteId: { in: itemless.map((c) => c.id) } },
+        // keyed on the CN LINK, not the return status: legacy PROCESSED rows exist (SA-628a). Row 747: never an INLINE
+        // return (counted by the inline term above), the same filter the order-level query below carries, so a future
+        // stamp of an invoice/credit-note link on an inline note cannot count it twice.
+        where: { creditNoteId: { in: itemless.map((c) => c.id) }, kind: { not: "INLINE" } },
         select: { items: { select: { productId: true, qty: true } } },
       });
     const qtyByProduct = new Map<string, number>();

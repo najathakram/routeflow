@@ -32,6 +32,7 @@ import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { RegulatedLedgerService, type FiledPeriod } from "../regulated/regulated-ledger.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { lockOrderRow } from "../credit-notes/credit-note-locks";
+import { assertCreditCustomerNotWalkIn } from "../credit-notes/walk-in-credit-guard";
 import {
   addCredits,
   toHeadroomLine,
@@ -1283,6 +1284,9 @@ export class ReturnsService {
     if (ret.kind === "INLINE") throw new BadRequestException(INLINE_RETURN_USE_INLINE_ENDPOINTS);
     if (ret.status !== "RECEIVED")
       throw new BadRequestException("Only RECEIVED returns can be refunded");
+    // W-913: store credit on the walk-in account is refused before the claim (the credit note writer refuses it too)
+    if (method !== EXTERNAL_REFUND_METHOD)
+      await assertCreditCustomerNotWalkIn(this.prisma.forTenant(), ret.customerId);
 
     // F08 B53: refund value is priced from what was actually BILLED (the order's
     // creditable invoices), not re-derived from the order line — see billedBasisFor.
@@ -1770,7 +1774,8 @@ export class ReturnsService {
             },
           },
         },
-        customer: { select: { id: true, businessName: true } },
+        // isWalkIn: the Resolve dialog offers a walk-in return a refund only (W-913)
+        customer: { select: { id: true, businessName: true, isWalkIn: true } },
         items: { include: { product: { select: { id: true, name: true, unit: true } } } },
       },
     });
