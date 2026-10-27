@@ -188,15 +188,16 @@ export interface ProductSalesHistory {
   summary: ProductSalesSummary;
 }
 
-/** One open order line of a product: what is still to be billed. Backed by
- *  `GET /products/:id/open-orders`. "Open" = `OPEN_ORDER_STATUSES` (PENDING, CONFIRMED,
- *  OUT_FOR_DELIVERY); counter sales and cancelled lines are excluded. No money fields. */
 /** The statuses on the open-orders card: the api's OPEN_ORDER_STATUSES plus PARTIALLY_DELIVERED for this card (owner 2026-10-19). */
 export type OpenOrderStatusValue = Extract<
   OrderStatusValue,
   "PENDING" | "CONFIRMED" | "OUT_FOR_DELIVERY" | "PARTIALLY_DELIVERED"
 >;
 
+/** One open order line of a product: what is still to be billed. Backed by
+ *  `GET /products/:id/open-orders`. "Open" = `OpenOrderStatusValue` (PENDING, CONFIRMED,
+ *  OUT_FOR_DELIVERY, PARTIALLY_DELIVERED); counter sales and cancelled lines are excluded.
+ *  No money fields. */
 export interface ProductOpenOrderLine {
   orderId: string;
   orderNumber: string | null;

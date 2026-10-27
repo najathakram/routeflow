@@ -105,8 +105,15 @@ export interface PriceSummaryEntry {
   /**
    * The newest sales, each in ITS OWN unit AND pack size (`unitsPerBox`, null = unknown / sold by the
    * piece). A chip may only be offered for a line whose pack matches the row's own, never the entry's.
+   * `salePack` as on `PriceHistoryRow` (1 piece, > 1 pack, null unknown); absent from an older server.
    */
-  last3: { date: string; unitPrice: number; unitLabel: string; unitsPerBox: number | null }[];
+  last3: {
+    date: string;
+    unitPrice: number;
+    unitLabel: string;
+    unitsPerBox: number | null;
+    salePack?: number | null;
+  }[];
   /** Low / high of the NEWEST sale's unit group only (never units mixed); null with no sales. */
   low: number | null;
   high: number | null;

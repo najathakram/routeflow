@@ -14,7 +14,7 @@ const MASTER_ITEMS: { label: string; href: string }[] = [
   { label: "Out-of-stock ordering", href: "#out-of-stock-ordering" },
   { label: "Batch invoice import", href: "/settings/batch-import" },
   { label: "Notifications", href: "/settings?tab=notifications" },
-  { label: "Email (SMTP)", href: "/settings?tab=email" },
+  { label: "Email sending (SMTP)", href: "/settings?tab=email" },
   { label: "Regulated sections", href: "/settings?tab=regulated" },
   { label: "Product labels", href: "/settings/product-categories" },
   { label: "Claude AI scanner", href: "/settings?tab=integrations" },

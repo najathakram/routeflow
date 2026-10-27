@@ -242,7 +242,8 @@ describe("CreateOrderModal - the customer's price layer (S19b slice B)", () => {
     fireEvent.click(await screen.findByText("Beta Bakery"));
   };
   const openEditor = (shown: string) => fireEvent.click(screen.getByText(shown));
-  const closeEditor = () => fireEvent.click(
+  const closeEditor = () =>
+    fireEvent.click(
       within(screen.getByRole("dialog", { name: /^Edit / })).getByRole("button", { name: "Close" }),
     );
   const saved = async () => {
