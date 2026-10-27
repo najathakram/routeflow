@@ -191,7 +191,7 @@ async function run(client, q, json) {
         AND t."deletedAt" IS NULL`,
   );
 
-  // SA r-note 5 A2: `suspendOverdueTenants` no longer acts on Stripe past_due / unpaid (dunning owns non-payment).
+  // SA r-note 5 A2: `reconcileCanceledSubscriptions` no longer acts on Stripe past_due / unpaid (dunning owns non-payment).
   // This counts the tenants the OLD cron would have examined (ACTIVE, Stripe-billed, period ended over the 3-day grace
   // ago) - an upper bound, because Stripe's own status is not readable from here - and, of those, the ones that already
   // carry failed payments, which are the ones it would actually have suspended. SELECT-only.

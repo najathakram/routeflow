@@ -83,7 +83,7 @@ const LABELS = [
   "Expected cash",
   "Counted",
   "Variance",
-  "Unpaid pickups",
+  "Paid outside the till",
   "Cash",
   "Card",
   "Check",
@@ -161,9 +161,9 @@ describe("buildZReportEmail", () => {
     expect(slice("Money in", "Credit & account")).toContain("Pickup hand-overs");
     expect(slice("Credit & account", "Refunds & net")).toContain("On account: $30.50");
     expect(slice("Refunds & net", "Some refunds")).toContain("Net collected: $417.50");
-    // the drawer sits right under the headline and carries the unpaid pickups as its own row (no orphan line)
+    // the drawer sits right under the headline and carries the paid-outside-the-till figure as its own row (no orphan line)
     expect(slice("Drawer", "Money in")).toContain("Variance: " + MINUS + "$2.50");
-    expect(slice("Drawer", "Money in")).toContain("Unpaid pickups: $64.00");
+    expect(slice("Drawer", "Money in")).toContain("Paid outside the till: $64.00");
     expect(mail.text).not.toContain("Not taken at the till");
   });
 
@@ -206,7 +206,7 @@ describe("buildZReportEmail", () => {
       expect(z.html).toContain(label);
     }
     expect(z.text).toContain("Balanced\nCounted $0.00");
-    expect(z.text).toContain("Unpaid pickups: $0.00");
+    expect(z.text).toContain("Paid outside the till: $0.00");
     expect(z.text).not.toContain("Some refunds have no method");
     expect(z.text).not.toMatch(/: -$|: —|: –/m);
   });
@@ -259,9 +259,9 @@ describe("buildZReportEmail", () => {
     expect(m.text).toContain("Pickup hand-overs (in till cash): $0.00 · 0 hand-overs");
   });
 
-  it("the unpaid pickups row always prints; the tender warning only when a refund has no method", () => {
-    expect(mail.text).toContain("Unpaid pickups: $64.00");
-    expect(mail.html).toContain("Unpaid pickups");
+  it("the paid outside the till row always prints; the tender warning only when a refund has no method", () => {
+    expect(mail.text).toContain("Paid outside the till: $64.00");
+    expect(mail.html).toContain("Paid outside the till");
     expect(mail.html).toContain(
       "<strong>Some refunds have no method. Expected cash may be high.</strong>",
     );
@@ -276,7 +276,7 @@ describe("buildZReportEmail", () => {
     });
     expect(clean.text).not.toContain("Some refunds have no method");
     expect(clean.html).not.toContain("Some refunds have no method");
-    expect(clean.text).toContain("Unpaid pickups: $64.00");
+    expect(clean.text).toContain("Paid outside the till: $64.00");
   });
 
   it("a window across midnight carries the weekday on both ends", () => {

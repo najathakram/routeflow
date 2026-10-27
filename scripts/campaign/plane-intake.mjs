@@ -53,7 +53,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
-import { registryRoot, registrySource } from "../lib/registry-root.mjs";
+import { registryMissingMessage, registryRoot, registrySource } from "../lib/registry-root.mjs";
 import {
   appendRun,
   createClient,
@@ -99,7 +99,9 @@ function catalogueDir() {
 
 function readCatalogueRows() {
   const file = join(catalogueDir(), "bugs.jsonl");
-  if (!existsSync(file)) return [];
+  // catalogueDir() resolves through registryRoot(), which throws when the register is missing;
+  // a PLANE_SYNC_REGISTRY_DIR override without bugs.jsonl is just as unreadable.
+  if (!existsSync(file)) throw new Error(registryMissingMessage(catalogueDir()));
   return readFileSync(file, "utf8")
     .split(/\r?\n/)
     .filter(Boolean)
