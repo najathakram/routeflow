@@ -220,3 +220,49 @@ describe("permission error helpers", () => {
     });
   });
 });
+
+describe("OperatorPermissionsService.hasAny (the guard's any-of)", () => {
+  let prisma: ReturnType<typeof createMockPrisma>;
+  let service: OperatorPermissionsService;
+  const op = { sub: "op1", tenantId: "t1", role: UserRole.OPERATOR };
+
+  beforeEach(() => {
+    prisma = createMockPrisma();
+    service = new OperatorPermissionsService(prisma as any);
+  });
+
+  it("an operator holding any one of the named groups passes", async () => {
+    prisma.user.findFirst.mockResolvedValue({
+      deniedPermissionGroups: ["ORDERS"],
+      permissionsVersion: 1,
+    });
+    await expect(service.hasAny(op, ["ORDERS", "FINANCE"])).resolves.toBe(true);
+  });
+
+  it("an operator denied every named group does not pass", async () => {
+    prisma.user.findFirst.mockResolvedValue({
+      deniedPermissionGroups: ["ORDERS", "FINANCE"],
+      permissionsVersion: 1,
+    });
+    await expect(service.hasAny(op, ["ORDERS", "FINANCE"])).resolves.toBe(false);
+  });
+
+  it("a stale session (row missing) holds none, and an empty group list is never satisfied", async () => {
+    prisma.user.findFirst.mockResolvedValue(null);
+    await expect(service.hasAny(op, ["ORDERS"])).resolves.toBe(false);
+    prisma.user.findFirst.mockResolvedValue({ deniedPermissionGroups: [], permissionsVersion: 1 });
+    await expect(service.hasAny(op, [])).resolves.toBe(false);
+  });
+
+  it("an admin passes every group with no database read", async () => {
+    await expect(
+      service.hasAny({ sub: "a", tenantId: "t1", role: UserRole.TENANT_ADMIN }, ["REGULATED"]),
+    ).resolves.toBe(true);
+    expect(prisma.user.findFirst).not.toHaveBeenCalled();
+  });
+
+  it("a lookup error propagates (the guard decides what a failure means)", async () => {
+    prisma.user.findFirst.mockRejectedValue(new Error("db down"));
+    await expect(service.hasAny(op, ["ORDERS"])).rejects.toThrow("db down");
+  });
+});
