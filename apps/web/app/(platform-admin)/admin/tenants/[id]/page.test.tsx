@@ -1,5 +1,5 @@
 import * as React from "react";
-import { render, screen, waitFor, fireEvent, within } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent, within, act } from "@testing-library/react";
 import { PLAN_KEYS } from "@routeflow/types";
 import TenantDetailPage from "./page";
 import { superAdminClient } from "@/lib/admin-api";
@@ -978,5 +978,52 @@ describe("BO-08: the Overview and Billing grids fit a narrow screen", () => {
       expect(card.parentElement).toBe(grid);
       expect(card).toHaveClass("min-w-0");
     }
+  });
+});
+
+describe("B1271: the one-time temporary password of a new tenant admin stays on screen", () => {
+  it("shows the password after Create admin, even though the tenant is refetched", async () => {
+    const { superAdminClient: client } = jest.requireMock("@/lib/admin-api");
+    client.post.mockImplementationOnce((url: string) => {
+      expect(url).toMatch(/\/tenants\/tenant-1\/admin$/);
+      return Promise.resolve({
+        data: {
+          id: "u-9",
+          username: "newadmin",
+          email: "n@acme.test",
+          status: "ACTIVE",
+          createdAt: "2026-10-27T10:00:00.000Z",
+          forcePasswordChange: true,
+          tempPassword: "Temp-Pass-123",
+        },
+      });
+    });
+    render(<TenantDetailPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Create admin account" }));
+    fireEvent.change(screen.getByLabelText("Username"), { target: { value: "newadmin" } });
+    fireEvent.change(screen.getByLabelText("Email"), { target: { value: "n@acme.test" } });
+    const tenantReads = () =>
+      client.get.mock.calls.filter(([u]: [string]) => new RegExp(`/tenants/${TENANT_ID}$`).test(u))
+        .length;
+    const before = tenantReads();
+    // The refetch takes real time (network), so the loading gate is actually rendered.
+    let finishRefetch: () => void = () => {};
+    const defaultGet = client.get.getMockImplementation();
+    client.get.mockImplementation((url: string) => {
+      if (new RegExp(`/tenants/${TENANT_ID}$`).test(url)) {
+        return new Promise((resolve) => {
+          finishRefetch = () => resolve({ data: tenantFixture() });
+        });
+      }
+      return defaultGet(url);
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create admin" }));
+    await waitFor(() => expect(tenantReads()).toBeGreaterThan(before));
+    await act(async () => {
+      finishRefetch();
+    });
+    await waitFor(() => expect(screen.queryByText("Loading tenant…")).not.toBeInTheDocument());
+    client.get.mockImplementation(defaultGet);
+    expect(screen.getByText("Temp-Pass-123")).toBeInTheDocument();
   });
 });

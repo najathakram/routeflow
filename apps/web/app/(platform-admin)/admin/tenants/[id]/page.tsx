@@ -1989,8 +1989,9 @@ export default function AdminTenantDetailPage() {
     router.replace(`/admin/tenants/${id}?tab=${key}`, { scroll: false });
   };
 
+  // A refetch after an action stays silent: the loading gate below unmounts the tree, which would
+  // drop state held in it (the one-time temporary password of a new tenant admin, B1271).
   const fetchTenant = React.useCallback(() => {
-    setLoading(true);
     superAdminClient
       .get<TenantDetail>(`/platform-admin/tenants/${id}`)
       .then((res) => setTenant(res.data))
@@ -1999,6 +2000,7 @@ export default function AdminTenantDetailPage() {
   }, [id]);
 
   React.useEffect(() => {
+    setLoading(true);
     fetchTenant();
   }, [fetchTenant]);
 
