@@ -78,6 +78,8 @@ on:
       - "apps/control/**"
       # Read by control's specs and by its running server (src/sources/denylist.ts).
       - "scripts/campaign/plane-denylist.json"
+      # Read by control's running server and specs (src/sources/registers.ts: register location).
+      - "scripts/lib/registry-source.json"
       # Read by control's specs: workspace-wiring (root scripts), the install, and the lockfile.
       - "package.json"
       - "package-lock.json"
