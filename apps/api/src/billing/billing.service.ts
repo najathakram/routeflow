@@ -1,4 +1,5 @@
 import { TX_CONFLICT_MAX_ATTEMPTS } from "../common/tx-retry";
+import { sellerDisplayName } from "../common/seller-display-name";
 import {
   HttpException,
   Injectable,
@@ -26,6 +27,7 @@ import {
   dunningEmailsFor,
   paymentReinstatable,
   paymentReinstatableWhere,
+  OVERDUE_SUSPENDED_REASON,
   STRIPE_CANCELLED_REASON,
 } from "./dunning-config";
 import { adminLockedRefusal } from "./admin-lock-refusal";
@@ -495,7 +497,7 @@ export class BillingService {
 
           const customer = await this.stripe.createCustomer({
             email: adminUser?.email ?? `tenant-${tenantId}@routeflow.app`,
-            name: tenant.config?.businessName ?? tenant.name ?? tenant.slug,
+            name: sellerDisplayName(tenant.config, tenant, tenant.slug),
             metadata: { tenantId, slug: tenant.slug },
           });
 
@@ -3454,6 +3456,7 @@ ${updateLine}
             -1,
             BILLING_EVENTS.SUBSCRIPTION_SUSPENDED,
             { source: "stripe", reason: "overdue_payment", stripeStatus: stripeSub.status },
+            { data: { readOnlyReason: OVERDUE_SUSPENDED_REASON } }, // W-664: a billing lock names itself
           );
           if (suspended) {
             this.tenantStatusGuard.invalidate(sub.tenantId);

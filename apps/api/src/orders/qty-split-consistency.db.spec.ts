@@ -458,6 +458,46 @@ describeDb(
         expect(Number((await lines())[0].qty)).toBe(12);
       }, 120_000);
 
+      // SA-982 PR-2b (row 139): the same sites also dry-run buildLine and log ONE `line-ambiguity` line (a separate
+      // logger from row 531's), including for a boxed product sent a bare qty, where the split `if` never runs.
+      describe("the buildLine census (SA-982 PR-2b): one line-ambiguity log per ambiguous write, the write untouched", () => {
+        let census: jest.SpyInstance;
+        beforeEach(() => {
+          census = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+        });
+        afterEach(() => census.mockRestore());
+        const ambiguity = () =>
+          census.mock.calls.map((c) => String(c[0])).filter((m) => m.startsWith("line-ambiguity"));
+        const create = (item: Record<string, unknown>, opts: Record<string, unknown> = {}) =>
+          tenantCtx.run(tenantId, () =>
+            orders.create({ customerId, items: [{ productId, ...item }] }, operator(), {
+              skipAutoMerge: true,
+              ...opts,
+            }),
+          );
+
+        it("a bare qty on a boxed product (the B644 shape) logs BOXED_NO_SPLIT and is stored as before", async () => {
+          await create({ qty: 2 });
+          expect(ambiguity()).toEqual([
+            `line-ambiguity site=orders.create.lines reason=BOXED_NO_SPLIT tenant=${tenantId} role=unknown`,
+          ]);
+          expect(Number((await lines())[0].qty)).toBe(2);
+        }, 120_000);
+
+        it("a contradictory split logs QTY_DISAGREES on the counter site and the split still wins", async () => {
+          await create({ qty: 2, boxes: 1, pieces: 0 }, { counterSale: true });
+          expect(ambiguity()).toEqual([
+            `line-ambiguity site=counter.sale reason=QTY_DISAGREES tenant=${tenantId} role=unknown`,
+          ]);
+          expect(Number((await lines())[0].qty)).toBe(12);
+        }, 120_000);
+
+        it("a consistent split logs nothing", async () => {
+          await create({ qty: 24, boxes: 2, pieces: 0 });
+          expect(ambiguity()).toEqual([]);
+        }, 120_000);
+      });
+
       it("create(): a consistent payload does not warn", async () => {
         await tenantCtx.run(tenantId, () =>
           orders.create(

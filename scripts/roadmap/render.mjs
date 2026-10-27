@@ -19,6 +19,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { gitEnv } from "../campaign/plane-client.mjs"; // the ONLY plane-client import allowed here (T31)
+import { registryRoot } from "../lib/registry-root.mjs";
 
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 export const REG_FILES = ["features.jsonl", "deferred.jsonl", "releases.jsonl"];
@@ -408,7 +409,7 @@ export function renderAll({
   const bugsPath =
     SELF_TEST && process.env.ROADMAP_REG_DIR
       ? join(dir, "bugs.jsonl")
-      : join(ROOT, ".claude", "campaign", "bugs.jsonl");
+      : join(registryRoot(), "bugs.jsonl");
   const stats = bugCounts(regs.features, regs.deferred, loadJsonl(bugsPath));
   const lag = computeLag(regs.features, regs.deferred, day);
   mkdirSync(outDir, { recursive: true });
@@ -612,7 +613,8 @@ function main() {
     r = renderAll({ outDir: args.out, prsPath: args.prs });
   } catch (err) {
     console.error(err.message);
-    process.exitCode = 1;
+    // A missing bug register is a stop (exit 2, names the fix), not a validation failure.
+    process.exitCode = /registry:clone/.test(String(err.message)) ? 2 : 1;
     return;
   }
   if (r.errors.length) {
