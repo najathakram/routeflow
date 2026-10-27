@@ -38,6 +38,7 @@ import { DunningService } from "./dunning.service";
 import { SubscriptionMutationService } from "./subscription-mutation.service";
 import { AutoLockSwitchService } from "./auto-lock-switch.service";
 import { AUTO_LOCKS_PAUSED_KEY, AUTO_LOCK_SKIP_AUDIT_ACTION } from "./auto-lock-gate";
+import { paymentReinstatable } from "./dunning-config";
 import { BILLING_EVENTS } from "./plan-catalog.constants";
 import { MrrService } from "./mrr.service";
 import { PlatformAdminService } from "../platform-admin/platform-admin.service";
@@ -483,6 +484,8 @@ describeDb("SA-775 automatic locks pause (real Postgres)", () => {
       const row = await tenantRow(prod.t);
       expect(row.status).toBe("CANCELLED");
       expect(row.readOnlyReason).toBe("stripe_cancelled");
+      // W-664 (master): the billing lock names itself, so a payment's predicate still lifts it.
+      expect(paymentReinstatable(row.status, row.readOnlyReason)).toBe(true);
       expect(await events(prod.t, BILLING_EVENTS.SUBSCRIPTION_CANCELED)).toHaveLength(1);
       expect(await events(prod.t, BILLING_EVENTS.SUBSCRIPTION_SUSPENDED)).toHaveLength(0);
       // the missed webhook finally redelivered: no second delta

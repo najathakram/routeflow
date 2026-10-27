@@ -189,6 +189,13 @@
 
 ## tooling
 
+### L-338 · 2026-10-24 · tooling · jest ignores an unknown config key, so a config pin must read the config jest resolved (#3638, #3643)
+
+- **Symptom:** a DB-lane hook wired as `setupFilesAfterEach` (the real key is `setupFilesAfterEnv`) never ran, yet the pin that guarded it stayed green.
+- **Root cause:** jest treats an unknown option as a "Validation Warning" and carries on, and the pin asserted on the object the test itself handed to jest, not on what jest loaded.
+- **Lesson:** **Pin a jest (or any tool) config through the tool itself: run `jest -c <config> --showConfig`, assert the resolved value, and fail on "Unknown option" in stderr. A pin that reads back its own input proves nothing.**
+- **Guard:** `apps/api/src/common/db-lane-serial.spec.ts` and the db-lane config pins (`--showConfig`).
+
 ### L-067 · 2026-09-04 · tooling · #597
 
 - **Symptom:** eight defects from one script: "updated" edits that changed nothing, mangled authored

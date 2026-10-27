@@ -16,6 +16,9 @@ export function assertNotWalkIn(customer: { isWalkIn?: boolean | null } | null |
   }
 }
 
+/** The ONE "not the walk-in customer" fragment for a Customer `where` (NULL, every legacy row, is not a walk-in). */
+export const NOT_WALK_IN_WHERE = { OR: [{ isWalkIn: null }, { isWalkIn: false }] };
+
 /**
  * The customer list and its CSV export never show the walk-in customer: it is a system row, chosen at the
  * counter by the `walkIn` flag, never from a list. `isWalkIn` is nullable and every pre-existing row is NULL,
@@ -25,7 +28,7 @@ export function assertNotWalkIn(customer: { isWalkIn?: boolean | null } | null |
 export function excludeWalkIn<T extends object>(where: T): T {
   const w = where as { AND?: unknown };
   const and = Array.isArray(w.AND) ? w.AND : w.AND ? [w.AND] : [];
-  w.AND = [...and, { OR: [{ isWalkIn: null }, { isWalkIn: false }] }];
+  w.AND = [...and, NOT_WALK_IN_WHERE];
   return where;
 }
 
