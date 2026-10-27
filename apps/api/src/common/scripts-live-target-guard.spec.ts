@@ -157,6 +157,8 @@ const EXEMPT: Record<string, Reason> = {
   "apps/api/scripts/ux-audit-seed.js": "test-slug-only",
   "scripts/data-integrity-report.mjs": "read-only",
   "scripts/f07-conservation-report.mjs": "read-only",
+  // Computed import() loads only the risk-path classifier; its one write is a markdown report file.
+  "scripts/factory-scoreboard.mjs": "not-a-db-client",
   // The DB-spec lane runner: creates and drops only its own rf_dbspec_* databases on the local compose
   // Postgres (SPEC_DB_PATTERN enforced), never a tenant table.
   "scripts/local-db-specs.mjs": "local-only",
