@@ -174,7 +174,8 @@ export async function decrementStockForSale(
 
   // SA-927: the oversell check, the backorder markers and the cost resolution run on the helper's
   // locked read (inside the plan function); the helper moves the counter and stamps stockAfter. A
-  // product id of another tenant is a 404 from the helper before any write.
+  // product id this tenant cannot see was dropped above (SA-1020), so the sale path never reaches
+  // the helper's 404 for it.
   let pending: Map<StockLine, number> = new Map();
   await applyStockMovements(
     tx,
