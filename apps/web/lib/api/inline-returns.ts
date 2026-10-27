@@ -11,6 +11,7 @@ import type {
   CaptureInlineReturnRequest,
   InlineReturnQuoteResponse,
   InlineReturnRecord,
+  InlineReturnRefundResponse,
   QuoteInlineReturnRequest,
   RefundInlineReturnRequest,
 } from "@routeflow/types";
@@ -47,6 +48,8 @@ export type {
 export function useInlineReturnQuote() {
   return useMutation<InlineReturnQuoteResponse, Error, QuoteInlineReturnRequest>({
     mutationFn: (dto) => apiClient.post("/returns/inline/quote", dto).then((r) => r.data),
+    // the dialog shows the one message for a failed quote; the global error toast would stack a second on top of it
+    meta: { localErrorToast: true },
   });
 }
 
@@ -81,7 +84,10 @@ export function useCaptureInlineReturn() {
  * Errors: 409 REFUND_AMOUNT_CHANGED, RETURN_ALREADY_RESOLVED, REFUND_NEEDS_PAID_INVOICE,
  * RETURN_REFUNDED_CASH, RETURN_NOT_REFUNDABLE; 403. A network loss = retry the same POST (replay-safe).
  */
-export function refundReturn(id: string, body: RefundInlineReturnRequest): Promise<unknown> {
+export function refundReturn(
+  id: string,
+  body: RefundInlineReturnRequest,
+): Promise<InlineReturnRefundResponse> {
   return apiClient.post(`/returns/inline/${id}/refund`, body).then((r) => r.data);
 }
 

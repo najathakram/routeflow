@@ -55,6 +55,11 @@ import {
   branchTip,
   execute,
   buildPlan,
+  parseAllowList,
+  classifyIgnoredForAllowList,
+  samePath,
+  salvageIgnored,
+  allowListVerdict,
   CMD_UNSAFE,
   unlinkLinksWithin,
   cmdRmdirArgs,
@@ -2015,6 +2020,195 @@ t("row 719: a precomputed scan map is reused across candidates", () => {
     const scan = scanLinkTargets([a, b]);
     assert.equal(linkedIntoBy(a, [a, b], scan).length, 1);
     assert.deepEqual(linkedIntoBy(b, [a, b], scan), []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// --- --allow-list: per-worktree qualifier (red-first cases) ---
+const AL_NOW = Date.parse("2026-10-26T16:00:00Z");
+const AL_OLD = AL_NOW - 48 * 3600 * 1000;
+const alOk = {
+  name: "wt-x",
+  isMainCheckout: false,
+  isLocked: false,
+  isDirty: false,
+  onOrigin: true,
+  headMs: AL_OLD,
+  indexMs: AL_OLD,
+  nowMs: AL_NOW,
+  linkedFrom: [],
+};
+t("allow-list: a clean, on-origin, idle, detached worktree qualifies", () => {
+  assert.equal(allowListVerdict(alOk).ok, true);
+});
+t("allow-list: dirty is refused", () => {
+  assert.equal(allowListVerdict({ ...alOk, isDirty: true }).ok, false);
+});
+t("allow-list: HEAD not on any origin ref is refused", () => {
+  assert.equal(allowListVerdict({ ...alOk, onOrigin: false }).ok, false);
+});
+t("allow-list: HEAD or index idle under 24h (or unknown) is refused", () => {
+  assert.equal(allowListVerdict({ ...alOk, headMs: AL_NOW - 3600e3 }).ok, false);
+  assert.equal(allowListVerdict({ ...alOk, indexMs: AL_NOW - 3600e3 }).ok, false);
+  assert.equal(allowListVerdict({ ...alOk, indexMs: null }).ok, false);
+});
+t("allow-list: main checkout, protected name and locked are refused", () => {
+  assert.equal(allowListVerdict({ ...alOk, isMainCheckout: true }).ok, false);
+  assert.equal(allowListVerdict({ ...alOk, name: "rf-migrate" }).ok, false);
+  assert.equal(allowListVerdict({ ...alOk, isLocked: true }).ok, false);
+});
+t("allow-list: a sibling tree linking into it (or an unreadable scan) is refused", () => {
+  assert.equal(allowListVerdict({ ...alOk, linkedFrom: ["/w/sib"] }).ok, false);
+  assert.equal(allowListVerdict({ ...alOk, linkedFrom: null }).ok, false);
+});
+t("allow-list: file parsing takes column 1, skips comments and blanks", () => {
+  const text = ["# c", "", "C:/a|b|1|origin", "C:/b\tx", "  C:/c  ", ""].join("\n");
+  assert.deepEqual(parseAllowList(text), ["C:/a", "C:/b", "C:/c"]);
+});
+t("allow-list: removal never follows a junction inside the worktree into a sibling", () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "janitor-al-")));
+  try {
+    const wt = join(root, "wt");
+    const sib = join(root, "sib");
+    mkdirSync(join(wt, "node_modules"), { recursive: true });
+    mkdirSync(sib);
+    writeFileSync(join(sib, "keep.txt"), "x");
+    dirLink(sib, join(wt, "node_modules", "pkg"));
+    removeWorktreeSafely(wt, {
+      git: () => {},
+      unlinkLinksWithin,
+      exists: (p) => existsSync(p),
+      removeTree: (p) => safeRemoveTree(p),
+    });
+    assert.equal(existsSync(wt), false);
+    assert.equal(readFileSync(join(sib, "keep.txt"), "utf8"), "x");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// --- --allow-list: ignored-path classes (cache passes / local-assets salvaged / unknown blocks) ---
+const ign = (...p) => p.map((x) => "!! " + x).join("\n");
+t("allow-list: regenerable cache dirs are not blockers", () => {
+  const r = classifyIgnoredForAllowList(
+    "",
+    ign(
+      "apps/api/.jest-cache/",
+      ".turbo/",
+      "apps/web/.next/",
+      "apps/web/test-results/",
+      "apps/web/playwright-report/",
+      "apps/api/dist/",
+      "node_modules/",
+      "coverage/",
+      ".expo/",
+      "packages/x/build/",
+    ),
+  );
+  assert.deepEqual(r, { dirty: false, salvage: [], blockers: [] });
+});
+t(
+  "allow-list: a nested src/build/ (source folder) is refused, anchored build output passes",
+  () => {
+    const r = classifyIgnoredForAllowList(
+      "",
+      ign("apps/api/src/build/", "apps/api/dist/", "build/", "apps/web/src/coverage/"),
+    );
+    assert.deepEqual(r.blockers, ["apps/api/src/build/", "apps/web/src/coverage/"]);
+  },
+);
+t("allow-list: samePath is case-insensitive only when asked (Windows main checkout)", () => {
+  assert.equal(samePath("C:/ClaudeCode/Routeflow", "c:/claudecode/routeflow", true), true);
+  assert.equal(samePath("/a/Routeflow", "/a/routeflow", false), false);
+});
+t("allow-list: local-assets is salvage, not a blocker", () => {
+  const r = classifyIgnoredForAllowList("", ign("local-assets/", "local-assets/proofs/x.png"));
+  assert.equal(r.blockers.length, 0);
+  assert.equal(r.salvage.length, 2);
+});
+t("allow-list: an unknown ignored file blocks and is named", () => {
+  const r = classifyIgnoredForAllowList("", ign("apps/api/.env", ".jest-cache/"));
+  assert.deepEqual(r.blockers, ["apps/api/.env"]);
+  const v = allowListVerdict({ ...alOk, isDirty: true, blockers: r.blockers });
+  assert.equal(v.ok, false);
+  assert.match(v.reason, /apps\/api\/\.env/);
+});
+t("allow-list: tracked changes or an unreadable status stay dirty", () => {
+  assert.equal(classifyIgnoredForAllowList(" M a.ts", "").dirty, true);
+  assert.equal(classifyIgnoredForAllowList(null, "").dirty, true);
+});
+t("allow-list: local-assets is moved to the salvage root, then the worktree is removed", () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "janitor-al2-")));
+  try {
+    const wt = join(root, "wt");
+    const salvageRoot = join(root, "main", "local-assets", "worktree-salvage");
+    mkdirSync(join(wt, "local-assets", "proofs"), { recursive: true });
+    writeFileSync(join(wt, "local-assets", "proofs", "x.png"), "img");
+    const log = [];
+    const a = {
+      kind: "worktree",
+      target: wt,
+      worktree: "wt",
+      worktreePath: wt,
+      allowListed: true,
+      salvage: ["local-assets/"],
+      salvageRoot,
+    };
+    const out = execute(a, {
+      refuseDelete: () => null,
+      isDirty: () => true,
+      isDirtyAllowList: () => false,
+      salvage: (x) => salvageIgnored(x.worktreePath, x.worktree, x.salvage, x.salvageRoot),
+      removeWorktree: (t) =>
+        removeWorktreeSafely(t, {
+          git: () => {},
+          unlinkLinksWithin,
+          exists: (p) => existsSync(p),
+          removeTree: (p) => safeRemoveTree(p),
+        }),
+      log: (m) => log.push(m),
+    });
+    assert.equal(out, "done");
+    assert.equal(existsSync(wt), false);
+    assert.equal(
+      readFileSync(join(salvageRoot, "wt", "local-assets", "proofs", "x.png"), "utf8"),
+      "img",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+t("allow-list: a failed or colliding salvage skips the worktree and keeps it", () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "janitor-al3-")));
+  try {
+    const wt = join(root, "wt");
+    const salvageRoot = join(root, "salvage");
+    mkdirSync(join(wt, "local-assets"), { recursive: true });
+    mkdirSync(join(salvageRoot, "wt", "local-assets"), { recursive: true });
+    let removed = false;
+    const a = {
+      kind: "worktree",
+      target: wt,
+      worktree: "wt",
+      worktreePath: wt,
+      allowListed: true,
+      salvage: ["local-assets/"],
+      salvageRoot,
+    };
+    const out = execute(a, {
+      refuseDelete: () => null,
+      isDirty: () => false,
+      isDirtyAllowList: () => false,
+      salvage: (x) => salvageIgnored(x.worktreePath, x.worktree, x.salvage, x.salvageRoot),
+      removeWorktree: () => {
+        removed = true;
+      },
+      log: () => {},
+    });
+    assert.equal(out, "skipped");
+    assert.equal(removed, false);
+    assert.equal(existsSync(join(wt, "local-assets")), true);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -2162,7 +2162,7 @@ export class RoutesService {
 
     // Durable POD: rewrite data-URL artifacts to storage keys before the tx
     // (after the idempotency check so a cached replay never re-uploads).
-    await ingestPodCapture(this.podDeps, dto, stopId);
+    await ingestPodCapture(this.podDeps, dto, stopId, { idempotencyKey: dto.idempotencyKey }); // #3723: retries overwrite
 
     let autoCompleted = false;
     // SA-706f: a 40P01/40001 victim re-runs the WHOLE tx (DB writes only; each attempt starts clean).
@@ -2388,7 +2388,7 @@ export class RoutesService {
 
     // Durable POD: rewrite data-URL artifacts to storage keys before the tx
     // (after the idempotency check so a cached replay never re-uploads).
-    await ingestPodCapture(this.podDeps, dto, stopId);
+    await ingestPodCapture(this.podDeps, dto, stopId, { idempotencyKey: dto.idempotencyKey }); // #3723: retries overwrite
 
     let autoCompleted = false;
     let paymentIds: string[] = [];

@@ -133,7 +133,8 @@ function loadRegs(cwd: string): Registers {
   for (const rev of ["origin/master", "HEAD"]) {
     const r = gitTry(cwd, ["rev-parse", "--verify", "--quiet", rev]);
     const sha = r.out.trim();
-    if (r.ok && /^[0-9a-f]{40}$/.test(sha)) return loadRegisters({ repoDir: cwd, sha });
+    if (r.ok && /^[0-9a-f]{40}$/.test(sha))
+      return loadRegisters({ repoDir: cwd, sha, registry: { repoDir: cwd, sha } });
   }
   return loadRegisters({});
 }

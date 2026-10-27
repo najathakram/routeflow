@@ -1,0 +1,15 @@
+2026-10-20T10:00:00Z start window=45m
+2026-10-20T10:00:05Z attempt public
+2026-10-20T10:20:00Z verified PRIVATE
+2026-10-21T06:00:00Z start window=45m
+2026-10-21T06:00:05Z attempt public
+2026-10-22T10:00:00Z start window=45m
+2026-10-22T10:00:05Z attempt public
+2026-10-22T10:40:00Z verified PRIVATE
+2026-10-23T09:00:00Z start window=45m
+2026-10-23T09:00:05Z attempt public
+2026-10-24T09:00:00Z start window=45m
+2026-10-24T09:00:05Z attempt public
+2026-10-24T09:30:00Z verified PRIVATE
+2026-10-25T08:00:00Z start window=45m
+2026-10-25T08:00:05Z attempt public
