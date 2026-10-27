@@ -1,3 +1,4 @@
+import * as warnModule from "../common/line-ambiguity-warn";
 import { buildManualInvoiceLines } from "./manual-invoice-lines";
 
 // The manual-invoice line builder, lifted verbatim out of InvoicesService.create() (4c-1 prefactor).
@@ -254,5 +255,102 @@ describe("SA-077(2): a split no pack can price is refused, never silently droppe
   it("leaves a plain unboxed line alone — no split, nothing to refuse", () => {
     const out = build([{ productId: "loose", description: "Flat", qty: 10, unitPrice: 11 }]);
     expect(out.itemsData[0].subtotal).toBeCloseTo(110, 2); // 11 per piece * 10
+  });
+});
+
+describe("SA-982 PR-2: the warn phase at the manual-invoice site (invoices.manual)", () => {
+  const run = (items: unknown[], warnSite: "invoices.manual" | null = "invoices.manual") =>
+    buildManualInvoiceLines(items as never, {
+      productMap,
+      categoryMap,
+      tenantId: "t-1",
+      role: "OPERATOR",
+      warnSite: warnSite ?? undefined,
+      clampFreeUnits: clamp,
+    });
+  let warn: jest.SpyInstance;
+  beforeEach(() => {
+    warn = jest.spyOn(warnModule, "warnLineAmbiguity");
+  });
+  afterEach(() => warn.mockRestore());
+
+  // A boxed product with qty only (the B644 shape), and a valid split.
+  const b644 = { description: "B644", productId: "boxed", qty: 6, unitPrice: 24 };
+  const valid = {
+    description: "Valid",
+    productId: "boxed",
+    qty: 30,
+    boxes: 2,
+    pieces: 6,
+    unitPrice: 24,
+  };
+
+  it("a NEW product line is dry-run with its RAW input, the tenant and the role, before any split", () => {
+    run([b644]);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(
+      "invoices.manual",
+      expect.objectContaining({ qty: 6, unitsPerBox: 12, unitPrice: 24 }),
+      { tenantId: "t-1", role: "OPERATOR" },
+    );
+    expect(warn.mock.calls[0][1]).not.toHaveProperty("boxes");
+  });
+
+  it("the written line is IDENTICAL with and without the warning, for a B644-shaped line and for a valid split", () => {
+    for (const line of [b644, valid]) {
+      const withWarn = run([line]);
+      warn.mockImplementation(() => undefined);
+      const withoutWarn = run([line]);
+      warn.mockRestore();
+      warn = jest.spyOn(warnModule, "warnLineAmbiguity");
+      expect(withWarn).toEqual(withoutWarn);
+    }
+  });
+
+  it("a valid split logs nothing, a B644-shaped line logs one ambiguity line", () => {
+    const logs = jest
+      .spyOn(require("@nestjs/common").Logger.prototype, "warn")
+      .mockImplementation(() => undefined);
+    run([valid]);
+    expect(logs).not.toHaveBeenCalled();
+    run([b644]);
+    expect(logs).toHaveBeenCalledWith(
+      "line-ambiguity site=invoices.manual reason=BOXED_NO_SPLIT tenant=t-1 role=OPERATOR",
+    );
+    logs.mockRestore();
+  });
+
+  it("a snapshotted legacy line and a line with no product are not dry-run, even from the named site", () => {
+    run([
+      {
+        description: "Legacy",
+        productId: "boxed",
+        qty: 3,
+        boxes: 1,
+        pieces: 1,
+        unitPrice: 5,
+        subtotalSnapshot: 10,
+      },
+    ]);
+    run([{ description: "Fee", qty: 1, unitPrice: 5 }]);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  // SA-982 PR-2, MacBook MUST 2: the census is of a CLIENT's raw new write, so it is gated on the caller naming the
+  // site (POST /invoices), never on a null pack snapshot. Estimate conversions and recurring runs both reach this
+  // builder with `packSnapshot: null` lines (B646 recurring, estimate lines with no derivable pack).
+  it("no named site, no dry-run: a null-snapshot estimate-conversion line and a recurring-run line are not counted", () => {
+    run([{ ...b644, packSnapshot: null }], null); // estimate conversion, no derivable pack
+    run([b644], null); // recurring run: stored template line, boxed, no split
+    run([{ ...b644, packSnapshot: 12 }], null);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("never mutates the caller's items (the dry-run gets a copy)", () => {
+    for (const line of [b644, valid]) {
+      const before = structuredClone(line);
+      run([line]);
+      expect(line).toEqual(before);
+    }
   });
 });

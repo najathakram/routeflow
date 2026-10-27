@@ -1,9 +1,9 @@
 import {
   buildLadderOptions,
   defaultLadderOptionValue,
+  ladderOptionDetail,
   ladderOptionLineTotal,
-  ladderOptionPriceText,
-  normalizeBoxesPieces,
+  ladderOptionText,
   type DerivedBaseMarker,
   type LadderOption,
   type LadderProduct,
@@ -14,10 +14,9 @@ import type { ProductUnitLevel } from "@routeflow/types";
 /**
  * Mobile mirror of `apps/web/lib/unit-options.ts` (units_v1) — same contract, same
  * `@routeflow/pricing` primitives, so the ladder a mobile picker offers can never disagree with
- * web's. The FORMATTING wrapper (`unitOptionText`) is necessarily a second copy (mobile cannot
- * import `apps/web`) — `__tests__/unit-options.test.ts` pins it against web's own test's exact
- * expected strings so the two can't drift silently. A follow-up to extract both `unit-options.ts`
- * copies into a shared package is filed separately, not done here.
+ * web's. The option TEXT and the derived pack-pieces split now live in `@routeflow/pricing` (row 513:
+ * `ladderOptionText`, `ladderOptionDetail`, `derivedPackSplit`), so only the money/qty formatters are
+ * app-local; `ladderOptionText`'s own spec pins the strings both apps render.
  */
 
 export type UnitOption = LadderOption;
@@ -56,22 +55,7 @@ export function buildUnitOptions(
 export const unitPickerValue = (line: { unitLabel?: string | null } & DerivedBaseMarker): string =>
   line.unitLabel ?? line.derivedBase ?? "";
 
-/**
- * The pack-pieces shape of `count` pieces of a DERIVED base option (units P0b / SA-728): `boxes`/`pieces` split on the
- * pack size (the option's own `derived.n`, rolled over at a full pack), `qty` the total pieces, NO unit label. The line
- * then bills through `computeLineSubtotal` at the PACK price, the server's own proration, never `count` x a rounded
- * per-piece price. Null for any option that is not a derived base (a level, an own-priced Piece, the pack): those keep
- * the unit-line path.
- */
-export function derivedPackSplit(
-  option: UnitOption,
-  count: number,
-): { qty: number; boxes: number; pieces: number; unitsPerBox: number } | null {
-  if (!option.derived) return null;
-  const unitsPerBox = option.derived.n;
-  const n = normalizeBoxesPieces({ boxes: 0, pieces: count, unitsPerBox });
-  return { qty: n.qty, boxes: n.boxes ?? 0, pieces: n.pieces ?? 0, unitsPerBox };
-}
+export { derivedPackSplit } from "@routeflow/pricing"; // row 513: the one derived pack-pieces split, shared with web
 
 /**
  * The correct base a line's `unitPrice` must be compared against to decide "is this a genuine
@@ -153,19 +137,14 @@ export function defaultStartOption(
   return buildUnitOptions(product, units, tier).find((o) => o.value === value) ?? null;
 }
 
-/** The picker row's detail line, e.g. "240 pcs · $220.00" — everything `unitOptionText` shows
- *  after the label. A factor-1 unit (Piece) omits the piece count: "$1.75". */
+/** The picker row's detail line, e.g. "240 pcs · $220.00" (a factor-1 unit omits the count: "$1.75"). The text lives in @routeflow/pricing (row 513), shared with web. */
 export function unitOptionDetail(o: UnitOption): string {
-  const pcs = o.factorToBase === 1 ? "" : `${formatQty(o.factorToBase)} pcs · `;
-  return `${pcs}${ladderOptionPriceText(o, formatMoney)}`;
+  return ladderOptionDetail(o, formatMoney, formatQty);
 }
 
-/**
- * The full option text: "Case · 240 pcs · $220.00". PINNED against web's own
- * `unit-options.test.ts` expected strings (see this file's test) — never re-derive by hand.
- */
+/** The full option text: "Case · 240 pcs · $220.00" (the same string web renders). */
 export function unitOptionText(o: UnitOption): string {
-  return `${o.label} · ${unitOptionDetail(o)}`;
+  return ladderOptionText(o, formatMoney, formatQty);
 }
 
 /** Line total for `count` of a unit — a derived Piece prorates off the pack, the rest bill count x price like the server. */

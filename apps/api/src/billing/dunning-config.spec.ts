@@ -8,6 +8,7 @@ import {
   dunningEmailsFor,
   DUNNING_PAUSE_HOURS,
   PAUSE_LOCAL_HOUR,
+  OVERDUE_SUSPENDED_REASON,
   paymentReinstatable,
   paymentReinstatableWhere,
   STRIPE_CANCELLED_REASON,
@@ -67,6 +68,7 @@ describe("paymentReinstatable (SA-832 / row 453)", () => {
     ["READ_ONLY(subscription_cancelled)", "READ_ONLY", "subscription_cancelled"],
     ["SUSPENDED by billing (no reason)", "SUSPENDED", null],
     ["SUSPENDED with a billing reason", "SUSPENDED", "overdue_payment"],
+    ["SUSPENDED by the overdue cron (W-664 stamp)", "SUSPENDED", "overdue_suspended"],
     // SA-832b: a Stripe churn is NOT an admin lock - the back-office win-back link must still work for it
     ["CANCELLED by a Stripe churn (stripe_cancelled)", "CANCELLED", "stripe_cancelled"],
   ])("%s: a payment lifts it", (_n, status, reason) => {
@@ -92,6 +94,7 @@ describe("paymentReinstatable (SA-832 / row 453)", () => {
   it("stamps the admin lock with the constant the predicate reads", () => {
     expect(ADMIN_SET_REASON).toBe("admin_set");
     expect(STRIPE_CANCELLED_REASON).toBe("stripe_cancelled");
+    expect(OVERDUE_SUSPENDED_REASON).toBe("overdue_suspended");
   });
 });
 

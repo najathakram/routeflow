@@ -10,6 +10,7 @@
  *
  * Real keep-labels code, mocked Prisma: the spec records every raw statement on the transaction, in order.
  */
+import { ConflictException } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
 import { ProductsService } from "./products.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -232,6 +233,7 @@ describe("ProductsService.update: a lossy reparent takes the label locks BEFORE 
       Object.assign(new Error("Raw query failed"), { code: "P2010", meta: { code: "40P01" } }),
     ],
   ])("a %s inside a reparent is the coded, retryable 409, never a 500", async (_n, raw) => {
+    // Row 519: a conflict that is NOT a label lock must not say "label change in progress": a neutral coded 409.
     prisma.product.update.mockRejectedValue(raw);
     const err = await service
       .update("prod-1", { parentProductId: "fam" } as never, {
@@ -242,8 +244,12 @@ describe("ProductsService.update: a lossy reparent takes the label locks BEFORE 
         () => null,
         (e: unknown) => e,
       );
-    expect(err).toBeInstanceOf(LabelLockTimeoutError);
-    expect((err as LabelLockTimeoutError).getStatus()).toBe(409);
+    expect(err).not.toBeInstanceOf(LabelLockTimeoutError);
+    expect((err as ConflictException).getStatus()).toBe(409);
+    expect((err as ConflictException).getResponse()).toMatchObject({
+      code: API_ERROR_CODES.PRODUCT_CHANGED_CONCURRENTLY,
+    });
+    expect(JSON.stringify((err as ConflictException).getResponse())).not.toMatch(/label/i);
   });
 
   it("control: the same deadlock on an edit that is NOT a reparent is not relabelled", async () => {
@@ -257,7 +263,9 @@ describe("ProductsService.update: a lossy reparent takes the label locks BEFORE 
         () => null,
         (e: unknown) => e,
       );
-    expect(err).not.toBeInstanceOf(LabelLockTimeoutError);
+    // The raw conflict passes through UNCHANGED (the global filter maps it to the 503 LOCK_UNAVAILABLE + Retry-After):
+    // not relabelled, not wrapped. Dropping the `reparenting &&` guard in update() turns this red.
+    expect(err).toBe(raw);
   });
 
   it("control: a reparent that loses nothing takes no label lock at all", async () => {

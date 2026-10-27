@@ -102,6 +102,8 @@ describe("#2520 — persisted OVERDUE in the tenant zone", () => {
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    // CM2a: the sweep writes inside tenantTransaction; hand it the same mock so $queryRaw/$executeRaw stay observable
+    prisma.tenantTransaction.mockImplementation((fn: any) => fn(prisma));
     prisma.invoice.findFirst.mockResolvedValue({ items: [] });
 
     const module: TestingModule = await Test.createTestingModule({
@@ -241,12 +243,13 @@ describe("#2520 — persisted OVERDUE in the tenant zone", () => {
       await svc.runScheduled();
       expect(prisma.tenant.findMany.mock.calls[0][0].where.status.in).toEqual(["TRIAL", "ACTIVE"]);
       expect(tenantCtx.run.mock.calls.map((c: any[]) => c[0])).toEqual(["t-chi", "t-tyo", "t-utc"]);
-      expect(prisma.$queryRaw).not.toHaveBeenCalled();
+      // CM2a: one lock query per tenant (each carries the zone cutoff), then one UPDATE
+      expect(prisma.$queryRaw).toHaveBeenCalledTimes(3);
       // An invoice due Oct 1: still grace in Chicago, overdue in Tokyo and in UTC.
       const due = new Date("2026-10-01T00:00:00.000Z");
-      expect(due < cutoffFor(prisma.$executeRaw, "t-chi")).toBe(false);
-      expect(due < cutoffFor(prisma.$executeRaw, "t-tyo")).toBe(true);
-      expect(due < cutoffFor(prisma.$executeRaw, "t-utc")).toBe(true);
+      expect(due < cutoffFor(prisma.$queryRaw, "t-chi")).toBe(false);
+      expect(due < cutoffFor(prisma.$queryRaw, "t-tyo")).toBe(true);
+      expect(due < cutoffFor(prisma.$queryRaw, "t-utc")).toBe(true);
       // #2567: the write itself: one UPDATE per tenant, and it sets OVERDUE and nothing else.
       expect(prisma.$executeRaw).toHaveBeenCalledTimes(3);
       for (const c of prisma.$executeRaw.mock.calls as any[][]) {
