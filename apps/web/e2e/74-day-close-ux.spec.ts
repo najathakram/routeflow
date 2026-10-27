@@ -249,7 +249,9 @@ for (const v of VIEWS) {
         await hero.evaluate((el) => parseFloat(getComputedStyle(el).fontSize)),
       ).toBeGreaterThanOrEqual(22);
       await expect(page.getByText("Expected cash")).toBeVisible();
-      await expect(page.getByTestId("close-not-at-till")).toHaveText("Unpaid pickups: $12.50");
+      await expect(page.getByTestId("close-not-at-till")).toHaveText(
+        "Paid outside the till: $12.50",
+      );
       const x = page
         .getByRole("dialog")
         .getByRole("button", { name: "Close", exact: true })
@@ -311,7 +313,7 @@ for (const v of VIEWS) {
         .locator("[data-testid^='z-group-']")
         .evaluateAll((els) => els.map((e) => e.getAttribute("data-testid")));
       expect(order[0]).toBe("z-group-Drawer");
-      await expect(z.getByTestId("z-row-Unpaid pickups")).toContainText("$12.50");
+      await expect(z.getByTestId("z-row-Paid outside the till")).toContainText("$12.50");
       await expect(z.getByTestId("z-row-Pickup hand-overs (in till cash)")).toContainText(
         "$18.94 · 1 hand-over",
       );
