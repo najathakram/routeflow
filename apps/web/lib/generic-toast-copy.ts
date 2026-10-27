@@ -181,6 +181,9 @@ const CODE_COPY: Record<string, string> = {
   [API_ERROR_CODES.LABEL_CHANGE_IN_PROGRESS]:
     "Another product label change is in progress. Try again in a moment.",
   [API_ERROR_CODES.PRODUCT_CHAIN_UNREADABLE]: "This product's family chain can't be read.",
+  // Row 519: a product write lost a row-lock race (reparent deadlock, or the product moved under the editor); nothing saved.
+  [API_ERROR_CODES.PRODUCT_CHANGED_CONCURRENTLY]:
+    "This product changed while you were saving it. Reload it and try again.",
   // SA-812a G-1: a typed-price customer's flag read failed (503); the write never ran, so a retry is safe.
   [API_ERROR_CODES.CUSTOMER_PRICES_UNAVAILABLE]:
     "Customer prices couldn't be loaded. Nothing was saved. Try again in a moment.",

@@ -12,6 +12,7 @@ import { TobaccoReportPdf } from "./tobacco-report-pdf";
 import type { TobaccoReportRow, TobaccoReportTotals } from "./tobacco-report.types";
 import { csvCell } from "../common/csv";
 import { findGeneratedTobaccoReport } from "../regulated/filed-periods";
+import { sellerDisplayName } from "../common/seller-display-name";
 
 const REAL_INVOICE_STATUSES = { notIn: ["DRAFT", "VOID", "WRITTEN_OFF"] as any };
 
@@ -65,7 +66,7 @@ export class TobaccoReportService {
       where: { tenantId },
       select: { businessName: true },
     });
-    const businessName = config?.businessName ?? "RouteFlow tenant";
+    const businessName = sellerDisplayName(config, null, "RouteFlow tenant");
 
     // Deterministic storage keys — regeneration overwrites in place
     const csvKey = `tobacco-reports/${tenantId}/${periodLabel}.csv`;

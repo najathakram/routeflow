@@ -1,4 +1,5 @@
 import { ConflictException } from "@nestjs/common";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { lockFamilyRow } from "./family-price";
 import { lockProductRow, type CatalogTx } from "./product-catalog-sync";
 import {
@@ -81,9 +82,10 @@ export async function lockAndAssertRecipeGuards(
       select: { parentProductId: true, unitsPerBox: true },
     });
   if (fresh && nul(fresh.parentProductId) !== nul(existing.parentProductId)) {
-    throw new ConflictException(
-      "This product was moved while you were editing it. Reload it and try again.",
-    );
+    throw new ConflictException({
+      code: API_ERROR_CODES.PRODUCT_CHANGED_CONCURRENTLY,
+      message: "This product was moved while you were editing it. Reload it and try again.",
+    });
   }
 
   // 3. decide, after the locks — on what is read NOW (SA-587): a recipes.create for this product that
