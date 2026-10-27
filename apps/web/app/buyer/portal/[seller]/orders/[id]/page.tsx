@@ -8,6 +8,7 @@ import {
   Clock,
   CheckCircle2,
   Truck,
+  Store,
   XCircle,
   AlertTriangle,
   Edit3,
@@ -43,10 +44,12 @@ import { ShipmentCard } from "./_components/ShipmentCard";
 import { useBuyerSellerCapabilities } from "@/lib/api/buyer-capabilities";
 import {
   NO_FLEET_STEP_LABELS,
+  PICKUP_STEP_LABELS,
   SHIP_STEP_LABELS,
   buyerOrderStatusLabel,
   noFleetStepIndex,
   orderTravelView,
+  pickupStepIndex,
   shipStepIndex,
   type BuyerOrderTravelView,
 } from "@/lib/buyer-fulfilment";
@@ -169,8 +172,8 @@ function formatStatus(s: string) {
 const ROUTE_TIMELINE = [
   { icon: Clock, label: "Pending" },
   { icon: CheckCircle2, label: "Confirmed" },
-  { icon: Truck, label: "Out for Delivery" },
-  { icon: Package, label: "Partial Delivery" },
+  { icon: Truck, label: "Out for delivery" },
+  { icon: Package, label: "Partial delivery" },
   { icon: CheckCircle2, label: "Delivered" },
 ];
 // Business profiles 1B: a SHIP order of a configured seller, and any order of a configured seller
@@ -180,15 +183,20 @@ const STEP_ICONS: Record<string, typeof Clock> = {
   Confirmed: CheckCircle2,
   Shipped: Package,
   Delivered: CheckCircle2,
+  "Ready for pickup": Store,
+  "Picked up": CheckCircle2,
 };
 const SHIP_TIMELINE = SHIP_STEP_LABELS.map((label) => ({ icon: STEP_ICONS[label], label }));
 const NO_FLEET_TIMELINE = NO_FLEET_STEP_LABELS.map((label) => ({ icon: STEP_ICONS[label], label }));
+const PICKUP_TIMELINE = PICKUP_STEP_LABELS.map((label) => ({ icon: STEP_ICONS[label], label }));
 
 function timelineFor(order: BuyerOrder, view: BuyerOrderTravelView) {
   if (view === "shipment") return { icons: SHIP_TIMELINE, currentIdx: shipStepIndex(order) };
   if (view === "none") {
     return { icons: NO_FLEET_TIMELINE, currentIdx: noFleetStepIndex(order.status) };
   }
+  if (view === "pickup")
+    return { icons: PICKUP_TIMELINE, currentIdx: pickupStepIndex(order.status) };
   return { icons: ROUTE_TIMELINE, currentIdx: STATUS_STEPS.indexOf(order.status) };
 }
 
@@ -338,7 +346,7 @@ function RequestChangeModal({
       const code = err?.response?.data?.code;
       if (code === "EDIT_WINDOW_OPEN") {
         setFormError(
-          "This order can still be edited directly — close this and use “Edit Items” instead.",
+          "This order can still be edited directly — close this and use “Edit items” instead.",
         );
       } else if (code === "CHANGE_WINDOW_CLOSED") {
         setFormError(
@@ -369,7 +377,7 @@ function RequestChangeModal({
             disabled={!isValid}
             loading={createCr.isPending}
           >
-            Send Request
+            Send request
           </Button>
         </>
       }
@@ -421,7 +429,7 @@ function RequestChangeModal({
                   type="text"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Search products (name, SKU, barcode)..."
+                  placeholder="Search products by name, SKU or barcode…"
                   className="w-full rounded-lg border border-surface-border bg-white py-2 pl-10 pr-4 text-sm text-navy placeholder:text-navy/70 focus:border-buyer-300 focus:outline-none focus:ring-1 focus:ring-buyer-200"
                 />
               </div>
@@ -748,7 +756,11 @@ export default function BuyerOrderDetailPage() {
         <p className="text-sm text-navy/70 mt-0.5">
           Placed {formatDate(order.createdAt)}
           {order.requestedDeliveryDate && (
-            <> · Delivery requested {fmtCalendarDate(order.requestedDeliveryDate)}</>
+            <>
+              {" "}
+              · {travel === "pickup" ? "Pickup" : "Delivery"} requested{" "}
+              {fmtCalendarDate(order.requestedDeliveryDate)}
+            </>
           )}
         </p>
       </div>
@@ -836,7 +848,7 @@ export default function BuyerOrderDetailPage() {
 
       {order.notes && (
         <div className="mb-4 rounded-xl border border-surface-border bg-white p-4">
-          <p className="text-xs text-navy/70 mb-1">Order Notes</p>
+          <p className="text-xs text-navy/70 mb-1">Order notes</p>
           <p className="text-sm text-navy">{order.notes}</p>
         </div>
       )}
@@ -867,7 +879,7 @@ export default function BuyerOrderDetailPage() {
           )}
           {canEdit && !editMode && (
             <Button variant="secondary" size="sm" onClick={enterEditMode}>
-              <Edit3 className="mr-1.5 h-3.5 w-3.5" /> Edit Items
+              <Edit3 className="mr-1.5 h-3.5 w-3.5" /> Edit items
             </Button>
           )}
           {!canEdit && canRequestChange && !editMode && (
@@ -877,16 +889,21 @@ export default function BuyerOrderDetailPage() {
           )}
           {editMode && (
             <div className="flex items-center gap-2">
-              <Button variant="secondary" size="sm" onClick={() => setEditMode(false)}>
+              <Button
+                variant="secondary"
+                size="sm"
+                className="max-lg:min-h-11"
+                onClick={() => setEditMode(false)}
+              >
                 Cancel
               </Button>
               <Button
                 size="sm"
-                className="bg-buyer-500 hover:bg-buyer-600 focus-visible:ring-buyer-500"
+                className="bg-buyer-500 hover:bg-buyer-600 focus-visible:ring-buyer-500 max-lg:min-h-11"
                 onClick={handleSaveEdit}
                 loading={updateItems.isPending}
               >
-                Save Changes
+                Save changes
               </Button>
             </div>
           )}
@@ -912,7 +929,9 @@ export default function BuyerOrderDetailPage() {
                 </th>
                 {showDeliveryProgress && (
                   <>
-                    <th className="px-4 py-2.5 text-right w-20">Delivered</th>
+                    <th className="px-4 py-2.5 text-right w-20">
+                      {travel === "pickup" ? "Picked up" : "Delivered"}
+                    </th>
                     <th className="px-4 py-2.5 text-right w-20">Remaining</th>
                   </>
                 )}
@@ -958,7 +977,7 @@ export default function BuyerOrderDetailPage() {
                                 ),
                               )
                             }
-                            className="rounded p-1 text-navy/70 hover:bg-surface-raised hover:text-navy"
+                            className="rounded p-1 text-navy/70 hover:bg-surface-raised hover:text-navy max-lg:inline-flex max-lg:min-h-11 max-lg:min-w-11 max-lg:items-center max-lg:justify-center"
                           >
                             <Minus className="h-3.5 w-3.5" />
                           </button>
@@ -974,7 +993,7 @@ export default function BuyerOrderDetailPage() {
                                 ),
                               );
                             }}
-                            className="w-14 rounded border border-surface-border bg-white px-2 py-1 text-center text-sm text-navy"
+                            className="w-14 rounded border border-surface-border bg-white px-2 py-1 text-center text-sm text-navy max-lg:h-11"
                           />
                           <button
                             onClick={() =>
@@ -984,7 +1003,7 @@ export default function BuyerOrderDetailPage() {
                                 ),
                               )
                             }
-                            className="rounded p-1 text-navy/70 hover:bg-surface-raised hover:text-navy"
+                            className="rounded p-1 text-navy/70 hover:bg-surface-raised hover:text-navy max-lg:inline-flex max-lg:min-h-11 max-lg:min-w-11 max-lg:items-center max-lg:justify-center"
                           >
                             <Plus className="h-3.5 w-3.5" />
                           </button>
@@ -1090,7 +1109,7 @@ export default function BuyerOrderDetailPage() {
                 type="text"
                 value={addSearch}
                 onChange={(e) => setAddSearch(e.target.value)}
-                placeholder="Search products to add (name, SKU, barcode)..."
+                placeholder="Search products to add by name, SKU or barcode…"
                 className="w-full rounded-lg border border-surface-border bg-white py-2 pl-10 pr-4 text-sm text-navy placeholder:text-navy/70 focus:border-buyer-300 focus:outline-none focus:ring-1 focus:ring-buyer-200"
               />
             </div>
@@ -1153,7 +1172,7 @@ export default function BuyerOrderDetailPage() {
             className="min-h-[44px]"
             onClick={() => setCancelOpen(true)}
           >
-            Cancel Order
+            Cancel order
           </Button>
         </div>
       )}
@@ -1162,15 +1181,15 @@ export default function BuyerOrderDetailPage() {
       <Modal
         open={cancelOpen}
         onClose={() => setCancelOpen(false)}
-        title="Cancel Order?"
+        title="Cancel order?"
         description={`Cancel order ${order.orderNumber ?? ""}?`}
         footer={
           <>
             <Button variant="secondary" onClick={() => setCancelOpen(false)}>
-              Keep Order
+              Keep order
             </Button>
             <Button variant="danger" onClick={handleCancel} loading={cancelOrder.isPending}>
-              Cancel Order
+              Cancel order
             </Button>
           </>
         }

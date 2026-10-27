@@ -9,7 +9,7 @@ import OrderDetailPage from "./page";
  * apple-ux r4 PR-GH (Q19, F07, F16, F05, row 724): Order detail + Edit Items.
  *  - at phone width the actions are ONE row: Confirm leads and fills it, the rest sit behind "More actions"
  *  - Generate Invoice says the new invoice is a draft that was not sent, in a status region, and keeps focus there
- *  - Save Changes confirms with "Order updated"; Ctrl/Cmd+Enter saves from any field while editing
+ *  - Save changes confirms with "Order updated"; Ctrl/Cmd+Enter saves from any field while editing
  *  - the trash button is "Remove ..." in both its title and its name
  * jsdom has no stylesheet or viewport: the phone width is a matchMedia stub (the page reads the query), and
  * class claims pin the tokens the CSS keys off. The pixel proof is the host-run capture.
@@ -148,17 +148,17 @@ beforeEach(() => {
 afterEach(() => setPhone(false));
 
 describe("Q19: one action row at phone width", () => {
-  it("PENDING: the bar is Edit Items, Confirm Order and one More menu; Cancel, Delete and Record return are not on it", async () => {
+  it("PENDING: the bar is Edit Items, Confirm order and one More menu; Cancel, Delete and Record return are not on it", async () => {
     setPhone(true);
     await open({}, ["orders_inline_returns"]);
     const bar = screen.getByTestId("order-actions");
     const names = within(bar)
       .getAllByRole("button")
       .map((b) => b.getAttribute("aria-label") ?? b.textContent?.trim());
-    expect(names.sort()).toEqual(["Confirm Order", "Edit Items", "More actions"]);
+    expect(names.sort()).toEqual(["Confirm order", "Edit Items", "More actions"]);
   });
 
-  it("Confirm Order is the full-width primary: it fills what the row leaves, as a 44px target", async () => {
+  it("Confirm order is the full-width primary: it fills what the row leaves, as a 44px target", async () => {
     setPhone(true);
     await open();
     const confirm = screen.getByRole("button", { name: /^confirm order$/i });
@@ -169,18 +169,18 @@ describe("Q19: one action row at phone width", () => {
     expect(screen.getByTestId("order-actions")).not.toHaveClass("flex-col");
   });
 
-  it("the More menu holds Record return, Cancel Order and Delete; Cancel Order still goes through its confirm", async () => {
+  it("the More menu holds Record return, Cancel order and Delete; Cancel order still goes through its confirm", async () => {
     setPhone(true);
     await open({}, ["orders_inline_returns"]);
     await menuUser().click(screen.getByRole("button", { name: "More actions" }));
     expect(await screen.findByRole("menuitem", { name: "Record return" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Delete order" })).toBeInTheDocument();
-    await menuUser().click(screen.getByRole("menuitem", { name: "Cancel Order" }));
+    await menuUser().click(screen.getByRole("menuitem", { name: "Cancel order" }));
     expect(await screen.findByText("Cancel this order?")).toBeInTheDocument();
     expect(patch).not.toHaveBeenCalled();
   });
 
-  it("Delete is reachable from the menu and still behind its confirm: nothing is deleted until Confirm Delete", async () => {
+  it("Delete is reachable from the menu and still behind its confirm: nothing is deleted until Confirm delete", async () => {
     setPhone(true);
     del.mockResolvedValue({ data: {} });
     await open();
@@ -189,7 +189,7 @@ describe("Q19: one action row at phone width", () => {
     await user.click(await screen.findByRole("menuitem", { name: "Delete order" }));
     expect(await screen.findByText("Delete order?")).toBeInTheDocument();
     expect(del).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Confirm Delete" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm delete" }));
     await waitFor(() => expect(del).toHaveBeenCalledWith("/orders/o1"));
   });
 
@@ -209,10 +209,10 @@ describe("Q19: one action row at phone width", () => {
     expect(within(bar).queryByRole("button", { name: /^cancel order$/i })).toBeNull();
     await menuUser().click(within(bar).getByRole("button", { name: "More actions" }));
     expect(await screen.findByRole("menuitem", { name: "Unconfirm" })).toBeInTheDocument();
-    expect(screen.getByRole("menuitem", { name: "Cancel Order" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Cancel order" })).toBeInTheDocument();
   });
 
-  it("wider than a phone nothing moves: Cancel Order and Delete stay as buttons, there is no More menu", async () => {
+  it("wider than a phone nothing moves: Cancel order and Delete stay as buttons, there is no More menu", async () => {
     await open({}, ["orders_inline_returns"]);
     expect(screen.getByRole("button", { name: /^cancel order$/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^delete$/i })).toBeInTheDocument();
@@ -271,7 +271,7 @@ describe("F07: Generate Invoice says the draft was not sent", () => {
   });
 });
 
-describe("F16: Save Changes confirms", () => {
+describe("F16: Save changes confirms", () => {
   const qty = () => screen.getByRole("spinbutton", { name: /qty/i });
   beforeEach(() => {
     patch.mockResolvedValue({
@@ -362,7 +362,7 @@ describe("F05: Ctrl/Cmd+Enter saves from any field while editing", () => {
     expect(screen.queryByRole("button", { name: /^save changes$/i })).toBeNull();
   });
 
-  it("Save Changes advertises the chord with aria-keyshortcuts", async () => {
+  it("Save changes advertises the chord with aria-keyshortcuts", async () => {
     await openEdit();
     const keys = screen
       .getByRole("button", { name: /^save changes$/i })

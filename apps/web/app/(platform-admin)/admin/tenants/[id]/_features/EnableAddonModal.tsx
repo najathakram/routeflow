@@ -125,7 +125,7 @@ export function EnableAddonModal({
           }}
           className="admin-inline text-indigo-400 underline hover:text-indigo-300"
         >
-          Add Override
+          Add override
         </button>
       </p>
     );
@@ -133,7 +133,7 @@ export function EnableAddonModal({
 
   function renderChoiceStep() {
     if (billing.status === "loading") {
-      return <p className="text-sm text-slate-400">Checking billing configuration...</p>;
+      return <p className="text-sm text-slate-400">Checking billing configuration…</p>;
     }
     if (billing.status === "error") {
       return (
@@ -280,7 +280,7 @@ export function EnableAddonModal({
           onClick={handleConfirm}
           className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
         >
-          {submitting ? "Enabling..." : "Confirm"}
+          {submitting ? "Enabling…" : "Confirm"}
         </button>
       </>
     );

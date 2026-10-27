@@ -385,7 +385,7 @@ export default function RuleDetailPage() {
             <dd className="text-navy/80">
               {jurisdictionText(rule)}
               {rule.jurisdiction === "STATE" && rule.states.length > 0 && (
-                <ul className="mt-1 flex flex-wrap gap-1.5" aria-label="Banned states">
+                <ul className="mt-1 flex flex-wrap gap-1.5" aria-label="Restricted states">
                   {rule.states.map((code) => (
                     <li
                       key={code}

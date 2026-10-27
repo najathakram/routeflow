@@ -48,8 +48,8 @@ jest.mock("@/lib/api/customers", () => ({
 
 function openModalWithCustomer() {
   renderWithProviders(<FinancePaymentsPage />);
-  fireEvent.click(screen.getAllByRole("button", { name: /Record Payment/ })[0]);
-  fireEvent.change(screen.getByDisplayValue("Select customer..."), {
+  fireEvent.click(screen.getAllByRole("button", { name: /Record payment/i })[0]);
+  fireEvent.change(screen.getByDisplayValue("Select customer…"), {
     target: { value: "cust-1" },
   });
 }
@@ -76,7 +76,7 @@ describe("finance/payments RecordPaymentModal — over-allocation guards (REG-B1
     fireEvent.change(rowInput(), { target: { value: "80" } });
 
     expect(screen.getByText(/Allocated more than received/)).toBeInTheDocument();
-    const save = screen.getByRole("button", { name: "Save as Paid" });
+    const save = screen.getByRole("button", { name: "Save as paid" });
     expect(save).toBeDisabled();
     fireEvent.click(save);
     expect(recordMutateAsync).not.toHaveBeenCalled();
@@ -88,7 +88,7 @@ describe("finance/payments RecordPaymentModal — over-allocation guards (REG-B1
     });
     openModalWithCustomer();
     fireEvent.change(screen.getAllByPlaceholderText("0.00")[0], { target: { value: "50" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save as Paid" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save as paid" }));
 
     await waitFor(() => expect(screen.getByText("Failed to record payment")).toBeInTheDocument());
     expect(screen.queryByText(/RAW-SERVER-TEXT/)).not.toBeInTheDocument();

@@ -39,6 +39,8 @@ describe("PromotionsService", () => {
   });
 
   it("writes product join rows for a PRODUCTS-scoped promotion", async () => {
+    // 681: the ids are proven in-tenant first, so the scoped read must return both.
+    prisma.product.findMany.mockResolvedValue([{ id: "p1" }, { id: "p2" }]);
     await service.create({ ...base, scope: "PRODUCTS", productIds: ["p1", "p2"] });
     expect(prisma.promotionProduct.createMany).toHaveBeenCalledTimes(1);
     const rows = prisma.promotionProduct.createMany.mock.calls[0][0].data;

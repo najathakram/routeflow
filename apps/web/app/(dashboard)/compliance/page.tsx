@@ -20,7 +20,7 @@ import { RegulatedFilingsTable } from "@/components/RegulatedFilingsTable";
  */
 export default function CompliancePage() {
   const { setTitle } = usePageTitle();
-  React.useEffect(() => setTitle("Regulated Items"), [setTitle]);
+  React.useEffect(() => setTitle("Regulated items"), [setTitle]);
 
   const { data: categories = [], isLoading } = useTrackedCategories();
   const hasTobacco = useHasAddon(TOBACCO_ADDON);
@@ -39,7 +39,7 @@ export default function CompliancePage() {
     <div className="space-y-5 p-6">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-bold text-navy">Regulated Items</h2>
+          <h2 className="text-2xl font-bold text-navy">Regulated items</h2>
           <p className="text-sm text-navy/70">
             Separately-handled sections · per-section tax, invoicing and filings
           </p>
@@ -56,7 +56,7 @@ export default function CompliancePage() {
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <Card>
           <div className="flex items-center gap-2 text-xs text-navy/70">
-            <Layers className="h-4 w-4" /> Regulated Types
+            <Layers className="h-4 w-4" /> Regulated types
           </div>
           <p className="mt-1 text-2xl font-bold text-navy">
             {activeCount}
@@ -90,7 +90,7 @@ export default function CompliancePage() {
       </div>
 
       {/* Sections */}
-      <Card title="Regulated Types">
+      <Card title="Regulated types">
         {isLoading ? (
           <div className="flex items-center justify-center py-10">
             <Loader2 className="h-6 w-6 animate-spin text-navy/50" />

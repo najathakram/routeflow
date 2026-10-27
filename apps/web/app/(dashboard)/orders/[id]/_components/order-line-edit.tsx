@@ -16,7 +16,7 @@ import {
 import { formatMoney } from "@/lib/format";
 import { EditCasesPieces } from "./EditCasesPieces";
 import { isCasesPiecesLine } from "../edit-cases-pieces";
-import { EDIT_QTY_INPUT } from "../edit-line-controls";
+import { EDIT_QTY_INPUT, EDIT_TAP_BELOW_LG } from "../edit-line-controls";
 import { EditScanBar } from "./EditScanBar";
 import { DeliveredLockedHint, DeliveredLockedQty } from "./DeliveredLineLock";
 import {
@@ -615,7 +615,7 @@ function SubstitutePicker({
         <input
           autoFocus
           className="w-full bg-transparent text-sm text-navy placeholder:text-navy/30 focus:outline-none"
-          placeholder="Search products..."
+          placeholder="Search products…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
@@ -1013,7 +1013,7 @@ export function EditableLineItems({
                     value={item.productName}
                     onChange={(e) => update(item.id, { productName: e.target.value })}
                     placeholder="Item name"
-                    className="min-w-0 flex-1 rounded border border-surface-border bg-white px-2 py-1 text-sm font-medium text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
+                    className="min-w-0 flex-1 rounded border border-surface-border bg-white px-2 py-1 text-sm font-medium text-navy max-lg:h-11 focus:outline-none focus:ring-1 focus:ring-brand-500"
                   />
                   <span className="shrink-0 rounded-full bg-brand-50 px-1.5 py-0.5 text-[10px] font-medium text-brand-700 ring-1 ring-brand-200">
                     Custom
@@ -1084,6 +1084,7 @@ export function EditableLineItems({
               !item.countLocked &&
               !isLocked(item.id) && (
                 <OrderLineUnitPicker
+                  className="max-lg:h-11"
                   line={{
                     productId: item.productId,
                     productName: item.productName,
@@ -1131,7 +1132,10 @@ export function EditableLineItems({
             <div className="flex items-center gap-1.5 max-sm:-ml-2">
               {item.cancelled ? (
                 <button
-                  className="flex items-center gap-1 rounded px-2 py-1 text-xs text-brand-600 hover:bg-brand-50"
+                  className={cn(
+                    "flex items-center gap-1 rounded px-2 py-1 text-xs text-brand-600 hover:bg-brand-50",
+                    EDIT_TAP_BELOW_LG,
+                  )}
                   onClick={() =>
                     update(item.id, {
                       cancelled: false,
@@ -1160,7 +1164,10 @@ export function EditableLineItems({
                 <>
                   {!item.substituteProductId && !item.isUnlisted && !item.countLocked && (
                     <button
-                      className="rounded px-2 py-1 text-xs text-navy/70 hover:bg-surface-raised hover:text-navy disabled:opacity-50"
+                      className={cn(
+                        "rounded px-2 py-1 text-xs text-navy/70 hover:bg-surface-raised hover:text-navy disabled:opacity-50",
+                        EDIT_TAP_BELOW_LG,
+                      )}
                       disabled={!pricingReady}
                       onClick={() => setSubstituteOpenId((p) => (p === item.id ? null : item.id))}
                     >
@@ -1169,7 +1176,10 @@ export function EditableLineItems({
                   )}
                   {item.substituteProductId && (
                     <button
-                      className="flex items-center gap-1 rounded px-2 py-1 text-xs text-brand-600 hover:bg-brand-50"
+                      className={cn(
+                        "flex items-center gap-1 rounded px-2 py-1 text-xs text-brand-600 hover:bg-brand-50",
+                        EDIT_TAP_BELOW_LG,
+                      )}
                       onClick={() =>
                         update(item.id, {
                           productId: item.originalProductId,
@@ -1190,7 +1200,10 @@ export function EditableLineItems({
                     </button>
                   )}
                   <button
-                    className="rounded px-2 py-1 text-xs text-navy/70 hover:bg-surface-raised hover:text-navy"
+                    className={cn(
+                      "rounded px-2 py-1 text-xs text-navy/70 hover:bg-surface-raised hover:text-navy",
+                      EDIT_TAP_BELOW_LG,
+                    )}
                     onClick={() => update(item.id, { cancelled: true })}
                   >
                     Not available
@@ -1262,7 +1275,7 @@ export function EditableLineItems({
                 value={item.notes ?? ""}
                 onChange={(e) => update(item.id, { notes: e.target.value })}
                 placeholder="Note for this line (prints on invoice)"
-                className="w-full resize-y rounded border border-surface-border bg-white px-2 py-1 text-xs text-navy placeholder:text-navy/40 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                className="w-full resize-y rounded border border-surface-border bg-white px-2 py-1 text-xs text-navy max-lg:min-h-11 placeholder:text-navy/40 focus:outline-none focus:ring-1 focus:ring-brand-500"
               />
             </div>
           )}

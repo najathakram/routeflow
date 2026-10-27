@@ -101,7 +101,7 @@ describe("FeatureOverridesSection — comps default to 30 days and show the end 
     return (await screen.findByRole("combobox", { name: "Expires" })) as HTMLSelectElement;
   };
 
-  it("+ New Override: Kind is Complimentary and Expires is 30 days, not permanent", async () => {
+  it("+ New override: Kind is Complimentary and Expires is 30 days, not permanent", async () => {
     const expires = await openNew();
     expect((screen.getByRole("combobox", { name: "Kind" }) as HTMLSelectElement).value).toBe(
       "COMP",

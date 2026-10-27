@@ -256,8 +256,8 @@ export function OperationStory({ compact = false }: { compact?: boolean }) {
       <div className="story-light story-light-one" />
       <div className="story-light story-light-two" />
       <div className="story-top">
-        <span>
-          <span /> INTERACTIVE PRODUCT EXAMPLE
+        <span className="caps">
+          <span /> Interactive product example
         </span>
         <span>One order. Every team.</span>
       </div>
@@ -281,7 +281,7 @@ export function OperationStory({ compact = false }: { compact?: boolean }) {
           </div>
           <div className="passport-context">
             <div>
-              <span>ORDER #RF-1042</span>
+              <span className="caps">Order #RF-1042</span>
               <strong>Parkside Market</strong>
             </div>
             <span className={"passport-status " + (delivered ? "status-done" : "")}>
@@ -293,7 +293,7 @@ export function OperationStory({ compact = false }: { compact?: boolean }) {
               <div className="inventory-scene">
                 <div className="stock-scene-top">
                   <div>
-                    <span className="story-small-label">SPRING WATER · 24-PACK</span>
+                    <span className="story-small-label caps">Spring water · 24-pack</span>
                     <strong className="stock-count">
                       148<span>cases on hand</span>
                     </strong>
@@ -368,7 +368,7 @@ export function OperationStory({ compact = false }: { compact?: boolean }) {
                   <b>$42</b>
                 </div>
                 <div className="order-delivery-note">
-                  <span>DELIVERY NOTE</span>
+                  <span className="caps">Delivery note</span>
                   <p>Use the rear receiving entrance.</p>
                 </div>
                 <div className="passport-total">

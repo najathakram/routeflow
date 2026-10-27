@@ -1095,6 +1095,16 @@ export default defineConfig({
         storageState: path.join(AUTH_DIR, "operator.json"),
       },
     },
+    // ── W-694: SearchableProductPicker closes on Tab / Shift+Tab / outside click / Escape ──────────
+    // Real Chromium keyboard focus movement, which jsdom cannot see. Every /api/v1 call is mocked and
+    // auth is a locally-minted unsigned JWT, so no tenant is touched and no setup project is needed.
+    // Run with SKIP_E2E_SEED=true (globalSetup would otherwise try to seed a DB) against a `next dev`
+    // or built web. WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's precedent.
+    {
+      name: "picker-tab-close",
+      testMatch: /w694-picker-tab-close\.spec\.ts/,
+      use: { ...devices["Desktop Chrome"], viewport: { width: 1440, height: 900 } },
+    },
     // ── B1210: counter sale "Ship this order instead" parks the cart as an ORDER draft and resumes it (spec 71).
     // LAST in the list on purpose (it changes the tenant's fulfilment config for its duration). LOCAL LANE ONLY: it rewrites (then restores) the tenant's fulfilment config. ci.yml / post-deploy / nightly run
     // `npx playwright test` with no project filter, so the project is simply NOT REGISTERED unless the base URL is local

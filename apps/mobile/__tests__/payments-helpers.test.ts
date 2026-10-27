@@ -175,10 +175,14 @@ describe("oldestInvoicesFirst", () => {
 describe("editPaymentMaxAmount", () => {
   it("reserves a DRAFT sibling's capacity, not just PAID ones", () => {
     // total 100, siblings: $30 DRAFT + $10 PAID -> capacity 60.
-    const max = editPaymentMaxAmount(100, [
-      { amount: 30, status: "DRAFT" },
-      { amount: 10, status: "PAID" },
-    ]);
+    const max = editPaymentMaxAmount(
+      100,
+      [
+        { amount: 30, status: "DRAFT" },
+        { amount: 10, status: "PAID" },
+      ],
+      "DRAFT",
+    );
     expect(max).toBe(60);
   });
 
@@ -194,6 +198,13 @@ describe("editPaymentMaxAmount", () => {
 
   it("returns the full total with no siblings", () => {
     expect(editPaymentMaxAmount(250, [])).toBe(250);
+  });
+
+  // W-769: a PAID edit is real money — capped on CONFIRMED siblings, so a DRAFT sibling does not shrink it.
+  it("a PAID edit ignores a DRAFT sibling; an unconfirmed edit still honours it", () => {
+    const others = [{ amount: 40, status: "DRAFT" }];
+    expect(editPaymentMaxAmount(100, others, "PAID")).toBe(100);
+    expect(editPaymentMaxAmount(100, others, "DRAFT")).toBe(60);
   });
 });
 

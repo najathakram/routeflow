@@ -109,7 +109,7 @@ describe("K14 FE1: nothing mounts until the units v2 flag is known", () => {
     expect(screen.queryByTestId("product-details-card")).toBeNull();
     expect(screen.queryByTestId("units-card")).toBeNull();
     expect(screen.queryByTestId("product-image-card")).toBeNull();
-    expect(screen.getByText("Loading...")).toBeInTheDocument();
+    expect(screen.getByText("Loading…")).toBeInTheDocument();
   });
 
   it("once the flag is known (off) the flag-off layout mounts as before", () => {

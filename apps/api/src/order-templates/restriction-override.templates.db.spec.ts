@@ -270,9 +270,7 @@ describeDb(
           const tx = await makeTemplate([w.banned], { customerId: w.txCustomerId, pickup: true });
           const e = await errOf(generate(tx.id));
           expect(bodyOf(e).code).toBe("RESTRICTION_WARNING");
-          expect(bodyOf(e).lines[0].rules[0].reasonText).toBe(
-            "This product is banned in CA by law.",
-          );
+          expect(bodyOf(e).lines[0].rules[0].reasonText).toBe("Restricted in CA: R510 state ban.");
           const order = await generate(tx.id, staff(), ackFrom(e));
           expect((await audits(order.id))[0].meta).toMatchObject({ basis: "STORE" });
         } finally {

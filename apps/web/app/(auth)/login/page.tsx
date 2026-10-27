@@ -134,7 +134,7 @@ export default function LoginPage() {
         }
       }
       const msg = errObj?.response?.data?.message ?? "Invalid username or password.";
-      setApiError(typeof msg === "string" ? msg : "Login failed.");
+      setApiError(typeof msg === "string" ? msg : "Sign-in failed.");
       setIsLoading(false);
     }
   };
@@ -235,7 +235,7 @@ export default function LoginPage() {
 
         {throttleSeconds && throttleSeconds > 0 ? (
           <p className="rounded-lg bg-warning-bg px-3 py-2 text-sm text-warning">
-            Too many login attempts. Try again in {throttleSeconds}{" "}
+            Too many sign-in attempts. Try again in {throttleSeconds}{" "}
             {throttleSeconds === 1 ? "second" : "seconds"}.
           </p>
         ) : apiError ? (

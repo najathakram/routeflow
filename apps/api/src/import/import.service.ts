@@ -9,6 +9,7 @@ import {
 } from "@nestjs/common";
 import type { ImportFamilyRowInfo, ImportFamilySummary } from "@routeflow/types";
 import { PrismaService } from "../prisma/prisma.service";
+import { tenantTimeZone } from "../common/tenant-time-zone";
 import { calendarStampFromInput } from "../common/calendar-date";
 import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
 import { CustomersService } from "../customers/customers.service";
@@ -1830,6 +1831,7 @@ export class ImportService {
     userId: string,
   ): Promise<{ imported: number; skipped: number; duplicates: number; errors: string[] }> {
     const rows = this.parseCsv(buffer);
+    const zone = await tenantTimeZone(this.prisma); // SA-964 §3: resolved once per run; OVERDUE is judged in it
     let imported = 0,
       skipped = 0,
       duplicates = 0;
@@ -1972,7 +1974,7 @@ export class ImportService {
             include: { payments: true },
           });
           const change = locked
-            ? importPaymentStatus(locked, locked.payments ?? [], new Date())
+            ? importPaymentStatus(locked, locked.payments ?? [], new Date(), zone)
             : null;
           await tx.invoice.update({
             where: { id: invoice.id },
@@ -2001,7 +2003,7 @@ export class ImportService {
       paidAt: Date | null;
     }> = [];
     for (const inv of allInvoices) {
-      const change = importPaymentStatus(inv, inv.payments, now); // #2262: the one shared rule
+      const change = importPaymentStatus(inv, inv.payments, now, zone); // #2262: the one shared rule
       if (change) statusUpdates.push({ id: inv.id, from: inv.status, ...change });
     }
     if (statusUpdates.length > 0) {

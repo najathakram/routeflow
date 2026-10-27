@@ -20,7 +20,7 @@ const ERROR_MESSAGES: Record<string, string> = {
     "Your Google account is not authorized for this system. Contact your administrator.",
   tenant_suspended: "This account is currently suspended. Please contact support.",
   google_email_is_staff:
-    "This email is registered as a staff account. Please sign in from the staff login page instead.",
+    "This email is registered as a staff account. Please sign in from the staff sign-in page instead.",
   google_already_linked:
     "Your account already has a Google account connected. Remove the existing connection first.",
   google_id_taken:
@@ -248,7 +248,7 @@ function GoogleCallbackInner() {
             href="/login"
             className="inline-flex items-center justify-center rounded-lg border border-[#ffffffed] bg-[#ffffffad] px-4 py-2 text-sm font-medium text-[#152d51] shadow-sm backdrop-blur transition-colors hover:bg-white"
           >
-            Go to staff login
+            Go to staff sign-in
           </a>
         ) : errorCode === "unauthorized" ||
           errorCode === "tenant_suspended" ||
@@ -261,7 +261,7 @@ function GoogleCallbackInner() {
               boxShadow: "inset 0 1px 0 #ffffff33, 0 7px 15px #10264d18",
             }}
           >
-            Back to login
+            Back to sign in
           </a>
         ) : (
           <p className="text-xs text-[#4c607a]">Redirecting you back in a moment…</p>

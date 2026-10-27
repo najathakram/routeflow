@@ -9,7 +9,8 @@ import BuyerOrderDetailPage from "./page";
  * the shipment (carrier + tracking number, linked when the carrier is known) and a
  * Confirmed → Shipped → Delivered timeline, with no route / driver / ETA wording. A configured
  * seller without a fleet shows no route wording on any order. An UNSET seller, or a capability
- * that cannot be read, is today's screen exactly.
+ * that cannot be read, is today's screen exactly. A PICKUP (counter / till) order is collected at
+ * the store for every seller: no tracking card, no route wording, a pickup timeline.
  *
  * Fixtures are placeholders (`Sample …`, `acme`); no live-client names.
  */
@@ -233,6 +234,49 @@ describe("shipping-only seller — other SHIP order states", () => {
   });
 });
 
+describe("a PICKUP order (counter / till): the buyer collects it, nothing is delivered", () => {
+  const PICKUP_STEPS = ["Pending", "Confirmed", "Ready for pickup", "Picked up"];
+
+  it.each([
+    ["an unset seller", () => ready(UNSET)],
+    ["a seller with a fleet", () => ready(BOTH_FLEET)],
+    ["a shipping-only seller", () => ready(SHIP_ONLY)],
+    ["a capability still loading", () => ({ data: undefined, isLoading: true, isError: false })],
+  ])("%s: no tracking card, no route wording, the pickup timeline", (_label, caps) => {
+    mockCaps = caps();
+    mockOrder = order({ fulfillPath: "PICKUP", status: "PENDING" });
+    const { container } = renderWithProviders(<BuyerOrderDetailPage />);
+    expect(screen.queryByRole("heading", { name: "Track your delivery" })).toBeNull();
+    expect(screen.queryByTestId("shipment-card")).toBeNull();
+    expect(container.textContent).not.toMatch(ROUTE_WORDING);
+    expect(mockTrackingHook).not.toHaveBeenCalledWith("ord-1");
+    expect(screen.getAllByTestId("timeline-step").map((s) => s.textContent)).toEqual(PICKUP_STEPS);
+  });
+
+  it("ready at the till: the badge and the timeline say Ready for pickup", () => {
+    mockCaps = ready(UNSET);
+    mockOrder = order({ fulfillPath: "PICKUP", status: "OUT_FOR_DELIVERY" });
+    renderWithProviders(<BuyerOrderDetailPage />);
+    expect(screen.getByTestId("order-status-badge")).toHaveTextContent(/^Ready For Pickup$/);
+    expect(screen.getAllByTestId("timeline-step").map((s) => s.getAttribute("data-state"))).toEqual(
+      ["complete", "complete", "current", "upcoming"],
+    );
+    // the items table counts what was collected, not delivered
+    expect(screen.getByRole("columnheader", { name: "Picked up" })).toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: "Delivered" })).toBeNull();
+  });
+
+  it("collected: the badge reads Picked Up and the timeline is complete", () => {
+    mockCaps = ready(UNSET);
+    mockOrder = order({ fulfillPath: "PICKUP", status: "DELIVERED" });
+    renderWithProviders(<BuyerOrderDetailPage />);
+    expect(screen.getByTestId("order-status-badge")).toHaveTextContent(/^Picked Up$/);
+    expect(screen.getAllByTestId("timeline-step").map((s) => s.getAttribute("data-state"))).toEqual(
+      ["complete", "complete", "complete", "current"],
+    );
+  });
+});
+
 describe("delivery + shipping seller with a fleet", () => {
   it("a SHIP order is a shipment; a ROUTE order keeps today's tracking card", () => {
     mockCaps = ready(BOTH_FLEET);
@@ -249,7 +293,7 @@ describe("delivery + shipping seller with a fleet", () => {
 });
 
 describe("before == after: unset sellers and an unreadable capability see today's screen", () => {
-  const TODAY_STEPS = ["Pending", "Confirmed", "Out for Delivery", "Partial Delivery", "Delivered"];
+  const TODAY_STEPS = ["Pending", "Confirmed", "Out for delivery", "Partial delivery", "Delivered"];
 
   it.each([
     ["an unset seller", () => ready(UNSET)],
@@ -274,8 +318,8 @@ describe("before == after: unset sellers and an unreadable capability see today'
     expect(screen.getAllByTestId("timeline-step").map((st) => st.textContent)).toEqual([
       "Pending",
       "Confirmed",
-      "Out for Delivery",
-      "Partial Delivery",
+      "Out for delivery",
+      "Partial delivery",
       "Delivered",
     ]);
     expect(screen.queryByTestId("shipment-card")).toBeNull();

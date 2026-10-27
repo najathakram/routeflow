@@ -84,7 +84,7 @@ const confirm = async () => {
       <OrderDetailPage />
     </Providers>,
   );
-  fireEvent.click(await screen.findByRole("button", { name: /Confirm Order/ }));
+  fireEvent.click(await screen.findByRole("button", { name: /Confirm order/ }));
 };
 
 describe("order detail — SELLING_RESTRICTED", () => {

@@ -186,6 +186,26 @@ test("syncEvents: an unknown train is left out, still idempotent", () => {
   assert.deepEqual(run([...baseEvents(), ...out.events], md).events, []);
 });
 
+// W-831: row 666's cell "R1b+R2 train" took the FIRST token (R1b, no such release) and was dropped to
+// null, so the cloud's dry count stayed at 1 forever while another machine kept writing R2 back.
+test("syncEvents: a cell naming several trains takes the first KNOWN one, and a board already on it is in sync", () => {
+  const r2 = mk("item.new", "R2", { title: "Window 3", type: "release", status: "building" });
+  const md = register(row(201, { train: "R1b+R2 train" }));
+  const out = run([...baseEvents(), r2], md);
+  assert.equal(out.events.length, 1);
+  assert.equal(out.events[0].data.train, "R2");
+  assert.equal(out.events[0].data.trainLabel, "R1b+R2 train");
+  assert.deepEqual(run([...baseEvents(), r2, ...out.events], md).events, []);
+  assert.equal(
+    pendingRegisterChanges({
+      events: [...baseEvents(), r2, ...out.events],
+      registerMd: md,
+      config,
+    }),
+    0,
+  );
+});
+
 test("syncEvents skips registry bug ids and never merges into an item the register never owned", () => {
   // R2 is a lane's own release item; the register has a row with the same id: refused, not merged.
   const lane = mk("item.new", "R2", { title: "Lane's own train", type: "release" });

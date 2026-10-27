@@ -40,7 +40,7 @@ describe("Business profile — invalid submit (web-2 #6)", () => {
   it("focuses the owner-name field, toasts 'Fix 1 field', and leaves Save enabled", async () => {
     const user = userEvent.setup();
     renderWithProviders(<SettingsPage />);
-    const owner = await screen.findByLabelText("Owner / Manager Name");
+    const owner = await screen.findByLabelText("Owner / manager name");
     await waitFor(() => expect(owner).toHaveValue("Jane Doe"));
     await user.clear(owner);
     const save = screen.getByRole("button", { name: /save changes/i });
@@ -55,7 +55,7 @@ describe("Business profile — invalid submit (web-2 #6)", () => {
   it("keeps Save enabled while the form is invalid", async () => {
     const user = userEvent.setup();
     renderWithProviders(<SettingsPage />);
-    const zip = await screen.findByLabelText("ZIP Code");
+    const zip = await screen.findByLabelText("ZIP code");
     await waitFor(() => expect(zip).toHaveValue("78701"));
     await user.clear(zip);
     await user.click(screen.getByRole("button", { name: /save changes/i }));
@@ -68,7 +68,7 @@ describe("Business profile — tax rate", () => {
   it("re-hydrates 8.25 from GET and PATCHes 8.25", async () => {
     const user = userEvent.setup();
     renderWithProviders(<SettingsPage />);
-    const tax = await screen.findByLabelText("Default Tax Rate");
+    const tax = await screen.findByLabelText("Default tax rate");
     await waitFor(() => expect(tax).toHaveValue(8.25));
     await user.click(screen.getByRole("button", { name: /save changes/i }));
     await waitFor(() =>
@@ -113,7 +113,7 @@ describe("Business profile — receipt footer", () => {
     const user = userEvent.setup();
     renderWithProviders(<SettingsPage />);
     const footer = await screen.findByLabelText("Receipt footer");
-    await waitFor(() => expect(screen.getByLabelText("Default Tax Rate")).toHaveValue(8.25));
+    await waitFor(() => expect(screen.getByLabelText("Default tax rate")).toHaveValue(8.25));
     fireEvent.change(footer, { target: { value: "x".repeat(201) } });
     await user.click(screen.getByRole("button", { name: /save changes/i }));
     expect(await screen.findByText(/200 characters or fewer/)).toBeInTheDocument();
@@ -124,7 +124,7 @@ describe("Business profile — receipt footer", () => {
     patch.mockRejectedValue({ response: { status: 400, data: { message: "raw server text" } } });
     const user = userEvent.setup();
     renderWithProviders(<SettingsPage />);
-    await waitFor(() => expect(screen.getByLabelText("Default Tax Rate")).toHaveValue(8.25));
+    await waitFor(() => expect(screen.getByLabelText("Default tax rate")).toHaveValue(8.25));
     await user.click(screen.getByRole("button", { name: /save changes/i }));
     expect(await screen.findByText("Couldn't save the receipt footer")).toBeInTheDocument();
     expect(screen.queryByText("raw server text")).not.toBeInTheDocument();
@@ -148,7 +148,7 @@ describe("Business profile — saving one section (row 327)", () => {
     const user = userEvent.setup();
     get.mockResolvedValue({ data: COUNTER_SHOP });
     renderWithProviders(<SettingsPage />);
-    const tax = await screen.findByLabelText("Default Tax Rate");
+    const tax = await screen.findByLabelText("Default tax rate");
     await waitFor(() => expect(tax).toHaveValue(8.25));
     await user.clear(tax);
     await user.type(tax, "7");
@@ -163,8 +163,8 @@ describe("Business profile — saving one section (row 327)", () => {
     const user = userEvent.setup();
     get.mockResolvedValue({ data: COUNTER_SHOP });
     renderWithProviders(<SettingsPage />);
-    const zip = await screen.findByLabelText("ZIP Code");
-    await waitFor(() => expect(screen.getByLabelText("Default Tax Rate")).toHaveValue(8.25));
+    const zip = await screen.findByLabelText("ZIP code");
+    await waitFor(() => expect(screen.getByLabelText("Default tax rate")).toHaveValue(8.25));
     await user.type(zip, "abc");
     await user.click(screen.getByRole("button", { name: /save changes/i }));
 
@@ -177,7 +177,7 @@ describe("Business profile — saving one section (row 327)", () => {
     const user = userEvent.setup();
     get.mockResolvedValue({ data: COUNTER_SHOP });
     renderWithProviders(<SettingsPage />);
-    const tax = await screen.findByLabelText("Default Tax Rate");
+    const tax = await screen.findByLabelText("Default tax rate");
     await waitFor(() => expect(tax).toHaveValue(8.25));
     await user.clear(tax);
     await user.type(tax, "150");

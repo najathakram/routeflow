@@ -25,12 +25,12 @@ jest.mock("./BuyerOversellCard", () => ({
 }));
 
 const TITLES = [
-  "How you sell",
   "Business & team",
+  "Orders & delivery",
+  "Pricing & products",
   "Invoicing & payments",
-  "Selling & pricing",
-  "Notifications",
-  "Compliance",
+  "Notifications & email",
+  "Compliance & restrictions",
   "Integrations & import",
 ];
 
@@ -39,8 +39,8 @@ beforeEach(() => {
 });
 
 const SECTION_IDS: Record<string, string> = {
-  "Selling & pricing": "selling",
-  Compliance: "compliance",
+  "Pricing & products": "selling",
+  "Compliance & restrictions": "compliance",
 };
 
 function section(title: string) {
@@ -62,29 +62,30 @@ describe("SettingsHub regroup", () => {
     expect(screen.getAllByText("Invoicing").length).toBeGreaterThan(0);
   });
 
-  // Owner 10-07 OK-2: the duplicate Selling restrictions link is gone; it lives under Selling & pricing only.
-  it("lists Selling restrictions once, under Selling & pricing (OK-2)", () => {
+  // Owner 10-07 OK-2: one Selling restrictions link. Row 376: it lives with the other rules that limit a sale.
+  it("lists Selling restrictions once, under Compliance & restrictions (OK-2, row 376)", () => {
     renderWithProviders(<SettingsHub isAdmin />);
-    const link = within(section("Selling & pricing")).getByRole("link", {
+    const link = within(section("Compliance & restrictions")).getByRole("link", {
       name: /selling restrictions/i,
     });
     expect(link).toHaveAttribute("href", "/settings/restrictions");
     expect(
-      within(section("Compliance")).queryByRole("link", { name: /selling restrictions/i }),
+      within(section("Pricing & products")).queryByRole("link", { name: /selling restrictions/i }),
     ).toBeNull();
   });
 
-  it("(C h) links the rules page as Portal limits & rules from both groups", () => {
+  it("(C h) links the rules page as Portal limits & rules once, in Compliance & restrictions", () => {
     renderWithProviders(<SettingsHub isAdmin />);
-    for (const t of ["Selling & pricing", "Compliance"]) {
-      const link = within(section(t)).getByRole("link", { name: /portal limits & rules/i });
-      expect(link).toHaveAttribute("href", "/settings/restrictions/rules");
-    }
+    const link = within(section("Compliance & restrictions")).getByRole("link", {
+      name: /portal limits & rules/i,
+    });
+    expect(link).toHaveAttribute("href", "/settings/restrictions/rules");
+    expect(screen.getAllByRole("link", { name: /portal limits & rules/i })).toHaveLength(1);
   });
 
-  it("operators see Selling restrictions under Selling & pricing (read-only page)", () => {
+  it("operators see Selling restrictions under Compliance & restrictions (read-only page)", () => {
     renderWithProviders(<SettingsHub isAdmin={false} />);
-    const hrefs = within(section("Selling & pricing"))
+    const hrefs = within(section("Compliance & restrictions"))
       .getAllByRole("link")
       .map((l) => l.getAttribute("href"));
     expect(hrefs).toContain("/settings/restrictions");
@@ -124,8 +125,10 @@ describe("SettingsHub regroup", () => {
       .getAllByRole("link")
       .filter((l) => l.getAttribute("href") === "/settings/restrictions");
     expect(hrefs).toHaveLength(1); // OK-2: one answer per destination
-    expect(screen.getByText("Selling & pricing › Selling restrictions")).toBeInTheDocument();
-    expect(screen.queryByText("Compliance › Selling restrictions")).toBeNull();
+    expect(
+      screen.getByText("Compliance & restrictions › Selling restrictions"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Pricing & products › Selling restrictions")).toBeNull();
   });
 
   describe("a page loaded with a card's hash scrolls to that card", () => {
@@ -164,7 +167,7 @@ describe("SettingsHub regroup", () => {
     expect(screen.getByText("route-defaults-card")).toBeInTheDocument();
   });
 
-  it("lists Out-of-stock ordering under How you sell and mounts its card at the anchor", () => {
+  it("lists Out-of-stock ordering under Orders & delivery and mounts its card at the anchor", () => {
     renderWithProviders(<SettingsHub isAdmin />);
     const link = screen
       .getAllByRole("link")
@@ -311,13 +314,13 @@ describe("SettingsHub search speaks the user's words", () => {
     ).toBe(false);
   });
 
-  it("9: a miss says so, and Clear Search restores the hub and focuses the input", () => {
+  it("9: a miss says so, and Clear search restores the hub and focuses the input", () => {
     renderWithProviders(<SettingsHub isAdmin />);
     search("zzzzqq");
     expect(screen.getByText("No settings match “zzzzqq”.")).toBeInTheDocument();
     expect(screen.getByText("Try another word, or browse all settings.")).toBeInTheDocument();
     expect(screen.queryByText("route-defaults-card")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Clear Search" }));
+    fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
     const input = screen.getByLabelText("Search settings") as HTMLInputElement;
     expect(input.value).toBe("");
     expect(input).toHaveFocus();

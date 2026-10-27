@@ -7,7 +7,7 @@ import {
 
 describe("FULFILMENT_METHODS", () => {
   it("ROUTE keeps today's words", () => {
-    expect(fulfilmentStatusLabel("ROUTE", "OUT_FOR_DELIVERY", "x")).toBe("Out for Delivery");
+    expect(fulfilmentStatusLabel("ROUTE", "OUT_FOR_DELIVERY", "x")).toBe("Out for delivery");
     expect(fulfilmentStatusLabel("ROUTE", "DELIVERED", "x")).toBe("Delivered");
   });
   it("SHIP says Shipped; PICKUP says Ready for pickup / Picked up", () => {
@@ -17,8 +17,8 @@ describe("FULFILMENT_METHODS", () => {
   });
   it("an unlisted status or an unknown / missing method falls back to the caller's label", () => {
     expect(fulfilmentStatusLabel("SHIP", "PENDING", "Pending")).toBe("Pending");
-    expect(fulfilmentStatusLabel("NOPE", "OUT_FOR_DELIVERY", "Out for Delivery")).toBe(
-      "Out for Delivery",
+    expect(fulfilmentStatusLabel("NOPE", "OUT_FOR_DELIVERY", "Out for delivery")).toBe(
+      "Out for delivery",
     );
     expect(fulfilmentStatusLabel(undefined, "DELIVERED", "Delivered")).toBe("Delivered");
   });

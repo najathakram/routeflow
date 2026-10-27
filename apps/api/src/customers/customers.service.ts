@@ -1,4 +1,5 @@
 import { assertNotWalkIn, assertWalkInLoginUntouched, excludeWalkIn } from "./walk-in-protected";
+import { sellerDisplayName } from "../common/seller-display-name";
 import { restoredUsernameFor } from "./restore-username";
 import { resumeSchedulesOnRestore } from "../recurring-invoices/recurring-schedule";
 import { buildMyStatement, buildOperatorStatement } from "./customer-statement";
@@ -18,6 +19,7 @@ import { BuyerMergeRequestStatus, MergeInitiator, type PaymentMethod } from "@pr
 import type { PaymentRefOpts } from "../invoices/payment-ref-dedupe";
 import { ConfigService } from "@nestjs/config";
 import * as bcrypt from "bcrypt";
+import { assertRefsInTenant } from "../common/assert-refs-in-tenant";
 import { PrismaService } from "../prisma/prisma.service";
 import { isInternalEmail } from "../common/internal-email";
 import { assertCleanupImportedEnabled } from "./cleanup-imported-disabled";
@@ -52,6 +54,8 @@ import {
 } from "../invoices/payment-predicates";
 import { settledDateFilter } from "../invoices/settled-date-filter";
 import { CREDIT_NOT_APPLICABLE } from "../invoices/invoice-status-sets";
+import { statusFromPayments } from "../invoices/invoice-status";
+import { tenantTimeZone } from "../common/tenant-time-zone";
 import { RECEIVABLE_INVOICE_SELECT, receivableBalance } from "../invoices/credit-exposure";
 import {
   geocodeAddress,
@@ -1019,6 +1023,12 @@ export class CustomersService {
     if (dto.pricingTier === undefined && dto.msrp === undefined) {
       throw new BadRequestException("Provide a pricing tier, an MSRP override, or both");
     }
+    // 681 (R5-5): the route customer and the body product are stored, so both must be in this tenant (a 404, the
+    // same for foreign and missing) BEFORE the MSRP gate and the family policy below.
+    await assertRefsInTenant(this.prisma, {
+      customerIds: [customerId],
+      productIds: [dto.productId],
+    });
     if (dto.msrp !== undefined) {
       await this.assertMsrpAllowed();
     }
@@ -1115,10 +1125,12 @@ export class CustomersService {
       throw new NotFoundException("Advance payment not found");
     }
 
+    // SA-968: the tenant's zone is read BEFORE the lock and the transaction (never after FOR UPDATE), once per apply.
+    const zone = await tenantTimeZone(this.prisma);
     try {
       const lock = await withAdvisoryLock(
         { family: "order-merge", key: apStub.customerId, mode: "wait", waitMs: 10_000 },
-        () => this.applyAdvancePaymentToInvoiceLocked(advancePaymentId, dto),
+        () => this.applyAdvancePaymentToInvoiceLocked(advancePaymentId, dto, zone),
       );
       // Unreachable in practice: `mode: "wait"` either resolves acquired (fn ran) or the
       // acquire itself rejects (LockTimeoutError/LockUnavailableError, caught below) — it
@@ -1151,6 +1163,7 @@ export class CustomersService {
   private async applyAdvancePaymentToInvoiceLocked(
     advancePaymentId: string,
     dto: { invoiceId: string; amount?: number },
+    zone: string | null,
   ) {
     return this.prisma.tenantTransaction(async (tx) => {
       const ap = await tx.advancePayment.findUnique({ where: { id: advancePaymentId } });
@@ -1223,10 +1236,15 @@ export class CustomersService {
       // (e.g. 0.1 + 0.2) can leave a fully-covered invoice reading PARTIAL.
       const newPaid = roundMoney(sumConfirmed(inv.payments) + applyAmount);
       const total = Number(inv.total);
-      let newStatus: any = "SENT";
-      if (newPaid >= total - 0.001) newStatus = "PAID";
-      else if (newPaid > 0) newStatus = "PARTIAL";
-      else if (inv.dueDate && new Date(inv.dueDate) < new Date()) newStatus = "OVERDUE";
+      // SA-964 §3: the ONE status predicate (tenant zone, [L-O2] NOT_PAID: a credit apply is never the deliberate overpayment).
+      const newStatus = statusFromPayments(
+        newPaid,
+        total,
+        inv.dueDate,
+        inv.status,
+        zone,
+        "NOT_PAID",
+      );
 
       const updatedInvoice = await tx.invoice.update({
         where: { id: dto.invoiceId },
@@ -2655,7 +2673,7 @@ export class CustomersService {
       where: { tenantId },
       select: { businessName: true },
     });
-    const sellerName = tenantCfg?.businessName ?? "Your supplier";
+    const sellerName = sellerDisplayName(tenantCfg, null, "Your supplier");
     const webUrl = this.config.get<string>("WEB_URL") ?? "http://localhost:3001";
     const inviteUrl = `${webUrl}/buyer/invite/${token}`;
 

@@ -41,6 +41,7 @@ jest.mock("../common/db-locks", () => ({
   LockUnavailableError: MockLockUnavailableError,
 }));
 
+import { fakeStripeProducts } from "../testing/fake-stripe-products";
 import { ConflictException, ServiceUnavailableException } from "@nestjs/common";
 import { SubscriptionMutationService } from "./subscription-mutation.service";
 import { BILLING_EVENTS } from "./plan-catalog.constants";
@@ -200,7 +201,7 @@ function make(opts: Opts = {}) {
     );
   };
   const stripeClient = {
-    products: { create: jest.fn().mockResolvedValue({ id: "prod_1" }) },
+    products: fakeStripeProducts().products,
     subscriptionItems: {
       create: opts.createFails
         ? jest.fn().mockRejectedValue(opts.createFails)
@@ -350,7 +351,7 @@ describe("self-serve enableAddon — billed through Stripe", () => {
         currency: "usd",
         unit_amount: 1200,
         recurring: { interval: "month" },
-        product: "prod_1",
+        product: "rf_addon_customer_pack_100",
       },
     });
     expect(tenantAddon.upsert).toHaveBeenCalledWith(

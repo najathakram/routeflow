@@ -518,12 +518,12 @@ test.describe("Mailbox connect card (F-10b), provider always stubbed", () => {
     expect(h.confirmBodies).toEqual([]);
   });
 
-  test("mailbox_admin_consent_required return: its own copy, naming the organisation's Microsoft 365 admin", async ({
+  test("mailbox_admin_consent_required return: its own copy, naming the organization's Microsoft 365 admin", async ({
     page,
   }) => {
     await page.goto(`${SETTINGS_EMAIL}&mailbox_admin_consent_required=1`);
 
-    await expect(toasts(page).getByText("Your organisation requires admin approval")).toBeVisible();
+    await expect(toasts(page).getByText("Your organization requires admin approval")).toBeVisible();
     await expect(
       toasts(page).getByText(/ask a Microsoft 365 admin to grant consent, then try again/),
     ).toBeVisible();

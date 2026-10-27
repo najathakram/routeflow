@@ -37,11 +37,24 @@
 // from `process.cwd()`, so this is a convenience, not a requirement.
 //
 // USAGE
-//   node scripts/visibility-watchdog.mjs [--minutes <n>] [--repo <owner/name>] [--replace] [--help]
-//     --minutes  minutes to wait before flipping private (default 45)
-//     --repo     "owner/name" to flip (default najathakram/routeflow)
-//     --replace  stop the watchdog already running (see SINGLE INSTANCE) and take over
-//     --help     print usage and exit 0
+//   node scripts/visibility-watchdog.mjs [--minutes <n>] [--repo <owner/name>] [--replace]
+//                                        [--window-marker] [--help]
+//     --minutes        minutes to wait before flipping private (default 45)
+//     --repo           "owner/name" to flip (default najathakram/routeflow)
+//     --replace        stop the watchdog already running (see SINGLE INSTANCE) and take over
+//     --window-marker  also publish a window marker for the Mac visibility timer (see WINDOW MARKER)
+//     --help           print usage and exit 0
+//
+// WINDOW MARKER (opt-in, `--window-marker`)
+// This watchdog runs on the machine that opens the window; if that machine dies, nothing here flips
+// the repo. With `--window-marker`, once the lock is held and the `start` line is logged, the
+// watchdog publishes {v, repo, openedAt, deadline, opener} to ops/visibility-window.json in the
+// private najathakram/routeflow-specs repo (`gh api -X PUT`, contents API; scripts/lib/
+// visibility-window.mjs defines the shape). A Mac launchd job (scripts/visibility-timer.mjs, see
+// tools/visibility-timer/README.md) reads it and flips the repo private past the deadline. The write
+// is BEST-EFFORT: a failure logs `marker-failed <first stderr line>` and never stops or delays the
+// watchdog. Without the flag the watchdog makes no `api` call and behaves exactly as before. The
+// opener is `<machine>/<hostname> pid <pid>`, machine read from ~/.routeflow/ops/machine if present.
 //
 // ARGUMENTS ARE VALIDATED FIRST (#2076)
 // An unknown flag or a bad value prints a usage message and exits 2 BEFORE any side effect: no lock,
@@ -141,7 +154,9 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import os from "node:os";
 import { fileURLToPath } from "node:url";
+import { MARKER_PATH, MARKER_REPO, MAX_WINDOW_MS, buildMarker } from "./lib/visibility-window.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, "..");
@@ -200,10 +215,11 @@ function markerRoot() {
   return cachedRoot;
 }
 
-const USAGE = `usage: node scripts/visibility-watchdog.mjs [--minutes <n>] [--repo <owner/name>] [--replace] [--help]
+const USAGE = `usage: node scripts/visibility-watchdog.mjs [--minutes <n>] [--repo <owner/name>] [--replace] [--window-marker] [--help]
   --minutes <n>        minutes to wait before flipping private (default ${DEFAULT_MINUTES})
   --repo <owner/name>  repository to flip (default ${DEFAULT_REPO})
   --replace            stop the watchdog already running and take over its lock
+  --window-marker      publish a window marker for the Mac visibility timer (best-effort)
   --help               print this message and exit 0`;
 
 class UsageError extends Error {}
@@ -212,6 +228,7 @@ function parseArgs(argv) {
   let minutes = DEFAULT_MINUTES;
   let repo = DEFAULT_REPO;
   let replace = false;
+  let windowMarker = false;
   let help = false;
   // A flag value must be a real value: `--minutes --repo x` would otherwise swallow the next flag.
   const valueOf = (flag, next) => {
@@ -226,6 +243,8 @@ function parseArgs(argv) {
       help = true;
     } else if (arg === "--replace") {
       replace = true;
+    } else if (arg === "--window-marker") {
+      windowMarker = true;
     } else if (arg === "--minutes") {
       minutes = Number(valueOf(arg, argv[++i]));
     } else if (arg.startsWith("--minutes=")) {
@@ -245,7 +264,7 @@ function parseArgs(argv) {
   if (!repo || typeof repo !== "string") {
     throw new UsageError(`invalid --repo: ${JSON.stringify(repo)}`);
   }
-  return { minutes, repo, replace, help: false };
+  return { minutes, repo, replace, windowMarker, help: false };
 }
 
 function logFile() {
@@ -508,8 +527,60 @@ async function acquireLock({ repo, deadline, replace }) {
   return { ok: false, message: `could not acquire ${file}` };
 }
 
-async function main({ minutes, repo, replace }) {
+// ─── window marker (opt-in, best-effort) ──────────────────────────────────────────────────────
+function openerLabel() {
+  let machine = "unknown";
+  try {
+    const raw = fs
+      .readFileSync(path.join(os.homedir(), ".routeflow", "ops", "machine"), "utf8")
+      .trim();
+    if (raw) machine = raw;
+  } catch {
+    // no machine file: keep "unknown"
+  }
+  return `${machine}/${os.hostname()} pid ${process.pid}`;
+}
+
+/** Publish the marker; never throws, never blocks the flip on anything but the two bounded calls. */
+function writeWindowMarker({ repo, openedAt, deadline }) {
+  try {
+    if (Date.parse(deadline) - Date.parse(openedAt) > MAX_WINDOW_MS) {
+      log("marker-failed", "window exceeds the 4h marker maximum; not published");
+      return;
+    }
+    const endpoint = `repos/${MARKER_REPO}/contents/${MARKER_PATH}`;
+    const existing = runGh(["api", endpoint, "--jq", ".sha"]);
+    const sha = !existing.error && existing.status === 0 ? (existing.stdout || "").trim() : "";
+    const marker = buildMarker({ repo, openedAt, deadline, opener: openerLabel() });
+    const content = Buffer.from(JSON.stringify(marker, null, 2) + "\n").toString("base64");
+    const put = runGh([
+      "api",
+      "-X",
+      "PUT",
+      endpoint,
+      "-f",
+      `message=ops: visibility window ${deadline}`,
+      "-f",
+      `content=${content}`,
+      ...(sha ? ["-f", `sha=${sha}`] : []),
+    ]);
+    if (put.error || put.status !== 0) {
+      log("marker-failed", firstErrorLine(put) || `exit ${put.status}`);
+      return;
+    }
+    log("marker", `written repo=${repo} deadline=${deadline}`);
+  } catch (err) {
+    try {
+      log("marker-failed", err && err.message ? err.message : String(err));
+    } catch {
+      // the marker is best-effort; nothing may stop the watchdog
+    }
+  }
+}
+
+async function main({ minutes, repo, replace, windowMarker }) {
   const waitMs = Math.round(minutes * 60_000);
+  const openedAt = new Date().toISOString();
   const deadline = new Date(Date.now() + waitMs).toISOString();
 
   // One watchdog at a time, decided BEFORE the first `gh` call or log line.
@@ -538,7 +609,16 @@ async function main({ minutes, repo, replace }) {
   // Keep running even if already PRIVATE — the public window this watchdog
   // guards against may still open later in the deploy flow.
 
-  await sleep(waitMs);
+  // The marker write is best-effort and must never delay the flip: whatever time it took (two
+  // bounded `gh` calls) is deducted from the wait, so the flip still lands at `deadline`.
+  let markerMs = 0;
+  if (windowMarker) {
+    const markerStart = Date.now();
+    writeWindowMarker({ repo, openedAt, deadline });
+    markerMs = Date.now() - markerStart;
+  }
+
+  await sleep(Math.max(0, waitMs - markerMs));
 
   let lastErrorDetail = "no successful read-back";
 

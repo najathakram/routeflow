@@ -1,4 +1,5 @@
 import { BadRequestException, Inject, Injectable, Logger, NotFoundException } from "@nestjs/common";
+import { sellerDisplayName } from "../common/seller-display-name";
 import { BuyerPaymentRequestStatus, InvoiceStatus, Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { InvoicesService } from "../invoices/invoices.service";
@@ -312,7 +313,7 @@ export class PaymentRequestsService {
 
     const webUrl = (process.env.WEB_URL ?? "https://www.routeflow.info").replace(/\/$/, "");
     const backTo = `${webUrl}/buyer/portal/${params.tenantSlug}/payments`;
-    const sellerName = config?.businessName ?? tenant?.name ?? "your seller";
+    const sellerName = sellerDisplayName(config, tenant, "your seller");
 
     let checkout: HostedCheckoutSession;
     try {
@@ -892,6 +893,8 @@ export class PaymentRequestsService {
       suspects: [] as DuplicateSuspect[],
     };
     let result: { paymentGroupId: string };
+    // W-769: the unconfirmed rows this capture displaced, alerted after commit (a retry of the tx resets it)
+    const displacedBy: Array<{ invoiceId: string; displaced: string[] }> = [];
     try {
       result = await this.invoices.recordStandalonePayment(
         {
@@ -906,7 +909,11 @@ export class PaymentRequestsService {
           // tx rolls back, the row STAYS SETTLING (never reopened), and Stripe's
           // redelivery recomputes a fresh allocation — converges without overpay.
         } as any,
-        { assertAllocationsWithinBalance: true, capturedExternally: capture },
+        {
+          assertAllocationsWithinBalance: true,
+          capturedExternally: capture,
+          onDisplaced: (invoiceId, ids) => displacedBy.push({ invoiceId, displaced: ids }),
+        },
       );
     } catch (err) {
       if (!isPaymentAlreadyRecorded(err)) throw err;
@@ -915,6 +922,17 @@ export class PaymentRequestsService {
         paymentGroupId: err.paymentGroupId,
       });
       return;
+    }
+    for (const d of displacedBy) {
+      await this.chargeReview
+        .flagUnconfirmedOverReserved({
+          tenantId: this.tenantContext.get(),
+          paymentIntentId: evt.paymentIntentId,
+          ...d,
+        })
+        .catch((e: Error) =>
+          this.logger.error(`over-reserved alert for ${evt.paymentIntentId} failed: ${e?.message}`),
+        );
     }
     for (const suspect of capture.suspects ?? []) {
       // Best-effort: the audit row written inside the payment transaction is the durable record.

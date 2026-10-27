@@ -59,6 +59,6 @@ describe("OrderLineItemsTable sub-lines", () => {
   it("a plain line renders none, and the totals row is unchanged", () => {
     render(<OrderLineItemsTable lineItems={[line("plain")]} orderStatus="CONFIRMED" total={60} />);
     expect(screen.queryByTestId("line-component-sub-line")).toBeNull();
-    expect(screen.getByText("Order Total")).toBeInTheDocument();
+    expect(screen.getByText("Order total")).toBeInTheDocument();
   });
 });
