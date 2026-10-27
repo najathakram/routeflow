@@ -3,10 +3,17 @@ import { test } from "node:test";
 import path from "node:path";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { planWorktree, parseArgs, preflight, runPlan } from "./worktree.mjs";
+import {
+  planWorktree,
+  parseArgs,
+  preflight,
+  runPlan,
+  readSharedHooksPath,
+  runHuskyKeepingSharedConfig,
+} from "./worktree.mjs";
 
 const norm = (p) => path.normalize(p);
 const base = {
@@ -155,4 +162,61 @@ test("runPlan: a tree WITH .husky/_/pre-push passes the guard and the plan conti
     { cwd: dir, cmd: ["node", "-e", "process.exit(0)"] },
   ];
   assert.equal(runPlan(plan, { env: noCi(), log: () => {} }), 0);
+});
+
+// B642 follow-up: `npx husky` runs a plain `git config core.hooksPath`, which rewrites the SHARED repo config
+// every other worktree reads. The wrapper must leave the shared value exactly as it found it.
+const gitIn = (cwd, ...a) =>
+  execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...a], {
+    cwd,
+    encoding: "utf8",
+    stdio: "pipe",
+  }).trim();
+
+function mainAndLinked({ worktreeConfig, shared }) {
+  const root = mkdtempSync(path.join(tmpdir(), "wt-shared-"));
+  const main = path.join(root, "main");
+  const linked = path.join(root, "linked");
+  mkdirSync(main);
+  gitIn(main, "init", "-q");
+  gitIn(main, "commit", "-q", "--allow-empty", "-m", "init");
+  if (worktreeConfig) gitIn(main, "config", "extensions.worktreeConfig", "true");
+  if (shared !== null) gitIn(main, "config", "core.hooksPath", shared);
+  gitIn(main, "worktree", "add", "-q", "-b", "t", linked);
+  return { main, linked };
+}
+
+// stands in for husky's install, which writes core.hooksPath unscoped
+const fakeHusky = (cwd) => () => {
+  gitIn(cwd, "config", "core.hooksPath", ".husky/_");
+  return 0;
+};
+
+test("husky step leaves the shared core.hooksPath as it was; this tree gets its own", () => {
+  const { main, linked } = mainAndLinked({ worktreeConfig: true, shared: "custom/hooks" });
+  assert.equal(runHuskyKeepingSharedConfig(linked, fakeHusky(linked)), 0);
+  assert.equal(readSharedHooksPath(main), "custom/hooks", "shared value must not change");
+  assert.equal(gitIn(linked, "config", "core.hooksPath"), ".husky/_", "this tree stays hooked");
+  assert.equal(gitIn(main, "config", "core.hooksPath"), "custom/hooks", "main tree untouched");
+});
+
+test("husky step restores the shared value even without worktreeConfig, and unsets one that was unset", () => {
+  const a = mainAndLinked({ worktreeConfig: false, shared: "custom/hooks" });
+  runHuskyKeepingSharedConfig(a.linked, fakeHusky(a.linked));
+  assert.equal(readSharedHooksPath(a.main), "custom/hooks");
+  const b = mainAndLinked({ worktreeConfig: false, shared: null });
+  runHuskyKeepingSharedConfig(b.linked, fakeHusky(b.linked));
+  assert.equal(readSharedHooksPath(b.main), null);
+});
+
+test("sensitivity: an unguarded husky run DOES change the shared value (the test above can go red)", () => {
+  const { main, linked } = mainAndLinked({ worktreeConfig: true, shared: "custom/hooks" });
+  fakeHusky(linked)();
+  assert.equal(readSharedHooksPath(main), ".husky/_");
+});
+
+test("the plan's husky step is the guarded one", () => {
+  const plan = planWorktree({ ...base, platform: "linux" });
+  const step = plan.find((s) => s.cmd.join(" ") === "npx husky");
+  assert.equal(step.keepSharedHooksPath, true);
 });
