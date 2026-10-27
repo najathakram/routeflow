@@ -23,6 +23,7 @@ const row = (over: Partial<PriceHistoryRow> = {}): PriceHistoryRow => ({
   unitPrice: 10,
   unitLabel: "case",
   unitsPerBox: 24,
+  salePack: over.unitsPerBox !== undefined ? (over.unitsPerBox ?? 1) : 24, // the server's pairing unless a case sets it
   qty: 2,
   boxes: 2,
   pieces: 0,
@@ -105,9 +106,13 @@ describe("prefetch", () => {
     await new Promise((r) => setTimeout(r, 20));
     fireEvent.click(screen.getByRole("button", { name: "Price history" }));
     const dialog = await screen.findByRole("dialog", { name: "Price history" });
-    expect(within(dialog).queryByRole("status")).not.toBeInTheDocument();
+    expect(
+      within(dialog).queryByRole("status", { name: /loading price history/i }),
+    ).not.toBeInTheDocument(); // no skeleton
     expect(within(dialog).getByText("Customer: Acme Foods")).toBeInTheDocument();
-    expect(mockGet).toHaveBeenCalledTimes(1);
+    // the prefetched history is reused; only the average-line request is new
+    await waitFor(() => expect(mockGet).toHaveBeenCalledTimes(2));
+    expect(mockGet.mock.calls.filter((c) => c[1]?.params?.compare === undefined)).toHaveLength(1);
   });
 
   it("does not fetch while the customer is missing", () => {
@@ -203,7 +208,7 @@ describe("references, compare, margin, markers", () => {
     expect(within(dialog).getByText("+3% since last order")).toBeInTheDocument();
   });
 
-  it("Compare: the base request has no compare; choosing All customers asks the server with ?compare=all and shows low / typical / high, never names", async () => {
+  it("Compare: the base request has no compare; the panel asks with ?compare=all on open and All customers shows low / typical / high, never names", async () => {
     const withAgg = base();
     const { aggregate: _a, ...noAgg } = withAgg;
     mockGet.mockImplementation((_url: string, cfg?: { params?: { compare?: string } }) =>
@@ -215,7 +220,6 @@ describe("references, compare, margin, markers", () => {
     // the toggle is offered although the base response carries no aggregate (it is the request that adds it)
     const toggle = await within(dialog).findByRole("button", { name: "All customers" });
     expect(within(dialog).queryByTestId("compare-panel")).not.toBeInTheDocument();
-    expect(mockGet.mock.calls.every((c) => c[1]?.params?.compare === undefined)).toBe(true);
     fireEvent.click(toggle);
     const panel = await within(dialog).findByTestId("compare-panel");
     await waitFor(() => expect(panel).toHaveTextContent("$11.50"));

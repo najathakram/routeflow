@@ -50,7 +50,6 @@ import {
   planCounterPayment,
   toPrismaMethod,
 } from "./counter-sale-payment";
-import { sweepableCredits } from "../../credit-notes/auto-apply-candidates";
 import { LockTimeoutError, LockUnavailableError, withAdvisoryLock } from "../../common/db-locks";
 import type { DuplicatePaymentRefExisting } from "@routeflow/types";
 import { duplicateOf, tenderRefDedupe } from "./counter-duplicate-ref";
@@ -127,9 +126,6 @@ export class CounterSaleService {
     let customerId: string;
     if (walkIn) {
       customerId = await this.walkIns.getOrCreateWalkIn();
-      // send() auto-applies the customer's oldest open credits: a walk-in has no business holding
-      // any, and the tender below would then be judged against a balance the clerk never saw.
-      await this.assertNoOpenCredit(customerId);
     } else {
       const customer = await this.prisma.forTenant().customer.findFirst({
         where: { id: dto.customerId, deletedAt: null },
@@ -142,7 +138,6 @@ export class CounterSaleService {
       if (customer.isWalkIn === true) {
         walkIn = true;
         assertPaymentShape(dto.payment, true);
-        await this.assertNoOpenCredit(customerId); // the same guard as dto.walkIn: send() would auto-apply it
       }
     }
 
@@ -611,23 +606,6 @@ export class CounterSaleService {
     // The pack factor of a plain, label-less counter line, read the ONE sanctioned way (resolveLineUnits,
     // units_v1), never off the product.
     return new Map(found.map((row) => [row.id, resolveLineUnits(row, [], null).unitsPerBox]));
-  }
-
-  private async assertNoOpenCredit(customerId: string): Promise<void> {
-    // When the tenant's send-time sweep is OFF (the default) send() applies nothing, so nothing can leak.
-    // SA-998: the SAME selection the sweep takes (sweepableCredits: flag off reads as none, so nothing can leak).
-    const notes = await sweepableCredits(this.prisma.forTenant(), {
-      tenantId: this.prisma.getTenantId(),
-      customerId,
-      now: new Date(),
-    });
-    if (notes.length > 0) {
-      throw new ConflictException({
-        code: API_ERROR_CODES.WALK_IN_OPEN_CREDIT,
-        message:
-          "The walk-in customer holds open credit, which would be applied to this sale. Resolve it first.",
-      });
-    }
   }
 
   private async readInvoices(orderId: string): Promise<InvoiceRow[]> {

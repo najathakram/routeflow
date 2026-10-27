@@ -14,6 +14,12 @@ const mockSettle = jest.fn();
 jest.mock("../order-status-invoicing", () => ({
   settleOrderInvoice: (...a: unknown[]) => mockSettle(...a),
 }));
+// The tenant's send-time credit sweep switch (the walk-in open-credit guard asks it).
+const mockSweepOn = { on: false };
+jest.mock("../../credit-notes/auto-apply-candidates", () => ({
+  ...jest.requireActual("../../credit-notes/auto-apply-candidates"),
+  creditAutoApplyOnSend: async () => mockSweepOn.on,
+}));
 
 // The shared Postgres advisory lock becomes an in-process stand-in with the same contract (fn never
 // runs without the lock); the calls are recorded and a failure can be injected.
@@ -154,6 +160,7 @@ describe("PickupCompleteService.complete", () => {
     require("../../testing/pickup-claim-mock").mockClaimStore.rows = claims;
     require("../../testing/pickup-claim-mock").mockClaimStore.recorded = false;
     mockSettle.mockReset();
+    mockSweepOn.on = false;
     mockLockCalls.length = 0;
     mockLockFailure.error = null;
     mockLockFailure.notAcquired = false;
@@ -987,14 +994,12 @@ describe("PickupCompleteService.complete", () => {
         nothingWritten();
       },
     );
-    it("open credit with the sweep on is 409 WALK_IN_OPEN_CREDIT before any write", async () => {
-      // the sweep switch is read through the one helper: ON for this tenant
-      prisma.tenantConfig.findUnique.mockResolvedValue({ creditAutoApplyOnSend: true });
+    it("W-913: a legacy open credit on the walk-in account with the sweep on no longer blocks the hand-over, and is never consulted", async () => {
+      mockSweepOn.on = true;
       prisma.creditNote.findMany.mockResolvedValue([{ amount: 10, amountUsed: 0 }]);
-      const e = await errorOf(run());
-      expect(e.getStatus()).toBe(409);
-      expect(e.getResponse().code).toBe("WALK_IN_OPEN_CREDIT");
-      nothingWritten();
+      const res = await run(cash(37.25));
+      expect(res).toMatchObject({ balanceDue: 0, paymentRecorded: true });
+      expect(prisma.creditNote.findMany).not.toHaveBeenCalled();
     });
     it("a full CASH tender still completes", async () => {
       const res = await run(cash(37.25));

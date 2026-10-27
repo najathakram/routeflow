@@ -1,13 +1,13 @@
 /**
  * The ONE predicate for "which credit notes can send() sweep onto an invoice" — the query half.
- * `CreditNotesService.autoApplyOldestCreditsInTx` selects with it, and the counter sale's walk-in
- * open-credit guard asks the same question with it, so the guard can never be narrower than what the
- * sweep would actually take (L-167: one predicate, two readers).
+ * `CreditNotesService.autoApplyOldestCreditsInTx` selects with it (L-167: one predicate). W-913: it excludes the walk-in
+ * account, so the counter sale's and the hand-over's old WALK_IN_OPEN_CREDIT guards (which re-asked this question) are retired.
  *
  * The remaining-balance half (amount - amountUsed > 0.001) cannot be a Prisma column comparison and
  * stays a JS filter at each caller, via {@link hasOpenCreditBalance}.
  */
 import { roundMoney, sumConfirmed } from "@routeflow/pricing";
+import { NOT_WALK_IN_WHERE } from "../customers/walk-in-protected";
 
 export function autoApplyCandidateWhere(args: {
   customerId: string;
@@ -18,6 +18,8 @@ export function autoApplyCandidateWhere(args: {
     customerId: args.customerId,
     status: { not: "VOID" as const },
     autoApplyExcluded: false, // SA-436: an operator kept this note out of the sweep
+    // W-913: the shared walk-in account is never a sweep target; credit left on it (legacy) stays unapplied until staff act
+    customer: NOT_WALK_IN_WHERE,
     OR: [{ expiresAt: null }, { expiresAt: { gt: args.now } }],
     ...(args.excludeCreditNoteIds?.length ? { id: { notIn: args.excludeCreditNoteIds } } : {}),
   };
@@ -30,8 +32,7 @@ export function hasOpenCreditBalance(note: { amount: unknown; amountUsed: unknow
 
 /**
  * The tenant's send-time credit sweep switch (SA-436, `TenantConfig.creditAutoApplyOnSend`, OFF by default; no
- * config row reads as OFF). The ONE reader: `autoApplyOldestCreditsInTx` runs only when it is on, and the
- * counter sale's walk-in open-credit guard only blocks when it is on (when it is off, send() applies nothing).
+ * config row reads as OFF). The ONE reader: `autoApplyOldestCreditsInTx` runs only when it is on.
  */
 export async function creditAutoApplyOnSend(
   db: { tenantConfig: { findUnique: (args: any) => Promise<any> } },
@@ -80,8 +81,8 @@ export async function isCarryingOrderMet(
  * `[]` when the tenant's sweep switch is off; otherwise {@link autoApplyCandidateWhere} (not VOID, not excluded,
  * unexpired), with an open balance, minus an inline-return note whose carrying order is not met yet. The sweep
  * (`autoApplyOldestCreditsInTx`) takes its list from it (its per-invoice blocked pairs stay there: a new sale's
- * invoice has none), the two walk-in open-credit guards ask `.length > 0`, and the operator statement's
- * `autoApplyCredit` sums it, so the counter's part-pay cap can never differ from what the server applies.
+ * invoice has none) and the operator statement's `autoApplyCredit` sums it (a walk-in reads as `[]`: the
+ * candidate predicate excludes that account), so the counter's part-pay cap can never differ from what the server applies.
  * Read-only: pass the tx client inside the sweep, the tenant client everywhere else.
  */
 export async function sweepableCredits(

@@ -8,6 +8,7 @@ import {
   Clock,
   CheckCircle2,
   Truck,
+  Store,
   XCircle,
   AlertTriangle,
   Edit3,
@@ -43,10 +44,12 @@ import { ShipmentCard } from "./_components/ShipmentCard";
 import { useBuyerSellerCapabilities } from "@/lib/api/buyer-capabilities";
 import {
   NO_FLEET_STEP_LABELS,
+  PICKUP_STEP_LABELS,
   SHIP_STEP_LABELS,
   buyerOrderStatusLabel,
   noFleetStepIndex,
   orderTravelView,
+  pickupStepIndex,
   shipStepIndex,
   type BuyerOrderTravelView,
 } from "@/lib/buyer-fulfilment";
@@ -180,15 +183,20 @@ const STEP_ICONS: Record<string, typeof Clock> = {
   Confirmed: CheckCircle2,
   Shipped: Package,
   Delivered: CheckCircle2,
+  "Ready for pickup": Store,
+  "Picked up": CheckCircle2,
 };
 const SHIP_TIMELINE = SHIP_STEP_LABELS.map((label) => ({ icon: STEP_ICONS[label], label }));
 const NO_FLEET_TIMELINE = NO_FLEET_STEP_LABELS.map((label) => ({ icon: STEP_ICONS[label], label }));
+const PICKUP_TIMELINE = PICKUP_STEP_LABELS.map((label) => ({ icon: STEP_ICONS[label], label }));
 
 function timelineFor(order: BuyerOrder, view: BuyerOrderTravelView) {
   if (view === "shipment") return { icons: SHIP_TIMELINE, currentIdx: shipStepIndex(order) };
   if (view === "none") {
     return { icons: NO_FLEET_TIMELINE, currentIdx: noFleetStepIndex(order.status) };
   }
+  if (view === "pickup")
+    return { icons: PICKUP_TIMELINE, currentIdx: pickupStepIndex(order.status) };
   return { icons: ROUTE_TIMELINE, currentIdx: STATUS_STEPS.indexOf(order.status) };
 }
 
@@ -912,7 +920,9 @@ export default function BuyerOrderDetailPage() {
                 </th>
                 {showDeliveryProgress && (
                   <>
-                    <th className="px-4 py-2.5 text-right w-20">Delivered</th>
+                    <th className="px-4 py-2.5 text-right w-20">
+                      {travel === "pickup" ? "Picked up" : "Delivered"}
+                    </th>
                     <th className="px-4 py-2.5 text-right w-20">Remaining</th>
                   </>
                 )}

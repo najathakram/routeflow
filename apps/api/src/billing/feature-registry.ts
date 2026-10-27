@@ -23,7 +23,7 @@
 // Feature grants v2 brief C: `import type` only — never a value import — @routeflow/types'
 // entry point is raw TS with no build step; a value import would crash `node dist/main.js`
 // (see no-runtime-workspace-imports.spec.ts). FeatureLifecycle is brief A's shared contract type.
-import type { FeatureLifecycle } from "@routeflow/types";
+import type { FeatureIncomplete, FeatureLifecycle, FeatureNature } from "@routeflow/types";
 
 export type FeatureKind = "boolean" | "limit" | "metered";
 export type FeatureArea =
@@ -92,7 +92,14 @@ export interface FeatureDef {
   kind: FeatureKind;
   area: FeatureArea;
   label: string;
+  /** One plain line on what the feature does for the business (SA-950 A6). */
   description: string;
+  /** What kind of choice this is; the compiler enforces the purpose/category pairs (SA-950 A1). */
+  nature: FeatureNature;
+  /** Lower-case search terms beyond label and description, e.g. "till" (SA-950 A4). */
+  keywords: readonly string[];
+  /** Set only when the feature does not work end to end yet; absent means it does (SA-950 A5). */
+  incomplete?: FeatureIncomplete;
   internal?: true;
   gate: FeatureGate;
   billing: FeatureBilling;
@@ -123,6 +130,8 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   // proof in feature-registry.spec.ts). Copied verbatim from addon-gate-registry.ts.
   {
     key: "ocr",
+    nature: { purpose: "commercial", category: "allowance" },
+    keywords: ["ocr", "scan", "scanning", "receipt", "document"],
     kind: "metered",
     area: "finance",
     label: "OCR document scanning",
@@ -150,6 +159,8 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "tobacco_dealer",
+    nature: { purpose: "business", category: "what_it_sells" },
+    keywords: ["tobacco", "regulated", "compliance", "cigarettes", "filing"],
     kind: "boolean",
     area: "compliance",
     label: "Regulated tobacco dealer program",
@@ -182,6 +193,8 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "recurring_routes",
+    nature: { purpose: "business", category: "hand_over" },
+    keywords: ["route", "routes", "recurring", "schedule", "driver", "delivery"],
     kind: "boolean",
     area: "routes",
     label: "Recurring routes",
@@ -207,6 +220,8 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "order_delivery",
+    nature: { purpose: "business", category: "hand_over" },
+    keywords: ["ad hoc", "on demand", "one-off", "delivery", "driver"],
     kind: "boolean",
     area: "routes",
     label: "Ad hoc order delivery",
@@ -232,6 +247,8 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "crm_gohighlevel",
+    nature: { purpose: "commercial", category: "office_tools" },
+    keywords: ["crm", "gohighlevel", "ghl", "contacts", "pipeline"],
     kind: "boolean",
     area: "integrations",
     label: "GoHighLevel CRM sync",
@@ -272,11 +289,12 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   // transport). Covered by mailbox-send.addon-gate.spec.ts.
   {
     key: "email.connected_mailbox",
+    nature: { purpose: "commercial", category: "office_tools" },
+    keywords: ["email", "mailbox", "gmail", "outlook", "microsoft", "google"],
     kind: "boolean",
     area: "integrations",
     label: "Connected email mailbox",
-    description:
-      "Send tenant-branded mail through a connected Google or Microsoft mailbox (Gmail API / Graph).",
+    description: "Send email from your own Google or Microsoft mailbox, with your branding.",
     gate: {
       via: "RequireAddon",
       state: "dark",
@@ -303,10 +321,12 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "developer_mode",
+    nature: { purpose: "commercial", category: "office_tools" },
+    keywords: ["developer", "dev", "preview", "in development"],
     kind: "boolean",
     area: "platform",
     label: "Developer mode",
-    description: "Internal switch unlocking in-development mobile/dispatch surfaces.",
+    description: "Shows screens that are still in development. RouteFlow staff only.",
     internal: true,
     gate: {
       via: "RequireAddon",
@@ -332,6 +352,8 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   // ── One hand-written-guard row (not a decorator).
   {
     key: "driver_payments",
+    nature: { purpose: "business", category: "how_it_gets_paid" },
+    keywords: ["door", "cash", "collect", "payment", "pay at the door", "cod"],
     kind: "boolean",
     area: "routes",
     label: "At-door payment collection",
@@ -352,11 +374,12 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "orders_inline_returns",
+    nature: { purpose: "commercial", category: "office_tools" },
+    keywords: ["return", "returns", "credit", "order entry"],
     kind: "boolean",
     area: "sales",
     label: "Returns at order entry",
-    description:
-      "Staff/drivers can capture a return and credit it in the same flow as recording a new order.",
+    description: "Staff and drivers can take a return and credit it while entering a new order.",
     gate: {
       via: "RequireAddon",
       // Owner-answers.md Q-A (2026-09-15, second round): "Enforced from day one — an
@@ -450,6 +473,8 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   // ── Nine RequirePlanFlag rows — key IS the dotted legacy catalog-flag string.
   {
     key: "flag.msrp",
+    nature: { purpose: "business", category: "what_it_sells" },
+    keywords: ["msrp", "retail price", "suggested price"],
     kind: "boolean",
     area: "catalog",
     label: "MSRP pricing",
@@ -468,6 +493,8 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "flag.sales_agents",
+    nature: { purpose: "commercial", category: "office_tools" },
+    keywords: ["sales agent", "commission", "rep", "salesperson"],
     kind: "boolean",
     area: "sales",
     label: "Sales agents & commissions",
@@ -486,11 +513,20 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "flag.units_v1",
+    nature: {
+      purpose: "release",
+      release: {
+        stage: "per_tenant_legacy",
+        introduced: "2026-09-19",
+        removalIssue: "W-899",
+        reviewBy: "2027-03-31",
+      },
+    },
+    keywords: ["units", "case", "pallet", "piece", "pack size"],
     kind: "boolean",
     area: "catalog",
     label: "Multi-level units",
-    description:
-      "Sell a product by Case/Pallet/Piece levels with their own prices; per-line unit picker.",
+    description: "Sell a product by case, pallet, or piece, each with its own price.",
     gate: {
       via: "RequirePlanFlag",
       // Brand-new key nobody uses, so it ships ENFORCED-BUT-UNGRANTED (invisible until an
@@ -507,11 +543,21 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "flag.units_settings_v1",
+    nature: {
+      purpose: "release",
+      release: {
+        stage: "per_tenant_legacy",
+        introduced: "2026-10-14",
+        removalIssue: "W-899",
+        reviewBy: "2027-03-31",
+      },
+    },
+    keywords: ["units", "rename units", "unit names"],
     kind: "boolean",
     area: "catalog",
-    label: "Settings > Units (rename units)",
+    label: "Unit names",
     description:
-      "The Settings > Units page and its API: add, rename, archive and restore the unit names tenants sell by. A rename rewrites the unit text on every product that uses it.",
+      "Rename or archive the unit names you sell by; a rename updates every product that uses that name.",
     gate: {
       via: "RequirePlanFlag",
       // ENFORCED, never dark: a dark flag is courtesy-allowed to every tenant, and a rename
@@ -530,6 +576,8 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "flag.analytics",
+    nature: { purpose: "commercial", category: "office_tools" },
+    keywords: ["analytics", "dashboard", "revenue", "performance"],
     kind: "boolean",
     area: "sales",
     label: "Analytics dashboard",
@@ -549,6 +597,8 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "flag.forecasting",
+    nature: { purpose: "commercial", category: "office_tools" },
+    keywords: ["forecast", "reorder", "stock", "inventory"],
     kind: "boolean",
     area: "finance",
     label: "Inventory forecasting",
@@ -571,6 +621,8 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "flag.reports",
+    nature: { purpose: "commercial", category: "office_tools" },
+    keywords: ["reports", "bookkeeping", "p&l", "aging", "sales report"],
     kind: "boolean",
     area: "finance",
     label: "Bookkeeping reports",
@@ -595,6 +647,8 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "flag.returns",
+    nature: { purpose: "commercial", category: "office_tools" },
+    keywords: ["returns", "refund", "credit note", "rma"],
     kind: "boolean",
     area: "sales",
     label: "Returns",
@@ -614,10 +668,12 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "flag.ap_bills",
+    nature: { purpose: "commercial", category: "office_tools" },
+    keywords: ["bills", "ap", "accounts payable", "vendor bills", "expenses"],
     kind: "boolean",
     area: "finance",
-    label: "AP bills",
-    description: "Vendor bill capture, approval, and accounts-payable tracking.",
+    label: "Vendor bills",
+    description: "Capture, approve, and track the bills you owe vendors.",
     gate: {
       via: "RequirePlanFlag",
       state: "dark",
@@ -633,6 +689,8 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "flag.pricing_tiers",
+    nature: { purpose: "business", category: "what_it_sells" },
+    keywords: ["pricing", "price tiers", "negotiated", "customer price", "special price"],
     kind: "boolean",
     area: "sales",
     label: "Customer pricing tiers",
@@ -656,10 +714,20 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "flag.units_prices_v2",
+    nature: {
+      purpose: "release",
+      release: {
+        stage: "per_tenant_legacy",
+        introduced: "2026-10-16",
+        removalIssue: "W-899",
+        reviewBy: "2027-03-31",
+      },
+    },
+    keywords: ["prices", "price grid", "unit prices", "tiers"],
     kind: "boolean",
     area: "catalog",
-    label: "Units and prices v2",
-    description: "The one price grid per product: every unit, every tier, Set or Auto.",
+    label: "Prices by unit",
+    description: "One price grid per product: a price for every unit and tier.",
     gate: {
       via: "RequirePlanFlag",
       // SA-796 R-5: a stated exception to the DARK_PLAN_FLAGS rule. The key gates a NEW route and
@@ -686,10 +754,12 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "flag.import_integrations",
+    nature: { purpose: "commercial", category: "office_tools" },
+    keywords: ["import", "migrate", "migration", "switch systems"],
     kind: "boolean",
     area: "integrations",
-    label: "Migration import integrations",
-    description: "Bulk migration import from a prior system into RouteFlow.",
+    label: "Import from another system",
+    description: "Move your data over from a previous system in one bulk import.",
     gate: {
       via: "RequirePlanFlag",
       state: "dark",
@@ -710,6 +780,8 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   // (see the "frozen catalog-only rows" block below, now three rows instead of four).
   {
     key: "flag.estimates",
+    nature: { purpose: "commercial", category: "office_tools" },
+    keywords: ["estimate", "quote", "quotation"],
     kind: "boolean",
     area: "sales",
     label: "Estimates",
@@ -729,6 +801,8 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "flag.recurring_invoices",
+    nature: { purpose: "commercial", category: "office_tools" },
+    keywords: ["recurring", "subscription", "autobill", "repeat invoice"],
     kind: "boolean",
     area: "finance",
     label: "Recurring invoices",
@@ -748,6 +822,8 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "flag.credit_notes",
+    nature: { purpose: "commercial", category: "office_tools" },
+    keywords: ["credit note", "credit memo", "refund"],
     kind: "boolean",
     area: "finance",
     label: "Credit notes",
@@ -767,10 +843,12 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "flag.suppliers",
+    nature: { purpose: "commercial", category: "office_tools" },
+    keywords: ["suppliers", "vendors", "purchasing"],
     kind: "boolean",
     area: "finance",
     label: "Suppliers",
-    description: "Supplier/vendor directory feeding purchasing and AP bills.",
+    description: "Supplier directory that feeds purchasing and vendor bills.",
     gate: {
       via: "RequirePlanFlag",
       state: "dark",
@@ -786,6 +864,8 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "flag.messaging",
+    nature: { purpose: "commercial", category: "office_tools" },
+    keywords: ["messages", "chat", "inbox", "sms"],
     kind: "boolean",
     area: "platform",
     label: "Messaging",
@@ -805,6 +885,8 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "addon.buyer_portal",
+    nature: { purpose: "commercial", category: "office_tools" },
+    keywords: ["portal", "self-serve", "customer ordering", "online ordering", "storefront"],
     kind: "boolean",
     area: "sales",
     label: "Buyer portal",
@@ -836,6 +918,8 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   // DARK_PLAN_FLAGS parity check on purpose).
   {
     key: "flag.credit_limits",
+    nature: { purpose: "business", category: "how_it_gets_paid" },
+    keywords: ["credit limit", "credit", "over limit", "hold"],
     kind: "boolean",
     area: "finance",
     label: "Customer credit limits",
@@ -866,11 +950,16 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   // (addon.buyer_portal moved above: Lite-L2 gave it a real RequirePlanFlag gate.)
   {
     key: "flag.dispatch_live",
+    nature: { purpose: "commercial", category: "office_tools" },
+    keywords: ["dispatch", "live", "map", "tracking"],
+    incomplete: {
+      missing:
+        "The live dispatch board is still in development and only shows behind developer mode.",
+    },
     kind: "boolean",
     area: "routes",
     label: "Live dispatch",
-    description:
-      "Real-time dispatch board — catalog metadata only; UI-gated by developer_mode today.",
+    description: "A live board of every route and driver on the road. Not available yet.",
     gate: {
       via: "none",
       state: "none",
@@ -884,10 +973,14 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "flag.settlement",
+    nature: { purpose: "commercial", category: "office_tools" },
+    keywords: ["settlement", "driver cash", "reconcile", "end of run"],
+    incomplete: { missing: "Not built yet: no settlement screen or API exists." },
     kind: "boolean",
     area: "finance",
     label: "Driver run settlement",
-    description: "Per-run driver cash/settlement reconciliation — no implementation exists yet.",
+    description:
+      "Reconcile each driver's cash and payments at the end of a run. Not available yet.",
     gate: {
       via: "none",
       state: "none",
@@ -901,10 +994,13 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "flag.api_sso",
+    nature: { purpose: "commercial", category: "office_tools" },
+    keywords: ["api", "sso", "single sign-on", "login"],
+    incomplete: { missing: "Not built yet: no sign-on or API-key feature exists." },
     kind: "boolean",
     area: "integrations",
     label: "API / SSO access",
-    description: "Single sign-on and API-key access for the tenant — no implementation exists yet.",
+    description: "Single sign-on and API-key access for the business. Not available yet.",
     gate: {
       via: "none",
       state: "none",
@@ -920,11 +1016,12 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   // ── Seven brand-new rows — pure data, no consumer yet.
   {
     key: "limit_seats",
+    nature: { purpose: "commercial", category: "allowance" },
+    keywords: ["seats", "users", "logins"],
     kind: "limit",
     area: "platform",
     label: "Seat limit",
-    description:
-      "The number of user seats a tenant's plan includes before an extra pack is needed.",
+    description: "How many user seats the plan includes before an extra pack is needed.",
     gate: {
       via: "none",
       state: "none",
@@ -938,11 +1035,12 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "limit_routes",
+    nature: { purpose: "commercial", category: "allowance" },
+    keywords: ["routes", "limit"],
     kind: "limit",
     area: "platform",
     label: "Route limit",
-    description:
-      "The number of active routes a tenant's plan includes before an extra pack is needed.",
+    description: "How many active routes the plan includes before an extra pack is needed.",
     gate: {
       via: "none",
       state: "none",
@@ -956,10 +1054,12 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "limit_customers",
+    nature: { purpose: "commercial", category: "allowance" },
+    keywords: ["customers", "limit", "customer pack"],
     kind: "limit",
     area: "platform",
     label: "Customer limit",
-    description: "The number of customers a tenant's plan includes before an extra pack is needed.",
+    description: "How many customers the plan includes before an extra pack is needed.",
     gate: {
       via: "none",
       state: "none",
@@ -973,10 +1073,12 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "metered_scans",
+    nature: { purpose: "commercial", category: "allowance" },
+    keywords: ["scans", "scan allowance", "usage"],
     kind: "metered",
     area: "platform",
-    label: "Scan meter",
-    description: "Monthly OCR scan usage counted against a tenant's plan allowance.",
+    label: "Document scans",
+    description: "Document scans used each month, counted against the plan's allowance.",
     gate: {
       via: "none",
       state: "none",
@@ -991,10 +1093,12 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "metered_msgs",
+    nature: { purpose: "commercial", category: "allowance" },
+    keywords: ["messages", "message allowance", "usage"],
     kind: "metered",
     area: "platform",
-    label: "Message meter",
-    description: "Monthly outbound message usage counted against a tenant's plan allowance.",
+    label: "Messages sent",
+    description: "Messages sent each month, counted against the plan's allowance.",
     gate: {
       via: "none",
       state: "none",
@@ -1009,10 +1113,12 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "catalog_varieties",
+    nature: { purpose: "business", category: "what_it_sells" },
+    keywords: ["varieties", "flavor", "flavour", "variants"],
     kind: "boolean",
     area: "catalog",
     label: "Product varieties",
-    description: "How a product's variety/flavor options are captured on an order line.",
+    description: "How a product's variety or flavor is chosen on an order line.",
     gate: {
       via: "none",
       state: "none",
@@ -1070,11 +1176,14 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "mixed_packs",
+    nature: { purpose: "business", category: "what_it_sells" },
+    keywords: ["mixed pack", "recipe", "assortment", "family", "bundle"],
+    incomplete: { missing: "No screen lets staff build a mixed pack yet." },
     kind: "boolean",
     area: "catalog",
     label: "Mixed packs",
     description:
-      "Family price authority and fixed recipes: a family owns its variants' prices, and a recipe sells a fixed mix of them as one product.",
+      "A family sets its variants' prices, and a recipe sells a fixed mix of them as one product.",
     gate: {
       via: "none",
       state: "none",
@@ -1097,10 +1206,12 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "routes_dispatch",
+    nature: { purpose: "business", category: "hand_over" },
+    keywords: ["routes", "schedule", "ad hoc", "dispatch"],
     kind: "boolean",
     area: "routes",
-    label: "Dispatch run kind",
-    description: "Whether a tenant's routes run on a schedule, ad hoc, or a mix of both.",
+    label: "How routes run",
+    description: "Whether routes run on a schedule, ad hoc, or a mix of both.",
     gate: {
       via: "none",
       state: "none",
@@ -1160,6 +1271,8 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "fulfilment_model",
+    nature: { purpose: "business", category: "hand_over" },
+    keywords: ["pickup", "ship", "shipping", "carrier", "delivery", "fulfilment"],
     kind: "boolean",
     area: "routes",
     label: "Where orders go",
@@ -1215,6 +1328,8 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "counter_sales",
+    nature: { purpose: "business", category: "hand_over" },
+    keywords: ["pos", "till", "walk-in", "counter", "cash sale", "over the counter"],
     kind: "boolean",
     area: "routes",
     label: "Counter sales",

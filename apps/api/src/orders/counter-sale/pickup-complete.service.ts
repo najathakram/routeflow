@@ -20,7 +20,6 @@ import { TILL_LOCK_HELD } from "../../invoices/counter-payment-guard";
 import type { JwtPayload } from "../../auth/jwt-payload.interface";
 import { OrdersService } from "../orders.service";
 import { settleOrderInvoice } from "../order-status-invoicing";
-import { sweepableCredits } from "../../credit-notes/auto-apply-candidates";
 import {
   allocateOldestFirst,
   assertCheckNotPostdatedForTenant,
@@ -171,7 +170,7 @@ export class PickupCompleteService {
       await assertCheckNotPostdatedForTenant(this.prisma, sent);
     } else if (!excused) assertPaymentShape({ method: "ON_ACCOUNT" }, walkIn);
     if (walkIn) {
-      // A walk-in leaves no partial on account and takes no credit: the counter sale's two guards.
+      // A walk-in leaves no partial on account (W-913: the sweep never takes credit off the walk-in account).
       if (
         sent &&
         sent.method !== "ON_ACCOUNT" &&
@@ -184,7 +183,6 @@ export class PickupCompleteService {
           message: "A walk-in customer must pay the full balance",
         });
       }
-      await this.assertNoOpenCredit(order.customerId);
     }
     // SA-905 MUST 1: the delivery credit gate the DELIVERED step runs (B585, netted), judged NOW through the same ONE entry,
     // read-only, so a refusal writes nothing (no claim, no switch, no silent CONFIRMED). The DELIVERED step's own gate stays
@@ -617,24 +615,6 @@ export class PickupCompleteService {
       code: API_ERROR_CODES.LOCK_UNAVAILABLE,
       message: "The hand-over is busy. Try again in a moment.",
     });
-  }
-
-  /** The counter sale's guard: a walk-in must not receive an open credit that send() would auto-apply. */
-  private async assertNoOpenCredit(customerId: string | null): Promise<void> {
-    if (!customerId) return;
-    // SA-998: the SAME selection the sweep takes (sweepableCredits: flag off reads as none, so nothing can leak).
-    const notes = await sweepableCredits(this.prisma.forTenant(), {
-      tenantId: this.prisma.getTenantId(),
-      customerId,
-      now: new Date(),
-    });
-    if (notes.length > 0) {
-      throw new ConflictException({
-        code: API_ERROR_CODES.WALK_IN_OPEN_CREDIT,
-        message:
-          "The walk-in customer holds open credit, which would be applied to this sale. Resolve it first.",
-      });
-    }
   }
 
   /**
