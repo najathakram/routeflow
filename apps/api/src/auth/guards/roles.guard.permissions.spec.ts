@@ -70,7 +70,9 @@ const OPERATOR = { sub: "u1", tenantId: "t1", role: UserRole.OPERATOR };
 
 describe("RolesGuard + operator permission groups", () => {
   let held: OperatorPermissionGroup[];
-  let mode: "shadow" | "live";
+  // Wider than the service type on purpose: an unknown mode string must never allow.
+  let mode: string | undefined;
+  let modeThrows: boolean;
   let effective: jest.Mock;
   let guard: RolesGuard;
   let warn: jest.SpyInstance;
@@ -78,10 +80,14 @@ describe("RolesGuard + operator permission groups", () => {
   beforeEach(() => {
     held = Object.values(OperatorPermissionGroup);
     mode = "shadow";
+    modeThrows = false;
     effective = jest.fn(async () => ({ groups: held, version: 1 }));
     const perms = {
       effective,
-      mode: () => mode,
+      mode: () => {
+        if (modeThrows) throw new Error("mode unreadable");
+        return mode;
+      },
       hasAny: async (user: unknown, groups: string[]) =>
         (await effective(user)).groups.some((g: string) => groups.includes(g)),
     } as unknown as OperatorPermissionsService;
@@ -162,6 +168,37 @@ describe("RolesGuard + operator permission groups", () => {
     jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
     await expect(guard.canActivate(ctx)).resolves.toBe(true);
   });
+
+  it("an unreadable mode counts as LIVE: refused, one error line naming the mode as unknown and the groups", async () => {
+    modeThrows = true;
+    const error = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+    await expect(Promise.resolve(guard.canActivate(ctxFor("orders", OPERATOR)))).rejects.toThrow(
+      "mode unreadable",
+    );
+    const lines = error.mock.calls.map((c) => String(c[0]));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/unknown/);
+    expect(lines[0]).toMatch(/groups=ORDERS\|FINANCE/);
+  });
+
+  it.each(["enforce", undefined])(
+    "an unknown mode (%p) on a deny is refused: 403 PERMISSION_DENIED, one error line naming it unknown",
+    async (unknownMode) => {
+      mode = unknownMode;
+      held = ["CATALOG"];
+      const error = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+      const err = (await Promise.resolve(guard.canActivate(ctxFor("orders", OPERATOR))).catch(
+        (e) => e,
+      )) as HttpException;
+      expect(err).toBeInstanceOf(HttpException);
+      expect(err.getStatus()).toBe(403);
+      expect(err.getResponse()).toMatchObject({ code: API_ERROR_CODES.PERMISSION_DENIED });
+      const lines = error.mock.calls.map((c) => String(c[0]));
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toMatch(/unknown/);
+      expect(lines[0]).toMatch(/groups=ORDERS\|FINANCE/);
+    },
+  );
 
   it("LIVE: a failed lookup FAILS CLOSED (the error propagates, the request is never allowed)", async () => {
     mode = "live";

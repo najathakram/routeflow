@@ -105,11 +105,24 @@ export class RolesGuard implements CanActivate {
         );
         return true;
       }
-      // LIVE fails closed: no answer is never an allow, so the error propagates and the request is refused.
+      // Anything but a confirmed shadow (live, or mode() itself threw) fails closed: no answer is never an allow.
+      if (mode !== "live") {
+        this.logger.error(
+          `permission lookup failed (mode unknown, refused) mode=${String(mode)} groups=${groups.join("|")} ${where}: ${describeLookupError(err)}`,
+        );
+      }
       throw err;
     }
     if (allowed) return true;
-    if (mode === "live") throw permissionDeniedException(groups);
+    // Only a confirmed shadow allows a deny: live, or any mode this guard does not know, is refused.
+    if (mode !== "shadow") {
+      if (mode !== "live") {
+        this.logger.error(
+          `permission mode unknown (refused) mode=${String(mode)} groups=${groups.join("|")} ${where}`,
+        );
+      }
+      throw permissionDeniedException(groups);
+    }
     // SHADOW: record what enforcement would do, allow the request.
     this.logger.warn(`would-deny groups=${groups.join("|")} ${where}`);
     return true;
