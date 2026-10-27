@@ -1,7 +1,8 @@
 /**
- * Row 748(b) DB-lane proof (real Postgres, throwaway `qa-*` tenants): `GET /products/:id/open-orders` never
- * reads another tenant's product or order lines. A product id from tenant B asked for inside tenant A's
- * context is "not found", and tenant A's own card lists only tenant A's lines.
+ * Row 748(b) DB-lane proof (real Postgres, throwaway `qa-*` tenants) for the service layer only:
+ * `ProductOpenOrdersService.getOpenOrders` answers "not found" for a product id that belongs to another
+ * tenant, and a tenant's own card still lists its own line. It does not cover the controller or guards,
+ * and it does not seed a second tenant's lines under the same product id.
  *
  * Run by the DB lane (`npm run local:test:db`); collected only by `jest.db.config.js`. `requireLocalDatabaseUrl()`
  * refuses any non-local host; every tenant is a `qa-*` slug approved by `assertTestTenant`.
