@@ -165,6 +165,12 @@ export async function decrementStockForSale(
   // B920: ONE per-product total, summed before anything is judged — the oversell check below, the
   // decrement and the SALE row all read it, so two lines of one product can never each pass alone.
   const qtyByProduct = sumPiecesByProduct(pieceLines);
+  // A line whose product this tenant cannot see (another tenant's id, or a deleted one) moves no
+  // stock and writes no row - as before the helper, when the set-based UPDATE simply joined to nothing.
+  // The helper itself still answers 404 for such an id; the sale path never hands it one.
+  const visible = new Set<string>(lockedProducts.map((lp: any) => lp.id));
+  for (const productId of [...qtyByProduct.keys()])
+    if (!visible.has(productId)) qtyByProduct.delete(productId);
 
   // SA-927: the oversell check, the backorder markers and the cost resolution run on the helper's
   // locked read (inside the plan function); the helper moves the counter and stamps stockAfter. A
