@@ -214,7 +214,7 @@ describeDb(
                 id: w.ruleId,
                 states: ["CA"],
                 legal: true,
-                reasonText: "This product is banned in CA by law.",
+                reasonText: "Restricted in CA: R510 state ban.",
               },
             ],
           },

@@ -95,7 +95,14 @@ choreography into one Workflow script. The v0 steps above stay valid as the fall
   `--json`, `--needs-db`). `workflow.dry-run.mjs` proves the workflow against stubbed agents; run it with
   `node --test .claude/skills/bug-swarm/scripts/*.test.mjs` after any edit to `workflow.js`.
 - `gate.mjs` replaces the planned `gate.sh` (lead-accepted): argv arrays, no shell, because shell quoting broke the hand gate twice in runs 1-2.
-- The HIGH guard rests on Triage's risk label: a mislabelled HIGH row can reach Build; Review is the backstop.
+- **The HIGH guard is path-based.** A change's class is the highest class of any path it touches, from the
+  checked-in rule list in `scripts/lib/risk-paths.mjs` (`green < amber < red < black`). `gate.mjs` runs a
+  `risk-class` step (`node scripts/risk-class.mjs --base <merge-base> --max amber`) and FAILS on any red or
+  black path, naming the path and its rule; a test file under a red directory is red. Triage's `risk` label is
+  the second signal, not the guard: a mislabelled row now stops at the gate. Review is still the backstop.
+  **Run `gate.mjs` from the lead's checkout** (cwd = the builder worktree, script path = the lead's copy): the gate
+  runs the classifier from its own checkout with `--repo <worktree>` and takes the rules from the base ref, so a
+  diff cannot edit the judge. Every file the judge imports is red; never run a worktree's own copy of `gate.mjs`.
 - **Resolver (run 2026-10-23-bug-swarm-4):** `cluster.mjs` runs `rf.mjs` / `bugs.mjs` from its own checkout (`--repo` only
   as a fallback), shows the resolver's stderr in the reason, and decodes HTML entities and `›`/`»` before comparing titles.
 - **Workspace key (run 2026-10-23-bug-swarm-4):** files outside `apps/*` and `packages/*` key on their top-level dir (file name

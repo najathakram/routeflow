@@ -39,6 +39,7 @@ import {
   exec,
   loadBugIds,
   readAllEvents,
+  RegistryUnavailable,
   syncSpecs,
   tryWithSpecsLock,
   withSpecsLock,
@@ -921,12 +922,17 @@ async function cmdDoctor(flags, env) {
   );
   const config = loadConfig(ctx.dir);
   row(true, "config", `${config.lanes.length} lanes, machine ${machineId(config, env)}`);
-  const bugs = await loadBugIds(env.RF_REPO_ROOT || REPO_ROOT);
-  row(
-    bugs.size > 0,
-    "bugs",
-    bugs.size ? `${bugs.size} registry bug ids on origin/master` : "none found (no origin/master?)",
-  );
+  try {
+    const bugs = await loadBugIds(env.RF_REPO_ROOT || REPO_ROOT);
+    row(
+      bugs.size > 0,
+      "bugs",
+      bugs.size ? `${bugs.size} registry bug ids on origin/master` : "none found in the register",
+    );
+  } catch (e) {
+    if (!(e instanceof RegistryUnavailable)) throw e;
+    row(false, "bugs", e.message);
+  }
   if (cloned) {
     const last = await exec("git", ["log", "-1", "--format=%cI %s", "--", "events"], {
       cwd: ctx.dir,
@@ -1024,6 +1030,11 @@ export async function main(argv, env = process.env) {
   } catch (e) {
     if (e instanceof UsageError) {
       process.stderr.write(`usage error: ${e.message}\n${USAGE}\n`);
+      return 2;
+    }
+    if (e instanceof RegistryUnavailable) {
+      // fail closed: no register is an error, never "zero bugs"
+      process.stderr.write(`error: ${e.message}\n`);
       return 2;
     }
     process.stderr.write(`error: ${e?.message ?? e}\n`);

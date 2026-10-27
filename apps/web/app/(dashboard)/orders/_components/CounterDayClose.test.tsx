@@ -259,9 +259,11 @@ describe("CounterDayClose: the form", () => {
     expect(v.className).toMatch(/red/);
   });
 
-  it("shows Unpaid pickups, and the tender note only while a refund has no recorded tender", async () => {
+  it("shows Paid outside the till, and the tender note only while a refund has no recorded tender", async () => {
     await openForm();
-    expect(screen.getByTestId("close-not-at-till")).toHaveTextContent("Unpaid pickups: $12.50");
+    expect(screen.getByTestId("close-not-at-till")).toHaveTextContent(
+      "Paid outside the till: $12.50",
+    );
     expect(screen.queryByTestId("close-tender-note")).toBeNull();
   });
 

@@ -552,7 +552,7 @@ export function foldMergeItems(
  *     two do NOT agree; `normalizeBareIncomingSellingUnits` (below) expands the
  *     INCOMING side instead.
  *
- * ⚠️ NOT exhaustive, and deliberately so — two gaps this module does NOT close:
+ * ⚠️ NOT exhaustive, and deliberately so — one gap this module does NOT close:
  *
  *   1. NO stored line + incoming BARE qty. Nothing here touches it, and
  *      `updateOrderItems`' buyer branch then re-splits it as loose PIECES
@@ -563,13 +563,12 @@ export function foldMergeItems(
  *      of a upb-12 product) bills 2/12 of a box. Settling it needs a client
  *      contract decision, not a tweak here — filed for a later batch, and F06
  *      leaves that path exactly as it found it.
- *   2. The STAFF caller does not normalize its stored side. `foldMergeItems`'
- *      other call site — `orders.controller.ts`' POST /orders scan-merge — is
- *      frozen byte-identical by F06's R12 and still reads a stored box-unaware
- *      qty as loose pieces (2 boxes + a scanned case bills $11.67 where the
- *      goods are $30). Normalizing there is one import away but is NOT this
- *      batch's fence; also filed. Do not assume a caller of this module is
- *      denomination-safe just because these normalizers exist.
+ *
+ * (Row 255 / SA-729: a second gap, "the STAFF caller does not normalize its stored side", is CLOSED. The staff
+ * POST /orders scan-merge in `orders.controller.ts` now hands `foldMergeItems` the live pack map
+ * (`liveUnitsPerBoxByProductId`) and folds every stored line at its own pack: B207, SA-841 PR-2, 29b4866da.)
+ *
+ * Do not assume a caller of this module is denomination-safe just because these normalizers exist.
  */
 export function normalizeBoxUnawareSnapshots(
   lines: MergeLineSnapshot[],

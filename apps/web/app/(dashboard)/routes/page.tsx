@@ -26,6 +26,7 @@ import {
   EmptyState,
 } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
+import { useOnTenantToday, useTenantToday } from "@/lib/tenant-timezone";
 import {
   useRoutes,
   useRouteRuns,
@@ -102,8 +103,10 @@ function DispatchModal({
   const { data: routeSettings } = useRouteSettings();
   const analyzeRoute = useAnalyzeRoute();
 
-  const today = new Date().toISOString().split("T")[0];
-  const [date, setDate] = React.useState(today);
+  // SA-964 §4: the run date is the TENANT's day. It starts empty and is seeded when the zone resolves (the browser's day
+  // is never a stand-in); Dispatch waits for a date.
+  const [date, setDate] = React.useState("");
+  const today = useOnTenantToday((day) => setDate((cur) => cur || day));
   const [driverId, setDriverId] = React.useState("");
   const [startTime, setStartTime] = React.useState("");
   const [lateStops, setLateStops] = React.useState<LateStop[]>([]);
@@ -124,7 +127,7 @@ function DispatchModal({
   // Reset form when modal opens
   React.useEffect(() => {
     if (open) {
-      setDate(today);
+      setDate(today ?? "");
       setDriverId("");
       setStartTime("");
       // Keep the ref in lockstep so the seed effect below (same commit,
@@ -191,7 +194,7 @@ function DispatchModal({
   const needsAcknowledge = lateStops.length > 0 && !acknowledged;
 
   const handleDispatch = () => {
-    if (!routeId) return;
+    if (!routeId || !date) return;
     createRun.mutate(
       {
         routeId,
@@ -224,7 +227,7 @@ function DispatchModal({
           <Button
             onClick={handleDispatch}
             loading={createRun.isPending}
-            disabled={needsAcknowledge || windowCheck === "checking"}
+            disabled={needsAcknowledge || windowCheck === "checking" || !date}
             title={
               needsAcknowledge
                 ? "Acknowledge the late-stop warning to dispatch"
@@ -491,6 +494,7 @@ export default function RoutesPage() {
   } = useRoutes({ kind: "SCHEDULED" });
 
   const activeRuns = runsData?.data ?? [];
+  const tenantToday = useTenantToday();
   // RF-206: deduplicate by route ID — routes with multiple historical runs could
   // appear more than once if the API JOIN returns one row per run.
   const routeTemplates = React.useMemo(() => {
@@ -601,9 +605,9 @@ export default function RoutesPage() {
               const scheduledLabel = (() => {
                 if (!run.scheduledDate) return null;
                 const d = new Date(run.scheduledDate);
-                const todayStr = new Date().toISOString().slice(0, 10);
                 const runStr = d.toISOString().slice(0, 10);
-                if (runStr === todayStr) return "Today";
+                // The tenant's day (SA-964 §4): until the zone is known no row claims "Today".
+                if (tenantToday && runStr === tenantToday) return "Today";
                 // `scheduledDate` is a calendar date at UTC midnight, and the
                 // Today check above compares UTC days — so the fallback must
                 // render UTC too, or a negative-offset viewer sees the day
