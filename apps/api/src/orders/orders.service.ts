@@ -69,6 +69,7 @@ import {
 import { sourceLineFor } from "./source-line";
 import { assertCustomerMayNotDraft, type CreateOrderOptions } from "./order-create-options";
 import { checkQtySplitConsistency, warnQtySplit, type QtySplitLine } from "./qty-split-consistency";
+import { warnOrderLine } from "./order-line-ambiguity";
 import { mergeIntoStoredLine, pickHeldMergeTarget } from "./stored-line-merge";
 import { loadLiveUnitsPerBoxByProduct } from "./live-pack-map";
 import {
@@ -132,16 +133,15 @@ import {
 } from "./merge-idempotency";
 import { BUYER_EDIT_CLOSED_STATUSES, computeEditWindow } from "./edit-window";
 import { fulfillPathLocked } from "./fulfil-path-lock";
-import {
-  assertQuantitiesKnown,
-  cancelBlockedMessage,
-  cancelImpact,
-  deliveredUnitsBlockedMessage,
-} from "./order-cancel-impact";
+import { assertCancelImpactAllows, cancelImpact } from "./order-cancel-impact";
 import { cancelOrderInTx, lockDeleteLines, type CancelOrderTxOptions } from "./order-cancel-tx";
 import { claimReopenInTx } from "./order-reopen-claim";
 import { assertNoCashRefundOnOrder } from "../invoices/invoice-cash-refund-guard";
-import { assertBuyerDiffShape, classifyEditPayload } from "./order-edit-payload";
+import {
+  assertBuyerDiffShape,
+  classifyEditPayload,
+  takesBuyerDriverReplace,
+} from "./order-edit-payload";
 import {
   applyBuyerMergeHeaderImpl,
   bulkDeleteOrdersImpl,
@@ -272,6 +272,7 @@ import { tenantSafeParentView } from "../products/product-parent";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
+import { assertOrderEditNotLocked } from "../regulated/filing-lock";
 import { clearLoserDraftForDelete } from "./merge-loser-draft";
 import { sumInlineReturnCredit } from "../returns/inline-return-credit.util";
 
@@ -279,8 +280,9 @@ import { sumInlineReturnCredit } from "../returns/inline-return-credit.util";
 export class OrdersService implements OnApplicationBootstrap {
   readonly logger = new Logger(OrdersService.name); // not `private`: order-sweep.ts reads it off `self`
   /** Row 531 F2 (WARN only, behaviour unchanged): log a line whose qty and box split disagree. */
-  private warnSplit(path: string, l: QtySplitLine, upb?: number | null) {
+  private warnSplit(path: string, l: QtySplitLine, upb?: number | null, fallbackQty?: number) {
     warnQtySplit(this.logger, this.prisma?.getTenantId?.(), path, l, upb);
+    warnOrderLine(path, l, upb, this.prisma, fallbackQty); // SA-982 PR-2b: the buildLine census, same path ids
   }
 
   constructor(
@@ -746,8 +748,7 @@ export class OrdersService implements OnApplicationBootstrap {
                   name: data.name,
                   qty: data.qty,
                   unitPrice: data.unitPrice,
-                  // scan-ok: money-rederive — custom line (productId: null), never boxed, so there's no unitsPerBox proration to lose; per-piece price x qty (Decimal(10,3) — the order-edit path allows fractional qty), rounded on write.
-                  subtotal: roundMoney(data.qty * data.unitPrice),
+                  subtotal: computeLineSubtotal({ unitPrice: data.unitPrice, qty: data.qty }),
                   status: ItemStatus.PENDING,
                   priceType: data.priceType,
                   originalPrice: data.originalPrice,
@@ -1005,8 +1006,7 @@ export class OrdersService implements OnApplicationBootstrap {
                   name: data.name,
                   qty: data.qty,
                   unitPrice: data.unitPrice,
-                  // scan-ok: money-rederive — custom line (productId: null), never boxed, so there's no unitsPerBox proration to lose; per-piece price x qty (Decimal(10,3) — the order-edit path allows fractional qty), rounded on write.
-                  subtotal: roundMoney(data.qty * data.unitPrice),
+                  subtotal: computeLineSubtotal({ unitPrice: data.unitPrice, qty: data.qty }),
                   status: ItemStatus.PENDING,
                   priceType: data.priceType,
                   originalPrice: data.originalPrice,
@@ -1574,8 +1574,7 @@ export class OrdersService implements OnApplicationBootstrap {
         return unitLine;
       }
 
-      // Recompute qty from boxes/pieces when provided (backend is authoritative).
-      // Normalize to integers and roll loose pieces >= unitsPerBox into boxes.
+      // Recompute qty from boxes/pieces (backend is authoritative): integers, rolled up at a full box.
       const source = sourceLineFor(item.productId, options.sourceLines, items);
       const upb = source?.unitsPerBox ?? Number(product.unitsPerBox ?? 0);
       let qty = item.qty;
@@ -1589,8 +1588,8 @@ export class OrdersService implements OnApplicationBootstrap {
       // 0/1 — the web still sends boxes:1 for unitsPerBox:1) keeps the operator's
       // qty instead of falling into normalizeBoxesPieces' non-boxed branch with no
       // qty at all, which derives 0 and trips the invariant below.
+      this.warnSplit(options.counterSale ? "counter.sale" : "orders.create.lines", item, upb);
       if ((item.boxes ?? 0) > 0 || (item.pieces ?? 0) > 0) {
-        this.warnSplit(options.counterSale ? "counter.sale" : "orders.create.lines", item, upb);
         const split = normalizeBoxesPieces({
           boxes: item.boxes,
           pieces: item.pieces,
@@ -2491,15 +2490,7 @@ export class OrdersService implements OnApplicationBootstrap {
    * money, since that's the more urgent problem for an operator to act on.
    */
   private async assertCancellableOrThrow(id: string) {
-    const impact = await this.cancelImpact(id);
-    if (impact.canCancel) return;
-    if (impact.blockingPayments.length > 0)
-      throw new BadRequestException(cancelBlockedMessage(impact.blockingPayments));
-    assertQuantitiesKnown(impact); // B692: legacy delivered row, no quantity recorded
-    // B56 (REG-B56): delivered goods can't be un-delivered by cancelling the
-    // order out from under them — that would erase the revenue for goods the
-    // customer already has. Record a return, or edit the order down instead.
-    throw new BadRequestException(deliveredUnitsBlockedMessage(impact.deliveredUnits));
+    assertCancelImpactAllows(await this.cancelImpact(id)); // see that judgment in order-cancel-impact.ts
   }
 
   async reopenOrder(id: string, user?: JwtPayload, ack?: rGate.Ack) {
@@ -2628,6 +2619,10 @@ export class OrdersService implements OnApplicationBootstrap {
     // Row 372 (MF4 nit e): an editor on an outdated order meets the 409 BEFORE any refusal can mask it and any
     // un-tx'd side effect (the invoice revert, the return number). Advisory; the in-tx check below is the lock.
     await assertRevisionCurrent(this.prisma.forTenant(), orderId, dto.expectedRevisionNumber);
+    await assertOrderEditNotLocked(this.prisma.forTenant(), orderId, dto as any, {
+      tenantId: (user?.tenantId ?? this.prisma.getTenantId()) as string, // B297 PR5 (D4a): see that guard
+      role: user?.role,
+    });
     const isDiffPayload = classifyEditPayload(order, dto, user); // A4/B13: see order-edit-payload.ts
     // SA-422: never revive a seller-CANCELLED line (409 before any write; a strike-off of one is a
     // no-op). SA-422b: BEFORE every unit check, so a cancelled line's id gets this answer first.
@@ -2885,10 +2880,7 @@ export class OrdersService implements OnApplicationBootstrap {
         // SA-407: a buyer's per-line diff (a unit line's count / a removal) merges like staff's too.
         // SA-696a (decided, fail closed): this path recreates every line (new ids), so a carrier order with an
         // unlisted line reads as a removal and is refused NO_REDUCE even when nothing changed; nothing written.
-        if (
-          (user?.role === UserRole.CUSTOMER || user?.role === UserRole.DRIVER) &&
-          !isDiffPayload
-        ) {
+        if (takesBuyerDriverReplace(user?.role, isDiffPayload) && user) {
           if (user.role === UserRole.CUSTOMER) {
             // REG-B131: `deletedAt: null` — the buyer replace-all path is the last door a
             // removed customer's still-valid session could mutate an order through.
@@ -3209,6 +3201,7 @@ export class OrdersService implements OnApplicationBootstrap {
             );
 
             const itemCtx: ReplaceAllLineBuildCtx = {
+              warnLine: (i, upb) => warnOrderLine("orders.replace-all", i, upb, this.prisma), // PR-2b
               bogoCounterparts,
               bogoPromos,
               existingLineByProduct,
@@ -3274,7 +3267,6 @@ export class OrdersService implements OnApplicationBootstrap {
                 await unitEdit.createUnitLine(uctx, orderId, product, unitRow, item, pos++, true);
                 continue;
               }
-
               const built = buildReplaceAllLineData(itemCtx, item, product);
               if (!built) continue;
               const made = await tx.orderItem.create({
@@ -3545,7 +3537,12 @@ export class OrdersService implements OnApplicationBootstrap {
                 // qty there, and normalize otherwise so a split sized to a different
                 // case can't persist with pieces >= the substitute's unitsPerBox.
                 const upb = Number(product.unitsPerBox ?? 0);
-                this.warnSplit("orders.update.substitute", { ...item, productId: product.id }, upb);
+                this.warnSplit(
+                  "orders.update.substitute",
+                  { ...item, productId: product.id },
+                  upb,
+                  Number(existingQty),
+                );
                 const split =
                   (item.boxes != null || item.pieces != null) && upb > 1
                     ? normalizeBoxesPieces({

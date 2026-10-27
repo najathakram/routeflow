@@ -428,7 +428,7 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
         await svc.suspendOverdueTenants();
         expect(tx.tenant.updateMany.mock.calls[0][0]).toMatchObject({
           where: { id: "t1", status: "ACTIVE", class: "PRODUCTION" }, // SA-775 S3: the judged class is part of the CAS
-          data: { status: "SUSPENDED" },
+          data: { status: "SUSPENDED", readOnlyReason: "overdue_suspended" }, // W-664: the lock names itself
         });
       });
     });

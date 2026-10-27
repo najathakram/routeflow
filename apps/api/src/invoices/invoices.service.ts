@@ -189,6 +189,8 @@ import {
 } from "./order-billing-lock";
 import { reconcileSplitOrderDrafts, type SplitReconcileDeps } from "./split-draft-reconcile";
 import { auditDeliberateOverpayment, auditRestatement, countLinesChanged } from "./invoice-audit";
+import { rebuildKeptItems } from "./kept-invoice-lines";
+import { assertSalesNotLockedForEdit } from "../regulated/filing-lock";
 import {
   applyPartialPriceFollow,
   planPartialPriceFollow,
@@ -230,7 +232,7 @@ import * as iGate from "./invoice-restriction-gate";
 import { flagSplitRestrictedLines } from "../selling-restrictions/restricted-lines-flag";
 import { defaultSaleFulfilmentKind } from "../orders/default-sale-fulfilment";
 import { assertEditStillJudged } from "./invoice-restriction-lines";
-import { buildManualInvoiceLines } from "./manual-invoice-lines";
+import { buildManualInvoiceLines, lineGuardCtx, type LineGuardSite } from "./manual-invoice-lines";
 import { loadOverride, type ManualInvoiceDto } from "./invoice-line-override";
 import {
   allocateOrderRegularTax,
@@ -429,7 +431,7 @@ export class InvoicesService {
    * SA-135: an internal caller's line may carry `packSnapshot` (ManualLineItem); the HTTP DTO never can. `actor` (HTTP
    * only): the H3b price-override author (`actor.sub`) and the row-510 restriction-override principal.
    */
-  async create(dto: ManualInvoiceDto, actor?: JwtPayload) {
+  async create(dto: ManualInvoiceDto, actor?: JwtPayload, opts?: { warnSite?: LineGuardSite }) {
     const issueDateInput = dto.issueDate ? issueDateStamp(dto.issueDate) : null; // #2197: 400 first
     const due = dueDateStamps(dto); // #2256: the due dates too, refused before any read or write
     assertFiniteInvoiceInput(dto); // N4: NaN is a 400, not a silent $0
@@ -471,7 +473,7 @@ export class InvoicesService {
     const { itemsData } = buildManualInvoiceLines(dto.items, {
       productMap,
       categoryMap,
-      tenantId: this.prisma.getTenantId(),
+      ...lineGuardCtx(this.prisma, actor, opts?.warnSite), // tenant, role, and POST /invoices' census site (SA-982 PR-2)
       clampFreeUnits: (free, boxes, qty) => this.clampLineFreeUnits(free, boxes, qty),
       resolved,
       override: await loadOverride(this.prisma, dto, unitsByProduct, actor?.sub, this.entitlements),
@@ -1972,6 +1974,8 @@ export class InvoicesService {
    * runs only for the order's SOLE non-void invoice, so no sibling SALE can be double-counted), the
    * DRAFT update, the price re-sync and unvoidInvoice (SA-839 / B706, `restoresVoid`).
    *
+   * B297 PR4 (SA-819): the settle's INVOICE_BILLED writes ONLY what changed (`syncInvoiceEntries`: an
+   * unchanged, still-same InvoiceItem row writes nothing; a changed line gets a REVERSAL + SALE pair).
    * SA-839 INVOICE_BILLED: it cancels only the sale-record and LEAVES every LIVE return /
    * credit-note reversal standing (a dead one's rows are countered by the settle's sweep first),
    * so a re-reconcile after a received return nets to (delivered − returned), not delivered.
@@ -2124,9 +2128,8 @@ export class InvoicesService {
           "NOT_PAID",
         );
       }
-      await db.invoiceItem.deleteMany({
-        where: { invoiceId: pd.draft.id, id: { notIn: pd.nsf.keepIds } },
-      });
+      // B297 PR4: a line whose rebuilt data equals the stored row is KEPT as the same row (kept-invoice-lines.ts).
+      const createLines = await rebuildKeptItems(db, pd.draft.id, pd.nsf.keepIds, pd.itemsData);
       const inv = await db.invoice.update({
         where: { id: pd.draft.id },
         data: {
@@ -2138,7 +2141,7 @@ export class InvoicesService {
           // Invalidate a cached PDF only when the invoice is (re)opened as a DRAFT; a
           // preserved finalized invoice keeps regenerating on demand anyway.
           pdfUrl: null,
-          items: { create: pd.itemsData },
+          items: { create: createLines },
         },
         include: { items: true },
       });
@@ -3117,6 +3120,14 @@ export class InvoicesService {
       throw new BadRequestException("Only DRAFT invoices can be edited");
     await this.assertOrderInvoiceUnlocked(inv);
     resolveShipmentText(dto, inv); // row 507: a CHANGED formula-led carrier / tracking is a coded 400
+    // B297 PR5 (D4a): a DRAFT can carry regulated SALE rows (split drafts book them at creation): a line,
+    // discount or shipping edit re-syncs them, so it is refused when they sit in a LOCKED filing period.
+    // (SA-819 MUST 4: after resolveShipmentText, whose 400 names a field the caller can fix.)
+    if (dto.items || dto.discount !== undefined || dto.shippingFee !== undefined)
+      await assertSalesNotLockedForEdit(this.prisma.forTenant(), {
+        tenantId: iGate.tenantId(this.prisma),
+        invoiceId: id,
+      });
     // #2197: the same literal calendar-day stamp create() writes.
     const issueDate = dto.issueDate ? issueDateStamp(dto.issueDate) : undefined;
     const due = dueDateStamps(dto); // #2256: and the due dates, before either rewrite path runs
@@ -5520,6 +5531,13 @@ export class InvoicesService {
       onCommitted?: () => void, // bulk: the tx committed (SA-651 MED-1), before the post-commit syncs
     ) => {
       const auditLine = `[${new Date().toLocaleDateString()} — Price adjusted by operator]`;
+      // B297 PR5 (D4a): a price change moves money on every adjusted line, so it is refused (409
+      // FILED_PERIOD_LOCKED) when the invoice's regulated SALE rows sit in a LOCKED filing period.
+      await assertSalesNotLockedForEdit(this.prisma.forTenant(), {
+        tenantId: iGate.tenantId(this.prisma),
+        invoiceId: inv.id,
+        lineIds: { invoiceItemIds: [...localPriceMap.keys()] },
+      });
 
       // B294 (SA-141): a legacy order/estimate-derived invoice (every line taxRate 0, a real
       // regular tax) keeps its tax — the inferred flat rate is stamped onto its lines first, in the
@@ -5621,7 +5639,13 @@ export class InvoicesService {
         this.prisma.forTenant(),
         plans.map((p) => p.inv.orderId),
       ); // SA-814e: the guard's per-order allocation tolerance
-      await preflightBulkPriceAdjustment(plans, isTaxExempt, this.prisma.forTenant(), orderCounts);
+      await preflightBulkPriceAdjustment(
+        plans,
+        isTaxExempt,
+        this.prisma.forTenant(),
+        iGate.tenantId(this.prisma),
+        orderCounts,
+      );
       // SA-651 MED-1: each tx re-judges under its own lock; a race refusal is named, and a partial batch is reported.
       await applyBulkPriceAdjustment(plans, applyToInvoice);
     }

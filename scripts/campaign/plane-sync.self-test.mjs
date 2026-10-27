@@ -109,6 +109,14 @@ function copyScrubHelper(clientDir) {
     join(dest, "scrubbed-git-env.cjs"),
     readFileSync(fileURLToPath(new URL("../lib/scrubbed-git-env.cjs", import.meta.url))),
   );
+  // plane-sync.mjs / plane-triage.mjs resolve the register through the one contract module, which
+  // reads its sibling registry-source.json — a planted copy of either script needs both.
+  for (const name of ["registry-root.mjs", "registry-source.json"]) {
+    writeFileSync(
+      join(dest, name),
+      readFileSync(fileURLToPath(new URL(`../lib/${name}`, import.meta.url))),
+    );
+  }
 }
 
 function makeThrowawayClientRepo() {

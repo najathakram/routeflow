@@ -6,7 +6,7 @@ import {
   defaultLadderOptionValue,
   derivedPiece,
   ladderOptionLineTotal,
-  ladderOptionPriceText,
+  ladderOptionText,
   type LadderOption,
   type LadderProduct,
   type LadderUnit,
@@ -133,10 +133,9 @@ export function defaultUnitValue(
   return defaultLadderOptionValue(product, units.map(toLadderUnit), tier);
 }
 
-/** The dropdown text: "Case · 288 pcs · $480.00"; a derived Piece reads "Piece · ≈$3.33 (1/3 of $10.00)" when not exact. */
+/** The dropdown text: "Case · 288 pcs · $480.00"; a derived Piece reads "Piece · ≈$3.33 (1/3 of $10.00)" when not exact. The text lives in @routeflow/pricing (row 513), shared with mobile. */
 export function unitOptionText(o: UnitOption): string {
-  const pcs = o.factorToBase === 1 ? "" : ` · ${formatQty(o.factorToBase)} pcs`;
-  return `${o.label}${pcs} · ${ladderOptionPriceText(o, formatMoney)}`;
+  return ladderOptionText(o, formatMoney, formatQty);
 }
 
 /** Line total for `count` of a unit — a derived Piece prorates off the pack, the rest bill count x price like the server. */
