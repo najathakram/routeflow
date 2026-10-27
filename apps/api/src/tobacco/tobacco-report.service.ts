@@ -11,6 +11,8 @@ import { roundMoney } from "@routeflow/pricing";
 import { TobaccoReportPdf } from "./tobacco-report-pdf";
 import type { TobaccoReportRow, TobaccoReportTotals } from "./tobacco-report.types";
 import { csvCell } from "../common/csv";
+import { findGeneratedTobaccoReport } from "../regulated/filed-periods";
+import { sellerDisplayName } from "../common/seller-display-name";
 
 const REAL_INVOICE_STATUSES = { notIn: ["DRAFT", "VOID", "WRITTEN_OFF"] as any };
 
@@ -64,7 +66,7 @@ export class TobaccoReportService {
       where: { tenantId },
       select: { businessName: true },
     });
-    const businessName = config?.businessName ?? "RouteFlow tenant";
+    const businessName = sellerDisplayName(config, null, "RouteFlow tenant");
 
     // Deterministic storage keys — regeneration overwrites in place
     const csvKey = `tobacco-reports/${tenantId}/${periodLabel}.csv`;
@@ -343,8 +345,9 @@ export class TobaccoReportService {
       await this.tenantCtx.run(tenant.id, async () => {
         try {
           // Idempotent: skip if this period already generated (deploy restarts)
-          const existing = await this.prisma.forTenant().tobaccoReport.findFirst({
-            where: { periodYear: year, periodMonth: month, status: "GENERATED" },
+          const existing = await findGeneratedTobaccoReport(this.prisma.forTenant(), tenant.id, {
+            year,
+            month,
           });
           if (existing) return;
           await this.generateForPeriod(year, month, { userId: null });

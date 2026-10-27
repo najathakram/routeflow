@@ -52,7 +52,7 @@ export interface Return {
   /** #2406: STANDARD (post-delivery RMA) or INLINE (captured during order edit/create). */
   kind: ReturnKind;
   customerId: string;
-  customer?: { id: string; businessName: string; contactName?: string };
+  customer?: { id: string; businessName: string; contactName?: string; isWalkIn?: boolean | null };
   orderId: string;
   order?: { id: string; orderNumber: string; counterSale?: boolean | null };
   status: ReturnStatus;
