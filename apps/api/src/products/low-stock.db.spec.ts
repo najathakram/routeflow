@@ -122,7 +122,7 @@ describeDb("products Low-stock filter, one rule (W-925) (db)", () => {
     await pool.end().catch(() => undefined);
   });
 
-  const LOW = ["r1-10-8", "r3-null-5", "r5-null-0", "r7-10-10"].map((k) => ids[k]);
+  const lowIds = () => ["r1-10-8", "r3-null-5", "r5-null-0", "r7-10-10"].map((k) => ids[k]);
   const lowKeys = ["r1-10-8", "r3-null-5", "r5-null-0", "r7-10-10"];
   const names = (rows: { name: string }[]) =>
     rows.map((r) => r.name.replace(`w925-`, "").replace(`-${run}`, "")).sort();
@@ -133,7 +133,7 @@ describeDb("products Low-stock filter, one rule (W-925) (db)", () => {
     );
     expect(names(res.data)).toEqual([...lowKeys].sort());
     expect(res.meta.total).toBe(lowKeys.length);
-    expect(LOW.length).toBe(lowKeys.length);
+    expect(lowIds().length).toBe(lowKeys.length);
   });
 
   it("IN_STOCK is the complement on the same rule (active products only)", async () => {
@@ -145,7 +145,7 @@ describeDb("products Low-stock filter, one rule (W-925) (db)", () => {
 
   it("ids: the same rule (row 1 included, row 6 never)", async () => {
     const res: any = await ctx.run(tenantA, () => products.findIds({ stockStatus: "LOW" } as any));
-    expect([...res.ids].sort()).toEqual([...LOW].sort());
+    expect([...res.ids].sort()).toEqual([...lowIds()].sort());
     expect(res.ids).not.toContain(ids["b-10-8"]);
   });
 
@@ -155,7 +155,7 @@ describeDb("products Low-stock filter, one rule (W-925) (db)", () => {
       const where = buildProductListWhere({ stockStatus: "LOW" } as any, { lowStockIds });
       return appPrisma.forTenant().product.findMany({ where, select: { id: true } });
     });
-    expect(rows.map((r: any) => r.id).sort()).toEqual([...LOW].sort());
+    expect(rows.map((r: any) => r.id).sort()).toEqual([...lowIds()].sort());
   });
 
   it("a second tenant's low product never appears in the first tenant's prefetch", async () => {
