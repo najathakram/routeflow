@@ -15,6 +15,7 @@ import { PrismaService } from "../../prisma/prisma.service";
 import { Roles } from "../decorators/roles.decorator";
 import { OperatorPermissionsModule } from "../permissions/operator-permissions.module";
 import { RequirePermission } from "../permissions/permission.decorators";
+import { listenOnLoopback } from "../../common/testing/listen-loopback";
 import { RolesGuard } from "./roles.guard";
 
 /**
@@ -57,7 +58,7 @@ describe("RolesGuard resolves OperatorPermissionsService through the module grap
       providers: [FakeAuth],
     }).compile();
     const app = mod.createNestApplication();
-    await app.init();
+    await listenOnLoopback(app);
     return app;
   };
 
