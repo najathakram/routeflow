@@ -31,6 +31,8 @@ COPY --from=builder /app/apps/control/package.json ./apps/control/
 
 # the write path scans every line against the shared denylist (resolved at ../../../../scripts/...)
 COPY scripts/campaign/plane-denylist.json scripts/campaign/plane-denylist.json
+# the register location contract (repo, branch, prefix), resolved at ../../../../scripts/lib/
+COPY scripts/lib/registry-source.json scripts/lib/registry-source.json
 
 WORKDIR /app/apps/control
 

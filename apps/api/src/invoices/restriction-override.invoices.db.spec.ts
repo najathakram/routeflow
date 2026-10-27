@@ -260,9 +260,7 @@ describeDb(
             {
               lineKey: "n:0",
               productId: w.banned,
-              rules: [
-                expect.objectContaining({ reasonText: "This product is banned in CA by law." }),
-              ],
+              rules: [expect.objectContaining({ reasonText: "Restricted in CA: R510 state ban." })],
             },
           ],
         });
@@ -423,9 +421,7 @@ describeDb(
             ]),
           );
           expect(bodyOf(e).code).toBe("RESTRICTION_WARNING");
-          expect(bodyOf(e).lines[0].rules[0].reasonText).toBe(
-            "This product is banned in CA by law.",
-          );
+          expect(bodyOf(e).lines[0].rules[0].reasonText).toBe("Restricted in CA: R510 state ban.");
           // the same edit on a ROUTE order for the same TX customer is NOT judged at the store
           await raw.order.update({ where: { id: order.id }, data: { fulfillPath: "ROUTE" } });
           let outcome: any = null;

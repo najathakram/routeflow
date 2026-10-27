@@ -17,9 +17,7 @@ const mkWarning = (hash: string, names: string[]): RestrictionWarningError => ({
     productId: `p${i}`,
     displayName: n,
     outcome: "BLOCK" as const,
-    rules: [
-      { id: "r", states: ["CA"], legal: true, reasonText: "This product is banned in CA by law." },
-    ],
+    rules: [{ id: "r", states: ["CA"], legal: true, reasonText: "Restricted in CA: State ban." }],
   })),
 });
 const err409 = (data: unknown) => ({ response: { status: 409, data } });

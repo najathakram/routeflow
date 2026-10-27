@@ -116,7 +116,7 @@ export function buildBulkRequest(args: {
 
 /**
  * A product-page chip: what the rule does. A BUYER_PORTAL rule only hides the product from portal customers
- * ("Not offered in TX"); a legal ban (surface ALL) is a ban by law, so it reads "Banned in TX" / "Banned everywhere".
+ * ("Not offered in TX"); a rule that reaches staff too (surface ALL) reads "Restricted in TX" / "Restricted everywhere".
  * Staff-facing wording is row 510's.
  */
 export function limitChipText(
@@ -125,10 +125,10 @@ export function limitChipText(
   const everywhere = l.jurisdiction === "FEDERAL" || l.states.length === 0;
   const states = l.states.map((c) => c.toUpperCase());
   if (l.surface === "ALL") {
-    if (everywhere) return "Banned everywhere";
+    if (everywhere) return "Restricted everywhere";
     return states.length <= 3
-      ? `Banned in ${states.join(", ")}`
-      : `Banned in ${states.length} states`;
+      ? `Restricted in ${states.join(", ")}`
+      : `Restricted in ${states.length} states`;
   }
   if (everywhere) return "Hidden from all portal customers";
   return states.length <= 3

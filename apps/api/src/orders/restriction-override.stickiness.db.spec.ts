@@ -234,7 +234,9 @@ describeDb("row 510: an override is sticky by (rule id, judged state) — real P
         }),
       ),
     );
-    expect(bodyOf(first).lines[0].rules[0].reasonText).toBe("This product is banned in TX by law.");
+    expect(bodyOf(first).lines[0].rules[0].reasonText).toBe(
+      "Restricted in TX: R510 CA and TX ban.",
+    );
     const order: any = await as(() =>
       svc.create({ customerId: w.caCustomerId, items, ...ackFrom(first) } as never, staff(), {
         fulfillPath: "PICKUP",
@@ -248,7 +250,7 @@ describeDb("row 510: an override is sticky by (rule id, judged state) — real P
     const warned = await errOf(sw());
     expect(bodyOf(warned).code).toBe("RESTRICTION_WARNING");
     expect(bodyOf(warned).lines[0].rules[0].reasonText).toBe(
-      "This product is banned in CA by law.",
+      "Restricted in CA: R510 CA and TX ban.",
     );
     expect((await raw.order.findUniqueOrThrow({ where: { id: order.id } })).fulfillPath).toBe(
       "PICKUP",
