@@ -1,3 +1,4 @@
+import "reflect-metadata";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { plainToInstance } from "class-transformer";
