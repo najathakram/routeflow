@@ -101,7 +101,7 @@ describe("T1.3 operator: account-admin controls are not offered", () => {
     const user = userEvent.setup();
     renderWithProviders(<SettingsPage />);
     expect(await screen.findByText("Business profile")).toBeInTheDocument();
-    for (const label of ["Import data", "Migration", "Email (SMTP)", "Claude AI scanner"]) {
+    for (const label of ["Import data", "Migration", "Email sending (SMTP)", "Claude AI scanner"]) {
       expect(screen.queryByText(label)).not.toBeInTheDocument();
     }
     // SA: GoHighLevel stays for operators (its tab is safe; sync, import, retry and handoffs are open to them)
@@ -112,7 +112,7 @@ describe("T1.3 operator: account-admin controls are not offered", () => {
         .some((a) => a.getAttribute("href") === "/settings?tab=gohighlevel"),
     ).toBe(true);
     await user.type(screen.getByLabelText("Search settings"), "smtp");
-    expect(screen.queryByText("Email (SMTP)")).not.toBeInTheDocument();
+    expect(screen.queryByText("Email sending (SMTP)")).not.toBeInTheDocument();
   });
 
   it("Stripe: status is shown read-only, with no Connect button", async () => {
@@ -223,7 +223,7 @@ describe("T1.4 admin: the same controls are all there", () => {
     for (const label of [
       "Import data",
       "Migration",
-      "Email (SMTP)",
+      "Email sending (SMTP)",
       "Claude AI scanner",
       "GoHighLevel",
     ]) {

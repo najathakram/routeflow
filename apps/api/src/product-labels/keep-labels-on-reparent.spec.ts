@@ -200,7 +200,9 @@ describe("keepLabelsOnReparent", () => {
       entityId: "P2",
       meta: { categoryId: "ca", mode: "INCLUDE" },
     });
-    // …and WA from the OLD family P1 earlier: P1 no longer carries WA, so the child never did.
+    // …and WA from the OLD family P1 earlier: the removal deleted P1's row, so the child never effectively had WA.
+    // (The keep reads rows on the OLD chain, not audits: this half is only meaningful beside the control below, where
+    // P1 still carries WA and the very same move keeps it.)
     db.audits.push({
       tenantId: "t1",
       action: LABEL_REMOVED_ACTION,
@@ -228,6 +230,16 @@ describe("keepLabelsOnReparent", () => {
         .filter((a) => a.action === LABEL_KEPT_ON_REPARENT_ACTION)
         .map((a) => (a.meta as { categoryId: string }).categoryId),
     ).toEqual(["ca", "ny"]);
+  });
+
+  it("(4d-ii) control for (4d): when the OLD parent still carries the label, the same move keeps it", async () => {
+    const db = world();
+    db.addCategory("wa", "WA ban");
+    db.addLabel("P1", "wa", "INCLUDE");
+    db.products.find((p) => p.id === "C")!.parentProductId = "P2";
+    const out = await run(db, { productId: "C", fromParentId: "P1", toParentId: "P2" });
+    expect(out.keptLabels).toEqual(["CA ban", "NY ban", "WA ban"]);
+    expect(db.label("C", "wa")?.mode).toBe("INCLUDE");
   });
 
   it("(4e) an ARCHIVED label still bans, so it is kept too", async () => {
