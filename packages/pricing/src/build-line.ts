@@ -20,12 +20,11 @@
  *     — a plain per-piece line that still snapshots its factor. `count` must be a whole number
  *     (G2) — 1.5 Cases is not a real quantity.
  *
- * NO CALLERS YET (PR-1 of the proposal). The three existing builders
- * (`orders/unit-line-build.ts`, `invoices/invoice-unit-line.ts`, `invoices.service.ts`'s
- * `buildInvoiceItemData`) keep calling `computeLineSubtotal`/`normalizeBoxesPieces` directly and
- * get re-pointed at this one at a time, checked against the copier-contract registry
- * (`apps/api/src/common/testing/copier-contract/`, #1163) per site. Existing ROWS are never
- * rewritten — this only shapes a new write.
+ * CALLERS (SA-982): `orders/unit-line-build.ts` and `invoices/invoice-unit-line.ts` build through this (SA-145(1), #1341).
+ * `buildInvoiceItemData` is deliberately NOT one: it prorates the STORED subtotal and must never recompute from
+ * `unitPrice` (SA-145(1)). The hand-built pack-axis NEW-write builders (`normalizeBoxesPieces` with client `boxes:`, priced by
+ * `computeLineSubtotal`) are a CLASS pinned in `apps/api/src/common/no-bare-line-math.spec.ts`; each converts here, one
+ * domain at a time, behind a warn phase. Existing ROWS are never rewritten: this only shapes a new write.
  */
 import { AmbiguousLineError, computeLineSubtotalStrict, normalizeBoxesPieces } from "./pricing";
 
@@ -71,16 +70,20 @@ export function buildLine(input: BuildLineInput): BuiltLine {
 
   if (axis.kind === "unit") {
     const label = axis.label.trim();
-    if (!label) throw new AmbiguousLineError("buildLine: a unit axis needs a non-blank label");
+    if (!label)
+      throw new AmbiguousLineError("buildLine: a unit axis needs a non-blank label", "BAD_QTY");
     // G2 (R-ui review, 2026-09-21): a unit count is a COUNT of whole units (3 Cases) — Math.trunc
     // alone silently billed 1.5 Cases as 1. Refuse a non-integer instead of rounding it away.
     const rawCount = Number(axis.count);
     if (!Number.isInteger(rawCount)) {
-      throw new AmbiguousLineError(`buildLine: unit count must be an integer, got ${axis.count}`);
+      throw new AmbiguousLineError(
+        `buildLine: unit count must be an integer, got ${axis.count}`,
+        "NON_INTEGER",
+      );
     }
     const count = rawCount;
     if (!(count > 0)) {
-      throw new AmbiguousLineError(`buildLine: unit count must be > 0 (got ${axis.count})`);
+      throw new AmbiguousLineError(`buildLine: unit count must be > 0 (got ${axis.count})`, "ZERO");
     }
     // N2 (R-ui review, optional — factorToBase is integer upstream anyway, but the same guard
     // is one line): a fractional factor has no meaning (pieces per unit is always whole).
@@ -88,6 +91,7 @@ export function buildLine(input: BuildLineInput): BuiltLine {
     if (!Number.isInteger(factor) || !(factor > 0)) {
       throw new AmbiguousLineError(
         `buildLine: "${label}" needs a positive integer factorToBase (got ${axis.factorToBase})`,
+        "BAD_QTY",
       );
     }
     const split =
@@ -131,12 +135,14 @@ export function buildLine(input: BuildLineInput): BuiltLine {
     if (axis.boxes != null || axis.pieces != null) {
       throw new AmbiguousLineError(
         "buildLine: boxes/pieces given but this axis is non-boxed (unitsPerBox <= 1) — they would be silently dropped",
+        "SPLIT_NO_PACK",
       );
     }
     const qty = Number(axis.qty);
     if (!Number.isFinite(qty) || qty <= 0) {
       throw new AmbiguousLineError(
         `buildLine: qty must be a positive, finite number, got ${axis.qty}`,
+        "BAD_QTY",
       );
     }
     const subtotal = computeLineSubtotalStrict({
@@ -164,6 +170,7 @@ export function buildLine(input: BuildLineInput): BuiltLine {
   if (axis.boxes == null && axis.pieces == null) {
     throw new AmbiguousLineError(
       "buildLine: unitsPerBox > 1 with neither boxes nor pieces given — qty alone is ambiguous (per-box vs per-piece); the B644 shape",
+      "BOXED_NO_SPLIT",
     );
   }
   // A real physical box/piece count is never fractional — checked here, on the RAW input, for
@@ -175,7 +182,10 @@ export function buildLine(input: BuildLineInput): BuiltLine {
     ["pieces", axis.pieces],
   ] as const) {
     if (v != null && !Number.isInteger(Number(v))) {
-      throw new AmbiguousLineError(`buildLine: ${name} must be an integer, got ${v}`);
+      throw new AmbiguousLineError(
+        `buildLine: ${name} must be an integer, got ${v}`,
+        "NON_INTEGER",
+      );
     }
   }
   // G3 (R-ui review, 2026-09-21): a split AND a qty that disagrees with it (boxes:1, pieces:0,
@@ -189,6 +199,7 @@ export function buildLine(input: BuildLineInput): BuiltLine {
     if (Number.isFinite(rawQty) && rawQty !== impliedQty) {
       throw new AmbiguousLineError(
         `buildLine: qty (${axis.qty}) disagrees with boxes*unitsPerBox+pieces (${impliedQty}) — the split and the qty must agree`,
+        "QTY_DISAGREES",
       );
     }
   }
@@ -211,6 +222,7 @@ export function buildLine(input: BuildLineInput): BuiltLine {
   if (!(normalized.qty > 0)) {
     throw new AmbiguousLineError(
       `buildLine: qty must be > 0, got boxes:${axis.boxes} pieces:${axis.pieces} (${normalized.qty} total)`,
+      "ZERO",
     );
   }
   const subtotal = computeLineSubtotalStrict({

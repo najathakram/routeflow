@@ -369,6 +369,9 @@ async function revertVerdict(
   const live = await stripe.getSubscription(push.stripeSubId);
   const items: any[] = Array.isArray(live?.items?.data) ? live.items.data : [];
   const base = items.find((i) => i?.id === revert.baseId);
+  // W-810: the product is the shared `rf_plan_<code>`, so it no longer tells this push's price from another
+  // push of the same plan. Plan + amount matching is the state this push left, which is what the revert needs;
+  // a base item moved to a different plan or amount still fails the check below.
   if (
     !base ||
     base.price?.unit_amount !== push.newAmountCents ||

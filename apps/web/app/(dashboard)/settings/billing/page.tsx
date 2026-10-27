@@ -13,6 +13,7 @@ import { DIALOG_FIT, DIALOG_FOOTER_BUTTON } from "@/components/dialog-mobile-fit
 import { isAccountAdmin } from "@/lib/auth";
 import { useAuth } from "@/lib/auth-context";
 import { formatMoney } from "@/lib/format";
+import { fmtDate } from "@/lib/formatting";
 import { BillingExportButton } from "./BillingExportButton";
 import { BillingStatusCard } from "./BillingStatusCard";
 import { PaidReturnNotice } from "./PaidReturnNotice";
@@ -37,6 +38,15 @@ import {
 // The one price format the hub's Business card also uses (lib/plan-money).
 const money = planMoney;
 
+// Tenant status display words (the Badge upper-cases, but READ_ONLY would show its underscore).
+const TENANT_STATUS_LABEL: Record<string, string> = {
+  TRIAL: "Trial",
+  ACTIVE: "Active",
+  READ_ONLY: "Read-only",
+  SUSPENDED: "Suspended",
+  CANCELLED: "Cancelled",
+};
+
 function MeterBar({ m }: { m: MeterReading }) {
   const unlimited = m.included == null;
   const pct = unlimited
@@ -60,9 +70,7 @@ function MeterBar({ m }: { m: MeterReading }) {
           />
         </div>
       )}
-      {m.resetsAt && (
-        <p className="text-xs text-slate-400">Resets {new Date(m.resetsAt).toLocaleDateString()}</p>
-      )}
+      {m.resetsAt && <p className="text-xs text-slate-400">Resets {fmtDate(m.resetsAt)}</p>}
     </div>
   );
 }
@@ -543,7 +551,7 @@ export default function BillingSettingsPage() {
     <div className="mx-auto max-w-4xl space-y-6 p-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Plan &amp; Billing</h1>
+          <h1 className="text-2xl font-bold text-slate-900">Plan &amp; billing</h1>
           <p className="mt-1 text-sm text-slate-500">
             Manage your subscription, add-ons and usage.
           </p>
@@ -577,7 +585,7 @@ export default function BillingSettingsPage() {
         <div className="flex items-center justify-between gap-2 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-red-200">
           <span className="flex items-center gap-2">
             <AlertTriangle className="h-4 w-4" /> Cancellation scheduled for{" "}
-            {s.renewalAt ? new Date(s.renewalAt).toLocaleDateString() : "period end"}.
+            {s.renewalAt ? fmtDate(s.renewalAt) : "period end"}.
           </span>
           <Button
             size="sm"
@@ -585,7 +593,7 @@ export default function BillingSettingsPage() {
             onClick={() => resume.mutate()}
             disabled={resume.isPending}
           >
-            Keep my plan
+            Keep current plan
           </Button>
         </div>
       )}
@@ -593,11 +601,13 @@ export default function BillingSettingsPage() {
       {s.downgradeToPlanKey && (
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-800 ring-1 ring-amber-200">
           <span>
-            Scheduled to change to <strong>{s.downgradeToPlanKey}</strong> on{" "}
-            {s.downgradeEffectiveAt
-              ? new Date(s.downgradeEffectiveAt).toLocaleDateString()
-              : "period end"}
-            . Nothing is deleted — over-cap data becomes read-only.
+            Scheduled to change to{" "}
+            <strong>
+              {plans.data?.plans?.find((p) => p.planKey === s.downgradeToPlanKey)?.name ??
+                s.downgradeToPlanKey}
+            </strong>{" "}
+            on {s.downgradeEffectiveAt ? fmtDate(s.downgradeEffectiveAt) : "period end"}. Nothing is
+            deleted — over-cap data becomes read-only.
           </span>
           {/* The only self-service undo: resume() clears downgradeToPlanKey without touching
               the plan or the period (re-subscribing would reset periodStart/periodEnd). */}
@@ -622,14 +632,14 @@ export default function BillingSettingsPage() {
             <div>
               <div className="flex items-center gap-2">
                 <span className="text-lg font-semibold text-slate-900">{s.planName}</span>
-                <Badge label={s.status} />
+                <Badge label={TENANT_STATUS_LABEL[s.status] ?? s.status} />
                 <Badge variant="neutral" label={s.cycle === "ANNUAL" ? "Annual" : "Monthly"} />
               </div>
               <p className="mt-0.5 text-sm text-slate-500">
                 {s.isCustom
                   ? "Custom pricing"
                   : `${money(priceForCycle)}/${s.cycle === "ANNUAL" ? "yr" : "mo"}`}
-                {s.renewalAt && ` · renews ${new Date(s.renewalAt).toLocaleDateString()}`}
+                {s.renewalAt && ` · renews ${fmtDate(s.renewalAt)}`}
               </p>
             </div>
           </div>
@@ -671,7 +681,7 @@ export default function BillingSettingsPage() {
                   onClick={() => setCancelOpen(true)}
                   disabled={cancel.isPending}
                 >
-                  Cancel
+                  Cancel subscription
                 </Button>
               ) : (
                 <span className="text-xs text-slate-500">

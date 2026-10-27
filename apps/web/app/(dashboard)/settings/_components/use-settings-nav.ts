@@ -49,10 +49,12 @@ export function useSettingsNav({ isAdmin }: { isAdmin: boolean }) {
 
   const counter = gate.showButton;
   const unitsSettings = useUnitsSettingsEnabled();
-  const canActAsDriver = !!(useAuth().user as { canActAsDriver?: boolean } | null)?.canActAsDriver;
+  const viewer = useAuth().user as { canActAsDriver?: boolean; role?: string } | null;
+  const canActAsDriver = !!viewer?.canActAsDriver;
+  const role = viewer?.role ?? null;
   const entries = React.useMemo(
-    () => buildIndex({ isAdmin, fleet, selfServe, counter, unitsSettings, canActAsDriver }),
-    [isAdmin, fleet, selfServe, counter, unitsSettings, canActAsDriver],
+    () => buildIndex({ isAdmin, fleet, selfServe, counter, unitsSettings, canActAsDriver, role }),
+    [isAdmin, fleet, selfServe, counter, unitsSettings, canActAsDriver, role],
   );
   const trailing: Record<string, string | undefined> = {
     "business-profile": timeZoneValue(settings.data),

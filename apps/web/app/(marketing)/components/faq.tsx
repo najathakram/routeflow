@@ -65,7 +65,7 @@ export function FAQ({ retail = false }: { retail?: boolean } = {}) {
     <section className="section faq-section wrap">
       <div>
         <p className="eyebrow">
-          <span />A FEW USEFUL ANSWERS
+          <span />A few useful answers
         </p>
         <h2>
           Before you <br />

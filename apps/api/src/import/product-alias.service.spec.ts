@@ -49,7 +49,8 @@ describe("ProductAliasService", () => {
 
   describe("learn", () => {
     it("rejects a reference from another business (no alias written)", async () => {
-      prisma.product.findMany.mockResolvedValue([]); // the product is not in this tenant
+      // 681: Once, so the shared mock's id-only echo (prisma-mock idEcho) cannot answer the proof.
+      prisma.product.findMany.mockResolvedValueOnce([]); // the product is not in this tenant
       await expect(
         service.learn(null, "cloud chips", { productId: "other-biz-product" }),
       ).rejects.toThrow(/not found/i);

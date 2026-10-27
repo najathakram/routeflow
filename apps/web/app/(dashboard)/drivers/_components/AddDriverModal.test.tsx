@@ -24,7 +24,7 @@ describe("AddDriverModal", () => {
       <AddDriverModal isOpen onClose={jest.fn()} onCreateDriver={onCreateDriver} />,
     );
 
-    await user.type(screen.getByLabelText("Full Name"), "Jane Smith");
+    await user.type(screen.getByLabelText("Full name"), "Jane Smith");
     await user.type(screen.getByLabelText("Email"), "jane.smith@example.com");
     // Username is auto-suggested from the name ("jsmith") once the operator
     // hasn't touched it — clear + retype to exercise the field directly too.

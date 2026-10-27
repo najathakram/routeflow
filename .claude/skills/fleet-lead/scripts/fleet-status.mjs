@@ -17,6 +17,20 @@ import { readFileSync, writeFileSync, readdirSync, statSync, existsSync } from "
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { makeProc } from "../../../../scripts/lib/proc.mjs";
+import { registryRoot } from "../../../../scripts/lib/registry-root.mjs";
+
+// Resolved first, before any git/gh work, so a missing register fails fast. A stop, never "registry file absent" in a healthy report.
+let registryPath;
+try {
+  registryPath = join(registryRoot(), "bugs.jsonl");
+  if (!existsSync(registryPath))
+    throw new Error(
+      `bug register file not found at ${registryPath} — run \`npm run registry:clone\``,
+    );
+} catch (err) {
+  process.stderr.write(`fleet-status: ${err.message}\n`);
+  process.exit(2);
+}
 
 const args = process.argv.slice(2);
 const wantJson = args.includes("--json");
@@ -295,10 +309,7 @@ h(``);
 // ---------------------------------------------------------------------------
 h(`## Bug registry counts`);
 {
-  const registryPath = join(REPO_ROOT, ".claude", "campaign", "bugs.jsonl");
-  if (!existsSync(registryPath)) {
-    h(`- registry file absent`);
-  } else {
+  {
     try {
       const raw = readFileSync(registryPath, "utf8");
       const recs = raw

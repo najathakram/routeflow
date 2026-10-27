@@ -25,6 +25,7 @@ import { Trim } from "../../common/transforms/trim.transform";
 import { SafeTextCell } from "../../common/transforms/safe-text-cell.transform";
 import { MAX_SHIPPING_CARRIER, MAX_SHIPPING_TRACKING } from "../../orders/shipment-text";
 import { IsOptionalNotNull } from "../../common/validators/optional-not-null";
+import { IsTaxRateFraction } from "../../common/is-tax-rate-fraction.validator";
 
 export class CreateInvoiceItemDto {
   @IsString() description: string;
@@ -36,7 +37,7 @@ export class CreateInvoiceItemDto {
   @IsNumber() @Min(0) unitPrice: number;
   @IsOptionalNotNull() @IsNumber() @Min(0) discount?: number;
   /** A FRACTION (0.08875 = 8.875%). @Max(1): a percent sent by mistake is a 400, never 887.5% (R5-1, B296). */
-  @IsOptionalNotNull() @IsNumber() @Min(0) @Max(1) taxRate?: number;
+  @IsOptionalNotNull() @IsNumber() @Min(0) @Max(1) @IsTaxRateFraction() taxRate?: number;
   /**
    * units_v1: sell this line by a unit of the product's ladder (Case, Pallet, Piece …); `qty` then
    * counts the unit (a whole number) and boxes/pieces/promoFreeUnits must be omitted. Behind
@@ -135,6 +136,8 @@ export interface StandalonePaymentOpts extends KeyedWriterOpts<StandalonePayment
   assertAllocationsWithinBalance?: boolean;
   /** The operator's user id, for the deliberate-overpayment audit row. */
   actor?: string | null;
+  /** W-769: told, inside the tx, of the unconfirmed rows a PAID allocation displaced (the captured settle alerts after commit). */
+  onDisplaced?: (invoiceId: string, displaced: string[]) => void;
   /**
    * SA-818 (row 615): runs INSIDE this payment transaction, after the payment rows (and any
    * excess AdvancePayment) are written and before commit. A caller that must decide something

@@ -44,6 +44,7 @@ import { SubscriptionMutationService } from "./subscription-mutation.service";
 import { AdminAuditAction } from "../platform-admin/audit-actions.constant";
 import { dropPublishedCatalog, ensurePublishedCatalog } from "../testing/ensure-published-catalog";
 import { buildCheckoutHarness } from "../testing/checkout-completed-harness";
+import { fakeStripeProducts } from "../testing/fake-stripe-products";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -79,7 +80,7 @@ describeDb("SA-815e: an add-on is priced at the tenant's PINNED version (real Po
     const items: any[] = [];
     let n = 0;
     const client = {
-      products: { create: jest.fn().mockResolvedValue({ id: "prod_new" }) },
+      products: fakeStripeProducts().products, // W-810: the owned-product path retrieves first
       subscriptionItems: {
         list: jest.fn(async () => ({ data: items.map((i) => ({ ...i })) })),
         create: jest.fn(async (args: any) => {

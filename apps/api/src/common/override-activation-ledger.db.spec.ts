@@ -160,7 +160,9 @@ describeDb(
       // BillingService and PlatformPricingService run here; only Stripe is a stand-in (these tenants have no
       // stripeSubId, so nothing is pushed).
       makeAdmin = (catalogReader: any) => {
-        const pricing = new PlatformPricingService(prisma as any, catalogReader);
+        const pricing = new PlatformPricingService(prisma as any, catalogReader, {
+          isConfigured: false,
+        } as any);
         const billing = new BillingService(
           prisma as any,
           { isConfigured: false } as any, // stripe

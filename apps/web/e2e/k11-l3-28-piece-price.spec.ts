@@ -38,7 +38,7 @@ for (const vp of VIEWPORTS) {
       let productId = "";
       try {
         await page.goto("/products");
-        await page.getByRole("button", { name: "New Product", exact: true }).click(); // 1
+        await page.getByRole("button", { name: "New product", exact: true }).click(); // 1
         const dialog = page.getByRole("dialog", { name: "New product" });
         await dialog.getByLabel("Name *", { exact: true }).fill(name); // 2
         await dialog.getByLabel(/^Unit \*/).fill("case"); // 3

@@ -89,7 +89,7 @@ describe("recurring template line: a decimal-string catalog price never crashes 
         submitLabel="Save"
       />,
     );
-    fireEvent.click(screen.getByRole("button", { name: /Add Line Item/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Add line item/ }));
     await pickTea();
     expect(await screen.findByDisplayValue("4.50")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
