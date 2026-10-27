@@ -203,6 +203,13 @@ export function useCounterSaleScan(deps: Deps) {
     shift();
     resume();
   };
+  /** W-852: a click on a live search match adds it like a scan: a whole selling unit times the typed quantity. */
+  const pick = (product: any) => {
+    depsRef.current.add(product, "BOX", carryRef.current);
+    confirmAdded(product);
+    setCarry(1);
+    setMessage("");
+  };
   const [moreBusy, setMoreBusy] = React.useState(false);
   const moreRef = React.useRef(false); // a ref: a double click must not send two requests
   /** CQ-10: the next page of the open category list, appended (a product never appears twice). */
@@ -274,6 +281,7 @@ export function useCounterSaleScan(deps: Deps) {
     waiting,
     submit,
     choose,
+    pick,
     loadMore,
     moreBusy,
     cancelPicker,

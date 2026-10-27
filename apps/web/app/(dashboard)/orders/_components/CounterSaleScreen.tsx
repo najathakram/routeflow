@@ -79,7 +79,11 @@ import {
   COUNTER_CHECK_ZONE_LOADING_COPY,
   isPostdatedCheck,
   isCounterSaleHandledError,
+  parseScanField,
 } from "@/lib/counter-sale";
+import { useProducts } from "@/lib/api/products";
+import { useDebounce } from "@/lib/hooks/useDebounce";
+import { sellableFlat } from "@/lib/product-search-groups";
 import { calendarDayInZone } from "@/lib/calendar-date";
 import { useTenantTimeZoneQuery } from "@/lib/tenant-timezone";
 import { keptSaleHref } from "@/lib/kept-draft-invoice";
@@ -547,6 +551,28 @@ export function CounterSaleScreen() {
       );
     },
   });
+
+  // W-852: live matches while typing, the same debounced search Create Order uses (a bare quantity never searches).
+  const liveTerm = useDebounce(scanText.trim(), 300);
+  const liveIsCode = /^\d{8,14}$/.test(liveTerm);
+  const liveOn =
+    !!liveTerm &&
+    parseScanField(liveTerm).kind === "code" &&
+    !lineLocked &&
+    !scan.picker &&
+    !scan.failed &&
+    !receipt;
+  const { data: liveData } = useProducts(
+    {
+      search: liveIsCode ? undefined : liveTerm || undefined,
+      scanCode: liveIsCode ? liveTerm : undefined,
+      isActive: true,
+      includeVariants: true,
+    },
+    { enabled: liveOn },
+  );
+  const liveMatches: any[] =
+    liveOn && scanText.trim() ? sellableFlat<any>(liveData?.data ?? []).slice(0, 10) : [];
 
   // A scan that lands on a line already in the cart says so (a new line is its own signal): "Cola · now 2".
   const [scanCue, setScanCue] = React.useState<string | null>(null);
@@ -1378,6 +1404,32 @@ export function CounterSaleScreen() {
               </span>
             ) : null}
           </form>
+          {liveMatches.length > 0 ? (
+            <ul
+              role="listbox"
+              aria-label="Matching items"
+              className="-mt-1 rounded border bg-white"
+              data-testid="counter-live-matches"
+            >
+              {liveMatches.map((p) => (
+                <li
+                  key={p.id}
+                  role="option"
+                  aria-selected={false}
+                  className="flex min-h-[44px] cursor-pointer items-center px-3 hover:bg-gray-50"
+                  onMouseDown={(e) => e.preventDefault()} // keep focus in the scan field
+                  onClick={() => {
+                    if (lineLocked || saleInFlight() || receipt) return;
+                    scan.pick(p);
+                    setScanText("");
+                    refocus();
+                  }}
+                >
+                  {displayProductName(p)}
+                </li>
+              ))}
+            </ul>
+          ) : null}
           {/* The multiply tip lives under the field: in the placeholder it was cut off at 390px. */}
           <p id="counter-scan-hint" className="-mt-1 text-xs text-navy/70" data-testid="scan-hint">
             Type a quantity first to multiply.
