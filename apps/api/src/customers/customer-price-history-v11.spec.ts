@@ -165,15 +165,50 @@ describe("CustomerPriceHistoryService v1.1", () => {
     });
   });
 
+  describe("SA-1004 (S1): the row carries salePackOf's answer, not only its > 1 projection", () => {
+    it("a factor-1 Case line is salePack 1 and a split line with no snapshot is salePack null; unitsPerBox is null for BOTH", async () => {
+      prisma.invoice.findMany.mockResolvedValue([
+        inv("a", "2026-06-10T00:00:00Z", 1, {
+          items: [line({ unitPrice: 1, unitLabel: "Case", unitsPerBox: 1 })],
+        }),
+        inv("b", "2026-05-10T00:00:00Z", 9.99, {
+          items: [line({ unitPrice: 9.99, unitLabel: "Box", boxes: 1, pieces: 0, qty: 1 })],
+        }),
+        inv("c", "2026-04-10T00:00:00Z", 100, {
+          items: [
+            line({
+              unitPrice: 100,
+              unitLabel: "Case",
+              unitsPerBox: 12,
+              boxes: 1,
+              pieces: 0,
+              qty: 12,
+            }),
+          ],
+        }),
+      ]);
+      const rows = (await run()).rows as Array<{
+        unitLabel: string;
+        salePack: unknown;
+        unitsPerBox: unknown;
+      }>;
+      const byLabel = (l: string, i = 0) => rows.filter((r) => r.unitLabel === l)[i]!;
+      expect(byLabel("Case", 0)).toMatchObject({ salePack: 1, unitsPerBox: null }); // factor 1: a known pack of 1
+      expect(byLabel("Box")).toMatchObject({ salePack: null, unitsPerBox: null }); // pre-snapshot: unknown
+      expect(byLabel("Case", 1)).toMatchObject({ salePack: 12, unitsPerBox: 12 }); // a real pack, both agree
+    });
+  });
+
   describe("?compare=all aggregate", () => {
+    // SA-954 D7: the compare read is ONE read of every customer (this one included); the "other customers" split is in memory.
     const withOthers = (rows: unknown[]) =>
       prisma.invoice.findMany.mockImplementation(async (args: any) =>
-        args.where.customerId?.not ? rows : [inv("a", "2026-06-10T00:00:00Z", 10)],
+        args.where.issueDate ? rows : [inv("a", "2026-06-10T00:00:00Z", 10)],
       );
     const othersCall = () =>
       prisma.invoice.findMany.mock.calls
         .map((c: any[]) => c[0])
-        .find((a: any) => a.where.customerId?.not);
+        .find((a: any) => a.where.issueDate);
 
     it("is absent without ?compare and issues no extra invoice query", async () => {
       const r = await run();
@@ -184,7 +219,7 @@ describe("CustomerPriceHistoryService v1.1", () => {
     it("low/median/high over OTHER customers, excluding this one, tenant-scoped, 180 days", async () => {
       withOthers([other("c2", 8), other("c3", 12), other("c4", 10), other("c5", 14)]);
       const r = await run({ compare: "all" });
-      expect(r.aggregate).toEqual({
+      expect(r.aggregate).toMatchObject({
         low: 8,
         median: 11,
         high: 14,
@@ -192,7 +227,7 @@ describe("CustomerPriceHistoryService v1.1", () => {
         unitLabel: "pc",
       });
       const call = othersCall();
-      expect(call.where.customerId).toEqual({ not: "c1" });
+      expect(call.where.customerId).toBeUndefined();
       expect(call.where.tenantId).toBe("test-tenant");
       expect(call.where.status).toBeDefined();
       const days = (Date.now() - call.where.issueDate.gte.getTime()) / 86_400_000;
@@ -233,6 +268,12 @@ describe("CustomerPriceHistoryService v1.1", () => {
 
     it("ignores any value other than 'all'", async () => {
       expect("aggregate" in (await run({ compare: "yes" }))).toBe(false);
+    });
+
+    it("reads only this tenant's invoices (tenant isolation) and never the customer's id or name into the aggregate", async () => {
+      withOthers([]);
+      await run({ compare: "all" });
+      expect(othersCall().where.tenantId).toBe("test-tenant");
     });
   });
 

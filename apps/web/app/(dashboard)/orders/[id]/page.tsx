@@ -1647,6 +1647,7 @@ export default function OrderDetailPage() {
                     <>
                       <WriteButton
                         size="sm"
+                        className="min-h-11 sm:min-h-0"
                         onClick={handleSaveItems}
                         aria-keyshortcuts={SAVE_CHORD_KEYS}
                         disabled={layerBlocked}

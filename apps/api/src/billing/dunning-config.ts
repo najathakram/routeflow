@@ -47,6 +47,13 @@ export const SUBSCRIPTION_CANCELLED_REASON = "subscription_cancelled";
  * legacy CANCELLED row carries NONE and stays refused (safe) until a backfill classifies it.
  */
 export const STRIPE_CANCELLED_REASON = "stripe_cancelled";
+/**
+ * W-664 (SA-846): the `readOnlyReason` the overdue cron stamps on the SUSPENDED it writes (a Stripe-cancelled
+ * subscription). It is a billing lock, so {@link paymentReinstatable} lifts it. Rows suspended before this stamp carry
+ * NO reason and are still lifted (dual-read) until the SA-846 prod census reads 0 NULL SUSPENDED rows; only then may the
+ * NULL acceptance be dropped, in its own diff.
+ */
+export const OVERDUE_SUSPENDED_REASON = "overdue_suspended";
 /** A lapsed / cancelled trial's READ_ONLY reasons all start with this (`trial_expired`, `trial_cancelled`). */
 export const TRIAL_REASON_PREFIX = "trial_";
 const TRIAL_STATUS = "TRIAL" as const;
@@ -62,7 +69,7 @@ const TRIAL_STATUS = "TRIAL" as const;
  *
  * Lifts: ACTIVE (nothing to lift: an ordinary renewal), TRIAL, READ_ONLY with a `trial_*`, `payment_overdue` or
  * `subscription_cancelled` reason, SUSPENDED unless an admin stamped it {@link ADMIN_SET_REASON} (the billing
- * suspensions - Stripe cancelled / overdue - carry no reason), and CANCELLED by a Stripe churn
+ * suspensions carry {@link OVERDUE_SUSPENDED_REASON}; rows from before W-664 carry none), and CANCELLED by a Stripe churn
  * ({@link STRIPE_CANCELLED_REASON}, SA-832b).
  * Never lifts: READ_ONLY(admin_set), READ_ONLY with no / an unknown reason (a legacy admin write), SUSPENDED(admin_set),
  * any other CANCELLED (an admin's, or a legacy row with no reason), and any unknown or missing status.

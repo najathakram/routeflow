@@ -36,7 +36,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { Prisma, UserRole } from "@prisma/client";
-import { roundMoney } from "@routeflow/pricing";
+import { roundMoney, scaleFrozenSplit } from "@routeflow/pricing";
 import { PrismaService } from "../prisma/prisma.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
@@ -1096,6 +1096,8 @@ export class InlineReturnsService {
       creditNoteNumber?: string;
       /** In-order path (#2094): cap the system-owned intent at the order's remaining balance. */
       capIntentToOrderBalance?: boolean;
+      /** SA-980: a REDUCED hold approval re-freezes the Return's split pro rata, in the same guarded write. */
+      refrozenSplit?: { creditSubtotal: number; creditTax: number; creditCategoryTax: number };
     },
   ): Promise<any> {
     if (!(amount > 0.001)) return null;
@@ -1141,6 +1143,7 @@ export class InlineReturnsService {
         refundedAt: new Date(),
         holdReason: null,
         heldAmount: null,
+        ...(extra?.refrozenSplit ?? {}),
         ...(extra?.approvedById
           ? { approvedById: extra.approvedById, approvedAt: new Date() }
           : {}),
@@ -1325,7 +1328,28 @@ export class InlineReturnsService {
       await restockReturnItems(tx, fresh, user.sub);
       await this.reverseLedgerForReturn(tx, fresh);
 
-      minted = await this.issueCreditInTx(tx, fresh, amount, tenantId, { approvedById: user.sub });
+      // SA-980: a reduced approval re-freezes the split pro rata (only when a split was frozen and the amount differs).
+      let refrozenSplit:
+        { creditSubtotal: number; creditTax: number; creditCategoryTax: number } | undefined;
+      if (fresh.creditSubtotal != null) {
+        const frozen = {
+          net: Number(fresh.creditSubtotal),
+          tax: Number(fresh.creditTax ?? 0),
+          categoryTax: Number(fresh.creditCategoryTax ?? 0),
+        };
+        if (Math.abs(amount - roundMoney(frozen.net + frozen.tax + frozen.categoryTax)) > 0.001) {
+          const s = scaleFrozenSplit(frozen, amount);
+          refrozenSplit = {
+            creditSubtotal: s.net,
+            creditTax: s.tax,
+            creditCategoryTax: s.categoryTax,
+          };
+        }
+      }
+      minted = await this.issueCreditInTx(tx, fresh, amount, tenantId, {
+        approvedById: user.sub,
+        refrozenSplit,
+      });
       if (fresh.holdReason === ALREADY_RETURNED_HOLD_REASON) {
         await tx.auditLog.create({
           data: {

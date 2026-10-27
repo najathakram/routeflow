@@ -53,7 +53,7 @@ describe("RestrictionRulesPage", () => {
     expect(within(card).getByText("Hemp")).toBeInTheDocument();
     expect(within(card).getByText("Category")).toBeInTheDocument();
     expect(within(card).getByText("Active")).toBeInTheDocument();
-    const chips = within(card).getByRole("list", { name: "Banned states" });
+    const chips = within(card).getByRole("list", { name: "Restricted states" });
     expect(
       within(chips)
         .getAllByRole("listitem")
@@ -86,8 +86,8 @@ describe("RestrictionRulesPage", () => {
     ok([rule({ jurisdiction: "FEDERAL", states: [], surface: "BUYER_PORTAL" })]);
     renderWithProviders(<RestrictionRulesPage />);
     const card = await screen.findByTestId("rule-card");
-    expect(within(card).getByText("Banned everywhere (federal)")).toBeInTheDocument();
-    expect(within(card).queryByRole("list", { name: "Banned states" })).toBeNull();
+    expect(within(card).getByText("Restricted everywhere (federal)")).toBeInTheDocument();
+    expect(within(card).queryByRole("list", { name: "Restricted states" })).toBeNull();
     expect(within(card).getByText(/Buyer portal only/)).toBeInTheDocument();
   });
 

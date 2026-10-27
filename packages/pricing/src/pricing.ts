@@ -205,11 +205,32 @@ export function computeLineSubtotal(input: LineSubtotalInput): number {
 export class AmbiguousLineError extends Error {
   readonly code = "AMBIGUOUS_LINE" as const;
 
-  constructor(message: string) {
+  /** SA-982: WHY the line was refused: the one predicate the warn-phase census and the later flip share. */
+  readonly reason: AmbiguousLineReason;
+
+  constructor(message: string, reason: AmbiguousLineReason) {
     super(message);
     this.name = "AmbiguousLineError";
+    this.reason = reason;
   }
 }
+
+/**
+ * SA-982 PR-2: the reason codes of {@link AmbiguousLineError}. Set at each throw in `buildLine` and in
+ * {@link computeLineSubtotalStrict}; the warn phase logs them, so the census counts exactly what the flip will refuse.
+ * BOXED_NO_SPLIT (the B644 shape), NON_INTEGER (a fractional box/piece/unit count), QTY_DISAGREES (qty contradicts its
+ * split, or a stale unrolled split on a direct strict call), ZERO (a zero split or count), SPLIT_NO_PACK (a split with no
+ * pack to divide by), BAD_QTY (a qty or factor that is not a positive finite number, a blank unit label).
+ */
+export const AMBIGUOUS_LINE_REASONS = [
+  "BOXED_NO_SPLIT",
+  "NON_INTEGER",
+  "QTY_DISAGREES",
+  "ZERO",
+  "SPLIT_NO_PACK",
+  "BAD_QTY",
+] as const;
+export type AmbiguousLineReason = (typeof AMBIGUOUS_LINE_REASONS)[number];
 
 /**
  * Pure ambiguity check for a line shape — no throw, no side effect. Returns the reason a shape is
@@ -256,12 +277,13 @@ export function splitWithoutPack(input: {
   );
 }
 
-export function lineAmbiguity(input: {
+/** {@link lineAmbiguity} with the reason code (SA-982): the message is the same string. */
+export function lineAmbiguityDetail(input: {
   qty: number;
   boxes?: number | null;
   pieces?: number | null;
   unitsPerBox?: number | null;
-}): string | null {
+}): { reason: AmbiguousLineReason; message: string } | null {
   const { qty, boxes, pieces, unitsPerBox } = input;
   // FIRST (SA-077e). Be precise about what that ordering does and does not buy, because a future
   // reader reordering these checks needs to know whether it is load-bearing for CORRECTNESS.
@@ -280,7 +302,7 @@ export function lineAmbiguity(input: {
   // The hole this closes is separate from the ordering: before it, a split with no pack passed
   // every check below, all of which are pack-gated, and was reported as unambiguous.
   const noPack = splitWithoutPack({ boxes, pieces, unitsPerBox });
-  if (noPack != null) return noPack;
+  if (noPack != null) return { reason: "SPLIT_NO_PACK", message: noPack };
   const upb = Number(unitsPerBox ?? 0);
   const hasBoxPackaging = upb > 1;
   const boxesGiven = boxes != null;
@@ -290,32 +312,55 @@ export function lineAmbiguity(input: {
     ["boxes", boxes],
     ["pieces", pieces],
   ] as const) {
-    if (v != null && !Number.isInteger(Number(v))) return `${name} must be an integer, got ${v}`;
+    if (v != null && !Number.isInteger(Number(v)))
+      return { reason: "NON_INTEGER", message: `${name} must be an integer, got ${v}` };
   }
   if (hasBoxPackaging && qty != null && !Number.isInteger(Number(qty))) {
-    return `qty must be an integer, got ${qty}`;
+    return { reason: "NON_INTEGER", message: `qty must be an integer, got ${qty}` };
   }
 
   if (hasBoxPackaging && !boxesGiven && !piecesGiven) {
-    return "unitsPerBox > 1 with neither boxes nor pieces given — qty alone is ambiguous (per-box vs per-piece); the B644 shape";
+    return {
+      reason: "BOXED_NO_SPLIT",
+      message:
+        "unitsPerBox > 1 with neither boxes nor pieces given — qty alone is ambiguous (per-box vs per-piece); the B644 shape",
+    };
   }
   if (hasBoxPackaging && piecesGiven && Number(pieces) >= upb) {
-    return `pieces (${pieces}) >= unitsPerBox (${upb}) — roll over via normalizeBoxesPieces first`;
+    return {
+      reason: "QTY_DISAGREES", // an unrolled split disagrees with its own rolled-over form (buildLine rolls it over and never reaches here)
+      message: `pieces (${pieces}) >= unitsPerBox (${upb}) — roll over via normalizeBoxesPieces first`,
+    };
   }
   if (hasBoxPackaging && (boxesGiven || piecesGiven)) {
     const implied = Number(boxes ?? 0) * upb + Number(pieces ?? 0);
     if (Number(qty) !== implied) {
-      return `qty (${qty}) disagrees with boxes*unitsPerBox+pieces (${implied})`;
+      return {
+        reason: "QTY_DISAGREES",
+        message: `qty (${qty}) disagrees with boxes*unitsPerBox+pieces (${implied})`,
+      };
     }
     // R-ui PC-probe follow-up, 2026-09-21: boxes:0, pieces:0 passed every check above (both
     // given, so "neither given" doesn't fire; disagreement agrees with itself at 0) and minted
     // a $0 line — buildLine's N1 already refuses this at the choke point, but a direct caller of
     // computeLineSubtotalStrict (skipping buildLine) got no such refusal. Now they agree.
     if (!(implied > 0)) {
-      return `qty must be > 0, got boxes:${boxes} pieces:${pieces} (${implied} total)`;
+      return {
+        reason: "ZERO",
+        message: `qty must be > 0, got boxes:${boxes} pieces:${pieces} (${implied} total)`,
+      };
     }
   }
   return null;
+}
+
+export function lineAmbiguity(input: {
+  qty: number;
+  boxes?: number | null;
+  pieces?: number | null;
+  unitsPerBox?: number | null;
+}): string | null {
+  return lineAmbiguityDetail(input)?.message ?? null;
 }
 
 /**
@@ -338,8 +383,10 @@ export function lineAmbiguity(input: {
  */
 export function computeLineSubtotalStrict(input: LineSubtotalInput): number {
   const { unitPrice, qty, boxes, pieces, unitsPerBox, freeUnits = 0 } = input;
-  const reason = lineAmbiguity({ qty, boxes, pieces, unitsPerBox });
-  if (reason != null) throw new AmbiguousLineError(`computeLineSubtotalStrict: ${reason}`);
+  const found = lineAmbiguityDetail({ qty, boxes, pieces, unitsPerBox });
+  if (found != null) {
+    throw new AmbiguousLineError(`computeLineSubtotalStrict: ${found.message}`, found.reason);
+  }
   return computeLineSubtotal({ unitPrice, qty, boxes, pieces, unitsPerBox, freeUnits });
 }
 

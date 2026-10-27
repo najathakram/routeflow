@@ -238,7 +238,7 @@ function Sidebar() {
 export default function PlatformAdminLayout({ children }: { children: React.ReactNode }) {
   return (
     <SuperAdminGuard>
-      <div className="surface-admin flex h-screen flex-col overflow-hidden bg-slate-950 lg:flex-row">
+      <div className="surface-admin flex h-screen supports-[height:100dvh]:h-dvh flex-col overflow-hidden bg-slate-950 lg:flex-row">
         <Sidebar />
         {/* BO-01: `relative` makes main the containing block of its sr-only (absolute) spans, so they
             no longer stretch the document past the page into a blank band. */}
