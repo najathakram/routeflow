@@ -65,6 +65,8 @@ import { restockReturnItems } from "./returns-restock.util";
 import { sumInlineReturnCredit } from "./inline-return-credit.util";
 import { InlineReturnsQuoteService } from "./inline-returns-quote.service";
 import { creditOverrideAuditItems } from "./inline-returns-pricing";
+import { assertWalkInCaptureRefused } from "./walk-in-return-guard";
+import { assertCreditCustomerNotWalkIn } from "../credit-notes/walk-in-credit-guard";
 import type { CaptureInlineReturnDto, InlineReturnLinesDto } from "./dto/capture-inline-return.dto";
 import type { ApproveInlineReturnDto } from "./dto/approve-inline-return.dto";
 import type { RefundInlineReturnDto } from "./dto/refund-inline-return.dto";
@@ -409,6 +411,11 @@ export class InlineReturnsService {
 
     // B948 / SA-628a (c): a source line may never be credited past its value by a credit note + an inline return.
     await this.assertWithinLineHeadroom(tx, priced.chunks);
+
+    // W-913: a walk-in return is a till refund, never store credit: judged before any write (a REFUND keeps assertRefundable)
+    if (!opts.forRefund) {
+      await assertWalkInCaptureRefused(tx, { customerId: order.customerId, user, priced });
+    }
 
     // SA-727: a REFUND-resolution capture is refused HERE, before any write, unless the refund could succeed: every returned
     // line on a source invoice paid in full, and worth money. Otherwise the goods would be restocked with no way to resolve
@@ -1633,6 +1640,7 @@ export class InlineReturnsService {
         if (await this.isStoreCreditReplay(tx, fresh)) return; // nothing minted, nothing to emit
         throw this.alreadyResolved();
       }
+      await assertCreditCustomerNotWalkIn(tx, fresh.customerId); // W-913: a walk-in return is never turned into credit
       if (!isRefundPending(fresh) || fresh.holdReason) {
         throw new ConflictException({
           code: API_ERROR_CODES.RETURN_NOT_REFUNDABLE,
