@@ -19,10 +19,6 @@ const SRC_ROOT = path.resolve(__dirname, "..");
 
 /** file (relative to apps/api/src) -> [hits, why none of them is a boxed line's amount] */
 const PINNED: Record<string, [number, string]> = {
-  "orders/orders.service.ts": [
-    2,
-    "merge appends of CUSTOM lines (productId: null): never boxed, per-piece price x qty, roundMoney on write (scan-ok: money-rederive)",
-  ],
   "import/import.service.ts": [
     1,
     "imported CSV line fallback: no case pack, the file's Item Total wins, plain qty x price only when absent (scan-ok: money-rederive)",
@@ -131,11 +127,6 @@ const PINNED_B: Record<string, PinB> = {
     1,
     { OUT: 1 },
     "replayLineKey :255 reads a STORED line's boxes/pieces to build an idempotency key",
-  ],
-  "products/line-units.ts": [
-    1,
-    { OUT: 1 },
-    "norm :221 re-splits a known piece count (boxes: 0, pieces: count) of a line the product already resolved",
   ],
   "recurring-invoices/recurring-line-split.ts": [
     1,

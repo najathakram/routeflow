@@ -247,9 +247,8 @@ describe("settings registry — every SystemConfig key the settings writers writ
       logoUrl: "u",
       receiptFooter: "Thank you",
       // Every other field the handler accepts is NOT tenant-editable: none may reach SystemConfig.
-      businessName: "b",
+      // businessName and email are refused outright since B1231 (settings.controller.spec pins that).
       ownerName: "o",
-      email: "e@example.com",
       street: "s",
       city: "c",
       state: "st",
