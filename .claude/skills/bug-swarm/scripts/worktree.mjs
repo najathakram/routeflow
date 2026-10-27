@@ -6,6 +6,9 @@
 //   node worktree.mjs --dir D --branch B [--base origin/master] [--from <worktree>] [--dry-run]
 //
 // Pure core: planWorktree(...) -> [{ cwd, cmd: string[] }]. Never `npm ci`.
+// B642: a copied node_modules never ran husky's `prepare`, so the new tree has no .husky/_ and git would
+// silently skip the pre-push verify. The plan runs `npx husky`, then scripts/check-git-hooks.mjs, which
+// exits 1 when hooks are still missing; runPlan stops there (exit 1) before the slow packages build.
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -46,6 +49,8 @@ export function planWorktree({
       cmd: [...cp, path.join(from, rel, "node_modules"), path.join(dir, rel, "node_modules")],
     });
   }
+  plan.push({ cwd: dir, cmd: ["npx", "husky"] });
+  plan.push({ cwd: dir, cmd: ["node", "scripts/check-git-hooks.mjs"] });
   plan.push({ cwd: dir, cmd: ["npx", "turbo", "run", "build", "--filter=./packages/*"] });
   plan.push({ cwd: path.join(dir, "apps/api"), cmd: ["npx", "prisma", "generate"] });
   return plan;
@@ -113,10 +118,19 @@ export function main(argv = process.argv.slice(2)) {
     from: path.resolve(o.from ?? repo),
     platform: process.platform,
   });
+  return runPlan(plan, { dryRun: o.dryRun });
+}
+
+/** Runs the plan in order; the first failing step stops it and its exit code is returned (1 = hooks missing). */
+export function runPlan(
+  plan,
+  { dryRun = false, env = process.env, log = console.log, onStep = () => {} } = {},
+) {
   for (const step of plan) {
-    console.log(`$ (cd ${step.cwd}) ${step.cmd.join(" ")}`);
-    if (o.dryRun) continue;
-    const r = spawnSync(step.cmd[0], step.cmd.slice(1), { cwd: step.cwd, stdio: "inherit" });
+    log(`$ (cd ${step.cwd}) ${step.cmd.join(" ")}`);
+    if (dryRun) continue;
+    onStep(step);
+    const r = spawnSync(step.cmd[0], step.cmd.slice(1), { cwd: step.cwd, stdio: "inherit", env });
     if (r.status !== 0) {
       console.error(`worktree: step failed (exit ${r.status}); stopping`);
       return r.status ?? 1;

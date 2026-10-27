@@ -2,7 +2,11 @@
 import { test } from "node:test";
 import path from "node:path";
 import assert from "node:assert/strict";
-import { planWorktree, parseArgs, preflight } from "./worktree.mjs";
+import { execFileSync } from "node:child_process";
+import { cpSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
+import { planWorktree, parseArgs, preflight, runPlan } from "./worktree.mjs";
 
 const norm = (p) => path.normalize(p);
 const base = {
@@ -90,4 +94,65 @@ test("preflight refuses an existing dir, a local branch or an origin branch; cle
     preflight({ dir: "/d", branch: "b", exists: () => false, git: git(false, true) }),
     /origin/,
   );
+});
+
+// B642 / SA 06:08Z guard: a tree made by worktree.mjs must have git hooks installed, or the script refuses (exit 1).
+test("plan installs hooks, then refuses a hookless tree BEFORE the slow build", () => {
+  const lines = flat(planWorktree({ ...base, platform: "linux" }));
+  const husky = lines.indexOf("npx husky");
+  const check = lines.indexOf("node scripts/check-git-hooks.mjs");
+  assert.ok(husky > lines.findIndex((l) => l.startsWith("git worktree add")), "husky after add");
+  assert.ok(check === husky + 1, "the guard runs right after husky");
+  assert.ok(
+    check < lines.indexOf("npx turbo run build --filter=./packages/*"),
+    "guard before build",
+  );
+  const plan = planWorktree({ ...base, platform: "linux" });
+  assert.equal(norm(plan[check].cwd), norm("/r/wt"));
+});
+
+const noCi = () => {
+  const env = { ...process.env };
+  delete env.CI;
+  return env;
+};
+
+function tmpTree({ hooks }) {
+  const dir = mkdtempSync(path.join(tmpdir(), "wt-hooks-"));
+  const g = (...a) => execFileSync("git", a, { cwd: dir, stdio: "pipe" });
+  g("init", "-q");
+  g("config", "core.hooksPath", ".husky/_");
+  mkdirSync(path.join(dir, "scripts"), { recursive: true });
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../..");
+  cpSync(
+    path.join(repoRoot, "scripts/check-git-hooks.mjs"),
+    path.join(dir, "scripts/check-git-hooks.mjs"),
+  );
+  cpSync(path.join(repoRoot, "scripts/lib"), path.join(dir, "scripts/lib"), { recursive: true });
+  if (hooks) {
+    mkdirSync(path.join(dir, ".husky/_"), { recursive: true });
+    writeFileSync(path.join(dir, ".husky/_/pre-push"), "#!/bin/sh\n");
+  }
+  return dir;
+}
+
+test("runPlan: a tree with no .husky/_ is refused with exit 1 and later steps never run", () => {
+  const dir = tmpTree({ hooks: false });
+  const ran = [];
+  const plan = [
+    { cwd: dir, cmd: ["node", "scripts/check-git-hooks.mjs"] },
+    { cwd: dir, cmd: ["node", "-e", "process.exit(0)"], after: true },
+  ];
+  const code = runPlan(plan, { env: noCi(), log: () => {}, onStep: (s) => ran.push(s) });
+  assert.equal(code, 1);
+  assert.equal(ran.length, 1, "stopped at the guard");
+});
+
+test("runPlan: a tree WITH .husky/_/pre-push passes the guard and the plan continues", () => {
+  const dir = tmpTree({ hooks: true });
+  const plan = [
+    { cwd: dir, cmd: ["node", "scripts/check-git-hooks.mjs"] },
+    { cwd: dir, cmd: ["node", "-e", "process.exit(0)"] },
+  ];
+  assert.equal(runPlan(plan, { env: noCi(), log: () => {} }), 0);
 });
