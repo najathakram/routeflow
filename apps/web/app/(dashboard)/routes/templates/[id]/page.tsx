@@ -42,7 +42,8 @@ import {
   arrayMove,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { Badge, Button, Modal, useToast, cn } from "@routeflow/ui/web";
+import { Badge, Button, Modal, useToast, cn, badgeStatusLabel } from "@routeflow/ui/web";
+import { useOnTenantToday } from "@/lib/tenant-timezone";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useDrivers } from "@/lib/api/drivers";
 import { useCustomers } from "@/lib/api/customers";
@@ -67,6 +68,12 @@ import {
   type WindowCheckState,
 } from "../../_components/late-stops";
 import { TemplateRouteMap } from "./TemplateRouteMap";
+
+const AI_STOP_LABEL: Record<string, string> = {
+  ok: "OK",
+  warning: "Warning",
+  critical: "Critical",
+};
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -301,8 +308,9 @@ function DispatchModal({
   const { data: routeSettings } = useRouteSettings();
   const analyzeRoute = useAnalyzeRoute();
 
-  const today = new Date().toISOString().split("T")[0];
-  const [date, setDate] = React.useState(today);
+  // SA-964 §4: the run date is the TENANT's day, seeded when the zone resolves; never the browser's.
+  const [date, setDate] = React.useState("");
+  useOnTenantToday((day) => setDate((cur) => cur || day));
   const [driverId, setDriverId] = React.useState("");
   const [startTime, setStartTime] = React.useState("");
   const [lateStops, setLateStops] = React.useState<LateStop[]>([]);
@@ -381,6 +389,7 @@ function DispatchModal({
   const needsAcknowledge = lateStops.length > 0 && !acknowledged;
 
   const handleDispatch = () => {
+    if (!date) return;
     createRun.mutate(
       {
         routeId,
@@ -404,7 +413,7 @@ function DispatchModal({
     <Modal
       open={open}
       onClose={onClose}
-      title="Dispatch Route Run"
+      title="Dispatch route run"
       footer={
         <>
           <Button variant="secondary" onClick={onClose} disabled={createRun.isPending}>
@@ -413,7 +422,7 @@ function DispatchModal({
           <Button
             onClick={handleDispatch}
             loading={createRun.isPending}
-            disabled={needsAcknowledge || windowCheck === "checking"}
+            disabled={needsAcknowledge || windowCheck === "checking" || !date}
             title={
               needsAcknowledge
                 ? "Acknowledge the late-stop warning to dispatch"
@@ -478,7 +487,7 @@ function DispatchModal({
           />
         </div>
         <div>
-          <label className="mb-1 block text-sm font-medium text-navy">Departure Time</label>
+          <label className="mb-1 block text-sm font-medium text-navy">Departure time</label>
           <input
             type="time"
             value={startTime}
@@ -741,7 +750,7 @@ export default function RouteTemplateDetailPage() {
       <div className="flex flex-col items-center gap-4 p-12 text-center">
         <p className="text-base font-medium text-navy">Route template not found.</p>
         <Button variant="secondary" href="/routes">
-          Back to Routes
+          Back to routes
         </Button>
       </div>
     );
@@ -894,7 +903,7 @@ export default function RouteTemplateDetailPage() {
             </span>
           ) : (
             <Button leftIcon={<Play className="h-4 w-4" />} onClick={() => setDispatchOpen(true)}>
-              Dispatch Run
+              Dispatch run
             </Button>
           )}
         </div>
@@ -921,7 +930,7 @@ export default function RouteTemplateDetailPage() {
               <TabTrigger value="packing">
                 <span className="flex items-center gap-1.5">
                   <Package className="h-3.5 w-3.5" />
-                  Packing List
+                  Packing list
                 </span>
               </TabTrigger>
               <TabTrigger value="analysis">
@@ -1005,7 +1014,7 @@ export default function RouteTemplateDetailPage() {
                                     : "bg-warning-bg text-warning",
                                 )}
                               >
-                                {order.status}
+                                {badgeStatusLabel(order.status)}
                               </span>
                             </div>
                             <div className="mt-1 space-y-0.5">
@@ -1024,7 +1033,7 @@ export default function RouteTemplateDetailPage() {
               )}
             </Tabs.Content>
 
-            {/* ── Packing List Tab ── */}
+            {/* ── Packing list tab ── */}
             <Tabs.Content value="packing" className="flex-1 overflow-y-auto p-4">
               {packingList.length === 0 ? (
                 <div className="flex flex-col items-center gap-3 py-12 text-navy/70">
@@ -1083,7 +1092,7 @@ export default function RouteTemplateDetailPage() {
                 <div className="flex items-end gap-3">
                   <div className="flex-1">
                     <label className="mb-1 block text-xs font-medium text-navy/70">
-                      Departure Time
+                      Departure time
                     </label>
                     <input
                       type="time"
@@ -1108,7 +1117,7 @@ export default function RouteTemplateDetailPage() {
                     }}
                     disabled={analyzeRoute.isPending || localStops.length < 1}
                   >
-                    {analyzeRoute.isPending ? "Analyzing..." : "Analyze Route"}
+                    {analyzeRoute.isPending ? "Analyzing…" : "Analyze route"}
                   </Button>
                 </div>
 
@@ -1186,7 +1195,7 @@ export default function RouteTemplateDetailPage() {
                                       {aiStop.status === "critical" && (
                                         <XCircle className="h-3 w-3" />
                                       )}
-                                      {aiStop.status}
+                                      {AI_STOP_LABEL[aiStop.status] ?? aiStop.status}
                                     </span>
                                   ) : eta.withinWindow === true ? (
                                     <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
@@ -1235,7 +1244,7 @@ export default function RouteTemplateDetailPage() {
                   <div className="flex flex-col items-center gap-3 py-12 text-navy/70">
                     <Clock className="h-8 w-8" />
                     <p className="text-sm text-center">
-                      Click &quot;Analyze Route&quot; to calculate ETAs and get AI-powered delivery
+                      Click &quot;Analyze route&quot; to calculate ETAs and get AI-powered delivery
                       window insights.
                     </p>
                   </div>

@@ -169,7 +169,7 @@ function useStaticCommands(router: ReturnType<typeof useRouter>): CommandItem[] 
         {
           id: "nav-purchase-orders",
           group: "Navigate",
-          label: "Purchase Orders",
+          label: "Purchase orders",
           icon: PackageCheck,
           action: () => router.push("/purchase-orders"),
         },
@@ -197,7 +197,7 @@ function useStaticCommands(router: ReturnType<typeof useRouter>): CommandItem[] 
         {
           id: "nav-credit-notes",
           group: "Navigate",
-          label: "Credit Notes",
+          label: "Credit notes",
           icon: Receipt,
           action: () => router.push("/credit-notes"),
         },
@@ -211,7 +211,7 @@ function useStaticCommands(router: ReturnType<typeof useRouter>): CommandItem[] 
         {
           id: "nav-expenses",
           group: "Navigate",
-          label: "Supplier Bills",
+          label: "Supplier bills",
           icon: ShoppingBag,
           action: () => router.push("/vendor-bills"),
         },
@@ -282,7 +282,7 @@ function useStaticCommands(router: ReturnType<typeof useRouter>): CommandItem[] 
         {
           id: "act-plan-trip",
           group: "Actions",
-          label: "Plan delivery trip",
+          label: "Plan delivery",
           icon: RouteIcon,
           action: () => router.push("/deliveries/new"),
           keywords: "adhoc trip dispatch delivery",

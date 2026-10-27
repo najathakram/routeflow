@@ -90,7 +90,7 @@ export default function AdminLoginPage() {
       const { accessToken, refreshToken, user } = res.data;
 
       if (user.role !== "SUPER_ADMIN") {
-        setError("This login is for platform administrators only.");
+        setError("This sign-in is for platform administrators only.");
         setIsLoading(false);
         return;
       }
@@ -102,7 +102,7 @@ export default function AdminLoginPage() {
       const msg =
         (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
         "Invalid username or password.";
-      setError(typeof msg === "string" ? msg : "Login failed.");
+      setError(typeof msg === "string" ? msg : "Sign-in failed.");
       setIsLoading(false);
     }
   };
@@ -125,7 +125,7 @@ export default function AdminLoginPage() {
             <Shield className="h-7 w-7 text-white" />
           </div>
           <h1 className="text-2xl font-bold text-white">RouteFlow Platform</h1>
-          <p className="text-sm text-[#c2d0e5]">Platform Administrator Login</p>
+          <p className="text-sm text-[#c2d0e5]">Platform administrator sign-in</p>
         </div>
 
         {/* Card */}

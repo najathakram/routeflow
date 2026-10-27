@@ -22,7 +22,7 @@ import {
   DoorOpen,
   ExternalLink,
 } from "lucide-react";
-import { Badge, Button, cn, useToast } from "@routeflow/ui/web";
+import { Badge, Button, cn, useToast, badgeStatusLabel } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useAuth } from "@/lib/auth-context";
 import {
@@ -142,7 +142,7 @@ function ChangeDriverModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/40 p-4">
       <div className="w-full max-w-sm rounded-card border border-surface-border bg-white shadow-modal">
         <div className="flex items-center justify-between border-b border-surface-border px-5 py-4">
-          <h2 className="text-[15px] font-semibold text-navy">Change Driver</h2>
+          <h2 className="text-[15px] font-semibold text-navy">Change driver</h2>
           <button
             onClick={onClose}
             className="rounded-ctl p-1 text-navy/50 transition-colors hover:bg-surface-raised hover:text-navy"
@@ -215,7 +215,7 @@ function CancelRunModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/40 p-4">
       <div className="w-full max-w-sm rounded-card border border-surface-border bg-white shadow-modal">
         <div className="flex items-center justify-between border-b border-surface-border px-5 py-4">
-          <h2 className="text-[15px] font-semibold text-navy">Cancel Route Run?</h2>
+          <h2 className="text-[15px] font-semibold text-navy">Cancel route run?</h2>
           <button
             onClick={onClose}
             className="rounded-ctl p-1 text-navy/50 transition-colors hover:bg-surface-raised hover:text-navy"
@@ -235,7 +235,7 @@ function CancelRunModal({
         </div>
         <div className="flex justify-end gap-2 border-t border-surface-border px-5 py-3.5">
           <Button variant="secondary" size="sm" onClick={onClose}>
-            Keep Run
+            Keep run
           </Button>
           <button
             onClick={handleCancel}
@@ -247,7 +247,7 @@ function CancelRunModal({
             ) : (
               <XCircle className="h-4 w-4" />
             )}
-            Yes, Cancel Run
+            Yes, cancel run
           </button>
         </div>
       </div>
@@ -362,7 +362,7 @@ function RequiredStopCard({
                   <Package2 className="h-3.5 w-3.5" />
                   {order.orderNumber ? `Order #${order.orderNumber}` : "Order"}{" "}
                   <span className="rounded bg-white px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.03em] text-navy/70">
-                    {order.status}
+                    {badgeStatusLabel(order.status)}
                   </span>
                 </p>
                 <ul className="space-y-1 pl-4">
@@ -524,7 +524,7 @@ export default function DispatchPage() {
       <div className="flex flex-col items-center gap-4 p-12 text-center">
         <p className="text-base font-medium text-navy">Route run not found.</p>
         <Button variant="secondary" href="/routes">
-          Back to Routes
+          Back to routes
         </Button>
       </div>
     );
@@ -581,7 +581,7 @@ export default function DispatchPage() {
                 className="inline-flex w-fit items-center gap-1.5 text-xs font-medium text-navy/70 transition-colors hover:text-navy"
               >
                 <ArrowLeft className="h-3.5 w-3.5" />
-                Route Detail
+                Route detail
               </Link>
               <div className="flex flex-wrap items-center gap-3">
                 <h1 className="text-xl font-semibold tracking-[-0.01em] text-navy">
@@ -631,14 +631,14 @@ export default function DispatchPage() {
                   </Button>
                   <Button variant="secondary" size="sm" onClick={() => setShowDriverModal(true)}>
                     <UserCheck className="mr-1.5 h-3.5 w-3.5" />
-                    Change Driver
+                    Change driver
                   </Button>
                   <button
                     onClick={() => setShowCancelModal(true)}
                     className="flex items-center gap-1.5 rounded-ctl border border-danger/40 px-3 py-1.5 text-sm font-semibold text-danger transition-colors hover:bg-danger-bg"
                   >
                     <XCircle className="h-3.5 w-3.5" />
-                    Cancel Run
+                    Cancel run
                   </button>
                 </>
               )}

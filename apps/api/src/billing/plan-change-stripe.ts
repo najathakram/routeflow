@@ -11,6 +11,7 @@ import type { StripeService } from "./stripe.service";
 import { CHECKOUT_ADDON_EXPAND, checkoutAddonItems } from "./stripe-addon-items";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { prorationAllowedFor } from "./price-override";
+import { ensurePlanProduct } from "./stripe-product";
 import {
   armNeedsReconcile,
   clearNeedsReconcile,
@@ -272,11 +273,8 @@ export async function pushPlanChange(
   let productId = basePrior.product;
   if (baseChanged) {
     try {
-      const product = await stripe.client.products.create(
-        { name: `RouteFlow ${a.planName}` },
-        { idempotencyKey: `${key}:product` },
-      );
-      productId = product.id;
+      // W-810: the shared active `rf_plan_<code>` product, never a product per push.
+      productId = await ensurePlanProduct(stripe.client, a.targetPlanKey, a.planName);
     } catch (err) {
       logger.error(
         `Plan change tenant ${a.tenantId}: Stripe product failed: ${(err as Error).message}`,

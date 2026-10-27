@@ -17,10 +17,10 @@ export function scanCreateLabel(o: {
   }
   if (o.invoiceCount <= 1) {
     return o.createMode === "bill"
-      ? "Create Vendor Bill"
+      ? "Create supplier bill"
       : o.createMode === "expense"
-        ? "Record Expense"
-        : "Create Bill & Expense";
+        ? "Record expense"
+        : "Create bill and expense";
   }
   return (
     "Create " +

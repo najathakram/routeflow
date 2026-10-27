@@ -58,7 +58,7 @@ describe("InvoicesService.create — selling restrictions (F-05)", () => {
       isTaxExempt: false,
       deletedAt: null,
     });
-    prisma.product.findMany.mockResolvedValue([]);
+    // 681: the default findMany answers the id-only tenant proof; every other product read stays [].
   });
 
   it("refuses a banned product with 409 SELLING_RESTRICTED before anything is priced, numbered or written", async () => {
@@ -66,7 +66,8 @@ describe("InvoicesService.create — selling restrictions (F-05)", () => {
       new ConflictException({ code: "SELLING_RESTRICTED", message: "banned", blockedLines: [] }),
     );
     await expect(create()).rejects.toMatchObject({ response: { code: "SELLING_RESTRICTED" } });
-    expect(prisma.product.findMany).not.toHaveBeenCalled();
+    // 681: the id-only tenant proof is the single product read; the line context read never ran.
+    expect(prisma.product.findMany).toHaveBeenCalledTimes(1);
     expect(prisma.invoice.create).not.toHaveBeenCalled();
     expect(numbering.reserveNext).not.toHaveBeenCalled();
   });
@@ -89,7 +90,7 @@ describe("InvoicesService.create — selling restrictions (F-05)", () => {
       }),
     );
     expect(restrictions.assertLinesSellable.mock.invocationCallOrder[0]).toBeLessThan(
-      prisma.product.findMany.mock.invocationCallOrder[0],
+      prisma.product.findMany.mock.invocationCallOrder[1], // [0] is the 681 tenant proof; [1] the line context read
     );
   });
 

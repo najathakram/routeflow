@@ -34,7 +34,7 @@ describe("1 the image carries the denylist, and boot refuses without it", () => 
     const m = /watchPatterns\s*=\s*\[([^\]]*)\]/.exec(toml);
     expect(m).not.toBeNull();
     const pats = [...(m as RegExpExecArray)[1].matchAll(/"([^"]+)"/g)].map((x) => x[1]).sort();
-    expect(pats).toEqual(["apps/control/**", "scripts/campaign/plane-denylist.json"]);
+    expect(pats).toEqual(["apps/control/**", "scripts/campaign/plane-denylist.json", "scripts/lib/registry-source.json"]);
   });
   it("denylistAvailable() is false for a missing file, true for the shipped one", () => {
     const { denylistAvailable } = require("../src/sources/denylist");

@@ -98,6 +98,7 @@ describe("InvoicesService — #2493 due dates under a negative-offset process zo
   beforeEach(async () => {
     fillSparseCasBasis(); // #2645: sparse order fixtures vs the CAS basis pin
     prisma = createMockPrisma();
+    prisma.tenantTransaction.mockImplementation((fn: any) => fn(prisma)); // CM2a: sweep writes in a tx
     // #2070: createPartialFromOrder's invoicedQty bump is a CAS (updateMany); a clean read matches 1.
     prisma.orderItem.updateMany.mockResolvedValue({ count: 1 } as any);
     prisma.invoice.findFirst.mockResolvedValue({ items: [] });
@@ -391,10 +392,11 @@ describe("InvoicesService — #2493 due dates under a negative-offset process zo
         applyInvoiceStatusFilters(where, { isOverdue: true } as any, LA);
         expect(due < where.dueDate.lt).toBe(overdue);
         // 4. the overdue cron (#2520: per tenant, OverdueSweepService)
+        prisma.$queryRaw.mockResolvedValue([{ id: "i1" }]);
         prisma.$executeRaw.mockResolvedValue(0);
         await markOverdueForTenant(prisma as any, "test-tenant", now);
-        // SA-770: the sweep's UPDATE carries the cutoff as a bound ISO instant
-        const swept = (prisma.$executeRaw.mock.calls[0][0] as { values: unknown[] }).values.find(
+        // SA-770: the sweep's lock query carries the cutoff as a bound ISO instant
+        const swept = (prisma.$queryRaw.mock.calls[0][0] as { values: unknown[] }).values.find(
           (v) => typeof v === "string" && /^\d{4}-\d{2}-\d{2}T/.test(v),
         ) as string;
         expect(due < new Date(swept)).toBe(overdue);

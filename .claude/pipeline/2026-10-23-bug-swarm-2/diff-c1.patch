@@ -1,0 +1,228 @@
+diff --git a/apps/web/app/(dashboard)/invoices/new/page.tax-label.test.tsx b/apps/web/app/(dashboard)/invoices/new/page.tax-label.test.tsx
+new file mode 100644
+index 000000000..01257a95a
+--- /dev/null
++++ b/apps/web/app/(dashboard)/invoices/new/page.tax-label.test.tsx
+@@ -0,0 +1,81 @@
++import * as React from "react";
++import userEvent from "@testing-library/user-event";
++import { renderWithProviders, screen, waitFor } from "@/test-utils/render";
++import NewInvoicePage from "./page";
++
++/** Row 300: the Tax row names the configured rate (8.25%), never a toFixed(0) round (8%). */
++jest.mock("next/navigation", () => ({ useRouter: () => ({ push: jest.fn() }) }));
++jest.mock("@/lib/api/customers", () => ({
++  useCustomers: () => ({ data: { data: [{ id: "cust-1", businessName: "Acme Co" }] } }),
++  useCustomerPrices: () => ({ data: [] }),
++}));
++jest.mock("@/lib/api/products", () => ({
++  ...jest.requireActual("@/lib/api/products"),
++  useProducts: () => ({
++    data: { data: [{ id: "prod-4", name: "Dropdown Widget", pricePerUnit: "8" }] },
++  }),
++  useCreateProduct: () => ({ mutate: jest.fn(), mutateAsync: jest.fn(), isPending: false }),
++}));
++jest.mock("@/lib/api/invoices", () => ({
++  ...jest.requireActual("@/lib/api/invoices"),
++  useCreateInvoice: () => ({ mutate: jest.fn(), isPending: false }),
++  useUpdateInvoice: () => ({ mutate: jest.fn(), isPending: false }),
++  useCreateInvoiceFromOrder: () => ({ mutate: jest.fn(), isPending: false }),
++  useInvoiceSettings: () => ({ data: undefined }),
++}));
++jest.mock("@/lib/api/orders", () => ({
++  ...jest.requireActual("@/lib/api/orders"),
++  useCreateSale: () => ({ mutate: jest.fn(), isPending: false }),
++  useUninvoicedOrders: () => ({ orders: [], isLoading: false }),
++}));
++jest.mock("@/lib/api/margin", () => ({
++  useMarginConfig: () => ({ data: undefined }),
++  floorForCategory: () => null,
++}));
++jest.mock("@/lib/api/tracked-categories", () => ({ useTrackedCategories: () => ({ data: [] }) }));
++
++let mockSettings: Record<string, unknown> = {};
++jest.mock("@/lib/api-client", () => ({
++  apiClient: {
++    get: (url: string) => Promise.resolve({ data: url === "/settings" ? mockSettings : {} }),
++    post: jest.fn().mockResolvedValue({ data: {} }),
++    patch: jest.fn(),
++    delete: jest.fn(),
++  },
++}));
++jest.mock("@/components/BarcodeScannerButton", () => ({ BarcodeScannerButton: () => null }));
++jest.mock("@/components/InlineCreateProductModal", () => ({
++  InlineCreateProductModal: () => null,
++}));
++
++async function withTaxableLine() {
++  const user = userEvent.setup();
++  renderWithProviders(<NewInvoicePage />);
++  await user.click(
++    screen.getByRole("button", { name: /other charge \(a fee or correction with no order\)/i }),
++  );
++  await user.click(screen.getByPlaceholderText(/search customers/i));
++  await user.click(await screen.findByText("Acme Co"));
++  const input = screen.getByPlaceholderText("Description / product…");
++  await user.click(input);
++  await user.type(input, "Dropdown");
++  await user.click(await screen.findByText("Dropdown Widget"));
++  await user.click(screen.getAllByRole("checkbox")[0]);
++}
++
++describe("new invoice: Tax row label (row 300)", () => {
++  it("prints the configured 8.25% rate in the totals bar and the summary", async () => {
++    mockSettings = { taxRate: 8.25 };
++    await withTaxableLine();
++    await waitFor(() =>
++      expect(screen.getAllByText("Tax (8.25%)").length).toBeGreaterThanOrEqual(2),
++    );
++    expect(screen.queryByText("Tax (8%)")).toBeNull();
++  });
++
++  it("a whole-number rate stays clean", async () => {
++    mockSettings = { taxRate: 10 };
++    await withTaxableLine();
++    await waitFor(() => expect(screen.getAllByText("Tax (10%)").length).toBeGreaterThanOrEqual(1));
++  });
++});
+diff --git a/apps/web/app/(dashboard)/invoices/new/page.tsx b/apps/web/app/(dashboard)/invoices/new/page.tsx
+index 388567f2b..97d921a27 100644
+--- a/apps/web/app/(dashboard)/invoices/new/page.tsx
++++ b/apps/web/app/(dashboard)/invoices/new/page.tsx
+@@ -86,6 +86,7 @@ import {
+   pendingScanDecision,
+   pillLabel,
+   plural,
++  taxRowLabel,
+   unitWords,
+   type CustomerLayerUnit,
+   type SellLevel,
+@@ -2940,7 +2941,7 @@ export default function NewInvoicePage() {
+                   </div>
+                   {tax > 0 && (
+                     <div className="flex justify-between text-navy/70">
+-                      <span>Tax ({(taxRate * 100).toFixed(0)}%)</span>
++                      <span>{taxRowLabel(settings?.taxRate)}</span>
+                       <span>{fmt(tax)}</span>
+                     </div>
+                   )}
+@@ -2996,7 +2997,7 @@ export default function NewInvoicePage() {
+                 </div>
+                 {tax > 0 && (
+                   <div className="flex justify-between">
+-                    <dt className="text-navy/70">Tax ({(taxRate * 100).toFixed(0)}%)</dt>
++                    <dt className="text-navy/70">{taxRowLabel(settings?.taxRate)}</dt>
+                     <dd className="font-medium text-navy">{fmt(tax)}</dd>
+                   </div>
+                 )}
+diff --git a/apps/web/app/(dashboard)/orders/_components/CounterLinePriceEdit.tap-targets.test.tsx b/apps/web/app/(dashboard)/orders/_components/CounterLinePriceEdit.tap-targets.test.tsx
+new file mode 100644
+index 000000000..5b3417fe5
+--- /dev/null
++++ b/apps/web/app/(dashboard)/orders/_components/CounterLinePriceEdit.tap-targets.test.tsx
+@@ -0,0 +1,22 @@
++import * as React from "react";
++import { fireEvent, render, screen } from "@testing-library/react";
++import { CounterLinePriceEdit } from "./CounterLinePriceEdit";
++
++/** Row 301: the editor footer buttons must be >= 44px on touch widths (jsdom: class pins only). */
++describe("CounterLinePriceEdit: footer tap targets", () => {
++  it("Apply and Cancel carry the 44px touch floor", () => {
++    render(
++      <CounterLinePriceEdit
++        canEditPrices
++        name="Cola"
++        line={{ tierPrice: 10, listPrice: 10, tier: 1, qty: 2 }}
++        onApply={jest.fn()}
++        onClosed={jest.fn()}
++        onReset={jest.fn()}
++      />,
++    );
++    fireEvent.click(screen.getByRole("button", { name: "Edit price for Cola" }));
++    expect(screen.getByRole("button", { name: "Apply" })).toHaveClass("min-h-[44px]");
++    expect(screen.getByRole("button", { name: "Cancel" })).toHaveClass("min-h-[44px]");
++  });
++});
+diff --git a/apps/web/app/(dashboard)/orders/_components/CounterLinePriceEdit.tsx b/apps/web/app/(dashboard)/orders/_components/CounterLinePriceEdit.tsx
+index 7973bb53f..d411ede7f 100644
+--- a/apps/web/app/(dashboard)/orders/_components/CounterLinePriceEdit.tsx
++++ b/apps/web/app/(dashboard)/orders/_components/CounterLinePriceEdit.tsx
+@@ -267,10 +267,17 @@ export function CounterLinePriceEdit({
+           </p>
+ 
+           <div className="flex items-center justify-end gap-3 border-t border-surface-border pt-4">
+-            <Button type="button" variant="ghost" onClick={close}>
++            <Button
++              type="button"
++              variant="ghost"
++              className="min-h-[44px] lg:min-h-0"
++              onClick={close}
++            >
+               Cancel
+             </Button>
+-            <Button type="submit">Apply</Button>
++            <Button type="submit" className="min-h-[44px] lg:min-h-0">
++              Apply
++            </Button>
+           </div>
+         </form>
+       </Modal>
+diff --git a/apps/web/app/(dashboard)/orders/_components/CreateOrderModal.backdate.test.tsx b/apps/web/app/(dashboard)/orders/_components/CreateOrderModal.backdate.test.tsx
+index f0fb9b7c5..f9eae84e8 100644
+--- a/apps/web/app/(dashboard)/orders/_components/CreateOrderModal.backdate.test.tsx
++++ b/apps/web/app/(dashboard)/orders/_components/CreateOrderModal.backdate.test.tsx
+@@ -253,3 +253,23 @@ describe("Backdate this order (row 100)", () => {
+     expect(backdateLink()).toBeInTheDocument();
+   });
+ });
++
++describe("Counter-path tap targets (row 296): >= 44px hit areas", () => {
++  it("Backdate link and Use today carry the 44px floor", async () => {
++    const user = userEvent.setup({ delay: null });
++    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
++    expect(backdateLink()).toHaveClass("min-h-[44px]");
++    await user.click(backdateLink()!);
++    expect(screen.getByRole("button", { name: "Use today" })).toHaveClass("min-h-[44px]");
++  });
++
++  it("the Change customer X is 44px tall and wide", async () => {
++    const user = userEvent.setup({ delay: null });
++    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
++    await user.type(screen.getByPlaceholderText(/search by business name/i), "acme");
++    await user.click((await screen.findByText(/Acme Deli/)).closest("button") as HTMLElement);
++    const x = screen.getByRole("button", { name: "Change customer" });
++    expect(x).toHaveClass("min-h-[44px]");
++    expect(x).toHaveClass("min-w-[44px]");
++  });
++});
+diff --git a/apps/web/app/(dashboard)/orders/_components/CreateOrderModal.tsx b/apps/web/app/(dashboard)/orders/_components/CreateOrderModal.tsx
+index 46b9faccb..d71573f0a 100644
+--- a/apps/web/app/(dashboard)/orders/_components/CreateOrderModal.tsx
++++ b/apps/web/app/(dashboard)/orders/_components/CreateOrderModal.tsx
+@@ -2557,7 +2557,7 @@ export function CreateOrderModal({
+                   type="button"
+                   ref={customerUndo.chipRef}
+                   onClick={customerUndo.change}
+-                  className="rounded p-1 text-navy/70 hover:text-danger transition-colors"
++                  className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded p-1 text-navy/70 hover:text-danger transition-colors lg:min-h-0 lg:min-w-0"
+                   title="Change customer"
+                   aria-label="Change customer"
+                 >
+@@ -3095,7 +3095,7 @@ export function CreateOrderModal({
+                         focusAfterToggle.current = "link";
+                         setBackdateOpen(false);
+                       }}
+-                      className="font-medium text-brand-500 hover:underline"
++                      className="inline-flex min-h-[44px] items-center font-medium text-brand-500 hover:underline lg:min-h-0"
+                     >
+                       Use today
+                     </button>
+@@ -3110,7 +3110,7 @@ export function CreateOrderModal({
+                       focusAfterToggle.current = "date";
+                       setBackdateOpen(true);
+                     }}
+-                    className="min-h-10 text-sm font-medium text-brand-500 hover:underline"
++                    className="min-h-[44px] text-sm font-medium text-brand-500 hover:underline lg:min-h-10"
+                   >
+                     Backdate this order
+                   </button>

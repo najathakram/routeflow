@@ -3,9 +3,11 @@ import {
   ArrayMinSize,
   IsArray,
   IsBoolean,
+  IsDefined,
   IsIn,
   IsInt,
   IsNumber,
+  IsObject,
   IsOptional,
   IsString,
   IsUUID,
@@ -66,6 +68,10 @@ export class CounterSaleDto extends RestrictionAckDto {
   @Type(() => CounterSaleItemDto)
   items: CounterSaleItemDto[];
 
+  // W-887: ONE payment object. `@ValidateNested()` alone accepted a list (and an empty one) and saved the sale unpaid,
+  // and let a missing payment through to the service; `@IsDefined() @IsObject()` refuse both (isObject excludes arrays).
+  @IsDefined()
+  @IsObject()
   @ValidateNested()
   @Type(() => CounterSalePaymentDto)
   payment: CounterSalePaymentDto;

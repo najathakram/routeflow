@@ -351,8 +351,8 @@ export default function BuyerShopPage() {
               <option value="best">Best for you</option>
               <option value="name_asc">Name A-Z</option>
               <option value="name_desc">Name Z-A</option>
-              <option value="price_asc">Price: Low to High</option>
-              <option value="price_desc">Price: High to Low</option>
+              <option value="price_asc">Price: low to high</option>
+              <option value="price_desc">Price: high to low</option>
             </select>
 
             {/* View toggle */}
@@ -514,9 +514,7 @@ export default function BuyerShopPage() {
                 {/* Loading / Error / Empty / Products */}
                 {isError ? (
                   <div className="rounded-xl border border-danger/30 bg-danger-bg p-8 text-center">
-                    <p className="text-sm text-danger">
-                      Failed to load products. Please try again later.
-                    </p>
+                    <p className="text-sm text-danger">Couldn&apos;t load products. Try again.</p>
                   </div>
                 ) : isLoading ? (
                   <div className="flex items-center justify-center py-16">

@@ -165,6 +165,84 @@ describe("PickupCompleteDialog — tender", () => {
     expect(document.body.textContent).not.toMatch(/Picked up —/);
   });
 
+  // Row 312(b): POS presses 8 vs target 7. The cash amount starts at the amount due (as Exact would set it), so an
+  // exact cash hand-over is one press less; it follows the due amount until the cashier types, and never overwrites them.
+  it("row 312: the cash amount starts at the amount due, so Picked up needs no typing", async () => {
+    balance(25);
+    post.mockResolvedValue(result({ change: 0, paid: 25 }));
+    mount();
+    await waitFor(() => expect(screen.getByLabelText("Amount tendered")).toHaveValue("25"));
+    confirm();
+    await waitFor(() => expect(post).toHaveBeenCalled());
+    expect(post.mock.calls[0][1]).toEqual({ payment: { method: "CASH", amount: 25 } });
+  });
+
+  it("row 312: what the cashier typed is kept when the dialog re-renders", async () => {
+    balance(25);
+    const { rerender } = mount();
+    await waitFor(() => expect(screen.getByLabelText("Amount tendered")).toHaveValue("25"));
+    fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "40" } });
+    rerender(
+      <QueryClientProvider client={new QueryClient()}>
+        <PickupCompleteDialog
+          open
+          onClose={jest.fn()}
+          orderId="o1"
+          orderNumber="ORD-1"
+          total={25}
+          invoices={invoices(25)}
+          isWalkIn={false}
+        />
+      </QueryClientProvider>,
+    );
+    expect(screen.getByLabelText("Amount tendered")).toHaveValue("40");
+  });
+
+  // #3722 review: the prefill is the SAME string Exact sets (roundMoney(due)), byte for byte.
+  it("row 312: the prefill is rounded to cents, exactly what Exact sets", async () => {
+    get.mockResolvedValue({ data: { id: "i1", status: "SENT", total: 25, balanceDue: 12.3456 } });
+    mount();
+    await waitFor(() => expect(screen.getByLabelText("Amount tendered")).toHaveValue("12.35"));
+    fireEvent.click(screen.getByRole("button", { name: "Exact" }));
+    expect(screen.getByLabelText("Amount tendered")).toHaveValue("12.35");
+  });
+
+  it("row 312: a part-paid invoice prefills its balance, not the order total", async () => {
+    balance(12.5);
+    mount();
+    await waitFor(() => expect(screen.getByLabelText("Amount tendered")).toHaveValue("12.5"));
+  });
+
+  it("row 312: a typed amount is kept when the amount due then changes (the server reports a new balance)", async () => {
+    balance(25);
+    post.mockResolvedValueOnce(
+      result({ paymentRecorded: false, paymentErrorCode: "COUNTER_TENDER_SHORT", balanceDue: 30 }),
+    );
+    mount({ isWalkIn: true });
+    await waitFor(() => expect(screen.getByLabelText("Amount tendered")).toHaveValue("25"));
+    fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "26" } });
+    confirm();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "A walk-in customer must pay the full balance.",
+    );
+    expect(screen.getByLabelText("Amount tendered")).toHaveValue("26");
+  });
+
+  it("row 312: an untouched amount follows the balance the server reports after COUNTER_TENDER_SHORT (rounded, as Exact)", async () => {
+    balance(25);
+    post.mockResolvedValueOnce(
+      result({
+        paymentRecorded: false,
+        paymentErrorCode: "COUNTER_TENDER_SHORT",
+        balanceDue: 30.004,
+      }),
+    );
+    mount({ isWalkIn: true });
+    await waitFor(() => expect(screen.getByLabelText("Amount tendered")).toHaveValue("25"));
+    confirm();
+    await waitFor(() => expect(screen.getByLabelText("Amount tendered")).toHaveValue("30"));
+  });
+
   it("quick tender fills the amount", async () => {
     balance(25);
     mount();

@@ -19,7 +19,7 @@ describe("root package.json local:* script contract (p5)", () => {
   // the shared compose `routeflow_dev` the live api container serves.
   it("local:test:db runs the DB lane through scripts/local-db-specs.mjs (its own fresh database)", () => {
     expect(scripts["local:test:db"]).toBe(
-      'node scripts/local-db-specs.mjs -- "npm run test:db -w apps/api"',
+      "node scripts/local-db-specs.mjs -- node apps/api/scripts/run-db-tests.mjs",
     );
   });
 
