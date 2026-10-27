@@ -54,6 +54,8 @@ import {
 } from "../invoices/payment-predicates";
 import { settledDateFilter } from "../invoices/settled-date-filter";
 import { CREDIT_NOT_APPLICABLE } from "../invoices/invoice-status-sets";
+import { statusFromPayments } from "../invoices/invoice-status";
+import { tenantTimeZone } from "../common/tenant-time-zone";
 import { RECEIVABLE_INVOICE_SELECT, receivableBalance } from "../invoices/credit-exposure";
 import {
   geocodeAddress,
@@ -1123,10 +1125,12 @@ export class CustomersService {
       throw new NotFoundException("Advance payment not found");
     }
 
+    // SA-968: the tenant's zone is read BEFORE the lock and the transaction (never after FOR UPDATE), once per apply.
+    const zone = await tenantTimeZone(this.prisma);
     try {
       const lock = await withAdvisoryLock(
         { family: "order-merge", key: apStub.customerId, mode: "wait", waitMs: 10_000 },
-        () => this.applyAdvancePaymentToInvoiceLocked(advancePaymentId, dto),
+        () => this.applyAdvancePaymentToInvoiceLocked(advancePaymentId, dto, zone),
       );
       // Unreachable in practice: `mode: "wait"` either resolves acquired (fn ran) or the
       // acquire itself rejects (LockTimeoutError/LockUnavailableError, caught below) — it
@@ -1159,6 +1163,7 @@ export class CustomersService {
   private async applyAdvancePaymentToInvoiceLocked(
     advancePaymentId: string,
     dto: { invoiceId: string; amount?: number },
+    zone: string | null,
   ) {
     return this.prisma.tenantTransaction(async (tx) => {
       const ap = await tx.advancePayment.findUnique({ where: { id: advancePaymentId } });
@@ -1231,10 +1236,15 @@ export class CustomersService {
       // (e.g. 0.1 + 0.2) can leave a fully-covered invoice reading PARTIAL.
       const newPaid = roundMoney(sumConfirmed(inv.payments) + applyAmount);
       const total = Number(inv.total);
-      let newStatus: any = "SENT";
-      if (newPaid >= total - 0.001) newStatus = "PAID";
-      else if (newPaid > 0) newStatus = "PARTIAL";
-      else if (inv.dueDate && new Date(inv.dueDate) < new Date()) newStatus = "OVERDUE";
+      // SA-964 §3: the ONE status predicate (tenant zone, [L-O2] NOT_PAID: a credit apply is never the deliberate overpayment).
+      const newStatus = statusFromPayments(
+        newPaid,
+        total,
+        inv.dueDate,
+        inv.status,
+        zone,
+        "NOT_PAID",
+      );
 
       const updatedInvoice = await tx.invoice.update({
         where: { id: dto.invoiceId },

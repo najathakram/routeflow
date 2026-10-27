@@ -322,7 +322,9 @@ describeDb("balanceDueSql — SQL <-> TS parity (SA-770), real Postgres", () => 
     );
     const cutoff = new Date("2026-10-02T00:00:00.000Z");
 
-    const n = await markInvoicesOverdue(prisma, s.tenantId, cutoff, ["SENT", "VIEWED"]);
+    const n = await prisma.$transaction((tx) =>
+      markInvoicesOverdue(tx, s.tenantId, cutoff, ["SENT", "VIEWED"]),
+    );
     expect(n).toBe(2); // owes + viewed
 
     const row = (id: string) =>

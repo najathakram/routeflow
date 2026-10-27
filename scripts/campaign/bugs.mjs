@@ -97,7 +97,7 @@ import { execFileSync, execSync, spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { scrubbedGitEnv } from "../lib/check-git-hooks.mjs";
-import { registryRoot, registrySource } from "../lib/registry-root.mjs";
+import { registryMissingMessage, registryRoot, registrySource } from "../lib/registry-root.mjs";
 import { normalizeEvidence } from "./normalize-evidence.mjs";
 import {
   hasRegToken,
@@ -4897,6 +4897,7 @@ cmds["self-test"] = () => {
     const prevRoot = process.env.BUGS_ROOT;
     const prevAnchor = process.env.BUGS_SYNC_STATE;
     process.env.BUGS_ROOT = tmp;
+    writeFileSync(join(tmp, "bugs.jsonl"), ""); // a register exists once it has a ledger file
     // The anchor is no longer inside BUGS_ROOT; keep it beside the fixture register.
     process.env.BUGS_SYNC_STATE = join(tmp, "sync-state.json");
     try {
@@ -9377,7 +9378,12 @@ if (!cmd || !cmds[cmd])
 // Fail closed: a missing register is never "0 rows". `self-test` builds its own fixtures.
 if (cmd !== "self-test") {
   try {
-    registryRoot();
+    // The creators (file, import) may start from an EMPTY existing directory (a fixture); every
+    // other command needs the register itself (bugs.jsonl), so an empty dir is never "0 rows".
+    if (cmd === "file" || cmd === "import") {
+      const dir = registryRoot({ allowMissing: true });
+      if (!existsSync(dir)) throw new Error(registryMissingMessage(dir));
+    } else registryRoot();
   } catch (e) {
     console.error(`bugs: ${e.message}`);
     process.exit(2);

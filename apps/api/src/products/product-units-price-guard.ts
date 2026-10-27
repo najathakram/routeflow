@@ -17,7 +17,8 @@ export function assertUnitPriceWritable(
   mode: "create" | "update" = "update",
 ): void {
   const body = dto as Record<string, unknown>;
-  if (!PRICE_KEYS.some((k) => (mode === "create" ? body[k] != null : body[k] !== undefined))) return;
+  if (!PRICE_KEYS.some((k) => (mode === "create" ? body[k] != null : body[k] !== undefined)))
+    return;
   const reason = governedReason(product);
   if (!reason) return;
   if (product.parentProductId) throw familyPriceAuthorityError(product.parentProductId);

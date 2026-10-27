@@ -15,7 +15,7 @@
 // vendored byte-for-byte into the ops-monitor image (a parity test pins the two copies).
 
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -44,7 +44,9 @@ export function registryRoot({ allowMissing = false } = {}) {
   const dir = process.env.BUGS_ROOT
     ? resolve(process.env.BUGS_ROOT)
     : resolve(REPO_ROOT, TRACKED_PREFIX);
-  if (!allowMissing && !existsSync(dir)) throw new Error(registryMissingMessage(dir));
+  // An existing but empty directory is not a register: bugs.jsonl must be there too.
+  if (!allowMissing && !existsSync(join(dir, "bugs.jsonl")))
+    throw new Error(registryMissingMessage(dir));
   return dir;
 }
 

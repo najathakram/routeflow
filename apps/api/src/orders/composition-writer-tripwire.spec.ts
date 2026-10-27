@@ -54,6 +54,11 @@ const REGISTRY: Record<string, Entry> = {
       "an order-linked invoice cannot be duplicated (RF-011); composed lines exist only on those",
   },
   "invoices/invoices.service.ts::update": { kind: "invoice" },
+  "invoices/kept-invoice-lines.ts::rebuildKeptItems": {
+    kind: "exempt",
+    reason:
+      "rebuildSiblingDrafts step: deletes the non-kept rows and updates the kept ones in place; the caller builds the created lines through buildInvoiceItemData",
+  },
   "orders/line-composition.ts::syncLineCompositions": {
     kind: "exempt",
     reason:

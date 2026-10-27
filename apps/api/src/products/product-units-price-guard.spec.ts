@@ -31,7 +31,9 @@ describe("assertUnitPriceWritable (row 749, keep structure / drop prices)", () =
   });
 
   it.each([variant, family, recipe])("create ignores a null price (legacy add form)", (p) => {
-    expect(() => assertUnitPriceWritable(p, { label: "Case", price: null }, "create")).not.toThrow();
+    expect(() =>
+      assertUnitPriceWritable(p, { label: "Case", price: null }, "create"),
+    ).not.toThrow();
     expect(() => assertUnitPriceWritable(p, { price: 5 }, "create")).toThrow(ConflictException);
   });
 
