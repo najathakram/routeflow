@@ -394,7 +394,7 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
     });
   });
 
-  describe("suspendOverdueTenants (→ SUSPENDED)", () => {
+  describe("reconcileCanceledSubscriptions (→ cancelFromStripe, SA-934 §3)", () => {
     // SA r-note 5 A2 (N5): payment overdue never SUSPENDS. Dunning owns non-payment (the 7-day grace, then
     // READ_ONLY + pay); this cron keeps only its `canceled` arm (a subscription the tenant ended).
     describe("A2: past_due / unpaid never change a status, in EVERY pause mode", () => {
@@ -416,35 +416,36 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
           stripeStatus: status,
           transitionCount: 1,
         });
-        await svc.suspendOverdueTenants();
+        await svc.reconcileCanceledSubscriptions();
         expect(prisma.$transaction).not.toHaveBeenCalled();
         expect(tx.tenant.updateMany).not.toHaveBeenCalled();
         expect(events.emit).not.toHaveBeenCalled();
         expect(billingNotification.notifySuspended).not.toHaveBeenCalled();
       });
 
-      it("the `canceled` arm is untouched: it still suspends (row 335 follow-up decides its future)", async () => {
+      it("the `canceled` arm ends CANCELLED with the Stripe stamp, as the webhook does (never SUSPENDED)", async () => {
         const { svc, tx } = make({ stripeStatus: "canceled", transitionCount: 1 });
-        await svc.suspendOverdueTenants();
+        await svc.reconcileCanceledSubscriptions();
         expect(tx.tenant.updateMany.mock.calls[0][0]).toMatchObject({
           where: { id: "t1", status: "ACTIVE", class: "PRODUCTION" }, // SA-775 S3: the judged class is part of the CAS
-          data: { status: "SUSPENDED", readOnlyReason: "overdue_suspended" }, // W-664: the lock names itself
+          data: { status: "CANCELLED", readOnlyReason: expect.any(String) },
         });
       });
     });
 
-    it("emits a NEGATIVE delta via an ACTIVE→SUSPENDED CAS when Stripe confirms the subscription is canceled", async () => {
+    it("emits ONE negative SUBSCRIPTION_CANCELED delta via an ACTIVE→CANCELLED CAS when Stripe confirms the subscription is canceled", async () => {
       const { svc, tx, events } = make({
         stripeStatus: "canceled",
         transitionCount: 1,
         addons: [{ priceSnapshot: 12, quantity: 2 }],
       });
-      await svc.suspendOverdueTenants();
+      await svc.reconcileCanceledSubscriptions();
       expect(tx.tenant.updateMany.mock.calls[0][0]).toMatchObject({
         where: { id: "t1", status: "ACTIVE", class: "PRODUCTION" }, // SA-775 S3: the judged class is part of the CAS
-        data: { status: "SUSPENDED" },
+        data: { status: "CANCELLED" },
       });
-      expect(deltaOf(events, BILLING_EVENTS.SUBSCRIPTION_SUSPENDED)).toBe(-373);
+      expect(deltaOf(events, BILLING_EVENTS.SUBSCRIPTION_CANCELED)).toBe(-373);
+      expect(emitted(events)).not.toContain(BILLING_EVENTS.SUBSCRIPTION_SUSPENDED);
     });
 
     // #2045 (6): emitPayingDelta's paying-set gate reads class/deletedAt post-CAS (SA-140) — a
@@ -453,44 +454,56 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
     it.each([
       ["a TEST-class tenant", { deletedAt: null, class: "TEST" }],
       ["a soft-deleted tenant", { deletedAt: new Date("2026-09-01"), class: "PRODUCTION" }],
-    ])("#2045: %s — the suspension applies but books no delta", async (_label, row) => {
+    ])("#2045: %s — the cancellation applies but books no delta", async (_label, row) => {
       const { svc, tx, events } = make({
         stripeStatus: "canceled",
         transitionCount: 1,
         addons: [{ priceSnapshot: 12, quantity: 2 }],
       });
       tx.tenant.findUniqueOrThrow.mockResolvedValue(row);
-      await svc.suspendOverdueTenants();
+      await svc.reconcileCanceledSubscriptions();
       expect(tx.tenant.updateMany.mock.calls[0][0]).toMatchObject({
-        data: { status: "SUSPENDED" },
+        data: { status: "CANCELLED" },
       });
-      expect(deltaOf(events, BILLING_EVENTS.SUBSCRIPTION_SUSPENDED) ?? 0).toBe(0);
+      expect(deltaOf(events, BILLING_EVENTS.SUBSCRIPTION_CANCELED) ?? 0).toBe(0);
     });
 
-    it("N3: notifies the tenant admin with reason 'subscription canceled' (the only arm left: A2 removed overdue payment) only when the suspension actually applied", async () => {
+    it("N3: sends the ONE cancellation notice (never the suspension notice) when the cancel applied", async () => {
       const { svc, billingNotification } = make({ stripeStatus: "canceled", transitionCount: 1 });
-      await svc.suspendOverdueTenants();
-      expect(billingNotification.notifySuspended).toHaveBeenCalledWith(
-        "t1",
-        "subscription canceled",
-      );
-    });
-
-    it("N3: does NOT notify when the CAS lost the race (already suspended elsewhere)", async () => {
-      const { svc, billingNotification } = make({ stripeStatus: "canceled", transitionCount: 0 });
-      await svc.suspendOverdueTenants();
+      await svc.reconcileCanceledSubscriptions();
+      expect(billingNotification.notifyCancelled).toHaveBeenCalledTimes(1);
+      expect(billingNotification.notifyCancelled).toHaveBeenCalledWith("t1");
       expect(billingNotification.notifySuspended).not.toHaveBeenCalled();
     });
 
-    it("N3: a rejected notifySuspended never blocks the cron tick", async () => {
+    it("SA-934 §3: the cancel also arms cancelAtPeriodEnd and disarms a scheduled downgrade", async () => {
+      const { svc, prisma } = make({ stripeStatus: "canceled", transitionCount: 1 });
+      await svc.reconcileCanceledSubscriptions();
+      expect(prisma.tenantSubscription.update.mock.calls[0][0]).toMatchObject({
+        where: { tenantId: "t1" },
+        data: { cancelAtPeriodEnd: true, downgradeToPlanKey: null },
+      });
+    });
+
+    it("N3: no delta and no notice when the CAS lost the race (the webhook ran first)", async () => {
+      const { svc, billingNotification, events } = make({
+        stripeStatus: "canceled",
+        transitionCount: 0,
+      });
+      await svc.reconcileCanceledSubscriptions();
+      expect(billingNotification.notifyCancelled).not.toHaveBeenCalled();
+      expect(deltaOf(events, BILLING_EVENTS.SUBSCRIPTION_CANCELED)).toBeUndefined();
+    });
+
+    it("N3: a rejected notifyCancelled never blocks the cron tick", async () => {
       const { svc, billingNotification } = make({ stripeStatus: "canceled", transitionCount: 1 });
-      billingNotification.notifySuspended.mockRejectedValueOnce(new Error("email down"));
-      await expect(svc.suspendOverdueTenants()).resolves.toBeUndefined();
+      billingNotification.notifyCancelled.mockRejectedValueOnce(new Error("email down"));
+      await expect(svc.reconcileCanceledSubscriptions()).resolves.toBeUndefined();
     });
 
     it("does NOT transition or emit when Stripe reports the sub is still active", async () => {
       const { svc, prisma, events } = make({ stripeStatus: "active" });
-      await svc.suspendOverdueTenants();
+      await svc.reconcileCanceledSubscriptions();
       expect(prisma.$transaction).not.toHaveBeenCalled();
       expect(events.emit).not.toHaveBeenCalled();
     });
@@ -2120,19 +2133,17 @@ describe("B216 — a Stripe reinstatement LEAVES a downgrade scheduled before th
     ).toHaveLength(1);
   });
 
-  // The fourth transitionAndEmit site (suspendOverdueTenants) is the ONE that must never disarm:
-  // a tenant that goes overdue keeps the downgrade it legitimately scheduled while ACTIVE, so the
-  // sweep can still apply it once the tenant is back. Mirroring the three disarming sites here
-  // would re-create B216 from the other direction.
-  it("pin B216: suspending an overdue tenant leaves a scheduled downgrade armed", async () => {
+  // SA-934 §3: the cron's canceled arm is cancelFromStripe, which disarms like the webhook it backstops: a
+  // CANCELLED tenant's downgrade is superseded (left armed, the 02:00 sweep would re-price a churned tenant).
+  it("pin B216: the canceled-subscription backstop disarms a scheduled downgrade, like the webhook", async () => {
     const { svc, prisma, tx } = make({
       sub: armedSub({ stripeSubId: "sub_1" }),
       stripeStatus: "canceled",
       transitionCount: 1,
     });
-    await svc.suspendOverdueTenants();
-    expect(tx.tenant.updateMany).toHaveBeenCalled(); // the suspension CAS really ran
-    expect(disarmCall(prisma)).toBeUndefined();
+    await svc.reconcileCanceledSubscriptions();
+    expect(tx.tenant.updateMany).toHaveBeenCalled(); // the cancel CAS really ran
+    expect(disarmCall(prisma)).toBeDefined();
   });
 });
 
