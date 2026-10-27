@@ -15,7 +15,7 @@
 // never as a silent pass.
 //
 // WHAT IT CHECKS
-// The register's ledger — `.claude/campaign/status/F##.jsonl`, one shard per
+// The register's ledger — `<register>/status/F##.jsonl`, one shard per
 // batch, seeded with all 179 open bug IDs at campaign kickoff — carries a
 // `state` per ID. Five states make an affirmative claim this script must verify;
 // two make no claim yet and are skipped:
@@ -115,6 +115,7 @@ import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { scrubbedGitEnv } from "./lib/check-git-hooks.mjs";
+import { registryRoot } from "./lib/registry-root.mjs";
 import { isFastMode } from "./lib/verify-scope.mjs";
 import { normalizeEvidence } from "./campaign/normalize-evidence.mjs";
 import {
@@ -148,9 +149,15 @@ function main() {
   const REPORT_COVERAGE_DEFERRED = "campaign-check: report coverage deferred to CI (fast verify)";
   // Overridable via CAMPAIGN_CHECK_STATUS_DIR (mirrors bugs.mjs's BUGS_ROOT
   // seam) so a self-test can drive this REAL command against a throwaway
-  // fixture ledger instead of the repo's own .claude/campaign/status.
-  const statusDir =
-    process.env.CAMPAIGN_CHECK_STATUS_DIR || path.join(REPO_ROOT, ".claude", "campaign", "status");
+  // fixture ledger instead of the register's own status/ directory. The default comes from
+  // registryRoot(); a missing register is a hard stop, never an empty ledger.
+  let statusDir;
+  try {
+    statusDir = process.env.CAMPAIGN_CHECK_STATUS_DIR || path.join(registryRoot(), "status");
+  } catch (err) {
+    console.error(`campaign-check: ${err.message}`);
+    process.exit(2);
+  }
 
   const CLAIM_STATES = new Set([
     "proven",

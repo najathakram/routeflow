@@ -12,7 +12,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { Redirect, useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { BrandGlyph } from "@routeflow/ui/mobile/ios";
 import { OptionPickerSheet } from "../../components/OptionPickerSheet";
@@ -26,8 +26,19 @@ import {
 import { useBuyerSessionStore } from "../../lib/buyer-session-store";
 import { PENDING_LANDING, SELLERLESS_LANDING, postSignInStep } from "../../lib/buyer-route-guard";
 import { GoogleButton } from "@routeflow/ui/mobile/ios";
+import { SHELL_ON } from "../../lib/web-shell/shell-env";
+import { SHELL_BUYER_ROUTE } from "../../lib/web-shell/shell-routing";
 
+/**
+ * W-830: with the hybrid shell on, the buyer sign-in is the web's own (in the shell), so this native
+ * screen is never shown. SHELL_ON is a build-time constant: the hook order never changes.
+ */
 export default function CustomerLoginScreen() {
+  if (SHELL_ON) return <Redirect href={SHELL_BUYER_ROUTE as any} />;
+  return <NativeCustomerLogin />;
+}
+
+function NativeCustomerLogin() {
   const router = useRouter();
   const params = useLocalSearchParams<{ returnTo?: string }>();
   const { setBuyer, setActiveSeller: storeSetSeller } = useBuyerSessionStore();

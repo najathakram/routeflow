@@ -4,7 +4,7 @@ import * as React from "react";
 import { cn } from "@routeflow/ui/web";
 
 /**
- * Buyer merchandising (P5-01): three display flags that put a product on the buyer catalogue's shelves. K11-23
+ * Buyer merchandising (P5-01): three display flags that put a product on the buyer catalog's shelves. K11-23
  * moved the card to the END of the Details body (it used to sit above the SKU row and pushed the price a whole
  * phone screen down); nothing about it was removed. Each switch saves at once, in view and edit mode alike.
  */
@@ -91,7 +91,7 @@ export function ProductMerchandising({
         </p>
       )}
       <p className="mb-3 text-xs text-navy/60">
-        Highlight this product on the buyer catalogue with badges and smart collections. These are
+        Highlight this product on the buyer catalog with badges and smart collections. These are
         display flags only — they don&apos;t change price.
       </p>
       <div className="grid gap-2 sm:grid-cols-3">

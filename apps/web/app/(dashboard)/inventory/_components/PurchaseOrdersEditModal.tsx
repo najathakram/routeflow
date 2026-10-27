@@ -260,7 +260,7 @@ function EditModalBody({
               </div>
               <div>
                 <label htmlFor="po-edit-date" className="mb-1 block text-xs text-navy">
-                  Expected Date
+                  Expected date
                 </label>
                 <input
                   id="po-edit-date"

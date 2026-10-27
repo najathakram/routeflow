@@ -80,7 +80,6 @@ import {
 import {
   labelIdForText,
   labelNameKey,
-  LabelLockTimeoutError,
   lockLabelCategories,
   syncCategoryLabel,
 } from "../product-categories/label-writer";
@@ -111,6 +110,7 @@ import {
   type ProductDeleteOutcome,
 } from "./product-delete-classify";
 import { boundedTenantTx, stockTxBounded } from "../common/stock-tx";
+import { assertRefsInTenant } from "../common/assert-refs-in-tenant";
 import { lockAndAssertRecipeGuards } from "./recipe-update-guard";
 import {
   applyFamilyPriceBeforeUpdate,
@@ -827,6 +827,8 @@ export class ProductsService {
     // B990: the typed free-text category too, UNCONDITIONALLY: even with a structured subcategory chosen or a parent without one
     // the written value can still be the typed text, and checking at the top is before any read or write.
     if (dto.category !== undefined) assertSafeProductCategory(dto.category);
+    // 681 site 16: a client-sent tracked category must be this tenant's own, proven before any tx.
+    await assertRefsInTenant(this.prisma, { trackedCategoryIds: [dto.trackedCategoryId] });
     await this.assertCanFlagTobacco(dto.isTobacco);
     if (dto.msrp !== undefined) await this.assertMsrpAllowed();
     if (dto.reorderPoint !== undefined || dto.reorderQty !== undefined) {
@@ -1117,6 +1119,8 @@ export class ProductsService {
       reparentVia?: FamilyAssignVia;
     },
   ) {
+    // 681 site 16: a client-sent tracked category must be this tenant's own, proven before any tx.
+    await assertRefsInTenant(this.prisma, { trackedCategoryIds: [dto.trackedCategoryId] });
     await this.assertCanFlagTobacco(dto.isTobacco);
     if (dto.msrp !== undefined) await this.assertMsrpAllowed();
     if (dto.reorderPoint !== undefined || dto.reorderQty !== undefined) {
@@ -1701,9 +1705,16 @@ export class ProductsService {
       return row;
     });
     // H2: a reparent's deadlock / write conflict (40P01, 40001, P2034 in any shape: the shared L-221 predicate) is the
-    // retryable coded 409, never a raw 500. Nothing was saved (the transaction rolled back).
+    // retryable coded 409, never a raw 500. Nothing was saved (the transaction rolled back). A label-lock conflict has
+    // already surfaced as LabelLockTimeoutError (an HttpException, so not matched here); what reaches this branch lost a
+    // product row race, and says so (Row 519), not "label change in progress".
     const updated = await txDone.catch((e: unknown): never => {
-      if (reparenting && txConflictState(e)) throw new LabelLockTimeoutError();
+      if (reparenting && txConflictState(e)) {
+        throw new ConflictException({
+          code: API_ERROR_CODES.PRODUCT_CHANGED_CONCURRENTLY,
+          message: "This product changed while you were saving it. Reload it and try again.",
+        });
+      }
       throw e;
     });
     // suppressEmit lets a caller that loops this method (bulkAssignParent) emit

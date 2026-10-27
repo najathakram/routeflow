@@ -189,7 +189,7 @@ describe("OrderLineItemCards", () => {
       />,
     );
     expect(screen.getByTestId("order-lines-summary")).toHaveTextContent("1 item · $1,234.50");
-    expect(screen.getByText("Order Total")).toBeInTheDocument();
+    expect(screen.getByText("Order total")).toBeInTheDocument();
     // the footer repeats the amount on its own (the summary carries it inside one text node)
     expect(screen.getByText("$1,234.50")).toBeInTheDocument();
   });

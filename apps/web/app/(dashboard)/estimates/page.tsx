@@ -389,7 +389,7 @@ function CreateEstimateModal({
     }
     toast({
       title: "Product not found",
-      description: `No product matches "${code}"`,
+      description: `No product matches "${code}".`,
       variant: "error",
     });
     setProductSearch("");
@@ -483,7 +483,7 @@ function CreateEstimateModal({
     <Modal
       open={isOpen}
       onClose={onClose}
-      title="New Estimate"
+      title="New estimate"
       description="Create an estimate for a customer."
       footer={
         <>
@@ -505,7 +505,7 @@ function CreateEstimateModal({
             loading={createEstimate.isPending}
             disabled={priceBlocked}
           >
-            Create Estimate
+            Create estimate
           </Button>
         </>
       }
@@ -586,7 +586,7 @@ function CreateEstimateModal({
         {/* Dates */}
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="mb-1.5 block text-sm font-medium text-navy/80">Issue Date</label>
+            <label className="mb-1.5 block text-sm font-medium text-navy/80">Issue date</label>
             <input
               type="date"
               value={issueDate}
@@ -596,7 +596,7 @@ function CreateEstimateModal({
             {errors.issueDate && <p className="mt-1 text-xs text-danger">{errors.issueDate}</p>}
           </div>
           <div>
-            <label className="mb-1.5 block text-sm font-medium text-navy/80">Expiry Date</label>
+            <label className="mb-1.5 block text-sm font-medium text-navy/80">Expiry date</label>
             <input
               type="date"
               value={expiryDate}
@@ -948,7 +948,7 @@ export default function EstimatesPage() {
               leftIcon={<Plus className="h-4 w-4" />}
               onClick={() => setIsCreateOpen(true)}
             >
-              New Estimate
+              New estimate
             </WriteButton>
             <ReadOnlyHint />
           </div>
@@ -1078,9 +1078,9 @@ export default function EstimatesPage() {
               <tr>
                 <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Estimate #</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Customer</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Issue Date</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Issue date</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">
-                  Expiry Date
+                  Expiry date
                 </th>
                 <th className="px-4 py-3 text-right text-xs font-medium text-navy/70">Total</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Status</th>

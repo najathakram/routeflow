@@ -79,8 +79,8 @@ function BuyerVerifyEmailInner() {
           )}
           <MailCheck className="h-8 w-8 text-buyer-600" />
           <p className="text-sm text-navy/70">
-            Confirm this is your email address. If you didn&apos;t create a RouteFlow buyer account,
-            close this page — don&apos;t verify.
+            Confirm this is your email address. If you didn&apos;t create a RouteFlow account, close
+            this page — don&apos;t verify.
           </p>
           <Button onClick={onVerify} loading={submitting} className="rf-btn w-full">
             Verify my email

@@ -30,6 +30,7 @@ import {
   type PendingScan,
 } from "./pending-scan-queue";
 import type { ScanResolution } from "./useScanCodeHandler";
+import { formatMoney } from "@/lib/format";
 import { useContinuousScanCamera, type ScanFrame } from "./useContinuousScanCamera";
 import {
   distinctSkuCount,
@@ -271,7 +272,7 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string; priceT
       } else {
         // The queue is genuinely full — this scan really was refused, not queued.
         playScanCue("rejected");
-        showFeedback("error", "Too many scans are waiting for signal - reconnect, then rescan");
+        showFeedback("error", "Too many scans are waiting for signal — reconnect, then rescan");
       }
     },
     [setPendingBoth, showFeedback],
@@ -314,7 +315,7 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string; priceT
       // A counted scan the queue had no room for is never silent: the rejected cue + a line to rescan.
       if (step.dropped) {
         playScanCue("rejected");
-        showFeedback("error", "Too many scans waiting - that one wasn't counted, scan it again");
+        showFeedback("error", "Too many scans waiting — that one wasn't counted, scan it again");
       }
       if (step.startResolving) void resolveOne(step.startResolving);
     },
@@ -496,7 +497,7 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string; priceT
   /** "Retry now": due immediately, or - honestly - say we are still offline. */
   const retryNow = () => {
     if (typeof navigator !== "undefined" && navigator.onLine === false) {
-      showFeedback("queued", "Still offline - will retry as soon as the connection returns");
+      showFeedback("queued", "Still offline — will retry as soon as the connection returns");
       return;
     }
     setPendingBoth(retryAllNow(pendingRef.current, Date.now()));
@@ -524,7 +525,7 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string; priceT
       const n = pendingRef.current.length;
       showFeedback(
         "queued",
-        `${n} scan${n === 1 ? "" : "s"} still waiting for signal - press Done again to discard`,
+        `${n} scan${n === 1 ? "" : "s"} still waiting for signal — press Done again to discard`,
       );
       return;
     }
@@ -832,7 +833,7 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string; priceT
 
       <footer className="flex h-14 shrink-0 items-center justify-between border-t border-surface-border bg-white px-3 pb-[env(safe-area-inset-bottom)]">
         <p className="text-sm font-semibold text-navy" aria-live="polite">
-          {count} {count === 1 ? "item" : "items"} · ${total.toFixed(2)}
+          {count} {count === 1 ? "item" : "items"} · {formatMoney(total)}
         </p>
         <Button type="button" onClick={requestClose}>
           Done

@@ -216,7 +216,7 @@ export function PurchaseOrdersTab({
           onChange={(e) => onFilter(setStatusFilter, e.target.value)}
           className="rounded border border-surface-border px-3 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
         >
-          <option value="">All Statuses</option>
+          <option value="">All statuses</option>
           {(["DRAFT", "SENT", "PARTIAL", "RECEIVED", "CLOSED"] as POStatus[]).map((s) => (
             <option key={s} value={s}>
               {s.charAt(0) + s.slice(1).toLowerCase()}
@@ -230,7 +230,7 @@ export function PurchaseOrdersTab({
           onChange={(e) => onFilter(setSupplierFilter, e.target.value)}
           className="rounded border border-surface-border px-3 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
         >
-          <option value="">All Suppliers</option>
+          <option value="">All suppliers</option>
           {suppliers.map((s) => (
             <option key={s.id} value={s.id}>
               {s.name}

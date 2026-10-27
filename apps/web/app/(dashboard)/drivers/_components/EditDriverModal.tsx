@@ -117,7 +117,7 @@ export function EditDriverModal({ driver, isOpen, onClose, onSave }: EditDriverM
     <Modal
       open={isOpen}
       onClose={handleClose}
-      title="Edit Driver"
+      title="Edit driver"
       description="Update the driver's profile details."
       footer={
         <>
@@ -125,7 +125,7 @@ export function EditDriverModal({ driver, isOpen, onClose, onSave }: EditDriverM
             Cancel
           </Button>
           <Button type="submit" form="edit-driver-form" loading={isSubmitting}>
-            Save Changes
+            Save changes
           </Button>
         </>
       }
@@ -142,7 +142,7 @@ export function EditDriverModal({ driver, isOpen, onClose, onSave }: EditDriverM
           </div>
         )}
         <Input
-          label="Full Name"
+          label="Full name"
           placeholder="Jane Smith"
           register={register("contactName")}
           error={errors.contactName?.message}
@@ -155,25 +155,25 @@ export function EditDriverModal({ driver, isOpen, onClose, onSave }: EditDriverM
           error={errors.phone?.message}
         />
         <Input
-          label="Vehicle Make"
+          label="Vehicle make"
           placeholder="Ford"
           register={register("vehicleMake")}
           error={errors.vehicleMake?.message}
         />
         <Input
-          label="Vehicle Model"
+          label="Vehicle model"
           placeholder="Transit"
           register={register("vehicleModel")}
           error={errors.vehicleModel?.message}
         />
         <Input
-          label="Vehicle Colour"
+          label="Vehicle color"
           placeholder="White"
           register={register("vehicleColour")}
           error={errors.vehicleColour?.message}
         />
         <Input
-          label="Vehicle Plate"
+          label="Vehicle plate"
           placeholder="TX PLT-XXXX"
           register={register("vehiclePlate")}
           error={errors.vehiclePlate?.message}
@@ -188,7 +188,7 @@ export function EditDriverModal({ driver, isOpen, onClose, onSave }: EditDriverM
             </p>
           </div>
           <Input
-            label="Home Address"
+            label="Home address"
             placeholder="42 Home Way"
             register={register("homeLine1")}
             error={errors.homeLine1?.message}

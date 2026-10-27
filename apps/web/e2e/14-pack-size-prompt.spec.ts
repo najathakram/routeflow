@@ -27,7 +27,7 @@ test.describe("Operator — Product-create pack-size prompt (WP2-14)", () => {
 
   /** Opens the create-product modal; returns its heading and a scope for the whole panel. */
   async function openCreateModal(page: Page) {
-    await page.getByRole("button", { name: "New Product", exact: true }).click();
+    await page.getByRole("button", { name: "New product", exact: true }).click();
     const modal = page.getByRole("dialog", { name: "New product" });
     const heading = modal.getByRole("heading", { name: "New product" });
     await expect(heading).toBeVisible({ timeout: 10_000 });

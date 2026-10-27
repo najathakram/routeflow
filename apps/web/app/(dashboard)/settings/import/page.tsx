@@ -87,7 +87,7 @@ const IMPORT_SECTIONS: ImportSection[] = [
   },
   {
     id: "inventory",
-    label: "Inventory Stock Levels",
+    label: "Inventory stock levels",
     description:
       "Sync current stock quantities from Zoho Stock Summary Report (Item Name, SKU, Closing Stock)",
     endpoint: "/import/inventory",
@@ -106,7 +106,7 @@ const IMPORT_SECTIONS: ImportSection[] = [
   },
   {
     id: "payments",
-    label: "Customer Payments",
+    label: "Customer payments",
     description: "Import payment history from Zoho Customer Payments CSV",
     endpoint: "/import/payments",
     icon: DollarSign,
@@ -174,7 +174,7 @@ function ImportCard({ section, step }: { section: ImportSection; step: number })
       let summary =
         d.updated !== undefined
           ? `${d.updated} updated, ${created} created, ${skipped} skipped`
-          : `${d.imported} records imported, ${skipped} skipped`;
+          : `${d.imported} ${d.imported === 1 ? "record" : "records"} imported, ${skipped} skipped`;
       if (duplicates > 0) {
         summary += `, ${duplicates} duplicate${duplicates !== 1 ? "s" : ""} skipped`;
       }
@@ -194,7 +194,7 @@ function ImportCard({ section, step }: { section: ImportSection; step: number })
     } catch (err: any) {
       toast({
         title: "Import failed",
-        description: err?.response?.data?.message ?? "Please check your file format and try again",
+        description: err?.response?.data?.message ?? "Check your file format and try again.",
         variant: "error",
       });
     } finally {
@@ -320,7 +320,7 @@ function LegacyImportBody({ section }: { section: ImportSection }) {
       let summary =
         d.updated !== undefined
           ? `${d.updated} updated, ${created} created, ${skipped} skipped`
-          : `${d.imported} records imported, ${skipped} skipped`;
+          : `${d.imported} ${d.imported === 1 ? "record" : "records"} imported, ${skipped} skipped`;
       if (duplicates > 0) {
         summary += `, ${duplicates} duplicate${duplicates !== 1 ? "s" : ""} skipped`;
       }
@@ -340,7 +340,7 @@ function LegacyImportBody({ section }: { section: ImportSection }) {
     } catch (err: any) {
       toast({
         title: "Import failed",
-        description: err?.response?.data?.message ?? "Please check your file format and try again",
+        description: err?.response?.data?.message ?? "Check your file format and try again.",
         variant: "error",
       });
     } finally {
@@ -799,14 +799,14 @@ function FinishSetupCard() {
 function SettingsImportBody() {
   const { setTitle } = usePageTitle();
   React.useEffect(() => {
-    setTitle("Import Data");
+    setTitle("Import data");
   }, [setTitle]);
 
   return (
     <div className="space-y-6 p-6">
       {/* Header */}
       <div>
-        <h2 className="text-xl font-semibold text-navy">Import from Zoho</h2>
+        <h2 className="text-2xl font-bold text-navy">Import from Zoho</h2>
         <p className="mt-1 text-sm text-navy/70">
           Upload CSV exports from Zoho to migrate your data into RouteFlow.
         </p>
@@ -862,12 +862,12 @@ export default function SettingsImportPage() {
   const { setTitle } = usePageTitle();
   const allowed = isAccountAdmin(user);
   React.useEffect(() => {
-    if (!allowed) setTitle("Import Data");
+    if (!allowed) setTitle("Import data");
   }, [allowed, setTitle]);
   if (!allowed) {
     return (
       <div className="space-y-2 p-6">
-        <h2 className="text-xl font-semibold text-navy">Import Data</h2>
+        <h2 className="text-2xl font-bold text-navy">Import data</h2>
         <p className="text-sm text-navy/50">Only an admin can import data.</p>
       </div>
     );

@@ -28,7 +28,7 @@ export function FulfillPathMoveConfirm({
       open={open}
       onClose={onClose}
       onConfirm={onConfirm}
-      title="Move this order off in-store pickup?"
+      title="Move this order off store pickup?"
       description={
         shown === "SHIP"
           ? "It will no longer be a pickup order. It will ship by carrier: add the carrier and tracking number in the Shipment card, then mark it shipped."

@@ -103,7 +103,7 @@ describe("Settings page parity", () => {
   it("?linked=google shows the connected toast and cleans the URL", async () => {
     window.history.replaceState(null, "", "/settings?linked=google");
     renderWithProviders(<SettingsPage />);
-    expect(await screen.findByText("Google account connected!")).toBeInTheDocument();
+    expect(await screen.findByText("Google account connected")).toBeInTheDocument();
     expect(window.location.search).not.toContain("linked");
   });
 

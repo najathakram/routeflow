@@ -88,7 +88,7 @@ describe("order edit — a LOCKED unit line (SA-388)", () => {
     fireEvent.change(await screen.findByPlaceholderText(/Note for this line/), {
       target: { value: "leave at the side door" },
     });
-    fireEvent.click(await screen.findByRole("button", { name: /Save Draft/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Save draft/ }));
 
     await waitFor(() =>
       expect(toast).toHaveBeenCalledWith(

@@ -118,7 +118,7 @@ function SupplierModal({
       <div className="w-full max-w-lg rounded-xl border border-surface-border bg-white shadow-xl">
         <div className="flex items-center justify-between border-b border-surface-border px-6 py-4">
           <h2 className="text-base font-semibold text-navy">
-            {isEdit ? "Edit Supplier" : "New Supplier"}
+            {isEdit ? "Edit supplier" : "New supplier"}
           </h2>
           <button onClick={onClose} className="text-navy/70 hover:text-navy transition-colors">
             <X className="h-4 w-4" />
@@ -869,7 +869,7 @@ export default function SuppliersPage() {
                 setShowModal(true);
               }}
             >
-              New Supplier
+              New supplier
             </Button>
           </div>
         }

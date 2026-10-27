@@ -38,6 +38,8 @@ const B768_REPORTS = [
   "report-640-restored-grants.mjs", // row 640 (SA-834) - born on the resolver
   "report-exempt-orders-taxed.mjs", // row 635 PR A (B293) - born on the resolver
   "report-order-discounts.mjs", // row 635 PR A (SA-780) - born on the resolver
+  "report-cross-tenant-refs.mjs", // row 681 PR A (SA-936) - born on the resolver
+  "report-order-taxrate-census.mjs", // T15 / SA-761 Order.taxRate census - born on the resolver
 ];
 
 /**

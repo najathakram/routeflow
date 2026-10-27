@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { LEGACY_CONFIG } from "./legacy-config.mjs";
+import { makeRegisterRepo } from "./register-fixture.mjs";
 
 const RF = resolve(dirname(fileURLToPath(import.meta.url)), "..", "bin", "rf.mjs");
 const git = (cwd, ...args) =>
@@ -29,13 +30,14 @@ before(() => {
   git(specs, "add", "README.md");
   git(specs, "commit", "--quiet", "-m", "init");
   git(specs, "push", "--quiet", "-u", "origin", "main");
+  const product = makeRegisterRepo(join(tmp, "product"));
   env = {
     ...process.env,
     RF_OPS_HOME: join(tmp, "home"),
     RF_SPECS_DIR: specs,
     RF_SPECS_REMOTE: remote,
     RF_MACHINE: "testbox",
-    RF_REPO_ROOT: join(tmp, "no-such-repo"),
+    RF_REPO_ROOT: product,
     RF_NO_SYNC: "1",
     RF_ACTOR: "cli-test",
   };
@@ -474,5 +476,24 @@ test(
     assert.equal(r.code, 0, r.stderr);
     assert.equal(JSON.parse(r.stdout).events[0].data.fields.harm, null);
     assert.notEqual((await rf("item", "edit", id, "--harm", "bogus")).code, 0);
+  },
+);
+
+test(
+  "an unreadable register is an error (exit 2) and a failed doctor row, never zero bugs",
+  T,
+  async () => {
+    const saved = env.RF_REPO_ROOT;
+    env.RF_REPO_ROOT = join(tmp, "no-such-repo");
+    try {
+      const s = await rf("sync", "--dry");
+      assert.equal(s.code, 2, s.stdout + s.stderr);
+      assert.match(s.stderr, /bug register unavailable/);
+      const d = await rf("doctor");
+      assert.match(d.stdout + d.stderr, /bugs/);
+      assert.match(d.stdout + d.stderr, /bug register unavailable/);
+    } finally {
+      env.RF_REPO_ROOT = saved;
+    }
   },
 );

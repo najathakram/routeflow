@@ -374,7 +374,7 @@ describe("OrderTemplatesService — stock decrement + regulated levy on generate
       await service.generateDailyOrders();
 
       expect(spy).toHaveBeenCalledTimes(1);
-      const [, isStaffRole] = spy.mock.calls[0];
+      const [, , isStaffRole] = spy.mock.calls[0]; // (template, targetDay, isStaffRole, ...)
       expect(isStaffRole).toBe(true);
     });
   });

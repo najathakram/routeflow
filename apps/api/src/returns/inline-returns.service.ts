@@ -37,7 +37,7 @@ import {
 } from "@nestjs/common";
 import { MovementType, Prisma, UserRole } from "@prisma/client";
 import { applyStockMovements } from "../inventory/stock-movements";
-import { roundMoney } from "@routeflow/pricing";
+import { roundMoney, scaleFrozenSplit } from "@routeflow/pricing";
 import { PrismaService } from "../prisma/prisma.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
@@ -66,6 +66,8 @@ import { restockReturnItems } from "./returns-restock.util";
 import { sumInlineReturnCredit } from "./inline-return-credit.util";
 import { InlineReturnsQuoteService } from "./inline-returns-quote.service";
 import { creditOverrideAuditItems } from "./inline-returns-pricing";
+import { assertWalkInCaptureRefused } from "./walk-in-return-guard";
+import { assertCreditCustomerNotWalkIn } from "../credit-notes/walk-in-credit-guard";
 import type { CaptureInlineReturnDto, InlineReturnLinesDto } from "./dto/capture-inline-return.dto";
 import type { ApproveInlineReturnDto } from "./dto/approve-inline-return.dto";
 import type { RefundInlineReturnDto } from "./dto/refund-inline-return.dto";
@@ -410,6 +412,11 @@ export class InlineReturnsService {
 
     // B948 / SA-628a (c): a source line may never be credited past its value by a credit note + an inline return.
     await this.assertWithinLineHeadroom(tx, priced.chunks);
+
+    // W-913: a walk-in return is a till refund, never store credit: judged before any write (a REFUND keeps assertRefundable)
+    if (!opts.forRefund) {
+      await assertWalkInCaptureRefused(tx, { customerId: order.customerId, user, priced });
+    }
 
     // SA-727: a REFUND-resolution capture is refused HERE, before any write, unless the refund could succeed: every returned
     // line on a source invoice paid in full, and worth money. Otherwise the goods would be restocked with no way to resolve
@@ -1097,6 +1104,8 @@ export class InlineReturnsService {
       creditNoteNumber?: string;
       /** In-order path (#2094): cap the system-owned intent at the order's remaining balance. */
       capIntentToOrderBalance?: boolean;
+      /** SA-980: a REDUCED hold approval re-freezes the Return's split pro rata, in the same guarded write. */
+      refrozenSplit?: { creditSubtotal: number; creditTax: number; creditCategoryTax: number };
     },
   ): Promise<any> {
     if (!(amount > 0.001)) return null;
@@ -1142,6 +1151,7 @@ export class InlineReturnsService {
         refundedAt: new Date(),
         holdReason: null,
         heldAmount: null,
+        ...(extra?.refrozenSplit ?? {}),
         ...(extra?.approvedById
           ? { approvedById: extra.approvedById, approvedAt: new Date() }
           : {}),
@@ -1326,7 +1336,28 @@ export class InlineReturnsService {
       await restockReturnItems(tx, fresh, user.sub);
       await this.reverseLedgerForReturn(tx, fresh);
 
-      minted = await this.issueCreditInTx(tx, fresh, amount, tenantId, { approvedById: user.sub });
+      // SA-980: a reduced approval re-freezes the split pro rata (only when a split was frozen and the amount differs).
+      let refrozenSplit:
+        { creditSubtotal: number; creditTax: number; creditCategoryTax: number } | undefined;
+      if (fresh.creditSubtotal != null) {
+        const frozen = {
+          net: Number(fresh.creditSubtotal),
+          tax: Number(fresh.creditTax ?? 0),
+          categoryTax: Number(fresh.creditCategoryTax ?? 0),
+        };
+        if (Math.abs(amount - roundMoney(frozen.net + frozen.tax + frozen.categoryTax)) > 0.001) {
+          const s = scaleFrozenSplit(frozen, amount);
+          refrozenSplit = {
+            creditSubtotal: s.net,
+            creditTax: s.tax,
+            creditCategoryTax: s.categoryTax,
+          };
+        }
+      }
+      minted = await this.issueCreditInTx(tx, fresh, amount, tenantId, {
+        approvedById: user.sub,
+        refrozenSplit,
+      });
       if (fresh.holdReason === ALREADY_RETURNED_HOLD_REASON) {
         await tx.auditLog.create({
           data: {
@@ -1610,6 +1641,7 @@ export class InlineReturnsService {
         if (await this.isStoreCreditReplay(tx, fresh)) return; // nothing minted, nothing to emit
         throw this.alreadyResolved();
       }
+      await assertCreditCustomerNotWalkIn(tx, fresh.customerId); // W-913: a walk-in return is never turned into credit
       if (!isRefundPending(fresh) || fresh.holdReason) {
         throw new ConflictException({
           code: API_ERROR_CODES.RETURN_NOT_REFUNDABLE,

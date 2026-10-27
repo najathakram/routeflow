@@ -11,6 +11,7 @@ import {
 } from "react-native";
 import { ios } from "@routeflow/ui/tokens";
 import type { PickupCompleteRequest } from "@routeflow/types";
+import { HAND_OVER_SHEET_COPY, handOverPrimaryLabel } from "../lib/pos-handover-sheet-copy";
 import {
   POS_COPY,
   POS_TENDER_METHODS,
@@ -137,10 +138,10 @@ export function PosHandOverSheet({
               </View>
               {method === "CASH" ? (
                 <>
-                  <Text style={styles.label}>Amount ($)</Text>
+                  <Text style={styles.label}>{HAND_OVER_SHEET_COPY.cashReceived}</Text>
                   <TextInput
                     value={amount}
-                    accessibilityLabel="Amount"
+                    accessibilityLabel={HAND_OVER_SHEET_COPY.cashReceived}
                     onChangeText={setAmount}
                     keyboardType="decimal-pad"
                     placeholder={balanceDue.toFixed(2)}
@@ -167,19 +168,19 @@ export function PosHandOverSheet({
           )}
           {problem || error ? <Text style={styles.error}>{problem ?? error}</Text> : null}
           <Pressable
-            style={[styles.primary, submitting && { opacity: 0.5 }]}
+            style={[styles.primary, (submitting || !ready) && { opacity: 0.5 }]}
             disabled={submitting || !ready}
             onPress={() => submit(false)}
             accessibilityRole="button"
+            accessibilityState={{ disabled: submitting || !ready }}
           >
             <Text style={styles.primaryText}>
-              {submitting
-                ? "Saving…"
-                : !ready
-                  ? "Balance unavailable"
-                  : nothingOwed
-                    ? copy.action
-                    : `${copy.action} and take payment`}
+              {handOverPrimaryLabel({
+                action: copy.action,
+                submitting: submitting === true,
+                ready,
+                nothingOwed,
+              })}
             </Text>
           </Pressable>
           {posMayHandOverUnpaid(isWalkIn) && ready && !nothingOwed ? (

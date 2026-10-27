@@ -23,6 +23,15 @@ export function useOrderOverpayGuard(
   const [info, setInfo] = React.useState<OrderOverpayInfo | null>(null);
   const [returnOpen, setReturnOpen] = React.useState(false);
   const hasInlineReturns = useHasAddon(ORDERS_INLINE_RETURNS_ADDON);
+  const noticeRef = React.useRef<HTMLDivElement>(null);
+
+  // Row 313: the notice sits by the line items, far above Save on a long order, so a refusal looked like nothing
+  // happened. Each new refusal brings it into view and takes focus (role="alert" alone does not move the eye).
+  React.useEffect(() => {
+    if (!info) return;
+    noticeRef.current?.scrollIntoView?.({ block: "center", behavior: "smooth" });
+    noticeRef.current?.focus({ preventScroll: true });
+  }, [info]);
 
   // The notice belongs to edit mode: leaving it (Cancel, a successful save, a status change) must not leave a
   // stale "this edit would overpay" notice, or its open return dialog, on the read-only page.
@@ -44,9 +53,11 @@ export function useOrderOverpayGuard(
 
   const node = info ? (
     <div
+      ref={noticeRef}
       role="alert"
+      tabIndex={-1}
       data-testid="order-overpay-notice"
-      className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-navy"
+      className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-navy focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
     >
       <p>{orderOverpayCopy(info, hasInlineReturns)}</p>
       <div className="mt-2 flex gap-2">

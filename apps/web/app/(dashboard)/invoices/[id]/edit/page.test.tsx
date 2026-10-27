@@ -94,7 +94,7 @@ describe("invoice edit page — a draft holding a unit line", () => {
     );
     // no form at all: nothing to save, so nothing can convert the line
     expect(screen.queryByRole("button", { name: /save changes/i })).toBeNull();
-    expect(screen.queryByText("Line Items")).toBeNull();
+    expect(screen.queryByText("Line items")).toBeNull();
     expect(updateMutate).not.toHaveBeenCalled();
     expect(updateMutateAsync).not.toHaveBeenCalled();
   });
@@ -107,11 +107,11 @@ describe("invoice edit page — a draft holding a unit line", () => {
 });
 
 describe("invoice edit page — FLAG-OFF characterization: a pack-only draft edits exactly as before", () => {
-  it("renders the edit form (Line Items, Save Changes) and no unit refusal", () => {
+  it("renders the edit form (Line items, Save changes) and no unit refusal", () => {
     mockInvoice = draft([packLine]);
     renderWithProviders(<EditInvoicePage />);
 
-    expect(screen.getByText("Line Items")).toBeInTheDocument();
+    expect(screen.getByText("Line items")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /save changes/i })).toBeInTheDocument();
     expect(screen.queryByText(/can.t be edited here yet/i)).toBeNull();
   });
