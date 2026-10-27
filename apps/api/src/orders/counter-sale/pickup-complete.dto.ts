@@ -1,4 +1,10 @@
-import { IsOptional, ValidateNested, registerDecorator } from "class-validator";
+import {
+  IsBoolean,
+  IsObject,
+  IsOptional,
+  ValidateNested,
+  registerDecorator,
+} from "class-validator";
 import { Transform, Type } from "class-transformer";
 import { REGISTER_KEY_PATTERN } from "@routeflow/pricing";
 import { CounterSalePaymentDto } from "./counter-sale.dto";
@@ -19,6 +25,7 @@ const IsRegisterKey = () => (target: object, propertyName: string) =>
 export class PickupCompleteDto {
   /** Omit to hand the order over unpaid (on account). A walk-in must pay. */
   @IsOptional()
+  @IsObject() // W-887: a list is the same malformed shape (isObject excludes arrays)
   @ValidateNested()
   @Type(() => CounterSalePaymentDto)
   payment?: CounterSalePaymentDto;
@@ -33,4 +40,9 @@ export class PickupCompleteDto {
   @IsOptional()
   @IsRegisterKey()
   registerKey?: string;
+
+  /** I-120 R8 (owner 7a Q1 = A): the operator confirmed taking an order on a driver's run off the run. */
+  @IsOptional()
+  @IsBoolean()
+  takeOffRun?: boolean;
 }

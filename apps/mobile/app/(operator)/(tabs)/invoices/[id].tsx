@@ -37,7 +37,8 @@ import {
   useUnapplyCreditNote,
 } from "../../../../lib/api/credit-notes";
 import { useApplyAdvancePayment, useCustomerAdvancePayments } from "../../../../lib/api/customers";
-import { useGetPaymentImageUrl } from "../../../../lib/api/payments";
+import { useGetPaymentImageUrl, useUpdatePayment } from "../../../../lib/api/payments";
+import { noLongerFitsCopy, voidPaymentBody } from "../../../../lib/payment-no-longer-fits";
 import { deriveInvoiceVariant } from "../../../../lib/invoice-pdf-variant";
 import { invoiceShowsTerms } from "../../../../lib/invoice-sale-terms";
 import { fmtCalendarDate } from "../../../../lib/format-date";
@@ -69,6 +70,8 @@ import { unvoidAmendedPeriodNote } from "@routeflow/types/unvoid-amended-period"
 import { freeUnitsLabel } from "../../../../lib/buyer-cart-logic";
 import { ACTIVATION_BUDGET_MS, sharePdf } from "../../../../lib/share-pdf";
 import { printPdf } from "../../../../lib/print-pdf";
+import { RestrictionOverrideNote } from "../../../../components/RestrictionOverrideNote";
+import { useRestrictionWarningRetry } from "../../../../lib/use-restriction-warning-retry";
 import { overpaidText, revisedBadgeText } from "../../../../lib/invoice-revision";
 import {
   nextPdfSharePhase,
@@ -162,8 +165,10 @@ export default function InvoiceDetailScreen() {
   const updateMut = useUpdateInvoice();
   const shipmentMut = useUpdateInvoiceShipment();
   const getImageUrlMut = useGetPaymentImageUrl();
+  const voidPaymentMut = useUpdatePayment();
   const reminderMut = useSendInvoiceReminder();
   const duplicateMut = useDuplicateInvoice();
+  const rw = useRestrictionWarningRetry(); // row 510: staff warning + override dialog
   const reopenMut = useReopenInvoice();
   const unvoidMut = useUnvoidInvoice();
   const revertMut = useRevertInvoiceToDraft();
@@ -574,12 +579,14 @@ export default function InvoiceDetailScreen() {
     // Real POST /invoices/:id/duplicate — preserves the box split + per-line
     // discount/taxRate (web hand-rolls a lossy re-create here; deliberately
     // not mirrored, RF-011).
-    duplicateMut.mutate(id, {
+    duplicateMut.mutate(rw.attach(id), {
       onSuccess: (inv) => {
         showToast(`New draft ${inv.invoiceNumber} created`);
         router.push(`/(operator)/invoices/${inv.id}`);
       },
-      onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+      onError: (e: any) =>
+        rw.handle(e, handleDuplicate) ||
+        showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
     });
   };
 
@@ -962,6 +969,7 @@ export default function InvoiceDetailScreen() {
                           {it.notes}
                         </Text>
                       ) : null}
+                      <RestrictionOverrideNote line={it} />
                       {invoiceLineSubLines(it).map((text, i) => (
                         <Text key={i} style={styles.itemSub} testID="line-component-sub-line">
                           {text}
@@ -1096,6 +1104,9 @@ export default function InvoiceDetailScreen() {
                           </Text>
                         </Pressable>
                       ) : null}
+                      {noLongerFitsCopy(p as never) ? (
+                        <Text style={styles.payMeta}>{noLongerFitsCopy(p as never)}</Text>
+                      ) : null}
                       {pay.imageKey ? (
                         <Pressable
                           style={styles.viewReceiptRow}
@@ -1109,6 +1120,22 @@ export default function InvoiceDetailScreen() {
                         </Pressable>
                       ) : null}
                     </View>
+                    {noLongerFitsCopy(p as never) ? (
+                      <Pressable
+                        hitSlop={8}
+                        style={styles.payEditBtn}
+                        onPress={() =>
+                          voidPaymentMut.mutate({
+                            invoiceId: String(id),
+                            paymentId: p.id,
+                            ...voidPaymentBody(p),
+                          } as never)
+                        }
+                        accessibilityLabel="Void payment"
+                      >
+                        <Ionicons name="close-circle-outline" size={16} color={ios.brand} />
+                      </Pressable>
+                    ) : null}
                     <Text style={styles.payAmount}>+{fmtCurrency(p.amount)}</Text>
                     {isPaymentEditable(p.method, p.status, invoice.status) ? (
                       <Pressable
@@ -1166,28 +1193,31 @@ export default function InvoiceDetailScreen() {
                 ]}
                 onPress={() => {
                   if (!id) return;
-                  updateMut.mutate(
-                    {
-                      id,
-                      dueDate: dueDateInput.trim() || undefined,
-                      expectedUpdatedAt: dueDateToken.current, // H4: as the modal opened
-                    },
-                    {
-                      onSuccess: () => {
-                        showToast("Due date updated");
-                        setDueDateModal(false);
-                        refetch();
-                      },
-                      onError: (e: any) => {
-                        if (isInvoiceStale(e)) {
-                          showToast(INVOICE_STALE_COPY); // H4: fixed copy, then the latest
+                  const saveDueDate = () =>
+                    updateMut.mutate(
+                      rw.attach({
+                        id,
+                        dueDate: dueDateInput.trim() || undefined,
+                        expectedUpdatedAt: dueDateToken.current, // H4: as the modal opened
+                      }),
+                      {
+                        onSuccess: () => {
+                          showToast("Due date updated");
+                          setDueDateModal(false);
                           refetch();
-                          return;
-                        }
-                        showToast(e?.response?.data?.message ?? e?.message ?? "Try again.");
+                        },
+                        onError: (e: any) => {
+                          if (rw.handle(e, saveDueDate)) return; // row 510
+                          if (isInvoiceStale(e)) {
+                            showToast(INVOICE_STALE_COPY); // H4: fixed copy, then the latest
+                            refetch();
+                            return;
+                          }
+                          showToast(e?.response?.data?.message ?? e?.message ?? "Try again.");
+                        },
                       },
-                    },
-                  );
+                    );
+                  saveDueDate();
                 }}
                 disabled={updateMut.isPending}
               >
@@ -1201,6 +1231,7 @@ export default function InvoiceDetailScreen() {
           </Pressable>
         </Pressable>
       </Modal>
+      {rw.modal}
 
       <ShipmentEditModal
         open={shipmentModal}

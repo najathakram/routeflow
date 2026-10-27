@@ -1,9 +1,9 @@
 import { headerLine } from "./unknown-state";
 
 const OFF_TAIL =
-  "Until it's set, products with a legal state ban stay hidden from them in your portal and can't be ordered there. Other state limits won't reach them. Staff orders and invoices aren't checked (turn on 'Also block restricted products on staff orders and invoices' to block them).";
+  "Until it's set, products with a state restriction stay hidden from them in your portal and can't be ordered there. Other state limits won't reach them. Staff orders and invoices aren't checked (turn on 'Also warn about restricted products on staff orders and invoices' to check them).";
 const ON_TAIL =
-  "Until it's set, products with a legal state ban stay hidden from them in your portal, and they can't be sold those products on any order. Other state limits won't reach them.";
+  "Until it's set, products with a state restriction stay hidden from them in your portal and can't be ordered there. Other state limits won't reach them. On staff orders and invoices, staff are warned and can choose Sell anyway with a reason; drivers can't.";
 
 describe("headerLine (M5)", () => {
   it("switch off: says staff orders are not checked", () => {
@@ -12,7 +12,7 @@ describe("headerLine (M5)", () => {
     expect(line).not.toMatch(/can still order/);
   });
 
-  it("switch on: says the products cannot be sold on any order", () => {
+  it("switch on (row 510): says staff are warned and can override, never that staff orders are unchecked", () => {
     expect(headerLine(5, false, true)).toBe(`5 customers need a state. ${ON_TAIL}`);
   });
 

@@ -17,7 +17,7 @@ export default function EditRecurringInvoicePage() {
   const updateRecurring = useUpdateRecurringInvoice();
 
   React.useEffect(() => {
-    setTitle("Edit Recurring Template");
+    setTitle("Edit recurring template");
   }, [setTitle]);
 
   return (
@@ -29,7 +29,7 @@ export default function EditRecurringInvoicePage() {
         <ArrowLeft className="h-4 w-4" />
         Recurring Invoices
       </Link>
-      <h2 className="text-2xl font-bold text-navy">Edit Recurring Template</h2>
+      <h2 className="text-2xl font-bold text-navy">Edit recurring template</h2>
       {isLoading ? (
         <div className="flex items-center justify-center p-12">
           <Loader2 className="h-8 w-8 animate-spin text-navy/70" />
@@ -46,7 +46,7 @@ export default function EditRecurringInvoicePage() {
           mode="edit"
           initial={template}
           isPending={updateRecurring.isPending}
-          submitLabel="Save Changes"
+          submitLabel="Save changes"
           onSubmit={({ customerId: _customerId, ...dto }) =>
             updateRecurring.mutate(
               { id: template.id, ...dto },

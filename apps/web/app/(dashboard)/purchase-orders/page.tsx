@@ -15,7 +15,7 @@ import type { Supplier } from "../inventory/_components/purchase-orders-shared";
 export default function PurchaseOrdersPage() {
   const { setTitle } = usePageTitle();
   React.useEffect(() => {
-    setTitle("Purchase Orders");
+    setTitle("Purchase orders");
   }, [setTitle]);
 
   const [highlightId, setHighlightId] = React.useState<string | null>(null);
@@ -40,7 +40,7 @@ export default function PurchaseOrdersPage() {
   return (
     <div className="space-y-5 p-6">
       <PageHeader
-        title="Purchase Orders"
+        title="Purchase orders"
         subtitle="Orders you place with suppliers — draft, send, receive into stock."
       />
       <PurchaseOrdersTab

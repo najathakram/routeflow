@@ -35,6 +35,11 @@ const REGISTRY: Record<string, Entry> = {
     kind: "exempt",
     reason: "manual invoice lines carry no order provenance and are never composed",
   },
+  "import/import-restriction-marker.ts::markImportedRestrictedLines": {
+    kind: "exempt",
+    reason:
+      "row 510: writes only the four restrictionOverride* stamp columns on a just-imported invoice line (an audit mark); no qty, price or composition column",
+  },
   "invoices/invoices.service.ts::createSplitInvoices": { kind: "invoice" },
   "invoices/invoices.service.ts::reconcileOrderDraftInvoiceLocked": { kind: "invoice" },
   // SA-760 Q-760-1: the DRAFT-partial price follow. Its lines come from the shared builder (planned via
@@ -49,6 +54,11 @@ const REGISTRY: Record<string, Entry> = {
       "an order-linked invoice cannot be duplicated (RF-011); composed lines exist only on those",
   },
   "invoices/invoices.service.ts::update": { kind: "invoice" },
+  "invoices/kept-invoice-lines.ts::rebuildKeptItems": {
+    kind: "exempt",
+    reason:
+      "rebuildSiblingDrafts step: deletes the non-kept rows and updates the kept ones in place; the caller builds the created lines through buildInvoiceItemData",
+  },
   "orders/line-composition.ts::syncLineCompositions": {
     kind: "exempt",
     reason:

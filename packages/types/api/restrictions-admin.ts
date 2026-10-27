@@ -79,7 +79,7 @@ export interface BulkRestrictionRequest {
   jurisdiction: RestrictionJurisdictionValue;
   /** 2-letter USPS codes; required (non-empty) when jurisdiction is STATE. */
   states: string[];
-  /** Server default "BUYER_PORTAL"; the web's "Legal ban" checkbox sends "ALL". */
+  /** Server default "BUYER_PORTAL"; the web's "Applies to staff too" checkbox sends "ALL". */
   surface?: RestrictionSurfaceValue;
   /** Server default "Portal limit". */
   reason?: string;
@@ -346,13 +346,20 @@ export interface RuleEditCommitRequest extends RuleEditRequest {
 /** The most open orders + drafts (together) the edit preview counts; past it the impact is `capped` (a lower bound). */
 export const IMPACT_SCAN_MAX_DOCUMENTS = 2000;
 
-/** The ONE copy for the edit impact line (row 510 changes this text in one place). */
-export function ruleEditImpactCopy(count: number, capped = false): string {
-  const tail =
-    "have products this change now restricts. They'll be checked when they're next edited, promoted or invoiced.";
-  if (capped) {
-    return `${IMPACT_SCAN_MAX_DOCUMENTS.toLocaleString("en-US")}+ open orders and drafts ${tail}`;
-  }
-  const n = `${count} open order${count === 1 ? "" : "s"}`;
-  return `${n} ${count === 1 ? "has" : "have"} products this change now restricts. They'll be checked when they're next edited, promoted or invoiced.`;
+/**
+ * The ONE copy for the edit impact line, by the tenant's owner-only staff-orders switch (`selling_restrictions.enabled`).
+ * ON (row 510): staff are WARNED (and may sell with a reason) and buyers are blocked. OFF: buyers are blocked and staff
+ * orders are not checked, so it never says staff are warned. `capped`: the scan stopped at `IMPACT_SCAN_MAX_DOCUMENTS`, so
+ * the count is a lower bound.
+ */
+export function ruleEditImpactCopy(count: number, capped: boolean, staffChecked: boolean): string {
+  const one = !capped && count === 1;
+  const subject = capped
+    ? `${IMPACT_SCAN_MAX_DOCUMENTS.toLocaleString("en-US")}+ open orders and drafts have`
+    : `${count} open order${one ? " has" : "s have"}`;
+  const them = one ? "it" : "them";
+  const tail = staffChecked
+    ? `Staff will be warned when they next edit or promote ${them}; buyers can't order ${them}.`
+    : `Buyers can't order ${them}. Staff orders and invoices aren't checked (turn on 'Also warn about restricted products on staff orders and invoices' to check them).`;
+  return `${subject} products this change now restricts. ${tail}`;
 }

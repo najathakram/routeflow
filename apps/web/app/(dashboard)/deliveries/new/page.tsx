@@ -13,6 +13,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { Badge, Button, Select, useToast } from "@routeflow/ui/web";
+import { useOnTenantToday } from "@/lib/tenant-timezone";
 import { usePageTitle } from "@/lib/page-title-context";
 import {
   useCreateTrip,
@@ -47,6 +48,7 @@ import {
   type RoutePlanningDriverOption,
 } from "@/components/RoutePlanningControls";
 import { RouteVariantsPanel } from "@/components/RouteVariantsPanel";
+import { fmtCalendarDate } from "@/lib/formatting";
 import { TripStopList } from "../_components/TripStopList";
 import { TripSkippedPanel, type TripSkippedRow } from "../_components/TripSkippedPanel";
 import { OrderPickerPanel } from "../_components/OrderPickerPanel";
@@ -62,7 +64,7 @@ function summaryLabel(stopCount: number, orderCount: number): string {
 }
 
 function originKindLabel(kind: RoutePlanningOriginKind): string {
-  if (kind === "TENANT") return "Tenant depot";
+  if (kind === "TENANT") return "Your depot";
   if (kind === "DRIVER") return "Driver's home base";
   return "Custom address";
 }
@@ -138,8 +140,9 @@ export default function NewTripPage() {
   const [end, setEnd] = React.useState<TripEndDraft>(EMPTY_END_DRAFT);
   const [avoidTolls, setAvoidTolls] = React.useState(false);
   const [optimizeBy, setOptimizeBy] = React.useState<RouteOptimizeMetric>("TIME");
-  const today = new Date().toISOString().split("T")[0];
-  const [date, setDate] = React.useState(today);
+  // SA-964 §4: the run date is the TENANT's day, seeded when the zone resolves; never the browser's.
+  const [date, setDate] = React.useState("");
+  useOnTenantToday((day) => setDate((cur) => cur || day));
 
   // ── BUILT-phase chrome ──
   const [confirmDiscard, setConfirmDiscard] = React.useState(false);
@@ -533,7 +536,7 @@ export default function NewTripPage() {
   }
 
   function handleSend() {
-    if (!routeId || createRun.isPending) return;
+    if (!routeId || createRun.isPending || !date) return;
     createRun.mutate(
       { routeId, scheduledDate: date, driverId: driverId || undefined, orderIds: frozenOrderIds },
       {
@@ -655,7 +658,7 @@ export default function NewTripPage() {
         <span className="font-medium">Driver:</span> {selectedDriver?.contactName ?? "Unassigned"}
       </p>
       <p className="text-navy">
-        <span className="font-medium">Date:</span> {new Date(date).toLocaleDateString()}
+        <span className="font-medium">Date:</span> {fmtCalendarDate(date)}
       </p>
     </div>
   );
@@ -854,7 +857,7 @@ export default function NewTripPage() {
                   )
                 }
                 onClick={handleSend}
-                disabled={createRun.isPending}
+                disabled={createRun.isPending || !date}
               >
                 {createRun.isPending
                   ? "Sending…"
@@ -899,7 +902,7 @@ export default function NewTripPage() {
           onAddOrder={handleAddOrder}
           orderPickerHint={
             orderIds.length === 0
-              ? 'You can also select orders on the Orders list and choose "Plan delivery trip".'
+              ? 'You can also select orders on the Orders list and choose "Plan delivery".'
               : undefined
           }
           variants={variants}
@@ -961,7 +964,7 @@ export default function NewTripPage() {
                   {selectedDriver?.contactName ?? "Unassigned"}
                 </p>
                 <p className="text-navy">
-                  <span className="font-medium">Date:</span> {new Date(date).toLocaleDateString()}
+                  <span className="font-medium">Date:</span> {fmtCalendarDate(date)}
                 </p>
               </div>
             )}
@@ -973,7 +976,7 @@ export default function NewTripPage() {
                 defaultOpen={orderIds.length === 0}
                 hint={
                   orderIds.length === 0
-                    ? 'You can also select orders on the Orders list and choose "Plan delivery trip".'
+                    ? 'You can also select orders on the Orders list and choose "Plan delivery".'
                     : undefined
                 }
               />

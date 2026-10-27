@@ -36,13 +36,17 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { Prisma, UserRole } from "@prisma/client";
-import { roundMoney } from "@routeflow/pricing";
+import { roundMoney, scaleFrozenSplit } from "@routeflow/pricing";
 import { PrismaService } from "../prisma/prisma.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { RegulatedLedgerService, type FiledPeriod } from "../regulated/regulated-ledger.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
-import { lockOrderRow } from "../credit-notes/credit-note-locks";
+import {
+  creditPaymentTargets,
+  lockCreditNotes,
+  lockOrderRow,
+} from "../credit-notes/credit-note-locks";
 import { NumberingService } from "../import/numbering.service";
 import {
   countCreditableInvoices,
@@ -61,6 +65,8 @@ import { restockReturnItems } from "./returns-restock.util";
 import { sumInlineReturnCredit } from "./inline-return-credit.util";
 import { InlineReturnsQuoteService } from "./inline-returns-quote.service";
 import { creditOverrideAuditItems } from "./inline-returns-pricing";
+import { assertWalkInCaptureRefused } from "./walk-in-return-guard";
+import { assertCreditCustomerNotWalkIn } from "../credit-notes/walk-in-credit-guard";
 import type { CaptureInlineReturnDto, InlineReturnLinesDto } from "./dto/capture-inline-return.dto";
 import type { ApproveInlineReturnDto } from "./dto/approve-inline-return.dto";
 import type { RefundInlineReturnDto } from "./dto/refund-inline-return.dto";
@@ -405,6 +411,11 @@ export class InlineReturnsService {
 
     // B948 / SA-628a (c): a source line may never be credited past its value by a credit note + an inline return.
     await this.assertWithinLineHeadroom(tx, priced.chunks);
+
+    // W-913: a walk-in return is a till refund, never store credit: judged before any write (a REFUND keeps assertRefundable)
+    if (!opts.forRefund) {
+      await assertWalkInCaptureRefused(tx, { customerId: order.customerId, user, priced });
+    }
 
     // SA-727: a REFUND-resolution capture is refused HERE, before any write, unless the refund could succeed: every returned
     // line on a source invoice paid in full, and worth money. Otherwise the goods would be restocked with no way to resolve
@@ -1092,6 +1103,8 @@ export class InlineReturnsService {
       creditNoteNumber?: string;
       /** In-order path (#2094): cap the system-owned intent at the order's remaining balance. */
       capIntentToOrderBalance?: boolean;
+      /** SA-980: a REDUCED hold approval re-freezes the Return's split pro rata, in the same guarded write. */
+      refrozenSplit?: { creditSubtotal: number; creditTax: number; creditCategoryTax: number };
     },
   ): Promise<any> {
     if (!(amount > 0.001)) return null;
@@ -1137,6 +1150,7 @@ export class InlineReturnsService {
         refundedAt: new Date(),
         holdReason: null,
         heldAmount: null,
+        ...(extra?.refrozenSplit ?? {}),
         ...(extra?.approvedById
           ? { approvedById: extra.approvedById, approvedAt: new Date() }
           : {}),
@@ -1321,7 +1335,28 @@ export class InlineReturnsService {
       await restockReturnItems(tx, fresh, user.sub);
       await this.reverseLedgerForReturn(tx, fresh);
 
-      minted = await this.issueCreditInTx(tx, fresh, amount, tenantId, { approvedById: user.sub });
+      // SA-980: a reduced approval re-freezes the split pro rata (only when a split was frozen and the amount differs).
+      let refrozenSplit:
+        { creditSubtotal: number; creditTax: number; creditCategoryTax: number } | undefined;
+      if (fresh.creditSubtotal != null) {
+        const frozen = {
+          net: Number(fresh.creditSubtotal),
+          tax: Number(fresh.creditTax ?? 0),
+          categoryTax: Number(fresh.creditCategoryTax ?? 0),
+        };
+        if (Math.abs(amount - roundMoney(frozen.net + frozen.tax + frozen.categoryTax)) > 0.001) {
+          const s = scaleFrozenSplit(frozen, amount);
+          refrozenSplit = {
+            creditSubtotal: s.net,
+            creditTax: s.tax,
+            creditCategoryTax: s.categoryTax,
+          };
+        }
+      }
+      minted = await this.issueCreditInTx(tx, fresh, amount, tenantId, {
+        approvedById: user.sub,
+        refrozenSplit,
+      });
       if (fresh.holdReason === ALREADY_RETURNED_HOLD_REASON) {
         await tx.auditLog.create({
           data: {
@@ -1605,6 +1640,7 @@ export class InlineReturnsService {
         if (await this.isStoreCreditReplay(tx, fresh)) return; // nothing minted, nothing to emit
         throw this.alreadyResolved();
       }
+      await assertCreditCustomerNotWalkIn(tx, fresh.customerId); // W-913: a walk-in return is never turned into credit
       if (!isRefundPending(fresh) || fresh.holdReason) {
         throw new ConflictException({
           code: API_ERROR_CODES.RETURN_NOT_REFUNDABLE,
@@ -1797,10 +1833,39 @@ export class InlineReturnsService {
         fresh.status === "REFUNDED" && fresh.creditNoteId
           ? await ledgerDocumentTargets(tx, { creditNoteId: fresh.creditNoteId })
           : { orderIds: [], invoiceIds: [] };
+      // W-757: and the Orders / Invoices the note's credit PAYMENTS sit on, which cancelStandaloneInTx below restores
+      // (each restore writes its Invoice). Without them in THIS one sorted pass the restore took CreditNote -> Invoice
+      // on another order's invoice: 40P01 against markSent, a 500 with no retry.
+      const paid =
+        fresh.status === "REFUNDED" && fresh.creditNoteId
+          ? await creditPaymentTargets(tx, fresh.creditNoteId)
+          : { orderIds: [], invoiceIds: [] };
+      const lockedOrders = [fresh.orderId, ...ret.orderIds, ...note.orderIds, ...paid.orderIds];
+      const lockedInvoices = [...ret.invoiceIds, ...note.invoiceIds, ...paid.invoiceIds];
       await lockLedgerDocumentRows(tx, tenantId, {
-        orderIds: [fresh.orderId, ...ret.orderIds, ...note.orderIds],
-        invoiceIds: [...ret.invoiceIds, ...note.invoiceIds],
+        orderIds: lockedOrders,
+        invoiceIds: lockedInvoices,
       });
+      if (fresh.status === "REFUNDED" && fresh.creditNoteId) {
+        // SA-920: `paid` was read BEFORE the pass, so a send-time sweep could have applied this note to another order's
+        // invoice in between. Take the note LAST (ROW_LOCK_ORDER; FOR NO KEY UPDATE, SA-706a, which every writer that
+        // adds a payment of this note also holds), then re-read under it. A target outside the locked set aborts the
+        // whole cancel with a retryable 409; a late lock on it would be CreditNote -> Invoice again. The retry re-reads
+        // and locks the full set.
+        await lockCreditNotes(tx, tenantId, [fresh.creditNoteId]);
+        const now = await creditPaymentTargets(tx, fresh.creditNoteId);
+        const orders = new Set(lockedOrders);
+        const invoices = new Set(lockedInvoices);
+        if (
+          now.orderIds.some((o) => !orders.has(o)) ||
+          now.invoiceIds.some((i) => !invoices.has(i))
+        ) {
+          throw new ConflictException({
+            code: API_ERROR_CODES.RETURN_CANCEL_RETRY,
+            message: "This return changed while it was being cancelled. Try again.",
+          });
+        }
+      }
 
       // HIGH-4: "applied" (restocked + regulated-ledger reversed) is no longer just
       // `status IN (RECEIVED, REFUNDED)` — a RECEIVED row still carrying `DRIVER_CAP` in

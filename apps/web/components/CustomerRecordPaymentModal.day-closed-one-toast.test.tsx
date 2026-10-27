@@ -56,7 +56,7 @@ describe("CustomerRecordPaymentModal: a closed-day refusal raises exactly one to
       queryClient: queryClientWithGlobalErrorToast(mockGlobalToast),
     });
     fireEvent.change(screen.getAllByPlaceholderText("0.00")[0], { target: { value: "50" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save as Paid" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save as paid" }));
 
     await expectOnlyThePageToasted(mockToast, mockGlobalToast, {
       title: "Failed to record payment",

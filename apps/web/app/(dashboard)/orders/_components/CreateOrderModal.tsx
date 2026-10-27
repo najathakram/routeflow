@@ -117,6 +117,8 @@ import { API_ERROR_CODES, staffMay } from "@routeflow/types";
 import { parseRegulatedAuthError, type BlockedCategory } from "@/lib/api/authorizations";
 import { parseSellingRestricted } from "@/lib/api/selling-restricted";
 import { BlockedLinesDialog } from "@/components/BlockedLinesDialog";
+import { parseRestrictionWarning } from "@/lib/api/restriction-warning";
+import { useRestrictionWarningRetry } from "@/lib/use-restriction-warning-retry";
 import type { BlockedLine } from "@routeflow/types";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { CreditNotePicker, type CreditSelection } from "./CreditNotePicker";
@@ -125,6 +127,8 @@ import { STALE_CREDIT_COPY, isStaleCreditRefusal } from "./stale-credit-refusal"
 import { useCustomerChangeUndo } from "./use-customer-change-undo";
 import { useListboxNav } from "@/lib/use-listbox-nav";
 import { useAuth } from "@/lib/auth-context";
+import { CustomerAccountStrip } from "@/components/CustomerAccountStrip";
+import { CreditRefusalRecordPayment } from "@/components/CreditRefusalRecordPayment";
 import { useCounterSaleGate } from "@/lib/api/counter-sale";
 import { useHasAddon } from "@/lib/api/tobacco";
 import { SALES_AGENTS_ADDON, useOrderUiV2, useScanV2 } from "@/lib/api/addons";
@@ -219,6 +223,9 @@ interface LineItem extends DerivedBaseMarker {
   unitLabel?: string;
   /** S19b: a price the SYSTEM pre-filled from last-given history; the customer layer replaces it once ready. */
   systemPrefill?: boolean;
+  /** B755: the customer whose last-given history pre-filled this line's price. A different customer chosen later
+   *  re-prices the line like a plain one; a price the operator typed (or confirmed with a reason) clears it. */
+  prefillCustomerId?: string;
   /** SA-817 A5: the price this line carried when the order was parked, set when a resume found today's price different. */
   priceChangedFrom?: number;
   /** S19b: set while the customer layer prices this line; the pre-layer values to restore if its row goes away. */
@@ -273,7 +280,8 @@ function isSameAttemptRefusal(err: any): boolean {
   ) {
     return true;
   }
-  return (parseRegulatedAuthError(err)?.length ?? 0) > 0;
+  // Row 510: a RESTRICTION_WARNING wrote nothing; the dialog resubmits this SAME attempt (same key) with the ack.
+  return parseRestrictionWarning(err) !== null || (parseRegulatedAuthError(err)?.length ?? 0) > 0;
 }
 
 /**
@@ -295,6 +303,7 @@ export function CreateOrderModal({
   const { toast, dismiss: dismissToast } = useToast();
   const toastApi = { toast, dismiss: dismissToast };
   const createOrder = useCreateOrder({ localErrorToast: true });
+  const rw = useRestrictionWarningRetry(); // row 510: staff warning + override dialog
   const pos = usePosMode(); // SA-763r P-2: server-backed preference, never localStorage
   const { user: posUser } = useAuth();
   // The switch and PICKUP are for roles with USE_POS_MODE only: a stored preference never applies without it.
@@ -767,23 +776,51 @@ export function CreateOrderModal({
   // BEFORE the customer was chosen (the classic modal never re-priced them). Only lines whose price
   // is still the auto-derived tier price move; an operator's one-time price, an upsell, or a
   // history-prefilled override stands, as do unlisted lines and lines added before this snapshot
-  // existed (no `tierPrices`). Behind the gate so the classic modal's behaviour is untouched.
+  // existed (no `tierPrices`). Behind the gate so the classic modal's behaviour is untouched,
+  // except B755: a price pre-filled from ANOTHER customer's history is dropped in both modes.
   // S19b: the layer's content for the cart's products, so new layer data (not just "ready") re-runs the effect.
   const layerSig = priceLayer.enabled
     ? `${priceLayer.ready}|` +
       lineItems.map((li) => JSON.stringify(priceLayer.layerOf(li.productId) ?? null)).join("|")
     : "";
   React.useEffect(() => {
-    if (!scanV2) return;
     setLineItems((prev) => {
       let changed = false;
-      const next = prev.map((li) => {
+      const next = prev.map((line) => {
+        let li = line;
         // a unit line is re-priced by its own picker from the product's ladder, not the pack's tiers
         if (li.isUnlisted || !li.tierPrices || li.unitLabel) return li;
+        // classic modal (scan_v2 off): only a price pre-filled from another customer moves (B755 below)
+        if (
+          !scanV2 &&
+          !(
+            li.prefillCustomerId != null &&
+            selectedCustomer != null &&
+            li.prefillCustomerId !== selectedCustomer.id
+          )
+        ) {
+          return li;
+        }
+        // B755: a price pre-filled from ANOTHER customer's history is not this customer's one-time price: it drops to
+        // a plain line and re-prices below. (A price the operator typed cleared prefillCustomerId when it was typed.)
+        // (no customer chosen yet, e.g. mid-switch, is not "another customer": the line waits for the next one)
+        const fromOtherCustomer =
+          li.prefillCustomerId != null &&
+          selectedCustomer != null &&
+          li.prefillCustomerId !== selectedCustomer.id;
+        if (fromOtherCustomer) {
+          li = {
+            ...li,
+            discountedPrice: undefined,
+            systemPrefill: undefined,
+            prefillCustomerId: undefined,
+            overrideReason: undefined,
+          };
+        }
         // an operator's MANUAL / DISCOUNTED price always carries a one-time price; a MANUAL line without one is the layer's
         // above-list price (the system's), so it re-prices with the customer
-        if (li.priceType === "DISCOUNTED") return li;
-        if (li.discountedPrice != null) return li;
+        if (!fromOtherCustomer && li.priceType === "DISCOUNTED") return li;
+        if (!fromOtherCustomer && li.discountedPrice != null) return li;
         const tier = cpMap.get(li.productId) ?? selectedCustomer?.pricingTier ?? 1;
         const lp = customerLinePrice({
           product: li.tierPrices as unknown as Record<string, unknown>,
@@ -794,6 +831,7 @@ export function CreateOrderModal({
         const priceType = lp.priceType;
         const specialPrice = customerLineSpecial(lp);
         if (
+          !fromOtherCustomer &&
           li.unitPrice === tierPrice &&
           li.priceType === priceType &&
           li.specialPrice === specialPrice
@@ -805,7 +843,7 @@ export function CreateOrderModal({
       });
       return changed ? next : prev;
     });
-  }, [scanV2, selectedCustomer?.pricingTier, cpMap, layerSig]);
+  }, [scanV2, selectedCustomer?.id, selectedCustomer?.pricingTier, cpMap, layerSig]);
 
   // ── Derived totals ────────────────────────────────────────────────────────
 
@@ -967,6 +1005,7 @@ export function CreateOrderModal({
       discountedPrice: hasHistOverride ? histEntry!.lastPrice : undefined,
       // a price the system pre-filled from history: the layer replaces it if one turns out to price this line (review 1)
       systemPrefill: hasHistOverride && priceLayer.enabled ? true : undefined,
+      prefillCustomerId: hasHistOverride ? selectedCustomer?.id : undefined,
       // the pre-layer (master) values, restored if the layer's row goes away
       layerFrom: linePrice.layered
         ? masterLayerFrom(
@@ -1374,6 +1413,7 @@ export function CreateOrderModal({
             ...li,
             discountedPrice: undefined,
             systemPrefill: undefined,
+            prefillCustomerId: undefined,
             overrideReason: undefined,
             unitPrice: revertPrice,
             priceType: li.specialPrice != null ? "SPECIAL" : "STANDARD",
@@ -1384,7 +1424,12 @@ export function CreateOrderModal({
         // of the special / list price is no override; below list DISCOUNTED, at/above MANUAL (an
         // upsell: the base is hidden from the customer server-side, shown green to the operator).
         const next = applyTypedPrice(li, value);
-        const consumed = { ...next, startOnDefaultUnit: false, systemPrefill: undefined };
+        const consumed = {
+          ...next,
+          startOnDefaultUnit: false,
+          systemPrefill: undefined,
+          prefillCustomerId: undefined,
+        };
         return consumed.discountedPrice == null
           ? { ...consumed, overrideReason: undefined }
           : consumed;
@@ -1395,7 +1440,14 @@ export function CreateOrderModal({
   const setOverrideReason = (tempId: string, reason: string) =>
     setLineItems((prev) =>
       prev.map((li) =>
-        li.tempId === tempId ? { ...li, overrideReason: reason, systemPrefill: undefined } : li,
+        li.tempId === tempId
+          ? {
+              ...li,
+              overrideReason: reason,
+              systemPrefill: undefined,
+              prefillCustomerId: undefined,
+            }
+          : li,
       ),
     );
 
@@ -1798,7 +1850,8 @@ export function CreateOrderModal({
     if (!lineItems.some(isPendingDefaultUnit)) return doSubmitOrder(data, options, lineItems);
     if (resolvingRef.current) return; // a double click while the units load must not submit twice
     resolvingRef.current = true;
-    void resolveDefaultUnits(lineItems)
+    // Returned so a Sell-anyway retry keeps its ack until the units have loaded and the request has been built.
+    return resolveDefaultUnits(lineItems)
       .then(({ lines, blocked, folds }) => {
         if (blocked.length) {
           setMergePrompt(null);
@@ -1828,7 +1881,7 @@ export function CreateOrderModal({
       : undefined;
     posFinish
       .mutateAsync({
-        orderId: created.id,
+        ...rw.attach({ orderId: created.id }),
         invoice: finish === "invoice",
         fromStatus: created.status ?? merged?.fromStatus,
       })
@@ -1842,6 +1895,7 @@ export function CreateOrderModal({
         });
       })
       .catch((err: unknown) => {
+        if (rw.handle(err, () => finishPosOrder(created, finish, viewOrder, merged))) return; // row 510: promote
         const step = err instanceof PosFinishError ? err.step : "confirm";
         toast({
           title:
@@ -1943,9 +1997,12 @@ export function CreateOrderModal({
     lastSubmitRef.current = { data, options, cartJson: draftPayloadJson };
     // SA-817 A6: the key is DURABLE before it is sent - the local copy (with `_submitKey`) is written and the server copy saved
     // (short budget, never gating the order) before the POST, so a lost response followed by a reload can replay the same key.
+    // Row 510: the Sell-anyway ack is read NOW, synchronously, not inside `send`: the durable write below awaits, and the
+    // retry has returned (so the hook has dropped the ack) before a deferred `attach` would run.
+    const sentBody = rw.attach(payload);
     const send = () =>
       createOrder.mutate(
-        { ...payload, idempotencyKey: attemptKey },
+        { ...sentBody, idempotencyKey: attemptKey },
         {
           onSuccess: (created: any) => {
             submitKey.settle("success");
@@ -2033,6 +2090,13 @@ export function CreateOrderModal({
               setMergePrompt(body.activeOrder as ActiveOrderSummary);
               return;
             }
+            if (
+              rw.handle(err, () => {
+                const r = submitOrder(data, options); // a boolean is the submit's result, not the retry's
+                return typeof r === "object" ? r : undefined; // the default-unit path: hold the ack until it has built
+              })
+            )
+              return; // row 510
             // Row 718: the tenant's day called the date past. The refusal is on the date field (above); a merge-or-separate
             // prompt that led here must not stay over it, so close it (as its onClose does) and put focus on the field.
             if (body?.code === API_ERROR_CODES.DELIVERY_DATE_IN_PAST) {
@@ -2154,7 +2218,7 @@ export function CreateOrderModal({
     if (!err) return null;
     // A SELLING_RESTRICTED 409 has its own dialog; the banner would repeat it (with the rule's
     // admin-written reason) and outlive the dialog's OK.
-    if (parseSellingRestricted(err)) return null;
+    if (parseSellingRestricted(err) || parseRestrictionWarning(err)) return null;
     // Row 718: the server's past-delivery-day refusal sits on the date field, not in this banner.
     if (deliveryDateRefusal) return null;
     // B986-7 (Opus): a RECOGNISED refusal (a coded one, a stock shortfall, a credit limit...) is fixed copy; an UNCODED one keeps
@@ -2532,8 +2596,19 @@ export function CreateOrderModal({
 
           {/* API error */}
           {apiError && (
-            <div className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 ring-1 ring-red-200">
-              {apiError}
+            <div
+              data-testid="order-api-error"
+              className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 ring-1 ring-red-200"
+            >
+              <span>{apiError}</span>
+              {selectedCustomer && (
+                <CreditRefusalRecordPayment
+                  error={createOrder.error}
+                  customerId={selectedCustomer.id}
+                  customerName={selectedCustomer.businessName}
+                  onPaid={() => createOrder.reset()}
+                />
+              )}
             </div>
           )}
 
@@ -2631,6 +2706,13 @@ export function CreateOrderModal({
                   </p>
                 )}
               </div>
+            )}
+
+            {selectedCustomer && (
+              <CustomerAccountStrip
+                customerId={selectedCustomer.id}
+                customerName={selectedCustomer.businessName}
+              />
             )}
 
             {selectedCustomer && (
@@ -3311,6 +3393,7 @@ export function CreateOrderModal({
 
       {/* License guard (W6b): the sale hit a 409 REGULATED_AUTH_REQUIRED. */}
       <BlockedLinesDialog lines={restrictedBlock} onClose={() => setRestrictedBlock(null)} />
+      {rw.dialog}
       {licenseBlock && selectedCustomer && (
         <LicenseGuardModal
           open

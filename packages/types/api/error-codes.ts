@@ -309,6 +309,7 @@ export const API_ERROR_CODES = {
   CREDIT_NOTE_CREDIT_CONSUMED: "CREDIT_NOTE_CREDIT_CONSUMED",
   CREDIT_NOTE_OVER_HEADROOM: "CREDIT_NOTE_OVER_HEADROOM",
   RETURN_REFUND_OVER_LINE_HEADROOM: "RETURN_REFUND_OVER_LINE_HEADROOM",
+  RETURN_REFUND_BASIS_CHANGED: "RETURN_REFUND_BASIS_CHANGED",
   RETURN_MIXED_UNIT_PRODUCT: "RETURN_MIXED_UNIT_PRODUCT",
   CREDIT_NOTE_SOURCE_GONE: "CREDIT_NOTE_SOURCE_GONE",
   CREDIT_NOTE_NO_SOURCE_CAP: "CREDIT_NOTE_NO_SOURCE_CAP",
@@ -328,6 +329,7 @@ export const API_ERROR_CODES = {
   LABEL_NAME_TAKEN: "LABEL_NAME_TAKEN",
   LABEL_CHANGE_IN_PROGRESS: "LABEL_CHANGE_IN_PROGRESS",
   PRODUCT_CHAIN_UNREADABLE: "PRODUCT_CHAIN_UNREADABLE",
+  PRODUCT_CHANGED_CONCURRENTLY: "PRODUCT_CHANGED_CONCURRENTLY",
   INVOICE_TAX_STATE_STALE: "INVOICE_TAX_STATE_STALE",
   INVOICE_TOTAL_BELOW_PAID: "INVOICE_TOTAL_BELOW_PAID",
   PRICE_ADJUSTMENT_PARTIAL: "PRICE_ADJUSTMENT_PARTIAL",
@@ -403,6 +405,7 @@ export const API_ERROR_CODES = {
   ORDER_BELOW_RETURN_CREDIT: "ORDER_BELOW_RETURN_CREDIT",
   CREDIT_LIMIT_EXCEEDED: "CREDIT_LIMIT_EXCEEDED",
   MERGE_CHOICE_REQUIRED: "MERGE_CHOICE_REQUIRED",
+  ORDER_MERGE_DISCOUNTED: "ORDER_MERGE_DISCOUNTED",
   SOURCE_LINE_AMBIGUOUS: "SOURCE_LINE_AMBIGUOUS",
   SOURCE_LINE_INVALID: "SOURCE_LINE_INVALID",
   UNIT_AWARE_LINE_UNVERIFIABLE: "UNIT_AWARE_LINE_UNVERIFIABLE",
@@ -421,6 +424,9 @@ export const API_ERROR_CODES = {
   RULE_STALE: "RULE_STALE",
   RULE_IMPACT_CHANGED: "RULE_IMPACT_CHANGED",
   RULE_END_USE_LIFT: "RULE_END_USE_LIFT",
+  // Row 510: a staff write that needs an override reason (409), and a reason outside 3..200 after trim (400).
+  RESTRICTION_WARNING: "RESTRICTION_WARNING",
+  RESTRICTION_OVERRIDE_REASON_INVALID: "RESTRICTION_OVERRIDE_REASON_INVALID",
   PO_LINK_CONFLICT: "PO_LINK_CONFLICT",
   SCAN_ALREADY_POSTED: "SCAN_ALREADY_POSTED",
   PO_LINK_BROKEN: "PO_LINK_BROKEN",
@@ -438,7 +444,21 @@ export const API_ERROR_CODES = {
   PO_LOT_PARTIALLY_CONSUMED: "PO_LOT_PARTIALLY_CONSUMED",
   PO_HAS_LINKED_BILL: "PO_HAS_LINKED_BILL",
   INVENTORY_LEDGER_GAP: "INVENTORY_LEDGER_GAP",
+  /** B297 PR5: a money-bearing edit to a line whose regulated SALE rows sit in a LOCKED filing period. */
+  FILED_PERIOD_LOCKED: "FILED_PERIOD_LOCKED",
+  /** B297 PR5: the last-line ledger guard: a row would be booked into a LOCKED filing's period. */
+  LEDGER_PERIOD_LOCKED: "LEDGER_PERIOD_LOCKED",
+  /** B297 PR5: the lock endpoint's refusals. */
+  FILING_NOT_LOCKABLE: "FILING_NOT_LOCKABLE",
+  FILING_ALREADY_LOCKED: "FILING_ALREADY_LOCKED",
+  FILING_PERIOD_RUNNING: "FILING_PERIOD_RUNNING",
+  /** SA-995: the lock found the filing's figures differ from what the ledger gives now; regenerate, check, lock. */
+  FILING_STALE: "FILING_STALE",
+  FILING_LOCK_NOT_READY: "FILING_LOCK_NOT_READY",
+  // 409 body: productId, period (the filed period's label) and filedFor ("Tobacco" or the tracked category's name, W-755).
   STOCK_DATE_IN_FILED_PERIOD: "STOCK_DATE_IN_FILED_PERIOD",
+  // 683 (SA-896): DELETE /settings/financial-data refused while the tenant holds regulated records.
+  FINANCIAL_WIPE_BLOCKED_REGULATED: "FINANCIAL_WIPE_BLOCKED_REGULATED",
   ALLOCATIONS_EXCEED_PAYMENT: "ALLOCATIONS_EXCEED_PAYMENT",
   INVOICE_CHANGED_DURING_EDIT: "INVOICE_CHANGED_DURING_EDIT",
   EMAIL_NOT_CONFIGURED: "EMAIL_NOT_CONFIGURED",
@@ -566,6 +586,8 @@ export const API_ERROR_CODES = {
   WALK_IN_NO_ACCOUNT: "WALK_IN_NO_ACCOUNT",
   WALK_IN_WITH_CUSTOMER: "WALK_IN_WITH_CUSTOMER",
   WALK_IN_OPEN_CREDIT: "WALK_IN_OPEN_CREDIT",
+  /** 409 from a credit-note writer, the inline return capture and the return refund: a walk-in return is refunded at the till, never kept as store credit on the shared walk-in account (body carries `cause`: STORE_CREDIT, ROLE, NOT_PAID_IN_FULL, PAID_WITH_STORE_CREDIT or ZERO_TOTAL). Nothing is written. */
+  WALK_IN_STORE_CREDIT_REFUSED: "WALK_IN_STORE_CREDIT_REFUSED",
   COUNTER_TENDER_SHORT: "COUNTER_TENDER_SHORT",
   COUNTER_CHECK_NUMBER_REQUIRED: "COUNTER_CHECK_NUMBER_REQUIRED",
   COUNTER_CHECK_POSTDATED: "COUNTER_CHECK_POSTDATED",
@@ -600,6 +622,11 @@ export const API_ERROR_CODES = {
    * the write (a dispatch attached it), so releasing the old link would have cleared a fresh one. Nothing was written.
    */
   ORDER_RUN_LINK_CHANGED: "ORDER_RUN_LINK_CHANGED",
+  /**
+   * W-769 (SA-862 rule 4): PATCH /invoices/:id/payments/:paymentId, 409: confirming (DRAFT → PAID) or reopening (VOID → PAID) a
+   * payment when real money already covers the invoice. Nothing written; void it or move it to the customer's credit.
+   */
+  UNCONFIRMED_PAYMENT_SUPERSEDED: "UNCONFIRMED_PAYMENT_SUPERSEDED",
   /**
    * 400 from `PATCH /orders/:id/fulfill-path` from PICKUP to ROUTE or SHIP: the customer has no address on file,
    * so there is nowhere to deliver to and no state to judge selling restrictions on. Nothing was written.
@@ -733,6 +760,22 @@ export const API_ERROR_CODES = {
    * PENDING, PARTIALLY_DELIVERED, or CANCELLED). Nothing was written.
    */
   PICKUP_NOT_READY: "PICKUP_NOT_READY",
+  /** I-120 (SA-861 rule 2): POST /orders/:id/pickup-complete, 409: this business does not hand orders over at the store (no PICKUP method and the counter off). */
+  COUNTER_COMPLETE_UNAVAILABLE: "COUNTER_COMPLETE_UNAVAILABLE",
+  /**
+   * 400 from a path switch to SHIP / PICKUP (PATCH /orders/:id/fulfill-path, and Complete at counter's switch): the order is on
+   * an ACTIVE delivery run (SCHEDULED / IN_PROGRESS); remove it from the run first. Nothing was written.
+   */
+  ORDER_ON_ACTIVE_RUN: "ORDER_ON_ACTIVE_RUN",
+  /** I-120 R9 (owner 7a Q2 = A): POST /orders/:id/pickup-complete, 409: the order has shipped with the carrier. Nothing written. */
+  COUNTER_COMPLETE_SHIPPED: "COUNTER_COMPLETE_SHIPPED",
+  /**
+   * I-120 R8 (owner 7a Q1 = A): POST /orders/:id/pickup-complete, 409: the order is on a driver's run (SA-913); the body
+   * carries `driverName` and `runId` for the confirm, which re-sends with `takeOffRun: true`. Nothing written.
+   */
+  COUNTER_COMPLETE_ON_RUN: "COUNTER_COMPLETE_ON_RUN",
+  /** I-120 R8: POST /orders/:id/pickup-complete, 409: the driver has started that stop (with or without `takeOffRun`). Nothing written. */
+  COUNTER_COMPLETE_STOP_STARTED: "COUNTER_COMPLETE_STOP_STARTED",
   /**
    * `paymentErrorCode` of a 200 from POST /orders/:id/pickup-complete: handed over with no payment sent, but
    * the final invoices leave money owing (a remainder or rebuild at DELIVERED). Retry with a payment.
@@ -889,6 +932,10 @@ export const API_ERROR_CODES = {
    * body carries `field` (the link's name). Nothing was written.
    */
   APP_LINK_URL_INVALID: "APP_LINK_URL_INVALID",
+  /** 400 from POST /customers/merge: the two customers are not both of the session's one business (W-763). Names no tenant. */
+  CUSTOMER_MERGE_TENANT_MISMATCH: "CUSTOMER_MERGE_TENANT_MISMATCH",
+  /** 409 from an inline return cancel: the credit note gained a payment on another invoice while the cancel locked its rows (SA-920). Retryable: the retry locks the full set. */
+  RETURN_CANCEL_RETRY: "RETURN_CANCEL_RETRY",
 } as const;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */
@@ -928,6 +975,14 @@ export type CreditNoteErrorCode = (typeof CREDIT_NOTE_ERROR_CODES)[number];
  */
 export const SHIPPED_ORDER_MESSAGE =
   "This order has already shipped. Contact the seller for changes.";
+
+/**
+ * SA-995: the 409 FILING_STALE sentence (a filing whose figures no longer match the ledger refuses to lock). Web and
+ * mobile show it by code; the API keeps a literal copy in regulated-filing.service.ts, pinned byte-equal by
+ * apps/api/src/regulated/filing-stale-message-parity.spec.ts.
+ */
+export const FILING_STALE_COPY =
+  "Sales were added to this period after the filing was generated. Regenerate the filing, check it, then lock it.";
 
 /**
  * SA-814g: the 409 INVOICE_TAX_STATE_STALE body carries `path`, the kind of invoice that refused: an
@@ -972,3 +1027,13 @@ export const UNVOID_BILLING_COPY: Record<OrderBillingChangedReason, string> = {
   LINE_REDUCED:
     "The order line now holds less than this invoice bills. Raise the order line, or create a new invoice from the order.",
 };
+
+/**
+ * SA-997: locking a filing is OFF until a sale that books into a locked period is routed to the current one (W-965).
+ * The API refuses with 409 FILING_LOCK_NOT_READY before any read; web disables the control with this sentence. The API
+ * keeps a literal copy (apps/api/src/regulated/filing-lock-ready.ts), pinned byte-equal and false-equal by
+ * apps/api/src/regulated/filing-lock-ready.spec.ts.
+ */
+export const FILING_LOCK_READY = false;
+export const FILING_LOCK_NOT_READY_COPY =
+  "Locking a filing isn't available yet. You can still generate, check and download it.";

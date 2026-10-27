@@ -229,6 +229,59 @@ describe("CounterSaleService.ring", () => {
       );
     });
 
+    // Row 510: the till's acknowledgement of a 409 RESTRICTION_WARNING rides the SAME request, with the SAME key.
+    describe("restriction ack (row 510)", () => {
+      const ackFields = {
+        warningHash: "rw1:abc",
+        restrictionOverrides: [{ lineKey: "n:0", reason: "Licensed buyer" }],
+      };
+
+      it("hands the ack to createSale untouched, with the counter-sale options (COUNTER path: the store's state judges)", async () => {
+        await service.ring(named({ method: "CARD" }, ackFields) as never, staff, "k-ack");
+        const [dto, user, sale] = createSale.mock.calls[0];
+        expect(dto.warningHash).toBe("rw1:abc");
+        expect(dto.restrictionOverrides).toEqual(ackFields.restrictionOverrides);
+        expect(user).toBe(staff);
+        // counterSale + PICKUP is exactly what saleFulfilmentKind maps to COUNTER (sale-fulfilment.ts), the store's state
+        expect(sale).toMatchObject({ counterSale: true, fulfillPath: "PICKUP" });
+      });
+
+      it("the first press and the resubmit carry the SAME Idempotency-Key and the same cart; only the ack differs", async () => {
+        await service.ring(named({ method: "CARD" }) as never, staff, "k-same");
+        await service.ring(named({ method: "CARD" }, ackFields) as never, staff, "k-same");
+        const [first, second] = createSale.mock.calls.map((c) => c[0]);
+        expect(first.idempotencyKey).toBe("k-same");
+        expect(second.idempotencyKey).toBe("k-same");
+        expect(second.items).toEqual(first.items);
+        expect(first.warningHash).toBeUndefined();
+        expect(first.restrictionOverrides).toBeUndefined();
+        expect(second.warningHash).toBe("rw1:abc");
+      });
+
+      it("the ack is never part of the replay's cart (a same-key replay with a different ack is still a replay, not a key conflict)", async () => {
+        replay = true;
+        await expect(
+          service.ring(named({ method: "CARD" }, ackFields) as never, staff, "k-replay"),
+        ).resolves.toBeDefined();
+        const [dto] = createSale.mock.calls[0];
+        // the cart the replay compares is the items; the ack fields are top-level and ignored by that comparison
+        expect(Object.keys(dto.items[0])).not.toEqual(
+          expect.arrayContaining(["warningHash", "restrictionOverrides"]),
+        );
+      });
+
+      it("a 409 RESTRICTION_WARNING from create() propagates untouched: no tender, no audit", async () => {
+        createSale.mockRejectedValue(
+          new ConflictException({ code: "RESTRICTION_WARNING", warningHash: "rw1:abc", lines: [] }),
+        );
+        await expect(
+          service.ring(named({ method: "CASH" }) as never, staff, "k-warn"),
+        ).rejects.toMatchObject({ response: { code: "RESTRICTION_WARNING" } });
+        expect(recordPayment).not.toHaveBeenCalled();
+        expect(audit.log).not.toHaveBeenCalled();
+      });
+    });
+
     it("a key that belongs to a NON-counter order is 409 COUNTER_SALE_KEY_CONFLICT before any write", async () => {
       replay = true;
       replayOrder = { id: "ord-staff", counterSale: false };
@@ -288,13 +341,13 @@ describe("CounterSaleService.ring", () => {
       expect(createSale).not.toHaveBeenCalled();
     });
 
-    it("the kept walk-in RECORD holding open credit is refused 409 WALK_IN_OPEN_CREDIT BEFORE create, like dto.walkIn", async () => {
+    it("W-913: the kept walk-in RECORD with a legacy open credit rings like dto.walkIn (auto-apply ON): the credit is never consulted", async () => {
       prisma.customer.findFirst.mockResolvedValue({ id: "cust-w", isWalkIn: true });
+      prisma.tenantConfig.findUnique.mockResolvedValue({ creditAutoApplyOnSend: true });
       prisma.creditNote.findMany.mockResolvedValue([{ amount: 10, amountUsed: 4 }]);
-      expect(await codeOf(service.ring(named({ method: "CASH" }) as never, staff))).toBe(
-        "WALK_IN_OPEN_CREDIT",
-      );
-      expect(createSale).not.toHaveBeenCalled();
+      await service.ring(named({ method: "CASH" }) as never, staff);
+      expect(createSale).toHaveBeenCalledTimes(1);
+      expect(prisma.creditNote.findMany).not.toHaveBeenCalled();
     });
 
     it("the kept walk-in RECORD gets the walk-in tender rule: CASH $20 on $50 is COUNTER_TENDER_SHORT from beforeWrite, nothing recorded", async () => {
@@ -355,116 +408,16 @@ describe("CounterSaleService.ring", () => {
       expect(createSale.mock.calls[0][2].suppressInvoiceNotify).toBeFalsy();
     });
 
-    it("a walk-in holding open credit is refused 409 WALK_IN_OPEN_CREDIT BEFORE create (send would auto-apply it)", async () => {
-      prisma.creditNote.findMany.mockResolvedValue([{ amount: 10, amountUsed: 4 }]);
-      const e = await errorOf(
-        service.ring({ walkIn: true, items: [item], payment: { method: "CASH" } } as never, staff),
-      );
-      expect(e).toBeInstanceOf(ConflictException);
-      expect(e.getResponse().code).toBe("WALK_IN_OPEN_CREDIT");
-      expect(createSale).not.toHaveBeenCalled();
-    });
-
-    // The guard must ask the SAME question as markSent's auto-apply (credit-notes/auto-apply-candidates):
-    // not just ISSUED. This evaluates the where the guard sends over a table of notes in each state.
-    it.each([
-      ["an ISSUED note with balance", { status: "ISSUED", expiresAt: null }],
-      ["an APPLIED-status note that still holds balance", { status: "APPLIED", expiresAt: null }],
-      [
-        "an ISSUED note that expires in the future",
-        { status: "ISSUED", expiresAt: new Date("2999-01-01") },
-      ],
-    ])("refuses the walk-in for %s (auto-apply would take it)", async (_n, state) => {
-      const table = [{ amount: 10, amountUsed: 4, autoApplyExcluded: false, ...state }];
-      prisma.creditNote.findMany.mockImplementation(async ({ where }: any) =>
-        table.filter(
-          (n: any) =>
-            (where.status === undefined ||
-              (where.status.not !== undefined
-                ? n.status !== where.status.not
-                : n.status === where.status)) &&
-            (where.autoApplyExcluded === undefined ||
-              n.autoApplyExcluded === where.autoApplyExcluded) &&
-            (where.OR === undefined ||
-              where.OR.some((c: any) =>
-                "expiresAt" in c && c.expiresAt === null
-                  ? n.expiresAt === null
-                  : c.expiresAt?.gt && n.expiresAt && n.expiresAt > c.expiresAt.gt,
-              )),
-        ),
-      );
-      const e = await errorOf(
-        service.ring({ walkIn: true, items: [item], payment: { method: "CASH" } } as never, staff),
-      );
-      expect(e).toBeInstanceOf(ConflictException);
-      expect(e.getResponse().code).toBe("WALK_IN_OPEN_CREDIT");
-      expect(createSale).not.toHaveBeenCalled();
-    });
-
-    it("does not refuse for a VOID note, an operator-excluded note or an expired one (auto-apply skips them)", async () => {
-      const table = [
-        { amount: 10, amountUsed: 0, status: "VOID", expiresAt: null, autoApplyExcluded: false },
-        { amount: 10, amountUsed: 0, status: "ISSUED", expiresAt: null, autoApplyExcluded: true },
-        {
-          amount: 10,
-          amountUsed: 0,
-          status: "ISSUED",
-          expiresAt: new Date("2000-01-01"),
-          autoApplyExcluded: false,
-        },
-      ];
-      prisma.creditNote.findMany.mockImplementation(async ({ where }: any) =>
-        table.filter(
-          (n: any) =>
-            n.status !== where.status.not &&
-            n.autoApplyExcluded === where.autoApplyExcluded &&
-            where.OR.some((c: any) =>
-              c.expiresAt === null
-                ? n.expiresAt === null
-                : n.expiresAt && n.expiresAt > c.expiresAt.gt,
-            ),
-        ),
-      );
-      await expect(
-        service.ring({ walkIn: true, items: [item], payment: { method: "CASH" } } as never, staff),
-      ).resolves.toBeDefined();
-    });
-
-    it("creditAutoApplyOnSend OFF (the default): open credit does NOT block the walk-in (send() would not apply it)", async () => {
-      prisma.tenantConfig.findUnique.mockResolvedValue({ creditAutoApplyOnSend: false });
-      prisma.creditNote.findMany.mockResolvedValue([{ amount: 10, amountUsed: 0 }]);
-      await expect(
-        service.ring({ walkIn: true, items: [item], payment: { method: "CASH" } } as never, staff),
-      ).resolves.toBeDefined();
-      expect(createSale).toHaveBeenCalled();
-    });
-
-    it("no tenant config row reads as OFF: open credit does not block the walk-in", async () => {
-      prisma.tenantConfig.findUnique.mockResolvedValue(null);
-      prisma.creditNote.findMany.mockResolvedValue([{ amount: 10, amountUsed: 0 }]);
-      await expect(
-        service.ring({ walkIn: true, items: [item], payment: { method: "CASH" } } as never, staff),
-      ).resolves.toBeDefined();
-    });
-
-    it("creditAutoApplyOnSend ON: open credit blocks the walk-in (409 WALK_IN_OPEN_CREDIT)", async () => {
+    // W-913 (SA-932 §A): the sweep predicate excludes the walk-in account, so a legacy open credit on it is never applied
+    // and never a reason to refuse a sale. The WALK_IN_OPEN_CREDIT guard is retired; the code stays in the list for old clients.
+    it("a walk-in sale with a legacy open credit on the account goes through (auto-apply ON): the credit is never consulted", async () => {
       prisma.tenantConfig.findUnique.mockResolvedValue({ creditAutoApplyOnSend: true });
-      prisma.creditNote.findMany.mockResolvedValue([{ amount: 10, amountUsed: 0 }]);
-      expect(
-        await codeOf(
-          service.ring(
-            { walkIn: true, items: [item], payment: { method: "CASH" } } as never,
-            staff,
-          ),
-        ),
-      ).toBe("WALK_IN_OPEN_CREDIT");
-    });
-
-    it("a fully consumed credit note does not block the walk-in", async () => {
-      prisma.creditNote.findMany.mockResolvedValue([{ amount: 10, amountUsed: 10 }]);
+      prisma.creditNote.findMany.mockResolvedValue([{ amount: 10, amountUsed: 4 }]);
       await expect(
         service.ring({ walkIn: true, items: [item], payment: { method: "CASH" } } as never, staff),
       ).resolves.toBeDefined();
+      expect(createSale).toHaveBeenCalledTimes(1);
+      expect(prisma.creditNote.findMany).not.toHaveBeenCalled();
     });
   });
 

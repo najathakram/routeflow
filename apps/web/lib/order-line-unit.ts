@@ -2,6 +2,7 @@ import {
   isSpecialTier,
   getTierPrice,
   customerLinePrice,
+  derivedPackSplit,
   layerRowForLabel,
   normalizeBoxesPieces,
   type CustomerLayerUnit,
@@ -100,14 +101,15 @@ export function applyLineUnit<T extends UnitLine>(
     // S19b: the picker's derived option carries the layer's PACK price (the Piece bills as the pack's proration).
     if (option.layerLine) pack = withLayerLine(pack, option.layerLine);
     const keep = ctx.keepQty && li.derivedBase === option.value ? li.qty : 1;
-    const n = normalizeBoxesPieces({ boxes: 0, pieces: keep, unitsPerBox: option.derived.n });
+    const n = derivedPackSplit(option, keep); // the shared derived shape (row 513)
+    if (!n) return line; // unreachable: `option.derived` is set
     return {
       ...pack,
       derivedBase: option.value,
       unitLabel: undefined,
-      unitsPerBox: option.derived.n,
-      boxes: n.boxes ?? 0,
-      pieces: n.pieces ?? 0,
+      unitsPerBox: n.unitsPerBox,
+      boxes: n.boxes,
+      pieces: n.pieces,
       qty: n.qty,
       sellBy: "unit",
       discountedPrice: undefined,

@@ -10,6 +10,7 @@ import { usePageTitle } from "@/lib/page-title-context";
 import { useDismissOnLeave } from "@/lib/use-dismiss-on-leave";
 import { codedToastCopy } from "@/lib/generic-toast-copy";
 import { useInvoice, useUpdateInvoice, type UpdateInvoiceItem } from "@/lib/api/invoices";
+import { useRestrictionWarningRetry } from "@/lib/use-restriction-warning-retry";
 import { isPendingMirrorInvoice } from "@/lib/invoice-pending-mirror";
 import { INVOICE_STALE_COPY, isInvoiceStale } from "@/lib/invoice-stale";
 import { hasUnitLine, unitLabelsOf } from "@/lib/invoice-line-unit";
@@ -436,6 +437,7 @@ export default function EditInvoicePage() {
   const openedUpdatedAt = React.useRef<string | undefined>(undefined);
   const [stale, setStale] = React.useState(false);
   const updateInvoice = useUpdateInvoice();
+  const rw = useRestrictionWarningRetry(); // row 510: staff warning + override dialog
 
   // #2791: a pending-mirror draft can't be edited here (the API refuses by design — the order is the
   // source of truth until delivery). Send the user to the order instead of showing a form that can only fail.
@@ -732,7 +734,7 @@ export default function EditInvoicePage() {
       }),
     };
 
-    updateInvoice.mutate(dto, {
+    updateInvoice.mutate(rw.attach(dto), {
       onSuccess: () => {
         toast({
           title: "Invoice updated",
@@ -742,6 +744,7 @@ export default function EditInvoicePage() {
         router.push(`/invoices/${id}`);
       },
       onError: (err: any) => {
+        if (rw.handle(err, handleSubmit)) return; // row 510
         if (isInvoiceStale(err)) {
           setStale(true); // H4: the notice owns it; no toast
           return;
@@ -785,7 +788,7 @@ export default function EditInvoicePage() {
       <div className="flex flex-col items-center gap-4 p-12 text-center">
         <p className="text-base font-medium text-navy">Invoice not found.</p>
         <Button variant="secondary" href="/invoices">
-          Back to Invoices
+          Back to invoices
         </Button>
       </div>
     );
@@ -808,9 +811,9 @@ export default function EditInvoicePage() {
   if (invoice.status !== "DRAFT") {
     return (
       <div className="flex flex-col items-center gap-4 p-12 text-center">
-        <p className="text-base font-medium text-navy">Only DRAFT invoices can be edited.</p>
+        <p className="text-base font-medium text-navy">Only draft invoices can be edited.</p>
         <Button variant="secondary" href={`/invoices/${id}`}>
-          Back to Invoice
+          Back to invoice
         </Button>
       </div>
     );
@@ -831,7 +834,7 @@ export default function EditInvoicePage() {
           the invoice to review it, or delete this draft and create it again.
         </p>
         <Button variant="secondary" href={`/invoices/${id}`}>
-          Back to Invoice
+          Back to invoice
         </Button>
       </div>
     );
@@ -847,16 +850,16 @@ export default function EditInvoicePage() {
         {invoice.invoiceNumber}
       </Link>
 
-      <h1 className="text-2xl font-bold text-navy">Edit Invoice</h1>
+      <h1 className="text-2xl font-bold text-navy">Edit invoice</h1>
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-5">
         {/* ── Left column (3/5) ── */}
         <div className="space-y-5 lg:col-span-3">
           {/* Dates */}
-          <Card title="Invoice Dates">
+          <Card title="Invoice dates">
             <div className="grid grid-cols-3 gap-4">
               <div>
-                <label className="mb-1.5 block text-sm font-medium text-navy/80">Issue Date</label>
+                <label className="mb-1.5 block text-sm font-medium text-navy/80">Issue date</label>
                 <input
                   type="date"
                   value={issueDate}
@@ -870,7 +873,7 @@ export default function EditInvoicePage() {
               </div>
               <div>
                 <label className="mb-1.5 block text-sm font-medium text-navy/80">
-                  Payment Terms
+                  Payment terms
                 </label>
                 <select
                   value={paymentTermsLabel}
@@ -885,7 +888,7 @@ export default function EditInvoicePage() {
                 </select>
               </div>
               <div>
-                <label className="mb-1.5 block text-sm font-medium text-navy/80">Due Date</label>
+                <label className="mb-1.5 block text-sm font-medium text-navy/80">Due date</label>
                 <input
                   type="date"
                   value={dueDate}
@@ -904,7 +907,7 @@ export default function EditInvoicePage() {
           </Card>
 
           {/* Line items */}
-          <Card title="Line Items">
+          <Card title="Line items">
             <div className="space-y-2">
               {errors.items && <p className="text-xs text-danger">{errors.items}</p>}
               {/* Table header */}
@@ -912,7 +915,7 @@ export default function EditInvoicePage() {
               <div className="hidden gap-2 px-1 sm:grid sm:grid-cols-[1fr_70px_90px_70px_70px_32px]">
                 <span className="text-xs font-medium text-navy/70">Description</span>
                 <span className="text-xs font-medium text-navy/70 text-right">Qty</span>
-                <span className="text-xs font-medium text-navy/70 text-right">Unit Price</span>
+                <span className="text-xs font-medium text-navy/70 text-right">Unit price</span>
                 <span className="text-xs font-medium text-navy/70 text-right">Disc. $</span>
                 <span className="text-xs font-medium text-navy/70 text-right">Tax %</span>
                 <span />
@@ -1026,9 +1029,9 @@ export default function EditInvoicePage() {
                           />
                         )}
                       </MobileField>
-                      <MobileField label="Unit Price">
+                      <MobileField label="Unit price">
                         <MoneyInput
-                          aria-label="Unit Price"
+                          aria-label="Unit price"
                           min={0}
                           value={item.unitPrice}
                           onChange={(v) => updateItem(item.key, { unitPrice: v ?? 0 })}
@@ -1092,13 +1095,13 @@ export default function EditInvoicePage() {
                 className="mt-2 flex items-center gap-1.5 text-sm font-medium text-brand-500 hover:text-brand-600 transition-colors"
               >
                 <Plus className="h-4 w-4" />
-                Add Line Item
+                Add line item
               </button>
             </div>
           </Card>
 
           {/* Notes & Terms */}
-          <Card title="Notes & Terms">
+          <Card title="Notes and terms">
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -1160,7 +1163,7 @@ export default function EditInvoicePage() {
             <div className="space-y-3">
               <div>
                 <label className="mb-1.5 block text-sm font-medium text-navy/80">
-                  Invoice Discount ($)
+                  Invoice discount ($)
                 </label>
                 <input
                   type="number"
@@ -1173,7 +1176,7 @@ export default function EditInvoicePage() {
               </div>
               <div>
                 <label className="mb-1.5 block text-sm font-medium text-navy/80">
-                  Shipping Fee ($)
+                  Shipping fee ($)
                 </label>
                 <input
                   type="number"
@@ -1188,7 +1191,7 @@ export default function EditInvoicePage() {
           </Card>
 
           {/* Summary */}
-          <Card title="Invoice Summary">
+          <Card title="Invoice summary">
             <dl className="space-y-2 text-sm">
               <div className="flex justify-between">
                 <dt className="text-navy/70">Subtotal</dt>
@@ -1250,7 +1253,7 @@ export default function EditInvoicePage() {
                 loading={updateInvoice.isPending}
                 disabled={updateInvoice.isPending || priceBlocked}
               >
-                Save Changes
+                Save changes
               </Button>
               <Button
                 className="w-full"
@@ -1293,6 +1296,7 @@ export default function EditInvoicePage() {
         initialName={createProductInitialName}
         initialSku={createProductInitialSku}
       />
+      {rw.dialog}
     </div>
   );
 }

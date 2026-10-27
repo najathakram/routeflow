@@ -485,6 +485,10 @@ describe("API error codes: the onboarding contracts are registered (B987-C)", ()
 const RETIRED_NOT_SENT: Record<string, string> = {
   ADDON_BILLING_PENDING_CHECKOUT:
     "SA-690 option A bills a trial's add-ons at checkout; the web billing page still maps the retired gate code",
+  WALK_IN_OPEN_CREDIT:
+    "W-913 / SA-932 A: a walk-in is never auto-applied credit, so open credit no longer refuses a sale and the API stops sending it; the web counter sale and the mobile POS still map it for an older server (removal LATER)",
+  PICKUP_ONLY:
+    "I-120 (SA-861 rule 1): Complete at counter takes any path (Store pickup first), so the API no longer sends it; the web pickup dialog still maps it until its copy is dropped (removal LATER)",
 };
 
 describe("API error codes: every code is still sent by the API (#2163)", () => {

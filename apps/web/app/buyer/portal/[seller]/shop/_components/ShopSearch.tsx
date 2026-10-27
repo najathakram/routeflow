@@ -74,7 +74,11 @@ export function ShopSearch({ value, onCommit, total }: ShopSearchProps) {
       <input
         ref={inputRef}
         type="search"
-        placeholder={`Search ${total ?? ""} products - name, SKU, barcode...`}
+        placeholder={
+          total != null
+            ? `Search ${total} products by name, SKU or barcode…`
+            : "Search products by name, SKU or barcode…"
+        }
         value={draft}
         onChange={(e) => {
           setDraft(e.target.value);

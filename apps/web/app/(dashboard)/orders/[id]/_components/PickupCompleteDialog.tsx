@@ -4,7 +4,13 @@ import * as React from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button, Modal, cn } from "@routeflow/ui/web";
 import { roundMoney } from "@routeflow/pricing";
-import { API_ERROR_CODES, RECORD_ANYWAY_LABEL, canRecordAnyway } from "@routeflow/types";
+import {
+  API_ERROR_CODES,
+  RECORD_ANYWAY_LABEL,
+  canRecordAnyway,
+  creditOverLimitSentence,
+  COUNTER_COPY,
+} from "@routeflow/types";
 import type { CounterSalePaymentMethod, PickupCompleteResponse } from "@routeflow/types";
 import { usePickupComplete, usePickupInvoiceBalances } from "@/lib/api/counter-sale";
 import { useOptionalAuth } from "@/lib/auth-context";
@@ -38,6 +44,8 @@ type Body = {
     reference?: string;
     recordAnyway?: boolean;
   };
+  /** SA-913 R8: the confirmed re-send after COUNTER_COMPLETE_ON_RUN (same key) */
+  takeOffRun?: boolean;
 };
 
 /**
@@ -58,8 +66,10 @@ export function PickupCompleteDialog({
   invoices,
   isWalkIn,
   handOver = false,
+  completeMode = false,
   heldKey,
   storeKey = null,
+  customerName = null,
 }: {
   open: boolean;
   onClose: () => void;
@@ -70,9 +80,13 @@ export function PickupCompleteDialog({
   isWalkIn: boolean;
   /** POS-mode order (PICKUP, not a counter sale): the confirm button reads "Hand over". Counter / portal keep "Picked up". */
   handOver?: boolean;
+  /** I-120: "Complete at counter" (any open order): its title, confirm and outcome copy; the payment step is the same. */
+  completeMode?: boolean;
   heldKey?: React.MutableRefObject<HeldPickupKey>;
   /** sessionStorage key (tenant + user + order) that keeps an UNKNOWN outcome's key across a reload. */
   storeKey?: string | null;
+  /** I-120: the customer the credit-over-limit line names (falls back to "the customer"). */
+  customerName?: string | null;
 }) {
   const ownHeld = React.useRef<HeldPickupKey>(null);
   const held = heldKey ?? ownHeld;
@@ -96,6 +110,8 @@ export function PickupCompleteDialog({
   const keyRef = React.useRef<string>("");
   const [method, setMethod] = React.useState<CounterSalePaymentMethod>("CASH");
   const [tendered, setTendered] = React.useState("");
+  /** Row 312(b): the value the dialog itself put in the cash field; a different value is the cashier's own. */
+  const autoTendered = React.useRef("");
   const [reference, setReference] = React.useState("");
   const [error, setError] = React.useState<string | null>(null);
   const [errorCode, setErrorCode] = React.useState<string | undefined>();
@@ -110,6 +126,7 @@ export function PickupCompleteDialog({
       }
       keyRef.current = held.current?.orderId === orderId ? held.current.key : newIdempotencyKey();
       setMethod("CASH");
+      autoTendered.current = "";
       setTendered("");
       setReference("");
       setError(null);
@@ -119,6 +136,18 @@ export function PickupCompleteDialog({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+
+  // Row 312(b): the cash amount starts at the amount due (as Exact sets it), and follows it (a balance the server
+  // reported later) until the cashier types. One press fewer on an exact cash hand-over; a typed amount is never replaced.
+  React.useEffect(() => {
+    if (!open || due === null || due <= 0) return;
+    const next = String(roundMoney(due)); // the same string Exact sets (quickTenderOptions)
+    setTendered((cur) => {
+      if (cur !== autoTendered.current) return cur;
+      autoTendered.current = next;
+      return next;
+    });
+  }, [open, due]);
 
   const tenderedNum = Number(tendered) || 0;
 
@@ -136,7 +165,9 @@ export function PickupCompleteDialog({
         // Back to the tender step; the next attempt is the same hand-over (same key) carrying the payment.
         if (res.balanceDue > 0) setOwed(res.balanceDue);
         setErrorCode(code);
-        setError(pickupCompleteErrorCopy({ response: { data: { code } } }));
+        setError(
+          pickupCompleteErrorCopy({ response: { data: { code } } }, undefined, completeMode),
+        );
         return;
       }
       held.current = null;
@@ -149,7 +180,7 @@ export function PickupCompleteDialog({
       if (unknown) writeHeldPickupKey(storeKey, keyRef.current);
       else clearHeldPickupKey(storeKey);
       setErrorCode(pickupErrorCode(err));
-      setError(pickupCompleteErrorCopy(err, due ?? undefined));
+      setError(pickupCompleteErrorCopy(err, due ?? undefined, completeMode));
     }
   }
 
@@ -204,7 +235,7 @@ export function PickupCompleteDialog({
     <Modal
       open={open}
       onClose={onClose}
-      title={`${handOver ? "Hand over" : "Picked up"}${orderNumber ? ` ${orderNumber}` : ""}`}
+      title={`${completeMode ? COUNTER_COPY.completeAtCounter : handOver ? "Hand over" : "Picked up"}${orderNumber ? ` ${orderNumber}` : ""}`}
       className="max-w-md"
       footer={
         outcome ? (
@@ -256,14 +287,31 @@ export function PickupCompleteDialog({
                     Retry
                   </Button>
                 )}
-                <Button
-                  type="button"
-                  onClick={confirm}
-                  loading={complete.isPending}
-                  disabled={due === null}
-                >
-                  {handOver ? "Hand over" : nothingToCollect ? "Confirm picked up" : "Picked up"}
-                </Button>
+                {/* SA-913 R8: the order is on a driver's run; the alert names the driver, this re-sends with the confirm */}
+                {errorCode === API_ERROR_CODES.COUNTER_COMPLETE_ON_RUN ? (
+                  <Button
+                    type="button"
+                    loading={complete.isPending}
+                    onClick={() => void send({ ...lastBody.current, takeOffRun: true })}
+                  >
+                    {COUNTER_COPY.takeOffRun}
+                  </Button>
+                ) : (
+                  <Button
+                    type="button"
+                    onClick={confirm}
+                    loading={complete.isPending}
+                    disabled={due === null}
+                  >
+                    {completeMode
+                      ? COUNTER_COPY.completeConfirm
+                      : handOver
+                        ? "Hand over"
+                        : nothingToCollect
+                          ? "Confirm picked up"
+                          : "Picked up"}
+                  </Button>
+                )}
               </>
             )}
           </>
@@ -282,9 +330,16 @@ export function PickupCompleteDialog({
               </p>
             ) : (
               <p className="text-sm font-semibold text-navy">
-                {outcome.balanceDue > 0
-                  ? `Picked up. ${money(outcome.balanceDue)} still due.`
-                  : "Picked up and paid."}
+                {completeMode
+                  ? outcome.emailed
+                    ? COUNTER_COPY.completedEmailed
+                    : COUNTER_COPY.completed
+                  : outcome.balanceDue > 0
+                    ? `Picked up. ${money(outcome.balanceDue)} still due.`
+                    : "Picked up and paid."}
+                {completeMode && outcome.balanceDue > 0
+                  ? ` ${money(outcome.balanceDue)} still due.`
+                  : ""}
               </p>
             )}
             {unrecorded && (
@@ -293,6 +348,16 @@ export function PickupCompleteDialog({
               </p>
             )}
             {duplicateMessage && <p className="text-sm text-navy">{duplicateMessage}</p>}
+            {/* I-120 (SA-849 on the hand-over): the gate counted this tender; without it the customer is over their limit. */}
+            {unrecorded && outcome.creditOverLimit && (
+              <p
+                role="status"
+                className="rounded border border-amber-300 bg-amber-50 p-3 text-sm"
+                data-testid="pickup-credit-over-limit"
+              >
+                {creditOverLimitSentence(customerName, outcome.creditOverLimit, money)}
+              </p>
+            )}
             {(outcome.change ?? 0) > 0 && (
               <p className="text-3xl font-bold" data-testid="pickup-change">
                 Change {money(outcome.change ?? 0)}

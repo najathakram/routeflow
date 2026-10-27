@@ -22,7 +22,8 @@ export type IndexEntry = {
   /** Breadcrumb tail, e.g. "Invoicing" (defaults to the label). */
   page?: string;
   keywords: string[];
-  show?: "admin";
+  /** admin = account admins only; staff = admins and operators (never a driver), e.g. the low-stock digest (OK-6). */
+  show?: "admin" | "staff";
   /**
    * fleet = routes/drivers on the plan; selfServe = Settings > Fulfillment is open to this tenant; counter = counter
    * sales on; unitsSettings = flag.units_settings_v1; driverAccess = the Driver access card renders (an admin on a
@@ -144,12 +145,13 @@ const ENTRIES: IndexEntry[] = [
   {
     id: "info-pos-mode",
     kind: "info",
-    label: "POS mode",
+    label: "Store pickup",
     desc: "Sell to a named customer and invoice now",
     answer:
-      "Turn on POS mode in the New order window on the Orders screen. It books a named customer and invoices right away.",
+      "Turn on Store pickup in the New order window on the Orders screen. It books a named customer and invoices right away.",
     groupKey: "fulfilment",
-    keywords: ["pos", "pos mode", "point of sale", "invoice now", "named customer"],
+    // "pos" / "pos mode" stay: the switch was called POS mode until I-120 (SA-861 rule 10)
+    keywords: ["store pickup", "pos", "pos mode", "point of sale", "invoice now", "named customer"],
   },
   // ── Business & team ──────────────────────────────────────────────────────────────────────
   {
@@ -342,15 +344,6 @@ const ENTRIES: IndexEntry[] = [
       "banned",
       "age",
     ],
-  },
-  {
-    id: "restrictions-compliance",
-    kind: "item",
-    label: "Selling restrictions",
-    desc: "Block restricted products by the customer's state",
-    href: R,
-    groupKey: "compliance",
-    keywords: ["restriction", "state", "blocked", "banned", "age", "tobacco", "vape", "compliance"],
   },
   {
     id: "restriction-rules-compliance",
@@ -640,7 +633,8 @@ const ENTRIES: IndexEntry[] = [
     "notifications",
     "Notifications",
     ["low stock", "reorder", "digest", "stock alert", "inventory email"],
-    { show: "admin", anchor: "low-stock-digest" },
+    // Owner 10-07 OK-6: operators receive the digest too, so its opt-out row is theirs; a driver gets none.
+    { show: "staff", anchor: "low-stock-digest" },
   ),
   ...card(
     "push",
@@ -832,6 +826,8 @@ export function buildIndex(o: {
   unitsSettings?: boolean;
   /** The viewer can act as a driver (their Driver access card shows even off-fleet and for an operator). */
   canActAsDriver?: boolean;
+  /** The viewer's role: `show: "staff"` rows need an admin or an OPERATOR (never a driver). */
+  role?: string | null;
 }): IndexEntry[] {
   const open = {
     fleet: o.fleet,
@@ -840,7 +836,8 @@ export function buildIndex(o: {
     unitsSettings: !!o.unitsSettings,
     driverAccess: !!o.canActAsDriver || (o.isAdmin && o.fleet),
   };
-  return ENTRIES.filter((e) => (e.show === "admin" ? o.isAdmin : true))
+  const staff = o.isAdmin || o.role === "OPERATOR";
+  return ENTRIES.filter((e) => (e.show === "admin" ? o.isAdmin : e.show === "staff" ? staff : true))
     .filter((e) => (e.needs ? open[e.needs] : true))
     .map((e) =>
       e.id === "user-management" && !o.fleet
@@ -906,7 +903,7 @@ export const GROUP_ROWS: Record<string, string[]> = {
   payments: ["invoicing", "how-to-pay", "card-payments"],
   selling: ["tier-names", "costing", "restrictions-selling", "restriction-rules", "product-labels"],
   notifications: ["notifications", "email-smtp"],
-  compliance: ["regulated-sections", "restrictions-compliance"],
+  compliance: ["regulated-sections"],
   integrations: [
     "claude-scanner",
     "gohighlevel",
@@ -946,8 +943,7 @@ export function searchSettings(q: string, entries: IndexEntry[]): IndexEntry[] {
   const linked = hits.filter((e) => e.kind !== "info");
   const seen = new Set<string>();
   const out = linked.filter((e) => {
-    // one result per destination: a row listed in two groups (Selling restrictions in Selling and Compliance) is
-    // one answer to a search, the first group's
+    // one result per destination: a row listed in two groups is one answer to a search, the first group's
     const k = `${e.href}|${e.label}`;
     return seen.has(k) ? false : (seen.add(k), true);
   });
@@ -988,7 +984,7 @@ export function activeEntryIds(
     .filter((e) => e.kind === "item" && e.href)
     .map((e) => ({ id: e.id, ...parseHref(e.href!) }));
   if (loc.pathname !== "/settings") {
-    // Selling restrictions is listed in two groups; only the first is the open row.
+    // A destination listed in two groups opens only its first row.
     const hit = rows.find((r) => r.path === loc.pathname);
     return hit ? [hit.id] : [];
   }

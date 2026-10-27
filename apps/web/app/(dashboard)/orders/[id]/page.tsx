@@ -82,6 +82,7 @@ import { phoneActionItems } from "./_components/phone-action-items";
 import { useInvoiceDraftNotice } from "./_components/use-invoice-draft-notice";
 import { SAVE_CHORD_KEYS, saveChordHandler } from "./_components/use-save-chord";
 import { PickupHandOverButton, PickupHandOverDialog } from "./_components/PickupHandOver";
+import { CompleteAtCounterAction, CompleteAtCounterDialog } from "./_components/CompleteAtCounter";
 import {
   ConfirmedPrimaryAction,
   OutForDeliveryPrimary,
@@ -103,6 +104,7 @@ import { findLockedUnitLineEdit, lockedUnitLineRefusal } from "./_components/uni
 import { parseRegulatedAuthError, type BlockedCategory } from "@/lib/api/authorizations";
 import { parseSellingRestricted } from "@/lib/api/selling-restricted";
 import { BlockedLinesDialog } from "@/components/BlockedLinesDialog";
+import { useRestrictionWarningRetry } from "@/lib/use-restriction-warning-retry";
 import { postDeliveryInvoicePrompt, type BlockedLine } from "@routeflow/types";
 import { CreditLimitGuardDialog } from "@/components/CreditLimitGuardDialog";
 import { parseCreditLimitError, type CreditLimitInfo } from "@/lib/api/credit-limit";
@@ -233,27 +235,28 @@ export default function OrderDetailPage() {
   // The cancel flow renders its own error (every other status change keeps the global toast), so it has its own instance.
   const cancelOrder = useUpdateOrderStatus({ localErrorToast: true });
   const reopenOrder = useReopenOrder();
+  const rw = useRestrictionWarningRetry(); // row 510: staff warning + override dialog
   const deleteOrder = useDeleteOrder({ localErrorToast: true });
   const updateShipment = useUpdateOrderShipment();
   const createInvoiceFromOrder = useCreateInvoiceFromOrder();
   const patchFulfillPath = usePatchOrderFulfillPath({ localErrorToast: true });
   const applyFulfillPath = (fulfillPath: "ROUTE" | "SHIP") =>
-    patchFulfillPath.mutate(
-      { id, fulfillPath },
-      {
-        onSuccess: () => toast({ title: "Fulfillment updated", variant: "success" }),
-        onError: (err: any) =>
-          toast({
-            title: "Could not update fulfillment",
-            description: fulfillPathErrorCopy(err),
-            variant: "error",
-          }),
-      },
-    );
+    patchFulfillPath.mutate(rw.attach({ id, fulfillPath }), {
+      onSuccess: () => toast({ title: "Fulfillment updated", variant: "success" }),
+      onError: (err: any) =>
+        rw.handle(err, () => applyFulfillPath(fulfillPath)) ||
+        toast({
+          title: "Could not update fulfillment",
+          description: fulfillPathErrorCopy(err),
+          variant: "error",
+        }),
+    });
   const [showShipDialog, setShowShipDialog] = React.useState(false);
   const [showUnmarkConfirm, setShowUnmarkConfirm] = React.useState(false);
   // Picked-up dialog + a pending move off pickup: page-level so they outlive the status-gated action rows.
   const [pickupOpen, setPickupOpen] = React.useState(false);
+  const [completeOpen, setCompleteOpen] = React.useState(false); // I-120: Complete at counter
+  const openComplete = () => setCompleteOpen(true);
   const [pendingPath, setPendingPath] = React.useState<"ROUTE" | "SHIP" | null>(null);
 
   // Order-level commission override (staff + sales_agents addon only — the
@@ -286,7 +289,7 @@ export default function OrderDetailPage() {
   // Opens the guard modal on a REGULATED_AUTH_REQUIRED 409; other errors fall
   // through to the global mutation toast.
   const guardError = (retry: () => void) => (err: unknown) => {
-    if (overpay.capture(err) || stale.capture(err)) return;
+    if (overpay.capture(err) || stale.capture(err) || rw.handle(err, retry)) return;
     const restricted = parseSellingRestricted(err);
     if (restricted) {
       setRestrictedBlock(restricted);
@@ -326,7 +329,7 @@ export default function OrderDetailPage() {
       fresh,
       base,
     );
-    if (n > 0) toast({ title: "Someone else changed this order - re-check it", variant: "error" });
+    if (n > 0) toast({ title: "Someone else changed this order — re-check it", variant: "error" });
   });
   const updateItems = useUpdateOrderItems({
     localErrorToast: (e) => overpay.ownsToast(e) || stale.ownsToast(e),
@@ -487,7 +490,9 @@ export default function OrderDetailPage() {
   function handleResolve(cr: ChangeRequest, action: ChangeRequestResolveAction, reason?: string) {
     const run = () =>
       resolveCr.mutate(
-        { orderId: order!.id, crId: cr.id, action, reason },
+        // Row 510: a restricted add/raise warns the office (409 RESTRICTION_WARNING, lineKey `cr:<id>`); the dialog's
+        // "Sell anyway" calls run() again and attach() adds the ack to this SAME request, once.
+        rw.attach({ orderId: order!.id, crId: cr.id, action, reason }),
         {
           onSuccess: () => {
             setDeclineTargetId(null);
@@ -662,7 +667,7 @@ export default function OrderDetailPage() {
       toast({ title: "Order updated", variant: "success" });
     };
     updateItems.mutate(
-      {
+      rw.attach({
         id: order!.id,
         items: updates,
         replaceAll: false,
@@ -673,7 +678,7 @@ export default function OrderDetailPage() {
         // intents untouched (see CreditNotePicker / syncOrderCreditSelections).
         ...(creditsTouched ? { appliedCreditNotes: editCredits } : {}),
         ...(inlineReturn ? { inlineReturn } : {}),
-      },
+      }),
       {
         // The latch is held through the own-replay re-read below, so a third click cannot send another write.
         onSettled: (_data, err) => {
@@ -888,7 +893,7 @@ export default function OrderDetailPage() {
             });
           }}
         >
-          Confirm Delete
+          Confirm delete
         </Button>
         <button
           onClick={() => setShowDeleteConfirm(false)}
@@ -1126,18 +1131,15 @@ export default function OrderDetailPage() {
                   leftIcon={<CheckCircle2 className="h-4 w-4" />}
                   onClick={() => {
                     const publish = () =>
-                      updateStatus.mutate(
-                        { id: order.id, status: "PENDING" as any },
-                        {
-                          onSuccess: () => setLocalStatus("PENDING"),
-                          onError: guardError(() => publish()),
-                        },
-                      );
+                      updateStatus.mutate(rw.attach({ id: order.id, status: "PENDING" as any }), {
+                        onSuccess: () => setLocalStatus("PENDING"),
+                        onError: guardError(() => publish()),
+                      });
                     publish();
                   }}
                   loading={updateStatus.isPending}
                 >
-                  Publish Order
+                  Publish order
                 </WriteButton>
               </ActionTier>
               <DeleteOrderTier
@@ -1146,7 +1148,7 @@ export default function OrderDetailPage() {
                 deleteOrder={deleteOrder}
                 open={showDeleteConfirm}
                 setOpen={setShowDeleteConfirm}
-                idleLabel="Delete Draft"
+                idleLabel="Delete draft"
                 successTitle="Draft deleted"
                 errorText={orderErrorText}
               />
@@ -1164,9 +1166,12 @@ export default function OrderDetailPage() {
                     onClick={handleConfirm}
                     loading={updateStatus.isPending}
                   >
-                    Confirm Order
+                    Confirm order
                   </Button>
                 </ActionTier>
+              )}
+              {access.staff && (
+                <CompleteAtCounterAction order={order} status={localStatus} onOpen={openComplete} />
               )}
             </>
           )}
@@ -1219,7 +1224,7 @@ export default function OrderDetailPage() {
                           });
                         }}
                       >
-                        Confirm Delete
+                        Confirm delete
                       </Button>
                       <button
                         onClick={() => setShowDeleteConfirm(false)}
@@ -1258,6 +1263,7 @@ export default function OrderDetailPage() {
                   <PickupHandOverButton onOpen={() => setPickupOpen(true)} />
                 </ActionTier>
               )}
+              <CompleteAtCounterAction order={order} status={localStatus} onOpen={openComplete} />
               {/* CONFIRMED→PENDING is a demotion — the server rejects it without a
                   reason, so the ONLY path is the DemoteReasonModal. A second
                   "Unconfirm" button used to submit directly (predating the
@@ -1297,6 +1303,7 @@ export default function OrderDetailPage() {
                 onDeliver={handleDeliver}
                 pending={updateStatus.isPending}
               />
+              <CompleteAtCounterAction order={order} status={localStatus} onOpen={openComplete} />
               {!phone && (
                 <ActionTier tier="secondary">
                   <Button
@@ -1344,7 +1351,7 @@ export default function OrderDetailPage() {
                     leftIcon={<RotateCcw className="h-4 w-4" />}
                     onClick={() => setDemoteTarget("CONFIRMED")}
                   >
-                    Reopen Order
+                    Reopen order
                   </Button>
                   <p className="text-[11px] text-navy/50">
                     Reopening keeps the invoice in sync while you edit. Orders delivered on a route
@@ -1354,7 +1361,7 @@ export default function OrderDetailPage() {
               </ActionTier>
               <ActionTier tier="danger">
                 {renderDeleteOrderAction(
-                  "Delete this DELIVERED order? Its delivery record is removed permanently.",
+                  "Delete this delivered order? Its delivery record is removed permanently.",
                 )}
               </ActionTier>
             </>
@@ -1370,14 +1377,17 @@ export default function OrderDetailPage() {
                   leftIcon={<RotateCcw className="h-4 w-4" />}
                   onClick={() => {
                     if (confirm("Reopen this order? It will return to Pending status.")) {
-                      reopenOrder.mutate(order.id, {
-                        onSuccess: () => setLocalStatus("PENDING"),
-                      });
+                      const reopen = () =>
+                        reopenOrder.mutate(rw.attach(order.id), {
+                          onSuccess: () => setLocalStatus("PENDING"),
+                          onError: guardError(reopen),
+                        });
+                      reopen();
                     }
                   }}
                   loading={reopenOrder.isPending}
                 >
-                  Reopen Order
+                  Reopen order
                 </Button>
               </ActionTier>
               <DeleteOrderTier
@@ -1413,7 +1423,7 @@ export default function OrderDetailPage() {
           <div className="rounded-lg bg-white p-6 shadow-card">
             <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
               <h3 className="flex items-center gap-2.5 text-base font-semibold text-navy">
-                Line Items
+                Line items
                 {isEditing && (
                   <Badge variant="info" label="Editing" className="normal-case tracking-normal" />
                 )}
@@ -1527,7 +1537,7 @@ export default function OrderDetailPage() {
                         disabled={layerBlocked}
                         loading={updateItems.isPending}
                       >
-                        Save Draft
+                        Save draft
                       </WriteButton>
                       {access.staff && (
                         <WriteButton
@@ -1544,7 +1554,7 @@ export default function OrderDetailPage() {
                             ];
                             const doPublish = () =>
                               updateStatus.mutate(
-                                { id: order!.id, status: "PENDING" as any },
+                                rw.attach({ id: order!.id, status: "PENDING" as any }),
                                 {
                                   // Row 604 M1: the publish latch is held from the first tap
                                   // until the status write settles (save-then-publish included).
@@ -1582,7 +1592,7 @@ export default function OrderDetailPage() {
                                 inlineReturn
                               ) {
                                 updateItems.mutate(
-                                  {
+                                  rw.attach({
                                     id: order!.id,
                                     items: updates,
                                     // replaceAll:false — this is an incremental diff (new
@@ -1600,7 +1610,7 @@ export default function OrderDetailPage() {
                                     // this exact miss last PR — do not repeat it).
                                     ...(creditsTouched ? { appliedCreditNotes: editCredits } : {}),
                                     ...(inlineReturn ? { inlineReturn } : {}),
-                                  },
+                                  }),
                                   {
                                     onSuccess: () => (returnSave.onSuccess(), doPublish()),
                                     onError: (err: unknown) => {
@@ -1621,7 +1631,7 @@ export default function OrderDetailPage() {
                           disabled={layerBlocked}
                           loading={updateItems.isPending || updateStatus.isPending}
                         >
-                          Publish Order
+                          Publish order
                         </WriteButton>
                       )}
                       <Button
@@ -1637,12 +1647,13 @@ export default function OrderDetailPage() {
                     <>
                       <WriteButton
                         size="sm"
+                        className="min-h-11 sm:min-h-0"
                         onClick={handleSaveItems}
                         aria-keyshortcuts={SAVE_CHORD_KEYS}
                         disabled={layerBlocked}
                         loading={savingItems}
                       >
-                        Save Changes
+                        Save changes
                       </WriteButton>
                       <Button
                         size="sm"
@@ -1791,7 +1802,7 @@ export default function OrderDetailPage() {
 
           {/* Notes */}
           {order.notes && !isEditing && (
-            <Card title="Order Notes">
+            <Card title="Order notes">
               <div className="flex items-start gap-3">
                 <FileText className="mt-0.5 h-4 w-4 shrink-0 text-navy/70" />
                 <p className="text-sm text-navy/80 whitespace-pre-line">{order.notes}</p>
@@ -2135,6 +2146,13 @@ export default function OrderDetailPage() {
           onClose={() => setPickupOpen(false)}
         />
       )}
+      {access.staff && (
+        <CompleteAtCounterDialog
+          order={order}
+          open={completeOpen}
+          onClose={() => setCompleteOpen(false)}
+        />
+      )}
       <FulfillPathMoveConfirm
         open={pendingPath !== null}
         path={pendingPath}
@@ -2183,6 +2201,7 @@ export default function OrderDetailPage() {
       {/* License guard (W6b): an edit/promote hit a 409 REGULATED_AUTH_REQUIRED.
           Lines are removed via the edit UI here, so the remove exit is omitted. */}
       <BlockedLinesDialog lines={restrictedBlock} onClose={() => setRestrictedBlock(null)} />
+      {rw.dialog}
       {licenseBlock && order && (
         <LicenseGuardModal
           open

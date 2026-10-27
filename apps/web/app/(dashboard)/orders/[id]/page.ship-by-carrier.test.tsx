@@ -90,7 +90,7 @@ describe("M8a: Ship by carrier… on a pickup order", () => {
       await open(status);
       expect(screen.getByRole("button", { name: /^Switch to delivery$/ })).toBeInTheDocument();
       fireEvent.click(screen.getByRole("button", { name: /^Ship by carrier…$/ }));
-      await screen.findByText(/Move this order off in-store pickup\?/);
+      await screen.findByText(/Move this order off store pickup\?/);
       expect(screen.getByText(/carrier and tracking number/i)).toBeInTheDocument();
       expect(patch).not.toHaveBeenCalled();
       fireEvent.click(screen.getByRole("button", { name: "Move order" }));
@@ -103,7 +103,7 @@ describe("M8a: Ship by carrier… on a pickup order", () => {
   it("Switch to delivery still goes to the delivery route, and says nothing about carriers", async () => {
     await open("CONFIRMED");
     fireEvent.click(screen.getByRole("button", { name: /^Switch to delivery$/ }));
-    await screen.findByText(/Move this order off in-store pickup\?/);
+    await screen.findByText(/Move this order off store pickup\?/);
     expect(screen.queryByText(/carrier and tracking number/i)).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Move order" }));
     await waitFor(() =>

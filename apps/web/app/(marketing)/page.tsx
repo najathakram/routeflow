@@ -37,7 +37,7 @@ import { PLANS, site } from "./lib/site";
 export const metadata: Metadata = {
   alternates: { canonical: "/" },
   openGraph: {
-    title: "RouteFlow | Turn scattered orders into organized deliveries",
+    title: "Turn scattered orders into organized deliveries · RouteFlow",
     description:
       "Connect wholesale orders, route planning, delivery confirmation, and customer accounts.",
     url: "/",
@@ -51,7 +51,7 @@ export default function Home() {
     <div className="glass-page">
       <section className="glass-hero wrap">
         <div className="glass-hero-copy">
-          <Eyebrow>WHOLESALE ORDER & DELIVERY SOFTWARE</Eyebrow>
+          <Eyebrow>Wholesale order & delivery software</Eyebrow>
           <h1>
             Turn scattered orders <br />
             into{" "}
@@ -89,7 +89,7 @@ export default function Home() {
       <section className="section proof-tour wrap" id="how-it-works">
         <div className="section-heading split-heading">
           <div>
-            <Eyebrow>HOW ROUTEFLOW SOLVES IT</Eyebrow>
+            <Eyebrow>How RouteFlow solves it</Eyebrow>
             <h2>
               From stock to invoice.
               <br />
@@ -111,7 +111,7 @@ export default function Home() {
       <section className="section wrap pricing-teaser">
         <div className="section-heading split-heading">
           <div>
-            <Eyebrow>PRICING</Eyebrow>
+            <Eyebrow>Pricing</Eyebrow>
             <h2>
               Discuss the plan
               <br />
@@ -127,7 +127,7 @@ export default function Home() {
           {PLANS.map((plan) => (
             <article key={plan.name} className="pricing-teaser-card">
               <plan.icon size={24} />
-              <p className="card-eyebrow">{plan.tag}</p>
+              <p className="card-eyebrow caps">{plan.tag}</p>
               <h3>{plan.name}</h3>
               <p>{plan.text}</p>
               <Link className="text-link" href="/pricing">

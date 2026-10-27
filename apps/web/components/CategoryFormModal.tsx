@@ -30,6 +30,11 @@ const TREATMENTS: { value: InvoiceTreatment; label: string }[] = [
 /** Fallback while `useRegulatedTemplates()` is loading. */
 const TEMPLATES_FALLBACK = ["GENERIC", "CA_CDTFA", "CA_ABC", "CALRECYCLE", "TX_COMPTROLLER"];
 const CADENCES: ReportCadence[] = ["MONTHLY", "QUARTERLY", "ANNUAL"];
+const CADENCE_LABELS: Record<ReportCadence, string> = {
+  MONTHLY: "Monthly",
+  QUARTERLY: "Quarterly",
+  ANNUAL: "Annual",
+};
 
 const inputCls =
   "w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500";
@@ -285,7 +290,7 @@ export function CategoryFormModal({ isOpen, onClose, category }: Props) {
               >
                 {CADENCES.map((c) => (
                   <option key={c} value={c}>
-                    {c}
+                    {CADENCE_LABELS[c]}
                   </option>
                 ))}
               </select>

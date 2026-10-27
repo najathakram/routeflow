@@ -1,3 +1,7 @@
+import { warnLineAmbiguity, type LineGuardSite } from "../common/line-ambiguity-warn";
+
+/** SA-982 PR-2: the census context (tenant + the actor's role) callers of this builder spread into its ctx. */
+export { lineGuardCtx, type LineGuardSite } from "../common/line-ambiguity-warn";
 import { BadRequestException } from "@nestjs/common";
 import { unpackableSplit } from "./update-pack-resolution";
 import type { CreateInvoiceDto } from "./dto/create-invoice.dto";
@@ -37,12 +41,23 @@ export type ManualLineItem = CreateInvoiceDto["items"][number] & {
   subtotalSnapshot?: number | null;
 };
 
+/** `InvoicesService.create`'s input: the HTTP body, with lines an internal caller may give a pack snapshot. */
+export type ManualInvoiceDto = Omit<CreateInvoiceDto, "items"> & { items: ManualLineItem[] };
+
 export function buildManualInvoiceLines(
   items: ManualLineItem[],
   ctx: {
     productMap: ReadonlyMap<string, any>;
     categoryMap: ReadonlyMap<string, any>;
     tenantId: string | null | undefined;
+    /** SA-982 PR-2: the actor's role, for the warn census only (absent = logged as unknown). */
+    role?: string | null;
+    /**
+     * SA-982 PR-2: set ONLY by the caller whose lines are a client's raw new write (POST /invoices). Absent = no
+     * dry-run: an estimate conversion, a recurring run and any other internal caller build lines from stored rows,
+     * which `buildLine` refuses nothing on, so they are not this census.
+     */
+    warnSite?: LineGuardSite;
     clampFreeUnits: (free: number | undefined, boxes: number | null, qty: number) => number;
     /** units_v1: `resolveLineUnits` per item, index-aligned with `items` (the caller resolves). */
     resolved?: ReadonlyArray<ResolvedLineUnits>;
@@ -50,7 +65,8 @@ export function buildManualInvoiceLines(
     override?: LineOverrideCtx;
   },
 ) {
-  const { productMap, categoryMap, tenantId, clampFreeUnits, resolved, override } = ctx;
+  const { productMap, categoryMap, tenantId, role, warnSite, clampFreeUnits, resolved, override } =
+    ctx;
   let subtotal = 0;
   const itemsData = items.map((sent, index) => {
     const product = sent.productId ? productMap.get(sent.productId) : undefined;
@@ -77,6 +93,7 @@ export function buildManualInvoiceLines(
       subtotal += unitLine.subtotal;
       return { ...unitLine, ...stamp };
     }
+    const livePack = product?.unitsPerBox; // the ONE read of the live pack (line-units call-site ratchet)
     let qty = item.qty;
     let boxes: number | null = null;
     let pieces: number | null = null;
@@ -94,8 +111,13 @@ export function buildManualInvoiceLines(
       pieces = Number(item.pieces ?? 0);
       lineSub = roundMoney(Number(item.subtotalSnapshot) - (item.discount ?? 0));
     } else {
+      // SA-982 PR-2 (warn only, the write is unchanged): a client's NEW line is dry-run through buildLine with its RAW
+      // input; the census of what a later flip would refuse is that log. Only the caller that names a site is a client.
+      if (warnSite && item.productId && product) {
+        warnLineAmbiguity(warnSite, { ...item, unitsPerBox: livePack }, { tenantId, role });
+      }
       if (item.productId && (item.boxes != null || item.pieces != null)) {
-        const pack = item.packSnapshot ?? product?.unitsPerBox;
+        const pack = item.packSnapshot ?? livePack;
         // B659 (review finding 7): truthy, not `> 1`, let a pack of 1 through — `normalizeBoxesPieces`
         // itself only does box math when unitsPerBox > 1 (its own `hasBoxPackaging` gate) and otherwise
         // falls back to an `input.qty` this caller never passes, so a pack-1 product's split silently
@@ -153,7 +175,7 @@ export function buildManualInvoiceLines(
     // B659 (review finding 2): a NO-SPLIT line (boxes == null, so the branch above never ran) still
     // needs the QUOTED pack for its per-piece levy basis, never a live repack — same snapshot the
     // box-split branch above already honours via `pack` (item.packSnapshot ?? product?.unitsPerBox).
-    const upbForPieces = Number(item.packSnapshot ?? product?.unitsPerBox ?? 0);
+    const upbForPieces = Number(item.packSnapshot ?? livePack ?? 0);
     const pieceQty = boxes != null ? qty : upbForPieces > 1 ? qty * upbForPieces : qty;
     const categoryTaxAmount = category
       ? computeCategoryTax({

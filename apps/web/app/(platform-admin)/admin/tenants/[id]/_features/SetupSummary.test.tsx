@@ -62,7 +62,7 @@ describe("SetupSummary — the tenant's current setup in plain English", () => {
     mockConfigValue.mockReturnValue(new Promise(() => {}));
     mockEffective.mockReturnValue(new Promise(() => {}));
     render(<SetupSummary tenantId={TENANT_ID} />);
-    expect(screen.getByText("Loading this tenant's setup...")).toBeInTheDocument();
+    expect(screen.getByText("Loading this tenant's setup…")).toBeInTheDocument();
   });
 
   it("BO-11: the fulfilment row reads 'Where orders go', the registry's own label", async () => {
@@ -139,7 +139,7 @@ describe("SetupSummary — the tenant's current setup in plain English", () => {
   it("a stored value this screen does not know is not printed raw", async () => {
     setup({ fulfilment: "teleport" }, {});
     render(<SetupSummary tenantId={TENANT_ID} />);
-    expect(await screen.findByText("A setting this screen does not recognise")).toBeInTheDocument();
+    expect(await screen.findByText("A setting this screen does not recognize")).toBeInTheDocument();
     expect(document.body.textContent).not.toContain("teleport");
   });
 

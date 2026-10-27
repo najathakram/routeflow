@@ -55,9 +55,9 @@ const routes = async (url: string) => {
 
 async function openModal() {
   renderWithProviders(<FinancePaymentsPage />);
-  fireEvent.click(screen.getAllByRole("button", { name: /Record Payment/ })[0]);
+  fireEvent.click(screen.getAllByRole("button", { name: /Record payment/i })[0]);
   await screen.findAllByRole("option", { name: /Acme Foods/ });
-  fireEvent.change(screen.getByDisplayValue("Select customer..."), {
+  fireEvent.change(screen.getByDisplayValue("Select customer…"), {
     target: { value: "cust-1" },
   });
   fireEvent.change(screen.getAllByPlaceholderText("0.00")[0], { target: { value: "50" } });
@@ -65,9 +65,9 @@ async function openModal() {
 // the scope is the customer (writer + target): a reopened dialog resolves it when the customer is chosen
 const pickCustomer = async () => {
   await screen.findAllByRole("option", { name: /Acme Foods/ });
-  fireEvent.change(screen.getByDisplayValue("Select customer..."), { target: { value: "cust-1" } });
+  fireEvent.change(screen.getByDisplayValue("Select customer…"), { target: { value: "cust-1" } });
 };
-const save = () => fireEvent.click(screen.getByRole("button", { name: "Save as Paid" }));
+const save = () => fireEvent.click(screen.getByRole("button", { name: "Save as paid" }));
 const checkBtn = () => screen.getByRole("button", { name: "Check payment status" });
 const goUnknown = async () => {
   mockPost.mockRejectedValueOnce(httpErr(503));
@@ -86,7 +86,7 @@ describe("finance/payments Record Payment: Check payment status (SA-824)", () =>
 
   it("an unknown outcome offers the check and disables both Save buttons", async () => {
     await goUnknown();
-    expect(screen.getByRole("button", { name: "Save as Paid" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save as paid" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Save as draft" })).toBeDisabled();
   });
 
@@ -109,7 +109,9 @@ describe("finance/payments Record Payment: Check payment status (SA-824)", () =>
     });
     mockPost.mockResolvedValue({ data: { url: "u" } });
     fireEvent.click(checkBtn());
-    await waitFor(() => expect(screen.queryByText("Record Payment")).toBeNull());
+    await waitFor(() =>
+      expect(screen.queryByRole("heading", { name: "Record payment" })).toBeNull(),
+    );
     expect(mockResolve).toHaveBeenCalledWith(resolveUrl(sent));
     expect(mockPost.mock.calls.map((c) => c[0])).toContain("/invoices/payments/p1/image");
     expect(mockToast).toHaveBeenCalledWith(
@@ -143,7 +145,7 @@ describe("finance/payments Record Payment: Check payment status (SA-824)", () =>
     mockResolve.mockResolvedValue({ data: { state: "tombstoned" } });
     fireEvent.click(checkBtn());
     expect(await screen.findByText(RESOLVED_COPY)).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Save as Paid" })).not.toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save as paid" })).not.toBeDisabled();
     mockPost.mockRejectedValueOnce(httpErr(400));
     save();
     await waitFor(() => expect(mockPost).toHaveBeenCalledTimes(2));
@@ -157,7 +159,7 @@ describe("finance/payments Record Payment: Check payment status (SA-824)", () =>
     expect(
       await screen.findByText("We couldn't check right now. Try again in a moment."),
     ).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Save as Paid" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save as paid" })).toBeDisabled();
   });
 
   it("409 PAYMENT_KEY_IN_FLIGHT: the fixed retry copy, still unknown, Save stays off", async () => {
@@ -172,7 +174,7 @@ describe("finance/payments Record Payment: Check payment status (SA-824)", () =>
       ),
     ).toBeTruthy();
     expect(screen.queryByText(/RAW SERVER TEXT/)).toBeNull();
-    expect(screen.getByRole("button", { name: "Save as Paid" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save as paid" })).toBeDisabled();
     expect(checkBtn()).toBeTruthy();
   });
 
@@ -188,7 +190,7 @@ describe("finance/payments Record Payment: Check payment status (SA-824)", () =>
       ),
     );
     expect(screen.queryByRole("button", { name: "Check payment status" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Save as Paid" })).not.toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save as paid" })).not.toBeDisabled();
     const first = keyOf(mockPost.mock.calls[0]);
     mockPost.mockRejectedValueOnce(httpErr(400));
     save();
@@ -204,7 +206,7 @@ describe("finance/payments Record Payment: Check payment status (SA-824)", () =>
       await screen.findByText("We couldn't check right now. Try again in a moment."),
     ).toBeTruthy();
     expect(screen.queryByText(/RAW SERVER TEXT/)).toBeNull();
-    expect(screen.getByRole("button", { name: "Save as Paid" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save as paid" })).toBeDisabled();
     expect(checkBtn()).toBeTruthy();
   });
 
@@ -213,10 +215,10 @@ describe("finance/payments Record Payment: Check payment status (SA-824)", () =>
     const sent = keyOf(mockPost.mock.calls[0]);
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(screen.queryByRole("button", { name: "Check payment status" })).toBeNull();
-    fireEvent.click(screen.getAllByRole("button", { name: /Record Payment/ })[0]);
+    fireEvent.click(screen.getAllByRole("button", { name: /Record payment/i })[0]);
     await pickCustomer();
     expect(checkBtn()).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Save as Paid" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save as paid" })).toBeDisabled();
     fireEvent.click(checkBtn());
     await waitFor(() => expect(mockResolve).toHaveBeenCalledWith(resolveUrl(sent)));
   });
@@ -230,20 +232,20 @@ describe("finance/payments Record Payment: Check payment status (SA-824)", () =>
     const k1 = keyOf(mockPost.mock.calls[0]);
     // Cancel is enabled while the save is pending; the modal unmounts and is reopened
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    expect(screen.queryByRole("heading", { name: "Record Payment" })).toBeNull();
-    fireEvent.click(screen.getAllByRole("button", { name: /Record Payment/ })[0]);
+    expect(screen.queryByRole("heading", { name: "Record payment" })).toBeNull();
+    fireEvent.click(screen.getAllByRole("button", { name: /Record payment/i })[0]);
     // the reopened dialog sees the request still out once the customer is chosen: unknown, so Save is off
     // and the check is offered
     await pickCustomer();
     expect(checkBtn()).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Save as Paid" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save as paid" })).toBeDisabled();
     // the first request now times out (no response)
     await act(async () => {
       timeOut(Object.assign(new Error("timeout of 15000ms exceeded"), { code: "ECONNABORTED" }));
     });
     await waitFor(() => expect(mockToast).toHaveBeenCalled());
     expect(checkBtn()).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Save as Paid" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save as paid" })).toBeDisabled();
     expect(acquirePaymentKeyHolder("standalone:cust-1").peek()).toBe(k1);
     fireEvent.click(checkBtn());
     await waitFor(() => expect(mockResolve).toHaveBeenCalledWith(resolveUrl(k1)));
@@ -258,11 +260,11 @@ describe("finance/payments Record Payment: Check payment status (SA-824)", () =>
     await waitFor(() => expect(mockPost).toHaveBeenCalledTimes(1));
     const k1 = keyOf(mockPost.mock.calls[0]);
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    fireEvent.click(screen.getAllByRole("button", { name: /Record Payment/ })[0]);
+    fireEvent.click(screen.getAllByRole("button", { name: /Record payment/i })[0]);
     await pickCustomer();
     // the in-flight request is an unknown outcome: Save is off with its reason, the check is offered
     expect(checkBtn()).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Save as Paid" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save as paid" })).toBeDisabled();
     expect(screen.getByText(/Check this payment.s status/)).toBeTruthy();
     save();
     await Promise.resolve();
@@ -286,7 +288,7 @@ describe("finance/payments Record Payment: Check payment status (SA-824)", () =>
       holder.keyFor({ amount: 50, method: "CASH" });
       holder.settle(holder.peek()!, { ok: false, error: httpErr(503) });
     });
-    expect(screen.getByRole("button", { name: "Save as Paid" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save as paid" })).toBeDisabled();
     save();
     await Promise.resolve();
     expect(mockPost).not.toHaveBeenCalled();

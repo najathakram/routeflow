@@ -112,9 +112,11 @@ describe("LimitInPortalDialog (C a-d)", () => {
     const user = userEvent.setup();
     open();
     await pickTexas(user);
-    await user.click(screen.getByRole("checkbox", { name: /legal ban/i }));
+    await user.click(screen.getByRole("checkbox", { name: /applies to staff too/i }));
     expect(screen.queryByText(/your staff can still sell them/i)).toBeNull();
-    expect(screen.getByText(/staff orders and invoices are blocked too/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/staff are warned and must give a reason to sell them/i),
+    ).toBeInTheDocument();
   });
 
   it("when every product already had the limit: says so, and offers no Undo", async () => {
@@ -187,17 +189,16 @@ describe("LimitInPortalDialog (C a-d)", () => {
     });
   });
 
-  it("Legal ban makes the rule apply to every sale (surface ALL)", async () => {
+  it("Applies to staff too makes the rule apply to every sale (surface ALL)", async () => {
     const user = userEvent.setup();
     mockPost.mockResolvedValueOnce({
       data: { created: 1, skipped: 0, createdIds: ["rule-1"], ruleId: "rule-1" },
     });
     open();
     await pickTexas(user);
-    await user.click(screen.getByRole("checkbox", { name: /legal ban/i }));
-    expect(
-      screen.getByText("Staff orders are blocked once enforcement is on."),
-    ).toBeInTheDocument();
+    await user.click(screen.getByRole("checkbox", { name: /applies to staff too/i }));
+    // the owner-only switch is off in this fixture: the staff-warning note points at turning enforcement on
+    expect(screen.getByText("Staff are warned once enforcement is on.")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Hide from Texas" }));
     await waitFor(() => expect(mockPost).toHaveBeenCalled());
     expect(mockPost.mock.calls[0][1]).toEqual(expect.objectContaining({ surface: "ALL" }));

@@ -66,7 +66,7 @@ const BASELINE: Record<string, number> = {
   // product?.unitsPerBox`, and the no-split branch's `upbForPieces` gaining the same fallback per
   // review finding 2). Verified by running the scanner's own regex directly against the file, not
   // carried forward from the stale pre-B717/B681 draft this commit was originally cut against.
-  "invoices/manual-invoice-lines.ts": 2,
+  "invoices/manual-invoice-lines.ts": 1,
   "invoices/invoice-restriction-lines.ts": 1, // F-05: a READ-ONLY piece count for the sell check on an edit; never derives or stores a line pack
   // B662: `applyPriceAdjustment`'s `unitsPerBoxByProduct` lookup (item 3 above) moved here with its
   // extraction (loadPriceAdjustmentReference): still a regulated BASIS lookup, never a line factor.
@@ -110,6 +110,9 @@ const BASELINE: Record<string, number> = {
 
 // Files that legitimately read a product's pack and are not line writers.
 const NON_WRITERS = new Set([
+  // B562 D2 (row 635, SA-902 MUST 4): reads `p.unitsPerBox` only as order-stock's `toPieces` live-pack fallback for a
+  // LEGACY line with no own snapshot (and marks the product APPROX); it writes no line.
+  "inventory/b562-repair/d2-repair.ts",
   "products/products.service.ts",
   "products/product-units.service.ts",
   "products/line-units.ts",

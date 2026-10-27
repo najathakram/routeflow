@@ -1,6 +1,7 @@
 import {
   API_ERROR_CODES,
   CREDITS_PENDING_COPY,
+  FILING_STALE_COPY,
   INVOICE_TAX_STATE_STALE_COPY,
   SHIPPED_ORDER_MESSAGE,
   productInOpenCountCopy,
@@ -46,6 +47,12 @@ const CODE_COPY: Record<string, string> = {
   // a buyer write toward a paused seller: the seller-unavailable sentence, never "You don't have permission"
   [API_ERROR_CODES.SELLER_UNAVAILABLE]: sellerUnavailableCopy(null),
   [API_ERROR_CODES.RETURN_REFUND_OVER_LINE_HEADROOM]: RETURN_REFUND_OVER_LINE_HEADROOM_COPY,
+  // Row 510: a staff sale of a restricted product. The warning dialog owns the flow (HANDLED_CODES); these are the
+  // fixed sentences for a surface with no dialog, never the server's text.
+  [API_ERROR_CODES.RESTRICTION_WARNING]:
+    "Some items are restricted. Review them and add a reason to sell them anyway.",
+  [API_ERROR_CODES.RESTRICTION_OVERRIDE_REASON_INVALID]:
+    "Give a reason of 3 to 200 characters to sell a restricted item.",
   // SA-823 (row 655): the product import refuses a whole file with a Family column (fixed copy, B980).
   ...IMPORT_REFUSAL_COPY,
   // SA-804 (1): FIFO and LIFO costing are retired; the picker no longer offers them, so this is an old client or a direct API call.
@@ -64,6 +71,18 @@ const CODE_COPY: Record<string, string> = {
   ORDER_DELIVERY_ADDRESS_MISSING:
     "This customer has no delivery address on file. Add one before switching the order to delivery.",
   ORDER_CHANGED_DURING_EDIT: "This order changed while you were editing it. Refresh and try again.",
+  // B297 PR5: the filing lock and the locked-period guards (fixed copy, never the server's text).
+  [API_ERROR_CODES.FILING_PERIOD_RUNNING]:
+    "This period hasn't ended yet. Lock the filing after the period ends.",
+  [API_ERROR_CODES.FILING_STALE]: FILING_STALE_COPY,
+  [API_ERROR_CODES.FILING_ALREADY_LOCKED]: "This filing is already locked.",
+  [API_ERROR_CODES.FILING_NOT_LOCKABLE]:
+    "Only a filing that was generated can be locked. Generate it again, then lock it.",
+  [API_ERROR_CODES.FILED_PERIOD_LOCKED]:
+    "This change would move money in a filed, locked period. Record a return or a credit note instead.",
+  // Permanent for a past issue date (manual or from a backdated order): a retry fails the same way.
+  [API_ERROR_CODES.LEDGER_PERIOD_LOCKED]:
+    "This date is in a filed, locked period. Use a date in the current period.",
   // F3: the edit named one line twice; nothing was saved.
   DUPLICATE_LINE_ID: "A line appears twice. Refresh the page and try again.",
   // Row 531: a buyer cart whose quantity and box split disagree; nothing was saved.
@@ -162,6 +181,9 @@ const CODE_COPY: Record<string, string> = {
   [API_ERROR_CODES.LABEL_CHANGE_IN_PROGRESS]:
     "Another product label change is in progress. Try again in a moment.",
   [API_ERROR_CODES.PRODUCT_CHAIN_UNREADABLE]: "This product's family chain can't be read.",
+  // Row 519: a product write lost a row-lock race (reparent deadlock, or the product moved under the editor); nothing saved.
+  [API_ERROR_CODES.PRODUCT_CHANGED_CONCURRENTLY]:
+    "This product changed while you were saving it. Reload it and try again.",
   // SA-812a G-1: a typed-price customer's flag read failed (503); the write never ran, so a retry is safe.
   [API_ERROR_CODES.CUSTOMER_PRICES_UNAVAILABLE]:
     "Customer prices couldn't be loaded. Nothing was saved. Try again in a moment.",
@@ -441,7 +463,10 @@ export function codedToastCopy(err: unknown): string | null {
   // the structured field (B986): what is wrong, and the next step.
   if (code === API_ERROR_CODES.STOCK_DATE_IN_FILED_PERIOD) {
     const period = typeof data.period === "string" && data.period ? data.period : "That period";
-    return `${period} is already filed for this product, so stock can't be dated on or before it. Choose a later date.`;
+    // W-755: WHAT is filed ("Tobacco" or the category name), when the api names it.
+    const what =
+      typeof data.filedFor === "string" && data.filedFor ? data.filedFor : "this product";
+    return `${period} is already filed for ${what}, so stock can't be dated on or before it. Choose a later date.`;
   }
   if (code === API_ERROR_CODES.CREDIT_LIMIT_EXCEEDED)
     return creditLimitSentence(data.limit, data.exposure);

@@ -6,7 +6,7 @@ import Page from "./page";
 
 /**
  * Row 401: a counter sale paid at the till is settled when it is rung, so the buyer's copy shows no due date, no
- * payment terms and no "Terms & Conditions" that is only the payment terms. The server answers `paidAtSale`; any
+ * payment terms and no "Terms and conditions" that is only the payment terms. The server answers `paidAtSale`; any
  * other invoice keeps all three, and a real long-form T&C text stays either way.
  */
 function makeInvoice(overrides: Record<string, unknown> = {}): BuyerInvoiceDetail {
@@ -86,7 +86,7 @@ describe("buyer invoice detail — paid at sale (row 401)", () => {
     expect(screen.getByText(/Issued/)).toBeInTheDocument();
     expect(screen.queryByText(/Due /)).toBeNull();
     expect(screen.queryByText(/Terms:/)).toBeNull();
-    expect(screen.queryByText(/Terms & Conditions/)).toBeNull();
+    expect(screen.queryByText(/Terms and conditions/)).toBeNull();
     expect(screen.queryByText("Net 30")).toBeNull();
   });
 

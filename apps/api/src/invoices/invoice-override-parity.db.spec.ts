@@ -87,7 +87,7 @@ describeDb("H3b invoice vs order price decision parity, real Postgres", () => {
     inTenant(() =>
       invoices.create(
         { customerId, items: [{ description: "Line", productId, qty: 3, ...over }] },
-        operatorUserId,
+        operator(), // row 510: the invoice writers take the actor's JwtPayload, not its id
       ),
     );
 
@@ -352,7 +352,7 @@ describeDb("H3b invoice vs order price decision parity, real Postgres", () => {
           invoices.update(
             invoice.id,
             { items: [{ id: stored.id, description: "Line", productId: packId, ...item }] },
-            operatorUserId,
+            operator(),
           ),
         );
       // qty changes, the price is re-sent with no reason: the stamp stays

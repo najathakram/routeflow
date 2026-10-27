@@ -3,9 +3,11 @@ import {
   ArrayMinSize,
   IsArray,
   IsBoolean,
+  IsDefined,
   IsIn,
   IsInt,
   IsNumber,
+  IsObject,
   IsOptional,
   IsString,
   IsUUID,
@@ -17,6 +19,7 @@ import {
 } from "class-validator";
 import { Type } from "class-transformer";
 import { StripHtml } from "../../common/transforms/strip-html.transform";
+import { RestrictionAckDto } from "../../selling-restrictions/dto/restriction-ack.dto";
 import { IsOptionalNotNull } from "../../common/validators/optional-not-null";
 
 /** Mirrors `COUNTER_SALE_PAYMENT_METHOD_VALUES` in @routeflow/types (API source never value-imports that package). */
@@ -48,8 +51,13 @@ export class CounterSalePaymentDto {
   @IsOptional() @IsString() @Matches(/^\d{4}-\d{2}-\d{2}$/) checkDate?: string;
 }
 
-/** `CounterSaleRequest` of the shared contract (packages/types/api/counter-sale.ts). */
-export class CounterSaleDto {
+/**
+ * `CounterSaleRequest` of the shared contract (packages/types/api/counter-sale.ts). Row 510: it extends the staff
+ * restriction ack (`restrictionOverrides`, `warningHash`): after a 409 RESTRICTION_WARNING the till resubmits the SAME
+ * cart with the SAME Idempotency-Key plus the ack. The ack is never part of the replay's cart comparison, so it can
+ * never turn into a key conflict.
+ */
+export class CounterSaleDto extends RestrictionAckDto {
   @IsOptional() @IsUUID() customerId?: string;
   @IsOptional() @IsBoolean() walkIn?: boolean;
 
@@ -60,6 +68,10 @@ export class CounterSaleDto {
   @Type(() => CounterSaleItemDto)
   items: CounterSaleItemDto[];
 
+  // W-887: ONE payment object. `@ValidateNested()` alone accepted a list (and an empty one) and saved the sale unpaid,
+  // and let a missing payment through to the service; `@IsDefined() @IsObject()` refuse both (isObject excludes arrays).
+  @IsDefined()
+  @IsObject()
   @ValidateNested()
   @Type(() => CounterSalePaymentDto)
   payment: CounterSalePaymentDto;

@@ -65,6 +65,8 @@ jest.mock("@/lib/api/tracked-categories", () => ({
 jest.mock("@/lib/api/tobacco", () => ({
   useHasAddon: () => false,
 }));
+// Row 661: the Account strip has its own Retry button and its own specs; this file is about a different Retry.
+jest.mock("@/components/CustomerAccountStrip", () => ({ CustomerAccountStrip: () => null }));
 jest.mock("@/lib/api-client", () => ({
   apiClient: {
     get: jest.fn().mockResolvedValue({ data: { taxRate: 0 } }),

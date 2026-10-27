@@ -36,6 +36,10 @@ const B768_REPORTS = [
   "report-addon-comp-candidates.mjs", // SA-693 — born on the resolver
   "report-sitting4-sizing.mjs", // SA-772 / SA-814 sitting 4 — born on the resolver
   "report-640-restored-grants.mjs", // row 640 (SA-834) - born on the resolver
+  "report-exempt-orders-taxed.mjs", // row 635 PR A (B293) - born on the resolver
+  "report-order-discounts.mjs", // row 635 PR A (SA-780) - born on the resolver
+  "report-cross-tenant-refs.mjs", // row 681 PR A (SA-936) - born on the resolver
+  "report-order-taxrate-census.mjs", // T15 / SA-761 Order.taxRate census - born on the resolver
 ];
 
 /**
@@ -43,6 +47,9 @@ const B768_REPORTS = [
  * reads the prod DB through it by default.
  */
 const ALLOWED: Record<string, string> = {
+  // Row 635: a WRITER (resolveDatabaseUrl, requireProxy unless --local); it sets DATABASE_URL to the resolved target for
+  // the compiled runner's PrismaService, which reads nothing else.
+  "b562-d2-average-repair.mjs": "a writer: hands the resolved target to the compiled runner",
   // `--local` mode only: production goes through resolveDatabaseUrl(); DATABASE_URL is read solely
   // when the operator explicitly asks for a local run.
   "data-questions-report.mjs": "--local mode only",

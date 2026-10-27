@@ -32,6 +32,7 @@ import { ChangeOrderStatusDto } from "./dto/change-order-status.dto";
 import { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
 import { UpdateShipmentDto } from "./dto/update-shipment.dto";
 import { UpdateFulfillPathDto } from "./dto/update-fulfill-path.dto";
+import { ReopenOrderDto } from "./dto/reopen-order.dto";
 import { CreateChangeRequestDto } from "./dto/create-change-request.dto";
 import { ResolveChangeRequestDto } from "./dto/resolve-change-request.dto";
 import { foldMergeItems } from "./merge-items";
@@ -44,6 +45,7 @@ import {
   isMergeContention,
   mapLockError,
 } from "./merge-contention";
+import { logDiscountedSkip, mergeBlockedByDiscount } from "./merge-discount-guard";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { BatchShipDto, PackingSlipsDto } from "./dto/batch-ship.dto";
 import { OrderBatchShipService } from "./order-batch-ship";
@@ -123,6 +125,8 @@ export class OrdersController {
     const choice: "merge" | "separate" | undefined =
       dto.mergeChoice ?? (dto.forceNew ? "separate" : undefined);
 
+    // W-762 / SA-918: an order discount on either side never merges — the order is created on its own.
+    let separateForDiscount = false;
     if (isStaff && dto.customerId) {
       // A merge target must share the incoming order's fulfil path (merge-candidates.ts).
       const mergeAs = { explicit: dto.fulfillPath, ...fulfilCaller(user) };
@@ -130,7 +134,10 @@ export class OrdersController {
         forMerge: true,
         mergeAs,
       });
-      if (activeOrder) {
+      if (activeOrder && mergeBlockedByDiscount([activeOrder, dto])) {
+        separateForDiscount = true;
+        logDiscountedSkip("orders.create", dto.customerId);
+      } else if (activeOrder) {
         // Operator hasn't told us what to do — make them choose.
         if (!choice) {
           throw new ConflictException({
@@ -174,7 +181,10 @@ export class OrdersController {
                 inlineReturn: dto.inlineReturn,
               })
             : undefined;
-          let merged: { kind: "merged"; orderId: string; replayed: boolean } | { kind: "stale" };
+          let merged:
+            | { kind: "merged"; orderId: string; replayed: boolean }
+            | { kind: "stale" }
+            | { kind: "discounted" };
           try {
             const lock = await withAdvisoryLock(
               // 10s, not the module default of 20s: the mobile api client aborts every request
@@ -198,6 +208,8 @@ export class OrdersController {
                 // back instead and let the caller take the create path, exactly as it would have
                 // had the PRE-lock read returned null.
                 if (!current) return { kind: "stale" as const };
+                // W-762: the open order took a discount while this request queued: keep the new order separate.
+                if (mergeBlockedByDiscount([current])) return { kind: "discounted" as const };
                 // F30/R8 (B196): this branch returns without ever reaching
                 // OrdersService.create, so honour the replay key HERE too — the
                 // fold computes ABSOLUTE totals, so a replayed merge (queue
@@ -299,6 +311,9 @@ export class OrdersController {
                     : {}),
                   // #2094: a return taken on a merge lands on the winner in the same tx (updateOrderItems).
                   ...(dto.inlineReturn ? { inlineReturn: dto.inlineReturn } : {}),
+                  // Row 510: the staff's acknowledgement of a restriction warning rides the fold unchanged.
+                  restrictionOverrides: dto.restrictionOverrides,
+                  warningHash: dto.warningHash,
                 } as any;
                 // B215: the idempotency key (when present) rides INTO updateOrderItems and
                 // commits inside the fold's own transaction — a crash or a later throw can no
@@ -349,7 +364,10 @@ export class OrdersController {
             // This is PRE-commit: nothing has been written, so a retryable 409 is honest here.
             mapLockError(e);
           }
-          if (merged.kind === "stale") {
+          if (merged.kind === "discounted") {
+            separateForDiscount = true;
+            logDiscountedSkip("orders.create", dto.customerId);
+          } else if (merged.kind === "stale") {
             // The merge target vanished while we queued for the lock. Nothing was written, so
             // this falls to `OrdersService.create`, whose customer-scoped key replay answers a
             // cart-mismatch 409 for a replayed merge (no second row); pre-lock-null behaviour,
@@ -392,7 +410,8 @@ export class OrdersController {
     const created = await this.ordersService.create(
       idempotencyKey ? ({ ...dto, idempotencyKey } as CreateOrderDto) : dto,
       user,
-      { skipAutoMerge: choice === "separate" },
+      // SA-923: a discount keeps this order apart ONCE; persisting skipAutoMerge would opt it out of every future merge.
+      { skipAutoMerge: choice === "separate", ...(separateForDiscount && { separateOnce: true }) },
     );
     // For non-staff (driver / customer) callers, keep the old auto-consolidate behaviour
     // for newly-created orders that don't have skipAutoMerge set.
@@ -553,8 +572,12 @@ export class OrdersController {
   @Post(":id/reopen")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR)
-  reopenOrder(@Param("id") id: string) {
-    return this.ordersService.reopenOrder(id);
+  reopenOrder(
+    @Param("id") id: string,
+    @Body() dto: ReopenOrderDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.ordersService.reopenOrder(id, user, dto);
   }
 
   @Patch(":id/items")

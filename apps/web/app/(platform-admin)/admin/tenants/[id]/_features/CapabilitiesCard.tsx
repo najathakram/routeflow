@@ -323,7 +323,7 @@ export function CapabilitiesCard({
           </button>
         </div>
       ) : loadState === "loading" || !caps ? (
-        <p className="text-sm text-slate-400">Loading what this business does...</p>
+        <p className="text-sm text-slate-400">Loading what this business does…</p>
       ) : (
         <div ref={rootRef} className="grid gap-x-6 gap-y-4 lg:grid-cols-2">
           <div className="flex flex-col gap-3 lg:col-start-1 lg:row-start-1">

@@ -21,6 +21,7 @@ import { escapeHtml, safeLinkHref } from "../common/html-escape";
 // shared with the email too — one formatter, never a second copy of the same
 // boxes/pieces/unitLabel display logic.
 import { showOriginalPrice, qtyCellText } from "../invoices/invoice-pdf-item";
+import { sellerDisplayName } from "../common/seller-display-name";
 
 // F6-001: SSRF guard — block private/loopback/metadata IPs as SMTP hosts.
 // Tenants control smtpHost; without this guard they could point it at
@@ -682,7 +683,7 @@ export class EmailService {
     const tenantId = this.prisma.getTenantId();
     if (!tenantId) return "RouteFlow";
     const cfg = await this.prisma.tenantConfig.findFirst({ where: { tenantId } });
-    return cfg?.businessName ?? "RouteFlow";
+    return sellerDisplayName(cfg, null, "RouteFlow");
   }
 
   // ─── Transactional From-identity (Resend) ──────────────────────────────────
@@ -1134,11 +1135,20 @@ export class EmailService {
      * link-only, exactly as before this field existed.
      */
     attachment?: { filename: string; content: Buffer; contentType: string };
+    /**
+     * I-120 (SA-861 rule 8): the ONE email of "Complete at counter": the order-complete subject and intro over the
+     * same invoice body (lines, paid now, balance). Absent = today's invoice email, unchanged.
+     */
+    completion?: { orderNumber: string };
+    /** I-120: the order's other invoices' PDFs, one attachment each, beside `attachment`. */
+    extraAttachments?: { filename: string; content: Buffer; contentType: string }[];
   }) {
     const businessName = await this.getTenantBusinessName();
-    const subject = params.isReminder
-      ? `Payment Reminder — Invoice ${params.invoiceNumber}`
-      : `Invoice ${params.invoiceNumber}`;
+    const subject = params.completion
+      ? `Your order ${params.completion.orderNumber} is complete — invoice attached`
+      : params.isReminder
+        ? `Payment Reminder — Invoice ${params.invoiceNumber}`
+        : `Invoice ${params.invoiceNumber}`;
 
     const { html, text } = this.buildInvoiceEmail(params, businessName);
     return this.send({
@@ -1146,7 +1156,10 @@ export class EmailService {
       subject,
       html,
       text,
-      attachments: params.attachment ? [params.attachment] : undefined,
+      attachments:
+        params.attachment || params.extraAttachments?.length
+          ? [...(params.attachment ? [params.attachment] : []), ...(params.extraAttachments ?? [])]
+          : undefined,
     });
   }
 
@@ -1640,6 +1653,8 @@ export class EmailService {
       }[];
       pdfUrl?: string;
       isReminder?: boolean;
+      /** I-120: the completion email's intro (see sendInvoice's doc). */
+      completion?: { orderNumber: string };
       /** Tenant's `invoice.hideOriginalPrice` — see sendInvoice's doc. */
       hideOriginalPrice?: boolean;
       /** Row 401: no Due Date / Terms rows for a paid-at-sale counter invoice — see sendInvoice's doc. */
@@ -1761,7 +1776,7 @@ export class EmailService {
           ${depositBanner}
           <p style="margin:0 0 8px;font-size:15px;color:#6b7280;">Dear ${escapeHtml(params.customerName)},</p>
           <p style="margin:0 0 24px;font-size:15px;color:#374151;">
-            ${params.isReminder ? "This is a reminder that the following invoice is outstanding." : "Please find your invoice details below."}
+            ${params.completion ? "Your order is complete. Your invoice is attached." : params.isReminder ? "This is a reminder that the following invoice is outstanding." : "Please find your invoice details below."}
           </p>
 
           <!-- Invoice meta -->
@@ -1829,9 +1844,11 @@ export class EmailService {
     }
     bodyText.push(`Dear ${params.customerName},`);
     bodyText.push(
-      params.isReminder
-        ? "This is a reminder that the following invoice is outstanding."
-        : "Please find your invoice details below.",
+      params.completion
+        ? "Your order is complete. Your invoice is attached."
+        : params.isReminder
+          ? "This is a reminder that the following invoice is outstanding."
+          : "Please find your invoice details below.",
     );
     bodyText.push(
       [

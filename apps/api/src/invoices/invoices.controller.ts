@@ -36,6 +36,7 @@ import {
 } from "./dto/create-invoice.dto";
 import { CreatePartialInvoiceDto } from "./dto/create-partial-invoice.dto";
 import { UpdateInvoiceDto } from "./dto/update-invoice.dto";
+import { DuplicateInvoiceDto } from "./dto/duplicate-invoice.dto";
 import { ListInvoicesDto } from "./dto/list-invoices.dto";
 import { KpiSummaryDto } from "./dto/kpi-summary.dto";
 import { PriceAdjustmentDto } from "./dto/price-adjustment.dto";
@@ -54,7 +55,7 @@ export class InvoicesController {
 
   @Post()
   create(@Body() dto: CreateInvoiceDto, @CurrentUser() user: JwtPayload) {
-    return this.invoicesService.create(dto, user.sub);
+    return this.invoicesService.create(dto, user, { warnSite: "invoices.manual" }); // SA-982 PR-2: a client write
   }
 
   @Post("from-order/:orderId")
@@ -191,7 +192,7 @@ export class InvoicesController {
     @Headers("x-client") xClient?: string,
   ) {
     // SA-837 row 500 step 1: the client identity only feeds the missing-token warn log.
-    return this.invoicesService.update(id, dto, user.sub, { userAgent, appVersion, xClient });
+    return this.invoicesService.update(id, dto, user, { userAgent, appVersion, xClient });
   }
 
   /**
@@ -253,8 +254,12 @@ export class InvoicesController {
   @Post(":id/reopen") reopenInvoice(@Param("id") id: string) {
     return this.invoicesService.reopenInvoice(id);
   }
-  @Post(":id/duplicate") duplicate(@Param("id") id: string) {
-    return this.invoicesService.duplicate(id);
+  @Post(":id/duplicate") duplicate(
+    @Param("id") id: string,
+    @Body() dto: DuplicateInvoiceDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.invoicesService.duplicate(id, user, dto);
   }
 
   @Get(":id/pdf")

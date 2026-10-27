@@ -43,6 +43,12 @@ describe("editPaymentDto: the body the edit screen sends (W-718)", () => {
   };
   const first: UpdatePaymentDto = editPaymentDto(fields, false);
 
+  it("W-663: an emptied reference and notes are SENT as null, so the server clears them", () => {
+    const body = editPaymentDto({ ...fields, reference: "  ", notes: "" }, false);
+    expect(body.reference).toBeNull();
+    expect(body.notes).toBeNull();
+  });
+
   it("a first save: trimmed fields, an emptied bank date sent as null, and no flag", () => {
     expect(first).toEqual({
       invoiceId: "inv-1",
@@ -50,7 +56,7 @@ describe("editPaymentDto: the body the edit screen sends (W-718)", () => {
       method: "CHECK",
       amount: 40,
       reference: "1042",
-      notes: undefined,
+      notes: null,
       bankCharges: undefined,
       paidAt: "2026-10-05",
       settledAt: null,

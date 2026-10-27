@@ -1,4 +1,9 @@
-import type { InvoiceItemSystemKind, InvoiceStatus } from "@routeflow/types";
+import type {
+  InvoiceItemSystemKind,
+  InvoiceStatus,
+  OverrideStampView,
+  RestrictionAck,
+} from "@routeflow/types";
 import type { InvoiceSendLock, InvoiceSendState } from "@/lib/invoice-send-state";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
@@ -25,6 +30,7 @@ import type { LocalErrorToastOption } from "@/lib/local-error-toast";
 import { keptDraftInvoiceId } from "@/lib/kept-draft-invoice";
 import { sendWithPaymentKey, type PaymentKeyHolder } from "@/lib/payment-submit-key";
 import type { HandOverSoldBy } from "@/lib/handover-stamp";
+import { splitIdAck, type IdWithAck } from "@/lib/api/restriction-warning";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -65,7 +71,9 @@ export type {
 /** P5-12: lifecycle of a CHECK InvoicePayment. Always null/absent on non-check payments. */
 export type CheckStatus = "RECORDED" | "DEPOSITED" | "CLEARED" | "BOUNCED";
 
-export interface InvoiceItem {
+/** Row 510: a STAFF read also carries the override stamp (and may carry the resolved name). */
+export interface InvoiceItem extends Partial<OverrideStampView> {
+  restrictionOverrideByName?: string | null;
   id: string;
   productId?: string;
   product?: { id: string; name: string; unit?: string; unitsPerBox?: number | null };
@@ -141,6 +149,8 @@ export interface InvoicePayment {
   imageKey?: string | null;
   imageOriginalName?: string | null;
   imageMimeType?: string | null;
+  /** W-769: an unconfirmed row that real money displaced (derived by the api, one predicate). */
+  noLongerFits?: boolean;
 }
 
 export interface Invoice {
@@ -357,7 +367,7 @@ export function useInvoicePayments(params?: PaymentListParams) {
 
 // ─── Mutations ────────────────────────────────────────────────────────────────
 
-export interface CreateInvoiceDto {
+export interface CreateInvoiceDto extends RestrictionAck {
   customerId: string;
   dueDate?: string;
   issueDate?: string;
@@ -405,8 +415,15 @@ export function useCreateInvoice() {
  */
 export function useDuplicateInvoice() {
   const qc = useQueryClient();
-  return useMutation<Invoice, Error, string>({
-    mutationFn: (id) => apiClient.post(`/invoices/${id}/duplicate`).then((r) => r.data),
+  return useMutation<Invoice, Error, IdWithAck>({
+    mutationFn: (v) => {
+      const { id, ack } = splitIdAck(v); // row 510: a duplicate is re-judged, so it can carry an ack
+      return (
+        ack
+          ? apiClient.post(`/invoices/${id}/duplicate`, ack)
+          : apiClient.post(`/invoices/${id}/duplicate`)
+      ).then((r) => r.data);
+    },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["invoices"] }),
   });
 }
@@ -687,8 +704,10 @@ export interface UpdateInvoicePaymentDto {
   settledAt?: string | null;
   bankCharges?: number;
   status?: "DRAFT" | "PAID" | "VOID";
-  reference?: string;
-  notes?: string;
+  /** W-663: null clears the stored reference (an emptied field); omit to keep it. */
+  reference?: string | null;
+  /** W-663: null clears the stored notes. */
+  notes?: string | null;
   /** W-718: the staff "Record anyway" resend of an edit refused 409 DUPLICATE_PAYMENT_REF. */
   recordAnyway?: boolean;
 }
@@ -945,8 +964,15 @@ export function useActivateRecurringInvoice() {
  */
 export function useRunRecurringInvoice() {
   const qc = useQueryClient();
-  return useMutation<Invoice | null, Error, string>({
-    mutationFn: (id) => apiClient.post(`/recurring-invoices/${id}/run`).then((r) => r.data),
+  return useMutation<Invoice | null, Error, IdWithAck>({
+    mutationFn: (v) => {
+      const { id, ack } = splitIdAck(v); // row 510 Q2: a manual run is judged for the clicker, who may acknowledge
+      return (
+        ack
+          ? apiClient.post(`/recurring-invoices/${id}/run`, ack)
+          : apiClient.post(`/recurring-invoices/${id}/run`)
+      ).then((r) => r.data);
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["invoices"] });
       qc.invalidateQueries({ queryKey: ["recurring-invoices"] });
@@ -1042,7 +1068,7 @@ export interface InvoiceSettings {
   hideOriginalPrice?: boolean;
   /** Tenant-wide deposit default (0–100). null/absent = no tenant deposit policy;
    *  a customer's own `defaultDepositPercent` still wins when set. */
-  depositDefaultPercent?: number | null;
+  depositDefaultPercent?: number | null; // GET: null when never set; PATCH: a number (0 clears), never null
   /** When true, an order's mirror invoice is ISSUED (SENT, no email) at
    *  placement so the deposit can be paid immediately; the order stays
    *  editable until delivery. */

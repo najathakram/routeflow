@@ -22,6 +22,7 @@ import { asReadableConflict, cnBad, cnConflict, type CreditNoteCode } from "./cr
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { finiteStoredLevy, finiteStoredMoney } from "../common/money-invariants.util";
 import { autoApplyCandidateWhere, creditAutoApplyOnSend } from "./auto-apply-candidates";
+import { assertCreditCustomerNotWalkIn } from "./walk-in-credit-guard";
 import { blockedPairs, clearApplyBlocks, pairKey, writeApplyBlocks } from "./apply-block";
 import {
   lockCreditNotes,
@@ -384,6 +385,7 @@ export class CreditNotesService {
     creditNoteNumber: string,
     tenantId: string | null,
   ): Promise<any> {
+    await assertCreditCustomerNotWalkIn(tx, dto.customerId); // W-913: never credit on the walk-in account
     // REG-B267 / cause-ruling.md §2 D2 parity: refused before any write, same as create().
     if (!tenantId) throw new BadRequestException("A tenant context is required.");
     if (!dto.amount || dto.amount <= 0)
@@ -485,6 +487,7 @@ export class CreditNotesService {
     tenantId: string | null,
     customer: unknown,
   ) {
+    await assertCreditCustomerNotWalkIn(tx, data.customerId); // W-913: create() and the reissue both land here
     const row = await tx.creditNote.create({
       data: {
         creditNoteNumber: data.creditNoteNumber,
@@ -575,6 +578,7 @@ export class CreditNotesService {
       select: { id: true, businessName: true },
     });
     if (!customer) throw new NotFoundException("Customer not found");
+    await assertCreditCustomerNotWalkIn(this.prisma.forTenant(), dto.customerId); // W-913: burn no number
 
     // REG-B267 / cause-ruling.md §2 D2: validate BEFORE reserving a number — a
     // standalone (non-tx) read of everything this create can be rejected for, so
@@ -623,6 +627,12 @@ export class CreditNotesService {
             // (a stale snapshot aborts 40001 and re-reads the shared per-line headroom).
             // B947: with 2+ creditable invoices on the order, the Order and ALL of them are locked FIRST (Order -> Invoice,
             // id-sorted), so a refund on Y and a credit note on X serialise and no writer takes an Invoice then the Order.
+            // SA-893 (ROW_LOCK_ORDER): a note that links a Return (internal.returnId; processRefund calls this AFTER its
+            // claim committed, so no Return is held) locks that Return FIRST. Writing the link after the Order and
+            // Invoice locks was Order -> Invoice -> Return, the inverse of inline issueCredit (Return -> Order): 40P01.
+            if (internal.returnId) {
+              await tx.$executeRaw`SELECT id FROM "Return" WHERE id = ${internal.returnId} AND "tenantId" = ${tenantId} FOR UPDATE`;
+            }
             if (dto.invoiceId) await lockOrderPoolRows(tx, dto.invoiceId, tenantId);
             if (dto.invoiceId) {
               await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${dto.invoiceId} AND "tenantId" = ${tenantId} FOR UPDATE`;
@@ -1118,7 +1128,8 @@ export class CreditNotesService {
       data: { status: "VOID" },
     });
     if (flipped.count > 0) {
-      // SA-839: counter-entries for this note's rows (the caller holds their Orders and Invoices);
+      // SA-839: counter-entries for this note's rows. The caller (InlineReturnsService.cancel) holds, in one sorted pass,
+      // the Orders and Invoices of the note's ledger rows AND of its credit payments restored above (W-757);
       // §3: `amendedPeriod` when one of them corrected a filed month.
       const settled = await this.ledger.settleRegulatedLedger(tx, {
         kind: "ADJUSTMENT_UNDONE",
@@ -1445,6 +1456,10 @@ export class CreditNotesService {
     const payAmt = roundMoney(Number(payment.amount));
     const restore = roundMoney(Math.min(payAmt, reduceBy ?? payAmt));
     if (!(restore > 0.001)) return 0;
+    // W-757 (ROW_LOCK_ORDER): the payment's Order -> Invoice BEFORE the note below, so a restore never takes
+    // CreditNote -> Invoice. Every caller already holds the payment's Order (most also its Invoice, in one sorted pass), so
+    // this takes no Order after an Invoice: a no-op or the Invoice alone, and the helper is in order on its own.
+    await lockInvoiceForCredit(tx, this.prisma.getTenantId(), payment.invoiceId);
     // B949: the backstop of the pre-pass below. A restore would hand a SOURCE_DELETED note's money back as SPENDABLE wallet
     // credit with no provenance; every path that restores refuses, before it writes any RESTORE (an operation such as an order cancel may already have written its own claim in the same transaction; the refusal rolls the whole transaction back).
     if (payment.creditNoteId !== opts.voidingNoteId)
@@ -2029,6 +2044,10 @@ export class CreditNotesService {
     return retryCreditTx(`credit unapply cn=${creditNoteId} inv=${invoiceId}`, () =>
       this.prisma.tenantTransaction(
         async (tx: any) => {
+          // W-757 (ROW_LOCK_ORDER): FIRST statement, the invoice's Order -> Invoice, before the restores below take the
+          // note. Without it the unapply took CreditNote -> Invoice and deadlocked against markSent (Order -> Invoice ->
+          // CreditNote) on the same pair.
+          await lockInvoiceForCredit(tx, this.prisma.getTenantId(), invoiceId);
           // scan-ok: draft-payment-not-void — method-scoped to CREDIT_NOTE (see
           // pullBackOrderCreditPair above).
           const payments = await tx.invoicePayment.findMany({

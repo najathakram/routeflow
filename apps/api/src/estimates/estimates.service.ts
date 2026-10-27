@@ -7,6 +7,7 @@ import {
 } from "@nestjs/common";
 import { assertSellableLines } from "../products/sellable-lines";
 import { EstimateStatus, PriceType } from "@prisma/client";
+import { assertRefsInTenant } from "../common/assert-refs-in-tenant";
 import { PrismaService } from "../prisma/prisma.service";
 import {
   computeLineSubtotal,
@@ -23,7 +24,8 @@ import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { defaultSaleFulfilmentKind } from "../orders/default-sale-fulfilment";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
-import { requireRestrictionTenantId } from "../selling-restrictions/restriction-tenant";
+import * as iGate from "../invoices/invoice-restriction-gate";
+import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { buildManualInvoiceLines } from "../invoices/manual-invoice-lines";
 import { loadManualLineContext, zeroExemptCategoryTax } from "../invoices/manual-invoice-context";
 import { packAtSaleByProduct, toSaleLedgerLines } from "../invoices/pack-at-sale";
@@ -142,6 +144,12 @@ export class EstimatesService {
       }
     }
 
+    // 681 (R5-5): the estimate stores its customer and each item's productId; prove both in this tenant (one 404 for
+    // foreign or missing) before any policy read and before the write.
+    await assertRefsInTenant(this.prisma, {
+      customerIds: [dto.customerId],
+      productIds: (dto.items ?? []).map((i: any) => i.productId),
+    });
     const customer = await this.prisma
       .forTenant()
       .customer.findUnique({ where: { id: dto.customerId } });
@@ -397,7 +405,7 @@ export class EstimatesService {
     return this.prisma.forTenant().estimate.findUniqueOrThrow({ where: { id } });
   }
 
-  async convertToInvoice(id: string) {
+  async convertToInvoice(id: string, actor?: JwtPayload, ack?: iGate.Ack) {
     // D9 (fix-round-2b.md): validate BEFORE reserving. Every reservation commits on
     // its own (see below), so a convert rejected AFTER one burns a number for good —
     // and "estimate missing" / "not ACCEPTED" is the ordinary rejection here, not a
@@ -418,6 +426,7 @@ export class EstimatesService {
         items: {
           orderBy: { id: "asc" }, // B659 finding 4: pins "line N" to the SAME line the tx builds
           select: {
+            id: true,
             description: true,
             productId: true,
             qty: true,
@@ -455,18 +464,13 @@ export class EstimatesService {
     estimateConvertLineItems(existing.items ?? [], 0);
     // F-05 (#2093): an estimate becoming an invoice SELLS its goods — a banned product refuses (409) BEFORE a
     // number is reserved. Judged now, at the sale, by the tenant's rules (owner rulings 2026-09-25).
-    await this.sellingRestrictions.assertLinesSellable({
-      tenantId: requireRestrictionTenantId(this.prisma.getTenantId()),
-      customerId: existing.customerId,
-      lines: (existing.items ?? []).flatMap((i) =>
-        i.productId ? [{ productId: i.productId }] : [],
-      ),
+    const tenant = iGate.tenantId(this.prisma);
+    const restriction = await this.sellingRestrictions.assertLinesSellable({
+      ...iGate.copy(tenant, existing.customerId, existing.items, actor, ack, {
+        // no order: how the next order would go
+        fulfilmentKind: await defaultSaleFulfilmentKind(this.prisma, tenant, existing.customerId),
+      }),
       channel: "STAFF",
-      fulfilmentKind: await defaultSaleFulfilmentKind(
-        this.prisma,
-        requireRestrictionTenantId(this.prisma.getTenantId()),
-        existing.customerId,
-      ), // no order: how the next order would go
     });
 
     // B100/F16b: reserved BEFORE the transaction below opens (fix-round-2.md D1).
@@ -596,6 +600,7 @@ export class EstimatesService {
           },
           include: { customer: { select: { id: true, businessName: true } }, items: true },
         });
+        await restriction?.stamp(tx, inv.id); // row 510: the staff override of a restricted line
         // Same pattern invoices.service.ts's own create() uses (pack-at-sale.ts): the FULL
         // boxes/pieces/unitsPerBox/packAtSale shape, never a thinner ledger-line mapping that
         // would re-derive the pack from the live product for a converted estimate line.

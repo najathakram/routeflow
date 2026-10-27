@@ -6,9 +6,9 @@ import DashboardPage from "./page";
  * Row 344 (follow-up of row 331): the dashboard header follows the SAME store-only rule the Orders header does
  * (UX G7), read from the one capability gate and the one shared helper (`quickCreateRule`):
  *  - a store-only business (capabilities.fulfilment: PICKUP only, counter always): Counter sale is the FILLED
- *    primary and trails, New Order is gone (it went to the same place as Counter sale), New Invoice stays secondary,
+ *    primary and trails, New order is gone (it went to the same place as Counter sale), New invoice stays secondary,
  *    and the two actions are 44 px targets below `sm`;
- *  - a delivery business is unchanged: Counter sale secondary, New Order the filled primary, no 44 px override.
+ *  - a delivery business is unchanged: Counter sale secondary, New order the filled primary, no 44 px override.
  * Row 344a (polish): a store-only business that may use POS mode also gets "Invoice a customer" (the builder intent,
  * `builder=1`: a bare `action=new` redirects a counter-default tenant straight back to the till), also a 44 px target.
  */
@@ -82,7 +82,7 @@ beforeEach(() => {
 });
 
 describe("Dashboard header — the store-only rule (row 344, follows row 331)", () => {
-  it("a store-only tenant: Counter sale is the filled primary, there is no New Order, New Invoice stays secondary", () => {
+  it("a store-only tenant: Counter sale is the filled primary, there is no New order, New invoice stays secondary", () => {
     fulfilment = STORE_ONLY;
     renderWithProviders(<DashboardPage />);
     expect(screen.queryByRole("link", { name: /new order/i })).toBeNull();
@@ -91,12 +91,12 @@ describe("Dashboard header — the store-only rule (row 344, follows row 331)", 
     expect(counter).toHaveClass("bg-accent-strong");
     expect(invoice).toHaveClass("bg-paper");
     expect(counter).toHaveAttribute("href", "/orders/counter-sale");
-    // The primary trails: [New Invoice][Counter sale].
+    // The primary trails: [New invoice][Counter sale].
     const order = screen
       .getAllByRole("link")
       .map((l) => l.textContent?.trim())
-      .filter((t) => t === "New Invoice" || t === "Counter sale");
-    expect(order).toEqual(["New Invoice", "Counter sale"]);
+      .filter((t) => t === "New invoice" || t === "Counter sale");
+    expect(order).toEqual(["New invoice", "Counter sale"]);
   });
 
   it("a store-only tenant: both actions are 44 px targets below sm", () => {
@@ -116,15 +116,15 @@ describe("Dashboard header — the store-only rule (row 344, follows row 331)", 
     expect(invoice).toHaveClass("bg-paper");
   });
 
-  it("a store-only tenant: every other shortcut stays (New Invoice, New Route)", () => {
+  it("a store-only tenant: every other shortcut stays (New invoice, New route)", () => {
     fulfilment = STORE_ONLY;
     routesOn = true;
     renderWithProviders(<DashboardPage />);
-    expect(screen.getByRole("link", { name: "New Invoice" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "New invoice" })).toHaveAttribute(
       "href",
       "/invoices/new",
     );
-    expect(screen.getByRole("link", { name: "New Route" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "New route" })).toBeInTheDocument();
   });
 
   it("a store-only tenant's role that cannot use POS mode gets no Invoice a customer", () => {
@@ -132,10 +132,10 @@ describe("Dashboard header — the store-only rule (row 344, follows row 331)", 
     authRole = "SUPER_ADMIN";
     renderWithProviders(<DashboardPage />);
     expect(screen.queryByRole("link", { name: "Invoice a customer" })).toBeNull();
-    expect(screen.queryByRole("link", { name: "New Order" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "New order" })).toBeNull();
   });
 
-  it("a delivery tenant is unchanged: New Order is the filled primary, Counter sale secondary, no 44 px override", () => {
+  it("a delivery tenant is unchanged: New order is the filled primary, Counter sale secondary, no 44 px override", () => {
     fulfilment = DELIVERY;
     renderWithProviders(<DashboardPage />);
     const newOrder = screen.getByRole("link", { name: /new order/i });

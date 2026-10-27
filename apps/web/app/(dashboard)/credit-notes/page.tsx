@@ -3,7 +3,16 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { Plus, Eye, Calendar, X, Loader2, Search, ShieldCheck } from "lucide-react";
-import { PageHeader, Button, cn, Modal, useToast, EmptyState, Badge } from "@routeflow/ui/web";
+import {
+  PageHeader,
+  Button,
+  cn,
+  Modal,
+  useToast,
+  EmptyState,
+  Badge,
+  badgeStatusLabel,
+} from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import {
   useCreditNotes,
@@ -246,7 +255,7 @@ function CreateCreditNoteModal({
     <Modal
       open={isOpen}
       onClose={onClose}
-      title="New Credit Note"
+      title="New credit note"
       description="Issue a credit note against an invoice or directly to a customer."
       footer={
         <>
@@ -254,7 +263,7 @@ function CreateCreditNoteModal({
             Cancel
           </Button>
           <Button type="submit" form="create-cn-form" loading={createCreditNote.isPending}>
-            Create Credit Note
+            Create credit note
           </Button>
         </>
       }
@@ -358,7 +367,7 @@ function CreateCreditNoteModal({
             <option value="">None</option>
             {invoices.map((inv) => (
               <option key={inv.id} value={inv.id}>
-                {inv.invoiceNumber} · {inv.status}
+                {inv.invoiceNumber} · {badgeStatusLabel(inv.status)}
               </option>
             ))}
           </select>
@@ -529,7 +538,7 @@ export default function CreditNotesPage() {
   const router = useRouter();
   const { setTitle } = usePageTitle();
   React.useEffect(() => {
-    setTitle("Credit Notes");
+    setTitle("Credit notes");
   }, [setTitle]);
 
   const [statusFilter, setStatusFilter] = React.useState("");
@@ -630,11 +639,11 @@ export default function CreditNotesPage() {
   return (
     <div className="space-y-5 p-6">
       <PageHeader
-        title="Credit Notes"
+        title="Credit notes"
         subtitle="Issued from returns, disputes and manual adjustments, applied against invoices automatically."
         action={
           <Button leftIcon={<Plus className="h-4 w-4" />} onClick={() => setIsCreateOpen(true)}>
-            New Credit Note
+            New credit note
           </Button>
         }
       />
@@ -642,7 +651,7 @@ export default function CreditNotesPage() {
       {/* Stat tiles */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <StatTile
-          label="Open Credit"
+          label="Open credit"
           value={fmt(stats.openCredit)}
           hint={`${stats.openCount} ${stats.openCount === 1 ? "note" : "notes"} with remaining balance`}
           money
@@ -654,7 +663,7 @@ export default function CreditNotesPage() {
           money
         />
         <StatTile
-          label="Top Reason"
+          label="Top reason"
           value={stats.topReason}
           hint={
             stats.topReasonPct > 0
@@ -769,7 +778,7 @@ export default function CreditNotesPage() {
             <thead className="border-b border-surface-border bg-surface-raised">
               <tr>
                 <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">
-                  Credit Note
+                  Credit note
                 </th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Customer</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Source</th>

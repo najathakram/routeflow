@@ -136,8 +136,8 @@ describe("one jurisdiction source (L8)", () => {
       .filter((f) => /saleFulfilmentKind|orderFulfilmentKind/.test(fs.readFileSync(f, "utf8")))
       .map(rel);
     for (const must of [
-      "orders/orders.service.ts",
-      "orders/fulfil-path-restrictions.ts",
+      "orders/default-sale-fulfilment.ts", // orders.service reaches the helper through it
+      "orders/order-restriction-gate.ts", // the live fulfil-path switch judges through it (W-748: the dead guard in fulfil-path-restrictions.ts is gone)
       "invoices/invoices.service.ts",
       "order-templates/order-templates.service.ts",
       "orders/merge-restriction-warning.ts",

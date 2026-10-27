@@ -39,7 +39,7 @@ function subCentPrice(raw: string | undefined): number | null {
   return Number.isFinite(n) && !isWholeCents(n) ? n : null;
 }
 
-/** The invoice page's "Adjust Prices" card (moved verbatim out of page.tsx so it can be tested on its own). */
+/** The invoice page's "Adjust prices" card (moved verbatim out of page.tsx so it can be tested on its own). */
 export function AdjustPricesPanel({ invoice, onClose }: { invoice: Invoice; onClose: () => void }) {
   const { toast } = useToast();
   const adjust = useAdjustInvoicePrices();
@@ -104,7 +104,7 @@ export function AdjustPricesPanel({ invoice, onClose }: { invoice: Invoice; onCl
   }
 
   return (
-    <Card title="Adjust Prices">
+    <Card title="Adjust prices">
       <p className="mb-4 text-sm text-navy/70">
         Override unit prices on this invoice. Totals will be recalculated and an audit note
         appended.
@@ -218,7 +218,7 @@ export function AdjustPricesPanel({ invoice, onClose }: { invoice: Invoice; onCl
           loading={adjust.isPending}
           leftIcon={<SlidersHorizontal className="h-3.5 w-3.5" />}
         >
-          Apply Price Changes
+          Apply price changes
         </Button>
       </div>
     </Card>

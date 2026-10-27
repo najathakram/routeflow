@@ -43,12 +43,21 @@ export function scanInvoiceDeletes(src: string): number {
   );
 }
 
-/** The text of `async <name>(` up to the next method at the same indent (2 spaces), or "". */
+/**
+ * The text of `async <name>(` up to the next method at the same indent (2 spaces), or "". A
+ * module-level `export async function <name>(` (a door extracted out of a service) is found too, up
+ * to its closing `}` at column 0.
+ */
 export function methodBody(src: string, name: string): string {
-  const start = src.indexOf(`  async ${name}(`);
-  if (start === -1) return "";
-  const end = src.indexOf("\n  }\n", start);
-  return end === -1 ? src.slice(start) : src.slice(start, end);
+  const method = src.indexOf(`  async ${name}(`);
+  if (method !== -1) {
+    const end = src.indexOf("\n  }\n", method);
+    return end === -1 ? src.slice(method) : src.slice(method, end);
+  }
+  const fn = src.indexOf(`export async function ${name}(`);
+  if (fn === -1) return "";
+  const end = src.indexOf("\n}\n", fn);
+  return end === -1 ? src.slice(fn) : src.slice(fn, end);
 }
 
 type Door = {
@@ -68,12 +77,12 @@ const KNOWN_DOORS: Record<string, Door> = {
     inside: "deleteInvoice",
     why: "deleteInvoice",
   },
-  "orders/orders.service.ts": {
-    count: 2,
-    kind: "pending",
-    ticket: "#2848",
-    pendingUntil: "2026-10-24",
-    why: "deleteOrder's invoice loop + the merge-loser draft delete (implicit FK SET NULL); wired in #2848 commit 2 once U-units' #2784/#2786 land",
+  // Row 259: deleteOrder's invoice loop and the merge-loser draft delete both go through this one helper.
+  "orders/order-invoice-delete.ts": {
+    count: 1,
+    kind: "wired",
+    inside: "deleteOrderInvoice",
+    why: "deleteOrder's invoice loop + the merge-loser draft delete (orders.service.ts has no delete of its own)",
   },
   "customers/customer-delete-preflight.ts": {
     count: 1,
@@ -122,8 +131,8 @@ describe("invoice delete doors (#2848)", () => {
   });
 
   it("pending doors are tracked: a ticket, and an expiry that is still in the future", () => {
+    // Row 259 wired the last pending door, so the list may be empty; any new "pending" entry is checked here.
     const pending = Object.entries(KNOWN_DOORS).filter(([, d]) => d.kind === "pending");
-    expect(pending.length).toBeGreaterThan(0);
     for (const [file, d] of pending) {
       expect(`${file} ${d.ticket}`).toMatch(/ #\d+$/);
       const until = Date.parse(`${d.pendingUntil}T00:00:00Z`);
@@ -163,6 +172,13 @@ describe("scanInvoiceDeletes mutants (#2848)", () => {
   it("methodBody isolates one method, so a call elsewhere in the file does not count", () => {
     const src =
       "  async a() {\n    x();\n  }\n\n  async b() {\n    unlinkSourcedCredits(1);\n  }\n";
+    expect(methodBody(src, "b")).toContain("unlinkSourcedCredits(");
+    expect(methodBody(src, "a")).not.toContain("unlinkSourcedCredits(");
+  });
+
+  it("methodBody isolates a module-level exported function the same way", () => {
+    const src =
+      "export async function a(tx: any) {\n  x();\n}\n\nexport async function b(tx: any) {\n  unlinkSourcedCredits(1);\n}\n";
     expect(methodBody(src, "b")).toContain("unlinkSourcedCredits(");
     expect(methodBody(src, "a")).not.toContain("unlinkSourcedCredits(");
   });

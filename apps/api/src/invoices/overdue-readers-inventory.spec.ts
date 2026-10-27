@@ -39,7 +39,9 @@ const USES_SQL_PREDICATE: Record<string, string> = {
  */
 const USES_CLASSIFIER: Record<string, string> = {
   "invoices/invoice-detail-read.ts": "detail read: balanceDue / isOverdue",
-  "invoices/invoices.service.ts": "list enrichment (findAll), sendEmail and sendReminder balances",
+  "invoices/invoices.service.ts": "list enrichment (findAll)",
+  "invoices/invoice-email-payload.ts":
+    "the invoice email's and the reminder's balance due: emailPaidBasis (confirmedBalance), the one copy since W-680 (it was inline in sendEmail/sendReminder)",
   "invoices/invoice-kpi-summary.ts": "KPI tiles: per-invoice balance (confirmedBalance)",
   "customers/customer-statement.ts":
     "statement overdueAmount (row 309), buyer's and operator's: classifyInvoiceBalance in the statement's tenant zone, one zone lookup per statement. SIGNED by design (row 326): the statement's outstandingAmount (the Balance Due tile) is the net position over open invoices, sum(total - confirmed) with no clamp, so an overpaid open invoice nets the figure down (a customer in credit reads <= 0, which the tile colours as credit); it reconciles with the ledger's per-invoice signed runningBalance, and overdueAmount stays clamped at 0",
@@ -243,7 +245,8 @@ describe("SA-770 — every overdue-cutoff reader is balance-aware or accounted f
   // What each classifier user must actually CALL (an import alone proves nothing).
   const REQUIRED_CALL: Record<string, RegExp> = {
     "invoices/invoice-detail-read.ts": /\bclassifyInvoiceBalance\(/,
-    "invoices/invoices.service.ts": /\bclassifyInvoiceBalance\([\s\S]*\bconfirmedBalance\(/,
+    "invoices/invoices.service.ts": /\bclassifyInvoiceBalance\(/,
+    "invoices/invoice-email-payload.ts": /\bconfirmedBalance\(/,
     "invoices/invoice-kpi-summary.ts": /\bclassifyInvoiceBalance\(/,
     "customers/customer-statement.ts": /\bclassifyInvoiceBalance\(/,
     "bookkeeping/bookkeeping.service.ts": /\bconfirmedBalance\(/,

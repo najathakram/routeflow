@@ -9,8 +9,7 @@ import {
   type BlockedCategory,
 } from "@/lib/api/authorizations";
 import { genericToastCopy } from "@/lib/generic-toast-copy";
-
-const todayIso = () => new Date().toISOString().slice(0, 10);
+import { useTenantToday } from "@/lib/tenant-timezone";
 
 const OVERRIDE_REASONS = [
   "License on file but not yet recorded",
@@ -50,6 +49,7 @@ export function LicenseGuardModal({
   onRemoveLines?: (categoryIds: string[]) => void;
   onClose: () => void;
 }) {
+  const tenantToday = useTenantToday(); // SA-964 §4: the expiry floor is the tenant's day, never the browser's
   const create = useCreateAuthorization(customerId);
   const override = useCreateAuthorizationOverride(customerId);
   const [mode, setMode] = React.useState<Mode>("choose");
@@ -86,7 +86,7 @@ export function LicenseGuardModal({
       const l = licenses[b.trackedCategoryId];
       if (!l?.number?.trim()) return setError(`Enter the ${b.categoryName} license number.`);
       if (!l?.expiresAt) return setError(`Enter the ${b.categoryName} expiry date.`);
-      if (new Date(l.expiresAt) < new Date(todayIso()))
+      if (tenantToday && l.expiresAt < tenantToday)
         return setError(`The ${b.categoryName} expiry date is in the past.`);
     }
     try {
@@ -156,7 +156,7 @@ export function LicenseGuardModal({
           Back
         </Button>
         <Button type="button" variant="danger" onClick={submitOverride} loading={busy}>
-          Accept responsibility &amp; continue
+          Accept responsibility and continue
         </Button>
       </>
     );
@@ -244,7 +244,7 @@ export function LicenseGuardModal({
                 <Input
                   label="Expiry date"
                   type="date"
-                  min={todayIso()}
+                  min={tenantToday}
                   value={licenses[b.trackedCategoryId]?.expiresAt ?? ""}
                   onChange={(e) => setLicense(b.trackedCategoryId, { expiresAt: e.target.value })}
                 />

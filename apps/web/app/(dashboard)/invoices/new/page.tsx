@@ -19,7 +19,7 @@ import {
   Receipt,
   Check,
 } from "lucide-react";
-import { Button, Card, Input, useToast, cn } from "@routeflow/ui/web";
+import { Button, Card, Input, useToast, cn, badgeStatusLabel } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useDismissOnLeave } from "@/lib/use-dismiss-on-leave";
 import { safeTextErrorCopy } from "@/lib/safe-text-error-copy";
@@ -35,6 +35,7 @@ import {
   type CreateInvoiceItem,
 } from "@/lib/api/invoices";
 import { useCreateSale, useUninvoicedOrders, type CreateSaleDto } from "@/lib/api/orders";
+import { useRestrictionWarningRetry } from "@/lib/use-restriction-warning-retry";
 import { SplitInvoiceModal } from "../../orders/_components/SplitInvoiceModal";
 import { toSplitInvoiceLine, type SplitInvoiceLine } from "@/lib/split-invoice-line";
 import {
@@ -678,7 +679,7 @@ function ExistingOrderInvoiceFlow({ onBack }: { onBack: () => void }) {
                       <p className="text-sm font-medium text-navy">{o.orderNumber}</p>
                       <p className="text-xs text-navy/70">
                         {o.lineItems.length} item{o.lineItems.length !== 1 ? "s" : ""} ·{" "}
-                        {fmt(o.total)} · {o.status}
+                        {fmt(o.total)} · {badgeStatusLabel(o.status)}
                       </p>
                     </div>
                     <Button
@@ -799,7 +800,7 @@ function LevelCount({
         </span>
       </div>
       {factor > 1 && (
-        <span className="text-right text-[9px] text-navy/30">
+        <span className="text-right text-xs text-navy/70">
           {item.qty * factor} {unitWords().baseShortFor(item.qty * factor)}
         </span>
       )}
@@ -818,6 +819,7 @@ export default function NewInvoicePage() {
   const createInvoice = useCreateInvoice();
   const updateInvoice = useUpdateInvoice();
   const createSale = useCreateSale();
+  const rw = useRestrictionWarningRetry(); // row 510: staff warning + override dialog
   const saleKey = useSaleAttemptKey(); // row 485: one Idempotency-Key per sale attempt
   // Row 485: set while the outcome of a sale is UNKNOWN; the cart is locked behind it.
   const [saleUnknown, setSaleUnknown] = React.useState<UnknownSale | null>(null);
@@ -848,16 +850,18 @@ export default function NewInvoicePage() {
   /** Creates the preview draft, or saves the dto onto it; returns its id and keeps the token current. */
   async function upsertDraft(dto: unknown): Promise<string> {
     if (currentDraftId) {
-      const saved: any = await updateInvoice.mutateAsync({
-        id: currentDraftId,
-        ...(dto as object),
-        expectedUpdatedAt: draftToken.current,
-      } as any);
+      const saved: any = await updateInvoice.mutateAsync(
+        rw.attach({
+          id: currentDraftId,
+          ...(dto as object),
+          expectedUpdatedAt: draftToken.current,
+        }) as any, // row 510: the ack, after a restriction warning
+      );
       draftToken.current = saved?.updatedAt;
       return currentDraftId;
     }
     const created: any = await createInvoice.mutateAsync(
-      dto as Parameters<typeof createInvoice.mutate>[0],
+      rw.attach(dto as object) as Parameters<typeof createInvoice.mutate>[0],
     );
     draftToken.current = created?.updatedAt;
     setCurrentDraftId(created.id);
@@ -1819,6 +1823,7 @@ export default function NewInvoicePage() {
         });
       }
     } catch (err) {
+      if (rw.handle(err, () => handlePreview(lines))) return; // row 510
       toast({
         title: "Couldn't build preview",
         description:
@@ -1862,6 +1867,7 @@ export default function NewInvoicePage() {
       setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
       toast({ title: "Invoice downloaded", variant: "success" });
     } catch (err) {
+      if (rw.handle(err, () => handleDownload(lines))) return; // row 510
       toast({
         title: "Couldn't generate PDF",
         description: staleCopy(err) ?? unitRefusal(err, lines) ?? "Please try again.",
@@ -1975,9 +1981,13 @@ export default function NewInvoicePage() {
     saleLines: LineItemState[],
     send: boolean,
   ) {
-    const idempotencyKey = saleKey.keyFor(JSON.stringify(saleDto));
+    // Row 510: a resubmit after the restriction warning carries the ack, so it is a new payload (a new key).
+    const body = rw.attach(saleDto) as CreateSaleDto & { paymentTermsLabel?: string };
+    // Try again after an unknown outcome must resend exactly what was sent (the ack included), under the held key.
+    if (lastSaleRef.current) lastSaleRef.current = { ...lastSaleRef.current, saleDto: body };
+    const idempotencyKey = saleKey.keyFor(JSON.stringify(body));
     createSale.mutate(
-      { ...saleDto, idempotencyKey },
+      { ...body, idempotencyKey },
       {
         onSuccess: (inv) => {
           saleKey.settle({ ok: true });
@@ -2000,6 +2010,7 @@ export default function NewInvoicePage() {
             draft.clear();
             return; // locked: the panel offers Try again / Open / Start a new sale
           }
+          if (rw.handle(err, () => postSale(saleDto, saleLines, send))) return; // row 510
           toast({
             title: "Could not create the sale",
             description: unitRefusal(err, saleLines) ?? "Please check your inputs and try again.",
@@ -2018,7 +2029,7 @@ export default function NewInvoicePage() {
     if (currentDraftId) {
       const dto = buildInvoiceDto(false, lines);
       updateInvoice.mutate(
-        { id: currentDraftId, ...dto, expectedUpdatedAt: draftToken.current } as any,
+        rw.attach({ id: currentDraftId, ...dto, expectedUpdatedAt: draftToken.current }) as any,
         {
           onSuccess: async () => {
             draft.clear(); // saved to the server draft (ROW 447)
@@ -2040,6 +2051,7 @@ export default function NewInvoicePage() {
             router.push(`/invoices/${currentDraftId}`);
           },
           onError: (err: unknown) => {
+            if (rw.handle(err, () => handleSubmit(sendNow, lines))) return; // row 510
             toast({
               title: "Failed to save invoice",
               description:
@@ -2056,7 +2068,7 @@ export default function NewInvoicePage() {
 
     const dto = buildInvoiceDto(sendNow, lines);
 
-    createInvoice.mutate(dto as Parameters<typeof createInvoice.mutate>[0], {
+    createInvoice.mutate(rw.attach(dto) as Parameters<typeof createInvoice.mutate>[0], {
       onSuccess: (invoice) => {
         draft.clear();
         toast({
@@ -2069,6 +2081,7 @@ export default function NewInvoicePage() {
         router.push(`/invoices/${invoice.id}`);
       },
       onError: (err: unknown) => {
+        if (rw.handle(err, () => handleSubmit(sendNow, lines))) return; // row 510
         // Row 466: the draft was committed and only the send failed. Open it; never offer a
         // second create (a retry here would duplicate the invoice).
         const keptId = keptDraftInvoiceId(err);
@@ -2228,7 +2241,7 @@ export default function NewInvoicePage() {
             </Card>
 
             {/* Invoice details */}
-            <Card title="Invoice Details">
+            <Card title="Invoice details">
               <div className="space-y-4">
                 {/* Order Number + Subject */}
                 <div className="grid grid-cols-2 gap-4">
@@ -2355,7 +2368,7 @@ export default function NewInvoicePage() {
                         </div>
                         <div>
                           <label className="mb-1.5 block text-sm font-medium text-navy/80">
-                            Deposit Due Date
+                            Deposit due date
                           </label>
                           <input
                             type="date"
@@ -2397,7 +2410,7 @@ export default function NewInvoicePage() {
             </Card>
 
             {/* Line items */}
-            <Card title="Item Table">
+            <Card title="Item table">
               <div className="space-y-2">
                 {errors.items && <p className="text-xs text-danger">{errors.items}</p>}
 
@@ -2528,7 +2541,7 @@ export default function NewInvoicePage() {
 
                 {/* Avg cost toggle */}
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-medium text-navy/70">Line Items</span>
+                  <span className="text-xs font-medium text-navy/70">Line items</span>
                   <button
                     type="button"
                     onClick={() => setShowAvgCost((v) => !v)}
@@ -2554,11 +2567,11 @@ export default function NewInvoicePage() {
                       : "md:grid-cols-[1fr_70px_100px_90px_44px_32px]",
                   )}
                 >
-                  <span>Item Details</span>
+                  <span>Item details</span>
                   <span className="text-right">Qty</span>
                   <span className="text-right">Rate</span>
                   <span className="text-right">Discount</span>
-                  {showAvgCost && <span className="text-right text-navy/70">Avg. Cost</span>}
+                  {showAvgCost && <span className="text-right text-navy/70">Avg. cost</span>}
                   <span className="text-center">Tax</span>
                   <span />
                 </div>
@@ -2745,7 +2758,7 @@ export default function NewInvoicePage() {
                               aria-disabled={!!pendingUnitOf(item) || undefined}
                               title={`Total ${w.base.lowerOther}`}
                             />
-                            <span className="text-[9px] text-navy/30 text-right">
+                            <span className="text-xs text-navy/70 text-right">
                               {w.base.short.other}
                             </span>
                           </div>
@@ -2791,7 +2804,7 @@ export default function NewInvoicePage() {
                                 title={`Extra ${w.base.lowerOther}`}
                               />
                             </div>
-                            <span className="text-[9px] text-navy/30 text-right">
+                            <span className="text-xs text-navy/70 text-right">
                               {item.qty} {w.baseShortFor(item.qty)}
                             </span>
                           </div>
@@ -2954,7 +2967,7 @@ export default function NewInvoicePage() {
                     className="flex items-center gap-1.5 text-sm font-medium text-brand-500 hover:text-brand-600 transition-colors"
                   >
                     <Plus className="h-4 w-4" />
-                    Add Line Item
+                    Add line item
                   </button>
                   {/* Unlisted/custom line: invoice lines accept a free-text description
                       with no productId, so this just adds a blank row to type into. */}
@@ -3003,7 +3016,7 @@ export default function NewInvoicePage() {
             </Card>
 
             {/* Notes */}
-            <Card title="Customer Notes">
+            <Card title="Customer notes">
               <textarea
                 rows={3}
                 placeholder="Add any notes visible to the customer…"
@@ -3027,7 +3040,7 @@ export default function NewInvoicePage() {
 
           {/* ── Right column (2/5) ── */}
           <div className="space-y-4 lg:col-span-2">
-            <Card title="Invoice Summary">
+            <Card title="Invoice summary">
               <dl className="space-y-2 text-sm">
                 <div className="flex justify-between">
                   <dt className="text-navy/70">Subtotal</dt>
@@ -3055,7 +3068,7 @@ export default function NewInvoicePage() {
                   <dd className="text-base font-bold text-navy">{fmt(total)}</dd>
                 </div>
                 <div className="flex justify-between pt-1 text-xs text-navy/70">
-                  <dt>Total Quantity</dt>
+                  <dt>Total quantity</dt>
                   <dd>{totalQty}</dd>
                 </div>
               </dl>
@@ -3172,7 +3185,7 @@ export default function NewInvoicePage() {
                   loading={createInvoice.isPending || updateInvoice.isPending}
                   disabled={createInvoice.isPending || updateInvoice.isPending || priceBlocked}
                 >
-                  Save and Send
+                  Save and send
                 </WriteButton>
               </>
             )}
@@ -3194,7 +3207,7 @@ export default function NewInvoicePage() {
             </button>
           </div>
           <div className="text-right">
-            <p className="text-xs text-navy/70">Total Amount</p>
+            <p className="text-xs text-navy/70">Total amount</p>
             <p className="text-lg font-bold text-navy">{fmt(total)}</p>
           </div>
         </div>
@@ -3229,6 +3242,7 @@ export default function NewInvoicePage() {
           </div>
         </div>
       ) : null}
+      {rw.dialog}
     </div>
   );
 }

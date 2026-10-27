@@ -19,12 +19,14 @@
 // NOT a reason to give up.
 //
 // Knobs (env): RF_HEAVY_SLOT_DIR, RF_HEAVY_SLOTS (default 1), RF_HEAVY_SLOT_MAX_WAIT_MIN (default
-// 720), RF_HEAVY_SLOT_MAX_HOLD_MIN (default 180), RF_HEAVY_SLOT=off (owner/lead escape hatch, loud), CI (no slot, silent). Test-only timing
+// 720), RF_HEAVY_SLOT_MAX_HOLD_MIN (default 90; the HOLDER enforces it too, W-759: at the cap it ends its own job's
+// process tree and releases the slot with exit 76 and `capped: true` in history; waiters give up only HOLD_GRACE after the cap, so a
+// queued job gets the slot the holder just freed), RF_HEAVY_SLOT=off (owner/lead escape hatch, loud), CI (no slot, silent). Test-only timing
 // knobs: RF_HEAVY_SLOT_POLL_MS, RF_HEAVY_SLOT_HEARTBEAT_MS.
 //
 // Node's spawnSync blocks the event loop, so the heartbeat could never fire: callers must run the
 // guarded work with `spawnAsync` below (or any awaited async spawn).
-import { spawn, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -34,7 +36,10 @@ export const DEFAULT_SLOTS = 1;
 export const HEARTBEAT_MS = 30_000;
 export const STALE_MS = 120_000;
 export const DEFAULT_MAX_WAIT_MIN = 720;
-export const DEFAULT_MAX_HOLD_MIN = 180;
+export const DEFAULT_MAX_HOLD_MIN = 90;
+export const HOLD_GRACE_MS = 5 * 60_000; // waiters give up at cap + this, never at the cap itself
+export const HOLD_KILL_MS = 15_000; // after the cap's SIGTERM the holder releases the slot regardless of fn
+export const HOLD_CAP_EXIT_CODE = 76; // the job was ended at the hold cap
 export const POLL_MS = 1_000;
 export const WAIT_LOG_MS = 60_000;
 export const HISTORY_MAX_LINES = 500;
@@ -52,6 +57,72 @@ export function parseSlots(raw) {
     : DEFAULT_SLOTS;
 }
 
+/** Largest slot count the machine-wide slots file may set; a bigger number is a typo, not a plan. */
+export const MAX_SLOTS_FILE = 16;
+
+/**
+ * Decode a slots file's bytes: UTF-8 (BOM allowed) or UTF-16 LE/BE with a BOM (PowerShell 5.1 `echo 4 > slots`).
+ * Returns null for a UTF-16 body with an odd byte count (a torn or foreign file), never throws on its own.
+ */
+function decodeSlotsBytes(buf) {
+  const le = buf.length >= 2 && buf[0] === 0xff && buf[1] === 0xfe;
+  const be = buf.length >= 2 && buf[0] === 0xfe && buf[1] === 0xff;
+  if (le || be) {
+    const body = buf.subarray(2);
+    if (body.length % 2 !== 0) return null;
+    return le ? body.toString("utf16le") : Buffer.from(body).swap16().toString("utf16le");
+  }
+  if (buf.length >= 3 && buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf)
+    return buf.subarray(3).toString("utf8");
+  return buf.toString("utf8");
+}
+
+/**
+ * The machine-wide slot count file `<dir>/slots`: { state: "absent" } | { state: "ok", value } |
+ * { state: "invalid", reason }. A plain decimal integer 1..MAX_SLOTS_FILE, in UTF-8 or BOM'd UTF-16;
+ * anything else (0, 17, 0x10, 4.5, words, a BOM-less UTF-16 file) is invalid and the waiter keeps its own count.
+ */
+export function inspectSlotsFile(dir) {
+  let buf;
+  try {
+    buf = fs.readFileSync(path.join(dir, "slots"));
+  } catch {
+    return { state: "absent" };
+  }
+  let raw;
+  try {
+    const text = decodeSlotsBytes(buf);
+    if (text === null) return { state: "invalid", reason: "UTF-16 body has an odd byte count" };
+    raw = text.trim();
+  } catch (e) {
+    return {
+      state: "invalid",
+      reason: `unreadable: ${e instanceof Error ? e.message : "decode error"}`,
+    };
+  }
+  if (!/^[0-9]+$/.test(raw)) {
+    return {
+      state: "invalid",
+      reason: `not a plain decimal integer: ${JSON.stringify(raw.slice(0, 20))}`,
+    };
+  }
+  const n = Number(raw);
+  if (n < 1 || n > MAX_SLOTS_FILE) {
+    return { state: "invalid", reason: `${n} is outside 1..${MAX_SLOTS_FILE}` };
+  }
+  return { state: "ok", value: n };
+}
+
+/**
+ * The machine-wide slot count: an optional `<dir>/slots` file. When valid it overrides every waiter's own
+ * RF_HEAVY_SLOTS / opts.slots (strict FIFO means one waiter started with a smaller count at the head would
+ * otherwise block the whole queue while higher slots sit free). Absent or invalid -> null.
+ */
+export function readSlotsFile(dir) {
+  const f = inspectSlotsFile(dir);
+  return f.state === "ok" ? f.value : null;
+}
+
 function parseMinutesMs(raw, fallbackMin) {
   const m = Number(raw);
   const ok = typeof raw === "string" && raw.trim() !== "" && Number.isFinite(m) && m >= 0;
@@ -63,9 +134,91 @@ export function parseMaxWaitMs(raw) {
   return parseMinutesMs(raw, DEFAULT_MAX_WAIT_MIN);
 }
 
-/** RF_HEAVY_SLOT_MAX_HOLD_MIN (minutes, fractions allowed) -> ms; unset/invalid -> 180 min. */
+/** RF_HEAVY_SLOT_MAX_HOLD_MIN (minutes, fractions allowed) -> ms; unset/invalid -> 90 min. */
 export function parseMaxHoldMs(raw) {
   return parseMinutesMs(raw, DEFAULT_MAX_HOLD_MIN);
+}
+
+// Owner cap (2026-10-25: "keep the CPU usage less than 80% and memory less than 80% too"): a job that
+// is first in line and has a free slot still waits while the MACHINE is above either threshold.
+export const DEFAULT_MAX_LOAD_PCT = 80;
+export const LOAD_SAMPLE_MS = 3_000;
+
+/** RF_HEAVY_SLOT_MAX_CPU_PCT / _MEM_PCT -> a percent in (0, 100], else 80. 100 never blocks (both at 100 skips the ~3 s sample). */
+export function parseLoadPct(raw) {
+  const n = Number(raw);
+  return raw !== undefined && raw !== "" && Number.isFinite(n) && n > 0 && n <= 100
+    ? n
+    : DEFAULT_MAX_LOAD_PCT;
+}
+
+/** Why the machine is too busy to start a heavy job, or null. `load` is { cpuPct, memPct }. */
+export function loadOverReason({ cpuPct, memPct }, { maxCpuPct, maxMemPct }) {
+  if (cpuPct > maxCpuPct) return `cpu ${Math.round(cpuPct)}% > ${maxCpuPct}%`;
+  if (memPct > maxMemPct) return `memory ${Math.round(memPct)}% > ${maxMemPct}%`;
+  return null;
+}
+
+/** Busy share (0-100) between two per-core `{ idle, total }` tick snapshots; no elapsed ticks -> 0. */
+export function cpuPctFromTimes(before, after) {
+  let idle = 0;
+  let total = 0;
+  after.forEach((a, i) => {
+    idle += a.idle - (before[i]?.idle ?? 0);
+    total += a.total - (before[i]?.total ?? 0);
+  });
+  return total > 0 ? Math.round(((total - idle) / total) * 1000) / 10 : 0;
+}
+
+const cpuTicks = (cpus) =>
+  cpus.map((c) => {
+    const t = c.times;
+    return { idle: t.idle, total: t.user + t.nice + t.sys + t.idle + t.irq };
+  });
+
+/**
+ * Reclaimable bytes from `vm_stat` text: (free + inactive + speculative) pages x page size, or null when it
+ * does not parse. macOS keeps most RAM in inactive/cached pages, so os.freemem() alone reads "full" there.
+ */
+export function parseVmStat(text) {
+  const size = /page size of (\d+) bytes/.exec(text ?? "")?.[1];
+  const pages = (name) =>
+    Number(new RegExp(`^Pages ${name}:\\s+(\\d+)`, "m").exec(text ?? "")?.[1]);
+  const [free, inactive, speculative] = [pages("free"), pages("inactive"), pages("speculative")];
+  if (!size || [free, inactive, speculative].some(Number.isNaN)) return null;
+  return (free + inactive + speculative) * Number(size);
+}
+
+function vmStatText() {
+  return execFileSync("vm_stat", { encoding: "utf8", timeout: 5000 });
+}
+
+/**
+ * One machine-wide reading: CPU busy share over `sampleMs`, and the used share of memory (reclaimable pages count
+ * as free on darwin, falling back to os.freemem). Everything is injectable.
+ */
+export async function sampleMachineLoad({
+  cpus = os.cpus,
+  freemem = os.freemem,
+  totalmem = os.totalmem,
+  platform = process.platform,
+  vmStat = vmStatText,
+  sleep: wait = (ms) => new Promise((r) => setTimeout(r, ms)),
+  sampleMs = LOAD_SAMPLE_MS,
+} = {}) {
+  const before = cpuTicks(cpus());
+  await wait(sampleMs);
+  const cpuPct = cpuPctFromTimes(before, cpuTicks(cpus()));
+  const total = totalmem();
+  let free = freemem();
+  if (platform === "darwin") {
+    try {
+      free = parseVmStat(vmStat()) ?? free;
+    } catch {
+      /* keep os.freemem() */
+    }
+  }
+  return { cpuPct, memPct: total > 0 ? Math.round(((total - free) / total) * 1000) / 10 : 0 };
 }
 
 /** A (live, heartbeating) holder that has held its slot longer than the hold cap. */
@@ -272,13 +425,40 @@ export function staleReason(
   return null;
 }
 
-/** The grant decision for the ticket `myName` given the live, ordered ticket names and free slots. */
-export function nextGrant({ order, myName, freeSlots }) {
+/** Labels of the jobs that hold a slot the longest and together exhaust memory: full `verify` runs and the pre-push gate (the runbook's `push` label). */
+const CAPPED_LABEL = /verify|pre-?push|\bpush\b/i;
+export const DEFAULT_CAPPED_MAX = 2;
+
+export function isCappedLabel(label) {
+  return CAPPED_LABEL.test(label ?? "");
+}
+
+/** RF_HEAVY_SLOT_CAPPED_MAX: a positive integer, else the default. */
+export function parseCappedMax(raw) {
+  const n = Number(String(raw ?? "").trim());
+  return Number.isInteger(n) && n > 0 ? n : DEFAULT_CAPPED_MAX;
+}
+
+/**
+ * The grant decision for the ticket `myName` given the live, ordered ticket names and free slots. Strict FIFO,
+ * except that a ticket in `capped` is skipped while `cappedHeld` slots are already held by capped jobs
+ * (`cappedMax`): the oldest ELIGIBLE ticket is first in line, so a capped head never blocks an uncapped job behind it.
+ */
+export function nextGrant({
+  order,
+  myName,
+  freeSlots,
+  capped,
+  cappedHeld = 0,
+  cappedMax = Infinity,
+}) {
   const idx = order.indexOf(myName);
+  const atCap = cappedHeld >= cappedMax;
+  const head = order.find((n) => !(atCap && capped?.has(n)));
   return {
     position: idx + 1, // 0 = my ticket is not in the list
     total: order.length,
-    grant: idx === 0 && freeSlots > 0,
+    grant: idx !== -1 && order[idx] === head && freeSlots > 0,
   };
 }
 
@@ -298,7 +478,7 @@ export function trimHistoryText(text, max = HISTORY_MAX_LINES) {
 }
 
 /** One history record (ISO times; waitSec/heldSec to the millisecond). */
-export function historyRecord(lease, endedAt, exit) {
+export function historyRecord(lease, endedAt, exit, extra = {}) {
   return {
     label: lease.label,
     branch: lease.branch,
@@ -310,6 +490,7 @@ export function historyRecord(lease, endedAt, exit) {
     waitSec: Math.round(lease.startedAt - lease.queuedAt) / 1000,
     heldSec: Math.round(endedAt - lease.startedAt) / 1000,
     exit,
+    ...extra,
   };
 }
 
@@ -449,12 +630,21 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const activeChildren = new Set();
 let interruptedBy = null;
+let holdExpired = false; // W-759: the holder's cap fired; no further child may start under this lease
 
 /** Awaited async spawn with the heartbeat free to run. Resolves `{ status, signal, error }`. */
+export function activeChildCount() {
+  return activeChildren.size;
+}
+
 export function spawnAsync(cmd, args = [], options = {}) {
   return new Promise((resolve) => {
     if (interruptedBy) {
       resolve({ status: interruptedBy === "SIGINT" ? 130 : 143, signal: interruptedBy });
+      return;
+    }
+    if (holdExpired) {
+      resolve({ status: HOLD_CAP_EXIT_CODE, signal: null });
       return;
     }
     let child;
@@ -472,6 +662,9 @@ export function spawnAsync(cmd, args = [], options = {}) {
       activeChildren.delete(child);
       resolve(r);
     };
+    // 'exit' (not only 'close'): 'close' waits for every holder of the child's stdio, and an exited child's PID may be reused;
+    // an exited child must never be a target of the cap's kill (SA review of #3688).
+    child.on("exit", () => activeChildren.delete(child));
     child.on("error", (error) => finish({ status: null, signal: null, error }));
     child.on("close", (code, signal) => finish({ status: code, signal }));
   });
@@ -479,6 +672,7 @@ export function spawnAsync(cmd, args = [], options = {}) {
 
 function forwardSignal(sig) {
   for (const child of activeChildren) {
+    if (child.exitCode !== null || child.signalCode !== null) continue; // already gone: its PID may belong to someone else now
     try {
       if (process.platform === "win32" && child.pid) {
         // child.kill() only ends the shell on Windows; take the child's own tree down.
@@ -513,9 +707,16 @@ function resolveConfig(opts, env) {
     slots: opts.slots ?? parseSlots(env.RF_HEAVY_SLOTS),
     maxWaitMs: opts.maxWaitMs ?? parseMaxWaitMs(env.RF_HEAVY_SLOT_MAX_WAIT_MIN),
     maxHoldMs: opts.maxHoldMs ?? parseMaxHoldMs(env.RF_HEAVY_SLOT_MAX_HOLD_MIN),
+    holdGraceMs: opts.holdGraceMs ?? HOLD_GRACE_MS,
+    holdKillMs: opts.holdKillMs ?? HOLD_KILL_MS,
     pollMs: opts.pollMs ?? parseMs(env.RF_HEAVY_SLOT_POLL_MS, POLL_MS),
     heartbeatMs: opts.heartbeatMs ?? parseMs(env.RF_HEAVY_SLOT_HEARTBEAT_MS, HEARTBEAT_MS),
     waitLogMs: opts.waitLogMs ?? WAIT_LOG_MS,
+    maxCpuPct: opts.maxCpuPct ?? parseLoadPct(env.RF_HEAVY_SLOT_MAX_CPU_PCT),
+    cappedMax: opts.cappedMax ?? parseCappedMax(env.RF_HEAVY_SLOT_CAPPED_MAX),
+    maxMemPct: opts.maxMemPct ?? parseLoadPct(env.RF_HEAVY_SLOT_MAX_MEM_PCT),
+    sampleLoad: opts.sampleLoad ?? sampleMachineLoad,
+    sampleTimeoutMs: opts.sampleTimeoutMs ?? 2 * LOAD_SAMPLE_MS,
     staleMs: opts.staleMs ?? STALE_MS,
     hostname: opts.hostname ?? os.hostname(),
     now: opts.now ?? Date.now,
@@ -523,6 +724,15 @@ function resolveConfig(opts, env) {
     label: opts.label || "job",
     branch: opts.branch ?? gitBranch(process.cwd()),
   };
+}
+
+/** Runs the sampler under a deadline; a sampler that never answers rejects, which the caller treats as fail-open. */
+function sampleWithin(sample, ms) {
+  let timer;
+  const deadline = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error("load sampler timed out")), ms);
+  });
+  return Promise.race([sample(), deadline]).finally(() => clearTimeout(timer));
 }
 
 /** A live lock carrying this token, if any (re-entrancy check). */
@@ -573,29 +783,55 @@ async function acquire(cfg, state) {
   };
 
   let lastLog = -Infinity;
+  let warnedSlots = null;
   try {
     for (;;) {
       if (state.aborted)
         throw new Error(`heavy-slot: interrupted by ${state.aborted} while waiting`);
-      const now = cfg.now();
+      let now = cfg.now();
       const snap = readState(cfg.dir, { now, hostname: cfg.hostname, staleMs: cfg.staleMs }, true);
       if (!fs.existsSync(ticketFile)) writeJson(ticketFile, { ...base, heartbeatAt: now });
       const taken = new Set(snap.holders.map((h) => h.index));
       let free = -1;
-      for (let i = 0; i < cfg.slots; i++) {
+      const sf = inspectSlotsFile(cfg.dir);
+      if (sf.state === "invalid" && sf.reason !== warnedSlots) {
+        warnedSlots = sf.reason;
+        cfg.log(`heavy-slot: ignoring ${cfg.dir}/slots (${sf.reason}); using ${cfg.slots} slot(s)`);
+      }
+      const slotCount = sf.state === "ok" ? sf.value : cfg.slots;
+      for (let i = 0; i < slotCount; i++) {
         if (!taken.has(i)) {
           free = i;
           break;
         }
       }
       const entries = snap.tickets.map((t) => ({ name: t.name }));
+      const capped = new Set(
+        snap.tickets.filter((t) => isCappedLabel(t.entry.label)).map((t) => t.name),
+      );
+      if (isCappedLabel(cfg.label)) capped.add(name);
       if (!entries.some((t) => t.name === name)) entries.push({ name }); // just (re)written
       const g = nextGrant({
         order: orderTickets(entries).map((t) => t.name),
         myName: name,
         freeSlots: free < 0 ? 0 : 1,
+        capped,
+        cappedHeld: snap.holders.filter((h) => isCappedLabel(h.entry.label)).length,
+        cappedMax: cfg.cappedMax,
       });
-      if (g.grant) {
+      // Owner cap: first in line with a free slot, but the machine is too busy -> keep waiting. Sampled only
+      // here (sampling takes ~3 s), so a job queued behind another holder costs nothing. A sampler that
+      // throws fails open: the cap is a load guard, never a reason to wedge the queue.
+      let busy = null;
+      if (g.grant && (cfg.maxCpuPct < 100 || cfg.maxMemPct < 100)) {
+        try {
+          busy = loadOverReason(await sampleWithin(cfg.sampleLoad, cfg.sampleTimeoutMs), cfg);
+          now = cfg.now(); // the sample took ~3 s: judge the max wait and the wait line on the clock after it
+        } catch {
+          busy = null;
+        }
+      }
+      if (g.grant && !busy) {
         let fd = null;
         try {
           fd = fs.openSync(lockPath(cfg.dir, free), "wx");
@@ -619,14 +855,14 @@ async function acquire(cfg, state) {
       if (
         free < 0 &&
         snap.holders.length &&
-        snap.holders.every((h) => holderOverCap(h.entry, now, cfg.maxHoldMs))
+        snap.holders.every((h) => holderOverCap(h.entry, now, cfg.maxHoldMs + cfg.holdGraceMs))
       ) {
         const holder = snap.holders[0].entry;
         throw new HeavySlotTimeout(
           `heavy-slot: gave up waiting for a slot (position ${g.position} of ${g.total}); ` +
             `held by ${describeHolder(holder)} for ${((now - holder.startedAt) / 60_000).toFixed(1)} min, ` +
             `over the ${(cfg.maxHoldMs / 60_000).toFixed(2)} min hold cap (RF_HEAVY_SLOT_MAX_HOLD_MIN) ` +
-            `while still heartbeating (wedged but alive?). Nothing was run. ` +
+            `and its ${(cfg.holdGraceMs / 60_000).toFixed(2)} min grace, while still heartbeating (wedged but alive?). Nothing was run. ` +
             `Check \`node scripts/heavy-slot.mjs status\`, then retry.`,
           holder,
         );
@@ -640,7 +876,10 @@ async function acquire(cfg, state) {
           holder,
         );
       }
-      if (now - lastLog >= cfg.waitLogMs) {
+      if (now - lastLog >= cfg.waitLogMs && busy) {
+        cfg.log(`heavy-slot: waiting for the machine to cool (${busy}; first in line, slot free)`);
+        lastLog = now;
+      } else if (now - lastLog >= cfg.waitLogMs) {
         cfg.log(
           formatWaitLine({
             position: g.position,
@@ -683,7 +922,7 @@ function makeLease(cfg, lock, index) {
   return {
     token: lock.token,
     lock,
-    release(exit = 0) {
+    release(exit = 0, extra = {}) {
       if (released) return;
       released = true;
       clearInterval(beat);
@@ -696,7 +935,7 @@ function makeLease(cfg, lock, index) {
           /* gone */
         }
       }
-      appendHistory(cfg.dir, historyRecord(lock, endedAt, exit));
+      appendHistory(cfg.dir, historyRecord(lock, endedAt, exit, extra));
     },
   };
 }
@@ -754,12 +993,49 @@ export async function withHeavySlot(opts, fn) {
   try {
     lease = await acquire(cfg, state);
     process.env.RF_HEAVY_SLOT_TOKEN = lease.token;
+    holdExpired = false;
+    // W-759: the holder enforces its OWN cap. A job that hangs while this process still heartbeats would otherwise stall every
+    // waiter. At the cap the holder ends its own guarded children (their process tree only); if fn still has not returned
+    // HOLD_KILL_MS later, the slot is released anyway and fn's late result is ignored.
+    // The timers are NOT unref'd: while armed they must keep the process alive, or a job hung on a bare promise would end the
+    // process with the slot never released by this path. They are cleared on release.
+    let capped = false;
+    let hardTimer = null;
+    let hardResolve = () => {};
+    const hard = new Promise((resolve) => {
+      hardResolve = resolve;
+    });
+    const capTimer = setTimeout(() => {
+      capped = true;
+      holdExpired = true;
+      cfg.log(
+        `heavy-slot: WARNING "${cfg.label}" held the slot past the ${(cfg.maxHoldMs / 60_000).toFixed(2)} min cap ` +
+          "(RF_HEAVY_SLOT_MAX_HOLD_MIN); ending its job and releasing the slot",
+      );
+      forwardSignal("SIGTERM");
+      hardTimer = setTimeout(() => {
+        forwardSignal("SIGKILL");
+        hardResolve(HOLD_CAP_EXIT_CODE);
+      }, cfg.holdKillMs);
+    }, cfg.maxHoldMs);
+    const stopTimers = () => {
+      clearTimeout(capTimer);
+      if (hardTimer) clearTimeout(hardTimer);
+    };
     let result;
     try {
-      result = await fn({ token: lease.token, held: true });
+      result = await Promise.race([fn({ token: lease.token, held: true }), hard]);
     } catch (e) {
-      lease.release(1);
+      stopTimers();
+      holdExpired = false;
+      lease.release(capped ? HOLD_CAP_EXIT_CODE : 1, capped ? { capped: true } : {});
       throw e;
+    }
+    stopTimers();
+    holdExpired = false;
+    if (capped) {
+      lease.release(HOLD_CAP_EXIT_CODE, { capped: true });
+      return HOLD_CAP_EXIT_CODE;
     }
     lease.release(typeof result === "number" ? result : 0);
     return result;
@@ -790,6 +1066,14 @@ export function formatStatus(
 ) {
   const st = readState(dir, { now, hostname }, false);
   const out = [`heavy-slot dir: ${dir}`];
+  const sf = inspectSlotsFile(dir);
+  out.push(
+    sf.state === "ok"
+      ? `slots file: ${path.join(dir, "slots")} = ${sf.value} (overrides every waiter's RF_HEAVY_SLOTS)`
+      : sf.state === "invalid"
+        ? `slots file: ${path.join(dir, "slots")} is INVALID (${sf.reason}) — ignored`
+        : "slots file: none (each waiter uses its own RF_HEAVY_SLOTS)",
+  );
   if (!st.holders.length) out.push("holder: none (slot free)");
   for (const h of st.holders) {
     const e = h.entry;
@@ -797,7 +1081,7 @@ export function formatStatus(
       `holder: ${e.label} on ${e.branch || "?"} — pid ${e.pid}, ${min(now - e.startedAt)} min, ` +
         `heartbeat ${Math.round((now - e.heartbeatAt) / 1000)}s ago (${h.name})` +
         (holderOverCap(e, now, maxHoldMs)
-          ? ` \u2014 OVER HOLD CAP (> ${(maxHoldMs / 60_000).toFixed(0)} min; waiters will give up)`
+          ? ` \u2014 OVER HOLD CAP (> ${(maxHoldMs / 60_000).toFixed(0)} min; the holder ends its job at the cap, waiters give up ${HOLD_GRACE_MS / 60_000} min later)`
           : ""),
     );
   }
