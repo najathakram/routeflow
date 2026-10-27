@@ -230,6 +230,13 @@ const CODE_COPY: Record<string, string> = {
   // checkout already in progress blocks a second one. Fixed sentences; no ids.
   [API_ERROR_CODES.EXTERNAL_PAYMENT_USE_CATCHUP]:
     "Your account is invoiced directly. Your RouteFlow contact will send you a secure link to set up card payment.",
+  // SA-774 (card first, then active): a plan is picked at checkout; fixed sentences, no ids.
+  [API_ERROR_CODES.USE_PLAN_CHANGE]:
+    "Your plan is paid by card. Use Change plan to switch, and the new price is prorated.",
+  [API_ERROR_CODES.CHECKOUT_PAYMENT_PROCESSING]:
+    "Your card payment is still being confirmed. This change is available once it clears.",
+  [API_ERROR_CODES.CHOOSE_PLAN_AT_CHECKOUT]:
+    "Choose your plan at checkout. Your plan starts once your payment clears.",
   [API_ERROR_CODES.CATCHUP_SESSION_OPEN]:
     "A card checkout is open for this account (October catch-up), so this change isn't available yet. Wait for it to complete or expire, then try again.",
   [API_ERROR_CODES.CATCHUP_PENDING]:
