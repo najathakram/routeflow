@@ -434,15 +434,15 @@ for (const vp of VIEWPORTS) {
 
       const readout = (key: string) =>
         page.locator(`[data-feature-key="${key}"]`).getByTestId("readout");
-      await expect(readout("tobacco_dealer")).toContainText("Off, removed by override");
+      await expect(readout("tobacco_dealer")).toContainText("Off for this business");
       await expect(readout("msrp")).toContainText("On, kept from an earlier plan");
-      await expect(readout("recurring_routes")).toContainText("On, paid add-on");
+      await expect(readout("recurring_routes")).toContainText("Add-on");
       // a plain inherited row has no source chip: exactly one readout, which is its mode or On/Off
       await expect(readout("route_optimization")).toHaveCount(1);
       await expect(readout("boxes_pieces_mode")).toContainText("Off");
 
       await page.getByLabel("Show internal").check();
-      await expect(readout("developer_mode")).toContainText("On, added by override");
+      await expect(readout("developer_mode")).toContainText("Set for this business");
     });
 
     test(`${vp.label}px — blocked mode option is disabled with the missing key named`, async ({

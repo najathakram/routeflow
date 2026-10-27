@@ -41,15 +41,15 @@ export const BADGE_COLORS: Record<FeatureBadge, string> = {
   unknown: "bg-amber-900/40 text-amber-300 ring-amber-600/30",
 };
 
-// ─── One state readout per console row (BO-12) ────────────────────────────────────────────────
+// ─── One state readout per console row (BO-12, SA-963) ──────────────────────────────────────
 //
 // The first rule that applies wins (the applied-mode case, rule 1, is decided by the console
 // because it needs the row's `config`):
 //   2. no effective data for the row (or the server could not tell)  -> "Not reported" (amber)
 //   3. feature on, gate dark, source none or an override that removes it -> "On, not enforced yet"
-//   4. otherwise "On" / "Off", with the source badge folded in as ONE chip for the four badges that
-//      say something the word alone does not: Added, Removed, Purchased, Grandfathered.
-//      The Inherited and Off badges are dropped.
+//   4. otherwise "On" / "Off", with the source folded in as ONE chip in the owner's words (SA-963):
+//      In plan / Add-on / Free until <date> / Set for this business / Off for this business, plus
+//      "kept from an earlier plan". The Off badge is dropped. No price: Plan & billing owns it.
 export type ReadoutKind = "not-reported" | "not-enforced" | "chip" | "on" | "off";
 
 export interface StateReadout {
@@ -57,14 +57,38 @@ export interface StateReadout {
   text: string;
   /** Only for kind "chip": the source badge whose colours the chip uses. */
   badge?: FeatureBadge;
+  /** Only for the Add-on chip: the tenant tab that shows what it costs (the price is never copied here). */
+  linkTab?: "billing";
 }
 
-/** Chip text per source badge, and whether the badge implies the feature is on. */
-export const READOUT_CHIPS: Partial<Record<FeatureBadge, { text: string; on: boolean }>> = {
-  added: { text: "On, added by override", on: true },
-  removed: { text: "Off, removed by override", on: false },
-  purchased: { text: "On, paid add-on", on: true },
-  grandfathered: { text: "On, kept from an earlier plan", on: true },
+/** "Nov 30, 2026" in UTC, so the date never shifts with the admin's time zone; null if unparseable. */
+function endDateText(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return null;
+  return at.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+}
+
+/** The ONE map of chip words per source badge, and whether the badge implies the feature is on. */
+export const READOUT_CHIPS: Partial<
+  Record<FeatureBadge, { text: (f: EffectiveFeature) => string; on: boolean; linkTab?: "billing" }>
+> = {
+  inherited: { text: () => "In plan", on: true },
+  purchased: { text: () => "Add-on", on: true, linkTab: "billing" },
+  added: {
+    text: (f) => {
+      const until = endDateText(f.detail?.expiresAt);
+      return until ? `Free until ${until}` : "Set for this business";
+    },
+    on: true,
+  },
+  removed: { text: () => "Off for this business", on: false },
+  grandfathered: { text: () => "On, kept from an earlier plan", on: true },
 };
 
 export function deriveReadout(
@@ -86,7 +110,12 @@ export function deriveReadout(
   // A source that contradicts what the row is actually serving (shadow mode) never gets a chip
   // that claims otherwise; the Details panel carries the resolver note.
   if (chip && chip.on === feature.serving) {
-    return { kind: "chip", text: chip.text, badge };
+    return {
+      kind: "chip",
+      text: chip.text(feature),
+      badge,
+      ...(chip.linkTab ? { linkTab: chip.linkTab } : {}),
+    };
   }
   return feature.serving ? { kind: "on", text: "On" } : { kind: "off", text: "Off" };
 }

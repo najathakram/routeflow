@@ -167,10 +167,10 @@ describe("FeatureConsole — data-driven readouts (test 1, BO-12)", () => {
 
     // The source badge is folded into the one readout (BO-12): Inherited and Off are dropped.
     const table: Array<[string, string]> = [
-      ["tobacco_dealer", "Off, removed by override"],
+      ["tobacco_dealer", "Off for this business"],
       ["msrp", "On, kept from an earlier plan"],
-      ["recurring_routes", "On, paid add-on"],
-      ["route_optimization", "On"],
+      ["recurring_routes", "Add-on"],
+      ["route_optimization", "In plan"],
       ["boxes_pieces_mode", "Off"],
     ];
     for (const [key, readout] of table) {
@@ -183,7 +183,7 @@ describe("FeatureConsole — data-driven readouts (test 1, BO-12)", () => {
     // Toggle "show internal" reveals the 6th row with its own readout.
     fireEvent.click(screen.getByLabelText("Show internal"));
     const devRow = document.querySelector('[data-feature-key="developer_mode"]') as HTMLElement;
-    expect(within(devRow).getByTestId("readout")).toHaveTextContent("On, added by override");
+    expect(within(devRow).getByTestId("readout")).toHaveTextContent("Set for this business");
   });
 });
 
@@ -1107,18 +1107,18 @@ describe("BO-12: one state readout per console row", () => {
   it("a dark row that is on for a real reason keeps that reason (the first rule that applies wins)", async () => {
     const { rowOf } = await renderAll();
     // route_optimization: dark, serving, source PRESET. developer_mode: dark, serving, GRANT.
-    expect(within(rowOf("route_optimization")).getByTestId("readout")).toHaveTextContent(/^On$/);
+    expect(within(rowOf("route_optimization")).getByTestId("readout")).toHaveTextContent(/^In plan$/);
     expect(within(rowOf("developer_mode")).getByTestId("readout")).toHaveTextContent(
-      /^On, added by override$/,
+      /^Set for this business$/,
     );
   });
 
   it("the four source chips use the badge colours and are a 10 px chip", async () => {
     const { rowOf } = await renderAll();
     const cases: Array<[string, string, string]> = [
-      ["developer_mode", "On, added by override", BADGE_COLORS.added],
-      ["tobacco_dealer", "Off, removed by override", BADGE_COLORS.removed],
-      ["recurring_routes", "On, paid add-on", BADGE_COLORS.purchased],
+      ["developer_mode", "Set for this business", BADGE_COLORS.added],
+      ["tobacco_dealer", "Off for this business", BADGE_COLORS.removed],
+      ["recurring_routes", "Add-on", BADGE_COLORS.purchased],
       ["msrp", "On, kept from an earlier plan", BADGE_COLORS.grandfathered],
     ];
     for (const [key, text, colours] of cases) {
@@ -1143,7 +1143,7 @@ describe("BO-12: one state readout per console row", () => {
 
   it("a source that contradicts what the row is serving falls back to plain On or Off", async () => {
     const { rowOf } = await renderAll();
-    // the resolver would grant it but it is not served today: never claim "On, added by override"
+    // the resolver would grant it but it is not served today: never claim "Set for this business"
     expect(within(rowOf("grant_but_off")).getByTestId("readout")).toHaveTextContent(/^Off$/);
   });
 
