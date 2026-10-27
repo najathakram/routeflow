@@ -889,12 +889,17 @@ export default function BuyerOrderDetailPage() {
           )}
           {editMode && (
             <div className="flex items-center gap-2">
-              <Button variant="secondary" size="sm" onClick={() => setEditMode(false)}>
+              <Button
+                variant="secondary"
+                size="sm"
+                className="max-lg:min-h-11"
+                onClick={() => setEditMode(false)}
+              >
                 Cancel
               </Button>
               <Button
                 size="sm"
-                className="bg-buyer-500 hover:bg-buyer-600 focus-visible:ring-buyer-500"
+                className="bg-buyer-500 hover:bg-buyer-600 focus-visible:ring-buyer-500 max-lg:min-h-11"
                 onClick={handleSaveEdit}
                 loading={updateItems.isPending}
               >
@@ -972,7 +977,7 @@ export default function BuyerOrderDetailPage() {
                                 ),
                               )
                             }
-                            className="rounded p-1 text-navy/70 hover:bg-surface-raised hover:text-navy"
+                            className="rounded p-1 text-navy/70 hover:bg-surface-raised hover:text-navy max-lg:inline-flex max-lg:min-h-11 max-lg:min-w-11 max-lg:items-center max-lg:justify-center"
                           >
                             <Minus className="h-3.5 w-3.5" />
                           </button>
@@ -988,7 +993,7 @@ export default function BuyerOrderDetailPage() {
                                 ),
                               );
                             }}
-                            className="w-14 rounded border border-surface-border bg-white px-2 py-1 text-center text-sm text-navy"
+                            className="w-14 rounded border border-surface-border bg-white px-2 py-1 text-center text-sm text-navy max-lg:h-11"
                           />
                           <button
                             onClick={() =>
@@ -998,7 +1003,7 @@ export default function BuyerOrderDetailPage() {
                                 ),
                               )
                             }
-                            className="rounded p-1 text-navy/70 hover:bg-surface-raised hover:text-navy"
+                            className="rounded p-1 text-navy/70 hover:bg-surface-raised hover:text-navy max-lg:inline-flex max-lg:min-h-11 max-lg:min-w-11 max-lg:items-center max-lg:justify-center"
                           >
                             <Plus className="h-3.5 w-3.5" />
                           </button>
