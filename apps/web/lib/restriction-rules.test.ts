@@ -27,7 +27,7 @@ describe("restriction-rules display helpers", () => {
 
   it("words the jurisdiction in plain language", () => {
     expect(jurisdictionText({ jurisdiction: "FEDERAL", states: [] })).toMatch(/federal/);
-    expect(jurisdictionText({ jurisdiction: "STATE", states: ["TX"] })).toBe("Banned in");
+    expect(jurisdictionText({ jurisdiction: "STATE", states: ["TX"] })).toBe("Restricted in");
     // A STATE rule with no states blocks everywhere (fail closed) — say so, don't hide it.
     expect(jurisdictionText({ jurisdiction: "STATE", states: [] })).toMatch(/everywhere/);
   });
@@ -79,11 +79,11 @@ describe("restriction-rules display helpers", () => {
 describe("ruleSentence (the detail page's one-line summary)", () => {
   it("names the states in words and the channel", () => {
     expect(ruleSentence({ jurisdiction: "STATE", states: ["TX", "CA"], surface: "ALL" })).toBe(
-      "Banned in Texas and California · All orders",
+      "Restricted in Texas and California · All orders",
     );
     expect(
       ruleSentence({ jurisdiction: "STATE", states: ["TX", "CA", "FL"], surface: "BUYER_PORTAL" }),
-    ).toBe("Banned in Texas, California and Florida · Buyer portal only");
+    ).toBe("Restricted in Texas, California and Florida · Buyer portal only");
   });
 
   it("many states read as a count, one state as itself", () => {
@@ -93,18 +93,18 @@ describe("ruleSentence (the detail page's one-line summary)", () => {
         states: ["TX", "CA", "FL", "NY", "WA"],
         surface: "ALL",
       }),
-    ).toBe("Banned in 5 states · All orders");
+    ).toBe("Restricted in 5 states · All orders");
     expect(ruleSentence({ jurisdiction: "STATE", states: ["TX"], surface: "ALL" })).toBe(
-      "Banned in Texas · All orders",
+      "Restricted in Texas · All orders",
     );
   });
 
   it("federal and state-with-no-states read as everywhere", () => {
     expect(ruleSentence({ jurisdiction: "FEDERAL", states: [], surface: "ALL" })).toBe(
-      "Banned everywhere (federal) · All orders",
+      "Restricted everywhere (federal) · All orders",
     );
     expect(ruleSentence({ jurisdiction: "STATE", states: [], surface: "ALL" })).toBe(
-      "Banned everywhere (no states listed) · All orders",
+      "Restricted everywhere (no states listed) · All orders",
     );
   });
 });

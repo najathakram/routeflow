@@ -85,7 +85,7 @@ const warning409 = {
               id: "r1",
               states: ["CA"],
               legal: true,
-              reasonText: "This product is banned in CA by law.",
+              reasonText: "Restricted in CA: State ban.",
             },
           ],
         },
@@ -109,7 +109,7 @@ async function openForm(basis: RegExp) {
   return user;
 }
 async function sellAnyway(user: ReturnType<typeof userEvent.setup>) {
-  expect(await screen.findByText("This product is banned in CA by law.")).toBeInTheDocument();
+  expect(await screen.findByText("Restricted in CA: State ban.")).toBeInTheDocument();
   await user.type(screen.getByLabelText(/reason/i), "Owner approved");
   await user.click(screen.getByRole("button", { name: "Sell anyway" }));
 }

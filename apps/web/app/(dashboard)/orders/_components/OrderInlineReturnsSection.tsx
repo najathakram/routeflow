@@ -137,6 +137,8 @@ export const OrderInlineReturnsSection = React.forwardRef<
           customerId={customerId}
           entryOrderId={entryOrderId}
           resetToken={resetToken}
+          // the return's credit note is held for THIS order first, so it is not "for the next order"
+          creditContext="thisOrder"
           onStateChange={(state) => {
             stateRef.current = state;
           }}
