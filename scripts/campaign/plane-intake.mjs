@@ -14,7 +14,7 @@
 //
 // --apply: mints the registry ids for real. Preconditions, in this exact
 // order (spec.md R6 / build-plan.md WP3, each ending the run at exit 2 with
-// zero writes on failure): (1) `.claude/campaign` is clean
+// zero writes on failure): (1) the register tree is clean
 // (`git status --porcelain`) — ids are only ever minted from a tree with no
 // in-flight registry edits; (2) HEAD descends from `origin/master` — ids are
 // minted only on master-merged trees; (3) PLANE_API_KEY is present. Then,
@@ -53,6 +53,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
+import { registryRoot, registrySource } from "../lib/registry-root.mjs";
 import {
   appendRun,
   createClient,
@@ -90,18 +91,14 @@ const RELINK_PAIR_RE = /^(B\d+)=(.+)$/;
 // spawned bugs.mjs) — so --relink's registry-row validation and
 // gatherIntake's title-dedup scan always read the exact catalogue
 // applyCandidates() itself mints into. Falls back to bugs.mjs's own default
-// (`.claude/campaign` under the repo root) when neither env var is set,
+// (registryRoot()) when neither env var is set,
 // matching what bugs.mjs resolves on its own when spawned with cwd=repoRoot().
-function registryRoot() {
-  return (
-    process.env.PLANE_SYNC_REGISTRY_DIR ??
-    process.env.BUGS_ROOT ??
-    join(repoRoot(), ".claude", "campaign")
-  );
+function catalogueDir() {
+  return process.env.PLANE_SYNC_REGISTRY_DIR ?? registryRoot();
 }
 
 function readCatalogueRows() {
-  const file = join(registryRoot(), "bugs.jsonl");
+  const file = join(catalogueDir(), "bugs.jsonl");
   if (!existsSync(file)) return [];
   return readFileSync(file, "utf8")
     .split(/\r?\n/)
@@ -297,7 +294,7 @@ async function applyCandidates(
   const env = {
     ...process.env,
     // Landmine 1: bugs.mjs reads BUGS_ROOT, not PLANE_SYNC_REGISTRY_DIR.
-    BUGS_ROOT: registryRoot(),
+    BUGS_ROOT: catalogueDir(),
   };
 
   const applied = [];
@@ -582,6 +579,16 @@ async function main() {
       manualBudgetLimit = 20;
     }
 
+    // Fail closed before anything else: a missing register is never an empty catalogue.
+    try {
+      catalogueDir();
+    } catch (err) {
+      process.stderr.write(`Plane intake: ${err.message}\n`);
+      process.exitCode = 2;
+      rec.error = `${err?.name ?? "Error"}: ${String(err.message).slice(0, 200)}`;
+      return;
+    }
+
     const apiKey = process.env.PLANE_API_KEY;
 
     // Finding C2: --relink is its own mode — it never mints, so it skips
@@ -620,7 +627,7 @@ async function main() {
       // worktree rather than wherever the caller invoked it from) + gitEnv()
       // (never inherit GIT_DIR/GIT_WORK_TREE from a pre-push-hook-style
       // ambient env — see plane-client.mjs's gitEnv() doc).
-      const statusRes = spawnSync("git", ["status", "--porcelain", "--", ".claude/campaign"], {
+      const statusRes = spawnSync("git", ["status", "--porcelain", "--", registrySource().prefix], {
         cwd: process.cwd(),
         env: gitEnv(),
         encoding: "utf8",
@@ -635,7 +642,7 @@ async function main() {
       }
       if (statusRes.stdout.trim()) {
         process.stderr.write(
-          "Plane intake: refused --apply — .claude/campaign has uncommitted changes (dirty)\n",
+          `Plane intake: refused --apply — ${registrySource().prefix} has uncommitted changes (dirty)\n`,
         );
         process.exitCode = 2;
         return;
