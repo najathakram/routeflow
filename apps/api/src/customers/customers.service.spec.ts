@@ -1454,6 +1454,9 @@ describe("CustomersService", () => {
 
     // SA-1048 B243: the per-row running balance is a rounded figure, like the summary figures beside it.
     it("statement rows: runningBalance is whole cents (0.3 owed less 0.1 paid is -0.2, not -0.19999999999999998)", async () => {
+      const runningBalanceOf = (r: { transactions: unknown[] }): unknown =>
+        (r.transactions as { id: string; runningBalance: unknown }[]).find((t) => t.id === "inv-1")
+          ?.runningBalance;
       const invoice = {
         id: "inv-1",
         invoiceNumber: "INV-1",
@@ -1470,10 +1473,10 @@ describe("CustomersService", () => {
       prisma.advancePayment.findMany.mockResolvedValue([]);
       prisma.order.findMany.mockResolvedValue([]);
 
-      const mine = await service.getMyStatement(customerPayload);
-      expect(mine.transactions.find((t: any) => t.id === "inv-1").runningBalance).toBe(-0.2);
+      const mine = await service.getMyStatement(customerPayload as any);
+      expect(runningBalanceOf(mine)).toBe(-0.2);
       const staff = await service.getStatementForOperator("cust-1");
-      expect(staff.transactions.find((t: any) => t.id === "inv-1").runningBalance).toBe(-0.2);
+      expect(runningBalanceOf(staff)).toBe(-0.2);
     });
 
     it("findAll: customer receivables exclude VOID payments", async () => {
