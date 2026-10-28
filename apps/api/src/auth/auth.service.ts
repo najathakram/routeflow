@@ -35,7 +35,7 @@ export interface DeviceInfo {
 /**
  * RF-176 / W-767 (SA-917): a staff session with no business is a PLATFORM session, SUPER_ADMIN only. A null-tenantId JWT
  * bypasses every forTenant() scope and can read across businesses. The ONE check, made before EVERY staff token mint in
- * this file (login, refresh, mintSessionForUser): `session-tenant.pin.spec.ts` keeps each sign site behind it.
+ * this file (login, refresh, mintSessionForUser): `session-tenant.spec.ts` keeps each sign site behind it.
  */
 export function hasSessionTenant(user: { tenantId: string | null; role: string }): boolean {
   return !!user.tenantId || user.role === "SUPER_ADMIN";

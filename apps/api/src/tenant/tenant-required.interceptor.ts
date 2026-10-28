@@ -27,6 +27,9 @@ const READ_VERBS = new Set(["GET", "HEAD", "OPTIONS"]);
 /**
  * W-767 (SA-908): a tenant WRITE needs a business in the session.
  *
+ * Request-level writes only; session issuance refuses live via hasSessionTenant (RF-176 rule). So this interceptor being
+ * DARK does not leave sessions open: the refusal at sign-in, refresh and password change is already live (SA-1016).
+ *
  * SUPER_ADMIN satisfies every role (roles.guard.ts), and its own token carries no tenant, so TenantInterceptor runs the
  * request with `tenantId: null`. Then `forTenant()` is the unscoped client and `tenantTransaction` the raw transaction, so a
  * tenant-scoped write could read and write across businesses (W-763 was one such route).
