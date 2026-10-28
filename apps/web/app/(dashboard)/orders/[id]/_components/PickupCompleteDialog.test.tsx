@@ -780,3 +780,87 @@ describe("PickupCompleteDialog: I-120 the hand-over's credit-over-limit line (SA
     expect(screen.queryByTestId("pickup-credit-over-limit")).toBeNull();
   });
 });
+
+describe("PickupCompleteDialog — Check not received yet (SA-1026 A-R1)", () => {
+  const CHOICE = "Check not received yet";
+
+  it("a named customer paying by Check is offered the choice; it is not offered under Cash or Card", async () => {
+    balance(25);
+    mount();
+    expect(screen.queryByLabelText(CHOICE)).toBeNull();
+    fireEvent.click(await screen.findByRole("button", { name: "Check" }));
+    expect(screen.getByLabelText(CHOICE)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Card" }));
+    expect(screen.queryByLabelText(CHOICE)).toBeNull();
+  });
+
+  it("a walk-in is never offered it (no account to collect on)", async () => {
+    balance(25);
+    mount({ isWalkIn: true });
+    fireEvent.click(await screen.findByRole("button", { name: "Check" }));
+    expect(screen.queryByLabelText(CHOICE)).toBeNull();
+    expect(screen.getByLabelText("Check number")).toBeInTheDocument();
+  });
+
+  it("choosing it hides the number and sends ON_ACCOUNT + expectedMethod CHECK with no reference", async () => {
+    balance(25);
+    mount();
+    fireEvent.click(await screen.findByRole("button", { name: "Check" }));
+    fireEvent.click(screen.getByLabelText(CHOICE));
+    expect(screen.queryByLabelText("Check number")).toBeNull();
+    confirm();
+    await waitFor(() => expect(post).toHaveBeenCalled());
+    expect(post.mock.calls[0][1]).toEqual({
+      payment: { method: "ON_ACCOUNT", expectedMethod: "CHECK" },
+    });
+  });
+
+  it("a number typed before choosing it is not sent", async () => {
+    balance(25);
+    mount();
+    fireEvent.click(await screen.findByRole("button", { name: "Check" }));
+    fireEvent.change(screen.getByLabelText("Check number"), { target: { value: "1042" } });
+    fireEvent.click(screen.getByLabelText(CHOICE));
+    confirm();
+    await waitFor(() => expect(post).toHaveBeenCalled());
+    expect(post.mock.calls[0][1].payment).toEqual({
+      method: "ON_ACCOUNT",
+      expectedMethod: "CHECK",
+    });
+  });
+
+  it("unchoosing brings the number back (kept) and the number is required again", async () => {
+    balance(25);
+    mount();
+    fireEvent.click(await screen.findByRole("button", { name: "Check" }));
+    fireEvent.change(screen.getByLabelText("Check number"), { target: { value: "1042" } });
+    fireEvent.click(screen.getByLabelText(CHOICE));
+    fireEvent.click(screen.getByLabelText(CHOICE));
+    expect(screen.getByLabelText("Check number")).toHaveValue("1042");
+    fireEvent.change(screen.getByLabelText("Check number"), { target: { value: "" } });
+    confirm();
+    expect(await screen.findByText("Enter the check number.")).toBeVisible();
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it("switching to another method drops the choice", async () => {
+    balance(25);
+    mount();
+    fireEvent.click(await screen.findByRole("button", { name: "Check" }));
+    fireEvent.click(screen.getByLabelText(CHOICE));
+    fireEvent.click(screen.getByRole("button", { name: "Card" }));
+    confirm();
+    await waitFor(() => expect(post).toHaveBeenCalled());
+    expect(post.mock.calls[0][1]).toEqual({ payment: { method: "CARD" } });
+  });
+
+  it("the outcome of a To collect hand-over says what is to collect", async () => {
+    balance(25);
+    post.mockResolvedValueOnce(result({ paid: 0, balanceDue: 25, toCollect: "TO_COLLECT" }));
+    mount();
+    fireEvent.click(await screen.findByRole("button", { name: "Check" }));
+    fireEvent.click(screen.getByLabelText(CHOICE));
+    confirm();
+    expect(await screen.findByText("Picked up. To collect: $25.00.")).toBeVisible();
+  });
+});

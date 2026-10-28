@@ -18,6 +18,7 @@ import {
   COMPLETE_MODE_ERROR_COPY,
   counterCompleteRefusalCopy,
   type CounterSalePaymentMethod,
+  type ToCollectMethod,
   type FulfilmentCapability,
 } from "@routeflow/types";
 import { regulatedAuthErrorCopy } from "@routeflow/types/regulated-auth-copy";
@@ -234,6 +235,24 @@ export function paymentMethodOptions(isWalkIn: boolean): PaymentMethodOption[] {
     { method: "CHECK", label: "Check", disabled: false },
     { method: "ON_ACCOUNT", label: "On account", disabled: isWalkIn },
   ];
+}
+
+/** SA-1026 A: the one choice inside the Check tender for a named customer whose check is not in hand. */
+export const CHECK_NOT_RECEIVED_LABEL = "Check not received yet";
+
+/**
+ * What the screen's tender state sends. "Check not received yet" is not a fifth method: it is On account plus one typed
+ * intent (`expectedMethod: "CHECK"`), so the till and the hand-over share ONE mapping, and `validatePayment` judges it as
+ * On account (a walk-in is refused by the same rule, with no check number to enter). The flag belongs to Check only: a stale
+ * flag under any other method never rides along.
+ */
+export function resolveTender(
+  method: CounterSalePaymentMethod,
+  checkNotReceived: boolean,
+): { method: CounterSalePaymentMethod; expectedMethod?: ToCollectMethod } {
+  return method === "CHECK" && checkNotReceived
+    ? { method: "ON_ACCOUNT", expectedMethod: "CHECK" }
+    : { method };
 }
 
 export type PaymentProblem = "TENDER_SHORT" | "CHECK_NUMBER_REQUIRED" | "WALK_IN_ON_ACCOUNT";

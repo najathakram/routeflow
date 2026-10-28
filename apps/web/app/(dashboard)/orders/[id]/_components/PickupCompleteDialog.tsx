@@ -11,10 +11,15 @@ import {
   creditOverLimitSentence,
   COUNTER_COPY,
 } from "@routeflow/types";
-import type { CounterSalePaymentMethod, PickupCompleteResponse } from "@routeflow/types";
+import type {
+  CounterSalePaymentMethod,
+  PickupCompleteResponse,
+  ToCollectMethod,
+} from "@routeflow/types";
 import { usePickupComplete, usePickupInvoiceBalances } from "@/lib/api/counter-sale";
 import { useOptionalAuth } from "@/lib/auth-context";
 import { duplicatePaymentRefMessage } from "@/lib/duplicate-payment-ref";
+import { CheckNotReceivedChoice } from "../../_components/CheckNotReceivedChoice";
 import {
   paymentProblemCopy,
   PICKUP_DEAD_INVOICE,
@@ -27,6 +32,7 @@ import {
   pickupErrorCode,
   quickTenderOptions,
   readHeldPickupKey,
+  resolveTender,
   validatePayment,
   writeHeldPickupKey,
 } from "@/lib/counter-sale";
@@ -43,6 +49,8 @@ type Body = {
     amount?: number;
     reference?: string;
     recordAnyway?: boolean;
+    /** SA-1026: with ON_ACCOUNT only: "the check is not received yet" (the order is left To collect) */
+    expectedMethod?: ToCollectMethod;
   };
   /** SA-913 R8: the confirmed re-send after COUNTER_COMPLETE_ON_RUN (same key) */
   takeOffRun?: boolean;
@@ -113,6 +121,8 @@ export function PickupCompleteDialog({
   /** Row 312(b): the value the dialog itself put in the cash field; a different value is the cashier's own. */
   const autoTendered = React.useRef("");
   const [reference, setReference] = React.useState("");
+  // SA-1026: "Check not received yet" under Check (named customer): sent as On account + expectedMethod CHECK.
+  const [checkNotReceived, setCheckNotReceived] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [errorCode, setErrorCode] = React.useState<string | undefined>();
   const [outcome, setOutcome] = React.useState<PickupCompleteResponse | null>(null);
@@ -129,6 +139,7 @@ export function PickupCompleteDialog({
       autoTendered.current = "";
       setTendered("");
       setReference("");
+      setCheckNotReceived(false);
       setError(null);
       setErrorCode(undefined);
       setOwed(null);
@@ -192,8 +203,9 @@ export function PickupCompleteDialog({
   function confirm() {
     if (due === null) return;
     if (nothingToCollect) return void send({});
+    const tender = resolveTender(method, checkNotReceived);
     const problem = validatePayment({
-      method,
+      method: tender.method,
       total: due,
       tendered: tenderedNum,
       reference,
@@ -202,9 +214,10 @@ export function PickupCompleteDialog({
     if (problem) return setError(paymentProblemCopy(problem, due));
     void send({
       payment: {
-        method,
-        ...(method === "CASH" ? { amount: roundMoney(tenderedNum) } : {}),
-        ...(reference.trim() ? { reference: reference.trim() } : {}),
+        ...tender,
+        ...(tender.method === "CASH" ? { amount: roundMoney(tenderedNum) } : {}),
+        // SA-1026: "Check not received yet" sends no number: a typed one is dropped, never deduped
+        ...(reference.trim() && !tender.expectedMethod ? { reference: reference.trim() } : {}),
       },
     });
   }
@@ -334,9 +347,11 @@ export function PickupCompleteDialog({
                   ? outcome.emailed
                     ? COUNTER_COPY.completedEmailed
                     : COUNTER_COPY.completed
-                  : outcome.balanceDue > 0
-                    ? `Picked up. ${money(outcome.balanceDue)} still due.`
-                    : "Picked up and paid."}
+                  : outcome.toCollect === "TO_COLLECT" && outcome.balanceDue > 0
+                    ? `Picked up. To collect: ${money(outcome.balanceDue)}.`
+                    : outcome.balanceDue > 0
+                      ? `Picked up. ${money(outcome.balanceDue)} still due.`
+                      : "Picked up and paid."}
                 {completeMode && outcome.balanceDue > 0
                   ? ` ${money(outcome.balanceDue)} still due.`
                   : ""}
@@ -388,6 +403,7 @@ export function PickupCompleteDialog({
                     )}
                     onClick={() => {
                       setMethod(m.method);
+                      setCheckNotReceived(false); // the choice belongs to Check
                       setError(null);
                     }}
                   >
@@ -425,7 +441,7 @@ export function PickupCompleteDialog({
                 </p>
               </div>
             )}
-            {method === "CHECK" && (
+            {method === "CHECK" && !checkNotReceived && (
               <label className="block text-sm">
                 Check number
                 <input
@@ -435,6 +451,16 @@ export function PickupCompleteDialog({
                   onChange={(e) => setReference(e.target.value)}
                 />
               </label>
+            )}
+            {/* SA-1026: a walk-in has no account to collect on, so the choice is not offered at all */}
+            {method === "CHECK" && !isWalkIn && (
+              <CheckNotReceivedChoice
+                checked={checkNotReceived}
+                onChange={(v) => {
+                  setCheckNotReceived(v);
+                  setError(null);
+                }}
+              />
             )}
           </section>
         )}
