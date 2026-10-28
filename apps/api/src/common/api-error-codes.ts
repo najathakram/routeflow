@@ -359,6 +359,8 @@ export const API_ERROR_CODES = {
   COUNTER_CHECK_NUMBER_REQUIRED: "COUNTER_CHECK_NUMBER_REQUIRED",
   /** 400 from POST /orders/counter-sale: a CHECK dated after the tenant's today cannot be tendered at the till; put the sale on account and record the check when it clears. Nothing is written. */
   COUNTER_CHECK_POSTDATED: "COUNTER_CHECK_POSTDATED",
+  /** 400 from POST /orders/counter-sale and the pickup hand-over (SA-1026): `expectedMethod` ("the check is not in hand yet") is valid only with `method: "ON_ACCOUNT"`. Nothing is written. */
+  COUNTER_EXPECTED_METHOD_NEEDS_ON_ACCOUNT: "COUNTER_EXPECTED_METHOD_NEEDS_ON_ACCOUNT",
   COUNTER_PAYMENT_EXCEEDS_TOTAL: "COUNTER_PAYMENT_EXCEEDS_TOTAL",
   COUNTER_PAYMENT_NOT_RECORDED: "COUNTER_PAYMENT_NOT_RECORDED",
   /**
