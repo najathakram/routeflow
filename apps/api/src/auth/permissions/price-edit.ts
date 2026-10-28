@@ -5,7 +5,8 @@ import {
   OperatorPermissionsService,
   type PermissionPrincipal,
 } from "./operator-permissions.service";
-import { STAFF_CAPABILITY_RULES, staffMay } from "./staff-capabilities";
+import { mayEditPrice, roleMayEditPrice } from "./price-edit-answer";
+import { STAFF_CAPABILITY_RULES } from "./staff-capabilities";
 
 const logger = new Logger("PriceEdit");
 
@@ -30,7 +31,7 @@ export async function priceEditAllowedFor(
   user: PermissionPrincipal | null | undefined,
   site: string,
 ): Promise<boolean> {
-  const roleOnly = staffMay(user?.role, "EDIT_LINE_PRICE", []);
+  const roleOnly = roleMayEditPrice(user?.role);
   if (!user || !roleOnly) return false;
   const mode = new OperatorPermissionsService(prisma).mode();
   let denied: readonly string[];
@@ -43,7 +44,7 @@ export async function priceEditAllowedFor(
     );
     return roleOnly;
   }
-  const enforced = staffMay(user.role, "EDIT_LINE_PRICE", denied);
+  const enforced = mayEditPrice(user.role, denied);
   if (mode === "live") return enforced;
   if (!enforced) {
     logger.warn(

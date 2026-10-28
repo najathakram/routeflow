@@ -2,6 +2,7 @@ import * as React from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { API_ERROR_CODES, allPermissionGroups, type MyPermissions } from "@routeflow/types";
 import { apiClient } from "../api-client";
+import { useOptionalAuth } from "../auth-context";
 
 /**
  * `GET /users/me/permissions`: the groups the signed-in user holds. Only an OPERATOR's answer can differ from "all
@@ -66,4 +67,17 @@ export function usePermissionDeniedWatcher(): void {
       offMutations();
     };
   }, [qc]);
+}
+
+/**
+ * SA-1034 rule 10: may the signed-in user type a line price (so add a custom item)? The SERVER's mode-applied answer
+ * (`priceEditAllowed`, never a role guess here), read for an OPERATOR only: an account admin always may, and nobody
+ * else reaches these screens. Pending, failed and missing answers read as ALLOWED: this only decides what to show, and
+ * the server refuses (403 PRICE_EDIT_NOT_PERMITTED, same sentence) whatever the screen offered.
+ */
+export function usePriceEditAllowed(): boolean {
+  const authUser = useOptionalAuth()?.user;
+  const perms = useMyPermissions(authUser?.id, { enabled: authUser?.role === "OPERATOR" });
+  if (authUser?.role !== "OPERATOR") return true;
+  return perms.data?.priceEditAllowed !== false;
 }

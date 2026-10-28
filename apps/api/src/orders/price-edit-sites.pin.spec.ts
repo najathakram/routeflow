@@ -12,7 +12,7 @@ import type { SaleOptions } from "./sale-options";
  *  - each override-site file has EXACTLY its count of `assertPriceEditAllowed(` and `priceEditAllowedFor(` calls: a
  *    new site raises its count in its own diff, where it is reviewed (OP-7).
  *  - `assertPriceEditAllowed` takes a required `boolean`.
- *  - `staffMay(…, "EDIT_LINE_PRICE"…)` is called only inside price-edit.ts (and not at all anywhere else).
+ *  - `staffMay(…, "EDIT_LINE_PRICE"…)` is called only inside price-edit-answer.ts (and not at all anywhere else).
  *  - neither `CreateOrderOptions` nor `SaleOptions` declares `priceEditAllowed`: a caller passes a principal, never a boolean.
  * Pure source reads: no Nest, no database.
  */
@@ -175,15 +175,18 @@ describe("SA-1034: price-edit capability is checked at every override site", () 
     expect(n).toBe(2);
   });
 
-  it('staffMay(…, "EDIT_LINE_PRICE"…) is called only inside auth/permissions/price-edit.ts', () => {
+  it('staffMay(…, "EDIT_LINE_PRICE"…) is called only inside auth/permissions/price-edit-answer.ts', () => {
     const where: string[] = [];
     for (const f of files) {
       for (const m of code(read(f)).matchAll(/staffMay\(([^()]*(?:\([^()]*\))?[^()]*)\)/g)) {
         if (m[1].includes('"EDIT_LINE_PRICE"')) where.push(f.split("\\").join("/"));
       }
     }
-    // price-edit.ts holds the two (role-only and enforced); the capability tables define the row, they do not call it.
-    expect(where).toEqual(["auth/permissions/price-edit.ts", "auth/permissions/price-edit.ts"]);
+    // price-edit-answer.ts holds the two (role-only and enforced), shared by price-edit.ts and /me/permissions; the capability tables define the row, they do not call it.
+    expect(where).toEqual([
+      "auth/permissions/price-edit-answer.ts",
+      "auth/permissions/price-edit-answer.ts",
+    ]);
   });
 
   it("neither CreateOrderOptions nor SaleOptions declares priceEditAllowed (a caller passes a principal, never a boolean)", () => {
