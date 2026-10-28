@@ -834,6 +834,16 @@ try {
       return [row.runs, row.passes, row.passAt1, row.passK];
     },
   );
+  // A broken duplicate of a failed run must not drop the fail out of pass@1 (it breaks --vs ties).
+  await check(
+    "a failed run with a broken duplicate stays a fail in pass@1",
+    [0.5, 0, false],
+    () => {
+      const mk = (run, result) => ({ taskId: "t", result, run, k: 2, runId: "A" });
+      const row = FE.report([mk(1, "pass"), mk(2, "fail"), mk(2, "broken")]).rows[0];
+      return [row.passAt1, row.broken, row.passK];
+    },
+  );
   const sameDir = (order) => {
     const abs = path.join(rtmp, "cd", "run1");
     save("cd/run1/results.jsonl", [t0]);
