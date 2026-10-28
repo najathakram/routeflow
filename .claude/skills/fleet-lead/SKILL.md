@@ -212,3 +212,5 @@ that sha; tier 1; squash; base check before, ref check after; BUILDING → SUCCE
 
 **Checkpoint timer:** `until [ "$(date -u +%H%M)" -ge HHMM ]; do sleep 30; done; …` in the
 background, printing visibility, open PRs with `mergeStateStatus` and `isDraft`, and master's ref.
+
+Advisory (dark, owner ruling pending on the budget): a change to a skill, hook, model or routing rule should carry a `factory-eval report` (`scripts/factory-eval.mjs`, frozen task set in `evals/factory/`).

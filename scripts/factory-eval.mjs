@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 // Frozen eval set for routine changes: a fixed set of past tasks, re-run when a skill, hook, model or routing
-// rule changes, graded on end state. `report` (pass^k, pass@1, --vs) and --sample come in R6-b3.
+// rule changes, graded on end state. `report` shows pass^k and pass@1.
 //
 //   node scripts/factory-eval.mjs select --since <YYYY-MM-DD> [--landings <file>]   (read-only, proposes)
 //   node scripts/factory-eval.mjs prepare <id> [--dir <d>]    detached worktree at baseSha + BRIEF.md
 //   node scripts/factory-eval.mjs grade <id> --tree <d>       pass | fail | broken; exit 0 only on pass
 //   node scripts/factory-eval.mjs cleanup <tree>              unlink every link in it, remove the tree
-//   node scripts/factory-eval.mjs run [<id>] --arm <name> [--k 3] [--budget <usd>]
+//   node scripts/factory-eval.mjs run [<id>] --arm <name> [--k 3] [--sample <n> [--seed <s>]] [--budget <usd>]
+//   node scripts/factory-eval.mjs report <results.jsonl|run-id>... [--vs <run>] [--json]
 //   common: --repo <dir> --tasks <dir> --arms <file> --include-example
 //
 // A task (evals/factory/tasks/<id>.json, schema in its README) is a real past change: the repo at the parent
@@ -31,6 +32,7 @@ import {
   realpathSync,
   rmSync,
   rmdirSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -461,11 +463,159 @@ export function saveRun(baseDir, runId, records) {
   return file;
 }
 
-// ---- report (stub) ----
-export const readResults = () => Object.assign([], { malformed: 0 });
-export const report = () => ({ rows: [], runs: [] });
-export const formatReport = () => "";
-export const sampleTasks = (tasks) => tasks;
+// ---- sample ----
+
+/** Seeded subset: kinds in proportion to the pool (one of each at n >= 2), risks rotate inside a kind. */
+export function sampleTasks(tasks, n, seed = 1) {
+  let s = seed >>> 0;
+  const rnd = () => {
+    s = (s + 0x6d2b79f5) >>> 0; // mulberry32: the same numbers on every platform
+    let t = Math.imul(s ^ (s >>> 15), s | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  const all = [...tasks].sort((a, b) => (a.id < b.id ? -1 : 1));
+  for (let i = all.length - 1; i > 0; i--) {
+    const j = Math.floor(rnd() * (i + 1));
+    [all[i], all[j]] = [all[j], all[i]];
+  }
+  const kinds = [...new Set(all.map((t) => t.kind))].sort();
+  const size = (k) => all.filter((t) => t.kind === k).length;
+  const want = Math.min(n, all.length);
+  const quota = Object.fromEntries(
+    kinds.map((k) => [k, Math.max(want >= 2 ? 1 : 0, Math.round((want * size(k)) / all.length))]),
+  );
+  const total = () => kinds.reduce((a, k) => a + quota[k], 0);
+  const biggest = () => [...kinds].sort((a, b) => quota[b] - quota[a])[0];
+  while (total() > want) quota[biggest()] -= 1;
+  while (total() < want) quota[kinds.find((k) => size(k) > quota[k])] += 1;
+  const lane = (kind) => {
+    const byRisk = {};
+    for (const t of all) if (t.kind === kind) (byRisk[t.risk] ??= []).push(t);
+    const lists = Object.keys(byRisk)
+      .sort()
+      .map((r) => byRisk[r]);
+    const out = [];
+    for (let i = 0; lists.some((l) => i < l.length); i++)
+      for (const l of lists) if (i < l.length) out.push(l[i]);
+    return out.slice(0, quota[kind]);
+  };
+  return kinds.flatMap(lane);
+}
+
+// ---- report ----
+
+/** A run's label: its directory name, or a bare <name>.jsonl's name. */
+function resultLabel(p) {
+  const file = existsSync(p) && statSync(p).isDirectory() ? path.join(p, "results.jsonl") : p;
+  const base = path.basename(file, ".jsonl");
+  return base === "results" ? path.basename(path.dirname(path.resolve(file))) : base;
+}
+
+/** Records of every run dir or results file, tagged with their run label; bad lines are counted, not kept. */
+export function readResults(paths) {
+  const records = [];
+  let malformed = 0;
+  for (const p of paths) {
+    const file = existsSync(p) && statSync(p).isDirectory() ? path.join(p, "results.jsonl") : p;
+    for (const line of readFileSync(file, "utf8").split("\n")) {
+      if (!line.trim()) continue;
+      try {
+        const r = JSON.parse(line);
+        if (!r || typeof r.taskId !== "string") throw new Error("shape");
+        records.push({ ...r, runId: resultLabel(p) });
+      } catch {
+        malformed += 1;
+      }
+    }
+  }
+  return Object.assign(records, { malformed });
+}
+
+const median = (xs) => {
+  const s = xs.filter((x) => x != null).sort((a, b) => a - b);
+  if (!s.length) return null;
+  const m = s.length >> 1;
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+};
+
+/**
+ * Per task and run: pass^k (every repeat passed) and pass@1 (share passed); broken repeats are their own count.
+ * Per run: mean cost per repeat (unknown costs left out and counted) and median wall-clock. With `vs` (another
+ * run's label): tasks both ran, won, lost and tied, by pass^k first and then pass@1.
+ */
+export function report(records, { vs, includeExample = false } = {}) {
+  const live = records.filter((r) => includeExample || !r.example);
+  const label = (r) => r.runId ?? r.arm;
+  const groups = new Map();
+  for (const r of live) {
+    const key = `${label(r)}\u0000${r.taskId}`;
+    if (!groups.has(key)) groups.set(key, { run: label(r), taskId: r.taskId, recs: [] });
+    groups.get(key).recs.push(r);
+  }
+  const rows = [...groups.values()].map(({ run, taskId, recs }) => {
+    const passes = recs.filter((r) => r.result === "pass").length;
+    const broken = recs.filter((r) => r.result === "broken").length;
+    return {
+      run,
+      taskId,
+      runs: recs.length,
+      passes,
+      passAt1: passes / recs.length,
+      passK: passes === recs.length,
+      broken,
+    };
+  });
+  const names = [...new Set(live.map(label))];
+  const runs = names.map((run) => {
+    const mine = live.filter((r) => label(r) === run);
+    const mineRows = rows.filter((r) => r.run === run);
+    const costs = mine.map((r) => r.costUsd).filter((c) => c != null);
+    return {
+      run,
+      tasks: mineRows.length,
+      passK: mineRows.filter((r) => r.passK).length,
+      broken: mineRows.reduce((a, r) => a + r.broken, 0),
+      meanCost: costs.length ? costs.reduce((a, b) => a + b, 0) / costs.length : null,
+      unknownCost: mine.length - costs.length,
+      medianWall: median(mine.map((r) => r.wallSec)),
+    };
+  });
+  if (!vs) return { rows, runs };
+  if (!names.includes(vs)) throw new Error(`no results for run "${vs}"`);
+  const base = new Map(rows.filter((r) => r.run === vs).map((r) => [r.taskId, r]));
+  const against = names
+    .filter((n) => n !== vs)
+    .map((run) => {
+      const out = { run, won: 0, lost: 0, tied: 0 };
+      for (const r of rows.filter((x) => x.run === run && base.has(x.taskId))) {
+        const b = base.get(r.taskId);
+        const d = Number(r.passK) - Number(b.passK) || Math.sign(r.passAt1 - b.passAt1);
+        out[d > 0 ? "won" : d < 0 ? "lost" : "tied"] += 1;
+      }
+      return out;
+    });
+  return { rows, runs, vs: { baseline: vs, against } };
+}
+
+export function formatReport(rep, malformed = 0) {
+  const usd = (n) => (n == null ? "n/a" : `$${n.toFixed(2)}`);
+  const out = ["task                      run            pass^k  pass@1  repeats  broken"];
+  for (const r of rep.rows)
+    out.push(
+      `${r.taskId.padEnd(25)} ${r.run.padEnd(14)} ${String(r.passK).padEnd(7)} ${r.passAt1.toFixed(2).padEnd(7)} ${String(r.runs).padEnd(8)} ${r.broken}`,
+    );
+  for (const a of rep.runs) {
+    out.push(
+      `run ${a.run}: pass^k on ${a.passK}/${a.tasks} tasks, mean cost per repeat ${usd(a.meanCost)} (${a.unknownCost} unknown), median wall-clock ${a.medianWall ?? "n/a"}s`,
+    );
+    if (a.broken) out.push(`broken ${a.run}: ${a.broken} repeats (not counted as fail)`);
+  }
+  for (const v of rep.vs?.against ?? [])
+    out.push(`${v.run} vs ${rep.vs.baseline}: won ${v.won}, lost ${v.lost}, tied ${v.tied}`);
+  if (malformed) out.push(`skipped ${malformed} malformed lines`);
+  return out.join("\n");
+}
 
 // ---- select ----
 
@@ -569,10 +719,22 @@ export async function main(argv) {
   for (let i = 0; i < rest.length; i++) {
     if (!rest[i].startsWith("--")) o._.push(rest[i]);
     else if (rest[i] === "--include-example") o.includeExample = true;
+    else if (rest[i] === "--json") o.json = true;
     else o[rest[i].slice(2)] = rest[++i];
   }
   const usage = (m) => (console.error(`factory-eval: ${m}`), 2);
   if (cmd === "stub-arm") return (stubArm(), 0);
+  if (cmd === "report") {
+    if (!o._.length) return usage("report needs a results file, run dir or run id");
+    const evals = path.join(homeOf(toplevel(o.repo)), "local-assets", "evals");
+    const find = (r) => (existsSync(r) ? r : path.join(evals, r));
+    const recs = readResults([...o._, ...(o.vs ? [o.vs] : [])].map(find));
+    const vs = o.vs && resultLabel(find(o.vs));
+    const rep = report(recs, { vs, includeExample: o.includeExample });
+    const json = JSON.stringify({ ...rep, malformed: recs.malformed }, null, 2);
+    console.log(o.json ? json : formatReport(rep, recs.malformed));
+    return 0;
+  }
   if (cmd === "cleanup") {
     if (!o._[0] || !existsSync(path.join(o._[0], "BRIEF.md")))
       return usage("cleanup needs the <tree> that prepare printed (it holds BRIEF.md)");
@@ -582,13 +744,14 @@ export async function main(argv) {
   if (cmd === "select")
     return o.since ? (select(o, root), 0) : usage("select needs --since <date>");
   if (!["prepare", "grade", "run"].includes(cmd))
-    return usage("commands: select | prepare | grade | cleanup | run");
+    return usage("commands: select | prepare | grade | cleanup | run | report");
   const { tasks, errors } = loadTasks(o.tasks ?? TASKS, { includeExample: o.includeExample });
   if (errors.length) return usage(`task files are invalid:\n  ${errors.join("\n  ")}`);
   const byId = (id) => tasks.find((t) => t.id === id);
   if (cmd === "run") {
     if (!o.arm) return usage("run needs --arm <name>");
-    const pick = o._[0] ? [byId(o._[0])].filter(Boolean) : tasks;
+    let pick = o._[0] ? [byId(o._[0])].filter(Boolean) : tasks;
+    if (o.sample) pick = sampleTasks(pick, Number(o.sample), Number(o.seed ?? 1));
     if (!pick.length) return usage("no such task");
     const extraEnv = agentEnv();
     const out = await runEval({
