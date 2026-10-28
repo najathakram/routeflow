@@ -1,4 +1,5 @@
 import { API_ERROR_CODES } from "./api/error-codes";
+import { stockCountSeedState, type StockCountSeedColumns } from "./api/stock-count";
 
 /**
  * SA-767 L-2.4 D (r-note 4 D, G7): the copy of a durable stock count's commit, by STATE. ONE
@@ -17,6 +18,37 @@ export const STOCK_COUNT_PARTLY_SAVED_COPY = "Partly saved — commit again to f
 export const STOCK_COUNT_NOTHING_SAVED_COPY = "Nothing was saved — try again";
 /** A second commit / an edit while a commit is running (409 STOCK_COUNT_COMMITTING). */
 export const STOCK_COUNT_COMMITTING_COPY = "This count is being saved. Try again in a moment.";
+/** A commit while the count is still being seeded (409 STOCK_COUNT_SEEDING; SA-999). */
+export const STOCK_COUNT_SEEDING_COPY =
+  "This count is still being prepared. Try again in a moment.";
+
+/** "Preparing count… N of M" - while a seeded count is still being filled (SA-999). */
+export function stockCountPreparingCopy(seeded: number, planned: number): string {
+  return `Preparing count… ${seeded} of ${planned}`;
+}
+
+/**
+ * The "Preparing count… N of M" sentence while a seeded count is still being filled, else null. ONE selection for
+ * web and mobile: `seeded` is the number of lines the count has now, `planned` its `seedPlannedLines`. The same
+ * sentence disables Commit. A row the table's CHECKs forbid reads as "not preparing" here (the api surfaces it).
+ */
+export function stockCountPreparingLine(
+  seed: { seedPlannedLines?: number | null; seedCompletedAt?: Date | string | null },
+  seeded: number,
+): string | null {
+  const row: StockCountSeedColumns = {
+    seedPlannedLines: seed.seedPlannedLines ?? null,
+    seedCompletedAt: seed.seedCompletedAt ?? null,
+  };
+  try {
+    return stockCountSeedState(row) === "seeding"
+      ? stockCountPreparingCopy(seeded, row.seedPlannedLines as number)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 /** The button that skips permanently uncountable lines and commits the rest (partly saved counts only). */
 export const STOCK_COUNT_FINISH_WITH_SKIPS_LABEL = "Finish with skips";
 /** Under the list of skipped products. */
@@ -113,6 +145,7 @@ const numberOrNull = (v: unknown): number | null =>
  * keeps its generic message.
  *  - 503 LOCK_UNAVAILABLE: "Partly saved" when `committedLines > 0`, else "Nothing was saved".
  *  - 409 STOCK_COUNT_COMMITTING: the "being saved" sentence.
+ *  - 409 STOCK_COUNT_SEEDING: the "still being prepared" sentence (SA-999).
  *  - 409 PRODUCT_IN_OPEN_COUNT: the legacy-overlap sentence (products also on another open count).
  *  - 400 FAMILY_NOT_SELLABLE / 404 with `missingProductIds`: a permanent refusal.
  */
@@ -129,6 +162,9 @@ export function stockCountCommitFailure(err: unknown): StockCountCommitFailure |
   }
   if (status === 409 && data.code === API_ERROR_CODES.STOCK_COUNT_COMMITTING) {
     return { copy: STOCK_COUNT_COMMITTING_COPY, permanent: false };
+  }
+  if (status === 409 && data.code === API_ERROR_CODES.STOCK_COUNT_SEEDING) {
+    return { copy: STOCK_COUNT_SEEDING_COPY, permanent: false };
   }
   if (status === 409 && data.code === API_ERROR_CODES.PRODUCT_IN_OPEN_COUNT) {
     return { copy: STOCK_COUNT_OVERLAP_COMMIT_COPY, permanent: false };
