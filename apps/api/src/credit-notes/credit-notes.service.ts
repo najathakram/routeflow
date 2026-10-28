@@ -12,6 +12,7 @@ import { statusFromPayments } from "../invoices/invoice-status";
 import { tenantTimeZone } from "../common/tenant-time-zone";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { RegulatedLedgerService, type FiledPeriod } from "../regulated/regulated-ledger.service";
+import { creditRoomRefusal } from "../regulated/credit-reversal-room";
 import { roundMoney, sumConfirmed, remainingCapacity } from "@routeflow/pricing";
 import { InvoiceStatus, PaymentMethod } from "@prisma/client";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
@@ -378,6 +379,17 @@ export class CreditNotesService {
           );
       }
     }
+    // SA-1042 A-4: a typed row on a REGULATED line must fit what the ledger can still reverse on its order line (the remaining
+    // reverseCreditNoteEntries clamps to), or the item would store a levy the filing never books. A return-refund row carries no
+    // category, a line with no live SALE row is skipped by the ledger too, so neither is bound.
+    const roomRefusal = await creditRoomRefusal(db, cnItemsData, {
+      excludeCreditNoteId: opts.excludeCreditNoteId,
+    });
+    if (roomRefusal)
+      throw cnBad(
+        API_ERROR_CODES.CREDIT_NOTE_OVER_HEADROOM,
+        `Credit of ${roomRefusal.requestedAmount} would exceed what the regulated ledger can still reverse on this invoice line (${roomRefusal.remainingAmount} left); credit a line that still has room.`,
+      );
     // SA-840: a return refund reconciles as sum(amount + categoryTax) + refundTax == dto.amount; an operator note is unchanged
     const itemsTotal = opts.ledgerReversedByReturn ? sum + sumLevy + (opts.refundTax ?? 0) : sum;
     if (Math.abs(itemsTotal - dto.amount) > 0.01)

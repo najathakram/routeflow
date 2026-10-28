@@ -7,7 +7,10 @@
  * `reverseCreditNoteEntries` (SA-789 F1, SA-835, SA-070(b) Hazard 1, B297 row 341, B661): credited item -> its order
  * line -> the live SALE rows -> per-ORDER-LINE SALE and REVERSAL bags.
  */
+import { roundMoney } from "@routeflow/pricing";
 import { deadSaleIdsOf } from "./regulated-ledger.service";
+
+const round3 = (n: number) => Math.round(n * 1000) / 1000;
 
 /** The ledger's own tolerance on the money axis (`remNet >= -0.005` = nothing left). */
 export const ROOM_EPS = 0.005;
@@ -334,4 +337,58 @@ export function creditItemRoom(room: CreditReversalRoom, it: RoomItem): ItemRoom
     remUnitBasis: -sale.unitBasis - already.unitBasis,
     remTax: -sale.tax - already.tax,
   };
+}
+
+/** A typed credit row on a regulated line, as the credit-note item builder holds it before anything is written. */
+export interface CreditRowInput extends RoomItem {
+  amount: number;
+  qty: number;
+}
+
+export interface CreditRoomRefusal {
+  invoiceItemId: string | null;
+  requestedAmount: number;
+  remainingAmount: number;
+  requestedQty: number;
+  remainingQty: number;
+}
+
+/**
+ * SA-1042 A-4: the first typed row that asks for more than the ledger can still reverse on its order line, or `null`.
+ * Compares the row's amount and qty (typed or derived) to the SAME remaining `reverseCreditNoteEntries` clamps to, past the
+ * same 0.005, and folds each accepted row into a local copy of the line's reversed bag so a second row on one order line
+ * sees the reduced remaining. Not bound (`creditItemRoom` returns null): a line with no live SALE row, and any row without a
+ * tracked category (non-regulated lines, SA-628 return-refund rows). Reads only: no notice, no write.
+ */
+export async function creditRoomRefusal(
+  db: any,
+  rows: CreditRowInput[],
+  opts: { excludeCreditNoteId?: string } = {},
+): Promise<CreditRoomRefusal | null> {
+  const regulated = rows.filter((r) => r.trackedCategoryId);
+  if (regulated.length === 0) return null;
+  const room = await loadCreditReversalRoom(db, regulated, opts);
+  if (!room) return null;
+  for (const row of regulated) {
+    const left = creditItemRoom(room, row);
+    if (!left) continue;
+    // a fully reversed line (`remNet >= -0.005`) has nothing left: any row on it is past the tolerance
+    const remainingAmount = Math.max(0, roundMoney(-left.remNet));
+    const remainingQty = Math.max(0, round3(-left.remQty));
+    if (row.amount > remainingAmount + ROOM_EPS || row.qty > remainingQty + ROOM_EPS) {
+      return {
+        invoiceItemId: row.invoiceItemId,
+        requestedAmount: roundMoney(row.amount),
+        remainingAmount,
+        requestedQty: round3(row.qty),
+        remainingQty,
+      };
+    }
+    room.revByLine.set(left.lineKey, {
+      ...left.already,
+      net: left.already.net - Math.min(row.amount, remainingAmount),
+      qty: left.already.qty - Math.min(row.qty, remainingQty),
+    });
+  }
+  return null;
 }
