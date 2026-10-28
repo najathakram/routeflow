@@ -442,6 +442,13 @@ export interface OrderPool {
   invoiceCount: number;
   lines: HeadroomLine[];
   credited: Map<string, LineCredit>;
+  /**
+   * SA-1042 A-3: the PINNED part of `credited`: what the LINE-NAMED return lumps (a Return item with a `sourceOrderItemId`)
+   * took from each invoice line, on the same axis as `credited`. A-2c attributes such a lump to its own line exactly, so a typed
+   * credit on that line is bound against it (`pinnedTakeRefusal`); the floating part (pooled lumps) stays bound per product by
+   * `pooledTakeRefusal` (B960). Absent: nothing is pinned.
+   */
+  pinned?: Map<string, LineCredit>;
 }
 export async function loadOrderPool(
   db: any,
@@ -472,6 +479,7 @@ export async function loadOrderPool(
   const ids = invoices.map((i) => i.id);
   const lines: HeadroomLine[] = [];
   let credited = new Map<string, LineCredit>();
+  const pinnedReturned: ReturnedQty[] = [];
   for (const inv of invoices) {
     const invLines = (inv.items ?? []).map(toHeadroomLine);
     lines.push(...invLines);
@@ -481,6 +489,7 @@ export async function loadOrderPool(
     });
     for (const [k, v] of part) credited.set(k, v);
   }
+  const itemCredited = credited; // credit note items + inline returns only: the base the lumps are replayed on
   const notThis = opts.excludeCreditNoteId ? { id: { not: opts.excludeCreditNoteId } } : {};
   const itemless: Array<{ id: string }> =
     ids.length === 0
@@ -508,12 +517,24 @@ export async function loadOrderPool(
       },
       select: { items: { select: { productId: true, qty: true, sourceOrderItemId: true } } },
     });
+    pinnedReturned.push(...returnedOf(returns).filter((r) => r.orderItemId));
     credited = replayReturnedQty(lines, credited, returnedOf(returns));
   }
   // SA-727 (M4): the order's EXTERNAL_REFUND STANDARD returns (no credit note), replayed like the legacy term above.
   const external = await externalRefundReturned(db, { orderId });
+  pinnedReturned.push(...external.filter((r) => r.orderItemId));
   if (external.length > 0) credited = replayReturnedQty(lines, credited, external);
-  return { invoiceCount: invoices.length, lines, credited };
+  // SA-1042 A-3: line groups are replayed FIRST and fill only their own line, so replaying just them on the item-credited base
+  // gives exactly the pinned share of the full replay above.
+  const pinned = new Map<string, LineCredit>();
+  if (pinnedReturned.length > 0) {
+    for (const [id, c] of replayReturnedQty(lines, itemCredited, pinnedReturned)) {
+      const base = itemCredited.get(id) ?? { amount: 0, qty: 0 };
+      const take = { amount: c.amount - base.amount, qty: c.qty - base.qty };
+      if (take.amount > 0 || take.qty > 0) pinned.set(id, take);
+    }
+  }
+  return { invoiceCount: invoices.length, lines, credited, pinned };
 }
 
 /**
@@ -525,8 +546,12 @@ export function toPiecesPool(pool: OrderPool): OrderPool {
   const credited = new Map<string, LineCredit>();
   for (const [id, c] of pool.credited)
     credited.set(id, { ...c, qty: c.qty * (factor.get(id) ?? 1) });
+  const pinned = new Map<string, LineCredit>();
+  for (const [id, c] of pool.pinned ?? [])
+    pinned.set(id, { ...c, qty: c.qty * (factor.get(id) ?? 1) });
   return {
     ...pool,
+    pinned,
     lines: pool.lines.map((l) => ({ ...l, qty: l.qty * (l.piecesPerQty ?? 1), piecesPerQty: 1 })),
     credited,
   };
@@ -608,6 +633,50 @@ export function pooledTakeRefusal(
     remainingQty,
     qtyUnit: "pieces",
   };
+}
+
+/** A typed credit row as the per-line bind reads it: its invoice item, net amount, and qty on the line's own axis. */
+export interface TypedCreditRow {
+  invoiceItemId: string;
+  amount: number;
+  qty: number;
+}
+
+/**
+ * SA-1042 A-3: the typed-credit take check, per LINE. Each row's amount and qty must fit its line's value minus the line's OWN
+ * credits (`own`: credit note items and inline returns on it, `loadLineCredits` with the legacy term skipped) minus what the
+ * LINE-NAMED return lumps already took from it (`pool.pinned`). Only a line that has a pinned lump is bound here: a pooled lump
+ * is bound per product by `pooledTakeRefusal` (B960 KEPT), because its line attribution is an artefact of line order. Null when
+ * every row fits, else the first refusal. Never clips.
+ */
+export function pinnedTakeRefusal(
+  pool: OrderPool,
+  rows: readonly TypedCreditRow[],
+  own: ReadonlyMap<string, LineCredit>,
+): (RefundRefusal & { invoiceItemId: string }) | null {
+  for (const row of rows) {
+    const pin = pool.pinned?.get(row.invoiceItemId);
+    if (!pin) continue;
+    const line = pool.lines.find((l) => l.id === row.invoiceItemId);
+    if (!line) continue;
+    const mine = own.get(row.invoiceItemId) ?? { amount: 0, qty: 0 };
+    const ppq = line.piecesPerQty ?? 1;
+    const remainingAmount = Math.max(0, roundMoney(line.subtotal - mine.amount - pin.amount));
+    const remainingQty = Math.max(0, round3(line.qty - mine.qty - pin.qty));
+    const moneyOver = row.amount > remainingAmount + CENT;
+    const qtyOver = row.qty > remainingQty + EPS * ppq;
+    if (!moneyOver && !qtyOver) continue;
+    return {
+      invoiceItemId: row.invoiceItemId,
+      productId: line.productId ?? "",
+      requestedAmount: roundMoney(row.amount),
+      remainingAmount,
+      requestedQty: round3(row.qty),
+      remainingQty,
+      qtyUnit: "pieces",
+    };
+  }
+  return null;
 }
 
 /**

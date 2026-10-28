@@ -37,6 +37,7 @@ import {
   loadOrderPool,
   lockOrderPoolRows,
   pooledRefundRefusal,
+  pinnedTakeRefusal,
   pooledTakeRefusal,
   toHeadroomLine,
   type OrderPool,
@@ -347,6 +348,14 @@ export class CreditNotesService {
       };
     });
     if (pool) {
+      // SA-1042 A-3: a line a LINE-NAMED return lump already refunded is bound per line against that lump (the product check
+      // below still sees B's room); `lineCredits` is the line's own credits only, the legacy term being the pool's.
+      const pinnedRefusal = pinnedTakeRefusal(pool, cnItemsData, lineCredits);
+      if (pinnedRefusal)
+        throw cnBad(
+          API_ERROR_CODES.CREDIT_NOTE_OVER_HEADROOM,
+          `Credit of ${pinnedRefusal.requestedAmount} would exceed what is left on this invoice line after the return already refunded against it (${pinnedRefusal.remainingAmount} left).`,
+        );
       // Every row's qty binds, derived or typed (in PIECES). With the pool as the only source for refund lumps, an amount-only
       // credit's derived qty is what keeps the PRODUCT's pieces (and the regulated reversal that follows them) from being credited
       // past what was billed when lines of the product carry different prices (B960 review).
