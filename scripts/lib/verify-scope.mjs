@@ -256,6 +256,8 @@ const PIN_TRIGGERS = [
   /^apps\/api\/src\/common\//,
   // The api jest rootDir is src, so --changedSince never relates a file here to the specs that walk it.
   /^apps\/api\/scripts\//,
+  // A changed `-script` spec outside src/common must run itself too.
+  /-script\.spec\.ts$/,
 ];
 
 export function repoPinsNeeded(files) {
@@ -321,10 +323,18 @@ export function selectScriptSpecs({ files, specs }) {
       line: `+ SCRIPT SPECS: all ${specs.length} (cannot diff, fail closed).`,
     };
   }
+  if (specs.length === 0) {
+    return {
+      files: "all",
+      line: "+ SCRIPT SPECS: all (no -script specs found on disk, fail closed).",
+    };
+  }
   const changed = files.map((f) => f.replaceAll("\\", "/"));
   const needles = changed.flatMap((f) => {
     const base = f.slice(f.lastIndexOf("/") + 1);
-    return GENERIC_BASENAMES.has(base) ? [] : [{ path: f, base }];
+    if (GENERIC_BASENAMES.has(base)) return [];
+    const bare = base.replace(/\.[^.]+$/, "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return [{ path: f, base, importRe: new RegExp(`/${bare}["'\`]`) }];
   });
   const always = specs.filter((s) => s.file.endsWith(ALWAYS_SCRIPT_SPEC));
   const why = [];
@@ -335,6 +345,8 @@ export function selectScriptSpecs({ files, specs }) {
     const hit = needles.find(
       (n) =>
         name === n.base ||
+        // TypeScript imports drop the extension: `from "./calendar-date"`.
+        n.importRe.test(s.text) ||
         name === `${n.base.replace(/\.[^.]+$/, "")}-script.spec.ts` ||
         s.text.includes(n.path) ||
         s.text.includes(n.base),
