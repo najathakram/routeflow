@@ -593,6 +593,15 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
     },
 
+    // ── I-101: a Pallet of the 10/200/4800 ladder sold in the UI, order + invoice truth (spec 79). Local-only,
+    // observe-only; not on the local:e2e allow-list.
+    {
+      name: "units-pallet-ladder-sale",
+      testMatch: /79-units-pallet-ladder-sale\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+    },
+
     // ── B1188: Settings invoice-numbering card, preview + confirm copy (spec 67). READ-ONLY:
     // never clicks Confirm; asserts no write request leaves the page.
     {
