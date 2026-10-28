@@ -592,7 +592,7 @@ export function report(records, { vs, includeExample = false } = {}) {
   const names = [...new Set(live.map(label))];
   for (const r of rows) {
     const wide = Math.max(...rows.filter((x) => x.run === r.run).flatMap((x) => [x.seen, x.recK]));
-    r.k = r.recK || wide;
+    r.k = r.recK ? Math.max(r.recK, r.seen) : wide;
     r.complete = r.runs > 0 && r.runs + r.broken >= r.k;
     r.passK = r.complete && r.broken === 0 && r.passes === r.runs;
   }
