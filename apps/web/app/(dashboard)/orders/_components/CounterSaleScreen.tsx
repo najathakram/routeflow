@@ -71,6 +71,7 @@ import {
   quickTenderOptions,
   readAutoPrint,
   readHeldAttempt,
+  resolveTender,
   validatePayment,
   writeAutoPrint,
   writeHeldAttempt,
@@ -226,6 +227,8 @@ export function CounterSaleScreen() {
   const [tendered, setTendered] = React.useState("");
   const [reference, setReference] = React.useState("");
   const [checkDate, setCheckDate] = React.useState(""); // "" = today (the business's day)
+  // SA-1026: "Check not received yet" under Check (named customer): sent as On account + expectedMethod CHECK.
+  const [checkNotReceived, setCheckNotReceived] = React.useState(false);
   const [error, setError] = React.useState("");
   const [receipt, setReceipt] = React.useState<CounterSaleResponse | null>(null);
   // Set only when the receipt came from "Check sale status": the cash the clerk ENTERED on the attempt (the server stores
@@ -445,6 +448,16 @@ export function CounterSaleScreen() {
   }, [receipt, refocus]);
 
   const isWalkIn = customer === null;
+  // SA-1026: the choice belongs to Check with a named customer; any other tender, or no account, drops it
+  const noAccount = !customer || !!customer.isWalkIn;
+  React.useEffect(() => {
+    if (method !== "CHECK" || noAccount) setCheckNotReceived(false);
+  }, [method, noAccount]);
+  // SA-1026 A-R2: ticking drops a number typed before it, so no park, held or refresh snapshot resumes as a Check in hand
+  const onNotReceivedChange = (on: boolean) => {
+    setCheckNotReceived(on);
+    if (on) setReference("");
+  };
   const zoneRead = useTenantTimeZoneQuery();
   const { data: settings } = useQuery<ReceiptBusinessProfile>({
     queryKey: ["settings"],
@@ -936,8 +949,9 @@ export function CounterSaleScreen() {
       );
       return null;
     }
+    const tender = resolveTender(method, checkNotReceived);
     const problem = validatePayment({
-      method,
+      method: tender.method,
       total: totals.total,
       tendered: tenderedNum,
       reference,
@@ -947,6 +961,7 @@ export function CounterSaleScreen() {
       // B1181: On account is refused for a walk-in, so it can no longer be the checked tender (its radio is disabled): fall
       // back to Cash with a clean amount and reference. The cart and the refusal copy stay.
       if (problem === "WALK_IN_ON_ACCOUNT") {
+        setCheckNotReceived(false);
         setMethod("CASH");
         setTendered("");
         setReference("");
@@ -961,7 +976,7 @@ export function CounterSaleScreen() {
     const submitToday = businessToday();
     const submitCheckDate = checkDate || submitToday;
     if (
-      method === "CHECK" &&
+      tender.method === "CHECK" &&
       (zoneStatus !== "ready" || isPostdatedCheck(submitCheckDate, submitToday))
     ) {
       setError(
@@ -979,10 +994,11 @@ export function CounterSaleScreen() {
       ...(customer ? { customerId: customer.id } : { walkIn: true }),
       items: lines.map(toSaleItem),
       payment: {
-        method,
-        ...(method === "CASH" ? { amount: tenderAmount } : {}),
-        ...(reference.trim() ? { reference: reference.trim() } : {}),
-        ...(method === "CHECK" && submitCheckDate ? { checkDate: submitCheckDate } : {}),
+        ...tender,
+        ...(tender.method === "CASH" ? { amount: tenderAmount } : {}),
+        // SA-1026: "Check not received yet" sends no number: a typed one is dropped, never deduped
+        ...(reference.trim() && !tender.expectedMethod ? { reference: reference.trim() } : {}),
+        ...(tender.method === "CHECK" && submitCheckDate ? { checkDate: submitCheckDate } : {}),
       },
     } as CounterSaleRequest);
     dropUndo(); // the sale is going out: a removed line can no longer come back
@@ -994,7 +1010,7 @@ export function CounterSaleScreen() {
     };
     estimateRef.current = {
       total: totals.total,
-      change: method === "CASH" ? changeDue(totals.total, tenderAmount) : 0,
+      change: tender.method === "CASH" ? changeDue(totals.total, tenderAmount) : 0,
     };
     return send(attemptRef.current);
   };
@@ -1609,8 +1625,10 @@ export function CounterSaleScreen() {
                 today={today}
                 zoneStatus={zoneStatus}
                 onRetryZone={zoneRead.retry}
-                walkIn={!customer || !!customer.isWalkIn}
+                walkIn={noAccount}
                 disabled={locked}
+                notReceived={checkNotReceived}
+                onNotReceivedChange={onNotReceivedChange}
                 onPutOnAccount={() => {
                   setMethod("ON_ACCOUNT");
                   setError("");

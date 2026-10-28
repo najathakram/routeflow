@@ -98,7 +98,7 @@ describe("Selling restrictions settings page", () => {
   it("an operator cannot change the settings but can fix customer data (owner ruling 10-07)", () => {
     role = "OPERATOR";
     render();
-    expect(screen.getByText(/only a workspace admin/i)).toBeInTheDocument();
+    expect(screen.getByText(/only an account admin/i)).toBeInTheDocument();
     expect(screen.getByRole("switch")).toBeDisabled();
     expect(screen.getByLabelText(/billing address first/i)).toBeDisabled();
     expect(screen.getByTestId("customers-without-state-card")).toHaveTextContent("can-fix");
