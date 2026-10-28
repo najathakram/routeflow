@@ -1,5 +1,7 @@
+import { Logger } from "@nestjs/common";
 import { OperatorPermissionGroup } from "@prisma/client";
-import { ALL_PERMISSION_GROUPS } from "./operator-permissions.service";
+import { ALL_PERMISSION_GROUPS, OperatorPermissionsService } from "./operator-permissions.service";
+import { priceEditAllowedFor } from "./price-edit";
 import { priceEditReported } from "./price-edit-answer";
 
 /**
@@ -33,5 +35,55 @@ describe("priceEditReported (the capability /me/permissions tells the web)", () 
       expect(priceEditReported(role, all, all, "shadow")).toBe(false);
       expect(priceEditReported(role, all, all, "live")).toBe(false);
     }
+  });
+});
+
+/**
+ * Parity (rule 10): what the web is TOLD (`priceEditReported`) is exactly what the server DECIDES
+ * (`priceEditAllowedFor`), for every role, every denied set and both modes. The screen can never offer a control the
+ * server then refuses, or hide one it would allow.
+ */
+describe("priceEditReported == priceEditAllowedFor", () => {
+  const all = ALL_PERMISSION_GROUPS;
+  const roles = ["OPERATOR", "TENANT_ADMIN", "SUPER_ADMIN", "DRIVER", "CUSTOMER", null, undefined];
+  const deniedSets: OperatorPermissionGroup[][] = [
+    [],
+    ...all.map((g) => [g]),
+    all.filter((g) => g !== OperatorPermissionGroup.PRICING),
+    [...all],
+  ];
+  let mode: jest.SpyInstance;
+  beforeEach(() => {
+    jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+    mode = jest.spyOn(OperatorPermissionsService.prototype, "mode");
+  });
+  afterEach(() => jest.restoreAllMocks());
+
+  it.each(["shadow", "live"] as const)("%s: every role x denied set agrees", async (m) => {
+    mode.mockReturnValue(m);
+    let compared = 0;
+    for (const role of roles) {
+      for (const denied of deniedSets) {
+        const prisma = {
+          user: {
+            findFirst: async () => ({ deniedPermissionGroups: denied, permissionsVersion: 1 }),
+          },
+        } as never;
+        const held = all.filter((g) => !denied.includes(g));
+        const decided = await priceEditAllowedFor(
+          prisma,
+          { sub: "u1", tenantId: "t1", role: role as never },
+          "parity",
+        );
+        expect({ role, denied, m, reported: priceEditReported(role, held, all, m) }).toEqual({
+          role,
+          denied,
+          m,
+          reported: decided,
+        });
+        compared++;
+      }
+    }
+    expect(compared).toBe(roles.length * deniedSets.length);
   });
 });
