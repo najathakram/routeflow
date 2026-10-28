@@ -14,7 +14,7 @@ description: >-
 # Model routing — decisions and verdicts on Opus, volume on Sonnet 5.5, mechanics on Haiku
 
 > **OWNER RULING 2026-10-15 — CURRENT, supersedes every "Fable" line below: we do not use Fable.** Every role below that
-> names Fable (planning, framing, fix design, final-pass decisions, tie-breaks, verdicts, the lead/orchestrator) is **Opus**,
+> names the retired Fable (planning, framing, fix design, final-pass decisions, tie-breaks, verdicts, the lead/orchestrator) is **Opus**,
 > addressed by the generic alias `opus` (always the latest Opus; never write a pinned Opus version into a model
 > string or routing table). Sonnet and Haiku roles are unchanged. Fable's price row below is kept for history, to read old
 > ledger rows and transcripts.
@@ -51,14 +51,14 @@ section is its summary.
 
 Price per MTok, the four classes that matter:
 
-| Model                                                         | Fresh input | Cache write (5m / 1h)  | **Cache read** | **Output** |
-| ------------------------------------------------------------- | ----------- | ---------------------- | -------------- | ---------- |
-| Fable 5.1 (NOT USED — owner 2026-10-15; historical rows only) | $10         | $12.50 / $20           | **$0.25**      | **$50**    |
-| Opus (current)                                                | $4          | 1h write not published | **$0.20**      | $20        |
-| Opus 5 (historical)                                           | $5          | $6.25 / $10            | $0.50          | $25        |
-| Sonnet 5.5 (current)                                          | $2          | $2.50 / $4             | $0.20          | $10        |
-| Sonnet 5 (historical)                                         | $2          | $2.50 / $4             | $0.20          | $10        |
-| Haiku 4.5                                                     | $1          | $1.25 / $2             | $0.10          | $5         |
+| Model                                                   | Fresh input | Cache write (5m / 1h)  | **Cache read** | **Output** |
+| ------------------------------------------------------- | ----------- | ---------------------- | -------------- | ---------- |
+| Retired Fable 5.1 (owner 2026-10-15; history rows only) | $10         | $12.50 / $20           | **$0.25**      | **$50**    |
+| Opus (current)                                          | $4          | 1h write not published | **$0.20**      | $20        |
+| Opus 5 (historical)                                     | $5          | $6.25 / $10            | $0.50          | $25        |
+| Sonnet 5.5 (current)                                    | $2          | $2.50 / $4             | $0.20          | $10        |
+| Sonnet 5 (historical)                                   | $2          | $2.50 / $4             | $0.20          | $10        |
+| Haiku 4.5                                               | $1          | $1.25 / $2             | $0.10          | $5         |
 
 Measured on one 113-agent engine run ($205 true): Opus $180, of which **$109 was cache reads and $67
 cache writes — $2.70 was verdict output**; retired Fable $11 was cache writes for a 20-token reply; Sonnet did all

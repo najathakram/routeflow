@@ -29,23 +29,38 @@ export const HISTORY_MARKERS = [
   /\bvoid\b/i,
   /\bnot used\b/i,
   /\bnot called\b/i,
+  /\bunused\b/i,
   /\bnever fable\b/i,
   /\bany ?more\b/i,
   /\bno longer\b/i,
   /\bnever (?:use|call|route|spawn)/i,
   /\bkept (?:only )?(?:as|for) history\b/i,
-  // A clause that maps a Fable role onto Opus is the ruling itself, not a routing to Fable.
-  /\b(?:held by|is|are|read as|read|becomes) [*_"`]*Opus\b/i,
+  // A clause that maps a Fable role onto Opus is the ruling itself, not a routing to Fable. Only the mapping verbs
+  // count: "the reviewer is Opus" or "read Opus output" says nothing about where Fable's role went.
+  /\b(?:held by|read as|becomes|(?:is|are) now) [*_"`]*Opus\b/i,
+  /(?:→|->) [*_"`]*Opus\b/,
 ];
 
 // FABLE-PROMPTING.md is a file name (its snippets apply to Opus), not a mention of the model.
 const FABLE_RE = /\bfable\b(?!-PROMPTING)/i;
 const AGENT_MODEL_RE = /^\s*model:\s*["']?(?:claude-)?fable/i;
 // A marker excuses only the clause it sits in: "use Fable — the old tier is retired" is still an instruction.
-// A period ends a clause only before a space, so "5.1" and ".md" stay whole.
-const CLAUSE_SPLIT = /\.(?=\s|$)|[;!?()–—]|\s-\s/;
-// A line that OPENS with this banner is history.
-const BANNER_RE = /^\s*>?\s*[*_[]*\s*HISTORICAL\b/;
+// A period ends a clause only before a space, so "5.1" and ".md" stay whole. Commas and joining words end one too:
+// "use Fable for S3, Haiku is not used" and "spawn Fable instead of the removed gate" are instructions.
+const CLAUSE_SPLIT =
+  /\.(?=\s|$)|[;,!?()–—]|\s-\s|\s(?:and|but|while|because|since|now that|instead of|so|then)\s/i;
+// A line that OPENS with this banner is history: formatted (`**HISTORICAL`), or plain and followed by ":", "(" or a
+// dash. "HISTORICAL runs used Opus; spawn Fable" is not a banner.
+const BANNER_RE = /^\s*>?\s*(?:[*_[]+\s*HISTORICAL\b|HISTORICAL\s*[:(—–-])/;
+// A heading marks its section HISTORICAL only when the word opens it or follows a dash ("## Fable 5.1 — HISTORICAL").
+const HEADING_HISTORY_RE = /^#{1,6}\s+(?:[*_[]*\s*HISTORICAL\b|.*[—–-]\s*[*_[]*HISTORICAL\b)/;
+// "Fable 5.1 (retired)" is one clause: a bracket right after the name that holds only a status word (plus a date or
+// "before"/"since"/"owner"/"ruling") stays with it. "(retired Opus slot)" is about something else, so it splits.
+const STATUS_BRACKET_RE =
+  /\bfable([\w .-]{0,12})\(((?:retired|superseded|removed|historical)\b(?:[\s,;:\d-]|\b(?:before|since|on|in|by|owner|ruling)\b)*)\)/gi;
+// Likewise "(Fable, retired, before 2026-09-29)" and "formerly Fable, retired": a status word right after the comma.
+const STATUS_COMMA_RE =
+  /\bfable([\w ."-]{0,16}),\s*((?:retired|superseded|removed|historical)\b)/gi;
 // A blockquote, or a paragraph inside one (after a bare ">" line), is history only when it opens with a FORMATTED
 // banner (`**HISTORICAL`, `[HISTORICAL`): a plain "> HISTORICAL note." covers its own line, not the lines after it.
 const SCOPE_BANNER_RE = /^\s*>\s*[*_[]+\s*HISTORICAL\b/;
@@ -56,7 +71,8 @@ const LOG_FILES = new Set(["RUN-LOG.md", "CATCHES.md", "ENGINE-NOTES.md", "BUGFI
 function lineIsHistory(l) {
   if (BANNER_RE.test(l)) return true;
   return l
-    .replace(/\bfable([\w .-]{0,12})\(([^()]*)\)/gi, "Fable$1 $2") // "Fable 5.1 (retired)" is one clause
+    .replace(STATUS_BRACKET_RE, "Fable$1 $2")
+    .replace(STATUS_COMMA_RE, "Fable$1 $2")
     .split(CLAUSE_SPLIT)
     .filter((c) => FABLE_RE.test(c))
     .every((c) => HISTORY_MARKERS.some((re) => re.test(c)));
@@ -102,7 +118,7 @@ export function scanText(file, text) {
     if (heading) {
       const level = heading[1].length;
       if (historyLevel && level <= historyLevel) historyLevel = 0;
-      if (/\bHISTORICAL\b/.test(l)) historyLevel = level;
+      if (HEADING_HISTORY_RE.test(l)) historyLevel = level;
     }
     if (isAgent && AGENT_MODEL_RE.test(l)) {
       hits.push({ line: i + 1, text: l.trim(), why: "agent routed to Fable" });

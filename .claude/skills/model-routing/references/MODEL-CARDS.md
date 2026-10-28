@@ -1,6 +1,6 @@
 # Model cards — Claude lineup for coding work
 
-> **Owner ruling 2026-10-15: the Fable model is not used.** Every Fable role below is held by Opus (generic alias `opus`, always the latest). Fable rows, prices and measurements are kept only as history.
+> **Owner ruling 2026-10-15: the Fable model is not used.** Every Fable role below is held by Opus (generic alias `opus`, always the latest). Rows, prices and measurements of the retired Fable are kept only as history.
 
 Prices are Anthropic first-party API list prices per million tokens, from the `claude-api` skill's
 "Current Models" table (**cached 2026-06-24**). Refresh: invoke `/claude-api`, read that table, update

@@ -34,7 +34,7 @@ pipeline applies it. The long-form history behind each rule is in [ENGINE-NOTES]
 > **OWNER RULING 2026-10-15 — CURRENT, supersedes every "Fable" line below: we do not use Fable.** Opus holds every
 > role the older callouts gave to the retired Fable (planning S1–S5, final-pass decisions, framing, verdicts,
 > light-loop planning), named by the generic alias `opus` (always the latest Opus, never a pinned version).
-> Wherever the prose below says "Fable" or "Fable 5.1", read "Opus". Nothing in the engine calls the retired model;
+> Wherever the older prose below names the retired Fable or Fable 5.1, read "Opus". Nothing in the engine calls the retired model;
 > its leftover `CFG.models.fable` entry is removed with the engine reconcile (R7-d). Sonnet and Haiku roles are
 > unchanged.
 
@@ -53,7 +53,7 @@ pipeline applies it. The long-form history behind each rule is in [ENGINE-NOTES]
 > conflicting line below and the 2026-09-10 "Fable replaces Opus everywhere" ruling.** Fable is **not called anywhere inside
 > the engine**: it authors the S1–S5 planning artifacts (from a Sonnet-built context pack; Sonnet
 > transcribes) and rules on the final-pass candidates, both in the interactive _session_ —
-> there is no `CFG.models.fable` any more (retired 2026-10-15). Inside `pipeline.js` the engine
+> `CFG.models.fable` is still defined (a pinned id) but nothing calls it; R7-d removes it. Inside `pipeline.js` the engine
 > routes:
 >
 > - **Opus** (alias `opus`) — the HIGH-risk task's reviewer (`review:` and the UI judge, at
@@ -64,7 +64,7 @@ pipeline applies it. The long-form history behind each rule is in [ENGINE-NOTES]
 >   read once that phase runs. Every Opus call is wrapped by `withToolCap()` (`CFG.caps.toolCalls`
 >   = 12) — `fableSafe()` covers these Opus calls. Opus is
 >   a **peer tier** chosen directly for these roles — not "refusal-fallback only". (
->   `CFG.models.fallbackModel`, also `opus`, is a leftover refusal-fallback constant for
+>   `CFG.models.fallbackModel` (still the pinned `claude-opus-5-5` until R7-d) is a leftover refusal-fallback constant for
 >   the now-dead `executorIsDesigner` path — that is the one place "fallback" still applies, and it
 >   backs a call that never runs.)
 > - **Sonnet 5.5** (`claude-sonnet-5-5`) — every implementer, including HIGH-risk (`implementHigh:
@@ -440,7 +440,7 @@ revert-probe outcome, not a five-agent slate.
   agent, all three Node scripts (`task-brief.mjs`, `review-pack.mjs`, `fix-brief.mjs`), the structural/behavioral
   RED check, the `revert-probe` checksum agent, and every checkpoint — all `low`. **Fable is not used
   anywhere** (owner rulings 2026-09-13, 2026-09-14, 2026-09-29, 2026-10-15) — planning and the final-pass read are Opus
-  @ high; `CFG.models.fable` was retired 2026-10-15. `CFG.models`/`CFG.effort` hold
+  @ high; the unused `CFG.models.fable` entry stays defined until R7-d removes it (the model was retired 2026-10-15). `CFG.models`/`CFG.effort` hold
   the table; `CFG.caps.toolCalls` (12) caps every Opus call via `withToolCap()`.
 - **`lean` vs `standard` profile** (`CFG.profiles`, S6, `args.profile` override): `lean` = superpowers parity — no
   separate test author (the implementer pastes its own RED then GREEN in `report.md`), Baseline skips the `final`
