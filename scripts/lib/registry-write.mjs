@@ -4,7 +4,8 @@
 //                                explicit paths -> push; a rejected push resets and redoes fn, up to
 //                                REGISTRY_PUSH_RETRIES times. The dirty guard runs before EVERY reset
 //                                (each retry, the give-up): after our own commit the tree is clean, so
-//                                anything dirty is a hand edit and is kept (exit 2), never reset.
+//                                anything dirty is a hand edit and is kept (exit 2), never reset. If
+//                                fn, add or commit throws, the clone is left as is (exit 2).
 //                                Returns { result, attempts, pushed } only after the push landed, so a
 //                                caller prints an id after it.
 //
@@ -77,14 +78,26 @@ export function withRegistryWrite(fn, opts = {}) {
           ok: true,
         });
         if (push.status === 0) return { ...done, pushed: true };
-        last = firstLine(push.stderr);
+        last =
+          push.stderr
+            .split("\n")
+            .find((l) => /^\s*!/.test(l))
+            ?.trim() ?? firstLine(push.stderr);
       }
       throw new RegistryError(
         `not recorded: no push landed in ${c.retries + 1} attempts (${last})`,
       );
     } catch (e) {
       if (e.keepClone) throw e;
-      if (!inFlight) guardClean(c, e.message); // anything dirty now is not ours: keep it
+      // Mid-write (fn, add or commit threw), our own edits and a hand edit cannot be told apart, so
+      // nothing is reset: the next write's dirty guard refuses the clone until someone looks.
+      if (inFlight)
+        throw new RegistryError(
+          `not recorded: the write failed mid-transaction (${e.message}); the clone was left as is ` +
+            `so no hand edit is lost — inspect ${c.cloneDir}, then commit or discard it`,
+          2,
+        );
+      guardClean(c, e.message); // anything dirty now is not ours: keep it
       reset(c);
       throw e;
     }
