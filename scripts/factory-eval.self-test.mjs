@@ -416,6 +416,29 @@ try {
     },
   );
   await check(
+    "stub arm refuses a ../ or absolute path outside the eval tree, writing nothing",
+    [[2, 2], [true, true], false],
+    async () => {
+      const away = path.join(path.dirname(repo.dir), "rf-esc-away.txt");
+      const arm = (p) =>
+        spawnSync(process.execPath, [path.join(HERE, "factory-eval.mjs"), "stub-arm"], {
+          cwd: repo.dir,
+          encoding: "utf8",
+          env: { ...scrubbedGitEnv(), EVAL_STUB_SHA: fix, EVAL_STUB_PATHS: p },
+        });
+      try {
+        const runs = [arm(path.join("..", path.basename(away))), arm(away)];
+        return [
+          runs.map((r) => r.status),
+          runs.map((r) => /outside the eval tree/.test(r.stderr)),
+          existsSync(away),
+        ];
+      } finally {
+        rmSync(away, { force: true });
+      }
+    },
+  );
+  await check(
     "a dollar-cap overrun is flagged; a wall-clock overrun is broken",
     [true, "broken"],
     async () => {
