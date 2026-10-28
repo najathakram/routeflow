@@ -192,6 +192,45 @@ function locateMain(cwd, git) {
   return { top, hooks };
 }
 
+/** Real path of `p`, or of its deepest existing ancestor plus the missing tail; null when unresolvable. */
+function realPathOf(fs, p) {
+  let cur = path.resolve(p);
+  const tail = [];
+  for (;;) {
+    try {
+      return path.join(fs.realpathSync(cur), ...tail.reverse());
+    } catch (e) {
+      const up = path.dirname(cur);
+      if (e?.code !== "ENOENT" || up === cur) return null;
+      tail.push(path.basename(cur));
+      cur = up;
+    }
+  }
+}
+
+/**
+ * The ONE ownership rule for writes into a hooks dir: it is this tree's own when this tree IS the main
+ * checkout, or when its REAL path sits inside this tree's REAL top (a junction/symlink into main, or a
+ * per-worktree core.hooksPath at a shared dir, resolves outside and is refused). Any realpath error
+ * fails closed.
+ */
+function ownsHooksDir(fs, mine, mainTop) {
+  const top = realPathOf(fs, mine.top);
+  const dir = realPathOf(fs, mine.dir);
+  const main = realPathOf(fs, mainTop);
+  if (!top || !dir || !main) return false;
+  if (top === main) return true;
+  const rel = path.relative(top, dir);
+  return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
+}
+
+/** Overwrite the husky helpers (not hooks): a stale one beside a fresh pre-push breaks it. */
+function refreshHelpers(fs, fromDir, toDir) {
+  for (const f of ["h", "husky.sh"].filter((n) => isFile(path.join(fromDir, n)))) {
+    fs.copyFileSync(path.join(fromDir, f), path.join(toDir, f));
+  }
+}
+
 const ok = (copied, message) => ({ ok: true, copied, message });
 const no = (message) => ({ ok: false, copied: false, message });
 
@@ -218,16 +257,18 @@ export function ensureGitHooks({
   const mine_pp = path.join(mine.dir, "pre-push");
   if (isFile(mine_pp)) {
     // Present is not enough off Windows: git ignores a non-executable hook, so fix the mode (what the check wants).
+    const owner = locateMain(cwd, git);
+    const owns = !owner.fail && ownsHooksDir(fs, mine, owner.top);
+    // Refresh stale helpers whenever the dir is this tree's own (never main's, never a shared dir).
+    if (owns && realPathOf(fs, owner.hooks.dir) !== realPathOf(fs, mine.dir)) {
+      refreshHelpers(fs, owner.hooks.dir, mine.dir);
+    }
     if (platform === "win32" || (fs.statSync(mine_pp).mode & 0o111) !== 0) {
       return ok(false, `ensure-git-hooks: ok — pre-push already present in ${mine.dir}`);
     }
-    // Only this tree's own hooks: chmod on the main checkout's shared dir would undo a deliberate chmod -x.
-    const owner = locateMain(cwd, git);
+    // Only this tree's own hooks: chmod on a shared dir would undo a deliberate chmod -x.
     if (owner.fail) return no(owner.fail);
-    if (
-      path.resolve(owner.top) !== path.resolve(mine.top) &&
-      path.resolve(owner.hooks.dir) === path.resolve(mine.dir)
-    ) {
+    if (!owns) {
       return no(
         `ensure-git-hooks: ${mine.dir} is the main checkout's own hooks directory; not changing its modes from another tree.`,
       );
@@ -241,7 +282,7 @@ export function ensureGitHooks({
   const owner = locateMain(cwd, git);
   if (owner.fail) return no(owner.fail);
   const main = owner.hooks;
-  if (path.resolve(main.dir) === path.resolve(mine.dir)) {
+  if (realPathOf(fs, main.dir) === realPathOf(fs, mine.dir) || !ownsHooksDir(fs, mine, owner.top)) {
     return no(
       `ensure-git-hooks: ${mine.dir} is the main checkout's own hooks directory and has no pre-push.`,
     );
@@ -253,10 +294,7 @@ export function ensureGitHooks({
   }
   // A custom hooks dir keeps what it has: only the missing files are copied.
   fs.cpSync(main.dir, mine.dir, { recursive: true, force: false, errorOnExist: false });
-  // The husky helpers are not hooks: a stale one beside a fresh pre-push breaks it, so always refresh.
-  for (const f of ["h", "husky.sh"].filter((n) => isFile(path.join(main.dir, n)))) {
-    fs.copyFileSync(path.join(main.dir, f), path.join(mine.dir, f));
-  }
+  refreshHelpers(fs, main.dir, mine.dir);
   const copied = path.join(mine.dir, "pre-push");
   if (platform !== "win32" && (fs.statSync(copied).mode & 0o111) === 0) {
     return no(`ensure-git-hooks: copied, but ${copied} is not executable; git would ignore it.`);
