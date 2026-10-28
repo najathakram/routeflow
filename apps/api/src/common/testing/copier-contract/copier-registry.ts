@@ -306,7 +306,7 @@ export const COPIERS: Copier[] = [
     fn: "create",
     target: "ReturnItem",
     anchor: { via: "prop", name: "items" },
-    carried: "productId qty reason restock condition notes",
+    carried: "productId qty reason restock condition notes sourceOrderItemId", // SA-1042 B9b: a line item records its line
     na: "unitPrice subtotal taxAmount categoryTax priceSource originalPrice overrideReason overriddenBy", // priced later by priceReturn
     gaps: {
       ...P0A_LABELS,
@@ -315,7 +315,6 @@ export const COPIERS: Copier[] = [
       unitsPerBox: "B665",
       sourceOrderId: "unfiled",
       sourceInvoiceItemId: "unfiled",
-      sourceOrderItemId: "unfiled",
     },
   },
   {
