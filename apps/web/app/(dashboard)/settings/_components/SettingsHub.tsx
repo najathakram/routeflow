@@ -11,6 +11,7 @@ import { BusinessCard } from "./BusinessCard";
 import { NeedsAttention } from "./NeedsAttention";
 import { SettingsFinder } from "./SettingsFinder";
 import { normalize, searchSettings } from "./settings-index";
+import { recallSettingsQuery, rememberSettingsQuery } from "./settings-query-memory";
 import { hashId } from "./use-hash-scroll";
 import { useDesktopRail } from "./use-desktop-rail";
 import { useSettingsNav } from "./use-settings-nav";
@@ -21,25 +22,6 @@ import { useSettingsNav } from "./use-settings-nav";
  * this shows the big Business card, what needs attention, and the loose cards. Every setting screen stays
  * reachable; role-gated rows are hidden the same way the sidebar hides them.
  */
-/** The hub's query lives on its own history entry, so Back/Forward brings it back and a fresh visit starts empty. */
-const HISTORY_KEY = "rfSettingsQuery";
-
-/**
- * The router rewrites an entry's history state when it restores it, which can drop HISTORY_KEY. So the last
- * query also lives in module scope (it survives the hub unmounting on a client navigation), and a popstate
- * (Back/Forward) that lands on the settings page marks the next hub mount as a return rather than a fresh visit.
- */
-let lastQuery = "";
-let returning = false;
-let handoff: string | null = null;
-if (typeof window !== "undefined") {
-  window.addEventListener("popstate", () => {
-    // Only a Back/Forward that LANDS on the hub is a return to it. One that lands anywhere else (another page, a
-    // settings sub-page) must not leave the flag armed for a later, unrelated fresh visit to /settings.
-    returning = window.location.pathname.replace(/\/+$/, "") === "/settings";
-  });
-}
-
 /** A card the page renders under the hub (Stripe Connect, tier names): shown at `#id`, hidden by a search it doesn't match. */
 export type LooseCard = { id: string; node: React.ReactNode };
 
@@ -54,25 +36,12 @@ export function SettingsHub({
   // whose state carries the query), but a NEW visit (sidebar, cmd-K, a back link: a new entry) starts empty.
   const [query, setQueryState] = React.useState("");
   React.useEffect(() => {
-    const kept = (window.history.state as Record<string, unknown> | null)?.[HISTORY_KEY];
-    let restored = typeof kept === "string" && kept ? kept : "";
-    if (!restored && returning) {
-      // read once per return; a dev-mode double mount runs both effects before the microtask below
-      returning = false;
-      restored = lastQuery;
-      handoff = restored;
-      queueMicrotask(() => {
-        handoff = null;
-      });
-    } else if (!restored && handoff !== null) restored = handoff;
+    const restored = recallSettingsQuery();
     if (restored) setQueryState(restored);
-    else lastQuery = "";
   }, []);
   const setQuery = React.useCallback((q: string) => {
     setQueryState(q);
-    lastQuery = q;
-    // keep the router's own state on the entry; only our key changes
-    window.history.replaceState({ ...(window.history.state ?? {}), [HISTORY_KEY]: q }, "");
+    rememberSettingsQuery(q);
   }, []);
   const desktop = useDesktopRail();
   const nav = useSettingsNav({ isAdmin });
