@@ -106,11 +106,15 @@ import {
   withLock,
 } from "../lib/mkdir-lock.mjs";
 import {
+  FIRST_RUN_WINDOW,
+  REGISTRY_GIT_TIMEOUT_MS,
   REGISTRY_PREFIX,
   registryMissingMessage,
   registryMode,
   registryRoot,
   registrySource,
+  syncRepoOverride,
+  syncStatePath,
 } from "../lib/registry-root.mjs";
 import { commitRecord, discardRegistry } from "../lib/registry-records.mjs";
 import { RegistryError, withRegistryWrite } from "../lib/registry-write.mjs";
@@ -1645,12 +1649,27 @@ cmds.expand = () => {
 // It is anchored on REPO_ROOT, never on the register or the cwd: the register may live outside
 // this tree (B1-c) and BUGS_ROOT is only a fixture seam, so neither may decide where machine-local
 // state is written. A fixture that runs `sync` sets BUGS_SYNC_STATE itself.
-const SYNC_STATE = () =>
-  process.env.BUGS_SYNC_STATE || join(REPO_ROOT, ".campaign", "bugs-sync-state.json");
-const FIRST_RUN_WINDOW = 400;
+const SYNC_STATE = syncStatePath;
 
-const git = (cmd) =>
-  execSync(cmd, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: scrubbedGitEnv() });
+const git = (cmd, extra = {}) =>
+  execSync(cmd, {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    env: scrubbedGitEnv(),
+    ...extra,
+  });
+// The sync scan only (claimId and resolveCloseSha keep the process cwd). Clone mode scans routeflow's
+// origin/master in REPO_ROOT, capped like every register git call; tracked mode scans HEAD with no
+// timeout. No sync git call ever prompts (GCM_INTERACTIVE: a credential-manager GUI ignores
+// GIT_TERMINAL_PROMPT).
+const syncRef = () => (registryMode() === "clone" ? "refs/remotes/origin/master" : "HEAD");
+const syncGit = (cmd, extra = {}) =>
+  git(cmd, {
+    cwd: syncRepoOverride() || (registryMode() === "clone" ? REPO_ROOT : undefined),
+    env: { ...scrubbedGitEnv(), GIT_TERMINAL_PROMPT: "0", GCM_INTERACTIVE: "never" },
+    ...(registryMode() === "clone" ? { timeout: REGISTRY_GIT_TIMEOUT_MS } : {}),
+    ...extra,
+  });
 
 function readSyncState() {
   const p = SYNC_STATE();
@@ -1678,7 +1697,13 @@ function commitMentions(state, args) {
   const rescan = args.includes("--rescan");
   let head;
   try {
-    head = git("git rev-parse HEAD").trim();
+    if (registryMode() === "clone")
+      try {
+        syncGit("git fetch origin master");
+      } catch (e) {
+        console.error(`sync: fetch failed, scanning the local origin/master — ${firstLine(e)}`);
+      }
+    head = syncGit(`git rev-parse ${syncRef()}`).trim();
   } catch (e) {
     // No git (a tarball, a broken PATH) is not a reason to lose the ledger half
     // of the sync — say so and carry on. Nothing to anchor either.
@@ -1688,7 +1713,7 @@ function commitMentions(state, args) {
   const prev = readSyncState().lastSha;
   // A sha that git no longer knows (rebased away, a different clone) must not
   // abort the scan — fall back to the bounded window.
-  const anchored = prev && !rescan && isCommit(prev) ? prev : null;
+  const anchored = prev && !rescan && isCommit(prev, syncGit) ? prev : null;
   if (!anchored && !rescan) {
     // Nothing is scanned in THIS branch — there is no per-record loop for the
     // anchor to race against, so it is safe (and necessary: a first run must
@@ -1707,11 +1732,13 @@ function commitMentions(state, args) {
         : `first run — anchored at ${head.slice(0, 8)}; commit history is not re-derived (use --rescan to force)`,
     };
   }
-  const spec = anchored ? `${anchored}..HEAD` : `--max-count=${FIRST_RUN_WINDOW} HEAD`;
+  const spec = anchored
+    ? `${anchored}..${syncRef()}`
+    : `--max-count=${FIRST_RUN_WINDOW} ${syncRef()}`;
 
   let log;
   try {
-    log = git(`git log --format=%H%x09%s ${spec}`);
+    log = syncGit(`git log --format=%H%x09%s ${spec}`);
   } catch (e) {
     // The scan itself failed — nothing was derived for this range, so the
     // anchor must not move either, or the range is silently skipped forever.
@@ -1777,9 +1804,9 @@ function parseMentions(log, state) {
 }
 
 const firstLine = (e) => String(e.message ?? e).split("\n")[0];
-const isCommit = (sha) => {
+const isCommit = (sha, run = git) => {
   try {
-    return git(`git cat-file -t ${sha}`).trim() === "commit";
+    return run(`git cat-file -t ${sha}`).trim() === "commit";
   } catch {
     return false;
   }

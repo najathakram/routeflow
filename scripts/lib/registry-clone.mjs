@@ -68,7 +68,7 @@ export function registryGit(c, args, { timeoutMs = c.timeoutMs, ok = false, raw 
         cwd: c.cloneDir,
         encoding: "utf8",
         timeout: timeoutMs,
-        env: { ...scrubbedGitEnv(), GIT_TERMINAL_PROMPT: "0" },
+        env: { ...scrubbedGitEnv(), GIT_TERMINAL_PROMPT: "0", GCM_INTERACTIVE: "never" },
       },
     );
   const stdout = r.stdout ?? "";
