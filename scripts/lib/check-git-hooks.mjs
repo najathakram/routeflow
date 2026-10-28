@@ -208,6 +208,15 @@ function realPathOf(fs, p) {
   }
 }
 
+/** True when `p` is itself a symlink/junction and what it points at does not exist. */
+function isDanglingLink(fs, p) {
+  try {
+    return fs.lstatSync(p).isSymbolicLink() && !fs.existsSync(p);
+  } catch {
+    return false;
+  }
+}
+
 /**
  * The ONE ownership rule for writes into a hooks dir: it is this tree's own when this tree IS the main
  * checkout, or when its REAL path sits inside this tree's REAL top (a junction/symlink into main, or a
@@ -278,6 +287,13 @@ export function ensureGitHooks({
       return no(`ensure-git-hooks: ${mine_pp} is not executable and chmod did not change that.`);
     }
     return ok(false, `ensure-git-hooks: made ${mine_pp} executable`);
+  }
+  // A link whose target is gone: realPathOf would walk past ENOENT and call it ours, then cpSync dies
+  // (exit 127, no message). Refuse it by name instead.
+  if (isDanglingLink(fs, mine.dir)) {
+    return no(
+      `ensure-git-hooks: ${mine.dir} is a dangling link (its target does not exist); remove it, then re-run.`,
+    );
   }
   const owner = locateMain(cwd, git);
   if (owner.fail) return no(owner.fail);
