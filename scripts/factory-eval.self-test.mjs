@@ -252,6 +252,61 @@ try {
       }
     },
   );
+  // A lane can lock its own tree "rf-eval"; the lock alone must not make cleanup remove it.
+  const siblingLockedAsEval = async (token) => {
+    const lane = realpathSync.native(mkdtempSync(path.join(tmpdir(), "rf-evl-")));
+    const wt = path.join(lane, "wt");
+    repo.git("worktree", "add", "--detach", wt, "HEAD");
+    repo.git("worktree", "lock", "--reason", "rf-eval", wt);
+    try {
+      if (token) {
+        const gitDir = spawnSync("git", ["rev-parse", "--path-format=absolute", "--git-dir"], {
+          cwd: wt,
+          encoding: "utf8",
+          env: scrubbedGitEnv(),
+        }).stdout.trim();
+        writeFileSync(path.join(gitDir, "rf-eval-owner"), token);
+      }
+      writeFileSync(path.join(wt, "wip.txt"), "keep\n");
+      let msg = "";
+      try {
+        FE.cleanupTree(wt, { repo: repo.dir, runId: FE.RUN_ID });
+      } catch (err) {
+        msg = err.message;
+      }
+      const still = repo.git("worktree", "list", "--porcelain").includes("locked rf-eval");
+      return [
+        msg.includes(wt) && /owner token/.test(msg),
+        existsSync(path.join(wt, "wip.txt")),
+        still,
+      ];
+    } finally {
+      spawnSync("git", ["worktree", "unlock", wt], { cwd: repo.dir, env: scrubbedGitEnv() });
+      repo.git("worktree", "remove", "--force", wt);
+      rmSync(lane, { recursive: true, force: true });
+    }
+  };
+  await check(
+    "cleanup throws for a sibling locked rf-eval with NO owner token, leaving it locked",
+    [true, true, true],
+    () => siblingLockedAsEval(null),
+  );
+  await check(
+    "cleanup throws for an owner token with the wrong run id, leaving the tree",
+    [true, true, true],
+    () => siblingLockedAsEval("rf-eval-owner v1 run=someone-else pid=1 at=2026-10-28T00:00:00Z\n"),
+  );
+  await check(
+    "cleanup removes a tree whose token matches this run, and a sweep accepts any parsable token",
+    [true, false, true, false],
+    async () => {
+      const a = await FE.prepare(task, { repo: repo.dir });
+      const okRun = FE.cleanupTree(a.tree, { repo: repo.dir, runId: FE.RUN_ID });
+      const b = await FE.prepare(task, { repo: repo.dir });
+      const okSweep = FE.cleanupTree(b.tree, { repo: repo.dir }); // later sweep: run id unknown
+      return [okRun, existsSync(a.tree), okSweep, existsSync(b.tree)];
+    },
+  );
   await check(
     "cleanup unlinks a link the agent planted (its target survives) and the tree is really gone",
     [true, false, true],
