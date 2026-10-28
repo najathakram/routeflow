@@ -399,6 +399,7 @@ describeDb("W-863 — a counter sale with an inline return, the real chain on Po
     const key = randomUUID();
     const rk = `rk-${key}`;
     const first = await ring(key, returnOf(snack, rk), { method: "CASH", amount: 6 });
+    const notesAfterFirst = await raw.creditNote.count({ where: { tenantId, customerId } });
     const second = await ring(key, returnOf(snack, rk), { method: "CASH", amount: 6 });
     expect(second.orderId).toBe(first.orderId);
     expect(second.replayed).toBe(true);
@@ -406,10 +407,11 @@ describeDb("W-863 — a counter sale with an inline return, the real chain on Po
     expect(f.orders).toHaveLength(1);
     expect(f.returns).toHaveLength(1);
     expect(f.payments.filter((p) => p.method === "CASH" && p.status !== "VOID")).toHaveLength(1);
+    // the replay minted no second credit note, and the sale carries exactly ONE credit link (counted by the sale's link and
+    // by the customer's notes before and after, never by the note's own primary key)
     expect(f.returns[0].creditNoteId).toBeTruthy();
-    expect(
-      await raw.creditNote.count({ where: { tenantId, id: f.returns[0].creditNoteId as string } }),
-    ).toBe(1);
+    expect(await raw.creditNote.count({ where: { tenantId, customerId } })).toBe(notesAfterFirst);
+    expect(await raw.orderCreditNote.count({ where: { orderId: first.orderId } })).toBe(1);
   }, 60_000);
 
   it("(e) the credit gate nets the SERVER-priced return: limit 100, balance 92, $10.00 on account with a $4.00 return is exposure 98, allowed", async () => {
