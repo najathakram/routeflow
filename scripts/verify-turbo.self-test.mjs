@@ -40,7 +40,6 @@ import {
   FAST_NOT_PROOF_LINE,
   FAST_VERIFY_BANNER,
   REPO_WIDE_PINS,
-  SCRIPT_SPEC_PATTERN,
   changedFilesSince,
   computeScope,
   currentBranch,
@@ -50,6 +49,7 @@ import {
   loadWorkspaces,
   mergeBaseSha,
   repoPinsNeeded,
+  SCRIPT_SPEC_PATTERN,
   shortName,
   staleWorkspaces,
   wantsFastVerify,
@@ -1717,11 +1717,11 @@ check(
     "FP1b (a) fast + pins plans ONE api-cwd jest call: every pin file and the -script pattern",
     [
       pinCall?.cwd,
-      pinCall?.argv.slice(0, 2),
+      pinCall?.argv.slice(0, 3),
       REPO_WIDE_PINS.every((p) => pinCall?.argv.includes(p.file.replace(/^apps\/api\//, ""))),
       pinCall?.argv.includes(SCRIPT_SPEC_PATTERN),
     ],
-    ["apps/api", ["jest", "--testPathIgnorePatterns=/node_modules/"], true, true],
+    ["apps/api", ["jest", "--testPathIgnorePatterns=/node_modules/", "--"], true, true],
   );
   check(
     "FP1c (a) the pin call is last; the rest is exactly the fast plan without pins",

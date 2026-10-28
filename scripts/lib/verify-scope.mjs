@@ -160,16 +160,88 @@ export function isFastMode(env = process.env) {
   return env.RF_VERIFY_MODE === "fast" && !env.CI && env.FULL_VERIFY !== "1";
 }
 
-// STUB (red commit): real values land in the next commit.
-export const FAST_NOT_PROOF_LINE = "";
-export const REPO_WIDE_PINS = [];
-export const SCRIPT_SPEC_PATTERN = "";
-export function repoPinsNeeded() {
-  return false;
+/**
+ * "A fast push is not proof" (lead ruling 2026-10-28). Three PRs passed a fast push while red on a
+ * full verify: the related-only lane never runs the repo-wide pins, and the api unit config ignores
+ * every `-script.spec.ts`. So (1) every fast run ends with this exact line, here, in verify-turbo and
+ * in .husky/pre-push (its skip line too), and (2) a diff that can break a pin also runs them.
+ */
+export const FAST_NOT_PROOF_LINE =
+  "fast: not proof (related tests only; run FULL_VERIFY=1 or CI before a merge-ready claim)";
+
+/** The final line of a run: the stamp for a fast run, null (print nothing new) otherwise. */
+export function fastStampLine(fast) {
+  return fast ? FAST_NOT_PROOF_LINE : null;
 }
-export function fastStampLine() {
-  return null;
+
+/**
+ * Specs under apps/api/src that read the WHOLE repo (scripts/, hooks, manifests) rather than one
+ * module, so `--changedSince` never relates them to a scripts/hooks/manifest edit. Run on a fast
+ * push whose diff `repoPinsNeeded`. Keep each entry's reason honest; the self-test pins existence.
+ */
+export const REPO_WIDE_PINS = [
+  {
+    file: "apps/api/src/common/scripts-live-target-guard.spec.ts",
+    why: "walks every scripts/*.mjs for live-DB targeting",
+  },
+  {
+    file: "apps/api/src/common/fixture-git-env-scrub.spec.ts",
+    why: "walks scripts/.claude/.husky for unscrubbed git spawns",
+  },
+  {
+    file: "apps/api/src/common/scripts-product-mirror-tripwire.spec.ts",
+    why: "scans scripts/ and apps/api/scripts for product mirrors",
+  },
+  {
+    file: "apps/api/src/common/script-money-writers.spec.ts",
+    why: "scans scripts/ for unrounded money writes",
+  },
+  {
+    file: "apps/api/src/common/script-spec-lane.spec.ts",
+    why: "reads apps/api/package.json jest lanes against the spec tree",
+  },
+  {
+    file: "apps/api/src/common/local-scripts-forwarding.spec.ts",
+    why: "reads the root package.json local:* contract",
+  },
+  {
+    file: "apps/api/src/common/local-db-specs.spec.ts",
+    why: "reads the root package.json and scripts/local-db-specs.mjs",
+  },
+  {
+    file: "apps/api/src/common/turbo-inputs.spec.ts",
+    why: "reads the root package.json and turbo.json inputs",
+  },
+  {
+    file: "apps/api/src/common/scan-signatures-selftest.spec.ts",
+    why: "walks .claude/skills/*/scripts and scripts/",
+  },
+  {
+    file: "apps/api/src/common/no-runtime-ddl.spec.ts",
+    why: "greps apps/api/scripts and src for runtime DDL",
+  },
+];
+
+/** Paths whose edit can break a repo-wide pin or a `-script` spec. */
+const PIN_TRIGGERS = [
+  /^scripts\//,
+  /^\.husky\//,
+  /^\.claude\/hooks\//,
+  /^\.claude\/skills\/[^/]+\/scripts\//,
+  /(^|\/)package\.json$/,
+  /^apps\/api\/src\/common\//,
+];
+
+export function repoPinsNeeded(files) {
+  return (files ?? []).some((f) => PIN_TRIGGERS.some((re) => re.test(f.replaceAll("\\", "/"))));
 }
+
+/**
+ * Every `-script.spec.ts` (the api unit config ignores them). The whole set measured 78 s on a
+ * 65%-loaded dev box (2026-10-28), inside the 90 s budget, so a fast push runs all of it rather than
+ * guessing which specs a scripts/ edit reaches. Literal-dot classes keep cmd.exe quoting trivial.
+ */
+export const SCRIPT_SPEC_PATTERN = "-script[.]spec[.]ts$";
 
 /** The checked-out branch name ("HEAD" when detached), or null when git cannot say. */
 export function currentBranch(root) {
