@@ -13,6 +13,7 @@ import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 import {
   clearIssueDisplayUnits,
   resolveIssueDisplayUnits,
+  itemsWithDisplayUnits,
   resolveLiveDisplayUnits,
   writeIssueDisplayUnits,
 } from "./invoice-display-unit";
@@ -61,6 +62,7 @@ describeDb("SA-827 invoice display unit — real Postgres", () => {
     opts: {
       business?: string;
       customerRef?: string;
+      invoiceUnitDefault?: "LEGACY" | "PIECES" | "PACK";
       tier?: { customerTier: number; invoiceUnitRef: string };
       status?: "DRAFT" | "SENT";
     } = {},
@@ -83,6 +85,7 @@ describeDb("SA-827 invoice display unit — real Postgres", () => {
         contactName: "Pat",
         tenantId,
         ...(opts.tier ? { pricingTier: opts.tier.customerTier } : {}),
+        ...(opts.invoiceUnitDefault ? { invoiceUnitDefault: opts.invoiceUnitDefault } : {}),
       },
     });
     const product = await prisma.product.create({
@@ -207,14 +210,50 @@ describeDb("SA-827 invoice display unit — real Postgres", () => {
   });
 
   /** The first-issue sequence, as markSent runs it: resolve OUTSIDE the tx, write INSIDE a Serializable tx. */
-  async function issue(s: { tenantId: string; invoice: { id: string } }) {
-    const units = await resolveIssueDisplayUnits(prisma, s.tenantId, s.invoice.id, on);
+  async function issue(
+    s: { tenantId: string; invoice: { id: string } },
+    entitlements: typeof on | typeof off = on,
+  ) {
+    const units = await resolveIssueDisplayUnits(prisma, s.tenantId, s.invoice.id, entitlements);
     await tenantCtx.run(s.tenantId, () =>
       prisma.tenantTransaction(async (tx) => writeIssueDisplayUnits(tx, s.invoice.id, units), {
         isolationLevel: "Serializable",
       }),
     );
   }
+
+  it("Customer.invoiceUnitDefault PIECES on a flag-OFF tenant resolves pieces and snapshots Piece/1; money is untouched", async () => {
+    const s = await seed("custdefault", { invoiceUnitDefault: "PIECES" });
+    const inv = { customerId: s.customer.id, items: [{ id: s.item.id, productId: s.product.id }] };
+    expect((await resolveLiveDisplayUnits(prisma, s.tenantId, inv, off)).get(s.item.id)).toEqual({
+      kind: "pieces",
+      label: "Piece",
+    });
+    const units = await resolveIssueDisplayUnits(prisma, s.tenantId, s.invoice.id, off);
+    expect(units.get(s.item.id)).toEqual({ kind: "pieces", label: "Piece" });
+    await issue(s, off);
+    const row = await itemRow(s.item.id);
+    expect(row.invoiceUnitLabel).toBe("Piece");
+    expect(row.invoiceUnitFactor).toBe(1);
+    expect(Number(row.subtotal)).toBe(60.02);
+    expect(Number(row.unitPrice)).toBe(30.01);
+    expect(Number(row.qty)).toBe(30);
+  });
+
+  it("Customer.invoiceUnitDefault PACK beats the business 'smallest'; a new customer reads LEGACY", async () => {
+    const s = await seed("custpack", { business: "smallest", invoiceUnitDefault: "PACK" });
+    const inv = { customerId: s.customer.id, items: [{ id: s.item.id, productId: s.product.id }] };
+    expect((await resolveLiveDisplayUnits(prisma, s.tenantId, inv, on)).get(s.item.id)).toEqual({
+      kind: "legacy",
+      label: null,
+    });
+    const fresh = await seed("custlegacy");
+    const row = await prisma.customer.findUniqueOrThrow({
+      where: { id: fresh.customer.id },
+      select: { invoiceUnitDefault: true },
+    });
+    expect(row.invoiceUnitDefault).toBe("LEGACY");
+  });
 
   it("writeIssueDisplayUnits (real Serializable tenantTransaction) writes ONLY the two display columns, once; money is untouched", async () => {
     const s = await seed("snap", { business: "smallest" });
@@ -254,6 +293,59 @@ describeDb("SA-827 invoice display unit — real Postgres", () => {
     const row = await itemRow(s.item.id);
     expect(row.invoiceUnitLabel).toBe("Each");
     expect(row.invoiceUnitFactor).toBe(1);
+  });
+
+  it("a customer default change after issue leaves the issued item on its snapshot; a still-DRAFT invoice follows the new default", async () => {
+    const s = await seed("custflip", { invoiceUnitDefault: "PIECES" });
+    await issue(s, off);
+    await prisma.invoice.update({ where: { id: s.invoice.id }, data: { status: "SENT" } });
+    const second = await prisma.invoice.create({
+      data: {
+        tenantId: s.tenantId,
+        customerId: s.customer.id,
+        invoiceNumber: `INV-SA827-${RUN}-${seq}-b`,
+        status: "DRAFT",
+        subtotal: 60.02,
+        taxAmount: 0,
+        total: 60.02,
+      },
+    });
+    const secondItem = await prisma.invoiceItem.create({
+      data: {
+        tenantId: s.tenantId,
+        invoiceId: second.id,
+        productId: s.product.id,
+        description: "Acme mixed box",
+        qty: 30,
+        boxes: 2,
+        pieces: 0,
+        unitsPerBox: 15,
+        unitPrice: 30.01,
+        discount: 0,
+        taxRate: 0,
+        subtotal: 60.02,
+      },
+    });
+    await prisma.customer.update({
+      where: { id: s.customer.id },
+      data: { invoiceUnitDefault: "PACK" },
+    });
+    const issuedItems = await prisma.invoiceItem.findMany({ where: { invoiceId: s.invoice.id } });
+    const [issued] = await itemsWithDisplayUnits(
+      prisma,
+      { status: "SENT", tenantId: s.tenantId, customerId: s.customer.id, items: issuedItems },
+      off,
+    );
+    expect(issued.displayUnit).toEqual({ kind: "pieces", label: "Piece" });
+    expect(issued.invoiceUnitFactor).toBe(1);
+    const draftItems = await prisma.invoiceItem.findMany({ where: { invoiceId: second.id } });
+    const [draft] = await itemsWithDisplayUnits(
+      prisma,
+      { status: "DRAFT", tenantId: s.tenantId, customerId: s.customer.id, items: draftItems },
+      off,
+    );
+    expect(draft.id).toBe(secondItem.id);
+    expect(draft.displayUnit).toEqual({ kind: "legacy", label: null });
   });
 
   it("nothing set (legacy): zero writes, the columns stay null", async () => {

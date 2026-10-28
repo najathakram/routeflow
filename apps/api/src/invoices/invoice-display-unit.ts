@@ -38,7 +38,7 @@ const allLegacy = (items: ReadonlyArray<{ id: string }>): Map<string, InvoiceDis
 /**
  * The display unit each invoice line would render in RIGHT NOW (customer/product/tier/business preference, then legacy).
  * Batched: one query per table for the whole invoice. A failed flag read means flag off. Any error gives legacy for every
- * item: the read never fails. `customerDefault` is null until the PR2 column lands.
+ * item: the read never fails.
  */
 export async function resolveLiveDisplayUnits(
   db: any,
@@ -63,7 +63,21 @@ export interface DisplayUnitCatalog {
   tierOrderUnits: Map<string, Record<number, string>>;
   unitsBy: Map<string, LadderViewUnit[]>;
   businessUnit: string | null;
+  /** Customer.invoiceUnitDefault (LEGACY | PIECES | PACK), the highest-precedence preference. */
+  customerDefault?: "LEGACY" | "PIECES" | "PACK" | null;
+  /** The ladder flag was off: only a customer-wide PIECES applies, with no view. */
+  ladderOff?: boolean;
 }
+
+const emptyCatalog = (): DisplayUnitCatalog => ({
+  customerTier: null,
+  cpBy: new Map(),
+  productBy: new Map(),
+  tierUnitBy: new Map(),
+  tierOrderUnits: new Map(),
+  unitsBy: new Map(),
+  businessUnit: null,
+});
 
 /** One catalog per customer, loaded BEFORE the delivery tx opens (see {@link loadDeliveryDisplayCatalogs}). */
 export type DisplayUnitCatalogs = ReadonlyMap<string, DisplayUnitCatalog>;
@@ -83,12 +97,21 @@ async function loadCatalog(
     } catch {
       on = false;
     }
-    if (!on) return null; // flag off: no ladder, and customerDefault is null in PR1, so everything is legacy
+    if (!on) {
+      // Flag off: no ladder and no catalog read. Only a customer-wide PIECES still applies (SA-827 rule 5); the pricing
+      // resolver returns pieces for it with a null view.
+      const c = await db.customer.findFirst({
+        where: { id: customerId, tenantId },
+        select: { invoiceUnitDefault: true },
+      });
+      if (c?.invoiceUnitDefault !== "PIECES") return null;
+      return { ...emptyCatalog(), customerDefault: "PIECES", ladderOff: true };
+    }
 
     const [customer, cpRows, tierRows, products, unitRows, business] = await Promise.all([
       db.customer.findFirst({
         where: { id: customerId, tenantId },
-        select: { pricingTier: true },
+        select: { pricingTier: true, invoiceUnitDefault: true },
       }),
       db.customerPrice.findMany({
         // CustomerPrice.tenantId is nullable, so the tenant rides the non-null customer relation
@@ -174,6 +197,7 @@ async function loadCatalog(
 
     return {
       customerTier: customer?.pricingTier,
+      customerDefault: customer?.invoiceUnitDefault ?? null,
       cpBy,
       productBy,
       tierUnitBy,
@@ -192,6 +216,11 @@ function viewsFromCatalog(
   const { customerTier, cpBy, productBy, tierUnitBy, tierOrderUnits, unitsBy, businessUnit } =
     catalog;
   const byProduct = new Map<string, InvoiceDisplayUnitView>();
+  if (catalog.ladderOff) {
+    const pieces = invoiceDisplayUnitFor({ customerDefault: "PIECES", scopes: {}, view: null });
+    for (const pid of productIds) byProduct.set(pid, { ...pieces });
+    return byProduct;
+  }
   for (const pid of productIds) {
     try {
       const p = productBy.get(pid);
@@ -209,7 +238,7 @@ function viewsFromCatalog(
       byProduct.set(
         pid,
         invoiceDisplayUnitFor({
-          customerDefault: null,
+          customerDefault: catalog.customerDefault ?? null,
           scopes: {
             customer: cp?.invoiceUnitRef ?? null,
             tier: tierUnitBy.get(`${pid}:${tier}`)?.invoiceUnitRef ?? null,
