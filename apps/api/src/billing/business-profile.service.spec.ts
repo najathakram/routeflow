@@ -11,6 +11,8 @@ import { BusinessProfileService, planFingerprint } from "./business-profile.serv
 import { presetTicks } from "./business-capabilities";
 import { businessProfileByKey } from "./business-profiles";
 import { FEATURE_REGISTRY } from "./feature-registry";
+import { FeaturePreviewService } from "./feature-preview.service";
+import { V11_PIN_FIXTURE, featureConfigOver, mockCollaborators } from "./feature-fixtures";
 
 const T = "tenant-a";
 const DAY = 86_400_000;
@@ -35,6 +37,8 @@ function build(
     modes?: Record<string, string>;
     /** Open SHIP orders already handed to the carrier (shippedAt set). */
     inTransit?: number;
+    /** Replaces the preview stub (the real FeaturePreviewService, for the stored-mode cases). */
+    featurePreview?: unknown;
   } = {},
 ) {
   const addonRows = (opts.addons ?? []).map((a) =>
@@ -90,7 +94,9 @@ function build(
     clear: jest.fn(),
   };
   const previewResponse = { before: [], after: [], changed: ["driver_payments"] };
-  const featurePreview = { preview: jest.fn().mockResolvedValue(previewResponse) };
+  const featurePreview = opts.featurePreview ?? {
+    preview: jest.fn().mockResolvedValue(previewResponse),
+  };
   const svc = new BusinessProfileService(
     prisma as never,
     featureOverrides as never,
@@ -98,7 +104,15 @@ function build(
     featureConfig as never,
     featurePreview as never,
   );
-  return { svc, prisma, featureOverrides, addons, featureConfig, featurePreview, previewResponse };
+  return {
+    svc,
+    prisma,
+    featureOverrides,
+    addons,
+    featureConfig,
+    featurePreview: featurePreview as { preview: jest.Mock },
+    previewResponse,
+  };
 }
 
 describe("BusinessProfileService.list", () => {
@@ -714,5 +728,35 @@ describe("BO-04 — capabilities (ticks) through the one planner", () => {
         }),
       }),
     );
+  });
+});
+
+// SA-1028 section 5, P-G4: the card previews through the REAL FeaturePreviewService, which now reads the stored mode.
+describe("BusinessProfileService.previewCapabilities - the stored mode (SA-1028 section 5)", () => {
+  it("P-G4: stored counter_sales On with the ticks unchanged shows no counter_sales diff", async () => {
+    const c = mockCollaborators(V11_PIN_FIXTURE);
+    const realPreview = new FeaturePreviewService(
+      c.entitlements as any,
+      c.featureOverrides as any,
+      c.catalog as any,
+      c.prisma as any,
+      featureConfigOver({ counter_sales: "on" }).service,
+    );
+    const { svc } = build({
+      modes: { fulfilment_model: "unset", counter_sales: "on" },
+      featurePreview: realPreview,
+    });
+
+    // the unset tenant works today as Ship + Counter (the card shows exactly that); the admin changes nothing
+    const res = await svc.previewCapabilities(T, {
+      delivery: false,
+      shipping: true,
+      counter: true,
+    });
+
+    const modeOf = (side: typeof res.before) => side.find((f) => f.key === "counter_sales")?.mode;
+    expect(modeOf(res.before)).toMatchObject({ value: "on", source: "TENANT" });
+    expect(modeOf(res.after)).toEqual(modeOf(res.before));
+    expect(res.changed).not.toContain("counter_sales");
   });
 });
