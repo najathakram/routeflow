@@ -2386,3 +2386,61 @@ describe("redactAddresses — masks IP literals AND email addresses (keeps the d
     expect(redactAddresses("plain message")).toBe("plain message");
   });
 });
+
+/** SA-1029 E-R1: the invoice email carries the per-piece price beside a pack line (display only). */
+describe("EmailService.sendInvoice — per-piece price (SA-1029 E-R1)", () => {
+  const packLine = {
+    description: "Acme Pack",
+    qty: 48,
+    boxes: 2,
+    pieces: 0,
+    unitPrice: 48,
+    subtotal: 96,
+    perBaseUnit: { price: 2, unit: "pc" },
+  };
+  const base = {
+    to: "buyer@example.com",
+    customerName: "Acme Buyer",
+    invoiceNumber: "INV-5001",
+    invoiceId: "inv-5001",
+    issueDate: "Jan 1, 2026",
+    dueDate: "Jan 31, 2026",
+    total: 96,
+    totalPaid: 0,
+    balanceDue: 96,
+  };
+
+  it("E-R1: the HTML table has a Per piece header and $2.00/pc", async () => {
+    const svc = makeService();
+    const sendSpy = jest
+      .spyOn(svc, "send")
+      .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
+    await svc.sendInvoice({ ...base, items: [packLine] } as any);
+    const html = sendSpy.mock.calls[0][0].html as string;
+    expect(html).toContain("Per piece");
+    expect(html).toContain("$2.00/pc");
+  });
+
+  it("E-R1: the text line reads qty 2 boxes @ $48.00 ($2.00/pc) = $96.00", async () => {
+    const svc = makeService();
+    const sendSpy = jest
+      .spyOn(svc, "send")
+      .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
+    await svc.sendInvoice({ ...base, items: [packLine] } as any);
+    expect(sendSpy.mock.calls[0][0].text as string).toContain(
+      "qty 2 boxes @ $48.00 ($2.00/pc) = $96.00",
+    );
+  });
+
+  it("G-1: a loose-only email has no Per piece header", async () => {
+    const svc = makeService();
+    const sendSpy = jest
+      .spyOn(svc, "send")
+      .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
+    await svc.sendInvoice({
+      ...base,
+      items: [{ description: "Loose", qty: 3, unitPrice: 5, subtotal: 15, perBaseUnit: null }],
+    } as any);
+    expect(sendSpy.mock.calls[0][0].html as string).not.toContain("Per piece");
+  });
+});
