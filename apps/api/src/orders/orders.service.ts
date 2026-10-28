@@ -5027,6 +5027,10 @@ export class OrdersService implements OnApplicationBootstrap {
     return updateShipmentImpl(this, orderId, dto, _user);
   }
 
+  async staffSellable(p: rGate.Args) {
+    return await this.sellingRestrictions.assertLinesSellable({ ...p, channel: "STAFF" });
+  }
+
   /** Extracted verbatim to `order-lifecycle.ts` (size-ratchet headroom move); thin delegator. */
   async updateFulfillPath(...[orderId, dto, _user, opts]: UpdateFulfillPathArgs) {
     return updateFulfillPathImpl(
