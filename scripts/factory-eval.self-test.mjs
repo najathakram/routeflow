@@ -522,7 +522,7 @@ try {
       return [
         rel === "local-assets/evals/run-1/results.jsonl",
         JSON.parse(readFileSync(f, "utf8")).taskId === "t1",
-        spawnSync("git", git, { cwd: top }).status,
+        spawnSync("git", git, { cwd: top, env: scrubbedGitEnv() }).status,
       ];
     },
   );
