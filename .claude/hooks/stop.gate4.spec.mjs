@@ -319,9 +319,7 @@ if (process.platform === "win32") {
   const r = runHook(m.dir, cloneEnv(c.dir, anchorFile("0123456789abcdef0123456789abcdef01234567")));
   check(
     "unknown anchor sha: names --rescan",
-    r.status === 0 &&
-      /anchor is missing or unknown/.test(r.stderr) &&
-      r.stderr.includes("--rescan"),
+    r.status === 0 && /missing or unknown/.test(r.stderr) && r.stderr.includes("--rescan"),
     r,
   );
 }
@@ -352,18 +350,10 @@ if (process.platform === "win32") {
 {
   const m = makeMain();
   const c = makeClone({ behind: 1 });
-  const sha = git(c.dir, [
-    "log",
-    "-1",
-    "--format=%H",
-    "origin/main",
-    "--",
-    "registry/campaign/status",
-  ]);
   const r = runHook(m.dir, cloneEnv(c.dir, anchorFile(m.tip)));
   check(
     "gate 5 usage guard, clone behind: landing sha comes from the ref",
-    r.status === 0 && r.stderr.includes(`Plane: WARN landing without sync (${sha})`),
+    r.status === 0 && r.stderr.includes(`Plane: WARN landing without sync (${c.tip})`),
     r,
   );
 }

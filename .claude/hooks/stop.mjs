@@ -53,12 +53,14 @@ import {
   registrySource,
   syncStatePath,
 } from "../../scripts/lib/registry-root.mjs";
+import { scrubbedGitEnv } from "../../scripts/lib/check-git-hooks.mjs";
 
 // The register location comes from the one contract module. In clone mode the register is a
 // separate git repo: Gate 4 only reports its lag and Gate 5 reads it through CLONE_DIR.
 const CLONE_MODE = registryMode() === "clone";
 const REGISTER = registrySource().prefix;
 const CLONE_DIR = registrySource().repoDir;
+const CLONE_REF = registrySource().ref;
 
 // Invoke prettier directly via node — this repo's root has no node_modules/.bin
 // shim, so `npx prettier` fails on Windows. Fall back to npx where the shim exists.
@@ -288,15 +290,16 @@ if (CLONE_MODE && isMainCheckoutOnMaster()) {
         const r = spawnSync("git", ["-C", cwd, "rev-list", "--count", range], {
           encoding: "utf8",
           timeout: left,
+          env: scrubbedGitEnv(),
         });
         if (r.error || r.signal) timedOut = true;
         return r.status === 0 ? Number((r.stdout || "").trim()) : null;
       };
       const notes = [];
-      const behind = count(CLONE_DIR, "HEAD..origin/main");
+      const behind = count(CLONE_DIR, `HEAD..${CLONE_REF}`);
       if (behind > 0) {
         notes.push(
-          `clone is ${behind} commit(s) behind origin/main — run \`npm run registry:land\``,
+          `clone is ${behind} commit(s) behind ${CLONE_REF.replace("refs/remotes/", "")} — run \`npm run registry:land\``,
         );
       }
       let anchor = null;
@@ -478,7 +481,7 @@ try {
           "log",
           "-1",
           "--format=%H %cI",
-          ...(CLONE_MODE ? ["origin/main"] : []),
+          ...(CLONE_MODE ? [CLONE_REF] : []),
           "--",
           `${REGISTER}/status`,
         ],
