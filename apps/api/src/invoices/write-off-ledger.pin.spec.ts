@@ -69,6 +69,30 @@ describe("SA-1050 A-2: the write-off ledger has one writer and is append-only (r
     expect(deleters.sort()).toEqual(wipeSites.sort());
   });
 
+  it("the importer hooks every site that can leave an invoice WRITTEN_OFF: the create and both re-import flips", () => {
+    const importer = files.find((f) => f.rel === "src/import/import.service.ts")!;
+    // Three `status === InvoiceStatus.WRITTEN_OFF` guards, each one followed by its ensureWriteOffEvent( call.
+    const guards = importer.code.match(
+      /if \(status === InvoiceStatus\.WRITTEN_OFF\)\s*await ensureWriteOffEvent\(\{ prisma: this\.prisma \}, tx, [\w.]+\);/g,
+    );
+    expect(guards).toHaveLength(3);
+    expect((importer.code.match(/ensureWriteOffEvent\(/g) ?? []).length).toBe(3);
+  });
+
+  it("ensureWriteOffEvent is called only by the importer and the backfill module (PR-2 adds the reinstate)", () => {
+    expect(
+      matches(/\bensureWriteOffEvent\(/g)
+        .map((m) => m.rel)
+        .sort(),
+    ).toEqual(
+      [
+        "src/import/import.service.ts",
+        "src/invoices/invoice-write-off-backfill.ts",
+        "src/invoices/invoice-write-off.ts",
+      ].sort(),
+    );
+  });
+
   it("the append function's body contains roundMoney( and getTenantId(", () => {
     const text = fs.readFileSync(path.join(API_ROOT, WRITER_FILE), "utf8");
     const start = text.indexOf("export async function appendWriteOffEvent(");

@@ -539,6 +539,20 @@ const CHECKS = [
         AND (c."tenantId" IS NULL OR c."tenantId" <> p."tenantId")
         ${t.replace(/x\./g, "p.")}`,
   })),
+  // SA-1050 G-b2: the bad-debt ledger's one writer takes the tenant from the LOCKED invoice row; PR-0's CHECKs and FK
+  // admit a row whose tenantId differs from its invoice's, so this is the standing read-only count (expected 0).
+  {
+    name: "write-off-event-tenant-mismatch",
+    severity: "high",
+    explain:
+      "InvoiceWriteOffEvent.tenantId ≠ its invoice's tenantId (a bad-debt row booked in another tenant's period)",
+    sql: (t) => `
+      SELECT e.id
+      FROM "InvoiceWriteOffEvent" e
+      JOIN "Invoice" p ON p.id = e."invoiceId"
+      WHERE e."tenantId" IS DISTINCT FROM p."tenantId"
+        ${t.replace(/x\./g, "p.")}`,
+  },
 ];
 
 // ─── Runner ──────────────────────────────────────────────────────────────────

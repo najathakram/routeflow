@@ -1,22 +1,45 @@
-import { BadRequestException, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
 import { InvoiceStatus } from "@prisma/client";
-import { roundMoney } from "@routeflow/pricing";
+import { badDebtPreTax, roundMoney } from "@routeflow/pricing";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import type { WriteOffDto } from "./dto/create-invoice.dto";
 import { confirmedBalance } from "./invoice-balance-classify";
+import { auditInvoiceWrittenOff } from "./invoice-audit";
 import { lockInvoiceRow, writeOffRefusal } from "./invoice-send-guard";
 
 /** The collaborators the write-off needs, bound by the caller (InvoicesService passes its own). */
 export interface WriteOffDeps {
-  prisma: { tenantTransaction<T>(fn: (tx: any) => Promise<T>): Promise<T> };
+  prisma: {
+    tenantTransaction<T>(fn: (tx: any) => Promise<T>): Promise<T>;
+    getTenantId(): string | null;
+  };
   commissionEngine: { syncInvoiceCommissionSafe(invoiceId: string, db?: any): Promise<unknown> };
 }
 
+/** 409 for a write-off of an already WRITTEN_OFF invoice (a lost-reply replay: the web treats it as done and refetches). */
+function alreadyWrittenOff(): ConflictException {
+  return new ConflictException({
+    code: API_ERROR_CODES.INVOICE_ALREADY_WRITTEN_OFF,
+    message: "This invoice is already written off.",
+  });
+}
+
+/** The status refusal, in order: WRITTEN_OFF is the replay (409), any other non-open status is a 400. */
+function refuseStatus(status: InvoiceStatus): void {
+  if (status === InvoiceStatus.WRITTEN_OFF) throw alreadyWrittenOff();
+  const refused = writeOffRefusal(status);
+  if (refused) throw new BadRequestException(refused);
+}
+
 /**
- * The write-off inside the caller's transaction (SA-1050 PR-1 commit 1: moved VERBATIM out of InvoicesService so
- * the bad-debt rules have ONE home, and to give invoices.service.ts its ratchet headroom back). #2472 (3): (Order →)
- * Invoice locked FIRST and re-checked there — a void since the caller's pre-read wins. Sales agents & commissions:
- * materially a no-op for money (payable derives from payments, and WRITTEN_OFF releases nothing beyond cash already
- * collected) but wrapped atomically to refresh the accrual's display status alongside the write-off.
+ * The write-off inside the caller's transaction. #2472 (3): (Order →) Invoice locked FIRST and re-checked there — a
+ * void since the caller's pre-read wins. SA-1050 PR-1: the actor is threaded in, and the write-off is the first WRITER
+ * of the bad-debt ledger: the event (amount = the confirmed balance, preTax = its pre-tax share, `at` = the moment the
+ * invoice is stamped), the `writtenOffById` column and the `invoice.written_off` audit row all land in this one
+ * transaction. An invoice that owes nothing is refused (409 WRITE_OFF_NOTHING_DUE: master booked a 0), a replay is
+ * 409 INVOICE_ALREADY_WRITTEN_OFF. Sales agents & commissions: materially a no-op for money (payable derives from
+ * payments, and WRITTEN_OFF releases nothing beyond cash already collected) but wrapped atomically to refresh the
+ * accrual's display status alongside the write-off.
  */
 export async function writeOffInTx(
   deps: WriteOffDeps,
@@ -24,17 +47,27 @@ export async function writeOffInTx(
   id: string,
   orderId: string | null,
   dto: WriteOffDto,
+  actorId: string | null,
 ) {
+  const reason = dto.reason?.trim() ?? "";
+  if (reason.length === 0) throw new BadRequestException("A reason is required");
   const locked = await lockInvoiceRow(tx, id, orderId);
   if (!locked) throw new NotFoundException("Invoice not found");
-  const refused = writeOffRefusal(locked.status);
-  if (refused) throw new BadRequestException(refused);
+  refuseStatus(locked.status);
+  const due = confirmedBalance(locked.total, locked.payments);
+  if (due <= 0)
+    throw new ConflictException({
+      code: API_ERROR_CODES.WRITE_OFF_NOTHING_DUE,
+      message: "This invoice has nothing left to write off.",
+    });
+  const at = new Date();
   const written = await tx.invoice.update({
     where: { id },
     data: {
       status: InvoiceStatus.WRITTEN_OFF,
-      writeOffReason: dto.reason,
-      writtenOffAt: new Date(),
+      writeOffReason: reason,
+      writtenOffAt: at,
+      writtenOffById: actorId,
     },
     include: {
       customer: { select: { id: true, businessName: true } },
@@ -42,6 +75,14 @@ export async function writeOffInTx(
       payments: { orderBy: { createdAt: "desc" } },
     },
   });
+  const preTax = badDebtPreTax(due, locked.total, locked.taxAmount);
+  await appendWriteOffEvent(
+    deps,
+    tx,
+    { id, tenantId: locked.tenantId },
+    { kind: "WRITE_OFF", amount: due, preTax, at, byId: actorId, reason },
+  );
+  await auditInvoiceWrittenOff(tx, { invoiceId: id, actor: actorId, amount: due, preTax, reason });
   await deps.commissionEngine.syncInvoiceCommissionSafe(id, tx);
   return written;
 }
@@ -51,10 +92,12 @@ export async function writeOffInvoice(
   deps: WriteOffDeps,
   inv: { id: string; status: InvoiceStatus; orderId: string | null },
   dto: WriteOffDto,
+  actorId: string | null,
 ) {
-  const early = writeOffRefusal(inv.status);
-  if (early) throw new BadRequestException(early);
-  return deps.prisma.tenantTransaction((tx) => writeOffInTx(deps, tx, inv.id, inv.orderId, dto));
+  refuseStatus(inv.status);
+  return deps.prisma.tenantTransaction((tx) =>
+    writeOffInTx(deps, tx, inv.id, inv.orderId, dto, actorId),
+  );
 }
 
 /**
@@ -184,4 +227,51 @@ export async function appendWriteOffEvent(
       );
   }
   return event;
+}
+
+/** Why `ensureWriteOffEvent` wrote nothing (it is idempotent and never guesses). */
+export type EnsureWriteOffResult =
+  | { written: true; eventId: string }
+  | { written: false; skipped: "NOT_WRITTEN_OFF" | "HAS_EVENT" | "NOTHING_DUE" };
+
+/**
+ * SA-1050 rule 3: for a WRITTEN_OFF invoice with NO event, write the WRITE_OFF from today's live figure:
+ * `confirmedBalance` and its `badDebtPreTax`, `at = writtenOffAt` (possibly null: an undated legacy or imported
+ * write-off sits in no window, exactly like today), a null `byId`, and `reason = writeOffReason ?? "Imported as written
+ * off"`. Callers: the importer after it creates (or flips) a WRITTEN_OFF invoice, PR-2's reinstate, and the backfill
+ * (which calls this and never runs its own SQL). It locks (Order →) Invoice itself, in the caller's transaction, so a
+ * concurrent payment or void cannot move the balance between the read and the append. An invoice that owes nothing
+ * writes no row (an event is `amount > 0` by CHECK): it is reported `NOTHING_DUE`, never a zero event.
+ */
+export async function ensureWriteOffEvent(
+  deps: WriteOffAppendDeps,
+  tx: any,
+  invoiceId: string,
+): Promise<EnsureWriteOffResult> {
+  const peek = await tx.invoice.findUnique({ where: { id: invoiceId }, select: { orderId: true } });
+  if (!peek) throw new NotFoundException("Invoice not found");
+  const inv = await lockInvoiceRow(tx, invoiceId, peek.orderId);
+  if (!inv || inv.status !== InvoiceStatus.WRITTEN_OFF)
+    return { written: false, skipped: "NOT_WRITTEN_OFF" };
+  const existing = await tx.invoiceWriteOffEvent.findFirst({
+    where: { invoiceId },
+    select: { id: true },
+  });
+  if (existing) return { written: false, skipped: "HAS_EVENT" };
+  const amount = confirmedBalance(inv.total, inv.payments);
+  if (amount <= 0) return { written: false, skipped: "NOTHING_DUE" };
+  const event = await appendWriteOffEvent(
+    deps,
+    tx,
+    { id: invoiceId, tenantId: inv.tenantId },
+    {
+      kind: "WRITE_OFF",
+      amount,
+      preTax: badDebtPreTax(amount, inv.total, inv.taxAmount),
+      at: inv.writtenOffAt ?? null,
+      byId: null,
+      reason: inv.writeOffReason?.trim() || "Imported as written off",
+    },
+  );
+  return { written: true, eventId: event.id };
 }
