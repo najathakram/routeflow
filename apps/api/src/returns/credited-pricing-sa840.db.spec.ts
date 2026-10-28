@@ -10,6 +10,7 @@
  *   R-F1c  both pairs as EXTERNAL_REFUND: the recorded amounts sum to the one-shot.
  *   G-F1d  ONE invoice: the mint stays itemised (credit note items on the invoice's lines), and the detail estimate equals the mint
  *          when an earlier credit note exists.
+ *   G-F1f  a RESOLVED return (MULTI credit note, MULTI external refund, SINGLE credit note): findOne's estimate equals refundAmount.
  *   G-F1e  REG-B53's latest-invoice room still refuses a MULTI pooled 500 (the latest invoice has 99.00 of room).
  *
  * Each case logs its OBSERVED figures (`SA840 OBSERVED {...}`) so a run at the pre-fix base reports today's values.
@@ -135,6 +136,37 @@ describeDb(
       log({ case: "G-F1d2", findOneEstimate: estimate, minted });
       expect(estimate).toBe(minted);
     });
+
+    // A RESOLVED return's detail estimate is priced against every OTHER credit (`own` leaves its own refund out), so it equals the
+    // recorded refundAmount to the cent. A guard at the base (the read priced uncredited then); load-bearing against dropping `own`:
+    // the return's own lump would then count as already carried and the estimate would price the NEXT slice of the lines.
+    it.each([
+      ["MULTI CREDIT_NOTE", 2, "CREDIT_NOTE"],
+      ["MULTI EXTERNAL_REFUND", 2, "EXTERNAL_REFUND"],
+      ["SINGLE CREDIT_NOTE", 1, "CREDIT_NOTE"],
+    ] as const)(
+      "G-F1f: %s — findOne's estimate for the resolved return equals its refundAmount",
+      async (label, invoices, method) => {
+        const s = await h.seed(`gf1f-${label.replace(/\W+/g, "-").toLowerCase()}`, {
+          older: "B",
+          smallerId: "B",
+          invoices,
+        });
+        const ret = await h.pooled(s, 100);
+        const minted = amountOf(await h.refund(s, ret.id, method));
+        const row = await h.returnRow(ret.id);
+        const estimate = (await h.estimateOf(s, ret.id)).refundEstimate;
+        log({
+          case: "G-F1f",
+          label,
+          minted,
+          refundAmount: Number(row.refundAmount),
+          findOneEstimate: estimate,
+        });
+        expect(Number(row.refundAmount)).toBe(minted);
+        expect(estimate).toBe(Number(row.refundAmount));
+      },
+    );
 
     it("G-F1e: REG-B53 — the latest invoice's room (99.00) still refuses a MULTI pooled 500", async () => {
       const s = await h.seed("gf1e", { older: "B", smallerId: "B" });

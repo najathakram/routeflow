@@ -1960,7 +1960,9 @@ export class ReturnsService {
       refundEstimate = null;
       refusal = "INLINE";
     } else {
-      // SA-840 A-2: detail = mint = recorded refund: it reads the credits the same way, leaving this return's own refund out
+      // SA-840 A-2: detail = mint = recorded refund: it reads the credits the same way, leaving this return's own refund out.
+      // For a RESOLVED return the estimate is therefore priced against every OTHER credit, so its money is `refundAmount` (the
+      // snapshot taken at the refund); a later refund on the same lines moves this estimate, never the recorded amount.
       const { credited } = await this.creditsForPricing(ret.order, this.prisma.forTenant(), {
         returnId: ret.id,
         creditNoteId: ret.creditNoteId,

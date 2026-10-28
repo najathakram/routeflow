@@ -28,6 +28,9 @@ import { requireLocalDatabaseUrl } from "../common/testing/db-spec";
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
 
 export type Side = "A" | "B";
+export type RefundResult =
+  | { amount: number }
+  | { refused: { status: number | undefined; code: string | undefined; message: string } };
 export interface MultiOpts {
   /** the invoice created EARLIER (its line is first in the pricer's fill order) */
   older: Side;
@@ -260,7 +263,7 @@ export async function buildHarness(tag: string) {
     s: Seed,
     returnId: string,
     method: "CREDIT_NOTE" | "EXTERNAL_REFUND" = "CREDIT_NOTE",
-  ) {
+  ): Promise<RefundResult> {
     await prisma.return.update({ where: { id: returnId }, data: { status: "RECEIVED" } });
     try {
       await tenantCtx.run(s.tenantId, () =>

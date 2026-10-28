@@ -8,8 +8,8 @@
  *          B 50 passed the refusal and was paid: 150 pcs refunded for more than the 39.38 the lines are worth. After: 409
  *          RETURN_REFUND_OVER_LINE_HEADROOM, no second credit note, the return stays RECEIVED.
  *   G-F2b  the id order matches createdAt (B older, B has the smaller id): refused before and after.
- *   G-F2c  B on the NEWER invoice (A older, smaller id): A-2 says "B 50" is allowed; OBSERVED it is refused 400 by the latest invoice's
- *          room (2.25 left of B's 27.00 after the pooled lump landed there), before and after. See the case's comment.
+ *   G-F2c  B on the NEWER invoice (A older, smaller id): "B 50" is refused 400 by the latest invoice's room (2.25 left of B's 27.00
+ *          after the pooled lump landed there), before and after A-2 (SA-840 A-3 keeps the refusal). See the case's comment.
  *
  * Each case logs its OBSERVED figures (`SA840 OBSERVED {...}`) so a run at the pre-fix base reports today's values.
  * Run with `npm run local:test:db` (fresh `rf_dbspec_*` database).
@@ -65,17 +65,19 @@ describeDb(
       expect(row.status).toBe("RECEIVED");
     });
 
-    // OBSERVED, not A-2's prediction: with B on the NEWER invoice the pooled 100 (24.75, priced on A, the older invoice's line) is
-    // still minted as ONE lump on the LATEST invoice, B's (27.00), leaving 2.25 of room there, so "B 50" (13.50) is refused 400 by the
-    // latest-invoice room check at the base AND after A-2. A-2 words this case as "allowed"; the spec follows the code and the
-    // difference is reported to the lead (SA to rule: is the latest-invoice room gate the intended answer here?).
-    it("G-F2c (observed): B on the NEWER invoice — 'B 50' is refused 400 by the LATEST invoice's room, before and after; no second credit note", async () => {
+    // GUARD (SA-840 A-3: the refusal is KEPT). With B on the NEWER invoice the pooled 100 (24.75, priced on A, the older invoice's
+    // line) is minted as ONE lump on the LATEST invoice, B's (27.00), leaving 2.25 of room there, so "B 50" (13.50) is refused 400 by
+    // the latest-invoice room check, before and after A-2. The 400 (invoice room) versus the 409 (line headroom, R-F2) is what tells
+    // the two gates apart. Which invoice a lump is minted on is an owner question, out of #3800.
+    it("G-F2c (guard): B on the NEWER invoice — 'B 50' is refused 400 naming the LATEST invoice's remaining room 2.25, before and after; one credit note, the return stays RECEIVED", async () => {
       const { first, out, row, s } = await pooledThenLineB("gf2c", "A", "A");
       expect(first).toMatchObject({ amount: 24.75 });
       expect(out).toMatchObject({
-        refused: { status: 400, message: expect.stringMatching(/remaining room 2.25/) },
+        refused: { status: 400, message: expect.stringMatching(/remaining room 2\.25/) },
       });
+      expect(out).not.toMatchObject({ refused: { code: OVER_HEADROOM } }); // the invoice-room 400, not the line-headroom 409
       expect(row.status).toBe("RECEIVED");
+      expect(row.creditNoteId).toBeNull();
       expect(await h.creditNoteCount(s)).toBe(1);
     });
   },

@@ -81,4 +81,19 @@ describe("SA-840 A-2 pin: priceReturn reads credits it is GIVEN", () => {
   it("billedBasisFor, externalRefundBasis and findOne read the credits through the one reader", () => {
     expect(src.match(/this\.creditsForPricing\(/g)).toHaveLength(3);
   });
+
+  it("only findOne names a return to leave out (excludeReturnId): exactly 1 of the 3 reader calls has a third argument", () => {
+    const calls = [...src.matchAll(/this\.creditsForPricing\(/g)].map((m) => ({
+      at: m.index!,
+      args: argsOf(src, m.index! + m[0].length - 1),
+    }));
+    expect(calls).toHaveLength(3);
+    const withThird = calls.filter((c) => c.args.length === 3);
+    expect(withThird).toHaveLength(1);
+    expect(calls.filter((c) => c.args.length === 2)).toHaveLength(2);
+    const findOne = src.slice(src.indexOf("async findOne("));
+    expect(withThird[0].at).toBeGreaterThan(src.indexOf("async findOne("));
+    expect(findOne).toContain("this.creditsForPricing(");
+    expect(withThird[0].args[2]).toMatch(/returnId:\s*ret\.id/);
+  });
 });
