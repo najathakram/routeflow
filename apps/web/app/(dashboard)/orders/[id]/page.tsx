@@ -985,8 +985,6 @@ export default function OrderDetailPage() {
 
   return (
     <div className="space-y-5 p-6">
-      {/* r5 Q23: no in-page "← Orders" link. The dashboard top bar shows a back arrow on every sub-page, and
-          its history Back is held by leaveGuard's sentinel while Edit Items has unsaved edits. */}
       {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
