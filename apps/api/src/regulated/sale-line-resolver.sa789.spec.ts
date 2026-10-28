@@ -11,6 +11,7 @@ import { resolveSaleLines } from "./sale-line-resolver";
 const READERS = [
   "regulated-ledger.service.ts",
   "credit-reversal-room.ts",
+  "credit-reversal-census.ts",
   "regulated-report.service.ts",
   "regulated-filing.service.ts",
   "regulated.service.ts",

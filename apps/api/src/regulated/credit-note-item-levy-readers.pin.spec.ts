@@ -37,6 +37,10 @@ const FILES: Record<string, { class: LevyReaderClass; why: string }> = {
     class: "NOT_A_READER",
     why: "ReturnItem field lists for the copier contract, not a read of the stored levy",
   },
+  "apps/api/src/regulated/credit-reversal-census.ts": {
+    class: "OWNER_REPORT",
+    why: "SA-1042 A-4 G5 owner-run read-only census: sums the stored levy of old typed rows against the REVERSAL rows booked, over lines with a live SALE",
+  },
   "apps/api/scripts/report-standard-refund-tax-shortfall.mjs": {
     class: "OWNER_REPORT",
     why: "SA-840 section 5 owner-run read-only SQL: prior credits' stored levy is the slice already refunded in a pricing comparison",
@@ -44,7 +48,14 @@ const FILES: Record<string, { class: LevyReaderClass; why: string }> = {
 };
 
 const REPO = join(__dirname, "..", "..", "..", "..");
-const ROOTS = ["apps/api/src", "apps/api/scripts", "apps/web", "apps/mobile", "packages", "scripts"];
+const ROOTS = [
+  "apps/api/src",
+  "apps/api/scripts",
+  "apps/web",
+  "apps/mobile",
+  "packages",
+  "scripts",
+];
 const SKIP_DIRS = new Set([
   "node_modules",
   "dist",
