@@ -197,8 +197,8 @@ export async function prepare(task, { repo, dir } = {}) {
   } catch (e) {
     try {
       cleanup();
-    } catch {
-      // already reported; the original error matters more
+    } catch (c) {
+      e.message += `; cleanup also failed: ${c.message}`;
     }
     throw e;
   }
@@ -243,7 +243,7 @@ export function cleanupTree(tree, { repo } = {}) {
     for (const name of readdirSync(d)) {
       const f = path.join(d, name);
       if (isLink(f)) links.push(f);
-      else if (name !== ".git" && lstatSync(f).isDirectory()) walk(f);
+      else if (!(d === dir && name === ".git") && lstatSync(f).isDirectory()) walk(f);
     }
   };
   walk(dir);
@@ -512,22 +512,39 @@ function resultLabel(p) {
   return base === "results" ? path.basename(path.dirname(path.resolve(file))) : base;
 }
 
+const okNum = (v) => v == null || (Number.isFinite(v) && v >= 0);
+const goodRecord = (r) =>
+  typeof r?.taskId === "string" &&
+  /^[a-z0-9][a-z0-9._-]{0,63}$/i.test(r.taskId) &&
+  ["pass", "fail", "broken"].includes(r.result) &&
+  [r.costUsd, r.wallSec].every(okNum);
+
 /** Records of every run dir or results file, tagged with their run label; bad lines are counted, not kept. */
 export function readResults(paths) {
   const records = [];
   let malformed = 0;
+  const seen = new Map(); // label -> file: one label for two files, or two arms in one file, throw
   for (const p of paths) {
     const file = existsSync(p) && statSync(p).isDirectory() ? path.join(p, "results.jsonl") : p;
+    const label = resultLabel(p);
+    if (seen.get(label) === file) continue; // the same path twice is read once
+    if (seen.has(label))
+      throw new Error(`run label "${label}" is used by both ${seen.get(label)} and ${file}`);
+    seen.set(label, file);
+    const arms = new Set();
     for (const line of readFileSync(file, "utf8").split("\n")) {
       if (!line.trim()) continue;
       try {
         const r = JSON.parse(line);
-        if (!r || typeof r.taskId !== "string") throw new Error("shape");
-        records.push({ ...r, runId: resultLabel(p) });
+        if (!goodRecord(r)) throw new Error("shape");
+        if (r.arm) arms.add(r.arm);
+        records.push({ ...r, runId: label });
       } catch {
         malformed += 1;
       }
     }
+    if (arms.size > 1)
+      throw new Error(`${file} holds records from more than one arm (${[...arms].join(", ")})`);
   }
   return Object.assign(records, { malformed });
 }
@@ -540,9 +557,10 @@ const median = (xs) => {
 };
 
 /**
- * Per task and run: pass^k (every repeat passed) and pass@1 (share passed); broken repeats are their own count.
- * Per run: mean cost per repeat (unknown costs left out and counted) and median wall-clock. With `vs` (another
- * run's label): tasks both ran, won, lost and tied, by pass^k first and then pass@1.
+ * Per task and run: pass^k (every repeat passed) and pass@1 (share passed), over the repeats not broken (a broken
+ * one is only counted; none left: n/a). Fewer repeats than the run's k (the records' k, else its most) is
+ * incomplete: never pass^k. Per run: mean cost per repeat (unknown left out and counted), median wall-clock.
+ * With `vs`: tasks both ran, won, lost, tied by pass^k, then completeness, then pass@1.
  */
 export function report(records, { vs, includeExample = false } = {}) {
   const live = records.filter((r) => includeExample || !r.example);
@@ -554,26 +572,31 @@ export function report(records, { vs, includeExample = false } = {}) {
     groups.get(key).recs.push(r);
   }
   const rows = [...groups.values()].map(({ run, taskId, recs }) => {
-    const passes = recs.filter((r) => r.result === "pass").length;
-    const broken = recs.filter((r) => r.result === "broken").length;
+    const kept = recs.filter((r) => r.result !== "broken");
+    const passes = kept.filter((r) => r.result === "pass").length;
     return {
       run,
       taskId,
-      runs: recs.length,
+      runs: kept.length,
       passes,
-      passAt1: passes / recs.length,
-      passK: passes === recs.length,
-      broken,
+      k: Number.isInteger(recs[0].k) ? recs[0].k : 0,
+      passAt1: kept.length ? passes / kept.length : null,
+      broken: recs.length - kept.length,
     };
   });
   const names = [...new Set(live.map(label))];
+  for (const r of rows) {
+    const k = Math.max(...rows.filter((x) => x.run === r.run).flatMap((x) => [x.runs, x.k]));
+    r.complete = r.runs > 0 && r.runs >= k;
+    r.passK = r.complete && r.passes === r.runs;
+  }
   const runs = names.map((run) => {
     const mine = live.filter((r) => label(r) === run);
     const mineRows = rows.filter((r) => r.run === run);
     const costs = mine.map((r) => r.costUsd).filter((c) => c != null);
     return {
       run,
-      tasks: mineRows.length,
+      tasks: mineRows.filter((r) => r.runs).length,
       passK: mineRows.filter((r) => r.passK).length,
       broken: mineRows.reduce((a, r) => a + r.broken, 0),
       meanCost: costs.length ? costs.reduce((a, b) => a + b, 0) / costs.length : null,
@@ -583,14 +606,17 @@ export function report(records, { vs, includeExample = false } = {}) {
   });
   if (!vs) return { rows, runs };
   if (!names.includes(vs)) throw new Error(`no results for run "${vs}"`);
-  const base = new Map(rows.filter((r) => r.run === vs).map((r) => [r.taskId, r]));
+  const base = new Map(rows.filter((r) => r.run === vs && r.runs).map((r) => [r.taskId, r]));
   const against = names
     .filter((n) => n !== vs)
     .map((run) => {
       const out = { run, won: 0, lost: 0, tied: 0 };
-      for (const r of rows.filter((x) => x.run === run && base.has(x.taskId))) {
+      for (const r of rows.filter((x) => x.run === run && x.runs && base.has(x.taskId))) {
         const b = base.get(r.taskId);
-        const d = Number(r.passK) - Number(b.passK) || Math.sign(r.passAt1 - b.passAt1);
+        const d =
+          Number(r.passK) - Number(b.passK) ||
+          Number(r.complete) - Number(b.complete) ||
+          Math.sign(r.passAt1 - b.passAt1);
         out[d > 0 ? "won" : d < 0 ? "lost" : "tied"] += 1;
       }
       return out;
@@ -601,15 +627,17 @@ export function report(records, { vs, includeExample = false } = {}) {
 export function formatReport(rep, malformed = 0) {
   const usd = (n) => (n == null ? "n/a" : `$${n.toFixed(2)}`);
   const out = ["task                      run            pass^k  pass@1  repeats  broken"];
-  for (const r of rep.rows)
+  for (const r of rep.rows) {
+    const [k, p1] = r.runs ? [r.passK, r.passAt1.toFixed(2)] : ["n/a", "n/a"];
     out.push(
-      `${r.taskId.padEnd(25)} ${r.run.padEnd(14)} ${String(r.passK).padEnd(7)} ${r.passAt1.toFixed(2).padEnd(7)} ${String(r.runs).padEnd(8)} ${r.broken}`,
+      `${r.taskId.padEnd(25)} ${r.run.padEnd(14)} ${String(k).padEnd(7)} ${p1.padEnd(7)} ${String(r.runs).padEnd(8)} ${r.broken}${r.runs && !r.complete ? " (incomplete)" : ""}`,
     );
+  }
   for (const a of rep.runs) {
     out.push(
       `run ${a.run}: pass^k on ${a.passK}/${a.tasks} tasks, mean cost per repeat ${usd(a.meanCost)} (${a.unknownCost} unknown), median wall-clock ${a.medianWall ?? "n/a"}s`,
     );
-    if (a.broken) out.push(`broken ${a.run}: ${a.broken} repeats (not counted as fail)`);
+    if (a.broken) out.push(`broken ${a.run}: ${a.broken} repeats (left out of pass^k and pass@1)`);
   }
   for (const v of rep.vs?.against ?? [])
     out.push(`${v.run} vs ${rep.vs.baseline}: won ${v.won}, lost ${v.lost}, tied ${v.tied}`);
@@ -751,7 +779,8 @@ export async function main(argv) {
   if (cmd === "run") {
     if (!o.arm) return usage("run needs --arm <name>");
     let pick = o._[0] ? [byId(o._[0])].filter(Boolean) : tasks;
-    if (o.sample) pick = sampleTasks(pick, Number(o.sample), Number(o.seed ?? 1));
+    if ("sample" in o && !/^[1-9]\d*$/.test(o.sample)) return usage("--sample: a whole number");
+    if ("sample" in o) pick = sampleTasks(pick, Number(o.sample), Number(o.seed ?? 1));
     if (!pick.length) return usage("no such task");
     const extraEnv = agentEnv();
     const out = await runEval({
