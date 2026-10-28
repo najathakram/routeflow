@@ -10,6 +10,7 @@
  *   R-r18 two invoices, 35.00 left on line A (60.00 on P): 1 Case off A is a 409 naming A and 35.00, nothing minted (A-2 F1).
  *   G-r19 two invoices: all of B refunded, then all of A, is accepted (the replay is group-shaped).
  *   G-r20 create() with a line-group pooledRefund over A's room is refused, nothing written.
+ *   G-r9  a legacy single-unit item naming a line is credited the pooled price and writes no line key (A-2 F2).
  *
  * Every tenant is a throwaway `qa-b9b-<run>-<n>` slug approved by `assertTestTenant`, deleted in FK order in afterAll.
  */
@@ -383,6 +384,106 @@ describeDb(
         pooled: err?.getResponse?.()?.pooled,
         minted: await mintedAmounts(s, [seeded.id]),
       }).toEqual({ code: "CREDIT_NOTE_OVER_HEADROOM", pooled: true, minted: [] });
+    });
+
+    /** A legacy single-unit product (SA-161) on two lines at different prices: L1 10 @ 2.40 = 24.00, L2 10 @ 1.92 = 19.20. */
+    async function seedLineUnit(label: string) {
+      seq += 1;
+      const slug = assertTestTenant(`qa-b9b-${RUN}-${seq}-${label}`, "returns-by-line.db.spec.ts");
+      const tenant = await prisma.tenant.create({ data: { slug, name: `b9b ${slug}` } });
+      tenantIds.push(tenant.id);
+      const tenantId = tenant.id;
+      const user = await prisma.user.create({
+        data: { email: `${slug}@example.invalid`, username: slug, role: "CUSTOMER", tenantId },
+      });
+      const customer = await prisma.customer.create({
+        data: { userId: user.id, businessName: `c ${label}`, contactName: `c ${label}`, tenantId },
+      });
+      const product = await prisma.product.create({
+        data: {
+          tenantId,
+          name: `LU ${slug}`,
+          unit: "each",
+          pricePerUnit: 2.4,
+          unitsPerBox: 12,
+        } as any,
+      });
+      const order = await prisma.order.create({
+        data: {
+          tenantId,
+          customerId: customer.id,
+          orderNumber: `ORD-B9B-${RUN}-${seq}`,
+          subtotal: 43.2,
+          tax: 0,
+          total: 43.2,
+          status: "DELIVERED",
+        } as any,
+      });
+      const mkLine = (position: number, unitPrice: number, subtotal: number) =>
+        prisma.orderItem.create({
+          data: {
+            tenantId,
+            orderId: order.id,
+            productId: product.id,
+            name: product.name,
+            position,
+            qty: 10,
+            unitPrice,
+            subtotal,
+            unitsPerBox: 12, // a pack snapshot with no boxes/pieces split: the box-unaware legacy shape
+          } as any,
+        });
+      const line1 = await mkLine(0, 2.4, 24);
+      const line2 = await mkLine(1, 1.92, 19.2);
+      const invoice = await prisma.invoice.create({
+        data: {
+          tenantId,
+          customerId: customer.id,
+          orderId: order.id,
+          invoiceNumber: `INV-B9B-${RUN}-${seq}`,
+          status: "SENT",
+          subtotal: 43.2,
+          taxAmount: 0,
+          total: 43.2,
+        },
+      });
+      for (const [line, unitPrice, subtotal] of [
+        [line1, 2.4, 24],
+        [line2, 1.92, 19.2],
+      ] as const)
+        await prisma.invoiceItem.create({
+          data: {
+            tenantId,
+            invoiceId: invoice.id,
+            orderItemId: line.id,
+            productId: product.id,
+            description: "LU",
+            qty: 10,
+            unitPrice,
+            subtotal,
+          } as any,
+        });
+      return { tenantId, userId: user.id, orderId: order.id, productId: product.id, line1 };
+    }
+
+    it("G-r9: a legacy single-unit item naming the dearer line is credited the pooled 21.60 and writes no line key", async () => {
+      const named = await seedLineUnit("gr9-named");
+      const retNamed: any = await create(named as any, [
+        { productId: named.productId, orderItemId: named.line1.id, qty: 10 },
+      ]);
+      const stored = await prisma.returnItem.findFirstOrThrow({ where: { returnId: retNamed.id } });
+      const namedErr = await refundOutcome(named, retNamed.id);
+      const namedCredit = await mintedAmounts(named, []);
+      const pooled = await seedLineUnit("gr9-pooled");
+      const retPooled: any = await create(pooled as any, [
+        { productId: pooled.productId, qty: 10 },
+      ]);
+      const pooledErr = await refundOutcome(pooled, retPooled.id);
+      expect({
+        errors: [namedErr, pooledErr].map((e) => e?.message ?? null),
+        key: stored.sourceOrderItemId,
+        credits: [namedCredit, await mintedAmounts(pooled, [])],
+      }).toEqual({ errors: [null, null], key: null, credits: [[21.6], [21.6]] });
     });
   },
 );

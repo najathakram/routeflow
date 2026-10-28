@@ -47,3 +47,12 @@ describe("the wire's `line` (rule 8)", () => {
     ).toEqual(["Case", null]);
   });
 });
+
+describe("the line key is the resolver's (A-2 F2)", () => {
+  const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  it("a stored return row's sourceOrderItemId is never read from the DTO's orderItemId", () => {
+    expect(code).not.toMatch(/sourceOrderItemId:\s*i\.orderItemId/);
+    expect([...code.matchAll(/sourceOrderItemId: i\.sourceOrderItemId/g)]).toHaveLength(1);
+    expect(code).toMatch(/sourceOrderItemId: r\.orderItemId/);
+  });
+});

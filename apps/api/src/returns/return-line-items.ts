@@ -23,7 +23,12 @@ export interface LineItemInput {
 export interface ResolvedLineItem {
   /** Position in the payload's `items`. */
   index: number;
-  orderItemId: string;
+  /**
+   * The order line this item is credited on, or null for a legacy single-unit item (SA-161). SA-1042 A-2: that item still
+   * validates the line it names (a 400 on a wrong one) but is POOLED: the column keeps one meaning, so every reader (price,
+   * cap, replay, billing check, display) pools it. The row's `sourceOrderItemId` comes from here, never from the DTO.
+   */
+  orderItemId: string | null;
   productId: string;
   /** The count in pieces, or null for a legacy single-unit line (SA-161), which has no pack and caps in its own unit. */
   pieces: number | null;
@@ -73,12 +78,13 @@ export function resolveLineItems(
     if (item.qty != null && hasSplit)
       throw countShape("Count a line with qty, or with boxes and pieces, not both.");
     if (cap.mode === "lineUnit") {
-      // SA-161: a legacy single-unit product has no pack; it caps in the line's own unit, the line key is provenance only.
+      // SA-161: a legacy single-unit product has no pack; it caps (and is priced) in the line's own unit, pooled over the
+      // product, so it records no line key (A-2). The named line was validated above.
       if (hasSplit || !(Number(item.qty) > 0))
         throw countShape("This line is counted in its own unit: send qty.");
       out.push({
         index,
-        orderItemId: item.orderItemId as string,
+        orderItemId: null,
         productId: item.productId,
         pieces: null,
         qty: Number(item.qty),
@@ -146,7 +152,7 @@ export function assertLineCaps(
 ): void {
   const used = new Map<string, number>();
   for (const r of resolved) {
-    if (r.lineUnit || r.pieces == null) continue;
+    if (r.lineUnit || r.pieces == null || r.orderItemId == null) continue;
     const cap = capBasis(packBases, r.productId);
     const factor = cap.mode === "pieces" ? cap.factor : 1;
     const line = (order.lineItems ?? []).find((l) => l.id === r.orderItemId) ?? r.line;

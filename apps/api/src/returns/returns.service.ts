@@ -367,21 +367,25 @@ export class ReturnsService {
       // SA-1042 B9b: an item may name its order line. Resolve the line and the count (the stored qty is in the line's own
       // unit, so the pool cap below runs unchanged), then cap each line on its own pieces. Pooled items pass through.
       const lineItems = resolveLineItems(order as any, dto.items, packBases);
-      const lineQty = new Map(lineItems.map((r) => [r.index, r.qty]));
+      const resolvedAt = new Map(lineItems.map((r) => [r.index, r]));
       if (lineItems.length)
         assertLineCaps(
           lineItems,
           order as any,
           await returnedPiecesByLine(
             tx,
-            [...new Set(lineItems.map((r) => r.orderItemId))],
+            [...new Set(lineItems.flatMap((r) => (r.orderItemId ? [r.orderItemId] : [])))],
             packBases,
           ),
           packBases,
         );
-      const items: any[] = dto.items.map((it: any, i: number) =>
-        lineQty.has(i) ? { ...it, qty: lineQty.get(i) } : it,
-      );
+      // SA-1042 A-2: the row's line key is the resolver's, never the DTO's (a legacy single-unit item is pooled: null).
+      const items: any[] = dto.items.map((it: any, i: number) => {
+        const r = resolvedAt.get(i);
+        return r
+          ? { ...it, qty: r.qty, sourceOrderItemId: r.orderItemId }
+          : { ...it, sourceOrderItemId: null };
+      });
 
       // Validate return qty does not exceed ordered qty per item (cumulative)
       for (const item of items) {
@@ -463,7 +467,7 @@ export class ReturnsService {
             create: items.map((i: any) => ({
               productId: i.productId,
               qty: i.qty,
-              sourceOrderItemId: i.orderItemId || undefined, // SA-1042: a line item records its line
+              sourceOrderItemId: i.sourceOrderItemId ?? undefined, // SA-1042: a line item records its line (the resolver's)
               reason: i.reason,
               condition: i.condition ?? undefined,
               notes: i.notes ?? undefined,
