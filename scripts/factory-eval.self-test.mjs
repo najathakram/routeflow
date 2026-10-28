@@ -377,6 +377,17 @@ try {
     },
   );
   await check(
+    "a real k=3 run with one broken repeat per task is incomplete, never pass^k",
+    [3, false, false],
+    async () => {
+      let n = 0;
+      const gradeFn = () => ({ result: ++n % 3 === 0 ? "broken" : "pass" });
+      const out = await go({ k: 3, extraEnv: env, gradeFn });
+      const row = FE.report(out.records).rows[0];
+      return [out.records[0].k, row.complete, row.passK];
+    },
+  );
+  await check(
     "a dollar-cap overrun is flagged; a wall-clock overrun is broken",
     [true, "broken"],
     async () => {
@@ -580,6 +591,11 @@ try {
       const v = R().vs.against[0];
       return [v.won, v.lost, v.tied];
     },
+  );
+  await check(
+    "a run dir and its results.jsonl are one input, read once",
+    8,
+    () => FE.readResults([path.dirname(fb), fb]).length,
   );
   await check("E7 pass^k per task", [true, true, false, true], () =>
     R()
