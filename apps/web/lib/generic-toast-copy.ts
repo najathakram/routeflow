@@ -40,6 +40,10 @@ import { paymentKeyRefusalCopy } from "@routeflow/types/payment-submit-key";
  * (see mutation-error-toast.ts).
  */
 
+/** SA-1032: promotions turned off for the business in the back office (page notice + refusal toast). */
+export const PROMOTIONS_OFF_COPY =
+  "Promotions are turned off for this business. Customers don't see them, and new orders don't use them. Past orders keep their promotion prices.";
+
 /** Daily-work refusals, by `body.code`. The sentences name the cause and the next step. */
 const CODE_COPY: Record<string, string> = {
   // Row 509: selling-restriction rule targets and edits (fixed copy; the guided cases are rendered in place).
@@ -47,6 +51,7 @@ const CODE_COPY: Record<string, string> = {
   // a buyer write toward a paused seller: the seller-unavailable sentence, never "You don't have permission"
   [API_ERROR_CODES.SELLER_UNAVAILABLE]: sellerUnavailableCopy(null),
   [API_ERROR_CODES.RETURN_REFUND_OVER_LINE_HEADROOM]: RETURN_REFUND_OVER_LINE_HEADROOM_COPY,
+  [API_ERROR_CODES.PROMOTIONS_OFF]: PROMOTIONS_OFF_COPY,
   // Row 510: a staff sale of a restricted product. The warning dialog owns the flow (HANDLED_CODES); these are the
   // fixed sentences for a surface with no dialog, never the server's text.
   [API_ERROR_CODES.RESTRICTION_WARNING]:

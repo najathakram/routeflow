@@ -74,7 +74,8 @@ import { useCounterLanding, useOpenCounterPref } from "@/lib/use-counter-device-
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { useI18n, LOCALES, LOCALE_LABELS } from "@/lib/i18n";
 import { useDriveMode } from "@/lib/drive-mode";
-import { matchPlanGatedRoute, planFlagVisible } from "@/lib/plan-gated-nav";
+import { matchPlanGatedRoute, modeGatedVisible, planFlagVisible } from "@/lib/plan-gated-nav";
+import { useTenantFeatures } from "@/lib/tenant-features";
 import { SkipToContentLink } from "@/components/SkipToContentLink";
 import { useNoShellScroll } from "@/lib/use-no-shell-scroll";
 import { RouteGuard } from "./_components/gates/RouteGuard";
@@ -157,8 +158,11 @@ function getNavForRole(
 function filterPlanGatedNav(
   entries: NavEntry[],
   planState: { flags: readonly string[] | undefined; resolved: boolean; failed: boolean },
+  modes?: Readonly<Record<string, string>>,
 ): NavEntry[] {
   const isVisible = (href: string): boolean => {
+    // SA-1032: a back-office config mode (e.g. promotions off) hides its page's entry.
+    if (!modeGatedVisible(href, modes)) return false;
     const key = matchPlanGatedRoute(href);
     if (!key) return true;
     return planFlagVisible({
@@ -1029,6 +1033,9 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
   // isSuccess/isError captured alongside `data` (do not add a second useSubscription call).
   // Per-viewer convenience memory (the strip-shown hint, the paid notice) is scoped to the workspace.
   const billingScope = user?.tenantSlug ?? user?.id ?? null;
+  // SA-1032: back-office config modes (promotions off hides its entry); unloaded ⇒ shown.
+  const { data: tenantFeatures } = useTenantFeatures();
+  const tenantModes = tenantFeatures?.modes;
   const {
     data: subscriptionStatus,
     dataUpdatedAt: subscriptionReadAt,
@@ -1146,11 +1153,15 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
     // Lite-L2 (WP8/R4.3): hide gated leaves before the Analytics-relative inject index
     // is computed, so Regulated Items/Sales Agents still land in the right spot even
     // when Analytics itself is hidden (analytics is also in PLAN_GATED_NAV).
-    base = filterPlanGatedNav(base, {
-      flags: subscriptionStatus?.flags,
-      resolved: subscriptionResolved,
-      failed: subscriptionFailed,
-    });
+    base = filterPlanGatedNav(
+      base,
+      {
+        flags: subscriptionStatus?.flags,
+        resolved: subscriptionResolved,
+        failed: subscriptionFailed,
+      },
+      tenantModes,
+    );
 
     if (inject.length === 0) return base;
 
@@ -1171,6 +1182,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
     subscriptionResolved,
     subscriptionFailed,
     counterEnabled,
+    tenantModes,
   ]);
   const [collapsed, setCollapsed] = React.useState(() => {
     if (typeof window !== "undefined") {

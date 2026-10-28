@@ -3,6 +3,8 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { useGuardedRouter } from "@/lib/use-guarded-router";
+import { modeGatedVisible } from "@/lib/plan-gated-nav";
+import { useTenantFeatures } from "@/lib/tenant-features";
 import { createPortal } from "react-dom";
 import {
   Search,
@@ -88,9 +90,11 @@ function useStaticCommands(router: ReturnType<typeof useRouter>): CommandItem[] 
   const { user } = useAuth();
   const { enabled: routesAccess } = useRoutesAccess();
   const { enabled: deliveryAccess } = useDeliveryAccess();
-  const { showButton: counterEnabled } = useCounterSaleGate({
-    enabled: user?.role !== "CUSTOMER" && user?.role !== "DRIVER",
-  });
+  const staffRole = user?.role !== "CUSTOMER" && user?.role !== "DRIVER";
+  const { showButton: counterEnabled } = useCounterSaleGate({ enabled: staffRole });
+  // SA-1032: promotions off (back office) drops the Promotions command; unloaded ⇒ shown.
+  const { data: tenantFeatures } = useTenantFeatures({ enabled: staffRole });
+  const modes = tenantFeatures?.modes;
   return React.useMemo(
     () =>
       [
@@ -309,9 +313,10 @@ function useStaticCommands(router: ReturnType<typeof useRouter>): CommandItem[] 
         if (ROUTES_COMMAND_IDS.includes(c.id)) return routesAccess;
         if (DELIVERY_COMMAND_IDS.includes(c.id)) return deliveryAccess;
         if (COUNTER_COMMAND_IDS.includes(c.id)) return counterEnabled;
+        if (c.id === "nav-promotions") return modeGatedVisible("/promotions", modes);
         return true;
       }),
-    [router, routesAccess, deliveryAccess, counterEnabled],
+    [router, routesAccess, deliveryAccess, counterEnabled, modes],
   );
 }
 
