@@ -213,6 +213,19 @@ jobs:
           # noise, not a correctness risk — left as-is, just documented).
           cache: npm
 
+      # DARK (R4): report-only. Warns when the PR weakens a test (scripts/test-tamper-check.mjs);
+      # never fails the job. Refs come through env, not inline expressions. The checkout is shallow, so
+      # deepen the PR's base and merge ref first: merge-base needs the history.
+      - name: test-tamper (dark)
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          git fetch --no-tags --depth=200 origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}" "refs/pull/${PR_NUMBER}/merge"
+          node scripts/test-tamper-check.mjs --base "origin/${BASE_REF}"
+
       # ── PRE-INSTALL lockfile gate ────────────────────────────────────────────
       # This runs before `npm ci` and that placement is load-bearing, not tidiness.
       #
