@@ -105,7 +105,7 @@ describe("withCheckoutPolicy x BILLING_CHECKOUT_PAYMENT_METHODS (R1)", () => {
   it("env card_and_bank: the session carries card + us_bank_account, every other param untouched", () => {
     process.env[CHECKOUT_PAYMENT_METHODS_ENV] = "card_and_bank";
     const out = withCheckoutPolicy(BASE);
-    expect(out.payment_method_types).toEqual(["card", "us_bank_account"]);
+    expect(out).toHaveProperty("payment_method_types", ["card", "us_bank_account"]);
     expect(out).toEqual({
       ...BASE,
       payment_method_types: ["card", "us_bank_account"],
