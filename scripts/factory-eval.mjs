@@ -519,7 +519,8 @@ const goodRecord = (r) =>
   /^[a-z0-9][a-z0-9._-]{0,63}$/i.test(r.taskId) &&
   ["pass", "fail", "broken"].includes(r.result) &&
   [r.costUsd, r.wallSec].every(okNum) &&
-  (r.k === undefined || (Number.isInteger(r.k) && r.k >= 1 && r.k <= 1000));
+  (r.k === undefined || (Number.isInteger(r.k) && r.k >= 1 && r.k <= 1000)) &&
+  (r.run === undefined || (Number.isInteger(r.run) && r.run >= 0 && r.run <= 1000));
 
 /** Records of every run dir or results file, tagged with their run label; bad lines are counted, not kept. */
 export function readResults(paths) {
@@ -559,9 +560,9 @@ const median = (xs) => {
 };
 
 /**
- * Per task and run: pass^k (every repeat passed) and pass@1 (share passed), over the repeats not broken (a broken
- * one is only counted; none left: n/a). Fewer repeats than the run's k (the records' k, else its most) is
- * incomplete: never pass^k. Per run: mean cost per repeat (unknown left out and counted), median wall-clock.
+ * Per task and run: pass^k (every repeat passed, none broken) and pass@1 (share passed), over the repeats not
+ * broken (a broken one is counted and blocks pass^k; none left: n/a). Fewer repeats, broken ones included, than
+ * the task's k (its records' k, else the run's most) is incomplete: never pass^k. Per run: mean cost per repeat (unknown left out and counted), median wall-clock.
  * With `vs`: tasks both ran, won, lost, tied by pass^k, then completeness, then pass@1.
  */
 export function report(records, { vs, includeExample = false } = {}) {
@@ -581,17 +582,19 @@ export function report(records, { vs, includeExample = false } = {}) {
       taskId,
       runs: kept.length,
       passes,
-      // k as run, else the most repeats seen (broken ones included): a short task is never complete
-      k: Math.max(0, recs.length, ...recs.map((r) => r.k ?? 0), ...recs.map((r) => r.run ?? 0)),
+      // the task's own recorded k (0: none); seen = most repeats or run number seen, broken ones included
+      recK: Math.max(0, ...recs.map((r) => r.k ?? 0)),
+      seen: Math.max(0, recs.length, ...recs.map((r) => r.run ?? 0)),
       passAt1: kept.length ? passes / kept.length : null,
       broken: recs.length - kept.length,
     };
   });
   const names = [...new Set(live.map(label))];
   for (const r of rows) {
-    const k = Math.max(...rows.filter((x) => x.run === r.run).flatMap((x) => [x.runs, x.k]));
-    r.complete = r.runs > 0 && r.runs >= k;
-    r.passK = r.complete && r.passes === r.runs;
+    const wide = Math.max(...rows.filter((x) => x.run === r.run).flatMap((x) => [x.seen, x.recK]));
+    r.k = r.recK || wide;
+    r.complete = r.runs > 0 && r.runs + r.broken >= r.k;
+    r.passK = r.complete && r.broken === 0 && r.passes === r.runs;
   }
   const runs = names.map((run) => {
     const mine = live.filter((r) => label(r) === run);
@@ -640,7 +643,8 @@ export function formatReport(rep, malformed = 0) {
     out.push(
       `run ${a.run}: pass^k on ${a.passK}/${a.tasks} tasks, mean cost per repeat ${usd(a.meanCost)} (${a.unknownCost} unknown), median wall-clock ${a.medianWall ?? "n/a"}s`,
     );
-    if (a.broken) out.push(`broken ${a.run}: ${a.broken} repeats (left out of pass^k and pass@1)`);
+    if (a.broken)
+      out.push(`broken ${a.run}: ${a.broken} repeats (block pass^k, left out of pass@1)`);
   }
   for (const v of rep.vs?.against ?? [])
     out.push(`${v.run} vs ${rep.vs.baseline}: won ${v.won}, lost ${v.lost}, tied ${v.tied}`);
