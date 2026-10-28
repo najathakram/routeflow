@@ -1720,11 +1720,16 @@ check(
     "FP1b (a) fast + pins plans ONE api-cwd jest call: every pin file and the -script pattern",
     [
       pinCall?.cwd,
-      pinCall?.argv.slice(0, 3),
+      pinCall?.argv.slice(0, 4),
       REPO_WIDE_PINS.every((p) => pinCall?.argv.includes(p.file.replace(/^apps\/api\//, ""))),
       pinCall?.argv.includes(SCRIPT_SPEC_PATTERN),
     ],
-    ["apps/api", ["jest", "--testPathIgnorePatterns=/node_modules/", "--"], true, true],
+    [
+      "apps/api",
+      ["jest", "--testPathIgnorePatterns=/node_modules/", "--runInBand", "--"],
+      true,
+      true,
+    ],
   );
   check(
     "FP1c (a) the pin call is last; the rest is exactly the fast plan without pins",
@@ -1750,10 +1755,10 @@ check(
   );
   const vt = readFileSync(join(ROOT, "scripts", "verify-turbo.mjs"), "utf8");
   check(
-    "FP2b (b) main() prints the stamp only for a fast run, after the heavy-slot hold",
+    "FP2b (b) main() ends the run through finishRun, after the heavy-slot hold",
     [
-      /fastStampLine\(runMode\.fast\)/.test(vt),
-      vt.indexOf("fastStampLine(runMode.fast)") > vt.indexOf("await withHeavySlot"),
+      /finishRun\(\{ fast: runMode\.fast/.test(vt),
+      vt.indexOf("finishRun({ fast: runMode.fast") > vt.indexOf("await withHeavySlot"),
     ],
     [true, true],
   );
@@ -1899,7 +1904,7 @@ check(
   );
   check(
     "FR7b main() delegates the tail to executePlan and finishRun",
-    (({ vt }) => [/await executePlan\(/.test(vt), /finishRun\(\{/.test(vt)])({
+    (({ vt }) => [/executePlan\(plan\.calls/.test(vt), /finishRun\(\{/.test(vt)])({
       vt: readFileSync(join(ROOT, "scripts", "verify-turbo.mjs"), "utf8"),
     }),
     [true, true],

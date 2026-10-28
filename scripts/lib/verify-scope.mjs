@@ -220,6 +220,30 @@ export const REPO_WIDE_PINS = [
     file: "apps/api/src/common/no-runtime-ddl.spec.ts",
     why: "greps apps/api/scripts and src for runtime DDL",
   },
+  {
+    file: "apps/api/src/common/scripts-unscoped-delete.spec.ts",
+    why: "walks apps/api/scripts and scripts/ for unscoped deleteMany/updateMany",
+  },
+  {
+    file: "apps/api/src/common/owner-report-db-url.spec.ts",
+    why: "walks apps/api/scripts for report scripts that read a DB url unsafely",
+  },
+  {
+    file: "apps/api/src/common/no-ui-package-import.spec.ts",
+    why: "scans apps/api/scripts (and src, prisma) for imports of the ui package",
+  },
+  {
+    file: "apps/api/src/common/wipe-order-fk-pin.spec.ts",
+    why: "reads apps/api/scripts/wipe-tenant-fresh-start.js and reset-and-seed.ts",
+  },
+  {
+    file: "apps/api/src/common/schema-folder.spec.ts",
+    why: "runs apps/api/scripts/split-prisma-schema.mjs --check against the schema folder",
+  },
+  {
+    file: "apps/api/src/common/no-single-schema-path.spec.ts",
+    why: "scans for single-file schema paths; exempts apps/api/scripts/split-prisma-schema.mjs",
+  },
 ];
 
 /** Paths whose edit can break a repo-wide pin or a `-script` spec. */
@@ -230,6 +254,8 @@ const PIN_TRIGGERS = [
   /^\.claude\/skills\/[^/]+\/scripts\//,
   /(^|\/)package\.json$/,
   /^apps\/api\/src\/common\//,
+  // The api jest rootDir is src, so --changedSince never relates a file here to the specs that walk it.
+  /^apps\/api\/scripts\//,
 ];
 
 export function repoPinsNeeded(files) {

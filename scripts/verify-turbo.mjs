@@ -251,7 +251,16 @@ function withPins(plan, pins, drop) {
   ];
   // "--" ends the array option: --testPathIgnorePatterns would otherwise swallow every file as one
   // more ignore pattern and jest would run the whole api suite.
-  const argv = ["jest", "--testPathIgnorePatterns=/node_modules/", "--", ...new Set(files)];
+  // --runInBand: these specs spawn real children and time out under parallel load (#2146, #2176), so
+  // the pin call is serialized the way jest.scripts.config.js (maxWorkers 1) runs the -script set.
+  // Every flag sits BEFORE "--": anything after it is a path pattern.
+  const argv = [
+    "jest",
+    "--testPathIgnorePatterns=/node_modules/",
+    "--runInBand",
+    "--",
+    ...new Set(files),
+  ];
   return { ...plan, calls: [...plan.calls, { pins: true, cwd: "apps/api", argv }] };
 }
 
@@ -373,19 +382,38 @@ export function chooseVerifyDefaults({ totalMemBytes, env, cpus }) {
  * spawn `npx turbo` and call `process.exit` inside the test process). Same pattern as
  * `scripts/janitor.mjs`.
  */
-/** STUB (red commit): decides whether the repo pins run and what to print. */
-export function planPins() {
-  return { pins: null, line: null };
+/**
+ * FAST only: do the repo pins run, and what does the run print about it? Fails CLOSED: a diff that
+ * cannot be computed (`files` null) runs the pins rather than skipping them. VERIFY_EXCLUDE naming
+ * api drops the pins (they are api specs), with no line. `pins: null` means "plan none".
+ */
+export function planPins({ fast, files, excluded = [] }) {
+  if (!fast || excluded.includes("@routeflow/api")) return { pins: null, line: null };
+  if (files === null) {
+    return {
+      pins: true,
+      line: "+ REPO PINS: cannot diff against origin/master, so the pin specs and the -script set run (fail closed).",
+    };
+  }
+  if (!repoPinsNeeded(files)) return { pins: null, line: null };
+  return {
+    pins: true,
+    line: `+ REPO PINS: this diff can break a repo-wide pin, so ${REPO_WIDE_PINS.length} pin specs and the -script set run too.`,
+  };
 }
 
-/** STUB (red commit): runs every planned call, returns the first non-zero status. */
-export async function executePlan() {
-  return 0;
+/** Runs every planned call in order (never short-circuits); the first non-zero status is the run's. */
+export async function executePlan(calls, runCall) {
+  const statuses = [];
+  for (const c of calls) statuses.push(await runCall(c));
+  return statuses.find((s) => s !== 0) ?? 0;
 }
 
-/** STUB (red commit): prints the closing stamp of a run and returns the status. */
-export function finishRun() {
-  return 0;
+/** The last line of a fast run is the not-proof stamp; any other run prints nothing new. */
+export function finishRun({ fast, status, log = console.log }) {
+  const stamp = fastStampLine(fast);
+  if (stamp) log(stamp);
+  return status;
 }
 
 export async function main() {
@@ -424,8 +452,9 @@ export async function main() {
 
   /** The repo-pin call: plain jest from apps/api, the same way the repo runs its specs by hand. */
   async function pinJest(c) {
-    const argv = [...c.argv, ...(JEST_MAX_WORKERS ? [`--maxWorkers=${JEST_MAX_WORKERS}`] : [])];
-    const r = await spawnAsync("npx", argv, {
+    // No --maxWorkers here: the argv is already serialized (--runInBand), and a flag appended after
+    // the "--" separator would be read as a path pattern.
+    const r = await spawnAsync("npx", c.argv, {
       cwd: join(ROOT, c.cwd),
       stdio: "inherit",
       shell: process.platform === "win32",
@@ -478,13 +507,9 @@ export async function main() {
   // --maxWorkers passthrough only ever reaches jest, never tsc/eslint. Exit = first non-zero status.
   let pins = null;
   if (runMode.fast) {
-    const diff = changedFilesSince(ROOT) ?? [];
-    if (repoPinsNeeded(diff)) {
-      pins = true;
-      console.log(
-        `+ REPO PINS: this diff can break a repo-wide pin, so ${REPO_WIDE_PINS.length} pin specs and the -script set run too.`,
-      );
-    }
+    const planned = planPins({ fast: true, files: changedFilesSince(ROOT), excluded });
+    pins = planned.pins;
+    if (planned.line) console.log(planned.line);
   }
   const plan = planTurboCalls({
     scope,
@@ -509,22 +534,17 @@ export async function main() {
   }
   // The whole turbo step is ONE heavy-slot hold (scripts/lib/heavy-slot.mjs): one verify at a time
   // per host, FIFO, fail closed when the wait cap passes. Calls run strictly in order, awaited.
-  const status = await withHeavySlot({ label: "verify" }, async () => {
-    const statuses = [];
-    for (const c of plan.calls)
-      statuses.push(
-        await (c.jest
-          ? turboJest(c.args, c.changedSince ? runMode.changedSince : undefined)
-          : c.pins
-            ? pinJest(c)
-            : turbo(c.args)),
-      );
-    return statuses.find((s) => s !== 0) ?? 0;
-  });
+  const status = await withHeavySlot({ label: "verify" }, () =>
+    executePlan(plan.calls, (c) =>
+      c.jest
+        ? turboJest(c.args, c.changedSince ? runMode.changedSince : undefined)
+        : c.pins
+          ? pinJest(c)
+          : turbo(c.args),
+    ),
+  );
   // Last line of a fast run: a related-tests-only pass is not a merge-ready claim.
-  const stamp = fastStampLine(runMode.fast);
-  if (stamp) console.log(stamp);
-  process.exit(status);
+  process.exit(finishRun({ fast: runMode.fast, status }));
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
