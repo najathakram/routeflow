@@ -595,6 +595,10 @@ export function report(records, { vs, includeExample = false } = {}) {
   const rows = [...groups.values()].map(({ run, taskId, recs }) => {
     const kept = recs.filter((r) => r.result !== "broken");
     const passes = kept.filter((r) => r.result === "pass").length;
+    // distinct run numbers; a record without `run` counts once itself
+    const have =
+      new Set(recs.filter((r) => r.run != null).map((r) => r.run)).size +
+      recs.filter((r) => r.run == null).length;
     return {
       run,
       taskId,
@@ -602,7 +606,8 @@ export function report(records, { vs, includeExample = false } = {}) {
       passes,
       // the task's own recorded k (0: none); seen = most repeats or run number seen, broken ones included
       recK: Math.max(0, ...recs.map((r) => r.k ?? 0)),
-      seen: Math.max(0, recs.length, ...recs.map((r) => r.run ?? 0)),
+      have,
+      seen: Math.max(0, have, ...recs.map((r) => r.run ?? 0)),
       passAt1: kept.length ? passes / kept.length : null,
       broken: recs.length - kept.length,
     };
@@ -611,7 +616,7 @@ export function report(records, { vs, includeExample = false } = {}) {
   for (const r of rows) {
     const wide = Math.max(...rows.filter((x) => x.run === r.run).flatMap((x) => [x.seen, x.recK]));
     r.k = r.recK ? Math.max(r.recK, r.seen) : wide;
-    r.complete = r.runs > 0 && r.runs + r.broken >= r.k;
+    r.complete = r.runs > 0 && r.have >= r.k;
     r.passK = r.complete && r.broken === 0 && r.passes === r.runs;
   }
   const runs = names.map((run) => {
