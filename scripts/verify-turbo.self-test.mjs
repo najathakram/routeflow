@@ -2000,6 +2000,52 @@ check(
     ])({ real: loadScriptSpecs(ROOT) }),
     [true, true, true],
   );
+  // R3C-h: TypeScript imports drop the extension, so the basename alone never matches them
+  const T = (f, text) => ({ file: `src/common/${f}`, text });
+  const tsSpecs = [
+    T("skip-verify-audit-script.spec.ts", "audits"),
+    T("overdue-sweep-script.spec.ts", 'import { toDay } from "./calendar-date";'),
+    T("tz-census-script.spec.ts", "import { zone } from '../tenant-time-zone';"),
+    T("quiet-script.spec.ts", 'import { x } from "./calendar-dated";'),
+    ...Array.from({ length: 12 }, (_, i) => T(`idx${i}-script.spec.ts`, 'from "./index"')),
+  ];
+  const tsPlan = (files) => planPins({ fast: true, files, excluded: [], specs: tsSpecs });
+  check(
+    "R3C-h an extensionless import ('./calendar-date') selects the spec; a longer name does not",
+    [
+      tsPlan(["apps/api/src/common/calendar-date.ts"]).scriptSpecs,
+      tsPlan(["apps/api/src/common/tenant-time-zone.ts"]).scriptSpecs,
+    ],
+    [
+      ["src/common/skip-verify-audit-script.spec.ts", "src/common/overdue-sweep-script.spec.ts"],
+      ["src/common/skip-verify-audit-script.spec.ts", "src/common/tz-census-script.spec.ts"],
+    ],
+  );
+  check(
+    "R3C-i a generic basename such as index.ts does not select every spec",
+    tsPlan(["apps/api/src/common/index.ts"]).scriptSpecs.length < 10,
+    true,
+  );
+  // R3C-j: a changed -script spec selects itself wherever it lives
+  const outSpec = { file: "src/orders/outside-script.spec.ts", text: "nothing" };
+  const outPlan = planPins({
+    fast: true,
+    files: ["apps/api/src/orders/outside-script.spec.ts"],
+    excluded: [],
+    specs: [...tsSpecs, outSpec],
+  });
+  check(
+    "R3C-j a changed -script spec outside src/common selects itself and runs the pins",
+    [outPlan.pins, outPlan.scriptSpecs?.includes("src/orders/outside-script.spec.ts")],
+    [true, true],
+  );
+  // R3C-k: no specs on disk must not read as "0 of 0"
+  const none = planPins({ fast: true, files: ["scripts/pr-size.mjs"], excluded: [], specs: [] });
+  check(
+    "R3C-k an empty spec list fails closed to all, with a reason",
+    [none.scriptSpecs, /no -script specs/.test(none.scriptLine ?? "")],
+    ["all", true],
+  );
   // (e) FR2 covers every pin that walks apps/api/scripts
   const walkers = REPO_WIDE_PINS.filter((p) => /apps\/api\/scripts/.test(p.why)).map((p) =>
     p.file.replace(/^apps\/api\/src\/common\//, ""),
