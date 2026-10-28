@@ -98,6 +98,12 @@ export const API_ERROR_CODES = {
   BILL_STATE_CHANGED: "BILL_STATE_CHANGED",
   BILL_VOID: "BILL_VOID",
   RETURN_NOTHING_BILLED: "RETURN_NOTHING_BILLED",
+  /** SA-1042 B9b, POST /returns 400: the item names an order line that is not on this order, is CANCELLED, or is another product. */
+  RETURN_LINE_NOT_ON_ORDER: "RETURN_LINE_NOT_ON_ORDER",
+  /** SA-1042 B9b, POST /returns 400: a line item mixes `qty` with `boxes`/`pieces`, or splits a line that is not split. */
+  RETURN_LINE_COUNT_SHAPE: "RETURN_LINE_COUNT_SHAPE",
+  /** SA-1042 B9b, POST /returns 400: one product has both line items and pooled items in one payload. */
+  RETURN_LINE_MIXED_WITH_POOLED: "RETURN_LINE_MIXED_WITH_POOLED",
   INVOICE_CHANGED_CONCURRENTLY: "INVOICE_CHANGED_CONCURRENTLY",
   LABEL_NAME_TAKEN: "LABEL_NAME_TAKEN",
   LABEL_CHANGE_IN_PROGRESS: "LABEL_CHANGE_IN_PROGRESS",
