@@ -179,7 +179,7 @@ export class CounterSaleService {
         creditPaidNow: (total) => counterCreditPaidNow(tender, total, checkToday),
         // The walk-in has no mailbox: no INVOICE_SENT message (never sendEmail for them either).
         suppressInvoiceNotify: walkIn || undefined,
-        onReplay: (existing) => {
+        onReplay: (existing, cart) => {
           // The replay lookup does not filter on counterSale (keys are client UUIDs per tenant), so a
           // key that belongs to an ordinary staff/buyer order lands here. Refuse BEFORE any write.
           if (existing.counterSale !== true) {
@@ -190,7 +190,7 @@ export class CounterSaleService {
             });
           }
           // POS-5: a price that differs from the stored sale's is a changed cart, like any other.
-          assertReplaySamePrices(existing, dto.items);
+          assertReplaySamePrices(existing, cart ?? dto.items);
           replayed = true;
         },
       },

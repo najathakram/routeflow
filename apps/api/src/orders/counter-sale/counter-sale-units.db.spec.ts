@@ -557,6 +557,74 @@ describeDb("Counter Sale sells by unit, the real chain on Postgres (SA-1040 B4a)
     });
   });
 
+  describe("SA-1047: a line that names the pack's own label (or a derived Piece) replays as the pack line it was stored as", () => {
+    const linesOfKey = async (k: string) => {
+      const f = await footprint(A, k, widget);
+      return f.orders.length ? linesOf(f.orders[0].id) : [];
+    };
+    const code = (e: unknown) =>
+      JSON.stringify((e as { getResponse?: () => unknown }).getResponse?.() ?? String(e));
+
+    it("R-c16: the counter rings {Box, qty 2} and the same key and cart returns the first sale", async () => {
+      const k = key();
+      const items = () => [{ productId: widget, unitLabel: "Box", qty: 2 }];
+      const first = await ring(A, k, { items: items(), payment: cash });
+      expect((await linesOfKey(k))[0]?.unitLabel).toBeNull(); // stored as the pack line
+      const again = await ring(A, k, { items: items(), payment: cash });
+      expect(again.orderId).toBe(first.orderId);
+      expect((await footprint(A, k, widget)).orders).toHaveLength(1);
+    });
+
+    it("R-c17: a staff create() with the pack label replays the same way", async () => {
+      const k = key();
+      const dto = () =>
+        ({
+          customerId: A.customerId,
+          items: [{ productId: widget, unitLabel: "Box", qty: 2 }],
+          idempotencyKey: k,
+        }) as never;
+      const run = () =>
+        tenantCtx.run(A.tenantId, () =>
+          orders.create(dto(), staff(A) as never, { skipAutoMerge: true }),
+        );
+      const first = (await run()) as { id?: string; orderId?: string };
+      const again = (await run()) as { id?: string; orderId?: string };
+      expect(again.id ?? again.orderId).toBe(first.id ?? first.orderId);
+      expect((await footprint(A, k, widget)).orders).toHaveLength(1);
+    });
+
+    it("R-c18: a Piece off the boxed pack rung by the counter replays too", async () => {
+      const k = key();
+      const items = () => [{ productId: widget, unitLabel: "Piece", qty: 3 }];
+      const first = await ring(A, k, { items: items(), payment: cash });
+      const again = await ring(A, k, { items: items(), payment: cash });
+      expect(again.orderId).toBe(first.orderId);
+      expect((await footprint(A, k, widget)).orders).toHaveLength(1);
+    });
+
+    it("G-c19: a Case line replayed as a Box line is still the coded 409; a Box line replayed blank is the same sale", async () => {
+      const k1 = key();
+      await ring(A, k1, {
+        items: [{ productId: widget, unitLabel: "Case", qty: 1 }],
+        payment: cash,
+      });
+      const err = await ring(A, k1, {
+        items: [{ productId: widget, unitLabel: "Box", qty: 1 }],
+        payment: cash,
+      }).catch((e: unknown) => e);
+      expect(code(err)).toContain("IDEMPOTENCY_KEY_CART_MISMATCH");
+      expect((await footprint(A, k1, widget)).orders).toHaveLength(1);
+
+      const k2 = key();
+      const first = await ring(A, k2, {
+        items: [{ productId: widget, unitLabel: "Box", qty: 2 }],
+        payment: cash,
+      });
+      const again = await ring(A, k2, { items: [{ productId: widget, qty: 2 }], payment: cash });
+      expect(again.orderId).toBe(first.orderId);
+    });
+  });
+
   describe("G-c7: a void puts the unit line's pieces back", () => {
     it("voiding 2 Cases restores 400 pieces", async () => {
       const before = await stockOf(widget);

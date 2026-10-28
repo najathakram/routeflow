@@ -20,6 +20,13 @@ export interface ReplayedOrder {
   }> | null;
 }
 
+/** SA-1047: the request lines as the replay compare saw them (a pack-resolving unit line comes back with `unitLabel` null). */
+export type ReplayedCart = ReadonlyArray<{
+  productId?: string | null;
+  unitLabel?: string | null;
+  unitPrice?: number | null;
+}> | null;
+
 /**
  * `OrdersService.create`'s third argument. Every field is INTERNAL (never a request DTO field).
  *  - `fulfillPath` (SA-655): PICKUP is not a writable DTO value (writable-fulfill-paths.ts), so a counter
@@ -60,7 +67,7 @@ export interface CreateOrderOptions {
    */
   lineAuthor?: OrderItemAuthorChannel;
   priceEditAllowed?: boolean;
-  onReplay?: (order: ReplayedOrder) => void;
+  onReplay?: (order: ReplayedOrder, cart?: ReplayedCart) => void;
   beforeWrite?: (priced: { total: number }) => void | Promise<void>;
   creditPaidNow?: (total: number) => number;
 }

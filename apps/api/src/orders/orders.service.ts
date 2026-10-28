@@ -1348,8 +1348,7 @@ export class OrdersService implements OnApplicationBootstrap {
           throw otherOrderConflict();
         }
         // R4 + BUG-A: a replay must be of the SAME cart and kind (replay-same-cart.ts).
-        await assertReplayOfCart(this.prisma.forTenant(), customerId, existing, dto);
-        options.onReplay?.(existing);
+        await assertReplayOfCart(this.prisma.forTenant(), customerId, existing, dto, options);
         const replay = await replayAfterCheck(this.prisma.forTenant(), inlineRet, existing);
         return withCreditsPendingHint(this.prisma, replay, appliedCreditNotes);
       }
@@ -1979,8 +1978,7 @@ export class OrdersService implements OnApplicationBootstrap {
               throw otherOrderConflict();
             }
             if (existing) {
-              await assertReplayOfCart(this.prisma.forTenant(), customerId, existing, dto);
-              options.onReplay?.(existing);
+              await assertReplayOfCart(this.prisma.forTenant(), customerId, existing, dto, options);
               const replay = await replayAfterCheck(this.prisma.forTenant(), inlineRet, existing);
               return withCreditsPendingHint(this.prisma, replay, appliedCreditNotes);
             }

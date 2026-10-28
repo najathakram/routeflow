@@ -1,6 +1,6 @@
 import { BadRequestException } from "@nestjs/common";
 import type { FulfillPath } from "@prisma/client";
-import type { CreateOrderOptions, ReplayedOrder } from "./order-create-options";
+import type { CreateOrderOptions, ReplayedCart, ReplayedOrder } from "./order-create-options";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import type { CreateSaleDto } from "./dto/create-sale.dto";
 import { parseOrderDate } from "./order-parsers";
@@ -21,7 +21,7 @@ export interface SaleOptions {
   counterSale?: boolean;
   suppressInvoiceNotify?: boolean;
   priceEditAllowed?: boolean;
-  onReplay?: (order: ReplayedOrder) => void;
+  onReplay?: (order: ReplayedOrder, cart?: ReplayedCart) => void;
   /** B1209: create()'s `beforeWrite` (the server total, before anything is written). */
   beforeWrite?: (priced: { total: number }) => void | Promise<void>;
   /** S1: create()'s `creditPaidNow` (the credit gate counts only what stays owed after this tender). */
@@ -87,9 +87,9 @@ export function saleCreateOptions(
     ...(sale.creditPaidNow ? { creditPaidNow: sale.creditPaidNow } : {}),
     ...(idempotencyKey
       ? {
-          onReplay: (order) => {
+          onReplay: (order, cart) => {
             markReplay();
-            sale.onReplay?.(order);
+            sale.onReplay?.(order, cart);
           },
         }
       : {}),
