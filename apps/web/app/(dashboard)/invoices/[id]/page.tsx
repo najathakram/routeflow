@@ -110,7 +110,7 @@ import { seesHandOverStamp } from "@/lib/handover-stamp";
 import { isPaidAtSale, termsAndConditionsToShow } from "@/lib/invoice-sale-terms";
 import { useTenantTimeZone } from "@/lib/tenant-timezone";
 import { OrderPreviewModal } from "../../_components/LinkedDocPreviewModal";
-import { printPdfBlob } from "@/lib/print-pdf-blob";
+import { usePrintInvoice } from "@/lib/use-print-invoice";
 import { dayClosedCopy } from "@/lib/day-closed-copy";
 import { toastDuplicatePaymentRef } from "@/lib/duplicate-payment-ref";
 import { unvoidRefusalCopy } from "@/lib/unvoid-refusal-copy";
@@ -1454,6 +1454,7 @@ export default function InvoiceDetailPage() {
   const uploadPaymentImage = useUploadPaymentImage();
   const getPaymentImageUrl = useGetPaymentImageUrl();
   const downloadPdf = useDownloadInvoicePdf();
+  const printInvoice = usePrintInvoice();
   const revertToDraft = useRevertInvoiceToDraft();
   const unvoid = useUnvoidInvoice();
   const updateShipment = useUpdateInvoiceShipment();
@@ -1728,20 +1729,7 @@ export default function InvoiceDetailPage() {
     });
   };
 
-  const handlePrint = () => {
-    downloadPdf.mutate(
-      { id: invoice.id, variant: pdfVariant },
-      {
-        onSuccess: ({ blob }) => printPdfBlob(blob),
-        onError: () =>
-          toast({
-            title: "Failed to generate PDF",
-            description: "Please try again.",
-            variant: "error",
-          }),
-      },
-    );
-  };
+  const handlePrint = () => void printInvoice.print(invoice.id, { variant: pdfVariant });
 
   const handleReminder = () => {
     // Import sentinels count as "no email" — they aren't real inboxes.
@@ -2236,7 +2224,7 @@ export default function InvoiceDetailPage() {
             variant="secondary"
             leftIcon={<Printer className="h-3.5 w-3.5" />}
             onClick={handlePrint}
-            loading={downloadPdf.isPending}
+            loading={printInvoice.printing}
           >
             Print
           </Button>

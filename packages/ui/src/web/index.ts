@@ -38,7 +38,7 @@ export type { StatCardProps } from "./StatCard";
 export { Avatar } from "./Avatar";
 export type { AvatarProps, AvatarSize } from "./Avatar";
 
-export { ToastProvider, useToast } from "./Toast";
+export { ToastProvider, useOptionalToast, useToast } from "./Toast";
 export type { ToastData, ToastVariant, ToastAction } from "./Toast";
 
 export { ScrollShadow } from "./ScrollShadow";
