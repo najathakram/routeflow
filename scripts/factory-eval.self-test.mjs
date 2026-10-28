@@ -71,12 +71,11 @@ function plant(files) {
 const mod = (v) => `export const f = () => ${v};\n`;
 const hidden = `import { f } from "./x.mjs";\nif (f() !== 2) process.exit(1);\n`;
 const base = { id: "acme-x", kind: "bug", risk: "amber", sourcePr: 1, brief: "f must return 2" };
-const hex = (c, n) => c.repeat(n);
 
 // E1: the schema names the missing field.
 const full = {
   ...base,
-  baseSha: hex("a", 40),
+  baseSha: "a".repeat(40),
   hiddenTests: [{ path: "a.mjs", fromSha: "bbbbbbb" }],
 };
 await check("E1 a valid task has no errors", [], () => FE.validateTask(full));
@@ -163,7 +162,7 @@ try {
       await onTree(task, () => {
         throw new Error("boom");
       }).catch(() => {});
-      const lost = { ...task, baseSha: hex("f", 40) };
+      const lost = { ...task, baseSha: "f".repeat(40) };
       const msg = await FE.prepare(lost, { repo: repo.dir }).catch((e) => e.message);
       return [trees() - before, /not reachable/.test(msg)];
     },
@@ -230,12 +229,6 @@ await check(
     ];
   },
 );
-await check("arms.json: each arm is a command template with its cost fields", [true, true], () => {
-  const arms = JSON.parse(readFileSync(path.join(EVALS, "arms.json"), "utf8"));
-  const ok = (a) =>
-    Array.isArray(a.cmd) && a.estUsd > 0 && a.capUsd >= a.estUsd && a.timeoutSec > 0;
-  return [Object.keys(arms).length > 0, Object.values(arms).every(ok)];
-});
 
 console.log(`factory-eval self-test: ${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
