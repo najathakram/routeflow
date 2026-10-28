@@ -18,7 +18,7 @@ import type {
 } from "@routeflow/types";
 import { usePickupComplete, usePickupInvoiceBalances } from "@/lib/api/counter-sale";
 import { useOptionalAuth } from "@/lib/auth-context";
-import { duplicatePaymentRefMessage } from "@/lib/duplicate-payment-ref";
+import { duplicatePaymentRefMessage, retryCanHelp } from "@/lib/duplicate-payment-ref";
 import { CheckNotReceivedChoice } from "../../_components/CheckNotReceivedChoice";
 import {
   paymentProblemCopy,
@@ -127,6 +127,12 @@ export function PickupCompleteDialog({
   const [errorCode, setErrorCode] = React.useState<string | undefined>();
   const [outcome, setOutcome] = React.useState<PickupCompleteResponse | null>(null);
   const lastBody = React.useRef<Body>({});
+  // SA-1026 D: "Change check number" returns to the tender with the number field focused.
+  const numberRef = React.useRef<HTMLInputElement>(null);
+  const [focusNumber, setFocusNumber] = React.useState(0);
+  React.useEffect(() => {
+    if (focusNumber > 0) numberRef.current?.focus();
+  }, [focusNumber]);
 
   React.useEffect(() => {
     if (open) {
@@ -243,6 +249,18 @@ export function PickupCompleteDialog({
   const sentPayment = lastBody.current?.payment;
   const recordAnyway = () =>
     void send({ ...lastBody.current, payment: { ...sentPayment!, recordAnyway: true } });
+  // SA-1026 D: a duplicate reference can never pass on a retry. Back to the tender (Check, the typed number kept), where the
+  // cashier fixes the number or picks "Check not received yet". The dialog keeps its key: the resend is the same hand-over.
+  const changeCheckNumber = () => {
+    if (outcome && outcome.balanceDue > 0) setOwed(outcome.balanceDue); // the tender step needs a balance to collect
+    setOutcome(null);
+    setMethod("CHECK");
+    setCheckNotReceived(false);
+    setReference(sentPayment?.reference ?? reference);
+    setError(null);
+    setErrorCode(undefined);
+    setFocusNumber((n) => n + 1);
+  };
 
   return (
     <Modal
@@ -253,7 +271,7 @@ export function PickupCompleteDialog({
       footer={
         outcome ? (
           <>
-            {unrecorded && (
+            {unrecorded && retryCanHelp(outcome) && (
               <Button
                 variant="secondary"
                 type="button"
@@ -261,6 +279,11 @@ export function PickupCompleteDialog({
                 onClick={() => void send(lastBody.current)}
               >
                 Retry
+              </Button>
+            )}
+            {duplicateMessage && (
+              <Button type="button" onClick={changeCheckNumber}>
+                Change check number
               </Button>
             )}
             {duplicateMessage && sentPayment && canRecordAnyway(role) && (
@@ -359,7 +382,9 @@ export function PickupCompleteDialog({
             )}
             {unrecorded && (
               <p className="text-xs text-navy/70">
-                The order is handed over, but the payment was not saved. Retry to record it.
+                {duplicateMessage
+                  ? "The order is handed over, but the payment was not saved."
+                  : "The order is handed over, but the payment was not saved. Retry to record it."}
               </p>
             )}
             {duplicateMessage && <p className="text-sm text-navy">{duplicateMessage}</p>}
@@ -446,6 +471,7 @@ export function PickupCompleteDialog({
                 Check number
                 <input
                   aria-label="Check number"
+                  ref={numberRef}
                   className="mt-1 w-full rounded border px-3 py-2"
                   value={reference}
                   onChange={(e) => setReference(e.target.value)}
