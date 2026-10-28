@@ -48,8 +48,6 @@ const EXEMPT: Record<string, string> = {
 
 /** ProductsService callers that pass column values: ProductsService.create is the routed writer. */
 const PRODUCTS_CALLER_EXEMPT: Record<string, string> = {
-  "catalog-copy/catalog-copy.service.ts":
-    "SA-1027: copies a source tenant's catalog into a target through ProductsService.create (variants with reparentVia import), which applies the family price; it writes no Product row itself.",
   "import/variant-resolution.service.ts":
     "createVariant/createBrandNew call ProductsService.create, which applies the family price.",
   "import/migration.service.ts":

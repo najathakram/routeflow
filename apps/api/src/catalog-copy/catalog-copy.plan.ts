@@ -1,3 +1,5 @@
+import { roundMoney } from "@routeflow/pricing";
+
 /**
  * SA-1027 rules 3, 4, 6, 7: the pure copy decisions. The service reads the source and the target into these shapes,
  * asks for a plan, and writes only what the plan says. Nothing here reads a database.
@@ -207,4 +209,119 @@ export function planCatalogCopy(source: readonly SourceProduct[], target: Target
     plan.createCount += planned.length;
   }
   return plan;
+}
+
+// ─── the write inputs (pure: they build the object a writer takes whole, and call nothing) ──────────────────────────
+//
+// SA-1027 ruling 1: the service hands each of these to the app's own writer exactly as built and names no price column
+// itself, so the price-column writer tripwires have nothing to list. Money is rounded here, once, at the boundary.
+
+/** A money value as the 2-decimal string the writers take; a null or unreadable value is 0.00. */
+export const toMoney = (v: unknown): string => roundMoney(Number(v ?? 0)).toFixed(2);
+
+/** The five price tiers, in order, of a source row (a Prisma `Product` or anything shaped like one). */
+export type Prices = [string, string, string, string, string];
+
+export function readPrices(row: {
+  pricePerUnit: unknown;
+  priceTier2: unknown;
+  priceTier3: unknown;
+  priceTier4: unknown;
+  priceTier5: unknown;
+}): Prices {
+  return [
+    toMoney(row.pricePerUnit),
+    toMoney(row.priceTier2),
+    toMoney(row.priceTier3),
+    toMoney(row.priceTier4),
+    toMoney(row.priceTier5),
+  ];
+}
+
+/** The columns `create` carries (rule 3), as the plan sees them; the service adds the not-carried ones for the dry run. */
+export interface CopySource extends SourceProduct {
+  kind: string;
+  description: string | null;
+  unit: string;
+  unitsPerBox: number | null;
+  category: string | null;
+  msrp: string | null;
+  prices: Prices;
+}
+
+/**
+ * `ProductsService.create`'s input for one product: exactly the columns rule 3 lists; a code the plan dropped is simply
+ * not sent. A variant stores its BARE label as its name (the family editor does the same).
+ */
+export function buildProductCreateInput(
+  src: CopySource,
+  planned: PlannedProduct,
+  parentTargetId: string | null,
+  msrpHeld: boolean,
+) {
+  const dropBarcode = planned.dropBarcode || planned.droppedLevels.length > 0;
+  const [p1, p2, p3, p4, p5] = src.prices;
+  return {
+    name: parentTargetId ? (src.variantName ?? src.name) : src.name,
+    ...(src.sku ? { sku: src.sku } : {}),
+    ...(src.barcode && !dropBarcode ? { barcode: src.barcode } : {}),
+    ...(src.unitSku && !planned.dropUnitSku ? { unitSku: src.unitSku } : {}),
+    unit: src.unit,
+    pricePerUnit: p1,
+    priceTier2: p2,
+    priceTier3: p3,
+    priceTier4: p4,
+    priceTier5: p5,
+    ...(src.category ? { category: src.category } : {}),
+    ...(src.description ? { description: src.description } : {}),
+    ...(src.msrp !== null && msrpHeld ? { msrp: src.msrp } : {}),
+    ...(src.unitsPerBox ? { unitsPerBox: src.unitsPerBox } : {}),
+    ...(parentTargetId
+      ? { parentProductId: parentTargetId, variantName: src.variantName ?? src.name }
+      : {}),
+    isActive: true,
+  };
+}
+
+/** `ProductFamiliesService.createFamilyContainer`'s input: the container carries the root's first-tier price only. */
+export function buildFamilyContainerInput(root: CopySource) {
+  return {
+    name: root.name,
+    category: root.category,
+    pricePerUnit: root.prices[0],
+    description: root.description,
+    actorId: null,
+  };
+}
+
+/** One rung of a source ladder, as `ProductUnitsService.create` takes it, re-parented onto the target's rung. */
+export function buildLadderLevelInput(
+  level: {
+    label: string;
+    factorToBase: unknown;
+    price: unknown;
+    priceTier2: unknown;
+    priceTier3: unknown;
+    priceTier4: unknown;
+    priceTier5: unknown;
+    perParent: unknown;
+    isDefaultSelling: boolean;
+    sortOrder: number;
+  },
+  targetParentUnitId: string | null,
+) {
+  const num = (v: unknown) => (v === null || v === undefined ? null : roundMoney(Number(v)));
+  return {
+    label: level.label,
+    factorToBase: level.factorToBase,
+    price: num(level.price),
+    priceTier2: num(level.priceTier2),
+    priceTier3: num(level.priceTier3),
+    priceTier4: num(level.priceTier4),
+    priceTier5: num(level.priceTier5),
+    parentUnitId: targetParentUnitId,
+    perParent: level.perParent,
+    isDefaultSelling: level.isDefaultSelling,
+    sortOrder: level.sortOrder,
+  };
 }

@@ -55,6 +55,37 @@ describe("SA-1027 structural pins", () => {
     const end = service.indexOf("private async copyLadder(");
     expect(start).toBeGreaterThan(-1);
     const body = service.slice(start, end);
-    for (const column of NOT_CARRIED) expect(body).not.toMatch(new RegExp(`\b${column}\b`));
+    for (const column of NOT_CARRIED) expect(body).not.toMatch(new RegExp(`\\b${column}\\b`));
+  });
+
+  /** The code with its comments removed, so a pin reads what runs and not what is explained. */
+  const code = (s: string): string =>
+    s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/[^\n]*/g, "$1");
+
+  it("C-G13 (ruling 1): the service names no price column; every write input comes whole from a plan.ts builder", () => {
+    const service = code(fs.readFileSync(path.join(DIR, "catalog-copy.service.ts"), "utf8"));
+    expect(service).not.toMatch(/\b(?:pricePerUnit|priceTier[2-5]|packAuto)\b/);
+    expect(service).not.toMatch(/\bprice\s*:/);
+    for (const builder of [
+      "buildProductCreateInput(",
+      "buildFamilyContainerInput(",
+      "buildLadderLevelInput(",
+      "readPrices(",
+    ]) {
+      expect(service).toContain(builder);
+    }
+  });
+
+  it("C-G13 (ruling 1): the plan makes no write call, and its product input names none of the columns `create` does not carry", () => {
+    const plan = code(fs.readFileSync(path.join(DIR, "catalog-copy.plan.ts"), "utf8"));
+    expect(plan).not.toMatch(
+      /\.(?:create|createMany|update|updateMany|upsert|delete|deleteMany)\(/,
+    );
+    expect(plan).not.toMatch(/\b(?:prisma|tx|db)\.|\bthis\./);
+    const start = plan.indexOf("export function buildProductCreateInput(");
+    expect(start).toBeGreaterThan(-1);
+    const next = plan.indexOf("\nexport function ", start + 10);
+    const body = plan.slice(start, next === -1 ? undefined : next);
+    for (const column of NOT_CARRIED) expect(body).not.toMatch(new RegExp(`\\b${column}\\b`));
   });
 });

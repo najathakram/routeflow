@@ -36,7 +36,6 @@ const OUTSIDE_WRITERS: readonly string[] = [
   "apps/api/scripts/seed-marketing-screenshot-products.js",
   "apps/api/scripts/seed-test-catalog.js",
   "apps/api/scripts/ux-audit-seed.js",
-  "apps/api/src/catalog-copy/catalog-copy.service.ts", // SA-1027: hands the source price columns to ProductsService.create (the app's own writer); no Prisma write of its own
   "apps/api/src/customers/customers.service.ts",
   "apps/api/src/import/import.service.ts",
   "apps/api/src/import/migration.service.ts",

@@ -1,6 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { ModuleRef } from "@nestjs/core";
-import { roundMoney } from "@routeflow/pricing";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { StorageService } from "../storage/storage.service";
@@ -17,10 +16,15 @@ import {
   CopyRefusal,
 } from "./catalog-copy.guard";
 import {
+  buildFamilyContainerInput,
+  buildLadderLevelInput,
+  buildProductCreateInput,
   planCatalogCopy,
+  readPrices,
+  toMoney,
   type CopyPlan,
+  type CopySource,
   type PlannedFamily,
-  type SourceProduct,
   type TargetCatalog,
 } from "./catalog-copy.plan";
 
@@ -32,14 +36,7 @@ const PAGE = 500;
 const UNITS_FLAG = "flag.units_v1";
 
 /** The columns `create` carries (rule 3) plus what the plan and the report need. Nothing else is read for a write. */
-interface SourceRow extends SourceProduct {
-  kind: string;
-  description: string | null;
-  unit: string;
-  unitsPerBox: number | null;
-  category: string | null;
-  msrp: string | null;
-  prices: [string, string, string, string, string];
+interface SourceRow extends CopySource {
   // the columns no app writer takes (rule 3): read only so the dry run can list what will differ
   packLabel: string | null;
   baseUnitLabel: string | null;
@@ -122,8 +119,6 @@ export interface RunOptions {
   /** Called after every family with the manifest so far (written to disk by the runner). */
   onManifest?: (manifest: Manifest) => void;
 }
-
-const dec = (v: unknown): string => roundMoney(Number(v ?? 0)).toFixed(2);
 
 @Injectable()
 export class CatalogCopyService {
@@ -316,14 +311,8 @@ export class CatalogCopyService {
           unit: p.unit,
           unitsPerBox: p.unitsPerBox,
           category: p.category,
-          msrp: p.msrp === null ? null : dec(p.msrp),
-          prices: [
-            dec(p.pricePerUnit),
-            dec(p.priceTier2),
-            dec(p.priceTier3),
-            dec(p.priceTier4),
-            dec(p.priceTier5),
-          ],
+          msrp: p.msrp === null ? null : toMoney(p.msrp),
+          prices: readPrices(p),
           packLabel: p.packLabel,
           baseUnitLabel: p.baseUnitLabel,
           orderUnitRef: p.orderUnitRef,
@@ -474,47 +463,23 @@ export class CatalogCopyService {
       const conflicts = await this.families.reserveFamilyName(tx, targetTenantId, root.name);
       if (conflicts.length > 0)
         throw new CopyRefusal(`family name is taken at the target: ${root.name}`);
-      const container = await this.families.createFamilyContainer(tx, {
-        name: root.name,
-        category: root.category,
-        pricePerUnit: root.prices[0],
-        description: root.description,
-        actorId: null,
-      });
+      const container = await this.families.createFamilyContainer(
+        tx,
+        buildFamilyContainerInput(root),
+      );
       return container.id as string;
     });
   }
 
-  /** `create`'s DTO carries exactly the columns rule 3 lists; a code the plan dropped is simply not sent. */
+  /** The input comes whole from the plan's builder (rule 3): this method only hands it to the app's own writer. */
   private async createProduct(
     src: SourceRow,
     planned: PlannedFamily["members"][number],
     parentTargetId: string | null,
     msrpHeld: boolean,
   ): Promise<string> {
-    const dropBarcode = planned.dropBarcode || planned.droppedLevels.length > 0;
     const created = await this.products.create(
-      {
-        // a variant stores its BARE label as its name (the family editor does the same)
-        name: parentTargetId ? (src.variantName ?? src.name) : src.name,
-        ...(src.sku ? { sku: src.sku } : {}),
-        ...(src.barcode && !dropBarcode ? { barcode: src.barcode } : {}),
-        ...(src.unitSku && !planned.dropUnitSku ? { unitSku: src.unitSku } : {}),
-        unit: src.unit,
-        pricePerUnit: src.prices[0],
-        priceTier2: src.prices[1],
-        priceTier3: src.prices[2],
-        priceTier4: src.prices[3],
-        priceTier5: src.prices[4],
-        ...(src.category ? { category: src.category } : {}),
-        ...(src.description ? { description: src.description } : {}),
-        ...(src.msrp !== null && msrpHeld ? { msrp: src.msrp } : {}),
-        ...(src.unitsPerBox ? { unitsPerBox: src.unitsPerBox } : {}),
-        ...(parentTargetId
-          ? { parentProductId: parentTargetId, variantName: src.variantName ?? src.name }
-          : {}),
-        isActive: true,
-      } as never,
+      buildProductCreateInput(src, planned, parentTargetId, msrpHeld) as never,
       { actorId: null, ...(parentTargetId ? { reparentVia: "import" as const } : {}) },
     );
     return (created as { id: string }).id;
@@ -535,22 +500,12 @@ export class CatalogCopyService {
     while (pending.length > 0) {
       const ready = pending.findIndex((l) => !l.parentUnitId || idMap.has(l.parentUnitId));
       const level = pending.splice(ready === -1 ? 0 : ready, 1)[0];
-      const num = (v: unknown) => (v === null || v === undefined ? null : roundMoney(Number(v)));
       const made = await this.units.create(
         targetProductId,
-        {
-          label: level.label,
-          factorToBase: level.factorToBase,
-          price: num(level.price),
-          priceTier2: num(level.priceTier2),
-          priceTier3: num(level.priceTier3),
-          priceTier4: num(level.priceTier4),
-          priceTier5: num(level.priceTier5),
-          parentUnitId: level.parentUnitId ? (idMap.get(level.parentUnitId) ?? null) : null,
-          perParent: level.perParent,
-          isDefaultSelling: level.isDefaultSelling,
-          sortOrder: level.sortOrder,
-        } as never,
+        buildLadderLevelInput(
+          level,
+          level.parentUnitId ? (idMap.get(level.parentUnitId) ?? null) : null,
+        ) as never,
         null,
       );
       idMap.set(level.id, (made as { id: string }).id);
