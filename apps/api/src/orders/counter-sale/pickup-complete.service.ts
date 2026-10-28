@@ -30,7 +30,11 @@ import {
   type CounterPaymentInput,
 } from "./counter-sale-payment";
 import { isHandOverTender, tenderFigures, type InvoiceRow } from "./pickup-tender";
-import { markOpenInvoicesToCollect, rollupToCollect, toCollectState } from "../../invoices/to-collect";
+import {
+  markOpenInvoicesToCollect,
+  rollupToCollect,
+  toCollectState,
+} from "../../invoices/to-collect";
 import { pickupTenderGroupId } from "./pickup-tender-group";
 import type { DuplicatePaymentRefExisting } from "@routeflow/types";
 import { duplicateOf, tenderRefDedupe } from "./counter-duplicate-ref";
@@ -840,12 +844,7 @@ export class PickupCompleteService {
       ),
       // SA-1026: read back from the stored rows, staff only
       toCollect: rollupToCollect(
-        invoices.map((i) =>
-          toCollectState({
-            status: i.status ?? "",
-            expectedPaymentMethod: (i as { expectedPaymentMethod?: string | null }).expectedPaymentMethod,
-          }),
-        ),
+        invoices.map((i) => toCollectState({ ...i, status: i.status ?? "" })),
       ),
       ...(alreadyPickedUp ? { alreadyPickedUp: true } : {}),
     };

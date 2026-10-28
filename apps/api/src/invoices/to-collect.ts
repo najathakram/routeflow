@@ -1,5 +1,6 @@
 import { Logger } from "@nestjs/common";
 import { InvoiceStatus, type Prisma } from "@prisma/client";
+import { confirmedBalance } from "./invoice-balance-classify";
 import { OPEN_INVOICE_STATUSES } from "./invoice-status-sets";
 
 /**
@@ -155,4 +156,26 @@ export function toCollectByCustomer(
     by.set(r.customerId, cur);
   }
   return [...by.values()].sort((a, b) => (a.customerId < b.customerId ? -1 : 1));
+}
+
+/**
+ * The customer detail's "To collect" tile (staff only): how many of the customer's invoices read To collect and the sum of
+ * their balance due. No new money math: each balance is `confirmedBalance` (the statement's own basis), summed in cents.
+ */
+export function toCollectSummary(
+  invoices: readonly {
+    status: string;
+    expectedPaymentMethod?: string | null;
+    total: unknown;
+    payments?: Parameters<typeof confirmedBalance>[1];
+  }[],
+): { count: number; balance: number } {
+  let count = 0;
+  let cents = 0;
+  for (const i of invoices) {
+    if (toCollectState(i) === "NONE") continue;
+    count += 1;
+    cents += Math.round(confirmedBalance(i.total, i.payments) * 100);
+  }
+  return { count, balance: cents / 100 };
 }

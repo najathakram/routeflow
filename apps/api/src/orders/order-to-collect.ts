@@ -9,6 +9,7 @@
  * Cost (staff read only): one indexed read of the order's invoices that carry an intent (none for most orders).
  */
 import { Logger } from "@nestjs/common";
+import type { Prisma } from "@prisma/client";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { rollupToCollect, toCollectState, type ToCollectState } from "../invoices/to-collect";
 import { seesInvoicesNeedReview as seesToCollect } from "./order-invoices-review";
@@ -17,14 +18,7 @@ const logger = new Logger("OrderToCollect");
 
 /** `db` is the tenant-scoped client (`prisma.forTenant()`). */
 export async function attachOrderToCollect(
-  db: {
-    invoice: {
-      findMany(args: {
-        where: { orderId: string; expectedPaymentMethod: { not: null } };
-        select: { status: true; expectedPaymentMethod: true };
-      }): Promise<{ status: string; expectedPaymentMethod: string | null }[]>;
-    };
-  },
+  db: { invoice: Pick<Prisma.TransactionClient["invoice"], "findMany"> },
   order: { id: string },
   user: Pick<JwtPayload, "role" | "type">,
 ): Promise<void> {
