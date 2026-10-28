@@ -8,6 +8,12 @@
  *  B-G1 a CUSTOMER and a DRIVER create() with {unitLabel, unitPrice} meet the selling-unit 400; no order row.
  *  T-G1 a refused edit is an HttpException 403 (never a 500), moves no orderItem / stockMovement / return
  *       row, and a second call with the same idempotency key meets the same 403 (no key is recorded).
+ *  PR7  an OPERATOR whose deny list holds PRICING (written by the fixture: no API writes it yet): with the
+ *       permissions mode forced `live` (a test-only spy on OperatorPermissionsService.mode) the order create,
+ *       the order line edit and the invoice line edit are refused 403 PRICE_EDIT_NOT_PERMITTED and the inline
+ *       return credit price 400 RETURN_CREDIT_OVERRIDE_FORBIDDEN, nothing written (M-R1, RC-R1); in `shadow`
+ *       the same edit is written with one would-deny log line (M-G1). R1b: a real platform principal
+ *       (tenantId null, tenantSlug null) is refused with no row written.
  *
  * Builds a REAL OrdersService via `Object.create` (no Nest DI), as b1050-delivered-edit.db.spec.ts does, and a
  * REAL InvoicesService through a Nest testing module, as invoices.sell-ban-edit-copy.db.spec.ts does.
@@ -59,6 +65,11 @@ import { EstimatesService } from "../estimates/estimates.service";
 import { NumberingService } from "../import/numbering.service";
 import { ProductLabelsService } from "../product-labels/product-labels.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { OperatorPermissionsService } from "../auth/permissions/operator-permissions.service";
+import {
+  InlineReturnsQuoteService,
+  RETURN_CREDIT_OVERRIDE_ERROR_CODES,
+} from "../returns/inline-returns-quote.service";
 import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-authority-provider";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -77,6 +88,7 @@ describeDb("SA-1034 — price-edit capability at the line edit, real Postgres", 
   let adminUserId = "";
   let buyerUserId = "";
   let driverUserId = "";
+  let deniedOperatorId = ""; // OPERATOR, deniedPermissionGroups = [PRICING]
   let customerId = "";
   let productId = "";
   const platformUserId = `platform-${run}`; // a platform principal's id: never a row in this tenant
@@ -84,7 +96,7 @@ describeDb("SA-1034 — price-edit capability at the line edit, real Postgres", 
   const invoiceIds: string[] = [];
 
   const principal = (
-    role: "SUPER_ADMIN" | "TENANT_ADMIN" | "CUSTOMER" | "DRIVER",
+    role: "SUPER_ADMIN" | "TENANT_ADMIN" | "OPERATOR" | "CUSTOMER" | "DRIVER",
     sub: string,
     extra: Partial<JwtPayload> = {},
   ): JwtPayload =>
@@ -311,6 +323,17 @@ describeDb("SA-1034 — price-edit capability at the line edit, real Postgres", 
       })
     ).id;
     await raw.driver.create({ data: { userId: driverUserId, tenantId } as any });
+    deniedOperatorId = (
+      await raw.user.create({
+        data: {
+          email: `o-${run}@example.test`,
+          username: `o-${run}`,
+          role: "OPERATOR",
+          tenantId,
+          deniedPermissionGroups: ["PRICING"],
+        },
+      })
+    ).id;
     productId = (
       await raw.product.create({
         data: {
@@ -455,6 +478,111 @@ describeDb("SA-1034 — price-edit capability at the line edit, real Postgres", 
       expectPriceEditRefused(second);
       expect(await counts()).toEqual(before);
       expect(Number((await lineOf(line.id)).qty)).toBe(2);
+    });
+  });
+
+  describe("PR7 — a denied OPERATOR (PRICING off) and the real platform principal", () => {
+    const denied = () => principal("OPERATOR", deniedOperatorId);
+    /** The real platform token: no tenant on the principal at all. */
+    const realPlatform = () =>
+      principal("SUPER_ADMIN", platformUserId, { tenantId: null, tenantSlug: null } as any);
+    const belowTierEdit = (line: { id: string }) => ({
+      replaceAll: false,
+      items: [{ id: line.id, qty: 2, unitPrice: 6 }],
+    });
+    let warn: jest.SpyInstance;
+    beforeEach(() => {
+      warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+    });
+    afterEach(() => jest.restoreAllMocks());
+    const wouldDeny = () =>
+      warn.mock.calls.filter((c) => String(c[0]).includes("would-deny groups=PRICING"));
+    const live = () =>
+      jest.spyOn(OperatorPermissionsService.prototype, "mode").mockReturnValue("live");
+
+    it("M-R1 live: the denied operator's order line edit is a 403 PRICE_EDIT_NOT_PERMITTED; the line is unchanged", async () => {
+      live();
+      const o = await order();
+      const err = await caught(editOrder(o.id, belowTierEdit(o.lineItems[0]), denied()));
+      expectPriceEditRefused(err);
+      const after = await lineOf(o.lineItems[0].id);
+      expect(Number(after.unitPrice)).toBe(10);
+      expect(after.overriddenBy).toBeNull();
+    });
+
+    it("M-R1 live: the denied operator's invoice line edit is a 403; the line is unchanged", async () => {
+      live();
+      const inv = await draftInvoice();
+      const err = await caught(
+        editInvoice(
+          inv.id,
+          { items: [{ id: inv.held.id, description: "line", productId, qty: 2, unitPrice: 6 }] },
+          denied(),
+        ),
+      );
+      expectPriceEditRefused(err);
+      const after = await raw.invoiceItem.findUniqueOrThrow({ where: { id: inv.held.id } });
+      expect(Number(after.unitPrice)).toBe(10);
+    });
+
+    it("M-R1 live: the denied operator's order create with a below-tier price is a 403; no order row", async () => {
+      live();
+      const before = await raw.order.count({ where: { tenantId } });
+      const err = await caught(
+        inTenant(() =>
+          orders.create(
+            { customerId, items: [{ productId, qty: 1, unitPrice: 6, overrideReason: "sa1034" }] },
+            denied(),
+          ),
+        ),
+      );
+      expectPriceEditRefused(err);
+      expect(await raw.order.count({ where: { tenantId } })).toBe(before);
+    });
+
+    it("M-G1 shadow: the same denied operator's edit is written as on master, with one would-deny line", async () => {
+      const o = await order();
+      await editOrder(o.id, belowTierEdit(o.lineItems[0]), denied());
+      const after = await lineOf(o.lineItems[0].id);
+      expect(Number(after.unitPrice)).toBe(6);
+      expect(after).toMatchObject({ priceType: "DISCOUNTED", overriddenBy: deniedOperatorId });
+      expect(wouldDeny()).toHaveLength(1);
+    });
+
+    it("RC-R1 live / RC-G1 shadow: the inline return credit price is a 400 FORBIDDEN only when enforced", async () => {
+      const quoteService = new InlineReturnsQuoteService(prisma, {
+        get: async () => null,
+      } as unknown as SystemConfigService);
+      const dto: any = {
+        customerId,
+        items: [{ productId, boxes: 0, pieces: 1, creditUnitPrice: 1, overrideReason: "sa1034" }],
+      };
+      const attempt = () => caught(inTenant(() => quoteService.quote(dto, denied())));
+      const shadowErr: any = await attempt(); // shadow: the price half passes; any later refusal is not this code
+      expect(shadowErr?.getResponse?.()?.code).not.toBe(
+        RETURN_CREDIT_OVERRIDE_ERROR_CODES.FORBIDDEN,
+      );
+      live();
+      const liveErr: any = await attempt();
+      expect(liveErr).toBeInstanceOf(HttpException);
+      expect(liveErr.getStatus()).toBe(400);
+      expect(liveErr.getResponse()).toMatchObject({
+        code: RETURN_CREDIT_OVERRIDE_ERROR_CODES.FORBIDDEN,
+      });
+    });
+
+    it("R1b: the real platform principal (tenantId null) is refused and writes no row", async () => {
+      const o = await order();
+      const counts = async () => ({
+        items: await raw.orderItem.count({ where: { orderId: o.id } }),
+        orders: await raw.order.count({ where: { tenantId } }),
+        keys: await raw.orderIdempotencyKey.count({ where: { tenantId } }),
+      });
+      const before = await counts();
+      const err: any = await caught(editOrder(o.id, belowTierEdit(o.lineItems[0]), realPlatform()));
+      expectPriceEditRefused(err); // observed: 403 PRICE_EDIT_NOT_PERMITTED
+      expect(Number((await lineOf(o.lineItems[0].id)).unitPrice)).toBe(10);
+      expect(await counts()).toEqual(before);
     });
   });
 });
