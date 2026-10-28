@@ -4,7 +4,13 @@
  */
 import { BadRequestException, ConflictException } from "@nestjs/common";
 import { API_ERROR_CODES } from "../common/api-error-codes";
-import { assertLineCaps, isLineItem, lineLeftText, resolveLineItems } from "./return-line-items";
+import {
+  assertLineCaps,
+  isLineItem,
+  lineLeftText,
+  resolveLineItems,
+  type LineItemInput,
+} from "./return-line-items";
 
 const P = "p1";
 // Product P: pack 10 at 2.50 a box, and a Case of 200. Line A: 2 Cases (400 pcs); line B: 10 boxes (100 pcs).
@@ -40,9 +46,10 @@ const codeOf = (fn: () => unknown) => {
 
 describe("isLineItem", () => {
   it("is true only when the item names a line", () => {
-    expect(isLineItem({ productId: P, orderItemId: "A", boxes: 1 })).toBe(true);
-    expect(isLineItem({ productId: P, qty: 1 })).toBe(false);
-    expect(isLineItem({ productId: P, qty: 1, orderItemId: "" })).toBe(false);
+    const item = (i: LineItemInput) => isLineItem(i);
+    expect(item({ productId: P, orderItemId: "A", boxes: 1 })).toBe(true);
+    expect(item({ productId: P, qty: 1 })).toBe(false);
+    expect(item({ productId: P, qty: 1, orderItemId: "" })).toBe(false);
   });
 });
 
