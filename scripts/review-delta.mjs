@@ -7,9 +7,10 @@
 // Carries (`same-delta`, --base default origin/master) only when the PR touches files (F = the files each
 // sha changed against ITS OWN merge-base with --base), the base did not move under any file in F, and
 // the two shas agree on every file in F: then both PR deltas are byte-identical. File names only, from
-// plumbing: no patch-id (it ignores hunk positions), no config (color, textconv, external diff).
-// Otherwise `changed`, listing the files the re-read must cover, with a hint: `base-moved` (the base
-// changed under a PR file), `whitespace-only` (indentation and literals still change meaning), `empty`.
+// plumbing: no patch-id (it ignores hunk positions), no config (color, textconv, external diff,
+// submodule ignore), no replace refs. Otherwise `changed`, listing the PR files the re-read must cover,
+// with a hint: `base-moved` (the base changed under a PR file), `whitespace-only` (indentation and
+// literals still change meaning), `empty`. A base change outside F that F depends on is CI's to catch.
 // Exit 0 carries, 1 changed, 2 unknown sha or bad usage. Read-only: nothing from the diff is ever run.
 import { execFileSync } from "node:child_process";
 import path from "node:path";
@@ -37,7 +38,7 @@ export function parseArgs(argv) {
 }
 
 const gitIn = (repo) => (args, input) =>
-  execFileSync("git", ["-c", "core.hooksPath=", ...(repo ? ["-C", repo] : []), ...args], {
+  execFileSync("git", [...GIT_OPTS, ...(repo ? ["-C", repo] : []), ...args], {
     encoding: "utf8",
     maxBuffer: 256 * 1024 * 1024,
     env: scrubbedGitEnv(),
@@ -46,9 +47,23 @@ const gitIn = (repo) => (args, input) =>
     timeout: GIT_TIMEOUT_MS,
   });
 
+const GIT_OPTS = ["--no-replace-objects", "--literal-pathspecs", "-c", "core.hooksPath="];
+const DIFF = ["diff-tree", "-r", "--no-renames", "--ignore-submodules=none"];
+const PATHS_PER_CALL = 200; // keeps one command line well under Windows' limit
 const mergeBase = (git, base, sha) => git(["merge-base", base, sha]).trim();
 const names = (git, x, y) =>
-  git(["diff-tree", "-r", "--no-renames", "--name-only", "-z", x, y]).split("\0").filter(Boolean);
+  git([...DIFF, "--name-only", "-z", x, y])
+    .split("\0")
+    .filter(Boolean);
+/** True when no listed file differs between x and y beyond whitespace and blank lines. */
+function whitespaceOnly(git, x, y, files) {
+  for (let i = 0; i < files.length; i += PATHS_PER_CALL) {
+    const chunk = files.slice(i, i + PATHS_PER_CALL);
+    if (git([...DIFF, "-p", "-w", "--ignore-blank-lines", x, y, "--", ...chunk]).trim())
+      return false;
+  }
+  return true;
+}
 
 export function main(argv = process.argv.slice(2), { git, log = console } = {}) {
   const o = parseArgs(argv);
@@ -76,15 +91,13 @@ export function main(argv = process.argv.slice(2), { git, log = console } = {}) 
     });
     const [mbA, mbB] = [mergeBase(git, o.base, a), mergeBase(git, o.base, b)];
     const touched = new Set([...names(git, mbA, a), ...names(git, mbB, b)]);
-    const headMoved = names(git, a, b);
+    if (!touched.size) return emit(false, "empty", names(git, a, b).sort());
+    const headMoved = names(git, a, b).filter((f) => touched.has(f));
     const baseMoved = names(git, mbA, mbB).filter((f) => touched.has(f));
-    if (touched.size && !baseMoved.length && !headMoved.some((f) => touched.has(f)))
-      return emit(true, "same-delta");
+    if (!baseMoved.length && !headMoved.length) return emit(true, "same-delta");
     const files = [...new Set([...headMoved, ...baseMoved])].sort();
-    if (!touched.size) return emit(false, "empty", files);
     if (baseMoved.length) return emit(false, "base-moved", files);
-    const blind = !git(["diff-tree", "-p", "-w", "--ignore-blank-lines", a, b]).trim();
-    return emit(false, blind ? "whitespace-only" : "changed", files);
+    return emit(false, whitespaceOnly(git, a, b, files) ? "whitespace-only" : "changed", files);
   } catch (e) {
     log.error(`review-delta: ${String(e.stderr || e.message).trim()}`);
     return 2;
