@@ -239,8 +239,8 @@ describeDb("SA-1050 PR-1: ensureWriteOffEvent and the backfill (real Postgres)",
   }
   const eventsOf = (invoiceId: string) =>
     prisma.invoiceWriteOffEvent.findMany({ where: { invoiceId } });
-  const WIDE = { gte: new Date("2026-01-01T00:00:00Z"), lt: new Date("2100-01-01T00:00:00Z") };
-  const SEPT = { gte: new Date("2026-09-01T00:00:00Z"), lt: new Date("2026-10-01T00:00:00Z") };
+  const WIDE = { gte: new Date("2026-01-01T00:00:00Z"), lte: new Date("2099-12-31T23:59:59.999Z") };
+  const SEPT = { gte: new Date("2026-09-01T00:00:00Z"), lte: new Date("2026-09-30T23:59:59.999Z") };
 
   it("G-5: an imported WRITTEN_OFF invoice gets ONE undated event; a second call and an owing-nothing invoice write nothing", async () => {
     const t = await seedTenant("g5");

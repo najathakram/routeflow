@@ -17,6 +17,7 @@ import {
 
 interface Row {
   invoiceId: string;
+  tenantId?: string;
   kind: string;
   amount: number;
   preTax: number;
