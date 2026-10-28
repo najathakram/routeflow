@@ -63,6 +63,8 @@ const inv = (id: string, items: any[], createdAt = "2026-01-01") => ({
   invoiceNumber: id.toUpperCase(),
   status: "SENT",
   total: items.reduce((t, i) => t + i.subtotal, 0),
+  taxAmount: 0, // SA-840: the stored invoice is priced on what it charged (net, discount, tax)
+  discount: 0,
   createdAt: new Date(createdAt),
   items,
 });
