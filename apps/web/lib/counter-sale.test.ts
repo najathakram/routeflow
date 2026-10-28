@@ -1,6 +1,7 @@
 import type { FulfilmentCapability } from "@routeflow/types";
 import * as keys from "./counter-live-cart-keys";
 import * as counterSaleModule from "./counter-sale";
+import * as counterSaleChoice from "./counter-sale";
 import {
   AUTO_PRINT_KEY,
   isNotSentOffline,
@@ -943,5 +944,48 @@ describe("resolveTender: 'Check not received yet' is On account plus one typed i
         isWalkIn: true,
       }),
     ).toBe("WALK_IN_ON_ACCOUNT");
+  });
+});
+
+describe("auto-print choice: receipt, invoice or both (SA-1026 B-G2)", () => {
+  // the red state: master has no choice reader or writer (read through a cast, as the module may not export them yet)
+  const api = counterSaleChoice as unknown as {
+    readAutoPrintChoice?: () => string;
+    writeAutoPrintChoice?: (c: string) => void;
+  };
+  afterEach(() => window.localStorage.clear());
+  it('a stored "1" or "true" reads as receipt, so no device changes behaviour on deploy', () => {
+    window.localStorage.setItem(AUTO_PRINT_KEY, "1");
+    expect(api.readAutoPrintChoice?.()).toBe("receipt");
+    window.localStorage.setItem(AUTO_PRINT_KEY, "true");
+    expect(api.readAutoPrintChoice?.()).toBe("receipt");
+  });
+  it('"0", "false", absent or unknown read as off', () => {
+    expect(api.readAutoPrintChoice?.()).toBe("off");
+    for (const v of ["0", "false", "banana", ""]) {
+      window.localStorage.setItem(AUTO_PRINT_KEY, v);
+      expect(api.readAutoPrintChoice?.()).toBe("off");
+    }
+  });
+  it('round-trips invoice and both; receipt keeps the old "1" so older tabs agree', () => {
+    api.writeAutoPrintChoice?.("invoice");
+    expect(api.readAutoPrintChoice?.()).toBe("invoice");
+    api.writeAutoPrintChoice?.("both");
+    expect(api.readAutoPrintChoice?.()).toBe("both");
+    api.writeAutoPrintChoice?.("receipt");
+    expect(window.localStorage.getItem(AUTO_PRINT_KEY)).toBe("1");
+    api.writeAutoPrintChoice?.("off");
+    expect(window.localStorage.getItem(AUTO_PRINT_KEY)).toBe("0");
+  });
+  it("readAutoPrint (the refund slip's switch) stays true only where a receipt prints", () => {
+    for (const [stored, receipt] of [
+      ["1", true],
+      ["both", true],
+      ["invoice", false],
+      ["0", false],
+    ] as const) {
+      window.localStorage.setItem(AUTO_PRINT_KEY, stored);
+      expect(readAutoPrint()).toBe(receipt);
+    }
   });
 });

@@ -600,7 +600,9 @@ describe("CounterSaleScreen", () => {
     };
     it("on: window.print once after Complete & show receipt, and the toggle persists locally", async () => {
       renderTill(<CounterSaleScreen />);
-      fireEvent.click(screen.getByLabelText("Print receipt automatically"));
+      fireEvent.change(screen.getByLabelText("Print automatically"), {
+        target: { value: "receipt" },
+      });
       expect(window.localStorage.getItem("rf.counterSale.autoPrint")).toBe("1");
       await finishSale();
       await waitFor(() => expect(printSpy).toHaveBeenCalledTimes(1));
@@ -609,7 +611,7 @@ describe("CounterSaleScreen", () => {
       window.localStorage.setItem("rf.counterSale.autoPrint", "1");
       renderTill(<CounterSaleScreen />);
       await waitFor(() =>
-        expect(screen.getByLabelText("Print receipt automatically")).toBeChecked(),
+        expect(screen.getByLabelText("Print automatically")).toHaveValue("receipt"),
       );
       await scan("012345678905");
       await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"));
@@ -641,8 +643,10 @@ describe("CounterSaleScreen", () => {
       });
       try {
         renderTill(<CounterSaleScreen />);
-        expect(screen.getByLabelText("Print receipt automatically")).not.toBeChecked();
-        fireEvent.click(screen.getByLabelText("Print receipt automatically"));
+        expect(screen.getByLabelText("Print automatically")).toHaveValue("off");
+        fireEvent.change(screen.getByLabelText("Print automatically"), {
+          target: { value: "receipt" },
+        });
         await finishSale();
         // the toggle was flipped for this session even though it could not persist
       } finally {
@@ -1186,7 +1190,7 @@ describe("CounterSaleScreen: API contract wiring", () => {
         mutateAsync.mockRejectedValueOnce({ response: { status: 503 } });
         renderTill(<CounterSaleScreen />);
         await waitFor(() =>
-          expect(screen.getByLabelText("Print receipt automatically")).toBeChecked(),
+          expect(screen.getByLabelText("Print automatically")).toHaveValue("receipt"),
         );
         await fillCola();
         fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
@@ -1519,7 +1523,7 @@ describe("CounterSaleScreen: API contract wiring", () => {
       mutateAsync.mockResolvedValue(unpaid);
       renderTill(<CounterSaleScreen />);
       await waitFor(() =>
-        expect(screen.getByLabelText("Print receipt automatically")).toBeChecked(),
+        expect(screen.getByLabelText("Print automatically")).toHaveValue("receipt"),
       );
       await fillCola();
       fireEvent.click(screen.getByRole("button", { name: /Complete & next sale/ }));
@@ -1660,7 +1664,7 @@ describe("CounterSaleScreen: API contract wiring", () => {
       });
       renderTill(<CounterSaleScreen />);
       await waitFor(() =>
-        expect(screen.getByLabelText("Print receipt automatically")).toBeChecked(),
+        expect(screen.getByLabelText("Print automatically")).toHaveValue("receipt"),
       );
       await fillCola();
       fireEvent.click(screen.getByRole("button", { name: /Complete & next sale/ }));
@@ -1989,7 +1993,7 @@ describe("CounterSaleScreen: API contract wiring", () => {
       mutateAsync.mockRejectedValueOnce({ response: { status: 503 } });
       renderTill(<CounterSaleScreen />);
       await waitFor(() =>
-        expect(screen.getByLabelText("Print receipt automatically")).toBeChecked(),
+        expect(screen.getByLabelText("Print automatically")).toHaveValue("receipt"),
       );
       await fillCola();
       fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
@@ -2003,7 +2007,7 @@ describe("CounterSaleScreen: API contract wiring", () => {
     it("two Complete & next sale runs print twice in total", async () => {
       renderTill(<CounterSaleScreen />);
       await waitFor(() =>
-        expect(screen.getByLabelText("Print receipt automatically")).toBeChecked(),
+        expect(screen.getByLabelText("Print automatically")).toHaveValue("receipt"),
       );
       for (let i = 0; i < 2; i++) {
         if (i > 0) tapWalkIn(); // the next sale asks who is buying again
@@ -2506,12 +2510,12 @@ describe("digital receipt on the live receipt (SA-751r)", () => {
     api.post.mockResolvedValue({ data: { channel: "email", to: "x" } });
   });
 
-  it("the receipt's row reads Print · Email receipt · New sale, and the email row is closed", async () => {
+  it("the receipt's row reads Print · Print invoice · Email receipt · New sale, and the email row is closed", async () => {
     renderTill(<CounterSaleScreen />);
     await finishCashSale();
     const root = screen.getByTestId("counter-sale-receipt");
     const names = Array.from(root.querySelectorAll("button")).map((b) => b.textContent);
-    expect(names).toEqual(["Print", "Email receipt", "New sale"]);
+    expect(names).toEqual(["Print", "Print invoice", "Email receipt", "New sale"]); // SA-1026 B: Print invoice follows the receipt's Print
     expect(screen.queryByRole("textbox", { name: "Email address" })).toBeNull();
     expect(api.post).not.toHaveBeenCalled();
   });

@@ -62,12 +62,10 @@ beforeEach(() => {
 });
 
 describe("CounterSaleScreen: tablet tap targets (CQ-32)", () => {
-  it("the Print receipt automatically checkbox is a 44 px box through md and compact from lg", () => {
+  it("the Print automatically choice is a 44 px control, in a 44 px row", () => {
     renderWithProviders(<CounterSaleScreen />);
-    const box = screen.getByRole("checkbox", { name: "Print receipt automatically" });
-    expect(box).toHaveClass("max-lg:h-11");
-    expect(box).toHaveClass("max-lg:w-11");
-    expect(box).toHaveClass("h-5"); // desktop density is unchanged
-    expect(box.closest("label")).toHaveClass("min-h-[44px]");
+    const choice = screen.getByRole("combobox", { name: "Print automatically" });
+    expect(choice).toHaveClass("min-h-[44px]");
+    expect(choice.closest("label")).toHaveClass("min-h-[44px]");
   });
 });

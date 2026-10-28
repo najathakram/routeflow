@@ -371,7 +371,9 @@ describe("D6: the receipt is on screen BEFORE it prints", () => {
   });
   const ring = async (name: string | RegExp) => {
     renderTill(<CounterSaleScreen />);
-    await waitFor(() => expect(screen.getByLabelText("Print receipt automatically")).toBeChecked());
+    await waitFor(() =>
+      expect(screen.getByLabelText("Print automatically")).toHaveValue("receipt"),
+    );
     await scan("200000000001");
     await waitFor(() => expect(lines()).toHaveLength(1));
     fireEvent.click(screen.getByRole("button", { name: "$20" }));

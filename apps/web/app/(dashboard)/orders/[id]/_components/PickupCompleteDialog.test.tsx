@@ -26,6 +26,14 @@ jest.mock("@/lib/api-client", () => ({
   apiClient: { get: (...a: unknown[]) => get(...a), post: (...a: unknown[]) => post(...a) },
 }));
 
+jest.mock("@/lib/fetch-pdf-blob", () => ({
+  fetchPdfBlob: () => Promise.resolve(new Blob(["pdf"])),
+}));
+const printPdfBlob = jest.fn();
+jest.mock("@/lib/print-pdf-blob", () => ({
+  printPdfBlob: (...a: unknown[]) => printPdfBlob(...a),
+}));
+
 const result = (over: Record<string, unknown> = {}) => ({
   data: {
     orderId: "o1",
@@ -972,5 +980,55 @@ describe("PickupCompleteDialog: a duplicate check number is never a dead end (SA
     expect(post.mock.calls[1][2].headers["Idempotency-Key"]).toBe(
       post.mock.calls[0][2].headers["Idempotency-Key"],
     );
+  });
+});
+
+describe("PickupCompleteDialog: Print invoice after the hand-over (SA-1026 B-R2, B-R4)", () => {
+  const serve = () =>
+    get.mockImplementation((url: string) =>
+      Promise.resolve(
+        url.endsWith("/pdf")
+          ? { data: { url: `https://files/${url.split("/")[2]}.pdf` } }
+          : { data: { id: "i1", status: "PAID", total: 25, balanceDue: 0 } },
+      ),
+    );
+  const pdfCalls = () => get.mock.calls.map((c) => String(c[0])).filter((u) => u.endsWith("/pdf"));
+
+  it("is not offered before the hand-over", async () => {
+    serve();
+    mount();
+    expect(await screen.findByText("Paid — nothing to collect")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Print invoice" })).toBeNull();
+  });
+
+  it("B-R2: the success state offers it, and one tap prints the invoice", async () => {
+    serve();
+    mount();
+    expect(await screen.findByText("Paid — nothing to collect")).toBeInTheDocument();
+    confirm();
+    fireEvent.click(await screen.findByRole("button", { name: "Print invoice" }));
+    await waitFor(() => expect(printPdfBlob).toHaveBeenCalledTimes(1));
+    expect(pdfCalls()).toEqual(["/invoices/i1/pdf"]);
+  });
+
+  it("B-R4: a hand-over of two invoices prints both, in invoiceIds order", async () => {
+    serve();
+    post.mockResolvedValue(result({ invoiceIds: ["i1", "i2"] }));
+    mount();
+    expect(await screen.findByText("Paid — nothing to collect")).toBeInTheDocument();
+    confirm();
+    fireEvent.click(await screen.findByRole("button", { name: "Print invoice" }));
+    await waitFor(() => expect(printPdfBlob).toHaveBeenCalledTimes(2));
+    expect(pdfCalls()).toEqual(["/invoices/i1/pdf", "/invoices/i2/pdf"]);
+  });
+
+  it("an older response without invoiceIds prints its one invoiceId", async () => {
+    serve();
+    mount();
+    expect(await screen.findByText("Paid — nothing to collect")).toBeInTheDocument();
+    confirm();
+    fireEvent.click(await screen.findByRole("button", { name: "Print invoice" }));
+    await waitFor(() => expect(printPdfBlob).toHaveBeenCalledTimes(1));
+    expect(pdfCalls()).toEqual(["/invoices/i1/pdf"]);
   });
 });
