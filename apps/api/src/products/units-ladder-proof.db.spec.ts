@@ -368,12 +368,13 @@ describeDb(
             const stock0 = await stockOf(productId);
 
             // 1. ORDER at the level
-            const order = await inTenant(() =>
-              orders.create(
-                { customerId, items: [{ productId, qty: ORDER_QTY, unitLabel: l.level }] },
-                operator(),
-                { skipAutoMerge: true },
-              ),
+            const order = await inTenant(
+              async () =>
+                (await orders.create(
+                  { customerId, items: [{ productId, qty: ORDER_QTY, unitLabel: l.level }] },
+                  operator(),
+                  { skipAutoMerge: true },
+                )) as { id: string },
             );
             const oLine = await raw.orderItem.findFirstOrThrow({ where: { orderId: order.id } });
             expect({
