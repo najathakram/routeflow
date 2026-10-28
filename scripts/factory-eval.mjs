@@ -567,7 +567,13 @@ function select(o, root) {
 
 /** The stub arm: copies EVAL_STUB_PATHS from EVAL_STUB_SHA into the tree and reports a fake cost. */
 function stubArm() {
-  for (const p of (process.env.EVAL_STUB_PATHS ?? "").split(",").filter(Boolean)) {
+  const paths = (process.env.EVAL_STUB_PATHS ?? "").split(",").filter(Boolean);
+  for (const p of paths) {
+    const rel = path.relative(process.cwd(), path.resolve(process.cwd(), p));
+    if (!rel || rel.startsWith("..") || path.isAbsolute(rel))
+      throw new Error(`stub arm: ${p} is outside the eval tree`);
+  }
+  for (const p of paths) {
     const r = gitIn(process.cwd(), ["show", `${process.env.EVAL_STUB_SHA}:${p}`]);
     if (r.status !== 0) throw new Error(`stub arm: cannot read ${p}`);
     writeFileSync(p, r.stdout);
