@@ -2,7 +2,7 @@
 
 One `<id>.json` per past change. The set is picked by a human from `node scripts/factory-eval.mjs select`
 output and is frozen: changing it is its own diff. A task marked `"example": true` documents the schema;
-every command skips it unless `--include-example` is passed. The 20 real tasks and the example land in R6-b.
+every command skips it unless `--include-example` is passed. `acme-example.json` is that example; the 20 real tasks land in R6-c.
 
 | Field         | Meaning                                                                                       |
 | ------------- | --------------------------------------------------------------------------------------------- |
