@@ -113,6 +113,20 @@ export async function readFamilyPriceMode(
   }
 }
 
+/** The family a RECIPE product's latest recipe links to, or null when it has no recipe. */
+export async function recipeFamilyIdOf(
+  db: Pick<CatalogTx, "recipe">,
+  tenantId: string,
+  productId: string,
+): Promise<string | null> {
+  const recipe: { familyProductId: string } | null = await db.recipe.findFirst({
+    where: { productId, tenantId },
+    orderBy: { version: "desc" },
+    select: { familyProductId: true },
+  });
+  return recipe?.familyProductId ?? null;
+}
+
 /** `SELECT … FOR UPDATE` on the family Product row: every family-price writer takes it first. */
 export async function lockFamilyRow(
   tx: CatalogTx,
@@ -287,15 +301,11 @@ export async function applyFamilyPriceBeforeUpdate(
 
   if (existing.kind === "RECIPE") {
     if (existing.familyPriceOverride) return { propagate: false };
-    const recipe: { familyProductId: string } | null = await tx.recipe.findFirst({
-      where: { productId: id, tenantId },
-      orderBy: { version: "desc" },
-      select: { familyProductId: true },
-    });
-    if (!recipe) return { propagate: false };
-    const family = await loadLockedFamilyPrices(tx, tenantId, recipe.familyProductId);
+    const recipeFamilyId = await recipeFamilyIdOf(tx, tenantId, id);
+    if (!recipeFamilyId) return { propagate: false };
+    const family = await loadLockedFamilyPrices(tx, tenantId, recipeFamilyId);
     if (!variantPriceWriteDecision({ mode: "on", governed: true, dto, family }).allow) {
-      throw familyPriceAuthorityError(recipe.familyProductId);
+      throw familyPriceAuthorityError(recipeFamilyId);
     }
     dropPriceKeys();
     return { propagate: false };
