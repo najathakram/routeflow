@@ -263,11 +263,96 @@ export function repoPinsNeeded(files) {
 }
 
 /**
- * Every `-script.spec.ts` (the api unit config ignores them). The whole set measured 78 s on a
- * 65%-loaded dev box (2026-10-28), inside the 90 s budget, so a fast push runs all of it rather than
- * guessing which specs a scripts/ edit reaches. Literal-dot classes keep cmd.exe quoting trivial.
+ * Every `-script.spec.ts` (the api unit config ignores them). A full or fail-closed run uses this pattern
+ * to select all of them. Literal-dot classes keep cmd.exe quoting trivial.
  */
 export const SCRIPT_SPEC_PATTERN = "-script[.]spec[.]ts$";
+
+/**
+ * Serial, the whole set measured ~568 s (66 specs), too slow for a fast push, so a fast run picks the
+ * RELATED `-script` specs instead (`selectScriptSpecs`). This one always runs: it guards the escape hatch.
+ */
+export const ALWAYS_SCRIPT_SPEC = "skip-verify-audit-script.spec.ts";
+
+// Basenames too common to relate a spec by name: the pins already cover manifests.
+const GENERIC_BASENAMES = new Set([
+  "package.json",
+  "package-lock.json",
+  "tsconfig.json",
+  "turbo.json",
+  "index.ts",
+  "index.js",
+  "index.mjs",
+  "README.md",
+]);
+
+/** Every apps/api `-script.spec.ts` as { file (relative to apps/api), text }. */
+export function loadScriptSpecs(root) {
+  const out = [];
+  const walk = (dir, rel) => {
+    let entries = [];
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      if (e.name === "node_modules") continue;
+      if (e.isDirectory()) walk(join(dir, e.name), `${rel}/${e.name}`);
+      else if (e.name.endsWith("-script.spec.ts")) {
+        out.push({ file: `${rel}/${e.name}`, text: readFileSync(join(dir, e.name), "utf8") });
+      }
+    }
+  };
+  walk(join(root, "apps", "api", "src"), "src");
+  return out.sort((a, b) => a.file.localeCompare(b.file));
+}
+
+/**
+ * Which `-script` specs a fast run executes: the always-on audit spec plus every spec whose file name
+ * or source text mentions a changed file's path or basename (plain substring reads, no import parsing).
+ * `files` null (diff not computable) selects ALL ("all"): fail closed. Returns
+ * { files: string[] | "all", line }, one line with the count and why.
+ */
+export function selectScriptSpecs({ files, specs }) {
+  if (files === null) {
+    return {
+      files: "all",
+      line: `+ SCRIPT SPECS: all ${specs.length} (cannot diff, fail closed).`,
+    };
+  }
+  const changed = files.map((f) => f.replaceAll("\\", "/"));
+  const needles = changed.flatMap((f) => {
+    const base = f.slice(f.lastIndexOf("/") + 1);
+    return GENERIC_BASENAMES.has(base) ? [] : [{ path: f, base }];
+  });
+  const always = specs.filter((s) => s.file.endsWith(ALWAYS_SCRIPT_SPEC));
+  const why = [];
+  const related = [];
+  for (const s of specs) {
+    if (always.includes(s)) continue;
+    const name = s.file.slice(s.file.lastIndexOf("/") + 1);
+    const hit = needles.find(
+      (n) =>
+        name === n.base ||
+        name === `${n.base.replace(/\.[^.]+$/, "")}-script.spec.ts` ||
+        s.text.includes(n.path) ||
+        s.text.includes(n.base),
+    );
+    if (hit) {
+      related.push(s.file);
+      why.push(`${name} (${hit.base})`);
+    }
+  }
+  const picked = [...always.map((s) => s.file), ...related];
+  return {
+    files: picked,
+    line:
+      `+ SCRIPT SPECS: ${picked.length} of ${specs.length} (always ${ALWAYS_SCRIPT_SPEC}` +
+      (why.length ? `; related: ${why.join(", ")}` : "; none related") +
+      ").",
+  };
+}
 
 /** The checked-out branch name ("HEAD" when detached), or null when git cannot say. */
 export function currentBranch(root) {
@@ -377,12 +462,4 @@ export function withStale(scope, stale) {
     workspaces: [...new Set([...scope.workspaces, ...pulled])].sort(),
     stale: pulled,
   };
-}
-
-// STUBS (red commit): the related-only -script selection lands in the next commit.
-export function loadScriptSpecs() {
-  return [];
-}
-export function selectScriptSpecs() {
-  return { files: [], line: "" };
 }
