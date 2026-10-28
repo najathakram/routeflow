@@ -7,6 +7,8 @@
  *     success, give-up, and the lock-wait >= worst-case pin (derived from the same constants);
  *   - the review musts: a hand edit made during the push window survives (retry and give-up), the
  *     lock is scripts/lib/mkdir-lock.mjs, a lock timeout names the lock to remove.
+ *   - idemKey on `file` through the real bugs.mjs in clone mode (the register records, B1-b1c), and the
+ *     two review SHOULDs on withRegistryWrite (fn throws before writing; empty paths over a dirty tree).
  * The clone, the origin check and RF_REGISTRY_MODE_TEST are pinned in registry-clone.self-test.mjs.
  *
  * Run directly: `node scripts/registry-write.self-test.mjs` (wired into `npm run verify`).
@@ -29,6 +31,7 @@ import * as rw from "./lib/registry-write.mjs";
 
 const ME = fileURLToPath(import.meta.url);
 const ROOT = resolve(dirname(ME), "..");
+const BUGS = join(ROOT, "scripts", "campaign", "bugs.mjs");
 // ── worker mode: one writer process on a shared clone (two of them race for the lock) ──
 if (process.argv[2] === "--worker") {
   const [, , , cloneDir, line, mode] = process.argv;
@@ -56,6 +59,18 @@ if (process.argv[2] === "--worker") {
 
 const fx = fixture("rf-regwrite-");
 const { tmp, bare, check, section, env, showOrigin, clean, other } = fx;
+// The real bugs.mjs in clone mode (RF_REGISTRY_MODE_TEST is honoured only under BUGS_SELF_TEST=1).
+const cloneEnv = (dir, extra = {}) =>
+  env({
+    RF_REGISTRY_DIR: dir,
+    RF_REGISTRY_MODE_TEST: "clone",
+    BUGS_SELF_TEST: "1",
+    BUGS_SYNC_STATE: join(tmp, "s.json"),
+    ...extra,
+  });
+const cli = (args, e, cwd) => spawnSync("node", [BUGS, ...args], { encoding: "utf8", env: e, cwd });
+const file = (dir, title) =>
+  cli(["file", title, "--location", "apps/api/x.ts", "--severity", "low"], cloneEnv(dir));
 
 async function main() {
   fx.world();
@@ -310,6 +325,116 @@ async function main() {
       "lock timeout: exit 1, names the lock to remove, honours lockWaitMs (not the helper's 10s)",
       [err?.exitCode, String(err?.message).includes(lockDir), took < 8000],
       [1, true, true],
+    );
+  });
+  await section("fn that throws or under-reports (SHOULDs)", async () => {
+    const boom = new Error("boom");
+    let err;
+    try {
+      rw.withRegistryWrite(() => {
+        throw boom;
+      }, base);
+    } catch (e) {
+      err = e;
+    }
+    check("fn throws before writing: the original error comes back unchanged", err === boom);
+    err = undefined;
+    try {
+      rw.withRegistryWrite(({ root }) => {
+        appendFileSync(join(root, "rows.txt"), "stray\n");
+        return { paths: [], result: "x" };
+      }, base);
+    } catch (e) {
+      err = e;
+    }
+    check(
+      "empty paths over a dirty tree: exit 2, names the dirty path, the write is kept",
+      [
+        err?.exitCode,
+        /rows\.txt/.test(err?.message),
+        readFileSync(join(A, PFX, "rows.txt"), "utf8").endsWith("stray\n"),
+      ],
+      [2, true, true],
+    );
+    git(A, "checkout", "--", PFX);
+    const idle = rw.withRegistryWrite(() => ({ paths: [], result: "idle" }), base);
+    check(
+      "empty paths over a clean tree: success, nothing pushed",
+      [idle.result, idle.pushed],
+      ["idle", false],
+    );
+  });
+  await section("bugs.mjs file / idemKey (clone mode)", async () => {
+    const rows = () => rowsOf(showOrigin("bugs.jsonl")).length;
+    const f1 = file(A, "Acme widget breaks");
+    const id1 = /filed (B\d+)/.exec(f1.stdout)?.[1];
+    check("file prints the id after the push", [f1.status, !!id1, rows()], [0, true, 1]);
+    check("the row carries an idemKey", /"idemKey":"[0-9a-f]{64}"/.test(showOrigin("bugs.jsonl")));
+    const f2 = file(A, "Acme  widget breaks ");
+    check(
+      "re-run returns the same id, one row",
+      [new RegExp(`${id1}.*already filed`).test(f2.stdout), rows()],
+      [true, 1],
+    );
+    const late = cli(
+      ["file", "Acme widget breaks", "--location", "apps/api/x.ts", "--severity", "low"],
+      cloneEnv(A, { BUGS_IDEM_WINDOW_MS: "0" }),
+    );
+    const id3 = /filed (B\d+)/.exec(late.stdout)?.[1];
+    check(
+      "outside the idem window the same title is a new bug: a fresh id, a second row",
+      [late.status, !!id3 && id3 !== id1, /already filed/.test(late.stdout), rows()],
+      [0, true, false, 2],
+    );
+    check(
+      "a stale clone resolves to the existing id too",
+      new RegExp(id1).test(file(B, "Acme widget breaks").stdout),
+    );
+    const pair = await Promise.all(
+      [A, B].map((d, i) =>
+        spawned(
+          [BUGS, "file", `Concurrent ${i}`, "--location", "x.ts", "--severity", "low"],
+          cloneEnv(d),
+        ),
+      ),
+    );
+    const ids = pair.map((p) => /filed (B\d+)/.exec(p.out)?.[1]);
+    check(
+      "two concurrent files: two distinct ids, both pushed",
+      [pair.map((p) => p.code), new Set(ids).size, rows()],
+      [[0, 0], 2, 4],
+    );
+    // Round 3 MUST 2: a filedAt in the future is clock skew, not a recent duplicate.
+    const sk1 = /filed (B\d+)/.exec(file(A, "Skewed clock bug").stdout)?.[1];
+    other(B, (root) => {
+      const f = join(root, "bugs.jsonl");
+      const future = (l) =>
+        l.includes("Skewed clock bug")
+          ? l.replace(/"filedAt":"[^"]*"/, '"filedAt":"2999-01-01"')
+          : l;
+      writeFileSync(f, readFileSync(f, "utf8").split("\n").map(future).join("\n"));
+    });
+    const skewed = /"filedAt":"2999/.test(showOrigin("bugs.jsonl"));
+    const sk2 = file(A, "Skewed clock bug");
+    const sk2id = /filed (B\d+)/.exec(sk2.stdout)?.[1];
+    check(
+      "a row stamped in the future is not a recent duplicate: a second file makes a new row",
+      [skewed, sk2.status, !!sk1 && !!sk2id && sk2id !== sk1, /already filed/.test(sk2.stdout)],
+      [true, 0, true, false],
+    );
+  });
+  await section("tracked mode unchanged", async () => {
+    const reg = join(tmp, "fixture-reg");
+    mkdirSync(join(reg, "status"), { recursive: true });
+    writeFileSync(join(reg, "bugs.jsonl"), "");
+    const tracked = { ...env(), BUGS_ROOT: reg };
+    const t1 = cli(["file", "Tracked one", "--location", "x.ts", "--severity", "low"], tracked);
+    cli(["file", "Tracked one", "--location", "x.ts", "--severity", "low"], tracked);
+    const trows = rowsOf(readFileSync(join(reg, "bugs.jsonl"), "utf8"));
+    check(
+      "tracked file: two rows (no dedupe), no idemKey, no git",
+      [t1.status, trows.length, trows.some((l) => l.includes("idemKey"))],
+      [0, 2, false],
     );
   });
 }
