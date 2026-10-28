@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Self-test for scripts/factory-eval.mjs (schema, select rules, prepare, grade, cleanup, ).
+// Self-test for scripts/factory-eval.mjs (schema, select rules, prepare, grade, cleanup).
 // Plain node; exit 0 when every check passes. Planted repos stand in for history; no agent runs.
 import { spawnSync } from "node:child_process";
 import {

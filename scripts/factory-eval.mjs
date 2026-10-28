@@ -5,7 +5,7 @@
 //   node scripts/factory-eval.mjs select --since <YYYY-MM-DD> [--landings <file>]   (read-only, proposes)
 //   node scripts/factory-eval.mjs prepare <id> [--dir <d>]    detached worktree at baseSha + BRIEF.md
 //   node scripts/factory-eval.mjs grade <id> --tree <d>       pass | fail | broken; exit 0 only on pass
-//   node scripts/factory-eval.mjs cleanup <tree>              unlink node_modules links, remove the tree
+//   node scripts/factory-eval.mjs cleanup <tree>              unlink every link in it, remove the tree
 //   common: --repo <dir> --tasks <dir> --include-example
 //
 // A task (evals/factory/tasks/<id>.json, schema in its README) is a real past change: the repo at the parent
@@ -36,7 +36,7 @@ import { fileURLToPath } from "node:url";
 import { scrubbedGitEnv } from "./lib/check-git-hooks.mjs";
 import { WARN_AT, countLines, rowsFromGhFiles } from "./lib/pr-size.mjs";
 import { CLASSES, classifyDiff } from "./lib/risk-paths.mjs";
-import { defaultRun, gitIn, lockWorktree, nodeModulesDirs, unlink } from "./fix-revert-probe.mjs";
+import { defaultRun, gitIn, nodeModulesDirs, unlink } from "./fix-revert-probe.mjs";
 import { isTestFile } from "./test-tamper-check.mjs";
 
 const { isTestTenant } = createRequire(import.meta.url)("./lib/test-tenants.cjs");
@@ -45,10 +45,26 @@ const EVALS = path.join(path.dirname(SCRIPT), "..", "evals", "factory");
 const TASKS = path.join(EVALS, "tasks");
 export const SELECT_MAX_LINES = WARN_AT;
 const GH_LIMIT = 200;
+const EVAL_LOCK = "rf-eval"; // prepare's own lock reason: cleanup touches no other tree (not R4's rf-probe)
 const ANSI = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g");
 const toplevel = (dir) =>
   realpathSync.native(gitIn(dir ?? process.cwd(), ["rev-parse", "--show-toplevel"]).stdout.trim());
 const HEX = /^[0-9a-f]{7,40}$/i;
+const samePath = (a, b) =>
+  process.platform === "win32"
+    ? path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase()
+    : path.resolve(a) === path.resolve(b);
+const isHidden = (printed, h, tree) => {
+  const p = printed
+    .trim()
+    .replace(/^file:\/\//, "")
+    .replace(/^\/([a-z]:)/i, "$1")
+    .replace(/\\/g, "/")
+    .replace(/^\.\//, "");
+  if (path.isAbsolute(p) || /^[a-z]:\//i.test(p)) return samePath(p, path.join(tree, h.path));
+  const hp = h.path.replace(/\\/g, "/");
+  return p === hp || hp.endsWith(`/${p}`);
+};
 
 /** Errors for one task object, each starting with the field name; [] when valid. */
 export function validateTask(t) {
@@ -148,7 +164,8 @@ export async function prepare(task, { repo, dir } = {}) {
   let added = false;
   let held = false;
   const cleanup = () => {
-    if (held && !cleanupTree(tree, { repo: root })) return;
+    if (held && !cleanupTree(tree, { repo: root }))
+      throw new Error(`could not remove the eval tree ${tree}; see the message above`);
     if (added && !held) gitIn(root, ["worktree", "remove", "--force", tree]); // unlocked: no links yet
     gitIn(root, ["worktree", "prune"]);
     if (tmp) rmSync(tmp, { recursive: true, force: true });
@@ -157,7 +174,7 @@ export async function prepare(task, { repo, dir } = {}) {
     const add = gitIn(root, ["worktree", "add", "--detach", tree, task.baseSha]);
     if (add.status !== 0) throw new Error(`git worktree add failed: ${add.stderr}`);
     added = true;
-    const locked = lockWorktree(root, tree);
+    const locked = gitIn(root, ["worktree", "lock", "--reason", EVAL_LOCK, tree]);
     if (locked.status !== 0) throw new Error(`git worktree lock failed: ${locked.stderr}`);
     held = true;
     for (const d of nodeModulesDirs(root)) {
@@ -167,7 +184,11 @@ export async function prepare(task, { repo, dir } = {}) {
     }
     writeFileSync(path.join(tree, "BRIEF.md"), `# ${task.id}\n\n${task.brief}\n`);
   } catch (e) {
-    cleanup();
+    try {
+      cleanup();
+    } catch {
+      // already reported; the original error matters more
+    }
     throw e;
   }
   return { tree, cleanup };
@@ -188,16 +209,15 @@ export function cleanupTree(tree, { repo } = {}) {
   const common = existsSync(dir) ? rev("--git-common-dir") : "";
   if (!common || rev("--git-dir") === common) throw new Error(`${dir} is not a linked worktree`);
   const root = toplevel(repo ?? path.dirname(common));
-  const norm = (p) =>
-    process.platform === "win32" ? path.resolve(p).toLowerCase() : path.resolve(p);
   const ours = gitIn(root, ["worktree", "list", "--porcelain"])
     .stdout.split(/\r?\n\r?\n/)
     .some((b) => {
       const at = b.match(/^worktree (.+?)\r?$/m)?.[1];
-      return at && norm(at) === norm(realpathSync.native(dir)) && /^locked rf-probe\r?$/m.test(b);
+      const lockedOurs = new RegExp(`^locked ${EVAL_LOCK}\r?$`, "m").test(b);
+      return at && samePath(at, realpathSync.native(dir)) && lockedOurs;
     });
   if (!ours)
-    throw new Error(`${dir} is not a tree prepare made (no "rf-probe" lock); left in place`);
+    throw new Error(`${dir} is not a tree prepare made (no "${EVAL_LOCK}" lock); left in place`);
   const isLink = (l) => {
     try {
       return lstatSync(l).isSymbolicLink();
@@ -208,18 +228,34 @@ export function cleanupTree(tree, { repo } = {}) {
   const links = nodeModulesDirs(dir)
     .map((d) => path.join(dir, d, "node_modules"))
     .filter(isLink);
+  const walk = (d) => {
+    for (const name of readdirSync(d)) {
+      const f = path.join(d, name);
+      if (isLink(f)) links.push(f);
+      else if (name !== ".git" && lstatSync(f).isDirectory()) walk(f);
+    }
+  };
+  walk(dir);
   if (!links.map(unlink).every(Boolean)) {
-    console.error(`factory-eval: could not unlink node_modules; left ${dir} in place.`);
+    console.error(`factory-eval: could not unlink every link in it; left ${dir} in place.`);
     return false;
   }
   gitIn(root, ["worktree", "unlock", dir]);
   gitIn(root, ["worktree", "remove", "--force", dir]);
   gitIn(root, ["worktree", "prune"]);
-  try {
-    rmdirSync(path.dirname(dir)); // prepare's rf-eval-* temp parent, once empty
-  } catch {
-    // not ours, or not empty: leave it
+  if (existsSync(dir)) {
+    console.error(
+      `factory-eval: ${dir} is still on disk after the remove (a process holding it?); ` +
+        `git no longer tracks it — remove it by hand.`,
+    );
+    return false;
   }
+  if (path.basename(path.dirname(dir)).startsWith("rf-eval-"))
+    try {
+      rmdirSync(path.dirname(dir)); // prepare's own temp parent, once empty
+    } catch {
+      // not empty: leave it
+    }
   return true;
 }
 
@@ -250,16 +286,14 @@ export async function grade(task, tree, { run = defaultRun } = {}) {
     // A hidden spec stopped by its own compiler errors before any test ran cannot run: broken. A compiler
     // error in the agent's code (isolatedModules: only syntax errors reach the runner) is the agent's fail.
     const out = (o.output ?? "").replace(ANSI, "");
-    const tsAt = [...out.matchAll(/^\s*(\S+?):\d+:\d+ - error TS\d+/gm)].map((m) =>
-      path.basename(m[1]),
-    );
-    const own = tsAt.length > 0 && tsAt.every((f) => f === path.basename(h.path));
+    const tsAt = [...out.matchAll(/^\s*(\S+?):\d+:\d+ - error TS\d+/gm)].map((m) => m[1]);
+    const own = tsAt.length > 0 && tsAt.every((f) => isHidden(f, h, tree));
     if (own && !/^Tests:\s+[1-9]/m.test(out))
       return { result: "broken", reason: `${h.path}: TypeScript diagnostics, no tests ran` };
     // A syntax error located in the hidden test itself means it cannot run; one in the agent's code is a fail.
     const [before, after] = out.split(/SyntaxError/);
     const at = before.split("\n").findLast((l) => /:\d+\s*$/.test(l)) ?? "";
-    if (after !== undefined && at.includes(path.basename(h.path)))
+    if (after !== undefined && at && isHidden(at.replace(/:\d+(:\d+)?\s*$/, ""), h, tree))
       return { result: "broken", reason: `${h.path}: SyntaxError${after.split("\n")[0]}` };
     fails.push(`${h.path}: exit ${o.status}`);
   }
