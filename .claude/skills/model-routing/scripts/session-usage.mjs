@@ -296,7 +296,7 @@ function parseModelCards(mdText) {
   return { table, pricesAsOf };
 }
 
-function loadPriceTable(flags) {
+export function loadPriceTable(flags) {
   const warnings = [];
   let table = {};
   let pricesAsOf = null;
@@ -400,7 +400,7 @@ function cacheHitRatio(b) {
 // call's usage is repeated on every streamed content-block line sharing the
 // same message.id (verified: 112 usage-bearing lines / 54 unique ids in one
 // real session transcript), so counting every line would inflate sums ~2x.
-function* readUsageRecords(filePath, warnings) {
+export function* readUsageRecords(filePath, warnings) {
   let raw;
   try {
     raw = fs.readFileSync(filePath, "utf8");
@@ -442,7 +442,7 @@ function* readUsageRecords(filePath, warnings) {
 
 // Folds a list of { model, usage, timestamp } records into
 // { byModel, total, messages, firstAt, lastAt, activeMs, cacheHitRatio }.
-function aggregate(records, priceTable, idleGapMs, warnings) {
+export function aggregate(records, priceTable, idleGapMs, warnings) {
   const byModel = {};
   const times = [];
   const unknownModels = new Set();
@@ -506,7 +506,7 @@ const PHASE_LABEL_RX = /^PHASE:\s*(.+?)\s*\u00b7\s*LABEL:\s*(.+?)\s*$/m;
 // first, from the SAME aggregate() an agent's tokens/cost are already computed
 // from (owner ruling 2026-09-10, session-usage.mjs durations). 0 when there
 // are fewer than two distinct timestamps to span.
-function agentDurationMs(agentAgg) {
+export function agentDurationMs(agentAgg) {
   if (!agentAgg.firstAt || !agentAgg.lastAt) return 0;
   const d = Date.parse(agentAgg.lastAt) - Date.parse(agentAgg.firstAt);
   return Number.isFinite(d) && d > 0 ? d : 0;
@@ -1307,4 +1307,5 @@ function main() {
   }
 }
 
-main();
+// Run only as a CLI: importing this module (the agent-log hook, R1) must run nothing.
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();

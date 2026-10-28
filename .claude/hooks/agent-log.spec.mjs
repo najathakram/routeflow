@@ -38,7 +38,11 @@ const agentFile = path.join(subDir, "agent-abc123.jsonl");
 writeFileSync(
   agentFile,
   [
-    JSON.stringify({ type: "user", timestamp: "2026-10-28T05:00:00.000Z", message: { content: "go" } }),
+    JSON.stringify({
+      type: "user",
+      timestamp: "2026-10-28T05:00:00.000Z",
+      message: { content: "go" },
+    }),
     line("m1", "claude-sonnet-5-5", "2026-10-28T05:00:00.000Z", usage(100, 1000)),
     line("m1", "claude-sonnet-5-5", "2026-10-28T05:00:00.500Z", usage(100, 1000)), // same API call, streamed twice
     line("m2", "claude-haiku-4-5", "2026-10-28T05:02:00.000Z", usage(10, 50)),
@@ -57,10 +61,18 @@ const base = { session_id: "sess-1", transcript_path: transcript };
   check("A1/A4 tokens are deduped by message id", r.tokens, 100 + 1000 + 10 + 50 + 200 + 2000);
   check("A1 cost is priced, not null", typeof r.costUsd === "number" && r.costUsd > 0, true);
   check("A1 the main model is the one with most tokens", r.model, "claude-sonnet-5-5");
-  check("A1 meta fills description and effort", [r.description, r.effort, r.agentType], ["review #3893", "medium", "general-purpose"]);
+  check(
+    "A1 meta fills description and effort",
+    [r.description, r.effort, r.agentType],
+    ["review #3893", "medium", "general-purpose"],
+  );
   check("A1 src derived, v2, no nullReason", [r.src, r.v, r.nullReason], ["derived", 2, null]);
 }
-check("A2 agent_transcript_path wins", buildRow({ agent_transcript_path: agentFile }).src, "payload");
+check(
+  "A2 agent_transcript_path wins",
+  buildRow({ agent_transcript_path: agentFile }).src,
+  "payload",
+);
 check(
   "A2b no agent_id: the newest transcript within 10 s",
   [buildRow(base).src, buildRow(base).agentId],
@@ -72,32 +84,62 @@ check(
   "no transcript",
 );
 {
-  const r = buildRow({ session_id: "s", transcript_path: path.join(tmp, "none.jsonl"), agent_id: "x" });
-  check("A3 no transcript: nulls with a reason", [r.tokens, r.costUsd, r.nullReason], [null, null, "no transcript"]);
+  const r = buildRow({
+    session_id: "s",
+    transcript_path: path.join(tmp, "none.jsonl"),
+    agent_id: "x",
+  });
+  check(
+    "A3 no transcript: nulls with a reason",
+    [r.tokens, r.costUsd, r.nullReason],
+    [null, null, "no transcript"],
+  );
 }
 {
   const src = readFileSync(path.join(HERE, "agent-log.mjs"), "utf8");
-  check("A4 one accounting: counts through session-usage.mjs", /from "\.\.\/skills\/model-routing\/scripts\/session-usage\.mjs"/.test(src), true);
+  check(
+    "A4 one accounting: counts through session-usage.mjs",
+    /from "\.\.\/skills\/model-routing\/scripts\/session-usage\.mjs"/.test(src),
+    true,
+  );
 }
 {
-  const r = spawnSync(process.execPath, ["-e", `import(${JSON.stringify("file:///" + path.join(HERE, "..", "skills", "model-routing", "scripts", "session-usage.mjs").replace(/\\/g, "/"))}).then(() => console.log("imported"))`], { encoding: "utf8", timeout: 30_000 });
+  const r = spawnSync(
+    process.execPath,
+    [
+      "-e",
+      `import(${JSON.stringify("file:///" + path.join(HERE, "..", "skills", "model-routing", "scripts", "session-usage.mjs").replace(/\\/g, "/"))}).then(() => console.log("imported"))`,
+    ],
+    { encoding: "utf8", timeout: 30_000 },
+  );
   check("A5 importing session-usage.mjs runs nothing", r.stdout.trim(), "imported");
 }
 {
   const wt = path.join(tmp, "wt");
   mkdirSync(wt);
-  writeFileSync(path.join(wt, ".git"), `gitdir: ${path.join(tmp, "main", ".git", "worktrees", "wt")}\n`);
+  writeFileSync(
+    path.join(wt, ".git"),
+    `gitdir: ${path.join(tmp, "main", ".git", "worktrees", "wt")}\n`,
+  );
   check("worktree rows land in the main checkout", mainRoot(wt), path.join(tmp, "main"));
   check("the main checkout is itself", mainRoot(tmp), tmp);
 }
 {
-  const r = spawnSync(process.execPath, [path.join(HERE, "agent-log.mjs")], { input: "not json {{", encoding: "utf8", timeout: 30_000 });
+  const r = spawnSync(process.execPath, [path.join(HERE, "agent-log.mjs")], {
+    input: "not json {{",
+    encoding: "utf8",
+    timeout: 30_000,
+  });
   check("garbage stdin exits 0 silently", [r.status, r.stdout], [0, ""]);
 }
 {
   const settings = JSON.parse(readFileSync(path.join(HERE, "..", "settings.json"), "utf8"));
   const cmds = (settings.hooks?.SubagentStop ?? []).flatMap((r) => r.hooks.map((h) => h.command));
-  check("settings register the repo hook on SubagentStop", cmds.includes("node .claude/hooks/agent-log.mjs"), true);
+  check(
+    "settings register the repo hook on SubagentStop",
+    cmds.includes("node .claude/hooks/agent-log.mjs"),
+    true,
+  );
 }
 
 rmSync(tmp, { recursive: true, force: true });
