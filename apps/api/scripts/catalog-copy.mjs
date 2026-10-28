@@ -11,7 +11,8 @@
 // uploadImage), booted as a script-only Nest module (`dist/catalog-copy`): never AppModule, never ScheduleModule. A
 // column `create` does not carry is NEVER written here; the target keeps its default and the dry run lists the difference.
 //
-// Needs `npm run build -w apps/api` first (the module runs from `dist`) and DATABASE_URL (+ the storage env of the API
+// Needs `npm run build -w apps/api` first (the module runs from `dist`) and a database: run it under
+// `railway run --service postgres`, or add `--local` for a docker-compose database (+ the storage env of the API
 // service for photos). A PROTECTED target (paying, Stripe-linked, env-listed; lib/live-target-guard.cjs) also needs
 // `--allow-protected <tenantId>` and the typed "ALLOW PROTECTED <tenantId>" at a real terminal.
 // Exit: 0 ok · 1 refused (nothing written) · 2 environment error · 3 finished with error rows (see the report and manifest).
@@ -20,6 +21,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
 import pg from "pg";
+import { redactUrl, resolveDatabaseUrl } from "./lib/railway-db-url.mjs";
 
 const require = createRequire(import.meta.url);
 const here = dirname(fileURLToPath(import.meta.url));
@@ -35,7 +37,7 @@ function stripGuardFlags(argv) {
   const out = [];
   for (let i = 0; i < argv.length; i += 1) {
     if (argv[i] === "--allow-protected") i += 1;
-    else if (argv[i] !== "--backup-taken") out.push(argv[i]);
+    else if (argv[i] !== "--backup-taken" && argv[i] !== "--local") out.push(argv[i]);
   }
   return out;
 }
@@ -45,10 +47,17 @@ async function main() {
     console.error(`${TAG}: dist is missing -- run \`npm run build -w apps/api\` first`);
     return 2;
   }
-  if (!process.env.DATABASE_URL) {
-    console.error(`${TAG}: DATABASE_URL is not set`);
+  // A writer: the Railway proxy variables win and it never falls back (requireProxy), unless the operator says --local
+  // (a docker-compose run). The resolved target is handed to the compiled module's PrismaService, which reads nothing else.
+  let dbUrl;
+  try {
+    dbUrl = resolveDatabaseUrl(process.env, { requireProxy: !process.argv.includes("--local") });
+  } catch (e) {
+    console.error(`${TAG}: ${e.message}`);
     return 2;
   }
+  process.env.DATABASE_URL = dbUrl;
+  console.error(`${TAG}: target ${redactUrl(dbUrl)}`);
   const { parseCopyArgs, assertApplyAllowed, CopyRefusal } = await import(
     pathToFileURL(resolve(DIST, "catalog-copy.guard.js")).href
   );
@@ -81,14 +90,11 @@ async function main() {
   // the confirmation at a real terminal. Runs after the plan and the --confirm check, before the first write.
   const beforeWrite = async ({ targetTenantId }) => {
     if (isTestTenant(args.target)) return;
-    const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
+    const client = new pg.Client({ connectionString: dbUrl });
     await client.connect();
     try {
       const protectedIds = new Set(
-        await guard.protectedTenantIds(
-          client,
-          loadProtectedSlugs(process.env, process.env.DATABASE_URL),
-        ),
+        await guard.protectedTenantIds(client, loadProtectedSlugs(process.env, dbUrl)),
       );
       if (protectedIds.has(targetTenantId)) {
         await guard.confirmProtectedOverride({ tenantId: targetTenantId, argv: process.argv });
