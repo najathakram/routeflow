@@ -17,6 +17,7 @@ import { Badge, useToast } from "@routeflow/ui/web";
 import {
   basePriceText,
   invoiceDisplayCategoryTax,
+  baseUnitSuffix,
   formatPerBaseUnitPrice,
   invoiceDisplayLines,
   invoiceLineQtyText,
@@ -34,10 +35,7 @@ import { fmtCalendarDate } from "@/lib/formatting";
 import { paymentMethodLabel } from "@/lib/payment-methods";
 import { isPaymentTermsText } from "@/lib/invoice-sale-terms";
 import { InvoiceRevisionMarks } from "@/components/InvoiceRevisionMarks";
-import {
-  InvoiceDisplayRows,
-  displayQtyText,
-} from "@/components/InvoiceDisplayRows";
+import { InvoiceDisplayRows, displayQtyText } from "@/components/InvoiceDisplayRows";
 
 function fmt(n: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
@@ -442,7 +440,9 @@ export default function BuyerInvoiceDetailPage() {
                         data presence, not the addon flag, so an issued invoice keeps
                         rendering it even if the seller later loses the MSRP addon. */}
                       {msrp != null && (
-                        <p className="mt-0.5 text-[10px] text-navy/50">MSRP {fmt(msrp)}/pc</p>
+                        <p className="mt-0.5 text-[10px] text-navy/50">
+                          MSRP {fmt(msrp)}/{baseUnitSuffix(item.perBaseUnit)}
+                        </p>
                       )}
                     </span>
                   </td>

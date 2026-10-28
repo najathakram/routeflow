@@ -3,7 +3,12 @@
  * Expected values are hand-worked (round4 of unitPrice / the line's own pack), not read from the helper.
  */
 import { computeLineSubtotal } from "./index";
-import { formatPerBaseUnitPrice, perBaseUnitPrice } from "./per-base-unit";
+import {
+  DEFAULT_BASE_UNIT_WORD,
+  baseUnitSuffix,
+  formatPerBaseUnitPrice,
+  perBaseUnitPrice,
+} from "./per-base-unit";
 
 const line = (over: Record<string, unknown> = {}) => ({
   unitPrice: 48,
@@ -65,5 +70,19 @@ describe("display only (PB-3)", () => {
     expect(
       computeLineSubtotal({ unitPrice: 10, qty: 8, boxes: 1, pieces: 2, unitsPerBox: 6 } as never),
     ).toBe(13.33);
+  });
+});
+
+describe("baseUnitSuffix (G-6: one word)", () => {
+  it("the default word is pc and a loose line (no perBaseUnit) falls back to it", () => {
+    expect(DEFAULT_BASE_UNIT_WORD).toBe("pc");
+    expect(baseUnitSuffix(null)).toBe("pc");
+    expect(baseUnitSuffix(undefined)).toBe("pc");
+  });
+  it("a pack line of a Bag product prints its own frozen word", () => {
+    expect(baseUnitSuffix(perBaseUnitPrice(line(), "Bag"))).toBe("bag");
+  });
+  it("a pack line with no label prints the default, from the same constant", () => {
+    expect(baseUnitSuffix(perBaseUnitPrice(line(), null))).toBe(DEFAULT_BASE_UNIT_WORD);
   });
 });

@@ -2,6 +2,7 @@ import React from "react";
 import { Document, Page, Text, View, StyleSheet, Image, Link } from "@react-pdf/renderer";
 import { carrierLabel, getTrackingUrl } from "../common/shipping";
 import {
+  baseUnitSuffix,
   formatPerBaseUnitPrice,
   invoiceTaxSplit,
   roundMoney,
@@ -738,7 +739,7 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
                   </Text>
                   {item.msrp != null ? (
                     <Text style={{ fontSize: 6.5, color: GRAY, textAlign: "right", marginTop: 1 }}>
-                      MSRP {fmt(item.msrp)}/pc
+                      MSRP {fmt(item.msrp)}/{baseUnitSuffix(item.perBaseUnit)}
                     </Text>
                   ) : null}
                 </View>
