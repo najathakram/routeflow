@@ -5,6 +5,8 @@ import {
   displayUnitForItem,
   displayUnitSnapshotOf,
   invoiceDisplayUnitFor,
+  perBaseUnitPrice,
+  type PerBaseUnitPrice,
   INVOICE_UNIT_SETTING_KEY,
   type LadderViewUnit,
 } from "@routeflow/pricing";
@@ -385,7 +387,59 @@ export async function resolveDraftIssueUnits(
     : null;
 }
 
-/** `invoice.items` with `displayUnit`: a DRAFT resolves live, an issued invoice reads its snapshot (no catalog query). */
+/** The pack-line fields the per-piece price reads (SA-1029). */
+type PerPieceLine = {
+  id: string;
+  productId: string | null;
+  baseLabel?: string | null;
+  unitPrice?: unknown;
+  unitsPerBox?: number | null;
+  compositionMode?: string | null;
+  systemKind?: string | null;
+};
+
+/** Live product base labels for the lines that have not frozen one; a failed read gives none (the unit word falls to "pc"). */
+async function liveBaseLabels(readDb: any, tenantId: string | null, items: PerPieceLine[]) {
+  const ids = [
+    ...new Set(items.filter((i) => !i.baseLabel && i.productId).map((i) => i.productId!)),
+  ];
+  const out = new Map<string, string | null>();
+  if (!tenantId || !ids.length || !readDb?.product?.findMany) return out;
+  try {
+    const rows: Array<{ id: string; baseUnitLabel: string | null }> = await readDb.product.findMany(
+      {
+        where: { tenantId, id: { in: ids } },
+        select: { id: true, baseUnitLabel: true },
+      },
+    );
+    for (const r of rows ?? []) out.set(r.id, r.baseUnitLabel ?? null);
+  } catch (err) {
+    log.warn(`base label read skipped: ${(err as Error)?.message}`);
+  }
+  return out;
+}
+
+/**
+ * SA-1029: `perBaseUnit` for each line, `line.baseLabel ?? product.baseUnitLabel` for the unit word. Display only; null for a
+ * line that is not a plain pack line. Only a line with no frozen label costs a (batched) product read.
+ */
+export async function withPerBaseUnit<I extends PerPieceLine>(
+  readDb: any,
+  tenantId: string | null,
+  items: I[],
+): Promise<Array<I & { perBaseUnit: PerBaseUnitPrice | null }>> {
+  const packs = items.filter((i) => (i.unitsPerBox ?? 0) > 1);
+  const live = packs.length ? await liveBaseLabels(readDb, tenantId, packs) : new Map();
+  return items.map((i) => ({
+    ...i,
+    perBaseUnit: perBaseUnitPrice(
+      i as never,
+      i.baseLabel ?? (i.productId ? (live.get(i.productId) ?? null) : null),
+    ),
+  }));
+}
+
+/** `invoice.items` with `displayUnit` (and `perBaseUnit`): a DRAFT resolves live, an issued invoice reads its snapshot. */
 export async function itemsWithDisplayUnits<
   I extends {
     id: string;
@@ -397,15 +451,22 @@ export async function itemsWithDisplayUnits<
   readDb: any,
   invoice: { status: string; tenantId: string | null; customerId: string; items: I[] },
   entitlements?: DisplayUnitEntitlements | null,
-): Promise<Array<I & { displayUnit: InvoiceDisplayUnitView }>> {
+): Promise<
+  Array<I & { displayUnit: InvoiceDisplayUnitView; perBaseUnit: PerBaseUnitPrice | null }>
+> {
   const live =
     invoice.status === "DRAFT"
       ? await resolveLiveDisplayUnits(readDb, invoice.tenantId, invoice, entitlements)
       : null;
-  return withItemDisplayUnits<I, { status: string; items: I[] }>(
+  const withUnits = withItemDisplayUnits<I, { status: string; items: I[] }>(
     { status: invoice.status, items: withComponentViews(invoice.items as any) as unknown as I[] },
     live,
   ).items;
+  return withPerBaseUnit(
+    readDb,
+    invoice.tenantId,
+    withUnits as Array<(typeof withUnits)[number] & PerPieceLine>,
+  );
 }
 
 /**
@@ -421,6 +482,7 @@ export async function freezeDraftIssueUnits(
   if (!inv.tenantId) return;
   const units = await resolveIssueDisplayUnits(readDb, inv.tenantId, inv.id, entitlements, tx);
   await writeIssueDisplayUnits(tx, inv.id, units);
+  await writeIssueBaseLabels(tx, inv.id, inv.tenantId);
 }
 
 /**
@@ -484,6 +546,7 @@ export async function freezeIssueUnitsFromCatalog(
     );
   }
   await writeIssueDisplayUnits(tx, inv.id, resolveFromCatalog(catalog, items)); // a missing product is legacy: nothing written
+  await writeIssueBaseLabels(tx, inv.id, inv.tenantId);
 }
 
 /**
@@ -553,6 +616,38 @@ export async function writeIssueDisplayUnits(
 }
 
 /**
+ * SA-1029: at the DRAFT -> issued transition, freeze each pack line's product base unit word into InvoiceItem.baseLabel
+ * (the per-piece unit word), one updateMany per distinct label. Only a line with no frozen label and a label to freeze is
+ * written; a line without one prints "pc" and stays null. Reads the invoice's own rows through `tx`.
+ */
+export async function writeIssueBaseLabels(
+  tx: any,
+  invoiceId: string,
+  tenantId: string | null,
+): Promise<void> {
+  if (typeof invoiceId !== "string" || !invoiceId || !tenantId) return;
+  await underSavepoint(tx, invoiceId, async () => {
+    const rows: Array<{ id: string; product: { baseUnitLabel: string | null } | null }> =
+      await tx.invoiceItem.findMany({
+        where: { invoiceId, baseLabel: null, unitsPerBox: { gt: 1 }, invoice: { tenantId } },
+        select: { id: true, product: { select: { baseUnitLabel: true } } },
+      });
+    const byLabel = new Map<string, string[]>();
+    for (const r of rows ?? []) {
+      const label = r.product?.baseUnitLabel?.trim();
+      if (!label) continue;
+      byLabel.set(label, [...(byLabel.get(label) ?? []), r.id]);
+    }
+    for (const [label, ids] of byLabel) {
+      await tx.invoiceItem.updateMany({
+        where: { id: { in: ids }, invoiceId, baseLabel: null },
+        data: { baseLabel: label },
+      });
+    }
+  });
+}
+
+/**
  * On a revert to DRAFT: clear the snapshot of that invoice's lines (both columns to null). A DRAFT renders live (SA-827
  * rule 5), so a re-issue snapshots afresh. The data holds ONLY the two display columns.
  */
@@ -561,7 +656,7 @@ export async function clearIssueDisplayUnits(tx: any, invoiceId: string): Promis
   await underSavepoint(tx, invoiceId, async () => {
     await tx.invoiceItem.updateMany({
       where: { invoiceId },
-      data: { invoiceUnitLabel: null, invoiceUnitFactor: null },
+      data: { invoiceUnitLabel: null, invoiceUnitFactor: null, baseLabel: null },
     });
   });
 }

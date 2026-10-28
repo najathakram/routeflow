@@ -34,9 +34,9 @@ const comps = [
 ];
 
 describe("pieceUnitPriceText", () => {
-  it("prints 4 dp", () => {
+  it("prints cents, up to 4 dp when needed", () => {
     expect(pieceUnitPriceText(2.0005)).toBe("$2.0005");
-    expect(pieceUnitPriceText(2)).toBe("$2.0000");
+    expect(pieceUnitPriceText(2)).toBe("$2.00");
   });
 });
 
@@ -72,7 +72,7 @@ describe("pdfItemDisplay", () => {
           barcodeText: "123",
           barcodeDataUri: "data:image/png;base64,AA",
           qtyText: "10 Piece",
-          priceText: "$2.0010",
+          priceText: "$2.001",
           amountText: "$20.01",
         },
         {

@@ -438,12 +438,12 @@ describe("writeIssueDisplayUnits (write side: inside the caller's tx, under a sa
 });
 
 describe("clearIssueDisplayUnits (revert to draft)", () => {
-  it("nulls both columns for that invoice's items under the savepoint; only those two keys", async () => {
+  it("nulls the frozen unit columns (incl. SA-1029 baseLabel) for that invoice's items under the savepoint; only those keys", async () => {
     const { tx, sql } = makeTx();
     await clearIssueDisplayUnits(tx, "inv-1");
     expect(tx.invoiceItem.updateMany).toHaveBeenCalledWith({
       where: { invoiceId: "inv-1" },
-      data: { invoiceUnitLabel: null, invoiceUnitFactor: null },
+      data: { invoiceUnitLabel: null, invoiceUnitFactor: null, baseLabel: null },
     });
     expect(sql).toEqual([
       "SAVEPOINT display_unit_snapshot",
@@ -602,7 +602,8 @@ describe("freezeDraftIssueUnits (resolve + write at the DRAFT -> issued transiti
     tx.$executeRaw = jest.fn(async () => 0);
     tx.invoiceItem.updateMany = jest.fn(async () => ({ count: 1 }));
     await freezeDraftIssueUnits(catalog as any, tx, { id: "inv-1", tenantId: TENANT }, flag(true));
-    expect(tx.invoiceItem.findMany).toHaveBeenCalledTimes(1);
+    // 1 for the unit snapshot, 1 for the SA-1029 baseLabel freeze (writeIssueBaseLabels)
+    expect(tx.invoiceItem.findMany).toHaveBeenCalledTimes(2);
     expect(catalog.invoiceItem.findMany).not.toHaveBeenCalled();
     expect(catalog.product.findMany).toHaveBeenCalled();
     expect(tx.invoiceItem.updateMany).toHaveBeenCalledTimes(1);
