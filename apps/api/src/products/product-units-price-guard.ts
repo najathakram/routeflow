@@ -6,7 +6,7 @@ import {
   type PriceAuthorityProduct,
 } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../common/api-error-codes";
-import { familyPriceAuthorityError } from "./family-price";
+import { familyOwnerIdOf, familyPriceAuthorityError } from "./family-price";
 
 const PRICE_KEYS = ["price", "priceTier2", "priceTier3", "priceTier4", "priceTier5"] as const;
 
@@ -26,8 +26,7 @@ export function assertUnitPriceWritable(
     return;
   const authority = priceAuthority(product, ctx.mode, ctx.level);
   if (authority === "own") return;
-  if (authority === "family")
-    throw familyPriceAuthorityError(product.parentProductId ?? product.id);
+  if (authority === "family") throw familyPriceAuthorityError(familyOwnerIdOf(product));
   throw new ConflictException({
     code: API_ERROR_CODES.FAMILY_PRICE_AUTHORITY,
     message: "Family prices are edited on the family page.",

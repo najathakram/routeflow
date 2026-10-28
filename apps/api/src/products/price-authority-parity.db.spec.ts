@@ -265,10 +265,15 @@ describeDb("SA-1041 price authority parity - real Postgres", () => {
         const recipeFamilyId = shape === "recipe-linked" ? s.familyId : null;
         const verdict = priceAuthority({ ...pr, recipeFamilyId } as any, m, "base");
 
-        const viaGrid = await saveGrid(s, "base", 13).then(
-          () => "accepted",
-          (e) => (e instanceof ConflictException ? "refused" : `error:${e?.message}`),
-        );
+        // SA-1041 A-1: the pack row is base, so the grid write targets "pack"; a "base"-ref
+        // write is the second assertion and must agree.
+        const outcome = (ref: string, to: number) =>
+          saveGrid(s, ref, to).then(
+            () => "accepted",
+            (e) => (e instanceof ConflictException ? "refused" : `error:${e?.message}`),
+          );
+        const viaGrid = await outcome("pack", 13);
+        const viaGridBaseRef = await outcome("base", 13);
         const viaEditor = await inTenant(s.tenantId, () =>
           products.update(
             s.productId,
@@ -284,9 +289,11 @@ describeDb("SA-1041 price authority parity - real Postgres", () => {
 
         if (verdict === "own") {
           expect(viaGrid).toBe("accepted");
+          expect(viaGridBaseRef).toBe("accepted");
           expect(viaEditor).toBe("accepted");
         } else if (verdict === "family") {
           expect(viaGrid).toBe("refused");
+          expect(viaGridBaseRef).toBe("refused");
           expect(viaEditor).toBe("refused");
         } else {
           // family-page: only the grid refuses; the product editor is where a family is priced

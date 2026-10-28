@@ -131,6 +131,15 @@ describe("ProductUnitsService price guard (row 749)", () => {
     expect(off.tx.productUnit.update).toHaveBeenCalled();
   });
 
+  it("R-a8: a family-linked recipe's factor-1 price 409 names the recipe's family, not the recipe (SA-1041 A-2)", async () => {
+    const recipe = { ...variantProduct, id: "p1", parentProductId: null, kind: "RECIPE" };
+    const one: Row = { id: "u-one", label: "Piece", factorToBase: 1 };
+    const linked = build({ product: recipe, rows: [one], mode: "on", recipeFamilyId: "f1" });
+    const err = await linked.service.update("p1", "u-one", { price: 9 }).catch((e) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(err.getResponse()).toMatchObject({ code: "FAMILY_PRICE_AUTHORITY", familyId: "f1" });
+  });
+
   it("a structure-only create on a variant still succeeds", async () => {
     const { service, tx } = build({ product: variantProduct });
     await service.create("p1", { label: "Case", factorToBase: 288 });

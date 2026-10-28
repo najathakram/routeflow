@@ -33,7 +33,12 @@ import {
   setStockLockTimeout,
 } from "../common/product-locks";
 import { FeatureConfigService } from "../billing/feature-config.service";
-import { familyPriceAuthorityError, readFamilyPriceMode, recipeFamilyIdOf } from "./family-price";
+import {
+  familyOwnerIdOf,
+  familyPriceAuthorityError,
+  readFamilyPriceMode,
+  recipeFamilyIdOf,
+} from "./family-price";
 import { priceWriteReplay } from "./product-price-replay";
 import { assertOrderUnitSwitchAllowed, pricingRulesNotReady } from "../common/pricing-rules-ready";
 import { PrismaService } from "../prisma/prisma.service";
@@ -562,7 +567,7 @@ export class ProductPriceWriteService {
     for (const level of levels) {
       const authority = priceAuthority(subject, mode, level);
       if (authority === "family") {
-        throw familyPriceAuthorityError(p.parentProductId ?? recipeFamilyId ?? p.id);
+        throw familyPriceAuthorityError(familyOwnerIdOf(subject));
       }
       if (authority === "family-page") {
         throw this.invalid(["Family prices are edited on the family page."]);

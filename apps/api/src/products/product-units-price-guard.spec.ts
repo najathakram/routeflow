@@ -91,6 +91,11 @@ describe("assertUnitPriceWritable (priceAuthority decides, SA-1041)", () => {
     );
   });
 
+  it("names the recipe's family, not the recipe, for a linked recipe (SA-1041 A-2)", () => {
+    const e = refusal(() => assertUnitPriceWritable(recipeLinked, { price: 1 }, on("base")));
+    expect(e.getResponse()).toMatchObject({ code: "FAMILY_PRICE_AUTHORITY", familyId: "f1" });
+  });
+
   it("names the family for a variant", () => {
     const e = refusal(() => assertUnitPriceWritable(variant, { price: 1 }, on("base")));
     expect(e.getResponse()).toMatchObject({ familyId: "f1" });

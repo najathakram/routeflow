@@ -86,6 +86,19 @@ export function variantPriceWriteDecision(input: {
   return { allow: want.every((value, i) => value === got[i]) };
 }
 
+/**
+ * The family that owns a governed product's price: its parent, else the family its recipe links to
+ * (SA-1041 A-2). Never the product itself; a "family" verdict without either is a broken invariant.
+ */
+export function familyOwnerIdOf(p: {
+  parentProductId?: string | null;
+  recipeFamilyId?: string | null;
+}): string {
+  const id = p.parentProductId ?? p.recipeFamilyId;
+  if (!id) throw new Error("price authority is family but the product has no owning family");
+  return id;
+}
+
 export function familyPriceAuthorityError(familyId: string): ConflictException {
   return new ConflictException({
     code: API_ERROR_CODES.FAMILY_PRICE_AUTHORITY,
