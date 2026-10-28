@@ -461,6 +461,12 @@ export function saveRun(baseDir, runId, records) {
   return file;
 }
 
+// ---- report (stub) ----
+export const readResults = () => Object.assign([], { malformed: 0 });
+export const report = () => ({ rows: [], runs: [] });
+export const formatReport = () => "";
+export const sampleTasks = (tasks) => tasks;
+
 // ---- select ----
 
 /** The merged-PR list from gh may be cut at its limit; say so when it is exactly full. */

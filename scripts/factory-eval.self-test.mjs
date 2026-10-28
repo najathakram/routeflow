@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Self-test for scripts/factory-eval.mjs (schema, select rules, prepare, grade, cleanup, budget, run).
+// Self-test for scripts/factory-eval.mjs (schema, select rules, prepare, grade, cleanup, budget, sample, report, run).
 // Plain node; exit 0 when every check passes. Planted repos stand in for history; only the free stub arm runs.
 import { spawnSync } from "node:child_process";
 import {
@@ -529,6 +529,108 @@ try {
 } finally {
   rmSync(tmp, { recursive: true, force: true });
 }
+
+// E7: report --vs over two result files on the same four tasks.
+const rtmp = realpathSync.native(mkdtempSync(path.join(tmpdir(), "rf-evr-")));
+try {
+  const rec = (taskId, run, ok, costUsd, wallSec, result = ok ? "pass" : "fail") => ({
+    taskId,
+    arm: "same-arm",
+    run,
+    result,
+    costUsd,
+    wallSec,
+  });
+  const plan = { t1: [2, 0], t2: [2, 1], t3: [0, 2], t4: [2, 2] }; // passes of 2 runs: [cand, base]
+  const lines = (i, cost) =>
+    Object.entries(plan).flatMap(([t, p]) =>
+      [0, 1].map((r) => rec(t, r, r < p[i], cost, 10 * (r + 1))),
+    );
+  const save = (name, rows) => {
+    const f = path.join(rtmp, name);
+    mkdirSync(path.dirname(f), { recursive: true });
+    writeFileSync(f, rows.map((r) => (typeof r === "string" ? r : JSON.stringify(r))).join("\n"));
+    return f;
+  };
+  const fa = save("cand.jsonl", lines(0, 3));
+  const fb = save("base/results.jsonl", lines(1, 1));
+  const R = () => FE.report(FE.readResults([fa, path.dirname(fb)]), { vs: "base" });
+  await check(
+    "E7 won 2, lost 1, tied 1 (two runs of one arm, told apart by file)",
+    [2, 1, 1],
+    () => {
+      const v = R().vs.against[0];
+      return [v.won, v.lost, v.tied];
+    },
+  );
+  await check("E7 pass^k per task", [true, true, false, true], () =>
+    R()
+      .rows.filter((r) => r.run === "cand")
+      .map((r) => r.passK),
+  );
+  await check("pass@1 is exact for k = 3 and shown with 2 decimals", [2 / 3, true], () => {
+    const rs = [rec("t", 0, true, 1, 1), rec("t", 1, true, 1, 1), rec("t", 2, false, 1, 1)];
+    const rep = FE.report(rs);
+    return [rep.rows[0].passAt1, /0\.67/.test(FE.formatReport(rep))];
+  });
+  await check("a null cost is left out of the mean and counted as unknown", [2, 1, true], () => {
+    const rs = [rec("t", 0, true, 1, 1), rec("t", 1, true, 3, 1), rec("t", 2, true, null, 1)];
+    const rep = FE.report(rs);
+    return [rep.runs[0].meanCost, rep.runs[0].unknownCost, /1 unknown/.test(FE.formatReport(rep))];
+  });
+  await check("broken is counted on its own line, not folded into fail", [1, true], () => {
+    const rep = FE.report([rec("t", 0, true, 1, 1), rec("t", 1, false, 1, 1, "broken")]);
+    return [rep.rows[0].broken, /^broken/m.test(FE.formatReport(rep))];
+  });
+  await check(
+    "a malformed line is skipped and counted; its text is never printed",
+    [1, false],
+    () => {
+      const rs = FE.readResults([
+        save("bad.jsonl", [rec("t", 0, true, 1, 1), "{zzsecret not json"]),
+      ]);
+      return [rs.malformed, FE.formatReport(FE.report(rs), rs.malformed).includes("zzsecret")];
+    },
+  );
+  await check("the report text names pass^k, pass@1 and won/lost/tied", [true, true, true], () => {
+    const text = FE.formatReport(R());
+    return [/pass\^k/.test(text), /pass@1/.test(text), /won 2, lost 1, tied 1/.test(text)];
+  });
+  await check("report --json prints the report as JSON", [true], () => {
+    const out = spawnSync("node", [path.join(HERE, "factory-eval.mjs"), "report", fa, "--json"], {
+      encoding: "utf8",
+    });
+    return [Array.isArray(JSON.parse(out.stdout).rows)];
+  });
+} finally {
+  rmSync(rtmp, { recursive: true, force: true });
+}
+
+// E9: seeded sample, kinds in proportion to the pool.
+const mk = (bugs, feats) =>
+  [...Array(bugs).fill("bug"), ...Array(feats).fill("feature")].map((kind, i) => ({
+    ...base,
+    id: `acme-${kind}-${i}`,
+    kind,
+    risk: ["green", "amber", "red"][i % 3],
+  }));
+const pool = mk(10, 10);
+const ids = (n, seed) => FE.sampleTasks(pool, n, seed).map((t) => t.id);
+await check("E9 --sample 6 --seed 1 twice gives the same 6 ids", [true, 6], () => {
+  const a = ids(6, 1);
+  return [JSON.stringify(a) === JSON.stringify(ids(6, 1)), new Set(a).size];
+});
+await check("E9 a 15-bug / 5-feature pool at n = 8 gives 6 bugs and 2 features", [6, 2], () => {
+  const got = FE.sampleTasks(mk(15, 5), 8, 3);
+  return ["bug", "feature"].map((k) => got.filter((t) => t.kind === k).length);
+});
+await check("E9 both kinds are present at n = 2, even in a lopsided pool", [2, 2], () => [
+  new Set(FE.sampleTasks(pool, 2, 7).map((t) => t.kind)).size,
+  new Set(FE.sampleTasks(mk(19, 1), 2, 7).map((t) => t.kind)).size,
+]);
+await check("E9 risks rotate inside a kind", [3], () => [
+  new Set(FE.sampleTasks(mk(9, 0), 3, 5).map((t) => t.risk)).size,
+]);
 
 await check(
   "arms file: a stub arm and one real template; the stub is free",
