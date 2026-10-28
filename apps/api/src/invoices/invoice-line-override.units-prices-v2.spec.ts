@@ -41,14 +41,21 @@ function harness(opts: { flag: boolean; typed: Array<[string, number]>; tier?: n
         ),
     },
   };
-  const prisma = { forTenant: () => db, getTenantId: () => "t1" };
+  // the capability helper reads the actor's deny list through the base client
+  const prisma = {
+    forTenant: () => db,
+    getTenantId: () => "t1",
+    user: {
+      findFirst: jest.fn().mockResolvedValue({ deniedPermissionGroups: [], permissionsVersion: 1 }),
+    },
+  } as never;
   const ladders = new Map([["p1", [caseRow]]]);
   const load = () =>
     loadOverride(
       prisma,
       { customerId: "c1", items: [{ productId: "p1" }] },
       ladders as never,
-      { sub: "actor", role: "OPERATOR" },
+      { sub: "actor", role: "OPERATOR", tenantId: "t1" },
       { hasFlagStrict: hasFlag },
     );
   return { hasFlag, load };

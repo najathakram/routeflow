@@ -28,7 +28,6 @@ import { toCounterOrderItem } from "./counter-sale-lines";
 import { resolveTierPrices } from "./counter-sale-tier-price";
 import { assertReplaySamePrices } from "./counter-sale-replay-price";
 import { AuditService } from "../../audit/audit.service";
-import { staffMay } from "../../auth/permissions/staff-capabilities";
 import {
   buildCounterSaleResponse,
   isCounterTenderCashRow,
@@ -167,10 +166,6 @@ export class CounterSaleService {
       {
         fulfillPath: FulfillPath.PICKUP,
         counterSale: true,
-        // POS-5: create() refuses a real price change from a caller who may not make one (403
-        // PRICE_EDIT_NOT_PERMITTED), against its own server-resolved price and before any write.
-        // SA-1034: the operator's denied groups arrive with the permissions rollout.
-        priceEditAllowed: staffMay(user.role, "EDIT_LINE_PRICE", []),
         // B1209: a walk-in's tender is judged against the SERVER total inside create(), before anything is written.
         beforeWrite: walkIn
           ? ({ total }) => assertWalkInTenderCoversTotal(dto.payment, total)

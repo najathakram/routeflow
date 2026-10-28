@@ -12,7 +12,6 @@ import { calendarDateFromIso, startOfCalendarDay } from "../common/calendar-date
  *  - `fulfillPath`: handed to create() as an internal option (PICKUP is not a writable DTO value).
  *  - `counterSale` (SA-672e): stamp Order.counterSale (only the counter POST sets it).
  *  - `suppressInvoiceNotify`: send the invoice without the INVOICE_SENT message (the walk-in has no mailbox).
- *  - `priceEditAllowed` (POS-5): create()'s option of the same name (counter sale only; absent for /sell).
  *  - `creditPaidNow` (S1): create()'s option of the same name (counter sale only; absent for /sell).
  *  - `onReplay`: called when `dto.idempotencyKey` replayed an earlier sale; createSale then RESUMES it.
  */
@@ -20,7 +19,6 @@ export interface SaleOptions {
   fulfillPath?: FulfillPath;
   counterSale?: boolean;
   suppressInvoiceNotify?: boolean;
-  priceEditAllowed?: boolean;
   onReplay?: (order: ReplayedOrder) => void;
   /** B1209: create()'s `beforeWrite` (the server total, before anything is written). */
   beforeWrite?: (priced: { total: number }) => void | Promise<void>;
@@ -82,7 +80,6 @@ export function saleCreateOptions(
     skipAutoMerge: true,
     ...(sale.fulfillPath ? { fulfillPath: sale.fulfillPath } : {}),
     ...(sale.counterSale ? { counterSale: true } : {}),
-    ...(sale.priceEditAllowed !== undefined ? { priceEditAllowed: sale.priceEditAllowed } : {}),
     ...(sale.beforeWrite ? { beforeWrite: sale.beforeWrite } : {}),
     ...(sale.creditPaidNow ? { creditPaidNow: sale.creditPaidNow } : {}),
     ...(idempotencyKey

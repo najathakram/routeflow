@@ -29,10 +29,6 @@ export interface ReplayedOrder {
  *    it is resuming, not creating. The key lookup itself does NOT filter on Order.counterSale (keys are
  *    client UUIDs per tenant, a pre-existing property), so the counter POST's onReplay guard is what
  *    refuses a key that belongs to an ordinary staff/buyer order. Existing callers pass neither.
- *  - `priceEditAllowed` (POS-5): ONLY the counter sale sets it, to `staffMay(user.role, "EDIT_LINE_PRICE")`. `false` refuses a line
- *    that WOULD be a real staff price override (DISCOUNTED / MANUAL, judged against the server's own tier price)
- *    with 403 PRICE_EDIT_NOT_PERMITTED, before anything is written; a typed price within 1/2 cent of the server's
- *    is no override and passes. `undefined` (every other caller) and `true` change nothing.
  *  - `beforeWrite` (B1209): called with the SERVER-computed order total right after pricing and before any
  *    stock lock or transaction (never on a replay, never for a draft); a throw refuses with nothing written.
  *  - `creditPaidNow` (S1, C42): ONLY the counter sale sets it: given the SERVER total, how much is paid at the till
@@ -57,7 +53,6 @@ export interface CreateOrderOptions {
    * REQUESTER's (SA ruling #3418). Never a DTO field.
    */
   lineAuthor?: OrderItemAuthorChannel;
-  priceEditAllowed?: boolean;
   onReplay?: (order: ReplayedOrder) => void;
   beforeWrite?: (priced: { total: number }) => void | Promise<void>;
   creditPaidNow?: (total: number) => number;

@@ -1,16 +1,19 @@
 import { readFileSync, readdirSync, statSync } from "fs";
 import { join, relative } from "path";
+import type { CreateOrderOptions } from "./order-create-options";
+import type { SaleOptions } from "./sale-options";
 
 /**
  * SA-1034: the price-edit capability is checked at every override site, through the ONE helper
- * `assertPriceEditAllowed` (staff-override.ts), with a required boolean the caller computes as
- * `staffMay(role, "EDIT_LINE_PRICE", deniedGroups)`.
+ * `assertPriceEditAllowed` (staff-override.ts), with a required boolean that every compute site gets from the ONE
+ * helper `priceEditAllowedFor` (auth/permissions/price-edit.ts: the deny list and the permissions mode read once).
  *
  *  - `decideTierOverride(` has exactly the callers listed below; a new one is reviewed and added here.
- *  - each override-site file keeps at least its count of `assertPriceEditAllowed(` calls (a floor:
- *    a count may grow with a new site, never drop).
+ *  - each override-site file has EXACTLY its count of `assertPriceEditAllowed(` and `priceEditAllowedFor(` calls: a
+ *    new site raises its count in its own diff, where it is reviewed (OP-7).
  *  - `assertPriceEditAllowed` takes a required `boolean`.
- *  - every `staffMay(…, "EDIT_LINE_PRICE"…)` passes its `deniedGroups` argument explicitly.
+ *  - `staffMay(…, "EDIT_LINE_PRICE"…)` is called only inside price-edit.ts (and not at all anywhere else).
+ *  - neither `CreateOrderOptions` nor `SaleOptions` declares `priceEditAllowed`: a caller passes a principal, never a boolean.
  * Pure source reads: no Nest, no database.
  */
 const SRC = join(__dirname, "..");
@@ -39,12 +42,18 @@ const DECIDE_TIER_OVERRIDE_CALLERS: Record<string, number> = {
   "invoices/invoice-line-override.ts": 1, // invoice line create / edit (pack line)
 };
 
-/** Shrink-only floors: the `assertPriceEditAllowed(` calls each override-site file makes. */
-const ASSERT_FLOORS: Record<string, number> = {
+/** Exact: the `assertPriceEditAllowed(` calls each override-site file makes. */
+const ASSERT_COUNTS: Record<string, number> = {
   "orders/orders.service.ts": 4, // create pack, substitute, diff-add, existing-line edit
-  "orders/unit-line-build.ts": 1, // a unit line's new override stamp (create + unit-line-edit)
+  "orders/unit-line-build.ts": 1, // a unit line's new override (create + unit-line-edit)
   "orders/replace-all-line-build.ts": 1, // replace-all repriced line + the create auto-merge's new line
   "invoices/invoice-line-override.ts": 1, // invoice line create / edit, pack and unit
+};
+
+/** Exact: the `priceEditAllowedFor(` compute sites (the helper's own definition is not a call). */
+const COMPUTE_COUNTS: Record<string, number> = {
+  "orders/orders.service.ts": 2, // create, updateOrderItems (each once, before its transaction)
+  "invoices/invoice-line-override.ts": 1, // loadOverride: invoice create and edit
 };
 
 describe("SA-1034: price-edit capability is checked at every override site", () => {
@@ -61,12 +70,31 @@ describe("SA-1034: price-edit capability is checked at every override site", () 
     expect(found).toEqual(DECIDE_TIER_OVERRIDE_CALLERS);
   });
 
-  it.each(Object.entries(ASSERT_FLOORS))(
-    "%s keeps at least %i assertPriceEditAllowed( calls (shrink-only floor)",
-    (file, floor) => {
-      expect(callCount(read(file), "assertPriceEditAllowed")).toBeGreaterThanOrEqual(floor);
+  it.each(Object.entries(ASSERT_COUNTS))(
+    "%s has exactly %i assertPriceEditAllowed( calls",
+    (file, n) => {
+      expect(callCount(read(file), "assertPriceEditAllowed")).toBe(n);
     },
   );
+
+  it("assertPriceEditAllowed( is called nowhere else outside staff-override.ts", () => {
+    const found: Record<string, number> = {};
+    for (const f of files) {
+      if (f === join("orders", "staff-override.ts")) continue;
+      const n = callCount(read(f), "assertPriceEditAllowed");
+      if (n > 0) found[f.split("\\").join("/")] = n;
+    }
+    expect(found).toEqual(ASSERT_COUNTS);
+  });
+
+  it("priceEditAllowedFor( is called at exactly the compute sites, once each per request path", () => {
+    const found: Record<string, number> = {};
+    for (const f of files) {
+      const n = callCount(read(f), "priceEditAllowedFor");
+      if (n > 0) found[f.split("\\").join("/")] = n;
+    }
+    expect(found).toEqual(COMPUTE_COUNTS);
+  });
 
   it("assertPriceEditAllowed takes a required boolean (no undefined, no optional parameter)", () => {
     const sig = read("orders/staff-override.ts").match(
@@ -87,17 +115,25 @@ describe("SA-1034: price-edit capability is checked at every override site", () 
     expect(n).toBe(2);
   });
 
-  it('every staffMay(…, "EDIT_LINE_PRICE"…) call passes its deniedGroups argument', () => {
-    const bare: string[] = [];
-    let total = 0;
+  it('staffMay(…, "EDIT_LINE_PRICE"…) is called only inside auth/permissions/price-edit.ts', () => {
+    const where: string[] = [];
     for (const f of files) {
       for (const m of code(read(f)).matchAll(/staffMay\(([^()]*(?:\([^()]*\))?[^()]*)\)/g)) {
-        if (!m[1].includes('"EDIT_LINE_PRICE"')) continue;
-        total++;
-        if (m[1].split(",").length < 3) bare.push(`${f}: staffMay(${m[1]})`);
+        if (m[1].includes('"EDIT_LINE_PRICE"')) where.push(f.split("\\").join("/"));
       }
     }
-    expect(bare).toEqual([]);
-    expect(total).toBeGreaterThanOrEqual(4); // create, updateOrderItems, the counter sale, invoice lines
+    // price-edit.ts holds the two (role-only and enforced); the capability tables define the row, they do not call it.
+    expect(where).toEqual(["auth/permissions/price-edit.ts", "auth/permissions/price-edit.ts"]);
+  });
+
+  it("neither CreateOrderOptions nor SaleOptions declares priceEditAllowed (a caller passes a principal, never a boolean)", () => {
+    expect(code(read("orders/order-create-options.ts"))).not.toContain("priceEditAllowed");
+    expect(code(read("orders/sale-options.ts"))).not.toContain("priceEditAllowed");
+    // type level: an excess property on either type is a compile error (check-types fails if it is ever re-added)
+    // @ts-expect-error priceEditAllowed is not a create() option
+    const create: CreateOrderOptions = { priceEditAllowed: true };
+    // @ts-expect-error priceEditAllowed is not a sale option
+    const sale: SaleOptions = { priceEditAllowed: true };
+    expect([create, sale]).toHaveLength(2);
   });
 });

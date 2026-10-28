@@ -37,8 +37,8 @@ describe("no canEditPrices is defined anywhere (SA-762r)", () => {
     expect(DEFINES.test("const staffMay = 1; // canEditPrices was deleted")).toBe(false);
   });
 
-  it("the counter passes through staffMay", () => {
+  it("the counter holds no price capability of its own: create() computes it from the principal (SA-1034)", () => {
     const src = readFileSync(join(__dirname, "counter-sale.service.ts"), "utf8");
-    expect(src).toContain('staffMay(user.role, "EDIT_LINE_PRICE", [])');
+    expect(src).not.toMatch(/priceEditAllowed|EDIT_LINE_PRICE|staffMay/);
   });
 });

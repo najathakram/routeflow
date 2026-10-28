@@ -68,15 +68,19 @@ describe("OrdersService.createSale — counter-sale options and resume", () => {
     expect(b.create.mock.calls[0][2]).not.toHaveProperty("counterSale");
   });
 
-  it("sale.priceEditAllowed reaches create() as given (true AND false), and is absent when unset (POS-5)", async () => {
+  it("createSale never forwards a price capability to create(): even a stale caller's priceEditAllowed is dropped (SA-1034 r5.3)", async () => {
     for (const v of [true, false]) {
       const a = await setup();
-      await a.h.service.createSale(dto, operatorPayload as never, { priceEditAllowed: v });
-      expect(a.create.mock.calls[0][2]).toMatchObject({ skipAutoMerge: true, priceEditAllowed: v });
+      await a.h.service.createSale(
+        dto,
+        operatorPayload as never,
+        {
+          counterSale: true,
+          priceEditAllowed: v,
+        } as never,
+      );
+      expect(a.create.mock.calls[0][2]).not.toHaveProperty("priceEditAllowed");
     }
-    const b = await setup();
-    await b.h.service.createSale(dto, operatorPayload as never, { counterSale: true });
-    expect(b.create.mock.calls[0][2]).not.toHaveProperty("priceEditAllowed");
   });
 
   it("sale.creditPaidNow reaches create() as the same function, and is absent when unset (S1)", async () => {

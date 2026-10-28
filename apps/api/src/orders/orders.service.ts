@@ -79,7 +79,8 @@ import {
   type SaleOptions,
 } from "./sale-options";
 import { notifyOrderStatusChange, type ChangeStatusOpts } from "./order-status-notify";
-import { assertPriceEditAllowed, decideTierOverride, staffMay } from "./staff-override";
+import { assertPriceEditAllowed, decideTierOverride } from "./staff-override";
+import { priceEditAllowedFor } from "../auth/permissions/price-edit";
 import { assertMergeLockAcquired, mapLockError } from "./merge-contention";
 import {
   deleteLoserGuarded,
@@ -1231,8 +1232,11 @@ export class OrdersService implements OnApplicationBootstrap {
     const commissionRatePct = parseCommissionRatePct(dto.commissionRatePct, user.role);
 
     const isStaffRole = user.role === UserRole.OPERATOR || user.role === UserRole.TENANT_ADMIN;
-    // SA-1034: the counter sale's own value, else the role's; denied groups arrive with the permissions rollout.
-    const priceEditAllowed = options.priceEditAllowed ?? staffMay(user.role, "EDIT_LINE_PRICE", []);
+    // SA-1034 (POS-5): the one price-edit capability, computed from the principal alone (no caller passes it, the counter
+    // included), once per request and before any lock. A line that WOULD be a real staff price override (DISCOUNTED /
+    // MANUAL, judged against the server's own tier price) is refused 403 PRICE_EDIT_NOT_PERMITTED before anything is
+    // written; a typed price within 1/2 cent of the server's is no override and passes.
+    const priceEditAllowed = await priceEditAllowedFor(this.prisma, user, "OrdersService.create");
     // B318: the edit path (updateOrderItems' isStaffCreditEdit) already strips
     // appliedCreditNotes for non-staff callers — a buyer or driver token could
     // otherwise spend a customer's credit notes on create, a right the edit path
@@ -2596,6 +2600,13 @@ export class OrdersService implements OnApplicationBootstrap {
       },
     });
     if (!order) throw new NotFoundException("Order not found");
+    // SA-1034: the price-edit capability, read once here, before the edit transaction opens; each line decision below
+    // still happens inside the lock against the held lines.
+    const priceEditAllowed = await priceEditAllowedFor(
+      this.prisma,
+      user,
+      "OrdersService.updateOrderItems",
+    );
     // #2565: a buyer's ownership is settled FIRST, unconditionally — before any status or shape
     // answer and before any side effect (the linked-invoice revert below commits on its own
     // connection). The later buyer checks were each conditional, so a non-owner's diff could revert
@@ -3165,8 +3176,7 @@ export class OrdersService implements OnApplicationBootstrap {
             tier: (pid) => (atCustomerTier ? (operatorCpMap.get(pid) ?? operatorDefaultTier) : 1),
             layerOf: atCustomerTier ? operatorPc.layer : undefined,
             overriddenBy: user?.sub ?? null,
-            // SA-1034: the operator's denied groups arrive with the permissions rollout.
-            priceEditAllowed: staffMay(user?.role, "EDIT_LINE_PRICE", []),
+            priceEditAllowed, // SA-1034: read once, before the transaction (top of this method)
             held: heldById,
             repriceTierOnQtyOnly: user?.role === UserRole.CUSTOMER,
             categoryMap: await loadCategoryMapForProducts(tx, unitCtx.products), // B297

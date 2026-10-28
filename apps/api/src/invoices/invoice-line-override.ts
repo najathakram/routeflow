@@ -1,4 +1,5 @@
 import { BadRequestException } from "@nestjs/common";
+import type { UserRole } from "@prisma/client";
 import {
   InvalidTierError,
   UnknownUnitError,
@@ -13,7 +14,8 @@ import {
 } from "@routeflow/pricing";
 import { assertSafeTextCell } from "../common/safe-text-cell";
 import { API_ERROR_CODES } from "../common/api-error-codes";
-import { staffMay } from "../auth/permissions/staff-capabilities";
+import { priceEditAllowedFor } from "../auth/permissions/price-edit";
+import type { PrismaService } from "../prisma/prisma.service";
 import {
   assertPriceEditAllowed,
   decideTierOverride,
@@ -121,13 +123,13 @@ const ladderProduct = (p: PricedProduct): LadderProduct => ({
  * Two reads: the customer's default tier and its per-product CustomerPrice tiers (a null tier = msrp-only row).
  */
 export async function loadOverride(
-  prisma: { forTenant(): any },
+  prisma: PrismaService,
   {
     customerId,
     items,
   }: { customerId: string; items: ReadonlyArray<{ productId?: string | null }> },
   ladders: ReadonlyMap<string, readonly LadderUnit[]>,
-  actor: { sub?: string; role?: string | null } | undefined,
+  actor: { sub?: string; role?: string | null; tenantId?: string | null } | undefined,
   entitlements?: Parameters<typeof customerPricing>[0]["entitlements"],
 ): Promise<LineOverrideCtx | undefined> {
   const actorId = actor?.sub;
@@ -149,8 +151,12 @@ export async function loadOverride(
   const pc = await customerPricing({ prisma, entitlements }, customerId, ids, customer, rows);
   return {
     actorId,
-    // SA-1034: the operator's denied groups arrive with the permissions rollout.
-    priceEditAllowed: staffMay(actor?.role, "EDIT_LINE_PRICE", []),
+    // SA-1034: the one price-edit capability, read once per request here (both callers sit before their transaction).
+    priceEditAllowed: await priceEditAllowedFor(
+      prisma,
+      { sub: actorId, tenantId: actor?.tenantId ?? null, role: actor?.role as UserRole },
+      "InvoicesService.loadOverride",
+    ),
     ladders,
     tierOf: (pid) => pc.cpMap.get(pid) ?? pc.defaultTier,
     layerOf: pc.layer,
