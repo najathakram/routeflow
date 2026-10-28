@@ -49,6 +49,34 @@ describe("search memory on Back", () => {
     expect(search().value).toBe("smtp");
   });
 
+  it("a Back on ANOTHER page does not make the next fresh visit to settings restore the query", () => {
+    const first = renderWithProviders(<SettingsHub isAdmin />);
+    fireEvent.change(search(), { target: { value: "smtp" } });
+    first.unmount();
+    // Back lands on an unrelated page (the hub is not mounted there); the listener must not stay armed
+    window.history.replaceState(null, "", "/orders/42");
+    act(() => {
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    // later /settings is opened fresh from a link: a new entry, no popstate
+    window.history.replaceState(null, "", "/settings");
+    renderWithProviders(<SettingsHub isAdmin />);
+    expect(search().value).toBe("");
+  });
+
+  it("Back to a settings sub-page is not a return to the hub either", () => {
+    const first = renderWithProviders(<SettingsHub isAdmin />);
+    fireEvent.change(search(), { target: { value: "smtp" } });
+    first.unmount();
+    window.history.replaceState(null, "", "/settings/restrictions");
+    act(() => {
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    window.history.replaceState(null, "", "/settings");
+    renderWithProviders(<SettingsHub isAdmin />);
+    expect(search().value).toBe("");
+  });
+
   it("a fresh visit (no Back) starts empty", () => {
     const first = renderWithProviders(<SettingsHub isAdmin />);
     fireEvent.change(search(), { target: { value: "smtp" } });

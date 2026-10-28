@@ -27,14 +27,16 @@ const HISTORY_KEY = "rfSettingsQuery";
 /**
  * The router rewrites an entry's history state when it restores it, which can drop HISTORY_KEY. So the last
  * query also lives in module scope (it survives the hub unmounting on a client navigation), and a popstate
- * (Back/Forward) marks the next hub mount as a return rather than a fresh visit.
+ * (Back/Forward) that lands on the settings page marks the next hub mount as a return rather than a fresh visit.
  */
 let lastQuery = "";
 let returning = false;
 let handoff: string | null = null;
 if (typeof window !== "undefined") {
   window.addEventListener("popstate", () => {
-    returning = true;
+    // Only a Back/Forward that LANDS on the hub is a return to it. One that lands anywhere else (another page, a
+    // settings sub-page) must not leave the flag armed for a later, unrelated fresh visit to /settings.
+    returning = window.location.pathname.replace(/\/+$/, "") === "/settings";
   });
 }
 
