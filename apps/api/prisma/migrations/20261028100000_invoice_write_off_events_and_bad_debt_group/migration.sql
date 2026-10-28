@@ -60,6 +60,11 @@ CREATE TABLE "InvoiceWriteOffEvent" (
       CHECK (length(btrim(reason)) > 0)
 );
 
+-- SA-816 (d)1 backstop: NUMERIC accepts 'NaN'. The table is new and empty, so the constraints validate at once.
+ALTER TABLE "InvoiceWriteOffEvent"
+  ADD CONSTRAINT "InvoiceWriteOffEvent_amount_not_nan" CHECK ("amount" <> 'NaN'::numeric),
+  ADD CONSTRAINT "InvoiceWriteOffEvent_preTax_not_nan" CHECK ("preTax" <> 'NaN'::numeric);
+
 -- CreateIndex
 CREATE INDEX "InvoiceWriteOffEvent_tenantId_at_idx" ON "InvoiceWriteOffEvent"("tenantId", "at");
 
