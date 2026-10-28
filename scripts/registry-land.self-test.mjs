@@ -20,6 +20,7 @@ import {
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { scrubbedGitEnv } from "./lib/check-git-hooks.mjs";
 import { fixture, git } from "./lib/registry-fixture.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -221,7 +222,12 @@ async function main() {
       const from = i ? "" : `from ${first}\n`;
       return `commit refs/heads/master\ncommitter t <t@t> ${1000 + i} +0000\ndata ${msg.length}\n${msg}\n${from}\n`;
     }).join("");
-    spawnSync("git", ["fast-import", "--quiet"], { cwd: big, input: stream, encoding: "utf8" });
+    spawnSync("git", ["fast-import", "--quiet"], {
+      cwd: big,
+      input: stream,
+      encoding: "utf8",
+      env: scrubbedGitEnv(),
+    });
     git(big, "push", "origin", "refs/heads/master:master");
     const at = (n) => git(big, "rev-list", "--skip", String(n), "--max-count=1", "master");
     const tryAt = (sha) => {
