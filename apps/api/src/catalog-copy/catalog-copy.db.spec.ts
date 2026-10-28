@@ -380,4 +380,74 @@ describeDb("SA-1027 catalog copy - real Postgres", () => {
     expect(names).not.toContain("A2");
     expect(names).toContain("Alpha"); // the other groups still copied
   }, 60000);
+
+  it("scale: a 2,500-product source across families is read WHOLE - the dry-run and created counts equal the seeded count", async () => {
+    const big = await tenant("big");
+    const SINGLES = 1500;
+    const FAMILIES = 20;
+    const PER_FAMILY = 50;
+    const rows: Record<string, unknown>[] = [];
+    for (let i = 0; i < SINGLES; i += 1) {
+      rows.push({
+        id: randomUUID(),
+        tenantId: big.id,
+        name: `Single ${i}`,
+        sku: `BG-${i}`,
+        unit: "box",
+        pricePerUnit: "5.00",
+      });
+    }
+    for (let f = 0; f < FAMILIES; f += 1) {
+      const familyId = randomUUID();
+      rows.push({
+        id: familyId,
+        tenantId: big.id,
+        name: `Family ${f}`,
+        unit: "each",
+        pricePerUnit: "5.00",
+        kind: "FAMILY",
+      });
+      for (let v = 0; v < PER_FAMILY; v += 1) {
+        rows.push({
+          id: randomUUID(),
+          tenantId: big.id,
+          name: `Family ${f} Variant ${v}`,
+          variantName: `Variant ${v}`,
+          sku: `BF-${f}-${v}`,
+          unit: "each",
+          pricePerUnit: "5.00",
+          kind: "VARIANT",
+          parentProductId: familyId,
+        });
+      }
+    }
+    for (let i = 0; i < rows.length; i += 500) {
+      await prisma.product.createMany({ data: rows.slice(i, i + 500) as never });
+    }
+    const seeded = rows.length; // 1,500 + 20 x (1 container + 50 variants) = 2,520, more than the 500-row page
+    expect(seeded).toBeGreaterThanOrEqual(2500);
+    expect(await prisma.product.count({ where: { tenantId: big.id, isActive: true } })).toBe(
+      seeded,
+    );
+
+    const target = await tenant("bigt");
+    await grant(target.id, "DENY"); // pack-only target, as the other cases: no plan-catalog lookup
+    const t0 = Date.now();
+    const dry = await service.run(args(target.slug, { source: big.slug }));
+    const dryMs = Date.now() - t0;
+    // eslint-disable-next-line no-console
+    console.info(`catalog-copy scale: dry run of ${seeded} products took ${dryMs} ms`);
+    expect(dry.sourceProducts).toBe(seeded);
+    expect(dry.toCreate).toBe(seeded);
+
+    const t1 = Date.now();
+    const applied = await service.run(args(target.slug, { source: big.slug, apply: true }));
+    // eslint-disable-next-line no-console
+    console.info(`catalog-copy scale: apply of ${seeded} products took ${Date.now() - t1} ms`);
+    expect(applied.errors).toEqual([]);
+    expect(applied.created).toBe(seeded);
+    expect(await prisma.product.count({ where: { tenantId: target.id, isActive: true } })).toBe(
+      seeded,
+    );
+  }, 1_800_000);
 });
