@@ -28,15 +28,28 @@ const check = (name, got, want) => {
 
 for (const c of DATA.cases) {
   const { hits, unverified } = checkFacts(c.message, fixtureSources(DATA, c));
-  check(`${c.id} ${c.log}`, hits.map((h) => [h.kind, h.token]), c.hits);
-  if (c.unverified) check(`${c.id} unverified`, unverified.map((u) => [u.kind, u.token]), c.unverified);
+  check(
+    `${c.id} ${c.log}`,
+    hits.map((h) => [h.kind, h.token]),
+    c.hits,
+  );
+  if (c.unverified)
+    check(
+      `${c.id} unverified`,
+      unverified.map((u) => [u.kind, u.token]),
+      c.unverified,
+    );
 }
 
 // Every hit names the truth, so the lead's correction is a copy, not a search.
 {
   const t1 = DATA.cases.find((c) => c.id === "T1");
   const [hit] = checkFacts(t1.message, fixtureSources(DATA, t1)).hits;
-  check("T1 truth names the head and the pending checks", /4ab859771/.test(hit?.truth) && /Verify/.test(hit?.truth), true);
+  check(
+    "T1 truth names the head and the pending checks",
+    /4ab859771/.test(hit?.truth) && /Verify/.test(hit?.truth),
+    true,
+  );
 }
 
 const cli = (args, input) =>
@@ -56,7 +69,11 @@ check("CLI unknown flag exits 2", cli(["--nope"]).status, 2);
   } catch {
     parsed = null;
   }
-  check("CLI --json carries the hits", parsed?.hits?.map((h) => h.token), ["631d718de"]);
+  check(
+    "CLI --json carries the hits",
+    parsed?.hits?.map((h) => h.token),
+    ["631d718de"],
+  );
 }
 
 console.log(`fact-check self-test: ${passed} passed, ${failures} failed`);

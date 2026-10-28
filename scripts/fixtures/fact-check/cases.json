@@ -54,8 +54,15 @@
     }
   },
   "issues": ["3686", "2554"],
-  "branches": ["fix/sa1028-card-reads-unset-keep-rule", "feat/b1a2-registry-consumers", "fix/row590-office-delivered-run-stop"],
-  "commits": ["4a96538fb474b10b71b2248fa5fa7f0290a3b6b3", "c60c0aee8795ac2a3fc209541963613969f40206"],
+  "branches": [
+    "fix/sa1028-card-reads-unset-keep-rule",
+    "feat/b1a2-registry-consumers",
+    "fix/row590-office-delivered-run-stop"
+  ],
+  "commits": [
+    "4a96538fb474b10b71b2248fa5fa7f0290a3b6b3",
+    "c60c0aee8795ac2a3fc209541963613969f40206"
+  ],
   "cases": [
     {
       "id": "T1",
@@ -69,7 +76,9 @@
       "log": "all checks SKIPPED (private-repo skip) is not green",
       "now": "2026-10-28T05:05:00Z",
       "message": "#3893 CI green, ready to land.",
-      "override": { "3893": { "rollup": [{ "name": "Verify", "status": "COMPLETED", "conclusion": "SKIPPED" }] } },
+      "override": {
+        "3893": { "rollup": [{ "name": "Verify", "status": "COMPLETED", "conclusion": "SKIPPED" }] }
+      },
       "hits": [["ready", "#3893"]]
     },
     {
@@ -85,7 +94,10 @@
       "log": "LEAD-LOG 1983: stamps 05:08Z-05:20Z typed while date -u read 05:02-05:05Z",
       "now": "2026-10-28T05:05:00Z",
       "message": "Lead 05:08Z: win-heavy, take the #3838 DB lanes.\nLead 05:20Z: review-a, hold until the slot frees.",
-      "hits": [["stamp", "05:08Z"], ["stamp", "05:20Z"]]
+      "hits": [
+        ["stamp", "05:08Z"],
+        ["stamp", "05:20Z"]
+      ]
     },
     {
       "id": "T5",
@@ -142,7 +154,10 @@
       "now": "2026-10-28T05:05:00Z",
       "message": "#3840 and #3844 at 631d718de and 52245384f",
       "hits": [],
-      "unverified": [["sha", "631d718de"], ["sha", "52245384f"]]
+      "unverified": [
+        ["sha", "631d718de"],
+        ["sha", "52245384f"]
+      ]
     },
     {
       "id": "T19",
@@ -163,7 +178,9 @@
       "log": "LEAD-LOG 1977: #3893's real first CI run FAILED (type ratchet + web lint)",
       "now": "2026-10-28T05:05:00Z",
       "message": "#3893 gate-complete.",
-      "override": { "3893": { "rollup": [{ "name": "Verify", "status": "COMPLETED", "conclusion": "FAILURE" }] } },
+      "override": {
+        "3893": { "rollup": [{ "name": "Verify", "status": "COMPLETED", "conclusion": "FAILURE" }] }
+      },
       "hits": [["ready", "#3893"]]
     },
     {
@@ -171,7 +188,11 @@
       "log": "billing-blocked runs show as STARTUP_FAILURE",
       "now": "2026-10-28T05:05:00Z",
       "message": "#3893 gate-complete.",
-      "override": { "3893": { "rollup": [{ "name": "Verify", "status": "COMPLETED", "conclusion": "STARTUP_FAILURE" }] } },
+      "override": {
+        "3893": {
+          "rollup": [{ "name": "Verify", "status": "COMPLETED", "conclusion": "STARTUP_FAILURE" }]
+        }
+      },
       "hits": [["ready", "#3893"]]
     },
     {
@@ -188,7 +209,11 @@
       "message": "#3893 gate-complete at 4ab859771.",
       "ghDown": true,
       "hits": [],
-      "unverified": [["pr", "#3893"], ["sha", "4ab859771"], ["ready", "#3893"]]
+      "unverified": [
+        ["pr", "#3893"],
+        ["sha", "4ab859771"],
+        ["ready", "#3893"]
+      ]
     },
     {
       "id": "T25",
