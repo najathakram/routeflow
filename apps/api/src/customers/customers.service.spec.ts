@@ -1452,6 +1452,30 @@ describe("CustomersService", () => {
       expect(result.overdueAmount).toBe(150);
     });
 
+    // SA-1048 B243: the per-row running balance is a rounded figure, like the summary figures beside it.
+    it("statement rows: runningBalance is whole cents (0.3 owed less 0.1 paid is -0.2, not -0.19999999999999998)", async () => {
+      const invoice = {
+        id: "inv-1",
+        invoiceNumber: "INV-1",
+        total: 0.3,
+        status: "OVERDUE",
+        dueDate: daysAgo(3),
+        createdAt: daysAgo(30),
+        payments: [{ amount: 0.1, status: "PAID" }],
+      };
+      prisma.customer.findFirst.mockResolvedValue(MOCK_CUSTOMER);
+      prisma.customer.findUnique.mockResolvedValue(MOCK_CUSTOMER);
+      prisma.invoice.findMany.mockResolvedValue([invoice]);
+      prisma.creditNote.findMany.mockResolvedValue([]);
+      prisma.advancePayment.findMany.mockResolvedValue([]);
+      prisma.order.findMany.mockResolvedValue([]);
+
+      const mine = await service.getMyStatement(customerPayload);
+      expect(mine.transactions.find((t: any) => t.id === "inv-1").runningBalance).toBe(-0.2);
+      const staff = await service.getStatementForOperator("cust-1");
+      expect(staff.transactions.find((t: any) => t.id === "inv-1").runningBalance).toBe(-0.2);
+    });
+
     it("findAll: customer receivables exclude VOID payments", async () => {
       prisma.customer.findMany.mockResolvedValue([MOCK_CUSTOMER]);
       prisma.customer.count.mockResolvedValue(1);

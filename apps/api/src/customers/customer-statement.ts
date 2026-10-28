@@ -194,7 +194,7 @@ export async function buildMyStatement(prisma: PrismaService, user: JwtPayload) 
       description: `Invoice #${i.invoiceNumber}`,
       date: i.createdAt.toISOString(),
       amount: Number(i.total),
-      runningBalance: -(Number(i.total) - i.amountPaid),
+      runningBalance: -roundMoney(Number(i.total) - i.amountPaid),
       status: i.status,
     })),
     ...ledgerCreditNotes.map((c) => {
@@ -429,7 +429,7 @@ export async function buildOperatorStatement(
       description: `Invoice #${i.invoiceNumber}`,
       date: i.createdAt.toISOString(),
       amount: Number(i.total),
-      runningBalance: -(Number(i.total) - i.amountPaid),
+      runningBalance: -roundMoney(Number(i.total) - i.amountPaid),
       status: i.status,
     })),
     ...ledgerCreditNotes.map((c) => {
