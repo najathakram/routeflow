@@ -1,6 +1,8 @@
 // auto-status: statuses written from polled PR + deploy facts. planAutoStatus is pure; runAutoStatus is the IO shell.
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { fold } from "../lib/fold.mjs";
 import { validateEvent } from "../lib/schema.mjs";
 import {
@@ -278,4 +280,10 @@ test("runAutoStatus appends the planned events once, under the held lock, and no
   });
   assert.equal(none.appended, 0);
   assert.equal(appended.length, 1);
+});
+
+test("the monitor server runs the step inside the specs pass", () => {
+  const src = readFileSync(fileURLToPath(new URL("../server.mjs", import.meta.url)), "utf8");
+  assert.match(src, /lib\/auto-status\.mjs/);
+  assert.match(src, /name:\s*"auto-status"/);
 });
