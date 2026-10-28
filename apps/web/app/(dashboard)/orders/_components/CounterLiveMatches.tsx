@@ -11,7 +11,7 @@ import { useListboxNav } from "@/lib/use-listbox-nav";
 /** The same wait Create Order's product search uses before it asks the server. */
 export const LIVE_MATCH_DEBOUNCE_MS = 300;
 const MIN_TERM_CHARS = 2;
-const MAX_ROWS = 8;
+const MAX_ROWS = 10;
 
 interface Options {
   /** The text in "Scan or search items". */

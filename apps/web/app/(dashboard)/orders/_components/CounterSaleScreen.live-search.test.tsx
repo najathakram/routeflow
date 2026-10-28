@@ -51,6 +51,9 @@ const CHOC = [
   row("p-2", "Chocolate milk", "CH-2"),
   row("p-3", "Chocolate chip cookies", "CH-3"),
 ];
+const HOUSEHOLD = Array.from({ length: 12 }, (_, i) =>
+  row(`h-${i + 1}`, `Household item ${String(i + 1).padStart(2, "0")}`, `HH-${i + 1}`),
+);
 const searchCalls: Array<Record<string, unknown>> = [];
 
 beforeEach(() => {
@@ -64,9 +67,9 @@ beforeEach(() => {
     if (url.startsWith("/products/barcode/")) return Promise.reject({ response: { status: 404 } });
     if (url === "/products") {
       const params = cfg?.params ?? {};
+      if (params.search || params.scanCode) searchCalls.push(params);
       if (params.search) {
-        searchCalls.push(params);
-        const hit = CHOC.filter((p) =>
+        const hit = [...CHOC, ...HOUSEHOLD].filter((p) =>
           p.name.toLowerCase().includes(String(params.search).toLowerCase()),
         );
         return { data: { data: hit, meta: { total: hit.length, page: 1, limit: 20 } } };
@@ -169,5 +172,20 @@ describe("counter live search (W-852)", () => {
     await waitFor(() => expect(lines()).toHaveLength(1));
     expect(lines()[0]).toHaveTextContent("Chocolate bar");
     expect(lines()[0]).toHaveTextContent("× 3");
+  });
+
+  it("shows at most 10 matches", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    type("household");
+    const list = await screen.findByRole("listbox", { name: "Matching items" });
+    expect(within(list).getAllByRole("option")).toHaveLength(10);
+  });
+
+  it("a scan-code-shaped term searches by scanCode", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    type("012345678905");
+    await waitFor(() => expect(searchCalls).toHaveLength(1));
+    expect(searchCalls[0]).toMatchObject({ scanCode: "012345678905" });
+    expect(searchCalls[0].search).toBeUndefined();
   });
 });
