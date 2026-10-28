@@ -29,6 +29,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { scrubbedGitEnv } from "./lib/check-git-hooks.mjs";
 
 /** Relative paths (forward slashes) that are never compared or copied. */
 export const IGNORE = [
@@ -38,13 +39,27 @@ export const IGNORE = [
   /\.pyc$/,
   /\.bak(?:-[^/]*)?$/,
   /(?:^|\/)\.DS_Store$/,
+  // Append-only logs and ledgers grow on every machine; syncing one would erase another machine's rows.
+  /(?:^|\/)RUN-LOG\.md$/,
+  /\.jsonl$/,
 ];
 const ignored = (rel) => IGNORE.some((re) => re.test(rel));
+
+/** git with the hook-inherited GIT_* env scrubbed, no signing and no hooks; never throws. */
+const git = (cwd, args) =>
+  spawnSync("git", ["-c", "commit.gpgsign=false", "-c", "core.hooksPath=", "-C", cwd, ...args], {
+    encoding: "utf8",
+    env: scrubbedGitEnv(),
+  });
 
 /** Files under dir as sorted forward-slash relative paths; statSync follows junctions and symlinks. */
 function listFiles(dir) {
   const out = [];
+  const seen = new Set(); // real dirs already walked: a junction loop must not recurse forever
   const walk = (abs, rel) => {
+    const real = realpathSync.native(abs);
+    if (seen.has(real)) return;
+    seen.add(real);
     for (const name of readdirSync(abs)) {
       const a = path.join(abs, name);
       const r = rel ? `${rel}/${name}` : name;
@@ -73,14 +88,23 @@ export function pairedSkills(repoDir, globalDir) {
     .sort();
 }
 
+/** Bytes, with CRLF read as LF for text (no NUL byte); a binary file compares byte for byte. */
+function contentOf(file) {
+  const buf = readFileSync(file);
+  return buf.includes(0)
+    ? buf
+    : Buffer.from(buf.toString("latin1").replace(/\r\n/g, "\n"), "latin1");
+}
+
 /** One skill: { differs, missingGlobal, globalOnly } as relative paths. Line endings count as equal. */
 export function diffSkill(repoSkill, globalSkill) {
   const a = listFiles(repoSkill);
   const b = new Set(listFiles(globalSkill));
-  const norm = (f) => readFileSync(f, "utf8").replace(/\r\n/g, "\n");
   return {
     differs: a.filter(
-      (f) => b.has(f) && norm(path.join(repoSkill, f)) !== norm(path.join(globalSkill, f)),
+      (f) =>
+        b.has(f) &&
+        !contentOf(path.join(repoSkill, f)).equals(contentOf(path.join(globalSkill, f))),
     ),
     missingGlobal: a.filter((f) => !b.has(f)),
     globalOnly: [...b].filter((f) => !a.includes(f)).sort(),
@@ -109,21 +133,25 @@ export function syncSkills(repoDir, globalDir, { force = false } = {}) {
   const refused = [];
   const roots = new Map(); // git toplevel -> relative paths changed under it
   for (const { skill, file, kind } of driftReport(repoDir, globalDir).drift) {
-    const real = realpathSync(path.join(globalDir, skill));
+    const real = realpathSync.native(path.join(globalDir, skill));
     const dest = path.join(real, ...file.split("/"));
-    const top = spawnSync("git", ["-C", real, "rev-parse", "--show-toplevel"], {
-      encoding: "utf8",
-    });
-    const root = top.status === 0 ? top.stdout.trim() : null;
-    // Overwriting is only safe when git can give the old text back: tracked and clean. A new file destroys nothing.
+    const top = git(real, ["rev-parse", "--show-toplevel"]);
+    const rootPath = top.status === 0 ? top.stdout.trim() : null;
+    // A toplevel that does not contain the skill dir means git resolved some other repo: treat it as no checkout.
+    const rel = rootPath ? path.relative(realpathSync.native(rootPath), real) : "..";
+    const root = rel.startsWith("..") || path.isAbsolute(rel) ? null : rootPath;
+    // Overwriting is only safe when git can give the old text back: tracked, unmodified and not ignored. A new file
+    // destroys nothing.
     if (kind === "differs" && !force) {
+      const tracked = root && git(real, ["ls-files", "--error-unmatch", "--", dest]).status === 0;
+      const st = root && git(real, ["status", "--porcelain", "--ignored", "--", dest]);
       const why = !root
         ? "not in a git checkout, so the global text could not be recovered"
-        : spawnSync("git", ["-C", real, "status", "--porcelain", "--", dest], {
-              encoding: "utf8",
-            }).stdout.trim()
-          ? "has uncommitted changes in its checkout"
-          : null;
+        : !tracked
+          ? "is not tracked by git in its checkout, so the global text could not be recovered"
+          : st.status !== 0 || st.stdout.trim()
+            ? "has uncommitted changes in its checkout"
+            : null;
       if (why) {
         refused.push({ file: `${skill}/${file}`, why });
         continue;
@@ -134,7 +162,7 @@ export function syncSkills(repoDir, globalDir, { force = false } = {}) {
     copied.push(`${skill}/${file}`);
     if (root) {
       if (!roots.has(root)) roots.set(root, []);
-      roots.get(root).push(slash(path.relative(realpathSync(root), dest)));
+      roots.get(root).push(slash(path.relative(realpathSync.native(root), dest)));
     }
   }
   const commands = [];
@@ -183,9 +211,16 @@ function main(argv) {
       console.log(`To record them in the owner's checkout:\n${commands.join("\n")}`);
     return refused.length ? 1 : 0;
   }
-  const { drift, extra } = driftReport(repoDir, globalDir);
   if (argv.includes("--warn")) {
-    // SessionStart: one line in every session's context, and none when clean.
+    // SessionStart: one line in every session's context, and none when clean. A hook must never break a session
+    // start, so an unreadable file is reported and the exit stays 0.
+    let drift;
+    try {
+      ({ drift } = driftReport(repoDir, globalDir));
+    } catch (e) {
+      console.log(`skills-drift: could not compare skills (${e.message}); run --check to see why`);
+      return 0;
+    }
     const skills = [...new Set(drift.map((d) => d.skill))];
     if (drift.length)
       console.log(
@@ -194,6 +229,7 @@ function main(argv) {
       );
     return 0;
   }
+  const { drift, extra } = driftReport(repoDir, globalDir);
   for (const d of drift) console.log(`drift ${d.kind}: ${d.skill}/${d.file}`);
   for (const e of extra) console.log(`extra (global only, not drift): ${e.skill}/${e.file}`);
   console.log(

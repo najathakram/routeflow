@@ -16,6 +16,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { IGNORE, diffSkill, driftReport, pairedSkills, syncSkills } from "./skills-drift.mjs";
+import { scrubbedGitEnv } from "./lib/check-git-hooks.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const CLI = path.join(HERE, "skills-drift.mjs");
@@ -30,7 +31,31 @@ const check = (name, got, want) => {
   );
 };
 
-const TMP = mkdtempSync(path.join(os.tmpdir(), "skills-drift-"));
+const TMP = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), "skills-drift-")));
+const norm = (p) => p.split(path.sep).join("/").replace(/\/+$/, "").toLowerCase();
+
+/** Scratch-repo git: hook-inherited GIT_* scrubbed, no signing, no hooks, and a failure throws here. */
+const git = (cwd, args) => {
+  const r = spawnSync(
+    "git",
+    [
+      ...["-c", "commit.gpgsign=false", "-c", "core.hooksPath="],
+      ...["-c", "user.name=t", "-c", "user.email=t@t"],
+      ...args,
+    ],
+    { cwd, encoding: "utf8", env: scrubbedGitEnv() },
+  );
+  if (r.status !== 0) throw new Error(`git ${args.join(" ")} in ${cwd}: ${r.stderr}`);
+  return r.stdout;
+};
+/** A committed scratch checkout; the toplevel guard proves no GIT_* leak points git at the outer repo. */
+const initRepo = (dir) => {
+  git(dir, ["init", "-q"]);
+  const top = git(dir, ["rev-parse", "--show-toplevel"]).trim();
+  if (norm(top) !== norm(dir)) throw new Error(`scratch repo resolved to ${top}, not ${dir}`);
+  git(dir, ["add", "-A"]);
+  git(dir, ["commit", "-qm", "base"]);
+};
 const put = (file, text) => {
   mkdirSync(path.dirname(file), { recursive: true });
   writeFileSync(file, text);
@@ -133,19 +158,7 @@ const run = (args) => spawnSync(process.execPath, [CLI, ...args], { encoding: "u
   const ck = path.join(TMP, "d4", "claude-skills");
   put(path.join(ck, "a", "SKILL.md"), "# a, older\n");
   put(path.join(ck, "a", "scripts", "x.mjs"), "export {};\n");
-  spawnSync("git", ["init", "-q", ck]);
-  spawnSync("git", ["-C", ck, "add", "-A"]);
-  spawnSync("git", [
-    "-C",
-    ck,
-    "-c",
-    "user.name=t",
-    "-c",
-    "user.email=t@t",
-    "commit",
-    "-qm",
-    "base",
-  ]);
+  initRepo(ck);
   rmSync(path.join(glob, "a"), { recursive: true });
   symlinkSync(path.join(ck, "a"), path.join(glob, "a"), "junction");
   put(path.join(repo, "a", "references", "new.md"), "new\n");
@@ -159,10 +172,8 @@ const run = (args) => spawnSync(process.execPath, [CLI, ...args], { encoding: "u
     ["# a\n", true],
   );
   check("D4 sync reports what it copied", res.copied, ["a/SKILL.md", "a/references/new.md"]);
-  const log = spawnSync("git", ["-C", ck, "log", "--oneline"], { encoding: "utf8" })
-    .stdout.trim()
-    .split("\n");
-  const status = spawnSync("git", ["-C", ck, "status", "--short"], { encoding: "utf8" }).stdout;
+  const log = git(ck, ["log", "--oneline"]).trim().split("\n");
+  const status = git(ck, ["status", "--short"]);
   check(
     "D4 nothing is committed: one commit, a dirty tree",
     [log.length, status.trim().length > 0],
@@ -170,9 +181,8 @@ const run = (args) => spawnSync(process.execPath, [CLI, ...args], { encoding: "u
   );
   check(
     "D4 the git commands for the owner's repo are printed, never run",
-    res.commands.some((c) =>
-      c.startsWith(`git -C "${realpathSync(ck).split(path.sep).join("/")}" add `),
-    ) && res.commands.some((c) => / commit /.test(c)),
+    res.commands.some((c) => c.startsWith(`git -C "${ck.split(path.sep).join("/")}" add `)) &&
+      res.commands.some((c) => / commit /.test(c)),
     true,
   );
   check("after sync: no drift", driftReport(repo, glob).drift, []);
@@ -195,6 +205,11 @@ const run = (args) => spawnSync(process.execPath, [CLI, ...args], { encoding: "u
   // D5: a plain global dir (no git) has no history, so an overwrite is refused unless --force; the CLI exits 1.
   const { repo, glob } = fresh("d5");
   put(path.join(glob, "a", "SKILL.md"), "# a, only copy\n");
+  const inGit = spawnSync("git", ["-C", glob, "rev-parse", "--show-toplevel"], {
+    encoding: "utf8",
+    env: scrubbedGitEnv(),
+  });
+  check("D5 precondition: the temp dir is outside any git checkout", inGit.status !== 0, true);
   const r = run(["--sync", "--repo", repo, "--global", glob]);
   check(
     "D5 outside git: refused, exit 1, the global text survives",
@@ -224,6 +239,56 @@ const run = (args) => spawnSync(process.execPath, [CLI, ...args], { encoding: "u
     "no global skills dir (CI): says so and exits 0",
     [r.status, /no global skills dir/.test(r.stdout)],
     [0, true],
+  );
+}
+{
+  // D7: a gitignored or untracked global file is not in git's history, so an overwrite would lose it: refused.
+  const { repo, glob } = fresh("d7");
+  const ck = path.join(TMP, "d7", "claude-skills");
+  put(path.join(ck, "a", "SKILL.md"), "# a\n");
+  put(path.join(ck, ".gitignore"), "local.md\n");
+  initRepo(ck);
+  put(path.join(ck, "a", "local.md"), "ignored, only copy\n");
+  put(path.join(ck, "a", "loose.md"), "untracked, only copy\n");
+  for (const f of ["local.md", "loose.md"]) put(path.join(repo, "a", f), "repo\n");
+  rmSync(path.join(glob, "a"), { recursive: true });
+  symlinkSync(path.join(ck, "a"), path.join(glob, "a"), "junction");
+  const d7 = syncSkills(repo, glob);
+  check(
+    "D7 ignored and untracked global files are refused and kept",
+    [
+      d7.refused.map((r) => [r.file, /not tracked/.test(r.why)]),
+      readFileSync(path.join(ck, "a", "local.md"), "utf8"),
+      readFileSync(path.join(ck, "a", "loose.md"), "utf8"),
+    ],
+    [
+      [
+        ["a/local.md", true],
+        ["a/loose.md", true],
+      ],
+      "ignored, only copy\n",
+      "untracked, only copy\n",
+    ],
+  );
+}
+{
+  // D8: logs and ledgers grow per machine; they are never compared, so never synced.
+  const { repo, glob } = fresh("d8");
+  put(path.join(repo, "a", "references", "RUN-LOG.md"), "repo rows\n");
+  put(path.join(glob, "a", "references", "RUN-LOG.md"), "global rows\n");
+  put(path.join(repo, "a", "ledger.jsonl"), "{}\n");
+  check("D8 RUN-LOG.md and *.jsonl are not drift", driftReport(repo, glob).drift, []);
+}
+{
+  // D9: CRLF vs LF text is equal; a binary file (NUL byte) compares byte for byte.
+  const { repo, glob } = fresh("d9");
+  put(path.join(glob, "a", "SKILL.md"), "# a\r\n");
+  put(path.join(repo, "a", "b.bin"), Buffer.from([0, 13, 10, 1]));
+  put(path.join(glob, "a", "b.bin"), Buffer.from([0, 10, 1]));
+  check(
+    "D9 CRLF text is equal, a CRLF change inside a binary is drift",
+    driftReport(repo, glob).drift,
+    [{ skill: "a", file: "b.bin", kind: "differs" }],
   );
 }
 check("usage: no mode exits 2", run([]).status, 2);
