@@ -12,7 +12,7 @@ import * as path from "path";
 
 const REPO = path.resolve(__dirname, "../../../..");
 const FORBIDDEN =
-  /\b(?:invoiceUnitFactor|invoiceUnitLabel|invoiceLineDisplay|InvoiceLineDisplay|invoiceDisplayLines|InvoiceDisplayLines|invoiceDisplayUnitFor|displayUnitSnapshotOf|displayUnitForItem)\b/;
+  /\b(?:invoiceUnitFactor|invoiceUnitLabel|invoiceLineDisplay|InvoiceLineDisplay|invoiceDisplayLines|InvoiceDisplayLines|invoiceDisplayUnitFor|displayUnitSnapshotOf|displayUnitForItem|perBaseUnitPrice|PerBaseUnit)\b/;
 
 /**
  * SA-827 (I6): the CALLER names. The display helpers (live resolve, issue-time resolve/write/clear, the item decorator) may be
@@ -47,6 +47,7 @@ const MONEY_FILES = ["apps/api/src/common/invoiced-sales.ts"];
 const DISPLAY_FILES = new Set([
   "packages/pricing/src/invoice-display.ts",
   "packages/pricing/src/invoice-display-lines.ts",
+  "packages/pricing/src/per-base-unit.ts",
   "packages/pricing/src/index.ts",
 ]);
 /** The API files that render an invoice (display only), by exact name: the PDF modules and the detail read. A new file must be added here on purpose. */
@@ -59,6 +60,7 @@ const DISPLAY_API_FILES = [
   "invoice-pdf.service.ts",
   "invoice-detail-read.ts",
   "invoice-display-unit.ts",
+  "invoice-email-payload.ts",
 ].map((n) => `apps/api/src/invoices/${n}`);
 const isDisplay = (f: string): boolean => DISPLAY_FILES.has(f) || DISPLAY_API_FILES.includes(f);
 
@@ -184,5 +186,50 @@ describe("G1: the invoice unit never reaches a money writer", () => {
     expect([...named].filter((n) => !ALLOWED.has(n))).toEqual([]);
     // markSent, the inline flip in createInvoiceFromOrderWithTenant, recordDeliveryPaymentInTx, bookkeeping recordPayment
     expect(writeCalls).toBe(4);
+  });
+});
+
+/**
+ * SA-1029 (G-6): the per-piece price is read from ONE place. On the four invoice surfaces (PDF, email, staff invoice page,
+ * buyer portal invoice page) the "per piece" cell comes from `perBaseUnit` (frozen word + `perBaseUnitPrice`), never from a
+ * second division or a hard-coded "pc" suffix. Count-pinned: a new occurrence is a new place that prices a piece, so it must
+ * be added here on purpose. The pre-existing display helpers (`formatUnitPrice4`, `pieceUnitPriceText`, the MSRP "/pc" suffix)
+ * are pinned at their current counts, not zero.
+ */
+const SURFACES = [
+  "apps/api/src/invoices/invoice-pdf-item.ts",
+  "apps/api/src/invoices/invoice-pdf-template.tsx",
+  "apps/api/src/invoices/invoice-email-payload.ts",
+  "apps/api/src/email/email.service.ts",
+  "apps/web/app/(dashboard)/invoices/[id]/page.tsx",
+  "apps/web/app/buyer/portal/[seller]/invoices/[id]/page.tsx",
+];
+const count = (src: string, re: RegExp): number => (src.match(re) ?? []).length;
+
+describe("G-6: one source for the per-piece price on the invoice surfaces", () => {
+  const src = (f: string): string => stripComments(fs.readFileSync(path.join(REPO, f), "utf8"));
+  const total = (re: RegExp): number => SURFACES.reduce((n, f) => n + count(src(f), re), 0);
+
+  it("the pattern detectors are not vacuous", () => {
+    expect(count("perUnitPrice(x)", /\bperUnitPrice\(/g)).toBe(1);
+    expect(count("a.unitPrice / b.unitsPerBox", /unitPrice[^;\n]*\/[^;\n]*unitsPerBox/g)).toBe(1);
+    expect(count("x/pc", /\/pc\b/g)).toBe(1);
+    expect(count(stripComments("// perUnitPrice("), /\bperUnitPrice\(/g)).toBe(0);
+  });
+
+  it("no surface divides a unit price by units-per-box, or calls perUnitPrice(", () => {
+    expect(total(/\bperUnitPrice\(/g)).toBe(0);
+    expect(total(/unitPrice[^;\n]*\/[^;\n]*unitsPerBox/g)).toBe(0);
+  });
+
+  it("the pre-existing price helpers keep their pinned counts (no new caller)", () => {
+    expect(total(/\bformatUnitPrice4\(/g)).toBe(2);
+    expect(total(/\bpieceUnitPriceText\(/g)).toBe(3);
+    expect(total(/\/pc\b/g)).toBe(4);
+  });
+
+  it("the new per-piece column is fed by perBaseUnit on every surface", () => {
+    for (const f of SURFACES.filter((x) => !x.endsWith("invoice-pdf-item.ts")))
+      expect(src(f)).toMatch(/perBaseUnit/);
   });
 });
