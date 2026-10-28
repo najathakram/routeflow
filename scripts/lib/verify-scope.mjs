@@ -378,3 +378,11 @@ export function withStale(scope, stale) {
     stale: pulled,
   };
 }
+
+// STUBS (red commit): the related-only -script selection lands in the next commit.
+export function loadScriptSpecs() {
+  return [];
+}
+export function selectScriptSpecs() {
+  return { files: [], line: "" };
+}
