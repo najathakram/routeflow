@@ -562,7 +562,6 @@ describe("CustomersService", () => {
         "defaultDepositPercent",
       );
     });
-
     it("create stores invoiceUnitDefault only when provided (SA-827)", async () => {
       prisma.user.findFirst.mockResolvedValue(null);
       prisma.user.create.mockResolvedValue({ id: "u1", username: "acme", email: "placeholder" });
