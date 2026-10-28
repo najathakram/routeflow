@@ -10,7 +10,7 @@ import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 import { ADMIN_AUDIT_ENTITY, AdminAuditAction } from "./audit-actions.constant";
 import { PlatformAdminService } from "./platform-admin.service";
 import { RfInvoiceIssuerService } from "../billing/rf-invoice/rf-invoice-issuer.service";
-import { nextBillingWindow } from "../billing/rf-invoice/calendar-windows";
+import { nextBillingWindow, snapToBoundary } from "../billing/rf-invoice/calendar-windows";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -27,6 +27,39 @@ let failMarker = false;
 // When set, the RF_INVOICE_VOIDED audit row (written right after the void's CAS update) throws.
 let failVoidAudit = false;
 let createdVersionId: string | undefined; // only a version this spec created is ever deleted
+/** The spec's "now". RF_SPEC_NOW (an ISO instant) pins it, to prove the calendar-window cases on any date. */
+const specNow = (): Date =>
+  process.env.RF_SPEC_NOW ? new Date(process.env.RF_SPEC_NOW) : new Date();
+
+/**
+ * The first instant at or after `from` that the REAL `snapToBoundary` leaves unchanged, and so do `from`'s
+ * `offsetDays` successors. The issuer snaps every window edge to the nearest month boundary (1st, 12:00Z, +-24h),
+ * so a period edge inside that band is re-keyed to the boundary and the wall-clock date decides the outcome
+ * (it went red for two days a month). Binary search on the production predicate: no copy of its constants.
+ */
+function firstUnsnapped(from: Date, offsetDays: number[] = []): Date {
+  const clear = (t: number) =>
+    offsetDays.every((d) => {
+      const x = new Date(t + d * DAY);
+      return snapToBoundary(x).getTime() === x.getTime();
+    });
+  let t = from.getTime();
+  while (!clear(t)) {
+    const snapped = (x: number) => snapToBoundary(new Date(x)).getTime() !== x;
+    // advance t to the first instant at which the edge that blocked it is out of the snap band
+    const blocked = [0, ...offsetDays].find((d) => snapped(t + d * DAY))!;
+    let lo = t;
+    let hi = t + 3 * DAY;
+    while (hi - lo > 1) {
+      const mid = Math.floor((lo + hi) / 2);
+      if (snapped(mid + blocked * DAY)) lo = mid;
+      else hi = mid;
+    }
+    t = hi;
+  }
+  return new Date(t);
+}
+
 const SLUG_BASE = `e2e-rfinv4a-${Date.now()}`;
 const ACTOR_DTO = { plan: "PROFESSIONAL", billingPeriodDays: 30, paymentMethod: "BANK_TRANSFER" };
 let seq = 0;
@@ -356,7 +389,7 @@ describeDb("manual activation auto-void (DB)", () => {
   describe("an activation void keeps the period consumed against the REAL issuer", () => {
     // PAID [P-30d, P) + OPEN [P, P+30d); a 30-day activation at P-3d anchors on P and covers the OPEN row.
     async function activateAheadOfOpenInvoice() {
-      const P = new Date(Date.now() + 3 * DAY);
+      const P = firstUnsnapped(new Date(specNow().getTime() + 3 * DAY), [30]);
       const paid = await monthlyInvoice(new Date(P.getTime() - 30 * DAY), "PAID");
       const open = await monthlyInvoice(P, "OPEN");
       await svc.activateManualSubscription(tenantId, ACTOR_DTO as any, "sa-4a");
