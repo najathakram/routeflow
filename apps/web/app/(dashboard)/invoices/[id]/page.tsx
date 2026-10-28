@@ -68,6 +68,7 @@ import { isStoreOnly } from "@/lib/counter-sale";
 import { canSendReminder } from "@/lib/invoice-reminder";
 import { canEmailAgain, invoiceSendStateLine, sendsAfterLabel } from "@/lib/invoice-send-state";
 import { EmailInvoiceAction } from "@/components/invoices/EmailInvoiceAction";
+import { ToCollectChip } from "@/components/ToCollectChip";
 import { useParams, useRouter } from "next/navigation";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { useUnapplyCreditNote } from "@/lib/api/credit-notes";
@@ -2180,6 +2181,7 @@ export default function InvoiceDetailPage() {
               {invoice.invoiceNumber}
             </h1>
             <Badge status={status} />
+            {user?.role !== "CUSTOMER" && <ToCollectChip state={invoice.toCollect} />}
             <TenantInvoiceRevisionMarks
               revisedAt={invoice.revisedAt}
               overpaidBy={invoice.overpaidBy}
