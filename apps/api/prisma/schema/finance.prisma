@@ -228,6 +228,10 @@ model Invoice {
   shippedAt              DateTime?
   writeOffReason         String?
   writtenOffAt           DateTime?
+  // SA-1050 PR-0: who wrote the CURRENT write-off off (clears on reinstate, with writtenOffAt and writeOffReason).
+  // Plain id string, no FK, like feeForPaymentId: the history of who did what is the event table's `byId` (FK SetNull).
+  // No writer or reader until SA-1050 PR-1 merges.
+  writtenOffById         String?
   orderId                String?
   deliveryBatchId        String?
   recurringInvoiceId     String?
@@ -260,6 +264,8 @@ model Invoice {
   commissionAccruals CommissionAccrual[]
   // F01/B17+B70: back-relation of Estimate.invoiceId (the converted-from estimate).
   estimate           Estimate?              @relation("EstimateInvoice")
+  // SA-1050 PR-0: the bad-debt ledger rows of this invoice (Restrict: an invoice with history is never deleted).
+  writeOffEvents     InvoiceWriteOffEvent[]
 
   @@unique([tenantId, invoiceNumber])
   @@index([customerId])
@@ -278,6 +284,37 @@ model Invoice {
   // #2118: one customer's invoices on the analytics date (buyer-filtered product line pages,
   // customer insights).
   @@index([customerId, issueDate])
+}
+
+/// SA-1050: the kind of a bad-debt ledger row. Mirrored in packages/types/api/enums.ts (INVOICE_WRITE_OFF_KIND_VALUES).
+enum InvoiceWriteOffKind {
+  WRITE_OFF
+  REINSTATE
+}
+
+/// SA-1050 PR-0: the bad-debt write-off ledger, one signed row per movement (a WRITE_OFF is positive, a REINSTATE its exact
+/// negative), so a closed month is never restated. Three CHECKs live in the migration only (Prisma does not model
+/// them): the kind/sign/pre-tax shape, "dated unless an authorless imported write-off", and a non-blank reason.
+/// No reader or writer until SA-1050 PR-1 merges. `tenantId` is a plain column (no Tenant FK), as the ruling lists
+/// only the Invoice (Restrict) and User (SetNull) keys.
+model InvoiceWriteOffEvent {
+  id        String              @id @default(uuid())
+  tenantId  String
+  invoiceId String
+  kind      InvoiceWriteOffKind
+  amount    Decimal             @db.Decimal(10, 2)
+  preTax    Decimal             @db.Decimal(10, 2)
+  /// The accounting moment (server now); null only for an undated legacy or imported write-off.
+  at        DateTime?
+  byId      String?
+  reason    String
+  createdAt DateTime            @default(now())
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+  by      User?   @relation("InvoiceWriteOffBy", fields: [byId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, at])
+  @@index([invoiceId, createdAt])
 }
 
 model InvoiceItem {

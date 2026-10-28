@@ -599,8 +599,14 @@ export const OPERATOR_PERMISSION_GROUP_VALUES = [
   "FINANCE",
   "NOTIFICATIONS",
   "REPORTS",
+  "BAD_DEBT",
 ] as const;
 export type OperatorPermissionGroup = (typeof OPERATOR_PERMISSION_GROUP_VALUES)[number];
+
+// SA-1050: the kind of a bad-debt write-off ledger row (Prisma `InvoiceWriteOffKind`). A WRITE_OFF has a positive
+// amount; a REINSTATE is its exact negative. The invoice history reads it on the web.
+export const INVOICE_WRITE_OFF_KIND_VALUES = ["WRITE_OFF", "REINSTATE"] as const;
+export type InvoiceWriteOffKind = (typeof INVOICE_WRITE_OFF_KIND_VALUES)[number];
 
 // M11: the billing usage meters (Prisma `MeterKey`, returned by `GET /billing/usage`). The web
 // meter labels are keyed on this union, so a new server meter is a type error, not a raw key.
