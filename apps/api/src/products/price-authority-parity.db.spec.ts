@@ -224,8 +224,8 @@ describeDb("SA-1041 price authority parity - real Postgres", () => {
       // eslint-disable-next-line no-await-in-loop
       const g = await readGrid(s);
       const base = g.rows.find((r: any) => r.ref === "base");
-      expect(base.editable).toBe(false);
-      expect(base.notEditableReason).toBe("Family prices are edited on the family page.");
+      expect(base!.editable).toBe(false);
+      expect(base!.notEditableReason).toBe("Family prices are edited on the family page.");
     }
   });
 
@@ -250,7 +250,7 @@ describeDb("SA-1041 price authority parity - real Postgres", () => {
     await prisma.productUnit.deleteMany({ where: { productId: s.productId } });
     const g = await readGrid(s);
     const base = g.rows.find((r: any) => r.ref === "base");
-    expect(base.editable).toBe(false);
+    expect(base!.editable).toBe(false);
   });
 
   const SHAPES: Shape[] = ["standard", "family", "variant", "recipe-override", "recipe-linked"];
