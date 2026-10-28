@@ -152,6 +152,8 @@ const INVOICE_ITEM = {
   components: { plan: COMPONENT, many: true },
   // derived { kind, label } object, carried whole (never a stored column)
   displayUnit: "keep",
+  // SA-1029: derived { price, unit } per-piece cell beside a pack line, display only
+  perBaseUnit: "keep",
 } satisfies Record<keyof BuyerInvoiceItem, Plan>;
 
 const PAYMENT = {
