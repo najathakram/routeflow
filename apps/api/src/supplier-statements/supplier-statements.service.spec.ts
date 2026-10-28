@@ -224,6 +224,33 @@ describe("SupplierStatementsService", () => {
       });
     });
 
+    it("reads the text block when the response starts with a thinking block (empty text by default)", async () => {
+      mockAnthropicCreate.mockResolvedValue({
+        content: [
+          { type: "thinking", thinking: "" },
+          {
+            type: "text",
+            text: JSON.stringify({
+              supplier: "Acme",
+              openingBalance: 0,
+              closingBalance: 0,
+              lines: [],
+            }),
+          },
+        ],
+        usage: { input_tokens: 1, output_tokens: 1 },
+      });
+      await expect(service.scanStatement([jpegPage])).resolves.toBeDefined();
+    });
+
+    it("a response with a thinking block and no text block is AI_PARSE_FAILED 422", async () => {
+      mockAnthropicCreate.mockResolvedValue({ content: [{ type: "thinking", thinking: "" }] });
+      await expect(service.scanStatement([jpegPage])).rejects.toMatchObject({
+        constructor: UnprocessableEntityException,
+        response: expect.objectContaining({ code: "AI_PARSE_FAILED" }),
+      });
+    });
+
     it("maps an unparseable AI response to AI_PARSE_FAILED 422", async () => {
       mockAnthropicCreate.mockResolvedValue({
         content: [{ type: "text", text: "sorry, no JSON here" }],

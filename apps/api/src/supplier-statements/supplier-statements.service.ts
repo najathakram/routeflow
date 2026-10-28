@@ -13,6 +13,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { PlatformConfigService } from "../platform-admin/platform-config.service";
 import { AI_TASKS } from "../platform-admin/ai-models";
+import { AI_SCAN_MAX_TOKENS, firstText } from "../platform-admin/ai-response";
 import { DuplicateMatchService } from "../import/duplicate-match.service";
 import { StorageService } from "../storage/storage.service";
 import { matchSupplier } from "../import/supplier-match";
@@ -199,7 +200,7 @@ IMPORTANT: "amount" is always a positive magnitude — use "kind" to say whether
       message = await anthropic.messages.create(
         {
           model: STATEMENT_MODEL,
-          max_tokens: 4096,
+          max_tokens: AI_SCAN_MAX_TOKENS,
           messages: [
             { role: "user", content: [...fileContentBlocks, { type: "text", text: promptText }] },
           ],
@@ -249,8 +250,8 @@ IMPORTANT: "amount" is always a positive magnitude — use "kind" to say whether
       outputTokens: message.usage?.output_tokens ?? 0,
     });
 
-    const content = message.content[0];
-    if (content.type !== "text") {
+    const rawText = firstText(message.content);
+    if (rawText === null) {
       throw new UnprocessableEntityException({
         message: "The AI scanner returned an unexpected response. Try again.",
         code: API_ERROR_CODES.AI_PARSE_FAILED,
@@ -259,7 +260,7 @@ IMPORTANT: "amount" is always a positive magnitude — use "kind" to say whether
 
     let parsed: Record<string, unknown>;
     try {
-      let text = content.text.trim();
+      let text = rawText.trim();
       text = text
         .replace(/^```(?:json)?\s*/i, "")
         .replace(/\s*```\s*$/i, "")
@@ -270,7 +271,7 @@ IMPORTANT: "amount" is always a positive magnitude — use "kind" to say whether
       }
       parsed = JSON.parse(text) as Record<string, unknown>;
     } catch (_e) {
-      this.logger.error(`scanStatement: failed to parse AI response. Raw output:\n${content.text}`);
+      this.logger.error(`scanStatement: failed to parse AI response. Raw output:\n${rawText}`);
       throw new UnprocessableEntityException({
         message: "Couldn't read the scan result. Try again — a retry usually works.",
         code: API_ERROR_CODES.AI_PARSE_FAILED,

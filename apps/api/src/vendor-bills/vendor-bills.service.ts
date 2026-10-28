@@ -17,6 +17,7 @@ import { randomUUID } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { PlatformConfigService } from "../platform-admin/platform-config.service";
+import { AI_SCAN_MAX_TOKENS, firstText } from "../platform-admin/ai-response";
 import { Prisma, MovementType, PaymentMethod } from "@prisma/client";
 import { costDecimal, nextAverageCost, reverseAverageCost } from "../inventory/costing";
 import {
@@ -2717,7 +2718,9 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
       message = await anthropic.messages.create(
         {
           model,
-          max_tokens: 4096,
+          max_tokens: AI_SCAN_MAX_TOKENS,
+          // Bill scanning is extraction, not reasoning: low effort keeps Haiku 5.5's adaptive thinking short and cheap.
+          output_config: { effort: "low" },
           messages: [
             {
               role: "user",
@@ -2770,8 +2773,8 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
       outputTokens: message.usage?.output_tokens ?? 0,
     });
 
-    const content = message.content[0];
-    if (content.type !== "text") {
+    const rawText = firstText(message.content);
+    if (rawText === null) {
       throw new UnprocessableEntityException({
         message: "The AI scanner returned an unexpected response. Try again.",
         code: API_ERROR_CODES.AI_PARSE_FAILED,
@@ -2780,7 +2783,7 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
 
     let parsed: Record<string, unknown>;
     try {
-      let text = content.text.trim();
+      let text = rawText.trim();
       text = text
         .replace(/^```(?:json)?\s*/i, "")
         .replace(/\s*```\s*$/i, "")
@@ -2791,7 +2794,7 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
       }
       parsed = JSON.parse(text) as Record<string, unknown>;
     } catch (_e) {
-      this.logger.error(`scanInvoice: failed to parse AI response. Raw output:\n${content.text}`);
+      this.logger.error(`scanInvoice: failed to parse AI response. Raw output:\n${rawText}`);
       throw new UnprocessableEntityException({
         message: "Couldn't read the scan result. Try again — a retry usually works.",
         code: API_ERROR_CODES.AI_PARSE_FAILED,

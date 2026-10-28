@@ -34,6 +34,7 @@ import { StorageService } from "../storage/storage.service";
 import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { PlatformConfigService } from "../platform-admin/platform-config.service";
+import { AI_SCAN_MAX_TOKENS, firstText } from "../platform-admin/ai-response";
 import Anthropic from "@anthropic-ai/sdk";
 import { compressDocument } from "../storage/compress.util";
 import { IRS_SYSTEM_CATEGORIES } from "./irs-categories.constant";
@@ -919,7 +920,7 @@ export class BookkeepingService implements OnModuleInit {
     try {
       response = await anthropic.messages.create({
         model,
-        max_tokens: 2048,
+        max_tokens: AI_SCAN_MAX_TOKENS,
         messages: [
           {
             role: "user",
@@ -955,7 +956,10 @@ export class BookkeepingService implements OnModuleInit {
 
     let parsed: any = {};
     try {
-      const text = (response.content[0] as any).text ?? "";
+      // The answer is the first text block (a thinking block may come first); none at all is a failed read, not an
+      // empty receipt.
+      const text = firstText(response.content);
+      if (text === null) throw new Error("no text block");
       const jsonMatch = text.match(/\{[\s\S]*\}/);
       parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : {};
     } catch {

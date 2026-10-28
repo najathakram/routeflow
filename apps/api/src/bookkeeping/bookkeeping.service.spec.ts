@@ -2249,6 +2249,46 @@ describe("BookkeepingService", () => {
       });
     });
 
+    it("reads the text block when the response starts with a thinking block (Opus 5.5 always thinks)", async () => {
+      mockAnthropicCreate.mockResolvedValue({
+        content: [
+          { type: "thinking", thinking: "" },
+          {
+            type: "text",
+            text: JSON.stringify({
+              vendor: "Acme",
+              total: 12,
+              items: [{ description: "Widget", qty: 1, unitCost: 12, amount: 12 }],
+            }),
+          },
+        ],
+        usage: { input_tokens: 5, output_tokens: 6 },
+      });
+      await service.extractExpenseItems("exp-1");
+      const lines = (prisma.forTenant() as any).expenseLineItem.createMany;
+      expect(lines).toHaveBeenCalledTimes(1);
+      expect(lines.mock.calls[0][0].data).toHaveLength(1);
+    });
+
+    it("a response with a thinking block and no text block is refused, not read as an empty receipt", async () => {
+      mockAnthropicCreate.mockResolvedValue({
+        content: [{ type: "thinking", thinking: "" }],
+        usage: { input_tokens: 5, output_tokens: 6 },
+      });
+      await expect(service.extractExpenseItems("exp-1")).rejects.toThrow(/Could not parse receipt/);
+    });
+
+    it("leaves headroom for thinking in max_tokens (the receipt keeps the model's default effort)", async () => {
+      mockAnthropicCreate.mockResolvedValue({
+        content: [{ type: "text", text: JSON.stringify({ items: [] }) }],
+        usage: { input_tokens: 1, output_tokens: 1 },
+      });
+      await service.extractExpenseItems("exp-1");
+      const req = mockAnthropicCreate.mock.calls[0][0];
+      expect(req.max_tokens).toBe(8192);
+      expect(req.output_config).toBeUndefined();
+    });
+
     it("records a failed AiUsageEvent and rethrows when the Anthropic call errors", async () => {
       mockAnthropicCreate.mockRejectedValue(new Error("overloaded"));
 

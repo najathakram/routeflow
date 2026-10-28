@@ -1933,6 +1933,43 @@ describe("VendorBillsService", () => {
       });
     });
 
+    it("reads the text block when the response starts with a thinking block (Haiku 5.5 adaptive thinking)", async () => {
+      mockAnthropicCreate.mockResolvedValue({
+        content: [
+          { type: "thinking", thinking: "" },
+          {
+            type: "text",
+            text: JSON.stringify({
+              supplier: "Acme",
+              items: [{ extractedName: "Widget", qty: 1, unitCost: 2 }],
+            }),
+          },
+        ],
+        usage: { input_tokens: 9, output_tokens: 3 },
+      });
+      const result = await service.scanInvoice([jpegPage]);
+      expect(result.items).toHaveLength(1);
+    });
+
+    it("a response with a thinking block and no text block is AI_PARSE_FAILED 422", async () => {
+      mockAnthropicCreate.mockResolvedValue({ content: [{ type: "thinking", thinking: "" }] });
+      await expect(service.scanInvoice([jpegPage])).rejects.toMatchObject({
+        constructor: UnprocessableEntityException,
+        response: expect.objectContaining({ code: "AI_PARSE_FAILED" }),
+      });
+    });
+
+    it("the scan call asks for low effort and leaves headroom for thinking in max_tokens", async () => {
+      mockAnthropicCreate.mockResolvedValue({
+        content: [{ type: "text", text: JSON.stringify({ supplier: "Acme", items: [] }) }],
+        usage: { input_tokens: 1, output_tokens: 1 },
+      });
+      await service.scanInvoice([jpegPage]);
+      const req = mockAnthropicCreate.mock.calls[0][0];
+      expect(req.output_config).toEqual({ effort: "low" });
+      expect(req.max_tokens).toBe(8192);
+    });
+
     it("M-R2: with no scan setting the call, both usage records and the stored row use claude-haiku-5-5", async () => {
       mockAnthropicCreate.mockResolvedValue({
         content: [{ type: "text", text: JSON.stringify({ supplier: "Acme", items: [] }) }],
