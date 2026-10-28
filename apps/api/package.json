@@ -171,7 +171,8 @@
       "cleanup-imported-no-client\\.spec\\.ts$",
       "no-hand-typed-open-invoice-statuses\\.spec\\.ts$",
       "no-stray-pipeline-state\\.spec\\.ts$",
-      "invoice-delete-sites\\.pin\\.spec\\.ts$"
+      "invoice-delete-sites\\.pin\\.spec\\.ts$",
+      "write-off-ledger\\.pin\\.spec\\.ts$"
     ],
     "transform": {
       "^.+\\.(t|j)s$": "ts-jest"

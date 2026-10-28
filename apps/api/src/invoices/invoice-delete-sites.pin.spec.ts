@@ -14,6 +14,7 @@
  */
 import * as fs from "fs";
 import * as path from "path";
+import { INVOICE_DELETE_SITE_CLASSES } from "./invoice-delete-site-classes";
 import { CUSTOMER_DELETE_NON_BLOCKING } from "./invoice-status-sets";
 
 const API_ROOT = path.resolve(__dirname, "..", "..");
@@ -21,19 +22,7 @@ const SCAN_ROOTS = ["src", "scripts"];
 const SOURCE_EXT = /\.(ts|tsx|js|mjs|cjs)$/;
 const PREDICATE = /\binvoice\.(delete|deleteMany)\(/;
 
-type DeleteClass = "WIPE" | "REFUSE" | "DRAFT_ONLY";
-
-/** Paths are relative to apps/api. */
-const CLASSES: Record<string, DeleteClass> = {
-  "src/system-config/settings.controller.ts": "WIPE",
-  "scripts/cleanup-qa-data.js": "WIPE",
-  "scripts/demo-seed.js": "WIPE",
-  "scripts/reset-and-seed.ts": "WIPE",
-  "scripts/sales-facts-timing.ts": "WIPE",
-  "src/invoices/invoices.service.ts": "REFUSE",
-  "src/orders/order-invoice-delete.ts": "REFUSE",
-  "src/customers/customer-delete-preflight.ts": "DRAFT_ONLY",
-};
+const CLASSES = INVOICE_DELETE_SITE_CLASSES;
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {

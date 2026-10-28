@@ -15,7 +15,7 @@ const derived = (findCrossWorkspaceSpecs(path.resolve(__dirname, "../.."))["apps
 // The hand-kept names are the specs that guard repo truth WITHOUT matching the detector's shape (they walk the
 // api's own tree, or read a file the detector cannot see by name), plus the derivation's own spec.
 const handKept =
-  "(docs-truth|no-dead-deps|no-single-schema-path|client-page-params|no-react-skew-hacks|next-version|audit-allowlist-retired|bugs-self-test-script|denied-identifiers|size-ratchet|owner-report-db-url|no-collection-time-clock-fuse|cleanup-imported-no-client|no-hand-typed-open-invoice-statuses|no-hand-typed-enum-mirrors|graph-core|no-stray-pipeline-state|cross-workspace-lane|invoice-delete-sites\\.pin)\\.spec\\.ts$";
+  "(docs-truth|no-dead-deps|no-single-schema-path|client-page-params|no-react-skew-hacks|next-version|audit-allowlist-retired|bugs-self-test-script|denied-identifiers|size-ratchet|owner-report-db-url|no-collection-time-clock-fuse|cleanup-imported-no-client|no-hand-typed-open-invoice-statuses|no-hand-typed-enum-mirrors|graph-core|no-stray-pipeline-state|cross-workspace-lane|invoice-delete-sites\\.pin|write-off-ledger\\.pin)\\.spec\\.ts$";
 
 module.exports = {
   ...base,
