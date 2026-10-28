@@ -27,10 +27,15 @@ jest.mock("../vendor-bills/vendor-bills.service", () => ({
 jest.mock("../invoices/invoice-display-unit", () => ({
   resolveIssueDisplayUnits: jest.fn(),
   writeIssueDisplayUnits: jest.fn().mockResolvedValue(undefined),
+  writeIssueBaseLabels: jest.fn().mockResolvedValue(undefined),
 }));
 
 import { BookkeepingService } from "./bookkeeping.service";
-import { resolveIssueDisplayUnits, writeIssueDisplayUnits } from "../invoices/invoice-display-unit";
+import {
+  resolveIssueDisplayUnits,
+  writeIssueBaseLabels,
+  writeIssueDisplayUnits,
+} from "../invoices/invoice-display-unit";
 import { InvoiceService } from "./invoice.service";
 import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
 import { StorageService } from "../storage/storage.service";
@@ -281,6 +286,7 @@ describe("BookkeepingService", () => {
     function arm(status: string) {
       (resolveIssueDisplayUnits as jest.Mock).mockReset().mockResolvedValue(UNITS);
       (writeIssueDisplayUnits as jest.Mock).mockClear();
+      (writeIssueBaseLabels as jest.Mock).mockClear();
       prisma.invoice.findUnique.mockResolvedValue({ status, tenantId: "tenant-acme-1" });
       const txClient = {
         $executeRaw: jest.fn(),
@@ -288,6 +294,7 @@ describe("BookkeepingService", () => {
           findMany: jest.fn(async () => []),
           findUnique: jest.fn().mockResolvedValue({
             id: "inv-827",
+            tenantId: "tenant-acme-1",
             status,
             total: 100,
             payments: [],
@@ -321,11 +328,25 @@ describe("BookkeepingService", () => {
       );
     });
 
+    it("D-R2: a DRAFT whose resolve found NO pieces line (null units) still freezes the base labels in the tx", async () => {
+      const tx = arm("DRAFT");
+      (resolveIssueDisplayUnits as jest.Mock).mockResolvedValue(null);
+      await service.recordPayment("inv-827", { amount: 40, method: "CASH" as any });
+      expect(writeIssueDisplayUnits).not.toHaveBeenCalled();
+      expect(writeIssueBaseLabels).toHaveBeenCalledTimes(1);
+      expect((writeIssueBaseLabels as jest.Mock).mock.calls[0]).toEqual([
+        tx,
+        "inv-827",
+        "tenant-acme-1",
+      ]);
+    });
+
     it("an already issued (SENT) invoice makes zero resolve calls and no write", async () => {
       arm("SENT");
       await service.recordPayment("inv-827", { amount: 40, method: "CASH" as any });
       expect(resolveIssueDisplayUnits).not.toHaveBeenCalled();
       expect(writeIssueDisplayUnits).not.toHaveBeenCalled();
+      expect(writeIssueBaseLabels).not.toHaveBeenCalled();
     });
   });
 

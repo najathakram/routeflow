@@ -19,6 +19,7 @@ jest.mock("./invoice-display-unit", () => {
     itemsWithDisplayUnits: jest.fn(),
     resolveIssueDisplayUnits: jest.fn(),
     writeIssueDisplayUnits: jest.fn().mockResolvedValue(undefined),
+    writeIssueBaseLabels: jest.fn().mockResolvedValue(undefined),
     freezeDraftIssueUnits: jest.fn().mockResolvedValue(undefined),
     freezeIssueUnitsFromCatalog: jest.fn().mockResolvedValue(undefined),
     loadStopDisplayUnitCatalog: jest.fn().mockResolvedValue(null),
@@ -55,6 +56,7 @@ import {
   loadStopDisplayUnitCatalog,
   resolveDraftIssueUnits,
   resolveIssueDisplayUnits,
+  writeIssueBaseLabels,
   writeIssueDisplayUnits,
 } from "./invoice-display-unit";
 import { AfterCommit } from "../common/after-commit";
@@ -208,13 +210,23 @@ describe("InvoicesService display-unit wiring (SA-827)", () => {
     expect((writeIssueDisplayUnits as jest.Mock).mock.calls[0][2]).toBeNull();
   });
 
-  it("markSent: a DRAFT whose resolve returned null writes nothing", async () => {
+  it("markSent: a DRAFT whose resolve returned null writes no unit snapshot, but D-R2 still freezes the base labels", async () => {
     (resolveDraftIssueUnits as jest.Mock).mockResolvedValue(null);
     const draft = fixture(InvoiceStatus.DRAFT);
     prisma.invoice.findUnique.mockResolvedValue(draft);
     prisma.invoice.update.mockResolvedValue({ ...draft, status: InvoiceStatus.SENT });
     await service.send(INVOICE_ID);
     expect((writeIssueDisplayUnits as jest.Mock).mock.calls[0][2]).toBeNull();
+    expect(writeIssueBaseLabels).toHaveBeenCalledTimes(1);
+    expect((writeIssueBaseLabels as jest.Mock).mock.calls[0][1]).toBe(INVOICE_ID);
+  });
+
+  it("markSent: a re-send of an issued (SENT) invoice freezes no base labels", async () => {
+    const sent = fixture(InvoiceStatus.SENT);
+    prisma.invoice.findUnique.mockResolvedValue(sent);
+    prisma.invoice.update.mockResolvedValue(sent);
+    await service.send(INVOICE_ID);
+    expect(writeIssueBaseLabels).not.toHaveBeenCalled();
   });
 
   describe("recordDeliveryPaymentInTx (wasDraft)", () => {

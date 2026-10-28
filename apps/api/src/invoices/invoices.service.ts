@@ -3537,6 +3537,7 @@ export class InvoicesService {
             data: { status: nextStatus, sentAt: locked.sentAt ?? new Date() }, // #2088: a re-send keeps the FIRST sentAt
           });
           await du.writeIssueDisplayUnits(tx, id, locked.status === "DRAFT" ? units : null);
+          if (issuing) await du.writeIssueBaseLabels(tx, id, this.prisma.getTenantId()); // SA-1029: never gated on a pieces line (D-R2)
           const auto = await runSendCredits(this.creditNotes, tx, id, issuing, updated);
           // A credit pre-applied at order time can already cover this invoice. Auto-apply
           // returns {applied:0, invoiceStatus:null} on a zero balance, which used to leave
