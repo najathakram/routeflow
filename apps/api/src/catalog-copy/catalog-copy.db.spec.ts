@@ -129,7 +129,6 @@ describeDb("SA-1027 catalog copy - real Postgres", () => {
     await product(s.id, { name: "Charlie", sku: "S-3", barcode: "TAKEN-1" }); // barcode used at the target: dropped
     await product(s.id, { name: "Delta", sku: "S-4", barcode: "B-NEW", unitsPerBox: 6 }); // fresh barcode copies
     await product(s.id, { name: "Echo", sku: "S-5", isActive: false }); // inactive: left out
-    await product(s.id, { name: "Recipe One", sku: "R-1", kind: "RECIPE" }); // listed, not built
     await product(s.id, { name: "Lone Regulated", sku: "S-6", regItemType: "CIGARETTE" }); // regulated: left out
     const famA = await product(s.id, { name: "Fam A", unit: "each", kind: "FAMILY" });
     await product(s.id, {
@@ -214,7 +213,7 @@ describeDb("SA-1027 catalog copy - real Postgres", () => {
       expect(r.skippedByName).toBe(2); // the no-SKU product, and Fam C (name taken)
       expect(r.regulated).toBe(1 + 3); // Lone Regulated + Fam B (container, B1, B2): the family left out whole (C-G10)
       expect(r.inactiveLeftOut).toBe(1);
-      expect(r.recipesLeftOut).toEqual(["R-1"]);
+      expect(r.recipesLeftOut).toEqual([]); // the recipe cases have their own source (C-G16)
       expect(r.packOnly).toEqual(["S-1"]); // C-G3
       expect(r.codesDropped).toEqual([{ sku: "S-3", kind: "barcode", code: "TAKEN-1" }]); // C-G11
       expect(r.photos).toBe(2);
@@ -480,6 +479,31 @@ describeDb("SA-1027 catalog copy - real Postgres", () => {
         create.mockRestore();
         bulk.mockRestore();
       }
+    }, 60000);
+  });
+
+  describe("C-G16: --apply refuses while the source holds a recipe product", () => {
+    const seed = async () => {
+      const rs = await tenant("recsrc");
+      await product(rs.id, { name: "Plain One", sku: "P-1" });
+      await product(rs.id, { name: "Recipe Nine", sku: "R-9", kind: "RECIPE" });
+      return rs;
+    };
+
+    it("the dry run still reports the recipe; --apply throws CopyRefusal naming it and writes nothing", async () => {
+      const rs = await seed();
+      const t = await tenant("recdst");
+      await grant(t.id, "DENY");
+      const dry = await service.run(args(t.slug, { source: rs.slug }));
+      expect(dry.recipesLeftOut).toEqual(["R-9"]);
+      expect(dry.toCreate).toBe(1);
+
+      const beforeWrite = jest.fn();
+      const attempt = service.run(args(t.slug, { source: rs.slug, apply: true }), { beforeWrite });
+      await expect(attempt).rejects.toBeInstanceOf(CopyRefusal);
+      await expect(attempt).rejects.toThrow(/R-9/);
+      expect(beforeWrite).not.toHaveBeenCalled();
+      expect(await prisma.product.count({ where: { tenantId: t.id } })).toBe(0);
     }, 60000);
   });
 

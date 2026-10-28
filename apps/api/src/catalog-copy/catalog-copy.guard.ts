@@ -77,3 +77,18 @@ export function assertConfirmed(args: CopyArgs, createCount: number): void {
     );
   }
 }
+
+/**
+ * Rule 3 (SA-1027 ruling 3): the script builds no recipe product, so an apply over a source that holds one would leave a
+ * catalog that quietly lacks it. It refuses before any write and names the recipes; the dry run still lists them.
+ */
+export function assertNoRecipesLeftOut(recipes: readonly string[]): void {
+  if (recipes.length === 0) return;
+  const shown =
+    recipes.length <= 20
+      ? recipes.join(", ")
+      : `${recipes.slice(0, 20).join(", ")} … +${recipes.length - 20} more`;
+  throw new CopyRefusal(
+    `refused: the source holds ${recipes.length} recipe product(s) this script does not build (${shown}); nothing was written`,
+  );
+}

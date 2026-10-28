@@ -2,6 +2,7 @@ import {
   CopyRefusal,
   assertApplyAllowed,
   assertConfirmed,
+  assertNoRecipesLeftOut,
   parseCopyArgs,
 } from "./catalog-copy.guard";
 
@@ -121,5 +122,22 @@ describe("C-G8: --confirm must carry the dry run's create count", () => {
   it("a test target needs no confirmation", () => {
     const args = parseCopyArgs(["--source", "acme-a", "--target", "qa-b", "--apply"]);
     expect(() => assertConfirmed(args, 12)).not.toThrow();
+  });
+});
+
+describe("C-G16: --apply refuses while the source holds recipe products", () => {
+  it("passes with no recipe", () => {
+    expect(() => assertNoRecipesLeftOut([])).not.toThrow();
+  });
+
+  it("refuses and names the recipes", () => {
+    expect(() => assertNoRecipesLeftOut(["R-1", "R-2"])).toThrow(CopyRefusal);
+    expect(() => assertNoRecipesLeftOut(["R-1", "R-2"])).toThrow(/R-1, R-2/);
+    expect(() => assertNoRecipesLeftOut(["R-1", "R-2"])).toThrow(/nothing was written/);
+  });
+
+  it("names the first 20 and counts the rest", () => {
+    const many = Array.from({ length: 25 }, (_, i) => "R-" + i);
+    expect(() => assertNoRecipesLeftOut(many)).toThrow(/R-19.*[+]5 more/);
   });
 });

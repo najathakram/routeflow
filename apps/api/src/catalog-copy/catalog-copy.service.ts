@@ -12,6 +12,7 @@ import { assertSafeProductNames } from "../common/text-cell-guards";
 import {
   assertApplyAllowed,
   assertConfirmed,
+  assertNoRecipesLeftOut,
   type CopyArgs,
   CopyRefusal,
 } from "./catalog-copy.guard";
@@ -194,6 +195,7 @@ export class CatalogCopyService {
     );
     if (!args.apply) return report;
 
+    assertNoRecipesLeftOut(report.recipesLeftOut); // before the confirm, the hook and every write
     assertConfirmed(args, plan.createCount);
     // The counts must not have moved between the plan and the first write.
     const before = await this.targetCount(target.id);
