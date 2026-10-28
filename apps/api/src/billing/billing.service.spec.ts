@@ -3936,6 +3936,98 @@ describe("SA-774 chunk 2: link-only checkout, activation on settlement (flag-gat
     );
   });
 
+  describe("R7-3: the activation pins the plan version the buyer saw (the LINKED marker's publishedVersionId)", () => {
+    const trialSub = {
+      tenantId: "t1",
+      planKey: null,
+      basePriceSnapshot: null,
+      discount: 0,
+      stripeSubId: null,
+      stripeCustomerId: "cus_1",
+    };
+    const pinCalls = (tx: any) => ({
+      sub: tx.tenantSubscription.updateMany.mock.calls.filter(
+        (c: any[]) => c[0]?.data?.planVersionId !== undefined,
+      ),
+      tenant: tx.tenant.updateMany.mock.calls.filter(
+        (c: any[]) => c[0]?.data?.planVersionId !== undefined,
+      ),
+    });
+    const linkedMarker = (tx: any, meta: Record<string, unknown>) =>
+      tx.auditLog.findFirst.mockImplementation(async ({ where }: any) =>
+        where?.action === "STRIPE_CHECKOUT_LINKED" ? { meta } : null,
+      );
+
+    it("a LINKED marker with an id: BOTH pins move to it, in the apply transaction, and the tenant is ACTIVE", async () => {
+      const { svc, tx, prisma, stripe, events } = make({
+        transitionCount: 1,
+        cardFirst: true,
+        sub: trialSub,
+      });
+      prisma.tenant.findUnique.mockResolvedValue(tenantRow("TRIAL"));
+      withBase(stripe, 29_900);
+      linkedMarker(tx, { sessionId: "cs_cf", publishedVersionId: "pv_7" });
+      await (svc as any).onCheckoutCompleted(sessionOf("paid"));
+      const pins = pinCalls(tx);
+      expect(pins.sub.map((c: any[]) => c[0].data)).toEqual([{ planVersionId: "pv_7" }]);
+      expect(pins.tenant.map((c: any[]) => c[0].data)).toEqual([{ planVersionId: "pv_7" }]);
+      expect(emitted(events)).toContain(BILLING_EVENTS.PLAN_CHANGED);
+    });
+
+    it("no marker (paid at once, never linked): the session's own metadata id pins both", async () => {
+      const { svc, tx, prisma, stripe } = make({
+        transitionCount: 1,
+        cardFirst: true,
+        sub: trialSub,
+      });
+      prisma.tenant.findUnique.mockResolvedValue(tenantRow("TRIAL"));
+      withBase(stripe, 29_900);
+      await (svc as any).onCheckoutCompleted(
+        sessionOf("paid", {
+          metadata: {
+            tenantId: "t1",
+            planKey: "BUSINESS",
+            intent: "subscribe",
+            publishedVersionId: "pv_9",
+          },
+        }),
+      );
+      expect(pinCalls(tx).sub.map((c: any[]) => c[0].data)).toEqual([{ planVersionId: "pv_9" }]);
+      expect(pinCalls(tx).tenant.map((c: any[]) => c[0].data)).toEqual([{ planVersionId: "pv_9" }]);
+    });
+
+    it("a null id (a session no builder made): activates UNPINNED, logs checkout.unpinned, strands nothing", async () => {
+      const { svc, tx, prisma, stripe, events } = make({
+        transitionCount: 1,
+        cardFirst: true,
+        sub: trialSub,
+      });
+      prisma.tenant.findUnique.mockResolvedValue(tenantRow("TRIAL"));
+      withBase(stripe, 29_900);
+      linkedMarker(tx, { sessionId: "cs_cf", publishedVersionId: null });
+      const warn = jest.spyOn((svc as any).logger, "warn").mockImplementation(() => undefined);
+      await (svc as any).onCheckoutCompleted(sessionOf("paid"));
+      expect(pinCalls(tx).sub).toEqual([]);
+      expect(pinCalls(tx).tenant).toEqual([]);
+      expect(warn.mock.calls.map((c) => String(c[0])).join("|")).toContain("checkout.unpinned");
+      expect(emitted(events)).toContain(BILLING_EVENTS.PLAN_CHANGED); // still activated and booked
+    });
+
+    it("a lock a payment may not lift (admin_set): nothing is pinned either", async () => {
+      const { svc, tx, prisma, stripe } = make({
+        transitionCount: 0,
+        cardFirst: true,
+        sub: trialSub,
+      });
+      prisma.tenant.findUnique.mockResolvedValue(tenantRow("SUSPENDED", "admin_set"));
+      withBase(stripe, 9_900);
+      linkedMarker(tx, { sessionId: "cs_cf", publishedVersionId: "pv_7" });
+      await (svc as any).onCheckoutCompleted(sessionOf("paid"));
+      expect(pinCalls(tx).sub).toEqual([]);
+      expect(pinCalls(tx).tenant).toEqual([]);
+    });
+  });
+
   it("R7-2: completed (paid), async_payment_succeeded, invoice.paid redeliveries: the contribution is booked once", async () => {
     const { svc, tx, prisma, stripe, events } = make({
       transitionCount: 1,

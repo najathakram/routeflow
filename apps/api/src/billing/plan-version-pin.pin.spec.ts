@@ -286,6 +286,7 @@ describe("SA-815a P3 - the named sites read through the resolver", () => {
     ).toEqual(
       [
         "billing/billing-cron.service.ts#applyScheduledDowngrades",
+        "billing/card-first-activation.ts#bookCardFirstActivationTx",
         "billing/subscription-mutation.service.ts#subscribe",
         "billing/subscription-mutation.service.ts#upgradeLocked",
         "platform-admin/platform-admin.service.ts#activateManualSubscription",

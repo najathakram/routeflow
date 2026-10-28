@@ -2363,6 +2363,10 @@ export class BillingService {
                     before,
                     planKeyForCheckout!,
                     row,
+                    {
+                      subscriptionId,
+                      sessionVersionId: session.metadata?.publishedVersionId ?? null,
+                    },
                   );
                 }
                 await this.resetCouponIfSubReplacedTx(tx, tenantId, previousSubId, subscriptionId);
@@ -2447,6 +2451,7 @@ export class BillingService {
                 before,
                 planKeyForCheckout!,
                 row,
+                { subscriptionId, sessionVersionId: session.metadata?.publishedVersionId ?? null },
               );
             }
             await this.resetCouponIfSubReplacedTx(tx, tenantId, previousSubId, subscriptionId);
@@ -2513,6 +2518,11 @@ export class BillingService {
     // TRIAL_CONVERTED for a trial): it never takes this resume CAS, which would book the same contribution again.
     const cardFirstDone = activation as CardFirstActivation | null;
     if (cardFirstDone) await this.dunning?.clearPauseAfterCommit(cardFirstDone.exit);
+    if (cardFirstDone?.unpinned) {
+      this.logger.warn(
+        `checkout.unpinned ${session.id ?? "?"}: tenant ${tenantId} activated with no catalog version to pin (the session carried no publishedVersionId)`,
+      );
+    }
     const reinstated = cardFirstDone
       ? !cardFirstDone.locked
       : await this.transitionAndEmit(

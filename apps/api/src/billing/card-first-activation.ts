@@ -4,6 +4,11 @@ import { BILLING_EVENTS, normalizePlanKey, planKeyToEnum } from "./plan-catalog.
 import { isPayingRow } from "./mrr.service";
 import { paymentReinstatableWhere } from "./dunning-config";
 import { isNeverActivated } from "./self-serve-plan-gate";
+import {
+  STRIPE_CHECKOUT_LINK_ENTITY,
+  STRIPE_CHECKOUT_LINKED_ACTION,
+} from "./config-snapshot-audit.constants";
+import { pinPlanVersionTx } from "./plan-version-pin";
 import { transitionToActiveTx, type PauseExit } from "./transition-to-active";
 import type { BillingEventService } from "./billing-event.service";
 
@@ -32,6 +37,14 @@ export interface ActivationBase {
 export interface CardFirstActivation {
   locked: boolean;
   exit: PauseExit | null;
+  /** The activation had no catalog version to pin (the caller logs `checkout.unpinned` after the commit). */
+  unpinned: boolean;
+}
+
+/** Where the version the buyer saw comes from: the Stripe subscription whose LINKED marker holds it, and the session itself. */
+export interface ActivationPin {
+  subscriptionId: string;
+  sessionVersionId: string | null;
 }
 
 export async function readActivationBaseTx(
@@ -63,9 +76,10 @@ export async function bookCardFirstActivationTx(
   before: ActivationBase,
   planKey: string,
   row: { basePriceSnapshot?: unknown },
+  pin: ActivationPin,
 ): Promise<CardFirstActivation> {
   const { tenant, sub } = before;
-  if (!tenant) return { locked: true, exit: null };
+  if (!tenant) return { locked: true, exit: null, unpinned: false };
   const couponFull = sub?.couponFull ?? false;
   const wasPaying = isPayingRow(tenant, sub?.planKey ?? null, couponFull);
   const oldPlanMonthly = wasPaying ? Number(sub?.basePriceSnapshot ?? 0) : 0;
@@ -77,7 +91,7 @@ export async function bookCardFirstActivationTx(
       ? {}
       : { where: { status: { not: "ACTIVE" }, ...paymentReinstatableWhere() } }),
   });
-  if (toActive.count !== 1) return { locked: true, exit: null };
+  if (toActive.count !== 1) return { locked: true, exit: null, unpinned: false };
   if (neverActivated) {
     await tx.tenantSubscription.update({
       where: { tenantId },
@@ -100,5 +114,38 @@ export async function bookCardFirstActivationTx(
       tx,
     },
   );
-  return { locked: false, exit: toActive.exit };
+  const versionId = await readLinkedVersionIdTx(tx, tenantId, pin);
+  if (versionId) {
+    await pinPlanVersionTx(tx, tenantId, versionId, {
+      kind: "SYSTEM",
+      id: null,
+      source: "checkout.card_first",
+    });
+  }
+  return { locked: false, exit: toActive.exit, unpinned: !versionId };
+}
+
+/**
+ * SA-774r7 (R7-3): the catalog version the buyer saw. It is the LINKED marker's `publishedVersionId` (written at the link
+ * from the session metadata); a session settled at once was never linked, so its own metadata is the same value. Null =
+ * a session no builder made: the caller activates it unpinned. It never pins a version the buyer did not see.
+ */
+async function readLinkedVersionIdTx(
+  tx: Prisma.TransactionClient,
+  tenantId: string,
+  pin: ActivationPin,
+): Promise<string | null> {
+  const marker = await tx.auditLog.findFirst({
+    where: {
+      tenantId,
+      entityType: STRIPE_CHECKOUT_LINK_ENTITY,
+      entityId: pin.subscriptionId,
+      action: STRIPE_CHECKOUT_LINKED_ACTION,
+    },
+    orderBy: { createdAt: "desc" },
+    select: { meta: true },
+  });
+  const fromMarker = (marker?.meta as { publishedVersionId?: unknown } | null)?.publishedVersionId;
+  const id = typeof fromMarker === "string" && fromMarker ? fromMarker : pin.sessionVersionId;
+  return typeof id === "string" && id ? id : null;
 }
