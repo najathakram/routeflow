@@ -5,11 +5,12 @@
 // the wrong things (lockfiles, fixtures, snapshots, bookkeeping ledgers), so the count skips the paths in
 // SIZE_EXCLUDE (checked in, with a reason each). Every size number in the repo must come from countLines.
 //
-// Pure functions: no git, no gh, no I/O. The CLI feeds them rows ({ path, added, deleted }) from
+// Pure functions: no git, no gh. The CLI feeds them rows ({ path, added, deleted }) from
 // `git diff --numstat` or gh's PR `files`; both sources give the same result (see the self-test).
 //
 // PR_SIZE_MODE is the dark/enforced switch. Dark never fails anything; flipping it to "enforced" is its own
 // diff, after the `--since` report. Verdicts: ok | warn (> WARN_AT) | block (> BLOCK_AT) | warn-override.
+import { registrySource } from "./registry-root.mjs";
 import { matchGlob } from "./risk-paths.mjs";
 
 export const WARN_AT = 400;
@@ -28,7 +29,8 @@ export const SIZE_EXCLUDE = [
   { glob: "**/dist/**", why: "build output" },
   { glob: ".claude/code-map/**", why: "bookkeeping ledger (code map)" },
   { glob: ".claude/lessons/**", why: "bookkeeping ledger (lessons)" },
-  { glob: ".claude/campaign/**", why: "bookkeeping ledger (bug register)" },
+  // Named through the register contract (B1-a), never as a literal path.
+  { glob: `${registrySource().prefix}/**`, why: "bookkeeping ledger (bug register)" },
   { glob: ".claude/pipeline/**", why: "bookkeeping ledger (pipeline logs)" },
 ];
 

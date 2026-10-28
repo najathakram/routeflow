@@ -26,6 +26,7 @@ import {
 } from "./lib/pr-size.mjs";
 import { main, parseArgs } from "./pr-size.mjs";
 import { scrubbedGitEnv } from "./lib/check-git-hooks.mjs";
+import { registrySource } from "./lib/registry-root.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "..");
@@ -118,7 +119,7 @@ check(
   countLines([
     src(10, ".claude/code-map/api.md"),
     src(10, ".claude/lessons/LESSONS.md"),
-    src(10, ".claude/campaign/bugs.jsonl"),
+    src(10, `${registrySource().prefix}/bugs.jsonl`),
     src(10, ".claude/pipeline/x.jsonl"),
     src(10, "apps/web/__snapshots__/a.snap"),
     src(10, "apps/web/b.snap"),
