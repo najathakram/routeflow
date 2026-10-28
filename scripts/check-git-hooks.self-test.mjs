@@ -11,6 +11,7 @@ import {
   realpathSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import * as nodeFs from "node:fs";
@@ -472,6 +473,70 @@ try {
     en.ok === true &&
       staleRead("h") === "# fresh h\n" &&
       /custom commit-msg/.test(staleRead("commit-msg")),
+  );
+
+  // T14t-v — review fold 2: ownership compares REAL paths; helpers refresh whenever the dir is ours.
+  // Injected fs (platform linux) so the chmod recorder runs on win32 too; the mode lives per real path.
+  const realFsFor = (ppPath, chmodLog) => {
+    const target = realpathSync(ppPath);
+    let m = 0o644;
+    return {
+      ...nodeFs,
+      statSync: (p) => {
+        try {
+          return realpathSync(p) === target ? { mode: m } : nodeFs.statSync(p);
+        } catch {
+          return nodeFs.statSync(p);
+        }
+      },
+      chmodSync: (p, mm) => (chmodLog.push(p), (m = mm)),
+    };
+  };
+  const linkMain = repo("t14t-main");
+  sh(linkMain, "config", "core.hooksPath", ".husky/_");
+  withHook(linkMain, ".husky/_");
+  const linkTree = path.join(tmp, "t14t-linked");
+  sh(linkMain, "worktree", "add", "-q", "-b", "t14t", linkTree);
+  mkdirSync(path.join(linkTree, ".husky"), { recursive: true });
+  symlinkSync(path.join(linkMain, ".husky/_"), path.join(linkTree, ".husky/_"), "junction");
+  const linkChmods = [];
+  const linkFs = realFsFor(path.join(linkMain, ".husky/_/pre-push"), linkChmods);
+  en = ensureGitHooks({ cwd: linkTree, env: {}, fs: linkFs, platform: "linux" });
+  ok(
+    "T14t a linked tree whose .husky/_ is a link to main's is refused, nothing chmod-ed",
+    en.ok === false && linkChmods.length === 0,
+    JSON.stringify([en, linkChmods]),
+  );
+  const wtMain = repo("t14u-main");
+  sh(wtMain, "config", "extensions.worktreeConfig", "true");
+  const outside = path.join(tmp, "t14u-outside");
+  withHook(outside, "_");
+  const wtTree = path.join(tmp, "t14u-linked");
+  sh(wtMain, "worktree", "add", "-q", "-b", "t14u", wtTree);
+  sh(
+    wtTree,
+    "config",
+    "--worktree",
+    "core.hooksPath",
+    path.join(outside, "_").replaceAll("\\", "/"),
+  );
+  const wtChmods = [];
+  const wtFs = realFsFor(path.join(outside, "_/pre-push"), wtChmods);
+  en = ensureGitHooks({ cwd: wtTree, env: {}, fs: wtFs, platform: "linux" });
+  ok(
+    "T14u a per-worktree hooksPath outside this tree is refused, nothing chmod-ed",
+    en.ok === false && wtChmods.length === 0,
+    JSON.stringify([en, wtChmods]),
+  );
+  const fresh = path.join(tmp, "t14v-linked");
+  sh(mainWithHook, "worktree", "add", "-q", "-b", "t14v", fresh);
+  withHook(fresh, ".husky/_");
+  writeFileSync(path.join(fresh, ".husky/_/h"), "# stale h\n");
+  en = ensureGitHooks({ cwd: fresh, env: {} });
+  ok(
+    "T14v a tree that already has pre-push still gets its stale helper refreshed",
+    en.ok === true && readFileSync(path.join(fresh, ".husky/_/h"), "utf8") === "# fresh h\n",
+    JSON.stringify(en),
   );
 
   // T12 — structural: the guard is actually wired where it must be.
