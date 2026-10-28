@@ -1,5 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
+import { promotionsOn as sharedPromotionsOn } from "@routeflow/types";
+import { promotionsOn } from "./promotions-mode";
 
 /**
  * SA-1032 structural pin: the `promotions` off switch holds only while every read of the
@@ -44,5 +46,11 @@ describe("SA-1032 — promotions off switch has one door", () => {
     expect(start).toBeGreaterThan(-1);
     const body = service.slice(start, service.indexOf("\n  }\n", start));
     expect(body).toContain("promotionsOn(");
+  });
+
+  it("the API promotionsOn mirror agrees with the shared reader", () => {
+    for (const mode of [undefined, null, "", "on", "off", "beta"]) {
+      expect(promotionsOn(mode)).toBe(sharedPromotionsOn(mode));
+    }
   });
 });

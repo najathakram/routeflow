@@ -12,9 +12,8 @@ import { UpdatePromotionDto } from "./dto/update-promotion.dto";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { assertNoFamilyProducts } from "../products/sellable-lines";
 import { assertRefsInTenant } from "../common/assert-refs-in-tenant";
-import { promotionsOn } from "@routeflow/types";
 import { FeatureConfigService } from "../billing/feature-config.service";
-import { assertPromotionsOn } from "./promotions-mode";
+import { assertPromotionsOn, promotionsOn } from "./promotions-mode";
 
 /**
  * The stored promotion fields the zero-price guard reads back. `value` is a Prisma

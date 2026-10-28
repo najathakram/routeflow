@@ -1,7 +1,15 @@
 import { ForbiddenException } from "@nestjs/common";
-import { promotionsOn } from "@routeflow/types";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import type { FeatureConfigService } from "../billing/feature-config.service";
+
+/**
+ * SA-1032: true unless the business turned promotions off (no row = on). API mirror of
+ * `promotionsOn` in `packages/types/api/features.ts`: the API never value-imports
+ * `@routeflow/types` (see no-runtime-workspace-imports.spec.ts); the structure spec pins parity.
+ */
+export function promotionsOn(mode?: string | null): boolean {
+  return mode !== "off";
+}
 
 /**
  * SA-1032: refuse a promotion write while the business has promotions turned off. A write with
