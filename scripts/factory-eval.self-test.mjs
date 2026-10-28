@@ -423,13 +423,54 @@ try {
     const out = await go({ k: 1, extraEnv: env, prepareFn });
     return [out.records.length, /rm failed/.test(out.records[0]?.reason), trees() - before];
   });
+  await check(
+    "money compares in cents: 3 x $0.10 fits a $0.30 budget, before and during the run",
+    [true, 3, undefined],
+    async () => {
+      const dime = {
+        d: { cmd: ["node", "-e", "console.log('{\"total_cost_usd\":0.1}')"], capUsd: 0.1 },
+      };
+      const allow = { EVAL_ALLOW_REAL_ARM: "1" };
+      const ok = FE.checkBudget({ k: 3, taskCount: 1, capUsd: 0.1, budget: 0.3, env: {} }).ok;
+      const out = await go({ armName: "d", arms: dime, k: 3, budget: 0.3, env: allow });
+      return [ok, out.records.length, out.stopped];
+    },
+  );
+  await check(
+    "the arm's process never inherits the runner's own EVAL_ settings",
+    "undefined",
+    async () => {
+      const probe = path.join(repo.dir, "probe.txt");
+      const cmd = [
+        "node",
+        "-e",
+        "require('fs').writeFileSync(process.argv[1], String(process.env.EVAL_PROBE))",
+        probe,
+      ];
+      process.env.EVAL_PROBE = "leak";
+      try {
+        await go({
+          armName: "p",
+          arms: { p: { cmd, capUsd: 1 } },
+          k: 1,
+          env: { EVAL_ALLOW_REAL_ARM: "1" },
+        });
+      } finally {
+        delete process.env.EVAL_PROBE;
+      }
+      return readFileSync(probe, "utf8");
+    },
+  );
   await check("a cap of 0, below 0 or not a number is refused", [false, false, false], () =>
     [0, -1, "x"].map((capUsd) => FE.checkBudget({ k: 1, taskCount: 1, capUsd, env: {} }).ok),
   );
   await check(
     "total_cost_usd must be a finite number >= 0; anything else is unknown",
-    [null, null, null, null, 0.3],
-    () => [null, '""', "-1", '"0.5"', "0.3"].map((v) => FE.parseCost(`{"total_cost_usd":${v}}`)),
+    [null, null, null, null, null, 0.3],
+    () =>
+      [null, '""', "-1", '"0.5"', "1e999", "0.3"].map((v) =>
+        FE.parseCost(`{"total_cost_usd":${v}}`),
+      ),
   );
   await check(
     "the agent sees only the stub's EVAL_ variables",
