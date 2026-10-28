@@ -312,6 +312,15 @@ describe("SA-1049 PR-2 — the detector (G-1, in-memory fixtures)", () => {
     expect(find(literal).filter((h) => h.kind === "object")).toHaveLength(1);
   });
 
+  it("does not exempt Partial<Record<Shared, …>>: SA-1049 A-1 files it as a `subset` row", () => {
+    const body = `{ ${v.map((x) => `${x}: 1`).join(", ")} }`;
+    const imp = `import type { ${ENUM_NAME} } from "@routeflow/types";\n`;
+    const declared = `${imp}const R: Partial<Record<${ENUM_NAME}, number>> = ${body};`;
+    const satisfied = `${imp}const R = ${body} satisfies Partial<Record<${ENUM_NAME}, number>>;`;
+    expect(find(declared).filter((h) => h.kind === "object")).toHaveLength(1);
+    expect(find(satisfied).filter((h) => h.kind === "object")).toHaveLength(1);
+  });
+
   it("applies the 3-value and half-of-the-group thresholds, and breaks ties by name", () => {
     expect(find(`const A = [${lits.slice(0, 2).join(", ")}];`)).toEqual([]);
     expect(find(`const A = [${lits.slice(0, 3).join(", ")}, "x1", "x2", "x3", "x4"];`)).toEqual([]);
