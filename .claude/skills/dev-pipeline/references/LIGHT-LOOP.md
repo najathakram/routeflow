@@ -1,6 +1,6 @@
 # Light loop — `light-loop.js`, a bounded-work Workflow script
 
-> **OWNER RULING 2026-09-29:** Sonnet 5.5 (`claude-sonnet-5-5`) builds at `medium` (never `low` for code); Opus (alias `opus`) reviews every task — `medium` routine, `high` when any package is HIGH-risk — and rules the fix plan at `high` (was Fable, retired 2026-10-15). Fable is not used (owner ruling 2026-10-15); every Fable role is Opus.
+> **OWNER RULING 2026-09-29:** Sonnet 5.5 (`claude-sonnet-5-5`) builds at `medium` (never `low` for code); Opus (alias `opus`) reviews every task — `medium` routine, `high` when any package is HIGH-risk — and rules the fix plan at `high` (was Fable, retired 2026-10-15). Fable is not used (owner ruling 2026-10-15); every role the retired Fable had is Opus.
 
 Owner ruling 2026-09-10 (skills-build wave 2): the light loop is now a real Workflow script,
 `~/.claude/skills/dev-pipeline/scripts/light-loop.js`, not a manual S1–S5 checklist. It shares

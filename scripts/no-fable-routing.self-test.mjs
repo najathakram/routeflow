@@ -65,6 +65,15 @@ for (const [name, text] of [
   ["F5c 'not used' about another model", "Use Fable for S3; Haiku is not used."],
   ["F5d 'never spawn' about another model", "Never spawn Sonnet for S3 — use Fable."],
   ["F5e a ruling date alone is no marker", "Per ruling 2026-10-15 the planner stays on Fable."],
+  // Second review round.
+  ["F5g a non-status bracket stays split", "Use Fable (it is Opus-class) for S3."],
+  ["F5h a bracket naming another retired slot", "Use Fable (retired Opus slot) for S3."],
+  ["F5i 'is Opus' about another role", "S3 planner is Fable and the reviewer is Opus."],
+  ["F5j 'read Opus' is no mapping", "Spawn Fable to read Opus output."],
+  ["F5k a comma ends a clause", "Use Fable for S3, Haiku is not used."],
+  ["F5l 'now that' ends a clause", "Use Fable for S3 now that Opus 4 is retired."],
+  ["F5m 'instead of' ends a clause", "Spawn Fable instead of the removed Haiku gate."],
+  ["F5n a plain HISTORICAL word is no banner", "HISTORICAL runs used Opus; spawn Fable for S3."],
 ])
   check(name, lines(SKILL, text), [1]);
 check(
@@ -79,6 +88,19 @@ check(
     "> **HISTORICAL (superseded 2026-10-15):** the old rules.\n> Fable authors S3.\n>\n> Fable rules S4.",
   ),
   [4],
+);
+check(
+  "F6f a heading that merely contains HISTORICAL does not exempt its file",
+  lines(SKILL, "# Prompting Opus (HISTORICAL file name)\n\nSpawn Fable for S3."),
+  [3],
+);
+check(
+  "F6g status words right after the name stay with it",
+  lines(
+    SKILL,
+    "Opus (Fable, retired, before 2026-09-29) rules once.\n| Fable 5.1 (retired) | $10 |",
+  ),
+  [],
 );
 check(
   "F6b a HISTORICAL heading covers its section, until a heading of that level",

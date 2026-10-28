@@ -24,7 +24,7 @@ registry was refuted on investigation. Bug work is test-heavy and cause-skeptica
 ## MODEL POLICY (same rule as dev-pipeline)
 
 > **OWNER RULING 2026-10-15 — CURRENT: we do not use Fable.** Every "Fable" role below is **Opus** (generic alias `opus`,
-> always the latest Opus, never a pinned version); `CFG.models.fable` is removed.
+> always the latest Opus, never a pinned version); the unused `CFG.models.fable` entry stays defined in the engine until R7-d removes it.
 
 > **OWNER RULING 2026-09-29 — CURRENT, supersedes the Fable roles below:** every role this file gives to Fable (S3 fix
 > ruling, S4/S5 rulings, final-pass rulings) is **Opus @ high** now; Opus also reviews EVERY task (medium
@@ -38,7 +38,7 @@ registry was refuted on investigation. Bug work is test-heavy and cause-skeptica
 > shared engine** (`~/.claude/skills/dev-pipeline/pipeline.js`, run here with `mode: 'bugfix'`) —
 > it authors the **S3 fix ruling** and the **S4/S5 test-plan and build-plan rulings** in the
 > session, from a Sonnet-transcribed brief, and rules on final-pass candidates in the session too.
-> (`CFG.models.fable` was removed 2026-10-15.)
+> (`CFG.models.fable` is still defined but unused since 2026-10-15; R7-d removes it.)
 
 **Opus 5.5** (`claude-opus-5-5`) is the engine's HIGH-risk judgment tier: the **HIGH-risk reviewer** on a `fix` or
 `docs` task touching a HIGH-risk file (money, auth, tenancy, schema, PII) — the only two task types whose chain
