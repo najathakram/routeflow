@@ -36,7 +36,40 @@ const base = {
   updatedAt: "2026-10-01T00:00:00.000Z",
 } as unknown as Return;
 
+const item = (over: Record<string, unknown>) => ({
+  id: "i1",
+  productId: "p-1",
+  product: { id: "p-1", name: "Cola" },
+  orderedQty: 400,
+  qty: 200,
+  ...over,
+});
+
 describe("return detail: what each returned line counts (SA-1042 B9c)", () => {
+  it("G-w4: a line item reads in the line's own unit, a pooled item with pcs", () => {
+    mockReturn = {
+      ...base,
+      status: "PENDING",
+      items: [
+        item({ id: "i1", line: { unitLabel: "Case", unitsPerBox: 200, boxes: 2, qty: 400 } }),
+        item({
+          id: "i2",
+          product: { id: "p-2", name: "Chips" },
+          productId: "p-2",
+          orderedQty: 500,
+          line: null,
+        }),
+      ],
+    } as unknown as Return;
+    renderWithProviders(<ReturnDetailPage />);
+    const row = (name: string) =>
+      screen.getAllByRole("row").find((r) => within(r).queryByText(name))!;
+    expect(row("Cola").textContent).toContain("200 pcs (1 Case)");
+    expect(row("Cola").textContent).toContain("400 pcs (2 Cases)"); // ordered, from the same line
+    expect(row("Chips").textContent).toContain("200 pcs");
+    expect(row("Chips").textContent).not.toContain("(");
+  });
+
   it("G-w5 (B976): a UNIT_UNRESOLVED preview shows the mixed-unit copy in the Resolve dialog", async () => {
     mockReturn = {
       ...base,

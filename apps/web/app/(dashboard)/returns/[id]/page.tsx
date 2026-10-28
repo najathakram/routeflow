@@ -23,6 +23,7 @@ import { refundSuccessToast } from "@/lib/refund-toast";
 import { TENDER_OPTIONS } from "../_components/refund-copy";
 import { RefundSlipAction } from "../_components/RefundSlipAction";
 import { RETURN_MIXED_UNIT_PRODUCT_COPY, refundErrorMessage } from "@/lib/credit-note-error-copy";
+import { orderedItemQtyText, returnedItemQtyText } from "@/lib/return-line-qty";
 import {
   useReturn,
   useApproveReturn,
@@ -767,8 +768,12 @@ export default function ReturnDetailPage() {
                       <td className="px-6 py-3 font-medium text-navy">
                         {item.product?.name ?? item.productId}
                       </td>
-                      <td className="px-4 py-3 text-center text-navy/70">{item.orderedQty}</td>
-                      <td className="px-4 py-3 text-center font-semibold text-navy">{item.qty}</td>
+                      <td className="px-4 py-3 text-center text-navy/70">
+                        {item.line ? orderedItemQtyText(item.line) : `${item.orderedQty} pcs`}
+                      </td>
+                      <td className="px-4 py-3 text-center font-semibold text-navy">
+                        {returnedItemQtyText(item)}
+                      </td>
                       <td className="px-4 py-3 text-navy/70">
                         {item.condition && (
                           <span className="mr-2 inline-flex items-center rounded-full bg-surface-raised px-2 py-0.5 text-xs font-medium text-navy">
