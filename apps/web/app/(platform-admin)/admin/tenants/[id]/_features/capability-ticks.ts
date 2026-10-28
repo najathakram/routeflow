@@ -40,9 +40,11 @@ export function nothingTicked(t: CapabilityTicks): boolean {
   return !t.delivery && !t.shipping && !t.counter;
 }
 
-/** What the saved tenant shows: a tenant nobody set up has nothing ticked (D1), whatever else the read carries. */
+/**
+ * What the saved tenant shows: the server's ticks. A tenant nobody set up (`configured: false`) is shown as what it
+ * does today (SA-1028), so a change to one box cannot read as "turn the others off".
+ */
 export function ticksFromCapabilities(c: BusinessCapabilities): CapabilityTicks {
-  if (!c.configured) return NO_TICKS;
   return {
     delivery: c.delivery,
     doorPayments: c.delivery && c.doorPayments,

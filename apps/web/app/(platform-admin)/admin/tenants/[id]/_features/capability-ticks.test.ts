@@ -29,10 +29,24 @@ function caps(over: Partial<BusinessCapabilities> = {}): BusinessCapabilities {
 }
 
 describe("ticksFromCapabilities", () => {
-  it("a tenant that is not set up shows nothing ticked, whatever else the read says (D1)", () => {
+  // SA-1028 K-R3: supersedes D1 ("not set up shows nothing ticked"). The server now reads what an unset tenant does
+  // today; the card copies it, so a tenant nobody set up is not shown as a business that does nothing.
+  it("a tenant that is not set up shows the server's ticks of what it does today", () => {
     const ticks = ticksFromCapabilities(
-      caps({ configured: false, delivery: true, counter: true, doorPayments: true }),
+      caps({ configured: false, delivery: true, shipping: true, doorPayments: true }),
     );
+    expect(ticks).toEqual({
+      delivery: true,
+      doorPayments: true,
+      shipping: true,
+      counter: false,
+      opensAs: "order",
+    });
+    expect(nothingTicked(ticks)).toBe(false);
+  });
+
+  it("an unset tenant whose read carries no ticks still shows nothing ticked", () => {
+    const ticks = ticksFromCapabilities(caps({ configured: false }));
     expect(ticks).toEqual(NO_TICKS);
     expect(nothingTicked(ticks)).toBe(true);
   });

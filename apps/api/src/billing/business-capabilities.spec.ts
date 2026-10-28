@@ -1,4 +1,5 @@
 import { BadRequestException } from "@nestjs/common";
+import type { BusinessCapabilityTicks } from "@routeflow/types";
 import {
   capabilitiesFromInputs,
   matchPreset,
@@ -43,16 +44,35 @@ describe("capabilitiesFromInputs", () => {
     );
   });
 
-  it("unset with a fleet held is not configured and ticks nothing", () => {
+  // SA-1028 K-R1 (supersedes the "unset ticks nothing" pin): an unset tenant is "not set up" but its card reads what
+  // the business does TODAY: unset offers Delivery (when the fleet is held) and Shipping, and counter when counter_sales is on.
+  it("K-R1: unset with a fleet held is not configured, and its ticks are what it does today", () => {
     const c = capabilitiesFromInputs(inputs("unset", "unset", true), ["driver_payments"]);
     expect(c).toMatchObject({
       configured: false,
-      delivery: false,
-      doorPayments: false,
-      shipping: false,
+      delivery: true,
+      doorPayments: true,
+      shipping: true,
       counter: false,
+      opensAs: "order",
+      opensAsChoosable: false,
+      fleetHeld: true,
       matchedPreset: null,
     });
+  });
+
+  it("K-R1: unset without a fleet reads Shipping only (Delivery follows the fleet held)", () => {
+    const c = capabilitiesFromInputs(inputs("unset", "unset", false), []);
+    expect(c).toMatchObject({ configured: false, delivery: false, shipping: true, counter: false });
+    expect(c.matchedPreset).toBeNull();
+  });
+
+  it("K-R1: unset with counter_sales on reads Counter ticked, and the opens-as stays an order", () => {
+    const c = capabilitiesFromInputs(inputs("unset", "on", false), []);
+    expect(c).toMatchObject({ configured: false, shipping: true, counter: true });
+    expect(c.opensAs).toBe("order");
+    expect(c.opensAsChoosable).toBe(true);
+    expect(c.matchedPreset).toBeNull();
   });
 
   it("Delivery without the fleet held matches no preset (a lapsed fleet add-on is not delivery_pos)", () => {
@@ -266,6 +286,120 @@ describe("ticksToProfileDef", () => {
         opensAs: "order",
       }),
     ).toBeNull();
+  });
+});
+
+/**
+ * SA-1028 keep rule: a tenant that is "not set up" (fulfilment_model unset) works today as Delivery (fleet held) +
+ * Shipping. When the admin leaves Delivery, Shipping and Opens-as as the card showed them and changes only something
+ * else (Counter, door payments), the def carries NO fulfilment_model: the stored model stays unset, the carrier-in-
+ * transit rule has no mode move to refuse, and invoicing stays at delivery. Changing D/S/Opens-as is a real change.
+ */
+describe("ticksToProfileDef keep rule (SA-1028)", () => {
+  const unsetCurrent = (over: Partial<BusinessCapabilityTicks> = {}) => ({
+    configured: false,
+    doorPayments: true,
+    ticks: {
+      delivery: true,
+      doorPayments: true,
+      shipping: true,
+      counter: false,
+      opensAs: "order" as const,
+      ...over,
+    },
+  });
+  const sameDS = { delivery: true, doorPayments: true, shipping: true };
+
+  it("K-R2 (unit): Delivery + Shipping unchanged, only Counter added: counter_sales alone, fulfilment_model omitted", () => {
+    const { def, normalised, preset } = ticksToProfileDef(
+      { ...sameDS, counter: true },
+      unsetCurrent(),
+    );
+    expect(def.modes).toEqual({ counter_sales: "on" });
+    expect(def.key).toBe("custom");
+    expect(preset).toBeNull();
+    expect(normalised).toEqual({
+      delivery: true,
+      doorPayments: true,
+      shipping: true,
+      counter: true,
+      opensAs: "order",
+    });
+  });
+
+  it("K-G2: unticking Shipping is a real change: fulfilment_model is carried", () => {
+    const { def } = ticksToProfileDef(
+      { delivery: true, shipping: false, counter: true },
+      unsetCurrent(),
+    );
+    expect(def.modes).toEqual({ fulfilment_model: "delivery", counter_sales: "on" });
+  });
+
+  it("K-G1: unticking Delivery is a real change: fulfilment_model is carried (the guard then judges it)", () => {
+    const { def } = ticksToProfileDef(
+      { shipping: true, counter: true, opensAs: "order" },
+      unsetCurrent(),
+    );
+    expect(def.modes).toEqual({ fulfilment_model: "ship", counter_sales: "on" });
+    const pickupShip = ticksToProfileDef({ shipping: true, counter: true }, unsetCurrent());
+    expect(pickupShip.def.modes.fulfilment_model).toBe("pickup_ship");
+  });
+
+  it("opens-as: the card's pre-filled 'order' is unchanged; an omitted one defaults to a counter sale (a real change)", () => {
+    const cur = unsetCurrent({ delivery: false, doorPayments: false });
+    const kept = ticksToProfileDef({ shipping: true, counter: true, opensAs: "order" }, cur);
+    expect(kept.def.modes).toEqual({ counter_sales: "on" });
+    const changed = ticksToProfileDef({ shipping: true, counter: true }, cur);
+    expect(changed.def.modes).toEqual({ fulfilment_model: "pickup_ship", counter_sales: "on" });
+  });
+
+  it("K-G3: a configured ship tenant adding only Counter keeps its mode; the def reads Shipping", () => {
+    const { def, normalised } = ticksToProfileDef(
+      { shipping: true, counter: true, opensAs: "order" },
+      {
+        configured: true,
+        doorPayments: false,
+        ticks: {
+          delivery: false,
+          doorPayments: false,
+          shipping: true,
+          counter: false,
+          opensAs: "order",
+        },
+      },
+    );
+    expect(def.modes).toEqual({ fulfilment_model: "ship", counter_sales: "on" });
+    expect(normalised.shipping).toBe(true);
+    expect(normalised.counter).toBe(true);
+  });
+
+  it("K-G6: an omitted doorPayments keeps the held value, on the kept path too", () => {
+    const held = ticksToProfileDef(
+      { delivery: true, shipping: true, counter: true },
+      unsetCurrent(),
+    );
+    expect(held.normalised.doorPayments).toBe(true);
+    expect(held.def.modules).toBeUndefined();
+    const off = ticksToProfileDef(
+      { delivery: true, shipping: true, counter: true },
+      { ...unsetCurrent({ doorPayments: false }), doorPayments: false },
+    );
+    expect(off.normalised.doorPayments).toBe(false);
+    expect(off.def.modes).toEqual({ counter_sales: "on" });
+    expect(off.def.modules).toEqual({
+      recurring_routes: true,
+      order_delivery: true,
+      driver_payments: false,
+    });
+  });
+
+  it("with no current ticks (a preset's own ticks, the create form) nothing is kept: the model is always written", () => {
+    const { def } = ticksToProfileDef({ ...sameDS, counter: true });
+    expect(def.modes.fulfilment_model).toBe("both");
+  });
+
+  it("nothing ticked is still a 400 before the keep rule is consulted", () => {
+    expect(() => ticksToProfileDef({}, unsetCurrent())).toThrow(BadRequestException);
   });
 });
 

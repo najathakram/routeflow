@@ -8,6 +8,7 @@ import {
   CAPABILITY_PRESETS_FIXTURE,
   DELIVERY_COUNTER_FIXTURE,
   NOT_CONFIGURED_FIXTURE,
+  UNSET_TODAY_FIXTURE,
   capabilitiesFixture,
   capabilitiesPreview,
   capabilitiesPreviewWithBilling,
@@ -34,6 +35,8 @@ const DELIVERY = "Delivers on own trucks";
 const DOOR = "Collect payment at the door";
 const SHIPPING = "Ships by carrier";
 const COUNTER = "Sells at the counter";
+const NOT_SET_UP_COPY =
+  "Not set up yet. The boxes show how this business works today. Change them, or start from a preset.";
 
 function apiError(status: number, data: Record<string, unknown>) {
   return Object.assign(new Error("Request failed"), { response: { status, data } });
@@ -78,11 +81,7 @@ describe("CapabilitiesCard: what is saved", () => {
   it("a tenant nobody set up shows the empty state, nothing ticked, Apply off with its reason (R11)", async () => {
     mockFetchCapabilities.mockResolvedValue(NOT_CONFIGURED_FIXTURE);
     await renderCard();
-    expect(
-      screen.getByText(
-        "Not set up yet. The business works as before. Tick what it does, or start from a preset.",
-      ),
-    ).toBeVisible();
+    expect(screen.getByText(NOT_SET_UP_COPY)).toBeVisible();
     for (const n of [DELIVERY, SHIPPING, COUNTER]) expect(box(n)).not.toBeChecked();
     expect(applyButton()).toBeDisabled();
     expect(screen.getByText("Tick at least one.")).toBeVisible();
@@ -91,6 +90,38 @@ describe("CapabilitiesCard: what is saved", () => {
       await sleep(400);
     });
     expect(mockPreview).not.toHaveBeenCalled();
+  });
+
+  // SA-1028 K-R3 (supersedes the "nothing ticked" read for a tenant nobody set up): the boxes show what the business
+  // does today, so adding Counter cannot silently untick Delivery and Shipping.
+  it("K-R3: a tenant nobody set up shows today's ticks, keeps the 'not set up' line, and Apply is off until something changes", async () => {
+    mockFetchCapabilities.mockResolvedValue(UNSET_TODAY_FIXTURE);
+    await renderCard();
+    expect(screen.getByText(NOT_SET_UP_COPY)).toBeVisible();
+    expect(screen.queryByText(/^Saved setup:/)).toBeNull();
+    expect(box(DELIVERY)).toBeChecked();
+    expect(box(DOOR)).toBeChecked();
+    expect(box(SHIPPING)).toBeChecked();
+    expect(box(COUNTER)).not.toBeChecked();
+    expect(applyButton()).toBeDisabled();
+    expect(screen.getByText("Already set up this way.")).toBeVisible();
+    await act(async () => {
+      await sleep(400);
+    });
+    expect(mockPreview).not.toHaveBeenCalled();
+  });
+
+  it("K-R3: adding Counter on that tenant previews Delivery + Shipping kept and Counter added, never a smaller request", async () => {
+    mockFetchCapabilities.mockResolvedValue(UNSET_TODAY_FIXTURE);
+    await renderCard();
+    fireEvent.click(box(COUNTER));
+    await waitFor(() => expect(mockPreview).toHaveBeenCalledTimes(1));
+    expect(mockPreview.mock.calls[0]![1]).toEqual({
+      delivery: true,
+      doorPayments: true,
+      shipping: true,
+      counter: true,
+    });
   });
 
   it("shows the saved ticks, sends no request while they are unchanged, and says why Apply is off", async () => {
