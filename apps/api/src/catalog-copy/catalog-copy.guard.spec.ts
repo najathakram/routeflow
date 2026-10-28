@@ -3,6 +3,7 @@ import {
   assertApplyAllowed,
   assertConfirmed,
   assertNoRecipesLeftOut,
+  assertStorageForApply,
   parseCopyArgs,
 } from "./catalog-copy.guard";
 
@@ -139,5 +140,53 @@ describe("C-G16: --apply refuses while the source holds recipe products", () => 
   it("names the first 20 and counts the rest", () => {
     const many = Array.from({ length: 25 }, (_, i) => "R-" + i);
     expect(() => assertNoRecipesLeftOut(many)).toThrow(/R-19.*[+]5 more/);
+  });
+});
+
+// The first live dry run printed "R2 credentials not configured - falling back to local disk storage": under a
+// `railway run --service postgres` shell an APPLY would have copied the photos to the operator's disk, leaving the
+// target's product rows pointing at objects that exist nowhere durable.
+describe("C-G18: --apply against a real (proxy) database refuses without R2 configured", () => {
+  const r2 = { R2_ACCOUNT_ID: "acct", R2_ACCESS_KEY_ID: "key", R2_SECRET_ACCESS_KEY: "secret" };
+  const apply = (target: string) =>
+    parseCopyArgs(["--source", "qa-a", "--target", target, "--apply"]);
+
+  it("refuses, naming each missing variable, when none is set", () => {
+    expect(() => assertStorageForApply(apply("qa-copy-1"), {}, false)).toThrow(CopyRefusal);
+    expect(() => assertStorageForApply(apply("qa-copy-1"), {}, false)).toThrow(
+      /R2_ACCOUNT_ID.*R2_ACCESS_KEY_ID.*R2_SECRET_ACCESS_KEY/,
+    );
+  });
+
+  it("refuses when one is blank", () => {
+    expect(() =>
+      assertStorageForApply(apply("qa-copy-1"), { ...r2, R2_SECRET_ACCESS_KEY: "" }, false),
+    ).toThrow(/R2_SECRET_ACCESS_KEY/);
+  });
+
+  it("passes with all three set", () => {
+    expect(() => assertStorageForApply(apply("qa-copy-1"), r2, false)).not.toThrow();
+  });
+
+  it("a --local (docker-compose) run keeps local disk storage", () => {
+    expect(() => assertStorageForApply(apply("qa-copy-1"), {}, true)).not.toThrow();
+  });
+
+  it("a dry run needs no storage", () => {
+    const dry = parseCopyArgs(["--source", "qa-a", "--target", "acme-live-1"]);
+    expect(() => assertStorageForApply(dry, {}, false)).not.toThrow();
+  });
+
+  it("--resume (photos only) needs it too", () => {
+    const resume = parseCopyArgs([
+      "--source",
+      "qa-a",
+      "--target",
+      "qa-copy-1",
+      "--apply",
+      "--resume",
+      "m.json",
+    ]);
+    expect(() => assertStorageForApply(resume, {}, false)).toThrow(CopyRefusal);
   });
 });

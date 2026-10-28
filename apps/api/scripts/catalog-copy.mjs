@@ -58,7 +58,7 @@ async function main() {
   }
   process.env.DATABASE_URL = dbUrl;
   console.error(`${TAG}: target ${redactUrl(dbUrl)}`);
-  const { parseCopyArgs, assertApplyAllowed, CopyRefusal } = await import(
+  const { parseCopyArgs, assertApplyAllowed, assertStorageForApply, CopyRefusal } = await import(
     pathToFileURL(resolve(DIST, "catalog-copy.guard.js")).href
   );
   const { runCatalogCopy, exitCodeFor } = await import(
@@ -69,6 +69,7 @@ async function main() {
   try {
     args = parseCopyArgs(stripGuardFlags(process.argv.slice(2)));
     assertApplyAllowed(args); // refused before the database is opened
+    assertStorageForApply(args, process.env, process.argv.includes("--local"));
     if (args.apply && !isTestTenant(args.target) && !guard.hasBackupAttestation(process.argv)) {
       throw new CopyRefusal(
         "refused: --apply on a non-test target needs --backup-taken (a fresh backup first)",

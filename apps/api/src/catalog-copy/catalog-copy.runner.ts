@@ -1,5 +1,6 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { randomBytes } from "node:crypto";
 import { NestFactory } from "@nestjs/core";
 import { CatalogCopyModule } from "./catalog-copy.module";
 import { CatalogCopyService, type CopyReport, type Manifest } from "./catalog-copy.service";
@@ -60,12 +61,25 @@ export function writeManifest(path: string, manifest: Manifest, extra?: Partial<
  * Boots the script-only module (`createApplicationContext`: no HTTP server, no websocket server, no scheduler) and
  * runs the copy. The CLI (`scripts/catalog-copy.mjs`) calls this from `dist`.
  */
+/**
+ * The script-only graph reaches AuthModule through ProductsModule, and its JwtStrategy refuses to build without a
+ * secret. A database-only shell (`railway run --service postgres`) carries none, and this script never starts an HTTP
+ * server or signs or verifies a token, so a missing secret is filled with a per-process random value (never one that
+ * is already set, and never written anywhere).
+ */
+export function ensureScriptEnv(env: NodeJS.ProcessEnv = process.env): void {
+  for (const k of ["JWT_SECRET", "JWT_REFRESH_SECRET"]) {
+    if (!env[k]) env[k] = randomBytes(32).toString("hex");
+  }
+}
+
 export async function runCatalogCopy(
   args: CopyArgs,
   manifestPath: string,
   hooks: RunnerHooks = {},
 ): Promise<CopyReport | { photosCopied: number }> {
   const log = hooks.log ?? ((l: string) => process.stdout.write(`${l}\n`));
+  ensureScriptEnv();
   const app = await NestFactory.createApplicationContext(CatalogCopyModule, {
     logger: ["error", "warn"],
   });

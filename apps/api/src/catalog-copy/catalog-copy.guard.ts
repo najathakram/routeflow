@@ -92,3 +92,27 @@ export function assertNoRecipesLeftOut(recipes: readonly string[]): void {
     `refused: the source holds ${recipes.length} recipe product(s) this script does not build (${shown}); nothing was written`,
   );
 }
+
+const R2_VARS = ["R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY"] as const;
+
+/**
+ * A write run against a real (Railway proxy) database must put the photos in R2: without the three R2 variables the
+ * storage service falls back to the operator's local disk, and the target's product rows would point at objects that
+ * exist nowhere durable. A `railway run --service postgres` shell carries the database but NOT the storage variables,
+ * so they are exported into the shell first (they are read from the API service). `local` (`--local`, a docker-compose
+ * database) keeps local disk. A dry run copies nothing and needs no storage.
+ */
+export function assertStorageForApply(
+  args: CopyArgs,
+  env: Readonly<Record<string, string | undefined>>,
+  local: boolean,
+): void {
+  if (!args.apply || local) return;
+  const missing = R2_VARS.filter((k) => !env[k]);
+  if (missing.length === 0) return;
+  throw new CopyRefusal(
+    `refused: --apply against a real database needs R2 storage for the photos; missing ${missing.join(", ")}. ` +
+      "Export them from the API service in this shell, then re-run under 'railway run --service postgres' " +
+      "(or add --local for a docker-compose database). Nothing was written.",
+  );
+}

@@ -1,5 +1,5 @@
 /** SA-1027 C-G17: a run that left an error row (a family not copied, or an undo that failed) exits non-zero. */
-import { exitCodeFor, formatReport } from "./catalog-copy.runner";
+import { ensureScriptEnv, exitCodeFor, formatReport } from "./catalog-copy.runner";
 
 describe("catalog-copy exit code", () => {
   it("0 when nothing went wrong, a dry run, or a resume", () => {
@@ -76,5 +76,24 @@ describe("catalog-copy report: tier units and the tenant units the ladder writer
 
   it("prints a zero count with no list", () => {
     expect(formatReport(report({})).join(" | ")).toMatch(/ladder writer would create: 0 |/);
+  });
+});
+
+describe("ensureScriptEnv: the script-only module boots under a bare database shell", () => {
+  it("fills a missing JWT secret and refresh secret with a per-process random value", () => {
+    const a: NodeJS.ProcessEnv = {};
+    const b: NodeJS.ProcessEnv = {};
+    ensureScriptEnv(a);
+    ensureScriptEnv(b);
+    expect(a.JWT_SECRET).toHaveLength(64);
+    expect(a.JWT_REFRESH_SECRET).toHaveLength(64);
+    expect(a.JWT_SECRET).not.toBe(a.JWT_REFRESH_SECRET);
+    expect(a.JWT_SECRET).not.toBe(b.JWT_SECRET);
+  });
+
+  it("never replaces a secret the environment already holds", () => {
+    const env: NodeJS.ProcessEnv = { JWT_SECRET: "keep-me", JWT_REFRESH_SECRET: "keep-me-too" };
+    ensureScriptEnv(env);
+    expect(env).toEqual({ JWT_SECRET: "keep-me", JWT_REFRESH_SECRET: "keep-me-too" });
   });
 });
